@@ -57,7 +57,7 @@
         <p><strong>Last updated: April 2026</strong></p>
 
         <h4>1. License Grant</h4>
-        <p>Ghost Arcade ("Software") is licensed, not sold. Risk Capital Media LLC ("Company") grants you a limited, non-exclusive, non-transferable license to use the Software according to your subscription tier. The Free Demo includes a watermark on output. Pro and Enterprise tiers remove the watermark and unlock additional features.</p>
+        <p>Ghost Arcade ("Software") is licensed, not sold. Risk Capital Media LLC ("Company") grants you a limited, non-exclusive, non-transferable license to use the Software according to your subscription tier. Pro Monthly and Pro Lifetime tiers unlock all features and effects. A separate free, open-source Community edition is distributed under the GNU AGPL v3.0 and is governed by that license, not this Agreement.</p>
 
         <h4>2. Restrictions</h4>
         <p>You may not: (a) reverse engineer, decompile, or disassemble the Software; (b) redistribute, sublicense, or transfer the Software to any third party; (c) remove or alter any proprietary notices; (d) use the Software for any unlawful purpose; (e) attempt to circumvent the license validation system.</p>
@@ -81,7 +81,7 @@
         <p>THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.</p>
 
         <h4>9. Limitation of Liability</h4>
-        <p>IN NO EVENT SHALL RISK CAPITAL LLC BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES ARISING FROM YOUR USE OF THE SOFTWARE.</p>
+        <p>IN NO EVENT SHALL RISK CAPITAL MEDIA LLC BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES ARISING FROM YOUR USE OF THE SOFTWARE.</p>
 
         <h4>10. Termination</h4>
         <p>This license is effective until terminated. It terminates automatically if you fail to comply with any term. Upon termination, you must destroy all copies of the Software.</p>

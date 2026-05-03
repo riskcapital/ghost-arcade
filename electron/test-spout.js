@@ -24,7 +24,7 @@ app.whenReady().then(() => {
 
     const output = new addon.SpoutOutput();
     console.log('[Test] SpoutOutput initialized:', output.isInitialized());
-    output.setSenderName('illVisuals');
+    output.setSenderName('ghostArcade');
 
     // Send green frames for 5 seconds so other apps can detect us
     const w = 256, h = 256;

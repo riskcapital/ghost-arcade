@@ -408,7 +408,7 @@ These are the things no other VJ tool currently does, ranked by "actually unique
 - **No auth provider in the desktop app** — license verification is tier-flag-based, not OAuth
 
 ### Things to consider before publishing
-- **Brand assets** — `illVisualsLogo.png`, the icon set, the "Shrink Wrap" / "Ghost Arcade" wordmarks. Strip from the OSS repo, or release with permission.
+- **Brand assets** — `logo.png`, the icon set, the "Shrink Wrap" / "Ghost Arcade" wordmarks. Strip from the OSS repo, or release with permission.
 - **Bundled shader library** (310+ ISFs) — some are CC-BY remixes from interactiveshaderformat.com. Audit each for redistribution rights before bundling.
 - **Feature gate system** — keep it as-is in OSS (so Pro-tier users get value), or flatten to a single-tier OSS edition? Easiest answer: OSS edition removes the gates, keeps the gate code dormant.
 - **AI shader prompts** — the system prompts that turn text into ISF are arguably the secret sauce. Decide whether to ship them in the OSS repo or keep proprietary.

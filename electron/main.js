@@ -106,7 +106,7 @@ let spoutOutput = null;     // SpoutOutput instance (sender)
 let spoutReceiver = null;   // SpoutReceiver instance
 let spoutSendActive = false;
 let spoutSendCreating = false; // Prevent concurrent creation
-let spoutSendName = 'illVisuals';
+let spoutSendName = 'ghostArcade';
 let spoutFrameCount = 0;
 let spoutLastLogTime = 0;
 
@@ -637,7 +637,7 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('spout_start_sender', (_, { name, width, height }) => {
-    const requestedName = name || 'illVisuals';
+    const requestedName = name || 'ghostArcade';
 
     // If sender is already active or being created, return existing state
     if ((spoutSendActive && spoutOutput) || spoutSendCreating) {

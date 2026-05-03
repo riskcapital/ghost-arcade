@@ -310,7 +310,7 @@ async function saveRecordingToLibrary(blob: Blob, mimeType: string, namePrefix: 
     const currentSettings = settings.get();
     if (currentSettings.recording.autoDownload) {
       const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
-      const filename = `illVisuals_${timestamp}.${extension}`;
+      const filename = `GhostArcade_${timestamp}.${extension}`;
       await downloadRecording(blob, filename);
     }
   } catch (err) {
