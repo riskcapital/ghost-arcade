@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Shrink Wrap - Output</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+    html:fullscreen, html:fullscreen body { cursor: none; }
+    canvas { display: block; width: 100%; height: 100%; background: #000; }
+    .fullscreen-hint {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.8); color: #fff; padding: 10px 20px;
+      border-radius: 8px; font-family: system-ui, sans-serif; font-size: 14px;
+      z-index: 1000; opacity: 1; transition: opacity 2s;
+    }
+    .fullscreen-hint.hidden { opacity: 0; pointer-events: none; }
+    .debug-info {
+      position: fixed; top: 10px; left: 10px; color: #0f0; font-family: monospace;
+      font-size: 12px; background: rgba(0,0,0,0.7); padding: 5px 10px;
+      border-radius: 4px; z-index: 1001; opacity: 0.8;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="output-canvas"></canvas>
+  <div id="fullscreen-hint" class="fullscreen-hint">
+    F11 / double-click: fullscreen | R: rotate | B: blackout
+  </div>
+  <div id="debug-info" class="debug-info">Initializing...</div>
+  <script>
+    const debugEl = document.getElementById('debug-info');
+    function debug(msg) {
+      debugEl.textContent = msg;
+      console.log('[Output]', msg);
+    }
+
+    const canvas = document.getElementById('output-canvas');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    let rotation = 0;
+    let polling = true;
+    let frameCount = 0;
+    let lastFrameTime = 0;
+    let fps = 0;
+
+    // Use a regular canvas element for the offscreen buffer (more compatible than OffscreenCanvas)
+    let offscreenCanvas = null;
+    let offscreenCtx = null;
+
+    // Resize canvas to window
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      // Fill with black on resize
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      debug(`Canvas resized: ${canvas.width}x${canvas.height}`);
+    }
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    // Hide hint after 4 seconds
+    setTimeout(() => {
+      document.getElementById('fullscreen-hint').classList.add('hidden');
+    }, 4000);
+
+    // Hide debug after 10 seconds
+    setTimeout(() => {
+      debugEl.style.display = 'none';
+    }, 10000);
+
+    // Poll the HTTP endpoint for frames
+    async function pollFrame() {
+      if (!polling) return;
+
+      try {
+        const response = await fetch('/output/frame');
+        if (response.status === 200) {
+          const width = parseInt(response.headers.get('X-Frame-Width') || '1920', 10);
+          const height = parseInt(response.headers.get('X-Frame-Height') || '1080', 10);
+          const buffer = await response.arrayBuffer();
+
+          if (buffer.byteLength === width * height * 4) {
+            // Create ImageData from RGBA buffer
+            const imageData = new ImageData(
+              new Uint8ClampedArray(buffer),
+              width,
+              height
+            );
+
+            // Create/resize offscreen canvas if needed (using regular canvas, not OffscreenCanvas)
+            if (!offscreenCanvas || offscreenCanvas.width !== width || offscreenCanvas.height !== height) {
+              offscreenCanvas = document.createElement('canvas');
+              offscreenCanvas.width = width;
+              offscreenCanvas.height = height;
+              offscreenCtx = offscreenCanvas.getContext('2d');
+            }
+            offscreenCtx.putImageData(imageData, 0, 0);
+
+            // Draw to output canvas with rotation
+            ctx.save();
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            const cx = canvas.width / 2;
+            const cy = canvas.height / 2;
+            ctx.translate(cx, cy);
+            ctx.rotate((rotation * Math.PI) / 180);
+
+            let dw = canvas.width;
+            let dh = canvas.height;
+            if (rotation === 90 || rotation === 270) {
+              dw = canvas.height;
+              dh = canvas.width;
+            }
+
+            ctx.drawImage(offscreenCanvas, -dw / 2, -dh / 2, dw, dh);
+            ctx.restore();
+
+            // Update FPS counter
+            frameCount++;
+            const now = performance.now();
+            if (now - lastFrameTime > 1000) {
+              fps = Math.round(frameCount * 1000 / (now - lastFrameTime));
+              frameCount = 0;
+              lastFrameTime = now;
+            }
+            debug(`${width}x${height} @ ${fps} fps | rot: ${rotation}`);
+          }
+        } else if (response.status === 204) {
+          debug('Waiting for frames...');
+        }
+      } catch (err) {
+        debug('Connection error: ' + err.message);
+      }
+
+      // Poll continuously
+      if (polling) {
+        requestAnimationFrame(pollFrame);
+      }
+    }
+
+    // Start polling
+    debug('Starting frame polling...');
+    pollFrame();
+
+    // Blackout state
+    let blackout = false;
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'F11') {
+        e.preventDefault();
+        if (document.fullscreenElement) document.exitFullscreen();
+        else document.documentElement.requestFullscreen();
+      }
+      if (e.key === 'Escape' && document.fullscreenElement) {
+        document.exitFullscreen();
+      }
+      if (e.key === 'r' || e.key === 'R') {
+        rotation = (rotation + 90) % 360;
+        debug(`Rotation: ${rotation} degrees`);
+      }
+      if (e.key === 'b' || e.key === 'B') {
+        blackout = !blackout;
+        canvas.style.visibility = blackout ? 'hidden' : 'visible';
+        document.body.style.background = '#000';
+        debug(blackout ? 'BLACKOUT' : `${canvas.width}x${canvas.height} @ ${fps} fps | rot: ${rotation}`);
+      }
+    });
+
+    // Double-click for fullscreen
+    document.body.addEventListener('dblclick', () => {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else document.documentElement.requestFullscreen();
+    });
+
+    // Cleanup on unload
+    window.addEventListener('beforeunload', () => {
+      polling = false;
+    });
+  </script>
+</body>
+</html>

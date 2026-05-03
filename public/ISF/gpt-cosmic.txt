@@ -1,0 +1,169 @@
+/*{
+    "CREDIT": "ChatGPT",
+    "DESCRIPTION": "Cosmic Melt Network — fluid 3D noise‑warped particle grid connected by glowing lines in molten outer space",
+    "CATEGORIES": [ "generator" ],
+    "INPUTS": [
+        { "NAME": "timeScale",      "TYPE": "float", "MIN": 0.0, "MAX": 5.0,  "DEFAULT": 1.0 },
+        { "NAME": "gridSize",       "TYPE": "float", "MIN": 4.0, "MAX": 16.0, "DEFAULT": 8.0 },
+        { "NAME": "connectThresh",  "TYPE": "float", "MIN": 0.001, "MAX": 0.05, "DEFAULT": 0.008 },
+        { "NAME": "noiseScale",     "TYPE": "float", "MIN": 0.1, "MAX": 10.0, "DEFAULT": 3.0 },
+        { "NAME": "meltAmt",        "TYPE": "float", "MIN": 0.0, "MAX": 1.0,  "DEFAULT": 0.3 },
+        { "NAME": "colorSat",       "TYPE": "float", "MIN": 0.0, "MAX": 2.0,  "DEFAULT": 1.0 }
+    ]
+}*/
+
+#ifdef GL_ES
+precision highp float;
+#endif
+
+#define PI       3.141592653589793
+#define TWO_PI   (2.0 * PI)
+const int MAX_DIM = 16;
+const int OCTAVES = 4;
+
+// 2D random (IQ)
+vec2 rand2(vec2 p){
+    p = vec2(dot(p,vec2(127.1,311.7)),
+             dot(p,vec2(269.5,183.3)));
+    return -1.0 + 2.0*fract(sin(p)*43758.5453123);
+}
+
+// 2D noise
+float noise2d(vec2 p){
+    vec2 i = floor(p), f = fract(p);
+    vec2 u = f*f*(3.0-2.0*f);
+    float a = dot(rand2(i + vec2(0.0)), f - vec2(0.0));
+    float b = dot(rand2(i + vec2(1.0,0.0)), f - vec2(1.0,0.0));
+    float c = dot(rand2(i + vec2(0.0,1.0)), f - vec2(0.0,1.0));
+    float d = dot(rand2(i + vec2(1.0,1.0)), f - vec2(1.0,1.0));
+    return mix(mix(a,b,u.x), mix(c,d,u.x), u.y);
+}
+
+// 3D hash & noise
+float hash3(vec3 p){
+    p = fract(p * vec3(0.1031,0.11369,0.13787));
+    p += dot(p, p.yzx+19.19);
+    return fract((p.x+p.y)*p.z);
+}
+float noise3(vec3 p){
+    vec3 i = floor(p), f = fract(p);
+    vec3 u = f*f*(3.0-2.0*f);
+    float n000 = hash3(i+vec3(0.0)), n100 = hash3(i+vec3(1.0,0.0,0.0));
+    float n010 = hash3(i+vec3(0.0,1.0,0.0)), n110 = hash3(i+vec3(1.0,1.0,0.0));
+    float n001 = hash3(i+vec3(0.0,0.0,1.0)), n101 = hash3(i+vec3(1.0,0.0,1.0));
+    float n011 = hash3(i+vec3(0.0,1.0,1.0)), n111 = hash3(i+vec3(1.0,1.0,1.0));
+    float nx00 = mix(n000,n100,u.x), nx10 = mix(n010,n110,u.x);
+    float nx01 = mix(n001,n101,u.x), nx11 = mix(n011,n111,u.x);
+    float nxy0 = mix(nx00,nx10,u.y), nxy1 = mix(nx01,nx11,u.y);
+    return mix(nxy0,nxy1,u.z);
+}
+
+// 3D fractal Brownian motion
+float fbm3(vec3 p){
+    float v=0.0, amp=0.6;
+    for(int i=0;i<OCTAVES;i++){
+        v += amp * noise3(p);
+        p *= 2.0;
+        amp *= 0.5;
+    }
+    return v;
+}
+
+// HSV → RGB
+vec3 hsv2rgb(vec3 c){
+    vec4 K = vec4(1.0, 2.0/3.0, 1.0/3.0, 3.0);
+    vec3 p = abs(fract(c.xxx + K.xyz)*6.0 - K.www);
+    return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+}
+
+// distance from point p to segment ab
+float sdSegment(vec2 p, vec2 a, vec2 b){
+    vec2 pa = p - a, ba = b - a;
+    float h = clamp(dot(pa,ba)/dot(ba,ba), 0.0, 1.0);
+    return length(pa - ba*h);
+}
+
+void main(){
+    // normalized UV & aspect
+    vec2 uv   = gl_FragCoord.xy / RENDERSIZE.xy;
+    vec2 cent = uv*2.0 - 1.0;
+    float aspect = RENDERSIZE.x / RENDERSIZE.y;
+    cent.x *= aspect;
+
+    float t = TIME * timeScale;
+
+    // — Background: swirling cosmic fbm
+    vec2 sw = vec2(
+        cent.x * cos(t*0.2) - cent.y * sin(t*0.2),
+        cent.x * sin(t*0.2) + cent.y * cos(t*0.2)
+    );
+    float bgN = fbm3(vec3(sw*noiseScale, t*0.1));
+    vec3 bgCol = hsv2rgb(vec3(bgN + 0.3, colorSat, 1.0));
+
+    // — Particle network
+    int gridDim = int(floor(gridSize + 0.5));
+    gridDim = clamp(gridDim, 2, MAX_DIM);
+    float invD = 1.0 / float(gridDim - 1);
+    float netVal = 0.0;
+
+    for(int y=0; y<MAX_DIM; y++){
+        if(y >= gridDim) break;
+        for(int x=0; x<MAX_DIM; x++){
+            if(x >= gridDim) break;
+
+            // base 2D pos
+            vec2 base = vec2(float(x), float(y)) * invD - 0.5;
+            base.x *= aspect;
+
+            // 3D extrusion for melting
+            vec3 P = vec3(base, base.x*0.3 + base.y*0.2 + t*0.1);
+            vec3 warp = P + meltAmt * vec3(
+                noise3(P + vec3(1.0,0.0,0.0)),
+                noise3(P + vec3(0.0,1.0,0.0)),
+                noise3(P + vec3(0.0,0.0,1.0))
+            );
+            vec2 A = warp.xy;
+
+            // connect to right neighbor
+            if(x < gridDim-1){
+                vec2 B0 = vec2(float(x+1), float(y)) * invD - 0.5;
+                B0.x *= aspect;
+                vec3 P2 = vec3(B0, B0.x*0.3 + B0.y*0.2 + t*0.1);
+                vec3 warp2 = P2 + meltAmt * vec3(
+                    noise3(P2 + vec3(1.0,0.0,0.0)),
+                    noise3(P2 + vec3(0.0,1.0,0.0)),
+                    noise3(P2 + vec3(0.0,0.0,1.0))
+                );
+                float d = sdSegment(cent, A, warp2.xy);
+                netVal += smoothstep(connectThresh, 0.0, d);
+            }
+            // connect to top neighbor
+            if(y < gridDim-1){
+                vec2 B1 = vec2(float(x), float(y+1)) * invD - 0.5;
+                B1.x *= aspect;
+                vec3 P3 = vec3(B1, B1.x*0.3 + B1.y*0.2 + t*0.1);
+                vec3 warp3 = P3 + meltAmt * vec3(
+                    noise3(P3 + vec3(1.0,0.0,0.0)),
+                    noise3(P3 + vec3(0.0,1.0,0.0)),
+                    noise3(P3 + vec3(0.0,0.0,1.0))
+                );
+                float d = sdSegment(cent, A, warp3.xy);
+                netVal += smoothstep(connectThresh, 0.0, d);
+            }
+        }
+    }
+
+    // color network by fbm depth
+    float hue = fract(fbm3(vec3(cent*noiseScale, t*0.05)) + t*0.1);
+    vec3 netCol = hsv2rgb(vec3(hue, colorSat, netVal));
+
+    // composite
+    vec3 col = mix(bgCol, netCol, clamp(netVal*1.5, 0.0, 1.0));
+
+    // mild vignette
+    float d = length(cent);
+    float vig = smoothstep(0.7, 1.0, d);
+    col *= 1.0 - vig;
+
+    gl_FragColor = vec4(col, 1.0);
+}

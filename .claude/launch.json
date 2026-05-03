@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dev",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["node_modules/vite/bin/vite.js", "--port", "1420", "--host"],
+      "port": 1420
+    },
+    {
+      "name": "shrinkwrap-site",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["-e", "const h=require('http'),f=require('fs'),p=require('path'),m={'html':'text/html','css':'text/css','js':'application/javascript','png':'image/png','jpg':'image/jpeg','ico':'image/x-icon','webmanifest':'application/manifest+json','svg':'image/svg+xml'};h.createServer((q,r)=>{let u=q.url==='/'?'/index.html':q.url;let fp=p.join('shrinkWrap',decodeURIComponent(u));if(!f.existsSync(fp)){r.writeHead(404);r.end('Not found');return}let e=p.extname(fp).slice(1);r.writeHead(200,{'Content-Type':m[e]||'application/octet-stream'});f.createReadStream(fp).pipe(r)}).listen(3000,()=>console.log('Serving on http://localhost:3000'))"],
+      "port": 3000
+    },
+    {
+      "name": "shrinkwrap-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "C:/Users/justi/OneDrive/Documents/001RISKCAPITAL/ShrinkWrap"],
+      "port": 3000
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "name": "spout-addon",
+  "version": "0.1.0",
+  "description": "Spout2 native addon for Electron — zero-copy GPU texture sharing",
+  "main": "build/Release/spout_addon.node",
+  "private": true,
+  "scripts": {
+    "install": "cmake-js compile",
+    "build": "cmake-js compile --runtime=electron --runtime-version=33.4.11",
+    "rebuild": "cmake-js rebuild --runtime=electron --runtime-version=33.4.11",
+    "clean": "cmake-js clean"
+  },
+  "dependencies": {
+    "cmake-js": "^7.3.0",
+    "node-addon-api": "^8.3.1"
+  }
+}

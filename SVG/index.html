@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SCRN - Liquid Flow Visualization</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #000; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; }
+        #canvas-container { width: 100vw; height: 100vh; }
+        canvas { display: block; }
+
+        #controls {
+            position: fixed; top: 10px; right: 10px;
+            background: rgba(0, 0, 0, 0.92);
+            border: 1px solid rgba(238, 52, 37, 0.4);
+            border-radius: 10px; padding: 15px;
+            color: #fff; width: 320px; max-height: 95vh;
+            overflow-y: auto; z-index: 1000;
+            transition: transform 0.3s ease;
+            font-size: 11px;
+        }
+        #controls::-webkit-scrollbar { width: 5px; }
+        #controls::-webkit-scrollbar-thumb { background: #ee3425; border-radius: 3px; }
+        #controls.hidden { transform: translateX(340px); }
+
+        #toggle-controls {
+            position: fixed; top: 10px; right: 10px;
+            background: rgba(238, 52, 37, 0.9); border: none;
+            color: white; width: 40px; height: 40px;
+            border-radius: 50%; cursor: pointer; font-size: 14px;
+            z-index: 999; font-weight: bold;
+        }
+
+        .section {
+            margin-bottom: 12px; padding-bottom: 10px;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+        .section:last-child { border-bottom: none; }
+
+        .section h3 {
+            color: #ee3425; font-size: 11px; text-transform: uppercase;
+            letter-spacing: 1px; margin-bottom: 8px;
+            display: flex; align-items: center; gap: 6px;
+        }
+        .section h3 input { width: 14px; height: 14px; accent-color: #ee3425; }
+
+        .row {
+            display: flex; align-items: center; gap: 8px; margin-bottom: 5px;
+        }
+        .row label { flex: 1; color: rgba(255,255,255,0.7); font-size: 10px; }
+        .row input[type="range"] { width: 100px; accent-color: #ee3425; }
+        .row input[type="color"] { width: 30px; height: 20px; border: none; border-radius: 3px; cursor: pointer; }
+        .row select {
+            background: rgba(238,52,37,0.2); border: 1px solid rgba(238,52,37,0.4);
+            color: white; padding: 4px 8px; border-radius: 4px; font-size: 10px;
+            cursor: pointer; width: 100px;
+        }
+        .row select option { background: #1a1a1a; }
+        .val { color: #ee3425; font-size: 9px; min-width: 30px; text-align: right; font-family: monospace; }
+
+        .presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+        .presets button {
+            background: rgba(238,52,37,0.2); border: 1px solid rgba(238,52,37,0.4);
+            color: white; padding: 6px 4px; border-radius: 4px; cursor: pointer;
+            font-size: 9px; text-transform: uppercase;
+        }
+        .presets button:hover { background: rgba(238,52,37,0.5); }
+
+        .upload-section {
+            background: rgba(238,52,37,0.1);
+            border: 1px dashed rgba(238,52,37,0.5);
+            border-radius: 6px;
+            padding: 10px;
+            text-align: center;
+        }
+        .upload-btn {
+            background: rgba(238,52,37,0.8); border: none;
+            color: white; padding: 8px 16px; border-radius: 4px;
+            cursor: pointer; font-size: 11px; font-weight: bold;
+            width: 100%;
+        }
+        .upload-btn:hover { background: rgba(238,52,37,1); }
+        #svg-status {
+            color: rgba(255,255,255,0.6); font-size: 9px;
+            margin-top: 6px;
+        }
+
+        #fps {
+            position: fixed; top: 10px; left: 10px;
+            color: #ee3425; font-size: 11px; font-family: monospace;
+            background: rgba(0,0,0,0.6); padding: 5px 8px; border-radius: 4px;
+        }
+        #info {
+            position: fixed; bottom: 10px; left: 10px;
+            color: rgba(255,255,255,0.3); font-size: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="canvas-container"></div>
+    <button id="toggle-controls">CFG</button>
+
+    <div id="controls">
+        <!-- SVG Upload Section -->
+        <div class="section">
+            <h3>SVG Upload</h3>
+            <div class="upload-section">
+                <button id="svg-upload-btn" class="upload-btn">Upload SVG File</button>
+                <input type="file" id="svg-file-input" accept=".svg" style="display:none">
+                <div id="svg-status">Default: SCRN artwork loaded</div>
+            </div>
+        </div>
+
+        <!-- Fill Mode Section -->
+        <div class="section">
+            <h3>Fill Mode</h3>
+            <div class="row">
+                <label>Mode</label>
+                <select id="fillMode">
+                    <option value="liquid">Liquid</option>
+                    <option value="solid">Solid</option>
+                    <option value="gradient">Gradient</option>
+                    <option value="shimmer">Shimmer</option>
+                    <option value="pulse">Pulse</option>
+                    <option value="noise">Noise</option>
+                    <option value="particles">Particles</option>
+                </select>
+            </div>
+            <!-- Gradient Options -->
+            <div class="row" id="gradientOptions">
+                <label>Angle</label>
+                <input type="range" id="gradientAngle" min="0" max="360" step="5" value="90">
+                <span class="val" id="gradientAngleVal">90</span>
+            </div>
+            <div class="row" id="gradientOptions2">
+                <label>Spread</label>
+                <input type="range" id="gradientSpread" min="0.1" max="0.8" step="0.05" value="0.3">
+                <span class="val" id="gradientSpreadVal">0.3</span>
+            </div>
+            <!-- Shimmer Options -->
+            <div class="row" id="shimmerOptions">
+                <label>Speed</label>
+                <input type="range" id="shimmerSpeed" min="1" max="15" step="0.5" value="5">
+                <span class="val" id="shimmerSpeedVal">5</span>
+            </div>
+            <div class="row" id="shimmerOptions2">
+                <label>Scale</label>
+                <input type="range" id="shimmerScale" min="0.02" max="0.3" step="0.01" value="0.1">
+                <span class="val" id="shimmerScaleVal">0.1</span>
+            </div>
+            <div class="row" id="shimmerOptions3">
+                <label>Intensity</label>
+                <input type="range" id="shimmerIntensity" min="0.2" max="1.5" step="0.1" value="0.8">
+                <span class="val" id="shimmerIntensityVal">0.8</span>
+            </div>
+            <!-- Pulse Options -->
+            <div class="row" id="pulseOptions">
+                <label>Speed</label>
+                <input type="range" id="pulseSpeed" min="0.5" max="10" step="0.5" value="3">
+                <span class="val" id="pulseSpeedVal">3</span>
+            </div>
+            <div class="row" id="pulseOptions2">
+                <label>Ring Scale</label>
+                <input type="range" id="pulseRingScale" min="2" max="30" step="1" value="10">
+                <span class="val" id="pulseRingScaleVal">10</span>
+            </div>
+            <div class="row" id="pulseOptions3">
+                <label>Ring Speed</label>
+                <input type="range" id="pulseRingSpeed" min="1" max="15" step="0.5" value="5">
+                <span class="val" id="pulseRingSpeedVal">5</span>
+            </div>
+            <!-- Noise Options -->
+            <div class="row" id="noiseOptions">
+                <label>Scale</label>
+                <input type="range" id="noiseScale" min="0.005" max="0.1" step="0.005" value="0.02">
+                <span class="val" id="noiseScaleVal">0.02</span>
+            </div>
+            <div class="row" id="noiseOptions2">
+                <label>Speed</label>
+                <input type="range" id="noiseSpeed" min="0.1" max="2" step="0.1" value="0.5">
+                <span class="val" id="noiseSpeedVal">0.5</span>
+            </div>
+            <div class="row" id="noiseOptions3">
+                <label>Contrast</label>
+                <input type="range" id="noiseContrast" min="0" max="1" step="0.1" value="0.5">
+                <span class="val" id="noiseContrastVal">0.5</span>
+            </div>
+            <!-- Particle Fill Options -->
+            <div class="row" id="particleFillOptions">
+                <label>Density</label>
+                <input type="range" id="particleFillDensity" min="50" max="500" step="25" value="200">
+                <span class="val" id="particleFillDensityVal">200</span>
+            </div>
+            <div class="row" id="particleFillOptions2">
+                <label>Size</label>
+                <input type="range" id="particleFillSize" min="1" max="10" step="0.5" value="3">
+                <span class="val" id="particleFillSizeVal">3</span>
+            </div>
+            <div class="row" id="particleFillOptions3">
+                <label>Speed</label>
+                <input type="range" id="particleFillSpeed" min="0.1" max="3" step="0.1" value="1">
+                <span class="val" id="particleFillSpeedVal">1</span>
+            </div>
+        </div>
+
+        <!-- Color Mode Section -->
+        <div class="section">
+            <h3>Color Mode</h3>
+            <div class="row">
+                <label>Mode</label>
+                <select id="colorMode">
+                    <option value="perShape">Per Shape</option>
+                    <option value="rainbow">Rainbow</option>
+                    <option value="monochrome">Monochrome</option>
+                    <option value="complementary">Complementary</option>
+                    <option value="analogous">Analogous</option>
+                    <option value="white">All White</option>
+                </select>
+            </div>
+            <div class="row">
+                <label>Mono Hue</label>
+                <input type="range" id="monochromeHue" min="0" max="360" step="1" value="0">
+                <span class="val" id="monochromeHueVal">0</span>
+            </div>
+        </div>
+
+        <!-- Outlines Section -->
+        <div class="section">
+            <h3>Outlines</h3>
+            <div class="row">
+                <label>Thickness</label>
+                <input type="range" id="outlineThickness" min="1" max="10" step="0.5" value="3">
+                <span class="val" id="outlineThicknessVal">3</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3><input type="checkbox" id="liquidEnabled" checked> Liquid Fill</h3>
+            <div class="row">
+                <label>Speed</label>
+                <input type="range" id="liquidSpeed" min="0.05" max="1" step="0.05" value="0.4">
+                <span class="val" id="liquidSpeedVal">0.4</span>
+            </div>
+            <div class="row">
+                <label>Wave</label>
+                <input type="range" id="liquidWaveAmp" min="0.02" max="0.15" step="0.01" value="0.08">
+                <span class="val" id="liquidWaveAmpVal">0.08</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3><input type="checkbox" id="particlesEnabled" checked> Edge Particles</h3>
+            <div class="row">
+                <label>Speed</label>
+                <input type="range" id="particleSpeed" min="20" max="300" step="10" value="80">
+                <span class="val" id="particleSpeedVal">80</span>
+            </div>
+            <div class="row">
+                <label>Size</label>
+                <input type="range" id="particleSize" min="1" max="5" step="0.5" value="2.5">
+                <span class="val" id="particleSizeVal">2.5</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3><input type="checkbox" id="energyEnabled" checked> Energy Pulses</h3>
+            <div class="row">
+                <label>Speed</label>
+                <input type="range" id="energySpeed" min="50" max="500" step="25" value="150">
+                <span class="val" id="energySpeedVal">150</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3><input type="checkbox" id="connectionsEnabled" checked> Connections</h3>
+            <div class="row">
+                <label>Pulse</label>
+                <input type="range" id="connectionPulseSpeed" min="0.5" max="6" step="0.5" value="2">
+                <span class="val" id="connectionPulseSpeedVal">2</span>
+            </div>
+            <div class="row">
+                <label>Thickness</label>
+                <input type="range" id="connectionThickness" min="1" max="8" step="0.5" value="2">
+                <span class="val" id="connectionThicknessVal">2</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3><input type="checkbox" id="glowEnabled" checked> Vertex Glow</h3>
+            <div class="row">
+                <label>Pulse</label>
+                <input type="range" id="glowPulseSpeed" min="0.5" max="8" step="0.5" value="2">
+                <span class="val" id="glowPulseSpeedVal">2</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3><input type="checkbox" id="ripplesEnabled" checked> Ripples</h3>
+            <div class="row">
+                <label>Speed</label>
+                <input type="range" id="rippleSpeed" min="0.3" max="3" step="0.1" value="1">
+                <span class="val" id="rippleSpeedVal">1</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3><input type="checkbox" id="lightningEnabled" checked> Lightning</h3>
+            <div class="row">
+                <label>Frequency</label>
+                <input type="range" id="lightningFrequency" min="0.1" max="4" step="0.1" value="1.5">
+                <span class="val" id="lightningFrequencyVal">1.5</span>
+            </div>
+            <div class="row">
+                <label>Thickness</label>
+                <input type="range" id="lightningThickness" min="1" max="8" step="0.5" value="3">
+                <span class="val" id="lightningThicknessVal">3</span>
+            </div>
+            <div class="row">
+                <label>Branches</label>
+                <input type="range" id="lightningBranches" min="0" max="6" step="1" value="3">
+                <span class="val" id="lightningBranchesVal">3</span>
+            </div>
+            <div class="row">
+                <label>Duration</label>
+                <input type="range" id="lightningDuration" min="0.05" max="0.4" step="0.01" value="0.12">
+                <span class="val" id="lightningDurationVal">0.12</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3><input type="checkbox" id="edgeFlowEnabled" checked> Edge Flow</h3>
+            <div class="row">
+                <label>Speed</label>
+                <input type="range" id="edgeFlowSpeed" min="0.5" max="4" step="0.25" value="1.5">
+                <span class="val" id="edgeFlowSpeedVal">1.5</span>
+            </div>
+            <div class="row">
+                <label>Thickness</label>
+                <input type="range" id="edgeFlowThickness" min="1" max="6" step="0.5" value="2">
+                <span class="val" id="edgeFlowThicknessVal">2</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3><input type="checkbox" id="innerGlowEnabled" checked> Inner Glow</h3>
+            <div class="row">
+                <label>Intensity</label>
+                <input type="range" id="innerGlowIntensity" min="0.1" max="1" step="0.1" value="0.5">
+                <span class="val" id="innerGlowIntensityVal">0.5</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3><input type="checkbox" id="nebulaEnabled" checked> Nebula BG</h3>
+            <div class="row">
+                <label>Intensity</label>
+                <input type="range" id="nebulaIntensity" min="0.1" max="0.8" step="0.05" value="0.3">
+                <span class="val" id="nebulaIntensityVal">0.3</span>
+            </div>
+            <div class="row">
+                <label>Speed</label>
+                <input type="range" id="nebulaSpeed" min="0.05" max="0.5" step="0.05" value="0.2">
+                <span class="val" id="nebulaSpeedVal">0.2</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3><input type="checkbox" id="heartbeatEnabled" checked> Heartbeat</h3>
+            <div class="row">
+                <label>Speed</label>
+                <input type="range" id="heartbeatSpeed" min="0.3" max="2.5" step="0.1" value="1">
+                <span class="val" id="heartbeatSpeedVal">1</span>
+            </div>
+            <div class="row">
+                <label>Intensity</label>
+                <input type="range" id="heartbeatIntensity" min="0.1" max="0.8" step="0.05" value="0.3">
+                <span class="val" id="heartbeatIntensityVal">0.3</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3><input type="checkbox" id="plasmaEnabled" checked> Plasma Tendrils</h3>
+            <div class="row">
+                <label>Intensity</label>
+                <input type="range" id="plasmaIntensity" min="0.2" max="1.5" step="0.1" value="0.8">
+                <span class="val" id="plasmaIntensityVal">0.8</span>
+            </div>
+            <div class="row">
+                <label>Speed</label>
+                <input type="range" id="plasmaSpeed" min="0.5" max="5" step="0.25" value="2">
+                <span class="val" id="plasmaSpeedVal">2</span>
+            </div>
+            <div class="row">
+                <label>Thickness</label>
+                <input type="range" id="plasmaThickness" min="1" max="8" step="0.5" value="3">
+                <span class="val" id="plasmaThicknessVal">3</span>
+            </div>
+            <div class="row">
+                <label>Opacity</label>
+                <input type="range" id="plasmaOpacity" min="0.2" max="1" step="0.1" value="0.6">
+                <span class="val" id="plasmaOpacityVal">0.6</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3><input type="checkbox" id="particleLinksEnabled" checked> Particle Links</h3>
+            <div class="row">
+                <label>Distance</label>
+                <input type="range" id="particleLinkDistance" min="20" max="120" step="5" value="60">
+                <span class="val" id="particleLinkDistanceVal">60</span>
+            </div>
+            <div class="row">
+                <label>Opacity</label>
+                <input type="range" id="particleLinkOpacity" min="0.1" max="0.8" step="0.05" value="0.3">
+                <span class="val" id="particleLinkOpacityVal">0.3</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3><input type="checkbox" id="echoEnabled" checked> Echo Layers</h3>
+            <div class="row">
+                <label>Layers</label>
+                <input type="range" id="echoLayers" min="1" max="8" step="1" value="4">
+                <span class="val" id="echoLayersVal">4</span>
+            </div>
+            <div class="row">
+                <label>Spacing</label>
+                <input type="range" id="echoSpacing" min="3" max="20" step="1" value="8">
+                <span class="val" id="echoSpacingVal">8</span>
+            </div>
+            <div class="row">
+                <label>Thickness</label>
+                <input type="range" id="echoThickness" min="1" max="6" step="0.5" value="2">
+                <span class="val" id="echoThicknessVal">2</span>
+            </div>
+            <div class="row">
+                <label>Opacity</label>
+                <input type="range" id="echoOpacity" min="0.1" max="0.6" step="0.05" value="0.3">
+                <span class="val" id="echoOpacityVal">0.3</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3><input type="checkbox" id="arcBridgesEnabled" checked> Arc Bridges</h3>
+            <div class="row">
+                <label>Height</label>
+                <input type="range" id="arcBridgeHeight" min="5" max="40" step="5" value="15">
+                <span class="val" id="arcBridgeHeightVal">15</span>
+            </div>
+            <div class="row">
+                <label>Thickness</label>
+                <input type="range" id="arcBridgeThickness" min="1" max="8" step="0.5" value="3">
+                <span class="val" id="arcBridgeThicknessVal">3</span>
+            </div>
+            <div class="row">
+                <label>Opacity</label>
+                <input type="range" id="arcBridgeOpacity" min="0.1" max="0.8" step="0.05" value="0.4">
+                <span class="val" id="arcBridgeOpacityVal">0.4</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3><input type="checkbox" id="colorCycleEnabled" checked> Color Cycle</h3>
+            <div class="row">
+                <label>Speed</label>
+                <input type="range" id="colorCycleSpeed" min="0.05" max="1" step="0.05" value="0.3">
+                <span class="val" id="colorCycleSpeedVal">0.3</span>
+            </div>
+            <div class="row">
+                <label>Saturation</label>
+                <input type="range" id="colorCycleSaturation" min="0.3" max="1" step="0.05" value="0.8">
+                <span class="val" id="colorCycleSaturationVal">0.8</span>
+            </div>
+            <div class="row">
+                <label>Lightness</label>
+                <input type="range" id="colorCycleLightness" min="0.3" max="0.8" step="0.05" value="0.55">
+                <span class="val" id="colorCycleLightnessVal">0.55</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3><input type="checkbox" id="perShapeColors" checked> Per-Shape Colors</h3>
+        </div>
+
+        <div class="section">
+            <h3>Post Processing</h3>
+            <div class="row">
+                <label>Bloom</label>
+                <input type="range" id="bloomStrength" min="0.5" max="4" step="0.1" value="1.8">
+                <span class="val" id="bloomStrengthVal">1.8</span>
+            </div>
+            <div class="row">
+                <label>Threshold</label>
+                <input type="range" id="bloomThreshold" min="0" max="0.5" step="0.05" value="0.15">
+                <span class="val" id="bloomThresholdVal">0.15</span>
+            </div>
+            <div class="row">
+                <label>Chromatic</label>
+                <input type="range" id="chromatic" min="0" max="0.008" step="0.001" value="0.002">
+                <span class="val" id="chromaticVal">0.002</span>
+            </div>
+            <div class="row">
+                <label>Vignette</label>
+                <input type="range" id="vignette" min="0" max="0.6" step="0.05" value="0.3">
+                <span class="val" id="vignetteVal">0.3</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3>Presets</h3>
+            <div class="presets">
+                <button class="preset" data-preset="default">Default</button>
+                <button class="preset" data-preset="electric">Electric</button>
+                <button class="preset" data-preset="organic">Organic</button>
+                <button class="preset" data-preset="neon">Neon</button>
+                <button class="preset" data-preset="minimal">Minimal</button>
+                <button class="preset" data-preset="chaos">Chaos</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="fps">FPS: 60</div>
+    <div id="info">SCRN - GPU-optimized for smooth performance</div>
+
+    <script type="importmap">
+    { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
+    </script>
+    <script type="module" src="app.js"></script>
+    <script>
+        // Show/hide fill mode options based on selection
+        function updateFillModeOptions() {
+            const mode = document.getElementById('fillMode').value;
+            const optionGroups = {
+                'gradient': ['gradientOptions', 'gradientOptions2'],
+                'shimmer': ['shimmerOptions', 'shimmerOptions2', 'shimmerOptions3'],
+                'pulse': ['pulseOptions', 'pulseOptions2', 'pulseOptions3'],
+                'noise': ['noiseOptions', 'noiseOptions2', 'noiseOptions3'],
+                'particles': ['particleFillOptions', 'particleFillOptions2', 'particleFillOptions3']
+            };
+            // Hide all option groups
+            Object.values(optionGroups).flat().forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.style.display = 'none';
+            });
+            // Show relevant options
+            if (optionGroups[mode]) {
+                optionGroups[mode].forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) el.style.display = 'flex';
+                });
+            }
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('fillMode').addEventListener('change', updateFillModeOptions);
+            updateFillModeOptions();
+        });
+    </script>
+</body>
+</html>

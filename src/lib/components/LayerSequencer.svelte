@@ -1,0 +1,435 @@
+<script lang="ts">
+  import { layerSequencer } from '../stores/layerSequencer';
+  import { layers } from '../stores/layers';
+  import { audioStore } from '../stores/audio';
+  import type { SequencerPresetMode, SequencerSubdivision } from '../types';
+
+  // Reactive state from store
+  $: state = $layerSequencer;
+  $: allLayers = $layers;
+  $: pattern = state.pattern;
+  $: config = state.config;
+  $: currentStep = state.currentStep;
+  $: isPlaying = state.isPlaying;
+  $: isOpen = state.isOpen;
+  $: stepCount = pattern.stepCount;
+  $: stepIndices = Array.from({ length: stepCount }, (_, i) => i);
+
+  function toggleTray() {
+    layerSequencer.toggleOpen();
+  }
+
+  function toggleCell(stepIdx: number, layerId: string) {
+    layerSequencer.toggleCell(stepIdx, layerId);
+  }
+
+  function applyPreset(mode: SequencerPresetMode) {
+    const ids = allLayers.map(l => l.id);
+    layerSequencer.generatePattern(mode, ids);
+  }
+
+  function onPresetChange(e: Event) {
+    const mode = (e.target as HTMLSelectElement).value as SequencerPresetMode;
+    if (mode === 'custom') {
+      layerSequencer.updateConfig({ presetMode: 'custom' });
+    } else {
+      applyPreset(mode);
+    }
+  }
+
+  function onStepCountChange(e: Event) {
+    layerSequencer.setStepCount(parseInt((e.target as HTMLSelectElement).value));
+  }
+
+  function onTimingModeChange(mode: 'beat' | 'fixed') {
+    layerSequencer.updateConfig({ timingMode: mode });
+  }
+
+  function onBPMChange(e: Event) {
+    const val = parseFloat((e.target as HTMLInputElement).value);
+    if (val >= 30 && val <= 300) layerSequencer.updateConfig({ bpm: val });
+  }
+
+  function onSubdivisionChange(e: Event) {
+    layerSequencer.updateConfig({ subdivision: parseInt((e.target as HTMLSelectElement).value) as SequencerSubdivision });
+  }
+
+  function onFixedDurationChange(e: Event) {
+    layerSequencer.updateConfig({ fixedStepDuration: parseFloat((e.target as HTMLSelectElement).value) });
+  }
+
+  function onCrossfadeToggle() {
+    layerSequencer.updateConfig({ crossfadeEnabled: !config.crossfadeEnabled });
+  }
+
+  function onCrossfadeDurationChange(e: Event) {
+    layerSequencer.updateConfig({ crossfadeDuration: parseFloat((e.target as HTMLSelectElement).value) });
+  }
+
+  function onLoopToggle() {
+    layerSequencer.updateConfig({ loop: !config.loop });
+  }
+
+  function onRandomDensityChange(e: Event) {
+    const val = parseFloat((e.target as HTMLInputElement).value);
+    layerSequencer.updateConfig({ randomDensity: val });
+    if (config.presetMode === 'random') applyPreset('random');
+  }
+
+  function tapTempo() {
+    audioStore.tapTempo();
+    setTimeout(() => {
+      const a = $audioStore;
+      if (a.bpm > 0) layerSequencer.updateConfig({ bpm: a.bpm });
+    }, 50);
+  }
+
+  // Truncate layer name for row label
+  function truncName(name: string, maxLen = 10): string {
+    return name.length > maxLen ? name.slice(0, maxLen) + '\u2026' : name;
+  }
+</script>
+
+<!-- Toggle Button -->
+<button class="seq-toggle" class:open={isOpen} onclick={toggleTray}>
+  <span class="toggle-icon">{isOpen ? '\u25BC' : '\u25B2'}</span>
+  <span class="toggle-label">Sequencer</span>
+</button>
+
+<!-- Slide-up Tray -->
+{#if isOpen}
+  <div class="seq-tray">
+    <!-- Header -->
+    <div class="seq-header">
+      <div class="seq-header-left">
+        <span class="seq-title">SEQUENCER</span>
+        <select class="seq-select" value={config.presetMode} onchange={onPresetChange}>
+          <option value="custom">Custom</option>
+          <option value="snake">Snake</option>
+          <option value="everyOther">Every Other</option>
+          <option value="random">Random</option>
+        </select>
+        {#if config.presetMode === 'random'}
+          <input class="seq-input seq-density" type="range" min="0.1" max="0.9" step="0.1"
+            value={config.randomDensity} oninput={onRandomDensityChange}
+            title="Density: {Math.round(config.randomDensity * 100)}%" />
+        {/if}
+        <select class="seq-select" value={stepCount} onchange={onStepCountChange}>
+          <option value={4}>4</option>
+          <option value={8}>8</option>
+          <option value={16}>16</option>
+          <option value={32}>32</option>
+          <option value={48}>48</option>
+        </select>
+        <span class="seq-steps-label">steps</span>
+      </div>
+
+      <div class="seq-header-center">
+        <button class="seq-btn seq-play" onclick={() => isPlaying ? layerSequencer.pause() : layerSequencer.play()} title={isPlaying ? 'Pause' : 'Play'}>
+          {#if isPlaying}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="3" width="4" height="18"/><rect x="15" y="3" width="4" height="18"/></svg>
+          {:else}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+          {/if}
+        </button>
+        <button class="seq-btn" onclick={() => layerSequencer.stop()} title="Stop">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+        </button>
+        <label class="seq-loop-label" title="Loop">
+          <input type="checkbox" checked={config.loop} onchange={onLoopToggle} />
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+            <polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+          </svg>
+        </label>
+        <button class="seq-btn seq-clear" onclick={() => layerSequencer.clearPattern()} title="Clear">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/></svg>
+        </button>
+        <span class="seq-step-display">{currentStep + 1}<span class="seq-step-sep">/</span>{stepCount}</span>
+      </div>
+
+      <div class="seq-header-right">
+        <div class="seq-timing-toggle">
+          <button class="seq-timing-btn" class:active={config.timingMode === 'beat'} onclick={() => onTimingModeChange('beat')}>Beat</button>
+          <button class="seq-timing-btn" class:active={config.timingMode === 'fixed'} onclick={() => onTimingModeChange('fixed')}>Fixed</button>
+        </div>
+        {#if config.timingMode === 'beat'}
+          <input class="seq-input seq-bpm" type="number" min="30" max="300" value={config.bpm} onchange={onBPMChange} title="BPM" />
+          <button class="seq-btn seq-tap" onclick={tapTempo} title="Tap tempo">TAP</button>
+          <select class="seq-select seq-sub" value={config.subdivision} onchange={onSubdivisionChange}>
+            <option value={1}>1/4</option>
+            <option value={2}>1/8</option>
+            <option value={4}>1/16</option>
+          </select>
+        {:else}
+          <select class="seq-select" value={config.fixedStepDuration} onchange={onFixedDurationChange}>
+            <option value={0.25}>0.25s</option>
+            <option value={0.5}>0.5s</option>
+            <option value={1}>1s</option>
+            <option value={2}>2s</option>
+            <option value={5}>5s</option>
+            <option value={10}>10s</option>
+          </select>
+        {/if}
+        <label class="seq-xfade-label" title="Crossfade">
+          <input type="checkbox" checked={config.crossfadeEnabled} onchange={onCrossfadeToggle} />
+          Xfade
+        </label>
+        {#if config.crossfadeEnabled}
+          <select class="seq-select seq-xfade-dur" value={config.crossfadeDuration} onchange={onCrossfadeDurationChange}>
+            <option value={0.1}>0.1s</option>
+            <option value={0.2}>0.2s</option>
+            <option value={0.3}>0.3s</option>
+            <option value={0.5}>0.5s</option>
+            <option value={1.0}>1.0s</option>
+            <option value={2.0}>2.0s</option>
+          </select>
+        {/if}
+      </div>
+    </div>
+
+    <!-- Horizontal Grid: rows = layers, columns = steps -->
+    <div class="seq-grid-container">
+      {#if allLayers.length === 0}
+        <div class="seq-empty">No layers. Add layers to use the sequencer.</div>
+      {:else}
+        <div class="seq-grid" style="grid-template-columns: 80px repeat({stepCount}, 28px); grid-template-rows: 20px repeat({allLayers.length}, 26px);">
+          <!-- Top-left corner (sticky) -->
+          <div class="seq-corner"></div>
+          <!-- Step number headers (top row) -->
+          {#each stepIndices as stepIdx}
+            <div class="seq-step-header" class:current={stepIdx === currentStep}>{stepIdx + 1}</div>
+          {/each}
+
+          <!-- Layer rows -->
+          {#each allLayers as layer, layerIdx}
+            <!-- Layer name (sticky left) -->
+            <div class="seq-layer-label" title={layer.name}>
+              <span class="seq-layer-dot" style="background: {layer.visible ? '#FF6B6B' : '#333'}"></span>
+              {truncName(layer.name)}
+            </div>
+            <!-- Step cells for this layer -->
+            {#each stepIndices as stepIdx}
+              {@const active = !!pattern.steps[stepIdx]?.activeLayers[layer.id]}
+              {@const isCurrent = stepIdx === currentStep}
+              <button
+                class="seq-cell"
+                class:active
+                class:current={isCurrent}
+                onclick={() => toggleCell(stepIdx, layer.id)}
+                title="{layer.name} \u2014 Step {stepIdx + 1}"
+              ></button>
+            {/each}
+          {/each}
+        </div>
+
+        <!-- (playhead line removed — current step highlighted green in grid) -->
+      {/if}
+    </div>
+  </div>
+{/if}
+
+<style>
+  /* ═══════════════════════════════════
+     TOGGLE BUTTON
+     ═══════════════════════════════════ */
+  .seq-toggle {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: linear-gradient(135deg, #0d0d10, #111114);
+    border: 1px solid #444;
+    color: #ddd;
+    padding: 8px 16px;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    z-index: 100;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    font-size: 12px;
+    font-weight: 600;
+    font-family: inherit;
+  }
+  .seq-toggle:hover { border-color: #FF6B6B; box-shadow: 0 4px 30px rgba(255,107,107,0.2); }
+  .seq-toggle.open { border-color: #FF6B6B; background: linear-gradient(135deg, #1a2020, #201515); }
+  .toggle-icon { font-size: 10px; color: #888; }
+  .toggle-label { font-size: 12px; font-weight: 600; }
+
+  /* ═══════════════════════════════════
+     TRAY PANEL
+     ═══════════════════════════════════ */
+  .seq-tray {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    height: 280px;
+    background: #0a0a0c;
+    border-top: 1px solid #333;
+    z-index: 99;
+    display: flex;
+    flex-direction: column;
+    animation: seqSlideUp 0.2s ease-out;
+  }
+  @keyframes seqSlideUp {
+    from { transform: translateY(100%); opacity: 0; }
+    to   { transform: translateY(0);    opacity: 1; }
+  }
+
+  /* ═══════════════════════════════════
+     HEADER
+     ═══════════════════════════════════ */
+  .seq-header {
+    display: flex; align-items: center;
+    padding: 6px 16px; gap: 12px;
+    border-bottom: 1px solid #161618;
+    background: #0d0d10; flex-shrink: 0;
+  }
+  .seq-header-left, .seq-header-center, .seq-header-right {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .seq-header-left { flex: 1; }
+  .seq-header-center { flex: 0 0 auto; }
+  .seq-header-right { flex: 1; justify-content: flex-end; }
+  .seq-title { font-size: 11px; font-weight: 700; color: #FF6B6B; letter-spacing: 1px; margin-right: 4px; }
+  .seq-steps-label { font-size: 10px; color: #666; }
+
+  /* ═══════════════════════════════════
+     CONTROLS
+     ═══════════════════════════════════ */
+  .seq-select {
+    background: #1a1a1e; border: 1px solid #333; color: #ccc;
+    padding: 3px 6px; border-radius: 4px; font-size: 11px; cursor: pointer; font-family: inherit;
+  }
+  .seq-select:hover { border-color: #FF6B6B; }
+  .seq-input {
+    background: #1a1a1e; border: 1px solid #333; color: #ccc;
+    padding: 3px 6px; border-radius: 4px; font-size: 11px; font-family: inherit;
+  }
+  .seq-input:focus { border-color: #FF6B6B; outline: none; }
+  .seq-bpm { width: 50px; text-align: center; }
+  .seq-density { width: 60px; padding: 0; height: 16px; accent-color: #FF6B6B; }
+  .seq-btn {
+    display: flex; align-items: center; justify-content: center;
+    width: 28px; height: 24px; background: #1a1a1e; border: 1px solid #444;
+    border-radius: 4px; color: #ccc; cursor: pointer; transition: all 0.15s;
+    font-family: inherit; padding: 0;
+  }
+  .seq-btn:hover { background: rgba(255,107,107,0.2); border-color: #FF6B6B; color: #FF6B6B; }
+  .seq-play { background: rgba(255,107,107,0.15); border-color: #FF6B6B; color: #FF6B6B; }
+  .seq-play:hover { background: rgba(255,107,107,0.35); }
+  .seq-tap { font-size: 9px; font-weight: 700; width: auto; padding: 0 8px; letter-spacing: 0.5px; }
+  .seq-clear { opacity: 0.6; }
+  .seq-clear:hover { opacity: 1; }
+  .seq-loop-label { display: flex; align-items: center; gap: 3px; cursor: pointer; color: #888; font-size: 11px; }
+  .seq-loop-label input { display: none; }
+  .seq-loop-label input:checked ~ svg { color: #FF6B6B; }
+  .seq-step-display {
+    font-size: 12px; color: #FF6B6B; font-family: 'JetBrains Mono', monospace;
+    min-width: 40px; text-align: center; font-weight: 700;
+  }
+  .seq-step-sep { color: #555; }
+  .seq-timing-toggle { display: flex; border: 1px solid #333; border-radius: 4px; overflow: hidden; }
+  .seq-timing-btn {
+    padding: 3px 8px; font-size: 10px; background: #1a1a1e; border: none;
+    color: #888; cursor: pointer; transition: all 0.15s; font-family: inherit; font-weight: 600;
+  }
+  .seq-timing-btn:first-child { border-right: 1px solid #333; }
+  .seq-timing-btn.active { background: rgba(255,107,107,0.2); color: #FF6B6B; }
+  .seq-timing-btn:hover:not(.active) { background: #222; color: #aaa; }
+  .seq-xfade-label {
+    display: flex; align-items: center; gap: 4px; font-size: 10px; color: #888; cursor: pointer;
+  }
+  .seq-xfade-label input[type="checkbox"] { accent-color: #FF6B6B; width: 12px; height: 12px; }
+  .seq-xfade-dur { width: 52px; }
+  .seq-sub { width: 48px; }
+
+  /* ═══════════════════════════════════
+     HORIZONTAL GRID
+     Rows = layers, Columns = steps
+     ═══════════════════════════════════ */
+  .seq-grid-container {
+    flex: 1; overflow: auto; padding: 4px 8px 8px; position: relative;
+  }
+  .seq-grid-container::-webkit-scrollbar { width: 6px; height: 6px; }
+  .seq-grid-container::-webkit-scrollbar-track { background: transparent; }
+  .seq-grid-container::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+  .seq-grid-container::-webkit-scrollbar-thumb:hover { background: #555; }
+
+  .seq-empty { color: #666; font-size: 12px; padding: 24px; text-align: center; }
+
+  .seq-grid {
+    display: grid;
+    gap: 2px;
+    width: fit-content;
+  }
+
+  /* Top-left corner cell */
+  .seq-corner {
+    position: sticky; left: 0; top: 0; z-index: 3;
+    background: #0a0a0c;
+  }
+
+  /* Step number headers (top row) */
+  .seq-step-header {
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px; font-weight: 600; color: #555;
+    font-family: 'JetBrains Mono', monospace;
+    position: sticky; top: 0; z-index: 2;
+    background: #0a0a0c;
+  }
+  .seq-step-header.current {
+    color: #4CAF50; font-weight: 700;
+  }
+
+  /* Layer name labels (left column) */
+  .seq-layer-label {
+    display: flex; align-items: center; gap: 5px;
+    padding: 0 6px;
+    font-size: 10px; color: #aaa;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    position: sticky; left: 0; z-index: 1;
+    background: #0a0a0c;
+    border-radius: 3px;
+  }
+
+  .seq-layer-dot {
+    width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+  }
+
+  /* ═══════════════════════════════════
+     GRID CELLS
+     ═══════════════════════════════════ */
+  .seq-cell {
+    width: 26px; height: 24px;
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 3px;
+    background: #161618;
+    cursor: pointer;
+    transition: background 0.06s, border-color 0.06s, box-shadow 0.06s;
+    padding: 0;
+  }
+  .seq-cell:hover {
+    border-color: rgba(255,107,107,0.3);
+    background: #1e1e22;
+  }
+  .seq-cell.active {
+    background: #FF6B6B;
+    border-color: rgba(255,107,107,0.5);
+    box-shadow: 0 0 4px rgba(255,107,107,0.2);
+  }
+  .seq-cell.active:hover {
+    background: #FF8585;
+  }
+  .seq-cell.current {
+    border-color: rgba(76,175,80,0.35);
+    background: rgba(76,175,80,0.08);
+  }
+  .seq-cell.current.active {
+    background: #43A047;
+    border-color: rgba(76,175,80,0.6);
+    box-shadow: 0 0 10px rgba(76,175,80,0.5);
+  }
+</style>

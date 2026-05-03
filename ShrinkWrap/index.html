@@ -1,0 +1,2532 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ghost Arcade — Professional Projection Mapping & VJ Software</title>
+
+    <!-- Favicons -->
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+    <link rel="manifest" href="site.webmanifest">
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Newsreader:ital,wght@0,300;0,400;1,300;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+    <style>
+        /* ==========================================
+           CSS VARIABLES - THEME SYSTEM
+           ========================================== */
+
+        :root {
+            /* Dark mode (default/night) */
+            --bg: #0a0a0a;
+            --bg-elevated: #1a1a1a;
+            --bg-glass: rgba(10, 10, 10, 0.85);
+            --text: #e8e8e8;
+            --text-dim: #888888;
+            --text-subtle: #444444;
+            --cyan: #5ce1e6;
+            --teal: #38bec9;
+            --orange: #ff6b35;
+            --border: rgba(92, 225, 230, 0.2);
+            --border-subtle: rgba(92, 225, 230, 0.1);
+            --fog-color: rgba(10, 10, 10, 0.95);
+            --grid-color: rgba(92, 225, 230, 0.08);
+
+            --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            --font-serif: 'Newsreader', Georgia, serif;
+            --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+        }
+
+        /* Light mode */
+        [data-theme="light"] {
+            --bg: #fafafa;
+            --bg-elevated: #ffffff;
+            --bg-glass: rgba(250, 250, 250, 0.9);
+            --text: #1a1a1a;
+            --text-dim: #666666;
+            --text-subtle: #999999;
+            --cyan: #0891b2;
+            --teal: #0d9488;
+            --orange: #ea580c;
+            --border: rgba(8, 145, 178, 0.25);
+            --border-subtle: rgba(8, 145, 178, 0.1);
+            --fog-color: rgba(250, 250, 250, 0.95);
+            --grid-color: rgba(8, 145, 178, 0.06);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        body {
+            font-family: var(--font-sans);
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            overflow-x: hidden;
+            transition: background 0.4s ease, color 0.3s ease;
+        }
+
+        /* ==========================================
+           3D WIREFRAME LANDSCAPE BACKGROUND
+           ========================================== */
+
+        #landscape-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            pointer-events: none;
+        }
+
+        /* Fog overlay - fades as you scroll */
+        .fog-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(
+                ellipse 80% 50% at 50% 30%,
+                transparent 0%,
+                var(--fog-color) 100%
+            );
+            z-index: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+
+        /* ==========================================
+           THEME TOGGLE
+           ========================================== */
+
+        .theme-toggle {
+            position: fixed;
+            bottom: 1.5rem;
+            right: 1.5rem;
+            z-index: 1002;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            background: var(--bg-glass);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .theme-toggle:hover {
+            border-color: var(--cyan);
+        }
+
+        .theme-icon {
+            width: 18px;
+            height: 18px;
+            color: var(--cyan);
+        }
+
+        .theme-label {
+            font-family: var(--font-mono);
+            font-size: 0.625rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        /* ==========================================
+           HEADER SYSTEM
+           ========================================== */
+
+        .top-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, var(--cyan), var(--orange));
+            z-index: 1000;
+            transform: translateY(0);
+            transition: transform 0.3s ease;
+        }
+
+        .top-bar.hidden {
+            transform: translateY(-100%);
+        }
+
+        .field-bar {
+            position: fixed;
+            top: 2px;
+            left: 0;
+            right: 0;
+            background: var(--bg);
+            padding: 0.5rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-family: var(--font-mono);
+            font-size: 0.625rem;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            border-bottom: 1px solid var(--border-subtle);
+            z-index: 999;
+            transform: translateY(0);
+            transition: transform 0.3s ease, background 0.4s ease;
+        }
+
+        .field-bar.hidden {
+            transform: translateY(-100%);
+        }
+
+        nav {
+            position: fixed;
+            top: 35px;
+            left: 0;
+            right: 0;
+            z-index: 998;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--bg-glass);
+            border-bottom: 1px solid var(--border-subtle);
+            transform: translateY(0) translateZ(0);
+            transition: transform 0.3s ease, top 0.3s ease, background 0.4s ease;
+        }
+
+        nav.compact {
+            top: 0;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            color: var(--text);
+            text-decoration: none;
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        .logo img {
+            max-width: 180px;
+            height: auto;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            transition: background 0.3s ease;
+        }
+
+        /* Dark background for logo in light mode */
+        [data-theme="light"] .logo img {
+            background: #111;
+            padding: 0.35rem 0.6rem;
+        }
+
+        .nav-menu {
+            display: flex;
+            gap: 2rem;
+            list-style: none;
+        }
+
+        .nav-menu a {
+            color: var(--text-dim);
+            text-decoration: none;
+            font-size: 0.8125rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            transition: color 0.2s;
+        }
+
+        .nav-menu a:hover {
+            color: var(--cyan);
+        }
+
+        /* Mobile Menu */
+        .menu-toggle {
+            display: none;
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--cyan);
+            padding: 0.5rem;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+
+        .menu-toggle:hover {
+            background: rgba(92, 225, 230, 0.1);
+        }
+
+        .menu-toggle svg {
+            display: block;
+        }
+
+        .mobile-nav {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--bg);
+            z-index: 1001;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 2rem;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s, visibility 0.3s;
+        }
+
+        .mobile-nav.active {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .mobile-nav-close {
+            position: absolute;
+            top: 1.5rem;
+            right: 1.5rem;
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--cyan);
+            padding: 0.75rem;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+
+        .mobile-nav a {
+            color: var(--text);
+            text-decoration: none;
+            font-size: 1.5rem;
+            font-family: var(--font-serif);
+            font-style: italic;
+            letter-spacing: 0.02em;
+            opacity: 0;
+            transform: translateY(20px);
+            transition: opacity 0.3s, transform 0.3s, color 0.2s;
+        }
+
+        .mobile-nav.active a {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .mobile-nav a:nth-child(2) { transition-delay: 0.05s; }
+        .mobile-nav a:nth-child(3) { transition-delay: 0.1s; }
+        .mobile-nav a:nth-child(4) { transition-delay: 0.15s; }
+        .mobile-nav a:nth-child(5) { transition-delay: 0.2s; }
+        .mobile-nav a:nth-child(6) { transition-delay: 0.25s; }
+
+        .mobile-nav a:hover {
+            color: var(--cyan);
+        }
+
+        .mobile-nav-footer {
+            position: absolute;
+            bottom: 2rem;
+            font-family: var(--font-mono);
+            font-size: 0.6875rem;
+            color: var(--text-subtle);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        /* ==========================================
+           HERO SECTION
+           ========================================== */
+
+        .hero {
+            min-height: 100vh;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4rem;
+            padding: 9rem 2rem 4rem;
+            max-width: 1600px;
+            margin: 0 auto;
+            position: relative;
+            z-index: 1;
+            background: transparent;
+        }
+
+        .hero-content {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .hero-label {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .line-segment {
+            width: 60px;
+            height: 1px;
+            background: var(--border);
+        }
+
+        .hero-label-text {
+            font-family: var(--font-mono);
+            font-size: 0.625rem;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+        }
+
+        .hero h1 {
+            font-family: var(--font-serif);
+            font-size: clamp(2.5rem, 6vw, 5rem);
+            font-weight: 300;
+            line-height: 1.1;
+            letter-spacing: -0.02em;
+            margin-bottom: 1.5rem;
+            font-style: italic;
+        }
+
+        .hero-description {
+            font-size: 1rem;
+            color: var(--text-dim);
+            max-width: 500px;
+            line-height: 1.7;
+            margin-bottom: 2rem;
+        }
+
+        .hero-cta {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .btn-primary {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 1rem 2rem;
+            background: var(--cyan);
+            border: none;
+            color: #000;
+            text-decoration: none;
+            font-size: 0.875rem;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+
+        .btn-primary:hover {
+            background: #fff;
+            transform: translateY(-2px);
+        }
+
+        .btn-secondary {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 1rem 2rem;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text);
+            text-decoration: none;
+            font-size: 0.875rem;
+            font-weight: 500;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            transition: all 0.2s;
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--cyan);
+            color: var(--cyan);
+        }
+
+        .hero-meta {
+            display: flex;
+            gap: 3rem;
+            padding-top: 2rem;
+            border-top: 1px solid var(--border-subtle);
+            margin-top: 2rem;
+        }
+
+        .meta-item {
+            font-family: var(--font-mono);
+            font-size: 0.6875rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+
+        .meta-label {
+            color: var(--text-subtle);
+            margin-bottom: 0.25rem;
+        }
+
+        .meta-value {
+            color: var(--text);
+        }
+
+        /* Shader Display Box */
+        .shader-display {
+            position: relative;
+            border: 1px solid var(--border-subtle);
+            background: rgba(0, 0, 0, 0.9);
+            display: flex;
+            flex-direction: column;
+            min-height: 500px;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        /* Ensure dark background in light mode too */
+        [data-theme="light"] .shader-display {
+            background: #0a0a0a;
+            border-color: rgba(0, 0, 0, 0.2);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+        }
+
+        [data-theme="light"] .shader-header,
+        [data-theme="light"] .shader-footer {
+            background: #111;
+            color: #888;
+        }
+
+        [data-theme="light"] .shader-title {
+            color: #888;
+        }
+
+        [data-theme="light"] .shader-fps {
+            color: #5ce1e6;
+        }
+
+        .shader-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .shader-title {
+            font-family: var(--font-mono);
+            font-size: 0.625rem;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+        }
+
+        .shader-fps {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--cyan);
+        }
+
+        .shader-canvas-container {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .shader-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .shader-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 1.5rem;
+            border-top: 1px solid var(--border-subtle);
+            font-family: var(--font-mono);
+            font-size: 0.625rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--text-subtle);
+        }
+
+        /* ==========================================
+           STATS SECTION
+           ========================================== */
+
+        .stats-section {
+            padding: 5rem 2rem;
+            max-width: 1600px;
+            margin: 0 auto;
+            border-top: none;
+            position: relative;
+            z-index: 1;
+            background: transparent;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 2rem;
+        }
+
+        .stat-item {
+            padding: 2rem 0;
+            border-left: 1px solid var(--border-subtle);
+            padding-left: 2rem;
+        }
+
+        .stat-number {
+            font-size: 3.5rem;
+            font-weight: 300;
+            letter-spacing: -0.02em;
+            color: var(--text);
+            margin-bottom: 0.25rem;
+        }
+
+        .stat-label {
+            font-family: var(--font-mono);
+            font-size: 0.6875rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--text-subtle);
+        }
+
+        /* ==========================================
+           GLASSMORPHIC STYLES
+           ========================================== */
+
+        .glass {
+            background: rgba(10, 10, 10, 0.4);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--border);
+        }
+
+        [data-theme="light"] .glass {
+            background: rgba(250, 250, 250, 0.4);
+        }
+
+        .glass-subtle {
+            background: rgba(10, 10, 10, 0.3);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+
+        [data-theme="light"] .glass-subtle {
+            background: rgba(250, 250, 250, 0.3);
+        }
+
+        .clear-bg {
+            background: transparent !important;
+            border-top: none !important;
+        }
+
+        /* ==========================================
+           SECTION STYLES
+           ========================================== */
+
+        section {
+            padding: 5rem 2rem;
+            max-width: 1600px;
+            margin: 0 auto;
+            border-top: 1px solid var(--border-subtle);
+            position: relative;
+            z-index: 1;
+        }
+
+        section.glass {
+            max-width: 100%;
+            padding-left: 0;
+            padding-right: 0;
+        }
+
+        section.glass > * {
+            max-width: 1600px;
+            margin-left: auto;
+            margin-right: auto;
+            padding-left: 2rem;
+            padding-right: 2rem;
+        }
+
+        section.glass > .pipeline-stack {
+            padding-left: 2rem;
+            padding-right: 2rem;
+        }
+
+        .section-header {
+            margin-bottom: 4rem;
+        }
+
+        .section-label {
+            font-family: var(--font-mono);
+            font-size: 0.625rem;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            margin-bottom: 1rem;
+        }
+
+        .section-title {
+            font-family: var(--font-serif);
+            font-size: clamp(2rem, 4vw, 3rem);
+            font-weight: 300;
+            line-height: 1.2;
+            letter-spacing: -0.02em;
+            font-style: italic;
+            max-width: 700px;
+        }
+
+        .section-description {
+            font-size: 1rem;
+            color: var(--text-dim);
+            max-width: 650px;
+            line-height: 1.7;
+            margin-top: 1.5rem;
+        }
+
+        /* ==========================================
+           UNIFIED PIPELINE STACK
+           ========================================== */
+
+        .pipeline-stack {
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+            margin-top: 3rem;
+            max-width: 900px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .pipeline-stage {
+            display: grid;
+            grid-template-columns: 100px 1fr 200px;
+            gap: 2rem;
+            align-items: center;
+            padding: 2rem 2.5rem;
+            border: 1px solid var(--border);
+            border-bottom: none;
+            background: linear-gradient(135deg, rgba(92, 225, 230, 0.02) 0%, transparent 100%);
+            position: relative;
+            transition: all 0.3s ease;
+        }
+
+        .pipeline-stage:first-child {
+            border-radius: 12px 12px 0 0;
+        }
+
+        .pipeline-stage:last-child {
+            border-bottom: 1px solid var(--border);
+            border-radius: 0 0 12px 12px;
+        }
+
+        .pipeline-stage:hover {
+            background: linear-gradient(135deg, rgba(92, 225, 230, 0.06) 0%, rgba(26, 127, 142, 0.03) 100%);
+            border-color: var(--cyan);
+        }
+
+        .pipeline-stage:hover + .pipeline-stage {
+            border-top-color: var(--cyan);
+        }
+
+        /* Connector arrow between stages */
+        .pipeline-stage::after {
+            content: '';
+            position: absolute;
+            bottom: -12px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0;
+            height: 0;
+            border-left: 10px solid transparent;
+            border-right: 10px solid transparent;
+            border-top: 12px solid var(--border);
+            z-index: 2;
+        }
+
+        .pipeline-stage:last-child::after {
+            display: none;
+        }
+
+        .pipeline-stage:hover::after {
+            border-top-color: var(--cyan);
+        }
+
+        .stage-number {
+            font-family: var(--font-mono);
+            font-size: 2.5rem;
+            font-weight: 300;
+            color: var(--cyan);
+            opacity: 0.4;
+            line-height: 1;
+        }
+
+        .stage-content {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .stage-title {
+            font-family: var(--font-mono);
+            font-size: 0.875rem;
+            color: var(--text);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            font-weight: 600;
+        }
+
+        .stage-description {
+            font-size: 0.875rem;
+            color: var(--text-dim);
+            line-height: 1.6;
+        }
+
+        .stage-visual {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--cyan);
+        }
+
+        .stage-visual svg {
+            width: 100%;
+            max-width: 160px;
+            height: auto;
+            opacity: 0.8;
+        }
+
+        /* Output stage highlight */
+        .pipeline-stage.output-stage {
+            background: linear-gradient(135deg, rgba(92, 225, 230, 0.08) 0%, rgba(26, 127, 142, 0.04) 100%);
+            border-color: var(--cyan);
+        }
+
+        .pipeline-stage.output-stage .stage-number {
+            opacity: 0.8;
+        }
+
+        .pipeline-stage.output-stage .stage-title {
+            color: var(--cyan);
+        }
+
+        /* ==========================================
+           FEATURES GRID
+           ========================================== */
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 3rem;
+            margin-top: 3rem;
+        }
+
+        .feature-item {
+            padding: 2rem 0;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .feature-number {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--cyan);
+            margin-bottom: 1rem;
+            letter-spacing: 0.1em;
+        }
+
+        .feature-item h3 {
+            font-size: 1.375rem;
+            font-weight: 500;
+            margin-bottom: 0.75rem;
+        }
+
+        .feature-item p {
+            color: var(--text-dim);
+            line-height: 1.7;
+            font-size: 0.9375rem;
+        }
+
+        .feature-category {
+            margin-bottom: 4rem;
+        }
+
+        .feature-category-label {
+            font-family: var(--font-mono);
+            font-size: 0.8125rem;
+            color: var(--cyan);
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .features-cta {
+            text-align: center;
+            margin-top: 3rem;
+            padding-top: 2rem;
+            border-top: 1px solid var(--border-subtle);
+        }
+
+        .features-cta a {
+            font-family: var(--font-mono);
+            font-size: 0.8125rem;
+            color: var(--cyan);
+            text-decoration: none;
+            letter-spacing: 0.05em;
+            transition: opacity 0.2s ease;
+        }
+
+        .features-cta a:hover {
+            text-decoration: underline;
+        }
+
+        /* ==========================================
+           MOBILE CONTROL SECTION
+           ========================================== */
+
+        .mobile-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4rem;
+            align-items: center;
+            margin-top: 4rem;
+        }
+
+        .mobile-visual {
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 400px;
+        }
+
+        .mobile-visual svg {
+            max-width: 100%;
+            height: auto;
+            color: var(--cyan);
+        }
+
+        .mobile-content h3 {
+            font-size: 1.5rem;
+            font-weight: 500;
+            margin-bottom: 1.5rem;
+        }
+
+        .mobile-content p {
+            color: var(--text-dim);
+            line-height: 1.7;
+            margin-bottom: 1rem;
+        }
+
+        .mobile-features {
+            margin-top: 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .mobile-feature {
+            display: flex;
+            align-items: flex-start;
+            gap: 1rem;
+        }
+
+        .mobile-feature-icon {
+            flex-shrink: 0;
+            width: 24px;
+            height: 24px;
+            color: var(--cyan);
+        }
+
+        .mobile-feature-text {
+            font-size: 0.9375rem;
+            color: var(--text-dim);
+        }
+
+        .mobile-feature-text strong {
+            color: var(--text);
+        }
+
+        /* ==========================================
+           SCREENSHOTS SECTION
+           ========================================== */
+
+        .screenshots-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 2rem;
+            margin-top: 3rem;
+        }
+
+        .screenshot-item {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .screenshot-frame {
+            position: relative;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            background: rgba(0, 0, 0, 0.5);
+            aspect-ratio: 16 / 10;
+        }
+
+        .screenshot-frame img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.3s ease;
+        }
+
+        .screenshot-item {
+            cursor: pointer;
+        }
+
+        .screenshot-frame:hover img {
+            transform: scale(1.05);
+        }
+
+        .screenshot-frame:hover {
+            border-color: var(--cyan);
+            box-shadow: 0 12px 40px rgba(92, 225, 230, 0.12);
+        }
+
+        .screenshot-caption {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            text-align: center;
+            letter-spacing: 0.05em;
+        }
+
+        /* ==========================================
+           LIGHTBOX MODAL
+           ========================================== */
+
+        .lightbox-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 1rem;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.35s ease;
+        }
+
+        .lightbox-overlay.open {
+            opacity: 1;
+            pointer-events: all;
+        }
+
+        .lightbox-backdrop {
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.92);
+            backdrop-filter: blur(40px);
+            -webkit-backdrop-filter: blur(40px);
+        }
+
+        .lightbox-frame {
+            position: relative;
+            max-width: 88vw;
+            max-height: 82vh;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            box-shadow: 0 0 100px rgba(92, 225, 230, 0.08);
+            transform: scale(0.88) translateY(20px);
+            transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 1;
+        }
+
+        .lightbox-overlay.open .lightbox-frame {
+            transform: scale(1) translateY(0);
+        }
+
+        .lightbox-frame img {
+            display: block;
+            max-width: 88vw;
+            max-height: 82vh;
+            object-fit: contain;
+        }
+
+        .lightbox-caption {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 2.5rem 1.5rem 1rem;
+            background: linear-gradient(to top, rgba(0,0,0,0.85), transparent);
+            font-family: var(--font-mono);
+            font-size: 0.8125rem;
+            color: var(--text);
+            letter-spacing: 0.03em;
+            z-index: 2;
+        }
+
+        .lightbox-nav {
+            position: relative;
+            z-index: 2;
+            flex-shrink: 0;
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            border: 1px solid var(--border);
+            background: rgba(0,0,0,0.6);
+            color: var(--text-dim);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.25s ease;
+            backdrop-filter: blur(10px);
+        }
+
+        .lightbox-nav:hover {
+            border-color: var(--cyan);
+            color: var(--cyan);
+            background: rgba(92, 225, 230, 0.1);
+        }
+
+        .lightbox-close {
+            position: fixed;
+            top: 1.25rem;
+            right: 1.25rem;
+            z-index: 10000;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            border: 1px solid var(--border);
+            background: rgba(0,0,0,0.6);
+            color: var(--text-dim);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.25s ease;
+            backdrop-filter: blur(10px);
+        }
+
+        .lightbox-close:hover {
+            border-color: var(--cyan);
+            color: var(--cyan);
+        }
+
+        .lightbox-counter {
+            position: fixed;
+            top: 1.5rem;
+            left: 1.5rem;
+            z-index: 10000;
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            letter-spacing: 0.1em;
+        }
+
+        /* ==========================================
+           FOOTER
+           ========================================== */
+
+        footer {
+            padding: 4rem 2rem;
+            border-top: 1px solid var(--border);
+            max-width: 100%;
+            margin: 0 auto;
+            position: relative;
+            z-index: 1;
+            background: rgba(10, 10, 10, 0.5);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+        }
+
+        [data-theme="light"] footer {
+            background: rgba(250, 250, 250, 0.5);
+        }
+
+        footer > * {
+            max-width: 1600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .footer-copy {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1.5rem;
+            text-align: center;
+            font-size: 0.75rem;
+            color: var(--text-subtle);
+            font-family: var(--font-mono);
+        }
+
+        .footer-logo img {
+            max-width: 140px;
+        }
+
+        .footer-copy a {
+            color: var(--cyan);
+            text-decoration: none;
+        }
+
+        .footer-copy a:hover {
+            text-decoration: underline;
+        }
+
+        .footer-copy span {
+            opacity: 0.7;
+        }
+
+        /* ==========================================
+           RESPONSIVE STYLES
+           ========================================== */
+
+        @media (max-width: 1024px) {
+            .hero {
+                grid-template-columns: 1fr;
+                padding-top: 7rem;
+            }
+
+            .shader-display {
+                min-height: 400px;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .features-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .mobile-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .pipeline-stage {
+                grid-template-columns: 60px 1fr;
+                padding: 1.5rem;
+            }
+
+            .stage-visual {
+                display: none;
+            }
+
+            .stage-number {
+                font-size: 1.75rem;
+            }
+
+            .screenshots-grid {
+                grid-template-columns: 1fr;
+                gap: 2.5rem;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .top-bar,
+            .field-bar {
+                display: none;
+            }
+
+            nav {
+                top: 0;
+                padding: 1rem;
+            }
+
+            .nav-menu {
+                display: none;
+            }
+
+            .menu-toggle {
+                display: block;
+            }
+
+            .mobile-nav {
+                display: flex;
+            }
+
+            .theme-toggle {
+                bottom: 1rem;
+                right: 1rem;
+                padding: 0.4rem 0.6rem;
+            }
+
+            .theme-label {
+                display: none;
+            }
+
+            .hero {
+                padding: 6rem 1rem 2rem;
+                gap: 2rem;
+            }
+
+            .hero h1 {
+                font-size: 2rem;
+            }
+
+            .hero-meta {
+                flex-direction: column;
+                gap: 1rem;
+            }
+
+            .hero-cta {
+                flex-direction: column;
+            }
+
+            .btn-primary,
+            .btn-secondary {
+                width: 100%;
+                justify-content: center;
+            }
+
+            section {
+                padding: 3rem 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: 1fr 1fr;
+                gap: 1rem;
+            }
+
+            .stat-item {
+                padding: 1rem 0 1rem 1rem;
+            }
+
+            .stat-number {
+                font-size: 2.5rem;
+            }
+
+            .pipeline-stage {
+                grid-template-columns: 1fr;
+                gap: 0.75rem;
+                padding: 1.25rem;
+            }
+
+            .stage-number {
+                font-size: 1.25rem;
+                opacity: 0.6;
+            }
+
+            .stage-title {
+                font-size: 0.75rem;
+            }
+
+            .stage-description {
+                font-size: 0.8125rem;
+            }
+
+        }
+
+        @media (max-width: 480px) {
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body data-theme="dark">
+    <!-- 3D Wireframe Landscape Background -->
+    <canvas id="landscape-canvas"></canvas>
+
+    <!-- Fog Overlay -->
+    <div class="fog-overlay" id="fogOverlay"></div>
+
+    <!-- Theme Toggle -->
+    <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
+        <svg class="theme-icon" id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="5"/>
+            <line x1="12" y1="1" x2="12" y2="3"/>
+            <line x1="12" y1="21" x2="12" y2="23"/>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+            <line x1="1" y1="12" x2="3" y2="12"/>
+            <line x1="21" y1="12" x2="23" y2="12"/>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+        </svg>
+        <span class="theme-label" id="themeLabel">Dark</span>
+    </button>
+
+    <!-- Top Bar (hidden on mobile) -->
+    <div class="top-bar" id="topBar"></div>
+
+    <!-- Field Bar (hidden on mobile) -->
+    <div class="field-bar" id="fieldBar">
+        <span>Projection Mapping + VJ Software</span>
+        <span>Built By Artists</span>
+        <span>>> Field Ready Performance</span>
+    </div>
+
+    <!-- Navigation -->
+    <nav id="mainNav">
+        <a href="#" class="logo">
+            <img src="logo.png" alt="Ghost Arcade">
+        </a>
+
+        <ul class="nav-menu">
+            <li><a href="#architecture">Architecture</a></li>
+            <li><a href="#features">Features</a></li>
+            <li><a href="#mobile">Mobile</a></li>
+            <li><a href="docs/index.html">Docs</a></li>
+            <li><a href="#download">Download</a></li>
+        </ul>
+
+        <button class="menu-toggle" id="menuToggle" aria-label="Open menu">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="3" y1="6" x2="21" y2="6"/>
+                <line x1="3" y1="12" x2="21" y2="12"/>
+                <line x1="3" y1="18" x2="21" y2="18"/>
+            </svg>
+        </button>
+    </nav>
+
+    <!-- Mobile Navigation -->
+    <div class="mobile-nav" id="mobileNav">
+        <button class="mobile-nav-close" id="mobileNavClose" aria-label="Close menu">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+        </button>
+        <a href="#architecture" class="mobile-nav-link">Architecture</a>
+        <a href="#features" class="mobile-nav-link">Features</a>
+        <a href="#mobile" class="mobile-nav-link">Mobile Control</a>
+        <a href="docs/index.html" class="mobile-nav-link">Docs</a>
+        <a href="#download" class="mobile-nav-link">Download</a>
+        <a href="https://riskcapital.io" target="_blank" class="mobile-nav-link">Risk Capital</a>
+        <div class="mobile-nav-footer">Professional VJ & Mapping Tool</div>
+    </div>
+
+    <!-- Hero -->
+    <section class="hero">
+        <div class="hero-content">
+            <div class="hero-label">
+                <div class="line-segment"></div>
+                <span class="hero-label-text">Professional VJ & Mapping Tool</span>
+            </div>
+
+            <h1>Visual performance for the field</h1>
+
+            <p class="hero-description">
+                Ghost Arcade is projection mapping and VJ software built by artists for artists.
+                100+ GPU-accelerated shaders, 16-channel VJ mode, wireless mobile control,
+                4K output, and real-time mesh warping. Made for installations, live shows, and field work.
+            </p>
+
+            <div class="hero-cta">
+                <a href="#download" class="btn-primary">
+                    <span>Download Beta</span>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                </a>
+                <a href="#features" class="btn-secondary">
+                    <span>Explore Features</span>
+                </a>
+            </div>
+
+            <div class="hero-meta">
+                <div class="meta-item">
+                    <div class="meta-label">Platform</div>
+                    <div class="meta-value">Mac / Windows</div>
+                </div>
+                <div class="meta-item">
+                    <div class="meta-label">Mobile</div>
+                    <div class="meta-value">iOS / Android / Web</div>
+                </div>
+                <div class="meta-item">
+                    <div class="meta-label">License</div>
+                    <div class="meta-value">Free Beta</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Hero Shader Display -->
+        <div class="shader-display">
+            <div class="shader-header">
+                <div class="shader-title">Real-time Shader Engine</div>
+                <div class="shader-fps"><span id="fpsCounter">60</span> fps</div>
+            </div>
+
+            <div class="shader-canvas-container">
+                <canvas class="shader-canvas" id="heroShader"></canvas>
+            </div>
+
+            <div class="shader-footer">
+                <span>GPU-Accelerated Processing</span>
+                <span>4K Output Ready</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- Stats -->
+    <section class="stats-section">
+        <div class="stats-grid">
+            <div class="stat-item">
+                <div class="stat-number">9</div>
+                <div class="stat-label">Layer Types</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number">100+</div>
+                <div class="stat-label">GPU Shaders</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number">81+</div>
+                <div class="stat-label">Chainable Effects</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number">16</div>
+                <div class="stat-label">VJ Channels</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- System Architecture -->
+    <section id="architecture" class="glass">
+        <div class="section-header">
+            <div class="section-label">System Architecture</div>
+            <h2 class="section-title">Distributed visual processing pipeline</h2>
+            <p class="section-description">
+                A layered architecture separates content generation from compositing and output.
+                Each stage runs independently on the GPU for maximum performance.
+            </p>
+        </div>
+
+        <div class="pipeline-stack">
+            <!-- Stage 1: Shader Engine -->
+            <div class="pipeline-stage">
+                <div class="stage-number">01</div>
+                <div class="stage-content">
+                    <div class="stage-title">Shader Engine</div>
+                    <div class="stage-description">100+ GPU-accelerated GLSL fragment shaders. Fractals, particle systems, kaleidoscopes, voronoi, plasma, sacred geometry, and generative visuals. All with real-time parameter control.</div>
+                </div>
+                <div class="stage-visual">
+                    <svg viewBox="0 0 120 80" fill="none">
+                        <polygon points="60,5 95,25 95,55 60,75 25,55 25,25" fill="none" stroke="currentColor" stroke-opacity="0.6" stroke-width="1.5"/>
+                        <polygon points="60,15 80,28 80,52 60,65 40,52 40,28" fill="currentColor" fill-opacity="0.1" stroke="currentColor" stroke-opacity="0.4" stroke-width="1"/>
+                        <polygon points="60,25 70,32 70,48 60,55 50,48 50,32" fill="currentColor" fill-opacity="0.15" stroke="currentColor" stroke-opacity="0.3" stroke-width="1"/>
+                        <circle cx="60" cy="40" r="6" fill="currentColor" fill-opacity="0.4"/>
+                    </svg>
+                </div>
+            </div>
+
+            <!-- Stage 2: 3D Compositor -->
+            <div class="pipeline-stage">
+                <div class="stage-number">02</div>
+                <div class="stage-content">
+                    <div class="stage-title">3D Compositor</div>
+                    <div class="stage-description">Three.js scene rendering with camera automation and dynamic lighting. Import 3D models, create depth, and seamlessly integrate with 2D content layers.</div>
+                </div>
+                <div class="stage-visual">
+                    <svg viewBox="0 0 120 80" fill="none">
+                        <path d="M30,60 L60,20 L90,60 Z" fill="none" stroke="currentColor" stroke-opacity="0.5" stroke-width="1.5"/>
+                        <path d="M60,20 L60,60" stroke="currentColor" stroke-opacity="0.3" stroke-width="1"/>
+                        <path d="M30,60 L60,45 L90,60" stroke="currentColor" stroke-opacity="0.3" stroke-width="1"/>
+                        <circle cx="60" cy="20" r="4" fill="currentColor" fill-opacity="0.5"/>
+                        <circle cx="30" cy="60" r="3" fill="currentColor" fill-opacity="0.3"/>
+                        <circle cx="90" cy="60" r="3" fill="currentColor" fill-opacity="0.3"/>
+                        <circle cx="60" cy="60" r="3" fill="currentColor" fill-opacity="0.3"/>
+                        <ellipse cx="60" cy="65" rx="35" ry="8" fill="none" stroke="currentColor" stroke-opacity="0.2" stroke-width="1" stroke-dasharray="4,3"/>
+                    </svg>
+                </div>
+            </div>
+
+            <!-- Stage 3: Media Mixer -->
+            <div class="pipeline-stage">
+                <div class="stage-number">03</div>
+                <div class="stage-content">
+                    <div class="stage-title">Media Mixer</div>
+                    <div class="stage-description">Import MP4, MOV, GIF, PNG, JPG. Layer content with 32 professional blend modes. Real-time opacity, timing, and playback controls for seamless mixing.</div>
+                </div>
+                <div class="stage-visual">
+                    <svg viewBox="0 0 120 80" fill="none">
+                        <rect x="20" y="35" width="40" height="30" rx="2" fill="currentColor" fill-opacity="0.1" stroke="currentColor" stroke-opacity="0.3" stroke-width="1"/>
+                        <rect x="35" y="25" width="40" height="30" rx="2" fill="currentColor" fill-opacity="0.15" stroke="currentColor" stroke-opacity="0.4" stroke-width="1"/>
+                        <rect x="50" y="15" width="40" height="30" rx="2" fill="currentColor" fill-opacity="0.2" stroke="currentColor" stroke-opacity="0.5" stroke-width="1"/>
+                        <polygon points="65,22 80,30 65,38" fill="currentColor" fill-opacity="0.6"/>
+                    </svg>
+                </div>
+            </div>
+
+            <!-- Stage 4: Mesh Warper -->
+            <div class="pipeline-stage">
+                <div class="stage-number">04</div>
+                <div class="stage-content">
+                    <div class="stage-title">Mesh Warper</div>
+                    <div class="stage-description">Precision projection mapping with adjustable mesh grids and 4-corner pinning. Map content to any surface shape with soft edge blending for seamless multi-projector setups.</div>
+                </div>
+                <div class="stage-visual">
+                    <svg viewBox="0 0 120 80" fill="none">
+                        <path d="M20,30 Q40,25 60,30 Q80,35 100,30" stroke="currentColor" stroke-opacity="0.3" stroke-width="1"/>
+                        <path d="M20,45 Q40,40 60,45 Q80,50 100,45" stroke="currentColor" stroke-opacity="0.4" stroke-width="1"/>
+                        <path d="M20,60 Q40,55 60,60 Q80,65 100,60" stroke="currentColor" stroke-opacity="0.3" stroke-width="1"/>
+                        <path d="M35,20 Q37,40 35,55 Q33,70 35,75" stroke="currentColor" stroke-opacity="0.3" stroke-width="1"/>
+                        <path d="M60,18 Q62,38 60,53 Q58,68 60,75" stroke="currentColor" stroke-opacity="0.4" stroke-width="1"/>
+                        <path d="M85,20 Q87,40 85,55 Q83,70 85,75" stroke="currentColor" stroke-opacity="0.3" stroke-width="1"/>
+                        <circle cx="35" cy="30" r="4" fill="currentColor" fill-opacity="0.5"/>
+                        <circle cx="60" cy="45" r="5" fill="currentColor" fill-opacity="0.6"/>
+                        <circle cx="85" cy="30" r="4" fill="currentColor" fill-opacity="0.5"/>
+                        <circle cx="35" cy="60" r="4" fill="currentColor" fill-opacity="0.4"/>
+                        <circle cx="85" cy="60" r="4" fill="currentColor" fill-opacity="0.4"/>
+                    </svg>
+                </div>
+            </div>
+
+            <!-- Stage 5: Output -->
+            <div class="pipeline-stage output-stage">
+                <div class="stage-number">OUT</div>
+                <div class="stage-content">
+                    <div class="stage-title">4K Projection Output</div>
+                    <div class="stage-description">60fps output to multiple displays and projectors. Built-in screen recording in WebM/MP4. Zero-latency rendering pipeline optimized for live performance.</div>
+                </div>
+                <div class="stage-visual">
+                    <svg viewBox="0 0 120 80" fill="none">
+                        <rect x="25" y="15" width="55" height="38" rx="3" fill="none" stroke="currentColor" stroke-opacity="0.6" stroke-width="1.5"/>
+                        <circle cx="52" cy="34" r="12" fill="none" stroke="currentColor" stroke-opacity="0.4" stroke-width="1"/>
+                        <circle cx="52" cy="34" r="6" fill="currentColor" fill-opacity="0.3"/>
+                        <line x1="52" y1="53" x2="52" y2="65" stroke="currentColor" stroke-opacity="0.4" stroke-width="2"/>
+                        <line x1="40" y1="65" x2="64" y2="65" stroke="currentColor" stroke-opacity="0.5" stroke-width="2"/>
+                        <line x1="80" y1="22" x2="100" y2="10" stroke="currentColor" stroke-opacity="0.3" stroke-width="1"/>
+                        <line x1="80" y1="34" x2="105" y2="34" stroke="currentColor" stroke-opacity="0.4" stroke-width="1"/>
+                        <line x1="80" y1="46" x2="100" y2="58" stroke="currentColor" stroke-opacity="0.3" stroke-width="1"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features -->
+    <section id="features" class="clear-bg">
+        <div class="section-header">
+            <div class="section-label">Complete Toolkit</div>
+            <h2 class="section-title">Everything for visual performance</h2>
+        </div>
+
+        <!-- Category 1: Content Layers -->
+        <div class="feature-category">
+            <div class="feature-category-label">Content Layers</div>
+            <div class="features-grid">
+                <div class="feature-item">
+                    <div class="feature-number">01 — ISF SHADERS</div>
+                    <h3>100+ GPU Shader Engine</h3>
+                    <p>GPU-accelerated GLSL shaders using the ISF standard. Fractals, particle systems, kaleidoscopes, voronoi, plasma, sacred geometry. All with real-time parameter sliders. ThreeBody mega-shader: 30 orbital presets x 12 effect styles.</p>
+                </div>
+
+                <div class="feature-item">
+                    <div class="feature-number">02 — MEDIA</div>
+                    <h3>Video &amp; Image Mixing</h3>
+                    <p>Import MP4, MOV, GIF, PNG, JPG, WebM. Playback speed control, loop modes, chromakey, timelapse, and trim controls. 81+ chainable post-processing effects on every layer.</p>
+                </div>
+
+                <div class="feature-item">
+                    <div class="feature-number">03 — 3D MODELS</div>
+                    <h3>Full 3D Pipeline</h3>
+                    <p>Import GLTF, GLB, FBX with skeletal animation. 16 material types, 15 deformations, 16 animation modes, echo/instancing with 18 patterns. Full camera, lighting, and audio-reactive control.</p>
+                </div>
+
+                <div class="feature-item">
+                    <div class="feature-number">04 — GAUSSIAN SPLATS</div>
+                    <h3>Point Cloud Rendering</h3>
+                    <p>Render gaussian splats and point clouds (PLY, .splat). 12 animation types, 13 color effects, physics simulation, mouse interaction, and 8 displacement modes. 100+ parameters deep.</p>
+                </div>
+
+                <div class="feature-item">
+                    <div class="feature-number">05 — LINES</div>
+                    <h3>Line Drawing &amp; Mapping</h3>
+                    <p>Freehand and point-click line drawing with 15 stroke effects including glow, neon, snake, laser, and pipe. Progress-based draw animation for PVC pipe mapping and stage line work.</p>
+                </div>
+
+                <div class="feature-item">
+                    <div class="feature-number">06 — LIGHT PAINTING</div>
+                    <h3>Brush-Based Painting</h3>
+                    <p>8 brush types (glow, neon, flame, electric, ribbon, particle, smoke, laser) with draw animation. Trail effects, bloom, afterglow, echo, and stagger modes for live painting.</p>
+                </div>
+
+                <div class="feature-item">
+                    <div class="feature-number">07 — SVG</div>
+                    <h3>Animated Vector Graphics</h3>
+                    <p>Import SVG with 7 fill modes and 15+ advanced effects. Edge particles, energy pulses, lightning, plasma, connections, and more. Gradient, shimmer, liquid, and noise fills.</p>
+                </div>
+
+                <div class="feature-item">
+                    <div class="feature-number">08 — TEXT</div>
+                    <h3>Animated Typography</h3>
+                    <p>18 text animation modes: typewriter, wave, glitch, rainbow, matrix rain, elastic, spiral, explode, and more. 3D extrusion with depth, lighting, and bevel. Full font and stroke control.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Category 2: Effects Pipeline -->
+        <div class="feature-category">
+            <div class="feature-category-label">Effects Pipeline</div>
+            <div class="features-grid">
+                <div class="feature-item">
+                    <div class="feature-number">09 — EFFECTS</div>
+                    <h3>81+ Chainable Effects</h3>
+                    <p>Drag-and-drop effect chains per layer. 16 categories: distortion, color grading, blur, stylize, generate, keying, light/glow, warp, atmosphere, text/pattern, 3D, depth, trails, and feedback.</p>
+                </div>
+
+                <div class="feature-item">
+                    <div class="feature-number">10 — BLEND MODES</div>
+                    <h3>25+ Compositing Modes</h3>
+                    <p>Professional blend modes: add, multiply, screen, overlay, soft light, hard light, color dodge, color burn, difference, exclusion, hue, saturation, luminosity, and more.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Category 3: Live Performance -->
+        <div class="feature-category">
+            <div class="feature-category-label">Live Performance</div>
+            <div class="features-grid">
+                <div class="feature-item">
+                    <div class="feature-number">11 — VJ MODE</div>
+                    <h3>16-Channel Clip Launcher</h3>
+                    <p>4 layers x 8 columns clip grid. Instant triggering, crossfades, compositions, and stage presets. Load any layer type into slots. Built for live shows.</p>
+                </div>
+
+                <div class="feature-item">
+                    <div class="feature-number">12 — SYNTHVISION</div>
+                    <h3>36-Key Visual Instrument</h3>
+                    <p>Map any visual to keyboard keys. 4 rows, 36 slots. Save and recall keyboard presets. Full-screen performance mode. A visual synthesizer for live performance.</p>
+                </div>
+
+                <div class="feature-item">
+                    <div class="feature-number">13 — SEQUENCER</div>
+                    <h3>Beat-Based Layer Automation</h3>
+                    <p>Timeline-based layer sequencer synced to BPM. Automate layer visibility and transitions. Quantized to beat grid with configurable time signatures.</p>
+                </div>
+
+                <div class="feature-item">
+                    <div class="feature-number">14 — STAGE PRESETS</div>
+                    <h3>Instant Scene Switching</h3>
+                    <p>Save complete multi-layer configurations as stage presets. One click changes your entire visual environment. Perfect for scene transitions during live shows.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Category 4: Control Systems -->
+        <div class="feature-category">
+            <div class="feature-category-label">Control Systems</div>
+            <div class="features-grid">
+                <div class="feature-item">
+                    <div class="feature-number">15 — MIDI</div>
+                    <h3>Full MIDI Mapping</h3>
+                    <p>Learn mode for any MIDI controller. Map CC, Note On/Off, Pitch Bend to any parameter. Multi-device support with channel filtering. Hardware control for every knob and fader.</p>
+                </div>
+
+                <div class="feature-item">
+                    <div class="feature-number">16 — AUDIO</div>
+                    <h3>Audio-Reactive Visuals</h3>
+                    <p>6 frequency band analysis with beat detection. LFO modulation with sine, triangle, square, sawtooth waveforms. Drive any parameter from audio input for music-reactive performance.</p>
+                </div>
+
+                <div class="feature-item">
+                    <div class="feature-number">17 — MOBILE</div>
+                    <h3>Wireless Control</h3>
+                    <p>Control from any device over WiFi. Touch-optimized interface for warp adjustment, clip triggering, and parameter control. Works with hotspot — no internet required.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Category 5: Mapping & Output -->
+        <div class="feature-category">
+            <div class="feature-category-label">Mapping &amp; Output</div>
+            <div class="features-grid">
+                <div class="feature-item">
+                    <div class="feature-number">18 — MAPPING</div>
+                    <h3>Precision Projection Mapping</h3>
+                    <p>Corner warp, mesh warp with adjustable grid density, per-element warp on individual shapes. Layer shape masks and soft edge blending for multi-projector setups.</p>
+                </div>
+
+                <div class="feature-item">
+                    <div class="feature-number">19 — RECORD</div>
+                    <h3>Recording &amp; Spout</h3>
+                    <p>Screen capture in WebM/MP4. Spout output for integration with OBS, Resolume, TouchDesigner, and LED controllers. 4K output at 60fps to multiple displays and projectors.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="features-cta">
+            <a href="docs/index.html">Read the full documentation &rarr;</a>
+        </div>
+    </section>
+
+    <!-- Mobile Control -->
+    <section id="mobile" class="glass">
+        <div class="section-header">
+            <div class="section-label">Mobile Control</div>
+            <h2 class="section-title">Control from anywhere on site</h2>
+            <p class="section-description">
+                Perfect for field installations and live performances. Walk around your venue,
+                adjust mappings, trigger effects, and control your entire show from your phone or tablet.
+            </p>
+        </div>
+
+        <div class="mobile-grid">
+            <div class="mobile-visual">
+                <svg width="500" height="400" viewBox="0 0 500 400">
+                    <!-- Mobile Device -->
+                    <rect x="40" y="60" width="120" height="240" rx="16" fill="rgba(0,0,0,0.8)" stroke="currentColor" stroke-opacity="0.6" stroke-width="2"/>
+                    <rect x="50" y="75" width="100" height="210" rx="8" fill="var(--bg)" stroke="currentColor" stroke-opacity="0.2" stroke-width="1"/>
+                    <text x="100" y="320" fill="currentColor" fill-opacity="0.8" font-size="10" text-anchor="middle" font-family="JetBrains Mono, monospace">MOBILE</text>
+
+                    <!-- Wireless Connection -->
+                    <line x1="160" y1="180" x2="240" y2="180" stroke="currentColor" stroke-opacity="0.5" stroke-width="2" stroke-dasharray="6,6"/>
+                    <text x="200" y="168" fill="currentColor" fill-opacity="0.7" font-size="9" text-anchor="middle" font-family="JetBrains Mono, monospace">WiFi</text>
+
+                    <!-- Desktop Box -->
+                    <rect x="240" y="130" width="120" height="100" fill="currentColor" fill-opacity="0.05" stroke="currentColor" stroke-opacity="0.6" stroke-width="2"/>
+                    <line x1="250" y1="145" x2="350" y2="145" stroke="currentColor" stroke-opacity="0.3" stroke-width="1"/>
+                    <line x1="250" y1="160" x2="350" y2="160" stroke="currentColor" stroke-opacity="0.3" stroke-width="1"/>
+                    <line x1="250" y1="175" x2="350" y2="175" stroke="currentColor" stroke-opacity="0.3" stroke-width="1"/>
+                    <line x1="250" y1="190" x2="350" y2="190" stroke="currentColor" stroke-opacity="0.3" stroke-width="1"/>
+                    <text x="300" y="118" fill="currentColor" fill-opacity="0.8" font-size="10" text-anchor="middle" font-family="JetBrains Mono, monospace">RENDER</text>
+
+                    <!-- Output Connection -->
+                    <line x1="300" y1="230" x2="300" y2="280" stroke="currentColor" stroke-opacity="0.5" stroke-width="2" stroke-dasharray="6,6"/>
+
+                    <!-- Projector -->
+                    <path d="M 265 280 L 335 280 L 365 320 L 345 320 L 300 280" fill="currentColor" fill-opacity="0.1" stroke="currentColor" stroke-opacity="0.6" stroke-width="2"/>
+                    <line x1="320" y1="300" x2="380" y2="340" stroke="currentColor" stroke-opacity="0.2" stroke-width="1"/>
+                    <line x1="320" y1="300" x2="380" y2="320" stroke="currentColor" stroke-opacity="0.2" stroke-width="1"/>
+                    <line x1="320" y1="300" x2="380" y2="300" stroke="currentColor" stroke-opacity="0.2" stroke-width="1"/>
+                    <text x="300" y="350" fill="currentColor" fill-opacity="0.8" font-size="10" text-anchor="middle" font-family="JetBrains Mono, monospace">OUTPUT</text>
+
+                    <!-- Surface -->
+                    <rect x="380" y="260" width="80" height="100" fill="none" stroke="currentColor" stroke-opacity="0.3" stroke-width="1" transform="skewY(-10)"/>
+                </svg>
+            </div>
+
+            <div class="mobile-content">
+                <h3>Distributed architecture</h3>
+                <p>
+                    Your mobile device handles the control interface while your desktop manages
+                    all rendering, processing, and projector output. Low-latency WebSocket protocol
+                    ensures responsive control.
+                </p>
+
+                <div class="mobile-features">
+                    <div class="mobile-feature">
+                        <svg class="mobile-feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
+                            <line x1="12" y1="18" x2="12.01" y2="18"/>
+                        </svg>
+                        <div class="mobile-feature-text">
+                            <strong>Touch gestures</strong> for precise warp point control
+                        </div>
+                    </div>
+                    <div class="mobile-feature">
+                        <svg class="mobile-feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                            <line x1="8" y1="21" x2="16" y2="21"/>
+                            <line x1="12" y1="17" x2="12" y2="21"/>
+                        </svg>
+                        <div class="mobile-feature-text">
+                            <strong>Real-time preview</strong> of all layers and effects
+                        </div>
+                    </div>
+                    <div class="mobile-feature">
+                        <svg class="mobile-feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5 3 19 12 5 21 5 3"/>
+                        </svg>
+                        <div class="mobile-feature-text">
+                            <strong>VJ clip triggering</strong> from anywhere on site
+                        </div>
+                    </div>
+                    <div class="mobile-feature">
+                        <svg class="mobile-feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M5 12.55a11 11 0 0 1 14.08 0"/>
+                            <path d="M1.42 9a16 16 0 0 1 21.16 0"/>
+                            <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
+                            <circle cx="12" cy="20" r="1"/>
+                        </svg>
+                        <div class="mobile-feature-text">
+                            <strong>Works with hotspot</strong> - no internet required
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Screenshots -->
+    <section id="screenshots" class="clear-bg">
+        <div class="section-header">
+            <div class="section-label">In Action</div>
+            <h2 class="section-title">See it in action</h2>
+        </div>
+
+        <div class="screenshots-grid">
+            <div class="screenshot-item" onclick="openLightbox(0)">
+                <div class="screenshot-frame">
+                    <img src="scr-reg.jpg" alt="Ghost Arcade - Main Interface">
+                </div>
+                <div class="screenshot-caption">Layer-based composition with real-time preview</div>
+            </div>
+            <div class="screenshot-item" onclick="openLightbox(1)">
+                <div class="screenshot-frame">
+                    <img src="scr-mesh.jpg" alt="Ghost Arcade - Mesh Warping">
+                </div>
+                <div class="screenshot-caption">Precision mesh warping for any surface</div>
+            </div>
+            <div class="screenshot-item" onclick="openLightbox(2)">
+                <div class="screenshot-frame">
+                    <img src="scr-vj.jpg" alt="Ghost Arcade - VJ Mode">
+                </div>
+                <div class="screenshot-caption">16-channel VJ clip launcher</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Lightbox Modal -->
+    <div class="lightbox-overlay" id="lightbox">
+        <div class="lightbox-backdrop" onclick="closeLightbox()"></div>
+        <span class="lightbox-counter" id="lb-counter"></span>
+        <button class="lightbox-close" onclick="closeLightbox()" aria-label="Close">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+        </button>
+        <button class="lightbox-nav lb-prev" onclick="navigateLightbox(-1)" aria-label="Previous">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="15 18 9 12 15 6"/>
+            </svg>
+        </button>
+        <div class="lightbox-frame">
+            <img id="lb-img" src="" alt="">
+            <div class="lightbox-caption" id="lb-caption"></div>
+        </div>
+        <button class="lightbox-nav lb-next" onclick="navigateLightbox(1)" aria-label="Next">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="9 18 15 12 9 6"/>
+            </svg>
+        </button>
+    </div>
+
+    <!-- Download -->
+    <section id="download" class="clear-bg">
+        <div class="section-header">
+            <div class="section-label">Get Started</div>
+            <h2 class="section-title">Download Ghost Arcade</h2>
+            <p class="section-description">
+                Free during beta. Mac and Windows versions available.
+                Mobile control works on any device with a web browser.
+            </p>
+        </div>
+
+        <div class="hero-cta" style="margin-top: 2rem;">
+            <a href="https://github.com/riskcapital/ghost-arcade-releases/releases/latest/download/Ghost-Arcade-0.2.11-arm64.dmg" class="btn-primary">
+                <span>Download for Mac</span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
+                </svg>
+            </a>
+            <a href="https://github.com/riskcapital/ghost-arcade-releases/releases/latest/download/Ghost-Arcade-Setup-0.2.11.exe" class="btn-primary">
+                <span>Download for Windows</span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/>
+                </svg>
+            </a>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="footer-copy">
+            <a href="#" class="logo footer-logo">
+                <img src="logo.png" alt="Ghost Arcade">
+            </a>
+            <span>&copy; 2026 Ghost Arcade &mdash; <a href="https://riskcapital.io" target="_blank">A Risk Capital Experience</a></span>
+        </div>
+    </footer>
+
+    <script>
+        // ==========================================
+        // THEME SYSTEM - Simple dark/light toggle
+        // ==========================================
+
+        const themeToggle = document.getElementById('themeToggle');
+        const themeIcon = document.getElementById('themeIcon');
+        const themeLabel = document.getElementById('themeLabel');
+
+        const sunIcon = `<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>`;
+        const moonIcon = `<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>`;
+
+        function getTimeBasedTheme() {
+            const hour = new Date().getHours();
+            // Light mode during day (7am - 7pm), dark otherwise
+            return (hour >= 7 && hour < 19) ? 'light' : 'dark';
+        }
+
+        function setTheme(theme) {
+            document.body.setAttribute('data-theme', theme);
+            if (theme === 'light') {
+                themeIcon.innerHTML = moonIcon;
+                themeLabel.textContent = 'Light';
+            } else {
+                themeIcon.innerHTML = sunIcon;
+                themeLabel.textContent = 'Dark';
+            }
+            localStorage.setItem('shrinkwrap-theme', theme);
+        }
+
+        function toggleTheme() {
+            const current = document.body.getAttribute('data-theme');
+            setTheme(current === 'light' ? 'dark' : 'light');
+        }
+
+        // Initialize theme
+        const savedTheme = localStorage.getItem('shrinkwrap-theme');
+        setTheme(savedTheme || getTimeBasedTheme());
+
+        themeToggle.addEventListener('click', toggleTheme);
+
+        // ==========================================
+        // 3D WIREFRAME LANDSCAPE BACKGROUND
+        // ==========================================
+
+        const canvas = document.getElementById('landscape-canvas');
+        const ctx = canvas.getContext('2d');
+
+        let width, height;
+        let scrollY = 0;
+        let time = 0;
+
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+        }
+
+        resize();
+
+        // --- Particle Constellation Background ---
+        // Drifting nodes with dynamic edges — reacts to mouse
+
+        const NODE_COUNT = 180;
+        const CONNECT_DIST = 120;
+        let mouseXBg = width / 2;
+        let mouseYBg = height / 2;
+
+        document.addEventListener('mousemove', (e) => {
+            mouseXBg = e.clientX;
+            mouseYBg = e.clientY;
+        });
+
+        function getCyanRGB() {
+            const c = getComputedStyle(document.body).getPropertyValue('--cyan').trim() || '#5ce1e6';
+            if (c.startsWith('#')) {
+                return [parseInt(c.slice(1,3),16), parseInt(c.slice(3,5),16), parseInt(c.slice(5,7),16)];
+            }
+            return [92, 225, 230];
+        }
+
+        class Node {
+            constructor() { this.reset(true); }
+            reset(init) {
+                this.x = Math.random() * width;
+                this.y = Math.random() * height;
+                this.vx = (Math.random() - 0.5) * 0.35;
+                this.vy = (Math.random() - 0.5) * 0.35;
+                this.r = 1 + Math.random() * 1.8;
+                this.baseAlpha = 0.15 + Math.random() * 0.35;
+                this.phase = Math.random() * Math.PI * 2;
+            }
+            update(t) {
+                // Gentle drift + mouse repulsion
+                const dx = this.x - mouseXBg;
+                const dy = this.y - mouseYBg;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < 200 && dist > 0) {
+                    const force = (200 - dist) / 200 * 0.4;
+                    this.vx += (dx / dist) * force;
+                    this.vy += (dy / dist) * force;
+                }
+                // Dampen
+                this.vx *= 0.985;
+                this.vy *= 0.985;
+                this.x += this.vx;
+                this.y += this.vy;
+                // Wrap
+                if (this.x < -20) this.x = width + 20;
+                if (this.x > width + 20) this.x = -20;
+                if (this.y < -20) this.y = height + 20;
+                if (this.y > height + 20) this.y = -20;
+                // Pulse
+                this.alpha = this.baseAlpha * (0.6 + 0.4 * Math.sin(t * 0.8 + this.phase));
+            }
+        }
+
+        let nodes = [];
+        for (let i = 0; i < NODE_COUNT; i++) nodes.push(new Node());
+
+        window.addEventListener('resize', () => {
+            resize();
+            for (const n of nodes) n.reset(true);
+        });
+
+        function drawConstellation() {
+            ctx.clearRect(0, 0, width, height);
+            const t = time;
+            const [cr, cg, cb] = getCyanRGB();
+
+            // Update
+            for (const n of nodes) n.update(t);
+
+            // Edges
+            for (let i = 0; i < nodes.length; i++) {
+                for (let j = i + 1; j < nodes.length; j++) {
+                    const dx = nodes[i].x - nodes[j].x;
+                    const dy = nodes[i].y - nodes[j].y;
+                    const d = Math.sqrt(dx * dx + dy * dy);
+                    if (d < CONNECT_DIST) {
+                        const a = (1 - d / CONNECT_DIST) * 0.12;
+                        ctx.beginPath();
+                        ctx.moveTo(nodes[i].x, nodes[i].y);
+                        ctx.lineTo(nodes[j].x, nodes[j].y);
+                        ctx.strokeStyle = `rgba(${cr},${cg},${cb},${a})`;
+                        ctx.lineWidth = 0.6;
+                        ctx.stroke();
+                    }
+                }
+            }
+
+            // Nodes
+            for (const n of nodes) {
+                ctx.beginPath();
+                ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(${cr},${cg},${cb},${n.alpha})`;
+                ctx.fill();
+            }
+        }
+
+        function animateLandscape() {
+            time += 0.016;
+            drawConstellation();
+            requestAnimationFrame(animateLandscape);
+        }
+
+        animateLandscape();
+
+        // ==========================================
+        // NESTED CUBES SHADER
+        // ==========================================
+
+        const nestedCubesShader = `
+            precision highp float;
+            uniform vec2 resolution;
+            uniform float time;
+
+            #define PI 3.14159265359
+
+            vec3 hsv2rgb(vec3 c) {
+                vec4 K = vec4(1.0, 2.0/3.0, 1.0/3.0, 3.0);
+                vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+                return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+            }
+
+            mat3 rotY(float a) {
+                float c = cos(a), s = sin(a);
+                return mat3(c, 0.0, s, 0.0, 1.0, 0.0, -s, 0.0, c);
+            }
+
+            mat3 rotX(float a) {
+                float c = cos(a), s = sin(a);
+                return mat3(1.0, 0.0, 0.0, 0.0, c, -s, 0.0, s, c);
+            }
+
+            float lineSegment(vec3 p, vec3 a, vec3 b, float r) {
+                vec3 pa = p - a, ba = b - a;
+                float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+                return length(pa - ba * h) - r;
+            }
+
+            float wireCube(vec3 p, float size, float r) {
+                float d = 1e10;
+                float s = size;
+                d = min(d, lineSegment(p, vec3(-s, -s, -s), vec3(s, -s, -s), r));
+                d = min(d, lineSegment(p, vec3(-s, s, -s), vec3(s, s, -s), r));
+                d = min(d, lineSegment(p, vec3(-s, -s, s), vec3(s, -s, s), r));
+                d = min(d, lineSegment(p, vec3(-s, s, s), vec3(s, s, s), r));
+                d = min(d, lineSegment(p, vec3(-s, -s, -s), vec3(-s, s, -s), r));
+                d = min(d, lineSegment(p, vec3(s, -s, -s), vec3(s, s, -s), r));
+                d = min(d, lineSegment(p, vec3(-s, -s, s), vec3(-s, s, s), r));
+                d = min(d, lineSegment(p, vec3(s, -s, s), vec3(s, s, s), r));
+                d = min(d, lineSegment(p, vec3(-s, -s, -s), vec3(-s, -s, s), r));
+                d = min(d, lineSegment(p, vec3(s, -s, -s), vec3(s, -s, s), r));
+                d = min(d, lineSegment(p, vec3(-s, s, -s), vec3(-s, s, s), r));
+                d = min(d, lineSegment(p, vec3(s, s, -s), vec3(s, s, s), r));
+                return d;
+            }
+
+            void main() {
+                vec2 uv = (gl_FragCoord.xy - 0.5 * resolution) / resolution.y;
+                float t = time * 0.3;
+
+                vec3 ro = vec3(0.0, 0.0, -2.0);
+                vec3 rd = normalize(vec3(uv, 1.0));
+
+                float lineR = 0.004;
+                vec3 col = vec3(0.0);
+                int count = 8;
+
+                for (int c = 0; c < 12; c++) {
+                    if (c >= count) break;
+                    float fc = float(c);
+                    float cubeSize = 0.1 + fc * 0.06;
+                    mat3 cubeRot = rotY(t) * rotX(t * 0.7);
+
+                    float depth = 0.0;
+                    for (int i = 0; i < 40; i++) {
+                        vec3 p = ro + rd * depth;
+                        vec3 rp = cubeRot * p;
+                        float d = wireCube(rp, cubeSize, lineR);
+
+                        if (d < 0.002) {
+                            float brightness = 1.0 - depth * 0.1;
+                            float depthFade = 1.0 - fc / float(count);
+                            float h = fc / float(count) * 0.5;
+                            vec3 cubeColor = hsv2rgb(vec3(h + 0.5, 0.7, brightness * depthFade));
+                            col = max(col, cubeColor);
+                            break;
+                        }
+
+                        depth += d * 0.8;
+                        if (depth > 10.0) break;
+                    }
+                }
+
+                float bg = 0.02 + length(uv) * 0.02;
+                col = max(col, vec3(bg));
+
+                gl_FragColor = vec4(col, 1.0);
+            }
+        `;
+
+        const vertexShaderSource = `
+            attribute vec2 position;
+            void main() {
+                gl_Position = vec4(position, 0.0, 1.0);
+            }
+        `;
+
+        class ShaderRenderer {
+            constructor(canvas, fragmentSource) {
+                this.canvas = canvas;
+                this.gl = canvas.getContext('webgl', {
+                    alpha: false,
+                    antialias: false,
+                    powerPreference: 'high-performance'
+                });
+
+                if (!this.gl) return;
+
+                this.program = this.createProgram(vertexShaderSource, fragmentSource);
+                if (!this.program) return;
+
+                this.setupGeometry();
+                this.startTime = performance.now();
+                this.running = false;
+            }
+
+            createShader(source, type) {
+                const gl = this.gl;
+                const shader = gl.createShader(type);
+                gl.shaderSource(shader, source);
+                gl.compileShader(shader);
+
+                if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                    console.error('Shader compile error:', gl.getShaderInfoLog(shader));
+                    gl.deleteShader(shader);
+                    return null;
+                }
+                return shader;
+            }
+
+            createProgram(vertexSource, fragmentSource) {
+                const gl = this.gl;
+                const vertexShader = this.createShader(vertexSource, gl.VERTEX_SHADER);
+                const fragmentShader = this.createShader(fragmentSource, gl.FRAGMENT_SHADER);
+
+                if (!vertexShader || !fragmentShader) return null;
+
+                const program = gl.createProgram();
+                gl.attachShader(program, vertexShader);
+                gl.attachShader(program, fragmentShader);
+                gl.linkProgram(program);
+
+                if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                    console.error('Program link error:', gl.getProgramInfoLog(program));
+                    return null;
+                }
+
+                return program;
+            }
+
+            setupGeometry() {
+                const gl = this.gl;
+                const positions = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
+                const buffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+                gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+
+                const positionLocation = gl.getAttribLocation(this.program, 'position');
+                gl.enableVertexAttribArray(positionLocation);
+                gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+                this.resolutionLocation = gl.getUniformLocation(this.program, 'resolution');
+                this.timeLocation = gl.getUniformLocation(this.program, 'time');
+            }
+
+            resize() {
+                const rect = this.canvas.getBoundingClientRect();
+                const dpr = Math.min(window.devicePixelRatio, 2);
+                this.canvas.width = rect.width * dpr;
+                this.canvas.height = rect.height * dpr;
+                this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+            }
+
+            render() {
+                if (!this.running || !this.program) return;
+
+                const gl = this.gl;
+                const time = (performance.now() - this.startTime) / 1000;
+
+                gl.useProgram(this.program);
+                gl.uniform2f(this.resolutionLocation, this.canvas.width, this.canvas.height);
+                gl.uniform1f(this.timeLocation, time);
+                gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+                requestAnimationFrame(() => this.render());
+            }
+
+            start() {
+                this.running = true;
+                this.resize();
+                this.render();
+            }
+
+            stop() {
+                this.running = false;
+            }
+        }
+
+        // ==========================================
+        // INIT HERO SHADER
+        // ==========================================
+
+        let heroRenderer = null;
+        let frameCount = 0;
+        let lastFpsUpdate = performance.now();
+
+        function initHeroShader() {
+            const canvas = document.getElementById('heroShader');
+            heroRenderer = new ShaderRenderer(canvas, nestedCubesShader);
+            heroRenderer.start();
+
+            function updateFps() {
+                frameCount++;
+                const now = performance.now();
+                if (now - lastFpsUpdate >= 1000) {
+                    document.getElementById('fpsCounter').textContent = frameCount;
+                    frameCount = 0;
+                    lastFpsUpdate = now;
+                }
+                requestAnimationFrame(updateFps);
+            }
+            updateFps();
+        }
+
+        let resizeTimeout;
+        window.addEventListener('resize', () => {
+            clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(() => {
+                if (heroRenderer) heroRenderer.resize();
+            }, 100);
+        });
+
+        document.addEventListener('DOMContentLoaded', initHeroShader);
+
+        // ==========================================
+        // MOBILE MENU
+        // ==========================================
+
+        const menuToggle = document.getElementById('menuToggle');
+        const mobileNav = document.getElementById('mobileNav');
+        const mobileNavClose = document.getElementById('mobileNavClose');
+        const mobileNavLinks = document.querySelectorAll('.mobile-nav-link');
+
+        function openMobileNav() {
+            mobileNav.classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeMobileNav() {
+            mobileNav.classList.remove('active');
+            document.body.style.overflow = '';
+        }
+
+        menuToggle.addEventListener('click', openMobileNav);
+        mobileNavClose.addEventListener('click', closeMobileNav);
+        mobileNavLinks.forEach(link => {
+            link.addEventListener('click', closeMobileNav);
+        });
+
+        // ==========================================
+        // SCROLL EFFECTS
+        // ==========================================
+
+        const topBar = document.getElementById('topBar');
+        const fieldBar = document.getElementById('fieldBar');
+        const mainNav = document.getElementById('mainNav');
+        const fogOverlay = document.getElementById('fogOverlay');
+        const heroSection = document.querySelector('.hero');
+
+        let ticking = false;
+
+        function updateOnScroll() {
+            scrollY = window.scrollY;
+
+            // Hide top bar after 100px
+            if (scrollY > 100) {
+                topBar.classList.add('hidden');
+                fieldBar.classList.add('hidden');
+                mainNav.classList.add('compact');
+            } else {
+                topBar.classList.remove('hidden');
+                fieldBar.classList.remove('hidden');
+                mainNav.classList.remove('compact');
+            }
+
+            // Reduce fog as user scrolls
+            const fogOpacity = Math.max(0, 1 - scrollY / 800);
+            fogOverlay.style.opacity = fogOpacity;
+
+            // Pause shader when hero is not visible
+            if (heroRenderer) {
+                const heroRect = heroSection.getBoundingClientRect();
+                const heroVisible = heroRect.bottom > 0 && heroRect.top < window.innerHeight;
+
+                if (heroVisible && !heroRenderer.running) {
+                    heroRenderer.start();
+                } else if (!heroVisible && heroRenderer.running) {
+                    heroRenderer.stop();
+                }
+            }
+
+            ticking = false;
+        }
+
+        window.addEventListener('scroll', () => {
+            if (!ticking) {
+                requestAnimationFrame(updateOnScroll);
+                ticking = true;
+            }
+        }, { passive: true });
+
+        // Smooth scroll for anchor links
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+            });
+        });
+
+        // ==========================================
+        // LIGHTBOX
+        // ==========================================
+
+        const lbScreenshots = [
+            { src: 'scr-reg.jpg', caption: 'Main Interface — Layer-based composition with real-time preview' },
+            { src: 'scr-mesh.jpg', caption: 'Mesh Warp — Precision mapping with adjustable grid and corner pinning' },
+            { src: 'scr-vj.jpg', caption: 'VJ Mode — 16-channel clip launcher for live performance' }
+        ];
+        let lbIndex = 0;
+        const lightboxEl = document.getElementById('lightbox');
+        const lbImg = document.getElementById('lb-img');
+        const lbCaptionEl = document.getElementById('lb-caption');
+        const lbCounterEl = document.getElementById('lb-counter');
+
+        function openLightbox(idx) {
+            lbIndex = idx;
+            updateLightbox();
+            lightboxEl.classList.add('open');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeLightbox() {
+            lightboxEl.classList.remove('open');
+            document.body.style.overflow = '';
+        }
+
+        function navigateLightbox(dir) {
+            lbIndex = (lbIndex + dir + lbScreenshots.length) % lbScreenshots.length;
+            // Brief scale pulse on image swap
+            const frame = document.querySelector('.lightbox-frame');
+            frame.style.transition = 'transform 0.2s ease';
+            frame.style.transform = 'scale(0.96)';
+            setTimeout(() => {
+                updateLightbox();
+                frame.style.transform = 'scale(1)';
+                setTimeout(() => {
+                    frame.style.transition = 'transform 0.4s cubic-bezier(0.4, 0, 0.2, 1)';
+                }, 200);
+            }, 150);
+        }
+
+        function updateLightbox() {
+            const s = lbScreenshots[lbIndex];
+            lbImg.src = s.src;
+            lbImg.alt = s.caption;
+            lbCaptionEl.textContent = s.caption;
+            lbCounterEl.textContent = (lbIndex + 1) + ' / ' + lbScreenshots.length;
+        }
+
+        // Keyboard nav
+        document.addEventListener('keydown', (e) => {
+            if (!lightboxEl.classList.contains('open')) return;
+            if (e.key === 'Escape') closeLightbox();
+            if (e.key === 'ArrowLeft') navigateLightbox(-1);
+            if (e.key === 'ArrowRight') navigateLightbox(1);
+        });
+
+        // Touch swipe support
+        let lbTouchStartX = 0;
+        lightboxEl.addEventListener('touchstart', (e) => {
+            lbTouchStartX = e.changedTouches[0].clientX;
+        }, { passive: true });
+        lightboxEl.addEventListener('touchend', (e) => {
+            const dx = e.changedTouches[0].clientX - lbTouchStartX;
+            if (Math.abs(dx) > 60) {
+                navigateLightbox(dx > 0 ? -1 : 1);
+            }
+        }, { passive: true });
+    </script>
+</body>
+</html>

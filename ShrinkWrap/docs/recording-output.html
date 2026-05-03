@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Recording &amp; Output — Shrink Wrap Docs</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="../favicon-32x32.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Newsreader:ital,wght@0,300;0,400;1,300;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="docs-styles.css">
+</head>
+<body data-theme="dark">
+
+    <nav class="docs-nav">
+        <div class="docs-nav-left">
+            <a href="../index.html" class="docs-nav-logo"><img src="../logo.png" alt="Shrink Wrap"></a>
+            <a href="../index.html" class="docs-nav-back"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg> Back to site</a>
+            <span class="docs-nav-title">Documentation</span>
+        </div>
+        <div class="docs-nav-right">
+            <button class="docs-theme-toggle" id="docsThemeToggle"><svg id="docsThemeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"></svg><span id="docsThemeLabel">Dark</span></button>
+        </div>
+    </nav>
+
+    <button class="sidebar-toggle" id="sidebarToggle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
+
+    <div class="docs-layout">
+        <aside class="docs-sidebar">
+            <div class="sidebar-section">
+                <div class="sidebar-label">Recording &amp; Output</div>
+                <a href="#screen-recording" class="sidebar-sublink">Screen Recording</a>
+                <a href="#recording-settings" class="sidebar-sublink">Recording Settings</a>
+                <a href="#spout" class="sidebar-sublink">Spout Output</a>
+                <a href="#display-management" class="sidebar-sublink">Display Management</a>
+                <a href="#4k-output" class="sidebar-sublink">4K Output</a>
+                <a href="#performance" class="sidebar-sublink">Performance Tips</a>
+            </div>
+            <div class="sidebar-divider"></div>
+            <div class="sidebar-section">
+                <div class="sidebar-label">All Docs</div>
+                <a href="index.html" class="sidebar-link">Overview</a>
+                <a href="getting-started.html" class="sidebar-link">Getting Started</a>
+                <a href="layers.html" class="sidebar-link">Layer Types</a>
+                <a href="effects.html" class="sidebar-link">Effects Pipeline</a>
+                <a href="vj-mode.html" class="sidebar-link">VJ Mode</a>
+                <a href="synthvision.html" class="sidebar-link">SynthVision</a>
+                <a href="projection-mapping.html" class="sidebar-link">Projection Mapping</a>
+                <a href="midi-audio.html" class="sidebar-link">MIDI &amp; Audio</a>
+                <a href="mobile-control.html" class="sidebar-link">Mobile Control</a>
+                <a href="recording-output.html" class="sidebar-link current-page">Recording &amp; Output</a>
+            </div>
+        </aside>
+
+        <main class="docs-content">
+            <div class="docs-breadcrumb">
+                <a href="index.html">Docs</a> <span>/</span> <span>Recording &amp; Output</span>
+            </div>
+
+            <h1>Recording &amp; Output</h1>
+            <p class="page-description">
+                Capture your visuals, send video to other software, manage display outputs, and optimize for 4K performance.
+            </p>
+
+            <h2 id="screen-recording">Screen Recording</h2>
+            <p>Record your visual output directly to video files without any external software. Recording captures exactly what's being rendered to the output, including all effects and warp.</p>
+
+            <h3>Starting a Recording</h3>
+            <ol>
+                <li>Click the <strong>Record</strong> button in the toolbar (red circle icon)</li>
+                <li>Recording begins immediately — the button pulses red to indicate active recording</li>
+                <li>Click the button again to stop recording</li>
+                <li>The video file is saved to your configured output folder</li>
+            </ol>
+
+            <h2 id="recording-settings">Recording Settings</h2>
+            <table class="param-table">
+                <thead><tr><th>Setting</th><th>Options</th><th>Description</th></tr></thead>
+                <tbody>
+                    <tr><td class="param-name">Format</td><td>WebM, MP4</td><td>Video container format. WebM is faster to encode; MP4 is more universally compatible</td></tr>
+                    <tr><td class="param-name">Output Folder</td><td>Custom path</td><td>Where recordings are saved. Auto-generated filenames with timestamp</td></tr>
+                    <tr><td class="param-name">Resolution</td><td>Canvas size</td><td>Records at the current canvas resolution</td></tr>
+                </tbody>
+            </table>
+
+            <div class="callout tip">
+                <div class="callout-label">Tip</div>
+                <p>Use WebM for quick captures during development. Switch to MP4 for final recordings that need to work in video editors and social media.</p>
+            </div>
+
+            <h2 id="spout">Spout Output</h2>
+            <p>Spout is a real-time video sharing framework that lets applications share GPU textures without performance overhead. Shrink Wrap can output its rendered visuals via Spout to other software running on the same machine.</p>
+
+            <h3>Common Uses</h3>
+            <ul>
+                <li><strong>OBS Studio</strong> — Capture Shrink Wrap output for live streaming</li>
+                <li><strong>Resolume / TouchDesigner</strong> — Feed Shrink Wrap into larger VJ rigs</li>
+                <li><strong>Unity / Unreal</strong> — Use Shrink Wrap as a texture source in game engines</li>
+                <li><strong>LED controllers</strong> — Route video to LED wall controllers</li>
+            </ul>
+
+            <h3>Enabling Spout</h3>
+            <ol>
+                <li>Open <strong>Output Settings</strong> in the toolbar</li>
+                <li>Toggle <strong>Spout Output</strong> on</li>
+                <li>A sender name appears (configurable)</li>
+                <li>In the receiving application, select the Shrink Wrap Spout sender</li>
+            </ol>
+
+            <div class="callout warning">
+                <div class="callout-label">Note</div>
+                <p>Spout is currently available on Windows only. macOS users can use Syphon-based workflows with similar results.</p>
+            </div>
+
+            <h2 id="display-management">Display Management</h2>
+            <p>Shrink Wrap can output to any connected display or projector. Configure which display receives the visual output:</p>
+
+            <h3>Display Selection</h3>
+            <ul>
+                <li><strong>Primary display</strong> — Your main monitor (windowed or fullscreen)</li>
+                <li><strong>Secondary display</strong> — A connected projector or external monitor</li>
+                <li><strong>Span</strong> — Output across multiple displays for multi-projector setups</li>
+            </ul>
+
+            <h3>Fullscreen Mode</h3>
+            <p>Press <kbd>F11</kbd> to toggle fullscreen output. In fullscreen, the entire display is used for visual output with no UI chrome. Press <kbd>F11</kbd> again or <kbd>Esc</kbd> to return to windowed mode.</p>
+
+            <h2 id="4k-output">4K Output</h2>
+            <p>Shrink Wrap renders at up to 4K resolution (3840 x 2160) at 60fps. For best 4K performance:</p>
+
+            <table class="param-table">
+                <thead><tr><th>Factor</th><th>Recommendation</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>GPU</strong></td><td>Modern dedicated GPU (RTX 3060+ or equivalent AMD)</td></tr>
+                    <tr><td><strong>VRAM</strong></td><td>6 GB+ for comfortable 4K with multiple layers</td></tr>
+                    <tr><td><strong>Connection</strong></td><td>HDMI 2.0+ or DisplayPort 1.4+ for 4K60</td></tr>
+                    <tr><td><strong>Layer Count</strong></td><td>Reduce active layers or effects if framerate drops</td></tr>
+                </tbody>
+            </table>
+
+            <h2 id="performance">Performance Optimization</h2>
+            <p>Tips for maintaining smooth performance:</p>
+
+            <ul>
+                <li><strong>Reduce layer count</strong> — Each active layer consumes GPU resources. Disable layers you're not using.</li>
+                <li><strong>Simplify effect chains</strong> — Complex multi-effect chains are the biggest performance cost. Remove effects you don't need.</li>
+                <li><strong>Lower resolution for development</strong> — Work at 1080p during setup, switch to 4K only for final output.</li>
+                <li><strong>Watch the FPS counter</strong> — The toolbar shows real-time FPS. If it drops below 30, simplify your composition.</li>
+                <li><strong>Pre-render heavy content</strong> — For 3D models and gaussian splats, let them load fully before starting performance.</li>
+                <li><strong>Close other applications</strong> — GPU-intensive apps (browsers with many tabs, games, video editors) compete for resources.</li>
+                <li><strong>Update GPU drivers</strong> — Latest drivers often include performance improvements for WebGL.</li>
+            </ul>
+
+            <div class="callout tip">
+                <div class="callout-label">Tip</div>
+                <p>For the smoothest live performances, always run a full rehearsal at your venue to identify any performance bottlenecks before the show.</p>
+            </div>
+
+            <div class="docs-pagination">
+                <a href="mobile-control.html" class="prev">
+                    <span class="pagination-label">Previous</span>
+                    <span class="pagination-title">Mobile Control</span>
+                </a>
+                <div></div>
+            </div>
+
+            <div class="docs-footer">
+                <span>&copy; 2026 Shrink Wrap &mdash; <a href="https://riskcapital.io" target="_blank">A Risk Capital Experience</a></span>
+            </div>
+        </main>
+    </div>
+
+    <script src="docs-nav.js"></script>
+</body>
+</html>
