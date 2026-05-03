@@ -66,8 +66,8 @@ nsis:
   allowToChangeInstallationDirectory: true
   installerIcon: build-resources/icons/icon.ico
   uninstallerIcon: build-resources/icons/icon.ico
-  installerSidebar: illVisuals/installer-splash.bmp
-  uninstallerSidebar: illVisuals/installer-splash.bmp
+  installerSidebar: brand-assets/installer-splash.bmp
+  uninstallerSidebar: brand-assets/installer-splash.bmp
   shortcutName: "Ghost Arcade"
   artifactName: "Ghost-Arcade-Setup-${version}.${ext}"
 

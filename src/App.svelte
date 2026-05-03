@@ -3242,7 +3242,7 @@
     <!-- Header / Toolbar -->
     <header class="toolbar">
       <div class="toolbar-left">
-        <img src="{import.meta.env.BASE_URL}illVisualsLogo.png" alt="Ghost Arcade" class="header-logo" />
+        <img src="{import.meta.env.BASE_URL}logo.png" alt="Ghost Arcade" class="header-logo" />
         {#if gpuInfo}
           <span
             class="gpu-indicator"

@@ -1,11 +1,11 @@
 // Minimal service worker for PWA installability.
-// Shrink Wrap is a local-network app, so we use a network-first strategy
+// Ghost Arcade is a local-network app, so we use a network-first strategy
 // (no aggressive caching — content comes from the desktop app server).
 
-const CACHE_NAME = 'shrinkwrap-v1';
+const CACHE_NAME = 'ghostarcade-v1';
 const SHELL_ASSETS = [
   '/',
-  '/ShrinkWrapLogo.png',
+  '/logo.png',
   '/manifest.json',
 ];
 

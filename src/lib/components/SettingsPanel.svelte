@@ -597,7 +597,7 @@
                 class="text-input"
                 value={$settings.output.spoutName}
                 onchange={handleSpoutNameChange}
-                placeholder="illVisuals"
+                placeholder="ghostArcade"
               />
             </div>
 

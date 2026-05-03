@@ -36,7 +36,7 @@
   <div class="welcome-panel">
     {#if mode === 'welcome'}
       <div class="welcome-logo">
-        <img src="{import.meta.env.BASE_URL}illVisualsLogo.png" alt="Ghost Arcade" class="logo-img" />
+        <img src="{import.meta.env.BASE_URL}logo.png" alt="Ghost Arcade" class="logo-img" />
       </div>
       <h1 class="welcome-title">Welcome to Ghost Arcade</h1>
       <p class="welcome-subtitle">Professional projection mapping & VJ software</p>

@@ -1008,7 +1008,7 @@
                 const slicePixels = (hasBlend ? sliceBlendCtx! : sliceCtx!).getImageData(0, 0, sw, sh).data;
 
                 sliceSendInFlight.add(slice.id);
-                const senderName = slice.spoutName || `illVisuals-${slice.name}`;
+                const senderName = slice.spoutName || `ghostArcade-${slice.name}`;
 
                 if (isElectron) {
                   invoke('spout_send_image', { data: new Uint8Array(slicePixels), width: sw, height: sh, senderName })
@@ -1210,7 +1210,7 @@
     }
     else if (resSetting === 'match' && canvas) { spoutW = canvas.width; spoutH = canvas.height; }
     invoke('spout_start_sender', {
-      name: s?.spoutName || 'illVisuals',
+      name: s?.spoutName || 'ghostArcade',
       width: spoutW,
       height: spoutH,
     }).then((result: any) => {

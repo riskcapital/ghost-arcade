@@ -256,7 +256,7 @@ export interface OutputSlice {
   cropW: number;               // 0-1, width of slice
   cropH: number;               // 0-1, height of slice
   // Spout sender
-  spoutName: string;           // Sender name for this slice (e.g. "illVisuals-Left")
+  spoutName: string;           // Sender name for this slice (e.g. "ghostArcade-Left")
   // Edge blending (per-slice)
   edgeBlendLeft: number;       // 0-0.5
   edgeBlendRight: number;
@@ -280,7 +280,7 @@ export function createDefaultSlice(id: string, name: string, spoutSuffix: string
     cropY: 0,
     cropW,
     cropH: 1,
-    spoutName: `illVisuals-${spoutSuffix}`,
+    spoutName: `ghostArcade-${spoutSuffix}`,
     edgeBlendLeft: 0,
     edgeBlendRight: 0,
     edgeBlendTop: 0,
@@ -397,7 +397,7 @@ function createDefaultSettings(): AppSettings {
     },
     output: {
       spoutEnabled: false,
-      spoutName: 'illVisuals',
+      spoutName: 'ghostArcade',
       spoutResolution: 'match' as const,
       customWidth: 1920,
       customHeight: 1080,

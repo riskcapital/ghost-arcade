@@ -1750,7 +1750,7 @@
     <!-- Header -->
     <div class="vj-header">
       <div class="header-left">
-        <img src="{import.meta.env.BASE_URL}illVisualsLogo.png" alt="Ghost Arcade" class="vj-logo" />
+        <img src="{import.meta.env.BASE_URL}logo.png" alt="Ghost Arcade" class="vj-logo" />
         <!-- File Menu -->
         <div class="vj-file-menu-container">
           <button class="vj-file-menu-btn" class:active={vjFileMenuOpen} onclick={() => vjFileMenuOpen = !vjFileMenuOpen}>
