@@ -351,7 +351,7 @@
 
   // Access the main output canvas via window (set by App.svelte)
   function getMainCanvas(): HTMLCanvasElement | null {
-    return (window as any).__ghost-arcadeOutputCanvas || null;
+    return (window as any).__ghostarcadeOutputCanvas || null;
   }
 
   // Start preview loop when VJ mode opens
