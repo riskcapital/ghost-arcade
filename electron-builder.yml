@@ -57,7 +57,7 @@ win:
     # Publisher comes from the cert's CN automatically.
     endpoint: "https://eus.codesigning.azure.net/"
     codeSigningAccountName: "JustinWood"
-    certificateProfileName: "ghost-arcade-prod"
+    certificateProfileName: "ill-visuals-prod"
     timestampRfc3161: "http://timestamp.acs.microsoft.com"
     timestampDigest: "SHA256"
 
