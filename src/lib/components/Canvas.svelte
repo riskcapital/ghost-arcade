@@ -436,7 +436,7 @@
     }
 
     // Expose canvas to window for VJ preview
-    (window as any).__ghost-arcadeOutputCanvas = canvas;
+    (window as any).__ghostarcadeOutputCanvas = canvas;
 
     // Setup shader rendering scene
     shaderScene = new THREE.Scene();
