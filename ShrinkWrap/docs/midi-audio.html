@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MIDI &amp; Audio — Shrink Wrap Docs</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="../favicon-32x32.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Newsreader:ital,wght@0,300;0,400;1,300;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="docs-styles.css">
+</head>
+<body data-theme="dark">
+
+    <nav class="docs-nav">
+        <div class="docs-nav-left">
+            <a href="../index.html" class="docs-nav-logo"><img src="../logo.png" alt="Shrink Wrap"></a>
+            <a href="../index.html" class="docs-nav-back"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg> Back to site</a>
+            <span class="docs-nav-title">Documentation</span>
+        </div>
+        <div class="docs-nav-right">
+            <button class="docs-theme-toggle" id="docsThemeToggle"><svg id="docsThemeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"></svg><span id="docsThemeLabel">Dark</span></button>
+        </div>
+    </nav>
+
+    <button class="sidebar-toggle" id="sidebarToggle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
+
+    <div class="docs-layout">
+        <aside class="docs-sidebar">
+            <div class="sidebar-section">
+                <div class="sidebar-label">MIDI &amp; Audio</div>
+                <a href="#midi-overview" class="sidebar-sublink">MIDI Overview</a>
+                <a href="#midi-setup" class="sidebar-sublink">Controller Setup</a>
+                <a href="#midi-learn" class="sidebar-sublink">Learn Mode</a>
+                <a href="#midi-types" class="sidebar-sublink">Message Types</a>
+                <a href="#midi-channels" class="sidebar-sublink">Channel Filtering</a>
+                <a href="#audio-overview" class="sidebar-sublink">Audio Reactivity</a>
+                <a href="#frequency-bands" class="sidebar-sublink">Frequency Bands</a>
+                <a href="#beat-detection" class="sidebar-sublink">Beat Detection</a>
+                <a href="#lfo" class="sidebar-sublink">LFO Modulation</a>
+            </div>
+            <div class="sidebar-divider"></div>
+            <div class="sidebar-section">
+                <div class="sidebar-label">All Docs</div>
+                <a href="index.html" class="sidebar-link">Overview</a>
+                <a href="getting-started.html" class="sidebar-link">Getting Started</a>
+                <a href="layers.html" class="sidebar-link">Layer Types</a>
+                <a href="effects.html" class="sidebar-link">Effects Pipeline</a>
+                <a href="vj-mode.html" class="sidebar-link">VJ Mode</a>
+                <a href="synthvision.html" class="sidebar-link">SynthVision</a>
+                <a href="projection-mapping.html" class="sidebar-link">Projection Mapping</a>
+                <a href="midi-audio.html" class="sidebar-link current-page">MIDI &amp; Audio</a>
+                <a href="mobile-control.html" class="sidebar-link">Mobile Control</a>
+                <a href="recording-output.html" class="sidebar-link">Recording &amp; Output</a>
+            </div>
+        </aside>
+
+        <main class="docs-content">
+            <div class="docs-breadcrumb">
+                <a href="index.html">Docs</a> <span>/</span> <span>MIDI &amp; Audio</span>
+            </div>
+
+            <h1>MIDI &amp; Audio</h1>
+            <p class="page-description">
+                Map MIDI controllers to any parameter and drive visuals from audio input. Beat detection, frequency analysis, and LFO modulation for music-reactive performance.
+            </p>
+
+            <h2 id="midi-overview">MIDI Overview</h2>
+            <p>Shrink Wrap supports MIDI input from any connected controller. Map knobs, faders, buttons, and pads to control visual parameters in real-time. Multiple MIDI devices can be connected simultaneously.</p>
+
+            <h2 id="midi-setup">Controller Setup</h2>
+            <ol>
+                <li>Connect your MIDI controller via USB (or MIDI interface)</li>
+                <li>Shrink Wrap automatically detects available MIDI devices</li>
+                <li>Open the <strong>MIDI Settings</strong> panel from the toolbar</li>
+                <li>Your controller should appear in the device list</li>
+                <li>Enable the device to start receiving MIDI messages</li>
+            </ol>
+
+            <div class="callout tip">
+                <div class="callout-label">Tip</div>
+                <p>Connect your MIDI controller before launching Shrink Wrap for the most reliable detection. If you connect a device after launch, use the refresh button in MIDI Settings.</p>
+            </div>
+
+            <h2 id="midi-learn">Learn Mode</h2>
+            <p>The fastest way to map MIDI controls to parameters is Learn Mode:</p>
+            <ol>
+                <li>Click the <strong>MIDI Learn</strong> button (or the small MIDI icon next to any parameter)</li>
+                <li>The parameter enters learn mode and waits for a MIDI message</li>
+                <li>Move a knob, fader, or press a button on your MIDI controller</li>
+                <li>The mapping is created automatically — the MIDI control now drives that parameter</li>
+            </ol>
+
+            <h3>Editing Mappings</h3>
+            <p>After creating a mapping, you can fine-tune it:</p>
+            <table class="param-table">
+                <thead><tr><th>Setting</th><th>Description</th></tr></thead>
+                <tbody>
+                    <tr><td class="param-name">Input Range</td><td>Map a subset of the MIDI range to the parameter range</td></tr>
+                    <tr><td class="param-name">Output Range</td><td>Limit the parameter's travel range</td></tr>
+                    <tr><td class="param-name">Invert</td><td>Reverse the mapping direction</td></tr>
+                    <tr><td class="param-name">Smoothing</td><td>Add smoothing to reduce jitter from noisy controllers</td></tr>
+                </tbody>
+            </table>
+
+            <h3>Removing Mappings</h3>
+            <p>Right-click a mapped parameter and select <strong>Remove MIDI Mapping</strong>, or use the MIDI Settings panel to manage all mappings.</p>
+
+            <h2 id="midi-types">Message Types</h2>
+            <p>Shrink Wrap supports three types of MIDI messages:</p>
+
+            <table class="param-table">
+                <thead><tr><th>Type</th><th>Range</th><th>Best For</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>CC (Control Change)</strong></td><td>0 - 127</td><td>Knobs, faders, continuous controls</td></tr>
+                    <tr><td><strong>Note On/Off</strong></td><td>0 - 127 (velocity)</td><td>Buttons, pads, toggle controls</td></tr>
+                    <tr><td><strong>Pitch Bend</strong></td><td>0 - 16383</td><td>Pitch wheels, high-resolution continuous control</td></tr>
+                </tbody>
+            </table>
+
+            <h3>CC Messages</h3>
+            <p>The most common mapping type. Each CC number (0-127) on each channel is an independent control. Most MIDI knobs and faders send CC messages. The 7-bit resolution gives 128 steps of control.</p>
+
+            <h3>Note Messages</h3>
+            <p>Note On/Off messages work well for toggle parameters (on/off switches) and trigger actions (clip launching). The velocity value (0-127) can optionally drive the parameter value.</p>
+
+            <h3>Pitch Bend</h3>
+            <p>Pitch bend provides 14-bit resolution (16,384 steps) for ultra-smooth continuous control. Ideal for parameters that need fine adjustment like position or smooth fades.</p>
+
+            <h2 id="midi-channels">Channel Filtering</h2>
+            <p>MIDI messages are sent on channels 1-16. You can filter by channel to avoid conflicts when multiple controllers or instruments share a MIDI connection.</p>
+            <ul>
+                <li><strong>All Channels</strong> — Accept messages from any channel (default)</li>
+                <li><strong>Specific Channel</strong> — Only respond to messages on the selected channel (1-16)</li>
+            </ul>
+            <p>This is especially useful in live setups where a DJ controller, drum pad, and keyboard might all be connected via the same MIDI interface.</p>
+
+            <h2 id="audio-overview">Audio Reactivity</h2>
+            <p>Shrink Wrap can analyze incoming audio in real-time and use it to drive visual parameters. This creates visuals that pulse, shift, and respond to music automatically.</p>
+
+            <h3>Audio Input Setup</h3>
+            <ol>
+                <li>Open <strong>Audio Settings</strong> from the toolbar</li>
+                <li>Select your audio input device (microphone, line-in, or virtual audio cable)</li>
+                <li>The audio level meter shows that audio is being received</li>
+                <li>Enable audio reactivity on individual layer parameters</li>
+            </ol>
+
+            <div class="callout tip">
+                <div class="callout-label">Tip</div>
+                <p>For best results, use a direct audio feed (line-in or virtual audio cable from your DJ software) rather than a microphone, which picks up room noise and crowd sounds.</p>
+            </div>
+
+            <h2 id="frequency-bands">Frequency Bands</h2>
+            <p>Audio input is analyzed across 6 frequency bands. Each band can independently drive different parameters for rich, frequency-specific visual responses.</p>
+
+            <table class="param-table">
+                <thead><tr><th>Band</th><th>Frequency Range</th><th>Typical Content</th></tr></thead>
+                <tbody>
+                    <tr><td class="param-name">Sub</td><td>20 - 60 Hz</td><td>Sub-bass rumble, deep kicks</td></tr>
+                    <tr><td class="param-name">Bass</td><td>60 - 250 Hz</td><td>Kick drums, bass guitar, bass synths</td></tr>
+                    <tr><td class="param-name">Low Mid</td><td>250 - 500 Hz</td><td>Warm body of instruments</td></tr>
+                    <tr><td class="param-name">Mid</td><td>500 Hz - 2 kHz</td><td>Vocals, lead instruments, snare body</td></tr>
+                    <tr><td class="param-name">High Mid</td><td>2 - 6 kHz</td><td>Vocal presence, guitar attack, snare snap</td></tr>
+                    <tr><td class="param-name">High</td><td>6 - 20 kHz</td><td>Cymbals, hi-hats, air, sibilance</td></tr>
+                </tbody>
+            </table>
+
+            <p>Additionally, an <strong>All</strong> band option combines all frequencies into a single response value, useful for overall volume-reactive effects.</p>
+
+            <h3>Audio Parameters</h3>
+            <table class="param-table">
+                <thead><tr><th>Parameter</th><th>Range</th><th>Description</th></tr></thead>
+                <tbody>
+                    <tr><td class="param-name">Sensitivity</td><td>0 - 3</td><td>Amplify the audio signal for stronger visual response</td></tr>
+                    <tr><td class="param-name">Smoothing</td><td>0 - 1</td><td>Smooth out rapid changes for flowing visuals (higher = smoother)</td></tr>
+                    <tr><td class="param-name">Threshold</td><td>0 - 1</td><td>Minimum audio level before reactivity kicks in</td></tr>
+                </tbody>
+            </table>
+
+            <h2 id="beat-detection">Beat Detection</h2>
+            <p>Shrink Wrap includes automatic beat detection that identifies rhythmic patterns in the audio input. Detected beats can trigger visual events like:</p>
+            <ul>
+                <li><strong>Scale punch</strong> — Layers scale up on each beat then return</li>
+                <li><strong>Color flash</strong> — Brief color shift on beat hits</li>
+                <li><strong>Rotation kick</strong> — Rotation impulse synced to beats</li>
+                <li><strong>Effect intensity</strong> — Boost effect parameters on beats</li>
+            </ul>
+
+            <p>Beat detection works best with music that has a clear rhythmic pulse. Electronic dance music, hip-hop, and pop typically give the strongest detection.</p>
+
+            <h2 id="lfo">LFO Modulation</h2>
+            <p>Low Frequency Oscillators (LFOs) generate repeating wave patterns that can modulate any parameter. Unlike audio reactivity which responds to external input, LFOs create their own rhythmic modulation.</p>
+
+            <h3>LFO Waveforms</h3>
+            <ul>
+                <li><strong>Sine</strong> — Smooth, organic modulation</li>
+                <li><strong>Triangle</strong> — Linear ramp up and down</li>
+                <li><strong>Square</strong> — Hard on/off switching</li>
+                <li><strong>Sawtooth</strong> — Ramp up, then snap back</li>
+            </ul>
+
+            <h3>LFO Parameters</h3>
+            <table class="param-table">
+                <thead><tr><th>Parameter</th><th>Description</th></tr></thead>
+                <tbody>
+                    <tr><td class="param-name">Rate</td><td>Speed of oscillation (Hz or beat-synced)</td></tr>
+                    <tr><td class="param-name">Depth</td><td>How much the LFO affects the target parameter (0-1)</td></tr>
+                    <tr><td class="param-name">Phase</td><td>Starting position in the waveform cycle</td></tr>
+                    <tr><td class="param-name">Sync to BPM</td><td>Lock LFO rate to the global BPM for tempo-synced modulation</td></tr>
+                </tbody>
+            </table>
+
+            <div class="callout tip">
+                <div class="callout-label">Tip</div>
+                <p>Combine audio reactivity on one parameter (like brightness from bass) with an LFO on another (like hue cycling) for complex, layered visual behavior that feels both musical and evolving.</p>
+            </div>
+
+            <div class="docs-pagination">
+                <a href="projection-mapping.html" class="prev">
+                    <span class="pagination-label">Previous</span>
+                    <span class="pagination-title">Projection Mapping</span>
+                </a>
+                <a href="mobile-control.html" class="next">
+                    <span class="pagination-label">Next</span>
+                    <span class="pagination-title">Mobile Control</span>
+                </a>
+            </div>
+
+            <div class="docs-footer">
+                <span>&copy; 2026 Shrink Wrap &mdash; <a href="https://riskcapital.io" target="_blank">A Risk Capital Experience</a></span>
+            </div>
+        </main>
+    </div>
+
+    <script src="docs-nav.js"></script>
+</body>
+</html>

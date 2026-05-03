@@ -1,0 +1,507 @@
+/**
+ * State Sync via BroadcastChannel — Main Window ↔ OSR Window
+ *
+ * The OSR (offscreen rendering) window needs the same Svelte store state
+ * as the main window to render the same Three.js scene. BroadcastChannel
+ * provides sub-millisecond IPC between same-origin renderer processes.
+ *
+ * Sender (main window): subscribes to project store, broadcasts changes
+ * Receiver (OSR window): listens for changes, updates local stores
+ */
+
+import { get } from 'svelte/store';
+import { project } from '$lib/stores/layers';
+import { settings } from '$lib/stores/settings';
+import { vjClipLauncher } from '$lib/stores/vjClipLauncher';
+
+const CHANNEL_NAME = 'ghostarcade-state-sync';
+
+let channel: BroadcastChannel | null = null;
+let mode: 'sender' | 'receiver' | null = null;
+let unsubscribers: (() => void)[] = [];
+
+// Debounce timer for project updates (avoid flooding during rapid changes)
+let projectDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+const DEBOUNCE_MS = 50; // Reduced frequency for full state (heavy serialization)
+
+// ── Fast-path layer patch (corners, opacity, etc.) ──
+// Tracks previous corners so we can detect corner-only changes and send a
+// lightweight patch instead of re-serializing the entire project.
+let lastLayerCorners: Record<string, any> = {};
+let lastLayerOpacities: Record<string, number> = {};
+let patchThrottle: ReturnType<typeof setTimeout> | null = null;
+
+/** Send a lightweight per-layer patch instead of a full export. */
+function broadcastLayerPatches() {
+  if (!channel || mode !== 'sender') return;
+
+  const currentLayers = get(project).layers;
+  const patches: Array<{ id: string; corners?: any; opacity?: number; meshGrid?: any }> = [];
+
+  for (const layer of currentLayers) {
+    const prevCorners = lastLayerCorners[layer.id];
+    const prevOpacity = lastLayerOpacities[layer.id];
+    const cornersChanged = !prevCorners || JSON.stringify(layer.corners) !== JSON.stringify(prevCorners);
+    const opacityChanged = prevOpacity !== layer.opacity;
+
+    if (cornersChanged || opacityChanged) {
+      const patch: any = { id: layer.id };
+      if (cornersChanged) { patch.corners = layer.corners; patch.meshGrid = layer.meshGrid; }
+      if (opacityChanged) patch.opacity = layer.opacity;
+      patches.push(patch);
+      lastLayerCorners[layer.id] = JSON.parse(JSON.stringify(layer.corners));
+      lastLayerOpacities[layer.id] = layer.opacity;
+    }
+  }
+
+  if (patches.length > 0) {
+    try {
+      channel.postMessage({
+        type: 'layer-patch',
+        data: patches,
+        timestamp: Date.now(),
+      } satisfies StateMessage);
+    } catch {}
+  }
+}
+
+// ============================================================
+// Message Types
+// ============================================================
+
+interface StateMessage {
+  type: 'project-state' | 'vj-state' | 'settings-update' | 'osr-request-state' | 'layer-patch' | 'cursor-visibility' | 'cursor-position' | 'output-frozen';
+  data?: any;
+  timestamp: number;
+}
+
+// ============================================================
+// Sender (Main Window)
+// ============================================================
+
+function sendFullState() {
+  if (!channel || mode !== 'sender') return;
+
+  try {
+    // Use existing exportProject() which strips textures/video elements
+    const projectData = project.exportProject();
+    const vjState = get(vjClipLauncher);
+    const settingsState = get(settings);
+
+    // Strip non-serializable properties from clip grids (HTMLCanvasElement,
+    // HTMLVideoElement, HTMLIFrameElement). Must strip both the top-level
+    // clipGrid AND the clipGrid inside every block — the old version only
+    // stripped the top-level one, so every clip sitting in vjState.blocks
+    // still carried its OffscreenCanvas/video/iframe into structured clone
+    // and threw DataCloneError on every broadcast.
+    const safeBlocks = vjState.blocks.map(block => ({
+      ...block,
+      clipGrid: stripClipGrid(block.clipGrid),
+    }));
+    const safeClipGrid = stripClipGrid(vjState.clipGrid);
+
+    channel.postMessage({
+      type: 'project-state',
+      data: {
+        ...projectData,
+        vjClipLauncher: {
+          blocks: safeBlocks,
+          activeBlockId: vjState.activeBlockId,
+          clipGrid: safeClipGrid,
+          layerStates: vjState.layerStates,
+          compositionEffects: vjState.compositionEffects,
+          masterOpacity: vjState.masterOpacity,
+          isOpen: vjState.isOpen,
+          isLive: vjState.isLive,
+        },
+        settings: {
+          output: settingsState?.output,
+        },
+      },
+      timestamp: Date.now(),
+    } satisfies StateMessage);
+
+    console.log('[StateSync] Full state sent to OSR');
+  } catch (err) {
+    console.error('[StateSync] Failed to send full state:', err);
+  }
+}
+
+let hasActiveReceiver = false;
+
+function broadcastProjectUpdate() {
+  if (!channel || mode !== 'sender' || !hasActiveReceiver) return;
+
+  // Debounce to avoid flooding during rapid store changes
+  if (projectDebounceTimer) clearTimeout(projectDebounceTimer);
+  projectDebounceTimer = setTimeout(() => {
+    try {
+      const projectData = project.exportProject();
+      channel!.postMessage({
+        type: 'project-state',
+        data: projectData,
+        timestamp: Date.now(),
+      } satisfies StateMessage);
+    } catch (err) {
+      console.error('[StateSync] Failed to broadcast project:', err);
+    }
+  }, DEBOUNCE_MS);
+}
+
+// Debounce VJ-state broadcasts. Modulation engines write to the clip launcher
+// at audio-frame rate (up to 60 Hz) for any modulated shader param, and each
+// write would otherwise trigger a full clip-grid deep-map + structured-clone
+// postMessage to the OSR window. Debouncing to ~33ms coalesces modulation
+// bursts into a single broadcast while still giving the output window a
+// perceptually-live feel (30 fps state sync).
+let vjDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+const VJ_DEBOUNCE_MS = 33;
+
+// Remove the non-cloneable runtime fields that VJ clips carry (OffscreenCanvas
+// for SynthVision, HTMLVideoElement for video clips, HTMLIFrameElement for
+// threejs clips). BroadcastChannel.postMessage uses structured clone which
+// throws DataCloneError on any of these — if that throw happens inside the
+// Svelte store subscription path, the subscribe callback rethrows on every
+// store update and the console fills with "[StateSync] Failed to broadcast
+// VJ state: [object DOMException]", which is what the fps meltdown showed.
+function stripClip(clip: any): any {
+  if (!clip) return clip;
+  const {
+    synthVisionCanvas: _s,
+    videoElement: _v,
+    iframeElement: _i,
+    threejsCanvas: _t,
+    ...rest
+  } = clip;
+  return rest;
+}
+
+function stripClipGrid(grid: any[][]): any[][] {
+  return grid.map(row => row.map(stripClip));
+}
+
+function doBroadcastVJState() {
+  if (!channel || mode !== 'sender' || !hasActiveReceiver) return;
+
+  try {
+    const vjState = get(vjClipLauncher);
+
+    // Strip the top-level clipGrid AND the clipGrid inside each block —
+    // earlier this only stripped the top-level grid and left
+    // vjState.blocks[].clipGrid intact, which meant every VJ clip that lived
+    // in a block re-exposed its OffscreenCanvas/video/iframe to the clone
+    // and triggered the DataCloneError above.
+    const safeBlocks = vjState.blocks.map(block => ({
+      ...block,
+      clipGrid: stripClipGrid(block.clipGrid),
+    }));
+    const safeClipGrid = stripClipGrid(vjState.clipGrid);
+
+    channel.postMessage({
+      type: 'vj-state',
+      data: {
+        blocks: safeBlocks,
+        activeBlockId: vjState.activeBlockId,
+        clipGrid: safeClipGrid,
+        layerStates: vjState.layerStates,
+        compositionEffects: vjState.compositionEffects,
+        masterOpacity: vjState.masterOpacity,
+        isOpen: vjState.isOpen,
+        isLive: vjState.isLive,
+      },
+      timestamp: Date.now(),
+    } satisfies StateMessage);
+  } catch (err) {
+    console.error('[StateSync] Failed to broadcast VJ state:', err);
+  }
+}
+
+function broadcastVJState() {
+  if (!channel || mode !== 'sender' || !hasActiveReceiver) return;
+  if (vjDebounceTimer !== null) return; // already scheduled
+  vjDebounceTimer = setTimeout(() => {
+    vjDebounceTimer = null;
+    doBroadcastVJState();
+  }, VJ_DEBOUNCE_MS);
+}
+
+function initSender() {
+  if (!channel) return;
+
+  // Listen for state requests from OSR window
+  channel.onmessage = (event: MessageEvent<StateMessage>) => {
+    if (event.data?.type === 'osr-request-state') {
+      console.log('[StateSync] OSR requested full state — activating broadcast');
+      hasActiveReceiver = true;
+      sendFullState();
+    }
+  };
+
+  // Subscribe to project store changes. Full export is debounced.
+  // Layer patches (corners, opacity) are sent only when the output window
+  // is actually open — otherwise they just waste CPU on JSON.stringify.
+  const unsubProject = project.subscribe(() => {
+    broadcastProjectUpdate();
+  });
+  unsubscribers.push(unsubProject);
+
+  // Subscribe to VJ clip launcher changes
+  const unsubVJ = vjClipLauncher.subscribe(() => {
+    broadcastVJState();
+  });
+  unsubscribers.push(unsubVJ);
+
+  console.log('[StateSync] Sender initialized');
+}
+
+// ============================================================
+// Receiver (OSR Window)
+// ============================================================
+
+let receivedFirstState = false;
+
+function handleReceivedMessage(event: MessageEvent<StateMessage>) {
+  const msg = event.data;
+  if (!msg || !msg.type) return;
+
+  switch (msg.type) {
+    case 'project-state': {
+      if (msg.data) {
+        try {
+          // Use existing importProject() which handles all store updates
+          project.importProject(msg.data);
+          if (!receivedFirstState) {
+            receivedFirstState = true;
+            console.log('[StateSync] First project state received');
+          }
+        } catch (err) {
+          console.error('[StateSync] Failed to import project state:', err);
+        }
+      }
+      break;
+    }
+
+    case 'output-frozen': {
+      if (msg.data) {
+        // Import and update the outputFrozen store on the output window
+        import('$lib/stores/settings').then(({ outputFrozen }) => {
+          outputFrozen.set(!!msg.data.frozen);
+        }).catch(() => {});
+      }
+      break;
+    }
+
+    case 'cursor-visibility': {
+      if (msg.data) {
+        outputCursorVisible = msg.data.show;
+        document.body.style.cursor = msg.data.show ? 'default' : 'none';
+        // Update or create cursor overlay
+        updateCursorOverlay();
+      }
+      break;
+    }
+
+    case 'cursor-position': {
+      if (msg.data) {
+        outputCursorX = msg.data.x;
+        outputCursorY = msg.data.y;
+      } else {
+        outputCursorX = null;
+        outputCursorY = null;
+      }
+      updateCursorOverlay();
+      break;
+    }
+
+    case 'layer-patch': {
+      // Lightweight corner/opacity patch — apply directly without full import
+      if (msg.data && Array.isArray(msg.data)) {
+        try {
+          project.update((p: any) => {
+            const layers = [...p.layers];
+            for (const patch of msg.data) {
+              const idx = layers.findIndex((l: any) => l.id === patch.id);
+              if (idx < 0) continue;
+              const l = { ...layers[idx] };
+              if (patch.corners) l.corners = patch.corners;
+              if (patch.meshGrid) l.meshGrid = patch.meshGrid;
+              if (patch.opacity !== undefined) l.opacity = patch.opacity;
+              layers[idx] = l;
+            }
+            return { ...p, layers };
+          });
+        } catch {}
+      }
+      break;
+    }
+
+    case 'vj-state': {
+      if (msg.data) {
+        try {
+          // Merge incoming VJ state payload into current state shape.
+          vjClipLauncher.update((state: any) => ({ ...state, ...msg.data }));
+        } catch (err) {
+          console.error('[StateSync] Failed to import VJ state:', err);
+        }
+      }
+      break;
+    }
+
+    case 'settings-update': {
+      if (msg.data) {
+        try {
+          if (typeof msg.data?.output?.spoutEnabled === 'boolean') {
+            settings.setSpoutEnabled(!!msg.data.output.spoutEnabled);
+          }
+          if (typeof msg.data?.output?.spoutName === 'string') {
+            settings.setSpoutName(msg.data.output.spoutName);
+          }
+          if (
+            msg.data?.output?.spoutResolution === 'match'
+            || msg.data?.output?.spoutResolution === '1080p'
+            || msg.data?.output?.spoutResolution === '4K'
+          ) {
+            settings.setSpoutResolution(msg.data.output.spoutResolution);
+          }
+          if (typeof msg.data?.output?.outputWindowOpen === 'boolean') {
+            settings.setOutputWindowOpen(!!msg.data.output.outputWindowOpen);
+          }
+        } catch (err) {
+          console.error('[StateSync] Failed to import settings:', err);
+        }
+      }
+      break;
+    }
+  }
+}
+
+function initReceiver() {
+  if (!channel) return;
+
+  channel.onmessage = handleReceivedMessage;
+
+  // Request initial state from main window
+  channel.postMessage({
+    type: 'osr-request-state',
+    timestamp: Date.now(),
+  } satisfies StateMessage);
+
+  console.log('[StateSync] Receiver initialized, requesting state');
+}
+
+// ============================================================
+// Public API
+// ============================================================
+
+/**
+ * Initialize BroadcastChannel state sync.
+ *
+ * @param syncMode 'sender' for main window, 'receiver' for OSR window
+ */
+/** Broadcast freeze/pause state to the output window */
+export function broadcastFrozenState(frozen: boolean) {
+  if (!channel || mode !== 'sender') return;
+  try {
+    channel.postMessage({ type: 'output-frozen', data: { frozen }, timestamp: Date.now() } satisfies StateMessage);
+  } catch {}
+}
+
+/** Broadcast cursor visibility to the output window */
+export function broadcastCursorVisibility(show: boolean) {
+  if (!channel || mode !== 'sender') return;
+  try {
+    channel.postMessage({ type: 'cursor-visibility', data: { show }, timestamp: Date.now() } satisfies StateMessage);
+  } catch {}
+}
+
+/** Broadcast cursor position (normalized 0-1) so the output can draw a crosshair */
+export function broadcastCursorPosition(x: number, y: number) {
+  if (!channel || mode !== 'sender') return;
+  try {
+    channel.postMessage({ type: 'cursor-position', data: { x, y }, timestamp: Date.now() } satisfies StateMessage);
+  } catch {}
+}
+
+/** Clear cursor on the output window */
+export function broadcastCursorClear() {
+  if (!channel || mode !== 'sender') return;
+  try {
+    channel.postMessage({ type: 'cursor-position', data: null, timestamp: Date.now() } satisfies StateMessage);
+  } catch {}
+}
+
+// Module-level cursor overlay state (set by receiver, read by SpoutOutputApp)
+export let outputCursorX: number | null = null;
+export let outputCursorY: number | null = null;
+export let outputCursorVisible = false;
+
+export function initStateBroadcast(syncMode: 'sender' | 'receiver') {
+  if (channel) {
+    console.warn('[StateSync] Already initialized as', mode);
+    return;
+  }
+
+  // BroadcastChannel requires same origin — both windows load from localhost:1420
+  channel = new BroadcastChannel(CHANNEL_NAME);
+  mode = syncMode;
+
+  if (syncMode === 'sender') {
+    initSender();
+  } else {
+    initReceiver();
+  }
+}
+
+/**
+ * Check if the receiver has received its first state update.
+ */
+export function hasReceivedState(): boolean {
+  return receivedFirstState;
+}
+
+/**
+ * Clean up BroadcastChannel and subscriptions.
+ */
+/** Render a crosshair cursor overlay on the output window */
+function updateCursorOverlay() {
+  let el = document.getElementById('cursor-overlay');
+  if (outputCursorX === null || outputCursorY === null) {
+    if (el) el.style.display = 'none';
+    return;
+  }
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'cursor-overlay';
+    el.style.cssText = 'position:fixed;pointer-events:none;z-index:99999;display:none;';
+    el.innerHTML = `
+      <div style="position:absolute;width:24px;height:2px;background:#fff;left:-12px;top:-1px;box-shadow:0 0 4px #000;"></div>
+      <div style="position:absolute;width:2px;height:24px;background:#fff;left:-1px;top:-12px;box-shadow:0 0 4px #000;"></div>
+      <div style="position:absolute;width:6px;height:6px;border:2px solid #fff;border-radius:50%;left:-5px;top:-5px;box-shadow:0 0 4px #000;"></div>
+    `;
+    document.body.appendChild(el);
+  }
+  el.style.display = 'block';
+  el.style.left = `${outputCursorX * 100}%`;
+  el.style.top = `${(1 - outputCursorY) * 100}%`;
+}
+
+export function destroyStateBroadcast() {
+  for (const unsub of unsubscribers) {
+    try { unsub(); } catch {}
+  }
+  unsubscribers = [];
+
+  if (projectDebounceTimer) {
+    clearTimeout(projectDebounceTimer);
+    projectDebounceTimer = null;
+  }
+
+  if (channel) {
+    channel.close();
+    channel = null;
+  }
+
+  mode = null;
+  receivedFirstState = false;
+  console.log('[StateSync] Destroyed');
+}

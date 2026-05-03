@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Genesis Eternal - Atomic</title>
+    <style>
+        * { margin: 0; padding: 0; }
+        body { overflow: hidden; background: #000; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <canvas id="c"></canvas>
+    <script>
+    const canvas = document.getElementById('c');
+    const gl = canvas.getContext('webgl');
+
+    const vs = `attribute vec2 p; void main() { gl_Position = vec4(p, 0, 1); }`;
+
+    const fs = `
+        precision highp float;
+        uniform float t;
+        uniform vec2 r;
+        
+        #define PI 3.14159265359
+        
+        mat2 rot(float a) { float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
+        
+        float hash(float n) { return fract(sin(n) * 43758.5453); }
+        
+        // Blend modes
+        vec3 blendAdd(vec3 base, vec3 blend) {
+            return base + blend;
+        }
+        
+        vec3 blendExclusion(vec3 base, vec3 blend) {
+            return base + blend - 2.0 * base * blend;
+        }
+        
+        vec3 blendScreen(vec3 base, vec3 blend) {
+            return 1.0 - (1.0 - base) * (1.0 - blend);
+        }
+        
+        vec3 blendOverlay(vec3 base, vec3 blend) {
+            vec3 result;
+            result.r = base.r < 0.5 ? 2.0 * base.r * blend.r : 1.0 - 2.0 * (1.0 - base.r) * (1.0 - blend.r);
+            result.g = base.g < 0.5 ? 2.0 * base.g * blend.g : 1.0 - 2.0 * (1.0 - base.g) * (1.0 - blend.g);
+            result.b = base.b < 0.5 ? 2.0 * base.b * blend.b : 1.0 - 2.0 * (1.0 - base.b) * (1.0 - blend.b);
+            return result;
+        }
+        
+        vec3 blendDifference(vec3 base, vec3 blend) {
+            return abs(base - blend);
+        }
+        
+        // Blend mode mixer - slow cycle
+        vec3 blendMix(vec3 base, vec3 blend, float time) {
+            float cycle = mod(time * 0.03, 5.0);
+            
+            vec3 b1, b2;
+            float mixAmt = fract(cycle);
+            
+            if(cycle < 1.0) {
+                b1 = blendAdd(base, blend);
+                b2 = blendExclusion(base, blend);
+            } else if(cycle < 2.0) {
+                b1 = blendExclusion(base, blend);
+                b2 = blendScreen(base, blend);
+            } else if(cycle < 3.0) {
+                b1 = blendScreen(base, blend);
+                b2 = blendOverlay(base, blend);
+            } else if(cycle < 4.0) {
+                b1 = blendOverlay(base, blend);
+                b2 = blendDifference(base, blend);
+            } else {
+                b1 = blendDifference(base, blend);
+                b2 = blendAdd(base, blend);
+            }
+            
+            float mt = mixAmt * mixAmt * (3.0 - 2.0 * mixAmt);
+            return mix(b1, b2, mt);
+        }
+        
+        // Primitives
+        float sdSphere(vec3 p, float r) { return length(p) - r; }
+        float sdBox(vec3 p, vec3 b) {
+            vec3 q = abs(p) - b;
+            return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+        }
+        float sdOctahedron(vec3 p, float s) {
+            p = abs(p);
+            return (p.x + p.y + p.z - s) * 0.577;
+        }
+        
+        // Nucleus fractal
+        vec3 fractalShape(vec3 p, float time) {
+            float m1 = sin(time * 0.13) * 0.5 + 0.5;
+            float m2 = sin(time * 0.17 + 1.0) * 0.5 + 0.5;
+            float m3 = sin(time * 0.11 + 2.0) * 0.5 + 0.5;
+            float m4 = sin(time * 0.19 + 3.0) * 0.5 + 0.5;
+            
+            p.xz *= rot(time * 0.05);
+            p.xy *= rot(time * 0.03);
+            
+            float scale = 1.0;
+            float d = 1e10;
+            float edgeAccum = 0.0;
+            float iterColor = 0.0;
+            
+            for(int i = 0; i < 4; i++) {
+                vec3 preAbs = p;
+                p = abs(p);
+                
+                edgeAccum += exp(-min(min(abs(preAbs.x), abs(preAbs.y)), abs(preAbs.z)) * 8.0 / scale);
+                
+                if(p.x < p.y) p.xy = p.yx;
+                if(p.x < p.z) p.xz = p.zx;
+                if(p.y < p.z) p.yz = p.zy;
+                
+                p.xy *= rot(0.5 + m1 * 0.3);
+                p.yz *= rot(0.4 + m2 * 0.2);
+                
+                float s = 2.0 + m3 * 0.3;
+                p = p * s - vec3(1.0 + m4 * 0.5, 1.0, 1.0) * (s - 1.0);
+                scale *= s;
+                
+                float shape;
+                if(m1 < 0.33) {
+                    shape = sdBox(p, vec3(1.0)) / scale;
+                } else if(m1 < 0.66) {
+                    shape = sdOctahedron(p, 1.5) / scale;
+                } else {
+                    shape = sdSphere(p, 1.2) / scale;
+                }
+                
+                if(shape < d) {
+                    d = shape;
+                    iterColor = float(i) / 4.0;
+                }
+            }
+            
+            return vec3(d, edgeAccum, iterColor);
+        }
+        
+        float map(vec3 p) {
+            return fractalShape(p, t).x;
+        }
+        
+        vec3 calcNormal(vec3 p) {
+            vec2 e = vec2(0.002, -0.002);
+            return normalize(
+                e.xyy * map(p + e.xyy) +
+                e.yyx * map(p + e.yyx) +
+                e.yxy * map(p + e.yxy) +
+                e.xxx * map(p + e.xxx)
+            );
+        }
+        
+        vec3 palette(float t) {
+            vec3 a = vec3(0.5, 0.5, 0.5);
+            vec3 b = vec3(0.5, 0.5, 0.5);
+            vec3 c = vec3(1.0, 1.0, 1.0);
+            vec3 d = vec3(0.0, 0.1, 0.2);
+            return a + b * cos(6.28318 * (c * t + d));
+        }
+        
+        // Particle position function
+        vec3 getParticlePos(float id, float time, float baseRadius, float speedMult) {
+            float orbitRadius = baseRadius + id * 0.15;
+            float speed = 0.06 * speedMult + id * 0.008;
+            float phase = id * PI * 0.8;
+            float tiltX = id * 0.4;
+            float tiltY = id * 0.3;
+            
+            float angle = time * speed + phase;
+            
+            vec3 pos = vec3(cos(angle) * orbitRadius, 0.0, sin(angle) * orbitRadius);
+            pos.xy *= rot(tiltX);
+            pos.yz *= rot(tiltY);
+            pos.y += sin(angle * 2.0 + id) * 0.3;
+            
+            return pos;
+        }
+        
+        // Electron position
+        vec3 getElectronPos(float id, float time) {
+            float orbitRadius = 5.0 + id * 0.3;
+            float speed = 0.1 + id * 0.015;
+            float phase = id * PI * 0.9 + PI * 0.5;
+            float tiltX = id * 0.5 + 1.0;
+            float tiltY = id * 0.4 + 0.5;
+            
+            float angle = time * speed + phase;
+            
+            vec3 pos = vec3(cos(angle) * orbitRadius, 0.0, sin(angle) * orbitRadius);
+            pos.xy *= rot(tiltX);
+            pos.yz *= rot(tiltY);
+            
+            return pos;
+        }
+        
+        // Line glow between two points
+        float lineGlow(vec3 ro, vec3 rd, vec3 a, vec3 b, float radius) {
+            vec3 ba = b - a;
+            vec3 oa = ro - a;
+            
+            float baba = dot(ba, ba);
+            float bard = dot(ba, rd);
+            float baoa = dot(ba, oa);
+            float rdoa = dot(rd, oa);
+            float rdrd = 1.0;
+            
+            float denom = baba - bard * bard;
+            if(abs(denom) < 0.0001) return 0.0;
+            
+            float th = (baoa * bard - rdoa * baba) / denom;
+            float tl = (baoa + th * bard) / baba;
+            
+            tl = clamp(tl, 0.0, 1.0);
+            th = max(th, 0.0);
+            
+            vec3 closestLine = a + ba * tl;
+            vec3 closestRay = ro + rd * th;
+            
+            float dist = length(closestLine - closestRay);
+            return exp(-dist * 25.0 / radius) * radius;
+        }
+        
+        // Particle glow
+        float particleGlow(vec3 ro, vec3 rd, vec3 particlePos, float radius) {
+            vec3 toParticle = particlePos - ro;
+            float alongRay = dot(toParticle, rd);
+            if(alongRay < 0.0) return 0.0;
+            
+            vec3 closest = ro + rd * alongRay;
+            float dist = length(particlePos - closest);
+            
+            float core = exp(-dist * 12.0 / radius);
+            float glow = exp(-dist * 4.0 / radius) * 0.4;
+            
+            return core + glow;
+        }
+        
+        void main() {
+            vec2 uv = (gl_FragCoord.xy - 0.5 * r) / r.y;
+            
+            // Camera
+            float zoomCycle = sin(t * 0.05) * 0.5 + 0.5;
+            float camDist = 8.0 + zoomCycle * 4.0;
+            
+            float camAngleH = t * 0.06;
+            float camAngleV = sin(t * 0.04) * 0.3;
+            
+            vec3 ro = vec3(
+                sin(camAngleH) * cos(camAngleV) * camDist,
+                sin(camAngleV) * camDist * 0.5 + 1.0,
+                cos(camAngleH) * cos(camAngleV) * camDist
+            );
+            
+            vec3 ww = normalize(-ro);
+            vec3 uu = normalize(cross(ww, vec3(0, 1, 0)));
+            vec3 vv = cross(uu, ww);
+            
+            float fov = 1.6;
+            vec3 rd = normalize(uv.x * uu + uv.y * vv + fov * ww);
+            
+            // Background
+            vec3 col = vec3(0.015, 0.015, 0.03);
+            col += 0.015 * palette(length(uv) * 0.3 + t * 0.01);
+            
+            // === PARTICLES AND LINES ===
+            vec3 particleCol = vec3(0.0);
+            vec3 lineCol = vec3(0.0);
+            
+            // Inner particles - unrolled loop
+            vec3 p0 = getParticlePos(0.0, t, 2.8, 1.0);
+            vec3 p1 = getParticlePos(1.0, t, 2.8, 1.0);
+            vec3 p2 = getParticlePos(2.0, t, 2.8, 1.0);
+            vec3 p3 = getParticlePos(3.0, t, 2.8, 1.0);
+            vec3 p4 = getParticlePos(4.0, t, 2.8, 1.0);
+            vec3 p5 = getParticlePos(5.0, t, 2.8, 1.0);
+            
+            // Particle glows
+            particleCol += palette(0.0 * 0.1 + t * 0.02) * particleGlow(ro, rd, p0, 0.35) * 0.7;
+            particleCol += palette(1.0 * 0.1 + t * 0.02) * particleGlow(ro, rd, p1, 0.35) * 0.7;
+            particleCol += palette(2.0 * 0.1 + t * 0.02) * particleGlow(ro, rd, p2, 0.35) * 0.7;
+            particleCol += palette(3.0 * 0.1 + t * 0.02) * particleGlow(ro, rd, p3, 0.35) * 0.7;
+            particleCol += palette(4.0 * 0.1 + t * 0.02) * particleGlow(ro, rd, p4, 0.35) * 0.7;
+            particleCol += palette(5.0 * 0.1 + t * 0.02) * particleGlow(ro, rd, p5, 0.35) * 0.7;
+            
+            // Connect particles in ring
+            lineCol += palette(0.05 + t * 0.02) * lineGlow(ro, rd, p0, p1, 0.8) * 0.35;
+            lineCol += palette(0.10 + t * 0.02) * lineGlow(ro, rd, p1, p2, 0.8) * 0.35;
+            lineCol += palette(0.15 + t * 0.02) * lineGlow(ro, rd, p2, p3, 0.8) * 0.35;
+            lineCol += palette(0.20 + t * 0.02) * lineGlow(ro, rd, p3, p4, 0.8) * 0.35;
+            lineCol += palette(0.25 + t * 0.02) * lineGlow(ro, rd, p4, p5, 0.8) * 0.35;
+            lineCol += palette(0.30 + t * 0.02) * lineGlow(ro, rd, p5, p0, 0.8) * 0.35;
+            
+            // Cross connections
+            lineCol += palette(0.1 + t * 0.015) * lineGlow(ro, rd, p0, p3, 0.6) * 0.2;
+            lineCol += palette(0.2 + t * 0.015) * lineGlow(ro, rd, p1, p4, 0.6) * 0.2;
+            lineCol += palette(0.3 + t * 0.015) * lineGlow(ro, rd, p2, p5, 0.6) * 0.2;
+            
+            // Connect to nucleus
+            float pulse0 = sin(t * 0.5) * 0.3 + 0.7;
+            float pulse1 = sin(t * 0.5 + 1.0) * 0.3 + 0.7;
+            lineCol += palette(t * 0.02) * lineGlow(ro, rd, p0, vec3(0.0), 0.4) * 0.15 * pulse0;
+            lineCol += palette(t * 0.02 + 0.2) * lineGlow(ro, rd, p2, vec3(0.0), 0.4) * 0.15 * pulse1;
+            
+            // Electrons - unrolled
+            vec3 e0 = getElectronPos(0.0, t);
+            vec3 e1 = getElectronPos(1.0, t);
+            vec3 e2 = getElectronPos(2.0, t);
+            vec3 e3 = getElectronPos(3.0, t);
+            vec3 e4 = getElectronPos(4.0, t);
+            
+            vec3 electronColor = vec3(0.4, 0.7, 1.0);
+            particleCol += electronColor * particleGlow(ro, rd, e0, 0.2) * 0.9;
+            particleCol += electronColor * particleGlow(ro, rd, e1, 0.2) * 0.9;
+            particleCol += electronColor * particleGlow(ro, rd, e2, 0.2) * 0.9;
+            particleCol += electronColor * particleGlow(ro, rd, e3, 0.2) * 0.9;
+            particleCol += electronColor * particleGlow(ro, rd, e4, 0.2) * 0.9;
+            
+            // Electron ring connections
+            vec3 eLineCol = vec3(0.3, 0.5, 0.8);
+            lineCol += eLineCol * lineGlow(ro, rd, e0, e1, 0.5) * 0.25;
+            lineCol += eLineCol * lineGlow(ro, rd, e1, e2, 0.5) * 0.25;
+            lineCol += eLineCol * lineGlow(ro, rd, e2, e3, 0.5) * 0.25;
+            lineCol += eLineCol * lineGlow(ro, rd, e3, e4, 0.5) * 0.25;
+            lineCol += eLineCol * lineGlow(ro, rd, e4, e0, 0.5) * 0.25;
+            
+            // === NUCLEUS FRACTAL ===
+            vec3 nucleusCol = vec3(0.0);
+            float glowAccum = 0.0;
+            
+            float depth = 0.0;
+            float lastD = 1000.0;
+            float stepsSinceHit = 100.0;
+            
+            for(int i = 0; i < 60; i++) {
+                if(depth > 25.0) break;
+                
+                vec3 p = ro + rd * depth;
+                vec3 result = fractalShape(p, t);
+                float d = result.x;
+                
+                glowAccum += exp(-abs(d) * 10.0) * 0.025;
+                
+                stepsSinceHit += 1.0;
+                
+                bool surfaceHit = abs(d) < 0.005;
+                bool crossedSurface = lastD * d < 0.0;
+                
+                if((surfaceHit || crossedSurface) && stepsSinceHit > 2.0) {
+                    stepsSinceHit = 0.0;
+                    
+                    vec3 n = calcNormal(p);
+                    float fresnel = pow(1.0 - abs(dot(n, -rd)), 2.0);
+                    
+                    float wire = fresnel * 0.8 + result.y * 0.25;
+                    wire = clamp(wire, 0.0, 1.0);
+                    
+                    float colorVal = result.z * 0.5 + t * 0.02;
+                    vec3 wireCol = palette(colorVal);
+                    
+                    float depthFade = exp(-depth * 0.08);
+                    vec3 layerCol = wireCol * wire * 1.2;
+                    layerCol += vec3(1.0) * pow(wire, 3.0) * 0.2;
+                    layerCol *= depthFade;
+                    
+                    float alpha = (wire * 0.5 + 0.1) * depthFade;
+                    
+                    nucleusCol = mix(nucleusCol, blendMix(nucleusCol, layerCol, t), alpha);
+                }
+                
+                lastD = d;
+                depth += max(abs(d) * 0.8, 0.02);
+            }
+            
+            // Nucleus glow
+            vec3 nucleusGlow = palette(t * 0.03) * glowAccum;
+            nucleusCol = blendMix(nucleusCol, nucleusGlow, t);
+            
+            // === COMPOSITE ===
+            col = blendMix(col, lineCol, t);
+            col = blendMix(col, particleCol * 0.9, t);
+            col = blendMix(col, nucleusCol, t);
+            
+            // Central glow
+            float centralGlow = exp(-length(uv) * 1.5) * 0.12;
+            col += palette(t * 0.015) * centralGlow;
+            
+            // Orbital ring hints
+            float ring1 = abs(length(uv) - 0.35);
+            float ring2 = abs(length(uv) - 0.55);
+            col += vec3(0.15, 0.2, 0.3) * exp(-ring1 * 40.0) * 0.12;
+            col += vec3(0.1, 0.15, 0.25) * exp(-ring2 * 40.0) * 0.08;
+            
+            // Vignette
+            col *= 1.0 - 0.35 * dot(uv, uv);
+            
+            // Tone map + gamma
+            col = col / (0.9 + col);
+            col = pow(col, vec3(0.45));
+            
+            gl_FragColor = vec4(col, 1.0);
+        }
+    `;
+
+    function compile(src, type) {
+        const s = gl.createShader(type);
+        gl.shaderSource(s, src);
+        gl.compileShader(s);
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+            console.error(gl.getShaderInfoLog(s));
+            return null;
+        }
+        return s;
+    }
+
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compile(vs, gl.VERTEX_SHADER));
+    gl.attachShader(prog, compile(fs, gl.FRAGMENT_SHADER));
+    gl.linkProgram(prog);
+
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
+
+    const pLoc = gl.getAttribLocation(prog, 'p');
+    const tLoc = gl.getUniformLocation(prog, 't');
+    const rLoc = gl.getUniformLocation(prog, 'r');
+
+    function resize() {
+        const dpr = Math.min(devicePixelRatio, 1.5);
+        canvas.width = innerWidth * dpr;
+        canvas.height = innerHeight * dpr;
+        canvas.style.width = innerWidth + 'px';
+        canvas.style.height = innerHeight + 'px';
+        gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+    addEventListener('resize', resize);
+    resize();
+
+    const start = performance.now();
+    function frame() {
+        const time = (performance.now() - start) / 1000;
+        
+        gl.useProgram(prog);
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.enableVertexAttribArray(pLoc);
+        gl.vertexAttribPointer(pLoc, 2, gl.FLOAT, false, 0, 0);
+        gl.uniform1f(tLoc, time);
+        gl.uniform2f(rLoc, canvas.width, canvas.height);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        
+        requestAnimationFrame(frame);
+    }
+    frame();
+
+    canvas.ondblclick = () => {
+        if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+        else document.exitFullscreen();
+    };
+    </script>
+</body>
+</html>

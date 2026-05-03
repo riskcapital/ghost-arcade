@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VJ Mode — Shrink Wrap Docs</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="../favicon-32x32.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Newsreader:ital,wght@0,300;0,400;1,300;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="docs-styles.css">
+</head>
+<body data-theme="dark">
+
+    <!-- Nav -->
+    <nav class="docs-nav">
+        <div class="docs-nav-left">
+            <a href="../index.html" class="docs-nav-logo"><img src="../logo.png" alt="Shrink Wrap"></a>
+            <a href="../index.html" class="docs-nav-back">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+                Back to site
+            </a>
+            <span class="docs-nav-title">Documentation</span>
+        </div>
+        <div class="docs-nav-right">
+            <button class="docs-theme-toggle" id="docsThemeToggle">
+                <svg id="docsThemeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"></svg>
+                <span id="docsThemeLabel">Dark</span>
+            </button>
+        </div>
+    </nav>
+
+    <button class="sidebar-toggle" id="sidebarToggle">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+        </svg>
+    </button>
+
+    <div class="docs-layout">
+        <aside class="docs-sidebar">
+            <div class="sidebar-section">
+                <div class="sidebar-label">VJ Mode</div>
+                <a href="#overview" class="sidebar-sublink">Overview</a>
+                <a href="#clip-launcher" class="sidebar-sublink">Clip Launcher</a>
+                <a href="#loading-clips" class="sidebar-sublink">Loading Clips</a>
+                <a href="#triggering" class="sidebar-sublink">Triggering &amp; Crossfading</a>
+                <a href="#compositions" class="sidebar-sublink">Compositions</a>
+                <a href="#stage-presets" class="sidebar-sublink">Stage Presets</a>
+                <a href="#sequencer" class="sidebar-sublink">Layer Sequencer</a>
+                <a href="#bpm" class="sidebar-sublink">BPM &amp; Timing</a>
+            </div>
+            <div class="sidebar-divider"></div>
+            <div class="sidebar-section">
+                <div class="sidebar-label">All Docs</div>
+                <a href="index.html" class="sidebar-link">Overview</a>
+                <a href="getting-started.html" class="sidebar-link">Getting Started</a>
+                <a href="layers.html" class="sidebar-link">Layer Types</a>
+                <a href="effects.html" class="sidebar-link">Effects Pipeline</a>
+                <a href="vj-mode.html" class="sidebar-link current-page">VJ Mode</a>
+                <a href="synthvision.html" class="sidebar-link">SynthVision</a>
+                <a href="projection-mapping.html" class="sidebar-link">Projection Mapping</a>
+                <a href="midi-audio.html" class="sidebar-link">MIDI &amp; Audio</a>
+                <a href="mobile-control.html" class="sidebar-link">Mobile Control</a>
+                <a href="recording-output.html" class="sidebar-link">Recording &amp; Output</a>
+            </div>
+        </aside>
+
+        <main class="docs-content">
+            <div class="docs-breadcrumb">
+                <a href="index.html">Docs</a> <span>/</span> <span>VJ Mode</span>
+            </div>
+
+            <h1>VJ Mode</h1>
+            <p class="page-description">
+                A professional clip launcher for live visual performance. Trigger clips, manage compositions, and automate layer sequences in real-time.
+            </p>
+
+            <h2 id="overview">Overview</h2>
+            <p>VJ Mode transforms Shrink Wrap from a composition tool into a live performance instrument. Switch to VJ Mode by pressing <kbd>Tab</kbd> or clicking the <strong>VJ Mode</strong> button in the toolbar.</p>
+            <p>In VJ Mode, you get a 16-channel clip launcher grid (4 layers x 8 columns), composition management, stage presets for instant scene switching, and a beat-synced layer sequencer.</p>
+
+            <h2 id="clip-launcher">Clip Launcher</h2>
+            <p>The clip launcher is a grid of triggerable visual clips, organized into 4 layer rows with 8 clip slots each. Each row corresponds to a layer in your composition — triggering a clip in a row replaces the active visual on that layer.</p>
+
+            <h3>Grid Layout</h3>
+            <table class="param-table">
+                <thead><tr><th>Property</th><th>Value</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>Rows</strong></td><td>4 (one per layer)</td></tr>
+                    <tr><td><strong>Columns</strong></td><td>8 (clip slots per layer)</td></tr>
+                    <tr><td><strong>Total Clips</strong></td><td>32 per composition</td></tr>
+                </tbody>
+            </table>
+
+            <p>Each clip slot can hold any type of layer content: a shader, media file, 3D model, or any other layer type. The clip retains all parameter settings, effects, and warp configurations.</p>
+
+            <h2 id="loading-clips">Loading Clips</h2>
+            <p>To load content into a clip slot:</p>
+            <ol>
+                <li><strong>Right-click</strong> on an empty clip slot in the grid</li>
+                <li>Select the layer type you want to load (ISF Shader, Media, 3D Model, etc.)</li>
+                <li>Configure the content using the properties panel that appears</li>
+                <li>The clip thumbnail updates to show a preview of the content</li>
+            </ol>
+
+            <p>You can also <strong>drag content</strong> from your mapping layers directly into VJ clip slots. This copies the entire layer configuration including all effects and settings.</p>
+
+            <div class="callout tip">
+                <div class="callout-label">Tip</div>
+                <p>Pre-load all your clips before a performance. Each clip stores its full configuration, so switching between clips is instantaneous with no loading delay.</p>
+            </div>
+
+            <h2 id="triggering">Triggering &amp; Crossfading</h2>
+            <p>Click any clip in the grid to trigger it. The clip immediately starts rendering on its layer row. The previously active clip on that row is replaced.</p>
+
+            <h3>Crossfade</h3>
+            <p>Clips can crossfade between each other for smooth transitions. The crossfade duration is configurable per layer and applies whenever you switch clips on that row.</p>
+
+            <h3>Empty Slots</h3>
+            <p>Clicking an empty slot or the currently active clip will clear that layer, making it transparent.</p>
+
+            <h2 id="compositions">Compositions</h2>
+            <p>A composition is a saved state of the entire clip launcher grid. It remembers which clips are loaded in all 32 slots and which clips are currently active.</p>
+
+            <h3>Saving a Composition</h3>
+            <ol>
+                <li>Set up your clip grid with all the content you need</li>
+                <li>Click <strong>Save Composition</strong> in the VJ panel</li>
+                <li>Name your composition</li>
+                <li>The composition is stored in your project file</li>
+            </ol>
+
+            <h3>Loading a Composition</h3>
+            <p>Select a composition from the dropdown to load it. All 32 clip slots are restored to their saved state. The currently active clips begin rendering immediately.</p>
+
+            <h2 id="stage-presets">Stage Presets</h2>
+            <p>Stage presets go beyond compositions — they save and recall the complete state of all mapping layers, including every parameter, effect chain, warp configuration, and blend mode.</p>
+
+            <h3>Creating a Stage Preset</h3>
+            <ol>
+                <li>Configure your entire visual setup across all layers</li>
+                <li>Open the <strong>Stage Presets</strong> panel</li>
+                <li>Click <strong>Save Preset</strong> and give it a name</li>
+                <li>The preset captures the full state of every layer</li>
+            </ol>
+
+            <h3>Recalling a Stage Preset</h3>
+            <p>Click any saved preset to instantly switch your entire visual output. This is perfect for scene changes during a live show — one click changes everything.</p>
+
+            <div class="callout tip">
+                <div class="callout-label">Tip</div>
+                <p>Create stage presets for each section of your show (intro, verse, chorus, breakdown, finale). During performance, you can switch entire visual environments with a single click or MIDI trigger.</p>
+            </div>
+
+            <h2 id="sequencer">Layer Sequencer</h2>
+            <p>The layer sequencer automates layer visibility and transitions over time, synced to your BPM. Use it to create evolving visual sequences that run automatically during a performance.</p>
+
+            <h3>Timeline</h3>
+            <p>Each layer gets a timeline track showing when it's visible (active) and when it's hidden. Click on the timeline to toggle visibility at specific beat positions.</p>
+
+            <h3>Quantization</h3>
+            <p>All sequencer actions snap to the current beat grid. This ensures your visual changes are perfectly synchronized with the music. Supported quantization values include whole notes, half notes, quarter notes, and eighth notes.</p>
+
+            <h3>Loop</h3>
+            <p>The sequencer loops at a configurable length (default: 8 bars). When the playhead reaches the end, it wraps back to the beginning for continuous automated performance.</p>
+
+            <h2 id="bpm">BPM &amp; Timing</h2>
+            <p>Set the global BPM (beats per minute) to synchronize the sequencer and any tempo-synced effects with your music.</p>
+
+            <table class="param-table">
+                <thead><tr><th>Parameter</th><th>Range</th><th>Description</th></tr></thead>
+                <tbody>
+                    <tr><td class="param-name">BPM</td><td>20 - 300</td><td>Beats per minute for sequencer and tempo-synced effects</td></tr>
+                    <tr><td class="param-name">Time Signature</td><td>2/4, 3/4, 4/4, 6/8</td><td>Beat grouping for the sequencer grid</td></tr>
+                    <tr><td class="param-name">Tap Tempo</td><td>—</td><td>Tap a button in time with the music to set BPM</td></tr>
+                </tbody>
+            </table>
+
+            <div class="callout tip">
+                <div class="callout-label">Tip</div>
+                <p>Use tap tempo to match BPM with a live DJ or band. Tap along with the beat for 4-8 beats and the BPM will be calculated automatically.</p>
+            </div>
+
+            <!-- Pagination -->
+            <div class="docs-pagination">
+                <a href="effects.html" class="prev">
+                    <span class="pagination-label">Previous</span>
+                    <span class="pagination-title">Effects Pipeline</span>
+                </a>
+                <a href="synthvision.html" class="next">
+                    <span class="pagination-label">Next</span>
+                    <span class="pagination-title">SynthVision Performer</span>
+                </a>
+            </div>
+
+            <div class="docs-footer">
+                <span>&copy; 2026 Shrink Wrap &mdash; <a href="https://riskcapital.io" target="_blank">A Risk Capital Experience</a></span>
+            </div>
+        </main>
+    </div>
+
+    <script src="docs-nav.js"></script>
+</body>
+</html>

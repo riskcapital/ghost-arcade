@@ -1,0 +1,42 @@
+node_modules/
+dist/
+dist-electron*/
+dist-release/
+.vite/
+*.log
+.DS_Store
+Thumbs.db
+
+# Tauri build artifacts
+src-tauri/target/
+
+# Electron native addon build artifacts
+electron/native/build/
+electron/native/node_modules/
+
+# Environment files
+.env
+.env.local
+
+# Secrets (never commit)
+stripe.txt
+*.secret
+*.secrets
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+*.swp
+*~
+nul
+public/models/
+
+# Diagnostic/build output captures (one-off artifacts)
+check_*.txt
+build_output*.txt
+shader-audit.md
+effect-audit.md
+
+.vercel

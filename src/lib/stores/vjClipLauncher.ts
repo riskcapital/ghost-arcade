@@ -1,0 +1,1968 @@
+// VJ Clip Launcher Store
+// Manages the clip grid state for the VJ clip launcher workflow
+// Works with shaders and videos directly (not compositions)
+
+import { writable, derived, get } from 'svelte/store';
+import type { BlendMode, Layer, MediaSource, Effect, JSAnimationSource, IntegratedEffectSource, SplatContent, Model3DContent, ISFInputDef } from '../types';
+import { createDefaultSplatContent, createDefaultModel3DContent } from '../types';
+import { createThreeJSIframeContext, getThreeJSIframeContext, createJSAnimationContext } from '../renderer/engine';
+import { keyframeTimeline } from './keyframeTimeline';
+import { parseISF } from '../isf/parser';
+
+// Cache parsed ISF shader inputs per shader code to avoid re-parsing every frame
+const vjShaderInputCache = new Map<string, ISFInputDef[]>();
+function getShaderInputs(shaderCode: string | undefined): ISFInputDef[] | undefined {
+  if (!shaderCode) return undefined;
+  const cached = vjShaderInputCache.get(shaderCode);
+  if (cached) return cached;
+  try {
+    const parsed = parseISF(shaderCode);
+    const inputs = (parsed?.metadata?.INPUTS || []) as ISFInputDef[];
+    vjShaderInputCache.set(shaderCode, inputs);
+    return inputs;
+  } catch {
+    return undefined;
+  }
+}
+
+// Default dimensions for the clip grid (user can add/remove dynamically)
+export const DEFAULT_VJ_LAYERS = 4;
+export const DEFAULT_VJ_COLUMNS = 8;
+export const MAX_VJ_LAYERS = 32;
+export const MAX_VJ_COLUMNS = 64;
+
+// Backward-compat aliases — existing imports still work
+export const NUM_VJ_LAYERS = DEFAULT_VJ_LAYERS;
+export const NUM_VJ_COLUMNS = DEFAULT_VJ_COLUMNS;
+
+// A clip in the grid - can be a shader, video, image, three.js HTML, AI-generated JS animation, Spout source, integrated effect, point cloud, or 3D model
+export interface VJClip {
+  id: string;
+  type: 'shader' | 'video' | 'image' | 'threejs' | 'p5js' | 'jsanimation' | 'synthvision' | 'spout' | 'effect' | 'splat' | 'model3d';
+  name: string;
+  src: string;
+  thumbnail?: string;
+  // For shaders
+  shaderCode?: string;
+  shaderValues?: Record<string, any>;
+  // For videos
+  videoElement?: HTMLVideoElement;
+  // For three.js - iframe element for rendering
+  iframeElement?: HTMLIFrameElement;
+  // For AI-generated JS animations (Three.js or p5.js)
+  jsAnimation?: JSAnimationSource;
+  // For Performer - offscreen canvas
+  synthVisionCanvas?: HTMLCanvasElement;
+  // For Spout sources (FluidGen, Particles3D plugins) - legacy
+  spoutSource?: string;
+  // For integrated effects (FluidGen, Particles3D running natively in WebGL)
+  effectSource?: IntegratedEffectSource;
+  // For point cloud / splat clips
+  splatContent?: SplatContent;
+  // For 3D model clips
+  model3dContent?: Model3DContent;
+  // Per-clip effects
+  effects?: Effect[];
+}
+
+// A block contains a named collection of clips (8 columns x 4 layers).
+// When the A/B crossfader is enabled the block also carries a parallel
+// bankBClipGrid so each block is a self-contained A+B scene that switches
+// together when the user activates it. bankBClipGrid is optional — older
+// blocks (pre-v0.3.8) won't have it; lazy-init to an empty grid on first
+// access.
+export interface VJBlock {
+  id: string;
+  name: string;
+  clipGrid: (VJClip | null)[][];
+  bankBClipGrid?: (VJClip | null)[][];
+}
+
+// VJ Layer state (per layer). Bank A and Bank B each get their own parallel
+// VJLayerState array — see `layerStates` (Bank A) and `bankBLayerStates`
+// (Bank B) on the launcher state. Per-deck independence is total: opacity,
+// solo, mute, blend, effects, and the active clip are all separate.
+export interface VJLayerState {
+  opacity: number;
+  blendMode: BlendMode;
+  solo: boolean;
+  mute: boolean;
+  activeColumn: number | null; // Which column is currently active (null = none) - used for visual indication in current block
+  activeClip: VJClip | null; // The actual clip playing on this layer (persists across block switches)
+  effects: Effect[];
+}
+
+// Convenience: a deck identifier. Bank A is the default deck and is always
+// active. Bank B exists in parallel but only feeds the output when the
+// crossfader is enabled.
+export type VJDeck = 'A' | 'B';
+
+// All transition shaders the crossfader can use. Order here matters —
+// the UI cycles through this array.
+export type CrossfaderTransition =
+  | 'dissolve'
+  | 'wipe'
+  | 'rgb-split'
+  | 'cube'
+  | 'shatter'
+  | 'halftone'
+  | 'glitch'
+  | 'liquid'
+  | 'strobe'
+  | 'slide';
+
+export type CrossfaderCurve = 'linear' | 'constant-power' | 'sharp-cut';
+
+// Output blend mode for the dual-deck composite. The transition shader
+// (dissolve/wipe/etc.) handles the *shape* of the A↔B journey; the blend
+// mode determines the *mathematical combination* of A and B at any
+// fragment where both contribute. With 'normal' the transition output is
+// used verbatim. With multiply/screen/add/etc., the output sweeps
+// A → blend(A,B) → B as the fader moves 0 → 0.5 → 1, giving the operator
+// a creative knob beyond the transition style.
+export type CrossfaderBlendMode =
+  | 'normal'
+  | 'multiply'
+  | 'screen'
+  | 'add'
+  | 'difference'
+  | 'darken'
+  | 'lighten'
+  | 'overlay'
+  | 'exclusion';
+
+// Quantization grid for clip launch. 'off' = instant trigger (current
+// behavior), anything else schedules the trigger to fire on the next
+// matching beat boundary.
+//   1/4   → next quarter note      (1 beat in 4/4)
+//   1/2   → next half note         (2 beats)
+//   1bar  → next downbeat          (4 beats)
+//   2bar  → next 2-bar boundary    (8 beats)
+//   4bar  → next 4-bar boundary    (16 beats)
+export type QuantizationGrid = 'off' | '1/4' | '1/2' | '1bar' | '2bar' | '4bar';
+
+// A clip waiting in the quantization queue. When the wall-clock time
+// reaches `fireAt`, the launcher pops it and fires immediately.
+export interface PendingTrigger {
+  id: string;
+  layerIndex: number;
+  columnIndex: number;
+  bank: VJDeck;
+  fireAt: number;        // performance.now() target (ms)
+  queuedAt: number;      // performance.now() when queued (for UI countdown)
+}
+
+// The full clip launcher state
+export interface VJClipLauncherState {
+  // Dynamic grid dimensions (user can add/remove layers & columns)
+  numLayers: number;
+  numColumns: number;
+  // Blocks - each block has its own clip grid
+  blocks: VJBlock[];
+  // Currently active block ID
+  activeBlockId: string;
+  // ===== Bank A (default deck — always active) =====
+  // Grid of clips [layerIndex][columnIndex] - computed from active block
+  clipGrid: (VJClip | null)[][];
+  // State per layer
+  layerStates: VJLayerState[];
+
+  // ===== Bank B (parallel deck — only feeds output when crossfaderEnabled) =====
+  // Bank B has its own clip grid (separate from Bank A's blocks) and its own
+  // per-layer state. State is preserved when the crossfader toggles off so
+  // the user can flip back on without losing their B-side setup.
+  bankBClipGrid: (VJClip | null)[][];
+  bankBLayerStates: VJLayerState[];
+  // Which deck the parameter panel / keyframe timeline / clip preview should
+  // follow when the crossfader is on. Ignored when crossfader is off.
+  selectedDeck: VJDeck;
+
+  // Master opacity
+  masterOpacity: number;
+  // Whether VJ mode is open
+  isOpen: boolean;
+  // Whether VJ mode is driving the output (live)
+  isLive: boolean;
+  // Composition-level effects (applied to final composite output)
+  compositionEffects: Effect[];
+  // Stage mode: bridge VJ layers to mapping layers
+  stageMode: boolean;
+  stagePresetId: string | null;
+  // Stop-all blackout: when true, all VJ output is suppressed (black)
+  // Auto-clears when any clip is launched
+  stoppedAll: boolean;
+  // Currently selected VJ layer index (for parameter panel + keyframe timeline)
+  selectedLayerIndex: number | null;
+  // ===== Crossfader (A/B mixing) =====
+  // When enabled, the UI shows two complete decks side-by-side. Bank A reads
+  // from layerStates + clipGrid; Bank B reads from bankBLayerStates +
+  // bankBClipGrid. The render engine composites both banks to separate
+  // FBOs and mixes them via the chosen transition shader, controlled by
+  // crossfaderValue (0.0 = pure A, 1.0 = pure B).
+  crossfaderEnabled: boolean;
+  crossfaderValue: number;             // 0..1
+  crossfaderTransition: CrossfaderTransition;
+  crossfaderCurve: CrossfaderCurve;    // shapes the fader response
+  crossfaderBlendMode: CrossfaderBlendMode; // A↔B math at the mix point
+
+  // ===== Launch quantization =====
+  // Schedules clip triggers to land on a beat grid for tight musical
+  // launches. 'off' is instant — same behavior the launcher had before
+  // quantization existed, so beginners don't get a "why isn't my clip
+  // playing?" surprise.
+  quantization: QuantizationGrid;
+  // Queue of clips waiting to fire on the next matching boundary. Each
+  // entry is its own pending trigger (same clip can be queued multiple
+  // times — useful for re-arming during a build-up). Click-the-queued-
+  // clip-again behaves as "cancel the queued trigger".
+  pendingTriggers: PendingTrigger[];
+}
+
+// UUID generator with fallback for insecure contexts (mobile HTTP)
+function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  // Fallback for browsers that don't support crypto.randomUUID (e.g., mobile HTTP)
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
+// Create an empty clip grid with given dimensions
+function createEmptyClipGrid(numLayers: number = DEFAULT_VJ_LAYERS, numColumns: number = DEFAULT_VJ_COLUMNS): (VJClip | null)[][] {
+  return Array(numLayers).fill(null).map(() => Array(numColumns).fill(null));
+}
+
+// Create a new block with default name. Each block carries its own Bank A
+// AND Bank B clip grids — switching blocks swaps both banks together so a
+// "block" is a complete A+B scene.
+function createNewBlock(name: string = 'Block 1', numLayers: number = DEFAULT_VJ_LAYERS, numColumns: number = DEFAULT_VJ_COLUMNS): VJBlock {
+  return {
+    id: generateUUID(),
+    name,
+    clipGrid: createEmptyClipGrid(numLayers, numColumns),
+    bankBClipGrid: createEmptyClipGrid(numLayers, numColumns),
+  };
+}
+
+// Create a default layer state
+function createDefaultLayerState(): VJLayerState {
+  return {
+    opacity: 1,
+    blendMode: 'normal' as BlendMode,
+    solo: false,
+    mute: false,
+    activeColumn: null,
+    activeClip: null,
+    effects: [],
+  };
+}
+
+// Create default state
+function createDefaultState(): VJClipLauncherState {
+  const defaultBlock = createNewBlock('Block 1', DEFAULT_VJ_LAYERS, DEFAULT_VJ_COLUMNS);
+  return {
+    numLayers: DEFAULT_VJ_LAYERS,
+    numColumns: DEFAULT_VJ_COLUMNS,
+    blocks: [defaultBlock],
+    activeBlockId: defaultBlock.id,
+    clipGrid: defaultBlock.clipGrid,
+    layerStates: Array(DEFAULT_VJ_LAYERS).fill(null).map(() => createDefaultLayerState()),
+    // Bank B's clipGrid is the LIVE mirror of the active block's bankBClipGrid
+    // (parallel to how `clipGrid` mirrors activeBlock.clipGrid). Block switches
+    // re-point this; mutations write through to both.
+    bankBClipGrid: defaultBlock.bankBClipGrid!,
+    bankBLayerStates: Array(DEFAULT_VJ_LAYERS).fill(null).map(() => createDefaultLayerState()),
+    selectedDeck: 'A',
+    masterOpacity: 1,
+    isOpen: false,
+    isLive: false,
+    compositionEffects: [],
+    stageMode: false,
+    stagePresetId: null,
+    stoppedAll: false,
+    selectedLayerIndex: null,
+    crossfaderEnabled: false,
+    crossfaderValue: 0,
+    crossfaderTransition: 'dissolve',
+    crossfaderCurve: 'constant-power',
+    crossfaderBlendMode: 'normal',
+    // Default off so beginners get instant triggers without thinking about
+    // beat-sync. Pros switch this on once they're locked to a tempo source.
+    quantization: 'off',
+    pendingTriggers: [],
+  };
+}
+
+// ----- Internal helpers: pick the right slice of state for a given deck.
+// All bank-aware mutators below funnel through these so we don't duplicate
+// the routing logic.
+function pickGrid(state: VJClipLauncherState, deck: VJDeck): (VJClip | null)[][] {
+  return deck === 'B' ? state.bankBClipGrid : state.clipGrid;
+}
+function pickLayerStates(state: VJClipLauncherState, deck: VJDeck): VJLayerState[] {
+  return deck === 'B' ? state.bankBLayerStates : state.layerStates;
+}
+// Apply a fresh grid + fresh layerStates back to state, returning a new
+// state object. `newGrid` may be null to leave the grid unchanged.
+function withDeck(
+  state: VJClipLauncherState,
+  deck: VJDeck,
+  newLayerStates: VJLayerState[],
+  newGrid?: (VJClip | null)[][] | null
+): VJClipLauncherState {
+  if (deck === 'B') {
+    return {
+      ...state,
+      bankBLayerStates: newLayerStates,
+      ...(newGrid !== undefined && newGrid !== null ? { bankBClipGrid: newGrid } : {}),
+    };
+  }
+  return {
+    ...state,
+    layerStates: newLayerStates,
+    ...(newGrid !== undefined && newGrid !== null ? { clipGrid: newGrid } : {}),
+  };
+}
+
+// Write a fresh deck grid into the active block, updating the right slot
+// (clipGrid for Bank A, bankBClipGrid for Bank B). Returns a fresh blocks
+// array. Both banks live inside the block so each block is a complete A+B
+// scene that swaps together when the user activates it.
+function blocksWithDeckGrid(
+  state: VJClipLauncherState,
+  deck: VJDeck,
+  newGrid: (VJClip | null)[][]
+): VJBlock[] {
+  return state.blocks.map(block => {
+    if (block.id !== state.activeBlockId) return block;
+    if (deck === 'A') {
+      return { ...block, clipGrid: newGrid.map(row => [...row]) };
+    }
+    return { ...block, bankBClipGrid: newGrid.map(row => [...row]) };
+  });
+}
+
+// ─── Quantization clock helpers ──────────────────────────────────────────
+//
+// Two ground truths for "where are we in the bar":
+//   1) Audio is active + has detected beats → anchor to the most recent
+//      detected beat using audioStore.beat.timeSinceLastBeat. This stays
+//      tight even if BPM drifts because we measure against a real beat.
+//   2) Audio is off (or no beats detected yet) → run a virtual clock at
+//      the current manual/auto BPM with a fixed epoch. Beginners who tap
+//      a tempo without enabling audio still get usable quantization.
+//
+// `quantClockEpoch` is the wall-clock time the virtual clock started — it
+// only matters for branch (2) but stays stable across BPM changes so the
+// fader doesn't jump on every tempo tweak.
+
+import { get as getStore } from 'svelte/store';
+import { audioStore } from './audio';
+
+const QUANT_CLOCK_EPOCH = performance.now();
+
+/** Convert a quantization grid label to its size in beats (4/4 assumed). */
+function gridToBeats(grid: QuantizationGrid): number {
+  switch (grid) {
+    case '1/4':  return 1;
+    case '1/2':  return 2;
+    case '1bar': return 4;
+    case '2bar': return 8;
+    case '4bar': return 16;
+    default:     return 0;
+  }
+}
+
+/**
+ * Compute the next wall-clock time (performance.now() ms) that aligns to
+ * the requested grid. Returns the current time if grid is 'off' so callers
+ * can use the same code path for unscheduled triggers.
+ */
+function nextQuantumWallTime(grid: QuantizationGrid): number {
+  const now = performance.now();
+  const beats = gridToBeats(grid);
+  if (beats === 0) return now;
+
+  const audio = getStore(audioStore);
+  // Resolve BPM with manual override > auto-detected > fallback 120
+  const bpm = audio.manualBPM || audio.bpm || 120;
+  if (bpm <= 0) return now;
+  const beatMs = 60000 / bpm;
+
+  // Anchor approach: find the wall-clock time of "beat 0" (the reference
+  // downbeat the clock counts from), then forward to the next boundary.
+  let anchorMs: number;
+  let anchorBeatPos: number;
+
+  if (audio.isActive && audio.beat.beatCount > 0 && audio.beat.timeSinceLastBeat >= 0) {
+    // Snap anchor to the most recent detected beat. timeSinceLastBeat is
+    // in seconds; convert to ms.
+    anchorMs = now - audio.beat.timeSinceLastBeat * 1000;
+    anchorBeatPos = audio.beat.beatCount;  // integer beat at anchorMs
+  } else {
+    // Virtual clock: anchor at the launcher's epoch, beat 0.
+    anchorMs = QUANT_CLOCK_EPOCH;
+    anchorBeatPos = 0;
+  }
+
+  // How many beats have elapsed since the anchor (float)?
+  const elapsedBeats = (now - anchorMs) / beatMs;
+  const currentBeatPos = anchorBeatPos + elapsedBeats;
+
+  // +epsilon so triggers fired exactly on the boundary don't get
+  // re-scheduled to the SAME boundary (would fire instantly, defeating
+  // the point of quantization).
+  const targetBeatPos = Math.ceil((currentBeatPos + 0.001) / beats) * beats;
+  const fireMs = anchorMs + (targetBeatPos - anchorBeatPos) * beatMs;
+  return fireMs;
+}
+
+// rAF tick state — only runs when there are pending triggers
+let quantTickHandle: number | null = null;
+function ensureQuantTickRunning(launcher: { update: any }) {
+  if (quantTickHandle !== null) return;
+  const tick = () => {
+    quantTickHandle = null;
+    let didFire = false;
+    let firedTriggers: PendingTrigger[] = [];
+    launcher.update((s: VJClipLauncherState) => {
+      if (s.pendingTriggers.length === 0) return s;
+      const now = performance.now();
+      const due: PendingTrigger[] = [];
+      const remaining: PendingTrigger[] = [];
+      for (const p of s.pendingTriggers) {
+        if (p.fireAt <= now) due.push(p);
+        else remaining.push(p);
+      }
+      if (due.length === 0) return s;
+      didFire = true;
+      firedTriggers = due;
+      return { ...s, pendingTriggers: remaining };
+    });
+    // Fire triggers OUTSIDE the update so the immediate trigger path
+    // (which itself calls update) doesn't recurse mid-mutation.
+    if (didFire) {
+      for (const t of firedTriggers) {
+        immediateTriggerClip(t.layerIndex, t.columnIndex, t.bank);
+      }
+    }
+    // Continue ticking if anything is still queued
+    const after = getStore(vjClipLauncher);
+    if (after.pendingTriggers.length > 0) {
+      quantTickHandle = requestAnimationFrame(tick);
+    }
+  };
+  quantTickHandle = requestAnimationFrame(tick);
+}
+
+/** Forward decl — populated below by createVJClipLauncherStore. */
+let immediateTriggerClip: (layerIndex: number, columnIndex: number, deck: VJDeck) => void = () => {};
+
+// Cache for video elements to persist playback
+const videoElementCache = new Map<string, HTMLVideoElement>();
+
+// Cache for VJ source objects (keeps textures persistent)
+const vjSourceCache = new Map<string, MediaSource>();
+
+// Create the store
+function createVJClipLauncherStore() {
+  const { subscribe, set, update } = writable<VJClipLauncherState>(createDefaultState());
+
+  // Wire the module-level immediateTriggerClip closure so triggerClip() can
+  // delegate to it AND so the rAF tick can fire queued triggers without
+  // needing access to the store closure scope.
+  immediateTriggerClip = (layerIndex, columnIndex, deck) => {
+    let didTrigger = false;
+    update(state => {
+      const targetGrid = pickGrid(state, deck);
+      const targetLayerStates = pickLayerStates(state, deck);
+      const newLayerStates = [...targetLayerStates];
+      const clip = targetGrid[layerIndex]?.[columnIndex];
+      if (!clip) return state;
+
+      const current = newLayerStates[layerIndex].activeClip;
+      // Click-the-already-playing-clip is idempotent so users don't
+      // accidentally re-trigger and reset keyframe time mid-show.
+      if (current && current.id === clip.id) return state;
+
+      newLayerStates[layerIndex] = {
+        ...newLayerStates[layerIndex],
+        activeColumn: columnIndex,
+        activeClip: clip,
+      };
+      didTrigger = true;
+      const next = withDeck(state, deck, newLayerStates);
+      return { ...next, stoppedAll: false };
+    });
+    if (didTrigger) {
+      keyframeTimeline.seek(0);
+      keyframeTimeline.play();
+    }
+  };
+
+  return {
+    subscribe,
+    set,
+    update,
+
+    // Reset to default state
+    reset() {
+      // Cleanup video elements
+      for (const video of videoElementCache.values()) {
+        video.pause();
+        video.src = '';
+      }
+      videoElementCache.clear();
+      vjSourceCache.clear();
+      set(createDefaultState());
+    },
+
+    // Set VJ mode open state
+    setOpen(isOpen: boolean) {
+      update(state => ({ ...state, isOpen }));
+    },
+
+    // Set a clip in the grid for the given deck. Bank A also writes through
+    // to the active block's persisted grid (Bank B has no block system).
+    setClip(layerIndex: number, columnIndex: number, clip: VJClip | null, deck: VJDeck = 'A') {
+      update(state => {
+        const targetGrid = pickGrid(state, deck);
+        const newGrid = targetGrid.map(row => [...row]);
+
+        // If setting a video, create/get the video element
+        if (clip && clip.type === 'video') {
+          let videoEl = videoElementCache.get(clip.id);
+          if (!videoEl) {
+            videoEl = document.createElement('video');
+            videoEl.src = clip.src;
+            videoEl.loop = true;
+            videoEl.muted = true;
+            videoEl.play().catch(e => console.warn('Video autoplay failed:', e));
+            videoElementCache.set(clip.id, videoEl);
+          }
+          clip.videoElement = videoEl;
+        }
+
+        // If setting a threejs clip (built-in), create/get the iframe context
+        if (clip && clip.type === 'threejs') {
+          const context = createThreeJSIframeContext(clip.id, clip.src);
+          clip.iframeElement = context.iframe;
+        }
+
+        // If setting an AI-generated JS animation (threejs or p5js with jsAnimation)
+        if (clip && (clip.type === 'jsanimation' || clip.type === 'p5js') && clip.jsAnimation) {
+          const context = createJSAnimationContext(clip.id, clip.jsAnimation);
+          clip.iframeElement = context.iframe;
+        }
+
+        newGrid[layerIndex][columnIndex] = clip;
+
+        // Persist into the active block — both banks now live inside the
+        // block so each block is a complete A+B scene.
+        const newBlocks = state.blocks.map(block => {
+          if (block.id !== state.activeBlockId) return block;
+          if (deck === 'A') {
+            const blockGrid = block.clipGrid.map(row => [...row]);
+            blockGrid[layerIndex][columnIndex] = clip;
+            return { ...block, clipGrid: blockGrid };
+          }
+          // Bank B
+          const blockBankB = (block.bankBClipGrid ?? createEmptyClipGrid(state.numLayers, state.numColumns)).map(row => [...row]);
+          blockBankB[layerIndex][columnIndex] = clip;
+          return { ...block, bankBClipGrid: blockBankB };
+        });
+
+        if (deck === 'A') {
+          return { ...state, clipGrid: newGrid, blocks: newBlocks };
+        }
+        return { ...state, bankBClipGrid: newGrid, blocks: newBlocks };
+      });
+    },
+
+    // Clear a clip from the grid for the given deck
+    clearClip(layerIndex: number, columnIndex: number, deck: VJDeck = 'A') {
+      update(state => {
+        const targetGrid = pickGrid(state, deck);
+        const targetLayerStates = pickLayerStates(state, deck);
+
+        // Remove stale source cache entry for this clip (key includes bank
+        // suffix when in dual-bank mode)
+        const oldClip = targetGrid[layerIndex]?.[columnIndex];
+        if (oldClip) {
+          const bankSuffix = deck === 'B' ? '-B' : '';
+          vjSourceCache.delete(`vj-${layerIndex}${bankSuffix}-${oldClip.id}`);
+        }
+
+        const newGrid = targetGrid.map(row => [...row]);
+        newGrid[layerIndex][columnIndex] = null;
+
+        // If this was the active clip, deactivate it and clear the reference
+        const newLayerStates = [...targetLayerStates];
+        if (newLayerStates[layerIndex].activeColumn === columnIndex) {
+          newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeColumn: null, activeClip: null };
+        }
+
+        // Persist into the active block — both banks are part of the block.
+        const newBlocks = state.blocks.map(block => {
+          if (block.id !== state.activeBlockId) return block;
+          if (deck === 'A') {
+            const blockGrid = block.clipGrid.map(row => [...row]);
+            blockGrid[layerIndex][columnIndex] = null;
+            return { ...block, clipGrid: blockGrid };
+          }
+          const blockBankB = (block.bankBClipGrid ?? createEmptyClipGrid(state.numLayers, state.numColumns)).map(row => [...row]);
+          blockBankB[layerIndex][columnIndex] = null;
+          return { ...block, bankBClipGrid: blockBankB };
+        });
+
+        if (deck === 'A') {
+          return { ...state, clipGrid: newGrid, layerStates: newLayerStates, blocks: newBlocks };
+        }
+        return { ...state, bankBClipGrid: newGrid, bankBLayerStates: newLayerStates, blocks: newBlocks };
+      });
+    },
+
+    /** Clear all synthvision clips from the grid — called when VJ mode closes to prevent stale canvas refs.
+     * Sweeps BOTH banks since synthvision clips can exist independently in each deck. */
+    clearSynthVisionClips() {
+      update(state => {
+        let changed = false;
+
+        const newGridA = state.clipGrid.map((row, li) =>
+          row.map((clip, ci) => {
+            if (clip?.type === 'synthvision') {
+              vjSourceCache.delete(`vj-${li}-${clip.id}`);
+              changed = true;
+              return null;
+            }
+            return clip;
+          })
+        );
+
+        const newGridB = state.bankBClipGrid.map((row, li) =>
+          row.map((clip, ci) => {
+            if (clip?.type === 'synthvision') {
+              vjSourceCache.delete(`vj-${li}-B-${clip.id}`);
+              changed = true;
+              return null;
+            }
+            return clip;
+          })
+        );
+
+        if (!changed) return state;
+
+        const newLayerStatesA = state.layerStates.map((ls) => {
+          if (ls.activeClip?.type === 'synthvision') {
+            return { ...ls, activeColumn: null, activeClip: null };
+          }
+          return ls;
+        });
+        const newLayerStatesB = state.bankBLayerStates.map((ls) => {
+          if (ls.activeClip?.type === 'synthvision') {
+            return { ...ls, activeColumn: null, activeClip: null };
+          }
+          return ls;
+        });
+
+        return {
+          ...state,
+          clipGrid: newGridA,
+          layerStates: newLayerStatesA,
+          bankBClipGrid: newGridB,
+          bankBLayerStates: newLayerStatesB,
+        };
+      });
+    },
+
+    // Trigger a clip on the given deck.
+    //
+    // Behavior depends on `state.quantization`:
+    //   'off' → fires instantly (legacy / beginner path, no surprises)
+    //   '1/4' .. '4bar' → enqueues to fire on the next matching beat boundary
+    //
+    // Click-while-already-queued cancels the pending trigger (lets the
+    // user re-arm without firing). Bank B triggers work whether or not
+    // the crossfader is enabled so users can pre-arm Bank B before flipping.
+    triggerClip(layerIndex: number, columnIndex: number, deck: VJDeck = 'A') {
+      const state = get({ subscribe });
+      const grid = state.quantization;
+
+      // Off → instant path
+      if (grid === 'off') {
+        immediateTriggerClip(layerIndex, columnIndex, deck);
+        return;
+      }
+
+      // Validate the cell exists before queuing
+      const targetGrid = pickGrid(state, deck);
+      const clip = targetGrid[layerIndex]?.[columnIndex];
+      if (!clip) return;
+
+      // Click-the-queued-cell-again unqueues it. Lets the user pre-arm and
+      // back out without firing.
+      const existingIdx = state.pendingTriggers.findIndex(
+        p => p.layerIndex === layerIndex && p.columnIndex === columnIndex && p.bank === deck
+      );
+      if (existingIdx >= 0) {
+        update(s => ({
+          ...s,
+          pendingTriggers: s.pendingTriggers.filter((_, i) => i !== existingIdx),
+        }));
+        return;
+      }
+
+      const fireAt = nextQuantumWallTime(grid);
+      const queuedAt = performance.now();
+      update(s => ({
+        ...s,
+        pendingTriggers: [
+          ...s.pendingTriggers,
+          { id: generateUUID(), layerIndex, columnIndex, bank: deck, fireAt, queuedAt },
+        ],
+      }));
+      ensureQuantTickRunning({ update });
+    },
+
+    /** Fire a clip immediately, bypassing quantization. Used by both the
+     *  'off' path and by the rAF tick when a queued trigger comes due. */
+    triggerClipNow(layerIndex: number, columnIndex: number, deck: VJDeck = 'A') {
+      immediateTriggerClip(layerIndex, columnIndex, deck);
+    },
+
+    // Trigger an entire column on the given deck (all layers at once)
+    triggerColumn(columnIndex: number, deck: VJDeck = 'A') {
+      let didTrigger = false;
+      update(state => {
+        const targetGrid = pickGrid(state, deck);
+        const targetLayerStates = pickLayerStates(state, deck);
+        const newLayerStates = targetLayerStates.map((layerState, layerIndex) => {
+          const clip = targetGrid[layerIndex]?.[columnIndex];
+          if (clip) {
+            didTrigger = true;
+            return { ...layerState, activeColumn: columnIndex, activeClip: clip };
+          }
+          return layerState;
+        });
+
+        const next = withDeck(state, deck, newLayerStates);
+        return { ...next, stoppedAll: false };
+      });
+      if (didTrigger) {
+        keyframeTimeline.seek(0);
+        keyframeTimeline.play();
+      }
+    },
+
+    // Stop all clips on a layer for the given deck
+    stopLayer(layerIndex: number, deck: VJDeck = 'A') {
+      update(state => {
+        const targetLayerStates = pickLayerStates(state, deck);
+        const newLayerStates = [...targetLayerStates];
+        newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeColumn: null, activeClip: null };
+        return withDeck(state, deck, newLayerStates);
+      });
+    },
+
+    // Stop all clips on BOTH decks — suppresses all VJ output to black.
+    // Also flushes the pending-trigger queue so a panic STOP doesn't leave
+    // queued clips that fire seconds later when the bar boundary lands.
+    stopAll() {
+      update(state => {
+        const newLayerStatesA = state.layerStates.map(ls => ({ ...ls, activeColumn: null, activeClip: null }));
+        const newLayerStatesB = state.bankBLayerStates.map(ls => ({ ...ls, activeColumn: null, activeClip: null }));
+        return {
+          ...state,
+          layerStates: newLayerStatesA,
+          bankBLayerStates: newLayerStatesB,
+          stoppedAll: true,
+          pendingTriggers: [],
+        };
+      });
+    },
+
+    /** Set the launch quantization grid. 'off' fires triggers instantly
+     *  (beginner default). Any other value queues triggers to the next
+     *  matching beat boundary using the active BPM source (audio-anchored
+     *  when audio is detecting beats, virtual-clock from BPM otherwise).
+     *
+     *  Switching TO 'off' flushes the pending-trigger queue — otherwise
+     *  triggers queued at the previous grid would still fire seconds
+     *  later, looking like a ghost. Switching BETWEEN non-off grids
+     *  preserves the queue so users can shift from 1bar → 4bar mid-set
+     *  without re-arming. */
+    setQuantization(grid: QuantizationGrid) {
+      update(state => ({
+        ...state,
+        quantization: grid,
+        pendingTriggers: grid === 'off' ? [] : state.pendingTriggers,
+      }));
+    },
+
+    /** Cancel every queued trigger. Called by panic shortcuts and by
+     *  stopAll above. Pending triggers are non-destructive (no clips
+     *  have fired yet) so this is always safe. */
+    clearPendingTriggers() {
+      update(state => state.pendingTriggers.length === 0 ? state : { ...state, pendingTriggers: [] });
+    },
+
+    /** Cancel a specific queued trigger — for the cell-right-click "Cancel
+     *  queued" action and as the toggle-off path when the user clicks a
+     *  queued cell again (handled inline in triggerClip too). */
+    cancelPendingTrigger(layerIndex: number, columnIndex: number, deck: VJDeck = 'A') {
+      update(state => ({
+        ...state,
+        pendingTriggers: state.pendingTriggers.filter(
+          p => !(p.layerIndex === layerIndex && p.columnIndex === columnIndex && p.bank === deck)
+        ),
+      }));
+    },
+
+    // Set layer opacity for the given deck
+    setLayerOpacity(layerIndex: number, opacity: number, deck: VJDeck = 'A') {
+      update(state => {
+        const targetLayerStates = pickLayerStates(state, deck);
+        const newLayerStates = [...targetLayerStates];
+        newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], opacity: Math.max(0, Math.min(1, opacity)) };
+        return withDeck(state, deck, newLayerStates);
+      });
+    },
+
+    // Set layer blend mode for the given deck
+    setLayerBlendMode(layerIndex: number, blendMode: BlendMode, deck: VJDeck = 'A') {
+      update(state => {
+        const targetLayerStates = pickLayerStates(state, deck);
+        const newLayerStates = [...targetLayerStates];
+        newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], blendMode };
+        return withDeck(state, deck, newLayerStates);
+      });
+    },
+
+    // Toggle layer solo for the given deck
+    toggleLayerSolo(layerIndex: number, deck: VJDeck = 'A') {
+      update(state => {
+        const targetLayerStates = pickLayerStates(state, deck);
+        const newLayerStates = [...targetLayerStates];
+        newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], solo: !newLayerStates[layerIndex].solo };
+        return withDeck(state, deck, newLayerStates);
+      });
+    },
+
+    // Toggle layer mute for the given deck
+    toggleLayerMute(layerIndex: number, deck: VJDeck = 'A') {
+      update(state => {
+        const targetLayerStates = pickLayerStates(state, deck);
+        const newLayerStates = [...targetLayerStates];
+        newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], mute: !newLayerStates[layerIndex].mute };
+        return withDeck(state, deck, newLayerStates);
+      });
+    },
+
+    // Set master opacity
+    setMasterOpacity(opacity: number) {
+      update(state => ({ ...state, masterOpacity: Math.max(0, Math.min(1, opacity)) }));
+    },
+
+    // Toggle live mode
+    toggleLive() {
+      update(state => ({ ...state, isLive: !state.isLive }));
+    },
+
+    // Set live mode
+    setLive(isLive: boolean) {
+      update(state => ({ ...state, isLive }));
+    },
+
+    // Add effect to layer on the given deck
+    addLayerEffect(layerIndex: number, effect: Effect, deck: VJDeck = 'A') {
+      update(state => {
+        const targetLayerStates = pickLayerStates(state, deck);
+        const newLayerStates = [...targetLayerStates];
+        newLayerStates[layerIndex] = {
+          ...newLayerStates[layerIndex],
+          effects: [...newLayerStates[layerIndex].effects, effect]
+        };
+        return withDeck(state, deck, newLayerStates);
+      });
+    },
+
+    // Remove effect from layer on the given deck
+    removeLayerEffect(layerIndex: number, effectId: string, deck: VJDeck = 'A') {
+      update(state => {
+        const targetLayerStates = pickLayerStates(state, deck);
+        const newLayerStates = [...targetLayerStates];
+        newLayerStates[layerIndex] = {
+          ...newLayerStates[layerIndex],
+          effects: newLayerStates[layerIndex].effects.filter(e => e.id !== effectId)
+        };
+        return withDeck(state, deck, newLayerStates);
+      });
+    },
+
+    // Toggle effect enabled on the given deck
+    toggleLayerEffect(layerIndex: number, effectId: string, deck: VJDeck = 'A') {
+      update(state => {
+        const targetLayerStates = pickLayerStates(state, deck);
+        const newLayerStates = [...targetLayerStates];
+        newLayerStates[layerIndex] = {
+          ...newLayerStates[layerIndex],
+          effects: newLayerStates[layerIndex].effects.map(e =>
+            e.id === effectId ? { ...e, enabled: !e.enabled } : e
+          )
+        };
+        return withDeck(state, deck, newLayerStates);
+      });
+    },
+
+    // Update a single shader uniform value on the active clip of a layer (per deck)
+    updateActiveClipShaderValue(layerIndex: number, paramName: string, value: any, deck: VJDeck = 'A') {
+      update(state => {
+        const targetLayerStates = pickLayerStates(state, deck);
+        const targetGrid = pickGrid(state, deck);
+        const newLayerStates = [...targetLayerStates];
+        const activeClip = newLayerStates[layerIndex]?.activeClip;
+        if (!activeClip) return state;
+
+        const newClip = {
+          ...activeClip,
+          shaderValues: { ...(activeClip.shaderValues || {}), [paramName]: value },
+        };
+        newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
+
+        // Also update the clip in the deck's grid if it exists there
+        const newGrid = targetGrid.map(row => [...row]);
+        for (let col = 0; col < state.numColumns; col++) {
+          const gridClip = newGrid[layerIndex]?.[col];
+          if (gridClip && gridClip.id === activeClip.id) {
+            newGrid[layerIndex][col] = newClip;
+          }
+        }
+
+        return withDeck(state, deck, newLayerStates, newGrid);
+      });
+      // Auto-record keyframe if track is armed (keyed per-clip so switching clips shows independent keyframes)
+      const s = get({ subscribe });
+      const ls = deck === 'B' ? s.bankBLayerStates : s.layerStates;
+      const activeClipId = ls[layerIndex]?.activeClip?.id;
+      if (activeClipId && (typeof value === 'number' || typeof value === 'boolean')) {
+        keyframeTimeline.autoRecord(
+          `vj-${activeClipId}`,
+          `shader:${paramName}`,
+          value,
+          paramName,
+          typeof value === 'boolean' ? 'boolean' : 'number'
+        );
+      }
+    },
+
+    // Batch-update multiple shader values in a single store mutation (used by modulation engine)
+    batchUpdateShaderValues(layerIndex: number, values: Record<string, number>, deck: VJDeck = 'A') {
+      update(state => {
+        const targetLayerStates = pickLayerStates(state, deck);
+        const targetGrid = pickGrid(state, deck);
+        const newLayerStates = [...targetLayerStates];
+        const activeClip = newLayerStates[layerIndex]?.activeClip;
+        if (!activeClip) return state;
+
+        const newClip = {
+          ...activeClip,
+          shaderValues: { ...(activeClip.shaderValues || {}), ...values },
+        };
+        newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
+
+        // Sync clip in grid
+        const newGrid = targetGrid.map(row => [...row]);
+        for (let col = 0; col < state.numColumns; col++) {
+          const gridClip = newGrid[layerIndex]?.[col];
+          if (gridClip && gridClip.id === activeClip.id) {
+            newGrid[layerIndex][col] = newClip;
+          }
+        }
+
+        return withDeck(state, deck, newLayerStates, newGrid);
+      });
+    },
+
+    // Update splat content on the active clip of a layer (per deck)
+    updateActiveClipSplatContent(layerIndex: number, updates: Partial<SplatContent>, deck: VJDeck = 'A') {
+      update(state => {
+        const targetLayerStates = pickLayerStates(state, deck);
+        const targetGrid = pickGrid(state, deck);
+        const newLayerStates = [...targetLayerStates];
+        if (layerIndex < 0 || layerIndex >= newLayerStates.length) return state;
+        const activeClip = newLayerStates[layerIndex]?.activeClip;
+        if (!activeClip || activeClip.type !== 'splat') return state;
+
+        const newClip = {
+          ...activeClip,
+          splatContent: { ...(activeClip.splatContent || createDefaultSplatContent()), ...updates },
+        };
+        newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
+
+        const newGrid = targetGrid.map(row => [...row]);
+        for (let col = 0; col < state.numColumns; col++) {
+          const gridClip = newGrid[layerIndex]?.[col];
+          if (gridClip && gridClip.id === activeClip.id) {
+            newGrid[layerIndex][col] = newClip;
+          }
+        }
+
+        return withDeck(state, deck, newLayerStates, newGrid);
+      });
+    },
+
+    // Update model3d content on the active clip of a layer (per deck)
+    updateActiveClipModel3DContent(layerIndex: number, updates: Partial<Model3DContent>, deck: VJDeck = 'A') {
+      update(state => {
+        const targetLayerStates = pickLayerStates(state, deck);
+        const targetGrid = pickGrid(state, deck);
+        const newLayerStates = [...targetLayerStates];
+        if (layerIndex < 0 || layerIndex >= newLayerStates.length) return state;
+        const activeClip = newLayerStates[layerIndex]?.activeClip;
+        if (!activeClip || activeClip.type !== 'model3d') return state;
+
+        const newClip = {
+          ...activeClip,
+          model3dContent: { ...(activeClip.model3dContent || createDefaultModel3DContent()), ...updates },
+        };
+        newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
+
+        const newGrid = targetGrid.map(row => [...row]);
+        for (let col = 0; col < state.numColumns; col++) {
+          const gridClip = newGrid[layerIndex]?.[col];
+          if (gridClip && gridClip.id === activeClip.id) {
+            newGrid[layerIndex][col] = newClip;
+          }
+        }
+
+        return withDeck(state, deck, newLayerStates, newGrid);
+      });
+    },
+
+    // Update splat/model3d content on a specific clip in the grid (for file loading) — per deck.
+    // Writes through to the active block so swapping blocks preserves the loaded file.
+    updateClipSplatContent(layerIndex: number, columnIndex: number, updates: Partial<SplatContent>, deck: VJDeck = 'A') {
+      update(state => {
+        const targetGrid = pickGrid(state, deck);
+        const targetLayerStates = pickLayerStates(state, deck);
+        const newGrid = targetGrid.map(row => [...row]);
+        const clip = newGrid[layerIndex]?.[columnIndex];
+        if (!clip || clip.type !== 'splat') return state;
+
+        const newClip = {
+          ...clip,
+          splatContent: { ...(clip.splatContent || createDefaultSplatContent()), ...updates },
+        };
+        newGrid[layerIndex][columnIndex] = newClip;
+
+        const newLayerStates = [...targetLayerStates];
+        if (newLayerStates[layerIndex]?.activeClip?.id === clip.id) {
+          newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
+        }
+
+        const newBlocks = blocksWithDeckGrid(state, deck, newGrid);
+        const next = withDeck(state, deck, newLayerStates, newGrid);
+        return { ...next, blocks: newBlocks };
+      });
+    },
+
+    updateClipModel3DContent(layerIndex: number, columnIndex: number, updates: Partial<Model3DContent>, deck: VJDeck = 'A') {
+      update(state => {
+        const targetGrid = pickGrid(state, deck);
+        const targetLayerStates = pickLayerStates(state, deck);
+        const newGrid = targetGrid.map(row => [...row]);
+        const clip = newGrid[layerIndex]?.[columnIndex];
+        if (!clip || clip.type !== 'model3d') return state;
+
+        const newClip = {
+          ...clip,
+          model3dContent: { ...(clip.model3dContent || createDefaultModel3DContent()), ...updates },
+        };
+        newGrid[layerIndex][columnIndex] = newClip;
+
+        const newLayerStates = [...targetLayerStates];
+        if (newLayerStates[layerIndex]?.activeClip?.id === clip.id) {
+          newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
+        }
+
+        const newBlocks = blocksWithDeckGrid(state, deck, newGrid);
+        const next = withDeck(state, deck, newLayerStates, newGrid);
+        return { ...next, blocks: newBlocks };
+      });
+    },
+
+    updateClipEffectSource(layerIndex: number, columnIndex: number, effectSource: any, deck: VJDeck = 'A') {
+      update(state => {
+        const targetGrid = pickGrid(state, deck);
+        const targetLayerStates = pickLayerStates(state, deck);
+        const newGrid = targetGrid.map(row => [...row]);
+        const clip = newGrid[layerIndex]?.[columnIndex];
+        if (!clip || clip.type !== 'effect') return state;
+
+        const newClip = { ...clip, effectSource };
+        newGrid[layerIndex][columnIndex] = newClip;
+
+        const newLayerStates = [...targetLayerStates];
+        if (newLayerStates[layerIndex]?.activeClip?.id === clip.id) {
+          newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
+        }
+
+        const newBlocks = blocksWithDeckGrid(state, deck, newGrid);
+        const next = withDeck(state, deck, newLayerStates, newGrid);
+        return { ...next, blocks: newBlocks };
+      });
+    },
+
+    // Update effect params on a layer of the given deck
+    updateLayerEffectParams(layerIndex: number, effectId: string, params: Record<string, any>, deck: VJDeck = 'A') {
+      update(state => {
+        const targetLayerStates = pickLayerStates(state, deck);
+        const newLayerStates = [...targetLayerStates];
+        newLayerStates[layerIndex] = {
+          ...newLayerStates[layerIndex],
+          effects: newLayerStates[layerIndex].effects.map(e =>
+            e.id === effectId ? { ...e, params: { ...e.params, ...params } } : e
+          )
+        };
+        return withDeck(state, deck, newLayerStates);
+      });
+      // Auto-record keyframes for any armed effect parameter tracks (keyed per-clip)
+      const sFx = get({ subscribe });
+      const ls = deck === 'B' ? sFx.bankBLayerStates : sFx.layerStates;
+      const activeClipIdFx = ls[layerIndex]?.activeClip?.id;
+      if (activeClipIdFx) {
+        for (const [paramName, value] of Object.entries(params)) {
+          if (typeof value !== 'number' && typeof value !== 'boolean') continue;
+          const trackKey = `fx:${effectId}:${paramName}`;
+          keyframeTimeline.autoRecord(
+            `vj-${activeClipIdFx}`,
+            trackKey,
+            value,
+            paramName,
+            typeof value === 'boolean' ? 'boolean' : 'number'
+          );
+        }
+      }
+    },
+
+    // ========== Composition Effects ==========
+
+    addCompositionEffect(effect: Effect) {
+      update(state => ({
+        ...state,
+        compositionEffects: [...state.compositionEffects, effect]
+      }));
+    },
+
+    removeCompositionEffect(effectId: string) {
+      update(state => ({
+        ...state,
+        compositionEffects: state.compositionEffects.filter(e => e.id !== effectId)
+      }));
+    },
+
+    toggleCompositionEffect(effectId: string) {
+      update(state => ({
+        ...state,
+        compositionEffects: state.compositionEffects.map(e =>
+          e.id === effectId ? { ...e, enabled: !e.enabled } : e
+        )
+      }));
+    },
+
+    updateCompositionEffectParams(effectId: string, params: Record<string, any>) {
+      update(state => ({
+        ...state,
+        compositionEffects: state.compositionEffects.map(e =>
+          e.id === effectId ? { ...e, params: { ...e.params, ...params } } : e
+        )
+      }));
+    },
+
+    // ========== Clip Effects ==========
+
+    addClipEffect(layerIndex: number, columnIndex: number, effect: Effect, deck: VJDeck = 'A') {
+      update(state => {
+        const targetGrid = pickGrid(state, deck);
+        const targetLayerStates = pickLayerStates(state, deck);
+        const newGrid = targetGrid.map(row => [...row]);
+        const clip = newGrid[layerIndex]?.[columnIndex];
+        if (!clip) return state;
+        newGrid[layerIndex][columnIndex] = {
+          ...clip,
+          effects: [...(clip.effects || []), effect]
+        };
+        const newLayerStates = [...targetLayerStates];
+        if (newLayerStates[layerIndex].activeClip?.id === clip.id) {
+          newLayerStates[layerIndex] = {
+            ...newLayerStates[layerIndex],
+            activeClip: newGrid[layerIndex][columnIndex]
+          };
+        }
+        const newBlocks = blocksWithDeckGrid(state, deck, newGrid);
+        if (deck === 'A') {
+          return { ...state, clipGrid: newGrid, layerStates: newLayerStates, blocks: newBlocks };
+        }
+        return { ...state, bankBClipGrid: newGrid, bankBLayerStates: newLayerStates, blocks: newBlocks };
+      });
+    },
+
+    removeClipEffect(layerIndex: number, columnIndex: number, effectId: string, deck: VJDeck = 'A') {
+      update(state => {
+        const targetGrid = pickGrid(state, deck);
+        const targetLayerStates = pickLayerStates(state, deck);
+        const newGrid = targetGrid.map(row => [...row]);
+        const clip = newGrid[layerIndex]?.[columnIndex];
+        if (!clip) return state;
+        newGrid[layerIndex][columnIndex] = {
+          ...clip,
+          effects: (clip.effects || []).filter(e => e.id !== effectId)
+        };
+        const newLayerStates = [...targetLayerStates];
+        if (newLayerStates[layerIndex].activeClip?.id === clip.id) {
+          newLayerStates[layerIndex] = {
+            ...newLayerStates[layerIndex],
+            activeClip: newGrid[layerIndex][columnIndex]
+          };
+        }
+        const newBlocks = blocksWithDeckGrid(state, deck, newGrid);
+        if (deck === 'A') {
+          return { ...state, clipGrid: newGrid, layerStates: newLayerStates, blocks: newBlocks };
+        }
+        return { ...state, bankBClipGrid: newGrid, bankBLayerStates: newLayerStates, blocks: newBlocks };
+      });
+    },
+
+    toggleClipEffect(layerIndex: number, columnIndex: number, effectId: string, deck: VJDeck = 'A') {
+      update(state => {
+        const targetGrid = pickGrid(state, deck);
+        const targetLayerStates = pickLayerStates(state, deck);
+        const newGrid = targetGrid.map(row => [...row]);
+        const clip = newGrid[layerIndex]?.[columnIndex];
+        if (!clip) return state;
+        newGrid[layerIndex][columnIndex] = {
+          ...clip,
+          effects: (clip.effects || []).map(e =>
+            e.id === effectId ? { ...e, enabled: !e.enabled } : e
+          )
+        };
+        const newLayerStates = [...targetLayerStates];
+        if (newLayerStates[layerIndex].activeClip?.id === clip.id) {
+          newLayerStates[layerIndex] = {
+            ...newLayerStates[layerIndex],
+            activeClip: newGrid[layerIndex][columnIndex]
+          };
+        }
+        const newBlocks = blocksWithDeckGrid(state, deck, newGrid);
+        if (deck === 'A') {
+          return { ...state, clipGrid: newGrid, layerStates: newLayerStates, blocks: newBlocks };
+        }
+        return { ...state, bankBClipGrid: newGrid, bankBLayerStates: newLayerStates, blocks: newBlocks };
+      });
+    },
+
+    /**
+     * Update a single shader-input value on a grid clip without launching it.
+     * Used by the clip preview panel so users can dial in shader params
+     * before triggering. Mirrors any matching active layer (same clip id)
+     * so the change shows up live if the clip is already playing. Per deck.
+     */
+    updateClipShaderValue(layerIndex: number, columnIndex: number, name: string, value: any, deck: VJDeck = 'A') {
+      update(state => {
+        const targetGrid = pickGrid(state, deck);
+        const targetLayerStates = pickLayerStates(state, deck);
+        const newGrid = targetGrid.map(row => [...row]);
+        const clip = newGrid[layerIndex]?.[columnIndex];
+        if (!clip) return state;
+        const updatedClip = {
+          ...clip,
+          shaderValues: { ...(clip.shaderValues || {}), [name]: value },
+        };
+        newGrid[layerIndex][columnIndex] = updatedClip;
+        const newLayerStates = [...targetLayerStates];
+        if (newLayerStates[layerIndex].activeClip?.id === clip.id) {
+          newLayerStates[layerIndex] = {
+            ...newLayerStates[layerIndex],
+            activeClip: updatedClip,
+          };
+        }
+        const newBlocks = blocksWithDeckGrid(state, deck, newGrid);
+        if (deck === 'A') {
+          return { ...state, clipGrid: newGrid, layerStates: newLayerStates, blocks: newBlocks };
+        }
+        return { ...state, bankBClipGrid: newGrid, bankBLayerStates: newLayerStates, blocks: newBlocks };
+      });
+    },
+
+    updateClipEffectParams(layerIndex: number, columnIndex: number, effectId: string, params: Record<string, any>, deck: VJDeck = 'A') {
+      update(state => {
+        const targetGrid = pickGrid(state, deck);
+        const targetLayerStates = pickLayerStates(state, deck);
+        const newGrid = targetGrid.map(row => [...row]);
+        const clip = newGrid[layerIndex]?.[columnIndex];
+        if (!clip) return state;
+        newGrid[layerIndex][columnIndex] = {
+          ...clip,
+          effects: (clip.effects || []).map(e =>
+            e.id === effectId ? { ...e, params: { ...e.params, ...params } } : e
+          )
+        };
+        const newLayerStates = [...targetLayerStates];
+        if (newLayerStates[layerIndex].activeClip?.id === clip.id) {
+          newLayerStates[layerIndex] = {
+            ...newLayerStates[layerIndex],
+            activeClip: newGrid[layerIndex][columnIndex]
+          };
+        }
+        const newBlocks = blocksWithDeckGrid(state, deck, newGrid);
+        if (deck === 'A') {
+          return { ...state, clipGrid: newGrid, layerStates: newLayerStates, blocks: newBlocks };
+        }
+        return { ...state, bankBClipGrid: newGrid, bankBLayerStates: newLayerStates, blocks: newBlocks };
+      });
+    },
+
+    // ========== Block Management ==========
+
+    // Add a new block
+    addBlock(name?: string) {
+      update(state => {
+        const blockNum = state.blocks.length + 1;
+        const newBlock = createNewBlock(name || `Block ${blockNum}`, state.numLayers, state.numColumns);
+        return {
+          ...state,
+          blocks: [...state.blocks, newBlock],
+        };
+      });
+    },
+
+    // Switch to a different block (does NOT interrupt playing clips).
+    // Restores BOTH Bank A's clipGrid AND Bank B's bankBClipGrid from the
+    // block — each block is a complete A+B scene.
+    setActiveBlock(blockId: string) {
+      update(state => {
+        const block = state.blocks.find(b => b.id === blockId);
+        if (!block) return state;
+
+        // Lazy-init: older blocks (loaded from pre-v0.3.8 saves) won't have
+        // a bankBClipGrid. Materialize an empty one so the dual-deck UI has
+        // something to render to.
+        const blockBankB = block.bankBClipGrid
+          ?? createEmptyClipGrid(state.numLayers, state.numColumns);
+
+        // Update activeColumn for each layer based on whether the activeClip
+        // exists in this block's grid (same logic for both banks). When
+        // we find a match we ALSO refresh the layer's activeClip pointer
+        // to the matching cell from the NEW block — otherwise the layer
+        // keeps a reference to the old block's clip object, and any
+        // edits the user made to the new block's version of that clip
+        // (different shaderValues, different effect chain) get ignored
+        // because the renderer reads from layerState.activeClip, not
+        // the grid.
+        const reconcileColumn = (
+          layerStates: VJLayerState[],
+          grid: (VJClip | null)[][]
+        ) => layerStates.map((layerState, layerIndex) => {
+          if (!layerState.activeClip) {
+            return { ...layerState, activeColumn: null };
+          }
+          const row = grid[layerIndex] || [];
+          const columnIndex = row.findIndex(
+            clip => clip && clip.id === layerState.activeClip!.id
+          );
+          if (columnIndex < 0) {
+            return { ...layerState, activeColumn: null };
+          }
+          // Re-bind activeClip to the new block's version of this clip.
+          return {
+            ...layerState,
+            activeColumn: columnIndex,
+            activeClip: row[columnIndex] || layerState.activeClip,
+          };
+        });
+
+        const newLayerStates = reconcileColumn(state.layerStates, block.clipGrid);
+        const newBankBLayerStates = reconcileColumn(state.bankBLayerStates, blockBankB);
+
+        return {
+          ...state,
+          activeBlockId: blockId,
+          clipGrid: block.clipGrid.map(row => [...row]),
+          bankBClipGrid: blockBankB.map(row => [...row]),
+          layerStates: newLayerStates,
+          bankBLayerStates: newBankBLayerStates,
+        };
+      });
+    },
+
+    // Rename a block
+    renameBlock(blockId: string, newName: string) {
+      update(state => {
+        const newBlocks = state.blocks.map(block =>
+          block.id === blockId ? { ...block, name: newName } : block
+        );
+        return { ...state, blocks: newBlocks };
+      });
+    },
+
+    // Delete a block (cannot delete the last one)
+    deleteBlock(blockId: string) {
+      update(state => {
+        if (state.blocks.length <= 1) return state; // Keep at least one block
+
+        const newBlocks = state.blocks.filter(b => b.id !== blockId);
+
+        // If deleting the active block, switch to the first remaining block
+        let newActiveBlockId = state.activeBlockId;
+        let newClipGrid = state.clipGrid;
+
+        if (state.activeBlockId === blockId) {
+          const firstBlock = newBlocks[0];
+          newActiveBlockId = firstBlock.id;
+          newClipGrid = firstBlock.clipGrid.map(row => [...row]);
+        }
+
+        return {
+          ...state,
+          blocks: newBlocks,
+          activeBlockId: newActiveBlockId,
+          clipGrid: newClipGrid,
+        };
+      });
+    },
+
+    // Duplicate a block — copies BOTH banks so an A+B scene clones intact.
+    duplicateBlock(blockId: string) {
+      update(state => {
+        const blockToDuplicate = state.blocks.find(b => b.id === blockId);
+        if (!blockToDuplicate) return state;
+
+        const sourceBankB = blockToDuplicate.bankBClipGrid
+          ?? createEmptyClipGrid(state.numLayers, state.numColumns);
+
+        const newBlock: VJBlock = {
+          id: generateUUID(),
+          name: `${blockToDuplicate.name} (copy)`,
+          clipGrid: blockToDuplicate.clipGrid.map(row => [...row]),
+          bankBClipGrid: sourceBankB.map(row => [...row]),
+        };
+
+        return {
+          ...state,
+          blocks: [...state.blocks, newBlock],
+        };
+      });
+    },
+
+    // Reorder layers (drag and drop). Layer count is shared between decks
+    // so a row swap reorders BOTH banks' layerStates and clip grids in lockstep
+    // — across ALL blocks — keeps the visual layout symmetric and predictable.
+    reorderLayers(fromIndex: number, toIndex: number) {
+      update(state => {
+        if (fromIndex === toIndex) return state;
+        if (fromIndex < 0 || fromIndex >= state.numLayers) return state;
+        if (toIndex < 0 || toIndex >= state.numLayers) return state;
+
+        // Bank A live state
+        const newLayerStates = [...state.layerStates];
+        const [movedLayerState] = newLayerStates.splice(fromIndex, 1);
+        newLayerStates.splice(toIndex, 0, movedLayerState);
+
+        const newClipGrid = [...state.clipGrid];
+        const [movedRow] = newClipGrid.splice(fromIndex, 1);
+        newClipGrid.splice(toIndex, 0, movedRow);
+
+        // Bank B live state
+        const newBankBLayerStates = [...state.bankBLayerStates];
+        const [movedB] = newBankBLayerStates.splice(fromIndex, 1);
+        newBankBLayerStates.splice(toIndex, 0, movedB);
+
+        const newBankBClipGrid = [...state.bankBClipGrid];
+        const [movedBRow] = newBankBClipGrid.splice(fromIndex, 1);
+        newBankBClipGrid.splice(toIndex, 0, movedBRow);
+
+        // Reorder each block's BOTH grids so the per-block snapshot stays
+        // consistent with the live row order.
+        const newBlocks = state.blocks.map(block => {
+          const blockA = [...block.clipGrid];
+          const [aRow] = blockA.splice(fromIndex, 1);
+          blockA.splice(toIndex, 0, aRow);
+
+          const sourceB = block.bankBClipGrid ?? createEmptyClipGrid(state.numLayers, state.numColumns);
+          const blockB = [...sourceB];
+          const [bRow] = blockB.splice(fromIndex, 1);
+          blockB.splice(toIndex, 0, bRow);
+
+          return { ...block, clipGrid: blockA, bankBClipGrid: blockB };
+        });
+
+        return {
+          ...state,
+          layerStates: newLayerStates,
+          clipGrid: newClipGrid,
+          blocks: newBlocks,
+          bankBLayerStates: newBankBLayerStates,
+          bankBClipGrid: newBankBClipGrid,
+        };
+      });
+    },
+
+    // ========== Dynamic Layer/Column Management ==========
+
+    // Add a new layer (row) to BOTH banks across ALL blocks so the dual-deck
+    // UI stays symmetric and switching blocks doesn't surface mismatched dims.
+    addLayer() {
+      update(state => {
+        if (state.numLayers >= MAX_VJ_LAYERS) return state;
+
+        const newNumLayers = state.numLayers + 1;
+        const cols = state.numColumns;
+
+        // Each block grows its A and B grids together.
+        const newBlocks = state.blocks.map(block => ({
+          ...block,
+          clipGrid: [...block.clipGrid, Array(cols).fill(null)],
+          bankBClipGrid: [
+            ...(block.bankBClipGrid ?? createEmptyClipGrid(state.numLayers, cols)),
+            Array(cols).fill(null),
+          ],
+        }));
+
+        const newClipGrid = [...state.clipGrid, Array(cols).fill(null)];
+        const newBankBClipGrid = [...state.bankBClipGrid, Array(cols).fill(null)];
+        const newLayerStates = [...state.layerStates, createDefaultLayerState()];
+        const newBankBLayerStates = [...state.bankBLayerStates, createDefaultLayerState()];
+
+        return {
+          ...state,
+          numLayers: newNumLayers,
+          clipGrid: newClipGrid,
+          blocks: newBlocks,
+          layerStates: newLayerStates,
+          bankBClipGrid: newBankBClipGrid,
+          bankBLayerStates: newBankBLayerStates,
+        };
+      });
+    },
+
+    // Remove a layer (default: last) from BOTH banks across ALL blocks.
+    removeLayer(index?: number) {
+      update(state => {
+        if (state.numLayers <= 1) return state;
+
+        const removeIdx = index !== undefined ? index : state.numLayers - 1;
+        if (removeIdx < 0 || removeIdx >= state.numLayers) return state;
+
+        const newNumLayers = state.numLayers - 1;
+
+        const newBlocks = state.blocks.map(block => ({
+          ...block,
+          clipGrid: block.clipGrid.filter((_, i) => i !== removeIdx),
+          bankBClipGrid: (block.bankBClipGrid ?? createEmptyClipGrid(state.numLayers, state.numColumns))
+            .filter((_, i) => i !== removeIdx),
+        }));
+
+        const newClipGrid = state.clipGrid.filter((_, i) => i !== removeIdx);
+        const newBankBClipGrid = state.bankBClipGrid.filter((_, i) => i !== removeIdx);
+        const newLayerStates = state.layerStates.filter((_, i) => i !== removeIdx);
+        const newBankBLayerStates = state.bankBLayerStates.filter((_, i) => i !== removeIdx);
+
+        return {
+          ...state,
+          numLayers: newNumLayers,
+          clipGrid: newClipGrid,
+          blocks: newBlocks,
+          layerStates: newLayerStates,
+          bankBClipGrid: newBankBClipGrid,
+          bankBLayerStates: newBankBLayerStates,
+        };
+      });
+    },
+
+    // Add a new column to BOTH banks across ALL blocks.
+    addColumn() {
+      update(state => {
+        if (state.numColumns >= MAX_VJ_COLUMNS) return state;
+
+        const newNumColumns = state.numColumns + 1;
+
+        const newBlocks = state.blocks.map(block => ({
+          ...block,
+          clipGrid: block.clipGrid.map(row => [...row, null]),
+          bankBClipGrid: (block.bankBClipGrid ?? createEmptyClipGrid(state.numLayers, state.numColumns))
+            .map(row => [...row, null]),
+        }));
+
+        const newClipGrid = state.clipGrid.map(row => [...row, null]);
+        const newBankBClipGrid = state.bankBClipGrid.map(row => [...row, null]);
+
+        return {
+          ...state,
+          numColumns: newNumColumns,
+          clipGrid: newClipGrid,
+          blocks: newBlocks,
+          bankBClipGrid: newBankBClipGrid,
+        };
+      });
+    },
+
+    // Remove a column (default: last) from BOTH banks across ALL blocks.
+    removeColumn(index?: number) {
+      update(state => {
+        if (state.numColumns <= 1) return state;
+
+        const removeIdx = index !== undefined ? index : state.numColumns - 1;
+        if (removeIdx < 0 || removeIdx >= state.numColumns) return state;
+
+        const newNumColumns = state.numColumns - 1;
+
+        const adjustActiveCol = (ls: VJLayerState): VJLayerState => {
+          if (ls.activeColumn === removeIdx) return { ...ls, activeColumn: null };
+          if (ls.activeColumn !== null && ls.activeColumn > removeIdx) {
+            return { ...ls, activeColumn: ls.activeColumn - 1 };
+          }
+          return ls;
+        };
+
+        const newBlocks = state.blocks.map(block => ({
+          ...block,
+          clipGrid: block.clipGrid.map(row => row.filter((_, i) => i !== removeIdx)),
+          bankBClipGrid: (block.bankBClipGrid ?? createEmptyClipGrid(state.numLayers, state.numColumns))
+            .map(row => row.filter((_, i) => i !== removeIdx)),
+        }));
+
+        const newClipGrid = state.clipGrid.map(row => row.filter((_, i) => i !== removeIdx));
+        const newBankBClipGrid = state.bankBClipGrid.map(row => row.filter((_, i) => i !== removeIdx));
+        const newLayerStates = state.layerStates.map(adjustActiveCol);
+        const newBankBLayerStates = state.bankBLayerStates.map(adjustActiveCol);
+
+        return {
+          ...state,
+          numColumns: newNumColumns,
+          clipGrid: newClipGrid,
+          blocks: newBlocks,
+          layerStates: newLayerStates,
+          bankBClipGrid: newBankBClipGrid,
+          bankBLayerStates: newBankBLayerStates,
+        };
+      });
+    },
+
+    // ========== Stage Mode ==========
+
+    toggleStageMode() {
+      update(state => ({ ...state, stageMode: !state.stageMode }));
+    },
+
+    setStageMode(enabled: boolean) {
+      update(state => ({ ...state, stageMode: enabled }));
+    },
+
+    setStagePreset(presetId: string | null) {
+      update(state => ({ ...state, stagePresetId: presetId }));
+    },
+
+    setSelectedLayerIndex(idx: number | null) {
+      update(state => ({ ...state, selectedLayerIndex: idx }));
+    },
+
+    // Which deck the parameter panel / clip preview should track when the
+    // crossfader is on. Ignored when the crossfader is off (Bank A is
+    // always the canonical deck in single-deck mode).
+    setSelectedDeck(deck: VJDeck) {
+      update(state => ({ ...state, selectedDeck: deck }));
+    },
+
+    // ===== Crossfader actions =====
+
+    setCrossfaderEnabled(enabled: boolean) {
+      update(state => {
+        // Toggling preserves both decks' state. We just snap the fader back
+        // to 0 (full Bank A) on disable so the user has a defined starting
+        // point next time they enable it. Bank B clipGrid + activeClips
+        // persist so flipping back on returns the user to where they were.
+        if (!enabled) {
+          return {
+            ...state,
+            crossfaderEnabled: false,
+            crossfaderValue: 0,
+            // Reset deck focus so panels go back to following Bank A.
+            selectedDeck: 'A' as VJDeck,
+          };
+        }
+        return { ...state, crossfaderEnabled: true };
+      });
+    },
+
+    setCrossfaderValue(value: number) {
+      const clamped = Math.max(0, Math.min(1, value));
+      update(state => ({ ...state, crossfaderValue: clamped }));
+    },
+
+    setCrossfaderTransition(transition: CrossfaderTransition) {
+      update(state => ({ ...state, crossfaderTransition: transition }));
+    },
+
+    setCrossfaderCurve(curve: CrossfaderCurve) {
+      update(state => ({ ...state, crossfaderCurve: curve }));
+    },
+
+    setCrossfaderBlendMode(mode: CrossfaderBlendMode) {
+      update(state => ({ ...state, crossfaderBlendMode: mode }));
+    },
+
+    cutToA() {
+      update(state => ({ ...state, crossfaderValue: 0 }));
+    },
+
+    cutToB() {
+      update(state => ({ ...state, crossfaderValue: 1 }));
+    },
+  };
+}
+
+export const vjClipLauncher = createVJClipLauncherStore();
+
+// Derived store: Get the active clip for each layer.
+//
+// When the crossfader is OFF: Bank A is the only deck. Each layer with an
+// active clip emits one entry tagged bank=null (engine treats it as the
+// single canonical bank).
+//
+// When the crossfader is ON: BOTH decks contribute entries. Bank A pulls
+// from layerStates, Bank B from bankBLayerStates — each fully independent
+// (separate opacity, blend, mute, solo, effects). The render engine
+// composites them to separate FBOs and crossfades between them via the
+// chosen transition shader.
+export const activeVJLayers = derived(
+  vjClipLauncher,
+  ($vjClipLauncher) => {
+    const cfOn = $vjClipLauncher.crossfaderEnabled;
+
+    // Solo gates ONLY apply within their own deck — soloing layer 2 on
+    // Bank A doesn't mute layer 2 on Bank B.
+    const hasSoloA = $vjClipLauncher.layerStates.some(ls => ls.solo);
+    const hasSoloB = cfOn && $vjClipLauncher.bankBLayerStates.some(ls => ls.solo);
+
+    const out: Array<{
+      clip: VJClip;
+      opacity: number;
+      blendMode: BlendMode;
+      effects: Effect[];
+      layerIndex: number;
+      bank: 'A' | 'B' | null;
+    }> = [];
+
+    // Bank A pass — always runs.
+    for (let i = 0; i < $vjClipLauncher.layerStates.length; i++) {
+      const ls = $vjClipLauncher.layerStates[i];
+      if (ls.mute) continue;
+      if (hasSoloA && !ls.solo) continue;
+      const clip = ls.activeClip;
+      if (!clip) continue;
+      out.push({
+        clip,
+        opacity: ls.opacity,
+        blendMode: ls.blendMode,
+        effects: [...(clip.effects || []), ...ls.effects],
+        layerIndex: i,
+        bank: cfOn ? 'A' : null,
+      });
+    }
+
+    // Bank B pass — only when crossfader is on.
+    if (cfOn) {
+      for (let i = 0; i < $vjClipLauncher.bankBLayerStates.length; i++) {
+        const ls = $vjClipLauncher.bankBLayerStates[i];
+        if (ls.mute) continue;
+        if (hasSoloB && !ls.solo) continue;
+        const clip = ls.activeClip;
+        if (!clip) continue;
+        out.push({
+          clip,
+          opacity: ls.opacity,
+          blendMode: ls.blendMode,
+          effects: [...(clip.effects || []), ...ls.effects],
+          layerIndex: i,
+          bank: 'B',
+        });
+      }
+    }
+
+    return out;
+  }
+);
+
+// Derived store: Get layers to render when VJ mode is live
+export const vjOutputLayers = derived(
+  [vjClipLauncher, activeVJLayers],
+  ([$vjClipLauncher, $activeVJLayers]) => {
+    if (!$vjClipLauncher.isLive) return null;
+
+    const outputLayers: Layer[] = [];
+
+    // Iterate every active entry — when crossfader is on, a single VJ
+    // layer may have BOTH a Bank A and a Bank B entry. We emit one
+    // Layer per entry so the engine can route each to its bank FBO.
+    for (const activeLayer of $activeVJLayers) {
+      const vjLayerIndex = activeLayer.layerIndex;
+      const clip = activeLayer.clip;
+      const vjLayerOpacity = activeLayer.opacity * $vjClipLauncher.masterOpacity;
+
+      // Cache key includes the bank so Bank A and Bank B clips on the same
+      // row don't collide. In single-bank mode bank is null and the key
+      // matches the original vj-{layer}-{clipId} shape.
+      const bankSuffix = activeLayer.bank ? `-${activeLayer.bank}` : '';
+      const cacheKey = `vj-${vjLayerIndex}${bankSuffix}-${clip.id}`;
+      let source = vjSourceCache.get(cacheKey);
+
+      if (!source) {
+        // Map VJClip type to MediaSource type
+        let mediaType: 'shader' | 'video' | 'image' | 'threejs' | 'color' | 'spout' | 'effect';
+        if (clip.type === 'shader') mediaType = 'shader';
+        else if (clip.type === 'video') mediaType = 'video';
+        else if (clip.type === 'threejs' || clip.type === 'synthvision') mediaType = 'threejs';
+        else if (clip.type === 'spout') mediaType = 'spout';
+        else if (clip.type === 'effect') mediaType = 'effect';
+        else if (clip.type === 'splat' || clip.type === 'model3d') mediaType = 'image'; // Placeholder; actual rendering uses splatContent/model3dContent
+        else mediaType = 'image';
+
+        source = {
+          id: clip.id,
+          type: mediaType,
+          name: clip.name,
+          src: clip.src,
+          shaderCode: clip.shaderCode,
+          shaderInputs: getShaderInputs(clip.shaderCode),
+          shaderValues: clip.shaderValues || {},
+          videoElement: clip.videoElement,
+          iframeElement: clip.iframeElement,
+        };
+
+        // For threejs clips, get the canvas from the iframe context
+        if (clip.type === 'threejs') {
+          const context = getThreeJSIframeContext(clip.id);
+          if (context) {
+            source.threejsCanvas = context.canvas;
+          }
+        }
+
+        // For synthvision clips, use the provided offscreen canvas
+        if (clip.type === 'synthvision' && clip.synthVisionCanvas) {
+          source.threejsCanvas = clip.synthVisionCanvas;
+        }
+
+        // For spout clips, set the spoutSource property for the renderer
+        if (clip.type === 'spout' && clip.spoutSource) {
+          source.spoutSource = {
+            senderName: clip.spoutSource,
+            name: clip.spoutSource, // Legacy compatibility
+            width: 1920,
+            height: 1080,
+          };
+        }
+
+        // For effect clips, set the effectSource property for integrated WebGL effects
+        if (clip.type === 'effect' && clip.effectSource) {
+          source.effectSource = clip.effectSource;
+        }
+
+        vjSourceCache.set(cacheKey, source);
+      } else {
+        // Update dynamic properties
+        source.shaderValues = clip.shaderValues || {};
+        if (clip.videoElement) {
+          source.videoElement = clip.videoElement;
+        }
+        if (clip.iframeElement) {
+          source.iframeElement = clip.iframeElement;
+        }
+        // For threejs clips, get the canvas from the iframe context
+        if (clip.type === 'threejs') {
+          const context = getThreeJSIframeContext(clip.id);
+          if (context) {
+            source.threejsCanvas = context.canvas;
+          }
+        }
+        // For synthvision clips, update the canvas reference
+        if (clip.type === 'synthvision' && clip.synthVisionCanvas) {
+          source.threejsCanvas = clip.synthVisionCanvas;
+        }
+        // For effect clips, update the effectSource (for parameter changes)
+        if (clip.type === 'effect' && clip.effectSource) {
+          source.effectSource = clip.effectSource;
+        }
+      }
+
+      // Map clip type to layer type (splat/model3d get their own layer types for proper rendering)
+      let layerType: Layer['type'] = 'media';
+      if (clip.type === 'splat') layerType = 'splat';
+      else if (clip.type === 'model3d') layerType = 'model3d';
+
+      // Create Layer object with all required properties.
+      // ID includes the bank suffix when in dual-bank mode so the render
+      // engine treats Bank A and Bank B clips on the same row as
+      // distinct layers (they'll otherwise collide in renderPlan
+      // dedup / texture caches).
+      const layerIdSuffix = activeLayer.bank ? `-${activeLayer.bank}` : '';
+      const layer: Layer = {
+        id: `vj-layer-${vjLayerIndex}${layerIdSuffix}`,
+        name: clip.name,
+        type: layerType,
+        visible: true,
+        locked: false,
+        opacity: vjLayerOpacity,
+        blendMode: activeLayer.blendMode,
+        source,
+        linesContent: null,
+        svgContent: null,
+        colorContent: null,
+        lightPaintingContent: null,
+        textContent: null,
+        splatContent: clip.type === 'splat' ? (clip.splatContent || createDefaultSplatContent()) : null,
+        model3dContent: clip.type === 'model3d' ? (clip.model3dContent || createDefaultModel3DContent()) : null,
+        // Transform
+        position: { x: 0, y: 0 },
+        scale: { x: 1, y: 1 },
+        rotation: 0,
+        flipH: false,
+        flipV: false,
+        // Warping - full screen quad with default corners
+        warpMode: 'corners',
+        corners: {
+          topLeft: { x: 0, y: 1 },
+          topRight: { x: 1, y: 1 },
+          bottomLeft: { x: 0, y: 0 },
+          bottomRight: { x: 1, y: 0 },
+        },
+        meshGrid: null,
+        // No mask or crop
+        mask: null,
+        cropRegion: null,
+        layerShape: null,
+        edgeEffects: null,
+        // Effects from VJ layer state
+        effects: activeLayer.effects,
+        // Bank tag — read by engine.render() to route to A or B FBO when crossfader is on.
+        bank: activeLayer.bank ?? undefined,
+      };
+
+      outputLayers.push(layer);
+    }
+
+    return outputLayers.length > 0 ? outputLayers : null;
+  }
+);
+
+// Helper to get current state
+export function getVJClipLauncherState(): VJClipLauncherState {
+  return get(vjClipLauncher);
+}
+
+// Don't clear source cache when VJ mode toggles - let textures persist
+// This was causing issues because textures need to be reloaded each time
+// The cache is small and keyed by vj-layer-index + clip-id, so it won't grow unbounded

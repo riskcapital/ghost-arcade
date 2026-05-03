@@ -1,0 +1,98 @@
+appId: live.ghostarcade.app
+productName: "Ghost Arcade"          # user-facing display name (start menu, window title)
+executableName: "Ghost-Arcade"       # actual .exe filename — no spaces so signtool can quote-free
+copyright: "Copyright (c) 2024-2026 Risk Capital Media LLC"
+artifactName: "Ghost-Arcade-${version}-${arch}.${ext}"
+
+directories:
+  output: dist-electron
+  buildResources: build-resources
+
+files:
+  - dist/**/*
+  - electron/**/*
+  - server/**/*
+  - package.json
+  - "!electron/native/node_modules/**/*"
+  - "!electron/native/build/**/*.obj"
+  - "!electron/native/build/**/*.pdb"
+
+# Platform-specific extra resources
+extraResources:
+  # Shaders (all platforms)
+  - from: ISF/
+    to: ISF/
+    filter:
+      - "**/*"
+  - from: CuratedISF/
+    to: CuratedISF/
+    filter:
+      - "**/*"
+  - from: user-shaders/
+    to: user-shaders/
+    filter:
+      - "**/*"
+
+asarUnpack:
+  - "electron/native/**/*.node"
+
+# ─── File Associations ─────────────────────────────────────────────────────
+fileAssociations:
+  - ext: gha
+    name: "Ghost Arcade Project"
+    description: "Ghost Arcade Project File"
+    role: Editor
+
+# ─── Windows ───────────────────────────────────────────────────────────────
+win:
+  target: nsis
+  icon: build-resources/icons/icon.ico
+  publisherName: "Justin Wood"   # must match the CN on the signing cert
+  # Azure Trusted Signing — short-lived certs issued per-build, RFC 3161
+  # timestamp ensures signed binaries stay valid past cert expiry.
+  # Auth: env vars AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET
+  # (Service Principal in CI; interactive `az login` for local builds).
+  azureSignOptions:
+    # NB: don't put `publisher` here — Invoke-TrustedSigning rejects it.
+    # Publisher comes from the cert's CN automatically.
+    endpoint: "https://eus.codesigning.azure.net/"
+    codeSigningAccountName: "JustinWood"
+    certificateProfileName: "ghost-arcade-prod"
+    timestampRfc3161: "http://timestamp.acs.microsoft.com"
+    timestampDigest: "SHA256"
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: build-resources/icons/icon.ico
+  uninstallerIcon: build-resources/icons/icon.ico
+  installerSidebar: illVisuals/installer-splash.bmp
+  uninstallerSidebar: illVisuals/installer-splash.bmp
+  shortcutName: "Ghost Arcade"
+  artifactName: "Ghost-Arcade-Setup-${version}.${ext}"
+
+# ─── macOS ─────────────────────────────────────────────────────────────────
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  icon: build-resources/icons/icon.icns
+  category: public.app-category.video
+  hardenedRuntime: true
+  entitlements: build-resources/entitlements.mac.plist
+  entitlementsInherit: build-resources/entitlements.mac.plist
+  notarize: true
+  gatekeeperAssess: false
+
+dmg:
+  iconSize: 128
+  contents:
+    - x: 380
+      y: 170
+      type: link
+      path: /Applications
+    - x: 130
+      y: 170
+      type: file

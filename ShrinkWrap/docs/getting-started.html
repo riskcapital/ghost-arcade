@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Getting Started — Shrink Wrap Docs</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="../favicon-32x32.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Newsreader:ital,wght@0,300;0,400;1,300;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="docs-styles.css">
+</head>
+<body data-theme="dark">
+
+    <!-- Nav -->
+    <nav class="docs-nav">
+        <div class="docs-nav-left">
+            <a href="../index.html" class="docs-nav-logo"><img src="../logo.png" alt="Shrink Wrap"></a>
+            <a href="../index.html" class="docs-nav-back">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+                Back to site
+            </a>
+            <span class="docs-nav-title">Documentation</span>
+        </div>
+        <div class="docs-nav-right">
+            <button class="docs-theme-toggle" id="docsThemeToggle">
+                <svg id="docsThemeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"></svg>
+                <span id="docsThemeLabel">Dark</span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Sidebar Toggle (mobile) -->
+    <button class="sidebar-toggle" id="sidebarToggle">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+        </svg>
+    </button>
+
+    <div class="docs-layout">
+        <!-- Sidebar -->
+        <aside class="docs-sidebar">
+            <div class="sidebar-section">
+                <div class="sidebar-label">Getting Started</div>
+                <a href="#requirements" class="sidebar-sublink">System Requirements</a>
+                <a href="#installation" class="sidebar-sublink">Installation</a>
+                <a href="#interface" class="sidebar-sublink">Interface Overview</a>
+                <a href="#first-project" class="sidebar-sublink">Your First Project</a>
+                <a href="#adding-layers" class="sidebar-sublink">Adding Layers</a>
+                <a href="#compositing" class="sidebar-sublink">Basic Compositing</a>
+                <a href="#saving" class="sidebar-sublink">Saving &amp; Loading</a>
+                <a href="#shortcuts" class="sidebar-sublink">Keyboard Shortcuts</a>
+            </div>
+
+            <div class="sidebar-divider"></div>
+
+            <div class="sidebar-section">
+                <div class="sidebar-label">All Docs</div>
+                <a href="index.html" class="sidebar-link">Overview</a>
+                <a href="getting-started.html" class="sidebar-link current-page">Getting Started</a>
+                <a href="layers.html" class="sidebar-link">Layer Types</a>
+                <a href="effects.html" class="sidebar-link">Effects Pipeline</a>
+                <a href="vj-mode.html" class="sidebar-link">VJ Mode</a>
+                <a href="synthvision.html" class="sidebar-link">SynthVision</a>
+                <a href="projection-mapping.html" class="sidebar-link">Projection Mapping</a>
+                <a href="midi-audio.html" class="sidebar-link">MIDI &amp; Audio</a>
+                <a href="mobile-control.html" class="sidebar-link">Mobile Control</a>
+                <a href="recording-output.html" class="sidebar-link">Recording &amp; Output</a>
+            </div>
+        </aside>
+
+        <!-- Content -->
+        <main class="docs-content">
+            <div class="docs-breadcrumb">
+                <a href="index.html">Docs</a>
+                <span>/</span>
+                <span>Getting Started</span>
+            </div>
+
+            <h1>Getting Started</h1>
+            <p class="page-description">
+                Install Shrink Wrap, learn the interface, and create your first visual project in minutes.
+            </p>
+
+            <h2 id="requirements">System Requirements</h2>
+
+            <table class="param-table">
+                <thead>
+                    <tr><th>Requirement</th><th>Minimum</th><th>Recommended</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td><strong>Operating System</strong></td><td>macOS 12+ / Windows 10+</td><td>macOS 14+ / Windows 11</td></tr>
+                    <tr><td><strong>GPU</strong></td><td>WebGL 2.0 capable</td><td>Dedicated GPU (NVIDIA/AMD/Apple Silicon)</td></tr>
+                    <tr><td><strong>RAM</strong></td><td>4 GB</td><td>8 GB+</td></tr>
+                    <tr><td><strong>Display</strong></td><td>1280 x 720</td><td>1920 x 1080+</td></tr>
+                    <tr><td><strong>Storage</strong></td><td>500 MB</td><td>2 GB+ (for media assets)</td></tr>
+                </tbody>
+            </table>
+
+            <div class="callout tip">
+                <div class="callout-label">Tip</div>
+                <p>Shrink Wrap runs on the GPU. A dedicated graphics card dramatically improves performance, especially with multiple layers and effects.</p>
+            </div>
+
+            <h2 id="installation">Installation</h2>
+
+            <h3>macOS</h3>
+            <ol>
+                <li>Download the <code>.dmg</code> file from the <a href="../index.html#download">download page</a></li>
+                <li>Open the DMG and drag Shrink Wrap to your Applications folder</li>
+                <li>On first launch, right-click the app and select <strong>Open</strong> to bypass Gatekeeper</li>
+                <li>The app will start and display the main workspace</li>
+            </ol>
+
+            <h3>Windows</h3>
+            <ol>
+                <li>Download the <code>.msi</code> installer from the <a href="../index.html#download">download page</a></li>
+                <li>Run the installer and follow the prompts</li>
+                <li>Launch Shrink Wrap from your Start menu or desktop shortcut</li>
+            </ol>
+
+            <h2 id="interface">Interface Overview</h2>
+
+            <p>The Shrink Wrap interface is designed around a central canvas with panels on each side:</p>
+
+            <h3>Main Canvas</h3>
+            <p>The center of the screen shows your live visual output. This is what gets sent to your projector or display. You can interact directly with the canvas to move, warp, and edit layer content.</p>
+
+            <h3>Layer Panel (Left)</h3>
+            <p>Lists all layers in your project from top to bottom. Each layer has visibility, lock, and solo toggles. Click a layer to select it and show its properties. Drag layers to reorder them in the composition stack.</p>
+
+            <h3>Properties Panel (Right)</h3>
+            <p>Shows controls for the currently selected layer. The available controls change based on the layer type. This is where you adjust shader parameters, media playback, 3D model properties, effects chains, and more.</p>
+
+            <h3>Toolbar (Top)</h3>
+            <p>Quick access to project management (new, save, load), display settings, recording controls, and mode switching (mapping mode vs VJ mode).</p>
+
+            <h3>Add Layer Menu</h3>
+            <p>Click the <strong>+</strong> button at the bottom of the layer panel to add a new layer. Choose from 9 layer types: ISF Shader, Media, 3D Model, Gaussian Splat, Lines, Light Painting, SVG, Text, or Color.</p>
+
+            <h2 id="first-project">Your First Project</h2>
+
+            <ol>
+                <li><strong>Add a shader layer</strong> — Click <strong>+</strong> in the layer panel, choose <strong>ISF Shader</strong>. A shader browser appears in the properties panel. Click any shader to load it. You'll see it rendering live on the canvas.</li>
+                <li><strong>Adjust parameters</strong> — Each shader exposes real-time controls (sliders, color pickers, dropdowns). Experiment with different values to change the visual output.</li>
+                <li><strong>Add a second layer</strong> — Click <strong>+</strong> again and add a <strong>Media</strong> layer. Load an image or video file. It appears above the shader layer.</li>
+                <li><strong>Blend layers</strong> — With the media layer selected, change its <strong>blend mode</strong> from Normal to something like Screen or Add. Adjust <strong>opacity</strong> to mix the two layers together.</li>
+                <li><strong>Save your work</strong> — Use <kbd>Ctrl</kbd>+<kbd>S</kbd> (or <kbd>Cmd</kbd>+<kbd>S</kbd> on Mac) to save your project as a <code>.ghost-arcade</code> file.</li>
+            </ol>
+
+            <h2 id="adding-layers">Adding Layers</h2>
+
+            <p>Shrink Wrap supports 9 different layer types, each designed for a specific type of visual content:</p>
+
+            <table class="param-table">
+                <thead>
+                    <tr><th>Layer Type</th><th>Description</th><th>Best For</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td><strong>ISF Shader</strong></td><td>GPU-accelerated fragment shaders</td><td>Generative visuals, backgrounds, abstract art</td></tr>
+                    <tr><td><strong>Media</strong></td><td>Images and video files</td><td>Pre-made content, logos, video loops</td></tr>
+                    <tr><td><strong>3D Model</strong></td><td>GLTF/GLB/FBX 3D objects</td><td>3D scenes, animated characters, product vis</td></tr>
+                    <tr><td><strong>Gaussian Splat</strong></td><td>Point cloud rendering</td><td>Photorealistic 3D captures, LiDAR scans</td></tr>
+                    <tr><td><strong>Lines</strong></td><td>Line drawing with effects</td><td>PVC pipe mapping, stage outlines, neon lines</td></tr>
+                    <tr><td><strong>Light Painting</strong></td><td>Brush-based painting</td><td>Live painting, trail effects, calligraphy</td></tr>
+                    <tr><td><strong>SVG</strong></td><td>Scalable vector graphics</td><td>Logos, icons, animated paths</td></tr>
+                    <tr><td><strong>Text</strong></td><td>Animated text rendering</td><td>Titles, lyrics, credits, data display</td></tr>
+                    <tr><td><strong>Color</strong></td><td>Solid color or gradient</td><td>Background tints, color washes, overlays</td></tr>
+                </tbody>
+            </table>
+
+            <p>See the <a href="layers.html">Layer Types</a> guide for detailed documentation on each type.</p>
+
+            <h2 id="compositing">Basic Compositing</h2>
+
+            <h3>Layer Order</h3>
+            <p>Layers render from bottom to top. The topmost layer in the panel is drawn last (on top of everything). Drag layers to reorder them.</p>
+
+            <h3>Blend Modes</h3>
+            <p>Each layer has a blend mode that controls how it combines with the layers below it. Common choices:</p>
+            <ul>
+                <li><strong>Normal</strong> — Standard opacity-based layering</li>
+                <li><strong>Add</strong> — Brightens (great for light effects)</li>
+                <li><strong>Multiply</strong> — Darkens (great for shadows and textures)</li>
+                <li><strong>Screen</strong> — Like Add but softer</li>
+                <li><strong>Overlay</strong> — Combines Multiply and Screen for contrast</li>
+            </ul>
+            <p>Shrink Wrap offers 25+ blend modes. See <a href="effects.html#blend-modes">Blend Modes</a> for the full list.</p>
+
+            <h3>Opacity</h3>
+            <p>The opacity slider (0-100%) controls layer transparency. At 0% the layer is invisible; at 100% it's fully opaque (subject to blend mode).</p>
+
+            <h3>Effects Chains</h3>
+            <p>Each layer can have a chain of post-processing effects applied to it. Effects are processed in order and can be reordered by dragging. See <a href="effects.html">Effects Pipeline</a> for details.</p>
+
+            <h2 id="saving">Saving &amp; Loading Projects</h2>
+
+            <h3>Project Files</h3>
+            <p>Projects are saved as <code>.ghost-arcade</code> files, which contain all layer configurations, effect chains, warp settings, and references to media files.</p>
+
+            <h3>Save</h3>
+            <p>Press <kbd>Ctrl</kbd>+<kbd>S</kbd> / <kbd>Cmd</kbd>+<kbd>S</kbd> or use <strong>File &gt; Save</strong>. On first save, you'll be prompted to choose a location and filename.</p>
+
+            <h3>Load</h3>
+            <p>Press <kbd>Ctrl</kbd>+<kbd>O</kbd> / <kbd>Cmd</kbd>+<kbd>O</kbd> or use <strong>File &gt; Open</strong>. Select a <code>.ghost-arcade</code> file to load.</p>
+
+            <h3>New Project</h3>
+            <p>Use <strong>File &gt; New</strong> to start a fresh project. You'll be asked to confirm if you have unsaved changes.</p>
+
+            <div class="callout tip">
+                <div class="callout-label">Tip</div>
+                <p>Keep your media files (videos, images, 3D models) in a folder alongside your .ghost-arcade file. The project stores relative paths, so moving the project folder keeps everything connected.</p>
+            </div>
+
+            <h2 id="shortcuts">Keyboard Shortcuts</h2>
+
+            <table class="param-table">
+                <thead>
+                    <tr><th>Action</th><th>Mac</th><th>Windows</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>New Project</td><td><kbd>Cmd</kbd>+<kbd>N</kbd></td><td><kbd>Ctrl</kbd>+<kbd>N</kbd></td></tr>
+                    <tr><td>Open Project</td><td><kbd>Cmd</kbd>+<kbd>O</kbd></td><td><kbd>Ctrl</kbd>+<kbd>O</kbd></td></tr>
+                    <tr><td>Save Project</td><td><kbd>Cmd</kbd>+<kbd>S</kbd></td><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td></tr>
+                    <tr><td>Undo</td><td><kbd>Cmd</kbd>+<kbd>Z</kbd></td><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td></tr>
+                    <tr><td>Redo</td><td><kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></td><td><kbd>Ctrl</kbd>+<kbd>Y</kbd></td></tr>
+                    <tr><td>Toggle VJ Mode</td><td colspan="2"><kbd>Tab</kbd></td></tr>
+                    <tr><td>Toggle Fullscreen</td><td colspan="2"><kbd>F11</kbd></td></tr>
+                    <tr><td>Add Layer</td><td><kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd></td><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd></td></tr>
+                    <tr><td>Delete Layer</td><td><kbd>Backspace</kbd></td><td><kbd>Delete</kbd></td></tr>
+                    <tr><td>Toggle Layer Visibility</td><td colspan="2"><kbd>V</kbd></td></tr>
+                    <tr><td>Solo Layer</td><td colspan="2"><kbd>S</kbd></td></tr>
+                </tbody>
+            </table>
+
+            <!-- Pagination -->
+            <div class="docs-pagination">
+                <div></div>
+                <a href="layers.html" class="next">
+                    <span class="pagination-label">Next</span>
+                    <span class="pagination-title">Layer Types</span>
+                </a>
+            </div>
+
+            <div class="docs-footer">
+                <span>&copy; 2026 Shrink Wrap &mdash; <a href="https://riskcapital.io" target="_blank">A Risk Capital Experience</a></span>
+            </div>
+        </main>
+    </div>
+
+    <script src="docs-nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,131 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v0.1.1)'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install native addon dependencies
+        run: npm ci
+        working-directory: electron/native
+
+      - name: Build Spout native addon
+        run: npm run build
+        working-directory: electron/native
+
+      - name: Build frontend
+        run: npm run build
+
+      # Azure Trusted Signing — installs the PowerShell module that
+      # electron-builder's azureSignOptions invokes to sign the .exe.
+      # Authentication uses Service Principal env vars passed below.
+      - name: Install Trusted Signing PowerShell module
+        shell: pwsh
+        run: |
+          Install-Module -Name TrustedSigning -RequiredVersion 0.4.1 -Force -Scope CurrentUser -AllowClobber
+          Get-Module -ListAvailable -Name TrustedSigning | Format-List Name, Version
+
+      - name: Build Electron (Windows NSIS, signed via Azure Trusted Signing)
+        run: npx electron-builder --win nsis
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+      - name: Upload Windows installer to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: riskcapital/ghost-arcade-releases
+          token: ${{ secrets.RELEASES_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          files: |
+            dist-electron/*.exe
+            dist-electron/latest.yml
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Syphon is Apple's OpenGL texture-sharing framework — required for
+      # inter-app video send/receive on macOS (Spout equivalent on Windows).
+      # Cached via GitHub Actions so we only download once per runner image.
+      - name: Install Syphon framework
+        run: |
+          SYPHON_VER="v5"
+          SYPHON_URL="https://github.com/Syphon/Syphon-Framework/releases/download/5/Syphon.SDK.5.zip"
+          curl -L -o /tmp/syphon.zip "$SYPHON_URL"
+          unzip -q /tmp/syphon.zip -d /tmp/syphon-sdk
+          sudo mkdir -p /Library/Frameworks
+          sudo cp -R "/tmp/syphon-sdk/Syphon SDK 5/Syphon.framework" /Library/Frameworks/
+          ls /Library/Frameworks/Syphon.framework/Versions/A/ || true
+
+      - name: Install native addon dependencies
+        run: npm ci
+        working-directory: electron/native
+
+      - name: Build Syphon native addon
+        run: npm run build
+        working-directory: electron/native
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Build Electron (macOS DMG - signed + notarized)
+        run: npx electron-builder --mac dmg --x64 --arm64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Upload macOS DMGs to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: riskcapital/ghost-arcade-releases
+          token: ${{ secrets.RELEASES_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          files: |
+            dist-electron/*.dmg
+            dist-electron/latest-mac.yml
+          draft: false
+          prerelease: false
+          generate_release_notes: true

@@ -1,0 +1,9 @@
+extends: electron-builder.yml
+
+# Local-only override: no Azure signing (no creds needed).
+# Used by `npm run build:desktop:dir` for manual canvas-render verification.
+win:
+  target: nsis
+  icon: build-resources/icons/icon.ico
+  publisherName: "Justin Wood"
+  azureSignOptions: null
