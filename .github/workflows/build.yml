@@ -14,7 +14,36 @@ permissions:
   contents: write
 
 jobs:
+  # Pre-create the empty release on the cross-repo target. softprops/
+  # action-gh-release@v2 can auto-create releases ONLY on the same repo
+  # the workflow is running in — when targeting a different repo via
+  # `repository:`, the release MUST already exist before the upload
+  # step runs, or every upload attempt 400s.
+  #
+  # This job runs ONCE, idempotently (gh release create -F /dev/null
+  # exits 0 if the release already exists). Both build jobs declare
+  # `needs: create-release` so they only kick off after the release is
+  # there, eliminating the parallel-creation race too.
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create empty release on ghost-arcade-releases (idempotent)
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        run: |
+          if gh release view "${{ github.ref_name }}" --repo riskcapital/ghost-arcade-releases > /dev/null 2>&1; then
+            echo "Release ${{ github.ref_name }} already exists — skipping create"
+          else
+            gh release create "${{ github.ref_name }}" \
+              --repo riskcapital/ghost-arcade-releases \
+              --title "Ghost Arcade Pro ${{ github.ref_name }}" \
+              --notes "Signed Windows installer + notarized macOS DMGs uploaded by CI." \
+              --target main
+            echo "Release ${{ github.ref_name }} created"
+          fi
+
   build-windows:
+    needs: create-release
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -70,6 +99,7 @@ jobs:
           generate_release_notes: true
 
   build-macos:
+    needs: create-release
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
