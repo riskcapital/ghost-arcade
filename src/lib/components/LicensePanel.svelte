@@ -194,7 +194,7 @@
     <div class="lp-section-label">{isLicensed ? 'Switch License Key' : 'Activate License'}</div>
 
     {#if isLicensed && !showSwitchKey}
-      <p class="section-hint">Have a different key? Switch between monthly, annual, or perpetual licenses.</p>
+      <p class="section-hint">Have a different key? Switch between monthly subscription and lifetime licenses.</p>
       <button class="btn-outline" onclick={() => { showSwitchKey = true; activateError = ''; activateSuccess = ''; }}>
         Enter a Different Key
       </button>
@@ -277,18 +277,13 @@
       <div class="upgrade-row">
         <button class="upgrade-card pro" onclick={() => openUrl('https://ghostarcade.live/checkout?tier=pro&billing=monthly')}>
           <span class="uc-tier">Pro Monthly</span>
-          <span class="uc-price">$24<small>/mo</small></span>
+          <span class="uc-price">$19<small>/mo</small></span>
           <span class="uc-features">All features • No watermark • Unlimited layers</span>
         </button>
-        <button class="upgrade-card annual" onclick={() => openUrl('https://ghostarcade.live/checkout?tier=pro&billing=yearly')}>
-          <span class="uc-tier">Pro Annual</span>
-          <span class="uc-price">$229<small>/yr</small></span>
-          <span class="uc-features">Save $59/yr • All pro features included</span>
-        </button>
         <button class="upgrade-card perpetual" onclick={() => openUrl('https://ghostarcade.live/checkout?tier=pro&billing=perpetual')}>
-          <span class="uc-tier">Pro Perpetual</span>
+          <span class="uc-tier">Pro Lifetime</span>
           <span class="uc-price">$399<small> once</small></span>
-          <span class="uc-features">Own it forever • 1yr updates included</span>
+          <span class="uc-features">Pay once, own forever • All updates included</span>
         </button>
       </div>
       <button class="btn-text center" onclick={() => openUrl('https://ghostarcade.live/pricing')}>
@@ -300,7 +295,7 @@
       <div class="lp-section-label">Upgrade</div>
       <button class="upgrade-card pro wide" onclick={() => openUrl('https://ghostarcade.live/checkout?tier=pro&billing=monthly')}>
         <span class="uc-tier">Upgrade to Pro</span>
-        <span class="uc-price">$24<small>/mo</small></span>
+        <span class="uc-price">$19<small>/mo</small></span>
         <span class="uc-features">Premium effects • Spout • 3D Particles • Video Export</span>
       </button>
     </section>
@@ -779,7 +774,7 @@
   /* ═══ Upgrade Cards ═══ */
   .upgrade-row {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-columns: 1fr 1fr;
     gap: 6px;
   }
 
