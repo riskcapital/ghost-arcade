@@ -77,7 +77,13 @@ jobs:
           Get-Module -ListAvailable -Name TrustedSigning | Format-List Name, Version
 
       - name: Build Electron (Windows NSIS, signed via Azure Trusted Signing)
-        run: npx electron-builder --win nsis
+        # --publish never disables electron-builder's auto-publish step. With
+        # GH_TOKEN in env it would otherwise try to push assets to the SOURCE
+        # repo (riskcapital/ghost-arcade) on top of softprops's cross-repo
+        # upload to ghost-arcade-releases. Two uploaders racing on the same
+        # asset name caused random 502s on overwrite-delete (saw it brick the
+        # v0.5.5 macOS job three times in a row). softprops handles publishing.
+        run: npx electron-builder --win nsis --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
@@ -137,7 +143,8 @@ jobs:
         run: npm run build
 
       - name: Build Electron (macOS DMG - signed + notarized)
-        run: npx electron-builder --mac dmg --x64 --arm64
+        # --publish never: see windows job comment.
+        run: npx electron-builder --mac dmg --x64 --arm64 --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
