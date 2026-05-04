@@ -49,6 +49,13 @@
   let penPreviewPoint: { x: number; y: number } | null = null;
   let isDraggingHandle = false;
 
+  // Full-width / full-height crosshair cursor that tracks the pointer over
+  // the drawing overlay. Tiny native crosshairs make precise placement hard
+  // (especially on dense compositions); these spanning guides make it
+  // obvious where the next stroke will start.
+  let cursorX: number | null = null;
+  let cursorY: number | null = null;
+
   const colorPresets: [number, number, number][] = [
     [255, 160, 40],   [67, 232, 249],   [50, 100, 255],
     [255, 50, 150],   [50, 255, 100],   [180, 50, 255],
@@ -378,15 +385,28 @@
       class="lp-draw-overlay"
       class:recording={isDrawing}
       class:pen-mode={drawMode === 'pen'}
-      onpointerdown={(e) => { if (drawMode === 'pen') handlePenClick(e); else startStroke(e); }}
-      onpointermove={(e) => { if (drawMode === 'pen' && isDraggingHandle) handlePenDrag(e); else continueStroke(e); }}
+      onpointerdown={(e) => { const p = getOverlayPixelCoords(e); cursorX = p.x; cursorY = p.y; if (drawMode === 'pen') handlePenClick(e); else startStroke(e); }}
+      onpointermove={(e) => { const p = getOverlayPixelCoords(e); cursorX = p.x; cursorY = p.y; if (drawMode === 'pen' && isDraggingHandle) handlePenDrag(e); else continueStroke(e); }}
       onpointerup={() => { if (drawMode === 'pen') { isDraggingHandle = false; } else endStroke(); }}
-      onpointerleave={() => { if (drawMode !== 'pen') endStroke(); }}
+      onpointerleave={() => { cursorX = null; cursorY = null; if (drawMode !== 'pen') endStroke(); }}
       oncontextmenu={handleOverlayContextMenu}
       role="application"
       aria-label="Light painting canvas"
     >
       <svg class="lp-preview-svg">
+        <!-- Full-overlay crosshair guide. Two lines (vertical + horizontal)
+             span the entire drawing area at the pointer position so the user
+             can land brush strokes precisely. White core + dark drop-shadow
+             so it's visible against bright AND dark scenes. Hidden when the
+             pointer leaves the overlay. -->
+        {#if cursorX !== null && cursorY !== null}
+          <line x1={cursorX} y1="0" x2={cursorX} y2="100%" stroke="rgba(0,0,0,0.6)" stroke-width="3" pointer-events="none" />
+          <line x1="0" y1={cursorY} x2="100%" y2={cursorY} stroke="rgba(0,0,0,0.6)" stroke-width="3" pointer-events="none" />
+          <line x1={cursorX} y1="0" x2={cursorX} y2="100%" stroke="rgba(255,255,255,0.85)" stroke-width="1" pointer-events="none" />
+          <line x1="0" y1={cursorY} x2="100%" y2={cursorY} stroke="rgba(255,255,255,0.85)" stroke-width="1" pointer-events="none" />
+          <circle cx={cursorX} cy={cursorY} r={Math.max(4, currentBrush.size * 0.35)} fill="none" stroke="rgba(0,0,0,0.7)" stroke-width="2" pointer-events="none" />
+          <circle cx={cursorX} cy={cursorY} r={Math.max(4, currentBrush.size * 0.35)} fill="none" stroke="rgba({brushColorRgb},0.95)" stroke-width="1" pointer-events="none" />
+        {/if}
         {#if drawMode === 'freehand' && isDrawing && livePreviewPath}
           <path d={livePreviewPath} fill="none" stroke="rgba({brushColorRgb},{currentBrush.opacity * 0.3})"
             stroke-width={currentBrush.size * 1.5} stroke-linecap="round" stroke-linejoin="round" filter="url(#lp-glow)" />
@@ -636,7 +656,7 @@
 
 <style>
   /* ====== OVERLAY (inside viewport) ====== */
-  .lp-draw-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 50; cursor: crosshair; touch-action: none; }
+  .lp-draw-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 50; cursor: none; touch-action: none; }
   .lp-draw-overlay.recording { cursor: none; }
   .lp-draw-overlay.pen-mode { cursor: crosshair; }
   .lp-preview-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }

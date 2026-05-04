@@ -1136,6 +1136,27 @@
     };
   });
 
+  // ── Engine layer cleanup ──────────────────────────────────────────────────
+  // The engine accumulates a per-layer GPU resource bundle (RT, geometry,
+  // material) in its `layerObjects` Map. Nothing was telling the engine
+  // when a layer disappeared from the project (delete, undo-add, redo-delete),
+  // so resources leaked. Worse: after an undo/redo round-trip a stale
+  // layerObject for a removed layer could still get touched by the render
+  // path (because Map iteration order doesn't follow project.layers), which
+  // matched the user-reported "redo bricks the app" symptom on light-painting
+  // layers. This reactive sweep walks the engine's known layer IDs each
+  // project tick and tears down any that are no longer present.
+  let _knownLayerIds = new Set<string>();
+  $: if (engine && $project) {
+    const liveIds = new Set($project.layers.map(l => l.id));
+    for (const id of _knownLayerIds) {
+      if (!liveIds.has(id)) {
+        try { engine.removeLayer(id); } catch (e) { console.warn('[Canvas] engine.removeLayer failed for', id, e); }
+      }
+    }
+    _knownLayerIds = liveIds;
+  }
+
   // Re-resize engine when project dimensions change (e.g., user picks 4K in settings)
   $: if (engine && $project.width && $project.height) {
     const pW = $project.width || 1920;

@@ -4,8 +4,10 @@
   import Canvas from './lib/components/Canvas.svelte';
   import AudioInputPicker from './lib/components/AudioInputPicker.svelte';
   import BpmTapWidget from './lib/components/BpmTapWidget.svelte';
-  import OnboardingTour from './lib/components/OnboardingTour.svelte';
-  import { onboarding } from './lib/stores/onboarding';
+  // Feature tour removed at user request — was an interactive multi-step
+  // overlay shown on first launch, but disrupted the experience for users
+  // already familiar with VJ software. The OnboardingTour.svelte and
+  // onboarding store files remain on disk but are no longer mounted.
   import WarpHandles from './lib/components/WarpHandles.svelte';
   import MeshWarpHandles from './lib/components/MeshWarpHandles.svelte';
   import CustomShapeHandles from './lib/components/CustomShapeHandles.svelte';
@@ -514,10 +516,7 @@
         // Welcome already seen (or non-demo tier) — still try the
         // first-launch demo import in case it wasn't done before.
         maybeAutoLoadDemo();
-        // Auto-show the feature tour on first launch after welcome — only
-        // if the user hasn't completed it before. Idempotent / silent on
-        // returning users.
-        setTimeout(() => onboarding.autoStartIfNew(), 500);
+        // (feature tour intentionally not auto-started; removed by request)
       }
     }).catch(e => console.warn('[License] Init error:', e));
 
@@ -3366,16 +3365,6 @@
                 </span>
                 <span class="menu-label">{demoLoading ? `Downloading ${demoProgress}%...` : 'Load Demo Project'}</span>
               </button>
-              <button class="menu-item" onclick={() => { fileMenuOpen = false; onboarding.open(); }}>
-                <span class="menu-icon">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="12" cy="12" r="10"/>
-                    <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
-                    <line x1="12" y1="17" x2="12.01" y2="17"/>
-                  </svg>
-                </span>
-                <span class="menu-label">Show Feature Tour</span>
-              </button>
               <div class="menu-separator"></div>
               <button class="menu-item" onclick={handleUndo} disabled={!$canUndo}>
                 <span class="menu-icon">
@@ -4292,14 +4281,10 @@
         localStorage.setItem('ghostarcade-welcome-seen', 'true');
         // Welcome was the gate — kick off demo download once dismissed
         maybeAutoLoadDemo();
-        // Auto-show the feature tour right after welcome on first launch.
-        setTimeout(() => onboarding.autoStartIfNew(), 400);
       }} />
     {/if}
 
-    <!-- Feature tour — auto-shows on first launch after welcome modal,
-         then suppressed until reset via Help → Show feature tour. -->
-    <OnboardingTour />
+    <!-- (Feature tour removed by request — see import comment.) -->
 
     <!-- Update available modal — shown when user clicks the Settings update
          banner. Handles download + install + auto-quit so the user never

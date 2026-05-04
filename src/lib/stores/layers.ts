@@ -15,10 +15,18 @@ import type { LineElement, LineShape, LinesContent, LineDrawAnimation, LineStrok
 import { maxLayers } from './license';
 import { createLineElement, createDefaultLinesContent, createDefaultDrawAnimation } from '../lines/types';
 
-// History recording callback — set from App.svelte to avoid circular imports
+// History recording callback — set from App.svelte to avoid circular imports.
+// We record SYNCHRONOUSLY (no setTimeout) so each discrete action lands in its
+// own undo step. Previously this used setTimeout(_, 0) which coalesced rapid
+// successive actions — drawing 10 light-painting strokes in quick succession
+// scheduled 10 callbacks that all fired in the next tick reading the SAME
+// post-mutation project, so the undo stack only got 1 entry pointing at the
+// pre-first-stroke state. One undo would wipe every stroke. Now each call
+// captures the project state synchronously, post-update, so undo unwinds
+// stroke-by-stroke as expected.
 let _onDiscreteAction: (() => void) | null = null;
 export function setHistoryCallback(fn: () => void) { _onDiscreteAction = fn; }
-function recordDiscreteAction() { if (_onDiscreteAction) setTimeout(_onDiscreteAction, 0); }
+function recordDiscreteAction() { if (_onDiscreteAction) _onDiscreteAction(); }
 const selectedLayerIdsState = writable<string[]>([]);
 
 function normalizeSelectedLayerIds(layerIds: string[], validIds: string[]): string[] {
