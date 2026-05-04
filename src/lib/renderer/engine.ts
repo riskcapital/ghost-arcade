@@ -289,10 +289,11 @@ export class RenderEngine {
   }
 
   // ─── Watermark System ─────────────────────────────────────────────────────
-  // Roaming logo watermark: icon-shrink.jpg appears at a random position,
-  // stays visible for a few seconds, fades out, disappears for a few seconds,
-  // then reappears at a new random position. Rendered in "screen" blend mode
-  // so it overlays everything including recordings.
+  // Tiled logo watermark: the Ghost Arcade brand mark renders as a grid
+  // across the output, with one cell illuminated at a time on a 10s rotation.
+  // Active in demo mode; removed once the user activates a Pro license.
+  // Rendered in "screen" blend mode so it overlays everything including
+  // recordings/Spout/Syphon output.
 
   /** Enable or disable the watermark overlay (controlled by license store) */
   setWatermark(enabled: boolean): void {
@@ -310,7 +311,7 @@ export class RenderEngine {
     if (!_watermarkTextureCache) {
       const loader = new THREE.TextureLoader();
       _watermarkTextureCache = loader.load(
-        './icon-shrink.png',
+        './logo.png',
         () => { console.log('[Watermark] Logo texture loaded successfully (cached)'); },
         undefined,
         (err) => { console.error('[Watermark] Failed to load logo texture:', err); }
