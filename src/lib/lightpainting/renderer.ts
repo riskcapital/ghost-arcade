@@ -10,6 +10,15 @@ import type {
   LightPaintingLoopMode,
 } from '../types';
 
+// Local-midnight wall-clock anchor used to derive `animationTime` from
+// Date.now(). Any process on the same machine computes the same value, so
+// renderer instances in the main viewport and the output window stay in
+// lock-step instead of drifting based on when each was constructed.
+const LP_TIME_ANCHOR_MS = (() => {
+  const d = new Date();
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+})();
+
 export class LightPaintingRenderer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -830,8 +839,12 @@ export class LightPaintingRenderer {
   render(content: LightPaintingContent, deltaTime: number): THREE.Texture {
     // Update animation time
     if (content.isPlaying) {
-      this.animationTime += deltaTime * 1000 * content.animationSpeed;
+      // Wall-clock-derived animationTime so the main viewport and output
+      // window converge on the SAME value at any moment. See community
+      // edition for full rationale (same code path).
+      this.animationTime = (Date.now() - LP_TIME_ANCHOR_MS) * content.animationSpeed;
     }
+    void deltaTime; // wall-clock-driven now; deltaTime kept for API stability
 
     // Calculate total duration
     this.totalDuration = this.calculateTotalDuration(content);

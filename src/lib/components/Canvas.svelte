@@ -92,6 +92,26 @@
   // Output post-processing (reactive)
   $: outputFilterCSS = getOutputFilterCSS($settings.output);
 
+  // ── Output-window display transforms (rotation + crop) ────────────────────
+  // Applied via CSS only when this Canvas is rendering the output window
+  // (isOutputMode). In editor mode they're a no-op so the user always sees
+  // the un-transformed source while editing. Pure GPU compositor work — no
+  // shader cost, no extra texture upload.
+  $: outputRotationDeg = isOutputMode ? ($settings.output.outputRotation ?? 0) : 0;
+  $: outputCropX = isOutputMode ? ($settings.output.outputCropX ?? 0) : 0;
+  $: outputCropY = isOutputMode ? ($settings.output.outputCropY ?? 0) : 0;
+  $: outputCropW = isOutputMode ? ($settings.output.outputCropWidth ?? 1) : 1;
+  $: outputCropH = isOutputMode ? ($settings.output.outputCropHeight ?? 1) : 1;
+  $: outputCropActive = isOutputMode && (outputCropX > 0 || outputCropY > 0 || outputCropW < 1 || outputCropH < 1);
+  $: outputCropClipPath = outputCropActive
+    ? `inset(${outputCropY * 100}% ${(1 - outputCropX - outputCropW) * 100}% ${(1 - outputCropY - outputCropH) * 100}% ${outputCropX * 100}%)`
+    : 'none';
+  $: outputCropTransform = outputCropActive
+    ? `translate(${(-outputCropX / outputCropW) * 100}%, ${(-outputCropY / outputCropH) * 100}%) scale(${1 / outputCropW}, ${1 / outputCropH})`
+    : '';
+  $: outputRotationTransform = outputRotationDeg !== 0 ? `rotate(${outputRotationDeg}deg)` : '';
+  $: outputCanvasTransform = [outputRotationTransform, outputCropTransform].filter(Boolean).join(' ');
+
   // Redraw overlay when test pattern / edge blend settings change
   $: if (outputOverlayCanvas) {
     updateOutputOverlay(
@@ -3378,9 +3398,15 @@
     bind:this={containerEl}
   >
     <canvas class="main-canvas" bind:this={canvas}
-      style:filter={outputFilterCSS !== 'none' ? outputFilterCSS : null}></canvas>
-    <!-- Edge blend + test pattern overlay -->
-    <canvas class="output-overlay" bind:this={outputOverlayCanvas}></canvas>
+      style:filter={outputFilterCSS !== 'none' ? outputFilterCSS : null}
+      style:transform={outputCanvasTransform || null}
+      style:clip-path={outputCropClipPath !== 'none' ? outputCropClipPath : null}
+      style:transform-origin={outputCropActive ? '0 0' : 'center'}></canvas>
+    <!-- Edge blend + test pattern overlay (rotates + crops with main canvas) -->
+    <canvas class="output-overlay" bind:this={outputOverlayCanvas}
+      style:transform={outputCanvasTransform || null}
+      style:clip-path={outputCropClipPath !== 'none' ? outputCropClipPath : null}
+      style:transform-origin={outputCropActive ? '0 0' : 'center'}></canvas>
     {#if $settings.output.blackout}
       <div class="blackout-overlay"></div>
     {/if}

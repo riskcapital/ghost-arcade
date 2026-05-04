@@ -35,10 +35,19 @@ function isRuntimeRef(value: unknown): boolean {
 }
 
 // Build a sanitized deep copy of `value`, omitting RUNTIME_KEYS by name and
-// any runtime refs detected by shape/type. Uses a WeakSet to handle cycles.
-// Everything returned is plain JSON-safe data, so JSON.stringify on the
-// result never triggers any toJSON() hooks.
-function sanitize(value: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
+// any runtime refs detected by shape/type. Cycle protection uses a recursion-
+// stack set (push on enter, pop on exit) so it ONLY rejects true back-edges,
+// never sibling re-uses of the same reference.
+//
+// Why the recursion-stack matters: project state has lots of shared refs
+// across siblings — every light-painting stroke spread-copies the same
+// `currentBrush` object, so all strokes' `brush.color` points at the SAME
+// [r,g,b] array. The previous implementation used a global WeakSet and
+// returned `undefined` the second time it saw any reference, so only the
+// first stroke survived an undo round-trip — strokes 2..N came back with
+// `brush.color = null` / missing fields, and the renderer threw
+// `Cannot read properties of null (reading 'x')` once Canvas re-rendered.
+function sanitize(value: unknown, ancestors: WeakSet<object> = new WeakSet()): unknown {
   if (value === null || value === undefined) return value;
   const t = typeof value;
   if (t === 'string' || t === 'number' || t === 'boolean') return value;
@@ -48,25 +57,31 @@ function sanitize(value: unknown, seen: WeakSet<object> = new WeakSet()): unknow
   if (isRuntimeRef(value)) return undefined;
 
   const obj = value as object;
-  if (seen.has(obj)) return undefined;
-  seen.add(obj);
+  // Recursion-stack cycle guard: if this object is one of our ancestors in
+  // the current branch, we're cycling — drop it. Sibling re-uses are fine.
+  if (ancestors.has(obj)) return undefined;
+  ancestors.add(obj);
 
+  let out: unknown;
   if (Array.isArray(value)) {
-    const out: unknown[] = [];
+    const arr: unknown[] = [];
     for (const item of value) {
-      const s = sanitize(item, seen);
-      out.push(s === undefined ? null : s);
+      const s = sanitize(item, ancestors);
+      arr.push(s === undefined ? null : s);
     }
-    return out;
+    out = arr;
+  } else {
+    const src = value as Record<string, unknown>;
+    const obj2: Record<string, unknown> = {};
+    for (const key of Object.keys(src)) {
+      if (RUNTIME_KEYS.has(key)) continue;
+      const s = sanitize(src[key], ancestors);
+      if (s !== undefined) obj2[key] = s;
+    }
+    out = obj2;
   }
 
-  const src = value as Record<string, unknown>;
-  const out: Record<string, unknown> = {};
-  for (const key of Object.keys(src)) {
-    if (RUNTIME_KEYS.has(key)) continue;
-    const s = sanitize(src[key], seen);
-    if (s !== undefined) out[key] = s;
-  }
+  ancestors.delete(obj); // pop on exit so siblings can re-traverse
   return out;
 }
 
