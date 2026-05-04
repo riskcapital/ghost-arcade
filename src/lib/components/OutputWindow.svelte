@@ -2,42 +2,48 @@
   import { onDestroy } from 'svelte';
   import { invoke } from '$lib/bridge';
   import type { RenderEngine } from '../renderer/engine';
+  import { settings } from '../stores/settings';
 
   export let isOpen = false;
   export let onClose: () => void = () => {};
   // Reference to the main canvas engine (kept for API compatibility)
   export let mainEngine: RenderEngine | null = null;
 
-  // Output rotation (0, 90, 180, 270 degrees)
-  export let rotation: number = 0;
+  // NOTE: rotation / cropRegion / showCursor used to be props bound from
+  // App.svelte. They now live in $settings.output and reach the output
+  // window via the BroadcastChannel state-sync, applied as CSS on the
+  // output canvas. The thin shims below stay for any external callers
+  // (admin panel, MIDI mapping, etc.) that still call them by name.
 
-  // Show cursor on output window (for live performance)
-  export let showCursor: boolean = false;
-
-  // Input slice/crop region (normalized 0-1 coordinates)
-  export let cropRegion: { x: number; y: number; width: number; height: number } = {
-    x: 0,
-    y: 0,
-    width: 1,
-    height: 1
-  };
-
-  // Methods to update settings from parent
   export function setRotation(deg: number) {
-    rotation = deg % 360;
+    const norm = (((deg % 360) + 360) % 360) as 0 | 90 | 180 | 270;
+    settings.update(s => ({ ...s, output: { ...s.output, outputRotation: norm } }));
   }
 
   export function setCropRegion(region: { x: number; y: number; width: number; height: number }) {
-    cropRegion = { ...region };
+    settings.update(s => ({
+      ...s,
+      output: {
+        ...s.output,
+        outputCropX: region.x,
+        outputCropY: region.y,
+        outputCropWidth: region.width,
+        outputCropHeight: region.height,
+      },
+    }));
   }
 
   export function setShowCursor(show: boolean) {
-    showCursor = show;
+    settings.update(s => ({ ...s, output: { ...s.output, outputShowCursor: show } }));
   }
 
   export function toggleCursor() {
-    showCursor = !showCursor;
-    return showCursor;
+    let next = false;
+    settings.update(s => {
+      next = !(s.output.outputShowCursor ?? false);
+      return { ...s, output: { ...s.output, outputShowCursor: next } };
+    });
+    return next;
   }
 
   // Update cursor position from main viewport (normalized 0-1 coordinates)

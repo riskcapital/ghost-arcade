@@ -49,11 +49,68 @@
   export let isOpen = false;
   export let onClose: () => void = () => {};
 
-  // Output display settings (passed from App.svelte)
-  export let outputRotation: number = 0;
-  export let outputCropRegion: { x: number; y: number; width: number; height: number } = { x: 0, y: 0, width: 1, height: 1 };
-  export let showOutputCursor: boolean = false;
-  export let onOutputCursorChange: (val: boolean) => void = () => {};
+  // Output display transforms now live in $settings.output (auto-broadcast
+  // via state-sync to the output window; CSS-applied on the output canvas).
+  // No props needed — read/write the store directly.
+  $: outputRotation = $settings.output.outputRotation ?? 0;
+  $: outputCropRegion = {
+    x: $settings.output.outputCropX ?? 0,
+    y: $settings.output.outputCropY ?? 0,
+    width: $settings.output.outputCropWidth ?? 1,
+    height: $settings.output.outputCropHeight ?? 1,
+  };
+  $: showOutputCursor = $settings.output.outputShowCursor ?? false;
+
+  function setOutputRotation(deg: 0 | 90 | 180 | 270) {
+    settings.update(s => ({ ...s, output: { ...s.output, outputRotation: deg } }));
+  }
+  function setOutputCrop(part: 'x' | 'y' | 'width' | 'height', v: number) {
+    settings.update(s => ({
+      ...s,
+      output: {
+        ...s.output,
+        outputCropX:      part === 'x' ? v : (s.output.outputCropX ?? 0),
+        outputCropY:      part === 'y' ? v : (s.output.outputCropY ?? 0),
+        outputCropWidth:  part === 'width'  ? v : (s.output.outputCropWidth ?? 1),
+        outputCropHeight: part === 'height' ? v : (s.output.outputCropHeight ?? 1),
+      },
+    }));
+  }
+  function resetOutputCrop() {
+    settings.update(s => ({ ...s, output: { ...s.output, outputCropX: 0, outputCropY: 0, outputCropWidth: 1, outputCropHeight: 1 } }));
+  }
+  function setShowOutputCursor(val: boolean) {
+    settings.update(s => ({ ...s, output: { ...s.output, outputShowCursor: val } }));
+  }
+
+  // ── Match Resolution ──────────────────────────────────────────────────────
+  // Asks the Electron main process for the native pixel dimensions of the
+  // display the output window is on (or would land on). Sets the project
+  // canvas to those dimensions so source pixels = projector pixels = zero
+  // scaling overhead in the GPU compositor.
+  let matchResLabel = '';
+  let matchResBusy = false;
+  async function handleMatchResolution() {
+    if (matchResBusy) return;
+    matchResBusy = true;
+    matchResLabel = '';
+    try {
+      const { invoke, isDesktopApp } = await import('$lib/bridge');
+      if (!isDesktopApp) { matchResLabel = 'Desktop only'; return; }
+      const info: any = await invoke('get_output_display_info');
+      if (info?.nativeWidth && info?.nativeHeight) {
+        project.setProjectDimensions(info.nativeWidth, info.nativeHeight);
+        matchResLabel = `${info.label}: ${info.nativeWidth}x${info.nativeHeight}`;
+      } else {
+        matchResLabel = 'No display info returned';
+      }
+    } catch (e) {
+      matchResLabel = 'Failed: ' + (e instanceof Error ? e.message : String(e));
+    } finally {
+      matchResBusy = false;
+      setTimeout(() => { matchResLabel = ''; }, 4000);
+    }
+  }
 
   // MIDI
   $: midiDevices = $midiStore.devices.filter((d: any) => d.state === 'connected');
@@ -651,16 +708,32 @@
         <section class="settings-section">
           <h3>Display</h3>
 
+          <!-- Match Resolution: snaps the project canvas to the native pixel
+               dimensions of the display the output window is on (or would be).
+               Eliminates source→projector scaling entirely. -->
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Resolution</span>
+              <span class="label-hint">
+                Project canvas: <strong>{$project.width}×{$project.height}</strong>
+                {#if matchResLabel}<br/><em style="color: #BB86FC;">{matchResLabel}</em>{/if}
+              </span>
+            </div>
+            <button class="secondary-btn" onclick={handleMatchResolution} disabled={matchResBusy}>
+              {matchResBusy ? 'Detecting…' : 'Match Output Display'}
+            </button>
+          </div>
+
           <div class="setting-row">
             <div class="setting-label">
               <span class="label-text">Output Rotation</span>
               <span class="label-hint">Rotate the output for portrait projectors</span>
             </div>
             <div class="rotation-buttons">
-              <button class="rot-btn" class:active={outputRotation === 0} onclick={() => outputRotation = 0}>0°</button>
-              <button class="rot-btn" class:active={outputRotation === 90} onclick={() => outputRotation = 90}>90°</button>
-              <button class="rot-btn" class:active={outputRotation === 180} onclick={() => outputRotation = 180}>180°</button>
-              <button class="rot-btn" class:active={outputRotation === 270} onclick={() => outputRotation = 270}>270°</button>
+              <button class="rot-btn" class:active={outputRotation === 0} onclick={() => setOutputRotation(0)}>0°</button>
+              <button class="rot-btn" class:active={outputRotation === 90} onclick={() => setOutputRotation(90)}>90°</button>
+              <button class="rot-btn" class:active={outputRotation === 180} onclick={() => setOutputRotation(180)}>180°</button>
+              <button class="rot-btn" class:active={outputRotation === 270} onclick={() => setOutputRotation(270)}>270°</button>
             </div>
           </div>
 
@@ -673,25 +746,29 @@
           <div class="crop-grid">
             <div class="crop-item">
               <span class="crop-label">X</span>
-              <input type="range" min="0" max="0.9" step="0.01" bind:value={outputCropRegion.x} />
+              <input type="range" min="0" max="0.9" step="0.01" value={outputCropRegion.x}
+                oninput={(e) => setOutputCrop('x', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="crop-value">{Math.round(outputCropRegion.x * 100)}%</span>
             </div>
             <div class="crop-item">
               <span class="crop-label">Y</span>
-              <input type="range" min="0" max="0.9" step="0.01" bind:value={outputCropRegion.y} />
+              <input type="range" min="0" max="0.9" step="0.01" value={outputCropRegion.y}
+                oninput={(e) => setOutputCrop('y', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="crop-value">{Math.round(outputCropRegion.y * 100)}%</span>
             </div>
             <div class="crop-item">
               <span class="crop-label">W</span>
-              <input type="range" min="0.1" max="1" step="0.01" bind:value={outputCropRegion.width} />
+              <input type="range" min="0.1" max="1" step="0.01" value={outputCropRegion.width}
+                oninput={(e) => setOutputCrop('width', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="crop-value">{Math.round(outputCropRegion.width * 100)}%</span>
             </div>
             <div class="crop-item">
               <span class="crop-label">H</span>
-              <input type="range" min="0.1" max="1" step="0.01" bind:value={outputCropRegion.height} />
+              <input type="range" min="0.1" max="1" step="0.01" value={outputCropRegion.height}
+                oninput={(e) => setOutputCrop('height', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="crop-value">{Math.round(outputCropRegion.height * 100)}%</span>
             </div>
-            <button class="secondary-btn" onclick={() => outputCropRegion = { x: 0, y: 0, width: 1, height: 1 }}>
+            <button class="secondary-btn" onclick={resetOutputCrop}>
               Reset Crop
             </button>
           </div>
@@ -699,13 +776,13 @@
           <div class="setting-row">
             <div class="setting-label">
               <span class="label-text">Show Cursor on Output</span>
-              <span class="label-hint">Press 'C' in output window to toggle</span>
+              <span class="label-hint">Full-screen crosshair on the output window</span>
             </div>
             <label class="toggle">
               <input
                 type="checkbox"
-                bind:checked={showOutputCursor}
-                onchange={() => onOutputCursorChange(showOutputCursor)}
+                checked={showOutputCursor}
+                onchange={(e) => setShowOutputCursor((e.target as HTMLInputElement).checked)}
               />
               <span class="toggle-slider"></span>
             </label>

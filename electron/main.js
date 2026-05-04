@@ -859,6 +859,38 @@ function registerIpcHandlers() {
     createOutputWindow(width, height, x, y, fullscreen, displayId);
   });
 
+  // Returns the NATIVE pixel resolution of the display the output window is
+  // currently on (or the would-be target if no output window is open yet).
+  // Used by the "Match Resolution" button — sets the project canvas to the
+  // exact pixel dimensions of the projector / external monitor so there's
+  // zero scaling between source and final output.
+  ipcMain.handle('get_output_display_info', () => {
+    const primary = screen.getPrimaryDisplay();
+    let target;
+    let isExternal = false;
+    if (outputWindow && !outputWindow.isDestroyed()) {
+      const bounds = outputWindow.getBounds();
+      const cx = bounds.x + bounds.width / 2;
+      const cy = bounds.y + bounds.height / 2;
+      target = screen.getDisplayNearestPoint({ x: Math.round(cx), y: Math.round(cy) });
+    } else {
+      target = screen.getAllDisplays().find(d => d.id !== primary.id) || primary;
+    }
+    isExternal = target.id !== primary.id;
+    const nativeW = Math.round(target.bounds.width * target.scaleFactor);
+    const nativeH = Math.round(target.bounds.height * target.scaleFactor);
+    return {
+      displayId: target.id,
+      label: target.label || (isExternal ? 'External display' : 'Primary display'),
+      isExternal,
+      logicalWidth: target.bounds.width,
+      logicalHeight: target.bounds.height,
+      scaleFactor: target.scaleFactor,
+      nativeWidth: nativeW,
+      nativeHeight: nativeH,
+    };
+  });
+
   ipcMain.handle('close_output_window', () => {
     if (outputWindow) {
       outputWindow.close();

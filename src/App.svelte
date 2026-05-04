@@ -124,10 +124,10 @@
   // Check GPU after a short delay to let native renderer initialize
   $: if (canvasComponent) { setTimeout(checkGPU, 2000); }
 
-  // Output window settings
-  let outputRotation = 0;
-  let outputCropRegion = { x: 0, y: 0, width: 1, height: 1 };
-  let showOutputCursor = false;
+  // Output rotation / crop / cursor used to live as local component state
+  // here. Moved into $settings.output so they auto-sync to the output window
+  // via the existing BroadcastChannel and apply via CSS on the output canvas.
+  // SettingsPanel now reads/writes them directly through the settings store.
   let showOutputSettings = false;
 
   // Audio input picker state moved into AudioInputPicker.svelte component.
@@ -4309,14 +4309,10 @@
       </div>
     {/if}
 
-    <!-- Settings Panel -->
+    <!-- Settings Panel — output transforms now read from $settings.output -->
     <SettingsPanel
       isOpen={showSettings}
       onClose={() => showSettings = false}
-      bind:outputRotation={outputRotation}
-      bind:outputCropRegion={outputCropRegion}
-      bind:showOutputCursor={showOutputCursor}
-      onOutputCursorChange={(val) => { outputWindow?.setShowCursor(val); import('./lib/sync/stateBroadcast').then(m => m.broadcastCursorVisibility(val)); }}
     />
 
     <!-- Footer / Status bar -->
@@ -4342,15 +4338,13 @@
     </footer>
   </div>
 
-  <!-- Output Window Manager -->
+  <!-- Output Window Manager — display transforms now flow via $settings.output
+       broadcast to the output window, applied via CSS on its canvas. -->
   <OutputWindow
     bind:this={outputWindow}
     bind:isOpen={outputIsOpen}
     mainEngine={canvasComponent?.getEngine()}
     onClose={() => { outputIsOpen = false; outputMode = 'embedded'; settings.setOutputWindowOpen(false); }}
-    bind:rotation={outputRotation}
-    bind:cropRegion={outputCropRegion}
-    bind:showCursor={showOutputCursor}
   />
 {/if}
 

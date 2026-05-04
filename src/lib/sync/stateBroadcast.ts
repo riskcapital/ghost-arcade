@@ -251,8 +251,38 @@ function initSender() {
   });
   unsubscribers.push(unsubVJ);
 
+  // Subscribe to settings.output changes so CSS-applied output transforms
+  // (rotation, crop, brightness, contrast, gamma, cursor visibility) stay
+  // in sync between editor + output window without requiring the user to
+  // reopen the output window after every tweak. Diffed against the last
+  // sent snapshot so non-output settings (e.g. UI prefs) don't trigger a
+  // broadcast.
+  let lastOutputJson = '';
+  const unsubSettings = settings.subscribe(s => {
+    if (!hasActiveReceiver) return;
+    const outJson = JSON.stringify(s.output);
+    if (outJson === lastOutputJson) return;
+    lastOutputJson = outJson;
+    if (settingsBroadcastTimer) clearTimeout(settingsBroadcastTimer);
+    settingsBroadcastTimer = setTimeout(() => {
+      if (!channel || mode !== 'sender') return;
+      try {
+        channel.postMessage({
+          type: 'settings-update',
+          data: { output: s.output },
+          timestamp: Date.now(),
+        } satisfies StateMessage);
+      } catch (err) {
+        console.error('[StateSync] Failed to broadcast settings:', err);
+      }
+    }, 16); // 1-frame coalesce — slider drags collapse to ~60 messages/sec
+  });
+  unsubscribers.push(unsubSettings);
+
   console.log('[StateSync] Sender initialized');
 }
+
+let settingsBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
 
 // ============================================================
 // Receiver (OSR Window)
@@ -270,6 +300,14 @@ function handleReceivedMessage(event: MessageEvent<StateMessage>) {
         try {
           // Use existing importProject() which handles all store updates
           project.importProject(msg.data);
+          // Pull settings.output through too. Output transforms (rotation,
+          // crop, color correction, cursor visibility) live in
+          // settings.output and are CSS-applied on the output canvas, so
+          // the output window needs the latest values to actually show
+          // changes the user makes mid-session.
+          if (msg.data.settings?.output) {
+            settings.update(s => ({ ...s, output: { ...s.output, ...msg.data.settings.output } }));
+          }
           if (!receivedFirstState) {
             receivedFirstState = true;
             console.log('[StateSync] First project state received');
@@ -366,6 +404,12 @@ function handleReceivedMessage(event: MessageEvent<StateMessage>) {
           if (typeof msg.data?.output?.outputWindowOpen === 'boolean') {
             settings.setOutputWindowOpen(!!msg.data.output.outputWindowOpen);
           }
+          // Bulk-merge the rest of output (rotation/crop/color/cursor) so
+          // CSS-applied transforms on the output canvas update live as the
+          // performer adjusts them in the editor.
+          if (msg.data?.output) {
+            settings.update(s => ({ ...s, output: { ...s.output, ...msg.data.output } }));
+          }
         } catch (err) {
           console.error('[StateSync] Failed to import settings:', err);
         }
@@ -379,6 +423,22 @@ function initReceiver() {
   if (!channel) return;
 
   channel.onmessage = handleReceivedMessage;
+
+  // Drive the cursor crosshair overlay visibility from settings rather than
+  // a separate cursor-visibility broadcast. The toggle in Settings →
+  // Display now writes settings.output.outputShowCursor; broadcast picks
+  // it up via the project-state / settings-update messages and we mirror
+  // it into the local outputCursorVisible flag the overlay code reads.
+  const unsubCursorVis = settings.subscribe(s => {
+    const next = !!s.output.outputShowCursor;
+    if (next !== outputCursorVisible) {
+      outputCursorVisible = next;
+      // Hide the OS cursor when our overlay is the cursor of record.
+      document.body.style.cursor = next ? 'none' : 'none';
+      updateCursorOverlay();
+    }
+  });
+  unsubscribers.push(unsubCursorVis);
 
   // Request initial state from main window
   channel.postMessage({
@@ -463,26 +523,53 @@ export function hasReceivedState(): boolean {
  * Clean up BroadcastChannel and subscriptions.
  */
 /** Render a crosshair cursor overlay on the output window */
+/**
+ * Render a full-overlay crosshair cursor on the output window. Vertical and
+ * horizontal lines span the entire window at the pointer position so the
+ * performer can see exactly where they're aiming on the projector. White
+ * core + dark drop-shadow so it reads on any background. Hidden when
+ * outputCursorVisible is false OR no cursor position is set.
+ */
 function updateCursorOverlay() {
   let el = document.getElementById('cursor-overlay');
-  if (outputCursorX === null || outputCursorY === null) {
+  const shouldShow =
+    outputCursorVisible && outputCursorX !== null && outputCursorY !== null;
+
+  if (!shouldShow) {
     if (el) el.style.display = 'none';
     return;
   }
+
   if (!el) {
     el = document.createElement('div');
     el.id = 'cursor-overlay';
-    el.style.cssText = 'position:fixed;pointer-events:none;z-index:99999;display:none;';
+    el.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:99999;';
     el.innerHTML = `
-      <div style="position:absolute;width:24px;height:2px;background:#fff;left:-12px;top:-1px;box-shadow:0 0 4px #000;"></div>
-      <div style="position:absolute;width:2px;height:24px;background:#fff;left:-1px;top:-12px;box-shadow:0 0 4px #000;"></div>
-      <div style="position:absolute;width:6px;height:6px;border:2px solid #fff;border-radius:50%;left:-5px;top:-5px;box-shadow:0 0 4px #000;"></div>
+      <div id="ch-vbg" style="position:absolute;top:0;bottom:0;width:3px;background:rgba(0,0,0,0.6);transform:translateX(-50%);"></div>
+      <div id="ch-hbg" style="position:absolute;left:0;right:0;height:3px;background:rgba(0,0,0,0.6);transform:translateY(-50%);"></div>
+      <div id="ch-vline" style="position:absolute;top:0;bottom:0;width:1px;background:rgba(255,255,255,0.9);transform:translateX(-50%);"></div>
+      <div id="ch-hline" style="position:absolute;left:0;right:0;height:1px;background:rgba(255,255,255,0.9);transform:translateY(-50%);"></div>
+      <div id="ch-ring" style="position:absolute;width:18px;height:18px;border-radius:50%;border:2px solid rgba(0,0,0,0.7);box-sizing:border-box;transform:translate(-50%,-50%);"></div>
+      <div id="ch-ring2" style="position:absolute;width:18px;height:18px;border-radius:50%;border:1px solid rgba(255,255,255,0.95);box-sizing:border-box;transform:translate(-50%,-50%);"></div>
     `;
     document.body.appendChild(el);
   }
+
   el.style.display = 'block';
-  el.style.left = `${outputCursorX * 100}%`;
-  el.style.top = `${(1 - outputCursorY) * 100}%`;
+  const xPct = (outputCursorX as number) * 100;
+  const yPct = (1 - (outputCursorY as number)) * 100;
+  const vbg = document.getElementById('ch-vbg');
+  const hbg = document.getElementById('ch-hbg');
+  const vline = document.getElementById('ch-vline');
+  const hline = document.getElementById('ch-hline');
+  const ring = document.getElementById('ch-ring');
+  const ring2 = document.getElementById('ch-ring2');
+  if (vbg) vbg.style.left = xPct + '%';
+  if (vline) vline.style.left = xPct + '%';
+  if (hbg) hbg.style.top = yPct + '%';
+  if (hline) hline.style.top = yPct + '%';
+  if (ring) { ring.style.left = xPct + '%'; ring.style.top = yPct + '%'; }
+  if (ring2) { ring2.style.left = xPct + '%'; ring2.style.top = yPct + '%'; }
 }
 
 export function destroyStateBroadcast() {

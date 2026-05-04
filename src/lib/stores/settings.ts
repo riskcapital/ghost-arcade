@@ -317,6 +317,18 @@ export interface OutputSettings {
   contrast: number;
   // Multi-output slices (overrides legacy single-output when non-empty)
   slices: OutputSlice[];
+  // ── Output-window display transforms ────────────────────────────────────
+  // These ONLY affect the dedicated output window (second-display projection).
+  // They live in settings so they auto-broadcast via the BroadcastChannel
+  // sync, applied via CSS on the output canvas (zero render cost — runs on
+  // the GPU compositor). Not persisted across sessions because they're
+  // typically per-venue.
+  outputRotation: 0 | 90 | 180 | 270;
+  outputCropX: number;       // 0..0.9
+  outputCropY: number;       // 0..0.9
+  outputCropWidth: number;   // 0.1..1
+  outputCropHeight: number;  // 0.1..1
+  outputShowCursor: boolean; // crosshair overlay on output window
   // Dome projection
   domeEnabled: boolean;
   domeMode: 'angular' | 'stereographic' | 'orthographic' | 'equirectangular';
@@ -413,6 +425,13 @@ function createDefaultSettings(): AppSettings {
       gamma: 1,
       contrast: 1,
       slices: [],
+      // Output-window display transforms (CSS-applied on output canvas)
+      outputRotation: 0,
+      outputCropX: 0,
+      outputCropY: 0,
+      outputCropWidth: 1,
+      outputCropHeight: 1,
+      outputShowCursor: false,
       // Dome projection defaults
       domeEnabled: false,
       domeMode: 'angular',
