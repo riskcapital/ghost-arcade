@@ -16,6 +16,7 @@
     type LightPaintingDrawMode,
     type LightPaintingLoopMode,
     type LightPaintingPenPoint,
+    type LightPaintingSequenceMode,
     type LightPaintingStrokePoint,
   } from '../types';
 
@@ -44,6 +45,10 @@
   let strokeStartTime = 0;
   let livePreviewPoints: { x: number; y: number }[] = [];
   let lastSmoothedPoint: { x: number; y: number } | null = null;
+  const LIVE_PREVIEW_SYNC_INTERVAL_MS = 50;
+  const LIVE_PREVIEW_MAX_POINTS = 300;
+  let livePreviewRafId: number | null = null;
+  let lastLivePreviewSyncTime = 0;
 
   let penPoints: LightPaintingPenPoint[] = [];
   let penPreviewPoint: { x: number; y: number } | null = null;
@@ -81,6 +86,16 @@
   const loopModes: { mode: LightPaintingLoopMode; label: string }[] = [
     { mode: 'forward', label: 'Fwd' },    { mode: 'reverse', label: 'Rev' },
     { mode: 'pingpong', label: 'PP' },    { mode: 'once', label: '1x' },
+  ];
+
+  const sequenceModes: { mode: LightPaintingSequenceMode; label: string }[] = [
+    { mode: 'recorded', label: 'Recorded' },
+    { mode: 'random', label: 'Random' },
+    { mode: 'alternating', label: 'Alternating' },
+    { mode: 'bottomUp', label: 'Bottom Up' },
+    { mode: 'topDown', label: 'Top Down' },
+    { mode: 'centerOut', label: 'Center Out' },
+    { mode: 'outsideIn', label: 'Outside In' },
   ];
 
   $: layer = $selectedLightPaintingLayer;
@@ -213,6 +228,45 @@
     return result;
   }
 
+  function getLivePreviewSyncPoints(): LightPaintingStrokePoint[] {
+    if (currentStrokePoints.length > LIVE_PREVIEW_MAX_POINTS) {
+      return resamplePoints(currentStrokePoints, LIVE_PREVIEW_MAX_POINTS);
+    }
+    return currentStrokePoints.slice();
+  }
+
+  function cancelLivePreviewSync() {
+    if (livePreviewRafId !== null) {
+      cancelAnimationFrame(livePreviewRafId);
+      livePreviewRafId = null;
+    }
+  }
+
+  function flushLivePreviewSync(force = false) {
+    if (!layerId || currentStrokePoints.length < 2) return;
+
+    const now = performance.now();
+    if (!force && now - lastLivePreviewSyncTime < LIVE_PREVIEW_SYNC_INTERVAL_MS) return;
+
+    lastLivePreviewSyncTime = now;
+    project.updateLightPaintingContent(layerId, {
+      livePreviewStroke: {
+        points: getLivePreviewSyncPoints(),
+        brush: { ...currentBrush },
+      },
+    });
+  }
+
+  function scheduleLivePreviewSync() {
+    if (livePreviewRafId !== null) return;
+    livePreviewRafId = requestAnimationFrame(() => {
+      livePreviewRafId = null;
+      flushLivePreviewSync();
+    });
+  }
+
+  onDestroy(cancelLivePreviewSync);
+
   // === DRAWING ===
   function startStroke(e: PointerEvent) {
     if (!layer || !content || drawMode === 'pen') return;
@@ -223,6 +277,8 @@
     currentStrokePoints = [{ x: coords.x, y: coords.y, pressure: (e as any).pressure ?? 0.5, timestamp: 0 }];
     lastSmoothedPoint = { x: coords.x, y: coords.y };
     livePreviewPoints = [pixel];
+    cancelLivePreviewSync();
+    lastLivePreviewSyncTime = 0;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     if (layerId) project.updateLightPaintingContent(layerId, { isRecording: true });
   }
@@ -230,7 +286,7 @@
   function continueStroke(e: PointerEvent) {
     if (drawMode === 'pen') { penPreviewPoint = getOverlayPixelCoords(e); return; }
     if (!isDrawing) return;
-    const coords = getCanvasCoords(e), pixel = getOverlayPixelCoords(e);
+    const coords = getCanvasCoords(e);
     const smoothing = currentBrush.smoothing ?? 0.5;
 
     // Exponential moving average smoothing (Procreate StreamLine)
@@ -256,21 +312,18 @@
     const overlayPixel = getOverlayPixelCoords(e);
     livePreviewPoints = [...livePreviewPoints, overlayPixel];
 
-    // Write in-progress stroke to the store so the output window can
-    // render it in real-time via BroadcastChannel state sync.
-    if (layerId && currentStrokePoints.length % 3 === 0) {
-      project.updateLightPaintingContent(layerId, {
-        livePreviewStroke: {
-          points: [...currentStrokePoints],
-          brush: { ...currentBrush },
-        },
-      });
-    }
+    // Batch in-progress stroke sync so the output window gets responsive
+    // previews without cloning a growing point array on every pointer burst.
+    scheduleLivePreviewSync();
   }
 
   function endStroke() {
     if (drawMode === 'pen') return;
-    if (!isDrawing || !layerId || currentStrokePoints.length < 2) { isDrawing = false; currentStrokePoints = []; livePreviewPoints = []; lastSmoothedPoint = null; return; }
+    cancelLivePreviewSync();
+    if (!isDrawing || !layerId || currentStrokePoints.length < 2) {
+      if (layerId) project.updateLightPaintingContent(layerId, { isRecording: false, livePreviewStroke: null });
+      isDrawing = false; currentStrokePoints = []; livePreviewPoints = []; lastSmoothedPoint = null; return;
+    }
 
     // Post-capture Chaikin corner-cutting refinement
     const smoothing = currentBrush.smoothing ?? 0.5;
@@ -361,7 +414,10 @@
   function togglePlayback() { if (layerId && content) project.updateLightPaintingContent(layerId, { isPlaying: !content.isPlaying }); }
   function clearAllStrokes() { if (layerId) project.clearLightPaintingStrokes(layerId); }
   function removeStroke(strokeId: string) { if (layerId) project.removeLightPaintingStroke(layerId, strokeId); }
-  function updateSetting(key: string, value: number | boolean) { if (layerId) project.updateLightPaintingContent(layerId, { [key]: value }); }
+  function updateSetting(key: string, value: number | boolean | string) { if (layerId) project.updateLightPaintingContent(layerId, { [key]: value }); }
+  function reshuffleSequence() {
+    if (layerId) project.updateLightPaintingContent(layerId, { randomSequenceSeed: Math.floor(Math.random() * 1_000_000_000) });
+  }
 
   function handleCustomColor(e: Event) { const h = (e.target as HTMLInputElement).value; setColor([parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)]); }
   function handleCustomSecondaryColor(e: Event) { const h = (e.target as HTMLInputElement).value; setSecondaryColor([parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)]); }
@@ -562,6 +618,9 @@
             <div class="sc"><label>Speed <b>{content.animationSpeed.toFixed(1)}x</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.animationSpeed} oninput={(e) => updateSetting('animationSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
             <div class="sc"><label>Draw Speed <b>{content.drawSpeed.toFixed(1)}x</b></label><input type="range" min="0.1" max="10" step="0.1" value={content.drawSpeed} oninput={(e) => updateSetting('drawSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
             <div class="sc"><label>Trail Length <b>{content.trailLength.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.trailLength} oninput={(e) => updateSetting('trailLength', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            {#if content.loopMode === 'pingpong'}
+              <div class="sc"><label>Ping Pong Hold <b>{content.pingPongHold ?? 0}ms</b></label><input type="range" min="0" max="5000" step="100" value={content.pingPongHold ?? 0} oninput={(e) => updateSetting('pingPongHold', parseInt((e.target as HTMLInputElement).value))} /></div>
+            {/if}
           </div>
 
           <div class="sec-label">Stagger</div>
@@ -574,10 +633,36 @@
             </div>
           {/if}
 
+          <div class="sec-label">Sequence</div>
+          <div class="slider-col">
+            <div class="sc">
+              <label>Order <b>{sequenceModes.find(sm => sm.mode === (content.sequenceMode ?? 'recorded'))?.label ?? 'Recorded'}</b></label>
+              <select value={content.sequenceMode ?? 'recorded'} onchange={(e) => updateSetting('sequenceMode', (e.target as HTMLSelectElement).value)}>
+                {#each sequenceModes as sm}
+                  <option value={sm.mode}>{sm.label}</option>
+                {/each}
+              </select>
+            </div>
+          </div>
+          {#if (content.sequenceMode ?? 'recorded') === 'random'}
+            <div class="check-row"><button class="mini-action" onclick={reshuffleSequence}>Reshuffle Random Order</button></div>
+          {/if}
+
           <div class="sec-label">Snake</div>
           <div class="slider-col">
             <div class="sc"><label>Head Size <b>{content.snake.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.snake} oninput={(e) => updateSetting('snake', parseFloat((e.target as HTMLInputElement).value))} /></div>
             <div class="sc"><label>Snake Speed <b>{content.snakeSpeed.toFixed(1)}x</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.snakeSpeed} oninput={(e) => updateSetting('snakeSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
+          </div>
+
+          <div class="sec-label">Organic Motion</div>
+          <div class="slider-col">
+            <div class="sc"><label>Wind Sway <b>{(content.windSway ?? 0).toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.windSway ?? 0} oninput={(e) => updateSetting('windSway', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Wind Speed <b>{(content.windSpeed ?? 1).toFixed(1)}x</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.windSpeed ?? 1} oninput={(e) => updateSetting('windSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Wind Detail <b>{(content.windScale ?? 2).toFixed(1)}</b></label><input type="range" min="0.5" max="8" step="0.1" value={content.windScale ?? 2} oninput={(e) => updateSetting('windScale', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Root Lock <b>{(content.windAnchor ?? 0.7).toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.windAnchor ?? 0.7} oninput={(e) => updateSetting('windAnchor', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Flow Pulse <b>{(content.flowPulse ?? 0).toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.flowPulse ?? 0} oninput={(e) => updateSetting('flowPulse', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Flow Speed <b>{(content.flowSpeed ?? 1).toFixed(1)}x</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.flowSpeed ?? 1} oninput={(e) => updateSetting('flowSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>Flow Width <b>{(content.flowWidth ?? 0.12).toFixed(2)}</b></label><input type="range" min="0.03" max="0.5" step="0.01" value={content.flowWidth ?? 0.12} oninput={(e) => updateSetting('flowWidth', parseFloat((e.target as HTMLInputElement).value))} /></div>
           </div>
 
         {:else if activeSection === 'effects'}
@@ -754,6 +839,10 @@
     appearance: none; width: 14px; height: 14px; border-radius: 50%;
     background: #BB86FC; cursor: pointer; border: 2px solid #141416;
   }
+  .sc select {
+    width: 100%; background: #0d0d10; border: 1px solid #333; color: #ddd;
+    border-radius: 5px; padding: 6px 8px; font-size: 11px; outline: none;
+  }
 
   /* Brush grid */
   .brush-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 8px; }
@@ -785,6 +874,11 @@
   .check-row { display: flex; gap: 12px; margin-bottom: 8px; }
   .check-row label { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #bbb; cursor: pointer; }
   .check-row input[type="checkbox"] { accent-color: #BB86FC; width: 13px; height: 13px; }
+  .mini-action {
+    background: #161618; border: 1px solid #333; color: #bbb;
+    border-radius: 5px; padding: 5px 8px; font-size: 11px; cursor: pointer;
+  }
+  .mini-action:hover { border-color: #BB86FC; color: #fff; }
 
   /* Strokes list */
   .strokes-list { max-height: 240px; overflow-y: auto; }
