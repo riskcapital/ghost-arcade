@@ -826,10 +826,35 @@ export const passthroughVertexShader = /* glsl */ `
 // This shader ensures the final output is always fully opaque
 export const opaqueOutputFragmentShader = /* glsl */ `
   uniform sampler2D uTexture;
+  uniform vec4 uOutputCrop;
+  uniform int uOutputRotation;
+  uniform float uBrightness;
+  uniform float uContrast;
+  uniform float uGamma;
   varying vec2 vUv;
+
+  vec2 rotateUv(vec2 uv) {
+    if (uOutputRotation == 1) {
+      return vec2(uv.y, 1.0 - uv.x);
+    }
+    if (uOutputRotation == 2) {
+      return vec2(1.0 - uv.x, 1.0 - uv.y);
+    }
+    if (uOutputRotation == 3) {
+      return vec2(1.0 - uv.y, uv.x);
+    }
+    return uv;
+  }
+
   void main() {
-    vec4 color = texture2D(uTexture, vUv);
-    gl_FragColor = vec4(color.rgb, 1.0);
+    vec2 uv = rotateUv(vUv);
+    uv = uOutputCrop.xy + uv * uOutputCrop.zw;
+
+    vec4 color = texture2D(uTexture, clamp(uv, 0.0, 1.0));
+    vec3 corrected = color.rgb * uBrightness;
+    corrected = (corrected - 0.5) * uContrast + 0.5;
+    corrected = pow(max(corrected, vec3(0.0)), vec3(max(uGamma, 0.001)));
+    gl_FragColor = vec4(clamp(corrected, 0.0, 1.0), 1.0);
   }
 `;
 

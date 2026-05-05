@@ -25,44 +25,136 @@ let projectDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 const DEBOUNCE_MS = 50; // Reduced frequency for full state (heavy serialization)
 
 // ── Fast-path layer patch (corners, opacity, etc.) ──
-// Tracks previous corners so we can detect corner-only changes and send a
-// lightweight patch instead of re-serializing the entire project.
+// Tracks previous layer state so corner/opacity/mesh tweaks can go out as
+// lightweight patches instead of re-serializing the entire project.
 let lastLayerCorners: Record<string, any> = {};
 let lastLayerOpacities: Record<string, number> = {};
+let lastLayerMeshGrids: Record<string, any> = {};
+let lastLayerSignatures: Record<string, string> = {};
+let lastLayerIds = '';
+let pendingLayerPatches = new Map<string, { id: string; corners?: any; opacity?: number; meshGrid?: any }>();
 let patchThrottle: ReturnType<typeof setTimeout> | null = null;
 
-/** Send a lightweight per-layer patch instead of a full export. */
-function broadcastLayerPatches() {
-  if (!channel || mode !== 'sender') return;
+function cloneSerializable<T>(value: T): T {
+  if (value === undefined || value === null) return value;
+  return JSON.parse(JSON.stringify(value));
+}
 
-  const currentLayers = get(project).layers;
+function stripLayerSourceForSignature(source: any): any {
+  if (!source) return source;
+  const {
+    texture: _texture,
+    videoElement: _videoElement,
+    isPlaying: _isPlaying,
+    synthVisionCanvas: _synthVisionCanvas,
+    threejsCanvas: _threejsCanvas,
+    iframeElement: _iframeElement,
+    ...rest
+  } = source;
+  return rest;
+}
+
+function layerPatchSignature(layer: any): string {
+  const {
+    corners: _corners,
+    opacity: _opacity,
+    meshGrid: _meshGrid,
+    source,
+    _seqOrigOpacity,
+    ...rest
+  } = layer;
+  return JSON.stringify({ ...rest, source: stripLayerSourceForSignature(source) });
+}
+
+function resetLayerPatchSnapshot(projectState = get(project)) {
+  const nextCorners: Record<string, any> = {};
+  const nextOpacities: Record<string, number> = {};
+  const nextMeshGrids: Record<string, any> = {};
+  const nextSignatures: Record<string, string> = {};
+  const ids: string[] = [];
+
+  for (const layer of projectState.layers) {
+    ids.push(layer.id);
+    nextCorners[layer.id] = cloneSerializable(layer.corners);
+    nextOpacities[layer.id] = layer.opacity;
+    nextMeshGrids[layer.id] = cloneSerializable(layer.meshGrid);
+    nextSignatures[layer.id] = layerPatchSignature(layer);
+  }
+
+  lastLayerIds = ids.join('|');
+  lastLayerCorners = nextCorners;
+  lastLayerOpacities = nextOpacities;
+  lastLayerMeshGrids = nextMeshGrids;
+  lastLayerSignatures = nextSignatures;
+}
+
+function flushLayerPatches() {
+  if (!channel || mode !== 'sender' || pendingLayerPatches.size === 0) return;
+  const patches = Array.from(pendingLayerPatches.values());
+  pendingLayerPatches.clear();
+  try {
+    channel.postMessage({
+      type: 'layer-patch',
+      data: patches,
+      timestamp: Date.now(),
+    } satisfies StateMessage);
+  } catch {}
+}
+
+/** Send a lightweight per-layer patch instead of a full export. */
+function broadcastLayerPatches(currentLayers = get(project).layers): boolean {
+  if (!channel || mode !== 'sender') return false;
+
   const patches: Array<{ id: string; corners?: any; opacity?: number; meshGrid?: any }> = [];
 
   for (const layer of currentLayers) {
     const prevCorners = lastLayerCorners[layer.id];
     const prevOpacity = lastLayerOpacities[layer.id];
+    const prevMeshGrid = lastLayerMeshGrids[layer.id];
     const cornersChanged = !prevCorners || JSON.stringify(layer.corners) !== JSON.stringify(prevCorners);
     const opacityChanged = prevOpacity !== layer.opacity;
+    const meshGridChanged = JSON.stringify(layer.meshGrid) !== JSON.stringify(prevMeshGrid);
 
-    if (cornersChanged || opacityChanged) {
+    if (cornersChanged || opacityChanged || meshGridChanged) {
       const patch: any = { id: layer.id };
-      if (cornersChanged) { patch.corners = layer.corners; patch.meshGrid = layer.meshGrid; }
+      if (cornersChanged) patch.corners = layer.corners;
+      if (meshGridChanged) patch.meshGrid = layer.meshGrid;
       if (opacityChanged) patch.opacity = layer.opacity;
       patches.push(patch);
-      lastLayerCorners[layer.id] = JSON.parse(JSON.stringify(layer.corners));
+      lastLayerCorners[layer.id] = cloneSerializable(layer.corners);
       lastLayerOpacities[layer.id] = layer.opacity;
+      lastLayerMeshGrids[layer.id] = cloneSerializable(layer.meshGrid);
     }
   }
 
   if (patches.length > 0) {
-    try {
-      channel.postMessage({
-        type: 'layer-patch',
-        data: patches,
-        timestamp: Date.now(),
-      } satisfies StateMessage);
-    } catch {}
+    for (const patch of patches) {
+      pendingLayerPatches.set(patch.id, { ...pendingLayerPatches.get(patch.id), ...patch });
+    }
+    if (!patchThrottle) {
+      patchThrottle = setTimeout(() => {
+        patchThrottle = null;
+        flushLayerPatches();
+      }, 16);
+    }
   }
+  return true;
+}
+
+function tryBroadcastLayerPatchUpdate(): boolean {
+  if (!channel || mode !== 'sender' || !hasActiveReceiver) return true;
+  const projectState = get(project);
+  const currentLayers = projectState.layers;
+  const currentIds = currentLayers.map(layer => layer.id).join('|');
+
+  if (!lastLayerIds || currentIds !== lastLayerIds) return false;
+
+  for (const layer of currentLayers) {
+    const signature = layerPatchSignature(layer);
+    if (lastLayerSignatures[layer.id] !== signature) return false;
+  }
+
+  return broadcastLayerPatches(currentLayers);
 }
 
 // ============================================================
@@ -121,6 +213,7 @@ function sendFullState() {
       timestamp: Date.now(),
     } satisfies StateMessage);
 
+    resetLayerPatchSnapshot();
     console.log('[StateSync] Full state sent to OSR');
   } catch (err) {
     console.error('[StateSync] Failed to send full state:', err);
@@ -142,6 +235,7 @@ function broadcastProjectUpdate() {
         data: projectData,
         timestamp: Date.now(),
       } satisfies StateMessage);
+      resetLayerPatchSnapshot();
     } catch (err) {
       console.error('[StateSync] Failed to broadcast project:', err);
     }
@@ -241,7 +335,9 @@ function initSender() {
   // Layer patches (corners, opacity) are sent only when the output window
   // is actually open — otherwise they just waste CPU on JSON.stringify.
   const unsubProject = project.subscribe(() => {
-    broadcastProjectUpdate();
+    if (!tryBroadcastLayerPatchUpdate()) {
+      broadcastProjectUpdate();
+    }
   });
   unsubscribers.push(unsubProject);
 
@@ -251,7 +347,7 @@ function initSender() {
   });
   unsubscribers.push(unsubVJ);
 
-  // Subscribe to settings.output changes so CSS-applied output transforms
+  // Subscribe to settings.output changes so final-pass output transforms
   // (rotation, crop, brightness, contrast, gamma, cursor visibility) stay
   // in sync between editor + output window without requiring the user to
   // reopen the output window after every tweak. Diffed against the last
@@ -302,7 +398,7 @@ function handleReceivedMessage(event: MessageEvent<StateMessage>) {
           project.importProject(msg.data);
           // Pull settings.output through too. Output transforms (rotation,
           // crop, color correction, cursor visibility) live in
-          // settings.output and are CSS-applied on the output canvas, so
+          // settings.output and are applied by the output renderer, so
           // the output window needs the latest values to actually show
           // changes the user makes mid-session.
           if (msg.data.settings?.output) {

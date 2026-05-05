@@ -1254,6 +1254,61 @@
   let clientCount = 0;
   let wsPort = 9001;
   let httpPort = 9002; // HTTP info server port
+  const LP_LIVE_PREVIEW_SYNC_INTERVAL_MS = 50;
+  const LP_LIVE_PREVIEW_MAX_POINTS = 300;
+
+  function resampleLightPaintingPreviewPoints(points: any[], maxCount = LP_LIVE_PREVIEW_MAX_POINTS) {
+    if (points.length <= maxCount) return points.slice();
+
+    const result: any[] = [];
+    const step = (points.length - 1) / (maxCount - 1);
+    for (let i = 0; i < maxCount; i++) {
+      const idx = i * step;
+      const lo = Math.floor(idx);
+      const hi = Math.min(lo + 1, points.length - 1);
+      const t = idx - lo;
+      const a = points[lo];
+      const b = points[hi];
+      result.push({
+        x: a.x + (b.x - a.x) * t,
+        y: a.y + (b.y - a.y) * t,
+        pressure: (a.pressure ?? 0.5) + ((b.pressure ?? 0.5) - (a.pressure ?? 0.5)) * t,
+        timestamp: (a.timestamp ?? 0) + ((b.timestamp ?? 0) - (a.timestamp ?? 0)) * t,
+      });
+    }
+    return result;
+  }
+
+  function cancelMobileLightPaintingPreview(state: any) {
+    if (state?.previewRafId !== null && state?.previewRafId !== undefined) {
+      cancelAnimationFrame(state.previewRafId);
+      state.previewRafId = null;
+    }
+  }
+
+  function flushMobileLightPaintingPreview(state: any, force = false) {
+    if (!state || state.points.length < 2) return;
+
+    const now = performance.now();
+    if (!force && now - (state.lastPreviewSyncTime ?? 0) < LP_LIVE_PREVIEW_SYNC_INTERVAL_MS) return;
+
+    state.lastPreviewSyncTime = now;
+    project.updateLightPaintingContent(state.layerId, {
+      livePreviewStroke: {
+        points: resampleLightPaintingPreviewPoints(state.points),
+        brush: state.brush,
+      },
+    });
+  }
+
+  function scheduleMobileLightPaintingPreview(state: any) {
+    if (!state || state.previewRafId != null) return;
+    state.previewRafId = requestAnimationFrame(() => {
+      state.previewRafId = null;
+      flushMobileLightPaintingPreview(state);
+    });
+  }
+
   let ws: WebSocket | null = null;
 
   // Connect to WebSocket server as desktop host
@@ -1766,6 +1821,8 @@
           brush,
           points: [],
           startTime: performance.now(),
+          previewRafId: null,
+          lastPreviewSyncTime: 0,
         };
         project.updateLightPaintingContent(layerId, { isRecording: true });
         break;
@@ -1775,20 +1832,18 @@
         if (!state) break;
         const { x, y, pressure, timestamp } = msg as any;
         state.points.push({ x, y, pressure: pressure ?? 0.5, timestamp: timestamp ?? (performance.now() - state.startTime) });
-        // Update live preview every 3rd point so output shows the stroke in real-time
-        if (state.points.length % 3 === 0) {
-          project.updateLightPaintingContent(state.layerId, {
-            livePreviewStroke: { points: [...state.points], brush: state.brush },
-          });
-        }
+        scheduleMobileLightPaintingPreview(state);
         break;
       }
       case 'lightpainting_stroke_end': {
         const state = (window as any).__mobileLPState;
         if (!state || state.points.length < 2) {
+          cancelMobileLightPaintingPreview(state);
+          if (state?.layerId) project.updateLightPaintingContent(state.layerId, { isRecording: false, livePreviewStroke: null });
           (window as any).__mobileLPState = null;
           break;
         }
+        cancelMobileLightPaintingPreview(state);
         // Finalize stroke with smoothing
         let finalPoints = [...state.points];
         const smoothing = state.brush.smoothing ?? 0.5;
@@ -2074,9 +2129,24 @@
     settings.setOutputWindowOpen(false);
   }
 
+  async function matchOutputDisplayResolution(reason: string) {
+    if (!isDesktopApp) return;
+    try {
+      const info: any = await invoke('get_output_display_info');
+      if (!info?.nativeWidth || !info?.nativeHeight) return;
+      const current = get(project);
+      if (current.width === info.nativeWidth && current.height === info.nativeHeight) return;
+      console.log(`[Output] Matching project resolution for ${reason}: ${current.width}x${current.height} -> ${info.nativeWidth}x${info.nativeHeight} (${info.label || 'display'})`);
+      project.setProjectDimensions(info.nativeWidth, info.nativeHeight);
+    } catch (err) {
+      console.warn('[Output] Could not match output display resolution:', err);
+    }
+  }
+
   async function toggleFullscreen() {
     // If output window is already open, toggle its fullscreen
     if (outputIsOpen && outputWindow) {
+      await matchOutputDisplayResolution('fullscreen output');
       const isFs = await outputWindow.toggleFullscreen();
       outputMode = isFs ? 'fullscreen' : 'window';
       return;
@@ -2085,7 +2155,8 @@
     // Open fullscreen output on external monitor (or primary if no external)
     if (outputMode !== 'fullscreen') {
       if (outputWindow) {
-        outputWindow.openFullscreenExternal();
+        await matchOutputDisplayResolution('fullscreen output');
+        await outputWindow.openFullscreenExternal();
         outputIsOpen = true;
         outputMode = 'fullscreen';
         settings.setOutputWindowOpen(true);

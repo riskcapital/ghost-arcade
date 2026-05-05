@@ -65,17 +65,18 @@
       let target = displays[0]; // fallback to first display
       if (preferExternal) {
         // Pick the first non-primary display
-        const external = displays.find((d: any) => !d.isPrimary);
+        const external = displays.find((d: any) => !(d.isPrimary ?? d.primary));
         if (external) {
           target = external;
         }
       }
 
       // Open at 1280x720 centered on the target display (not full size)
-      const winW = Math.min(1280, target.width);
-      const winH = Math.min(720, target.height);
-      const x = target.x + Math.round((target.width - winW) / 2);
-      const y = target.y + Math.round((target.height - winH) / 2);
+      const bounds = target.bounds || target;
+      const winW = Math.min(1280, bounds.width);
+      const winH = Math.min(720, bounds.height);
+      const x = bounds.x + Math.round((bounds.width - winW) / 2);
+      const y = bounds.y + Math.round((bounds.height - winH) / 2);
 
       await invoke('create_output_window', {
         width: winW, height: winH, x, y,

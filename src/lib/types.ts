@@ -485,6 +485,15 @@ export type LightPaintingBrushType =
 
 export type LightPaintingLoopMode = 'forward' | 'reverse' | 'pingpong' | 'once';
 
+export type LightPaintingSequenceMode =
+  | 'recorded'
+  | 'random'
+  | 'alternating'
+  | 'bottomUp'
+  | 'topDown'
+  | 'centerOut'
+  | 'outsideIn';
+
 // Drawing tool modes
 export type LightPaintingDrawMode = 'freehand' | 'pen';
 
@@ -543,6 +552,9 @@ export interface LightPaintingContent {
   drawSpeed: number;                  // How fast strokes draw themselves 0.1-10
   staggerStrokes: boolean;            // Draw strokes one after another vs all at once
   staggerDelay: number;               // Delay between staggered strokes in ms
+  pingPongHold: number;               // Hold at each end of ping-pong playback in ms
+  sequenceMode: LightPaintingSequenceMode; // Stroke playback ordering
+  randomSequenceSeed: number;         // Seed used for deterministic random stroke order
 
   // Global effects
   bloom: number;                      // Post-process bloom intensity 0-3
@@ -561,6 +573,13 @@ export interface LightPaintingContent {
   wave: number;                       // Sine wave distortion amount 0-1
   waveFreq: number;                   // Wave frequency 0.5-10
   waveSpeed: number;                  // Wave animation speed 0.1-5
+  windSway: number;                   // Organic per-point wind sway 0-1
+  windSpeed: number;                  // Wind sway speed 0.1-5
+  windScale: number;                  // Wind spatial frequency/detail 0.5-8
+  windAnchor: number;                 // How much lower/root areas resist sway 0-1
+  flowPulse: number;                  // Traveling brightness pulse along strokes 0-1
+  flowSpeed: number;                  // Flow pulse speed 0.1-5
+  flowWidth: number;                  // Flow pulse width 0.03-0.5
   sparkle: number;                    // Random sparkle particles along stroke 0-1
   flicker: number;                    // Random brightness flicker 0-1
   breathe: number;                    // Smooth size breathing 0-1
@@ -604,6 +623,9 @@ export function createDefaultLightPaintingContent(): LightPaintingContent {
     drawSpeed: 1,
     staggerStrokes: true,
     staggerDelay: 200,
+    pingPongHold: 0,
+    sequenceMode: 'recorded',
+    randomSequenceSeed: 1337,
     bloom: 1.5,
     motionBlur: 0.2,
     afterglow: 0.4,
@@ -620,6 +642,13 @@ export function createDefaultLightPaintingContent(): LightPaintingContent {
     wave: 0,
     waveFreq: 3,
     waveSpeed: 1,
+    windSway: 0,
+    windSpeed: 1,
+    windScale: 2,
+    windAnchor: 0.7,
+    flowPulse: 0,
+    flowSpeed: 1,
+    flowWidth: 0.12,
     sparkle: 0,
     flicker: 0,
     breathe: 0,

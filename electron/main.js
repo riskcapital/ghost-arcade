@@ -28,11 +28,21 @@ const require = createRequire(import.meta.url);
 
 // Force Chromium to use the discrete GPU (NVIDIA/AMD) on Optimus laptops.
 // Must be set before app.whenReady() — affects the GPU process.
+// GPU / DPI / autoplay tuning. Projection-safe mode avoids forcing Chromium
+// presentation paths that can flicker or band on some Windows projector stacks.
+const PROJECTION_SAFE_MODE = process.argv.includes('--projection-safe-mode') || process.env.GA_PROJECTION_SAFE_MODE === '1';
+const EXPERIMENTAL_GPU_PRESENT = process.argv.includes('--experimental-gpu-present') || process.env.GA_EXPERIMENTAL_GPU_PRESENT === '1';
 app.commandLine.appendSwitch('force_high_performance_gpu');
-// Match Tauri's WebView2 flags for proper GPU rendering and DPI handling
-app.commandLine.appendSwitch('enable-zero-copy');
-app.commandLine.appendSwitch('enable-hardware-overlays');
-app.commandLine.appendSwitch('enable-gpu-rasterization');
+if (PROJECTION_SAFE_MODE) {
+  app.commandLine.appendSwitch('disable-zero-copy');
+  app.commandLine.appendSwitch('disable-features', 'HardwareOverlays');
+} else {
+  app.commandLine.appendSwitch('enable-gpu-rasterization');
+  if (EXPERIMENTAL_GPU_PRESENT) {
+    app.commandLine.appendSwitch('enable-zero-copy');
+    app.commandLine.appendSwitch('enable-hardware-overlays');
+  }
+}
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 // Disable pinch-to-zoom at the browser level (we handle zoom ourselves)
 app.commandLine.appendSwitch('disable-pinch');
@@ -62,6 +72,7 @@ console.error = (...args) => {
   try { fs.appendFileSync(_logFile, `[ERR] ${msg}\n`); } catch {}
   try { _origErr(...args); } catch {}
 };
+console.log(`[Main] Projection safe mode=${PROJECTION_SAFE_MODE} experimentalGpuPresent=${EXPERIMENTAL_GPU_PRESENT}`);
 
 // Prevent EPIPE crashes from killing the process
 process.stdout?.on?.('error', () => {});
@@ -1913,6 +1924,7 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
       contextIsolation: true,
       nodeIntegration: false,
       webgl: true,
+      backgroundThrottling: false,
     },
   });
 

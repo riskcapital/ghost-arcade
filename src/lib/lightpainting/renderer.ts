@@ -7,7 +7,6 @@ import type {
   LightPaintingContent,
   LightPaintingStroke,
   LightPaintingBrush,
-  LightPaintingLoopMode,
 } from '../types';
 
 // Local-midnight wall-clock anchor used to derive `animationTime` from
@@ -18,6 +17,9 @@ const LP_TIME_ANCHOR_MS = (() => {
   const d = new Date();
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 })();
+
+const TIGHT_STAMP_BRUSH_TYPES = new Set(['calligraphy', 'paintbrush', 'marker', 'ribbon']);
+const LINE_BRUSH_TYPES = new Set(['glow', 'neon', 'laser']);
 
 export class LightPaintingRenderer {
   private canvas: HTMLCanvasElement;
@@ -38,6 +40,17 @@ export class LightPaintingRenderer {
   // Bloom buffer
   private bloomCanvas: HTMLCanvasElement;
   private bloomCtx: CanvasRenderingContext2D;
+
+  // Full-size stroke buffer used to apply echo copies without re-stamping
+  // every brush point for every echo layer.
+  private strokeCanvas: HTMLCanvasElement;
+  private strokeCtx: CanvasRenderingContext2D;
+
+  // Static render cache. Canvas.svelte still asks every frame, but paused
+  // light-painting layers only need a redraw when their content object changes.
+  private staticCacheContent: LightPaintingContent | null = null;
+  private staticCacheWidth = 0;
+  private staticCacheHeight = 0;
 
   constructor(width: number, height: number) {
     this.width = width;
@@ -60,6 +73,12 @@ export class LightPaintingRenderer {
     this.bloomCanvas.width = Math.floor(width / 4);
     this.bloomCanvas.height = Math.floor(height / 4);
     this.bloomCtx = this.bloomCanvas.getContext('2d')!;
+
+    // Stroke buffer canvas (full size so drawImage echo copies are cheap)
+    this.strokeCanvas = document.createElement('canvas');
+    this.strokeCanvas.width = width;
+    this.strokeCanvas.height = height;
+    this.strokeCtx = this.strokeCanvas.getContext('2d')!;
 
     // Create Three.js texture
     this.texture = new THREE.CanvasTexture(this.canvas);
@@ -86,30 +105,175 @@ export class LightPaintingRenderer {
     this.persistCanvas.height = height;
     this.bloomCanvas.width = Math.floor(width / 4);
     this.bloomCanvas.height = Math.floor(height / 4);
+    this.strokeCanvas.width = width;
+    this.strokeCanvas.height = height;
+    this.invalidateStaticCache();
+  }
+
+  private invalidateStaticCache() {
+    this.staticCacheContent = null;
+    this.staticCacheWidth = 0;
+    this.staticCacheHeight = 0;
+  }
+
+  private canUseStaticCache(content: LightPaintingContent): boolean {
+    return !content.isPlaying;
+  }
+
+  private isStaticCacheHit(content: LightPaintingContent): boolean {
+    return this.canUseStaticCache(content)
+      && this.staticCacheContent === content
+      && this.staticCacheWidth === this.width
+      && this.staticCacheHeight === this.height;
+  }
+
+  private markStaticCache(content: LightPaintingContent) {
+    if (!this.canUseStaticCache(content)) {
+      this.invalidateStaticCache();
+      return;
+    }
+    this.staticCacheContent = content;
+    this.staticCacheWidth = this.width;
+    this.staticCacheHeight = this.height;
   }
 
   /**
    * Calculate total animation duration based on content settings
    */
-  private calculateTotalDuration(content: LightPaintingContent): number {
-    if (content.strokes.length === 0) return 0;
+  private calculateTotalDuration(
+    content: LightPaintingContent,
+    visibleStrokes: LightPaintingStroke[]
+  ): number {
+    if (visibleStrokes.length === 0) return 0;
 
     if (content.staggerStrokes) {
       // Staggered: each stroke starts after the previous one + delay
       let total = 0;
-      for (const stroke of content.strokes) {
-        if (!stroke.visible) continue;
+      for (const stroke of visibleStrokes) {
         total += (stroke.duration / content.drawSpeed) + content.staggerDelay;
       }
       return total;
     } else {
       // Simultaneous: duration is the longest stroke
       let max = 0;
-      for (const stroke of content.strokes) {
-        if (!stroke.visible) continue;
+      for (const stroke of visibleStrokes) {
         max = Math.max(max, stroke.duration / content.drawSpeed);
       }
       return max;
+    }
+  }
+
+  private calculateStrokeStartTimes(
+    visibleStrokes: LightPaintingStroke[],
+    content: LightPaintingContent
+  ): number[] {
+    const startTimes = new Array(visibleStrokes.length).fill(0);
+    if (!content.staggerStrokes) return startTimes;
+
+    let offset = 0;
+    for (let i = 0; i < visibleStrokes.length; i++) {
+      const stroke = visibleStrokes[i];
+      startTimes[i] = offset;
+      offset += (stroke.duration / content.drawSpeed) + content.staggerDelay;
+    }
+    return startTimes;
+  }
+
+  private hashString(value: string): number {
+    let hash = 2166136261;
+    for (let i = 0; i < value.length; i++) {
+      hash ^= value.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+  }
+
+  private hashToUnit(value: string | number): number {
+    const hash = typeof value === 'number' ? value >>> 0 : this.hashString(value);
+    return ((hash ^ (hash >>> 16)) >>> 0) / 4294967295;
+  }
+
+  private seededRandom(seed: number): () => number {
+    let state = seed >>> 0;
+    return () => {
+      state = (Math.imul(1664525, state) + 1013904223) >>> 0;
+      return state / 4294967296;
+    };
+  }
+
+  private getStrokeCenter(stroke: LightPaintingStroke): { x: number; y: number } {
+    if (stroke.points.length === 0) return { x: 0.5, y: 0.5 };
+    let sx = 0;
+    let sy = 0;
+    for (const point of stroke.points) {
+      sx += point.x;
+      sy += point.y;
+    }
+    return { x: sx / stroke.points.length, y: sy / stroke.points.length };
+  }
+
+  private getLoopCycleDuration(duration: number, content: LightPaintingContent): number {
+    if (duration <= 0) return 1;
+    if (content.loopMode === 'pingpong') {
+      const hold = Math.max(0, content.pingPongHold ?? 0);
+      return duration * 2 + hold * 2;
+    }
+    return duration;
+  }
+
+  private getSequenceCycleIndex(rawTime: number, duration: number, content: LightPaintingContent): number {
+    if (content.loopMode === 'once') return 0;
+    return Math.max(0, Math.floor(rawTime / this.getLoopCycleDuration(duration, content)));
+  }
+
+  private orderVisibleStrokes(
+    visibleStrokes: LightPaintingStroke[],
+    content: LightPaintingContent,
+    cycleIndex: number
+  ): LightPaintingStroke[] {
+    const mode = content.sequenceMode ?? 'recorded';
+    if (mode === 'recorded' || visibleStrokes.length <= 1) return visibleStrokes;
+
+    const ordered = visibleStrokes.slice();
+    switch (mode) {
+      case 'random': {
+        const seed = ((content.randomSequenceSeed ?? 1337) + cycleIndex * 1013904223) >>> 0;
+        const rand = this.seededRandom(seed);
+        for (let i = ordered.length - 1; i > 0; i--) {
+          const j = Math.floor(rand() * (i + 1));
+          [ordered[i], ordered[j]] = [ordered[j], ordered[i]];
+        }
+        return ordered;
+      }
+      case 'alternating': {
+        const result: LightPaintingStroke[] = [];
+        let left = 0;
+        let right = ordered.length - 1;
+        while (left <= right) {
+          result.push(ordered[left++]);
+          if (left <= right) result.push(ordered[right--]);
+        }
+        return result;
+      }
+      case 'bottomUp':
+        return ordered.sort((a, b) => this.getStrokeCenter(b).y - this.getStrokeCenter(a).y);
+      case 'topDown':
+        return ordered.sort((a, b) => this.getStrokeCenter(a).y - this.getStrokeCenter(b).y);
+      case 'centerOut':
+      case 'outsideIn': {
+        const distanceFromCenter = (stroke: LightPaintingStroke) => {
+          const c = this.getStrokeCenter(stroke);
+          const dx = c.x - 0.5;
+          const dy = c.y - 0.5;
+          return dx * dx + dy * dy;
+        };
+        return ordered.sort((a, b) => {
+          const delta = distanceFromCenter(a) - distanceFromCenter(b);
+          return mode === 'centerOut' ? delta : -delta;
+        });
+      }
+      default:
+        return ordered;
     }
   }
 
@@ -117,24 +281,12 @@ export class LightPaintingRenderer {
    * Get the animation progress for a stroke (0 = not started, 1 = fully drawn)
    */
   private getStrokeProgress(
-    _strokeIndex: number,
     stroke: LightPaintingStroke,
     content: LightPaintingContent,
-    currentTime: number
+    currentTime: number,
+    strokeStart: number
   ): number {
     const strokeDuration = stroke.duration / content.drawSpeed;
-    let strokeStart = 0;
-
-    if (content.staggerStrokes) {
-      // Calculate when this stroke starts
-      let offset = 0;
-      const visibleStrokes = content.strokes.filter(s => s.visible);
-      for (let i = 0; i < visibleStrokes.length; i++) {
-        if (visibleStrokes[i].id === stroke.id) break;
-        offset += (visibleStrokes[i].duration / content.drawSpeed) + content.staggerDelay;
-      }
-      strokeStart = offset;
-    }
 
     const elapsed = currentTime - strokeStart;
     if (elapsed <= 0) return 0;
@@ -145,8 +297,9 @@ export class LightPaintingRenderer {
   /**
    * Apply loop mode to get the effective animation time
    */
-  private getLoopedTime(rawTime: number, duration: number, mode: LightPaintingLoopMode): number {
+  private getLoopedTime(rawTime: number, duration: number, content: LightPaintingContent): number {
     if (duration <= 0) return 0;
+    const mode = content.loopMode;
     if (mode === 'once') return Math.min(rawTime, duration);
 
     if (mode === 'forward') {
@@ -158,12 +311,60 @@ export class LightPaintingRenderer {
     }
 
     if (mode === 'pingpong') {
-      const cycle = rawTime % (duration * 2);
+      const hold = Math.max(0, content.pingPongHold ?? 0);
+      const cycle = rawTime % (duration * 2 + hold * 2);
       if (cycle <= duration) return cycle;
-      return duration * 2 - cycle;
+      if (cycle <= duration + hold) return duration;
+      if (cycle <= duration + hold + duration) {
+        return duration - (cycle - duration - hold);
+      }
+      return 0;
     }
 
     return rawTime % duration;
+  }
+
+  private getAnimatedPointPosition(
+    stroke: LightPaintingStroke,
+    point: { x: number; y: number },
+    content: LightPaintingContent | null,
+    strokeProgress: number
+  ): { x: number; y: number } {
+    let x = point.x * this.width;
+    let y = point.y * this.height;
+    const sway = content?.isPlaying ? (content.windSway ?? 0) : 0;
+    if (content && sway > 0) {
+      const timeS = this.animationTime / 1000;
+      const phase = this.hashToUnit(stroke.id) * Math.PI * 2;
+      const speed = Math.max(0.05, content.windSpeed ?? 1);
+      const scale = Math.max(0.1, content.windScale ?? 2);
+      const anchor = Math.max(0, Math.min(1, content.windAnchor ?? 0.7));
+      const topWeight = Math.pow(1 - point.y, 1.35);
+      const anchorWeight = (1 - anchor) + anchor * topWeight;
+      const amp = sway * Math.min(this.width, this.height) * 0.045 * anchorWeight;
+      const wave = Math.sin(timeS * speed * Math.PI * 2 + point.y * scale * Math.PI * 2 + phase);
+      const detail = Math.sin(timeS * speed * Math.PI * 3.1 + point.x * scale * Math.PI * 2 - phase) * 0.35;
+      x += (wave + detail) * amp;
+      y += Math.cos(timeS * speed * Math.PI * 1.3 + strokeProgress * Math.PI * 2 + phase) * amp * 0.18;
+    }
+    return { x, y };
+  }
+
+  private getFlowPulseMultiplier(
+    stroke: LightPaintingStroke,
+    content: LightPaintingContent | null,
+    strokeProgress: number
+  ): number {
+    const amount = content?.isPlaying ? (content.flowPulse ?? 0) : 0;
+    if (!content || amount <= 0) return 1;
+    const phase = this.hashToUnit(stroke.id) * 0.23;
+    const speed = Math.max(0.05, content.flowSpeed ?? 1);
+    const width = Math.max(0.02, content.flowWidth ?? 0.12);
+    const head = ((this.animationTime / 1000) * speed * 0.25 + phase) % 1;
+    const dist = Math.abs(strokeProgress - head);
+    const wrappedDist = Math.min(dist, 1 - dist);
+    const pulse = Math.exp(-(wrappedDist * wrappedDist) / (2 * width * width));
+    return 1 + pulse * amount * 1.8;
   }
 
   /**
@@ -177,7 +378,8 @@ export class LightPaintingRenderer {
     pressure: number,
     progress: number, // 0-1 along stroke for taper
     angle: number = 0,  // stroke direction in radians
-    timeS: number = 0   // elapsed time in seconds (for animated brushes)
+    timeS: number = 0,  // elapsed time in seconds (for animated brushes)
+    opacityScale: number = 1
   ) {
     const size = brush.size * (brush.pressureSensitive ? pressure : 1);
 
@@ -191,7 +393,7 @@ export class LightPaintingRenderer {
 
     const finalSize = Math.max(1, size * taperMult);
     const [r, g, b] = brush.color;
-    const alpha = brush.opacity * taperMult;
+    const alpha = Math.max(0, Math.min(1, brush.opacity * taperMult * opacityScale));
 
     // Apply jitter
     let jx = x, jy = y;
@@ -622,7 +824,8 @@ export class LightPaintingRenderer {
     progress: number,
     trailLength: number,
     colorShiftAngle: number,
-    multiColorGlow: boolean = false
+    multiColorGlow: boolean = false,
+    content: LightPaintingContent | null = null
   ) {
     if (stroke.points.length < 2 || progress <= 0) return;
 
@@ -652,14 +855,15 @@ export class LightPaintingRenderer {
       for (let i = trailStart; i < drawUpTo; i++) {
         if (i % step2 !== 0 && i !== drawUpTo - 1) continue;
         const p = points[i];
-        const px = p.x * this.width;
-        const py = p.y * this.height;
+        const strokeProgress = i / Math.max(1, totalPoints - 1);
+        const { x: px, y: py } = this.getAnimatedPointPosition(stroke, p, content, strokeProgress);
         let trailAlpha = 1;
         if (trailLength > 0 && drawUpTo > 0) {
           const distFromHead = (drawUpTo - i) / Math.max(1, drawUpTo - trailStart);
           trailAlpha = 1 - distFromHead;
           trailAlpha = trailAlpha * trailAlpha;
         }
+        trailAlpha *= this.getFlowPulseMultiplier(stroke, content, strokeProgress);
         const grad = ctx.createRadialGradient(px, py, 0, px, py, haloSize);
         grad.addColorStop(0, `rgba(${sc[0]},${sc[1]},${sc[2]},${brush.opacity * trailAlpha * 0.25})`);
         grad.addColorStop(0.5, `rgba(${sc[0]},${sc[1]},${sc[2]},${brush.opacity * trailAlpha * 0.1})`);
@@ -676,20 +880,15 @@ export class LightPaintingRenderer {
     ctx.save();
     ctx.globalCompositeOperation = 'lighter'; // Additive blending
 
-    // Brush types that need tight stamp spacing (direction-aware / textured)
-    const tightStampBrushes = new Set(['calligraphy', 'paintbrush', 'marker', 'ribbon']);
-    // Brush types that benefit from a continuous line overlay
-    const lineBrushes = new Set(['glow', 'neon', 'laser']);
-
     // Stamp spacing: tighter for direction-aware brushes, moderate for others
-    const step = tightStampBrushes.has(brush.type)
+    const step = TIGHT_STAMP_BRUSH_TYPES.has(brush.type)
       ? Math.max(1, Math.ceil(brush.size * 0.04))
       : Math.max(1, Math.ceil(brush.size * 0.08));
 
     for (let i = trailStart; i < drawUpTo; i++) {
       const p = points[i];
-      const px = p.x * this.width;
-      const py = p.y * this.height;
+      const strokeProgress = i / Math.max(1, totalPoints - 1);
+      const { x: px, y: py } = this.getAnimatedPointPosition(stroke, p, content, strokeProgress);
 
       // Calculate trail fade
       let trailAlpha = 1;
@@ -698,31 +897,31 @@ export class LightPaintingRenderer {
         trailAlpha = 1 - distFromHead;
         trailAlpha = trailAlpha * trailAlpha; // Quadratic falloff
       }
-
-      const strokeProgress = i / Math.max(1, totalPoints - 1);
+      trailAlpha *= this.getFlowPulseMultiplier(stroke, content, strokeProgress);
 
       // Compute stroke direction angle for direction-aware brushes
       let angle = 0;
       if (i > 0) {
         const prev = points[i - 1];
-        angle = Math.atan2((p.y - prev.y) * this.height, (p.x - prev.x) * this.width);
+        const prevProgress = (i - 1) / Math.max(1, totalPoints - 1);
+        const prevPos = this.getAnimatedPointPosition(stroke, prev, content, prevProgress);
+        angle = Math.atan2(py - prevPos.y, px - prevPos.x);
       } else if (i < totalPoints - 1) {
         const next = points[i + 1];
-        angle = Math.atan2((next.y - p.y) * this.height, (next.x - p.x) * this.width);
+        const nextProgress = (i + 1) / Math.max(1, totalPoints - 1);
+        const nextPos = this.getAnimatedPointPosition(stroke, next, content, nextProgress);
+        angle = Math.atan2(nextPos.y - py, nextPos.x - px);
       }
-
-      // Modulate brush with trail alpha
-      const modBrush = { ...brush, opacity: brush.opacity * trailAlpha };
 
       // Align step to trailStart so we don't skip initial points
       if ((i - trailStart) % step === 0 || i === drawUpTo - 1) {
-        this.drawBrushPoint(ctx, px, py, modBrush, p.pressure, strokeProgress, angle, this.animationTime / 1000);
+        this.drawBrushPoint(ctx, px, py, brush, p.pressure, strokeProgress, angle, this.animationTime / 1000, trailAlpha);
       }
     }
 
     // Draw continuous line overlay ONLY for line-type brushes (glow, neon, laser)
     // Stamp-based brushes (spray, calligraphy, watercolor, etc.) rely purely on stamps
-    if (lineBrushes.has(brush.type)) {
+    if (LINE_BRUSH_TYPES.has(brush.type)) {
       ctx.globalCompositeOperation = 'lighter';
       ctx.strokeStyle = `rgba(${brush.color[0]},${brush.color[1]},${brush.color[2]},${brush.opacity * 0.25})`;
       ctx.lineWidth = brush.size * 0.25;
@@ -737,17 +936,25 @@ export class LightPaintingRenderer {
       ctx.beginPath();
       const startIdx = Math.max(trailStart, 0);
       if (startIdx < drawUpTo) {
-        ctx.moveTo(points[startIdx].x * this.width, points[startIdx].y * this.height);
+        const startProgress = startIdx / Math.max(1, totalPoints - 1);
+        const startPos = this.getAnimatedPointPosition(stroke, points[startIdx], content, startProgress);
+        ctx.moveTo(startPos.x, startPos.y);
         for (let i = startIdx + 1; i < drawUpTo; i++) {
           // Smooth with quadratic bezier
           if (i < drawUpTo - 1) {
             const curr = points[i];
             const next = points[i + 1];
-            const mx = (curr.x + next.x) / 2 * this.width;
-            const my = (curr.y + next.y) / 2 * this.height;
-            ctx.quadraticCurveTo(curr.x * this.width, curr.y * this.height, mx, my);
+            const currProgress = i / Math.max(1, totalPoints - 1);
+            const nextProgress = (i + 1) / Math.max(1, totalPoints - 1);
+            const currPos = this.getAnimatedPointPosition(stroke, curr, content, currProgress);
+            const nextPos = this.getAnimatedPointPosition(stroke, next, content, nextProgress);
+            const mx = (currPos.x + nextPos.x) / 2;
+            const my = (currPos.y + nextPos.y) / 2;
+            ctx.quadraticCurveTo(currPos.x, currPos.y, mx, my);
           } else {
-            ctx.lineTo(points[i].x * this.width, points[i].y * this.height);
+            const lineProgress = i / Math.max(1, totalPoints - 1);
+            const linePos = this.getAnimatedPointPosition(stroke, points[i], content, lineProgress);
+            ctx.lineTo(linePos.x, linePos.y);
           }
         }
         ctx.stroke();
@@ -832,29 +1039,88 @@ export class LightPaintingRenderer {
     this.ctx.restore();
   }
 
+  private drawSparkles(
+    stroke: LightPaintingStroke,
+    progress: number,
+    content: LightPaintingContent
+  ) {
+    if (content.sparkle <= 0 || !content.isPlaying || stroke.points.length <= 2) return;
+
+    const drawUpTo = Math.floor(stroke.points.length * progress);
+    if (drawUpTo <= 0) return;
+
+    this.ctx.save();
+    this.ctx.globalCompositeOperation = 'lighter';
+    const sparkCount = Math.floor(content.sparkle * 15);
+    for (let s = 0; s < sparkCount; s++) {
+      const idx = Math.floor(Math.random() * drawUpTo);
+      if (idx >= stroke.points.length) continue;
+      const p = stroke.points[idx];
+      const strokeProgress = idx / Math.max(1, stroke.points.length - 1);
+      const pos = this.getAnimatedPointPosition(stroke, p, content, strokeProgress);
+      const sx = pos.x + (Math.random() - 0.5) * stroke.brush.size;
+      const sy = pos.y + (Math.random() - 0.5) * stroke.brush.size;
+      const sparkSize = 1 + Math.random() * 3;
+      const sparkAlpha = 0.5 + Math.random() * 0.5;
+      const [cr, cg, cb] = stroke.brush.color;
+      const grad = this.ctx.createRadialGradient(sx, sy, 0, sx, sy, sparkSize * 3);
+      grad.addColorStop(0, `rgba(255,255,255,${sparkAlpha})`);
+      grad.addColorStop(0.3, `rgba(${cr},${cg},${cb},${sparkAlpha * 0.6})`);
+      grad.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
+      this.ctx.fillStyle = grad;
+      this.ctx.beginPath();
+      this.ctx.arc(sx, sy, sparkSize * 3, 0, Math.PI * 2);
+      this.ctx.fill();
+    }
+    this.ctx.restore();
+  }
+
   /**
    * Main render function - called every frame
    * Returns a Three.js texture suitable for compositing
    */
   render(content: LightPaintingContent, deltaTime: number): THREE.Texture {
-    // Update animation time
+    if (this.isStaticCacheHit(content)) {
+      return this.texture;
+    }
+
+    // Update animation time — derived from a globally-shared wall clock so
+    // the main viewport and the output window converge on the SAME value at
+    // any given wall-clock moment. Previously each renderer self-incremented
+    // an animationTime accumulator from its own deltaTime, which drifted:
+    // the output window opens later, so its accumulator is always behind,
+    // and even when both are running they tick at slightly different rates
+    // depending on frame load.
+    //
+    // We anchor at today's local midnight (a stable per-day value identical
+    // in every process on the machine) so the elapsed milliseconds are a
+    // reasonable size for FP math.
+    //
+    // Pause: when content.isPlaying flips false we leave animationTime at
+    // its last value. On resume it jumps to the current wall-clock value —
+    // continuity across pauses is sacrificed in exchange for guaranteed
+    // sync between the two windows. (No UI currently surfaces pause/resume
+    // for light-painting playback, so this trade-off is invisible today.)
     if (content.isPlaying) {
-      // Wall-clock-derived animationTime so the main viewport and output
-      // window converge on the SAME value at any moment. See community
-      // edition for full rationale (same code path).
       this.animationTime = (Date.now() - LP_TIME_ANCHOR_MS) * content.animationSpeed;
     }
-    void deltaTime; // wall-clock-driven now; deltaTime kept for API stability
+    void deltaTime;
+
+    const visibleStrokes = content.strokes.filter(s => s.visible);
 
     // Calculate total duration
-    this.totalDuration = this.calculateTotalDuration(content);
+    this.totalDuration = this.calculateTotalDuration(content, visibleStrokes);
+    const sequenceCycle = this.getSequenceCycleIndex(this.animationTime, this.totalDuration, content);
+    const orderedVisibleStrokes = this.orderVisibleStrokes(visibleStrokes, content, sequenceCycle);
 
     // Get looped time
     const effectiveTime = this.getLoopedTime(
       this.animationTime,
       this.totalDuration,
-      content.loopMode
+      content
     );
+
+    const strokeStartTimes = this.calculateStrokeStartTimes(orderedVisibleStrokes, content);
 
     // Clear canvas
     const [bgR, bgG, bgB, bgA] = content.backgroundColor;
@@ -931,73 +1197,79 @@ export class LightPaintingRenderer {
       this.ctx.translate(waveOffsetX, waveOffsetY);
     }
 
-    // Draw each visible stroke (with echo and snake effects)
-    const visibleStrokes = content.strokes.filter(s => s.visible);
-    for (let i = 0; i < visibleStrokes.length; i++) {
-      const stroke = visibleStrokes[i];
-      let progress = content.isPlaying
-        ? this.getStrokeProgress(i, stroke, content, effectiveTime)
+    const strokeRenderItems = orderedVisibleStrokes.map((stroke, i) => {
+      const progress = content.isPlaying
+        ? this.getStrokeProgress(stroke, content, effectiveTime, strokeStartTimes[i])
         : 1; // Show fully drawn when not playing
 
-      // Snake effect: override trail to create a moving head
       let trailLen = content.isPlaying ? content.trailLength : 0;
       if (content.snake > 0 && content.isPlaying) {
         trailLen = 1 - content.snake;
       }
 
-      // Echo effect: draw offset copies behind the main stroke
-      if (content.echo > 0) {
-        const echoCount = Math.round(content.echo);
-        for (let e = echoCount; e >= 1; e--) {
-          this.ctx.save();
-          this.ctx.globalAlpha = Math.pow(1 - content.echoDecay, e) * globalAlpha;
-          const offsetPx = e * content.echoOffset * this.width * 0.5;
-          this.ctx.translate(0, -offsetPx);
-          this.drawStroke(this.ctx, stroke, progress, trailLen, colorShiftAngle, content.multiColorGlow);
-          this.ctx.restore();
-          this.ctx.save();
-          this.ctx.globalAlpha = Math.pow(1 - content.echoDecay, e) * globalAlpha;
-          this.ctx.translate(0, offsetPx);
-          this.drawStroke(this.ctx, stroke, progress, trailLen, colorShiftAngle, content.multiColorGlow);
-          this.ctx.restore();
-        }
+      return { stroke, progress, trailLen };
+    });
+
+    // Echo uses a full-size stroke buffer, so each stroke is stamped once and
+    // repeated with cheap drawImage copies instead of replaying every point.
+    if (content.echo > 0 && strokeRenderItems.length > 0) {
+      this.strokeCtx.setTransform(1, 0, 0, 1, 0, 0);
+      this.strokeCtx.globalAlpha = 1;
+      this.strokeCtx.globalCompositeOperation = 'source-over';
+      this.strokeCtx.clearRect(0, 0, this.width, this.height);
+
+      for (const item of strokeRenderItems) {
+        this.drawStroke(
+          this.strokeCtx,
+          item.stroke,
+          item.progress,
+          item.trailLen,
+          colorShiftAngle,
+          content.multiColorGlow,
+          content
+        );
       }
 
-      // Draw main stroke
-      this.drawStroke(
-        this.ctx,
-        stroke,
-        progress,
-        trailLen,
-        colorShiftAngle,
-        content.multiColorGlow
-      );
+      this.ctx.save();
+      this.ctx.globalCompositeOperation = 'lighter';
 
-      // Sparkle: random bright dots along visible stroke points
-      if (content.sparkle > 0 && content.isPlaying && stroke.points.length > 2) {
+      const echoCount = Math.round(content.echo);
+      for (let e = echoCount; e >= 1; e--) {
+        const echoAlpha = Math.pow(1 - content.echoDecay, e) * globalAlpha;
+        if (echoAlpha <= 0.001) continue;
+
+        const offsetPx = e * content.echoOffset * this.width * 0.5;
         this.ctx.save();
-        this.ctx.globalCompositeOperation = 'lighter';
-        const sparkCount = Math.floor(content.sparkle * 15);
-        const drawUpTo = Math.floor(stroke.points.length * progress);
-        for (let s = 0; s < sparkCount; s++) {
-          const idx = Math.floor(Math.random() * drawUpTo);
-          if (idx >= stroke.points.length) continue;
-          const p = stroke.points[idx];
-          const sx = p.x * this.width + (Math.random() - 0.5) * stroke.brush.size;
-          const sy = p.y * this.height + (Math.random() - 0.5) * stroke.brush.size;
-          const sparkSize = 1 + Math.random() * 3;
-          const sparkAlpha = 0.5 + Math.random() * 0.5;
-          const [cr, cg, cb] = stroke.brush.color;
-          const grad = this.ctx.createRadialGradient(sx, sy, 0, sx, sy, sparkSize * 3);
-          grad.addColorStop(0, `rgba(255,255,255,${sparkAlpha})`);
-          grad.addColorStop(0.3, `rgba(${cr},${cg},${cb},${sparkAlpha * 0.6})`);
-          grad.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
-          this.ctx.fillStyle = grad;
-          this.ctx.beginPath();
-          this.ctx.arc(sx, sy, sparkSize * 3, 0, Math.PI * 2);
-          this.ctx.fill();
-        }
+        this.ctx.globalAlpha = echoAlpha;
+        this.ctx.translate(0, -offsetPx);
+        this.ctx.drawImage(this.strokeCanvas, 0, 0);
         this.ctx.restore();
+
+        this.ctx.save();
+        this.ctx.globalAlpha = echoAlpha;
+        this.ctx.translate(0, offsetPx);
+        this.ctx.drawImage(this.strokeCanvas, 0, 0);
+        this.ctx.restore();
+      }
+
+      this.ctx.drawImage(this.strokeCanvas, 0, 0);
+      this.ctx.restore();
+
+      for (const item of strokeRenderItems) {
+        this.drawSparkles(item.stroke, item.progress, content);
+      }
+    } else {
+      for (const item of strokeRenderItems) {
+        this.drawStroke(
+          this.ctx,
+          item.stroke,
+          item.progress,
+          item.trailLen,
+          colorShiftAngle,
+          content.multiColorGlow,
+          content
+        );
+        this.drawSparkles(item.stroke, item.progress, content);
       }
     }
 
@@ -1014,7 +1286,7 @@ export class LightPaintingRenderer {
           visible: true,
           locked: false,
           drawMode: 'freehand',
-        }, 1, 0, colorShiftAngle, content.multiColorGlow);
+        }, 1, 0, colorShiftAngle, content.multiColorGlow, content);
       }
     }
 
@@ -1047,6 +1319,7 @@ export class LightPaintingRenderer {
 
     // Update texture
     this.texture.needsUpdate = true;
+    this.markStaticCache(content);
     return this.texture;
   }
 
@@ -1056,6 +1329,7 @@ export class LightPaintingRenderer {
   resetAnimation() {
     this.animationTime = 0;
     this.persistCtx.clearRect(0, 0, this.width, this.height);
+    this.invalidateStaticCache();
   }
 
   /**
@@ -1063,6 +1337,7 @@ export class LightPaintingRenderer {
    */
   setPlaybackPosition(position: number) {
     this.animationTime = position * this.totalDuration;
+    this.invalidateStaticCache();
   }
 
   /**
