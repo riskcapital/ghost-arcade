@@ -47,7 +47,11 @@ fileAssociations:
 win:
   target: nsis
   icon: build-resources/icons/icon.ico
-  publisherName: "Justin Wood"   # must match the CN on the signing cert
+  # `publisherName` is no longer a root-level win.* property in electron-
+  # builder 26 — it moved into `signtoolOptions.publisherName` for the
+  # signtool path, and for Azure Trusted Signing the publisher is derived
+  # from the certificate's CN automatically (so we don't need to set it
+  # at all on this Azure-signed build).
   # Azure Trusted Signing — short-lived certs issued per-build, RFC 3161
   # timestamp ensures signed binaries stay valid past cert expiry.
   # Auth: env vars AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET
