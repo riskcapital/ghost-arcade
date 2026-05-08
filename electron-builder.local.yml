@@ -2,8 +2,11 @@ extends: electron-builder.yml
 
 # Local-only override: no Azure signing (no creds needed).
 # Used by `npm run build:desktop:dir` for manual canvas-render verification.
+# `publisherName` is no longer a root-level win.* property in
+# electron-builder 26 — for the Azure-signed parent it's auto-derived
+# from the cert CN; for this unsigned local override there's no
+# publisher to declare at all.
 win:
   target: nsis
   icon: build-resources/icons/icon.ico
-  publisherName: "Justin Wood"
   azureSignOptions: null
