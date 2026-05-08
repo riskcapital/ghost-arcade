@@ -6,8 +6,8 @@
   "private": true,
   "scripts": {
     "install": "cmake-js compile",
-    "build": "cmake-js compile --runtime=electron --runtime-version=33.4.11",
-    "rebuild": "cmake-js rebuild --runtime=electron --runtime-version=33.4.11",
+    "build": "cmake-js compile --runtime=electron --runtime-version=42.0.0",
+    "rebuild": "cmake-js rebuild --runtime=electron --runtime-version=42.0.0",
     "clean": "cmake-js clean"
   },
   "dependencies": {
