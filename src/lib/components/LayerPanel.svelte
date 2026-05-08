@@ -320,18 +320,28 @@
 
     if (mediaType === 'video') {
       const video = document.createElement('video');
-      video.src = url;
+      // crossOrigin BEFORE src — changing it after the load starts forces a
+      // re-load that races any pending play() (AbortError on Chromium 130).
       video.crossOrigin = 'anonymous';
       video.loop = true;
       video.muted = true;
       video.playsInline = true;
       video.preload = 'auto';
+      video.src = url;
 
-      // Wait for video to be ready before playing
+      // The `.src=` setter already initiated the load. Don't call `.load()`
+      // — a second in-flight request races any pending play() and throws
+      // AbortError on Chromium 130 (Electron 42).
       await new Promise<void>((resolve, reject) => {
-        video.onloadeddata = () => resolve();
-        video.onerror = () => reject(new Error('Video load failed'));
-        video.load();
+        const onReady = () => { cleanup(); resolve(); };
+        const onError = () => { cleanup(); reject(new Error('Video load failed')); };
+        const cleanup = () => {
+          video.removeEventListener('loadeddata', onReady);
+          video.removeEventListener('error', onError);
+        };
+        video.addEventListener('loadeddata', onReady, { once: true });
+        video.addEventListener('error', onError, { once: true });
+        if (video.readyState >= 2) onReady();
       });
 
       // Autoplay the video immediately

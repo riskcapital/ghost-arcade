@@ -144,6 +144,22 @@
     return bank === 'B' ? $vjClipLauncher.bankBLayerStates : $vjClipLauncher.layerStates;
   }
 
+  // Check whether a video src is already present anywhere in the given
+  // deck's grid. Used by handleCellDrop to enforce the "no same video in
+  // both decks" rule that works around the dual-bank shared-videoElement
+  // freeze. Empty src never matches (avoids false positives on empty
+  // cells / clips without a real source).
+  function isVideoSrcInDeck(src: string, bank: VJDeck): boolean {
+    if (!src) return false;
+    const grid = deckGrid(bank);
+    for (const row of grid) {
+      for (const c of row) {
+        if (c?.type === 'video' && c.src === src) return true;
+      }
+    }
+    return false;
+  }
+
   // (The pulsing ▶ scroll-hint was replaced with color-coded scrollbars
   // — cyan for Deck A, coral for Deck B — so users still get a visual cue
   // that more columns exist beyond the visible area without the chrome.)
@@ -480,6 +496,16 @@
   // the crossfader is on (drag from Bank A cell → Bank B cell, etc.)
   let dragOverCell: { layer: number; column: number; bank: VJDeck } | null = null;
   let dragSourceCell: { layer: number; column: number; bank: VJDeck } | null = null;
+
+  // Branded alert state. Set to a { title, message } object to show the
+  // modal; cleared on dismiss. Replaces window.alert() for in-app errors
+  // so the dialog matches the Ghost Arcade aesthetic instead of the
+  // generic OS chrome (which is jarring when the editor is fullscreened
+  // on a projector).
+  let brandedAlert: { title: string; message: string } | null = null;
+  function showBrandedAlert(title: string, message: string) {
+    brandedAlert = { title, message };
+  }
 
   // Copy/paste state
   let clipboardClip: VJClip | null = null;
@@ -1049,8 +1075,16 @@
     const url = URL.createObjectURL(file);
     if (kind === 'video') {
       const video = document.createElement('video');
-      video.src = url; video.crossOrigin = 'anonymous'; video.loop = true; video.muted = true; video.playsInline = true; video.preload = 'auto';
-      await new Promise<void>((resolve) => { video.onloadeddata = () => resolve(); video.onerror = () => resolve(); video.load(); });
+      // crossOrigin BEFORE src — order matters on Chromium 130.
+      video.crossOrigin = 'anonymous'; video.loop = true; video.muted = true; video.playsInline = true; video.preload = 'auto';
+      video.src = url;
+      // `.src=` already initiated the load — don't call `.load()`.
+      await new Promise<void>((resolve) => {
+        const done = () => { video.removeEventListener('loadeddata', done); video.removeEventListener('error', done); resolve(); };
+        video.addEventListener('loadeddata', done, { once: true });
+        video.addEventListener('error', done, { once: true });
+        if (video.readyState >= 2) done();
+      });
       mediaLibrary.addItem({
         id: generateUUID(),
         name: file.name,
@@ -1204,6 +1238,22 @@
         dragSourceCell.layer === layerIndex &&
         dragSourceCell.column === columnIndex;
       if (srcClip && !sameSpot) {
+        // Cross-deck moves of VIDEO clips are blocked: the same video file
+        // playing simultaneously in both decks runs into shared-resource
+        // contention (one HTMLVideoElement in cache backs both layers, so
+        // the dual-bank crossfade samples the same paused frame on the B
+        // side instead of an independently-playing instance). Until that
+        // upstream fix lands, prevent the duplicate at the UI layer.
+        const isCrossDeck = dragSourceCell.bank !== bank;
+        if (srcClip.type === 'video' && isCrossDeck && isVideoSrcInDeck(srcClip.src, bank)) {
+          showBrandedAlert(
+            'Already in the other deck',
+            `This video is already loaded into Deck ${bank === 'A' ? 'B' : 'A'}. Split-deck mode can't run the same file in both decks at once — use a different clip here, or remove the existing one first.`
+          );
+          dragSourceCell = null;
+          draggedClip = null;
+          return;
+        }
         const movedClip: VJClip = { ...srcClip, id: generateUUID() };
         vjClipLauncher.setClip(layerIndex, columnIndex, movedClip, bank);
         vjClipLauncher.clearClip(dragSourceCell.layer, dragSourceCell.column, dragSourceCell.bank);
@@ -1214,6 +1264,22 @@
     }
 
     if (!draggedClip) return;
+
+    // Video duplicate-block: prevent adding the same video file to both
+    // decks of a split-deck setup. See comment above on the cell-to-cell
+    // move path. We check the OTHER deck (bank's opposite) for an
+    // existing clip with the same src — if found, alert and abort.
+    if (draggedClip.type === 'video') {
+      const media = $mediaLibrary.find(m => m.id === draggedClip!.id);
+      if (media && isVideoSrcInDeck(media.src, bank === 'A' ? 'B' : 'A')) {
+        showBrandedAlert(
+          'Already in the other deck',
+          `This video is already loaded into Deck ${bank === 'A' ? 'B' : 'A'}. Split-deck mode can't run the same file in both decks at once — use a different clip here, or remove the existing one first.`
+        );
+        draggedClip = null;
+        return;
+      }
+    }
 
     if (draggedClip.type === 'shader') {
       const shader = shaders.find(s => s.id === draggedClip!.id);
@@ -1675,13 +1741,14 @@
       thumbnail: '',
     } as any);
 
+    // `.src=` already initiated the load — don't call `.load()`.
     await new Promise<void>((resolve) => {
       let resolved = false;
       const done = () => { if (!resolved) { resolved = true; resolve(); } };
       video.oncanplaythrough = done;
       video.onloadeddata = done;
       video.onerror = done;
-      video.load();
+      if (video.readyState >= 2) done();
       setTimeout(done, 5000);
     });
 
@@ -1738,6 +1805,7 @@
 <!-- VJ Mode Full Overlay -->
 <svelte:window
   onclick={(e) => { const t = e.target as HTMLElement; if (vjFileMenuOpen && !t.closest?.('.vj-file-menu-container')) vjFileMenuOpen = false; }}
+  onkeydown={(e) => { if (e.key === 'Escape' && brandedAlert) brandedAlert = null; }}
 />
 
 {#if $vjClipLauncher.isOpen}
@@ -1745,6 +1813,30 @@
        recall the live VJ state in one click. Self-collapses to a small
        icon launcher when not in use. -->
   <SnapshotBank />
+
+  <!-- Branded alert modal — replaces window.alert() for in-app errors so
+       the dialog matches the Ghost Arcade aesthetic instead of generic
+       OS chrome. Click backdrop or OK button to dismiss. Escape closes too. -->
+  {#if brandedAlert}
+    <div class="ga-alert-overlay" onclick={() => brandedAlert = null} role="dialog" aria-modal="true" aria-labelledby="ga-alert-title">
+      <div class="ga-alert-modal" onclick={(e) => e.stopPropagation()} role="document">
+        <div class="ga-alert-header">
+          <div class="ga-alert-icon" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="8" x2="12" y2="13"/>
+              <circle cx="12" cy="16.5" r="1" fill="currentColor"/>
+            </svg>
+          </div>
+          <h3 id="ga-alert-title" class="ga-alert-title">{brandedAlert.title}</h3>
+        </div>
+        <p class="ga-alert-message">{brandedAlert.message}</p>
+        <div class="ga-alert-actions">
+          <button class="ga-alert-ok" onclick={() => brandedAlert = null} autofocus>OK</button>
+        </div>
+      </div>
+    </div>
+  {/if}
 
   <div class="vj-overlay" class:kf-tray-open={$keyframeTimeline.isOpen}>
     <!-- Header -->
@@ -2709,10 +2801,17 @@
 
               <div class="xfade-readout">{Math.round($vjClipLauncher.crossfaderValue * 100)}%</div>
 
+              <!-- Use onpointerdown to forcibly bring the select to focus
+                   before its native dropdown attempt — without this on
+                   Electron 42 / Chromium 130 the open click is sometimes
+                   absorbed by the surrounding flex column and the dropdown
+                   never appears. onchange-driven update still flows through
+                   the store; the pointerdown is a no-op when things work. -->
               <select
                 class="xfade-select"
                 value={$vjClipLauncher.crossfaderTransition}
-                onchange={(e) => vjClipLauncher.setCrossfaderTransition((e.target as HTMLSelectElement).value as any)}
+                onpointerdown={(e) => (e.currentTarget as HTMLSelectElement).focus()}
+                onchange={(e) => vjClipLauncher.setCrossfaderTransition((e.currentTarget as HTMLSelectElement).value as any)}
                 title="Transition style"
                 data-midi-path="vj:crossfader:transition"
                 data-midi-label="Crossfader Transition"
@@ -2741,7 +2840,8 @@
               <select
                 class="xfade-select xfade-curve"
                 value={$vjClipLauncher.crossfaderBlendMode || 'normal'}
-                onchange={(e) => vjClipLauncher.setCrossfaderBlendMode((e.target as HTMLSelectElement).value as any)}
+                onpointerdown={(e) => (e.currentTarget as HTMLSelectElement).focus()}
+                onchange={(e) => vjClipLauncher.setCrossfaderBlendMode((e.currentTarget as HTMLSelectElement).value as any)}
                 title="Output blend mode — A↔B combination math at the mix point"
                 data-midi-path="vj:crossfader:blendMode"
                 data-midi-label="Crossfader Blend Mode"
@@ -2929,21 +3029,28 @@
           <div class="loading">Loading shaders...</div>
         {/if}
 
-        <!-- Import bar: file picker for VJ-only media import -->
+        <!-- Import bar: file picker for VJ-only media import.
+             Uses <label> wrapping a hidden <input> instead of a button +
+             programmatic .click(): on Chromium 130 (Electron 42) the
+             programmatic-click path silently dropped the `multiple` flag
+             so the OS dialog only allowed single-select even though the
+             attribute was set. Native label-driven click preserves the
+             flag. (Mapping-mode MediaTray uses the same pattern; this
+             aligns the two paths.) -->
         {#if vjMediaTab === 'videos' || vjMediaTab === 'images'}
           <div class="vj-import-bar">
-            <button class="vj-import-btn" onclick={() => vjMediaFileInput?.click()} title="Import files from disk">
+            <label class="vj-import-btn" title="Import files from disk">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
               Import {vjMediaTab === 'videos' ? 'Videos' : 'Images'}
-            </button>
-            <input
-              type="file"
-              bind:this={vjMediaFileInput}
-              accept={vjMediaTab === 'videos' ? 'video/*' : 'image/*'}
-              multiple
-              style="display:none;"
-              onchange={vjHandleMediaFilePick}
-            />
+              <input
+                type="file"
+                bind:this={vjMediaFileInput}
+                accept={vjMediaTab === 'videos' ? 'video/*' : 'image/*'}
+                multiple
+                style="display:none;"
+                onchange={vjHandleMediaFilePick}
+              />
+            </label>
           </div>
         {/if}
 
@@ -6292,4 +6399,98 @@
     color: #fff;
   }
   .bank-pill-seg + .bank-pill-seg { border-left: 1px solid rgba(255, 255, 255, 0.1); }
+
+  /* ─── Branded alert modal ─── */
+  .ga-alert-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.78);
+    backdrop-filter: blur(8px);
+    z-index: 100000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: ga-alert-fade-in 160ms ease-out;
+  }
+  @keyframes ga-alert-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+  .ga-alert-modal {
+    background: linear-gradient(180deg, #1a1a2e 0%, #14141f 100%);
+    border: 1px solid rgba(168, 85, 247, 0.25);
+    border-radius: 12px;
+    width: 440px;
+    max-width: calc(100vw - 32px);
+    box-shadow:
+      0 24px 60px rgba(0, 0, 0, 0.6),
+      0 0 0 1px rgba(255, 255, 255, 0.04) inset,
+      0 0 60px rgba(168, 85, 247, 0.08);
+    padding: 22px 24px 18px;
+    color: #e8e8ee;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    animation: ga-alert-pop-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @keyframes ga-alert-pop-in {
+    from { transform: scale(0.94); opacity: 0; }
+    to   { transform: scale(1); opacity: 1; }
+  }
+  .ga-alert-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .ga-alert-icon {
+    flex: 0 0 36px;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, rgba(168, 85, 247, 0.25), rgba(124, 58, 237, 0.25));
+    border: 1px solid rgba(168, 85, 247, 0.35);
+    color: #c4a4ff;
+  }
+  .ga-alert-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: #f1f0f7;
+  }
+  .ga-alert-message {
+    margin: 0 0 18px;
+    font-size: 13px;
+    line-height: 1.55;
+    color: #b8b8c4;
+  }
+  .ga-alert-actions {
+    display: flex;
+    justify-content: flex-end;
+  }
+  .ga-alert-ok {
+    padding: 8px 22px;
+    background: linear-gradient(135deg, #a855f7, #7c3aed);
+    border: none;
+    color: #fff;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    transition: filter 150ms, box-shadow 200ms;
+  }
+  .ga-alert-ok:hover {
+    filter: brightness(1.15);
+    box-shadow: 0 0 18px rgba(168, 85, 247, 0.45);
+  }
+  .ga-alert-ok:active {
+    filter: brightness(0.9);
+  }
+  .ga-alert-ok:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px #14141f, 0 0 0 4px rgba(168, 85, 247, 0.6);
+  }
 </style>

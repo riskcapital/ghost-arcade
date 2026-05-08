@@ -15,6 +15,7 @@ const urlParams = new URLSearchParams(window.location.search);
 const mode = urlParams.get('mode');
 const isSpoutOutput = mode === 'spout-output';
 const isOutputWindow = mode === 'output';
+const isWebRTCDisplay = mode === 'webrtc-display';
 
 // Set global flags so Canvas.svelte knows not to create Spout sender/receiver
 // Use try/catch because Electron's contextBridge.exposeInMainWorld makes these read-only
@@ -22,15 +23,28 @@ if (isSpoutOutput && !window.__SPOUT_OSR_MODE__) {
   try { (window as any).__SPOUT_OSR_MODE__ = true; } catch { /* already set by preload */ }
 }
 
-if (isOutputWindow && !(window as any).__OUTPUT_WINDOW_MODE__) {
+if ((isOutputWindow || isWebRTCDisplay) && !(window as any).__OUTPUT_WINDOW_MODE__) {
   try { (window as any).__OUTPUT_WINDOW_MODE__ = true; } catch { /* already set by preload */ }
 }
 
 async function init() {
-  if (isSpoutOutput || isOutputWindow) {
-    // Output modes: render just the canvas fullscreen (no UI panels)
+  if (isWebRTCDisplay) {
+    // WebRTC presentation surface: receives the editor canvas as a
+    // same-process MediaStream and renders it into a single
+    // <video srcObject>. Replaces the legacy second-renderer pattern
+    // that ran its own RenderEngine + state-sync; that path was prone
+    // to freezing on external displays under load. Single-renderer
+    // architecture matches Resolume / TouchDesigner / VDMX.
+    const { default: OutputDisplayApp } = await import('./OutputDisplayApp.svelte');
+    mount(OutputDisplayApp, {
+      target: document.getElementById('app')!,
+    });
+  } else if (isSpoutOutput || isOutputWindow) {
+    // Legacy output paths (Spout OSR + visible output window second renderer).
     // SpoutOutput: hidden window, paint events → DXGI → Spout
     // OutputWindow: visible window on projector/external display
+    // Set GHOSTARCADE_OUTPUT_LEGACY=1 to force the visible output to
+    // route through here instead of the WebRTC path above.
     const { default: SpoutOutputApp } = await import('./SpoutOutputApp.svelte');
     mount(SpoutOutputApp, {
       target: document.getElementById('app')!,

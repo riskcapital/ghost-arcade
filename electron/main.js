@@ -1990,14 +1990,29 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
   // Hide menu bar for clean look
   outputWindow.setMenuBarVisibility(false);
 
-  // Load the same Svelte app but in output mode (canvas only, no UI)
+  // WebRTC output transport (single-renderer pattern, like Resolume /
+  // TouchDesigner / VDMX): the output window mounts OutputDisplayApp,
+  // which receives the editor canvas as a same-process WebRTC stream
+  // and displays it via a single <video srcObject> element. Replaces
+  // the legacy second-renderer (SpoutOutputApp) for the visible output
+  // window — that path was contending with the editor for video
+  // decode + GPU upload and freezing under load. The legacy path is
+  // preserved for fallback: set GHOSTARCADE_OUTPUT_LEGACY=1 in the
+  // environment to flip back if a specific machine misbehaves.
+  //
+  // NOTE: this only affects the VISIBLE output window. The hidden Spout
+  // OSR window (?mode=spout-output) is separate and stays on the legacy
+  // path — it has different requirements (needs the full RenderEngine
+  // to paint into the DXGI surface for native shared-texture export).
+  const useLegacyOutput = process.env.GHOSTARCADE_OUTPUT_LEGACY === '1';
+  const outputMode = useLegacyOutput ? 'output' : 'webrtc-display';
   const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
   const isDev = !app.isPackaged;
   if (isDev) {
-    outputWindow.loadURL(`${devUrl}?mode=output`);
+    outputWindow.loadURL(`${devUrl}?mode=${outputMode}`);
   } else {
     const filePath = path.join(__dirname, '..', 'dist', 'index.html');
-    outputWindow.loadFile(filePath, { query: { mode: 'output' } });
+    outputWindow.loadFile(filePath, { query: { mode: outputMode } });
   }
 
   outputWindow.on('closed', () => {
