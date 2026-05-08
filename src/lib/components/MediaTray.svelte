@@ -925,16 +925,21 @@
 
     if (mediaType === 'video') {
       const video = document.createElement('video');
-      video.src = url;
+      // crossOrigin BEFORE src so the load uses anonymous mode from the start.
       video.crossOrigin = 'anonymous';
       video.loop = true;
       video.muted = true;
       video.playsInline = true;
       video.preload = 'auto';
+      video.src = url;
 
+      // `.src=` setter already initiated the load. Don't call `.load()` —
+      // it would race any pending play() and throw AbortError on
+      // Chromium 130 (Electron 42).
       await new Promise<void>((resolve) => {
-        video.onloadeddata = () => resolve();
-        video.load();
+        const done = () => { video.removeEventListener('loadeddata', done); resolve(); };
+        video.addEventListener('loadeddata', done, { once: true });
+        if (video.readyState >= 2) done();
       });
 
       const item: MediaItem = {
@@ -1097,31 +1102,54 @@
         };
 
         if (item.type === 'video' && item.videoElement) {
-          const video = document.createElement('video');
-          video.src = item.src;
-          // Only set crossOrigin for remote URLs, not blob: URLs
-          if (!item.src.startsWith('blob:')) {
-            video.crossOrigin = 'anonymous';
+          // Reuse the library item's existing <video> element. Pre-fix:
+          // each apply-to-layer click made a fresh element, fresh load,
+          // fresh GPU upload — and on rapid back-and-forth between two
+          // clips the editor was racing 4+ in-flight loads at once and
+          // the textures stuck on garbage frames. Reusing the library
+          // element lets the texture cache survive a switch through B
+          // and back to A as a near-instant texture swap.
+          const video = item.videoElement;
+          // Pause whatever video was previously bound to this layer so
+          // it doesn't keep decoding in the background. The decoder
+          // budget is shared across all <video> elements; a stack of
+          // "still playing but offscreen" clips thrashes the GPU.
+          const prevLayer = $project.layers.find((l) => l.id === layerId);
+          const prevVideo = (prevLayer?.source as any)?.videoElement as HTMLVideoElement | undefined;
+          if (prevVideo && prevVideo !== video) {
+            try { prevVideo.pause(); } catch { /* ignore */ }
           }
           video.loop = true;
           video.muted = true;
           video.playsInline = true;
           video.preload = 'auto';
+          // Restart from frame 0 on every apply — VJ semantics: clicking
+          // a clip means "play this clip from the top", not "resume from
+          // wherever it was last paused".
+          try { video.currentTime = 0; } catch { /* ignore */ }
 
-          // Wait for video to have enough data
-          await new Promise<void>((resolve) => {
-            video.oncanplaythrough = () => resolve();
-            video.onloadeddata = () => resolve();
-            video.load();
-          });
+          if (video.readyState < 2) {
+            await new Promise<void>((resolve) => {
+              const done = () => { cleanup(); resolve(); };
+              const cleanup = () => {
+                video.removeEventListener('loadeddata', done);
+                video.removeEventListener('canplaythrough', done);
+              };
+              video.addEventListener('loadeddata', done, { once: true });
+              video.addEventListener('canplaythrough', done, { once: true });
+            });
+          }
 
-          // Start playing
-          try {
-            await video.play();
-            // Wait for at least one frame to be rendered
-            await new Promise(resolve => requestAnimationFrame(resolve));
-          } catch (e) {
-            console.warn('Video autoplay blocked:', e);
+          if (video.paused) {
+            try {
+              await video.play();
+              await new Promise(resolve => requestAnimationFrame(resolve));
+            } catch (e) {
+              // AbortError is benign — rapid re-apply during pending play.
+              if ((e as DOMException)?.name !== 'AbortError') {
+                console.warn('Video autoplay blocked:', e);
+              }
+            }
           }
 
           source.videoElement = video;
@@ -1598,16 +1626,18 @@
 
       // Create a new video element for the looped version
       const video = document.createElement('video');
-      video.src = loopedUrl;
       video.crossOrigin = 'anonymous';
       video.loop = true;
       video.muted = true;
       video.playsInline = true;
       video.preload = 'auto';
+      video.src = loopedUrl;
 
+      // `.src=` already initiated the load. Don't call `.load()`.
       await new Promise<void>((resolve) => {
-        video.onloadeddata = () => resolve();
-        video.load();
+        const done = () => { video.removeEventListener('loadeddata', done); resolve(); };
+        video.addEventListener('loadeddata', done, { once: true });
+        if (video.readyState >= 2) done();
       });
 
       // Add to media library with "(Loop)" suffix
@@ -2019,13 +2049,14 @@
 
     // Wait (up to 5s) for the video to load, then capture a thumbnail
     // and patch the existing library item so its tile shows a preview.
+    // `.src=` setter already started the load — don't call `.load()`.
     await new Promise<void>((resolve) => {
       let resolved = false;
       const done = () => { if (!resolved) { resolved = true; resolve(); } };
       video.oncanplaythrough = done;
       video.onloadeddata = done;
       video.onerror = done;
-      video.load();
+      if (video.readyState >= 2) done();
       setTimeout(done, 5000);
     });
 
@@ -2239,12 +2270,13 @@
     video.preload = 'auto';
     video.src = blobUrl;
 
+    // `.src=` setter already started the load — don't call `.load()`.
     await new Promise<void>((resolve) => {
       let resolved = false;
       const done = () => { if (!resolved) { resolved = true; resolve(); } };
       video.onloadeddata = done;
       video.onerror = done;
-      video.load();
+      if (video.readyState >= 2) done();
       setTimeout(done, 5000);
     });
 

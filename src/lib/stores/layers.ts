@@ -1494,22 +1494,51 @@ void main() {
     },
 
     setLayerSource(id: string, source: MediaSource | null) {
+      // Debug trace — set window.__VIDEO_DEBUG__ = true to see every
+      // setLayerSource call with the caller stack so we can localize
+      // which path is mutating layer.source mid-frame.
+      if (typeof window !== 'undefined' && (window as any).__VIDEO_DEBUG__) {
+        const stack = new Error().stack?.split('\n').slice(2, 6).map(s => s.trim()).join(' / ') || 'no-stack';
+        const srcShort = (source?.src || '').slice(-40);
+        console.log(`[setLayerSource] layer=${id.slice(0, 8)} type=${source?.type ?? 'null'} src=${srcShort} stack=${stack}`);
+      }
+
       update((project) => {
         // Find the old layer source to clean up
         const oldLayer = project.layers.find(l => l.id === id);
         const oldSource = oldLayer?.source;
 
-        // Dispose old JS animation context if it exists and is different from the new one
-        if (oldSource && oldSource.jsAnimation && oldSource.id !== source?.id) {
+        // Compare on `src` (the actual media identity), NOT on `id` (a fresh
+        // UUID generated on every apply-to-layer call). Pre-fix: re-applying
+        // the same media file to a layer (e.g., from a rapid double-click)
+        // produced two MediaSource objects with the same src but different
+        // UUIDs → the second apply disposed the freshly-loaded texture mid-
+        // load, then a fresh load raced the previous one's pending play()
+        // → "video freezes on first frame" symptom.
+        const srcChanged = !!oldSource && oldSource.src !== source?.src;
+
+        // Dispose old JS animation context if the underlying source genuinely changed
+        if (oldSource && oldSource.jsAnimation && srcChanged) {
           console.log('Disposing old JS animation context:', oldSource.id, oldSource.name);
           disposeJSAnimationContext(oldSource.id);
         }
 
-        // Dispose old texture if it exists
-        if (oldSource?.texture && oldSource.id !== source?.id) {
-          console.log('Disposing old texture for:', oldSource.name);
-          oldSource.texture.dispose();
-        }
+        // DO NOT dispose `oldSource.texture` here.
+        //
+        // The texture object on `oldSource.texture` is the SAME reference
+        // held by Canvas.svelte's `textureCache` (assigned by
+        // updateTexturesSync from the URL-keyed cache). Disposing it here
+        // leaves the cache pointing at a dead texture, so when the user
+        // switches BACK to a previously-seen clip the cache hit returns a
+        // disposed VideoTexture and the new layer freezes on the last
+        // sampled frame. That was the "rapid clip switching freezes
+        // again" symptom.
+        //
+        // Texture lifetime is owned by Canvas.svelte's textureCache with
+        // LRU eviction (`evictTextureCache`). When the cache evicts an
+        // entry it disposes the texture properly. setLayerSource just
+        // changes which source the layer points at — the texture stays
+        // alive for fast switch-back until LRU reclaims it.
 
         return {
           ...project,

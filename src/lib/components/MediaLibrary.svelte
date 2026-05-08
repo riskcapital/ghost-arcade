@@ -173,7 +173,7 @@
   function applyToLayer(item: MediaSource) {
     if (!$selectedLayerId) return;
 
-    // Create a fresh copy for the layer
+    // Create a fresh source wrapper for the layer
     const layerSource: MediaSource = {
       id: generateUUID(),
       type: item.type,
@@ -182,13 +182,38 @@
     };
 
     if (item.type === 'video') {
-      const video = document.createElement('video');
-      video.src = item.src;
+      // Reuse the library item's existing <video> element. Pre-fix:
+      // every apply-to-layer click made a fresh element + fresh load,
+      // and rapid back-and-forth between two clips raced 4+ in-flight
+      // loads at once and stuck textures on garbage frames. Reusing
+      // the library element makes apply-A → apply-B → apply-A a near-
+      // instant texture swap (clip A's element is still warm).
+      let video = item.videoElement as HTMLVideoElement | undefined;
+      if (!video) {
+        video = document.createElement('video');
+        video.src = item.src;
+        item.videoElement = video;
+        libraryItems = libraryItems.map(i => i.id === item.id ? { ...i, videoElement: video } : i);
+      }
+      // Pause whatever video was previously bound to this layer so it
+      // doesn't keep decoding in the background. The decoder budget is
+      // shared across all <video> elements, and a stack of "still
+      // playing but offscreen" clips is what was thrashing the GPU.
+      const prevLayer = $project.layers.find((l) => l.id === $selectedLayerId);
+      const prevVideo = (prevLayer?.source as any)?.videoElement as HTMLVideoElement | undefined;
+      if (prevVideo && prevVideo !== video) {
+        try { prevVideo.pause(); } catch { /* ignore */ }
+      }
       video.loop = true;
       video.muted = true;
       video.playsInline = true;
-      video.autoplay = true;
-      video.play();
+      video.preload = 'auto';
+      // Restart from frame 0 on every apply — VJ semantics: clicking a
+      // clip means "play this clip from the top", not "resume from
+      // wherever it was last paused". Wrapped in try/catch because
+      // currentTime= can throw if the element is mid-load.
+      try { video.currentTime = 0; } catch { /* ignore */ }
+      if (video.paused) video.play().catch(() => { /* AbortError on rapid re-apply is fine */ });
       layerSource.videoElement = video;
     }
 
