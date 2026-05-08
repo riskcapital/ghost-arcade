@@ -21,6 +21,9 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // Display/window
   'get_displays', 'create_output_window', 'close_output_window', 'move_output_window',
   'resize_output_window', 'show_main_window',
+  // SRC tab Capture chooser — enumerates screens + app windows
+  // with thumbnails so the renderer can show a Zoom/Slack-style picker.
+  'screen_sources_list',
   // License
   'license_get_status', 'license_activate', 'license_deactivate', 'license_validate_online',
   // HTTP proxy
