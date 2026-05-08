@@ -147,8 +147,114 @@
     }
   }
 
-  // Start screen/window capture
+  // ── Screen / window capture chooser ─────────────────────────────────
+  // The Capture button now opens a modal that lists every screen + every
+  // open application window with a thumbnail preview. The user picks one
+  // and we start a getUserMedia stream pinned to that desktopCapturer
+  // source id — no reliance on platform getDisplayMedia pickers (which
+  // pre-Win11 24H2 / pre-macOS 15 don't exist or only show whole-screen).
+  //
+  // If the IPC isn't available (web build, missing electronAPI) we fall
+  // back to the old getDisplayMedia path so non-Electron contexts at least
+  // still work.
+
+  interface ScreenSource {
+    id: string;
+    name: string;
+    display_id: string | null;
+    thumbnailDataUrl: string | null;
+    appIconDataUrl: string | null;
+    kind: 'screen' | 'window';
+  }
+
+  let screenPickerOpen = false;
+  let screenPickerSources: ScreenSource[] = [];
+  let screenPickerLoading = false;
+
   async function startScreenCapture() {
+    const electronAPI = (window as any).electronAPI;
+    // Non-Electron context: keep the old behaviour so the app still runs in browsers.
+    if (!electronAPI?.invoke) return startScreenCaptureBrowserFallback();
+
+    screenPickerOpen = true;
+    screenPickerLoading = true;
+    screenPickerSources = [];
+    try {
+      const list = await electronAPI.invoke('screen_sources_list');
+      screenPickerSources = Array.isArray(list) ? list : [];
+    } catch (err) {
+      console.error('Failed to enumerate screen sources:', err);
+      screenPickerSources = [];
+    } finally {
+      screenPickerLoading = false;
+    }
+  }
+
+  function closeScreenPicker() {
+    screenPickerOpen = false;
+    screenPickerSources = [];
+    screenPickerLoading = false;
+  }
+
+  async function pickScreenSource(picked: ScreenSource) {
+    closeScreenPicker();
+    try {
+      // Chrome legacy mandatory constraints — the only way to pin
+      // getUserMedia to a specific desktopCapturer source id in Electron.
+      // Standard MediaTrackConstraints typings don't include `mandatory`
+      // (it's a legacy WebRTC field), hence the `as any` cast.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          mandatory: {
+            chromeMediaSource: 'desktop',
+            chromeMediaSourceId: picked.id,
+            // Cap to 1080p so we don't burn CPU on a 4K capture path
+            // by default. Users who need higher can edit this later.
+            maxWidth: 1920,
+            maxHeight: 1080,
+            maxFrameRate: 60,
+          },
+        } as any,
+      });
+
+      const videoTrack = stream.getVideoTracks()[0];
+      const label = picked.name || videoTrack.label || 'Capture';
+      const videoEl = document.createElement('video');
+      videoEl.srcObject = stream;
+      videoEl.muted = true;
+      videoEl.playsInline = true;
+      videoEl.autoplay = true;
+      await videoEl.play();
+
+      const source: LiveSource = {
+        id: generateUUID(),
+        name: label,
+        type: 'capture',
+        status: 'live',
+        stream,
+        videoEl,
+        // Stash the chooser thumbnail so the live tile shows something
+        // immediately — gets replaced by a live frame on next poll.
+        thumbnail: picked.thumbnailDataUrl || undefined,
+      };
+
+      // The track ends when the source goes away (user closes the window
+      // they were capturing, monitor unplugged, etc). Auto-clean.
+      videoTrack.onended = () => stopSource(source.id);
+
+      liveSources = [...liveSources, source];
+    } catch (err) {
+      console.error('Failed to start capture for', picked.name, err);
+      showToast(
+        `Could not capture "${picked.name}". The window may have closed or the OS denied access.`,
+        'error',
+      );
+    }
+  }
+
+  // Fallback for non-Electron environments (web build) — the old behaviour.
+  async function startScreenCaptureBrowserFallback() {
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: { cursor: 'always' } as any,
@@ -163,11 +269,6 @@
       videoEl.autoplay = true;
       await videoEl.play();
 
-      // Handle user stopping the share via browser UI
-      videoTrack.onended = () => {
-        stopSource(source.id);
-      };
-
       const source: LiveSource = {
         id: generateUUID(),
         name: label,
@@ -176,6 +277,7 @@
         stream,
         videoEl,
       };
+      videoTrack.onended = () => stopSource(source.id);
       liveSources = [...liveSources, source];
     } catch (err) {
       if ((err as any).name !== 'AbortError') {
@@ -3418,6 +3520,85 @@
   </div>
 {/if}
 
+<!-- ── Screen / window capture picker modal ──────────────────────────────
+  Opens when the Capture button is clicked in the SRC tab. Lists every
+  desktopCapturer source (physical displays + open application windows)
+  with a thumbnail preview and an app icon for windows. Clicking a tile
+  hands the chosen sourceId to getUserMedia + chromeMediaSource so the
+  resulting MediaStream is pinned to that surface — same UX as Zoom /
+  Slack / OBS.
+
+  Why a custom modal instead of the OS picker: on Windows pre-24H2 and
+  macOS pre-15 there isn't a system screen-share picker that Electron
+  can delegate to. Building it here gives every supported platform the
+  same "Zoom-style" chooser UX.
+-->
+{#if screenPickerOpen}
+  <div
+    class="capture-picker-backdrop"
+    onclick={closeScreenPicker}
+    role="dialog"
+    aria-modal="true"
+    aria-label="Pick a screen or window to capture"
+  >
+    <div class="capture-picker-modal" onclick={(e) => e.stopPropagation()} role="document">
+      <div class="cpm-header">
+        <div class="cpm-title">Capture a screen or window</div>
+        <button class="cpm-close" onclick={closeScreenPicker} title="Close">×</button>
+      </div>
+
+      {#if screenPickerLoading}
+        <div class="cpm-loading">Loading sources…</div>
+      {:else if screenPickerSources.length === 0}
+        <div class="cpm-empty">
+          No capturable sources found. On Linux you may need to grant
+          screen-share permission in your desktop environment.
+        </div>
+      {:else}
+        {@const screens = screenPickerSources.filter(s => s.kind === 'screen')}
+        {@const windows = screenPickerSources.filter(s => s.kind === 'window')}
+
+        {#if screens.length > 0}
+          <div class="cpm-section-title">Screens</div>
+          <div class="cpm-grid">
+            {#each screens as src (src.id)}
+              <button class="cpm-card" onclick={() => pickScreenSource(src)} title={src.name}>
+                {#if src.thumbnailDataUrl}
+                  <img class="cpm-thumb" src={src.thumbnailDataUrl} alt={src.name} />
+                {:else}
+                  <div class="cpm-thumb cpm-thumb-empty">No preview</div>
+                {/if}
+                <div class="cpm-name">{src.name}</div>
+              </button>
+            {/each}
+          </div>
+        {/if}
+
+        {#if windows.length > 0}
+          <div class="cpm-section-title">Application windows</div>
+          <div class="cpm-grid">
+            {#each windows as src (src.id)}
+              <button class="cpm-card" onclick={() => pickScreenSource(src)} title={src.name}>
+                {#if src.thumbnailDataUrl}
+                  <img class="cpm-thumb" src={src.thumbnailDataUrl} alt={src.name} />
+                {:else}
+                  <div class="cpm-thumb cpm-thumb-empty">No preview</div>
+                {/if}
+                <div class="cpm-name-row">
+                  {#if src.appIconDataUrl}
+                    <img class="cpm-app-icon" src={src.appIconDataUrl} alt="" />
+                  {/if}
+                  <div class="cpm-name">{src.name}</div>
+                </div>
+              </button>
+            {/each}
+          </div>
+        {/if}
+      {/if}
+    </div>
+  </div>
+{/if}
+
 <style>
   .tray-toggle {
     position: fixed;
@@ -5561,5 +5742,151 @@
     border-color: #f44;
     color: #f44;
     background: #2d1a1a;
+  }
+
+  /* ── Capture chooser modal ─────────────────────────────────────── */
+
+  .capture-picker-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.78);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(4px);
+  }
+
+  .capture-picker-modal {
+    background: #141418;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    width: 92vw;
+    max-width: 1100px;
+    height: 80vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    color: #e8e8ea;
+  }
+
+  .cpm-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .cpm-title {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+  }
+
+  .cpm-close {
+    background: transparent;
+    color: #aaa;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 4px;
+    width: 28px;
+    height: 28px;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .cpm-close:hover {
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+
+  .cpm-loading,
+  .cpm-empty {
+    padding: 40px;
+    text-align: center;
+    color: #888;
+    font-size: 13px;
+  }
+
+  .cpm-section-title {
+    padding: 16px 18px 6px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1.1px;
+    color: #888;
+  }
+
+  .cpm-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+    padding: 6px 18px 18px;
+    overflow-y: auto;
+  }
+
+  .capture-picker-modal > .cpm-grid:last-child {
+    flex: 1 1 auto;       /* the last grid scrolls; earlier sections are static */
+  }
+
+  .cpm-card {
+    background: #1c1c22;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    cursor: pointer;
+    text-align: left;
+    color: inherit;
+    transition: border-color 120ms, background 120ms;
+  }
+
+  .cpm-card:hover {
+    border-color: #BB86FC;
+    background: #1f1c2a;
+  }
+
+  .cpm-thumb {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    background: #0a0a0c;
+    border-radius: 4px;
+    display: block;
+  }
+
+  .cpm-thumb-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #555;
+    font-size: 11px;
+  }
+
+  .cpm-name-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .cpm-app-icon {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 16px;
+    object-fit: contain;
+  }
+
+  .cpm-name {
+    font-size: 12px;
+    color: #d8d8dc;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1 1 auto;
+    min-width: 0;
   }
 </style>

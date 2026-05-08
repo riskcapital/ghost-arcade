@@ -925,6 +925,51 @@ function registerIpcHandlers() {
     }));
   });
 
+  // ── screen_sources_list ─────────────────────────────────────────────
+  // Enumerate every capturable surface on this machine — physical
+  // displays AND open application windows — for the SRC tab's "Capture"
+  // chooser modal. Returns a thumbnail (data URL, ~320×180) + display
+  // name + the desktopCapturer source id, which the renderer then feeds
+  // into navigator.mediaDevices.getUserMedia({
+  //   video: { mandatory: { chromeMediaSource: 'desktop',
+  //                          chromeMediaSourceId: <id> } } })
+  // to start the actual capture stream.
+  //
+  // Why we don't go through getDisplayMedia() for this: the platform
+  // picker on Windows shows nothing (no native picker pre-Win11 24H2),
+  // and on macOS pre-15 Electron's setDisplayMediaRequestHandler doesn't
+  // forward source choice from the renderer. Building our own picker on
+  // top of desktopCapturer.getSources() is the only way to give Windows
+  // users the "pick a Chrome window" UX that Zoom/Slack/OBS provide.
+  //
+  // The thumbnails are PNG-encoded data URLs; ~30-50 KB each. With a
+  // typical 5-15 capturable surfaces this is a few hundred KB total —
+  // fine to send across IPC once when the modal opens.
+  ipcMain.handle('screen_sources_list', async () => {
+    try {
+      const sources = await desktopCapturer.getSources({
+        types: ['screen', 'window'],
+        thumbnailSize: { width: 320, height: 180 },
+        fetchWindowIcons: true,
+      });
+      return sources.map(s => ({
+        id: s.id,
+        name: s.name,
+        display_id: s.display_id || null,
+        // s.thumbnail is a NativeImage; serialize as a PNG data URL so
+        // the renderer can drop it straight into an <img src=...>.
+        thumbnailDataUrl: s.thumbnail.isEmpty() ? null : s.thumbnail.toDataURL(),
+        // Window icons (only present for window sources, may be null).
+        appIconDataUrl: s.appIcon && !s.appIcon.isEmpty() ? s.appIcon.toDataURL() : null,
+        // Coarse type hint so the UI can show a Display badge vs Window badge.
+        kind: s.id.startsWith('screen:') ? 'screen' : 'window',
+      }));
+    } catch (err) {
+      console.error('[screen_sources_list] failed:', err);
+      return [];
+    }
+  });
+
   // --- Output fullscreen on external monitor ---
   ipcMain.handle('output_fullscreen_external', () => {
     const allDisplays = screen.getAllDisplays();
@@ -1671,13 +1716,27 @@ function setupPermissions() {
     return SAFE_PERMISSIONS.has(permission);
   });
 
-  // Handle getDisplayMedia() calls from renderer — required for system audio capture
-  // Without this, navigator.mediaDevices.getDisplayMedia() throws "Not supported" in Electron
-  session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
+  // System audio capture: getDisplayMedia() needs an explicit handler in
+  // Electron or it throws "Not supported". We now expose BOTH screens and
+  // windows via the IPC `screen_sources_list` (used by the SRC tab's
+  // capture chooser modal) and also keep this fallback handler for any
+  // code path that still uses navigator.mediaDevices.getDisplayMedia()
+  // directly — namely the audio analyzer's system-audio capture.
+  //
+  // The audio analyzer doesn't care which video source it gets back (it
+  // uses the audio track and discards the video). For that path we keep
+  // the old auto-pick of the primary screen so we don't accidentally
+  // break system-audio capture for users on Windows. Renderers that want
+  // a specific screen or window go through the IPC + getUserMedia path
+  // instead — see MediaTray.svelte's startScreenCapture().
+  //
+  // useSystemPicker is set true so on macOS 15+ the OS native screen
+  // share picker handles selection; on other platforms Electron falls
+  // back to invoking this handler.
+  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
     try {
-      const sources = await desktopCapturer.getSources({ types: ['screen'] });
-      // Pick the primary screen (first source)
-      const primaryScreen = sources[0];
+      const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
+      const primaryScreen = sources.find(s => s.id.startsWith('screen:')) || sources[0];
       if (primaryScreen) {
         console.log(`[DisplayMedia] Granting screen capture: ${primaryScreen.name}`);
         callback({ video: primaryScreen, audio: 'loopback' });
@@ -1689,7 +1748,7 @@ function setupPermissions() {
       console.error('[DisplayMedia] Error getting sources:', err);
       callback({});
     }
-  });
+  }, { useSystemPicker: true });
 }
 
 // ============================================================
