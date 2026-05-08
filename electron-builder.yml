@@ -96,3 +96,16 @@ dmg:
     - x: 130
       y: 170
       type: file
+
+# ─── Publish ────────────────────────────────────────────────────────────────
+# `npm run build:desktop -- --publish always` uploads the resulting NSIS /
+# DMG / blockmap / latest.yml artifacts to a draft GitHub Release on the
+# riskcapital/ghost-arcade repo. Auth via the `GH_TOKEN` env var (a PAT
+# with `repo` scope, or a GitHub Actions $GITHUB_TOKEN). Without GH_TOKEN
+# electron-builder still produces local artifacts under dist-electron/
+# but `--publish always` warns and skips upload.
+publish:
+  - provider: github
+    owner: riskcapital
+    repo: ghost-arcade
+    releaseType: draft
