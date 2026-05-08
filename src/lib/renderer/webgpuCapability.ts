@@ -218,18 +218,28 @@ export function _resetWebGPUCapabilityForTesting(): void {
 /**
  * Decide whether the S4 pilot should be active right now.
  *
- *   pilot = (settings flag OR `?webgpu-pilot=1` URL override)
+ * Effective rule:
+ *
+ *   pilot = `?webgpu-pilot=1` URL override
  *           AND `isWebGPUSupported()`
  *
- * Centralizes the "is the pilot effectively on" check so callers
- * (Canvas.svelte, diagnostics panel, future visual-regression
- * fixture) all agree. Either disable hook (`?webgpu-disable=1` or
- * the capability probe failing) overrides everything else and
- * forces false — there's no way to "force enable" past a missing
- * adapter.
+ * Pre-fix this honoured a persisted settings flag too, which meant a
+ * stale persisted toggle would silently impose an extra 512×512
+ * WebGPU render every animation frame. Codex flagged that as a P2
+ * perf regression vs the Pro folder. The pilot is a benchmarking /
+ * diagnostic tool, not a feature — gate it on an explicit URL opt-in
+ * so it can never run "by accident".
+ *
+ * `settingsFlagOn` is now ignored. The parameter stays so existing
+ * call sites compile, and the dev-preferences toggle still persists
+ * its value (so a power user who wants it on by default can also
+ * append `?webgpu-pilot=1` to their dev URL alias).
+ *
+ * Either disable hook (`?webgpu-disable=1` or the capability probe
+ * failing) still overrides everything else and forces false.
  */
-export function isPilotEffectivelyEnabled(settingsFlagOn: boolean): boolean {
+export function isPilotEffectivelyEnabled(_settingsFlagOn: boolean): boolean {
   if (DISABLE_OVERRIDE) return false;
   if (!isWebGPUSupported()) return false;
-  return settingsFlagOn || PILOT_URL_OVERRIDE;
+  return PILOT_URL_OVERRIDE;
 }

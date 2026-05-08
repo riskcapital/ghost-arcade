@@ -3606,12 +3606,23 @@ void main() {
     const clipId = `perf-media-${assignment.mediaId || Date.now()}`;
 
     if (assignment.mediaType === 'video') {
-      const video = document.createElement('video');
-      video.src = assignment.mediaSrc;
+      // Reuse library item's <video> element if available so rapid
+      // Performer keyboard switching doesn't churn fresh elements.
+      const libraryItem = assignment.mediaId
+        ? $mediaLibrary.find(m => m.id === assignment.mediaId)
+        : null;
+      let video = libraryItem?.videoElement as HTMLVideoElement | undefined;
+      if (!video) {
+        video = document.createElement('video');
+        video.src = assignment.mediaSrc;
+      }
       video.loop = true;
       video.muted = true;
       video.playsInline = true;
-      video.play().catch(() => {});
+      // Restart from frame 0 on every Performer keypress — clicking a key
+      // means "play this clip from the top", not "resume mid-stream".
+      try { video.currentTime = 0; } catch { /* ignore */ }
+      if (video.paused) video.play().catch(() => {});
       const clip: VJClip = {
         id: clipId,
         type: 'video',
