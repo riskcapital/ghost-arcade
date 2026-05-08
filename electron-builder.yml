@@ -47,18 +47,23 @@ fileAssociations:
 win:
   target: nsis
   icon: build-resources/icons/icon.ico
-  # `publisherName` is no longer a root-level win.* property in electron-
-  # builder 26 — it moved into `signtoolOptions.publisherName` for the
-  # signtool path, and for Azure Trusted Signing the publisher is derived
-  # from the certificate's CN automatically (so we don't need to set it
-  # at all on this Azure-signed build).
   # Azure Trusted Signing — short-lived certs issued per-build, RFC 3161
   # timestamp ensures signed binaries stay valid past cert expiry.
   # Auth: env vars AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET
   # (Service Principal in CI; interactive `az login` for local builds).
+  #
+  # Schema notes (electron-builder 26):
+  #   - `publisherName` is REQUIRED inside azureSignOptions (it was a
+  #     root-level win.* property in electron-builder 25; both my v25→26
+  #     migration attempts overshot — the first kept it at root and got
+  #     "unknown property", the second removed it and got "misses
+  #     property". Correct landing: inside azureSignOptions, exactly as
+  #     it appears on the signing cert's CN). Several names allowed.
+  #   - The original "Invoke-TrustedSigning rejects it" comment referred
+  #     to a different `publisher` field in the upstream PowerShell
+  #     module's params, NOT this electron-builder schema field.
   azureSignOptions:
-    # NB: don't put `publisher` here — Invoke-TrustedSigning rejects it.
-    # Publisher comes from the cert's CN automatically.
+    publisherName: "Justin Wood"
     endpoint: "https://eus.codesigning.azure.net/"
     codeSigningAccountName: "JustinWood"
     certificateProfileName: "ill-visuals-prod"
