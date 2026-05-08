@@ -469,13 +469,20 @@ function createSpoutOsrWindow(width, height) {
     });
 
     // Load the same Vite app URL with ?mode=spout-output
+    // Load the same Vite app URL with ?mode=spout-output. `webgpu-disable=1`
+    // is the belt-and-suspenders guard against the S4 WebGPU pilot ever
+    // running in this OSR renderer. The primary defense is the
+    // `!isOutputMode && !isOsrMode` gate on the pilot lifecycle/handoff
+    // in Canvas.svelte; this URL override hard-stops the capability
+    // probe so even a future bypass can't activate the pilot in the
+    // OSR window.
     const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
     const isDev = !app.isPackaged;
     if (isDev) {
-      spoutOsrWindow.loadURL(`${devUrl}?mode=spout-output`);
+      spoutOsrWindow.loadURL(`${devUrl}?mode=spout-output&webgpu-disable=1`);
     } else {
       const filePath = path.join(__dirname, '..', 'dist', 'index.html');
-      spoutOsrWindow.loadFile(filePath, { query: { mode: 'spout-output' } });
+      spoutOsrWindow.loadFile(filePath, { query: { mode: 'spout-output', 'webgpu-disable': '1' } });
     }
 
     console.log('[Spout OSR] Window created');
@@ -1990,14 +1997,24 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
   // Hide menu bar for clean look
   outputWindow.setMenuBarVisibility(false);
 
-  // Load the same Svelte app but in output mode (canvas only, no UI)
+  // Load the same Svelte app but in output mode (canvas only, no UI).
+  //
+  // `webgpu-disable=1` is a belt-and-suspenders guard against the S4
+  // WebGPU pilot ever spinning up in this renderer process. The
+  // primary defense is the `!isOutputMode && !isOsrMode` gate on the
+  // pilot lifecycle/handoff in Canvas.svelte, but the settings store
+  // is shared via state-sync — if a future code path bypasses the
+  // mode-flag check, this URL override forces the capability probe
+  // (webgpuCapability.ts) to report unsupported, which the lifecycle
+  // gate also honors. Two independent failsafes, neither of which
+  // requires the other to work.
   const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
   const isDev = !app.isPackaged;
   if (isDev) {
-    outputWindow.loadURL(`${devUrl}?mode=output`);
+    outputWindow.loadURL(`${devUrl}?mode=output&webgpu-disable=1`);
   } else {
     const filePath = path.join(__dirname, '..', 'dist', 'index.html');
-    outputWindow.loadFile(filePath, { query: { mode: 'output' } });
+    outputWindow.loadFile(filePath, { query: { mode: 'output', 'webgpu-disable': '1' } });
   }
 
   outputWindow.on('closed', () => {
