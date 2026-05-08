@@ -102,14 +102,10 @@ dmg:
       type: file
 
 # ─── Publish ────────────────────────────────────────────────────────────────
-# `npm run build:desktop -- --publish always` uploads the resulting NSIS /
-# DMG / blockmap / latest.yml artifacts to a draft GitHub Release on the
-# riskcapital/ghost-arcade repo. Auth via the `GH_TOKEN` env var (a PAT
-# with `repo` scope, or a GitHub Actions $GITHUB_TOKEN). Without GH_TOKEN
-# electron-builder still produces local artifacts under dist-electron/
-# but `--publish always` warns and skips upload.
-publish:
-  - provider: github
-    owner: riskcapital
-    repo: ghost-arcade
-    releaseType: draft
+# Intentionally NO `publish:` block here. CI (.github/workflows/build.yml)
+# runs `electron-builder --publish never` and then uses
+# `softprops/action-gh-release` to upload the signed artifacts to the
+# CROSS-REPO release target `riskcapital/ghost-arcade-releases`. Adding a
+# `publish:` block here would either be ignored (because of --publish never)
+# or, if someone ran a local `--publish always`, push to the wrong repo.
+# The release flow is: push a `v*` git tag → CI builds + signs + uploads.
