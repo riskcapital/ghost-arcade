@@ -56,8 +56,22 @@
     // Cursor clearing can be added later
   }
 
+  // Read the experimental WebRTC-output flag once at the call site
+  // (synchronous get from the settings store). When true, the
+  // create_output_window IPC routes the visible output window to
+  // OutputDisplayApp (`?mode=webrtc-display`) instead of the legacy
+  // SpoutOutputApp full renderer (`?mode=output`). Off by default —
+  // see settings.ts experimental.outputWebRTC for full rationale.
+  function readExperimentalWebRTC(): boolean {
+    let flag = false;
+    const unsub = settings.subscribe((s) => { flag = !!s.experimental?.outputWebRTC; });
+    unsub();
+    return flag;
+  }
+
   // Open output window — opens a draggable window (double-click to fullscreen)
   export async function openPopup(preferExternal: boolean = true) {
+    const experimentalWebRTC = readExperimentalWebRTC();
     try {
       // Get available displays from Electron
       const displays: any[] = await invoke('get_displays');
@@ -82,9 +96,10 @@
         width: winW, height: winH, x, y,
         fullscreen: false,
         displayId: target.id,
+        experimentalWebRTC,
       });
       isOpen = true;
-      console.log(`[Output] Window opened on display "${target.label}" (${winW}x${winH})`);
+      console.log(`[Output] Window opened on display "${target.label}" (${winW}x${winH})${experimentalWebRTC ? ' [WebRTC]' : ''}`);
     } catch (error) {
       console.error('Failed to create output window:', error);
       // Fallback: open without display info
@@ -93,6 +108,7 @@
           width: 1280, height: 720,
           x: 100, y: 100,
           fullscreen: false,
+          experimentalWebRTC,
         });
         isOpen = true;
       } catch (e2) {
@@ -103,10 +119,11 @@
 
   // Open fullscreen on external monitor (or primary if no external)
   export async function openFullscreenExternal() {
+    const experimentalWebRTC = readExperimentalWebRTC();
     try {
-      const result: any = await invoke('output_fullscreen_external');
+      const result: any = await invoke('output_fullscreen_external', { experimentalWebRTC });
       isOpen = true;
-      console.log(`[Output] Fullscreen on display ${result.displayId}, external=${result.isExternal}`);
+      console.log(`[Output] Fullscreen on display ${result.displayId}, external=${result.isExternal}${experimentalWebRTC ? ' [WebRTC]' : ''}`);
     } catch (error) {
       console.error('Failed to open fullscreen output:', error);
     }

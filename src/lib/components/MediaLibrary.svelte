@@ -182,13 +182,34 @@
     };
 
     if (item.type === 'video') {
-      const video = document.createElement('video');
-      video.src = item.src;
+      // Reuse the library item's existing <video> element. See community
+      // fix: pre-fix every apply-to-layer click made a fresh element +
+      // fresh load, racing 4+ in-flight loads on rapid back-and-forth.
+      let video = item.videoElement as HTMLVideoElement | undefined;
+      if (!video) {
+        video = document.createElement('video');
+        video.src = item.src;
+        item.videoElement = video;
+        libraryItems = libraryItems.map(i => i.id === item.id ? { ...i, videoElement: video } : i);
+      }
+      // Pause whatever video was previously bound to this layer so it
+      // doesn't keep decoding in the background. The decoder budget is
+      // shared across all <video> elements; a stack of "still playing
+      // but offscreen" clips thrashes the GPU.
+      const prevLayer = $project.layers.find((l) => l.id === $selectedLayerId);
+      const prevVideo = (prevLayer?.source as any)?.videoElement as HTMLVideoElement | undefined;
+      if (prevVideo && prevVideo !== video) {
+        try { prevVideo.pause(); } catch { /* ignore */ }
+      }
       video.loop = true;
       video.muted = true;
       video.playsInline = true;
-      video.autoplay = true;
-      video.play();
+      video.preload = 'auto';
+      // Restart from frame 0 on every apply — VJ semantics: clicking a
+      // clip means "play this clip from the top", not "resume from
+      // wherever it was last paused".
+      try { video.currentTime = 0; } catch { /* ignore */ }
+      if (video.paused) video.play().catch(() => { /* AbortError on rapid re-apply is fine */ });
       layerSource.videoElement = video;
     }
 

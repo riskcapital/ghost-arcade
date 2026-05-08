@@ -873,8 +873,15 @@ function registerIpcHandlers() {
   });
 
   // --- Output window ---
-  ipcMain.handle('create_output_window', (_, { width, height, x, y, fullscreen, displayId }) => {
-    createOutputWindow(width, height, x, y, fullscreen, displayId);
+  // `experimentalWebRTC` (optional) routes the visible output window
+  // to the new OutputDisplayApp (presentation-only WebRTC peer) instead
+  // of the legacy SpoutOutputApp full renderer. The renderer reads the
+  // experimental.outputWebRTC settings flag and passes it here. When
+  // omitted/false, the legacy `?mode=output` URL is used (Pro v0.6.0
+  // baseline, unchanged). This lets us flag-gate the new transport
+  // through the dev preferences panel without touching production.
+  ipcMain.handle('create_output_window', (_, { width, height, x, y, fullscreen, displayId, experimentalWebRTC }) => {
+    createOutputWindow(width, height, x, y, fullscreen, displayId, !!experimentalWebRTC);
   });
 
   // Returns the NATIVE pixel resolution of the display the output window is
@@ -978,13 +985,18 @@ function registerIpcHandlers() {
   });
 
   // --- Output fullscreen on external monitor ---
-  ipcMain.handle('output_fullscreen_external', () => {
+  // Same `experimentalWebRTC` opt-in as create_output_window so
+  // fullscreen-direct mode also lands on the new transport when the
+  // flag is on. Renderer reads settings.experimental.outputWebRTC and
+  // passes it through.
+  ipcMain.handle('output_fullscreen_external', (_, args) => {
     const allDisplays = screen.getAllDisplays();
     const primary = screen.getPrimaryDisplay();
     const external = allDisplays.find(d => d.id !== primary.id);
     const target = external || primary;
+    const experimentalWebRTC = !!(args && args.experimentalWebRTC);
 
-    createOutputWindow(target.bounds.width, target.bounds.height, target.bounds.x, target.bounds.y, true, target.id);
+    createOutputWindow(target.bounds.width, target.bounds.height, target.bounds.x, target.bounds.y, true, target.id, experimentalWebRTC);
     return { displayId: target.id, isExternal: !!external };
   });
 
@@ -1940,7 +1952,7 @@ function createMainWindow() {
   });
 }
 
-function createOutputWindow(width, height, x, y, fullscreen = false, displayId = null) {
+function createOutputWindow(width, height, x, y, fullscreen = false, displayId = null, experimentalWebRTC = false) {
   // Validate dimensions
   width = Math.max(320, Math.min(8192, Number(width) || 1920));
   height = Math.max(240, Math.min(8192, Number(height) || 1080));
@@ -2008,13 +2020,40 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
   // (webgpuCapability.ts) to report unsupported, which the lifecycle
   // gate also honors. Two independent failsafes, neither of which
   // requires the other to work.
+  // Output mode selection (gated by experimental.outputWebRTC flag
+  // passed in from the renderer's create_output_window IPC call):
+  //
+  //   webrtc-display → mounts OutputDisplayApp (presentation-only,
+  //                    receives editor canvas via same-process WebRTC
+  //                    peer + <video srcObject>). Single renderer
+  //                    pattern, the architectural target.
+  //
+  //   output         → mounts SpoutOutputApp (the legacy full
+  //                    renderer with state-sync + per-layer rendering).
+  //                    Production default until the WebRTC path
+  //                    passes the success-criteria sweep.
+  //
+  // Auto-DevTools detached so the OutputDisplayApp logs (signaling
+  // state, getStats() values when ?stats=1) are visible without
+  // hunting for the window's hidden DevTools shortcut.
+  const outputMode = experimentalWebRTC ? 'webrtc-display' : 'output';
+  console.log(`[Output] Selected mode "${outputMode}" (experimentalWebRTC=${experimentalWebRTC})`);
   const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
   const isDev = !app.isPackaged;
   if (isDev) {
-    outputWindow.loadURL(`${devUrl}?mode=output&webgpu-disable=1`);
+    outputWindow.loadURL(`${devUrl}?mode=${outputMode}&webgpu-disable=1`);
+    // Auto-DevTools on output is a debugging convenience but it changes
+    // the perf profile measurably (devtools allocates extra GPU surfaces
+    // + renderer threads). Opt in via env or a launch arg so smoothness
+    // benchmarks match the Pro folder's no-devtools baseline. Set
+    // GHOSTARCADE_OUTPUT_DEVTOOLS=1 in the shell that runs `npm run
+    // desktop` to enable.
+    if (process.env.GHOSTARCADE_OUTPUT_DEVTOOLS === '1') {
+      try { outputWindow.webContents.openDevTools({ mode: 'detach' }); } catch {}
+    }
   } else {
     const filePath = path.join(__dirname, '..', 'dist', 'index.html');
-    outputWindow.loadFile(filePath, { query: { mode: 'output', 'webgpu-disable': '1' } });
+    outputWindow.loadFile(filePath, { query: { mode: outputMode, 'webgpu-disable': '1' } });
   }
 
   outputWindow.on('closed', () => {

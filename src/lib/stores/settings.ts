@@ -371,6 +371,19 @@ export interface ExperimentalSettings {
    *  via the dev preferences panel + a machine that passes
    *  `webgpuCapability.probeWebGPU()`. */
   webgpuPilot: boolean;
+  /** Output-window pixel transport mode. When false (default) the
+   *  visible output window runs the legacy SpoutOutputApp full
+   *  renderer (Pro v0.6.0 baseline — has its own decoders, state-sync,
+   *  and the well-known cross-window drift / drag-freeze limitations).
+   *  When true, the output window mounts OutputDisplayApp: a
+   *  presentation-only `<video srcObject>` fed by the editor's
+   *  `canvas.captureStream(60)` over a same-process WebRTC peer.
+   *  Single renderer (editor), output is a dumb display surface.
+   *  Until the success-criteria sweep (1080p60 stable, 4K60 stable,
+   *  latency under 1-2 frames, no color shift, etc.) lands clean on
+   *  real hardware, this stays opt-in via dev preferences only;
+   *  flipping it on is the way we measure those criteria. */
+  outputWebRTC: boolean;
 }
 
 export interface AppSettings {
@@ -497,6 +510,12 @@ function createDefaultSettings(): AppSettings {
       // toggle in dev preferences AND `webgpuCapability.probeWebGPU()`
       // succeeding — neither alone unlocks the pilot.
       webgpuPilot: false,
+      // WebRTC output transport. Off by default — the legacy
+      // SpoutOutputApp renderer is the proven baseline. Flipping
+      // this on routes the output window to OutputDisplayApp +
+      // canvas.captureStream + RTCPeerConnection. Stays opt-in
+      // until the success-criteria sweep proves out.
+      outputWebRTC: false,
     },
   };
 }

@@ -30,6 +30,7 @@
   import { audioStore, getLastRawAnalysis } from '../stores/audio';
   import { audioTextures } from '../audio/audioTextures';
   import { initStateBroadcast, destroyStateBroadcast } from '$lib/sync/stateBroadcast';
+  import { startOutputPixelBroadcast, stopOutputPixelBroadcast } from '$lib/sync/outputPixelBroadcast';
   import { NativeRendererSync, getProjectOutputSize } from '$lib/sync/nativeRendererSync';
   import { hasWatermark } from '$lib/stores/license';
   import { fpsStore } from '$lib/stores/fps';
@@ -114,6 +115,9 @@
   /** Unsubscribe handle for the settings.experimental.webgpuPilot reactive
    *  subscription. Lifted to module scope so onDestroy can call it. */
   let webgpuPilotUnsub: (() => void) | null = null;
+  /** Unsubscribe handle for the settings.experimental.outputWebRTC reactive
+   *  subscription that drives startOutputPixelBroadcast / stop. */
+  let outputWebRTCUnsub: (() => void) | null = null;
 
   // Output-window transforms are applied in the final WebGL pass. Keeping them
   // out of CSS avoids compositor resampling of the live projection canvas.
@@ -177,8 +181,18 @@
   // Track loaded textures (with LRU eviction)
   const textureCache = new Map<string, THREE.Texture>();
   const TEXTURE_CACHE_MAX = 64;
+  // Expose for DevTools debugging:
+  //   __textureCache.size                    — entry count
+  //   [...__textureCache.keys()]             — keys, oldest first (LRU order)
+  //   __textureCache.get(key)?.image?.src    — what backs each entry
+  //   __VIDEO_DEBUG__ = true                 — turn on per-frame video state logging
+  if (typeof window !== 'undefined') {
+    (window as any).__textureCache = textureCache;
+    (window as any).__loadingTextures = null; // assigned below
+  }
   // Track textures being loaded to avoid duplicate async loads
   const loadingTextures = new Set<string>();
+  if (typeof window !== 'undefined') (window as any).__loadingTextures = loadingTextures;
   // Track texture loads that hard-failed (missing video file, CORS error, bad
   // shader compile) so we don't retry them on every frame. Without this, a
   // single VJ clip pointing at a deleted file or expired blob URL floods the
@@ -190,18 +204,87 @@
   const FAILED_TEXTURE_LOG_LIMIT = 3; // only log each bad key a few times
   const failedTextureLogCount = new Map<string, number>();
 
-  /** Evict oldest entries from textureCache when it exceeds the max size */
-  function evictTextureCache() {
+  /** Bump a textureCache entry to the most-recent position so true-LRU
+   *  eviction won't drop it. Map iteration order is insertion order, so
+   *  delete + re-set moves the entry to the end. Called on every cache
+   *  hit + every fresh insert. */
+  function touchTextureCacheEntry(key: string): void {
+    const tex = textureCache.get(key);
+    if (!tex) return;
+    textureCache.delete(key);
+    textureCache.set(key, tex);
+  }
+
+  /** Evict least-recently-used entries from textureCache, but NEVER
+   *  evict a texture that's currently referenced by an active layer.
+   *
+   *  Pre-fix: simple FIFO eviction disposed the texture for the FIRST
+   *  clip the user added once the cache hit 64 entries — but if that
+   *  clip was still mapped on a layer ("left it playing for a bit"),
+   *  its now-disposed VideoTexture stayed assigned and visually froze
+   *  on whatever frame the GPU last sampled. Subsequent clip switches
+   *  also returned disposed cached textures. That's the "all rest
+   *  frozen when I launched them" symptom.
+   *
+   *  Pinned-set accounting: walks $layers + $vjOutputLayers and
+   *  collects every textureCacheKey currently in use. Eviction skips
+   *  pinned keys entirely; if every entry is pinned the cache simply
+   *  grows past TEXTURE_CACHE_MAX (logged so we can diagnose runaway). */
+  function evictTextureCache(): void {
     if (textureCache.size <= TEXTURE_CACHE_MAX) return;
+
+    // Build set of textureCacheKeys currently in use by ANY active layer.
+    // Mirror the lookupKey derivation in updateTexturesSync exactly so
+    // the pinned set matches the keys textureCache actually uses.
+    const pinned = new Set<string>();
+    const collectFrom = (layerList: Layer[] | null | undefined) => {
+      if (!layerList) return;
+      for (const layer of layerList) {
+        if (!layer?.source) continue;
+        const isAIGenerated = layer.source.src === 'ai-generated' || layer.source.src === 'js-animation';
+        const isSynthVision =
+          layer.source.type === 'synthvision' ||
+          (!layer.source.src && (layer.source as any).synthVisionCanvas) ||
+          (layer.source.type === 'threejs' && (layer.source as any).threejsCanvas && !layer.source.src);
+        const isVJVideoLayer =
+          layer.source.type === 'video' &&
+          typeof layer.id === 'string' && layer.id.startsWith('vj-layer-');
+        const textureCacheKey =
+          (isAIGenerated || isSynthVision) ? layer.source.id
+          : isVJVideoLayer ? `${layer.id}:${layer.source.src}`
+          : layer.source.src;
+        const isShader = layer.source.type === 'shader';
+        const lookupKey = isShader ? `${layer.id}:${textureCacheKey}` : textureCacheKey;
+        if (lookupKey) pinned.add(lookupKey);
+      }
+    };
+    collectFrom(get(layers));
+    collectFrom(get(vjOutputLayers));
+
+    const targetCount = Math.max(TEXTURE_CACHE_MAX, pinned.size);
+    if (textureCache.size <= targetCount) return;
+
     const keysToDelete: string[] = [];
     for (const key of textureCache.keys()) {
-      if (textureCache.size - keysToDelete.length <= TEXTURE_CACHE_MAX) break;
+      if (textureCache.size - keysToDelete.length <= targetCount) break;
+      if (pinned.has(key)) continue;
       keysToDelete.push(key);
     }
+
+    if ((window as any).__VIDEO_DEBUG__ && keysToDelete.length > 0) {
+      console.log('[textureCache] evicting', keysToDelete.length, 'of', textureCache.size,
+        '— pinned:', pinned.size, 'keys:', keysToDelete);
+    }
+
     for (const key of keysToDelete) {
       const tex = textureCache.get(key);
       if (tex) tex.dispose();
       textureCache.delete(key);
+    }
+
+    if (textureCache.size > targetCount && (window as any).__VIDEO_DEBUG__) {
+      console.warn('[textureCache] cache size', textureCache.size,
+        'exceeds target', targetCount, '— all entries pinned, allowing growth');
     }
   }
 
@@ -434,6 +517,33 @@
     // Output window and OSR window are receivers — they get state from main
     if (!isOsrMode && !isOutputMode) {
       initStateBroadcast('sender');
+    }
+
+    // Experimental WebRTC output transport. When the
+    // `experimental.outputWebRTC` flag is on, the editor exposes its
+    // main canvas as a MediaStream and a same-process WebRTC peer
+    // serves it to the output window. The output window mounts
+    // OutputDisplayApp which is presentation-only — single renderer
+    // architecture, the pro pattern adapted to Electron. The flag
+    // gates editor-side broadcasting too: with the flag off the
+    // BroadcastChannel doesn't open and captureStream isn't called,
+    // so unflagged installs see zero overhead. Hard-gated to editor
+    // mode (output / OSR don't broadcast to themselves).
+    {
+      let outputWebRTCStarted = false;
+      const reconcileOutputWebRTC = (flagOn: boolean) => {
+        const wantOn = flagOn && !isOsrMode && !isOutputMode && !!canvas;
+        if (wantOn && !outputWebRTCStarted) {
+          startOutputPixelBroadcast(canvas, 60);
+          outputWebRTCStarted = true;
+        } else if (!wantOn && outputWebRTCStarted) {
+          stopOutputPixelBroadcast();
+          outputWebRTCStarted = false;
+        }
+      };
+      outputWebRTCUnsub = settings.subscribe((s) => {
+        reconcileOutputWebRTC(!!s.experimental?.outputWebRTC);
+      });
     }
 
     // S4 pilot: kick off the WebGPU capability probe in parallel with the
@@ -984,7 +1094,28 @@
         // Inner-gate diagnostic: outer gate is passing (animate-dbg is silent)
         // but the send block isn't firing either. Log once/sec which of the
         // inner-gate flags is blocking. Remove once the flow is confirmed.
-        if (!(spoutOutputActive || outputWindowOpen) || !glCanvas || osrSpoutActive || isOsrMode || isOutputMode) {
+        // Spout-send gate: skip without logging unless the user explicitly
+        // opted into the diagnostic via `?spout-debug=1`. The legacy
+        // per-second log was useful when bringing up the OSR Spout pipeline
+        // but in steady state it's pure noise — fires every tick on output
+        // and OSR renderers (which legitimately never send), and clutters
+        // the console for every actual debugging task. Gate it.
+        // CPU Spout-send gate. Pre-fix this fired when EITHER spoutOutputActive
+        // OR outputWindowOpen was true — meaning just opening the visible output
+        // window made the editor do a 1920×1080 RGBA readback (8 MB) every other
+        // frame even when Spout output was off and the output window had its
+        // own renderer. That single coupling has been the "editor slow when
+        // output is open" symptom we've chased all session. The visible output
+        // window already presents itself; the editor has zero reason to read
+        // back pixels for it.
+        //
+        // Correct gate: ONLY run the CPU send path for actual user-explicit
+        // Spout output (spoutOutputActive) when zero-copy OSR isn't already
+        // handling it (osrSpoutActive). Output-window state is window state,
+        // not a CPU-readback trigger.
+        const __syphonGateSkipped =
+          !spoutOutputActive || !glCanvas || osrSpoutActive || isOsrMode || isOutputMode;
+        if (__syphonGateSkipped && (window as any).__SPOUT_DEBUG__) {
           const __now2 = Date.now();
           if (!(window as any).__spoutInnerDbgLast || __now2 - (window as any).__spoutInnerDbgLast > 1000) {
             (window as any).__spoutInnerDbgLast = __now2;
@@ -997,7 +1128,7 @@
           }
         }
 
-        if ((spoutOutputActive || outputWindowOpen) && glCanvas && !osrSpoutActive && !isOsrMode && !isOutputMode) {
+        if (spoutOutputActive && glCanvas && !osrSpoutActive && !isOsrMode && !isOutputMode) {
           // Checkpoint A: we're past the inner gate. Log 3 times so we know
           // this branch is actually entered.
           if (!(window as any).__sendCpA) (window as any).__sendCpA = 0;
@@ -1521,6 +1652,16 @@
       webgpuHandoffTexture = null;
     }
 
+    // Experimental WebRTC output transport teardown — unsubscribe from
+    // the flag reactive and tear down any active peer. Fire-and-forget;
+    // the BroadcastChannel close + RTCPeerConnection close are both
+    // synchronous enough that we don't need to await.
+    if (outputWebRTCUnsub) {
+      try { outputWebRTCUnsub(); } catch { /* */ }
+      outputWebRTCUnsub = null;
+    }
+    stopOutputPixelBroadcast();
+
     if (nativeRendererStatusTimer) {
       clearInterval(nativeRendererStatusTimer);
       nativeRendererStatusTimer = null;
@@ -1677,7 +1818,21 @@
         layer.source.type === 'synthvision' ||
         (!layer.source.src && (layer.source as any).synthVisionCanvas) ||
         (layer.source.type === 'threejs' && (layer.source as any).threejsCanvas && !layer.source.src);
-      const textureCacheKey = (isAIGenerated || isSynthVision) ? layer.source.id : layer.source.src;
+      // VJ video layers need their own cache namespace because each VJ
+      // clip has its own private HTMLVideoElement (built by
+      // vjClipLauncher.prepareClipVideo, keyed per-clip), separate from
+      // any element the same URL has in the mapping-mode media library.
+      // If we shared a URL-keyed cache between the two, VJ layers would
+      // get back a texture wrapping mapping-mode's videoElement —
+      // visible as a frozen frame from whatever the mapping clip last
+      // sampled. Namespacing by layer.id + src keeps them isolated.
+      const isVJVideoLayer =
+        layer.source.type === 'video' &&
+        typeof layer.id === 'string' && layer.id.startsWith('vj-layer-');
+      const textureCacheKey =
+        (isAIGenerated || isSynthVision) ? layer.source.id
+        : isVJVideoLayer ? `${layer.id}:${layer.source.src}`
+        : layer.source.src;
       // Layer-specific cache key for shader instances (which may have per-layer state)
       const shaderCacheKey = `${layer.id}:${textureCacheKey}`;
 
@@ -1710,6 +1865,11 @@
         } else {
           // Always assign - the source object reference may have changed due to store updates
           layer.source.texture = cachedTexture;
+          // Bump this entry to most-recent so true-LRU eviction won't
+          // drop a texture that's actively in use. Without this, the
+          // first-inserted texture gets evicted even when it's still
+          // mapped on a layer ("clip frozen after playing for a bit").
+          touchTextureCacheEntry(lookupKey);
         }
       }
       // If not loading yet, start async load — skip entirely if a previous
@@ -1721,11 +1881,73 @@
         loadTextureAsync(layer.id, layer.source, lookupKey);
       }
 
-      // Video textures need to be marked for update every frame
-      // This is critical - without this the video won't display new frames
+      // Video textures need to be marked for update every frame so the
+      // GPU resamples each decoded frame — but ONLY when the video has
+      // actual frame data. Setting `needsUpdate=true` while the element
+      // is still loading (readyState < 2 OR videoWidth === 0) makes
+      // three.js call `texImage2D(..., video)` on an empty source, which
+      // returns `WebGL: INVALID_VALUE: texImage2D: no video` and leaves
+      // the texture in an undefined state. On Electron 42 / three.js
+      // 0.184 that broken texture is what shows up as the horizontal
+      // lines / black bars on the output window after rapid clip
+      // switching.
       if (layer.source.type === 'video') {
-        if (layer.source.texture) {
+        const vEl = layer.source.videoElement;
+        const ready = !!vEl && vEl.readyState >= 2 /* HAVE_CURRENT_DATA */ && vEl.videoWidth > 0 && vEl.videoHeight > 0;
+        if (layer.source.texture && ready) {
           (layer.source.texture as THREE.VideoTexture).needsUpdate = true;
+        }
+
+        // Video health watchdog — gated behind window.__VIDEO_DEBUG__ so
+        // it doesn't spam in normal sessions. Logs once per state change
+        // per layer. Set `__VIDEO_DEBUG__ = true` in DevTools to enable.
+        if ((window as any).__VIDEO_DEBUG__) {
+          const tex = layer.source.texture as THREE.VideoTexture | null | undefined;
+          const dbgKey = `__vidDbg_${layer.id}`;
+          const elIdHandle = vEl as any;
+          if (vEl && !elIdHandle.__gaElId) {
+            elIdHandle.__gaElId = `el#${Math.floor(Math.random() * 0xffff).toString(16)}`;
+          }
+          const cur = {
+            ready,
+            paused: !!vEl?.paused,
+            readyState: vEl?.readyState ?? -1,
+            videoWidth: vEl?.videoWidth ?? 0,
+            videoHeight: vEl?.videoHeight ?? 0,
+            currentTime: vEl?.currentTime?.toFixed(2) ?? 'n/a',
+            duration: vEl?.duration?.toFixed(2) ?? 'n/a',
+            srcShort: (vEl?.src || '').slice(-50),
+            hasTexture: !!tex,
+            textureImageMatchesElement: tex?.image === vEl,
+            elId: elIdHandle?.__gaElId ?? 'n/a',                     // identifies WHICH HTMLVideoElement
+            textureImageElId: (tex?.image as any)?.__gaElId ?? 'n/a', // and which one the texture wraps
+          };
+          const prev = (window as any)[dbgKey];
+          const changed = !prev ||
+            prev.ready !== cur.ready ||
+            prev.paused !== cur.paused ||
+            prev.readyState !== cur.readyState ||
+            prev.hasTexture !== cur.hasTexture ||
+            prev.textureImageMatchesElement !== cur.textureImageMatchesElement ||
+            prev.srcShort !== cur.srcShort ||
+            prev.elId !== cur.elId ||
+            prev.textureImageElId !== cur.textureImageElId;
+          if (changed) {
+            (window as any)[dbgKey] = cur;
+            const matchTag = cur.textureImageMatchesElement ? 'OK' : 'MISMATCH';
+            console.log(
+              `[VIDEO] layer=${layer.id.slice(0, 8)}`,
+              `el=${cur.elId}`,
+              `texEl=${cur.textureImageElId}`,
+              `match=${matchTag}`,
+              `tex=${cur.hasTexture}`,
+              `rs=${cur.readyState}`,
+              `dim=${cur.videoWidth}x${cur.videoHeight}`,
+              `t=${cur.currentTime}`,
+              `paused=${cur.paused}`,
+              `src=${cur.srcShort}`,
+            );
+          }
         }
 
         const video = layer.source.videoElement;
@@ -1888,7 +2110,6 @@
         // If no video element exists, create one
         if (!video) {
           video = document.createElement('video');
-          video.src = source.src;
           // Only set crossOrigin for remote URLs, not blob: URLs
           if (!source.src.startsWith('blob:')) {
             video.crossOrigin = 'anonymous';
@@ -1897,12 +2118,27 @@
           video.muted = true;
           video.playsInline = true;
           video.preload = 'auto';
+          video.src = source.src;
 
-          // Wait for video to load
+          // Wait for video to load. The src setter SHOULD auto-trigger
+          // the resource selection algorithm but for custom protocol URLs
+          // on Chromium 130 (Electron 42), the auto-trigger sometimes
+          // never fires loadeddata — so we kick `.load()` explicitly.
+          // SAFE on a fresh element (no concurrent ops to abort). For
+          // REUSED elements (VJ rapid clip switch), do NOT call load() —
+          // it races any in-flight load + pending play() and throws
+          // AbortError on Chromium 130.
           await new Promise<void>((resolve, reject) => {
-            video!.onloadeddata = () => resolve();
-            video!.onerror = () => reject(new Error('Video failed to load'));
-            video!.load();
+            const v = video!;
+            const onLoaded = () => { cleanup(); resolve(); };
+            const onError = () => { cleanup(); reject(new Error('Video failed to load')); };
+            const cleanup = () => {
+              v.removeEventListener('loadeddata', onLoaded);
+              v.removeEventListener('error', onError);
+            };
+            v.addEventListener('loadeddata', onLoaded, { once: true });
+            v.addEventListener('error', onError, { once: true });
+            v.load();  // Fresh element only — see big comment above.
           });
 
           // Store reference on the layer's source
@@ -2344,9 +2580,14 @@
       if (mediaItem) {
         // If we already have a texture cached for this media item, use it
         if (mediaItem.texture) {
-          // Update video texture if needed
+          // Update video texture if needed — only when the underlying
+          // <video> has decoded a frame, otherwise the GPU upload throws
+          // INVALID_VALUE on Electron 42 / three.js 0.184.
           if (mediaItem.type === 'video' && mediaItem.texture instanceof THREE.VideoTexture) {
-            mediaItem.texture.needsUpdate = true;
+            const mv = mediaItem.videoElement;
+            if (mv && mv.readyState >= 2 && mv.videoWidth > 0 && mv.videoHeight > 0) {
+              mediaItem.texture.needsUpdate = true;
+            }
           }
           // Also cache locally for fast access
           imageInputTextureCache.set(localCacheKey, mediaItem.texture);
