@@ -351,12 +351,35 @@ export const DEFAULT_LAYER_SHADERS: { id: DefaultLayerShader; label: string }[] 
   { id: 'none', label: 'Blank (No Shader)' },
 ];
 
+/**
+ * Experimental flags for in-progress feature work. These are
+ * deliberately NOT surfaced in the normal settings UI — the
+ * preferences panel only renders them when a dev-mode URL override
+ * (`?dev=1`) is present. Production users see no UI for these
+ * regardless of localStorage state.
+ *
+ * Each flag has its own kill switch via URL param so a feature in
+ * trouble can be disabled without re-launching the app:
+ *   - `?webgpu-disable=1` forces webgpuPilot off (overrides
+ *     localStorage). Combined with the capability probe so a
+ *     machine without WebGPU also sees the pilot disabled even
+ *     when the user toggled it on.
+ */
+export interface ExperimentalSettings {
+  /** S4 pilot: enable the WebGPU + TSL particle-flow effect.
+   *  Default false. Production users never see this; only enabled
+   *  via the dev preferences panel + a machine that passes
+   *  `webgpuCapability.probeWebGPU()`. */
+  webgpuPilot: boolean;
+}
+
 export interface AppSettings {
   recording: RecordingSettings;
   output: OutputSettings;
   ui: UISettings;
   ai: AISettings;
   defaultLayerShader: DefaultLayerShader;
+  experimental: ExperimentalSettings;
 }
 
 // Check which formats are supported by this browser
@@ -469,6 +492,12 @@ function createDefaultSettings(): AppSettings {
       replicateApiKey: '',
     },
     defaultLayerShader: 'grid',
+    experimental: {
+      // S4 pilot. Off by default. Enabling requires both the user
+      // toggle in dev preferences AND `webgpuCapability.probeWebGPU()`
+      // succeeding — neither alone unlocks the pilot.
+      webgpuPilot: false,
+    },
   };
 }
 
@@ -577,6 +606,13 @@ function loadSettings(): AppSettings {
           claudeApiKey: parsed.ai?.claudeApiKey || legacyClaude || '',
           geminiApiKey: parsed.ai?.geminiApiKey || legacyGemini || '',
           shaderProvider: parsed.ai?.shaderProvider || (legacyProvider as ShaderAIProvider) || defaults.ai.shaderProvider,
+        },
+        // S4: experimental flags. Spread defaults first so new
+        // flags added in future sprints get merged in for users
+        // with older saved settings.
+        experimental: {
+          ...defaults.experimental,
+          ...(parsed.experimental || {}),
         },
       };
 

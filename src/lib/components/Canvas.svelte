@@ -34,6 +34,13 @@
   import { hasWatermark } from '$lib/stores/license';
   import { fpsStore } from '$lib/stores/fps';
   import type { OutputSlice } from '$lib/stores/settings';
+  // S4 pilot. Imported as types/refs only at module load — the
+  // actual `three/webgpu` chunk is fetched dynamically inside
+  // WebGPUPilot.create(), so the WebGPU bundle stays out of the
+  // main Canvas chunk for users who never enable the pilot.
+  import type { WebGPUPilot } from '$lib/renderer/webgpuPilot';
+  import { probeWebGPU, getWebGPUInfo, isWebGPUSupported, isPilotEffectivelyEnabled } from '$lib/renderer/webgpuCapability';
+  import { webgpuPilotMetrics, resetWebgpuPilotMetrics } from '$lib/stores/webgpuPilotStore';
 
   // FPS tracking
   let fpsFrameCount = 0;
@@ -88,6 +95,25 @@
   let containerEl: HTMLDivElement;
   let wrapperEl: HTMLDivElement;
   let outputOverlayCanvas: HTMLCanvasElement;
+
+  // S4 pilot state. The pilot, if active, owns its own canvas and
+  // WebGPURenderer instance — see webgpuPilot.ts. We track:
+  //   - the live pilot ref (null when disabled / unsupported / failed)
+  //   - a WebGL2 texture used as the handoff target for measuring
+  //     gl.texImage2D(canvas, ...) cost. Allocated on first use, kept
+  //     alive across frames so the per-frame cost is steady-state
+  //     (no allocation bias)
+  //   - ema-smoothed handoff timing
+  // All pilot code paths are gated on `$settings.experimental.webgpuPilot`
+  // AND `isWebGPUSupported()`. Either off → pilot stays null and the
+  // animate loop skips the integration entirely.
+  let webgpuPilot: WebGPUPilot | null = null;
+  let webgpuPilotInitInFlight = false;
+  let webgpuHandoffTexture: WebGLTexture | null = null;
+  let webgpuHandoffMsEma = 0;
+  /** Unsubscribe handle for the settings.experimental.webgpuPilot reactive
+   *  subscription. Lifted to module scope so onDestroy can call it. */
+  let webgpuPilotUnsub: (() => void) | null = null;
 
   // Output-window transforms are applied in the final WebGL pass. Keeping them
   // out of CSS avoids compositor resampling of the live projection canvas.
@@ -409,6 +435,91 @@
     if (!isOsrMode && !isOutputMode) {
       initStateBroadcast('sender');
     }
+
+    // S4 pilot: kick off the WebGPU capability probe in parallel with the
+    // rest of editor init. The probe runs even when the pilot flag is off
+    // so the dev preferences panel can show "WebGPU available: yes /
+    // Adapter: ..." before the user opts in.
+    void probeWebGPU().then(() => {
+      const info = getWebGPUInfo();
+      webgpuPilotMetrics.update((m) => ({
+        ...m,
+        adapter: info.description || `${info.vendor ?? '?'}/${info.architecture ?? '?'}`,
+        inactiveReason: info.supported
+          ? (m.inactiveReason || 'pilot disabled in settings')
+          : `WebGPU not supported (${info.failReason || 'reason unknown'})`,
+        updatedAt: Date.now(),
+      }));
+    });
+
+    // S4 pilot lifecycle subscription. Brings the pilot up when the user
+    // toggles `experimental.webgpuPilot` true AND the capability probe
+    // says yes; tears it down on toggle false. Race-safe via
+    // `webgpuPilotInitInFlight` — a rapid on/off doesn't leak a
+    // half-initialized pilot.
+    //
+    // HARD-GATED to the editor window. The pilot is a dev-only diagnostic
+    // experiment; running it in the output/Spout/OSR renderers would
+    // (a) waste their GPU budget on a test pattern they never composite,
+    // and (b) — more importantly — pollute the WebGL state cache that
+    // those windows' video-texture path leans on. The settings store is
+    // shared via state-sync, so without this gate, toggling the flag in
+    // the editor would silently spin up a pilot in the output window too.
+    // `?webgpu-disable=1` on the output window's load URL is the
+    // belt-and-suspenders defense (see electron/main.js).
+    webgpuPilotUnsub = settings.subscribe(async (s) => {
+      const wantPilot =
+        !isOutputMode &&
+        !isOsrMode &&
+        isPilotEffectivelyEnabled(!!s.experimental?.webgpuPilot);
+      if (wantPilot && !webgpuPilot && !webgpuPilotInitInFlight) {
+        webgpuPilotInitInFlight = true;
+        try {
+          const { WebGPUPilot } = await import('$lib/renderer/webgpuPilot');
+          // If the user toggled OFF while we awaited the import, bail
+          // before instantiating.
+          if (!isPilotEffectivelyEnabled(!!get(settings).experimental?.webgpuPilot)) {
+            webgpuPilotInitInFlight = false;
+            return;
+          }
+          webgpuPilot = await WebGPUPilot.create({ width: 512, height: 512 });
+          if (webgpuPilot) {
+            const info = getWebGPUInfo();
+            webgpuPilotMetrics.update((m) => ({
+              ...m,
+              active: true,
+              inactiveReason: '',
+              adapter: info.description || `${info.vendor ?? '?'}/${info.architecture ?? '?'}`,
+              pilotDims: `${webgpuPilot!.metrics.outputWidth}×${webgpuPilot!.metrics.outputHeight}`,
+              updatedAt: Date.now(),
+            }));
+          }
+        } catch (e: any) {
+          webgpuPilotMetrics.update((m) => ({
+            ...m,
+            active: false,
+            inactiveReason: `pilot create failed: ${e?.message ?? e}`,
+            updatedAt: Date.now(),
+          }));
+        } finally {
+          webgpuPilotInitInFlight = false;
+        }
+      } else if (!wantPilot && webgpuPilot) {
+        const dying = webgpuPilot;
+        webgpuPilot = null;
+        // Clean up the handoff texture so a re-enable doesn't reuse a
+        // stale binding (different gl context if the canvas was
+        // re-created mid-session).
+        if (webgpuHandoffTexture) {
+          const gl2 = canvas?.getContext('webgl2') as WebGL2RenderingContext | null;
+          try { gl2?.deleteTexture(webgpuHandoffTexture); } catch { /* */ }
+          webgpuHandoffTexture = null;
+        }
+        webgpuHandoffMsEma = 0;
+        await dying.dispose();
+        resetWebgpuPilotMetrics();
+      }
+    });
 
     // Start native renderer command-stream synchronization on Tauri runtime.
     // Electron path continues using existing WebGL/OSR flow until migrated.
@@ -819,6 +930,25 @@
               if (!macroBundles) macroBundles = [];
               macroBundles.push({ id: m.id, value: m.value, effects: m.effects });
             }
+          }
+          // S4 pilot: tick the pilot before the main render so the pilot's
+          // canvas has a fresh frame when a future compositor migration
+          // wants to sample it. Hard-gated to !output && !osr (the
+          // settings-store sub already enforces this on creation, but
+          // defense-in-depth — even a stale pilot ref leaking past a
+          // window-mode flip stays inert here).
+          if (webgpuPilot && !isOutputMode && !isOsrMode) {
+            webgpuPilot.tick();
+            // Push the latest metrics into the diagnostics store so the
+            // pilot panel updates without subscribing to the pilot directly.
+            webgpuPilotMetrics.update((m) => ({
+              ...m,
+              webgpuRenderMs: Math.round(webgpuPilot!.metrics.webgpuRenderMs * 100) / 100,
+              pilotFramesRendered: webgpuPilot!.metrics.framesRendered,
+              pilotFramesFailed: webgpuPilot!.metrics.framesFailed,
+              lastError: webgpuPilot!.metrics.lastError,
+              updatedAt: Date.now(),
+            }));
           }
           engine.render(layersToRender, null, compEffects, macroBundles);
         } catch (e) {
@@ -1369,6 +1499,27 @@
   onDestroy(() => {
     cancelAnimationFrame(animationId);
     engine?.dispose();
+
+    // S4 pilot teardown — unsubscribe from the settings reactive and
+    // dispose the pilot if active. Synchronous fire-and-forget on the
+    // dispose Promise: the WebGPURenderer's queued work resolves
+    // asynchronously but the renderer itself tears down its device
+    // synchronously enough that we don't need to await here.
+    if (webgpuPilotUnsub) {
+      try { webgpuPilotUnsub(); } catch { /* */ }
+      webgpuPilotUnsub = null;
+    }
+    if (webgpuPilot) {
+      const dying = webgpuPilot;
+      webgpuPilot = null;
+      void dying.dispose();
+      resetWebgpuPilotMetrics();
+    }
+    if (webgpuHandoffTexture) {
+      const gl2 = canvas?.getContext('webgl2') as WebGL2RenderingContext | null;
+      try { gl2?.deleteTexture(webgpuHandoffTexture); } catch { /* */ }
+      webgpuHandoffTexture = null;
+    }
 
     if (nativeRendererStatusTimer) {
       clearInterval(nativeRendererStatusTimer);
