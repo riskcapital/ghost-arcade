@@ -13,7 +13,7 @@
  * No pixels touch CPU memory in the send path.
  */
 
-import { app, BrowserWindow, desktopCapturer, ipcMain, MessageChannelMain, screen, session, utilityProcess } from 'electron';
+import { app, BrowserWindow, desktopCapturer, ipcMain, screen, session, utilityProcess } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn, fork, execSync } from 'child_process';
@@ -105,6 +105,12 @@ app.on('child-process-gone', (_ev, details) => {
 let mainWindow = null;
 let outputWindow = null;
 let spoutOsrWindow = null;  // Hidden OSR window for zero-copy Spout output
+// Placement config staged by `configure_next_output_window` IPC and
+// consumed by the next setWindowOpenHandler call for the WebGPU
+// zero-copy output window. Cleared after consumption (or after a 5s
+// timeout to avoid cross-call leakage).
+let pendingOutputWindowConfig = null;
+let pendingOutputWindowConfigTimer = null;
 let sidecarProcess = null;
 
 // Platform flags (used elsewhere in this file)
@@ -886,6 +892,28 @@ function registerIpcHandlers() {
   // renderer reads both settings flags and passes them through.
   ipcMain.handle('create_output_window', (_, { width, height, x, y, fullscreen, displayId, experimentalWebRTC, experimentalZeroCopy }) => {
     createOutputWindow(width, height, x, y, fullscreen, displayId, !!experimentalWebRTC, !!experimentalZeroCopy);
+  });
+
+  // Pre-stage placement config for the next WebGPU zero-copy output
+  // window opening. Called by the editor renderer immediately before
+  // `window.open('?mode=webgpu-display', ...)`. The setWindowOpenHandler
+  // (in createMainWindow) reads + clears this on the next matching open.
+  // Auto-clears after 5s if no open follows — prevents accidental
+  // staleness across user clicks.
+  ipcMain.handle('configure_next_output_window', (_, config) => {
+    pendingOutputWindowConfig = config && typeof config === 'object' ? { ...config } : null;
+    if (pendingOutputWindowConfigTimer) {
+      clearTimeout(pendingOutputWindowConfigTimer);
+      pendingOutputWindowConfigTimer = null;
+    }
+    if (pendingOutputWindowConfig) {
+      pendingOutputWindowConfigTimer = setTimeout(() => {
+        pendingOutputWindowConfig = null;
+        pendingOutputWindowConfigTimer = null;
+        console.log('[Output] pending config cleared (5s timeout)');
+      }, 5000);
+    }
+    return true;
   });
 
   // Returns the NATIVE pixel resolution of the display the output window is
@@ -1874,6 +1902,110 @@ function createMainWindow() {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
 
+  // ── window.open() handler for the WebGPU zero-copy output window ──
+  // The editor renderer opens the output window via window.open() with
+  // `?mode=webgpu-display`. Same-origin window.open from a renderer
+  // creates the new BrowserWindow in the SAME renderer process, which
+  // is the only way to get true zero-copy VideoFrame transfer through
+  // a MessageChannel (cross-process MessageChannelMain silently drops
+  // GpuMemoryBuffer-backed VideoFrames in Chromium 130).
+  //
+  // Editor-side flow (see OutputWindow.svelte / outputSharedTexture-
+  // Presenter.ts):
+  //   1. invoke('configure_next_output_window', { displayId, width,
+  //      height, fullscreen, x, y }) — pre-stages the placement config
+  //      that setWindowOpenHandler will read on the next open call
+  //   2. window.open(url, 'ga-output', '...') — synchronous; returns
+  //      the Window object proxy
+  //   3. await output's 'output-ready' message via window message
+  //   4. Create local MessageChannel; post port2 to the new window;
+  //      use port1 for the editor's pump
+  //
+  // The new BrowserWindow is captured into the existing `outputWindow`
+  // global via `did-create-window` so all the existing placement IPCs
+  // (output_toggle_fullscreen, output_set_cursor, move_output_window,
+  // close_output_window) continue to operate on it transparently —
+  // they see a normal BrowserWindow reference and don't care how it
+  // was opened.
+  mainWindow.webContents.setWindowOpenHandler((details) => {
+    if (!details.url.includes('mode=webgpu-display')) {
+      // Block any other window.open from the renderer — the editor
+      // shouldn't be opening arbitrary windows for any other reason.
+      // The legacy output modes still go through the IPC create_output_window
+      // path, which doesn't trigger this handler.
+      return { action: 'deny' };
+    }
+
+    // Resolve placement from the pre-staged config (or sensible
+    // defaults if the editor opened without configuring).
+    const cfg = pendingOutputWindowConfig || {};
+    pendingOutputWindowConfig = null;
+    const allDisplays = screen.getAllDisplays();
+    let target = screen.getPrimaryDisplay();
+    if (cfg.displayId) {
+      const found = allDisplays.find(d => d.id === cfg.displayId);
+      if (found) target = found;
+    }
+    const bounds = target.bounds;
+    const fullscreen = !!cfg.fullscreen;
+    const winW = fullscreen ? bounds.width : Math.max(320, Math.min(8192, Math.round(cfg.width || 1280)));
+    const winH = fullscreen ? bounds.height : Math.max(240, Math.min(8192, Math.round(cfg.height || 720)));
+    const winX = fullscreen ? bounds.x : Math.round(cfg.x ?? bounds.x + (bounds.width - winW) / 2);
+    const winY = fullscreen ? bounds.y : Math.round(cfg.y ?? bounds.y + (bounds.height - winH) / 2);
+
+    return {
+      action: 'allow',
+      overrideBrowserWindowOptions: {
+        width: winW,
+        height: winH,
+        x: winX,
+        y: winY,
+        title: 'Ghost Arcade Output',
+        resizable: true,
+        frame: true,
+        fullscreen,
+        simpleFullscreen: process.platform === 'darwin',
+        autoHideMenuBar: true,
+        skipTaskbar: false,
+        backgroundColor: '#000000',
+        hasShadow: true,
+        webPreferences: {
+          preload: path.join(__dirname, 'preload.cjs'),
+          contextIsolation: true,
+          nodeIntegration: false,
+          webgl: true,
+          backgroundThrottling: false,
+          // Critical: the new window MUST share the main window's
+          // session/partition for window.open same-process semantics
+          // to apply. Electron's default behaviour does this, but
+          // setting it explicitly removes any future surprise.
+          session: mainWindow.webContents.session,
+        },
+      },
+    };
+  });
+
+  // Capture the BrowserWindow created via window.open into the
+  // `outputWindow` global so existing placement IPCs continue to work
+  // against it. Also wire the close handler so we clear the global
+  // when the user closes the output window.
+  mainWindow.webContents.on('did-create-window', (newWindow, details) => {
+    if (!details.url.includes('mode=webgpu-display')) return;
+    outputWindow = newWindow;
+    try { newWindow.setMenuBarVisibility(false); } catch { /* */ }
+    console.log('[Output] zero-copy output window captured into outputWindow global');
+    // DevTools opt-in via env var to match the perf baseline of the
+    // legacy output path (devtools allocates extra GPU surfaces +
+    // renderer threads). Set GHOSTARCADE_OUTPUT_DEVTOOLS=1 in the
+    // shell that runs `npm run desktop` to enable.
+    if (process.env.GHOSTARCADE_OUTPUT_DEVTOOLS === '1') {
+      try { newWindow.webContents.openDevTools({ mode: 'detach' }); } catch { /* */ }
+    }
+    newWindow.on('closed', () => {
+      if (outputWindow === newWindow) outputWindow = null;
+    });
+  });
+
   // Main-window renderer-process crash recovery.
   //
   // Before this, an unrecoverable renderer crash (out-of-memory, D3D device
@@ -2084,46 +2216,16 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
     outputWindow.loadFile(filePath, { query: fileQuery });
   }
 
-  // Pair the editor + output windows with a MessageChannelMain so
-  // the editor's MediaStreamTrackProcessor can ship GPU-backed
-  // VideoFrames straight into the output's WebGPU compositor without
-  // round-tripping through Chromium IPC's serialization layer
-  // (which would copy the GpuMemoryBuffer through CPU). MessagePort
-  // postMessage preserves transferable handles across renderer
-  // processes via Mojo. This is the same primitive Chromium uses
-  // internally for transferable MediaStreamTrack between iframes.
-  //
-  // Lifetime: the channel is bound to THIS output window. When the
-  // window closes we'd technically leak the MessageChannelMain object
-  // until GC, but the ports become non-functional once the windows
-  // close so there's no stream to drain. If the window reopens, a
-  // fresh channel is created on the next `createOutputWindow` call.
-  if (outputMode === 'webgpu-display' && mainWindow && !mainWindow.isDestroyed()) {
-    try {
-      // Wait for the output window to finish loading before posting
-      // the port. If we post earlier the renderer's `ipcRenderer.on`
-      // listener (in preload) may not be registered yet and the port
-      // would be dropped.
-      const sendPorts = () => {
-        if (!mainWindow || mainWindow.isDestroyed() || !outputWindow || outputWindow.isDestroyed()) return;
-        const channel = new MessageChannelMain();
-        try {
-          mainWindow.webContents.postMessage('output-transport-port', null, [channel.port1]);
-          outputWindow.webContents.postMessage('output-transport-port', null, [channel.port2]);
-          console.log('[Output] MessagePort pair delivered to editor + output windows');
-        } catch (err) {
-          console.error('[Output] failed to deliver MessagePort pair:', err && err.message ? err.message : err);
-        }
-      };
-      // `did-finish-load` fires after the renderer's preload + module
-      // init completes, by which point the ipcRenderer listener is up.
-      // `once` so a future reload doesn't double-post and confuse the
-      // sender (which holds onto the first port it sees).
-      outputWindow.webContents.once('did-finish-load', sendPorts);
-    } catch (err) {
-      console.error('[Output] MessageChannelMain setup failed:', err && err.message ? err.message : err);
-    }
-  }
+  // (MessageChannelMain pairing removed for webgpu-display mode.
+  // Cross-process VideoFrame transfer is silently dropped by Chromium
+  // 130's Mojo IPC — only specific Mojo interfaces (RTCRtpSender,
+  // MediaStreamTrack) preserve GpuMemoryBuffer handles cross-process,
+  // not generic MessagePort. The webgpu-display path is now opened
+  // via window.open() from the editor renderer (see
+  // setWindowOpenHandler in createMainWindow), putting the output
+  // window in the SAME renderer process where MessageChannel
+  // transferables work as designed. This IPC path remains for the
+  // legacy `output` and `webrtc-display` modes which are unaffected.)
 
   outputWindow.on('closed', () => {
     outputWindow = null;

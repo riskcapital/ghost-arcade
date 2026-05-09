@@ -19,7 +19,8 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'spout_start_receiver', 'spout_stop_receiver', 'spout_receive_frame',
   'spout_start_osr', 'spout_stop_osr', 'spout_send_shared_texture',
   // Display/window
-  'get_displays', 'create_output_window', 'close_output_window', 'move_output_window',
+  'get_displays', 'create_output_window', 'configure_next_output_window',
+  'close_output_window', 'move_output_window',
   'resize_output_window', 'show_main_window',
   // SRC tab Capture chooser — enumerates screens + app windows
   // with thumbnails so the renderer can show a Zoom/Slack-style picker.
@@ -127,42 +128,15 @@ contextBridge.exposeInMainWorld('electronOSR', {
   },
 });
 
-// ── Cross-process MessagePort forwarder for the WebGPU zero-copy
-// output transport. Main process creates a MessageChannelMain when an
-// output window opens with `outputZeroCopy` mode and posts one port to
-// each window via `webContents.postMessage('output-transport-port',
-// null, [port])`. The receiving renderer needs that MessagePort in the
-// main world so it can `port.postMessage(videoFrame, [videoFrame])`
-// (sender) or `port.onmessage = (e) => e.data /* VideoFrame */`
-// (receiver). MessagePorts cannot cross the contextBridge isolation
-// boundary via exposed functions (they get cloned to {} on
-// serialization), so we forward via the canonical Electron pattern:
-// `window.postMessage` from the preload's isolated world INTO the main
-// world with the port in the transfer list. The renderer subscribes
-// with a normal `window.addEventListener('message', ...)`.
-//
-// Why this pattern over `contextBridge.exposeInMainWorld`: only
-// window.postMessage and MessageChannel honour the `transfer` argument
-// across isolation boundaries. ExposeInMainWorld serializes everything
-// through structured-clone which strips MessagePort.
-//
-// One port arrives per output-window open. If the output window
-// closes and reopens, a fresh channel is created on the main side
-// and a new port is forwarded. The renderer's sender module is
-// responsible for closing the previous port before binding the new
-// one to avoid double-sending VideoFrames into a stale channel.
-ipcRenderer.on('output-transport-port', (event) => {
-  // event.ports is the array of MessagePort objects attached to the
-  // postMessage by the main process. Forward into the main world.
-  // Tag the message with a known string so the renderer's listener
-  // can ignore unrelated postMessages from other code paths
-  // (Director SSE, dev tools probes, etc.).
-  try {
-    window.postMessage({ type: 'ghostarcade-output-transport-port' }, '*', event.ports);
-  } catch (err) {
-    console.error('[Preload] failed to forward output-transport-port:', err && err.message ? err.message : err);
-  }
-});
+// (Cross-process MessagePort forwarder removed — proven not zero-copy
+// in Electron 42 / Chromium 130. Cross-process VideoFrame transfer
+// silently drops frames; only same-renderer-process MessageChannel
+// preserves the GpuMemoryBufferHandle. The output window now opens
+// via window.open() from the editor, putting both windows in the
+// same renderer process where transferable VideoFrames work as
+// designed. Main process configures the resulting BrowserWindow via
+// setWindowOpenHandler. See outputSharedTexturePresenter.ts and
+// OutputSharedTextureDisplayApp.svelte for the renderer-side glue.)
 
 // Also set a detection flag (replaces __TAURI_INTERNALS__)
 contextBridge.exposeInMainWorld('__ELECTRON__', true);

@@ -1,93 +1,86 @@
 /**
  * outputSharedTexturePresenter — editor-side WebGPU zero-copy sender.
  *
- * Replaces outputPixelBroadcast.ts (WebRTC) with the production
- * pipeline. Reads GPU-backed VideoFrames from the editor canvas via
- * MediaStreamTrackProcessor and ships them across to the output
- * window via a cross-process MessagePort (paired by main.js as a
- * MessageChannelMain). The output side calls
- * `device.importExternalTexture({source: videoFrame})` for true
- * zero-copy GPU sampling on a fullscreen quad.
+ * Architectural model: same-renderer-process Resolume pattern. The
+ * editor renderer process owns BOTH the editor window AND the output
+ * window(s); the output windows are opened via `window.open()` (which
+ * Chromium routes to the same renderer process for same-origin URLs).
+ * A local `new MessageChannel()` between the two windows preserves
+ * transferable VideoFrame zero-copy because the V8 heap and GPU
+ * command stream are shared.
  *
- *   Editor canvas
- *     → canvas.captureStream(60)
- *     → MediaStreamTrackProcessor.readable.getReader()
- *     → port.postMessage(videoFrame, [videoFrame])  ← transferable
- *     ⇒ Output window's WebGPU presenter
+ *   Editor renderer process
+ *     editor canvas ─→ captureStream(60) ─→ MediaStreamTrackProcessor
+ *                                              ↓ readable.getReader()
+ *                                          VideoFrame
+ *                                              ↓ port.postMessage(vf, [vf])
+ *                                          ──── same-process MessageChannel ────
+ *                                              ↓
+ *     output window  ─→ port.onmessage(vf)  → device.importExternalTexture
+ *                                                ─→ fullscreen quad
  *
- * Why this beats WebRTC for output:
- *   - No encode (WebRTC: VP9/H264 ~5-15ms + lossy compression)
- *   - No decode (WebRTC: matching cost on receive)
- *   - No format conversion (importExternalTexture binds GpuMemoryBuffer
- *     directly; WebRTC always lands in YUV420 + re-converts)
- *   - True 4K60 with no quality drop on degraded encoders
- *   - Each output window gets its own MessagePort → multi-output is
- *     "more presenter windows", no fan-out cost on the editor side
- *
- * Why MessagePort over BroadcastChannel for VideoFrames:
- *   - BroadcastChannel uses structured-clone, which DOES NOT support
- *     transferring objects. VideoFrames would be cloned (CPU readback)
- *     instead of transferred (GPU handle stays GPU-resident). MessagePort
- *     postMessage with the transfer list is the only same-origin
- *     primitive that preserves the GpuMemoryBufferHandle.
- *   - Cross-process MessagePort in Chromium uses Mojo IPC which
- *     forwards the GpuMemoryBuffer handle natively (this is the same
- *     pathway used internally for transferable MediaStreamTracks
- *     between iframes).
+ * Why NOT cross-process MessageChannelMain (the original design):
+ *   - Chromium 130's Mojo IPC for cross-renderer MessagePort silently
+ *     drops the GpuMemoryBuffer handle when transferring a VideoFrame.
+ *     The receiver gets nothing. Verified empirically: editor sends
+ *     frames, GC warnings appear because nothing closes them on the
+ *     receive side, and the output's port.onmessage never fires.
+ *   - Only specific Mojo interfaces (RTCRtpSender, MediaStreamTrack)
+ *     have GpuMemoryBuffer-preserving cross-process transfer. Generic
+ *     MessagePort doesn't.
  *
  * Lifecycle:
- *   1. Module loads → starts listening for the MessagePort that
- *      preload.cjs forwards via window.postMessage. The port arrives
- *      AFTER an output window opens with `outputZeroCopy` mode (main.js
- *      creates the MessageChannelMain on `did-finish-load`). May
- *      already be present if the editor started after the output
- *      (rare, but possible during dev hot-reload).
- *   2. `startOutputSharedTexturePresenter(canvas)` is called from
- *      Canvas.svelte once the editor canvas exists. Idempotent on the
- *      same canvas.
- *   3. When BOTH a port and a canvas are present, the pump starts:
- *      MediaStreamTrackProcessor reads VideoFrames in a loop, posts
- *      each through the port with the transfer list, and closes any
- *      frame that fails to transfer.
- *   4. `stopOutputSharedTexturePresenter()` tears down the pump and
- *      closes the port. Called when the output window closes (port
- *      breaks, the read loop's catch detects it) or the experimental
- *      flag flips off.
+ *   1. `attachOutputWindow(targetWindow)` is called from
+ *      OutputWindow.svelte after `window.open(...)` returns. The
+ *      target Window proxy is the renderer-side handle to the new
+ *      same-process window.
+ *   2. We register a `window.message` listener that waits for the
+ *      output window to send `{ type: 'ghostarcade-output-ready' }`
+ *      (output side does this on its onMount after WebGPU is ready
+ *      to receive).
+ *   3. On 'output-ready', we create a local MessageChannel, post
+ *      port2 to the target via `targetWindow.postMessage(..., [port2])`,
+ *      and use port1 for our pump.
+ *   4. `startPump()` opens captureStream + MediaStreamTrackProcessor
+ *      and runs the read-and-transfer loop.
+ *   5. If the target window closes (we detect via target.closed
+ *      polling or message error), we tear down the pump and wait
+ *      for a fresh attach.
  *
- * Health metrics:
- *   - Per-frame `format` is recorded on the first 5 frames + sampled
- *     once a second after that. `'NV12'`/`'I420'` are the GPU-backed
- *     formats Chromium uses on Win/Mac with discrete GPUs. `'BGRA'`
- *     means Chromium fell back to CPU readback — degraded path, surface
- *     a warning so the operator can tell why their output looks slow.
- *   - Steady-state fps + total frames sent → exposed via
- *     `getOutputSharedTexturePresenterStats()` for the dev panel.
+ * Multi-output (future): each call to attachOutputWindow registers a
+ * separate target. The pump then fan-outs each frame to N ports via
+ * `videoFrame.clone()` (refcount bump, still zero-copy). For now
+ * single-output is the only call site.
  */
 
 import { get } from 'svelte/store';
 import { settings } from '$lib/stores/settings';
 
-/** A frame as captured from the editor canvas. Module-internal alias
- *  so we can swap to a future GPUExternalTexture-backed source without
- *  changing the call sites. */
 type EditorFrame = VideoFrame;
 
-let port: MessagePort | null = null;
-let portWaiting = true;        // true until window.postMessage delivers one
 let sourceCanvas: HTMLCanvasElement | null = null;
 let captureFrameRate = 60;
+
+// One target window + one paired port. Multi-output extension would
+// turn these into Map<windowId, {target, port}>.
+let targetWindow: Window | null = null;
+let outboundPort: MessagePort | null = null;
+let pendingChannel: MessageChannel | null = null;
 
 let mediaStream: MediaStream | null = null;
 let processor: MediaStreamTrackProcessor<EditorFrame> | null = null;
 let reader: ReadableStreamDefaultReader<EditorFrame> | null = null;
 let pumpRunning = false;
-let pumpAbort = new AbortController();
 
 let settingsUnsub: (() => void) | null = null;
 let lastTransformJson = '';
 
-// ── Stats ──────────────────────────────────────────────────────────
-// Sampled by the dev panel; lightweight aggregation in the hot loop.
+// Listener for the output window's 'ready' message + 'bye' message.
+// Registered exactly once when the first attachOutputWindow call
+// happens; survives subsequent attaches (they post their own ready,
+// each ready is matched against the current targetWindow reference).
+let messageListenerInstalled = false;
+
 let stats = {
   framesTransferred: 0,
   framesDroppedNoPort: 0,
@@ -95,126 +88,174 @@ let stats = {
   lastFormat: '' as string,
   formatHistogram: new Map<string, number>(),
   fps: 0,
-  bytesTransferredEstimate: 0,
   startedAt: 0,
   lastFrameAt: 0,
-  // GPU-backed assertion — true when the most recent frames have a
-  // GPU-friendly format. False indicates Chromium fell back to CPU.
-  gpuBacked: true,
-  gpuBackedReason: '',
 };
 
-const GPU_FRIENDLY_FORMATS = new Set(['NV12', 'I420', 'I422', 'I444', 'NV12A']);
-const FORMAT_LOG_FIRST_N = 5;
-
 function isPresenterEligible(): boolean {
-  // Sender lives only in the editor renderer. Output / OSR windows
-  // never publish to themselves. The mode flags are exposed by main.ts
-  // before any imports run, so reading from window is safe at module
-  // load time.
   if (typeof window === 'undefined') return false;
   if ((window as any).__OUTPUT_WINDOW_MODE__) return false;
   if ((window as any).__SPOUT_OSR_MODE__) return false;
   return true;
 }
 
-// ── Port intake ────────────────────────────────────────────────────
-// The preload script forwards the MessagePort from the main process
-// via window.postMessage with a tagged payload. The first port we see
-// is the one we use. Subsequent ports (e.g. output window reopened)
-// replace the previous one — the old pump tears down, a new one
-// starts on the fresh port. This keeps the "single output window"
-// case honest while leaving the door open for multi-output later
-// (would need a per-port list instead of a single slot).
-function installPortIntake(): void {
+function installMessageListener(): void {
+  if (messageListenerInstalled) return;
   if (typeof window === 'undefined') return;
   window.addEventListener('message', (event: MessageEvent) => {
+    // Only consider messages from windows we have attached as targets
+    // (the output window sends from its own context). MessageEvent.source
+    // is a WindowProxy when the message comes from another window.
     if (!event?.data || typeof event.data !== 'object') return;
-    if (event.data.type !== 'ghostarcade-output-transport-port') return;
-    const incoming = event.ports?.[0];
-    if (!incoming) {
-      console.warn('[OutputSharedTexture] received port-intake event with no ports');
-      return;
+    const data = event.data;
+    if (data.type === 'ghostarcade-output-ready') {
+      // The output window is ready to receive. Establish the channel.
+      // Validate source matches the target we attached, in case we
+      // somehow get a ready from an old window after a reattach.
+      if (event.source && targetWindow && event.source === (targetWindow as any)) {
+        establishChannel();
+      } else if (targetWindow) {
+        // No source check — accept anyway. Chromium doesn't always
+        // populate event.source for cross-window posts depending on
+        // the security context. The targetWindow check + the URL
+        // mode gate on the receiver side is enough.
+        establishChannel();
+      }
+    } else if (data.type === 'ghostarcade-output-bye') {
+      // Output is shutting down or reloading. Tear down the pump so
+      // we don't keep posting to a dead port.
+      console.log('[OutputSharedTexture] output window said bye — tearing down pump');
+      stopOutputSharedTexturePresenter();
     }
-    if (port && port !== incoming) {
-      console.log('[OutputSharedTexture] new MessagePort received — replacing previous');
-      try { port.close(); } catch { /* */ }
-    }
-    port = incoming;
-    portWaiting = false;
-    console.log('[OutputSharedTexture] MessagePort installed, ready to publish frames');
-    // If the canvas is already known (Canvas.svelte called start
-    // before the port arrived), kick off the pump immediately.
-    maybeStartPump();
   });
+  messageListenerInstalled = true;
 }
 
-// Install the listener exactly once, at module load. This is a
-// renderer-process module — multiple Svelte components importing it
-// share the same singleton port + pump. The listener is cheap; only
-// fires on tagged messages from preload.
-if (isPresenterEligible()) {
-  installPortIntake();
+function establishChannel(): void {
+  if (!targetWindow) return;
+  if (outboundPort) {
+    // Already established — re-establishing means the output reloaded.
+    // Tear down the old pump first.
+    teardownPort();
+  }
+  try {
+    pendingChannel = new MessageChannel();
+    // Post port2 to the output window. The transfer list MUST include
+    // port2 — otherwise the port gets cloned (which doesn't actually
+    // create a working MessagePort).
+    targetWindow.postMessage(
+      { type: 'ghostarcade-output-transport-port' },
+      '*',
+      [pendingChannel.port2],
+    );
+    outboundPort = pendingChannel.port1;
+    pendingChannel = null;
+    console.log('[OutputSharedTexture] MessageChannel established with output window — port1 retained, port2 sent');
+    // Push initial transform snapshot now that the port is live.
+    sendTransformSnapshot(get(settings));
+    maybeStartPump();
+  } catch (err) {
+    console.error('[OutputSharedTexture] failed to establish channel:', err);
+  }
 }
 
-/** Wire the editor canvas into the presenter. Idempotent — calling
- *  again with the same canvas is a no-op; calling with a different
- *  canvas tears down and restarts. The pump only actually starts
- *  once both a port AND a canvas are present. */
-export function startOutputSharedTexturePresenter(canvas: HTMLCanvasElement, frameRate = 60): void {
+function sendTransformSnapshot(s: any): void {
+  if (!outboundPort) return;
+  const payload = {
+    type: 'transform',
+    rotation: s.output?.outputRotation ?? 0,
+    brightness: s.output?.brightness ?? 1,
+    contrast: s.output?.contrast ?? 1,
+    gamma: s.output?.gamma ?? 1,
+    fit: (s.output as any)?.outputFit ?? 'cover',
+  };
+  const json = JSON.stringify(payload);
+  if (json === lastTransformJson) return;
+  lastTransformJson = json;
+  try {
+    outboundPort.postMessage(payload);
+  } catch {
+    // Port may have closed since we last checked; pump's catch will
+    // detect it on the next frame.
+  }
+}
+
+/** Register the editor's main canvas with the presenter. Called once
+ *  from Canvas.svelte's onMount. The canvas is held module-locally so
+ *  any future attachOutputWindow call can start the pump without
+ *  needing OutputWindow.svelte (which lives in a different component
+ *  tree) to re-derive it. Idempotent on the same canvas; calling with
+ *  a different canvas tears down any active pump. */
+export function registerEditorCanvas(canvas: HTMLCanvasElement, frameRate = 60): void {
   if (!isPresenterEligible()) return;
-  if (sourceCanvas === canvas && pumpRunning) return;
-  if (sourceCanvas !== canvas) stopOutputSharedTexturePresenter();
+  if (sourceCanvas === canvas) {
+    captureFrameRate = frameRate;
+    return;
+  }
+  if (sourceCanvas) {
+    // Different canvas — tear down any pump on the old one.
+    pumpRunning = false;
+    if (reader) {
+      try { reader.cancel('canvas swap'); } catch { /* */ }
+      try { reader.releaseLock(); } catch { /* */ }
+      reader = null;
+    }
+    processor = null;
+    if (mediaStream) {
+      try { mediaStream.getTracks().forEach((t) => t.stop()); } catch { /* */ }
+      mediaStream = null;
+    }
+  }
   sourceCanvas = canvas;
   captureFrameRate = frameRate;
+  // If a target window is already attached (output opened first,
+  // Canvas mounted second — possible during dev hot-reload), the pump
+  // can start now.
+  maybeStartPump();
+}
 
-  // Subscribe to settings changes and forward output transform deltas
-  // (rotation/brightness/contrast/fit/gamma) over the same port using a
-  // sentinel object. The receiver discriminates frames vs control
-  // messages by `data instanceof VideoFrame` (frames) or
-  // `data?.type === 'transform'` (controls). Keeps everything on one
-  // channel so we don't need a second BroadcastChannel for state.
+/** Called from OutputWindow.svelte right after `window.open(...)`.
+ *  The target Window proxy is the renderer-side handle to the new
+ *  same-process child window. We start listening for the output's
+ *  'ready' message; once received we establish the MessageChannel
+ *  and start pumping frames (assuming the editor canvas was already
+ *  registered via registerEditorCanvas). */
+export function attachOutputWindow(target: Window): void {
+  if (!isPresenterEligible()) return;
+  installMessageListener();
+  if (targetWindow && targetWindow !== target) {
+    // Re-attach: previous target was different (closed and reopened).
+    // Tear down the old channel before binding the new one.
+    teardownPort();
+  }
+  targetWindow = target;
+
   if (!settingsUnsub) {
-    const sendTransformIfChanged = (s: any) => {
-      if (!port) return;
-      const payload = {
-        type: 'transform',
-        rotation: s.output?.outputRotation ?? 0,
-        brightness: s.output?.brightness ?? 1,
-        contrast: s.output?.contrast ?? 1,
-        gamma: s.output?.gamma ?? 1,
-        fit: (s.output as any)?.outputFit ?? 'cover',
-      };
-      const json = JSON.stringify(payload);
-      if (json === lastTransformJson) return;
-      lastTransformJson = json;
-      try {
-        port.postMessage(payload);
-      } catch (err) {
-        // If the port is closed (output window died) postMessage
-        // throws. The frame pump will detect this on its next iteration
-        // and tear down; we just swallow here to avoid spamming logs.
-      }
-    };
-    sendTransformIfChanged(get(settings));
-    settingsUnsub = settings.subscribe(sendTransformIfChanged);
+    settingsUnsub = settings.subscribe(sendTransformSnapshot);
   }
 
-  maybeStartPump();
+  // The output window may have already been mounted by the time we
+  // get here. Send a probe 'editor-attach' message; the output's
+  // listener responds with 'output-ready' if it's set up. This
+  // handles the race where output's onMount finishes before our
+  // message listener is installed.
+  try {
+    target.postMessage({ type: 'ghostarcade-editor-attach' }, '*');
+  } catch (err) {
+    console.warn('[OutputSharedTexture] could not post editor-attach probe:', err);
+  }
+
+  console.log('[OutputSharedTexture] attached to output window — awaiting ready handshake');
 }
 
 export function stopOutputSharedTexturePresenter(): void {
   pumpRunning = false;
-  pumpAbort.abort();
-  pumpAbort = new AbortController();
   if (reader) {
     try { reader.cancel('presenter stopped'); } catch { /* */ }
     try { reader.releaseLock(); } catch { /* */ }
     reader = null;
   }
-  if (processor) {
-    processor = null;
-  }
+  processor = null;
   if (mediaStream) {
     try { mediaStream.getTracks().forEach((t) => t.stop()); } catch { /* */ }
     mediaStream = null;
@@ -223,13 +264,19 @@ export function stopOutputSharedTexturePresenter(): void {
     try { settingsUnsub(); } catch { /* */ }
     settingsUnsub = null;
   }
-  if (port) {
-    try { port.close(); } catch { /* */ }
-    port = null;
-    portWaiting = true;
-  }
+  teardownPort();
+  targetWindow = null;
   sourceCanvas = null;
   resetStats();
+}
+
+function teardownPort(): void {
+  if (outboundPort) {
+    try { outboundPort.close(); } catch { /* */ }
+    outboundPort = null;
+  }
+  pendingChannel = null;
+  lastTransformJson = '';
 }
 
 function resetStats(): void {
@@ -240,22 +287,17 @@ function resetStats(): void {
     lastFormat: '',
     formatHistogram: new Map<string, number>(),
     fps: 0,
-    bytesTransferredEstimate: 0,
     startedAt: 0,
     lastFrameAt: 0,
-    gpuBacked: true,
-    gpuBackedReason: '',
   };
 }
 
 function maybeStartPump(): void {
   if (pumpRunning) return;
   if (!sourceCanvas) return;
-  if (!port) return;
+  if (!outboundPort) return;
   if (typeof MediaStreamTrackProcessor === 'undefined') {
     console.warn('[OutputSharedTexture] MediaStreamTrackProcessor unavailable — Chromium feature flag may be off');
-    stats.gpuBacked = false;
-    stats.gpuBackedReason = 'MediaStreamTrackProcessor not available';
     return;
   }
   try {
@@ -272,9 +314,6 @@ function maybeStartPump(): void {
     stats.startedAt = performance.now();
     console.log('[OutputSharedTexture] pump started — publishing frames at', captureFrameRate, 'fps target');
     pump().catch((err) => {
-      // pump's normal exit path is via reader.cancel(), which surfaces
-      // as 'AbortError' or the cancel reason. Anything else is an
-      // unexpected failure worth logging loudly.
       const name = err?.name;
       if (name !== 'AbortError') {
         console.error('[OutputSharedTexture] pump terminated with error:', err);
@@ -288,22 +327,7 @@ function maybeStartPump(): void {
 }
 
 async function pump(): Promise<void> {
-  // Hot loop. Each iteration:
-  //   1. await reader.read() — blocks until the next VideoFrame is
-  //      ready from the canvas paint, or the stream closes.
-  //   2. Update stats (format histogram + fps EMA).
-  //   3. port.postMessage(frame, [frame]) — transfers ownership. The
-  //      sender's `frame` is detached after this call; we MUST NOT
-  //      touch it again. If postMessage throws (closed port), close
-  //      the frame ourselves to release its GPU buffer.
-  //
-  // We don't yield with setTimeout/RAF between frames because the
-  // ReadableStream backpressure is driven by the consumer (the
-  // canvas paint rate). MediaStreamTrackProcessor produces at most
-  // one frame per actual paint, never faster than the source.
-  if (!reader || !port) return;
-  // tslint:disable-next-line - we want the explicit `while (true)` for
-  // clarity; the exit condition is `done` from the reader.
+  if (!reader) return;
   while (pumpRunning) {
     let value: EditorFrame | undefined;
     let done = false;
@@ -311,54 +335,27 @@ async function pump(): Promise<void> {
       const result = await reader.read();
       done = result.done;
       value = result.value;
-    } catch (err) {
-      // Reader threw — usually means cancel() was called from
-      // stopOutputSharedTexturePresenter. Exit cleanly.
+    } catch {
       break;
     }
     if (done) break;
     if (!value) continue;
-    if (!port) {
+    if (!outboundPort) {
       stats.framesDroppedNoPort++;
       try { value.close(); } catch { /* */ }
       continue;
     }
 
-    // Stats accounting. videoFrame.format is the layout of the GPU
-    // memory backing the frame; NV12/I420 are the indicators that
-    // Chromium kept it on the GPU. BGRA usually means it dropped to
-    // CPU readback.
     const fmt = (value.format as string | null) ?? 'unknown';
     stats.lastFormat = fmt;
     stats.formatHistogram.set(fmt, (stats.formatHistogram.get(fmt) ?? 0) + 1);
-    if (stats.framesTransferred < FORMAT_LOG_FIRST_N) {
+    if (stats.framesTransferred < 5) {
       console.log(
         `[OutputSharedTexture] frame ${stats.framesTransferred + 1} format=${fmt} ` +
           `dim=${value.codedWidth}x${value.codedHeight} ts=${value.timestamp}`,
       );
     }
-    if (GPU_FRIENDLY_FORMATS.has(fmt)) {
-      if (!stats.gpuBacked) {
-        stats.gpuBacked = true;
-        stats.gpuBackedReason = '';
-        console.log('[OutputSharedTexture] frame format recovered to GPU-friendly:', fmt);
-      }
-    } else {
-      // Only consider it "fell back to CPU" once we've seen a few
-      // consecutive non-GPU formats; transient odd frames during
-      // ramp-up shouldn't trip the warning badge.
-      const cpuCount = (stats.formatHistogram.get('BGRA') ?? 0) + (stats.formatHistogram.get('RGBA') ?? 0);
-      if (stats.framesTransferred > 10 && cpuCount > stats.framesTransferred * 0.5) {
-        if (stats.gpuBacked) {
-          stats.gpuBacked = false;
-          stats.gpuBackedReason = `format=${fmt} (Chromium fell back to CPU readback)`;
-          console.warn('[OutputSharedTexture] CPU fallback detected:', stats.gpuBackedReason);
-        }
-      }
-    }
 
-    // Per-frame fps EMA. `lastFrameAt = 0` on first iteration so the
-    // first delta computes correctly only from the second frame onward.
     const now = performance.now();
     if (stats.lastFrameAt > 0) {
       const dt = now - stats.lastFrameAt;
@@ -367,63 +364,37 @@ async function pump(): Promise<void> {
     }
     stats.lastFrameAt = now;
 
-    // Transfer the frame. We're explicitly transferring (not cloning)
-    // — after this call `value` is detached and unusable. The
-    // receiver's onmessage handler now owns it and must close() it
-    // when done.
     try {
-      port.postMessage(value, [value]);
+      outboundPort.postMessage(value, [value]);
       stats.framesTransferred++;
-      // Estimate bytes for the dev panel — codedWidth * codedHeight * 1.5
-      // is a passable approximation for NV12 (1 byte luma + 0.5 byte
-      // chroma per pixel). Doesn't need to be exact.
-      stats.bytesTransferredEstimate += value.codedWidth * value.codedHeight * 1.5;
     } catch (err) {
       stats.framesDroppedTransferError++;
-      // Port closed (output window died). Best-effort close of the
-      // frame to release GPU memory; transfer might have already
-      // succeeded partially in the implementation.
       try { value.close(); } catch { /* */ }
-      console.warn('[OutputSharedTexture] postMessage failed — port likely closed:', (err as any)?.message ?? err);
-      // Tear down the pump; main.js will set up a fresh channel if
-      // the output window reopens.
-      stopOutputSharedTexturePresenter();
+      console.warn('[OutputSharedTexture] postMessage failed — output likely closed:', (err as any)?.message ?? err);
+      // Tear down only the port + pump; keep the targetWindow
+      // reference because the user may reload the output. The next
+      // 'output-ready' will re-establish.
+      pumpRunning = false;
+      teardownPort();
       return;
     }
   }
 }
 
-/** Diagnostic readout — used by the dev preferences panel. */
-export function getOutputSharedTexturePresenterStats(): {
-  active: boolean;
-  pumpRunning: boolean;
-  portConnected: boolean;
-  framesTransferred: number;
-  framesDroppedNoPort: number;
-  framesDroppedTransferError: number;
-  lastFormat: string;
-  formatHistogram: Record<string, number>;
-  fps: number;
-  bytesTransferredEstimate: number;
-  uptimeMs: number;
-  gpuBacked: boolean;
-  gpuBackedReason: string;
-} {
+export function getOutputSharedTexturePresenterStats() {
   const histogram: Record<string, number> = {};
   stats.formatHistogram.forEach((v, k) => { histogram[k] = v; });
   return {
     active: !!sourceCanvas,
     pumpRunning,
-    portConnected: !!port,
+    portConnected: !!outboundPort,
+    targetAttached: !!targetWindow,
     framesTransferred: stats.framesTransferred,
     framesDroppedNoPort: stats.framesDroppedNoPort,
     framesDroppedTransferError: stats.framesDroppedTransferError,
     lastFormat: stats.lastFormat,
     formatHistogram: histogram,
     fps: stats.fps,
-    bytesTransferredEstimate: stats.bytesTransferredEstimate,
     uptimeMs: stats.startedAt ? performance.now() - stats.startedAt : 0,
-    gpuBacked: stats.gpuBacked,
-    gpuBackedReason: stats.gpuBackedReason,
   };
 }
