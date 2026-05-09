@@ -3802,6 +3802,23 @@
     return engine;
   }
 
+  // Phase 3 WebGPU bridge: expose the WebGL canvas DOM element so a
+  // WebGPU presenter (WebGPUCanvas in bridge mode) can sample it via
+  // VideoFrame + importExternalTexture each frame and present the
+  // result on a sibling WebGPU canvas. Returns null until onMount has
+  // initialised the bind:this.
+  export function getCanvas(): HTMLCanvasElement | null {
+    return canvas ?? null;
+  }
+
+  // Phase 3 WebGPU bridge: when true, the WebGL canvas is hidden via
+  // CSS opacity so the overlaid WebGPU presenter shows instead. Chromium
+  // continues to PAINT the canvas (opacity:0 doesn't prevent paint, only
+  // visibility) so the WebGPU side gets fresh frames. Falls through to
+  // visible (opacity:1) by default — no behavioural change for the
+  // existing WebGL-only path.
+  export let bridgeMode: boolean = false;
+
   // Expose actual container dimensions for warp handle alignment
   export function getContainerRect(): { x: number; y: number; width: number; height: number } {
     if (!containerEl || !wrapperEl) return { x: 0, y: 0, width: 0, height: 0 };
@@ -3825,7 +3842,7 @@
     class:output-mode={isOsrMode || isOutputMode}
     bind:this={containerEl}
   >
-    <canvas class="main-canvas" bind:this={canvas}></canvas>
+    <canvas class="main-canvas" class:bridge-source={bridgeMode} bind:this={canvas}></canvas>
     <!-- Edge blend + test pattern overlay -->
     <canvas class="output-overlay" bind:this={outputOverlayCanvas}></canvas>
     {#if $settings.output.blackout}
@@ -3876,6 +3893,17 @@
     width: 100%;
     height: 100%;
     display: block;
+  }
+
+  /* Phase 3 WebGPU bridge: when bridgeMode is on, hide the WebGL
+     canvas via opacity so a sibling WebGPU presenter (mounted by
+     App.svelte) shows on top instead. opacity:0 keeps the canvas
+     in the layout AND keeps Chromium painting it (so the WebGPU
+     side gets fresh frames each tick). visibility:hidden /
+     display:none would stop the paint. pointer-events stay on
+     because mapping interactions still target this layer. */
+  .main-canvas.bridge-source {
+    opacity: 0;
   }
 
   .output-overlay {
