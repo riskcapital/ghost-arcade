@@ -127,6 +127,43 @@ contextBridge.exposeInMainWorld('electronOSR', {
   },
 });
 
+// ── Cross-process MessagePort forwarder for the WebGPU zero-copy
+// output transport. Main process creates a MessageChannelMain when an
+// output window opens with `outputZeroCopy` mode and posts one port to
+// each window via `webContents.postMessage('output-transport-port',
+// null, [port])`. The receiving renderer needs that MessagePort in the
+// main world so it can `port.postMessage(videoFrame, [videoFrame])`
+// (sender) or `port.onmessage = (e) => e.data /* VideoFrame */`
+// (receiver). MessagePorts cannot cross the contextBridge isolation
+// boundary via exposed functions (they get cloned to {} on
+// serialization), so we forward via the canonical Electron pattern:
+// `window.postMessage` from the preload's isolated world INTO the main
+// world with the port in the transfer list. The renderer subscribes
+// with a normal `window.addEventListener('message', ...)`.
+//
+// Why this pattern over `contextBridge.exposeInMainWorld`: only
+// window.postMessage and MessageChannel honour the `transfer` argument
+// across isolation boundaries. ExposeInMainWorld serializes everything
+// through structured-clone which strips MessagePort.
+//
+// One port arrives per output-window open. If the output window
+// closes and reopens, a fresh channel is created on the main side
+// and a new port is forwarded. The renderer's sender module is
+// responsible for closing the previous port before binding the new
+// one to avoid double-sending VideoFrames into a stale channel.
+ipcRenderer.on('output-transport-port', (event) => {
+  // event.ports is the array of MessagePort objects attached to the
+  // postMessage by the main process. Forward into the main world.
+  // Tag the message with a known string so the renderer's listener
+  // can ignore unrelated postMessages from other code paths
+  // (Director SSE, dev tools probes, etc.).
+  try {
+    window.postMessage({ type: 'ghostarcade-output-transport-port' }, '*', event.ports);
+  } catch (err) {
+    console.error('[Preload] failed to forward output-transport-port:', err && err.message ? err.message : err);
+  }
+});
+
 // Also set a detection flag (replaces __TAURI_INTERNALS__)
 contextBridge.exposeInMainWorld('__ELECTRON__', true);
 
