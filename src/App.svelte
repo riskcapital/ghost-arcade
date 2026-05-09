@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import Canvas from './lib/components/Canvas.svelte';
+  import WebGPUCanvas from './lib/components/WebGPUCanvas.svelte';
   import AudioInputPicker from './lib/components/AudioInputPicker.svelte';
   import BpmTapWidget from './lib/components/BpmTapWidget.svelte';
   // Feature tour removed at user request — was an interactive multi-step
@@ -3729,7 +3730,21 @@
           class="viewport-content"
           style="transform: translate({viewportPanX}px, {viewportPanY}px) scale({viewportZoom}); transform-origin: 0 0;"
         >
-        <Canvas bind:this={canvasComponent} />
+        <!--
+          Phase 2 of the WebGPU migration. When experimental.editorWebGPU
+          is on, mount the parallel WebGPU scaffold INSTEAD of the
+          WebGL Canvas. The two are mutually exclusive — both bind
+          to canvasComponent, so downstream code (e.g. App.svelte's
+          getEngine() calls) sees one or the other. The WebGPU path
+          stubs getEngine() as null for compatibility while Phase 3
+          builds out the per-layer renderers.
+          See docs/WEBGPU_MIGRATION.md for the roadmap.
+        -->
+        {#if $settings.experimental?.editorWebGPU}
+          <WebGPUCanvas bind:this={canvasComponent} />
+        {:else}
+          <Canvas bind:this={canvasComponent} />
+        {/if}
         <!-- Grid overlay: editor-only, not in output. Always visible when enabled. -->
         {#if $settings.ui.gridSettings?.enabled}
           <div class="grid-overlay-offset" style="left: {canvasOffsetX}px; top: {canvasOffsetY}px;">
