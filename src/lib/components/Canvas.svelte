@@ -32,9 +32,17 @@
   import { initStateBroadcast, destroyStateBroadcast } from '$lib/sync/stateBroadcast';
   import { startOutputPixelBroadcast, stopOutputPixelBroadcast } from '$lib/sync/outputPixelBroadcast';
   import {
-    startOutputSharedTexturePresenter,
+    registerEditorCanvas,
     stopOutputSharedTexturePresenter,
   } from '$lib/sync/outputSharedTexturePresenter';
+  // Note: zero-copy presenter is NOT auto-started by the reconcile.
+  // Unlike WebRTC (which broadcasts to anyone listening on the
+  // BroadcastChannel), the zero-copy path requires a target Window
+  // reference — established when OutputWindow.svelte calls
+  // window.open() and then attachOutputWindow(target, canvas). The
+  // reconcile here only handles the LEGACY WebRTC path; zero-copy
+  // start is triggered by user action in OutputWindow.openPopup().
+  // We DO call stop on teardown to be safe.
   import { NativeRendererSync, getProjectOutputSize } from '$lib/sync/nativeRendererSync';
   import { hasWatermark } from '$lib/stores/license';
   import { fpsStore } from '$lib/stores/fps';
@@ -523,44 +531,41 @@
       initStateBroadcast('sender');
     }
 
-    // Output transport reconcile. Three transports, one active at a
-    // time; the renderer picks based on settings flags and tears down
-    // the previous transport when switching.
+    // Register the editor canvas with the zero-copy presenter so that
+    // when the user opens the output window via window.open(), the
+    // pump can start without OutputWindow.svelte needing a canvas
+    // reference of its own. This is a no-op in OSR / output modes.
+    if (!isOsrMode && !isOutputMode && canvas) {
+      registerEditorCanvas(canvas, 60);
+    }
+
+    // Legacy WebRTC output transport reconcile. The zero-copy path
+    // (experimental.outputZeroCopy) is NOT started here — see top-of-
+    // file note. Only the WebRTC fallback runs under reconcile-control
+    // because it broadcasts blindly to a BroadcastChannel and doesn't
+    // need a target window reference.
     //
-    //   outputZeroCopy → WebGPU presenter (MediaStreamTrackProcessor →
-    //                    cross-process MessagePort → importExternalTexture).
-    //                    True zero-copy GPU pipeline. Production target.
-    //   outputWebRTC   → Legacy same-process WebRTC peer + <video>.
-    //                    Escape hatch for drivers where the WebGPU path
-    //                    falls back to CPU.
-    //   neither        → No editor-side broadcast. Output window (if
-    //                    open) renders independently via SpoutOutputApp.
+    //   outputZeroCopy true                    → no-op here; OutputWindow
+    //                                            calls attachOutputWindow
+    //                                            on user click
+    //   outputZeroCopy false, outputWebRTC true → start WebRTC presenter
+    //   both false                              → no editor broadcast
     //
-    // Both transports are no-ops in OSR / output modes (we don't
-    // broadcast to ourselves).
+    // Both transports are no-ops in OSR / output modes.
     {
-      type Transport = 'zero-copy' | 'webrtc' | 'none';
-      let activeTransport: Transport = 'none';
-      const startTransport = (t: Transport) => {
-        if (t === 'zero-copy') startOutputSharedTexturePresenter(canvas, 60);
-        else if (t === 'webrtc') startOutputPixelBroadcast(canvas, 60);
-      };
-      const stopTransport = (t: Transport) => {
-        if (t === 'zero-copy') stopOutputSharedTexturePresenter();
-        else if (t === 'webrtc') stopOutputPixelBroadcast();
-      };
+      let webrtcStarted = false;
       const reconcileTransport = (zeroCopy: boolean, webrtc: boolean) => {
         const eligible = !isOsrMode && !isOutputMode && !!canvas;
-        let wantTransport: Transport = 'none';
-        if (eligible) {
-          if (zeroCopy) wantTransport = 'zero-copy';
-          else if (webrtc) wantTransport = 'webrtc';
+        const wantWebRTC = eligible && !zeroCopy && webrtc;
+        if (wantWebRTC && !webrtcStarted) {
+          startOutputPixelBroadcast(canvas, 60);
+          webrtcStarted = true;
+          console.log('[Canvas] legacy WebRTC output transport started');
+        } else if (!wantWebRTC && webrtcStarted) {
+          stopOutputPixelBroadcast();
+          webrtcStarted = false;
+          console.log('[Canvas] legacy WebRTC output transport stopped');
         }
-        if (wantTransport === activeTransport) return;
-        if (activeTransport !== 'none') stopTransport(activeTransport);
-        if (wantTransport !== 'none') startTransport(wantTransport);
-        activeTransport = wantTransport;
-        console.log(`[Canvas] output transport set to: ${activeTransport}`);
       };
       outputWebRTCUnsub = settings.subscribe((s) => {
         reconcileTransport(

@@ -69,6 +69,14 @@
   let lastFrameDim = '';
   let renderTimeUsEMA = 0;       // GPU submit latency (rough)
 
+  // Debug counters — distinguish "port.onmessage never fires" (raw=0)
+  // from "fires but data isn't a VideoFrame" (raw>0, frames=0). Visible
+  // in stats overlay so we don't need DevTools to triage cross-process
+  // transfer issues.
+  let rawMessagesReceived = 0;
+  let nonVideoFrameMessages = 0;
+  let lastMessageTypeName = '';
+
   // ── Transform state — populated from control messages ────────────
   // Defaults match the legacy renderer's "no transform" identity so
   // the first frame is shown correctly even before the editor sends
@@ -396,18 +404,32 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     const fmt = (videoFrame.format as string) || 'unknown';
     lastFormat = fmt;
     formatHistogram = { ...formatHistogram, [fmt]: (formatHistogram[fmt] ?? 0) + 1 };
-    const isCpuFmt = fmt === 'BGRA' || fmt === 'BGRX' || fmt === 'RGBA' || fmt === 'RGBX';
-    if (isCpuFmt) {
+    // BGRA is NOT a reliable CPU-fallback indicator. The format field
+    // describes texel layout, not memory location — Chromium's canvas
+    // captureStream often produces BGRA-formatted VideoFrames that
+    // remain GPU-resident (the underlying GpuMemoryBuffer is in VRAM).
+    // importExternalTexture accepts any GPU-backed VideoFrame
+    // regardless of format. The reliable signal is render-time:
+    // GPU-backed import + draw stays under ~1ms; CPU fallback drives
+    // it past several ms.
+    //
+    // Threshold: presentFrame's renderTimeUsEMA exceeding 4ms (= 4000μs)
+    // for >5 consecutive frames marks the link as degraded. This catches
+    // both true CPU readback AND any future Chromium quirk that turns
+    // importExternalTexture into a per-frame copy.
+    if (renderTimeUsEMA > 4000) {
       cpuFallbackStreak++;
       if (cpuFallbackStreak >= 5 && !cpuFallback) {
         cpuFallback = true;
-        console.warn('[OutputSharedTexture] CPU fallback detected: format=' + fmt);
+        console.warn('[OutputSharedTexture] degraded path detected: render-time EMA = ' +
+          renderTimeUsEMA.toFixed(0) + 'μs (format=' + fmt + ')');
       }
-    } else {
+    } else if (renderTimeUsEMA > 0 && renderTimeUsEMA < 2000) {
       cpuFallbackStreak = 0;
       if (cpuFallback) {
         cpuFallback = false;
-        console.log('[OutputSharedTexture] format recovered to GPU-friendly:', fmt);
+        console.log('[OutputSharedTexture] render-time recovered to ' +
+          renderTimeUsEMA.toFixed(0) + 'μs (format=' + fmt + ')');
       }
     }
     const now = performance.now();
@@ -429,18 +451,58 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     if (msg.fit === 'contain' || msg.fit === 'cover' || msg.fit === 'fill') fit = msg.fit;
   }
 
+  // ── Port intake (same-renderer-process MessageChannel handshake) ──
+  // The output window is opened via window.open() from the editor,
+  // putting both windows in the same renderer process. The editor
+  // creates a local `new MessageChannel()` and posts port2 to us via
+  // `targetWindow.postMessage(..., [port2])` — same-process transfer,
+  // GpuMemoryBuffer-backed VideoFrames preserve their handles.
+  //
+  // Handshake protocol:
+  //   1. We register a window 'message' listener at top-of-script
+  //      (before any onMount race could lose a message).
+  //   2. On mount, after WebGPU initialises, we post 'output-ready'
+  //      to window.opener — telling the editor we're ready to bind
+  //      a port.
+  //   3. We may ALSO receive an 'editor-attach' probe from the editor
+  //      (sent on attachOutputWindow) — we respond by re-posting
+  //      'output-ready' so the editor knows we're alive.
+  //   4. The editor posts the MessageChannel port to us; we attach
+  //      it and start receiving frames.
+  //
+  // The port may arrive BEFORE WebGPU finishes initialising (output
+  // is fast to mount, WebGPU adapter probe takes a beat). In that
+  // case we buffer the port into `pendingPort` and attach it once
+  // initWebGPU completes via tryAttachPendingPort().
+  let pendingPort: MessagePort | null = null;
+  let attachedPort: MessagePort | null = null;
+
   function attachPort(port: MessagePort): void {
-    if (initStatus === 'no-port') initStatus = 'running';
+    if (attachedPort && attachedPort !== port) {
+      try { attachedPort.close(); } catch { /* */ }
+    }
+    attachedPort = port;
+    if (initStatus === 'no-port' || initStatus === 'init') initStatus = 'running';
     port.onmessage = (event: MessageEvent) => {
       if (disposed) return;
+      rawMessagesReceived++;
       const data = event.data;
+      lastMessageTypeName = (data === null || data === undefined)
+        ? String(data)
+        : (data?.constructor?.name || typeof data);
+      if (rawMessagesReceived <= 3) {
+        console.log('[OutputSharedTexture] raw message #' + rawMessagesReceived,
+          'type=' + lastMessageTypeName,
+          'isVideoFrame=' + (data instanceof VideoFrame),
+          'data=', data);
+      }
       // Discriminate frames vs control messages. VideoFrame is an
       // instance check; control messages are plain objects with
       // `type` field.
       if (data instanceof VideoFrame) {
         try {
           recordFrameStats(data);
-          if (initStatus === 'running' && pipeline && device && canvasContext) {
+          if (pipeline && device && canvasContext) {
             presentFrame(data);
           }
         } catch (err) {
@@ -453,25 +515,77 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
           try { data.close(); } catch { /* */ }
         }
       } else {
+        nonVideoFrameMessages++;
         handleControlMessage(data);
       }
     };
     port.start();
+    console.log('[OutputSharedTexture] MessagePort attached, awaiting frames. port=', port);
+  }
+
+  function tryAttachPendingPort(): void {
+    if (!pendingPort) return;
+    if (!device || !pipeline || !canvasContext) return;
+    const p = pendingPort;
+    pendingPort = null;
+    attachPort(p);
   }
 
   function handlePortIntake(event: MessageEvent): void {
     if (!event?.data || typeof event.data !== 'object') return;
-    if (event.data.type !== 'ghostarcade-output-transport-port') return;
+    const t = event.data.type;
+    if (t === 'ghostarcade-editor-attach') {
+      // Editor probed us. If we're past initWebGPU we can already
+      // signal ready; otherwise the post-init readyHandshake will
+      // do it. Either way the editor will follow up with the port.
+      if (device && pipeline && canvasContext) {
+        signalReadyToOpener();
+      }
+      return;
+    }
+    if (t !== 'ghostarcade-output-transport-port') return;
     const incoming = event.ports?.[0];
     if (!incoming) return;
-    attachPort(incoming);
-    console.log('[OutputSharedTexture] MessagePort attached, awaiting frames');
+    if (device && pipeline && canvasContext) {
+      // WebGPU is already initialised — attach immediately.
+      attachPort(incoming);
+    } else {
+      // Buffer until initWebGPU completes.
+      console.log('[OutputSharedTexture] port received before WebGPU init — buffering');
+      pendingPort = incoming;
+    }
+  }
+
+  function signalReadyToOpener(): void {
+    // window.opener is the editor renderer's Window proxy when this
+    // window was created via window.open() from there. If opener is
+    // null (output was loaded directly via URL or main.js), we have
+    // no editor to talk to and the user will see "no link" badge.
+    const opener = (window as any).opener as Window | null;
+    if (!opener) {
+      console.warn('[OutputSharedTexture] window.opener is null — no editor to signal. ' +
+        'Was this window opened via window.open() from the editor renderer?');
+      return;
+    }
+    try {
+      opener.postMessage({ type: 'ghostarcade-output-ready' }, '*');
+      console.log('[OutputSharedTexture] signalled output-ready to opener');
+    } catch (err) {
+      console.error('[OutputSharedTexture] postMessage to opener failed:', err);
+    }
   }
 
   function handleKeydown(e: KeyboardEvent): void {
     if (e.key === 's' || e.key === 'S') {
       showStats = !showStats;
     }
+  }
+
+  // Register the port intake listener IMMEDIATELY (top-level script
+  // execution = before any onMount). This is what closes the race
+  // with preload's window.postMessage.
+  if (typeof window !== 'undefined') {
+    window.addEventListener('message', handlePortIntake);
   }
 
   onMount(async () => {
@@ -483,15 +597,39 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     }
 
     window.addEventListener('keydown', handleKeydown);
-    window.addEventListener('message', handlePortIntake);
 
     await initWebGPU();
+
+    // WebGPU is now ready. Tell the editor we can receive frames.
+    // If the editor's attachOutputWindow already fired its
+    // 'editor-attach' probe before we got here, our listener handled
+    // it but couldn't respond yet (device wasn't ready); now we
+    // explicitly signal ready. The editor responds by posting the
+    // MessageChannel port.
+    signalReadyToOpener();
+
+    // If a port arrived between top-level listener registration and
+    // initWebGPU finishing, it was buffered into `pendingPort`. Try
+    // to attach now that the pipeline is ready.
+    tryAttachPendingPort();
   });
 
   onDestroy(() => {
     disposed = true;
     window.removeEventListener('keydown', handleKeydown);
     window.removeEventListener('message', handlePortIntake);
+    if (attachedPort) {
+      try { attachedPort.close(); } catch { /* */ }
+      attachedPort = null;
+    }
+    // Tell the editor we're going away so it can tear down its pump
+    // without waiting for the next postMessage to fail.
+    try {
+      const opener = (window as any).opener as Window | null;
+      if (opener) {
+        opener.postMessage({ type: 'ghostarcade-output-bye' }, '*');
+      }
+    } catch { /* */ }
     try { device?.destroy?.(); } catch { /* */ }
   });
 
@@ -536,6 +674,8 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 mode webgpu-display
 status {initStatus}
 frames {connectedFrames}  fps {healthFps.toFixed(1)}
+raw-msgs {rawMessagesReceived}  non-vf {nonVideoFrameMessages}
+last-type {lastMessageTypeName}
 format {lastFormat}  cpu-fallback {cpuFallback}
 canvas {lastCanvasW}x{lastCanvasH}  frame {lastFrameDim}
 fit {fit}  rotation {rotationDeg}°
