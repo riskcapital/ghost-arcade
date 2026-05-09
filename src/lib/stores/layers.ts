@@ -1,6 +1,6 @@
 import { writable, derived, get } from 'svelte/store';
 import type { Layer, Project, WarpCorners, Point2D, BezierPoint, MediaSource, BlendMode, WarpMode, Effect, EffectType, EffectParams, LayerType, SVGContent, SVGFillMode, SVGColorMode, ColorContent, LightPaintingContent, LightPaintingStroke, CropRegion, LayerShape, LayerShapeType, Composition, VJModeState, VJDeck, Timeline, TimelineClip, TextContent, TextAnimation, SplatContent, Model3DContent, MediaTrayFolder, StagePreset, SVKeyboardPreset, EdgeEffect, EdgeEffectsConfig } from '../types';
-import { createLayer, createProject, createDefaultCorners, createMeshGrid, createLinesLayer, createSVGLayer, createColorLayer, createLightPaintingLayer, createTextLayer, createSplatLayer, createDefaultSVGContent, createDefaultCropRegion, createDefaultLayerShape, createDefaultVJModeState, createDefaultTimeline, generateUUID, createDefaultModel3DContent, createDefaultEdgeEffect, convertShapeToCustom, createGroupLayer } from '../types';
+import { createLayer, createProject, createDefaultCorners, createMeshGrid, createLinesLayer, createSVGLayer, createColorLayer, createLightPaintingLayer, createAdvLightPaintingLayer, createTextLayer, createSplatLayer, createDefaultSVGContent, createDefaultCropRegion, createDefaultLayerShape, createDefaultVJModeState, createDefaultTimeline, generateUUID, createDefaultModel3DContent, createDefaultEdgeEffect, convertShapeToCustom, createGroupLayer } from '../types';
 import type { GroupConfig } from '../types';
 import { mediaLibrary } from './media';
 import { vjClipLauncher, type VJClip, type VJBlock, type VJLayerState, DEFAULT_VJ_LAYERS, DEFAULT_VJ_COLUMNS } from './vjClipLauncher';
@@ -289,6 +289,26 @@ void main() {
         const id = generateUUID();
         const layerName = name || `Light Paint ${project.layers.filter(l => l.type === 'lightpainting').length + 1}`;
         const newLayer = createLightPaintingLayer(id, layerName);
+        return {
+          ...project,
+          layers: [newLayer, ...project.layers],
+          selectedLayerId: id,
+        };
+      });
+      recordDiscreteAction();
+    },
+
+    /** Add an Adv Light Painting layer (WebGPU 3D particle paint).
+     *  Renders only when experimental.editorWebGPU is on (the WebGPU
+     *  bridge owns the compute + render pipeline). With the flag off
+     *  the layer is visible in the layer panel but renders nothing —
+     *  intentional, so the project file stays portable across the
+     *  flag flip. */
+    addAdvLightPaintingLayer(name?: string) {
+      update((project) => {
+        const id = generateUUID();
+        const layerName = name || `Adv Light Paint ${project.layers.filter(l => l.type === 'adv-lightpaint').length + 1}`;
+        const newLayer = createAdvLightPaintingLayer(id, layerName);
         return {
           ...project,
           layers: [newLayer, ...project.layers],
@@ -3402,6 +3422,7 @@ void main() {
         svgContent: layer.svgContent,
         colorContent: layer.colorContent,
         lightPaintingContent: layer.lightPaintingContent || null,
+        advLightPaintingContent: layer.advLightPaintingContent || null,
         textContent: layer.textContent || null,
         splatContent: layer.splatContent || null,
         model3dContent: layer.model3dContent || null,
@@ -3905,6 +3926,16 @@ export const selectedLightPaintingContent = derived(project, ($project) => {
   const layer = $project.layers.find((l) => l.id === $project.selectedLayerId);
   if (!layer || layer.type !== 'lightpainting' || !layer.lightPaintingContent) return null;
   return layer.lightPaintingContent;
+});
+
+// Adv Light Painting (WebGPU) derived stores
+export const advLightPaintingLayers = derived(project, ($project) =>
+  $project.layers.filter((l) => l.type === 'adv-lightpaint')
+);
+
+export const selectedAdvLightPaintingLayer = derived(project, ($project) => {
+  const layer = $project.layers.find((l) => l.id === $project.selectedLayerId);
+  return layer?.type === 'adv-lightpaint' ? layer : null;
 });
 
 // Text layer derived stores

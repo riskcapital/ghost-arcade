@@ -87,6 +87,20 @@
   let gamma = 1;
   let fit: 'contain' | 'cover' | 'fill' = 'cover';
 
+  // Output cursor — driven by 'cursor' (position/visibility) and
+  // 'cursorStyle' (visual config) messages from the editor renderer.
+  // Rendered as a CSS overlay on top of the WebGPU canvas (cheaper +
+  // simpler than baking it into the WGSL shader, and the styling
+  // surface is much richer with CSS).
+  let cursorVisible = false;
+  let cursorX = 0.5;            // 0..1 normalized canvas coords
+  let cursorY = 0.5;
+  let cursorStyle: 'crosshair' | 'circle' | 'dot' | 'reticle' | 'fullscreen' = 'crosshair';
+  let cursorSizePx = 28;
+  let cursorThicknessPx = 2;
+  let cursorColor = '#ffffff';
+  let cursorOpacity = 0.85;
+
   // ── WebGPU resources ─────────────────────────────────────────────
   let gpu: any = null;
   let adapter: any = null;
@@ -443,12 +457,31 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 
   function handleControlMessage(msg: any): void {
     if (!msg || typeof msg !== 'object') return;
-    if (msg.type !== 'transform') return;
-    if (typeof msg.rotation === 'number') rotationDeg = msg.rotation;
-    if (typeof msg.brightness === 'number') brightness = msg.brightness;
-    if (typeof msg.contrast === 'number') contrast = msg.contrast;
-    if (typeof msg.gamma === 'number') gamma = msg.gamma;
-    if (msg.fit === 'contain' || msg.fit === 'cover' || msg.fit === 'fill') fit = msg.fit;
+    if (msg.type === 'transform') {
+      if (typeof msg.rotation === 'number') rotationDeg = msg.rotation;
+      if (typeof msg.brightness === 'number') brightness = msg.brightness;
+      if (typeof msg.contrast === 'number') contrast = msg.contrast;
+      if (typeof msg.gamma === 'number') gamma = msg.gamma;
+      if (msg.fit === 'contain' || msg.fit === 'cover' || msg.fit === 'fill') fit = msg.fit;
+      return;
+    }
+    if (msg.type === 'cursor') {
+      if (typeof msg.x === 'number') cursorX = msg.x;
+      if (typeof msg.y === 'number') cursorY = msg.y;
+      cursorVisible = !!msg.visible;
+      return;
+    }
+    if (msg.type === 'cursorStyle') {
+      if (msg.style === 'crosshair' || msg.style === 'circle' || msg.style === 'dot' ||
+          msg.style === 'reticle' || msg.style === 'fullscreen') {
+        cursorStyle = msg.style;
+      }
+      if (typeof msg.sizePx === 'number')      cursorSizePx = Math.max(2, Math.min(256, msg.sizePx));
+      if (typeof msg.thicknessPx === 'number') cursorThicknessPx = Math.max(1, Math.min(20, msg.thicknessPx));
+      if (typeof msg.color === 'string')       cursorColor = msg.color;
+      if (typeof msg.opacity === 'number')     cursorOpacity = Math.max(0, Math.min(1, msg.opacity));
+      return;
+    }
   }
 
   // ── Port intake (same-renderer-process MessageChannel handshake) ──
@@ -658,6 +691,48 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 
 <canvas bind:this={canvasEl} class="output-canvas"></canvas>
 
+<!-- Output cursor overlay. Rendered as DOM (not in WGSL) because:
+     CSS gives us thickness in subpixel-precise integer px independent
+     of canvas resolution, opacity is free, and the user can swap
+     style without touching shaders. Sits ABOVE the canvas via
+     z-index; pointer-events: none so it never intercepts clicks. -->
+{#if cursorVisible}
+  {#if cursorStyle === 'fullscreen'}
+    <!-- Fullscreen lines span the entire viewport at the cursor's
+         row/column. Useful for alignment work where you need to know
+         exactly which pixel column/row your cursor is on. -->
+    <span class="fs-line fs-h"
+          style="top: {cursorY * 100}%; height: {cursorThicknessPx}px;
+                 background: {cursorColor}; opacity: {cursorOpacity};"></span>
+    <span class="fs-line fs-v"
+          style="left: {cursorX * 100}%; width: {cursorThicknessPx}px;
+                 background: {cursorColor}; opacity: {cursorOpacity};"></span>
+  {:else}
+    <div
+      class="output-cursor cursor-{cursorStyle}"
+      style="
+        left: {cursorX * 100}%;
+        top: {cursorY * 100}%;
+        --csz: {cursorSizePx}px;
+        --cth: {cursorThicknessPx}px;
+        --ccol: {cursorColor};
+        --copa: {cursorOpacity};
+      "
+    >
+      {#if cursorStyle === 'crosshair' || cursorStyle === 'reticle'}
+        <span class="seg seg-h"></span>
+        <span class="seg seg-v"></span>
+      {/if}
+      {#if cursorStyle === 'circle' || cursorStyle === 'reticle'}
+        <span class="ring"></span>
+      {/if}
+      {#if cursorStyle === 'dot'}
+        <span class="dot"></span>
+      {/if}
+    </div>
+  {/if}
+{/if}
+
 {#if statusText}
   <div class="status-overlay">{statusText}</div>
 {/if}
@@ -751,5 +826,106 @@ press S to hide</pre>
     pointer-events: none;
     margin: 0;
     white-space: pre;
+  }
+
+  /* ── Output cursor overlays ──────────────────────────────────────
+     Sized via CSS custom properties set inline so the JS layer can
+     drive them per-frame without re-templating. The cursor sits at
+     `left: cursorX * 100%; top: cursorY * 100%` and translates by
+     -50% to center on that point. */
+  .output-cursor {
+    position: fixed;
+    pointer-events: none;
+    z-index: 50;
+    width: var(--csz);
+    height: var(--csz);
+    transform: translate(-50%, -50%);
+    opacity: var(--copa);
+    color: var(--ccol);
+    /* Soft outline for visibility against any background — pure
+       coloured cursors disappear into matching content colours. */
+    filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.7));
+  }
+
+  /* Crosshair / reticle: + shape made of two segments crossing the
+     center, with a small gap left clear so a focal target is visible. */
+  .seg {
+    position: absolute;
+    background: var(--ccol);
+    pointer-events: none;
+  }
+  .seg-h {
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: var(--cth);
+    transform: translateY(-50%);
+    /* Keep a center gap = thickness * 4, so for 1px thickness we
+       get a 4px gap; for 4px we get 16px. Visually proportional. */
+    background: linear-gradient(
+      to right,
+      var(--ccol) calc(50% - var(--cth) * 2),
+      transparent calc(50% - var(--cth) * 2),
+      transparent calc(50% + var(--cth) * 2),
+      var(--ccol) calc(50% + var(--cth) * 2)
+    );
+  }
+  .seg-v {
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: var(--cth);
+    transform: translateX(-50%);
+    background: linear-gradient(
+      to bottom,
+      var(--ccol) calc(50% - var(--cth) * 2),
+      transparent calc(50% - var(--cth) * 2),
+      transparent calc(50% + var(--cth) * 2),
+      var(--ccol) calc(50% + var(--cth) * 2)
+    );
+  }
+
+  /* Hollow ring for circle / reticle styles. */
+  .ring {
+    position: absolute;
+    inset: 0;
+    border: var(--cth) solid var(--ccol);
+    border-radius: 50%;
+    box-sizing: border-box;
+  }
+
+  /* Tiny center dot for the dot style — uses thickness as diameter
+     so 1px = single pixel. */
+  .dot {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: var(--cth);
+    height: var(--cth);
+    background: var(--ccol);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+  }
+
+  /* Fullscreen alignment crosshair — horizontal + vertical lines
+     spanning the entire viewport at the cursor's row / column.
+     The position-percent + thickness are inlined per element from
+     Svelte; the rule below just centers the line on its anchor and
+     drops a soft shadow for visibility. */
+  .fs-line {
+    position: fixed;
+    pointer-events: none;
+    z-index: 50;
+    filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.7));
+  }
+  .fs-h {
+    left: 0;
+    right: 0;
+    transform: translateY(-50%);
+  }
+  .fs-v {
+    top: 0;
+    bottom: 0;
+    transform: translateX(-50%);
   }
 </style>

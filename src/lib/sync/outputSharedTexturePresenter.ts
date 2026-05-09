@@ -180,6 +180,52 @@ function sendTransformSnapshot(s: any): void {
   }
 }
 
+// Output cursor position (0..1 normalized canvas coords). The editor
+// renderer pushes the latest mouse-over-canvas position via this
+// setter; the output receiver renders a CSS crosshair overlay at
+// that position when visible. De-duped on the JSON of the payload
+// so we don't spam the channel with identical messages between
+// frames where the cursor didn't actually move.
+let lastCursorJson = '';
+export function setOutputCursor(u: number, v: number, visible: boolean): void {
+  if (!outboundPort) return;
+  const payload = {
+    type: 'cursor',
+    x: Math.max(0, Math.min(1, u)),
+    y: Math.max(0, Math.min(1, v)),
+    visible,
+  };
+  const json = JSON.stringify(payload);
+  if (json === lastCursorJson) return;
+  lastCursorJson = json;
+  try {
+    outboundPort.postMessage(payload);
+  } catch { /* */ }
+}
+
+// Cursor STYLE — separate from position because it changes rarely
+// (user tweaks settings) vs position (every mousemove). Keeping
+// them in different messages avoids re-sending the style every
+// frame for nothing.
+let lastCursorStyleJson = '';
+export interface OutputCursorStyle {
+  style: 'crosshair' | 'circle' | 'dot' | 'reticle' | 'fullscreen';
+  sizePx: number;
+  thicknessPx: number;
+  color: string;
+  opacity: number;
+}
+export function setOutputCursorStyle(s: OutputCursorStyle): void {
+  if (!outboundPort) return;
+  const payload = { type: 'cursorStyle', ...s };
+  const json = JSON.stringify(payload);
+  if (json === lastCursorStyleJson) return;
+  lastCursorStyleJson = json;
+  try {
+    outboundPort.postMessage(payload);
+  } catch { /* */ }
+}
+
 /** Register the editor's main canvas with the presenter. Called once
  *  from Canvas.svelte's onMount. The canvas is held module-locally so
  *  any future attachOutputWindow call can start the pump without

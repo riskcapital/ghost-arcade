@@ -776,7 +776,7 @@
           <div class="setting-row">
             <div class="setting-label">
               <span class="label-text">Show Cursor on Output</span>
-              <span class="label-hint">Full-screen crosshair on the output window</span>
+              <span class="label-hint">Visualises mouse position on the output window</span>
             </div>
             <label class="toggle">
               <input
@@ -787,6 +787,81 @@
               <span class="toggle-slider"></span>
             </label>
           </div>
+
+          {#if showOutputCursor}
+            <!-- Cursor style + sizing knobs. Shown only when the
+                 cursor is on so the panel doesn't carry dead-eye
+                 controls when the user has it off. Each input mutates
+                 settings.output.outputCursorXxx; WebGPUCanvas
+                 subscribes and pushes the change to the output via
+                 the MessagePort cursorStyle message. -->
+            <div class="setting-row sub-row">
+              <div class="setting-label">
+                <span class="label-text">Style</span>
+              </div>
+              <select
+                class="select-input"
+                value={$settings.output.outputCursorStyle ?? 'crosshair'}
+                onchange={(e) => settings.update(s => ({ ...s, output: { ...s.output, outputCursorStyle: (e.target as HTMLSelectElement).value as any } }))}
+              >
+                <option value="crosshair">Crosshair</option>
+                <option value="circle">Circle</option>
+                <option value="dot">Dot</option>
+                <option value="reticle">Reticle</option>
+                <option value="fullscreen">Fullscreen lines</option>
+              </select>
+            </div>
+
+            <div class="setting-row sub-row">
+              <div class="setting-label">
+                <span class="label-text">Size</span>
+                <span class="label-hint">{$settings.output.outputCursorSize ?? 28}px</span>
+              </div>
+              <input
+                type="range"
+                min="4" max="128" step="1"
+                value={$settings.output.outputCursorSize ?? 28}
+                oninput={(e) => settings.update(s => ({ ...s, output: { ...s.output, outputCursorSize: +(e.target as HTMLInputElement).value } }))}
+              />
+            </div>
+
+            <div class="setting-row sub-row">
+              <div class="setting-label">
+                <span class="label-text">Thickness</span>
+                <span class="label-hint">{$settings.output.outputCursorThickness ?? 2}px (1 = hairline for macro)</span>
+              </div>
+              <input
+                type="range"
+                min="1" max="12" step="1"
+                value={$settings.output.outputCursorThickness ?? 2}
+                oninput={(e) => settings.update(s => ({ ...s, output: { ...s.output, outputCursorThickness: +(e.target as HTMLInputElement).value } }))}
+              />
+            </div>
+
+            <div class="setting-row sub-row">
+              <div class="setting-label">
+                <span class="label-text">Color</span>
+              </div>
+              <input
+                type="color"
+                value={$settings.output.outputCursorColor ?? '#ffffff'}
+                oninput={(e) => settings.update(s => ({ ...s, output: { ...s.output, outputCursorColor: (e.target as HTMLInputElement).value } }))}
+              />
+            </div>
+
+            <div class="setting-row sub-row">
+              <div class="setting-label">
+                <span class="label-text">Opacity</span>
+                <span class="label-hint">{Math.round(($settings.output.outputCursorOpacity ?? 0.85) * 100)}%</span>
+              </div>
+              <input
+                type="range"
+                min="0.1" max="1" step="0.05"
+                value={$settings.output.outputCursorOpacity ?? 0.85}
+                oninput={(e) => settings.update(s => ({ ...s, output: { ...s.output, outputCursorOpacity: +(e.target as HTMLInputElement).value } }))}
+              />
+            </div>
+          {/if}
         </section>
 
         <!-- Projection Tools section removed (v0.3.5):
@@ -1760,6 +1835,42 @@
 
   .setting-row:last-of-type {
     border-bottom: none;
+  }
+
+  /* Sub-rows are nested controls under a parent toggle (e.g. cursor
+     style/size when "Show Cursor" is on). Tighter padding + indent. */
+  .setting-row.sub-row {
+    padding: 6px 0 6px 14px;
+    border-bottom: 1px solid #131315;
+  }
+  .setting-row.sub-row .label-text {
+    font-size: 11px;
+    color: #aaa;
+  }
+  .setting-row.sub-row .label-hint {
+    font-size: 10px;
+    color: #666;
+  }
+  .setting-row.sub-row input[type="range"] {
+    width: 140px;
+    accent-color: #6df;
+  }
+  .setting-row.sub-row input[type="color"] {
+    width: 32px;
+    height: 24px;
+    border: 1px solid #2a2a30;
+    background: transparent;
+    cursor: pointer;
+    padding: 0;
+  }
+  .select-input {
+    background: #1c1c20;
+    color: #ddd;
+    border: 1px solid #2a2a30;
+    padding: 4px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    cursor: pointer;
   }
 
   .setting-label {

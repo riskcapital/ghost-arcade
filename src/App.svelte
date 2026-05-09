@@ -16,6 +16,7 @@
   import LinesPanel from './lib/components/LinesPanel.svelte';
   import SVGSourceTray from './lib/components/SVGSourceTray.svelte';
   import LightPaintingPanel from './lib/components/LightPaintingPanel.svelte';
+  import AdvLightPaintingPanel from './lib/components/AdvLightPaintingPanel.svelte';
   import TextPanel from './lib/components/TextPanel.svelte';
   import SplatPanel from './lib/components/SplatPanel.svelte';
   import Model3DPanel from './lib/components/Model3DPanel.svelte';
@@ -38,7 +39,7 @@
   import EULAModal from './lib/components/EULAModal.svelte';
   import UpdateModal from './lib/components/UpdateModal.svelte';
   import { updateModalOpen } from './lib/stores/uiState';
-  import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedGroupLayer, setHistoryCallback } from './lib/stores/layers';
+  import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedGroupLayer, setHistoryCallback } from './lib/stores/layers';
   import { keyframeTimeline } from './lib/stores/keyframeTimeline';
   import { settings, outputFrozen } from './lib/stores/settings';
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from './lib/recording/recorder';
@@ -4309,6 +4310,8 @@
             {canvasHeight}
             bind:drawingEnabled={lpDrawingEnabled}
           />
+        {:else if $selectedAdvLightPaintingLayer}
+          <AdvLightPaintingPanel />
         {:else if $selectedTextLayer}
           <div class="text-panel-sidebar">
             <TextPanel />
