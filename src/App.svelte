@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import Canvas from './lib/components/Canvas.svelte';
+  import WebGPUCanvas from './lib/components/WebGPUCanvas.svelte';
   import AudioInputPicker from './lib/components/AudioInputPicker.svelte';
   import BpmTapWidget from './lib/components/BpmTapWidget.svelte';
   // Feature tour removed at user request — was an interactive multi-step
@@ -93,6 +94,10 @@
   let outputWindow: OutputWindow;
   let outputIsOpen = false;
   let canvasComponent: Canvas;
+  // WebGPU bridge: bound when experimental.editorWebGPU is on so
+  // we can push the WebGL canvas reference into it after both
+  // components mount. See the onMount push block.
+  let webgpuBridgeComponent: WebGPUCanvas | null = null;
 
   // GPU info state (populated after engine init)
   let gpuInfo: { renderer: string; vendor: string; isIntegrated: boolean } | null = null;
@@ -489,6 +494,29 @@
   }
 
   onMount(() => {
+    // WebGPU bridge: when editorWebGPU is on, both Canvas and
+    // WebGPUCanvas are mounted. Push the WebGL canvas DOM ref
+    // from Canvas (via getCanvas()) into the WebGPU bridge's setter
+    // so it knows what to sample. We poll for up to 2s in case
+    // Canvas's own onMount hasn't fired yet — bind:this fires after
+    // mount but Canvas's `canvas` element binding is set inside
+    // ITS onMount which runs in a separate microtask.
+    if ($settings.experimental?.editorWebGPU) {
+      let attempts = 0;
+      const tryPushSource = () => {
+        const c = canvasComponent?.getCanvas?.();
+        if (c && webgpuBridgeComponent) {
+          webgpuBridgeComponent.setSourceCanvas(c);
+          console.log('[App] WebGPU bridge source canvas wired:', c.width, 'x', c.height);
+          return;
+        }
+        if (attempts++ < 40) setTimeout(tryPushSource, 50);
+        else console.warn('[App] WebGPU bridge: source canvas never appeared (Canvas.getCanvas() returned null after 2s)');
+      };
+      // Defer to next tick so bind:this has fired on both children.
+      setTimeout(tryPushSource, 0);
+    }
+
     // Auto-report uncaught errors and promise rejections
     const onError = (e: ErrorEvent) => {
       reportError(e.message || 'Uncaught error', e.error?.stack, 'window.onerror', 'crash');
@@ -3729,7 +3757,33 @@
           class="viewport-content"
           style="transform: translate({viewportPanX}px, {viewportPanY}px) scale({viewportZoom}); transform-origin: 0 0;"
         >
-        <Canvas bind:this={canvasComponent} />
+        <!--
+          WebGPU bridge presenter (opt-in, experimental).
+
+          When experimental.editorWebGPU is OFF (default): mount
+          Canvas alone — the existing WebGL renderer path.
+
+          When ON: mount BOTH:
+            - Canvas in bridgeMode (its WebGL <canvas> is hidden via
+              opacity:0 but still painted by Chromium each frame)
+            - WebGPUCanvas overlaid on top, sourcing the WebGL canvas
+              and presenting it via VideoFrame + importExternalTexture
+              on a WebGPU canvas
+
+          Net effect: the editor visually renders identically to the
+          WebGL path, but the FINAL present surface (which captureStream
+          pulls from for the output presenter) is now WebGPU.
+
+          canvasComponent stays bound to the Canvas instance in BOTH
+          cases so all downstream code that calls getEngine() etc.
+          continues to work transparently.
+        -->
+        {#if $settings.experimental?.editorWebGPU}
+          <Canvas bind:this={canvasComponent} bridgeMode={true} />
+          <WebGPUCanvas bind:this={webgpuBridgeComponent} />
+        {:else}
+          <Canvas bind:this={canvasComponent} />
+        {/if}
         <!-- Grid overlay: editor-only, not in output. Always visible when enabled. -->
         {#if $settings.ui.gridSettings?.enabled}
           <div class="grid-overlay-offset" style="left: {canvasOffsetX}px; top: {canvasOffsetY}px;">

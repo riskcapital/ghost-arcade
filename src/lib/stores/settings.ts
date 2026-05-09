@@ -329,6 +329,25 @@ export interface OutputSettings {
   outputCropWidth: number;   // 0.1..1
   outputCropHeight: number;  // 0.1..1
   outputShowCursor: boolean; // crosshair overlay on output window
+  /** Cursor style preset. Each renders differently:
+   *    crosshair  — + shape with center gap
+   *    circle     — hollow circle (good for finding things at a distance)
+   *    dot        — filled small dot (minimal interference with content)
+   *    reticle    — + with center gap + outer ring (sniper scope)
+   *    fullscreen — vertical + horizontal lines spanning the whole canvas
+   *                 (alignment work — every pixel of the cursor's row/col
+   *                 is visible) */
+  outputCursorStyle: 'crosshair' | 'circle' | 'dot' | 'reticle' | 'fullscreen';
+  /** Cursor diameter in pixels (CSS px on the output window).
+   *  16-128 reasonable. Smaller for macro projects. */
+  outputCursorSize: number;
+  /** Stroke thickness in pixels. 1 for hairline (macro projects),
+   *  4+ for high-visibility VJ output. Affects all styles. */
+  outputCursorThickness: number;
+  /** Cursor colour (hex string e.g. #ffffff). */
+  outputCursorColor: string;
+  /** Cursor opacity 0..1. */
+  outputCursorOpacity: number;
   // Dome projection
   domeEnabled: boolean;
   domeMode: 'angular' | 'stereographic' | 'orthographic' | 'equirectangular';
@@ -351,12 +370,59 @@ export const DEFAULT_LAYER_SHADERS: { id: DefaultLayerShader; label: string }[] 
   { id: 'none', label: 'Blank (No Shader)' },
 ];
 
+/**
+ * Experimental flags for in-progress feature work. These are
+ * deliberately NOT surfaced in the normal settings UI for production
+ * users — the dev preferences panel renders them only when the user
+ * opts in, and several have dedicated URL kill-switches:
+ *   - `?webgpu-disable=1` forces all WebGPU paths off (overrides
+ *     localStorage). Combined with the capability probe so a
+ *     machine without WebGPU also sees these flags effectively
+ *     disabled even when toggled on.
+ */
+export interface ExperimentalSettings {
+  /** Editor renderer migration: when true AND the WebGPU capability
+   *  probe returns supported, App.svelte mounts WebGPUCanvas as an
+   *  overlay on top of Canvas (which runs in `bridgeMode`). The
+   *  WebGPU canvas samples the WebGL canvas via VideoFrame +
+   *  importExternalTexture and presents the result on a WebGPU
+   *  surface. captureStream then pulls from the WebGPU canvas for
+   *  the output presenter. Default OFF. */
+  editorWebGPU: boolean;
+
+  /** Zero-copy GPU output transport.
+   *
+   *  When true (and WebGPU is available), OutputWindow.svelte opens
+   *  the output window via window.open() with `?mode=webgpu-display`
+   *  so it lives in the SAME renderer process as the editor. The
+   *  presenter (outputSharedTexturePresenter.ts) runs
+   *  MediaStreamTrackProcessor on `canvas.captureStream(60)`, reads
+   *  GPU-backed VideoFrames, and ships them through a local
+   *  MessageChannel to the output. The output binds them via
+   *  `device.importExternalTexture({source: videoFrame})` for true
+   *  zero-copy, GPU-resident sampling on a fullscreen quad.
+   *
+   *  Why this beats the WebRTC escape hatch:
+   *    - No encode/decode (WebRTC introduces VP9/H264 round-trip,
+   *      ~5-15ms latency + lossy compression at low bitrates)
+   *    - No format conversion (importExternalTexture binds the
+   *      GpuMemoryBuffer directly; WebRTC always lands in YUV420
+   *      and re-converts on display)
+   *    - True 4K60 with no quality drop on degraded encoders
+   *
+   *  Default FALSE in Pro/Community: opt-in until users verify the
+   *  zero-copy path works in their environment. The v0.6.x default
+   *  remains the WebRTC path. */
+  outputZeroCopy: boolean;
+}
+
 export interface AppSettings {
   recording: RecordingSettings;
   output: OutputSettings;
   ui: UISettings;
   ai: AISettings;
   defaultLayerShader: DefaultLayerShader;
+  experimental: ExperimentalSettings;
 }
 
 // Check which formats are supported by this browser
@@ -432,6 +498,11 @@ function createDefaultSettings(): AppSettings {
       outputCropWidth: 1,
       outputCropHeight: 1,
       outputShowCursor: false,
+      outputCursorStyle: 'crosshair',
+      outputCursorSize: 28,
+      outputCursorThickness: 2,
+      outputCursorColor: '#ffffff',
+      outputCursorOpacity: 0.85,
       // Dome projection defaults
       domeEnabled: false,
       domeMode: 'angular',
@@ -469,6 +540,18 @@ function createDefaultSettings(): AppSettings {
       replicateApiKey: '',
     },
     defaultLayerShader: 'grid',
+    experimental: {
+      // Editor WebGPU bridge. OFF by default — opt-in until users
+      // verify the bridge frame path works in their environment.
+      // Toggle via dev preferences; the WebGPU capability probe is
+      // checked at component mount.
+      editorWebGPU: false,
+      // Zero-copy WebGPU output. OFF by default for Pro/Community —
+      // opt-in until users verify the same-process MessageChannel
+      // pump works on their hardware. v0.6.x default stays on the
+      // WebRTC presenter.
+      outputZeroCopy: false,
+    },
   };
 }
 
@@ -577,6 +660,13 @@ function loadSettings(): AppSettings {
           claudeApiKey: parsed.ai?.claudeApiKey || legacyClaude || '',
           geminiApiKey: parsed.ai?.geminiApiKey || legacyGemini || '',
           shaderProvider: parsed.ai?.shaderProvider || (legacyProvider as ShaderAIProvider) || defaults.ai.shaderProvider,
+        },
+        // Experimental flags. Spread defaults first so new flags
+        // added in future versions get merged in for users with
+        // older saved settings.
+        experimental: {
+          ...defaults.experimental,
+          ...(parsed.experimental || {}),
         },
       };
 
