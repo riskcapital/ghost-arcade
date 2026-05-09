@@ -35,7 +35,7 @@
   import { settings } from '$lib/stores/settings';
   import { project } from '$lib/stores/layers';
   import { WebGPUEngine } from '$lib/renderer/webgpuEngine';
-  import { isWebGPUSupported } from '$lib/renderer/webgpuCapability';
+  import { isWebGPUSupported, probeWebGPU } from '$lib/renderer/webgpuCapability';
   import {
     registerEditorCanvas,
     stopOutputSharedTexturePresenter,
@@ -139,7 +139,13 @@
   }
 
   onMount(async () => {
-    if (!isWebGPUSupported()) {
+    // Capability probe is normally kicked off by Canvas.svelte's
+    // onMount, but with editorWebGPU on we mount INSTEAD of Canvas
+    // — so the probe hasn't run yet. Run it here. probeWebGPU() is
+    // idempotent so a future Canvas mount (e.g. user toggles flag
+    // off) will return the cached result.
+    const supported = await probeWebGPU();
+    if (!supported || !isWebGPUSupported()) {
       initError = 'WebGPU is not supported in this build/runtime. ' +
         'Disable experimental.editorWebGPU to fall back to the WebGL renderer.';
       console.error('[WebGPUCanvas] ' + initError);
