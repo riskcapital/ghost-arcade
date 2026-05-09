@@ -389,6 +389,24 @@ export interface ExperimentalSettings {
    */
   outputWebRTC: boolean;
 
+  /** Phase 2 of the WebGPU migration: swap the editor's main
+   *  renderer from THREE.WebGLRenderer to THREE.WebGPURenderer.
+   *
+   *  Default false. When on AND the WebGPU capability probe
+   *  returns supported, Canvas.svelte instantiates WebGPUEngine
+   *  (renderer/webgpuEngine.ts) instead of RenderEngine (engine.ts).
+   *
+   *  Phase 2 scope: editor canvas shows clear color only — per-layer
+   *  rendering is intentionally NOT in this phase. The point of
+   *  Phase 2 is proving (a) WebGPURenderer works as the main
+   *  renderer in this Electron build, and (b) canvas.captureStream()
+   *  (which the output presenter depends on) keeps working with a
+   *  WebGPU canvas. Once those success criteria pass, Phase 3
+   *  begins porting per-layer renderers one at a time.
+   *
+   *  See docs/WEBGPU_MIGRATION.md for the full roadmap. */
+  editorWebGPU: boolean;
+
   /** Zero-copy GPU output transport — the production target.
    *
    *  When true (default), the visible output window mounts
@@ -561,6 +579,10 @@ function createDefaultSettings(): AppSettings {
       // when the WebGPU capability probe says no or when the
       // MessagePort handshake fails.
       outputZeroCopy: true,
+      // Phase 2 of the WebGPU migration. Default OFF until the
+      // success criteria in WEBGPU_MIGRATION.md pass. Enable via
+      // dev preferences or `?editor-webgpu=1` URL param to test.
+      editorWebGPU: false,
     },
   };
 }
