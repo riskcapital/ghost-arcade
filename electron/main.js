@@ -105,6 +105,12 @@ app.on('child-process-gone', (_ev, details) => {
 let mainWindow = null;
 let outputWindow = null;
 let spoutOsrWindow = null;  // Hidden OSR window for zero-copy Spout output
+// Placement config staged by `configure_next_output_window` IPC and
+// consumed by the next setWindowOpenHandler call for the WebGPU
+// zero-copy output window. Cleared after consumption (or after a 5s
+// timeout to avoid cross-call leakage).
+let pendingOutputWindowConfig = null;
+let pendingOutputWindowConfigTimer = null;
 let sidecarProcess = null;
 
 // Platform flags (used elsewhere in this file)
@@ -866,8 +872,41 @@ function registerIpcHandlers() {
   });
 
   // --- Output window ---
-  ipcMain.handle('create_output_window', (_, { width, height, x, y, fullscreen, displayId }) => {
-    createOutputWindow(width, height, x, y, fullscreen, displayId);
+  // Two experimental flags control output transport:
+  //   - `experimentalZeroCopy` → mounts OutputSharedTextureDisplayApp
+  //     (WebGPU + GPUExternalTexture, the production target). The
+  //     editor opens this window via window.open() (not via this IPC
+  //     create path) so they share the same renderer process — the
+  //     only way Chromium 130 preserves GpuMemoryBuffer-backed
+  //     VideoFrames across a MessageChannel.
+  //   - `experimentalWebRTC` → mounts OutputDisplayApp (same-process
+  //     WebRTC peer). Production default in 0.6.x.
+  // Selection precedence: zero-copy beats WebRTC beats legacy. The
+  // renderer reads both settings flags and passes them through.
+  ipcMain.handle('create_output_window', (_, { width, height, x, y, fullscreen, displayId, experimentalWebRTC, experimentalZeroCopy }) => {
+    createOutputWindow(width, height, x, y, fullscreen, displayId, !!experimentalWebRTC, !!experimentalZeroCopy);
+  });
+
+  // Pre-stage placement config for the next WebGPU zero-copy output
+  // window opening. Called by the editor renderer immediately before
+  // `window.open('?mode=webgpu-display', ...)`. The setWindowOpenHandler
+  // (in createMainWindow) reads + clears this on the next matching open.
+  // Auto-clears after 5s if no open follows — prevents accidental
+  // staleness across user clicks.
+  ipcMain.handle('configure_next_output_window', (_, config) => {
+    pendingOutputWindowConfig = config && typeof config === 'object' ? { ...config } : null;
+    if (pendingOutputWindowConfigTimer) {
+      clearTimeout(pendingOutputWindowConfigTimer);
+      pendingOutputWindowConfigTimer = null;
+    }
+    if (pendingOutputWindowConfig) {
+      pendingOutputWindowConfigTimer = setTimeout(() => {
+        pendingOutputWindowConfig = null;
+        pendingOutputWindowConfigTimer = null;
+        console.log('[Output] pending config cleared (5s timeout)');
+      }, 5000);
+    }
+    return true;
   });
 
   // Returns the NATIVE pixel resolution of the display the output window is
@@ -971,13 +1010,18 @@ function registerIpcHandlers() {
   });
 
   // --- Output fullscreen on external monitor ---
-  ipcMain.handle('output_fullscreen_external', () => {
+  // Same `experimentalZeroCopy` / `experimentalWebRTC` opt-in as
+  // create_output_window so fullscreen-direct mode also lands on the
+  // new transport when the flag is on.
+  ipcMain.handle('output_fullscreen_external', (_, args) => {
     const allDisplays = screen.getAllDisplays();
     const primary = screen.getPrimaryDisplay();
     const external = allDisplays.find(d => d.id !== primary.id);
     const target = external || primary;
+    const experimentalWebRTC = !!(args && args.experimentalWebRTC);
+    const experimentalZeroCopy = !!(args && args.experimentalZeroCopy);
 
-    createOutputWindow(target.bounds.width, target.bounds.height, target.bounds.x, target.bounds.y, true, target.id);
+    createOutputWindow(target.bounds.width, target.bounds.height, target.bounds.x, target.bounds.y, true, target.id, experimentalWebRTC, experimentalZeroCopy);
     return { displayId: target.id, isExternal: !!external };
   });
 
@@ -1851,6 +1895,110 @@ function createMainWindow() {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
 
+  // ── window.open() handler for the WebGPU zero-copy output window ──
+  // The editor renderer opens the output window via window.open() with
+  // `?mode=webgpu-display`. Same-origin window.open from a renderer
+  // creates the new BrowserWindow in the SAME renderer process, which
+  // is the only way to get true zero-copy VideoFrame transfer through
+  // a MessageChannel (cross-process MessageChannelMain silently drops
+  // GpuMemoryBuffer-backed VideoFrames in Chromium 130).
+  //
+  // Editor-side flow (see OutputWindow.svelte / outputSharedTexture-
+  // Presenter.ts):
+  //   1. invoke('configure_next_output_window', { displayId, width,
+  //      height, fullscreen, x, y }) — pre-stages the placement config
+  //      that setWindowOpenHandler will read on the next open call
+  //   2. window.open(url, 'ga-output', '...') — synchronous; returns
+  //      the Window object proxy
+  //   3. await output's 'output-ready' message via window message
+  //   4. Create local MessageChannel; post port2 to the new window;
+  //      use port1 for the editor's pump
+  //
+  // The new BrowserWindow is captured into the existing `outputWindow`
+  // global via `did-create-window` so all the existing placement IPCs
+  // (output_toggle_fullscreen, output_set_cursor, move_output_window,
+  // close_output_window) continue to operate on it transparently —
+  // they see a normal BrowserWindow reference and don't care how it
+  // was opened.
+  mainWindow.webContents.setWindowOpenHandler((details) => {
+    if (!details.url.includes('mode=webgpu-display')) {
+      // Block any other window.open from the renderer — the editor
+      // shouldn't be opening arbitrary windows for any other reason.
+      // The legacy output modes still go through the IPC create_output_window
+      // path, which doesn't trigger this handler.
+      return { action: 'deny' };
+    }
+
+    // Resolve placement from the pre-staged config (or sensible
+    // defaults if the editor opened without configuring).
+    const cfg = pendingOutputWindowConfig || {};
+    pendingOutputWindowConfig = null;
+    const allDisplays = screen.getAllDisplays();
+    let target = screen.getPrimaryDisplay();
+    if (cfg.displayId) {
+      const found = allDisplays.find(d => d.id === cfg.displayId);
+      if (found) target = found;
+    }
+    const bounds = target.bounds;
+    const fullscreen = !!cfg.fullscreen;
+    const winW = fullscreen ? bounds.width : Math.max(320, Math.min(8192, Math.round(cfg.width || 1280)));
+    const winH = fullscreen ? bounds.height : Math.max(240, Math.min(8192, Math.round(cfg.height || 720)));
+    const winX = fullscreen ? bounds.x : Math.round(cfg.x ?? bounds.x + (bounds.width - winW) / 2);
+    const winY = fullscreen ? bounds.y : Math.round(cfg.y ?? bounds.y + (bounds.height - winH) / 2);
+
+    return {
+      action: 'allow',
+      overrideBrowserWindowOptions: {
+        width: winW,
+        height: winH,
+        x: winX,
+        y: winY,
+        title: 'Ghost Arcade Output',
+        resizable: true,
+        frame: true,
+        fullscreen,
+        simpleFullscreen: process.platform === 'darwin',
+        autoHideMenuBar: true,
+        skipTaskbar: false,
+        backgroundColor: '#000000',
+        hasShadow: true,
+        webPreferences: {
+          preload: path.join(__dirname, 'preload.cjs'),
+          contextIsolation: true,
+          nodeIntegration: false,
+          webgl: true,
+          backgroundThrottling: false,
+          // Critical: the new window MUST share the main window's
+          // session/partition for window.open same-process semantics
+          // to apply. Electron's default behaviour does this, but
+          // setting it explicitly removes any future surprise.
+          session: mainWindow.webContents.session,
+        },
+      },
+    };
+  });
+
+  // Capture the BrowserWindow created via window.open into the
+  // `outputWindow` global so existing placement IPCs continue to work
+  // against it. Also wire the close handler so we clear the global
+  // when the user closes the output window.
+  mainWindow.webContents.on('did-create-window', (newWindow, details) => {
+    if (!details.url.includes('mode=webgpu-display')) return;
+    outputWindow = newWindow;
+    try { newWindow.setMenuBarVisibility(false); } catch { /* */ }
+    console.log('[Output] zero-copy output window captured into outputWindow global');
+    // DevTools opt-in via env var to match the perf baseline of the
+    // legacy output path (devtools allocates extra GPU surfaces +
+    // renderer threads). Set GHOSTARCADE_OUTPUT_DEVTOOLS=1 in the
+    // shell that runs `npm run desktop` to enable.
+    if (process.env.GHOSTARCADE_OUTPUT_DEVTOOLS === '1') {
+      try { newWindow.webContents.openDevTools({ mode: 'detach' }); } catch { /* */ }
+    }
+    newWindow.on('closed', () => {
+      if (outputWindow === newWindow) outputWindow = null;
+    });
+  });
+
   // Main-window renderer-process crash recovery.
   //
   // Before this, an unrecoverable renderer crash (out-of-memory, D3D device
@@ -1933,7 +2081,7 @@ function createMainWindow() {
   });
 }
 
-function createOutputWindow(width, height, x, y, fullscreen = false, displayId = null) {
+function createOutputWindow(width, height, x, y, fullscreen = false, displayId = null, experimentalWebRTC = false, experimentalZeroCopy = false) {
   // Validate dimensions
   width = Math.max(320, Math.min(8192, Number(width) || 1920));
   height = Math.max(240, Math.min(8192, Number(height) || 1080));
@@ -1990,29 +2138,56 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
   // Hide menu bar for clean look
   outputWindow.setMenuBarVisibility(false);
 
-  // WebRTC output transport (single-renderer pattern, like Resolume /
-  // TouchDesigner / VDMX): the output window mounts OutputDisplayApp,
-  // which receives the editor canvas as a same-process WebRTC stream
-  // and displays it via a single <video srcObject> element. Replaces
-  // the legacy second-renderer (SpoutOutputApp) for the visible output
-  // window — that path was contending with the editor for video
-  // decode + GPU upload and freezing under load. The legacy path is
-  // preserved for fallback: set GHOSTARCADE_OUTPUT_LEGACY=1 in the
-  // environment to flip back if a specific machine misbehaves.
+  // Output mode selection. Three transports, in precedence order:
   //
-  // NOTE: this only affects the VISIBLE output window. The hidden Spout
-  // OSR window (?mode=spout-output) is separate and stays on the legacy
-  // path — it has different requirements (needs the full RenderEngine
-  // to paint into the DXGI surface for native shared-texture export).
+  //   webgpu-display → mounts OutputSharedTextureDisplayApp. Editor
+  //                    side runs MediaStreamTrackProcessor on
+  //                    canvas.captureStream(60), reads GPU-backed
+  //                    VideoFrames, and ships them via an in-process
+  //                    MessageChannel paired through window.open()
+  //                    (see setWindowOpenHandler in createMainWindow).
+  //                    Output side calls
+  //                    `device.importExternalTexture({source: frame})`
+  //                    and renders a fullscreen quad in WebGPU. True
+  //                    zero-copy GPU pipeline — the production target.
+  //                    NOTE: when this branch is reached via the IPC
+  //                    create_output_window path it produces a
+  //                    cross-process window which CAN'T receive zero-
+  //                    copy VideoFrames. Pro's UI flow opens this
+  //                    mode via window.open from OutputWindow.svelte,
+  //                    NOT through this IPC. We still set the URL
+  //                    correctly for symmetry.
+  //
+  //   webrtc-display → mounts OutputDisplayApp (same-process WebRTC
+  //                    peer). Production default in 0.6.x — kept as
+  //                    fallback when WebGPU is unavailable.
+  //
+  //   output         → mounts SpoutOutputApp (the original full
+  //                    renderer with state-sync + per-layer rendering).
+  //                    Legacy escape hatch via GHOSTARCADE_OUTPUT_LEGACY=1.
   const useLegacyOutput = process.env.GHOSTARCADE_OUTPUT_LEGACY === '1';
-  const outputMode = useLegacyOutput ? 'output' : 'webrtc-display';
+  let outputMode;
+  if (experimentalZeroCopy) outputMode = 'webgpu-display';
+  else if (useLegacyOutput) outputMode = 'output';
+  else if (experimentalWebRTC) outputMode = 'webrtc-display';
+  else outputMode = 'webrtc-display';
+  console.log(`[Output] Selected mode "${outputMode}" (zeroCopy=${experimentalZeroCopy} webRTC=${experimentalWebRTC} legacy=${useLegacyOutput})`);
   const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
   const isDev = !app.isPackaged;
+  // The webgpu-disable URL flag is a belt-and-suspenders guard for
+  // legacy / WebRTC display modes where we don't want the WebGPU
+  // capability probe to trip. The new webgpu-display mode requires
+  // WebGPU so we omit the flag there.
+  const wantWebgpuDisable = outputMode !== 'webgpu-display';
+  const queryParts = [`mode=${outputMode}`];
+  if (wantWebgpuDisable) queryParts.push('webgpu-disable=1');
   if (isDev) {
-    outputWindow.loadURL(`${devUrl}?mode=${outputMode}`);
+    outputWindow.loadURL(`${devUrl}?${queryParts.join('&')}`);
   } else {
     const filePath = path.join(__dirname, '..', 'dist', 'index.html');
-    outputWindow.loadFile(filePath, { query: { mode: outputMode } });
+    const fileQuery = { mode: outputMode };
+    if (wantWebgpuDisable) fileQuery['webgpu-disable'] = '1';
+    outputWindow.loadFile(filePath, { query: fileQuery });
   }
 
   outputWindow.on('closed', () => {

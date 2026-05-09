@@ -16,6 +16,7 @@ const mode = urlParams.get('mode');
 const isSpoutOutput = mode === 'spout-output';
 const isOutputWindow = mode === 'output';
 const isWebRTCDisplay = mode === 'webrtc-display';
+const isWebGPUDisplay = mode === 'webgpu-display';
 
 // Set global flags so Canvas.svelte knows not to create Spout sender/receiver
 // Use try/catch because Electron's contextBridge.exposeInMainWorld makes these read-only
@@ -23,12 +24,22 @@ if (isSpoutOutput && !window.__SPOUT_OSR_MODE__) {
   try { (window as any).__SPOUT_OSR_MODE__ = true; } catch { /* already set by preload */ }
 }
 
-if ((isOutputWindow || isWebRTCDisplay) && !(window as any).__OUTPUT_WINDOW_MODE__) {
+if ((isOutputWindow || isWebRTCDisplay || isWebGPUDisplay) && !(window as any).__OUTPUT_WINDOW_MODE__) {
   try { (window as any).__OUTPUT_WINDOW_MODE__ = true; } catch { /* already set by preload */ }
 }
 
 async function init() {
-  if (isWebRTCDisplay) {
+  if (isWebGPUDisplay) {
+    // WebGPU zero-copy presentation surface: receives the editor
+    // canvas frames over a same-process MessagePort as transferred
+    // VideoFrames, builds a GPUExternalTexture per frame, and renders
+    // a fullscreen quad. Counterpart to outputSharedTexturePresenter
+    // on the editor side.
+    const { default: OutputSharedTextureDisplayApp } = await import('./OutputSharedTextureDisplayApp.svelte');
+    mount(OutputSharedTextureDisplayApp, {
+      target: document.getElementById('app')!,
+    });
+  } else if (isWebRTCDisplay) {
     // WebRTC presentation surface: receives the editor canvas as a
     // same-process MediaStream and renders it into a single
     // <video srcObject>. Replaces the legacy second-renderer pattern

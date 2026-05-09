@@ -2233,7 +2233,8 @@
           (selectedLayerState?.activeClip?.type === 'shader' && selectedLayerState?.activeClip?.shaderCode && showShaderParams) ||
           (selectedLayerState?.activeClip?.type === 'splat') ||
           (selectedLayerState?.activeClip?.type === 'model3d') ||
-          (selectedLayerState?.activeClip?.type === 'effect' && selectedLayerState?.activeClip?.effectSource)
+          (selectedLayerState?.activeClip?.type === 'effect' && selectedLayerState?.activeClip?.effectSource) ||
+          (selectedLayerState?.activeClip?.type === 'video')
         ))}>
           <!-- Shader Parameters (above media tabs) -->
           {#if selectedLayerIndex !== null && selectedLayerState?.activeClip?.type === 'shader' && selectedLayerState?.activeClip?.shaderCode && showShaderParams}
@@ -2492,6 +2493,114 @@
                 </div>
               </div>
             {/if}
+          {/if}
+
+          <!-- Video Transform panel — per-clip zoom/fit/anchor/rotation/
+               opacity. Maps to VJClip.zoom/fit/anchorX/anchorY/rotation/
+               opacity which Layer construction in vjOutputLayers
+               translates to the engine's existing position/scale/
+               rotation/opacity/contentFit fields. Each input writes
+               immediately via vjClipLauncher.updateActiveClipVideoProps
+               so the change is visible on the next frame. -->
+          {#if selectedLayerIndex !== null && selectedLayerState?.activeClip?.type === 'video'}
+            {@const vClip = selectedLayerState.activeClip}
+            {@const vZoom = vClip.zoom ?? 1}
+            {@const vFit = vClip.fit ?? 'cover'}
+            {@const vAnchorX = vClip.anchorX ?? 0.5}
+            {@const vAnchorY = vClip.anchorY ?? 0.5}
+            {@const vRotation = vClip.rotation ?? 0}
+            {@const vOpacity = vClip.opacity ?? 1}
+            <div class="shader-params-panel video-params-panel">
+              <div class="shader-params-panel-header">
+                <span class="shader-params-overlay-title">
+                  {vClip.name || 'Video'}
+                  <span class="shader-params-layer-badge" style="background: rgba(96, 165, 250, 0.3); color: #60a5fa;">VID</span>
+                </span>
+              </div>
+              <div class="shader-params-panel-list">
+                <div class="video-controls-panel">
+                  <div class="vt-transform">
+                    <div class="vt-section-title">Transform</div>
+
+                    <label class="vt-tf-row">
+                      <span class="vt-tf-label">Fit</span>
+                      <select
+                        class="vt-tf-select"
+                        value={vFit}
+                        onchange={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { fit: (e.target as HTMLSelectElement).value as any }, paramDeck)}
+                      >
+                        <option value="cover">Cover (fill + crop)</option>
+                        <option value="contain">Contain (letterbox)</option>
+                        <option value="fill">Fill (stretch)</option>
+                      </select>
+                    </label>
+
+                    <label class="vt-tf-row">
+                      <span class="vt-tf-label">Zoom</span>
+                      <input
+                        type="range"
+                        min="0.1" max="4" step="0.05"
+                        value={vZoom}
+                        oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { zoom: +(e.target as HTMLInputElement).value }, paramDeck)}
+                      />
+                      <span class="vt-tf-num">{vZoom.toFixed(2)}×</span>
+                    </label>
+
+                    <label class="vt-tf-row">
+                      <span class="vt-tf-label">Anchor X</span>
+                      <input
+                        type="range"
+                        min="0" max="1" step="0.01"
+                        value={vAnchorX}
+                        oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { anchorX: +(e.target as HTMLInputElement).value }, paramDeck)}
+                      />
+                      <span class="vt-tf-num">{vAnchorX.toFixed(2)}</span>
+                    </label>
+
+                    <label class="vt-tf-row">
+                      <span class="vt-tf-label">Anchor Y</span>
+                      <input
+                        type="range"
+                        min="0" max="1" step="0.01"
+                        value={vAnchorY}
+                        oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { anchorY: +(e.target as HTMLInputElement).value }, paramDeck)}
+                      />
+                      <span class="vt-tf-num">{vAnchorY.toFixed(2)}</span>
+                    </label>
+
+                    <label class="vt-tf-row">
+                      <span class="vt-tf-label">Rotation</span>
+                      <input
+                        type="range"
+                        min="-180" max="180" step="1"
+                        value={vRotation}
+                        oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { rotation: +(e.target as HTMLInputElement).value }, paramDeck)}
+                      />
+                      <span class="vt-tf-num">{vRotation}°</span>
+                    </label>
+
+                    <label class="vt-tf-row">
+                      <span class="vt-tf-label">Opacity</span>
+                      <input
+                        type="range"
+                        min="0" max="1" step="0.01"
+                        value={vOpacity}
+                        oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { opacity: +(e.target as HTMLInputElement).value }, paramDeck)}
+                      />
+                      <span class="vt-tf-num">{Math.round(vOpacity * 100)}%</span>
+                    </label>
+
+                    <button
+                      class="vt-tf-reset"
+                      onclick={() => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { zoom: 1, fit: 'cover', anchorX: 0.5, anchorY: 0.5, rotation: 0, opacity: 1 }, paramDeck)}
+                      title="Reset transform to defaults"
+                    >
+                      Reset transform
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
           {/if}
       </div>
       </div>
@@ -4302,6 +4411,74 @@
 
   .shader-params-panel-list::-webkit-scrollbar { width: 4px; }
   .shader-params-panel-list::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+
+  /* ── VJ video Transform section (per-clip zoom/fit/anchor/rotation/
+       opacity). Sits inside the VJ video-controls-panel; styled to
+       match the surrounding shader-params-panel rows so it doesn't
+       look out of place. */
+  .vt-transform {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 0 4px 0;
+    margin-top: 6px;
+    border-top: 1px solid #2a2a2a;
+  }
+  .vt-section-title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: #888;
+    text-transform: uppercase;
+    margin: 0 0 4px 2px;
+  }
+  .vt-tf-row {
+    display: grid;
+    grid-template-columns: 60px 1fr 48px;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #ccc;
+  }
+  .vt-tf-label {
+    color: #999;
+  }
+  .vt-tf-num {
+    font-family: 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 10px;
+    color: #ccc;
+    text-align: right;
+  }
+  .vt-tf-select {
+    grid-column: 2 / 4;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    color: #ddd;
+    font-size: 11px;
+    padding: 2px 4px;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  .vt-tf-reset {
+    margin-top: 6px;
+    background: #222;
+    border: 1px solid #333;
+    color: #aaa;
+    font-size: 11px;
+    padding: 4px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .vt-tf-reset:hover {
+    background: #2a2a2a;
+    color: #ddd;
+  }
+  .vt-modes {
+    display: flex;
+    gap: 4px;
+    margin-top: 6px;
+  }
 
   /* Bottom Section: Grid + Media Tray */
   .vj-bottom {

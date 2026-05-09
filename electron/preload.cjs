@@ -21,6 +21,10 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // Display/window
   'get_displays', 'create_output_window', 'close_output_window', 'move_output_window',
   'resize_output_window', 'show_main_window',
+  // Pre-stage placement config for the next WebGPU zero-copy output
+  // window opened via window.open() — see setWindowOpenHandler in
+  // electron/main.js.
+  'configure_next_output_window',
   // SRC tab Capture chooser — enumerates screens + app windows
   // with thumbnails so the renderer can show a Zoom/Slack-style picker.
   'screen_sources_list',
