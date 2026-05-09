@@ -56,22 +56,32 @@
     // Cursor clearing can be added later
   }
 
-  // Read the experimental WebRTC-output flag once at the call site
-  // (synchronous get from the settings store). When true, the
-  // create_output_window IPC routes the visible output window to
-  // OutputDisplayApp (`?mode=webrtc-display`) instead of the legacy
-  // SpoutOutputApp full renderer (`?mode=output`). Off by default —
-  // see settings.ts experimental.outputWebRTC for full rationale.
-  function readExperimentalWebRTC(): boolean {
-    let flag = false;
-    const unsub = settings.subscribe((s) => { flag = !!s.experimental?.outputWebRTC; });
+  // Read the experimental output-transport flags once at the call
+  // site (synchronous get from the settings store). main.js applies
+  // the precedence ordering (zeroCopy > webrtc > legacy) — we just
+  // forward both bits.
+  //   experimentalZeroCopy → mounts OutputSharedTextureDisplayApp
+  //                          (`?mode=webgpu-display`). On by default.
+  //   experimentalWebRTC   → mounts OutputDisplayApp
+  //                          (`?mode=webrtc-display`). Escape hatch.
+  // Both off → SpoutOutputApp (`?mode=output`), legacy default.
+  // See settings.ts experimental.outputZeroCopy / outputWebRTC for
+  // the architectural rationale.
+  function readExperimentalTransports(): { experimentalWebRTC: boolean; experimentalZeroCopy: boolean } {
+    let webrtc = false;
+    let zeroCopy = false;
+    const unsub = settings.subscribe((s) => {
+      webrtc = !!s.experimental?.outputWebRTC;
+      zeroCopy = !!s.experimental?.outputZeroCopy;
+    });
     unsub();
-    return flag;
+    return { experimentalWebRTC: webrtc, experimentalZeroCopy: zeroCopy };
   }
 
   // Open output window — opens a draggable window (double-click to fullscreen)
   export async function openPopup(preferExternal: boolean = true) {
-    const experimentalWebRTC = readExperimentalWebRTC();
+    const { experimentalWebRTC, experimentalZeroCopy } = readExperimentalTransports();
+    const transportTag = experimentalZeroCopy ? ' [WebGPU zero-copy]' : (experimentalWebRTC ? ' [WebRTC]' : '');
     try {
       // Get available displays from Electron
       const displays: any[] = await invoke('get_displays');
@@ -97,9 +107,10 @@
         fullscreen: false,
         displayId: target.id,
         experimentalWebRTC,
+        experimentalZeroCopy,
       });
       isOpen = true;
-      console.log(`[Output] Window opened on display "${target.label}" (${winW}x${winH})${experimentalWebRTC ? ' [WebRTC]' : ''}`);
+      console.log(`[Output] Window opened on display "${target.label}" (${winW}x${winH})${transportTag}`);
     } catch (error) {
       console.error('Failed to create output window:', error);
       // Fallback: open without display info
@@ -109,6 +120,7 @@
           x: 100, y: 100,
           fullscreen: false,
           experimentalWebRTC,
+          experimentalZeroCopy,
         });
         isOpen = true;
       } catch (e2) {
@@ -119,11 +131,12 @@
 
   // Open fullscreen on external monitor (or primary if no external)
   export async function openFullscreenExternal() {
-    const experimentalWebRTC = readExperimentalWebRTC();
+    const { experimentalWebRTC, experimentalZeroCopy } = readExperimentalTransports();
+    const transportTag = experimentalZeroCopy ? ' [WebGPU zero-copy]' : (experimentalWebRTC ? ' [WebRTC]' : '');
     try {
-      const result: any = await invoke('output_fullscreen_external', { experimentalWebRTC });
+      const result: any = await invoke('output_fullscreen_external', { experimentalWebRTC, experimentalZeroCopy });
       isOpen = true;
-      console.log(`[Output] Fullscreen on display ${result.displayId}, external=${result.isExternal}${experimentalWebRTC ? ' [WebRTC]' : ''}`);
+      console.log(`[Output] Fullscreen on display ${result.displayId}, external=${result.isExternal}${transportTag}`);
     } catch (error) {
       console.error('Failed to open fullscreen output:', error);
     }

@@ -378,12 +378,51 @@ export interface ExperimentalSettings {
    *  When true, the output window mounts OutputDisplayApp: a
    *  presentation-only `<video srcObject>` fed by the editor's
    *  `canvas.captureStream(60)` over a same-process WebRTC peer.
-   *  Single renderer (editor), output is a dumb display surface.
-   *  Until the success-criteria sweep (1080p60 stable, 4K60 stable,
-   *  latency under 1-2 frames, no color shift, etc.) lands clean on
-   *  real hardware, this stays opt-in via dev preferences only;
-   *  flipping it on is the way we measure those criteria. */
+   *
+   *  Now superseded by `outputZeroCopy` below — kept as an escape
+   *  hatch in case the WebGPU presenter falls back to CPU on a
+   *  specific driver/GPU combo and we need to diff transports
+   *  in the field. The selection precedence is:
+   *      outputZeroCopy && WebGPU available  →  webgpu-display
+   *      outputWebRTC                         →  webrtc-display
+   *      else                                 →  output (legacy)
+   */
   outputWebRTC: boolean;
+
+  /** Zero-copy GPU output transport — the production target.
+   *
+   *  When true (default), the visible output window mounts
+   *  OutputSharedTextureDisplayApp: a WebGPU presenter that receives
+   *  VideoFrames from the editor via a cross-process MessagePort
+   *  (set up by main.js as a MessageChannelMain) and binds them via
+   *  `device.importExternalTexture({source: videoFrame})` for true
+   *  zero-copy, GPU-resident sampling on a fullscreen quad. Editor
+   *  side runs MediaStreamTrackProcessor on `canvas.captureStream(60)`
+   *  to read GPU-backed VideoFrames and ships them through the port.
+   *
+   *  Why this beats the WebRTC escape hatch:
+   *    - No encode/decode (WebRTC introduces VP9/H264 round-trip,
+   *      ~5-15ms latency + lossy compression at low bitrates)
+   *    - No format conversion (importExternalTexture binds the
+   *      GpuMemoryBuffer directly; WebRTC always lands in YUV420
+   *      and re-converts on display)
+   *    - True 4K60 with no quality drop on degraded encoders
+   *    - Multi-output ready: each presenter window calls
+   *      importExternalTexture on its own MessagePort, no extra cost
+   *    - Native compositor — modern Chromium media+WebGPU pipeline IS
+   *      what Resolume builds in C++. We just consume it through web
+   *      APIs.
+   *
+   *  Falls back to `outputWebRTC` (if also true) or to the legacy
+   *  SpoutOutputApp when WebGPU is unavailable (`webgpuCapability`
+   *  probe fails) or when MessagePortMain delivery fails.
+   *
+   *  Health monitoring: each VideoFrame's `format` field is logged on
+   *  the first 5 frames; `'NV12'` / `'I420'` indicate GPU-backed
+   *  zero-copy, `'BGRA'` indicates Chromium fell back to CPU readback.
+   *  The output's health badge surfaces this so the operator can spot
+   *  a degraded link mid-show. */
+  outputZeroCopy: boolean;
 }
 
 export interface AppSettings {
@@ -516,6 +555,12 @@ function createDefaultSettings(): AppSettings {
       // canvas.captureStream + RTCPeerConnection. Stays opt-in
       // until the success-criteria sweep proves out.
       outputWebRTC: false,
+      // S5: WebGPU + MediaStreamTrackProcessor + GPUExternalTexture.
+      // Default ON — this is the production zero-copy path. Falls
+      // back to outputWebRTC (if also on) or legacy SpoutOutputApp
+      // when the WebGPU capability probe says no or when the
+      // MessagePort handshake fails.
+      outputZeroCopy: true,
     },
   };
 }

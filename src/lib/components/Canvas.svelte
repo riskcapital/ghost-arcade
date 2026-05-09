@@ -31,6 +31,10 @@
   import { audioTextures } from '../audio/audioTextures';
   import { initStateBroadcast, destroyStateBroadcast } from '$lib/sync/stateBroadcast';
   import { startOutputPixelBroadcast, stopOutputPixelBroadcast } from '$lib/sync/outputPixelBroadcast';
+  import {
+    startOutputSharedTexturePresenter,
+    stopOutputSharedTexturePresenter,
+  } from '$lib/sync/outputSharedTexturePresenter';
   import { NativeRendererSync, getProjectOutputSize } from '$lib/sync/nativeRendererSync';
   import { hasWatermark } from '$lib/stores/license';
   import { fpsStore } from '$lib/stores/fps';
@@ -519,30 +523,50 @@
       initStateBroadcast('sender');
     }
 
-    // Experimental WebRTC output transport. When the
-    // `experimental.outputWebRTC` flag is on, the editor exposes its
-    // main canvas as a MediaStream and a same-process WebRTC peer
-    // serves it to the output window. The output window mounts
-    // OutputDisplayApp which is presentation-only — single renderer
-    // architecture, the pro pattern adapted to Electron. The flag
-    // gates editor-side broadcasting too: with the flag off the
-    // BroadcastChannel doesn't open and captureStream isn't called,
-    // so unflagged installs see zero overhead. Hard-gated to editor
-    // mode (output / OSR don't broadcast to themselves).
+    // Output transport reconcile. Three transports, one active at a
+    // time; the renderer picks based on settings flags and tears down
+    // the previous transport when switching.
+    //
+    //   outputZeroCopy → WebGPU presenter (MediaStreamTrackProcessor →
+    //                    cross-process MessagePort → importExternalTexture).
+    //                    True zero-copy GPU pipeline. Production target.
+    //   outputWebRTC   → Legacy same-process WebRTC peer + <video>.
+    //                    Escape hatch for drivers where the WebGPU path
+    //                    falls back to CPU.
+    //   neither        → No editor-side broadcast. Output window (if
+    //                    open) renders independently via SpoutOutputApp.
+    //
+    // Both transports are no-ops in OSR / output modes (we don't
+    // broadcast to ourselves).
     {
-      let outputWebRTCStarted = false;
-      const reconcileOutputWebRTC = (flagOn: boolean) => {
-        const wantOn = flagOn && !isOsrMode && !isOutputMode && !!canvas;
-        if (wantOn && !outputWebRTCStarted) {
-          startOutputPixelBroadcast(canvas, 60);
-          outputWebRTCStarted = true;
-        } else if (!wantOn && outputWebRTCStarted) {
-          stopOutputPixelBroadcast();
-          outputWebRTCStarted = false;
+      type Transport = 'zero-copy' | 'webrtc' | 'none';
+      let activeTransport: Transport = 'none';
+      const startTransport = (t: Transport) => {
+        if (t === 'zero-copy') startOutputSharedTexturePresenter(canvas, 60);
+        else if (t === 'webrtc') startOutputPixelBroadcast(canvas, 60);
+      };
+      const stopTransport = (t: Transport) => {
+        if (t === 'zero-copy') stopOutputSharedTexturePresenter();
+        else if (t === 'webrtc') stopOutputPixelBroadcast();
+      };
+      const reconcileTransport = (zeroCopy: boolean, webrtc: boolean) => {
+        const eligible = !isOsrMode && !isOutputMode && !!canvas;
+        let wantTransport: Transport = 'none';
+        if (eligible) {
+          if (zeroCopy) wantTransport = 'zero-copy';
+          else if (webrtc) wantTransport = 'webrtc';
         }
+        if (wantTransport === activeTransport) return;
+        if (activeTransport !== 'none') stopTransport(activeTransport);
+        if (wantTransport !== 'none') startTransport(wantTransport);
+        activeTransport = wantTransport;
+        console.log(`[Canvas] output transport set to: ${activeTransport}`);
       };
       outputWebRTCUnsub = settings.subscribe((s) => {
-        reconcileOutputWebRTC(!!s.experimental?.outputWebRTC);
+        reconcileTransport(
+          !!s.experimental?.outputZeroCopy,
+          !!s.experimental?.outputWebRTC,
+        );
       });
     }
 
@@ -1661,6 +1685,7 @@
       outputWebRTCUnsub = null;
     }
     stopOutputPixelBroadcast();
+    stopOutputSharedTexturePresenter();
 
     if (nativeRendererStatusTimer) {
       clearInterval(nativeRendererStatusTimer);
