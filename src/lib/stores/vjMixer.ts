@@ -188,6 +188,7 @@ export const vjOutputLayersNew = derived(vjMixer, ($vjMixer) => {
       svgContent: null,
       colorContent: null,
       lightPaintingContent: null,
+      advLightPaintingContent: null,
       textContent: null,
       splatContent: null,
       model3dContent: null,

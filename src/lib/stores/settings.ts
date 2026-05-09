@@ -329,6 +329,25 @@ export interface OutputSettings {
   outputCropWidth: number;   // 0.1..1
   outputCropHeight: number;  // 0.1..1
   outputShowCursor: boolean; // crosshair overlay on output window
+  /** Cursor style preset. Each renders differently:
+   *    crosshair  — + shape with center gap
+   *    circle     — hollow circle (good for finding things at a distance)
+   *    dot        — filled small dot (minimal interference with content)
+   *    reticle    — + with center gap + outer ring (sniper scope)
+   *    fullscreen — vertical + horizontal lines spanning the whole canvas
+   *                 (alignment work — every pixel of the cursor's row/col
+   *                 is visible) */
+  outputCursorStyle: 'crosshair' | 'circle' | 'dot' | 'reticle' | 'fullscreen';
+  /** Cursor diameter in pixels (CSS px on the output window).
+   *  16-128 reasonable. Smaller for macro projects. */
+  outputCursorSize: number;
+  /** Stroke thickness in pixels. 1 for hairline (macro projects),
+   *  4+ for high-visibility VJ output. Affects all styles. */
+  outputCursorThickness: number;
+  /** Cursor colour (hex string e.g. #ffffff). */
+  outputCursorColor: string;
+  /** Cursor opacity 0..1. */
+  outputCursorOpacity: number;
   // Dome projection
   domeEnabled: boolean;
   domeMode: 'angular' | 'stereographic' | 'orthographic' | 'equirectangular';
@@ -525,6 +544,11 @@ function createDefaultSettings(): AppSettings {
       outputCropWidth: 1,
       outputCropHeight: 1,
       outputShowCursor: false,
+      outputCursorStyle: 'crosshair',
+      outputCursorSize: 28,
+      outputCursorThickness: 2,
+      outputCursorColor: '#ffffff',
+      outputCursorOpacity: 0.85,
       // Dome projection defaults
       domeEnabled: false,
       domeMode: 'angular',

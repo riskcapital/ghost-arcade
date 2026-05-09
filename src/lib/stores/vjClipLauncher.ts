@@ -66,6 +66,37 @@ export interface VJClip {
   /** Live play/pause flag. Toggle from the VJ video-controls panel.
    *  Default true (clip auto-plays on first trigger, same as today). */
   isPlaying?: boolean;
+
+  // ── Per-clip transform (applied at composite time) ──
+  // These let the user fit a video into a layer's quad with full
+  // control over scale, position, rotation, and aspect handling
+  // — the same surface mapping-mode media layers expose, but per-
+  // clip so a single layer slot can host multiple content sizes.
+  // All optional so old projects load with sensible defaults
+  // (1.0 zoom, no offset, no rotation, fit:cover, opacity 1).
+
+  /** Source-zoom multiplier. 1 = native size, 2 = 2× zoomed in,
+   *  0.5 = zoomed out (more of the source visible / pillarboxed).
+   *  Independent of the layer-quad scale. */
+  zoom?: number;
+  /** How the source aspect maps into the layer quad:
+   *    cover    — fill quad, crop overflowing dimension
+   *    contain  — fit entirely, letterbox empty axis
+   *    fill     — stretch source to quad, ignore aspect
+   *    stretch  — alias for fill (label-friendly variant)
+   *  Default 'cover'. */
+  fit?: 'cover' | 'contain' | 'fill' | 'stretch';
+  /** Anchor point inside the source (0..1). 0.5,0.5 = centered.
+   *  Used together with fit:cover to choose which part of an over-
+   *  cropped source stays visible (e.g. anchorY=0 keeps the top). */
+  anchorX?: number;
+  anchorY?: number;
+  /** Per-clip rotation in degrees, applied around anchor. */
+  rotation?: number;
+  /** Per-clip opacity 0..1, multiplied with the layer's opacity at
+   *  composite time. Default 1. */
+  opacity?: number;
+
   // For three.js - iframe element for rendering
   iframeElement?: HTMLIFrameElement;
   // For AI-generated JS animations (Three.js or p5.js)
@@ -496,6 +527,10 @@ function createVJClipLauncherStore() {
   // needing access to the store closure scope.
   immediateTriggerClip = (layerIndex, columnIndex, deck) => {
     let didTrigger = false;
+    let isReclick = false;
+    let outgoingClip: VJClip | null = null;
+    let incomingClip: VJClip | null = null;
+
     update(state => {
       const targetGrid = pickGrid(state, deck);
       const targetLayerStates = pickLayerStates(state, deck);
@@ -504,9 +539,19 @@ function createVJClipLauncherStore() {
       if (!clip) return state;
 
       const current = newLayerStates[layerIndex].activeClip;
-      // Click-the-already-playing-clip is idempotent so users don't
-      // accidentally re-trigger and reset keyframe time mid-show.
-      if (current && current.id === clip.id) return state;
+      isReclick = !!(current && current.id === clip.id);
+      outgoingClip = !isReclick ? current : null;
+      incomingClip = clip;
+
+      // Re-clicking the currently-playing clip keeps STATE unchanged
+      // (so we don't reset keyframe time mid-show), but the video
+      // element below is still restarted to frame 0 — that's the
+      // explicit user expectation: every click on a clip starts it
+      // from the beginning, no exceptions.
+      if (isReclick) {
+        didTrigger = false;
+        return state;
+      }
 
       newLayerStates[layerIndex] = {
         ...newLayerStates[layerIndex],
@@ -517,6 +562,32 @@ function createVJClipLauncherStore() {
       const next = withDeck(state, deck, newLayerStates);
       return { ...next, stoppedAll: false };
     });
+
+    // VJ semantics: clicking a clip ALWAYS restarts it at frame 0,
+    // never resumes from where it last paused. Combined with pausing
+    // the outgoing clip on this same layer/deck, this stops the
+    // "videos play forever in the background and resume mid-stream"
+    // behaviour the user reported. Wrapped in try/catch because
+    // currentTime= can throw if the element is mid-load.
+    // Cast through the VJClip type — TS can't track assignments
+    // inside the update() closure across closure boundaries.
+    const inc = incomingClip as VJClip | null;
+    const out = outgoingClip as VJClip | null;
+    if (inc && inc.type === 'video' && inc.videoElement) {
+      try { inc.videoElement.currentTime = 0; } catch { /* */ }
+      if (inc.videoElement.paused) {
+        inc.videoElement.play().catch(() => { /* AbortError on rapid retrigger is fine */ });
+      }
+    }
+    // Pause the OUTGOING video so it doesn't keep decoding in the
+    // background. Only when it's a different element from the
+    // incoming clip's — same element (e.g. re-clicking same clip on
+    // the layer) doesn't get paused mid-restart.
+    if (out && out.type === 'video' && out.videoElement &&
+        out.videoElement !== inc?.videoElement) {
+      try { out.videoElement.pause(); } catch { /* */ }
+    }
+
     if (didTrigger) {
       keyframeTimeline.seek(0);
       keyframeTimeline.play();
@@ -1092,7 +1163,7 @@ function createVJClipLauncherStore() {
     // splat/model3d shape so the VJ video controls panel can write through to
     // the store without touching the live videoElement (the panel does that
     // separately on the DOM node).
-    updateActiveClipVideoProps(layerIndex: number, updates: Partial<Pick<VJClip, 'playbackMode' | 'playbackRate' | 'trimStart' | 'trimEnd' | 'isPlaying'>>, deck: VJDeck = 'A') {
+    updateActiveClipVideoProps(layerIndex: number, updates: Partial<Pick<VJClip, 'playbackMode' | 'playbackRate' | 'trimStart' | 'trimEnd' | 'isPlaying' | 'zoom' | 'fit' | 'anchorX' | 'anchorY' | 'rotation' | 'opacity'>>, deck: VJDeck = 'A') {
       update(state => {
         const targetLayerStates = pickLayerStates(state, deck);
         const targetGrid = pickGrid(state, deck);
@@ -2010,36 +2081,98 @@ export const vjOutputLayers = derived(
       // distinct layers (they'll otherwise collide in renderPlan
       // dedup / texture caches).
       const layerIdSuffix = activeLayer.bank ? `-${activeLayer.bank}` : '';
+
+      // Per-clip transforms — applied by REWRITING THE CORNERS of
+      // the layer's warp quad. The engine renders VJ layers through
+      // the warp-quad pipeline; layer.position/scale/rotation are
+      // bypassed for layers in 'corners' warp mode. So we bake the
+      // transforms into the corners directly:
+      //   1. Start with default unit-rect corners at ±0.5 from center
+      //   2. Scale by zoom (uniform scale around center)
+      //   3. Rotate by rotation degrees (around center)
+      //   4. Translate by (anchor - 0.5)
+      //   5. Re-anchor to (0.5, 0.5) and convert to corner format
+      // contentFit + opacity are still consumed via the existing
+      // shader uniforms (they're UV-based and per-layer-multiply,
+      // not corner-based).
+      const clipZoom = clip.type === 'video' ? (clip.zoom ?? 1) : 1;
+      const clipRotation = clip.type === 'video' ? (clip.rotation ?? 0) : 0;
+      const clipOpacity = clip.type === 'video' ? (clip.opacity ?? 1) : 1;
+      const ax = clip.type === 'video' ? (clip.anchorX ?? 0.5) : 0.5;
+      const ay = clip.type === 'video' ? (clip.anchorY ?? 0.5) : 0.5;
+      // Map VJ-friendly fit names to engine ContentFitMode.
+      let clipContentFit: 'stretch' | 'fill' | 'crop' | undefined;
+      if (clip.type === 'video') {
+        const f = clip.fit ?? 'cover';
+        clipContentFit = f === 'cover' ? 'fill' : f === 'contain' ? 'crop' : 'stretch';
+      }
+
+      // Corner computation. Engine corner space is [0,1]² with
+      // y=1 at top. We work in centered space (-0.5..0.5) for the
+      // matrix math, then re-translate to [0,1] for the engine.
+      const cosR = Math.cos((clipRotation * Math.PI) / 180);
+      const sinR = Math.sin((clipRotation * Math.PI) / 180);
+      // Anchor maps user 0..1 → quad offset from center in [-0.5..0.5].
+      // anchorX=0 means "anchor at left edge" → quad shifts LEFT by 0.5
+      // (so the right edge ends up at x=0.5 of canvas? actually that's
+      // "anchor at left edge of source maps to center of canvas"; for
+      // a more intuitive pan-the-content semantics we shift the OPPOSITE
+      // way so anchorX=1 reveals the left side of source).
+      const offX = (ax - 0.5);
+      const offY = (ay - 0.5);
+      const transformCorner = (cx: number, cy: number) => {
+        // cx,cy are corner positions in centered space ±0.5
+        // Apply zoom, rotate around center, translate by anchor
+        const sx = cx * clipZoom;
+        const sy = cy * clipZoom;
+        const rx = sx * cosR - sy * sinR;
+        const ry = sx * sinR + sy * cosR;
+        return { x: rx + 0.5 + offX, y: ry + 0.5 + offY };
+      };
+      // Default unit corners in centered space (-0.5..0.5). The
+      // top corners have cy=+0.5 because engine corner space has
+      // y=1 at the top, y=0 at the bottom — transformCorner adds
+      // 0.5 at the end so cy=+0.5 → y=1 (top) for identity. Hand-
+      // off into the engine's corner format is now direct.
+      const clipCorners = {
+        topLeft:     transformCorner(-0.5,  0.5),
+        topRight:    transformCorner( 0.5,  0.5),
+        bottomLeft:  transformCorner(-0.5, -0.5),
+        bottomRight: transformCorner( 0.5, -0.5),
+      };
+
       const layer: Layer = {
         id: `vj-layer-${vjLayerIndex}${layerIdSuffix}`,
         name: clip.name,
         type: layerType,
         visible: true,
         locked: false,
-        opacity: vjLayerOpacity,
+        opacity: vjLayerOpacity * clipOpacity,
         blendMode: activeLayer.blendMode,
         source,
         linesContent: null,
         svgContent: null,
         colorContent: null,
         lightPaintingContent: null,
+        advLightPaintingContent: null,
         textContent: null,
         splatContent: clip.type === 'splat' ? (clip.splatContent || createDefaultSplatContent()) : null,
         model3dContent: clip.type === 'model3d' ? (clip.model3dContent || createDefaultModel3DContent()) : null,
-        // Transform
+        // Transform identity — per-clip transforms are baked into
+        // `corners` below so the engine's warp pipeline applies them
+        // uniformly. position/scale/rotation are bypassed by the
+        // corner pipeline anyway.
         position: { x: 0, y: 0 },
         scale: { x: 1, y: 1 },
         rotation: 0,
         flipH: false,
         flipV: false,
-        // Warping - full screen quad with default corners
+        contentFit: clipContentFit,
+        // Warping - corners computed from per-clip zoom/anchor/rotation
+        // above; defaults to a full-screen unit quad when all transforms
+        // are at identity (zoom=1, anchor=0.5/0.5, rotation=0).
         warpMode: 'corners',
-        corners: {
-          topLeft: { x: 0, y: 1 },
-          topRight: { x: 1, y: 1 },
-          bottomLeft: { x: 0, y: 0 },
-          bottomRight: { x: 1, y: 0 },
-        },
+        corners: clipCorners,
         meshGrid: null,
         // No mask or crop
         mask: null,

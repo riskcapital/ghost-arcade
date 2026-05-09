@@ -564,6 +564,17 @@
               </svg>
               Light Painting
             </button>
+            <button onclick={() => { project.addAdvLightPaintingLayer(); showAddLayerMenu = false; }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="6" cy="6" r="2.5"/>
+                <circle cx="18" cy="9" r="1.5"/>
+                <circle cx="9" cy="17" r="2"/>
+                <circle cx="17" cy="18" r="1"/>
+                <path d="M6 8.5 Q9 13 9 15 M18 10.5 Q15 13 12 14"/>
+              </svg>
+              Adv Light Paint
+              <span style="margin-left:auto; font-size:9px; color:#6df; opacity:0.7">WebGPU</span>
+            </button>
             <button onclick={() => { project.addTextLayer(); showAddLayerMenu = false; }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="4 7 4 4 20 4 20 7"/>

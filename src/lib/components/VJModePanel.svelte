@@ -2563,6 +2563,12 @@
             {@const vTrimS = vClip.trimStart ?? 0}
             {@const vTrimE = vClip.trimEnd ?? 1}
             {@const vIsPlaying = vClip.isPlaying !== false}
+            {@const vZoom = vClip.zoom ?? 1}
+            {@const vFit = vClip.fit ?? 'cover'}
+            {@const vAnchorX = vClip.anchorX ?? 0.5}
+            {@const vAnchorY = vClip.anchorY ?? 0.5}
+            {@const vRotation = vClip.rotation ?? 0}
+            {@const vOpacity = vClip.opacity ?? 1}
             <div class="shader-params-panel video-params-panel">
               <div class="shader-params-panel-header">
                 <span class="shader-params-overlay-title">
@@ -2667,6 +2673,93 @@
                     <button class="vt-mode-btn" class:active={vMode === 'once'} onclick={() => vjSetPlaybackMode(selectedLayerIndex!, 'once')} title="Play Once">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
                       Once
+                    </button>
+                  </div>
+
+                  <!-- Per-clip transform: zoom, fit, anchor, rotation, opacity.
+                       Maps to VJClip.zoom/fit/anchorX/anchorY/rotation/opacity
+                       which Layer construction in vjOutputLayers translates to
+                       the engine's existing position/scale/rotation/opacity/
+                       contentFit fields. Each input writes immediately via
+                       vjClipLauncher.updateActiveClipVideoProps so the change
+                       is visible on the next frame. -->
+                  <div class="vt-transform">
+                    <div class="vt-section-title">Transform</div>
+
+                    <label class="vt-tf-row">
+                      <span class="vt-tf-label">Fit</span>
+                      <select
+                        class="vt-tf-select"
+                        value={vFit}
+                        onchange={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { fit: (e.target as HTMLSelectElement).value as any }, paramDeck)}
+                      >
+                        <option value="cover">Cover (fill + crop)</option>
+                        <option value="contain">Contain (letterbox)</option>
+                        <option value="fill">Fill (stretch)</option>
+                      </select>
+                    </label>
+
+                    <label class="vt-tf-row">
+                      <span class="vt-tf-label">Zoom</span>
+                      <input
+                        type="range"
+                        min="0.1" max="4" step="0.05"
+                        value={vZoom}
+                        oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { zoom: +(e.target as HTMLInputElement).value }, paramDeck)}
+                      />
+                      <span class="vt-tf-num">{vZoom.toFixed(2)}×</span>
+                    </label>
+
+                    <label class="vt-tf-row">
+                      <span class="vt-tf-label">Anchor X</span>
+                      <input
+                        type="range"
+                        min="0" max="1" step="0.01"
+                        value={vAnchorX}
+                        oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { anchorX: +(e.target as HTMLInputElement).value }, paramDeck)}
+                      />
+                      <span class="vt-tf-num">{vAnchorX.toFixed(2)}</span>
+                    </label>
+
+                    <label class="vt-tf-row">
+                      <span class="vt-tf-label">Anchor Y</span>
+                      <input
+                        type="range"
+                        min="0" max="1" step="0.01"
+                        value={vAnchorY}
+                        oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { anchorY: +(e.target as HTMLInputElement).value }, paramDeck)}
+                      />
+                      <span class="vt-tf-num">{vAnchorY.toFixed(2)}</span>
+                    </label>
+
+                    <label class="vt-tf-row">
+                      <span class="vt-tf-label">Rotation</span>
+                      <input
+                        type="range"
+                        min="-180" max="180" step="1"
+                        value={vRotation}
+                        oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { rotation: +(e.target as HTMLInputElement).value }, paramDeck)}
+                      />
+                      <span class="vt-tf-num">{vRotation}°</span>
+                    </label>
+
+                    <label class="vt-tf-row">
+                      <span class="vt-tf-label">Opacity</span>
+                      <input
+                        type="range"
+                        min="0" max="1" step="0.01"
+                        value={vOpacity}
+                        oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { opacity: +(e.target as HTMLInputElement).value }, paramDeck)}
+                      />
+                      <span class="vt-tf-num">{Math.round(vOpacity * 100)}%</span>
+                    </label>
+
+                    <button
+                      class="vt-tf-reset"
+                      onclick={() => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { zoom: 1, fit: 'cover', anchorX: 0.5, anchorY: 0.5, rotation: 0, opacity: 1 }, paramDeck)}
+                      title="Reset transform to defaults"
+                    >
+                      Reset transform
                     </button>
                   </div>
                 </div>
@@ -6689,6 +6782,71 @@
   .vt-modes {
     display: flex;
     gap: 2px;
+  }
+
+  /* Per-clip transform section — sits below the trim/playback row.
+     Compact rows with label + range + numeric readout. */
+  .vt-transform {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .vt-section-title {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: #777;
+    margin-bottom: 2px;
+  }
+  .vt-tf-row {
+    display: grid;
+    grid-template-columns: 56px 1fr 44px;
+    align-items: center;
+    gap: 8px;
+  }
+  .vt-tf-label {
+    font-size: 10px;
+    color: #aaa;
+  }
+  .vt-tf-num {
+    font-family: 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 10px;
+    color: #6df;
+    text-align: right;
+  }
+  .vt-tf-row input[type="range"] {
+    width: 100%;
+    accent-color: #6df;
+  }
+  .vt-tf-select {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #ddd;
+    padding: 3px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    cursor: pointer;
+    width: 100%;
+  }
+  .vt-tf-row:has(.vt-tf-select) {
+    grid-template-columns: 56px 1fr;
+  }
+  .vt-tf-reset {
+    margin-top: 4px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #aaa;
+    padding: 5px;
+    border-radius: 3px;
+    font-size: 10px;
+    cursor: pointer;
+  }
+  .vt-tf-reset:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
   }
   .vt-mode-btn {
     flex: 1;

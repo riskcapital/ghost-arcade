@@ -180,7 +180,7 @@ export interface JSAnimationSource {
 // 'stretch' = distort to fill (default), 'fill' = maintain aspect + crop overflow (CSS cover), 'crop' = maintain aspect + letterbox (CSS contain)
 export type ContentFitMode = 'stretch' | 'fill' | 'crop';
 
-export type LayerType = 'media' | 'lines' | 'svg' | 'color' | 'lightpainting' | 'text' | 'splat' | 'model3d' | 'screen' | 'group';
+export type LayerType = 'media' | 'lines' | 'svg' | 'color' | 'lightpainting' | 'adv-lightpaint' | 'text' | 'splat' | 'model3d' | 'screen' | 'group';
 
 // ── Group Layer ─────────────────────────────────────────────────────────────
 
@@ -657,6 +657,104 @@ export function createDefaultLightPaintingContent(): LightPaintingContent {
     isPlaying: false,
     isRecording: false,
     playbackPosition: 0,
+  };
+}
+
+// ============================================================================
+// ADV LIGHT PAINTING (WebGPU 3D PARTICLE PAINT) TYPES
+// ============================================================================
+//
+// A WebGPU-only layer type. Unlike the legacy `lightpainting` layer
+// (CPU stroke rasterisation, 13 brush types, animation timeline),
+// Adv Light Painting is a pure compute-shader showcase: the user
+// drags on the canvas, the renderer spawns thousands of physics-driven
+// particles in 3D that drip / pool / spray / splash. No CPU stroke
+// drawing happens — the brush IS the particle physics, configured by
+// the brush preset.
+//
+// Brush presets steer the compute shader's force model:
+//
+//   drip      — gravity-dominated; viscosity high; particles fall in
+//               coherent streams. Looks like dripping paint.
+//   water     — gravity + cohesion; particles attract weakly; pools
+//               form at rest. Approximates 2D fluid surface tension.
+//   smoke     — buoyant (negative gravity), low viscosity, expanding;
+//               wispy upward plumes.
+//   plasma    — chaotic curl-noise driven; bright additive particles
+//               that swirl. The original demo aesthetic.
+//   shader    — sample colour from a chosen ISF shader (future v2);
+//               for now identical to plasma but reads colour from a
+//               procedural pattern.
+
+export type AdvLightPaintBrush = 'drip' | 'water' | 'smoke' | 'plasma' | 'shader';
+
+export interface AdvLightPaintingContent {
+  /** Active brush preset. Defines the force model the compute shader
+   *  applies each frame. */
+  brush: AdvLightPaintBrush;
+
+  /** Particle population cap. The compute pipeline allocates this
+   *  many slots in the storage buffer; runtime always tracks the
+   *  full count even when most are dead. Higher = denser drips but
+   *  more GPU work. */
+  particleCount: number;            // 10000 - 200000
+
+  /** Particles spawned per frame while the user is actively
+   *  dragging. Higher = denser stroke. */
+  spawnRate: number;                // 10 - 500
+
+  /** Initial velocity randomness applied at spawn. */
+  spawnSpread: number;              // 0 - 1
+
+  /** Gravity vector strength (positive = downward). The brush preset
+   *  scales this to its preferred direction (e.g. smoke flips sign). */
+  gravity: number;                  // 0 - 2
+
+  /** Per-second velocity damping. Higher viscosity = slower-moving
+   *  particles + tighter clusters. */
+  viscosity: number;                // 0.5 - 0.99
+
+  /** Particle lifespan in seconds. Long lifespans produce visible
+   *  trails as particles fall. */
+  lifespanSec: number;              // 0.5 - 10
+
+  /** Brightness multiplier applied at the additive blend step.
+   *  Higher = more glow buildup where particles overlap. */
+  glow: number;                     // 0 - 4
+
+  /** Hue cycle rate in cycles per second. 0 = fixed colour, 0.05 =
+   *  one rainbow per ~20s. */
+  hueCycleSpeed: number;            // 0 - 1
+
+  /** Base colour (RGB 0-1). Hue cycling rotates from this base. */
+  baseColor: [number, number, number];
+
+  /** Particle billboard size in normalized canvas coords. */
+  size: number;                     // 0.001 - 0.05
+
+  /** Audio bass kick reactivity. 0 = ignore audio, 1 = full effect. */
+  audioReactivity: number;          // 0 - 1
+
+  /** Z-axis (depth) emission position when drawing. Negative = closer
+   *  to camera (larger), positive = further (smaller). */
+  emissionZ: number;                // -1 to 1
+}
+
+export function createDefaultAdvLightPaintingContent(): AdvLightPaintingContent {
+  return {
+    brush: 'drip',
+    particleCount: 80000,
+    spawnRate: 350,
+    spawnSpread: 0.4,
+    gravity: 0.7,
+    viscosity: 0.92,
+    lifespanSec: 5,
+    glow: 1.8,
+    hueCycleSpeed: 0.04,
+    baseColor: [1.0, 0.3, 0.82],   // hot pink default
+    size: 0.014,                    // bigger so particles are clearly visible
+    audioReactivity: 0.7,
+    emissionZ: 0,
   };
 }
 
@@ -1684,6 +1782,7 @@ export interface Layer {
   svgContent: SVGContent | null;  // For SVG layers
   colorContent: ColorContent | null;  // For solid color layers
   lightPaintingContent: LightPaintingContent | null;  // For light painting layers
+  advLightPaintingContent: AdvLightPaintingContent | null;  // For Adv Light Painting layers (WebGPU)
   textContent: TextContent | null;  // For text layers
   splatContent: SplatContent | null;  // For splat (point cloud/gaussian splat) layers
   model3dContent: Model3DContent | null;  // For 3D model layers
@@ -2478,7 +2577,7 @@ export function createLayer(id: string, name: string, type: LayerType = 'media')
     visible: true,
     locked: false,
     opacity: 1,
-    blendMode: type === 'lines' || type === 'svg' || type === 'lightpainting' || type === 'splat' || type === 'model3d' ? 'add' : 'normal',
+    blendMode: type === 'lines' || type === 'svg' || type === 'lightpainting' || type === 'adv-lightpaint' || type === 'splat' || type === 'model3d' ? 'add' : 'normal',
     source: null,
     linesContent: type === 'lines' ? createDefaultLinesContent() : null,
     svgContent: type === 'svg' ? createDefaultSVGContent() : null,
@@ -2489,6 +2588,7 @@ export function createLayer(id: string, name: string, type: LayerType = 'media')
       alpha: 1,
     } : null,
     lightPaintingContent: type === 'lightpainting' ? createDefaultLightPaintingContent() : null,
+    advLightPaintingContent: type === 'adv-lightpaint' ? createDefaultAdvLightPaintingContent() : null,
     textContent: type === 'text' ? createDefaultTextContent() : null,
     splatContent: type === 'splat' ? createDefaultSplatContent() : null,
     model3dContent: type === 'model3d' ? createDefaultModel3DContent() : null,
@@ -2539,6 +2639,10 @@ export function createColorLayer(id: string, name: string): Layer {
 
 export function createLightPaintingLayer(id: string, name: string): Layer {
   return createLayer(id, name, 'lightpainting');
+}
+
+export function createAdvLightPaintingLayer(id: string, name: string): Layer {
+  return createLayer(id, name, 'adv-lightpaint');
 }
 
 export function createTextLayer(id: string, name: string): Layer {
