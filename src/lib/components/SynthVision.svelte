@@ -3660,12 +3660,18 @@ void main() {
         manifestDefaults: shader.manifestDefaults,
       }));
     } else if (item) {
+      // For images, the src itself is a perfectly good preview. For
+      // videos, fall back to the captured poster (item.thumbnail) so
+      // the destination cell has something to render — otherwise the
+      // CSS background-image silently fails on a video URL.
+      const mediaThumbnail = item.type === 'image' ? item.src : (item.thumbnail || '');
       e.dataTransfer.setData('text/plain', JSON.stringify({
         type: 'media',
         mediaId: item.id,
         mediaName: item.name,
         mediaSrc: item.src,
         mediaType: item.type,
+        mediaThumbnail,
       }));
     }
     e.dataTransfer.effectAllowed = 'copy';
@@ -3706,6 +3712,7 @@ void main() {
           mediaName: data.mediaName,
           mediaSrc: data.mediaSrc,
           mediaType: data.mediaType,
+          mediaThumbnail: data.mediaThumbnail,
         };
         clipAssignments = { ...clipAssignments };
         clipsDirty = true;
@@ -3793,12 +3800,24 @@ void main() {
     const assignment = assignments[clipPos];
     if (!assignment) return { name: '', desc: 'EMPTY', isMedia: false, isAssigned: false };
     if (assignment.type === 'media') {
+      // Prefer the captured poster. Heal legacy assignments (saved
+      // before the mediaThumbnail field existed) by looking up the
+      // library item — works as long as the user hasn't cleared the
+      // library since saving the preset. For images we ALSO fall back
+      // to mediaSrc, which is itself a valid CSS background-image.
+      let thumb = assignment.mediaThumbnail;
+      if (!thumb && assignment.mediaId) {
+        const libItem = $mediaLibrary.find(m => m.id === assignment.mediaId);
+        thumb = libItem?.thumbnail
+          || (libItem?.type === 'image' ? libItem.src : undefined);
+      }
+      if (!thumb && assignment.mediaType === 'image') thumb = assignment.mediaSrc;
       return {
         name: assignment.mediaName || 'Media',
         desc: assignment.mediaType === 'video' ? 'VIDEO' : 'IMAGE',
         isMedia: true,
         isAssigned: true,
-        thumbnail: assignment.mediaSrc,
+        thumbnail: thumb,
       };
     }
     return {

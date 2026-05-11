@@ -220,9 +220,12 @@
         const isVJVideoLayer =
           layer.source.type === 'video' &&
           typeof layer.id === 'string' && layer.id.startsWith('vj-layer-');
+        // Mirror the cache-key shape used by updateTexturesSync — VJ
+        // video layers key by clip.id (= source.id) so two clips holding
+        // the same source file get distinct cache entries.
         const textureCacheKey =
           (isAIGenerated || isSynthVision) ? layer.source.id
-          : isVJVideoLayer ? `${layer.id}:${layer.source.src}`
+          : isVJVideoLayer ? `${layer.id}:${layer.source.id}`
           : layer.source.src;
         const isShader = layer.source.type === 'shader';
         const lookupKey = isShader ? `${layer.id}:${textureCacheKey}` : textureCacheKey;
@@ -1637,13 +1640,26 @@
       // If we shared a URL-keyed cache between the two, VJ layers would
       // get back a texture wrapping mapping-mode's videoElement —
       // visible as a frozen frame from whatever the mapping clip last
-      // sampled. Namespacing by layer.id + src keeps them isolated.
+      // sampled.
+      //
+      // CRITICAL: namespace by layer.source.id (= clip.id) NOT
+      // layer.source.src. A common workflow is having the same video
+      // file on a Performer key AND in a regular VJ deck cell — both
+      // refer to the same blob URL, but each has its own clip.id and
+      // its own HTMLVideoElement. URL-keyed caching collided them: the
+      // first-loaded VideoTexture got returned for both, leaving the
+      // second clip silently bound to the FIRST clip's videoElement.
+      // Performer triggers then appeared dead because the cached
+      // texture was wrapping the deck-clip's element, not the
+      // performer's. Switching to id keys gives each clip its own
+      // entry; the cap stays small via the pinned-set walk in
+      // evictTextureCache.
       const isVJVideoLayer =
         layer.source.type === 'video' &&
         typeof layer.id === 'string' && layer.id.startsWith('vj-layer-');
       const textureCacheKey =
         (isAIGenerated || isSynthVision) ? layer.source.id
-        : isVJVideoLayer ? `${layer.id}:${layer.source.src}`
+        : isVJVideoLayer ? `${layer.id}:${layer.source.id}`
         : layer.source.src;
       // Layer-specific cache key for shader instances (which may have per-layer state)
       const shaderCacheKey = `${layer.id}:${textureCacheKey}`;

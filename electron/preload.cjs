@@ -47,6 +47,13 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'output_toggle_fullscreen',
   'output_fullscreen_external',
   'output_set_cursor',
+  // Output display info — used by App.matchOutputDisplayResolution to
+  // resize the project to the external monitor's native resolution
+  // before fullscreening. Without this whitelisting the IPC fails,
+  // matchOutputDisplayResolution silently no-ops, and the first
+  // fullscreen click presents a wrong-sized canvas (looks black) until
+  // a second click recovers via the resize-on-window-show path.
+  'get_output_display_info',
   // Ping
   'ping',
   // Error reporting
