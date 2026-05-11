@@ -416,6 +416,34 @@ export interface ExperimentalSettings {
   outputZeroCopy: boolean;
 }
 
+/**
+ * Performance settings — user-facing knobs to dial in the editor for
+ * weaker hardware. Defaults match the historical full-quality
+ * behaviour so capable machines see no change; users with integrated
+ * GPUs / older laptops can step these down via the Settings →
+ * Performance panel until the app feels smooth. All apply at runtime
+ * (no restart) by reading the live store value at the relevant hot
+ * path. Output Stream changes apply when the output window opens.
+ */
+export interface PerformanceSettings {
+  /** Long-edge resolution cap for the VJ preview canvas (px). 0 = no
+   *  cap (match main canvas — historical default). */
+  previewMaxDim: number;
+  /** Target refresh rate for the VJ preview loop. */
+  previewFrameRate: 60 | 30 | 15;
+  /** WebRTC output stream framerate. */
+  outputFrameRate: 60 | 30 | 24;
+  /** Max bitrate for the WebRTC output encoder (bps). */
+  outputMaxBitrate: number;
+  /** How the encoder degrades under load. */
+  outputDegradationPreference: 'maintain-resolution' | 'maintain-framerate' | 'balanced';
+  /** Preferred WebRTC video codec. */
+  outputCodecPreference: 'auto' | 'h264' | 'vp8';
+  /** Editor render-loop FPS cap. 0 = uncapped (match display refresh).
+   *  Big win on high-refresh monitors when the output is 60Hz. */
+  editorMaxFps: 0 | 30 | 60;
+}
+
 export interface AppSettings {
   recording: RecordingSettings;
   output: OutputSettings;
@@ -423,6 +451,7 @@ export interface AppSettings {
   ai: AISettings;
   defaultLayerShader: DefaultLayerShader;
   experimental: ExperimentalSettings;
+  performance: PerformanceSettings;
 }
 
 // Check which formats are supported by this browser
@@ -552,6 +581,17 @@ function createDefaultSettings(): AppSettings {
       // WebRTC presenter.
       outputZeroCopy: false,
     },
+    performance: {
+      // Defaults match the historical full-quality behaviour. Users on
+      // weak hardware step these down via Settings → Performance.
+      previewMaxDim: 0,               // 0 = no cap (match main canvas)
+      previewFrameRate: 60,
+      outputFrameRate: 60,
+      outputMaxBitrate: 80_000_000,   // 80 Mbps
+      outputDegradationPreference: 'maintain-resolution',
+      outputCodecPreference: 'auto',
+      editorMaxFps: 0,                // 0 = uncapped (match rAF / refresh rate)
+    },
   };
 }
 
@@ -667,6 +707,10 @@ function loadSettings(): AppSettings {
         experimental: {
           ...defaults.experimental,
           ...(parsed.experimental || {}),
+        },
+        performance: {
+          ...defaults.performance,
+          ...(parsed.performance || {}),
         },
       };
 

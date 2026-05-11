@@ -2,6 +2,55 @@
 
 ---
 
+## v0.6.3 — Performance Settings Tab + Integrated-GPU Banner (May 2026)
+
+### Added
+
+- **Settings → Performance tab.** Dedicated panel for users on weaker
+  hardware to tune the editor until it feels smooth. Defaults match
+  the historical full-quality behaviour so capable machines see no
+  change. All settings apply live (no restart).
+    - Render Quality: Shader Quality (moved here from Output)
+    - Editor Render: Frame rate cap (Uncapped / 60 / 30) — big win on
+      high-refresh monitors where the projector is 60 Hz
+    - VJ Preview: Resolution cap (Full / 1280 / 960 / 640 / 480 px)
+      + Refresh rate (60 / 30 / 15 fps)
+    - Output Stream: Frame rate (60 / 30 / 24 fps), Max bitrate (80 /
+      40 / 20 / 10 Mbps), Quality vs Smoothness (maintain resolution /
+      framerate / balanced), Video codec (Auto / Force H.264 / Force
+      VP8 — routes through `RTCRtpTransceiver.setCodecPreferences`)
+    - Video Decoding: live `MediaCapabilities` probe of H.264 / HEVC /
+      VP9 / AV1 → hw / sw / not supported
+    - Help link to https://ghostarcade.live/docs/performance
+
+- **Integrated-GPU warning banner.** WebGL renderer string probe on
+  startup. If it matches Intel HD/UHD/Iris, Microsoft Basic Render,
+  llvmpipe, surface a yellow banner with three actions: Tune
+  Performance (opens Settings → Performance via hash routing),
+  Dismiss, Don't show again. Most "app is laggy" reports trace back
+  to laptops on the wrong GPU.
+
+### Fixed
+
+- **Resize guard on engine.** Canvas's reactive `$project` block was
+  calling `engine.resize` + reallocating shader/SVG render targets on
+  every project store update (layer adds, name edits, anything). Now
+  bails when project dimensions are unchanged.
+
+- **preserveDrawingBuffer: false** on editor canvas. Was true for
+  one-shot thumbnail captures, but the cost was paid on every paint.
+  Removed unconditionally.
+
+### Changed
+
+- **Floating output-window status badge** no longer permanently
+  displays the FPS readout when output is configured to run below
+  50fps. Now only surfaces on genuine fault states: no-link (WebRTC)
+  or CPU fallback (WebGPU zero-copy). Press-S stats overlay still
+  works for users who want the numbers.
+
+---
+
 ## v0.6.2 — VJ Video Controls Panel + Performer Thumbnails + Fullscreen Fix (May 2026)
 
 ### Fixed
