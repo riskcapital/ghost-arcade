@@ -1,5 +1,26 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { settings, getSupportedFormats, COLOR_SCHEMES, CLAUDE_MODELS, GEMINI_MODELS, VEO_MODELS, LUMA_MODELS, DEFAULT_LAYER_SHADERS, type RecordingSettings, type OutputSettings, type ColorSchemeId, type FluidQualityMode, type ShaderQualityMode, type ShaderAIProvider, type VideoAIProvider } from '../stores/settings';
+  import {
+    probeDecodeSupport,
+    probeEncodeSupport,
+    formatDecodeSupport,
+    type CodecDecodeReport,
+    type CodecEncodeReport,
+  } from '../utils/codecProbe';
+
+  // Codec capability probe results — populated on Performance tab mount.
+  // Lazily probed so the panel doesn't pay the cost when the user
+  // never opens the tab.
+  let codecDecode: CodecDecodeReport | null = null;
+  let codecEncode: CodecEncodeReport | null = null;
+  let codecProbed = false;
+  async function runCodecProbe() {
+    if (codecProbed) return;
+    codecProbed = true;
+    codecEncode = probeEncodeSupport();
+    codecDecode = await probeDecodeSupport();
+  }
   import { validateAPIKey, validateLumaKey } from '../api/ai-client';
   import { updateInfo } from '../stores/updateChecker';
   import { updateModalOpen } from '../stores/uiState';
@@ -124,7 +145,28 @@
   }
 
   // Settings tab navigation
-  let activeTab: 'general' | 'output' | 'midi' | 'ai' | 'license' = 'general';
+  let activeTab: 'general' | 'output' | 'performance' | 'midi' | 'ai' | 'license' = 'general';
+
+  // Auto-select a tab from window.location.hash on open. Lets the
+  // integrated-GPU warning banner drop the user directly into the
+  // Performance tab without an extra click.
+  onMount(() => {
+    const h = (typeof window !== 'undefined' ? window.location.hash : '').replace(/^#/, '');
+    if (h === 'performance' || h === 'output' || h === 'midi' || h === 'general' || h === 'ai' || h === 'license') {
+      activeTab = h as typeof activeTab;
+      try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch { /* */ }
+    }
+  });
+  $: if (isOpen && typeof window !== 'undefined') {
+    const h = window.location.hash.replace(/^#/, '');
+    if (h === 'performance' || h === 'output' || h === 'midi' || h === 'general' || h === 'ai' || h === 'license') {
+      activeTab = h as typeof activeTab;
+      try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch { /* */ }
+    }
+  }
+
+  // Run the codec probe the first time the Performance tab is opened.
+  $: if (activeTab === 'performance' && !codecProbed) runCodecProbe();
 
   // License panel state
   let licenseOpen = false;
@@ -381,6 +423,7 @@
       <div class="settings-tabs">
         <button class="settings-tab" class:active={activeTab === 'general'} onclick={() => activeTab = 'general'}>General</button>
         <button class="settings-tab" class:active={activeTab === 'output'} onclick={() => activeTab = 'output'}>Output</button>
+        <button class="settings-tab" class:active={activeTab === 'performance'} onclick={() => activeTab = 'performance'}>Performance</button>
         <button class="settings-tab" class:active={activeTab === 'midi'} onclick={() => activeTab = 'midi'}>MIDI</button>
         <button class="settings-tab" class:active={activeTab === 'ai'} onclick={() => activeTab = 'ai'}>AI</button>
         <button class="settings-tab" class:active={activeTab === 'license'} onclick={() => activeTab = 'license'}>
@@ -1244,6 +1287,185 @@
           {/if}
         </section>
         {/if}
+
+        {:else if activeTab === 'performance'}
+        <!-- Performance Tab — opt-in knobs for users on weaker hardware.
+             Defaults match the historical full-quality behaviour so
+             capable machines see no change. Anything users dial down
+             here applies live (no restart) by reading the settings
+             store at the relevant hot path. -->
+        <section class="settings-section">
+          <div class="setting-row" style="border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 12px;">
+            <div class="setting-label" style="flex: 1;">
+              <span class="label-text" style="color: #BB86FC;">Tune the editor for your hardware</span>
+              <span class="label-hint" style="line-height: 1.5;">
+                If the app feels laggy, step these down until it feels smooth. None of these change your output content — only how the editor renders the preview and how the output stream encodes. Capable machines should leave everything at the defaults.
+                <br/><br/>
+                <a href="https://ghostarcade.live/docs/performance" target="_blank" rel="noopener noreferrer"
+                   style="color: #BB86FC; text-decoration: underline; font-weight: 600;">
+                  Full guide: optimizing Ghost Arcade for your machine →
+                </a>
+              </span>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3>Render Quality</h3>
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Shader Quality</span>
+              <span class="label-hint">Internal render resolution for shader layers. Full = native; lower scales down then upscales for display.</span>
+            </div>
+            <select value={$settings.ui.shaderQuality} onchange={handleShaderQualityChange}>
+              <option value="full">Full</option>
+              <option value="high">High (0.75x)</option>
+              <option value="medium">Medium (0.5x)</option>
+              <option value="low">Low (0.25x)</option>
+            </select>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3>Editor Render</h3>
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Editor Frame Rate Cap</span>
+              <span class="label-hint">
+                Limits how many frames per second the editor renders. Projectors are almost always 60Hz — rendering at 120/144/165 Hz on a high-refresh monitor is wasted GPU. Cap to 60 to free up budget. Input remains responsive regardless. Applies to mapping mode too.
+              </span>
+            </div>
+            <select value={String($settings.performance.editorMaxFps)}
+              onchange={(e) => settings.update(s => ({ ...s, performance: { ...s.performance, editorMaxFps: parseInt((e.target as HTMLSelectElement).value) as 0 | 30 | 60 } }))}>
+              <option value="0">Uncapped (match display)</option>
+              <option value="60">60 fps</option>
+              <option value="30">30 fps</option>
+            </select>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3>VJ Preview</h3>
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Preview Resolution</span>
+              <span class="label-hint">Long-edge cap for the VJ mode preview canvas. Lower frees GPU for the actual render. Doesn't affect what gets sent to the output.</span>
+            </div>
+            <select value={String($settings.performance.previewMaxDim)}
+              onchange={(e) => settings.update(s => ({ ...s, performance: { ...s.performance, previewMaxDim: parseInt((e.target as HTMLSelectElement).value) } }))}>
+              <option value="0">Full (match canvas)</option>
+              <option value="1280">1280 px (720p)</option>
+              <option value="960">960 px</option>
+              <option value="640">640 px (recommended on integrated GPU)</option>
+              <option value="480">480 px (minimum)</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Preview Refresh Rate</span>
+              <span class="label-hint">Frames per second for the preview canvas. 30fps is enough to monitor; 15 frees a lot of budget on weak hardware.</span>
+            </div>
+            <select value={String($settings.performance.previewFrameRate)}
+              onchange={(e) => settings.update(s => ({ ...s, performance: { ...s.performance, previewFrameRate: parseInt((e.target as HTMLSelectElement).value) as 60 | 30 | 15 } }))}>
+              <option value="60">60 fps</option>
+              <option value="30">30 fps</option>
+              <option value="15">15 fps</option>
+            </select>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3>Output Stream</h3>
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Output Frame Rate</span>
+              <span class="label-hint">Encoder rate for the output window. 60 = silky for fast motion; 30 = standard projector cadence; 24 = lightest encode + cinematic.</span>
+            </div>
+            <select value={String($settings.performance.outputFrameRate)}
+              onchange={(e) => settings.update(s => ({ ...s, performance: { ...s.performance, outputFrameRate: parseInt((e.target as HTMLSelectElement).value) as 60 | 30 | 24 } }))}>
+              <option value="60">60 fps</option>
+              <option value="30">30 fps</option>
+              <option value="24">24 fps</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Max Bitrate</span>
+              <span class="label-hint">Encoder bitrate ceiling. Same-process loopback so the rate doesn't go on a wire — high = encoder runs near-lossless, low = encoder works much less.</span>
+            </div>
+            <select value={String($settings.performance.outputMaxBitrate)}
+              onchange={(e) => settings.update(s => ({ ...s, performance: { ...s.performance, outputMaxBitrate: parseInt((e.target as HTMLSelectElement).value) } }))}>
+              <option value="80000000">High — 80 Mbps</option>
+              <option value="40000000">Medium — 40 Mbps</option>
+              <option value="20000000">Low — 20 Mbps</option>
+              <option value="10000000">Minimum — 10 Mbps</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Quality vs Smoothness</span>
+              <span class="label-hint">How the encoder degrades under load: keep pixels (drop fps), keep smoothness (drop pixels), or let WebRTC decide.</span>
+            </div>
+            <select value={$settings.performance.outputDegradationPreference}
+              onchange={(e) => settings.update(s => ({ ...s, performance: { ...s.performance, outputDegradationPreference: (e.target as HTMLSelectElement).value as 'maintain-resolution' | 'maintain-framerate' | 'balanced' } }))}>
+              <option value="maintain-resolution">Maintain Resolution</option>
+              <option value="maintain-framerate">Maintain Frame Rate</option>
+              <option value="balanced">Balanced</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Video Codec</span>
+              <span class="label-hint">
+                Auto picks VP9 first (best quality/bitrate). Force H.264 if your machine has hardware H.264 — usually a big perf win.
+                {#if codecEncode}
+                  <br/>Available on this machine: {[codecEncode.vp9 && 'VP9', codecEncode.h264 && 'H.264', codecEncode.vp8 && 'VP8', codecEncode.av1 && 'AV1'].filter(Boolean).join(' · ') || 'none detected'}.
+                {/if}
+              </span>
+            </div>
+            <select value={$settings.performance.outputCodecPreference}
+              onchange={(e) => settings.update(s => ({ ...s, performance: { ...s.performance, outputCodecPreference: (e.target as HTMLSelectElement).value as 'auto' | 'h264' | 'vp8' } }))}>
+              <option value="auto">Auto (recommended)</option>
+              <option value="h264">Force H.264</option>
+              <option value="vp8">Force VP8 (compatibility)</option>
+            </select>
+          </div>
+          <div class="setting-row" style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 8px; margin-top: 4px;">
+            <div class="setting-label" style="flex: 1;">
+              <span class="label-hint" style="opacity: 0.7;">
+                <strong>Apply on next output-window open.</strong> Stream-tuning settings (framerate / bitrate / codec) take effect when the output window opens — close and reopen the output for changes to apply.
+              </span>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3>Video Decoding (read-only)</h3>
+          <div class="setting-row">
+            <div class="setting-label" style="flex: 1;">
+              <span class="label-hint" style="line-height: 1.7;">
+                {#if codecDecode}
+                  <strong>H.264:</strong> <span style:color={codecDecode.h264 === 'hw' ? '#4caf50' : codecDecode.h264 === 'sw' ? '#fbbf24' : '#999'}>{formatDecodeSupport(codecDecode.h264)}</span>
+                  &nbsp;·&nbsp;
+                  <strong>HEVC:</strong> <span style:color={codecDecode.hevc === 'hw' ? '#4caf50' : codecDecode.hevc === 'sw' ? '#fbbf24' : '#999'}>{formatDecodeSupport(codecDecode.hevc)}</span>
+                  &nbsp;·&nbsp;
+                  <strong>VP9:</strong> <span style:color={codecDecode.vp9 === 'hw' ? '#4caf50' : codecDecode.vp9 === 'sw' ? '#fbbf24' : '#999'}>{formatDecodeSupport(codecDecode.vp9)}</span>
+                  &nbsp;·&nbsp;
+                  <strong>AV1:</strong> <span style:color={codecDecode.av1 === 'hw' ? '#4caf50' : codecDecode.av1 === 'sw' ? '#fbbf24' : '#999'}>{formatDecodeSupport(codecDecode.av1)}</span>
+                  <br/><br/>
+                  For best playback performance, re-encode your video clips with a codec your machine decodes in <strong style="color: #4caf50;">hardware</strong>.
+                  <a href="https://ghostarcade.live/docs/performance#video-codecs" target="_blank" rel="noopener noreferrer"
+                     style="color: #BB86FC; text-decoration: underline;">
+                    See ffmpeg recipes →
+                  </a>
+                {:else}
+                  Probing decode capabilities…
+                {/if}
+              </span>
+            </div>
+          </div>
+        </section>
+
 
         {:else if activeTab === 'midi'}
         <!-- MIDI Settings Section -->

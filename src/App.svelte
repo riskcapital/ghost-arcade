@@ -101,6 +101,16 @@
 
   // GPU info state (populated after engine init)
   let gpuInfo: { renderer: string; vendor: string; isIntegrated: boolean } | null = null;
+  // Persisted "user has seen the integrated-GPU warning" flag so we
+  // don't nag on every launch.
+  const INTEGRATED_GPU_BANNER_DISMISSED_KEY = 'ga.integratedGpuBannerDismissed';
+  let showIntegratedGpuBanner = false;
+  function dismissIntegratedGpuBanner(persist: boolean) {
+    showIntegratedGpuBanner = false;
+    if (persist && typeof window !== 'undefined') {
+      try { window.localStorage?.setItem(INTEGRATED_GPU_BANNER_DISMISSED_KEY, '1'); } catch { /* */ }
+    }
+  }
   async function checkGPU() {
     // First try native D3D11 renderer status (this is the real GPU for shader rendering)
     try {
@@ -124,6 +134,12 @@
     const engine = canvasComponent?.getEngine();
     if (engine) {
       gpuInfo = engine.getGPUInfo();
+    }
+    // Surface a one-time warning if we're running on integrated /
+    // software graphics. Gets users to Settings → Performance.
+    if (gpuInfo?.isIntegrated && typeof window !== 'undefined') {
+      const dismissed = window.localStorage?.getItem(INTEGRATED_GPU_BANNER_DISMISSED_KEY);
+      if (!dismissed) showIntegratedGpuBanner = true;
     }
   }
   // Check GPU after a short delay to let native renderer initialize
@@ -3337,6 +3353,35 @@
   <MobileApp />
 {:else}
   <div class="app">
+    <!-- Integrated/software GPU warning banner. Surfaces ONCE per
+         install when the detected WebGL renderer string matches an
+         integrated/software pattern. Most "app is laggy" reports
+         trace back to laptops running on the wrong GPU on Windows. -->
+    {#if showIntegratedGpuBanner && gpuInfo}
+      <div class="gpu-warning-banner" role="alert">
+        <div class="gpu-warning-icon" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <circle cx="12" cy="17" r="1" fill="currentColor"/>
+          </svg>
+        </div>
+        <div class="gpu-warning-body">
+          <strong>Running on integrated graphics</strong>
+          <span class="gpu-warning-detail">Detected: <code>{gpuInfo.renderer}</code>. For smoother playback you can either switch to your dedicated GPU in system settings, or dial down the editor's performance settings to match.</span>
+          <a class="gpu-warning-link"
+             href="https://ghostarcade.live/docs/performance"
+             target="_blank"
+             rel="noopener noreferrer">Performance guide →</a>
+        </div>
+        <div class="gpu-warning-actions">
+          <button class="gpu-warning-dismiss persist" onclick={() => { showSettings = true; window.location.hash = '#performance'; }} title="Open Settings → Performance">Tune Performance</button>
+          <button class="gpu-warning-dismiss" onclick={() => dismissIntegratedGpuBanner(false)} title="Dismiss for this session">Dismiss</button>
+          <button class="gpu-warning-dismiss" onclick={() => dismissIntegratedGpuBanner(true)} title="Never show this again">Don't show again</button>
+        </div>
+      </div>
+    {/if}
+
     <!-- Header / Toolbar -->
     <header class="toolbar">
       <div class="toolbar-left">
@@ -4812,6 +4857,47 @@
     padding: 2px 6px;
     border-radius: 3px;
   }
+
+  /* ─── Integrated-GPU warning banner ───────────────────────────── */
+  .gpu-warning-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    background: linear-gradient(90deg, rgba(245, 158, 11, 0.18), rgba(245, 158, 11, 0.08));
+    border-bottom: 1px solid rgba(245, 158, 11, 0.35);
+    color: #fde68a;
+    font-size: 12.5px;
+    line-height: 1.4;
+  }
+  .gpu-warning-icon { flex: 0 0 auto; color: #fbbf24; display: flex; align-items: center; }
+  .gpu-warning-body { flex: 1 1 auto; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; }
+  .gpu-warning-body strong { color: #fef3c7; }
+  .gpu-warning-detail { color: #fde68a; opacity: 0.9; }
+  .gpu-warning-detail code {
+    font-family: 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 11px;
+    background: rgba(0, 0, 0, 0.25);
+    padding: 1px 5px;
+    border-radius: 3px;
+    color: #fef3c7;
+  }
+  .gpu-warning-link { color: #fbbf24; text-decoration: underline; font-weight: 600; }
+  .gpu-warning-link:hover { color: #fde68a; }
+  .gpu-warning-actions { flex: 0 0 auto; display: flex; gap: 6px; }
+  .gpu-warning-dismiss {
+    background: rgba(0, 0, 0, 0.25);
+    color: #fef3c7;
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .gpu-warning-dismiss:hover { background: rgba(0, 0, 0, 0.4); border-color: rgba(245, 158, 11, 0.55); }
+  .gpu-warning-dismiss.persist { background: rgba(245, 158, 11, 0.18); }
+  .gpu-warning-dismiss.persist:hover { background: rgba(245, 158, 11, 0.3); }
 
   .gpu-indicator {
     font-size: 10px;

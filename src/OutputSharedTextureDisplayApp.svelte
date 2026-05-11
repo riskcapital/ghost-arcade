@@ -681,11 +681,16 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     if (healthFps < 50) return '#ffb300';
     return 'rgba(0, 0, 0, 0)';   // invisible when healthy
   })();
-  $: badgeShow = initStatus !== 'running' || cpuFallback || healthFps < 50;
+  // Pre-v0.6.3 this also fired when `healthFps < 50`, but users
+  // running output at lower configured framerates (Settings →
+  // Performance) saw it permanently — distracting and non-actionable.
+  // Keep the badge for genuine fault states only: init failure or
+  // CPU fallback. Press-S stats overlay covers diagnostic need.
+  $: badgeShow = initStatus !== 'running' || cpuFallback;
   $: badgeText = (() => {
     if (initStatus !== 'running') return '●  no link';
     if (cpuFallback) return `●  CPU fallback (${lastFormat})`;
-    return `●  ${healthFps.toFixed(0)}fps`;
+    return '';
   })();
 </script>
 
@@ -740,7 +745,6 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 {#if badgeShow}
   <div class="health-badge" style="background: {badgeColor};">
     {badgeText}
-    <span class="health-hint">press S for stats</span>
   </div>
 {/if}
 
