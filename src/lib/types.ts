@@ -2124,6 +2124,12 @@ export interface SVClipAssignment {
   mediaName?: string;
   mediaSrc?: string;
   mediaType?: 'video' | 'image';
+  // Pre-rendered preview for the key cell. For images this is just the
+  // src (browsers happily render images as CSS background-image). For
+  // videos we capture a poster-frame at library-import time and stash
+  // it here — pre-fix the cell tried to use the video URL as a CSS
+  // background and rendered nothing because video can't be a CSS image.
+  mediaThumbnail?: string;
 }
 
 // SynthVision Keyboard Preset - Saved keyboard layout with clip assignments

@@ -45,8 +45,22 @@ export interface VJClip {
   // For shaders
   shaderCode?: string;
   shaderValues?: Record<string, any>;
-  // For videos
+  // For videos. videoElement is the runtime <video>; the other fields
+  // mirror MediaSource's playback controls so the VJ video panel can
+  // drive pause/restart/speed/trim/loop the same way the mapping-mode
+  // LayerPanel does. Defaults match the historical behavior (loop on,
+  // 1× speed, full trim range, isPlaying true on first trigger).
   videoElement?: HTMLVideoElement;
+  /** 'loop' | 'once'. Loop is the historical default. */
+  playbackMode?: 'loop' | 'once';
+  /** 0.25 / 0.5 / 1 / 1.5 / 2 / 4. Maps to `videoElement.playbackRate`. */
+  playbackRate?: number;
+  /** 0..1 fraction of duration. Default 0 (start of source). */
+  trimStart?: number;
+  /** 0..1. Default 1 (end of source). */
+  trimEnd?: number;
+  /** Live play/pause flag. Default true (clip auto-plays on first trigger). */
+  isPlaying?: boolean;
   // For three.js - iframe element for rendering
   iframeElement?: HTMLIFrameElement;
   // For AI-generated JS animations (Three.js or p5.js)
@@ -1119,7 +1133,7 @@ function createVJClipLauncherStore() {
     // updateActiveClip*Content shape so panel callbacks can write
     // through without touching the live videoElement (the panel
     // does that separately on the DOM node, if at all).
-    updateActiveClipVideoProps(layerIndex: number, updates: Partial<Pick<VJClip, 'zoom' | 'fit' | 'anchorX' | 'anchorY' | 'rotation' | 'opacity'>>, deck: VJDeck = 'A') {
+    updateActiveClipVideoProps(layerIndex: number, updates: Partial<Pick<VJClip, 'zoom' | 'fit' | 'anchorX' | 'anchorY' | 'rotation' | 'opacity' | 'playbackMode' | 'playbackRate' | 'trimStart' | 'trimEnd' | 'isPlaying'>>, deck: VJDeck = 'A') {
       update(state => {
         const targetLayerStates = pickLayerStates(state, deck);
         const targetGrid = pickGrid(state, deck);
@@ -1941,6 +1955,15 @@ export const vjOutputLayers = derived(
           shaderValues: clip.shaderValues || {},
           videoElement: clip.videoElement,
           iframeElement: clip.iframeElement,
+          // Stamp video playback fields onto MediaSource so the per-frame
+          // trim-enforcement loop in Canvas.svelte (lines ~1768-1820) can
+          // read them. Without this stamp the loop sees `trimEnd ?? 1`
+          // and the playhead runs the whole clip ignoring the handles.
+          playbackMode: clip.playbackMode || 'loop',
+          playbackRate: clip.playbackRate ?? 1,
+          trimStart: clip.trimStart ?? 0,
+          trimEnd: clip.trimEnd ?? 1,
+          isPlaying: clip.isPlaying !== false,
         };
 
         // For threejs clips, get the canvas from the iframe context
@@ -1981,6 +2004,14 @@ export const vjOutputLayers = derived(
         if (clip.iframeElement) {
           source.iframeElement = clip.iframeElement;
         }
+        // Re-stamp playback fields so live edits from the controls panel
+        // (mode toggle, speed, trim drag, play/pause) flow into the per-
+        // frame trim-enforcement loop on the next render tick.
+        source.playbackMode = clip.playbackMode || 'loop';
+        source.playbackRate = clip.playbackRate ?? 1;
+        source.trimStart = clip.trimStart ?? 0;
+        source.trimEnd = clip.trimEnd ?? 1;
+        source.isPlaying = clip.isPlaying !== false;
         // For threejs clips, get the canvas from the iframe context
         if (clip.type === 'threejs') {
           const context = getThreeJSIframeContext(clip.id);

@@ -2,6 +2,52 @@
 
 ---
 
+## v0.6.2 — VJ Video Controls Panel + Performer Thumbnails + Fullscreen Fix (May 2026)
+
+### Fixed
+
+- **Performer key triggers go dead when the same video is also in a VJ
+  deck cell.** The texture cache was keyed by `${layer.id}:${layer.source.src}`,
+  so two clips with the same source file (one `perf-media-${mediaId}`,
+  one regular VJ deck UUID) collided onto a single cached `VideoTexture`.
+  The first-loaded texture wrapped the deck-clip's `videoElement`; the
+  performer's element was orphaned. Triggering the performer key looked
+  like nothing happened — the layer was still bound to the deck-clip's
+  video. Switched to keying by `layer.source.id` (= clip.id, unique per
+  cell). Same fix as Community v1.1.5.
+
+- **Fullscreen output button shows black on first click; needs second
+  click + close-output dance to recover.** `App.matchOutputDisplayResolution`
+  invokes `get_output_display_info` to resize the project to the external
+  monitor's native resolution before fullscreening. The IPC handler
+  exists in `electron/main.js`, but the command was never added to
+  `electron/preload.cjs`'s allowlist — every call rejected with
+  "IPC command not allowed", the resize silently no-op'd, and the
+  output canvas opened at the wrong size. Whitelisted the command.
+
+### Added
+
+- **Full VJ video controls panel** (parity with mapping-mode `LayerPanel`).
+  Per-clip transport row (play/pause + restart + time readout + speed
+  selector 0.25-4×) → trim-aware timeline with playhead and drag handles
+  → Loop / Once mode buttons → existing Transform sliders. New `VJClip`
+  fields: `playbackMode`, `playbackRate`, `trimStart`, `trimEnd`,
+  `isPlaying`. `updateActiveClipVideoProps` widened to accept them. All
+  writes route through `paramDeck` so Bank A and Bank B clips stay
+  independent. `vjOutputLayers` stamps the playback fields onto
+  `MediaSource` so Canvas's per-frame trim-enforcement loop reads them
+  correctly (pre-fix it always saw `trimEnd ?? 1` and ran the whole clip).
+
+- **Performer-mode video clip thumbnails.** Drop a video onto a key in
+  edit mode and the captured poster frame now shows on the cell, the
+  same way shader thumbnails do. Pre-fix the cell tried to use the
+  video URL as a CSS `background-image` and silently rendered nothing
+  because video can't be a CSS image. New `SVClipAssignment.mediaThumbnail`
+  field carries the poster through drag → drop → label. Legacy
+  assignments self-heal via library lookup by `mediaId`.
+
+---
+
 ## v0.5.0 — Dual-Deck VJ, Macros, X-Fader Blend Modes, Mobile Companion (May 2026)
 
 The biggest VJ release since the launcher shipped. Adds a full Bank A/Bank B
