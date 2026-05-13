@@ -564,17 +564,18 @@
               </svg>
               Light Painting
             </button>
+            <!-- Adv Light Paint button hidden — superseded by the
+                 in-progress "Light Painting GPU" effort that adds GPU
+                 brush types (spiral/firefly/sap-flow/etc) directly to
+                 the existing Light Painting layer instead of creating
+                 a separate toy layer. The advLightPaint layer type
+                 + WebGPUAdvLightPaint module remain in the codebase
+                 for reference but are not user-reachable.
             <button onclick={() => { project.addAdvLightPaintingLayer(); showAddLayerMenu = false; }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="6" cy="6" r="2.5"/>
-                <circle cx="18" cy="9" r="1.5"/>
-                <circle cx="9" cy="17" r="2"/>
-                <circle cx="17" cy="18" r="1"/>
-                <path d="M6 8.5 Q9 13 9 15 M18 10.5 Q15 13 12 14"/>
-              </svg>
-              Adv Light Paint
-              <span style="margin-left:auto; font-size:9px; color:#6df; opacity:0.7">WebGPU</span>
+              ...
             </button>
+            -->
+
             <button onclick={() => { project.addTextLayer(); showAddLayerMenu = false; }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="4 7 4 4 20 4 20 7"/>
@@ -605,6 +606,25 @@
                 <path d="M2 12L12 17L22 12"/>
               </svg>
               3D Model
+            </button>
+            <!-- Legacy Pixel FX layer button hidden — Pixel Particles
+                 now ships as a shader inside the GPU Shader layer
+                 (gives full engine integration: warp, blend, effects).
+                 The 'pixel-fx' layer type is kept in the data model
+                 so any saved projects that already use it still load. -->
+            <!--
+            <button onclick={() => { project.addPixelFXLayer(); showAddLayerMenu = false; }}>
+              Pixel FX (legacy)
+            </button>
+            -->
+
+            <button onclick={() => { project.addGPULayer(); showAddLayerMenu = false; }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="9"/>
+                <ellipse cx="12" cy="12" rx="9" ry="3.2"/>
+                <path d="M3 12 a9 9 0 0 0 18 0"/>
+              </svg>
+              GPU Shader <span style="font-size:9px; opacity:0.7; padding:1px 4px; background:linear-gradient(135deg,#1e3a8a,#7c2d12); border-radius:2px; margin-left:4px;">WebGPU</span>
             </button>
             <button onclick={() => { project.addScreenLayer(); showAddLayerMenu = false; }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1534,7 +1554,13 @@
               Enable Mask
             </label>
             <span class="mask-point-count">
-              {layer.mask?.points?.length ?? 0} points
+              {#if layer.mask?.shapes}
+                {@const totalShapes = layer.mask.shapes.length}
+                {@const totalPoints = layer.mask.shapes.reduce((acc, s) => acc + s.points.length, 0)}
+                {totalPoints} points · {totalShapes} {totalShapes === 1 ? 'shape' : 'shapes'}
+              {:else}
+                0 points · 0 shapes
+              {/if}
             </span>
           </div>
 
@@ -1563,11 +1589,36 @@
               <span class="value">{((layer.mask?.feather ?? 0) * 100).toFixed(0)}%</span>
             </div>
 
+            <!-- Per-shape list with delete buttons. Closed = solid swatch,
+                 open = dashed. Click the × to delete the entire sub-polygon. -->
+            {#if (layer.mask?.shapes?.length ?? 0) > 0}
+              <div class="mask-shape-list">
+                {#each layer.mask.shapes as shape, sIdx}
+                  <div class="mask-shape-row">
+                    <span class="mask-shape-swatch" class:open={!shape.closed} aria-hidden="true"></span>
+                    <span class="mask-shape-label">
+                      Shape {sIdx + 1}
+                      <span class="mask-shape-meta">
+                        · {shape.points.length} pt{shape.points.length === 1 ? '' : 's'}
+                        {#if !shape.closed}· <em>open</em>{/if}
+                      </span>
+                    </span>
+                    <button
+                      class="mask-shape-delete"
+                      title="Delete this shape"
+                      onclick={() => project.removeMaskShape(layer.id, sIdx)}
+                      aria-label="Delete shape {sIdx + 1}"
+                    >×</button>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+
             <div class="property-row mask-actions">
               <button class="btn-secondary" onclick={() => project.clearMask(layer.id)}>
-                Clear Points
+                Clear All
               </button>
-              <span class="mask-hint">Click canvas to add mask points</span>
+              <span class="mask-hint">Click to add points · Click+drag for curves · Click first point or right-click empty area to close · Right-click anchor to delete</span>
             </div>
 
             <div class="property-row mask-done">
@@ -1953,7 +2004,72 @@
 
                       <details open>
                         <summary>Controls</summary>
-                      {#if effect.type === 'vignette'}
+                      {#if effect.type === 'gpuFluidSim'}
+                        <!-- ── WebGPU Fluid Simulation ──
+                             Real-time Navier-Stokes fluid running on
+                             GPU compute. The source is the layer's
+                             rendered output (after upstream effects);
+                             it injects dye and force into the fluid.
+                             All knobs accept MIDI mapping just like
+                             the other effects. -->
+                        <div class="param-row">
+                          <label>Inject Strength</label>
+                          <input type="range" min="0" max="3" step="0.01"
+                            data-midi-path="map:effect:{effect.id}:injectStrength"
+                            value={effect.params.injectStrength ?? 1.0}
+                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { injectStrength: parseFloat((e.target as HTMLInputElement).value) })} />
+                          <span class="param-value">{(effect.params.injectStrength ?? 1.0).toFixed(2)}</span>
+                        </div>
+                        <div class="param-row">
+                          <label>Velocity Push</label>
+                          <input type="range" min="0" max="3" step="0.01"
+                            data-midi-path="map:effect:{effect.id}:velocityFromGradient"
+                            value={effect.params.velocityFromGradient ?? 1.0}
+                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { velocityFromGradient: parseFloat((e.target as HTMLInputElement).value) })} />
+                          <span class="param-value">{(effect.params.velocityFromGradient ?? 1.0).toFixed(2)}</span>
+                        </div>
+                        <div class="param-row">
+                          <label>Vorticity</label>
+                          <input type="range" min="0" max="3" step="0.01"
+                            data-midi-path="map:effect:{effect.id}:vorticity"
+                            value={effect.params.vorticity ?? 1.5}
+                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { vorticity: parseFloat((e.target as HTMLInputElement).value) })} />
+                          <span class="param-value">{(effect.params.vorticity ?? 1.5).toFixed(2)}</span>
+                        </div>
+                        <div class="param-row">
+                          <label>Dye Decay</label>
+                          <input type="range" min="0" max="3" step="0.01"
+                            data-midi-path="map:effect:{effect.id}:dyeDecay"
+                            value={effect.params.dyeDecay ?? 0.4}
+                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { dyeDecay: parseFloat((e.target as HTMLInputElement).value) })} />
+                          <span class="param-value">{(effect.params.dyeDecay ?? 0.4).toFixed(2)}</span>
+                        </div>
+                        <div class="param-row">
+                          <label>Velocity Decay</label>
+                          <input type="range" min="0" max="3" step="0.01"
+                            data-midi-path="map:effect:{effect.id}:velocityDecay"
+                            value={effect.params.velocityDecay ?? 0.6}
+                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { velocityDecay: parseFloat((e.target as HTMLInputElement).value) })} />
+                          <span class="param-value">{(effect.params.velocityDecay ?? 0.6).toFixed(2)}</span>
+                        </div>
+                        <div class="param-row">
+                          <label>Brightness Boost</label>
+                          <input type="range" min="0.5" max="4" step="0.01"
+                            data-midi-path="map:effect:{effect.id}:outputBoost"
+                            value={effect.params.outputBoost ?? 1.6}
+                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { outputBoost: parseFloat((e.target as HTMLInputElement).value) })} />
+                          <span class="param-value">{(effect.params.outputBoost ?? 1.6).toFixed(2)}×</span>
+                        </div>
+                        <div class="param-row">
+                          <label>Time Scale</label>
+                          <input type="range" min="0.1" max="3" step="0.01"
+                            data-midi-path="map:effect:{effect.id}:timeScale"
+                            value={effect.params.timeScale ?? 1.0}
+                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { timeScale: parseFloat((e.target as HTMLInputElement).value) })} />
+                          <span class="param-value">{(effect.params.timeScale ?? 1.0).toFixed(2)}×</span>
+                        </div>
+
+                      {:else if effect.type === 'vignette'}
                         <div class="param-row">
                           <label>Size</label>
                           <input
@@ -4091,14 +4207,78 @@
     cursor: pointer;
   }
 
-  .mask-actions .btn-secondary:hover {
+  .mask-actions .btn-secondary:hover:not(:disabled) {
     background: #555;
+  }
+
+  .mask-actions .btn-secondary:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
   }
 
   .mask-hint {
     font-size: 10px;
     color: #666;
     font-style: italic;
+  }
+
+  .mask-shape-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 6px 0 8px;
+    padding: 6px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 4px;
+  }
+  .mask-shape-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 6px;
+    border-radius: 3px;
+    background: rgba(255, 0, 255, 0.06);
+    border: 1px solid rgba(255, 0, 255, 0.2);
+  }
+  .mask-shape-swatch {
+    width: 12px; height: 12px;
+    border-radius: 3px;
+    background: #ff00ff;
+    flex-shrink: 0;
+  }
+  .mask-shape-swatch.open {
+    background: transparent;
+    border: 1.5px dashed #ff00ff;
+  }
+  .mask-shape-label {
+    flex: 1;
+    font-size: 11px;
+    color: #ddd;
+  }
+  .mask-shape-meta {
+    color: #888;
+    font-size: 10px;
+  }
+  .mask-shape-meta em {
+    color: #ffd400;
+    font-style: normal;
+    font-weight: 600;
+  }
+  .mask-shape-delete {
+    background: transparent;
+    border: 1px solid #555;
+    color: #aaa;
+    width: 22px; height: 22px;
+    border-radius: 3px;
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .mask-shape-delete:hover {
+    background: #2a1414;
+    border-color: #844;
+    color: #f88;
   }
 
   .mask-done {

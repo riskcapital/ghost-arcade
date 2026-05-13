@@ -19,6 +19,9 @@
   import { SplatRenderer } from '../splat/SplatRenderer';
   import { loadPLY, loadSplatFromUrl } from '../splat';
   import { Model3DRenderer } from '../model3d/Model3DRenderer';
+  import { GpuLayerRenderer } from '$lib/renderer/gpuLayerRenderer';
+  import { ensureWebGPUDevice, isWebGPUReady, getWebGPUDevice, getPreferredCanvasFormat } from '$lib/renderer/webgpuShared';
+  import { getShaderDef } from '$lib/renderer/gpuShaderCatalog';
   import { settings, outputFrozen, SHADER_QUALITY_MULTIPLIERS } from '../stores/settings';
   import { showToast } from '../stores/errorToast';
   import { invoke, isDesktopApp, isOsrMode, isOutputMode } from '$lib/bridge';
@@ -27,7 +30,7 @@
   import { FluidSimulation, type FluidMode } from '../effects/fluidSimulation';
   import { ParticleSystem3D } from '../effects/particleSystem3D';
   // ParticleSystem removed — Particles3D runs as standalone Bevy app via Spout
-  import { audioStore, getLastRawAnalysis } from '../stores/audio';
+  import { audioStore, getLastRawAnalysis, audioBands } from '../stores/audio';
   import { audioTextures } from '../audio/audioTextures';
   import { initStateBroadcast, destroyStateBroadcast } from '$lib/sync/stateBroadcast';
   import { startOutputPixelBroadcast, stopOutputPixelBroadcast } from '$lib/sync/outputPixelBroadcast';
@@ -384,6 +387,21 @@
     loadingPly: boolean;
   }
   const splatRenderers = new Map<string, SplatRendererContext>();
+  // ── GPU layer renderers ──
+  // One per gpu-layer, plus its CanvasTexture wrapper. The renderer
+  // owns a canvas with a webgpu context; the CanvasTexture exposes
+  // that canvas to the Three.js engine. Engine treats the result
+  // like any other texture-backed layer (warp/blend/effects work).
+  const gpuLayerRenderers = new Map<string, GpuLayerRenderer>();
+  const gpuLayerTextures = new Map<string, THREE.CanvasTexture>();
+  // Latch — try to init WebGPU once; subsequent gpu layers just
+  // pull the existing device.
+  let _gpuLayerWebGpuTried = false;
+  function ensureWebGPUForGpuLayers(): void {
+    if (_gpuLayerWebGpuTried) return;
+    _gpuLayerWebGpuTried = true;
+    void ensureWebGPUDevice().catch((e: any) => console.warn('[Canvas] gpu-layer: WebGPU init failed', e?.message || e));
+  }
 
   // Model3D renderers (per layer) - 3D Model rendering
   // Uses WebGLRenderTarget on the main engine's renderer to avoid cross-context issues
@@ -490,7 +508,12 @@
     const { w: wrapW, h: wrapH } = getWrapperLayoutSize();
     const projW = $project.width || 1920;
     const projH = $project.height || 1080;
-    engine = new RenderEngine(canvas, projW, projH, { preserveDrawingBuffer: !isOutputMode });
+    // preserveDrawingBuffer false unconditionally — was previously true
+    // for the editor to support one-shot canvas.toBlob/toDataURL
+    // thumbnails, but the cost was paid on every paint. Any thumbnail
+    // path that needed it can do an explicit one-shot render to a
+    // dedicated render target.
+    engine = new RenderEngine(canvas, projW, projH, { preserveDrawingBuffer: false });
     // Set initial container size from wrapper layout dimensions
     sizeContainer(wrapW, wrapH);
 
@@ -558,7 +581,14 @@
         const eligible = !isOsrMode && !isOutputMode && !!canvas;
         const wantWebRTC = eligible && !zeroCopy && webrtc;
         if (wantWebRTC && !webrtcStarted) {
-          startOutputPixelBroadcast(canvas, 60);
+          // Read perf knobs from Settings → Performance so users on weak
+          // hardware can dial down framerate / bitrate / codec.
+          const _perf = get(settings)?.performance;
+          startOutputPixelBroadcast(canvas, _perf?.outputFrameRate ?? 60, {
+            maxBitrate: _perf?.outputMaxBitrate,
+            degradationPreference: _perf?.outputDegradationPreference,
+            codecPreference: _perf?.outputCodecPreference,
+          });
           webrtcStarted = true;
           console.log('[Canvas] legacy WebRTC output transport started');
         } else if (!wantWebRTC && webrtcStarted) {
@@ -751,6 +781,7 @@
       try { updateTextLayerTextures(target); } catch (e) { console.error('[Canvas] Text update error:', e); }
       try { updateSplatLayerTextures(target); } catch (e) { console.error('[Canvas] Splat update error:', e); }
       try { updateModel3DTextures(target); } catch (e) { console.error('[Canvas] Model3D update error:', e); }
+      try { updateGpuLayerTextures(target); } catch (e) { console.error('[Canvas] GPU layer update error:', e); }
     }
 
     // Start render loop
@@ -763,6 +794,11 @@
     // the rest of the session with no indication to the user. With the guard,
     // bad frames are logged and skipped, next frame still schedules.
     let _consecutiveFrameErrors = 0;
+    // Editor render-rate cap. rAF on a high-refresh display runs at
+    // 120/144/165Hz — the editor renders at that rate, but the projector
+    // is almost always 60Hz so anything above 60 is wasted work. Users
+    // dial this from Settings → Performance: 0 = uncapped (default).
+    let _lastEditorRenderTime = 0;
     function animate() {
       // Unconditional first-3-frames log. No gate, no store lookup. If THIS
       // doesn't appear in the terminal, animate() isn't being called at all
@@ -779,6 +815,20 @@
           'spoutOutputActive=', spoutOutputActive, 'outputWindowOpen=', $settings?.output?.outputWindowOpen,
           'glCanvas=', !!glCanvas);
       }
+
+      // Render-rate gate. Reschedule rAF unconditionally so input
+      // handlers stay responsive; bypass render body when early.
+      const _editorFpsCap = ($settings as any)?.performance?.editorMaxFps ?? 0;
+      if (_editorFpsCap > 0) {
+        const now = performance.now();
+        const interval = 1000 / _editorFpsCap;
+        if (now - _lastEditorRenderTime < interval) {
+          animationId = requestAnimationFrame(animate);
+          return;
+        }
+        _lastEditorRenderTime = now;
+      }
+
       try {
       if (engine && !contextLost && !$outputFrozen) {
         // Use reactive $ subscriptions (persistent, no per-frame subscribe/unsubscribe)
@@ -1012,6 +1062,16 @@
                 kfStash.push({ layer, key, orig: target[last], target, prop: last });
                 target[last] = value;
               }
+            } else if (key.startsWith('gpu:') && layer.gpuLayerContent) {
+              // GPU-shader param keyframes — `gpu:${paramKey}` writes
+              // into layer.gpuLayerContent.params[paramKey]. Works
+              // for any shader in the catalog because params are a
+              // free-form record. The renderer reads params each
+              // frame so the override surfaces immediately.
+              const paramKey = key.slice('gpu:'.length);
+              const params = layer.gpuLayerContent.params || (layer.gpuLayerContent.params = {});
+              kfStash.push({ layer, key, orig: params[paramKey], target: params, prop: paramKey });
+              params[paramKey] = value;
             }
           }
         }
@@ -1472,23 +1532,32 @@
     _knownLayerIds = liveIds;
   }
 
-  // Re-resize engine when project dimensions change (e.g., user picks 4K in settings)
+  // Re-resize engine when project dimensions change. Pre-guard the
+  // reactive `$:` fired on ANY project store change (layer adds,
+  // name edits, slider tweaks) and reallocated every shader/SVG RT,
+  // stalling weak GPUs. Cache last-applied dims and bail unchanged.
+  let _lastResizeW: number | null = null;
+  let _lastResizeH: number | null = null;
   $: if (engine && $project.width && $project.height) {
     const pW = $project.width || 1920;
     const pH = $project.height || 1080;
-    // Re-calculate container size from wrapper layout dimensions (not affected by zoom transform)
-    if (wrapperEl && wrapperEl.offsetWidth > 0 && wrapperEl.offsetHeight > 0) {
-      sizeContainer(wrapperEl.offsetWidth, wrapperEl.offsetHeight);
-      engine.resize(pW, pH);
-      if (linesRenderer) linesRenderer.resize(pW, pH);
-      for (const svgRenderer of svgRenderers.values()) svgRenderer.resize(pW, pH);
-      for (const rt of svgRenderTargets.values()) rt.setSize(pW, pH);
-      // Resize shader render targets (scale by per-layer quality)
-      for (const [key, rt] of shaderRenderTargets.entries()) {
-        const quality = shaderRenderTargetQualities.get(key) ?? 1.0;
-        const rtW = Math.max(64, Math.round(pW * quality));
-        const rtH = Math.max(64, Math.round(pH * quality));
-        rt.setSize(rtW, rtH);
+    if (pW !== _lastResizeW || pH !== _lastResizeH) {
+      // Re-calculate container size from wrapper layout dimensions (not affected by zoom transform)
+      if (wrapperEl && wrapperEl.offsetWidth > 0 && wrapperEl.offsetHeight > 0) {
+        _lastResizeW = pW;
+        _lastResizeH = pH;
+        sizeContainer(wrapperEl.offsetWidth, wrapperEl.offsetHeight);
+        engine.resize(pW, pH);
+        if (linesRenderer) linesRenderer.resize(pW, pH);
+        for (const svgRenderer of svgRenderers.values()) svgRenderer.resize(pW, pH);
+        for (const rt of svgRenderTargets.values()) rt.setSize(pW, pH);
+        // Resize shader render targets (scale by per-layer quality)
+        for (const [key, rt] of shaderRenderTargets.entries()) {
+          const quality = shaderRenderTargetQualities.get(key) ?? 1.0;
+          const rtW = Math.max(64, Math.round(pW * quality));
+          const rtH = Math.max(64, Math.round(pH * quality));
+          rt.setSize(rtW, rtH);
+        }
       }
     }
   }
@@ -3247,6 +3316,100 @@
         ctx.renderTarget.dispose();
         splatRenderers.delete(layerId);
         console.log('[Canvas] Disposed splat renderer for layer:', layerId);
+      }
+    }
+  }
+
+  // ── GPU layer textures ──
+  // Per-frame: ensure a renderer exists for each visible gpu layer,
+  // run the active shader (planet, particle, etc.) into the
+  // renderer's canvas, then expose the canvas to the engine via a
+  // THREE.CanvasTexture stamped on the layer as `_gpuLayerTexture`.
+  // The engine's getLayerTexture() picks it up; warp/mesh/blend/
+  // per-layer effects all apply normally because the engine just
+  // sees a texture.
+  function updateGpuLayerTextures(layerList: Layer[]) {
+    if (!engine) return;
+    ensureWebGPUForGpuLayers();
+    if (!isWebGPUReady()) return;
+    const device = getWebGPUDevice();
+    const presentFormat = getPreferredCanvasFormat();
+    if (!device) return;
+
+    const projectData = $project;
+    const width = projectData?.width || 1920;
+    const height = projectData?.height || 1080;
+    const liveIds = new Set<string>();
+
+    for (const layer of layerList) {
+      if (layer.type !== 'gpu' || !layer.gpuLayerContent || !layer.visible) continue;
+      liveIds.add(layer.id);
+      const c = layer.gpuLayerContent;
+
+      // Lazy-create renderer.
+      let renderer = gpuLayerRenderers.get(layer.id);
+      if (!renderer) {
+        try {
+          renderer = new GpuLayerRenderer(device, presentFormat, width, height);
+          gpuLayerRenderers.set(layer.id, renderer);
+        } catch (err: any) {
+          console.warn('[Canvas] gpu-layer: failed to create renderer for', layer.id, err?.message || err);
+          continue;
+        }
+      }
+
+      // Resolve params with shader defaults so newly-added layers
+      // render meaningfully even before the panel touches anything.
+      const def = getShaderDef(c.shaderId);
+      const mergedParams = def ? { ...def.defaultParams, ...c.params } : c.params;
+
+      // Render the active shader to the layer's canvas. Pass the
+      // source context so source-driven shaders (pixel-particles)
+      // can resolve their media-source param into an actual element.
+      try {
+        const sourceCtx = {
+          layers: projectData?.layers ?? [],
+          mediaItems: get(mediaLibrary),
+        };
+        // Audio bands for shaders that opt into reactivity (e.g.
+        // flythrough audioReactive toggle). audioBands is a derived
+        // store; get() is O(1) and the per-frame cost is negligible.
+        const bandsSnap = get(audioBands);
+        renderer.renderFrame(c.shaderId, mergedParams, width, height, sourceCtx, {
+          bass: bandsSnap.bass ?? 0,
+          mid: bandsSnap.mid ?? 0,
+          treble: bandsSnap.treble ?? 0,
+        });
+      } catch (err: any) {
+        console.warn('[Canvas] gpu-layer: render failed', err?.message || err);
+        continue;
+      }
+
+      // Lazy-create the Three.js wrapper texture.
+      let tex = gpuLayerTextures.get(layer.id);
+      if (!tex) {
+        tex = new THREE.CanvasTexture(renderer.canvas);
+        tex.minFilter = THREE.LinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        tex.generateMipmaps = false;
+        tex.colorSpace = THREE.SRGBColorSpace;
+        // The renderer writes top-down; Three.js samples bottom-up.
+        // flipY = true flips on upload so the texture reads upright.
+        tex.flipY = true;
+        gpuLayerTextures.set(layer.id, tex);
+      }
+      tex.needsUpdate = true;
+      (layer as any)._gpuLayerTexture = tex;
+    }
+
+    // Reap renderers for removed/hidden layers.
+    for (const [id, r] of gpuLayerRenderers) {
+      if (!liveIds.has(id)) {
+        try { r.dispose(); } catch { /* */ }
+        gpuLayerRenderers.delete(id);
+        const t = gpuLayerTextures.get(id);
+        try { t?.dispose(); } catch { /* */ }
+        gpuLayerTextures.delete(id);
       }
     }
   }

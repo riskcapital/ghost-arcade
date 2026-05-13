@@ -1,6 +1,6 @@
 import { writable, derived, get } from 'svelte/store';
-import type { Layer, Project, WarpCorners, Point2D, BezierPoint, MediaSource, BlendMode, WarpMode, Effect, EffectType, EffectParams, LayerType, SVGContent, SVGFillMode, SVGColorMode, ColorContent, LightPaintingContent, LightPaintingStroke, CropRegion, LayerShape, LayerShapeType, Composition, VJModeState, VJDeck, Timeline, TimelineClip, TextContent, TextAnimation, SplatContent, Model3DContent, MediaTrayFolder, StagePreset, SVKeyboardPreset, EdgeEffect, EdgeEffectsConfig } from '../types';
-import { createLayer, createProject, createDefaultCorners, createMeshGrid, createLinesLayer, createSVGLayer, createColorLayer, createLightPaintingLayer, createAdvLightPaintingLayer, createTextLayer, createSplatLayer, createDefaultSVGContent, createDefaultCropRegion, createDefaultLayerShape, createDefaultVJModeState, createDefaultTimeline, generateUUID, createDefaultModel3DContent, createDefaultEdgeEffect, convertShapeToCustom, createGroupLayer } from '../types';
+import type { Layer, Project, WarpCorners, Point2D, BezierPoint, MaskShape, MediaSource, BlendMode, WarpMode, Effect, EffectType, EffectParams, LayerType, SVGContent, SVGFillMode, SVGColorMode, ColorContent, LightPaintingContent, LightPaintingStroke, CropRegion, LayerShape, LayerShapeType, Composition, VJModeState, VJDeck, Timeline, TimelineClip, TextContent, TextAnimation, SplatContent, Model3DContent, MediaTrayFolder, StagePreset, SVKeyboardPreset, EdgeEffect, EdgeEffectsConfig, PixelFXContent, GPULayerContent } from '../types';
+import { createLayer, createProject, createDefaultCorners, createMeshGrid, createLinesLayer, createSVGLayer, createColorLayer, createLightPaintingLayer, createAdvLightPaintingLayer, createTextLayer, createSplatLayer, createDefaultSVGContent, createDefaultCropRegion, createDefaultLayerShape, createDefaultVJModeState, createDefaultTimeline, generateUUID, createDefaultModel3DContent, createDefaultEdgeEffect, convertShapeToCustom, createGroupLayer, createDefaultPixelFXContent, createDefaultGPULayerContent } from '../types';
 import type { GroupConfig } from '../types';
 import { mediaLibrary } from './media';
 import { vjClipLauncher, type VJClip, type VJBlock, type VJLayerState, DEFAULT_VJ_LAYERS, DEFAULT_VJ_COLUMNS } from './vjClipLauncher';
@@ -468,6 +468,76 @@ void main() {
       recordDiscreteAction();
     },
 
+    /** Add a Pixel FX layer (WebGPU source-to-particles). User picks
+     *  the source via the panel; the layer renders nothing until a
+     *  source is set. Default mode is 'depth-shift' so the first
+     *  visible result is the source displaced into 3D space — most
+     *  immediately demos the WebGPU magic. */
+    addPixelFXLayer(name?: string) {
+      update((project) => {
+        const id = generateUUID();
+        const layerName = name || `Pixel FX ${project.layers.filter(l => l.type === 'pixel-fx').length + 1}`;
+        const newLayer: Layer = {
+          ...createLayer(id, layerName, 'pixel-fx'),
+          pixelFXContent: createDefaultPixelFXContent(),
+        };
+        return {
+          ...project,
+          layers: [newLayer, ...project.layers],
+          selectedLayerId: id,
+        };
+      });
+      recordDiscreteAction();
+    },
+
+    /** Add a GPU layer — hosts a swappable WebGPU shader (planet,
+     *  particle, etc). The selected shader's defaults are populated
+     *  by the renderer on first frame so the new layer starts with
+     *  a useful look immediately. */
+    addGPULayer(name?: string) {
+      update((project) => {
+        const id = generateUUID();
+        const layerName = name || `GPU ${project.layers.filter(l => l.type === 'gpu').length + 1}`;
+        const newLayer: Layer = {
+          ...createLayer(id, layerName, 'gpu'),
+          gpuLayerContent: createDefaultGPULayerContent(),
+        };
+        return {
+          ...project,
+          layers: [newLayer, ...project.layers],
+          selectedLayerId: id,
+        };
+      });
+      recordDiscreteAction();
+    },
+
+    /** Patch a gpu layer's content (shader id and/or params).
+     *  The renderer reads the layer's content each frame so a single
+     *  store update is the whole sync path. */
+    updateGPULayerContent(layerId: string, updates: Partial<GPULayerContent>) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((layer) =>
+          layer.id === layerId && layer.gpuLayerContent
+            ? { ...layer, gpuLayerContent: { ...layer.gpuLayerContent, ...updates } }
+            : layer
+        ),
+      }));
+    },
+
+    /** Patch the params of a gpu layer (shorthand — merges into
+     *  existing params). Used by every slider in the panel. */
+    updateGPULayerParams(layerId: string, paramUpdates: Record<string, any>) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((layer) =>
+          layer.id === layerId && layer.gpuLayerContent
+            ? { ...layer, gpuLayerContent: { ...layer.gpuLayerContent, params: { ...layer.gpuLayerContent.params, ...paramUpdates } } }
+            : layer
+        ),
+      }));
+    },
+
     addScreenLayer(name?: string) {
       const id = generateUUID();
       update((project) => {
@@ -724,6 +794,21 @@ void main() {
       }));
     },
 
+    /** Patch a pixel-fx layer's content. Used by the PixelFX panel
+     *  for every parameter change — the WebGPU renderer reads the
+     *  layer's content each frame so a single store update is the
+     *  whole sync path. */
+    updatePixelFXContent(layerId: string, updates: Partial<PixelFXContent>) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((layer) =>
+          layer.id === layerId && layer.pixelFXContent
+            ? { ...layer, pixelFXContent: { ...layer.pixelFXContent, ...updates } }
+            : layer
+        ),
+      }));
+    },
+
     addLightPaintingStroke(layerId: string, stroke: LightPaintingStroke) {
       update((project) => ({
         ...project,
@@ -812,21 +897,29 @@ void main() {
       }));
     },
 
-    // Mask methods
+    // ============================================================================
+    // MASK METHODS
+    //
+    // Masks are now a UNION of multiple sub-polygons, each with bezier handles.
+    // The UI builds them one anchor at a time: `addMaskPoint` appends to the
+    // last unclosed shape (or starts a new shape if none is open),
+    // `closeMaskShape` finalizes it, and a fresh `addMaskPoint` after closing
+    // starts the next sub-polygon.
+    // ============================================================================
     enableMask(layerId: string) {
       update((project) => ({
         ...project,
         layers: project.layers.map((layer) => {
           if (layer.id !== layerId) return layer;
           // If a mask already exists (e.g. from a prior disable), force enabled=true
-          // while preserving its points/feather/inverted. Without the explicit
+          // while preserving its shapes/feather/inverted. Without the explicit
           // override, `mask: layer.mask || {...}` short-circuits to the existing
           // (still disabled) object and the toggle never re-enables.
           return {
             ...layer,
             mask: layer.mask
               ? { ...layer.mask, enabled: true }
-              : { enabled: true, points: [], inverted: false, feather: 0 },
+              : { enabled: true, shapes: [], inverted: false, feather: 0 },
           };
         }),
       }));
@@ -854,48 +947,148 @@ void main() {
       }));
     },
 
-    addMaskPoint(layerId: string, point: Point2D) {
+    /**
+     * Append an anchor to the last UNCLOSED shape. If every shape is closed
+     * (or no shapes exist yet) a new open shape is started with this point.
+     * Caller passes a BezierPoint so the same call can carry handle data when
+     * the pen tool ends a click-and-drag gesture.
+     */
+    addMaskPoint(layerId: string, point: BezierPoint) {
       update((project) => ({
         ...project,
-        layers: project.layers.map((layer) =>
-          layer.id === layerId && layer.mask
-            ? { ...layer, mask: { ...layer.mask, points: [...layer.mask.points, point] } }
-            : layer
-        ),
+        layers: project.layers.map((layer) => {
+          if (layer.id !== layerId || !layer.mask) return layer;
+          const shapes = layer.mask.shapes ?? [];
+          const lastIdx = shapes.length - 1;
+          const lastShape = lastIdx >= 0 ? shapes[lastIdx] : null;
+          let newShapes: MaskShape[];
+          if (lastShape && !lastShape.closed) {
+            newShapes = shapes.map((s, i) =>
+              i === lastIdx ? { ...s, points: [...s.points, point] } : s
+            );
+          } else {
+            newShapes = [...shapes, { points: [point], closed: false }];
+          }
+          return { ...layer, mask: { ...layer.mask, shapes: newShapes } };
+        }),
       }));
     },
 
-    updateMaskPoint(layerId: string, pointIndex: number, point: Point2D) {
+    /**
+     * Close the last unclosed sub-polygon. No-op if no unclosed shape exists
+     * or if the trailing shape has fewer than 3 anchors.
+     */
+    closeMaskShape(layerId: string) {
       update((project) => ({
         ...project,
-        layers: project.layers.map((layer) =>
-          layer.id === layerId && layer.mask
-            ? {
-                ...layer,
-                mask: {
-                  ...layer.mask,
-                  points: layer.mask.points.map((p, i) => (i === pointIndex ? point : p)),
-                },
-              }
-            : layer
-        ),
+        layers: project.layers.map((layer) => {
+          if (layer.id !== layerId || !layer.mask) return layer;
+          const shapes = layer.mask.shapes ?? [];
+          const lastIdx = shapes.length - 1;
+          if (lastIdx < 0) return layer;
+          const last = shapes[lastIdx];
+          if (last.closed || last.points.length < 3) return layer;
+          const newShapes = shapes.map((s, i) =>
+            i === lastIdx ? { ...s, closed: true } : s
+          );
+          return { ...layer, mask: { ...layer.mask, shapes: newShapes } };
+        }),
       }));
     },
 
-    removeMaskPoint(layerId: string, pointIndex: number) {
+    updateMaskPoint(layerId: string, shapeIndex: number, pointIndex: number, partial: Partial<BezierPoint>) {
       update((project) => ({
         ...project,
-        layers: project.layers.map((layer) =>
-          layer.id === layerId && layer.mask
-            ? {
-                ...layer,
-                mask: {
-                  ...layer.mask,
-                  points: layer.mask.points.filter((_, i) => i !== pointIndex),
-                },
-              }
-            : layer
-        ),
+        layers: project.layers.map((layer) => {
+          if (layer.id !== layerId || !layer.mask) return layer;
+          const shapes = layer.mask.shapes ?? [];
+          if (shapeIndex < 0 || shapeIndex >= shapes.length) return layer;
+          const shape = shapes[shapeIndex];
+          if (pointIndex < 0 || pointIndex >= shape.points.length) return layer;
+          const newShapes = shapes.map((s, si) => {
+            if (si !== shapeIndex) return s;
+            return {
+              ...s,
+              points: s.points.map((p, pi) => (pi === pointIndex ? { ...p, ...partial } : p)),
+            };
+          });
+          return { ...layer, mask: { ...layer.mask, shapes: newShapes } };
+        }),
+      }));
+    },
+
+    /**
+     * Remove an entire sub-polygon from the mask. Used by the per-shape
+     * delete buttons in the LayerPanel.
+     */
+    removeMaskShape(layerId: string, shapeIndex: number) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((layer) => {
+          if (layer.id !== layerId || !layer.mask) return layer;
+          const shapes = layer.mask.shapes ?? [];
+          if (shapeIndex < 0 || shapeIndex >= shapes.length) return layer;
+          const newShapes = shapes.filter((_, i) => i !== shapeIndex);
+          return { ...layer, mask: { ...layer.mask, shapes: newShapes } };
+        }),
+      }));
+    },
+
+    removeMaskPoint(layerId: string, shapeIndex: number, pointIndex: number) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((layer) => {
+          if (layer.id !== layerId || !layer.mask) return layer;
+          const shapes = layer.mask.shapes ?? [];
+          if (shapeIndex < 0 || shapeIndex >= shapes.length) return layer;
+          const shape = shapes[shapeIndex];
+          if (pointIndex < 0 || pointIndex >= shape.points.length) return layer;
+          const remainingPts = shape.points.filter((_, i) => i !== pointIndex);
+          let newShapes: MaskShape[];
+          if (remainingPts.length < 2) {
+            // Drop the now-degenerate shape entirely
+            newShapes = shapes.filter((_, i) => i !== shapeIndex);
+          } else {
+            newShapes = shapes.map((s, si) =>
+              si === shapeIndex ? { ...s, points: remainingPts } : s
+            );
+          }
+          return { ...layer, mask: { ...layer.mask, shapes: newShapes } };
+        }),
+      }));
+    },
+
+    /**
+     * Set or clear an individual bezier handle on a specific anchor.
+     * Pass `null` for `point` to remove the handle (anchor becomes a sharp corner on that side).
+     */
+    setMaskPointHandle(layerId: string, shapeIndex: number, pointIndex: number, which: 'cpIn' | 'cpOut', point: Point2D | null) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((layer) => {
+          if (layer.id !== layerId || !layer.mask) return layer;
+          const shapes = layer.mask.shapes ?? [];
+          if (shapeIndex < 0 || shapeIndex >= shapes.length) return layer;
+          const shape = shapes[shapeIndex];
+          if (pointIndex < 0 || pointIndex >= shape.points.length) return layer;
+          const newShapes = shapes.map((s, si) => {
+            if (si !== shapeIndex) return s;
+            return {
+              ...s,
+              points: s.points.map((p, pi) => {
+                if (pi !== pointIndex) return p;
+                const updated: BezierPoint = { ...p };
+                if (point === null) {
+                  delete updated[which];
+                } else {
+                  updated[which] = point;
+                }
+                return updated;
+              }),
+            };
+          });
+          return { ...layer, mask: { ...layer.mask, shapes: newShapes } };
+        }),
       }));
     },
 
@@ -3380,6 +3573,31 @@ void main() {
       // Migrate old 'generative' type to 'lines'
       const migratedType = layer.type === 'generative' ? 'lines' : (layer.type || 'media');
 
+      // Migrate legacy single-polygon mask shape (mask.points -> mask.shapes).
+      // Old projects stored a flat `points: Point2D[]` representing ONE
+      // polygon. New layout is `shapes: MaskShape[]` (union of bezier sub-
+      // polygons). If we see the legacy field, fold it into a single closed
+      // shape so the visual output is identical, then drop the legacy key.
+      let migratedMask: import('../types').MaskConfig | null = layer.mask || null;
+      if (migratedMask) {
+        const m = migratedMask as any;
+        if ('points' in m && !('shapes' in m)) {
+          const legacyPoints: Point2D[] = Array.isArray(m.points) ? m.points : [];
+          const newShapes: MaskShape[] = legacyPoints.length >= 3
+            ? [{ points: legacyPoints.map((p) => ({ x: p.x, y: p.y })), closed: true }]
+            : [];
+          migratedMask = {
+            enabled: !!m.enabled,
+            inverted: !!m.inverted,
+            feather: typeof m.feather === 'number' ? m.feather : 0,
+            shapes: newShapes,
+          };
+        } else if (!Array.isArray((migratedMask as any).shapes)) {
+          // Defensive: make sure shapes is always an array
+          migratedMask = { ...migratedMask, shapes: [] };
+        }
+      }
+
       // Migrate generativeContent to linesContent
       let linesContent: LinesContent | null = null;
       if (layer.linesContent) {
@@ -3426,7 +3644,9 @@ void main() {
         textContent: layer.textContent || null,
         splatContent: layer.splatContent || null,
         model3dContent: layer.model3dContent || null,
-        mask: layer.mask || null,
+        pixelFXContent: layer.pixelFXContent || null,
+        gpuLayerContent: layer.gpuLayerContent || null,
+        mask: migratedMask,
         cropRegion: layer.cropRegion || null,
         layerShape: layer.layerShape || null,
         edgeEffects: layer.edgeEffects || null,
@@ -3978,6 +4198,26 @@ export const selectedModel3DContent = derived(project, ($project) => {
   const layer = $project.layers.find((l) => l.id === $project.selectedLayerId);
   if (!layer || layer.type !== 'model3d' || !layer.model3dContent) return null;
   return layer.model3dContent;
+});
+
+// Pixel FX layer helpers — selected layer + content. Used by the
+// PixelFXPanel to read state and route updates back to the project
+// store. Mirrors the pattern used by the other GPU layer types.
+export const selectedPixelFXLayer = derived(project, ($project) => {
+  const layer = $project.layers.find((l) => l.id === $project.selectedLayerId);
+  return layer?.type === 'pixel-fx' ? layer : null;
+});
+
+// GPU layer helpers — selected layer + content for the GPULayerPanel.
+export const selectedGPULayer = derived(project, ($project) => {
+  const layer = $project.layers.find((l) => l.id === $project.selectedLayerId);
+  return layer?.type === 'gpu' ? layer : null;
+});
+
+export const selectedPixelFXContent = derived(project, ($project) => {
+  const layer = $project.layers.find((l) => l.id === $project.selectedLayerId);
+  if (!layer || layer.type !== 'pixel-fx' || !layer.pixelFXContent) return null;
+  return layer.pixelFXContent;
 });
 
 // VJ Mode derived stores

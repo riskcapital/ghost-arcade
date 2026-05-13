@@ -17,6 +17,14 @@ type RawEntry = Omit<EffectCatalogEntry, 'tier'>;
 // Single source of truth for effect availability in Mapper + VJ
 // 81 curated effects — every one has a unique shader implementation
 const RAW_CATALOG: RawEntry[] = [
+  // ── WebGPU (compute / fragment effects running on the GPU
+  // through the dedicated WebGPU pipeline; integrate with the
+  // existing effect chain — warp / blend / opacity / mask all apply
+  // normally because the result is just another texture). ──
+  { type: 'gpuFluidSim', label: 'Fluid Sim', category: 'WebGPU',
+    description: 'Real-time Navier-Stokes fluid simulation on GPU compute. The source feeds dye + force into the fluid; colors swirl, billow, and dissipate like watercolor in water. Try over a video for surreal flowing imagery.',
+    previewCSS: 'radial-gradient(circle at 30% 70%, #06f 0%, #08f 20%, #0cf 35%, #f80 55%, #f44 75%, #311 95%)' },
+
   // ── Masking (2) ──
   { type: 'vignette', label: 'Vignette', category: 'Masking',
     description: 'Fade edges to transparent with adjustable shape',

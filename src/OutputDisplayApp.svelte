@@ -405,14 +405,14 @@
      the link is healthy (60fps, no drops). Visible in amber when fps
      drops below 50, red below 30. Helps spot the difference between
      a clean HDTV link and a struggling projector at a glance. -->
-{#if healthBadgeShow}
+{#if !connected}
+  <!-- Connection-status badge. Now only fires for genuine fault states.
+       Pre-port the badge also showed FPS below 50, but users running
+       at lower configured output framerates saw it permanently —
+       distracting and non-actionable. Press-S stats overlay still
+       covers diagnostics. -->
   <div class="health-badge" style="background: {healthBadgeColor};">
-    {#if !connected}
-      ●  no link
-    {:else}
-      ●  {healthFps.toFixed(0)}fps {#if healthDropped > 0}· {healthDropped} dropped{/if}
-    {/if}
-    <span class="health-hint">press S for stats</span>
+    ●  no link
   </div>
 {/if}
 

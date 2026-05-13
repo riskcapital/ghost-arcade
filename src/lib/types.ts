@@ -180,7 +180,258 @@ export interface JSAnimationSource {
 // 'stretch' = distort to fill (default), 'fill' = maintain aspect + crop overflow (CSS cover), 'crop' = maintain aspect + letterbox (CSS contain)
 export type ContentFitMode = 'stretch' | 'fill' | 'crop';
 
-export type LayerType = 'media' | 'lines' | 'svg' | 'color' | 'lightpainting' | 'adv-lightpaint' | 'text' | 'splat' | 'model3d' | 'screen' | 'group';
+export type LayerType = 'media' | 'lines' | 'svg' | 'color' | 'lightpainting' | 'adv-lightpaint' | 'text' | 'splat' | 'model3d' | 'screen' | 'group' | 'pixel-fx' | 'gpu';
+
+/**
+ * GPU layer — hosts a swappable WebGPU shader (similar to how a
+ * media layer hosts a swappable shader/video/image). Shaders are
+ * defined in the GPU shader registry (gpuShaderCatalog.ts); each
+ * has its own param schema. Switching shaders mid-session is cheap.
+ *
+ * Renders to its own OffscreenCanvas so the existing engine pipeline
+ * handles warp / blend / mesh / per-layer effects normally — the
+ * GPU layer behaves exactly like a media layer from the engine's
+ * point of view. Just the SOURCE of the pixels is a WebGPU shader
+ * instead of a video/image/glsl-shader.
+ */
+export interface GPULayerContent {
+  /** Shader id from the GPU shader registry (e.g. 'planet',
+   *  'pixel-particles'). */
+  shaderId: string;
+  /** Shader-specific params. Keys + types are defined by the
+   *  shader's paramSchema; the panel renders controls accordingly. */
+  params: Record<string, any>;
+}
+
+export function createDefaultGPULayerContent(): GPULayerContent {
+  // Default to planet — most visually striking out of the box.
+  return {
+    shaderId: 'planet',
+    params: {},   // shader populates defaults from its schema on first render
+  };
+}
+
+/**
+ * PixelFX layer — turns any 2D source (image, video, canvas, shader)
+ * into a cloud of GPU-animated particles. The source provides per-
+ * particle color; the active mode drives the animation.
+ *
+ * sourceType + sourceUrl let us load by URL (drag-drop, MediaLibrary)
+ * but we keep a runtime-only HTMLImageElement / blob handle as
+ * `_runtimeSource` (not serialized) for hot reload performance.
+ */
+/** Pixel-FX rendering modes.
+ *
+ *   identity      — particle stays at its UV anchor (sanity check)
+ *   depth-shift   — depth-mapped point cloud with lighting + noise
+ *   sand-fall     — gravity drags particles down
+ *   scatter       — random walk + slow recovery to anchor
+ *   halftone      — particles snap to a coarse grid; size scales w/ luma
+ *   stipple-noise — tight noise wobble around anchor (ink stipple)
+ *   dissolve      — particles drift outward and fade
+ *   flythrough    — endless point-cloud tunnel; camera flies through
+ *                   N replicated slabs of the source. Optional worm-
+ *                   stroke topology (extruded quads along velocity)
+ *                   for a volumetric brush-stroke look. Dispatched to
+ *                   a dedicated renderer (`WebGPUFlythrough`) rather
+ *                   than the standard pixel-particles class because
+ *                   the camera model + topology are fundamentally
+ *                   different. See `flythrough*` fields below for
+ *                   tuning. */
+export type PixelFXMode = 'identity' | 'depth-shift' | 'sand-fall' | 'scatter' | 'halftone' | 'stipple-noise' | 'dissolve' | 'flythrough';
+
+/** Particle-rendering topology for the flythrough mode.
+ *   points  — billboard sprites (cheap, classic point-cloud look)
+ *   strokes — quads extruded along each particle's velocity vector
+ *             for the "worms in fluid" / volumetric brush look. */
+export type FlythroughTopology = 'points' | 'strokes';
+
+/** Depth-source strategy for the flythrough mode. ML-based depth
+ *  (Depth Anything V2 via ONNX) is reserved for a later iteration —
+ *  would require an onnxruntime-node sidecar download. */
+export type FlythroughDepthSource = 'luminance' | 'inverse-luminance' | 'edge-density';
+
+export interface PixelFXContent {
+  /** Where the source pixels come from. v1 supports:
+   *    'media'  — sourceMediaId picks an item from the global Media
+   *               Library (same items the Media Tray shows). Most
+   *               common path — pick from your loaded clips/images.
+   *    'layer'  — sourceLayerId points at another layer in the
+   *               project; that layer's media is used as the source.
+   *               Use when you've configured trim / playback on a
+   *               media layer and want the pixel-fx to consume it.
+   *    'image'  — sourceUrl points at a still image (file picker).
+   *    'video'  — sourceUrl points at a video file (file picker). */
+  sourceType: 'media' | 'image' | 'video' | 'layer' | 'canvas' | 'shader';
+  /** URL or data URL of the source. For images, anything browsers
+   *  can load. For videos, mp4/webm. Ignored when sourceType is
+   *  'media' or 'layer'. */
+  sourceUrl: string | null;
+  /** ID of a Media Library item to pull pixels from. The renderer
+   *  reads the item's src (image) or videoElement (video) each
+   *  frame so playback and replacement work transparently. */
+  sourceMediaId?: string | null;
+  /** ID of another layer in the project to read pixels from.
+   *  v1 supports media layers (image / video). Other layer types
+   *  (lines, svg, lightpainting, shader) need per-layer render-to-
+   *  texture, queued for the next phase. */
+  sourceLayerId?: string | null;
+  /** The active effect mode. */
+  mode: PixelFXMode;
+  /** Per-mode tuning knobs — semantics vary by mode. The panel
+   *  surfaces named sliders that map to these positions. */
+  knobs: [number, number, number, number];
+  /** Particle count. Higher = sharper image, more GPU. 250K is the
+   *  sweet spot for 1080p output. */
+  particleCount: number;
+  /** Base billboard size in normalized canvas units. */
+  baseSize: number;
+  /** Global opacity envelope (0..1). */
+  opacity: number;
+  /** Anchor jitter to break grid banding (0..1). */
+  anchorJitter: number;
+  /** Camera FOV in degrees. Applies to ALL modes (not just depth-shift)
+   *  so you can frame any effect properly. */
+  fovDeg: number;
+  /** Camera distance from origin along Z. Doubles as zoom — smaller
+   *  value zooms in. */
+  cameraZ: number;
+  /** Camera yaw + pitch in degrees, applied around the world origin
+   *  before perspective. Lets you orbit the scene from the panel. */
+  cameraYaw?: number;
+  cameraPitch?: number;
+  /** Pan offset in normalized canvas units. Useful for off-center
+   *  framing without rotating the camera. */
+  panX?: number;
+  panY?: number;
+
+  /** ── Lighting (depth-shift mode) ──
+   *  When enabled, particles are shaded by a movable point light
+   *  with a Lambertian diffuse term computed from the source's
+   *  luminance heightmap normal. Gives a real "lit and shadowed"
+   *  3D look on the depth-shifted point cloud. */
+  lightEnabled?: boolean;
+  lightX?: number;       // -2..2  world X
+  lightY?: number;       // -2..2  world Y
+  lightZ?: number;       //  0..3  world Z (positive = in front of plane)
+  lightIntensity?: number; // 0..3 multiplier on diffuse contribution
+  lightAmbient?: number;   // 0..1 ambient term so unlit areas don't go pitch black
+  lightHeightStrength?: number; // 0..3 scales the heightmap normal contribution
+
+  /** ── Depth-shift noise displacement ──
+   *  Adds a flowing noise field that wobbles each particle in
+   *  XY (and optionally Z) over time. Works alongside auto-spin and
+   *  camera orbit. Reads as the depth-mapped image gently flowing /
+   *  breathing. */
+  noiseAmpXY?: number;     // 0..0.4  XY displacement strength
+  noiseAmpZ?: number;      // 0..2    Z displacement strength
+  noiseFreq?: number;      // 0.5..30 spatial frequency
+  noiseSpeed?: number;     // 0..3    time scale for animation
+
+  /** ── Flythrough mode params ─────────────────────────────────────
+   *  Only meaningful when `mode === 'flythrough'`. Routed to the
+   *  dedicated `WebGPUFlythrough` renderer instead of the standard
+   *  pixel-particles class. The visual: the source image / video is
+   *  replicated into N "slabs" stacked along Z, and the camera
+   *  continuously translates forward through them. As each slab
+   *  passes behind the camera it wraps to the far end of the stack,
+   *  producing an endless tunnel of the source. Particles within
+   *  each slab swirl under a curl-noise velocity field; combined
+   *  with stroke topology they read as fluid worms / brush strokes
+   *  moving through the tunnel.
+   */
+  /** Particle-rendering topology. `strokes` extrudes each particle
+   *  into a quad along its velocity vector — produces the volumetric
+   *  brush-stroke / worm look. `points` is the cheap billboard path. */
+  flythroughTopology?: FlythroughTopology;
+  /** How depth is derived from the source pixels.
+   *  `luminance`         — brighter pixels are closer (push toward camera)
+   *  `inverse-luminance` — darker pixels are closer (good for backlit shots)
+   *  `edge-density`      — high-contrast edges are closer (line-art look) */
+  flythroughDepthSource?: FlythroughDepthSource;
+  /** Camera Z-translation rate in world units per second. Positive
+   *  values fly INTO the tunnel; negative values pull back out of it.
+   *  Audio reactivity (when enabled) modulates this around the
+   *  configured baseline. */
+  flythroughFlySpeed?: number;       // -2..6
+  /** Z extent of one source slab in world units. Smaller values stack
+   *  more tightly; larger values spread the duplications out. */
+  flythroughTunnelDepth?: number;    // 0.5..6
+  /** How many duplicated slabs are visible at once. Bigger numbers
+   *  produce a denser tunnel and cost linearly more on the GPU
+   *  (instanced draws). */
+  flythroughSlabCount?: number;      // 2..8 integer
+  /** Curl-noise amplitude on per-particle velocity. 0 = particles
+   *  ride exactly along the camera axis; higher = more swirl. */
+  flythroughFlowStrength?: number;   // 0..2
+  /** Spatial frequency of the curl-noise field. Higher = tighter
+   *  swirls, more local detail. */
+  flythroughFlowScale?: number;      // 0.5..8
+  /** Pull factor toward each particle's source-UV anchor. Low =
+   *  chaotic swirl that doesn't read as the source image. High =
+   *  the image stays legible with subtle motion. */
+  flythroughAnchorPull?: number;     // 0..3
+  /** Stroke length in world units. Only used when topology is
+   *  `strokes`. Longer strokes = more painterly streaks. */
+  flythroughStrokeLength?: number;   // 0.01..0.4
+  /** Stroke width in world units. Only used when topology is
+   *  `strokes`. Wider strokes paint a fuller volume. */
+  flythroughStrokeWidth?: number;    // 0.001..0.05
+  /** Strength of the depth derived from the source (multiplier on
+   *  the depth-source heuristic). Higher = more 3D pop within each
+   *  slab; 0 = flat plane. */
+  flythroughDepthStrength?: number;  // 0..1.5
+  /** When true, fly speed and flow strength are modulated by the
+   *  audio analyzer's bass / treble bands. The configured baselines
+   *  remain the "no audio" values. */
+  flythroughAudioReactive?: boolean;
+}
+
+export function createDefaultPixelFXContent(): PixelFXContent {
+  return {
+    sourceType: 'image',
+    sourceUrl: null,
+    mode: 'depth-shift',
+    knobs: [0.6, 0, 0, 0],   // depth, _, spin_speed (0=no spin), spin_axis
+    particleCount: 250_000,
+    baseSize: 0.005,
+    opacity: 1,
+    anchorJitter: 0.6,
+    fovDeg: 50,
+    cameraZ: 2.2,
+    cameraYaw: 0,
+    cameraPitch: 0,
+    panX: 0,
+    panY: 0,
+    lightEnabled: false,
+    lightX: 1.0,
+    lightY: 1.0,
+    lightZ: 1.5,
+    lightIntensity: 1.5,
+    lightAmbient: 0.25,
+    lightHeightStrength: 1.5,
+    noiseAmpXY: 0,
+    noiseAmpZ: 0,
+    noiseFreq: 4,
+    noiseSpeed: 0.5,
+    // Flythrough defaults — tuned so a freshly-set-to-flythrough layer
+    // looks compelling immediately (not flat, not chaotic). Users
+    // can dial it all the way down to a slow corridor or all the
+    // way up to a hyperspace tunnel from here.
+    flythroughTopology: 'strokes',
+    flythroughDepthSource: 'luminance',
+    flythroughFlySpeed: 0.8,
+    flythroughTunnelDepth: 2.0,
+    flythroughSlabCount: 4,
+    flythroughFlowStrength: 0.4,
+    flythroughFlowScale: 2.0,
+    flythroughAnchorPull: 1.2,
+    flythroughStrokeLength: 0.08,
+    flythroughStrokeWidth: 0.006,
+    flythroughDepthStrength: 0.5,
+    flythroughAudioReactive: false,
+  };
+}
 
 // ── Group Layer ─────────────────────────────────────────────────────────────
 
@@ -407,9 +658,21 @@ export interface ColorContent {
 }
 
 // Click-point mask configuration
+//
+// A mask is a UNION of one-or-more sub-polygons ("shapes"). Each shape is an
+// array of bezier anchor points (Illustrator-style: each anchor may carry
+// `cpIn` / `cpOut` control handles to define curved segments). At least 3
+// anchors are required for a shape to render; `closed` flips once the user
+// finishes drawing it. The rasterizer tessellates each closed shape's beziers
+// in JS, then unions the silhouettes.
+export interface MaskShape {
+  points: BezierPoint[];   // Normalized coordinates (0-1) with optional bezier handles
+  closed: boolean;         // True once the user has closed this sub-polygon
+}
+
 export interface MaskConfig {
   enabled: boolean;
-  points: Point2D[];   // Normalized coordinates (0-1)
+  shapes: MaskShape[]; // Multiple sub-polygons; final mask is the UNION
   inverted: boolean;   // If true, show outside mask, hide inside
   feather: number;     // Feather/softness at edges (0-1)
 }
@@ -469,6 +732,7 @@ export interface LayerShapeParams {
 // ============================================================================
 
 export type LightPaintingBrushType =
+  // ── Original CPU-rasterised brushes ──
   | 'glow'        // Soft glowing trail (like long-exposure light)
   | 'neon'        // Hard-edged neon tube look
   | 'flame'       // Flickering fire trail
@@ -481,7 +745,21 @@ export type LightPaintingBrushType =
   | 'spray'       // Graffiti spray paint (scattered particles)
   | 'paintbrush'  // Wide bristle brush (direction-aware)
   | 'marker'      // Flat chisel-tip marker
-  | 'watercolor'; // Soft wet edges with bleed effect
+  | 'watercolor'  // Soft wet edges with bleed effect
+  // ── WebGPU compute-shader brushes ──
+  // Each spawns thousands of GPU particles bound to the stroke's
+  // tangent + normal vectors. Renders as instanced billboards with
+  // additive glow. Skipped by the CPU stroke rasteriser — the GPU
+  // pass is the entire visual.
+  //
+  // Designed for plant / organic projection mapping: spiral wraps
+  // around tree limbs, firefly emanates outward (great on
+  // branches), sap-flow simulates fluid travelling along the stroke.
+  | 'spiral'      // Particles wrap around the stroke like a candy cane
+  | 'firefly'     // Particles spawn near stroke + drift outward, twinkle
+  | 'sap-flow'    // Particles travel along stroke at varying phases (flow)
+  | 'water'       // Droplets fall from the stroke under gravity (rain off branches)
+  | 'smoke';      // Wisps rise from the stroke with curl noise (incense)
 
 export type LightPaintingLoopMode = 'forward' | 'reverse' | 'pingpong' | 'once';
 
@@ -510,6 +788,70 @@ export interface LightPaintingBrush {
   pressureSensitive: boolean;         // Use pressure for size
   smoothing: number;                  // Stroke smoothing 0-1 (0=raw, 1=max)
   speed: number;                      // Brush animation speed 0.1-5 (flame flicker, electric sparks, etc.)
+  /** Per-stroke width multiplier at the START of the stroke
+   *  (progress = 0). 1.0 = full brush width, 0.0 = pinched to a
+   *  point. Combined with taperEnd this lets a single stroke paint
+   *  a tapered shape — thicker at the base, thinner at the tip
+   *  (or vice versa). Used for projecting tree trunks/branches that
+   *  vary in thickness along their length. Defaults to 1. */
+  taperStart?: number;                // 0 - 2
+  /** Per-stroke width multiplier at the END of the stroke
+   *  (progress = 1). 1.0 = full brush width, 0.0 = pinched to a
+   *  point. Defaults to 1. */
+  taperEnd?: number;                  // 0 - 2
+  /** Power exponent applied to the taper interpolation curve.
+   *  1 = linear (default), 2 = ease-in (slow then fast taper),
+   *  0.5 = ease-out (fast then slow). Subtle but lets the taper
+   *  feel like a natural branch contour rather than a wedge. */
+  taperCurve?: number;                // 0.25 - 4
+  // ── GPU brush params (only consumed when type is a GPU brush) ──
+  // Defaults are set at brush creation; tuning happens in the panel.
+  /** Particles allocated to this stroke per frame budget. Higher =
+   *  denser visual but more GPU work. Each stroke gets its own slice
+   *  of the global particle buffer. Default 800. */
+  gpuParticleCount?: number;          // 50 - 4000
+  /** For 'spiral' brush: orbit radius in normalized canvas units
+   *  (0..1). 0.02 ≈ tight wrap, 0.1 ≈ wide spiral. */
+  gpuSpiralRadius?: number;           // 0.005 - 0.2
+  /** For 'spiral' brush: revolutions per second. Higher = faster
+   *  spinning candy-cane. Negative = reverse direction. */
+  gpuSpiralSpeed?: number;            // -5 - 5
+  /** For 'spiral' brush: spiral pitch (turns per stroke length).
+   *  Higher = tighter helix. */
+  gpuSpiralPitch?: number;            // 1 - 30
+  /** For 'firefly' / 'sap-flow' / 'water' / 'smoke' brushes: how
+   *  far particles drift from the stroke before expiring. */
+  gpuParticleDrift?: number;          // 0.005 - 0.3
+  /** For 'spiral' brush: render a glowing line of particles along
+   *  the stroke's center + hide back-side spiral particles entirely
+   *  (so when projected on a 3D surface the wrap reads correctly —
+   *  back-side particles can't leak through a tree trunk). When
+   *  off the spiral renders as a 360° helix with both halves
+   *  visible — usually the better look for free-floating shapes.
+   *  Default false (full helix). Turn on when projecting onto a
+   *  solid 3D object you want the spiral to wrap around. */
+  gpuSpiralShowCore?: boolean;
+  /** For 'water' brush: gravity strength (downward). 0=none,
+   *  1=normal, 2=heavy. Default 1. */
+  gpuWaterGravity?: number;           // 0 - 2
+  /** For 'smoke' brush: how fast wisps rise. 0.1 = slow incense,
+   *  1.5 = fast steam. Default 0.5. */
+  gpuSmokeRise?: number;              // 0.05 - 1.5
+  /** Render a translucent glass-style tube around the stroke that
+   *  visually contains the particles inside. The tube's radius
+   *  auto-scales with the per-brush max particle offset (spiral
+   *  orbit radius / firefly+sap-flow drift) so the particles
+   *  appear to live INSIDE the tube. Default ON for spiral and
+   *  sap-flow (containers feel natural for fluid / wraparound),
+   *  OFF for firefly (sparks should escape). */
+  gpuGlassTube?: boolean;
+  /** Optional override for glass-tube radius multiplier. 1.0 ≈
+   *  exactly fits particles. >1 looser fit. Default 1.25. */
+  gpuGlassTubeRadiusScale?: number;   // 0.5 - 3.0
+  /** Glass-tube color, RGB 0..255. Independent of the particle
+   *  colour so you can have e.g. a cool-blue glass tube containing
+   *  warm-amber fireflies. Defaults to a soft white when unset. */
+  gpuGlassTubeColor?: [number, number, number];
 }
 
 export interface LightPaintingStrokePoint {
@@ -609,6 +951,23 @@ export function createDefaultLightPaintingBrush(): LightPaintingBrush {
     pressureSensitive: false,
     smoothing: 0.5,
     speed: 1,
+    // GPU brush defaults — sensible starter values for spiral. The
+    // panel will swap these to brush-specific defaults when the user
+    // picks a different GPU brush type.
+    gpuParticleCount: 800,
+    gpuSpiralRadius: 0.025,
+    gpuSpiralSpeed: 1.2,
+    gpuSpiralPitch: 8,
+    gpuParticleDrift: 0.05,
+    gpuSpiralShowCore: false,
+    gpuWaterGravity: 1,
+    gpuSmokeRise: 0.5,
+    gpuGlassTube: false,                  // off by default — opt in per stroke
+    gpuGlassTubeRadiusScale: 1.25,
+    gpuGlassTubeColor: [220, 230, 255],   // soft cool-white — looks right for most particle colors
+    taperStart: 1,                        // no taper by default — both ends full width
+    taperEnd: 1,
+    taperCurve: 1,                        // linear interpolation
   };
 }
 
@@ -1786,6 +2145,8 @@ export interface Layer {
   textContent: TextContent | null;  // For text layers
   splatContent: SplatContent | null;  // For splat (point cloud/gaussian splat) layers
   model3dContent: Model3DContent | null;  // For 3D model layers
+  pixelFXContent: PixelFXContent | null;  // For pixel-fx layers (WebGPU source-to-particles)
+  gpuLayerContent: GPULayerContent | null; // For 'gpu' layers (swappable WebGPU shaders)
 
   // Transform (applied to the whole layer quad)
   position: Point2D;  // Offset in normalized coords (0-1)
@@ -1847,6 +2208,10 @@ export interface Layer {
 
 // Effect types — 81 curated effects with unique shader implementations
 export type EffectType =
+  // ── WebGPU compute / fragment effects ──
+  // Names are prefixed `gpu` so the engine can dispatch them via the
+  // gpuEffectRunner instead of the regular WebGL effect chain.
+  | 'gpuFluidSim'
   // Masking (2)
   | 'vignette'
   | 'edgeFeather'
@@ -2005,6 +2370,19 @@ export type EffectType =
   | 'chronophoto';
 
 export interface EffectParams {
+  // ── WebGPU Fluid Sim params (gpuFluidSim) ──
+  // Real-time Navier-Stokes simulation. The source layer feeds dye
+  // (color) + force (luminance gradient) into the fluid; the result
+  // swirls and dissipates over time.
+  injectStrength?: number;          // 0..3 — how much source feeds dye + force
+  velocityFromGradient?: number;    // 0..3 — luminance-gradient → velocity
+  viscosity?: number;               // 0..0.01 — momentum diffusion
+  dyeDecay?: number;                // 0..3 (1/sec) — exponential dye fade
+  velocityDecay?: number;           // 0..3 (1/sec)
+  vorticity?: number;               // 0..3 — extra swirl (vorticity confinement)
+  outputBoost?: number;             // 0.5..4 — visual brightness multiplier
+  timeScale?: number;               // 0.1..3 — sim speed independent of fps
+
   // Vignette params
   vignetteSize?: number;          // 0-1, how far vignette extends
   vignetteSoftness?: number;      // 0-1, edge softness
@@ -2592,6 +2970,8 @@ export function createLayer(id: string, name: string, type: LayerType = 'media')
     textContent: type === 'text' ? createDefaultTextContent() : null,
     splatContent: type === 'splat' ? createDefaultSplatContent() : null,
     model3dContent: type === 'model3d' ? createDefaultModel3DContent() : null,
+    pixelFXContent: type === 'pixel-fx' ? createDefaultPixelFXContent() : null,
+    gpuLayerContent: type === 'gpu' ? createDefaultGPULayerContent() : null,
     position: { x: 0, y: 0 },
     scale: { x: 1, y: 1 },
     rotation: 0,
@@ -2655,6 +3035,14 @@ export function createSplatLayer(id: string, name: string): Layer {
 
 export function createModel3DLayer(id: string, name: string): Layer {
   return createLayer(id, name, 'model3d');
+}
+
+export function createPixelFXLayer(id: string, name: string): Layer {
+  return createLayer(id, name, 'pixel-fx');
+}
+
+export function createGPULayer(id: string, name: string): Layer {
+  return createLayer(id, name, 'gpu');
 }
 
 export function createVJDeck(id: string): VJDeck {
