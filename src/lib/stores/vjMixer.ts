@@ -208,7 +208,7 @@ export const vjOutputLayersNew = derived(vjMixer, ($vjMixer) => {
       meshGrid: null,
       mask: null,
       cropRegion: null,
-      layerShapes: [],
+      layerShape: null,
       edgeEffects: null,
     };
 

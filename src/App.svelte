@@ -65,7 +65,7 @@
   import { startSpoutScanner } from './lib/stores/spout';
   import { preloadShaderLibrary } from './lib/preload';
   import { invoke, isMac, isDesktopApp } from './lib/bridge';
-  import type { Point2D, Layer, WarpCorners } from './lib/types';
+  import type { Point2D, BezierPoint, Layer, WarpCorners } from './lib/types';
   import { generateUUID } from './lib/types';
   import { createDefaultFreehandLine, createDefaultPointClickLine } from './lib/lines/types';
   import QRCode from 'qrcode';
@@ -154,7 +154,25 @@
   // Audio input picker state moved into AudioInputPicker.svelte component.
 
   // Mask editing state
-  let draggingMaskPointIndex: number | null = null;
+  // ── Anchor dragging ──
+  // Tracks which anchor across which sub-polygon is currently being dragged.
+  let draggingMaskAnchor: { shapeIndex: number; pointIndex: number } | null = null;
+  // ── Bezier handle dragging ──
+  // Tracks which cpIn/cpOut handle is being dragged.
+  let draggingMaskHandle: { shapeIndex: number; pointIndex: number; which: 'cpIn' | 'cpOut' } | null = null;
+  // ── Pen-tool draft ──
+  // While the user is mid-mousedown on empty canvas we hold the future anchor
+  // here and watch for drag distance > DRAG_BEND_THRESHOLD to decide between
+  // a sharp corner and a smooth bezier point (Illustrator-style).
+  type MaskPenDraft = {
+    anchor: Point2D;       // Normalized 0-1 UV
+    anchorPx: { x: number; y: number }; // Pixel position of anchor (fixed at mousedown)
+    dragPx: { x: number; y: number };   // Current pixel position (tracks during drag)
+    isCurve: boolean;      // Set once drag distance exceeds threshold
+  };
+  let maskPenDraft: MaskPenDraft | null = null;
+  const MASK_DRAG_BEND_THRESHOLD = 6; // px
+
   let shapeWarpModeEnabled = false;
   let draggingShapeControlPointIndex: number | null = null;
   let shapeWarpOverlayEl: SVGSVGElement;
@@ -1019,9 +1037,7 @@
   }
 
   function isLayerShapeWarpable(layer: Layer | null | undefined): boolean {
-    // Canvas warp UI edits the first shape only; multi-mask edits happen in
-    // the LayerPanel where the user picks the active chip.
-    const t = layer?.layerShapes?.[0]?.type;
+    const t = layer?.layerShape?.type;
     return !!t && (t === 'circle' || t === 'triangle');
   }
 
@@ -1043,17 +1059,15 @@
   }
 
   function ensureActiveLayerShapeControlPoints() {
-    if (!$selectedLayer || !isLayerShapeWarpable($selectedLayer)) return;
-    const primary = $selectedLayer.layerShapes[0];
-    if (!primary) return;
-    const existing = primary.controlPoints;
+    if (!$selectedLayer || !$selectedLayer.layerShape || !isLayerShapeWarpable($selectedLayer)) return;
+    const existing = $selectedLayer.layerShape.controlPoints;
     if (existing && existing.length > 0) return;
-    const shapeType = primary.type as 'circle' | 'triangle';
+    const shapeType = $selectedLayer.layerShape.type as 'circle' | 'triangle';
     project.initShapeControlPoints($selectedLayer.id, getDefaultLayerShapeControlPoints(shapeType));
   }
 
   function startShapeControlPointDrag(index: number, e: MouseEvent) {
-    if (!$selectedLayer || !$selectedLayer.layerShapes[0]) return;
+    if (!$selectedLayer || !$selectedLayer.layerShape) return;
     e.preventDefault();
     e.stopPropagation();
     ensureActiveLayerShapeControlPoints();
@@ -1063,7 +1077,7 @@
   }
 
   function handleShapeControlPointDrag(e: MouseEvent) {
-    if (draggingShapeControlPointIndex === null || !$selectedLayer || !$selectedLayer.layerShapes[0] || !shapeWarpOverlayEl) return;
+    if (draggingShapeControlPointIndex === null || !$selectedLayer || !$selectedLayer.layerShape || !shapeWarpOverlayEl) return;
     const rect = shapeWarpOverlayEl.getBoundingClientRect();
     // Get canvas-normalized coords from mouse position
     const canvasNormX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
@@ -3204,48 +3218,264 @@
 
   // ============================================================================
   // MASK POINT INTERACTION HANDLERS
+  //
+  // The mask is a UNION of one-or-more bezier sub-polygons. The pen tool
+  // mirrors CustomShapeHandles.svelte's Illustrator-style UX:
+  //   - mousedown on empty canvas → start a `maskPenDraft` (deferred anchor)
+  //   - drag past MASK_DRAG_BEND_THRESHOLD → flip draft to "curve" mode and
+  //     show preview handles
+  //   - mouseup → commit anchor (sharp or smooth) to the current open shape
+  //   - right-click or double-click empty canvas → close the open shape
+  //   - right-click an anchor → delete it
+  //   - drag an anchor or one of its handles → live-update via the store
   // ============================================================================
 
-  function handleMaskOverlayClick(e: MouseEvent) {
+  /** True if the layer's mask currently has an open sub-polygon. */
+  function hasOpenMaskShape(layer: Layer | null | undefined): boolean {
+    return !!layer?.mask?.shapes?.some((s) => !s.closed && s.points.length > 0);
+  }
+
+  /** Mousedown on the mask overlay (empty canvas — anchor / handle clicks are
+   *  caught by their own mousedown handlers and stopPropagation). */
+  function handleMaskMouseDown(e: MouseEvent) {
+    if (e.button !== 0) return;
     if (!$selectedLayer?.mask?.enabled) return;
-    if (draggingMaskPointIndex !== null) return; // Don't add while dragging
+    // Ignore clicks that originate on anchor / handle dots
+    const target = e.target as Element | null;
+    if (target && target.closest('.mask-anchor, .mask-handle')) return;
 
-    // Use the same letterbox-aware transform as other canvas interactions
-    // so the mask point lands exactly where the cursor is.
-    const coords = mouseToCanvasCoords(e);
-    const x = Math.max(0, Math.min(1, coords.x));
-    const y = Math.max(0, Math.min(1, coords.y));
+    const norm = mouseToCanvasCoords(e);
+    const clampedAnchor: Point2D = {
+      x: Math.max(0, Math.min(1, norm.x)),
+      y: Math.max(0, Math.min(1, norm.y)),
+    };
+    // Convert anchor back to SVG-pixel space for the live preview overlay so
+    // drag-distance math is in pixels (consistent with the threshold).
+    const anchorPx = { x: canvasToSvgX(clampedAnchor.x), y: canvasToSvgY(clampedAnchor.y) };
+    maskPenDraft = {
+      anchor: clampedAnchor,
+      anchorPx,
+      dragPx: { ...anchorPx },
+      isCurve: false,
+    };
+    window.addEventListener('mousemove', handleMaskPenMove);
+    window.addEventListener('mouseup', handleMaskPenUp);
+  }
 
-    project.addMaskPoint($selectedLayer.id, { x, y });
+  function handleMaskPenMove(e: MouseEvent) {
+    if (!maskPenDraft) return;
+    // Track the cursor in normalized-canvas space, then convert to SVG-pixel
+    // space for the preview and drag-distance calculation.
+    const norm = mouseToCanvasCoords(e);
+    const clamped: Point2D = {
+      x: Math.max(0, Math.min(1, norm.x)),
+      y: Math.max(0, Math.min(1, norm.y)),
+    };
+    const dragPx = { x: canvasToSvgX(clamped.x), y: canvasToSvgY(clamped.y) };
+    maskPenDraft.dragPx = dragPx;
+    const dist = Math.hypot(dragPx.x - maskPenDraft.anchorPx.x, dragPx.y - maskPenDraft.anchorPx.y);
+    maskPenDraft.isCurve = dist > MASK_DRAG_BEND_THRESHOLD;
+    // Reassign to trigger reactivity for the preview overlay
+    maskPenDraft = maskPenDraft;
+  }
+
+  function handleMaskPenUp(e: MouseEvent) {
+    window.removeEventListener('mousemove', handleMaskPenMove);
+    window.removeEventListener('mouseup', handleMaskPenUp);
+    if (!maskPenDraft || !$selectedLayer) {
+      maskPenDraft = null;
+      return;
+    }
+    const draft = maskPenDraft;
+    maskPenDraft = null;
+    const layerId = $selectedLayer.id;
+
+    // Commit the anchor — the store routes it to the last unclosed shape, or
+    // starts a new shape if none is open.
+    const anchorPoint: BezierPoint = { x: draft.anchor.x, y: draft.anchor.y };
+    project.addMaskPoint(layerId, anchorPoint);
+
+    if (draft.isCurve) {
+      // Compute cpOut in normalized space from the final mouse position.
+      const finalNorm = mouseToCanvasCoords(e);
+      const cpOutNorm: Point2D = {
+        x: Math.max(-2, Math.min(3, finalNorm.x)),
+        y: Math.max(-2, Math.min(3, finalNorm.y)),
+      };
+      const cpInNorm: Point2D = {
+        x: 2 * draft.anchor.x - cpOutNorm.x,
+        y: 2 * draft.anchor.y - cpOutNorm.y,
+      };
+      // Find the just-added anchor — it's the last point of the last unclosed shape.
+      const post = $selectedLayer;
+      const shapes = post?.mask?.shapes ?? [];
+      // Prefer the LAST UNCLOSED shape (consistent with how addMaskPoint routes).
+      let targetShapeIdx = -1;
+      for (let i = shapes.length - 1; i >= 0; i--) {
+        if (!shapes[i].closed) { targetShapeIdx = i; break; }
+      }
+      // Fallback: if every shape is somehow closed, use the absolute last.
+      if (targetShapeIdx < 0) targetShapeIdx = shapes.length - 1;
+      if (targetShapeIdx >= 0) {
+        const targetShape = shapes[targetShapeIdx];
+        const newPointIdx = targetShape.points.length - 1;
+        if (newPointIdx >= 0) {
+          project.setMaskPointHandle(layerId, targetShapeIdx, newPointIdx, 'cpOut', cpOutNorm);
+          project.setMaskPointHandle(layerId, targetShapeIdx, newPointIdx, 'cpIn', cpInNorm);
+        }
+      }
+    }
     recordHistory();
   }
 
-  function handleMaskPointDragStart(pointIndex: number, e: MouseEvent) {
+  /** Right-click on empty canvas: close the current open shape. */
+  function handleMaskOverlayContextMenu(e: MouseEvent) {
+    if (!$selectedLayer?.mask?.enabled) return;
+    // Anchor right-click is handled separately and stopPropagation()s.
+    const target = e.target as Element | null;
+    if (target && target.closest('.mask-anchor, .mask-handle')) return;
+    e.preventDefault();
     e.stopPropagation();
-    draggingMaskPointIndex = pointIndex;
+    project.closeMaskShape($selectedLayer.id);
+    recordHistory();
   }
 
-  function handleMaskPointDrag(e: MouseEvent) {
-    if (draggingMaskPointIndex === null || !$selectedLayer?.mask) return;
+  /** Anchor mousedown — start dragging this anchor (move x/y + carry handles).
+   *  Special case: clicking the FIRST anchor of the currently-open shape
+   *  closes the shape (provided it has at least 3 anchors). This matches
+   *  the conventional pen-tool "click first point to close" UX. */
+  function handleMaskAnchorMouseDown(shapeIndex: number, pointIndex: number, e: MouseEvent) {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const mask = $selectedLayer?.mask;
+    if (mask && pointIndex === 0) {
+      const shape = mask.shapes[shapeIndex];
+      if (shape && !shape.closed && shape.points.length >= 3) {
+        project.closeMaskShape($selectedLayer!.id);
+        recordHistory();
+        return;
+      }
+    }
+    draggingMaskAnchor = { shapeIndex, pointIndex };
+    window.addEventListener('mousemove', handleMaskAnchorDrag);
+    window.addEventListener('mouseup', handleMaskAnchorDragEnd);
+  }
 
+  function handleMaskAnchorDrag(e: MouseEvent) {
+    if (!draggingMaskAnchor || !$selectedLayer?.mask) return;
     const coords = mouseToCanvasCoords(e);
-    const x = Math.max(0, Math.min(1, coords.x));
-    const y = Math.max(0, Math.min(1, coords.y));
-
-    project.updateMaskPoint($selectedLayer.id, draggingMaskPointIndex, { x, y });
+    const newX = Math.max(0, Math.min(1, coords.x));
+    const newY = Math.max(0, Math.min(1, coords.y));
+    const shape = $selectedLayer.mask.shapes[draggingMaskAnchor.shapeIndex];
+    if (!shape) return;
+    const pt = shape.points[draggingMaskAnchor.pointIndex];
+    if (!pt) return;
+    const dx = newX - pt.x;
+    const dy = newY - pt.y;
+    const partial: Partial<BezierPoint> = { x: newX, y: newY };
+    if (pt.cpIn) partial.cpIn = { x: pt.cpIn.x + dx, y: pt.cpIn.y + dy };
+    if (pt.cpOut) partial.cpOut = { x: pt.cpOut.x + dx, y: pt.cpOut.y + dy };
+    project.updateMaskPoint($selectedLayer.id, draggingMaskAnchor.shapeIndex, draggingMaskAnchor.pointIndex, partial);
   }
 
-  function handleMaskPointDragEnd() {
-    if (draggingMaskPointIndex !== null) recordHistory();
-    draggingMaskPointIndex = null;
+  function handleMaskAnchorDragEnd() {
+    if (draggingMaskAnchor !== null) recordHistory();
+    draggingMaskAnchor = null;
+    window.removeEventListener('mousemove', handleMaskAnchorDrag);
+    window.removeEventListener('mouseup', handleMaskAnchorDragEnd);
   }
 
-  function handleMaskPointRightClick(pointIndex: number, e: MouseEvent) {
+  /** Right-click an anchor: delete it. */
+  function handleMaskAnchorRightClick(shapeIndex: number, pointIndex: number, e: MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
     if (!$selectedLayer?.mask) return;
-    project.removeMaskPoint($selectedLayer.id, pointIndex);
+    project.removeMaskPoint($selectedLayer.id, shapeIndex, pointIndex);
     recordHistory();
+  }
+
+  /** Control-handle mousedown — drag a cpIn/cpOut handle, mirror the other side. */
+  function handleMaskHandleMouseDown(shapeIndex: number, pointIndex: number, which: 'cpIn' | 'cpOut', e: MouseEvent) {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    draggingMaskHandle = { shapeIndex, pointIndex, which };
+    window.addEventListener('mousemove', handleMaskHandleDrag);
+    window.addEventListener('mouseup', handleMaskHandleDragEnd);
+  }
+
+  function handleMaskHandleDrag(e: MouseEvent) {
+    if (!draggingMaskHandle || !$selectedLayer?.mask) return;
+    const coords = mouseToCanvasCoords(e);
+    const newPos: Point2D = {
+      x: Math.max(0, Math.min(1, coords.x)),
+      y: Math.max(0, Math.min(1, coords.y)),
+    };
+    project.setMaskPointHandle(
+      $selectedLayer.id,
+      draggingMaskHandle.shapeIndex,
+      draggingMaskHandle.pointIndex,
+      draggingMaskHandle.which,
+      newPos
+    );
+    // Mirror the opposite handle unless Alt is held (matches CustomShapeHandles).
+    if (!e.altKey) {
+      const shape = $selectedLayer.mask.shapes[draggingMaskHandle.shapeIndex];
+      const pt = shape?.points[draggingMaskHandle.pointIndex];
+      if (pt) {
+        const mirrorWhich: 'cpIn' | 'cpOut' = draggingMaskHandle.which === 'cpIn' ? 'cpOut' : 'cpIn';
+        const mirror: Point2D = { x: 2 * pt.x - newPos.x, y: 2 * pt.y - newPos.y };
+        project.setMaskPointHandle(
+          $selectedLayer.id,
+          draggingMaskHandle.shapeIndex,
+          draggingMaskHandle.pointIndex,
+          mirrorWhich,
+          mirror
+        );
+      }
+    }
+  }
+
+  function handleMaskHandleDragEnd() {
+    if (draggingMaskHandle !== null) recordHistory();
+    draggingMaskHandle = null;
+    window.removeEventListener('mousemove', handleMaskHandleDrag);
+    window.removeEventListener('mouseup', handleMaskHandleDragEnd);
+  }
+
+  /** Return the trailing open sub-polygon (with at least one anchor), or null
+   *  if every shape is closed. Mirrors how the store routes new anchors. */
+  function findOpenMaskShape(shapes: Array<{ points: BezierPoint[]; closed: boolean }>): { points: BezierPoint[]; closed: boolean } | null {
+    for (let i = shapes.length - 1; i >= 0; i--) {
+      const s = shapes[i];
+      if (!s.closed && s.points.length > 0) return s;
+    }
+    return null;
+  }
+
+  /** Build an SVG path "d" string for one mask sub-polygon. Uses C-curves
+   *  between any two anchors when either side carries a handle, else L lines.
+   *  Closed shapes terminate with Z. */
+  function buildMaskShapePath(shape: { points: BezierPoint[]; closed: boolean }): string {
+    const pts = shape.points;
+    if (pts.length < 2) return '';
+    let d = `M ${canvasToSvgX(pts[0].x)},${canvasToSvgY(pts[0].y)}`;
+    const segCount = shape.closed ? pts.length : pts.length - 1;
+    for (let i = 0; i < segCount; i++) {
+      const a = pts[i];
+      const b = pts[(i + 1) % pts.length];
+      const hasCurve = a.cpOut || b.cpIn;
+      if (hasCurve) {
+        const cp1 = a.cpOut ?? a;
+        const cp2 = b.cpIn ?? b;
+        d += ` C ${canvasToSvgX(cp1.x)},${canvasToSvgY(cp1.y)} ${canvasToSvgX(cp2.x)},${canvasToSvgY(cp2.y)} ${canvasToSvgX(b.x)},${canvasToSvgY(b.y)}`;
+      } else {
+        d += ` L ${canvasToSvgX(b.x)},${canvasToSvgY(b.y)}`;
+      }
+    }
+    if (shape.closed) d += ' Z';
+    return d;
   }
 
   // Exit shape-warp mode automatically if selected layer can't use it
@@ -3255,7 +3485,7 @@
   $: if (shapeWarpModeEnabled) {
     ensureActiveLayerShapeControlPoints();
   }
-  $: layerShapeControlPoints = $selectedLayer?.layerShapes?.[0]?.controlPoints ?? [];
+  $: layerShapeControlPoints = $selectedLayer?.layerShape?.controlPoints ?? [];
 
   // ============================================================================
   // SHAPE VERTEX DRAGGING (for editing shape control points)
@@ -3847,7 +4077,7 @@
               <MeshWarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
             {/if}
 
-            {#if $selectedLayer.layerShapes?.[0]?.type === 'custom'}
+            {#if $selectedLayer.layerShape?.type === 'custom'}
               <CustomShapeHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
             {/if}
 
@@ -3859,7 +4089,7 @@
                 style="width: {canvasWidth}px; height: {canvasHeight}px;"
                 class:editing={shapeWarpModeEnabled}
               >
-                {#if $selectedLayer.layerShapes?.[0]?.type === 'circle' && layerShapeControlPoints.length >= 5 && warpCorners}
+                {#if $selectedLayer.layerShape?.type === 'circle' && layerShapeControlPoints.length >= 5 && warpCorners}
                   {@const w0 = warpPointThroughCorners(warpCorners, layerShapeControlPoints[0].x, layerShapeControlPoints[0].y)}
                   {@const w1 = warpPointThroughCorners(warpCorners, layerShapeControlPoints[1].x, layerShapeControlPoints[1].y)}
                   {@const w2 = warpPointThroughCorners(warpCorners, layerShapeControlPoints[2].x, layerShapeControlPoints[2].y)}
@@ -3871,7 +4101,7 @@
                   <line x1={wc.x * canvasWidth} y1={(1 - wc.y) * canvasHeight} x2={w1.x * canvasWidth} y2={(1 - w1.y) * canvasHeight} stroke="#67E8F9" stroke-width="1" opacity="0.55" />
                   <line x1={wc.x * canvasWidth} y1={(1 - wc.y) * canvasHeight} x2={w2.x * canvasWidth} y2={(1 - w2.y) * canvasHeight} stroke="#67E8F9" stroke-width="1" opacity="0.55" />
                   <line x1={wc.x * canvasWidth} y1={(1 - wc.y) * canvasHeight} x2={w3.x * canvasWidth} y2={(1 - w3.y) * canvasHeight} stroke="#67E8F9" stroke-width="1" opacity="0.55" />
-                {:else if $selectedLayer.layerShapes?.[0]?.type === 'triangle' && layerShapeControlPoints.length >= 3 && warpCorners}
+                {:else if $selectedLayer.layerShape?.type === 'triangle' && layerShapeControlPoints.length >= 3 && warpCorners}
                   <polygon
                     points={layerShapeControlPoints.slice(0, 3).map((p) => { const w = warpPointThroughCorners(warpCorners, p.x, p.y); return `${w.x * canvasWidth},${(1 - w.y) * canvasHeight}`; }).join(' ')}
                     fill="none"
@@ -3883,7 +4113,7 @@
 
                 {#if shapeWarpModeEnabled && warpCorners}
                   {#each layerShapeControlPoints as point, i}
-                    {@const isCircleCenter = $selectedLayer.layerShapes?.[0]?.type === 'circle' && i === 4}
+                    {@const isCircleCenter = $selectedLayer.layerShape?.type === 'circle' && i === 4}
                     {@const warped = warpPointThroughCorners(warpCorners, point.x, point.y)}
                     <circle
                       cx={warped.x * canvasWidth}
@@ -4196,56 +4426,162 @@
           </div>
         {/if}
 
-        <!-- Mask editing overlay -->
+        <!-- Mask editing overlay (multi-shape bezier pen tool) -->
         {#if $selectedLayer?.mask?.enabled}
+          {@const maskShapes = $selectedLayer.mask.shapes ?? []}
           <div
             class="mask-overlay"
-            onclick={handleMaskOverlayClick}
-            onmousemove={handleMaskPointDrag}
-            onmouseup={handleMaskPointDragEnd}
-            onmouseleave={handleMaskPointDragEnd}
+            onmousedown={handleMaskMouseDown}
+            oncontextmenu={handleMaskOverlayContextMenu}
             role="presentation"
           >
             <svg class="mask-handles" style="width: 100%; height: 100%;">
-              <!-- Draw polygon outline -->
-              {#if $selectedLayer.mask.points.length >= 2}
-                <polygon
-                  points={$selectedLayer.mask.points.map(p => `${canvasToSvgX(p.x)},${canvasToSvgY(p.y)}`).join(' ')}
-                  fill="rgba(255, 0, 255, 0.1)"
-                  stroke="#ff00ff"
-                  stroke-width="2"
-                  stroke-dasharray="4 4"
-                />
-              {/if}
-              <!-- Draw mask points -->
-              {#each $selectedLayer.mask.points as point, i}
-                {@const x = canvasToSvgX(point.x)}
-                {@const y = canvasToSvgY(point.y)}
-                <circle
-                  cx={x}
-                  cy={y}
-                  r="8"
-                  fill={draggingMaskPointIndex === i ? '#ff00ff' : '#fff'}
-                  stroke="#ff00ff"
-                  stroke-width="2"
-                  style="cursor: grab;"
-                  onmousedown={(e) => handleMaskPointDragStart(i, e)}
-                  oncontextmenu={(e) => handleMaskPointRightClick(i, e)}
-                  role="button"
-                  tabindex="0"
-                />
-                <text
-                  x={x}
-                  y={y - 12}
-                  text-anchor="middle"
-                  fill="#ff00ff"
-                  font-size="10"
-                  font-weight="bold"
-                >{i + 1}</text>
+              <!-- One <path> per sub-polygon. Closed shapes get a solid stroke and
+                   light fill; the in-progress (open) shape gets a dashed stroke. -->
+              {#each maskShapes as shape, sIdx}
+                {#if shape.points.length >= 2}
+                  <path
+                    d={buildMaskShapePath(shape)}
+                    fill={shape.closed ? 'rgba(255, 0, 255, 0.1)' : 'none'}
+                    stroke="#ff00ff"
+                    stroke-width="2"
+                    stroke-dasharray={shape.closed ? 'none' : '4 4'}
+                  />
+                {/if}
+                <!-- Per-anchor handle preview lines (only for closed shapes;
+                     open-shape handles get rendered after pen draft). -->
+                {#if shape.closed}
+                  {#each shape.points as pt, pIdx}
+                    {#if pt.cpIn}
+                      <line
+                        x1={canvasToSvgX(pt.x)} y1={canvasToSvgY(pt.y)}
+                        x2={canvasToSvgX(pt.cpIn.x)} y2={canvasToSvgY(pt.cpIn.y)}
+                        stroke="#ff00ff" stroke-width="1" opacity="0.6"
+                      />
+                    {/if}
+                    {#if pt.cpOut}
+                      <line
+                        x1={canvasToSvgX(pt.x)} y1={canvasToSvgY(pt.y)}
+                        x2={canvasToSvgX(pt.cpOut.x)} y2={canvasToSvgY(pt.cpOut.y)}
+                        stroke="#ff00ff" stroke-width="1" opacity="0.6"
+                      />
+                    {/if}
+                  {/each}
+                {/if}
+                <!-- Anchor dots + indices (for ALL anchors, open or closed) -->
+                {#each shape.points as pt, pIdx}
+                  {@const ax = canvasToSvgX(pt.x)}
+                  {@const ay = canvasToSvgY(pt.y)}
+                  {@const isDragging = draggingMaskAnchor?.shapeIndex === sIdx && draggingMaskAnchor?.pointIndex === pIdx}
+                  {@const isCloseTarget = !shape.closed && pIdx === 0 && shape.points.length >= 3}
+                  <!-- First anchor of an open shape with ≥3 points is the
+                       "click to close" target. Bigger + yellow rim so it's
+                       obvious you can click it to finish the polygon. -->
+                  {#if isCloseTarget}
+                    <circle
+                      cx={ax} cy={ay} r="13"
+                      fill="none"
+                      stroke="#ffd400"
+                      stroke-width="2"
+                      stroke-dasharray="3 3"
+                      pointer-events="none"
+                    />
+                  {/if}
+                  <circle
+                    class="mask-anchor"
+                    cx={ax}
+                    cy={ay}
+                    r="8"
+                    fill={isDragging ? '#ff00ff' : (isCloseTarget ? '#ffd400' : '#fff')}
+                    stroke={isCloseTarget ? '#ffd400' : '#ff00ff'}
+                    stroke-width="2"
+                    style="cursor: {isCloseTarget ? 'pointer' : 'grab'};"
+                    onmousedown={(e) => handleMaskAnchorMouseDown(sIdx, pIdx, e)}
+                    oncontextmenu={(e) => handleMaskAnchorRightClick(sIdx, pIdx, e)}
+                    role="button"
+                    tabindex="0"
+                  />
+                  <text
+                    x={ax}
+                    y={ay - 12}
+                    text-anchor="middle"
+                    fill="#ff00ff"
+                    font-size="10"
+                    font-weight="bold"
+                    pointer-events="none"
+                  >{pIdx + 1}</text>
+                  <!-- cpIn / cpOut handle dots (only when a handle exists) -->
+                  {#if pt.cpIn}
+                    <circle
+                      class="mask-handle"
+                      cx={canvasToSvgX(pt.cpIn.x)}
+                      cy={canvasToSvgY(pt.cpIn.y)}
+                      r="5"
+                      fill="#ff00ff"
+                      stroke="#fff"
+                      stroke-width="1.5"
+                      style="cursor: grab;"
+                      onmousedown={(e) => handleMaskHandleMouseDown(sIdx, pIdx, 'cpIn', e)}
+                      role="button"
+                      tabindex="0"
+                    />
+                  {/if}
+                  {#if pt.cpOut}
+                    <circle
+                      class="mask-handle"
+                      cx={canvasToSvgX(pt.cpOut.x)}
+                      cy={canvasToSvgY(pt.cpOut.y)}
+                      r="5"
+                      fill="#ff00ff"
+                      stroke="#fff"
+                      stroke-width="1.5"
+                      style="cursor: grab;"
+                      onmousedown={(e) => handleMaskHandleMouseDown(sIdx, pIdx, 'cpOut', e)}
+                      role="button"
+                      tabindex="0"
+                    />
+                  {/if}
+                {/each}
               {/each}
+
+              <!-- Pen draft preview: in-progress anchor + handles -->
+              {#if maskPenDraft}
+                {@const anchorPx = maskPenDraft.anchorPx}
+                {@const cpOutPx = maskPenDraft.dragPx}
+                {@const cpInPx = { x: 2 * anchorPx.x - cpOutPx.x, y: 2 * anchorPx.y - cpOutPx.y }}
+                <!-- Find the trailing open shape (if any) for the ghost-segment preview -->
+                {@const openShapeForDraft = findOpenMaskShape(maskShapes)}
+                {#if openShapeForDraft && openShapeForDraft.points.length > 0}
+                  {@const lastPt = openShapeForDraft.points[openShapeForDraft.points.length - 1]}
+                  {@const prevPx = { x: canvasToSvgX(lastPt.x), y: canvasToSvgY(lastPt.y) }}
+                  {@const prevCpOutPx = lastPt.cpOut
+                    ? { x: canvasToSvgX(lastPt.cpOut.x), y: canvasToSvgY(lastPt.cpOut.y) }
+                    : prevPx}
+                  <path
+                    d={`M ${prevPx.x},${prevPx.y} C ${prevCpOutPx.x},${prevCpOutPx.y} ${cpInPx.x},${cpInPx.y} ${anchorPx.x},${anchorPx.y}`}
+                    fill="none"
+                    stroke="#ff00ff"
+                    stroke-width="2"
+                    stroke-dasharray={maskPenDraft.isCurve ? 'none' : '4 4'}
+                    opacity="0.85"
+                  />
+                {/if}
+                <!-- Handle bar + handle dots while in curve mode -->
+                {#if maskPenDraft.isCurve}
+                  <line
+                    x1={cpInPx.x} y1={cpInPx.y}
+                    x2={cpOutPx.x} y2={cpOutPx.y}
+                    stroke="#ff00ff" stroke-width="1" opacity="0.7"
+                  />
+                  <circle cx={cpInPx.x} cy={cpInPx.y} r="4" fill="#ff00ff" stroke="#fff" stroke-width="1" />
+                  <circle cx={cpOutPx.x} cy={cpOutPx.y} r="4" fill="#ff00ff" stroke="#fff" stroke-width="1" />
+                {/if}
+                <!-- Anchor preview dot, drawn last so it sits on top -->
+                <circle cx={anchorPx.x} cy={anchorPx.y} r="6" fill="#fff" stroke="#ff00ff" stroke-width="2" />
+              {/if}
             </svg>
             <div class="mask-hint">
-              Click to add points | Drag to move | Right-click to delete
+              Click to add points · Drag to add curves · Right-click empty area to close shape · Right-click anchor to delete
             </div>
           </div>
         {/if}

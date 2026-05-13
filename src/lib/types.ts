@@ -407,9 +407,21 @@ export interface ColorContent {
 }
 
 // Click-point mask configuration
+//
+// A mask is a UNION of one-or-more sub-polygons ("shapes"). Each shape is an
+// array of bezier anchor points (Illustrator-style: each anchor may carry
+// `cpIn` / `cpOut` control handles to define curved segments). At least 3
+// anchors are required for a shape to render; `closed` flips once the user
+// finishes drawing it. The rasterizer tessellates each closed shape's beziers
+// in JS, then unions the silhouettes.
+export interface MaskShape {
+  points: BezierPoint[];   // Normalized coordinates (0-1) with optional bezier handles
+  closed: boolean;         // True once the user has closed this sub-polygon
+}
+
 export interface MaskConfig {
   enabled: boolean;
-  points: Point2D[];   // Normalized coordinates (0-1)
+  shapes: MaskShape[]; // Multiple sub-polygons; final mask is the UNION
   inverted: boolean;   // If true, show outside mask, hide inside
   feather: number;     // Feather/softness at edges (0-1)
 }
@@ -1763,12 +1775,8 @@ export interface Layer {
   // Input crop/slice (what portion of the source to use)
   cropRegion: CropRegion | null;
 
-  // Layer shape masks (circle, triangle, line, etc.). Empty array = no shape masking.
-  // When the array has more than one shape, the renderer unions them together
-  // (max-alpha blending) so e.g. a circle + a star yields BOTH regions visible.
-  // The "active shape" being edited in the panel is purely UI-only state — it
-  // does NOT live on the layer.
-  layerShapes: LayerShape[];
+  // Layer shape mask (circle, triangle, line, etc.)
+  layerShape: LayerShape | null;
 
   // Effects (applied to both media and generative layers)
   effects: Effect[];
@@ -2569,7 +2577,7 @@ export function createLayer(id: string, name: string, type: LayerType = 'media')
     meshGrid: null,
     mask: null,
     cropRegion: null,
-    layerShapes: type === 'media' ? [createDefaultLayerShape('rectangle')] : [],
+    layerShape: type === 'media' ? createDefaultLayerShape('rectangle') : null,
     effects: [],
     edgeEffects: null,
     ...(type === 'screen' ? { vjLayerIndex: 0 } : {}),

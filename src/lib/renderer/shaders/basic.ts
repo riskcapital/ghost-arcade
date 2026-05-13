@@ -1319,6 +1319,86 @@ export const polygonMaskShader = /* glsl */ `
 `;
 
 // ============================================================================
+// MASK SHAPE TO ALPHA - Renders a single polygon's silhouette into a buffer's
+// alpha channel. Used when building a UNION of multiple sub-polygons: this
+// shader gets called once per shape with THREE.MaxEquation blending so the
+// destination alpha accumulates `max(prevAlpha, thisShapeAlpha)`.
+// RGB output is unused — the consumer only reads .a.
+// ============================================================================
+export const polygonMaskAlphaShader = /* glsl */ `
+  uniform vec2 uPoints[64];
+  uniform int uPointCount;
+  uniform float uFeather;
+  varying vec2 vUv;
+
+  float pointInPolygon(vec2 p) {
+    if (uPointCount < 3) return 0.0;
+    int crossings = 0;
+    for (int i = 0; i < 64; i++) {
+      if (i >= uPointCount) break;
+      int j = i + 1;
+      if (j >= uPointCount) j = 0;
+      vec2 p1 = uPoints[i];
+      vec2 p2 = uPoints[j];
+      if (((p1.y <= p.y && p2.y > p.y) || (p1.y > p.y && p2.y <= p.y)) &&
+          (p.x < (p2.x - p1.x) * (p.y - p1.y) / (p2.y - p1.y) + p1.x)) {
+        crossings++;
+      }
+    }
+    return mod(float(crossings), 2.0);
+  }
+
+  float distToPolygonEdge(vec2 p) {
+    if (uPointCount < 3) return 1.0;
+    float minDist = 1000.0;
+    for (int i = 0; i < 64; i++) {
+      if (i >= uPointCount) break;
+      int j = i + 1;
+      if (j >= uPointCount) j = 0;
+      vec2 a = uPoints[i];
+      vec2 b = uPoints[j];
+      vec2 ab = b - a;
+      vec2 ap = p - a;
+      float t = clamp(dot(ap, ab) / dot(ab, ab), 0.0, 1.0);
+      vec2 closest = a + t * ab;
+      minDist = min(minDist, length(p - closest));
+    }
+    return minDist;
+  }
+
+  void main() {
+    float inside = pointInPolygon(vUv);
+    float alpha;
+    if (uFeather > 0.001 && inside > 0.5) {
+      float dist = distToPolygonEdge(vUv);
+      alpha = smoothstep(0.0, uFeather, dist);
+    } else {
+      alpha = inside;
+    }
+    gl_FragColor = vec4(1.0, 1.0, 1.0, alpha);
+  }
+`;
+
+// ============================================================================
+// APPLY EXTERNAL MASK - Multiplies a source texture's alpha by another
+// texture's alpha channel. Used to apply a pre-built union mask to a layer's
+// source. Supports the same `uInvert` flag as the inline polygon mask.
+// ============================================================================
+export const applyExternalMaskShader = /* glsl */ `
+  uniform sampler2D uSource;
+  uniform sampler2D uMask;
+  uniform float uInvert;
+  varying vec2 vUv;
+
+  void main() {
+    vec4 src = texture2D(uSource, vUv);
+    float maskA = texture2D(uMask, vUv).a;
+    float a = uInvert > 0.5 ? (1.0 - maskA) : maskA;
+    gl_FragColor = vec4(src.rgb, src.a * a);
+  }
+`;
+
+// ============================================================================
 // LAYER SHAPE MASK - Circle, ellipse, polygon, star, triangle, line shapes
 // ============================================================================
 export const layerShapeMaskShader = /* glsl */ `
@@ -1555,217 +1635,6 @@ export const layerShapeMaskShader = /* glsl */ `
     }
 
     gl_FragColor = vec4(texColor.rgb, texColor.a * mask);
-  }
-`;
-
-// ============================================================================
-// MULTI-SHAPE MASK SUPPORT — silhouette shaders used to build a unioned alpha
-// mask when a layer carries multiple shapes. The union pass renders each shape
-// into a shared FBO with MAX blend on the alpha channel; the final composite
-// pass multiplies that union mask into the source texture.
-// ============================================================================
-
-// Silhouette variant of layerShapeMaskShader — outputs vec4(1, 1, 1, mask) so
-// the union FBO accumulates pure alpha (no source-color leak). Same uniforms
-// as layerShapeMaskShader but without uTexture / sampling.
-export const layerShapeSilhouetteShader = /* glsl */ `
-  uniform int uShapeType;
-  uniform float uRadiusX;
-  uniform float uRadiusY;
-  uniform int uSides;
-  uniform float uInnerRadius;
-  uniform float uRotation;
-  uniform float uFeather;
-  uniform float uScale;
-  uniform float uLineWidth;
-  uniform vec2 uLineStart;
-  uniform vec2 uLineEnd;
-  uniform int uHasControlPoints;
-  uniform int uControlPointCount;
-  uniform vec2 uControlPoints[5];
-  uniform int uInvert;
-  varying vec2 vUv;
-
-  #define PI 3.14159265359
-
-  vec2 rotate(vec2 p, float angle) {
-    float c = cos(angle);
-    float s = sin(angle);
-    return vec2(p.x * c - p.y * s, p.x * s + p.y * c);
-  }
-  float sdCircle(vec2 p, float r) { return length(p) - r; }
-  float sdEllipse(vec2 p, vec2 r) {
-    float k0 = length(p / r);
-    float k1 = length(p / (r * r));
-    return k0 * (k0 - 1.0) / k1;
-  }
-  float sdLine(vec2 p, vec2 a, vec2 b, float width) {
-    vec2 pa = p - a;
-    vec2 ba = b - a;
-    float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
-    return length(pa - ba * h) - width;
-  }
-  float distToSegment(vec2 p, vec2 a, vec2 b) {
-    vec2 pa = p - a;
-    vec2 ba = b - a;
-    float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
-    return length(pa - ba * h);
-  }
-  bool pointInTriangle(vec2 p, vec2 a, vec2 b, vec2 c) {
-    vec2 v0 = c - a;
-    vec2 v1 = b - a;
-    vec2 v2 = p - a;
-    float dot00 = dot(v0, v0);
-    float dot01 = dot(v0, v1);
-    float dot02 = dot(v0, v2);
-    float dot11 = dot(v1, v1);
-    float dot12 = dot(v1, v2);
-    float invDenom = 1.0 / (dot00 * dot11 - dot01 * dot01);
-    float u = (dot11 * dot02 - dot01 * dot12) * invDenom;
-    float v = (dot00 * dot12 - dot01 * dot02) * invDenom;
-    return (u >= 0.0) && (v >= 0.0) && (u + v <= 1.0);
-  }
-  float sdTriangleFromPoints(vec2 p, vec2 a, vec2 b, vec2 c) {
-    float d = min(min(distToSegment(p, a, b), distToSegment(p, b, c)), distToSegment(p, c, a));
-    return pointInTriangle(p, a, b, c) ? -d : d;
-  }
-  float sdPolygon(vec2 p, float r, int n) {
-    float an = PI / float(n);
-    float a = atan(p.y, p.x);
-    float bn = mod(a, 2.0 * an) - an;
-    vec2 q = length(p) * vec2(cos(bn), abs(sin(bn)));
-    return q.x - r;
-  }
-  float sdStar(vec2 p, float r, float innerR, int n) {
-    float an = PI / float(n);
-    float en = PI / float(n * 2);
-    vec2 acs = vec2(cos(an), sin(an));
-    vec2 ecs = vec2(cos(en), sin(en));
-    float bn = mod(atan(p.y, p.x), 2.0 * an) - an;
-    p = length(p) * vec2(cos(bn), abs(sin(bn)));
-    p -= r * acs;
-    p += ecs * clamp(-dot(p, ecs), 0.0, r * acs.y / ecs.y);
-    return length(p) * sign(p.x);
-  }
-
-  void main() {
-    vec2 p = vUv - 0.5;
-    p = p / uScale;
-    p = rotate(p, -uRotation);
-
-    float dist = 0.0;
-    float mask = 1.0;
-
-    if (uShapeType == 0) {
-      mask = 1.0;
-    } else if (uShapeType == 1) {
-      dist = sdCircle(p, uRadiusX * 0.5);
-      mask = uFeather > 0.001 ? 1.0 - smoothstep(-uFeather, uFeather, dist) : (dist < 0.0 ? 1.0 : 0.0);
-    } else if (uShapeType == 2) {
-      dist = sdEllipse(p, vec2(uRadiusX, uRadiusY) * 0.5);
-      mask = uFeather > 0.001 ? 1.0 - smoothstep(-uFeather, uFeather, dist) : (dist < 0.0 ? 1.0 : 0.0);
-    } else if (uShapeType == 3) {
-      if (uHasControlPoints == 1 && uControlPointCount >= 3) {
-        vec2 a = uControlPoints[0];
-        vec2 b = uControlPoints[1];
-        vec2 c = uControlPoints[2];
-        dist = sdTriangleFromPoints(vUv, a, b, c);
-      } else {
-        dist = sdPolygon(p, 0.4, 3);
-      }
-      mask = uFeather > 0.001 ? 1.0 - smoothstep(-uFeather, uFeather, dist) : (dist < 0.0 ? 1.0 : 0.0);
-    } else if (uShapeType == 4) {
-      dist = sdPolygon(p, 0.4, uSides);
-      mask = uFeather > 0.001 ? 1.0 - smoothstep(-uFeather, uFeather, dist) : (dist < 0.0 ? 1.0 : 0.0);
-    } else if (uShapeType == 5) {
-      dist = sdStar(p, 0.4, uInnerRadius * 0.4, uSides);
-      mask = uFeather > 0.001 ? 1.0 - smoothstep(-uFeather, uFeather, dist) : (dist < 0.0 ? 1.0 : 0.0);
-    } else if (uShapeType == 6) {
-      vec2 a = uLineStart - 0.5;
-      vec2 b = uLineEnd - 0.5;
-      dist = sdLine(p, a, b, uLineWidth * 0.5);
-      mask = uFeather > 0.001 ? 1.0 - smoothstep(-uFeather, uFeather, dist) : (dist < 0.0 ? 1.0 : 0.0);
-    }
-
-    if (uInvert == 1) mask = 1.0 - mask;
-
-    gl_FragColor = vec4(1.0, 1.0, 1.0, mask);
-  }
-`;
-
-// Silhouette variant of polygonMaskShader — outputs vec4(1, 1, 1, mask) for
-// custom (pen-tool) polygon shapes. Used in the union pass.
-export const polygonMaskSilhouetteShader = /* glsl */ `
-  uniform vec2 uPoints[64];
-  uniform int uPointCount;
-  uniform float uFeather;
-  uniform float uInvert;
-  varying vec2 vUv;
-
-  float pointInPolygon(vec2 p) {
-    if (uPointCount < 3) return 0.0;
-    int crossings = 0;
-    for (int i = 0; i < 64; i++) {
-      if (i >= uPointCount) break;
-      int j = i + 1;
-      if (j >= uPointCount) j = 0;
-      vec2 p1 = uPoints[i];
-      vec2 p2 = uPoints[j];
-      if (((p1.y <= p.y && p2.y > p.y) || (p1.y > p.y && p2.y <= p.y)) &&
-          (p.x < (p2.x - p1.x) * (p.y - p1.y) / (p2.y - p1.y) + p1.x)) {
-        crossings++;
-      }
-    }
-    return mod(float(crossings), 2.0);
-  }
-
-  float distToPolygonEdge(vec2 p) {
-    if (uPointCount < 3) return 1.0;
-    float minDist = 1000.0;
-    for (int i = 0; i < 64; i++) {
-      if (i >= uPointCount) break;
-      int j = i + 1;
-      if (j >= uPointCount) j = 0;
-      vec2 a = uPoints[i];
-      vec2 b = uPoints[j];
-      vec2 ab = b - a;
-      vec2 ap = p - a;
-      float t = clamp(dot(ap, ab) / dot(ab, ab), 0.0, 1.0);
-      vec2 closest = a + t * ab;
-      float dist = length(p - closest);
-      minDist = min(minDist, dist);
-    }
-    return minDist;
-  }
-
-  void main() {
-    if (uPointCount < 3) {
-      float alpha = uInvert > 0.5 ? 0.0 : 1.0;
-      gl_FragColor = vec4(1.0, 1.0, 1.0, alpha);
-      return;
-    }
-    float inside = pointInPolygon(vUv);
-    float alpha;
-    if (uFeather > 0.001 && inside > 0.5) {
-      float dist = distToPolygonEdge(vUv);
-      alpha = smoothstep(0.0, uFeather, dist);
-    } else {
-      alpha = inside;
-    }
-    if (uInvert > 0.5) alpha = 1.0 - alpha;
-    gl_FragColor = vec4(1.0, 1.0, 1.0, alpha);
-  }
-`;
-
-// Composite shader: multiplies source texture's alpha by the union-mask texture's alpha.
-export const applyExternalMaskShader = /* glsl */ `
-  uniform sampler2D uTexture;
-  uniform sampler2D uMaskTexture;
-  varying vec2 vUv;
-  void main() {
-    vec4 src = texture2D(uTexture, vUv);
-    vec4 mask = texture2D(uMaskTexture, vUv);
-    gl_FragColor = vec4(src.rgb, src.a * mask.a);
   }
 `;
 
