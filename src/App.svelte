@@ -4502,7 +4502,12 @@
         <span class="test-pattern-status">TEST: {$settings.output.testPattern}</span>
       {/if}
       <span class="spacer"></span>
-      <span class="fps-counter" class:fps-good={$fpsStore > 50} class:fps-warn={$fpsStore >= 30 && $fpsStore <= 50} class:fps-bad={$fpsStore < 30 && $fpsStore > 0}>{$fpsStore} FPS</span>
+      {#if $settings.performance.showEditorFps}
+        <!-- Hidden by default — see PerformanceSettings.showEditorFps.
+             Visible FPS counters can worry users when the actual output
+             video looks smooth, even at lower preview rates. -->
+        <span class="fps-counter" class:fps-good={$fpsStore > 50} class:fps-warn={$fpsStore >= 30 && $fpsStore <= 50} class:fps-bad={$fpsStore < 30 && $fpsStore > 0}>{$fpsStore} FPS</span>
+      {/if}
       <span class="version-label">v0.1.0</span>
       <button class="shortcut-help-btn" onclick={() => showShortcutHelp = true} title="Keyboard Shortcuts (?)">?</button>
     </footer>
