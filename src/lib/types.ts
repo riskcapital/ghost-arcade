@@ -1763,8 +1763,12 @@ export interface Layer {
   // Input crop/slice (what portion of the source to use)
   cropRegion: CropRegion | null;
 
-  // Layer shape mask (circle, triangle, line, etc.)
-  layerShape: LayerShape | null;
+  // Layer shape masks (circle, triangle, line, etc.). Empty array = no shape masking.
+  // When the array has more than one shape, the renderer unions them together
+  // (max-alpha blending) so e.g. a circle + a star yields BOTH regions visible.
+  // The "active shape" being edited in the panel is purely UI-only state — it
+  // does NOT live on the layer.
+  layerShapes: LayerShape[];
 
   // Effects (applied to both media and generative layers)
   effects: Effect[];
@@ -2565,7 +2569,7 @@ export function createLayer(id: string, name: string, type: LayerType = 'media')
     meshGrid: null,
     mask: null,
     cropRegion: null,
-    layerShape: type === 'media' ? createDefaultLayerShape('rectangle') : null,
+    layerShapes: type === 'media' ? [createDefaultLayerShape('rectangle')] : [],
     effects: [],
     edgeEffects: null,
     ...(type === 'screen' ? { vjLayerIndex: 0 } : {}),

@@ -2129,7 +2129,7 @@ export const vjOutputLayers = derived(
         // No mask or crop
         mask: null,
         cropRegion: null,
-        layerShape: null,
+        layerShapes: [],
         edgeEffects: null,
         // Effects from VJ layer state
         effects: activeLayer.effects,

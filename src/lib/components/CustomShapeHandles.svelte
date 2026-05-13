@@ -140,7 +140,11 @@
     return { x: sum.x / points.length, y: sum.y / points.length };
   }
 
-  $: layerShape = $selectedLayer?.layerShape;
+  // Always operate on the FIRST shape — multi-shape pen-tool editing isn't
+  // supported (each custom shape has its own control points that can only be
+  // edited one at a time). To edit a different custom shape the user must
+  // re-order the chip list in LayerPanel.
+  $: layerShape = $selectedLayer?.layerShapes?.[0] ?? null;
   $: isCustom = layerShape?.type === 'custom';
   $: customPoints = ((isCustom ? layerShape?.params.customPoints : []) ?? []) as BezierPoint[];
   $: isClosed = isCustom && (layerShape?.params.customClosed ?? false);
