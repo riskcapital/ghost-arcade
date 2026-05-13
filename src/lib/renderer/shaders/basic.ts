@@ -1319,6 +1319,86 @@ export const polygonMaskShader = /* glsl */ `
 `;
 
 // ============================================================================
+// MASK SHAPE TO ALPHA - Renders a single polygon's silhouette into a buffer's
+// alpha channel. Used when building a UNION of multiple sub-polygons: this
+// shader gets called once per shape with THREE.MaxEquation blending so the
+// destination alpha accumulates `max(prevAlpha, thisShapeAlpha)`.
+// RGB output is unused — the consumer only reads .a.
+// ============================================================================
+export const polygonMaskAlphaShader = /* glsl */ `
+  uniform vec2 uPoints[64];
+  uniform int uPointCount;
+  uniform float uFeather;
+  varying vec2 vUv;
+
+  float pointInPolygon(vec2 p) {
+    if (uPointCount < 3) return 0.0;
+    int crossings = 0;
+    for (int i = 0; i < 64; i++) {
+      if (i >= uPointCount) break;
+      int j = i + 1;
+      if (j >= uPointCount) j = 0;
+      vec2 p1 = uPoints[i];
+      vec2 p2 = uPoints[j];
+      if (((p1.y <= p.y && p2.y > p.y) || (p1.y > p.y && p2.y <= p.y)) &&
+          (p.x < (p2.x - p1.x) * (p.y - p1.y) / (p2.y - p1.y) + p1.x)) {
+        crossings++;
+      }
+    }
+    return mod(float(crossings), 2.0);
+  }
+
+  float distToPolygonEdge(vec2 p) {
+    if (uPointCount < 3) return 1.0;
+    float minDist = 1000.0;
+    for (int i = 0; i < 64; i++) {
+      if (i >= uPointCount) break;
+      int j = i + 1;
+      if (j >= uPointCount) j = 0;
+      vec2 a = uPoints[i];
+      vec2 b = uPoints[j];
+      vec2 ab = b - a;
+      vec2 ap = p - a;
+      float t = clamp(dot(ap, ab) / dot(ab, ab), 0.0, 1.0);
+      vec2 closest = a + t * ab;
+      minDist = min(minDist, length(p - closest));
+    }
+    return minDist;
+  }
+
+  void main() {
+    float inside = pointInPolygon(vUv);
+    float alpha;
+    if (uFeather > 0.001 && inside > 0.5) {
+      float dist = distToPolygonEdge(vUv);
+      alpha = smoothstep(0.0, uFeather, dist);
+    } else {
+      alpha = inside;
+    }
+    gl_FragColor = vec4(1.0, 1.0, 1.0, alpha);
+  }
+`;
+
+// ============================================================================
+// APPLY EXTERNAL MASK - Multiplies a source texture's alpha by another
+// texture's alpha channel. Used to apply a pre-built union mask to a layer's
+// source. Supports the same `uInvert` flag as the inline polygon mask.
+// ============================================================================
+export const applyExternalMaskShader = /* glsl */ `
+  uniform sampler2D uSource;
+  uniform sampler2D uMask;
+  uniform float uInvert;
+  varying vec2 vUv;
+
+  void main() {
+    vec4 src = texture2D(uSource, vUv);
+    float maskA = texture2D(uMask, vUv).a;
+    float a = uInvert > 0.5 ? (1.0 - maskA) : maskA;
+    gl_FragColor = vec4(src.rgb, src.a * a);
+  }
+`;
+
+// ============================================================================
 // LAYER SHAPE MASK - Circle, ellipse, polygon, star, triangle, line shapes
 // ============================================================================
 export const layerShapeMaskShader = /* glsl */ `

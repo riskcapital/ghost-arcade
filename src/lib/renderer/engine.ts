@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Layer, WarpCorners, BlendMode, MeshWarpGrid, Effect, ColorContent, MaskConfig, LayerShapeType, Point2D, ContentFitMode, EdgeEffect, GroupConfig } from '../types';
+import { GpuEffectRunner, isGpuEffect } from './gpuEffectRunner';
 import { getShapeVertices } from '../types';
 
 // ── Group rendering types ──────────────────────────────────────────────────
@@ -11,7 +12,7 @@ import type { DrawingElement, PointClickLineShape } from '../drawing/types';
 import { createDefaultShapeWarp, createDefaultShapeMesh } from '../drawing/types';
 import type { LineElement } from '../lines/types';
 import { warpVertexShader, textureFragmentShader, blendShaders, passthroughVertexShader, opaqueOutputFragmentShader } from './shaders';
-import { createEffectMaterial, updateEffectUniforms, effectVertexShader, polygonMaskShader, layerShapeMaskShader } from './effects';
+import { createEffectMaterial, updateEffectUniforms, effectVertexShader, polygonMaskShader, polygonMaskAlphaShader, applyExternalMaskShader, layerShapeMaskShader } from './effects';
 import { domeProjectionShader } from './shaders/dome';
 import { getTransition, applyFaderCurve, type TransitionDef } from './crossfadeTransitions';
 // Geometry imports kept for potential future use with shape control point warping
@@ -67,6 +68,15 @@ export class RenderEngine {
   // Layer render objects cache
   private layerObjects: Map<string, LayerRenderObject> = new Map();
 
+  // GPU effect runner — bridges to WebGPU for compute / fragment
+  // effects in the layer's effect chain. Runs alongside the existing
+  // WebGL effect materials so a single chain can mix both.
+  private gpuEffectRunner: GpuEffectRunner = new GpuEffectRunner();
+  // Tracks which (layerId, effectId) pairs were used this frame so
+  // stale instances can be reaped at the end of the frame.
+  private gpuEffectLiveKeys: Set<string> = new Set();
+  private lastGpuEffectFrameTime: number = 0;
+
   // Composite quad
   private compositeScene: THREE.Scene;
   private compositeMaterial: THREE.ShaderMaterial;
@@ -97,10 +107,20 @@ export class RenderEngine {
   // Color textures cache (for solid color layers)
   private colorTextures: Map<string, THREE.DataTexture> = new Map();
 
-  // Mask materials cache (keyed by layerId)
+  // Mask materials cache (keyed by layerId). Single-polygon path uses the
+  // inline polygonMaskShader; the union path uses a separate alpha-only
+  // shader plus an apply-mask compositor.
   private maskMaterials: Map<string, THREE.ShaderMaterial> = new Map();
-  // Mask render target
+  // Mask render target (final masked source for the active layer)
   private maskTarget: THREE.WebGLRenderTarget | null = null;
+  // Union accumulator for multi-shape masks (alpha channel = union silhouette)
+  private maskUnionTarget: THREE.WebGLRenderTarget | null = null;
+  // Reusable material for accumulating one shape's silhouette into the union
+  // target. Single material reused across shapes/layers — uniforms swap per
+  // shape, points uniform is rewritten between renders.
+  private maskUnionAccumMaterial: THREE.ShaderMaterial | null = null;
+  // Reusable material that applies the union mask's alpha to a source texture.
+  private maskApplyMaterial: THREE.ShaderMaterial | null = null;
 
   // Shape mask (SDF-based) material and render target
   private shapeMaskMaterial: THREE.ShaderMaterial | null = null;
@@ -1137,54 +1157,206 @@ export class RenderEngine {
   }
 
   /**
+   * Tessellate a bezier sub-polygon into a straight-segment point list using
+   * the same approach as the custom layer-shape mask (cubic bezier between
+   * each pair of anchors). Anchors without cpOut/cpIn produce straight
+   * segments. Capped at the shader's 64-point uniform — if a single shape
+   * exceeds that, we drop the overflow with a console warning.
+   */
+  private tessellateMaskShape(anchors: import('../types').BezierPoint[]): Point2D[] {
+    const out: Point2D[] = [];
+    const BEZIER_STEPS = 24;
+    for (let i = 0; i < anchors.length; i++) {
+      const a = anchors[i];
+      const nextI = (i + 1) % anchors.length;
+      const b = anchors[nextI];
+      const hasCurve = a.cpOut || b.cpIn;
+      out.push({ x: a.x, y: a.y });
+      if (hasCurve) {
+        const cp1 = a.cpOut ?? a;
+        const cp2 = b.cpIn ?? b;
+        for (let s = 1; s < BEZIER_STEPS; s++) {
+          const t = s / BEZIER_STEPS;
+          const mt = 1 - t;
+          out.push({
+            x: mt * mt * mt * a.x + 3 * mt * mt * t * cp1.x + 3 * mt * t * t * cp2.x + t * t * t * b.x,
+            y: mt * mt * mt * a.y + 3 * mt * mt * t * cp1.y + 3 * mt * t * t * cp2.y + t * t * t * b.y,
+          });
+        }
+      }
+    }
+    return out;
+  }
+
+  /** Lazy-create the union-accumulation material (alpha-only output). */
+  private getOrCreateMaskUnionAccumMaterial(): THREE.ShaderMaterial {
+    if (!this.maskUnionAccumMaterial) {
+      const pointUniforms: THREE.Vector2[] = [];
+      for (let i = 0; i < 64; i++) pointUniforms.push(new THREE.Vector2(0, 0));
+      this.maskUnionAccumMaterial = new THREE.ShaderMaterial({
+        vertexShader: effectVertexShader,
+        fragmentShader: polygonMaskAlphaShader,
+        uniforms: {
+          uPoints: { value: pointUniforms },
+          uPointCount: { value: 0 },
+          uFeather: { value: 0 },
+        },
+        // Custom alpha-max blending: dst.a = max(dst.a, src.a). Lets each pass
+        // contribute its silhouette to the union without overwriting prior
+        // shapes.
+        transparent: true,
+        blending: THREE.CustomBlending,
+        blendEquationAlpha: THREE.MaxEquation,
+        blendSrcAlpha: THREE.OneFactor,
+        blendDstAlpha: THREE.OneFactor,
+        // Color channel: keep src so first shape paints white(1,1,1,a) and
+        // subsequent shapes inherit; we only sample .a downstream anyway.
+        blendEquation: THREE.MaxEquation,
+        blendSrc: THREE.OneFactor,
+        blendDst: THREE.OneFactor,
+        depthTest: false,
+        depthWrite: false,
+      });
+    }
+    return this.maskUnionAccumMaterial;
+  }
+
+  /** Lazy-create the "apply external mask" compositor. */
+  private getOrCreateMaskApplyMaterial(): THREE.ShaderMaterial {
+    if (!this.maskApplyMaterial) {
+      this.maskApplyMaterial = new THREE.ShaderMaterial({
+        vertexShader: effectVertexShader,
+        fragmentShader: applyExternalMaskShader,
+        uniforms: {
+          uSource: { value: null },
+          uMask: { value: null },
+          uInvert: { value: 0 },
+        },
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+      });
+    }
+    return this.maskApplyMaterial;
+  }
+
+  /**
    * Apply polygon mask to a texture
    * Returns the masked texture
+   *
+   * Handles the three cases:
+   *  - 0 closed shapes: pass-through (no mask to apply)
+   *  - 1 closed shape: single-pass `polygonMaskShader` (preserves the legacy
+   *    rendering exactly for users who only ever drew one polygon)
+   *  - 2+ closed shapes: build the union silhouette into `maskUnionTarget`
+   *    using THREE.MaxEquation on alpha, then multiply through with
+   *    `applyExternalMaskShader`.
    */
   private applyMask(
     sourceTexture: THREE.Texture,
     mask: MaskConfig,
     layerId: string
   ): THREE.Texture {
-    if (!mask.enabled || mask.points.length < 3) {
-      return sourceTexture;
-    }
+    if (!mask.enabled) return sourceTexture;
+    const shapes = mask.shapes ?? [];
+    const closedShapes = shapes.filter((s) => s.closed && s.points.length >= 3);
+    if (closedShapes.length === 0) return sourceTexture;
 
-    // Create mask target if needed
+    // Tessellate every closed shape once. Drop shapes that still don't have
+    // enough points after tessellation (defensive — shouldn't happen) and
+    // warn if any single shape exceeds the 64-point shader uniform cap.
+    const tessellated: Point2D[][] = [];
+    for (const shape of closedShapes) {
+      let pts = this.tessellateMaskShape(shape.points);
+      if (pts.length < 3) continue;
+      if (pts.length > 64) {
+        // Naive downsample: keep every Nth point. Bezier tessellation is
+        // already dense; this preserves overall silhouette quality.
+        console.warn(`[applyMask] Shape on layer ${layerId} tessellates to ${pts.length} points (>64); downsampling for shader.`);
+        const stride = pts.length / 64;
+        const ds: Point2D[] = [];
+        for (let i = 0; i < 64; i++) ds.push(pts[Math.floor(i * stride)]);
+        pts = ds;
+      }
+      tessellated.push(pts);
+    }
+    if (tessellated.length === 0) return sourceTexture;
+
+    // Ensure the final-mask target exists (used by both paths)
     if (!this.maskTarget) {
       this.maskTarget = this.createRenderTarget();
     }
 
-    const material = this.getOrCreateMaskMaterial(layerId);
-
-    // Update mask uniforms
-    material.uniforms.uTexture.value = sourceTexture;
-    material.uniforms.uPointCount.value = Math.min(mask.points.length, 64);
-    material.uniforms.uFeather.value = mask.feather;
-    material.uniforms.uInvert.value = mask.inverted ? 1.0 : 0.0;
-
-    // Copy points to uniform array
-    const pointsUniform = material.uniforms.uPoints.value as THREE.Vector2[];
-    for (let i = 0; i < 64; i++) {
-      if (i < mask.points.length) {
-        pointsUniform[i].set(mask.points[i].x, mask.points[i].y);
-      } else {
-        pointsUniform[i].set(0, 0);
-      }
-    }
-
-    // Render mask - clear to TRANSPARENT black so masked-off areas have alpha=0
-    // (allows layers below to show through in compositing)
     const prevMaskClearColor = this.renderer.getClearColor(this._tempColor);
     const prevMaskClearAlpha = this.renderer.getClearAlpha();
     this.renderer.setClearColor(0x000000, 0);
 
-    this.effectQuad.material = material;
-    this.renderer.setRenderTarget(this.maskTarget);
-    this.renderer.clear();
-    this.renderer.render(this.effectScene, this.camera);
+    if (tessellated.length === 1) {
+      // -- Single-shape path: identical to the legacy implementation. --
+      const pts = tessellated[0];
+      const material = this.getOrCreateMaskMaterial(layerId);
+      material.uniforms.uTexture.value = sourceTexture;
+      material.uniforms.uPointCount.value = Math.min(pts.length, 64);
+      material.uniforms.uFeather.value = mask.feather;
+      material.uniforms.uInvert.value = mask.inverted ? 1.0 : 0.0;
+      const pointsUniform = material.uniforms.uPoints.value as THREE.Vector2[];
+      for (let i = 0; i < 64; i++) {
+        if (i < pts.length) pointsUniform[i].set(pts[i].x, pts[i].y);
+        else pointsUniform[i].set(0, 0);
+      }
+      this.effectQuad.material = material;
+      this.renderer.setRenderTarget(this.maskTarget);
+      this.renderer.clear();
+      this.renderer.render(this.effectScene, this.camera);
+    } else {
+      // -- Multi-shape union path. --
+      if (!this.maskUnionTarget) {
+        this.maskUnionTarget = this.createRenderTarget();
+      }
+      const accumMat = this.getOrCreateMaskUnionAccumMaterial();
+
+      // Clear union target to fully transparent so MaxEquation starts at 0.
+      this.renderer.setRenderTarget(this.maskUnionTarget);
+      this.renderer.clear();
+
+      // Three.js defaults autoClear=true, which would CLEAR the target
+      // before every render() call — wiping out previous shapes and
+      // leaving only the last one's silhouette. Disable it for the
+      // accumulation loop, then restore. This is the bug that made
+      // 2+ shape masks render as if only the last shape existed.
+      const prevAutoClear = this.renderer.autoClear;
+      this.renderer.autoClear = false;
+
+      // Accumulate each shape's silhouette into the alpha channel via
+      // CustomBlending + MaxEquation. The shader writes vec4(1,1,1,inside).
+      this.effectQuad.material = accumMat;
+      const accumUniform = accumMat.uniforms.uPoints.value as THREE.Vector2[];
+      for (const pts of tessellated) {
+        const n = Math.min(pts.length, 64);
+        accumMat.uniforms.uPointCount.value = n;
+        accumMat.uniforms.uFeather.value = mask.feather;
+        for (let i = 0; i < 64; i++) {
+          if (i < pts.length) accumUniform[i].set(pts[i].x, pts[i].y);
+          else accumUniform[i].set(0, 0);
+        }
+        this.renderer.render(this.effectScene, this.camera);
+      }
+
+      this.renderer.autoClear = prevAutoClear;
+
+      // Apply the union mask to the source texture (uSource.rgb, uSource.a *
+      // unionAlpha, with optional invert).
+      const applyMat = this.getOrCreateMaskApplyMaterial();
+      applyMat.uniforms.uSource.value = sourceTexture;
+      applyMat.uniforms.uMask.value = this.maskUnionTarget.texture;
+      applyMat.uniforms.uInvert.value = mask.inverted ? 1.0 : 0.0;
+      this.effectQuad.material = applyMat;
+      this.renderer.setRenderTarget(this.maskTarget);
+      this.renderer.clear();
+      this.renderer.render(this.effectScene, this.camera);
+    }
 
     this.renderer.setClearColor(prevMaskClearColor, prevMaskClearAlpha);
-
     return this.maskTarget.texture;
   }
 
@@ -1340,14 +1512,23 @@ export class RenderEngine {
    */
   private applyEffects(
     sourceTexture: THREE.Texture,
-    effects: Effect[]
+    effects: Effect[],
+    layerId: string = '__composition__',
   ): THREE.Texture {
     const enabledEffects = effects.filter(e => e.enabled);
     if (enabledEffects.length === 0) {
       return sourceTexture;
     }
 
-    const currentTime = performance.now() / 1000 - this.startTime;
+    const nowMs = performance.now();
+    const currentTime = nowMs / 1000 - this.startTime;
+    // dt for stateful GPU effects (fluid sim integrates over time).
+    // Clamp to keep the sim stable even after a frame hitch.
+    const dt = this.lastGpuEffectFrameTime > 0
+      ? Math.min(0.1, (nowMs - this.lastGpuEffectFrameTime) / 1000)
+      : 1 / 60;
+    this.lastGpuEffectFrameTime = nowMs;
+
     let currentSource = sourceTexture;
     let writeTarget = this.effectTargetA;
     let readTarget = this.effectTargetB;
@@ -1359,20 +1540,50 @@ export class RenderEngine {
 
     for (let i = 0; i < enabledEffects.length; i++) {
       const effect = enabledEffects[i];
-      const material = this.getOrCreateEffectMaterial(effect);
-
-      // Update effect uniforms
-      updateEffectUniforms(material, effect, this.width, this.height, currentTime);
-
-      // Set input texture
-      material.uniforms.uTexture.value = currentSource;
-
       const effectOpacity = effect.opacity ?? 1;
       const effectBlend = effect.blendMode ?? 'normal';
       const needsBlendPass = effectOpacity < 1 || effectBlend !== 'normal';
-
-      // Save pre-effect source for blend pass
       const preEffectSource = currentSource;
+
+      // ── GPU effect branch ──
+      // Dispatch to the WebGPU runner. The returned Three.js texture
+      // (a CanvasTexture wrapping a webgpu canvas) is what we feed
+      // forward — either directly, or through a blend pass if the
+      // effect has a non-default blend mode / opacity. Note we don't
+      // need to swap A/B here because the GPU output lives in the
+      // runner's own canvas, not in our ping-pong targets.
+      if (isGpuEffect(effect.type)) {
+        const key = `${layerId}::${effect.id}`;
+        this.gpuEffectLiveKeys.add(key);
+        const gpuOutput = this.gpuEffectRunner.runGpuEffect(
+          currentSource, effect, layerId, dt, this.renderer, this.width, this.height,
+        );
+        if (needsBlendPass) {
+          // Blend the GPU output back over the pre-effect source.
+          const blendMat = this.blendMaterials.get(effectBlend) || this.blendMaterials.get('normal')!;
+          blendMat.uniforms.uBase.value = preEffectSource;
+          blendMat.uniforms.uLayer.value = gpuOutput;
+          blendMat.uniforms.uOpacity.value = effectOpacity;
+          this.effectQuad.material = blendMat;
+          this.renderer.setRenderTarget(this.effectBlendTarget);
+          this.renderer.clear();
+          this.renderer.render(this.effectScene, this.camera);
+          currentSource = this.effectBlendTarget.texture;
+          // Targets are still free; swap so subsequent CSS effects work
+          // correctly. We only consumed effectBlendTarget here.
+          const temp = writeTarget; writeTarget = readTarget; readTarget = temp;
+        } else {
+          // Pass the GPU canvas-texture forward as-is. Subsequent
+          // CSS effects sample it via material.uniforms.uTexture.
+          currentSource = gpuOutput;
+        }
+        continue;
+      }
+
+      // ── WebGL fragment effect branch (existing path) ──
+      const material = this.getOrCreateEffectMaterial(effect);
+      updateEffectUniforms(material, effect, this.width, this.height, currentTime);
+      material.uniforms.uTexture.value = currentSource;
 
       // Render effect
       this.effectQuad.material = material;
@@ -1413,6 +1624,15 @@ export class RenderEngine {
     this.renderer.setClearColor(prevEffClearColor, prevEffClearAlpha);
 
     return currentSource;
+  }
+
+  /** Reap stale GPU effect instances (those not used this frame).
+   *  Called by the renderFrame loop after the layer pass completes
+   *  so memory for removed effects gets freed promptly. */
+  reapStaleGpuEffects(): void {
+    if (!this.gpuEffectRunner.isReady()) return;
+    this.gpuEffectRunner.reapStale(this.gpuEffectLiveKeys);
+    this.gpuEffectLiveKeys.clear();
   }
 
   /**
@@ -1460,6 +1680,7 @@ export class RenderEngine {
     if (l.type === 'text' && (l as any)._textTexture) return true;
     if (l.type === 'splat' && (l as any)._splatTexture) return true;
     if (l.type === 'model3d' && (l as any)._model3dTexture) return true;
+    if (l.type === 'gpu' && (l as any)._gpuLayerTexture) return true;
     return false;
   }
 
@@ -1548,7 +1769,7 @@ export class RenderEngine {
     // Apply composition-level effects to the final composite (after all layers blended)
     if (compositionEffects && compositionEffects.length > 0) {
       let compositeTexture: THREE.Texture = this.compositeTarget.texture;
-      compositeTexture = this.applyEffects(compositeTexture, compositionEffects);
+      compositeTexture = this.applyEffects(compositeTexture, compositionEffects, '__composition__');
 
       // If effects produced a different texture, copy it back to compositeTarget (using cached copy objects)
       if (compositeTexture !== this.compositeTarget.texture) {
@@ -1594,7 +1815,7 @@ export class RenderEngine {
         // from `dryTexture` and writes to its internal ping-pong
         // targets, ultimately returning a texture handle for the wet
         // result.
-        const wetTexture = this.applyEffects(dryTexture, enabled);
+        const wetTexture = this.applyEffects(dryTexture, enabled, `__macro__${bundle.id}`);
 
         // Wet/dry mix → compositeTarget via the 'normal' blend material.
         // mix(dry, wet, layer.a * uOpacity) — passing layer alpha as 1
@@ -1627,6 +1848,11 @@ export class RenderEngine {
       (this.outputQuad.material as THREE.ShaderMaterial).uniforms.uTexture.value = this.compositeTarget.texture;
       this.renderer.render(this.outputScene, this.camera);
     }
+
+    // End of frame: drop GPU effect instances whose layers/effects
+    // weren't referenced this frame (so we don't leak GPU memory
+    // when the user removes a fluid-sim effect).
+    this.reapStaleGpuEffects();
   }
 
   private swapTargets(): void {
@@ -1820,6 +2046,7 @@ export class RenderEngine {
     if (layer.type === 'text') return (layer as any)._textTexture;
     if (layer.type === 'splat') return (layer as any)._splatTexture;
     if (layer.type === 'model3d') return (layer as any)._model3dTexture;
+    if (layer.type === 'gpu') return (layer as any)._gpuLayerTexture;
     if (layer.type === 'color' && layer.colorContent) return this.getOrCreateColorTexture(layer.id, layer.colorContent);
     return layer.source?.texture || obj.material.uniforms.uTexture.value;
   }
@@ -2052,12 +2279,17 @@ export class RenderEngine {
 
     let finalTexture: THREE.Texture = obj.renderTarget.texture;
 
-    // Effects
+    // Effects (passes layer.id so GPU effects can key per-layer state)
     if (layer.effects && layer.effects.length > 0) {
-      finalTexture = this.applyEffects(finalTexture, layer.effects);
+      finalTexture = this.applyEffects(finalTexture, layer.effects, layer.id);
     }
     // Polygon mask
-    if (layer.mask && layer.mask.enabled && layer.mask.points.length >= 3) {
+    if (
+      layer.mask &&
+      layer.mask.enabled &&
+      layer.mask.shapes &&
+      layer.mask.shapes.some((s) => s.closed && s.points.length >= 3)
+    ) {
       finalTexture = this.applyMask(finalTexture, layer.mask, layer.id);
     }
     // Legacy shape mask
@@ -2387,6 +2619,9 @@ export class RenderEngine {
     this.effectBlendTarget.dispose();
     this.blackTexture?.dispose();
     this.maskTarget?.dispose();
+    this.maskUnionTarget?.dispose();
+    this.maskUnionAccumMaterial?.dispose();
+    this.maskApplyMaterial?.dispose();
 
     for (const material of this.blendMaterials.values()) {
       material.dispose();

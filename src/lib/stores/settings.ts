@@ -460,6 +460,48 @@ export interface ExperimentalSettings {
    *  The output's health badge surfaces this so the operator can spot
    *  a degraded link mid-show. */
   outputZeroCopy: boolean;
+  /**
+   * Allow the legacy `gpuEffectRunner` CPU-readback bridge to run when
+   * the user has a WebGPU effect (e.g. `gpuFluidSim`) in their layer's
+   * effect chain.
+   *
+   * Why opt-in: `gpuEffectRunner` does a per-frame GPU→CPU readback via
+   * `readRenderTargetPixels` then a CPU→GPU upload via `writeTexture`,
+   * costing ~3ms at 1080p per affected effect. That round-trip is the
+   * single biggest "WebGPU effects are slow" complaint. The strategic
+   * shift in the GPU edition is to push WebGPU work to the downstream
+   * compositor stage (via the WebGPUCanvas VideoFrame +
+   * importExternalTexture bridge), where the transfer is zero-copy.
+   *
+   * When this flag is OFF (default in the GPU edition):
+   *  - `gpuFluidSim` and any future `gpu*`-prefixed effects in the
+   *    middle of a layer's effect chain are skipped (pass-through).
+   *  - Output / compositor-stage WebGPU work is unaffected — that runs
+   *    through `WebGPUCanvas.svelte` and never touches gpuEffectRunner.
+   *
+   * When ON: mid-chain WebGPU effects work as before, paying the
+   * CPU-readback cost. Useful when the effect needs to compose with
+   * downstream WebGL effects (warp, blend, etc.) before the final
+   * bridge to WebGPU at output time.
+   */
+  allowMidChainGpuEffects: boolean;
+}
+
+/**
+ * Performance settings — user-facing knobs to dial in the editor for
+ * weaker hardware. Defaults match the historical full-quality
+ * behaviour. All apply at runtime by reading the live store value at
+ * the relevant hot path. Output Stream changes apply when the output
+ * window opens.
+ */
+export interface PerformanceSettings {
+  previewMaxDim: number;
+  previewFrameRate: 60 | 30 | 15;
+  outputFrameRate: 60 | 30 | 24;
+  outputMaxBitrate: number;
+  outputDegradationPreference: 'maintain-resolution' | 'maintain-framerate' | 'balanced';
+  outputCodecPreference: 'auto' | 'h264' | 'vp8';
+  editorMaxFps: 0 | 30 | 60;
 }
 
 export interface AppSettings {
@@ -469,6 +511,7 @@ export interface AppSettings {
   ai: AISettings;
   defaultLayerShader: DefaultLayerShader;
   experimental: ExperimentalSettings;
+  performance: PerformanceSettings;
 }
 
 // Check which formats are supported by this browser
@@ -603,10 +646,29 @@ function createDefaultSettings(): AppSettings {
       // when the WebGPU capability probe says no or when the
       // MessagePort handshake fails.
       outputZeroCopy: true,
-      // Phase 2 of the WebGPU migration. Default OFF until the
-      // success criteria in WEBGPU_MIGRATION.md pass. Enable via
-      // dev preferences or `?editor-webgpu=1` URL param to test.
-      editorWebGPU: false,
+      // Phase 2 of the WebGPU migration. Default ON in the GPU edition
+      // as of the bridge-as-default shift — the VideoFrame +
+      // importExternalTexture bridge in WebGPUCanvas.svelte is the
+      // primary WebGL → WebGPU path now, and the output zero-copy
+      // transport above depends on it. Falls back automatically when
+      // `webgpuCapability.probeWebGPU()` fails.
+      editorWebGPU: true,
+      // Mid-chain CPU-readback bridge (gpuEffectRunner) — opt-in only.
+      // The default GPU-edition position is "WebGPU is the downstream
+      // compositor / output stage, not a mid-WebGL-chain insertion."
+      // See the doc comment on this field in ExperimentalSettings.
+      allowMidChainGpuEffects: false,
+    },
+    performance: {
+      // Defaults match the historical full-quality behaviour. Users on
+      // weak hardware step these down via Settings → Performance.
+      previewMaxDim: 0,               // 0 = no cap (match main canvas)
+      previewFrameRate: 60,
+      outputFrameRate: 60,
+      outputMaxBitrate: 80_000_000,   // 80 Mbps
+      outputDegradationPreference: 'maintain-resolution',
+      outputCodecPreference: 'auto',
+      editorMaxFps: 0,                // 0 = uncapped (match rAF / refresh rate)
     },
   };
 }
@@ -723,6 +785,10 @@ function loadSettings(): AppSettings {
         experimental: {
           ...defaults.experimental,
           ...(parsed.experimental || {}),
+        },
+        performance: {
+          ...defaults.performance,
+          ...(parsed.performance || {}),
         },
       };
 

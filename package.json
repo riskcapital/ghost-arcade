@@ -1,6 +1,6 @@
 {
   "name": "ghost-arcade-gpu",
-  "version": "0.6.1-gpu.0",
+  "version": "0.7.0-gpu.0",
   "private": true,
   "type": "module",
   "main": "electron/main.js",

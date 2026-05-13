@@ -192,6 +192,8 @@ export const vjOutputLayersNew = derived(vjMixer, ($vjMixer) => {
       textContent: null,
       splatContent: null,
       model3dContent: null,
+      pixelFXContent: null,
+      gpuLayerContent: null,
       effects: vjLayer.effects,
       // VJ mode doesn't use shape transforms - full screen
       position: { x: 0, y: 0 },

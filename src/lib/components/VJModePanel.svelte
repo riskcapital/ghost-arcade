@@ -486,24 +486,43 @@
     return (window as any).__ghostarcadeOutputCanvas || null;
   }
 
+  // Preview loop perf budget — controlled by Settings → Performance.
+  // Defaults to full resolution at 60fps so capable machines look crisp;
+  // users on weak hardware can downgrade either axis to free GPU budget.
+  let _lastPreviewFrameTime = 0;
+
   // Start preview loop when VJ mode opens
   function startPreviewLoop() {
     if (previewAnimationFrame !== null) return;
 
-    function updatePreview() {
-      const mainCanvas = getMainCanvas();
-      if (previewCanvas && mainCanvas && previewCtx) {
-        // Match preview canvas resolution to main canvas
-        if (previewCanvas.width !== mainCanvas.width || previewCanvas.height !== mainCanvas.height) {
-          previewCanvas.width = mainCanvas.width;
-          previewCanvas.height = mainCanvas.height;
-        }
-        // Copy main canvas to preview
-        previewCtx.drawImage(mainCanvas, 0, 0);
-      }
+    function updatePreview(now: number) {
       previewAnimationFrame = requestAnimationFrame(updatePreview);
+
+      const perf = (get(settings) as any)?.performance;
+      const fpsTarget = perf?.previewFrameRate ?? 60;
+      const resCap = perf?.previewMaxDim ?? 0;
+      const frameIntervalMs = 1000 / Math.max(1, fpsTarget);
+
+      if (fpsTarget < 60 && now - _lastPreviewFrameTime < frameIntervalMs) return;
+      _lastPreviewFrameTime = now;
+
+      const mainCanvas = getMainCanvas();
+      if (!previewCanvas || !mainCanvas || !previewCtx) return;
+      const srcW = mainCanvas.width;
+      const srcH = mainCanvas.height;
+      if (srcW === 0 || srcH === 0) return;
+
+      const longEdge = Math.max(srcW, srcH);
+      const scale = resCap > 0 && longEdge > resCap ? resCap / longEdge : 1;
+      const dstW = Math.max(1, Math.round(srcW * scale));
+      const dstH = Math.max(1, Math.round(srcH * scale));
+      if (previewCanvas.width !== dstW || previewCanvas.height !== dstH) {
+        previewCanvas.width = dstW;
+        previewCanvas.height = dstH;
+      }
+      previewCtx.drawImage(mainCanvas, 0, 0, dstW, dstH);
     }
-    updatePreview();
+    previewAnimationFrame = requestAnimationFrame(updatePreview);
   }
 
   // Stop preview loop when VJ mode closes

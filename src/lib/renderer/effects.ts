@@ -37,6 +37,8 @@ import {
   thermalShader,
   nightVisionShader,
   polygonMaskShader,
+  polygonMaskAlphaShader,
+  applyExternalMaskShader,
   layerShapeMaskShader,
   brightnessShader,
   contrastShader,
@@ -91,13 +93,18 @@ import {
 } from './shaders/time-effects';
 
 // Re-export shader strings consumed by engine.ts and other modules
-export { effectVertexShader, polygonMaskShader, layerShapeMaskShader };
+export { effectVertexShader, polygonMaskShader, polygonMaskAlphaShader, applyExternalMaskShader, layerShapeMaskShader };
 
 // ============================================================================
 // Effect shader lookup and material creation
 // ============================================================================
 
 export const effectShaders: Record<EffectType, string> = {
+  // ── WebGPU effects (no GLSL shader; dispatched via gpuEffectRunner) ──
+  // The engine's applyEffects() short-circuits before reaching the
+  // GLSL material path for these. The empty string here is just to
+  // satisfy the Record<EffectType, string> requirement.
+  gpuFluidSim: '',
   // Dedicated shaders (24)
   vignette: vignetteShader,
   edgeFeather: edgeFeatherShader,

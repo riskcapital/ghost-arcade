@@ -1,5 +1,6 @@
 import type { Layer } from '../types';
 import { effectParamLabels } from '../effects/effectUX';
+import { getShaderDef } from '../renderer/gpuShaderCatalog';
 
 export interface KeyframeableParam {
   key: string;             // track key: "shader:speed", "fx:abc:blurRadius", "fx:abc:enabled"
@@ -196,6 +197,58 @@ export function discoverKeyframeableParams(layer: Layer): KeyframeableParam[] {
         defaultValue: edge.opacity ?? 1,
         group: 'Edge Effects',
       });
+    }
+  }
+
+  // ── GPU layer (planet, pixel-particles, future shaders) ──
+  // Track keys use the `gpu:` prefix that the Canvas keyframe
+  // override loop already understands. Schema is pulled from the
+  // shader's catalog entry so any new shader's params become
+  // keyframable automatically — no per-shader plumbing required.
+  if (layer.type === 'gpu' && layer.gpuLayerContent) {
+    const def = getShaderDef(layer.gpuLayerContent.shaderId);
+    if (def) {
+      const shaderName = def.label;
+      for (const p of def.paramSchema) {
+        // Numeric keyframe tracks: slider + angle.
+        if (p.kind === 'slider') {
+          const cur = layer.gpuLayerContent.params[p.key] ?? p.default;
+          params.push({
+            key: `gpu:${p.key}`,
+            label: p.label,
+            type: 'number',
+            min: p.min,
+            max: p.max,
+            step: p.step,
+            defaultValue: typeof cur === 'number' ? cur : p.default,
+            group: p.group ? `${shaderName} · ${p.group}` : shaderName,
+          });
+        } else if (p.kind === 'angle') {
+          const cur = layer.gpuLayerContent.params[p.key] ?? p.default;
+          params.push({
+            key: `gpu:${p.key}`,
+            label: p.label,
+            type: 'number',
+            min: -180,
+            max: 360,
+            step: 0.5,
+            defaultValue: typeof cur === 'number' ? cur : p.default,
+            group: p.group ? `${shaderName} · ${p.group}` : shaderName,
+          });
+        } else if (p.kind === 'toggle') {
+          const cur = layer.gpuLayerContent.params[p.key] ?? p.default;
+          params.push({
+            key: `gpu:${p.key}`,
+            label: p.label,
+            type: 'boolean',
+            defaultValue: typeof cur === 'boolean' ? cur : p.default,
+            group: p.group ? `${shaderName} · ${p.group}` : shaderName,
+          });
+        }
+        // 'select', 'color', and 'media-source' are not keyframable
+        // (string / array / object values aren't smoothly interpolatable
+        // and their identity changes are typically discrete events).
+      }
     }
   }
 

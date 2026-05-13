@@ -2158,6 +2158,8 @@ export const vjOutputLayers = derived(
         textContent: null,
         splatContent: clip.type === 'splat' ? (clip.splatContent || createDefaultSplatContent()) : null,
         model3dContent: clip.type === 'model3d' ? (clip.model3dContent || createDefaultModel3DContent()) : null,
+        pixelFXContent: null,
+        gpuLayerContent: null,
         // Transform identity — per-clip transforms are baked into
         // `corners` below so the engine's warp pipeline applies them
         // uniformly. position/scale/rotation are bypassed by the
