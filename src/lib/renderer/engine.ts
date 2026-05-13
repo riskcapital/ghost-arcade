@@ -11,7 +11,7 @@ import type { DrawingElement, PointClickLineShape } from '../drawing/types';
 import { createDefaultShapeWarp, createDefaultShapeMesh } from '../drawing/types';
 import type { LineElement } from '../lines/types';
 import { warpVertexShader, textureFragmentShader, blendShaders, passthroughVertexShader, opaqueOutputFragmentShader } from './shaders';
-import { createEffectMaterial, updateEffectUniforms, effectVertexShader, polygonMaskShader, layerShapeMaskShader } from './effects';
+import { createEffectMaterial, updateEffectUniforms, effectVertexShader, polygonMaskShader, layerShapeMaskShader, layerShapeSilhouetteShader, polygonMaskSilhouetteShader, applyExternalMaskShader } from './effects';
 import { domeProjectionShader } from './shaders/dome';
 import { getTransition, applyFaderCurve, type TransitionDef } from './crossfadeTransitions';
 // Geometry imports kept for potential future use with shape control point warping
@@ -105,6 +105,16 @@ export class RenderEngine {
   // Shape mask (SDF-based) material and render target
   private shapeMaskMaterial: THREE.ShaderMaterial | null = null;
   private shapeMaskTarget: THREE.WebGLRenderTarget | null = null;
+
+  // Multi-shape union mask (used when a layer has >= 2 shapes).
+  // unionMaskTarget accumulates the per-shape silhouettes via MAX-alpha blend;
+  // applyExternalMaskMaterial then multiplies that accumulated mask into the
+  // source layer texture in a separate pass.
+  private shapeSilhouetteMaterial: THREE.ShaderMaterial | null = null;
+  private polygonSilhouetteMaterial: THREE.ShaderMaterial | null = null;
+  private applyExternalMaskMaterial: THREE.ShaderMaterial | null = null;
+  private unionMaskTarget: THREE.WebGLRenderTarget | null = null;
+  private unionApplyTarget: THREE.WebGLRenderTarget | null = null;
 
   // Edge effects rendering
   private drawingRendererRef: any = null;      // LinesRenderer (legacy, for line strokes)
@@ -1189,30 +1199,24 @@ export class RenderEngine {
   }
 
   /**
-   * Apply SDF shape mask to a texture (circle, ellipse, triangle, polygon, star)
-   * Uses signed distance functions to clip the layer to a shape with feathered edges
+   * Render a single LayerShape into shapeMaskTarget as a textured mask
+   * (matches the legacy single-shape fast path: applies the layer's
+   * texture color and the shape's alpha mask in one pass).
    */
-  private applyShapeMask(
-    sourceTexture: THREE.Texture,
-    layer: Layer
-  ): THREE.Texture {
-    if (!layer.layerShape || !layer.layerShape.enabled || layer.layerShape.type === 'rectangle') {
-      return sourceTexture;
-    }
-
+  private renderSingleShapeMask(sourceTexture: THREE.Texture, shape: import('../types').LayerShape, layerId: string): THREE.Texture {
     // Custom shapes use the polygon mask shader (ray-casting) instead of SDF
-    if (layer.layerShape.type === 'custom') {
-      const customPoints = layer.layerShape.params.customPoints;
-      if (!customPoints || customPoints.length < 3 || !layer.layerShape.params.customClosed) {
+    if (shape.type === 'custom') {
+      const customPoints = shape.params.customPoints;
+      if (!customPoints || customPoints.length < 3 || !shape.params.customClosed) {
         return sourceTexture;
       }
       if (!this.shapeMaskTarget) {
         this.shapeMaskTarget = this.createRenderTarget();
       }
-      const material = this.getOrCreateMaskMaterial(layer.id + '_custom');
+      const material = this.getOrCreateMaskMaterial(layerId + '_custom');
       material.uniforms.uTexture.value = sourceTexture;
       material.uniforms.uPointCount.value = Math.min(customPoints.length, 64);
-      material.uniforms.uFeather.value = layer.layerShape.params.feather ?? 0;
+      material.uniforms.uFeather.value = shape.params.feather ?? 0;
       material.uniforms.uInvert.value = 0;
       const pointsUniform = material.uniforms.uPoints.value as THREE.Vector2[];
       for (let i = 0; i < 64; i++) {
@@ -1273,7 +1277,6 @@ export class RenderEngine {
       });
     }
 
-    // Map shape type to integer
     const shapeTypeMap: Record<string, number> = {
       rectangle: 0,
       circle: 1,
@@ -1285,12 +1288,10 @@ export class RenderEngine {
       polyline: 6,
     };
 
-    const params = layer.layerShape.params;
+    const params = shape.params;
     const mat = this.shapeMaskMaterial;
-
-    // Update uniforms
     mat.uniforms.uTexture.value = sourceTexture;
-    mat.uniforms.uShapeType.value = shapeTypeMap[layer.layerShape.type] ?? 0;
+    mat.uniforms.uShapeType.value = shapeTypeMap[shape.type] ?? 0;
     mat.uniforms.uRadiusX.value = params.radiusX ?? 0.5;
     mat.uniforms.uRadiusY.value = params.radiusY ?? 0.35;
     mat.uniforms.uSides.value = params.sides ?? 6;
@@ -1303,11 +1304,11 @@ export class RenderEngine {
     mat.uniforms.uHasControlPoints.value = 0;
     mat.uniforms.uControlPointCount.value = 0;
 
-    const cps = layer.layerShape.controlPoints;
+    const cps = shape.controlPoints;
     if (
       cps &&
       cps.length > 0 &&
-      (layer.layerShape.type === 'circle' || layer.layerShape.type === 'triangle')
+      (shape.type === 'circle' || shape.type === 'triangle')
     ) {
       const target = mat.uniforms.uControlPoints.value as THREE.Vector2[];
       const count = Math.min(cps.length, target.length);
@@ -1318,19 +1319,209 @@ export class RenderEngine {
       mat.uniforms.uControlPointCount.value = count;
     }
 
-    // Render shape mask - clear to TRANSPARENT black so masked-off areas have alpha=0
     const prevShapeClearColor = this.renderer.getClearColor(this._tempColor);
     const prevShapeClearAlpha = this.renderer.getClearAlpha();
     this.renderer.setClearColor(0x000000, 0);
-
     this.effectQuad.material = mat;
     this.renderer.setRenderTarget(this.shapeMaskTarget);
     this.renderer.clear();
     this.renderer.render(this.effectScene, this.camera);
-
     this.renderer.setClearColor(prevShapeClearColor, prevShapeClearAlpha);
-
     return this.shapeMaskTarget.texture;
+  }
+
+  /**
+   * Build a union alpha-mask FBO from `shapes` using MAX-alpha blending,
+   * then multiply it into `sourceTexture` and return the result.
+   *
+   * Only used when the layer has >= 2 shapes whose union we need. The
+   * silhouette shaders write `vec4(1,1,1,mask)` so the destination FBO's
+   * alpha channel accumulates `max(prev_a, new_a)` — that's exactly the
+   * union we want.
+   */
+  private renderUnionShapeMask(sourceTexture: THREE.Texture, shapes: import('../types').LayerShape[]): THREE.Texture {
+    if (!this.unionMaskTarget) this.unionMaskTarget = this.createRenderTarget();
+    if (!this.unionApplyTarget) this.unionApplyTarget = this.createRenderTarget();
+
+    // ── 1. Build the union mask FBO ──
+    // Clear to RGBA(0,0,0,0) and accumulate each shape's silhouette with
+    // MAX-alpha blending. RGB is forced to 1.0 by the silhouette shaders so
+    // they don't affect the running alpha union.
+    const prevClearColor = this.renderer.getClearColor(this._tempColor);
+    const prevClearAlpha = this.renderer.getClearAlpha();
+    this.renderer.setClearColor(0x000000, 0);
+    this.renderer.setRenderTarget(this.unionMaskTarget);
+    this.renderer.clear();
+
+    const shapeTypeMap: Record<string, number> = {
+      rectangle: 0, circle: 1, ellipse: 2, triangle: 3, polygon: 4, star: 5, line: 6, polyline: 6,
+    };
+
+    let customWarned = false;
+    let customRenderedCount = 0;
+    for (const shape of shapes) {
+      if (!shape.enabled) continue;
+      if (shape.type === 'rectangle') continue; // rectangle = no-op (full-frame)
+
+      if (shape.type === 'custom') {
+        const customPts = shape.params.customPoints;
+        if (!customPts || customPts.length < 3 || !shape.params.customClosed) continue;
+        if (customRenderedCount > 0) {
+          if (!customWarned) {
+            console.warn('[engine] Multiple custom shapes per layer: only the first is unioned (control points are managed per shape on the canvas).');
+            customWarned = true;
+          }
+          continue;
+        }
+        customRenderedCount++;
+
+        if (!this.polygonSilhouetteMaterial) {
+          const pointUniforms: THREE.Vector2[] = [];
+          for (let i = 0; i < 64; i++) pointUniforms.push(new THREE.Vector2(0, 0));
+          this.polygonSilhouetteMaterial = new THREE.ShaderMaterial({
+            vertexShader: effectVertexShader,
+            fragmentShader: polygonMaskSilhouetteShader,
+            uniforms: {
+              uPoints: { value: pointUniforms },
+              uPointCount: { value: 0 },
+              uFeather: { value: 0 },
+              uInvert: { value: 0 },
+            },
+            transparent: true,
+            depthTest: false,
+            depthWrite: false,
+            blending: THREE.CustomBlending,
+            blendSrc: THREE.OneFactor,
+            blendDst: THREE.OneFactor,
+            blendEquation: THREE.MaxEquation,
+          });
+        }
+        const m = this.polygonSilhouetteMaterial;
+        m.uniforms.uPointCount.value = Math.min(customPts.length, 64);
+        m.uniforms.uFeather.value = shape.params.feather ?? 0;
+        m.uniforms.uInvert.value = shape.params.invert ? 1 : 0;
+        const pointsUniform = m.uniforms.uPoints.value as THREE.Vector2[];
+        for (let i = 0; i < 64; i++) {
+          if (i < customPts.length) pointsUniform[i].set(customPts[i].x, customPts[i].y);
+          else pointsUniform[i].set(0, 0);
+        }
+        this.effectQuad.material = m;
+        this.renderer.render(this.effectScene, this.camera);
+        continue;
+      }
+
+      // Parametric SDF shape
+      if (!this.shapeSilhouetteMaterial) {
+        this.shapeSilhouetteMaterial = new THREE.ShaderMaterial({
+          vertexShader: effectVertexShader,
+          fragmentShader: layerShapeSilhouetteShader,
+          uniforms: {
+            uShapeType: { value: 0 },
+            uRadiusX: { value: 0.5 },
+            uRadiusY: { value: 0.5 },
+            uSides: { value: 6 },
+            uInnerRadius: { value: 0.4 },
+            uRotation: { value: 0.0 },
+            uFeather: { value: 0.0 },
+            uScale: { value: 1.0 },
+            uLineWidth: { value: 0.05 },
+            uLineStart: { value: new THREE.Vector2(0.2, 0.5) },
+            uLineEnd: { value: new THREE.Vector2(0.8, 0.5) },
+            uInvert: { value: 0 },
+            uHasControlPoints: { value: 0 },
+            uControlPointCount: { value: 0 },
+            uControlPoints: { value: [
+              new THREE.Vector2(0.2, 0.8),
+              new THREE.Vector2(0.8, 0.8),
+              new THREE.Vector2(0.2, 0.2),
+              new THREE.Vector2(0.8, 0.2),
+              new THREE.Vector2(0.5, 0.5),
+            ] },
+          },
+          transparent: true,
+          depthTest: false,
+          depthWrite: false,
+          blending: THREE.CustomBlending,
+          blendSrc: THREE.OneFactor,
+          blendDst: THREE.OneFactor,
+          blendEquation: THREE.MaxEquation,
+        });
+      }
+      const mat = this.shapeSilhouetteMaterial;
+      const params = shape.params;
+      mat.uniforms.uShapeType.value = shapeTypeMap[shape.type] ?? 0;
+      mat.uniforms.uRadiusX.value = params.radiusX ?? 0.5;
+      mat.uniforms.uRadiusY.value = params.radiusY ?? 0.35;
+      mat.uniforms.uSides.value = params.sides ?? 6;
+      mat.uniforms.uInnerRadius.value = params.innerRadius ?? 0.4;
+      mat.uniforms.uRotation.value = (params.rotation ?? 0) * Math.PI / 180;
+      mat.uniforms.uFeather.value = params.feather ?? 0;
+      mat.uniforms.uScale.value = params.scale ?? 1.0;
+      mat.uniforms.uLineWidth.value = params.lineWidth ?? 0.05;
+      mat.uniforms.uInvert.value = params.invert ? 1 : 0;
+      mat.uniforms.uHasControlPoints.value = 0;
+      mat.uniforms.uControlPointCount.value = 0;
+      const cps = shape.controlPoints;
+      if (cps && cps.length > 0 && (shape.type === 'circle' || shape.type === 'triangle')) {
+        const target = mat.uniforms.uControlPoints.value as THREE.Vector2[];
+        const count = Math.min(cps.length, target.length);
+        for (let i = 0; i < count; i++) target[i].set(cps[i].x, cps[i].y);
+        mat.uniforms.uHasControlPoints.value = 1;
+        mat.uniforms.uControlPointCount.value = count;
+      }
+      this.effectQuad.material = mat;
+      this.renderer.render(this.effectScene, this.camera);
+    }
+
+    // ── 2. Composite source × union-mask ──
+    if (!this.applyExternalMaskMaterial) {
+      this.applyExternalMaskMaterial = new THREE.ShaderMaterial({
+        vertexShader: effectVertexShader,
+        fragmentShader: applyExternalMaskShader,
+        uniforms: {
+          uTexture: { value: null },
+          uMaskTexture: { value: null },
+        },
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+      });
+    }
+    this.applyExternalMaskMaterial.uniforms.uTexture.value = sourceTexture;
+    this.applyExternalMaskMaterial.uniforms.uMaskTexture.value = this.unionMaskTarget.texture;
+
+    this.renderer.setRenderTarget(this.unionApplyTarget);
+    this.renderer.clear();
+    this.effectQuad.material = this.applyExternalMaskMaterial;
+    this.renderer.render(this.effectScene, this.camera);
+
+    this.renderer.setClearColor(prevClearColor, prevClearAlpha);
+    return this.unionApplyTarget.texture;
+  }
+
+  /**
+   * Apply SDF shape mask(s) to a texture.
+   *
+   * - 0 enabled non-rect shapes: pass-through
+   * - 1 enabled non-rect shape: existing single-shape fast path
+   * - >= 2 enabled shapes: union mask path (build alpha union, multiply in)
+   */
+  private applyShapeMask(
+    sourceTexture: THREE.Texture,
+    layer: Layer
+  ): THREE.Texture {
+    const shapes = layer.layerShapes ?? [];
+    if (shapes.length === 0) return sourceTexture;
+
+    // Filter to shapes that actually mask (rectangle = no-op, disabled = skip)
+    const masking = shapes.filter(s => s.enabled && s.type !== 'rectangle');
+    if (masking.length === 0) return sourceTexture;
+
+    if (masking.length === 1) {
+      return this.renderSingleShapeMask(sourceTexture, masking[0], layer.id);
+    }
+
+    return this.renderUnionShapeMask(sourceTexture, masking);
   }
 
   /**
@@ -1832,7 +2023,19 @@ export class RenderEngine {
     // Update material
     obj.material.uniforms.uTexture.value = layerTexture;
 
-    const activeShapeType = layer.layerShape?.enabled ? layer.layerShape.type : 'rectangle';
+    // ── Multi-shape resolution ──────────────────────────────────────────
+    // When the layer has 2+ shapes we DEFER all masking to applyShapeMask()
+    // (union path); the inline shader path can only handle one shape inline.
+    // For 0-1 shapes the inline path is fine — we read shape[0] as the
+    // "primary" shape (mirrors the legacy single-shape semantics).
+    const shapes = layer.layerShapes ?? [];
+    const enabledNonRect = shapes.filter(s => s.enabled && s.type !== 'rectangle');
+    const forceExternalMask = enabledNonRect.length >= 2;
+    const primaryShape = forceExternalMask
+      ? null  // force rectangle inline; union FBO will mask later
+      : (shapes[0] ?? null);
+
+    const activeShapeType = primaryShape?.enabled ? primaryShape.type : 'rectangle';
     const inlineShapeTypeMap: Record<string, number> = { rectangle: 0, circle: 1, triangle: 2 };
     const inlineShapeType = inlineShapeTypeMap[activeShapeType] ?? 0;
 
@@ -1847,15 +2050,15 @@ export class RenderEngine {
 
     // Inline layer shape
     obj.material.uniforms.uLayerShapeType.value = inlineShapeType;
-    obj.material.uniforms.uLayerShapeFeather.value = layer.layerShape?.params.feather ?? 0.0;
-    obj.material.uniforms.uLayerShapeRotation.value = ((layer.layerShape?.params.rotation ?? 0) * Math.PI) / 180;
-    obj.material.uniforms.uLayerShapeScale.value = layer.layerShape?.params.scale ?? 1.0;
+    obj.material.uniforms.uLayerShapeFeather.value = primaryShape?.params.feather ?? 0.0;
+    obj.material.uniforms.uLayerShapeRotation.value = ((primaryShape?.params.rotation ?? 0) * Math.PI) / 180;
+    obj.material.uniforms.uLayerShapeScale.value = primaryShape?.params.scale ?? 1.0;
     obj.material.uniforms.uLayerShapeHasControlPoints.value = 0;
     obj.material.uniforms.uLayerShapeControlPointCount.value = 0;
 
     // Custom shape
-    if (activeShapeType === 'custom' && layer.layerShape?.params.customPoints && layer.layerShape.params.customClosed) {
-      const customPts = layer.layerShape.params.customPoints;
+    if (activeShapeType === 'custom' && primaryShape?.params.customPoints && primaryShape.params.customClosed) {
+      const customPts = primaryShape.params.customPoints;
       if (customPts.length >= 3) {
         const tessellated: { x: number; y: number }[] = [];
         // Higher step count = smoother curves but more vertices in the
@@ -1923,7 +2126,7 @@ export class RenderEngine {
           bbMaxY = Math.max(bbMaxY, target[ci].y);
         }
         obj.material.uniforms.uCustomShapeBBox.value.set(bbMinX, bbMinY, bbMaxX, bbMaxY);
-        const fitMode = layer.layerShape?.params.customShapeFit ?? 'warp';
+        const fitMode = primaryShape?.params.customShapeFit ?? 'warp';
         const fitMap: Record<string, number> = { mask: 0, warp: 1, fill: 2 };
         obj.material.uniforms.uCustomShapeFit.value = fitMap[fitMode] ?? 1;
       } else {
@@ -1953,7 +2156,7 @@ export class RenderEngine {
     obj.material.uniforms.uLayerAspect.value = (maxY - minY) * this.height > 0 ? ((maxX - minX) * this.width) / ((maxY - minY) * this.height) : 1.0;
 
     // Control points
-    const cps = layer.layerShape?.controlPoints;
+    const cps = primaryShape?.controlPoints;
     if ((inlineShapeType === 1 || inlineShapeType === 2) && cps && cps.length > 0) {
       const target = obj.material.uniforms.uLayerShapeControlPoints.value as THREE.Vector2[];
       const count = Math.min(cps.length, target.length);
@@ -1964,8 +2167,8 @@ export class RenderEngine {
 
     // Warp — expand corner bounds to encompass custom shape points that extend beyond the quad
     let effectiveCorners = layer.corners;
-    if (activeShapeType === 'custom' && layer.layerShape?.params.customPoints && layer.layerShape.params.customClosed) {
-      const cpts = layer.layerShape.params.customPoints;
+    if (activeShapeType === 'custom' && primaryShape?.params.customPoints && primaryShape.params.customClosed) {
+      const cpts = primaryShape.params.customPoints;
       if (cpts.length >= 3) {
         // Find bounding box of custom shape in 0-1 UV space
         let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
@@ -2060,8 +2263,17 @@ export class RenderEngine {
     if (layer.mask && layer.mask.enabled && layer.mask.points.length >= 3) {
       finalTexture = this.applyMask(finalTexture, layer.mask, layer.id);
     }
-    // Legacy shape mask
-    if (layer.layerShape && layer.layerShape.enabled && !['rectangle', 'circle', 'triangle', 'custom'].includes(layer.layerShape.type)) {
+    // Shape mask:
+    // - When the layer has 2+ enabled shapes, ALWAYS apply the external union
+    //   mask here (the inline path has been bypassed for these layers).
+    // - Otherwise, only the shape types that aren't inline-handled
+    //   (rectangle/circle/triangle/custom are inline) need this fallback.
+    if (forceExternalMask) {
+      finalTexture = this.applyShapeMask(finalTexture, layer);
+    } else if (
+      primaryShape && primaryShape.enabled &&
+      !['rectangle', 'circle', 'triangle', 'custom'].includes(primaryShape.type)
+    ) {
       finalTexture = this.applyShapeMask(finalTexture, layer);
     }
     // Edge effects
@@ -2209,10 +2421,14 @@ export class RenderEngine {
       return sourceTexture;
     }
 
-    // Get polygon vertices from shape (in UV space 0-1)
-    // For layers without a custom shape, use default rectangle edges
-    const uvVertices = layer.layerShape
-      ? getShapeVertices(layer.layerShape)
+    // Get polygon vertices from shape (in UV space 0-1).
+    // When the layer carries multiple shapes the edge effects follow the
+    // first (primary) shape — a single closed polygon is what the edge
+    // renderer expects, and unioning N polygons into one outline isn't
+    // well-defined for our consumers (would need a 2D boolean library).
+    const primary = layer.layerShapes?.[0] ?? null;
+    const uvVertices = primary
+      ? getShapeVertices(primary)
       : [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }];
     if (uvVertices.length < 3) return sourceTexture;
 
@@ -2387,6 +2603,13 @@ export class RenderEngine {
     this.effectBlendTarget.dispose();
     this.blackTexture?.dispose();
     this.maskTarget?.dispose();
+    this.shapeMaskTarget?.dispose();
+    this.shapeMaskMaterial?.dispose();
+    this.unionMaskTarget?.dispose();
+    this.unionApplyTarget?.dispose();
+    this.shapeSilhouetteMaterial?.dispose();
+    this.polygonSilhouetteMaterial?.dispose();
+    this.applyExternalMaskMaterial?.dispose();
 
     for (const material of this.blendMaterials.values()) {
       material.dispose();

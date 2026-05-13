@@ -742,6 +742,12 @@ function loadSettings(): AppSettings {
       // strictly a fallback for hardware that fails WebGL2 init.)
       settings.performance.useWebGL2LightPainting = true;
 
+      // The Editor Frame Rate Cap was removed from the UI because it
+      // often made frame pacing feel worse than uncapped rAF. Reset
+      // any persisted value so older installs don't keep a hidden
+      // throttle. Field stays in the schema for back-compat.
+      settings.performance.editorMaxFps = 0;
+
       // Clean up legacy keys after migration
       if (legacyClaude) localStorage.removeItem('ai_claude_key');
       if (legacyGemini) localStorage.removeItem('ai_gemini_key');

@@ -1019,7 +1019,9 @@
   }
 
   function isLayerShapeWarpable(layer: Layer | null | undefined): boolean {
-    const t = layer?.layerShape?.type;
+    // Canvas warp UI edits the first shape only; multi-mask edits happen in
+    // the LayerPanel where the user picks the active chip.
+    const t = layer?.layerShapes?.[0]?.type;
     return !!t && (t === 'circle' || t === 'triangle');
   }
 
@@ -1041,15 +1043,17 @@
   }
 
   function ensureActiveLayerShapeControlPoints() {
-    if (!$selectedLayer || !$selectedLayer.layerShape || !isLayerShapeWarpable($selectedLayer)) return;
-    const existing = $selectedLayer.layerShape.controlPoints;
+    if (!$selectedLayer || !isLayerShapeWarpable($selectedLayer)) return;
+    const primary = $selectedLayer.layerShapes[0];
+    if (!primary) return;
+    const existing = primary.controlPoints;
     if (existing && existing.length > 0) return;
-    const shapeType = $selectedLayer.layerShape.type as 'circle' | 'triangle';
+    const shapeType = primary.type as 'circle' | 'triangle';
     project.initShapeControlPoints($selectedLayer.id, getDefaultLayerShapeControlPoints(shapeType));
   }
 
   function startShapeControlPointDrag(index: number, e: MouseEvent) {
-    if (!$selectedLayer || !$selectedLayer.layerShape) return;
+    if (!$selectedLayer || !$selectedLayer.layerShapes[0]) return;
     e.preventDefault();
     e.stopPropagation();
     ensureActiveLayerShapeControlPoints();
@@ -1059,7 +1063,7 @@
   }
 
   function handleShapeControlPointDrag(e: MouseEvent) {
-    if (draggingShapeControlPointIndex === null || !$selectedLayer || !$selectedLayer.layerShape || !shapeWarpOverlayEl) return;
+    if (draggingShapeControlPointIndex === null || !$selectedLayer || !$selectedLayer.layerShapes[0] || !shapeWarpOverlayEl) return;
     const rect = shapeWarpOverlayEl.getBoundingClientRect();
     // Get canvas-normalized coords from mouse position
     const canvasNormX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
@@ -3251,7 +3255,7 @@
   $: if (shapeWarpModeEnabled) {
     ensureActiveLayerShapeControlPoints();
   }
-  $: layerShapeControlPoints = $selectedLayer?.layerShape?.controlPoints ?? [];
+  $: layerShapeControlPoints = $selectedLayer?.layerShapes?.[0]?.controlPoints ?? [];
 
   // ============================================================================
   // SHAPE VERTEX DRAGGING (for editing shape control points)
@@ -3843,7 +3847,7 @@
               <MeshWarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
             {/if}
 
-            {#if $selectedLayer.layerShape?.type === 'custom'}
+            {#if $selectedLayer.layerShapes?.[0]?.type === 'custom'}
               <CustomShapeHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
             {/if}
 
@@ -3855,7 +3859,7 @@
                 style="width: {canvasWidth}px; height: {canvasHeight}px;"
                 class:editing={shapeWarpModeEnabled}
               >
-                {#if $selectedLayer.layerShape?.type === 'circle' && layerShapeControlPoints.length >= 5 && warpCorners}
+                {#if $selectedLayer.layerShapes?.[0]?.type === 'circle' && layerShapeControlPoints.length >= 5 && warpCorners}
                   {@const w0 = warpPointThroughCorners(warpCorners, layerShapeControlPoints[0].x, layerShapeControlPoints[0].y)}
                   {@const w1 = warpPointThroughCorners(warpCorners, layerShapeControlPoints[1].x, layerShapeControlPoints[1].y)}
                   {@const w2 = warpPointThroughCorners(warpCorners, layerShapeControlPoints[2].x, layerShapeControlPoints[2].y)}
@@ -3867,7 +3871,7 @@
                   <line x1={wc.x * canvasWidth} y1={(1 - wc.y) * canvasHeight} x2={w1.x * canvasWidth} y2={(1 - w1.y) * canvasHeight} stroke="#67E8F9" stroke-width="1" opacity="0.55" />
                   <line x1={wc.x * canvasWidth} y1={(1 - wc.y) * canvasHeight} x2={w2.x * canvasWidth} y2={(1 - w2.y) * canvasHeight} stroke="#67E8F9" stroke-width="1" opacity="0.55" />
                   <line x1={wc.x * canvasWidth} y1={(1 - wc.y) * canvasHeight} x2={w3.x * canvasWidth} y2={(1 - w3.y) * canvasHeight} stroke="#67E8F9" stroke-width="1" opacity="0.55" />
-                {:else if $selectedLayer.layerShape?.type === 'triangle' && layerShapeControlPoints.length >= 3 && warpCorners}
+                {:else if $selectedLayer.layerShapes?.[0]?.type === 'triangle' && layerShapeControlPoints.length >= 3 && warpCorners}
                   <polygon
                     points={layerShapeControlPoints.slice(0, 3).map((p) => { const w = warpPointThroughCorners(warpCorners, p.x, p.y); return `${w.x * canvasWidth},${(1 - w.y) * canvasHeight}`; }).join(' ')}
                     fill="none"
@@ -3879,7 +3883,7 @@
 
                 {#if shapeWarpModeEnabled && warpCorners}
                   {#each layerShapeControlPoints as point, i}
-                    {@const isCircleCenter = $selectedLayer.layerShape?.type === 'circle' && i === 4}
+                    {@const isCircleCenter = $selectedLayer.layerShapes?.[0]?.type === 'circle' && i === 4}
                     {@const warped = warpPointThroughCorners(warpCorners, point.x, point.y)}
                     <circle
                       cx={warped.x * canvasWidth}

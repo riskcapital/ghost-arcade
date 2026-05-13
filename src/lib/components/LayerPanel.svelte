@@ -2,9 +2,53 @@
   import { project, layers, selectedLayer, selectedLayerId, selectedLayerIds, getGroupLayers } from '../stores/layers';
   // import AutoMapPanel from './AutoMapPanel.svelte';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
-  import type { BlendMode, MediaSource, EffectType, ContentFitMode, VideoPlaybackMode } from '../types';
+  import type { BlendMode, MediaSource, EffectType, ContentFitMode, VideoPlaybackMode, LayerShapeType } from '../types';
   import { generateUUID } from '../types';
   import { onDestroy } from 'svelte';
+
+  // ── Multi-mask UI state ──────────────────────────────────────────────
+  // Active shape index per layer. Pure UI state — NOT persisted on the layer
+  // (the data model has no concept of "which shape is being edited"). On
+  // layer selection change we lazily default to 0 for any layer we haven't
+  // seen yet.
+  let activeShapeIndexByLayer: Record<string, number> = {};
+  let addShapePopoverLayerId: string | null = null;
+
+  function getActiveShapeIndex(layerId: string): number {
+    return activeShapeIndexByLayer[layerId] ?? 0;
+  }
+  function setActiveShapeIndex(layerId: string, idx: number) {
+    activeShapeIndexByLayer = { ...activeShapeIndexByLayer, [layerId]: idx };
+  }
+  function addShapeAt(layerId: string, type: LayerShapeType) {
+    const newIdx = project.addLayerShape(layerId, type);
+    if (newIdx >= 0) setActiveShapeIndex(layerId, newIdx);
+    addShapePopoverLayerId = null;
+  }
+  function removeShapeChip(layerId: string, idx: number) {
+    const currentLayer = $layers.find(l => l.id === layerId);
+    if (!currentLayer || currentLayer.layerShapes.length <= 1) return; // never remove last
+    project.removeLayerShapeAt(layerId, idx);
+    const active = getActiveShapeIndex(layerId);
+    // Clamp activeShapeIndex if it points past the new array end.
+    if (active >= idx && active > 0) setActiveShapeIndex(layerId, active - 1);
+  }
+
+  // Friendly label for the chip button.
+  function shapeIconLabel(type: LayerShapeType): string {
+    switch (type) {
+      case 'rectangle': return 'Rect';
+      case 'circle': return 'Circle';
+      case 'ellipse': return 'Ellipse';
+      case 'triangle': return 'Tri';
+      case 'polygon': return 'Poly';
+      case 'star': return 'Star';
+      case 'line': return 'Line';
+      case 'polyline': return 'PLine';
+      case 'custom': return 'Custom';
+      default: return type;
+    }
+  }
   // ShapeType import removed — Lines layer uses pen tools instead of shape library
   import { getDefaultEffectParams } from '../renderer/effects';
   import { applyPresetToEffect, getEffectPresets, getNumericEffectParams, effectParamLabels } from '../effects/effectUX';
@@ -48,8 +92,13 @@
   }
   function closeContextMenu() { ctxMenu = null; ctxGroupSubmenu = false; }
   let shapeWarpEditing = false;
-  $: if (!$selectedLayer || !$selectedLayer.layerShape || !($selectedLayer.layerShape.type === 'circle' || $selectedLayer.layerShape.type === 'triangle')) {
-    shapeWarpEditing = false;
+  // Exit shape-warp edit mode if the active shape isn't warpable (circle/triangle).
+  $: {
+    const sel = $selectedLayer;
+    const activeShape = sel ? sel.layerShapes[getActiveShapeIndex(sel.id)] : null;
+    if (!sel || !activeShape || !(activeShape.type === 'circle' || activeShape.type === 'triangle')) {
+      shapeWarpEditing = false;
+    }
   }
 
   const blendModes: BlendMode[] = [
@@ -1576,231 +1625,267 @@
         <!-- Layer Shape Section -->
         <div class="shape-mask-section">
           {#if layer.type === 'media'}
-            {@const shapeType = layer.layerShape?.type ?? 'rectangle'}
+            {@const shapes = layer.layerShapes ?? []}
+            {@const rawActiveIdx = getActiveShapeIndex(layer.id)}
+            {@const activeIdx = Math.min(Math.max(rawActiveIdx, 0), Math.max(shapes.length - 1, 0))}
+            {@const activeShape = shapes[activeIdx] ?? null}
+            {@const shapeT = activeShape?.type ?? 'rectangle'}
+
+            <!-- Shape chip list -->
             <div class="property-row">
-              <label>Layer Shape</label>
-              <div class="shape-icon-row">
+              <label>{shapes.length > 1 ? `Layer Shapes (${shapes.length})` : 'Layer Shape'}</label>
+              <div class="shape-chip-row">
+                {#each shapes as shape, i (i)}
+                  <button
+                    class="shape-chip"
+                    class:active={i === activeIdx}
+                    onclick={() => setActiveShapeIndex(layer.id, i)}
+                    title="Edit {shape.type}"
+                  >
+                    {shapeIconLabel(shape.type)}
+                    {#if shapes.length > 1}
+                      <span
+                        class="chip-remove"
+                        role="button"
+                        tabindex="-1"
+                        title="Remove this shape"
+                        onclick={(e) => { e.stopPropagation(); removeShapeChip(layer.id, i); }}
+                      >×</span>
+                    {/if}
+                  </button>
+                {/each}
                 <button
-                  class="shape-icon-btn"
-                  class:active={shapeType === 'rectangle'}
-                  onclick={() => project.setLayerShape(layer.id, 'rectangle')}
-                  title="Rectangle"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="6" width="16" height="12" rx="1.5"/></svg>
-                </button>
-                <button
-                  class="shape-icon-btn"
-                  class:active={shapeType === 'circle'}
-                  onclick={() => project.setLayerShape(layer.id, 'circle')}
-                  title="Circle"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/></svg>
-                </button>
-                <button
-                  class="shape-icon-btn"
-                  class:active={shapeType === 'ellipse'}
-                  onclick={() => project.setLayerShape(layer.id, 'ellipse')}
-                  title="Ellipse"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="12" rx="9" ry="6"/></svg>
-                </button>
-                <button
-                  class="shape-icon-btn"
-                  class:active={shapeType === 'triangle'}
-                  onclick={() => project.setLayerShape(layer.id, 'triangle')}
-                  title="Triangle"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4l8 16H4L12 4z"/></svg>
-                </button>
-                <button
-                  class="shape-icon-btn"
-                  class:active={shapeType === 'polygon'}
-                  onclick={() => project.setLayerShape(layer.id, 'polygon')}
-                  title="Polygon"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l9.5 7-3.5 11h-12L2.5 9z"/></svg>
-                </button>
-                <!-- Star shape hidden from UI (functionality retained) -->
+                  class="shape-chip add"
+                  title="Add another shape"
+                  onclick={() => { addShapePopoverLayerId = addShapePopoverLayerId === layer.id ? null : layer.id; }}
+                >+</button>
               </div>
             </div>
 
-            {#if shapeType === 'circle' || shapeType === 'triangle'}
+            {#if addShapePopoverLayerId === layer.id}
               <div class="property-row">
-                <button class="btn-secondary" onclick={toggleShapeWarpEditing}>
-                  {shapeWarpEditing ? 'Exit Shape Warp Edit' : 'Edit Shape Warp'}
-                </button>
-              </div>
-            {/if}
-
-            {#if layer.layerShape && layer.layerShape.type !== 'custom'}
-              <div class="property-row">
-                <button class="btn-secondary" onclick={() => project.convertToCustomShape(layer.id)} title="Convert shape to editable polygon with draggable vertices">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1.5" fill="currentColor"/><path d="M12 5v2m0 10v2m-7-7h2m10 0h2"/></svg>
-                  Edit Points
-                </button>
-              </div>
-            {/if}
-            {#if layer.layerShape?.type === 'custom'}
-              <div class="property-row shape-help">
-                <span>Drag vertices on canvas. Click edges to add points. Right-click vertex to remove.</span>
-              </div>
-              <div class="property-row">
-                <label>Shape Fit</label>
-                <select
-                  value={layer.layerShape.params.customShapeFit || 'warp'}
-                  onchange={(e) => project.updateLayerShapeParams(layer.id, { customShapeFit: (e.target as HTMLSelectElement).value as 'warp' | 'fill' | 'mask' })}
-                >
-                  <option value="warp">Warp</option>
-                  <option value="fill">Fill</option>
-                  <option value="mask">Mask</option>
-                </select>
-              </div>
-            {/if}
-          {/if}
-
-          {#if layer.layerShape}
-            {@const shapeT = layer.layerShape.type}
-            {#if shapeT === 'circle' || shapeT === 'triangle'}
-              <div class="property-row shape-help">
-                <span>Shape geometry is controlled directly on canvas via warp points.</span>
-              </div>
-            {/if}
-
-            {#if shapeT !== 'rectangle' && shapeT !== 'custom'}
-              <!-- Radius controls -->
-              {#if shapeT === 'circle' || shapeT === 'ellipse'}
-                <div class="property-row">
-                  <label>{shapeT === 'ellipse' ? 'Radius X' : 'Radius'}</label>
-                  <input
-                    type="range"
-                    min="0.05"
-                    max="1.0"
-                    step="0.01"
-                    value={layer.layerShape.params.radiusX ?? 0.5}
-                    oninput={(e) => {
-                      const val = parseFloat((e.target as HTMLInputElement).value);
-                      const updates: Record<string, number> = { radiusX: val };
-                      if (shapeT === 'circle') updates.radiusY = val;
-                      project.updateLayerShapeParams(layer.id, updates);
-                    }}
-                  />
-                  <span class="value">{((layer.layerShape.params.radiusX ?? 0.5) * 100).toFixed(0)}%</span>
+                <div class="shape-icon-row add-shape-popover">
+                  <button class="shape-icon-btn" onclick={() => addShapeAt(layer.id, 'rectangle')} title="Rectangle">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="6" width="16" height="12" rx="1.5"/></svg>
+                  </button>
+                  <button class="shape-icon-btn" onclick={() => addShapeAt(layer.id, 'circle')} title="Circle">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/></svg>
+                  </button>
+                  <button class="shape-icon-btn" onclick={() => addShapeAt(layer.id, 'ellipse')} title="Ellipse">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="12" rx="9" ry="6"/></svg>
+                  </button>
+                  <button class="shape-icon-btn" onclick={() => addShapeAt(layer.id, 'triangle')} title="Triangle">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4l8 16H4L12 4z"/></svg>
+                  </button>
+                  <button class="shape-icon-btn" onclick={() => addShapeAt(layer.id, 'polygon')} title="Polygon">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l9.5 7-3.5 11h-12L2.5 9z"/></svg>
+                  </button>
+                  <button class="shape-icon-btn" onclick={() => addShapeAt(layer.id, 'star')} title="Star">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77 5.82 21l1.18-6.88L2 9.27l6.91-1.01L12 2z"/></svg>
+                  </button>
                 </div>
-                {#if shapeT === 'ellipse'}
+              </div>
+            {/if}
+
+            <!-- Shape type selector for the ACTIVE shape (changes the active chip's type) -->
+            {#if activeShape}
+              <div class="property-row">
+                <label>Type</label>
+                <div class="shape-icon-row">
+                  <button class="shape-icon-btn" class:active={shapeT === 'rectangle'} onclick={() => project.setLayerShape(layer.id, 'rectangle', activeIdx)} title="Rectangle">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="6" width="16" height="12" rx="1.5"/></svg>
+                  </button>
+                  <button class="shape-icon-btn" class:active={shapeT === 'circle'} onclick={() => project.setLayerShape(layer.id, 'circle', activeIdx)} title="Circle">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/></svg>
+                  </button>
+                  <button class="shape-icon-btn" class:active={shapeT === 'ellipse'} onclick={() => project.setLayerShape(layer.id, 'ellipse', activeIdx)} title="Ellipse">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="12" rx="9" ry="6"/></svg>
+                  </button>
+                  <button class="shape-icon-btn" class:active={shapeT === 'triangle'} onclick={() => project.setLayerShape(layer.id, 'triangle', activeIdx)} title="Triangle">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4l8 16H4L12 4z"/></svg>
+                  </button>
+                  <button class="shape-icon-btn" class:active={shapeT === 'polygon'} onclick={() => project.setLayerShape(layer.id, 'polygon', activeIdx)} title="Polygon">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l9.5 7-3.5 11h-12L2.5 9z"/></svg>
+                  </button>
+                  <!-- Star shape hidden from UI (functionality retained) -->
+                </div>
+              </div>
+
+              {#if shapeT === 'circle' || shapeT === 'triangle'}
+                <div class="property-row">
+                  <button class="btn-secondary" onclick={toggleShapeWarpEditing}>
+                    {shapeWarpEditing ? 'Exit Shape Warp Edit' : 'Edit Shape Warp'}
+                  </button>
+                </div>
+              {/if}
+
+              {#if shapeT !== 'custom'}
+                <div class="property-row">
+                  <button class="btn-secondary" onclick={() => project.convertToCustomShape(layer.id, activeIdx)} title="Convert shape to editable polygon with draggable vertices">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1.5" fill="currentColor"/><path d="M12 5v2m0 10v2m-7-7h2m10 0h2"/></svg>
+                    Edit Points
+                  </button>
+                </div>
+              {/if}
+              {#if shapeT === 'custom'}
+                <div class="property-row shape-help">
+                  <span>Drag vertices on canvas. Click edges to add points. Right-click vertex to remove.</span>
+                </div>
+                <div class="property-row">
+                  <label>Shape Fit</label>
+                  <select
+                    value={activeShape.params.customShapeFit || 'warp'}
+                    onchange={(e) => project.updateLayerShapeParams(layer.id, { customShapeFit: (e.target as HTMLSelectElement).value as 'warp' | 'fill' | 'mask' }, activeIdx)}
+                  >
+                    <option value="warp">Warp</option>
+                    <option value="fill">Fill</option>
+                    <option value="mask">Mask</option>
+                  </select>
+                </div>
+              {/if}
+
+              {#if shapeT === 'circle' || shapeT === 'triangle'}
+                <div class="property-row shape-help">
+                  <span>Shape geometry is controlled directly on canvas via warp points.</span>
+                </div>
+              {/if}
+
+              {#if shapeT !== 'rectangle' && shapeT !== 'custom'}
+                <!-- Radius controls -->
+                {#if shapeT === 'circle' || shapeT === 'ellipse'}
                   <div class="property-row">
-                    <label>Radius Y</label>
+                    <label>{shapeT === 'ellipse' ? 'Radius X' : 'Radius'}</label>
                     <input
                       type="range"
                       min="0.05"
                       max="1.0"
                       step="0.01"
-                      value={layer.layerShape.params.radiusY ?? 0.35}
-                      oninput={(e) => project.updateLayerShapeParams(layer.id, { radiusY: parseFloat((e.target as HTMLInputElement).value) })}
+                      value={activeShape.params.radiusX ?? 0.5}
+                      oninput={(e) => {
+                        const val = parseFloat((e.target as HTMLInputElement).value);
+                        const updates: Record<string, number> = { radiusX: val };
+                        if (shapeT === 'circle') updates.radiusY = val;
+                        project.updateLayerShapeParams(layer.id, updates, activeIdx);
+                      }}
                     />
-                    <span class="value">{((layer.layerShape.params.radiusY ?? 0.35) * 100).toFixed(0)}%</span>
+                    <span class="value">{((activeShape.params.radiusX ?? 0.5) * 100).toFixed(0)}%</span>
+                  </div>
+                  {#if shapeT === 'ellipse'}
+                    <div class="property-row">
+                      <label>Radius Y</label>
+                      <input
+                        type="range"
+                        min="0.05"
+                        max="1.0"
+                        step="0.01"
+                        value={activeShape.params.radiusY ?? 0.35}
+                        oninput={(e) => project.updateLayerShapeParams(layer.id, { radiusY: parseFloat((e.target as HTMLInputElement).value) }, activeIdx)}
+                      />
+                      <span class="value">{((activeShape.params.radiusY ?? 0.35) * 100).toFixed(0)}%</span>
+                    </div>
+                  {/if}
+                {/if}
+
+                <!-- Sides control for polygon/star -->
+                {#if shapeT === 'polygon' || shapeT === 'star'}
+                  <div class="property-row">
+                    <label>Sides</label>
+                    <input
+                      type="range"
+                      min="3"
+                      max="12"
+                      step="1"
+                      value={activeShape.params.sides ?? 6}
+                      oninput={(e) => project.updateLayerShapeParams(layer.id, { sides: parseInt((e.target as HTMLInputElement).value) }, activeIdx)}
+                    />
+                    <span class="value">{activeShape.params.sides ?? 6}</span>
                   </div>
                 {/if}
-              {/if}
 
-              <!-- Sides control for polygon/star -->
-              {#if shapeT === 'polygon' || shapeT === 'star'}
+                <!-- Inner radius for star -->
+                {#if shapeT === 'star'}
+                  <div class="property-row">
+                    <label>Inner Radius</label>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="0.9"
+                      step="0.01"
+                      value={activeShape.params.innerRadius ?? 0.4}
+                      oninput={(e) => project.updateLayerShapeParams(layer.id, { innerRadius: parseFloat((e.target as HTMLInputElement).value) }, activeIdx)}
+                    />
+                    <span class="value">{((activeShape.params.innerRadius ?? 0.4) * 100).toFixed(0)}%</span>
+                  </div>
+                {/if}
+
+                <!-- Rotation -->
                 <div class="property-row">
-                  <label>Sides</label>
+                  <label>Rotation</label>
                   <input
                     type="range"
-                    min="3"
-                    max="12"
+                    min="0"
+                    max="360"
                     step="1"
-                    value={layer.layerShape.params.sides ?? 6}
-                    oninput={(e) => project.updateLayerShapeParams(layer.id, { sides: parseInt((e.target as HTMLInputElement).value) })}
+                    value={activeShape.params.rotation ?? 0}
+                    oninput={(e) => project.updateLayerShapeParams(layer.id, { rotation: parseFloat((e.target as HTMLInputElement).value) }, activeIdx)}
                   />
-                  <span class="value">{layer.layerShape.params.sides ?? 6}</span>
+                  <span class="value">{(activeShape.params.rotation ?? 0).toFixed(0)}&deg;</span>
                 </div>
-              {/if}
 
-              <!-- Inner radius for star -->
-              {#if shapeT === 'star'}
+                <!-- Scale -->
                 <div class="property-row">
-                  <label>Inner Radius</label>
+                  <label>Scale</label>
                   <input
                     type="range"
                     min="0.1"
-                    max="0.9"
+                    max="3.0"
                     step="0.01"
-                    value={layer.layerShape.params.innerRadius ?? 0.4}
-                    oninput={(e) => project.updateLayerShapeParams(layer.id, { innerRadius: parseFloat((e.target as HTMLInputElement).value) })}
+                    value={activeShape.params.scale ?? 1.0}
+                    oninput={(e) => project.updateLayerShapeParams(layer.id, { scale: parseFloat((e.target as HTMLInputElement).value) }, activeIdx)}
                   />
-                  <span class="value">{((layer.layerShape.params.innerRadius ?? 0.4) * 100).toFixed(0)}%</span>
+                  <span class="value">{((activeShape.params.scale ?? 1.0) * 100).toFixed(0)}%</span>
+                </div>
+
+                <!-- Feather -->
+                <div class="property-row">
+                  <label>Feather</label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="0.2"
+                    step="0.005"
+                    value={activeShape.params.feather ?? 0}
+                    oninput={(e) => project.updateLayerShapeParams(layer.id, { feather: parseFloat((e.target as HTMLInputElement).value) }, activeIdx)}
+                  />
+                  <span class="value">{((activeShape.params.feather ?? 0) * 100).toFixed(0)}%</span>
+                </div>
+
+                <!-- Invert -->
+                <div class="property-row">
+                  <label>Invert</label>
+                  <input
+                    type="checkbox"
+                    checked={activeShape.params.invert ?? false}
+                    onchange={(e) => project.updateLayerShapeParams(layer.id, { invert: (e.target as HTMLInputElement).checked }, activeIdx)}
+                  />
                 </div>
               {/if}
 
-              <!-- Rotation -->
-              <div class="property-row">
-                <label>Rotation</label>
-                <input
-                  type="range"
-                  min="0"
-                  max="360"
-                  step="1"
-                  value={layer.layerShape.params.rotation ?? 0}
-                  oninput={(e) => project.updateLayerShapeParams(layer.id, { rotation: parseFloat((e.target as HTMLInputElement).value) })}
-                />
-                <span class="value">{(layer.layerShape.params.rotation ?? 0).toFixed(0)}&deg;</span>
-              </div>
-
-              <!-- Scale -->
-              <div class="property-row">
-                <label>Scale</label>
-                <input
-                  type="range"
-                  min="0.1"
-                  max="3.0"
-                  step="0.01"
-                  value={layer.layerShape.params.scale ?? 1.0}
-                  oninput={(e) => project.updateLayerShapeParams(layer.id, { scale: parseFloat((e.target as HTMLInputElement).value) })}
-                />
-                <span class="value">{((layer.layerShape.params.scale ?? 1.0) * 100).toFixed(0)}%</span>
-              </div>
-
-              <!-- Feather -->
-              <div class="property-row">
-                <label>Feather</label>
-                <input
-                  type="range"
-                  min="0"
-                  max="0.2"
-                  step="0.005"
-                  value={layer.layerShape.params.feather ?? 0}
-                  oninput={(e) => project.updateLayerShapeParams(layer.id, { feather: parseFloat((e.target as HTMLInputElement).value) })}
-                />
-                <span class="value">{((layer.layerShape.params.feather ?? 0) * 100).toFixed(0)}%</span>
-              </div>
-
-              <!-- Invert -->
-              <div class="property-row">
-                <label>Invert</label>
-                <input
-                  type="checkbox"
-                  checked={layer.layerShape.params.invert ?? false}
-                  onchange={(e) => project.updateLayerShapeParams(layer.id, { invert: (e.target as HTMLInputElement).checked })}
-                />
-              </div>
-            {/if}
-
-            {#if shapeT === 'custom'}
-              <!-- Custom shapes just get feather -->
-              <div class="property-row">
-                <label>Feather</label>
-                <input
-                  type="range"
-                  min="0"
-                  max="0.2"
-                  step="0.005"
-                  value={layer.layerShape.params.feather ?? 0}
-                  oninput={(e) => project.updateLayerShapeParams(layer.id, { feather: parseFloat((e.target as HTMLInputElement).value) })}
-                />
-                <span class="value">{((layer.layerShape.params.feather ?? 0) * 100).toFixed(0)}%</span>
-              </div>
+              {#if shapeT === 'custom'}
+                <!-- Custom shapes just get feather -->
+                <div class="property-row">
+                  <label>Feather</label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="0.2"
+                    step="0.005"
+                    value={activeShape.params.feather ?? 0}
+                    oninput={(e) => project.updateLayerShapeParams(layer.id, { feather: parseFloat((e.target as HTMLInputElement).value) }, activeIdx)}
+                  />
+                  <span class="value">{((activeShape.params.feather ?? 0) * 100).toFixed(0)}%</span>
+                </div>
+              {/if}
             {/if}
           {/if}
         </div>
@@ -4169,6 +4254,67 @@
     border-color: #67E8F9;
     color: #67E8F9;
     background: rgba(103, 232, 249, 0.08);
+  }
+
+  /* Multi-shape chip list */
+  .shape-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    flex: 1;
+  }
+  .shape-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: #1a1a1e;
+    color: #9aa0a6;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 2px 8px;
+    height: 26px;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .shape-chip:hover {
+    border-color: #67E8F9;
+    color: #d6faff;
+  }
+  .shape-chip.active {
+    border-color: #67E8F9;
+    color: #67E8F9;
+    background: rgba(103, 232, 249, 0.10);
+  }
+  .shape-chip.add {
+    color: #67E8F9;
+    border-style: dashed;
+    padding: 2px 10px;
+    font-weight: 600;
+  }
+  .shape-chip .chip-remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.06);
+    color: #d33;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .shape-chip .chip-remove:hover {
+    background: rgba(255, 80, 80, 0.18);
+  }
+  .add-shape-popover {
+    background: rgba(103, 232, 249, 0.05);
+    border: 1px dashed rgba(103, 232, 249, 0.3);
+    border-radius: 6px;
+    padding: 6px;
   }
 
   .shape-mask-section .property-row select {

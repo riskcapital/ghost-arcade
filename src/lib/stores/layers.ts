@@ -226,7 +226,8 @@ void main() {
           : `Layer ${project.layers.filter(l => l.type === 'media').length + 1}`);
         const newLayer = createLayer(id, layerName, type);
         if (type === 'media' && initialShapeType) {
-          newLayer.layerShape = createDefaultLayerShape(initialShapeType);
+          // Replace the default rectangle with the requested initial shape.
+          newLayer.layerShapes = [createDefaultLayerShape(initialShapeType)];
         }
         return {
           ...project,
@@ -905,129 +906,134 @@ void main() {
     // CUSTOM SHAPE METHODS (pen-tool polygon on media layers)
     // ============================================================================
 
-    addCustomShapePoint(layerId: string, point: Point2D) {
+    addCustomShapePoint(layerId: string, point: Point2D, shapeIndex: number = 0) {
       update((project) => ({
         ...project,
         layers: project.layers.map((layer) => {
-          if (layer.id !== layerId || !layer.layerShape || layer.layerShape.type !== 'custom') return layer;
-          const pts = layer.layerShape.params.customPoints ?? [];
-          return {
-            ...layer,
-            layerShape: {
-              ...layer.layerShape,
-              params: { ...layer.layerShape.params, customPoints: [...pts, point] },
-            },
-          };
+          if (layer.id !== layerId) return layer;
+          const shape = layer.layerShapes[shapeIndex];
+          if (!shape || shape.type !== 'custom') return layer;
+          const pts = shape.params.customPoints ?? [];
+          const newShapes = layer.layerShapes.map((s, i) => i === shapeIndex
+            ? { ...s, params: { ...s.params, customPoints: [...pts, point] } }
+            : s);
+          return { ...layer, layerShapes: newShapes };
         }),
       }));
     },
 
-    updateCustomShapePoint(layerId: string, pointIndex: number, point: Point2D) {
+    updateCustomShapePoint(layerId: string, pointIndex: number, point: Point2D, shapeIndex: number = 0) {
       update((project) => ({
         ...project,
         layers: project.layers.map((layer) => {
-          if (layer.id !== layerId || !layer.layerShape || layer.layerShape.type !== 'custom') return layer;
-          const pts = layer.layerShape.params.customPoints ?? [];
-          return {
-            ...layer,
-            layerShape: {
-              ...layer.layerShape,
-              params: {
-                ...layer.layerShape.params,
-                customPoints: pts.map((p, i) => (i === pointIndex ? point : p)),
-              },
-            },
-          };
+          if (layer.id !== layerId) return layer;
+          const shape = layer.layerShapes[shapeIndex];
+          if (!shape || shape.type !== 'custom') return layer;
+          const pts = shape.params.customPoints ?? [];
+          const newShapes = layer.layerShapes.map((s, i) => i === shapeIndex
+            ? {
+                ...s,
+                params: {
+                  ...s.params,
+                  customPoints: pts.map((p, idx) => (idx === pointIndex ? point : p)),
+                },
+              }
+            : s);
+          return { ...layer, layerShapes: newShapes };
         }),
       }));
     },
 
-    removeCustomShapePoint(layerId: string, pointIndex: number) {
+    removeCustomShapePoint(layerId: string, pointIndex: number, shapeIndex: number = 0) {
       update((project) => ({
         ...project,
         layers: project.layers.map((layer) => {
-          if (layer.id !== layerId || !layer.layerShape || layer.layerShape.type !== 'custom') return layer;
-          const pts = layer.layerShape.params.customPoints ?? [];
+          if (layer.id !== layerId) return layer;
+          const shape = layer.layerShapes[shapeIndex];
+          if (!shape || shape.type !== 'custom') return layer;
+          const pts = shape.params.customPoints ?? [];
           if (pts.length <= 3) return layer; // Minimum 3 vertices
-          return {
-            ...layer,
-            layerShape: {
-              ...layer.layerShape,
-              params: {
-                ...layer.layerShape.params,
-                customPoints: pts.filter((_, i) => i !== pointIndex),
-              },
-            },
-          };
+          const newShapes = layer.layerShapes.map((s, i) => i === shapeIndex
+            ? {
+                ...s,
+                params: {
+                  ...s.params,
+                  customPoints: pts.filter((_, idx) => idx !== pointIndex),
+                },
+              }
+            : s);
+          return { ...layer, layerShapes: newShapes };
         }),
       }));
       recordDiscreteAction();
     },
 
-    closeCustomShape(layerId: string) {
+    closeCustomShape(layerId: string, shapeIndex: number = 0) {
       update((project) => ({
         ...project,
         layers: project.layers.map((layer) => {
-          if (layer.id !== layerId || !layer.layerShape || layer.layerShape.type !== 'custom') return layer;
-          const pts = layer.layerShape.params.customPoints ?? [];
+          if (layer.id !== layerId) return layer;
+          const shape = layer.layerShapes[shapeIndex];
+          if (!shape || shape.type !== 'custom') return layer;
+          const pts = shape.params.customPoints ?? [];
           if (pts.length < 3) return layer; // Need at least 3 points to close
-          return {
-            ...layer,
-            layerShape: {
-              ...layer.layerShape,
-              params: { ...layer.layerShape.params, customClosed: true },
-            },
-          };
+          const newShapes = layer.layerShapes.map((s, i) => i === shapeIndex
+            ? { ...s, params: { ...s.params, customClosed: true } }
+            : s);
+          return { ...layer, layerShapes: newShapes };
         }),
       }));
       recordDiscreteAction();
     },
 
-    insertCustomShapePoint(layerId: string, afterIndex: number, point: BezierPoint) {
+    insertCustomShapePoint(layerId: string, afterIndex: number, point: BezierPoint, shapeIndex: number = 0) {
       update((project) => ({
         ...project,
         layers: project.layers.map((layer) => {
-          if (layer.id !== layerId || !layer.layerShape || layer.layerShape.type !== 'custom') return layer;
-          const pts = [...(layer.layerShape.params.customPoints ?? [])];
+          if (layer.id !== layerId) return layer;
+          const shape = layer.layerShapes[shapeIndex];
+          if (!shape || shape.type !== 'custom') return layer;
+          const pts = [...(shape.params.customPoints ?? [])];
           pts.splice(afterIndex + 1, 0, point);
-          return {
-            ...layer,
-            layerShape: {
-              ...layer.layerShape,
-              params: { ...layer.layerShape.params, customPoints: pts },
-            },
-          };
+          const newShapes = layer.layerShapes.map((s, i) => i === shapeIndex
+            ? { ...s, params: { ...s.params, customPoints: pts } }
+            : s);
+          return { ...layer, layerShapes: newShapes };
         }),
       }));
       recordDiscreteAction();
     },
 
-    updateCustomShapeHandle(layerId: string, pointIndex: number, handleType: 'cpIn' | 'cpOut', pos: Point2D | undefined) {
+    updateCustomShapeHandle(layerId: string, pointIndex: number, handleType: 'cpIn' | 'cpOut', pos: Point2D | undefined, shapeIndex: number = 0) {
       update((project) => ({
         ...project,
         layers: project.layers.map((layer) => {
-          if (layer.id !== layerId || !layer.layerShape || layer.layerShape.type !== 'custom') return layer;
-          const pts = layer.layerShape.params.customPoints ?? [];
-          return {
-            ...layer,
-            layerShape: {
-              ...layer.layerShape,
-              params: {
-                ...layer.layerShape.params,
-                customPoints: pts.map((p, i) => (i === pointIndex ? { ...p, [handleType]: pos } : p)),
-              },
-            },
-          };
+          if (layer.id !== layerId) return layer;
+          const shape = layer.layerShapes[shapeIndex];
+          if (!shape || shape.type !== 'custom') return layer;
+          const pts = shape.params.customPoints ?? [];
+          const newShapes = layer.layerShapes.map((s, i) => i === shapeIndex
+            ? {
+                ...s,
+                params: {
+                  ...s.params,
+                  customPoints: pts.map((p, idx) => (idx === pointIndex ? { ...p, [handleType]: pos } : p)),
+                },
+              }
+            : s);
+          return { ...layer, layerShapes: newShapes };
         }),
       }));
     },
 
-    toggleCustomShapePointCurve(layerId: string, pointIndex: number) {
+    toggleCustomShapePointCurve(layerId: string, pointIndex: number, shapeIndex: number = 0) {
       update((project) => ({
         ...project,
         layers: project.layers.map((layer) => {
-          if (layer.id !== layerId || !layer.layerShape || layer.layerShape.type !== 'custom') return layer;
-          const pts = layer.layerShape.params.customPoints ?? [];
+          if (layer.id !== layerId) return layer;
+          const shape = layer.layerShapes[shapeIndex];
+          if (!shape || shape.type !== 'custom') return layer;
+          const pts = shape.params.customPoints ?? [];
           const pt = pts[pointIndex];
           if (!pt) return layer;
           const hasCurve = pt.cpIn || pt.cpOut;
@@ -1047,31 +1053,33 @@ void main() {
               cpOut: { x: pt.x + dx, y: pt.y + dy },
             };
           }
-          return {
-            ...layer,
-            layerShape: {
-              ...layer.layerShape,
-              params: {
-                ...layer.layerShape.params,
-                customPoints: pts.map((p, i) => (i === pointIndex ? newPt : p)),
-              },
-            },
-          };
+          const newShapes = layer.layerShapes.map((s, i) => i === shapeIndex
+            ? {
+                ...s,
+                params: {
+                  ...s.params,
+                  customPoints: pts.map((p, idx) => (idx === pointIndex ? newPt : p)),
+                },
+              }
+            : s);
+          return { ...layer, layerShapes: newShapes };
         }),
       }));
       recordDiscreteAction();
     },
 
-    convertToCustomShape(layerId: string) {
+    convertToCustomShape(layerId: string, shapeIndex: number = 0) {
       update((project) => ({
         ...project,
         layers: project.layers.map((layer) => {
-          if (layer.id !== layerId || !layer.layerShape) return layer;
-          if (layer.layerShape.type === 'custom') return layer;
-          return {
-            ...layer,
-            layerShape: convertShapeToCustom(layer.layerShape),
-          };
+          if (layer.id !== layerId) return layer;
+          const shape = layer.layerShapes[shapeIndex];
+          if (!shape) return layer;
+          if (shape.type === 'custom') return layer;
+          const newShapes = layer.layerShapes.map((s, i) => i === shapeIndex
+            ? convertShapeToCustom(s)
+            : s);
+          return { ...layer, layerShapes: newShapes };
         }),
       }));
       recordDiscreteAction();
@@ -1207,133 +1215,205 @@ void main() {
     // LAYER SHAPE METHODS (shape mask: circle, triangle, line, etc.)
     // ============================================================================
 
-    setLayerShape(layerId: string, shapeType: LayerShapeType | null) {
+    /**
+     * Set the shape at `shapeIndex`.
+     * - If `shapeType` is null: removes the shape at that index.
+     *   When the result would empty the array, the layer ends with `layerShapes: []`.
+     * - If `shapeType` is non-null and `shapeIndex === layerShapes.length`: appends.
+     * - Otherwise: replaces the shape at `shapeIndex` with a fresh default of `shapeType`.
+     */
+    setLayerShape(layerId: string, shapeType: LayerShapeType | null, shapeIndex: number = 0) {
       update((project) => ({
         ...project,
-        layers: project.layers.map((layer) =>
-          layer.id === layerId
-            ? (
-              (layer.layerShape?.type ?? null) === shapeType
-                ? layer
-                : {
-                    ...layer,
-                    // Shape is now the primary geometry path for media layers.
-                    // Clear legacy crop state to avoid crop-like behavior stacking.
-                    cropRegion: null,
-                    layerShape: shapeType ? createDefaultLayerShape(shapeType) : null,
-                  }
-            )
-            : layer
-        ),
+        layers: project.layers.map((layer) => {
+          if (layer.id !== layerId) return layer;
+          const shapes = layer.layerShapes;
+          const current = shapes[shapeIndex];
+
+          // Removing this shape (shapeType === null)
+          if (shapeType === null) {
+            if (!current) return layer; // nothing to remove
+            const newShapes = shapes.filter((_, i) => i !== shapeIndex);
+            return { ...layer, cropRegion: null, layerShapes: newShapes };
+          }
+
+          // Replacing the same type — no change required
+          if (current && current.type === shapeType) return layer;
+
+          // Appending vs replacing
+          if (shapeIndex === shapes.length) {
+            // Append (only when index equals length — i.e. one past the end)
+            return {
+              ...layer,
+              cropRegion: null,
+              layerShapes: [...shapes, createDefaultLayerShape(shapeType)],
+            };
+          }
+
+          const newShapes = shapes.map((s, i) => i === shapeIndex ? createDefaultLayerShape(shapeType) : s);
+          // If the target index didn't exist, fall back to appending so callers
+          // who pass `shapeIndex = 0` on an empty array still get a shape.
+          if (!current) {
+            return {
+              ...layer,
+              cropRegion: null,
+              layerShapes: [...shapes, createDefaultLayerShape(shapeType)],
+            };
+          }
+          return { ...layer, cropRegion: null, layerShapes: newShapes };
+        }),
       }));
       recordDiscreteAction();
     },
 
-    updateLayerShape(layerId: string, updates: Partial<LayerShape>) {
+    /** Append a new shape of `shapeType`. Returns the new index (for callers that care). */
+    addLayerShape(layerId: string, shapeType: LayerShapeType): number {
+      let newIndex = -1;
       update((project) => ({
         ...project,
-        layers: project.layers.map((layer) =>
-          layer.id === layerId && layer.layerShape
-            ? { ...layer, layerShape: { ...layer.layerShape, ...updates } }
-            : layer
-        ),
+        layers: project.layers.map((layer) => {
+          if (layer.id !== layerId) return layer;
+          newIndex = layer.layerShapes.length;
+          return {
+            ...layer,
+            cropRegion: null,
+            layerShapes: [...layer.layerShapes, createDefaultLayerShape(shapeType)],
+          };
+        }),
+      }));
+      recordDiscreteAction();
+      return newIndex;
+    },
+
+    /** Remove a single shape from the array (preserving order). */
+    removeLayerShapeAt(layerId: string, shapeIndex: number) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((layer) => {
+          if (layer.id !== layerId) return layer;
+          if (shapeIndex < 0 || shapeIndex >= layer.layerShapes.length) return layer;
+          return {
+            ...layer,
+            layerShapes: layer.layerShapes.filter((_, i) => i !== shapeIndex),
+          };
+        }),
+      }));
+      recordDiscreteAction();
+    },
+
+    updateLayerShape(layerId: string, updates: Partial<LayerShape>, shapeIndex: number = 0) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((layer) => {
+          if (layer.id !== layerId) return layer;
+          const shape = layer.layerShapes[shapeIndex];
+          if (!shape) return layer;
+          const newShapes = layer.layerShapes.map((s, i) => i === shapeIndex ? { ...s, ...updates } : s);
+          return { ...layer, layerShapes: newShapes };
+        }),
       }));
     },
 
-    updateLayerShapeParams(layerId: string, params: Partial<import('../types').LayerShapeParams>) {
+    updateLayerShapeParams(layerId: string, params: Partial<import('../types').LayerShapeParams>, shapeIndex: number = 0) {
       update((project) => ({
         ...project,
-        layers: project.layers.map((layer) =>
-          layer.id === layerId && layer.layerShape
-            ? {
-                ...layer,
-                layerShape: {
-                  ...layer.layerShape,
-                  params: { ...layer.layerShape.params, ...params },
-                },
-              }
-            : layer
-        ),
+        layers: project.layers.map((layer) => {
+          if (layer.id !== layerId) return layer;
+          const shape = layer.layerShapes[shapeIndex];
+          if (!shape) return layer;
+          const newShapes = layer.layerShapes.map((s, i) => i === shapeIndex
+            ? { ...s, params: { ...s.params, ...params } }
+            : s);
+          return { ...layer, layerShapes: newShapes };
+        }),
       }));
     },
 
-    toggleLayerShapeEnabled(layerId: string) {
+    toggleLayerShapeEnabled(layerId: string, shapeIndex: number = 0) {
       update((project) => ({
         ...project,
-        layers: project.layers.map((layer) =>
-          layer.id === layerId && layer.layerShape
-            ? { ...layer, layerShape: { ...layer.layerShape, enabled: !layer.layerShape.enabled } }
-            : layer
-        ),
+        layers: project.layers.map((layer) => {
+          if (layer.id !== layerId) return layer;
+          const shape = layer.layerShapes[shapeIndex];
+          if (!shape) return layer;
+          const newShapes = layer.layerShapes.map((s, i) => i === shapeIndex
+            ? { ...s, enabled: !s.enabled }
+            : s);
+          return { ...layer, layerShapes: newShapes };
+        }),
       }));
     },
 
+    /** Clear ALL shapes from a layer (empties the array). */
     clearLayerShape(layerId: string) {
       update((project) => ({
         ...project,
         layers: project.layers.map((layer) =>
-          layer.id === layerId ? { ...layer, layerShape: null } : layer
+          layer.id === layerId ? { ...layer, layerShapes: [] } : layer
         ),
       }));
     },
 
+    /** Remove a single shape (legacy-name alias for callers expecting individual remove). */
+    clearLayerShapeAt(layerId: string, shapeIndex: number) {
+      this.removeLayerShapeAt(layerId, shapeIndex);
+    },
+
     // Add/update polyline points for line shapes
-    addLayerShapeLinePoint(layerId: string, point: Point2D) {
+    addLayerShapeLinePoint(layerId: string, point: Point2D, shapeIndex: number = 0) {
       update((project) => ({
         ...project,
         layers: project.layers.map((layer) => {
-          if (layer.id !== layerId || !layer.layerShape) return layer;
-          const currentPoints = layer.layerShape.params.linePoints || [];
-          return {
-            ...layer,
-            layerShape: {
-              ...layer.layerShape,
-              params: {
-                ...layer.layerShape.params,
-                linePoints: [...currentPoints, point],
-              },
-            },
-          };
+          if (layer.id !== layerId) return layer;
+          const shape = layer.layerShapes[shapeIndex];
+          if (!shape) return layer;
+          const currentPoints = shape.params.linePoints || [];
+          const newShapes = layer.layerShapes.map((s, i) => i === shapeIndex
+            ? { ...s, params: { ...s.params, linePoints: [...currentPoints, point] } }
+            : s);
+          return { ...layer, layerShapes: newShapes };
         }),
       }));
     },
 
-    updateLayerShapeLinePoint(layerId: string, pointIndex: number, point: Point2D) {
+    updateLayerShapeLinePoint(layerId: string, pointIndex: number, point: Point2D, shapeIndex: number = 0) {
       update((project) => ({
         ...project,
         layers: project.layers.map((layer) => {
-          if (layer.id !== layerId || !layer.layerShape || !layer.layerShape.params.linePoints) return layer;
-          return {
-            ...layer,
-            layerShape: {
-              ...layer.layerShape,
-              params: {
-                ...layer.layerShape.params,
-                linePoints: layer.layerShape.params.linePoints.map((p, i) =>
-                  i === pointIndex ? point : p
-                ),
-              },
-            },
-          };
+          if (layer.id !== layerId) return layer;
+          const shape = layer.layerShapes[shapeIndex];
+          if (!shape || !shape.params.linePoints) return layer;
+          const newShapes = layer.layerShapes.map((s, i) => i === shapeIndex
+            ? {
+                ...s,
+                params: {
+                  ...s.params,
+                  linePoints: s.params.linePoints!.map((p, idx) => idx === pointIndex ? point : p),
+                },
+              }
+            : s);
+          return { ...layer, layerShapes: newShapes };
         }),
       }));
     },
 
-    removeLayerShapeLinePoint(layerId: string, pointIndex: number) {
+    removeLayerShapeLinePoint(layerId: string, pointIndex: number, shapeIndex: number = 0) {
       update((project) => ({
         ...project,
         layers: project.layers.map((layer) => {
-          if (layer.id !== layerId || !layer.layerShape || !layer.layerShape.params.linePoints) return layer;
-          return {
-            ...layer,
-            layerShape: {
-              ...layer.layerShape,
-              params: {
-                ...layer.layerShape.params,
-                linePoints: layer.layerShape.params.linePoints.filter((_, i) => i !== pointIndex),
-              },
-            },
-          };
+          if (layer.id !== layerId) return layer;
+          const shape = layer.layerShapes[shapeIndex];
+          if (!shape || !shape.params.linePoints) return layer;
+          const newShapes = layer.layerShapes.map((s, i) => i === shapeIndex
+            ? {
+                ...s,
+                params: {
+                  ...s.params,
+                  linePoints: s.params.linePoints!.filter((_, idx) => idx !== pointIndex),
+                },
+              }
+            : s);
+          return { ...layer, layerShapes: newShapes };
         }),
       }));
     },
@@ -1716,54 +1796,51 @@ void main() {
     },
 
     // Shape control point manipulation
-    setShapeControlPoint(id: string, pointIndex: number, position: Point2D) {
+    setShapeControlPoint(id: string, pointIndex: number, position: Point2D, shapeIndex: number = 0) {
       update((project) => ({
         ...project,
         layers: project.layers.map((l) => {
-          if (l.id !== id || !l.layerShape || !l.layerShape.controlPoints) return l;
-          const newControlPoints = l.layerShape.controlPoints.map((p, i) =>
+          if (l.id !== id) return l;
+          const shape = l.layerShapes[shapeIndex];
+          if (!shape || !shape.controlPoints) return l;
+          const newControlPoints = shape.controlPoints.map((p, i) =>
             i === pointIndex ? position : p
           );
-          return {
-            ...l,
-            layerShape: {
-              ...l.layerShape,
-              controlPoints: newControlPoints,
-            },
-          };
+          const newShapes = l.layerShapes.map((s, i) => i === shapeIndex
+            ? { ...s, controlPoints: newControlPoints }
+            : s);
+          return { ...l, layerShapes: newShapes };
         }),
       }));
     },
 
-    initShapeControlPoints(id: string, controlPoints: Point2D[]) {
+    initShapeControlPoints(id: string, controlPoints: Point2D[], shapeIndex: number = 0) {
       update((project) => ({
         ...project,
         layers: project.layers.map((l) => {
-          if (l.id !== id || !l.layerShape) return l;
-          return {
-            ...l,
-            layerShape: {
-              ...l.layerShape,
-              controlPoints,
-            },
-          };
+          if (l.id !== id) return l;
+          const shape = l.layerShapes[shapeIndex];
+          if (!shape) return l;
+          const newShapes = l.layerShapes.map((s, i) => i === shapeIndex
+            ? { ...s, controlPoints }
+            : s);
+          return { ...l, layerShapes: newShapes };
         }),
       }));
     },
 
-    resetShapeControlPoints(id: string) {
+    resetShapeControlPoints(id: string, shapeIndex: number = 0) {
       update((project) => ({
         ...project,
         layers: project.layers.map((l) => {
-          if (l.id !== id || !l.layerShape) return l;
+          if (l.id !== id) return l;
+          const shape = l.layerShapes[shapeIndex];
+          if (!shape) return l;
           // Remove control points to let the geometry generator create defaults
-          return {
-            ...l,
-            layerShape: {
-              ...l.layerShape,
-              controlPoints: undefined,
-            },
-          };
+          const newShapes = l.layerShapes.map((s, i) => i === shapeIndex
+            ? { ...s, controlPoints: undefined }
+            : s);
+          return { ...l, layerShapes: newShapes };
         }),
       }));
       recordDiscreteAction();
@@ -2999,7 +3076,7 @@ void main() {
         meshGrid: layer.meshGrid,
         mask: layer.mask,
         cropRegion: layer.cropRegion,
-        layerShape: layer.layerShape,
+        layerShapes: layer.layerShapes,
         effects: layer.effects,
         edgeEffects: layer.edgeEffects,
         vjLayerIndex: layer.vjLayerIndex,
@@ -3410,7 +3487,13 @@ void main() {
         model3dContent: layer.model3dContent || null,
         mask: layer.mask || null,
         cropRegion: layer.cropRegion || null,
-        layerShape: layer.layerShape || null,
+        // Legacy single-shape projects had `layerShape: LayerShape | null`.
+        // Newer schema uses `layerShapes: LayerShape[]`. Migrate transparently —
+        // preserve "no shape" when legacy field was null (don't auto-add a
+        // rectangle, which would silently introduce masking on old projects).
+        layerShapes: Array.isArray(layer.layerShapes)
+          ? layer.layerShapes
+          : (layer.layerShape ? [layer.layerShape] : []),
         edgeEffects: layer.edgeEffects || null,
         vjLayerIndex: layer.vjLayerIndex,
         contentFit: layer.contentFit,
