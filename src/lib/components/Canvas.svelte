@@ -15,6 +15,7 @@
   import { DrawingRenderer } from '../drawing/renderer';
   import { SVGLayerRenderer } from '../svg/renderer';
   import { LightPaintingRenderer } from '../lightpainting/renderer';
+  import { LightPaintingWebGLRenderer } from '../lightpainting/webglRenderer';
   import { TextRenderer } from '../text/renderer';
   import { SplatRenderer } from '../splat/SplatRenderer';
   import { loadPLY, loadSplatFromUrl } from '../splat';
@@ -330,7 +331,8 @@
   let lastSVGUpdateTime = 0;
 
   // Light painting renderers (per layer)
-  const lightPaintingRenderers = new Map<string, LightPaintingRenderer>();
+  type LPRenderer = LightPaintingRenderer | LightPaintingWebGLRenderer;
+  const lightPaintingRenderers = new Map<string, LPRenderer>();
   let lastLPUpdateTime = 0;
 
   // Text renderers (per layer)
@@ -2900,10 +2902,34 @@
     for (const layer of layerList) {
       if (layer.type !== 'lightpainting' || !layer.lightPaintingContent) continue;
 
-      // Get or create renderer for this layer
+      // Get or create renderer for this layer. Pick the WebGL2 path
+      // when the user opted in, otherwise the legacy Canvas2D path.
+      // We don't hot-swap between paths for an already-running layer
+      // — the user has to remove + re-add the layer for the new flag
+      // to take effect (matches what they'd expect on a setting that
+      // changes the renderer backend).
       let lpRenderer = lightPaintingRenderers.get(layer.id);
       if (!lpRenderer) {
-        lpRenderer = new LightPaintingRenderer(width, height);
+        const settingsValue = $settings;
+        const useWebGL2 = !!settingsValue?.performance?.useWebGL2LightPainting;
+        // Loud diagnostic: tell the console which renderer this
+        // layer ended up with and why. Helps diagnose "I flipped the
+        // flag but it didn't take effect."
+        console.log(
+          '[LightPainting] creating renderer for layer', layer.id,
+          '— useWebGL2 flag:', useWebGL2,
+          '— performance settings:', settingsValue?.performance,
+        );
+        try {
+          lpRenderer = useWebGL2
+            ? new LightPaintingWebGLRenderer(width, height)
+            : new LightPaintingRenderer(width, height);
+        } catch (err: any) {
+          // WebGL2 init can fail on hardware without it; fall back to
+          // Canvas2D so the user still sees their drawing.
+          console.warn('[Canvas] WebGL2 light painting init failed, falling back to Canvas2D:', err?.message || err);
+          lpRenderer = new LightPaintingRenderer(width, height);
+        }
         lightPaintingRenderers.set(layer.id, lpRenderer);
       } else {
         lpRenderer.resize(width, height);

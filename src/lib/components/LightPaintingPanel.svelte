@@ -73,7 +73,7 @@
     [180, 50, 255],   [255, 100, 0],    [255, 255, 100],
   ];
 
-  const brushTypes: { type: LightPaintingBrushType; label: string }[] = [
+  const brushTypes: { type: LightPaintingBrushType; label: string; webgl2Only?: boolean }[] = [
     { type: 'glow', label: 'Glow' },         { type: 'neon', label: 'Neon' },
     { type: 'flame', label: 'Flame' },       { type: 'electric', label: 'Electric' },
     { type: 'ribbon', label: 'Ribbon' },     { type: 'particle', label: 'Particle' },
@@ -81,6 +81,24 @@
     { type: 'calligraphy', label: 'Callig.' }, { type: 'spray', label: 'Spray' },
     { type: 'paintbrush', label: 'Paint' },  { type: 'marker', label: 'Marker' },
     { type: 'watercolor', label: 'Water' },
+    // ── Phase 2 brushes (WebGL2 only) ────────────────────────────
+    // These leverage fragment-shader procedural work that Canvas2D
+    // can't keep up with. On the legacy Canvas2D renderer they fall
+    // back to 'glow' silently — picking them with WebGL2 OFF won't
+    // give the user the intended look, but won't crash either.
+    { type: 'sparkle',  label: 'Sparkle',  webgl2Only: true },
+    { type: 'firefly',  label: 'Firefly',  webgl2Only: true },
+    { type: 'plasma',   label: 'Plasma',   webgl2Only: true },
+    { type: 'galaxy',   label: 'Galaxy',   webgl2Only: true },
+    { type: 'lightning',label: 'Lightning',webgl2Only: true },
+    { type: 'vortex',   label: 'Vortex',   webgl2Only: true },
+    // ── Phase 3 brushes (WebGL2 only) ────────────────────────────
+    { type: 'nebula',   label: 'Nebula',   webgl2Only: true },
+    { type: 'kaleido',  label: 'Kaleido',  webgl2Only: true },
+    { type: 'ink',      label: 'Ink',      webgl2Only: true },
+    { type: 'crystal',  label: 'Crystal',  webgl2Only: true },
+    { type: 'aurora',   label: 'Aurora',   webgl2Only: true },
+    { type: 'bubbles',  label: 'Bubbles',  webgl2Only: true },
   ];
 
   const loopModes: { mode: LightPaintingLoopMode; label: string }[] = [
@@ -107,6 +125,14 @@
   $: penPreviewSvg = buildPenPreviewSvg(penPoints, penPreviewPoint);
   $: brushColorRgb = `${currentBrush.color[0]},${currentBrush.color[1]},${currentBrush.color[2]}`;
   $: customColorHex = '#' + currentBrush.color.map(c => c.toString(16).padStart(2, '0')).join('');
+
+  // Capability flags per brush type — drive which Phase-3 param
+  // sliders the UI surfaces. Keep these wide rather than
+  // hyper-specific so the user can experiment freely.
+  $: brushHasParticles  = ['sparkle','firefly','bubbles'].includes(currentBrush.type);
+  $: brushHasNoise      = ['plasma','galaxy','lightning','vortex','nebula','kaleido','ink','aurora','firefly','crystal','bubbles'].includes(currentBrush.type);
+  $: brushHasComplexity = ['sparkle','firefly','plasma','galaxy','lightning','vortex','nebula','kaleido','ink','crystal','aurora','bubbles'].includes(currentBrush.type);
+  $: brushHasInternalGlow = ['sparkle','firefly','plasma','galaxy','lightning','vortex','nebula','kaleido','ink','crystal','aurora','bubbles'].includes(currentBrush.type);
   $: secondaryColorHex = currentBrush.secondaryColor
     ? '#' + currentBrush.secondaryColor.map(c => c.toString(16).padStart(2, '0')).join('')
     : '#43e8f9';
@@ -563,7 +589,11 @@
           <div class="sec-label">Brush Type</div>
           <div class="brush-grid">
             {#each brushTypes as bt}
-              <button class="brush-btn" class:active={currentBrush.type === bt.type} onclick={() => setBrushType(bt.type)}>{bt.label}</button>
+              <button class="brush-btn"
+                class:active={currentBrush.type === bt.type}
+                class:webgl2-only={bt.webgl2Only}
+                title={bt.webgl2Only ? `${bt.label} — requires WebGL2 renderer (Settings → Performance)` : bt.label}
+                onclick={() => setBrushType(bt.type)}>{bt.label}</button>
             {/each}
           </div>
 
@@ -599,7 +629,7 @@
 
           <div class="sec-label">Settings</div>
           <div class="slider-col">
-            <div class="sc"><label>Size <b>{currentBrush.size}</b></label><input type="range" min="1" max="100" step="1" value={currentBrush.size} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, size: parseInt((e.target as HTMLInputElement).value) })} /></div>
+            <div class="sc"><label>Size <b>{currentBrush.size}</b></label><input type="range" min="1" max="200" step="1" value={currentBrush.size} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, size: parseInt((e.target as HTMLInputElement).value) })} /></div>
             <div class="sc"><label>Glow <b>{currentBrush.glow.toFixed(1)}</b></label><input type="range" min="0" max="5" step="0.1" value={currentBrush.glow} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, glow: parseFloat((e.target as HTMLInputElement).value) })} /></div>
             <div class="sc"><label>Softness <b>{currentBrush.softness.toFixed(1)}</b></label><input type="range" min="0" max="1" step="0.05" value={currentBrush.softness} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, softness: parseFloat((e.target as HTMLInputElement).value) })} /></div>
             <div class="sc"><label>Jitter <b>{currentBrush.jitter.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={currentBrush.jitter} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, jitter: parseFloat((e.target as HTMLInputElement).value) })} /></div>
@@ -611,6 +641,26 @@
             <label><input type="checkbox" checked={currentBrush.taper} onchange={(e) => updateBrushAndMaybeStroke({ ...currentBrush, taper: (e.target as HTMLInputElement).checked })} /> Taper</label>
             <label><input type="checkbox" checked={currentBrush.pressureSensitive} onchange={(e) => updateBrushAndMaybeStroke({ ...currentBrush, pressureSensitive: (e.target as HTMLInputElement).checked })} /> Pressure</label>
           </div>
+
+          {#if brushHasInternalGlow || brushHasParticles || brushHasNoise || brushHasComplexity}
+            <div class="sec-label">Procedural</div>
+            <div class="slider-col">
+              {#if brushHasInternalGlow}
+                <div class="sc"><label>Inner Glow <b>{(currentBrush.internalGlow ?? 1).toFixed(2)}</b></label><input type="range" min="0" max="3" step="0.05" value={currentBrush.internalGlow ?? 1} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, internalGlow: parseFloat((e.target as HTMLInputElement).value) })} /></div>
+              {/if}
+              {#if brushHasParticles}
+                <div class="sc"><label>Particle Size <b>{(currentBrush.particleSize ?? 1).toFixed(2)}</b></label><input type="range" min="0.1" max="3" step="0.05" value={currentBrush.particleSize ?? 1} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, particleSize: parseFloat((e.target as HTMLInputElement).value) })} /></div>
+              {/if}
+              {#if brushHasComplexity}
+                <div class="sc"><label>Complexity <b>{(currentBrush.complexity ?? 1).toFixed(2)}</b></label><input type="range" min="0.5" max="4" step="0.05" value={currentBrush.complexity ?? 1} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, complexity: parseFloat((e.target as HTMLInputElement).value) })} /></div>
+              {/if}
+              {#if brushHasNoise}
+                <div class="sc"><label>Noise Scale <b>{(currentBrush.noiseScale ?? 1).toFixed(2)}</b></label><input type="range" min="0.1" max="8" step="0.05" value={currentBrush.noiseScale ?? 1} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, noiseScale: parseFloat((e.target as HTMLInputElement).value) })} /></div>
+                <div class="sc"><label>Noise Speed <b>{(currentBrush.noiseSpeed ?? 1).toFixed(2)}</b></label><input type="range" min="0" max="5" step="0.05" value={currentBrush.noiseSpeed ?? 1} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, noiseSpeed: parseFloat((e.target as HTMLInputElement).value) })} /></div>
+                <div class="sc"><label>Noise Amount <b>{(currentBrush.noiseAmount ?? 0.6).toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={currentBrush.noiseAmount ?? 0.6} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, noiseAmount: parseFloat((e.target as HTMLInputElement).value) })} /></div>
+              {/if}
+            </div>
+          {/if}
 
         {:else if activeSection === 'animation'}
           <div class="sec-label">Timing</div>
@@ -853,6 +903,18 @@
   }
   .brush-btn:hover { background: #161618; color: #eee; border-color: #555; }
   .brush-btn.active { background: rgba(103,232,249,0.1); color: #BB86FC; border-color: #BB86FC; }
+  /* WebGL2-only brushes get a subtle gradient accent so users know
+     they're getting the experimental shader path. Still selectable
+     even when WebGL2 is off — they fall back to glow gracefully. */
+  .brush-btn.webgl2-only {
+    background: linear-gradient(135deg, #0d0d10 0%, #1a1525 100%);
+    border-color: #3a2a4a;
+  }
+  .brush-btn.webgl2-only.active {
+    background: linear-gradient(135deg, rgba(187,134,252,0.18) 0%, rgba(103,232,249,0.18) 100%);
+    border-color: #BB86FC;
+    color: #fff;
+  }
 
   /* Color grid */
   .color-grid { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }

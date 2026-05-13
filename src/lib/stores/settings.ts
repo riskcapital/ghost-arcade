@@ -442,6 +442,24 @@ export interface PerformanceSettings {
   /** Editor render-loop FPS cap. 0 = uncapped (match display refresh).
    *  Big win on high-refresh monitors when the output is 60Hz. */
   editorMaxFps: 0 | 30 | 60;
+  /**
+   * Use the WebGL2 light painting renderer instead of the legacy
+   * Canvas2D one. The WebGL2 path runs every brush stamp as a GPU
+   * fragment shader, eliminating the `createRadialGradient`-per-stamp
+   * cost that hits Windows/Chromium Canvas2D hardest. Bakes completed
+   * strokes into a persistent framebuffer so frame cost stops scaling
+   * with stroke count. Force-promoted to true on settings load.
+   */
+  useWebGL2LightPainting: boolean;
+  /**
+   * Whether to show the live FPS counter in the editor footer.
+   * Default off — visible FPS readouts can worry users when the
+   * actual video on the output looks smooth (e.g. a 30fps preview
+   * looks identical to 60fps for a video texture but the counter
+   * makes it look "broken"). Power users can flip this on for
+   * performance tuning.
+   */
+  showEditorFps: boolean;
 }
 
 export interface AppSettings {
@@ -591,6 +609,8 @@ function createDefaultSettings(): AppSettings {
       outputDegradationPreference: 'maintain-resolution',
       outputCodecPreference: 'auto',
       editorMaxFps: 0,                // 0 = uncapped (match rAF / refresh rate)
+      useWebGL2LightPainting: true,   // default v0.6.4 — WebGL2 renderer is the primary path
+      showEditorFps: false,           // FPS counter hidden by default; opt-in for power users
     },
   };
 }
@@ -713,6 +733,14 @@ function loadSettings(): AppSettings {
           ...(parsed.performance || {}),
         },
       };
+
+      // v0.6.4: WebGL2 light painting is the new default. Any user who
+      // had this stored as `false` from the brief experimental window
+      // gets promoted to the new default on load. (Users who explicitly
+      // need to opt out can do so via DevTools localStorage edit — no
+      // UI knob exists, intentionally — the Canvas2D path is now
+      // strictly a fallback for hardware that fails WebGL2 init.)
+      settings.performance.useWebGL2LightPainting = true;
 
       // Clean up legacy keys after migration
       if (legacyClaude) localStorage.removeItem('ai_claude_key');

@@ -481,7 +481,23 @@ export type LightPaintingBrushType =
   | 'spray'       // Graffiti spray paint (scattered particles)
   | 'paintbrush'  // Wide bristle brush (direction-aware)
   | 'marker'      // Flat chisel-tip marker
-  | 'watercolor'; // Soft wet edges with bleed effect
+  | 'watercolor'  // Soft wet edges with bleed effect
+  // ── WebGL2-only brushes (require useWebGL2LightPainting=true) ──
+  // These leverage fragment shaders to do per-pixel procedural work
+  // that's prohibitive in Canvas2D. They fall back to 'glow' on the
+  // legacy Canvas2D path.
+  | 'sparkle'     // Burst of twinkling micro-stars
+  | 'firefly'     // Pulsing glow dots drifting around the stamp
+  | 'plasma'      // Animated electric ball with internal noise arcs
+  | 'galaxy'      // Spiral arms with star density
+  | 'lightning'   // Branching fractal bolts
+  | 'vortex'      // Swirling spiral with chromatic aberration
+  | 'nebula'      // Volumetric fbm clouds with star sparkles
+  | 'kaleido'     // Mirror-symmetric mandala bursts
+  | 'ink'         // Inky bloom with feathered edges + fibres
+  | 'crystal'     // Faceted gem with refraction + glints
+  | 'aurora'      // Flowing curtain of color bands
+  | 'bubbles';    // Cluster of refractive bubbles that float + fade
 
 export type LightPaintingLoopMode = 'forward' | 'reverse' | 'pingpong' | 'once';
 
@@ -510,6 +526,39 @@ export interface LightPaintingBrush {
   pressureSensitive: boolean;         // Use pressure for size
   smoothing: number;                  // Stroke smoothing 0-1 (0=raw, 1=max)
   speed: number;                      // Brush animation speed 0.1-5 (flame flicker, electric sparks, etc.)
+  /**
+   * Per-particle sub-element size for procedural brushes that
+   * render multiple internal features (firefly dots, sparkle stars,
+   * bubble bubbles, etc.). 0.1..3, default 1.
+   */
+  particleSize?: number;
+  /**
+   * Internal glow — brightness boost applied to the inner core of
+   * procedural brushes. Distinct from `glow` which controls the
+   * outer halo. 0..3, default 1.
+   */
+  internalGlow?: number;
+  /**
+   * Procedural-noise frequency. Used by plasma/nebula/aurora/ink/
+   * lightning for fbm pattern scale. 0.1..8, default 1.
+   */
+  noiseScale?: number;
+  /**
+   * Procedural-noise time-evolution speed. Multiplies v_time for
+   * noise field animation. 0..5, default 1.
+   */
+  noiseSpeed?: number;
+  /**
+   * Procedural-noise contribution strength. 0..1, default 0.6.
+   * Higher = more chaotic/turbulent.
+   */
+  noiseAmount?: number;
+  /**
+   * Density / count multiplier for repeating procedural elements
+   * (galaxy arms, lightning bolt forks, firefly counts, kaleido
+   * symmetry). 0.5..4, default 1.
+   */
+  complexity?: number;
 }
 
 export interface LightPaintingStrokePoint {
@@ -609,6 +658,14 @@ export function createDefaultLightPaintingBrush(): LightPaintingBrush {
     pressureSensitive: false,
     smoothing: 0.5,
     speed: 1,
+    // Phase 3 — extra params for procedural/textured WebGL2 brushes.
+    // Defaults chosen so existing brushes look the same as before.
+    particleSize: 1,
+    internalGlow: 1,
+    noiseScale: 1,
+    noiseSpeed: 1,
+    noiseAmount: 0.6,
+    complexity: 1,
   };
 }
 

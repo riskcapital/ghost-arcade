@@ -1372,6 +1372,17 @@
               <option value="15">15 fps</option>
             </select>
           </div>
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Show FPS Counter</span>
+              <span class="label-hint">Display the live frame-rate counter in the editor footer. Off by default — visible FPS readouts can look alarming when the output video is actually smooth at lower preview rates.</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" checked={$settings.performance.showEditorFps}
+                onchange={(e) => settings.update(s => ({ ...s, performance: { ...s.performance, showEditorFps: (e.target as HTMLInputElement).checked } }))} />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
         </section>
 
         <section class="settings-section">
