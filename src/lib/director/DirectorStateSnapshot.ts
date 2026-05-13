@@ -35,13 +35,7 @@ export function buildStateSnapshot(): Record<string, any> {
         name: l.source.name,
         shader: l.source.shaderCode ? 'ISF' : undefined,
       } : null,
-      // Report the first enabled shape type for legacy compatibility — the
-      // snapshot consumer only reads a single name. (When the layer has
-      // multiple shapes unioned, the first enabled one is most representative.)
-      shape: (() => {
-        const s = (l.layerShapes ?? []).find(sh => sh.enabled);
-        return s ? s.type : null;
-      })(),
+      shape: l.layerShape?.enabled ? l.layerShape.type : null,
       effectCount: l.effects?.length || 0,
       effects: l.effects?.map(e => e.type) || [],
       hasEdgeEffects: !!l.edgeEffects?.enabled,

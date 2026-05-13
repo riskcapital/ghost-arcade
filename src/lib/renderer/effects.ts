@@ -37,10 +37,9 @@ import {
   thermalShader,
   nightVisionShader,
   polygonMaskShader,
-  layerShapeMaskShader,
-  layerShapeSilhouetteShader,
-  polygonMaskSilhouetteShader,
+  polygonMaskAlphaShader,
   applyExternalMaskShader,
+  layerShapeMaskShader,
   brightnessShader,
   contrastShader,
   saturationShader,
@@ -94,14 +93,7 @@ import {
 } from './shaders/time-effects';
 
 // Re-export shader strings consumed by engine.ts and other modules
-export {
-  effectVertexShader,
-  polygonMaskShader,
-  layerShapeMaskShader,
-  layerShapeSilhouetteShader,
-  polygonMaskSilhouetteShader,
-  applyExternalMaskShader,
-};
+export { effectVertexShader, polygonMaskShader, polygonMaskAlphaShader, applyExternalMaskShader, layerShapeMaskShader };
 
 // ============================================================================
 // Effect shader lookup and material creation
