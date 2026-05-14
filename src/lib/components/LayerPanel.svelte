@@ -12,6 +12,7 @@
   import EffectPickerModal from './EffectPickerModal.svelte';
   import EdgeEffectsPanel from './EdgeEffectsPanel.svelte';
   import { generateCachedThumbnail } from '../isf/thumbnail';
+  import { confirmDeleteIfSafeMode } from '../utils/safeMode';
 
   // Shader thumbnail cache: layerId -> { url, codeSnippet }
   let shaderThumbnails: Record<string, string> = {};
@@ -462,6 +463,11 @@
     return effectTypes.find((e) => e.type === type)?.label || type;
   }
 
+  // Inline layer rename — stores the id of the layer currently being
+  // renamed (null when no input is showing). Double-click the layer
+  // name to start editing; Enter / blur saves; Esc cancels.
+  let renamingLayerId: string | null = null;
+
   // Effect drag and drop
   let draggedEffectIndex: number | null = null;
   let dragOverEffectIndex: number | null = null;
@@ -741,7 +747,27 @@
           {/if}
         </button>
 
-        <span class="layer-name">{layer.name}</span>
+        {#if renamingLayerId === layer.id}
+          <!-- Inline rename input. Enter / blur saves; Esc cancels. -->
+          <input
+            class="layer-name-input"
+            type="text"
+            value={layer.name}
+            autofocus
+            onkeydown={(e) => {
+              if (e.key === 'Enter') { project.renameLayer(layer.id, (e.target as HTMLInputElement).value); renamingLayerId = null; }
+              else if (e.key === 'Escape') { renamingLayerId = null; }
+            }}
+            onblur={(e) => { project.renameLayer(layer.id, (e.target as HTMLInputElement).value); renamingLayerId = null; }}
+            onclick={(e) => e.stopPropagation()}
+          />
+        {:else}
+          <span
+            class="layer-name"
+            ondblclick={(e) => { e.stopPropagation(); renamingLayerId = layer.id; }}
+            title="Double-click to rename"
+          >{layer.name}</span>
+        {/if}
 
         <button
           class="btn-lock"
@@ -764,7 +790,7 @@
 
         <button
           class="btn-delete"
-          onclick={(e) => { e.stopPropagation(); project.removeLayer(layer.id); }}
+          onclick={async (e) => { e.stopPropagation(); if (await confirmDeleteIfSafeMode(`layer "${layer.name}"`, e)) project.removeLayer(layer.id); }}
           title="Delete layer"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -820,7 +846,16 @@
       {/if}
       <div class="ctx-divider"></div>
       <button class="ctx-item" onclick={() => { project.duplicateLayer(ctxId); closeContextMenu(); }}>Duplicate</button>
-      <button class="ctx-item ctx-danger" onclick={() => { project.removeLayer(ctxId); closeContextMenu(); }}>Delete</button>
+      <button class="ctx-item ctx-danger" onclick={async () => {
+        // Anchor the popover at the original right-click coords (ctxMenu.x/y)
+        // so it appears right where the user is — close the menu first so it
+        // doesn't visually compete with the popover.
+        const lyr = $layers.find(l => l.id === ctxId);
+        const anchor = ctxMenu ? { clientX: ctxMenu.x, clientY: ctxMenu.y } : undefined;
+        const id = ctxId;
+        closeContextMenu();
+        if (await confirmDeleteIfSafeMode(`layer "${lyr?.name ?? id}"`, anchor)) project.removeLayer(id);
+      }}>Delete</button>
     </div>
   {/if}
 
@@ -1686,6 +1721,19 @@
                   <option value="mask">Mask</option>
                 </select>
               </div>
+              <!-- Invert: turns the custom shape into a HOLE / cutout
+                   instead of a fill. Stack a second layer underneath
+                   and you get cool projection-mapping setups where the
+                   shape "punches through" to reveal what's behind. -->
+              <div class="property-row">
+                <label>Invert</label>
+                <input
+                  type="checkbox"
+                  checked={layer.layerShape.params.invert === true}
+                  onchange={(e) => project.updateLayerShapeParams(layer.id, { invert: (e.target as HTMLInputElement).checked })}
+                />
+                <span class="invert-hint">cutout / negative space</span>
+              </div>
             {/if}
           {/if}
 
@@ -1859,7 +1907,7 @@
         {#if !layer.parentGroupId || layer.type === 'group'}
         <div class="effects-section">
             <div class="effects-header">
-              <h4>Effects</h4>
+              <h4>Layer Effects</h4>
               <button
                 class="add-effect-btn"
                 onclick={() => { effectPickerLayerId = layer.id; showEffectPicker = true; }}
@@ -3411,13 +3459,23 @@
     justify-content: space-between;
     align-items: center;
     margin-bottom: 8px;
+    /* Match `.section-header-row` padding in EdgeEffectsPanel so the
+       "Layer Effects" and "Edge Effects" titles line up vertically
+       at the same left edge. */
+    padding: 4px 12px;
   }
 
   .effects-header h4 {
     margin: 0;
-    font-size: 12px;
+    /* Same uppercase / weight / spacing as EdgeEffectsPanel's
+       `.section-title` so the two section headers visually rhyme.
+       Distinct accent color (purple vs Edge's orange) makes them
+       clearly separate sections, not parent/child. */
+    font-size: 11px;
     font-weight: 600;
-    color: #888;
+    color: #BB86FC;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
   }
 
   .panel-header {
@@ -3667,6 +3725,22 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+
+  /* Inline rename input — sits in the same flex slot as `.layer-name`
+     so the row layout doesn't reflow when you double-click to edit. */
+  .layer-name-input {
+    flex: 1;
+    background: rgba(187, 134, 252, 0.12);
+    border: 1px solid #BB86FC;
+    border-radius: 3px;
+    color: #fff;
+    font: inherit;
+    font-size: 12px;
+    padding: 2px 6px;
+    outline: none;
+    min-width: 0;
+  }
+  .layer-name-input:focus { background: rgba(187, 134, 252, 0.18); }
 
   .btn-visibility,
   .btn-lock,
@@ -4233,6 +4307,21 @@
 
   .shape-mask-section .property-row label input[type="checkbox"] {
     margin: 0;
+  }
+
+  /* Inline hint that sits next to the Invert checkbox so the label stays
+     short and stops wrapping into "stacked text". The hint is a single
+     italic muted span and is the only flex sibling that's allowed to
+     shrink, so the row never overflows. */
+  .invert-hint {
+    font-size: 10px;
+    color: #777;
+    font-style: italic;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .shape-icon-row {

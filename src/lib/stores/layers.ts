@@ -1479,13 +1479,43 @@ void main() {
     },
 
     duplicateLayer(id: string) {
+      // SAFE clone: structuredClone throws DataCloneError on Layers that
+      // hold live DOM/WebGL handles (video elements, image elements,
+      // THREE.Texture references on splat/3D layers, etc.). The thrown
+      // exception silently aborted the whole `update()` callback, which
+      // is why the right-click "Duplicate" appeared to do nothing for
+      // any layer with media. Strategy: first JSON-roundtrip to drop
+      // non-serializable fields, then re-fill the safe-to-share refs
+      // (`source` keeps its id but loses the live element — the engine
+      // will rehydrate from the MediaSource registry on first render).
+      const safeCloneLayer = (l: Layer): Layer => {
+        // JSON.parse(JSON.stringify) silently drops functions, DOM nodes,
+        // and circular refs — perfect for stripping cloneability hazards
+        // while preserving all the plain config data we want copied.
+        const cloned: Layer = JSON.parse(JSON.stringify(l));
+        // Source: keep identifier + type so the engine re-resolves to the
+        // existing MediaSource entry. videoEl / imageEl / texture handles
+        // would have been dropped by JSON anyway.
+        if (l.source && cloned.source) {
+          cloned.source = { ...cloned.source };
+        }
+        return cloned;
+      };
+
       update((project) => {
         const layer = project.layers.find((l) => l.id === id);
         if (!layer) return project;
 
+        let cloned: Layer;
+        try {
+          cloned = safeCloneLayer(layer);
+        } catch (err) {
+          console.error('[duplicateLayer] clone failed:', err);
+          return project;
+        }
         const newId = generateUUID();
         const newLayer: Layer = {
-          ...structuredClone(layer),
+          ...cloned,
           id: newId,
           name: `${layer.name} Copy`,
         };
@@ -1494,14 +1524,19 @@ void main() {
         const newLayers = [...project.layers];
 
         if (layer.type === 'group') {
-          // Deep-clone: duplicate all children with new IDs
           const children = project.layers.filter(l => l.parentGroupId === id);
-          const clonedChildren = children.map(child => ({
-            ...structuredClone(child),
-            id: generateUUID(),
-            parentGroupId: newId,
-          }));
-          // Find the end of this group's block
+          const clonedChildren: Layer[] = [];
+          for (const child of children) {
+            try {
+              clonedChildren.push({
+                ...safeCloneLayer(child),
+                id: generateUUID(),
+                parentGroupId: newId,
+              });
+            } catch (err) {
+              console.warn('[duplicateLayer] failed to clone child', child.id, err);
+            }
+          }
           let blockEnd = index;
           for (let i = index + 1; i < project.layers.length; i++) {
             if (project.layers[i].parentGroupId === id) blockEnd = i;
@@ -1710,6 +1745,18 @@ void main() {
       update((project) => ({
         ...project,
         layers: project.layers.map((l) => (l.id === id ? { ...l, locked: !l.locked } : l)),
+      }));
+      recordDiscreteAction();
+    },
+
+    /** Rename a layer. Empty / whitespace-only names are rejected so the
+     *  thumbnail row never shows a blank label. */
+    renameLayer(id: string, name: string) {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((l) => (l.id === id ? { ...l, name: trimmed } : l)),
       }));
       recordDiscreteAction();
     },

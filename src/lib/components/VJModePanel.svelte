@@ -46,6 +46,7 @@
   import EffectPickerModal from './EffectPickerModal.svelte';
   import SplatPanel from './SplatPanel.svelte';
   import Model3DPanel from './Model3DPanel.svelte';
+  import { setCleanDragPreview } from '../utils/dragPreview';
 
   // File menu callback (wired by parent App.svelte)
   export let onFileAction: ((action: 'new' | 'open' | 'save' | 'saveAs' | 'importPresets' | 'loadDemo' | 'undo' | 'redo') => void) | null = null;
@@ -1061,6 +1062,8 @@
       e.dataTransfer.effectAllowed = 'copy';
       e.dataTransfer.setData('text/plain', JSON.stringify(clip));
     }
+    // Single-frame clean drag image — kills the multi-ghost trail.
+    setCleanDragPreview(e, e.currentTarget as HTMLElement);
   }
 
   function handleDragEnd() {
@@ -1255,10 +1258,16 @@
     e.preventDefault();
     dragOverCell = null;
 
-    // Cell-to-cell move (works across decks too — drag from Bank A to Bank B
-    // copies the clip; the source slot on the original deck is cleared).
+    // Cell-to-cell move OR swap. Resolume-style behavior: if the
+    // destination cell is empty, move the source clip into it (clearing
+    // the source). If the destination cell ALREADY has a clip, SWAP the
+    // two — neither clip is destroyed, they just trade places. This is
+    // what users expect when dragging clips between layers in the grid;
+    // the previous "always replace" behavior was nuking work mid-set.
+    // Cross-deck moves of duplicate-video-source still blocked (see below).
     if (dragSourceCell) {
       const srcClip = deckGrid(dragSourceCell.bank)[dragSourceCell.layer]?.[dragSourceCell.column];
+      const destClip = deckGrid(bank)[layerIndex]?.[columnIndex];
       const sameSpot =
         dragSourceCell.bank === bank &&
         dragSourceCell.layer === layerIndex &&
@@ -1282,7 +1291,14 @@
         }
         const movedClip: VJClip = { ...srcClip, id: generateUUID() };
         vjClipLauncher.setClip(layerIndex, columnIndex, movedClip, bank);
-        vjClipLauncher.clearClip(dragSourceCell.layer, dragSourceCell.column, dragSourceCell.bank);
+        if (destClip) {
+          // Dest had a clip → swap it back to the source slot.
+          const swappedClip: VJClip = { ...destClip, id: generateUUID() };
+          vjClipLauncher.setClip(dragSourceCell.layer, dragSourceCell.column, swappedClip, dragSourceCell.bank);
+        } else {
+          // Dest was empty → clear the source (true move semantics).
+          vjClipLauncher.clearClip(dragSourceCell.layer, dragSourceCell.column, dragSourceCell.bank);
+        }
       }
       dragSourceCell = null;
       draggedClip = null;

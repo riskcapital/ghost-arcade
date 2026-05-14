@@ -50,3 +50,96 @@
     </div>
   </div>
 {/if}
+
+<style>
+  /* Bug fix (Mar 2026): the component had NO style block at all, so
+     `?` button "did nothing" — the overlay rendered but was invisible
+     (unpositioned divs at the document end). Adding proper modal
+     styling with backdrop, centered card, z-index above all panels. */
+  .shortcut-overlay-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    cursor: pointer;
+  }
+  .shortcut-overlay {
+    position: relative;
+    background: #15151a;
+    border: 1px solid rgba(187, 134, 252, 0.4);
+    border-radius: 10px;
+    padding: 24px 28px;
+    max-width: 760px;
+    max-height: calc(100vh - 96px);
+    width: 100%;
+    overflow-y: auto;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.04);
+    color: #ddd;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    cursor: default;
+  }
+  .shortcut-overlay-close {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    background: transparent;
+    border: none;
+    color: #888;
+    font-size: 22px;
+    cursor: pointer;
+    width: 32px;
+    height: 32px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+  .shortcut-overlay-close:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
+  .shortcut-overlay-title {
+    margin: 0 0 18px;
+    font-size: 18px;
+    font-weight: 600;
+    color: #BB86FC;
+  }
+  .shortcut-columns {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 18px 24px;
+  }
+  .shortcut-section h3 {
+    margin: 0 0 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #BB86FC;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .shortcut-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    font-size: 12px;
+    color: #ccc;
+  }
+  .shortcut-row span { flex: 1; color: #aaa; }
+  .shortcut-row kbd {
+    display: inline-block;
+    padding: 2px 6px;
+    background: #2a2a30;
+    border: 1px solid #444;
+    border-radius: 3px;
+    font-family: 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 11px;
+    color: #e0e0e0;
+    min-width: 18px;
+    text-align: center;
+  }
+</style>
