@@ -37,6 +37,7 @@
   import KeyframeTimeline from './lib/components/KeyframeTimeline.svelte';
   import SettingsPanel from './lib/components/SettingsPanel.svelte';
   import ShortcutsOverlay from './lib/components/ShortcutsOverlay.svelte';
+  import ConfirmPopover from './lib/components/ConfirmPopover.svelte';
   import WelcomeModal from './lib/components/WelcomeModal.svelte';
   import EULAModal from './lib/components/EULAModal.svelte';
   import UpdateModal from './lib/components/UpdateModal.svelte';
@@ -44,6 +45,7 @@
   import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback } from './lib/stores/layers';
   import { keyframeTimeline } from './lib/stores/keyframeTimeline';
   import { settings, outputFrozen } from './lib/stores/settings';
+  import { checkForUpdate, type VersionCheckResult } from './lib/utils/versionCheck';
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from './lib/recording/recorder';
   import { vjClipLauncher } from './lib/stores/vjClipLauncher';
   import { audioStore } from './lib/stores/audio';
@@ -249,6 +251,29 @@
 
   // Keyboard shortcut help overlay
   let showShortcutHelp = false;
+
+  // App version baked in at build time from package.json (see vite.config.ts).
+  // Auto-tracks the actual shipped version so the footer pill never
+  // drifts from package.json.
+  const appVersion: string = (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '?');
+  // Background update check — quietly polls GitHub Releases once on
+  // startup (rate-limited to once / 24 h locally) and stores the
+  // result. The footer version label turns into a "→ vX.Y.Z available"
+  // link when an upgrade exists. Settings panel exposes a manual
+  // "Check now" button for users who want to force a fresh check.
+  let versionInfo: VersionCheckResult | null = null;
+  let versionCheckInFlight = false;
+  async function runVersionCheck(force = false) {
+    if (versionCheckInFlight) return;
+    versionCheckInFlight = true;
+    try {
+      versionInfo = await checkForUpdate({ force });
+    } catch (err) {
+      console.warn('[VersionCheck] failed:', err);
+    } finally {
+      versionCheckInFlight = false;
+    }
+  }
 
   // VJ Preset name for saving from mapping mode
   let vjPresetName = '';
@@ -564,6 +589,56 @@
     };
     window.addEventListener('error', onError);
     window.addEventListener('unhandledrejection', onRejection);
+
+    // Multi-select collapse on control interaction.
+    // User report: drag-selecting on the canvas (which selects multiple
+    // layers) then trying to use a slider in the property panel applied
+    // the change to ALL selected layers — surprising and unwanted. This
+    // handler watches for pointerdown on form controls inside any panel
+    // and, if a multi-select is active, collapses it to just the
+    // currently-active layer FIRST so the control affects only one
+    // layer. Capture-phase so we beat any handlers on the controls.
+    const collapseMultiSelectOnControl = (e: PointerEvent) => {
+      const ids = get(selectedLayerIds);
+      if (!ids || ids.length <= 1) return;
+      const tgt = e.target as Element | null;
+      if (!tgt) return;
+      // Only collapse for actual editable controls — not arbitrary divs.
+      const ctl = tgt.closest('input, select, textarea, button, [role="slider"]');
+      if (!ctl) return;
+      // Don't collapse for the canvas/viewport or the layer-row chrome
+      // itself (visibility/lock/delete buttons live there and the user
+      // expects those to apply to the multi-selection).
+      if (tgt.closest('.viewport, .layer-row, .layer-list')) return;
+      const active = get(selectedLayer);
+      if (active) project.selectLayer(active.id);
+    };
+    window.addEventListener('pointerdown', collapseMultiSelectOnControl, true);
+
+    // Save-on-close modal: existing showCloseModal infrastructure (modal
+    // body + Save/Discard/Cancel buttons + handlers) was wired but never
+    // TRIGGERED. Hook it up to the window's beforeunload event so users
+    // get prompted before losing their work when they hit ⌘W / Alt+F4 /
+    // the window's X button. preventDefault() keeps the window open
+    // while we show the modal; the modal's button handlers call
+    // window.close() programmatically when the user makes a choice.
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!hasUnsavedChanges) return;
+      // Only intercept once — if the modal is already open, let the
+      // user finish their decision (and the modal handler will close).
+      if (showCloseModal) return;
+      e.preventDefault();
+      // Required for some browsers / Electron versions to honor
+      // preventDefault and keep the window open.
+      e.returnValue = '';
+      showCloseModal = true;
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+
+    // Background update check — first run shows cached result if any,
+    // then re-fetches if it's been > 24 h since last check. Manual
+    // "Check now" from Settings calls runVersionCheck(true).
+    runVersionCheck(false);
 
     // Initialize license system (checks local license file, starts background validation)
     initLicense().then(() => {
@@ -4860,7 +4935,20 @@
       {/if}
       <span class="spacer"></span>
       <span class="fps-counter" class:fps-good={$fpsStore > 50} class:fps-warn={$fpsStore >= 30 && $fpsStore <= 50} class:fps-bad={$fpsStore < 30 && $fpsStore > 0}>{$fpsStore} FPS</span>
-      <span class="version-label">v0.1.0</span>
+      {#if versionInfo?.hasUpdate && versionInfo.releaseUrl}
+        <!-- Update available — clickable badge that opens the release
+             page. Replaces the version label with an actionable link
+             so users immediately know an upgrade is available. -->
+        <a
+          class="version-label version-update"
+          href={versionInfo.releaseUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="A newer version is available — click to download"
+        >v{appVersion} → {versionInfo.latest}</a>
+      {:else}
+        <span class="version-label" title="Ghost Arcade GPU v{appVersion}">v{appVersion}</span>
+      {/if}
       <button class="shortcut-help-btn" onclick={() => showShortcutHelp = true} title="Keyboard Shortcuts (?)">?</button>
     </footer>
   </div>
@@ -4877,6 +4965,9 @@
 
 <!-- Keyboard Shortcut Help Overlay -->
 <ShortcutsOverlay visible={showShortcutHelp} onClose={() => showShortcutHelp = false} />
+
+<!-- Safe Mode in-app confirm popover (replaces window.confirm) -->
+<ConfirmPopover />
 
 <!-- Close Confirmation Modal -->
 {#if showCloseModal}
@@ -6522,8 +6613,30 @@
 
   .version-label {
     font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-    font-size: 10px;
-    color: #444;
+    /* Boosted from 10px/#444 — was nearly invisible. Now it's
+       readable at a glance so users can verify what version they're
+       on without squinting. */
+    font-size: 12px;
+    color: #999;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  /* Active when an upgrade is available — clickable, accent-colored,
+     subtle pulse to attract attention without being intrusive. */
+  .version-label.version-update {
+    color: #BB86FC;
+    text-decoration: none;
+    background: rgba(187, 134, 252, 0.12);
+    border-color: rgba(187, 134, 252, 0.4);
+    cursor: pointer;
+  }
+  .version-label.version-update:hover {
+    background: rgba(187, 134, 252, 0.24);
+    color: #fff;
   }
 
   /* Shape Interaction Overlay for Lines Layers */

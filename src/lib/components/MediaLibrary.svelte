@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
   import { project, selectedLayerId } from '../stores/layers';
+  import { confirmDeleteIfSafeMode } from '../utils/safeMode';
   import type { MediaSource, JSAnimationSource } from '../types';
   import { generateUUID } from '../types';
   import AIShaderGenerator from './AIShaderGenerator.svelte';
@@ -153,8 +154,12 @@
     }
   }
 
-  function removeFromLibrary(id: string) {
+  async function removeFromLibrary(id: string, event?: MouseEvent) {
     const item = libraryItems.find(i => i.id === id);
+    // Safe Mode: confirm before nuking media-library entries. The × is
+    // tiny and easy to misclick when scanning thumbnails. The click event
+    // is passed through so the in-app popover anchors right at the ×.
+    if (!(await confirmDeleteIfSafeMode(item ? `"${item.name}" from the media library` : 'this media item', event))) return;
     if (item) {
       URL.revokeObjectURL(item.src);
       if (item.videoElement) {
@@ -593,7 +598,7 @@
             <div class="item-type-badge">{item.jsAnimation?.animationType === 'threejs' ? '3JS' : 'P5'}</div>
             <button
               class="btn-remove"
-              onclick={(e) => { e.stopPropagation(); removeFromLibrary(item.id); }}
+              onclick={(e) => { e.stopPropagation(); removeFromLibrary(item.id, e); }}
               title="Remove from library"
             >
               ×
@@ -657,7 +662,7 @@
             <div class="item-name">{item.name}</div>
             <button
               class="btn-remove"
-              onclick={(e) => { e.stopPropagation(); removeFromLibrary(item.id); }}
+              onclick={(e) => { e.stopPropagation(); removeFromLibrary(item.id, e); }}
               title="Remove from library"
             >
               ×

@@ -23,6 +23,15 @@
   import { updateInfo } from '../stores/updateChecker';
   import { updateModalOpen } from '../stores/uiState';
   import { project } from '../stores/layers';
+  import { checkForUpdate, getCachedVersionResult, type VersionCheckResult } from '../utils/versionCheck';
+
+  // Version-check state for the Settings → Updates section.
+  // Reads cached result on mount so the row shows last-known state
+  // instantly (without re-hitting GitHub). The "Check for updates"
+  // button forces a fresh API call.
+  const appVersion: string = (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '?');
+  let versionInfo: VersionCheckResult | null = getCachedVersionResult();
+  let isCheckingUpdate = false;
   import { midiStore } from '../midi/midiStore';
   import { midiManager } from '../midi/midiManager';
   import LicensePanel from './LicensePanel.svelte';
@@ -480,6 +489,50 @@
                 <span class="scheme-desc">{scheme.description}</span>
               </button>
             {/each}
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Safe Mode</span>
+              <span class="label-hint">Add a confirmation prompt before deleting layers, shaders, clips, or media library entries. Useful when you're moving fast in a session and don't want a misclick to nuke a layer.</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" checked={$settings.ui.safeMode ?? false}
+                onchange={(e) => settings.update(s => ({ ...s, ui: { ...s.ui, safeMode: (e.target as HTMLInputElement).checked } }))} />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </section>
+
+        <!-- Updates Section -->
+        <section class="settings-section">
+          <h3>Updates</h3>
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Version</span>
+              <span class="label-hint">
+                Currently running v{appVersion}.
+                {#if versionInfo?.error}
+                  Last check failed: {versionInfo.error}.
+                {:else if versionInfo?.hasUpdate && versionInfo.latest}
+                  <strong style="color: #BB86FC;">{versionInfo.latest}</strong> is available — open the link to download.
+                {:else if versionInfo?.latest && !versionInfo.hasUpdate}
+                  You're on the latest release.
+                {:else}
+                  Click to check for newer releases.
+                {/if}
+              </span>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              {#if versionInfo?.hasUpdate && versionInfo.releaseUrl}
+                <a class="btn-update-link" href={versionInfo.releaseUrl} target="_blank" rel="noopener noreferrer">Open release</a>
+              {/if}
+              <button
+                class="btn-check-update"
+                onclick={async () => { isCheckingUpdate = true; versionInfo = await checkForUpdate({ force: true }); isCheckingUpdate = false; }}
+                disabled={isCheckingUpdate}
+              >{isCheckingUpdate ? 'Checking…' : 'Check for updates'}</button>
+            </div>
           </div>
         </section>
 
@@ -2144,6 +2197,41 @@
 
   select option:disabled {
     color: #666;
+  }
+
+  /* Updates section buttons */
+  .btn-check-update {
+    background: #161618;
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 8px 14px;
+    color: #ddd;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn-check-update:hover:not(:disabled) {
+    background: #1f1f23;
+    border-color: #777;
+    color: #fff;
+  }
+  .btn-check-update:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .btn-update-link {
+    background: rgba(187, 134, 252, 0.12);
+    border: 1px solid #BB86FC;
+    border-radius: 6px;
+    padding: 8px 14px;
+    color: #BB86FC;
+    font-size: 12px;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .btn-update-link:hover {
+    background: rgba(187, 134, 252, 0.24);
+    color: #fff;
   }
 
   /* Toggle switch */
