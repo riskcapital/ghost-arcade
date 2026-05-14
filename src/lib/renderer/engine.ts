@@ -755,10 +755,18 @@ export class RenderEngine {
         uCustomShapePoints: { value: Array.from({ length: 256 }, () => new THREE.Vector2(0, 0)) },
         uCustomShapeFit: { value: 1 },          // 0=mask, 1=warp(stretch-to-bbox), 2=fill(aspect-fit)
         uCustomShapeBBox: { value: new THREE.Vector4(0, 0, 1, 1) },  // minX, minY, maxX, maxY
+        uCustomShapeInvert: { value: 0 },       // 0=normal, 1=cutout / negative-space
       },
       transparent: true,
       depthTest: false,
       depthWrite: false,
+      // DoubleSide so warps that flip the quad's winding (e.g. swapping
+      // two opposite mesh corners across the center) still render the
+      // texture instead of going completely blank from backface culling.
+      // User report: "swap opposite corners → layer goes blank, expected
+      // it to flip the screen". With DoubleSide the geometry's back face
+      // is rendered too — the swap reads as a mirror flip as expected.
+      side: THREE.DoubleSide,
     });
   }
 
@@ -1375,7 +1383,11 @@ export class RenderEngine {
       material.uniforms.uTexture.value = sourceTexture;
       material.uniforms.uPointCount.value = Math.min(customPoints.length, 64);
       material.uniforms.uFeather.value = layer.layerShape.params.feather ?? 0;
-      material.uniforms.uInvert.value = 0;
+      // User-toggleable invert — turn the custom shape into a hole/cutout
+      // so layers stacked above show through everywhere EXCEPT the shape.
+      // Useful for projection-mapping setups where you want one layer to
+      // mask out a region of the layer below it.
+      material.uniforms.uInvert.value = layer.layerShape.params.invert ? 1 : 0;
       const pointsUniform = material.uniforms.uPoints.value as THREE.Vector2[];
       for (let i = 0; i < 64; i++) {
         if (i < customPoints.length) {
@@ -1950,6 +1962,7 @@ export class RenderEngine {
       groupObj.material.uniforms.uTexture.value = groupTarget.texture;
       groupObj.material.uniforms.uUseMeshPosition.value = false;
       groupObj.material.uniforms.uCustomShapeEnabled.value = 0;
+      groupObj.material.uniforms.uCustomShapeInvert.value = 0;
       groupObj.material.uniforms.uLayerShapeType.value = 0;
       groupObj.material.uniforms.uCropEnabled.value = false;
       groupObj.material.uniforms.uFlipH.value = false;
@@ -2088,11 +2101,15 @@ export class RenderEngine {
         const fitMode = layer.layerShape?.params.customShapeFit ?? 'warp';
         const fitMap: Record<string, number> = { mask: 0, warp: 1, fill: 2 };
         obj.material.uniforms.uCustomShapeFit.value = fitMap[fitMode] ?? 1;
+        // Invert (cutout) — flip the polygon mask so the shape becomes a hole.
+        obj.material.uniforms.uCustomShapeInvert.value = layer.layerShape?.params.invert ? 1 : 0;
       } else {
         obj.material.uniforms.uCustomShapeEnabled.value = 0;
+        obj.material.uniforms.uCustomShapeInvert.value = 0;
       }
     } else {
       obj.material.uniforms.uCustomShapeEnabled.value = 0;
+      obj.material.uniforms.uCustomShapeInvert.value = 0;
     }
 
     // Flip, content fit, aspect
