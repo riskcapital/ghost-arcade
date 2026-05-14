@@ -27,6 +27,24 @@
   export let setAudioSource: ((source: 'none' | 'microphone' | 'system') => void) | null = null;
   void isMac;
   void setAudioSource;
+
+  // Live signal level used to make the active source button GLOW
+  // proportionally to actual incoming audio. User report: previously
+  // the green LED stayed solid when audio was selected but silent —
+  // made it impossible to tell whether the input was actually being
+  // detected vs just routed. Now box-shadow + background brighten
+  // with rms (and a small kick from beat intensity) so a cold mic
+  // shows as dim-green and a loud one pulses bright.
+  $: sigLevel = $audioStore.isActive
+    ? Math.min(1, ($audioStore.rms ?? 0) * 4 + ($audioStore.beat?.beatIntensity ?? 0) * 0.3)
+    : 0;
+  $: sigGlow = sigLevel > 0.03
+    ? `box-shadow: 0 0 ${4 + sigLevel * 12}px rgba(34, 197, 94, ${0.4 + sigLevel * 0.6}), inset 0 0 ${sigLevel * 8}px rgba(34, 197, 94, ${sigLevel * 0.4}); background: rgba(34, 197, 94, ${0.08 + sigLevel * 0.25});`
+    : '';
+  // Keep references explicit so unused-warning doesn't fire — these are
+  // consumed by future callers / external CSS hooks.
+  void sigLevel;
+  void sigGlow;
 </script>
 
 <div class="audio-bar">

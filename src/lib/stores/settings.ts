@@ -221,6 +221,13 @@ export interface UISettings {
   gridSettings: GridSettings;
   /** VJ layout: false = controls left (default), true = controls right */
   vjLayoutReversed: boolean;
+  /**
+   * Safe Mode — add a confirmation prompt before destructive actions
+   * (delete shader, delete clip, delete layer effect, etc.). For users
+   * who move fast and accidentally nuke things. Default off; power
+   * users opt-in via Settings → General.
+   */
+  safeMode: boolean;
 }
 
 export type FluidQualityMode = 'live' | 'balanced' | 'quality';
@@ -615,6 +622,7 @@ function createDefaultSettings(): AppSettings {
         snapToLayers: true,
       },
       vjLayoutReversed: false,
+      safeMode: false,
     },
     ai: {
       shaderProvider: 'claude',

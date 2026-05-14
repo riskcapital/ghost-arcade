@@ -765,6 +765,7 @@ export class RenderEngine {
         uCustomShapePoints: { value: Array.from({ length: 256 }, () => new THREE.Vector2(0, 0)) },
         uCustomShapeFit: { value: 1 },          // 0=mask, 1=warp(stretch-to-bbox), 2=fill(aspect-fit)
         uCustomShapeBBox: { value: new THREE.Vector4(0, 0, 1, 1) },  // minX, minY, maxX, maxY
+        uCustomShapeInvert: { value: 0 },       // 0=normal, 1=cutout / negative-space
       },
       transparent: true,
       depthTest: false,
@@ -2014,6 +2015,7 @@ export class RenderEngine {
       groupObj.material.uniforms.uTexture.value = groupTarget.texture;
       groupObj.material.uniforms.uUseMeshPosition.value = false;
       groupObj.material.uniforms.uCustomShapeEnabled.value = 0;
+      groupObj.material.uniforms.uCustomShapeInvert.value = 0;
       groupObj.material.uniforms.uLayerShapeType.value = 0;
       groupObj.material.uniforms.uCropEnabled.value = false;
       groupObj.material.uniforms.uFlipH.value = false;
@@ -2153,11 +2155,15 @@ export class RenderEngine {
         const fitMode = layer.layerShape?.params.customShapeFit ?? 'warp';
         const fitMap: Record<string, number> = { mask: 0, warp: 1, fill: 2 };
         obj.material.uniforms.uCustomShapeFit.value = fitMap[fitMode] ?? 1;
+        // Invert (cutout) — flip the polygon mask so the shape becomes a hole.
+        obj.material.uniforms.uCustomShapeInvert.value = layer.layerShape?.params.invert ? 1 : 0;
       } else {
         obj.material.uniforms.uCustomShapeEnabled.value = 0;
+        obj.material.uniforms.uCustomShapeInvert.value = 0;
       }
     } else {
       obj.material.uniforms.uCustomShapeEnabled.value = 0;
+      obj.material.uniforms.uCustomShapeInvert.value = 0;
     }
 
     // Flip, content fit, aspect

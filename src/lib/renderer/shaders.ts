@@ -59,6 +59,7 @@ export const textureFragmentShader = /* glsl */ `
   uniform vec2 uCustomShapePoints[256];
   uniform int uCustomShapeFit;      // 0=mask (clip only), 1=warp (stretch to bbox), 2=fill (aspect-fit to bbox)
   uniform vec4 uCustomShapeBBox;    // vec4(minX, minY, maxX, maxY) of the polygon
+  uniform int uCustomShapeInvert;   // 0=normal (show inside shape), 1=invert (show outside / cutout)
   varying vec2 vUv;
 
   vec2 rotate2D(vec2 p, float angle) {
@@ -231,8 +232,13 @@ export const textureFragmentShader = /* glsl */ `
       sampledUv = uCropRegion.xy + sampledUv * uCropRegion.zw;
     }
 
-    // Custom shape UV remapping: stretch/fill texture to polygon bounding box
-    if (uCustomShapeEnabled == 1 && uCustomShapeFit > 0 && uCustomShapePointCount >= 3) {
+    // Custom shape UV remapping: stretch/fill texture to polygon bounding box.
+    // Skipped entirely when invert is ON — in cutout/negative-space mode the
+    // visible region is OUTSIDE the polygon (often most of the layer quad),
+    // and bbox-relative UVs would extrapolate way past 0..1 and produce ugly
+    // stretched/repeated artifacts. With inversion the texture should fill
+    // the whole layer naturally and the polygon just punches a hole through it.
+    if (uCustomShapeEnabled == 1 && uCustomShapeFit > 0 && uCustomShapePointCount >= 3 && uCustomShapeInvert == 0) {
       vec2 bbMin = uCustomShapeBBox.xy;
       vec2 bbSize = uCustomShapeBBox.zw - uCustomShapeBBox.xy;
       if (bbSize.x > 0.001 && bbSize.y > 0.001) {
@@ -325,6 +331,8 @@ export const textureFragmentShader = /* glsl */ `
     // Custom shape polygon mask (evaluated in UV space so it warps with geometry).
     // Feather is one-sided: only fades the INSIDE edge. Outside the polygon is
     // always fully transparent — no outward bleed.
+    // When uCustomShapeInvert==1, we flip the mask so the polygon punches a hole
+    // (cutout / negative space) and the area OUTSIDE the polygon shows the layer.
     if (uCustomShapeEnabled == 1 && uCustomShapePointCount >= 3) {
       float inside = customPointInPolygon(layerUv);
       float customMask;
@@ -333,6 +341,9 @@ export const textureFragmentShader = /* glsl */ `
         customMask = smoothstep(0.0, feather, dist);
       } else {
         customMask = inside;
+      }
+      if (uCustomShapeInvert == 1) {
+        customMask = 1.0 - customMask;
       }
       mask *= customMask;
     }
