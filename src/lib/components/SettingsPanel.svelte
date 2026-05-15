@@ -34,11 +34,32 @@
   let isCheckingUpdate = false;
   import { midiStore } from '../midi/midiStore';
   import { midiManager } from '../midi/midiManager';
-  import LicensePanel from './LicensePanel.svelte';
-  import { licenseTier, canUseSpout, canUseOwnAPIKeys, canUseMIDIEdit, canUseOutputSlices, maxOutputSlices, setDevTierOverride, type LicenseTier } from '../stores/license';
+  // LicensePanel + tier-related imports removed — OSS build has no license UI.
+  // `maxOutputSlices` is the only remaining import (used as a slice-count
+  // upper bound; resolves to Infinity in the OSS build, so all guards pass).
+  import { maxOutputSlices } from '../stores/license';
   import { createDefaultSlice, type OutputSlice } from '../stores/settings';
   import { isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
   import { getErrorLog, clearErrorLog, type ErrorEntry } from '../utils/errorReporter';
+  import { isWebGPUSupported, probeWebGPU, getWebGPUInfo, type WebGPUInfo } from '../renderer/webgpuCapability';
+
+  // GPU Acceleration panel state — populated by the WebGPU capability probe.
+  // We display the adapter info read-only and expose the two production
+  // toggles (editor-side bridge + zero-copy output transport). The probe
+  // is idempotent, so calling it from onMount is cheap on repeat opens.
+  let webgpuSupported = isWebGPUSupported();
+  let webgpuInfo: WebGPUInfo = getWebGPUInfo();
+  let webgpuProbing = false;
+  async function refreshWebGPUStatus() {
+    webgpuProbing = true;
+    try {
+      await probeWebGPU();
+    } finally {
+      webgpuSupported = isWebGPUSupported();
+      webgpuInfo = getWebGPUInfo();
+      webgpuProbing = false;
+    }
+  }
 
   const tsLabel = getTextureShareLabel();
 
@@ -151,25 +172,33 @@
     if (id) midiManager.selectDevice(id);
   }
 
-  // Settings tab navigation
-  let activeTab: 'general' | 'output' | 'performance' | 'midi' | 'ai' | 'license' = 'general';
+  // Settings tab navigation (license tab removed in OSS build)
+  let activeTab: 'general' | 'output' | 'performance' | 'midi' | 'ai' = 'general';
 
   // Hash-based deep link from the integrated-GPU banner.
   onMount(() => {
     const h = (typeof window !== 'undefined' ? window.location.hash : '').replace(/^#/, '');
-    if (h === 'performance' || h === 'output' || h === 'midi' || h === 'general' || h === 'ai' || h === 'license') {
+    if (h === 'performance' || h === 'output' || h === 'midi' || h === 'general' || h === 'ai') {
       activeTab = h as typeof activeTab;
       try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch { /* */ }
     }
   });
   $: if (isOpen && typeof window !== 'undefined') {
     const h = window.location.hash.replace(/^#/, '');
-    if (h === 'performance' || h === 'output' || h === 'midi' || h === 'general' || h === 'ai' || h === 'license') {
+    if (h === 'performance' || h === 'output' || h === 'midi' || h === 'general' || h === 'ai') {
       activeTab = h as typeof activeTab;
       try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch { /* */ }
     }
   }
   $: if (activeTab === 'performance' && !codecProbed) runCodecProbe();
+  // Re-probe WebGPU on first Performance tab open so the status panel shows
+  // fresh adapter info (and so the "Auto-enable on first launch" pathway,
+  // which depends on a successful probe, has had a chance to run).
+  let webgpuProbedFromPanel = false;
+  $: if (activeTab === 'performance' && !webgpuProbedFromPanel) {
+    webgpuProbedFromPanel = true;
+    refreshWebGPUStatus();
+  }
 
   // License panel state
   let licenseOpen = false;
@@ -429,12 +458,6 @@
         <button class="settings-tab" class:active={activeTab === 'performance'} onclick={() => activeTab = 'performance'}>Performance</button>
         <button class="settings-tab" class:active={activeTab === 'midi'} onclick={() => activeTab = 'midi'}>MIDI</button>
         <button class="settings-tab" class:active={activeTab === 'ai'} onclick={() => activeTab = 'ai'}>AI</button>
-        <button class="settings-tab" class:active={activeTab === 'license'} onclick={() => activeTab = 'license'}>
-          License
-          <span class="tier-indicator" style="background: {$licenseTier === 'pro' ? '#f59e0b' : $licenseTier === 'starter' ? '#3b82f6' : '#6b7280'}">
-            {$licenseTier.toUpperCase()}
-          </span>
-        </button>
       </div>
 
       <div class="settings-content">
@@ -716,21 +739,17 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">{tsLabel} Output {#if !$canUseSpout}<span class="pro-badge">PRO</span>{/if}</span>
+              <span class="label-text">{tsLabel} Output</span>
               <span class="label-hint">Share GPU texture to other applications</span>
             </div>
-            {#if $canUseSpout}
-              <label class="toggle">
-                <input
-                  type="checkbox"
-                  checked={$settings.output.spoutEnabled}
-                  onchange={handleSpoutToggle}
-                />
-                <span class="toggle-slider"></span>
-              </label>
-            {:else}
-              <span class="locked-label">🔒</span>
-            {/if}
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={$settings.output.spoutEnabled}
+                onchange={handleSpoutToggle}
+              />
+              <span class="toggle-slider"></span>
+            </label>
           </div>
 
           {#if $settings.output.spoutEnabled}
@@ -1152,13 +1171,9 @@
         <!-- Multi-Output Slices Section (hidden until multi-projector testing) -->
         <section class="settings-section">
           <h3>Multi-Output Routing</h3>
-          {#if $canUseOutputSlices}
-            <p class="section-hint">
-              Slice your canvas into regions and route each to a separate {tsLabel} output for multi-projector setups.
-              {#if $maxOutputSlices !== Infinity}
-                Your plan supports up to {$maxOutputSlices} outputs.
-              {/if}
-            </p>
+          <p class="section-hint">
+            Slice your canvas into regions and route each to a separate {tsLabel} output for multi-projector setups.
+          </p>
 
             <!-- Layout presets -->
             {#if $settings.output.slices.length === 0}
@@ -1328,10 +1343,6 @@
                 Clear All Slices
               </button>
             {/if}
-          {:else}
-            <p class="section-hint">Multi-output routing is available on Pro and Enterprise plans.</p>
-            <span class="locked-label">🔒 PRO</span>
-          {/if}
         </section>
         {/if}
 
@@ -1383,6 +1394,115 @@
                 </a>
               </span>
             </div>
+          </div>
+        </section>
+
+        <!-- ─────────────────────────────────────────────────────────────
+             GPU Acceleration — capability + 2 production toggles.
+             Status is read from the cached WebGPU probe; the toggles
+             write directly to $settings.experimental. When WebGPU is
+             unavailable the toggles are disabled and the section
+             explains why so users don't waste time hunting for the
+             effect / layer that disappeared from their picker.
+             ───────────────────────────────────────────────────────── -->
+        <section class="settings-section">
+          <h3>GPU Acceleration <span style="font-size: 10px; padding: 2px 6px; margin-left: 6px; background: linear-gradient(135deg, #1e3a8a, #7c2d12); color: #fff; border-radius: 3px; vertical-align: middle;">EXPERIMENTAL</span></h3>
+          <div class="setting-row" style="border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 10px;">
+            <div class="setting-label" style="flex: 1;">
+              <span class="label-text" style:color={webgpuSupported ? '#4caf50' : '#fbbf24'}>
+                {#if webgpuProbing}
+                  Probing WebGPU…
+                {:else if webgpuSupported}
+                  ✓ WebGPU detected
+                {:else}
+                  ⚠ WebGPU not available
+                {/if}
+              </span>
+              <span class="label-hint" style="line-height: 1.5;">
+                {#if webgpuSupported}
+                  Adapter:
+                  <strong>
+                    {webgpuInfo.description || webgpuInfo.vendor || 'unknown'}
+                    {#if webgpuInfo.architecture}({webgpuInfo.architecture}){/if}
+                  </strong>
+                  {#if webgpuInfo.isFallbackAdapter}
+                    <br/><span style="color: #fbbf24;">⚠ Software fallback adapter — performance will be limited.</span>
+                  {/if}
+                  <br/>
+                  Hardware-accelerated rendering paths are available. The toggles below let you turn the GPU bridge and the zero-copy output transport on or off independently.
+                {:else}
+                  {webgpuInfo.failReason ? `Reason: ${webgpuInfo.failReason}.` : 'Your browser/device did not return a WebGPU adapter.'}
+                  <br/>
+                  Effects and layers that require WebGPU (e.g. <em>Fluid Sim</em>, the GPU Shader layer) are hidden in the picker so you don't try to add something that won't run. The legacy WebGL pipeline keeps the rest of the app working normally.
+                {/if}
+              </span>
+            </div>
+            <button class="primary-btn" onclick={refreshWebGPUStatus} disabled={webgpuProbing} style="white-space: nowrap;">
+              {webgpuProbing ? 'Probing…' : 'Re-probe'}
+            </button>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Editor GPU bridge</span>
+              <span class="label-hint">
+                Use the WebGPU + VideoFrame bridge for the editor → output handoff. When off, falls back to the legacy WebGL transport (works everywhere, slightly higher latency, no zero-copy).
+                {#if !webgpuSupported}
+                  <br/><em style="color: #999;">Disabled — requires WebGPU.</em>
+                {/if}
+              </span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={$settings.experimental.editorWebGPU}
+                disabled={!webgpuSupported}
+                onchange={(e) => settings.update(s => ({ ...s, experimental: { ...s.experimental, editorWebGPU: (e.target as HTMLInputElement).checked } }))}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Zero-copy GPU output</span>
+              <span class="label-hint">
+                Send frames to the output window via WebGPU's <code>importExternalTexture</code> — no encode/decode round trip, true 4K60. Falls back to the legacy WebRTC/Spout transport when off or when WebGPU is unavailable. Apply on next output-window open.
+                {#if !webgpuSupported}
+                  <br/><em style="color: #999;">Disabled — requires WebGPU.</em>
+                {/if}
+              </span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={$settings.experimental.outputZeroCopy}
+                disabled={!webgpuSupported}
+                onchange={(e) => settings.update(s => ({ ...s, experimental: { ...s.experimental, outputZeroCopy: (e.target as HTMLInputElement).checked } }))}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Mid-chain GPU effects</span>
+              <span class="label-hint">
+                Allow WebGPU effects (e.g. <em>Fluid Sim</em>) in the middle of a layer's effect chain. Adds a ~3 ms GPU↔CPU round-trip per affected effect; turn off if you're not using GPU effects and want the steady-state path purely WebGL.
+                {#if !webgpuSupported}
+                  <br/><em style="color: #999;">Disabled — requires WebGPU.</em>
+                {/if}
+              </span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={$settings.experimental.allowMidChainGpuEffects}
+                disabled={!webgpuSupported}
+                onchange={(e) => settings.update(s => ({ ...s, experimental: { ...s.experimental, allowMidChainGpuEffects: (e.target as HTMLInputElement).checked } }))}
+              />
+              <span class="toggle-slider"></span>
+            </label>
           </div>
         </section>
 
@@ -1566,18 +1686,14 @@
                 <span class="label-text">MIDI Learn Mode</span>
                 <span class="label-hint">Click a parameter, then move a MIDI control to map it</span>
               </div>
-              {#if $canUseMIDIEdit}
-                <button
-                  class="secondary-btn midi-learn-btn"
-                  class:active={midiEditMode}
-                  disabled={midiDevices.length === 0 && !midiEditMode}
-                  onclick={() => midiStore.toggleEditMode()}
-                >
-                  {midiEditMode ? 'Exit MIDI Learn' : midiDevices.length === 0 ? 'No MIDI Device' : 'Enter MIDI Learn'}
-                </button>
-              {:else}
-                <span class="locked-label">🔒 PRO</span>
-              {/if}
+              <button
+                class="secondary-btn midi-learn-btn"
+                class:active={midiEditMode}
+                disabled={midiDevices.length === 0 && !midiEditMode}
+                onclick={() => midiStore.toggleEditMode()}
+              >
+                {midiEditMode ? 'Exit MIDI Learn' : midiDevices.length === 0 ? 'No MIDI Device' : 'Enter MIDI Learn'}
+              </button>
             </div>
 
             <div class="info-box">
@@ -1679,12 +1795,7 @@
             </select>
           </div>
 
-          <!-- API Keys section (Pro only: own API keys) -->
-          {#if !$canUseOwnAPIKeys}
-          <div class="pro-gate-notice">
-            <span class="pro-badge">PRO</span> Upgrade to Pro to use your own API keys. Demo & Starter tiers use included AI credits.
-          </div>
-          {:else}
+          <!-- API Keys section -->
           <!-- Claude API Key -->
           <div class="setting-row">
             <div class="setting-label">
@@ -1814,32 +1925,8 @@
               {/each}
             </select>
           </div>
-          {/if}
 
         </section>
-        {:else if activeTab === 'license'}
-        <!-- Dev tier override (browser dev mode only) -->
-        {#if !isDesktopApp}
-        <section class="settings-section">
-          <div class="dev-tier-box">
-            <div class="dev-tier-header">
-              <span class="dev-tier-label">DEV MODE</span>
-              <span class="dev-tier-sublabel">Tier Override</span>
-            </div>
-            <select
-              class="dev-tier-select"
-              value={$licenseTier}
-              onchange={(e) => setDevTierOverride(e.currentTarget.value as LicenseTier)}
-            >
-              <option value="demo">Demo (watermark, 3 layers)</option>
-              <option value="starter">Starter (8 layers, no premium)</option>
-              <option value="pro">Pro (all features)</option>
-            </select>
-          </div>
-        </section>
-        {/if}
-        <!-- License tab: embedded license panel -->
-        <LicensePanel isOpen={true} embedded={true} onClose={() => activeTab = 'general'} />
         {/if}
       </div>
 

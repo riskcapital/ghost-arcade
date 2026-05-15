@@ -5,7 +5,7 @@
   import { createEventDispatcher, onMount } from 'svelte';
   import { shaderLibrary, type SavedShader } from '../stores/shaderLibrary';
   import { settings } from '../stores/settings';
-  import { canUseThreeJS, canUseP5JS } from '../stores/license';
+  // Tier-related imports removed — Three.js / p5.js generators always available.
 
   // Props for editing existing content
   export let editingItem: MediaSource | null = null;
@@ -245,30 +245,26 @@
       <button
         class="type-tab"
         class:active={generationType === 'threejs'}
-        class:locked={!$canUseThreeJS}
-        onclick={() => { if ($canUseThreeJS) generationType = 'threejs'; }}
-        title={$canUseThreeJS ? 'Three.js Animation' : 'Three.js requires Pro license'}
+        onclick={() => generationType = 'threejs'}
+        title="Three.js Animation"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M12 2L2 7v10l10 5 10-5V7L12 2z"/>
           <circle cx="12" cy="12" r="2"/>
         </svg>
         Three.js
-        {#if !$canUseThreeJS}<span class="pro-badge">PRO</span>{/if}
       </button>
       <button
         class="type-tab"
         class:active={generationType === 'p5js'}
-        class:locked={!$canUseP5JS}
-        onclick={() => { if ($canUseP5JS) generationType = 'p5js'; }}
-        title={$canUseP5JS ? 'p5.js Animation' : 'p5.js requires Pro license'}
+        onclick={() => generationType = 'p5js'}
+        title="p5.js Animation"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="10"/>
           <path d="M8 12l3 3 5-6"/>
         </svg>
         p5.js
-        {#if !$canUseP5JS}<span class="pro-badge">PRO</span>{/if}
       </button>
     </div>
   </div>

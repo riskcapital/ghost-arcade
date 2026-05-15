@@ -79,6 +79,17 @@ let vjClipsState = null;
 // Compositions/presets state (synchronized from desktop app)
 let compositionsState = [];
 
+// Output-frozen state (true when desktop's outputFrozen store is set).
+// Cached so newly-connected mobiles see the right play/pause icon on
+// the freeze pill from the moment they mount. Updated by the
+// `output_freeze_state` message the desktop broadcasts on every change.
+let outputFrozenState = false;
+
+// User shader library (synchronized from desktop's shaderLibrary store).
+// Mobile shader tab uses this to mirror desktop's add/remove of custom
+// shaders so the picker stays in lockstep across both surfaces.
+let shaderLibraryState = [];
+
 // Connected clients
 const clients = new Set();
 let desktopClient = null;
@@ -140,6 +151,21 @@ wss.on('connection', (ws, req) => {
     ws.send(JSON.stringify({
       type: 'compositions_sync',
       compositions: compositionsState,
+    }));
+  }
+
+  // Send current output-frozen state so the mobile pause/play pill
+  // shows the right icon from the first paint.
+  ws.send(JSON.stringify({
+    type: 'output_freeze_state',
+    frozen: outputFrozenState,
+  }));
+
+  // Send user shader library so mobile mirrors desktop's custom adds.
+  if (shaderLibraryState.length > 0) {
+    ws.send(JSON.stringify({
+      type: 'shader_library_sync',
+      shaders: shaderLibraryState,
     }));
   }
 
@@ -560,6 +586,38 @@ function handleMessage(sender, msg) {
     // sends only to mobile clients.
     case 'beat_pulse':
       broadcast(sender, msg);
+      break;
+
+    // ═══ Output freeze (mobile pause/play in mapping mode) ═══
+    // Bidirectional: mobile sends `set_output_freeze` to ask the
+    // desktop to freeze/resume; desktop replies + broadcasts
+    // `output_freeze_state` so every connected client (including
+    // future mobiles that connect after the toggle) shows the right
+    // play/pause icon. We cache the latest value on the server so a
+    // freshly-connected mobile can be told the current state on
+    // connect (see initial-sync block above).
+    case 'set_output_freeze':
+      console.log(`[*] Mobile → set_output_freeze: ${msg.frozen}`);
+      broadcast(sender, msg);
+      break;
+    case 'output_freeze_state':
+      outputFrozenState = !!msg.frozen;
+      console.log(`[*] Desktop → output_freeze_state: ${outputFrozenState}`);
+      broadcast(sender, msg);
+      break;
+
+    // ═══ Shader library sync (desktop MediaTray → mobile) ═══
+    // Sent by the desktop whenever its MediaTray shader list changes so
+    // the mobile picker mirrors exactly what the user sees on desktop —
+    // built-in catalog + user-added + AI-generated + cloud-synced.
+    // Cached so newly-connected mobiles get the current list immediately.
+    case 'shader_library_sync':
+      shaderLibraryState = Array.isArray(msg.shaders) ? msg.shaders : [];
+      console.log(`[*] Shader library updated: ${shaderLibraryState.length} shaders`);
+      broadcast(sender, {
+        type: 'shader_library_sync',
+        shaders: shaderLibraryState,
+      });
       break;
 
     default:

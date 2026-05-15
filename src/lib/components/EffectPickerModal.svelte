@@ -2,15 +2,22 @@
   import type { EffectType } from '../types';
   import { EFFECT_CATALOG, getEffectCategories, type EffectCatalogEntry } from '../effects/effectCatalog';
   import {
-    customEffects,
     customCatalogEntries,
     importDMFXFromFile,
     downloadTemplate,
     removeCustomEffect,
   } from '../effects/customEffects';
-  import { licenseTier } from '../stores/license';
-  import { canAccessEffect, getTierBadgeLabel } from '../license/featureGates';
+  // licenseTier + canAccessEffect + getTierBadgeLabel imports removed —
+  // every effect is unlocked in OSS build.
+  import { isWebGPUSupported } from '../renderer/webgpuCapability';
   import { get } from 'svelte/store';
+
+  // WebGPU capability snapshot. We use the synchronous check (which reads
+  // the cached probe result) so the picker can hide GPU-only effects on
+  // browsers without WebGPU support without flickering. The async probe
+  // runs once at app startup; by the time this modal opens the cache is
+  // warm.
+  const webgpuAvailable = isWebGPUSupported();
 
   interface Props {
     open: boolean;
@@ -21,28 +28,83 @@
   let { open = $bindable(false), onAdd, onClose }: Props = $props();
 
   let searchQuery = $state('');
-  let activeCategory = $state('All');
   let selected = $state<Set<EffectType>>(new Set());
   let importStatus = $state<{ kind: 'idle' | 'ok' | 'err'; message: string }>({
     kind: 'idle',
     message: '',
   });
 
+  // ── Accordion state ─────────────────────────────────────────────────
+  // Persisted across sessions. Power users can collapse categories they
+  // never use (e.g. Advanced 3D) so the picker doesn't scroll forever.
+  // Storage key versioned ('v2') in case we want to invalidate later.
+  const STORAGE_KEY = 'ga-effectpicker-collapsed-v2';
+  const DEFAULT_COLLAPSED: string[] = [
+    // Sensible default: collapse the deep-dive 3D / depth / feedback
+    // sections so first-time users see the meat-and-potatoes picker
+    // (Color, Stylize, Blur, Light) above the fold. Easy to expand
+    // with one click — and the choice is remembered after the first
+    // time you toggle it.
+    'Advanced 3D',
+    'Advanced Depth',
+    'Advanced Feedback',
+    'Advanced Trails',
+    'Advanced Text & Pattern',
+  ];
+  function loadCollapsed(): Set<string> {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) return new Set(JSON.parse(raw) as string[]);
+    } catch {}
+    return new Set(DEFAULT_COLLAPSED);
+  }
+  function saveCollapsed(s: Set<string>) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify([...s]));
+    } catch {}
+  }
+  let collapsed = $state<Set<string>>(loadCollapsed());
+
+  function toggleCategory(cat: string) {
+    const next = new Set(collapsed);
+    if (next.has(cat)) next.delete(cat);
+    else next.add(cat);
+    collapsed = next;
+    saveCollapsed(next);
+  }
+
+  function expandAll() {
+    collapsed = new Set();
+    saveCollapsed(collapsed);
+  }
+  function collapseAll() {
+    const all = new Set(allCategories);
+    collapsed = all;
+    saveCollapsed(all);
+  }
+
   // Custom effects reactive snapshot so the picker list refreshes on import/remove.
-  // `$effect` wraps the subscription so the assignment to the `$state` variable is
-  // tracked by Svelte 5's reactivity graph.
   let customEntries = $state<EffectCatalogEntry[]>([]);
   $effect(() => customCatalogEntries.subscribe(($v) => { customEntries = $v; }));
 
   // Combine built-in + custom, with custom effects grouped under "Custom" category.
+  // Entries that require WebGPU are filtered out on devices without WebGPU
+  // support so they never appear in the picker (per "Hide entirely" UX choice
+  // — no point teasing an effect that can't run).
   const combinedCatalog = $derived<EffectCatalogEntry[]>([
     ...customEntries.map((c) => ({ ...c, category: 'Custom' })),
     ...EFFECT_CATALOG,
-  ]);
+  ].filter((entry) => !entry.requiresWebGPU || webgpuAvailable));
 
-  const categories = $derived.by<string[]>(() => {
+  // All categories (Custom first if present, then built-in order).
+  // Drop categories that ended up empty after capability filtering — e.g.
+  // the "WebGPU" category should disappear entirely on browsers without
+  // WebGPU support rather than show an empty section header.
+  const allCategories = $derived.by<string[]>(() => {
     const builtins = getEffectCategories();
-    return customEntries.length > 0 ? ['All', 'Custom', ...builtins] : ['All', ...builtins];
+    const present = new Set(combinedCatalog.map((e) => e.category));
+    const filtered = builtins.filter((c) => present.has(c));
+    return customEntries.length > 0 ? ['Custom', ...filtered] : filtered;
   });
 
   const customTypeSet = $derived(new Set(customEntries.map((e) => e.type as unknown as string)));
@@ -51,21 +113,42 @@
     return customTypeSet.has(entry.type as unknown as string);
   }
 
-  const filtered = $derived.by(() => {
-    let list = combinedCatalog;
-    if (activeCategory !== 'All') {
-      list = list.filter((e) => e.category === activeCategory);
+  // Filter by search across ALL categories — search overrides the
+  // accordion (results from collapsed sections still show up when you
+  // type, otherwise the user would think the search was broken).
+  const filteredByCategory = $derived.by<Map<string, EffectCatalogEntry[]>>(() => {
+    const q = searchQuery.toLowerCase().trim();
+    const map = new Map<string, EffectCatalogEntry[]>();
+    for (const cat of allCategories) map.set(cat, []);
+    for (const entry of combinedCatalog) {
+      if (q) {
+        const matches =
+          entry.label.toLowerCase().includes(q) ||
+          entry.description.toLowerCase().includes(q) ||
+          entry.type.toLowerCase().includes(q);
+        if (!matches) continue;
+      }
+      const bucket = map.get(entry.category);
+      if (bucket) bucket.push(entry);
     }
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase().trim();
-      list = list.filter(
-        (e) =>
-          e.label.toLowerCase().includes(q) ||
-          e.description.toLowerCase().includes(q) ||
-          e.type.toLowerCase().includes(q)
-      );
+    return map;
+  });
+
+  const totalMatches = $derived.by<number>(() => {
+    let n = 0;
+    for (const list of filteredByCategory.values()) n += list.length;
+    return n;
+  });
+
+  // When searching, force-expand all categories that have matches so
+  // the user can see them. Doesn't mutate the persisted collapsed set.
+  const effectivelyCollapsed = $derived.by<Set<string>>(() => {
+    if (!searchQuery.trim()) return collapsed;
+    const next = new Set(collapsed);
+    for (const [cat, list] of filteredByCategory.entries()) {
+      if (list.length > 0) next.delete(cat);
     }
-    return list;
+    return next;
   });
 
   let fileInput: HTMLInputElement | undefined = $state();
@@ -80,7 +163,11 @@
         kind: 'ok',
         message: `Imported "${result.effect.label}" — it's under the Custom category.`,
       };
-      activeCategory = 'Custom';
+      // Make sure Custom is expanded so they see it.
+      const next = new Set(collapsed);
+      next.delete('Custom');
+      collapsed = next;
+      saveCollapsed(next);
     } else {
       importStatus = { kind: 'err', message: result.error ?? 'Import failed.' };
     }
@@ -98,35 +185,19 @@
     selected = new Set(selected);
   }
 
-  let showUpgradeToast = $state('');
+  // No tier locks in the OSS build — every effect is selectable.
 
-  function isLocked(entry: EffectCatalogEntry): boolean {
-    return !canAccessEffect(get(licenseTier), entry.category);
-  }
-
-  function handleCardClick(entry: EffectCatalogEntry, e: MouseEvent) {
-    if (isLocked(entry)) {
-      showUpgradeToast = `"${entry.label}" requires ${getTierBadgeLabel(entry.tier)} tier`;
-      setTimeout(() => { showUpgradeToast = ''; }, 3000);
-      return;
-    }
-    // Always toggle selection (touch-friendly multi-select)
+  function handleCardClick(entry: EffectCatalogEntry) {
     const next = new Set(selected);
-    if (next.has(entry.type)) {
-      next.delete(entry.type);
-    } else {
-      next.add(entry.type);
-    }
+    if (next.has(entry.type)) next.delete(entry.type);
+    else next.add(entry.type);
     selected = next;
   }
 
   function handleDoubleClick(entry: EffectCatalogEntry) {
-    if (isLocked(entry)) return;
-    // Double-click instantly adds the single effect
     onAdd([entry.type]);
     selected = new Set();
     searchQuery = '';
-    activeCategory = 'All';
     open = false;
   }
 
@@ -135,14 +206,12 @@
     onAdd([...selected]);
     selected = new Set();
     searchQuery = '';
-    activeCategory = 'All';
     open = false;
   }
 
   function handleClose() {
     selected = new Set();
     searchQuery = '';
-    activeCategory = 'All';
     onClose();
   }
 
@@ -202,7 +271,7 @@
         <div class="import-banner {importStatus.kind}">{importStatus.message}</div>
       {/if}
 
-      <!-- Search -->
+      <!-- Search + accordion controls -->
       <div class="search-bar">
         <input
           type="text"
@@ -210,75 +279,80 @@
           bind:value={searchQuery}
           class="search-input"
         />
+        <div class="accordion-controls">
+          <button class="ctrl-btn" onclick={expandAll} title="Expand all categories">Expand all</button>
+          <button class="ctrl-btn" onclick={collapseAll} title="Collapse all categories">Collapse all</button>
+        </div>
       </div>
 
-      <!-- Category tabs -->
-      <div class="category-tabs">
-        {#each categories as cat}
-          <button
-            class="cat-pill"
-            class:active={activeCategory === cat}
-            onclick={() => (activeCategory = cat)}
-          >
-            {cat}
-          </button>
-        {/each}
-      </div>
-
-      <!-- List -->
-      <div class="effect-list">
-        {#each filtered as entry (entry.type)}
-          {@const locked = isLocked(entry)}
-          {@const custom = isCustomEntry(entry)}
-          <button
-            class="effect-row"
-            class:selected={selected.has(entry.type)}
-            class:locked
-            class:custom
-            onclick={(e) => handleCardClick(entry, e)}
-            ondblclick={() => handleDoubleClick(entry)}
-            title="{entry.description}{locked ? `\n🔒 Requires ${getTierBadgeLabel(entry.tier)} tier` : '\nTap to select · Double-click to add instantly'}"
-          >
-            <div class="row-thumb" style="background: {entry.previewCSS};">
-              {#if locked}
-                <div class="lock-overlay">🔒</div>
-              {/if}
-            </div>
-            <div class="row-info">
-              <span class="row-name">
-                {entry.label}
-                {#if custom}
-                  <span class="custom-badge">CUSTOM</span>
-                {/if}
-                {#if locked}
-                  <span class="tier-badge">{getTierBadgeLabel(entry.tier)}</span>
-                {/if}
-              </span>
-              <span class="row-cat">{entry.category}</span>
-            </div>
-            {#if custom}
+      <!-- Accordion list -->
+      <div class="accordion-list">
+        {#each allCategories as cat (cat)}
+          {@const entries = filteredByCategory.get(cat) ?? []}
+          {@const isCollapsed = effectivelyCollapsed.has(cat)}
+          {#if entries.length > 0 || !searchQuery.trim()}
+            <section class="cat-section" class:collapsed={isCollapsed}>
               <button
-                class="delete-btn"
-                onclick={(e) => handleDeleteCustom(entry.type as unknown as string, e)}
-                title="Delete this custom effect"
-                aria-label="Delete custom effect"
-              >×</button>
-            {/if}
-          </button>
+                class="cat-header"
+                class:empty={entries.length === 0}
+                onclick={() => toggleCategory(cat)}
+                aria-expanded={!isCollapsed}
+                aria-controls={`cat-grid-${cat}`}
+              >
+                <span class="cat-chevron" class:rotated={!isCollapsed}>▶</span>
+                <span class="cat-label">{cat}</span>
+                <span class="cat-count">{entries.length}</span>
+              </button>
+
+              {#if !isCollapsed && entries.length > 0}
+                <div class="cat-grid" id={`cat-grid-${cat}`}>
+                  {#each entries as entry (entry.type)}
+                    {@const custom = isCustomEntry(entry)}
+                    <button
+                      class="effect-row"
+                      class:selected={selected.has(entry.type)}
+                      class:custom
+                      onclick={() => handleCardClick(entry)}
+                      ondblclick={() => handleDoubleClick(entry)}
+                      title="{entry.description}\nTap to select · Double-click to add instantly"
+                    >
+                      <div class="row-thumb" style="background: {entry.previewCSS};"></div>
+                      <div class="row-info">
+                        <span class="row-name">
+                          {entry.label}
+                          {#if custom}
+                            <span class="custom-badge">CUSTOM</span>
+                          {/if}
+                        </span>
+                        <span class="row-desc">{entry.description}</span>
+                      </div>
+                      {#if custom}
+                        <button
+                          class="delete-btn"
+                          onclick={(e) => handleDeleteCustom(entry.type as unknown as string, e)}
+                          title="Delete this custom effect"
+                          aria-label="Delete custom effect"
+                        >×</button>
+                      {/if}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </section>
+          {/if}
         {/each}
-        {#if filtered.length === 0}
-          <div class="no-results">No effects match your search.</div>
+
+        {#if searchQuery.trim() && totalMatches === 0}
+          <div class="no-results">No effects match "{searchQuery}".</div>
         {/if}
       </div>
 
       <!-- Upgrade toast -->
-      {#if showUpgradeToast}
-        <div class="upgrade-toast">{showUpgradeToast}</div>
-      {/if}
+      <!-- Upgrade toast removed — no tiers in OSS build. -->
 
       <!-- Footer -->
       <div class="modal-footer">
-        <span class="hint">Tap to select · Double-click to add one</span>
+        <span class="hint">Tap to select · Double-click to add one · Click a category to collapse</span>
         <div class="footer-actions">
           <button class="secondary-btn" onclick={handleClose}>Cancel</button>
           <button
@@ -311,7 +385,7 @@
     border: 1px solid #333;
     border-radius: 12px;
     width: 94%;
-    max-width: 700px;
+    max-width: 760px;
     max-height: 85vh;
     display: flex;
     flex-direction: column;
@@ -363,12 +437,17 @@
     color: #eee;
   }
 
+  /* Search row + expand/collapse controls share one bar so the
+     header stays compact. */
   .search-bar {
     padding: 8px 18px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
   }
 
   .search-input {
-    width: 100%;
+    flex: 1;
     background: #161618;
     border: 1px solid #333;
     border-radius: 6px;
@@ -377,76 +456,121 @@
     font-size: 13px;
     outline: none;
     transition: border-color 0.15s;
-    box-sizing: border-box;
   }
+  .search-input::placeholder { color: #666; }
+  .search-input:focus { border-color: #BB86FC; }
 
-  .search-input::placeholder {
-    color: #666;
-  }
-
-  .search-input:focus {
-    border-color: #BB86FC;
-  }
-
-  .category-tabs {
+  .accordion-controls {
     display: flex;
-    gap: 6px;
-    padding: 4px 18px 10px;
-    overflow-x: auto;
+    gap: 4px;
     flex-shrink: 0;
   }
-
-  .category-tabs::-webkit-scrollbar {
-    height: 3px;
-  }
-
-  .category-tabs::-webkit-scrollbar-thumb {
-    background: #444;
-    border-radius: 2px;
-  }
-
-  .cat-pill {
-    background: #1a1a1e;
+  .ctrl-btn {
+    background: #161618;
     border: 1px solid #333;
-    border-radius: 14px;
-    padding: 4px 12px;
+    border-radius: 6px;
+    padding: 6px 10px;
     color: #999;
     font-size: 11px;
     cursor: pointer;
-    white-space: nowrap;
     transition: all 0.15s;
-    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .ctrl-btn:hover {
+    background: #1f1f23;
+    color: #eee;
+    border-color: #555;
   }
 
-  .cat-pill:hover {
-    background: #252528;
-    color: #ccc;
-  }
-
-  .cat-pill.active {
-    background: #BB86FC22;
-    border-color: #BB86FC;
-    color: #BB86FC;
-  }
-
-  /* ── 3-column grid layout ── */
-  .effect-list {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 4px;
-    padding: 4px 12px;
+  /* ── Accordion sections ────────────────────────────────────────── */
+  .accordion-list {
     overflow-y: auto;
     flex: 1;
     min-height: 0;
+    padding: 4px 12px 12px;
   }
 
-  .effect-list::-webkit-scrollbar {
+  .accordion-list::-webkit-scrollbar {
     width: 5px;
   }
 
-  .effect-list::-webkit-scrollbar-thumb {
+  .accordion-list::-webkit-scrollbar-thumb {
     background: #444;
     border-radius: 3px;
+  }
+
+  .cat-section {
+    border-bottom: 1px solid #1d1d22;
+    padding-bottom: 4px;
+  }
+  .cat-section:last-child { border-bottom: none; }
+
+  /* Category header = sticky-ish accent bar that toggles its grid. */
+  .cat-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    background: #131318;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: #BB86FC;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    transition: background 0.12s;
+    margin: 8px 0 6px;
+    text-align: left;
+  }
+  .cat-header:hover {
+    background: #1a1a20;
+  }
+  .cat-header.empty {
+    color: #555;
+    background: transparent;
+    cursor: default;
+  }
+
+  /* Tiny chevron rotates 90° when section is open. */
+  .cat-chevron {
+    display: inline-block;
+    font-size: 9px;
+    color: #888;
+    width: 10px;
+    transition: transform 0.15s ease;
+    flex-shrink: 0;
+  }
+  .cat-chevron.rotated {
+    transform: rotate(90deg);
+  }
+
+  .cat-label {
+    flex: 1;
+  }
+
+  .cat-count {
+    color: #555;
+    font-weight: 500;
+    font-size: 10px;
+    background: rgba(187, 134, 252, 0.08);
+    border: 1px solid rgba(187, 134, 252, 0.18);
+    border-radius: 999px;
+    padding: 1px 8px;
+    min-width: 22px;
+    text-align: center;
+  }
+
+  /* Effects grid inside each open section. Two columns at this width
+     so each tile has room for a description line — keeps the picker
+     scannable. */
+  .cat-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 4px;
+    padding: 0 4px 4px;
   }
 
   .effect-row {
@@ -456,12 +580,13 @@
     background: transparent;
     border: 1px solid transparent;
     border-radius: 6px;
-    padding: 4px 6px 4px 4px;
+    padding: 5px 7px 5px 5px;
     cursor: pointer;
     transition: all 0.12s;
     text-align: left;
     width: 100%;
     min-width: 0;
+    position: relative;
   }
 
   .effect-row:hover {
@@ -475,11 +600,12 @@
   }
 
   .row-thumb {
-    width: 32px;
-    height: 32px;
-    min-width: 32px;
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
     border-radius: 5px;
     flex-shrink: 0;
+    position: relative;
   }
 
   .row-info {
@@ -488,10 +614,11 @@
     gap: 1px;
     min-width: 0;
     overflow: hidden;
+    flex: 1;
   }
 
   .row-name {
-    font-size: 11px;
+    font-size: 12px;
     color: #ddd;
     font-weight: 500;
     white-space: nowrap;
@@ -503,8 +630,8 @@
     color: #BB86FC;
   }
 
-  .row-cat {
-    font-size: 9px;
+  .row-desc {
+    font-size: 10px;
     color: #666;
     white-space: nowrap;
     overflow: hidden;
@@ -512,7 +639,6 @@
   }
 
   .no-results {
-    grid-column: 1 / -1;
     text-align: center;
     padding: 40px 0;
     color: #666;
@@ -566,7 +692,7 @@
   }
 
   .primary-btn:hover:not(:disabled) {
-    background: #5dd3e3;
+    background: #d0a8ff;
   }
 
   .primary-btn:disabled {
@@ -594,10 +720,6 @@
     background: rgba(0, 0, 0, 0.5);
     border-radius: 5px;
     font-size: 14px;
-  }
-
-  .row-thumb {
-    position: relative;
   }
 
   .tier-badge {
@@ -687,10 +809,6 @@
     color: #000;
     margin-left: 4px;
     vertical-align: middle;
-  }
-
-  .effect-row.custom {
-    position: relative;
   }
 
   .effect-row.custom .row-thumb {

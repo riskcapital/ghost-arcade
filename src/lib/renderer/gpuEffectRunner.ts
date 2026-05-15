@@ -436,15 +436,19 @@ export class GpuEffectRunner {
       // a `params: EffectParams` object; we extract our knobs by
       // name with sensible defaults.
       const p: any = effect.params || {};
+      // Fallback values match `getDefaultEffectParams('gpuFluidSim')` so
+      // an effect created before that case existed (or via legacy load
+      // paths that bypass the defaults) gets the new tuned look instead
+      // of the original conservative numbers.
       const fp: Partial<FluidSimParams> = {
-        injectStrength: p.injectStrength ?? 1.0,
-        velocityFromGradient: p.velocityFromGradient ?? 1.0,
+        injectStrength: p.injectStrength ?? 1.5,
+        velocityFromGradient: p.velocityFromGradient ?? 1.4,
         viscosity: p.viscosity ?? 0.0,
-        dyeDecay: p.dyeDecay ?? 0.4,
-        velocityDecay: p.velocityDecay ?? 0.6,
-        vorticity: p.vorticity ?? 1.5,
-        outputBoost: p.outputBoost ?? 1.6,
-        timeScale: p.timeScale ?? 1.0,
+        dyeDecay: p.dyeDecay ?? 2.4,
+        velocityDecay: p.velocityDecay ?? 2.3,
+        vorticity: p.vorticity ?? 1.0,
+        outputBoost: p.outputBoost ?? 0.7,
+        timeScale: p.timeScale ?? 1.6,
       };
       sim.setParams(fp);
       sim.setSourceTexture(externalTexture);

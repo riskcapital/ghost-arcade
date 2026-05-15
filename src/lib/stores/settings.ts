@@ -661,11 +661,15 @@ function createDefaultSettings(): AppSettings {
       // transport above depends on it. Falls back automatically when
       // `webgpuCapability.probeWebGPU()` fails.
       editorWebGPU: true,
-      // Mid-chain CPU-readback bridge (gpuEffectRunner) — opt-in only.
-      // The default GPU-edition position is "WebGPU is the downstream
-      // compositor / output stage, not a mid-WebGL-chain insertion."
-      // See the doc comment on this field in ExperimentalSettings.
-      allowMidChainGpuEffects: false,
+      // Mid-chain CPU-readback bridge (gpuEffectRunner). Was opt-in to
+      // protect users from the ~3ms GPU→CPU→GPU round-trip per affected
+      // effect — but that meant dropping the only WebGPU effect we
+      // ship (`gpuFluidSim`) on a layer did nothing, which is a wrong
+      // default for the GPU edition. Now ON by default: users who add
+      // a `gpu*` effect actually get the effect. Power users can flip
+      // it off in Settings → Experimental to keep the steady-state
+      // path purely WebGL when they're not using GPU effects.
+      allowMidChainGpuEffects: true,
     },
     performance: {
       // Defaults match the historical full-quality behaviour. Users on
@@ -686,7 +690,9 @@ const STORAGE_KEY = 'ghost-arcade_settings';
 const APP_VERSION_KEY = 'ill_app_version';
 // Bump this whenever stale localStorage may break the new build.
 // Any mismatch clears problematic caches on startup.
-const CURRENT_APP_VERSION = '0.3.7';
+// 0.3.8 bump: forces the `allowMidChainGpuEffects` migration to run for
+// existing users so `gpuFluidSim` actually fires when dropped on a layer.
+const CURRENT_APP_VERSION = '0.3.8';
 
 /**
  * Clear known-problematic localStorage on version change so a fresh install
@@ -728,6 +734,19 @@ function runVersionMigration(): { versionChanged: boolean } {
         }
         if (parsed.defaultLayerShader === 'crosshair' || parsed.defaultLayerShader == null) {
           parsed.defaultLayerShader = 'grid';
+        }
+        // Flip `allowMidChainGpuEffects` from old default (false) to new
+        // default (true) for existing users. Without this migration,
+        // anyone who launched a prior version keeps `false` saved and
+        // the only WebGPU effect (`gpuFluidSim`) silently does nothing
+        // when added to a layer. We only flip the explicit `false`;
+        // if the user has explicitly toggled it off in Settings →
+        // Experimental, that's a `false` too — but we have no way to
+        // distinguish "default" from "explicitly turned off" without
+        // versioning the field, so we forcibly enable for everyone on
+        // the version that introduces hero `gpuFluidSim` integration.
+        if (parsed.experimental && parsed.experimental.allowMidChainGpuEffects === false) {
+          parsed.experimental.allowMidChainGpuEffects = true;
         }
         localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
       }

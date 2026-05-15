@@ -2367,7 +2367,52 @@ export type EffectType =
   | 'hue'
   // Time-based effects
   | 'timeSmear'
-  | 'chronophoto';
+  | 'chronophoto'
+  // ── New Hero Effects (Batch A) ──
+  | 'opticalFlowDatamosh'
+  | 'flowFieldTrails'
+  | 'reactionDiffusion'
+  | 'neonTubeTrace'
+  | 'depthParallax'
+  | 'pointCloudDissolve'
+  | 'pixelSand'
+  | 'liquidGlass'
+  | 'hologramScan'
+  | 'laserSlice'
+  // ── New Hero Effects (Batch B) ──
+  | 'auraField'
+  | 'smokeDisintegrate'
+  | 'shimmerCloth'
+  | 'glitchQuilt'
+  | 'cellularAutomataBurn'
+  | 'rorschachMirror'
+  | 'spectralPrismTunnel'
+  | 'ledVolume'
+  | 'posterTear'
+  | 'paintPeel'
+  // ── New Hero Effects (Batch C) ──
+  | 'audioShockBloom'
+  | 'vhsFullDeck'
+  | 'analogFeedbackRack'
+  | 'clubLaserGrid'
+  | 'mirrorShards'
+  | 'ghostExposure'
+  | 'thermalContour'
+  | 'dreamDiffusion'
+  | 'topoWarp'
+  | 'strobeSequencer'
+  | 'wrappedTerrain'
+  // ── Geometric 3D (10) ──
+  | 'stringOrb'
+  | 'sphereWireframe'
+  | 'voxelCubeCluster'
+  | 'mobiusLattice'
+  | 'crystalShardField'
+  | 'tubeLattice'
+  | 'discoMirrorBall'
+  | 'lissajousKnot'
+  | 'helixParticleStream'
+  | 'donutConstellation';
 
 export interface EffectParams {
   // ── WebGPU Fluid Sim params (gpuFluidSim) ──
@@ -2383,30 +2428,48 @@ export interface EffectParams {
   outputBoost?: number;             // 0.5..4 — visual brightness multiplier
   timeScale?: number;               // 0.1..3 — sim speed independent of fps
 
-  // Vignette params
+  // Vignette params (hero rewrite)
   vignetteSize?: number;          // 0-1, how far vignette extends
   vignetteSoftness?: number;      // 0-1, edge softness
-  vignetteRoundness?: number;     // 0-1, circular vs rectangular
+  vignetteRoundness?: number;     // 0-1, circular vs rectangular (legacy mix factor)
+  vignetteShape?: number;         // 0=round, 1=oval, 2=square, 3=superellipse
+  vignetteAspect?: number;        // 0.3-3.0 oval/superellipse aspect ratio (X/Y)
+  vignetteCenterX?: number;       // 0-1 center offset
+  vignetteCenterY?: number;
+  vignetteColorR?: number;        // 0-1 tint color (used when tintAmount > 0)
+  vignetteColorG?: number;
+  vignetteColorB?: number;
+  vignetteTintAmount?: number;    // 0=transparent fade (legacy), 1=solid color fade
+  vignetteBreathing?: number;     // 0-1 animated size oscillation amplitude
+  vignetteBreathSpeed?: number;   // 0-2 breathing speed
 
-  // Edge feather params (independent sides)
+  // Edge feather params (hero rewrite)
   featherTop?: number;            // 0-1
   featherBottom?: number;
   featherLeft?: number;
   featherRight?: number;
   featherSoftness?: number;
+  featherGamma?: number;          // 0.2-3.0 falloff curve (1.0 linear)
+  featherMattePreview?: number;   // 0=normal, 1=red matte preview overlay
 
-  // Colorama params (cosine palette effect)
-  coloramaPalette?: number;       // 0-7 preset palettes
+  // Colorama params (cosine palette effect — hero rewrite)
+  coloramaPalette?: number;       // 0-11 named palettes (Rainbow, Sunset, Ocean, Neon, Fire,
+                                  //   Forest, Ice, Psychedelic, Vaporwave, Club, Pastel, Mono Glow)
   coloramaOffset?: number;        // 0-1 manual offset through palette
   coloramaSpeed?: number;         // 0-2 auto-cycle speed (0 = off)
   coloramaContrast?: number;      // 0.5-2 luminance contrast
   coloramaMix?: number;           // 0-1 blend with original
+  coloramaBands?: number;         // 0 = smooth gradient, 1-32 = posterized into N bands
+  coloramaAudioReact?: number;    // 0-1 how much live audio rms modulates the cycling
+  coloramaHueShift?: number;      // 0-1 fixed hue offset (used by Mono palette as base hue)
 
-  // Dither params
-  ditherType?: number;            // 0=bayer, 1=noise, 2=halftone, 3=ordered
+  // Dither params (hero — palette lock + pixel lock)
+  ditherType?: number;            // 0=bayer4, 1=bayer8, 2=noise, 3=ordered, 4=floyd-style hash
   ditherIntensity?: number;       // 0-1
   ditherScale?: number;           // 1-16
   ditherColorDepth?: number;      // 1-8 bits
+  ditherPalette?: number;         // 0=free, 1=gameboy, 2=cga, 3=mono, 4=c64
+  ditherPixelLock?: number;       // 0-1 snap dither to pixel grid
 
   // VHS params
   vhsTracking?: number;           // 0-1
@@ -2414,6 +2477,12 @@ export interface EffectParams {
   vhsDistortion?: number;         // 0-1
   vhsColorBleed?: number;         // 0-1
   vhsScanlines?: number;          // 0-1
+  vhsHeadSwitch?: number;
+  vhsTapeWobble?: number;
+  vhsDropout?: number;
+  vhsChromaDelay?: number;
+  vhsTrackingJump?: number;
+  vhsSaturation?: number;
 
   // Glitch params
   glitchIntensity?: number;       // 0-1
@@ -2421,71 +2490,340 @@ export interface EffectParams {
   glitchBlockSize?: number;       // 0-1
   glitchRGBSplit?: number;        // 0-1
   glitchJitter?: number;          // 0-1
+  glitchTriggerMode?: number;
+  glitchBlockHold?: number;
+  glitchVerticalSlice?: number;
+  glitchFreezeBurst?: number;
+  glitchTearChance?: number;
 
-  // RGB Shift
+  // RGB Shift (hero — directional/radial/prism/luma/edge modes)
   rgbShiftAmount?: number;        // 0-50 pixels
   rgbShiftAngle?: number;         // 0-360
+  rgbShiftMode?: number;          // 0=directional, 1=radial, 2=prism, 3=luma-driven, 4=edge-driven
+  rgbShiftCenterX?: number;       // 0-1 radial/prism center
+  rgbShiftCenterY?: number;       // 0-1
+  rgbShiftPrismSpread?: number;   // 0-3 prism rainbow spread
 
-  // Scanlines
+  // Scanlines (hero — phosphor mask + rolling bar + curvature + interlace)
   scanlinesIntensity?: number;    // 0-1
   scanlinesCount?: number;        // 50-500
   scanlinesSpeed?: number;        // 0-2
+  scanlinesPhosphor?: number;     // 0-1 RGB phosphor mask strength
+  scanlinesRollingBar?: number;   // 0-1 vertical rolling brightness bar
+  scanlinesCurvature?: number;    // 0-1 CRT curvature warp
+  scanlinesInterlace?: number;    // 0-1 odd/even field flicker
 
-  // Pixelate
+  // Pixelate (hero — modes + grid + animated)
   pixelateSize?: number;          // 1-64
+  pixelateMode?: number;          // 0=square, 1=hex, 2=triangular, 3=voronoi
+  pixelateGrid?: number;          // 0-1 grid line overlay strength
+  pixelateAnimSpeed?: number;     // 0-2 animated size pulse speed
+  pixelateAnimAmount?: number;    // 0-1 animated size pulse amount
 
-  // Blur
-  blurRadius?: number;            // 0-20
+  // Blur (hero — modes/quality/edge protect)
+  blurRadius?: number;            // 0-30
+  blurMode?: number;              // 0=box, 1=gaussian, 2=motion, 3=bilateral
+  blurAngle?: number;             // 0-360 (motion direction)
+  blurQuality?: number;           // 0=low, 1=mid, 2=high
+  blurEdgeProtect?: number;       // 0-1 bilateral edge preservation
+  blurMix?: number;               // 0-1 wet/dry
 
-  // Sharpen
-  sharpenAmount?: number;         // 0-2
+  // Sharpen (hero — laplacian/unsharp + clarity)
+  sharpenAmount?: number;         // 0-3
+  sharpenMode?: number;           // 0=laplacian, 1=unsharp mask
+  sharpenRadius?: number;         // 1-8 unsharp radius
+  sharpenEdgeProtect?: number;    // 0-1 limit sharpening on flat areas
+  sharpenClarity?: number;        // 0-1 mid-tone contrast pop
 
-  // Noise
+  // Directional Blur (hero)
+  dirBlurAmount?: number;         // 0-1 normalized blur length
+  dirBlurAngle?: number;          // 0-360 degrees
+  dirBlurSamples?: number;        // 4-32
+  dirBlurFalloff?: number;        // 0-1
+  dirBlurCenterBias?: number;     // 0-1 keep center sharper
+  dirBlurMix?: number;            // 0-1
+
+  // Zoom Blur (hero)
+  zoomBlurAmount?: number;        // 0-1
+  zoomBlurCenterX?: number;       // 0-1
+  zoomBlurCenterY?: number;       // 0-1
+  zoomBlurSamples?: number;       // 4-32
+  zoomBlurFalloff?: number;       // 0-1
+  zoomBlurChromatic?: number;     // 0-1 RGB split during zoom
+  zoomBlurMix?: number;           // 0-1
+
+  // Radial Blur (hero — spin)
+  radialBlurAmount?: number;      // 0-1
+  radialBlurCenterX?: number;     // 0-1
+  radialBlurCenterY?: number;     // 0-1
+  radialBlurSamples?: number;     // 4-32
+  radialBlurFalloff?: number;     // 0-1
+  radialBlurRadiusInner?: number; // 0-1 unblurred inner radius
+  radialBlurRadiusOuter?: number; // 0-1 fully blurred outer radius
+  radialBlurMix?: number;         // 0-1
+
+  // Oil Paint (hero — bristle painterly)
+  oilPaintRadius?: number;        // 1-8 brush radius
+  oilPaintIntensity?: number;     // 4-32 quantization bins
+  oilPaintBrushLength?: number;   // 0-2 directional brush length
+  oilPaintBristle?: number;       // 0-1 bristle striations
+  oilPaintColorPunch?: number;    // 0-1 saturation pop
+  oilPaintHighlight?: number;     // 0-1 wet specular pop on bright bins
+  oilPaintMode?: number;          // 0=bin pick, 1=variance pick
+
+  // Watercolor (hero — bleed + edge darken + paper)
+  watercolorBleed?: number;       // 0-1 pigment bleed radius
+  watercolorEdgeDarken?: number;  // 0-1 sobel-driven edge darkening
+  watercolorPaperTexture?: number;// 0-1 paper noise strength
+  watercolorPaperScale?: number;  // 1-32 paper noise scale
+  watercolorWetness?: number;     // 0-1 colour saturation boost (wet pigment)
+  watercolorGranulation?: number; // 0-1 pigment granulation noise
+  watercolorPaperHue?: number;    // 0=cream, 1=cool grey, 2=tea-stain
+
+  // Noise (hero — multi-type generator + tonal weighting)
   noiseAmount?: number;           // 0-1
-  noiseType?: number;             // 0=static, 1=animated
+  noiseType?: number;             // 0=white, 1=blue, 2=value, 3=fbm, 4=cellular
+  noiseMode?: number;             // 0=overlay, 1=add, 2=multiply, 3=screen, 4=replace
+  noiseScale?: number;            // 0.5-32
+  noiseMono?: number;             // 0=RGB, 1=mono
+  noiseShadow?: number;           // 0-1 shadow zone amplitude
+  noiseMid?: number;              // 0-1 mid zone amplitude
+  noiseHigh?: number;             // 0-1 highlight zone amplitude
+  noiseAnimSpeed?: number;        // 0-2
 
-  // Kaleidoscope
-  kaleidoscopeSegments?: number;  // 2-16
+  // Kaleidoscope (hero)
+  kaleidoscopeSegments?: number;  // 2-32
   kaleidoscopeAngle?: number;     // 0-360
+  kaleidoscopeCenterX?: number;   // 0-1
+  kaleidoscopeCenterY?: number;   // 0-1
+  kaleidoscopeZoom?: number;      // 0.25-4
+  kaleidoscopeMode?: number;      // 0=mirror, 1=tile, 2=spiral
+  kaleidoscopeSpiral?: number;    // 0-2
+  kaleidoscopeAnimSpeed?: number; // 0-2 auto-rotate
+  kaleidoscopeMix?: number;       // 0-1
 
-  // Mirror
-  mirrorAxis?: number;            // 0=horizontal, 1=vertical, 2=both
+  // Mirror (hero)
+  mirrorMode?: number;            // 0=horizontal, 1=vertical, 2=quad, 3=diagonal
+  mirrorAxis?: number;            // legacy alias for backward compat
   mirrorPosition?: number;        // 0-1
+  mirrorOffset?: number;          // 0-1
+  mirrorFlipSide?: number;        // 0/1
+  mirrorMix?: number;             // 0-1
 
   // Plasma params
-  plasmaSpeed?: number;           // 0-2
-  plasmaScale?: number;           // 1-20
-  plasmaComplexity?: number;      // 1-5
-  plasmaPalette?: number;         // 0=rainbow, 1=fire, 2=ocean, 3=neon, 4=custom
+  plasmaSpeed?: number;
+  plasmaScale?: number;
+  plasmaComplexity?: number;
+  plasmaPalette?: number;         // 0..7
+  plasmaMode?: number;
+  plasmaBlendMode?: number;
+  plasmaMix?: number;
+  plasmaWarpAmount?: number;
+  plasmaAudioReact?: number;
 
-  // Posterize params (standalone)
-  posterizeLevels?: number;       // 2-32
+  // Posterize params (hero rewrite)
+  posterizeLevels?: number;       // 2-32 quantization levels per channel
+  posterizeDither?: number;       // 0-1 Bayer 4x4 ordered dither strength
+  posterizeAnimSpeed?: number;    // 0-2 animated level stepping speed (0 = static)
+  posterizePalette?: number;      // 0=free RGB, 1=comic, 2=thermal, 3=retro
 
-  // Edge Detection params
+  // Exposure params (hero rewrite — dedicated shader)
+  exposureStops?: number;         // -2..+2 photographic stops
+  exposureRollOff?: number;       // 0-1 highlight shoulder softness
+  exposureHighlightProtect?: number; // 0-1 reduce gain on bright pixels
+
+  // Gamma (hero) — three-zone gamma split
+  gammaShadows?: number;          // 0.2-3.0 shadow gamma
+  gammaMids?: number;             // 0.2-3.0 midtone gamma
+  gammaHighlights?: number;       // 0.2-3.0 highlight gamma
+  gammaMix?: number;              // 0-1 wet/dry
+
+  // Vibrance (hero) — skin/highlight protect, ceiling, negative
+  vibranceAmount?: number;        // -1..+1
+  vibranceSkinProtect?: number;   // 0-1
+  vibranceHighlightProtect?: number; // 0-1
+  vibranceCeiling?: number;       // 0-1 saturation clamp
+
+  // Temperature/Tint (hero) — split-tone + auto-cycle
+  tempTemperature?: number;       // -1..+1 cool to warm
+  tempTint?: number;              // -1..+1 green to magenta
+  tempShadow?: number;            // -1..+1 split-tone shadow temp
+  tempHighlight?: number;         // -1..+1 split-tone highlight temp
+  tempSplitTone?: number;         // 0-1 blend between simple temp and split
+  tempAutoCycle?: number;         // 0-1 auto temperature oscillation
+
+  // Color Balance (hero) — three-zone RGB
+  cbShadowR?: number;  cbShadowG?: number;  cbShadowB?: number;   // -1..+1 each
+  cbMidR?: number;     cbMidG?: number;     cbMidB?: number;
+  cbHighR?: number;    cbHighG?: number;    cbHighB?: number;
+  cbPreserveLuma?: number;        // 0-1 keep brightness stable
+  cbMix?: number;
+
+  // Curves (hero) — S-curve + toe + shoulder + black crush
+  curvesContrast?: number;        // 0-1 S-curve strength
+  curvesToe?: number;             // 0-1 lift dark end
+  curvesShoulder?: number;        // 0-1 soften bright end
+  curvesBlackCrush?: number;      // 0-1 crush below threshold
+  curvesMix?: number;
+
+  // Lift / Gamma / Gain (hero) — three-zone color wheels
+  lggLiftR?: number;  lggLiftG?: number;  lggLiftB?: number;     // -0.5..+0.5
+  lggGammaR?: number; lggGammaG?: number; lggGammaB?: number;    // 0.5..1.5
+  lggGainR?: number;  lggGainG?: number;  lggGainB?: number;     // 0.5..2.0
+  lggLumaOnly?: number;           // 0=color shifts, 1=luma-only
+  lggMix?: number;
+
+  // Filmic Tonemap (hero) — multi-curve selector
+  tonemapCurve?: number;          // 0=ACES, 1=Reinhard, 2=Hable, 3=Bleach, 4=Print, 5=Soft Clip
+  tonemapExposure?: number;       // 0.25-4.0 pre-tonemap gain
+  tonemapContrast?: number;       // 0-1 post S-curve
+  tonemapMix?: number;
+
+  // Selective Color (hero) — hue target picker, isolate/replace
+  selColorTargetHue?: number;     // 0-1 hue to target
+  selColorRange?: number;         // 0-1 hue band width
+  selColorFeather?: number;       // 0-1 edge softness
+  selColorMode?: number;          // 0=isolate (desat outside), 1=replace
+  selColorReplaceHue?: number;    // 0-1 destination hue for replace mode
+  selColorSatBoost?: number;      // 0-1 saturation boost on targeted pixels
+
+  // Thermal (hero) — extra params
+  thermalShimmer?: number;        // 0-1 heat-haze shimmer on hot pixels
+  thermalSensorNoise?: number;    // 0-1 rolling sensor noise
+
+  // Night Vision (hero) — extra params
+  nightVisionPhosphor?: number;   // 0=green, 1=amber, 2=white phosphor
+  nightVisionBloom?: number;      // 0-2 phosphor bloom strength
+  nightVisionScopeMask?: number;  // 0=off, 1=circle, 2=scope crosshairs
+  nightVisionRollingNoise?: number; // 0-1 horizontal rolling noise
+
+  // Edge Detection params (hero — color edges + tint + glow)
   edgeThreshold?: number;         // 0-1
   edgeThickness?: number;         // 0.5-3
-  edgeMode?: number;              // 0=sobel, 1=laplacian, 2=prewitt, 3=frei-chen
+  edgeMode?: number;              // 0=sobel, 1=laplacian, 2=prewitt, 3=frei-chen, 4=color
   edgeInvert?: number;            // 0=normal, 1=inverted
+  edgeTintR?: number;             // 0-1 edge tint colour
+  edgeTintG?: number;
+  edgeTintB?: number;
+  edgeTintEdges?: number;         // 0-1 mix tint over original edges
+  edgeGlow?: number;              // 0-1 edge glow falloff
+  edgeOnlyAlpha?: number;         // 0-1 only show edges (transparent elsewhere)
 
-  // Outline params
+  // Outline params (hero — inner/outer/both, crawl, glow falloff, alpha aware)
   outlineThickness?: number;      // 1-10
   outlineColor?: number[];        // RGB color
   outlineOnly?: number;           // 0=overlay, 1=outline only
   outlineGlow?: number;           // 0-1 glow amount
+  outlinePosition?: number;       // 0=inner, 1=outer, 2=both
+  outlineCrawl?: number;          // 0-1 marching-ants crawl speed
+  outlineGlowFalloff?: number;    // 0.1-4 glow falloff exponent
+  outlineAlphaAware?: number;     // 0-1 use alpha for edge detection
 
-  // Emboss params
+  // Emboss params (hero — relight + colored hi/lo + normal-map + metallic)
   embossStrength?: number;        // 0-2
   embossAngle?: number;           // 0-360
+  embossHeight?: number;          // 0-4 height field exaggeration
+  embossHighlightR?: number;      // 0-1 highlight tint
+  embossHighlightG?: number;
+  embossHighlightB?: number;
+  embossShadowR?: number;         // 0-1 shadow tint
+  embossShadowG?: number;
+  embossShadowB?: number;
+  embossNormalMode?: number;      // 0=relight, 1=normal map preview
+  embossMetallicness?: number;    // 0-1 specular punch
 
-  // Wave distortion params
+  // Halftone (hero — CMYK + dot shapes + drift)
+  halftoneDotSize?: number;       // 2-32 dot screen pixel size
+  halftoneDotShape?: number;      // 0=dot, 1=square, 2=line, 3=cross
+  halftoneAngleC?: number;        // 0-180 cyan screen angle
+  halftoneAngleM?: number;
+  halftoneAngleY?: number;
+  halftoneAngleK?: number;
+  halftoneMode?: number;          // 0=greyscale, 1=cmyk, 2=spot
+  halftoneDrift?: number;         // 0-2 animated screen drift speed
+  halftoneSpotColor?: number[];   // RGB tint for spot mode
+
+  // Toon (hero — quantization + outlines + shadow band)
+  toonSteps?: number;             // 2-12 luma quantization bands
+  toonOutline?: number;           // 0-2 outline thickness (sobel)
+  toonOutlineColor?: number[];    // RGB outline tint
+  toonShadowBand?: number;        // 0-1 dedicated shadow band darkness
+  toonRampSoftness?: number;      // 0-1 soften step transitions
+  toonColorPop?: number;          // 0-1 saturation pop in lit zones
+
+  // Kuwahara (hero — painterly oil paint smoothing)
+  kuwaharaRadius?: number;        // 1-8 quadrant radius
+  kuwaharaEdgeSharpness?: number; // 0-1 edge preservation strength
+  kuwaharaColorPunch?: number;    // 0-1 saturation boost
+
+  // CRT (hero)
+  crtScanlines?: number;          // 0-1
+  crtScanCount?: number;          // 100-1200
+  crtMask?: number;               // 0-1
+  crtMaskType?: number;           // 0=Trinitron, 1=Aperture grille, 2=Shadow mask
+  crtCurvature?: number;          // 0-1
+  crtVignette?: number;           // 0-1
+  crtGlow?: number;               // 0-1
+  crtRollingBar?: number;         // 0-1
+  crtChromatic?: number;          // 0-1
+
+  // Lens Distortion (hero)
+  lensDistAmount?: number;        // -1..1
+  lensDistMode?: number;          // 0=barrel, 1=pincushion, 2=mustache, 3=anamorphic
+  lensDistCenterX?: number;       // 0-1
+  lensDistCenterY?: number;       // 0-1
+  lensDistCubic?: number;         // -0.5..0.5
+  lensDistAnamorphicX?: number;   // 0.5-2
+  lensDistEdgeFade?: number;      // 0-1
+  lensDistChromaFringe?: number;  // 0-1
+
+  // Chroma Key (hero)
+  chromaKeyR?: number;            // 0-1 key colour
+  chromaKeyG?: number;
+  chromaKeyB?: number;
+  chromaKeyTolerance?: number;    // 0-1
+  chromaKeySoftness?: number;     // 0-1
+  chromaKeySpill?: number;        // 0-1
+  chromaKeyMatte?: number;        // 0/1 show matte
+  chromaKeyMode?: number;         // 0=hue, 1=YCbCr, 2=RGB
+
+  // Luma Key (hero)
+  lumaKeyLowCut?: number;         // 0-1
+  lumaKeyHighCut?: number;        // 0-1
+  lumaKeyInvert?: number;         // 0/1
+  lumaKeyGamma?: number;          // 0.2-3
+  lumaKeyMatte?: number;          // 0/1
+  lumaKeyPremultiply?: number;    // 0/1
+
+  // Difference Key (hero)
+  diffKeyR?: number;              // 0-1 reference colour
+  diffKeyG?: number;
+  diffKeyB?: number;
+  diffKeyTolerance?: number;      // 0-1
+  diffKeySoftness?: number;       // 0-1
+  diffKeyInvert?: number;         // 0/1
+  diffKeyMatte?: number;          // 0/1
+  diffKeyMode?: number;           // 0=Euclidean, 1=Manhattan, 2=Max channel
+
+  // Wave distortion params (hero — multi-waveform)
+  waveWaveform?: number;          // 0=sin, 1=triangle, 2=saw, 3=square
+  wavePhase?: number;             // 0-360
+  waveSecondary?: number;         // 0-1 second harmonic
+  waveChromaSplit?: number;       // 0-1 RGB phase shift
   waveAmplitude?: number;         // 0-50
-  waveFrequency?: number;         // 1-20
+  waveFrequency?: number;         // 1-30
   waveSpeed?: number;             // 0-2
   waveType?: number;              // 0=horizontal, 1=vertical, 2=radial
 
   // Fisheye params
-  fisheyeStrength?: number;       // -1 to 1 (negative = pincushion)
-  fisheyeRadius?: number;         // 0-1
+  // Fisheye (hero)
+  fisheyeStrength?: number;       // -1..1
+  fisheyeRadius?: number;         // 0.1-1
+  fisheyeCenterX?: number;        // 0-1
+  fisheyeCenterY?: number;        // 0-1
+  fisheyeZoom?: number;           // 0.5-2
+  fisheyeMode?: number;           // 0=spherize, 1=barrel, 2=pincushion
+  fisheyeChromaEdge?: number;     // 0-1
 
   // Thermal camera params
   thermalIntensity?: number;      // 0-2
@@ -2495,6 +2833,1013 @@ export interface EffectParams {
   nightVisionIntensity?: number;  // 0-2
   nightVisionNoise?: number;      // 0-1
   nightVisionVignette?: number;   // 0-1
+
+  // Tilt-Shift (hero — focus band + blur)
+  tiltShiftMode?: number;          // 0=horizontal, 1=vertical, 2=radial, 3=linear gradient
+  tiltShiftFocusY?: number;        // 0-1
+  tiltShiftFocusX?: number;        // 0-1
+  tiltShiftFocusBand?: number;     // 0-1 sharp band width
+  tiltShiftFalloff?: number;       // 0-1
+  tiltShiftMaxBlur?: number;       // 0-1
+  tiltShiftAngle?: number;         // 0-360 (linear gradient direction)
+  tiltShiftSaturation?: number;    // 0-2
+
+  // Defocus Bokeh (hero — disc kernel)
+  bokehRadius?: number;            // 0-30
+  bokehSamples?: number;           // 12-48
+  bokehBrightWeight?: number;      // 0-2 highlight punch
+  bokehThreshold?: number;         // 0-1
+  bokehChromaFringe?: number;      // 0-1
+  bokehShape?: number;             // 0=disc, 1=hex, 2=octagon
+  bokehRotation?: number;          // 0-360
+  bokehMix?: number;               // 0-1
+
+  // Chromatic Aberration (hero)
+  caAmount?: number;               // 0-1
+  caMode?: number;                 // 0=linear, 1=radial, 2=lens, 3=prism
+  caAngle?: number;                // 0-360
+  caCenterX?: number;              // 0-1
+  caCenterY?: number;              // 0-1
+  caEdgeFalloff?: number;          // 0-1
+  caMix?: number;                  // 0-1
+
+  // God Rays (hero)
+  godRaysIntensity?: number;       // 0-2
+  godRaysDecay?: number;           // 0.85-1.0
+  godRaysExposure?: number;        // 0.1-1
+  godRaysDensity?: number;         // 0-1
+  godRaysThreshold?: number;       // 0-1
+  godRaysCenterX?: number;         // 0-1
+  godRaysCenterY?: number;         // 0-1
+  godRaysSamples?: number;         // 16-128
+  godRaysTintR?: number;           // 0-1
+  godRaysTintG?: number;
+  godRaysTintB?: number;
+  godRaysMix?: number;             // 0-1
+
+  // Halation (hero)
+  halationAmount?: number;         // 0-2
+  halationRadius?: number;         // 1-30
+  halationThreshold?: number;      // 0-1
+  halationTintR?: number;          // 0-1
+  halationTintG?: number;
+  halationTintB?: number;
+  halationMode?: number;           // 0=screen, 1=add, 2=soft light
+  halationMix?: number;            // 0-1
+
+  // Anamorphic Streak (hero)
+  anaIntensity?: number;           // 0-2
+  anaLength?: number;              // 0-1
+  anaThreshold?: number;           // 0-1
+  anaTintR?: number;               // 0-1
+  anaTintG?: number;
+  anaTintB?: number;
+  anaAngle?: number;               // 0-180
+  anaSamples?: number;             // 16-64
+  anaMix?: number;                 // 0-1
+
+  // Lens Dirt (hero)
+  dirtAmount?: number;             // 0-1
+  dirtScale?: number;              // 1-32
+  dirtThreshold?: number;          // 0-1
+  dirtTintWarmth?: number;         // 0-1
+  dirtScratches?: number;          // 0-1
+  dirtSpots?: number;              // 0-1
+  dirtMode?: number;               // 0=screen, 1=add, 2=multiply
+  dirtAnimSpeed?: number;          // 0-1
+
+  // Diffusion / Promist (hero)
+  diffAmount?: number;             // 0-1
+  diffRadius?: number;             // 1-30
+  diffThreshold?: number;          // 0-1
+  diffShadowLift?: number;         // 0-1
+  diffHighlightBloom?: number;     // 0-1
+  diffHaze?: number;               // 0-1
+  diffHazeWarmth?: number;         // 0-1
+  diffMix?: number;                // 0-1
+
+  // Film Grain (hero — multi-stock)
+  grainAmount?: number;            // 0-1
+  grainSize?: number;              // 0.5-4
+  grainShadow?: number;            // 0-1 shadow zone amplitude
+  grainMid?: number;               // 0-1 mid zone amplitude
+  grainHigh?: number;              // 0-1 highlight zone amplitude
+  grainMono?: number;              // 0/1 mono vs RGB grain
+  grainStock?: number;             // 0=fine, 1=35mm, 2=16mm, 3=Super8
+  grainColorJitter?: number;       // 0-1 chroma noise
+  grainAnimSpeed?: number;         // 0-1 anim cadence
+
+  // Heat Haze (hero — animated displacement)
+  hazeAmount?: number;             // 0-1
+  hazeScale?: number;              // 1-32
+  hazeSpeed?: number;              // 0-3
+  hazeDirectionY?: number;         // -1..1
+  hazeTurbulence?: number;         // 0-1
+  hazeMode?: number;               // 0=heat, 1=underwater, 2=glass
+  hazeFocusY?: number;             // 0-1
+  hazeFocusBand?: number;          // 0-1
+
+  // Compression Artifacts (hero — block DCT)
+  compArtBlockSize?: number;       // 4-32
+  compArtQuality?: number;         // 0-1 (low=more artifacts)
+  compArtChromaSubsample?: number; // 0-1
+  compArtBlockNoise?: number;      // 0-1
+  compArtMode?: number;            // 0=DCT-style, 1=hard 8x8, 2=color banding
+  compArtMix?: number;             // 0-1
+
+  // Erode (hero)
+  erodeRadius?: number;            // 1-8
+  erodeShape?: number;             // 0=cross, 1=square, 2=circle
+  erodeChannel?: number;           // 0=luma, 1=R, 2=G, 3=B, 4=A
+  erodeMix?: number;               // 0-1
+
+  // Dilate (hero)
+  dilateRadius?: number;           // 1-8
+  dilateShape?: number;            // 0=cross, 1=square, 2=circle
+  dilateChannel?: number;          // 0=luma, 1=R, 2=G, 3=B, 4=A
+  dilateMix?: number;              // 0-1
+
+  // Displacement (hero — procedural noise)
+  dispAmount?: number;             // 0-1
+  dispScale?: number;              // 1-32
+  dispSpeed?: number;              // 0-3
+  dispMode?: number;               // 0=fbm, 1=cellular, 2=sine grid, 3=ripple
+  dispTurbulence?: number;         // 0-1
+  dispChromatic?: number;          // 0-1
+
+  // Twirl (hero)
+  twirlAngle?: number;             // radians
+  twirlRadius?: number;            // 0.05-1
+  twirlCenterX?: number;           // 0-1
+  twirlCenterY?: number;           // 0-1
+  twirlFalloff?: number;           // 0.5-4
+  twirlAnimSpeed?: number;         // 0-2
+  twirlMix?: number;               // 0-1
+
+  // Pinch / Bulge (hero)
+  pinchAmount?: number;            // -1..1
+  pinchRadius?: number;            // 0.1-1
+  pinchCenterX?: number;           // 0-1
+  pinchCenterY?: number;           // 0-1
+  pinchFalloff?: number;           // 0.5-4
+  pinchChromatic?: number;         // 0-1
+  pinchMix?: number;               // 0-1
+
+  // Polar Transform (hero)
+  polarMode?: number;              // 0=cart→polar, 1=polar→cart, 2=log polar
+  polarRotation?: number;          // 0-360
+  polarZoom?: number;              // 0.25-4
+  polarCenterX?: number;           // 0-1
+  polarCenterY?: number;           // 0-1
+  polarMix?: number;               // 0-1
+
+  // False Color (hero)
+  falseColorMode?: number;         // 0=DIT exposure, 1=zone heat, 2=Resolve, 3=histogram
+  falseColorMix?: number;          // 0-1
+  falseColorShowOriginal?: number; // 0-1
+  falseColorMidpoint?: number;     // 0-1
+  falseColorRange?: number;        // 0-0.5
+
+  // Shadow Recovery (hero)
+  shadowAmount?: number;           // 0-1
+  shadowThreshold?: number;        // 0-1
+  shadowSoftness?: number;         // 0-1
+  shadowColorRecovery?: number;    // 0-1
+  shadowHighlightProtect?: number; // 0-1
+  shadowMix?: number;              // 0-1
+
+  // Highlight Rolloff (hero)
+  highRolloffAmount?: number;      // 0-1
+  highRolloffThreshold?: number;   // 0-1
+  highRolloffSoftness?: number;    // 0-1
+  highRolloffPreserveHue?: number; // 0-1
+  highRolloffMaxValue?: number;    // 0.7-1.5
+  highRolloffMix?: number;         // 0-1
+
+  // ASCII (hero)
+  asciiCellSize?: number;          // 4-32
+  asciiContrast?: number;          // 0-2
+  asciiColorMix?: number;          // 0-1
+  asciiMode?: number;              // 0=density, 1=stipple, 2=block, 3=line
+  asciiInvert?: number;            // 0/1
+  asciiTintR?: number;             // 0-1
+  asciiTintG?: number;
+  asciiTintB?: number;
+
+  // Comic Ink (hero)
+  comicInkStrength?: number;       // 0-2
+  comicInkThreshold?: number;      // 0-1
+  comicInkPosterize?: number;      // 2-12
+  comicInkHalftone?: number;       // 0-1
+  comicInkHalftoneSize?: number;   // 2-16
+  comicInkColorMix?: number;       // 0-1
+  comicInkR?: number;
+  comicInkG?: number;
+  comicInkB?: number;
+
+  // Datamosh Lite (hero)
+  datamoshIntensity?: number;      // 0-1
+  datamoshBlockSize?: number;      // 4-32
+  datamoshSmear?: number;          // 0-1
+  datamoshChannelSplit?: number;   // 0-1
+  datamoshChaos?: number;          // 0-1
+  datamoshMode?: number;           // 0=horizontal, 1=any, 2=blocks-only
+
+  // Scanline Drift (hero)
+  scanDriftIntensity?: number;     // 0-1
+  scanDriftFrequency?: number;     // 1-200
+  scanDriftSpeed?: number;         // 0-3
+  scanDriftWaveform?: number;      // 0=sin, 1=noise, 2=sawtooth
+  scanDriftChromaSplit?: number;   // 0-1
+  scanDriftChunkiness?: number;    // 0-1
+
+  // Tape Dropout (hero)
+  tapeDropoutDensity?: number;     // 0-1
+  tapeDropoutLength?: number;      // 0-1
+  tapeDropoutColor?: number;       // 0=white, 1=mono, 2=glitch hue
+  tapeDropoutSpeed?: number;       // 0-3
+  tapeDropoutNoise?: number;       // 0-1
+  tapeDropoutMix?: number;         // 0-1
+
+  // Ripple Caustics (hero)
+  causticsIntensity?: number;      // 0-2
+  causticsScale?: number;          // 1-32
+  causticsSpeed?: number;          // 0-3
+  causticsRefraction?: number;     // 0-1
+  causticsTintR?: number;
+  causticsTintG?: number;
+  causticsTintB?: number;
+  causticsMode?: number;           // 0=overlay, 1=add, 2=screen
+
+  // Shockwave (hero)
+  shockTriggerTime?: number;
+  shockSpeed?: number;             // 0.1-3
+  shockAmplitude?: number;         // 0-0.2
+  shockRingWidth?: number;         // 0.01-0.5
+  shockCenterX?: number;
+  shockCenterY?: number;
+  shockChromatic?: number;         // 0-1
+  shockMode?: number;              // 0=looping, 1=one-shot
+
+  // Droste Recursive (hero)
+  drosteZoom?: number;             // 1.05-3
+  drosteRotation?: number;         // 0-360
+  drosteIterations?: number;       // 1-12
+  drosteOffsetX?: number;
+  drosteOffsetY?: number;
+  drosteFrameSize?: number;        // 0-0.5
+  drosteMix?: number;              // 0-1
+
+  // Slit Scan (hero)
+  slitScanIntensity?: number;      // 0-1
+  slitScanMode?: number;           // 0=horizontal, 1=vertical, 2=radial, 3=stretch
+  slitScanPattern?: number;        // 0=linear, 1=sine, 2=noise
+  slitScanSpeed?: number;          // 0-3
+  slitScanChromaSplit?: number;    // 0-1
+
+  // Volumetric Fog Overlay (hero)
+  fogDensity?: number;             // 0-1
+  fogScale?: number;               // 1-32
+  fogSpeed?: number;               // 0-2
+  fogHeightFalloff?: number;       // -1..1
+  fogDepthSim?: number;            // 0-1
+  fogColorR?: number;
+  fogColorG?: number;
+  fogColorB?: number;
+  fogTurbulence?: number;          // 0-1
+  fogMode?: number;                // 0=add, 1=mix, 2=subtract
+
+  // Rain/Fog/Snow Overlay (hero)
+  weatherType?: number;            // 0=rain, 1=snow, 2=mist, 3=embers
+  weatherDensity?: number;         // 0-1
+  weatherSpeed?: number;           // 0-3
+  weatherAngle?: number;           // -45..45
+  weatherSize?: number;            // 0.5-3
+  weatherFog?: number;             // 0-1
+  weatherColorR?: number;
+  weatherColorG?: number;
+  weatherColorB?: number;
+
+  // Particle Overlay (hero)
+  partMode?: number;               // 0=stars, 1=bokeh, 2=sparkles, 3=fireflies, 4=dust
+  partDensity?: number;            // 0-1
+  partSize?: number;               // 0.5-4
+  partSpeed?: number;              // 0-3
+  partTwinkle?: number;            // 0-1
+  partColorR?: number;
+  partColorG?: number;
+  partColorB?: number;
+  partBlend?: number;              // 0=add, 1=screen
+
+  // Glint Starburst (hero)
+  glintIntensity?: number;         // 0-2
+  glintThreshold?: number;         // 0-1
+  glintLength?: number;            // 0-1
+  glintPoints?: number;            // 4-12 (doubled)
+  glintRotation?: number;          // 0-360
+  glintColorR?: number;
+  glintColorG?: number;
+  glintColorB?: number;
+
+  // Emboss Relight (hero)
+  embRelStrength?: number;         // 0-3
+  embRelAngle?: number;            // 0-360
+  embRelHeight?: number;           // 0-4
+  embRelDetail?: number;           // 0-2
+  embRelSpecular?: number;         // 0-1
+  embRelColorPreserve?: number;    // 0-1
+  embRelAmbient?: number;          // 0-1
+
+  // Dot Matrix (hero)
+  dmDotSize?: number;              // 4-32
+  dmDotShape?: number;             // 0=circle, 1=square, 2=hex
+  dmGap?: number;                  // 0-1
+  dmPosterize?: number;            // 1-8
+  dmGlow?: number;                 // 0-1
+  dmBgR?: number;
+  dmBgG?: number;
+  dmBgB?: number;
+
+  // Matrix Rain (hero)
+  matrixDensity?: number;          // 0-1
+  matrixSpeed?: number;            // 0-3
+  matrixCellSize?: number;         // 6-32
+  matrixTrailLength?: number;      // 0-1
+  matrixColorR?: number;
+  matrixColorG?: number;
+  matrixColorB?: number;
+  matrixBgMix?: number;            // 0-1
+
+  // Binary Code (hero)
+  binDensity?: number;             // 0-1
+  binSpeed?: number;               // 0-3
+  binCellSize?: number;            // 6-32
+  binColorR?: number;
+  binColorG?: number;
+  binColorB?: number;
+  binBgMix?: number;               // 0-1
+  binContrast?: number;            // 0-2
+
+  // Crosshatch (hero)
+  hatchDensity?: number;           // 0-1 (lower=fewer lines)
+  hatchAngle?: number;             // 0-180
+  hatchLineWidth?: number;         // 0.5-4
+  hatchContrast?: number;          // 0-2
+  hatchPaperR?: number;
+  hatchPaperG?: number;
+  hatchPaperB?: number;
+  hatchInkR?: number;
+  hatchInkG?: number;
+  hatchInkB?: number;
+
+  // Block Mosaic (hero)
+  mosaicTileSize?: number;         // 8-64
+  mosaicMode?: number;             // 0=square, 1=voronoi, 2=hex, 3=brick
+  mosaicGrout?: number;            // 0-1
+  mosaicColorJitter?: number;      // 0-1
+  mosaicGroutR?: number;
+  mosaicGroutG?: number;
+  mosaicGroutB?: number;
+
+  // Tunnel Flight (hero)
+  tunnelSpeed?: number;            // 0-3
+  tunnelTwist?: number;            // 0-3
+  tunnelDepth?: number;            // 0.5-3
+  tunnelCenterX?: number;
+  tunnelCenterY?: number;
+  tunnelMode?: number;             // 0=cylinder, 1=funnel, 2=square
+  tunnelChromatic?: number;        // 0-1
+
+  // Infinite Mirror (hero)
+  infMirrorIterations?: number;    // 1-12
+  infMirrorShrink?: number;        // 0.5-0.95
+  infMirrorRotation?: number;      // 0-360
+  infMirrorTintFade?: number;      // 0-1
+  infMirrorHueShift?: number;      // 0-1
+  infMirrorMode?: number;          // 0=center, 1=offset
+  infMirrorOffsetX?: number;
+  infMirrorOffsetY?: number;
+
+  // Fractal Warp (hero)
+  fractalWarpAmount?: number;      // 0-1
+  fractalWarpScale?: number;       // 0.5-16
+  fractalWarpOctaves?: number;     // 2-6
+  fractalWarpSpeed?: number;       // 0-3
+  fractalWarpChromatic?: number;   // 0-1
+  fractalWarpMode?: number;        // 0=fbm, 1=ridged, 2=hybrid
+
+  // Crystal Refract (hero)
+  crystalScale?: number;           // 1-16
+  crystalRefraction?: number;      // 0-1
+  crystalSparkle?: number;         // 0-1
+  crystalEdgeGlow?: number;        // 0-1
+  crystalTintR?: number;
+  crystalTintG?: number;
+  crystalTintB?: number;
+  crystalMode?: number;            // 0=voronoi, 1=hex
+
+  // Fluid Distort (hero)
+  fluidDistAmount?: number;        // 0-1
+  fluidDistScale?: number;         // 1-16
+  fluidDistSpeed?: number;         // 0-3
+  fluidDistTurbulence?: number;    // 0-1
+  fluidDistMode?: number;          // 0=swirl, 1=push, 2=oil
+
+  // Wormhole (hero)
+  wormholePullStrength?: number;   // 0-1
+  wormholeRotation?: number;       // 0-3
+  wormholeCenterX?: number;
+  wormholeCenterY?: number;
+  wormholeTwist?: number;          // 0-3
+  wormholeChromatic?: number;      // 0-1
+  wormholeAnimSpeed?: number;      // 0-2
+
+  // Geometric Tile (hero)
+  geomTiles?: number;              // 1-16
+  geomMode?: number;               // 0=mirror, 1=rotate, 2=tile, 3=quilt
+  geomRotation?: number;           // 0-360
+  geomOffsetX?: number;            // 0-1
+  geomMix?: number;                // 0-1
+
+  // Motion Trails (hero)
+  motionTrailsLength?: number;     // 0-1
+  motionTrailsAngle?: number;      // 0-360
+  motionTrailsSamples?: number;    // 4-32
+  motionTrailsFalloff?: number;    // 0-1
+  motionTrailsChromaSplit?: number;// 0-1
+  motionTrailsMode?: number;       // 0=fade, 1=copy
+
+  // Echo Repeat (hero)
+  echoCount?: number;              // 1-12
+  echoOffsetX?: number;            // -0.5..0.5
+  echoOffsetY?: number;
+  echoDecay?: number;              // 0.5-0.95
+  echoHueShift?: number;           // 0-1
+  echoMode?: number;               // 0=add, 1=screen, 2=replace
+
+  // Ghost Double (hero)
+  ghostOpacity?: number;           // 0-1
+  ghostOffsetX?: number;
+  ghostOffsetY?: number;
+  ghostMirror?: number;            // 0/1
+  ghostTintR?: number;
+  ghostTintG?: number;
+  ghostTintB?: number;
+  ghostBlend?: number;             // 0=screen, 1=add, 2=multiply
+
+  // Strobe Flash (hero)
+  strobeRate?: number;             // 0.5-30 Hz
+  strobeDuty?: number;             // 0-1
+  strobeIntensity?: number;        // 0-2
+  strobeMode?: number;             // 0=on/off, 1=invert, 2=tint
+  strobeTintR?: number;
+  strobeTintG?: number;
+  strobeTintB?: number;
+
+  // Light Paint (hero — long-exposure)
+  lightPaintIntensity?: number;    // 0-2
+  lightPaintThreshold?: number;    // 0-1
+  lightPaintTrailLength?: number;  // 0-1
+  lightPaintFlowAngle?: number;    // 0-360
+  lightPaintFlowScale?: number;    // 1-16
+  lightPaintChromaShift?: number;  // 0-1
+  lightPaintTintR?: number;
+  lightPaintTintG?: number;
+  lightPaintTintB?: number;
+
+  // Recursive Echo (hero)
+  recEchoDepth?: number;           // 1-12
+  recEchoZoom?: number;            // 0.85-1.15
+  recEchoRotation?: number;        // 0-360
+  recEchoOpacity?: number;         // 0-1
+  recEchoHueShift?: number;        // 0-1
+  recEchoOffsetX?: number;
+  recEchoOffsetY?: number;
+  recEchoMode?: number;            // 0=zoom, 1=mirror, 2=spiral
+
+  // ── New Hero Effects (Batch A) ──
+
+  // Optical Flow Datamosh (hero — uses uFeedback)
+  ofdmIntensity?: number;          // 0-1
+  ofdmMotionScale?: number;        // 0-2
+  ofdmPersistence?: number;        // 0-1
+  ofdmChromaSplit?: number;        // 0-1
+  ofdmBlockSize?: number;          // 4-32
+  ofdmFreeze?: number;             // 0-1
+  ofdmMode?: number;               // 0=normal, 1=glitch, 2=smooth
+
+  // Flow Field Trails (hero)
+  fftFlowScale?: number;           // 0.5-16
+  fftTrailLength?: number;         // 0-1
+  fftSamples?: number;             // 8-64
+  fftSpeed?: number;               // 0-3
+  fftChromaSplit?: number;         // 0-1
+  fftContrast?: number;            // 0-2
+  fftMode?: number;                // 0=advect, 1=streak, 2=tendril
+  fftColorCycle?: number;          // 0-1
+
+  // Reaction Diffusion (hero — uses uFeedback)
+  rdFeedRate?: number;             // 0-0.1
+  rdKillRate?: number;             // 0-0.1
+  rdDiffusionA?: number;           // 0.5-1.5
+  rdDiffusionB?: number;           // 0.2-1
+  rdPatternScale?: number;         // 0.5-4
+  rdLumaMask?: number;             // 0-1
+  rdMode?: number;                 // 0=spots, 1=stripes, 2=mitosis, 3=coral
+  rdColorR?: number;
+  rdColorG?: number;
+  rdColorB?: number;
+  rdMix?: number;
+  rdReseed?: number;               // 0-1
+
+  // Neon Tube Trace (hero)
+  ntEdgeThreshold?: number;        // 0-1
+  ntTubeWidth?: number;            // 0.5-4
+  ntGlow?: number;                 // 0-2
+  ntGlowRadius?: number;           // 1-12
+  ntTintR?: number;
+  ntTintG?: number;
+  ntTintB?: number;
+  ntChase?: number;                // 0-1
+  ntChaseSpeed?: number;           // 0-3
+  ntFlicker?: number;              // 0-1
+  ntBg?: number;                   // 0=black, 1=keep, 2=darkened
+
+  // Depth Parallax (hero)
+  dpDepthStrength?: number;        // 0-1
+  dpPushIn?: number;               // 0-1
+  dpLayers?: number;               // 1-8
+  dpChromatic?: number;            // 0-1
+  dpDepthBoost?: number;           // 0-2
+  dpMode?: number;                 // 0=push, 1=pan, 2=swing
+  dpPanX?: number;                 // -1..1
+  dpPanY?: number;                 // -1..1
+
+  // Point Cloud Dissolve (hero)
+  pcdDissolve?: number;            // 0-1
+  pcdDotSize?: number;             // 1-12
+  pcdScatterRadius?: number;       // 0-1
+  pcdAttract?: number;             // 0-1
+  pcdTurbulence?: number;          // 0-1
+  pcdMode?: number;                // 0=square, 1=circle, 2=cross
+  pcdBgR?: number;
+  pcdBgG?: number;
+  pcdBgB?: number;
+  pcdHueShift?: number;            // 0-1
+
+  // Pixel Sand (hero — uses uFeedback)
+  psGravity?: number;              // 0-2
+  psTurbulence?: number;           // 0-1
+  psThreshold?: number;            // 0-1
+  psPersistence?: number;          // 0-1
+  psMode?: number;                 // 0=fall, 1=rise, 2=swirl
+  psReplenish?: number;            // 0-1
+  psChromaSplit?: number;          // 0-1
+  psGrainSize?: number;            // 1-6 grain pixel size
+
+  // Liquid Glass (hero)
+  lgBlobs?: number;                // 1-8
+  lgBlobSize?: number;             // 0.05-0.4
+  lgRefraction?: number;           // 0-1
+  lgChromatic?: number;            // 0-1
+  lgSpecular?: number;             // 0-1
+  lgCausticAmount?: number;        // 0-1
+  lgSpeed?: number;                // 0-3
+  lgTintR?: number;
+  lgTintG?: number;
+  lgTintB?: number;
+
+  // Hologram Scan (hero)
+  hsIntensity?: number;            // 0-1
+  hsScanFreq?: number;             // 50-500
+  hsScanSpeed?: number;            // 0-3
+  hsGridSpacing?: number;          // 4-32
+  hsRGBFlicker?: number;           // 0-1
+  hsBrokenBands?: number;          // 0-1
+  hsTintR?: number;
+  hsTintG?: number;
+  hsTintB?: number;
+  hsOpacityFlicker?: number;       // 0-1
+  hsEdgeGlow?: number;             // 0-1
+
+  // Laser Slice (hero — uses uFeedback)
+  lsMode?: number;                 // 0=h, 1=v, 2=diag, 3=radial
+  lsSpeed?: number;                // 0-3
+  lsBeamWidth?: number;            // 0.005-0.1
+  lsGlow?: number;                 // 0-2
+  lsSparks?: number;               // 0-1
+  lsEraseAmount?: number;          // 0-1
+  lsTintR?: number;
+  lsTintG?: number;
+  lsTintB?: number;
+  lsReveal?: number;               // 0=erase, 1=reveal
+  lsPersistence?: number;          // 0-1
+
+  // ── New Hero Effects (Batch B) ──
+
+  // Aura Field (hero)
+  afIntensity?: number;            // 0-2
+  afRadius?: number;               // 4-32
+  afEdgeAmount?: number;           // 0-1
+  afLumaAmount?: number;           // 0-1
+  afAudioReact?: number;           // 0-2
+  afHueShift?: number;             // 0-1
+  afTintR?: number;
+  afTintG?: number;
+  afTintB?: number;
+  afMode?: number;                 // 0=add, 1=screen, 2=replace
+
+  // Smoke Disintegrate (hero)
+  smokeAmount?: number;            // 0-1
+  smokeScale?: number;             // 0.5-16
+  smokeSpeed?: number;             // 0-3
+  smokeDirection?: number;         // 0-360
+  smokeEdgeFade?: number;          // 0-1
+  smokeColorR?: number;
+  smokeColorG?: number;
+  smokeColorB?: number;
+  smokeMode?: number;              // 0=top-down, 1=center-out, 2=fbm-driven
+
+  // Shimmer Cloth (hero)
+  clothAmplitude?: number;         // 0-1
+  clothFrequency?: number;         // 1-30
+  clothSpeed?: number;             // 0-3
+  clothThreadDensity?: number;     // 1-200
+  clothThreadDepth?: number;       // 0-1
+  clothShimmer?: number;           // 0-2
+  clothMode?: number;              // 0=horizontal, 1=plaid, 2=satin
+
+  // Glitch Quilt (hero)
+  gqTileSize?: number;             // 8-128
+  gqShuffleAmount?: number;        // 0-1
+  gqRotateAmount?: number;         // 0-1
+  gqDelayAmount?: number;          // 0-1
+  gqChromaSplit?: number;          // 0-1
+  gqTriggerRate?: number;          // 0-3
+  gqMode?: number;                 // 0=quilt, 1=swap, 2=mosh
+
+  // Cellular Automata Burn (hero)
+  caCellSize?: number;             // 1-8
+  caBirthThreshold?: number;       // 0-1
+  caSurvivalLow?: number;          // 0-8
+  caSurvivalHigh?: number;         // 0-8
+  caColorR?: number;
+  caColorG?: number;
+  caColorB?: number;
+  caMode?: number;                 // 0=Conway, 1=Brian's Brain, 2=Burn
+  caMix?: number;                  // 0-1
+
+  // Rorschach Mirror (hero)
+  rmMode?: number;                 // 0=v, 1=h, 2=both, 3=4-fold
+  rmInkAmount?: number;            // 0-1
+  rmFluidEdges?: number;           // 0-1
+  rmTintR?: number;
+  rmTintG?: number;
+  rmTintB?: number;
+  rmBgR?: number;
+  rmBgG?: number;
+  rmBgB?: number;
+  rmMixOriginal?: number;          // 0-1
+
+  // Spectral Prism Tunnel (hero)
+  sptTunnelDepth?: number;         // 0.5-3
+  sptPrismSpread?: number;         // 0-2
+  sptRotation?: number;            // 0-3
+  sptSpeed?: number;               // 0-3
+  sptSlices?: number;              // 4-32
+  sptFade?: number;                // 0-1
+
+  // LED Volume (hero)
+  ledVoxelSize?: number;           // 8-32
+  ledDepthPulse?: number;          // 0-1
+  ledDepthSpeed?: number;          // 0-3
+  ledPosterize?: number;           // 1-8
+  ledGlow?: number;                // 0-1
+  ledPerspective?: number;         // 0-1
+  ledMode?: number;                // 0=square, 1=round, 2=hex
+  ledBgR?: number;
+  ledBgG?: number;
+  ledBgB?: number;
+
+  // Poster Tear (hero)
+  ptTearAmount?: number;           // 0-1
+  ptTearAngle?: number;            // 0-360
+  ptTearJitter?: number;           // 0-1
+  ptShiftBelow?: number;           // 0-1
+  ptOffsetX?: number;              // -0.3..0.3
+  ptOffsetY?: number;              // -0.3..0.3
+  ptTearGlow?: number;             // 0-1
+  ptMode?: number;                 // 0=line, 1=arc, 2=rectangle
+
+  // Paint Peel (hero)
+  ppAmount?: number;               // 0-1
+  ppScale?: number;                // 1-16
+  ppLumaBias?: number;             // 0-1
+  ppCurl?: number;                 // 0-1
+  ppShadow?: number;               // 0-1
+  ppBgR?: number;
+  ppBgG?: number;
+  ppBgB?: number;
+  ppMode?: number;                 // 0=fbm, 1=cellular, 2=cracks
+
+  // ── New Hero Effects (Batch C) ──
+
+  // Audio Shock Bloom (hero — uses uAudio)
+  asbIntensity?: number;           // 0-2
+  asbBloomThreshold?: number;      // 0-1
+  asbBloomRadius?: number;         // 1-30
+  asbShockSpeed?: number;          // 0.1-3
+  asbShockAmplitude?: number;      // 0-0.2
+  asbChromaSplit?: number;         // 0-1
+  asbStrobeAmount?: number;        // 0-1
+  asbTintR?: number;
+  asbTintG?: number;
+  asbTintB?: number;
+  asbAudioGate?: number;           // 0-1
+
+  // VHS Full Deck (hero)
+  vhsFdTracking?: number;          // 0-1
+  vhsFdHeadSwitch?: number;        // 0-1
+  vhsFdChromaBleed?: number;       // 0-1
+  vhsFdDropouts?: number;          // 0-1
+  vhsFdTapeNoise?: number;         // 0-1
+  vhsFdScanlines?: number;         // 0-1
+  vhsFdColorBleed?: number;        // 0-1
+  vhsFdSaturation?: number;        // 0-1.5
+  vhsFdTrackingJump?: number;      // 0-1
+  vhsFdMode?: number;              // 0=clean, 1=worn, 2=destroyed
+
+  // Analog Feedback Rack (hero — uses uFeedback)
+  afrMix?: number;                 // 0-1
+  afrZoom?: number;                // 0.85-1.15
+  afrRotation?: number;            // -0.2..0.2
+  afrDecay?: number;               // 0-1
+  afrHueShift?: number;            // 0-1
+  afrMaskCenter?: number;          // 0-1
+  afrChromaSplit?: number;         // 0-1
+  afrOffsetX?: number;             // -0.1..0.1
+  afrOffsetY?: number;             // -0.1..0.1
+  afrMode?: number;                // 0=normal, 1=invert, 2=multiply
+
+  // Club Laser Grid (hero — uses uAudio)
+  clgIntensity?: number;           // 0-2
+  clgGridDensity?: number;         // 4-32
+  clgPerspective?: number;         // 0-1
+  clgSpeed?: number;               // 0-3
+  clgIntersectionGlow?: number;    // 0-1
+  clgLineWidth?: number;           // 0.5-4
+  clgTintR?: number;
+  clgTintG?: number;
+  clgTintB?: number;
+  clgAudioReact?: number;          // 0-2
+  clgMode?: number;                // 0=floor, 1=ceiling, 2=tunnel
+
+  // Mirror Shards (hero — uses uFeedback)
+  msShards?: number;               // 4-32
+  msShardSize?: number;            // 0.05-0.5
+  msRotation?: number;             // 0-360
+  msDelayAmount?: number;          // 0-1
+  msChromatic?: number;            // 0-1
+  msMode?: number;                 // 0=voronoi, 1=hex, 2=triangular
+
+  // Ghost Exposure (hero — uses uFeedback)
+  geExposure?: number;             // 0-1
+  geDecay?: number;                // 0-1
+  geHueShiftPerFrame?: number;     // 0-0.05
+  geIntensity?: number;            // 0-2
+  geMode?: number;                 // 0=add, 1=max, 2=screen
+  geClamp?: number;                // 0-1
+
+  // Thermal Contour (hero)
+  tcPalette?: number;              // 0=ironbow, 1=jet, 2=viridis, 3=inferno
+  tcContourCount?: number;         // 1-12
+  tcContourWidth?: number;         // 0.001-0.02
+  tcContourGlow?: number;          // 0-1
+  tcIntensity?: number;            // 0-2
+  tcTrackBlobs?: number;           // 0-1
+  tcMix?: number;                  // 0-1
+
+  // Dream Diffusion Look (hero)
+  ddBloomAmount?: number;          // 0-2
+  ddBloomRadius?: number;          // 1-30
+  ddHalation?: number;             // 0-1
+  ddChromaticBlur?: number;        // 0-1
+  ddPastelRolloff?: number;        // 0-1
+  ddShadowLift?: number;           // 0-0.5
+  ddSoftness?: number;             // 0-1
+  ddTintR?: number;
+  ddTintG?: number;
+  ddTintB?: number;
+
+  // Topo Warp (hero)
+  twContourCount?: number;         // 4-32
+  twContourWidth?: number;         // 0.001-0.05
+  twDisplacement?: number;         // 0-1
+  twChromaticEdge?: number;        // 0-1
+  twColorR?: number;
+  twColorG?: number;
+  twColorB?: number;
+  twShadowRidges?: number;         // 0-1
+  twMix?: number;                  // 0-1
+
+  // Strobe Sequencer (hero)
+  ssBPM?: number;                  // 30-240
+  ssSteps?: number;                // 4-16
+  ssPattern?: number;              // bitmask
+  ssMode?: number;                 // 0=on/off, 1=invert, 2=tint, 3=zoom
+  ssIntensity?: number;            // 0-2
+  ssTintR?: number;
+  ssTintG?: number;
+  ssTintB?: number;
+  ssSwing?: number;                // 0-0.5
+
+  // Terrain 3D (hero — added fade/source-mix)
+  terrainMode?: number;            // 0=opaque, 1=fade horizon, 2=blend source
+  terrainHeight?: number;          // 0-1
+  terrainCamHeight?: number;       // 0-1
+  terrainSpeed?: number;           // 0-1
+  terrainFog?: number;             // 0-1
+  terrainYaw?: number;             // radians
+  terrainPitch?: number;           // 0-1
+  terrainRoll?: number;            // 0-1
+  terrainFogR?: number;
+  terrainFogG?: number;
+  terrainFogB?: number;
+  terrainHorizonFade?: number;     // 0-1
+  terrainSourceMix?: number;       // 0-1
+
+  // Wrapped Terrain (sphere/cube/pyramid extrude)
+  wtShape?: number;                // 0=sphere, 1=cube, 2=pyramid
+  wtHeight?: number;               // 0-1 extrusion
+  wtRotateX?: number;              // 0-1
+  wtRotateY?: number;              // 0-1
+  wtAutoRotate?: number;           // 0-2
+  wtCamDistance?: number;          // 1-5
+  wtSpecular?: number;             // 0-1
+  wtAmbient?: number;              // 0-1
+  wtFogDistance?: number;          // 0-1
+  wtFogR?: number;
+  wtFogG?: number;
+  wtFogB?: number;
+  wtHorizonFade?: number;          // 0-1
+  wtSourceMix?: number;            // 0-1
+  wtTileScale?: number;            // 0.5-4
+
+  // ── Geometric 3D effects ──
+  // (every effect ships with audio hooks: soAudioBass / soAudioHigh / soAudioBeatPulse,
+  //  but these read from a shared uniform set — params below cover the visual params.)
+
+  // 1. String Orb
+  soRadius?: number;
+  soHeight?: number;
+  soLatCount?: number;
+  soLonCount?: number;
+  soDiagCount?: number;
+  soSlope?: number;
+  soWidth?: number;
+  soSpin?: number;
+  soTilt?: number;
+  soFlow?: number;
+  soIntensity?: number;
+  soGlow?: number;
+  soGlowR?: number;
+  soGlowG?: number;
+  soGlowB?: number;
+  soHorizonFade?: number;
+  soTileScale?: number;
+
+  // 2. Sphere Wireframe
+  swRadius?: number;
+  swHeight?: number;
+  swMeridians?: number;
+  swParallels?: number;
+  swWidth?: number;
+  swSpin?: number;
+  swTilt?: number;
+  swIntensity?: number;
+  swHaloGlow?: number;
+  swColorR?: number;
+  swColorG?: number;
+  swColorB?: number;
+  swHorizonFade?: number;
+  swFillSource?: number;
+  swTileScale?: number;
+
+  // 3. Voxel Cube Cluster
+  vccGridSize?: number;
+  vccCubeSize?: number;
+  vccSpacing?: number;
+  vccHeight?: number;
+  vccSpin?: number;
+  vccTilt?: number;
+  vccCamDistance?: number;
+  vccSpecular?: number;
+  vccAmbient?: number;
+  vccHorizonFade?: number;
+  vccBgR?: number;
+  vccBgG?: number;
+  vccBgB?: number;
+
+  // 4. Mobius Lattice
+  mlMajorR?: number;
+  mlRibbonW?: number;
+  mlTwists?: number;
+  mlSpin?: number;
+  mlTilt?: number;
+  mlLineDensity?: number;
+  mlLineWidth?: number;
+  mlIntensity?: number;
+  mlLineR?: number;
+  mlLineG?: number;
+  mlLineB?: number;
+  mlHorizonFade?: number;
+
+  // 5. Crystal Shard Field
+  csfShardCount?: number;
+  csfShardSize?: number;
+  csfSpread?: number;
+  csfChromaEdge?: number;
+  csfRefraction?: number;
+  csfSpin?: number;
+  csfIntensity?: number;
+  csfTintR?: number;
+  csfTintG?: number;
+  csfTintB?: number;
+  csfHorizonFade?: number;
+
+  // 6. Tube Lattice
+  tlTubeCount?: number;
+  tlTubeRadius?: number;
+  tlSpread?: number;
+  tlSpin?: number;
+  tlTilt?: number;
+  tlTwist?: number;
+  tlIntensity?: number;
+  tlRimR?: number;
+  tlRimG?: number;
+  tlRimB?: number;
+  tlHorizonFade?: number;
+
+  // 7. Disco Mirror Ball
+  dmbRadius?: number;
+  dmbFacetCount?: number;
+  dmbSpin?: number;
+  dmbTilt?: number;
+  dmbChaseSpeed?: number;
+  dmbChaseHueWidth?: number;
+  dmbSparkle?: number;
+  dmbIntensity?: number;
+  dmbHighlightR?: number;
+  dmbHighlightG?: number;
+  dmbHighlightB?: number;
+  dmbHorizonFade?: number;
+
+  // 8. Lissajous Knot
+  lkRatioX?: number;
+  lkRatioY?: number;
+  lkRatioZ?: number;
+  lkPhaseX?: number;
+  lkPhaseY?: number;
+  lkTubeRadius?: number;
+  lkScale?: number;
+  lkSpin?: number;
+  lkTilt?: number;
+  lkIntensity?: number;
+  lkTubeR?: number;
+  lkTubeG?: number;
+  lkTubeB?: number;
+  lkHorizonFade?: number;
+
+  // 9. Helix Particle Stream
+  hpsHelices?: number;
+  hpsHelixRadius?: number;
+  hpsTurns?: number;
+  hpsHeight?: number;
+  hpsTubeRadius?: number;
+  hpsRiseSpeed?: number;
+  hpsSpin?: number;
+  hpsTilt?: number;
+  hpsIntensity?: number;
+  hpsTintR?: number;
+  hpsTintG?: number;
+  hpsTintB?: number;
+  hpsHorizonFade?: number;
+
+  // 10. Donut Constellation
+  dcMajorR?: number;
+  dcMinorR?: number;
+  dcStarCount?: number;
+  dcStarSize?: number;
+  dcSpin?: number;
+  dcTilt?: number;
+  dcTintIntensity?: number;
+  dcTorusR?: number;
+  dcTorusG?: number;
+  dcTorusB?: number;
+  dcStarR?: number;
+  dcStarG?: number;
+  dcStarB?: number;
+  dcHorizonFade?: number;
 
   // Brightness/Contrast/Saturation/Hue (VJ mode simple effects)
   radius?: number;                // Generic radius param (blur in VJ)
@@ -2509,7 +3854,10 @@ export interface EffectParams {
   brightnessAmount?: number;      // -1 to 1
   contrastAmount?: number;        // -1 to 1
   saturationAmount?: number;      // -1 to 1
-  invertAmount?: number;          // 0 or 1
+  invertAmount?: number;          // 0-1 partial invert (1=full)
+  invertMode?: number;            // 0=RGB,1=luma,2=hue,3=strobe,4=threshold-above
+  invertThreshold?: number;       // 0-1 threshold for mode 4
+  invertStrobeRate?: number;      // 0-10 Hz strobe rate for mode 3
 
   // Plasma additional
   plasmaMix?: number;             // 0-1 plasma mix amount
@@ -2537,10 +3885,23 @@ export interface EffectParams {
   angle?: number;                 // Generic angle parameter
   centerX?: number;               // Generic center X
   centerY?: number;               // Generic center Y
-  red?: number;                   // Generic color grading red component
-  green?: number;                 // Generic color grading green component
-  blue?: number;                  // Generic color grading blue component
-  softness?: number;              // Generic softness parameter
+  red?: number;
+  green?: number;
+  blue?: number;
+  softness?: number;
+
+  // Bloom hero rewrite — dedicated multi-octave bloom shader
+  bloomIntensity?: number;
+  bloomKnee?: number;
+  bloomRadius?: number;
+  bloomAnamorphic?: number;
+
+  // Feedback Zoom hero rewrite — real previous-frame buffer
+  feedbackZoom?: number;
+  feedbackRotation?: number;
+  feedbackDecay?: number;
+  feedbackHueShift?: number;
+  feedbackMaskCenter?: number;
 
   // Blob Tracking params
   blobThreshold?: number;         // 0-1 luminance threshold for blob detection

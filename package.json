@@ -1,7 +1,17 @@
 {
-  "name": "ghost-arcade-gpu",
-  "version": "0.7.0-gpu.0",
-  "private": true,
+  "name": "ghost-arcade",
+  "version": "1.0.0",
+  "description": "Ghost Arcade — open-source projection mapping & VJ software with WebGPU acceleration, real-time effects, MIDI control, and a mobile companion.",
+  "license": "AGPL-3.0-only",
+  "homepage": "https://ghostarcade.live",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/riskcapital/ghost-arcade-gpu.git"
+  },
+  "bugs": {
+    "url": "https://github.com/riskcapital/ghost-arcade-gpu/issues"
+  },
+  "author": "Risk Capital Media LLC",
   "type": "module",
   "main": "electron/main.js",
   "scripts": {

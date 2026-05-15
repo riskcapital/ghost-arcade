@@ -15,12 +15,14 @@
   import { createLoop, type LoopProgress, type LoopTransitionType, LOOP_TRANSITIONS } from '../utils/videoLoop';
   import { downloadRecording } from '../recording/recorder';
   import { updateJSAnimationParams } from '../renderer/js-animation';
-  import { canUseFluidGen } from '../stores/license';
+  import { confirmDeleteIfSafeMode } from '../utils/safeMode';
+  // Tier-related imports removed — FluidGen plugin always available.
   import AIShaderGenerator from './AIShaderGenerator.svelte';
   import AIVideoGenerator from './AIVideoGenerator.svelte';
   import ShaderLibrary from './ShaderLibrary.svelte';
   import * as THREE from 'three';
   import { modulationStore, setParamModSource, setParamModAmount, setBaseValue, registerParamRanges, type ModSource, type ParamModulation } from '../audio/modulation';
+  import { mediaTrayShaders } from '../stores/mediaTrayShaders';
 
   // Module-level shader cache — survives component remounts
   const _win = window as any;
@@ -51,12 +53,7 @@
 
   // Apply an integrated plugin to the selected layer
   async function applyPluginToLayer(plugin: PluginManifest) {
-    // License gate
-    if (plugin.id === 'fluidgen' && !get(canUseFluidGen)) {
-      console.warn('[License] FluidGen requires Pro license');
-      return;
-    }
-
+    // No tier gate in OSS build — every plugin is available to everyone.
     await applySourceToTargetMediaLayers((layerId) => {
       const newSource: MediaSource = {
         id: `plugin-${plugin.id}-${layerId}-${Date.now()}`,
@@ -517,6 +514,27 @@
 
   // Shader library (not shared, local to this component)
   let shaders: ShaderItem[] = [];
+
+  // Mirror the local shaders list into a global store so the WS layer in
+  // App.svelte can sync the same list (with thumbnails) to the mobile
+  // companion. The mobile uses this list as the SOURCE OF TRUTH for its
+  // shader picker — no separate manifest fetch — so adds/removes here are
+  // reflected on the phone within one render frame. Excludes hidden
+  // shaders since users hide them precisely so they don't see them.
+  $: {
+    const visible = shaders.filter(s => !hiddenShaders.has(s.id));
+    mediaTrayShaders.set(visible.map(s => ({
+      id: s.id,
+      name: s.name,
+      // For library shaders the local `src` is `library-shader:<id>`; for
+      // catalog shaders it's `./ISF/...`. Both shapes are understood by
+      // the desktop's set_layer_source handler, so we pass them through
+      // unchanged. Mobile doesn't need to know the difference.
+      src: s.src,
+      thumbnail: s.thumbnail,
+      custom: !!(s.userAdded || s.cloudShader || s.aiGenerated),
+    })));
+  }
 
   // Selected shader for parameter editing
   let selectedShader: ShaderItem | null = null;
@@ -2242,11 +2260,11 @@
     }
   }
 
-  // Delete a shader from the library
-  function deleteFromLibrary(savedId: string) {
-    if (confirm('Are you sure you want to delete this from your library? This cannot be undone.')) {
-      shaderLibrary.removeShader(savedId);
-    }
+  // Delete a shader from the library. Safe Mode gates this with the
+  // in-app confirm popover.
+  async function deleteFromLibrary(savedId: string, event?: MouseEvent) {
+    if (!(await confirmDeleteIfSafeMode('this shader from your library', event))) return;
+    shaderLibrary.removeShader(savedId);
   }
 
   // Load a saved video from the persistent library into the session
@@ -2287,11 +2305,11 @@
     activeTab = 'videos';
   }
 
-  // Delete a saved video from the persistent library
-  function deleteSavedVideo(id: string) {
-    if (confirm('Delete this video from your library? This cannot be undone.')) {
-      videoLibrary.removeVideo(id);
-    }
+  // Delete a saved video from the persistent library. Safe Mode gates
+  // this with the in-app confirm popover.
+  async function deleteSavedVideo(id: string, event?: MouseEvent) {
+    if (!(await confirmDeleteIfSafeMode('this video from your library', event))) return;
+    videoLibrary.removeVideo(id);
   }
 
   // Saved video library state
@@ -2956,7 +2974,7 @@
                 <span class="library-desc" title={sv.prompt}>{sv.prompt}</span>
                 <div class="library-actions">
                   <button class="library-load-btn" onclick={() => loadSavedVideo(sv)} title="Load into session">Load</button>
-                  <button class="library-delete-btn" onclick={() => deleteSavedVideo(sv.id)} title="Delete from library">
+                  <button class="library-delete-btn" onclick={(e) => deleteSavedVideo(sv.id, e)} title="Delete from library">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
                     </svg>
@@ -3026,7 +3044,7 @@
                 <span class="library-desc" title={saved.description}>{saved.description}</span>
                 <div class="library-actions">
                   <button class="library-load-btn" onclick={() => loadFromLibrary(saved)} title="Load and add to active list">Load</button>
-                  <button class="library-delete-btn" onclick={() => deleteFromLibrary(saved.id)} title="Delete from library">
+                  <button class="library-delete-btn" onclick={(e) => deleteFromLibrary(saved.id, e)} title="Delete from library">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
                     </svg>
@@ -3091,7 +3109,11 @@
               {/if}
               <button
                 class="remove-btn"
-                onclick={(e) => { e.stopPropagation(); removeJSAnimation(item.id); }}
+                onclick={async (e) => {
+                  e.stopPropagation();
+                  if (!(await confirmDeleteIfSafeMode(`"${item.name ?? 'this animation'}" from the library`, e))) return;
+                  removeJSAnimation(item.id);
+                }}
                 title="Remove from library"
               >
                 x
@@ -3300,7 +3322,12 @@
                 {/if}
                 <button
                   class="remove-btn"
-                  onclick={(e) => { e.stopPropagation(); removeItem(item); }}
+                  onclick={async (e) => {
+                    e.stopPropagation();
+                    const name = ('name' in item ? item.name : 'this item') || 'this item';
+                    if (!(await confirmDeleteIfSafeMode(`"${name}" from the tray`, e))) return;
+                    removeItem(item);
+                  }}
                   title="Remove from tray"
                 >
                   x
@@ -3337,7 +3364,11 @@
           </div>
         {:else}
           {#if activeFolderId && selectedTrayItemIds.length > 0}
-            <button class="ctx-btn" onclick={() => removeItemsFromFolder(activeFolderId!, selectedTrayItemIds)}>
+            <button class="ctx-btn" onclick={async (e) => {
+              const n = selectedTrayItemIds.length;
+              if (!(await confirmDeleteIfSafeMode(`${n} ${n === 1 ? 'item' : 'items'} from this folder`, e))) return;
+              removeItemsFromFolder(activeFolderId!, selectedTrayItemIds);
+            }}>
               Remove from Folder ({selectedTrayItemIds.length})
             </button>
             <div class="ctx-sep"></div>
@@ -3384,7 +3415,13 @@
           <button class="ctx-btn" onclick={() => renameFolder(folderContextMenuId!)}>
             Rename Folder
           </button>
-          <button class="ctx-btn ctx-btn-danger" onclick={() => { deleteFolder(folderContextMenuId!); closeFolderContextMenu(); }}>
+          <button class="ctx-btn ctx-btn-danger" onclick={async (e) => {
+            const folder = mediaFolders.find(f => f.id === folderContextMenuId);
+            const id = folderContextMenuId!;
+            closeFolderContextMenu();
+            if (!(await confirmDeleteIfSafeMode(`folder "${folder?.name ?? 'this folder'}"`, e))) return;
+            deleteFolder(id);
+          }}>
             Delete Folder
           </button>
         {/if}

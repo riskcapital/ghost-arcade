@@ -20,7 +20,7 @@ import { spawn, fork, execSync } from 'child_process';
 import { createRequire } from 'module';
 import fs from 'fs';
 import net from 'net';
-import * as license from './license.js';
+// License system removed in OSS build — see src/lib/stores/license.ts.
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1647,12 +1647,8 @@ function registerIpcHandlers() {
     ipcMain.handle(cmd, () => { throw new Error('Native renderer not available in Electron mode'); });
   }
 
-  // --- License system ---
-  ipcMain.handle('license_get_machine_id', () => license.getMachineId());
-  ipcMain.handle('license_get_status', () => license.getStatus());
-  ipcMain.handle('license_activate', (_, { licenseKey }) => license.activate(licenseKey));
-  ipcMain.handle('license_deactivate', () => license.deactivate());
-  ipcMain.handle('license_validate_online', () => license.validateOnline());
+  // License IPC removed in OSS build — every install is unlocked, no
+  // activation, no machine fingerprinting, no online validation.
 
   // --- Error reporting to ghostarcade.live ---
   const ERROR_REPORT_URL = 'https://ghostarcade.live/api/error-report';
@@ -1694,14 +1690,11 @@ function registerIpcHandlers() {
       const { error, stack, context, severity } = args || {};
       if (!error) return { queued: false };
 
-      // Get license info for linking
-      let licenseKey = null;
-      let machineId = null;
-      try {
-        const status = await license.getStatus();
-        licenseKey = status?.licenseKey || null;
-        machineId = await license.getMachineId();
-      } catch {}
+      // OSS build has no license / machine ID — leave both null in the
+      // crash report so any self-hosted error endpoint can still parse the
+      // payload shape but won't get user-identifying data.
+      const licenseKey = null;
+      const machineId = null;
 
       const report = {
         licenseKey,

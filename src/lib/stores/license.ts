@@ -1,11 +1,27 @@
-// License Store
-// Manages license tier, feature gates, and periodic validation
+/**
+ * License store — stubbed for the open-source release.
+ *
+ * Ghost Arcade is now a single product, free, AGPL-3.0. There are no
+ * tiers, no watermarks, no activation, no online validation.
+ *
+ * This file used to manage a four-tier license system with periodic
+ * server validation, machine fingerprinting, and grace-period downgrade.
+ * All of that infrastructure has been ripped out. The exports below are
+ * preserved so existing import sites continue to compile — every gate
+ * returns `true` / `Infinity`, no IPC ever fires, and `hasWatermark` is
+ * permanently `false`.
+ *
+ * If you're forking this for a commercial release (e.g. the houses-of-
+ * worship spin-off), this is the right place to re-introduce gating —
+ * change the `licenseTier` writable to whatever your tier model needs
+ * and the `canUse*` derived stores will pick it up automatically.
+ */
 
-import { writable, derived, get } from 'svelte/store';
-import { invoke, isDesktopApp } from '$lib/bridge';
+import { writable, derived } from 'svelte/store';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
-
+// `LicenseTier` is kept as a string union for source compatibility, but
+// `'pro'` is the only value we ever hand out now.
 export type LicenseTier = 'demo' | 'starter' | 'pro' | 'enterprise';
 
 export interface LicenseStatus {
@@ -20,178 +36,76 @@ export interface LicenseStatus {
   grace_expired: boolean;
 }
 
-const DEFAULT_STATUS: LicenseStatus = {
-  tier: 'demo',
+const ALWAYS_PRO_STATUS: LicenseStatus = {
+  tier: 'pro',
   user_email: null,
   license_id: null,
   expires_at: null,
-  is_perpetual: false,
-  machine_id: '',
-  days_until_check_required: 0,
+  is_perpetual: true,
+  machine_id: 'oss',
+  days_until_check_required: Number.POSITIVE_INFINITY,
   grace_warning: false,
   grace_expired: false,
 };
 
-// ─── Core Store ──────────────────────────────────────────────────────────────
+// ─── Core Stores ─────────────────────────────────────────────────────────────
 
-export const licenseStatus = writable<LicenseStatus>(DEFAULT_STATUS);
+export const licenseStatus = writable<LicenseStatus>(ALWAYS_PRO_STATUS);
 export const licenseLoading = writable(false);
 export const licenseError = writable<string | null>(null);
 
-// ─── Derived Feature Gate Stores ─────────────────────────────────────────────
+// ─── Derived gates — all unlocked, watermark always off ──────────────────────
 
-export const licenseTier = derived(licenseStatus, $s => $s.tier);
+export const licenseTier = derived(licenseStatus, () => 'pro' as LicenseTier);
+export const hasWatermark = derived(licenseStatus, () => false);
+export const maxLayers = derived(licenseStatus, () => Number.POSITIVE_INFINITY);
 
-export const hasWatermark = derived(licenseTier, $t => $t === 'demo');
+export const canUsePremiumEffects = derived(licenseStatus, () => true);
+export const canUseProPackEffects = derived(licenseStatus, () => true);
+export const canUseSpout = derived(licenseStatus, () => true);
+export const canUseFluidGen = derived(licenseStatus, () => true);
+export const canUseParticles3D = derived(licenseStatus, () => true);
+export const canUseThreeJS = derived(licenseStatus, () => true);
+export const canUseP5JS = derived(licenseStatus, () => true);
+export const canUseOwnAPIKeys = derived(licenseStatus, () => true);
+export const canUseMIDIEdit = derived(licenseStatus, () => true);
+export const canUseVJSlicing = derived(licenseStatus, () => true);
+export const canUseVideoExport = derived(licenseStatus, () => true);
 
-export const maxLayers = derived(licenseTier, $t => Infinity);
+export const maxOutputSlices = derived(licenseStatus, () => Number.POSITIVE_INFINITY);
+export const canUseOutputSlices = derived(licenseStatus, () => true);
 
-// Demo-friendly: all features unlocked; watermark is the ONLY distinction.
-const isPro = ($t: LicenseTier) => true;
+export const graceWarning = derived(licenseStatus, () => false);
+export const graceExpired = derived(licenseStatus, () => false);
 
-// Effect access: everything available to everyone — watermark is the only gate.
-export const canUsePremiumEffects = derived(licenseTier, () => true);
-export const canUseProPackEffects = derived(licenseTier, () => true);
-export const canUseSpout = derived(licenseTier, () => true);
-export const canUseFluidGen = derived(licenseTier, () => true);
-export const canUseParticles3D = derived(licenseTier, () => true);
-export const canUseThreeJS = derived(licenseTier, () => true);
-export const canUseP5JS = derived(licenseTier, () => true);
-export const canUseOwnAPIKeys = derived(licenseTier, () => true);
-export const canUseMIDIEdit = derived(licenseTier, () => true);
-export const canUseVJSlicing = derived(licenseTier, () => true);
-export const canUseVideoExport = derived(licenseTier, () => true);
+// ─── No-op actions (kept for source compatibility) ───────────────────────────
 
-// Multi-output slices: fully unlocked regardless of tier
-export const maxOutputSlices = derived(licenseTier, () => Infinity);
-export const canUseOutputSlices = derived(licenseTier, () => true);
-
-// Grace period warnings
-export const graceWarning = derived(licenseStatus, $s => $s.grace_warning);
-export const graceExpired = derived(licenseStatus, $s => $s.grace_expired);
-
-// ─── Dev Tier Override (browser dev mode only) ──────────────────────────────
-
-/** Set a dev tier override (browser dev mode only). Persists to localStorage. */
-export function setDevTierOverride(tier: LicenseTier): void {
-  if (isDesktopApp) return; // No-op in Tauri builds
-  try { localStorage.setItem('sw-dev-tier', tier); } catch {}
-  licenseStatus.update(s => ({ ...s, tier }));
+/** Dev tier override is a no-op in the OSS build. */
+export function setDevTierOverride(_tier: LicenseTier): void {
+  /* no-op — everyone is 'pro' now */
 }
 
-/** Read persisted dev tier override from localStorage */
-function getDevTierOverride(): LicenseTier {
-  try {
-    const saved = localStorage.getItem('sw-dev-tier');
-    if (saved === 'demo' || saved === 'starter' || saved === 'pro' || saved === 'enterprise') return saved;
-  } catch {}
-  return 'pro'; // Default dev mode tier
-}
-
-// ─── Actions ─────────────────────────────────────────────────────────────────
-
-let validationInterval: ReturnType<typeof setInterval> | null = null;
-
-/** Initialize license system on app startup */
+/** Initialize the license system. No-op in the OSS build. */
 export async function initLicense(): Promise<void> {
-  if (!isDesktopApp) {
-    // Running in browser (dev mode) — use persisted tier override
-    const devTier = getDevTierOverride();
-    licenseStatus.set({
-      ...DEFAULT_STATUS,
-      tier: devTier,
-      machine_id: 'dev-mode',
-    });
-    return;
-  }
-
-  licenseLoading.set(true);
-  licenseError.set(null);
-
-  try {
-    const status = await invoke<LicenseStatus>('license_get_status');
-    licenseStatus.set(status);
-
-    if (status.grace_warning) {
-      console.warn(`[License] Grace period warning: online check required within ${30 - (7 - status.days_until_check_required)} days`);
-    }
-
-    // Attempt background online validation
-    tryOnlineValidation();
-
-    // Set up periodic validation every 4 hours
-    if (validationInterval) clearInterval(validationInterval);
-    validationInterval = setInterval(() => {
-      tryOnlineValidation();
-    }, 4 * 60 * 60 * 1000);
-
-  } catch (err: any) {
-    console.error('[License] Failed to get license status:', err);
-    licenseError.set(err?.message || 'Failed to check license');
-    // Fall back to demo
-    licenseStatus.set(DEFAULT_STATUS);
-  } finally {
-    licenseLoading.set(false);
-  }
+  licenseStatus.set(ALWAYS_PRO_STATUS);
 }
 
-/** Try to validate online (silent, non-blocking) */
-async function tryOnlineValidation(): Promise<void> {
-  if (!isDesktopApp) return;
-
-  const status = get(licenseStatus);
-  if (!status.license_id) return; // No license to validate
-
-  try {
-    const freshStatus = await invoke<LicenseStatus>('license_validate_online');
-    licenseStatus.set(freshStatus);
-  } catch {
-    // Silent failure — grace period handles offline scenarios
-  }
+/** Activate a license key. No-op in the OSS build. */
+export async function activateLicense(_licenseKey: string): Promise<void> {
+  /* no-op — no activation needed */
 }
 
-/** Activate a license key */
-export async function activateLicense(licenseKey: string): Promise<void> {
-  licenseLoading.set(true);
-  licenseError.set(null);
-
-  try {
-    const status = await invoke<LicenseStatus>('license_activate', { licenseKey });
-    licenseStatus.set(status);
-  } catch (err: any) {
-    licenseError.set(err?.message || err || 'Activation failed');
-    throw err;
-  } finally {
-    licenseLoading.set(false);
-  }
-}
-
-/** Deactivate license on this machine */
+/** Deactivate license on this machine. No-op in the OSS build. */
 export async function deactivateLicense(): Promise<void> {
-  licenseLoading.set(true);
-  licenseError.set(null);
-
-  try {
-    await invoke('license_deactivate');
-    licenseStatus.set({ ...DEFAULT_STATUS, machine_id: get(licenseStatus).machine_id });
-  } catch (err: any) {
-    licenseError.set(err?.message || err || 'Deactivation failed');
-    throw err;
-  } finally {
-    licenseLoading.set(false);
-  }
+  /* no-op — nothing to deactivate */
 }
 
-/** Get this machine's hardware fingerprint */
+/** Get this machine's hardware fingerprint. Returns a stable placeholder. */
 export async function getMachineId(): Promise<string> {
-  if (!isDesktopApp) return 'dev-mode';
-  return invoke<string>('license_get_machine_id');
+  return 'oss';
 }
 
-/** Cleanup on app teardown */
+/** Cleanup on app teardown. No-op in the OSS build. */
 export function destroyLicense(): void {
-  if (validationInterval) {
-    clearInterval(validationInterval);
-    validationInterval = null;
-  }
+  /* no-op */
 }
