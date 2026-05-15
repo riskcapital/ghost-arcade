@@ -1346,37 +1346,13 @@
         </section>
         {/if}
 
-        <!-- ── Experimental: WebRTC output transport ─────────────────────
-          Replaces the legacy state-sync output window with a presentation-
-          only `<video srcObject>` fed by `canvas.captureStream(60)` over
-          a same-process WebRTC peer. Single-renderer architecture: editor
-          renders, output displays. Eliminates the dual-decoder drift +
-          drag-freeze the Pro output has had. Off by default until the
-          success-criteria sweep (1080p60/4K60/latency/no shift/etc.)
-          lands clean on real hardware. -->
-        <section class="settings-section">
-          <h3>Experimental</h3>
-          <div class="setting-row">
-            <label class="setting-label">
-              <input
-                type="checkbox"
-                checked={$settings.experimental?.outputWebRTC ?? false}
-                onchange={(e) => settings.update(s => ({
-                  ...s,
-                  experimental: { ...(s.experimental ?? { webgpuPilot: false, outputWebRTC: false }), outputWebRTC: (e.currentTarget as HTMLInputElement).checked },
-                }))}
-              />
-              <span>WebRTC output transport (experimental)</span>
-            </label>
-            <p class="section-hint">
-              Output window becomes a presentation-only `&lt;video&gt;` fed
-              by the editor's canvas via same-process WebRTC. Eliminates
-              cross-window sync drift + drag-freeze. Toggle takes effect
-              the next time you open the output window. Append `?stats=1`
-              to the output URL for the diagnostics overlay.
-            </p>
-          </div>
-        </section>
+        <!-- The standalone "Experimental: WebRTC output transport" toggle
+             that used to live here was removed — WebRTC is the default
+             output transport now (and WebGPU zero-copy supersedes it
+             when GPU acceleration is enabled in Performance → GPU
+             Acceleration). The underlying $settings.experimental.outputWebRTC
+             field is still in the store for the runtime selector but
+             is no longer user-toggleable from the UI. -->
 
         {:else if activeTab === 'performance'}
         <!-- Performance Tab — opt-in knobs for users on weaker hardware.

@@ -9,15 +9,13 @@
   } from '../effects/customEffects';
   // licenseTier + canAccessEffect + getTierBadgeLabel imports removed —
   // every effect is unlocked in OSS build.
-  import { isWebGPUSupported } from '../renderer/webgpuCapability';
+  import { webgpuSupportedStore } from '../renderer/webgpuCapability';
   import { get } from 'svelte/store';
 
-  // WebGPU capability snapshot. We use the synchronous check (which reads
-  // the cached probe result) so the picker can hide GPU-only effects on
-  // browsers without WebGPU support without flickering. The async probe
-  // runs once at app startup; by the time this modal opens the cache is
-  // warm.
-  const webgpuAvailable = isWebGPUSupported();
+  // WebGPU capability — reactive store, NOT a snapshot. The probe is
+  // async and may not have resolved by the time this modal first
+  // mounts; subscribing to the store means GPU-only effects appear
+  // the instant the probe lands without needing to remount the modal.
 
   interface Props {
     open: boolean;
@@ -90,11 +88,13 @@
   // Combine built-in + custom, with custom effects grouped under "Custom" category.
   // Entries that require WebGPU are filtered out on devices without WebGPU
   // support so they never appear in the picker (per "Hide entirely" UX choice
-  // — no point teasing an effect that can't run).
+  // — no point teasing an effect that can't run). Subscribes to
+  // $webgpuSupportedStore so the list updates as soon as the async probe
+  // resolves, instead of being frozen to the value at component-mount time.
   const combinedCatalog = $derived<EffectCatalogEntry[]>([
     ...customEntries.map((c) => ({ ...c, category: 'Custom' })),
     ...EFFECT_CATALOG,
-  ].filter((entry) => !entry.requiresWebGPU || webgpuAvailable));
+  ].filter((entry) => !entry.requiresWebGPU || $webgpuSupportedStore));
 
   // All categories (Custom first if present, then built-in order).
   // Drop categories that ended up empty after capability filtering — e.g.

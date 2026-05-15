@@ -36,9 +36,53 @@
  * params above are set. Production users see no behavior change.
  */
 
+import { writable, type Writable } from 'svelte/store';
+
 let _cachedSupport: boolean | null = null;
 let _cachedInfo: WebGPUInfo | null = null;
 let _probePromise: Promise<boolean> | null = null;
+
+/**
+ * Reactive store that mirrors `_cachedSupport` so Svelte components can
+ * subscribe and re-render when the probe completes asynchronously.
+ *
+ * Why this exists: `isWebGPUSupported()` is a synchronous function — when
+ * components call it at component-init time (e.g. EffectPickerModal,
+ * LayerPanel) the probe may not have finished yet, so they get back
+ * `false` and hide the GPU-only features (gpuFluidSim, GPU Shader layer
+ * button, etc.). The local snapshot then never updates, even after the
+ * probe lands — the UI stays stuck saying "no WebGPU here" on machines
+ * that actually support it.
+ *
+ * Components should subscribe to `$webgpuSupportedStore` instead of
+ * snapshotting `isWebGPUSupported()` so they re-render the moment the
+ * probe resolves.
+ *
+ * URL overrides honored at module-load: `?webgpu-disable=1` initializes
+ * the store to false; `?webgpu-force=1` initializes it to true.
+ */
+export const webgpuSupportedStore: Writable<boolean> = writable(false);
+
+// Honor `?webgpu-force=1` immediately so subscribers see `true` even
+// before the probe runs (the URL override path skips the probe).
+// `?webgpu-disable=1` keeps the default `false`.
+// (URL_PARAMS is read once at module load further down — guarded by
+// a typeof check so this file remains import-safe in non-browser test
+// environments.)
+if (typeof window !== 'undefined') {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('webgpu-force') !== null && params.get('webgpu-disable') === null) {
+      webgpuSupportedStore.set(true);
+    }
+  } catch { /* ignore */ }
+}
+
+/** Single setter — keeps `_cachedSupport` and the store in lockstep. */
+function setCachedSupport(v: boolean | null): void {
+  _cachedSupport = v;
+  webgpuSupportedStore.set(v === true);
+}
 
 export interface WebGPUInfo {
   /** Whether the probe succeeded. */
@@ -127,7 +171,7 @@ export function isWebGPUSupported(): boolean {
  */
 export async function probeWebGPU(): Promise<boolean> {
   if (DISABLE_OVERRIDE) {
-    _cachedSupport = false;
+    setCachedSupport(false);
     _cachedInfo = { ...DISABLED, failReason: '?webgpu-disable URL override' };
     return false;
   }
@@ -136,7 +180,7 @@ export async function probeWebGPU(): Promise<boolean> {
 
   _probePromise = (async () => {
     if (typeof navigator === 'undefined' || !(navigator as any).gpu) {
-      _cachedSupport = false;
+      setCachedSupport(false);
       _cachedInfo = { ...DISABLED, failReason: 'navigator.gpu undefined' };
       return false;
     }
@@ -152,7 +196,7 @@ export async function probeWebGPU(): Promise<boolean> {
       // `powerPreference: 'high-performance'`.
       const adapter = await gpu.requestAdapter({ powerPreference: 'high-performance' });
       if (!adapter) {
-        _cachedSupport = false;
+        setCachedSupport(false);
         _cachedInfo = { ...DISABLED, failReason: 'requestAdapter returned null' };
         return false;
       }
@@ -169,7 +213,7 @@ export async function probeWebGPU(): Promise<boolean> {
           set.forEach((f: string) => features.push(f));
         }
       } catch { /* */ }
-      _cachedSupport = true;
+      setCachedSupport(true);
       _cachedInfo = {
         supported: true,
         vendor: info?.vendor ?? null,
@@ -183,7 +227,7 @@ export async function probeWebGPU(): Promise<boolean> {
       };
       return true;
     } catch (e: any) {
-      _cachedSupport = false;
+      setCachedSupport(false);
       _cachedInfo = { ...DISABLED, failReason: `requestAdapter threw: ${e?.message || e}` };
       return false;
     } finally {
@@ -210,7 +254,7 @@ export function getWebGPUInfo(): WebGPUInfo {
  * different mocks. URL overrides still take effect on the next read.
  */
 export function _resetWebGPUCapabilityForTesting(): void {
-  _cachedSupport = null;
+  setCachedSupport(null);
   _cachedInfo = null;
   _probePromise = null;
 }

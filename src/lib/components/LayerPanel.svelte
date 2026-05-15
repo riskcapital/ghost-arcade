@@ -13,12 +13,13 @@
   import EffectPickerModal from './EffectPickerModal.svelte';
   import EdgeEffectsPanel from './EdgeEffectsPanel.svelte';
   import { generateCachedThumbnail } from '../isf/thumbnail';
-  import { isWebGPUSupported } from '../renderer/webgpuCapability';
+  import { webgpuSupportedStore } from '../renderer/webgpuCapability';
 
-  // WebGPU capability snapshot — used to hide the "GPU Shader" layer type
-  // and Fluid-Sim-style effects on devices without WebGPU support so users
-  // never see an option that can't actually run on their hardware.
-  const webgpuAvailable = isWebGPUSupported();
+  // WebGPU capability — reactive store, NOT a snapshot. The probe is
+  // async and may not have resolved when this panel first mounts;
+  // subscribing to the store means the GPU Shader layer button
+  // appears the instant the probe lands instead of staying hidden
+  // until the next remount.
 
   // Shader thumbnail cache: layerId -> { url, codeSnippet }
   let shaderThumbnails: Record<string, string> = {};
@@ -628,7 +629,7 @@
             </button>
             -->
 
-            {#if webgpuAvailable}
+            {#if $webgpuSupportedStore}
               <button onclick={() => { project.addGPULayer(); showAddLayerMenu = false; }}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <circle cx="12" cy="12" r="9"/>
