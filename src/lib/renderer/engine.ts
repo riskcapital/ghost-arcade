@@ -15,10 +15,14 @@ import { warpVertexShader, textureFragmentShader, blendShaders, passthroughVerte
 import { createEffectMaterial, updateEffectUniforms, effectVertexShader, polygonMaskShader, polygonMaskAlphaShader, applyExternalMaskShader, layerShapeMaskShader } from './effects';
 import { domeProjectionShader } from './shaders/dome';
 import { getTransition, applyFaderCurve, type TransitionDef } from './crossfadeTransitions';
+import { audioStore } from '../stores/audio';
+import { get as svelteGet } from 'svelte/store';
 // Geometry imports kept for potential future use with shape control point warping
 // import { createShapeGeometry, updateGeometryFromControlPoints } from './geometry';
 
-// Module-level watermark texture cache — shared across engine instances
+// Watermark texture cache — kept as a typed null in the OSS build for
+// source compatibility with anything that still references it. Will be
+// removed when the next round of dead-code cleanup lands.
 // so the PNG is only fetched once per session.
 let _watermarkTextureCache: THREE.Texture | null = null;
 
@@ -93,6 +97,12 @@ export class RenderEngine {
   private effectTargetB: THREE.WebGLRenderTarget;
   private effectBlendTarget: THREE.WebGLRenderTarget; // Third target for per-effect blend pass
 
+  // Per-effect feedback buffers — for shaders with uFeedback/uHasFeedback
+  // (Feedback Zoom hero, etc). Allocated lazily per effect instance.
+  private effectFeedbackTargets = new Map<string, THREE.WebGLRenderTarget>();
+  private effectFeedbackHasPrior = new Map<string, boolean>();
+  private feedbackCopyMaterial: THREE.ShaderMaterial | null = null;
+
   // Effect scene/quad
   private effectScene: THREE.Scene;
   private effectQuad: THREE.Mesh;
@@ -142,12 +152,8 @@ export class RenderEngine {
   private _copyScene: THREE.Scene;
   private _tempColor: THREE.Color;
 
-  // Watermark overlay (free/demo tier) — grid of darkened logo outlines with random illumination
-  private watermarkEnabled: boolean = true;
-  private watermarkScene: THREE.Scene | null = null;
-  private watermarkQuad: THREE.Mesh | null = null;
-  private watermarkMaterial: THREE.ShaderMaterial | null = null;
-  private watermarkTexture: THREE.Texture | null = null;
+  // Watermark overlay removed in OSS build. setWatermark() / applyWatermark()
+  // are kept as no-ops so external call sites don't need to be updated.
 
   // Dome projection overlay
   private domeEnabled: boolean = false;
@@ -346,151 +352,19 @@ export class RenderEngine {
     material.uniforms.uGamma.value = Math.max(0.001, params.gamma ?? 1);
   }
 
-  // ─── Watermark System ─────────────────────────────────────────────────────
-  // Tiled logo watermark: the Ghost Arcade brand mark renders as a grid
-  // across the output, with one cell illuminated at a time on a 10s rotation.
-  // Active in demo mode; removed once the user activates a Pro license.
-  // Rendered in "screen" blend mode so it overlays everything including
-  // recordings/Spout/Syphon output.
+  // ─── Watermark System (REMOVED in OSS build) ──────────────────────────────
+  // The OSS build has no watermark. `setWatermark()` is kept as a no-op so
+  // any external callers (Canvas.svelte etc.) don't need to be updated, and
+  // `applyWatermark()` is a no-op so the per-frame call site stays cheap.
 
-  /** Enable or disable the watermark overlay (controlled by license store) */
-  setWatermark(enabled: boolean): void {
-    this.watermarkEnabled = enabled;
+  /** No-op in the OSS build (no watermark). */
+  setWatermark(_enabled: boolean): void {
+    /* no-op */
   }
 
-  private initWatermark(): void {
-    if (this.watermarkScene) return; // Already initialized
-
-    this.watermarkScene = new THREE.Scene();
-
-    // Load logo texture — cache the loaded THREE.Texture across engine
-    // instances (e.g. re-init, output window) so we avoid re-fetching the
-    // PNG on every engine creation (~50-200ms on cold start).
-    if (!_watermarkTextureCache) {
-      const loader = new THREE.TextureLoader();
-      _watermarkTextureCache = loader.load(
-        './logo.png',
-        () => { console.log('[Watermark] Logo texture loaded successfully (cached)'); },
-        undefined,
-        (err) => { console.error('[Watermark] Failed to load logo texture:', err); }
-      );
-      _watermarkTextureCache.minFilter = THREE.LinearFilter;
-      _watermarkTextureCache.magFilter = THREE.LinearFilter;
-    }
-    this.watermarkTexture = _watermarkTextureCache;
-
-    // Grid of logos: most are dark outlines, random ones illuminate full-color
-    this.watermarkMaterial = new THREE.ShaderMaterial({
-      vertexShader: passthroughVertexShader,
-      fragmentShader: /* glsl */ `
-        precision highp float;
-        varying vec2 vUv;
-        uniform sampler2D uTexture;    // scene composite
-        uniform sampler2D uLogo;       // logo texture
-        uniform float uTime;
-        uniform float uAspect;         // screen width/height
-        uniform float uGridSize;       // logo size as fraction of screen height
-
-        // Pseudo-random hash
-        float hash(vec2 p) {
-          return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-        }
-
-        void main() {
-          vec4 base = texture2D(uTexture, vUv);
-
-          // Compute grid cell — square cells based on screen height
-          float cellH = uGridSize;
-          float cellW = cellH / uAspect;
-
-          vec2 cell = floor(vUv / vec2(cellW, cellH));
-          vec2 cellUV = fract(vUv / vec2(cellW, cellH));
-
-          // Add padding so logos don't touch edges (80% of cell used)
-          float pad = 0.1;
-          vec2 logoUV = (cellUV - pad) / (1.0 - 2.0 * pad);
-
-          // Only draw if inside the padded logo area
-          if (logoUV.x >= 0.0 && logoUV.x <= 1.0 && logoUV.y >= 0.0 && logoUV.y <= 1.0) {
-            vec4 logo = texture2D(uLogo, logoUV);
-
-            if (logo.a > 0.01) {
-              // One logo illuminated at a time, 10 seconds each
-              // Count total cells in view and pick one based on time
-              float cols = floor(1.0 / cellW);
-              float rows = floor(1.0 / cellH);
-              float totalCells = cols * rows;
-              float activeIndex = mod(floor(uTime / 10.0), totalCells);
-
-              // Map cell to a shuffled index so it doesn't go left-to-right
-              float cellIndex = cell.y * cols + cell.x;
-              float shuffled = mod(cellIndex * 7.0 + 3.0, totalCells); // pseudo-shuffle
-
-              // Smooth fade: 2s fade in, 6s hold, 2s fade out within 10s window
-              float cycleT = mod(uTime, 10.0);
-              float fadeIn = smoothstep(0.0, 2.0, cycleT);
-              float fadeOut = 1.0 - smoothstep(8.0, 10.0, cycleT);
-              float illuminate = (shuffled == activeIndex) ? fadeIn * fadeOut : 0.0;
-
-              // Dark outline: very subtle darken so shader content stays visible
-              float darkAlpha = logo.a * 0.08;  // barely-there dark outline
-              vec3 darkened = base.rgb * (1.0 - darkAlpha);
-
-              // Illuminated logo via soft difference blend (reduced intensity)
-              vec3 diff = abs(base.rgb - logo.rgb);
-              vec3 lit = mix(base.rgb, diff, 0.5); // 50% blend, not full difference
-
-              // Mix between dark outline and illuminated
-              vec3 result = mix(darkened, lit, illuminate * logo.a * 0.7);
-              gl_FragColor = vec4(result, base.a);
-            } else {
-              gl_FragColor = base;
-            }
-          } else {
-            gl_FragColor = base;
-          }
-        }
-      `,
-      uniforms: {
-        uTexture: { value: null },
-        uLogo: { value: this.watermarkTexture },
-        uTime: { value: 0 },
-        uAspect: { value: this.width / this.height },
-        uGridSize: { value: 0.18 }, // each logo = 18% of screen height (fewer, larger)
-      },
-      transparent: true,
-      depthTest: false,
-      depthWrite: false,
-    });
-
-    const wmGeometry = new THREE.PlaneGeometry(2, 2);
-    this.watermarkQuad = new THREE.Mesh(wmGeometry, this.watermarkMaterial);
-    this.watermarkScene.add(this.watermarkQuad);
-  }
-
-  /** Apply watermark overlay to the compositeTarget (in-place) */
+  /** No-op in the OSS build (no watermark). */
   private applyWatermark(): void {
-    if (!this.watermarkEnabled) return;
-
-    // Lazy-init watermark resources
-    this.initWatermark();
-    if (!this.watermarkScene || !this.watermarkMaterial || !this.watermarkQuad) return;
-
-    const time = (performance.now() / 1000) - this.startTime;
-
-    // Update uniforms
-    this.watermarkMaterial.uniforms.uTexture.value = this.compositeTarget.texture;
-    this.watermarkMaterial.uniforms.uTime.value = time;
-    this.watermarkMaterial.uniforms.uAspect.value = this.width / this.height;
-
-    // Render watermark over compositeTarget using tempTarget as scratch
-    this.renderer.setRenderTarget(this.tempTarget);
-    this.renderer.render(this.watermarkScene, this.camera);
-
-    // Copy result back to compositeTarget (using cached copy objects)
-    this._copyMaterial.map = this.tempTarget.texture;
-    this.renderer.setRenderTarget(this.compositeTarget);
-    this.renderer.render(this._copyScene, this.camera);
+    /* no-op */
   }
 
   /** Update dome projection settings from the settings store */
@@ -1103,6 +977,45 @@ export class RenderEngine {
   }
 
   /**
+   * Get or create the per-effect feedback render target.
+   */
+  private getOrCreateFeedbackTarget(effectId: string): THREE.WebGLRenderTarget {
+    let rt = this.effectFeedbackTargets.get(effectId);
+    if (!rt) {
+      rt = this.createRenderTarget();
+      this.effectFeedbackTargets.set(effectId, rt);
+      this.effectFeedbackHasPrior.set(effectId, false);
+    } else if (rt.width !== this.width || rt.height !== this.height) {
+      rt.setSize(this.width, this.height);
+      this.effectFeedbackHasPrior.set(effectId, false);
+    }
+    return rt;
+  }
+
+  /** Copy a texture into a render target via passthrough fragment. */
+  private copyTextureToTarget(src: THREE.Texture, dst: THREE.WebGLRenderTarget): void {
+    if (!this.feedbackCopyMaterial) {
+      this.feedbackCopyMaterial = new THREE.ShaderMaterial({
+        vertexShader: effectVertexShader,
+        fragmentShader: /* glsl */ `
+          uniform sampler2D uTexture;
+          varying vec2 vUv;
+          void main() { gl_FragColor = texture2D(uTexture, vUv); }
+        `,
+        uniforms: { uTexture: { value: null } },
+        transparent: false,
+        depthTest: false,
+        depthWrite: false,
+      });
+    }
+    this.feedbackCopyMaterial.uniforms.uTexture.value = src;
+    this.effectQuad.material = this.feedbackCopyMaterial;
+    this.renderer.setRenderTarget(dst);
+    this.renderer.clear();
+    this.renderer.render(this.effectScene, this.camera);
+  }
+
+  /**
    * Get or create an effect material for the given effect
    */
   private getOrCreateEffectMaterial(effect: Effect): THREE.ShaderMaterial {
@@ -1523,6 +1436,13 @@ export class RenderEngine {
 
     const nowMs = performance.now();
     const currentTime = nowMs / 1000 - this.startTime;
+    // Read live audio rms once per applyEffects call. Audio-reactive
+    // shaders (Colorama, eventually VHS / Bloom / Glitch) declare a
+    // `uAudio` uniform and pick this up automatically via
+    // updateEffectUniforms. Cheap to read — audioStore is a writable
+    // store; svelteGet is O(1).
+    const audioState = svelteGet(audioStore);
+    const audioRms = audioState?.isActive ? (audioState.rms ?? 0) : 0;
     // dt for stateful GPU effects (fluid sim integrates over time).
     // Clamp to keep the sim stable even after a frame hitch.
     const dt = this.lastGpuEffectFrameTime > 0
@@ -1583,14 +1503,30 @@ export class RenderEngine {
 
       // ── WebGL fragment effect branch (existing path) ──
       const material = this.getOrCreateEffectMaterial(effect);
-      updateEffectUniforms(material, effect, this.width, this.height, currentTime);
+      updateEffectUniforms(material, effect, this.width, this.height, currentTime, audioRms);
       material.uniforms.uTexture.value = currentSource;
+
+      // Feedback-buffer plumbing for shaders with uFeedback/uHasFeedback.
+      const usesFeedback = !!material.uniforms.uFeedback && !!material.uniforms.uHasFeedback;
+      let feedbackRt: THREE.WebGLRenderTarget | null = null;
+      if (usesFeedback) {
+        feedbackRt = this.getOrCreateFeedbackTarget(effect.id);
+        const hasPrior = this.effectFeedbackHasPrior.get(effect.id) === true;
+        material.uniforms.uFeedback.value = hasPrior ? feedbackRt.texture : null;
+        material.uniforms.uHasFeedback.value = hasPrior ? 1 : 0;
+      }
 
       // Render effect
       this.effectQuad.material = material;
       this.renderer.setRenderTarget(writeTarget);
       this.renderer.clear();
       this.renderer.render(this.effectScene, this.camera);
+
+      // Snapshot output into per-effect feedback buffer for next frame.
+      if (usesFeedback && feedbackRt) {
+        this.copyTextureToTarget(writeTarget.texture, feedbackRt);
+        this.effectFeedbackHasPrior.set(effect.id, true);
+      }
 
       if (needsBlendPass) {
         // Blend the effect output with the pre-effect source using the effect's blend mode.
@@ -2386,6 +2322,9 @@ export class RenderEngine {
       try { this.effectTargetA.dispose(); } catch {}
       try { this.effectTargetB.dispose(); } catch {}
       try { this.effectBlendTarget.dispose(); } catch {}
+      this.effectFeedbackTargets.forEach((rt) => { try { rt.dispose(); } catch {} });
+      this.effectFeedbackTargets.clear();
+      this.effectFeedbackHasPrior.clear();
 
       // Recreate render targets at current project dimensions.
       this.compositeTarget = this.createRenderTarget();
@@ -2623,6 +2562,11 @@ export class RenderEngine {
     this.effectTargetA.dispose();
     this.effectTargetB.dispose();
     this.effectBlendTarget.dispose();
+    this.effectFeedbackTargets.forEach((rt) => { try { rt.dispose(); } catch {} });
+    this.effectFeedbackTargets.clear();
+    this.effectFeedbackHasPrior.clear();
+    this.feedbackCopyMaterial?.dispose();
+    this.feedbackCopyMaterial = null;
     this.blackTexture?.dispose();
     this.maskTarget?.dispose();
     this.maskUnionTarget?.dispose();

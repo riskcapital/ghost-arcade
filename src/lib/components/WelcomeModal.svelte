@@ -1,90 +1,41 @@
 <script lang="ts">
-  import { licenseTier, licenseStatus, activateLicense } from '../stores/license';
+  // Welcome modal — first-launch greeter for the open-source build.
+  // No license activation, no purchase upsell, no demo/watermark fork.
+  // Just a friendly hello + a "Get started" button.
 
   export let onClose: () => void = () => {};
 
-  let mode: 'welcome' | 'activate' = 'welcome';
-  let licenseKeyInput = '';
-  let activating = false;
-  let activateError = '';
-
-  async function handleActivate() {
-    if (!licenseKeyInput.trim()) return;
-    activating = true;
-    activateError = '';
-    try {
-      await activateLicense(licenseKeyInput.trim());
-      onClose();
-    } catch (err: any) {
-      activateError = typeof err === 'string' ? err : err?.message || 'Activation failed';
-    } finally {
-      activating = false;
-    }
-  }
-
-  function startDemo() {
+  function getStarted() {
     localStorage.setItem('ghostarcade-welcome-seen', 'true');
     onClose();
   }
-
-  function openPurchase() {
-    window.open('https://ghostarcade.live/pricing', '_blank');
+  function openGitHub() {
+    window.open('https://github.com/riskcapital/ghost-arcade-gpu', '_blank', 'noopener');
   }
 </script>
 
 <div class="welcome-overlay">
   <div class="welcome-panel">
-    {#if mode === 'welcome'}
-      <div class="welcome-logo">
-        <img src="{import.meta.env.BASE_URL}logo.png" alt="Ghost Arcade" class="logo-img" />
-      </div>
-      <h1 class="welcome-title">Welcome to Ghost Arcade</h1>
-      <p class="welcome-subtitle">Professional projection mapping & VJ software</p>
+    <div class="welcome-logo">
+      <img src="{import.meta.env.BASE_URL}logo.png" alt="Ghost Arcade" class="logo-img" />
+    </div>
+    <h1 class="welcome-title">Welcome to Ghost Arcade</h1>
+    <p class="welcome-subtitle">Open-source projection mapping &amp; VJ software</p>
 
-      <div class="welcome-actions">
-        <button class="welcome-btn primary" onclick={() => { mode = 'activate'; }}>
-          Enter License Key
-        </button>
-        <button class="welcome-btn secondary" onclick={startDemo}>
-          Start Free Demo
-        </button>
-        <button class="welcome-btn outline" onclick={openPurchase}>
-          Purchase License
-        </button>
-      </div>
+    <div class="welcome-actions">
+      <button class="welcome-btn primary" onclick={getStarted}>
+        Get started
+      </button>
+      <button class="welcome-btn outline" onclick={openGitHub}>
+        View on GitHub
+      </button>
+    </div>
 
-      <p class="welcome-hint">
-        The free demo includes all features with a watermark overlay.
-        Upgrade anytime from Settings → License.
-      </p>
-
-    {:else}
-      <h2 class="activate-title">Activate License</h2>
-      <p class="activate-desc">Enter your license key to unlock Ghost Arcade.</p>
-
-      <div class="activate-form">
-        <input
-          type="text"
-          class="key-input"
-          placeholder="SW-XXXX-XXXX-XXXX-XXXX"
-          bind:value={licenseKeyInput}
-          disabled={activating}
-          onkeydown={(e) => { if (e.key === 'Enter') handleActivate(); }}
-        />
-        {#if activateError}
-          <p class="error-msg">{activateError}</p>
-        {/if}
-      </div>
-
-      <div class="activate-actions">
-        <button class="welcome-btn outline" onclick={() => { mode = 'welcome'; activateError = ''; }}>
-          Back
-        </button>
-        <button class="welcome-btn primary" onclick={handleActivate} disabled={activating || !licenseKeyInput.trim()}>
-          {activating ? 'Activating...' : 'Activate'}
-        </button>
-      </div>
-    {/if}
+    <p class="welcome-hint">
+      Free, AGPL-3.0. Every effect, layer type, and output is unlocked — no
+      tiers, no watermarks, no signup. Pair your phone via the QR-code button
+      in the toolbar.
+    </p>
   </div>
 </div>
 

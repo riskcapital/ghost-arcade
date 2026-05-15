@@ -41,7 +41,7 @@
   import { applyPresetToEffect, getEffectPresets, getNumericEffectParams } from '../effects/effectUX';
   import { EFFECT_CATALOG } from '../effects/effectCatalog';
   import { EFFECT_PARAM_DEFS } from '../effects/effectParamDefs';
-  import { canUseVideoExport, canUseParticles3D } from '../stores/license';
+  // Tier-related imports removed — recording / Particles3D always available.
   import { getDefaultEffectParams as getRendererDefaultEffectParams } from '../renderer/effects';
   import EffectPickerModal from './EffectPickerModal.svelte';
   import SplatPanel from './SplatPanel.svelte';
@@ -2005,15 +2005,9 @@
             Stop Rec
           </button>
         {:else}
-          {#if $canUseVideoExport}
-            <button class="vj-rec-btn" onclick={vjStartRecording} title="Record Output">
-              ● REC
-            </button>
-          {:else}
-            <button class="vj-rec-btn locked" title="Recording requires Pro license" disabled>
-              🔒 REC
-            </button>
-          {/if}
+          <button class="vj-rec-btn" onclick={vjStartRecording} title="Record Output">
+            ● REC
+          </button>
         {/if}
       </div>
 

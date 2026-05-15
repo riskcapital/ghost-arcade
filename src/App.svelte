@@ -39,7 +39,7 @@
   import ShortcutsOverlay from './lib/components/ShortcutsOverlay.svelte';
   import ConfirmPopover from './lib/components/ConfirmPopover.svelte';
   import WelcomeModal from './lib/components/WelcomeModal.svelte';
-  import EULAModal from './lib/components/EULAModal.svelte';
+  // EULAModal removed — no EULA in the open-source build.
   import UpdateModal from './lib/components/UpdateModal.svelte';
   import { updateModalOpen } from './lib/stores/uiState';
   import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback } from './lib/stores/layers';
@@ -62,13 +62,14 @@
   import { mediaLibrary } from './lib/stores/media';
   import { history, canUndo, canRedo } from './lib/stores/history';
   import { recentFiles } from './lib/stores/recentFiles';
-  import { initLicense, destroyLicense, licenseTier, hasWatermark, graceWarning } from './lib/stores/license';
+  import { initLicense, destroyLicense } from './lib/stores/license';
   import { startUpdateChecker, stopUpdateChecker } from './lib/stores/updateChecker';
   import { linesStore } from './lib/stores/lines';
-  import { loadShadersFromServer, loadCloudShadersFromDisk } from './lib/stores/shaderLibrary';
+  import { loadShadersFromServer, loadCloudShadersFromDisk, shaderLibrary } from './lib/stores/shaderLibrary';
+  import { mediaTrayShaders } from './lib/stores/mediaTrayShaders';
   import { getNativeRendererStatus } from './lib/api/native-renderer';
   import { startSpoutScanner } from './lib/stores/spout';
-  import { preloadShaderLibrary } from './lib/preload';
+  import { preloadShaderLibrary, populateShaderListForSync } from './lib/preload';
   import { invoke, isMac, isDesktopApp } from './lib/bridge';
   import type { Point2D, BezierPoint, Layer, WarpCorners } from './lib/types';
   import { generateUUID } from './lib/types';
@@ -233,21 +234,8 @@
   // Check if we're on mobile route
   let isMobile = false;
 
-  // EULA and first-run welcome modal
-  let showEULA = false;
+  // First-run welcome modal (EULA gate removed in OSS build)
   let showWelcome = false;
-
-  // Check if EULA has been accepted
-  function checkEULA(): boolean {
-    try {
-      const stored = localStorage.getItem('ghostarcade-eula-accepted');
-      if (stored) {
-        const data = JSON.parse(stored);
-        return data.accepted === true;
-      }
-    } catch {}
-    return false;
-  }
 
   // Keyboard shortcut help overlay
   let showShortcutHelp = false;
@@ -640,31 +628,29 @@
     // "Check now" from Settings calls runVersionCheck(true).
     runVersionCheck(false);
 
-    // Initialize license system (checks local license file, starts background validation)
+    // No license check in the OSS build — go straight to first-run UX.
     initLicense().then(() => {
-      console.log('[License] Initialized — tier:', $licenseTier, 'watermark:', $hasWatermark);
-      // Show EULA on first run (before anything else)
-      if (!checkEULA()) {
-        showEULA = true;
-        return; // Don't show welcome until EULA is accepted
-      }
-      // Show welcome modal on first run (no license, never seen welcome)
       const welcomeSeen = localStorage.getItem('ghostarcade-welcome-seen');
-      if (!welcomeSeen && $licenseTier === 'demo') {
+      if (!welcomeSeen) {
         showWelcome = true;
       } else {
-        // Welcome already seen (or non-demo tier) — still try the
-        // first-launch demo import in case it wasn't done before.
+        // Welcome already seen — still try the first-launch demo import.
         maybeAutoLoadDemo();
-        // (feature tour intentionally not auto-started; removed by request)
       }
-    }).catch(e => console.warn('[License] Init error:', e));
+    });
 
     // Check for app updates (compares against latest GitHub release)
     startUpdateChecker();
 
     // Start preloading shaders in background (non-blocking — don't wait for completion)
     preloadShaderLibrary().catch(() => {});
+
+    // Populate the mobile-sync shader list in parallel. preloadShaderLibrary
+    // also calls this when it finishes, but it bails early when the
+    // window cache is already warm (from a prior MediaTray mount), and we
+    // need this to run unconditionally so mobile gets the list even when
+    // preload short-circuits.
+    populateShaderListForSync().catch(() => {});
 
     // Show the main window and dismiss splash immediately
     invoke('show_main_window').catch(() => {
@@ -1516,6 +1502,10 @@
         console.log('[Desktop] Server requested re-sync, sending current state');
         syncState();
         syncMediaLibrary();
+        // Push the current freeze state too so the mobile pause/play pill
+        // reflects reality from the moment it mounts (rather than waiting
+        // for the user to toggle it for the first time).
+        syncOutputFreeze(get(outputFrozen));
         break;
 
       case 'control_point': {
@@ -1607,11 +1597,27 @@
           };
           project.setLayerSource(layerId, source);
         } else if (sourceType === 'shader') {
-          // Set shader source on layer - fetch the shader code
+          // Two src formats from mobile:
+          //   - "library-shader:<id>" → look up code in the shaderLibrary store
+          //     (custom user shaders, AI-generated, cloud-synced — none are
+          //     fetchable over HTTP)
+          //   - normal HTTP URL → fetch the .fs file from public/ISF/...
           (async () => {
             try {
-              const response = await fetch(sourceSrc);
-              const shaderCode = await response.text();
+              let shaderCode: string;
+              if (sourceSrc.startsWith('library-shader:')) {
+                const id = sourceSrc.slice('library-shader:'.length);
+                const lib = get(shaderLibrary);
+                const saved = lib.shaders.find(s => s.id === id);
+                if (!saved) {
+                  console.warn('[Mobile shader trigger] not found in library:', id);
+                  return;
+                }
+                shaderCode = saved.code;
+              } else {
+                const response = await fetch(sourceSrc);
+                shaderCode = await response.text();
+              }
               const source: import('./lib/types').MediaSource = {
                 id: generateUUID(),
                 type: 'shader',
@@ -1835,6 +1841,24 @@
         break;
       }
 
+      case 'set_output_freeze': {
+        // Mobile pressed the pause/play pill. Reuse the exact same path
+        // the desktop's freeze button takes — set the store + broadcast
+        // to the output window — so the behaviour is identical whether
+        // you trigger it from desktop, B-key, or phone.
+        const want = !!(msg as { frozen?: boolean }).frozen;
+        const cur = get(outputFrozen);
+        console.log(`[Mobile freeze] received set_output_freeze frozen=${want} (cur=${cur})`);
+        if (cur !== want) {
+          // toggleFreeze() is the canonical desktop path — it does the
+          // store update + the BroadcastChannel ping to the output window
+          // in one place. Calling it directly keeps mobile in lockstep
+          // with whatever toggleFreeze grows to do in the future.
+          toggleFreeze();
+        }
+        break;
+      }
+
       case 'add_vj_layer_effect': {
         // Mobile added an effect to a VJ layer
         const { layerIndex, effect } = (msg as unknown) as { layerIndex: number; effect: import('./lib/types').Effect };
@@ -2033,22 +2057,69 @@
     }
   }
 
-  // Sync media library to mobile (videos and images only - serializable data)
-  function syncMediaLibrary() {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      // Send only serializable data (no videoElement, no texture)
-      const serializableLibrary = $mediaLibrary.map(item => ({
+  // Cache of converted image data URLs keyed by source blob: URL.
+  // Image library items use their own blob: URL as the thumbnail value
+  // (the thumbnail _is_ the source image), but blob URLs are scoped to
+  // the desktop window — sending one to mobile yields a broken <img>.
+  // We rasterize each blob: thumbnail to a small JPEG data URL once and
+  // reuse that data URL for every subsequent sync. Cache survives until
+  // the desktop reload (no eviction needed; thumbnails are tiny).
+  const _imageThumbCache = new Map<string, string>();
+  async function ensureImageDataUrl(blobUrl: string): Promise<string | undefined> {
+    if (!blobUrl?.startsWith('blob:')) return undefined;
+    const cached = _imageThumbCache.get(blobUrl);
+    if (cached) return cached;
+    try {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = blobUrl;
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('image load failed'));
+      });
+      const c = document.createElement('canvas');
+      const ratio = (img.naturalWidth || 1) / (img.naturalHeight || 1);
+      c.width = 160;
+      c.height = Math.max(1, Math.round(160 / Math.max(ratio, 0.1)));
+      const ctx = c.getContext('2d');
+      if (!ctx) return undefined;
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      const data = c.toDataURL('image/jpeg', 0.7);
+      _imageThumbCache.set(blobUrl, data);
+      return data;
+    } catch {
+      return undefined;
+    }
+  }
+
+  // Sync media library to mobile (videos and images only — serializable data).
+  // Async because image thumbnails (which start life as blob: URLs from drag-
+  // drop / file-picker) need to be rasterized to portable data: URLs before
+  // the mobile can render them. Video thumbnails are already data URLs from
+  // captureVideoThumbnail, so they pass through unchanged.
+  async function syncMediaLibrary() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const items = $mediaLibrary;
+    const out = await Promise.all(items.map(async (item) => {
+      let thumb = item.thumbnail || '';
+      if (thumb.startsWith('blob:')) {
+        const data = await ensureImageDataUrl(thumb);
+        if (data) thumb = data;
+        else thumb = '';
+      }
+      return {
         id: item.id,
         name: item.name,
         src: item.src,
         type: item.type,
-        thumbnail: item.thumbnail,
-      }));
-      ws.send(JSON.stringify({
-        type: 'library_sync',
-        library: serializableLibrary,
-      }));
-    }
+        thumbnail: thumb,
+      };
+    }));
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({
+      type: 'library_sync',
+      library: out,
+    }));
   }
 
   // Sync on project changes
@@ -2060,6 +2131,36 @@
   $: if (wsServerReady && $mediaLibrary) {
     syncMediaLibrary();
   }
+
+  // Push the current output-freeze state to mobile every time it changes
+  // (so the phone's pause/play pill stays in sync with the desktop's
+  // freeze button + B-key shortcut + any other connected mobile peer).
+  function syncOutputFreeze(frozen: boolean) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'output_freeze_state', frozen }));
+    }
+  }
+  $: if (wsServerReady) syncOutputFreeze($outputFrozen);
+
+  // Sync the MediaTray's canonical shader list to mobile. This is the
+  // EXACT same list the desktop user picks from (manifest catalog +
+  // user-added + AI generated + cloud-synced), with the same thumbnails
+  // already rendered for the desktop tiles. Mobile uses this as its
+  // sole source of truth — no separate manifest fetch — so any
+  // add/remove on desktop appears on the phone within one render frame.
+  // The store is published by MediaTray.svelte's reactive `$:` block
+  // and survives MediaTray remounts because it lives at module scope.
+  function syncShaderLibrary(list: Array<{
+    id: string;
+    name: string;
+    src: string;
+    thumbnail?: string;
+    custom?: boolean;
+  }>) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'shader_library_sync', shaders: list }));
+  }
+  $: if (wsServerReady) syncShaderLibrary($mediaTrayShaders);
 
   // Sync VJ Clip Launcher state to mobile (clips in the grid)
   function syncVJClips() {
@@ -4862,21 +4963,7 @@
       </button>
     {/if}
 
-    <!-- Welcome Modal (first run) -->
-    {#if showEULA}
-      <EULAModal onAccept={() => {
-        showEULA = false;
-        // After EULA accepted, show welcome if first run
-        const welcomeSeen = localStorage.getItem('ghostarcade-welcome-seen');
-        if (!welcomeSeen && $licenseTier === 'demo') {
-          showWelcome = true;
-        } else {
-          // EULA was the only first-run modal — try demo auto-import now
-          maybeAutoLoadDemo();
-        }
-      }} />
-    {/if}
-
+    <!-- Welcome Modal (first run) — EULA gate removed in OSS build. -->
     {#if showWelcome}
       <WelcomeModal onClose={() => {
         showWelcome = false;
@@ -4947,7 +5034,7 @@
           title="A newer version is available — click to download"
         >v{appVersion} → {versionInfo.latest}</a>
       {:else}
-        <span class="version-label" title="Ghost Arcade GPU v{appVersion}">v{appVersion}</span>
+        <span class="version-label" title="Ghost Arcade v{appVersion}">v{appVersion}</span>
       {/if}
       <button class="shortcut-help-btn" onclick={() => showShortcutHelp = true} title="Keyboard Shortcuts (?)">?</button>
     </footer>
