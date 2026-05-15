@@ -47,7 +47,7 @@
   // start is triggered by user action in OutputWindow.openPopup().
   // We DO call stop on teardown to be safe.
   import { NativeRendererSync, getProjectOutputSize } from '$lib/sync/nativeRendererSync';
-  import { hasWatermark } from '$lib/stores/license';
+  // hasWatermark removed — OSS build has no watermark.
   import { fpsStore } from '$lib/stores/fps';
   import type { OutputSlice } from '$lib/stores/settings';
   // S4 pilot. Imported as types/refs only at module load — the
@@ -517,10 +517,8 @@
     // Set initial container size from wrapper layout dimensions
     sizeContainer(wrapW, wrapH);
 
-    // Sync watermark state from license store
-    const unsubWatermark = hasWatermark.subscribe(enabled => {
-      if (engine) engine.setWatermark(enabled);
-    });
+    // Watermark sync removed — no watermark in OSS build.
+    const unsubWatermark = () => {};
 
     // Sync dome projection settings
     const unsubDome = settings.subscribe(s => {
