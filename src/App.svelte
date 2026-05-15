@@ -16,9 +16,12 @@
   import LinesPanel from './lib/components/LinesPanel.svelte';
   import SVGSourceTray from './lib/components/SVGSourceTray.svelte';
   import LightPaintingPanel from './lib/components/LightPaintingPanel.svelte';
+  import AdvLightPaintingPanel from './lib/components/AdvLightPaintingPanel.svelte';
   import TextPanel from './lib/components/TextPanel.svelte';
   import SplatPanel from './lib/components/SplatPanel.svelte';
   import Model3DPanel from './lib/components/Model3DPanel.svelte';
+  import PixelFXPanel from './lib/components/PixelFXPanel.svelte';
+  import GPULayerPanel from './lib/components/GPULayerPanel.svelte';
   import MediaTray from './lib/components/MediaTray.svelte';
   import PluginLayerPanel from './lib/components/PluginLayerPanel.svelte';
   import { preloadShaders } from './lib/shaderPreload';
@@ -36,10 +39,10 @@
   import ShortcutsOverlay from './lib/components/ShortcutsOverlay.svelte';
   import ConfirmPopover from './lib/components/ConfirmPopover.svelte';
   import WelcomeModal from './lib/components/WelcomeModal.svelte';
-  import EULAModal from './lib/components/EULAModal.svelte';
+  // EULAModal removed — no EULA in the open-source build.
   import UpdateModal from './lib/components/UpdateModal.svelte';
   import { updateModalOpen } from './lib/stores/uiState';
-  import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedGroupLayer, setHistoryCallback } from './lib/stores/layers';
+  import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback } from './lib/stores/layers';
   import { keyframeTimeline } from './lib/stores/keyframeTimeline';
   import { settings, outputFrozen } from './lib/stores/settings';
   import { checkForUpdate, type VersionCheckResult } from './lib/utils/versionCheck';
@@ -59,13 +62,14 @@
   import { mediaLibrary } from './lib/stores/media';
   import { history, canUndo, canRedo } from './lib/stores/history';
   import { recentFiles } from './lib/stores/recentFiles';
-  import { initLicense, destroyLicense, licenseTier, hasWatermark, graceWarning } from './lib/stores/license';
+  import { initLicense, destroyLicense } from './lib/stores/license';
   import { startUpdateChecker, stopUpdateChecker } from './lib/stores/updateChecker';
   import { linesStore } from './lib/stores/lines';
-  import { loadShadersFromServer, loadCloudShadersFromDisk } from './lib/stores/shaderLibrary';
+  import { loadShadersFromServer, loadCloudShadersFromDisk, shaderLibrary } from './lib/stores/shaderLibrary';
+  import { mediaTrayShaders } from './lib/stores/mediaTrayShaders';
   import { getNativeRendererStatus } from './lib/api/native-renderer';
   import { startSpoutScanner } from './lib/stores/spout';
-  import { preloadShaderLibrary } from './lib/preload';
+  import { preloadShaderLibrary, populateShaderListForSync } from './lib/preload';
   import { invoke, isMac, isDesktopApp } from './lib/bridge';
   import type { Point2D, BezierPoint, Layer, WarpCorners } from './lib/types';
   import { generateUUID } from './lib/types';
@@ -96,15 +100,15 @@
   let outputWindow: OutputWindow;
   let outputIsOpen = false;
   let canvasComponent: Canvas;
-  // WebGPU bridge: bound when experimental.editorWebGPU is on so
+  // Phase 3.0 bridge: bound when experimental.editorWebGPU is on so
   // we can push the WebGL canvas reference into it after both
-  // components mount. See the onMount push block.
+  // components mount. See the WebGPUCanvas mount block for the
+  // explicit push.
   let webgpuBridgeComponent: WebGPUCanvas | null = null;
 
   // GPU info state (populated after engine init)
   let gpuInfo: { renderer: string; vendor: string; isIntegrated: boolean } | null = null;
-  // Persisted "user has seen the integrated-GPU warning" flag so we
-  // don't nag on every launch.
+  // Persisted "user has seen the integrated-GPU warning" flag.
   const INTEGRATED_GPU_BANNER_DISMISSED_KEY = 'ga.integratedGpuBannerDismissed';
   let showIntegratedGpuBanner = false;
   function dismissIntegratedGpuBanner(persist: boolean) {
@@ -137,8 +141,8 @@
     if (engine) {
       gpuInfo = engine.getGPUInfo();
     }
-    // Surface a one-time warning if we're running on integrated /
-    // software graphics. Gets users to Settings → Performance.
+    // Surface a one-time warning if running on integrated / software
+    // graphics. Routes the user to Settings → Performance.
     if (gpuInfo?.isIntegrated && typeof window !== 'undefined') {
       const dismissed = window.localStorage?.getItem(INTEGRATED_GPU_BANNER_DISMISSED_KEY);
       if (!dismissed) showIntegratedGpuBanner = true;
@@ -156,13 +160,13 @@
   // Audio input picker state moved into AudioInputPicker.svelte component.
 
   // Mask editing state
-  // ── Anchor dragging ──
+  // -- Anchor dragging --
   // Tracks which anchor across which sub-polygon is currently being dragged.
   let draggingMaskAnchor: { shapeIndex: number; pointIndex: number } | null = null;
-  // ── Bezier handle dragging ──
+  // -- Bezier handle dragging --
   // Tracks which cpIn/cpOut handle is being dragged.
   let draggingMaskHandle: { shapeIndex: number; pointIndex: number; which: 'cpIn' | 'cpOut' } | null = null;
-  // ── Pen-tool draft ──
+  // -- Pen-tool draft --
   // While the user is mid-mousedown on empty canvas we hold the future anchor
   // here and watch for drag distance > DRAG_BEND_THRESHOLD to decide between
   // a sharp corner and a smooth bezier point (Illustrator-style).
@@ -230,29 +234,15 @@
   // Check if we're on mobile route
   let isMobile = false;
 
-  // EULA and first-run welcome modal
-  let showEULA = false;
+  // First-run welcome modal (EULA gate removed in OSS build)
   let showWelcome = false;
-
-  // Check if EULA has been accepted
-  function checkEULA(): boolean {
-    try {
-      const stored = localStorage.getItem('ghostarcade-eula-accepted');
-      if (stored) {
-        const data = JSON.parse(stored);
-        return data.accepted === true;
-      }
-    } catch {}
-    return false;
-  }
 
   // Keyboard shortcut help overlay
   let showShortcutHelp = false;
 
   // App version baked in at build time from package.json (see vite.config.ts).
-  // Was previously a hardcoded 'v0.1.0' string in the footer — wrong for
-  // every release after the first. Now auto-tracks the actual shipped
-  // version.
+  // Auto-tracks the actual shipped version so the footer pill never
+  // drifts from package.json.
   const appVersion: string = (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '?');
   // Background update check — quietly polls GitHub Releases once on
   // startup (rate-limited to once / 24 h locally) and stores the
@@ -554,8 +544,8 @@
   }
 
   onMount(() => {
-    // WebGPU bridge: when editorWebGPU is on, both Canvas and
-    // WebGPUCanvas are mounted. Push the WebGL canvas DOM ref
+    // Phase 3.0 WebGPU bridge: when editorWebGPU is on, both Canvas
+    // and WebGPUCanvas are mounted. Push the WebGL canvas DOM ref
     // from Canvas (via getCanvas()) into the WebGPU bridge's setter
     // so it knows what to sample. We poll for up to 2s in case
     // Canvas's own onMount hasn't fired yet — bind:this fires after
@@ -633,25 +623,21 @@
     };
     window.addEventListener('beforeunload', onBeforeUnload);
 
-    // Initialize license system (checks local license file, starts background validation)
+    // Background update check — first run shows cached result if any,
+    // then re-fetches if it's been > 24 h since last check. Manual
+    // "Check now" from Settings calls runVersionCheck(true).
+    runVersionCheck(false);
+
+    // No license check in the OSS build — go straight to first-run UX.
     initLicense().then(() => {
-      console.log('[License] Initialized — tier:', $licenseTier, 'watermark:', $hasWatermark);
-      // Show EULA on first run (before anything else)
-      if (!checkEULA()) {
-        showEULA = true;
-        return; // Don't show welcome until EULA is accepted
-      }
-      // Show welcome modal on first run (no license, never seen welcome)
       const welcomeSeen = localStorage.getItem('ghostarcade-welcome-seen');
-      if (!welcomeSeen && $licenseTier === 'demo') {
+      if (!welcomeSeen) {
         showWelcome = true;
       } else {
-        // Welcome already seen (or non-demo tier) — still try the
-        // first-launch demo import in case it wasn't done before.
+        // Welcome already seen — still try the first-launch demo import.
         maybeAutoLoadDemo();
-        // (feature tour intentionally not auto-started; removed by request)
       }
-    }).catch(e => console.warn('[License] Init error:', e));
+    });
 
     // Check for app updates (compares against latest GitHub release)
     startUpdateChecker();
@@ -659,10 +645,12 @@
     // Start preloading shaders in background (non-blocking — don't wait for completion)
     preloadShaderLibrary().catch(() => {});
 
-    // Background update check — first run shows cached result if any,
-    // then re-fetches if it's been > 24 h since last check. Manual
-    // "Check now" from Settings calls runVersionCheck(true).
-    runVersionCheck(false);
+    // Populate the mobile-sync shader list in parallel. preloadShaderLibrary
+    // also calls this when it finishes, but it bails early when the
+    // window cache is already warm (from a prior MediaTray mount), and we
+    // need this to run unconditionally so mobile gets the list even when
+    // preload short-circuits.
+    populateShaderListForSync().catch(() => {});
 
     // Show the main window and dismiss splash immediately
     invoke('show_main_window').catch(() => {
@@ -1514,6 +1502,10 @@
         console.log('[Desktop] Server requested re-sync, sending current state');
         syncState();
         syncMediaLibrary();
+        // Push the current freeze state too so the mobile pause/play pill
+        // reflects reality from the moment it mounts (rather than waiting
+        // for the user to toggle it for the first time).
+        syncOutputFreeze(get(outputFrozen));
         break;
 
       case 'control_point': {
@@ -1605,11 +1597,27 @@
           };
           project.setLayerSource(layerId, source);
         } else if (sourceType === 'shader') {
-          // Set shader source on layer - fetch the shader code
+          // Two src formats from mobile:
+          //   - "library-shader:<id>" → look up code in the shaderLibrary store
+          //     (custom user shaders, AI-generated, cloud-synced — none are
+          //     fetchable over HTTP)
+          //   - normal HTTP URL → fetch the .fs file from public/ISF/...
           (async () => {
             try {
-              const response = await fetch(sourceSrc);
-              const shaderCode = await response.text();
+              let shaderCode: string;
+              if (sourceSrc.startsWith('library-shader:')) {
+                const id = sourceSrc.slice('library-shader:'.length);
+                const lib = get(shaderLibrary);
+                const saved = lib.shaders.find(s => s.id === id);
+                if (!saved) {
+                  console.warn('[Mobile shader trigger] not found in library:', id);
+                  return;
+                }
+                shaderCode = saved.code;
+              } else {
+                const response = await fetch(sourceSrc);
+                shaderCode = await response.text();
+              }
               const source: import('./lib/types').MediaSource = {
                 id: generateUUID(),
                 type: 'shader',
@@ -1833,6 +1841,24 @@
         break;
       }
 
+      case 'set_output_freeze': {
+        // Mobile pressed the pause/play pill. Reuse the exact same path
+        // the desktop's freeze button takes — set the store + broadcast
+        // to the output window — so the behaviour is identical whether
+        // you trigger it from desktop, B-key, or phone.
+        const want = !!(msg as { frozen?: boolean }).frozen;
+        const cur = get(outputFrozen);
+        console.log(`[Mobile freeze] received set_output_freeze frozen=${want} (cur=${cur})`);
+        if (cur !== want) {
+          // toggleFreeze() is the canonical desktop path — it does the
+          // store update + the BroadcastChannel ping to the output window
+          // in one place. Calling it directly keeps mobile in lockstep
+          // with whatever toggleFreeze grows to do in the future.
+          toggleFreeze();
+        }
+        break;
+      }
+
       case 'add_vj_layer_effect': {
         // Mobile added an effect to a VJ layer
         const { layerIndex, effect } = (msg as unknown) as { layerIndex: number; effect: import('./lib/types').Effect };
@@ -2031,22 +2057,69 @@
     }
   }
 
-  // Sync media library to mobile (videos and images only - serializable data)
-  function syncMediaLibrary() {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      // Send only serializable data (no videoElement, no texture)
-      const serializableLibrary = $mediaLibrary.map(item => ({
+  // Cache of converted image data URLs keyed by source blob: URL.
+  // Image library items use their own blob: URL as the thumbnail value
+  // (the thumbnail _is_ the source image), but blob URLs are scoped to
+  // the desktop window — sending one to mobile yields a broken <img>.
+  // We rasterize each blob: thumbnail to a small JPEG data URL once and
+  // reuse that data URL for every subsequent sync. Cache survives until
+  // the desktop reload (no eviction needed; thumbnails are tiny).
+  const _imageThumbCache = new Map<string, string>();
+  async function ensureImageDataUrl(blobUrl: string): Promise<string | undefined> {
+    if (!blobUrl?.startsWith('blob:')) return undefined;
+    const cached = _imageThumbCache.get(blobUrl);
+    if (cached) return cached;
+    try {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = blobUrl;
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('image load failed'));
+      });
+      const c = document.createElement('canvas');
+      const ratio = (img.naturalWidth || 1) / (img.naturalHeight || 1);
+      c.width = 160;
+      c.height = Math.max(1, Math.round(160 / Math.max(ratio, 0.1)));
+      const ctx = c.getContext('2d');
+      if (!ctx) return undefined;
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      const data = c.toDataURL('image/jpeg', 0.7);
+      _imageThumbCache.set(blobUrl, data);
+      return data;
+    } catch {
+      return undefined;
+    }
+  }
+
+  // Sync media library to mobile (videos and images only — serializable data).
+  // Async because image thumbnails (which start life as blob: URLs from drag-
+  // drop / file-picker) need to be rasterized to portable data: URLs before
+  // the mobile can render them. Video thumbnails are already data URLs from
+  // captureVideoThumbnail, so they pass through unchanged.
+  async function syncMediaLibrary() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const items = $mediaLibrary;
+    const out = await Promise.all(items.map(async (item) => {
+      let thumb = item.thumbnail || '';
+      if (thumb.startsWith('blob:')) {
+        const data = await ensureImageDataUrl(thumb);
+        if (data) thumb = data;
+        else thumb = '';
+      }
+      return {
         id: item.id,
         name: item.name,
         src: item.src,
         type: item.type,
-        thumbnail: item.thumbnail,
-      }));
-      ws.send(JSON.stringify({
-        type: 'library_sync',
-        library: serializableLibrary,
-      }));
-    }
+        thumbnail: thumb,
+      };
+    }));
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({
+      type: 'library_sync',
+      library: out,
+    }));
   }
 
   // Sync on project changes
@@ -2058,6 +2131,36 @@
   $: if (wsServerReady && $mediaLibrary) {
     syncMediaLibrary();
   }
+
+  // Push the current output-freeze state to mobile every time it changes
+  // (so the phone's pause/play pill stays in sync with the desktop's
+  // freeze button + B-key shortcut + any other connected mobile peer).
+  function syncOutputFreeze(frozen: boolean) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'output_freeze_state', frozen }));
+    }
+  }
+  $: if (wsServerReady) syncOutputFreeze($outputFrozen);
+
+  // Sync the MediaTray's canonical shader list to mobile. This is the
+  // EXACT same list the desktop user picks from (manifest catalog +
+  // user-added + AI generated + cloud-synced), with the same thumbnails
+  // already rendered for the desktop tiles. Mobile uses this as its
+  // sole source of truth — no separate manifest fetch — so any
+  // add/remove on desktop appears on the phone within one render frame.
+  // The store is published by MediaTray.svelte's reactive `$:` block
+  // and survives MediaTray remounts because it lives at module scope.
+  function syncShaderLibrary(list: Array<{
+    id: string;
+    name: string;
+    src: string;
+    thumbnail?: string;
+    custom?: boolean;
+  }>) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'shader_library_sync', shaders: list }));
+  }
+  $: if (wsServerReady) syncShaderLibrary($mediaTrayShaders);
 
   // Sync VJ Clip Launcher state to mobile (clips in the grid)
   function syncVJClips() {
@@ -3297,13 +3400,13 @@
   //
   // The mask is a UNION of one-or-more bezier sub-polygons. The pen tool
   // mirrors CustomShapeHandles.svelte's Illustrator-style UX:
-  //   - mousedown on empty canvas → start a `maskPenDraft` (deferred anchor)
-  //   - drag past MASK_DRAG_BEND_THRESHOLD → flip draft to "curve" mode and
+  //   - mousedown on empty canvas -> start a `maskPenDraft` (deferred anchor)
+  //   - drag past MASK_DRAG_BEND_THRESHOLD -> flip draft to "curve" mode and
   //     show preview handles
-  //   - mouseup → commit anchor (sharp or smooth) to the current open shape
-  //   - right-click or double-click empty canvas → close the open shape
-  //   - right-click an anchor → delete it
-  //   - drag an anchor or one of its handles → live-update via the store
+  //   - mouseup -> commit anchor (sharp or smooth) to the current open shape
+  //   - right-click or double-click empty canvas -> close the open shape
+  //   - right-click an anchor -> delete it
+  //   - drag an anchor or one of its handles -> live-update via the store
   // ============================================================================
 
   /** True if the layer's mask currently has an open sub-polygon. */
@@ -3664,9 +3767,8 @@
 {:else}
   <div class="app">
     <!-- Integrated/software GPU warning banner. Surfaces ONCE per
-         install when the detected WebGL renderer string matches an
-         integrated/software pattern. Most "app is laggy" reports
-         trace back to laptops running on the wrong GPU on Windows. -->
+         install when the detected renderer is integrated/software.
+         Routes the user to Settings → Performance. -->
     {#if showIntegratedGpuBanner && gpuInfo}
       <div class="gpu-warning-banner" role="alert">
         <div class="gpu-warning-icon" aria-hidden="true">
@@ -4113,7 +4215,7 @@
           style="transform: translate({viewportPanX}px, {viewportPanY}px) scale({viewportZoom}); transform-origin: 0 0;"
         >
         <!--
-          WebGPU bridge presenter (opt-in, experimental).
+          Phase 3.0 (Bridge-A) of the editor renderer migration.
 
           When experimental.editorWebGPU is OFF (default): mount
           Canvas alone — the existing WebGL renderer path.
@@ -4127,11 +4229,16 @@
 
           Net effect: the editor visually renders identically to the
           WebGL path, but the FINAL present surface (which captureStream
-          pulls from for the output presenter) is now WebGPU.
+          pulls from for the output presenter) is now WebGPU. This
+          unblocks Phase 3.x — per-layer WebGPU renderers can be
+          composited on top of the bridge surface incrementally,
+          eventually replacing it.
 
-          canvasComponent stays bound to the Canvas instance in BOTH
+          canvasComponent is bound to the Canvas instance in BOTH
           cases so all downstream code that calls getEngine() etc.
           continues to work transparently.
+
+          See docs/WEBGPU_MIGRATION.md for the full roadmap.
         -->
         {#if $settings.experimental?.editorWebGPU}
           <Canvas bind:this={canvasComponent} bridgeMode={true} />
@@ -4550,7 +4657,7 @@
                   {@const ay = canvasToSvgY(pt.y)}
                   {@const isDragging = draggingMaskAnchor?.shapeIndex === sIdx && draggingMaskAnchor?.pointIndex === pIdx}
                   {@const isCloseTarget = !shape.closed && pIdx === 0 && shape.points.length >= 3}
-                  <!-- First anchor of an open shape with ≥3 points is the
+                  <!-- First anchor of an open shape with >=3 points is the
                        "click to close" target. Bigger + yellow rim so it's
                        obvious you can click it to finish the polygon. -->
                   {#if isCloseTarget}
@@ -4764,6 +4871,8 @@
             {canvasHeight}
             bind:drawingEnabled={lpDrawingEnabled}
           />
+        {:else if $selectedAdvLightPaintingLayer}
+          <AdvLightPaintingPanel />
         {:else if $selectedTextLayer}
           <div class="text-panel-sidebar">
             <TextPanel />
@@ -4775,6 +4884,14 @@
         {:else if $selectedModel3DLayer}
           <div class="model3d-panel-sidebar">
             <Model3DPanel />
+          </div>
+        {:else if $selectedPixelFXLayer}
+          <div class="pixel-fx-panel-sidebar">
+            <PixelFXPanel />
+          </div>
+        {:else if $selectedGPULayer}
+          <div class="gpu-layer-panel-sidebar">
+            <GPULayerPanel />
           </div>
         {:else if $selectedSVGLayer}
           <SVGSourceTray embedded={true} />
@@ -4846,21 +4963,7 @@
       </button>
     {/if}
 
-    <!-- Welcome Modal (first run) -->
-    {#if showEULA}
-      <EULAModal onAccept={() => {
-        showEULA = false;
-        // After EULA accepted, show welcome if first run
-        const welcomeSeen = localStorage.getItem('ghostarcade-welcome-seen');
-        if (!welcomeSeen && $licenseTier === 'demo') {
-          showWelcome = true;
-        } else {
-          // EULA was the only first-run modal — try demo auto-import now
-          maybeAutoLoadDemo();
-        }
-      }} />
-    {/if}
-
+    <!-- Welcome Modal (first run) — EULA gate removed in OSS build. -->
     {#if showWelcome}
       <WelcomeModal onClose={() => {
         showWelcome = false;
@@ -4918,12 +5021,7 @@
         <span class="test-pattern-status">TEST: {$settings.output.testPattern}</span>
       {/if}
       <span class="spacer"></span>
-      {#if $settings.performance.showEditorFps}
-        <!-- Hidden by default — see PerformanceSettings.showEditorFps.
-             Visible FPS counters can worry users when the actual output
-             video looks smooth, even at lower preview rates. -->
-        <span class="fps-counter" class:fps-good={$fpsStore > 50} class:fps-warn={$fpsStore >= 30 && $fpsStore <= 50} class:fps-bad={$fpsStore < 30 && $fpsStore > 0}>{$fpsStore} FPS</span>
-      {/if}
+      <span class="fps-counter" class:fps-good={$fpsStore > 50} class:fps-warn={$fpsStore >= 30 && $fpsStore <= 50} class:fps-bad={$fpsStore < 30 && $fpsStore > 0}>{$fpsStore} FPS</span>
       {#if versionInfo?.hasUpdate && versionInfo.releaseUrl}
         <!-- Update available — clickable badge that opens the release
              page. Replaces the version label with an actionable link
@@ -4936,7 +5034,7 @@
           title="A newer version is available — click to download"
         >v{appVersion} → {versionInfo.latest}</a>
       {:else}
-        <span class="version-label" title="Ghost Arcade Pro v{appVersion}">v{appVersion}</span>
+        <span class="version-label" title="Ghost Arcade v{appVersion}">v{appVersion}</span>
       {/if}
       <button class="shortcut-help-btn" onclick={() => showShortcutHelp = true} title="Keyboard Shortcuts (?)">?</button>
     </footer>

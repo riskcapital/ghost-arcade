@@ -1,7 +1,7 @@
 <script lang="ts">
   import { midiStore } from '../midi/midiStore';
   import { midiManager } from '../midi/midiManager';
-  import { canUseMIDIEdit } from '../stores/license';
+  // Tier-related imports removed — MIDI editing always available.
 
   $: devices = $midiStore.devices.filter(d => d.state === 'connected');
   $: selectedId = $midiStore.selectedDeviceId;
@@ -26,9 +26,8 @@
     <button
       class="midi-edit-btn"
       class:active={editMode}
-      class:locked={!$canUseMIDIEdit}
-      onclick={() => { if ($canUseMIDIEdit) midiStore.toggleEditMode(); }}
-      title={$canUseMIDIEdit ? (editMode ? 'Exit MIDI Edit Mode (ESC)' : 'Enter MIDI Edit Mode') : 'MIDI editing requires Pro license'}
+      onclick={() => midiStore.toggleEditMode()}
+      title={editMode ? 'Exit MIDI Edit Mode (ESC)' : 'Enter MIDI Edit Mode'}
     >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="2"/>

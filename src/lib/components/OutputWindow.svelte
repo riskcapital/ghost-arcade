@@ -61,18 +61,18 @@
   // the precedence ordering (zeroCopy > webrtc > legacy) — we just
   // forward both bits.
   //   experimentalZeroCopy → mounts OutputSharedTextureDisplayApp
-  //                          (`?mode=webgpu-display`). Opt-in.
+  //                          (`?mode=webgpu-display`). On by default.
   //   experimentalWebRTC   → mounts OutputDisplayApp
-  //                          (`?mode=webrtc-display`). Default in 0.6.x.
-  // Both off → falls back to webrtc-display (the v0.6.1 default).
+  //                          (`?mode=webrtc-display`). Escape hatch.
+  // Both off → SpoutOutputApp (`?mode=output`), legacy default.
   // See settings.ts experimental.outputZeroCopy / outputWebRTC for
   // the architectural rationale.
   function readExperimentalTransports(): { experimentalWebRTC: boolean; experimentalZeroCopy: boolean } {
     let webrtc = false;
     let zeroCopy = false;
     const unsub = settings.subscribe((s) => {
-      webrtc = !!(s.experimental as any)?.outputWebRTC;
-      zeroCopy = !!(s.experimental as any)?.outputZeroCopy;
+      webrtc = !!s.experimental?.outputWebRTC;
+      zeroCopy = !!s.experimental?.outputZeroCopy;
     });
     unsub();
     return { experimentalWebRTC: webrtc, experimentalZeroCopy: zeroCopy };
@@ -110,7 +110,7 @@
         fullscreen: false,
         displayId: target.id,
         experimentalWebRTC,
-        experimentalZeroCopy: false, // legacy IPC path only
+        experimentalZeroCopy: false, // legacy path only
       });
       isOpen = true;
       console.log(`[Output] Window opened on display "${target.label}" (${winW}x${winH})${transportTag}`);
@@ -194,7 +194,7 @@
 
       // 3) Tell the presenter to attach to this window. The presenter
       // already has the editor canvas (registerEditorCanvas was called
-      // from WebGPUCanvas at mount). Once the new window's
+      // from Canvas.svelte at mount). Once the new window's
       // OutputSharedTextureDisplayApp signals 'output-ready', the
       // presenter establishes the MessageChannel and starts pumping.
       const { attachOutputWindow } = await import('$lib/sync/outputSharedTexturePresenter');

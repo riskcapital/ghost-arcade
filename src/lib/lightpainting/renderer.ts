@@ -383,12 +383,23 @@ export class LightPaintingRenderer {
   ) {
     const size = brush.size * (brush.pressureSensitive ? pressure : 1);
 
-    // Apply taper
-    let taperMult = 1;
+    // ── Per-stroke taper curve ──
+    // taperStart / taperEnd are width multipliers at the two ends
+    // (default 1 = no taper). Linear interpolation along progress
+    // with optional power curve so the contour can feel branch-like
+    // rather than a flat wedge. The legacy `brush.taper` boolean
+    // still kicks in a soft fade-in/out at both ends so existing
+    // strokes don't change appearance — it's now multiplicative on
+    // top of the start/end curve.
+    const taperStart = brush.taperStart ?? 1;
+    const taperEnd   = brush.taperEnd   ?? 1;
+    const taperPow   = Math.max(0.0001, brush.taperCurve ?? 1);
+    const t = Math.pow(Math.max(0, Math.min(1, progress)), taperPow);
+    let taperMult = taperStart + (taperEnd - taperStart) * t;
     if (brush.taper) {
-      const taperIn = Math.min(1, progress * 5);   // Quick fade in
-      const taperOut = Math.min(1, (1 - progress) * 5); // Quick fade out
-      taperMult = taperIn * taperOut;
+      const taperIn  = Math.min(1, progress * 5);
+      const taperOut = Math.min(1, (1 - progress) * 5);
+      taperMult *= taperIn * taperOut;
     }
 
     const finalSize = Math.max(1, size * taperMult);
@@ -828,6 +839,15 @@ export class LightPaintingRenderer {
     content: LightPaintingContent | null = null
   ) {
     if (stroke.points.length < 2 || progress <= 0) return;
+    // GPU brushes are rendered by WebGPUStrokeParticles in the
+    // WebGPU bridge overlay, NOT by this CPU rasteriser. Skip here
+    // so the same stroke isn't drawn twice (CPU faint + GPU bright).
+    // The GPU pass reads strokes directly from the project store.
+    if (stroke.brush.type === 'spiral' || stroke.brush.type === 'firefly' ||
+        stroke.brush.type === 'sap-flow' || stroke.brush.type === 'water' ||
+        stroke.brush.type === 'smoke') {
+      return;
+    }
 
     const points = stroke.points;
     const totalPoints = points.length;

@@ -73,7 +73,7 @@
     [180, 50, 255],   [255, 100, 0],    [255, 255, 100],
   ];
 
-  const brushTypes: { type: LightPaintingBrushType; label: string; webgl2Only?: boolean }[] = [
+  const brushTypes: { type: LightPaintingBrushType; label: string; gpu?: boolean }[] = [
     { type: 'glow', label: 'Glow' },         { type: 'neon', label: 'Neon' },
     { type: 'flame', label: 'Flame' },       { type: 'electric', label: 'Electric' },
     { type: 'ribbon', label: 'Ribbon' },     { type: 'particle', label: 'Particle' },
@@ -81,25 +81,24 @@
     { type: 'calligraphy', label: 'Callig.' }, { type: 'spray', label: 'Spray' },
     { type: 'paintbrush', label: 'Paint' },  { type: 'marker', label: 'Marker' },
     { type: 'watercolor', label: 'Water' },
-    // ── Phase 2 brushes (WebGL2 only) ────────────────────────────
-    // These leverage fragment-shader procedural work that Canvas2D
-    // can't keep up with. On the legacy Canvas2D renderer they fall
-    // back to 'glow' silently — picking them with WebGL2 OFF won't
-    // give the user the intended look, but won't crash either.
-    { type: 'sparkle',  label: 'Sparkle',  webgl2Only: true },
-    { type: 'firefly',  label: 'Firefly',  webgl2Only: true },
-    { type: 'plasma',   label: 'Plasma',   webgl2Only: true },
-    { type: 'galaxy',   label: 'Galaxy',   webgl2Only: true },
-    { type: 'lightning',label: 'Lightning',webgl2Only: true },
-    { type: 'vortex',   label: 'Vortex',   webgl2Only: true },
-    // ── Phase 3 brushes (WebGL2 only) ────────────────────────────
-    { type: 'nebula',   label: 'Nebula',   webgl2Only: true },
-    { type: 'kaleido',  label: 'Kaleido',  webgl2Only: true },
-    { type: 'ink',      label: 'Ink',      webgl2Only: true },
-    { type: 'crystal',  label: 'Crystal',  webgl2Only: true },
-    { type: 'aurora',   label: 'Aurora',   webgl2Only: true },
-    { type: 'bubbles',  label: 'Bubbles',  webgl2Only: true },
+    // ── WebGPU compute brushes ──
+    // Particles bound to the stroke's tangent + normal vectors,
+    // animated by per-frame compute shader. Best for projection-
+    // mapping plant/tree work — spiral wraps around limbs, firefly
+    // drifts outward like sparks, sap-flow simulates fluid motion.
+    { type: 'spiral', label: 'Spiral', gpu: true },
+    { type: 'firefly', label: 'Firefly', gpu: true },
+    { type: 'sap-flow', label: 'Sap Flow', gpu: true },
+    // 'water' (Ectoplasm) and 'smoke' GPU brushes intentionally hidden from
+    // the picker — kept in the type union + shader so any project files that
+    // already reference them keep loading without errors. Hide until we have
+    // proper fluid / volumetric simulation rather than glorified billboards.
   ];
+
+  // Detect whether the current brush is a GPU brush so the panel
+  // can show GPU-specific knobs (spiral radius/speed/pitch, particle
+  // count, drift) only when relevant.
+  const GPU_BRUSH_TYPES = new Set<LightPaintingBrushType>(['spiral', 'firefly', 'sap-flow', 'water', 'smoke']);
 
   const loopModes: { mode: LightPaintingLoopMode; label: string }[] = [
     { mode: 'forward', label: 'Fwd' },    { mode: 'reverse', label: 'Rev' },
@@ -125,17 +124,14 @@
   $: penPreviewSvg = buildPenPreviewSvg(penPoints, penPreviewPoint);
   $: brushColorRgb = `${currentBrush.color[0]},${currentBrush.color[1]},${currentBrush.color[2]}`;
   $: customColorHex = '#' + currentBrush.color.map(c => c.toString(16).padStart(2, '0')).join('');
-
-  // Capability flags per brush type — drive which Phase-3 param
-  // sliders the UI surfaces. Keep these wide rather than
-  // hyper-specific so the user can experiment freely.
-  $: brushHasParticles  = ['sparkle','firefly','bubbles'].includes(currentBrush.type);
-  $: brushHasNoise      = ['plasma','galaxy','lightning','vortex','nebula','kaleido','ink','aurora','firefly','crystal','bubbles'].includes(currentBrush.type);
-  $: brushHasComplexity = ['sparkle','firefly','plasma','galaxy','lightning','vortex','nebula','kaleido','ink','crystal','aurora','bubbles'].includes(currentBrush.type);
-  $: brushHasInternalGlow = ['sparkle','firefly','plasma','galaxy','lightning','vortex','nebula','kaleido','ink','crystal','aurora','bubbles'].includes(currentBrush.type);
   $: secondaryColorHex = currentBrush.secondaryColor
     ? '#' + currentBrush.secondaryColor.map(c => c.toString(16).padStart(2, '0')).join('')
     : '#43e8f9';
+  // Glass-tube color hex for the picker. Falls back to the soft
+  // cool-white default when the brush hasn't set one explicitly.
+  $: glassTubeColorHex = (currentBrush.gpuGlassTubeColor ?? [220, 230, 255])
+    .map(c => Math.max(0, Math.min(255, c)).toString(16).padStart(2, '0')).join('');
+  $: glassTubeColorHexFull = '#' + glassTubeColorHex;
 
   function buildSvgPath(points: { x: number; y: number }[]): string {
     if (points.length < 2) return '';
@@ -589,11 +585,9 @@
           <div class="sec-label">Brush Type</div>
           <div class="brush-grid">
             {#each brushTypes as bt}
-              <button class="brush-btn"
-                class:active={currentBrush.type === bt.type}
-                class:webgl2-only={bt.webgl2Only}
-                title={bt.webgl2Only ? `${bt.label} — requires WebGL2 renderer (Settings → Performance)` : bt.label}
-                onclick={() => setBrushType(bt.type)}>{bt.label}</button>
+              <button class="brush-btn" class:active={currentBrush.type === bt.type} class:gpu={bt.gpu} onclick={() => setBrushType(bt.type)}>
+                {bt.label}{#if bt.gpu}<span class="gpu-badge">GPU</span>{/if}
+              </button>
             {/each}
           </div>
 
@@ -629,7 +623,7 @@
 
           <div class="sec-label">Settings</div>
           <div class="slider-col">
-            <div class="sc"><label>Size <b>{currentBrush.size}</b></label><input type="range" min="1" max="200" step="1" value={currentBrush.size} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, size: parseInt((e.target as HTMLInputElement).value) })} /></div>
+            <div class="sc"><label>Size <b>{currentBrush.size}</b></label><input type="range" min="1" max="100" step="1" value={currentBrush.size} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, size: parseInt((e.target as HTMLInputElement).value) })} /></div>
             <div class="sc"><label>Glow <b>{currentBrush.glow.toFixed(1)}</b></label><input type="range" min="0" max="5" step="0.1" value={currentBrush.glow} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, glow: parseFloat((e.target as HTMLInputElement).value) })} /></div>
             <div class="sc"><label>Softness <b>{currentBrush.softness.toFixed(1)}</b></label><input type="range" min="0" max="1" step="0.05" value={currentBrush.softness} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, softness: parseFloat((e.target as HTMLInputElement).value) })} /></div>
             <div class="sc"><label>Jitter <b>{currentBrush.jitter.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={currentBrush.jitter} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, jitter: parseFloat((e.target as HTMLInputElement).value) })} /></div>
@@ -638,26 +632,194 @@
             <div class="sc"><label>Speed <b>{(currentBrush.speed ?? 1).toFixed(2)}</b></label><input type="range" min="0.1" max="5" step="0.05" value={currentBrush.speed ?? 1} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, speed: parseFloat((e.target as HTMLInputElement).value) })} /></div>
           </div>
           <div class="check-row">
-            <label><input type="checkbox" checked={currentBrush.taper} onchange={(e) => updateBrushAndMaybeStroke({ ...currentBrush, taper: (e.target as HTMLInputElement).checked })} /> Taper</label>
+            <label><input type="checkbox" checked={currentBrush.taper} onchange={(e) => updateBrushAndMaybeStroke({ ...currentBrush, taper: (e.target as HTMLInputElement).checked })} /> Soft Ends</label>
             <label><input type="checkbox" checked={currentBrush.pressureSensitive} onchange={(e) => updateBrushAndMaybeStroke({ ...currentBrush, pressureSensitive: (e.target as HTMLInputElement).checked })} /> Pressure</label>
           </div>
 
-          {#if brushHasInternalGlow || brushHasParticles || brushHasNoise || brushHasComplexity}
-            <div class="sec-label">Procedural</div>
+          <!-- ── Per-stroke taper curve ──
+               Two width multipliers + a power curve that let a single
+               stroke draw a tapered shape (thicker at one end, thinner
+               at the other). This is what lets the same stroke read as
+               a tree trunk → branch → twig without needing a layer-
+               level mesh warp. Applies to BOTH the CPU brushes and
+               the GPU brush + glass tube widths.
+
+               Quick-set buttons jump the sliders to common shapes:
+                 trunk → 1, 0.25, 1.5  (thick base, narrow tip)
+                 root  → 0.25, 1, 0.7  (narrow start, fans wider)
+                 even  → 1, 1, 1       (no taper) -->
+          <div class="sec-label sub">
+            Taper
+            <span style="font-weight:400; opacity:0.7; font-size:0.85em; margin-left:auto;">
+              start → end
+            </span>
+          </div>
+          <div class="slider-col">
+            <div class="sc">
+              <label>Start Width <b>{(currentBrush.taperStart ?? 1).toFixed(2)}×</b></label>
+              <input type="range" min="0" max="2" step="0.05"
+                value={currentBrush.taperStart ?? 1}
+                oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, taperStart: parseFloat((e.target as HTMLInputElement).value) })} />
+            </div>
+            <div class="sc">
+              <label>End Width <b>{(currentBrush.taperEnd ?? 1).toFixed(2)}×</b></label>
+              <input type="range" min="0" max="2" step="0.05"
+                value={currentBrush.taperEnd ?? 1}
+                oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, taperEnd: parseFloat((e.target as HTMLInputElement).value) })} />
+            </div>
+            <div class="sc">
+              <label>Curve <b>{(currentBrush.taperCurve ?? 1).toFixed(2)}</b></label>
+              <input type="range" min="0.25" max="4" step="0.05"
+                value={currentBrush.taperCurve ?? 1}
+                oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, taperCurve: parseFloat((e.target as HTMLInputElement).value) })} />
+            </div>
+          </div>
+          <div class="check-row" style="gap:6px; flex-wrap:wrap;">
+            <button class="mini-action" onclick={() => updateBrushAndMaybeStroke({ ...currentBrush, taperStart: 1, taperEnd: 0.25, taperCurve: 1.5 })}>Trunk → tip</button>
+            <button class="mini-action" onclick={() => updateBrushAndMaybeStroke({ ...currentBrush, taperStart: 0.25, taperEnd: 1, taperCurve: 0.7 })}>Tip → trunk</button>
+            <button class="mini-action" onclick={() => updateBrushAndMaybeStroke({ ...currentBrush, taperStart: 1, taperEnd: 1, taperCurve: 1 })}>Even</button>
+          </div>
+
+          <!-- GPU brush controls — surfaced only when the active brush
+               is a GPU type (spiral / firefly / sap-flow). Each brush
+               consumes a different subset; the panel shows all relevant
+               knobs and the WGSL ignores the irrelevant ones. -->
+          {#if GPU_BRUSH_TYPES.has(currentBrush.type)}
+            <div class="sec-label">
+              GPU Brush <span class="gpu-badge inline">WebGPU</span>
+            </div>
             <div class="slider-col">
-              {#if brushHasInternalGlow}
-                <div class="sc"><label>Inner Glow <b>{(currentBrush.internalGlow ?? 1).toFixed(2)}</b></label><input type="range" min="0" max="3" step="0.05" value={currentBrush.internalGlow ?? 1} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, internalGlow: parseFloat((e.target as HTMLInputElement).value) })} /></div>
+              <div class="sc">
+                <label>Particles <b>{currentBrush.gpuParticleCount ?? 800}</b></label>
+                <input type="range" min="50" max="4000" step="50"
+                  value={currentBrush.gpuParticleCount ?? 800}
+                  oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuParticleCount: parseInt((e.target as HTMLInputElement).value) })} />
+              </div>
+              {#if currentBrush.type === 'spiral'}
+                <div class="sc">
+                  <label>Wrap Radius <b>{(currentBrush.gpuSpiralRadius ?? 0.025).toFixed(3)}</b></label>
+                  <input type="range" min="0.005" max="0.15" step="0.001"
+                    value={currentBrush.gpuSpiralRadius ?? 0.025}
+                    oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuSpiralRadius: parseFloat((e.target as HTMLInputElement).value) })} />
+                </div>
+                <div class="sc">
+                  <label>Wrap Speed <b>{(currentBrush.gpuSpiralSpeed ?? 1.2).toFixed(2)}</b></label>
+                  <input type="range" min="-5" max="5" step="0.1"
+                    value={currentBrush.gpuSpiralSpeed ?? 1.2}
+                    oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuSpiralSpeed: parseFloat((e.target as HTMLInputElement).value) })} />
+                </div>
+                <div class="sc">
+                  <label>Helix Pitch <b>{currentBrush.gpuSpiralPitch ?? 8}</b></label>
+                  <input type="range" min="1" max="30" step="0.5"
+                    value={currentBrush.gpuSpiralPitch ?? 8}
+                    oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuSpiralPitch: parseFloat((e.target as HTMLInputElement).value) })} />
+                </div>
+                <div class="check-row">
+                  <label>
+                    <input type="checkbox"
+                      checked={currentBrush.gpuSpiralShowCore ?? false}
+                      onchange={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuSpiralShowCore: (e.target as HTMLInputElement).checked })} />
+                    Wrap-around mode (core + back-side cull, for tree trunks)
+                  </label>
+                </div>
               {/if}
-              {#if brushHasParticles}
-                <div class="sc"><label>Particle Size <b>{(currentBrush.particleSize ?? 1).toFixed(2)}</b></label><input type="range" min="0.1" max="3" step="0.05" value={currentBrush.particleSize ?? 1} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, particleSize: parseFloat((e.target as HTMLInputElement).value) })} /></div>
+              {#if currentBrush.type === 'firefly' || currentBrush.type === 'sap-flow' || currentBrush.type === 'water' || currentBrush.type === 'smoke'}
+                <div class="sc">
+                  <label>Drift <b>{(currentBrush.gpuParticleDrift ?? 0.05).toFixed(3)}</b></label>
+                  <input type="range" min="0.005" max="0.3" step="0.005"
+                    value={currentBrush.gpuParticleDrift ?? 0.05}
+                    oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuParticleDrift: parseFloat((e.target as HTMLInputElement).value) })} />
+                </div>
               {/if}
-              {#if brushHasComplexity}
-                <div class="sc"><label>Complexity <b>{(currentBrush.complexity ?? 1).toFixed(2)}</b></label><input type="range" min="0.5" max="4" step="0.05" value={currentBrush.complexity ?? 1} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, complexity: parseFloat((e.target as HTMLInputElement).value) })} /></div>
+              {#if currentBrush.type === 'water'}
+                <div class="sc">
+                  <label>Sag (Gravity) <b>{(currentBrush.gpuWaterGravity ?? 1).toFixed(2)}</b></label>
+                  <input type="range" min="0" max="2" step="0.05"
+                    value={currentBrush.gpuWaterGravity ?? 1}
+                    oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuWaterGravity: parseFloat((e.target as HTMLInputElement).value) })} />
+                </div>
+                <div class="sc">
+                  <label>Flow Speed <b>{(currentBrush.gpuSpiralSpeed ?? 1.2).toFixed(2)}</b></label>
+                  <input type="range" min="0.1" max="5" step="0.1"
+                    value={currentBrush.gpuSpiralSpeed ?? 1.2}
+                    oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuSpiralSpeed: parseFloat((e.target as HTMLInputElement).value) })} />
+                </div>
               {/if}
-              {#if brushHasNoise}
-                <div class="sc"><label>Noise Scale <b>{(currentBrush.noiseScale ?? 1).toFixed(2)}</b></label><input type="range" min="0.1" max="8" step="0.05" value={currentBrush.noiseScale ?? 1} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, noiseScale: parseFloat((e.target as HTMLInputElement).value) })} /></div>
-                <div class="sc"><label>Noise Speed <b>{(currentBrush.noiseSpeed ?? 1).toFixed(2)}</b></label><input type="range" min="0" max="5" step="0.05" value={currentBrush.noiseSpeed ?? 1} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, noiseSpeed: parseFloat((e.target as HTMLInputElement).value) })} /></div>
-                <div class="sc"><label>Noise Amount <b>{(currentBrush.noiseAmount ?? 0.6).toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={currentBrush.noiseAmount ?? 0.6} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, noiseAmount: parseFloat((e.target as HTMLInputElement).value) })} /></div>
+              {#if currentBrush.type === 'smoke'}
+                <div class="sc">
+                  <label>Rise Speed <b>{(currentBrush.gpuSmokeRise ?? 0.5).toFixed(2)}</b></label>
+                  <input type="range" min="0.05" max="1.5" step="0.05"
+                    value={currentBrush.gpuSmokeRise ?? 0.5}
+                    oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuSmokeRise: parseFloat((e.target as HTMLInputElement).value) })} />
+                </div>
+              {/if}
+
+              <!-- ── Glass-tube container ──
+                   Wraps the stroke in a translucent SDF tube whose
+                   radius auto-scales with the brush's particle
+                   spread (orbit / drift). The tube renders as a
+                   fake-3D glass cylinder — bright rim, faint inner
+                   glow — so the particles read as if they're
+                   contained inside. -->
+              <div class="check-row">
+                <label>
+                  <input type="checkbox"
+                    checked={currentBrush.gpuGlassTube ?? false}
+                    onchange={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuGlassTube: (e.target as HTMLInputElement).checked })} />
+                  Glass tube (translucent container around stroke)
+                </label>
+              </div>
+              {#if currentBrush.gpuGlassTube}
+                <div class="sc">
+                  <label>Tube Width <b>{(currentBrush.gpuGlassTubeRadiusScale ?? 1.25).toFixed(2)}×</b></label>
+                  <input type="range" min="0.5" max="3" step="0.05"
+                    value={currentBrush.gpuGlassTubeRadiusScale ?? 1.25}
+                    oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuGlassTubeRadiusScale: parseFloat((e.target as HTMLInputElement).value) })} />
+                </div>
+                <!-- Glass-tube color: independent of the particle color
+                     so you can tint the container separately from its
+                     contents (e.g. cool blue glass containing warm
+                     amber fireflies). Presets cover the most useful
+                     starting points; the swatch on the right opens a
+                     full color picker for anything else. -->
+                <div class="sec-label sub">Tube Color</div>
+                <div class="color-grid">
+                  {#each [[220,230,255],[200,255,240],[255,240,200],[255,200,230],[180,220,255],[255,255,255]] as cp}
+                    <button class="color-dot sm"
+                      class:active={
+                        (currentBrush.gpuGlassTubeColor ?? [220,230,255])[0] === cp[0] &&
+                        (currentBrush.gpuGlassTubeColor ?? [220,230,255])[1] === cp[1] &&
+                        (currentBrush.gpuGlassTubeColor ?? [220,230,255])[2] === cp[2]
+                      }
+                      style="background:rgb({cp[0]},{cp[1]},{cp[2]})"
+                      onclick={() => updateBrushAndMaybeStroke({ ...currentBrush, gpuGlassTubeColor: [cp[0], cp[1], cp[2]] as [number, number, number] })} />
+                  {/each}
+                  <input type="color" class="color-picker sm" value={glassTubeColorHexFull}
+                    onchange={(e) => {
+                      const h = (e.target as HTMLInputElement).value;
+                      updateBrushAndMaybeStroke({
+                        ...currentBrush,
+                        gpuGlassTubeColor: [
+                          parseInt(h.slice(1,3),16),
+                          parseInt(h.slice(3,5),16),
+                          parseInt(h.slice(5,7),16),
+                        ] as [number, number, number],
+                      });
+                    }} />
+                </div>
+              {/if}
+            </div>
+            <div class="gpu-hint">
+              {#if currentBrush.type === 'spiral'}
+                360° helix of particles around the stroke — full visibility front and back. Toggle Wrap-around mode for projections onto tree trunks where you want only the front-side particles + a glowing centerline.
+              {:else if currentBrush.type === 'firefly'}
+                Particles spawn on the stroke and drift outward, twinkling. Place strokes on branch tips for a fireflies-on-a-tree look.
+              {:else if currentBrush.type === 'sap-flow'}
+                Particles flow along the stroke at varying phases — like sap moving through veins.
+              {:else if currentBrush.type === 'water'}
+                Viscous glowing ectoplasm hugs the stroke and undulates slowly. Use a darker green/teal base color and high glow for the slimy fluid look.
+              {:else if currentBrush.type === 'smoke'}
+                Wisps rise upward from the stroke with curl-noise drift. Use white/grey base color and moderate glow.
               {/if}
             </div>
           {/if}
@@ -900,20 +1062,43 @@
     background: #0d0d10; border: 1px solid #333; color: #aaa;
     border-radius: 5px; padding: 6px 2px; font-size: 10px; font-weight: 600;
     cursor: pointer; text-align: center;
+    position: relative;
   }
   .brush-btn:hover { background: #161618; color: #eee; border-color: #555; }
   .brush-btn.active { background: rgba(103,232,249,0.1); color: #BB86FC; border-color: #BB86FC; }
-  /* WebGL2-only brushes get a subtle gradient accent so users know
-     they're getting the experimental shader path. Still selectable
-     even when WebGL2 is off — they fall back to glow gracefully. */
-  .brush-btn.webgl2-only {
-    background: linear-gradient(135deg, #0d0d10 0%, #1a1525 100%);
-    border-color: #3a2a4a;
+  /* GPU brush buttons get a subtle gradient hint so they're visually
+     distinct from the CPU-rasterised ones in the picker. */
+  .brush-btn.gpu {
+    background: linear-gradient(135deg, #0d0d10, #181228);
+    border-color: #335;
   }
-  .brush-btn.webgl2-only.active {
-    background: linear-gradient(135deg, rgba(187,134,252,0.18) 0%, rgba(103,232,249,0.18) 100%);
-    border-color: #BB86FC;
-    color: #fff;
+  .brush-btn.gpu:hover { border-color: #6df; }
+  .brush-btn.gpu.active {
+    background: linear-gradient(135deg, rgba(109,221,255,0.15), rgba(187,134,252,0.15));
+    border-color: #6df;
+  }
+  .gpu-badge {
+    display: inline-block;
+    background: linear-gradient(135deg, #6df, #b9f);
+    color: #000;
+    font-size: 7px;
+    font-weight: 700;
+    padding: 1px 3px;
+    border-radius: 999px;
+    letter-spacing: 0.4px;
+    margin-left: 3px;
+    vertical-align: middle;
+  }
+  .gpu-badge.inline { margin-left: 6px; font-size: 8px; padding: 1px 5px; }
+  .gpu-hint {
+    margin-top: 8px;
+    padding: 6px 8px;
+    background: rgba(109,221,255,0.06);
+    border: 1px solid rgba(109,221,255,0.2);
+    border-radius: 4px;
+    font-size: 10px;
+    color: #aac;
+    line-height: 1.4;
   }
 
   /* Color grid */

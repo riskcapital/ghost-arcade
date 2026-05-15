@@ -210,14 +210,16 @@ export const terrain3DShader = /* glsl */ `
   uniform sampler2D uTexture;
   uniform vec2 uResolution;
   uniform float uTime;
-  uniform float uMode;
-  uniform float uAmount;
-  uniform float uAmount2;
-  uniform float uAmount3;
-  uniform float uThreshold;
-  uniform float uAngle;
-  uniform vec2 uCenter;
-  uniform vec3 uColor;
+  uniform float uMode;          // 0=opaque sky, 1=fade horizon to transparent, 2=blend with source
+  uniform float uAmount;        // height scale
+  uniform float uAmount2;       // camera height
+  uniform float uAmount3;       // speed
+  uniform float uThreshold;     // fog density
+  uniform float uAngle;         // yaw
+  uniform vec2 uCenter;         // pitch/roll
+  uniform vec3 uColor;          // fog colour
+  uniform float uHorizonFade;   // 0-1 fade terrain alpha at horizon
+  uniform float uSourceMix;     // 0-1 blend with original source layer
   varying vec2 vUv;
 
   #define PI 3.14159265359
@@ -234,7 +236,6 @@ export const terrain3DShader = /* glsl */ `
     float speed = uAmount3 * 0.5;
     float fogDensity = uThreshold * 3.0;
     float camYaw = uAngle;
-    // Pitch: remap so 0 = looking down at terrain, 0.5 = level, 1 = looking up
     float camPitch = (uCenter.x - 0.5) * PI * 0.5;
     float camRoll = uCenter.y * TAU;
     vec3 fogColor = uColor;
@@ -249,18 +250,12 @@ export const terrain3DShader = /* glsl */ `
     screenPos.x *= uResolution.x / uResolution.y;
 
     vec3 ro = vec3(camPos2D.x, camHeight, camPos2D.y);
-    // Start looking slightly downward so terrain is visible by default
     vec3 rd = normalize(vec3(screenPos.x, screenPos.y * 0.5 - 0.3, 1.5));
 
-    // Roll
     float crl = cos(camRoll), srl = sin(camRoll);
     rd = vec3(crl * rd.x - srl * rd.y, srl * rd.x + crl * rd.y, rd.z);
-
-    // Pitch (positive = look down toward terrain)
     float cp = cos(camPitch), sp = sin(camPitch);
     rd = vec3(rd.x, cp * rd.y - sp * rd.z, sp * rd.y + cp * rd.z);
-
-    // Yaw
     rd.xz = mat2(cos(camYaw), -sin(camYaw), sin(camYaw), cos(camYaw)) * rd.xz;
 
     float t = 0.01;
@@ -274,6 +269,12 @@ export const terrain3DShader = /* glsl */ `
       t += max(0.005, (hitPos.y - h) * 0.4);
       if (t > maxDist) break;
     }
+
+    // Horizon fade: alpha drops as ray points up (toward sky) or distance grows
+    float horizonW = smoothstep(0.0, 0.4, rd.y); // 0 below horizon, 1 well above
+    float distFade = clamp(t / maxDist, 0.0, 1.0);
+    float terrainAlpha = 1.0;
+    int mode = int(uMode + 0.5);
 
     if (hit) {
       vec2 sUV = fract(hitPos.xz * 0.3);
@@ -289,13 +290,371 @@ export const terrain3DShader = /* glsl */ `
       color = texColor * diff;
       float fogFactor = 1.0 - exp(-t * fogDensity * 0.5);
       color = mix(color, fogColor, fogFactor);
+      // Distance-based alpha fade
+      terrainAlpha = mix(1.0, 1.0 - distFade, uHorizonFade * 0.85);
     } else {
-      // Sky gradient instead of flat fog
+      // Sky / miss
       float skyGrad = max(rd.y, 0.0);
       color = mix(fogColor, fogColor * 1.3, skyGrad);
+      // Mode 0: opaque sky. Mode 1+: alpha falls off above horizon for transparent reveal.
+      if (mode != 0) terrainAlpha = mix(1.0, 1.0 - horizonW, uHorizonFade);
     }
 
-    gl_FragColor = vec4(clamp(color, 0.0, 1.0), src.a);
+    // Mode 2: also blend final result with the underlying source colour
+    vec4 srcLayer = src;
+    if (mode == 2 && uSourceMix > 0.001) {
+      color = mix(color, srcLayer.rgb, uSourceMix * (mode == 2 ? 1.0 : 0.0));
+    }
+
+    gl_FragColor = vec4(clamp(color, 0.0, 1.0), terrainAlpha * src.a);
+  }
+`;
+
+// ============================================================================
+// WRAPPED TERRAIN (LEGACY) — kept for reference; actual export is the SDF
+// raymarched version below.
+// ============================================================================
+const wrappedTerrainShader_LEGACY = /* glsl */ `
+  uniform sampler2D uTexture;
+  uniform vec2 uResolution;
+  uniform float uTime;
+  uniform float uShape;         // 0=sphere, 1=cube, 2=pyramid
+  uniform float uHeight;        // 0-1 extrusion amount (luma → outward push)
+  uniform float uRotateX;       // 0-1 (mapped to 0..2π)
+  uniform float uRotateY;       // 0-1
+  uniform float uAutoRotate;    // 0-2 spin speed
+  uniform float uCamDistance;   // 1-5
+  uniform float uSpecular;      // 0-1
+  uniform float uAmbient;       // 0-1
+  uniform float uFogDistance;   // 0-1 distance fog factor
+  uniform vec3 uFogColor;
+  uniform float uHorizonFade;   // 0-1 alpha fade past silhouette
+  uniform float uSourceMix;     // 0-1 blend with raw source layer
+  uniform float uTileScale;     // 0.5-4 tile UV repeat
+  varying vec2 vUv;
+
+  #define PI 3.14159265359
+  #define TAU 6.28318530718
+
+  float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+
+  mat3 rotX(float a) { float s = sin(a), c = cos(a); return mat3(1,0,0, 0,c,-s, 0,s,c); }
+  mat3 rotY(float a) { float s = sin(a), c = cos(a); return mat3(c,0,s, 0,1,0, -s,0,c); }
+
+  // Sphere intersect
+  float intersectSphere(vec3 ro, vec3 rd, float r) {
+    float b = dot(ro, rd);
+    float c = dot(ro, ro) - r * r;
+    float h = b * b - c;
+    if (h < 0.0) return -1.0;
+    return -b - sqrt(h);
+  }
+
+  // Box intersect (returns near hit; sets normal via outNormal)
+  float intersectBox(vec3 ro, vec3 rd, float r, out vec3 outNormal) {
+    vec3 m = 1.0 / rd;
+    vec3 n = m * ro;
+    vec3 k = abs(m) * r;
+    vec3 t1 = -n - k;
+    vec3 t2 = -n + k;
+    float tN = max(max(t1.x, t1.y), t1.z);
+    float tF = min(min(t2.x, t2.y), t2.z);
+    if (tN > tF || tF < 0.0) return -1.0;
+    outNormal = -sign(rd) * step(t1.yzx, t1.xyz) * step(t1.zxy, t1.xyz);
+    return tN;
+  }
+
+  // Pyramid (4-sided) — analytic intersect via plane equations
+  float intersectPyramid(vec3 ro, vec3 rd, float r, out vec3 outNormal) {
+    // 4 side planes meeting at apex (0, r, 0), base at y = -r/3
+    float bestT = 1e9;
+    vec3 bestN = vec3(0.0);
+    vec3 normals[5];
+    float ds[5];
+    float baseY = -r * 0.33;
+    float apexY = r;
+    // Normalize: each side plane normal points outward, slope from base edge to apex
+    normals[0] = normalize(vec3( 1.0,  0.4,  0.0)); ds[0] = r * 0.5;
+    normals[1] = normalize(vec3(-1.0,  0.4,  0.0)); ds[1] = r * 0.5;
+    normals[2] = normalize(vec3( 0.0,  0.4,  1.0)); ds[2] = r * 0.5;
+    normals[3] = normalize(vec3( 0.0,  0.4, -1.0)); ds[3] = r * 0.5;
+    normals[4] = vec3(0.0, -1.0, 0.0); ds[4] = -baseY;
+    for (int i = 0; i < 5; i++) {
+      float denom = dot(rd, normals[i]);
+      if (abs(denom) < 1e-4) continue;
+      float ti = (ds[i] - dot(ro, normals[i])) / denom;
+      if (ti < 0.0) continue;
+      vec3 hit = ro + rd * ti;
+      // Validate inside other planes (with small epsilon)
+      bool inside = true;
+      for (int j = 0; j < 5; j++) {
+        if (i == j) continue;
+        if (dot(hit, normals[j]) > ds[j] + 0.01) { inside = false; break; }
+      }
+      if (inside && ti < bestT) { bestT = ti; bestN = normals[i]; }
+    }
+    if (bestT > 1e8) return -1.0;
+    outNormal = bestN;
+    return bestT;
+  }
+
+  // Map a world-space point on the surface to a UV coord on the source texture
+  vec2 surfaceUV(vec3 p, int shape, vec3 n) {
+    if (shape == 0) {
+      // Sphere → equirectangular
+      vec3 d = normalize(p);
+      return vec2(atan(d.z, d.x) / TAU + 0.5, asin(clamp(d.y, -1.0, 1.0)) / PI + 0.5);
+    } else if (shape == 1) {
+      // Cube → pick face from largest |normal| component
+      vec3 an = abs(n);
+      vec2 uv;
+      if (an.x > an.y && an.x > an.z) uv = vec2(p.z, p.y) * 0.5 + 0.5;
+      else if (an.y > an.z) uv = vec2(p.x, p.z) * 0.5 + 0.5;
+      else uv = vec2(p.x, p.y) * 0.5 + 0.5;
+      return uv;
+    } else {
+      // Pyramid → triplanar approx
+      vec3 d = normalize(p);
+      return vec2(atan(d.z, d.x) / TAU + 0.5, p.y * 0.5 + 0.5);
+    }
+  }
+
+  void main() {
+    vec3 srcRaw = texture2D(uTexture, vUv).rgb;
+    int shape = int(uShape + 0.5);
+    vec2 screenPos = vUv * 2.0 - 1.0;
+    screenPos.x *= uResolution.x / uResolution.y;
+
+    // Camera setup
+    float dist = max(1.5, uCamDistance);
+    vec3 ro = vec3(0.0, 0.0, dist);
+    vec3 rd = normalize(vec3(screenPos, -1.5));
+
+    // Auto + manual rotation
+    float angY = uRotateY * TAU + uTime * uAutoRotate * 0.4;
+    float angX = (uRotateX - 0.5) * PI;
+    mat3 rotMat = rotY(angY) * rotX(angX);
+
+    ro = rotMat * ro;
+    rd = rotMat * rd;
+
+    float radius = 1.0;
+    float t = -1.0;
+    vec3 normal = vec3(0.0, 0.0, 1.0);
+
+    if (shape == 0) {
+      t = intersectSphere(ro, rd, radius);
+      if (t > 0.0) normal = normalize(ro + rd * t);
+    } else if (shape == 1) {
+      t = intersectBox(ro, rd, radius, normal);
+    } else {
+      t = intersectPyramid(ro, rd, radius, normal);
+    }
+
+    if (t < 0.0) {
+      // Miss — show fog colour with horizon fade
+      float alpha = 1.0 - uHorizonFade;
+      vec3 col = mix(uFogColor, srcRaw, uSourceMix);
+      gl_FragColor = vec4(col, alpha);
+      return;
+    }
+
+    vec3 hitPos = ro + rd * t;
+    vec2 sUV = fract(surfaceUV(hitPos, shape, normal) * uTileScale);
+    vec3 texCol = texture2D(uTexture, sUV).rgb;
+    float l = luma(texCol);
+
+    // Extrude outward by luma * uHeight along normal
+    vec3 extrudedPos = hitPos + normal * l * uHeight * 0.4;
+    // Re-derive surface UV for the extruded position (small wiggle)
+    vec2 sUV2 = fract(surfaceUV(extrudedPos, shape, normal) * uTileScale);
+    vec3 finalCol = texture2D(uTexture, sUV2).rgb;
+
+    // Lighting
+    vec3 lightDir = normalize(rotMat * vec3(0.5, 0.7, 0.5));
+    float diff = max(dot(normal, lightDir), 0.0);
+    float spec = pow(max(dot(reflect(-lightDir, normal), -rd), 0.0), 32.0) * uSpecular;
+    vec3 lit = finalCol * (uAmbient + diff * 0.85) + vec3(spec);
+
+    // Distance fog (smooth falloff away from camera at silhouette)
+    float fogFactor = 1.0 - exp(-t * uFogDistance * 0.3);
+    lit = mix(lit, uFogColor, fogFactor);
+
+    // Silhouette-edge fade (Fresnel-like) for nice fade into BG
+    float fres = 1.0 - max(dot(normal, -rd), 0.0);
+    float silAlpha = 1.0 - smoothstep(0.7, 1.0, fres) * uHorizonFade;
+
+    // Source mix
+    vec3 disp = mix(lit, srcRaw, uSourceMix);
+    gl_FragColor = vec4(clamp(disp, 0.0, 1.0), silAlpha);
+  }
+`;
+
+// ============================================================================
+// WRAPPED TERRAIN — SDF raymarched bumpy sphere/cube/pyramid.
+// Source luma physically pushes the surface outward along its normal — the
+// silhouette deforms, not just the texture. Uses standard SDF raymarch +
+// 4-tap normal estimate for shading.
+// ============================================================================
+export const wrappedTerrainShader = /* glsl */ `
+  uniform sampler2D uTexture;
+  uniform vec2 uResolution;
+  uniform float uTime;
+  uniform float uShape;         // 0=sphere, 1=cube, 2=pyramid
+  uniform float uHeight;        // 0-1 extrusion amount
+  uniform float uRotateX;
+  uniform float uRotateY;
+  uniform float uAutoRotate;
+  uniform float uCamDistance;
+  uniform float uSpecular;
+  uniform float uAmbient;
+  uniform float uFogDistance;
+  uniform vec3 uFogColor;
+  uniform float uHorizonFade;
+  uniform float uSourceMix;
+  uniform float uTileScale;
+  varying vec2 vUv;
+
+  #define PI 3.14159265359
+  #define TAU 6.28318530718
+
+  float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+  mat3 rotX(float a) { float s = sin(a), c = cos(a); return mat3(1,0,0, 0,c,-s, 0,s,c); }
+  mat3 rotY(float a) { float s = sin(a), c = cos(a); return mat3(c,0,s, 0,1,0, -s,0,c); }
+
+  // SDF for an axis-aligned box.
+  float sdBox(vec3 p, vec3 b) {
+    vec3 d = abs(p) - b;
+    return length(max(d, 0.0)) + min(max(d.x, max(d.y, d.z)), 0.0);
+  }
+
+  // SDF for a 4-sided pyramid (apex up). h = height. baseHalf = base half-width.
+  float sdPyramid(vec3 p, float h, float baseHalf) {
+    p.y += baseHalf * 0.4;
+    p.xz = abs(p.xz);
+    float m2 = h * h + baseHalf * baseHalf;
+    vec3 q = vec3(p.z, h * p.y - baseHalf * p.x, h * p.x + baseHalf * p.y);
+    float s = max(-q.x, 0.0);
+    float t = clamp((q.y - baseHalf * p.z) / (m2 + baseHalf * baseHalf), 0.0, 1.0);
+    float a = m2 * (q.x + s) * (q.x + s) + q.y * q.y;
+    float b = m2 * (q.x + 0.5 * t) * (q.x + 0.5 * t) + (q.y - m2 * t) * (q.y - m2 * t);
+    float d2 = min(q.y, -q.x * m2 - q.y * baseHalf) > 0.0 ? 0.0 : min(a, b);
+    return sqrt((d2 + q.z * q.z) / m2) * sign(max(q.z, -p.y));
+  }
+
+  // Map a point in surface space to a UV coordinate based on shape.
+  vec2 surfaceUV(vec3 p, int shape) {
+    if (shape == 0) {
+      // Sphere — equirectangular
+      vec3 d = normalize(p + 1e-6);
+      return vec2(atan(d.z, d.x) / TAU + 0.5, asin(clamp(d.y, -1.0, 1.0)) / PI + 0.5);
+    } else if (shape == 1) {
+      // Cube — pick face from largest |axis|, project remaining two
+      vec3 ap = abs(p);
+      vec2 uv;
+      if (ap.x > ap.y && ap.x > ap.z) {
+        uv = vec2(p.z * sign(p.x), p.y) * 0.5 + 0.5;
+      } else if (ap.y > ap.z) {
+        uv = vec2(p.x, p.z * sign(p.y)) * 0.5 + 0.5;
+      } else {
+        uv = vec2(p.x * sign(p.z), p.y) * 0.5 + 0.5;
+      }
+      return clamp(uv, 0.0, 1.0);
+    } else {
+      // Pyramid — wrap U around base, V vertical
+      vec3 d = normalize(p + 1e-6);
+      return vec2(atan(d.z, d.x) / TAU + 0.5, p.y * 0.5 + 0.5);
+    }
+  }
+
+  // Sample heightfield from source luma at given surface point.
+  float heightAt(vec3 p, int shape) {
+    vec2 uv = fract(surfaceUV(p, shape) * uTileScale);
+    return luma(texture2D(uTexture, uv).rgb);
+  }
+
+  // Bumped SDF — base shape minus luma height along outward direction.
+  float bumpedSDF(vec3 p) {
+    int shape = int(uShape + 0.5);
+    float baseR = 0.85;
+    float h = heightAt(p, shape) * uHeight * 0.5;
+    float baseSDF;
+    if (shape == 0) {
+      baseSDF = length(p) - baseR;
+    } else if (shape == 1) {
+      baseSDF = sdBox(p, vec3(baseR));
+    } else {
+      baseSDF = sdPyramid(p, baseR * 1.2, baseR);
+    }
+    return baseSDF - h;
+  }
+
+  // 4-tap normal estimation
+  vec3 calcNormal(vec3 p) {
+    const vec2 e = vec2(0.0025, -0.0025);
+    return normalize(
+      e.xyy * bumpedSDF(p + e.xyy) +
+      e.yyx * bumpedSDF(p + e.yyx) +
+      e.yxy * bumpedSDF(p + e.yxy) +
+      e.xxx * bumpedSDF(p + e.xxx)
+    );
+  }
+
+  void main() {
+    vec3 srcRaw = texture2D(uTexture, vUv).rgb;
+    vec2 screenPos = vUv * 2.0 - 1.0;
+    screenPos.x *= uResolution.x / uResolution.y;
+
+    float dist = max(1.5, uCamDistance);
+    vec3 ro = vec3(0.0, 0.0, dist);
+    vec3 rd = normalize(vec3(screenPos, -1.5));
+
+    float angY = uRotateY * TAU + uTime * uAutoRotate * 0.4;
+    float angX = (uRotateX - 0.5) * PI;
+    mat3 rotMat = rotY(angY) * rotX(angX);
+    ro = rotMat * ro;
+    rd = rotMat * rd;
+
+    // SDF raymarch
+    float t = 0.0;
+    bool hit = false;
+    for (int i = 0; i < 80; i++) {
+      vec3 p = ro + rd * t;
+      float d = bumpedSDF(p);
+      if (d < 0.001) { hit = true; break; }
+      t += max(d * 0.7, 0.005);
+      if (t > 8.0) break;
+    }
+
+    if (!hit) {
+      float alpha = 1.0 - uHorizonFade;
+      vec3 col = mix(uFogColor, srcRaw, uSourceMix);
+      gl_FragColor = vec4(col, alpha);
+      return;
+    }
+
+    vec3 hitPos = ro + rd * t;
+    vec3 N = calcNormal(hitPos);
+    int shape = int(uShape + 0.5);
+    vec2 sUV = fract(surfaceUV(hitPos, shape) * uTileScale);
+    vec3 texCol = texture2D(uTexture, sUV).rgb;
+
+    // Lighting
+    vec3 lightDir = normalize(rotMat * vec3(0.5, 0.7, 0.5));
+    float diff = max(dot(N, lightDir), 0.0);
+    float spec = pow(max(dot(reflect(-lightDir, N), -rd), 0.0), 32.0) * uSpecular;
+    vec3 lit = texCol * (uAmbient + diff * 0.85) + vec3(spec);
+
+    // Distance fog
+    float fogFactor = 1.0 - exp(-t * uFogDistance * 0.3);
+    lit = mix(lit, uFogColor, fogFactor);
+
+    // Fresnel-like silhouette fade for clean transparent BG
+    float fres = 1.0 - max(dot(N, -rd), 0.0);
+    float silAlpha = 1.0 - smoothstep(0.7, 1.0, fres) * uHorizonFade;
+
+    vec3 disp = mix(lit, srcRaw, uSourceMix);
+    gl_FragColor = vec4(clamp(disp, 0.0, 1.0), silAlpha);
   }
 `;
 

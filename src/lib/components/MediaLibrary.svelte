@@ -2,10 +2,10 @@
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
   import { project, selectedLayerId } from '../stores/layers';
+  import { confirmDeleteIfSafeMode } from '../utils/safeMode';
   import type { MediaSource, JSAnimationSource } from '../types';
   import { generateUUID } from '../types';
   import AIShaderGenerator from './AIShaderGenerator.svelte';
-  import { confirmDeleteIfSafeMode } from '../utils/safeMode';
 
   // Library state
   let libraryItems: MediaSource[] = [];
@@ -178,7 +178,7 @@
   function applyToLayer(item: MediaSource) {
     if (!$selectedLayerId) return;
 
-    // Create a fresh source wrapper for the layer
+    // Create a fresh copy for the layer
     const layerSource: MediaSource = {
       id: generateUUID(),
       type: item.type,
@@ -187,12 +187,9 @@
     };
 
     if (item.type === 'video') {
-      // Reuse the library item's existing <video> element. Pre-fix:
-      // every apply-to-layer click made a fresh element + fresh load,
-      // and rapid back-and-forth between two clips raced 4+ in-flight
-      // loads at once and stuck textures on garbage frames. Reusing
-      // the library element makes apply-A → apply-B → apply-A a near-
-      // instant texture swap (clip A's element is still warm).
+      // Reuse the library item's existing <video> element. See community
+      // fix: pre-fix every apply-to-layer click made a fresh element +
+      // fresh load, racing 4+ in-flight loads on rapid back-and-forth.
       let video = item.videoElement as HTMLVideoElement | undefined;
       if (!video) {
         video = document.createElement('video');
@@ -202,8 +199,8 @@
       }
       // Pause whatever video was previously bound to this layer so it
       // doesn't keep decoding in the background. The decoder budget is
-      // shared across all <video> elements, and a stack of "still
-      // playing but offscreen" clips is what was thrashing the GPU.
+      // shared across all <video> elements; a stack of "still playing
+      // but offscreen" clips thrashes the GPU.
       const prevLayer = $project.layers.find((l) => l.id === $selectedLayerId);
       const prevVideo = (prevLayer?.source as any)?.videoElement as HTMLVideoElement | undefined;
       if (prevVideo && prevVideo !== video) {
@@ -215,8 +212,7 @@
       video.preload = 'auto';
       // Restart from frame 0 on every apply — VJ semantics: clicking a
       // clip means "play this clip from the top", not "resume from
-      // wherever it was last paused". Wrapped in try/catch because
-      // currentTime= can throw if the element is mid-load.
+      // wherever it was last paused".
       try { video.currentTime = 0; } catch { /* ignore */ }
       if (video.paused) video.play().catch(() => { /* AbortError on rapid re-apply is fine */ });
       layerSource.videoElement = video;

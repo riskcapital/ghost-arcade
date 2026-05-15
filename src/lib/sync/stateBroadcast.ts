@@ -181,16 +181,22 @@ function sendFullState() {
     const settingsState = get(settings);
 
     // Strip non-serializable properties from clip grids (HTMLCanvasElement,
-    // HTMLVideoElement, HTMLIFrameElement). Must strip both the top-level
-    // clipGrid AND the clipGrid inside every block — the old version only
-    // stripped the top-level one, so every clip sitting in vjState.blocks
-    // still carried its OffscreenCanvas/video/iframe into structured clone
-    // and threw DataCloneError on every broadcast.
+    // HTMLVideoElement, HTMLIFrameElement). Must strip:
+    //   - the top-level Bank A clipGrid
+    //   - the Bank B clipGrid (when crossfader has it)
+    //   - the clipGrid AND bankBClipGrid inside every block
+    //   - layerStates[i].activeClip + bankBLayerStates[i].activeClip
+    //     (same VJClip object reference as in the grid, so same runtime fields)
+    // Pre-fix the activeClip path leaked HTMLVideoElement into structured
+    // clone and threw DataCloneError on every triggerClip / setClip /
+    // openVJMode — visible as a console flood and reported by the user.
     const safeBlocks = vjState.blocks.map(block => ({
       ...block,
       clipGrid: stripClipGrid(block.clipGrid),
+      bankBClipGrid: block.bankBClipGrid ? stripClipGrid(block.bankBClipGrid) : undefined,
     }));
     const safeClipGrid = stripClipGrid(vjState.clipGrid);
+    const safeBankBClipGrid = (vjState as any).bankBClipGrid ? stripClipGrid((vjState as any).bankBClipGrid) : undefined;
 
     channel.postMessage({
       type: 'project-state',
@@ -200,7 +206,9 @@ function sendFullState() {
           blocks: safeBlocks,
           activeBlockId: vjState.activeBlockId,
           clipGrid: safeClipGrid,
-          layerStates: vjState.layerStates,
+          bankBClipGrid: safeBankBClipGrid,
+          layerStates: stripLayerStates(vjState.layerStates),
+          bankBLayerStates: stripLayerStates((vjState as any).bankBLayerStates),
           compositionEffects: vjState.compositionEffects,
           masterOpacity: vjState.masterOpacity,
           isOpen: vjState.isOpen,
@@ -274,6 +282,21 @@ function stripClipGrid(grid: any[][]): any[][] {
   return grid.map(row => row.map(stripClip));
 }
 
+// layerStates[i].activeClip points to the same VJClip object that lives in
+// the grid, so it has the same uncloneable runtime fields. Strip activeClip
+// the same way stripClip does for grid cells. Without this, every broadcast
+// that carries layerStates rethrows DataCloneError ("HTMLVideoElement object
+// could not be cloned") — fills the console and signals to anyone watching
+// that the sync pipeline is broken even though video texture creation in
+// the editor itself is fine.
+function stripLayerStates(layerStates: any[] | undefined): any[] | undefined {
+  if (!layerStates) return layerStates;
+  return layerStates.map(ls => ({
+    ...ls,
+    activeClip: stripClip(ls?.activeClip),
+  }));
+}
+
 function doBroadcastVJState() {
   if (!channel || mode !== 'sender' || !hasActiveReceiver) return;
 
@@ -281,15 +304,18 @@ function doBroadcastVJState() {
     const vjState = get(vjClipLauncher);
 
     // Strip the top-level clipGrid AND the clipGrid inside each block —
-    // earlier this only stripped the top-level grid and left
-    // vjState.blocks[].clipGrid intact, which meant every VJ clip that lived
-    // in a block re-exposed its OffscreenCanvas/video/iframe to the clone
-    // and triggered the DataCloneError above.
+    // also strip layerStates[i].activeClip (carries the same uncloneable
+    // VJClip reference) and bank B equivalents. Pre-fix only the top-level
+    // grid was stripped, so every triggerClip/setClip/openVJMode broadcast
+    // re-exposed an HTMLVideoElement to structured clone and threw
+    // DataCloneError.
     const safeBlocks = vjState.blocks.map(block => ({
       ...block,
       clipGrid: stripClipGrid(block.clipGrid),
+      bankBClipGrid: block.bankBClipGrid ? stripClipGrid(block.bankBClipGrid) : undefined,
     }));
     const safeClipGrid = stripClipGrid(vjState.clipGrid);
+    const safeBankBClipGrid = (vjState as any).bankBClipGrid ? stripClipGrid((vjState as any).bankBClipGrid) : undefined;
 
     channel.postMessage({
       type: 'vj-state',
@@ -297,7 +323,9 @@ function doBroadcastVJState() {
         blocks: safeBlocks,
         activeBlockId: vjState.activeBlockId,
         clipGrid: safeClipGrid,
-        layerStates: vjState.layerStates,
+        bankBClipGrid: safeBankBClipGrid,
+        layerStates: stripLayerStates(vjState.layerStates),
+        bankBLayerStates: stripLayerStates((vjState as any).bankBLayerStates),
         compositionEffects: vjState.compositionEffects,
         masterOpacity: vjState.masterOpacity,
         isOpen: vjState.isOpen,

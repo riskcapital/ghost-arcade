@@ -377,6 +377,21 @@
   // Media library state
   let showMediaLibrary = false;
 
+  // Output freeze state — mirrored from desktop. Mobile shows a play/pause
+  // pill in the top mode-strip in mapping mode that toggles this; the
+  // desktop's outputFrozen store is the source of truth and broadcasts the
+  // current value back so the icon stays in sync if someone toggles freeze
+  // from the desktop or another connected mobile.
+  let outputFrozen = false;
+  function toggleOutputFreeze() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    // Optimistic local flip — desktop will echo the authoritative state
+    // back via 'output_freeze_state' so this self-corrects within one RTT
+    // if anything went wrong on the desktop side.
+    outputFrozen = !outputFrozen;
+    ws.send(JSON.stringify({ type: 'set_output_freeze', frozen: outputFrozen }));
+  }
+
   // Mesh grid size
   let meshRows = 4;
   let meshCols = 4;
@@ -397,11 +412,8 @@
   // Viewport navigation is now controlled by sliders instead of pinch/pan gestures
   // This frees up all touch interactions for layer/mesh manipulation
 
-  // Built-in Three.js sources available for triggering
-  const threejsSources = [
-    { id: 'threejs-embryo', name: 'Embryo', src: '/threejs/embryo/index.html' },
-    { id: 'threejs-flow', name: 'Flow', src: '/threejs/flow/index-new.html' },
-  ];
+  // Built-in Three.js sources removed — those HTML payloads are no
+  // longer shipped. Mobile uses the synced shader_library instead.
 
   // Effects panel state
   let showEffectsPanel = false;
@@ -472,16 +484,25 @@
   // Use shared effect parameter definitions (covers all 81+ effects)
   const effectParamDefs = EFFECT_PARAM_DEFS;
 
-  // Shaders loaded from manifest
+  // Shaders for the picker. Two sources, in priority order:
+  //   1. shader_library_sync from the desktop (preferred — same list +
+  //      thumbnails the desktop user picks from, including custom / AI
+  //      / cloud-synced entries that aren't in the public manifest).
+  //   2. ./ISF/manifest.json + ./ISF/thumbnails/manifest.json fetched
+  //      directly by the mobile (fallback — works even if the desktop
+  //      WS server hasn't been restarted with the new sync handlers).
+  // Whichever source produces a non-empty list first wins; the WS
+  // sync handler always overwrites if it arrives later.
   interface ShaderInfo {
     id: string;
     name: string;
     src: string;
-    thumbnail?: string; // URL to pre-generated thumbnail image
+    thumbnail?: string;
+    custom?: boolean;
   }
   let shaders: ShaderInfo[] = [];
-  let shadersLoading = false;
-  let thumbnailManifest: Record<string, string> = {}; // shader filename → thumbnail jpg
+  let shadersLoading = true;
+  let shadersFromSync = false; // true once the WS sync overwrote the list
 
   // Media library items received from desktop
   interface LibraryItem {
@@ -663,57 +684,58 @@
     });
   }
 
-  // Load pre-generated thumbnails manifest
-  async function loadThumbnailManifest() {
+  // Fallback shader loader: fetches the public ISF manifest + the
+  // pre-generated thumbnails manifest directly. Used when the desktop
+  // WS server hasn't yet sent (or can't send — e.g. older server build
+  // without the relay handler) the canonical shader_library_sync.
+  // Whatever this loads is overwritten the moment a real sync arrives.
+  let thumbnailManifest: Record<string, string> = {};
+  async function loadShaderManifestFallback() {
     try {
-      const resp = await fetch('./ISF/thumbnails/manifest.json');
-      if (resp.ok) {
-        const data = await resp.json();
-        // Build lookup: shader filename (no ext) → jpg filename
-        if (data && typeof data === 'object') {
-          for (const [key, val] of Object.entries(data)) {
-            thumbnailManifest[key] = val as string;
+      const [mResp, tResp] = await Promise.all([
+        fetch('./ISF/manifest.json'),
+        fetch('./ISF/thumbnails/manifest.json').catch(() => null),
+      ]);
+      if (tResp && tResp.ok) {
+        try {
+          const tJson = await tResp.json();
+          if (tJson && typeof tJson === 'object') {
+            const map = (tJson.thumbnails && typeof tJson.thumbnails === 'object')
+              ? tJson.thumbnails
+              : tJson;
+            for (const [k, v] of Object.entries(map)) {
+              if (typeof v === 'string') thumbnailManifest[k] = v;
+            }
           }
-        }
+        } catch { /* skip */ }
       }
-    } catch {
-      // No thumbnails manifest — that's fine, we'll show fallback icons
-    }
-  }
-
-  // Load shaders from manifest
-  async function loadShaders() {
-    shadersLoading = true;
-    // Load thumbnail manifest in parallel
-    await loadThumbnailManifest();
-    try {
-      const response = await fetch('./ISF/manifest.json');
-      const manifest = await response.json();
-
-      const loadedShaders: ShaderInfo[] = [];
-      // Support both v1 (flat array) and v2 (objects with metadata) manifest formats
+      const manifest = await mResp.json();
       const entries: Array<{ file: string }> =
         manifest.version === 2
           ? manifest.shaders.filter((s: any) => s.enabled !== false)
           : manifest.shaders.map((f: string) => ({ file: f }));
+      const list: ShaderInfo[] = [];
       for (const entry of entries) {
         const filename = entry.file;
         const baseName = filename.replace('.fs', '');
         const encodedPath = filename.split('/').map(encodeURIComponent).join('/');
-        // Look up thumbnail from pre-generated manifest
         const thumbFile = thumbnailManifest[baseName] || thumbnailManifest[filename];
-        loadedShaders.push({
-          id: generateUUID(),
-          name: baseName.replace('DM-', ''),
+        list.push({
+          id: `isf:${filename}`,
+          name: baseName.replace('DM-', '').replace('SM-', '').replace('AR-', ''),
           src: `./ISF/${encodedPath}`,
           thumbnail: thumbFile ? `./ISF/thumbnails/${encodeURIComponent(thumbFile)}` : undefined,
         });
       }
-      shaders = loadedShaders;
+      // Only apply the fallback if a sync hasn't already populated us.
+      if (!shadersFromSync) {
+        shaders = list;
+        shadersLoading = false;
+      }
     } catch (err) {
-      console.error('Failed to load shader manifest:', err);
+      console.error('[Mobile] Manifest fallback load failed:', err);
+      shadersLoading = false;
     }
-    shadersLoading = false;
   }
 
   onMount(() => {
@@ -752,8 +774,10 @@
     updateViewportSize();
     window.addEventListener('resize', updateViewportSize);
 
-    // Load shaders from manifest
-    loadShaders();
+    // Kick off the manifest fallback in the background. If the desktop
+    // pushes a real sync via WS first, the fallback's eventual write
+    // is suppressed by the shadersFromSync flag.
+    loadShaderManifestFallback();
 
     // If running as PWA, auto-connect
     if (isPWA && serverUrl) {
@@ -969,6 +993,39 @@
         // Receive media library from desktop
         libraryItems = (msg.library as LibraryItem[]) || [];
         break;
+
+      case 'output_freeze_state':
+        // Desktop telling us its current output-frozen state. Sent on
+        // initial connect and every time the freeze toggles (whether the
+        // toggle came from this mobile, the desktop, or another peer).
+        outputFrozen = !!(msg as { frozen?: boolean }).frozen;
+        break;
+
+      case 'shader_library_sync': {
+        // Desktop pushed its MediaTray shader list (manifest catalog +
+        // user-added + AI-generated + cloud-synced — already de-duped
+        // and with thumbnails rendered). This is the preferred source;
+        // the manifest fallback that ran on mount is replaced by it.
+        const incoming = (msg as { shaders?: Array<{
+          id: string;
+          name: string;
+          src: string;
+          thumbnail?: string;
+          custom?: boolean;
+        }> }).shaders || [];
+        if (incoming.length > 0) {
+          shaders = incoming.map((s) => ({
+            id: s.id,
+            name: s.name,
+            src: s.src,
+            thumbnail: s.thumbnail,
+            custom: !!s.custom,
+          }));
+          shadersFromSync = true;
+        }
+        shadersLoading = false;
+        break;
+      }
 
       case 'vj_clips_sync': {
         // Receive VJ clips state from desktop
@@ -2209,6 +2266,29 @@
         >Paint</button>
       </div>
       {#if mobileMode === 'mapping'}
+        <!-- Output freeze pill — pause/play the output canvas from the
+             phone. State is mirrored from desktop's outputFrozen store, so
+             the icon flips even if someone toggles freeze elsewhere. -->
+        <button
+          class="freeze-btn"
+          class:active={outputFrozen}
+          onclick={toggleOutputFreeze}
+          title={outputFrozen ? 'Resume output' : 'Freeze output'}
+          aria-label={outputFrozen ? 'Resume output' : 'Freeze output'}
+        >
+          {#if outputFrozen}
+            <!-- play triangle when frozen (tap to resume) -->
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <polygon points="5,3 19,12 5,21"/>
+            </svg>
+          {:else}
+            <!-- pause bars when running (tap to freeze) -->
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <rect x="6" y="4" width="4" height="16" rx="1"/>
+              <rect x="14" y="4" width="4" height="16" rx="1"/>
+            </svg>
+          {/if}
+        </button>
         <button class="media-btn" onclick={() => showMediaLibrary = !showMediaLibrary}>
           {showMediaLibrary ? 'Close' : 'Media'}
         </button>
@@ -2430,46 +2510,66 @@
       </div>
     </div>
 
-    <!-- Quick Controls -->
+    <!-- Quick Controls — opacity / blend / visibility share one compact
+         row at 45 / 45 / 10 so the strip stays under the layer list
+         without wrapping. The eye icon is the layer-visibility toggle:
+         open eye = currently visible (tap to hide), eye-with-slash =
+         currently hidden (tap to show). -->
     {#if selectedLayer}
       <div class="quick-controls">
-        <div class="control-row">
-          <span>Opacity</span>
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={selectedLayer.opacity}
-            oninput={(e) => {
-              const val = parseFloat((e.target as HTMLInputElement).value);
-              sendParameter(selectedLayer.id, 'opacity', val);
-            }}
-          />
-          <span>{Math.round(selectedLayer.opacity * 100)}%</span>
-        </div>
-
-        <div class="control-row">
-          <span>Blend</span>
-          <select
-            value={selectedLayer.blendMode}
-            onchange={(e) => {
-              sendParameter(selectedLayer.id, 'blendMode', (e.target as HTMLSelectElement).value);
-            }}
+        <div class="quick-row">
+          <div class="quick-cell quick-opacity">
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={selectedLayer.opacity}
+              oninput={(e) => {
+                const val = parseFloat((e.target as HTMLInputElement).value);
+                sendParameter(selectedLayer.id, 'opacity', val);
+              }}
+              aria-label="Layer opacity"
+            />
+            <span class="quick-pct">{Math.round(selectedLayer.opacity * 100)}%</span>
+          </div>
+          <div class="quick-cell quick-blend">
+            <select
+              value={selectedLayer.blendMode}
+              onchange={(e) => {
+                sendParameter(selectedLayer.id, 'blendMode', (e.target as HTMLSelectElement).value);
+              }}
+              aria-label="Layer blend mode"
+            >
+              {#each blendModes as mode}
+                <option value={mode}>{mode}</option>
+              {/each}
+            </select>
+          </div>
+          <button
+            class="visibility-btn quick-vis"
+            class:hidden={!selectedLayer.visible}
+            onclick={() => sendParameter(selectedLayer.id, 'visible', !selectedLayer.visible)}
+            title={selectedLayer.visible ? 'Hide layer' : 'Show layer'}
+            aria-label={selectedLayer.visible ? 'Hide layer' : 'Show layer'}
           >
-            {#each blendModes as mode}
-              <option value={mode}>{mode}</option>
-            {/each}
-          </select>
+            {#if selectedLayer.visible}
+              <!-- Open eye: layer is visible; tap to hide -->
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+            {:else}
+              <!-- Eye with slash: layer is hidden; tap to show -->
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a19.78 19.78 0 0 1 5.06-5.94"/>
+                <path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a19.78 19.78 0 0 1-3.16 4.19"/>
+                <path d="M14.12 14.12A3 3 0 1 1 9.88 9.88"/>
+                <line x1="1" y1="1" x2="23" y2="23"/>
+              </svg>
+            {/if}
+          </button>
         </div>
-
-        <button
-          class="visibility-btn"
-          class:hidden={!selectedLayer.visible}
-          onclick={() => sendParameter(selectedLayer.id, 'visible', !selectedLayer.visible)}
-        >
-          {selectedLayer.visible ? 'Hide Layer' : 'Show Layer'}
-        </button>
       </div>
     {/if}
 
@@ -2712,27 +2812,9 @@
                 </div>
               </div>
 
-              <!-- Built-in Three.js Sources -->
-              <div class="media-section">
-                <h4>Three.js Visuals</h4>
-                <div class="media-grid">
-                  {#each threejsSources as source}
-                    <button
-                      class="media-item"
-                      onclick={() => triggerMedia('threejs', source.src, source.name)}
-                    >
-                      <div class="media-icon threejs">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                          <path d="M12 2L2 7v10l10 5 10-5V7L12 2z"/>
-                          <path d="M12 22V12"/>
-                          <path d="M22 7l-10 5-10-5"/>
-                        </svg>
-                      </div>
-                      <span>{source.name}</span>
-                    </button>
-                  {/each}
-                </div>
-              </div>
+              <!-- Three.js Visuals section removed: those source files
+                   are no longer shipped. Custom desktop shaders are now
+                   merged into the grid above via shader_library_sync. -->
 
               <!-- Current Layer Info -->
               <div class="media-section">
@@ -2749,28 +2831,42 @@
               {#if libraryItems.length > 0}
                 <div class="media-section">
                   <h4>Media Library ({libraryItems.length})</h4>
-                  <div class="media-list scrollable">
+                  <!-- Thumbnail grid: matches the Shaders tab layout so users
+                       can see what they're about to launch instead of scanning
+                       a list of names + generic image/video icons. The desktop
+                       sends `thumbnail` (base64 data URL) for every video and
+                       image in $mediaLibrary; we just have to render it. -->
+                  <div class="shader-thumb-grid scrollable">
                     {#each libraryItems as item}
                       <button
-                        class="media-list-item"
+                        class="shader-thumb-item"
                         onclick={() => triggerMedia(item.type, item.src, item.name)}
+                        title={item.name}
                       >
-                        <div class="media-type-icon {item.type}">
-                          {#if item.type === 'image'}
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                              <rect x="3" y="3" width="18" height="18" rx="2"/>
-                              <circle cx="8.5" cy="8.5" r="1.5"/>
-                              <path d="M21 15l-5-5L5 21"/>
-                            </svg>
-                          {:else}
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                              <rect x="2" y="4" width="20" height="16" rx="2"/>
-                              <path d="M10 9l5 3-5 3V9z"/>
-                            </svg>
-                          {/if}
-                        </div>
-                        <span class="media-name">{item.name}</span>
-                        <span class="media-type-label">{item.type}</span>
+                        {#if item.thumbnail}
+                          <img
+                            src={item.thumbnail}
+                            alt={item.name}
+                            class="shader-thumb-img"
+                            loading="lazy"
+                          />
+                        {:else}
+                          <div class="shader-thumb-fallback">
+                            {#if item.type === 'image'}
+                              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                                <circle cx="8.5" cy="8.5" r="1.5"/>
+                                <path d="M21 15l-5-5L5 21"/>
+                              </svg>
+                            {:else}
+                              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="2" y="4" width="20" height="16" rx="2"/>
+                                <path d="M10 9l5 3-5 3V9z"/>
+                              </svg>
+                            {/if}
+                          </div>
+                        {/if}
+                        <span class="shader-thumb-name">{item.name}</span>
                       </button>
                     {/each}
                   </div>
@@ -3390,6 +3486,32 @@
     cursor: pointer;
   }
 
+  /* Freeze (pause/play output) pill — same dimensions as the icon
+     buttons so the strip stays balanced. Red when active so the
+     "output is paused" state is unmissable while you're tapping. */
+  .freeze-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #444;
+    color: #fff;
+    border: none;
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .freeze-btn.active {
+    background: #ff4444;
+    color: #fff;
+  }
+
+  .freeze-btn:active {
+    transform: scale(0.94);
+  }
+
   .disconnect-btn {
     background: #ff4444;
     color: #fff;
@@ -3527,62 +3649,90 @@
     font-size: 14px;
   }
 
-  /* Quick Controls */
+  /* Quick Controls — single 45/45/10 row.
+     Opacity slider + percentage chip on the left, blend select in the
+     middle, eye toggle on the right. Cells use min-width:0 so the
+     slider/select can shrink rather than push the eye off-screen on
+     narrow phones. */
   .quick-controls {
-    padding: 12px;
+    padding: 8px 12px;
     background: #202020;
     border-top: 1px solid #333;
   }
 
-  .control-row {
+  .quick-row {
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin-bottom: 12px;
+    gap: 8px;
+    width: 100%;
   }
 
-  .control-row span:first-child {
-    width: 60px;
-    color: #888;
-    font-size: 13px;
+  .quick-cell {
+    display: flex;
+    align-items: center;
+    min-width: 0;
   }
 
-  .control-row input[type='range'] {
+  .quick-cell.quick-opacity {
+    flex: 0 0 45%;
+    gap: 6px;
+  }
+
+  .quick-cell.quick-blend {
+    flex: 0 0 45%;
+  }
+
+  .quick-cell.quick-opacity input[type='range'] {
     flex: 1;
+    min-width: 0;
     accent-color: #BB86FC;
   }
 
-  .control-row span:last-child {
-    width: 40px;
+  .quick-pct {
+    width: 36px;
     text-align: right;
-    font-size: 12px;
+    font-size: 11px;
     color: #888;
+    flex-shrink: 0;
   }
 
-  .control-row select {
-    flex: 1;
+  .quick-cell.quick-blend select {
+    width: 100%;
+    min-width: 0;
     padding: 8px;
     background: #333;
     color: #eee;
     border: 1px solid #444;
     border-radius: 6px;
-    font-size: 14px;
+    font-size: 13px;
   }
 
-  .visibility-btn {
-    width: 100%;
-    padding: 12px;
+  .visibility-btn.quick-vis {
+    flex: 0 0 10%;
+    min-width: 36px;
+    padding: 0;
+    height: 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     background: #333;
-    border: none;
+    border: 1px solid #444;
     border-radius: 6px;
     color: #eee;
-    font-size: 14px;
     cursor: pointer;
+    transition: background 0.15s, color 0.15s;
   }
 
-  .visibility-btn.hidden {
+  .visibility-btn.quick-vis:active {
+    transform: scale(0.94);
+  }
+
+  /* When hidden, tint the eye-with-slash red so the "layer is invisible"
+     state is unmistakable at a glance. */
+  .visibility-btn.quick-vis.hidden {
     background: #ff444433;
     color: #ff8888;
+    border-color: #ff444466;
   }
 
   /* View Mode Toggle */

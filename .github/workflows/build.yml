@@ -36,7 +36,7 @@ jobs:
           else
             gh release create "${{ github.ref_name }}" \
               --repo riskcapital/ghost-arcade-releases \
-              --title "Ghost Arcade Pro ${{ github.ref_name }}" \
+              --title "Ghost Arcade ${{ github.ref_name }}" \
               --notes "Signed Windows installer + notarized macOS DMGs uploaded by CI." \
               --target main
             echo "Release ${{ github.ref_name }} created"

@@ -180,7 +180,258 @@ export interface JSAnimationSource {
 // 'stretch' = distort to fill (default), 'fill' = maintain aspect + crop overflow (CSS cover), 'crop' = maintain aspect + letterbox (CSS contain)
 export type ContentFitMode = 'stretch' | 'fill' | 'crop';
 
-export type LayerType = 'media' | 'lines' | 'svg' | 'color' | 'lightpainting' | 'text' | 'splat' | 'model3d' | 'screen' | 'group';
+export type LayerType = 'media' | 'lines' | 'svg' | 'color' | 'lightpainting' | 'adv-lightpaint' | 'text' | 'splat' | 'model3d' | 'screen' | 'group' | 'pixel-fx' | 'gpu';
+
+/**
+ * GPU layer — hosts a swappable WebGPU shader (similar to how a
+ * media layer hosts a swappable shader/video/image). Shaders are
+ * defined in the GPU shader registry (gpuShaderCatalog.ts); each
+ * has its own param schema. Switching shaders mid-session is cheap.
+ *
+ * Renders to its own OffscreenCanvas so the existing engine pipeline
+ * handles warp / blend / mesh / per-layer effects normally — the
+ * GPU layer behaves exactly like a media layer from the engine's
+ * point of view. Just the SOURCE of the pixels is a WebGPU shader
+ * instead of a video/image/glsl-shader.
+ */
+export interface GPULayerContent {
+  /** Shader id from the GPU shader registry (e.g. 'planet',
+   *  'pixel-particles'). */
+  shaderId: string;
+  /** Shader-specific params. Keys + types are defined by the
+   *  shader's paramSchema; the panel renders controls accordingly. */
+  params: Record<string, any>;
+}
+
+export function createDefaultGPULayerContent(): GPULayerContent {
+  // Default to planet — most visually striking out of the box.
+  return {
+    shaderId: 'planet',
+    params: {},   // shader populates defaults from its schema on first render
+  };
+}
+
+/**
+ * PixelFX layer — turns any 2D source (image, video, canvas, shader)
+ * into a cloud of GPU-animated particles. The source provides per-
+ * particle color; the active mode drives the animation.
+ *
+ * sourceType + sourceUrl let us load by URL (drag-drop, MediaLibrary)
+ * but we keep a runtime-only HTMLImageElement / blob handle as
+ * `_runtimeSource` (not serialized) for hot reload performance.
+ */
+/** Pixel-FX rendering modes.
+ *
+ *   identity      — particle stays at its UV anchor (sanity check)
+ *   depth-shift   — depth-mapped point cloud with lighting + noise
+ *   sand-fall     — gravity drags particles down
+ *   scatter       — random walk + slow recovery to anchor
+ *   halftone      — particles snap to a coarse grid; size scales w/ luma
+ *   stipple-noise — tight noise wobble around anchor (ink stipple)
+ *   dissolve      — particles drift outward and fade
+ *   flythrough    — endless point-cloud tunnel; camera flies through
+ *                   N replicated slabs of the source. Optional worm-
+ *                   stroke topology (extruded quads along velocity)
+ *                   for a volumetric brush-stroke look. Dispatched to
+ *                   a dedicated renderer (`WebGPUFlythrough`) rather
+ *                   than the standard pixel-particles class because
+ *                   the camera model + topology are fundamentally
+ *                   different. See `flythrough*` fields below for
+ *                   tuning. */
+export type PixelFXMode = 'identity' | 'depth-shift' | 'sand-fall' | 'scatter' | 'halftone' | 'stipple-noise' | 'dissolve' | 'flythrough';
+
+/** Particle-rendering topology for the flythrough mode.
+ *   points  — billboard sprites (cheap, classic point-cloud look)
+ *   strokes — quads extruded along each particle's velocity vector
+ *             for the "worms in fluid" / volumetric brush look. */
+export type FlythroughTopology = 'points' | 'strokes';
+
+/** Depth-source strategy for the flythrough mode. ML-based depth
+ *  (Depth Anything V2 via ONNX) is reserved for a later iteration —
+ *  would require an onnxruntime-node sidecar download. */
+export type FlythroughDepthSource = 'luminance' | 'inverse-luminance' | 'edge-density';
+
+export interface PixelFXContent {
+  /** Where the source pixels come from. v1 supports:
+   *    'media'  — sourceMediaId picks an item from the global Media
+   *               Library (same items the Media Tray shows). Most
+   *               common path — pick from your loaded clips/images.
+   *    'layer'  — sourceLayerId points at another layer in the
+   *               project; that layer's media is used as the source.
+   *               Use when you've configured trim / playback on a
+   *               media layer and want the pixel-fx to consume it.
+   *    'image'  — sourceUrl points at a still image (file picker).
+   *    'video'  — sourceUrl points at a video file (file picker). */
+  sourceType: 'media' | 'image' | 'video' | 'layer' | 'canvas' | 'shader';
+  /** URL or data URL of the source. For images, anything browsers
+   *  can load. For videos, mp4/webm. Ignored when sourceType is
+   *  'media' or 'layer'. */
+  sourceUrl: string | null;
+  /** ID of a Media Library item to pull pixels from. The renderer
+   *  reads the item's src (image) or videoElement (video) each
+   *  frame so playback and replacement work transparently. */
+  sourceMediaId?: string | null;
+  /** ID of another layer in the project to read pixels from.
+   *  v1 supports media layers (image / video). Other layer types
+   *  (lines, svg, lightpainting, shader) need per-layer render-to-
+   *  texture, queued for the next phase. */
+  sourceLayerId?: string | null;
+  /** The active effect mode. */
+  mode: PixelFXMode;
+  /** Per-mode tuning knobs — semantics vary by mode. The panel
+   *  surfaces named sliders that map to these positions. */
+  knobs: [number, number, number, number];
+  /** Particle count. Higher = sharper image, more GPU. 250K is the
+   *  sweet spot for 1080p output. */
+  particleCount: number;
+  /** Base billboard size in normalized canvas units. */
+  baseSize: number;
+  /** Global opacity envelope (0..1). */
+  opacity: number;
+  /** Anchor jitter to break grid banding (0..1). */
+  anchorJitter: number;
+  /** Camera FOV in degrees. Applies to ALL modes (not just depth-shift)
+   *  so you can frame any effect properly. */
+  fovDeg: number;
+  /** Camera distance from origin along Z. Doubles as zoom — smaller
+   *  value zooms in. */
+  cameraZ: number;
+  /** Camera yaw + pitch in degrees, applied around the world origin
+   *  before perspective. Lets you orbit the scene from the panel. */
+  cameraYaw?: number;
+  cameraPitch?: number;
+  /** Pan offset in normalized canvas units. Useful for off-center
+   *  framing without rotating the camera. */
+  panX?: number;
+  panY?: number;
+
+  /** ── Lighting (depth-shift mode) ──
+   *  When enabled, particles are shaded by a movable point light
+   *  with a Lambertian diffuse term computed from the source's
+   *  luminance heightmap normal. Gives a real "lit and shadowed"
+   *  3D look on the depth-shifted point cloud. */
+  lightEnabled?: boolean;
+  lightX?: number;       // -2..2  world X
+  lightY?: number;       // -2..2  world Y
+  lightZ?: number;       //  0..3  world Z (positive = in front of plane)
+  lightIntensity?: number; // 0..3 multiplier on diffuse contribution
+  lightAmbient?: number;   // 0..1 ambient term so unlit areas don't go pitch black
+  lightHeightStrength?: number; // 0..3 scales the heightmap normal contribution
+
+  /** ── Depth-shift noise displacement ──
+   *  Adds a flowing noise field that wobbles each particle in
+   *  XY (and optionally Z) over time. Works alongside auto-spin and
+   *  camera orbit. Reads as the depth-mapped image gently flowing /
+   *  breathing. */
+  noiseAmpXY?: number;     // 0..0.4  XY displacement strength
+  noiseAmpZ?: number;      // 0..2    Z displacement strength
+  noiseFreq?: number;      // 0.5..30 spatial frequency
+  noiseSpeed?: number;     // 0..3    time scale for animation
+
+  /** ── Flythrough mode params ─────────────────────────────────────
+   *  Only meaningful when `mode === 'flythrough'`. Routed to the
+   *  dedicated `WebGPUFlythrough` renderer instead of the standard
+   *  pixel-particles class. The visual: the source image / video is
+   *  replicated into N "slabs" stacked along Z, and the camera
+   *  continuously translates forward through them. As each slab
+   *  passes behind the camera it wraps to the far end of the stack,
+   *  producing an endless tunnel of the source. Particles within
+   *  each slab swirl under a curl-noise velocity field; combined
+   *  with stroke topology they read as fluid worms / brush strokes
+   *  moving through the tunnel.
+   */
+  /** Particle-rendering topology. `strokes` extrudes each particle
+   *  into a quad along its velocity vector — produces the volumetric
+   *  brush-stroke / worm look. `points` is the cheap billboard path. */
+  flythroughTopology?: FlythroughTopology;
+  /** How depth is derived from the source pixels.
+   *  `luminance`         — brighter pixels are closer (push toward camera)
+   *  `inverse-luminance` — darker pixels are closer (good for backlit shots)
+   *  `edge-density`      — high-contrast edges are closer (line-art look) */
+  flythroughDepthSource?: FlythroughDepthSource;
+  /** Camera Z-translation rate in world units per second. Positive
+   *  values fly INTO the tunnel; negative values pull back out of it.
+   *  Audio reactivity (when enabled) modulates this around the
+   *  configured baseline. */
+  flythroughFlySpeed?: number;       // -2..6
+  /** Z extent of one source slab in world units. Smaller values stack
+   *  more tightly; larger values spread the duplications out. */
+  flythroughTunnelDepth?: number;    // 0.5..6
+  /** How many duplicated slabs are visible at once. Bigger numbers
+   *  produce a denser tunnel and cost linearly more on the GPU
+   *  (instanced draws). */
+  flythroughSlabCount?: number;      // 2..8 integer
+  /** Curl-noise amplitude on per-particle velocity. 0 = particles
+   *  ride exactly along the camera axis; higher = more swirl. */
+  flythroughFlowStrength?: number;   // 0..2
+  /** Spatial frequency of the curl-noise field. Higher = tighter
+   *  swirls, more local detail. */
+  flythroughFlowScale?: number;      // 0.5..8
+  /** Pull factor toward each particle's source-UV anchor. Low =
+   *  chaotic swirl that doesn't read as the source image. High =
+   *  the image stays legible with subtle motion. */
+  flythroughAnchorPull?: number;     // 0..3
+  /** Stroke length in world units. Only used when topology is
+   *  `strokes`. Longer strokes = more painterly streaks. */
+  flythroughStrokeLength?: number;   // 0.01..0.4
+  /** Stroke width in world units. Only used when topology is
+   *  `strokes`. Wider strokes paint a fuller volume. */
+  flythroughStrokeWidth?: number;    // 0.001..0.05
+  /** Strength of the depth derived from the source (multiplier on
+   *  the depth-source heuristic). Higher = more 3D pop within each
+   *  slab; 0 = flat plane. */
+  flythroughDepthStrength?: number;  // 0..1.5
+  /** When true, fly speed and flow strength are modulated by the
+   *  audio analyzer's bass / treble bands. The configured baselines
+   *  remain the "no audio" values. */
+  flythroughAudioReactive?: boolean;
+}
+
+export function createDefaultPixelFXContent(): PixelFXContent {
+  return {
+    sourceType: 'image',
+    sourceUrl: null,
+    mode: 'depth-shift',
+    knobs: [0.6, 0, 0, 0],   // depth, _, spin_speed (0=no spin), spin_axis
+    particleCount: 250_000,
+    baseSize: 0.005,
+    opacity: 1,
+    anchorJitter: 0.6,
+    fovDeg: 50,
+    cameraZ: 2.2,
+    cameraYaw: 0,
+    cameraPitch: 0,
+    panX: 0,
+    panY: 0,
+    lightEnabled: false,
+    lightX: 1.0,
+    lightY: 1.0,
+    lightZ: 1.5,
+    lightIntensity: 1.5,
+    lightAmbient: 0.25,
+    lightHeightStrength: 1.5,
+    noiseAmpXY: 0,
+    noiseAmpZ: 0,
+    noiseFreq: 4,
+    noiseSpeed: 0.5,
+    // Flythrough defaults — tuned so a freshly-set-to-flythrough layer
+    // looks compelling immediately (not flat, not chaotic). Users
+    // can dial it all the way down to a slow corridor or all the
+    // way up to a hyperspace tunnel from here.
+    flythroughTopology: 'strokes',
+    flythroughDepthSource: 'luminance',
+    flythroughFlySpeed: 0.8,
+    flythroughTunnelDepth: 2.0,
+    flythroughSlabCount: 4,
+    flythroughFlowStrength: 0.4,
+    flythroughFlowScale: 2.0,
+    flythroughAnchorPull: 1.2,
+    flythroughStrokeLength: 0.08,
+    flythroughStrokeWidth: 0.006,
+    flythroughDepthStrength: 0.5,
+    flythroughAudioReactive: false,
+  };
+}
 
 // ── Group Layer ─────────────────────────────────────────────────────────────
 
@@ -481,6 +732,7 @@ export interface LayerShapeParams {
 // ============================================================================
 
 export type LightPaintingBrushType =
+  // ── Original CPU-rasterised brushes ──
   | 'glow'        // Soft glowing trail (like long-exposure light)
   | 'neon'        // Hard-edged neon tube look
   | 'flame'       // Flickering fire trail
@@ -494,22 +746,20 @@ export type LightPaintingBrushType =
   | 'paintbrush'  // Wide bristle brush (direction-aware)
   | 'marker'      // Flat chisel-tip marker
   | 'watercolor'  // Soft wet edges with bleed effect
-  // ── WebGL2-only brushes (require useWebGL2LightPainting=true) ──
-  // These leverage fragment shaders to do per-pixel procedural work
-  // that's prohibitive in Canvas2D. They fall back to 'glow' on the
-  // legacy Canvas2D path.
-  | 'sparkle'     // Burst of twinkling micro-stars
-  | 'firefly'     // Pulsing glow dots drifting around the stamp
-  | 'plasma'      // Animated electric ball with internal noise arcs
-  | 'galaxy'      // Spiral arms with star density
-  | 'lightning'   // Branching fractal bolts
-  | 'vortex'      // Swirling spiral with chromatic aberration
-  | 'nebula'      // Volumetric fbm clouds with star sparkles
-  | 'kaleido'     // Mirror-symmetric mandala bursts
-  | 'ink'         // Inky bloom with feathered edges + fibres
-  | 'crystal'     // Faceted gem with refraction + glints
-  | 'aurora'      // Flowing curtain of color bands
-  | 'bubbles';    // Cluster of refractive bubbles that float + fade
+  // ── WebGPU compute-shader brushes ──
+  // Each spawns thousands of GPU particles bound to the stroke's
+  // tangent + normal vectors. Renders as instanced billboards with
+  // additive glow. Skipped by the CPU stroke rasteriser — the GPU
+  // pass is the entire visual.
+  //
+  // Designed for plant / organic projection mapping: spiral wraps
+  // around tree limbs, firefly emanates outward (great on
+  // branches), sap-flow simulates fluid travelling along the stroke.
+  | 'spiral'      // Particles wrap around the stroke like a candy cane
+  | 'firefly'     // Particles spawn near stroke + drift outward, twinkle
+  | 'sap-flow'    // Particles travel along stroke at varying phases (flow)
+  | 'water'       // Droplets fall from the stroke under gravity (rain off branches)
+  | 'smoke';      // Wisps rise from the stroke with curl noise (incense)
 
 export type LightPaintingLoopMode = 'forward' | 'reverse' | 'pingpong' | 'once';
 
@@ -538,39 +788,70 @@ export interface LightPaintingBrush {
   pressureSensitive: boolean;         // Use pressure for size
   smoothing: number;                  // Stroke smoothing 0-1 (0=raw, 1=max)
   speed: number;                      // Brush animation speed 0.1-5 (flame flicker, electric sparks, etc.)
-  /**
-   * Per-particle sub-element size for procedural brushes that
-   * render multiple internal features (firefly dots, sparkle stars,
-   * bubble bubbles, etc.). 0.1..3, default 1.
-   */
-  particleSize?: number;
-  /**
-   * Internal glow — brightness boost applied to the inner core of
-   * procedural brushes. Distinct from `glow` which controls the
-   * outer halo. 0..3, default 1.
-   */
-  internalGlow?: number;
-  /**
-   * Procedural-noise frequency. Used by plasma/nebula/aurora/ink/
-   * lightning for fbm pattern scale. 0.1..8, default 1.
-   */
-  noiseScale?: number;
-  /**
-   * Procedural-noise time-evolution speed. Multiplies v_time for
-   * noise field animation. 0..5, default 1.
-   */
-  noiseSpeed?: number;
-  /**
-   * Procedural-noise contribution strength. 0..1, default 0.6.
-   * Higher = more chaotic/turbulent.
-   */
-  noiseAmount?: number;
-  /**
-   * Density / count multiplier for repeating procedural elements
-   * (galaxy arms, lightning bolt forks, firefly counts, kaleido
-   * symmetry). 0.5..4, default 1.
-   */
-  complexity?: number;
+  /** Per-stroke width multiplier at the START of the stroke
+   *  (progress = 0). 1.0 = full brush width, 0.0 = pinched to a
+   *  point. Combined with taperEnd this lets a single stroke paint
+   *  a tapered shape — thicker at the base, thinner at the tip
+   *  (or vice versa). Used for projecting tree trunks/branches that
+   *  vary in thickness along their length. Defaults to 1. */
+  taperStart?: number;                // 0 - 2
+  /** Per-stroke width multiplier at the END of the stroke
+   *  (progress = 1). 1.0 = full brush width, 0.0 = pinched to a
+   *  point. Defaults to 1. */
+  taperEnd?: number;                  // 0 - 2
+  /** Power exponent applied to the taper interpolation curve.
+   *  1 = linear (default), 2 = ease-in (slow then fast taper),
+   *  0.5 = ease-out (fast then slow). Subtle but lets the taper
+   *  feel like a natural branch contour rather than a wedge. */
+  taperCurve?: number;                // 0.25 - 4
+  // ── GPU brush params (only consumed when type is a GPU brush) ──
+  // Defaults are set at brush creation; tuning happens in the panel.
+  /** Particles allocated to this stroke per frame budget. Higher =
+   *  denser visual but more GPU work. Each stroke gets its own slice
+   *  of the global particle buffer. Default 800. */
+  gpuParticleCount?: number;          // 50 - 4000
+  /** For 'spiral' brush: orbit radius in normalized canvas units
+   *  (0..1). 0.02 ≈ tight wrap, 0.1 ≈ wide spiral. */
+  gpuSpiralRadius?: number;           // 0.005 - 0.2
+  /** For 'spiral' brush: revolutions per second. Higher = faster
+   *  spinning candy-cane. Negative = reverse direction. */
+  gpuSpiralSpeed?: number;            // -5 - 5
+  /** For 'spiral' brush: spiral pitch (turns per stroke length).
+   *  Higher = tighter helix. */
+  gpuSpiralPitch?: number;            // 1 - 30
+  /** For 'firefly' / 'sap-flow' / 'water' / 'smoke' brushes: how
+   *  far particles drift from the stroke before expiring. */
+  gpuParticleDrift?: number;          // 0.005 - 0.3
+  /** For 'spiral' brush: render a glowing line of particles along
+   *  the stroke's center + hide back-side spiral particles entirely
+   *  (so when projected on a 3D surface the wrap reads correctly —
+   *  back-side particles can't leak through a tree trunk). When
+   *  off the spiral renders as a 360° helix with both halves
+   *  visible — usually the better look for free-floating shapes.
+   *  Default false (full helix). Turn on when projecting onto a
+   *  solid 3D object you want the spiral to wrap around. */
+  gpuSpiralShowCore?: boolean;
+  /** For 'water' brush: gravity strength (downward). 0=none,
+   *  1=normal, 2=heavy. Default 1. */
+  gpuWaterGravity?: number;           // 0 - 2
+  /** For 'smoke' brush: how fast wisps rise. 0.1 = slow incense,
+   *  1.5 = fast steam. Default 0.5. */
+  gpuSmokeRise?: number;              // 0.05 - 1.5
+  /** Render a translucent glass-style tube around the stroke that
+   *  visually contains the particles inside. The tube's radius
+   *  auto-scales with the per-brush max particle offset (spiral
+   *  orbit radius / firefly+sap-flow drift) so the particles
+   *  appear to live INSIDE the tube. Default ON for spiral and
+   *  sap-flow (containers feel natural for fluid / wraparound),
+   *  OFF for firefly (sparks should escape). */
+  gpuGlassTube?: boolean;
+  /** Optional override for glass-tube radius multiplier. 1.0 ≈
+   *  exactly fits particles. >1 looser fit. Default 1.25. */
+  gpuGlassTubeRadiusScale?: number;   // 0.5 - 3.0
+  /** Glass-tube color, RGB 0..255. Independent of the particle
+   *  colour so you can have e.g. a cool-blue glass tube containing
+   *  warm-amber fireflies. Defaults to a soft white when unset. */
+  gpuGlassTubeColor?: [number, number, number];
 }
 
 export interface LightPaintingStrokePoint {
@@ -670,14 +951,23 @@ export function createDefaultLightPaintingBrush(): LightPaintingBrush {
     pressureSensitive: false,
     smoothing: 0.5,
     speed: 1,
-    // Phase 3 — extra params for procedural/textured WebGL2 brushes.
-    // Defaults chosen so existing brushes look the same as before.
-    particleSize: 1,
-    internalGlow: 1,
-    noiseScale: 1,
-    noiseSpeed: 1,
-    noiseAmount: 0.6,
-    complexity: 1,
+    // GPU brush defaults — sensible starter values for spiral. The
+    // panel will swap these to brush-specific defaults when the user
+    // picks a different GPU brush type.
+    gpuParticleCount: 800,
+    gpuSpiralRadius: 0.025,
+    gpuSpiralSpeed: 1.2,
+    gpuSpiralPitch: 8,
+    gpuParticleDrift: 0.05,
+    gpuSpiralShowCore: false,
+    gpuWaterGravity: 1,
+    gpuSmokeRise: 0.5,
+    gpuGlassTube: false,                  // off by default — opt in per stroke
+    gpuGlassTubeRadiusScale: 1.25,
+    gpuGlassTubeColor: [220, 230, 255],   // soft cool-white — looks right for most particle colors
+    taperStart: 1,                        // no taper by default — both ends full width
+    taperEnd: 1,
+    taperCurve: 1,                        // linear interpolation
   };
 }
 
@@ -726,6 +1016,104 @@ export function createDefaultLightPaintingContent(): LightPaintingContent {
     isPlaying: false,
     isRecording: false,
     playbackPosition: 0,
+  };
+}
+
+// ============================================================================
+// ADV LIGHT PAINTING (WebGPU 3D PARTICLE PAINT) TYPES
+// ============================================================================
+//
+// A WebGPU-only layer type. Unlike the legacy `lightpainting` layer
+// (CPU stroke rasterisation, 13 brush types, animation timeline),
+// Adv Light Painting is a pure compute-shader showcase: the user
+// drags on the canvas, the renderer spawns thousands of physics-driven
+// particles in 3D that drip / pool / spray / splash. No CPU stroke
+// drawing happens — the brush IS the particle physics, configured by
+// the brush preset.
+//
+// Brush presets steer the compute shader's force model:
+//
+//   drip      — gravity-dominated; viscosity high; particles fall in
+//               coherent streams. Looks like dripping paint.
+//   water     — gravity + cohesion; particles attract weakly; pools
+//               form at rest. Approximates 2D fluid surface tension.
+//   smoke     — buoyant (negative gravity), low viscosity, expanding;
+//               wispy upward plumes.
+//   plasma    — chaotic curl-noise driven; bright additive particles
+//               that swirl. The original demo aesthetic.
+//   shader    — sample colour from a chosen ISF shader (future v2);
+//               for now identical to plasma but reads colour from a
+//               procedural pattern.
+
+export type AdvLightPaintBrush = 'drip' | 'water' | 'smoke' | 'plasma' | 'shader';
+
+export interface AdvLightPaintingContent {
+  /** Active brush preset. Defines the force model the compute shader
+   *  applies each frame. */
+  brush: AdvLightPaintBrush;
+
+  /** Particle population cap. The compute pipeline allocates this
+   *  many slots in the storage buffer; runtime always tracks the
+   *  full count even when most are dead. Higher = denser drips but
+   *  more GPU work. */
+  particleCount: number;            // 10000 - 200000
+
+  /** Particles spawned per frame while the user is actively
+   *  dragging. Higher = denser stroke. */
+  spawnRate: number;                // 10 - 500
+
+  /** Initial velocity randomness applied at spawn. */
+  spawnSpread: number;              // 0 - 1
+
+  /** Gravity vector strength (positive = downward). The brush preset
+   *  scales this to its preferred direction (e.g. smoke flips sign). */
+  gravity: number;                  // 0 - 2
+
+  /** Per-second velocity damping. Higher viscosity = slower-moving
+   *  particles + tighter clusters. */
+  viscosity: number;                // 0.5 - 0.99
+
+  /** Particle lifespan in seconds. Long lifespans produce visible
+   *  trails as particles fall. */
+  lifespanSec: number;              // 0.5 - 10
+
+  /** Brightness multiplier applied at the additive blend step.
+   *  Higher = more glow buildup where particles overlap. */
+  glow: number;                     // 0 - 4
+
+  /** Hue cycle rate in cycles per second. 0 = fixed colour, 0.05 =
+   *  one rainbow per ~20s. */
+  hueCycleSpeed: number;            // 0 - 1
+
+  /** Base colour (RGB 0-1). Hue cycling rotates from this base. */
+  baseColor: [number, number, number];
+
+  /** Particle billboard size in normalized canvas coords. */
+  size: number;                     // 0.001 - 0.05
+
+  /** Audio bass kick reactivity. 0 = ignore audio, 1 = full effect. */
+  audioReactivity: number;          // 0 - 1
+
+  /** Z-axis (depth) emission position when drawing. Negative = closer
+   *  to camera (larger), positive = further (smaller). */
+  emissionZ: number;                // -1 to 1
+}
+
+export function createDefaultAdvLightPaintingContent(): AdvLightPaintingContent {
+  return {
+    brush: 'drip',
+    particleCount: 80000,
+    spawnRate: 350,
+    spawnSpread: 0.4,
+    gravity: 0.7,
+    viscosity: 0.92,
+    lifespanSec: 5,
+    glow: 1.8,
+    hueCycleSpeed: 0.04,
+    baseColor: [1.0, 0.3, 0.82],   // hot pink default
+    size: 0.014,                    // bigger so particles are clearly visible
+    audioReactivity: 0.7,
+    emissionZ: 0,
   };
 }
 
@@ -1753,9 +2141,12 @@ export interface Layer {
   svgContent: SVGContent | null;  // For SVG layers
   colorContent: ColorContent | null;  // For solid color layers
   lightPaintingContent: LightPaintingContent | null;  // For light painting layers
+  advLightPaintingContent: AdvLightPaintingContent | null;  // For Adv Light Painting layers (WebGPU)
   textContent: TextContent | null;  // For text layers
   splatContent: SplatContent | null;  // For splat (point cloud/gaussian splat) layers
   model3dContent: Model3DContent | null;  // For 3D model layers
+  pixelFXContent: PixelFXContent | null;  // For pixel-fx layers (WebGPU source-to-particles)
+  gpuLayerContent: GPULayerContent | null; // For 'gpu' layers (swappable WebGPU shaders)
 
   // Transform (applied to the whole layer quad)
   position: Point2D;  // Offset in normalized coords (0-1)
@@ -1817,6 +2208,10 @@ export interface Layer {
 
 // Effect types — 81 curated effects with unique shader implementations
 export type EffectType =
+  // ── WebGPU compute / fragment effects ──
+  // Names are prefixed `gpu` so the engine can dispatch them via the
+  // gpuEffectRunner instead of the regular WebGL effect chain.
+  | 'gpuFluidSim'
   // Masking (2)
   | 'vignette'
   | 'edgeFeather'
@@ -1972,33 +2367,109 @@ export type EffectType =
   | 'hue'
   // Time-based effects
   | 'timeSmear'
-  | 'chronophoto';
+  | 'chronophoto'
+  // ── New Hero Effects (Batch A) ──
+  | 'opticalFlowDatamosh'
+  | 'flowFieldTrails'
+  | 'reactionDiffusion'
+  | 'neonTubeTrace'
+  | 'depthParallax'
+  | 'pointCloudDissolve'
+  | 'pixelSand'
+  | 'liquidGlass'
+  | 'hologramScan'
+  | 'laserSlice'
+  // ── New Hero Effects (Batch B) ──
+  | 'auraField'
+  | 'smokeDisintegrate'
+  | 'shimmerCloth'
+  | 'glitchQuilt'
+  | 'cellularAutomataBurn'
+  | 'rorschachMirror'
+  | 'spectralPrismTunnel'
+  | 'ledVolume'
+  | 'posterTear'
+  | 'paintPeel'
+  // ── New Hero Effects (Batch C) ──
+  | 'audioShockBloom'
+  | 'vhsFullDeck'
+  | 'analogFeedbackRack'
+  | 'clubLaserGrid'
+  | 'mirrorShards'
+  | 'ghostExposure'
+  | 'thermalContour'
+  | 'dreamDiffusion'
+  | 'topoWarp'
+  | 'strobeSequencer'
+  | 'wrappedTerrain'
+  // ── Geometric 3D (10) ──
+  | 'stringOrb'
+  | 'sphereWireframe'
+  | 'voxelCubeCluster'
+  | 'mobiusLattice'
+  | 'crystalShardField'
+  | 'tubeLattice'
+  | 'discoMirrorBall'
+  | 'lissajousKnot'
+  | 'helixParticleStream'
+  | 'donutConstellation';
 
 export interface EffectParams {
-  // Vignette params
+  // ── WebGPU Fluid Sim params (gpuFluidSim) ──
+  // Real-time Navier-Stokes simulation. The source layer feeds dye
+  // (color) + force (luminance gradient) into the fluid; the result
+  // swirls and dissipates over time.
+  injectStrength?: number;          // 0..3 — how much source feeds dye + force
+  velocityFromGradient?: number;    // 0..3 — luminance-gradient → velocity
+  viscosity?: number;               // 0..0.01 — momentum diffusion
+  dyeDecay?: number;                // 0..3 (1/sec) — exponential dye fade
+  velocityDecay?: number;           // 0..3 (1/sec)
+  vorticity?: number;               // 0..3 — extra swirl (vorticity confinement)
+  outputBoost?: number;             // 0.5..4 — visual brightness multiplier
+  timeScale?: number;               // 0.1..3 — sim speed independent of fps
+
+  // Vignette params (hero rewrite)
   vignetteSize?: number;          // 0-1, how far vignette extends
   vignetteSoftness?: number;      // 0-1, edge softness
-  vignetteRoundness?: number;     // 0-1, circular vs rectangular
+  vignetteRoundness?: number;     // 0-1, circular vs rectangular (legacy mix factor)
+  vignetteShape?: number;         // 0=round, 1=oval, 2=square, 3=superellipse
+  vignetteAspect?: number;        // 0.3-3.0 oval/superellipse aspect ratio (X/Y)
+  vignetteCenterX?: number;       // 0-1 center offset
+  vignetteCenterY?: number;
+  vignetteColorR?: number;        // 0-1 tint color (used when tintAmount > 0)
+  vignetteColorG?: number;
+  vignetteColorB?: number;
+  vignetteTintAmount?: number;    // 0=transparent fade (legacy), 1=solid color fade
+  vignetteBreathing?: number;     // 0-1 animated size oscillation amplitude
+  vignetteBreathSpeed?: number;   // 0-2 breathing speed
 
-  // Edge feather params (independent sides)
+  // Edge feather params (hero rewrite)
   featherTop?: number;            // 0-1
   featherBottom?: number;
   featherLeft?: number;
   featherRight?: number;
   featherSoftness?: number;
+  featherGamma?: number;          // 0.2-3.0 falloff curve (1.0 linear)
+  featherMattePreview?: number;   // 0=normal, 1=red matte preview overlay
 
-  // Colorama params (cosine palette effect)
-  coloramaPalette?: number;       // 0-7 preset palettes
+  // Colorama params (cosine palette effect — hero rewrite)
+  coloramaPalette?: number;       // 0-11 named palettes (Rainbow, Sunset, Ocean, Neon, Fire,
+                                  //   Forest, Ice, Psychedelic, Vaporwave, Club, Pastel, Mono Glow)
   coloramaOffset?: number;        // 0-1 manual offset through palette
   coloramaSpeed?: number;         // 0-2 auto-cycle speed (0 = off)
   coloramaContrast?: number;      // 0.5-2 luminance contrast
   coloramaMix?: number;           // 0-1 blend with original
+  coloramaBands?: number;         // 0 = smooth gradient, 1-32 = posterized into N bands
+  coloramaAudioReact?: number;    // 0-1 how much live audio rms modulates the cycling
+  coloramaHueShift?: number;      // 0-1 fixed hue offset (used by Mono palette as base hue)
 
-  // Dither params
-  ditherType?: number;            // 0=bayer, 1=noise, 2=halftone, 3=ordered
+  // Dither params (hero — palette lock + pixel lock)
+  ditherType?: number;            // 0=bayer4, 1=bayer8, 2=noise, 3=ordered, 4=floyd-style hash
   ditherIntensity?: number;       // 0-1
   ditherScale?: number;           // 1-16
   ditherColorDepth?: number;      // 1-8 bits
+  ditherPalette?: number;         // 0=free, 1=gameboy, 2=cga, 3=mono, 4=c64
+  ditherPixelLock?: number;       // 0-1 snap dither to pixel grid
 
   // VHS params
   vhsTracking?: number;           // 0-1
@@ -2006,6 +2477,12 @@ export interface EffectParams {
   vhsDistortion?: number;         // 0-1
   vhsColorBleed?: number;         // 0-1
   vhsScanlines?: number;          // 0-1
+  vhsHeadSwitch?: number;
+  vhsTapeWobble?: number;
+  vhsDropout?: number;
+  vhsChromaDelay?: number;
+  vhsTrackingJump?: number;
+  vhsSaturation?: number;
 
   // Glitch params
   glitchIntensity?: number;       // 0-1
@@ -2013,71 +2490,340 @@ export interface EffectParams {
   glitchBlockSize?: number;       // 0-1
   glitchRGBSplit?: number;        // 0-1
   glitchJitter?: number;          // 0-1
+  glitchTriggerMode?: number;
+  glitchBlockHold?: number;
+  glitchVerticalSlice?: number;
+  glitchFreezeBurst?: number;
+  glitchTearChance?: number;
 
-  // RGB Shift
+  // RGB Shift (hero — directional/radial/prism/luma/edge modes)
   rgbShiftAmount?: number;        // 0-50 pixels
   rgbShiftAngle?: number;         // 0-360
+  rgbShiftMode?: number;          // 0=directional, 1=radial, 2=prism, 3=luma-driven, 4=edge-driven
+  rgbShiftCenterX?: number;       // 0-1 radial/prism center
+  rgbShiftCenterY?: number;       // 0-1
+  rgbShiftPrismSpread?: number;   // 0-3 prism rainbow spread
 
-  // Scanlines
+  // Scanlines (hero — phosphor mask + rolling bar + curvature + interlace)
   scanlinesIntensity?: number;    // 0-1
   scanlinesCount?: number;        // 50-500
   scanlinesSpeed?: number;        // 0-2
+  scanlinesPhosphor?: number;     // 0-1 RGB phosphor mask strength
+  scanlinesRollingBar?: number;   // 0-1 vertical rolling brightness bar
+  scanlinesCurvature?: number;    // 0-1 CRT curvature warp
+  scanlinesInterlace?: number;    // 0-1 odd/even field flicker
 
-  // Pixelate
+  // Pixelate (hero — modes + grid + animated)
   pixelateSize?: number;          // 1-64
+  pixelateMode?: number;          // 0=square, 1=hex, 2=triangular, 3=voronoi
+  pixelateGrid?: number;          // 0-1 grid line overlay strength
+  pixelateAnimSpeed?: number;     // 0-2 animated size pulse speed
+  pixelateAnimAmount?: number;    // 0-1 animated size pulse amount
 
-  // Blur
-  blurRadius?: number;            // 0-20
+  // Blur (hero — modes/quality/edge protect)
+  blurRadius?: number;            // 0-30
+  blurMode?: number;              // 0=box, 1=gaussian, 2=motion, 3=bilateral
+  blurAngle?: number;             // 0-360 (motion direction)
+  blurQuality?: number;           // 0=low, 1=mid, 2=high
+  blurEdgeProtect?: number;       // 0-1 bilateral edge preservation
+  blurMix?: number;               // 0-1 wet/dry
 
-  // Sharpen
-  sharpenAmount?: number;         // 0-2
+  // Sharpen (hero — laplacian/unsharp + clarity)
+  sharpenAmount?: number;         // 0-3
+  sharpenMode?: number;           // 0=laplacian, 1=unsharp mask
+  sharpenRadius?: number;         // 1-8 unsharp radius
+  sharpenEdgeProtect?: number;    // 0-1 limit sharpening on flat areas
+  sharpenClarity?: number;        // 0-1 mid-tone contrast pop
 
-  // Noise
+  // Directional Blur (hero)
+  dirBlurAmount?: number;         // 0-1 normalized blur length
+  dirBlurAngle?: number;          // 0-360 degrees
+  dirBlurSamples?: number;        // 4-32
+  dirBlurFalloff?: number;        // 0-1
+  dirBlurCenterBias?: number;     // 0-1 keep center sharper
+  dirBlurMix?: number;            // 0-1
+
+  // Zoom Blur (hero)
+  zoomBlurAmount?: number;        // 0-1
+  zoomBlurCenterX?: number;       // 0-1
+  zoomBlurCenterY?: number;       // 0-1
+  zoomBlurSamples?: number;       // 4-32
+  zoomBlurFalloff?: number;       // 0-1
+  zoomBlurChromatic?: number;     // 0-1 RGB split during zoom
+  zoomBlurMix?: number;           // 0-1
+
+  // Radial Blur (hero — spin)
+  radialBlurAmount?: number;      // 0-1
+  radialBlurCenterX?: number;     // 0-1
+  radialBlurCenterY?: number;     // 0-1
+  radialBlurSamples?: number;     // 4-32
+  radialBlurFalloff?: number;     // 0-1
+  radialBlurRadiusInner?: number; // 0-1 unblurred inner radius
+  radialBlurRadiusOuter?: number; // 0-1 fully blurred outer radius
+  radialBlurMix?: number;         // 0-1
+
+  // Oil Paint (hero — bristle painterly)
+  oilPaintRadius?: number;        // 1-8 brush radius
+  oilPaintIntensity?: number;     // 4-32 quantization bins
+  oilPaintBrushLength?: number;   // 0-2 directional brush length
+  oilPaintBristle?: number;       // 0-1 bristle striations
+  oilPaintColorPunch?: number;    // 0-1 saturation pop
+  oilPaintHighlight?: number;     // 0-1 wet specular pop on bright bins
+  oilPaintMode?: number;          // 0=bin pick, 1=variance pick
+
+  // Watercolor (hero — bleed + edge darken + paper)
+  watercolorBleed?: number;       // 0-1 pigment bleed radius
+  watercolorEdgeDarken?: number;  // 0-1 sobel-driven edge darkening
+  watercolorPaperTexture?: number;// 0-1 paper noise strength
+  watercolorPaperScale?: number;  // 1-32 paper noise scale
+  watercolorWetness?: number;     // 0-1 colour saturation boost (wet pigment)
+  watercolorGranulation?: number; // 0-1 pigment granulation noise
+  watercolorPaperHue?: number;    // 0=cream, 1=cool grey, 2=tea-stain
+
+  // Noise (hero — multi-type generator + tonal weighting)
   noiseAmount?: number;           // 0-1
-  noiseType?: number;             // 0=static, 1=animated
+  noiseType?: number;             // 0=white, 1=blue, 2=value, 3=fbm, 4=cellular
+  noiseMode?: number;             // 0=overlay, 1=add, 2=multiply, 3=screen, 4=replace
+  noiseScale?: number;            // 0.5-32
+  noiseMono?: number;             // 0=RGB, 1=mono
+  noiseShadow?: number;           // 0-1 shadow zone amplitude
+  noiseMid?: number;              // 0-1 mid zone amplitude
+  noiseHigh?: number;             // 0-1 highlight zone amplitude
+  noiseAnimSpeed?: number;        // 0-2
 
-  // Kaleidoscope
-  kaleidoscopeSegments?: number;  // 2-16
+  // Kaleidoscope (hero)
+  kaleidoscopeSegments?: number;  // 2-32
   kaleidoscopeAngle?: number;     // 0-360
+  kaleidoscopeCenterX?: number;   // 0-1
+  kaleidoscopeCenterY?: number;   // 0-1
+  kaleidoscopeZoom?: number;      // 0.25-4
+  kaleidoscopeMode?: number;      // 0=mirror, 1=tile, 2=spiral
+  kaleidoscopeSpiral?: number;    // 0-2
+  kaleidoscopeAnimSpeed?: number; // 0-2 auto-rotate
+  kaleidoscopeMix?: number;       // 0-1
 
-  // Mirror
-  mirrorAxis?: number;            // 0=horizontal, 1=vertical, 2=both
+  // Mirror (hero)
+  mirrorMode?: number;            // 0=horizontal, 1=vertical, 2=quad, 3=diagonal
+  mirrorAxis?: number;            // legacy alias for backward compat
   mirrorPosition?: number;        // 0-1
+  mirrorOffset?: number;          // 0-1
+  mirrorFlipSide?: number;        // 0/1
+  mirrorMix?: number;             // 0-1
 
   // Plasma params
-  plasmaSpeed?: number;           // 0-2
-  plasmaScale?: number;           // 1-20
-  plasmaComplexity?: number;      // 1-5
-  plasmaPalette?: number;         // 0=rainbow, 1=fire, 2=ocean, 3=neon, 4=custom
+  plasmaSpeed?: number;
+  plasmaScale?: number;
+  plasmaComplexity?: number;
+  plasmaPalette?: number;         // 0..7
+  plasmaMode?: number;
+  plasmaBlendMode?: number;
+  plasmaMix?: number;
+  plasmaWarpAmount?: number;
+  plasmaAudioReact?: number;
 
-  // Posterize params (standalone)
-  posterizeLevels?: number;       // 2-32
+  // Posterize params (hero rewrite)
+  posterizeLevels?: number;       // 2-32 quantization levels per channel
+  posterizeDither?: number;       // 0-1 Bayer 4x4 ordered dither strength
+  posterizeAnimSpeed?: number;    // 0-2 animated level stepping speed (0 = static)
+  posterizePalette?: number;      // 0=free RGB, 1=comic, 2=thermal, 3=retro
 
-  // Edge Detection params
+  // Exposure params (hero rewrite — dedicated shader)
+  exposureStops?: number;         // -2..+2 photographic stops
+  exposureRollOff?: number;       // 0-1 highlight shoulder softness
+  exposureHighlightProtect?: number; // 0-1 reduce gain on bright pixels
+
+  // Gamma (hero) — three-zone gamma split
+  gammaShadows?: number;          // 0.2-3.0 shadow gamma
+  gammaMids?: number;             // 0.2-3.0 midtone gamma
+  gammaHighlights?: number;       // 0.2-3.0 highlight gamma
+  gammaMix?: number;              // 0-1 wet/dry
+
+  // Vibrance (hero) — skin/highlight protect, ceiling, negative
+  vibranceAmount?: number;        // -1..+1
+  vibranceSkinProtect?: number;   // 0-1
+  vibranceHighlightProtect?: number; // 0-1
+  vibranceCeiling?: number;       // 0-1 saturation clamp
+
+  // Temperature/Tint (hero) — split-tone + auto-cycle
+  tempTemperature?: number;       // -1..+1 cool to warm
+  tempTint?: number;              // -1..+1 green to magenta
+  tempShadow?: number;            // -1..+1 split-tone shadow temp
+  tempHighlight?: number;         // -1..+1 split-tone highlight temp
+  tempSplitTone?: number;         // 0-1 blend between simple temp and split
+  tempAutoCycle?: number;         // 0-1 auto temperature oscillation
+
+  // Color Balance (hero) — three-zone RGB
+  cbShadowR?: number;  cbShadowG?: number;  cbShadowB?: number;   // -1..+1 each
+  cbMidR?: number;     cbMidG?: number;     cbMidB?: number;
+  cbHighR?: number;    cbHighG?: number;    cbHighB?: number;
+  cbPreserveLuma?: number;        // 0-1 keep brightness stable
+  cbMix?: number;
+
+  // Curves (hero) — S-curve + toe + shoulder + black crush
+  curvesContrast?: number;        // 0-1 S-curve strength
+  curvesToe?: number;             // 0-1 lift dark end
+  curvesShoulder?: number;        // 0-1 soften bright end
+  curvesBlackCrush?: number;      // 0-1 crush below threshold
+  curvesMix?: number;
+
+  // Lift / Gamma / Gain (hero) — three-zone color wheels
+  lggLiftR?: number;  lggLiftG?: number;  lggLiftB?: number;     // -0.5..+0.5
+  lggGammaR?: number; lggGammaG?: number; lggGammaB?: number;    // 0.5..1.5
+  lggGainR?: number;  lggGainG?: number;  lggGainB?: number;     // 0.5..2.0
+  lggLumaOnly?: number;           // 0=color shifts, 1=luma-only
+  lggMix?: number;
+
+  // Filmic Tonemap (hero) — multi-curve selector
+  tonemapCurve?: number;          // 0=ACES, 1=Reinhard, 2=Hable, 3=Bleach, 4=Print, 5=Soft Clip
+  tonemapExposure?: number;       // 0.25-4.0 pre-tonemap gain
+  tonemapContrast?: number;       // 0-1 post S-curve
+  tonemapMix?: number;
+
+  // Selective Color (hero) — hue target picker, isolate/replace
+  selColorTargetHue?: number;     // 0-1 hue to target
+  selColorRange?: number;         // 0-1 hue band width
+  selColorFeather?: number;       // 0-1 edge softness
+  selColorMode?: number;          // 0=isolate (desat outside), 1=replace
+  selColorReplaceHue?: number;    // 0-1 destination hue for replace mode
+  selColorSatBoost?: number;      // 0-1 saturation boost on targeted pixels
+
+  // Thermal (hero) — extra params
+  thermalShimmer?: number;        // 0-1 heat-haze shimmer on hot pixels
+  thermalSensorNoise?: number;    // 0-1 rolling sensor noise
+
+  // Night Vision (hero) — extra params
+  nightVisionPhosphor?: number;   // 0=green, 1=amber, 2=white phosphor
+  nightVisionBloom?: number;      // 0-2 phosphor bloom strength
+  nightVisionScopeMask?: number;  // 0=off, 1=circle, 2=scope crosshairs
+  nightVisionRollingNoise?: number; // 0-1 horizontal rolling noise
+
+  // Edge Detection params (hero — color edges + tint + glow)
   edgeThreshold?: number;         // 0-1
   edgeThickness?: number;         // 0.5-3
-  edgeMode?: number;              // 0=sobel, 1=laplacian, 2=prewitt, 3=frei-chen
+  edgeMode?: number;              // 0=sobel, 1=laplacian, 2=prewitt, 3=frei-chen, 4=color
   edgeInvert?: number;            // 0=normal, 1=inverted
+  edgeTintR?: number;             // 0-1 edge tint colour
+  edgeTintG?: number;
+  edgeTintB?: number;
+  edgeTintEdges?: number;         // 0-1 mix tint over original edges
+  edgeGlow?: number;              // 0-1 edge glow falloff
+  edgeOnlyAlpha?: number;         // 0-1 only show edges (transparent elsewhere)
 
-  // Outline params
+  // Outline params (hero — inner/outer/both, crawl, glow falloff, alpha aware)
   outlineThickness?: number;      // 1-10
   outlineColor?: number[];        // RGB color
   outlineOnly?: number;           // 0=overlay, 1=outline only
   outlineGlow?: number;           // 0-1 glow amount
+  outlinePosition?: number;       // 0=inner, 1=outer, 2=both
+  outlineCrawl?: number;          // 0-1 marching-ants crawl speed
+  outlineGlowFalloff?: number;    // 0.1-4 glow falloff exponent
+  outlineAlphaAware?: number;     // 0-1 use alpha for edge detection
 
-  // Emboss params
+  // Emboss params (hero — relight + colored hi/lo + normal-map + metallic)
   embossStrength?: number;        // 0-2
   embossAngle?: number;           // 0-360
+  embossHeight?: number;          // 0-4 height field exaggeration
+  embossHighlightR?: number;      // 0-1 highlight tint
+  embossHighlightG?: number;
+  embossHighlightB?: number;
+  embossShadowR?: number;         // 0-1 shadow tint
+  embossShadowG?: number;
+  embossShadowB?: number;
+  embossNormalMode?: number;      // 0=relight, 1=normal map preview
+  embossMetallicness?: number;    // 0-1 specular punch
 
-  // Wave distortion params
+  // Halftone (hero — CMYK + dot shapes + drift)
+  halftoneDotSize?: number;       // 2-32 dot screen pixel size
+  halftoneDotShape?: number;      // 0=dot, 1=square, 2=line, 3=cross
+  halftoneAngleC?: number;        // 0-180 cyan screen angle
+  halftoneAngleM?: number;
+  halftoneAngleY?: number;
+  halftoneAngleK?: number;
+  halftoneMode?: number;          // 0=greyscale, 1=cmyk, 2=spot
+  halftoneDrift?: number;         // 0-2 animated screen drift speed
+  halftoneSpotColor?: number[];   // RGB tint for spot mode
+
+  // Toon (hero — quantization + outlines + shadow band)
+  toonSteps?: number;             // 2-12 luma quantization bands
+  toonOutline?: number;           // 0-2 outline thickness (sobel)
+  toonOutlineColor?: number[];    // RGB outline tint
+  toonShadowBand?: number;        // 0-1 dedicated shadow band darkness
+  toonRampSoftness?: number;      // 0-1 soften step transitions
+  toonColorPop?: number;          // 0-1 saturation pop in lit zones
+
+  // Kuwahara (hero — painterly oil paint smoothing)
+  kuwaharaRadius?: number;        // 1-8 quadrant radius
+  kuwaharaEdgeSharpness?: number; // 0-1 edge preservation strength
+  kuwaharaColorPunch?: number;    // 0-1 saturation boost
+
+  // CRT (hero)
+  crtScanlines?: number;          // 0-1
+  crtScanCount?: number;          // 100-1200
+  crtMask?: number;               // 0-1
+  crtMaskType?: number;           // 0=Trinitron, 1=Aperture grille, 2=Shadow mask
+  crtCurvature?: number;          // 0-1
+  crtVignette?: number;           // 0-1
+  crtGlow?: number;               // 0-1
+  crtRollingBar?: number;         // 0-1
+  crtChromatic?: number;          // 0-1
+
+  // Lens Distortion (hero)
+  lensDistAmount?: number;        // -1..1
+  lensDistMode?: number;          // 0=barrel, 1=pincushion, 2=mustache, 3=anamorphic
+  lensDistCenterX?: number;       // 0-1
+  lensDistCenterY?: number;       // 0-1
+  lensDistCubic?: number;         // -0.5..0.5
+  lensDistAnamorphicX?: number;   // 0.5-2
+  lensDistEdgeFade?: number;      // 0-1
+  lensDistChromaFringe?: number;  // 0-1
+
+  // Chroma Key (hero)
+  chromaKeyR?: number;            // 0-1 key colour
+  chromaKeyG?: number;
+  chromaKeyB?: number;
+  chromaKeyTolerance?: number;    // 0-1
+  chromaKeySoftness?: number;     // 0-1
+  chromaKeySpill?: number;        // 0-1
+  chromaKeyMatte?: number;        // 0/1 show matte
+  chromaKeyMode?: number;         // 0=hue, 1=YCbCr, 2=RGB
+
+  // Luma Key (hero)
+  lumaKeyLowCut?: number;         // 0-1
+  lumaKeyHighCut?: number;        // 0-1
+  lumaKeyInvert?: number;         // 0/1
+  lumaKeyGamma?: number;          // 0.2-3
+  lumaKeyMatte?: number;          // 0/1
+  lumaKeyPremultiply?: number;    // 0/1
+
+  // Difference Key (hero)
+  diffKeyR?: number;              // 0-1 reference colour
+  diffKeyG?: number;
+  diffKeyB?: number;
+  diffKeyTolerance?: number;      // 0-1
+  diffKeySoftness?: number;       // 0-1
+  diffKeyInvert?: number;         // 0/1
+  diffKeyMatte?: number;          // 0/1
+  diffKeyMode?: number;           // 0=Euclidean, 1=Manhattan, 2=Max channel
+
+  // Wave distortion params (hero — multi-waveform)
+  waveWaveform?: number;          // 0=sin, 1=triangle, 2=saw, 3=square
+  wavePhase?: number;             // 0-360
+  waveSecondary?: number;         // 0-1 second harmonic
+  waveChromaSplit?: number;       // 0-1 RGB phase shift
   waveAmplitude?: number;         // 0-50
-  waveFrequency?: number;         // 1-20
+  waveFrequency?: number;         // 1-30
   waveSpeed?: number;             // 0-2
   waveType?: number;              // 0=horizontal, 1=vertical, 2=radial
 
   // Fisheye params
-  fisheyeStrength?: number;       // -1 to 1 (negative = pincushion)
-  fisheyeRadius?: number;         // 0-1
+  // Fisheye (hero)
+  fisheyeStrength?: number;       // -1..1
+  fisheyeRadius?: number;         // 0.1-1
+  fisheyeCenterX?: number;        // 0-1
+  fisheyeCenterY?: number;        // 0-1
+  fisheyeZoom?: number;           // 0.5-2
+  fisheyeMode?: number;           // 0=spherize, 1=barrel, 2=pincushion
+  fisheyeChromaEdge?: number;     // 0-1
 
   // Thermal camera params
   thermalIntensity?: number;      // 0-2
@@ -2087,6 +2833,1013 @@ export interface EffectParams {
   nightVisionIntensity?: number;  // 0-2
   nightVisionNoise?: number;      // 0-1
   nightVisionVignette?: number;   // 0-1
+
+  // Tilt-Shift (hero — focus band + blur)
+  tiltShiftMode?: number;          // 0=horizontal, 1=vertical, 2=radial, 3=linear gradient
+  tiltShiftFocusY?: number;        // 0-1
+  tiltShiftFocusX?: number;        // 0-1
+  tiltShiftFocusBand?: number;     // 0-1 sharp band width
+  tiltShiftFalloff?: number;       // 0-1
+  tiltShiftMaxBlur?: number;       // 0-1
+  tiltShiftAngle?: number;         // 0-360 (linear gradient direction)
+  tiltShiftSaturation?: number;    // 0-2
+
+  // Defocus Bokeh (hero — disc kernel)
+  bokehRadius?: number;            // 0-30
+  bokehSamples?: number;           // 12-48
+  bokehBrightWeight?: number;      // 0-2 highlight punch
+  bokehThreshold?: number;         // 0-1
+  bokehChromaFringe?: number;      // 0-1
+  bokehShape?: number;             // 0=disc, 1=hex, 2=octagon
+  bokehRotation?: number;          // 0-360
+  bokehMix?: number;               // 0-1
+
+  // Chromatic Aberration (hero)
+  caAmount?: number;               // 0-1
+  caMode?: number;                 // 0=linear, 1=radial, 2=lens, 3=prism
+  caAngle?: number;                // 0-360
+  caCenterX?: number;              // 0-1
+  caCenterY?: number;              // 0-1
+  caEdgeFalloff?: number;          // 0-1
+  caMix?: number;                  // 0-1
+
+  // God Rays (hero)
+  godRaysIntensity?: number;       // 0-2
+  godRaysDecay?: number;           // 0.85-1.0
+  godRaysExposure?: number;        // 0.1-1
+  godRaysDensity?: number;         // 0-1
+  godRaysThreshold?: number;       // 0-1
+  godRaysCenterX?: number;         // 0-1
+  godRaysCenterY?: number;         // 0-1
+  godRaysSamples?: number;         // 16-128
+  godRaysTintR?: number;           // 0-1
+  godRaysTintG?: number;
+  godRaysTintB?: number;
+  godRaysMix?: number;             // 0-1
+
+  // Halation (hero)
+  halationAmount?: number;         // 0-2
+  halationRadius?: number;         // 1-30
+  halationThreshold?: number;      // 0-1
+  halationTintR?: number;          // 0-1
+  halationTintG?: number;
+  halationTintB?: number;
+  halationMode?: number;           // 0=screen, 1=add, 2=soft light
+  halationMix?: number;            // 0-1
+
+  // Anamorphic Streak (hero)
+  anaIntensity?: number;           // 0-2
+  anaLength?: number;              // 0-1
+  anaThreshold?: number;           // 0-1
+  anaTintR?: number;               // 0-1
+  anaTintG?: number;
+  anaTintB?: number;
+  anaAngle?: number;               // 0-180
+  anaSamples?: number;             // 16-64
+  anaMix?: number;                 // 0-1
+
+  // Lens Dirt (hero)
+  dirtAmount?: number;             // 0-1
+  dirtScale?: number;              // 1-32
+  dirtThreshold?: number;          // 0-1
+  dirtTintWarmth?: number;         // 0-1
+  dirtScratches?: number;          // 0-1
+  dirtSpots?: number;              // 0-1
+  dirtMode?: number;               // 0=screen, 1=add, 2=multiply
+  dirtAnimSpeed?: number;          // 0-1
+
+  // Diffusion / Promist (hero)
+  diffAmount?: number;             // 0-1
+  diffRadius?: number;             // 1-30
+  diffThreshold?: number;          // 0-1
+  diffShadowLift?: number;         // 0-1
+  diffHighlightBloom?: number;     // 0-1
+  diffHaze?: number;               // 0-1
+  diffHazeWarmth?: number;         // 0-1
+  diffMix?: number;                // 0-1
+
+  // Film Grain (hero — multi-stock)
+  grainAmount?: number;            // 0-1
+  grainSize?: number;              // 0.5-4
+  grainShadow?: number;            // 0-1 shadow zone amplitude
+  grainMid?: number;               // 0-1 mid zone amplitude
+  grainHigh?: number;              // 0-1 highlight zone amplitude
+  grainMono?: number;              // 0/1 mono vs RGB grain
+  grainStock?: number;             // 0=fine, 1=35mm, 2=16mm, 3=Super8
+  grainColorJitter?: number;       // 0-1 chroma noise
+  grainAnimSpeed?: number;         // 0-1 anim cadence
+
+  // Heat Haze (hero — animated displacement)
+  hazeAmount?: number;             // 0-1
+  hazeScale?: number;              // 1-32
+  hazeSpeed?: number;              // 0-3
+  hazeDirectionY?: number;         // -1..1
+  hazeTurbulence?: number;         // 0-1
+  hazeMode?: number;               // 0=heat, 1=underwater, 2=glass
+  hazeFocusY?: number;             // 0-1
+  hazeFocusBand?: number;          // 0-1
+
+  // Compression Artifacts (hero — block DCT)
+  compArtBlockSize?: number;       // 4-32
+  compArtQuality?: number;         // 0-1 (low=more artifacts)
+  compArtChromaSubsample?: number; // 0-1
+  compArtBlockNoise?: number;      // 0-1
+  compArtMode?: number;            // 0=DCT-style, 1=hard 8x8, 2=color banding
+  compArtMix?: number;             // 0-1
+
+  // Erode (hero)
+  erodeRadius?: number;            // 1-8
+  erodeShape?: number;             // 0=cross, 1=square, 2=circle
+  erodeChannel?: number;           // 0=luma, 1=R, 2=G, 3=B, 4=A
+  erodeMix?: number;               // 0-1
+
+  // Dilate (hero)
+  dilateRadius?: number;           // 1-8
+  dilateShape?: number;            // 0=cross, 1=square, 2=circle
+  dilateChannel?: number;          // 0=luma, 1=R, 2=G, 3=B, 4=A
+  dilateMix?: number;              // 0-1
+
+  // Displacement (hero — procedural noise)
+  dispAmount?: number;             // 0-1
+  dispScale?: number;              // 1-32
+  dispSpeed?: number;              // 0-3
+  dispMode?: number;               // 0=fbm, 1=cellular, 2=sine grid, 3=ripple
+  dispTurbulence?: number;         // 0-1
+  dispChromatic?: number;          // 0-1
+
+  // Twirl (hero)
+  twirlAngle?: number;             // radians
+  twirlRadius?: number;            // 0.05-1
+  twirlCenterX?: number;           // 0-1
+  twirlCenterY?: number;           // 0-1
+  twirlFalloff?: number;           // 0.5-4
+  twirlAnimSpeed?: number;         // 0-2
+  twirlMix?: number;               // 0-1
+
+  // Pinch / Bulge (hero)
+  pinchAmount?: number;            // -1..1
+  pinchRadius?: number;            // 0.1-1
+  pinchCenterX?: number;           // 0-1
+  pinchCenterY?: number;           // 0-1
+  pinchFalloff?: number;           // 0.5-4
+  pinchChromatic?: number;         // 0-1
+  pinchMix?: number;               // 0-1
+
+  // Polar Transform (hero)
+  polarMode?: number;              // 0=cart→polar, 1=polar→cart, 2=log polar
+  polarRotation?: number;          // 0-360
+  polarZoom?: number;              // 0.25-4
+  polarCenterX?: number;           // 0-1
+  polarCenterY?: number;           // 0-1
+  polarMix?: number;               // 0-1
+
+  // False Color (hero)
+  falseColorMode?: number;         // 0=DIT exposure, 1=zone heat, 2=Resolve, 3=histogram
+  falseColorMix?: number;          // 0-1
+  falseColorShowOriginal?: number; // 0-1
+  falseColorMidpoint?: number;     // 0-1
+  falseColorRange?: number;        // 0-0.5
+
+  // Shadow Recovery (hero)
+  shadowAmount?: number;           // 0-1
+  shadowThreshold?: number;        // 0-1
+  shadowSoftness?: number;         // 0-1
+  shadowColorRecovery?: number;    // 0-1
+  shadowHighlightProtect?: number; // 0-1
+  shadowMix?: number;              // 0-1
+
+  // Highlight Rolloff (hero)
+  highRolloffAmount?: number;      // 0-1
+  highRolloffThreshold?: number;   // 0-1
+  highRolloffSoftness?: number;    // 0-1
+  highRolloffPreserveHue?: number; // 0-1
+  highRolloffMaxValue?: number;    // 0.7-1.5
+  highRolloffMix?: number;         // 0-1
+
+  // ASCII (hero)
+  asciiCellSize?: number;          // 4-32
+  asciiContrast?: number;          // 0-2
+  asciiColorMix?: number;          // 0-1
+  asciiMode?: number;              // 0=density, 1=stipple, 2=block, 3=line
+  asciiInvert?: number;            // 0/1
+  asciiTintR?: number;             // 0-1
+  asciiTintG?: number;
+  asciiTintB?: number;
+
+  // Comic Ink (hero)
+  comicInkStrength?: number;       // 0-2
+  comicInkThreshold?: number;      // 0-1
+  comicInkPosterize?: number;      // 2-12
+  comicInkHalftone?: number;       // 0-1
+  comicInkHalftoneSize?: number;   // 2-16
+  comicInkColorMix?: number;       // 0-1
+  comicInkR?: number;
+  comicInkG?: number;
+  comicInkB?: number;
+
+  // Datamosh Lite (hero)
+  datamoshIntensity?: number;      // 0-1
+  datamoshBlockSize?: number;      // 4-32
+  datamoshSmear?: number;          // 0-1
+  datamoshChannelSplit?: number;   // 0-1
+  datamoshChaos?: number;          // 0-1
+  datamoshMode?: number;           // 0=horizontal, 1=any, 2=blocks-only
+
+  // Scanline Drift (hero)
+  scanDriftIntensity?: number;     // 0-1
+  scanDriftFrequency?: number;     // 1-200
+  scanDriftSpeed?: number;         // 0-3
+  scanDriftWaveform?: number;      // 0=sin, 1=noise, 2=sawtooth
+  scanDriftChromaSplit?: number;   // 0-1
+  scanDriftChunkiness?: number;    // 0-1
+
+  // Tape Dropout (hero)
+  tapeDropoutDensity?: number;     // 0-1
+  tapeDropoutLength?: number;      // 0-1
+  tapeDropoutColor?: number;       // 0=white, 1=mono, 2=glitch hue
+  tapeDropoutSpeed?: number;       // 0-3
+  tapeDropoutNoise?: number;       // 0-1
+  tapeDropoutMix?: number;         // 0-1
+
+  // Ripple Caustics (hero)
+  causticsIntensity?: number;      // 0-2
+  causticsScale?: number;          // 1-32
+  causticsSpeed?: number;          // 0-3
+  causticsRefraction?: number;     // 0-1
+  causticsTintR?: number;
+  causticsTintG?: number;
+  causticsTintB?: number;
+  causticsMode?: number;           // 0=overlay, 1=add, 2=screen
+
+  // Shockwave (hero)
+  shockTriggerTime?: number;
+  shockSpeed?: number;             // 0.1-3
+  shockAmplitude?: number;         // 0-0.2
+  shockRingWidth?: number;         // 0.01-0.5
+  shockCenterX?: number;
+  shockCenterY?: number;
+  shockChromatic?: number;         // 0-1
+  shockMode?: number;              // 0=looping, 1=one-shot
+
+  // Droste Recursive (hero)
+  drosteZoom?: number;             // 1.05-3
+  drosteRotation?: number;         // 0-360
+  drosteIterations?: number;       // 1-12
+  drosteOffsetX?: number;
+  drosteOffsetY?: number;
+  drosteFrameSize?: number;        // 0-0.5
+  drosteMix?: number;              // 0-1
+
+  // Slit Scan (hero)
+  slitScanIntensity?: number;      // 0-1
+  slitScanMode?: number;           // 0=horizontal, 1=vertical, 2=radial, 3=stretch
+  slitScanPattern?: number;        // 0=linear, 1=sine, 2=noise
+  slitScanSpeed?: number;          // 0-3
+  slitScanChromaSplit?: number;    // 0-1
+
+  // Volumetric Fog Overlay (hero)
+  fogDensity?: number;             // 0-1
+  fogScale?: number;               // 1-32
+  fogSpeed?: number;               // 0-2
+  fogHeightFalloff?: number;       // -1..1
+  fogDepthSim?: number;            // 0-1
+  fogColorR?: number;
+  fogColorG?: number;
+  fogColorB?: number;
+  fogTurbulence?: number;          // 0-1
+  fogMode?: number;                // 0=add, 1=mix, 2=subtract
+
+  // Rain/Fog/Snow Overlay (hero)
+  weatherType?: number;            // 0=rain, 1=snow, 2=mist, 3=embers
+  weatherDensity?: number;         // 0-1
+  weatherSpeed?: number;           // 0-3
+  weatherAngle?: number;           // -45..45
+  weatherSize?: number;            // 0.5-3
+  weatherFog?: number;             // 0-1
+  weatherColorR?: number;
+  weatherColorG?: number;
+  weatherColorB?: number;
+
+  // Particle Overlay (hero)
+  partMode?: number;               // 0=stars, 1=bokeh, 2=sparkles, 3=fireflies, 4=dust
+  partDensity?: number;            // 0-1
+  partSize?: number;               // 0.5-4
+  partSpeed?: number;              // 0-3
+  partTwinkle?: number;            // 0-1
+  partColorR?: number;
+  partColorG?: number;
+  partColorB?: number;
+  partBlend?: number;              // 0=add, 1=screen
+
+  // Glint Starburst (hero)
+  glintIntensity?: number;         // 0-2
+  glintThreshold?: number;         // 0-1
+  glintLength?: number;            // 0-1
+  glintPoints?: number;            // 4-12 (doubled)
+  glintRotation?: number;          // 0-360
+  glintColorR?: number;
+  glintColorG?: number;
+  glintColorB?: number;
+
+  // Emboss Relight (hero)
+  embRelStrength?: number;         // 0-3
+  embRelAngle?: number;            // 0-360
+  embRelHeight?: number;           // 0-4
+  embRelDetail?: number;           // 0-2
+  embRelSpecular?: number;         // 0-1
+  embRelColorPreserve?: number;    // 0-1
+  embRelAmbient?: number;          // 0-1
+
+  // Dot Matrix (hero)
+  dmDotSize?: number;              // 4-32
+  dmDotShape?: number;             // 0=circle, 1=square, 2=hex
+  dmGap?: number;                  // 0-1
+  dmPosterize?: number;            // 1-8
+  dmGlow?: number;                 // 0-1
+  dmBgR?: number;
+  dmBgG?: number;
+  dmBgB?: number;
+
+  // Matrix Rain (hero)
+  matrixDensity?: number;          // 0-1
+  matrixSpeed?: number;            // 0-3
+  matrixCellSize?: number;         // 6-32
+  matrixTrailLength?: number;      // 0-1
+  matrixColorR?: number;
+  matrixColorG?: number;
+  matrixColorB?: number;
+  matrixBgMix?: number;            // 0-1
+
+  // Binary Code (hero)
+  binDensity?: number;             // 0-1
+  binSpeed?: number;               // 0-3
+  binCellSize?: number;            // 6-32
+  binColorR?: number;
+  binColorG?: number;
+  binColorB?: number;
+  binBgMix?: number;               // 0-1
+  binContrast?: number;            // 0-2
+
+  // Crosshatch (hero)
+  hatchDensity?: number;           // 0-1 (lower=fewer lines)
+  hatchAngle?: number;             // 0-180
+  hatchLineWidth?: number;         // 0.5-4
+  hatchContrast?: number;          // 0-2
+  hatchPaperR?: number;
+  hatchPaperG?: number;
+  hatchPaperB?: number;
+  hatchInkR?: number;
+  hatchInkG?: number;
+  hatchInkB?: number;
+
+  // Block Mosaic (hero)
+  mosaicTileSize?: number;         // 8-64
+  mosaicMode?: number;             // 0=square, 1=voronoi, 2=hex, 3=brick
+  mosaicGrout?: number;            // 0-1
+  mosaicColorJitter?: number;      // 0-1
+  mosaicGroutR?: number;
+  mosaicGroutG?: number;
+  mosaicGroutB?: number;
+
+  // Tunnel Flight (hero)
+  tunnelSpeed?: number;            // 0-3
+  tunnelTwist?: number;            // 0-3
+  tunnelDepth?: number;            // 0.5-3
+  tunnelCenterX?: number;
+  tunnelCenterY?: number;
+  tunnelMode?: number;             // 0=cylinder, 1=funnel, 2=square
+  tunnelChromatic?: number;        // 0-1
+
+  // Infinite Mirror (hero)
+  infMirrorIterations?: number;    // 1-12
+  infMirrorShrink?: number;        // 0.5-0.95
+  infMirrorRotation?: number;      // 0-360
+  infMirrorTintFade?: number;      // 0-1
+  infMirrorHueShift?: number;      // 0-1
+  infMirrorMode?: number;          // 0=center, 1=offset
+  infMirrorOffsetX?: number;
+  infMirrorOffsetY?: number;
+
+  // Fractal Warp (hero)
+  fractalWarpAmount?: number;      // 0-1
+  fractalWarpScale?: number;       // 0.5-16
+  fractalWarpOctaves?: number;     // 2-6
+  fractalWarpSpeed?: number;       // 0-3
+  fractalWarpChromatic?: number;   // 0-1
+  fractalWarpMode?: number;        // 0=fbm, 1=ridged, 2=hybrid
+
+  // Crystal Refract (hero)
+  crystalScale?: number;           // 1-16
+  crystalRefraction?: number;      // 0-1
+  crystalSparkle?: number;         // 0-1
+  crystalEdgeGlow?: number;        // 0-1
+  crystalTintR?: number;
+  crystalTintG?: number;
+  crystalTintB?: number;
+  crystalMode?: number;            // 0=voronoi, 1=hex
+
+  // Fluid Distort (hero)
+  fluidDistAmount?: number;        // 0-1
+  fluidDistScale?: number;         // 1-16
+  fluidDistSpeed?: number;         // 0-3
+  fluidDistTurbulence?: number;    // 0-1
+  fluidDistMode?: number;          // 0=swirl, 1=push, 2=oil
+
+  // Wormhole (hero)
+  wormholePullStrength?: number;   // 0-1
+  wormholeRotation?: number;       // 0-3
+  wormholeCenterX?: number;
+  wormholeCenterY?: number;
+  wormholeTwist?: number;          // 0-3
+  wormholeChromatic?: number;      // 0-1
+  wormholeAnimSpeed?: number;      // 0-2
+
+  // Geometric Tile (hero)
+  geomTiles?: number;              // 1-16
+  geomMode?: number;               // 0=mirror, 1=rotate, 2=tile, 3=quilt
+  geomRotation?: number;           // 0-360
+  geomOffsetX?: number;            // 0-1
+  geomMix?: number;                // 0-1
+
+  // Motion Trails (hero)
+  motionTrailsLength?: number;     // 0-1
+  motionTrailsAngle?: number;      // 0-360
+  motionTrailsSamples?: number;    // 4-32
+  motionTrailsFalloff?: number;    // 0-1
+  motionTrailsChromaSplit?: number;// 0-1
+  motionTrailsMode?: number;       // 0=fade, 1=copy
+
+  // Echo Repeat (hero)
+  echoCount?: number;              // 1-12
+  echoOffsetX?: number;            // -0.5..0.5
+  echoOffsetY?: number;
+  echoDecay?: number;              // 0.5-0.95
+  echoHueShift?: number;           // 0-1
+  echoMode?: number;               // 0=add, 1=screen, 2=replace
+
+  // Ghost Double (hero)
+  ghostOpacity?: number;           // 0-1
+  ghostOffsetX?: number;
+  ghostOffsetY?: number;
+  ghostMirror?: number;            // 0/1
+  ghostTintR?: number;
+  ghostTintG?: number;
+  ghostTintB?: number;
+  ghostBlend?: number;             // 0=screen, 1=add, 2=multiply
+
+  // Strobe Flash (hero)
+  strobeRate?: number;             // 0.5-30 Hz
+  strobeDuty?: number;             // 0-1
+  strobeIntensity?: number;        // 0-2
+  strobeMode?: number;             // 0=on/off, 1=invert, 2=tint
+  strobeTintR?: number;
+  strobeTintG?: number;
+  strobeTintB?: number;
+
+  // Light Paint (hero — long-exposure)
+  lightPaintIntensity?: number;    // 0-2
+  lightPaintThreshold?: number;    // 0-1
+  lightPaintTrailLength?: number;  // 0-1
+  lightPaintFlowAngle?: number;    // 0-360
+  lightPaintFlowScale?: number;    // 1-16
+  lightPaintChromaShift?: number;  // 0-1
+  lightPaintTintR?: number;
+  lightPaintTintG?: number;
+  lightPaintTintB?: number;
+
+  // Recursive Echo (hero)
+  recEchoDepth?: number;           // 1-12
+  recEchoZoom?: number;            // 0.85-1.15
+  recEchoRotation?: number;        // 0-360
+  recEchoOpacity?: number;         // 0-1
+  recEchoHueShift?: number;        // 0-1
+  recEchoOffsetX?: number;
+  recEchoOffsetY?: number;
+  recEchoMode?: number;            // 0=zoom, 1=mirror, 2=spiral
+
+  // ── New Hero Effects (Batch A) ──
+
+  // Optical Flow Datamosh (hero — uses uFeedback)
+  ofdmIntensity?: number;          // 0-1
+  ofdmMotionScale?: number;        // 0-2
+  ofdmPersistence?: number;        // 0-1
+  ofdmChromaSplit?: number;        // 0-1
+  ofdmBlockSize?: number;          // 4-32
+  ofdmFreeze?: number;             // 0-1
+  ofdmMode?: number;               // 0=normal, 1=glitch, 2=smooth
+
+  // Flow Field Trails (hero)
+  fftFlowScale?: number;           // 0.5-16
+  fftTrailLength?: number;         // 0-1
+  fftSamples?: number;             // 8-64
+  fftSpeed?: number;               // 0-3
+  fftChromaSplit?: number;         // 0-1
+  fftContrast?: number;            // 0-2
+  fftMode?: number;                // 0=advect, 1=streak, 2=tendril
+  fftColorCycle?: number;          // 0-1
+
+  // Reaction Diffusion (hero — uses uFeedback)
+  rdFeedRate?: number;             // 0-0.1
+  rdKillRate?: number;             // 0-0.1
+  rdDiffusionA?: number;           // 0.5-1.5
+  rdDiffusionB?: number;           // 0.2-1
+  rdPatternScale?: number;         // 0.5-4
+  rdLumaMask?: number;             // 0-1
+  rdMode?: number;                 // 0=spots, 1=stripes, 2=mitosis, 3=coral
+  rdColorR?: number;
+  rdColorG?: number;
+  rdColorB?: number;
+  rdMix?: number;
+  rdReseed?: number;               // 0-1
+
+  // Neon Tube Trace (hero)
+  ntEdgeThreshold?: number;        // 0-1
+  ntTubeWidth?: number;            // 0.5-4
+  ntGlow?: number;                 // 0-2
+  ntGlowRadius?: number;           // 1-12
+  ntTintR?: number;
+  ntTintG?: number;
+  ntTintB?: number;
+  ntChase?: number;                // 0-1
+  ntChaseSpeed?: number;           // 0-3
+  ntFlicker?: number;              // 0-1
+  ntBg?: number;                   // 0=black, 1=keep, 2=darkened
+
+  // Depth Parallax (hero)
+  dpDepthStrength?: number;        // 0-1
+  dpPushIn?: number;               // 0-1
+  dpLayers?: number;               // 1-8
+  dpChromatic?: number;            // 0-1
+  dpDepthBoost?: number;           // 0-2
+  dpMode?: number;                 // 0=push, 1=pan, 2=swing
+  dpPanX?: number;                 // -1..1
+  dpPanY?: number;                 // -1..1
+
+  // Point Cloud Dissolve (hero)
+  pcdDissolve?: number;            // 0-1
+  pcdDotSize?: number;             // 1-12
+  pcdScatterRadius?: number;       // 0-1
+  pcdAttract?: number;             // 0-1
+  pcdTurbulence?: number;          // 0-1
+  pcdMode?: number;                // 0=square, 1=circle, 2=cross
+  pcdBgR?: number;
+  pcdBgG?: number;
+  pcdBgB?: number;
+  pcdHueShift?: number;            // 0-1
+
+  // Pixel Sand (hero — uses uFeedback)
+  psGravity?: number;              // 0-2
+  psTurbulence?: number;           // 0-1
+  psThreshold?: number;            // 0-1
+  psPersistence?: number;          // 0-1
+  psMode?: number;                 // 0=fall, 1=rise, 2=swirl
+  psReplenish?: number;            // 0-1
+  psChromaSplit?: number;          // 0-1
+  psGrainSize?: number;            // 1-6 grain pixel size
+
+  // Liquid Glass (hero)
+  lgBlobs?: number;                // 1-8
+  lgBlobSize?: number;             // 0.05-0.4
+  lgRefraction?: number;           // 0-1
+  lgChromatic?: number;            // 0-1
+  lgSpecular?: number;             // 0-1
+  lgCausticAmount?: number;        // 0-1
+  lgSpeed?: number;                // 0-3
+  lgTintR?: number;
+  lgTintG?: number;
+  lgTintB?: number;
+
+  // Hologram Scan (hero)
+  hsIntensity?: number;            // 0-1
+  hsScanFreq?: number;             // 50-500
+  hsScanSpeed?: number;            // 0-3
+  hsGridSpacing?: number;          // 4-32
+  hsRGBFlicker?: number;           // 0-1
+  hsBrokenBands?: number;          // 0-1
+  hsTintR?: number;
+  hsTintG?: number;
+  hsTintB?: number;
+  hsOpacityFlicker?: number;       // 0-1
+  hsEdgeGlow?: number;             // 0-1
+
+  // Laser Slice (hero — uses uFeedback)
+  lsMode?: number;                 // 0=h, 1=v, 2=diag, 3=radial
+  lsSpeed?: number;                // 0-3
+  lsBeamWidth?: number;            // 0.005-0.1
+  lsGlow?: number;                 // 0-2
+  lsSparks?: number;               // 0-1
+  lsEraseAmount?: number;          // 0-1
+  lsTintR?: number;
+  lsTintG?: number;
+  lsTintB?: number;
+  lsReveal?: number;               // 0=erase, 1=reveal
+  lsPersistence?: number;          // 0-1
+
+  // ── New Hero Effects (Batch B) ──
+
+  // Aura Field (hero)
+  afIntensity?: number;            // 0-2
+  afRadius?: number;               // 4-32
+  afEdgeAmount?: number;           // 0-1
+  afLumaAmount?: number;           // 0-1
+  afAudioReact?: number;           // 0-2
+  afHueShift?: number;             // 0-1
+  afTintR?: number;
+  afTintG?: number;
+  afTintB?: number;
+  afMode?: number;                 // 0=add, 1=screen, 2=replace
+
+  // Smoke Disintegrate (hero)
+  smokeAmount?: number;            // 0-1
+  smokeScale?: number;             // 0.5-16
+  smokeSpeed?: number;             // 0-3
+  smokeDirection?: number;         // 0-360
+  smokeEdgeFade?: number;          // 0-1
+  smokeColorR?: number;
+  smokeColorG?: number;
+  smokeColorB?: number;
+  smokeMode?: number;              // 0=top-down, 1=center-out, 2=fbm-driven
+
+  // Shimmer Cloth (hero)
+  clothAmplitude?: number;         // 0-1
+  clothFrequency?: number;         // 1-30
+  clothSpeed?: number;             // 0-3
+  clothThreadDensity?: number;     // 1-200
+  clothThreadDepth?: number;       // 0-1
+  clothShimmer?: number;           // 0-2
+  clothMode?: number;              // 0=horizontal, 1=plaid, 2=satin
+
+  // Glitch Quilt (hero)
+  gqTileSize?: number;             // 8-128
+  gqShuffleAmount?: number;        // 0-1
+  gqRotateAmount?: number;         // 0-1
+  gqDelayAmount?: number;          // 0-1
+  gqChromaSplit?: number;          // 0-1
+  gqTriggerRate?: number;          // 0-3
+  gqMode?: number;                 // 0=quilt, 1=swap, 2=mosh
+
+  // Cellular Automata Burn (hero)
+  caCellSize?: number;             // 1-8
+  caBirthThreshold?: number;       // 0-1
+  caSurvivalLow?: number;          // 0-8
+  caSurvivalHigh?: number;         // 0-8
+  caColorR?: number;
+  caColorG?: number;
+  caColorB?: number;
+  caMode?: number;                 // 0=Conway, 1=Brian's Brain, 2=Burn
+  caMix?: number;                  // 0-1
+
+  // Rorschach Mirror (hero)
+  rmMode?: number;                 // 0=v, 1=h, 2=both, 3=4-fold
+  rmInkAmount?: number;            // 0-1
+  rmFluidEdges?: number;           // 0-1
+  rmTintR?: number;
+  rmTintG?: number;
+  rmTintB?: number;
+  rmBgR?: number;
+  rmBgG?: number;
+  rmBgB?: number;
+  rmMixOriginal?: number;          // 0-1
+
+  // Spectral Prism Tunnel (hero)
+  sptTunnelDepth?: number;         // 0.5-3
+  sptPrismSpread?: number;         // 0-2
+  sptRotation?: number;            // 0-3
+  sptSpeed?: number;               // 0-3
+  sptSlices?: number;              // 4-32
+  sptFade?: number;                // 0-1
+
+  // LED Volume (hero)
+  ledVoxelSize?: number;           // 8-32
+  ledDepthPulse?: number;          // 0-1
+  ledDepthSpeed?: number;          // 0-3
+  ledPosterize?: number;           // 1-8
+  ledGlow?: number;                // 0-1
+  ledPerspective?: number;         // 0-1
+  ledMode?: number;                // 0=square, 1=round, 2=hex
+  ledBgR?: number;
+  ledBgG?: number;
+  ledBgB?: number;
+
+  // Poster Tear (hero)
+  ptTearAmount?: number;           // 0-1
+  ptTearAngle?: number;            // 0-360
+  ptTearJitter?: number;           // 0-1
+  ptShiftBelow?: number;           // 0-1
+  ptOffsetX?: number;              // -0.3..0.3
+  ptOffsetY?: number;              // -0.3..0.3
+  ptTearGlow?: number;             // 0-1
+  ptMode?: number;                 // 0=line, 1=arc, 2=rectangle
+
+  // Paint Peel (hero)
+  ppAmount?: number;               // 0-1
+  ppScale?: number;                // 1-16
+  ppLumaBias?: number;             // 0-1
+  ppCurl?: number;                 // 0-1
+  ppShadow?: number;               // 0-1
+  ppBgR?: number;
+  ppBgG?: number;
+  ppBgB?: number;
+  ppMode?: number;                 // 0=fbm, 1=cellular, 2=cracks
+
+  // ── New Hero Effects (Batch C) ──
+
+  // Audio Shock Bloom (hero — uses uAudio)
+  asbIntensity?: number;           // 0-2
+  asbBloomThreshold?: number;      // 0-1
+  asbBloomRadius?: number;         // 1-30
+  asbShockSpeed?: number;          // 0.1-3
+  asbShockAmplitude?: number;      // 0-0.2
+  asbChromaSplit?: number;         // 0-1
+  asbStrobeAmount?: number;        // 0-1
+  asbTintR?: number;
+  asbTintG?: number;
+  asbTintB?: number;
+  asbAudioGate?: number;           // 0-1
+
+  // VHS Full Deck (hero)
+  vhsFdTracking?: number;          // 0-1
+  vhsFdHeadSwitch?: number;        // 0-1
+  vhsFdChromaBleed?: number;       // 0-1
+  vhsFdDropouts?: number;          // 0-1
+  vhsFdTapeNoise?: number;         // 0-1
+  vhsFdScanlines?: number;         // 0-1
+  vhsFdColorBleed?: number;        // 0-1
+  vhsFdSaturation?: number;        // 0-1.5
+  vhsFdTrackingJump?: number;      // 0-1
+  vhsFdMode?: number;              // 0=clean, 1=worn, 2=destroyed
+
+  // Analog Feedback Rack (hero — uses uFeedback)
+  afrMix?: number;                 // 0-1
+  afrZoom?: number;                // 0.85-1.15
+  afrRotation?: number;            // -0.2..0.2
+  afrDecay?: number;               // 0-1
+  afrHueShift?: number;            // 0-1
+  afrMaskCenter?: number;          // 0-1
+  afrChromaSplit?: number;         // 0-1
+  afrOffsetX?: number;             // -0.1..0.1
+  afrOffsetY?: number;             // -0.1..0.1
+  afrMode?: number;                // 0=normal, 1=invert, 2=multiply
+
+  // Club Laser Grid (hero — uses uAudio)
+  clgIntensity?: number;           // 0-2
+  clgGridDensity?: number;         // 4-32
+  clgPerspective?: number;         // 0-1
+  clgSpeed?: number;               // 0-3
+  clgIntersectionGlow?: number;    // 0-1
+  clgLineWidth?: number;           // 0.5-4
+  clgTintR?: number;
+  clgTintG?: number;
+  clgTintB?: number;
+  clgAudioReact?: number;          // 0-2
+  clgMode?: number;                // 0=floor, 1=ceiling, 2=tunnel
+
+  // Mirror Shards (hero — uses uFeedback)
+  msShards?: number;               // 4-32
+  msShardSize?: number;            // 0.05-0.5
+  msRotation?: number;             // 0-360
+  msDelayAmount?: number;          // 0-1
+  msChromatic?: number;            // 0-1
+  msMode?: number;                 // 0=voronoi, 1=hex, 2=triangular
+
+  // Ghost Exposure (hero — uses uFeedback)
+  geExposure?: number;             // 0-1
+  geDecay?: number;                // 0-1
+  geHueShiftPerFrame?: number;     // 0-0.05
+  geIntensity?: number;            // 0-2
+  geMode?: number;                 // 0=add, 1=max, 2=screen
+  geClamp?: number;                // 0-1
+
+  // Thermal Contour (hero)
+  tcPalette?: number;              // 0=ironbow, 1=jet, 2=viridis, 3=inferno
+  tcContourCount?: number;         // 1-12
+  tcContourWidth?: number;         // 0.001-0.02
+  tcContourGlow?: number;          // 0-1
+  tcIntensity?: number;            // 0-2
+  tcTrackBlobs?: number;           // 0-1
+  tcMix?: number;                  // 0-1
+
+  // Dream Diffusion Look (hero)
+  ddBloomAmount?: number;          // 0-2
+  ddBloomRadius?: number;          // 1-30
+  ddHalation?: number;             // 0-1
+  ddChromaticBlur?: number;        // 0-1
+  ddPastelRolloff?: number;        // 0-1
+  ddShadowLift?: number;           // 0-0.5
+  ddSoftness?: number;             // 0-1
+  ddTintR?: number;
+  ddTintG?: number;
+  ddTintB?: number;
+
+  // Topo Warp (hero)
+  twContourCount?: number;         // 4-32
+  twContourWidth?: number;         // 0.001-0.05
+  twDisplacement?: number;         // 0-1
+  twChromaticEdge?: number;        // 0-1
+  twColorR?: number;
+  twColorG?: number;
+  twColorB?: number;
+  twShadowRidges?: number;         // 0-1
+  twMix?: number;                  // 0-1
+
+  // Strobe Sequencer (hero)
+  ssBPM?: number;                  // 30-240
+  ssSteps?: number;                // 4-16
+  ssPattern?: number;              // bitmask
+  ssMode?: number;                 // 0=on/off, 1=invert, 2=tint, 3=zoom
+  ssIntensity?: number;            // 0-2
+  ssTintR?: number;
+  ssTintG?: number;
+  ssTintB?: number;
+  ssSwing?: number;                // 0-0.5
+
+  // Terrain 3D (hero — added fade/source-mix)
+  terrainMode?: number;            // 0=opaque, 1=fade horizon, 2=blend source
+  terrainHeight?: number;          // 0-1
+  terrainCamHeight?: number;       // 0-1
+  terrainSpeed?: number;           // 0-1
+  terrainFog?: number;             // 0-1
+  terrainYaw?: number;             // radians
+  terrainPitch?: number;           // 0-1
+  terrainRoll?: number;            // 0-1
+  terrainFogR?: number;
+  terrainFogG?: number;
+  terrainFogB?: number;
+  terrainHorizonFade?: number;     // 0-1
+  terrainSourceMix?: number;       // 0-1
+
+  // Wrapped Terrain (sphere/cube/pyramid extrude)
+  wtShape?: number;                // 0=sphere, 1=cube, 2=pyramid
+  wtHeight?: number;               // 0-1 extrusion
+  wtRotateX?: number;              // 0-1
+  wtRotateY?: number;              // 0-1
+  wtAutoRotate?: number;           // 0-2
+  wtCamDistance?: number;          // 1-5
+  wtSpecular?: number;             // 0-1
+  wtAmbient?: number;              // 0-1
+  wtFogDistance?: number;          // 0-1
+  wtFogR?: number;
+  wtFogG?: number;
+  wtFogB?: number;
+  wtHorizonFade?: number;          // 0-1
+  wtSourceMix?: number;            // 0-1
+  wtTileScale?: number;            // 0.5-4
+
+  // ── Geometric 3D effects ──
+  // (every effect ships with audio hooks: soAudioBass / soAudioHigh / soAudioBeatPulse,
+  //  but these read from a shared uniform set — params below cover the visual params.)
+
+  // 1. String Orb
+  soRadius?: number;
+  soHeight?: number;
+  soLatCount?: number;
+  soLonCount?: number;
+  soDiagCount?: number;
+  soSlope?: number;
+  soWidth?: number;
+  soSpin?: number;
+  soTilt?: number;
+  soFlow?: number;
+  soIntensity?: number;
+  soGlow?: number;
+  soGlowR?: number;
+  soGlowG?: number;
+  soGlowB?: number;
+  soHorizonFade?: number;
+  soTileScale?: number;
+
+  // 2. Sphere Wireframe
+  swRadius?: number;
+  swHeight?: number;
+  swMeridians?: number;
+  swParallels?: number;
+  swWidth?: number;
+  swSpin?: number;
+  swTilt?: number;
+  swIntensity?: number;
+  swHaloGlow?: number;
+  swColorR?: number;
+  swColorG?: number;
+  swColorB?: number;
+  swHorizonFade?: number;
+  swFillSource?: number;
+  swTileScale?: number;
+
+  // 3. Voxel Cube Cluster
+  vccGridSize?: number;
+  vccCubeSize?: number;
+  vccSpacing?: number;
+  vccHeight?: number;
+  vccSpin?: number;
+  vccTilt?: number;
+  vccCamDistance?: number;
+  vccSpecular?: number;
+  vccAmbient?: number;
+  vccHorizonFade?: number;
+  vccBgR?: number;
+  vccBgG?: number;
+  vccBgB?: number;
+
+  // 4. Mobius Lattice
+  mlMajorR?: number;
+  mlRibbonW?: number;
+  mlTwists?: number;
+  mlSpin?: number;
+  mlTilt?: number;
+  mlLineDensity?: number;
+  mlLineWidth?: number;
+  mlIntensity?: number;
+  mlLineR?: number;
+  mlLineG?: number;
+  mlLineB?: number;
+  mlHorizonFade?: number;
+
+  // 5. Crystal Shard Field
+  csfShardCount?: number;
+  csfShardSize?: number;
+  csfSpread?: number;
+  csfChromaEdge?: number;
+  csfRefraction?: number;
+  csfSpin?: number;
+  csfIntensity?: number;
+  csfTintR?: number;
+  csfTintG?: number;
+  csfTintB?: number;
+  csfHorizonFade?: number;
+
+  // 6. Tube Lattice
+  tlTubeCount?: number;
+  tlTubeRadius?: number;
+  tlSpread?: number;
+  tlSpin?: number;
+  tlTilt?: number;
+  tlTwist?: number;
+  tlIntensity?: number;
+  tlRimR?: number;
+  tlRimG?: number;
+  tlRimB?: number;
+  tlHorizonFade?: number;
+
+  // 7. Disco Mirror Ball
+  dmbRadius?: number;
+  dmbFacetCount?: number;
+  dmbSpin?: number;
+  dmbTilt?: number;
+  dmbChaseSpeed?: number;
+  dmbChaseHueWidth?: number;
+  dmbSparkle?: number;
+  dmbIntensity?: number;
+  dmbHighlightR?: number;
+  dmbHighlightG?: number;
+  dmbHighlightB?: number;
+  dmbHorizonFade?: number;
+
+  // 8. Lissajous Knot
+  lkRatioX?: number;
+  lkRatioY?: number;
+  lkRatioZ?: number;
+  lkPhaseX?: number;
+  lkPhaseY?: number;
+  lkTubeRadius?: number;
+  lkScale?: number;
+  lkSpin?: number;
+  lkTilt?: number;
+  lkIntensity?: number;
+  lkTubeR?: number;
+  lkTubeG?: number;
+  lkTubeB?: number;
+  lkHorizonFade?: number;
+
+  // 9. Helix Particle Stream
+  hpsHelices?: number;
+  hpsHelixRadius?: number;
+  hpsTurns?: number;
+  hpsHeight?: number;
+  hpsTubeRadius?: number;
+  hpsRiseSpeed?: number;
+  hpsSpin?: number;
+  hpsTilt?: number;
+  hpsIntensity?: number;
+  hpsTintR?: number;
+  hpsTintG?: number;
+  hpsTintB?: number;
+  hpsHorizonFade?: number;
+
+  // 10. Donut Constellation
+  dcMajorR?: number;
+  dcMinorR?: number;
+  dcStarCount?: number;
+  dcStarSize?: number;
+  dcSpin?: number;
+  dcTilt?: number;
+  dcTintIntensity?: number;
+  dcTorusR?: number;
+  dcTorusG?: number;
+  dcTorusB?: number;
+  dcStarR?: number;
+  dcStarG?: number;
+  dcStarB?: number;
+  dcHorizonFade?: number;
 
   // Brightness/Contrast/Saturation/Hue (VJ mode simple effects)
   radius?: number;                // Generic radius param (blur in VJ)
@@ -2101,7 +3854,10 @@ export interface EffectParams {
   brightnessAmount?: number;      // -1 to 1
   contrastAmount?: number;        // -1 to 1
   saturationAmount?: number;      // -1 to 1
-  invertAmount?: number;          // 0 or 1
+  invertAmount?: number;          // 0-1 partial invert (1=full)
+  invertMode?: number;            // 0=RGB,1=luma,2=hue,3=strobe,4=threshold-above
+  invertThreshold?: number;       // 0-1 threshold for mode 4
+  invertStrobeRate?: number;      // 0-10 Hz strobe rate for mode 3
 
   // Plasma additional
   plasmaMix?: number;             // 0-1 plasma mix amount
@@ -2129,10 +3885,23 @@ export interface EffectParams {
   angle?: number;                 // Generic angle parameter
   centerX?: number;               // Generic center X
   centerY?: number;               // Generic center Y
-  red?: number;                   // Generic color grading red component
-  green?: number;                 // Generic color grading green component
-  blue?: number;                  // Generic color grading blue component
-  softness?: number;              // Generic softness parameter
+  red?: number;
+  green?: number;
+  blue?: number;
+  softness?: number;
+
+  // Bloom hero rewrite — dedicated multi-octave bloom shader
+  bloomIntensity?: number;
+  bloomKnee?: number;
+  bloomRadius?: number;
+  bloomAnamorphic?: number;
+
+  // Feedback Zoom hero rewrite — real previous-frame buffer
+  feedbackZoom?: number;
+  feedbackRotation?: number;
+  feedbackDecay?: number;
+  feedbackHueShift?: number;
+  feedbackMaskCenter?: number;
 
   // Blob Tracking params
   blobThreshold?: number;         // 0-1 luminance threshold for blob detection
@@ -2193,12 +3962,6 @@ export interface SVClipAssignment {
   mediaName?: string;
   mediaSrc?: string;
   mediaType?: 'video' | 'image';
-  // Pre-rendered preview for the key cell. For images this is just the
-  // src (browsers happily render images as CSS background-image). For
-  // videos we capture a poster-frame at library-import time and stash
-  // it here — pre-fix the cell tried to use the video URL as a CSS
-  // background and rendered nothing because video can't be a CSS image.
-  mediaThumbnail?: string;
 }
 
 // SynthVision Keyboard Preset - Saved keyboard layout with clip assignments
@@ -2553,7 +4316,7 @@ export function createLayer(id: string, name: string, type: LayerType = 'media')
     visible: true,
     locked: false,
     opacity: 1,
-    blendMode: type === 'lines' || type === 'svg' || type === 'lightpainting' || type === 'splat' || type === 'model3d' ? 'add' : 'normal',
+    blendMode: type === 'lines' || type === 'svg' || type === 'lightpainting' || type === 'adv-lightpaint' || type === 'splat' || type === 'model3d' ? 'add' : 'normal',
     source: null,
     linesContent: type === 'lines' ? createDefaultLinesContent() : null,
     svgContent: type === 'svg' ? createDefaultSVGContent() : null,
@@ -2564,9 +4327,12 @@ export function createLayer(id: string, name: string, type: LayerType = 'media')
       alpha: 1,
     } : null,
     lightPaintingContent: type === 'lightpainting' ? createDefaultLightPaintingContent() : null,
+    advLightPaintingContent: type === 'adv-lightpaint' ? createDefaultAdvLightPaintingContent() : null,
     textContent: type === 'text' ? createDefaultTextContent() : null,
     splatContent: type === 'splat' ? createDefaultSplatContent() : null,
     model3dContent: type === 'model3d' ? createDefaultModel3DContent() : null,
+    pixelFXContent: type === 'pixel-fx' ? createDefaultPixelFXContent() : null,
+    gpuLayerContent: type === 'gpu' ? createDefaultGPULayerContent() : null,
     position: { x: 0, y: 0 },
     scale: { x: 1, y: 1 },
     rotation: 0,
@@ -2616,6 +4382,10 @@ export function createLightPaintingLayer(id: string, name: string): Layer {
   return createLayer(id, name, 'lightpainting');
 }
 
+export function createAdvLightPaintingLayer(id: string, name: string): Layer {
+  return createLayer(id, name, 'adv-lightpaint');
+}
+
 export function createTextLayer(id: string, name: string): Layer {
   return createLayer(id, name, 'text');
 }
@@ -2626,6 +4396,14 @@ export function createSplatLayer(id: string, name: string): Layer {
 
 export function createModel3DLayer(id: string, name: string): Layer {
   return createLayer(id, name, 'model3d');
+}
+
+export function createPixelFXLayer(id: string, name: string): Layer {
+  return createLayer(id, name, 'pixel-fx');
+}
+
+export function createGPULayer(id: string, name: string): Layer {
+  return createLayer(id, name, 'gpu');
 }
 
 export function createVJDeck(id: string): VJDeck {
