@@ -35,7 +35,7 @@ It's a single product, free, and fully open source under AGPL-3.0. There are no 
 
 ### Install
 ```bash
-git clone https://github.com/riskcapital/ghost-arcade-gpu.git ghost-arcade
+git clone https://github.com/riskcapital/ghost-arcade.git ghost-arcade
 cd ghost-arcade
 npm install
 ```
@@ -145,5 +145,5 @@ Logo design + visual identity: Risk Capital Media LLC.
 ## Links
 
 - **Website:** [ghostarcade.live](https://ghostarcade.live)
-- **Discussions:** [GitHub Discussions](https://github.com/riskcapital/ghost-arcade-gpu/discussions)
-- **Issues:** [GitHub Issues](https://github.com/riskcapital/ghost-arcade-gpu/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/riskcapital/ghost-arcade/discussions)
+- **Issues:** [GitHub Issues](https://github.com/riskcapital/ghost-arcade/issues)

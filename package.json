@@ -6,10 +6,10 @@
   "homepage": "https://ghostarcade.live",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/riskcapital/ghost-arcade-gpu.git"
+    "url": "git+https://github.com/riskcapital/ghost-arcade.git"
   },
   "bugs": {
-    "url": "https://github.com/riskcapital/ghost-arcade-gpu/issues"
+    "url": "https://github.com/riskcapital/ghost-arcade/issues"
   },
   "author": "Risk Capital Media LLC",
   "type": "module",
