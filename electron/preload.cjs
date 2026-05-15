@@ -19,12 +19,9 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'spout_start_receiver', 'spout_stop_receiver', 'spout_receive_frame',
   'spout_start_osr', 'spout_stop_osr', 'spout_send_shared_texture',
   // Display/window
-  'get_displays', 'create_output_window', 'close_output_window', 'move_output_window',
+  'get_displays', 'create_output_window', 'configure_next_output_window',
+  'close_output_window', 'move_output_window',
   'resize_output_window', 'show_main_window',
-  // Pre-stage placement config for the next WebGPU zero-copy output
-  // window opened via window.open() — see setWindowOpenHandler in
-  // electron/main.js.
-  'configure_next_output_window',
   // SRC tab Capture chooser — enumerates screens + app windows
   // with thumbnails so the renderer can show a Zoom/Slack-style picker.
   'screen_sources_list',
@@ -47,13 +44,6 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'output_toggle_fullscreen',
   'output_fullscreen_external',
   'output_set_cursor',
-  // Output display info — used by App.matchOutputDisplayResolution to
-  // resize the project to the external monitor's native resolution
-  // before fullscreening. Without this whitelisting the IPC fails,
-  // matchOutputDisplayResolution silently no-ops, and the first
-  // fullscreen click presents a wrong-sized canvas (looks black) until
-  // a second click recovers via the resize-on-window-show path.
-  'get_output_display_info',
   // Ping
   'ping',
   // Error reporting
@@ -137,6 +127,16 @@ contextBridge.exposeInMainWorld('electronOSR', {
     ipcRenderer.on('spout-osr-status', (_event, data) => callback(data));
   },
 });
+
+// (Cross-process MessagePort forwarder removed — proven not zero-copy
+// in Electron 42 / Chromium 130. Cross-process VideoFrame transfer
+// silently drops frames; only same-renderer-process MessageChannel
+// preserves the GpuMemoryBufferHandle. The output window now opens
+// via window.open() from the editor, putting both windows in the
+// same renderer process where transferable VideoFrames work as
+// designed. Main process configures the resulting BrowserWindow via
+// setWindowOpenHandler. See outputSharedTexturePresenter.ts and
+// OutputSharedTextureDisplayApp.svelte for the renderer-side glue.)
 
 // Also set a detection flag (replaces __TAURI_INTERNALS__)
 contextBridge.exposeInMainWorld('__ELECTRON__', true);

@@ -45,38 +45,27 @@ export interface VJClip {
   // For shaders
   shaderCode?: string;
   shaderValues?: Record<string, any>;
-  // For videos. videoElement is the runtime <video>; the other fields
-  // mirror MediaSource's playback controls so the VJ video panel can
-  // drive pause/restart/speed/trim/loop the same way the mapping-mode
-  // LayerPanel does. Defaults match the historical behavior (loop on,
-  // 1× speed, full trim range, isPlaying true on first trigger).
+  // For videos. videoElement is the runtime <video> created when the clip
+  // is dropped into the grid (vjClipLauncher.setClip → videoElementCache).
+  // The other fields control playback the same way MediaSource does for
+  // mapping-mode video layers — exposed in the right-side panel that
+  // opens when a video clip is selected (mirrors the shader-params panel).
+  // Defaults: native loop=true (set on the element at create time),
+  // playbackRate=1, trim full range, isPlaying=true on first trigger.
   videoElement?: HTMLVideoElement;
-  /** 'loop' | 'once'. Loop is the historical default. */
+  /** 'loop' | 'once'. Loop is the historical default and matches the
+   *  hardcoded `videoEl.loop = true` set at clip-element creation. */
   playbackMode?: 'loop' | 'once';
   /** 0.25 / 0.5 / 1 / 1.5 / 2 / 4. Maps to `videoElement.playbackRate`. */
   playbackRate?: number;
-  /** 0..1 fraction of duration. Default 0 (start of source). */
+  /** 0..1 fraction of duration. Out-of-trim playback is clamped on the
+   *  next per-frame update. Default 0 (start of source). */
   trimStart?: number;
   /** 0..1. Default 1 (end of source). */
   trimEnd?: number;
-  /** Live play/pause flag. Default true (clip auto-plays on first trigger). */
+  /** Live play/pause flag. Toggle from the VJ video-controls panel.
+   *  Default true (clip auto-plays on first trigger, same as today). */
   isPlaying?: boolean;
-  // For three.js - iframe element for rendering
-  iframeElement?: HTMLIFrameElement;
-  // For AI-generated JS animations (Three.js or p5.js)
-  jsAnimation?: JSAnimationSource;
-  // For Performer - offscreen canvas
-  synthVisionCanvas?: HTMLCanvasElement;
-  // For Spout sources (FluidGen, Particles3D plugins) - legacy
-  spoutSource?: string;
-  // For integrated effects (FluidGen, Particles3D running natively in WebGL)
-  effectSource?: IntegratedEffectSource;
-  // For point cloud / splat clips
-  splatContent?: SplatContent;
-  // For 3D model clips
-  model3dContent?: Model3DContent;
-  // Per-clip effects
-  effects?: Effect[];
 
   // ── Per-clip transform (applied at composite time) ──
   // These let the user fit a video into a layer's quad with full
@@ -107,6 +96,23 @@ export interface VJClip {
   /** Per-clip opacity 0..1, multiplied with the layer's opacity at
    *  composite time. Default 1. */
   opacity?: number;
+
+  // For three.js - iframe element for rendering
+  iframeElement?: HTMLIFrameElement;
+  // For AI-generated JS animations (Three.js or p5.js)
+  jsAnimation?: JSAnimationSource;
+  // For Performer - offscreen canvas
+  synthVisionCanvas?: HTMLCanvasElement;
+  // For Spout sources (FluidGen, Particles3D plugins) - legacy
+  spoutSource?: string;
+  // For integrated effects (FluidGen, Particles3D running natively in WebGL)
+  effectSource?: IntegratedEffectSource;
+  // For point cloud / splat clips
+  splatContent?: SplatContent;
+  // For 3D model clips
+  model3dContent?: Model3DContent;
+  // Per-clip effects
+  effects?: Effect[];
 }
 
 // A block contains a named collection of clips (8 columns x 4 layers).
@@ -561,8 +567,8 @@ function createVJClipLauncherStore() {
     // never resumes from where it last paused. Combined with pausing
     // the outgoing clip on this same layer/deck, this stops the
     // "videos play forever in the background and resume mid-stream"
-    // behaviour. Wrapped in try/catch because currentTime= can throw
-    // if the element is mid-load.
+    // behaviour the user reported. Wrapped in try/catch because
+    // currentTime= can throw if the element is mid-load.
     // Cast through the VJClip type — TS can't track assignments
     // inside the update() closure across closure boundaries.
     const inc = incomingClip as VJClip | null;
@@ -617,15 +623,40 @@ function createVJClipLauncherStore() {
         const targetGrid = pickGrid(state, deck);
         const newGrid = targetGrid.map(row => [...row]);
 
-        // If setting a video, create/get the video element
+        // If setting a video, create/get the video element. Match
+        // LayerPanel.createMediaSource() — without playsInline + preload + an
+        // explicit load-then-play sequence the element starts in HAVE_NOTHING
+        // and the first VideoTexture sample comes back as a single black
+        // frame. That's the "VJ video shows one stuck frame" bug.
         if (clip && clip.type === 'video') {
           let videoEl = videoElementCache.get(clip.id);
           if (!videoEl) {
             videoEl = document.createElement('video');
-            videoEl.src = clip.src;
+            // Only set crossOrigin for remote URLs — blob:/file: would log a
+            // CORS warning and refuse to load.
+            if (!clip.src.startsWith('blob:') && !clip.src.startsWith('file:')) {
+              videoEl.crossOrigin = 'anonymous';
+            }
             videoEl.loop = true;
             videoEl.muted = true;
-            videoEl.play().catch(e => console.warn('Video autoplay failed:', e));
+            videoEl.playsInline = true;
+            videoEl.preload = 'auto';
+            videoEl.src = clip.src;
+            // Default isPlaying to true — the layer is being triggered into
+            // the deck, so playback should start. UI toggle (pause from the
+            // VJ video controls panel) flips this to false later.
+            clip.isPlaying = clip.isPlaying ?? true;
+            // Wait for the first frame to decode, then play. DON'T call
+            // `.load()` here — the `.src=` setter above already initiated
+            // the resource selection algorithm. A second load() races the
+            // first and, on Electron 42 / Chromium 130, aborts any pending
+            // play() with AbortError + leaves the VideoTexture in an
+            // INVALID_VALUE state on next upload (= the "horizontal lines /
+            // freeze on rapid clip switch" bug).
+            const v = videoEl;
+            const tryPlay = () => v.play().catch(e => console.warn('[vjClipLauncher] video autoplay failed:', e));
+            if (v.readyState >= 2) tryPlay();
+            else v.addEventListener('loadeddata', tryPlay, { once: true });
             videoElementCache.set(clip.id, videoEl);
           }
           clip.videoElement = videoEl;
@@ -1127,13 +1158,12 @@ function createVJClipLauncherStore() {
       });
     },
 
-    // Update video transform props on the active clip of a layer
-    // (per deck). Currently used by the VJ video Transform section
-    // for zoom/fit/anchor/rotation/opacity. Mirrors the
-    // updateActiveClip*Content shape so panel callbacks can write
-    // through without touching the live videoElement (the panel
-    // does that separately on the DOM node, if at all).
-    updateActiveClipVideoProps(layerIndex: number, updates: Partial<Pick<VJClip, 'zoom' | 'fit' | 'anchorX' | 'anchorY' | 'rotation' | 'opacity' | 'playbackMode' | 'playbackRate' | 'trimStart' | 'trimEnd' | 'isPlaying'>>, deck: VJDeck = 'A') {
+    // Update video playback props (playbackMode / playbackRate / trimStart /
+    // trimEnd / isPlaying) on the active clip of a layer. Mirrors the
+    // splat/model3d shape so the VJ video controls panel can write through to
+    // the store without touching the live videoElement (the panel does that
+    // separately on the DOM node).
+    updateActiveClipVideoProps(layerIndex: number, updates: Partial<Pick<VJClip, 'playbackMode' | 'playbackRate' | 'trimStart' | 'trimEnd' | 'isPlaying' | 'zoom' | 'fit' | 'anchorX' | 'anchorY' | 'rotation' | 'opacity'>>, deck: VJDeck = 'A') {
       update(state => {
         const targetLayerStates = pickLayerStates(state, deck);
         const targetGrid = pickGrid(state, deck);
@@ -1142,9 +1172,12 @@ function createVJClipLauncherStore() {
         const activeClip = newLayerStates[layerIndex]?.activeClip;
         if (!activeClip || activeClip.type !== 'video') return state;
 
-        const newClip: VJClip = { ...activeClip, ...updates };
+        const newClip = { ...activeClip, ...updates };
         newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
 
+        // Mirror the change into the grid for any cells whose clip.id matches
+        // (handles the case where the same source has been triggered into
+        // multiple columns of the same row).
         const newGrid = targetGrid.map(row => [...row]);
         for (let col = 0; col < state.numColumns; col++) {
           const gridClip = newGrid[layerIndex]?.[col];
@@ -1153,7 +1186,10 @@ function createVJClipLauncherStore() {
           }
         }
 
-        return withDeck(state, deck, newLayerStates, newGrid);
+        // Persist into the active block too.
+        const newBlocks = blocksWithDeckGrid(state, deck, newGrid);
+        const next = withDeck(state, deck, newLayerStates, newGrid);
+        return { ...next, blocks: newBlocks };
       });
     },
 
@@ -1955,10 +1991,11 @@ export const vjOutputLayers = derived(
           shaderValues: clip.shaderValues || {},
           videoElement: clip.videoElement,
           iframeElement: clip.iframeElement,
-          // Stamp video playback fields onto MediaSource so the per-frame
-          // trim-enforcement loop in Canvas.svelte (lines ~1768-1820) can
-          // read them. Without this stamp the loop sees `trimEnd ?? 1`
-          // and the playhead runs the whole clip ignoring the handles.
+          // Forward video playback props so Canvas.svelte's updateTexturesSync
+          // sees them. Canvas already has trim-aware loop/clamp/once logic
+          // (`source.trimStart/trimEnd/playbackMode/playbackRate/isPlaying`)
+          // — without these forwards the playhead ignores the trim handles
+          // and just plays the whole file end-to-end on loop.
           playbackMode: clip.playbackMode || 'loop',
           playbackRate: clip.playbackRate ?? 1,
           trimStart: clip.trimStart ?? 0,
@@ -2004,14 +2041,18 @@ export const vjOutputLayers = derived(
         if (clip.iframeElement) {
           source.iframeElement = clip.iframeElement;
         }
-        // Re-stamp playback fields so live edits from the controls panel
-        // (mode toggle, speed, trim drag, play/pause) flow into the per-
-        // frame trim-enforcement loop on the next render tick.
-        source.playbackMode = clip.playbackMode || 'loop';
-        source.playbackRate = clip.playbackRate ?? 1;
-        source.trimStart = clip.trimStart ?? 0;
-        source.trimEnd = clip.trimEnd ?? 1;
-        source.isPlaying = clip.isPlaying !== false;
+        // For video clips: refresh trim/playback props every recompute so
+        // the trim handles in the VJ video controls panel feed live values
+        // into Canvas.svelte's per-frame trim clamp / loop logic. Without
+        // this refresh the cached source freezes its trim values at
+        // first-trigger time and the playhead ignores subsequent drags.
+        if (clip.type === 'video') {
+          source.playbackMode = clip.playbackMode || 'loop';
+          source.playbackRate = clip.playbackRate ?? 1;
+          source.trimStart = clip.trimStart ?? 0;
+          source.trimEnd = clip.trimEnd ?? 1;
+          source.isPlaying = clip.isPlaying !== false;
+        }
         // For threejs clips, get the canvas from the iframe context
         if (clip.type === 'threejs') {
           const context = getThreeJSIframeContext(clip.id);
@@ -2072,6 +2113,11 @@ export const vjOutputLayers = derived(
       const cosR = Math.cos((clipRotation * Math.PI) / 180);
       const sinR = Math.sin((clipRotation * Math.PI) / 180);
       // Anchor maps user 0..1 → quad offset from center in [-0.5..0.5].
+      // anchorX=0 means "anchor at left edge" → quad shifts LEFT by 0.5
+      // (so the right edge ends up at x=0.5 of canvas? actually that's
+      // "anchor at left edge of source maps to center of canvas"; for
+      // a more intuitive pan-the-content semantics we shift the OPPOSITE
+      // way so anchorX=1 reveals the left side of source).
       const offX = (ax - 0.5);
       const offY = (ay - 0.5);
       const transformCorner = (cx: number, cy: number) => {
@@ -2086,7 +2132,8 @@ export const vjOutputLayers = derived(
       // Default unit corners in centered space (-0.5..0.5). The
       // top corners have cy=+0.5 because engine corner space has
       // y=1 at the top, y=0 at the bottom — transformCorner adds
-      // 0.5 at the end so cy=+0.5 → y=1 (top) for identity.
+      // 0.5 at the end so cy=+0.5 → y=1 (top) for identity. Hand-
+      // off into the engine's corner format is now direct.
       const clipCorners = {
         topLeft:     transformCorner(-0.5,  0.5),
         topRight:    transformCorner( 0.5,  0.5),
@@ -2107,9 +2154,12 @@ export const vjOutputLayers = derived(
         svgContent: null,
         colorContent: null,
         lightPaintingContent: null,
+        advLightPaintingContent: null,
         textContent: null,
         splatContent: clip.type === 'splat' ? (clip.splatContent || createDefaultSplatContent()) : null,
         model3dContent: clip.type === 'model3d' ? (clip.model3dContent || createDefaultModel3DContent()) : null,
+        pixelFXContent: null,
+        gpuLayerContent: null,
         // Transform identity — per-clip transforms are baked into
         // `corners` below so the engine's warp pipeline applies them
         // uniformly. position/scale/rotation are bypassed by the

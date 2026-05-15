@@ -397,14 +397,24 @@
   style="object-fit: {videoObjectFit}; transform: {videoTransform}; filter: {videoFilter};"
 ></video>
 
-<!-- All on-screen status badges removed. The output window must
-     stay completely clean for projection — no "no link" pill, no
-     "waiting for stream" text, no health indicators. Operators
-     running gigs don't want any text on top of the projection,
-     even faintly. Diagnostic stats remain available via the
-     opt-in `?stats=1` URL flag or pressing `S` on the focused
-     output window — those route through the .stats-overlay
-     element below. -->
+{#if !connected && statusText}
+  <div class="status-overlay">{statusText}</div>
+{/if}
+
+<!-- Always-on health badge. Small + corner-pinned + auto-hides when
+     the link is healthy (60fps, no drops). Visible in amber when fps
+     drops below 50, red below 30. Helps spot the difference between
+     a clean HDTV link and a struggling projector at a glance. -->
+{#if !connected}
+  <!-- Connection-status badge. Now only fires for genuine fault states.
+       Pre-port the badge also showed FPS below 50, but users running
+       at lower configured output framerates saw it permanently —
+       distracting and non-actionable. Press-S stats overlay still
+       covers diagnostics. -->
+  <div class="health-badge" style="background: {healthBadgeColor};">
+    ●  no link
+  </div>
+{/if}
 
 {#if showStats && connected}
   <pre class="stats-overlay">{statsOverlay || 'gathering stats…'}
@@ -432,6 +442,18 @@ press S to hide</pre>
        reactive Svelte bindings can update them per-frame as
        transform messages arrive from the editor. */
   }
+  .status-overlay {
+    position: fixed;
+    bottom: 8px;
+    left: 8px;
+    color: #888;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 11px;
+    background: rgba(0, 0, 0, 0.6);
+    padding: 4px 8px;
+    border-radius: 3px;
+    pointer-events: none;
+  }
   .stats-overlay {
     position: fixed;
     top: 8px;
@@ -446,5 +468,30 @@ press S to hide</pre>
     pointer-events: none;
     margin: 0;
     white-space: pre;
+  }
+  /* Always-on health badge — small enough not to interfere with the
+     projection but readable at a glance from across the room. */
+  .health-badge {
+    position: fixed;
+    bottom: 12px;
+    right: 12px;
+    color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 10px;
+    border-radius: 999px;
+    pointer-events: none;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    transition: background 0.4s;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .health-hint {
+    font-weight: 400;
+    font-size: 10px;
+    opacity: 0.7;
+    letter-spacing: 0.3px;
   }
 </style>

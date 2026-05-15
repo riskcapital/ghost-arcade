@@ -1,5 +1,6 @@
 <script lang="ts">
   import { project, layers, selectedLayer, selectedLayerId, selectedLayerIds, getGroupLayers } from '../stores/layers';
+  import { confirmDeleteIfSafeMode } from '../utils/safeMode';
   // import AutoMapPanel from './AutoMapPanel.svelte';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
   import type { BlendMode, MediaSource, EffectType, ContentFitMode, VideoPlaybackMode } from '../types';
@@ -12,7 +13,12 @@
   import EffectPickerModal from './EffectPickerModal.svelte';
   import EdgeEffectsPanel from './EdgeEffectsPanel.svelte';
   import { generateCachedThumbnail } from '../isf/thumbnail';
-  import { confirmDeleteIfSafeMode } from '../utils/safeMode';
+  import { isWebGPUSupported } from '../renderer/webgpuCapability';
+
+  // WebGPU capability snapshot — used to hide the "GPU Shader" layer type
+  // and Fluid-Sim-style effects on devices without WebGPU support so users
+  // never see an option that can't actually run on their hardware.
+  const webgpuAvailable = isWebGPUSupported();
 
   // Shader thumbnail cache: layerId -> { url, codeSnippet }
   let shaderThumbnails: Record<string, string> = {};
@@ -41,6 +47,9 @@
   // Context menu state
   let ctxMenu: { x: number; y: number; layerId: string } | null = null;
   let ctxGroupSubmenu = false; // show "Add to Group" submenu
+  // Inline rename state — id of the layer whose name is being edited.
+  // Set on dbl-click of the layer name; cleared on Enter / blur / Esc.
+  let renamingLayerId: string | null = null;
 
   function handleLayerContextMenu(layerId: string, e: MouseEvent) {
     e.preventDefault();
@@ -321,8 +330,7 @@
 
     if (mediaType === 'video') {
       const video = document.createElement('video');
-      // crossOrigin BEFORE src — changing it after the load starts forces a
-      // re-load that races any pending play() (AbortError on Chromium 130).
+      // crossOrigin BEFORE src — order matters on Chromium 130.
       video.crossOrigin = 'anonymous';
       video.loop = true;
       video.muted = true;
@@ -330,9 +338,8 @@
       video.preload = 'auto';
       video.src = url;
 
-      // The `.src=` setter already initiated the load. Don't call `.load()`
-      // — a second in-flight request races any pending play() and throws
-      // AbortError on Chromium 130 (Electron 42).
+      // `.src=` already initiated the load. Don't call `.load()` —
+      // races any pending play() on Chromium 130 (Electron 42).
       await new Promise<void>((resolve, reject) => {
         const onReady = () => { cleanup(); resolve(); };
         const onError = () => { cleanup(); reject(new Error('Video load failed')); };
@@ -463,11 +470,6 @@
     return effectTypes.find((e) => e.type === type)?.label || type;
   }
 
-  // Inline layer rename — stores the id of the layer currently being
-  // renamed (null when no input is showing). Double-click the layer
-  // name to start editing; Enter / blur saves; Esc cancels.
-  let renamingLayerId: string | null = null;
-
   // Effect drag and drop
   let draggedEffectIndex: number | null = null;
   let dragOverEffectIndex: number | null = null;
@@ -572,6 +574,18 @@
               </svg>
               Light Painting
             </button>
+            <!-- Adv Light Paint button hidden — superseded by the
+                 in-progress "Light Painting GPU" effort that adds GPU
+                 brush types (spiral/firefly/sap-flow/etc) directly to
+                 the existing Light Painting layer instead of creating
+                 a separate toy layer. The advLightPaint layer type
+                 + WebGPUAdvLightPaint module remain in the codebase
+                 for reference but are not user-reachable.
+            <button onclick={() => { project.addAdvLightPaintingLayer(); showAddLayerMenu = false; }}>
+              ...
+            </button>
+            -->
+
             <button onclick={() => { project.addTextLayer(); showAddLayerMenu = false; }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="4 7 4 4 20 4 20 7"/>
@@ -603,6 +617,27 @@
               </svg>
               3D Model
             </button>
+            <!-- Legacy Pixel FX layer button hidden — Pixel Particles
+                 now ships as a shader inside the GPU Shader layer
+                 (gives full engine integration: warp, blend, effects).
+                 The 'pixel-fx' layer type is kept in the data model
+                 so any saved projects that already use it still load. -->
+            <!--
+            <button onclick={() => { project.addPixelFXLayer(); showAddLayerMenu = false; }}>
+              Pixel FX (legacy)
+            </button>
+            -->
+
+            {#if webgpuAvailable}
+              <button onclick={() => { project.addGPULayer(); showAddLayerMenu = false; }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="9"/>
+                  <ellipse cx="12" cy="12" rx="9" ry="3.2"/>
+                  <path d="M3 12 a9 9 0 0 0 18 0"/>
+                </svg>
+                GPU Shader <span style="font-size:9px; opacity:0.7; padding:1px 4px; background:linear-gradient(135deg,#1e3a8a,#7c2d12); border-radius:2px; margin-left:4px;">WebGPU</span>
+              </button>
+            {/if}
             <button onclick={() => { project.addScreenLayer(); showAddLayerMenu = false; }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="2" y="3" width="20" height="14" rx="2"/>
@@ -2023,112 +2058,69 @@
 
                       <details open>
                         <summary>Controls</summary>
-                      {#if effect.type === 'vignette'}
+                      {#if effect.type === 'gpuFluidSim'}
+                        <!-- ── WebGPU Fluid Simulation ──
+                             Real-time Navier-Stokes fluid running on
+                             GPU compute. The source is the layer's
+                             rendered output (after upstream effects);
+                             it injects dye and force into the fluid.
+                             All knobs accept MIDI mapping just like
+                             the other effects. -->
                         <div class="param-row">
-                          <label>Size</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:vignetteSize"
-                            value={effect.params.vignetteSize ?? 0.8}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { vignetteSize: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.vignetteSize ?? 0.8) * 100).toFixed(0)}%</span>
+                          <label>Inject Strength</label>
+                          <input type="range" min="0" max="3" step="0.01"
+                            data-midi-path="map:effect:{effect.id}:injectStrength"
+                            value={effect.params.injectStrength ?? 1.5}
+                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { injectStrength: parseFloat((e.target as HTMLInputElement).value) })} />
+                          <span class="param-value">{(effect.params.injectStrength ?? 1.5).toFixed(2)}</span>
                         </div>
                         <div class="param-row">
-                          <label>Softness</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:vignetteSoftness"
-                            value={effect.params.vignetteSoftness ?? 0.4}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { vignetteSoftness: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.vignetteSoftness ?? 0.4) * 100).toFixed(0)}%</span>
+                          <label>Velocity Push</label>
+                          <input type="range" min="0" max="3" step="0.01"
+                            data-midi-path="map:effect:{effect.id}:velocityFromGradient"
+                            value={effect.params.velocityFromGradient ?? 1.4}
+                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { velocityFromGradient: parseFloat((e.target as HTMLInputElement).value) })} />
+                          <span class="param-value">{(effect.params.velocityFromGradient ?? 1.4).toFixed(2)}</span>
                         </div>
                         <div class="param-row">
-                          <label>Roundness</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:vignetteRoundness"
-                            value={effect.params.vignetteRoundness ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { vignetteRoundness: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.vignetteRoundness ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-
-                      {:else if effect.type === 'edgeFeather'}
-                        <div class="param-row">
-                          <label>Top</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="0.5"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:featherTop"
-                            value={effect.params.featherTop ?? 0}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { featherTop: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.featherTop ?? 0) * 100).toFixed(0)}%</span>
+                          <label>Vorticity</label>
+                          <input type="range" min="0" max="3" step="0.01"
+                            data-midi-path="map:effect:{effect.id}:vorticity"
+                            value={effect.params.vorticity ?? 1.0}
+                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { vorticity: parseFloat((e.target as HTMLInputElement).value) })} />
+                          <span class="param-value">{(effect.params.vorticity ?? 1.0).toFixed(2)}</span>
                         </div>
                         <div class="param-row">
-                          <label>Bottom</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="0.5"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:featherBottom"
-                            value={effect.params.featherBottom ?? 0}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { featherBottom: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.featherBottom ?? 0) * 100).toFixed(0)}%</span>
+                          <label>Dye Decay</label>
+                          <input type="range" min="0" max="3" step="0.01"
+                            data-midi-path="map:effect:{effect.id}:dyeDecay"
+                            value={effect.params.dyeDecay ?? 2.4}
+                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { dyeDecay: parseFloat((e.target as HTMLInputElement).value) })} />
+                          <span class="param-value">{(effect.params.dyeDecay ?? 2.4).toFixed(2)}</span>
                         </div>
                         <div class="param-row">
-                          <label>Left</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="0.5"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:featherLeft"
-                            value={effect.params.featherLeft ?? 0}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { featherLeft: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.featherLeft ?? 0) * 100).toFixed(0)}%</span>
+                          <label>Velocity Decay</label>
+                          <input type="range" min="0" max="3" step="0.01"
+                            data-midi-path="map:effect:{effect.id}:velocityDecay"
+                            value={effect.params.velocityDecay ?? 2.3}
+                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { velocityDecay: parseFloat((e.target as HTMLInputElement).value) })} />
+                          <span class="param-value">{(effect.params.velocityDecay ?? 2.3).toFixed(2)}</span>
                         </div>
                         <div class="param-row">
-                          <label>Right</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="0.5"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:featherRight"
-                            value={effect.params.featherRight ?? 0}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { featherRight: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.featherRight ?? 0) * 100).toFixed(0)}%</span>
+                          <label>Brightness Boost</label>
+                          <input type="range" min="0.5" max="4" step="0.01"
+                            data-midi-path="map:effect:{effect.id}:outputBoost"
+                            value={effect.params.outputBoost ?? 0.7}
+                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { outputBoost: parseFloat((e.target as HTMLInputElement).value) })} />
+                          <span class="param-value">{(effect.params.outputBoost ?? 0.7).toFixed(2)}×</span>
                         </div>
                         <div class="param-row">
-                          <label>Softness</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:featherSoftness"
-                            value={effect.params.featherSoftness ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { featherSoftness: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.featherSoftness ?? 0.5) * 100).toFixed(0)}%</span>
+                          <label>Time Scale</label>
+                          <input type="range" min="0.1" max="3" step="0.01"
+                            data-midi-path="map:effect:{effect.id}:timeScale"
+                            value={effect.params.timeScale ?? 1.6}
+                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { timeScale: parseFloat((e.target as HTMLInputElement).value) })} />
+                          <span class="param-value">{(effect.params.timeScale ?? 1.6).toFixed(2)}×</span>
                         </div>
 
                       {:else if effect.type === 'colorama'}
@@ -2203,1105 +2195,6 @@
 
                       {:else if effect.type === 'invert'}
                         <div class="param-info">No parameters</div>
-
-                      {:else if effect.type === 'dither'}
-                        <div class="param-row">
-                          <label>Algorithm</label>
-                          <select
-                            value={effect.params.ditherType ?? 0}
-                            onchange={(e) => project.updateEffectParams(layer.id, effect.id, { ditherType: parseInt((e.target as HTMLSelectElement).value) })}
-                          >
-                            <option value="0">Bayer 8x8</option>
-                            <option value="1">Blue Noise</option>
-                            <option value="2">Halftone CMYK</option>
-                            <option value="3">Atkinson</option>
-                            <option value="4">Floyd-Steinberg</option>
-                          </select>
-                        </div>
-                        <div class="param-row">
-                          <label>Intensity</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:ditherIntensity"
-                            value={effect.params.ditherIntensity ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { ditherIntensity: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.ditherIntensity ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Scale</label>
-                          <input
-                            type="range"
-                            min="1"
-                            max="16"
-                            step="1"
-                            data-midi-path="map:effect:{effect.id}:ditherScale"
-                            value={effect.params.ditherScale ?? 1}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { ditherScale: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{(effect.params.ditherScale ?? 1).toFixed(0)}x</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Color Depth</label>
-                          <input
-                            type="range"
-                            min="1"
-                            max="8"
-                            step="1"
-                            data-midi-path="map:effect:{effect.id}:ditherColorDepth"
-                            value={effect.params.ditherColorDepth ?? 4}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { ditherColorDepth: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{(effect.params.ditherColorDepth ?? 4).toFixed(0)} bit</span>
-                        </div>
-
-                      {:else if effect.type === 'vhs'}
-                        <div class="param-row">
-                          <label>Tracking</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:vhsTracking"
-                            value={effect.params.vhsTracking ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { vhsTracking: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.vhsTracking ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Noise</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:vhsNoise"
-                            value={effect.params.vhsNoise ?? 0.3}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { vhsNoise: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.vhsNoise ?? 0.3) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Distortion</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:vhsDistortion"
-                            value={effect.params.vhsDistortion ?? 0.3}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { vhsDistortion: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.vhsDistortion ?? 0.3) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Color Bleed</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:vhsColorBleed"
-                            value={effect.params.vhsColorBleed ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { vhsColorBleed: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.vhsColorBleed ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Scanlines</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:vhsScanlines"
-                            value={effect.params.vhsScanlines ?? 0.3}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { vhsScanlines: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.vhsScanlines ?? 0.3) * 100).toFixed(0)}%</span>
-                        </div>
-
-                      {:else if effect.type === 'glitch'}
-                        <div class="param-row">
-                          <label>Intensity</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:glitchIntensity"
-                            value={effect.params.glitchIntensity ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { glitchIntensity: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.glitchIntensity ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Speed</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="2"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:glitchSpeed"
-                            value={effect.params.glitchSpeed ?? 1}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { glitchSpeed: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.glitchSpeed ?? 1) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Block Size</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:glitchBlockSize"
-                            value={effect.params.glitchBlockSize ?? 0.3}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { glitchBlockSize: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.glitchBlockSize ?? 0.3) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>RGB Split</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:glitchRGBSplit"
-                            value={effect.params.glitchRGBSplit ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { glitchRGBSplit: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.glitchRGBSplit ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Jitter</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:glitchJitter"
-                            value={effect.params.glitchJitter ?? 0.3}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { glitchJitter: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.glitchJitter ?? 0.3) * 100).toFixed(0)}%</span>
-                        </div>
-
-                      {:else if effect.type === 'rgbShift'}
-                        <div class="param-row">
-                          <label>Amount</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="50"
-                            step="1"
-                            data-midi-path="map:effect:{effect.id}:rgbShiftAmount"
-                            value={effect.params.rgbShiftAmount ?? 5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { rgbShiftAmount: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{(effect.params.rgbShiftAmount ?? 5).toFixed(0)}px</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Angle</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="360"
-                            step="1"
-                            data-midi-path="map:effect:{effect.id}:rgbShiftAngle"
-                            value={effect.params.rgbShiftAngle ?? 0}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { rgbShiftAngle: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{(effect.params.rgbShiftAngle ?? 0).toFixed(0)}</span>
-                        </div>
-
-                      {:else if effect.type === 'scanlines'}
-                        <div class="param-row">
-                          <label>Intensity</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:scanlinesIntensity"
-                            value={effect.params.scanlinesIntensity ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { scanlinesIntensity: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.scanlinesIntensity ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Count</label>
-                          <input
-                            type="range"
-                            min="50"
-                            max="500"
-                            step="10"
-                            data-midi-path="map:effect:{effect.id}:scanlinesCount"
-                            value={effect.params.scanlinesCount ?? 200}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { scanlinesCount: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{(effect.params.scanlinesCount ?? 200).toFixed(0)}</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Speed</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="2"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:scanlinesSpeed"
-                            value={effect.params.scanlinesSpeed ?? 0}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { scanlinesSpeed: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.scanlinesSpeed ?? 0) * 100).toFixed(0)}%</span>
-                        </div>
-
-                      {:else if effect.type === 'pixelate'}
-                        <div class="param-row">
-                          <label>Size</label>
-                          <input
-                            type="range"
-                            min="1"
-                            max="64"
-                            step="1"
-                            data-midi-path="map:effect:{effect.id}:pixelateSize"
-                            value={effect.params.pixelateSize ?? 8}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { pixelateSize: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{(effect.params.pixelateSize ?? 8).toFixed(0)}px</span>
-                        </div>
-
-                      {:else if effect.type === 'blur'}
-                        <div class="param-row">
-                          <label>Radius</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="20"
-                            step="0.5"
-                            data-midi-path="map:effect:{effect.id}:blurRadius"
-                            value={effect.params.blurRadius ?? 5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { blurRadius: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{(effect.params.blurRadius ?? 5).toFixed(1)}px</span>
-                        </div>
-
-                      {:else if effect.type === 'sharpen'}
-                        <div class="param-row">
-                          <label>Amount</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="2"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:sharpenAmount"
-                            value={effect.params.sharpenAmount ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { sharpenAmount: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.sharpenAmount ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-
-                      {:else if effect.type === 'noise'}
-                        <div class="param-row">
-                          <label>Amount</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:noiseAmount"
-                            value={effect.params.noiseAmount ?? 0.2}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { noiseAmount: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.noiseAmount ?? 0.2) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Type</label>
-                          <select
-                            value={effect.params.noiseType ?? 0}
-                            onchange={(e) => project.updateEffectParams(layer.id, effect.id, { noiseType: parseInt((e.target as HTMLSelectElement).value) })}
-                          >
-                            <option value="0">Static</option>
-                            <option value="1">Animated</option>
-                          </select>
-                        </div>
-
-                      {:else if effect.type === 'kaleidoscope'}
-                        <div class="param-row">
-                          <label>Segments</label>
-                          <input
-                            type="range"
-                            min="2"
-                            max="16"
-                            step="1"
-                            data-midi-path="map:effect:{effect.id}:kaleidoscopeSegments"
-                            value={effect.params.kaleidoscopeSegments ?? 6}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { kaleidoscopeSegments: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{(effect.params.kaleidoscopeSegments ?? 6).toFixed(0)}</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Angle</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="360"
-                            step="1"
-                            data-midi-path="map:effect:{effect.id}:kaleidoscopeAngle"
-                            value={effect.params.kaleidoscopeAngle ?? 0}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { kaleidoscopeAngle: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{(effect.params.kaleidoscopeAngle ?? 0).toFixed(0)}</span>
-                        </div>
-
-                      {:else if effect.type === 'mirror'}
-                        <div class="param-row">
-                          <label>Axis</label>
-                          <select
-                            value={effect.params.mirrorAxis ?? 0}
-                            onchange={(e) => project.updateEffectParams(layer.id, effect.id, { mirrorAxis: parseInt((e.target as HTMLSelectElement).value) })}
-                          >
-                            <option value="0">Horizontal</option>
-                            <option value="1">Vertical</option>
-                            <option value="2">Both</option>
-                          </select>
-                        </div>
-                        <div class="param-row">
-                          <label>Position</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:mirrorPosition"
-                            value={effect.params.mirrorPosition ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { mirrorPosition: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.mirrorPosition ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-
-                      {:else if effect.type === 'plasma'}
-                        <div class="param-row">
-                          <label>Speed</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="2"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:plasmaSpeed"
-                            value={effect.params.plasmaSpeed ?? 1}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { plasmaSpeed: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.plasmaSpeed ?? 1) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Scale</label>
-                          <input
-                            type="range"
-                            min="1"
-                            max="20"
-                            step="0.5"
-                            data-midi-path="map:effect:{effect.id}:plasmaScale"
-                            value={effect.params.plasmaScale ?? 5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { plasmaScale: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{(effect.params.plasmaScale ?? 5).toFixed(1)}</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Complexity</label>
-                          <input
-                            type="range"
-                            min="1"
-                            max="5"
-                            step="1"
-                            data-midi-path="map:effect:{effect.id}:plasmaComplexity"
-                            value={effect.params.plasmaComplexity ?? 3}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { plasmaComplexity: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{(effect.params.plasmaComplexity ?? 3).toFixed(0)}</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Palette</label>
-                          <select
-                            value={effect.params.plasmaPalette ?? 0}
-                            onchange={(e) => project.updateEffectParams(layer.id, effect.id, { plasmaPalette: parseInt((e.target as HTMLSelectElement).value) })}
-                          >
-                            <option value="0">Rainbow</option>
-                            <option value="1">Fire</option>
-                            <option value="2">Ocean</option>
-                            <option value="3">Neon</option>
-                            <option value="4">Matrix</option>
-                          </select>
-                        </div>
-
-                      {:else if effect.type === 'posterize'}
-                        <div class="param-row">
-                          <label>Levels</label>
-                          <input
-                            type="range"
-                            min="2"
-                            max="32"
-                            step="1"
-                            data-midi-path="map:effect:{effect.id}:posterizeLevels"
-                            value={effect.params.posterizeLevels ?? 8}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { posterizeLevels: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{(effect.params.posterizeLevels ?? 8).toFixed(0)}</span>
-                        </div>
-
-                      {:else if effect.type === 'edgeDetect'}
-                        <div class="param-row">
-                          <label>Mode</label>
-                          <select
-                            value={effect.params.edgeMode ?? 0}
-                            onchange={(e) => project.updateEffectParams(layer.id, effect.id, { edgeMode: parseInt((e.target as HTMLSelectElement).value) })}
-                          >
-                            <option value="0">Sobel</option>
-                            <option value="1">Laplacian</option>
-                            <option value="2">Prewitt</option>
-                            <option value="3">Frei-Chen</option>
-                          </select>
-                        </div>
-                        <div class="param-row">
-                          <label>Threshold</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:edgeThreshold"
-                            value={effect.params.edgeThreshold ?? 0.1}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { edgeThreshold: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.edgeThreshold ?? 0.1) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Thickness</label>
-                          <input
-                            type="range"
-                            min="0.5"
-                            max="3"
-                            step="0.1"
-                            data-midi-path="map:effect:{effect.id}:edgeThickness"
-                            value={effect.params.edgeThickness ?? 1}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { edgeThickness: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{(effect.params.edgeThickness ?? 1).toFixed(1)}</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Invert</label>
-                          <select
-                            value={effect.params.edgeInvert ?? 0}
-                            onchange={(e) => project.updateEffectParams(layer.id, effect.id, { edgeInvert: parseInt((e.target as HTMLSelectElement).value) })}
-                          >
-                            <option value="0">Normal</option>
-                            <option value="1">Inverted</option>
-                          </select>
-                        </div>
-
-                      {:else if effect.type === 'outline'}
-                        <div class="param-row">
-                          <label>Thickness</label>
-                          <input
-                            type="range"
-                            min="1"
-                            max="10"
-                            step="0.5"
-                            data-midi-path="map:effect:{effect.id}:outlineThickness"
-                            value={effect.params.outlineThickness ?? 2}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { outlineThickness: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{(effect.params.outlineThickness ?? 2).toFixed(1)}</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Glow</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:outlineGlow"
-                            value={effect.params.outlineGlow ?? 0}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { outlineGlow: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.outlineGlow ?? 0) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Mode</label>
-                          <select
-                            value={effect.params.outlineOnly ?? 0}
-                            onchange={(e) => project.updateEffectParams(layer.id, effect.id, { outlineOnly: parseInt((e.target as HTMLSelectElement).value) })}
-                          >
-                            <option value="0">Overlay</option>
-                            <option value="1">Outline Only</option>
-                          </select>
-                        </div>
-
-                      {:else if effect.type === 'emboss'}
-                        <div class="param-row">
-                          <label>Strength</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="2"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:embossStrength"
-                            value={effect.params.embossStrength ?? 1}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { embossStrength: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.embossStrength ?? 1) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Angle</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="360"
-                            step="1"
-                            data-midi-path="map:effect:{effect.id}:embossAngle"
-                            value={effect.params.embossAngle ?? 135}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { embossAngle: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{(effect.params.embossAngle ?? 135).toFixed(0)}</span>
-                        </div>
-
-                      {:else if effect.type === 'wave'}
-                        <div class="param-row">
-                          <label>Type</label>
-                          <select
-                            value={effect.params.waveType ?? 0}
-                            onchange={(e) => project.updateEffectParams(layer.id, effect.id, { waveType: parseInt((e.target as HTMLSelectElement).value) })}
-                          >
-                            <option value="0">Horizontal</option>
-                            <option value="1">Vertical</option>
-                            <option value="2">Radial</option>
-                          </select>
-                        </div>
-                        <div class="param-row">
-                          <label>Amplitude</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="50"
-                            step="1"
-                            data-midi-path="map:effect:{effect.id}:waveAmplitude"
-                            value={effect.params.waveAmplitude ?? 10}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { waveAmplitude: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{(effect.params.waveAmplitude ?? 10).toFixed(0)}px</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Frequency</label>
-                          <input
-                            type="range"
-                            min="1"
-                            max="20"
-                            step="0.5"
-                            data-midi-path="map:effect:{effect.id}:waveFrequency"
-                            value={effect.params.waveFrequency ?? 5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { waveFrequency: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{(effect.params.waveFrequency ?? 5).toFixed(1)}</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Speed</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="2"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:waveSpeed"
-                            value={effect.params.waveSpeed ?? 1}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { waveSpeed: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.waveSpeed ?? 1) * 100).toFixed(0)}%</span>
-                        </div>
-
-                      {:else if effect.type === 'fisheye'}
-                        <div class="param-row">
-                          <label>Strength</label>
-                          <input
-                            type="range"
-                            min="-1"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:fisheyeStrength"
-                            value={effect.params.fisheyeStrength ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { fisheyeStrength: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.fisheyeStrength ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Radius</label>
-                          <input
-                            type="range"
-                            min="0.1"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:fisheyeRadius"
-                            value={effect.params.fisheyeRadius ?? 1}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { fisheyeRadius: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.fisheyeRadius ?? 1) * 100).toFixed(0)}%</span>
-                        </div>
-
-                      {:else if effect.type === 'thermal'}
-                        <div class="param-row">
-                          <label>Palette</label>
-                          <select
-                            value={effect.params.thermalPalette ?? 0}
-                            onchange={(e) => project.updateEffectParams(layer.id, effect.id, { thermalPalette: parseInt((e.target as HTMLSelectElement).value) })}
-                          >
-                            <option value="0">Classic</option>
-                            <option value="1">Ironbow</option>
-                            <option value="2">Arctic</option>
-                          </select>
-                        </div>
-                        <div class="param-row">
-                          <label>Intensity</label>
-                          <input
-                            type="range"
-                            min="0.5"
-                            max="2"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:thermalIntensity"
-                            value={effect.params.thermalIntensity ?? 1}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { thermalIntensity: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.thermalIntensity ?? 1) * 100).toFixed(0)}%</span>
-                        </div>
-
-                      {:else if effect.type === 'nightVision'}
-                        <div class="param-row">
-                          <label>Intensity</label>
-                          <input
-                            type="range"
-                            min="0.5"
-                            max="2"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:nightVisionIntensity"
-                            value={effect.params.nightVisionIntensity ?? 1.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { nightVisionIntensity: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.nightVisionIntensity ?? 1.5) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Noise</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:nightVisionNoise"
-                            value={effect.params.nightVisionNoise ?? 0.3}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { nightVisionNoise: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.nightVisionNoise ?? 0.3) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Vignette</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:nightVisionVignette"
-                            value={effect.params.nightVisionVignette ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { nightVisionVignette: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.nightVisionVignette ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-
-                      {:else if effect.type === 'curves' || effect.type === 'liftGammaGain' || effect.type === 'colorBalance'}
-                        <div class="param-row">
-                          <label>Master</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:amount"
-                            value={effect.params.amount ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { amount: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.amount ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Red</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:red"
-                            value={effect.params.red ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { red: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.red ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Green</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:green"
-                            value={effect.params.green ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { green: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.green ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Blue</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:blue"
-                            value={effect.params.blue ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { blue: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.blue ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-                        {#if effect.type === 'liftGammaGain'}
-                          <div class="param-row">
-                            <label>Gamma</label>
-                            <input
-                              type="range"
-                              min="0"
-                              max="1"
-                              step="0.01"
-                              data-midi-path="map:effect:{effect.id}:amount2"
-                              value={effect.params.amount2 ?? 0.5}
-                              oninput={(e) => project.updateEffectParams(layer.id, effect.id, { amount2: parseFloat((e.target as HTMLInputElement).value) })}
-                            />
-                            <span class="param-value">{((effect.params.amount2 ?? 0.5) * 100).toFixed(0)}%</span>
-                          </div>
-                          <div class="param-row">
-                            <label>Gain</label>
-                            <input
-                              type="range"
-                              min="0"
-                              max="1"
-                              step="0.01"
-                              data-midi-path="map:effect:{effect.id}:amount3"
-                              value={effect.params.amount3 ?? 0.5}
-                              oninput={(e) => project.updateEffectParams(layer.id, effect.id, { amount3: parseFloat((e.target as HTMLInputElement).value) })}
-                            />
-                            <span class="param-value">{((effect.params.amount3 ?? 0.5) * 100).toFixed(0)}%</span>
-                          </div>
-                        {/if}
-
-                      {:else if effect.type === 'exposure' || effect.type === 'gamma' || effect.type === 'vibrance' || effect.type === 'filmGrain' || effect.type === 'halftone' || effect.type === 'toon' || effect.type === 'kuwahara' || effect.type === 'oilPaint' || effect.type === 'watercolor' || effect.type === 'compressionArtifacts' || effect.type === 'heatHaze' || effect.type === 'displacement' || effect.type === 'erode' || effect.type === 'dilate'}
-                        <div class="param-row">
-                          <label>Amount</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:amount"
-                            value={effect.params.amount ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { amount: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.amount ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Detail</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:amount2"
-                            value={effect.params.amount2 ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { amount2: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.amount2 ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-
-                      {:else if effect.type === 'temperatureTint'}
-                        <div class="param-row">
-                          <label>Temperature</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:amount"
-                            value={effect.params.amount ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { amount: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.amount ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Tint</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:amount2"
-                            value={effect.params.amount2 ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { amount2: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.amount2 ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-
-                      {:else if effect.type === 'bloom'}
-                        <div class="param-row">
-                          <label>Intensity</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:amount"
-                            value={effect.params.amount ?? 0.35}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { amount: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.amount ?? 0.35) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Radius</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:amount2"
-                            value={effect.params.amount2 ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { amount2: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.amount2 ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Threshold</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:threshold"
-                            value={effect.params.threshold ?? 0.65}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { threshold: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.threshold ?? 0.65) * 100).toFixed(0)}%</span>
-                        </div>
-
-                      {:else if effect.type === 'chromaticAberration' || effect.type === 'lensDistortion' || effect.type === 'tiltShift' || effect.type === 'godRays' || effect.type === 'zoomBlur' || effect.type === 'radialBlur' || effect.type === 'twirl' || effect.type === 'pinchBulge'}
-                        <div class="param-row">
-                          <label>Amount</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:amount"
-                            value={effect.params.amount ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { amount: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.amount ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Detail</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:amount2"
-                            value={effect.params.amount2 ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { amount2: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.amount2 ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Center X</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:centerX"
-                            value={effect.params.centerX ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { centerX: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.centerX ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Center Y</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:centerY"
-                            value={effect.params.centerY ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { centerY: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.centerY ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-                        {#if effect.type === 'godRays'}
-                          <div class="param-row">
-                            <label>Threshold</label>
-                            <input
-                              type="range"
-                              min="0"
-                              max="1"
-                              step="0.01"
-                              data-midi-path="map:effect:{effect.id}:threshold"
-                              value={effect.params.threshold ?? 0.7}
-                              oninput={(e) => project.updateEffectParams(layer.id, effect.id, { threshold: parseFloat((e.target as HTMLInputElement).value) })}
-                            />
-                            <span class="param-value">{((effect.params.threshold ?? 0.7) * 100).toFixed(0)}%</span>
-                          </div>
-                        {/if}
-
-                      {:else if effect.type === 'directionalBlur'}
-                        <div class="param-row">
-                          <label>Amount</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:amount"
-                            value={effect.params.amount ?? 0.25}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { amount: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.amount ?? 0.25) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Angle</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="6.283"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:angle"
-                            value={effect.params.angle ?? 0}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { angle: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.angle ?? 0) * 57.2958).toFixed(0)}deg</span>
-                        </div>
-
-                      {:else if effect.type === 'crt'}
-                        <div class="param-row">
-                          <label>Scanlines</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:amount"
-                            value={effect.params.amount ?? 0.4}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { amount: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.amount ?? 0.4) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Mask</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:amount2"
-                            value={effect.params.amount2 ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { amount2: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.amount2 ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Curvature</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:amount3"
-                            value={effect.params.amount3 ?? 0.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { amount3: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.amount3 ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-
-                      {:else if effect.type === 'chromaKey' || effect.type === 'lumaKey' || effect.type === 'differenceKey'}
-                        <div class="param-row">
-                          <label>Threshold</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:threshold"
-                            value={effect.params.threshold ?? 0.4}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { threshold: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.threshold ?? 0.4) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Softness</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:amount"
-                            value={effect.params.amount ?? 0.15}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { amount: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.amount ?? 0.15) * 100).toFixed(0)}%</span>
-                        </div>
-                        {#if effect.type === 'chromaKey'}
-                          <div class="param-row">
-                            <label>Key R</label>
-                            <input
-                              type="range"
-                              min="0"
-                              max="1"
-                              step="0.01"
-                              data-midi-path="map:effect:{effect.id}:red"
-                              value={effect.params.red ?? 0}
-                              oninput={(e) => project.updateEffectParams(layer.id, effect.id, { red: parseFloat((e.target as HTMLInputElement).value) })}
-                            />
-                            <span class="param-value">{((effect.params.red ?? 0) * 100).toFixed(0)}%</span>
-                          </div>
-                          <div class="param-row">
-                            <label>Key G</label>
-                            <input
-                              type="range"
-                              min="0"
-                              max="1"
-                              step="0.01"
-                              data-midi-path="map:effect:{effect.id}:green"
-                              value={effect.params.green ?? 1}
-                              oninput={(e) => project.updateEffectParams(layer.id, effect.id, { green: parseFloat((e.target as HTMLInputElement).value) })}
-                            />
-                            <span class="param-value">{((effect.params.green ?? 1) * 100).toFixed(0)}%</span>
-                          </div>
-                          <div class="param-row">
-                            <label>Key B</label>
-                            <input
-                              type="range"
-                              min="0"
-                              max="1"
-                              step="0.01"
-                              data-midi-path="map:effect:{effect.id}:blue"
-                              value={effect.params.blue ?? 0}
-                              oninput={(e) => project.updateEffectParams(layer.id, effect.id, { blue: parseFloat((e.target as HTMLInputElement).value) })}
-                            />
-                            <span class="param-value">{((effect.params.blue ?? 0) * 100).toFixed(0)}%</span>
-                          </div>
-                        {/if}
 
                       {:else}
                         {@const paramMeta = effectParamLabels[effect.type]}
@@ -3459,18 +2352,18 @@
     justify-content: space-between;
     align-items: center;
     margin-bottom: 8px;
-    /* Match `.section-header-row` padding in EdgeEffectsPanel so the
-       "Layer Effects" and "Edge Effects" titles line up vertically
-       at the same left edge. */
+    /* Match EdgeEffectsPanel's .section-header-row padding so the
+       "LAYER EFFECTS" and "EDGE EFFECTS" titles line up at the same
+       left edge — fixes visual mismatch where one was indented less. */
     padding: 4px 12px;
   }
 
   .effects-header h4 {
     margin: 0;
-    /* Same uppercase / weight / spacing as EdgeEffectsPanel's
-       `.section-title` so the two section headers visually rhyme.
-       Distinct accent color (purple vs Edge's orange) makes them
-       clearly separate sections, not parent/child. */
+    /* Mirror EdgeEffectsPanel's .section-title styling exactly: same
+       weight, size, uppercase, letter-spacing. Only difference is the
+       accent color — purple (BB86FC) here vs orange (ff9800) for Edge
+       Effects, so the two sections read as siblings, not parent/child. */
     font-size: 11px;
     font-weight: 600;
     color: #BB86FC;
@@ -3741,6 +2634,21 @@
     min-width: 0;
   }
   .layer-name-input:focus { background: rgba(187, 134, 252, 0.18); }
+
+  /* Inline hint that sits next to the Invert checkbox so the label stays
+     short and stops wrapping into "stacked text". The hint is a single
+     italic muted span and is the only flex sibling that's allowed to
+     shrink, so the row never overflows. */
+  .invert-hint {
+    font-size: 10px;
+    color: #777;
+    font-style: italic;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
   .btn-visibility,
   .btn-lock,
@@ -4307,21 +3215,6 @@
 
   .shape-mask-section .property-row label input[type="checkbox"] {
     margin: 0;
-  }
-
-  /* Inline hint that sits next to the Invert checkbox so the label stays
-     short and stops wrapping into "stacked text". The hint is a single
-     italic muted span and is the only flex sibling that's allowed to
-     shrink, so the row never overflows. */
-  .invert-hint {
-    font-size: 10px;
-    color: #777;
-    font-style: italic;
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .shape-icon-row {

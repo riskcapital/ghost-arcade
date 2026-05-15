@@ -1,23 +1,17 @@
 /**
- * versionCheck — poll GitHub Releases for newer Ghost Arcade Community
+ * versionCheck — poll GitHub Releases for newer Ghost Arcade GPU
  * versions and surface them to the user.
  *
- * Why this is here, in the OSS edition
- * ────────────────────────────────────
- * The Pro edition uses Electron's autoUpdater + a paid licensing layer to
- * deliver in-app upgrades. Community is GitHub-released and unsigned by
- * default, so we DON'T silently auto-update — that would break IT-managed
- * installs and surprise users on locked-down machines. Instead we
- * passively check the public Releases API once on startup (and on
- * demand from the Settings panel), and if a newer tag exists we show a
- * non-modal banner that links to the download page. User in control.
+ * GPU edition mirrors the Community check shape (compatible API for the
+ * footer version pill / Settings "Check for updates" button) but points
+ * at the GPU release channel: `ghost-arcade-releases`.
  *
  * The check is rate-limited locally (LAST_CHECK_KEY in localStorage) so
  * we don't hammer the GitHub API on every reload during dev. Manual
  * "Check now" from Settings bypasses the rate limit.
  */
 
-const REPO = 'riskcapital/ghost-arcade';
+const REPO = 'riskcapital/ghost-arcade-releases';
 const LAST_CHECK_KEY = 'ghostarcade-last-version-check';
 const LAST_RESULT_KEY = 'ghostarcade-last-version-result';
 /** 24 h between automatic checks. Manual check overrides this. */

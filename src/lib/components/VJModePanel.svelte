@@ -41,12 +41,11 @@
   import { applyPresetToEffect, getEffectPresets, getNumericEffectParams } from '../effects/effectUX';
   import { EFFECT_CATALOG } from '../effects/effectCatalog';
   import { EFFECT_PARAM_DEFS } from '../effects/effectParamDefs';
-  import { canUseVideoExport, canUseParticles3D } from '../stores/license';
+  // Tier-related imports removed — recording / Particles3D always available.
   import { getDefaultEffectParams as getRendererDefaultEffectParams } from '../renderer/effects';
   import EffectPickerModal from './EffectPickerModal.svelte';
   import SplatPanel from './SplatPanel.svelte';
   import Model3DPanel from './Model3DPanel.svelte';
-  import { setCleanDragPreview } from '../utils/dragPreview';
 
   // File menu callback (wired by parent App.svelte)
   export let onFileAction: ((action: 'new' | 'open' | 'save' | 'saveAs' | 'importPresets' | 'loadDemo' | 'undo' | 'redo') => void) | null = null;
@@ -143,22 +142,6 @@
   }
   function deckLayerStates(bank: VJDeck) {
     return bank === 'B' ? $vjClipLauncher.bankBLayerStates : $vjClipLauncher.layerStates;
-  }
-
-  // Check whether a video src is already present anywhere in the given
-  // deck's grid. Used by handleCellDrop to enforce the "no same video in
-  // both decks" rule that works around the dual-bank shared-videoElement
-  // freeze. Empty src never matches (avoids false positives on empty
-  // cells / clips without a real source).
-  function isVideoSrcInDeck(src: string, bank: VJDeck): boolean {
-    if (!src) return false;
-    const grid = deckGrid(bank);
-    for (const row of grid) {
-      for (const c of row) {
-        if (c?.type === 'video' && c.src === src) return true;
-      }
-    }
-    return false;
   }
 
   // (The pulsing ▶ scroll-hint was replaced with color-coded scrollbars
@@ -322,6 +305,138 @@
   let resizeStartY = 0;
   let resizeStartHeight = 0;
 
+  // ─── VJ Video Controls State ───────────────────────────────────────
+  // Mirrors LayerPanel.svelte's mapping-mode video controls. Refreshed
+  // by a requestAnimationFrame tick whenever the active clip is a video,
+  // so the timeline scrubber + time readout stay live without forcing
+  // store updates 60×/sec.
+  let vjVideoCurrentTime = 0;
+  let vjVideoDuration = 0;
+  let vjTrimDragging: 'start' | 'end' | null = null;
+  let vjTimelineScrubbing = false;
+  let vjTimelineEl: HTMLDivElement | null = null;
+  let vjVideoTickFrame: number | null = null;
+
+  function vjFormatTime(seconds: number): string {
+    if (!isFinite(seconds) || isNaN(seconds)) return '0:00';
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  }
+
+  function startVjVideoTick() {
+    if (vjVideoTickFrame !== null) return;
+    function tick() {
+      const clip = selectedLayerState?.activeClip;
+      const v = clip?.videoElement;
+      if (clip?.type === 'video' && v) {
+        vjVideoCurrentTime = v.currentTime;
+        vjVideoDuration = v.duration || 0;
+      }
+      vjVideoTickFrame = requestAnimationFrame(tick);
+    }
+    tick();
+  }
+
+  function stopVjVideoTick() {
+    if (vjVideoTickFrame !== null) {
+      cancelAnimationFrame(vjVideoTickFrame);
+      vjVideoTickFrame = null;
+    }
+  }
+
+  function vjSeekToPosition(e: MouseEvent, vEl: HTMLVideoElement) {
+    if (!vjTimelineEl || !vEl) return;
+    const rect = vjTimelineEl.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / (rect.width || 1)));
+    // Clamp to the active trim region — Canvas.svelte's per-frame loop will
+    // pull currentTime back to trimStart anyway if we seek outside, but
+    // clamping at the input layer makes the playhead "stick" inside the
+    // trim region the moment the user releases (no visual snap-back).
+    const clip = selectedLayerState?.activeClip;
+    const trimS = clip?.trimStart ?? 0;
+    const trimE = clip?.trimEnd ?? 1;
+    const clamped = Math.max(trimS, Math.min(trimE, pct));
+    vEl.currentTime = clamped * (vEl.duration || 0);
+  }
+
+  function vjHandleTimelineMouseDown(e: MouseEvent, vEl: HTMLVideoElement) {
+    if (!vjTimelineEl || !vEl) return;
+    e.stopPropagation();
+    vjTimelineScrubbing = true;
+    vjSeekToPosition(e, vEl);
+    const onMove = (me: MouseEvent) => vjSeekToPosition(me, vEl);
+    const onUp = () => {
+      vjTimelineScrubbing = false;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  function vjHandleTrimMouseDown(e: MouseEvent, which: 'start' | 'end', layerIdx: number) {
+    e.stopPropagation();
+    e.preventDefault();
+    vjTrimDragging = which;
+    const onMove = (me: MouseEvent) => {
+      if (!vjTimelineEl) return;
+      const rect = vjTimelineEl.getBoundingClientRect();
+      const pct = Math.max(0, Math.min(1, (me.clientX - rect.left) / (rect.width || 1)));
+      const clip = paramLayerStates[layerIdx]?.activeClip;
+      if (!clip) return;
+      const trimS = clip.trimStart ?? 0;
+      const trimE = clip.trimEnd ?? 1;
+      const updates: { trimStart?: number; trimEnd?: number } = {};
+      if (which === 'start') updates.trimStart = Math.min(pct, trimE - 0.02);
+      else updates.trimEnd = Math.max(pct, trimS + 0.02);
+      vjClipLauncher.updateActiveClipVideoProps(layerIdx, updates, paramDeck);
+    };
+    const onUp = () => {
+      vjTrimDragging = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  function vjSetVideoPlaying(layerIdx: number, playing: boolean) {
+    const clip = paramLayerStates[layerIdx]?.activeClip;
+    const v = clip?.videoElement;
+    if (!clip || !v) return;
+    if (playing) {
+      v.play().catch(() => {});
+    } else {
+      v.pause();
+    }
+    vjClipLauncher.updateActiveClipVideoProps(layerIdx, { isPlaying: playing }, paramDeck);
+  }
+
+  function vjRestartVideo(layerIdx: number) {
+    const clip = paramLayerStates[layerIdx]?.activeClip;
+    const v = clip?.videoElement;
+    if (!clip || !v) return;
+    v.currentTime = (clip.trimStart ?? 0) * (v.duration || 0);
+    v.play().catch(() => {});
+    vjClipLauncher.updateActiveClipVideoProps(layerIdx, { isPlaying: true }, paramDeck);
+  }
+
+  function vjSetPlaybackRate(layerIdx: number, rate: number) {
+    const clip = paramLayerStates[layerIdx]?.activeClip;
+    const v = clip?.videoElement;
+    if (!clip) return;
+    if (v) v.playbackRate = rate;
+    vjClipLauncher.updateActiveClipVideoProps(layerIdx, { playbackRate: rate }, paramDeck);
+  }
+
+  function vjSetPlaybackMode(layerIdx: number, mode: 'loop' | 'once') {
+    const clip = paramLayerStates[layerIdx]?.activeClip;
+    if (!clip) return;
+    vjClipLauncher.updateActiveClipVideoProps(layerIdx, { playbackMode: mode }, paramDeck);
+  }
+  // ─── End VJ Video Controls ──────────────────────────────────────────
+
   function onPreviewResizeStart(e: PointerEvent) {
     isResizingPreview = true;
     resizeStartY = e.clientY;
@@ -372,10 +487,8 @@
   }
 
   // Preview loop perf budget — controlled by Settings → Performance.
-  // Defaults to full resolution at 60fps so capable machines look
-  // crisp out of the box; users on weak hardware can downgrade either
-  // axis (resolution / framerate) via the settings panel to free GPU
-  // budget for the actual render.
+  // Defaults to full resolution at 60fps so capable machines look crisp;
+  // users on weak hardware can downgrade either axis to free GPU budget.
   let _lastPreviewFrameTime = 0;
 
   // Start preview loop when VJ mode opens
@@ -385,12 +498,9 @@
     function updatePreview(now: number) {
       previewAnimationFrame = requestAnimationFrame(updatePreview);
 
-      // Pull the current perf settings off the store snapshot each
-      // frame — cheap, and reactive to settings panel changes without
-      // restart.
       const perf = (get(settings) as any)?.performance;
       const fpsTarget = perf?.previewFrameRate ?? 60;
-      const resCap = perf?.previewMaxDim ?? 0; // 0 = no cap (full res)
+      const resCap = perf?.previewMaxDim ?? 0;
       const frameIntervalMs = 1000 / Math.max(1, fpsTarget);
 
       if (fpsTarget < 60 && now - _lastPreviewFrameTime < frameIntervalMs) return;
@@ -402,8 +512,6 @@
       const srcH = mainCanvas.height;
       if (srcW === 0 || srcH === 0) return;
 
-      // Resolution cap (long-edge). When 0 (Full), match main canvas
-      // exactly — same as the pre-settings behavior.
       const longEdge = Math.max(srcW, srcH);
       const scale = resCap > 0 && longEdge > resCap ? resCap / longEdge : 1;
       const dstW = Math.max(1, Math.round(srcW * scale));
@@ -437,6 +545,7 @@
   onDestroy(() => {
     stopPreviewLoop();
     stopModGhostLoop();
+    stopVjVideoTick();
     if (vjRecorderHandle && vjIsRecording) {
       try { vjRecorderHandle.stop(); } catch {}
     }
@@ -523,16 +632,6 @@
   // the crossfader is on (drag from Bank A cell → Bank B cell, etc.)
   let dragOverCell: { layer: number; column: number; bank: VJDeck } | null = null;
   let dragSourceCell: { layer: number; column: number; bank: VJDeck } | null = null;
-
-  // Branded alert state. Set to a { title, message } object to show the
-  // modal; cleared on dismiss. Replaces window.alert() for in-app errors
-  // so the dialog matches the Ghost Arcade aesthetic instead of the
-  // generic OS chrome (which is jarring when the editor is fullscreened
-  // on a projector).
-  let brandedAlert: { title: string; message: string } | null = null;
-  function showBrandedAlert(title: string, message: string) {
-    brandedAlert = { title, message };
-  }
 
   // Copy/paste state
   let clipboardClip: VJClip | null = null;
@@ -1062,8 +1161,6 @@
       e.dataTransfer.effectAllowed = 'copy';
       e.dataTransfer.setData('text/plain', JSON.stringify(clip));
     }
-    // Single-frame clean drag image — kills the multi-ghost trail.
-    setCleanDragPreview(e, e.currentTarget as HTMLElement);
   }
 
   function handleDragEnd() {
@@ -1263,8 +1360,9 @@
     // the source). If the destination cell ALREADY has a clip, SWAP the
     // two — neither clip is destroyed, they just trade places. This is
     // what users expect when dragging clips between layers in the grid;
-    // the previous "always replace" behavior was nuking work mid-set.
-    // Cross-deck moves of duplicate-video-source still blocked (see below).
+    // the previous "always replace / clear source" behavior was nuking
+    // work mid-set when users dropped onto a populated cell. Swap also
+    // works across decks (Bank A ↔ Bank B).
     if (dragSourceCell) {
       const srcClip = deckGrid(dragSourceCell.bank)[dragSourceCell.layer]?.[dragSourceCell.column];
       const destClip = deckGrid(bank)[layerIndex]?.[columnIndex];
@@ -1273,22 +1371,6 @@
         dragSourceCell.layer === layerIndex &&
         dragSourceCell.column === columnIndex;
       if (srcClip && !sameSpot) {
-        // Cross-deck moves of VIDEO clips are blocked: the same video file
-        // playing simultaneously in both decks runs into shared-resource
-        // contention (one HTMLVideoElement in cache backs both layers, so
-        // the dual-bank crossfade samples the same paused frame on the B
-        // side instead of an independently-playing instance). Until that
-        // upstream fix lands, prevent the duplicate at the UI layer.
-        const isCrossDeck = dragSourceCell.bank !== bank;
-        if (srcClip.type === 'video' && isCrossDeck && isVideoSrcInDeck(srcClip.src, bank)) {
-          showBrandedAlert(
-            'Already in the other deck',
-            `This video is already loaded into Deck ${bank === 'A' ? 'B' : 'A'}. Split-deck mode can't run the same file in both decks at once — use a different clip here, or remove the existing one first.`
-          );
-          dragSourceCell = null;
-          draggedClip = null;
-          return;
-        }
         const movedClip: VJClip = { ...srcClip, id: generateUUID() };
         vjClipLauncher.setClip(layerIndex, columnIndex, movedClip, bank);
         if (destClip) {
@@ -1306,22 +1388,6 @@
     }
 
     if (!draggedClip) return;
-
-    // Video duplicate-block: prevent adding the same video file to both
-    // decks of a split-deck setup. See comment above on the cell-to-cell
-    // move path. We check the OTHER deck (bank's opposite) for an
-    // existing clip with the same src — if found, alert and abort.
-    if (draggedClip.type === 'video') {
-      const media = $mediaLibrary.find(m => m.id === draggedClip!.id);
-      if (media && isVideoSrcInDeck(media.src, bank === 'A' ? 'B' : 'A')) {
-        showBrandedAlert(
-          'Already in the other deck',
-          `This video is already loaded into Deck ${bank === 'A' ? 'B' : 'A'}. Split-deck mode can't run the same file in both decks at once — use a different clip here, or remove the existing one first.`
-        );
-        draggedClip = null;
-        return;
-      }
-    }
 
     if (draggedClip.type === 'shader') {
       const shader = shaders.find(s => s.id === draggedClip!.id);
@@ -1843,150 +1909,19 @@
   $: paramClipGrid = paramDeck === 'B' ? $vjClipLauncher.bankBClipGrid : $vjClipLauncher.clipGrid;
   $: selectedLayerState = selectedLayerIndex !== null ? paramLayerStates[selectedLayerIndex] : null;
 
-  // ─── VJ Video Controls (mirrors LayerPanel mapping-mode video) ────────
-  // Refreshed by a requestAnimationFrame tick whenever the active clip
-  // is a video, so the timeline scrubber + time readout stay live without
-  // forcing store updates 60×/sec. All writes go through paramDeck so
-  // edits to a Bank B clip don't accidentally mutate the Bank A clip.
-  let vjVideoCurrentTime = 0;
-  let vjVideoDuration = 0;
-  let vjTrimDragging: 'start' | 'end' | null = null;
-  let vjTimelineScrubbing = false;
-  let vjTimelineEl: HTMLDivElement | null = null;
-  let vjVideoTickFrame: number | null = null;
-
-  function vjFormatTime(seconds: number): string {
-    if (!isFinite(seconds) || isNaN(seconds)) return '0:00';
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
-  }
-
-  function startVjVideoTick() {
-    if (vjVideoTickFrame !== null) return;
-    function tick() {
-      const clip = selectedLayerState?.activeClip;
-      const v = clip?.videoElement;
-      if (clip?.type === 'video' && v) {
-        vjVideoCurrentTime = v.currentTime;
-        vjVideoDuration = v.duration || 0;
-      }
-      vjVideoTickFrame = requestAnimationFrame(tick);
-    }
-    tick();
-  }
-
-  function stopVjVideoTick() {
-    if (vjVideoTickFrame !== null) {
-      cancelAnimationFrame(vjVideoTickFrame);
-      vjVideoTickFrame = null;
-    }
-  }
-
-  $: {
-    const _activeClip = selectedLayerState?.activeClip;
-    if (_activeClip?.type === 'video' && _activeClip.videoElement) {
-      startVjVideoTick();
-    } else {
-      stopVjVideoTick();
-      vjVideoCurrentTime = 0;
-      vjVideoDuration = 0;
-    }
-  }
-
-  onDestroy(() => stopVjVideoTick());
-
-  function vjSeekToPosition(e: MouseEvent, vEl: HTMLVideoElement) {
-    if (!vjTimelineEl || !vEl) return;
-    const rect = vjTimelineEl.getBoundingClientRect();
-    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / (rect.width || 1)));
-    // Clamp to active trim region — Canvas's per-frame loop pulls
-    // currentTime back to trimStart anyway if we seek outside, but
-    // clamping here avoids visual snap-back on release.
-    const clip = selectedLayerState?.activeClip;
-    const trimS = clip?.trimStart ?? 0;
-    const trimE = clip?.trimEnd ?? 1;
-    const clamped = Math.max(trimS, Math.min(trimE, pct));
-    try { vEl.currentTime = clamped * (vEl.duration || 0); } catch { /* mid-load */ }
-  }
-
-  function vjHandleTimelineMouseDown(e: MouseEvent, vEl: HTMLVideoElement) {
-    if (!vjTimelineEl || !vEl) return;
-    e.stopPropagation();
-    vjTimelineScrubbing = true;
-    vjSeekToPosition(e, vEl);
-    const onMove = (me: MouseEvent) => vjSeekToPosition(me, vEl);
-    const onUp = () => {
-      vjTimelineScrubbing = false;
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  }
-
-  function vjHandleTrimMouseDown(e: MouseEvent, which: 'start' | 'end', layerIdx: number) {
-    e.stopPropagation();
-    e.preventDefault();
-    vjTrimDragging = which;
-    const onMove = (me: MouseEvent) => {
-      if (!vjTimelineEl) return;
-      const rect = vjTimelineEl.getBoundingClientRect();
-      const pct = Math.max(0, Math.min(1, (me.clientX - rect.left) / (rect.width || 1)));
-      const clip = paramLayerStates[layerIdx]?.activeClip;
-      if (!clip) return;
-      const trimS = clip.trimStart ?? 0;
-      const trimE = clip.trimEnd ?? 1;
-      const updates: { trimStart?: number; trimEnd?: number } = {};
-      if (which === 'start') updates.trimStart = Math.min(pct, trimE - 0.02);
-      else updates.trimEnd = Math.max(pct, trimS + 0.02);
-      vjClipLauncher.updateActiveClipVideoProps(layerIdx, updates, paramDeck);
-    };
-    const onUp = () => {
-      vjTrimDragging = null;
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  }
-
-  function vjSetVideoPlaying(layerIdx: number, playing: boolean) {
-    const clip = paramLayerStates[layerIdx]?.activeClip;
-    const v = clip?.videoElement;
-    if (!clip || !v) return;
-    if (playing) v.play().catch(() => {}); else v.pause();
-    vjClipLauncher.updateActiveClipVideoProps(layerIdx, { isPlaying: playing }, paramDeck);
-  }
-
-  function vjRestartVideo(layerIdx: number) {
-    const clip = paramLayerStates[layerIdx]?.activeClip;
-    const v = clip?.videoElement;
-    if (!clip || !v) return;
-    try { v.currentTime = (clip.trimStart ?? 0) * (v.duration || 0); } catch {}
-    v.play().catch(() => {});
-    vjClipLauncher.updateActiveClipVideoProps(layerIdx, { isPlaying: true }, paramDeck);
-  }
-
-  function vjSetPlaybackRate(layerIdx: number, rate: number) {
-    const clip = paramLayerStates[layerIdx]?.activeClip;
-    const v = clip?.videoElement;
-    if (!clip) return;
-    if (v) v.playbackRate = rate;
-    vjClipLauncher.updateActiveClipVideoProps(layerIdx, { playbackRate: rate }, paramDeck);
-  }
-
-  function vjSetPlaybackMode(layerIdx: number, mode: 'loop' | 'once') {
-    const clip = paramLayerStates[layerIdx]?.activeClip;
-    if (!clip) return;
-    vjClipLauncher.updateActiveClipVideoProps(layerIdx, { playbackMode: mode }, paramDeck);
+  // Drive the video-controls polling tick from the selected clip type. Same
+  // pattern as LayerPanel's startVideoTick — only run when a video clip is
+  // selected, so the rAF loop is dormant for shader/splat/model3d clips.
+  $: if (selectedLayerState?.activeClip?.type === 'video' && selectedLayerState.activeClip.videoElement) {
+    startVjVideoTick();
+  } else {
+    stopVjVideoTick();
   }
 </script>
 
 <!-- VJ Mode Full Overlay -->
 <svelte:window
   onclick={(e) => { const t = e.target as HTMLElement; if (vjFileMenuOpen && !t.closest?.('.vj-file-menu-container')) vjFileMenuOpen = false; }}
-  onkeydown={(e) => { if (e.key === 'Escape' && brandedAlert) brandedAlert = null; }}
 />
 
 {#if $vjClipLauncher.isOpen}
@@ -1994,30 +1929,6 @@
        recall the live VJ state in one click. Self-collapses to a small
        icon launcher when not in use. -->
   <SnapshotBank />
-
-  <!-- Branded alert modal — replaces window.alert() for in-app errors so
-       the dialog matches the Ghost Arcade aesthetic instead of generic
-       OS chrome. Click backdrop or OK button to dismiss. Escape closes too. -->
-  {#if brandedAlert}
-    <div class="ga-alert-overlay" onclick={() => brandedAlert = null} role="dialog" aria-modal="true" aria-labelledby="ga-alert-title">
-      <div class="ga-alert-modal" onclick={(e) => e.stopPropagation()} role="document">
-        <div class="ga-alert-header">
-          <div class="ga-alert-icon" aria-hidden="true">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="10"/>
-              <line x1="12" y1="8" x2="12" y2="13"/>
-              <circle cx="12" cy="16.5" r="1" fill="currentColor"/>
-            </svg>
-          </div>
-          <h3 id="ga-alert-title" class="ga-alert-title">{brandedAlert.title}</h3>
-        </div>
-        <p class="ga-alert-message">{brandedAlert.message}</p>
-        <div class="ga-alert-actions">
-          <button class="ga-alert-ok" onclick={() => brandedAlert = null} autofocus>OK</button>
-        </div>
-      </div>
-    </div>
-  {/if}
 
   <div class="vj-overlay" class:kf-tray-open={$keyframeTimeline.isOpen}>
     <!-- Header -->
@@ -2094,15 +2005,9 @@
             Stop Rec
           </button>
         {:else}
-          {#if $canUseVideoExport}
-            <button class="vj-rec-btn" onclick={vjStartRecording} title="Record Output">
-              ● REC
-            </button>
-          {:else}
-            <button class="vj-rec-btn locked" title="Recording requires Pro license" disabled>
-              🔒 REC
-            </button>
-          {/if}
+          <button class="vj-rec-btn" onclick={vjStartRecording} title="Record Output">
+            ● REC
+          </button>
         {/if}
       </div>
 
@@ -2415,7 +2320,7 @@
           (selectedLayerState?.activeClip?.type === 'splat') ||
           (selectedLayerState?.activeClip?.type === 'model3d') ||
           (selectedLayerState?.activeClip?.type === 'effect' && selectedLayerState?.activeClip?.effectSource) ||
-          (selectedLayerState?.activeClip?.type === 'video')
+          (selectedLayerState?.activeClip?.type === 'video' && selectedLayerState?.activeClip?.videoElement)
         ))}>
           <!-- Shader Parameters (above media tabs) -->
           {#if selectedLayerIndex !== null && selectedLayerState?.activeClip?.type === 'shader' && selectedLayerState?.activeClip?.shaderCode && showShaderParams}
@@ -2676,10 +2581,7 @@
             {/if}
           {/if}
 
-          <!-- Video Controls Panel — full mapping-mode parity (transport
-               row, trim-aware timeline, Loop/Once mode, then transform
-               sliders). All writes route through paramDeck so Bank A and
-               Bank B clips stay independent. -->
+          <!-- Video Controls Panel (matches LayerPanel mapping-mode controls) -->
           {#if selectedLayerIndex !== null && selectedLayerState?.activeClip?.type === 'video' && selectedLayerState?.activeClip?.videoElement}
             {@const vClip = selectedLayerState.activeClip}
             {@const vEl = vClip.videoElement!}
@@ -2703,7 +2605,7 @@
               </div>
               <div class="shader-params-panel-list">
                 <div class="video-controls-panel">
-                  <!-- Transport row: play/pause + restart + time + speed -->
+                  <!-- Transport row -->
                   <div class="vt-transport">
                     <button
                       class="vt-btn vt-play"
@@ -2746,7 +2648,7 @@
                     </select>
                   </div>
 
-                  <!-- Trim-aware timeline with playhead + drag handles -->
+                  <!-- Timeline bar -->
                   <div
                     class="vt-timeline"
                     bind:this={vjTimelineEl}
@@ -2758,27 +2660,35 @@
                     aria-valuemax={100}
                     aria-valuenow={vjVideoDuration > 0 ? Math.round(vjVideoCurrentTime / vjVideoDuration * 100) : 0}
                   >
+                    <!-- Grayed areas outside trim -->
                     <div class="vt-trim-outside-left" style="width: {vTrimS * 100}%"></div>
                     <div class="vt-trim-outside-right" style="width: {(1 - vTrimE) * 100}%"></div>
+                    <!-- Active trim region -->
                     <div class="vt-trim-region" style="left: {vTrimS * 100}%; width: {(vTrimE - vTrimS) * 100}%"></div>
+                    <!-- Playhead -->
                     {#if vjVideoDuration > 0}
                       <div class="vt-playhead" style="left: {(vjVideoCurrentTime / vjVideoDuration) * 100}%"></div>
                     {/if}
+                    <!-- Trim handles -->
                     <div
                       class="vt-trim-handle vt-trim-start"
                       style="left: {vTrimS * 100}%"
                       onmousedown={(e) => vjHandleTrimMouseDown(e, 'start', selectedLayerIndex!)}
-                      role="slider" tabindex="0" aria-label="Trim start"
+                      role="slider"
+                      tabindex="0"
+                      aria-label="Trim start"
                     ></div>
                     <div
                       class="vt-trim-handle vt-trim-end"
                       style="left: {vTrimE * 100}%"
                       onmousedown={(e) => vjHandleTrimMouseDown(e, 'end', selectedLayerIndex!)}
-                      role="slider" tabindex="0" aria-label="Trim end"
+                      role="slider"
+                      tabindex="0"
+                      aria-label="Trim end"
                     ></div>
                   </div>
 
-                  <!-- Mode buttons: Loop / Once -->
+                  <!-- Mode buttons row -->
                   <div class="vt-modes">
                     <button class="vt-mode-btn" class:active={vMode === 'loop'} onclick={() => vjSetPlaybackMode(selectedLayerIndex!, 'loop')} title="Loop">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -2793,6 +2703,13 @@
                     </button>
                   </div>
 
+                  <!-- Per-clip transform: zoom, fit, anchor, rotation, opacity.
+                       Maps to VJClip.zoom/fit/anchorX/anchorY/rotation/opacity
+                       which Layer construction in vjOutputLayers translates to
+                       the engine's existing position/scale/rotation/opacity/
+                       contentFit fields. Each input writes immediately via
+                       vjClipLauncher.updateActiveClipVideoProps so the change
+                       is visible on the next frame. -->
                   <div class="vt-transform">
                     <div class="vt-section-title">Transform</div>
 
@@ -3184,17 +3101,10 @@
 
               <div class="xfade-readout">{Math.round($vjClipLauncher.crossfaderValue * 100)}%</div>
 
-              <!-- Use onpointerdown to forcibly bring the select to focus
-                   before its native dropdown attempt — without this on
-                   Electron 42 / Chromium 130 the open click is sometimes
-                   absorbed by the surrounding flex column and the dropdown
-                   never appears. onchange-driven update still flows through
-                   the store; the pointerdown is a no-op when things work. -->
               <select
                 class="xfade-select"
                 value={$vjClipLauncher.crossfaderTransition}
-                onpointerdown={(e) => (e.currentTarget as HTMLSelectElement).focus()}
-                onchange={(e) => vjClipLauncher.setCrossfaderTransition((e.currentTarget as HTMLSelectElement).value as any)}
+                onchange={(e) => vjClipLauncher.setCrossfaderTransition((e.target as HTMLSelectElement).value as any)}
                 title="Transition style"
                 data-midi-path="vj:crossfader:transition"
                 data-midi-label="Crossfader Transition"
@@ -3223,8 +3133,7 @@
               <select
                 class="xfade-select xfade-curve"
                 value={$vjClipLauncher.crossfaderBlendMode || 'normal'}
-                onpointerdown={(e) => (e.currentTarget as HTMLSelectElement).focus()}
-                onchange={(e) => vjClipLauncher.setCrossfaderBlendMode((e.currentTarget as HTMLSelectElement).value as any)}
+                onchange={(e) => vjClipLauncher.setCrossfaderBlendMode((e.target as HTMLSelectElement).value as any)}
                 title="Output blend mode — A↔B combination math at the mix point"
                 data-midi-path="vj:crossfader:blendMode"
                 data-midi-label="Crossfader Blend Mode"
@@ -3412,28 +3321,21 @@
           <div class="loading">Loading shaders...</div>
         {/if}
 
-        <!-- Import bar: file picker for VJ-only media import.
-             Uses <label> wrapping a hidden <input> instead of a button +
-             programmatic .click(): on Chromium 130 (Electron 42) the
-             programmatic-click path silently dropped the `multiple` flag
-             so the OS dialog only allowed single-select even though the
-             attribute was set. Native label-driven click preserves the
-             flag. (Mapping-mode MediaTray uses the same pattern; this
-             aligns the two paths.) -->
+        <!-- Import bar: file picker for VJ-only media import -->
         {#if vjMediaTab === 'videos' || vjMediaTab === 'images'}
           <div class="vj-import-bar">
-            <label class="vj-import-btn" title="Import files from disk">
+            <button class="vj-import-btn" onclick={() => vjMediaFileInput?.click()} title="Import files from disk">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
               Import {vjMediaTab === 'videos' ? 'Videos' : 'Images'}
-              <input
-                type="file"
-                bind:this={vjMediaFileInput}
-                accept={vjMediaTab === 'videos' ? 'video/*' : 'image/*'}
-                multiple
-                style="display:none;"
-                onchange={vjHandleMediaFilePick}
-              />
-            </label>
+            </button>
+            <input
+              type="file"
+              bind:this={vjMediaFileInput}
+              accept={vjMediaTab === 'videos' ? 'video/*' : 'image/*'}
+              multiple
+              style="display:none;"
+              onchange={vjHandleMediaFilePick}
+            />
           </div>
         {/if}
 
@@ -4685,74 +4587,6 @@
 
   .shader-params-panel-list::-webkit-scrollbar { width: 4px; }
   .shader-params-panel-list::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
-
-  /* ── VJ video Transform section (per-clip zoom/fit/anchor/rotation/
-       opacity). Sits inside the VJ video-controls-panel; styled to
-       match the surrounding shader-params-panel rows so it doesn't
-       look out of place. */
-  .vt-transform {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 6px 0 4px 0;
-    margin-top: 6px;
-    border-top: 1px solid #2a2a2a;
-  }
-  .vt-section-title {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.5px;
-    color: #888;
-    text-transform: uppercase;
-    margin: 0 0 4px 2px;
-  }
-  .vt-tf-row {
-    display: grid;
-    grid-template-columns: 60px 1fr 48px;
-    align-items: center;
-    gap: 6px;
-    font-size: 11px;
-    color: #ccc;
-  }
-  .vt-tf-label {
-    color: #999;
-  }
-  .vt-tf-num {
-    font-family: 'SF Mono', Menlo, Consolas, monospace;
-    font-size: 10px;
-    color: #ccc;
-    text-align: right;
-  }
-  .vt-tf-select {
-    grid-column: 2 / 4;
-    background: #1a1a1a;
-    border: 1px solid #333;
-    color: #ddd;
-    font-size: 11px;
-    padding: 2px 4px;
-    border-radius: 3px;
-    cursor: pointer;
-  }
-  .vt-tf-reset {
-    margin-top: 6px;
-    background: #222;
-    border: 1px solid #333;
-    color: #aaa;
-    font-size: 11px;
-    padding: 4px 8px;
-    border-radius: 3px;
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-  .vt-tf-reset:hover {
-    background: #2a2a2a;
-    color: #ddd;
-  }
-  .vt-modes {
-    display: flex;
-    gap: 4px;
-    margin-top: 6px;
-  }
 
   /* Bottom Section: Grid + Media Tray */
   .vj-bottom {
@@ -6851,117 +6685,39 @@
   }
   .bank-pill-seg + .bank-pill-seg { border-left: 1px solid rgba(255, 255, 255, 0.1); }
 
-  /* ─── Branded alert modal ─── */
-  .ga-alert-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.78);
-    backdrop-filter: blur(8px);
-    z-index: 100000;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    animation: ga-alert-fade-in 160ms ease-out;
-  }
-  @keyframes ga-alert-fade-in {
-    from { opacity: 0; }
-    to   { opacity: 1; }
-  }
-  .ga-alert-modal {
-    background: linear-gradient(180deg, #1a1a2e 0%, #14141f 100%);
-    border: 1px solid rgba(168, 85, 247, 0.25);
-    border-radius: 12px;
-    width: 440px;
-    max-width: calc(100vw - 32px);
-    box-shadow:
-      0 24px 60px rgba(0, 0, 0, 0.6),
-      0 0 0 1px rgba(255, 255, 255, 0.04) inset,
-      0 0 60px rgba(168, 85, 247, 0.08);
-    padding: 22px 24px 18px;
-    color: #e8e8ee;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    animation: ga-alert-pop-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
-  }
-  @keyframes ga-alert-pop-in {
-    from { transform: scale(0.94); opacity: 0; }
-    to   { transform: scale(1); opacity: 1; }
-  }
-  .ga-alert-header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 12px;
-  }
-  .ga-alert-icon {
-    flex: 0 0 36px;
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: linear-gradient(135deg, rgba(168, 85, 247, 0.25), rgba(124, 58, 237, 0.25));
-    border: 1px solid rgba(168, 85, 247, 0.35);
-    color: #c4a4ff;
-  }
-  .ga-alert-title {
+  /* ─── VJ Video Controls Panel — mirrors LayerPanel mapping-mode video ─── */
+  .video-controls-panel {
     margin: 0;
-    font-size: 15px;
-    font-weight: 600;
-    letter-spacing: 0.01em;
-    color: #f1f0f7;
-  }
-  .ga-alert-message {
-    margin: 0 0 18px;
-    font-size: 13px;
-    line-height: 1.55;
-    color: #b8b8c4;
-  }
-  .ga-alert-actions {
-    display: flex;
-    justify-content: flex-end;
-  }
-  .ga-alert-ok {
-    padding: 8px 22px;
-    background: linear-gradient(135deg, #a855f7, #7c3aed);
-    border: none;
-    color: #fff;
+    padding: 8px;
+    background: rgba(255, 255, 255, 0.04);
     border-radius: 6px;
-    font-size: 13px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    cursor: pointer;
-    transition: filter 150ms, box-shadow 200ms;
+    border: 1px solid rgba(255, 255, 255, 0.06);
   }
-  .ga-alert-ok:hover {
-    filter: brightness(1.15);
-    box-shadow: 0 0 18px rgba(168, 85, 247, 0.45);
+  .vt-transport {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 8px;
   }
-  .ga-alert-ok:active {
-    filter: brightness(0.9);
-  }
-  .ga-alert-ok:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 2px #14141f, 0 0 0 4px rgba(168, 85, 247, 0.6);
-  }
-
-  /* ─── VJ Video Controls Panel — playback half (the transform half is
-     already styled above as .vt-tf-* / .vt-transform). Mirrors LayerPanel
-     mapping-mode video controls visually. */
-  .vt-transport { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
   .vt-btn {
     background: rgba(255, 255, 255, 0.08);
     color: #ccc;
     border: none;
-    width: 28px; height: 28px;
+    width: 28px;
+    height: 28px;
     border-radius: 4px;
     cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     transition: background 0.15s, color 0.15s;
     flex-shrink: 0;
   }
   .vt-btn:hover { background: rgba(255, 255, 255, 0.15); color: #fff; }
-  .vt-play { background: #BB86FC; color: #111; }
+  .vt-play {
+    background: #BB86FC;
+    color: #111;
+  }
   .vt-play:hover { background: #CF6EFF; color: #000; }
   .vt-time {
     font-size: 11px;
@@ -6993,8 +6749,11 @@
     overflow: visible;
     user-select: none;
   }
-  .vt-trim-outside-left, .vt-trim-outside-right {
-    position: absolute; top: 0; height: 100%;
+  .vt-trim-outside-left,
+  .vt-trim-outside-right {
+    position: absolute;
+    top: 0;
+    height: 100%;
     background: rgba(0, 0, 0, 0.45);
     pointer-events: none;
     z-index: 1;
@@ -7002,7 +6761,9 @@
   .vt-trim-outside-left { left: 0; border-radius: 3px 0 0 3px; }
   .vt-trim-outside-right { right: 0; border-radius: 0 3px 3px 0; }
   .vt-trim-region {
-    position: absolute; top: 0; height: 100%;
+    position: absolute;
+    top: 0;
+    height: 100%;
     background: rgba(187, 134, 252, 0.15);
     border-top: 2px solid rgba(187, 134, 252, 0.35);
     border-bottom: 2px solid rgba(187, 134, 252, 0.35);
@@ -7010,8 +6771,10 @@
     z-index: 1;
   }
   .vt-playhead {
-    position: absolute; top: -2px;
-    width: 2px; height: calc(100% + 4px);
+    position: absolute;
+    top: -2px;
+    width: 2px;
+    height: calc(100% + 4px);
     background: #BB86FC;
     box-shadow: 0 0 4px rgba(187, 134, 252, 0.6);
     z-index: 3;
@@ -7019,8 +6782,10 @@
     transform: translateX(-1px);
   }
   .vt-trim-handle {
-    position: absolute; top: 0;
-    width: 8px; height: 100%;
+    position: absolute;
+    top: 0;
+    width: 8px;
+    height: 100%;
     cursor: ew-resize;
     z-index: 4;
     transform: translateX(-4px);
@@ -7028,20 +6793,93 @@
     transition: background 0.1s;
   }
   .vt-trim-handle::after {
-    content: ''; position: absolute;
-    top: 25%; left: 50%;
+    content: '';
+    position: absolute;
+    top: 25%;
+    left: 50%;
     transform: translateX(-50%);
-    width: 2px; height: 50%;
+    width: 2px;
+    height: 50%;
     background: rgba(187, 134, 252, 0.7);
     border-radius: 1px;
   }
   .vt-trim-handle:hover { background: rgba(187, 134, 252, 0.25); }
   .vt-trim-handle:hover::after { background: #BB86FC; }
 
-  .vt-modes { display: flex; gap: 2px; margin-bottom: 8px; }
+  .vt-modes {
+    display: flex;
+    gap: 2px;
+  }
+
+  /* Per-clip transform section — sits below the trim/playback row.
+     Compact rows with label + range + numeric readout. */
+  .vt-transform {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .vt-section-title {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: #777;
+    margin-bottom: 2px;
+  }
+  .vt-tf-row {
+    display: grid;
+    grid-template-columns: 56px 1fr 44px;
+    align-items: center;
+    gap: 8px;
+  }
+  .vt-tf-label {
+    font-size: 10px;
+    color: #aaa;
+  }
+  .vt-tf-num {
+    font-family: 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 10px;
+    color: #6df;
+    text-align: right;
+  }
+  .vt-tf-row input[type="range"] {
+    width: 100%;
+    accent-color: #6df;
+  }
+  .vt-tf-select {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #ddd;
+    padding: 3px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    cursor: pointer;
+    width: 100%;
+  }
+  .vt-tf-row:has(.vt-tf-select) {
+    grid-template-columns: 56px 1fr;
+  }
+  .vt-tf-reset {
+    margin-top: 4px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #aaa;
+    padding: 5px;
+    border-radius: 3px;
+    font-size: 10px;
+    cursor: pointer;
+  }
+  .vt-tf-reset:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+  }
   .vt-mode-btn {
     flex: 1;
-    display: flex; align-items: center; justify-content: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     gap: 4px;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);

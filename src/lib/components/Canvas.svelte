@@ -15,11 +15,13 @@
   import { DrawingRenderer } from '../drawing/renderer';
   import { SVGLayerRenderer } from '../svg/renderer';
   import { LightPaintingRenderer } from '../lightpainting/renderer';
-  import { LightPaintingWebGLRenderer } from '../lightpainting/webglRenderer';
   import { TextRenderer } from '../text/renderer';
   import { SplatRenderer } from '../splat/SplatRenderer';
   import { loadPLY, loadSplatFromUrl } from '../splat';
   import { Model3DRenderer } from '../model3d/Model3DRenderer';
+  import { GpuLayerRenderer } from '$lib/renderer/gpuLayerRenderer';
+  import { ensureWebGPUDevice, isWebGPUReady, getWebGPUDevice, getPreferredCanvasFormat } from '$lib/renderer/webgpuShared';
+  import { getShaderDef } from '$lib/renderer/gpuShaderCatalog';
   import { settings, outputFrozen, SHADER_QUALITY_MULTIPLIERS } from '../stores/settings';
   import { showToast } from '../stores/errorToast';
   import { invoke, isDesktopApp, isOsrMode, isOutputMode } from '$lib/bridge';
@@ -28,14 +30,33 @@
   import { FluidSimulation, type FluidMode } from '../effects/fluidSimulation';
   import { ParticleSystem3D } from '../effects/particleSystem3D';
   // ParticleSystem removed — Particles3D runs as standalone Bevy app via Spout
-  import { audioStore, getLastRawAnalysis } from '../stores/audio';
+  import { audioStore, getLastRawAnalysis, audioBands } from '../stores/audio';
   import { audioTextures } from '../audio/audioTextures';
   import { initStateBroadcast, destroyStateBroadcast } from '$lib/sync/stateBroadcast';
   import { startOutputPixelBroadcast, stopOutputPixelBroadcast } from '$lib/sync/outputPixelBroadcast';
+  import {
+    registerEditorCanvas,
+    stopOutputSharedTexturePresenter,
+  } from '$lib/sync/outputSharedTexturePresenter';
+  // Note: zero-copy presenter is NOT auto-started by the reconcile.
+  // Unlike WebRTC (which broadcasts to anyone listening on the
+  // BroadcastChannel), the zero-copy path requires a target Window
+  // reference — established when OutputWindow.svelte calls
+  // window.open() and then attachOutputWindow(target, canvas). The
+  // reconcile here only handles the LEGACY WebRTC path; zero-copy
+  // start is triggered by user action in OutputWindow.openPopup().
+  // We DO call stop on teardown to be safe.
   import { NativeRendererSync, getProjectOutputSize } from '$lib/sync/nativeRendererSync';
-  import { hasWatermark } from '$lib/stores/license';
+  // hasWatermark removed — OSS build has no watermark.
   import { fpsStore } from '$lib/stores/fps';
   import type { OutputSlice } from '$lib/stores/settings';
+  // S4 pilot. Imported as types/refs only at module load — the
+  // actual `three/webgpu` chunk is fetched dynamically inside
+  // WebGPUPilot.create(), so the WebGPU bundle stays out of the
+  // main Canvas chunk for users who never enable the pilot.
+  import type { WebGPUPilot } from '$lib/renderer/webgpuPilot';
+  import { probeWebGPU, getWebGPUInfo, isWebGPUSupported, isPilotEffectivelyEnabled } from '$lib/renderer/webgpuCapability';
+  import { webgpuPilotMetrics, resetWebgpuPilotMetrics } from '$lib/stores/webgpuPilotStore';
 
   // FPS tracking
   let fpsFrameCount = 0;
@@ -90,6 +111,28 @@
   let containerEl: HTMLDivElement;
   let wrapperEl: HTMLDivElement;
   let outputOverlayCanvas: HTMLCanvasElement;
+
+  // S4 pilot state. The pilot, if active, owns its own canvas and
+  // WebGPURenderer instance — see webgpuPilot.ts. We track:
+  //   - the live pilot ref (null when disabled / unsupported / failed)
+  //   - a WebGL2 texture used as the handoff target for measuring
+  //     gl.texImage2D(canvas, ...) cost. Allocated on first use, kept
+  //     alive across frames so the per-frame cost is steady-state
+  //     (no allocation bias)
+  //   - ema-smoothed handoff timing
+  // All pilot code paths are gated on `$settings.experimental.webgpuPilot`
+  // AND `isWebGPUSupported()`. Either off → pilot stays null and the
+  // animate loop skips the integration entirely.
+  let webgpuPilot: WebGPUPilot | null = null;
+  let webgpuPilotInitInFlight = false;
+  let webgpuHandoffTexture: WebGLTexture | null = null;
+  let webgpuHandoffMsEma = 0;
+  /** Unsubscribe handle for the settings.experimental.webgpuPilot reactive
+   *  subscription. Lifted to module scope so onDestroy can call it. */
+  let webgpuPilotUnsub: (() => void) | null = null;
+  /** Unsubscribe handle for the settings.experimental.outputWebRTC reactive
+   *  subscription that drives startOutputPixelBroadcast / stop. */
+  let outputWebRTCUnsub: (() => void) | null = null;
 
   // Output-window transforms are applied in the final WebGL pass. Keeping them
   // out of CSS avoids compositor resampling of the live projection canvas.
@@ -221,12 +264,9 @@
         const isVJVideoLayer =
           layer.source.type === 'video' &&
           typeof layer.id === 'string' && layer.id.startsWith('vj-layer-');
-        // Mirror the cache-key shape used by updateTexturesSync — VJ
-        // video layers key by clip.id (= source.id) so two clips holding
-        // the same source file get distinct cache entries.
         const textureCacheKey =
           (isAIGenerated || isSynthVision) ? layer.source.id
-          : isVJVideoLayer ? `${layer.id}:${layer.source.id}`
+          : isVJVideoLayer ? `${layer.id}:${layer.source.src}`
           : layer.source.src;
         const isShader = layer.source.type === 'shader';
         const lookupKey = isShader ? `${layer.id}:${textureCacheKey}` : textureCacheKey;
@@ -331,8 +371,7 @@
   let lastSVGUpdateTime = 0;
 
   // Light painting renderers (per layer)
-  type LPRenderer = LightPaintingRenderer | LightPaintingWebGLRenderer;
-  const lightPaintingRenderers = new Map<string, LPRenderer>();
+  const lightPaintingRenderers = new Map<string, LightPaintingRenderer>();
   let lastLPUpdateTime = 0;
 
   // Text renderers (per layer)
@@ -348,6 +387,21 @@
     loadingPly: boolean;
   }
   const splatRenderers = new Map<string, SplatRendererContext>();
+  // ── GPU layer renderers ──
+  // One per gpu-layer, plus its CanvasTexture wrapper. The renderer
+  // owns a canvas with a webgpu context; the CanvasTexture exposes
+  // that canvas to the Three.js engine. Engine treats the result
+  // like any other texture-backed layer (warp/blend/effects work).
+  const gpuLayerRenderers = new Map<string, GpuLayerRenderer>();
+  const gpuLayerTextures = new Map<string, THREE.CanvasTexture>();
+  // Latch — try to init WebGPU once; subsequent gpu layers just
+  // pull the existing device.
+  let _gpuLayerWebGpuTried = false;
+  function ensureWebGPUForGpuLayers(): void {
+    if (_gpuLayerWebGpuTried) return;
+    _gpuLayerWebGpuTried = true;
+    void ensureWebGPUDevice().catch((e: any) => console.warn('[Canvas] gpu-layer: WebGPU init failed', e?.message || e));
+  }
 
   // Model3D renderers (per layer) - 3D Model rendering
   // Uses WebGLRenderTarget on the main engine's renderer to avoid cross-context issues
@@ -454,22 +508,17 @@
     const { w: wrapW, h: wrapH } = getWrapperLayoutSize();
     const projW = $project.width || 1920;
     const projH = $project.height || 1080;
-    // preserveDrawingBuffer was true for the editor (only off in output
-    // window mode) so a one-shot canvas.toBlob/toDataURL for thumbnails
-    // could read back the last frame. But it costs continuous-render
-    // perf on every GPU because the browser has to keep the framebuffer
-    // intact between paints (no eager clear, extra blits on some
-    // drivers). Switched to false unconditionally — any thumbnail
-    // capture path that needed it can do a single explicit render to a
-    // separate WebGLRenderTarget when it needs to grab a frame.
+    // preserveDrawingBuffer false unconditionally — was previously true
+    // for the editor to support one-shot canvas.toBlob/toDataURL
+    // thumbnails, but the cost was paid on every paint. Any thumbnail
+    // path that needed it can do an explicit one-shot render to a
+    // dedicated render target.
     engine = new RenderEngine(canvas, projW, projH, { preserveDrawingBuffer: false });
     // Set initial container size from wrapper layout dimensions
     sizeContainer(wrapW, wrapH);
 
-    // Sync watermark state from license store
-    const unsubWatermark = hasWatermark.subscribe(enabled => {
-      if (engine) engine.setWatermark(enabled);
-    });
+    // Watermark sync removed — no watermark in OSS build.
+    const unsubWatermark = () => {};
 
     // Sync dome projection settings
     const unsubDome = settings.subscribe(s => {
@@ -503,24 +552,141 @@
       initStateBroadcast('sender');
     }
 
-    // WebRTC output transport (single-renderer pattern, like Resolume /
-    // TouchDesigner / VDMX). Editor exposes its main canvas as a same-
-    // process MediaStream; the output window mounts OutputDisplayApp
-    // and renders the stream into a single <video srcObject>. Replaces
-    // the legacy second-renderer pattern that was freezing on external
-    // displays under load. Editor-only — output / OSR don't broadcast
-    // to themselves.
+    // Register the editor canvas with the zero-copy presenter so that
+    // when the user opens the output window via window.open(), the
+    // pump can start without OutputWindow.svelte needing a canvas
+    // reference of its own. This is a no-op in OSR / output modes.
     if (!isOsrMode && !isOutputMode && canvas) {
-      // Read perf knobs from Settings → Performance so users on weak
-      // hardware can dial down framerate / bitrate / codec without
-      // editing code. Defaults match the historical full-quality path.
-      const _perf = get(settings)?.performance;
-      startOutputPixelBroadcast(canvas, _perf?.outputFrameRate ?? 60, {
-        maxBitrate: _perf?.outputMaxBitrate,
-        degradationPreference: _perf?.outputDegradationPreference,
-        codecPreference: _perf?.outputCodecPreference,
+      registerEditorCanvas(canvas, 60);
+    }
+
+    // Legacy WebRTC output transport reconcile. The zero-copy path
+    // (experimental.outputZeroCopy) is NOT started here — see top-of-
+    // file note. Only the WebRTC fallback runs under reconcile-control
+    // because it broadcasts blindly to a BroadcastChannel and doesn't
+    // need a target window reference.
+    //
+    //   outputZeroCopy true                    → no-op here; OutputWindow
+    //                                            calls attachOutputWindow
+    //                                            on user click
+    //   outputZeroCopy false, outputWebRTC true → start WebRTC presenter
+    //   both false                              → no editor broadcast
+    //
+    // Both transports are no-ops in OSR / output modes.
+    {
+      let webrtcStarted = false;
+      const reconcileTransport = (zeroCopy: boolean, webrtc: boolean) => {
+        const eligible = !isOsrMode && !isOutputMode && !!canvas;
+        const wantWebRTC = eligible && !zeroCopy && webrtc;
+        if (wantWebRTC && !webrtcStarted) {
+          // Read perf knobs from Settings → Performance so users on weak
+          // hardware can dial down framerate / bitrate / codec.
+          const _perf = get(settings)?.performance;
+          startOutputPixelBroadcast(canvas, _perf?.outputFrameRate ?? 60, {
+            maxBitrate: _perf?.outputMaxBitrate,
+            degradationPreference: _perf?.outputDegradationPreference,
+            codecPreference: _perf?.outputCodecPreference,
+          });
+          webrtcStarted = true;
+          console.log('[Canvas] legacy WebRTC output transport started');
+        } else if (!wantWebRTC && webrtcStarted) {
+          stopOutputPixelBroadcast();
+          webrtcStarted = false;
+          console.log('[Canvas] legacy WebRTC output transport stopped');
+        }
+      };
+      outputWebRTCUnsub = settings.subscribe((s) => {
+        reconcileTransport(
+          !!s.experimental?.outputZeroCopy,
+          !!s.experimental?.outputWebRTC,
+        );
       });
     }
+
+    // S4 pilot: kick off the WebGPU capability probe in parallel with the
+    // rest of editor init. The probe runs even when the pilot flag is off
+    // so the dev preferences panel can show "WebGPU available: yes /
+    // Adapter: ..." before the user opts in.
+    void probeWebGPU().then(() => {
+      const info = getWebGPUInfo();
+      webgpuPilotMetrics.update((m) => ({
+        ...m,
+        adapter: info.description || `${info.vendor ?? '?'}/${info.architecture ?? '?'}`,
+        inactiveReason: info.supported
+          ? (m.inactiveReason || 'pilot disabled in settings')
+          : `WebGPU not supported (${info.failReason || 'reason unknown'})`,
+        updatedAt: Date.now(),
+      }));
+    });
+
+    // S4 pilot lifecycle subscription. Brings the pilot up when the user
+    // toggles `experimental.webgpuPilot` true AND the capability probe
+    // says yes; tears it down on toggle false. Race-safe via
+    // `webgpuPilotInitInFlight` — a rapid on/off doesn't leak a
+    // half-initialized pilot.
+    //
+    // HARD-GATED to the editor window. The pilot is a dev-only diagnostic
+    // experiment; running it in the output/Spout/OSR renderers would
+    // (a) waste their GPU budget on a test pattern they never composite,
+    // and (b) — more importantly — pollute the WebGL state cache that
+    // those windows' video-texture path leans on. The settings store is
+    // shared via state-sync, so without this gate, toggling the flag in
+    // the editor would silently spin up a pilot in the output window too.
+    // `?webgpu-disable=1` on the output window's load URL is the
+    // belt-and-suspenders defense (see electron/main.js).
+    webgpuPilotUnsub = settings.subscribe(async (s) => {
+      const wantPilot =
+        !isOutputMode &&
+        !isOsrMode &&
+        isPilotEffectivelyEnabled(!!s.experimental?.webgpuPilot);
+      if (wantPilot && !webgpuPilot && !webgpuPilotInitInFlight) {
+        webgpuPilotInitInFlight = true;
+        try {
+          const { WebGPUPilot } = await import('$lib/renderer/webgpuPilot');
+          // If the user toggled OFF while we awaited the import, bail
+          // before instantiating.
+          if (!isPilotEffectivelyEnabled(!!get(settings).experimental?.webgpuPilot)) {
+            webgpuPilotInitInFlight = false;
+            return;
+          }
+          webgpuPilot = await WebGPUPilot.create({ width: 512, height: 512 });
+          if (webgpuPilot) {
+            const info = getWebGPUInfo();
+            webgpuPilotMetrics.update((m) => ({
+              ...m,
+              active: true,
+              inactiveReason: '',
+              adapter: info.description || `${info.vendor ?? '?'}/${info.architecture ?? '?'}`,
+              pilotDims: `${webgpuPilot!.metrics.outputWidth}×${webgpuPilot!.metrics.outputHeight}`,
+              updatedAt: Date.now(),
+            }));
+          }
+        } catch (e: any) {
+          webgpuPilotMetrics.update((m) => ({
+            ...m,
+            active: false,
+            inactiveReason: `pilot create failed: ${e?.message ?? e}`,
+            updatedAt: Date.now(),
+          }));
+        } finally {
+          webgpuPilotInitInFlight = false;
+        }
+      } else if (!wantPilot && webgpuPilot) {
+        const dying = webgpuPilot;
+        webgpuPilot = null;
+        // Clean up the handoff texture so a re-enable doesn't reuse a
+        // stale binding (different gl context if the canvas was
+        // re-created mid-session).
+        if (webgpuHandoffTexture) {
+          const gl2 = canvas?.getContext('webgl2') as WebGL2RenderingContext | null;
+          try { gl2?.deleteTexture(webgpuHandoffTexture); } catch { /* */ }
+          webgpuHandoffTexture = null;
+        }
+        webgpuHandoffMsEma = 0;
+        await dying.dispose();
+        resetWebgpuPilotMetrics();
+      }
+    });
 
     // Start native renderer command-stream synchronization on Tauri runtime.
     // Electron path continues using existing WebGL/OSR flow until migrated.
@@ -613,6 +779,7 @@
       try { updateTextLayerTextures(target); } catch (e) { console.error('[Canvas] Text update error:', e); }
       try { updateSplatLayerTextures(target); } catch (e) { console.error('[Canvas] Splat update error:', e); }
       try { updateModel3DTextures(target); } catch (e) { console.error('[Canvas] Model3D update error:', e); }
+      try { updateGpuLayerTextures(target); } catch (e) { console.error('[Canvas] GPU layer update error:', e); }
     }
 
     // Start render loop
@@ -628,9 +795,7 @@
     // Editor render-rate cap. rAF on a high-refresh display runs at
     // 120/144/165Hz — the editor renders at that rate, but the projector
     // is almost always 60Hz so anything above 60 is wasted work. Users
-    // dial this from Settings → Performance: 0 = uncapped (default for
-    // capable hardware), or 60 / 30 to cap. Skips the render path on
-    // throttled frames but always reschedules rAF for input responsiveness.
+    // dial this from Settings → Performance: 0 = uncapped (default).
     let _lastEditorRenderTime = 0;
     function animate() {
       // Unconditional first-3-frames log. No gate, no store lookup. If THIS
@@ -650,8 +815,7 @@
       }
 
       // Render-rate gate. Reschedule rAF unconditionally so input
-      // handlers (mousedown/mouseup/keydown) stay responsive; just
-      // bypass the render body when the cap says we're early.
+      // handlers stay responsive; bypass render body when early.
       const _editorFpsCap = ($settings as any)?.performance?.editorMaxFps ?? 0;
       if (_editorFpsCap > 0) {
         const now = performance.now();
@@ -896,6 +1060,16 @@
                 kfStash.push({ layer, key, orig: target[last], target, prop: last });
                 target[last] = value;
               }
+            } else if (key.startsWith('gpu:') && layer.gpuLayerContent) {
+              // GPU-shader param keyframes — `gpu:${paramKey}` writes
+              // into layer.gpuLayerContent.params[paramKey]. Works
+              // for any shader in the catalog because params are a
+              // free-form record. The renderer reads params each
+              // frame so the override surfaces immediately.
+              const paramKey = key.slice('gpu:'.length);
+              const params = layer.gpuLayerContent.params || (layer.gpuLayerContent.params = {});
+              kfStash.push({ layer, key, orig: params[paramKey], target: params, prop: paramKey });
+              params[paramKey] = value;
             }
           }
         }
@@ -954,6 +1128,25 @@
               macroBundles.push({ id: m.id, value: m.value, effects: m.effects });
             }
           }
+          // S4 pilot: tick the pilot before the main render so the pilot's
+          // canvas has a fresh frame when a future compositor migration
+          // wants to sample it. Hard-gated to !output && !osr (the
+          // settings-store sub already enforces this on creation, but
+          // defense-in-depth — even a stale pilot ref leaking past a
+          // window-mode flip stays inert here).
+          if (webgpuPilot && !isOutputMode && !isOsrMode) {
+            webgpuPilot.tick();
+            // Push the latest metrics into the diagnostics store so the
+            // pilot panel updates without subscribing to the pilot directly.
+            webgpuPilotMetrics.update((m) => ({
+              ...m,
+              webgpuRenderMs: Math.round(webgpuPilot!.metrics.webgpuRenderMs * 100) / 100,
+              pilotFramesRendered: webgpuPilot!.metrics.framesRendered,
+              pilotFramesFailed: webgpuPilot!.metrics.framesFailed,
+              lastError: webgpuPilot!.metrics.lastError,
+              updatedAt: Date.now(),
+            }));
+          }
           engine.render(layersToRender, null, compEffects, macroBundles);
         } catch (e) {
           console.error('[Canvas] Render error:', e);
@@ -985,19 +1178,28 @@
         const allSlices = $settings?.output?.slices ?? [];
         const activeSlices = allSlices.filter((s: OutputSlice) => s.enabled);
 
+        // Inner-gate diagnostic: outer gate is passing (animate-dbg is silent)
+        // but the send block isn't firing either. Log once/sec which of the
+        // inner-gate flags is blocking. Remove once the flow is confirmed.
+        // Spout-send gate: skip without logging unless the user explicitly
+        // opted into the diagnostic via `?spout-debug=1`. The legacy
+        // per-second log was useful when bringing up the OSR Spout pipeline
+        // but in steady state it's pure noise — fires every tick on output
+        // and OSR renderers (which legitimately never send), and clutters
+        // the console for every actual debugging task. Gate it.
         // CPU Spout-send gate. Pre-fix this fired when EITHER spoutOutputActive
         // OR outputWindowOpen was true — meaning just opening the visible output
         // window made the editor do a 1920×1080 RGBA readback (8 MB) every other
-        // frame even when Spout output was off. That single coupling has been
-        // the "editor slow when output window is open" symptom — FPS dropping
-        // from 60 → 8-20. The visible output window already presents itself
-        // (now via WebRTC), so the editor has zero reason to read back pixels
-        // for it.
+        // frame even when Spout output was off and the output window had its
+        // own renderer. That single coupling has been the "editor slow when
+        // output is open" symptom we've chased all session. The visible output
+        // window already presents itself; the editor has zero reason to read
+        // back pixels for it.
         //
         // Correct gate: ONLY run the CPU send path for actual user-explicit
         // Spout output (spoutOutputActive) when zero-copy OSR isn't already
-        // handling it. Output-window state is window state, not a CPU-readback
-        // trigger.
+        // handling it (osrSpoutActive). Output-window state is window state,
+        // not a CPU-readback trigger.
         const __syphonGateSkipped =
           !spoutOutputActive || !glCanvas || osrSpoutActive || isOsrMode || isOutputMode;
         if (__syphonGateSkipped && (window as any).__SPOUT_DEBUG__) {
@@ -1328,14 +1530,10 @@
     _knownLayerIds = liveIds;
   }
 
-  // Re-resize engine when project dimensions change (e.g., user picks 4K in settings).
-  //
-  // The reactive `$:` fires on ANY change to the project store — layer
-  // adds, name edits, slider tweaks, the lot. Pre-guard this was
-  // running `engine.resize` + every shader/SVG render-target
-  // reallocation many times per second during normal interaction,
-  // blowing texture caches and stalling weak GPUs. Cache the last-
-  // applied dims and bail when unchanged.
+  // Re-resize engine when project dimensions change. Pre-guard the
+  // reactive `$:` fired on ANY project store change (layer adds,
+  // name edits, slider tweaks) and reallocated every shader/SVG RT,
+  // stalling weak GPUs. Cache last-applied dims and bail unchanged.
   let _lastResizeW: number | null = null;
   let _lastResizeH: number | null = null;
   $: if (engine && $project.width && $project.height) {
@@ -1529,6 +1727,38 @@
     cancelAnimationFrame(animationId);
     engine?.dispose();
 
+    // S4 pilot teardown — unsubscribe from the settings reactive and
+    // dispose the pilot if active. Synchronous fire-and-forget on the
+    // dispose Promise: the WebGPURenderer's queued work resolves
+    // asynchronously but the renderer itself tears down its device
+    // synchronously enough that we don't need to await here.
+    if (webgpuPilotUnsub) {
+      try { webgpuPilotUnsub(); } catch { /* */ }
+      webgpuPilotUnsub = null;
+    }
+    if (webgpuPilot) {
+      const dying = webgpuPilot;
+      webgpuPilot = null;
+      void dying.dispose();
+      resetWebgpuPilotMetrics();
+    }
+    if (webgpuHandoffTexture) {
+      const gl2 = canvas?.getContext('webgl2') as WebGL2RenderingContext | null;
+      try { gl2?.deleteTexture(webgpuHandoffTexture); } catch { /* */ }
+      webgpuHandoffTexture = null;
+    }
+
+    // Experimental WebRTC output transport teardown — unsubscribe from
+    // the flag reactive and tear down any active peer. Fire-and-forget;
+    // the BroadcastChannel close + RTCPeerConnection close are both
+    // synchronous enough that we don't need to await.
+    if (outputWebRTCUnsub) {
+      try { outputWebRTCUnsub(); } catch { /* */ }
+      outputWebRTCUnsub = null;
+    }
+    stopOutputPixelBroadcast();
+    stopOutputSharedTexturePresenter();
+
     if (nativeRendererStatusTimer) {
       clearInterval(nativeRendererStatusTimer);
       nativeRendererStatusTimer = null;
@@ -1547,7 +1777,6 @@
     }
 
     destroyStateBroadcast();
-    stopOutputPixelBroadcast();
 
     // Dispose textures
     for (const texture of textureCache.values()) {
@@ -1693,26 +1922,13 @@
       // If we shared a URL-keyed cache between the two, VJ layers would
       // get back a texture wrapping mapping-mode's videoElement —
       // visible as a frozen frame from whatever the mapping clip last
-      // sampled.
-      //
-      // CRITICAL: namespace by layer.source.id (= clip.id) NOT
-      // layer.source.src. A common workflow is having the same video
-      // file on a Performer key AND in a regular VJ deck cell — both
-      // refer to the same blob URL, but each has its own clip.id and
-      // its own HTMLVideoElement. URL-keyed caching collided them: the
-      // first-loaded VideoTexture got returned for both, leaving the
-      // second clip silently bound to the FIRST clip's videoElement.
-      // Performer triggers then appeared dead because the cached
-      // texture was wrapping the deck-clip's element, not the
-      // performer's. Switching to id keys gives each clip its own
-      // entry; the cap stays small via the pinned-set walk in
-      // evictTextureCache.
+      // sampled. Namespacing by layer.id + src keeps them isolated.
       const isVJVideoLayer =
         layer.source.type === 'video' &&
         typeof layer.id === 'string' && layer.id.startsWith('vj-layer-');
       const textureCacheKey =
         (isAIGenerated || isSynthVision) ? layer.source.id
-        : isVJVideoLayer ? `${layer.id}:${layer.source.id}`
+        : isVJVideoLayer ? `${layer.id}:${layer.source.src}`
         : layer.source.src;
       // Layer-specific cache key for shader instances (which may have per-layer state)
       const shaderCacheKey = `${layer.id}:${textureCacheKey}`;
@@ -1936,25 +2152,11 @@
     }
   }
 
-  // Cleanup shader resources for a layer.
-  //
-  // SCOPE: only the per-layer shader objects (ISF shader instance + its
-  // private render target + the per-layer key in textureCache). Does
-  // NOT touch the SHARED textureCache entry for the source's URL.
-  //
-  // Why: video clips reuse the same URL across rapid VJ-clip switches.
-  // The previous version disposed `textureCache.get(src)` here (the URL-
-  // keyed entry, not the layer-keyed one), so every clip switch tore
-  // down the VideoTexture and any future click-back had to reload the
-  // file from disk and re-upload to the GPU. That's the "rapid clip
-  // switching gets laggy" symptom — GPU resource churn + disk re-reads
-  // per click. The LRU evictor (`evictTextureCache`) already bounds the
-  // cache size, so leaving URL-keyed entries in place is safe.
+  // Cleanup shader resources for a layer
   function cleanupLayerShader(layerId: string, src: string) {
     const cacheKey = `${layerId}:${src}`;
 
-    // Dispose shader instance (per-layer, can't be reused across layers
-    // because shaders carry per-layer uniform state)
+    // Dispose shader instance
     const shader = shaderInstances.get(cacheKey);
     if (shader) {
       shader.material.dispose();
@@ -1965,23 +2167,29 @@
       console.log('[Canvas] Disposed shader instance:', cacheKey);
     }
 
-    // Dispose shader render target (per-layer, sized per-layer's quality)
+    // Dispose render target
     const rt = shaderRenderTargets.get(cacheKey);
     if (rt) {
       rt.dispose();
       shaderRenderTargets.delete(cacheKey);
     }
 
-    // Dispose layer-keyed texture entry only (used by some shader paths
-    // that cache under the layer-prefixed key). Leave the URL-keyed
-    // entry alone — see comment above.
-    const layerKeyedTexture = textureCache.get(cacheKey);
-    if (layerKeyedTexture) {
-      layerKeyedTexture.dispose();
+    // Dispose texture from cache (shader key format: layerId:src)
+    const texture = textureCache.get(cacheKey);
+    if (texture) {
+      texture.dispose();
       textureCache.delete(cacheKey);
     }
 
-    loadingTextures.delete(cacheKey);
+    // Also check non-shader key format (used by SynthVision, AI-generated, etc.)
+    // The src IS the source.id for these types
+    const altTexture = textureCache.get(src);
+    if (altTexture) {
+      altTexture.dispose();
+      textureCache.delete(src);
+      console.log('[Canvas] Disposed stale texture for source:', src);
+    }
+    loadingTextures.delete(src);
   }
 
   // Async texture loading
@@ -2012,12 +2220,11 @@
           // Wait for video to load. The src setter SHOULD auto-trigger
           // the resource selection algorithm but for custom protocol URLs
           // on Chromium 130 (Electron 42), the auto-trigger sometimes
-          // never fires loadeddata — so we kick `.load()` explicitly
-          // here. SAFE on a fresh element (no concurrent ops to abort).
-          // For REUSED elements (cache hit / src swap), do NOT call
-          // load() — it races any in-flight load + pending play() and
-          // throws AbortError on Chromium 130. That's the rapid-clip-
-          // switch freeze regression.
+          // never fires loadeddata — so we kick `.load()` explicitly.
+          // SAFE on a fresh element (no concurrent ops to abort). For
+          // REUSED elements (VJ rapid clip switch), do NOT call load() —
+          // it races any in-flight load + pending play() and throws
+          // AbortError on Chromium 130.
           await new Promise<void>((resolve, reject) => {
             const v = video!;
             const onLoaded = () => { cleanup(); resolve(); };
@@ -2902,34 +3109,10 @@
     for (const layer of layerList) {
       if (layer.type !== 'lightpainting' || !layer.lightPaintingContent) continue;
 
-      // Get or create renderer for this layer. Pick the WebGL2 path
-      // when the user opted in, otherwise the legacy Canvas2D path.
-      // We don't hot-swap between paths for an already-running layer
-      // — the user has to remove + re-add the layer for the new flag
-      // to take effect (matches what they'd expect on a setting that
-      // changes the renderer backend).
+      // Get or create renderer for this layer
       let lpRenderer = lightPaintingRenderers.get(layer.id);
       if (!lpRenderer) {
-        const settingsValue = $settings;
-        const useWebGL2 = !!settingsValue?.performance?.useWebGL2LightPainting;
-        // Loud diagnostic: tell the console which renderer this
-        // layer ended up with and why. Helps diagnose "I flipped the
-        // flag but it didn't take effect."
-        console.log(
-          '[LightPainting] creating renderer for layer', layer.id,
-          '— useWebGL2 flag:', useWebGL2,
-          '— performance settings:', settingsValue?.performance,
-        );
-        try {
-          lpRenderer = useWebGL2
-            ? new LightPaintingWebGLRenderer(width, height)
-            : new LightPaintingRenderer(width, height);
-        } catch (err: any) {
-          // WebGL2 init can fail on hardware without it; fall back to
-          // Canvas2D so the user still sees their drawing.
-          console.warn('[Canvas] WebGL2 light painting init failed, falling back to Canvas2D:', err?.message || err);
-          lpRenderer = new LightPaintingRenderer(width, height);
-        }
+        lpRenderer = new LightPaintingRenderer(width, height);
         lightPaintingRenderers.set(layer.id, lpRenderer);
       } else {
         lpRenderer.resize(width, height);
@@ -3131,6 +3314,100 @@
         ctx.renderTarget.dispose();
         splatRenderers.delete(layerId);
         console.log('[Canvas] Disposed splat renderer for layer:', layerId);
+      }
+    }
+  }
+
+  // ── GPU layer textures ──
+  // Per-frame: ensure a renderer exists for each visible gpu layer,
+  // run the active shader (planet, particle, etc.) into the
+  // renderer's canvas, then expose the canvas to the engine via a
+  // THREE.CanvasTexture stamped on the layer as `_gpuLayerTexture`.
+  // The engine's getLayerTexture() picks it up; warp/mesh/blend/
+  // per-layer effects all apply normally because the engine just
+  // sees a texture.
+  function updateGpuLayerTextures(layerList: Layer[]) {
+    if (!engine) return;
+    ensureWebGPUForGpuLayers();
+    if (!isWebGPUReady()) return;
+    const device = getWebGPUDevice();
+    const presentFormat = getPreferredCanvasFormat();
+    if (!device) return;
+
+    const projectData = $project;
+    const width = projectData?.width || 1920;
+    const height = projectData?.height || 1080;
+    const liveIds = new Set<string>();
+
+    for (const layer of layerList) {
+      if (layer.type !== 'gpu' || !layer.gpuLayerContent || !layer.visible) continue;
+      liveIds.add(layer.id);
+      const c = layer.gpuLayerContent;
+
+      // Lazy-create renderer.
+      let renderer = gpuLayerRenderers.get(layer.id);
+      if (!renderer) {
+        try {
+          renderer = new GpuLayerRenderer(device, presentFormat, width, height);
+          gpuLayerRenderers.set(layer.id, renderer);
+        } catch (err: any) {
+          console.warn('[Canvas] gpu-layer: failed to create renderer for', layer.id, err?.message || err);
+          continue;
+        }
+      }
+
+      // Resolve params with shader defaults so newly-added layers
+      // render meaningfully even before the panel touches anything.
+      const def = getShaderDef(c.shaderId);
+      const mergedParams = def ? { ...def.defaultParams, ...c.params } : c.params;
+
+      // Render the active shader to the layer's canvas. Pass the
+      // source context so source-driven shaders (pixel-particles)
+      // can resolve their media-source param into an actual element.
+      try {
+        const sourceCtx = {
+          layers: projectData?.layers ?? [],
+          mediaItems: get(mediaLibrary),
+        };
+        // Audio bands for shaders that opt into reactivity (e.g.
+        // flythrough audioReactive toggle). audioBands is a derived
+        // store; get() is O(1) and the per-frame cost is negligible.
+        const bandsSnap = get(audioBands);
+        renderer.renderFrame(c.shaderId, mergedParams, width, height, sourceCtx, {
+          bass: bandsSnap.bass ?? 0,
+          mid: bandsSnap.mid ?? 0,
+          treble: bandsSnap.treble ?? 0,
+        });
+      } catch (err: any) {
+        console.warn('[Canvas] gpu-layer: render failed', err?.message || err);
+        continue;
+      }
+
+      // Lazy-create the Three.js wrapper texture.
+      let tex = gpuLayerTextures.get(layer.id);
+      if (!tex) {
+        tex = new THREE.CanvasTexture(renderer.canvas);
+        tex.minFilter = THREE.LinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        tex.generateMipmaps = false;
+        tex.colorSpace = THREE.SRGBColorSpace;
+        // The renderer writes top-down; Three.js samples bottom-up.
+        // flipY = true flips on upload so the texture reads upright.
+        tex.flipY = true;
+        gpuLayerTextures.set(layer.id, tex);
+      }
+      tex.needsUpdate = true;
+      (layer as any)._gpuLayerTexture = tex;
+    }
+
+    // Reap renderers for removed/hidden layers.
+    for (const [id, r] of gpuLayerRenderers) {
+      if (!liveIds.has(id)) {
+        try { r.dispose(); } catch { /* */ }
+        gpuLayerRenderers.delete(id);
+        const t = gpuLayerTextures.get(id);
+        try { t?.dispose(); } catch { /* */ }
+        gpuLayerTextures.delete(id);
       }
     }
   }
@@ -3686,21 +3963,21 @@
     return engine;
   }
 
-  // WebGPU bridge: expose the WebGL canvas DOM element so a WebGPU
-  // presenter (WebGPUCanvas in bridge mode) can sample it via
+  // Phase 3 WebGPU bridge: expose the WebGL canvas DOM element so a
+  // WebGPU presenter (WebGPUCanvas in bridge mode) can sample it via
   // VideoFrame + importExternalTexture each frame and present the
-  // result on a sibling WebGPU canvas. Returns null until onMount
-  // has initialised the bind:this.
+  // result on a sibling WebGPU canvas. Returns null until onMount has
+  // initialised the bind:this.
   export function getCanvas(): HTMLCanvasElement | null {
     return canvas ?? null;
   }
 
-  // WebGPU bridge: when true, the WebGL canvas is hidden via CSS
-  // opacity so the overlaid WebGPU presenter shows instead. Chromium
-  // continues to PAINT the canvas (opacity:0 doesn't prevent paint,
-  // only visibility) so the WebGPU side gets fresh frames. Falls
-  // through to visible (opacity:1) by default — no behavioural change
-  // for the existing WebGL-only path.
+  // Phase 3 WebGPU bridge: when true, the WebGL canvas is hidden via
+  // CSS opacity so the overlaid WebGPU presenter shows instead. Chromium
+  // continues to PAINT the canvas (opacity:0 doesn't prevent paint, only
+  // visibility) so the WebGPU side gets fresh frames. Falls through to
+  // visible (opacity:1) by default — no behavioural change for the
+  // existing WebGL-only path.
   export let bridgeMode: boolean = false;
 
   // Expose actual container dimensions for warp handle alignment
@@ -3779,13 +4056,13 @@
     display: block;
   }
 
-  /* WebGPU bridge: when bridgeMode is on, hide the WebGL canvas via
-     opacity so a sibling WebGPU presenter (mounted by App.svelte)
-     shows on top instead. opacity:0 keeps the canvas in the layout
-     AND keeps Chromium painting it (so the WebGPU side gets fresh
-     frames each tick). visibility:hidden / display:none would stop
-     the paint. pointer-events stay on because mapping interactions
-     still target this layer. */
+  /* Phase 3 WebGPU bridge: when bridgeMode is on, hide the WebGL
+     canvas via opacity so a sibling WebGPU presenter (mounted by
+     App.svelte) shows on top instead. opacity:0 keeps the canvas
+     in the layout AND keeps Chromium painting it (so the WebGPU
+     side gets fresh frames each tick). visibility:hidden /
+     display:none would stop the paint. pointer-events stay on
+     because mapping interactions still target this layer. */
   .main-canvas.bridge-source {
     opacity: 0;
   }

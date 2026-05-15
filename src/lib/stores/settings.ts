@@ -379,35 +379,70 @@ export const DEFAULT_LAYER_SHADERS: { id: DefaultLayerShader; label: string }[] 
 
 /**
  * Experimental flags for in-progress feature work. These are
- * deliberately NOT surfaced in the normal settings UI for production
- * users — the dev preferences panel renders them only when the user
- * opts in, and several have dedicated URL kill-switches:
- *   - `?webgpu-disable=1` forces all WebGPU paths off (overrides
+ * deliberately NOT surfaced in the normal settings UI — the
+ * preferences panel only renders them when a dev-mode URL override
+ * (`?dev=1`) is present. Production users see no UI for these
+ * regardless of localStorage state.
+ *
+ * Each flag has its own kill switch via URL param so a feature in
+ * trouble can be disabled without re-launching the app:
+ *   - `?webgpu-disable=1` forces webgpuPilot off (overrides
  *     localStorage). Combined with the capability probe so a
- *     machine without WebGPU also sees these flags effectively
- *     disabled even when toggled on.
+ *     machine without WebGPU also sees the pilot disabled even
+ *     when the user toggled it on.
  */
 export interface ExperimentalSettings {
-  /** Editor renderer migration: when true AND the WebGPU capability
-   *  probe returns supported, App.svelte mounts WebGPUCanvas as an
-   *  overlay on top of Canvas (which runs in `bridgeMode`). The
-   *  WebGPU canvas samples the WebGL canvas via VideoFrame +
-   *  importExternalTexture and presents the result on a WebGPU
-   *  surface. captureStream then pulls from the WebGPU canvas for
-   *  the output presenter. Default OFF. */
+  /** S4 pilot: enable the WebGPU + TSL particle-flow effect.
+   *  Default false. Production users never see this; only enabled
+   *  via the dev preferences panel + a machine that passes
+   *  `webgpuCapability.probeWebGPU()`. */
+  webgpuPilot: boolean;
+  /** Output-window pixel transport mode. When false (default) the
+   *  visible output window runs the legacy SpoutOutputApp full
+   *  renderer (Pro v0.6.0 baseline — has its own decoders, state-sync,
+   *  and the well-known cross-window drift / drag-freeze limitations).
+   *  When true, the output window mounts OutputDisplayApp: a
+   *  presentation-only `<video srcObject>` fed by the editor's
+   *  `canvas.captureStream(60)` over a same-process WebRTC peer.
+   *
+   *  Now superseded by `outputZeroCopy` below — kept as an escape
+   *  hatch in case the WebGPU presenter falls back to CPU on a
+   *  specific driver/GPU combo and we need to diff transports
+   *  in the field. The selection precedence is:
+   *      outputZeroCopy && WebGPU available  →  webgpu-display
+   *      outputWebRTC                         →  webrtc-display
+   *      else                                 →  output (legacy)
+   */
+  outputWebRTC: boolean;
+
+  /** Phase 2 of the WebGPU migration: swap the editor's main
+   *  renderer from THREE.WebGLRenderer to THREE.WebGPURenderer.
+   *
+   *  Default false. When on AND the WebGPU capability probe
+   *  returns supported, Canvas.svelte instantiates WebGPUEngine
+   *  (renderer/webgpuEngine.ts) instead of RenderEngine (engine.ts).
+   *
+   *  Phase 2 scope: editor canvas shows clear color only — per-layer
+   *  rendering is intentionally NOT in this phase. The point of
+   *  Phase 2 is proving (a) WebGPURenderer works as the main
+   *  renderer in this Electron build, and (b) canvas.captureStream()
+   *  (which the output presenter depends on) keeps working with a
+   *  WebGPU canvas. Once those success criteria pass, Phase 3
+   *  begins porting per-layer renderers one at a time.
+   *
+   *  See docs/WEBGPU_MIGRATION.md for the full roadmap. */
   editorWebGPU: boolean;
 
-  /** Zero-copy GPU output transport.
+  /** Zero-copy GPU output transport — the production target.
    *
-   *  When true (and WebGPU is available), OutputWindow.svelte opens
-   *  the output window via window.open() with `?mode=webgpu-display`
-   *  so it lives in the SAME renderer process as the editor. The
-   *  presenter (outputSharedTexturePresenter.ts) runs
-   *  MediaStreamTrackProcessor on `canvas.captureStream(60)`, reads
-   *  GPU-backed VideoFrames, and ships them through a local
-   *  MessageChannel to the output. The output binds them via
+   *  When true (default), the visible output window mounts
+   *  OutputSharedTextureDisplayApp: a WebGPU presenter that receives
+   *  VideoFrames from the editor via a cross-process MessagePort
+   *  (set up by main.js as a MessageChannelMain) and binds them via
    *  `device.importExternalTexture({source: videoFrame})` for true
-   *  zero-copy, GPU-resident sampling on a fullscreen quad.
+   *  zero-copy, GPU-resident sampling on a fullscreen quad. Editor
+   *  side runs MediaStreamTrackProcessor on `canvas.captureStream(60)`
+   *  to read GPU-backed VideoFrames and ships them through the port.
    *
    *  Why this beats the WebRTC escape hatch:
    *    - No encode/decode (WebRTC introduces VP9/H264 round-trip,
@@ -416,57 +451,64 @@ export interface ExperimentalSettings {
    *      GpuMemoryBuffer directly; WebRTC always lands in YUV420
    *      and re-converts on display)
    *    - True 4K60 with no quality drop on degraded encoders
+   *    - Multi-output ready: each presenter window calls
+   *      importExternalTexture on its own MessagePort, no extra cost
+   *    - Native compositor — modern Chromium media+WebGPU pipeline IS
+   *      what Resolume builds in C++. We just consume it through web
+   *      APIs.
    *
-   *  Default FALSE in Pro/Community: opt-in until users verify the
-   *  zero-copy path works in their environment. The v0.6.x default
-   *  remains the WebRTC path. */
+   *  Falls back to `outputWebRTC` (if also true) or to the legacy
+   *  SpoutOutputApp when WebGPU is unavailable (`webgpuCapability`
+   *  probe fails) or when MessagePortMain delivery fails.
+   *
+   *  Health monitoring: each VideoFrame's `format` field is logged on
+   *  the first 5 frames; `'NV12'` / `'I420'` indicate GPU-backed
+   *  zero-copy, `'BGRA'` indicates Chromium fell back to CPU readback.
+   *  The output's health badge surfaces this so the operator can spot
+   *  a degraded link mid-show. */
   outputZeroCopy: boolean;
+  /**
+   * Allow the legacy `gpuEffectRunner` CPU-readback bridge to run when
+   * the user has a WebGPU effect (e.g. `gpuFluidSim`) in their layer's
+   * effect chain.
+   *
+   * Why opt-in: `gpuEffectRunner` does a per-frame GPU→CPU readback via
+   * `readRenderTargetPixels` then a CPU→GPU upload via `writeTexture`,
+   * costing ~3ms at 1080p per affected effect. That round-trip is the
+   * single biggest "WebGPU effects are slow" complaint. The strategic
+   * shift in the GPU edition is to push WebGPU work to the downstream
+   * compositor stage (via the WebGPUCanvas VideoFrame +
+   * importExternalTexture bridge), where the transfer is zero-copy.
+   *
+   * When this flag is OFF (default in the GPU edition):
+   *  - `gpuFluidSim` and any future `gpu*`-prefixed effects in the
+   *    middle of a layer's effect chain are skipped (pass-through).
+   *  - Output / compositor-stage WebGPU work is unaffected — that runs
+   *    through `WebGPUCanvas.svelte` and never touches gpuEffectRunner.
+   *
+   * When ON: mid-chain WebGPU effects work as before, paying the
+   * CPU-readback cost. Useful when the effect needs to compose with
+   * downstream WebGL effects (warp, blend, etc.) before the final
+   * bridge to WebGPU at output time.
+   */
+  allowMidChainGpuEffects: boolean;
 }
 
 /**
  * Performance settings — user-facing knobs to dial in the editor for
  * weaker hardware. Defaults match the historical full-quality
- * behaviour so capable machines see no change; users with integrated
- * GPUs / older laptops can step these down via the Settings →
- * Performance panel until the app feels smooth. All apply at runtime
- * (no restart) by reading the live store value at the relevant hot
- * path. Output Stream changes apply when the output window opens.
+ * behaviour. All apply at runtime by reading the live store value at
+ * the relevant hot path. Output Stream changes apply when the output
+ * window opens.
  */
 export interface PerformanceSettings {
-  /** Long-edge resolution cap for the VJ preview canvas (px). 0 = no
-   *  cap (match main canvas — historical default). */
   previewMaxDim: number;
-  /** Target refresh rate for the VJ preview loop. */
   previewFrameRate: 60 | 30 | 15;
-  /** WebRTC output stream framerate. */
   outputFrameRate: 60 | 30 | 24;
-  /** Max bitrate for the WebRTC output encoder (bps). */
   outputMaxBitrate: number;
-  /** How the encoder degrades under load. */
   outputDegradationPreference: 'maintain-resolution' | 'maintain-framerate' | 'balanced';
-  /** Preferred WebRTC video codec. */
   outputCodecPreference: 'auto' | 'h264' | 'vp8';
-  /** Editor render-loop FPS cap. 0 = uncapped (match display refresh).
-   *  Big win on high-refresh monitors when the output is 60Hz. */
   editorMaxFps: 0 | 30 | 60;
-  /**
-   * Use the WebGL2 light painting renderer instead of the legacy
-   * Canvas2D one. The WebGL2 path runs every brush stamp as a GPU
-   * fragment shader, eliminating the `createRadialGradient`-per-stamp
-   * cost that hits Windows/Chromium Canvas2D hardest. Bakes completed
-   * strokes into a persistent framebuffer so frame cost stops scaling
-   * with stroke count. Force-promoted to true on settings load.
-   */
-  useWebGL2LightPainting: boolean;
-  /**
-   * Whether to show the live FPS counter in the editor footer.
-   * Default off — visible FPS readouts can worry users when the
-   * actual video on the output looks smooth (e.g. a 30fps preview
-   * looks identical to 60fps for a video texture but the counter
-   * makes it look "broken"). Power users can flip this on for
-   * performance tuning.
-   */
-  showEditorFps: boolean;
 }
 
 export interface AppSettings {
@@ -596,16 +638,38 @@ function createDefaultSettings(): AppSettings {
     },
     defaultLayerShader: 'grid',
     experimental: {
-      // Editor WebGPU bridge. OFF by default — opt-in until users
-      // verify the bridge frame path works in their environment.
-      // Toggle via dev preferences; the WebGPU capability probe is
-      // checked at component mount.
-      editorWebGPU: false,
-      // Zero-copy WebGPU output. OFF by default for Pro/Community —
-      // opt-in until users verify the same-process MessageChannel
-      // pump works on their hardware. v0.6.x default stays on the
-      // WebRTC presenter.
-      outputZeroCopy: false,
+      // S4 pilot. Off by default. Enabling requires both the user
+      // toggle in dev preferences AND `webgpuCapability.probeWebGPU()`
+      // succeeding — neither alone unlocks the pilot.
+      webgpuPilot: false,
+      // WebRTC output transport. Off by default — the legacy
+      // SpoutOutputApp renderer is the proven baseline. Flipping
+      // this on routes the output window to OutputDisplayApp +
+      // canvas.captureStream + RTCPeerConnection. Stays opt-in
+      // until the success-criteria sweep proves out.
+      outputWebRTC: false,
+      // S5: WebGPU + MediaStreamTrackProcessor + GPUExternalTexture.
+      // Default ON — this is the production zero-copy path. Falls
+      // back to outputWebRTC (if also on) or legacy SpoutOutputApp
+      // when the WebGPU capability probe says no or when the
+      // MessagePort handshake fails.
+      outputZeroCopy: true,
+      // Phase 2 of the WebGPU migration. Default ON in the GPU edition
+      // as of the bridge-as-default shift — the VideoFrame +
+      // importExternalTexture bridge in WebGPUCanvas.svelte is the
+      // primary WebGL → WebGPU path now, and the output zero-copy
+      // transport above depends on it. Falls back automatically when
+      // `webgpuCapability.probeWebGPU()` fails.
+      editorWebGPU: true,
+      // Mid-chain CPU-readback bridge (gpuEffectRunner). Was opt-in to
+      // protect users from the ~3ms GPU→CPU→GPU round-trip per affected
+      // effect — but that meant dropping the only WebGPU effect we
+      // ship (`gpuFluidSim`) on a layer did nothing, which is a wrong
+      // default for the GPU edition. Now ON by default: users who add
+      // a `gpu*` effect actually get the effect. Power users can flip
+      // it off in Settings → Experimental to keep the steady-state
+      // path purely WebGL when they're not using GPU effects.
+      allowMidChainGpuEffects: true,
     },
     performance: {
       // Defaults match the historical full-quality behaviour. Users on
@@ -617,8 +681,6 @@ function createDefaultSettings(): AppSettings {
       outputDegradationPreference: 'maintain-resolution',
       outputCodecPreference: 'auto',
       editorMaxFps: 0,                // 0 = uncapped (match rAF / refresh rate)
-      useWebGL2LightPainting: true,   // default v0.6.4 — WebGL2 renderer is the primary path
-      showEditorFps: false,           // FPS counter hidden by default; opt-in for power users
     },
   };
 }
@@ -628,7 +690,9 @@ const STORAGE_KEY = 'ghost-arcade_settings';
 const APP_VERSION_KEY = 'ill_app_version';
 // Bump this whenever stale localStorage may break the new build.
 // Any mismatch clears problematic caches on startup.
-const CURRENT_APP_VERSION = '0.3.7';
+// 0.3.8 bump: forces the `allowMidChainGpuEffects` migration to run for
+// existing users so `gpuFluidSim` actually fires when dropped on a layer.
+const CURRENT_APP_VERSION = '0.3.8';
 
 /**
  * Clear known-problematic localStorage on version change so a fresh install
@@ -670,6 +734,19 @@ function runVersionMigration(): { versionChanged: boolean } {
         }
         if (parsed.defaultLayerShader === 'crosshair' || parsed.defaultLayerShader == null) {
           parsed.defaultLayerShader = 'grid';
+        }
+        // Flip `allowMidChainGpuEffects` from old default (false) to new
+        // default (true) for existing users. Without this migration,
+        // anyone who launched a prior version keeps `false` saved and
+        // the only WebGPU effect (`gpuFluidSim`) silently does nothing
+        // when added to a layer. We only flip the explicit `false`;
+        // if the user has explicitly toggled it off in Settings →
+        // Experimental, that's a `false` too — but we have no way to
+        // distinguish "default" from "explicitly turned off" without
+        // versioning the field, so we forcibly enable for everyone on
+        // the version that introduces hero `gpuFluidSim` integration.
+        if (parsed.experimental && parsed.experimental.allowMidChainGpuEffects === false) {
+          parsed.experimental.allowMidChainGpuEffects = true;
         }
         localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
       }
@@ -729,9 +806,9 @@ function loadSettings(): AppSettings {
           geminiApiKey: parsed.ai?.geminiApiKey || legacyGemini || '',
           shaderProvider: parsed.ai?.shaderProvider || (legacyProvider as ShaderAIProvider) || defaults.ai.shaderProvider,
         },
-        // Experimental flags. Spread defaults first so new flags
-        // added in future versions get merged in for users with
-        // older saved settings.
+        // S4: experimental flags. Spread defaults first so new
+        // flags added in future sprints get merged in for users
+        // with older saved settings.
         experimental: {
           ...defaults.experimental,
           ...(parsed.experimental || {}),
@@ -741,20 +818,6 @@ function loadSettings(): AppSettings {
           ...(parsed.performance || {}),
         },
       };
-
-      // v0.6.4: WebGL2 light painting is the new default. Any user who
-      // had this stored as `false` from the brief experimental window
-      // gets promoted to the new default on load. (Users who explicitly
-      // need to opt out can do so via DevTools localStorage edit — no
-      // UI knob exists, intentionally — the Canvas2D path is now
-      // strictly a fallback for hardware that fails WebGL2 init.)
-      settings.performance.useWebGL2LightPainting = true;
-
-      // The Editor Frame Rate Cap was removed from the UI because it
-      // often made frame pacing feel worse than uncapped rAF. Reset
-      // any persisted value so older installs don't keep a hidden
-      // throttle. Field stays in the schema for back-compat.
-      settings.performance.editorMaxFps = 0;
 
       // Clean up legacy keys after migration
       if (legacyClaude) localStorage.removeItem('ai_claude_key');

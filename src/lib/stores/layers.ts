@@ -1,6 +1,6 @@
 import { writable, derived, get } from 'svelte/store';
-import type { Layer, Project, WarpCorners, Point2D, BezierPoint, MaskShape, MediaSource, BlendMode, WarpMode, Effect, EffectType, EffectParams, LayerType, SVGContent, SVGFillMode, SVGColorMode, ColorContent, LightPaintingContent, LightPaintingStroke, CropRegion, LayerShape, LayerShapeType, Composition, VJModeState, VJDeck, Timeline, TimelineClip, TextContent, TextAnimation, SplatContent, Model3DContent, MediaTrayFolder, StagePreset, SVKeyboardPreset, EdgeEffect, EdgeEffectsConfig } from '../types';
-import { createLayer, createProject, createDefaultCorners, createMeshGrid, createLinesLayer, createSVGLayer, createColorLayer, createLightPaintingLayer, createTextLayer, createSplatLayer, createDefaultSVGContent, createDefaultCropRegion, createDefaultLayerShape, createDefaultVJModeState, createDefaultTimeline, generateUUID, createDefaultModel3DContent, createDefaultEdgeEffect, convertShapeToCustom, createGroupLayer } from '../types';
+import type { Layer, Project, WarpCorners, Point2D, BezierPoint, MaskShape, MediaSource, BlendMode, WarpMode, Effect, EffectType, EffectParams, LayerType, SVGContent, SVGFillMode, SVGColorMode, ColorContent, LightPaintingContent, LightPaintingStroke, CropRegion, LayerShape, LayerShapeType, Composition, VJModeState, VJDeck, Timeline, TimelineClip, TextContent, TextAnimation, SplatContent, Model3DContent, MediaTrayFolder, StagePreset, SVKeyboardPreset, EdgeEffect, EdgeEffectsConfig, PixelFXContent, GPULayerContent } from '../types';
+import { createLayer, createProject, createDefaultCorners, createMeshGrid, createLinesLayer, createSVGLayer, createColorLayer, createLightPaintingLayer, createAdvLightPaintingLayer, createTextLayer, createSplatLayer, createDefaultSVGContent, createDefaultCropRegion, createDefaultLayerShape, createDefaultVJModeState, createDefaultTimeline, generateUUID, createDefaultModel3DContent, createDefaultEdgeEffect, convertShapeToCustom, createGroupLayer, createDefaultPixelFXContent, createDefaultGPULayerContent } from '../types';
 import type { GroupConfig } from '../types';
 import { mediaLibrary } from './media';
 import { vjClipLauncher, type VJClip, type VJBlock, type VJLayerState, DEFAULT_VJ_LAYERS, DEFAULT_VJ_COLUMNS } from './vjClipLauncher';
@@ -298,6 +298,26 @@ void main() {
       recordDiscreteAction();
     },
 
+    /** Add an Adv Light Painting layer (WebGPU 3D particle paint).
+     *  Renders only when experimental.editorWebGPU is on (the WebGPU
+     *  bridge owns the compute + render pipeline). With the flag off
+     *  the layer is visible in the layer panel but renders nothing —
+     *  intentional, so the project file stays portable across the
+     *  flag flip. */
+    addAdvLightPaintingLayer(name?: string) {
+      update((project) => {
+        const id = generateUUID();
+        const layerName = name || `Adv Light Paint ${project.layers.filter(l => l.type === 'adv-lightpaint').length + 1}`;
+        const newLayer = createAdvLightPaintingLayer(id, layerName);
+        return {
+          ...project,
+          layers: [newLayer, ...project.layers],
+          selectedLayerId: id,
+        };
+      });
+      recordDiscreteAction();
+    },
+
     // Text layer methods
     addTextLayer(name?: string) {
       update((project) => {
@@ -446,6 +466,76 @@ void main() {
         };
       });
       recordDiscreteAction();
+    },
+
+    /** Add a Pixel FX layer (WebGPU source-to-particles). User picks
+     *  the source via the panel; the layer renders nothing until a
+     *  source is set. Default mode is 'depth-shift' so the first
+     *  visible result is the source displaced into 3D space — most
+     *  immediately demos the WebGPU magic. */
+    addPixelFXLayer(name?: string) {
+      update((project) => {
+        const id = generateUUID();
+        const layerName = name || `Pixel FX ${project.layers.filter(l => l.type === 'pixel-fx').length + 1}`;
+        const newLayer: Layer = {
+          ...createLayer(id, layerName, 'pixel-fx'),
+          pixelFXContent: createDefaultPixelFXContent(),
+        };
+        return {
+          ...project,
+          layers: [newLayer, ...project.layers],
+          selectedLayerId: id,
+        };
+      });
+      recordDiscreteAction();
+    },
+
+    /** Add a GPU layer — hosts a swappable WebGPU shader (planet,
+     *  particle, etc). The selected shader's defaults are populated
+     *  by the renderer on first frame so the new layer starts with
+     *  a useful look immediately. */
+    addGPULayer(name?: string) {
+      update((project) => {
+        const id = generateUUID();
+        const layerName = name || `GPU ${project.layers.filter(l => l.type === 'gpu').length + 1}`;
+        const newLayer: Layer = {
+          ...createLayer(id, layerName, 'gpu'),
+          gpuLayerContent: createDefaultGPULayerContent(),
+        };
+        return {
+          ...project,
+          layers: [newLayer, ...project.layers],
+          selectedLayerId: id,
+        };
+      });
+      recordDiscreteAction();
+    },
+
+    /** Patch a gpu layer's content (shader id and/or params).
+     *  The renderer reads the layer's content each frame so a single
+     *  store update is the whole sync path. */
+    updateGPULayerContent(layerId: string, updates: Partial<GPULayerContent>) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((layer) =>
+          layer.id === layerId && layer.gpuLayerContent
+            ? { ...layer, gpuLayerContent: { ...layer.gpuLayerContent, ...updates } }
+            : layer
+        ),
+      }));
+    },
+
+    /** Patch the params of a gpu layer (shorthand — merges into
+     *  existing params). Used by every slider in the panel. */
+    updateGPULayerParams(layerId: string, paramUpdates: Record<string, any>) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((layer) =>
+          layer.id === layerId && layer.gpuLayerContent
+            ? { ...layer, gpuLayerContent: { ...layer.gpuLayerContent, params: { ...layer.gpuLayerContent.params, ...paramUpdates } } }
+            : layer
+        ),
+      }));
     },
 
     addScreenLayer(name?: string) {
@@ -699,6 +789,21 @@ void main() {
         layers: project.layers.map((layer) =>
           layer.id === layerId && layer.lightPaintingContent
             ? { ...layer, lightPaintingContent: { ...layer.lightPaintingContent, ...updates } }
+            : layer
+        ),
+      }));
+    },
+
+    /** Patch a pixel-fx layer's content. Used by the PixelFX panel
+     *  for every parameter change — the WebGPU renderer reads the
+     *  layer's content each frame so a single store update is the
+     *  whole sync path. */
+    updatePixelFXContent(layerId: string, updates: Partial<PixelFXContent>) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((layer) =>
+          layer.id === layerId && layer.pixelFXContent
+            ? { ...layer, pixelFXContent: { ...layer.pixelFXContent, ...updates } }
             : layer
         ),
       }));
@@ -1557,6 +1662,18 @@ void main() {
       recordDiscreteAction();
     },
 
+    /** Rename a layer. Empty / whitespace-only names are rejected so the
+     *  thumbnail row never shows a blank label. */
+    renameLayer(id: string, name: string) {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((l) => (l.id === id ? { ...l, name: trimmed } : l)),
+      }));
+      recordDiscreteAction();
+    },
+
     reorderLayers(fromIndex: number, toIndex: number) {
       update((project) => {
         const newLayers = [...project.layers];
@@ -1653,11 +1770,9 @@ void main() {
 
         // Compare on `src` (the actual media identity), NOT on `id` (a fresh
         // UUID generated on every apply-to-layer call). Pre-fix: re-applying
-        // the same media file to a layer (e.g., from a rapid double-click)
-        // produced two MediaSource objects with the same src but different
-        // UUIDs → the second apply disposed the freshly-loaded texture mid-
-        // load, then a fresh load raced the previous one's pending play()
-        // → "video freezes on first frame" symptom.
+        // the same media file produced two MediaSource objects with the
+        // same src but different UUIDs → the second apply disposed the
+        // freshly-loaded texture mid-load → "video freezes on first frame".
         const srcChanged = !!oldSource && oldSource.src !== source?.src;
 
         // Dispose old JS animation context if the underlying source genuinely changed
@@ -1674,8 +1789,7 @@ void main() {
         // leaves the cache pointing at a dead texture, so when the user
         // switches BACK to a previously-seen clip the cache hit returns a
         // disposed VideoTexture and the new layer freezes on the last
-        // sampled frame. That was the "rapid clip switching freezes
-        // again" symptom.
+        // sampled frame.
         //
         // Texture lifetime is owned by Canvas.svelte's textureCache with
         // LRU eviction (`evictTextureCache`). When the cache evicts an
@@ -1745,18 +1859,6 @@ void main() {
       update((project) => ({
         ...project,
         layers: project.layers.map((l) => (l.id === id ? { ...l, locked: !l.locked } : l)),
-      }));
-      recordDiscreteAction();
-    },
-
-    /** Rename a layer. Empty / whitespace-only names are rejected so the
-     *  thumbnail row never shows a blank label. */
-    renameLayer(id: string, name: string) {
-      const trimmed = name.trim();
-      if (!trimmed) return;
-      update((project) => ({
-        ...project,
-        layers: project.layers.map((l) => (l.id === id ? { ...l, name: trimmed } : l)),
       }));
       recordDiscreteAction();
     },
@@ -3585,9 +3687,12 @@ void main() {
         svgContent: layer.svgContent,
         colorContent: layer.colorContent,
         lightPaintingContent: layer.lightPaintingContent || null,
+        advLightPaintingContent: layer.advLightPaintingContent || null,
         textContent: layer.textContent || null,
         splatContent: layer.splatContent || null,
         model3dContent: layer.model3dContent || null,
+        pixelFXContent: layer.pixelFXContent || null,
+        gpuLayerContent: layer.gpuLayerContent || null,
         mask: migratedMask,
         cropRegion: layer.cropRegion || null,
         layerShape: layer.layerShape || null,
@@ -4090,6 +4195,16 @@ export const selectedLightPaintingContent = derived(project, ($project) => {
   return layer.lightPaintingContent;
 });
 
+// Adv Light Painting (WebGPU) derived stores
+export const advLightPaintingLayers = derived(project, ($project) =>
+  $project.layers.filter((l) => l.type === 'adv-lightpaint')
+);
+
+export const selectedAdvLightPaintingLayer = derived(project, ($project) => {
+  const layer = $project.layers.find((l) => l.id === $project.selectedLayerId);
+  return layer?.type === 'adv-lightpaint' ? layer : null;
+});
+
 // Text layer derived stores
 export const textLayers = derived(project, ($project) =>
   $project.layers.filter((l) => l.type === 'text')
@@ -4130,6 +4245,26 @@ export const selectedModel3DContent = derived(project, ($project) => {
   const layer = $project.layers.find((l) => l.id === $project.selectedLayerId);
   if (!layer || layer.type !== 'model3d' || !layer.model3dContent) return null;
   return layer.model3dContent;
+});
+
+// Pixel FX layer helpers — selected layer + content. Used by the
+// PixelFXPanel to read state and route updates back to the project
+// store. Mirrors the pattern used by the other GPU layer types.
+export const selectedPixelFXLayer = derived(project, ($project) => {
+  const layer = $project.layers.find((l) => l.id === $project.selectedLayerId);
+  return layer?.type === 'pixel-fx' ? layer : null;
+});
+
+// GPU layer helpers — selected layer + content for the GPULayerPanel.
+export const selectedGPULayer = derived(project, ($project) => {
+  const layer = $project.layers.find((l) => l.id === $project.selectedLayerId);
+  return layer?.type === 'gpu' ? layer : null;
+});
+
+export const selectedPixelFXContent = derived(project, ($project) => {
+  const layer = $project.layers.find((l) => l.id === $project.selectedLayerId);
+  if (!layer || layer.type !== 'pixel-fx' || !layer.pixelFXContent) return null;
+  return layer.pixelFXContent;
 });
 
 // VJ Mode derived stores

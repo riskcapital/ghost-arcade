@@ -9,9 +9,7 @@
     type CodecEncodeReport,
   } from '../utils/codecProbe';
 
-  // Codec capability probe results — populated on Performance tab mount.
-  // Lazily probed so the panel doesn't pay the cost when the user
-  // never opens the tab.
+  // Codec capability probe (Performance tab readout). Lazy.
   let codecDecode: CodecDecodeReport | null = null;
   let codecEncode: CodecEncodeReport | null = null;
   let codecProbed = false;
@@ -25,13 +23,6 @@
   import { updateInfo } from '../stores/updateChecker';
   import { updateModalOpen } from '../stores/uiState';
   import { project } from '../stores/layers';
-  import { midiStore } from '../midi/midiStore';
-  import { midiManager } from '../midi/midiManager';
-  import LicensePanel from './LicensePanel.svelte';
-  import { licenseTier, canUseSpout, canUseOwnAPIKeys, canUseMIDIEdit, canUseOutputSlices, maxOutputSlices, setDevTierOverride, type LicenseTier } from '../stores/license';
-  import { createDefaultSlice, type OutputSlice } from '../stores/settings';
-  import { isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
-  import { getErrorLog, clearErrorLog, type ErrorEntry } from '../utils/errorReporter';
   import { checkForUpdate, getCachedVersionResult, type VersionCheckResult } from '../utils/versionCheck';
 
   // Version-check state for the Settings → Updates section.
@@ -41,6 +32,34 @@
   const appVersion: string = (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '?');
   let versionInfo: VersionCheckResult | null = getCachedVersionResult();
   let isCheckingUpdate = false;
+  import { midiStore } from '../midi/midiStore';
+  import { midiManager } from '../midi/midiManager';
+  // LicensePanel + tier-related imports removed — OSS build has no license UI.
+  // `maxOutputSlices` is the only remaining import (used as a slice-count
+  // upper bound; resolves to Infinity in the OSS build, so all guards pass).
+  import { maxOutputSlices } from '../stores/license';
+  import { createDefaultSlice, type OutputSlice } from '../stores/settings';
+  import { isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
+  import { getErrorLog, clearErrorLog, type ErrorEntry } from '../utils/errorReporter';
+  import { isWebGPUSupported, probeWebGPU, getWebGPUInfo, type WebGPUInfo } from '../renderer/webgpuCapability';
+
+  // GPU Acceleration panel state — populated by the WebGPU capability probe.
+  // We display the adapter info read-only and expose the two production
+  // toggles (editor-side bridge + zero-copy output transport). The probe
+  // is idempotent, so calling it from onMount is cheap on repeat opens.
+  let webgpuSupported = isWebGPUSupported();
+  let webgpuInfo: WebGPUInfo = getWebGPUInfo();
+  let webgpuProbing = false;
+  async function refreshWebGPUStatus() {
+    webgpuProbing = true;
+    try {
+      await probeWebGPU();
+    } finally {
+      webgpuSupported = isWebGPUSupported();
+      webgpuInfo = getWebGPUInfo();
+      webgpuProbing = false;
+    }
+  }
 
   const tsLabel = getTextureShareLabel();
 
@@ -153,29 +172,33 @@
     if (id) midiManager.selectDevice(id);
   }
 
-  // Settings tab navigation
-  let activeTab: 'general' | 'output' | 'performance' | 'midi' | 'ai' | 'license' = 'general';
+  // Settings tab navigation (license tab removed in OSS build)
+  let activeTab: 'general' | 'output' | 'performance' | 'midi' | 'ai' = 'general';
 
-  // Auto-select a tab from window.location.hash on open. Lets the
-  // integrated-GPU warning banner drop the user directly into the
-  // Performance tab without an extra click.
+  // Hash-based deep link from the integrated-GPU banner.
   onMount(() => {
     const h = (typeof window !== 'undefined' ? window.location.hash : '').replace(/^#/, '');
-    if (h === 'performance' || h === 'output' || h === 'midi' || h === 'general' || h === 'ai' || h === 'license') {
+    if (h === 'performance' || h === 'output' || h === 'midi' || h === 'general' || h === 'ai') {
       activeTab = h as typeof activeTab;
       try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch { /* */ }
     }
   });
   $: if (isOpen && typeof window !== 'undefined') {
     const h = window.location.hash.replace(/^#/, '');
-    if (h === 'performance' || h === 'output' || h === 'midi' || h === 'general' || h === 'ai' || h === 'license') {
+    if (h === 'performance' || h === 'output' || h === 'midi' || h === 'general' || h === 'ai') {
       activeTab = h as typeof activeTab;
       try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch { /* */ }
     }
   }
-
-  // Run the codec probe the first time the Performance tab is opened.
   $: if (activeTab === 'performance' && !codecProbed) runCodecProbe();
+  // Re-probe WebGPU on first Performance tab open so the status panel shows
+  // fresh adapter info (and so the "Auto-enable on first launch" pathway,
+  // which depends on a successful probe, has had a chance to run).
+  let webgpuProbedFromPanel = false;
+  $: if (activeTab === 'performance' && !webgpuProbedFromPanel) {
+    webgpuProbedFromPanel = true;
+    refreshWebGPUStatus();
+  }
 
   // License panel state
   let licenseOpen = false;
@@ -435,12 +458,6 @@
         <button class="settings-tab" class:active={activeTab === 'performance'} onclick={() => activeTab = 'performance'}>Performance</button>
         <button class="settings-tab" class:active={activeTab === 'midi'} onclick={() => activeTab = 'midi'}>MIDI</button>
         <button class="settings-tab" class:active={activeTab === 'ai'} onclick={() => activeTab = 'ai'}>AI</button>
-        <button class="settings-tab" class:active={activeTab === 'license'} onclick={() => activeTab = 'license'}>
-          License
-          <span class="tier-indicator" style="background: {$licenseTier === 'pro' ? '#f59e0b' : $licenseTier === 'starter' ? '#3b82f6' : '#6b7280'}">
-            {$licenseTier.toUpperCase()}
-          </span>
-        </button>
       </div>
 
       <div class="settings-content">
@@ -722,21 +739,17 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">{tsLabel} Output {#if !$canUseSpout}<span class="pro-badge">PRO</span>{/if}</span>
+              <span class="label-text">{tsLabel} Output</span>
               <span class="label-hint">Share GPU texture to other applications</span>
             </div>
-            {#if $canUseSpout}
-              <label class="toggle">
-                <input
-                  type="checkbox"
-                  checked={$settings.output.spoutEnabled}
-                  onchange={handleSpoutToggle}
-                />
-                <span class="toggle-slider"></span>
-              </label>
-            {:else}
-              <span class="locked-label">🔒</span>
-            {/if}
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={$settings.output.spoutEnabled}
+                onchange={handleSpoutToggle}
+              />
+              <span class="toggle-slider"></span>
+            </label>
           </div>
 
           {#if $settings.output.spoutEnabled}
@@ -872,7 +885,7 @@
           <div class="setting-row">
             <div class="setting-label">
               <span class="label-text">Show Cursor on Output</span>
-              <span class="label-hint">Full-screen crosshair on the output window</span>
+              <span class="label-hint">Visualises mouse position on the output window</span>
             </div>
             <label class="toggle">
               <input
@@ -1158,13 +1171,9 @@
         <!-- Multi-Output Slices Section (hidden until multi-projector testing) -->
         <section class="settings-section">
           <h3>Multi-Output Routing</h3>
-          {#if $canUseOutputSlices}
-            <p class="section-hint">
-              Slice your canvas into regions and route each to a separate {tsLabel} output for multi-projector setups.
-              {#if $maxOutputSlices !== Infinity}
-                Your plan supports up to {$maxOutputSlices} outputs.
-              {/if}
-            </p>
+          <p class="section-hint">
+            Slice your canvas into regions and route each to a separate {tsLabel} output for multi-projector setups.
+          </p>
 
             <!-- Layout presets -->
             {#if $settings.output.slices.length === 0}
@@ -1334,25 +1343,50 @@
                 Clear All Slices
               </button>
             {/if}
-          {:else}
-            <p class="section-hint">Multi-output routing is available on Pro and Enterprise plans.</p>
-            <span class="locked-label">🔒 PRO</span>
-          {/if}
         </section>
         {/if}
 
+        <!-- ── Experimental: WebRTC output transport ─────────────────────
+          Replaces the legacy state-sync output window with a presentation-
+          only `<video srcObject>` fed by `canvas.captureStream(60)` over
+          a same-process WebRTC peer. Single-renderer architecture: editor
+          renders, output displays. Eliminates the dual-decoder drift +
+          drag-freeze the Pro output has had. Off by default until the
+          success-criteria sweep (1080p60/4K60/latency/no shift/etc.)
+          lands clean on real hardware. -->
+        <section class="settings-section">
+          <h3>Experimental</h3>
+          <div class="setting-row">
+            <label class="setting-label">
+              <input
+                type="checkbox"
+                checked={$settings.experimental?.outputWebRTC ?? false}
+                onchange={(e) => settings.update(s => ({
+                  ...s,
+                  experimental: { ...(s.experimental ?? { webgpuPilot: false, outputWebRTC: false }), outputWebRTC: (e.currentTarget as HTMLInputElement).checked },
+                }))}
+              />
+              <span>WebRTC output transport (experimental)</span>
+            </label>
+            <p class="section-hint">
+              Output window becomes a presentation-only `&lt;video&gt;` fed
+              by the editor's canvas via same-process WebRTC. Eliminates
+              cross-window sync drift + drag-freeze. Toggle takes effect
+              the next time you open the output window. Append `?stats=1`
+              to the output URL for the diagnostics overlay.
+            </p>
+          </div>
+        </section>
+
         {:else if activeTab === 'performance'}
         <!-- Performance Tab — opt-in knobs for users on weaker hardware.
-             Defaults match the historical full-quality behaviour so
-             capable machines see no change. Anything users dial down
-             here applies live (no restart) by reading the settings
-             store at the relevant hot path. -->
+             Defaults match the historical full-quality behaviour. -->
         <section class="settings-section">
           <div class="setting-row" style="border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 12px;">
             <div class="setting-label" style="flex: 1;">
               <span class="label-text" style="color: #BB86FC;">Tune the editor for your hardware</span>
               <span class="label-hint" style="line-height: 1.5;">
-                If the app feels laggy, step these down until it feels smooth. None of these change your output content — only how the editor renders the preview and how the output stream encodes. Capable machines should leave everything at the defaults.
+                If the app feels laggy, step these down until it feels smooth. None of these change your output content — only how the editor renders and the output stream encodes. Capable machines should leave everything at the defaults.
                 <br/><br/>
                 <a href="https://ghostarcade.live/docs/performance" target="_blank" rel="noopener noreferrer"
                    style="color: #BB86FC; text-decoration: underline; font-weight: 600;">
@@ -1363,12 +1397,121 @@
           </div>
         </section>
 
+        <!-- ─────────────────────────────────────────────────────────────
+             GPU Acceleration — capability + 2 production toggles.
+             Status is read from the cached WebGPU probe; the toggles
+             write directly to $settings.experimental. When WebGPU is
+             unavailable the toggles are disabled and the section
+             explains why so users don't waste time hunting for the
+             effect / layer that disappeared from their picker.
+             ───────────────────────────────────────────────────────── -->
+        <section class="settings-section">
+          <h3>GPU Acceleration <span style="font-size: 10px; padding: 2px 6px; margin-left: 6px; background: linear-gradient(135deg, #1e3a8a, #7c2d12); color: #fff; border-radius: 3px; vertical-align: middle;">EXPERIMENTAL</span></h3>
+          <div class="setting-row" style="border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 10px;">
+            <div class="setting-label" style="flex: 1;">
+              <span class="label-text" style:color={webgpuSupported ? '#4caf50' : '#fbbf24'}>
+                {#if webgpuProbing}
+                  Probing WebGPU…
+                {:else if webgpuSupported}
+                  ✓ WebGPU detected
+                {:else}
+                  ⚠ WebGPU not available
+                {/if}
+              </span>
+              <span class="label-hint" style="line-height: 1.5;">
+                {#if webgpuSupported}
+                  Adapter:
+                  <strong>
+                    {webgpuInfo.description || webgpuInfo.vendor || 'unknown'}
+                    {#if webgpuInfo.architecture}({webgpuInfo.architecture}){/if}
+                  </strong>
+                  {#if webgpuInfo.isFallbackAdapter}
+                    <br/><span style="color: #fbbf24;">⚠ Software fallback adapter — performance will be limited.</span>
+                  {/if}
+                  <br/>
+                  Hardware-accelerated rendering paths are available. The toggles below let you turn the GPU bridge and the zero-copy output transport on or off independently.
+                {:else}
+                  {webgpuInfo.failReason ? `Reason: ${webgpuInfo.failReason}.` : 'Your browser/device did not return a WebGPU adapter.'}
+                  <br/>
+                  Effects and layers that require WebGPU (e.g. <em>Fluid Sim</em>, the GPU Shader layer) are hidden in the picker so you don't try to add something that won't run. The legacy WebGL pipeline keeps the rest of the app working normally.
+                {/if}
+              </span>
+            </div>
+            <button class="primary-btn" onclick={refreshWebGPUStatus} disabled={webgpuProbing} style="white-space: nowrap;">
+              {webgpuProbing ? 'Probing…' : 'Re-probe'}
+            </button>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Editor GPU bridge</span>
+              <span class="label-hint">
+                Use the WebGPU + VideoFrame bridge for the editor → output handoff. When off, falls back to the legacy WebGL transport (works everywhere, slightly higher latency, no zero-copy).
+                {#if !webgpuSupported}
+                  <br/><em style="color: #999;">Disabled — requires WebGPU.</em>
+                {/if}
+              </span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={$settings.experimental.editorWebGPU}
+                disabled={!webgpuSupported}
+                onchange={(e) => settings.update(s => ({ ...s, experimental: { ...s.experimental, editorWebGPU: (e.target as HTMLInputElement).checked } }))}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Zero-copy GPU output</span>
+              <span class="label-hint">
+                Send frames to the output window via WebGPU's <code>importExternalTexture</code> — no encode/decode round trip, true 4K60. Falls back to the legacy WebRTC/Spout transport when off or when WebGPU is unavailable. Apply on next output-window open.
+                {#if !webgpuSupported}
+                  <br/><em style="color: #999;">Disabled — requires WebGPU.</em>
+                {/if}
+              </span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={$settings.experimental.outputZeroCopy}
+                disabled={!webgpuSupported}
+                onchange={(e) => settings.update(s => ({ ...s, experimental: { ...s.experimental, outputZeroCopy: (e.target as HTMLInputElement).checked } }))}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Mid-chain GPU effects</span>
+              <span class="label-hint">
+                Allow WebGPU effects (e.g. <em>Fluid Sim</em>) in the middle of a layer's effect chain. Adds a ~3 ms GPU↔CPU round-trip per affected effect; turn off if you're not using GPU effects and want the steady-state path purely WebGL.
+                {#if !webgpuSupported}
+                  <br/><em style="color: #999;">Disabled — requires WebGPU.</em>
+                {/if}
+              </span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={$settings.experimental.allowMidChainGpuEffects}
+                disabled={!webgpuSupported}
+                onchange={(e) => settings.update(s => ({ ...s, experimental: { ...s.experimental, allowMidChainGpuEffects: (e.target as HTMLInputElement).checked } }))}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </section>
+
         <section class="settings-section">
           <h3>Render Quality</h3>
           <div class="setting-row">
             <div class="setting-label">
               <span class="label-text">Shader Quality</span>
-              <span class="label-hint">Internal render resolution for shader layers. Full = native; lower scales down then upscales for display.</span>
+              <span class="label-hint">Internal render resolution for shader layers. Full = native; lower scales then upscales.</span>
             </div>
             <select value={$settings.ui.shaderQuality} onchange={handleShaderQualityChange}>
               <option value="full">Full</option>
@@ -1379,19 +1522,30 @@
           </div>
         </section>
 
-        <!-- Editor Render section removed: the editor render loop now
-             follows requestAnimationFrame directly because manual FPS
-             caps produced worse frame pacing on some machines. The
-             editorMaxFps setting field is kept in the schema for
-             backward compatibility with old saved settings, but it's
-             force-reset to 0 (uncapped) on load — see settings.ts. -->
+        <section class="settings-section">
+          <h3>Editor Render</h3>
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Editor Frame Rate Cap</span>
+              <span class="label-hint">
+                Caps editor render fps. Projectors are 60Hz; rendering at 120/144/165Hz on a high-refresh monitor wastes GPU. Cap to 60 to free budget. Input remains responsive. Applies to mapping mode too.
+              </span>
+            </div>
+            <select value={String($settings.performance.editorMaxFps)}
+              onchange={(e) => settings.update(s => ({ ...s, performance: { ...s.performance, editorMaxFps: parseInt((e.target as HTMLSelectElement).value) as 0 | 30 | 60 } }))}>
+              <option value="0">Uncapped (match display)</option>
+              <option value="60">60 fps</option>
+              <option value="30">30 fps</option>
+            </select>
+          </div>
+        </section>
 
         <section class="settings-section">
           <h3>VJ Preview</h3>
           <div class="setting-row">
             <div class="setting-label">
               <span class="label-text">Preview Resolution</span>
-              <span class="label-hint">Long-edge cap for the VJ mode preview canvas. Lower frees GPU for the actual render. Doesn't affect what gets sent to the output.</span>
+              <span class="label-hint">Long-edge cap for the VJ mode preview. Lower frees GPU. Doesn't affect output.</span>
             </div>
             <select value={String($settings.performance.previewMaxDim)}
               onchange={(e) => settings.update(s => ({ ...s, performance: { ...s.performance, previewMaxDim: parseInt((e.target as HTMLSelectElement).value) } }))}>
@@ -1405,7 +1559,7 @@
           <div class="setting-row">
             <div class="setting-label">
               <span class="label-text">Preview Refresh Rate</span>
-              <span class="label-hint">Frames per second for the preview canvas. 30fps is enough to monitor; 15 frees a lot of budget on weak hardware.</span>
+              <span class="label-hint">FPS for the preview canvas. 30 is enough to monitor; 15 frees a lot of budget.</span>
             </div>
             <select value={String($settings.performance.previewFrameRate)}
               onchange={(e) => settings.update(s => ({ ...s, performance: { ...s.performance, previewFrameRate: parseInt((e.target as HTMLSelectElement).value) as 60 | 30 | 15 } }))}>
@@ -1414,17 +1568,6 @@
               <option value="15">15 fps</option>
             </select>
           </div>
-          <div class="setting-row">
-            <div class="setting-label">
-              <span class="label-text">Show FPS Counter</span>
-              <span class="label-hint">Display the live frame-rate counter in the editor footer. Off by default — visible FPS readouts can look alarming when the output video is actually smooth at lower preview rates.</span>
-            </div>
-            <label class="toggle">
-              <input type="checkbox" checked={$settings.performance.showEditorFps}
-                onchange={(e) => settings.update(s => ({ ...s, performance: { ...s.performance, showEditorFps: (e.target as HTMLInputElement).checked } }))} />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
         </section>
 
         <section class="settings-section">
@@ -1432,7 +1575,7 @@
           <div class="setting-row">
             <div class="setting-label">
               <span class="label-text">Output Frame Rate</span>
-              <span class="label-hint">Encoder rate for the output window. 60 = silky for fast motion; 30 = standard projector cadence; 24 = lightest encode + cinematic.</span>
+              <span class="label-hint">Encoder rate for the output window. 60 = silky; 30 = projector standard; 24 = cinematic.</span>
             </div>
             <select value={String($settings.performance.outputFrameRate)}
               onchange={(e) => settings.update(s => ({ ...s, performance: { ...s.performance, outputFrameRate: parseInt((e.target as HTMLSelectElement).value) as 60 | 30 | 24 } }))}>
@@ -1444,7 +1587,7 @@
           <div class="setting-row">
             <div class="setting-label">
               <span class="label-text">Max Bitrate</span>
-              <span class="label-hint">Encoder bitrate ceiling. Same-process loopback so the rate doesn't go on a wire — high = encoder runs near-lossless, low = encoder works much less.</span>
+              <span class="label-hint">Encoder bitrate ceiling. Same-process loopback so the rate doesn't go on a wire — high = near-lossless, low = encoder works less.</span>
             </div>
             <select value={String($settings.performance.outputMaxBitrate)}
               onchange={(e) => settings.update(s => ({ ...s, performance: { ...s.performance, outputMaxBitrate: parseInt((e.target as HTMLSelectElement).value) } }))}>
@@ -1457,7 +1600,7 @@
           <div class="setting-row">
             <div class="setting-label">
               <span class="label-text">Quality vs Smoothness</span>
-              <span class="label-hint">How the encoder degrades under load: keep pixels (drop fps), keep smoothness (drop pixels), or let WebRTC decide.</span>
+              <span class="label-hint">How the encoder degrades under load: keep pixels (drop fps), keep smoothness (drop pixels), or balanced.</span>
             </div>
             <select value={$settings.performance.outputDegradationPreference}
               onchange={(e) => settings.update(s => ({ ...s, performance: { ...s.performance, outputDegradationPreference: (e.target as HTMLSelectElement).value as 'maintain-resolution' | 'maintain-framerate' | 'balanced' } }))}>
@@ -1486,7 +1629,7 @@
           <div class="setting-row" style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 8px; margin-top: 4px;">
             <div class="setting-label" style="flex: 1;">
               <span class="label-hint" style="opacity: 0.7;">
-                <strong>Apply on next output-window open.</strong> Stream-tuning settings (framerate / bitrate / codec) take effect when the output window opens — close and reopen the output for changes to apply.
+                <strong>Apply on next output-window open.</strong> Stream-tuning settings take effect when the output window opens — close and reopen the output for changes to apply.
               </span>
             </div>
           </div>
@@ -1519,7 +1662,6 @@
           </div>
         </section>
 
-
         {:else if activeTab === 'midi'}
         <!-- MIDI Settings Section -->
         <section class="settings-section">
@@ -1544,18 +1686,14 @@
                 <span class="label-text">MIDI Learn Mode</span>
                 <span class="label-hint">Click a parameter, then move a MIDI control to map it</span>
               </div>
-              {#if $canUseMIDIEdit}
-                <button
-                  class="secondary-btn midi-learn-btn"
-                  class:active={midiEditMode}
-                  disabled={midiDevices.length === 0 && !midiEditMode}
-                  onclick={() => midiStore.toggleEditMode()}
-                >
-                  {midiEditMode ? 'Exit MIDI Learn' : midiDevices.length === 0 ? 'No MIDI Device' : 'Enter MIDI Learn'}
-                </button>
-              {:else}
-                <span class="locked-label">🔒 PRO</span>
-              {/if}
+              <button
+                class="secondary-btn midi-learn-btn"
+                class:active={midiEditMode}
+                disabled={midiDevices.length === 0 && !midiEditMode}
+                onclick={() => midiStore.toggleEditMode()}
+              >
+                {midiEditMode ? 'Exit MIDI Learn' : midiDevices.length === 0 ? 'No MIDI Device' : 'Enter MIDI Learn'}
+              </button>
             </div>
 
             <div class="info-box">
@@ -1657,12 +1795,7 @@
             </select>
           </div>
 
-          <!-- API Keys section (Pro only: own API keys) -->
-          {#if !$canUseOwnAPIKeys}
-          <div class="pro-gate-notice">
-            <span class="pro-badge">PRO</span> Upgrade to Pro to use your own API keys. Demo & Starter tiers use included AI credits.
-          </div>
-          {:else}
+          <!-- API Keys section -->
           <!-- Claude API Key -->
           <div class="setting-row">
             <div class="setting-label">
@@ -1792,32 +1925,8 @@
               {/each}
             </select>
           </div>
-          {/if}
 
         </section>
-        {:else if activeTab === 'license'}
-        <!-- Dev tier override (browser dev mode only) -->
-        {#if !isDesktopApp}
-        <section class="settings-section">
-          <div class="dev-tier-box">
-            <div class="dev-tier-header">
-              <span class="dev-tier-label">DEV MODE</span>
-              <span class="dev-tier-sublabel">Tier Override</span>
-            </div>
-            <select
-              class="dev-tier-select"
-              value={$licenseTier}
-              onchange={(e) => setDevTierOverride(e.currentTarget.value as LicenseTier)}
-            >
-              <option value="demo">Demo (watermark, 3 layers)</option>
-              <option value="starter">Starter (8 layers, no premium)</option>
-              <option value="pro">Pro (all features)</option>
-            </select>
-          </div>
-        </section>
-        {/if}
-        <!-- License tab: embedded license panel -->
-        <LicensePanel isOpen={true} embedded={true} onClose={() => activeTab = 'general'} />
         {/if}
       </div>
 
@@ -2080,38 +2189,40 @@
     border-bottom: none;
   }
 
-  /* Sub-row: indented child of a parent setting-row, used for nested
-     controls that only appear when the parent toggle is on (e.g.
-     cursor style/size/thickness/color/opacity beneath the
-     "Show Cursor on Output" toggle). */
+  /* Sub-rows are nested controls under a parent toggle (e.g. cursor
+     style/size when "Show Cursor" is on). Tighter padding + indent. */
   .setting-row.sub-row {
-    padding-left: 16px;
-    padding-top: 6px;
-    padding-bottom: 6px;
-    border-bottom: 1px dashed #1a1a1c;
+    padding: 6px 0 6px 14px;
+    border-bottom: 1px solid #131315;
   }
-  .setting-row.sub-row:last-of-type {
-    border-bottom: 1px solid #161618;
+  .setting-row.sub-row .label-text {
+    font-size: 11px;
+    color: #aaa;
   }
-
-  /* Native select styled to match the rest of the settings inputs
-     (matches the dark surface colour, soft border, hover lift). */
+  .setting-row.sub-row .label-hint {
+    font-size: 10px;
+    color: #666;
+  }
+  .setting-row.sub-row input[type="range"] {
+    width: 140px;
+    accent-color: #6df;
+  }
+  .setting-row.sub-row input[type="color"] {
+    width: 32px;
+    height: 24px;
+    border: 1px solid #2a2a30;
+    background: transparent;
+    cursor: pointer;
+    padding: 0;
+  }
   .select-input {
-    background: #1a1a1c;
-    border: 1px solid #2a2a2e;
+    background: #1c1c20;
     color: #ddd;
-    font-size: 12px;
+    border: 1px solid #2a2a30;
     padding: 4px 8px;
     border-radius: 3px;
+    font-size: 11px;
     cursor: pointer;
-    min-width: 140px;
-  }
-  .select-input:hover {
-    border-color: #3a3a3e;
-  }
-  .select-input:focus {
-    outline: none;
-    border-color: #4a4a4e;
   }
 
   .setting-label {
@@ -2147,6 +2258,34 @@
     border-color: #555;
   }
 
+  select:focus {
+    outline: none;
+    border-color: #BB86FC;
+  }
+
+  .text-input {
+    background: #161618;
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: #eee;
+    font-size: 13px;
+    min-width: 180px;
+  }
+
+  .text-input:hover {
+    border-color: #555;
+  }
+
+  .text-input:focus {
+    outline: none;
+    border-color: #BB86FC;
+  }
+
+  select option:disabled {
+    color: #666;
+  }
+
   /* Updates section buttons */
   .btn-check-update {
     background: #161618;
@@ -2180,34 +2319,6 @@
   .btn-update-link:hover {
     background: rgba(187, 134, 252, 0.24);
     color: #fff;
-  }
-
-  select:focus {
-    outline: none;
-    border-color: #BB86FC;
-  }
-
-  .text-input {
-    background: #161618;
-    border: 1px solid #444;
-    border-radius: 6px;
-    padding: 8px 12px;
-    color: #eee;
-    font-size: 13px;
-    min-width: 180px;
-  }
-
-  .text-input:hover {
-    border-color: #555;
-  }
-
-  .text-input:focus {
-    outline: none;
-    border-color: #BB86FC;
-  }
-
-  select option:disabled {
-    color: #666;
   }
 
   /* Toggle switch */

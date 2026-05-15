@@ -681,11 +681,9 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     if (healthFps < 50) return '#ffb300';
     return 'rgba(0, 0, 0, 0)';   // invisible when healthy
   })();
-  // Pre-v0.6.3 this also fired when `healthFps < 50`, but users
-  // running output at lower configured framerates (Settings →
-  // Performance) saw it permanently — distracting and non-actionable.
-  // Keep the badge for genuine fault states only: init failure or
-  // CPU fallback. Press-S stats overlay covers diagnostic need.
+  // Only surface the badge for genuine fault states. Pre-port also
+  // showed fps < 50, but users at configured lower framerates saw it
+  // permanently — distracting and non-actionable.
   $: badgeShow = initStatus !== 'running' || cpuFallback;
   $: badgeText = (() => {
     if (initStatus !== 'running') return '●  no link';
@@ -738,12 +736,15 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   {/if}
 {/if}
 
-<!-- All on-screen status badges removed (status overlay + health
-     badge). The output window must stay completely clean for
-     projection — even fault states (init failure, CPU fallback)
-     no longer paint a pill on top of the projection. Diagnostic
-     stats remain available via the opt-in `?stats=1` URL flag or
-     pressing `S` on the focused output window. -->
+{#if statusText}
+  <div class="status-overlay">{statusText}</div>
+{/if}
+
+{#if badgeShow}
+  <div class="health-badge" style="background: {badgeColor};">
+    {badgeText}
+  </div>
+{/if}
 
 {#if showStats}
   <pre class="stats-overlay">
@@ -777,6 +778,41 @@ press S to hide</pre>
     height: 100vh;
     background: #000;
     display: block;
+  }
+  .status-overlay {
+    position: fixed;
+    bottom: 8px;
+    left: 8px;
+    color: #888;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 11px;
+    background: rgba(0, 0, 0, 0.6);
+    padding: 4px 8px;
+    border-radius: 3px;
+    pointer-events: none;
+  }
+  .health-badge {
+    position: fixed;
+    bottom: 12px;
+    right: 12px;
+    color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 10px;
+    border-radius: 999px;
+    pointer-events: none;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    transition: background 0.4s;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .health-hint {
+    font-weight: 400;
+    font-size: 10px;
+    opacity: 0.7;
+    letter-spacing: 0.3px;
   }
   .stats-overlay {
     position: fixed;

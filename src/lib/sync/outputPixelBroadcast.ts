@@ -74,10 +74,9 @@ let sourceCanvas: HTMLCanvasElement | null = null;
 // frameRate arg when users opt into a lower-cost output stream.
 let captureFrameRate = 60;
 // Perf-tuning knobs forwarded from startOutputPixelBroadcast to the
-// peer-build path (handleReadyFromOutput), which is the function that
-// actually configures the RTC encoder. Module-level so we don't have
-// to thread them through the BroadcastChannel ready-handshake; set
-// once at start, consumed when the output window connects.
+// peer-build path. Module-level so we don't have to thread them
+// through the BroadcastChannel ready-handshake; set once at start,
+// consumed when the output window connects.
 let captureMaxBitrate = 80_000_000;
 let captureDegradationPref: 'maintain-resolution' | 'maintain-framerate' | 'balanced' = 'maintain-resolution';
 let captureCodecPref: 'auto' | 'h264' | 'vp8' = 'auto';
@@ -314,16 +313,9 @@ async function handleReadyFromOutput(): Promise<void> {
     }
   }
 
-  // Codec preference — applied to all video transceivers BEFORE
-  // createOffer so the SDP carries the preference. Modes (set by
-  // Settings → Performance → Video Codec):
-  //   'auto' (default): VP9 → AV1 → H.264 → VP8 priority. VP9 is the
-  //     same-process sweet spot — better quality/bitrate than VP8,
-  //     widely hardware-decoded, cheap to encode.
-  //   'h264': force H.264 first — best for users with hardware H.264
-  //     encoders (modern Win/Mac/Linux with discrete or recent
-  //     integrated GPU). Big perf win when HW path is available.
-  //   'vp8': force VP8 first. Maximum compatibility fallback.
+  // Codec preference — modes set by Settings → Performance → Video
+  // Codec. 'auto' picks VP9 first (best quality/bitrate); 'h264' for
+  // hardware H.264; 'vp8' for max compatibility.
   try {
     const transceivers = pc.getTransceivers();
     const supported = (RTCRtpSender as any).getCapabilities?.('video')?.codecs ?? [];

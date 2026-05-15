@@ -20,7 +20,7 @@ import { spawn, fork, execSync } from 'child_process';
 import { createRequire } from 'module';
 import fs from 'fs';
 import net from 'net';
-import * as license from './license.js';
+// License system removed in OSS build — see src/lib/stores/license.ts.
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -475,13 +475,20 @@ function createSpoutOsrWindow(width, height) {
     });
 
     // Load the same Vite app URL with ?mode=spout-output
+    // Load the same Vite app URL with ?mode=spout-output. `webgpu-disable=1`
+    // is the belt-and-suspenders guard against the S4 WebGPU pilot ever
+    // running in this OSR renderer. The primary defense is the
+    // `!isOutputMode && !isOsrMode` gate on the pilot lifecycle/handoff
+    // in Canvas.svelte; this URL override hard-stops the capability
+    // probe so even a future bypass can't activate the pilot in the
+    // OSR window.
     const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
     const isDev = !app.isPackaged;
     if (isDev) {
-      spoutOsrWindow.loadURL(`${devUrl}?mode=spout-output`);
+      spoutOsrWindow.loadURL(`${devUrl}?mode=spout-output&webgpu-disable=1`);
     } else {
       const filePath = path.join(__dirname, '..', 'dist', 'index.html');
-      spoutOsrWindow.loadFile(filePath, { query: { mode: 'spout-output' } });
+      spoutOsrWindow.loadFile(filePath, { query: { mode: 'spout-output', 'webgpu-disable': '1' } });
     }
 
     console.log('[Spout OSR] Window created');
@@ -874,13 +881,13 @@ function registerIpcHandlers() {
   // --- Output window ---
   // Two experimental flags control output transport:
   //   - `experimentalZeroCopy` → mounts OutputSharedTextureDisplayApp
-  //     (WebGPU + GPUExternalTexture, the production target). The
-  //     editor opens this window via window.open() (not via this IPC
-  //     create path) so they share the same renderer process — the
-  //     only way Chromium 130 preserves GpuMemoryBuffer-backed
-  //     VideoFrames across a MessageChannel.
-  //   - `experimentalWebRTC` → mounts OutputDisplayApp (same-process
-  //     WebRTC peer). Production default in 0.6.x.
+  //     (WebGPU + GPUExternalTexture, the production target). Main
+  //     process pairs the editor and output windows via a
+  //     MessageChannelMain so the editor's MediaStreamTrackProcessor
+  //     can ship VideoFrames directly into the output's WebGPU
+  //     compositor with zero copies.
+  //   - `experimentalWebRTC` → mounts OutputDisplayApp (legacy
+  //     same-process WebRTC peer). Kept as escape hatch.
   // Selection precedence: zero-copy beats WebRTC beats legacy. The
   // renderer reads both settings flags and passes them through.
   ipcMain.handle('create_output_window', (_, { width, height, x, y, fullscreen, displayId, experimentalWebRTC, experimentalZeroCopy }) => {
@@ -1640,12 +1647,8 @@ function registerIpcHandlers() {
     ipcMain.handle(cmd, () => { throw new Error('Native renderer not available in Electron mode'); });
   }
 
-  // --- License system ---
-  ipcMain.handle('license_get_machine_id', () => license.getMachineId());
-  ipcMain.handle('license_get_status', () => license.getStatus());
-  ipcMain.handle('license_activate', (_, { licenseKey }) => license.activate(licenseKey));
-  ipcMain.handle('license_deactivate', () => license.deactivate());
-  ipcMain.handle('license_validate_online', () => license.validateOnline());
+  // License IPC removed in OSS build — every install is unlocked, no
+  // activation, no machine fingerprinting, no online validation.
 
   // --- Error reporting to ghostarcade.live ---
   const ERROR_REPORT_URL = 'https://ghostarcade.live/api/error-report';
@@ -1687,14 +1690,11 @@ function registerIpcHandlers() {
       const { error, stack, context, severity } = args || {};
       if (!error) return { queued: false };
 
-      // Get license info for linking
-      let licenseKey = null;
-      let machineId = null;
-      try {
-        const status = await license.getStatus();
-        licenseKey = status?.licenseKey || null;
-        machineId = await license.getMachineId();
-      } catch {}
+      // OSS build has no license / machine ID — leave both null in the
+      // crash report so any self-hosted error endpoint can still parse the
+      // payload shape but won't get user-identifying data.
+      const licenseKey = null;
+      const machineId = null;
 
       const report = {
         licenseKey,
@@ -2138,44 +2138,54 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
   // Hide menu bar for clean look
   outputWindow.setMenuBarVisibility(false);
 
+  // Load the same Svelte app but in output mode (canvas only, no UI).
+  //
+  // `webgpu-disable=1` is a belt-and-suspenders guard against the S4
+  // WebGPU pilot ever spinning up in this renderer process. The
+  // primary defense is the `!isOutputMode && !isOsrMode` gate on the
+  // pilot lifecycle/handoff in Canvas.svelte, but the settings store
+  // is shared via state-sync — if a future code path bypasses the
+  // mode-flag check, this URL override forces the capability probe
+  // (webgpuCapability.ts) to report unsupported, which the lifecycle
+  // gate also honors. Two independent failsafes, neither of which
+  // requires the other to work.
   // Output mode selection. Three transports, in precedence order:
   //
   //   webgpu-display → mounts OutputSharedTextureDisplayApp. Editor
   //                    side runs MediaStreamTrackProcessor on
   //                    canvas.captureStream(60), reads GPU-backed
-  //                    VideoFrames, and ships them via an in-process
-  //                    MessageChannel paired through window.open()
-  //                    (see setWindowOpenHandler in createMainWindow).
+  //                    VideoFrames, and ships them via a cross-process
+  //                    MessagePort (paired below via MessageChannelMain).
   //                    Output side calls
   //                    `device.importExternalTexture({source: frame})`
   //                    and renders a fullscreen quad in WebGPU. True
   //                    zero-copy GPU pipeline — the production target.
-  //                    NOTE: when this branch is reached via the IPC
-  //                    create_output_window path it produces a
-  //                    cross-process window which CAN'T receive zero-
-  //                    copy VideoFrames. Pro's UI flow opens this
-  //                    mode via window.open from OutputWindow.svelte,
-  //                    NOT through this IPC. We still set the URL
-  //                    correctly for symmetry.
+  //                    NOTE: `webgpu-disable=1` is NOT appended on this
+  //                    path because we *need* WebGPU here. The output
+  //                    process is still safe from the S4 pilot because
+  //                    OutputSharedTextureDisplayApp doesn't import any
+  //                    pilot code; the gate that mattered was the
+  //                    legacy `output` mode.
   //
-  //   webrtc-display → mounts OutputDisplayApp (same-process WebRTC
-  //                    peer). Production default in 0.6.x — kept as
-  //                    fallback when WebGPU is unavailable.
+  //   webrtc-display → mounts OutputDisplayApp (legacy WebRTC peer).
+  //                    Kept as fallback when WebGPU is unavailable.
   //
   //   output         → mounts SpoutOutputApp (the original full
   //                    renderer with state-sync + per-layer rendering).
-  //                    Legacy escape hatch via GHOSTARCADE_OUTPUT_LEGACY=1.
-  const useLegacyOutput = process.env.GHOSTARCADE_OUTPUT_LEGACY === '1';
+  //                    Production default before zero-copy.
+  //
+  // Auto-DevTools detached so the OutputDisplayApp logs (signaling
+  // state, getStats() values when ?stats=1) are visible without
+  // hunting for the window's hidden DevTools shortcut.
   let outputMode;
   if (experimentalZeroCopy) outputMode = 'webgpu-display';
-  else if (useLegacyOutput) outputMode = 'output';
   else if (experimentalWebRTC) outputMode = 'webrtc-display';
-  else outputMode = 'webrtc-display';
-  console.log(`[Output] Selected mode "${outputMode}" (zeroCopy=${experimentalZeroCopy} webRTC=${experimentalWebRTC} legacy=${useLegacyOutput})`);
+  else outputMode = 'output';
+  console.log(`[Output] Selected mode "${outputMode}" (zeroCopy=${experimentalZeroCopy} webRTC=${experimentalWebRTC})`);
   const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
   const isDev = !app.isPackaged;
   // The webgpu-disable URL flag is a belt-and-suspenders guard for
-  // legacy / WebRTC display modes where we don't want the WebGPU
+  // legacy / WebRTC display modes where we don't want the S4 pilot
   // capability probe to trip. The new webgpu-display mode requires
   // WebGPU so we omit the flag there.
   const wantWebgpuDisable = outputMode !== 'webgpu-display';
@@ -2183,12 +2193,32 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
   if (wantWebgpuDisable) queryParts.push('webgpu-disable=1');
   if (isDev) {
     outputWindow.loadURL(`${devUrl}?${queryParts.join('&')}`);
+    // Auto-DevTools on output is a debugging convenience but it changes
+    // the perf profile measurably (devtools allocates extra GPU surfaces
+    // + renderer threads). Opt in via env or a launch arg so smoothness
+    // benchmarks match the Pro folder's no-devtools baseline. Set
+    // GHOSTARCADE_OUTPUT_DEVTOOLS=1 in the shell that runs `npm run
+    // desktop` to enable.
+    if (process.env.GHOSTARCADE_OUTPUT_DEVTOOLS === '1') {
+      try { outputWindow.webContents.openDevTools({ mode: 'detach' }); } catch {}
+    }
   } else {
     const filePath = path.join(__dirname, '..', 'dist', 'index.html');
     const fileQuery = { mode: outputMode };
     if (wantWebgpuDisable) fileQuery['webgpu-disable'] = '1';
     outputWindow.loadFile(filePath, { query: fileQuery });
   }
+
+  // (MessageChannelMain pairing removed for webgpu-display mode.
+  // Cross-process VideoFrame transfer is silently dropped by Chromium
+  // 130's Mojo IPC — only specific Mojo interfaces (RTCRtpSender,
+  // MediaStreamTrack) preserve GpuMemoryBuffer handles cross-process,
+  // not generic MessagePort. The webgpu-display path is now opened
+  // via window.open() from the editor renderer (see
+  // setWindowOpenHandler in createMainWindow), putting the output
+  // window in the SAME renderer process where MessageChannel
+  // transferables work as designed. This IPC path remains for the
+  // legacy `output` and `webrtc-display` modes which are unaffected.)
 
   outputWindow.on('closed', () => {
     outputWindow = null;
