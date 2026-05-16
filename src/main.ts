@@ -73,14 +73,26 @@ async function init() {
     // audioWaveform) come out as zero unless we forward analysis bytes
     // from the editor. Wire the BroadcastChannel receiver before mounting
     // so the very first rendered frame has live audio.
-    const [{ default: SpoutOutputApp }, { startAudioBroadcastReceiver }, { audioStore }] = await Promise.all([
+    const [
+      { default: SpoutOutputApp },
+      { startAudioBroadcastReceiver },
+      { audioStore },
+      { startModulationBroadcastReceiver },
+    ] = await Promise.all([
       import('./SpoutOutputApp.svelte'),
       import('./lib/sync/audioBroadcast'),
       import('./lib/stores/audio'),
+      import('./lib/sync/modulationBroadcast'),
     ]);
     startAudioBroadcastReceiver({
       onFrame: (frame) => audioStore.injectBroadcastedFrame(frame),
     });
+    // Without the modulation map, the OSR window's shaders + effects
+    // sit at their un-modulated baseline even though audio data is
+    // flowing. The receiver bulkLoads modulation entries and starts
+    // the engine so OSR computes modulated values in parallel with
+    // the editor.
+    startModulationBroadcastReceiver();
     mount(SpoutOutputApp, {
       target: document.getElementById('app')!,
     });

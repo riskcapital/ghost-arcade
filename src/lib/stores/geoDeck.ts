@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store';
+import { writable, get } from 'svelte/store';
 
 export type GeoFormId = 'minimal' | 'hex' | 'grid' | 'sacred' | 'tunnel' | 'wave';
 export type GeoActionId = 'pulse' | 'slice' | 'phase' | 'shatter' | 'tunnel' | 'hold';
@@ -260,6 +260,27 @@ function createGeoDeckStore() {
           { id: 'r6', source: 'lfo2', target: 'scale', amount: 0.22, enabled: false },
         ],
       });
+    },
+
+    /** Whole-state snapshot for project save. The state is already serializable
+     *  (no runtime refs), so we just return the current value. */
+    serialize(): GeoDeckState {
+      return get({ subscribe });
+    },
+
+    /** Restore from project save. Defensive merging — any field missing on
+     *  a legacy save falls back to the current default value so old projects
+     *  still open. */
+    hydrate(payload: any) {
+      if (!payload || typeof payload !== 'object') return;
+      update((state) => ({
+        ...state,
+        ...payload,
+        // Ensure arrays are not undefined / wrong shape (defensive against
+        // older saves missing newer fields).
+        sceneSlots: Array.isArray(payload.sceneSlots) ? payload.sceneSlots : state.sceneSlots,
+        modRoutes: Array.isArray(payload.modRoutes) ? payload.modRoutes : state.modRoutes,
+      }));
     },
   };
 }
