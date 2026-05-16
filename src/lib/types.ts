@@ -198,9 +198,18 @@ export interface GPULayerContent {
   /** Shader id from the GPU shader registry (e.g. 'planet',
    *  'pixel-particles'). */
   shaderId: string;
-  /** Shader-specific params. Keys + types are defined by the
-   *  shader's paramSchema; the panel renders controls accordingly. */
+  /** Active shader's params — keys + types are defined by the shader's
+   *  paramSchema; the panel renders controls accordingly. Mirrors the
+   *  current shader's slot from `paramsByShader` so the GPU runner,
+   *  modulation system, and keyframe playback all read from one place. */
   params: Record<string, any>;
+  /** Per-shader param history. Switching to a different shader stashes
+   *  the current `params` under `paramsByShader[currentShaderId]` and
+   *  restores `paramsByShader[newShaderId]` if it exists, falling back
+   *  to defaults otherwise. Without this stash, the source picker
+   *  selection (and every slider) would be wiped every time the user
+   *  bounced between shaders. */
+  paramsByShader?: Record<string, Record<string, any>>;
 }
 
 export function createDefaultGPULayerContent(): GPULayerContent {
@@ -267,6 +276,8 @@ export interface PixelFXContent {
    *  can load. For videos, mp4/webm. Ignored when sourceType is
    *  'media' or 'layer'. */
   sourceUrl: string | null;
+  /** Durable file identity — resolves sourceUrl on reload. */
+  _sourceAssetRef?: import('./storage/assetRegistry').AssetRef;
   /** ID of a Media Library item to pull pixels from. The renderer
    *  reads the item's src (image) or videoElement (video) each
    *  frame so playback and replacement work transparently. */
@@ -506,6 +517,11 @@ export interface MediaSource {
   // Set when src failed to load (404, decode error). Surfaced as a badge in the library UI.
   broken?: boolean;
   brokenReason?: string;
+  // Durable identity of the underlying file (capture path + dest after Save).
+  // Set at File-import time by createAssetRefFromFile; consumed at reload by
+  // resolveAssetRefForRuntime to recompute `src` without trusting the
+  // transient blob URL. Optional for backwards compat with pre-AssetRef projects.
+  _assetRef?: import('./storage/assetRegistry').AssetRef;
 }
 
 // Lines layer content is defined in ./lines/types.ts and imported at top
@@ -759,7 +775,22 @@ export type LightPaintingBrushType =
   | 'firefly'     // Particles spawn near stroke + drift outward, twinkle
   | 'sap-flow'    // Particles travel along stroke at varying phases (flow)
   | 'water'       // Droplets fall from the stroke under gravity (rain off branches)
-  | 'smoke';      // Wisps rise from the stroke with curl noise (incense)
+  | 'smoke'       // Wisps rise from the stroke with curl noise (incense)
+  // ── Phase 2 — WebGL2-only procedural brushes ──
+  // Rendered by webglRenderer.ts via fragment shaders in webglShaders.ts.
+  // No CPU rasteriser fallback (the Canvas2D renderer skips them too).
+  | 'sparkle'     // Twinkling specks scattered along the stroke
+  | 'plasma'      // Animated noise-driven plasma blob
+  | 'galaxy'      // Spiral-arm starfield centered on each stamp
+  | 'lightning'   // Branching electrical filaments
+  | 'vortex'      // Swirling gravitational well distortion
+  // ── Phase 3 — additional WebGL2-only brushes ──
+  | 'nebula'      // Soft volumetric cloud with internal glow
+  | 'kaleido'     // Mirrored kaleidoscope segments
+  | 'ink'         // Bleeding-edge ink wash
+  | 'crystal'     // Faceted crystalline shards
+  | 'aurora'      // Curtains of borealis-style light
+  | 'bubbles';    // Floating soap-bubble field
 
 export type LightPaintingLoopMode = 'forward' | 'reverse' | 'pingpong' | 'once';
 
@@ -1361,6 +1392,10 @@ export interface SplatContent {
   textureOffsetX: number;         // Texture offset X
   textureOffsetY: number;         // Texture offset Y
   hasNativeUVs?: boolean;         // Read-only: true if PLY file contained UV coordinates
+  // Durable file identity for the .ply/.splat itself (resolves filePath on reload).
+  _assetRef?: import('./storage/assetRegistry').AssetRef;
+  // Durable file identity for the texture map (resolves texturePath on reload).
+  _textureAssetRef?: import('./storage/assetRegistry').AssetRef;
 
   // Point rendering
   renderMode: SplatRenderMode;
@@ -1866,6 +1901,8 @@ export interface Model3DContent {
   modelName: string;
   vertexCount: number;          // Read-only, set on load
   faceCount: number;            // Read-only
+  // Durable file identity (resolves modelData on reload — survives blob URL death).
+  _assetRef?: import('./storage/assetRegistry').AssetRef;
 
   // Material
   materialType: Model3DMaterialType;
@@ -3964,7 +4001,7 @@ export interface SVClipAssignment {
   mediaType?: 'video' | 'image';
   /** Snapshot frame used as the key's preview image. For images this is
    *  usually omitted (the CSS background-image: url(mediaSrc) renders
-   *  fine on its own), but videos can't be sampled by CSS - we capture
+   *  fine on its own), but videos can't be sampled by CSS — we capture
    *  the first decoded frame to a data URL at drop time and store it
    *  here so the key shows a still preview instead of an empty tile. */
   mediaThumbnail?: string;

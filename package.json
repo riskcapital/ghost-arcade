@@ -1,6 +1,6 @@
 {
   "name": "ghost-arcade",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Ghost Arcade — open-source projection mapping & VJ software with WebGPU acceleration, real-time effects, MIDI control, and a mobile companion.",
   "license": "AGPL-3.0-only",
   "homepage": "https://ghostarcade.live",
@@ -52,6 +52,7 @@
     "eslint": "^10.0.3",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-svelte": "^3.15.2",
+    "p5": "^1.11.0",
     "prettier": "^3.8.1",
     "prettier-plugin-svelte": "^3.5.1",
     "svelte": "^5.46.3",

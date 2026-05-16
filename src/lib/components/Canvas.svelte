@@ -15,6 +15,7 @@
   import { DrawingRenderer } from '../drawing/renderer';
   import { SVGLayerRenderer } from '../svg/renderer';
   import { LightPaintingRenderer } from '../lightpainting/renderer';
+  import { LightPaintingWebGLRenderer } from '../lightpainting/webglRenderer';
   import { TextRenderer } from '../text/renderer';
   import { SplatRenderer } from '../splat/SplatRenderer';
   import { loadPLY, loadSplatFromUrl } from '../splat';
@@ -33,6 +34,7 @@
   import { audioStore, getLastRawAnalysis, audioBands } from '../stores/audio';
   import { audioTextures } from '../audio/audioTextures';
   import { initStateBroadcast, destroyStateBroadcast } from '$lib/sync/stateBroadcast';
+  import { startAudioBroadcast, stopAudioBroadcast, broadcastAudioFrame } from '$lib/sync/audioBroadcast';
   import { startOutputPixelBroadcast, stopOutputPixelBroadcast } from '$lib/sync/outputPixelBroadcast';
   import {
     registerEditorCanvas,
@@ -371,7 +373,14 @@
   let lastSVGUpdateTime = 0;
 
   // Light painting renderers (per layer)
-  const lightPaintingRenderers = new Map<string, LightPaintingRenderer>();
+  // Renderer is either the legacy Canvas2D rasteriser or the WebGL2
+  // instanced renderer — picked per-layer at create time based on the
+  // user's `settings.performance.useWebGL2LightPainting` flag. Hot-
+  // swapping is intentionally NOT supported (would require disposing
+  // both backends + losing the persistent committed framebuffer);
+  // user toggles take effect on the next layer add.
+  type LPRenderer = LightPaintingRenderer | LightPaintingWebGLRenderer;
+  const lightPaintingRenderers = new Map<string, LPRenderer>();
   let lastLPUpdateTime = 0;
 
   // Text renderers (per layer)
@@ -550,6 +559,11 @@
     // Output window and OSR window are receivers — they get state from main
     if (!isOsrMode && !isOutputMode) {
       initStateBroadcast('sender');
+      // Start the audio analysis broadcast too — output windows have no
+      // microphone access of their own, so without this their shaders
+      // see permanently-zero audio uniforms and the projector shows no
+      // reactivity even when the editor is fully reactive.
+      startAudioBroadcast();
     }
 
     // Register the editor canvas with the zero-copy presenter so that
@@ -1777,6 +1791,7 @@
     }
 
     destroyStateBroadcast();
+    stopAudioBroadcast();
 
     // Dispose textures
     for (const texture of textureCache.values()) {
@@ -2126,15 +2141,15 @@
         }
       }
 
-      // AI-generated JS animations (threejs or p5js with jsAnimation) need texture updates
+      // AI-generated JS animations (threejs or p5js with jsAnimation) need texture updates.
+      // jsContext.updateTexture() already rebinds texture.image to the live
+      // iframe canvas AND sets needsUpdate. The previous code set
+      // needsUpdate again on layer.source.texture, which is a SEPARATE
+      // reference set during loadTextureAsync — Three.js had to re-upload
+      // the canvas to the GPU twice per frame. Drop the redundant set.
       if ((layer.source.type === 'threejs' || layer.source.type === 'p5js') && layer.source.jsAnimation) {
         const jsContext = getJSAnimationContext(layer.source.id);
-        if (jsContext) {
-          jsContext.updateTexture();
-          if (layer.source.texture) {
-            (layer.source.texture as THREE.CanvasTexture).needsUpdate = true;
-          }
-        }
+        if (jsContext) jsContext.updateTexture();
       }
     }
 
@@ -2776,11 +2791,20 @@
     const width = projectData.width || 1920;
     const height = projectData.height || 1080;
 
-    // Update audio textures once per frame (for all ISF shaders to use)
+    // Update audio textures once per frame (for all ISF shaders to use).
+    // Also broadcast the analysis bytes to output windows (Spout OSR,
+    // fullscreen output) — their own JS context has no microphone access,
+    // so without this every projector/Spout output sees zeroed audio
+    // uniforms even when the editor is fully reactive. See audioBroadcast.ts.
     const audioState = $audioStore;
     const rawAnalysis = getLastRawAnalysis();
     if (rawAnalysis && audioState.isActive) {
       audioTextures.update(rawAnalysis);
+      broadcastAudioFrame(rawAnalysis, true);
+    } else if (rawAnalysis) {
+      // Send isActive=false to telegraph "stop reacting" to receivers,
+      // so their shaders fall back to the same zero state the editor uses.
+      broadcastAudioFrame(rawAnalysis, false);
     }
 
     for (const layer of layerList) {
@@ -3109,10 +3133,24 @@
     for (const layer of layerList) {
       if (layer.type !== 'lightpainting' || !layer.lightPaintingContent) continue;
 
-      // Get or create renderer for this layer
+      // Get or create renderer for this layer. Pick the WebGL2 path
+      // when the user opted in (default true), otherwise the legacy
+      // Canvas2D path. We don't hot-swap between paths for an already-
+      // running layer — would lose the committed framebuffer + dispose
+      // costs both ways. Toggle takes effect on the next layer add.
       let lpRenderer = lightPaintingRenderers.get(layer.id);
       if (!lpRenderer) {
-        lpRenderer = new LightPaintingRenderer(width, height);
+        const useWebGL2 = $settings?.performance?.useWebGL2LightPainting !== false;
+        try {
+          lpRenderer = useWebGL2
+            ? new LightPaintingWebGLRenderer(width, height)
+            : new LightPaintingRenderer(width, height);
+        } catch (err: any) {
+          // WebGL2 init can fail on hardware without it; fall back
+          // to Canvas2D so the user still sees their drawing.
+          console.warn('[Canvas] WebGL2 light painting init failed, falling back to Canvas2D:', err?.message || err);
+          lpRenderer = new LightPaintingRenderer(width, height);
+        }
         lightPaintingRenderers.set(layer.id, lpRenderer);
       } else {
         lpRenderer.resize(width, height);

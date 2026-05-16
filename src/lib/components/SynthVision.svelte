@@ -3718,7 +3718,7 @@ void main() {
             if (!thumb) return;
             const cur = clipAssignments[clipPos];
             // Slot may have been reassigned or cleared while we waited
-            // for the frame; bail silently in that case.
+            // for the frame — bail silently in that case.
             if (!cur || cur.type !== 'media' || cur.mediaSrc !== data.mediaSrc) return;
             clipAssignments[clipPos] = { ...cur, mediaThumbnail: thumb };
             clipAssignments = { ...clipAssignments };
@@ -3732,7 +3732,7 @@ void main() {
   }
 
   /**
-   * Capture the first decoded frame of a video URL as a 160x90 JPEG data
+   * Capture the first decoded frame of a video URL as a 160×90 JPEG data
    * URL. Used for performer-mode key thumbnails on video drops. Failures
    * (cors, slow first frame, blob URL revoked) resolve to undefined and
    * the caller leaves the key without a preview.
@@ -3775,7 +3775,7 @@ void main() {
       }, { once: true });
       v.addEventListener('seeked', grab, { once: true });
       v.addEventListener('error', () => finish(undefined), { once: true });
-      // Hard timeout: never let a hung video stall the slot forever.
+      // Hard timeout — never let a hung video stall the slot forever.
       setTimeout(() => finish(undefined), 3000);
     });
   }

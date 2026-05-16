@@ -509,6 +509,18 @@ export interface PerformanceSettings {
   outputDegradationPreference: 'maintain-resolution' | 'maintain-framerate' | 'balanced';
   outputCodecPreference: 'auto' | 'h264' | 'vp8';
   editorMaxFps: 0 | 30 | 60;
+  /**
+   * Use the WebGL2 instanced renderer for the Light Painting layer.
+   * Default true. Falls back to the legacy Canvas2D renderer
+   * automatically if WebGL2 init fails on the user's hardware.
+   *
+   * The WebGL2 path renders all stamps for a stroke in a single
+   * instanced draw call and bakes finished strokes into a persistent
+   * framebuffer, so completed strokes stop costing per-frame work.
+   * Roughly 5-10× faster than the Canvas2D rasteriser at the same
+   * stamp count + brush size.
+   */
+  useWebGL2LightPainting: boolean;
 }
 
 export interface AppSettings {
@@ -681,6 +693,7 @@ function createDefaultSettings(): AppSettings {
       outputDegradationPreference: 'maintain-resolution',
       outputCodecPreference: 'auto',
       editorMaxFps: 0,                // 0 = uncapped (match rAF / refresh rate)
+      useWebGL2LightPainting: true,   // WebGL2 instanced renderer ON by default
     },
   };
 }

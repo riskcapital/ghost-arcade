@@ -12,6 +12,7 @@
     Model3DLightingPreset,
     Model3DContent,
   } from '../types';
+  import { createAssetRefFromFile } from '../storage/assetRegistry';
 
   // Material types with descriptions
   const materialTypes: { value: Model3DMaterialType; label: string; description: string }[] = [
@@ -195,7 +196,9 @@
       // because nothing else references it once we overwrite modelData.
       if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
 
-      const blobUrl = URL.createObjectURL(file);
+      // Capture both runtime URL and durable AssetRef. The blob URL is for
+      // immediate three.js loading; the AssetRef is what survives save/reload.
+      const { assetRef, runtimeUrl: blobUrl } = createAssetRefFromFile(file);
       currentBlobUrl = blobUrl;
       currentFileName = file.name;
       cachedFile = file;
@@ -206,7 +209,8 @@
         modelData: blobUrl,
         modelFormat: ext as any,
         modelName: file.name,
-      });
+        _assetRef: assetRef,
+      } as any);
     } catch (err) {
       console.error('Failed to load 3D model:', err);
     } finally {

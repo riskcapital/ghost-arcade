@@ -179,6 +179,21 @@
   let maskPenDraft: MaskPenDraft | null = null;
   const MASK_DRAG_BEND_THRESHOLD = 6; // px
 
+  // -- Pen tool mode for closed shapes --
+  // Mirrors the CustomShapeHandles pen toolbar. `edit` is the default
+  // (drag anchors, drag handles); `add` lets the user click an edge to
+  // insert a knot mid-segment; `remove` lets the user delete an anchor
+  // with a left-click (vs. having to right-click). Per-shape Edit button
+  // in LayerPanel flips this to `edit` so the toolbar appears even when
+  // the user re-enters edit mode after closing all shapes.
+  let maskPenMode: 'edit' | 'add' | 'remove' = 'edit';
+  // Currently-hovered edge index keyed by shape, for add-mode visual.
+  // -1 means "no edge under cursor."
+  let maskHoverShapeIdx: number = -1;
+  let maskHoverEdgeIdx: number = -1;
+  let maskHoverPx: { x: number; y: number } = { x: 0, y: 0 };
+  const MASK_EDGE_HIT_THRESHOLD = 10; // px
+
   let shapeWarpModeEnabled = false;
   let draggingShapeControlPointIndex: number | null = null;
   let shapeWarpOverlayEl: SVGSVGElement;
@@ -1640,6 +1655,9 @@
               src: sourceSrc,
               name: sourceName,
               videoElement: mediaItem.videoElement,
+              // Carry the library item's durable AssetRef so save+reload
+              // restores the original disk file instead of a dead blob URL.
+              _assetRef: (mediaItem as any)._assetRef,
             };
             project.setLayerSource(layerId, source);
           } else {
@@ -2545,172 +2563,197 @@
   // After the first successful native save, remember the directory so re-saves
   // materialize blobs to the same place.
   let currentProjectPath: string | null = null;
+  // Re-entrance guard for save flows. Prevents Ctrl+S firing twice rapidly
+  // (or menu-click + key-binding both hitting saveComposition) from popping
+  // two native dialogs or queuing a second save against the file the first
+  // one is still writing.
+  let saveInFlight = false;
 
   /**
-   * Walk a project JSON and materialize every `blob:` URL into an actual
-   * sibling file at `projectDir`, replacing the JSON's `src` field with a
-   * relative path like `./<filename>`. After this runs, the JSON is portable
-   * — anyone with the .gha + the sibling files can open the project.
+   * Walk a project JSON and ensure every media-bearing node carries a
+   * resolvable identity in the saved file. The save NEVER copies files —
+   * earlier versions did, and on top of being slow it polluted the user's
+   * folders with `*_2.mp4` duplicates whenever the .gha lived in the same
+   * directory as the source media. We just save the path.
    *
-   * Only modifies blob: URLs; existing relative paths, file:// URLs, http(s)
-   * URLs, and data: URIs are left as-is.
+   * What actually happens:
+   *   - Nodes with `_assetRef.originalPath`: leave the assetRef alone.
+   *     Reload converts originalPath → ghost-asset:// URL via the resolver.
+   *   - Nodes with `_assetRef.dataUrl` / `_assetRef.url`: same — pass through.
+   *   - Legacy nodes with a raw `blob:` URL on the runtime field but no
+   *     assetRef: nothing we can do — the blob dies at session end and we
+   *     have no path to recover. Mark them by clearing the dead URL so
+   *     the layer comes back as "missing media" instead of an unresolvable
+   *     phantom. Users with old projects need to re-import the file once;
+   *     the new import flow captures originalPath.
    *
-   * No-op + returns the input unchanged if not running in Electron.
+   * Returns JSON unchanged if not running in Electron (browser builds rely
+   * on whatever URL the renderer captured, since they have no disk paths).
    */
-  async function materializeBlobsInProject(jsonStr: string, projectDir: string): Promise<string> {
+  async function materializeAssetsInProject(jsonStr: string, projectDir: string): Promise<string> {
     if (!isDesktopApp) return jsonStr;
-    const api = (window as any).electronAPI;
-    if (!api?.invoke) return jsonStr;
 
     let data: any;
     try { data = JSON.parse(jsonStr); } catch { return jsonStr; }
 
-    // Collect every (parent, key) pointing at a blob: URL so we can mutate in place
-    const targets: { parent: any; key: string; src: string; nameHint: string }[] = [];
-    function walk(node: any, parentName?: string) {
+    // Walk the project tree and clean up any runtime URLs we can't resolve
+    // on reload. We do NOT copy any files. The user's folders are theirs;
+    // the .gha just remembers paths.
+    const BLOB_FIELDS = ['src', 'modelData', 'filePath', 'texturePath', 'sourceUrl', 'url', 'thumbnail'] as const;
+    let kept = 0;        // assetRef-backed (originalPath, dataUrl, or url)
+    let cleared = 0;     // blob: with no assetRef — runtime-only, can't recover
+
+    function walk(node: any) {
       if (!node) return;
-      if (Array.isArray(node)) { node.forEach(n => walk(n, parentName)); return; }
+      if (Array.isArray(node)) { node.forEach(walk); return; }
       if (typeof node !== 'object') return;
-      // .src field at any depth
-      if (typeof node.src === 'string' && node.src.startsWith('blob:')) {
-        const hint =
-          (typeof node.name === 'string' && node.name) ||
-          parentName ||
-          'media';
-        targets.push({ parent: node, key: 'src', src: node.src, nameHint: hint });
+
+      // Tally assetRef-backed fields. Nothing to do — the resolver on
+      // reload reads the assetRef to compute the runtime URL.
+      if (node._assetRef?.projectPath || node._assetRef?.originalPath || node._assetRef?.dataUrl || node._assetRef?.url) kept++;
+      if (node._textureAssetRef?.projectPath || node._textureAssetRef?.originalPath || node._textureAssetRef?.dataUrl || node._textureAssetRef?.url) kept++;
+      if (node._sourceAssetRef?.projectPath || node._sourceAssetRef?.originalPath || node._sourceAssetRef?.dataUrl || node._sourceAssetRef?.url) kept++;
+      if (node.assetRef?.projectPath || node.assetRef?.originalPath || node.assetRef?.dataUrl || node.assetRef?.url) kept++;
+
+      // Strip dead blob: URLs from runtime fields when there's no AssetRef
+      // to recover from. Keeping them in the saved file leads to the
+      // dreaded "stale blob URL on reopen" bug — the renderer tries to
+      // load `blob:http://localhost:1420/<gone>` and fails forever.
+      for (const field of BLOB_FIELDS) {
+        const v = node[field];
+        if (typeof v !== 'string' || !v.startsWith('blob:')) continue;
+        const hasRef =
+          (field === 'src' && (node._assetRef?.projectPath || node._assetRef?.originalPath || node._assetRef?.dataUrl || node._assetRef?.url)) ||
+          (field === 'modelData' && (node._assetRef?.projectPath || node._assetRef?.originalPath || node._assetRef?.dataUrl)) ||
+          (field === 'filePath' && (node._assetRef?.projectPath || node._assetRef?.originalPath || node._assetRef?.dataUrl)) ||
+          (field === 'texturePath' && (node._textureAssetRef?.projectPath || node._textureAssetRef?.originalPath || node._textureAssetRef?.dataUrl)) ||
+          (field === 'sourceUrl' && (node._sourceAssetRef?.projectPath || node._sourceAssetRef?.originalPath || node._sourceAssetRef?.dataUrl)) ||
+          (field === 'url' && (node.assetRef?.projectPath || node.assetRef?.originalPath || node.assetRef?.dataUrl || node.assetRef?.url || node._assetRef?.projectPath || node._assetRef?.originalPath || node._assetRef?.dataUrl || node._assetRef?.url)) ||
+          (field === 'thumbnail' && (node._assetRef?.projectPath || node._assetRef?.originalPath || node._assetRef?.dataUrl || node._assetRef?.url));
+        if (hasRef) {
+          // The reload resolver will rebuild the URL from assetRef, so the
+          // dead blob in the runtime field is harmless — but blank it out
+          // anyway so JSON inspection isn't misleading.
+          node[field] = '';
+        } else {
+          // No assetRef. Clear the dead URL so reload shows "missing
+          // media" rather than retrying a blob:http://localhost/<gone>
+          // forever. The user will have to re-import the file once.
+          node[field] = '';
+          cleared++;
+        }
       }
-      // Model3D layer's modelData also holds blob URLs
-      if (typeof node.modelData === 'string' && node.modelData.startsWith('blob:')) {
-        const hint =
-          (typeof node.modelName === 'string' && node.modelName) ||
-          parentName ||
-          'model.glb';
-        targets.push({ parent: node, key: 'modelData', src: node.modelData, nameHint: hint });
-      }
+
       for (const [k, v] of Object.entries(node)) {
-        if (k === 'src' || k === 'modelData') continue; // already handled
-        walk(v, typeof node.name === 'string' ? node.name : parentName);
+        if (k.startsWith('_')) continue;
+        walk(v);
       }
     }
     walk(data);
 
-    if (targets.length === 0) return jsonStr;
-
-    // De-dupe by blob URL — many entries reference the same blob (e.g. a
-    // video used in mediaLibrary + mediaFolders + a layer source).
-    const writePlan = new Map<string, string>(); // blob URL -> chosen filename
-    const usedNames = new Set<string>();
-    function uniqify(name: string): string {
-      // Strip path components, sanitize
-      const safe = name.replace(/[\\/]/g, '_').replace(/[<>:"|?*]/g, '_');
-      if (!usedNames.has(safe)) { usedNames.add(safe); return safe; }
-      const dot = safe.lastIndexOf('.');
-      const stem = dot > 0 ? safe.slice(0, dot) : safe;
-      const ext = dot > 0 ? safe.slice(dot) : '';
-      for (let i = 2; i < 9999; i++) {
-        const candidate = `${stem}_${i}${ext}`;
-        if (!usedNames.has(candidate)) { usedNames.add(candidate); return candidate; }
-      }
-      return safe;
+    if (cleared > 0) {
+      console.warn(
+        `[Save] Cleared ${cleared} dead blob URL(s) — those layers had no ` +
+        `originalPath captured (likely added before AssetRef wiring). ` +
+        `Re-add the file in the layer to make it survive future save/reload.`,
+      );
     }
-    for (const t of targets) {
-      if (writePlan.has(t.src)) continue;
-      writePlan.set(t.src, uniqify(t.nameHint));
-    }
-
-    const sep = projectDir.includes('\\') ? '\\' : '/';
-    const baseDir = projectDir.endsWith(sep) ? projectDir : projectDir + sep;
-    let written = 0;
-    let failed = 0;
-
-    for (const [blobUrl, filename] of writePlan) {
-      try {
-        const resp = await fetch(blobUrl);
-        if (!resp.ok) { failed++; continue; }
-        const buf = await resp.arrayBuffer();
-        // Convert to base64 for IPC transport (matches save_file_binary's contract)
-        const bytes = new Uint8Array(buf);
-        let binary = '';
-        const chunk = 0x8000;
-        for (let i = 0; i < bytes.length; i += chunk) {
-          binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-        }
-        const base64Data = btoa(binary);
-        const result = await api.invoke('save_file_binary', { path: baseDir + filename, base64Data });
-        if (!result?.success) {
-          console.warn('[Save] save_file_binary failed for', filename, result?.error);
-          failed++;
-          continue;
-        }
-        written++;
-      } catch (e) {
-        console.warn('[Save] materialize failed for', filename, e);
-        failed++;
-      }
-    }
-
-    // Replace src/modelData fields with relative paths
-    for (const t of targets) {
-      const filename = writePlan.get(t.src);
-      if (filename) t.parent[t.key] = './' + filename;
-    }
-
-    console.log(`[Save] Materialized ${written}/${writePlan.size} blob assets to ${projectDir} (${failed} failed)`);
+    console.log(`[Save] Saved with ${kept} resolvable asset reference(s); no files copied.`);
     return JSON.stringify(data, null, 2);
   }
+  // Back-compat alias — older code paths still call materializeBlobsInProject
+  // by name. Kept thin so nothing else has to change.
+  const materializeBlobsInProject = materializeAssetsInProject;
 
-  // Save to existing file (or trigger Save As if no file)
+  // Save to existing file (or trigger Save As if no file).
+  // Re-entrant guard: a fast double-press of Ctrl+S, or menu-click + key
+  // overlap, used to fire two native dialogs back-to-back; the user reported
+  // "saved and then immediately asked to save again, then dialog stopped
+  // coming up". The mutex is the fix — second invocation no-ops while the
+  // first is still in flight.
   async function saveComposition() {
+    if (saveInFlight) {
+      console.log('[Save] suppressed — save already in flight');
+      return;
+    }
+    saveInFlight = true;
     fileMenuOpen = false;
-    const jsonStr = await project.exportProjectJSONForSave();
+    try {
+      const jsonStr = await project.exportProjectJSONForSave();
 
-    // Electron path: re-save to the previously-chosen filesystem path,
-    // re-materializing any new blob assets to the same project dir.
-    if (isDesktopApp && currentProjectPath) {
-      const api = (window as any).electronAPI;
-      if (api?.invoke) {
-        try {
-          const sep = currentProjectPath.includes('\\') ? '\\' : '/';
-          const projectDir = currentProjectPath.substring(0, currentProjectPath.lastIndexOf(sep) + 1);
-          const portableJson = await materializeBlobsInProject(jsonStr, projectDir);
-          const result = await api.invoke('save_file_text', { path: currentProjectPath, content: portableJson });
-          if (!result?.success) {
-            alert(`Save failed: ${result?.error || 'unknown error'}`);
+      // Electron path: re-save to the previously-chosen filesystem path,
+      // re-materializing any new blob assets to the same project dir.
+      if (isDesktopApp && currentProjectPath) {
+        const api = (window as any).electronAPI;
+        if (api?.invoke) {
+          try {
+            const sep = currentProjectPath.includes('\\') ? '\\' : '/';
+            const projectDir = currentProjectPath.substring(0, currentProjectPath.lastIndexOf(sep) + 1);
+            const portableJson = await materializeAssetsInProject(jsonStr, projectDir);
+            const result = await api.invoke('save_file_text', { path: currentProjectPath, content: portableJson });
+            if (!result?.success) {
+              alert(`Save failed: ${result?.error || 'unknown error'}`);
+              return;
+            }
+            console.log('Project saved successfully:', currentProjectPath);
+            markAsSaved();
+            clearAutosave();
+            return;
+          } catch (err: any) {
+            // Don't fall through to Save As here — that pops a second dialog
+            // for what was meant to be an in-place save and confused users
+            // into a save loop. Surface the error instead.
+            console.error('[Save] Electron save failed:', err);
+            alert(`Save failed: ${err?.message || err}`);
             return;
           }
-          console.log('Project saved successfully:', currentProjectPath);
+        }
+      }
+
+      // If we have a file handle, save directly to it
+      if (currentFileHandle) {
+        try {
+          const writable = await currentFileHandle.createWritable();
+          await writable.write(jsonStr);
+          await writable.close();
+          console.log('Project saved successfully');
+          recentFiles.add(currentFileHandle.name, null);
           markAsSaved();
           clearAutosave();
           return;
         } catch (err: any) {
-          console.warn('Electron save failed, falling back to Save As:', err);
+          console.warn('Failed to save to existing file, showing save dialog:', err);
         }
       }
-    }
 
-    // If we have a file handle, save directly to it
-    if (currentFileHandle) {
-      try {
-        const writable = await currentFileHandle.createWritable();
-        await writable.write(jsonStr);
-        await writable.close();
-        console.log('Project saved successfully');
-        recentFiles.add(currentFileHandle.name, null);
-        markAsSaved();
-        clearAutosave();
-        return;
-      } catch (err: any) {
-        console.warn('Failed to save to existing file, showing save dialog:', err);
-      }
+      // No known target — trigger Save As. saveCompositionAs has its own
+      // mutex check that becomes a no-op while saveInFlight is still true,
+      // so we call its inner implementation directly to avoid the guard
+      // bouncing this through.
+      await saveCompositionAsInner();
+    } finally {
+      saveInFlight = false;
     }
-
-    // No file handle, trigger Save As
-    await saveCompositionAs();
   }
 
-  // Save As - always shows file picker
+  // Save As — public entry point that takes the mutex.
   async function saveCompositionAs() {
+    if (saveInFlight) {
+      console.log('[Save] Save As suppressed — save already in flight');
+      return;
+    }
+    saveInFlight = true;
     fileMenuOpen = false;
+    try {
+      await saveCompositionAsInner();
+    } finally {
+      saveInFlight = false;
+    }
+  }
+
+  // The actual Save As work. Always shows a file picker. Caller owns the
+  // mutex — split out so saveComposition can re-use it without lock thrash.
+  async function saveCompositionAsInner() {
     const jsonStr = await project.exportProjectJSONForSave();
     const suggestedName = `${$project.name.replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().split('T')[0]}.gha`;
 
@@ -2732,7 +2775,7 @@
           // Derive project dir from the chosen file path
           const sep = filePath.includes('\\') ? '\\' : '/';
           const projectDir = filePath.substring(0, filePath.lastIndexOf(sep) + 1);
-          const portableJson = await materializeBlobsInProject(jsonStr, projectDir);
+          const portableJson = await materializeAssetsInProject(jsonStr, projectDir);
           const writeResult = await api.invoke('save_file_text', { path: filePath, content: portableJson });
           if (!writeResult?.success) {
             alert(`Save failed: ${writeResult?.error || 'unknown error'}`);
@@ -2745,8 +2788,13 @@
           clearAutosave();
           return;
         } catch (err: any) {
-          console.error('Electron save failed, falling back to browser API:', err);
-          // fall through to browser path below
+          // In Electron, do NOT fall through to the browser File System
+          // Access API — that pops a second native picker on top of the
+          // failed one and explains the "two dialogs in a row" bug. Surface
+          // the error and let the user retry.
+          console.error('[Save As] Electron save failed:', err);
+          alert(`Save failed: ${err?.message || err}`);
+          return;
         }
       }
     }
@@ -2807,6 +2855,24 @@
     const file = input.files?.[0];
     if (!file) return;
 
+    // Resolve the absolute disk path BEFORE the import runs so we can
+    // pass it as projectDir. Without this, sibling-file references in
+    // the .gha (the relative `./video.mp4` paths that
+    // materializeBlobsInProject wrote at save-time) can't be resolved
+    // and every media layer comes back with a dead `./filename` src
+    // — looking like the saved-then-reopened project lost everything.
+    //
+    // Electron 32+ removed the non-standard `File.path` extension;
+    // `webUtils.getPathForFile` is the official replacement. Returns
+    // null in the web build or when the file came from a remote drop.
+    const w = window as any;
+    const electronPath: string | null = w.electronAPI?.getPathForFile?.(file) || null;
+    let projectDir: string | undefined;
+    if (electronPath) {
+      const sep = electronPath.includes('\\') ? '\\' : '/';
+      projectDir = electronPath.substring(0, electronPath.lastIndexOf(sep) + 1);
+    }
+
     const reader = new FileReader();
     reader.onload = (e) => {
       const content = e.target?.result as string;
@@ -2818,18 +2884,12 @@
         try { isfShaderCache.clear(); } catch {}
         try { modulationStore.clearAll(); } catch {}
 
-        const success = project.importProjectJSON(content);
+        const success = project.importProjectJSON(content, projectDir);
         if (success) {
-          console.log('Project loaded successfully');
+          console.log('Project loaded successfully', projectDir ? `(projectDir=${projectDir})` : '(no projectDir)');
           currentFileHandle = null; // Clear file handle since we loaded via file input
-          // Resolve absolute disk path via the preload bridge. Electron 32+
-          // removed the non-standard `File.path` extension; webUtils.getPathForFile
-          // is the official replacement. Returns null when the renderer is in
-          // the web build (no electronAPI) or the file came from a remote drop.
           // Track the loaded path so Save (Ctrl+S) overwrites the same .gha
           // file instead of triggering a Save As dialog.
-          const w = window as any;
-          const electronPath = w.electronAPI?.getPathForFile?.(file) || null;
           currentProjectPath = electronPath;
           recentFiles.add(file.name, electronPath);
           markAsSaved();
@@ -2847,28 +2907,37 @@
     input.value = '';
   }
 
+  // Styled modal for the "New" file action — replaces the native confirm()
+  // dialog so the prompt matches the rest of the in-app modals (close,
+  // recovery) and shows below the menubar instead of as an OS-level alert.
+  let showNewProjectModal = false;
   function newComposition() {
     fileMenuOpen = false;
-    if (confirm('Create a new composition? Any unsaved changes will be lost.')) {
-      project.newProject('Untitled Project');
-      vjClipLauncher.reset();
-      synthVisionStore.reset();
-      mediaLibrary.reset();
-      modulationStore.clearAll();
-      // Reset macros so the new project starts with empty 8 knobs instead
-      // of inheriting the last project's destinations (would write to
-      // layers that don't exist yet, looking like ghost-mappings).
-      macros.reset();
-      // Same for snapshots — fresh project, empty 16-slot bank.
-      snapshots.reset();
-      currentFileHandle = null; // Clear file handle for new project
-      // Also clear the Electron path so Save doesn't accidentally overwrite
-      // the previously-loaded .gha with a fresh empty project.
-      currentProjectPath = null;
-      history.clear();
-      markAsSaved();
-      clearAutosave();
-    }
+    showNewProjectModal = true;
+  }
+  function newProjectConfirm() {
+    showNewProjectModal = false;
+    project.newProject('Untitled Project');
+    vjClipLauncher.reset();
+    synthVisionStore.reset();
+    mediaLibrary.reset();
+    modulationStore.clearAll();
+    // Reset macros so the new project starts with empty 8 knobs instead
+    // of inheriting the last project's destinations (would write to
+    // layers that don't exist yet, looking like ghost-mappings).
+    macros.reset();
+    // Same for snapshots — fresh project, empty 16-slot bank.
+    snapshots.reset();
+    currentFileHandle = null; // Clear file handle for new project
+    // Also clear the Electron path so Save doesn't accidentally overwrite
+    // the previously-loaded .gha with a fresh empty project.
+    currentProjectPath = null;
+    history.clear();
+    markAsSaved();
+    clearAutosave();
+  }
+  function newProjectCancel() {
+    showNewProjectModal = false;
   }
 
   // =========================================================================
@@ -3293,6 +3362,53 @@
   function canvasToSvgX(nx: number): number { return canvasOffsetX + nx * canvasWidth; }
   function canvasToSvgY(ny: number): number { return canvasOffsetY + (1 - ny) * canvasHeight; }
 
+  // Distance from point to a line segment, plus the t-parameter of the
+  // closest point along the segment. Used by the mask add-point mode to
+  // pick the edge under the cursor + interpolate the insertion point.
+  function distToMaskSegment(p: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }): { dist: number; t: number } {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    if (len2 === 0) return { dist: Math.hypot(p.x - a.x, p.y - a.y), t: 0 };
+    const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
+    return { dist: Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy)), t };
+  }
+
+  // Find the closest edge across all closed mask shapes to the given SVG
+  // pixel position. Returns { shapeIdx, edgeIdx, t, insertNorm } or null
+  // if no edge is within MASK_EDGE_HIT_THRESHOLD. insertNorm is the
+  // normalized 0..1 UV coordinate where a new anchor would land if
+  // inserted on that edge.
+  function findClosestMaskEdge(px: number, py: number): {
+    shapeIdx: number; edgeIdx: number; t: number; insertNorm: Point2D
+  } | null {
+    if (!$selectedLayer?.mask?.shapes) return null;
+    let best: { shapeIdx: number; edgeIdx: number; t: number; dist: number; aN: Point2D; bN: Point2D } | null = null;
+    for (let si = 0; si < $selectedLayer.mask.shapes.length; si++) {
+      const shape = $selectedLayer.mask.shapes[si];
+      if (!shape.closed || shape.points.length < 3) continue;
+      for (let i = 0; i < shape.points.length; i++) {
+        const a = shape.points[i];
+        const b = shape.points[(i + 1) % shape.points.length];
+        const aPx = { x: canvasToSvgX(a.x), y: canvasToSvgY(a.y) };
+        const bPx = { x: canvasToSvgX(b.x), y: canvasToSvgY(b.y) };
+        const r = distToMaskSegment({ x: px, y: py }, aPx, bPx);
+        if (!best || r.dist < best.dist) {
+          best = { shapeIdx: si, edgeIdx: i, t: r.t, dist: r.dist, aN: a, bN: b };
+        }
+      }
+    }
+    if (!best || best.dist > MASK_EDGE_HIT_THRESHOLD) return null;
+    return {
+      shapeIdx: best.shapeIdx,
+      edgeIdx: best.edgeIdx,
+      t: best.t,
+      insertNorm: {
+        x: best.aN.x + best.t * (best.bN.x - best.aN.x),
+        y: best.aN.y + best.t * (best.bN.y - best.aN.y),
+      },
+    };
+  }
+
   // ============================================================================
   // GENERATIVE DRAWING HANDLERS (for freehand and point-click lines)
   // ============================================================================
@@ -3421,7 +3537,27 @@
     if (!$selectedLayer?.mask?.enabled) return;
     // Ignore clicks that originate on anchor / handle dots
     const target = e.target as Element | null;
-    if (target && target.closest('.mask-anchor, .mask-handle')) return;
+    if (target && target.closest('.mask-anchor, .mask-handle, .mask-pen-toolbar')) return;
+
+    // Add mode: detect edge under cursor and insert a knot there instead
+    // of treating the click as a new draw-mode anchor. Add only operates
+    // on closed shapes; empty-canvas clicks while in add mode and not over
+    // any edge are intentionally a no-op so the user doesn't accidentally
+    // start a new shape.
+    if (maskPenMode === 'add') {
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      const svgX = e.clientX - rect.left;
+      const svgY = e.clientY - rect.top;
+      const hit = findClosestMaskEdge(svgX, svgY);
+      if (hit) {
+        project.insertMaskPoint($selectedLayer.id, hit.shapeIdx, hit.edgeIdx, hit.insertNorm);
+        recordHistory();
+      }
+      return;
+    }
+    // Remove mode: empty-canvas clicks are no-op; user must click an
+    // anchor (handled by handleMaskAnchorMouseDown which checks the mode).
+    if (maskPenMode === 'remove') return;
 
     const norm = mouseToCanvasCoords(e);
     const clampedAnchor: Point2D = {
@@ -3528,6 +3664,20 @@
     e.stopPropagation();
     e.preventDefault();
     const mask = $selectedLayer?.mask;
+    // Remove mode: left-click on anchor deletes it. Match the
+    // CustomShapeHandles behaviour where the toolbar shifts what a
+    // click does without forcing the user to right-click.
+    if (maskPenMode === 'remove' && mask) {
+      const shape = mask.shapes[shapeIndex];
+      // Don't drop a closed shape below 3 anchors — that's the minimum
+      // for a valid polygon. The store would otherwise nuke the whole
+      // shape (consistent with right-click delete) which is surprising
+      // when the user just wanted to trim one point.
+      if (shape?.closed && shape.points.length <= 3) return;
+      project.removeMaskPoint($selectedLayer!.id, shapeIndex, pointIndex);
+      recordHistory();
+      return;
+    }
     if (mask && pointIndex === 0) {
       const shape = mask.shapes[shapeIndex];
       if (shape && !shape.closed && shape.points.length >= 3) {
@@ -3539,6 +3689,29 @@
     draggingMaskAnchor = { shapeIndex, pointIndex };
     window.addEventListener('mousemove', handleMaskAnchorDrag);
     window.addEventListener('mouseup', handleMaskAnchorDragEnd);
+  }
+
+  // Track cursor over the mask overlay for add-mode hover feedback.
+  function handleMaskOverlayMouseMove(e: MouseEvent) {
+    if (maskPenMode !== 'add' || !$selectedLayer?.mask?.enabled) {
+      if (maskHoverEdgeIdx !== -1) {
+        maskHoverEdgeIdx = -1;
+        maskHoverShapeIdx = -1;
+      }
+      return;
+    }
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const svgX = e.clientX - rect.left;
+    const svgY = e.clientY - rect.top;
+    maskHoverPx = { x: svgX, y: svgY };
+    const hit = findClosestMaskEdge(svgX, svgY);
+    if (hit) {
+      maskHoverShapeIdx = hit.shapeIdx;
+      maskHoverEdgeIdx = hit.edgeIdx;
+    } else {
+      maskHoverShapeIdx = -1;
+      maskHoverEdgeIdx = -1;
+    }
   }
 
   function handleMaskAnchorDrag(e: MouseEvent) {
@@ -4612,9 +4785,13 @@
         <!-- Mask editing overlay (multi-shape bezier pen tool) -->
         {#if $selectedLayer?.mask?.enabled}
           {@const maskShapes = $selectedLayer.mask.shapes ?? []}
+          {@const maskHasClosedShape = maskShapes.some(s => s.closed)}
           <div
             class="mask-overlay"
+            class:add-mode={maskPenMode === 'add'}
+            class:remove-mode={maskPenMode === 'remove'}
             onmousedown={handleMaskMouseDown}
+            onmousemove={handleMaskOverlayMouseMove}
             oncontextmenu={handleMaskOverlayContextMenu}
             role="presentation"
           >
@@ -4762,7 +4939,68 @@
                 <!-- Anchor preview dot, drawn last so it sits on top -->
                 <circle cx={anchorPx.x} cy={anchorPx.y} r="6" fill="#fff" stroke="#ff00ff" stroke-width="2" />
               {/if}
+
+              <!-- Add-mode edge hover indicator: green crosshair at the
+                   insertion point so the user can SEE where the new anchor
+                   will land before they click. -->
+              {#if maskPenMode === 'add' && maskHoverEdgeIdx >= 0}
+                <circle cx={maskHoverPx.x} cy={maskHoverPx.y} r="6" fill="none" stroke="#00ff88" stroke-width="2" />
+                <line x1={maskHoverPx.x - 4} y1={maskHoverPx.y} x2={maskHoverPx.x + 4} y2={maskHoverPx.y} stroke="#00ff88" stroke-width="2" />
+                <line x1={maskHoverPx.x} y1={maskHoverPx.y - 4} x2={maskHoverPx.x} y2={maskHoverPx.y + 4} stroke="#00ff88" stroke-width="2" />
+              {/if}
             </svg>
+
+            <!-- Pen-tool toolbar — only appears once at least one shape is
+                 closed (modes only make sense for finished polygons). The
+                 toolbar mirrors CustomShapeHandles' pen toolbar exactly so
+                 users get the same UX between masks and custom shapes. -->
+            {#if maskHasClosedShape}
+              <div class="mask-pen-toolbar" role="toolbar" aria-label="Mask pen tool">
+                <button
+                  class="mask-pen-btn"
+                  class:active={maskPenMode === 'edit'}
+                  title="Select & Move"
+                  onclick={(e) => { e.stopPropagation(); maskPenMode = 'edit'; }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/>
+                  </svg>
+                </button>
+                <button
+                  class="mask-pen-btn"
+                  class:active={maskPenMode === 'add'}
+                  title="Add Point — click an edge to insert"
+                  onclick={(e) => { e.stopPropagation(); maskPenMode = 'add'; }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M4 20L8 4l4 10 6-2"/>
+                    <line x1="16" y1="6" x2="16" y2="14"/>
+                    <line x1="12" y1="10" x2="20" y2="10"/>
+                  </svg>
+                </button>
+                <button
+                  class="mask-pen-btn"
+                  class:active={maskPenMode === 'remove'}
+                  title="Remove Point — click an anchor to delete"
+                  onclick={(e) => { e.stopPropagation(); maskPenMode = 'remove'; }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M4 20L8 4l4 10 6-2"/>
+                    <line x1="12" y1="10" x2="20" y2="10"/>
+                  </svg>
+                </button>
+                <span class="mask-pen-hint">
+                  {#if maskPenMode === 'edit'}
+                    Drag anchors. Right-click anchor to delete.
+                  {:else if maskPenMode === 'add'}
+                    Click an edge to insert a point.
+                  {:else}
+                    Click an anchor to remove it.
+                  {/if}
+                </span>
+              </div>
+            {/if}
+
             <div class="mask-hint">
               Click to add points · Drag to add curves · Right-click empty area to close shape · Right-click anchor to delete
             </div>
@@ -5057,6 +5295,35 @@
 <ConfirmPopover />
 
 <!-- Close Confirmation Modal -->
+{#if showNewProjectModal}
+  <div class="close-modal-backdrop" onclick={newProjectCancel}>
+    <div class="close-modal" onclick={(e) => e.stopPropagation()}>
+      <div class="close-modal-icon">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="12" y1="18" x2="12" y2="12"/>
+          <line x1="9" y1="15" x2="15" y2="15"/>
+        </svg>
+      </div>
+      <h2 class="close-modal-title">New Composition</h2>
+      <p class="close-modal-desc">Start a new project? Any unsaved changes will be lost.</p>
+      <div class="close-modal-actions">
+        <button class="close-modal-btn btn-save" onclick={newProjectConfirm}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="12" y1="5" x2="12" y2="19"/>
+            <line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          Create New
+        </button>
+        <button class="close-modal-btn btn-cancel" onclick={newProjectCancel}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 {#if showCloseModal}
   <div class="close-modal-backdrop" onclick={closeModalCancel}>
     <div class="close-modal" onclick={(e) => e.stopPropagation()}>
@@ -6895,6 +7162,59 @@
     font-size: 12px;
     pointer-events: none;
     white-space: nowrap;
+  }
+
+  /* Mask pen tool overrides the crosshair cursor for non-edit modes so the
+     user has a visual cue that left-click does something different. */
+  .mask-overlay.add-mode { cursor: copy; }
+  .mask-overlay.remove-mode { cursor: not-allowed; }
+
+  /* Pen toolbar overlay — mirrors CustomShapeHandles.pen-toolbar styles
+     so masks and custom shapes have the same look. Positioned at the top
+     center of the mask overlay so it doesn't overlap the bottom hint. */
+  .mask-pen-toolbar {
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    background: rgba(0, 0, 0, 0.85);
+    border: 1px solid rgba(255, 0, 255, 0.4);
+    border-radius: 6px;
+    padding: 3px 8px;
+    pointer-events: auto;
+    z-index: 60;
+  }
+  .mask-pen-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    color: #aaa;
+    cursor: pointer;
+    padding: 0;
+  }
+  .mask-pen-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+  }
+  .mask-pen-btn.active {
+    background: rgba(255, 0, 255, 0.2);
+    border-color: #ff00ff;
+    color: #ff00ff;
+  }
+  .mask-pen-hint {
+    font-size: 10px;
+    color: #888;
+    white-space: nowrap;
+    user-select: none;
+    margin-left: 6px;
   }
 
   .text-panel-sidebar {

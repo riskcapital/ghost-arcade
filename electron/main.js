@@ -13,7 +13,7 @@
  * No pixels touch CPU memory in the send path.
  */
 
-import { app, BrowserWindow, desktopCapturer, ipcMain, screen, session, utilityProcess } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, net as electronNet, protocol, screen, session, utilityProcess } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn, fork, execSync } from 'child_process';
@@ -97,6 +97,54 @@ app.on('child-process-gone', (_ev, details) => {
   if (!details) return;
   console.error(`[Main] child-process-gone: type=${details.type} reason=${details.reason} exitCode=${details.exitCode} name=${details.name || ''}`);
 });
+
+// ============================================================
+// Custom protocol: ghost-asset://
+// ============================================================
+//
+// Why this exists:
+//   The renderer (Chromium) blocks all `file://` URLs by default —
+//   "Not allowed to load local resource". That ban applies to <video>,
+//   <img>, fetch(), and Three.js loaders alike. Without a custom scheme
+//   our AssetRef resolver could only produce URLs the loader couldn't
+//   actually open, which is what showed up in the user's console as
+//   "Not allowed to load local resource: file:///C:/Users/.../video.mp4".
+//
+//   We register `ghost-asset://` as a privileged scheme that is treated
+//   like https for all the things <video> + <img> need (CORS, range
+//   requests for video seek, supportFetchAPI, stream). The handler
+//   resolves the URL back to a disk path and streams the bytes.
+//
+//   URL shape: `ghost-asset:///C:/Users/justi/Videos/clip.mp4`
+//   The third slash after the scheme makes the rest look like a path
+//   to net.fetch + Web Standards URL parsing. Spaces and other special
+//   characters are percent-encoded by pathToGhostAssetUrl in the
+//   renderer's assetRegistry.ts.
+//
+// privileged + standard:    Required so the URL parser treats it as
+//                           hierarchical (`scheme://host/path`) rather
+//                           than opaque (`scheme:opaque-data`).
+// secure:                   Treated as https-equivalent — no mixed
+//                           content warnings, allowed in service
+//                           workers, etc.
+// supportFetchAPI:          fetch() and Three.js loaders work.
+// stream:                   <video> can issue Range requests for seeks
+//                           without buffering the entire file first.
+// corsEnabled:              Let renderer code read response bytes for
+//                           thumbnails / canvas drawing without taint.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'ghost-asset',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      corsEnabled: true,
+      bypassCSP: true,
+    },
+  },
+]);
 
 // ============================================================
 // State
@@ -1199,6 +1247,66 @@ function registerIpcHandlers() {
     }
   });
 
+  function extensionFromMime(mime) {
+    const m = String(mime || '').toLowerCase();
+    if (m.includes('mp4')) return '.mp4';
+    if (m.includes('webm')) return '.webm';
+    if (m.includes('quicktime')) return '.mov';
+    if (m.includes('png')) return '.png';
+    if (m.includes('jpeg') || m.includes('jpg')) return '.jpg';
+    if (m.includes('gif')) return '.gif';
+    if (m.includes('svg')) return '.svg';
+    return '.bin';
+  }
+
+  function safeGeneratedAssetFilename(filename, mime) {
+    const parsed = path.parse(String(filename || 'asset'));
+    const base = (parsed.name || 'asset')
+      .replace(/[^a-zA-Z0-9._ -]/g, '_')
+      .replace(/\s+/g, '_')
+      .slice(0, 80) || 'asset';
+    const ext = (parsed.ext && parsed.ext.length <= 12)
+      ? parsed.ext.replace(/[^a-zA-Z0-9.]/g, '')
+      : extensionFromMime(mime);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const rand = Math.random().toString(36).slice(2, 8);
+    return `${base}_${stamp}_${rand}${ext || extensionFromMime(mime)}`;
+  }
+
+  // --- Persist generated/session blobs to app-managed disk storage ---
+  // AI videos, looped clips, and recordings do not have an original filesystem
+  // path. The renderer sends their bytes here once, then project saves can keep
+  // a normal disk-backed AssetRef instead of a dead blob: URL.
+  ipcMain.handle('save_generated_asset', async (_, args) => {
+    try {
+      if (!args || typeof args !== 'object') return { success: false, error: 'Invalid arguments' };
+      const { filename, mime, bytes } = args;
+      let buffer;
+      if (Buffer.isBuffer(bytes)) {
+        buffer = bytes;
+      } else if (bytes instanceof ArrayBuffer) {
+        buffer = Buffer.from(bytes);
+      } else if (ArrayBuffer.isView(bytes)) {
+        buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      } else if (Array.isArray(bytes)) {
+        buffer = Buffer.from(bytes);
+      } else {
+        return { success: false, error: 'Invalid bytes payload' };
+      }
+      if (!buffer.length) return { success: false, error: 'Generated asset is empty' };
+
+      const dir = path.join(app.getPath('userData'), 'project-assets');
+      fs.mkdirSync(dir, { recursive: true });
+      const safeName = safeGeneratedAssetFilename(filename, mime);
+      const dest = path.join(dir, safeName);
+      fs.writeFileSync(dest, buffer);
+      return { success: true, path: dest };
+    } catch (err) {
+      console.error('[Main] save_generated_asset error:', err?.message || err);
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
   // --- Cloud shader persistence to disk ---
   // Synced shaders from the public catalog are written to {userData}/shaders/<id>.fs
   // so they survive localStorage clears + reinstalls. localStorage stays as the
@@ -1517,6 +1625,48 @@ function registerIpcHandlers() {
       return { success: true };
     } catch (err) {
       console.error('[Main] save_file_binary error:', err?.message || err);
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
+  // --- Copy an on-disk file to a project sibling path ---
+  // Used by materializeBlobsInProject when saving — copies the user's original
+  // picked-from-disk file (captured via webUtils.getPathForFile at import time)
+  // alongside the .gha. Skips the base64 IPC round-trip that save_file_binary
+  // requires for blob: URLs, which adds seconds per gigabyte for large videos.
+  ipcMain.handle('copy_file_to_project', async (_, args) => {
+    try {
+      if (!args || typeof args !== 'object') return { success: false, error: 'Invalid arguments' };
+      const { sourcePath, destPath } = args;
+      if (typeof sourcePath !== 'string' || !sourcePath) {
+        return { success: false, error: 'Invalid sourcePath' };
+      }
+      if (typeof destPath !== 'string' || !destPath) {
+        return { success: false, error: 'Invalid destPath' };
+      }
+      const normSrc = path.normalize(sourcePath);
+      const normDest = path.normalize(destPath);
+      if (!path.isAbsolute(normSrc) || normSrc.includes('..')) {
+        return { success: false, error: 'sourcePath must be absolute (no traversal)' };
+      }
+      if (!path.isAbsolute(normDest) || normDest.includes('..')) {
+        return { success: false, error: 'destPath must be absolute (no traversal)' };
+      }
+      // Same-file no-op — common when the project sits in the same dir as the
+      // original media (Save in place to a project folder of curated assets).
+      try {
+        const srcStat = fs.statSync(normSrc);
+        if (fs.existsSync(normDest)) {
+          const dstStat = fs.statSync(normDest);
+          if (srcStat.ino === dstStat.ino && srcStat.dev === dstStat.dev) {
+            return { success: true, skipped: 'same-file' };
+          }
+        }
+      } catch { /* fall through to the actual copy */ }
+      fs.copyFileSync(normSrc, normDest);
+      return { success: true };
+    } catch (err) {
+      console.error('[Main] copy_file_to_project error:', err?.message || err);
       return { success: false, error: err?.message || String(err) };
     }
   });
@@ -2249,6 +2399,85 @@ app.on('second-instance', () => {
 app.whenReady().then(async () => {
   setupPermissions();
   registerIpcHandlers();
+
+  // Wire up the ghost-asset:// protocol handler. The scheme was registered
+  // as privileged at module top so the renderer treats URLs as standard
+  // hierarchical (scheme://host/path); the actual byte-streaming happens
+  // here. We map `ghost-asset:///<absPath>` → file at <absPath>.
+  //
+  // Path resolution is intentionally strict: only absolute paths, no
+  // traversal, and we do NOT confine to a project directory. Reason:
+  // users routinely save .gha files into project folders that reference
+  // media scattered across `C:\Users\*\Videos`, network drives, external
+  // SSDs, etc. Confining would block the very use case AssetRef is for.
+  // The URL is constructed by our own assetRegistry from getPathForFile
+  // and never from untrusted page content, so traversal isn't a vector
+  // unless an attacker can also forge a project file — at which point
+  // they already control the disk.
+  // Wrap a Response to add CORS headers. WebGL refuses to sample a video
+  // texture loaded cross-origin unless the response advertises
+  // Access-Control-Allow-Origin AND the <video crossOrigin="anonymous">
+  // attribute was set before src. Without these headers Three.js throws
+  // "SecurityError: Failed to execute 'texImage2D' ... contains
+  // cross-origin data" on every frame.
+  const addCorsHeaders = (resp) => {
+    const headers = new Headers(resp.headers);
+    headers.set('Access-Control-Allow-Origin', '*');
+    headers.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+    headers.set('Access-Control-Allow-Headers', '*');
+    headers.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
+    return new Response(resp.body, {
+      status: resp.status,
+      statusText: resp.statusText,
+      headers,
+    });
+  };
+
+  protocol.handle('ghost-asset', async (request) => {
+    try {
+      // CORS preflight — answer immediately, no file read needed.
+      if (request.method === 'OPTIONS') {
+        return addCorsHeaders(new Response(null, { status: 204 }));
+      }
+      const url = new URL(request.url);
+      // For URL "ghost-asset:///C:/Users/x/v.mp4":
+      //   url.pathname = "/C:/Users/x/v.mp4"
+      // Strip the leading slash and decode percent-encoding back to a
+      // raw filesystem path. On Windows we get back drive-letter form
+      // (`C:/Users/x/v.mp4`); on POSIX we get an absolute path.
+      let p = decodeURIComponent(url.pathname);
+      if (p.startsWith('/') && /^\/[A-Za-z]:\//.test(p)) {
+        p = p.slice(1); // strip leading slash on Windows drive paths
+      }
+      const normalized = path.normalize(p);
+      if (!path.isAbsolute(normalized) || normalized.includes('..')) {
+        return addCorsHeaders(new Response('Bad path', { status: 400 }));
+      }
+      if (!fs.existsSync(normalized)) {
+        return addCorsHeaders(new Response('Not found', { status: 404 }));
+      }
+      // Re-emit as file:// for net.fetch — it handles range requests +
+      // streaming for us, which <video> needs to seek without buffering
+      // the whole file. We can't expose file:// to the renderer directly
+      // (that's the bug we're fixing), but main-process net.fetch can.
+      // Forward the Range header so <video> seek + decoder buffering work
+      // correctly — without it net.fetch returns the whole file for every
+      // request and the browser can't issue partial reads.
+      const fileUrl = 'file:///' + normalized.replace(/\\/g, '/').replace(/^\//, '');
+      const fetchHeaders = new Headers();
+      const range = request.headers.get('range');
+      if (range) fetchHeaders.set('range', range);
+      const resp = await electronNet.fetch(fileUrl, {
+        method: request.method,
+        headers: fetchHeaders,
+        bypassCustomProtocolHandlers: true,
+      });
+      return addCorsHeaders(resp);
+    } catch (err) {
+      console.error('[ghost-asset] handler error:', err?.message || err);
+      return addCorsHeaders(new Response('Internal error', { status: 500 }));
+    }
+  });
 
   // Eagerly load Spout addon so we see errors immediately
   const addon = loadSpoutAddon();

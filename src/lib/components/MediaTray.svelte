@@ -23,6 +23,12 @@
   import * as THREE from 'three';
   import { modulationStore, setParamModSource, setParamModAmount, setBaseValue, registerParamRanges, type ModSource, type ParamModulation } from '../audio/modulation';
   import { mediaTrayShaders } from '../stores/mediaTrayShaders';
+  import { createAssetRefFromFile, createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
+  // Built-in Three.js / p5.js animations — auto-discovered from
+  // public/threejs/ at build time by the vite plugin (see vite.config.ts).
+  // Add a folder there, rebuild, it appears in the JS tab automatically.
+  // @ts-expect-error virtual module supplied by vite plugin
+  import bundledThreeJSItems from 'virtual:threejs-bundles';
 
   // Module-level shader cache — survives component remounts
   const _win = window as any;
@@ -805,7 +811,62 @@
   // store subscription in `hydrateUserShaders()` so the tray reflects synced
   // shaders automatically.
 
+  // Built-in JS animations seeded into jsAnimations on mount. The list
+  // is supplied by the vite plugin at build time so dropping a new
+  // folder into public/threejs/<name>/ ships it on the next build.
+  const BUILT_IN_THREEJS: Array<{ id: string; folder: string; name: string; url: string }> =
+    bundledThreeJSItems as any;
+
+  async function seedBuiltInThreeJSItems() {
+    for (const def of BUILT_IN_THREEJS) {
+      // Skip if already in the list (re-mount of MediaTray would duplicate)
+      if (jsAnimations.some(a => a.id === def.id)) continue;
+      try {
+        const resp = await fetch(def.url);
+        if (!resp.ok) {
+          console.warn('[MediaTray] failed to fetch built-in', def.url, resp.status);
+          continue;
+        }
+        const htmlCode = await resp.text();
+        const params = parseShaderParamDefs(htmlCode);
+        const values = parseShaderParamValues(htmlCode);
+        const paramValues: Record<string, number | boolean | number[]> = {};
+        for (const p of params) paramValues[p.name] = values[p.name] ?? p.default;
+        const isP5 = /p5\.(min\.)?js|new\s+p5\s*\(/.test(htmlCode);
+        const item: JSAnimationItem = {
+          id: def.id,
+          name: def.name,
+          type: isP5 ? 'p5js' : 'threejs',
+          jsAnimation: {
+            animationType: isP5 ? 'p5js' : 'threejs',
+            htmlCode,
+            params: params.length > 0 ? params : undefined,
+            paramValues: params.length > 0 ? paramValues : undefined,
+          },
+          thumbnail: undefined,
+        };
+        jsAnimations = [...jsAnimations, item];
+        // Background thumbnail capture — non-blocking so the item appears
+        // immediately and the thumbnail backfills a few seconds later.
+        captureJSAnimationThumbnail(htmlCode).then(thumb => {
+          if (!thumb) return;
+          const idx = jsAnimations.findIndex(a => a.id === def.id);
+          if (idx >= 0) {
+            jsAnimations[idx] = { ...jsAnimations[idx], thumbnail: thumb };
+            jsAnimations = [...jsAnimations];
+          }
+        }).catch(() => { /* */ });
+      } catch (err) {
+        console.warn('[MediaTray] error seeding built-in', def.name, err);
+      }
+    }
+  }
+
   onMount(async () => {
+    // Seed built-in Three.js / p5 animations in the background so the JS
+    // tab is never empty out of the box. Doesn't block shader loading.
+    seedBuiltInThreeJSItems();
+
     // If shaders are already cached, use them instantly (filter out hidden)
     if (shaderCache.shaders) {
       shaders = shaderCache.shaders.filter((s: ShaderItem) => !hiddenShaders.has(s.id)).map(withShaderLoadRating);
@@ -916,9 +977,14 @@
     generateMissingThumbnails();
   });
 
-  function getMediaType(file: File): 'image' | 'video' | 'shader' {
+  function getMediaType(file: File): 'image' | 'video' | 'shader' | 'threejs' {
     const ext = file.name.toLowerCase().split('.').pop();
     if (ext === 'fs' || ext === 'isf') return 'shader';
+    // .html / .htm files are treated as Three.js / p5.js animation sources.
+    // The loader will read the file as text and embed it as htmlCode; the
+    // iframe-canvas-as-texture pipeline doesn't care whether the HTML was
+    // hand-written, exported from a tool, or AI-generated.
+    if (ext === 'html' || ext === 'htm') return 'threejs';
     if (file.type.startsWith('video/')) return 'video';
     return 'image';
   }
@@ -938,7 +1004,10 @@
   }
 
   async function addMediaFile(file: File) {
-    const url = URL.createObjectURL(file);
+    // Capture both the runtime URL AND a durable AssetRef. The blob URL dies
+    // at session end; the AssetRef carries the absolute disk path so reload
+    // works even without the .gha sibling-copy (Electron Save As).
+    const { assetRef, runtimeUrl: url } = createAssetRefFromFile(file);
     const mediaType = getMediaType(file);
 
     if (mediaType === 'video') {
@@ -965,6 +1034,7 @@
         type: 'video',
         videoElement: video,
         thumbnail: await captureVideoThumbnail(video),
+        _assetRef: assetRef,
       };
       mediaLibrary.addItem(item);
     } else if (mediaType === 'image') {
@@ -974,6 +1044,7 @@
         src: url,
         type: 'image',
         thumbnail: url,
+        _assetRef: assetRef,
       };
       mediaLibrary.addItem(item);
     } else if (mediaType === 'shader') {
@@ -1017,7 +1088,179 @@
       }
 
       shaders = [...shaders, shaderItem];
+    } else if (mediaType === 'threejs') {
+      // User-supplied Three.js / p5.js animation HTML. Read as text and
+      // embed as htmlCode so the iframe loader can blob-URL it without
+      // needing a stable disk path.
+      try {
+        const htmlCode = await file.text();
+        const baseName = file.name.replace(/\.html?$/i, '');
+        // Auto-detect p5 vs three by looking for the import. Defaults to
+        // threejs so single-canvas pages without either work too.
+        const isP5 = /p5\.(min\.)?js|new p5\(/.test(htmlCode);
+        const animationType: 'threejs' | 'p5js' = isP5 ? 'p5js' : 'threejs';
+
+        // Parse window.shaderParamDefs out of the HTML so the slider UI
+        // can render the right controls. Without this users have to
+        // manually re-declare every param in the app — defeats the point
+        // of supporting param-aware files.
+        const parsedDefs = parseShaderParamDefs(htmlCode);
+        // Also parse window.shaderParams for the live values; falls back
+        // to the def's default if not present.
+        const parsedValues = parseShaderParamValues(htmlCode);
+        const paramValues: Record<string, number | boolean | number[]> = {};
+        for (const def of parsedDefs) {
+          paramValues[def.name] = parsedValues[def.name] ?? def.default;
+        }
+
+        const jsAnimation: JSAnimationSource = {
+          animationType,
+          htmlCode,
+          params: parsedDefs.length > 0 ? parsedDefs : undefined,
+          paramValues: parsedDefs.length > 0 ? paramValues : undefined,
+        };
+
+        // Snapshot the first rendered frame as a thumbnail. Best-effort —
+        // failures (cross-origin, no canvas, slow first frame) fall back
+        // to no thumbnail, same as the AI-gen path.
+        let thumbnail: string | undefined;
+        try { thumbnail = await captureJSAnimationThumbnail(htmlCode); }
+        catch { /* leave undefined */ }
+
+        const jsItem: JSAnimationItem = {
+          id: generateUUID(),
+          name: baseName,
+          type: animationType,
+          jsAnimation,
+          thumbnail,
+        };
+        jsAnimations = [...jsAnimations, jsItem];
+        activeTab = 'js';
+      } catch (err) {
+        console.error('[MediaTray] failed to import .html as Three.js animation:', err);
+      }
     }
+  }
+
+  /**
+   * Extract a balanced object-or-array literal from `html` starting after
+   * the first match of `pattern`. Handles nested brackets (e.g. a defs
+   * array whose entries contain `default: [0.4, 0.7, 1.0]`) and strings
+   * with brackets inside them. Returns the literal text including its
+   * outer brackets, or null when no match / unbalanced.
+   *
+   * Why this exists: the original regex match `\[[\s\S]*?\]` is non-
+   * greedy and stops at the FIRST closing bracket, so a color default
+   * like `[0.4, 0.7, 1.0]` truncates the entire defs array and the
+   * caller falls back to "no params" — exactly the user-visible bug we
+   * just hit with the Embryo defaults.
+   */
+  function extractBracketedAfter(html: string, pattern: RegExp): string | null {
+    const m = html.match(pattern);
+    if (!m || m.index === undefined) return null;
+    let i = m.index + m[0].length;
+    while (i < html.length && /\s/.test(html[i])) i++;
+    if (i >= html.length) return null;
+    const open = html[i];
+    if (open !== '[' && open !== '{') return null;
+    const close = open === '[' ? ']' : '}';
+    let depth = 0;
+    let inStr = false;
+    let strCh = '';
+    for (let j = i; j < html.length; j++) {
+      const c = html[j];
+      if (inStr) {
+        if (c === '\\') { j++; continue; }
+        if (c === strCh) inStr = false;
+      } else {
+        if (c === '"' || c === "'" || c === '`') { inStr = true; strCh = c; }
+        else if (c === open) depth++;
+        else if (c === close) {
+          depth--;
+          if (depth === 0) return html.slice(i, j + 1);
+        }
+      }
+    }
+    return null;
+  }
+
+  function parseShaderParamDefs(html: string): Array<{
+    name: string;
+    type: 'number' | 'boolean' | 'color';
+    default: number | boolean | number[];
+    min?: number;
+    max?: number;
+    label?: string;
+  }> {
+    const lit = extractBracketedAfter(html, /window\.shaderParamDefs\s*=\s*/);
+    if (!lit) return [];
+    try {
+      const arr = new Function('return ' + lit)();
+      if (!Array.isArray(arr)) return [];
+      return arr.filter(d => d && typeof d.name === 'string' && d.type).map(d => ({
+        name: String(d.name),
+        type: d.type as 'number' | 'boolean' | 'color',
+        default: d.default,
+        min: typeof d.min === 'number' ? d.min : undefined,
+        max: typeof d.max === 'number' ? d.max : undefined,
+        label: typeof d.label === 'string' ? d.label : d.name,
+      }));
+    } catch (err) {
+      console.warn('[MediaTray] failed to parse shaderParamDefs:', err);
+      return [];
+    }
+  }
+
+  function parseShaderParamValues(html: string): Record<string, number | boolean | number[]> {
+    const lit = extractBracketedAfter(html, /window\.shaderParams\s*=\s*/);
+    if (!lit) return {};
+    try {
+      const obj = new Function('return ' + lit)();
+      return (obj && typeof obj === 'object') ? obj : {};
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * Mount the HTML in a hidden iframe long enough to capture the first
+   * frame as a 160×90 JPEG thumbnail. Cleans up the iframe after. Fails
+   * silently on cross-origin / no-canvas / slow-load.
+   */
+  async function captureJSAnimationThumbnail(html: string): Promise<string | undefined> {
+    return new Promise((resolve) => {
+      const blob = new Blob([html], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const iframe = document.createElement('iframe');
+      iframe.style.cssText = 'position:absolute;left:-9999px;top:-9999px;width:320px;height:180px;border:none;';
+      iframe.src = url;
+      document.body.appendChild(iframe);
+
+      const finish = (out: string | undefined) => {
+        try { document.body.removeChild(iframe); } catch {}
+        URL.revokeObjectURL(url);
+        resolve(out);
+      };
+
+      // Give the scene up to 2.5s to produce its first frame. Most
+      // Three.js / p5 sketches paint within 100ms; raymarchers can take
+      // longer. Capped so import doesn't stall the UI thread.
+      setTimeout(() => {
+        try {
+          const doc = iframe.contentDocument || iframe.contentWindow?.document;
+          const canvasEl = doc?.querySelector('canvas') as HTMLCanvasElement | null;
+          if (!canvasEl || canvasEl.width === 0) return finish(undefined);
+          const thumb = document.createElement('canvas');
+          thumb.width = 160; thumb.height = 90;
+          const ctx = thumb.getContext('2d');
+          if (!ctx) return finish(undefined);
+          ctx.drawImage(canvasEl, 0, 0, thumb.width, thumb.height);
+          finish(thumb.toDataURL('image/jpeg', 0.7));
+        } catch {
+          finish(undefined);
+        }
+      }, 2000);
+    });
   }
 
   async function captureVideoThumbnail(video: HTMLVideoElement): Promise<string> {
@@ -1115,6 +1358,10 @@
           type: item.type,
           src: item.src,
           name: item.name,
+          // Carry the library item's AssetRef onto the layer so save+reload
+          // can find the original disk file. Without this the layer ends up
+          // with a dead blob: URL by save time and reload comes back empty.
+          _assetRef: (item as any)._assetRef,
         };
 
         if (item.type === 'video' && item.videoElement) {
@@ -1653,23 +1900,45 @@
         if (video.readyState >= 2) done();
       });
 
-      // Add to media library with "(Loop)" suffix
+      // Persist the generated loop once so project save/reload has a real
+      // disk-backed AssetRef instead of a session-only blob URL.
       const baseName = item.name.replace(/\.[^/.]+$/, ''); // Remove extension
+      const generatedName = `${baseName} (Loop).mp4`;
+      let loopBlob: Blob | null = null;
+      let loopAssetRef: any = undefined;
+      try {
+        const resp = await fetch(loopedUrl);
+        loopBlob = await resp.blob();
+        const captured = await createAssetRefFromGeneratedBlob(
+          loopBlob,
+          generatedName,
+          loopBlob.type || 'video/mp4',
+          loopedUrl,
+        );
+        loopAssetRef = captured.assetRef;
+      } catch (err) {
+        console.warn('[Loop] Failed to persist generated loop asset:', err);
+      }
+
+      // Add to media library with "(Loop)" suffix
       const newItem: MediaItem = {
         id: generateUUID(),
-        name: `${baseName} (Loop).mp4`,
+        name: generatedName,
         src: loopedUrl,
         type: 'video',
         videoElement: video,
         thumbnail: await captureVideoThumbnail(video),
+        _assetRef: loopAssetRef,
       };
 
       mediaLibrary.addItem(newItem);
 
       // Save loop video to disk (same recordings folder as output recording)
       try {
-        const resp = await fetch(loopedUrl);
-        const loopBlob = await resp.blob();
+        if (!loopBlob) {
+          const resp = await fetch(loopedUrl);
+          loopBlob = await resp.blob();
+        }
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
         const safeName = baseName.replace(/[^a-zA-Z0-9_\- ]/g, '').trim().replace(/\s+/g, '_');
         await downloadRecording(loopBlob, `Loop_${safeName}_${timestamp}.mp4`);
@@ -2041,6 +2310,12 @@
     // Normalise MIME type
     const videoBlob = blob.type.startsWith('video/') ? blob : new Blob([blob], { type: 'video/mp4' });
     const blobUrl = URL.createObjectURL(videoBlob);
+    const { assetRef } = await createAssetRefFromGeneratedBlob(
+      videoBlob,
+      `${(name || 'AI Video').replace(/\.[^.]+$/, '')}.mp4`,
+      videoBlob.type || 'video/mp4',
+      blobUrl,
+    );
 
     const video = document.createElement('video');
     video.loop = true;
@@ -2058,6 +2333,7 @@
       type: 'video',
       videoElement: video,
       thumbnail: '',
+      _assetRef: assetRef,
     });
 
     // Wait (up to 5s) for the video to load, then capture a thumbnail
@@ -2276,6 +2552,12 @@
     }
 
     const blobUrl = URL.createObjectURL(blob);
+    const { assetRef } = await createAssetRefFromGeneratedBlob(
+      blob,
+      `${(saved.name || 'Saved Video').replace(/\.[^.]+$/, '')}.mp4`,
+      blob.type || 'video/mp4',
+      blobUrl,
+    );
     const video = document.createElement('video');
     video.loop = true;
     video.muted = true;
@@ -2300,6 +2582,7 @@
       type: 'video',
       videoElement: video,
       thumbnail: saved.thumbnail,
+      _assetRef: assetRef,
     });
 
     activeTab = 'videos';
@@ -2349,15 +2632,24 @@
     }
   }
 
-  // Check if current layer has a JS animation
+  // Check if current layer has a JS animation. The layer source's id is a
+  // composite `${item.id}-${layerId}-${timestamp}` (see applyJSAnimationToLayer)
+  // so an exact `a.id === source.id` match would never succeed — that was
+  // the reason params never appeared after applying an animation. Match
+  // by source.id starting with the tray item's id instead. Fall back to
+  // a name-based lookup for built-in items where the source.id may have
+  // been generated differently.
   $: {
-    if ($selectedLayer?.source?.jsAnimation) {
-      const found = jsAnimations.find(a => a.id === $selectedLayer?.source?.id);
+    const layerSrc = $selectedLayer?.source;
+    if (layerSrc?.jsAnimation) {
+      const sid = layerSrc.id || '';
+      let found = jsAnimations.find(a => sid === a.id || sid.startsWith(a.id + '-'));
+      if (!found) found = jsAnimations.find(a => a.name === layerSrc.name && a.type === (layerSrc as any).type);
       if (found) {
         selectedJSAnimation = found;
-        // Sync param values from layer source
-        if ($selectedLayer.source.jsAnimation.paramValues) {
-          selectedJSAnimation.jsAnimation.paramValues = { ...$selectedLayer.source.jsAnimation.paramValues };
+        // Sync param values from layer source so sliders reflect current state
+        if (layerSrc.jsAnimation.paramValues) {
+          selectedJSAnimation.jsAnimation.paramValues = { ...layerSrc.jsAnimation.paramValues };
         }
       }
     } else {
@@ -2388,8 +2680,14 @@
       });
     }
 
-    // Send parameter update to the iframe
-    updateJSAnimationParams(selectedJSAnimation.id, { [paramName]: value });
+    // Send parameter update to the iframe. The iframe cache is keyed by
+    // the LAYER source's id (set in Canvas.svelte when createJSAnimationContext
+    // is called), NOT by the tray item id — those differ because apply-to-layer
+    // constructs `${item.id}-${layerId}-${timestamp}`. Passing the tray id
+    // here would miss the cache and the slider would do nothing.
+    if (currentSource?.id) {
+      updateJSAnimationParams(currentSource.id, { [paramName]: value });
+    }
   }
 
   // Reactive declaration for available image sources
@@ -3438,7 +3736,7 @@
       Add Files
       <input
         type="file"
-        accept="image/*,video/*,.fs,.isf"
+        accept="image/*,video/*,.fs,.isf,.html,.htm"
         multiple
         onchange={async (e) => {
           const input = e.target as HTMLInputElement;

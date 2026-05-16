@@ -3,6 +3,7 @@
 
 import { writable, derived } from 'svelte/store';
 import type * as THREE from 'three';
+import type { AssetRef } from './../storage/assetRegistry';
 
 export interface MediaItem {
   id: string;
@@ -14,6 +15,8 @@ export interface MediaItem {
   texture?: THREE.Texture; // Cached texture for this media item
   broken?: boolean;        // True when src failed to load (404, missing file, decode error)
   brokenReason?: string;   // Short description for tooltip
+  // Durable file identity — resolves src on reload. Captured at File-import.
+  _assetRef?: AssetRef;
 }
 
 function createMediaStore() {
