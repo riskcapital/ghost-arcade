@@ -1,7 +1,14 @@
 <script lang="ts">
-  import { selectedLayer, project } from '../stores/layers';
+  import { selectedLayer, layers, project } from '../stores/layers';
   import type { BlendMode } from '../types';
   import type { StrokeType, FillType, AnimationType } from '../drawing/types';
+  import EffectParamRow from './EffectParamRow.svelte';
+
+  // The modulation engine identifies the target layer by index into the
+  // project's layer array, not by id. Derive it reactively from the
+  // currently-selected layer so EffectParamRow can build the right
+  // modulation key (`<layerIdx>:edge:<effectId>:<path>`).
+  $: layerIdx = $selectedLayer ? $layers.findIndex(l => l.id === $selectedLayer!.id) : -1;
 
   const strokeTypes: { type: StrokeType; label: string }[] = [
     { type: 'none', label: 'None' },
@@ -111,6 +118,14 @@
     });
   }
 
+  function updateAnimation(effectId: string, animUpdates: Record<string, unknown>) {
+    const effect = $selectedLayer?.edgeEffects?.effects.find(e => e.id === effectId);
+    if (!effect || !$selectedLayer) return;
+    project.updateEdgeEffect($selectedLayer.id, effectId, {
+      animation: { ...effect.animation, ...animUpdates },
+    });
+  }
+
   function setFillType(effectId: string, type: FillType) {
     if (!$selectedLayer) return;
     const defaults: Record<string, any> = {
@@ -183,7 +198,9 @@
                 <option value={bm.value}>{bm.label}</option>
               {/each}
             </select>
-            <!-- Opacity -->
+            <!-- Opacity (kept on the header row as a quick slider; the
+                 modulation-aware version with dropdown sits in the
+                 expanded controls when the effect is opened). -->
             <input type="range" class="opacity-slider" min="0" max="1" step="0.05"
               value={effect.opacity}
               oninput={(e) => updateEffect(effect.id, { opacity: parseFloat((e.target as HTMLInputElement).value) })} />
@@ -213,91 +230,87 @@
                         oninput={(e) => updateStroke(effect.id, { color: hexToRgba((e.target as HTMLInputElement).value, (effect.stroke as any).color?.[3] ?? 1) })} />
                     </div>
                   {/if}
+                  <!-- Layer opacity (top-level, not nested under stroke) —
+                       exposed here so users can modulate it via audio
+                       without leaving the expanded effect controls. -->
+                  <EffectParamRow label="Opacity" min={0} max={1} step={0.01}
+                    layerIndex={layerIdx} effectId={effect.id} paramName="opacity" effectKind="edge"
+                    value={effect.opacity}
+                    displayValue={(v) => (v * 100).toFixed(0) + '%'}
+                    onChange={(v) => updateEffect(effect.id, { opacity: v })} />
                   {#if 'width' in effect.stroke}
-                    <div class="control-row">
-                      <span class="control-label">Width</span>
-                      <input type="range" min="1" max="20" step="0.5" value={effect.stroke.width}
-                        oninput={(e) => updateStroke(effect.id, { width: parseFloat((e.target as HTMLInputElement).value) })} />
-                      <span class="control-value">{(effect.stroke as any).width?.toFixed(1)}</span>
-                    </div>
+                    <EffectParamRow label="Width" min={1} max={20} step={0.5}
+                      layerIndex={layerIdx} effectId={effect.id} paramName="stroke.width" effectKind="edge"
+                      value={effect.stroke.width}
+                      displayValue={(v) => v.toFixed(1)}
+                      onChange={(v) => updateStroke(effect.id, { width: v })} />
                   {/if}
                   {#if (effect.stroke.type === 'glow' || effect.stroke.type === 'neon') && 'glowSize' in effect.stroke}
-                    <div class="control-row">
-                      <span class="control-label">Glow Size</span>
-                      <input type="range" min="5" max="50" step="1" value={(effect.stroke as any).glowSize}
-                        oninput={(e) => updateStroke(effect.id, { glowSize: parseFloat((e.target as HTMLInputElement).value) })} />
-                      <span class="control-value">{(effect.stroke as any).glowSize}</span>
-                    </div>
-                    <div class="control-row">
-                      <span class="control-label">Intensity</span>
-                      <input type="range" min="0.1" max="3" step="0.1" value={(effect.stroke as any).glowIntensity}
-                        oninput={(e) => updateStroke(effect.id, { glowIntensity: parseFloat((e.target as HTMLInputElement).value) })} />
-                      <span class="control-value">{(effect.stroke as any).glowIntensity?.toFixed(1)}</span>
-                    </div>
-                    <div class="control-row">
-                      <span class="control-label">Pulse</span>
-                      <input type="range" min="0" max="3" step="0.1" value={(effect.stroke as any).pulseSpeed}
-                        oninput={(e) => updateStroke(effect.id, { pulseSpeed: parseFloat((e.target as HTMLInputElement).value) })} />
-                      <span class="control-value">{(effect.stroke as any).pulseSpeed?.toFixed(1)}</span>
-                    </div>
+                    <EffectParamRow label="Glow Size" min={5} max={50} step={1}
+                      layerIndex={layerIdx} effectId={effect.id} paramName="stroke.glowSize" effectKind="edge"
+                      value={(effect.stroke as any).glowSize}
+                      displayValue={(v) => v.toFixed(0)}
+                      onChange={(v) => updateStroke(effect.id, { glowSize: v })} />
+                    <EffectParamRow label="Intensity" min={0.1} max={3} step={0.1}
+                      layerIndex={layerIdx} effectId={effect.id} paramName="stroke.glowIntensity" effectKind="edge"
+                      value={(effect.stroke as any).glowIntensity}
+                      displayValue={(v) => v.toFixed(1)}
+                      onChange={(v) => updateStroke(effect.id, { glowIntensity: v })} />
+                    <EffectParamRow label="Pulse" min={0} max={3} step={0.1}
+                      layerIndex={layerIdx} effectId={effect.id} paramName="stroke.pulseSpeed" effectKind="edge"
+                      value={(effect.stroke as any).pulseSpeed}
+                      displayValue={(v) => v.toFixed(1)}
+                      onChange={(v) => updateStroke(effect.id, { pulseSpeed: v })} />
                   {/if}
                   {#if effect.stroke.type === 'snake' && 'length' in effect.stroke}
-                    <div class="control-row">
-                      <span class="control-label">Length</span>
-                      <input type="range" min="0.05" max="0.95" step="0.05" value={(effect.stroke as any).length}
-                        oninput={(e) => updateStroke(effect.id, { length: parseFloat((e.target as HTMLInputElement).value) })} />
-                      <span class="control-value">{((effect.stroke as any).length * 100).toFixed(0)}%</span>
-                    </div>
-                    <div class="control-row">
-                      <span class="control-label">Speed</span>
-                      <input type="range" min="0.1" max="3" step="0.1" value={(effect.stroke as any).speed}
-                        oninput={(e) => updateStroke(effect.id, { speed: parseFloat((e.target as HTMLInputElement).value) })} />
-                      <span class="control-value">{(effect.stroke as any).speed?.toFixed(1)}x</span>
-                    </div>
-                    <div class="control-row">
-                      <span class="control-label">Snakes</span>
-                      <input type="range" min="1" max="8" step="1" value={(effect.stroke as any).snakeCount}
-                        oninput={(e) => updateStroke(effect.id, { snakeCount: parseInt((e.target as HTMLInputElement).value) })} />
-                      <span class="control-value">{(effect.stroke as any).snakeCount}</span>
-                    </div>
+                    <EffectParamRow label="Length" min={0.05} max={0.95} step={0.05}
+                      layerIndex={layerIdx} effectId={effect.id} paramName="stroke.length" effectKind="edge"
+                      value={(effect.stroke as any).length}
+                      displayValue={(v) => (v * 100).toFixed(0) + '%'}
+                      onChange={(v) => updateStroke(effect.id, { length: v })} />
+                    <EffectParamRow label="Speed" min={0.1} max={3} step={0.1}
+                      layerIndex={layerIdx} effectId={effect.id} paramName="stroke.speed" effectKind="edge"
+                      value={(effect.stroke as any).speed}
+                      displayValue={(v) => v.toFixed(1) + 'x'}
+                      onChange={(v) => updateStroke(effect.id, { speed: v })} />
+                    <EffectParamRow label="Snakes" min={1} max={8} step={1}
+                      layerIndex={layerIdx} effectId={effect.id} paramName="stroke.snakeCount" effectKind="edge"
+                      value={(effect.stroke as any).snakeCount}
+                      displayValue={(v) => v.toFixed(0)}
+                      onChange={(v) => updateStroke(effect.id, { snakeCount: Math.round(v) })} />
                   {/if}
                   {#if effect.stroke.type === 'electric' && 'arcIntensity' in effect.stroke}
-                    <div class="control-row">
-                      <span class="control-label">Arc</span>
-                      <input type="range" min="0.1" max="2" step="0.1" value={(effect.stroke as any).arcIntensity}
-                        oninput={(e) => updateStroke(effect.id, { arcIntensity: parseFloat((e.target as HTMLInputElement).value) })} />
-                      <span class="control-value">{(effect.stroke as any).arcIntensity?.toFixed(1)}</span>
-                    </div>
+                    <EffectParamRow label="Arc" min={0.1} max={2} step={0.1}
+                      layerIndex={layerIdx} effectId={effect.id} paramName="stroke.arcIntensity" effectKind="edge"
+                      value={(effect.stroke as any).arcIntensity}
+                      displayValue={(v) => v.toFixed(1)}
+                      onChange={(v) => updateStroke(effect.id, { arcIntensity: v })} />
                   {/if}
                   {#if effect.stroke.type === 'pulse'}
-                    <div class="control-row">
-                      <span class="control-label">Pulses</span>
-                      <input type="range" min="1" max="8" step="1" value={(effect.stroke as any).pulseCount ?? 3}
-                        oninput={(e) => updateStroke(effect.id, { pulseCount: parseInt((e.target as HTMLInputElement).value) })} />
-                      <span class="control-value">{(effect.stroke as any).pulseCount ?? 3}</span>
-                    </div>
+                    <EffectParamRow label="Pulses" min={1} max={8} step={1}
+                      layerIndex={layerIdx} effectId={effect.id} paramName="stroke.pulseCount" effectKind="edge"
+                      value={(effect.stroke as any).pulseCount ?? 3}
+                      displayValue={(v) => v.toFixed(0)}
+                      onChange={(v) => updateStroke(effect.id, { pulseCount: Math.round(v) })} />
                   {/if}
                   {#if effect.stroke.type === 'scanner' && 'beamWidth' in effect.stroke}
-                    <div class="control-row">
-                      <span class="control-label">Beam</span>
-                      <input type="range" min="0.02" max="0.3" step="0.01" value={(effect.stroke as any).beamWidth}
-                        oninput={(e) => updateStroke(effect.id, { beamWidth: parseFloat((e.target as HTMLInputElement).value) })} />
-                      <span class="control-value">{((effect.stroke as any).beamWidth * 100).toFixed(0)}%</span>
-                    </div>
-                    <div class="control-row">
-                      <span class="control-label">Trail</span>
-                      <input type="range" min="0.05" max="0.8" step="0.05" value={(effect.stroke as any).trailLength}
-                        oninput={(e) => updateStroke(effect.id, { trailLength: parseFloat((e.target as HTMLInputElement).value) })} />
-                      <span class="control-value">{((effect.stroke as any).trailLength * 100).toFixed(0)}%</span>
-                    </div>
+                    <EffectParamRow label="Beam" min={0.02} max={0.3} step={0.01}
+                      layerIndex={layerIdx} effectId={effect.id} paramName="stroke.beamWidth" effectKind="edge"
+                      value={(effect.stroke as any).beamWidth}
+                      displayValue={(v) => (v * 100).toFixed(0) + '%'}
+                      onChange={(v) => updateStroke(effect.id, { beamWidth: v })} />
+                    <EffectParamRow label="Trail" min={0.05} max={0.8} step={0.05}
+                      layerIndex={layerIdx} effectId={effect.id} paramName="stroke.trailLength" effectKind="edge"
+                      value={(effect.stroke as any).trailLength}
+                      displayValue={(v) => (v * 100).toFixed(0) + '%'}
+                      onChange={(v) => updateStroke(effect.id, { trailLength: v })} />
                   {/if}
                   {#if 'speed' in effect.stroke && (effect.stroke.type as string) !== 'glow' && (effect.stroke.type as string) !== 'neon' && effect.stroke.type !== 'snake'}
-                    <div class="control-row">
-                      <span class="control-label">Speed</span>
-                      <input type="range" min="0.1" max="3" step="0.1" value={(effect.stroke as any).speed}
-                        oninput={(e) => updateStroke(effect.id, { speed: parseFloat((e.target as HTMLInputElement).value) })} />
-                      <span class="control-value">{(effect.stroke as any).speed?.toFixed(1)}x</span>
-                    </div>
+                    <EffectParamRow label="Speed" min={0.1} max={3} step={0.1}
+                      layerIndex={layerIdx} effectId={effect.id} paramName="stroke.speed" effectKind="edge"
+                      value={(effect.stroke as any).speed}
+                      displayValue={(v) => v.toFixed(1) + 'x'}
+                      onChange={(v) => updateStroke(effect.id, { speed: v })} />
                   {/if}
                 {/if}
               </div>
@@ -321,36 +334,32 @@
                     <input type="color" value={rgbaToHex((effect.fill as any).color)}
                       oninput={(e) => updateFill(effect.id, { color: hexToRgba((e.target as HTMLInputElement).value) })} />
                   </div>
-                  <div class="control-row">
-                    <span class="control-label">Opacity</span>
-                    <input type="range" min="0" max="1" step="0.05" value={(effect.fill as any).opacity ?? 1}
-                      oninput={(e) => updateFill(effect.id, { opacity: parseFloat((e.target as HTMLInputElement).value) })} />
-                    <span class="control-value">{(((effect.fill as any).opacity ?? 1) * 100).toFixed(0)}%</span>
-                  </div>
+                  <EffectParamRow label="Opacity" min={0} max={1} step={0.05}
+                    layerIndex={layerIdx} effectId={effect.id} paramName="fill.opacity" effectKind="edge"
+                    value={(effect.fill as any).opacity ?? 1}
+                    displayValue={(v) => (v * 100).toFixed(0) + '%'}
+                    onChange={(v) => updateFill(effect.id, { opacity: v })} />
                 {/if}
                 {#if effect.fill.type !== 'none' && effect.fill.type !== 'solid' && 'speed' in effect.fill}
-                  <div class="control-row">
-                    <span class="control-label">Speed</span>
-                    <input type="range" min="0.1" max="3" step="0.1" value={(effect.fill as any).speed}
-                      oninput={(e) => updateFill(effect.id, { speed: parseFloat((e.target as HTMLInputElement).value) })} />
-                    <span class="control-value">{(effect.fill as any).speed?.toFixed(1)}x</span>
-                  </div>
+                  <EffectParamRow label="Speed" min={0.1} max={3} step={0.1}
+                    layerIndex={layerIdx} effectId={effect.id} paramName="fill.speed" effectKind="edge"
+                    value={(effect.fill as any).speed}
+                    displayValue={(v) => v.toFixed(1) + 'x'}
+                    onChange={(v) => updateFill(effect.id, { speed: v })} />
                 {/if}
                 {#if effect.fill.type === 'plasma' && 'scale' in effect.fill}
-                  <div class="control-row">
-                    <span class="control-label">Scale</span>
-                    <input type="range" min="1" max="10" step="0.5" value={(effect.fill as any).scale}
-                      oninput={(e) => updateFill(effect.id, { scale: parseFloat((e.target as HTMLInputElement).value) })} />
-                    <span class="control-value">{(effect.fill as any).scale?.toFixed(1)}</span>
-                  </div>
+                  <EffectParamRow label="Scale" min={1} max={10} step={0.5}
+                    layerIndex={layerIdx} effectId={effect.id} paramName="fill.scale" effectKind="edge"
+                    value={(effect.fill as any).scale}
+                    displayValue={(v) => v.toFixed(1)}
+                    onChange={(v) => updateFill(effect.id, { scale: v })} />
                 {/if}
                 {#if effect.fill.type === 'liquid' && 'viscosity' in effect.fill}
-                  <div class="control-row">
-                    <span class="control-label">Viscosity</span>
-                    <input type="range" min="0.1" max="2" step="0.1" value={(effect.fill as any).viscosity}
-                      oninput={(e) => updateFill(effect.id, { viscosity: parseFloat((e.target as HTMLInputElement).value) })} />
-                    <span class="control-value">{(effect.fill as any).viscosity?.toFixed(1)}</span>
-                  </div>
+                  <EffectParamRow label="Viscosity" min={0.1} max={2} step={0.1}
+                    layerIndex={layerIdx} effectId={effect.id} paramName="fill.viscosity" effectKind="edge"
+                    value={(effect.fill as any).viscosity}
+                    displayValue={(v) => v.toFixed(1)}
+                    onChange={(v) => updateFill(effect.id, { viscosity: v })} />
                 {/if}
               </div>
 
@@ -377,26 +386,23 @@
                       <option value="both">Both</option>
                     </select>
                   </div>
-                  <div class="control-row">
-                    <span class="control-label">Count</span>
-                    <input type="range" min="2" max="20" step="1" value={(effect.animation as any).count}
-                      oninput={(e) => updateEffect(effect.id, { animation: { ...effect.animation, count: parseInt((e.target as HTMLInputElement).value) } })} />
-                    <span class="control-value">{(effect.animation as any).count}</span>
-                  </div>
-                  <div class="control-row">
-                    <span class="control-label">Spacing</span>
-                    <input type="range" min="0.01" max="0.1" step="0.005" value={(effect.animation as any).spacing}
-                      oninput={(e) => updateEffect(effect.id, { animation: { ...effect.animation, spacing: parseFloat((e.target as HTMLInputElement).value) } })} />
-                    <span class="control-value">{((effect.animation as any).spacing * 100).toFixed(0)}%</span>
-                  </div>
+                  <EffectParamRow label="Count" min={2} max={20} step={1}
+                    layerIndex={layerIdx} effectId={effect.id} paramName="animation.count" effectKind="edge"
+                    value={(effect.animation as any).count}
+                    displayValue={(v) => v.toFixed(0)}
+                    onChange={(v) => updateAnimation(effect.id, { count: Math.round(v) })} />
+                  <EffectParamRow label="Spacing" min={0.01} max={0.1} step={0.005}
+                    layerIndex={layerIdx} effectId={effect.id} paramName="animation.spacing" effectKind="edge"
+                    value={(effect.animation as any).spacing}
+                    displayValue={(v) => (v * 100).toFixed(0) + '%'}
+                    onChange={(v) => updateAnimation(effect.id, { spacing: v })} />
                 {/if}
                 {#if effect.animation.type !== 'none' && 'speed' in effect.animation}
-                  <div class="control-row">
-                    <span class="control-label">Speed</span>
-                    <input type="range" min="0.1" max="3" step="0.1" value={(effect.animation as any).speed}
-                      oninput={(e) => updateEffect(effect.id, { animation: { ...effect.animation, speed: parseFloat((e.target as HTMLInputElement).value) } })} />
-                    <span class="control-value">{(effect.animation as any).speed?.toFixed(1)}x</span>
-                  </div>
+                  <EffectParamRow label="Speed" min={0.1} max={3} step={0.1}
+                    layerIndex={layerIdx} effectId={effect.id} paramName="animation.speed" effectKind="edge"
+                    value={(effect.animation as any).speed}
+                    displayValue={(v) => v.toFixed(1) + 'x'}
+                    onChange={(v) => updateAnimation(effect.id, { speed: v })} />
                 {/if}
               </div>
             </div>

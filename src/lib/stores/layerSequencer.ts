@@ -338,6 +338,46 @@ function createLayerSequencerStore() {
       });
       lastStepTime = performance.now();
     },
+
+    /** Serialize the pattern + config for project save. Excludes runtime
+     *  fields (isPlaying, currentStep, opacityOverrides) which are session
+     *  state, not composition state. `isOpen` is kept because the user
+     *  expects the panel to be where they left it on reopen. */
+    serialize(): { pattern: SequencerPattern; config: SequencerConfig; isOpen: boolean } {
+      const s = get({ subscribe });
+      return {
+        pattern: s.pattern,
+        config: s.config,
+        isOpen: s.isOpen,
+      };
+    },
+
+    /** Restore from project save. Stops playback (no auto-start on load —
+     *  would surprise the user) and resets the playhead to step 0. */
+    hydrate(payload: any) {
+      if (!payload || typeof payload !== 'object') {
+        set({ ...INITIAL_STATE });
+        return;
+      }
+      if (animFrameId) {
+        cancelAnimationFrame(animFrameId);
+        animFrameId = null;
+      }
+      const pattern = payload.pattern && typeof payload.pattern === 'object' && Array.isArray(payload.pattern.steps)
+        ? payload.pattern as SequencerPattern
+        : createEmptyPattern(DEFAULT_STEP_COUNT);
+      const config = payload.config && typeof payload.config === 'object'
+        ? { ...DEFAULT_CONFIG, ...payload.config }
+        : { ...DEFAULT_CONFIG };
+      set({
+        isOpen: !!payload.isOpen,
+        isPlaying: false,
+        currentStep: 0,
+        pattern,
+        config,
+        opacityOverrides: {},
+      });
+    },
   };
 
   return store;

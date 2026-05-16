@@ -20,15 +20,36 @@ let _mappingLayerReader: ((layerIndex: number, paramName: string) => number | un
 // Returns true if layerIndex refers to a mapping layer (not VJ)
 let _isMappingLayer: ((layerIndex: number) => boolean) | null = null;
 
+// Effect-param read/write callbacks for mapping mode. Without these the
+// engine can write modulated values to VJ effect params but mapping-mode
+// effects sit at the user's manual slider value. The store registers
+// them alongside the shader callbacks below.
+let _mappingEffectUpdater: ((layerIndex: number, effectId: string, values: Record<string, number>) => void) | null = null;
+let _mappingEffectReader: ((layerIndex: number, effectId: string, paramName: string) => number | undefined) | null = null;
+
+// Edge-effect read/write callbacks. paramPath is the dotted nested
+// path (e.g. 'stroke.width'); updater is responsible for the deep-merge
+// into the right top-level object (stroke/fill/animation).
+let _mappingEdgeEffectUpdater: ((layerIndex: number, effectId: string, paramPath: string, value: number) => void) | null = null;
+let _mappingEdgeEffectReader: ((layerIndex: number, effectId: string, paramPath: string) => number | undefined) | null = null;
+
 /** Register mapping mode callbacks — called once from layers store init */
 export function registerMappingLayerCallbacks(
   updater: (layerIndex: number, values: Record<string, number>) => void,
   reader: (layerIndex: number, paramName: string) => number | undefined,
   isMapping: (layerIndex: number) => boolean,
+  effectUpdater?: (layerIndex: number, effectId: string, values: Record<string, number>) => void,
+  effectReader?: (layerIndex: number, effectId: string, paramName: string) => number | undefined,
+  edgeEffectUpdater?: (layerIndex: number, effectId: string, paramPath: string, value: number) => void,
+  edgeEffectReader?: (layerIndex: number, effectId: string, paramPath: string) => number | undefined,
 ) {
   _mappingLayerUpdater = updater;
   _mappingLayerReader = reader;
   _isMappingLayer = isMapping;
+  if (effectUpdater) _mappingEffectUpdater = effectUpdater;
+  if (effectReader) _mappingEffectReader = effectReader;
+  if (edgeEffectUpdater) _mappingEdgeEffectUpdater = edgeEffectUpdater;
+  if (edgeEffectReader) _mappingEdgeEffectReader = edgeEffectReader;
 }
 
 // Modulation source types
@@ -58,8 +79,17 @@ export type ModSource =
 export interface ParamModulation {
   source: ModSource;
   amount: number;    // 0-1 how much the source affects the parameter
-  speed: number;     // LFO speed multiplier (only for LFO sources), cycles per second
+  speed: number;     // LFO speed multiplier (only for LFO sources)
+                     // - bpmSync=false: cycles per second (Hz). speed=1 → 1Hz → 60 BPM
+                     // - bpmSync=true:  beat divisions. speed=1 → 1 cycle per beat,
+                     //                  speed=0.25 → 1 cycle per 4 beats (slow),
+                     //                  speed=4 → 4 cycles per beat (sixteenths)
   invert: boolean;   // Invert the modulation signal
+  /** When true and source is an LFO, the LFO syncs to the detected/manual
+   *  BPM instead of running at a free Hz rate. Effective cycle rate becomes
+   *  `speed × (bpm / 60)` cycles per second, so speed acts as a beat-division
+   *  multiplier rather than a Hz value. Ignored for non-LFO sources. */
+  bpmSync?: boolean;
 }
 
 // Default modulation values for new assignments
@@ -67,6 +97,7 @@ export const DEFAULT_MOD: Omit<ParamModulation, 'source'> = {
   amount: 0.5,
   speed: 1,
   invert: false,
+  bpmSync: false,
 };
 
 // Pre-parsed key for hot-path use (avoids split(':') per frame)
@@ -78,16 +109,19 @@ interface ParsedModEntry {
   // Bank tag for layer/effect targets. Default 'A'. Ignored when `special` is set.
   bank: 'A' | 'B';
   layerIndex: number;
-  isEffect: boolean;
-  effectId: string;   // '' for shader params
-  paramName: string;
+  isEffect: boolean;     // true for regular pixel effects (`layer.effects[]`)
+  isEdgeEffect: boolean; // true for edge effects (`layer.edgeEffects.effects[]`)
+  effectId: string;      // '' for shader params
+  paramName: string;     // for edge effects this is the nested path, e.g. 'stroke.width'
 }
 
 // Key formats — discriminator is the leading token:
-//   Bank A shader:  "layerIndex:paramName"            (legacy / default)
+//   Bank A shader:  "layerIndex:paramName"                    (legacy / default)
 //   Bank A effect:  "layerIndex:fx:effectId:paramName"
+//   Bank A edge fx: "layerIndex:edge:effectId:stroke.width"   (nested path)
 //   Bank B shader:  "B:layerIndex:paramName"
 //   Bank B effect:  "B:layerIndex:fx:effectId:paramName"
+//   Bank B edge fx: "B:layerIndex:edge:effectId:stroke.width"
 //   Crossfader:     "xfade:value"
 export type ModulationMap = Map<string, ParamModulation>;
 
@@ -100,6 +134,19 @@ export function modKeyEffect(layerIndex: number, effectId: string, paramName: st
     ? `B:${layerIndex}:fx:${effectId}:${paramName}`
     : `${layerIndex}:fx:${effectId}:${paramName}`;
 }
+/** Edge effects live on `layer.edgeEffects.effects[]` with a nested
+ *  shape (e.g. `effect.stroke.width`, `effect.fill.opacity`,
+ *  `effect.animation.speed`). The modulation key uses a `:edge:`
+ *  segment so the engine can distinguish them from regular pixel
+ *  effects and route writes through `project.updateEdgeEffect` with
+ *  the right deep-merge instead of the flat `params` updater used by
+ *  regular effects. `paramPath` is the dotted nested path
+ *  (e.g. `'stroke.width'`). */
+export function modKeyEdgeEffect(layerIndex: number, effectId: string, paramPath: string, bank: 'A' | 'B' = 'A'): string {
+  return bank === 'B'
+    ? `B:${layerIndex}:edge:${effectId}:${paramPath}`
+    : `${layerIndex}:edge:${effectId}:${paramPath}`;
+}
 export const MOD_KEY_XFADE_VALUE = 'xfade:value';
 
 // Pre-parsed cache rebuilt on store change — avoids per-frame string parsing
@@ -108,6 +155,59 @@ let parsedCache: ParsedModEntry[] = [];
 // Parameter range registry — stores ISF min/max for shader params to enable clamping
 // Key format: "layerIndex:paramName"
 const paramRanges = new Map<string, { min: number; max: number }>();
+
+// Effect param range registry — same idea for layer effect params.
+// Key format: "layerIndex:fx:effectId:paramName"
+// Used by the engine to clamp modulated effect values to the slider's
+// configured min/max (matches what the LayerPanel inputs enforce).
+const effectParamRanges = new Map<string, { min: number; max: number }>();
+
+/** Register the min/max for a single effect param. The LayerPanel calls
+ *  this when wiring up a mod-source dropdown so the engine knows how to
+ *  clamp the modulated output. Safe to call repeatedly for the same key
+ *  (just overwrites). */
+export function registerEffectParamRange(
+  layerIndex: number,
+  effectId: string,
+  paramName: string,
+  min: number,
+  max: number,
+) {
+  effectParamRanges.set(`${layerIndex}:fx:${effectId}:${paramName}`, { min, max });
+}
+
+/** Drop every effect-range entry for a layer. Call when the layer's
+ *  effects list churns (effect removed, layer deleted) so stale ranges
+ *  don't survive into unrelated effects that happen to reuse the index. */
+export function clearEffectParamRanges(layerIndex: number) {
+  const aPrefix = `${layerIndex}:fx:`;
+  for (const key of effectParamRanges.keys()) {
+    if (key.startsWith(aPrefix)) effectParamRanges.delete(key);
+  }
+}
+
+// Edge-effect param range registry — separate map keyed by the dotted
+// path so `stroke.width` and `fill.opacity` don't collide with any
+// regular effect named "stroke" or "fill". Same engine semantics:
+// modulation output is clamped to (min,max) before being written back.
+const edgeEffectParamRanges = new Map<string, { min: number; max: number }>();
+
+export function registerEdgeEffectParamRange(
+  layerIndex: number,
+  effectId: string,
+  paramPath: string,
+  min: number,
+  max: number,
+) {
+  edgeEffectParamRanges.set(`${layerIndex}:edge:${effectId}:${paramPath}`, { min, max });
+}
+
+export function clearEdgeEffectParamRanges(layerIndex: number) {
+  const prefix = `${layerIndex}:edge:`;
+  for (const key of edgeEffectParamRanges.keys()) {
+    if (key.startsWith(prefix)) edgeEffectParamRanges.delete(key);
+  }
+}
 
 // Last modulated values — for UI ghost indicator display
 const lastModulatedValues = new Map<string, number>();
@@ -181,6 +281,7 @@ function rebuildParsedCache(map: ModulationMap) {
         bank: 'A',
         layerIndex: -1,
         isEffect: false,
+        isEdgeEffect: false,
         effectId: '',
         paramName: '',
       });
@@ -204,8 +305,22 @@ function rebuildParsedCache(map: ModulationMap) {
         bank,
         layerIndex,
         isEffect: true,
+        isEdgeEffect: false,
         effectId: parts[cursor + 2],
         paramName: parts[cursor + 3],
+      });
+    } else if (parts[cursor + 1] === 'edge') {
+      // Edge effect path may contain dots (`stroke.width`) — rejoin
+      // anything after the effect id so the nested path is preserved
+      // intact. Splitting was on `:` only, so dots in paramName are safe.
+      parsedCache.push({
+        mod,
+        bank,
+        layerIndex,
+        isEffect: false,
+        isEdgeEffect: true,
+        effectId: parts[cursor + 2],
+        paramName: parts.slice(cursor + 3).join(':'),
       });
     } else {
       parsedCache.push({
@@ -213,6 +328,7 @@ function rebuildParsedCache(map: ModulationMap) {
         bank,
         layerIndex,
         isEffect: false,
+        isEdgeEffect: false,
         effectId: '',
         paramName: parts[cursor + 1],
       });
@@ -268,6 +384,28 @@ function createModulationStore() {
     getEffectModulation(layerIndex: number, effectId: string, paramName: string, bank: 'A' | 'B' = 'A'): ParamModulation | undefined {
       const map = get({ subscribe });
       return map.get(modKeyEffect(layerIndex, effectId, paramName, bank));
+    },
+
+    /** Set modulation on an edge-effect param. `paramPath` is the
+     *  dotted nested path (e.g. `'stroke.width'`, `'fill.opacity'`).
+     *  Bank A only — edge effects don't participate in VJ A/B banking. */
+    setEdgeEffectModulation(layerIndex: number, effectId: string, paramPath: string, mod: ParamModulation) {
+      update(map => {
+        const newMap = new Map(map);
+        const key = modKeyEdgeEffect(layerIndex, effectId, paramPath, 'A');
+        if (mod.source === 'manual') {
+          newMap.delete(key);
+        } else {
+          newMap.set(key, mod);
+        }
+        return newMap;
+      });
+    },
+
+    /** Get modulation for an edge-effect param. */
+    getEdgeEffectModulation(layerIndex: number, effectId: string, paramPath: string): ParamModulation | undefined {
+      const map = get({ subscribe });
+      return map.get(modKeyEdgeEffect(layerIndex, effectId, paramPath, 'A'));
     },
 
     /** Set modulation on the global VJ A/B crossfader value (0..1).
@@ -447,9 +585,9 @@ class ModulationEngine {
     const mappingBatch = new Map<number, Record<string, number>>();
 
     for (const entry of parsedCache) {
-      const { mod, bank, layerIndex, isEffect, effectId, paramName, special } = entry;
+      const { mod, bank, layerIndex, isEffect, isEdgeEffect, effectId, paramName, special } = entry;
 
-      let signal = this.getSignal(mod.source, audio, now, mod.speed);
+      let signal = this.getSignal(mod.source, audio, now, mod.speed, mod.bpmSync === true);
       if (mod.invert) signal = 1 - signal;
 
       // ===== Special: crossfader value =====
@@ -477,23 +615,82 @@ class ModulationEngine {
         ? vjState.bankBLayerStates
         : vjState.layerStates;
 
-      if (isEffect && !isMapping) {
-        // Effect params — VJ mode only.
-        const layerState = layerStates[layerIndex];
-        const effect = layerState?.effects.find(e => e.id === effectId);
-        if (!effect) continue;
-        // Base-value cache is keyed including bank so A and B effects on the
-        // same row don't share a base.
+      if (isEdgeEffect) {
+        // Edge-effect modulation. Edge effects live on
+        // `layer.edgeEffects.effects[]` with a nested data shape
+        // (`effect.stroke.width`, `effect.fill.opacity`, etc.) — the
+        // engine writes through the registered edge updater which
+        // handles the deep-merge into the right top-level object.
+        //
+        // Mapping mode only — VJ mode doesn't have its own edge-effects
+        // state, so edge modulation is intentionally scoped to mapping.
+        if (!isMapping || !_mappingEdgeEffectUpdater || !_mappingEdgeEffectReader) continue;
+
+        const edgeKey = `${bank}:${layerIndex}:edge:${effectId}:${paramName}`;
+        let edgeBase = baseValues.get(edgeKey);
+        if (edgeBase === undefined) {
+          const sv = _mappingEdgeEffectReader(layerIndex, effectId, paramName);
+          if (typeof sv !== 'number') continue;
+          edgeBase = sv;
+          baseValues.set(edgeKey, edgeBase);
+        }
+
+        const edgeRange = edgeEffectParamRanges.get(`${layerIndex}:edge:${effectId}:${paramName}`);
+        const eMin = edgeRange?.min ?? 0;
+        const eMax = edgeRange?.max ?? 1;
+        const eSpan = eMax - eMin;
+        const rawE = edgeBase + (signal - 0.5) * mod.amount * eSpan;
+        const modulatedE = Math.max(eMin, Math.min(eMax, rawE));
+
+        _mappingEdgeEffectUpdater(layerIndex, effectId, paramName, modulatedE);
+        lastModulatedValues.set(edgeKey, modulatedE);
+      } else if (isEffect) {
+        // Effect param modulation. Mapping mode + VJ mode share the same
+        // math (capture base on first hit, signal-driven offset, clamp to
+        // the registered range) but write to different places — mapping
+        // hits the layer's effect via the project store callback, VJ hits
+        // the layer-state effect via vjClipLauncher.
+
+        // Base-value cache key — mapping uses bank='A' implicitly (no
+        // banks in mapping mode), VJ uses the real bank so A and B effects
+        // on the same row don't share a base.
         const fxKey = `${bank}:${layerIndex}:fx:${effectId}:${paramName}`;
         let fxBase = baseValues.get(fxKey);
         if (fxBase === undefined) {
-          const sv = (effect.params as Record<string, number>)[paramName];
+          let sv: number | undefined;
+          if (isMapping && _mappingEffectReader) {
+            sv = _mappingEffectReader(layerIndex, effectId, paramName);
+          } else if (!isMapping) {
+            const layerState = layerStates[layerIndex];
+            const effect = layerState?.effects.find(e => e.id === effectId);
+            if (!effect) continue;
+            const fxParam = (effect.params as Record<string, number>)[paramName];
+            sv = typeof fxParam === 'number' ? fxParam : undefined;
+          }
           if (typeof sv !== 'number') continue;
           fxBase = sv;
           baseValues.set(fxKey, fxBase);
         }
-        const modulated = Math.max(0, Math.min(1, fxBase + (signal - 0.5) * mod.amount * 2));
-        vjClipLauncher.updateLayerEffectParams(layerIndex, effectId, { [paramName]: modulated }, bank);
+
+        // Pull the registered slider range so modulation scales naturally
+        // to the param's actual scope (e.g. a 0..10 displacement amplitude
+        // doesn't get clamped to 0..1). Falls back to 0..1 for legacy
+        // unregistered params so the old VJ-mode behavior is preserved.
+        const fxRange = effectParamRanges.get(`${layerIndex}:fx:${effectId}:${paramName}`);
+        const fxMin = fxRange?.min ?? 0;
+        const fxMax = fxRange?.max ?? 1;
+        const fxSpan = fxMax - fxMin;
+        const raw = fxBase + (signal - 0.5) * mod.amount * fxSpan;
+        const modulated = Math.max(fxMin, Math.min(fxMax, raw));
+
+        if (isMapping) {
+          if (_mappingEffectUpdater) {
+            _mappingEffectUpdater(layerIndex, effectId, { [paramName]: modulated });
+          }
+        } else {
+          vjClipLauncher.updateLayerEffectParams(layerIndex, effectId, { [paramName]: modulated }, bank);
+        }
+        lastModulatedValues.set(fxKey, modulated);
       } else if (!isEffect) {
         // Shader params — works for VJ (both banks) and mapping mode.
         const bvKey = `${bank}:${layerIndex}:${paramName}`;
@@ -555,7 +752,7 @@ class ModulationEngine {
     }
   }
 
-  private getSignal(source: ModSource, audio: AudioState, time: number, speed: number): number {
+  private getSignal(source: ModSource, audio: AudioState, time: number, speed: number, bpmSync: boolean): number {
     switch (source) {
       case 'sub':       return audio.bands.sub;
       case 'bass':      return audio.bands.bass;
@@ -584,11 +781,25 @@ class ModulationEngine {
         const t = ks.timeSinceLastSnare / 1000;
         return Math.max(0, ks.snareIntensity * Math.exp(-t / 0.15));
       }
-      case 'lfo-sine':  return (Math.sin(time * speed * Math.PI * 2) + 1) / 2;
-      case 'lfo-saw':   return (time * speed) % 1;
-      case 'lfo-square': return (Math.sin(time * speed * Math.PI * 2) > 0) ? 1 : 0;
+      // LFOs: bpmSync reinterprets `speed` from "cycles per second" to
+      // "cycles per beat". effectiveRate = speed × (bpm/60). When no BPM
+      // is detected (bpm=0) fall back to the manual speed so the LFO
+      // keeps running instead of freezing.
+      case 'lfo-sine': {
+        const rate = bpmSync && audio.bpm > 0 ? speed * (audio.bpm / 60) : speed;
+        return (Math.sin(time * rate * Math.PI * 2) + 1) / 2;
+      }
+      case 'lfo-saw': {
+        const rate = bpmSync && audio.bpm > 0 ? speed * (audio.bpm / 60) : speed;
+        return (time * rate) % 1;
+      }
+      case 'lfo-square': {
+        const rate = bpmSync && audio.bpm > 0 ? speed * (audio.bpm / 60) : speed;
+        return (Math.sin(time * rate * Math.PI * 2) > 0) ? 1 : 0;
+      }
       case 'lfo-tri': {
-        const phase = (time * speed) % 1;
+        const rate = bpmSync && audio.bpm > 0 ? speed * (audio.bpm / 60) : speed;
+        const phase = (time * rate) % 1;
         return phase < 0.5 ? phase * 2 : 2 - phase * 2;
       }
       default: return 0;

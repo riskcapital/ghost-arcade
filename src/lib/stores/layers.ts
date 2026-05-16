@@ -11,6 +11,8 @@ import { audioStore } from './audio';
 import { keyframeTimeline } from './keyframeTimeline';
 import { macros } from './macros';
 import { snapshots } from './snapshots';
+import { layerSequencer } from './layerSequencer';
+import { geoDeckStore } from './geoDeck';
 import { createDefaultShapeMesh } from '../drawing/types';
 import type { LineElement, LineShape, LinesContent, LineDrawAnimation, LineStroke } from '../lines/types';
 import { maxLayers } from './license';
@@ -3626,6 +3628,10 @@ void main() {
 
       // Deep clone and strip out non-serializable data
       const exportData = {
+        // 1.9.3 = added layerSequencer (step sequencer pattern + config)
+        //         and geoDeck (geo performer scenes + mod routes) at the
+        //         project root. Older saves skip these on import and the
+        //         stores stay at their initial state.
         // 1.9.1 = added project-root synthVision + audio settings
         //         (sensitivity / smoothing / manualBPM / bandGain).
         // 1.9.0 = added macros (8 knobs + destinations + pulse), snapshots
@@ -3633,7 +3639,7 @@ void main() {
         //         outside this vjClipLauncher payload but versioned together).
         // 1.8.0 = moved bankBClipGrid INSIDE each VJBlock.
         // 1.7.0 = added Bank B deck + crossfader state at launcher root.
-        version: '1.9.1',
+        version: '1.9.3',
         exportedAt: new Date().toISOString(),
         project: {
           id: currentProject.id,
@@ -3663,6 +3669,14 @@ void main() {
         synthVision: exportSynthVision,
         // Include user-tweakable audio settings
         audio: exportAudio,
+        // Include layer step sequencer (pattern + timing config). Was
+        // missing — meant the user's sequencer pattern survived an in-app
+        // session but was lost the moment they reopened the .gha.
+        layerSequencer: layerSequencer.serialize(),
+        // Include GeoDeck (geo performer) state — scene slots, modulation
+        // routes, current form/sliders. Lives at project root because the
+        // performer state is part of the composition the user is building.
+        geoDeck: geoDeckStore.serialize(),
       };
 
       return exportData;
@@ -3706,10 +3720,11 @@ void main() {
       }
 
       // Keep in lockstep with exportProject() above.
+      // 1.9.3 bump: layerSequencer + geoDeck now serialize at project root.
       // 1.9.2 bump: AssetRef capture on every File-import site, plus
       // pixelFXContent / gpuLayerContent now actually export. Older saves
       // (1.9.x and earlier) still load via the legacy resolveSrc fallback.
-      syncExport.version = '1.9.2';
+      syncExport.version = '1.9.3';
       return syncExport;
     },
 
@@ -4388,6 +4403,21 @@ void main() {
           }
         }
 
+        // Import layer step sequencer (added 1.9.3). Older saves don't
+        // have the field — hydrate() resets to a clean empty pattern in
+        // that case so the user gets a predictable starting state.
+        if ((parsed as any).layerSequencer) {
+          try { layerSequencer.hydrate((parsed as any).layerSequencer); }
+          catch (e) { console.warn('[Import] layerSequencer restore failed:', e); }
+        }
+
+        // Import GeoDeck (added 1.9.3). Older saves keep current store
+        // defaults.
+        if ((parsed as any).geoDeck) {
+          try { geoDeckStore.hydrate((parsed as any).geoDeck); }
+          catch (e) { console.warn('[Import] geoDeck restore failed:', e); }
+        }
+
         // Reconstruct the project with proper defaults
         const importedProject: Project = {
           id: proj.id || generateUUID(),
@@ -4735,5 +4765,67 @@ registerMappingLayerCallbacks(
   (layerIndex: number) => {
     const p = get(project);
     return !(p.vjMode?.enabled ?? false);
+  },
+  // effectUpdater: apply modulated effect-param values in mapping mode.
+  // Goes through the project store's updateEffectParams so the change
+  // also feeds the keyframe auto-record path. Without this, modulation
+  // entries on effect params (set via the LayerPanel mod dropdowns)
+  // would only fire in VJ mode and silently no-op in mapping.
+  (layerIndex: number, effectId: string, values: Record<string, number>) => {
+    const p = get(project);
+    const layer = p.layers[layerIndex];
+    if (!layer) return;
+    project.updateEffectParams(layer.id, effectId, values);
+  },
+  // effectReader: capture current effect param as the modulation base
+  (layerIndex: number, effectId: string, paramName: string) => {
+    const p = get(project);
+    const layer = p.layers[layerIndex];
+    const eff = layer?.effects.find(e => e.id === effectId);
+    const val = (eff?.params as Record<string, any> | undefined)?.[paramName];
+    return typeof val === 'number' ? val : undefined;
+  },
+  // edgeEffectUpdater: write a modulated value into the nested edge-
+  // effect structure. paramPath is `<topKey>.<nestedKey>` (e.g.
+  // `stroke.width`); deep-merge so we don't clobber sibling keys on
+  // the same subobject. Goes through project.updateEdgeEffect so the
+  // change is part of the same undo/serialization path as user edits.
+  (layerIndex: number, effectId: string, paramPath: string, value: number) => {
+    const p = get(project);
+    const layer = p.layers[layerIndex];
+    if (!layer?.edgeEffects) return;
+    const eff = layer.edgeEffects.effects.find(e => e.id === effectId);
+    if (!eff) return;
+    const dot = paramPath.indexOf('.');
+    if (dot < 0) {
+      // Top-level numeric (e.g. effect.opacity)
+      project.updateEdgeEffect(layer.id, effectId, { [paramPath]: value } as any);
+      return;
+    }
+    const topKey = paramPath.slice(0, dot);
+    const nestedKey = paramPath.slice(dot + 1);
+    const topObj = (eff as any)[topKey];
+    if (!topObj || typeof topObj !== 'object') return;
+    project.updateEdgeEffect(layer.id, effectId, {
+      [topKey]: { ...topObj, [nestedKey]: value },
+    } as any);
+  },
+  // edgeEffectReader: capture current nested value as the base.
+  (layerIndex: number, effectId: string, paramPath: string) => {
+    const p = get(project);
+    const layer = p.layers[layerIndex];
+    const eff = layer?.edgeEffects?.effects.find(e => e.id === effectId);
+    if (!eff) return undefined;
+    const dot = paramPath.indexOf('.');
+    if (dot < 0) {
+      const v = (eff as any)[paramPath];
+      return typeof v === 'number' ? v : undefined;
+    }
+    const topKey = paramPath.slice(0, dot);
+    const nestedKey = paramPath.slice(dot + 1);
+    const topObj = (eff as any)[topKey];
+    if (!topObj || typeof topObj !== 'object') return undefined;
+    const v = topObj[nestedKey];
+    return typeof v === 'number' ? v : undefined;
   },
 );

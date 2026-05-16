@@ -35,6 +35,7 @@
   import { audioTextures } from '../audio/audioTextures';
   import { initStateBroadcast, destroyStateBroadcast } from '$lib/sync/stateBroadcast';
   import { startAudioBroadcast, stopAudioBroadcast, broadcastAudioFrame } from '$lib/sync/audioBroadcast';
+  import { startModulationBroadcast, stopModulationBroadcast } from '$lib/sync/modulationBroadcast';
   import { startOutputPixelBroadcast, stopOutputPixelBroadcast } from '$lib/sync/outputPixelBroadcast';
   import {
     registerEditorCanvas,
@@ -564,6 +565,12 @@
       // see permanently-zero audio uniforms and the projector shows no
       // reactivity even when the editor is fully reactive.
       startAudioBroadcast();
+      // And the modulation map. Audio data alone doesn't help if the
+      // receiver doesn't know which params react to which bands — that
+      // mapping lives in modulationStore. Without this, kick→particle-
+      // density on a shader looks right in the editor but the projector
+      // shows the un-modulated baseline.
+      startModulationBroadcast();
     }
 
     // Register the editor canvas with the zero-copy presenter so that
@@ -1792,6 +1799,7 @@
 
     destroyStateBroadcast();
     stopAudioBroadcast();
+    stopModulationBroadcast();
 
     // Dispose textures
     for (const texture of textureCache.values()) {

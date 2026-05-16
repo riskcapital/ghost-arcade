@@ -12,6 +12,7 @@
   import { EFFECT_CATALOG } from '../effects/effectCatalog';
   import EffectPickerModal from './EffectPickerModal.svelte';
   import EdgeEffectsPanel from './EdgeEffectsPanel.svelte';
+  import EffectParamRow from './EffectParamRow.svelte';
   import { generateCachedThumbnail } from '../isf/thumbnail';
   import { webgpuSupportedStore } from '../renderer/webgpuCapability';
   import { createAssetRefFromFile } from '../storage/assetRegistry';
@@ -2024,7 +2025,11 @@
 
                   <!-- Effect Parameters (expanded) -->
                   {#if expandedEffectId === effect.id}
-                    <div class="effect-params" ondragstart={(e) => e.stopPropagation()} draggable="false">
+                    {@const layerIdx = $layers.findIndex(l => l.id === layer.id)}
+                    <div
+                      class="effect-params"
+                      ondragstart={(e) => e.stopPropagation()}
+                      draggable="false">
                       <!-- Per-effect opacity & blend mode -->
                       <div class="effect-mix-row">
                         <div class="effect-opacity-ctrl">
@@ -2082,64 +2087,39 @@
                              GPU compute. The source is the layer's
                              rendered output (after upstream effects);
                              it injects dye and force into the fluid.
-                             All knobs accept MIDI mapping just like
-                             the other effects. -->
-                        <div class="param-row">
-                          <label>Inject Strength</label>
-                          <input type="range" min="0" max="3" step="0.01"
-                            data-midi-path="map:effect:{effect.id}:injectStrength"
-                            value={effect.params.injectStrength ?? 1.5}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { injectStrength: parseFloat((e.target as HTMLInputElement).value) })} />
-                          <span class="param-value">{(effect.params.injectStrength ?? 1.5).toFixed(2)}</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Velocity Push</label>
-                          <input type="range" min="0" max="3" step="0.01"
-                            data-midi-path="map:effect:{effect.id}:velocityFromGradient"
-                            value={effect.params.velocityFromGradient ?? 1.4}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { velocityFromGradient: parseFloat((e.target as HTMLInputElement).value) })} />
-                          <span class="param-value">{(effect.params.velocityFromGradient ?? 1.4).toFixed(2)}</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Vorticity</label>
-                          <input type="range" min="0" max="3" step="0.01"
-                            data-midi-path="map:effect:{effect.id}:vorticity"
-                            value={effect.params.vorticity ?? 1.0}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { vorticity: parseFloat((e.target as HTMLInputElement).value) })} />
-                          <span class="param-value">{(effect.params.vorticity ?? 1.0).toFixed(2)}</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Dye Decay</label>
-                          <input type="range" min="0" max="3" step="0.01"
-                            data-midi-path="map:effect:{effect.id}:dyeDecay"
-                            value={effect.params.dyeDecay ?? 2.4}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { dyeDecay: parseFloat((e.target as HTMLInputElement).value) })} />
-                          <span class="param-value">{(effect.params.dyeDecay ?? 2.4).toFixed(2)}</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Velocity Decay</label>
-                          <input type="range" min="0" max="3" step="0.01"
-                            data-midi-path="map:effect:{effect.id}:velocityDecay"
-                            value={effect.params.velocityDecay ?? 2.3}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { velocityDecay: parseFloat((e.target as HTMLInputElement).value) })} />
-                          <span class="param-value">{(effect.params.velocityDecay ?? 2.3).toFixed(2)}</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Brightness Boost</label>
-                          <input type="range" min="0.5" max="4" step="0.01"
-                            data-midi-path="map:effect:{effect.id}:outputBoost"
-                            value={effect.params.outputBoost ?? 0.7}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { outputBoost: parseFloat((e.target as HTMLInputElement).value) })} />
-                          <span class="param-value">{(effect.params.outputBoost ?? 0.7).toFixed(2)}×</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Time Scale</label>
-                          <input type="range" min="0.1" max="3" step="0.01"
-                            data-midi-path="map:effect:{effect.id}:timeScale"
-                            value={effect.params.timeScale ?? 1.6}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { timeScale: parseFloat((e.target as HTMLInputElement).value) })} />
-                          <span class="param-value">{(effect.params.timeScale ?? 1.6).toFixed(2)}×</span>
-                        </div>
+                             EffectParamRow gives each knob the same
+                             mod-source dropdown + click-to-type editor
+                             the rest of the panel uses. -->
+                        <EffectParamRow label="Inject Strength" min={0} max={3} step={0.01}
+                          layerIndex={layerIdx} effectId={effect.id} paramName="injectStrength"
+                          value={effect.params.injectStrength ?? 1.5}
+                          onChange={(v) => project.updateEffectParams(layer.id, effect.id, { injectStrength: v })} />
+                        <EffectParamRow label="Velocity Push" min={0} max={3} step={0.01}
+                          layerIndex={layerIdx} effectId={effect.id} paramName="velocityFromGradient"
+                          value={effect.params.velocityFromGradient ?? 1.4}
+                          onChange={(v) => project.updateEffectParams(layer.id, effect.id, { velocityFromGradient: v })} />
+                        <EffectParamRow label="Vorticity" min={0} max={3} step={0.01}
+                          layerIndex={layerIdx} effectId={effect.id} paramName="vorticity"
+                          value={effect.params.vorticity ?? 1.0}
+                          onChange={(v) => project.updateEffectParams(layer.id, effect.id, { vorticity: v })} />
+                        <EffectParamRow label="Dye Decay" min={0} max={3} step={0.01}
+                          layerIndex={layerIdx} effectId={effect.id} paramName="dyeDecay"
+                          value={effect.params.dyeDecay ?? 2.4}
+                          onChange={(v) => project.updateEffectParams(layer.id, effect.id, { dyeDecay: v })} />
+                        <EffectParamRow label="Velocity Decay" min={0} max={3} step={0.01}
+                          layerIndex={layerIdx} effectId={effect.id} paramName="velocityDecay"
+                          value={effect.params.velocityDecay ?? 2.3}
+                          onChange={(v) => project.updateEffectParams(layer.id, effect.id, { velocityDecay: v })} />
+                        <EffectParamRow label="Brightness Boost" min={0.5} max={4} step={0.01}
+                          layerIndex={layerIdx} effectId={effect.id} paramName="outputBoost"
+                          value={effect.params.outputBoost ?? 0.7}
+                          displayValue={(v) => v.toFixed(2) + '×'}
+                          onChange={(v) => project.updateEffectParams(layer.id, effect.id, { outputBoost: v })} />
+                        <EffectParamRow label="Time Scale" min={0.1} max={3} step={0.01}
+                          layerIndex={layerIdx} effectId={effect.id} paramName="timeScale"
+                          value={effect.params.timeScale ?? 1.6}
+                          displayValue={(v) => v.toFixed(2) + '×'}
+                          onChange={(v) => project.updateEffectParams(layer.id, effect.id, { timeScale: v })} />
 
                       {:else if effect.type === 'colorama'}
                         <div class="param-row">
@@ -2158,58 +2138,25 @@
                             <option value="7">Psychedelic</option>
                           </select>
                         </div>
-                        <div class="param-row">
-                          <label>Offset</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:coloramaOffset"
-                            value={effect.params.coloramaOffset ?? 0}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { coloramaOffset: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.coloramaOffset ?? 0) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Auto Speed</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="2"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:coloramaSpeed"
-                            value={effect.params.coloramaSpeed ?? 0.2}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { coloramaSpeed: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{(effect.params.coloramaSpeed ?? 0.2).toFixed(2)}</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Contrast</label>
-                          <input
-                            type="range"
-                            min="0.5"
-                            max="2"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:coloramaContrast"
-                            value={effect.params.coloramaContrast ?? 1}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { coloramaContrast: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.coloramaContrast ?? 1) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="param-row">
-                          <label>Mix</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            data-midi-path="map:effect:{effect.id}:coloramaMix"
-                            value={effect.params.coloramaMix ?? 1}
-                            oninput={(e) => project.updateEffectParams(layer.id, effect.id, { coloramaMix: parseFloat((e.target as HTMLInputElement).value) })}
-                          />
-                          <span class="param-value">{((effect.params.coloramaMix ?? 1) * 100).toFixed(0)}%</span>
-                        </div>
+                        <EffectParamRow label="Offset" min={0} max={1} step={0.01}
+                          layerIndex={layerIdx} effectId={effect.id} paramName="coloramaOffset"
+                          value={effect.params.coloramaOffset ?? 0}
+                          displayValue={(v) => (v * 100).toFixed(0) + '%'}
+                          onChange={(v) => project.updateEffectParams(layer.id, effect.id, { coloramaOffset: v })} />
+                        <EffectParamRow label="Auto Speed" min={0} max={2} step={0.01}
+                          layerIndex={layerIdx} effectId={effect.id} paramName="coloramaSpeed"
+                          value={effect.params.coloramaSpeed ?? 0.2}
+                          onChange={(v) => project.updateEffectParams(layer.id, effect.id, { coloramaSpeed: v })} />
+                        <EffectParamRow label="Contrast" min={0.5} max={2} step={0.01}
+                          layerIndex={layerIdx} effectId={effect.id} paramName="coloramaContrast"
+                          value={effect.params.coloramaContrast ?? 1}
+                          displayValue={(v) => (v * 100).toFixed(0) + '%'}
+                          onChange={(v) => project.updateEffectParams(layer.id, effect.id, { coloramaContrast: v })} />
+                        <EffectParamRow label="Mix" min={0} max={1} step={0.01}
+                          layerIndex={layerIdx} effectId={effect.id} paramName="coloramaMix"
+                          value={effect.params.coloramaMix ?? 1}
+                          displayValue={(v) => (v * 100).toFixed(0) + '%'}
+                          onChange={(v) => project.updateEffectParams(layer.id, effect.id, { coloramaMix: v })} />
 
                       {:else if effect.type === 'invert'}
                         <div class="param-info">No parameters</div>
@@ -2250,36 +2197,34 @@
                                 />
                               </div>
                             {:else}
-                              <div class="param-row">
-                                <label>{meta.label}</label>
-                                <input
-                                  type="range"
-                                  min={meta.min}
-                                  max={meta.max}
-                                  step={meta.step}
-                                  data-midi-path="map:effect:{effect.id}:{paramKey}"
-                                  value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
-                                  oninput={(e) => project.updateEffectParams(layer.id, effect.id, { [paramKey]: parseFloat((e.target as HTMLInputElement).value) })}
-                                />
-                                <span class="param-value">{meta.max <= 1 ? (((effect.params as Record<string, number>)[paramKey] ?? meta.default) * 100).toFixed(0) + '%' : ((effect.params as Record<string, number>)[paramKey] ?? meta.default).toFixed(2)}</span>
-                              </div>
+                              <EffectParamRow
+                                label={meta.label}
+                                value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
+                                min={meta.min as number}
+                                max={meta.max as number}
+                                step={meta.step as number}
+                                layerIndex={layerIdx}
+                                effectId={effect.id}
+                                paramName={paramKey}
+                                displayValue={(v) => (meta.max as number) <= 1 ? (v * 100).toFixed(0) + '%' : v.toFixed(2)}
+                                onChange={(v) => project.updateEffectParams(layer.id, effect.id, { [paramKey]: v })}
+                              />
                             {/if}
                           {/each}
                         {:else}
                           {#each getNumericEffectParams(effect.type) as paramKey}
-                            <div class="param-row">
-                              <label>{paramKey}</label>
-                              <input
-                                type="range"
-                                min="0"
-                                max="1"
-                                step="0.01"
-                                data-midi-path="map:effect:{effect.id}:{paramKey}"
-                                value={(effect.params as Record<string, number>)[paramKey] ?? 0.5}
-                                oninput={(e) => project.updateEffectParams(layer.id, effect.id, { [paramKey]: parseFloat((e.target as HTMLInputElement).value) })}
-                              />
-                              <span class="param-value">{(((effect.params as Record<string, number>)[paramKey] ?? 0.5) * 100).toFixed(0)}%</span>
-                            </div>
+                            <EffectParamRow
+                              label={paramKey}
+                              value={(effect.params as Record<string, number>)[paramKey] ?? 0.5}
+                              min={0}
+                              max={1}
+                              step={0.01}
+                              layerIndex={layerIdx}
+                              effectId={effect.id}
+                              paramName={paramKey}
+                              displayValue={(v) => (v * 100).toFixed(0) + '%'}
+                              onChange={(v) => project.updateEffectParams(layer.id, effect.id, { [paramKey]: v })}
+                            />
                           {/each}
                         {/if}
                       {/if}
@@ -2313,6 +2258,7 @@
   }}
   onClose={() => { showEffectPicker = false; }}
 />
+
 
 <style>
   .layer-panel {
