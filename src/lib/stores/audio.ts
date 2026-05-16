@@ -374,6 +374,48 @@ function createAudioStore() {
     getAudioStream(): { stream: MediaStream; cleanup: () => void } | null {
       return audioAnalyzer.getAudioStream();
     },
+
+    /**
+     * Inject an audio frame received over BroadcastChannel from the editor
+     * window. Used by output / Spout OSR windows that have no microphone
+     * access of their own. Populates _lastRawAnalysis so getLastRawAnalysis()
+     * works for the audioTextures upload, and writes bands / amplitude /
+     * beat into the store so any UI or shader uniform that reads
+     * $audioStore sees live values.
+     *
+     * No-op in windows where a real analyzer has already produced a frame —
+     * the local analyzer always wins. Output windows never start the
+     * analyzer, so the receiver feeds them exclusively.
+     */
+    injectBroadcastedFrame(frame: {
+      isActive: boolean;
+      fft: Float32Array;
+      waveform: Float32Array;
+      bands: AudioBands;
+      amplitude: number;
+      peak: number;
+      rms: number;
+      beat: BeatState;
+    }): void {
+      _lastRawAnalysis = {
+        fftData: frame.fft as unknown as Float32Array<ArrayBuffer>,
+        waveformData: frame.waveform as unknown as Float32Array<ArrayBuffer>,
+        bands: frame.bands,
+        amplitude: frame.amplitude,
+        peak: frame.peak,
+        rms: frame.rms,
+        beat: frame.beat,
+      } as AudioAnalysis;
+      update(state => ({
+        ...state,
+        isActive: frame.isActive,
+        bands: frame.bands,
+        amplitude: frame.amplitude,
+        peak: frame.peak,
+        rms: frame.rms,
+        beat: frame.beat,
+      }));
+    },
   };
 }
 

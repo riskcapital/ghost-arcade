@@ -28,6 +28,11 @@ export class TextRenderer {
   private startTime: number;
   private lastText: string = '';
   private letterMetrics: LetterMetrics[] = [];
+  // Cached signature of the last rendered TextContent — used to skip the
+  // per-frame canvas redraw + GPU upload when the text is static and
+  // nothing the renderer cares about changed. Animated text always
+  // re-renders (its animTime tick changes every frame anyway).
+  private lastStaticSig: string | null = null;
   // Offscreen canvas for 3D compositing (render flat text here, then extrude onto main)
   private flatCanvas: HTMLCanvasElement | null = null;
   private flatCtx: CanvasRenderingContext2D | null = null;
@@ -195,6 +200,43 @@ export class TextRenderer {
    * Main render method - renders text with current animation state
    */
   render(content: TextContent, _deltaTime: number): THREE.Texture {
+    // Static text shortcut: when the animation type is 'none', the canvas
+    // would be redrawn pixel-identical every frame and uploaded to the GPU
+    // anyway. Hash the inputs that actually affect the rendered pixels
+    // and skip both the canvas redraw AND the needsUpdate flag when they
+    // haven't moved. This is the dirty-flag the perf review asked for.
+    if (content.animation.type === 'none') {
+      const sig = JSON.stringify({
+        t: content.text,
+        f: content.fontFamily,
+        s: content.fontSize,
+        w: content.fontWeight,
+        c: content.color,
+        bg: content.backgroundColor,
+        a: content.textAlign,
+        v: content.verticalAlign,
+        ls: content.letterSpacing,
+        lh: content.lineHeight,
+        s3: content.enable3D,
+        ed: content.extrudeDepth,
+        sh: content.shadowEnabled,
+        out: content.outlineEnabled,
+        oc: content.outlineColor,
+        ow: content.outlineWidth,
+        w_: this.width,
+        h: this.height,
+      });
+      if (sig === this.lastStaticSig) {
+        // No-op — texture already on the GPU, nothing changed.
+        return this.texture;
+      }
+      this.lastStaticSig = sig;
+    } else {
+      // Animated text: invalidate the static cache so a subsequent flip
+      // back to 'none' triggers a fresh render.
+      this.lastStaticSig = null;
+    }
+
     const ctx = this.ctx;
     const t = performance.now() / 1000 - this.startTime;
     const speed = content.animation.speed;

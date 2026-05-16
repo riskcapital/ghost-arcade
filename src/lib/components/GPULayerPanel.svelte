@@ -18,6 +18,7 @@
   import type { GPULayerContent, Layer } from '../types';
   import type { MediaItem } from '../stores/media';
   import type { ParamControl } from '../renderer/gpuShaderTypes';
+  import { createAssetRefFromFile } from '../storage/assetRegistry';
   import NumericInput from './NumericInput.svelte';
 
   // Media-source picker support (for shaders with kind: 'media-source'
@@ -93,13 +94,15 @@
     const input = e.target as HTMLInputElement;
     const file = input.files?.[0];
     if (!file || !_fileSourceKey) return;
-    const url = URL.createObjectURL(file);
+    // Capture an AssetRef so save/reload restores the source. Without it the
+    // blob URL dies on session end and this GPU layer comes back with a dead src.
+    const { assetRef, runtimeUrl: url } = createAssetRefFromFile(file);
     // Stash the original filename on the source object. Blob URLs
     // drop the extension (they look like `blob:http://.../uuid`), so
     // the runner relies on this field to detect .ply / .splat files
     // and route them to the point-cloud parser instead of trying to
     // decode the bytes as an image.
-    setParam(_fileSourceKey, { type: 'file', url, mime: file.type, name: file.name });
+    setParam(_fileSourceKey, { type: 'file', url, mime: file.type, name: file.name, assetRef });
     input.value = '';
     _fileSourceKey = '';
   }
@@ -168,9 +171,27 @@
     if (!layerId || !content || content.shaderId === id) return;
     const def = getShaderDef(id);
     if (!def) return;
-    // Switching shader: reset params to the new shader's defaults
-    // (the param keys are entirely different).
-    project.updateGPULayerContent(layerId, { shaderId: id, params: { ...def.defaultParams } });
+    // Switching shader USED to wipe params to defaults — meant the source
+    // picker selection (and every slider) was lost the moment the user
+    // clicked another shader. Now we stash the outgoing shader's params
+    // under `paramsByShader[oldId]` and restore them on return.
+    //
+    // Active `params` always mirrors the current shader's slot so the
+    // rest of the codebase (GPU runner, modulation, keyframes) sees the
+    // same shape it always has.
+    const prevId = content.shaderId;
+    const prevParams = { ...content.params };
+    const stash: Record<string, Record<string, any>> = { ...(content.paramsByShader || {}) };
+    if (prevId) stash[prevId] = prevParams;
+    const restored = stash[id];
+    const nextParams = restored
+      ? { ...def.defaultParams, ...restored }
+      : { ...def.defaultParams };
+    project.updateGPULayerContent(layerId, {
+      shaderId: id,
+      params: nextParams,
+      paramsByShader: stash,
+    } as any);
   }
 
   function setParam(key: string, value: any) {

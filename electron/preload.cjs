@@ -35,6 +35,12 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'save_shader_source', 'list_shader_sources', 'delete_shader_source',
   // File system
   'pick_directory', 'save_file_binary', 'save_file_text', 'save_project_dialog',
+  'save_generated_asset',
+  // Fast sibling-asset materialization. Copies a known-on-disk file to a
+  // destination path without round-tripping its bytes through base64+IPC.
+  // Saves seconds per gigabyte over save_file_binary for large videos/.glb.
+  'copy_file_to_project',
+  'open_project_dialog',
   'download_demo_zip', 'read_project_file',
   // Update installer download + launch
   'download_update_installer', 'launch_update_installer',

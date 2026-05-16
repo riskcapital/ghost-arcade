@@ -303,9 +303,24 @@
     }
   }
 
-  // Vertex mousedown: select + drag, or remove in pen- mode
+  // Vertex mousedown: select + drag, or remove in pen mode.
+  //
+  // Special case for draw mode: clicking the FIRST vertex when at least 3
+  // points exist closes the shape — matching the mask UX. Without this
+  // path users have to right-click to close, which is non-obvious when
+  // the green first-vertex marker visibly highlights the close target.
   function handleVertexMouseDown(index: number, e: MouseEvent) {
-    if (!$selectedLayer || $selectedLayer.locked || !isCustom || !isClosed) return;
+    if (!$selectedLayer || $selectedLayer.locked || !isCustom) return;
+
+    if (!isClosed) {
+      if (index === 0 && customPoints.length >= 3) {
+        e.preventDefault();
+        e.stopPropagation();
+        project.closeCustomShape($selectedLayer.id);
+      }
+      return;
+    }
+
     e.preventDefault();
     e.stopPropagation();
 
@@ -676,7 +691,7 @@
         {:else if customPoints.length < 3}
           Click to add points ({3 - customPoints.length} more to close)
         {:else}
-          Right-click to close shape
+          Click first point or right-click to close
         {/if}
       </div>
     {/if}

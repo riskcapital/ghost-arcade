@@ -107,6 +107,8 @@ export interface VJClip {
   spoutSource?: string;
   // For integrated effects (FluidGen, Particles3D running natively in WebGL)
   effectSource?: IntegratedEffectSource;
+  // Durable file identity for image/video clips dragged from the media library.
+  _assetRef?: import('../storage/assetRegistry').AssetRef;
   // For point cloud / splat clips
   splatContent?: SplatContent;
   // For 3D model clips
@@ -518,6 +520,62 @@ const videoElementCache = new Map<string, HTMLVideoElement>();
 // Cache for VJ source objects (keeps textures persistent)
 const vjSourceCache = new Map<string, MediaSource>();
 
+function shouldSkipVideoCors(src: string | undefined): boolean {
+  // Skip only schemes that are same-origin or in-memory. `ghost-asset://`
+  // is served by Electron's custom protocol on a DIFFERENT origin, so the
+  // video element MUST set crossOrigin='anonymous' before src — otherwise
+  // WebGL throws "SecurityError: ... contains cross-origin data" the
+  // moment Three.js tries to upload the frame as a texture. Pair this with
+  // the Access-Control-Allow-Origin headers in main.js's protocol handler.
+  return !src || /^(blob:|file:|data:)/i.test(src);
+}
+
+function mediaTypeForClip(clip: VJClip): 'shader' | 'video' | 'image' | 'threejs' | 'color' | 'spout' | 'effect' {
+  if (clip.type === 'shader') return 'shader';
+  if (clip.type === 'video') return 'video';
+  if (clip.type === 'threejs' || clip.type === 'synthvision') return 'threejs';
+  if (clip.type === 'spout') return 'spout';
+  if (clip.type === 'effect') return 'effect';
+  return 'image';
+}
+
+function ensureClipVideoElement(clip: VJClip): HTMLVideoElement | undefined {
+  if (!clip || clip.type !== 'video' || !clip.src) return clip.videoElement;
+
+  let videoEl = videoElementCache.get(clip.id);
+  if (videoEl && videoEl.src !== clip.src) {
+    try { videoEl.pause(); } catch { /* ignore */ }
+    videoEl.removeAttribute('src');
+    videoElementCache.delete(clip.id);
+    videoEl = undefined;
+  }
+
+  if (!videoEl) {
+    videoEl = document.createElement('video');
+    if (!shouldSkipVideoCors(clip.src)) {
+      videoEl.crossOrigin = 'anonymous';
+    }
+    videoEl.loop = true;
+    videoEl.muted = true;
+    videoEl.playsInline = true;
+    videoEl.preload = 'auto';
+    videoEl.src = clip.src;
+    clip.isPlaying = clip.isPlaying ?? true;
+
+    const v = videoEl;
+    const tryPlay = () => {
+      if (clip.isPlaying === false) return;
+      v.play().catch(e => console.warn('[vjClipLauncher] video autoplay failed:', e));
+    };
+    if (v.readyState >= 2) tryPlay();
+    else v.addEventListener('loadeddata', tryPlay, { once: true });
+    videoElementCache.set(clip.id, videoEl);
+  }
+
+  clip.videoElement = videoEl;
+  return videoEl;
+}
+
 // Create the store
 function createVJClipLauncherStore() {
   const { subscribe, set, update } = writable<VJClipLauncherState>(createDefaultState());
@@ -537,6 +595,9 @@ function createVJClipLauncherStore() {
       const newLayerStates = [...targetLayerStates];
       const clip = targetGrid[layerIndex]?.[columnIndex];
       if (!clip) return state;
+      if (clip.type === 'video') {
+        ensureClipVideoElement(clip);
+      }
 
       const current = newLayerStates[layerIndex].activeClip;
       isReclick = !!(current && current.id === clip.id);
@@ -629,6 +690,7 @@ function createVJClipLauncherStore() {
         // and the first VideoTexture sample comes back as a single black
         // frame. That's the "VJ video shows one stuck frame" bug.
         if (clip && clip.type === 'video') {
+          ensureClipVideoElement(clip);
           let videoEl = videoElementCache.get(clip.id);
           if (!videoEl) {
             videoEl = document.createElement('video');
@@ -858,6 +920,9 @@ function createVJClipLauncherStore() {
         const newLayerStates = targetLayerStates.map((layerState, layerIndex) => {
           const clip = targetGrid[layerIndex]?.[columnIndex];
           if (clip) {
+            if (clip.type === 'video') {
+              ensureClipVideoElement(clip);
+            }
             didTrigger = true;
             return { ...layerState, activeColumn: columnIndex, activeClip: clip };
           }
@@ -1962,6 +2027,9 @@ export const vjOutputLayers = derived(
       const vjLayerIndex = activeLayer.layerIndex;
       const clip = activeLayer.clip;
       const vjLayerOpacity = activeLayer.opacity * $vjClipLauncher.masterOpacity;
+      if (clip.type === 'video') {
+        ensureClipVideoElement(clip);
+      }
 
       // Cache key includes the bank so Bank A and Bank B clips on the same
       // row don't collide. In single-bank mode bank is null and the key
@@ -1972,20 +2040,14 @@ export const vjOutputLayers = derived(
 
       if (!source) {
         // Map VJClip type to MediaSource type
-        let mediaType: 'shader' | 'video' | 'image' | 'threejs' | 'color' | 'spout' | 'effect';
-        if (clip.type === 'shader') mediaType = 'shader';
-        else if (clip.type === 'video') mediaType = 'video';
-        else if (clip.type === 'threejs' || clip.type === 'synthvision') mediaType = 'threejs';
-        else if (clip.type === 'spout') mediaType = 'spout';
-        else if (clip.type === 'effect') mediaType = 'effect';
-        else if (clip.type === 'splat' || clip.type === 'model3d') mediaType = 'image'; // Placeholder; actual rendering uses splatContent/model3dContent
-        else mediaType = 'image';
+        const mediaType = mediaTypeForClip(clip);
 
         source = {
           id: clip.id,
           type: mediaType,
           name: clip.name,
           src: clip.src,
+          _assetRef: clip._assetRef,
           shaderCode: clip.shaderCode,
           shaderInputs: getShaderInputs(clip.shaderCode),
           shaderValues: clip.shaderValues || {},
@@ -2034,10 +2096,22 @@ export const vjOutputLayers = derived(
         vjSourceCache.set(cacheKey, source);
       } else {
         // Update dynamic properties
+        const mediaType = mediaTypeForClip(clip);
+        const srcChanged = source.src !== clip.src;
+        source.id = clip.id;
+        source.type = mediaType;
+        source.name = clip.name;
+        source.src = clip.src;
+        if (srcChanged) {
+          source.texture?.dispose?.();
+          source.texture = undefined;
+          source.videoElement = undefined;
+        }
         source.shaderValues = clip.shaderValues || {};
         if (clip.videoElement) {
           source.videoElement = clip.videoElement;
         }
+        source._assetRef = clip._assetRef;
         if (clip.iframeElement) {
           source.iframeElement = clip.iframeElement;
         }

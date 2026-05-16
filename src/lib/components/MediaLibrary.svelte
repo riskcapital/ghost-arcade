@@ -5,6 +5,7 @@
   import { confirmDeleteIfSafeMode } from '../utils/safeMode';
   import type { MediaSource, JSAnimationSource } from '../types';
   import { generateUUID } from '../types';
+  import { createAssetRefFromFile } from '../storage/assetRegistry';
   import AIShaderGenerator from './AIShaderGenerator.svelte';
 
   // Library state
@@ -25,18 +26,17 @@
     thumbnail?: string;
   }
 
+  // Default Three.js items that ship with every build. Located under
+  // /public/threejs/<name>/index.html so vite copies them into dist.
+  // The apply-to-layer path fetches the HTML and routes through the
+  // JS-animation pipeline so they get the same shim injection + param
+  // slider UI that user-uploaded HTML gets.
   const defaultThreeJSItems: ThreeJSItem[] = [
     {
       id: 'threejs-embryo',
       name: 'Embryo',
       src: '/threejs/embryo/index.html',
-      thumbnail: undefined,
-    },
-    {
-      id: 'threejs-flow',
-      name: 'Flow',
-      src: '/threejs/flow/index-new.html',
-      thumbnail: undefined,
+      thumbnail: undefined, // generated on mount
     },
   ];
 
@@ -114,7 +114,10 @@
   }
 
   function addFileToLibrary(file: File) {
-    const url = URL.createObjectURL(file);
+    // Capture an AssetRef so the library entry survives save/reload. Without
+    // this the URL is a blob: that dies at session end and the library item
+    // becomes unresolvable.
+    const { assetRef, runtimeUrl: url } = createAssetRefFromFile(file);
     const isVideo = file.type.startsWith('video/');
 
     const item: MediaSource = {
@@ -122,6 +125,7 @@
       type: isVideo ? 'video' : 'image',
       src: url,
       name: file.name,
+      _assetRef: assetRef,
     };
 
     if (isVideo) {
@@ -184,6 +188,7 @@
       type: item.type,
       src: item.src,
       name: item.name,
+      _assetRef: (item as any)._assetRef,
     };
 
     if (item.type === 'video') {
@@ -221,18 +226,79 @@
     project.setLayerSource($selectedLayerId, layerSource);
   }
 
-  // Apply Three.js item to selected layer
-  function applyThreeJSToLayer(item: ThreeJSItem) {
+  // Apply Three.js item to selected layer.
+  //
+  // Built-in items live as static HTML at /threejs/<name>/index.html.
+  // We fetch the file, parse its shaderParamDefs, and dispatch as a
+  // JSAnimation so the layer gets:
+  //   - the iframe runtime shims (importmap for `three`, DPR=1 clamp)
+  //   - param slider UI driven by the HTML's own shaderParamDefs
+  // Without this conversion the layer would skip both — the engine's
+  // legacy createThreeJSIframeContext path doesn't support params or
+  // shim injection.
+  async function applyThreeJSToLayer(item: ThreeJSItem) {
     if (!$selectedLayerId) return;
+    try {
+      const resp = await fetch(item.src);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const htmlCode = await resp.text();
+      const isP5 = /p5\.(min\.)?js|new\s+p5\s*\(/.test(htmlCode);
+      const animationType: 'threejs' | 'p5js' = isP5 ? 'p5js' : 'threejs';
+      const params = parseShaderParamDefs(htmlCode);
+      const values = parseShaderParamValues(htmlCode);
+      const paramValues: Record<string, number | boolean | number[]> = {};
+      for (const p of params) paramValues[p.name] = values[p.name] ?? p.default;
 
-    const layerSource: MediaSource = {
-      id: generateUUID(),
-      type: 'threejs',
-      src: item.src,
-      name: item.name,
-    };
+      const layerSource: MediaSource = {
+        id: generateUUID(),
+        type: animationType,
+        src: item.src,
+        name: item.name,
+        jsAnimation: {
+          animationType,
+          htmlCode,
+          params: params.length > 0 ? params : undefined,
+          paramValues: params.length > 0 ? paramValues : undefined,
+        },
+      };
+      project.setLayerSource($selectedLayerId, layerSource);
+    } catch (err) {
+      console.error('[MediaLibrary] failed to load built-in Three.js item:', item.src, err);
+    }
+  }
 
-    project.setLayerSource($selectedLayerId, layerSource);
+  // ---- shaderParamDefs parsers ----
+  // Shared with the file-upload path in MediaTray. Both need to extract
+  // the same object-literal-with-unquoted-keys format from raw HTML.
+  function parseShaderParamDefs(html: string): Array<{
+    name: string; type: 'number' | 'boolean' | 'color';
+    default: number | boolean | number[];
+    min?: number; max?: number; label?: string;
+  }> {
+    const m = html.match(/window\.shaderParamDefs\s*=\s*(\[[\s\S]*?\])\s*;?/);
+    if (!m) return [];
+    try {
+      const arr = new Function('return ' + m[1])();
+      if (!Array.isArray(arr)) return [];
+      return arr.filter(d => d && typeof d.name === 'string' && d.type).map(d => ({
+        name: String(d.name),
+        type: d.type as 'number' | 'boolean' | 'color',
+        default: d.default,
+        min: typeof d.min === 'number' ? d.min : undefined,
+        max: typeof d.max === 'number' ? d.max : undefined,
+        label: typeof d.label === 'string' ? d.label : d.name,
+      }));
+    } catch {
+      return [];
+    }
+  }
+  function parseShaderParamValues(html: string): Record<string, number | boolean | number[]> {
+    const m = html.match(/window\.shaderParams\s*=\s*(\{[\s\S]*?\})\s*;?/);
+    if (!m) return {};
+    try {
+      const obj = new Function('return ' + m[1])();
+      return (obj && typeof obj === 'object') ? obj : {};
+    } catch { return {}; }
   }
 
   // Drag Three.js item

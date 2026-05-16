@@ -13,6 +13,7 @@
     SplatRenderMode,
     SplatMouseInteraction
   } from '../types';
+  import { createAssetRefFromFile } from '../storage/assetRegistry';
 
   // Optional props for dual-mode (mapping mode vs VJ mode)
   // When not provided, falls back to selectedLayer store (mapping mode behavior)
@@ -153,7 +154,7 @@
       if (ext === 'splat') {
         // Native .splat format — create blob URL, Canvas will detect by extension
         if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
-        const blobUrl = URL.createObjectURL(file);
+        const { assetRef, runtimeUrl: blobUrl } = createAssetRefFromFile(file);
         currentBlobUrl = blobUrl;
         currentFileName = file.name;
         // Store the original filename so Canvas can detect .splat format
@@ -161,13 +162,14 @@
           filePath: blobUrl,
           dataType: 'gaussian',
           _originalFileName: file.name,
+          _assetRef: assetRef,
         } as any);
       } else {
         // PLY format
         const plyData = await loadPLYFromFile(file);
 
         if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
-        const blobUrl = URL.createObjectURL(file);
+        const { assetRef, runtimeUrl: blobUrl } = createAssetRefFromFile(file);
         currentBlobUrl = blobUrl;
         currentFileName = file.name;
 
@@ -178,6 +180,7 @@
           dataType: plyData.dataType,
           pointCount: plyData.vertices.length,
           hasNativeUVs: plyData.hasUVs,
+          _assetRef: assetRef,
         };
 
         // Auto-enable native texture projection when PLY has embedded UVs
@@ -292,16 +295,25 @@
                   const file = (e.target as HTMLInputElement).files?.[0];
                   if (file) {
                     if (sc.textureType === 'video') {
-                      // For video, use blob URL for better performance
+                      // For video, use blob URL for better performance, plus
+                      // capture an AssetRef so the texture survives reload
+                      // (blob URLs die at session end).
                       if (currentTextureBlobUrl) URL.revokeObjectURL(currentTextureBlobUrl);
-                      const blobUrl = URL.createObjectURL(file);
+                      const { assetRef, runtimeUrl: blobUrl } = createAssetRefFromFile(file);
                       currentTextureBlobUrl = blobUrl;
-                      doUpdate({ texturePath: blobUrl });
+                      doUpdate({ texturePath: blobUrl, _textureAssetRef: assetRef } as any);
                     } else {
-                      // For images, use data URL
+                      // For images, embed as data URL (small assets) AND keep
+                      // the AssetRef so the original disk path is recoverable
+                      // if the user re-uses the same image elsewhere.
+                      const { assetRef } = createAssetRefFromFile(file);
                       const reader = new FileReader();
                       reader.onload = () => {
-                        doUpdate({ texturePath: reader.result as string });
+                        const dataUrl = reader.result as string;
+                        // Promote the dataUrl into the assetRef so save/reload
+                        // doesn't have to copy the image — it's already inline.
+                        const refWithData = { ...assetRef, kind: 'embedded' as const, dataUrl };
+                        doUpdate({ texturePath: dataUrl, _textureAssetRef: refWithData } as any);
                       };
                       reader.readAsDataURL(file);
                     }

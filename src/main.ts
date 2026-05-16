@@ -67,7 +67,20 @@ async function init() {
     //                  its own Three.js compositor + state-sync
     // The visible `output` path is the production fallback when the
     // WebRTC experiment is off or fails its success-criteria sweep.
-    const { default: SpoutOutputApp } = await import('./SpoutOutputApp.svelte');
+    //
+    // These windows render shaders independently and have no microphone
+    // access, so audio uniforms (audioLevel, audioBass, audioFFT,
+    // audioWaveform) come out as zero unless we forward analysis bytes
+    // from the editor. Wire the BroadcastChannel receiver before mounting
+    // so the very first rendered frame has live audio.
+    const [{ default: SpoutOutputApp }, { startAudioBroadcastReceiver }, { audioStore }] = await Promise.all([
+      import('./SpoutOutputApp.svelte'),
+      import('./lib/sync/audioBroadcast'),
+      import('./lib/stores/audio'),
+    ]);
+    startAudioBroadcastReceiver({
+      onFrame: (frame) => audioStore.injectBroadcastedFrame(frame),
+    });
     mount(SpoutOutputApp, {
       target: document.getElementById('app')!,
     });

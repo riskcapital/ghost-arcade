@@ -8,6 +8,7 @@ import { settings, getMimeType, getFileExtension } from '../stores/settings';
 import { mediaLibrary } from '../stores/media';
 import { generateUUID } from '../types';
 import { audioStore } from '../stores/audio';
+import { createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
 
 // ============================================================================
 // TYPES
@@ -295,6 +296,13 @@ async function saveRecordingToLibrary(blob: Blob, mimeType: string, namePrefix: 
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const name = `${namePrefix} ${timestamp}`;
+    const extension = mimeType.includes('mp4') ? 'mp4' : mimeType.includes('webm') ? 'webm' : 'mp4';
+    const { assetRef } = await createAssetRefFromGeneratedBlob(
+      blob,
+      `${name}.${extension}`,
+      mimeType,
+      url,
+    );
 
     mediaLibrary.addItem({
       id: generateUUID(),
@@ -302,6 +310,7 @@ async function saveRecordingToLibrary(blob: Blob, mimeType: string, namePrefix: 
       type: 'video',
       src: url,
       thumbnail,
+      _assetRef: assetRef,
     });
 
     console.log('[Recorder] Saved to library:', name);
@@ -309,7 +318,6 @@ async function saveRecordingToLibrary(blob: Blob, mimeType: string, namePrefix: 
     // Auto-download if enabled
     const currentSettings = settings.get();
     if (currentSettings.recording.autoDownload) {
-      const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
       const filename = `GhostArcade_${timestamp}.${extension}`;
       await downloadRecording(blob, filename);
     }

@@ -15,6 +15,7 @@
   import type { BlendMode, Effect, EffectType, ISFInputDef, SplatContent, Model3DContent, Model3DFormat, SplatAnimationType, SplatDisplacementType, Model3DAnimationType, Model3DDeformationType, Model3DMaterialType, Model3DWireframeMode, Model3DLightingPreset } from '../types';
   import { generateUUID, createDefaultSplatContent, createDefaultModel3DContent } from '../types';
   import { audioStore } from '../stores/audio';
+  import { createAssetRefFromFile, createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
   import ClipPreviewPanel from './ClipPreviewPanel.svelte';
   import { markUserInteracting } from '../midi/midiRouter';
   import { modulationStore, modulationEngine, setParamModSource, setParamModAmount, setParamModSpeed, registerParamRanges, getModulatedValue, setBaseValue, clearBaseValues, clearModulatedValues, type ModSource, type ParamModulation } from '../audio/modulation';
@@ -846,17 +847,13 @@
     thumbnail?: string;
   }
 
+  // Default Three.js items that ship with every build. Located under
+  // /public/threejs/<name>/index.html so vite copies them into dist.
   const defaultThreeJSItems: ThreeJSItem[] = [
     {
       id: 'threejs-embryo',
       name: 'Embryo',
       src: '/threejs/embryo/index.html',
-      thumbnail: undefined, // Will generate preview
-    },
-    {
-      id: 'threejs-flow',
-      name: 'Flow',
-      src: '/threejs/flow/index-new.html',
       thumbnail: undefined,
     },
   ];
@@ -1198,7 +1195,9 @@
   async function vjAddMediaFile(file: File) {
     const kind = vjMediaGetType(file);
     if (!kind) { console.warn('[VJ Media] Unsupported file type:', file.name); return; }
-    const url = URL.createObjectURL(file);
+    // Capture both runtime URL and durable AssetRef so VJ media library entries
+    // survive save/reload (the blob URL alone won't).
+    const { assetRef, runtimeUrl: url } = createAssetRefFromFile(file);
     if (kind === 'video') {
       const video = document.createElement('video');
       // crossOrigin BEFORE src — order matters on Chromium 130.
@@ -1218,6 +1217,7 @@
         type: 'video',
         videoElement: video,
         thumbnail: await vjCaptureVideoThumb(video),
+        _assetRef: assetRef,
       } as any);
     } else if (kind === 'image') {
       mediaLibrary.addItem({
@@ -1226,6 +1226,7 @@
         src: url,
         type: 'image',
         thumbnail: url,
+        _assetRef: assetRef,
       } as any);
     }
   }
@@ -1301,32 +1302,37 @@
       const priorBlobUrl: string | null =
         existing?.splatContent?.filePath && existing.splatContent.filePath.startsWith('blob:')
           ? existing.splatContent.filePath
-          : existing?.model3DContent?.modelData && existing.model3DContent.modelData.startsWith?.('blob:')
-          ? existing.model3DContent.modelData
+          : (existing?.model3dContent || existing?.model3DContent)?.modelData?.startsWith?.('blob:')
+          ? (existing.model3dContent || existing.model3DContent).modelData
           : null;
 
       if (type === 'splat') {
-        // Use blob URL for splat files (more efficient than data URLs for binary)
-        const blobUrl = URL.createObjectURL(file);
+        // Use blob URL for splat files (more efficient than data URLs for binary).
+        // Pair with AssetRef so the clip survives save/reload — without it,
+        // every VJ splat clip comes back broken after closing the app.
+        const { assetRef, runtimeUrl: blobUrl } = createAssetRefFromFile(file);
         const isSplatFormat = file.name.toLowerCase().endsWith('.splat');
         vjClipLauncher.updateClipSplatContent(layerIndex, columnIndex, {
           filePath: blobUrl,
           dataType: isSplatFormat ? 'gaussian' : 'pointcloud',
           _originalFileName: file.name,  // Pass filename so Canvas can detect .splat format
+          _assetRef: assetRef,
         } as any, bank);
         vjClipLauncher.setClip(layerIndex, columnIndex, {
           ...(deckGrid(bank)[layerIndex]?.[columnIndex] as VJClip),
           name: file.name.replace(/\.[^.]+$/, ''),
         }, bank);
       } else {
-        // Use blob URL for 3D model files
-        const blobUrl = URL.createObjectURL(file);
+        // Use blob URL for 3D model files. AssetRef carries the durable disk
+        // path so save/reload restores the model — blob URLs alone can't.
+        const { assetRef, runtimeUrl: blobUrl } = createAssetRefFromFile(file);
         const ext = file.name.split('.').pop()?.toLowerCase() || 'glb';
         vjClipLauncher.updateClipModel3DContent(layerIndex, columnIndex, {
           modelData: blobUrl,
           modelFormat: ext as Model3DFormat,
           modelName: file.name,
-        }, bank);
+          _assetRef: assetRef,
+        } as any, bank);
         vjClipLauncher.setClip(layerIndex, columnIndex, {
           ...(deckGrid(bank)[layerIndex]?.[columnIndex] as VJClip),
           name: file.name.replace(/\.[^.]+$/, ''),
@@ -1470,6 +1476,7 @@
           name: media.name,
           src: media.src,
           thumbnail: media.thumbnail,
+          _assetRef: (media as any)._assetRef,
         };
         vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
       }
@@ -1832,6 +1839,12 @@
 
     const videoBlob = blob.type.startsWith('video/') ? blob : new Blob([blob], { type: 'video/mp4' });
     const blobUrl = URL.createObjectURL(videoBlob);
+    const { assetRef } = await createAssetRefFromGeneratedBlob(
+      videoBlob,
+      `${(name || 'AI Video').replace(/\.[^.]+$/, '')}.mp4`,
+      videoBlob.type || 'video/mp4',
+      blobUrl,
+    );
 
     const video = document.createElement('video');
     video.loop = true;
@@ -1847,6 +1860,7 @@
       type: 'video',
       videoElement: video,
       thumbnail: '',
+      _assetRef: assetRef,
     } as any);
 
     // `.src=` already initiated the load — don't call `.load()`.

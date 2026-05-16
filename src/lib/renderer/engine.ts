@@ -3123,11 +3123,29 @@ export function createCanvasTexture(canvas: HTMLCanvasElement): THREE.CanvasText
   return texture;
 }
 
-// Three.js iframe management - creates iframe and capture canvas
+// Three.js iframe management — creates iframe + a CanvasTexture that
+// reads DIRECTLY from the iframe's WebGL canvas. The previous version
+// used an intermediate 2D canvas with `ctx.drawImage(iframeCanvas, …)`
+// every frame, which is a GPU→CPU readback (browser reads the iframe's
+// WebGL pixels into a CPU bitmap) followed by a `texImage2D` CPU→GPU
+// upload. At 1080p that's roughly 6-16 ms per frame of pure overhead
+// per Three.js layer — enough to single-handedly trash the frame budget
+// on a busy show. Sourcing CanvasTexture from the iframe canvas
+// directly lets the browser do a GPU→GPU blit on the `texImage2D`
+// upload (hardware-accelerated, ~10× faster).
+//
+// The texture is created upfront with a 1×1 placeholder so consumers
+// can grab `context.texture` at layer-setup time without a race. The
+// first `updateTexture()` call that finds the iframe's WebGL canvas
+// hot-swaps `texture.image` to the live canvas. References stay
+// stable, so anyone who already grabbed `context.texture` keeps
+// pointing at the right thing.
 export interface ThreeJSIframeContext {
   iframe: HTMLIFrameElement;
+  /** Stable reference — starts as a 1×1 placeholder, swapped to the
+   *  iframe's WebGL canvas on first successful updateTexture(). */
   canvas: HTMLCanvasElement;
-  ctx: CanvasRenderingContext2D;
+  /** Stable CanvasTexture. Source canvas swaps via `texture.image =`. */
   texture: THREE.CanvasTexture;
   updateTexture: () => void;
 }
@@ -3141,7 +3159,8 @@ export function createThreeJSIframeContext(id: string, src: string, width = 1920
     return cached;
   }
 
-  // Create hidden iframe
+  // Create hidden iframe — runs the Three.js HTML page in its own
+  // WebGL context. Same-origin so we can read its DOM.
   const iframe = document.createElement('iframe');
   iframe.src = src;
   iframe.width = String(width);
@@ -3153,37 +3172,49 @@ export function createThreeJSIframeContext(id: string, src: string, width = 1920
   iframe.style.pointerEvents = 'none';
   document.body.appendChild(iframe);
 
-  // Create offscreen canvas for texture capture
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d', { alpha: false })!;
+  // Stable placeholder — 1×1 black pixel. Consumers see a black layer
+  // until the iframe's WebGL canvas loads (~ms after load event).
+  // The texture object stays stable; only its source canvas changes
+  // when the iframe canvas appears.
+  const placeholder = document.createElement('canvas');
+  placeholder.width = 1;
+  placeholder.height = 1;
+  const phCtx = placeholder.getContext('2d');
+  if (phCtx) { phCtx.fillStyle = '#000'; phCtx.fillRect(0, 0, 1, 1); }
+  const texture = createCanvasTexture(placeholder);
 
-  // Create texture from canvas
-  const texture = createCanvasTexture(canvas);
+  // Track the iframe canvas we last bound so we can detect when the
+  // iframe replaces its canvas (some demos rebuild on resize). On
+  // change, repoint `texture.image` at the new one.
+  let lastBoundIframeCanvas: HTMLCanvasElement | null = null;
 
-  // Function to update texture from iframe content
   const updateTexture = () => {
     try {
       const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-      if (iframeDoc) {
-        // Try to get canvas from iframe (Three.js and WebGL pages typically have a canvas)
-        const iframeCanvas = iframeDoc.querySelector('canvas') as HTMLCanvasElement;
-        if (iframeCanvas && iframeCanvas.width > 0 && iframeCanvas.height > 0) {
-          ctx.drawImage(iframeCanvas, 0, 0, width, height);
-          texture.needsUpdate = true;
-        }
+      if (!iframeDoc) return;
+
+      const iframeCanvas = iframeDoc.querySelector('canvas') as HTMLCanvasElement | null;
+      if (!iframeCanvas || iframeCanvas.width <= 0 || iframeCanvas.height <= 0) return;
+
+      if (lastBoundIframeCanvas !== iframeCanvas) {
+        // First frame iframe canvas appears OR canvas was replaced.
+        // Hot-swap the source. No texture object recreation = consumers
+        // that already grabbed `context.texture` stay valid.
+        texture.image = iframeCanvas;
+        context.canvas = iframeCanvas;
+        lastBoundIframeCanvas = iframeCanvas;
       }
-    } catch (e) {
-      // Cross-origin errors are expected if iframe is from different origin
-      // For same-origin iframes, this should work fine
+
+      texture.needsUpdate = true;
+    } catch {
+      // Cross-origin errors are expected for off-origin iframes;
+      // same-origin Three.js HTML files should always work.
     }
   };
 
   const context: ThreeJSIframeContext = {
     iframe,
-    canvas,
-    ctx,
+    canvas: placeholder,
     texture,
     updateTexture,
   };

@@ -360,7 +360,15 @@ export class GpuLayerRenderer {
     }
     const v = this.cachedVideoEl ?? document.createElement('video');
     v.muted = true; v.playsInline = true; v.loop = true; v.autoplay = true;
-    v.crossOrigin = /^https?:/i.test(url) ? 'anonymous' : null;
+    // crossOrigin MUST be set before `src` for any non-same-origin URL,
+    // or WebGL throws "SecurityError: video element contains cross-origin
+    // data" the moment it tries to upload the frame as a texture. The
+    // `ghost-asset://` custom protocol is a different origin from the
+    // renderer page (it's served by Electron main), so it needs the
+    // anonymous opt-in alongside http(s). Matches the equivalent fix in
+    // vjClipLauncher.shouldSkipVideoCors. Without this, GPU shader
+    // media sources visually rendered as solid black after save→reload.
+    v.crossOrigin = /^(https?:|ghost-asset:)/i.test(url) ? 'anonymous' : null;
     v.src = url;
     this.cachedVideoSrc = url;
     this.cachedVideoEl = v;
@@ -371,7 +379,10 @@ export class GpuLayerRenderer {
   /** Load a still image and feed it to the shader once decoded. */
   private loadImage(url: string): void {
     const img = new Image();
-    if (/^https?:/i.test(url)) img.crossOrigin = 'anonymous';
+    // Same CORS opt-in story as ensureVideo above — `ghost-asset://`
+    // images served via the Electron custom protocol need crossOrigin
+    // set so canvas / WebGL can read their pixels.
+    if (/^(https?:|ghost-asset:)/i.test(url)) img.crossOrigin = 'anonymous';
     img.onload = () => {
       if (this.impl?.setSource) this.impl.setSource(img);
     };

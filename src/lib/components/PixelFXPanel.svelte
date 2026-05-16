@@ -13,6 +13,7 @@
   import { mediaLibrary } from '../stores/media';
   import type { PixelFXMode, PixelFXContent, Layer } from '../types';
   import type { MediaItem } from '../stores/media';
+  import { createAssetRefFromFile } from '../storage/assetRegistry';
   import NumericInput from './NumericInput.svelte';
 
   $: layer = $selectedLayer;
@@ -133,15 +134,15 @@
     const input = e.target as HTMLInputElement;
     const file = input.files?.[0];
     if (!file || !layerId) return;
-    // Use a blob URL — small enough for v1, no base64 bloat in
-    // the project file. (Project export will need to inline as
-    // data URL or copy to assets dir; that's a follow-up.)
-    const url = URL.createObjectURL(file);
+    // Capture an AssetRef so save/reload restores the source. Without it the
+    // blob URL dies on session end and the layer comes back with a dead src.
+    const { assetRef, runtimeUrl: url } = createAssetRefFromFile(file);
     const isVideo = file.type.startsWith('video/');
     project.updatePixelFXContent(layerId, {
       sourceType: isVideo ? 'video' : 'image',
       sourceUrl: url,
-    });
+      _sourceAssetRef: assetRef,
+    } as any);
     input.value = '';
   }
 

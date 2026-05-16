@@ -14,6 +14,7 @@
   import EdgeEffectsPanel from './EdgeEffectsPanel.svelte';
   import { generateCachedThumbnail } from '../isf/thumbnail';
   import { webgpuSupportedStore } from '../renderer/webgpuCapability';
+  import { createAssetRefFromFile } from '../storage/assetRegistry';
 
   // WebGPU capability — reactive store, NOT a snapshot. The probe is
   // async and may not have resolved when this panel first mounts;
@@ -319,7 +320,9 @@
   }
 
   async function createMediaSource(file: File): Promise<MediaSource> {
-    const url = URL.createObjectURL(file);
+    // Capture both runtime URL and durable AssetRef so this layer's source
+    // survives save+reload (the blob URL alone won't).
+    const { assetRef, runtimeUrl: url } = createAssetRefFromFile(file);
     const mediaType = getMediaType(file);
 
     const source: MediaSource = {
@@ -327,6 +330,7 @@
       type: mediaType,
       src: url,
       name: file.name,
+      _assetRef: assetRef,
     };
 
     if (mediaType === 'video') {
@@ -1631,8 +1635,10 @@
               <span class="value">{((layer.mask?.feather ?? 0) * 100).toFixed(0)}%</span>
             </div>
 
-            <!-- Per-shape list with delete buttons. Closed = solid swatch,
-                 open = dashed. Click the × to delete the entire sub-polygon. -->
+            <!-- Per-shape list. Closed = solid swatch, open = dashed.
+                 Edit button re-activates the mask drawing/editing overlay
+                 (drag anchors, right-click anchor to delete, right-click
+                 empty area to close); × deletes the whole sub-polygon. -->
             {#if (layer.mask?.shapes?.length ?? 0) > 0}
               <div class="mask-shape-list">
                 {#each layer.mask.shapes as shape, sIdx}
@@ -1645,6 +1651,17 @@
                         {#if !shape.closed}· <em>open</em>{/if}
                       </span>
                     </span>
+                    <button
+                      class="mask-shape-edit"
+                      title="Edit points (drag to move, right-click anchor to delete)"
+                      onclick={() => project.enableMask(layer.id)}
+                      aria-label="Edit shape {sIdx + 1}"
+                    >
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 20h9"/>
+                        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+                      </svg>
+                    </button>
                     <button
                       class="mask-shape-delete"
                       title="Delete this shape"
@@ -3168,6 +3185,25 @@
     background: #2a1414;
     border-color: #844;
     color: #f88;
+  }
+
+  /* Per-shape edit button — matches the delete-button footprint so the
+     row layout stays tight. Hover shifts to the warp-orange palette
+     used elsewhere for "this puts you into an editing mode." */
+  .mask-shape-edit {
+    background: transparent;
+    border: 1px solid #555;
+    color: #aaa;
+    width: 22px; height: 22px;
+    border-radius: 3px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    margin-right: 4px;
+  }
+  .mask-shape-edit:hover {
+    background: #2a1f10;
+    border-color: #ff9800;
+    color: #ff9800;
   }
 
   .mask-done {

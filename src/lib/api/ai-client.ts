@@ -178,10 +178,10 @@ Generate a complete, self-contained Three.js animation in a single HTML file. It
   </style>
 </head>
 <body>
-  <script type="importmap">
-    { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
-  </script>
   <script type="module">
+    // Ghost Arcade injects an importmap that resolves 'three' to a locally
+    // bundled copy of Three.js (no CDN fetch, works offline). Don't add
+    // your own importmap — the runtime patches it in before your code runs.
     import * as THREE from 'three';
 
     window.shaderParams = {
@@ -201,7 +201,9 @@ Generate a complete, self-contained Three.js animation in a single HTML file. It
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Pixel ratio is forced to 1 by the host — it samples this canvas at
+    // its own resolution, so setPixelRatio(devicePixelRatio) would 4x the
+    // GPU memory for nothing on a Retina display. Just leave it default.
     document.body.appendChild(renderer.domElement);
 
     // YOUR SPECTACULAR 3D SCENE HERE
@@ -294,6 +296,10 @@ Generate a complete, self-contained p5.js sketch in a single HTML file. It MUST 
     body { overflow: hidden; background: #000; }
     canvas { display: block; }
   </style>
+  <!-- p5.js is injected by Ghost Arcade from a local bundle when your
+       HTML references p5. You can leave this CDN tag in if you want the
+       file to also work standalone in a browser; the runtime preserves
+       it but loads the local copy first so there's no network fetch. -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
 </head>
 <body>

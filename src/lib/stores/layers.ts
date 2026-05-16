@@ -7,6 +7,7 @@ import { vjClipLauncher, type VJClip, type VJBlock, type VJLayerState, DEFAULT_V
 import { disposeJSAnimationContext } from '../renderer/js-animation';
 import { synthVisionStore } from './synthVision';
 import { modulationStore, type ParamModulation } from '../audio/modulation';
+import { audioStore } from './audio';
 import { keyframeTimeline } from './keyframeTimeline';
 import { macros } from './macros';
 import { snapshots } from './snapshots';
@@ -1029,6 +1030,43 @@ void main() {
           const shapes = layer.mask.shapes ?? [];
           if (shapeIndex < 0 || shapeIndex >= shapes.length) return layer;
           const newShapes = shapes.filter((_, i) => i !== shapeIndex);
+          return { ...layer, mask: { ...layer.mask, shapes: newShapes } };
+        }),
+      }));
+    },
+
+    /**
+     * Insert a new anchor between `edgeIndex` and `edgeIndex+1` of a closed
+     * mask shape. Used by the add-point pen-tool mode so the user can click
+     * an edge to insert a knot mid-segment without redrawing the shape.
+     *
+     * Only acts on closed shapes; open shapes use `addMaskPoint` instead
+     * because the append semantics are well-defined while the polygon is
+     * still being drawn. The new point is a sharp corner (no bezier
+     * handles) so the inserted edge stays visually identical until the
+     * user drags the new anchor's handles to bend it.
+     */
+    insertMaskPoint(layerId: string, shapeIndex: number, edgeIndex: number, point: Point2D) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((layer) => {
+          if (layer.id !== layerId || !layer.mask) return layer;
+          const shapes = layer.mask.shapes ?? [];
+          if (shapeIndex < 0 || shapeIndex >= shapes.length) return layer;
+          const shape = shapes[shapeIndex];
+          if (!shape.closed) return layer;
+          const ptCount = shape.points.length;
+          if (ptCount < 2 || edgeIndex < 0 || edgeIndex >= ptCount) return layer;
+          const insertAt = edgeIndex + 1; // place between edgeIndex and (edgeIndex+1)%N
+          const newPoint: BezierPoint = { x: point.x, y: point.y };
+          const newPoints = [
+            ...shape.points.slice(0, insertAt),
+            newPoint,
+            ...shape.points.slice(insertAt),
+          ];
+          const newShapes = shapes.map((s, si) =>
+            si === shapeIndex ? { ...s, points: newPoints } : s,
+          );
           return { ...layer, mask: { ...layer.mask, shapes: newShapes } };
         }),
       }));
@@ -3267,7 +3305,9 @@ void main() {
         groupCollapsed: layer.groupCollapsed,
       };
 
-      // Handle media source - strip texture and video element
+      // Handle media source - strip texture and video element. Carry
+      // `_assetRef` so reload can recover the original disk file even if
+      // the runtime `src` is a dead blob: URL by then.
       if (layer.source) {
         exportLayer.source = {
           id: layer.source.id,
@@ -3285,9 +3325,12 @@ void main() {
           aiPrompt: layer.source.aiPrompt,
           playbackMode: layer.source.playbackMode,
           playbackRate: layer.source.playbackRate,
+          trimStart: (layer.source as any).trimStart,
+          trimEnd: (layer.source as any).trimEnd,
           timelapseInterval: layer.source.timelapseInterval,
           timelapseRunning: layer.source.timelapseRunning,
-          // Exclude: texture, videoElement, isPlaying
+          _assetRef: (layer.source as any)._assetRef,
+          // Exclude: texture, videoElement, isPlaying, iframeElement, threejsCanvas, synthVisionCanvas
         };
       }
 
@@ -3310,37 +3353,54 @@ void main() {
       if (layer.lightPaintingContent) {
         exportLayer.lightPaintingContent = layer.lightPaintingContent;
       }
+      if ((layer as any).advLightPaintingContent) {
+        (exportLayer as any).advLightPaintingContent = (layer as any).advLightPaintingContent;
+      }
 
       // Handle text content
       if (layer.textContent) {
         exportLayer.textContent = layer.textContent;
       }
 
-      // Handle splat content (point cloud / gaussian splat) — strip blob URLs
+      // Handle splat content (point cloud / gaussian splat). Spread preserves
+      // `_assetRef` and `_textureAssetRef` — those are the durable identity
+      // for save/reload now, so we no longer null out blob URLs (the
+      // resolver consults the assetRef first and only falls back to the
+      // runtime URL field for legacy projects).
       if (layer.splatContent) {
-        const sc = { ...layer.splatContent };
-        // Strip blob URLs from filePath (point cloud data) — they die with the session
-        if (sc.filePath?.startsWith('blob:')) {
-          sc.filePath = (sc as any)._originalFilePath || null;
-        }
-        // Strip blob URLs from texturePath (video textures use blob URLs)
-        if (sc.texturePath?.startsWith('blob:')) {
-          (sc as any).texturePath = null;
-        }
+        const sc: any = { ...layer.splatContent };
+        // Strip the runtime three.js refs that don't survive JSON.
+        delete sc.texture;
+        delete sc.videoTextureElement;
         exportLayer.splatContent = sc;
       }
 
-      // Handle model3d content — strip blob URLs (session-only, won't work on reload).
-      // Keep data URLs and file paths; clear blob URLs so they don't trigger
-      // infinite fetch-fail loops on project open.
+      // Handle model3d content. Same story — assetRef carries the truth,
+      // so we only strip runtime refs.
       if (layer.model3dContent) {
-        const mc = { ...layer.model3dContent };
-        if (mc.modelData?.startsWith('blob:')) {
-          // Blob URLs die with the session. Store the original file path if we have it,
-          // otherwise null it out — user will need to re-add the model file.
-          mc.modelData = (mc as any)._originalFilePath || null;
-        }
+        const mc: any = { ...layer.model3dContent };
+        delete mc.scene;
+        delete mc.mixer;
         exportLayer.model3dContent = mc;
+      }
+
+      // PixelFX layer content — was missing from the export entirely, which
+      // meant reopening a project lost every pixel-fx layer's source picker
+      // state, knob values, particle count, etc. Spread to keep the
+      // `_sourceAssetRef` durable identity along with the regular params.
+      if ((layer as any).pixelFXContent) {
+        const px: any = { ...(layer as any).pixelFXContent };
+        // No runtime objects on this content type; spread is safe.
+        exportLayer.pixelFXContent = px;
+      }
+
+      // GPU layer (compute shader / fluid sim / particles) — same omission.
+      // The `params` blob holds the user's per-shader knob state and source
+      // assignments; without it the layer comes back with default params on
+      // every reload.
+      if ((layer as any).gpuLayerContent) {
+        const gp: any = { ...(layer as any).gpuLayerContent };
+        exportLayer.gpuLayerContent = gp;
       }
 
       return exportLayer;
@@ -3353,8 +3413,14 @@ void main() {
     async _exportLayerForSave(layer: Layer): Promise<Record<string, unknown>> {
       const exported = this._exportLayer(layer);
 
-      // Re-embed model3d blob URLs as base64 data URLs
-      if (layer.model3dContent?.modelData?.startsWith('blob:')) {
+      // For each blob-URL field, prefer the AssetRef path — materializeAssets
+      // ${...} in App.svelte will copy the file alongside the .gha via the
+      // captured originalPath, which is orders of magnitude faster than
+      // base64-ing a multi-GB video into the JSON. Only fall back to
+      // base64 embedding for legacy nodes that lack an assetRef.
+
+      if (layer.model3dContent?.modelData?.startsWith('blob:')
+          && !(layer.model3dContent as any)._assetRef) {
         try {
           const dataUrl = await blobUrlToDataUrl(layer.model3dContent.modelData);
           if (dataUrl && exported.model3dContent) {
@@ -3365,8 +3431,8 @@ void main() {
         }
       }
 
-      // Re-embed splat filePath blob URLs as base64 data URLs
-      if (layer.splatContent?.filePath?.startsWith('blob:')) {
+      if (layer.splatContent?.filePath?.startsWith('blob:')
+          && !(layer.splatContent as any)._assetRef) {
         try {
           const dataUrl = await blobUrlToDataUrl(layer.splatContent.filePath);
           if (dataUrl && exported.splatContent) {
@@ -3377,8 +3443,8 @@ void main() {
         }
       }
 
-      // Re-embed splat texturePath blob URLs (video textures)
-      if (layer.splatContent?.texturePath?.startsWith('blob:')) {
+      if (layer.splatContent?.texturePath?.startsWith('blob:')
+          && !(layer.splatContent as any)._textureAssetRef) {
         try {
           const dataUrl = await blobUrlToDataUrl(layer.splatContent.texturePath);
           if (dataUrl && exported.splatContent) {
@@ -3440,13 +3506,16 @@ void main() {
         };
       }
 
-      // Export media library (strip runtime objects)
+      // Export media library (strip runtime objects). Carry `_assetRef` so
+      // the library entries restore to the same disk file on reload — without
+      // it the saved src is just a dead blob: URL.
       const exportMedia = currentMedia.map(item => ({
         id: item.id,
         name: item.name,
         src: item.src,
         type: item.type,
         thumbnail: item.thumbnail,
+        _assetRef: (item as any)._assetRef,
         // Exclude: videoElement, texture
       }));
 
@@ -3466,6 +3535,12 @@ void main() {
           effectSource: clip.effectSource,
           jsAnimation: clip.jsAnimation,
           effects: clip.effects || [],
+          // Splat / 3D model clips carry their content blob alongside the
+          // top-level src — copy through so the assetRef on those nested
+          // contents survives save/reload.
+          splatContent: (clip as any).splatContent,
+          model3dContent: (clip as any).model3dContent || (clip as any).model3DContent,
+          _assetRef: (clip as any)._assetRef,
           // Exclude runtime objects: videoElement / iframeElement / synthVisionCanvas
         };
       };
@@ -3525,14 +3600,40 @@ void main() {
         mod,
       }));
 
+      // SynthVision PROJECT-ROOT state. Was previously only saved
+      // INSIDE vjMode compositions, which meant any performer / world
+      // / shader-param config the user set up while just working in
+      // mapping mode was lost on save. Capture it at the top level so
+      // it survives a project reopen even when no composition is set.
+      const exportSynthVision = synthVisionStore.getSerializable();
+
+      // User-tweakable audio settings. Most of audioStore's fields are
+      // runtime FFT bins / beat phase that don't need to persist, but
+      // these four carry the user's sound-board calibration:
+      //   - sensitivity:  global gain across all bands
+      //   - smoothing:    EMA factor on band-level updates
+      //   - manualBPM:    set when the user overrode auto-detect
+      //   - bandGain:     per-band EQ multipliers
+      // Without persisting these, every project reopen reverts to
+      // defaults and the user has to retune for their venue.
+      const audioState = audioStore.getState();
+      const exportAudio = {
+        sensitivity: audioState.sensitivity,
+        smoothing: audioState.smoothing,
+        manualBPM: audioState.manualBPM,
+        bandGain: audioState.bandGain,
+      };
+
       // Deep clone and strip out non-serializable data
       const exportData = {
+        // 1.9.1 = added project-root synthVision + audio settings
+        //         (sensitivity / smoothing / manualBPM / bandGain).
         // 1.9.0 = added macros (8 knobs + destinations + pulse), snapshots
         //         (16-slot scene bank), and launch quantization (those live
         //         outside this vjClipLauncher payload but versioned together).
         // 1.8.0 = moved bankBClipGrid INSIDE each VJBlock.
         // 1.7.0 = added Bank B deck + crossfader state at launcher root.
-        version: '1.9.0',
+        version: '1.9.1',
         exportedAt: new Date().toISOString(),
         project: {
           id: currentProject.id,
@@ -3558,6 +3659,10 @@ void main() {
         macros: macros.serialize(),
         // Include snapshot bank (16 captured-state slots)
         snapshots: snapshots.serialize(),
+        // Include SynthVision performer state at project root
+        synthVision: exportSynthVision,
+        // Include user-tweakable audio settings
+        audio: exportAudio,
       };
 
       return exportData;
@@ -3601,7 +3706,10 @@ void main() {
       }
 
       // Keep in lockstep with exportProject() above.
-      syncExport.version = '1.9.0';
+      // 1.9.2 bump: AssetRef capture on every File-import site, plus
+      // pixelFXContent / gpuLayerContent now actually export. Older saves
+      // (1.9.x and earlier) still load via the legacy resolveSrc fallback.
+      syncExport.version = '1.9.2';
       return syncExport;
     },
 
@@ -3729,28 +3837,63 @@ void main() {
           modulation?: Array<{ key: string; mod: ParamModulation }>;
         };
 
-        // Convert any local-filesystem path (Windows `C:\...` or Unix `/...`) to
-        // a `file://` URL so it loads in browser elements like <video> /
-        // <img>. Three.js loaders work with raw paths because they use fetch,
-        // but the HTML media elements reject paths without a scheme.
+        // Convert any local-filesystem path (Windows `C:\...` or Unix `/...`)
+        // to a renderer-loadable URL.
+        //
+        // Inside Electron we cannot emit `file://` URLs to the renderer —
+        // Chromium blocks them ("Not allowed to load local resource") even
+        // for trusted local content. Using `file://` here was the actual
+        // reason save→reload appeared to lose every video / image: the URL
+        // resolved to a path the <video> tag was forbidden to open. We use
+        // a custom `ghost-asset://` protocol registered in electron/main.js
+        // that proxies to the disk file via main-process net.fetch.
+        //
+        // In the browser build (where __ELECTRON__ isn't set) the user-
+        // picked File path doesn't survive anyway (the API doesn't expose
+        // it), so the file:// branch here is cosmetic.
         const pathToFileUrl = (p: string): string => {
           let urlPath = p.replace(/\\/g, '/');
           if (!urlPath.startsWith('/')) urlPath = '/' + urlPath;
-          // Encode characters that are legal in paths but illegal/special in URLs
-          return 'file://' + urlPath
+          const encoded = urlPath
             .replace(/%/g, '%25')
             .replace(/ /g, '%20')
             .replace(/#/g, '%23')
             .replace(/\?/g, '%3F');
+          if (typeof window !== 'undefined' && (window as any).__ELECTRON__) {
+            return 'ghost-asset://localhost' + encoded;
+          }
+          return 'file://' + encoded;
         };
 
         // Helper: resolve relative media paths against project directory.
-        // Returns a `file://` URL for any absolute filesystem path (so video /
-        // image elements can load it directly).
+        // Returns a renderer-loadable URL for any absolute filesystem path.
+        //
+        // Special case for `file://` URLs in Electron: these are the
+        // residue of older builds that wrote `file://` paths into the
+        // .gha (or that survive in autosave snapshots). Chromium refuses
+        // to load them in <video>/<img>, so we transparently rewrite to
+        // the ghost-asset:// custom protocol that DOES work. Without
+        // this rewrite, opening any older project shows every media
+        // layer as broken until the user re-imports each file by hand.
         const resolveSrc = (src: string): string => {
           if (!src) return src;
-          // Already a URL — leave as-is
-          if (/^(https?:|blob:|data:|file:)/i.test(src)) return src;
+          // Pass through any URL with a scheme. Without this, a project
+          // that already contains `ghost-asset://...` URLs (because it was
+          // opened, the URL got resolved, then re-saved and re-opened)
+          // gets the URL doubled because the resolver mistakes it for a
+          // relative path and prepends projectDir.
+          if (/^(https?:|blob:|data:|ghost-asset:)/i.test(src)) return src;
+          if (/^file:/i.test(src)) {
+            // Decode the file URL back to a path, then re-encode through
+            // our pathToFileUrl which emits ghost-asset:// in Electron.
+            const m = src.match(/^file:\/\/+(.*)$/i);
+            if (!m) return src;
+            try {
+              return pathToFileUrl(decodeURIComponent(m[1]));
+            } catch {
+              return src;
+            }
+          }
           let absPath: string | null = null;
           if (/^[A-Z]:\\/i.test(src) || src.startsWith('/')) {
             absPath = src;
@@ -3762,19 +3905,68 @@ void main() {
           return absPath ? pathToFileUrl(absPath) : src;
         };
 
+        // Resolve a media field by preferring an AssetRef, then falling back
+        // to the legacy resolveSrc walk for projects from before AssetRef
+        // shipped. The AssetRef path tries projectPath (sibling-copy beside
+        // the .gha) first, then originalPath (machine-local disk path that
+        // survives even without a Save As copy), then dataUrl, then url.
+        // This is what makes save→close→reopen actually round-trip the
+        // user's videos / 3D models / splats / images instead of coming
+        // back with dead `./filename` references and an empty layer.
+        const resolveWithRef = (ref: any, fallbackSrc: string): string => {
+          if (ref && typeof ref === 'object') {
+            if (ref.projectPath && projectDir) {
+              const sep = projectDir.includes('\\') ? '\\' : '/';
+              const base = projectDir.endsWith(sep) ? projectDir : projectDir + sep;
+              return pathToFileUrl(base + String(ref.projectPath).replace(/^\.\//, ''));
+            }
+            if (ref.originalPath) return pathToFileUrl(String(ref.originalPath));
+            if (ref.dataUrl) return String(ref.dataUrl);
+            if (ref.url) return String(ref.url);
+          }
+          return resolveSrc(fallbackSrc);
+        };
+
+        const resolveGpuLayerAssetParams = (gpuLayerContent: any): void => {
+          const seen = new WeakSet<object>();
+          const walk = (node: any) => {
+            if (!node || typeof node !== 'object') return;
+            if (seen.has(node)) return;
+            seen.add(node);
+
+            if (node.type === 'file' && (node.url || node.assetRef || node._assetRef)) {
+              node.url = resolveWithRef(node.assetRef || node._assetRef, node.url || '');
+            }
+
+            if (Array.isArray(node)) {
+              for (const child of node) walk(child);
+              return;
+            }
+            for (const value of Object.values(node)) walk(value);
+          };
+          walk(gpuLayerContent?.params);
+        };
+
         if (!parsed.project) {
           console.error('Invalid project data: missing project object');
           return false;
         }
 
         const proj = parsed.project;
+        try { vjClipLauncher.reset(); } catch { /* keep importing even if VJ runtime cleanup fails */ }
 
         // Import vjMode with compositions (presets)
         let importedVjMode: VJModeState | null = null;
         if (proj.vjMode) {
           const vjm = proj.vjMode;
           importedVjMode = {
-            enabled: vjm.enabled || false,
+            // Always land in mapping mode on import. If a project was saved
+            // while VJ mode was active, restoring straight back into VJ left
+            // the clip launcher in a half-initialized state — clicks did
+            // nothing until the user exited and re-entered VJ. Forcing
+            // mapping on open mirrors how every other VJ tool boots: design
+            // view first, go-live by user action.
+            enabled: false,
             activeCompositionId: vjm.activeCompositionId || null,
             masterOpacity: vjm.masterOpacity !== undefined ? vjm.masterOpacity : 1,
             compositions: (vjm.compositions || []).map((comp: any) => ({
@@ -3784,7 +3976,49 @@ void main() {
               createdAt: comp.createdAt || Date.now(),
               layers: (comp.layers || []).map((layer: any) => {
                 const imported = this._importLayer(layer);
-                if (imported.source?.src) imported.source.src = resolveSrc(imported.source.src);
+                // Same multi-field resolve as the top-level project import below
+                // — VJ compositions can carry splats / 3D models / splat
+                // textures too, and they need the same `./filename` →
+                // `file:///abs/path` rewriting so they don't open empty.
+                // Prefer AssetRef when present so blob URLs that died at
+                // session end still resolve to the original disk file.
+                if (imported.source) {
+                  imported.source.src = resolveWithRef(
+                    (imported.source as any)._assetRef,
+                    imported.source.src,
+                  );
+                }
+                if (imported.splatContent) {
+                  if (imported.splatContent.filePath || (imported.splatContent as any)._assetRef) {
+                    imported.splatContent.filePath = resolveWithRef(
+                      (imported.splatContent as any)._assetRef,
+                      imported.splatContent.filePath,
+                    );
+                  }
+                  if (imported.splatContent.texturePath || (imported.splatContent as any)._textureAssetRef) {
+                    imported.splatContent.texturePath = resolveWithRef(
+                      (imported.splatContent as any)._textureAssetRef,
+                      imported.splatContent.texturePath,
+                    );
+                  }
+                }
+                if (imported.model3dContent) {
+                  if (imported.model3dContent.modelData || (imported.model3dContent as any)._assetRef) {
+                    imported.model3dContent.modelData = resolveWithRef(
+                      (imported.model3dContent as any)._assetRef,
+                      imported.model3dContent.modelData || '',
+                    );
+                  }
+                }
+                if ((imported as any).pixelFXContent) {
+                  const px = (imported as any).pixelFXContent;
+                  if (px.sourceUrl || px._sourceAssetRef) {
+                    px.sourceUrl = resolveWithRef(px._sourceAssetRef, px.sourceUrl || '');
+                  }
+                }
+                if ((imported as any).gpuLayerContent) {
+                  resolveGpuLayerAssetParams((imported as any).gpuLayerContent);
+                }
                 return imported;
               }),
               synthVision: comp.synthVision,
@@ -3815,12 +4049,22 @@ void main() {
           // Clear existing media and add imported items
           mediaLibrary.reset();
           for (const item of parsed.mediaLibrary) {
+            const ref = (item as any)._assetRef;
+            const resolvedSrc = resolveWithRef(ref, item.src || '');
+            const mediaType = item.type || 'image';
+            const savedThumbnail = typeof item.thumbnail === 'string' && !item.thumbnail.startsWith('blob:')
+              ? item.thumbnail
+              : undefined;
             mediaLibrary.addItem({
               id: item.id || generateUUID(),
               name: item.name || 'Media',
-              src: resolveSrc(item.src || ''),
-              type: item.type || 'image',
-              thumbnail: item.thumbnail,
+              src: resolvedSrc,
+              type: mediaType,
+              thumbnail: savedThumbnail || (mediaType === 'image' ? resolvedSrc : item.thumbnail),
+              // Carry the assetRef forward so future re-saves don't lose
+              // the original disk path. Without this, every save→reload
+              // cycle would erase the durable identity for library entries.
+              _assetRef: ref,
               // Runtime properties will be recreated when media is loaded
               videoElement: undefined,
               texture: undefined,
@@ -3839,20 +4083,68 @@ void main() {
           // Helper to import a clip (strips runtime objects)
           const importClip = (clip: any): VJClip | null => {
             if (!clip) return null;
+            // Resolve the runtime URL via assetRef when available — without
+            // this, VJ clips that were created via drag-drop come back with
+            // dead blob: URLs after reload.
+            const clipType = clip.type || 'image';
+            const baseSrc = resolveWithRef(clip._assetRef, clip.src || '');
+            const savedThumbnail = typeof clip.thumbnail === 'string' && !clip.thumbnail.startsWith('blob:')
+              ? clip.thumbnail
+              : undefined;
+            // Splat/Model3D clip-shaped content lives on splatContent /
+            // model3DContent off the clip (added by VJModePanel). Resolve
+            // those too so clip-launcher cells with .ply / .glb survive.
+            if (clip.splatContent) {
+              if (clip.splatContent.filePath || clip.splatContent._assetRef) {
+                clip.splatContent.filePath = resolveWithRef(
+                  clip.splatContent._assetRef,
+                  clip.splatContent.filePath || '',
+                );
+              }
+              if (clip.splatContent.texturePath || clip.splatContent._textureAssetRef) {
+                clip.splatContent.texturePath = resolveWithRef(
+                  clip.splatContent._textureAssetRef,
+                  clip.splatContent.texturePath || '',
+                );
+              }
+            }
+            const clipModel3dContent = clip.model3dContent || clip.model3DContent;
+            if (clipModel3dContent) {
+              if (clipModel3dContent.modelData || clipModel3dContent._assetRef) {
+                clipModel3dContent.modelData = resolveWithRef(
+                  clipModel3dContent._assetRef,
+                  clipModel3dContent.modelData || '',
+                );
+              }
+            }
             return {
               id: clip.id || generateUUID(),
-              type: clip.type || 'image',
+              type: clipType,
               name: clip.name || 'Clip',
-              src: resolveSrc(clip.src || ''),
-              thumbnail: clip.thumbnail,
+              src: baseSrc,
+              thumbnail: savedThumbnail || (clipType === 'image' ? baseSrc : clip.thumbnail),
               shaderCode: clip.shaderCode,
               shaderValues: clip.shaderValues || {},
+              playbackMode: clip.playbackMode || 'loop',
+              playbackRate: clip.playbackRate ?? 1,
+              trimStart: clip.trimStart ?? 0,
+              trimEnd: clip.trimEnd ?? 1,
+              isPlaying: clip.isPlaying ?? true,
+              zoom: clip.zoom ?? 1,
+              fit: clip.fit || 'cover',
+              anchorX: clip.anchorX ?? 0.5,
+              anchorY: clip.anchorY ?? 0.5,
+              rotation: clip.rotation ?? 0,
+              opacity: clip.opacity ?? 1,
               spoutSource: clip.spoutSource,
               effectSource: clip.effectSource,
               jsAnimation: clip.jsAnimation,
               effects: clip.effects || [],
+              splatContent: clip.splatContent,
+              model3dContent: clipModel3dContent,
+              _assetRef: clip._assetRef,
               // videoElement will be recreated at runtime
-            };
+            } as any;
           };
 
           // Helper: hydrate a saved 2D grid into a properly-shaped grid that
@@ -4008,7 +4300,13 @@ void main() {
             selectedDeck: importedSelectedDeck,
             selectedLayerIndex: null,
             masterOpacity: vjcl.masterOpacity !== undefined ? vjcl.masterOpacity : 1,
-            isOpen: vjcl.isOpen || false,
+            // Always land in mapping mode on import. Restoring the launcher
+            // panel as `isOpen: true` left the VJ clip rehydration in a
+            // half-initialized state — clicking clips did nothing until the
+            // user exited and re-entered VJ. Forcing closed mirrors how
+            // every other VJ tool boots: design view first, go-live by
+            // explicit user action.
+            isOpen: false,
             isLive: false, // Never import as live
             compositionEffects: vjcl.compositionEffects || [],
             stageMode: false, // Never import as stage mode active
@@ -4064,6 +4362,32 @@ void main() {
           snapshots.reset();
         }
 
+        // Import SynthVision PROJECT-ROOT state (added 1.9.1). Saves
+        // before that only carry SynthVision inside compositions, so
+        // this no-ops on legacy projects — the per-composition load
+        // path further down still restores composition-scoped state.
+        if ((parsed as any).synthVision) {
+          try { synthVisionStore.loadSerializable((parsed as any).synthVision); }
+          catch (e) { console.warn('[Import] synthVision restore failed:', e); }
+        }
+
+        // Import user audio settings (added 1.9.1). Sensitivity /
+        // smoothing / manual BPM / per-band gains. Older saves silently
+        // skip — defaults already in the store from createDefaultState().
+        const audioPayload = (parsed as any).audio;
+        if (audioPayload && typeof audioPayload === 'object') {
+          if (typeof audioPayload.sensitivity === 'number') audioStore.setSensitivity(audioPayload.sensitivity);
+          if (typeof audioPayload.smoothing === 'number') audioStore.setSmoothing(audioPayload.smoothing);
+          if (typeof audioPayload.manualBPM === 'number') audioStore.setManualBPM(audioPayload.manualBPM);
+          if (audioPayload.bandGain && typeof audioPayload.bandGain === 'object') {
+            for (const [band, val] of Object.entries(audioPayload.bandGain)) {
+              if (typeof val === 'number') {
+                audioStore.setBandGain(band as any, val);
+              }
+            }
+          }
+        }
+
         // Reconstruct the project with proper defaults
         const importedProject: Project = {
           id: proj.id || generateUUID(),
@@ -4073,7 +4397,48 @@ void main() {
           selectedLayerId: proj.selectedLayerId || null,
           layers: (proj.layers || []).map(layer => {
             const imported = this._importLayer(layer);
-            if (imported.source?.src) imported.source.src = resolveSrc(imported.source.src);
+            // Resolve every media-path field. Prefer AssetRef so blob URLs
+            // that died at session end still resolve to the originating
+            // disk file (or the sibling-copy beside the .gha). Falls back
+            // to the legacy resolveSrc when no assetRef is present (older
+            // projects from before assetRef shipped).
+            if (imported.source) {
+              imported.source.src = resolveWithRef(
+                (imported.source as any)._assetRef,
+                imported.source.src,
+              );
+            }
+            if (imported.splatContent) {
+              if (imported.splatContent.filePath || (imported.splatContent as any)._assetRef) {
+                imported.splatContent.filePath = resolveWithRef(
+                  (imported.splatContent as any)._assetRef,
+                  imported.splatContent.filePath,
+                );
+              }
+              if (imported.splatContent.texturePath || (imported.splatContent as any)._textureAssetRef) {
+                imported.splatContent.texturePath = resolveWithRef(
+                  (imported.splatContent as any)._textureAssetRef,
+                  imported.splatContent.texturePath,
+                );
+              }
+            }
+            if (imported.model3dContent) {
+              if (imported.model3dContent.modelData || (imported.model3dContent as any)._assetRef) {
+                imported.model3dContent.modelData = resolveWithRef(
+                  (imported.model3dContent as any)._assetRef,
+                  imported.model3dContent.modelData || '',
+                );
+              }
+            }
+            if ((imported as any).pixelFXContent) {
+              const px = (imported as any).pixelFXContent;
+              if (px.sourceUrl || px._sourceAssetRef) {
+                px.sourceUrl = resolveWithRef(px._sourceAssetRef, px.sourceUrl || '');
+              }
+            }
+            if ((imported as any).gpuLayerContent) {
+              resolveGpuLayerAssetParams((imported as any).gpuLayerContent);
+            }
             return imported;
           }),
           vjMode: importedVjMode,
