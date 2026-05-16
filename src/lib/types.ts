@@ -3962,6 +3962,12 @@ export interface SVClipAssignment {
   mediaName?: string;
   mediaSrc?: string;
   mediaType?: 'video' | 'image';
+  /** Snapshot frame used as the key's preview image. For images this is
+   *  usually omitted (the CSS background-image: url(mediaSrc) renders
+   *  fine on its own), but videos can't be sampled by CSS - we capture
+   *  the first decoded frame to a data URL at drop time and store it
+   *  here so the key shows a still preview instead of an empty tile. */
+  mediaThumbnail?: string;
 }
 
 // SynthVision Keyboard Preset - Saved keyboard layout with clip assignments

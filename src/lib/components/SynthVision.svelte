@@ -3628,6 +3628,7 @@ void main() {
         type: 'video',
         name: assignment.mediaName || 'Media Clip',
         src: assignment.mediaSrc,
+        thumbnail: assignment.mediaThumbnail || libraryItem?.thumbnail,
         videoElement: video,
       };
       vjClipLauncher.setClip(layerIdx, 0, clip);
@@ -3638,6 +3639,7 @@ void main() {
         type: 'image',
         name: assignment.mediaName || 'Image Clip',
         src: assignment.mediaSrc,
+        thumbnail: assignment.mediaThumbnail || assignment.mediaSrc,
       };
       vjClipLauncher.setClip(layerIdx, 0, clip);
       vjClipLauncher.triggerClip(layerIdx, 0);
@@ -3658,12 +3660,14 @@ void main() {
         manifestDefaults: shader.manifestDefaults,
       }));
     } else if (item) {
+      const mediaThumbnail = item.type === 'image' ? item.src : (item.thumbnail || '');
       e.dataTransfer.setData('text/plain', JSON.stringify({
         type: 'media',
         mediaId: item.id,
         mediaName: item.name,
         mediaSrc: item.src,
         mediaType: item.type,
+        mediaThumbnail,
       }));
     }
     e.dataTransfer.effectAllowed = 'copy';
@@ -3704,13 +3708,76 @@ void main() {
           mediaName: data.mediaName,
           mediaSrc: data.mediaSrc,
           mediaType: data.mediaType,
+          mediaThumbnail: data.mediaThumbnail || (data.mediaType === 'image' ? data.mediaSrc : undefined),
         };
         clipAssignments = { ...clipAssignments };
         clipsDirty = true;
+
+        if (data.mediaType === 'video' && data.mediaSrc) {
+          captureVideoKeyThumbnail(data.mediaSrc).then(thumb => {
+            if (!thumb) return;
+            const cur = clipAssignments[clipPos];
+            // Slot may have been reassigned or cleared while we waited
+            // for the frame; bail silently in that case.
+            if (!cur || cur.type !== 'media' || cur.mediaSrc !== data.mediaSrc) return;
+            clipAssignments[clipPos] = { ...cur, mediaThumbnail: thumb };
+            clipAssignments = { ...clipAssignments };
+            clipsDirty = true;
+          }).catch(() => { /* */ });
+        }
       }
     } catch (err) {
       // Ignore invalid drag data
     }
+  }
+
+  /**
+   * Capture the first decoded frame of a video URL as a 160x90 JPEG data
+   * URL. Used for performer-mode key thumbnails on video drops. Failures
+   * (cors, slow first frame, blob URL revoked) resolve to undefined and
+   * the caller leaves the key without a preview.
+   */
+  async function captureVideoKeyThumbnail(url: string): Promise<string | undefined> {
+    return new Promise((resolve) => {
+      const v = document.createElement('video');
+      v.muted = true; v.playsInline = true; v.preload = 'auto';
+      // ghost-asset:// is cross-origin from the renderer; without anonymous
+      // CORS the canvas drawImage below taints and toDataURL throws.
+      if (/^(https?:|ghost-asset:)/i.test(url)) v.crossOrigin = 'anonymous';
+      v.src = url;
+
+      let done = false;
+      const finish = (out: string | undefined) => {
+        if (done) return;
+        done = true;
+        try { v.pause(); v.removeAttribute('src'); v.load(); } catch { /* */ }
+        resolve(out);
+      };
+
+      const grab = () => {
+        try {
+          const w = 160, h = 90;
+          const c = document.createElement('canvas');
+          c.width = w; c.height = h;
+          const ctx = c.getContext('2d');
+          if (!ctx) return finish(undefined);
+          ctx.drawImage(v, 0, 0, w, h);
+          finish(c.toDataURL('image/jpeg', 0.7));
+        } catch {
+          finish(undefined);
+        }
+      };
+
+      v.addEventListener('loadeddata', () => {
+        // Seek slightly past 0 so demuxers that produce a black initial
+        // frame land on actual content.
+        try { v.currentTime = 0.1; } catch { grab(); return; }
+      }, { once: true });
+      v.addEventListener('seeked', grab, { once: true });
+      v.addEventListener('error', () => finish(undefined), { once: true });
+      // Hard timeout: never let a hung video stall the slot forever.
+      setTimeout(() => finish(undefined), 3000);
+    });
   }
 
   // Preset management
@@ -3791,12 +3858,19 @@ void main() {
     const assignment = assignments[clipPos];
     if (!assignment) return { name: '', desc: 'EMPTY', isMedia: false, isAssigned: false };
     if (assignment.type === 'media') {
+      let thumb = assignment.mediaThumbnail;
+      if (!thumb && assignment.mediaId) {
+        const libItem = $mediaLibrary.find(m => m.id === assignment.mediaId);
+        thumb = libItem?.thumbnail
+          || (libItem?.type === 'image' ? libItem.src : undefined);
+      }
+      if (!thumb && assignment.mediaType === 'image') thumb = assignment.mediaSrc;
       return {
         name: assignment.mediaName || 'Media',
         desc: assignment.mediaType === 'video' ? 'VIDEO' : 'IMAGE',
         isMedia: true,
         isAssigned: true,
-        thumbnail: assignment.mediaSrc,
+        thumbnail: thumb,
       };
     }
     return {
