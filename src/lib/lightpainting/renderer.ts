@@ -896,9 +896,18 @@ export class LightPaintingRenderer {
     // bright). The GPU pass reads strokes directly from the project
     // store. Same skip lives in webglRenderer.ts via the
     // GPU_COMPUTE_BRUSH_TYPES set.
-    if (stroke.brush.type === 'spiral' || stroke.brush.type === 'firefly' ||
-        stroke.brush.type === 'sap-flow' || stroke.brush.type === 'water' ||
-        stroke.brush.type === 'smoke') {
+    //
+    // Original organic brushes (spiral / firefly / sap-flow / water /
+    // smoke) plus premium-port brushes (galaxy / nebula / sparkle /
+    // vortex / plasma) all live on the GPU compute path now.
+    const gpuOnly = (
+      stroke.brush.type === 'spiral' || stroke.brush.type === 'firefly' ||
+      stroke.brush.type === 'sap-flow' || stroke.brush.type === 'water' ||
+      stroke.brush.type === 'smoke' || stroke.brush.type === 'galaxy' ||
+      stroke.brush.type === 'nebula' || stroke.brush.type === 'sparkle' ||
+      stroke.brush.type === 'vortex' || stroke.brush.type === 'plasma'
+    );
+    if (gpuOnly) {
       return;
     }
 

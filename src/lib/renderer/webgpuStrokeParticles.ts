@@ -101,16 +101,49 @@ const TRAIL_TAU_SEC = 0.45;
 
 // Brush ID mapping for the compute shader. Must stay in sync with
 // the WGSL `if (sm.brush_id == Nu)` branches.
-function brushIdFor(t: string): number {
+//
+// Original organic brushes (0-4) — wrap-around / fluid-style:
+//   spiral / firefly / sap-flow / water / smoke
+//
+// Premium effects brushes (5-9) — port of community's WebGL2 stamps
+// to real GPU compute particles for far higher density and a true
+// "alive" feel. Visuals modelled after the original fragment-shader
+// implementations but with thousands of particles per stroke:
+//   galaxy  — spiral arms with star density radiating from each
+//             stroke point. Three arm structures + dim field.
+//   nebula  — volumetric cloud puffs along the stroke, sampled
+//             from fbm noise. Slow breathing pulse.
+//   sparkle — high-frequency twinkling specks at small normal
+//             offsets along the stroke. Random on/off cycles.
+//   vortex  — particles orbit each stroke point with radius
+//             oscillating; chromatic aberration via radial colour
+//             shift.
+//   plasma  — chaotic curl-noise driven turbulence around the
+//             stroke. Colour oscillates with internal noise.
+export function brushIdFor(t: string): number {
   switch (t) {
     case 'spiral':   return 0;
     case 'firefly':  return 1;
     case 'sap-flow': return 2;
     case 'water':    return 3;
     case 'smoke':    return 4;
+    case 'galaxy':   return 5;
+    case 'nebula':   return 6;
+    case 'sparkle':  return 7;
+    case 'vortex':   return 8;
+    case 'plasma':   return 9;
     default: return 0;
   }
 }
+
+// Brushes that are owned by THIS WebGPU compute renderer. The WebGL2
+// fragment-shader path in webglRenderer.ts must sentinel-skip these so
+// they don't double-render. Exported so renderer.ts + webglRenderer.ts
+// can stay in sync from one source of truth.
+export const GPU_PARTICLE_BRUSHES = new Set<string>([
+  'spiral', 'firefly', 'sap-flow', 'water', 'smoke',
+  'galaxy', 'nebula', 'sparkle', 'vortex', 'plasma',
+]);
 
 const COMPUTE_WGSL = /* wgsl */ `
 struct Particle {
@@ -338,6 +371,154 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let fade_out = 1.0 - life;
     p.alpha = fade_in * fade_out * glow * 0.6;
     p.color = sm.color_a;
+  } else if (sm.brush_id == 5u) {
+    // ── GALAXY ──
+    // Each stroke point is the centre of a small galaxy. Particles
+    // distribute into 3 spiral arms + a dim halo + a bright core
+    // cluster, governed by phase_seed bands:
+    //   phase_seed < 0.15      → bright core stars (small radius)
+    //   phase_seed < 0.85      → arm stars (one of N arms, log-spiral)
+    //   phase_seed ≥ 0.85      → halo / field stars (random radius)
+    // The whole galaxy slowly rotates over time. Colour gradient
+    // from color_a (bright centre) to color_b (cooler arms).
+    let ss = sampleStroke(sm, p.seed_t);
+    let arm_count = max(2.0, floor(pitch * 0.5));   // pitch repurposed as arm count (~2–8)
+    let radius_max = sm.spiral_radius;
+    let rot_t = u.time * sm.spiral_speed * 0.5;
+    // Slot the particle into core / arm / halo by hashing phase_seed
+    let band = fract(p.phase_seed * 0.31831);          // 0..1, decorrelated
+    var r_norm: f32;
+    var ang: f32;
+    var bright: f32;
+    var col_mix: f32;
+    if (band < 0.15) {
+      // Bright core star — small radius, full alpha
+      r_norm = band / 0.15 * 0.18;                     // 0..0.18
+      ang = fract(p.phase_seed * 5.7) * 6.28318530;
+      bright = 1.4;
+      col_mix = r_norm * 1.5;                          // mostly color_a
+    } else if (band < 0.85) {
+      // Arm star — log-spiral with N arms
+      let armband = (band - 0.15) / 0.70;              // 0..1
+      let arm = floor(fract(p.phase_seed * 13.7) * arm_count); // 0..arm_count-1
+      r_norm = pow(armband, 0.7);                      // bias toward inner arms
+      // Log spiral: ang = arm_angle + log(r) * tightness
+      let arm_angle = arm / arm_count * 6.28318530;
+      ang = arm_angle + log(r_norm + 0.05) * 3.0 + rot_t;
+      // Per-particle scatter perpendicular to the arm so arms have width
+      let scatter = (fract(p.phase_seed * 91.3) - 0.5) * 0.18;
+      ang = ang + scatter;
+      bright = 0.7 + (1.0 - r_norm) * 0.6;
+      col_mix = r_norm;                                // outer arms bias to color_b
+    } else {
+      // Halo / field star — wide ring, sparse, dimmer
+      let h = (band - 0.85) / 0.15;
+      r_norm = 0.4 + h * 0.6;                          // 0.4..1.0
+      ang = fract(p.phase_seed * 23.1) * 6.28318530 + rot_t * 0.3;
+      bright = 0.25 + fract(p.phase_seed * 41.7) * 0.35;
+      col_mix = 0.7 + h * 0.3;
+    }
+    let r = r_norm * radius_max;
+    let off = vec2(cos(ang), sin(ang)) * r;
+    p.pos = ss.pos + off;
+    p.alpha = bright * glow * jitter;
+    p.color = mix(sm.color_a, sm.color_b, col_mix);
+  } else if (sm.brush_id == 6u) {
+    // ── NEBULA ──
+    // Volumetric cloud puffs along the stroke. Each particle sits
+    // at a perturbed offset around its anchor, sampled from
+    // low-frequency noise. Slow "breathing" pulse on alpha makes
+    // the cloud feel volumetric.
+    let ss = sampleStroke(sm, p.seed_t);
+    // Drift offset — noise-driven so puffs feel organic.
+    let n_seed = p.phase_seed * 5.7;
+    let nx = sin(n_seed * 1.3 + u.time * 0.15) * cos(n_seed * 2.7 - u.time * 0.09);
+    let ny = cos(n_seed * 1.7 - u.time * 0.13) * sin(n_seed * 3.1 + u.time * 0.07);
+    let off_dist = (0.3 + fract(p.phase_seed * 0.917) * 0.7) * drift;
+    p.pos = ss.pos + vec2(nx, ny) * off_dist;
+    // Breathing pulse — desync'd per particle by phase_seed
+    let pulse = sin(u.time * 0.6 + p.phase_seed * 4.3) * 0.5 + 0.5;
+    // Falloff with distance from centerline so the cloud has a
+    // bright core and softer halo.
+    let dist_norm = length(vec2(nx, ny));
+    let core_falloff = exp(-dist_norm * dist_norm * 1.8);
+    p.alpha = (0.25 + pulse * 0.55) * core_falloff * glow * jitter * 0.85;
+    // Mix toward color_b at edges — outer puffs read as cooler.
+    p.color = mix(sm.color_a, sm.color_b, dist_norm * 0.6);
+  } else if (sm.brush_id == 7u) {
+    // ── SPARKLE ──
+    // Twinkling specks scattered along the stroke. Each particle
+    // has its own twinkle phase (high-frequency on/off cycle).
+    // Position: anchored at seed_t with a tiny normal offset so
+    // sparkles aren't all stacked on the centerline.
+    let ss = sampleStroke(sm, p.seed_t);
+    let off_dir = vec2(
+      cos(p.phase_seed * 11.3),
+      sin(p.phase_seed * 7.1),
+    );
+    let off_dist = fract(p.phase_seed * 0.6180) * drift * 0.6;
+    p.pos = ss.pos + off_dir * off_dist;
+    // Twinkle: high-frequency square-ish wave (sharp on, slow off).
+    // Each particle has its own period and phase so the cluster
+    // sparkles asynchronously.
+    let twk_period = 0.6 + fract(p.phase_seed * 31.7) * 1.4;
+    let twk_phase = fract((u.time + p.phase_seed * twk_period) / twk_period);
+    // Sharp attack (0..0.1), exponential decay (0.1..1.0)
+    let twk_a = clamp(twk_phase * 12.0, 0.0, 1.0);
+    let twk_b = exp(-(twk_phase - 0.08) * 4.5);
+    let twk = twk_a * smoothstep(0.0, 0.5, twk_b);
+    p.alpha = twk * glow * jitter * 1.3;
+    // Colour shifts toward color_b at peak brightness — gives a
+    // subtle bicolour twinkle.
+    p.color = mix(sm.color_a, sm.color_b, twk * 0.4);
+  } else if (sm.brush_id == 8u) {
+    // ── VORTEX ──
+    // Particles orbit each stroke point with radius oscillating
+    // between min and max — looks like a swirling vortex. Phase
+    // advances over time so the swirl rotates. Chromatic
+    // aberration: colour shifts based on radial distance.
+    let ss = sampleStroke(sm, p.seed_t);
+    let radius_max = sm.spiral_radius;
+    let orbit_speed = sm.spiral_speed * 2.0;
+    // Each particle has its own base radius + orbit phase.
+    let r_base = fract(p.phase_seed * 0.318);              // 0..1
+    let phase_off = fract(p.phase_seed * 7.13) * 6.28318530;
+    let phase = u.time * orbit_speed + phase_off;
+    // Radius pulses between 0.4·max and 1.0·max — gives a breathing
+    // swirl rather than a fixed ring.
+    let r_pulse = 0.4 + 0.6 * (sin(phase * 0.7 + p.phase_seed * 5.0) * 0.5 + 0.5);
+    let r = r_base * radius_max * r_pulse;
+    let off = vec2(cos(phase), sin(phase)) * r;
+    p.pos = ss.pos + off;
+    let r_norm = r_base * r_pulse;
+    // Chromatic aberration: inner particles → color_a, outer → color_b
+    p.color = mix(sm.color_a, sm.color_b, smoothstep(0.2, 1.0, r_norm));
+    // Brighter near the centre, fading toward the edge
+    p.alpha = (0.4 + (1.0 - r_norm) * 0.7) * glow * jitter;
+  } else if (sm.brush_id == 9u) {
+    // ── PLASMA ──
+    // Chaotic noise-driven turbulence around the stroke. Particles
+    // are displaced by a sum of sinusoids (cheap fbm-ish noise)
+    // that animates over time. Colour oscillates between primary
+    // and secondary with internal noise frequency — gives the
+    // characteristic electric/plasma read.
+    let ss = sampleStroke(sm, p.seed_t);
+    let seed = p.phase_seed;
+    // Multi-octave displacement field driven by time
+    let nx1 = sin(seed * 3.1 + u.time * sm.spiral_speed * 1.7);
+    let ny1 = cos(seed * 2.7 - u.time * sm.spiral_speed * 1.3);
+    let nx2 = sin(seed * 7.3 - u.time * sm.spiral_speed * 2.3) * 0.5;
+    let ny2 = cos(seed * 5.9 + u.time * sm.spiral_speed * 1.9) * 0.5;
+    let disp = vec2(nx1 + nx2, ny1 + ny2);
+    p.pos = ss.pos + disp * drift * 0.7;
+    // Internal "arc" oscillation — colour switches between primary
+    // and secondary on a high-frequency cycle.
+    let arc = sin(u.time * 6.0 * sm.spiral_speed + seed * 11.0) * 0.5 + 0.5;
+    let arc_mix = smoothstep(0.35, 0.65, arc);
+    p.color = mix(sm.color_a, sm.color_b, arc_mix);
+    // Bright cluster with a fast crackle modulation
+    let crackle = (sin(u.time * 14.0 + seed * 17.0) * 0.5 + 0.5);
+    p.alpha = (0.55 + crackle * 0.45) * glow * jitter;
   }
 
   // ── Animation drawing-head gate ──
@@ -753,7 +934,9 @@ fn fs_comp(in: V) -> @location(0) vec4<f32> {
 // re-packs the GPU buffers and assigns particle slots to strokes
 // proportional to their gpuParticleCount budgets.
 
-export type GPUBrushKind = 'spiral' | 'firefly' | 'sap-flow' | 'water' | 'smoke';
+export type GPUBrushKind =
+  | 'spiral' | 'firefly' | 'sap-flow' | 'water' | 'smoke'
+  | 'galaxy' | 'nebula' | 'sparkle' | 'vortex' | 'plasma';
 
 export interface StrokeForGPU {
   id: string;
@@ -1546,7 +1729,10 @@ export class WebGPUStrokeParticles {
   }
 }
 
-const GPU_BRUSH_SET = new Set<GPUBrushKind>(['spiral', 'firefly', 'sap-flow', 'water', 'smoke']);
+const GPU_BRUSH_SET = new Set<GPUBrushKind>([
+  'spiral', 'firefly', 'sap-flow', 'water', 'smoke',
+  'galaxy', 'nebula', 'sparkle', 'vortex', 'plasma',
+]);
 
 // Animation state captured per layer so progress can advance even
 // while the project store doesn't fire. Keyed by layer id; the

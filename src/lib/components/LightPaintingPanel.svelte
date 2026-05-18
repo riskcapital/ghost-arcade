@@ -93,12 +93,26 @@
     // the picker — kept in the type union + shader so any project files that
     // already reference them keep loading without errors. Hide until we have
     // proper fluid / volumetric simulation rather than glorified billboards.
+    // ── Premium WebGPU compute brushes ──
+    // Ported from community's WebGL2 fragment-shader stamps to real
+    // GPU particle systems — thousands of particles per stroke,
+    // additive HDR trails, true motion. Each one is what its WebGL2
+    // ancestor only hinted at.
+    { type: 'galaxy', label: 'Galaxy', gpu: true },
+    { type: 'nebula', label: 'Nebula', gpu: true },
+    { type: 'sparkle', label: 'Sparkle', gpu: true },
+    { type: 'vortex', label: 'Vortex', gpu: true },
+    { type: 'plasma', label: 'Plasma', gpu: true },
   ];
 
   // Detect whether the current brush is a GPU brush so the panel
-  // can show GPU-specific knobs (spiral radius/speed/pitch, particle
-  // count, drift) only when relevant.
-  const GPU_BRUSH_TYPES = new Set<LightPaintingBrushType>(['spiral', 'firefly', 'sap-flow', 'water', 'smoke']);
+  // can show GPU-specific knobs (radius/speed/pitch, particle count,
+  // drift) only when relevant. Keep in sync with GPU_PARTICLE_BRUSHES
+  // in webgpuStrokeParticles.ts.
+  const GPU_BRUSH_TYPES = new Set<LightPaintingBrushType>([
+    'spiral', 'firefly', 'sap-flow', 'water', 'smoke',
+    'galaxy', 'nebula', 'sparkle', 'vortex', 'plasma',
+  ]);
 
   const loopModes: { mode: LightPaintingLoopMode; label: string }[] = [
     { mode: 'forward', label: 'Fwd' },    { mode: 'reverse', label: 'Rev' },
