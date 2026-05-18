@@ -10,7 +10,7 @@
     onClose();
   }
   function openGitHub() {
-    window.open('https://github.com/riskcapital/ghost-arcade-gpu', '_blank', 'noopener');
+    window.open('https://github.com/riskcapital/ghost-arcade', '_blank', 'noopener');
   }
 </script>
 
