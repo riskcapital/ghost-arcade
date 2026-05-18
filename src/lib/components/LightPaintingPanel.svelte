@@ -292,6 +292,10 @@
   // === DRAWING ===
   function startStroke(e: PointerEvent) {
     if (!layer || !content || drawMode === 'pen') return;
+    // In path-edit mode the canvas drag is reserved for handle moves;
+    // ignore stray pointerdowns on empty space (handles stopPropagation
+    // when they're the target).
+    if (isPathEditMode) return;
     // Deselect any selected stroke when starting a new one
     if (isEditingStroke) deselectStroke();
     const coords = getCanvasCoords(e), pixel = getOverlayPixelCoords(e);
@@ -407,12 +411,187 @@
       }
     } else {
       isEditingStroke = false;
+      // Exiting selection also exits path-edit mode.
+      isPathEditMode = false;
     }
   }
 
   function deselectStroke() {
     selectStroke(null);
     isEditingStroke = false;
+    isPathEditMode = false;
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // PATH EDIT MODE — drag control handles to reshape an existing stroke
+  // ════════════════════════════════════════════════════════════════════
+  //
+  // For freehand strokes the raw points array can be hundreds of entries
+  // dense, so dragging every individual point would be tedious. We
+  // subsample N evenly-spaced control handles (default 24) — dragging
+  // one applies a Gaussian-weighted warp to the nearby raw points so
+  // the change reads as a smooth reshape, not a single-vertex spike.
+  //
+  // For pen-mode strokes the original anchor list (penPoints) IS the
+  // editable representation — we drag those anchors directly and
+  // regenerate the dense strokePoints via the existing
+  // penPointsToStrokePoints() helper. Bezier handles aren't draggable
+  // yet in path-edit mode; the user can re-create them by switching
+  // back to draw mode + pen tool.
+  //
+  // The "Show all points" toggle bypasses subsampling and exposes
+  // every raw point as a handle — only useful for fine-tuning.
+
+  let isPathEditMode = false;
+  let pathEditShowAllRawPoints = false;
+  const PATH_EDIT_HANDLE_COUNT = 24;
+
+  // Drag state — single-handle drag at a time
+  let pathDragHandleIndex: number | null = null;
+  let pathDragStartNorm: { x: number; y: number } | null = null;
+  // We keep the original points around so each pointermove computes the
+  // warp from the original (not the accumulated) — feels predictable.
+  let pathDragOriginalPoints: LightPaintingStrokePoint[] | null = null;
+  let pathDragOriginalPenPoints: LightPaintingPenPoint[] | null = null;
+
+  // Each handle binds to a single raw-point index on the stroke. The
+  // drag math then warps a neighbourhood of raw points around that
+  // index using a Gaussian falloff. For pen-mode strokes the "index"
+  // is into penPoints instead — separately handled.
+  //
+  // Returns null for strokes that have no editable representation
+  // (empty points, or fewer than 2).
+  function computeEditHandles(
+    stroke: import('../types').LightPaintingStroke | null,
+    showAll: boolean,
+  ): { x: number; y: number; pointIndex: number; isAnchor: boolean }[] | null {
+    if (!stroke || stroke.points.length < 2) return null;
+    // Pen-mode strokes use penPoints as the editable representation.
+    if (stroke.drawMode === 'pen' && stroke.penPoints && stroke.penPoints.length > 0) {
+      return stroke.penPoints.map((p, i) => ({ x: p.x, y: p.y, pointIndex: i, isAnchor: true }));
+    }
+    // Freehand: either all raw points, or N evenly-spaced.
+    if (showAll || stroke.points.length <= PATH_EDIT_HANDLE_COUNT) {
+      return stroke.points.map((p, i) => ({ x: p.x, y: p.y, pointIndex: i, isAnchor: false }));
+    }
+    // Subsample by index — guarantees first and last endpoints are anchors.
+    const count = PATH_EDIT_HANDLE_COUNT;
+    const last = stroke.points.length - 1;
+    const out: { x: number; y: number; pointIndex: number; isAnchor: boolean }[] = [];
+    for (let i = 0; i < count; i++) {
+      const t = i / (count - 1);
+      const idx = Math.round(t * last);
+      out.push({ x: stroke.points[idx].x, y: stroke.points[idx].y, pointIndex: idx, isAnchor: i === 0 || i === count - 1 });
+    }
+    return out;
+  }
+
+  $: editHandles = isPathEditMode ? computeEditHandles(selectedStroke, pathEditShowAllRawPoints) : null;
+
+  // Gaussian-weighted warp: every raw point near the dragged handle
+  // gets a fraction of the delta. Far points stay put. Falloff width
+  // sigma is set so neighbouring handles barely overlap — the warp
+  // reads as "this segment moved" rather than a sharp spike.
+  function warpFreehand(
+    originalPoints: LightPaintingStrokePoint[],
+    handlePointIndex: number,
+    dxNorm: number,
+    dyNorm: number,
+    handleCount: number,
+    showAll: boolean,
+  ): LightPaintingStrokePoint[] {
+    if (showAll) {
+      // Edit a single raw point only — no neighbourhood blending.
+      return originalPoints.map((p, i) =>
+        i === handlePointIndex ? { ...p, x: p.x + dxNorm, y: p.y + dyNorm } : p
+      );
+    }
+    // Sigma in INDEX units. With 24 handles across N raw points, the
+    // spacing is N/24. Sigma = spacing/2 gives a smooth bump with
+    // neighbouring handles' bumps tapering toward each other.
+    const spacing = originalPoints.length / Math.max(1, handleCount - 1);
+    const sigma = Math.max(1, spacing * 0.5);
+    const twoSigmaSq = 2 * sigma * sigma;
+    return originalPoints.map((p, i) => {
+      const d = i - handlePointIndex;
+      const w = Math.exp(-(d * d) / twoSigmaSq);
+      return { ...p, x: p.x + dxNorm * w, y: p.y + dyNorm * w };
+    });
+  }
+
+  // Pen-mode anchor drag: moves the anchor + its in/out handles by the
+  // same delta (so the curve translates around that anchor rather than
+  // changing the tangent direction), then regenerates strokePoints.
+  function warpPenStroke(
+    originalPenPoints: LightPaintingPenPoint[],
+    anchorIndex: number,
+    dxNorm: number,
+    dyNorm: number,
+  ): { penPoints: LightPaintingPenPoint[]; strokePoints: LightPaintingStrokePoint[] } {
+    const newPenPoints = originalPenPoints.map((p, i) => {
+      if (i !== anchorIndex) return p;
+      return {
+        x: p.x + dxNorm,
+        y: p.y + dyNorm,
+        handleIn: p.handleIn ? { x: p.handleIn.x + dxNorm, y: p.handleIn.y + dyNorm } : null,
+        handleOut: p.handleOut ? { x: p.handleOut.x + dxNorm, y: p.handleOut.y + dyNorm } : null,
+      };
+    });
+    return {
+      penPoints: newPenPoints,
+      strokePoints: penPointsToStrokePoints(newPenPoints),
+    };
+  }
+
+  // Convert a normalized 0..1 stroke point to overlay-SVG pixel coords.
+  // The overlay's bounding rect aligns with the same transform basis
+  // getCanvasCoords() reverses, so just multiply by canvas dims and add
+  // the offset. (viewportZoom + pan are applied to the OVERLAY element
+  // by its parent, so SVG-local coords don't need to compensate.)
+  function normToOverlayPx(nx: number, ny: number): { x: number; y: number } {
+    return {
+      x: canvasOffsetX + nx * canvasWidth,
+      y: canvasOffsetY + ny * canvasHeight,
+    };
+  }
+
+  // Handle pointerdown — capture the drag, freeze the original points.
+  function onHandlePointerDown(e: PointerEvent, handleIndex: number) {
+    if (!selectedStroke || !layerId) return;
+    e.stopPropagation();
+    e.preventDefault();
+    pathDragHandleIndex = handleIndex;
+    pathDragStartNorm = getCanvasCoords(e);
+    pathDragOriginalPoints = selectedStroke.points.map(p => ({ ...p }));
+    pathDragOriginalPenPoints = selectedStroke.penPoints ? selectedStroke.penPoints.map(p => ({ ...p, handleIn: p.handleIn ? { ...p.handleIn } : null, handleOut: p.handleOut ? { ...p.handleOut } : null })) : null;
+    (e.currentTarget as SVGElement).setPointerCapture(e.pointerId);
+  }
+
+  function onHandlePointerMove(e: PointerEvent) {
+    if (pathDragHandleIndex === null || !pathDragStartNorm || !pathDragOriginalPoints || !selectedStroke || !layerId) return;
+    const cur = getCanvasCoords(e);
+    const dx = cur.x - pathDragStartNorm.x;
+    const dy = cur.y - pathDragStartNorm.y;
+    const handles = editHandles;
+    if (!handles) return;
+    const handle = handles[pathDragHandleIndex];
+    if (!handle) return;
+    if (handle.isAnchor && pathDragOriginalPenPoints && selectedStroke.drawMode === 'pen') {
+      const { penPoints: newPen, strokePoints: newPts } = warpPenStroke(pathDragOriginalPenPoints, handle.pointIndex, dx, dy);
+      project.updateLightPaintingStrokePoints(layerId, selectedStroke.id, newPts, newPen);
+    } else {
+      const newPts = warpFreehand(pathDragOriginalPoints, handle.pointIndex, dx, dy, PATH_EDIT_HANDLE_COUNT, pathEditShowAllRawPoints);
+      project.updateLightPaintingStrokePoints(layerId, selectedStroke.id, newPts);
+    }
+  }
+
+  function onHandlePointerUp(e: PointerEvent) {
+    if (pathDragHandleIndex === null) return;
+    try { (e.currentTarget as SVGElement).releasePointerCapture(e.pointerId); } catch {}
+    pathDragHandleIndex = null;
+    pathDragStartNorm = null;
+    pathDragOriginalPoints = null;
+    pathDragOriginalPenPoints = null;
   }
 
   // Push brush changes to the selected stroke in real-time
@@ -505,6 +684,58 @@
           {#each penPreviewSvg.dots as dot}
             <circle cx={dot.x} cy={dot.y} r="4" fill="none" stroke="#fff" stroke-width="1.5" />
             <circle cx={dot.x} cy={dot.y} r="2" fill="rgba({brushColorRgb},0.9)" />
+          {/each}
+        {/if}
+        <!-- Path-edit overlay: faint stroke guide + draggable control handles.
+             Only rendered when the user has explicitly entered path-edit
+             mode on a selected stroke. Handles capture pointer events
+             (pointer-events: all on the circles + stopPropagation in the
+             handler) so the overlay's startStroke never fires while a
+             handle drag is in flight. -->
+        {#if isPathEditMode && selectedStroke && editHandles}
+          <!-- Faint guide line that traces the stroke's current shape.
+               Helps the user see what they're reshaping vs the drawn brush. -->
+          <path
+            d={selectedStroke.points.map((p, i) => {
+              const px = normToOverlayPx(p.x, p.y);
+              return (i === 0 ? 'M' : 'L') + px.x.toFixed(1) + ',' + px.y.toFixed(1);
+            }).join(' ')}
+            fill="none"
+            stroke="rgba(103,232,249,0.55)"
+            stroke-width="1.5"
+            stroke-dasharray="4 3"
+            pointer-events="none"
+          />
+          <!-- Handles. Anchors (endpoints + pen anchors) are square-ish,
+               other handles are circular. Hovered/dragged handle gets a
+               cyan halo. -->
+          {#each editHandles as h, i}
+            {@const px = normToOverlayPx(h.x, h.y)}
+            <g>
+              <!-- Outer halo / hit target — generous to make grabbing easy. -->
+              <circle
+                cx={px.x}
+                cy={px.y}
+                r={pathDragHandleIndex === i ? 12 : 10}
+                fill={pathDragHandleIndex === i ? 'rgba(103,232,249,0.35)' : 'rgba(0,0,0,0.35)'}
+                stroke={h.isAnchor ? 'rgba(255,200,80,0.95)' : 'rgba(103,232,249,0.95)'}
+                stroke-width="1.5"
+                style="cursor: grab; pointer-events: all; touch-action: none;"
+                onpointerdown={(e: PointerEvent) => onHandlePointerDown(e, i)}
+                onpointermove={onHandlePointerMove}
+                onpointerup={onHandlePointerUp}
+                onpointercancel={onHandlePointerUp}
+              />
+              <!-- Inner dot — visual centre. No pointer events so the
+                   outer circle gets all the clicks. -->
+              <circle
+                cx={px.x}
+                cy={px.y}
+                r={h.isAnchor ? 3 : 2.5}
+                fill={h.isAnchor ? '#FFC850' : '#67E8F9'}
+                pointer-events="none"
+              />
+            </g>
           {/each}
         {/if}
         <defs>
@@ -926,6 +1157,40 @@
               <span>Editing: <b>Stroke {(content.strokes.findIndex(s => s.id === selectedStrokeId) ?? 0) + 1}</b> — {selectedStroke.brush.type}</span>
               <button class="done-btn" onclick={deselectStroke}>Done</button>
             </div>
+            <!-- Path-edit toggle row. Only meaningful when a stroke is
+                 selected; that's why it sits inside the editing banner
+                 instead of being a permanent UI affordance. -->
+            <div class="path-edit-row">
+              <button
+                class="path-edit-toggle"
+                class:active={isPathEditMode}
+                onclick={() => { isPathEditMode = !isPathEditMode; }}
+                title="Drag control handles on the canvas to reshape this stroke"
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4z" />
+                </svg>
+                {isPathEditMode ? 'Done Editing Path' : 'Edit Path'}
+              </button>
+              {#if isPathEditMode && selectedStroke.drawMode !== 'pen'}
+                <label class="path-edit-checkbox" title="Show every raw point as a handle (more handles, finer control, but harder to target)">
+                  <input type="checkbox" bind:checked={pathEditShowAllRawPoints} />
+                  <span>Show all points</span>
+                </label>
+              {/if}
+              {#if isPathEditMode}
+                <span class="path-edit-hint">
+                  {#if selectedStroke.drawMode === 'pen'}
+                    Drag any anchor to reshape. Yellow handles are pen anchors.
+                  {:else if pathEditShowAllRawPoints}
+                    {selectedStroke.points.length} handles — drag any single point.
+                  {:else}
+                    {Math.min(PATH_EDIT_HANDLE_COUNT, selectedStroke.points.length)} handles — drag warps the nearby segment.
+                  {/if}
+                </span>
+              {/if}
+            </div>
           {/if}
           {#if content.strokes.length === 0}
             <div class="empty-msg">No strokes yet. Draw on the canvas to add strokes.</div>
@@ -1151,6 +1416,30 @@
     border-radius: 4px; font-size: 10px; font-weight: 600; cursor: pointer;
   }
   .done-btn:hover { background: #d4b8ff; }
+  .path-edit-row {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    padding: 6px 8px; margin-bottom: 8px;
+    background: rgba(103, 232, 249, 0.05); border: 1px solid rgba(103, 232, 249, 0.18);
+    border-radius: 6px;
+  }
+  .path-edit-toggle {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 10px;
+    background: transparent; color: #67E8F9;
+    border: 1px solid rgba(103, 232, 249, 0.45);
+    border-radius: 4px;
+    font-size: 11px; font-weight: 600; cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .path-edit-toggle:hover { background: rgba(103, 232, 249, 0.10); border-color: rgba(103, 232, 249, 0.7); }
+  .path-edit-toggle.active { background: #67E8F9; color: #0a0a0c; border-color: #67E8F9; }
+  .path-edit-toggle.active:hover { background: #8ff0fc; }
+  .path-edit-checkbox {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 10px; color: #aaa; cursor: pointer; user-select: none;
+  }
+  .path-edit-checkbox input { width: 12px; height: 12px; cursor: pointer; accent-color: #67E8F9; }
+  .path-edit-hint { font-size: 10px; color: #888; flex-basis: 100%; }
   .stroke-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
   .stroke-info { flex: 1; min-width: 0; }
   .sname { display: block; font-size: 12px; color: #ddd; }

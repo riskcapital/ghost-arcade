@@ -870,6 +870,45 @@ void main() {
       }));
     },
 
+    // Replace the entire points array of a stroke. Used by path-edit mode
+    // when handle drags warp a neighbourhood of raw points. The caller
+    // pre-computes the new array (Catmull-Rom warp for freehand, anchor
+    // move for pen-mode) and passes it whole — keeps the warp math in
+    // one place (the UI) and the store side immutable + simple.
+    //
+    // If the stroke is a pen-mode stroke, optionally pass newPenPoints
+    // to keep penPoints in sync so future edits / re-renders work.
+    updateLightPaintingStrokePoints(
+      layerId: string,
+      strokeId: string,
+      newPoints: import('../types').LightPaintingStrokePoint[],
+      newPenPoints?: import('../types').LightPaintingPenPoint[],
+    ) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((layer) =>
+          layer.id === layerId && layer.lightPaintingContent
+            ? {
+                ...layer,
+                lightPaintingContent: {
+                  ...layer.lightPaintingContent,
+                  strokes: layer.lightPaintingContent.strokes.map(s =>
+                    s.id === strokeId
+                      ? {
+                          ...s,
+                          points: newPoints,
+                          ...(newPenPoints ? { penPoints: newPenPoints } : {}),
+                        }
+                      : s
+                  ),
+                },
+              }
+            : layer
+        ),
+      }));
+      recordDiscreteAction();
+    },
+
     clearLightPaintingStrokes(layerId: string) {
       update((project) => ({
         ...project,
