@@ -58,8 +58,18 @@ import {
 // they don't double-render (once via WebGL2 stamps, once via WebGPU
 // particles). The compute pass reads strokes directly from the
 // project store; nothing here needs to forward them.
+//
+// Original organic set (spiral / firefly / sap-flow / water / smoke)
+// has been here since the GPU brush effort started. The premium-port
+// brushes (galaxy / nebula / sparkle / vortex / plasma) were
+// previously rendered as WebGL2 fragment-shader stamps on instanced
+// quads; they now run as real GPU compute particle systems through
+// webgpuStrokeParticles.ts for the higher density + "alive" feel.
+// On non-WebGPU hardware these brushes won't render — same trade-off
+// as the original organic set.
 const GPU_COMPUTE_BRUSH_TYPES = new Set<LightPaintingBrushType>([
   'spiral', 'firefly', 'sap-flow', 'water', 'smoke',
+  'galaxy', 'nebula', 'sparkle', 'vortex', 'plasma',
 ]);
 
 // Numeric brush type IDs — must match the u_brushType dispatch in
