@@ -217,7 +217,7 @@ Single source of truth at `src/lib/effects/effectCatalog.ts`.
 | **Keying** | Chroma Key · Luma Key · Difference Key · Erode · Dilate |
 | **Analysis** | Blob Track · Blob Contour |
 
-### Premium (Pro tier)
+### Premium (all included — no separate tier)
 - **Premium Color**: False Color · Shadow Recovery · Highlight Rolloff
 - **Premium Stylize**: Compression Artifacts · ASCII · Comic Ink · Datamosh Lite · Scanline Drift · Tape Dropout
 - **Premium Warp**: Ripple Caustics · Shockwave · Droste Recursive · Slit Scan · Fractal Warp · Fluid Distort · Wormhole
