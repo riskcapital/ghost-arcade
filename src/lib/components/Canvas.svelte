@@ -3419,7 +3419,17 @@
         // flythrough audioReactive toggle). audioBands is a derived
         // store; get() is O(1) and the per-frame cost is negligible.
         const bandsSnap = get(audioBands);
-        renderer.renderFrame(c.shaderId, mergedParams, width, height, sourceCtx, {
+        // Render-quality scaling — heavy shaders (planet clouds, fluid
+        // sims) blow past 60fps budget at full project resolution on
+        // Apple Silicon + integrated GPUs. The per-layer renderQuality
+        // slider (and the global Shader Quality setting it falls back
+        // to) scales the WebGPU backing store, then the downstream
+        // CanvasTexture upsamples with LinearFilter. Mirrors the
+        // existing ISF path at line ~2852.
+        const gpuQuality = layer.renderQuality ?? SHADER_QUALITY_MULTIPLIERS[get(settings).ui.shaderQuality] ?? 1.0;
+        const gpuW = Math.max(64, Math.round(width * gpuQuality));
+        const gpuH = Math.max(64, Math.round(height * gpuQuality));
+        renderer.renderFrame(c.shaderId, mergedParams, gpuW, gpuH, sourceCtx, {
           bass: bandsSnap.bass ?? 0,
           mid: bandsSnap.mid ?? 0,
           treble: bandsSnap.treble ?? 0,
