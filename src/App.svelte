@@ -31,11 +31,11 @@
   import MobileApp from './lib/components/MobileApp.svelte';
   import OutputWindow from './lib/components/OutputWindow.svelte';
   import VJModePanel from './lib/components/VJModePanel.svelte';
-  import GridOverlay from './lib/components/GridOverlay.svelte';
   import PresetTray from './lib/components/PresetTray.svelte';
   import LayerSequencer from './lib/components/LayerSequencer.svelte';
   import KeyframeTimeline from './lib/components/KeyframeTimeline.svelte';
   import SettingsPanel from './lib/components/SettingsPanel.svelte';
+  import GridOverlay from './lib/components/GridOverlay.svelte';
   import ShortcutsOverlay from './lib/components/ShortcutsOverlay.svelte';
   import ConfirmPopover from './lib/components/ConfirmPopover.svelte';
   import WelcomeModal from './lib/components/WelcomeModal.svelte';
@@ -245,6 +245,15 @@
 
   // Light painting draw mode toggle — when off, warp/mesh handles are accessible
   let lpDrawingEnabled = true;
+
+  // Path-edit state shared between the overlay LightPaintingPanel
+  // (renders handles into the viewport SVG) and the sidebar
+  // LightPaintingPanel (owns the toggle UI). Both instances bind: to
+  // these so toggling Edit Path in the sidebar reaches the overlay's
+  // {#if isPathEditMode ...} block.
+  let lpIsPathEditMode = false;
+  let lpPathEditTool: 'move' | 'delete' | 'insert' = 'move';
+  let lpPathEditShowAllRawPoints = false;
 
   // Check if we're on mobile route
   let isMobile = false;
@@ -2696,6 +2705,11 @@
               return;
             }
             console.log('Project saved successfully:', currentProjectPath);
+            // Bump to top of Recent Files and re-record with its path,
+            // so clicking the entry later loads directly without the
+            // file picker. Without this an in-place Electron save never
+            // refreshes the recent-files entry.
+            recentFiles.add(currentProjectPath.split(sep).pop() || 'project.gha', currentProjectPath);
             markAsSaved();
             clearAutosave();
             return;
@@ -2717,7 +2731,13 @@
           await writable.write(jsonStr);
           await writable.close();
           console.log('Project saved successfully');
-          recentFiles.add(currentFileHandle.name, null);
+          // currentProjectPath is non-null when this save originated
+          // from a file we opened by absolute path (Electron picker /
+          // recent-file click). Forwarding it makes the recent-files
+          // entry directly loadable next time. Browser File System
+          // Access handles don't expose a disk path → currentProjectPath
+          // stays null in that case, which is the expected web behaviour.
+          recentFiles.add(currentFileHandle.name, currentProjectPath);
           markAsSaved();
           clearAutosave();
           return;
@@ -2783,7 +2803,9 @@
           }
           currentProjectPath = filePath;
           console.log('Project saved successfully (Electron native):', filePath);
-          recentFiles.add(filePath.split(sep).pop() || 'project.gha', null);
+          // Store the absolute path so clicking this entry in Recent
+          // Files loads it directly instead of re-prompting the picker.
+          recentFiles.add(filePath.split(sep).pop() || 'project.gha', filePath);
           markAsSaved();
           clearAutosave();
           return;
@@ -4419,10 +4441,20 @@
         {:else}
           <Canvas bind:this={canvasComponent} />
         {/if}
-        <!-- Grid overlay: editor-only, not in output. Always visible when enabled. -->
+        <!-- Grid overlay — mounted at App.svelte level (sibling to
+             Canvas + WebGPUCanvas) so it stays visible regardless of
+             which presenter is active. The WebGPU bridge overlay sits
+             at z-index 10 over .canvas-wrapper, so anything mounted
+             inside Canvas's .canvas-container is hidden when WebGPU
+             is on. Wrapper is positioned + sized to mirror Canvas's
+             aspect-ratio-constrained .canvas-container rect, and the
+             grid SVG self-sizes 100% × 100% inside it. -->
         {#if $settings.ui.gridSettings?.enabled}
-          <div class="grid-overlay-offset" style="left: {canvasOffsetX}px; top: {canvasOffsetY}px;">
-            <GridOverlay containerWidth={canvasWidth} containerHeight={canvasHeight} />
+          <div
+            class="grid-overlay-offset"
+            style="left: {canvasOffsetX}px; top: {canvasOffsetY}px; width: {canvasWidth}px; height: {canvasHeight}px;"
+          >
+            <GridOverlay />
           </div>
         {/if}
         {#if $selectedLayer}
@@ -5092,6 +5124,9 @@
             {canvasWidth}
             {canvasHeight}
             drawingEnabled={lpDrawingEnabled}
+            bind:isPathEditMode={lpIsPathEditMode}
+            bind:pathEditTool={lpPathEditTool}
+            bind:pathEditShowAllRawPoints={lpPathEditShowAllRawPoints}
           />
         {/if}
       </div>
@@ -5114,6 +5149,9 @@
             {canvasWidth}
             {canvasHeight}
             bind:drawingEnabled={lpDrawingEnabled}
+            bind:isPathEditMode={lpIsPathEditMode}
+            bind:pathEditTool={lpPathEditTool}
+            bind:pathEditShowAllRawPoints={lpPathEditShowAllRawPoints}
           />
         {:else if $selectedAdvLightPaintingLayer}
           <AdvLightPaintingPanel />
@@ -6764,6 +6802,13 @@
     pointer-events: none;
     z-index: 50;
   }
+  /* Grid overlay sits above the WebGPU bridge (z-index 10) but below
+     warp/multi-select handles so mapping interactions stay reachable. */
+  .grid-overlay-offset {
+    position: absolute;
+    pointer-events: none;
+    z-index: 15;
+  }
   .multi-select-overlay {
     position: absolute;
     pointer-events: none;
@@ -6819,13 +6864,6 @@
 
   .reset-view-btn:hover {
     background: rgba(255, 255, 255, 0.12);
-  }
-
-  /* Grid overlay offset */
-  .grid-overlay-offset {
-    position: absolute;
-    top: 0;
-    pointer-events: none;
   }
 
   /* Grid controls */

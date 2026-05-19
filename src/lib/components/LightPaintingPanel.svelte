@@ -456,8 +456,13 @@
   // The "Show all points" toggle bypasses subsampling and exposes
   // every raw point as a handle — only useful for fine-tuning.
 
-  let isPathEditMode = false;
-  let pathEditShowAllRawPoints = false;
+  // Exported so the overlay + sidebar instances of this panel can share
+  // a single source of truth via `bind:` from the parent. The "Edit Path"
+  // toggle, tool picker, and show-all-points checkbox all live in the
+  // sidebar UI — without binding, the overlay would never see them flip
+  // and the handles would never render.
+  export let isPathEditMode = false;
+  export let pathEditShowAllRawPoints = false;
   const PATH_EDIT_HANDLE_COUNT = 24;
 
   // ── Path-edit toolbox ──
@@ -466,7 +471,7 @@
   // point), Insert (click on the guide path to add a new raw point at
   // the closest position along the stroke).
   type PathEditTool = 'move' | 'delete' | 'insert';
-  let pathEditTool: PathEditTool = 'move';
+  export let pathEditTool: PathEditTool = 'move';
   // Selection set of handle indices for marquee / shift-click multi-select.
   // Move tool drags any selected group as a rigid translation. Delete tool
   // can wipe the whole selection at once. Cleared whenever editHandles
