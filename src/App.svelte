@@ -5071,8 +5071,14 @@
           </span>
         </div>
 
-        <!-- Light Painting draw overlay (inside viewport for correct coordinates) -->
-        {#if $selectedLightPaintingLayer && lpDrawingEnabled}
+        <!-- Light Painting draw overlay (inside viewport for correct
+             coordinates). Mount whenever the layer is selected — NOT
+             just when drawing is enabled — so the path-edit handles
+             can render in Edit mode too. The overlay panel itself
+             self-disables pointer events when neither drawing nor
+             path-editing is active so layer-level transform handles
+             behind it keep working in normal Edit mode. -->
+        {#if $selectedLightPaintingLayer}
           <LightPaintingPanel
             overlayOnly={true}
             viewportEl={viewportEl}
