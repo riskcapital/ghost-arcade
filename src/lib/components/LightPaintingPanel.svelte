@@ -460,6 +460,26 @@
   let pathEditShowAllRawPoints = false;
   const PATH_EDIT_HANDLE_COUNT = 24;
 
+  // ── Path-edit toolbox ──
+  // Three tools share the path-edit mode: Move (drag handles to warp /
+  // rigid-translate selection), Delete (click handle to remove its raw
+  // point), Insert (click on the guide path to add a new raw point at
+  // the closest position along the stroke).
+  type PathEditTool = 'move' | 'delete' | 'insert';
+  let pathEditTool: PathEditTool = 'move';
+  // Selection set of handle indices for marquee / shift-click multi-select.
+  // Move tool drags any selected group as a rigid translation. Delete tool
+  // can wipe the whole selection at once. Cleared whenever editHandles
+  // changes (different stroke or show-all toggle) since indices wouldn't
+  // map across.
+  let pathSelectedHandles = new Set<number>();
+  let pathDragIsGroupTranslate = false;
+  // Marquee state — pixel coords on the overlay SVG. Drawn as a dashed
+  // cyan rect while dragging.
+  let pathMarqueeStart: { x: number; y: number } | null = null;
+  let pathMarqueeCurrent: { x: number; y: number } | null = null;
+  let pathMarqueeStartNorm: { x: number; y: number } | null = null;
+
   // Drag state — single-handle drag at a time
   let pathDragHandleIndex: number | null = null;
   let pathDragStartNorm: { x: number; y: number } | null = null;
@@ -501,6 +521,132 @@
   }
 
   $: editHandles = isPathEditMode ? computeEditHandles(selectedStroke, pathEditShowAllRawPoints) : null;
+
+  // Wipe selection when the handle layout changes — indices wouldn't be
+  // valid against the new layout, and the user expectation when toggling
+  // Show-all or switching strokes is "clean slate".
+  $: { editHandles; pathEditShowAllRawPoints; selectedStrokeId; pathSelectedHandles = new Set(); }
+
+  // Delete the raw point bound to a handle. For freehand strokes this
+  // splices out `selectedStroke.points[h.pointIndex]`; for pen strokes
+  // it removes the pen anchor + regenerates the raw points. We refuse
+  // to drop below 2 points (a stroke needs at least an endpoint pair to
+  // remain renderable; below that it would silently disappear). Selection
+  // is cleared after a successful delete because all indices shift.
+  function deleteHandleByIndex(handleIndex: number) {
+    if (!selectedStroke || !layerId || !editHandles) return;
+    const h = editHandles[handleIndex];
+    if (!h) return;
+    if (selectedStroke.drawMode === 'pen' && selectedStroke.penPoints && h.isAnchor) {
+      const newPen = selectedStroke.penPoints.filter((_, i) => i !== h.pointIndex);
+      if (newPen.length < 2) return;
+      const newPts = penPointsToStrokePoints(newPen);
+      project.updateLightPaintingStrokePoints(layerId, selectedStroke.id, newPts, newPen);
+    } else {
+      const newPts = selectedStroke.points.filter((_, i) => i !== h.pointIndex);
+      if (newPts.length < 2) return;
+      project.updateLightPaintingStrokePoints(layerId, selectedStroke.id, newPts);
+    }
+    pathSelectedHandles = new Set();
+  }
+
+  function deleteSelectedHandles() {
+    if (!selectedStroke || !layerId || !editHandles || pathSelectedHandles.size === 0) return;
+    // Collect rawpoint indices to remove. Pen-mode: only anchor-bound
+    // handles can delete. Freehand: each handle maps to a single raw
+    // point. Sort descending so the splice doesn't shift earlier targets.
+    const isPen = selectedStroke.drawMode === 'pen' && !!selectedStroke.penPoints;
+    const drop = new Set<number>();
+    for (const hi of pathSelectedHandles) {
+      const h = editHandles[hi];
+      if (!h) continue;
+      if (isPen && !h.isAnchor) continue;
+      drop.add(h.pointIndex);
+    }
+    if (drop.size === 0) return;
+    if (isPen && selectedStroke.penPoints) {
+      const newPen = selectedStroke.penPoints.filter((_, i) => !drop.has(i));
+      if (newPen.length < 2) return;
+      const newPts = penPointsToStrokePoints(newPen);
+      project.updateLightPaintingStrokePoints(layerId, selectedStroke.id, newPts, newPen);
+    } else {
+      const newPts = selectedStroke.points.filter((_, i) => !drop.has(i));
+      if (newPts.length < 2) return;
+      project.updateLightPaintingStrokePoints(layerId, selectedStroke.id, newPts);
+    }
+    pathSelectedHandles = new Set();
+  }
+
+  // Insert a new raw point at the position along the stroke closest to
+  // a normalized click. We find the segment (i, i+1) whose perpendicular
+  // distance to the click is smallest, project the click onto it, and
+  // splice the new point in. Timestamp/pressure are linearly
+  // interpolated between the segment endpoints so playback timing stays
+  // monotonic. Pen-mode strokes: we add a new anchor to penPoints (no
+  // handles → straight join) and regenerate the raw points.
+  function insertPointAtNorm(nx: number, ny: number) {
+    if (!selectedStroke || !layerId) return;
+    if (selectedStroke.drawMode === 'pen' && selectedStroke.penPoints && selectedStroke.penPoints.length >= 2) {
+      // Find closest pen-segment by sampling — the curve isn't a polyline
+      // so projection is approximate, but anchor insertion only needs to
+      // be near a click; the user can drag the new anchor afterward.
+      const pen = selectedStroke.penPoints;
+      let bestSeg = 0, bestDist = Infinity, bestT = 0;
+      for (let i = 0; i < pen.length - 1; i++) {
+        const a = pen[i], b = pen[i + 1];
+        for (let s = 0; s <= 10; s++) {
+          const t = s / 10;
+          const px = a.x + (b.x - a.x) * t, py = a.y + (b.y - a.y) * t;
+          const d2 = (px - nx) ** 2 + (py - ny) ** 2;
+          if (d2 < bestDist) { bestDist = d2; bestSeg = i; bestT = t; }
+        }
+      }
+      const a = pen[bestSeg], b = pen[bestSeg + 1];
+      const newAnchor = { x: a.x + (b.x - a.x) * bestT, y: a.y + (b.y - a.y) * bestT, handleIn: null, handleOut: null };
+      const newPen = [...pen.slice(0, bestSeg + 1), newAnchor, ...pen.slice(bestSeg + 1)];
+      const newPts = penPointsToStrokePoints(newPen);
+      project.updateLightPaintingStrokePoints(layerId, selectedStroke.id, newPts, newPen);
+      return;
+    }
+    const pts = selectedStroke.points;
+    if (pts.length < 2) return;
+    let bestSeg = 0, bestDist = Infinity, bestT = 0;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1];
+      const dxs = b.x - a.x, dys = b.y - a.y;
+      const len2 = dxs * dxs + dys * dys;
+      if (len2 < 1e-12) continue;
+      let t = ((nx - a.x) * dxs + (ny - a.y) * dys) / len2;
+      t = Math.max(0, Math.min(1, t));
+      const px = a.x + dxs * t, py = a.y + dys * t;
+      const d2 = (px - nx) ** 2 + (py - ny) ** 2;
+      if (d2 < bestDist) { bestDist = d2; bestSeg = i; bestT = t; }
+    }
+    const a = pts[bestSeg], b = pts[bestSeg + 1];
+    const newPt = {
+      x: a.x + (b.x - a.x) * bestT,
+      y: a.y + (b.y - a.y) * bestT,
+      pressure: a.pressure + (b.pressure - a.pressure) * bestT,
+      timestamp: a.timestamp + (b.timestamp - a.timestamp) * bestT,
+    };
+    const newPts = [...pts.slice(0, bestSeg + 1), newPt, ...pts.slice(bestSeg + 1)];
+    project.updateLightPaintingStrokePoints(layerId, selectedStroke.id, newPts);
+  }
+
+  // Marquee select — convert pixel rect to normalized rect, then collect
+  // every handle whose normalized position falls inside. Replaces the
+  // selection (additive mode would require Shift; we keep marquee simple).
+  function applyMarquee(startPx: { x: number; y: number }, endPx: { x: number; y: number }) {
+    if (!editHandles) return;
+    const minX = Math.min(startPx.x, endPx.x), maxX = Math.max(startPx.x, endPx.x);
+    const minY = Math.min(startPx.y, endPx.y), maxY = Math.max(startPx.y, endPx.y);
+    const next = new Set<number>();
+    for (let i = 0; i < editHandles.length; i++) {
+      const px = normToOverlayPx(editHandles[i].x, editHandles[i].y);
+      if (px.x >= minX && px.x <= maxX && px.y >= minY && px.y <= maxY) next.add(i);
+    }
+    pathSelectedHandles = next;
+  }
 
   // Gaussian-weighted warp: every raw point near the dragged handle
   // gets a fraction of the delta. Far points stay put. Falloff width
@@ -569,15 +715,48 @@
     };
   }
 
-  // Handle pointerdown — capture the drag, freeze the original points.
+  // Handle pointerdown — routes by active tool. Move tool starts a drag
+  // (warp or rigid group translate if the handle is part of a selection).
+  // Delete tool removes the handle's raw point. Insert tool no-ops here
+  // since insertion targets the path between handles, not handles
+  // themselves — that's wired on the overlay pointerdown. Shift-click
+  // anywhere toggles the handle into the selection without starting a
+  // drag; the user can drag a selected handle afterward to move the
+  // whole group rigidly.
   function onHandlePointerDown(e: PointerEvent, handleIndex: number) {
     if (!selectedStroke || !layerId) return;
     e.stopPropagation();
     e.preventDefault();
+    // Shift-click: toggle into selection set, no drag.
+    if (e.shiftKey) {
+      const next = new Set(pathSelectedHandles);
+      if (next.has(handleIndex)) next.delete(handleIndex); else next.add(handleIndex);
+      pathSelectedHandles = next;
+      return;
+    }
+    if (pathEditTool === 'delete') {
+      // Bulk-delete if this handle is part of a selection; else single.
+      if (pathSelectedHandles.has(handleIndex) && pathSelectedHandles.size > 1) {
+        deleteSelectedHandles();
+      } else {
+        deleteHandleByIndex(handleIndex);
+      }
+      return;
+    }
+    if (pathEditTool === 'insert') {
+      // Insert tool clicking a handle is a no-op; insertion targets the
+      // path between handles (overlay pointerdown handles that).
+      return;
+    }
+    // Move tool: drag start.
     pathDragHandleIndex = handleIndex;
     pathDragStartNorm = getCanvasCoords(e);
     pathDragOriginalPoints = selectedStroke.points.map(p => ({ ...p }));
     pathDragOriginalPenPoints = selectedStroke.penPoints ? selectedStroke.penPoints.map(p => ({ ...p, handleIn: p.handleIn ? { ...p.handleIn } : null, handleOut: p.handleOut ? { ...p.handleOut } : null })) : null;
+    // If this handle is in the selection, drag translates the whole
+    // group rigidly (every selected raw point moves by the same delta);
+    // otherwise fall through to the existing warp logic.
+    pathDragIsGroupTranslate = pathSelectedHandles.has(handleIndex) && pathSelectedHandles.size > 1;
     (e.currentTarget as SVGElement).setPointerCapture(e.pointerId);
   }
 
@@ -590,6 +769,37 @@
     if (!handles) return;
     const handle = handles[pathDragHandleIndex];
     if (!handle) return;
+    if (pathDragIsGroupTranslate) {
+      // Rigid translation of every selected raw point. Pen-mode: translate
+      // the corresponding pen anchors (with their handles) and regen.
+      if (selectedStroke.drawMode === 'pen' && pathDragOriginalPenPoints) {
+        const targetAnchorIdx = new Set<number>();
+        for (const hi of pathSelectedHandles) {
+          const h = handles[hi];
+          if (h && h.isAnchor) targetAnchorIdx.add(h.pointIndex);
+        }
+        const newPen = pathDragOriginalPenPoints.map((p, i) => {
+          if (!targetAnchorIdx.has(i)) return p;
+          return {
+            x: p.x + dx, y: p.y + dy,
+            handleIn: p.handleIn ? { x: p.handleIn.x + dx, y: p.handleIn.y + dy } : null,
+            handleOut: p.handleOut ? { x: p.handleOut.x + dx, y: p.handleOut.y + dy } : null,
+          };
+        });
+        project.updateLightPaintingStrokePoints(layerId, selectedStroke.id, penPointsToStrokePoints(newPen), newPen);
+      } else {
+        const targetPointIdx = new Set<number>();
+        for (const hi of pathSelectedHandles) {
+          const h = handles[hi];
+          if (h) targetPointIdx.add(h.pointIndex);
+        }
+        const newPts = pathDragOriginalPoints.map((p, i) =>
+          targetPointIdx.has(i) ? { ...p, x: p.x + dx, y: p.y + dy } : p
+        );
+        project.updateLightPaintingStrokePoints(layerId, selectedStroke.id, newPts);
+      }
+      return;
+    }
     if (handle.isAnchor && pathDragOriginalPenPoints && selectedStroke.drawMode === 'pen') {
       const { penPoints: newPen, strokePoints: newPts } = warpPenStroke(pathDragOriginalPenPoints, handle.pointIndex, dx, dy);
       project.updateLightPaintingStrokePoints(layerId, selectedStroke.id, newPts, newPen);
@@ -606,6 +816,58 @@
     pathDragStartNorm = null;
     pathDragOriginalPoints = null;
     pathDragOriginalPenPoints = null;
+    pathDragIsGroupTranslate = false;
+  }
+
+  // ── Marquee + insert handlers on the overlay ──
+  // When path-edit mode is on and the user clicks empty overlay space,
+  // we intercept here so the overlay's startStroke handler doesn't fire
+  // (it would create a new stroke instead of marqueeing). Insert tool
+  // splices a new raw point along the closest stroke segment; Move/Delete
+  // start a marquee selection.
+  function onPathEditOverlayPointerDown(e: PointerEvent): boolean {
+    if (!isPathEditMode) return false;
+    // Don't compete with the per-handle pointerdown handlers — they call
+    // stopPropagation; if we're here the click missed every handle.
+    if (pathEditTool === 'insert') {
+      const norm = getCanvasCoords(e);
+      insertPointAtNorm(norm.x, norm.y);
+      e.preventDefault();
+      return true;
+    }
+    // Move + Delete: start marquee.
+    const px = getOverlayPixelCoords(e);
+    pathMarqueeStart = px;
+    pathMarqueeCurrent = px;
+    pathMarqueeStartNorm = getCanvasCoords(e);
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    e.preventDefault();
+    return true;
+  }
+
+  function onPathEditOverlayPointerMove(e: PointerEvent): boolean {
+    if (!pathMarqueeStart) return false;
+    pathMarqueeCurrent = getOverlayPixelCoords(e);
+    return true;
+  }
+
+  function onPathEditOverlayPointerUp(e: PointerEvent): boolean {
+    if (!pathMarqueeStart || !pathMarqueeCurrent) return false;
+    // Treat a near-zero drag as a "click on empty space → clear selection"
+    // (5px is roughly the slop a steady click produces). Anything bigger
+    // is a real marquee — apply it.
+    const dx = pathMarqueeCurrent.x - pathMarqueeStart.x;
+    const dy = pathMarqueeCurrent.y - pathMarqueeStart.y;
+    if (dx * dx + dy * dy < 25) {
+      pathSelectedHandles = new Set();
+    } else {
+      applyMarquee(pathMarqueeStart, pathMarqueeCurrent);
+    }
+    try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch {}
+    pathMarqueeStart = null;
+    pathMarqueeCurrent = null;
+    pathMarqueeStartNorm = null;
+    return true;
   }
 
   // Push brush changes to the selected stroke in real-time
@@ -640,6 +902,18 @@
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape' && drawMode === 'pen' && penPoints.length > 0) { penPoints = []; penPreviewPoint = null; e.preventDefault(); }
     if (e.key === 'Enter' && drawMode === 'pen' && penPoints.length > 1) { finishPenPath(); e.preventDefault(); }
+    // Path-edit shortcuts: Delete/Backspace removes selected handles,
+    // Escape clears the selection without exiting edit mode.
+    if (isPathEditMode) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && pathSelectedHandles.size > 0) {
+        deleteSelectedHandles();
+        e.preventDefault();
+      }
+      if (e.key === 'Escape' && pathSelectedHandles.size > 0) {
+        pathSelectedHandles = new Set();
+        e.preventDefault();
+      }
+    }
   }
 
   function handleOverlayContextMenu(e: MouseEvent) {
@@ -656,10 +930,10 @@
       class="lp-draw-overlay"
       class:recording={isDrawing}
       class:pen-mode={drawMode === 'pen'}
-      onpointerdown={(e) => { const p = getOverlayPixelCoords(e); cursorX = p.x; cursorY = p.y; if (drawMode === 'pen') handlePenClick(e); else startStroke(e); }}
-      onpointermove={(e) => { const p = getOverlayPixelCoords(e); cursorX = p.x; cursorY = p.y; if (drawMode === 'pen' && isDraggingHandle) handlePenDrag(e); else continueStroke(e); }}
-      onpointerup={() => { if (drawMode === 'pen') { isDraggingHandle = false; } else endStroke(); }}
-      onpointerleave={() => { cursorX = null; cursorY = null; if (drawMode !== 'pen') endStroke(); }}
+      onpointerdown={(e) => { const p = getOverlayPixelCoords(e); cursorX = p.x; cursorY = p.y; if (onPathEditOverlayPointerDown(e)) return; if (drawMode === 'pen') handlePenClick(e); else startStroke(e); }}
+      onpointermove={(e) => { const p = getOverlayPixelCoords(e); cursorX = p.x; cursorY = p.y; if (onPathEditOverlayPointerMove(e)) return; if (drawMode === 'pen' && isDraggingHandle) handlePenDrag(e); else continueStroke(e); }}
+      onpointerup={(e) => { if (onPathEditOverlayPointerUp(e)) return; if (drawMode === 'pen') { isDraggingHandle = false; } else endStroke(); }}
+      onpointerleave={() => { cursorX = null; cursorY = null; if (!isPathEditMode && drawMode !== 'pen') endStroke(); }}
       oncontextmenu={handleOverlayContextMenu}
       role="application"
       aria-label="Light painting canvas"
@@ -707,50 +981,110 @@
              handler) so the overlay's startStroke never fires while a
              handle drag is in flight. -->
         {#if isPathEditMode && selectedStroke && editHandles}
-          <!-- Faint guide line that traces the stroke's current shape.
-               Helps the user see what they're reshaping vs the drawn brush. -->
+          <!-- Guide line that traces the stroke's current shape. Drawn
+               with a dark drop-shadow underneath + bright cyan dashed
+               on top so it reads against both dark sky and bright glow
+               strokes. Pointer-events on but only insert-tool reacts;
+               otherwise clicks fall through to the overlay. -->
+          {@const guidePath = selectedStroke.points.map((p, i) => {
+            const px = normToOverlayPx(p.x, p.y);
+            return (i === 0 ? 'M' : 'L') + px.x.toFixed(1) + ',' + px.y.toFixed(1);
+          }).join(' ')}
           <path
-            d={selectedStroke.points.map((p, i) => {
-              const px = normToOverlayPx(p.x, p.y);
-              return (i === 0 ? 'M' : 'L') + px.x.toFixed(1) + ',' + px.y.toFixed(1);
-            }).join(' ')}
+            d={guidePath}
             fill="none"
-            stroke="rgba(103,232,249,0.55)"
+            stroke="rgba(0,0,0,0.65)"
+            stroke-width="3"
+            pointer-events="none"
+          />
+          <path
+            d={guidePath}
+            fill="none"
+            stroke="rgba(103,232,249,0.95)"
             stroke-width="1.5"
             stroke-dasharray="4 3"
             pointer-events="none"
           />
-          <!-- Handles. Anchors (endpoints + pen anchors) are square-ish,
-               other handles are circular. Hovered/dragged handle gets a
-               cyan halo. -->
+          <!-- Tool-coloured handles. Move=cyan, Delete=red, Insert=green
+               (insert tool doesn't actually act on handle clicks but we
+               still tint them so the user knows what mode they're in).
+               Selected handles get a bright yellow outer ring. Each
+               handle gets a white halo behind so it's visible on bright
+               glow strokes. -->
+          {@const toolPalette = (
+            pathEditTool === 'delete'
+              ? { stroke: 'rgba(255,90,90,0.95)',  fill: '#FF8080', anchorStroke: 'rgba(255,180,90,0.95)', anchorFill: '#FFC850' }
+              : pathEditTool === 'insert'
+              ? { stroke: 'rgba(120,220,140,0.95)', fill: '#80E89C', anchorStroke: 'rgba(255,180,90,0.95)', anchorFill: '#FFC850' }
+              : { stroke: 'rgba(103,232,249,0.95)', fill: '#67E8F9', anchorStroke: 'rgba(255,200,80,0.95)', anchorFill: '#FFC850' }
+          )}
           {#each editHandles as h, i}
             {@const px = normToOverlayPx(h.x, h.y)}
+            {@const isSelected = pathSelectedHandles.has(i)}
+            {@const isDragging = pathDragHandleIndex === i}
             <g>
-              <!-- Outer halo / hit target — generous to make grabbing easy. -->
+              <!-- White halo — sits behind the coloured outline and
+                   makes the handle pop against any background. -->
               <circle
                 cx={px.x}
                 cy={px.y}
-                r={pathDragHandleIndex === i ? 12 : 10}
-                fill={pathDragHandleIndex === i ? 'rgba(103,232,249,0.35)' : 'rgba(0,0,0,0.35)'}
-                stroke={h.isAnchor ? 'rgba(255,200,80,0.95)' : 'rgba(103,232,249,0.95)'}
+                r={isDragging ? 13 : 11}
+                fill="rgba(0,0,0,0.55)"
+                stroke="rgba(255,255,255,0.95)"
+                stroke-width="2"
+                pointer-events="none"
+              />
+              <!-- Outer ring / hit target — tool-coloured, generous click area. -->
+              <circle
+                cx={px.x}
+                cy={px.y}
+                r={isDragging ? 11 : 9}
+                fill={isDragging ? 'rgba(103,232,249,0.35)' : 'transparent'}
+                stroke={h.isAnchor ? toolPalette.anchorStroke : toolPalette.stroke}
                 stroke-width="1.5"
-                style="cursor: grab; pointer-events: all; touch-action: none;"
+                style="cursor: {pathEditTool === 'delete' ? 'not-allowed' : pathEditTool === 'insert' ? 'crosshair' : 'grab'}; pointer-events: all; touch-action: none;"
                 onpointerdown={(e: PointerEvent) => onHandlePointerDown(e, i)}
                 onpointermove={onHandlePointerMove}
                 onpointerup={onHandlePointerUp}
                 onpointercancel={onHandlePointerUp}
               />
-              <!-- Inner dot — visual centre. No pointer events so the
-                   outer circle gets all the clicks. -->
+              <!-- Selected state: bright yellow ring outside the tool ring. -->
+              {#if isSelected}
+                <circle
+                  cx={px.x}
+                  cy={px.y}
+                  r={14}
+                  fill="none"
+                  stroke="rgba(255,220,60,0.95)"
+                  stroke-width="2"
+                  stroke-dasharray="3 2"
+                  pointer-events="none"
+                />
+              {/if}
+              <!-- Inner dot — bigger + brighter for visibility on glow strokes. -->
               <circle
                 cx={px.x}
                 cy={px.y}
-                r={h.isAnchor ? 3 : 2.5}
-                fill={h.isAnchor ? '#FFC850' : '#67E8F9'}
+                r={h.isAnchor ? 4 : 3.5}
+                fill={h.isAnchor ? toolPalette.anchorFill : toolPalette.fill}
                 pointer-events="none"
               />
             </g>
           {/each}
+          <!-- Marquee rectangle while user is dragging on empty overlay. -->
+          {#if pathMarqueeStart && pathMarqueeCurrent}
+            <rect
+              x={Math.min(pathMarqueeStart.x, pathMarqueeCurrent.x)}
+              y={Math.min(pathMarqueeStart.y, pathMarqueeCurrent.y)}
+              width={Math.abs(pathMarqueeCurrent.x - pathMarqueeStart.x)}
+              height={Math.abs(pathMarqueeCurrent.y - pathMarqueeStart.y)}
+              fill="rgba(103,232,249,0.10)"
+              stroke="rgba(103,232,249,0.95)"
+              stroke-width="1"
+              stroke-dasharray="4 3"
+              pointer-events="none"
+            />
+          {/if}
         {/if}
         <defs>
           <filter id="lp-glow" x="-50%" y="-50%" width="200%" height="200%">
@@ -1187,6 +1521,34 @@
                 </svg>
                 {isPathEditMode ? 'Done Editing Path' : 'Edit Path'}
               </button>
+              {#if isPathEditMode}
+                <!-- Tool toolbox: Move / Delete / Insert. Default move
+                     keeps the prior drag-to-warp UX; the other tools
+                     unlock destructive + additive editing. -->
+                <div class="path-edit-tools" role="radiogroup" aria-label="Path edit tool">
+                  <button
+                    class="path-tool-btn"
+                    class:active={pathEditTool === 'move'}
+                    onclick={() => { pathEditTool = 'move'; }}
+                    title="Move tool — drag a handle to warp / drag a selected group to translate rigidly"
+                    aria-pressed={pathEditTool === 'move'}
+                  >Move</button>
+                  <button
+                    class="path-tool-btn delete"
+                    class:active={pathEditTool === 'delete'}
+                    onclick={() => { pathEditTool = 'delete'; }}
+                    title="Delete tool — click a handle to remove its point. Delete/Backspace also wipes the current selection."
+                    aria-pressed={pathEditTool === 'delete'}
+                  >Delete</button>
+                  <button
+                    class="path-tool-btn insert"
+                    class:active={pathEditTool === 'insert'}
+                    onclick={() => { pathEditTool = 'insert'; }}
+                    title="Insert tool — click anywhere near the stroke to insert a new point at the closest position"
+                    aria-pressed={pathEditTool === 'insert'}
+                  >Insert</button>
+                </div>
+              {/if}
               {#if isPathEditMode && selectedStroke.drawMode !== 'pen'}
                 <label class="path-edit-checkbox" title="Show every raw point as a handle (more handles, finer control, but harder to target)">
                   <input type="checkbox" bind:checked={pathEditShowAllRawPoints} />
@@ -1194,13 +1556,20 @@
                 </label>
               {/if}
               {#if isPathEditMode}
+                {#if pathSelectedHandles.size > 0}
+                  <span class="path-edit-selcount">{pathSelectedHandles.size} selected</span>
+                {/if}
                 <span class="path-edit-hint">
-                  {#if selectedStroke.drawMode === 'pen'}
-                    Drag any anchor to reshape. Yellow handles are pen anchors.
+                  {#if pathEditTool === 'delete'}
+                    Click a handle to delete its point. Shift-click adds to selection. Drag empty space to marquee-select. Delete/Backspace removes selection.
+                  {:else if pathEditTool === 'insert'}
+                    Click anywhere along the stroke to insert a new point at the closest position.
+                  {:else if selectedStroke.drawMode === 'pen'}
+                    Drag any anchor to reshape. Yellow handles are pen anchors. Shift-click to select multiple; drag a selected anchor to translate the group.
                   {:else if pathEditShowAllRawPoints}
-                    {selectedStroke.points.length} handles — drag any single point.
+                    {selectedStroke.points.length} handles — drag any single point. Shift-click or marquee to select multiple; drag a selected handle to translate the group rigidly.
                   {:else}
-                    {Math.min(PATH_EDIT_HANDLE_COUNT, selectedStroke.points.length)} handles — drag warps the nearby segment.
+                    {Math.min(PATH_EDIT_HANDLE_COUNT, selectedStroke.points.length)} handles — drag warps the nearby segment. Shift-click or marquee to select multiple; drag a selected handle to translate the group rigidly.
                   {/if}
                 </span>
               {/if}
@@ -1454,6 +1823,35 @@
   }
   .path-edit-checkbox input { width: 12px; height: 12px; cursor: pointer; accent-color: #67E8F9; }
   .path-edit-hint { font-size: 10px; color: #888; flex-basis: 100%; }
+  .path-edit-tools {
+    display: inline-flex; gap: 0; align-items: stretch;
+    border: 1px solid rgba(103, 232, 249, 0.3);
+    border-radius: 4px; overflow: hidden;
+  }
+  .path-tool-btn {
+    padding: 4px 9px;
+    background: transparent; color: #67E8F9;
+    border: none;
+    border-right: 1px solid rgba(103, 232, 249, 0.18);
+    font-size: 10px; font-weight: 600; cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+  .path-tool-btn:last-child { border-right: none; }
+  .path-tool-btn:hover { background: rgba(103, 232, 249, 0.10); }
+  .path-tool-btn.active { background: #67E8F9; color: #0a0a0c; }
+  .path-tool-btn.delete { color: #FF8080; }
+  .path-tool-btn.delete:hover { background: rgba(255, 128, 128, 0.10); }
+  .path-tool-btn.delete.active { background: #FF8080; color: #1a0a0a; }
+  .path-tool-btn.insert { color: #80E89C; }
+  .path-tool-btn.insert:hover { background: rgba(128, 232, 156, 0.10); }
+  .path-tool-btn.insert.active { background: #80E89C; color: #0a1a0c; }
+  .path-edit-selcount {
+    font-size: 10px; font-weight: 600; color: #FFDD3C;
+    padding: 2px 6px;
+    border: 1px solid rgba(255, 220, 60, 0.5);
+    border-radius: 3px;
+    background: rgba(255, 220, 60, 0.10);
+  }
   .stroke-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
   .stroke-info { flex: 1; min-width: 0; }
   .sname { display: block; font-size: 12px; color: #ddd; }
