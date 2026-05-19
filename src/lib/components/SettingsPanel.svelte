@@ -61,6 +61,48 @@
     }
   }
 
+  // Snapshot of the experimental GPU flags at the time this settings
+  // panel script first ran. The Electron renderer wires up which
+  // canvas/bridge to mount at boot, so toggling editorWebGPU or
+  // allowMidChainGpuEffects mid-session leaves the engine in a
+  // half-broken state (grid disappears, layers stop receiving frames,
+  // etc.). We compare current values against this snapshot to know
+  // when a restart is required. Using $settings.experimental directly
+  // (not the store wrapper) so the snapshot is a plain object frozen
+  // at module-script-eval time.
+  const bootExperimentalGPU = {
+    editorWebGPU: $settings.experimental?.editorWebGPU ?? true,
+    outputZeroCopy: $settings.experimental?.outputZeroCopy ?? true,
+    allowMidChainGpuEffects: $settings.experimental?.allowMidChainGpuEffects ?? true,
+  };
+  $: gpuRestartRequired =
+    $settings.experimental?.editorWebGPU !== bootExperimentalGPU.editorWebGPU ||
+    $settings.experimental?.outputZeroCopy !== bootExperimentalGPU.outputZeroCopy ||
+    $settings.experimental?.allowMidChainGpuEffects !== bootExperimentalGPU.allowMidChainGpuEffects;
+
+  let restarting = false;
+  async function restartApp() {
+    if (restarting) return;
+    restarting = true;
+    try {
+      // Electron path — preferred. Goes through the whitelisted
+      // app_relaunch IPC handler which calls app.relaunch() + exit(0)
+      // so the new process boots cleanly with the new flags.
+      const api = (window as any).electronAPI;
+      if (api?.invoke) {
+        await api.invoke('app_relaunch');
+        return;
+      }
+      // Browser / dev-server fallback — full reload reboots Vite-side
+      // module state, which is enough for the renderer-only flags
+      // (editorWebGPU) since there is no separate main process.
+      window.location.reload();
+    } catch (err) {
+      console.error('[SettingsPanel] restart failed', err);
+      restarting = false;
+    }
+  }
+
   const tsLabel = getTextureShareLabel();
 
   let diagnosticsOpen = false;
@@ -1383,6 +1425,26 @@
              ───────────────────────────────────────────────────────── -->
         <section class="settings-section">
           <h3>GPU Acceleration <span style="font-size: 10px; padding: 2px 6px; margin-left: 6px; background: linear-gradient(135deg, #1e3a8a, #7c2d12); color: #fff; border-radius: 3px; vertical-align: middle;">EXPERIMENTAL</span></h3>
+          <!-- Restart-required banner. The renderer chooses which canvas
+               and effect-chain path to mount at boot, so toggling these
+               flags mid-session leaves a broken state (grid disappears,
+               layers stop receiving frames). Banner appears whenever any
+               of the three GPU toggles differs from its value at app
+               startup; clicking Restart calls into Electron's relaunch
+               IPC (or falls back to window.location.reload in dev/web). -->
+          {#if gpuRestartRequired}
+            <div class="gpu-restart-banner" role="alert">
+              <div class="gpu-restart-text">
+                <strong>Restart required.</strong>
+                These GPU settings only take effect on a fresh process —
+                the editor will appear broken (no grid, missing frames)
+                until you restart the app.
+              </div>
+              <button class="primary-btn" onclick={restartApp} disabled={restarting} style="white-space: nowrap;">
+                {restarting ? 'Restarting…' : 'Restart app'}
+              </button>
+            </div>
+          {/if}
           <div class="setting-row" style="border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 10px;">
             <div class="setting-label" style="flex: 1;">
               <span class="label-text" style:color={webgpuSupported ? '#4caf50' : '#fbbf24'}>
@@ -2964,5 +3026,29 @@
   .update-cta-btn:hover {
     filter: brightness(1.1);
     transform: translateY(-1px);
+  }
+
+  /* Banner shown above the GPU toggles when any of them has diverged
+     from its boot-time value. Amber, attention-grabbing, but not as
+     red as an error state — this is a "do this before continuing"
+     prompt, not a failure. */
+  .gpu-restart-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0 0 12px 0;
+    padding: 10px 12px;
+    background: rgba(251, 191, 36, 0.10);
+    border: 1px solid rgba(251, 191, 36, 0.45);
+    border-radius: 4px;
+  }
+  .gpu-restart-text {
+    flex: 1;
+    color: #e6c66a;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  .gpu-restart-text strong {
+    color: #fbbf24;
   }
 </style>

@@ -161,7 +161,14 @@
     {/if}
   </div>
 
-  <!-- System audio toggle — Windows: WASAPI loopback, macOS 13+: ScreenCaptureKit -->
+  <!-- System audio toggle — captures the system audio mix:
+         · Windows: WASAPI loopback (any source)
+         · macOS:   Chromium's getDisplayMedia. The user MUST pick
+                    "Entire Screen" in the OS picker AND toggle the
+                    "Share audio" / speaker checkbox before clicking
+                    Share. Picking a Window returns silent video and
+                    we surface a "No audio track" error. There is no
+                    per-app capture on macOS via this API. -->
   <button
     class="aip-btn"
     class:active={$audioStore.inputType === 'system'}
@@ -169,7 +176,7 @@
     title={$audioStore.inputType === 'system'
       ? 'Disable System Audio'
       : (isMac
-        ? 'Capture System Audio — pick Entire Screen and enable audio in the dialog'
+        ? 'Capture System Audio — pick "Entire Screen" and toggle "Share audio" in the picker'
         : 'Enable System Audio')}
   >
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

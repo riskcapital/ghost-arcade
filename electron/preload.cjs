@@ -52,6 +52,9 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'output_set_cursor',
   // Ping
   'ping',
+  // Restart the app — used when experimental flags (renderer / GPU
+  // settings) need a fresh process to take effect.
+  'app_relaunch',
   // Error reporting
   'report_error',
   // Debug log forwarding to main-process log file

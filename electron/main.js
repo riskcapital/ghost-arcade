@@ -688,6 +688,19 @@ function registerIpcHandlers() {
     return 'pong';
   });
 
+  // Restart the app. Used when toggling experimental flags
+  // (editorWebGPU, etc.) that change which renderer path the
+  // process boots into — those decisions are made at startup so
+  // changing them mid-run leaves the UI in a half-broken state.
+  // app.relaunch schedules a fresh process for after exit;
+  // app.exit(0) kills the current one without running quit handlers
+  // (avoids "are you sure?" dialogs / save prompts hanging the relaunch).
+  ipcMain.handle('app_relaunch', () => {
+    console.log('[IPC] app_relaunch — restarting');
+    app.relaunch();
+    app.exit(0);
+  });
+
   // --- Spout (native addon — zero-copy GPU) ---
   ipcMain.handle('spout_is_available', () => {
     const addon = loadSpoutAddon();
