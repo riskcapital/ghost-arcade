@@ -286,8 +286,10 @@ fn starField(rd: vec3<f32>, density: f32) -> vec3<f32> {
 // noise is sampled in 3D so there's no pole pinching / seam. ──
 fn earthSurface(n: vec3<f32>) -> vec3<f32> {
   let p = n * 3.0;
-  // Continental landmasses via FBM thresholded.
-  let continent = fbm(p, 5);
+  // Continental landmasses via FBM thresholded. 4 octaves instead of 5 —
+  // continent silhouette is dominated by the first 3 octaves; the 5th
+  // adds sub-pixel jitter that anti-aliasing eats anyway.
+  let continent = fbm(p, 4);
   let is_land = step(0.5, continent);
 
   // Ocean — deep blue to lighter shore.
@@ -299,14 +301,13 @@ fn earthSurface(n: vec3<f32>) -> vec3<f32> {
   // Use the user's land color as the BASE green. Add subtle dark
   // variation via FBM so the surface reads as terrain instead of
   // flat paint, but the dominant tone is the user-chosen color.
-  // The Tron-Earth look comes from cranking saturation; a
-  // photorealistic look comes from softer greens.
+  // Single 4-octave fbm covers both broad highlands and small valleys;
+  // the previous 5-oct + 4-oct twin sample was duplicative and the
+  // mid-band terms cancel out in the (shade = a + b) blend.
   let lat = abs(n.y);
-  let elev = fbm(p * 1.7 + vec3(11.3), 5);
-  let detail = fbm(p * 6.0, 4);
+  let elev = fbm(p * 1.7 + vec3(11.3), 4);
   let snow = vec3(0.92, 0.94, 0.97);
-  // Slight darkening in valleys + slight brightening on highlands.
-  let shade = (elev - 0.5) * 0.35 + (detail - 0.5) * 0.18;
+  let shade = (elev - 0.5) * 0.45;
   var land = u.land_color + vec3(shade);
   // Polar latitudes blend toward snow.
   land = mix(land, snow, smoothstep(0.78, 0.95, lat));
@@ -435,6 +436,33 @@ fn surfaceHeight(n: vec3<f32>, planet_id: u32) -> f32 {
   return 0.0;  // Gas giants: smooth
 }
 
+// Stripped height sampler for bump-mapping ONLY. perturbedNormal calls
+// this 3× per pixel (h0/h1/h2 for tangent-space gradient), so cutting
+// octaves here is multiplied by 3. The full surfaceHeight() above is
+// still used elsewhere where the value is read directly, not differenced.
+//
+// Tangent-space gradient picks up the LOW-FREQUENCY relief (mountain
+// ranges, continental shelves) — that's what casts visible terminator
+// shadows at the planet's apparent scale. High-frequency detail noise
+// (the * 6.0 term, frequency 24) contributes nothing across an
+// eps=0.012 step at planet scale; its gradient is dominated by aliasing,
+// not signal.
+fn surfaceHeightBump(n: vec3<f32>, planet_id: u32) -> f32 {
+  if (planet_id == 0u) {
+    // Earth bump: just the continent mask, 3 octaves instead of 5+4=9.
+    let p = n * 4.0;
+    let h_continent = fbm(p, 3);
+    let is_land = step(0.5, h_continent);
+    return is_land * (h_continent - 0.5) * 0.18;
+  }
+  if (planet_id == 1u) {
+    // Mars bump: 3 octaves instead of 6.
+    let p = n * 5.0;
+    return (fbm(p, 3) - 0.5) * 0.24;
+  }
+  return 0.0;
+}
+
 fn perturbedNormal(n: vec3<f32>, planet_id: u32) -> vec3<f32> {
   if (planet_id == 2u || planet_id == 3u) { return n; }
   let eps = 0.012;
@@ -443,9 +471,12 @@ fn perturbedNormal(n: vec3<f32>, planet_id: u32) -> vec3<f32> {
   let helper = select(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), abs(n.y) > 0.95);
   let tangent = normalize(cross(n, helper));
   let bitangent = normalize(cross(n, tangent));
-  let h0 = surfaceHeight(n, planet_id);
-  let h1 = surfaceHeight(normalize(n + tangent * eps), planet_id);
-  let h2 = surfaceHeight(normalize(n + bitangent * eps), planet_id);
+  // 3× the cost of fbm here — was 9 octaves × 3 = 27 octaves per pixel
+  // on Earth. Stripped sampler drops that to 3 × 3 = 9 octaves. Single
+  // biggest per-pixel win in the surface pass.
+  let h0 = surfaceHeightBump(n, planet_id);
+  let h1 = surfaceHeightBump(normalize(n + tangent * eps), planet_id);
+  let h2 = surfaceHeightBump(normalize(n + bitangent * eps), planet_id);
   let dx = (h1 - h0) / eps;
   let dy = (h2 - h0) / eps;
   // Bumpiness multiplier — higher = more pronounced terrain shadows.
@@ -467,14 +498,19 @@ fn perturbedNormal(n: vec3<f32>, planet_id: u32) -> vec3<f32> {
 // organic instead of perfectly uniform.
 fn earthShorelineGlow(n_rot: vec3<f32>) -> vec3<f32> {
   let p = n_rot * 3.0;
-  let continent = fbm(p, 5);
+  // 3 octaves instead of 5. The coastline silhouette is determined by
+  // the threshold-crossing of the lowest 2-3 octaves; the 4th/5th add
+  // sub-coast wiggle that the smoothstep eats anyway. Cuts 40% off
+  // shoreline cost on every Earth pixel even when shoreline is off
+  // (early-out below saves the jitter sample but not this one).
+  let continent = fbm(p, 3);
   let coast_dist = abs(continent - 0.5);
   let half_width = max(u.shoreline_width, 0.001);
   let coast = smoothstep(half_width, 0.0, coast_dist);
   if (coast < 0.001) { return vec3(0.0); }
   // Light per-pixel variation so the coastline doesn't look painted
-  // on with a uniform brush.
-  let jitter = 0.75 + 0.25 * fbm(n_rot * 22.0 + 3.7, 3);
+  // on with a uniform brush. 2-octave is enough at freq 22.
+  let jitter = 0.75 + 0.25 * fbm(n_rot * 22.0 + 3.7, 2);
   return u.shoreline_color * coast * jitter * u.shoreline_intensity;
 }
 
@@ -498,9 +534,13 @@ fn marchAtmosphere(
 ) -> vec3<f32> {
   let span = max(t_end - t_start, 0.0);
   if (span <= 0.0001) { return vec3(0.0); }
-  let steps: i32 = 12;
+  // 8 steps instead of 12 — atmosphere is exponentially front-loaded
+  // (rim shells contribute most), the eye can't distinguish 8 vs 12
+  // samples across a soft Rayleigh integral.
+  let steps: i32 = 8;
   let dt = span / f32(steps);
   let tint = atmosphereTint(planet_id);
+  let r_planet_sq = r_planet * r_planet;
   var accum = vec3(0.0);
   for (var i = 0; i < steps; i = i + 1) {
     let t = t_start + (f32(i) + 0.5) * dt;
@@ -510,9 +550,16 @@ fn marchAtmosphere(
     // Secondary ray toward sun: single-sample optical depth proxy.
     let sun_hit = raySphere(p, sun, planet_center, r_atmo);
     let sun_path = max(sun_hit.y, 0.0);
-    // If the planet itself is blocking the sun, skip (terminator).
-    let planet_block = raySphere(p, sun, planet_center, r_planet);
-    let blocked = step(0.0, planet_block.x);
+    // Cheap planet-shadow test: the sun-ray hits the planet body iff
+    // the perpendicular distance from the planet center to the line
+    // (p, sun) is less than r_planet AND the planet is in front of p
+    // along the sun direction. Cuts a raySphere() call per atmosphere
+    // step (8 fewer raySphere calls per pixel) without altering the
+    // terminator dimming behaviour visibly.
+    let to_c = planet_center - p;
+    let along = dot(to_c, sun);                // >0 = planet is sunward
+    let perp_sq = dot(to_c, to_c) - along * along;
+    let blocked = step(0.0, along) * step(perp_sq, r_planet_sq);
     let sun_density = density * sun_path * 0.7;
     let attenuation = exp(-sun_density * tint * 1.4);
     accum = accum + attenuation * tint * density * dt * (1.0 - blocked * 0.85);
@@ -893,16 +940,22 @@ struct V { @builtin(position) clip: vec4<f32>, @location(0) uv: vec2<f32> };
   let r_cloud = r_planet * 1.012;
   let sun = sunDir();
 
-  // ── Background ──
-  // Stars + Milky Way galactic band. Both are sampled from the ray
-  // direction so they stay fixed in world space as the camera orbits.
-  var col = starField(rd, u.star_density) + milkyWay(rd) * u.star_density;
-
   // Atmosphere shell intersection (for rim glow + aurora marching).
   let tA = raySphere(ro, rd, center, r_atmo);
   let tP = raySphere(ro, rd, center, r_planet);
   let hits_atmo = tA.x > 0.0;
   let hits_planet = tP.x > 0.0;
+
+  // ── Background ──
+  // Stars + Milky Way galactic band. Sky-only: pixels covered by the
+  // planet body would overwrite the background entirely on the next
+  // branch, so computing starField()/milkyWay() there is pure waste.
+  // For a planet that fills 30-40% of the frame, this skips a couple
+  // dozen noise lookups per visible-planet pixel.
+  var col = vec3(0.0);
+  if (!hits_planet) {
+    col = starField(rd, u.star_density) + milkyWay(rd) * u.star_density;
+  }
 
   // ── Surface ──
   if (hits_planet) {
