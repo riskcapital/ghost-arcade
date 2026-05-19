@@ -952,10 +952,11 @@
       class="lp-draw-overlay"
       class:recording={isDrawing}
       class:pen-mode={drawMode === 'pen'}
-      onpointerdown={(e) => { const p = getOverlayPixelCoords(e); cursorX = p.x; cursorY = p.y; if (onPathEditOverlayPointerDown(e)) return; if (drawMode === 'pen') handlePenClick(e); else startStroke(e); }}
-      onpointermove={(e) => { const p = getOverlayPixelCoords(e); cursorX = p.x; cursorY = p.y; if (onPathEditOverlayPointerMove(e)) return; if (drawMode === 'pen' && isDraggingHandle) handlePenDrag(e); else continueStroke(e); }}
-      onpointerup={(e) => { if (onPathEditOverlayPointerUp(e)) return; if (drawMode === 'pen') { isDraggingHandle = false; } else endStroke(); }}
-      onpointerleave={() => { cursorX = null; cursorY = null; if (!isPathEditMode && drawMode !== 'pen') endStroke(); }}
+      class:inactive={!drawingEnabled && !isPathEditMode}
+      onpointerdown={(e) => { const p = getOverlayPixelCoords(e); cursorX = p.x; cursorY = p.y; if (onPathEditOverlayPointerDown(e)) return; if (!drawingEnabled) return; if (drawMode === 'pen') handlePenClick(e); else startStroke(e); }}
+      onpointermove={(e) => { const p = getOverlayPixelCoords(e); cursorX = p.x; cursorY = p.y; if (onPathEditOverlayPointerMove(e)) return; if (!drawingEnabled) return; if (drawMode === 'pen' && isDraggingHandle) handlePenDrag(e); else continueStroke(e); }}
+      onpointerup={(e) => { if (onPathEditOverlayPointerUp(e)) return; if (!drawingEnabled) return; if (drawMode === 'pen') { isDraggingHandle = false; } else endStroke(); }}
+      onpointerleave={() => { cursorX = null; cursorY = null; if (!isPathEditMode && drawingEnabled && drawMode !== 'pen') endStroke(); }}
       oncontextmenu={handleOverlayContextMenu}
       role="application"
       aria-label="Light painting canvas"
@@ -1611,6 +1612,13 @@
   .lp-draw-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 50; cursor: none; touch-action: none; }
   .lp-draw-overlay.recording { cursor: none; }
   .lp-draw-overlay.pen-mode { cursor: crosshair; }
+  /* Click-through state: layer is selected but we're neither drawing
+     nor path-editing. Pointer events fall through to whatever's behind
+     (layer transform handles, viewport pan, etc.) while inner SVG
+     elements that explicitly set pointer-events:all still work — the
+     marquee guide is hidden in this state anyway because pathMarquee*
+     is null when not editing. */
+  .lp-draw-overlay.inactive { pointer-events: none; cursor: default; }
   .lp-preview-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
   .draw-hint { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: rgba(255,255,255,0.25); font-size: 13px; pointer-events: none; text-align: center; max-width: 300px; }
   .status-pill { position: absolute; top: 10px; left: 10px; padding: 3px 10px; border-radius: 12px; font-size: 10px; font-weight: 700; pointer-events: none; }

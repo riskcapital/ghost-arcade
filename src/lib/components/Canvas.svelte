@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
+  import GridOverlay from './GridOverlay.svelte';
   import { RenderEngine, loadImageTexture, createVideoTexture, getThreeJSIframeContext, createThreeJSIframeContext, getJSAnimationContext, createJSAnimationContext } from '../renderer/engine';
   import { project, layers } from '../stores/layers';
   import { mediaLibrary } from '../stores/media';
@@ -4062,6 +4063,12 @@
     <canvas class="main-canvas" class:bridge-source={bridgeMode} bind:this={canvas}></canvas>
     <!-- Edge blend + test pattern overlay -->
     <canvas class="output-overlay" bind:this={outputOverlayCanvas}></canvas>
+    <!-- Mapping grid overlay. Self-sizing 100% × 100% so it always
+         aligns with the canvas-container. Hidden in output/OSR mode
+         so projected output stays clean. -->
+    {#if !isOsrMode && !isOutputMode}
+      <GridOverlay />
+    {/if}
     {#if $settings.output.blackout}
       <div class="blackout-overlay"></div>
     {/if}
