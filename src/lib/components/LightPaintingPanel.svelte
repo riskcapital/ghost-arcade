@@ -990,6 +990,13 @@
             const px = normToOverlayPx(p.x, p.y);
             return (i === 0 ? 'M' : 'L') + px.x.toFixed(1) + ',' + px.y.toFixed(1);
           }).join(' ')}
+          {@const toolPalette = (
+            pathEditTool === 'delete'
+              ? { stroke: 'rgba(255,90,90,0.95)',  fill: '#FF8080', anchorStroke: 'rgba(255,180,90,0.95)', anchorFill: '#FFC850' }
+              : pathEditTool === 'insert'
+              ? { stroke: 'rgba(120,220,140,0.95)', fill: '#80E89C', anchorStroke: 'rgba(255,180,90,0.95)', anchorFill: '#FFC850' }
+              : { stroke: 'rgba(103,232,249,0.95)', fill: '#67E8F9', anchorStroke: 'rgba(255,200,80,0.95)', anchorFill: '#FFC850' }
+          )}
           <path
             d={guidePath}
             fill="none"
@@ -1011,13 +1018,6 @@
                Selected handles get a bright yellow outer ring. Each
                handle gets a white halo behind so it's visible on bright
                glow strokes. -->
-          {@const toolPalette = (
-            pathEditTool === 'delete'
-              ? { stroke: 'rgba(255,90,90,0.95)',  fill: '#FF8080', anchorStroke: 'rgba(255,180,90,0.95)', anchorFill: '#FFC850' }
-              : pathEditTool === 'insert'
-              ? { stroke: 'rgba(120,220,140,0.95)', fill: '#80E89C', anchorStroke: 'rgba(255,180,90,0.95)', anchorFill: '#FFC850' }
-              : { stroke: 'rgba(103,232,249,0.95)', fill: '#67E8F9', anchorStroke: 'rgba(255,200,80,0.95)', anchorFill: '#FFC850' }
-          )}
           {#each editHandles as h, i}
             {@const px = normToOverlayPx(h.x, h.y)}
             {@const isSelected = pathSelectedHandles.has(i)}
