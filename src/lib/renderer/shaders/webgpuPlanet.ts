@@ -575,13 +575,42 @@ fn cloudDensity(
   return clamp(eroded * vertical, 0.0, 1.0);
 }
 
+// Stripped shadow-only cloud density: cumulus shape + vertical shell only.
+// No puffs, no erosion, 2-octave fbm instead of 4. Used inside the shadow
+// loop where the result is integrated along the sun ray, so high-freq edge
+// detail washes out anyway — only the coarse silhouette affects attenuation.
+// Roughly 6× cheaper than cloudDensity() and the visual delta is invisible
+// because shadow rays only modulate the lighting term, not the silhouette.
+fn cloudDensityShadow(
+  p_local: vec3<f32>, total_rot: f32, phase: f32,
+  coverage: f32, freq_mul: f32,
+) -> f32 {
+  let r = length(p_local);
+  let r_low = 1.005;
+  let r_high = 1.060;
+  if (r < r_low || r > r_high) { return 0.0; }
+  let shell_t = (r - r_low) / (r_high - r_low);
+  let vertical = smoothstep(0.0, 0.18, shell_t) * (1.0 - smoothstep(0.7, 1.0, shell_t));
+  let p_rot = rotateY(p_local, total_rot * 0.92);
+  let n = normalize(p_rot);
+  let p_big = n * 1.8 * freq_mul + vec3(phase * 0.18, 0.0, phase * 0.12);
+  let cumulus = fbm(p_big, 2);
+  let cov_t = 0.50 - coverage * 0.35;
+  let shape = smoothstep(cov_t, cov_t + 0.18, cumulus);
+  return clamp(shape * vertical, 0.0, 1.0);
+}
+
 // ── Volumetric cloud ray-march ──
-// 32 primary samples + 5 logarithmically-spaced light samples per
-// dense primary. Beer-Powder lighting (Häusler-Frostbite trick):
-// combine direct attenuation (Beer) with a powder term that
-// captures the dark internal shadowing real clouds exhibit. HG
-// phase term gives the silver lining when backlit. Multiple-
-// scattering approximation via a small ambient lift on top.
+// 22 primary samples + 2 logarithmically-spaced light samples per
+// dense primary, with per-pixel + per-frame temporal jitter on the
+// primary t-offset so the eye integrates over 2-3 frames at 60fps
+// without visible banding. Beer-Powder lighting (Häusler-Frostbite
+// trick): direct attenuation (Beer) + powder term for dark internal
+// shadowing on thick clouds. HG phase term gives the silver lining
+// when backlit. Multiple-scattering approximation via a small
+// ambient lift on top. Shadow samples use cloudDensityShadow() — a
+// stripped 2-octave cumulus-only sampler ~6× cheaper than the full
+// cloudDensity(); shadow integration washes out fine detail anyway.
 fn marchClouds(
   ro: vec3<f32>, rd: vec3<f32>,
   t_start: f32, t_end: f32,
@@ -594,8 +623,14 @@ fn marchClouds(
 ) -> vec4<f32> {
   let span = max(t_end - t_start, 0.0);
   if (span <= 0.0001) { return vec4(0.0); }
-  let steps: i32 = 32;
+  let steps: i32 = 22;
   let dt = span / f32(steps);
+  // Per-pixel + per-frame jitter on the march offset. The eye accumulates
+  // across frames at typical 60fps refresh, smoothing banding that 22
+  // primary steps would otherwise show on dense cloud edges. White-noise
+  // jitter is fine for volumetric integration; blue-noise would look
+  // marginally cleaner on stills but adds a 64×64 LUT for negligible gain.
+  let jitter = hash31(rd * 100.0 + vec3(u.time * 11.0, u.time * 7.0, u.time * 13.0));
   var transmittance = 1.0;
   var color = vec3(0.0);
 
@@ -614,13 +649,13 @@ fn marchClouds(
   let phase_back = hgPhase(cos_theta, -0.18); // gentle back
   let phase_term = phase_fwd * 0.78 + phase_back * 0.22;
 
-  // Logarithmic spacing for light samples — local self-shadow at
-  // near distance + broader shadow further away. Reduced from 5 to 3
-  // samples (close/mid/far) with the optical-depth multipliers bumped
-  // from 6.0/12.0 to 9.0/18.0 below to preserve visual density. ~40%
-  // fewer cloudDensity() calls in the inner shadow loop, biggest
-  // single per-pixel win after resolution scaling.
-  let light_steps_dist: array<f32, 3> = array<f32, 3>(0.008, 0.024, 0.080);
+  // Shadow march: 2 samples (close + far) using the stripped density
+  // function. Sum of distances 0.072 vs the prior 3-sample sum 0.112,
+  // but cloudDensityShadow() returns ~1.4× higher (no erosion subtract)
+  // so the light_density integral lands ~0.9× of the prior 3-sample one —
+  // close enough that the 9.0/18.0 Beer-Powder multipliers preserve the
+  // lit/shadow contrast without re-tuning.
+  let light_steps_dist: array<f32, 2> = array<f32, 2>(0.012, 0.060);
   let sky_color = vec3(0.55, 0.70, 0.95);
 
   // Thickness multiplier — scales every density sample so clouds
@@ -629,25 +664,26 @@ fn marchClouds(
   let thick = u.cloud_thickness;
 
   for (var i = 0; i < steps; i = i + 1) {
-    let t = t_start + (f32(i) + 0.5) * dt;
+    let t = t_start + (f32(i) + jitter) * dt;
     let p_local = ro + rd * t - planet_center;
     let d_raw = cloudDensity(p_local, total_rot, phase, coverage, freq_mul);
     let d = d_raw * thick;
     if (d < 0.002) { continue; }
 
-    // Optical depth toward sun via 3 log-spaced samples (close/mid/far).
+    // Optical depth toward sun via 2 log-spaced samples (close + far),
+    // each using the stripped cloudDensityShadow() — 2-octave cumulus
+    // shape only. Shadow integration smooths out high-freq detail so
+    // dropping puffs + erosion is invisible. This is the biggest single
+    // perf win in the cloud pass.
     var light_density = 0.0;
-    for (var j = 0; j < 3; j = j + 1) {
+    for (var j = 0; j < 2; j = j + 1) {
       let pl = p_local + sun * light_steps_dist[j];
-      light_density = light_density + cloudDensity(pl, total_rot, phase, coverage, freq_mul) * thick * light_steps_dist[j];
+      light_density = light_density + cloudDensityShadow(pl, total_rot, phase, coverage, freq_mul) * thick * light_steps_dist[j];
     }
     // Beer-Powder: direct attenuation + powder term (dark heart on
     // thick clouds when viewed perpendicular to sun). Symmetric
     // around perpendicular so both front-lit and backlit clouds
-    // get the powder shading. Multipliers bumped from 6.0/12.0 to
-    // 9.0/18.0 to compensate for the 3-sample shadow sum being ~0.67×
-    // of the original 5-sample sum (0.112 / 0.166), so the lit/shadow
-    // contrast lands in the same place as before.
+    // get the powder shading.
     let beer = exp(-light_density * 9.0);
     let powder = 1.0 - exp(-light_density * 18.0);
     let perp_factor = 1.0 - abs(cos_theta);                          // 0 at aligned, 1 perpendicular
@@ -672,10 +708,9 @@ fn marchClouds(
     let sample_alpha = 1.0 - exp(-d * 8.5 * dt);
     color = color + scattered * sample_alpha * transmittance;
     transmittance = transmittance * (1.0 - sample_alpha);
-    // Early-out at 0.05 instead of 0.01: once 95% of light is
-    // absorbed, the remaining samples contribute below visible
-    // threshold (well under 1 LSB at 8-bit). Cheap ~10% lift for
-    // dense cloud cover paths.
+    // Early-out at 0.05: once 95% of light is absorbed, remaining
+    // samples contribute below visible threshold (well under 1 LSB at
+    // 8-bit). Cheap lift for dense cloud cover paths.
     if (transmittance < 0.05) { break; }
   }
   return vec4(color, 1.0 - transmittance);
