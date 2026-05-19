@@ -522,6 +522,28 @@
 
   $: editHandles = isPathEditMode ? computeEditHandles(selectedStroke, pathEditShowAllRawPoints) : null;
 
+  // Script-level reactive helpers for the path-edit SVG block. Computing
+  // these here (instead of {@const} inside the template) avoids any
+  // Svelte-5 template-block edge cases that can otherwise silently
+  // prevent the {#if} children from entering the DOM even when the
+  // condition is truthy and editHandles is populated.
+  $: pathGuidePathD = (isPathEditMode && selectedStroke && editHandles)
+    ? selectedStroke.points.map((p, i) => {
+        const px = normToOverlayPx(p.x, p.y);
+        return (i === 0 ? 'M' : 'L') + px.x.toFixed(1) + ',' + px.y.toFixed(1);
+      }).join(' ')
+    : '';
+  $: pathToolPalette = (
+    pathEditTool === 'delete'
+      ? { stroke: 'rgba(255,90,90,0.95)',  fill: '#FF8080', anchorStroke: 'rgba(255,180,90,0.95)', anchorFill: '#FFC850' }
+      : pathEditTool === 'insert'
+      ? { stroke: 'rgba(120,220,140,0.95)', fill: '#80E89C', anchorStroke: 'rgba(255,180,90,0.95)', anchorFill: '#FFC850' }
+      : { stroke: 'rgba(103,232,249,0.95)', fill: '#67E8F9', anchorStroke: 'rgba(255,200,80,0.95)', anchorFill: '#FFC850' }
+  );
+  $: pathHandlePositions = (isPathEditMode && editHandles)
+    ? editHandles.map(h => normToOverlayPx(h.x, h.y))
+    : [];
+
   // Wipe selection when the handle layout changes — indices wouldn't be
   // valid against the new layout, and the user expectation when toggling
   // Show-all or switching strokes is "clean slate".
@@ -984,28 +1006,16 @@
           <!-- Guide line that traces the stroke's current shape. Drawn
                with a dark drop-shadow underneath + bright cyan dashed
                on top so it reads against both dark sky and bright glow
-               strokes. Pointer-events on but only insert-tool reacts;
-               otherwise clicks fall through to the overlay. -->
-          {@const guidePath = selectedStroke.points.map((p, i) => {
-            const px = normToOverlayPx(p.x, p.y);
-            return (i === 0 ? 'M' : 'L') + px.x.toFixed(1) + ',' + px.y.toFixed(1);
-          }).join(' ')}
-          {@const toolPalette = (
-            pathEditTool === 'delete'
-              ? { stroke: 'rgba(255,90,90,0.95)',  fill: '#FF8080', anchorStroke: 'rgba(255,180,90,0.95)', anchorFill: '#FFC850' }
-              : pathEditTool === 'insert'
-              ? { stroke: 'rgba(120,220,140,0.95)', fill: '#80E89C', anchorStroke: 'rgba(255,180,90,0.95)', anchorFill: '#FFC850' }
-              : { stroke: 'rgba(103,232,249,0.95)', fill: '#67E8F9', anchorStroke: 'rgba(255,200,80,0.95)', anchorFill: '#FFC850' }
-          )}
+               strokes. -->
           <path
-            d={guidePath}
+            d={pathGuidePathD}
             fill="none"
             stroke="rgba(0,0,0,0.65)"
             stroke-width="3"
             pointer-events="none"
           />
           <path
-            d={guidePath}
+            d={pathGuidePathD}
             fill="none"
             stroke="rgba(103,232,249,0.95)"
             stroke-width="1.5"
@@ -1018,17 +1028,14 @@
                Selected handles get a bright yellow outer ring. Each
                handle gets a white halo behind so it's visible on bright
                glow strokes. -->
-          {#each editHandles as h, i}
-            {@const px = normToOverlayPx(h.x, h.y)}
-            {@const isSelected = pathSelectedHandles.has(i)}
-            {@const isDragging = pathDragHandleIndex === i}
+          {#each editHandles as h, i (i)}
             <g>
               <!-- White halo — sits behind the coloured outline and
                    makes the handle pop against any background. -->
               <circle
-                cx={px.x}
-                cy={px.y}
-                r={isDragging ? 13 : 11}
+                cx={pathHandlePositions[i]?.x ?? 0}
+                cy={pathHandlePositions[i]?.y ?? 0}
+                r={pathDragHandleIndex === i ? 13 : 11}
                 fill="rgba(0,0,0,0.55)"
                 stroke="rgba(255,255,255,0.95)"
                 stroke-width="2"
@@ -1036,11 +1043,11 @@
               />
               <!-- Outer ring / hit target — tool-coloured, generous click area. -->
               <circle
-                cx={px.x}
-                cy={px.y}
-                r={isDragging ? 11 : 9}
-                fill={isDragging ? 'rgba(103,232,249,0.35)' : 'transparent'}
-                stroke={h.isAnchor ? toolPalette.anchorStroke : toolPalette.stroke}
+                cx={pathHandlePositions[i]?.x ?? 0}
+                cy={pathHandlePositions[i]?.y ?? 0}
+                r={pathDragHandleIndex === i ? 11 : 9}
+                fill={pathDragHandleIndex === i ? 'rgba(103,232,249,0.35)' : 'transparent'}
+                stroke={h.isAnchor ? pathToolPalette.anchorStroke : pathToolPalette.stroke}
                 stroke-width="1.5"
                 style="cursor: {pathEditTool === 'delete' ? 'not-allowed' : pathEditTool === 'insert' ? 'crosshair' : 'grab'}; pointer-events: all; touch-action: none;"
                 onpointerdown={(e: PointerEvent) => onHandlePointerDown(e, i)}
@@ -1049,10 +1056,10 @@
                 onpointercancel={onHandlePointerUp}
               />
               <!-- Selected state: bright yellow ring outside the tool ring. -->
-              {#if isSelected}
+              {#if pathSelectedHandles.has(i)}
                 <circle
-                  cx={px.x}
-                  cy={px.y}
+                  cx={pathHandlePositions[i]?.x ?? 0}
+                  cy={pathHandlePositions[i]?.y ?? 0}
                   r={14}
                   fill="none"
                   stroke="rgba(255,220,60,0.95)"
@@ -1063,10 +1070,10 @@
               {/if}
               <!-- Inner dot — bigger + brighter for visibility on glow strokes. -->
               <circle
-                cx={px.x}
-                cy={px.y}
+                cx={pathHandlePositions[i]?.x ?? 0}
+                cy={pathHandlePositions[i]?.y ?? 0}
                 r={h.isAnchor ? 4 : 3.5}
-                fill={h.isAnchor ? toolPalette.anchorFill : toolPalette.fill}
+                fill={h.isAnchor ? pathToolPalette.anchorFill : pathToolPalette.fill}
                 pointer-events="none"
               />
             </g>
