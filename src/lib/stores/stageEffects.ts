@@ -297,6 +297,12 @@ export function createDefaultStageEffect(type: StageEffectType): StageEffect {
 interface StageEffectsRuntime {
   /** sliceId → current frame brightness (0..1). */
   sliceOutputs: Map<string, number>;
+  /** sliceId → current frame color tint (`#rrggbb` or null when the
+   *  active effect doesn't carry a color). Engine integration for
+   *  tinting is a follow-up; the data is published now so the UI can
+   *  visualize it and so the wiring is in place when the engine hook
+   *  lands. */
+  sliceColors: Map<string, string | null>;
   /** layerId → sliceId, populated from Surface.slices[].sourceBinding.
    *  Built lazily when surfaces change. Canvas reads this to find the
    *  current brightness for an opacity modulation. */
@@ -309,6 +315,7 @@ interface StageEffectsRuntime {
 
 const initialRuntime: StageEffectsRuntime = {
   sliceOutputs: new Map(),
+  sliceColors: new Map(),
   layerToSlice: new Map(),
   state: new Map(),
 };
@@ -676,77 +683,166 @@ let startMs = 0;
 
 function tick(nowMs: number) {
   const tSec = (nowMs - startMs) / 1000;
+  // Drive any automation schedulers first — they may flip the
+  // surface's activeEffectId between frames.
+  advanceAutomation(nowMs);
   const newOutputs = new Map<string, number>();
-  // Walk each surface's effects[] and evaluate per slice. Multiple
-  // enabled effects on a surface composite multiplicatively per slice
-  // — sweep × noise = gated noise across the band, pulse × audio =
-  // audio-modulated ring, etc. Output clamped 0..1.
+  const newColors = new Map<string, string | null>();
   for (const surface of surfacesCache) {
-    const effs = (surface.effects ?? []).filter(e => e.enabled);
-    if (effs.length === 0) continue;
-    // Build slice index map for this surface so index-aware effects
-    // (chase, checker, random-hits) can pick out their slice's
-    // position within the surface's ordered slice list.
+    const live = pickLiveEffect(surface);
+    if (!live) continue;
+    // Build slice index map for index-aware effects.
     const surfaceSliceIds: string[] = [];
     for (const meta of sliceMetaCache) {
       if (meta.surfaceId === surface.id) surfaceSliceIds.push(meta.sliceId);
     }
     const sliceCount = surfaceSliceIds.length;
+    const state = (() => {
+      const rt = get({ subscribe });
+      let s = rt.state.get(live.id);
+      if (!s) { s = {}; rt.state.set(live.id, s); }
+      return s;
+    })();
     for (const meta of sliceMetaCache) {
       if (meta.surfaceId !== surface.id) continue;
-      const sliceIndex = surfaceSliceIds.indexOf(meta.sliceId);
-      let composite = 1;
-      let touched = false;
-      for (const eff of effs) {
-        const state = (() => {
-          const rt = get({ subscribe });
-          let s = rt.state.get(eff.id);
-          if (!s) { s = {}; rt.state.set(eff.id, s); }
-          return s;
-        })();
-        // Pass slice index + count into the evaluator state so
-        // index-dependent effects can pick the right value without
-        // a separate API. Most evaluators ignore these.
-        state._sliceIndex = sliceIndex;
-        state._sliceCount = sliceCount;
-        const v = evaluate(eff, meta.cx, meta.cy, tSec, state);
-        const wet = eff.opacity ?? 1;
-        const eff01 = v * wet + 1 * (1 - wet);
-        composite *= eff01;
-        touched = true;
-      }
-      if (touched) newOutputs.set(meta.sliceId, Math.max(0, Math.min(1, composite)));
+      state._sliceIndex = surfaceSliceIds.indexOf(meta.sliceId);
+      state._sliceCount = sliceCount;
+      const v = evaluate(live, meta.cx, meta.cy, tSec, state);
+      const wet = live.opacity ?? 1;
+      const eff01 = v * wet + 1 * (1 - wet);
+      newOutputs.set(meta.sliceId, Math.max(0, Math.min(1, eff01)));
+      // Publish per-slice color tint when the effect carries one. The
+      // tint is independent of brightness — engine integration will
+      // multiply the slice's content by tint × brightness when wired.
+      newColors.set(meta.sliceId, live.color ?? null);
     }
   }
-  update(rt => ({ ...rt, sliceOutputs: newOutputs }));
-  if (!anyEnabledEffect()) {
+  update(rt => ({ ...rt, sliceOutputs: newOutputs, sliceColors: newColors }));
+  if (!anyLiveEffect()) {
     stopIfIdle();
     return;
   }
   rafId = requestAnimationFrame(tick);
 }
 
-function anyEnabledEffect(): boolean {
+/** Resolve which effect (if any) is the live one for this surface.
+ *  Honors `activeEffectId` — `null` or `'still'` returns null
+ *  (no effect runs, slices render at their natural opacity). */
+function pickLiveEffect(surface: Surface): StageEffect | null {
+  const id = surface.activeEffectId;
+  if (id == null || id === 'still') return null;
+  const eff = (surface.effects ?? []).find(e => e.id === id);
+  return eff ?? null;
+}
+
+function anyLiveEffect(): boolean {
   for (const s of surfacesCache) {
-    if ((s.effects ?? []).some(e => e.enabled)) return true;
+    if (pickLiveEffect(s)) return true;
+    // Automation playing on this surface also counts — even if the
+    // current step is 'still', the scheduler still needs to tick so
+    // it can advance to the next effect.
+    if (s.effectAutomation?.playing) return true;
   }
   return false;
 }
 
 function ensureRunning() {
   if (rafId !== null) return;
-  if (!anyEnabledEffect()) return;
+  if (!anyLiveEffect()) return;
   startMs = performance.now();
   rafId = requestAnimationFrame(tick);
 }
 
 function stopIfIdle() {
-  if (!anyEnabledEffect() && rafId !== null) {
+  if (!anyLiveEffect() && rafId !== null) {
     cancelAnimationFrame(rafId);
     rafId = null;
     // Clear outputs so layers go back to their natural opacity.
-    update(rt => ({ ...rt, sliceOutputs: new Map() }));
+    update(rt => ({ ...rt, sliceOutputs: new Map(), sliceColors: new Map() }));
   }
+}
+
+// ─── Automation scheduler ───────────────────────────────────
+// Each surface has its own scheduler; we keep the per-surface state
+// keyed by surface.id so multiple surfaces can run independent
+// automations. `lastAdvanceMs` (time mode) and `lastBeatPhase` (beat
+// mode) drive when the next step fires.
+const automationState = new Map<string, {
+  lastAdvanceMs?: number;
+  lastBeatPhase?: number;
+  beatsAccum?: number;
+}>();
+
+function advanceAutomation(nowMs: number) {
+  for (const surface of surfacesCache) {
+    const auto = surface.effectAutomation;
+    if (!auto?.playing) {
+      automationState.delete(surface.id);
+      continue;
+    }
+    const cycle = buildAutomationCycle(surface);
+    if (cycle.length === 0) continue;
+
+    let st = automationState.get(surface.id);
+    if (!st) { st = {}; automationState.set(surface.id, st); }
+
+    let shouldAdvance = false;
+    if (auto.mode === 'time') {
+      const interval = Math.max(0.1, auto.seconds ?? 4) * 1000;
+      if (st.lastAdvanceMs == null) {
+        st.lastAdvanceMs = nowMs;
+        // Fire immediately on play so the first step engages without
+        // waiting one full interval.
+        shouldAdvance = true;
+      } else if (nowMs - st.lastAdvanceMs >= interval) {
+        st.lastAdvanceMs = nowMs;
+        shouldAdvance = true;
+      }
+    } else {
+      // Beat mode — count cumulative beats elapsed using beatPhase
+      // wraparounds. beatPhase is 0..1 between beats; a wrap (where
+      // the new value is much smaller than the old) means one beat
+      // has elapsed.
+      const audio = get(audioStore);
+      const phase = audio?.beatPhase ?? 0;
+      if (st.lastBeatPhase == null) {
+        st.lastBeatPhase = phase;
+        st.beatsAccum = 0;
+        shouldAdvance = true; // fire immediately on play
+      } else {
+        if (phase < (st.lastBeatPhase ?? 0)) {
+          st.beatsAccum = (st.beatsAccum ?? 0) + 1;
+        }
+        st.lastBeatPhase = phase;
+        const target = Math.max(1, Math.round(auto.beats ?? 4));
+        if ((st.beatsAccum ?? 0) >= target) {
+          st.beatsAccum = 0;
+          shouldAdvance = true;
+        }
+      }
+    }
+
+    if (!shouldAdvance) continue;
+
+    // Pick the next slot. Land on the current activeEffectId then step
+    // forward; if the current isn't in the cycle (e.g. user disabled
+    // it mid-play), start from the first slot.
+    const currentId = surface.activeEffectId ?? 'still';
+    let idx = cycle.indexOf(currentId);
+    idx = idx < 0 ? 0 : (idx + 1) % cycle.length;
+    const nextId = cycle[idx];
+
+    void import('./surface').then(({ surfaceStore }) => {
+      surfaceStore.setActiveEffect(surface.id, nextId === 'still' ? 'still' : nextId);
+    });
+  }
+}
+
+function buildAutomationCycle(surface: Surface): string[] {
+  const includeStill = surface.effectAutomation?.includeStill !== false;
+  const enabled = (surface.effects ?? []).filter(e => e.enabled).map(e => e.id);
+  if (enabled.length === 0) return includeStill ? ['still'] : [];
+  return includeStill ? ['still', ...enabled] : enabled;
 }
 
 // ─── Public API ─────────────────────────────────────────────────────
@@ -756,6 +852,11 @@ export const stageEffectsRuntime = { subscribe };
 /** Brightness output map keyed by slice id. Canvas reads this each
  *  frame to modulate the slice's bound layer opacity. */
 export const stageEffectOutputs = derived(stageEffectsRuntime, $rt => $rt.sliceOutputs);
+
+/** Color tint map keyed by slice id. Engine integration deferred —
+ *  exposes the values so UI can preview and so future engine work
+ *  can tint slice content with the live effect's color. */
+export const stageEffectColors = derived(stageEffectsRuntime, $rt => $rt.sliceColors);
 
 /** layerId → sliceId reverse lookup. Canvas uses this to find the
  *  effect output for a given layer in O(1). */

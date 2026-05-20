@@ -11,7 +11,7 @@
  */
 
 import { writable, derived, get } from 'svelte/store';
-import type { Surface, SurfaceSlice, SurfaceSliceBinding, Point2D, BezierPoint, StageEffect, StageEffectType } from '../types';
+import type { Surface, SurfaceSlice, SurfaceSliceBinding, Point2D, BezierPoint, StageEffect, StageEffectType, SurfaceEffectAutomation } from '../types';
 import { generateUUID } from '../utils/uuid';
 import { syncStageEffectsFromSurfaces, createDefaultStageEffect } from './stageEffects';
 
@@ -571,11 +571,75 @@ function createSurfaceStore() {
     deleteStageEffect(effectId: string) {
       update(s => ({
         ...s,
+        surfaces: s.surfaces.map(surface => {
+          if (surface.id !== s.activeSurfaceId) return surface;
+          const effects = (surface.effects ?? []).filter(e => e.id !== effectId);
+          // If the live effect was the one being deleted, fall back
+          // to "still" so the tick doesn't keep referencing a stale id.
+          const activeEffectId = surface.activeEffectId === effectId ? 'still' : surface.activeEffectId;
+          return { ...surface, effects, activeEffectId };
+        }),
+      }));
+    },
+
+    /** Make ONE effect (or 'still' / null) the currently-live effect
+     *  on a surface. This is the radio-button activation model —
+     *  exactly one effect runs at a time, replacing the prior
+     *  multi-active-stacking design.
+     *
+     *  `surfaceId` defaults to the active surface so the in-VJ Stage
+     *  tab can call this with just an effectId; the automation
+     *  scheduler in stageEffects.ts passes an explicit surfaceId so
+     *  it can drive multiple surfaces independently. */
+    setActiveEffect(surfaceIdOrEffectId: string, effectId?: string | null) {
+      // Disambiguate the two call shapes: setActiveEffect('still') vs
+      // setActiveEffect(surfaceId, 'still'). If only one arg, treat
+      // it as the effectId for the active surface.
+      let surfaceId: string;
+      let nextActive: string | null;
+      if (arguments.length === 1) {
+        const state = get({ subscribe });
+        surfaceId = state.activeSurfaceId ?? '';
+        nextActive = surfaceIdOrEffectId;
+      } else {
+        surfaceId = surfaceIdOrEffectId;
+        nextActive = effectId ?? null;
+      }
+      if (!surfaceId) return;
+      update(s => ({
+        ...s,
         surfaces: s.surfaces.map(surface =>
-          surface.id === s.activeSurfaceId
-            ? { ...surface, effects: (surface.effects ?? []).filter(e => e.id !== effectId) }
+          surface.id === surfaceId
+            ? { ...surface, activeEffectId: nextActive }
             : surface
         ),
+      }));
+    },
+
+    /** Toggle the per-surface automation scheduler. When playing,
+     *  stageEffects.ts advances activeEffectId through the surface's
+     *  enabled effects (and optionally 'still') at the configured
+     *  interval. */
+    toggleEffectAutomation() {
+      update(s => ({
+        ...s,
+        surfaces: s.surfaces.map(surface => {
+          if (surface.id !== s.activeSurfaceId) return surface;
+          const cur = surface.effectAutomation ?? defaultAutomation();
+          return { ...surface, effectAutomation: { ...cur, playing: !cur.playing } };
+        }),
+      }));
+    },
+
+    /** Patch any subset of the automation config. */
+    updateEffectAutomation(patch: Partial<SurfaceEffectAutomation>) {
+      update(s => ({
+        ...s,
+        surfaces: s.surfaces.map(surface => {
+          if (surface.id !== s.activeSurfaceId) return surface;
+          const cur = surface.effectAutomation ?? defaultAutomation();
+          return { ...surface, effectAutomation: { ...cur, ...patch } };
+        }),
       }));
     },
 
@@ -646,6 +710,16 @@ function createSurfaceStore() {
     reset() {
       set({ ...INITIAL_STATE });
     },
+  };
+}
+
+function defaultAutomation(): SurfaceEffectAutomation {
+  return {
+    playing: false,
+    mode: 'beat',
+    seconds: 4,
+    beats: 8,
+    includeStill: false,
   };
 }
 
