@@ -3982,6 +3982,16 @@ export interface StagePreset {
   createdAt: number;
   layers: Layer[];  // Deep clone of mapping layers with vjLayerIndex assignments
   scope?: 'project' | 'global';  // Two-tier: 'project' saved in .ghost-arcade, 'global' in localStorage
+  /** Stage Effects bundle — captured at save time so re-triggering
+   *  the preset re-instates the entire animation setup (catalog of
+   *  effects + which one is currently live + automation play state
+   *  and interval). Optional so old presets load cleanly with no
+   *  effects snapshot. */
+  stageEffects?: {
+    effects: StageEffect[];
+    activeEffectId: string | null;
+    automation: SurfaceEffectAutomation | null;
+  };
 }
 
 // SynthVision Keyboard Clip Assignment

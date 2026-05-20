@@ -12,6 +12,7 @@ import { keyframeTimeline } from './keyframeTimeline';
 import { macros } from './macros';
 import { snapshots } from './snapshots';
 import { layerSequencer } from './layerSequencer';
+import { surfaceStore } from './surface';
 import { geoDeckStore } from './geoDeck';
 import { createDefaultShapeMesh } from '../drawing/types';
 import type { LineElement, LineShape, LinesContent, LineDrawAnimation, LineStroke } from '../lines/types';
@@ -2396,12 +2397,37 @@ void main() {
         }
       }
 
+      // Capture the active surface's effects setup (catalog + live
+      // selection + automation) so re-triggering the preset restores
+      // the whole animation bundle.  Late-bound `get` against the
+      // surfaceStore module so we don't introduce a circular import.
+      let stageEffectsSnap: StagePreset['stageEffects'] = undefined;
+      try {
+        // Sync-friendly: surfaceStore is already imported elsewhere
+        // in this file (see hydrateFromProject); subscribe() reads
+        // the current value without async.
+        const surfState = get(surfaceStore);
+        const activeSurf = surfState.surfaces.find(s => s.id === surfState.activeSurfaceId);
+        if (activeSurf) {
+          stageEffectsSnap = {
+            effects: JSON.parse(JSON.stringify(activeSurf.effects ?? [])),
+            activeEffectId: activeSurf.activeEffectId ?? null,
+            automation: activeSurf.effectAutomation
+              ? JSON.parse(JSON.stringify(activeSurf.effectAutomation))
+              : null,
+          };
+        }
+      } catch (err) {
+        console.warn('[Store] saveStagePreset: surface effects snapshot failed', err);
+      }
+
       const preset: StagePreset = {
         id: presetId,
         name,
         thumbnail,
         createdAt: Date.now(),
         layers: layersSnapshot,
+        stageEffects: stageEffectsSnap,
       };
 
       update((project) => ({
@@ -2414,9 +2440,15 @@ void main() {
 
     /** Load a stage preset — replaces project.layers with the preset's saved layers */
     loadStagePreset(presetId: string) {
+      // Capture the preset's effects snapshot here so we can apply
+      // it to the surface store AFTER the update() call returns
+      // (avoids nested-mutation hazards across two stores).
+      let effectsSnap: StagePreset['stageEffects'] | undefined;
+
       update((project) => {
         const preset = (project.stagePresets || []).find(p => p.id === presetId);
         if (!preset) return project;
+        effectsSnap = preset.stageEffects;
 
         const loadedLayers = structuredClone(preset.layers);
         return { ...project, layers: loadedLayers };
@@ -2424,6 +2456,20 @@ void main() {
 
       // Also update VJ clip launcher's active preset reference
       vjClipLauncher.setStagePreset(presetId);
+
+      // Restore the surface's effects setup. Deferred a microtask
+      // so the layers update flushes first; the mirror subscriber
+      // inside surfaceStore writes back to project.surfaces so the
+      // round trip stays consistent for project save.
+      if (effectsSnap) {
+        queueMicrotask(() => {
+          surfaceStore.setStageEffectsBundle({
+            effects: effectsSnap!.effects ?? [],
+            activeEffectId: effectsSnap!.activeEffectId ?? null,
+            automation: effectsSnap!.automation ?? null,
+          });
+        });
+      }
     },
 
     /** Delete a stage preset */
