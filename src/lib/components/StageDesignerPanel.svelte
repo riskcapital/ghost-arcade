@@ -553,47 +553,19 @@
       {/if}
     </div>
 
-    <div class="header-center toolbar">
-      <button class="tool-btn labeled" class:active={tool === 'select'} onclick={() => tool = 'select'} title="Select (V)">
-        <span class="t-icon">↖</span><span class="t-label">Select</span>
-      </button>
-      <button class="tool-btn labeled" class:active={tool === 'pen'} onclick={() => tool = 'pen'} title="Pen — click to add anchor, drag for bezier handle, click first to close (P)">
-        <span class="t-icon">✎</span><span class="t-label">Pen</span>
-      </button>
-      <span class="tool-sep"></span>
-      <button class="tool-btn labeled" onclick={() => addPremade('rect')}     title="Add rectangle">
-        <span class="t-icon">▭</span><span class="t-label">Rect</span>
-      </button>
-      <button class="tool-btn labeled" onclick={() => addPremade('circle')}   title="Add circle (true cubic-bezier)">
-        <span class="t-icon">◯</span><span class="t-label">Circle</span>
-      </button>
-      <button class="tool-btn labeled" onclick={() => addPremade('ellipse')}  title="Add ellipse">
-        <span class="t-icon">⬭</span><span class="t-label">Ellipse</span>
-      </button>
-      <button class="tool-btn labeled" onclick={() => addPremade('triangle')} title="Add triangle">
-        <span class="t-icon">△</span><span class="t-label">Tri</span>
-      </button>
-      <button class="tool-btn labeled" onclick={() => addPremade('star')}     title="Add 5-point star">
-        <span class="t-icon">☆</span><span class="t-label">Star</span>
-      </button>
-      <button class="tool-btn labeled" onclick={() => addPremade('hex')}      title="Add hexagon">
-        <span class="t-icon">⬡</span><span class="t-label">Hex</span>
-      </button>
-      <button class="tool-btn labeled" onclick={() => addPremade('pill')}     title="Add pill (rounded rectangle)">
-        <span class="t-icon">▱</span><span class="t-label">Pill</span>
-      </button>
-      <span class="tool-sep"></span>
-      <button class="tool-btn import-btn" onclick={triggerFilePicker} title="Import SVG file — each path becomes a slice with its bezier handles intact">
-        <span class="import-icon">↑</span><span>Import SVG</span>
-      </button>
-      <input
-        bind:this={fileInput}
-        type="file"
-        accept=".svg,image/svg+xml"
-        style="display:none"
-        onchange={handleFile}
-      />
+    <div class="header-center">
+      <!-- Tool palette moved out to a persistent left sidebar — see
+           .tool-palette below. Header stays uncluttered (surface name
+           on the left, zoom on the right). -->
     </div>
+    <!-- File picker for SVG import — triggered from the left palette. -->
+    <input
+      bind:this={fileInput}
+      type="file"
+      accept=".svg,image/svg+xml"
+      style="display:none"
+      onchange={handleFile}
+    />
 
     <div class="header-right">
       <button class="zoom-btn" onclick={fitToViewport} title="Fit to viewport">⛶</button>
@@ -601,8 +573,51 @@
     </div>
   </header>
 
-  <!-- Body ── slice list | canvas | inspector ─────────────────── -->
+  <!-- Body ── tool palette | slice list | canvas | inspector ─────── -->
   <div class="stage-body">
+    <!-- Always-visible tool palette (Illustrator-style). Icon-only
+         buttons; full tooltip on hover. Pen + shapes + Import SVG
+         live here permanently so they're never cropped off the
+         header at narrow window widths. -->
+    <aside class="tool-palette">
+      <button class="palette-btn" class:active={tool === 'select'} onclick={() => tool = 'select'} title="Select tool (V)">
+        <span class="p-icon">↖</span><span class="p-label">Select</span>
+      </button>
+      <button class="palette-btn" class:active={tool === 'pen'} onclick={() => tool = 'pen'} title="Pen tool — click anchors, drag for bezier handles, click first to close (P)">
+        <span class="p-icon">✎</span><span class="p-label">Pen</span>
+      </button>
+
+      <div class="palette-divider"></div>
+      <div class="palette-section">Shapes</div>
+      <button class="palette-btn" onclick={() => addPremade('rect')}     title="Add rectangle">
+        <span class="p-icon">▭</span><span class="p-label">Rect</span>
+      </button>
+      <button class="palette-btn" onclick={() => addPremade('circle')}   title="Add circle (true cubic-bezier)">
+        <span class="p-icon">◯</span><span class="p-label">Circle</span>
+      </button>
+      <button class="palette-btn" onclick={() => addPremade('ellipse')}  title="Add ellipse">
+        <span class="p-icon">⬭</span><span class="p-label">Ellipse</span>
+      </button>
+      <button class="palette-btn" onclick={() => addPremade('triangle')} title="Add triangle">
+        <span class="p-icon">△</span><span class="p-label">Tri</span>
+      </button>
+      <button class="palette-btn" onclick={() => addPremade('star')}     title="Add 5-point star">
+        <span class="p-icon">☆</span><span class="p-label">Star</span>
+      </button>
+      <button class="palette-btn" onclick={() => addPremade('hex')}      title="Add hexagon">
+        <span class="p-icon">⬡</span><span class="p-label">Hex</span>
+      </button>
+      <button class="palette-btn" onclick={() => addPremade('pill')}     title="Add pill (stadium)">
+        <span class="p-icon">▱</span><span class="p-label">Pill</span>
+      </button>
+
+      <div class="palette-divider"></div>
+      <div class="palette-section">Import</div>
+      <button class="palette-btn primary-btn" onclick={triggerFilePicker} title="Import SVG file — each path becomes a slice with its bezier handles intact">
+        <span class="p-icon">↑</span><span class="p-label">SVG</span>
+      </button>
+    </aside>
+
     <!-- Slice list -->
     <aside class="slice-list-panel">
       <div class="panel-header">
@@ -1048,8 +1063,91 @@
   .stage-body {
     flex: 1;
     display: grid;
-    grid-template-columns: 240px 1fr 280px;
+    /* tool palette | slice list | canvas | inspector */
+    grid-template-columns: 64px 220px 1fr 280px;
     min-height: 0;
+  }
+
+  /* ─── Tool palette (left) ─── */
+  /* Always-visible vertical strip — Photoshop / Illustrator
+     convention. Compact (64px wide) so it doesn't eat canvas
+     space; icon + tiny label below each button so the user can
+     identify tools without hovering for tooltips. */
+  .tool-palette {
+    background: #08080a;
+    border-right: 1px solid #1d1d22;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    padding: 8px 6px;
+    gap: 4px;
+  }
+  .palette-section {
+    font-size: 9px;
+    letter-spacing: 1.2px;
+    color: #555;
+    text-transform: uppercase;
+    padding: 6px 4px 2px;
+    text-align: center;
+  }
+  .palette-divider {
+    height: 1px;
+    background: #1d1d22;
+    margin: 4px 4px;
+  }
+  .palette-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 6px 4px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: #aaa;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.12s;
+    min-height: 44px;
+  }
+  .palette-btn:hover {
+    background: #14141a;
+    color: #fff;
+    border-color: #2a2a30;
+  }
+  .palette-btn.active {
+    background: rgba(76,209,255,0.15);
+    border-color: #4cd1ff;
+    color: #4cd1ff;
+  }
+  .palette-btn .p-icon {
+    font-size: 16px;
+    line-height: 1;
+  }
+  .palette-btn .p-label {
+    font-size: 9px;
+    letter-spacing: 0.3px;
+    font-weight: 500;
+    color: #888;
+  }
+  .palette-btn:hover .p-label,
+  .palette-btn.active .p-label {
+    color: inherit;
+  }
+  .palette-btn.primary-btn {
+    background: linear-gradient(180deg, rgba(76,209,255,0.18), rgba(76,209,255,0.06));
+    border-color: rgba(76,209,255,0.4);
+    color: #b6e8ff;
+  }
+  .palette-btn.primary-btn:hover {
+    background: linear-gradient(180deg, rgba(76,209,255,0.32), rgba(76,209,255,0.16));
+    border-color: #4cd1ff;
+    color: #fff;
+  }
+  .palette-btn.primary-btn .p-label {
+    color: #b6e8ff;
+    font-weight: 600;
   }
 
   /* ─── Slice list (left) ─── */
