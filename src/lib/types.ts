@@ -4219,12 +4219,21 @@ export interface SurfaceSlice {
   /** Auto-generated as "Polygon 1, Polygon 2, ..." on SVG import;
    *  user-renameable in the slice list. */
   name: string;
-  /** Straight-line polygon vertices in the parent surface's coordinate
-   *  space (0..width, 0..height). Curves from SVG paths are tessellated
-   *  to dense point arrays at import time — slices themselves are
-   *  always straight-segment polygons, simpler editing model than the
-   *  layer-level BezierPoint shapes. */
-  polygon: Point2D[];
+  /** Vertices in the parent surface's coordinate space
+   *  (0..width, 0..height). Each entry is a BezierPoint: the `x`/`y`
+   *  fields define an anchor; optional `cpIn`/`cpOut` define cubic
+   *  bezier control handles entering / leaving that anchor (also in
+   *  surface coords, absolute — NOT deltas).
+   *
+   *  - Anchor with no handles ⇒ straight segment to the next anchor.
+   *  - Anchor with `cpOut` set ⇒ curve LEAVES it through cpOut.
+   *  - Next anchor with `cpIn` set ⇒ curve ARRIVES at it through cpIn.
+   *
+   *  SVG imports populate handles for path C/Q/S/T commands; the pen
+   *  tool can add handles via click-and-drag. Rendering walks the
+   *  array and emits SVG `C x1 y1 x2 y2 x y` when EITHER endpoint of
+   *  a segment carries a handle, else a straight `L x y`. */
+  polygon: BezierPoint[];
   /** Stroke/outline color in the designer UI (hex). Has no effect on
    *  rendered output. */
   color: string;
