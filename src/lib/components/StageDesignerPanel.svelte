@@ -29,8 +29,8 @@
     parseSurfaceSVG,
   } from '../stores/surface';
   import { layers as projectLayers } from '../stores/layers';
-  import { STAGE_EFFECT_CATALOG, getEffectDef } from '../stores/stageEffects';
-  import type { Point2D, BezierPoint, SurfaceSlice, StageEffectType } from '../types';
+  import { STAGE_EFFECT_CATALOG } from '../stores/stageEffects';
+  import type { Point2D, BezierPoint, SurfaceSlice } from '../types';
 
   // ── Canvas pan/zoom state ─────────────────────────────────
   // Mirrors the App.svelte viewport pattern: pan + zoom on a wrapper
@@ -542,7 +542,13 @@
   <!-- Header ── tools, surface name, close button ───────────────── -->
   <header class="stage-header">
     <div class="header-left">
-      <button class="close-btn" onclick={() => workspace.closeAll()} title="Close Stage Designer (Esc)">×</button>
+      <!-- Back button — closes the designer WITHOUT applying. The
+           surface state stays saved on the project; the user can come
+           back any time to edit. Apply Stage on the right is the
+           commit-to-mapping action. -->
+      <button class="back-btn" onclick={() => workspace.closeAll()} title="Close Stage Designer without applying (Esc)">
+        <span class="back-arrow">←</span> Back to Mapping
+      </button>
       <span class="title">STAGE DESIGNER</span>
       {#if $activeSurface}
         <input
@@ -939,86 +945,28 @@
         <div class="inspector-empty">Select a slice to edit its properties.</div>
       {/if}
 
-      <!-- ── Stage Effects panel ────────────────────────────────────
-           Surface-wide procedural generators. Always visible (not
-           gated by slice selection) since they're surface-level
-           controls. Each enabled effect ticks at RAF and modulates
-           the opacity of slices' bound mapping layers based on the
-           slice's centroid position in normalized surface space. -->
+      <!-- Stage Effects live in the VJ deck now — drag from the
+           VJ "StageFX" tab onto a clip cell, fire to activate.
+           Designer no longer owns the activation UI; this hint
+           points the user to the right place. -->
       {#if $activeSurface}
         <div class="effects-section">
           <div class="effects-header">
             <span>Stage Effects</span>
-            <span class="effects-count">{($activeSurface.effects ?? []).length}</span>
+            <span class="effects-count">{STAGE_EFFECT_CATALOG.length} available</span>
           </div>
-          <div class="effects-add">
-            {#each STAGE_EFFECT_CATALOG as def}
-              <button
-                class="effect-add-btn"
-                onclick={() => surfaceStore.addStageEffect(def.type)}
-                title={`Add ${def.label}`}
-              >
-                <span class="effect-add-icon">{def.icon}</span>
-                <span class="effect-add-label">{def.label}</span>
-              </button>
-            {/each}
+          <div class="effects-pointer">
+            <p>Stage Effects live in the <strong>VJ deck</strong> now.</p>
+            <p>Open VJ Mode → <strong>StageFX</strong> tab → drag an effect onto a clip cell. Firing the cell activates the effect on this surface's slices. Multiple effects compose multiplicatively.</p>
+            <div class="effects-catalog-list">
+              {#each STAGE_EFFECT_CATALOG as def}
+                <div class="effects-catalog-row">
+                  <span class="effects-catalog-icon">{def.icon}</span>
+                  <span class="effects-catalog-label">{def.label}</span>
+                </div>
+              {/each}
+            </div>
           </div>
-          {#each $activeSurface.effects ?? [] as eff (eff.id)}
-            {@const def = getEffectDef(eff.type)}
-            <div class="effect-card" class:disabled={!eff.enabled}>
-              <div class="effect-card-head">
-                <button
-                  class="effect-enable"
-                  class:active={eff.enabled}
-                  onclick={() => surfaceStore.updateStageEffect(eff.id, { enabled: !eff.enabled })}
-                  title={eff.enabled ? 'Disable' : 'Enable'}
-                >{eff.enabled ? '●' : '○'}</button>
-                <span class="effect-name">
-                  <span class="effect-icon">{def?.icon ?? '◆'}</span>
-                  {def?.label ?? eff.type}
-                </span>
-                <button
-                  class="effect-delete"
-                  onclick={() => surfaceStore.deleteStageEffect(eff.id)}
-                  title="Remove effect"
-                >×</button>
-              </div>
-              <div class="effect-params">
-                <label class="effect-param">
-                  <span>Opacity</span>
-                  <input
-                    type="range" min="0" max="1" step="0.01"
-                    value={eff.opacity}
-                    oninput={(e) => surfaceStore.updateStageEffect(eff.id, {
-                      opacity: parseFloat((e.target as HTMLInputElement).value)
-                    })}
-                  />
-                  <span class="param-val">{eff.opacity.toFixed(2)}</span>
-                </label>
-                {#each def?.paramSpecs ?? [] as spec}
-                  <label class="effect-param">
-                    <span>{spec.label}</span>
-                    <input
-                      type="range"
-                      min={spec.min}
-                      max={spec.max}
-                      step={spec.step ?? 0.01}
-                      value={eff.params[spec.key] ?? def?.defaultParams[spec.key] ?? 0}
-                      oninput={(e) => surfaceStore.updateStageEffectParam(eff.id, spec.key,
-                        parseFloat((e.target as HTMLInputElement).value)
-                      )}
-                    />
-                    <span class="param-val">{(eff.params[spec.key] ?? def?.defaultParams[spec.key] ?? 0).toFixed(2)}</span>
-                  </label>
-                {/each}
-              </div>
-            </div>
-          {/each}
-          {#if ($activeSurface.effects ?? []).length === 0}
-            <div class="effects-empty">
-              Add an effect to drive per-slice brightness — pulses, sweeps, noise, or audio-reactive. Effects run continuously, even after you Apply Stage and switch to the main mapping workspace.
-            </div>
-          {/if}
         </div>
       {/if}
     </aside>
@@ -1053,18 +1001,26 @@
     align-items: center;
     gap: 10px;
   }
-  .close-btn {
-    width: 28px;
+  .back-btn {
     height: 28px;
+    padding: 0 12px;
     border: 1px solid #2a2a30;
-    background: transparent;
-    color: #aaa;
+    background: #14141a;
+    color: #ccc;
     border-radius: 4px;
-    font-size: 18px;
-    line-height: 1;
+    font-size: 12px;
+    font-weight: 500;
     cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
   }
-  .close-btn:hover { background: rgba(255,255,255,0.06); color: #fff; }
+  .back-btn:hover {
+    background: #1c1c24;
+    border-color: #4cd1ff;
+    color: #fff;
+  }
+  .back-arrow { font-size: 14px; line-height: 1; }
   .title {
     font-size: 11px;
     letter-spacing: 2px;
@@ -1273,126 +1229,42 @@
     font-weight: normal;
   }
 
-  .effects-add {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 4px;
-    margin-bottom: 12px;
+  .effects-pointer {
+    font-size: 11px;
+    color: #bbb;
+    line-height: 1.6;
+    padding: 10px 12px;
+    background: rgba(76,209,255,0.05);
+    border-left: 2px solid rgba(76,209,255,0.4);
+    border-radius: 0 4px 4px 0;
   }
-  .effect-add-btn {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    padding: 6px 8px;
-    background: #14141a;
-    border: 1px solid #2a2a30;
-    border-radius: 4px;
-    color: #aaa;
-    font-size: 10.5px;
-    cursor: pointer;
-    text-align: left;
+  .effects-pointer p {
+    margin: 0 0 6px;
   }
-  .effect-add-btn:hover {
-    background: rgba(76,209,255,0.08);
-    border-color: #4cd1ff;
-    color: #fff;
-  }
-  .effect-add-icon { font-size: 12px; }
-  .effect-add-label { flex: 1; }
-
-  .effect-card {
-    background: #0d0d10;
-    border: 1px solid #1d1d22;
-    border-radius: 4px;
-    margin-bottom: 8px;
-    overflow: hidden;
-  }
-  .effect-card.disabled {
-    opacity: 0.5;
-  }
-  .effect-card-head {
-    display: grid;
-    grid-template-columns: 22px 1fr 22px;
-    align-items: center;
-    padding: 6px 8px;
-    gap: 6px;
-    background: rgba(76,209,255,0.04);
-    border-bottom: 1px solid #1d1d22;
-  }
-  .effect-enable {
-    background: transparent;
-    border: 1px solid #2a2a30;
-    border-radius: 3px;
-    width: 20px;
-    height: 20px;
-    color: #555;
-    font-size: 12px;
-    cursor: pointer;
-    padding: 0;
-  }
-  .effect-enable.active {
+  .effects-pointer strong {
     color: #4cd1ff;
-    border-color: #4cd1ff;
-  }
-  .effect-name {
-    font-size: 12px;
     font-weight: 600;
-    color: #ddd;
-    display: flex;
-    align-items: center;
-    gap: 6px;
   }
-  .effect-icon {
-    color: #4cd1ff;
-    font-size: 13px;
-  }
-  .effect-delete {
-    background: transparent;
-    border: none;
-    color: #666;
-    font-size: 14px;
-    cursor: pointer;
-    width: 20px;
-    height: 20px;
-    border-radius: 3px;
-  }
-  .effect-delete:hover {
-    background: rgba(255,68,68,0.15);
-    color: #ff8888;
-  }
-
-  .effect-params {
-    padding: 8px;
+  .effects-catalog-list {
+    margin-top: 10px;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 3px;
   }
-  .effect-param {
-    display: grid;
-    grid-template-columns: 78px 1fr 38px;
+  .effects-catalog-row {
+    display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 10px;
-    color: #aaa;
+    padding: 4px 0;
+    font-size: 11px;
+    color: #888;
+    border-top: 1px solid rgba(76,209,255,0.08);
   }
-  .effect-param input[type="range"] {
-    width: 100%;
-    accent-color: #4cd1ff;
-  }
-  .effect-param .param-val {
-    font-family: monospace;
-    color: #ddd;
-    text-align: right;
-    font-size: 10px;
-  }
-
-  .effects-empty {
-    font-size: 10.5px;
-    color: #666;
-    line-height: 1.55;
-    padding: 8px;
-    background: rgba(76,209,255,0.04);
-    border-left: 2px solid rgba(76,209,255,0.3);
+  .effects-catalog-icon {
+    color: #4cd1ff;
+    font-size: 13px;
+    width: 18px;
+    text-align: center;
   }
 
   /* ─── Body ─── */

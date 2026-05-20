@@ -23,6 +23,7 @@ import { writable, get, derived } from 'svelte/store';
 import type { StageEffect, StageEffectType, Surface } from '../types';
 import { generateUUID } from '../utils/uuid';
 import { audioStore } from './audio';
+import { activeStageEffectClips } from './vjClipLauncher';
 
 // ─── Per-effect-type catalog (UI + default params) ──────────────────
 
@@ -157,6 +158,12 @@ interface SliceMeta {
 
 let sliceMetaCache: SliceMeta[] = [];
 let surfacesCache: Surface[] = [];
+/** Active stage-effect clips, populated by a subscriber on
+ *  activeStageEffectClips. The RAF tick walks this list each frame —
+ *  one effect per active VJ clip. Earlier versions read effects from
+ *  Surface.effects[]; now activation is driven by VJ clip firing so
+ *  the user can perform with them like any other VJ source. */
+let activeClipsCache: { id: string; type: StageEffectType; params: Record<string, number> }[] = [];
 
 function recomputeSliceMeta(surfaces: Surface[]) {
   sliceMetaCache = [];
@@ -276,27 +283,31 @@ let startMs = 0;
 function tick(nowMs: number) {
   const tSec = (nowMs - startMs) / 1000;
   const newOutputs = new Map<string, number>();
-  // For each surface, evaluate each enabled effect per slice. Multiple
-  // effects on a single surface multiply together (so a sweep + a
-  // noise produces gated noise) — opaque to the slice, it just sees
-  // a single final brightness value.
-  for (const surface of surfacesCache) {
-    const effs = (surface.effects ?? []).filter(e => e.enabled);
-    if (effs.length === 0) continue;
+  // Walk every active stage-effect VJ clip and evaluate it per slice.
+  // Multiple active clips composite multiplicatively — a sweep + a
+  // noise yields "gated noise across the band", a pulse + audio gives
+  // an audio-modulated ring, etc.  Output is clamped 0..1 per slice.
+  if (activeClipsCache.length > 0) {
     for (const meta of sliceMetaCache) {
-      if (meta.surfaceId !== surface.id) continue;
       let composite = 1;
       let touched = false;
-      for (const eff of effs) {
+      for (const clip of activeClipsCache) {
+        // Build a transient StageEffect view of the clip so the
+        // existing evaluate() functions work unchanged.
+        const eff: StageEffect = {
+          id: clip.id,
+          type: clip.type,
+          enabled: true,
+          opacity: clip.params._opacity ?? 1,
+          params: clip.params,
+        };
         const state = (() => {
           const rt = get({ subscribe });
-          let s = rt.state.get(eff.id);
-          if (!s) { s = {}; rt.state.set(eff.id, s); }
+          let s = rt.state.get(clip.id);
+          if (!s) { s = {}; rt.state.set(clip.id, s); }
           return s;
         })();
         const v = evaluate(eff, meta.cx, meta.cy, tSec, state);
-        // Effect opacity (wet/dry): blend toward "no effect" (1.0) at
-        // opacity 0, full effect at opacity 1.
         const wet = eff.opacity ?? 1;
         const eff01 = v * wet + 1 * (1 - wet);
         composite *= eff01;
@@ -306,28 +317,45 @@ function tick(nowMs: number) {
     }
   }
   update(rt => ({ ...rt, sliceOutputs: newOutputs }));
+  // Keep ticking as long as there's at least one active stage-effect
+  // clip OR slices to map. Going idle drops the RAF (see stopIfIdle).
+  if (activeClipsCache.length === 0) {
+    stopIfIdle();
+    return;
+  }
   rafId = requestAnimationFrame(tick);
 }
 
 function ensureRunning() {
   if (rafId !== null) return;
-  // Only run if any surface has at least one enabled effect — keeps
-  // the tick idle when there's nothing to compute.
-  const anyEnabled = surfacesCache.some(s => (s.effects ?? []).some(e => e.enabled));
-  if (!anyEnabled) return;
+  if (activeClipsCache.length === 0) return;
   startMs = performance.now();
   rafId = requestAnimationFrame(tick);
 }
 
 function stopIfIdle() {
-  const anyEnabled = surfacesCache.some(s => (s.effects ?? []).some(e => e.enabled));
-  if (!anyEnabled && rafId !== null) {
+  if (activeClipsCache.length === 0 && rafId !== null) {
     cancelAnimationFrame(rafId);
     rafId = null;
     // Clear outputs so layers go back to their natural opacity.
     update(rt => ({ ...rt, sliceOutputs: new Map() }));
   }
 }
+
+// Subscribe to the VJ-active stage-effect clips. Whenever a clip is
+// fired/replaced/stopped, this fires; we sync the local cache and
+// start the RAF tick if it's not running.
+activeStageEffectClips.subscribe(clips => {
+  activeClipsCache = clips
+    .filter(c => c.type === 'stageEffect' && c.stageEffectType)
+    .map(c => ({
+      id: c.id,
+      type: c.stageEffectType as StageEffectType,
+      params: c.stageEffectParams ?? {},
+    }));
+  ensureRunning();
+  if (activeClipsCache.length === 0) stopIfIdle();
+});
 
 // ─── Public API ─────────────────────────────────────────────────────
 
@@ -342,9 +370,9 @@ export const stageEffectOutputs = derived(stageEffectsRuntime, $rt => $rt.sliceO
 export const layerToSliceMap = derived(stageEffectsRuntime, $rt => $rt.layerToSlice);
 
 /** Called by surface.ts whenever surfaces change. Rebuilds centroid
- *  cache + layer→slice map; starts/stops the RAF tick. */
+ *  cache + layer→slice map. The tick start/stop is driven entirely by
+ *  activeStageEffectClips now (effects activate via VJ clip firing),
+ *  so this function no longer touches RAF state. */
 export function syncStageEffectsFromSurfaces(surfaces: Surface[]) {
   recomputeSliceMeta(surfaces);
-  ensureRunning();
-  stopIfIdle();
 }
