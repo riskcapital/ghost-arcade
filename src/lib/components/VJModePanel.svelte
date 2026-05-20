@@ -2261,9 +2261,58 @@
                 </div>
               {:else}
                 {@const effects = $activeSurface.effects ?? []}
+                {@const activeId = $activeSurface.activeEffectId ?? 'still'}
+                {@const auto = $activeSurface.effectAutomation}
                 <div class="effects-info">
                   <span class="effects-info-label">STAGE FX</span>
-                  <p class="effects-info-hint">{effects.length} effect{effects.length === 1 ? '' : 's'} on "{$activeSurface.name}"</p>
+                  <p class="effects-info-hint">{effects.length} effect{effects.length === 1 ? '' : 's'} on "{$activeSurface.name}" · one runs at a time</p>
+                </div>
+
+                <!-- Automation transport — play/pause cycles through
+                     auto-cycle-included effects at the configured
+                     interval (Beat mode follows audioStore beatPhase). -->
+                <div class="stage-auto-bar">
+                  <button
+                    class="stage-auto-play"
+                    class:playing={auto?.playing}
+                    onclick={() => surfaceStore.toggleEffectAutomation()}
+                    title={auto?.playing ? 'Stop auto-cycle' : 'Start auto-cycle through ↻-included effects'}
+                  >{auto?.playing ? '⏸' : '▶'}</button>
+                  <select
+                    class="stage-auto-mode"
+                    value={auto?.mode ?? 'beat'}
+                    onchange={(e) => surfaceStore.updateEffectAutomation({ mode: (e.target as HTMLSelectElement).value as 'time' | 'beat' })}
+                  >
+                    <option value="beat">Beat</option>
+                    <option value="time">Time</option>
+                  </select>
+                  {#if (auto?.mode ?? 'beat') === 'beat'}
+                    <input
+                      type="number" min="1" max="64" step="1"
+                      class="stage-auto-interval"
+                      value={auto?.beats ?? 8}
+                      onchange={(e) => surfaceStore.updateEffectAutomation({ beats: parseInt((e.target as HTMLInputElement).value) || 8 })}
+                      title="Beats per step"
+                    />
+                    <span class="stage-auto-unit">bts</span>
+                  {:else}
+                    <input
+                      type="number" min="0.5" max="60" step="0.5"
+                      class="stage-auto-interval"
+                      value={auto?.seconds ?? 4}
+                      onchange={(e) => surfaceStore.updateEffectAutomation({ seconds: parseFloat((e.target as HTMLInputElement).value) || 4 })}
+                      title="Seconds per step"
+                    />
+                    <span class="stage-auto-unit">sec</span>
+                  {/if}
+                  <label class="stage-auto-still" title="Include the 'Still' (no-effect) slot in the cycle">
+                    <input
+                      type="checkbox"
+                      checked={auto?.includeStill ?? false}
+                      onchange={(e) => surfaceStore.updateEffectAutomation({ includeStill: (e.target as HTMLInputElement).checked })}
+                    />
+                    Inc. Still
+                  </label>
                 </div>
 
                 <!-- Add new effect — dropdown + button so the user
@@ -2280,20 +2329,52 @@
 
                 <div class="effects-section">
                   <div class="effects-list">
+                    <!-- Still slot — "no effect" radio entry. Goes
+                         first so it's a discoverable "back to nothing"
+                         choice and so it sits at the top of the auto-
+                         cycle when Inc. Still is on. -->
+                    <div class="effect-item still-item" class:live={activeId === 'still'}>
+                      <div class="effect-header" onclick={() => surfaceStore.setActiveEffect('still')}>
+                        <button
+                          class="effect-live-radio"
+                          class:active={activeId === 'still'}
+                          onclick={(e) => { e.stopPropagation(); surfaceStore.setActiveEffect('still'); }}
+                          title="Make Still the live state (no effect)"
+                        >{activeId === 'still' ? '◉' : '○'}</button>
+                        <span class="effect-name">
+                          <span class="stage-fx-icon">∅</span>
+                          Still
+                        </span>
+                        <span class="effect-still-hint">default</span>
+                      </div>
+                    </div>
+
                     {#each effects as eff (eff.id)}
                       {@const def = getEffectDef(eff.type)}
-                      <div class="effect-item" class:disabled={!eff.enabled}>
+                      {@const isLive = activeId === eff.id}
+                      <div class="effect-item" class:live={isLive}>
                         <div class="effect-header" onclick={() => expandedEffectId = expandedEffectId === eff.id ? null : eff.id}>
+                          <!-- Live radio — exactly one effect runs at a time. -->
                           <button
-                            class="effect-toggle"
-                            class:active={eff.enabled}
-                            onclick={(e) => { e.stopPropagation(); surfaceStore.updateStageEffect(eff.id, { enabled: !eff.enabled }); }}
-                            title={eff.enabled ? 'Disable' : 'Enable'}
-                          >{eff.enabled ? '●' : '○'}</button>
+                            class="effect-live-radio"
+                            class:active={isLive}
+                            onclick={(e) => { e.stopPropagation(); surfaceStore.setActiveEffect(eff.id); }}
+                            title="Activate this effect (only one runs at a time)"
+                          >{isLive ? '◉' : '○'}</button>
                           <span class="effect-name">
                             <span class="stage-fx-icon">{def?.icon ?? '◆'}</span>
                             {def?.label ?? eff.type}
                           </span>
+                          <!-- Cycle-include toggle. Auto-cycle visits
+                               only ↻-included effects; muting this
+                               doesn't deactivate the effect if it's
+                               currently live. -->
+                          <button
+                            class="effect-cycle-toggle"
+                            class:included={eff.enabled}
+                            onclick={(e) => { e.stopPropagation(); surfaceStore.updateStageEffect(eff.id, { enabled: !eff.enabled }); }}
+                            title={eff.enabled ? 'In auto-cycle (click to exclude)' : 'Excluded from auto-cycle (click to include)'}
+                          >{eff.enabled ? '↻' : '⊘'}</button>
                           <span class="effect-expand">{expandedEffectId === eff.id ? '▼' : '▶'}</span>
                           <button
                             class="effect-delete"
@@ -2313,6 +2394,31 @@
                                 })}
                               />
                               <span class="param-val">{eff.opacity.toFixed(2)}</span>
+                            </div>
+                            <!-- Color tint — picker stores the hex on
+                                 the effect; per-slice color publishing
+                                 happens in stageEffects.ts. Engine
+                                 integration for tinting slice content
+                                 is a follow-up. -->
+                            <div class="param-row">
+                              <span>Color tint</span>
+                              <input
+                                type="color"
+                                class="effect-color-input"
+                                value={eff.color ?? '#4cd1ff'}
+                                onchange={(e) => surfaceStore.updateStageEffect(eff.id, {
+                                  color: (e.target as HTMLInputElement).value
+                                })}
+                              />
+                              {#if eff.color}
+                                <button
+                                  class="effect-color-clear"
+                                  onclick={() => surfaceStore.updateStageEffect(eff.id, { color: undefined })}
+                                  title="Clear color tint"
+                                >×</button>
+                              {:else}
+                                <span class="param-val">—</span>
+                              {/if}
                             </div>
                             {#each def?.paramSpecs ?? [] as spec (spec.key)}
                               <div class="param-row">
@@ -4552,6 +4658,142 @@
     color: #4cd1ff;
     margin-right: 4px;
   }
+
+  /* ── Stage Effects: automation transport ── */
+  .stage-auto-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    background: linear-gradient(180deg, rgba(76,209,255,0.06), rgba(76,209,255,0.02));
+    border-bottom: 1px solid rgba(76,209,255,0.18);
+    margin-bottom: 4px;
+  }
+  .stage-auto-play {
+    width: 30px; height: 26px;
+    background: #14141a;
+    border: 1px solid #2a2a30;
+    color: #4cd1ff;
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .stage-auto-play:hover { background: rgba(76,209,255,0.12); border-color: #4cd1ff; }
+  .stage-auto-play.playing {
+    background: #4cd1ff;
+    color: #0a0a0c;
+    border-color: #4cd1ff;
+  }
+  .stage-auto-mode {
+    background: #14141a;
+    border: 1px solid #2a2a30;
+    color: #ddd;
+    border-radius: 4px;
+    padding: 3px 5px;
+    font-size: 11px;
+    height: 26px;
+  }
+  .stage-auto-interval {
+    width: 48px;
+    background: #14141a;
+    border: 1px solid #2a2a30;
+    color: #ddd;
+    border-radius: 4px;
+    padding: 3px 5px;
+    font-size: 11px;
+    font-family: monospace;
+    height: 26px;
+  }
+  .stage-auto-unit {
+    color: #888;
+    font-size: 10px;
+    font-family: monospace;
+  }
+  .stage-auto-still {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: #aaa;
+    font-size: 10.5px;
+    cursor: pointer;
+  }
+  .stage-auto-still input { cursor: pointer; }
+
+  /* ── Stage Effects: live-radio + cycle toggle on each row ── */
+  .effect-live-radio {
+    width: 22px; height: 22px;
+    border: 1px solid #2a2a30;
+    background: transparent;
+    color: #555;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .effect-live-radio:hover {
+    border-color: #4cd1ff;
+    color: #aaa;
+  }
+  .effect-live-radio.active {
+    color: #4cd1ff;
+    border-color: #4cd1ff;
+    background: rgba(76,209,255,0.12);
+    box-shadow: 0 0 8px rgba(76,209,255,0.35);
+  }
+  .effect-cycle-toggle {
+    background: transparent;
+    border: 1px solid transparent;
+    color: #555;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 11px;
+    padding: 2px 4px;
+  }
+  .effect-cycle-toggle:hover { color: #aaa; border-color: #2a2a30; }
+  .effect-cycle-toggle.included {
+    color: #4cd1ff;
+    border-color: rgba(76,209,255,0.35);
+  }
+  .effect-item.live {
+    background: rgba(76,209,255,0.04);
+    border-left: 2px solid #4cd1ff;
+  }
+  .still-item {
+    border-bottom: 1px dashed rgba(255,255,255,0.05);
+    opacity: 0.85;
+  }
+  .still-item.live { opacity: 1; }
+  .effect-still-hint {
+    margin-left: auto;
+    color: #555;
+    font-size: 9.5px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .effect-color-input {
+    width: 60px;
+    height: 22px;
+    border: 1px solid #2a2a30;
+    border-radius: 3px;
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+  }
+  .effect-color-clear {
+    background: transparent;
+    border: 1px solid #2a2a30;
+    color: #888;
+    border-radius: 3px;
+    width: 18px; height: 18px;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 0;
+  }
+  .effect-color-clear:hover { background: rgba(255,68,68,0.15); color: #ff8888; }
 
   .effects-list {
     display: flex;

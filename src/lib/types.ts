@@ -4212,13 +4212,37 @@ export interface Surface {
    *  generated FROM this SVG on import but stored independently so the
    *  user can edit them afterward. */
   background?: { svgRef?: string; color?: string };
-  /** Stage Effects — procedural pixel-map sources that animate the
-   *  surface's slices. Each effect emits a brightness/color value per
-   *  slice each frame, which Canvas applies as an opacity multiplier
-   *  on the slice's bound mapping layer. Active effects run regardless
-   *  of which workspace is open (so the pulse keeps animating in
-   *  mapping mode after you Apply Stage). */
+  /** Stage Effects catalog — procedural pixel-map sources the user
+   *  has configured for this surface. Each effect emits a brightness
+   *  value per slice each frame. They live on the surface as
+   *  configurations; only the one referenced by `activeEffectId` is
+   *  actually running at any given moment (stacking multiple effects
+   *  produced confusing multiplicative results, so we switched to a
+   *  radio-button "pick one to go live" model). */
   effects?: StageEffect[];
+  /** Which effect (or 'still') is currently live. `null` / `'still'`
+   *  = no effect running, slices render at their natural layer
+   *  opacity. Any other value is an effect.id from effects[]. */
+  activeEffectId?: string | null;
+  /** Optional auto-cycle automation. When `playing` is true, an
+   *  internal scheduler advances `activeEffectId` through the
+   *  surface's effects[] (and optionally through the 'still' slot)
+   *  at the configured interval. */
+  effectAutomation?: SurfaceEffectAutomation;
+}
+
+export interface SurfaceEffectAutomation {
+  playing: boolean;
+  /** 'time' = fixed seconds-per-step, 'beat' = BPM-synced where one
+   *  step lasts `beats` audio beats (uses audioStore.bpm). */
+  mode: 'time' | 'beat';
+  seconds: number;    // used when mode='time'
+  beats: number;      // used when mode='beat'
+  /** Include the 'still' slot in the rotation. When false the cycle
+   *  skips it and goes straight from the last effect back to the
+   *  first; when true the user gets a beat of "no effect" between
+   *  each effect in the cycle. */
+  includeStill: boolean;
 }
 
 // ── Stage Effects ────────────────────────────────────────
@@ -4249,6 +4273,10 @@ export type StageEffectType =
 export interface StageEffect {
   id: string;
   type: StageEffectType;
+  /** Now means "include in the automation cycle." The actual live-or-not
+   *  state is on Surface.activeEffectId — only one effect runs at a time
+   *  (multiple stacking was confusing). When effectAutomation.playing,
+   *  the scheduler steps through enabled=true effects in order. */
   enabled: boolean;
   /** 0..1 wet/dry — at 0 the effect contributes nothing (slice gets
    *  brightness 1 from this effect's perspective), at 1 full effect. */
@@ -4257,6 +4285,12 @@ export interface StageEffect {
    *  (no enum on values — numbers only so MIDI / LFO modulation can
    *  reach in via the standard modulationStore pipeline). */
   params: Record<string, number>;
+  /** Optional color tint the effect renders WITH the brightness.
+   *  Stored as `#rrggbb`. The stageEffects store publishes a per-slice
+   *  color map alongside the brightness map; engine integration for
+   *  tinting slice content with this color is a follow-up. UI exposes
+   *  the picker so the data round-trips with project save. */
+  color?: string;
 }
 
 export interface SurfaceSlice {
