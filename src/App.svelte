@@ -1255,11 +1255,69 @@
     for (let i = 0; i < currentLayers.length; i++) {
       const layer = currentLayers[i];
       if (!layer.visible || layer.locked) continue;
-      if (layer.corners && pointInQuad(normalizedX, normalizedY, layer.corners)) {
-        return layer.id;
+      if (!layer.corners || !pointInQuad(normalizedX, normalizedY, layer.corners)) continue;
+      // For layers with a non-rect layerShape, narrow the hit to the
+      // actual polygon — bbox quad is a click-area trap; users
+      // dragging across a busy stage of polygons would lose select
+      // accuracy on overlapping bboxes. Tessellate the customPoints
+      // (so beziers contribute their curve, not just their anchors)
+      // and run a ray-cast point-in-polygon test in layer-local UV
+      // space (inverseBilinear unwraps the warp).
+      const shape = layer.layerShape;
+      if (
+        shape?.enabled &&
+        shape.type === 'custom' &&
+        shape.params?.customPoints &&
+        shape.params.customPoints.length >= 3
+      ) {
+        const local = inverseBilinearCorners(layer.corners, normalizedX, normalizedY);
+        const tessellated = tessellateBezierPolygon(shape.params.customPoints);
+        if (!pointInPolygon2D(local.x, local.y, tessellated)) {
+          continue;  // Inside the bbox but outside the shape → skip.
+        }
       }
+      return layer.id;
     }
     return null;
+  }
+
+  /** Tessellate a BezierPoint[] polygon into a dense point list for
+   *  hit-testing.  Mirrors engine.ts tessellateMaskShape but in this
+   *  module to avoid pulling renderer code into the UI layer. 16
+   *  samples per curve segment is enough resolution for click
+   *  accuracy without hot-path overhead. */
+  function tessellateBezierPolygon(anchors: import('./lib/types').BezierPoint[]): Point2D[] {
+    const out: Point2D[] = [];
+    const STEPS = 16;
+    for (let i = 0; i < anchors.length; i++) {
+      const a = anchors[i];
+      const b = anchors[(i + 1) % anchors.length];
+      out.push({ x: a.x, y: a.y });
+      if (a.cpOut || b.cpIn) {
+        const cp1 = a.cpOut ?? a;
+        const cp2 = b.cpIn  ?? b;
+        for (let s = 1; s < STEPS; s++) {
+          const t = s / STEPS, mt = 1 - t;
+          out.push({
+            x: mt*mt*mt*a.x + 3*mt*mt*t*cp1.x + 3*mt*t*t*cp2.x + t*t*t*b.x,
+            y: mt*mt*mt*a.y + 3*mt*mt*t*cp1.y + 3*mt*t*t*cp2.y + t*t*t*b.y,
+          });
+        }
+      }
+    }
+    return out;
+  }
+
+  function pointInPolygon2D(px: number, py: number, poly: Point2D[]): boolean {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const xi = poly[i].x, yi = poly[i].y;
+      const xj = poly[j].x, yj = poly[j].y;
+      const intersect = ((yi > py) !== (yj > py)) &&
+        (px < ((xj - xi) * (py - yi)) / ((yj - yi) || 1e-9) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
   }
 
   // Clipboard state for copy/paste

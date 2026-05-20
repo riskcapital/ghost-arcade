@@ -613,6 +613,14 @@
     $selectedLayer.layerShape.type &&
     $selectedLayer.layerShape.type !== 'rectangle'
   );
+  // Suppress the bbox corner + edge handles when the layer's shape is
+  // not a rectangle — non-rect shapes get their polygon-vertex
+  // handles from CustomShapeHandles (custom) or LayerShape's shape-
+  // warp controls (circle/triangle), and showing the bbox handles on
+  // top creates two competing edit systems the user has to choose
+  // between. Move/Rotate/Scale stay visible so users can still
+  // reposition the whole layer as a unit.
+  $: nonRectShape = shapeHidesBoundingRect;
   $: lines = (handlePositions && !shapeHidesBoundingRect)
     ? [
         { from: handlePositions.topLeft, to: handlePositions.topRight },
@@ -700,8 +708,11 @@
       {/if}
     </svg>
 
-    <!-- Corner handles (hidden in mesh mode to avoid overlap with mesh grid corner handles) -->
-    {#if !hideCorners}
+    <!-- Corner handles — hidden in mesh mode (overlap with mesh-grid
+         corner handles) AND when the layer carries a non-rectangle
+         shape (the polygon's own vertex handles in CustomShapeHandles
+         become the primary warps). -->
+    {#if !hideCorners && !nonRectShape}
       {#each Object.entries(handlePositions) as [corner, pos]}
         <div
           class="handle corner-handle"
@@ -720,8 +731,9 @@
       {/each}
     {/if}
 
-    <!-- Edge handles (bars) -->
-    {#each Object.entries(edgePositions) as [edge, pos]}
+    <!-- Edge handles (bars) — also suppressed for non-rect shapes
+         (same reasoning as the corner handles above). -->
+    {#each (nonRectShape ? [] : Object.entries(edgePositions)) as [edge, pos]}
       <div
         class="handle edge-handle edge-{edge}"
         class:dragging={dragging === 'edge' && dragTarget === edge}

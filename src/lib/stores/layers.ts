@@ -314,6 +314,11 @@ void main() {
       existingLinks?: Record<string, string>,
     ): Record<string, string> {
       const links: Record<string, string> = {};
+      // Tracks layer ids freshly created in this pass — used after the
+      // update() to auto-apply the default shader (which itself runs
+      // through async settings loading + project.update, so it must
+      // happen OUTSIDE the current update() to avoid nested mutation).
+      const freshIds: string[] = [];
       update((project) => {
         let layers = project.layers;
         const sw = Math.max(1, surface.width);
@@ -370,9 +375,18 @@ void main() {
             } : l);
             links[slice.id] = existingId;
           } else {
-            // Fresh media layer with custom shape pre-applied.
+            // Fresh Screen (VJ Output) layer with custom shape pre-
+            // applied. Screen layers are the type that participates in
+            // VJ stage mode — vjLayerIndex tells the engine which VJ
+            // clip stream to route through this layer's mapping. They
+            // also group naturally with project.createGroupFromIds so
+            // users can group slice-layers and save the bundle as a
+            // mapping preset.
             const id = generateUUID();
-            const fresh = createLayer(id, slice.name, 'media');
+            const fresh: Layer = {
+              ...createLayer(id, slice.name, 'screen'),
+              vjLayerIndex: 0,
+            };
             fresh.corners = corners;
             fresh.layerShape = {
               type: 'custom',
@@ -386,11 +400,18 @@ void main() {
             };
             layers = [fresh, ...layers];
             links[slice.id] = id;
+            freshIds.push(id);
           }
         }
         return { ...project, layers, selectedLayerId: layers[0]?.id ?? null };
       });
       recordDiscreteAction();
+      // Auto-apply the user's default layer shader to each freshly-
+      // created Screen layer so empty slices have a visible reference
+      // (crosshair / grid / whatever the user has configured) instead
+      // of being blank until content is dropped in. Matches the
+      // addScreenLayer behavior — same code path.
+      for (const id of freshIds) autoApplyDefaultShader(id);
       return links;
     },
 
