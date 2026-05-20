@@ -11,8 +11,9 @@
  */
 
 import { writable, derived, get } from 'svelte/store';
-import type { Surface, SurfaceSlice, SurfaceSliceBinding, Point2D, BezierPoint } from '../types';
+import type { Surface, SurfaceSlice, SurfaceSliceBinding, Point2D, BezierPoint, StageEffect, StageEffectType } from '../types';
 import { generateUUID } from '../utils/uuid';
+import { syncStageEffectsFromSurfaces, createDefaultStageEffect } from './stageEffects';
 
 // ─── State ───────────────────────────────────────────────
 
@@ -327,6 +328,37 @@ function createSurfaceStore() {
     };
   }
 
+  /** Mirror the live surface state into project.surfaces / activeSurfaceId
+   *  so project save (which serializes `project`) always captures the
+   *  current Stage Designer state. `_isHydrating` blocks mirror writes
+   *  during the load path so a freshly-loaded project's surfaces don't
+   *  get clobbered by our initial empty state on import. */
+  let _isHydrating = false;
+  function mirrorToProject(next: SurfaceState) {
+    if (_isHydrating) return;
+    void import('./layers').then(({ project }) => {
+      try {
+        (project as any).update((p: any) => ({
+          ...p,
+          surfaces: next.surfaces,
+          activeSurfaceId: next.activeSurfaceId,
+        }));
+      } catch (err) {
+        // Project store may not be fully initialized at module load
+        // time during cold start — best-effort, retry happens on the
+        // next mutation.
+        console.warn('[surface] mirrorToProject:', err);
+      }
+    });
+  }
+  // Every store change pushes through to project. Cheap shallow merge.
+  subscribe(state => mirrorToProject(state));
+  // Sync the stage-effects runtime (centroid cache + layer↔slice map +
+  // RAF tick start/stop) whenever surfaces change. The store handles
+  // its own idle detection so a stage with no enabled effects costs
+  // nothing per frame.
+  subscribe(state => syncStageEffectsFromSurfaces(state.surfaces));
+
   return {
     subscribe,
 
@@ -483,6 +515,131 @@ function createSurfaceStore() {
 
     selectSlice(sliceId: string | null) {
       update(s => ({ ...s, selectedSliceId: sliceId }));
+    },
+
+    // ─── Stage Effects ─────────────────────────────────────────────
+    // Effects live on the active surface. CRUD is identical in shape
+    // to the slice actions above; the stageEffects store picks them
+    // up via the syncStageEffectsFromSurfaces subscriber.
+
+    addStageEffect(type: StageEffectType): string | null {
+      const state = get({ subscribe });
+      const target = state.surfaces.find(x => x.id === state.activeSurfaceId);
+      if (!target) return null;
+      const effect = createDefaultStageEffect(type);
+      update(s => ({
+        ...s,
+        surfaces: s.surfaces.map(x =>
+          x.id === target.id ? { ...x, effects: [...(x.effects ?? []), effect] } : x
+        ),
+      }));
+      return effect.id;
+    },
+
+    updateStageEffect(effectId: string, patch: Partial<StageEffect>) {
+      update(s => ({
+        ...s,
+        surfaces: s.surfaces.map(surface =>
+          surface.id === s.activeSurfaceId
+            ? {
+                ...surface,
+                effects: (surface.effects ?? []).map(e =>
+                  e.id === effectId ? { ...e, ...patch } : e
+                ),
+              }
+            : surface
+        ),
+      }));
+    },
+
+    updateStageEffectParam(effectId: string, key: string, value: number) {
+      update(s => ({
+        ...s,
+        surfaces: s.surfaces.map(surface =>
+          surface.id === s.activeSurfaceId
+            ? {
+                ...surface,
+                effects: (surface.effects ?? []).map(e =>
+                  e.id === effectId ? { ...e, params: { ...e.params, [key]: value } } : e
+                ),
+              }
+            : surface
+        ),
+      }));
+    },
+
+    deleteStageEffect(effectId: string) {
+      update(s => ({
+        ...s,
+        surfaces: s.surfaces.map(surface =>
+          surface.id === s.activeSurfaceId
+            ? { ...surface, effects: (surface.effects ?? []).filter(e => e.id !== effectId) }
+            : surface
+        ),
+      }));
+    },
+
+    /** Restore from a project load. Sets `_isHydrating` so the mirror
+     *  subscriber doesn't immediately overwrite the project's just-
+     *  loaded data with this store's prior state. */
+    hydrateFromProject(surfaces: Surface[], activeId: string | null) {
+      _isHydrating = true;
+      set({
+        surfaces: surfaces ?? [],
+        activeSurfaceId: activeId ?? null,
+        selectedSliceId: null,
+      });
+      // Re-enable mirror writes after the set propagates. Microtask
+      // is enough — the subscriber has already fired synchronously.
+      queueMicrotask(() => { _isHydrating = false; });
+    },
+
+    /** Convert the active surface's slices into custom-shape mapping
+     *  layers and bind each slice to its new layer.  Called by the
+     *  "Apply Stage" button in the designer. After this, the user is
+     *  routed back to the main mapping workspace where they can drop
+     *  content onto each layer like any other mapping target.
+     *
+     *  Re-application is idempotent: existing slice→layer links are
+     *  updated in place (layer keeps its content + name customizations),
+     *  and new slices get new layers.  Returns true on success. */
+    async applyStage(): Promise<boolean> {
+      const state = get({ subscribe });
+      const surface = state.surfaces.find(x => x.id === state.activeSurfaceId);
+      if (!surface || surface.slices.length === 0) {
+        console.warn('[surface] applyStage: no surface or no slices to apply');
+        return false;
+      }
+      // Late-bound import dodges the circular dep (layers store can
+      // also import this store on project load).
+      const { project } = await import('./layers');
+      // Pre-existing slice → layer map (carried in sourceBinding).
+      const existingLinks: Record<string, string> = {};
+      for (const slice of surface.slices) {
+        if (slice.sourceBinding?.kind === 'layer' && slice.sourceBinding.layerId) {
+          existingLinks[slice.id] = slice.sourceBinding.layerId;
+        }
+      }
+      const newLinks = (project as any).applyStageSurfaceToLayers(surface, existingLinks);
+      // Write the resulting links back onto the slices so future
+      // re-applies + per-slice render binding can find them.
+      update(s => ({
+        ...s,
+        surfaces: s.surfaces.map(sf => sf.id === surface.id ? {
+          ...sf,
+          slices: sf.slices.map(sl => ({
+            ...sl,
+            sourceBinding: newLinks[sl.id]
+              ? { kind: 'layer' as const, layerId: newLinks[sl.id] }
+              : sl.sourceBinding,
+          })),
+        } : sf),
+      }));
+      // Pop the user back into the main mapping workspace so they can
+      // start assigning content to the freshly-created layers.
+      const { workspace } = await import('./workspace');
+      workspace.closeAll();
+      return true;
     },
 
     /** Wipe everything — used on project reset / new project. */

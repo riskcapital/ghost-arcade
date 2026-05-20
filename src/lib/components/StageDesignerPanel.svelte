@@ -28,7 +28,9 @@
     selectedSlice,
     parseSurfaceSVG,
   } from '../stores/surface';
-  import type { Point2D, BezierPoint, SurfaceSlice } from '../types';
+  import { layers as projectLayers } from '../stores/layers';
+  import { STAGE_EFFECT_CATALOG, getEffectDef } from '../stores/stageEffects';
+  import type { Point2D, BezierPoint, SurfaceSlice, StageEffectType } from '../types';
 
   // ── Canvas pan/zoom state ─────────────────────────────────
   // Mirrors the App.svelte viewport pattern: pan + zoom on a wrapper
@@ -570,6 +572,21 @@
     <div class="header-right">
       <button class="zoom-btn" onclick={fitToViewport} title="Fit to viewport">⛶</button>
       <span class="zoom-readout">{Math.round(zoom * 100)}%</span>
+      <span class="header-sep"></span>
+      <!-- Apply Stage: turn slices into mapping layers + jump to the
+           main workspace so the user can drop content onto each layer.
+           Disabled until the surface has at least one slice. -->
+      <button
+        class="apply-stage-btn"
+        disabled={!$activeSurface || $activeSurfaceSlices.length === 0}
+        onclick={async () => {
+          const ok = await surfaceStore.applyStage();
+          if (!ok) alert('Add at least one slice before applying the stage.');
+        }}
+        title="Convert slices into custom-shape mapping layers and switch to the main workspace"
+      >
+        Apply Stage →
+      </button>
     </div>
   </header>
 
@@ -863,6 +880,8 @@
     <!-- Inspector -->
     <aside class="inspector-panel">
       <div class="panel-header"><span>Inspector</span></div>
+
+      <!-- Slice-specific section (visible only with a selection). -->
       {#if $selectedSlice}
         {@const sl = $selectedSlice}
         <div class="inspector-section">
@@ -893,13 +912,114 @@
             </label>
           </div>
           <div class="inspector-stat"><span>Vertices</span><span>{sl.polygon.length}</span></div>
-          <div class="inspector-stat"><span>Binding</span><span>{sl.sourceBinding ? sl.sourceBinding.kind : 'unbound'}</span></div>
-          <div class="inspector-note">
-            Slice→content binding lands in Phase 3. Output routing in Phase 3 too. Stage Effects in Phase 4.
-          </div>
+          <!-- Binding section — shows what content source feeds this
+               slice. After Apply Stage, sourceBinding.kind = 'layer'
+               and points at the mapping layer the user can populate
+               in the main workspace. -->
+          {#if sl.sourceBinding?.kind === 'layer'}
+            {@const bindingLayerId = (sl.sourceBinding as { kind: 'layer'; layerId: string }).layerId}
+            {@const linkedLayer = $projectLayers.find(l => l.id === bindingLayerId)}
+            <div class="binding-card">
+              <div class="binding-label">Bound to mapping layer</div>
+              <div class="binding-name">{linkedLayer ? linkedLayer.name : 'Layer removed'}</div>
+              <button
+                class="binding-action"
+                onclick={() => workspace.closeAll()}
+                title="Switch to the main mapping workspace where you can drop content onto this layer"
+              >Open in mapping →</button>
+            </div>
+          {:else}
+            <div class="inspector-stat"><span>Binding</span><span class="muted">unbound</span></div>
+            <div class="inspector-note">
+              Click <strong>Apply Stage</strong> to convert all slices into mapping layers. The active mapping workspace will open where you can drop content (video, shader, image) onto each layer.
+            </div>
+          {/if}
         </div>
       {:else}
         <div class="inspector-empty">Select a slice to edit its properties.</div>
+      {/if}
+
+      <!-- ── Stage Effects panel ────────────────────────────────────
+           Surface-wide procedural generators. Always visible (not
+           gated by slice selection) since they're surface-level
+           controls. Each enabled effect ticks at RAF and modulates
+           the opacity of slices' bound mapping layers based on the
+           slice's centroid position in normalized surface space. -->
+      {#if $activeSurface}
+        <div class="effects-section">
+          <div class="effects-header">
+            <span>Stage Effects</span>
+            <span class="effects-count">{($activeSurface.effects ?? []).length}</span>
+          </div>
+          <div class="effects-add">
+            {#each STAGE_EFFECT_CATALOG as def}
+              <button
+                class="effect-add-btn"
+                onclick={() => surfaceStore.addStageEffect(def.type)}
+                title={`Add ${def.label}`}
+              >
+                <span class="effect-add-icon">{def.icon}</span>
+                <span class="effect-add-label">{def.label}</span>
+              </button>
+            {/each}
+          </div>
+          {#each $activeSurface.effects ?? [] as eff (eff.id)}
+            {@const def = getEffectDef(eff.type)}
+            <div class="effect-card" class:disabled={!eff.enabled}>
+              <div class="effect-card-head">
+                <button
+                  class="effect-enable"
+                  class:active={eff.enabled}
+                  onclick={() => surfaceStore.updateStageEffect(eff.id, { enabled: !eff.enabled })}
+                  title={eff.enabled ? 'Disable' : 'Enable'}
+                >{eff.enabled ? '●' : '○'}</button>
+                <span class="effect-name">
+                  <span class="effect-icon">{def?.icon ?? '◆'}</span>
+                  {def?.label ?? eff.type}
+                </span>
+                <button
+                  class="effect-delete"
+                  onclick={() => surfaceStore.deleteStageEffect(eff.id)}
+                  title="Remove effect"
+                >×</button>
+              </div>
+              <div class="effect-params">
+                <label class="effect-param">
+                  <span>Opacity</span>
+                  <input
+                    type="range" min="0" max="1" step="0.01"
+                    value={eff.opacity}
+                    oninput={(e) => surfaceStore.updateStageEffect(eff.id, {
+                      opacity: parseFloat((e.target as HTMLInputElement).value)
+                    })}
+                  />
+                  <span class="param-val">{eff.opacity.toFixed(2)}</span>
+                </label>
+                {#each def?.paramSpecs ?? [] as spec}
+                  <label class="effect-param">
+                    <span>{spec.label}</span>
+                    <input
+                      type="range"
+                      min={spec.min}
+                      max={spec.max}
+                      step={spec.step ?? 0.01}
+                      value={eff.params[spec.key] ?? def?.defaultParams[spec.key] ?? 0}
+                      oninput={(e) => surfaceStore.updateStageEffectParam(eff.id, spec.key,
+                        parseFloat((e.target as HTMLInputElement).value)
+                      )}
+                    />
+                    <span class="param-val">{(eff.params[spec.key] ?? def?.defaultParams[spec.key] ?? 0).toFixed(2)}</span>
+                  </label>
+                {/each}
+              </div>
+            </div>
+          {/each}
+          {#if ($activeSurface.effects ?? []).length === 0}
+            <div class="effects-empty">
+              Add an effect to drive per-slice brightness — pulses, sweeps, noise, or audio-reactive. Effects run continuously, even after you Apply Stage and switch to the main mapping workspace.
+            </div>
+          {/if}
+        </div>
       {/if}
     </aside>
   </div>
@@ -1057,6 +1177,222 @@
     color: #888;
     min-width: 44px;
     text-align: right;
+  }
+  .header-sep {
+    width: 1px;
+    height: 22px;
+    background: #2a2a30;
+    margin: 0 4px;
+  }
+
+  /* Apply Stage — the primary commit action. Cyan→violet gradient
+     so it visually echoes the STAGE button in the main header (the
+     workspace's entry point) and Import SVG. */
+  .apply-stage-btn {
+    background: linear-gradient(135deg, #4cd1ff, #6f5cff);
+    color: #fff;
+    border: none;
+    padding: 7px 14px;
+    border-radius: 5px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    cursor: pointer;
+    transition: all 0.15s;
+    box-shadow: 0 0 0 1px rgba(76,209,255,0.4), 0 2px 8px rgba(76,209,255,0.2);
+  }
+  .apply-stage-btn:hover:not(:disabled) {
+    background: linear-gradient(135deg, #80dfff, #8a7aff);
+    transform: scale(1.03);
+    box-shadow: 0 0 0 1px #4cd1ff, 0 4px 14px rgba(76,209,255,0.35);
+  }
+  .apply-stage-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* Binding card — shown in the inspector when a slice is linked to
+     a mapping layer post-apply. */
+  .binding-card {
+    background: rgba(76,209,255,0.06);
+    border: 1px solid rgba(76,209,255,0.25);
+    border-radius: 5px;
+    padding: 10px;
+    margin-top: 4px;
+  }
+  .binding-label {
+    font-size: 9.5px;
+    letter-spacing: 1px;
+    color: #888;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .binding-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: #4cd1ff;
+    margin-bottom: 8px;
+  }
+  .binding-action {
+    background: transparent;
+    border: 1px solid #4cd1ff;
+    color: #4cd1ff;
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    width: 100%;
+  }
+  .binding-action:hover {
+    background: rgba(76,209,255,0.15);
+    color: #fff;
+  }
+  .inspector-stat .muted { color: #555; font-style: italic; }
+  .inspector-note strong { color: #4cd1ff; font-weight: 600; }
+
+  /* ── Stage Effects panel ── */
+  .effects-section {
+    border-top: 1px solid #1d1d22;
+    padding: 10px 12px 16px;
+  }
+  .effects-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    color: #4cd1ff;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+    font-weight: 600;
+  }
+  .effects-count {
+    color: #555;
+    font-family: monospace;
+    font-weight: normal;
+  }
+
+  .effects-add {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    margin-bottom: 12px;
+  }
+  .effect-add-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 8px;
+    background: #14141a;
+    border: 1px solid #2a2a30;
+    border-radius: 4px;
+    color: #aaa;
+    font-size: 10.5px;
+    cursor: pointer;
+    text-align: left;
+  }
+  .effect-add-btn:hover {
+    background: rgba(76,209,255,0.08);
+    border-color: #4cd1ff;
+    color: #fff;
+  }
+  .effect-add-icon { font-size: 12px; }
+  .effect-add-label { flex: 1; }
+
+  .effect-card {
+    background: #0d0d10;
+    border: 1px solid #1d1d22;
+    border-radius: 4px;
+    margin-bottom: 8px;
+    overflow: hidden;
+  }
+  .effect-card.disabled {
+    opacity: 0.5;
+  }
+  .effect-card-head {
+    display: grid;
+    grid-template-columns: 22px 1fr 22px;
+    align-items: center;
+    padding: 6px 8px;
+    gap: 6px;
+    background: rgba(76,209,255,0.04);
+    border-bottom: 1px solid #1d1d22;
+  }
+  .effect-enable {
+    background: transparent;
+    border: 1px solid #2a2a30;
+    border-radius: 3px;
+    width: 20px;
+    height: 20px;
+    color: #555;
+    font-size: 12px;
+    cursor: pointer;
+    padding: 0;
+  }
+  .effect-enable.active {
+    color: #4cd1ff;
+    border-color: #4cd1ff;
+  }
+  .effect-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: #ddd;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .effect-icon {
+    color: #4cd1ff;
+    font-size: 13px;
+  }
+  .effect-delete {
+    background: transparent;
+    border: none;
+    color: #666;
+    font-size: 14px;
+    cursor: pointer;
+    width: 20px;
+    height: 20px;
+    border-radius: 3px;
+  }
+  .effect-delete:hover {
+    background: rgba(255,68,68,0.15);
+    color: #ff8888;
+  }
+
+  .effect-params {
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .effect-param {
+    display: grid;
+    grid-template-columns: 78px 1fr 38px;
+    align-items: center;
+    gap: 8px;
+    font-size: 10px;
+    color: #aaa;
+  }
+  .effect-param input[type="range"] {
+    width: 100%;
+    accent-color: #4cd1ff;
+  }
+  .effect-param .param-val {
+    font-family: monospace;
+    color: #ddd;
+    text-align: right;
+    font-size: 10px;
+  }
+
+  .effects-empty {
+    font-size: 10.5px;
+    color: #666;
+    line-height: 1.55;
+    padding: 8px;
+    background: rgba(76,209,255,0.04);
+    border-left: 2px solid rgba(76,209,255,0.3);
   }
 
   /* ─── Body ─── */
