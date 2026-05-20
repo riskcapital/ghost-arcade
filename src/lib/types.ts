@@ -4176,7 +4176,74 @@ export interface Project {
   stagePresets?: StagePreset[];
   // SynthVision keyboard presets (performer mode keyboard assignments)
   svKeyboardPresets?: SVKeyboardPreset[];
+  // Stage Designer surfaces: SVG-imported polygon slice layouts.
+  // Distinct from `stagePresets` (which is a saved mapping-layer
+  // layout for VJ-style use); a Surface is the projection geometry
+  // itself — polygons the user pins to physical projection surfaces
+  // and routes content into. Optional + defaults to empty so legacy
+  // projects load unchanged.
+  surfaces?: Surface[];
+  activeSurfaceId?: string | null;
 }
+
+// ═══════════════════════════════════════════════════
+// Stage Designer types
+// ═══════════════════════════════════════════════════
+// A Surface is the projection geometry the user designs in the Stage
+// Designer workspace — an SVG-imported (or hand-drawn) set of named
+// polygon slices that map onto physical projection surfaces. Each
+// slice routes content from one source: a project Layer, a VJ clip,
+// or a procedural Stage Effect (Phase 4).
+//
+// Naming note: `StagePreset` is a pre-existing concept (saved mapping-
+// layer layout) and is intentionally unrelated. "Surface" matches the
+// projection-mapping industry vocabulary (Resolume, MadMapper, HeavyM
+// all call these surfaces).
+
+export interface Surface {
+  id: string;
+  name: string;
+  /** Logical canvas size — slice polygon coordinates are in this space. */
+  width: number;
+  height: number;
+  slices: SurfaceSlice[];
+  /** Optional reference SVG shown faintly behind the slices in the
+   *  designer canvas — used for tracing / alignment. Slices are
+   *  generated FROM this SVG on import but stored independently so the
+   *  user can edit them afterward. */
+  background?: { svgRef?: string; color?: string };
+}
+
+export interface SurfaceSlice {
+  id: string;
+  /** Auto-generated as "Polygon 1, Polygon 2, ..." on SVG import;
+   *  user-renameable in the slice list. */
+  name: string;
+  /** Straight-line polygon vertices in the parent surface's coordinate
+   *  space (0..width, 0..height). Curves from SVG paths are tessellated
+   *  to dense point arrays at import time — slices themselves are
+   *  always straight-segment polygons, simpler editing model than the
+   *  layer-level BezierPoint shapes. */
+  polygon: Point2D[];
+  /** Stroke/outline color in the designer UI (hex). Has no effect on
+   *  rendered output. */
+  color: string;
+  visible: boolean;
+  locked: boolean;
+  /** What feeds content into this slice — Phase 3 wires this through to
+   *  the rendering pipeline. Null = slice exists in the layout but
+   *  carries no content yet (useful for staging layouts before binding). */
+  sourceBinding: SurfaceSliceBinding | null;
+  /** Phase 3: named output destination (Spout/Syphon sender name) this
+   *  slice's polygon-clipped content gets sent to. Null = no separate
+   *  output (slice is composite-only). */
+  outputDestination?: string | null;
+}
+
+export type SurfaceSliceBinding =
+  | { kind: 'layer';       layerId: string }
+  | { kind: 'vjClip';      clipId: string }
+  | { kind: 'stageEffect'; effectId: string };
 
 export interface MediaTrayFolder {
   id: string;

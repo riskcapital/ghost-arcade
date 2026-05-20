@@ -31,6 +31,8 @@
   import MobileApp from './lib/components/MobileApp.svelte';
   import OutputWindow from './lib/components/OutputWindow.svelte';
   import VJModePanel from './lib/components/VJModePanel.svelte';
+  import StageDesignerPanel from './lib/components/StageDesignerPanel.svelte';
+  import { workspace } from './lib/stores/workspace';
   import PresetTray from './lib/components/PresetTray.svelte';
   import LayerSequencer from './lib/components/LayerSequencer.svelte';
   import KeyframeTimeline from './lib/components/KeyframeTimeline.svelte';
@@ -4330,6 +4332,13 @@
           VJ
         </button>
 
+        <!-- Stage Designer Button — opens the SVG-import / polygon-slice
+             projection-mapping workspace. Mutually exclusive with VJ
+             mode via the activeWorkspace flag in the workspace store. -->
+        <button class="stage-btn" onclick={() => workspace.openStage()} title="Open Stage Designer">
+          STAGE
+        </button>
+
         <!-- Settings Button -->
         <button class="settings-btn" onclick={() => showSettings = true} title="Settings">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -5286,6 +5295,13 @@
         <span class="live-dot-pulse"></span>
         VJ Live — Open Panel
       </button>
+    {/if}
+
+    <!-- Stage Designer overlay (fullscreen, z=999 — same pattern as
+         VJModePanel). Mutual exclusion guaranteed by activeWorkspace
+         setter in workspace.ts. -->
+    {#if $workspace === 'stage'}
+      <StageDesignerPanel />
     {/if}
 
 
@@ -6527,6 +6543,27 @@
     background: linear-gradient(135deg, #CF6EFF, #50FF30);
     transform: scale(1.05);
     box-shadow: 0 0 20px rgba(57, 255, 20, 0.3);
+  }
+
+  /* Stage Designer button — sibling to VJ button, distinct cyan
+     gradient so the user reads them as different workspaces at a
+     glance. */
+  .stage-btn {
+    background: linear-gradient(135deg, #4cd1ff, #6f5cff);
+    border: none;
+    color: #fff;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-left: 6px;
+  }
+  .stage-btn:hover {
+    background: linear-gradient(135deg, #80dfff, #8a7aff);
+    transform: scale(1.05);
+    box-shadow: 0 0 20px rgba(76, 209, 255, 0.3);
   }
 
   .settings-btn {

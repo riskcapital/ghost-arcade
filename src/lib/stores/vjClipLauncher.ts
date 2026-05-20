@@ -726,9 +726,20 @@ function createVJClipLauncherStore() {
       set(createDefaultState());
     },
 
-    // Set VJ mode open state
-    setOpen(isOpen: boolean) {
+    // Set VJ mode open state. Mirrors into the workspace store so the
+    // tri-state activeWorkspace flag ('main' | 'vj' | 'stage') stays
+    // consistent — required so a future Stage Designer overlay can
+    // open and reliably close any active VJ panel without each call
+    // site having to remember.  The `opts.fromWorkspace` escape hatch
+    // is used when workspace.setActive() drives the close itself, to
+    // avoid bouncing back through workspace and double-firing.
+    setOpen(isOpen: boolean, opts?: { fromWorkspace?: boolean }) {
       update(state => ({ ...state, isOpen }));
+      if (!opts?.fromWorkspace) {
+        void import('./workspace').then(({ workspace }) => {
+          workspace.setActive(isOpen ? 'vj' : 'main');
+        });
+      }
     },
 
     // Set a clip in the grid for the given deck. Bank A also writes through

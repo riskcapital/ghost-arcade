@@ -599,8 +599,21 @@
     ? { x: edgePositions.bottom.x, y: edgePositions.bottom.y + 40 }
     : null;
 
-  // Draw lines between corners
-  $: lines = handlePositions
+  // Draw the dashed bounding rectangle connecting the four corner
+  // warp handles. We HIDE this rectangle whenever the layer has a
+  // non-rectangular shape mask enabled — the user's complaint was
+  // that custom/polygon/circle/etc. shapes were visually surrounded
+  // by a misleading "rectangle outline" even though the content is
+  // clipped to the shape. The corner handles themselves still
+  // render (they're the warp inputs), just the connecting rectangle
+  // is suppressed so the shape's own outline is the only visible
+  // boundary.
+  $: shapeHidesBoundingRect = !!(
+    $selectedLayer?.layerShape?.enabled &&
+    $selectedLayer.layerShape.type &&
+    $selectedLayer.layerShape.type !== 'rectangle'
+  );
+  $: lines = (handlePositions && !shapeHidesBoundingRect)
     ? [
         { from: handlePositions.topLeft, to: handlePositions.topRight },
         { from: handlePositions.topRight, to: handlePositions.bottomRight },
