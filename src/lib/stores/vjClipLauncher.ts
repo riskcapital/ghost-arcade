@@ -35,10 +35,15 @@ export const MAX_VJ_COLUMNS = 64;
 export const NUM_VJ_LAYERS = DEFAULT_VJ_LAYERS;
 export const NUM_VJ_COLUMNS = DEFAULT_VJ_COLUMNS;
 
-// A clip in the grid - can be a shader, video, image, three.js HTML, AI-generated JS animation, Spout source, integrated effect, point cloud, or 3D model
+// A clip in the grid - can be a shader, video, image, three.js HTML, AI-generated JS animation, Spout source, integrated effect, point cloud, 3D model, or mapping preset (loads a saved composition on fire)
 export interface VJClip {
   id: string;
-  type: 'shader' | 'video' | 'image' | 'threejs' | 'p5js' | 'jsanimation' | 'synthvision' | 'spout' | 'effect' | 'splat' | 'model3d';
+  type: 'shader' | 'video' | 'image' | 'threejs' | 'p5js' | 'jsanimation' | 'synthvision' | 'spout' | 'effect' | 'splat' | 'model3d' | 'preset';
+  /** For type='preset' clips: id of the saved Composition (mapping preset)
+   *  this cell loads when fired. Firing a preset clip calls
+   *  project.loadComposition() — a side effect on the mapping layers —
+   *  rather than feeding content into a VJ layer like the other types. */
+  presetId?: string;
   name: string;
   src: string;
   thumbnail?: string;
@@ -240,6 +245,12 @@ export interface VJClipLauncherState {
   // Stage mode: bridge VJ layers to mapping layers
   stageMode: boolean;
   stagePresetId: string | null;
+  // Map mode: VJ layer slots hold mapping presets; output is a stack of
+  // their full composition layers, modulated by per-VJ-layer opacity +
+  // blendMode. When mapMode is true, MIX/STAGE rendering paths are
+  // bypassed and the Maps tab is the only visible source in the tray.
+  // Mutually exclusive with stageMode (setters clear the other).
+  mapMode: boolean;
   // Stop-all blackout: when true, all VJ output is suppressed (black)
   // Auto-clears when any clip is launched
   stoppedAll: boolean;
@@ -334,6 +345,7 @@ function createDefaultState(): VJClipLauncherState {
     isLive: false,
     compositionEffects: [],
     stageMode: false,
+    mapMode: false,
     stagePresetId: null,
     stoppedAll: false,
     selectedLayerIndex: null,
@@ -595,6 +607,48 @@ function createVJClipLauncherStore() {
       const newLayerStates = [...targetLayerStates];
       const clip = targetGrid[layerIndex]?.[columnIndex];
       if (!clip) return state;
+      // Preset clips:
+      //   - ALWAYS load the composition into project.layers (side
+      //     effect). In STAGE mode this immediately swaps the mapping
+      //     topology, exiting VJ shows the loaded preset, etc.
+      //   - In MAP mode ALSO occupy the VJ layer slot via activeClip
+      //     so the Canvas MAP render branch composites this preset
+      //     into the output stack. The cell highlight + per-VJ-layer
+      //     opacity + blend mode all flow from that.
+      //   - In MIX / STAGE the slot stays available for the user's
+      //     real VJ content. Otherwise firing a preset would lock
+      //     a VJ layer to "no content" (the preset is filtered out
+      //     of vjOutputLayers) and shader/video fires on the same
+      //     layer would appear to do nothing visually.
+      if (clip.type === 'preset') {
+        if (clip.presetId) {
+          void import('./layers').then(({ project }) => {
+            project.loadComposition(clip.presetId!);
+          }).catch((err) => {
+            console.error('[VJ] preset load failed:', err);
+          });
+        }
+        if (!state.mapMode) {
+          // Side-effect only — leave the VJ layer slot's activeClip
+          // alone so STAGE/MIX VJ workflow is preserved.
+          didTrigger = false;
+          return state;
+        }
+        const wasReclick = !!(newLayerStates[layerIndex].activeClip && newLayerStates[layerIndex].activeClip!.id === clip.id);
+        if (wasReclick) {
+          didTrigger = false;
+          return state;
+        }
+        newLayerStates[layerIndex] = {
+          ...newLayerStates[layerIndex],
+          activeColumn: columnIndex,
+          activeClip: clip,
+        };
+        didTrigger = true;
+        incomingClip = clip;
+        const next = withDeck(state, deck, newLayerStates);
+        return { ...next, stoppedAll: false };
+      }
       if (clip.type === 'video') {
         ensureClipVideoElement(clip);
       }
@@ -1867,14 +1921,33 @@ function createVJClipLauncherStore() {
       });
     },
 
-    // ========== Stage Mode ==========
+    // ========== Sub-modes (MIX / STAGE / MAP) ==========
+    // Mutually exclusive — setting STAGE or MAP true clears the other.
+    // MIX is the implicit default (both flags false).
 
     toggleStageMode() {
-      update(state => ({ ...state, stageMode: !state.stageMode }));
+      update(state => ({ ...state, stageMode: !state.stageMode, mapMode: false }));
     },
 
     setStageMode(enabled: boolean) {
-      update(state => ({ ...state, stageMode: enabled }));
+      update(state => ({ ...state, stageMode: enabled, mapMode: enabled ? false : state.mapMode }));
+    },
+
+    toggleMapMode() {
+      update(state => ({ ...state, mapMode: !state.mapMode, stageMode: false }));
+    },
+
+    setMapMode(enabled: boolean) {
+      update(state => ({ ...state, mapMode: enabled, stageMode: enabled ? false : state.stageMode }));
+    },
+
+    /** Convenience: set the active sub-mode by name. */
+    setSubMode(mode: 'mix' | 'stage' | 'map') {
+      update(state => ({
+        ...state,
+        stageMode: mode === 'stage',
+        mapMode: mode === 'map',
+      }));
     },
 
     setStagePreset(presetId: string | null) {
@@ -1979,6 +2052,10 @@ export const activeVJLayers = derived(
       if (hasSoloA && !ls.solo) continue;
       const clip = ls.activeClip;
       if (!clip) continue;
+      // Preset clips are side-effect-only (load mapping on fire); they
+      // don't feed content into a VJ layer. Skip them so the engine
+      // doesn't try to source pixels from a preset.
+      if (clip.type === 'preset') continue;
       out.push({
         clip,
         opacity: ls.opacity,
@@ -1997,6 +2074,7 @@ export const activeVJLayers = derived(
         if (hasSoloB && !ls.solo) continue;
         const clip = ls.activeClip;
         if (!clip) continue;
+        if (clip.type === 'preset') continue;
         out.push({
           clip,
           opacity: ls.opacity,

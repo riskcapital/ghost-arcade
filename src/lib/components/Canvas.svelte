@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import { RenderEngine, loadImageTexture, createVideoTexture, getThreeJSIframeContext, createThreeJSIframeContext, getJSAnimationContext, createJSAnimationContext } from '../renderer/engine';
-  import { project, layers } from '../stores/layers';
+  import { project, layers, compositions } from '../stores/layers';
   import { mediaLibrary } from '../stores/media';
   import { vjOutputLayers, vjClipLauncher } from '../stores/vjClipLauncher';
   import { macros } from '../stores/macros';
@@ -863,6 +863,105 @@
         if (vjState.stoppedAll && vjState.isLive) {
           layersToRender = [];
           compEffects = undefined;
+        } else if (vjState.mapMode && vjState.isLive) {
+          // ── MAP sub-mode: preset-only mixer ─────────────────────────
+          // Each VJ layer slot holding a preset clip is rendered as a
+          // synthetic GROUP layer wrapping that preset's composition
+          // layers. The group's opacity = VJ-layer-opacity × master,
+          // its blendMode = the VJ-layer blendMode. This way fading
+          // a VJ-layer slider fades the entire preset as a unit
+          // (preset renders to its own offscreen target, then
+          // composites with the configured opacity + blend) instead
+          // of just making each surface partially transparent —
+          // which produced no visible crossfade when surfaces didn't
+          // overlap.
+          //
+          // Deep-cloning each preset layer through a JSON sanitizer
+          // (strips runtime THREE.Texture / videoElement refs) is
+          // CRITICAL: the engine's per-frame texture-update path
+          // mutates layer.source.texture in-place; a shallow spread
+          // would share nested `source` references with the
+          // composition's saved layers, leaking THREE objects back
+          // into compositions[] and crashing syncState's
+          // JSON.stringify with a circular-structure error.
+          const cleanCloneLayer = (l: Layer): Layer => JSON.parse(JSON.stringify(l, (key, value) => {
+            if (key === 'texture' || key === 'videoElement' || key === 'renderTarget' || key === 'iframeElement' || key === 'synthVisionCanvas') return undefined;
+            if (typeof key === 'string' && key.startsWith('_')) return undefined;
+            if (value && typeof value === 'object' && value.constructor?.name?.startsWith('_')) return undefined;
+            return value;
+          }));
+          const makeSyntheticPresetGroup = (id: string, name: string, opacity: number, blendMode: any): Layer => ({
+            id,
+            name,
+            type: 'group',
+            visible: true,
+            locked: false,
+            opacity,
+            blendMode,
+            source: null,
+            linesContent: null,
+            svgContent: null,
+            colorContent: null,
+            lightPaintingContent: null,
+            advLightPaintingContent: null,
+            textContent: null,
+            splatContent: null,
+            model3dContent: null,
+            pixelFXContent: null,
+            gpuLayerContent: null,
+            position: { x: 0, y: 0 },
+            scale: { x: 1, y: 1 },
+            rotation: 0,
+            flipH: false,
+            flipV: false,
+            warpMode: 'none',
+            corners: {
+              topLeft: { x: 0, y: 1 },
+              topRight: { x: 1, y: 1 },
+              bottomLeft: { x: 0, y: 0 },
+              bottomRight: { x: 1, y: 0 },
+            },
+            meshGrid: null,
+            mask: null,
+            cropRegion: null,
+            layerShape: null,
+            effects: [],
+            edgeEffects: null,
+            groupConfig: { shaderMode: 'individual', overrideStyles: false, shaderSource: null },
+          });
+
+          const presetLayers: Layer[] = [];
+          const lsArr = vjState.layerStates;
+          const hasSolo = lsArr.some((l) => l.solo);
+          for (let i = 0; i < lsArr.length; i++) {
+            const ls = lsArr[i];
+            if (ls.mute) continue;
+            if (hasSolo && !ls.solo) continue;
+            const clip = ls.activeClip;
+            if (!clip || clip.type !== 'preset' || !clip.presetId) continue;
+            const comp = $compositions.find((c) => c.id === clip.presetId);
+            if (!comp) continue;
+            const groupOpacity = ls.opacity * (vjState.masterOpacity ?? 1);
+            if (groupOpacity <= 0) continue;
+
+            const groupId = `mapvj-${i}-${clip.id}`;
+            presetLayers.push(makeSyntheticPresetGroup(groupId, `MAP L${i + 1}: ${comp.name}`, groupOpacity, ls.blendMode));
+
+            for (const layer of comp.layers) {
+              const cloned = cleanCloneLayer(layer);
+              // Namespace the child id so the same preset on two VJ
+              // layer slots doesn't fight over the engine's per-layer
+              // render-target cache.
+              cloned.id = `${groupId}::${cloned.id}`;
+              cloned.parentGroupId = groupId;
+              cloned.bank = undefined;
+              presetLayers.push(cloned);
+            }
+          }
+          layersToRender = presetLayers;
+          compEffects = vjState.compositionEffects;
+          updateAllTextures(layersToRender, null);
+          didStageTexturePrepass = true;
         } else if (vjState.stageMode && vjState.isLive) {
           // ── STAGE MODE: VJ layers feed into mapping layers ──
 
@@ -1112,10 +1211,26 @@
         const seqOverrides = (seqState.isPlaying || Object.keys(seqState.opacityOverrides).length > 0) ? seqState.opacityOverrides : null;
 
         if (seqOverrides) {
+          // Continuous-mode rows take a separate side-channel path:
+          // their `layer.opacity` stays unchanged so the engine still
+          // renders the layer's content pass every frame (shader TIME,
+          // keyframe-driven uniforms, particle integrators all keep
+          // advancing). Only the FINAL composite alpha gets gated, via
+          // `_seqGate` which the engine reads when uploading uniforms
+          // to the layer's display material — see engine.ts uMultiplier
+          // path. Non-continuous rows keep the legacy behavior:
+          // opacity is multiplied at the layer level (which still
+          // renders the pass but can cascade into shader resets
+          // elsewhere in the pipeline — exactly the symptom the ∞
+          // toggle was added to escape).
+          const contMap = seqState.pattern?.continuousLayers ?? {};
           for (let i = 0; i < layersToRender.length; i++) {
             const layer = layersToRender[i];
             const mult = seqOverrides[layer.id];
-            if (mult !== undefined && mult < 1) {
+            if (mult === undefined) continue;
+            if (contMap[layer.id]) {
+              (layer as any)._seqGate = mult;
+            } else if (mult < 1) {
               (layer as any)._seqOrigOpacity = layer.opacity;
               layer.opacity = layer.opacity * mult;
             }
@@ -1181,13 +1296,20 @@
 
         // Shader uniforms are restored inside updateShaderTextures now (no-op here)
 
-        // Restore sequencer original opacities after render
+        // Restore sequencer original opacities + clear continuous-mode
+        // alpha-gate side channel after render. Both fields must be
+        // wiped each frame so a row toggled off the sequencer (or out
+        // of continuous mode) doesn't carry stale state into later
+        // frames.
         if (seqOverrides) {
           for (let i = 0; i < layersToRender.length; i++) {
             const layer = layersToRender[i];
             if ((layer as any)._seqOrigOpacity !== undefined) {
               layer.opacity = (layer as any)._seqOrigOpacity;
               delete (layer as any)._seqOrigOpacity;
+            }
+            if ((layer as any)._seqGate !== undefined) {
+              delete (layer as any)._seqGate;
             }
           }
         }

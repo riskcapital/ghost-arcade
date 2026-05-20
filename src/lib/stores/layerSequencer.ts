@@ -43,7 +43,7 @@ function createEmptyPattern(stepCount: number): SequencerPattern {
   for (let i = 0; i < stepCount; i++) {
     steps.push({ activeLayers: {} });
   }
-  return { steps, stepCount };
+  return { steps, stepCount, continuousLayers: {} };
 }
 
 const INITIAL_STATE: LayerSequencerState = {
@@ -285,6 +285,23 @@ function createLayerSequencerStore() {
       }));
     },
 
+    /** Toggle the "continuous" flag for one layer. When true, the layer
+     *  is rendered every frame regardless of which sequencer cell is
+     *  active; only its final composite alpha is gated by the cell.
+     *  See Canvas.svelte + engine.ts _seqGate handling. */
+    toggleContinuous(layerId: string) {
+      update(s => ({
+        ...s,
+        pattern: {
+          ...s.pattern,
+          continuousLayers: {
+            ...(s.pattern.continuousLayers ?? {}),
+            [layerId]: !(s.pattern.continuousLayers ?? {})[layerId],
+          },
+        },
+      }));
+    },
+
     // ─── Config ───
 
     updateConfig(updates: Partial<SequencerConfig>) {
@@ -364,7 +381,12 @@ function createLayerSequencerStore() {
         animFrameId = null;
       }
       const pattern = payload.pattern && typeof payload.pattern === 'object' && Array.isArray(payload.pattern.steps)
-        ? payload.pattern as SequencerPattern
+        ? {
+            ...payload.pattern,
+            // Older saves predate continuousLayers — default to {} so
+            // the rendering branch can safely read pattern.continuousLayers[id].
+            continuousLayers: (payload.pattern as any).continuousLayers ?? {},
+          } as SequencerPattern
         : createEmptyPattern(DEFAULT_STEP_COUNT);
       const config = payload.config && typeof payload.config === 'object'
         ? { ...DEFAULT_CONFIG, ...payload.config }

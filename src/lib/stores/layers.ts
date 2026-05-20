@@ -578,17 +578,74 @@ void main() {
       recordDiscreteAction();
     },
 
+    /** Group the supplied layer ids (in their existing project.layers
+     *  order) into a new group. Mirrors createGroupFromSelection's
+     *  insertion logic but takes the id list explicitly so the caller
+     *  doesn't have to round-trip through the selection store —
+     *  useful for the right-click "group all" action and for tests. */
+    createGroupFromIds(idsToGroup: string[]) {
+      console.log('[createGroupFromIds] ids=', idsToGroup);
+      const validInputs = idsToGroup.filter((id) => !!id);
+      if (validInputs.length < 1) return;
+      let resultGroupId: string | null = null;
+      update((project) => {
+        const groupId = generateUUID();
+        const groupName = `Group ${project.layers.filter((l) => l.type === 'group').length + 1}`;
+        const groupLayer = createGroupLayer(groupId, groupName);
+        resultGroupId = groupId;
+
+        const indices = validInputs
+          .map((id) => project.layers.findIndex((l) => l.id === id))
+          .filter((i) => i >= 0);
+        if (indices.length === 0) {
+          console.warn('[createGroupFromIds] no inputs match project.layers', validInputs);
+          return project;
+        }
+        const insertAt = Math.min(...indices);
+        const idSet = new Set(validInputs);
+        const remaining = project.layers.filter((l) => !idSet.has(l.id));
+        const children = project.layers
+          .filter((l) => idSet.has(l.id) && l.type !== 'group')
+          .map((l) => ({ ...l, parentGroupId: groupId }));
+        if (children.length === 0) {
+          console.warn('[createGroupFromIds] all inputs are group-type — nothing to wrap', validInputs);
+          return project;
+        }
+        const newLayers = [...remaining];
+        newLayers.splice(insertAt, 0, groupLayer, ...children);
+        console.log('[createGroupFromIds] created group', { groupId, childCount: children.length, total: newLayers.length });
+        return { ...project, layers: newLayers, selectedLayerId: groupId };
+      });
+      if (resultGroupId) {
+        selectedLayerIdsState.set([resultGroupId]);
+        recordDiscreteAction();
+      }
+    },
+
     /** Create a group from currently selected layers */
     createGroupFromSelection() {
       const selectedIds = get(selectedLayerIdsState);
-      if (selectedIds.length < 1) return;
+      console.log('[createGroupFromSelection] selectedIds=', selectedIds);
+      if (selectedIds.length < 1) {
+        console.warn('[createGroupFromSelection] no layers selected — aborting');
+        return;
+      }
+      let resultGroupId: string | null = null;
+      let resultChildIds: string[] = [];
       update((project) => {
         const groupId = generateUUID();
         const groupName = `Group ${project.layers.filter(l => l.type === 'group').length + 1}`;
         const groupLayer = createGroupLayer(groupId, groupName);
+        resultGroupId = groupId;
 
         // Find earliest selected layer position
-        const indices = selectedIds.map(id => project.layers.findIndex(l => l.id === id)).filter(i => i >= 0);
+        const indices = selectedIds
+          .map(id => project.layers.findIndex(l => l.id === id))
+          .filter(i => i >= 0);
+        if (indices.length === 0) {
+          console.warn('[createGroupFromSelection] none of the selectedIds match project.layers — aborting', { selectedIds, layerIds: project.layers.map(l => l.id) });
+          return project;
+        }
         const insertAt = Math.min(...indices);
 
         // Remove selected from current positions, clear any existing parentGroupId
@@ -596,15 +653,24 @@ void main() {
         const children = project.layers
           .filter(l => selectedIds.includes(l.id) && l.type !== 'group') // no nested groups
           .map(l => ({ ...l, parentGroupId: groupId }));
+        resultChildIds = children.map(c => c.id);
+        if (children.length === 0) {
+          console.warn('[createGroupFromSelection] all selectedIds are group-type — nothing to wrap; aborting', { selectedIds });
+          return project;
+        }
 
         // Insert group + children at the position of the first selected
         const newLayers = [...remaining];
         newLayers.splice(insertAt, 0, groupLayer, ...children);
+        console.log('[createGroupFromSelection] created group', { groupId, childCount: children.length, total: newLayers.length });
 
         return { ...project, layers: newLayers, selectedLayerId: groupId };
       });
-      selectedLayerIdsState.set([get({ subscribe }).selectedLayerId!]);
-      recordDiscreteAction();
+      if (resultGroupId) {
+        selectedLayerIdsState.set([resultGroupId]);
+        recordDiscreteAction();
+      }
+      void resultChildIds;
     },
 
     /** Move layers into an existing group */
@@ -2884,6 +2950,23 @@ void main() {
       // Get Performer state snapshot
       const synthVisionSnapshot = synthVisionStore.getSerializable();
 
+      // Capture transport sub-store snapshots so the preset can resume
+      // playback on load when it was actively playing at save time.
+      // Sub-store snapshots round-trip through JSON to strip any
+      // accidental non-serializable bits (defensive — both serializers
+      // already exclude runtime fields, but presets get embedded inside
+      // project saves so an exotic ref would brick the whole file).
+      const seqState = get(layerSequencer);
+      const sequencerSnap = {
+        snapshot: JSON.parse(JSON.stringify(layerSequencer.serialize())),
+        wasPlaying: !!seqState.isPlaying,
+      };
+      const kfState = get(keyframeTimeline);
+      const keyframesSnap = {
+        snapshot: JSON.parse(JSON.stringify(keyframeTimeline.exportAll())),
+        wasPlaying: !!kfState.config.isPlaying,
+      };
+
       const composition: Composition = {
         id: compositionId,
         name,
@@ -2891,6 +2974,8 @@ void main() {
         createdAt: Date.now(),
         layers: layersSnapshot,
         synthVision: synthVisionSnapshot,
+        sequencer: sequencerSnap,
+        keyframes: keyframesSnap,
       };
 
       console.log('[Store] Created composition:', composition.id, composition.name, 'with Performer state');
@@ -2909,6 +2994,79 @@ void main() {
       });
 
       return compositionId;
+    },
+
+    /**
+     * Update an existing composition in place with the current project
+     * state. Mirrors saveComposition's snapshot logic (layers + sub-store
+     * snapshots + Performer state + thumbnail) but writes back to the
+     * existing composition id — so right-click → Update and the
+     * "Update current" button overwrite rather than spawn a new entry.
+     * Preserves createdAt and the existing name unless overridden.
+     */
+    updateComposition(compositionId: string, opts?: { thumbnail?: string; name?: string }): boolean {
+      const currentProject = get({ subscribe });
+      if (!currentProject.vjMode) return false;
+      const existing = currentProject.vjMode.compositions.find(c => c.id === compositionId);
+      if (!existing) {
+        console.warn('[Store] updateComposition: no composition with id', compositionId);
+        return false;
+      }
+
+      // Reuse the same sanitize-then-clone path as saveComposition so we
+      // don't leak THREE/runtime refs into the saved tree.
+      const layersSnapshot: Layer[] = [];
+      for (const layer of currentProject.layers) {
+        try {
+          const cleanLayer = JSON.parse(JSON.stringify(layer, (key, value) => {
+            if (key === 'texture' || key === 'videoElement') return undefined;
+            if (value && typeof value === 'object' && value.constructor?.name?.startsWith('_')) return undefined;
+            return value;
+          }));
+          layersSnapshot.push(cleanLayer);
+        } catch (e) {
+          console.warn('[Store] updateComposition: failed to clone layer', layer.id, e);
+        }
+      }
+
+      const synthVisionSnapshot = synthVisionStore.getSerializable();
+      const seqState = get(layerSequencer);
+      const sequencerSnap = {
+        snapshot: JSON.parse(JSON.stringify(layerSequencer.serialize())),
+        wasPlaying: !!seqState.isPlaying,
+      };
+      const kfState = get(keyframeTimeline);
+      const keyframesSnap = {
+        snapshot: JSON.parse(JSON.stringify(keyframeTimeline.exportAll())),
+        wasPlaying: !!kfState.config.isPlaying,
+      };
+
+      const updated: Composition = {
+        ...existing,
+        name: opts?.name ?? existing.name,
+        thumbnail: opts?.thumbnail ?? existing.thumbnail,
+        // createdAt intentionally preserved — that's the original creation
+        // timestamp, not "last updated".
+        layers: layersSnapshot,
+        synthVision: synthVisionSnapshot,
+        sequencer: sequencerSnap,
+        keyframes: keyframesSnap,
+      };
+
+      update((project) => {
+        if (!project.vjMode) return project;
+        return {
+          ...project,
+          vjMode: {
+            ...project.vjMode,
+            compositions: project.vjMode.compositions.map(c =>
+              c.id === compositionId ? updated : c
+            ),
+          },
+        };
+      });
+      console.log('[Store] updateComposition: overwrote', compositionId, updated.name);
+      return true;
     },
 
     /**
@@ -3005,6 +3163,39 @@ void main() {
           },
         };
       });
+
+      // Transport sub-stores: restore pattern + tracks; if the snapshot
+      // was actively playing, reset playhead to 0 and auto-start.
+      // Deferred via queueMicrotask so the layer-swap above flushes
+      // first — otherwise the sequencer/keyframe tick reads the old
+      // layer set on its first iteration.
+      const { sequencer: seqSnap, keyframes: kfSnap } = composition;
+      if (seqSnap || kfSnap) {
+        queueMicrotask(() => {
+          if (seqSnap?.snapshot) {
+            layerSequencer.hydrate(seqSnap.snapshot);
+            if (seqSnap.wasPlaying) {
+              // stop() resets currentStep=0 and clears overrides; play()
+              // kicks the RAF loop. Reset-then-play matches the user's
+              // "predictable, always starts clean" choice.
+              layerSequencer.stop();
+              layerSequencer.play();
+            }
+          }
+          if (kfSnap?.snapshot) {
+            keyframeTimeline.importAll(kfSnap.snapshot);
+            if (kfSnap.wasPlaying) {
+              // seek(0) rewinds the playhead and re-evaluates overrides
+              // WITHOUT wiping the timelines we just imported. Earlier
+              // this called reset(), which calls set(createInitialState())
+              // and blew away the tracks — bug noticed on the first
+              // preset-with-keyframes load.
+              keyframeTimeline.seek(0);
+              keyframeTimeline.play();
+            }
+          }
+        });
+      }
     },
 
     /**
@@ -4365,6 +4556,7 @@ void main() {
             compositionEffects: vjcl.compositionEffects || [],
             stageMode: false, // Never import as stage mode active
             stagePresetId: vjcl.stagePresetId || null,
+            mapMode: false, // Never import as map mode active
             stoppedAll: false,
             crossfaderEnabled: importedXfadeEnabled,
             crossfaderValue: importedXfadeValue,

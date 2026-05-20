@@ -47,8 +47,12 @@
   // Layer type dropdown state
   let showAddLayerMenu = false;
   let addMenuPos = { top: 0, left: 0 };
-  // Context menu state
-  let ctxMenu: { x: number; y: number; layerId: string } | null = null;
+  // Context menu state. We snapshot the multi-selection IDs at the moment
+  // the menu opens — otherwise some other UI action (canvas click, drag-
+  // select clear, layer hit-test on the viewport) can reset the selection
+  // between menu open and menu-item click, leaving "Group selected" with
+  // only the right-clicked layer in scope.
+  let ctxMenu: { x: number; y: number; layerId: string; selectionSnapshot: string[] } | null = null;
   let ctxGroupSubmenu = false; // show "Add to Group" submenu
   // Inline rename state — id of the layer whose name is being edited.
   // Set on dbl-click of the layer name; cleared on Enter / blur / Esc.
@@ -56,7 +60,14 @@
 
   function handleLayerContextMenu(layerId: string, e: MouseEvent) {
     e.preventDefault();
-    ctxMenu = { x: e.clientX, y: e.clientY, layerId };
+    // Snapshot selection NOW. Including the right-clicked layer if not
+    // already in the selection — right-clicking on an unselected layer
+    // intuitively means "act on this layer too".
+    const sel = $selectedLayerIds.includes(layerId)
+      ? [...$selectedLayerIds]
+      : [...$selectedLayerIds, layerId];
+    console.log('[ctxmenu open] right-clicked=', layerId, 'snapshot=', sel);
+    ctxMenu = { x: e.clientX, y: e.clientY, layerId, selectionSnapshot: sel };
     ctxGroupSubmenu = false;
   }
   function closeContextMenu() { ctxMenu = null; ctxGroupSubmenu = false; }
@@ -102,6 +113,7 @@
   function selectLayerWithModifiers(layerId: string, index: number, e?: MouseEvent | KeyboardEvent) {
     const isShift = !!e?.shiftKey;
     const isToggle = !!(e && ('ctrlKey' in e ? (e.ctrlKey || (e as MouseEvent).metaKey) : false));
+    console.log('[select] layer=', layerId, 'index=', index, 'shift=', isShift, 'toggle=', isToggle, 'meta=', (e as MouseEvent)?.metaKey, 'ctrl=', (e as MouseEvent)?.ctrlKey, 'currentSel=', $selectedLayerIds);
     const idsInOrder = $layers.map(l => l.id);
 
     if (isShift && lastLayerSelectIndex !== null) {
@@ -854,11 +866,42 @@
     {@const ctxLayer = $layers.find(l => l.id === ctxId)}
     {@const groups = getGroupLayers($layers)}
     {@const hasMultiSelect = $selectedLayerIds.length > 1}
+    {@const snap = ctxMenu.selectionSnapshot}
     <div class="ctx-backdrop" onclick={closeContextMenu}></div>
     <div class="layer-ctx-menu" style="left:{ctxMenu.x}px;top:{ctxMenu.y}px">
-      {#if hasMultiSelect}
-        <button class="ctx-item" onclick={() => { project.createGroupFromSelection(); closeContextMenu(); }}>Create Group</button>
+      {#if snap.length > 1}
+        <button
+          class="ctx-item"
+          onclick={(e) => {
+            e.stopPropagation();
+            console.log('[ctxmenu] Group selected — snapshot=', snap);
+            project.createGroupFromIds(snap);
+            closeContextMenu();
+          }}
+        >Group selected ({snap.length} layers)</button>
       {/if}
+      <button
+        class="ctx-item"
+        onclick={(e) => {
+          e.stopPropagation();
+          // Group every non-group layer that is currently a top-level
+          // sibling of the right-clicked layer (so an existing group's
+          // contents don't get torn out by accident). This is the
+          // "I want all my layers in one group" one-click path.
+          const ids = $layers.filter((l) => l.type !== 'group' && !l.parentGroupId).map((l) => l.id);
+          project.createGroupFromIds(ids);
+          closeContextMenu();
+        }}
+      >Group all top-level layers ({$layers.filter((l) => l.type !== 'group' && !l.parentGroupId).length})</button>
+      <button
+        class="ctx-item"
+        onclick={(e) => {
+          e.stopPropagation();
+          if (ctxId) project.createGroupFromIds([ctxId]);
+          closeContextMenu();
+        }}
+      >Wrap this layer in a group</button>
+      <div class="ctx-divider"></div>
       {#if ctxLayer && ctxLayer.type !== 'group'}
         {#if groups.length > 0}
           <button class="ctx-item ctx-has-sub" onclick={() => ctxGroupSubmenu = !ctxGroupSubmenu}>
@@ -868,7 +911,7 @@
             <div class="ctx-submenu">
               {#each groups as g}
                 <button class="ctx-item" onclick={() => {
-                  const ids = $selectedLayerIds.length > 1 ? $selectedLayerIds.filter(id => id !== g.id) : [ctxId];
+                  const ids = snap.length > 1 ? snap.filter(id => id !== g.id) : [ctxId];
                   project.addToGroup(ids, g.id);
                   closeContextMenu();
                 }}>

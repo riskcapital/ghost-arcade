@@ -950,9 +950,22 @@
         return;
       }
 
-      // Delete selected layer: Delete or Backspace key
+      // Delete selected layer: Delete or Backspace key.
+      // BUT: if a keyframe is currently selected in the timeline,
+      // the user pressing Delete intends to delete that keyframe —
+      // not blow away the entire layer.  Without this guard, the
+      // global handler races ahead and `project.removeLayer(sel.id)`
+      // takes out the whole mapping layer the moment the user clicks
+      // a kf bubble and hits Delete (on macOS Backspace too —
+      // there's no separate forward-delete on most Mac keyboards).
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (inInput) return;
+        const kfSel = get(keyframeTimeline).selectedKeyframe;
+        if (kfSel) {
+          e.preventDefault();
+          keyframeTimeline.removeKeyframe(kfSel.layerId, kfSel.trackKey, kfSel.time);
+          return;
+        }
         const sel = get(selectedLayer);
         if (sel) {
           e.preventDefault();
@@ -2074,13 +2087,43 @@
     }
   }
 
-  // Sync project state to server
+  // Sync project state to server.  We sanitize before JSON.stringify to
+  // strip runtime objects that the renderer attaches to layer / clip
+  // structures at draw time (THREE textures, WebGL render targets, DOM
+  // canvases, video elements, internal `_*` caches). Any one of those
+  // can introduce a circular structure that aborts the serialization
+  // for the entire frame — which then freezes the reactive graph
+  // because the effect throws on every tick. Strip them here once and
+  // the mobile companion still gets the data it actually needs (ids,
+  // names, params, layouts).
+  const _SKIP_KEYS = new Set(['texture', 'videoElement', 'iframeElement', 'renderTarget', 'synthVisionCanvas', 'threejsCanvas']);
+  function _sanitizeForSync(key: string, value: any): any {
+    if (_SKIP_KEYS.has(key)) return undefined;
+    if (typeof key === 'string' && key.startsWith('_')) return undefined;
+    if (value && typeof value === 'object') {
+      const ctor = (value as any).constructor?.name;
+      // THREE objects + DOM elements — strip on identity rather than key.
+      if ((value as any).isTexture) return undefined;
+      if ((value as any).isWebGLRenderTarget) return undefined;
+      if ((value as any).isMesh || (value as any).isObject3D) return undefined;
+      if (typeof HTMLElement !== 'undefined' && value instanceof HTMLElement) return undefined;
+      if (ctor && ctor.startsWith('_')) return undefined;
+    }
+    return value;
+  }
   function syncState() {
     if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: 'sync',
-        project: $project,
-      }));
+      try {
+        ws.send(JSON.stringify({
+          type: 'sync',
+          project: $project,
+        }, _sanitizeForSync));
+      } catch (err) {
+        // Belt-and-suspenders: even with the replacer, an exotic
+        // circular structure could slip through. Don't let it brick
+        // the reactive graph.
+        console.error('[syncState] serialize failed, skipping frame:', err);
+      }
     }
   }
 
@@ -5245,6 +5288,7 @@
       </button>
     {/if}
 
+
     <!-- Welcome Modal (first run) — EULA gate removed in OSS build. -->
     {#if showWelcome}
       <WelcomeModal onClose={() => {
@@ -6940,6 +6984,7 @@
     border-color: rgba(255, 60, 60, 0.6);
     color: #ff8888;
   }
+
 
   .live-dot-pulse {
     width: 8px;

@@ -8,7 +8,7 @@
   import { mediaLibrary } from '../stores/media';
   import { vjClipLauncher, type VJClip, type VJBlock, type VJDeck } from '../stores/vjClipLauncher';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
-  import { project, stagePresets } from '../stores/layers';
+  import { project, stagePresets, compositions, activeCompositionId } from '../stores/layers';
   import { globalStagePresets } from '../stores/globalPresets';
   import { parseISF, getInputDefault } from '../isf/parser';
   import { generateCachedThumbnail as generateShaderThumbnail } from '../isf/thumbnail';
@@ -628,7 +628,7 @@
   }
 
   // Drag state for clips
-  let draggedClip: { type: 'shader' | 'video' | 'image' | 'threejs' | 'spout' | 'effect' | 'splat' | 'model3d'; id: string; spoutName?: string; pluginName?: string; effectType?: 'fluid' | 'particles' | 'splat' | 'model3d' } | null = null;
+  let draggedClip: { type: 'shader' | 'video' | 'image' | 'threejs' | 'spout' | 'effect' | 'splat' | 'model3d' | 'preset'; id: string; spoutName?: string; pluginName?: string; effectType?: 'fluid' | 'particles' | 'splat' | 'model3d' } | null = null;
   // Cells now carry a bank tag so cross-deck drag/drop works correctly when
   // the crossfader is on (drag from Bank A cell → Bank B cell, etc.)
   let dragOverCell: { layer: number; column: number; bank: VJDeck } | null = null;
@@ -658,7 +658,19 @@
   $: vjClipLauncher.setSelectedLayerIndex(selectedLayerIndex);
 
   // Media tab (matching mapping mode tabs)
-  let vjMediaTab: 'shaders' | 'js' | 'library' | 'videos' | 'images' | 'sources' | 'plugins' = 'shaders';
+  let vjMediaTab: 'shaders' | 'js' | 'library' | 'videos' | 'images' | 'sources' | 'plugins' | 'maps' = 'shaders';
+
+  // When MAP sub-mode engages, force the media tray to the Maps tab.
+  // (Other source tabs are hidden in MAP — landing on a hidden tab
+  // would leave the tray blank.) When LEAVING MAP, if the user was
+  // still pointed at Maps, fall back to Shaders since Maps is hidden
+  // outside MAP mode.
+  $: if ($vjClipLauncher.mapMode && vjMediaTab !== 'maps') {
+    vjMediaTab = 'maps';
+  }
+  $: if (!$vjClipLauncher.mapMode && vjMediaTab === 'maps') {
+    vjMediaTab = 'shaders';
+  }
 
   // AI generator state
   let vjShowAIGenerator = false;
@@ -1151,7 +1163,7 @@
   }
 
   // Drag handlers
-  function handleDragStart(e: DragEvent, clip: { type: 'shader' | 'video' | 'image' | 'threejs' | 'spout' | 'effect' | 'splat' | 'model3d'; id: string; spoutName?: string; pluginName?: string; effectType?: 'fluid' | 'particles' | 'splat' | 'model3d' }) {
+  function handleDragStart(e: DragEvent, clip: { type: 'shader' | 'video' | 'image' | 'threejs' | 'spout' | 'effect' | 'splat' | 'model3d' | 'preset'; id: string; spoutName?: string; pluginName?: string; effectType?: 'fluid' | 'particles' | 'splat' | 'model3d' }) {
     draggedClip = clip;
     // Electron/Chromium requires dataTransfer.setData() for drag to work
     if (e.dataTransfer) {
@@ -1467,6 +1479,21 @@
       vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
       // Trigger file picker for 3D model file
       triggerVJFileLoad(layerIndex, columnIndex, 'model3d', bank);
+    } else if (draggedClip.type === 'preset') {
+      // Handle mapping-preset clip: stores the composition id; firing
+      // calls project.loadComposition() to swap the mapping topology.
+      const comp = $compositions.find((c) => c.id === draggedClip!.id);
+      if (comp) {
+        const vjClip: VJClip = {
+          id: generateUUID(),
+          type: 'preset',
+          name: comp.name,
+          src: comp.id,
+          thumbnail: comp.thumbnail,
+          presetId: comp.id,
+        };
+        vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
+      }
     } else {
       const media = $mediaLibrary.find(m => m.id === draggedClip!.id);
       if (media) {
@@ -2027,8 +2054,9 @@
 
       {#if $vjClipLauncher.isLive}
         <div class="header-stage">
-          <button class="stage-mix-btn" class:active={!$vjClipLauncher.stageMode} onclick={() => vjClipLauncher.setStageMode(false)}>MIX</button>
-          <button class="stage-mix-btn" class:active={$vjClipLauncher.stageMode} onclick={() => vjClipLauncher.setStageMode(true)}>STAGE</button>
+          <button class="stage-mix-btn" class:active={!$vjClipLauncher.stageMode && !$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('mix')} title="Raw VJ clip output">MIX</button>
+          <button class="stage-mix-btn" class:active={$vjClipLauncher.stageMode} onclick={() => vjClipLauncher.setSubMode('stage')} title="Route VJ content through the active mapping topology">STAGE</button>
+          <button class="stage-mix-btn" class:active={$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('map')} title="Preset-only mixer — VJ layer slots hold mapping presets that stack with opacity + blend modes">MAP</button>
         </div>
 
         <!-- A/B crossfader toggle — its own header section, orthogonal to MIX/STAGE.
@@ -3026,15 +3054,18 @@
               {#each columnIndices as colIdx (colIdx)}
                 {@const clip = grid[layerIdx]?.[colIdx]}
                 {@const isActive = activeClip !== null && clip != null && activeClip.id === clip.id}
+                {@const isPresetActive = clip != null && clip.type === 'preset' && clip.presetId === $activeCompositionId}
                 {@const isQueued = $vjClipLauncher.pendingTriggers.some(p => p.layerIndex === layerIdx && p.columnIndex === colIdx && p.bank === bank)}
+                {@const isClipFirable = clip == null || (clip.type === 'preset' ? $vjClipLauncher.mapMode : !$vjClipLauncher.mapMode)}
                 <div
                   class="clip-cell"
                   class:has-clip={clip != null}
-                  class:active={isActive}
+                  class:active={isActive || isPresetActive}
                   class:queued={isQueued}
                   class:dragover={dragOverCell?.layer === layerIdx && dragOverCell?.column === colIdx && dragOverCell?.bank === bank}
+                  class:wrong-mode={clip != null && !isClipFirable}
                   draggable={clip != null ? 'true' : 'false'}
-                  onclick={() => clip && handleCellClick(layerIdx, colIdx, bank)}
+                  onclick={() => clip && isClipFirable && handleCellClick(layerIdx, colIdx, bank)}
                   ondragstart={(e) => clip && handleClipCellDragStart(e, layerIdx, colIdx, bank)}
                   ondragend={handleDragEnd}
                   ondragover={(e) => handleCellDragOver(e, layerIdx, colIdx, bank)}
@@ -3053,7 +3084,7 @@
                         <img src={clip.thumbnail} alt={clip.name} class="clip-thumb" />
                       {:else}
                         <div class="clip-placeholder {clip.type}">
-                          {clip.type === 'shader' ? 'ISF' : clip.type === 'video' ? 'VID' : clip.type === 'spout' ? 'SPT' : clip.type === 'threejs' ? '3JS' : clip.type === 'splat' ? 'PLY' : clip.type === 'model3d' ? '3DM' : clip.type === 'effect' ? 'FX' : 'IMG'}
+                          {clip.type === 'shader' ? 'ISF' : clip.type === 'video' ? 'VID' : clip.type === 'spout' ? 'SPT' : clip.type === 'threejs' ? '3JS' : clip.type === 'splat' ? 'PLY' : clip.type === 'model3d' ? '3DM' : clip.type === 'effect' ? 'FX' : clip.type === 'preset' ? 'MAP' : 'IMG'}
                         </div>
                       {/if}
                       <span class="clip-name">{clip.name}</span>
@@ -3253,45 +3284,58 @@
           </svg>
         </button>
         {#if !mediaTrayCollapsed}
-        <!-- Tab Icons Row (matching mapping mode) -->
+        <!-- Tab Icons Row (matching mapping mode).  In MAP sub-mode only
+             the Maps tab is shown — the panel becomes a preset-only mixer
+             so hiding the other source tabs prevents accidentally dragging
+             non-preset content into the cells. Reactive auto-select below
+             ensures the tab pointer lands on 'maps' when entering MAP. -->
         <div class="vj-tabs">
           <div class="vj-tab-row">
-            <button class="vj-tab" class:active={vjMediaTab === 'shaders'} onclick={() => vjMediaTab = 'shaders'}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-              <span>FX</span>
-              {#if shaders.length}<span class="vj-tab-count">{shaders.length}</span>{/if}
-            </button>
-            <button class="vj-tab" class:active={vjMediaTab === 'js'} onclick={() => vjMediaTab = 'js'}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
-              <span>JS</span>
-              {#if threejsItems.length}<span class="vj-tab-count">{threejsItems.length}</span>{/if}
-            </button>
-            <button class="vj-tab" class:active={vjMediaTab === 'library'} onclick={() => vjMediaTab = 'library'}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
-              <span>Saved</span>
-              {#if savedShaders.length}<span class="vj-tab-count">{savedShaders.length}</span>{/if}
-            </button>
-            <button class="vj-tab" class:active={vjMediaTab === 'videos'} onclick={() => vjMediaTab = 'videos'}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-              <span>Vid</span>
-              {#if $mediaLibrary.filter(m => m.type === 'video').length}<span class="vj-tab-count">{$mediaLibrary.filter(m => m.type === 'video').length}</span>{/if}
-            </button>
-            <button class="vj-tab" class:active={vjMediaTab === 'images'} onclick={() => vjMediaTab = 'images'}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-              <span>Img</span>
-              {#if $mediaLibrary.filter(m => m.type === 'image').length}<span class="vj-tab-count">{$mediaLibrary.filter(m => m.type === 'image').length}</span>{/if}
-            </button>
-            <button class="vj-tab" class:active={vjMediaTab === 'sources'} onclick={() => vjMediaTab = 'sources'}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
-              <span>Src</span>
-              {#if vjLiveSources.filter(s => s.status === 'live').length > 0}
-                <span class="vj-tab-count live">{vjLiveSources.filter(s => s.status === 'live').length}</span>
-              {/if}
-            </button>
-            <button class="vj-tab" class:active={vjMediaTab === 'plugins'} onclick={() => vjMediaTab = 'plugins'}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2C6.5 8 4 12 4 15a8 8 0 1 0 16 0c0-3-2.5-7-8-13Z"/></svg>
-              <span>Plug</span>
-            </button>
+            {#if !$vjClipLauncher.mapMode}
+              <button class="vj-tab" class:active={vjMediaTab === 'shaders'} onclick={() => vjMediaTab = 'shaders'}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                <span>FX</span>
+                {#if shaders.length}<span class="vj-tab-count">{shaders.length}</span>{/if}
+              </button>
+              <button class="vj-tab" class:active={vjMediaTab === 'js'} onclick={() => vjMediaTab = 'js'}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
+                <span>JS</span>
+                {#if threejsItems.length}<span class="vj-tab-count">{threejsItems.length}</span>{/if}
+              </button>
+              <button class="vj-tab" class:active={vjMediaTab === 'library'} onclick={() => vjMediaTab = 'library'}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+                <span>Saved</span>
+                {#if savedShaders.length}<span class="vj-tab-count">{savedShaders.length}</span>{/if}
+              </button>
+              <button class="vj-tab" class:active={vjMediaTab === 'videos'} onclick={() => vjMediaTab = 'videos'}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                <span>Vid</span>
+                {#if $mediaLibrary.filter(m => m.type === 'video').length}<span class="vj-tab-count">{$mediaLibrary.filter(m => m.type === 'video').length}</span>{/if}
+              </button>
+              <button class="vj-tab" class:active={vjMediaTab === 'images'} onclick={() => vjMediaTab = 'images'}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                <span>Img</span>
+                {#if $mediaLibrary.filter(m => m.type === 'image').length}<span class="vj-tab-count">{$mediaLibrary.filter(m => m.type === 'image').length}</span>{/if}
+              </button>
+              <button class="vj-tab" class:active={vjMediaTab === 'sources'} onclick={() => vjMediaTab = 'sources'}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+                <span>Src</span>
+                {#if vjLiveSources.filter(s => s.status === 'live').length > 0}
+                  <span class="vj-tab-count live">{vjLiveSources.filter(s => s.status === 'live').length}</span>
+                {/if}
+              </button>
+              <button class="vj-tab" class:active={vjMediaTab === 'plugins'} onclick={() => vjMediaTab = 'plugins'}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2C6.5 8 4 12 4 15a8 8 0 1 0 16 0c0-3-2.5-7-8-13Z"/></svg>
+                <span>Plug</span>
+              </button>
+            {/if}
+            {#if $vjClipLauncher.mapMode}
+              <button class="vj-tab" class:active={vjMediaTab === 'maps'} onclick={() => vjMediaTab = 'maps'} title="Saved mapping presets — drag onto a clip cell. Stack with VJ layer opacity + blend.">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="1 6 7 3 17 6 23 3 23 18 17 21 7 18 1 21 1 6"/><line x1="7" y1="3" x2="7" y2="18"/><line x1="17" y1="6" x2="17" y2="21"/></svg>
+                <span>Maps</span>
+                {#if $compositions.length}<span class="vj-tab-count">{$compositions.length}</span>{/if}
+              </button>
+            {/if}
           </div>
         </div>
 
@@ -3505,6 +3549,41 @@
                 <p>Effects run natively in WebGL - no external process needed</p>
               </div>
             </div>
+          {:else if vjMediaTab === 'maps'}
+            <!-- Maps tab — saved mapping presets, drag onto a clip cell to
+                 install a "load preset on fire" trigger. Firing the cell
+                 calls project.loadComposition() (mapping swap), not a
+                 normal content-feed-into-layer trigger. -->
+            {#if $compositions.length === 0}
+              <div class="empty-media">
+                <p>No saved mapping presets</p>
+                <p class="hint">Save a mapping preset (Presets tray ▲) then come back — drag it onto a clip cell to launch it from the VJ mixer.</p>
+              </div>
+            {:else}
+              {#each $compositions as comp (comp.id)}
+                <div
+                  class="media-item"
+                  draggable="true"
+                  ondragstart={(e) => handleDragStart(e, { type: 'preset', id: comp.id })}
+                  ondragend={handleDragEnd}
+                  role="button"
+                  tabindex="0"
+                  title="Drag onto a clip cell — firing it loads this mapping preset"
+                >
+                  <div class="item-thumb">
+                    {#if comp.thumbnail}
+                      <img src={comp.thumbnail} alt={comp.name} />
+                    {:else}
+                      <div class="thumb-placeholder"><span>MAP</span></div>
+                    {/if}
+                  </div>
+                  <div class="item-info">
+                    <span class="item-name">{comp.name}</span>
+                    <span class="item-type">preset · {comp.layers.length} layer{comp.layers.length === 1 ? '' : 's'}</span>
+                  </div>
+                </div>
+              {/each}
+            {/if}
           {:else if vjMediaTab === 'library'}
             <!-- Saved shaders/videos -->
             {#if savedShaders.length === 0 && savedVideos.length === 0}
@@ -4882,6 +4961,49 @@
   .clip-cell.dragover {
     border-color: #BB86FC;
     background: #1a2530;
+  }
+
+  /* Wrong-mode cells: preset clips while in MIX/STAGE, or non-preset
+     clips while in MAP. Still draggable (move/swap) and right-clickable
+     (delete) — the onclick handler is short-circuited at the binding
+     site. Visual cue is a heavy dim + a slash icon overlay so the user
+     immediately reads "this clip can't fire in this mode" without
+     reading any tooltip. Hover still subtly brightens so a quick scrub
+     across the grid reveals what's there. */
+  .clip-cell.wrong-mode {
+    cursor: not-allowed;
+  }
+  .clip-cell.wrong-mode .clip-content {
+    opacity: 0.28;
+    filter: grayscale(0.65);
+    transition: opacity 0.15s, filter 0.15s;
+  }
+  .clip-cell.wrong-mode:hover .clip-content {
+    opacity: 0.45;
+    filter: grayscale(0.35);
+  }
+  .clip-cell.wrong-mode::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      repeating-linear-gradient(
+        135deg,
+        rgba(0, 0, 0, 0.0) 0px,
+        rgba(0, 0, 0, 0.0) 6px,
+        rgba(255, 255, 255, 0.04) 6px,
+        rgba(255, 255, 255, 0.04) 7px
+      );
+    border-radius: inherit;
+  }
+  /* Suppress the active-glow on wrong-mode cells so the user doesn't
+     read a dimmed-yellow cell as "currently firing" — the cell is
+     dim and inert. Active highlight returns automatically when the
+     mode matches again. */
+  .clip-cell.wrong-mode.active {
+    box-shadow: none;
+    border-color: #333;
   }
 
   .clip-content {

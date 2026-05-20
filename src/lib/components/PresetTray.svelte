@@ -190,6 +190,50 @@
     }
   }
 
+  // Capture a thumbnail of the current main canvas at preset size.
+  // Shared by saveNewPreset and updateCurrentPreset so a re-saved
+  // preset visually reflects whatever's on screen right now.
+  function captureThumbnail(): string | undefined {
+    try {
+      const canvas = document.querySelector('canvas.main-canvas') as HTMLCanvasElement ||
+                     document.querySelector('.canvas-container canvas') as HTMLCanvasElement ||
+                     document.querySelector('canvas') as HTMLCanvasElement;
+      if (!canvas) return undefined;
+      const thumbCanvas = document.createElement('canvas');
+      thumbCanvas.width = 120;
+      thumbCanvas.height = 68;
+      const ctx = thumbCanvas.getContext('2d');
+      if (!ctx) return undefined;
+      ctx.drawImage(canvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
+      return thumbCanvas.toDataURL('image/jpeg', 0.7);
+    } catch (e) {
+      console.warn('Failed to capture thumbnail:', e);
+      return undefined;
+    }
+  }
+
+  // Right-click context menu state. Anchored to mouse pos at open.
+  // Stays open until a menu item clicks or the backdrop click closes it.
+  let ctxMenu: { x: number; y: number; comp: Composition } | null = null;
+  function openCtxMenu(e: MouseEvent, comp: Composition) {
+    e.preventDefault();
+    e.stopPropagation();
+    ctxMenu = { x: e.clientX, y: e.clientY, comp };
+  }
+  function closeCtxMenu() { ctxMenu = null; }
+
+  // Update the active preset (or a specified one) with the current
+  // project state — layers, sub-store snapshots, fresh thumbnail.
+  // Targets the right-clicked preset when targetId is supplied; falls
+  // back to the active preset for the "Update current" header button.
+  function updateCurrentPreset(targetId?: string) {
+    const id = targetId ?? $activeCompositionId;
+    if (!id) return;
+    const thumbnail = captureThumbnail();
+    const ok = project.updateComposition(id, { thumbnail });
+    if (!ok) console.warn('[PresetTray] update failed for', id);
+  }
+
   // Save current state as new preset
   async function saveNewPreset() {
     const name = newPresetName.trim() || `Preset ${$compositions.length + 1}`;
@@ -287,7 +331,13 @@
       </div>
 
       <div class="header-center">
-        <!-- Save new preset -->
+        <!-- Save / Update preset.  "+ Save" always creates a new entry.
+             "↻ Update" appears only when a preset is currently active —
+             clicking it overwrites that preset with the current layers
+             + sub-store snapshots + a fresh thumbnail. Two buttons (vs
+             one chameleon button) so the destructive action is never
+             reached by muscle memory when the user means "save a new
+             one." -->
         <div class="save-preset">
           <input
             type="text"
@@ -295,9 +345,15 @@
             bind:value={newPresetName}
             onkeydown={(e) => e.key === 'Enter' && saveNewPreset()}
           />
-          <button class="save-btn" onclick={saveNewPreset}>
+          <button class="save-btn" onclick={saveNewPreset} title="Save current state as a new preset">
             + Save
           </button>
+          {#if $activeCompositionId && $compositions.some(c => c.id === $activeCompositionId)}
+            {@const activeName = $compositions.find(c => c.id === $activeCompositionId)?.name ?? 'preset'}
+            <button class="update-btn" onclick={() => updateCurrentPreset()} title={`Overwrite "${activeName}" with the current state`}>
+              ↻ Update
+            </button>
+          {/if}
         </div>
 
         <!-- Auto-Play Controls -->
@@ -368,6 +424,39 @@
       </div>
     </div>
 
+    {#if ctxMenu}
+      <!-- Right-click menu — anchored to mouse position. Backdrop catches
+           outside clicks; ESC could close it via a global handler but
+           the click-outside path is enough for this tray's UX. -->
+      <div
+        class="ctx-backdrop"
+        onclick={closeCtxMenu}
+        oncontextmenu={(e) => { e.preventDefault(); closeCtxMenu(); }}
+        role="button"
+        tabindex="-1"
+      ></div>
+      <div class="preset-ctx-menu" style="left:{ctxMenu.x}px;top:{ctxMenu.y}px">
+        <button
+          class="ctx-item"
+          onclick={(e) => { e.stopPropagation(); updateCurrentPreset(ctxMenu!.comp.id); closeCtxMenu(); }}
+          title="Overwrite this preset with the current project state"
+        >↻ Update with current state</button>
+        <button
+          class="ctx-item"
+          onclick={(e) => { e.stopPropagation(); loadPreset(ctxMenu!.comp.id); closeCtxMenu(); }}
+        >▶ Load preset</button>
+        <button
+          class="ctx-item"
+          onclick={(e) => { e.stopPropagation(); const c = ctxMenu!.comp; closeCtxMenu(); startEdit(c, e); }}
+        >✎ Rename</button>
+        <div class="ctx-divider"></div>
+        <button
+          class="ctx-item ctx-danger"
+          onclick={(e) => { e.stopPropagation(); const id = ctxMenu!.comp.id; closeCtxMenu(); if (confirm('Delete this preset?')) project.deleteComposition(id); }}
+        >× Delete</button>
+      </div>
+    {/if}
+
     <div class="preset-list">
       {#if $compositions.length === 0}
         <div class="empty-state">
@@ -380,6 +469,7 @@
             class="preset-item"
             class:active={$activeCompositionId === comp.id}
             onclick={() => loadPreset(comp.id)}
+            oncontextmenu={(e) => openCtxMenu(e, comp)}
             role="button"
             tabindex="0"
             onkeydown={(e) => e.key === 'Enter' && loadPreset(comp.id)}
@@ -684,6 +774,77 @@
 
   .save-btn:hover {
     background: #00ccff;
+  }
+
+  /* "Update current preset" — visually paired with .save-btn but with
+     an inverted scheme: outlined accent + filled-on-hover. Signals
+     "this is destructive over an existing entry" without being
+     alarming (preset overwrites aren't catastrophic — they can be
+     re-saved). */
+  .update-btn {
+    background: transparent;
+    border: 1px solid #BB86FC;
+    color: #BB86FC;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .update-btn:hover {
+    background: rgba(187,134,252,0.15);
+    color: #fff;
+  }
+
+  /* Right-click context menu over preset cards. Mirrors the styling of
+     similar context menus elsewhere (LayerPanel) — dark background,
+     subtle border, hover row, danger-row for destructive actions. */
+  .ctx-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1100;
+    background: transparent;
+  }
+  .preset-ctx-menu {
+    position: fixed;
+    z-index: 1101;
+    min-width: 200px;
+    background: #1a1a1f;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 6px;
+    padding: 4px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .preset-ctx-menu .ctx-item {
+    background: transparent;
+    border: none;
+    color: #ddd;
+    padding: 6px 10px;
+    text-align: left;
+    font-size: 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .preset-ctx-menu .ctx-item:hover {
+    background: rgba(255,255,255,0.06);
+    color: #fff;
+  }
+  .preset-ctx-menu .ctx-item.ctx-danger {
+    color: #ff8888;
+  }
+  .preset-ctx-menu .ctx-item.ctx-danger:hover {
+    background: rgba(255,68,68,0.12);
+    color: #ffb0b0;
+  }
+  .preset-ctx-menu .ctx-divider {
+    height: 1px;
+    background: rgba(255,255,255,0.08);
+    margin: 4px 2px;
   }
 
   /* Recording controls */
