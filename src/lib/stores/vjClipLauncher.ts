@@ -35,25 +35,15 @@ export const MAX_VJ_COLUMNS = 64;
 export const NUM_VJ_LAYERS = DEFAULT_VJ_LAYERS;
 export const NUM_VJ_COLUMNS = DEFAULT_VJ_COLUMNS;
 
-// A clip in the grid - can be a shader, video, image, three.js HTML, AI-generated JS animation, Spout source, integrated effect, point cloud, 3D model, mapping preset (loads a saved composition on fire), or stage effect (procedural per-slice modulation while active)
+// A clip in the grid - can be a shader, video, image, three.js HTML, AI-generated JS animation, Spout source, integrated effect, point cloud, 3D model, or mapping preset (loads a saved composition on fire)
 export interface VJClip {
   id: string;
-  type: 'shader' | 'video' | 'image' | 'threejs' | 'p5js' | 'jsanimation' | 'synthvision' | 'spout' | 'effect' | 'splat' | 'model3d' | 'preset' | 'stageEffect';
+  type: 'shader' | 'video' | 'image' | 'threejs' | 'p5js' | 'jsanimation' | 'synthvision' | 'spout' | 'effect' | 'splat' | 'model3d' | 'preset';
   /** For type='preset' clips: id of the saved Composition (mapping preset)
    *  this cell loads when fired. Firing a preset clip calls
    *  project.loadComposition() — a side effect on the mapping layers —
    *  rather than feeding content into a VJ layer like the other types. */
   presetId?: string;
-  /** For type='stageEffect' clips: which procedural generator to run
-   *  + its tuned param values. While this clip is the active clip in
-   *  its VJ-layer slot, the effect is enabled — the stageEffects
-   *  store reads activeStageEffectClips each frame and modulates the
-   *  bound slice→layer opacities. Removing the clip from the active
-   *  slot deactivates the effect. Multiple stage-effect clips can run
-   *  in parallel on different VJ-layer slots; their per-slice outputs
-   *  composite multiplicatively. */
-  stageEffectType?: import('../types').StageEffectType;
-  stageEffectParams?: Record<string, number>;
   name: string;
   src: string;
   thumbnail?: string;
@@ -644,27 +634,6 @@ function createVJClipLauncherStore() {
           didTrigger = false;
           return state;
         }
-        const wasReclick = !!(newLayerStates[layerIndex].activeClip && newLayerStates[layerIndex].activeClip!.id === clip.id);
-        if (wasReclick) {
-          didTrigger = false;
-          return state;
-        }
-        newLayerStates[layerIndex] = {
-          ...newLayerStates[layerIndex],
-          activeColumn: columnIndex,
-          activeClip: clip,
-        };
-        didTrigger = true;
-        incomingClip = clip;
-        const next = withDeck(state, deck, newLayerStates);
-        return { ...next, stoppedAll: false };
-      }
-      // Stage-effect clips: side-effect-only (the effect is driven by
-      // activeStageEffectClips, which derives from this clip becoming
-      // the active clip in its slot). Re-firing the same clip is a
-      // no-op (matches preset clip semantics). No content load, no
-      // video element, no effect-source plumbing needed.
-      if (clip.type === 'stageEffect') {
         const wasReclick = !!(newLayerStates[layerIndex].activeClip && newLayerStates[layerIndex].activeClip!.id === clip.id);
         if (wasReclick) {
           didTrigger = false;
@@ -2097,7 +2066,7 @@ export const activeVJLayers = derived(
       // Preset clips are side-effect-only (load mapping on fire); they
       // don't feed content into a VJ layer. Skip them so the engine
       // doesn't try to source pixels from a preset.
-      if (clip.type === 'preset' || clip.type === 'stageEffect') continue;
+      if (clip.type === 'preset') continue;
       out.push({
         clip,
         opacity: ls.opacity,
@@ -2116,7 +2085,7 @@ export const activeVJLayers = derived(
         if (hasSoloB && !ls.solo) continue;
         const clip = ls.activeClip;
         if (!clip) continue;
-        if (clip.type === 'preset' || clip.type === 'stageEffect') continue;
+        if (clip.type === 'preset') continue;
         out.push({
           clip,
           opacity: ls.opacity,
@@ -2128,40 +2097,6 @@ export const activeVJLayers = derived(
       }
     }
 
-    return out;
-  }
-);
-
-/** Derived store: active stage-effect clips per VJ-layer slot.
- *  Side-effect-only — these clips don't feed content into render
- *  passes; instead the stageEffects RAF tick reads this list and runs
- *  the corresponding procedural generators each frame. Filtered to
- *  ACTIVE clips only (active in either bank — when crossfader is on,
- *  Bank B effects also count).  Empty list when VJ mode isn't live
- *  OR when no slot holds a stageEffect clip. */
-export const activeStageEffectClips = derived(
-  [vjClipLauncher],
-  ([$vj]) => {
-    if (!$vj.isLive) return [] as VJClip[];
-    const hasSoloA = $vj.layerStates.some(ls => ls.solo);
-    const out: VJClip[] = [];
-    for (const ls of $vj.layerStates) {
-      if (ls.mute) continue;
-      if (hasSoloA && !ls.solo) continue;
-      const c = ls.activeClip;
-      if (c && c.type === 'stageEffect') out.push(c);
-    }
-    // Crossfader on → also include Bank B's stageEffect clips.
-    const cfOn = $vj.crossfaderEnabled === true && $vj.isLive;
-    if (cfOn) {
-      const hasSoloB = $vj.bankBLayerStates.some(ls => ls.solo);
-      for (const ls of $vj.bankBLayerStates) {
-        if (ls.mute) continue;
-        if (hasSoloB && !ls.solo) continue;
-        const c = ls.activeClip;
-        if (c && c.type === 'stageEffect') out.push(c);
-      }
-    }
     return out;
   }
 );
