@@ -20,6 +20,7 @@
    */
 
   import { onMount, onDestroy } from 'svelte';
+  import { get } from 'svelte/store';
   import { workspace } from '../stores/workspace';
   import {
     surfaceStore,
@@ -523,6 +524,15 @@
   }
 
   onMount(() => {
+    // Reverse-sync slice polygons FROM their bound mapping layers so
+    // any warping / corner adjustment the user did in mapping mode
+    // is reflected when they reopen the designer. Walks
+    // slice.sourceBinding.layerId for each slice and recomputes its
+    // polygon from the layer's corners + customPoints. No-ops cleanly
+    // for slices with no binding or whose bound layer was deleted.
+    const liveLayers = get(projectLayers);
+    surfaceStore.syncFromMappingLayers(liveLayers);
+
     window.addEventListener('mousemove', onWindowMouseMove);
     window.addEventListener('mouseup', onWindowMouseUp);
     window.addEventListener('keydown', onWindowKeyDown);

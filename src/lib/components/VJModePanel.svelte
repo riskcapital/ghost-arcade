@@ -656,6 +656,37 @@
   // can overwrite an existing preset with the current scene state instead
   // of having to delete and re-save.
   let stageContextMenu: { x: number; y: number; preset: any } | null = null;
+  // Inline rename state for stage presets — double-click the name to
+  // enter edit mode. Right-click → Rename still works (prompt-based);
+  // this is the discoverable in-place path.
+  let stageRenamingPresetId: string | null = null;
+  let stageRenameValue = '';
+  function startStageRename(preset: any, e: Event) {
+    e.stopPropagation();
+    stageRenamingPresetId = preset.id;
+    stageRenameValue = preset.name;
+  }
+  function commitStageRename(preset: any) {
+    const name = stageRenameValue.trim();
+    if (name && name !== preset.name) {
+      if (preset._scope === 'global') {
+        globalStagePresets.rename(preset.id, name);
+      } else {
+        project.renameStagePreset(preset.id, name);
+      }
+    }
+    stageRenamingPresetId = null;
+    stageRenameValue = '';
+  }
+  function cancelStageRename() {
+    stageRenamingPresetId = null;
+    stageRenameValue = '';
+  }
+  /** Tiny Svelte action — focus + select the input on mount so the
+   *  user can type immediately. Used by the inline rename input. */
+  function focusOnMount(node: HTMLInputElement) {
+    queueMicrotask(() => { node.focus(); node.select(); });
+  }
   // Clip-preview panel state — opened from the cell context menu's Edit/Preview item.
   let previewPanel: { layer: number; column: number; clip: VJClip; bank: VJDeck } | null = null;
 
@@ -2193,15 +2224,35 @@
             <button
               class="stage-preset-btn"
               class:active={$vjClipLauncher.stagePresetId === preset.id}
-              onclick={() => project.loadStagePreset(preset.id)}
+              onclick={() => stageRenamingPresetId !== preset.id && project.loadStagePreset(preset.id)}
               oncontextmenu={(e) => openStageContextMenu(e, preset)}
-              title="{preset.name} — right-click for Update / Rename / Delete"
+              title="{preset.name} — double-click name to rename · right-click for Update / Delete"
             >
               {#if preset._scope === 'global'}<span class="stage-preset-scope">G</span>{/if}
               {#if preset.thumbnail}
                 <img src={preset.thumbnail} alt={preset.name} class="stage-preset-thumb" />
               {/if}
-              <span class="stage-preset-name">{preset.name}</span>
+              {#if stageRenamingPresetId === preset.id}
+                <input
+                  class="stage-preset-name-input"
+                  type="text"
+                  bind:value={stageRenameValue}
+                  onclick={(e) => e.stopPropagation()}
+                  onkeydown={(e) => {
+                    e.stopPropagation();
+                    if (e.key === 'Enter') commitStageRename(preset);
+                    if (e.key === 'Escape') cancelStageRename();
+                  }}
+                  onblur={() => commitStageRename(preset)}
+                  use:focusOnMount
+                />
+              {:else}
+                <span
+                  class="stage-preset-name"
+                  ondblclick={(e) => startStageRename(preset, e)}
+                  title="Double-click to rename"
+                >{preset.name}</span>
+              {/if}
             </button>
           {/each}
         </div>
@@ -6864,6 +6915,17 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .stage-preset-name-input {
+    width: 70px;
+    background: #14141a;
+    border: 1px solid #4cd1ff;
+    color: #fff;
+    border-radius: 3px;
+    padding: 1px 4px;
+    font-size: 11px;
+    font-family: inherit;
+    outline: none;
   }
 
   .stage-preset-save-btn {

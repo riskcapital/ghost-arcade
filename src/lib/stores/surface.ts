@@ -631,6 +631,33 @@ function createSurfaceStore() {
       }));
     },
 
+    /** Replace the active surface's entire effects bundle in one
+     *  shot — catalog of effects, which one is live, and automation
+     *  state. Used by loadStagePreset to restore the snapshot a
+     *  preset captured at save time. */
+    setStageEffectsBundle(bundle: {
+      effects: StageEffect[];
+      activeEffectId: string | null;
+      automation: SurfaceEffectAutomation | null;
+    }) {
+      update(s => {
+        if (!s.activeSurfaceId) return s;
+        return {
+          ...s,
+          surfaces: s.surfaces.map(surface =>
+            surface.id === s.activeSurfaceId
+              ? {
+                  ...surface,
+                  effects: bundle.effects ?? [],
+                  activeEffectId: bundle.activeEffectId ?? null,
+                  effectAutomation: bundle.automation ?? undefined,
+                }
+              : surface
+          ),
+        };
+      });
+    },
+
     /** Patch any subset of the automation config. */
     updateEffectAutomation(patch: Partial<SurfaceEffectAutomation>) {
       update(s => ({
@@ -640,6 +667,64 @@ function createSurfaceStore() {
           const cur = surface.effectAutomation ?? defaultAutomation();
           return { ...surface, effectAutomation: { ...cur, ...patch } };
         }),
+      }));
+    },
+
+    /** Reverse the apply-stage transform — recompute each slice's
+     *  polygon (in surface coords) from its bound mapping layer's
+     *  current corner-warp + customPoints. Called when the Stage
+     *  Designer reopens, so the user can warp slice layers in
+     *  mapping mode and have those edits show up in the designer
+     *  when they go back. No-ops for slices with no layer binding
+     *  or whose bound layer no longer exists (the slice keeps its
+     *  prior polygon — a sensible fallback after layer deletion). */
+    syncFromMappingLayers(layers: import('../types').Layer[]) {
+      const state = get({ subscribe });
+      const surface = state.surfaces.find(s => s.id === state.activeSurfaceId);
+      if (!surface) return;
+      const layerById = new Map(layers.map(l => [l.id, l]));
+      const sw = Math.max(1, surface.width);
+      const sh = Math.max(1, surface.height);
+
+      const updatedSlices = surface.slices.map(slice => {
+        if (slice.sourceBinding?.kind !== 'layer') return slice;
+        const layer = layerById.get(slice.sourceBinding.layerId);
+        if (!layer || !layer.corners || !layer.layerShape?.params?.customPoints) return slice;
+        const corners = layer.corners;
+        const pts = layer.layerShape.params.customPoints;
+        if (pts.length < 3) return slice;
+        // Forward bilinear in canvas-normalized (Y-up) space:
+        //   p_canvas = bilinearMix(corners, uv)
+        // Then convert to surface coords (Y-down, scaled by surface dims).
+        const project = (uv: { x: number; y: number }) => {
+          const u = uv.x, v = uv.y;
+          const topX = corners.topLeft.x + (corners.topRight.x - corners.topLeft.x) * u;
+          const topY = corners.topLeft.y + (corners.topRight.y - corners.topLeft.y) * u;
+          const botX = corners.bottomLeft.x + (corners.bottomRight.x - corners.bottomLeft.x) * u;
+          const botY = corners.bottomLeft.y + (corners.bottomRight.y - corners.bottomLeft.y) * u;
+          const cx = botX + (topX - botX) * v;
+          const cy = botY + (topY - botY) * v;
+          // canvas Y-up → surface Y-down
+          return { x: cx * sw, y: (1 - cy) * sh };
+        };
+        const newPoly: import('../types').BezierPoint[] = pts.map(p => ({
+          x: project(p).x,
+          y: project(p).y,
+          cpIn:  p.cpIn  ? project(p.cpIn)  : undefined,
+          cpOut: p.cpOut ? project(p.cpOut) : undefined,
+        }));
+        return { ...slice, polygon: newPoly };
+      });
+
+      // Only update if something actually changed — avoid a no-op
+      // store write that would re-trigger the mirror subscriber.
+      const changed = updatedSlices.some((s, i) => s !== surface.slices[i]);
+      if (!changed) return;
+      update(prev => ({
+        ...prev,
+        surfaces: prev.surfaces.map(sf =>
+          sf.id === surface.id ? { ...sf, slices: updatedSlices } : sf
+        ),
       }));
     },
 
