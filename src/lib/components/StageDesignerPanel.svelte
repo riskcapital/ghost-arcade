@@ -28,7 +28,7 @@
     selectedSlice,
     parseSurfaceSVG,
   } from '../stores/surface';
-  import type { Point2D, SurfaceSlice } from '../types';
+  import type { Point2D, BezierPoint, SurfaceSlice } from '../types';
 
   // ── Canvas pan/zoom state ─────────────────────────────────
   // Mirrors the App.svelte viewport pattern: pan + zoom on a wrapper
@@ -47,18 +47,44 @@
   // Pen-tool in-flight polygon points. First click starts a draft;
   // each subsequent click adds a vertex; clicking near the first
   // vertex (or pressing Enter) closes the polygon and commits a slice.
-  let penDraft: Point2D[] | null = null;
+  // Click-and-drag from a new vertex pulls out symmetric bezier
+  // handles (Illustrator-style) so the segment leaving the anchor is
+  // a curve.
+  let penDraft: BezierPoint[] | null = null;
   /** Live cursor position in surface coords — used to render a
    *  preview segment from the last placed vertex to the cursor while
    *  the user is mid-draw. */
   let penCursor: Point2D | null = null;
+  /** When the user mouses down to place a pen vertex but is still
+   *  holding the button, we treat further movement as "pulling out"
+   *  the bezier handle. This state tracks the in-progress vertex. */
+  let penPulling: { anchorIndex: number; anchorPos: Point2D } | null = null;
+
+  // ── Slice-vertex drag state ───────────────────────────────
+  // For the select tool: drag an anchor or a bezier handle of the
+  // selected slice to reshape it without leaving the panel.
+  type VertexDrag =
+    | { kind: 'anchor';     sliceId: string; idx: number }
+    | { kind: 'cpIn';       sliceId: string; idx: number }
+    | { kind: 'cpOut';      sliceId: string; idx: number }
+    | { kind: 'sliceMove';  sliceId: string; startMouse: Point2D; startPolygon: BezierPoint[] };
+  let vertexDrag: VertexDrag | null = null;
 
   // ── File input for SVG import ─────────────────────────────
   let fileInput: HTMLInputElement;
+  let isDraggingFile = false;
   function triggerFilePicker() { fileInput?.click(); }
   function handleFile(e: Event) {
     const f = (e.target as HTMLInputElement).files?.[0];
     if (!f) return;
+    importSvgFile(f);
+    (e.target as HTMLInputElement).value = '';
+  }
+  function importSvgFile(file: File) {
+    if (!/\.svg$/i.test(file.name) && file.type !== 'image/svg+xml') {
+      alert('Please drop an .svg file.');
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       const text = String(reader.result ?? '');
@@ -66,9 +92,23 @@
         alert('No polygons could be extracted from that SVG.');
       }
     };
-    reader.readAsText(f);
-    // Reset so the same file can be reselected after a parse failure.
-    (e.target as HTMLInputElement).value = '';
+    reader.readAsText(file);
+  }
+  function onCanvasDragOver(e: DragEvent) {
+    // Show the drop overlay only if the drag actually carries files.
+    if (e.dataTransfer?.types?.includes('Files')) {
+      e.preventDefault();
+      isDraggingFile = true;
+    }
+  }
+  function onCanvasDragLeave(_e: DragEvent) {
+    isDraggingFile = false;
+  }
+  function onCanvasDrop(e: DragEvent) {
+    e.preventDefault();
+    isDraggingFile = false;
+    const f = e.dataTransfer?.files?.[0];
+    if (f) importSvgFile(f);
   }
 
   // ── Coordinate transforms ─────────────────────────────────
@@ -84,39 +124,94 @@
     return { x: localX, y: localY };
   }
 
-  // ── Panning ──────────────────────────────────────────────
+  // ── Mouse handling ─────────────────────────────────────────
+  // The canvas is a single big mousedown target — we dispatch based on
+  // the active tool, modifier keys, and what (if anything) was hit
+  // (a slice vertex / handle / body / empty canvas). Mousemove +
+  // mouseup are wired on the window so a fast drag that escapes the
+  // canvas bounds doesn't lose tracking.
   function onCanvasMouseDown(e: MouseEvent) {
-    // Middle button OR space+left = pan. Right-click = context menu (TODO).
+    // Pan: middle button or shift+left, regardless of tool.
     if (e.button === 1 || (e.button === 0 && e.shiftKey)) {
       isPanning = true;
       panStart = { x: e.clientX, y: e.clientY, px: panX, py: panY };
       e.preventDefault();
       return;
     }
-    // Pen tool: place a vertex.
-    if (tool === 'pen' && e.button === 0) {
-      const pt = screenToSurface(e.clientX, e.clientY);
-      if (!pt) return;
+    if (e.button !== 0) return;
+
+    const pt = screenToSurface(e.clientX, e.clientY);
+    if (!pt) return;
+
+    // Pen tool: place a new vertex. If the user starts dragging
+    // before releasing, the drag pulls out a bezier handle.
+    if (tool === 'pen') {
       if (!penDraft) {
-        penDraft = [pt];
-      } else {
-        // Click near the first vertex (within 12px in surface units
-        // at current zoom) closes the polygon.
-        const first = penDraft[0];
-        const closeDistSurface = 12 / zoom;
-        const dx = first.x - pt.x, dy = first.y - pt.y;
-        if (penDraft.length >= 3 && Math.hypot(dx, dy) < closeDistSurface) {
-          surfaceStore.addSlice(penDraft);
-          penDraft = null;
-          penCursor = null;
-        } else {
-          penDraft = [...penDraft, pt];
-        }
+        penDraft = [{ x: pt.x, y: pt.y }];
+        penPulling = { anchorIndex: 0, anchorPos: { x: pt.x, y: pt.y } };
+        e.preventDefault();
+        return;
       }
+      const first = penDraft[0];
+      const closeDistSurface = 12 / zoom;
+      const dx = first.x - pt.x, dy = first.y - pt.y;
+      if (penDraft.length >= 3 && Math.hypot(dx, dy) < closeDistSurface) {
+        surfaceStore.addSlice(penDraft);
+        penDraft = null;
+        penCursor = null;
+        penPulling = null;
+      } else {
+        const newAnchor: BezierPoint = { x: pt.x, y: pt.y };
+        penDraft = [...penDraft, newAnchor];
+        penPulling = { anchorIndex: penDraft.length - 1, anchorPos: { x: pt.x, y: pt.y } };
+      }
+      e.preventDefault();
       return;
     }
-    // Select tool: click empty canvas → clear selection.
-    if (tool === 'select' && e.button === 0 && e.target === canvasEl) {
+
+    // Select tool: hit-test in priority order — handles, anchors,
+    // slice body, empty canvas (clears selection).
+    if (tool === 'select' && $selectedSlice) {
+      const sl = $selectedSlice;
+      const hitR = 8 / zoom;
+      for (let idx = 0; idx < sl.polygon.length; idx++) {
+        const v = sl.polygon[idx];
+        // Handles only show while selected; check them first so a
+        // handle on top of an anchor still wins.
+        if (v.cpIn && Math.hypot(v.cpIn.x - pt.x, v.cpIn.y - pt.y) < hitR) {
+          vertexDrag = { kind: 'cpIn', sliceId: sl.id, idx };
+          e.preventDefault();
+          return;
+        }
+        if (v.cpOut && Math.hypot(v.cpOut.x - pt.x, v.cpOut.y - pt.y) < hitR) {
+          vertexDrag = { kind: 'cpOut', sliceId: sl.id, idx };
+          e.preventDefault();
+          return;
+        }
+        if (Math.hypot(v.x - pt.x, v.y - pt.y) < hitR) {
+          vertexDrag = { kind: 'anchor', sliceId: sl.id, idx };
+          e.preventDefault();
+          return;
+        }
+      }
+      // Click inside the slice body → start a move drag.
+      if (!sl.locked && pointInPolygon(pt, sl.polygon)) {
+        vertexDrag = {
+          kind: 'sliceMove', sliceId: sl.id,
+          startMouse: pt,
+          startPolygon: sl.polygon.map(p => ({
+            x: p.x, y: p.y,
+            cpIn:  p.cpIn  ? { ...p.cpIn  } : undefined,
+            cpOut: p.cpOut ? { ...p.cpOut } : undefined,
+          })),
+        };
+        e.preventDefault();
+        return;
+      }
+    }
+    // Empty canvas → clear selection (only when clicking the canvas
+    // background, not propagated from a slice path).
+    if (tool === 'select' && e.target === canvasEl) {
       surfaceStore.selectSlice(null);
     }
   }
@@ -126,12 +221,94 @@
       panY = panStart.py + (e.clientY - panStart.y);
       return;
     }
+    const pt = screenToSurface(e.clientX, e.clientY);
+    if (!pt) return;
+
+    // Pen-tool bezier-handle pull-out. While the mouse is held after
+    // placing a vertex, drag distance > ~3px (in surface units)
+    // pulls symmetric handles out of that vertex.
+    if (tool === 'pen' && penPulling && penDraft) {
+      const a = penPulling.anchorPos;
+      const dx = pt.x - a.x, dy = pt.y - a.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 3 / zoom) {
+        // Symmetric: cpOut at drag pos, cpIn reflected through anchor.
+        const idx = penPulling.anchorIndex;
+        const updated = [...penDraft];
+        updated[idx] = {
+          ...updated[idx],
+          cpOut: { x: a.x + dx, y: a.y + dy },
+          cpIn:  { x: a.x - dx, y: a.y - dy },
+        };
+        penDraft = updated;
+      }
+      return;
+    }
     if (tool === 'pen' && penDraft) {
-      penCursor = screenToSurface(e.clientX, e.clientY);
+      penCursor = pt;
+      return;
+    }
+
+    if (vertexDrag) {
+      if (vertexDrag.kind === 'sliceMove') {
+        const dx = pt.x - vertexDrag.startMouse.x;
+        const dy = pt.y - vertexDrag.startMouse.y;
+        const moved: BezierPoint[] = vertexDrag.startPolygon.map(p => ({
+          x: p.x + dx, y: p.y + dy,
+          cpIn:  p.cpIn  ? { x: p.cpIn.x  + dx, y: p.cpIn.y  + dy } : undefined,
+          cpOut: p.cpOut ? { x: p.cpOut.x + dx, y: p.cpOut.y + dy } : undefined,
+        }));
+        surfaceStore.updateSlice(vertexDrag.sliceId, { polygon: moved });
+      } else {
+        // Single-vertex / single-handle drag. Reach into the slice
+        // store; pull out the polygon, patch the one field, write back.
+        // Local alias so TS keeps the narrow type inside the .map cb
+        // (kind: 'anchor' | 'cpIn' | 'cpOut' — all have `idx`).
+        const drag = vertexDrag;
+        const slice = ($activeSurfaceSlices.find(x => x.id === drag.sliceId));
+        if (slice) {
+          const next = slice.polygon.map((v, i) => {
+            if (i !== drag.idx) return v;
+            if (drag.kind === 'anchor') {
+              // Move the anchor and its handles together (preserve
+              // local-relative handle offsets so the curve shape is
+              // preserved under translation).
+              const dx = pt.x - v.x;
+              const dy = pt.y - v.y;
+              return {
+                x: pt.x, y: pt.y,
+                cpIn:  v.cpIn  ? { x: v.cpIn.x  + dx, y: v.cpIn.y  + dy } : undefined,
+                cpOut: v.cpOut ? { x: v.cpOut.x + dx, y: v.cpOut.y + dy } : undefined,
+              };
+            }
+            if (drag.kind === 'cpIn')  return { ...v, cpIn:  { x: pt.x, y: pt.y } };
+            if (drag.kind === 'cpOut') return { ...v, cpOut: { x: pt.x, y: pt.y } };
+            return v;
+          });
+          surfaceStore.updateSlice(drag.sliceId, { polygon: next });
+        }
+      }
     }
   }
   function onWindowMouseUp(_e: MouseEvent) {
     isPanning = false;
+    penPulling = null;
+    vertexDrag = null;
+  }
+
+  /** Ray-cast point-in-polygon test for hit-detecting slice bodies.
+   *  Uses anchor positions only — beziers may slightly under/over-test
+   *  near curve apexes; acceptable for a click-tolerance test. */
+  function pointInPolygon(p: Point2D, poly: BezierPoint[]): boolean {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const xi = poly[i].x, yi = poly[i].y;
+      const xj = poly[j].x, yj = poly[j].y;
+      const intersect = ((yi > p.y) !== (yj > p.y)) &&
+        (p.x < ((xj - xi) * (p.y - yi)) / ((yj - yi) || 1e-9) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
   }
   function onCanvasWheel(e: WheelEvent) {
     if (!canvasEl) return;
@@ -185,11 +362,39 @@
   }
 
   // ── Helpers ──────────────────────────────────────────────
-  function polygonToPath(pts: Point2D[]): string {
+  /**
+   * Emit an SVG path d-string for a polygon. Each segment becomes a
+   * cubic `C` when EITHER endpoint carries a control handle (the
+   * other endpoint defaults to the anchor itself, which yields a
+   * straight segment shape from one side and a curve from the other —
+   * matches Illustrator's behavior). When neither endpoint has a
+   * handle, emit `L`. Closes with `Z`. Open polylines (e.g. mid-pen
+   * draft) skip the `Z` — caller decides via the `close` arg.
+   */
+  function polygonToPath(pts: BezierPoint[], close = true): string {
     if (pts.length === 0) return '';
     let d = `M ${pts[0].x} ${pts[0].y}`;
-    for (let i = 1; i < pts.length; i++) d += ` L ${pts[i].x} ${pts[i].y}`;
-    d += ' Z';
+    for (let i = 1; i < pts.length; i++) {
+      const prev = pts[i - 1];
+      const curr = pts[i];
+      if (prev.cpOut || curr.cpIn) {
+        const c1 = prev.cpOut ?? { x: prev.x, y: prev.y };
+        const c2 = curr.cpIn  ?? { x: curr.x, y: curr.y };
+        d += ` C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${curr.x} ${curr.y}`;
+      } else {
+        d += ` L ${curr.x} ${curr.y}`;
+      }
+    }
+    if (close && pts.length >= 3) {
+      // Closing segment: also bezier if the last/first carry handles.
+      const last = pts[pts.length - 1], first = pts[0];
+      if (last.cpOut || first.cpIn) {
+        const c1 = last.cpOut  ?? { x: last.x,  y: last.y  };
+        const c2 = first.cpIn  ?? { x: first.x, y: first.y };
+        d += ` C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${first.x} ${first.y}`;
+      }
+      d += ' Z';
+    }
     return d;
   }
 
@@ -200,11 +405,13 @@
     const rect = canvasEl.getBoundingClientRect();
     return screenToSurface(rect.left + rect.width / 2, rect.top + rect.height / 2) ?? { x: 200, y: 200 };
   }
-  function addPremade(kind: 'rect' | 'circle' | 'triangle' | 'star' | 'hex') {
+  function addPremade(kind: 'rect' | 'circle' | 'triangle' | 'star' | 'hex' | 'ellipse' | 'pill') {
     const c = viewportCenter();
     const r = 120;
-    let pts: Point2D[] = [];
+    let pts: BezierPoint[] = [];
+    let name = 'Shape';
     if (kind === 'rect') {
+      name = 'Rectangle';
       pts = [
         { x: c.x - r, y: c.y - r * 0.7 },
         { x: c.x + r, y: c.y - r * 0.7 },
@@ -212,18 +419,65 @@
         { x: c.x - r, y: c.y + r * 0.7 },
       ];
     } else if (kind === 'circle') {
-      const N = 48;
-      for (let i = 0; i < N; i++) {
-        const t = (i / N) * Math.PI * 2;
-        pts.push({ x: c.x + Math.cos(t) * r, y: c.y + Math.sin(t) * r });
-      }
+      name = 'Circle';
+      // True circle as 4 cubic-bezier quadrants. The magic constant
+      // 0.5522847... = (4/3) * tan(π/8) makes the quadrant a near-
+      // perfect quarter circle (max error < 0.027% of radius). This
+      // beats the N-sided polygon approximation at every zoom level
+      // AND makes the shape editable as a real bezier path — drag
+      // a handle and the curve flexes naturally.
+      const K = 0.5522847498307936 * r;
+      pts = [
+        { x: c.x,     y: c.y - r, cpIn: { x: c.x + K, y: c.y - r }, cpOut: { x: c.x - K, y: c.y - r } },
+        { x: c.x - r, y: c.y,     cpIn: { x: c.x - r, y: c.y - K }, cpOut: { x: c.x - r, y: c.y + K } },
+        { x: c.x,     y: c.y + r, cpIn: { x: c.x - K, y: c.y + r }, cpOut: { x: c.x + K, y: c.y + r } },
+        { x: c.x + r, y: c.y,     cpIn: { x: c.x + r, y: c.y + K }, cpOut: { x: c.x + r, y: c.y - K } },
+      ];
+    } else if (kind === 'ellipse') {
+      name = 'Ellipse';
+      const rx = r, ry = r * 0.6;
+      const Kx = 0.5522847498307936 * rx, Ky = 0.5522847498307936 * ry;
+      pts = [
+        { x: c.x,      y: c.y - ry, cpIn: { x: c.x + Kx, y: c.y - ry }, cpOut: { x: c.x - Kx, y: c.y - ry } },
+        { x: c.x - rx, y: c.y,      cpIn: { x: c.x - rx, y: c.y - Ky }, cpOut: { x: c.x - rx, y: c.y + Ky } },
+        { x: c.x,      y: c.y + ry, cpIn: { x: c.x - Kx, y: c.y + ry }, cpOut: { x: c.x + Kx, y: c.y + ry } },
+        { x: c.x + rx, y: c.y,      cpIn: { x: c.x + rx, y: c.y + Ky }, cpOut: { x: c.x + rx, y: c.y - Ky } },
+      ];
+    } else if (kind === 'pill') {
+      // Rounded rectangle (stadium): two straight long sides + two
+      // semicircular caps. Useful for projection mapping LED bars.
+      name = 'Pill';
+      const w = r * 1.4, h = r * 0.5;
+      const K = 0.5522847498307936 * h;
+      pts = [
+        { x: c.x - w, y: c.y - h,
+          cpIn:  { x: c.x - w, y: c.y - h },
+          cpOut: { x: c.x + w, y: c.y - h } },
+        { x: c.x + w, y: c.y - h,
+          cpIn:  { x: c.x - w, y: c.y - h },
+          cpOut: { x: c.x + w + K, y: c.y - h } },
+        { x: c.x + w + h, y: c.y,
+          cpIn:  { x: c.x + w + h, y: c.y - K },
+          cpOut: { x: c.x + w + h, y: c.y + K } },
+        { x: c.x + w, y: c.y + h,
+          cpIn:  { x: c.x + w + K, y: c.y + h },
+          cpOut: { x: c.x - w, y: c.y + h } },
+        { x: c.x - w, y: c.y + h,
+          cpIn:  { x: c.x + w, y: c.y + h },
+          cpOut: { x: c.x - w - K, y: c.y + h } },
+        { x: c.x - w - h, y: c.y,
+          cpIn:  { x: c.x - w - h, y: c.y + K },
+          cpOut: { x: c.x - w - h, y: c.y - K } },
+      ];
     } else if (kind === 'triangle') {
+      name = 'Triangle';
       pts = [
         { x: c.x, y: c.y - r },
         { x: c.x + r * 0.866, y: c.y + r * 0.5 },
         { x: c.x - r * 0.866, y: c.y + r * 0.5 },
       ];
     } else if (kind === 'star') {
+      name = 'Star';
       const N = 10;
       for (let i = 0; i < N; i++) {
         const t = (i / N) * Math.PI * 2 - Math.PI / 2;
@@ -231,17 +485,14 @@
         pts.push({ x: c.x + Math.cos(t) * rr, y: c.y + Math.sin(t) * rr });
       }
     } else if (kind === 'hex') {
+      name = 'Hexagon';
       const N = 6;
       for (let i = 0; i < N; i++) {
         const t = (i / N) * Math.PI * 2 - Math.PI / 6;
         pts.push({ x: c.x + Math.cos(t) * r, y: c.y + Math.sin(t) * r });
       }
     }
-    surfaceStore.addSlice(pts, kind === 'rect' ? 'Rectangle' :
-                                kind === 'circle' ? 'Circle' :
-                                kind === 'triangle' ? 'Triangle' :
-                                kind === 'star' ? 'Star' :
-                                kind === 'hex' ? 'Hexagon' : undefined);
+    surfaceStore.addSlice(pts, name);
   }
 
   // ── Auto-create a default surface when user opens the panel
@@ -303,16 +554,38 @@
     </div>
 
     <div class="header-center toolbar">
-      <button class="tool-btn" class:active={tool === 'select'} onclick={() => tool = 'select'} title="Select (V)">↖</button>
-      <button class="tool-btn" class:active={tool === 'pen'} onclick={() => tool = 'pen'} title="Pen — click to add vertices, click first to close (P)">✎</button>
+      <button class="tool-btn labeled" class:active={tool === 'select'} onclick={() => tool = 'select'} title="Select (V)">
+        <span class="t-icon">↖</span><span class="t-label">Select</span>
+      </button>
+      <button class="tool-btn labeled" class:active={tool === 'pen'} onclick={() => tool = 'pen'} title="Pen — click to add anchor, drag for bezier handle, click first to close (P)">
+        <span class="t-icon">✎</span><span class="t-label">Pen</span>
+      </button>
       <span class="tool-sep"></span>
-      <button class="tool-btn" onclick={() => addPremade('rect')}     title="Add rectangle">▭</button>
-      <button class="tool-btn" onclick={() => addPremade('circle')}   title="Add circle">◯</button>
-      <button class="tool-btn" onclick={() => addPremade('triangle')} title="Add triangle">△</button>
-      <button class="tool-btn" onclick={() => addPremade('star')}     title="Add star">☆</button>
-      <button class="tool-btn" onclick={() => addPremade('hex')}      title="Add hexagon">⬡</button>
+      <button class="tool-btn labeled" onclick={() => addPremade('rect')}     title="Add rectangle">
+        <span class="t-icon">▭</span><span class="t-label">Rect</span>
+      </button>
+      <button class="tool-btn labeled" onclick={() => addPremade('circle')}   title="Add circle (true cubic-bezier)">
+        <span class="t-icon">◯</span><span class="t-label">Circle</span>
+      </button>
+      <button class="tool-btn labeled" onclick={() => addPremade('ellipse')}  title="Add ellipse">
+        <span class="t-icon">⬭</span><span class="t-label">Ellipse</span>
+      </button>
+      <button class="tool-btn labeled" onclick={() => addPremade('triangle')} title="Add triangle">
+        <span class="t-icon">△</span><span class="t-label">Tri</span>
+      </button>
+      <button class="tool-btn labeled" onclick={() => addPremade('star')}     title="Add 5-point star">
+        <span class="t-icon">☆</span><span class="t-label">Star</span>
+      </button>
+      <button class="tool-btn labeled" onclick={() => addPremade('hex')}      title="Add hexagon">
+        <span class="t-icon">⬡</span><span class="t-label">Hex</span>
+      </button>
+      <button class="tool-btn labeled" onclick={() => addPremade('pill')}     title="Add pill (rounded rectangle)">
+        <span class="t-icon">▱</span><span class="t-label">Pill</span>
+      </button>
       <span class="tool-sep"></span>
-      <button class="tool-btn import-btn" onclick={triggerFilePicker} title="Import SVG file">↑ SVG</button>
+      <button class="tool-btn import-btn" onclick={triggerFilePicker} title="Import SVG file — each path becomes a slice with its bezier handles intact">
+        <span class="import-icon">↑</span><span>Import SVG</span>
+      </button>
       <input
         bind:this={fileInput}
         type="file"
@@ -379,9 +652,13 @@
     <div
       class="design-canvas"
       class:tool-pen={tool === 'pen'}
+      class:drop-active={isDraggingFile}
       bind:this={canvasEl}
       onmousedown={onCanvasMouseDown}
       onwheel={onCanvasWheel}
+      ondragover={onCanvasDragOver}
+      ondragleave={onCanvasDragLeave}
+      ondrop={onCanvasDrop}
       role="application"
       tabindex="0"
     >
@@ -430,13 +707,50 @@
                   pointer-events="none"
                 >{slice.name}</text>
               {/if}
-              <!-- Vertex handles for the selected slice -->
+              <!-- Vertex + bezier-handle controls for the selected
+                   slice. Anchor handles are square, bezier handles
+                   are smaller circles joined to their anchor by a
+                   thin tangent line — matches Illustrator/Figma
+                   convention so the user gets a free legible UX. -->
               {#if isSelected}
                 {#each slice.polygon as v, vi}
-                  <circle
-                    cx={v.x}
-                    cy={v.y}
-                    r={4 / zoom}
+                  <!-- Bezier handle tangent lines + nubs -->
+                  {#if v.cpIn}
+                    <line
+                      x1={v.x} y1={v.y}
+                      x2={v.cpIn.x} y2={v.cpIn.y}
+                      stroke={slice.color}
+                      stroke-width={0.8 / zoom}
+                      opacity="0.55"
+                    />
+                    <circle
+                      cx={v.cpIn.x} cy={v.cpIn.y}
+                      r={3 / zoom}
+                      fill={slice.color}
+                      opacity="0.9"
+                    />
+                  {/if}
+                  {#if v.cpOut}
+                    <line
+                      x1={v.x} y1={v.y}
+                      x2={v.cpOut.x} y2={v.cpOut.y}
+                      stroke={slice.color}
+                      stroke-width={0.8 / zoom}
+                      opacity="0.55"
+                    />
+                    <circle
+                      cx={v.cpOut.x} cy={v.cpOut.y}
+                      r={3 / zoom}
+                      fill={slice.color}
+                      opacity="0.9"
+                    />
+                  {/if}
+                  <!-- Anchor — square so it's distinct from bezier handles -->
+                  <rect
+                    x={v.x - 4 / zoom}
+                    y={v.y - 4 / zoom}
+                    width={8 / zoom}
+                    height={8 / zoom}
                     fill="#0a0a0c"
                     stroke={slice.color}
                     stroke-width={1.5 / zoom}
@@ -446,28 +760,87 @@
             {/if}
           {/each}
 
-          <!-- Pen-tool live draft -->
+          <!-- Pen-tool live draft. The committed segments render
+               with their bezier curves (since penDraft is BezierPoint[]);
+               the trailing segment from last vertex to cursor renders
+               separately as a dashed preview so the user knows it's
+               not yet placed. -->
           {#if penDraft && penDraft.length > 0}
             <path
-              d={polygonToPath([...penDraft, ...(penCursor ? [penCursor] : [])])}
+              d={polygonToPath(penDraft, false)}
               fill="none"
               stroke="#4cd1ff"
               stroke-width={1.5 / zoom}
-              stroke-dasharray="{4 / zoom},{3 / zoom}"
+              opacity="0.9"
             />
+            {#if penCursor}
+              <line
+                x1={penDraft[penDraft.length - 1].x}
+                y1={penDraft[penDraft.length - 1].y}
+                x2={penCursor.x}
+                y2={penCursor.y}
+                stroke="#4cd1ff"
+                stroke-width={1.5 / zoom}
+                stroke-dasharray="{4 / zoom},{3 / zoom}"
+                opacity="0.6"
+              />
+            {/if}
             {#each penDraft as v, vi}
-              <circle cx={v.x} cy={v.y} r={4 / zoom} fill="#4cd1ff" stroke="#0a0a0c" stroke-width={1 / zoom} />
+              {#if v.cpIn}
+                <line x1={v.x} y1={v.y} x2={v.cpIn.x} y2={v.cpIn.y}
+                      stroke="#4cd1ff" stroke-width={0.7 / zoom} opacity="0.5" />
+                <circle cx={v.cpIn.x} cy={v.cpIn.y} r={2.5 / zoom} fill="#4cd1ff" opacity="0.7" />
+              {/if}
+              {#if v.cpOut}
+                <line x1={v.x} y1={v.y} x2={v.cpOut.x} y2={v.cpOut.y}
+                      stroke="#4cd1ff" stroke-width={0.7 / zoom} opacity="0.5" />
+                <circle cx={v.cpOut.x} cy={v.cpOut.y} r={2.5 / zoom} fill="#4cd1ff" opacity="0.7" />
+              {/if}
+              <rect
+                x={v.x - 3.5 / zoom} y={v.y - 3.5 / zoom}
+                width={7 / zoom} height={7 / zoom}
+                fill="#4cd1ff" stroke="#0a0a0c" stroke-width={1 / zoom}
+              />
             {/each}
           {/if}
         </svg>
       {/if}
 
-      <!-- Help overlay when nothing yet -->
+      <!-- Empty-state CTAs — visible only when the surface has no
+           slices yet AND the user isn't mid-pen-draft. Two big
+           obvious buttons + a dotted drop zone so the user can't
+           miss either entry point. -->
       {#if $activeSurfaceSlices.length === 0 && !penDraft}
-        <div class="canvas-hint">
-          <p><strong>Stage Designer</strong></p>
-          <p>↑ Import an SVG, drag a premade shape, or press <kbd>P</kbd> to draw with the pen.</p>
-          <p style="opacity: 0.6;">Shift+drag = pan · Mouse wheel = zoom · Esc = close</p>
+        <div class="canvas-empty">
+          <div class="empty-card">
+            <p class="empty-title">Stage Designer</p>
+            <p class="empty-sub">Import a vector stage layout, or build it from primitives.</p>
+            <div class="empty-actions">
+              <button class="empty-btn primary" onclick={triggerFilePicker}>
+                ↑ Import SVG file
+              </button>
+              <button class="empty-btn" onclick={() => tool = 'pen'}>
+                ✎ Draw with pen
+              </button>
+              <button class="empty-btn" onclick={() => addPremade('rect')}>
+                ▭ Start with a rectangle
+              </button>
+            </div>
+            <p class="empty-hint">…or drop an SVG file anywhere on this canvas.</p>
+            <p class="empty-shortcut">Shift+drag pans · wheel zooms · Esc closes the workspace</p>
+          </div>
+        </div>
+      {/if}
+
+      <!-- Live drop indicator while a file is being dragged over the
+           canvas — overrides the empty-state CTA so the user sees
+           exactly where the drop will land. -->
+      {#if isDraggingFile}
+        <div class="canvas-drop-overlay">
+          <div class="drop-card">
+            <span class="drop-icon">↧</span>
+            <p>Drop SVG to import</p>
+          </div>
         </div>
       {/if}
     </div>
@@ -587,8 +960,9 @@
     gap: 4px;
   }
   .tool-btn {
-    width: 30px;
+    min-width: 30px;
     height: 30px;
+    padding: 0 6px;
     border: 1px solid #2a2a30;
     background: #14141a;
     color: #aaa;
@@ -598,6 +972,19 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    gap: 5px;
+  }
+  .tool-btn.labeled {
+    padding: 0 9px 0 7px;
+  }
+  .tool-btn .t-icon {
+    font-size: 14px;
+    line-height: 1;
+  }
+  .tool-btn .t-label {
+    font-size: 11px;
+    letter-spacing: 0.3px;
+    font-weight: 500;
   }
   .tool-btn:hover {
     border-color: #4cd1ff;
@@ -610,9 +997,23 @@
   }
   .tool-btn.import-btn {
     width: auto;
-    padding: 0 10px;
-    font-size: 11px;
-    letter-spacing: 1px;
+    padding: 0 14px;
+    font-size: 11.5px;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+    background: linear-gradient(180deg, rgba(76,209,255,0.18), rgba(76,209,255,0.08));
+    border-color: rgba(76,209,255,0.4);
+    color: #b6e8ff;
+    gap: 6px;
+  }
+  .tool-btn.import-btn:hover {
+    background: linear-gradient(180deg, rgba(76,209,255,0.32), rgba(76,209,255,0.18));
+    border-color: #4cd1ff;
+    color: #fff;
+  }
+  .tool-btn.import-btn .import-icon {
+    font-size: 13px;
+    font-weight: 700;
   }
   .tool-sep {
     width: 1px;
@@ -755,26 +1156,118 @@
        and stroke widths legible at any zoom via the /zoom divisions
        above. */
   }
-  .canvas-hint {
+  /* Empty-state card — replaces the previous tiny hint, gives users
+     three actionable buttons + clear instructions to drop an SVG. */
+  .canvas-empty {
     position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    text-align: center;
-    color: #666;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     pointer-events: none;
-    font-size: 13px;
-    line-height: 1.6;
+    z-index: 1;
   }
-  .canvas-hint kbd {
-    display: inline-block;
-    padding: 1px 6px;
-    background: #14141a;
-    border: 1px solid #2a2a30;
-    border-radius: 3px;
-    font-family: monospace;
-    font-size: 11px;
+  .empty-card {
+    pointer-events: auto;
+    background: rgba(10, 10, 14, 0.85);
+    border: 1px solid #1d1d22;
+    border-radius: 10px;
+    padding: 32px 36px;
+    text-align: center;
+    max-width: 460px;
+    backdrop-filter: blur(8px);
+  }
+  .empty-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: #4cd1ff;
+    letter-spacing: 2px;
+    margin: 0 0 6px;
+  }
+  .empty-sub {
+    font-size: 13px;
     color: #aaa;
+    margin: 0 0 22px;
+    line-height: 1.5;
+  }
+  .empty-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  .empty-btn {
+    padding: 11px 18px;
+    border-radius: 6px;
+    border: 1px solid #2a2a30;
+    background: #14141a;
+    color: #ddd;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .empty-btn:hover {
+    background: #1c1c24;
+    border-color: #4cd1ff;
+    color: #fff;
+  }
+  .empty-btn.primary {
+    background: linear-gradient(135deg, #4cd1ff, #6f5cff);
+    border-color: transparent;
+    color: #fff;
+    font-weight: 600;
+  }
+  .empty-btn.primary:hover {
+    background: linear-gradient(135deg, #80dfff, #8a7aff);
+    transform: scale(1.02);
+  }
+  .empty-hint {
+    font-size: 11px;
+    color: #777;
+    margin: 0 0 4px;
+  }
+  .empty-shortcut {
+    font-size: 10.5px;
+    color: #555;
+    margin: 0;
+    letter-spacing: 0.3px;
+  }
+
+  /* Live drop overlay — shown while a file is being dragged over the
+     canvas. The .drop-active class on the canvas root provides the
+     dashed border accent; this is the centered card. */
+  .design-canvas.drop-active {
+    box-shadow: inset 0 0 0 3px rgba(76,209,255,0.6);
+  }
+  .canvas-drop-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(76,209,255,0.08);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 5;
+  }
+  .drop-card {
+    background: rgba(10, 10, 14, 0.95);
+    border: 2px dashed #4cd1ff;
+    border-radius: 12px;
+    padding: 24px 40px;
+    text-align: center;
+    color: #4cd1ff;
+  }
+  .drop-icon {
+    display: block;
+    font-size: 32px;
+    margin-bottom: 6px;
+  }
+  .drop-card p {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 1px;
   }
 
   /* ─── Inspector (right) ─── */

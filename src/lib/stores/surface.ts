@@ -11,7 +11,7 @@
  */
 
 import { writable, derived, get } from 'svelte/store';
-import type { Surface, SurfaceSlice, SurfaceSliceBinding, Point2D } from '../types';
+import type { Surface, SurfaceSlice, SurfaceSliceBinding, Point2D, BezierPoint } from '../types';
 import { generateUUID } from '../utils/uuid';
 
 // ─── State ───────────────────────────────────────────────
@@ -49,7 +49,157 @@ const SVG_GEOM_TAGS = new Set(['path', 'polygon', 'polyline', 'rect', 'circle', 
 
 interface ParsedSurfaceSlice {
   name: string;
-  polygon: Point2D[];
+  polygon: BezierPoint[];
+}
+
+/**
+ * Minimal SVG path-d parser that turns C/Q/S/T commands into
+ * BezierPoint anchors with cpIn/cpOut handles. M/L/H/V/Z become
+ * straight-segment anchors. Falls back to sampling via
+ * SVGGeometryElement for any path that doesn't parse cleanly here —
+ * sampled curves are lossy (no handles) but visually correct.
+ *
+ * Returns null if the path d-string is too gnarly (e.g. unsupported
+ * commands or arc commands which we don't yet expand). Caller can then
+ * fall through to the sampling path.
+ */
+function parsePathDToBezier(d: string): BezierPoint[] | null {
+  if (!d || typeof d !== 'string') return null;
+  // Tokenize: split commands and numbers. SVG numbers can be exponents,
+  // signed, decimals; this regex is permissive enough for hand-authored
+  // and Illustrator output.
+  const tokens = d.match(/[a-zA-Z]|-?\d*\.?\d+(?:[eE][-+]?\d+)?/g);
+  if (!tokens || tokens.length === 0) return null;
+  const result: BezierPoint[] = [];
+  let cx = 0, cy = 0;          // current point
+  let startX = 0, startY = 0;  // subpath start (for Z)
+  // Reflected control point cache for S/T smooth commands. Per the SVG
+  // spec these reflect the previous cubic/quadratic control point.
+  let lastCubicCp: Point2D | null = null;
+  let lastQuadCp: Point2D | null = null;
+  let i = 0;
+  function num(): number {
+    const v = parseFloat(tokens![i++]);
+    if (isNaN(v)) throw new Error('NaN');
+    return v;
+  }
+  function pushAnchor(x: number, y: number, cpIn?: Point2D, cpOut?: Point2D) {
+    const pt: BezierPoint = { x, y };
+    if (cpIn) pt.cpIn = cpIn;
+    if (cpOut) pt.cpOut = cpOut;
+    result.push(pt);
+  }
+  try {
+    let cmd = '';
+    let isRel = false;
+    while (i < tokens.length) {
+      const t = tokens[i];
+      if (/^[a-zA-Z]$/.test(t)) {
+        cmd = t.toUpperCase();
+        isRel = t !== cmd;
+        i++;
+      }
+      if (cmd === 'M' || cmd === 'L') {
+        const x = num() + (isRel ? cx : 0);
+        const y = num() + (isRel ? cy : 0);
+        if (cmd === 'M') {
+          startX = x; startY = y;
+          result.length = 0; // Stage slice = ONE subpath; reset if another M appears.
+          pushAnchor(x, y);
+        } else {
+          pushAnchor(x, y);
+        }
+        cx = x; cy = y;
+        lastCubicCp = null; lastQuadCp = null;
+        // Implicit lineto continues the current command.
+        if (cmd === 'M') cmd = 'L';
+      } else if (cmd === 'H') {
+        const x = num() + (isRel ? cx : 0);
+        pushAnchor(x, cy);
+        cx = x;
+        lastCubicCp = null; lastQuadCp = null;
+      } else if (cmd === 'V') {
+        const y = num() + (isRel ? cy : 0);
+        pushAnchor(cx, y);
+        cy = y;
+        lastCubicCp = null; lastQuadCp = null;
+      } else if (cmd === 'C') {
+        const c1x = num() + (isRel ? cx : 0);
+        const c1y = num() + (isRel ? cy : 0);
+        const c2x = num() + (isRel ? cx : 0);
+        const c2y = num() + (isRel ? cy : 0);
+        const x   = num() + (isRel ? cx : 0);
+        const y   = num() + (isRel ? cy : 0);
+        // Attach cpOut to the previous anchor (last pushed) and cpIn
+        // to the new anchor. SVG stores them per-segment; we store them
+        // per-vertex on either end of the segment.
+        if (result.length > 0) result[result.length - 1].cpOut = { x: c1x, y: c1y };
+        pushAnchor(x, y, { x: c2x, y: c2y });
+        cx = x; cy = y;
+        lastCubicCp = { x: c2x, y: c2y };
+        lastQuadCp = null;
+      } else if (cmd === 'S') {
+        // Smooth cubic — reflect previous c2 around the current point.
+        const reflected: Point2D = lastCubicCp
+          ? { x: 2 * cx - lastCubicCp.x, y: 2 * cy - lastCubicCp.y }
+          : { x: cx, y: cy };
+        const c2x = num() + (isRel ? cx : 0);
+        const c2y = num() + (isRel ? cy : 0);
+        const x   = num() + (isRel ? cx : 0);
+        const y   = num() + (isRel ? cy : 0);
+        if (result.length > 0) result[result.length - 1].cpOut = reflected;
+        pushAnchor(x, y, { x: c2x, y: c2y });
+        cx = x; cy = y;
+        lastCubicCp = { x: c2x, y: c2y };
+        lastQuadCp = null;
+      } else if (cmd === 'Q') {
+        // Quadratic — convert to cubic by elevating degree. C1 = P0 +
+        // 2/3(Q - P0), C2 = P2 + 2/3(Q - P2).
+        const qx = num() + (isRel ? cx : 0);
+        const qy = num() + (isRel ? cy : 0);
+        const x  = num() + (isRel ? cx : 0);
+        const y  = num() + (isRel ? cy : 0);
+        const c1: Point2D = { x: cx + (2/3) * (qx - cx), y: cy + (2/3) * (qy - cy) };
+        const c2: Point2D = { x:  x + (2/3) * (qx -  x), y:  y + (2/3) * (qy -  y) };
+        if (result.length > 0) result[result.length - 1].cpOut = c1;
+        pushAnchor(x, y, c2);
+        cx = x; cy = y;
+        lastQuadCp = { x: qx, y: qy };
+        lastCubicCp = null;
+      } else if (cmd === 'T') {
+        const reflected: Point2D = lastQuadCp
+          ? { x: 2 * cx - lastQuadCp.x, y: 2 * cy - lastQuadCp.y }
+          : { x: cx, y: cy };
+        const x = num() + (isRel ? cx : 0);
+        const y = num() + (isRel ? cy : 0);
+        const c1: Point2D = { x: cx + (2/3) * (reflected.x - cx), y: cy + (2/3) * (reflected.y - cy) };
+        const c2: Point2D = { x:  x + (2/3) * (reflected.x -  x), y:  y + (2/3) * (reflected.y -  y) };
+        if (result.length > 0) result[result.length - 1].cpOut = c1;
+        pushAnchor(x, y, c2);
+        cx = x; cy = y;
+        lastQuadCp = reflected;
+        lastCubicCp = null;
+      } else if (cmd === 'Z') {
+        // Close — return to subpath start. No new anchor (the next
+        // segment is implicit between last anchor and result[0]). We
+        // signal "closed" by the fact that the slice's polygon array
+        // is used as a closed shape; nothing extra to push.
+        cx = startX; cy = startY;
+        lastCubicCp = null; lastQuadCp = null;
+      } else if (cmd === 'A') {
+        // SVG arc command — exact cubic-bezier expansion is nontrivial.
+        // For now: bail to sampling path so the slice still imports
+        // (just without the perfect handles).
+        return null;
+      } else {
+        // Unknown command — bail.
+        return null;
+      }
+    }
+  } catch {
+    return null;
+  }
+  return result.length >= 3 ? result : null;
 }
 
 /** Parse SVG source text into a list of {name, polygon} entries.
@@ -103,26 +253,49 @@ export function parseSurfaceSVG(svgSource: string): {
       try { len = el.getTotalLength(); } catch { return; }
       if (!isFinite(len) || len <= 0) return;
 
-      const polygon: Point2D[] = [];
-      // For polygon / polyline, prefer the raw points list (no
-      // resampling — preserves user intent and is exact).
+      let polygon: BezierPoint[] = [];
+      // For polygon / polyline, raw points are exact and unambiguous.
       if (tag === 'polygon' || tag === 'polyline') {
         const raw = el.getAttribute('points') || '';
         const nums = raw.split(/[\s,]+/).map(Number).filter(n => !isNaN(n));
-        for (let i = 0; i + 1 < nums.length; i += 2) {
-          polygon.push({ x: nums[i] - vbX, y: nums[i + 1] - vbY });
+        for (let j = 0; j + 1 < nums.length; j += 2) {
+          polygon.push({ x: nums[j] - vbX, y: nums[j + 1] - vbY });
+        }
+      } else if (tag === 'path') {
+        // Try the structured parser first so cubic / quadratic curves
+        // come through with their handles intact. Bail to sampling on
+        // unsupported commands (e.g. SVG arcs).
+        const d = el.getAttribute('d') || '';
+        const parsed = parsePathDToBezier(d);
+        if (parsed) {
+          // Translate to viewBox-origin space.
+          polygon = parsed.map(p => ({
+            x: p.x - vbX, y: p.y - vbY,
+            cpIn:  p.cpIn  ? { x: p.cpIn.x  - vbX, y: p.cpIn.y  - vbY } : undefined,
+            cpOut: p.cpOut ? { x: p.cpOut.x - vbX, y: p.cpOut.y - vbY } : undefined,
+          }));
+        } else {
+          // Fallback sampling — straight-segment polygon, no handles.
+          const steps = SVG_SAMPLE_POINTS;
+          for (let s = 0; s < steps; s++) {
+            const t = (s / steps) * len;
+            try {
+              const pt = el.getPointAtLength(t);
+              polygon.push({ x: pt.x - vbX, y: pt.y - vbY });
+            } catch {}
+          }
         }
       } else {
-        // Sample curved / rect / arc geometry uniformly along its length.
+        // rect / circle / ellipse / line — sample uniformly. Could be
+        // exactified later (circles → 4 cubic beziers, etc.) but the
+        // 64-sample approximation reads as smooth at any practical zoom.
         const steps = SVG_SAMPLE_POINTS;
         for (let s = 0; s < steps; s++) {
           const t = (s / steps) * len;
           try {
             const pt = el.getPointAtLength(t);
             polygon.push({ x: pt.x - vbX, y: pt.y - vbY });
-          } catch {
-            // Single sample failure isn't fatal — skip it.
-          }
+          } catch {}
         }
       }
       if (polygon.length >= 3) {
@@ -233,7 +406,7 @@ function createSurfaceStore() {
 
     // ─── Slice CRUD ───
 
-    addSlice(polygon: Point2D[], name?: string): string | null {
+    addSlice(polygon: BezierPoint[], name?: string): string | null {
       const state = get({ subscribe });
       const target = state.surfaces.find(x => x.id === state.activeSurfaceId);
       if (!target) return null;
