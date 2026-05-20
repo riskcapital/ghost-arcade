@@ -977,7 +977,11 @@
   .stage-overlay {
     position: fixed;
     inset: 0;
-    z-index: 999;
+    /* Must sit ABOVE the main .toolbar (z-index 1000 in App.svelte)
+       so the Stage Designer's own header — Back to Mapping, Apply
+       Stage, zoom controls — isn't cropped behind the app toolbar.
+       Matches VJModePanel's overlay z-index. */
+    z-index: 1001;
     background: #050507;
     color: #ddd;
     display: flex;
