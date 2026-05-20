@@ -287,6 +287,113 @@ void main() {
       recordDiscreteAction();
     },
 
+    /** Batch-create mapping layers from a Stage Designer Surface's
+     *  slices. Each slice becomes a custom-shape media layer:
+     *
+     *  - corners: the slice polygon's surface-space bbox, expressed in
+     *    project-normalized 0..1 coords (Y-flipped — corners use the
+     *    UV convention where Y=1 is top, Y=0 is bottom; surface coords
+     *    are SVG-style Y-down).
+     *  - layerShape.type='custom' with the slice's bezier polygon
+     *    transformed into layer-local 0..1 space + Y-flipped. The
+     *    engine's existing custom-shape rendering path (polygon mask
+     *    shader + bezier tessellation in tessellateMaskShape) clips
+     *    content to the polygon — content fills the bbox, mask makes
+     *    only the polygon visible.
+     *  - corner-warp on the new layer is set to the bbox so dragging
+     *    a corner re-anchors the polygon to a physical surface point.
+     *
+     *  If `replaceLinked` is true and the caller passes a sliceId →
+     *  layerId map, EXISTING linked layers are updated in place rather
+     *  than duplicated — re-applying a stage doesn't pile up layers
+     *  across multiple rounds.
+     *
+     *  Returns a fresh sliceId → layerId map. */
+    applyStageSurfaceToLayers(
+      surface: import('../types').Surface,
+      existingLinks?: Record<string, string>,
+    ): Record<string, string> {
+      const links: Record<string, string> = {};
+      update((project) => {
+        let layers = project.layers;
+        const sw = Math.max(1, surface.width);
+        const sh = Math.max(1, surface.height);
+        for (const slice of surface.slices) {
+          if (slice.polygon.length < 3) continue;
+          // 1. Compute slice bbox in surface coords (using anchors —
+          //    bezier handles slightly extend beyond but the warp can
+          //    be adjusted after import and most real-world projection
+          //    geometry has anchors at the extremes).
+          let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+          for (const p of slice.polygon) {
+            if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+            if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+          }
+          const bw = Math.max(1e-6, maxX - minX);
+          const bh = Math.max(1e-6, maxY - minY);
+          // 2. Re-normalize polygon to layer-local 0..1 + Y-flip
+          //    (surface Y is down, layer UV Y is up).
+          const localPoly = slice.polygon.map(p => ({
+            x: (p.x - minX) / bw,
+            y: 1 - (p.y - minY) / bh,
+            cpIn:  p.cpIn  ? { x: (p.cpIn.x  - minX) / bw, y: 1 - (p.cpIn.y  - minY) / bh } : undefined,
+            cpOut: p.cpOut ? { x: (p.cpOut.x - minX) / bw, y: 1 - (p.cpOut.y - minY) / bh } : undefined,
+          }));
+          // 3. corners in project-normalized 0..1 with Y-flip.
+          const cMinX = minX / sw, cMaxX = maxX / sw;
+          const cTop  = 1 - (minY / sh);  // bbox top in canvas Y → high in corner Y
+          const cBot  = 1 - (maxY / sh);
+          const corners = {
+            topLeft:     { x: cMinX, y: cTop },
+            topRight:    { x: cMaxX, y: cTop },
+            bottomLeft:  { x: cMinX, y: cBot },
+            bottomRight: { x: cMaxX, y: cBot },
+          };
+
+          const existingId = existingLinks?.[slice.id];
+          if (existingId && layers.some(l => l.id === existingId)) {
+            // Update in place — preserves any content the user has
+            // already assigned to this layer between applies.
+            layers = layers.map(l => l.id === existingId ? {
+              ...l,
+              name: slice.name,
+              corners,
+              layerShape: {
+                type: 'custom' as const,
+                enabled: true,
+                params: {
+                  ...(l.layerShape?.params ?? { feather: 0, rotation: 0 }),
+                  customPoints: localPoly,
+                  customClosed: true,
+                },
+              },
+            } : l);
+            links[slice.id] = existingId;
+          } else {
+            // Fresh media layer with custom shape pre-applied.
+            const id = generateUUID();
+            const fresh = createLayer(id, slice.name, 'media');
+            fresh.corners = corners;
+            fresh.layerShape = {
+              type: 'custom',
+              enabled: true,
+              params: {
+                feather: 0,
+                rotation: 0,
+                customPoints: localPoly,
+                customClosed: true,
+              },
+            };
+            layers = [fresh, ...layers];
+            links[slice.id] = id;
+          }
+        }
+        return { ...project, layers, selectedLayerId: layers[0]?.id ?? null };
+      });
+      recordDiscreteAction();
+      return links;
+    },
+
     addLightPaintingLayer(name?: string) {
       update((project) => {
         const id = generateUUID();
@@ -3882,6 +3989,11 @@ void main() {
           mediaFolders: normalizeMediaTrayFolders(currentProject.mediaFolders),
           stagePresets: currentProject.stagePresets || [],
           svKeyboardPresets: currentProject.svKeyboardPresets || [],
+          // Stage Designer surfaces — projection geometry layouts +
+          // their slice→layer bindings. Persisted as plain JSON; no
+          // runtime refs to strip.
+          surfaces: currentProject.surfaces || [],
+          activeSurfaceId: currentProject.activeSurfaceId ?? null,
         },
         // Include media library
         mediaLibrary: exportMedia,
@@ -4706,10 +4818,24 @@ void main() {
           mediaFolders: normalizeMediaTrayFolders(proj.mediaFolders),
           stagePresets: (proj as any).stagePresets || [],
           svKeyboardPresets: (proj as any).svKeyboardPresets || [],
+          surfaces: (proj as any).surfaces || [],
+          activeSurfaceId: (proj as any).activeSurfaceId ?? null,
         };
 
         set(importedProject);
         selectedLayerIdsState.set(importedProject.selectedLayerId ? [importedProject.selectedLayerId] : []);
+        // Hydrate the Stage Designer surface store from the imported
+        // project. Deferred via dynamic import + microtask so the
+        // surface module — which lazily loads here — doesn't introduce
+        // a circular dep at module-evaluation time.
+        if (importedProject.surfaces?.length) {
+          void import('./surface').then(({ surfaceStore }) => {
+            queueMicrotask(() => surfaceStore.hydrateFromProject(
+              importedProject.surfaces!,
+              importedProject.activeSurfaceId ?? null,
+            ));
+          });
+        }
         console.log('Project imported successfully with', importedProject.layers.length, 'layers');
         if (importedVjMode) {
           console.log('Imported', importedVjMode.compositions.length, 'presets');

@@ -4212,6 +4212,39 @@ export interface Surface {
    *  generated FROM this SVG on import but stored independently so the
    *  user can edit them afterward. */
   background?: { svgRef?: string; color?: string };
+  /** Stage Effects — procedural pixel-map sources that animate the
+   *  surface's slices. Each effect emits a brightness/color value per
+   *  slice each frame, which Canvas applies as an opacity multiplier
+   *  on the slice's bound mapping layer. Active effects run regardless
+   *  of which workspace is open (so the pulse keeps animating in
+   *  mapping mode after you Apply Stage). */
+  effects?: StageEffect[];
+}
+
+// ── Stage Effects ────────────────────────────────────────
+// Resolume-style "stage-pixel" effects — procedural generators that
+// drive per-slice brightness in waves / pulses / sweeps so the whole
+// stage reacts together. Each slice's centroid samples the effect's
+// virtual output at that location; the resulting brightness becomes
+// an opacity multiplier on the slice's bound mapping layer.
+
+export type StageEffectType =
+  | 'radial-pulse'          // expanding ring from configurable origin
+  | 'linear-sweep'          // bar of light sweeping across the surface
+  | 'noise-flicker'         // pseudo-random per-slice brightness (Perlin)
+  | 'audio-rms-intensity';  // solid brightness driven by audio RMS
+
+export interface StageEffect {
+  id: string;
+  type: StageEffectType;
+  enabled: boolean;
+  /** 0..1 wet/dry — at 0 the effect contributes nothing (slice gets
+   *  brightness 1 from this effect's perspective), at 1 full effect. */
+  opacity: number;
+  /** Type-specific generator params. Keys are stable for serialization
+   *  (no enum on values — numbers only so MIDI / LFO modulation can
+   *  reach in via the standard modulationStore pipeline). */
+  params: Record<string, number>;
 }
 
 export interface SurfaceSlice {

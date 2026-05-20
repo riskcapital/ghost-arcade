@@ -7,6 +7,7 @@
   import { vjOutputLayers, vjClipLauncher } from '../stores/vjClipLauncher';
   import { macros } from '../stores/macros';
   import { layerSequencer } from '../stores/layerSequencer';
+  import { stageEffectsRuntime } from '../stores/stageEffects';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
   import type { Layer } from '../types';
   import * as THREE from 'three';
@@ -1210,6 +1211,29 @@
         const seqState = get(layerSequencer);
         const seqOverrides = (seqState.isPlaying || Object.keys(seqState.opacityOverrides).length > 0) ? seqState.opacityOverrides : null;
 
+        // ── Stage Effects opacity modulation (per-slice brightness) ──
+        // For any layer that's bound to a Surface slice (via Apply
+        // Stage), look up the slice's current effect-driven brightness
+        // and multiply the layer's opacity by it.  Stash the original
+        // in `_stageOrigOpacity` and restore at the end of the frame
+        // alongside the sequencer's `_seqOrigOpacity` restore.  Done
+        // BEFORE the sequencer-override block so the sequencer's
+        // continuous-mode gate stacks on top (the two systems compose:
+        // sequencer says "show/hide this beat", stage says "while
+        // shown, ride the cascading pulse").
+        const stageRt = get(stageEffectsRuntime);
+        if (stageRt.sliceOutputs.size > 0 && stageRt.layerToSlice.size > 0) {
+          for (let i = 0; i < layersToRender.length; i++) {
+            const layer = layersToRender[i];
+            const sliceId = stageRt.layerToSlice.get(layer.id);
+            if (!sliceId) continue;
+            const brightness = stageRt.sliceOutputs.get(sliceId);
+            if (brightness === undefined || brightness >= 1) continue;
+            (layer as any)._stageOrigOpacity = layer.opacity;
+            layer.opacity = layer.opacity * brightness;
+          }
+        }
+
         if (seqOverrides) {
           // Continuous-mode rows take a separate side-channel path:
           // their `layer.opacity` stays unchanged so the engine still
@@ -1300,17 +1324,22 @@
         // alpha-gate side channel after render. Both fields must be
         // wiped each frame so a row toggled off the sequencer (or out
         // of continuous mode) doesn't carry stale state into later
-        // frames.
-        if (seqOverrides) {
-          for (let i = 0; i < layersToRender.length; i++) {
-            const layer = layersToRender[i];
-            if ((layer as any)._seqOrigOpacity !== undefined) {
-              layer.opacity = (layer as any)._seqOrigOpacity;
-              delete (layer as any)._seqOrigOpacity;
-            }
-            if ((layer as any)._seqGate !== undefined) {
-              delete (layer as any)._seqGate;
-            }
+        // frames. Also restore the stage-effect opacity stash for the
+        // same reason — disabling all stage effects mid-frame should
+        // visibly snap layers back to full opacity, not leave them
+        // dimmed from a previous frame's brightness.
+        for (let i = 0; i < layersToRender.length; i++) {
+          const layer = layersToRender[i];
+          if ((layer as any)._seqOrigOpacity !== undefined) {
+            layer.opacity = (layer as any)._seqOrigOpacity;
+            delete (layer as any)._seqOrigOpacity;
+          }
+          if ((layer as any)._seqGate !== undefined) {
+            delete (layer as any)._seqGate;
+          }
+          if ((layer as any)._stageOrigOpacity !== undefined) {
+            layer.opacity = (layer as any)._stageOrigOpacity;
+            delete (layer as any)._stageOrigOpacity;
           }
         }
 
