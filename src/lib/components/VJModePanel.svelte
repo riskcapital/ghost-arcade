@@ -10,7 +10,12 @@
   import { keyframeTimeline } from '../stores/keyframeTimeline';
   import { project, stagePresets, compositions, activeCompositionId } from '../stores/layers';
   import { STAGE_EFFECT_CATALOG, getEffectDef } from '../stores/stageEffects';
+  import { surfaceStore, activeSurface } from '../stores/surface';
   import type { StageEffectType } from '../types';
+
+  // Stage Effects tab UX state — which effect type the user has
+  // chosen in the "Add" picker. Defaults to the first catalog entry.
+  let stageAddType: StageEffectType = STAGE_EFFECT_CATALOG[0].type;
   import { globalStagePresets } from '../stores/globalPresets';
   import { parseISF, getInputDefault } from '../isf/parser';
   import { generateCachedThumbnail as generateShaderThumbnail } from '../isf/thumbnail';
@@ -105,8 +110,12 @@
   // Media tray collapse state
   let mediaTrayCollapsed = false;
 
-  // Effects tab: Composition / Layer / Clip
-  let effectsTab: 'composition' | 'layer' | 'clip' = 'layer';
+  // Effects tab: Composition / Layer / Clip / Stage.
+  // Stage is the new tab — manages procedural per-slice stage effects
+  // (radial pulse, sweep, chase, strobe, beat-pulse, …) that modulate
+  // the bound mapping layers created by Apply Stage. Always available;
+  // the only way to activate stage effects.
+  let effectsTab: 'composition' | 'layer' | 'clip' | 'stage' = 'layer';
 
   // Effect types available
   const effectTypes: { value: EffectType; label: string }[] =
@@ -630,7 +639,7 @@
   }
 
   // Drag state for clips
-  let draggedClip: { type: 'shader' | 'video' | 'image' | 'threejs' | 'spout' | 'effect' | 'splat' | 'model3d' | 'preset' | 'stageEffect'; id: string; spoutName?: string; pluginName?: string; effectType?: 'fluid' | 'particles' | 'splat' | 'model3d' } | null = null;
+  let draggedClip: { type: 'shader' | 'video' | 'image' | 'threejs' | 'spout' | 'effect' | 'splat' | 'model3d' | 'preset'; id: string; spoutName?: string; pluginName?: string; effectType?: 'fluid' | 'particles' | 'splat' | 'model3d' } | null = null;
   // Cells now carry a bank tag so cross-deck drag/drop works correctly when
   // the crossfader is on (drag from Bank A cell → Bank B cell, etc.)
   let dragOverCell: { layer: number; column: number; bank: VJDeck } | null = null;
@@ -660,7 +669,7 @@
   $: vjClipLauncher.setSelectedLayerIndex(selectedLayerIndex);
 
   // Media tab (matching mapping mode tabs)
-  let vjMediaTab: 'shaders' | 'js' | 'library' | 'videos' | 'images' | 'sources' | 'plugins' | 'maps' | 'stageFx' = 'shaders';
+  let vjMediaTab: 'shaders' | 'js' | 'library' | 'videos' | 'images' | 'sources' | 'plugins' | 'maps' = 'shaders';
 
   // When MAP sub-mode engages, force the media tray to the Maps tab.
   // (Other source tabs are hidden in MAP — landing on a hidden tab
@@ -1165,7 +1174,7 @@
   }
 
   // Drag handlers
-  function handleDragStart(e: DragEvent, clip: { type: 'shader' | 'video' | 'image' | 'threejs' | 'spout' | 'effect' | 'splat' | 'model3d' | 'preset' | 'stageEffect'; id: string; spoutName?: string; pluginName?: string; effectType?: 'fluid' | 'particles' | 'splat' | 'model3d' }) {
+  function handleDragStart(e: DragEvent, clip: { type: 'shader' | 'video' | 'image' | 'threejs' | 'spout' | 'effect' | 'splat' | 'model3d' | 'preset'; id: string; spoutName?: string; pluginName?: string; effectType?: 'fluid' | 'particles' | 'splat' | 'model3d' }) {
     draggedClip = clip;
     // Electron/Chromium requires dataTransfer.setData() for drag to work
     if (e.dataTransfer) {
@@ -1493,26 +1502,6 @@
           src: comp.id,
           thumbnail: comp.thumbnail,
           presetId: comp.id,
-        };
-        vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
-      }
-    } else if (draggedClip.type === 'stageEffect') {
-      // Stage Effect clip: side-effect-only — while this clip is the
-      // active clip in its VJ-layer slot, stageEffects.ts reads it
-      // through activeStageEffectClips and runs the corresponding
-      // procedural generator on the active Surface's slices. The
-      // dragged id is the effect TYPE string ('radial-pulse' etc.);
-      // we copy default params off the catalog so the user gets a
-      // sensible starting tuning out of the box.
-      const def = STAGE_EFFECT_CATALOG.find(d => d.type === draggedClip!.id);
-      if (def) {
-        const vjClip: VJClip = {
-          id: generateUUID(),
-          type: 'stageEffect',
-          name: def.label,
-          src: def.type,
-          stageEffectType: def.type as StageEffectType,
-          stageEffectParams: { ...def.defaultParams },
         };
         vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
       }
@@ -2252,10 +2241,106 @@
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
               Clip
             </button>
+            <button class="fx-tab" class:active={effectsTab === 'stage'} onclick={() => effectsTab = 'stage'} title="Stage Effects — procedural per-slice modulation that animates the bound mapping layers">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="11"/></svg>
+              Stage
+            </button>
           </div>
 
           <div class="effects-panel-content">
-            {#if (effectsTab === 'layer' || effectsTab === 'clip') && selectedLayerIndex === null}
+            {#if effectsTab === 'stage'}
+              <!-- Stage Effects — procedural per-slice modulation that
+                   drives the brightness of slice-bound mapping layers.
+                   Effects live on the active Surface (Surface.effects[]),
+                   persist with the project, and tick continuously in
+                   the background via the stageEffects store regardless
+                   of which workspace is open. -->
+              {#if !$activeSurface}
+                <div class="no-effects">
+                  Build a stage first (open STAGE → draw slices → Apply Stage), then add effects here to animate your slice layers.
+                </div>
+              {:else}
+                {@const effects = $activeSurface.effects ?? []}
+                <div class="effects-info">
+                  <span class="effects-info-label">STAGE FX</span>
+                  <p class="effects-info-hint">{effects.length} effect{effects.length === 1 ? '' : 's'} on "{$activeSurface.name}"</p>
+                </div>
+
+                <!-- Add new effect — dropdown + button so the user
+                     picks the type, clicks Add, and the effect
+                     appears at the bottom of the list with defaults. -->
+                <div class="stage-fx-add">
+                  <select bind:value={stageAddType} class="stage-fx-select">
+                    {#each STAGE_EFFECT_CATALOG as def (def.type)}
+                      <option value={def.type}>{def.icon} {def.label}</option>
+                    {/each}
+                  </select>
+                  <button class="add-effect-btn" onclick={() => surfaceStore.addStageEffect(stageAddType)}>+ Add</button>
+                </div>
+
+                <div class="effects-section">
+                  <div class="effects-list">
+                    {#each effects as eff (eff.id)}
+                      {@const def = getEffectDef(eff.type)}
+                      <div class="effect-item" class:disabled={!eff.enabled}>
+                        <div class="effect-header" onclick={() => expandedEffectId = expandedEffectId === eff.id ? null : eff.id}>
+                          <button
+                            class="effect-toggle"
+                            class:active={eff.enabled}
+                            onclick={(e) => { e.stopPropagation(); surfaceStore.updateStageEffect(eff.id, { enabled: !eff.enabled }); }}
+                            title={eff.enabled ? 'Disable' : 'Enable'}
+                          >{eff.enabled ? '●' : '○'}</button>
+                          <span class="effect-name">
+                            <span class="stage-fx-icon">{def?.icon ?? '◆'}</span>
+                            {def?.label ?? eff.type}
+                          </span>
+                          <span class="effect-expand">{expandedEffectId === eff.id ? '▼' : '▶'}</span>
+                          <button
+                            class="effect-delete"
+                            onclick={(e) => { e.stopPropagation(); surfaceStore.deleteStageEffect(eff.id); }}
+                            title="Remove"
+                          >×</button>
+                        </div>
+                        {#if expandedEffectId === eff.id}
+                          <div class="effect-params">
+                            <div class="param-row">
+                              <span>Opacity</span>
+                              <input
+                                type="range" min="0" max="1" step="0.01"
+                                value={eff.opacity}
+                                oninput={(e) => surfaceStore.updateStageEffect(eff.id, {
+                                  opacity: parseFloat((e.target as HTMLInputElement).value)
+                                })}
+                              />
+                              <span class="param-val">{eff.opacity.toFixed(2)}</span>
+                            </div>
+                            {#each def?.paramSpecs ?? [] as spec (spec.key)}
+                              <div class="param-row">
+                                <span>{spec.label}</span>
+                                <input
+                                  type="range"
+                                  min={spec.min}
+                                  max={spec.max}
+                                  step={spec.step ?? 0.01}
+                                  value={eff.params[spec.key] ?? def?.defaultParams[spec.key] ?? 0}
+                                  oninput={(e) => surfaceStore.updateStageEffectParam(eff.id, spec.key,
+                                    parseFloat((e.target as HTMLInputElement).value)
+                                  )}
+                                />
+                                <span class="param-val">{(eff.params[spec.key] ?? def?.defaultParams[spec.key] ?? 0).toFixed(2)}</span>
+                              </div>
+                            {/each}
+                          </div>
+                        {/if}
+                      </div>
+                    {/each}
+                    {#if effects.length === 0}
+                      <div class="no-effects">No effects yet. Pick one above and click <strong>+ Add</strong>.</div>
+                    {/if}
+                  </div>
+                </div>
+              {/if}
+            {:else if (effectsTab === 'layer' || effectsTab === 'clip') && selectedLayerIndex === null}
               <div class="no-effects">Click a layer to edit effects</div>
             {:else if effectsTab === 'clip' && selectedLayerIndex !== null && paramLayerStates[selectedLayerIndex].activeColumn === null}
               <div class="no-effects">No active clip on layer {selectedLayerIndex + 1}</div>
@@ -3106,7 +3191,7 @@
                         <img src={clip.thumbnail} alt={clip.name} class="clip-thumb" />
                       {:else}
                         <div class="clip-placeholder {clip.type}">
-                          {clip.type === 'shader' ? 'ISF' : clip.type === 'video' ? 'VID' : clip.type === 'spout' ? 'SPT' : clip.type === 'threejs' ? '3JS' : clip.type === 'splat' ? 'PLY' : clip.type === 'model3d' ? '3DM' : clip.type === 'effect' ? 'FX' : clip.type === 'preset' ? 'MAP' : clip.type === 'stageEffect' ? 'STG' : 'IMG'}
+                          {clip.type === 'shader' ? 'ISF' : clip.type === 'video' ? 'VID' : clip.type === 'spout' ? 'SPT' : clip.type === 'threejs' ? '3JS' : clip.type === 'splat' ? 'PLY' : clip.type === 'model3d' ? '3DM' : clip.type === 'effect' ? 'FX' : clip.type === 'preset' ? 'MAP' : 'IMG'}
                         </div>
                       {/if}
                       <span class="clip-name">{clip.name}</span>
@@ -3350,15 +3435,6 @@
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2C6.5 8 4 12 4 15a8 8 0 1 0 16 0c0-3-2.5-7-8-13Z"/></svg>
                 <span>Plug</span>
               </button>
-              <!-- Stage FX — procedural per-slice modulation effects that
-                   you drag onto a clip cell. Firing one activates it on
-                   the active surface's slices; firing multiple at once
-                   composites them multiplicatively. -->
-              <button class="vj-tab" class:active={vjMediaTab === 'stageFx'} onclick={() => vjMediaTab = 'stageFx'} title="Stage Effects — procedural per-slice brightness modulation. Drag onto a clip cell and fire to activate.">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="11"/></svg>
-                <span>StageFX</span>
-                <span class="vj-tab-count">{STAGE_EFFECT_CATALOG.length}</span>
-              </button>
             {/if}
             {#if $vjClipLauncher.mapMode}
               <button class="vj-tab" class:active={vjMediaTab === 'maps'} onclick={() => vjMediaTab = 'maps'} title="Saved mapping presets — drag onto a clip cell. Stack with VJ layer opacity + blend.">
@@ -3580,37 +3656,6 @@
                 <p>Effects run natively in WebGL - no external process needed</p>
               </div>
             </div>
-          {:else if vjMediaTab === 'stageFx'}
-            <!-- Stage FX — procedural per-slice modulation. Drag a card
-                 onto a clip cell; firing the cell activates the effect.
-                 Effects modulate the opacity of slice-bound mapping
-                 layers (created by Apply Stage in the Stage Designer)
-                 based on each slice's centroid in normalized surface
-                 coords. Multiple active effects composite multiplica-
-                 tively (sweep + noise = gated noise across the band). -->
-            <div class="vj-plugin-hint" style="margin-bottom: 8px; border-left-color: rgba(76,209,255,0.5);">
-              <p style="color: #b6e8ff;">Drag a Stage FX onto a clip cell</p>
-              <p>Modulates per-slice opacity on layers created by Apply Stage. Open the clip's params to tune speed / width / direction.</p>
-            </div>
-            {#each STAGE_EFFECT_CATALOG as def (def.type)}
-              <div
-                class="media-item"
-                draggable="true"
-                ondragstart={(e) => handleDragStart(e, { type: 'stageEffect', id: def.type })}
-                ondragend={handleDragEnd}
-                role="button"
-                tabindex="0"
-                title={`Drag onto a clip cell — firing activates ${def.label}`}
-              >
-                <div class="item-thumb">
-                  <div class="thumb-placeholder" style="font-size: 22px; color: #4cd1ff;"><span>{def.icon}</span></div>
-                </div>
-                <div class="item-info">
-                  <span class="item-name">{def.label}</span>
-                  <span class="item-type">stage-fx · {def.paramSpecs.length} params</span>
-                </div>
-              </div>
-            {/each}
           {:else if vjMediaTab === 'maps'}
             <!-- Maps tab — saved mapping presets, drag onto a clip cell to
                  install a "load preset on fire" trigger. Firing the cell
@@ -4477,6 +4522,35 @@
   .add-effect-btn:hover {
     background: rgba(187, 134, 252, 0.2);
     border-color: #BB86FC;
+  }
+
+  /* Stage Effects tab — its own +Add row with a picker + button.
+     Matches the existing effect-row aesthetic (compact, dark, accent
+     cyan for stage-FX specifically since they're a different class
+     of effect than the layer/clip post-fx). */
+  .stage-fx-add {
+    display: flex;
+    gap: 6px;
+    padding: 8px 6px;
+    border-bottom: 1px solid #1d1d22;
+    margin-bottom: 6px;
+  }
+  .stage-fx-select {
+    flex: 1;
+    background: #14141a;
+    border: 1px solid #2a2a30;
+    color: #ddd;
+    border-radius: 4px;
+    padding: 5px 8px;
+    font-size: 11px;
+  }
+  .stage-fx-select:focus {
+    border-color: #4cd1ff;
+    outline: none;
+  }
+  .stage-fx-icon {
+    color: #4cd1ff;
+    margin-right: 4px;
   }
 
   .effects-list {

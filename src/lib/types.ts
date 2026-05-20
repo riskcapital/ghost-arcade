@@ -4231,8 +4231,20 @@ export interface Surface {
 export type StageEffectType =
   | 'radial-pulse'          // expanding ring from configurable origin
   | 'linear-sweep'          // bar of light sweeping across the surface
-  | 'noise-flicker'         // pseudo-random per-slice brightness (Perlin)
-  | 'audio-rms-intensity';  // solid brightness driven by audio RMS
+  | 'noise-flicker'         // pseudo-random per-slice brightness (Perlin-ish)
+  | 'audio-rms-intensity'   // solid brightness driven by audio RMS
+  | 'chase'                 // one slice at a time lights, cycles through in order
+  | 'strobe'                // all slices flash at a configurable rate (synced)
+  | 'twinkle'               // each slice independently fades in/out at random
+  | 'sine-wave'             // per-slice sine oscillation with positional phase
+  | 'beat-pulse'            // pulse on audio onset (kick / snare flash)
+  | 'spiral'                // pulse rotating around centroid with angular sweep
+  | 'cascade'               // vertical drop wave with delay between rows
+  | 'random-hits'           // per-slice random one-shot strobes
+  | 'breathing'             // smooth global pulse (lub-dub heartbeat option)
+  | 'checker'               // alternating on/off based on slice index parity
+  | 'inverse-pulse'         // ring contracting from edge inward to origin
+  | 'split-flash';          // top/bottom or left/right halves alternate
 
 export interface StageEffect {
   id: string;

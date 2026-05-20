@@ -956,8 +956,8 @@
             <span class="effects-count">{STAGE_EFFECT_CATALOG.length} available</span>
           </div>
           <div class="effects-pointer">
-            <p>Stage Effects live in the <strong>VJ deck</strong> now.</p>
-            <p>Open VJ Mode → <strong>StageFX</strong> tab → drag an effect onto a clip cell. Firing the cell activates the effect on this surface's slices. Multiple effects compose multiplicatively.</p>
+            <p>Stage Effects are managed from the <strong>VJ deck</strong>.</p>
+            <p>Open VJ Mode → effects panel (left) → <strong>Stage</strong> tab. Add procedural effects there with live param sliders. Effects keep running after Apply Stage so the cascading pulse animates over your mapping layers in real time.</p>
             <div class="effects-catalog-list">
               {#each STAGE_EFFECT_CATALOG as def}
                 <div class="effects-catalog-row">

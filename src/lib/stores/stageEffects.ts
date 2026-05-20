@@ -23,7 +23,6 @@ import { writable, get, derived } from 'svelte/store';
 import type { StageEffect, StageEffectType, Surface } from '../types';
 import { generateUUID } from '../utils/uuid';
 import { audioStore } from './audio';
-import { activeStageEffectClips } from './vjClipLauncher';
 
 // ─── Per-effect-type catalog (UI + default params) ──────────────────
 
@@ -102,6 +101,180 @@ export const STAGE_EFFECT_CATALOG: StageEffectDef[] = [
       { key: 'smoothing', label: 'Smoothing', min: 0,   max: 0.95, step: 0.01 },
     ],
   },
+  {
+    type: 'chase',
+    label: 'Chase',
+    icon: '→',
+    // Sequential one-at-a-time lighting cycling through slices in
+    // their stored order. width controls how many slices are lit
+    // simultaneously (0.1 = sharp single; 1 = the whole stage).
+    defaultParams: { speed: 1.0, width: 0.18 },
+    paramSpecs: [
+      { key: 'speed', label: 'Speed', min: 0,    max: 6,   step: 0.05 },
+      { key: 'width', label: 'Width', min: 0.05, max: 1,   step: 0.01 },
+    ],
+  },
+  {
+    type: 'strobe',
+    label: 'Strobe',
+    icon: '⚡',
+    // Global flash at a configurable rate. duty = fraction of the
+    // cycle the stage is "on" (0.05 = punchy ratlle, 0.5 = even
+    // square wave).
+    defaultParams: { rate: 6, duty: 0.15 },
+    paramSpecs: [
+      { key: 'rate', label: 'Rate (Hz)', min: 0.5, max: 20,  step: 0.1 },
+      { key: 'duty', label: 'Duty',      min: 0.02, max: 0.95, step: 0.01 },
+    ],
+  },
+  {
+    type: 'twinkle',
+    label: 'Twinkle',
+    icon: '✨',
+    // Each slice independently fades in/out at random.
+    // density = portion of slices lit at any moment; speed = fade rate.
+    defaultParams: { density: 0.35, speed: 1.2 },
+    paramSpecs: [
+      { key: 'density', label: 'Density', min: 0.05, max: 1, step: 0.01 },
+      { key: 'speed',   label: 'Speed',   min: 0.1,  max: 6, step: 0.05 },
+    ],
+  },
+  {
+    type: 'sine-wave',
+    label: 'Sine Wave',
+    icon: '∿',
+    // Per-slice sine oscillation. phaseSpread distributes phases
+    // across slices based on centroid X — positions become a
+    // traveling wave instead of a unison flicker. depth = amplitude.
+    defaultParams: { speed: 0.8, phaseSpread: 1.6, depth: 0.6 },
+    paramSpecs: [
+      { key: 'speed',       label: 'Speed',        min: 0,   max: 4, step: 0.01 },
+      { key: 'phaseSpread', label: 'Phase Spread', min: 0,   max: 6, step: 0.05 },
+      { key: 'depth',       label: 'Depth',        min: 0,   max: 1, step: 0.01 },
+    ],
+  },
+  {
+    type: 'beat-pulse',
+    label: 'Beat Pulse',
+    icon: '♪',
+    // Audio-onset reactive — every tick where RMS spikes above the
+    // recent average triggers a global flash that decays over `decay`
+    // seconds. sensitivity scales how aggressively the spike test
+    // fires (lower = more sensitive).
+    defaultParams: { sensitivity: 1.4, decay: 0.25, threshold: 0.08 },
+    paramSpecs: [
+      { key: 'sensitivity', label: 'Sensitivity', min: 1.05, max: 3,   step: 0.05 },
+      { key: 'decay',       label: 'Decay (s)',   min: 0.05, max: 1.5, step: 0.01 },
+      { key: 'threshold',   label: 'Threshold',   min: 0,    max: 0.5, step: 0.01 },
+    ],
+  },
+  {
+    type: 'spiral',
+    label: 'Spiral',
+    icon: '𓆉',
+    // Rotating angular sweep — like a lighthouse beam centered on the
+    // origin. arms = how many beam arms; rotation > 0 sweeps CCW,
+    // < 0 CW. Width controls how wide each beam arm is in radians.
+    defaultParams: {
+      originX: 0.5, originY: 0.5,
+      speed: 0.5, arms: 1, width: 0.6,
+    },
+    paramSpecs: [
+      { key: 'speed',   label: 'Speed',   min: -3, max: 3,  step: 0.01 },
+      { key: 'arms',    label: 'Arms',    min: 1,  max: 6,  step: 1 },
+      { key: 'width',   label: 'Width',   min: 0.1, max: 3, step: 0.01 },
+      { key: 'originX', label: 'Origin X', min: 0,  max: 1, step: 0.01 },
+      { key: 'originY', label: 'Origin Y', min: 0,  max: 1, step: 0.01 },
+    ],
+  },
+  {
+    type: 'cascade',
+    label: 'Cascade',
+    icon: '↓',
+    // Vertical drop wave — slices at higher Y light first, lower-Y
+    // slices light progressively later. Like a curtain of light
+    // falling down the stage. delay = how staggered the slices
+    // light relative to each other.
+    defaultParams: { speed: 0.6, bandHeight: 0.25, delay: 0.7 },
+    paramSpecs: [
+      { key: 'speed',      label: 'Speed',       min: -3,   max: 3,   step: 0.01 },
+      { key: 'bandHeight', label: 'Band Height', min: 0.05, max: 1,   step: 0.01 },
+      { key: 'delay',      label: 'Spread',      min: 0,    max: 1,   step: 0.01 },
+    ],
+  },
+  {
+    type: 'random-hits',
+    label: 'Random Hits',
+    icon: '!',
+    // Per-slice random one-shot strobes — a slice randomly fires,
+    // brightens to peak, decays over `duration`. rate = average
+    // hits per second across the whole stage.
+    defaultParams: { rate: 3, duration: 0.18, peak: 1 },
+    paramSpecs: [
+      { key: 'rate',     label: 'Rate (per s)', min: 0.1, max: 20,  step: 0.1 },
+      { key: 'duration', label: 'Duration (s)', min: 0.05, max: 1,  step: 0.01 },
+      { key: 'peak',     label: 'Peak',         min: 0.1, max: 1,   step: 0.01 },
+    ],
+  },
+  {
+    type: 'breathing',
+    label: 'Breathing',
+    icon: '◐',
+    // Smooth global pulse — full stage breathes in unison. With
+    // `heartbeat` > 0 the cycle gains a "lub-dub" second peak (more
+    // alive feel; useful as a base layer under other effects).
+    defaultParams: { speed: 0.3, depth: 0.6, heartbeat: 0 },
+    paramSpecs: [
+      { key: 'speed',     label: 'Speed',     min: 0, max: 3, step: 0.01 },
+      { key: 'depth',     label: 'Depth',     min: 0, max: 1, step: 0.01 },
+      { key: 'heartbeat', label: 'Heartbeat', min: 0, max: 1, step: 0.01 },
+    ],
+  },
+  {
+    type: 'checker',
+    label: 'Checker',
+    icon: '▣',
+    // Alternating on/off groups by slice index parity. Toggles
+    // between two states at `rate` Hz. Useful with `phase` for
+    // staggered alternation across odd/even slices.
+    defaultParams: { rate: 1, ratio: 0.5 },
+    paramSpecs: [
+      { key: 'rate',  label: 'Rate (Hz)', min: 0.1, max: 8, step: 0.05 },
+      { key: 'ratio', label: 'On Ratio',  min: 0.1, max: 0.9, step: 0.01 },
+    ],
+  },
+  {
+    type: 'inverse-pulse',
+    label: 'Inverse Pulse',
+    icon: '◉',
+    // Ring contracts inward (mirror of radial-pulse). Outer slices
+    // light first, then the pulse converges on the origin.
+    defaultParams: {
+      originX: 0.5, originY: 0.5,
+      speed: 0.4, ringWidth: 0.25, tail: 0.55,
+    },
+    paramSpecs: [
+      { key: 'speed',     label: 'Speed',      min: 0,    max: 4,   step: 0.01 },
+      { key: 'ringWidth', label: 'Ring Width', min: 0.05, max: 1,   step: 0.01 },
+      { key: 'tail',      label: 'Tail',       min: 0,    max: 1,   step: 0.01 },
+      { key: 'originX',   label: 'Origin X',   min: 0,    max: 1,   step: 0.01 },
+      { key: 'originY',   label: 'Origin Y',   min: 0,    max: 1,   step: 0.01 },
+    ],
+  },
+  {
+    type: 'split-flash',
+    label: 'Split Flash',
+    icon: '⇄',
+    // Two halves of the stage alternate. axis 0 = horizontal split
+    // (top vs bottom); axis 1 = vertical split (left vs right);
+    // intermediate values angle the split line.
+    defaultParams: { rate: 2, axis: 1, mix: 0.5 },
+    paramSpecs: [
+      { key: 'rate', label: 'Rate (Hz)', min: 0.1, max: 8, step: 0.05 },
+      { key: 'axis', label: 'Axis',      min: 0,   max: 1, step: 0.01 },
+      { key: 'mix',  label: 'Mix',       min: 0,   max: 1, step: 0.01 },
+    ],
+  },
 ];
 
 export function getEffectDef(type: StageEffectType): StageEffectDef | undefined {
@@ -128,9 +301,10 @@ interface StageEffectsRuntime {
    *  Built lazily when surfaces change. Canvas reads this to find the
    *  current brightness for an opacity modulation. */
   layerToSlice: Map<string, string>;
-  /** Per-effect internal state (e.g. audio-rms smoothing accumulator
-   *  carries the prior frame's value). Keyed by effect.id. */
-  state: Map<string, { lastValue?: number; phase?: number }>;
+  /** Per-effect internal state (audio-rms smoothing accumulator,
+   *  beat-pulse last-onset time, random-hits per-slice fire timers,
+   *  and so on). Open shape — keys are local to each evaluator. */
+  state: Map<string, Record<string, any>>;
 }
 
 const initialRuntime: StageEffectsRuntime = {
@@ -158,12 +332,6 @@ interface SliceMeta {
 
 let sliceMetaCache: SliceMeta[] = [];
 let surfacesCache: Surface[] = [];
-/** Active stage-effect clips, populated by a subscriber on
- *  activeStageEffectClips. The RAF tick walks this list each frame —
- *  one effect per active VJ clip. Earlier versions read effects from
- *  Surface.effects[]; now activation is driven by VJ clip firing so
- *  the user can perform with them like any other VJ source. */
-let activeClipsCache: { id: string; type: StageEffectType; params: Record<string, number> }[] = [];
 
 function recomputeSliceMeta(surfaces: Surface[]) {
   sliceMetaCache = [];
@@ -266,12 +434,238 @@ function evalAudioRms(eff: StageEffect, _cx: number, _cy: number, _tSec: number,
   return next;
 }
 
+// `_sliceIndex` for the per-slice evaluators that need it — populated
+// by tick() into the evaluator state object so we don't need to
+// change the evaluate() signature. See the tick refactor below.
+function evalChase(eff: StageEffect, _cx: number, _cy: number, tSec: number, state: any): number {
+  const speed = eff.params.speed ?? 1;
+  const width = Math.max(0.01, eff.params.width ?? 0.18);
+  const totalSlices = state._sliceCount ?? 1;
+  const idx = state._sliceIndex ?? 0;
+  // Slice position normalized 0..1 in chase order.
+  const pos = totalSlices > 0 ? (idx / totalSlices) : 0;
+  // Chase head sweeps 0..1 over (1/speed) seconds.
+  const head = (tSec * speed) % 1;
+  // Distance from head, wrapped so the chase loops continuously.
+  let d = pos - head;
+  if (d < -0.5) d += 1;
+  if (d >  0.5) d -= 1;
+  const dist = Math.abs(d);
+  if (dist > width) return 0;
+  // Soft falloff inside the band.
+  return 1 - (dist / width);
+}
+
+function evalStrobe(eff: StageEffect, _cx: number, _cy: number, tSec: number, _state: any): number {
+  const rate = eff.params.rate ?? 6;
+  const duty = Math.max(0.01, Math.min(0.99, eff.params.duty ?? 0.15));
+  // Phase 0..1 within each cycle. Inside duty → 1; outside → 0.
+  // Short ramp-down at the very end of "on" so the transition isn't
+  // a hard digital edge that flickers at high rates.
+  const phase = (tSec * rate) % 1;
+  if (phase < duty) {
+    // Hold full brightness for the bulk, then a thin tail.
+    return phase < duty * 0.85 ? 1 : 1 - (phase - duty * 0.85) / (duty * 0.15);
+  }
+  return 0;
+}
+
+function evalTwinkle(eff: StageEffect, cx: number, cy: number, tSec: number, _state: any): number {
+  const density = Math.max(0.01, Math.min(1, eff.params.density ?? 0.35));
+  const speed = eff.params.speed ?? 1.2;
+  // Each slice's centroid generates a stable phase via spatial hash.
+  const seed = hashNoise(cx * 17.31, cy * 23.97, 0);
+  const phaseOffset = seed * 6.283;
+  // Slow per-slice oscillation; sin wave warped so it's "off" most
+  // of the time when density is low.
+  const w = Math.sin(tSec * speed + phaseOffset) * 0.5 + 0.5;
+  const threshold = 1 - density;
+  if (w < threshold) return 0;
+  return (w - threshold) / (1 - threshold);
+}
+
+function evalSineWave(eff: StageEffect, cx: number, _cy: number, tSec: number, _state: any): number {
+  const speed = eff.params.speed ?? 0.8;
+  const spread = eff.params.phaseSpread ?? 1.6;
+  const depth = eff.params.depth ?? 0.6;
+  const phase = (cx - 0.5) * spread * 6.283;
+  const v = Math.sin(tSec * speed * 6.283 + phase) * 0.5 + 0.5;
+  // depth scales how deep the troughs go: depth=1 reaches 0,
+  // depth=0 stays at 1.0 (no effect).
+  return 1 - (1 - v) * depth;
+}
+
+function evalBeatPulse(eff: StageEffect, _cx: number, _cy: number, _tSec: number, state: any): number {
+  const sensitivity = eff.params.sensitivity ?? 1.4;
+  const decay = Math.max(0.01, eff.params.decay ?? 0.25);
+  const threshold = eff.params.threshold ?? 0.08;
+  const audio = get(audioStore);
+  const raw = audio?.isActive ? (audio.rms ?? 0) : 0;
+  // Maintain a rolling baseline (EMA) so beats are detected as
+  // SPIKES above the recent average, not absolute level. Beats =
+  // current >= baseline * sensitivity AND current > threshold.
+  const prevBaseline = state._baseline ?? raw;
+  const baselineA = 0.92;  // ~10-frame smoothing
+  const baseline = prevBaseline * baselineA + raw * (1 - baselineA);
+  state._baseline = baseline;
+  if (raw > threshold && raw > baseline * sensitivity) {
+    state._lastBeatTime = performance.now() / 1000;
+  }
+  const since = (performance.now() / 1000) - (state._lastBeatTime ?? -10);
+  if (since > decay) return 0;
+  return 1 - (since / decay);
+}
+
+function evalSpiral(eff: StageEffect, cx: number, cy: number, tSec: number, _state: any): number {
+  const ox = eff.params.originX ?? 0.5;
+  const oy = eff.params.originY ?? 0.5;
+  const speed = eff.params.speed ?? 0.5;
+  const arms = Math.max(1, Math.round(eff.params.arms ?? 1));
+  const width = Math.max(0.05, eff.params.width ?? 0.6);
+  // Angle of this slice's centroid relative to origin.
+  const ang = Math.atan2(cy - oy, cx - ox);
+  // Beam center angle rotates with time. arms > 1 splits into N
+  // beams equally distributed around the circle.
+  const beamCenter = tSec * speed * 6.283;
+  // Distance from any beam — find the closest of N arms.
+  let minDelta = Infinity;
+  for (let i = 0; i < arms; i++) {
+    const armAng = beamCenter + (i * 6.283 / arms);
+    let delta = Math.abs(ang - (armAng % 6.283));
+    if (delta > 3.14159) delta = 6.283 - delta;
+    if (delta < minDelta) minDelta = delta;
+  }
+  if (minDelta > width) return 0;
+  return 1 - (minDelta / width);
+}
+
+function evalCascade(eff: StageEffect, _cx: number, cy: number, tSec: number, _state: any): number {
+  const speed = eff.params.speed ?? 0.6;
+  const bandHeight = Math.max(0.01, eff.params.bandHeight ?? 0.25);
+  // delay is unused as a fundamental cascade parameter — the inherent
+  // spread happens via the band thickness and the slice's Y position.
+  // Reserved for future use (e.g. multi-band cascade).
+  // Band Y position cycles -bandHeight..1, so it enters from off-top
+  // and exits past the bottom.
+  const pos = ((tSec * speed) % (1 + bandHeight * 2)) - bandHeight;
+  const diff = cy - pos;
+  if (diff < 0 || diff > bandHeight) return 0;
+  // Soft falloff toward each edge of the band.
+  const local = diff / bandHeight;
+  return 1 - Math.abs(local - 0.5) * 2;
+}
+
+function evalRandomHits(eff: StageEffect, cx: number, cy: number, _tSec: number, state: any): number {
+  const rate = eff.params.rate ?? 3;
+  const duration = Math.max(0.01, eff.params.duration ?? 0.18);
+  const peak = eff.params.peak ?? 1;
+  const totalSlices = state._sliceCount ?? 1;
+  const nowSec = performance.now() / 1000;
+  // Per-slice last-hit time stored in state, keyed by slice index.
+  // Probability of firing this frame ≈ rate * dt / totalSlices.
+  const lastFire = state._lastFireTime ?? nowSec;
+  const dt = Math.max(0, Math.min(0.1, nowSec - lastFire));
+  state._lastFireTime = nowSec;
+  // Compute slice-local hit time map (lazy init).
+  if (!state._hitTimes) state._hitTimes = new Map<number, number>();
+  const idx = state._sliceIndex ?? 0;
+  // Stochastic test — chance proportional to dt × per-slice rate.
+  const perSliceRate = rate / Math.max(1, totalSlices);
+  if (Math.random() < perSliceRate * dt) {
+    state._hitTimes.set(idx, nowSec);
+  }
+  const hitAt = state._hitTimes.get(idx) ?? -10;
+  const elapsed = nowSec - hitAt;
+  if (elapsed > duration) return 0;
+  // Exponential-ish decay from peak to 0 over `duration`.
+  const t = 1 - (elapsed / duration);
+  return peak * t * t;
+}
+
+function evalBreathing(eff: StageEffect, _cx: number, _cy: number, tSec: number, _state: any): number {
+  const speed = eff.params.speed ?? 0.3;
+  const depth = eff.params.depth ?? 0.6;
+  const heartbeat = eff.params.heartbeat ?? 0;
+  const t = tSec * speed * 6.283;
+  // Base sine breathing.
+  let v = Math.sin(t) * 0.5 + 0.5;
+  // Heartbeat adds a second smaller pulse one-third through each
+  // cycle, producing a "lub-dub" rhythm.
+  if (heartbeat > 0) {
+    const dub = Math.sin(t * 3) * 0.5 + 0.5;
+    v = v * (1 - heartbeat * 0.5) + dub * dub * heartbeat * 0.7;
+    v = Math.min(1, v);
+  }
+  // depth scales how deep the troughs go.
+  return 1 - (1 - v) * depth;
+}
+
+function evalChecker(eff: StageEffect, _cx: number, _cy: number, tSec: number, state: any): number {
+  const rate = eff.params.rate ?? 1;
+  const ratio = Math.max(0.05, Math.min(0.95, eff.params.ratio ?? 0.5));
+  const idx = state._sliceIndex ?? 0;
+  const phase = (tSec * rate) % 1;
+  // Even / odd slices flip — odd slices invert the phase test.
+  const inverted = idx % 2 === 1;
+  const lit = inverted ? (phase >= ratio) : (phase < ratio);
+  return lit ? 1 : 0;
+}
+
+function evalInversePulse(eff: StageEffect, cx: number, cy: number, tSec: number, _state: any): number {
+  const speed = eff.params.speed ?? 0.4;
+  const ox = eff.params.originX ?? 0.5;
+  const oy = eff.params.originY ?? 0.5;
+  const ringW = Math.max(0.01, eff.params.ringWidth ?? 0.25);
+  const tail = eff.params.tail ?? 0.55;
+  const dx = cx - ox, dy = cy - oy;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  // Inverse: the ring CONTRACTS from 1.4 (off-screen) toward 0.
+  const radius = 1.4 - ((tSec * speed) % 1.4);
+  const diff = dist - radius;
+  if (diff > 0) {
+    // Trailing (now outside ring) — soft falloff outward.
+    const trail = Math.max(0, 1 - diff / Math.max(0.001, tail));
+    return Math.min(1, trail);
+  } else if (diff > -ringW) {
+    return 1 - (-diff / ringW) * 0.4;
+  }
+  return 0;
+}
+
+function evalSplitFlash(eff: StageEffect, cx: number, cy: number, tSec: number, _state: any): number {
+  const rate = eff.params.rate ?? 2;
+  const axis = eff.params.axis ?? 1;
+  const mix = eff.params.mix ?? 0.5;
+  // axis is 0 (horizontal split, Y matters) to 1 (vertical split, X
+  // matters). Intermediate values angle the split line.
+  const angle = axis * Math.PI / 2;
+  const proj = (cx - 0.5) * Math.sin(angle) + (cy - 0.5) * Math.cos(angle);
+  // Alternates between two halves at `rate` Hz.
+  const phase = (tSec * rate) % 1;
+  const sideA = phase < 0.5;
+  const onA = proj < 0;
+  const lit = sideA === onA;
+  return lit ? 1 : mix;
+}
+
 function evaluate(eff: StageEffect, cx: number, cy: number, tSec: number, state: any): number {
   switch (eff.type) {
     case 'radial-pulse':         return evalRadialPulse(eff, cx, cy, tSec, state);
     case 'linear-sweep':         return evalLinearSweep(eff, cx, cy, tSec, state);
     case 'noise-flicker':        return evalNoiseFlicker(eff, cx, cy, tSec, state);
     case 'audio-rms-intensity':  return evalAudioRms(eff, cx, cy, tSec, state);
+    case 'chase':                return evalChase(eff, cx, cy, tSec, state);
+    case 'strobe':               return evalStrobe(eff, cx, cy, tSec, state);
+    case 'twinkle':              return evalTwinkle(eff, cx, cy, tSec, state);
+    case 'sine-wave':            return evalSineWave(eff, cx, cy, tSec, state);
+    case 'beat-pulse':           return evalBeatPulse(eff, cx, cy, tSec, state);
+    case 'spiral':               return evalSpiral(eff, cx, cy, tSec, state);
+    case 'cascade':              return evalCascade(eff, cx, cy, tSec, state);
+    case 'random-hits':          return evalRandomHits(eff, cx, cy, tSec, state);
+    case 'breathing':            return evalBreathing(eff, cx, cy, tSec, state);
+    case 'checker':              return evalChecker(eff, cx, cy, tSec, state);
+    case 'inverse-pulse':        return evalInversePulse(eff, cx, cy, tSec, state);
+    case 'split-flash':          return evalSplitFlash(eff, cx, cy, tSec, state);
   }
 }
 
@@ -283,30 +677,38 @@ let startMs = 0;
 function tick(nowMs: number) {
   const tSec = (nowMs - startMs) / 1000;
   const newOutputs = new Map<string, number>();
-  // Walk every active stage-effect VJ clip and evaluate it per slice.
-  // Multiple active clips composite multiplicatively — a sweep + a
-  // noise yields "gated noise across the band", a pulse + audio gives
-  // an audio-modulated ring, etc.  Output is clamped 0..1 per slice.
-  if (activeClipsCache.length > 0) {
+  // Walk each surface's effects[] and evaluate per slice. Multiple
+  // enabled effects on a surface composite multiplicatively per slice
+  // — sweep × noise = gated noise across the band, pulse × audio =
+  // audio-modulated ring, etc. Output clamped 0..1.
+  for (const surface of surfacesCache) {
+    const effs = (surface.effects ?? []).filter(e => e.enabled);
+    if (effs.length === 0) continue;
+    // Build slice index map for this surface so index-aware effects
+    // (chase, checker, random-hits) can pick out their slice's
+    // position within the surface's ordered slice list.
+    const surfaceSliceIds: string[] = [];
     for (const meta of sliceMetaCache) {
+      if (meta.surfaceId === surface.id) surfaceSliceIds.push(meta.sliceId);
+    }
+    const sliceCount = surfaceSliceIds.length;
+    for (const meta of sliceMetaCache) {
+      if (meta.surfaceId !== surface.id) continue;
+      const sliceIndex = surfaceSliceIds.indexOf(meta.sliceId);
       let composite = 1;
       let touched = false;
-      for (const clip of activeClipsCache) {
-        // Build a transient StageEffect view of the clip so the
-        // existing evaluate() functions work unchanged.
-        const eff: StageEffect = {
-          id: clip.id,
-          type: clip.type,
-          enabled: true,
-          opacity: clip.params._opacity ?? 1,
-          params: clip.params,
-        };
+      for (const eff of effs) {
         const state = (() => {
           const rt = get({ subscribe });
-          let s = rt.state.get(clip.id);
-          if (!s) { s = {}; rt.state.set(clip.id, s); }
+          let s = rt.state.get(eff.id);
+          if (!s) { s = {}; rt.state.set(eff.id, s); }
           return s;
         })();
+        // Pass slice index + count into the evaluator state so
+        // index-dependent effects can pick the right value without
+        // a separate API. Most evaluators ignore these.
+        state._sliceIndex = sliceIndex;
+        state._sliceCount = sliceCount;
         const v = evaluate(eff, meta.cx, meta.cy, tSec, state);
         const wet = eff.opacity ?? 1;
         const eff01 = v * wet + 1 * (1 - wet);
@@ -317,45 +719,35 @@ function tick(nowMs: number) {
     }
   }
   update(rt => ({ ...rt, sliceOutputs: newOutputs }));
-  // Keep ticking as long as there's at least one active stage-effect
-  // clip OR slices to map. Going idle drops the RAF (see stopIfIdle).
-  if (activeClipsCache.length === 0) {
+  if (!anyEnabledEffect()) {
     stopIfIdle();
     return;
   }
   rafId = requestAnimationFrame(tick);
 }
 
+function anyEnabledEffect(): boolean {
+  for (const s of surfacesCache) {
+    if ((s.effects ?? []).some(e => e.enabled)) return true;
+  }
+  return false;
+}
+
 function ensureRunning() {
   if (rafId !== null) return;
-  if (activeClipsCache.length === 0) return;
+  if (!anyEnabledEffect()) return;
   startMs = performance.now();
   rafId = requestAnimationFrame(tick);
 }
 
 function stopIfIdle() {
-  if (activeClipsCache.length === 0 && rafId !== null) {
+  if (!anyEnabledEffect() && rafId !== null) {
     cancelAnimationFrame(rafId);
     rafId = null;
     // Clear outputs so layers go back to their natural opacity.
     update(rt => ({ ...rt, sliceOutputs: new Map() }));
   }
 }
-
-// Subscribe to the VJ-active stage-effect clips. Whenever a clip is
-// fired/replaced/stopped, this fires; we sync the local cache and
-// start the RAF tick if it's not running.
-activeStageEffectClips.subscribe(clips => {
-  activeClipsCache = clips
-    .filter(c => c.type === 'stageEffect' && c.stageEffectType)
-    .map(c => ({
-      id: c.id,
-      type: c.stageEffectType as StageEffectType,
-      params: c.stageEffectParams ?? {},
-    }));
-  ensureRunning();
-  if (activeClipsCache.length === 0) stopIfIdle();
-});
 
 // ─── Public API ─────────────────────────────────────────────────────
 
@@ -370,9 +762,11 @@ export const stageEffectOutputs = derived(stageEffectsRuntime, $rt => $rt.sliceO
 export const layerToSliceMap = derived(stageEffectsRuntime, $rt => $rt.layerToSlice);
 
 /** Called by surface.ts whenever surfaces change. Rebuilds centroid
- *  cache + layer→slice map. The tick start/stop is driven entirely by
- *  activeStageEffectClips now (effects activate via VJ clip firing),
- *  so this function no longer touches RAF state. */
+ *  cache + layer→slice map, then starts/stops the RAF tick based on
+ *  whether any surface has at least one enabled effect. Idle when
+ *  there's nothing to compute (zero per-frame cost). */
 export function syncStageEffectsFromSurfaces(surfaces: Surface[]) {
   recomputeSliceMeta(surfaces);
+  ensureRunning();
+  stopIfIdle();
 }
