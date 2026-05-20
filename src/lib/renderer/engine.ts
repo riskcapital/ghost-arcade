@@ -644,6 +644,14 @@ export class RenderEngine {
       transparent: true,
       depthTest: false,
       depthWrite: false,
+      // Render both faces. Default FrontSide culls the back-face, which
+      // makes the layer go black the moment a user drags a corner past
+      // its opposite (e.g. right edge past the left), since flipping the
+      // quad inside-out reverses its winding. With DoubleSide the
+      // content stays visible and the texture appears mirrored —
+      // matching the user's mental model of "I dragged across so the
+      // image flips."
+      side: THREE.DoubleSide,
     });
   }
 
@@ -1912,7 +1920,10 @@ export class RenderEngine {
       const layerTexture = this.getLayerTexture(child, obj);
       if (layerTexture) {
         const finalTexture = this.processLayerPipeline(child, obj, layerTexture);
-        this.compositeTexture(finalTexture, child.opacity, child.blendMode, childIdx === 0);
+        // Continuous-mode gate (see renderUnitsToCurrentTarget comment).
+        const childSeqGate = (child as any)._seqGate;
+        const childCompositeOpacity = child.opacity * (typeof childSeqGate === 'number' ? childSeqGate : 1);
+        this.compositeTexture(finalTexture, childCompositeOpacity, child.blendMode, childIdx === 0);
         childIdx++;
       }
 
@@ -2234,8 +2245,22 @@ export class RenderEngine {
     ) {
       finalTexture = this.applyMask(finalTexture, layer.mask, layer.id);
     }
-    // Legacy shape mask
-    if (layer.layerShape && layer.layerShape.enabled && !['rectangle', 'circle', 'triangle', 'custom'].includes(layer.layerShape.type)) {
+    // Shape mask — runs AFTER effects for ALL non-rectangle shapes.
+    // circle/triangle/custom are inline-masked during content render in
+    // the layer material's fragment shader, but blur, glow, displacement,
+    // etc. produce non-zero alpha outside the original shape boundary, so
+    // we re-apply the mask here to clip that bleed. Skipped when there are
+    // no effects (inline mask is already clean) UNLESS the shape type has
+    // no inline support — ellipse/polygon/star/line/polyline always need
+    // this pass since their masking only lives here.
+    const hasLayerEffects = layer.effects && layer.effects.length > 0;
+    const inlineMaskedTypes = ['rectangle', 'circle', 'triangle', 'custom'];
+    if (
+      layer.layerShape &&
+      layer.layerShape.enabled &&
+      layer.layerShape.type !== 'rectangle' &&
+      (hasLayerEffects || !inlineMaskedTypes.includes(layer.layerShape.type))
+    ) {
       finalTexture = this.applyShapeMask(finalTexture, layer);
     }
     // Edge effects
@@ -2772,7 +2797,9 @@ export class RenderEngine {
       if (unit.kind === 'group') {
         const groupTexture = this.renderGroupToTexture(unit.group, unit.children);
         if (groupTexture) {
-          this.compositeTexture(groupTexture, unit.group.opacity, unit.group.blendMode, compositeIdx === 0);
+          const groupSeqGate = (unit.group as any)._seqGate;
+          const groupCompositeOpacity = unit.group.opacity * (typeof groupSeqGate === 'number' ? groupSeqGate : 1);
+          this.compositeTexture(groupTexture, groupCompositeOpacity, unit.group.blendMode, compositeIdx === 0);
           compositeIdx++;
         }
         continue;
@@ -2782,7 +2809,14 @@ export class RenderEngine {
       const layerTexture = this.getLayerTexture(layer, obj);
       if (!layerTexture) continue;
       const finalTexture = this.processLayerPipeline(layer, obj, layerTexture);
-      this.compositeTexture(finalTexture, layer.opacity, layer.blendMode, compositeIdx === 0);
+      // Continuous-mode sequencer rows stash a gate multiplier on the
+      // layer (Canvas.svelte sets _seqGate when the row's ∞ flag is
+      // on). The layer still renders its full pipeline upstream so its
+      // shader / keyframe-driven state keeps advancing; the gate only
+      // hides the layer at composite time. Default 1 = unaffected.
+      const seqGate = (layer as any)._seqGate;
+      const compositeOpacity = layer.opacity * (typeof seqGate === 'number' ? seqGate : 1);
+      this.compositeTexture(finalTexture, compositeOpacity, layer.blendMode, compositeIdx === 0);
       compositeIdx++;
     }
   }

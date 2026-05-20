@@ -4024,6 +4024,18 @@ export interface Composition {
   createdAt: number;  // Timestamp
   layers: Layer[];    // Deep copy of all layers at save time
   synthVision?: any;  // Performer state snapshot (optional for backwards compat)
+  // Transport snapshots: if either was actively playing at save time,
+  // load resets that sub-store's playhead and auto-starts it. Both
+  // optional so older presets (which lack these fields) load with the
+  // current sub-store state untouched.
+  sequencer?: {
+    snapshot: any;        // output of layerSequencer.serialize()
+    wasPlaying: boolean;  // sub-store's isPlaying flag at save time
+  };
+  keyframes?: {
+    snapshot: any;        // output of keyframeTimeline.exportAll()
+    wasPlaying: boolean;  // config.isPlaying at save time
+  };
 }
 
 // VJ Deck - A slot that can hold a composition for live mixing
@@ -4076,6 +4088,14 @@ export interface SequencerStep {
 export interface SequencerPattern {
   steps: SequencerStep[];
   stepCount: number;
+  /** Per-layer "continuous" flag. When set for a layer, the sequencer's
+   *  active/inactive cell only gates that layer's final composite alpha —
+   *  the layer is still rendered every frame so its shader uniforms,
+   *  keyframe-driven parameters, and time-dependent effects keep advancing
+   *  even while the cell is "off." Missing keys / false = legacy behavior
+   *  (layer hides on inactive cells and may visually restart on the next
+   *  on-step). Optional so old saved patterns deserialize cleanly. */
+  continuousLayers?: Record<string, boolean>;
 }
 
 export interface SequencerConfig {

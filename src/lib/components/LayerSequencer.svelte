@@ -203,10 +203,20 @@
 
           <!-- Layer rows -->
           {#each allLayers as layer, layerIdx}
-            <!-- Layer name (sticky left) -->
+            {@const isContinuous = !!pattern.continuousLayers?.[layer.id]}
+            <!-- Layer name (sticky left) + continuous-mode toggle -->
             <div class="seq-layer-label" title={layer.name}>
               <span class="seq-layer-dot" style="background: {layer.visible ? '#FF6B6B' : '#333'}"></span>
-              {truncName(layer.name)}
+              <button
+                class="seq-cont-btn"
+                class:active={isContinuous}
+                onclick={(e) => { e.stopPropagation(); layerSequencer.toggleContinuous(layer.id); }}
+                title={isContinuous
+                  ? 'Continuous mode ON \u2014 cells gate alpha; shader keeps running. Click to disable.'
+                  : 'Continuous mode OFF \u2014 cells fully gate the layer. Click to keep shader running while cells gate alpha.'}
+                aria-pressed={isContinuous}
+              >\u221e</button>
+              <span class="seq-layer-name">{truncName(layer.name)}</span>
             </div>
             <!-- Step cells for this layer -->
             {#each stepIndices as stepIdx}
@@ -216,6 +226,7 @@
                 class="seq-cell"
                 class:active
                 class:current={isCurrent}
+                class:continuous={isContinuous}
                 onclick={() => toggleCell(stepIdx, layer.id)}
                 title="{layer.name} \u2014 Step {stepIdx + 1}"
               ></button>
@@ -397,6 +408,55 @@
 
   .seq-layer-dot {
     width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+  }
+
+  /* Continuous-mode (∞) toggle, lives inside .seq-layer-label between
+     the visibility dot and the layer name. Active state mirrors the
+     accent used for continuous cells (cyan) so the row visually signals
+     "this layer is in continuous mode" at a glance. */
+  .seq-cont-btn {
+    flex-shrink: 0;
+    width: 14px; height: 14px;
+    padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 3px;
+    background: transparent;
+    color: #555;
+    font-size: 10px; line-height: 1;
+    cursor: pointer;
+    transition: color 0.08s, border-color 0.08s, background 0.08s;
+  }
+  .seq-cont-btn:hover {
+    color: #aaa;
+    border-color: rgba(76,209,255,0.4);
+  }
+  .seq-cont-btn.active {
+    color: #4cd1ff;
+    border-color: rgba(76,209,255,0.55);
+    background: rgba(76,209,255,0.08);
+  }
+
+  .seq-layer-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  /* Continuous rows get a faint cyan tint on their cells so the user
+     can see at a glance which rows are gating alpha vs. fully gating
+     the layer. Keeps the active/current accents distinct. */
+  .seq-cell.continuous {
+    border-color: rgba(76,209,255,0.18);
+  }
+  .seq-cell.active.continuous {
+    background: #4cd1ff;
+    border-color: rgba(76,209,255,0.55);
+    box-shadow: 0 0 4px rgba(76,209,255,0.25);
+  }
+  .seq-cell.active.continuous:hover {
+    background: #6fdcff;
   }
 
   /* ═══════════════════════════════════
