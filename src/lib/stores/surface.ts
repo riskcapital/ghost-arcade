@@ -719,7 +719,6 @@ function defaultAutomation(): SurfaceEffectAutomation {
     mode: 'beat',
     seconds: 4,
     beats: 8,
-    includeStill: false,
   };
 }
 

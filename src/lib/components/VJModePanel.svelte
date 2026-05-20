@@ -2305,14 +2305,6 @@
                     />
                     <span class="stage-auto-unit">sec</span>
                   {/if}
-                  <label class="stage-auto-still" title="Include the 'Still' (no-effect) slot in the cycle">
-                    <input
-                      type="checkbox"
-                      checked={auto?.includeStill ?? false}
-                      onchange={(e) => surfaceStore.updateEffectAutomation({ includeStill: (e.target as HTMLInputElement).checked })}
-                    />
-                    Inc. Still
-                  </label>
                 </div>
 
                 <!-- Add new effect — dropdown + button so the user
@@ -2329,26 +2321,6 @@
 
                 <div class="effects-section">
                   <div class="effects-list">
-                    <!-- Still slot — "no effect" radio entry. Goes
-                         first so it's a discoverable "back to nothing"
-                         choice and so it sits at the top of the auto-
-                         cycle when Inc. Still is on. -->
-                    <div class="effect-item still-item" class:live={activeId === 'still'}>
-                      <div class="effect-header" onclick={() => surfaceStore.setActiveEffect('still')}>
-                        <button
-                          class="effect-live-radio"
-                          class:active={activeId === 'still'}
-                          onclick={(e) => { e.stopPropagation(); surfaceStore.setActiveEffect('still'); }}
-                          title="Make Still the live state (no effect)"
-                        >{activeId === 'still' ? '◉' : '○'}</button>
-                        <span class="effect-name">
-                          <span class="stage-fx-icon">∅</span>
-                          Still
-                        </span>
-                        <span class="effect-still-hint">default</span>
-                      </div>
-                    </div>
-
                     {#each effects as eff (eff.id)}
                       {@const def = getEffectDef(eff.type)}
                       {@const isLive = activeId === eff.id}
@@ -2394,31 +2366,6 @@
                                 })}
                               />
                               <span class="param-val">{eff.opacity.toFixed(2)}</span>
-                            </div>
-                            <!-- Color tint — picker stores the hex on
-                                 the effect; per-slice color publishing
-                                 happens in stageEffects.ts. Engine
-                                 integration for tinting slice content
-                                 is a follow-up. -->
-                            <div class="param-row">
-                              <span>Color tint</span>
-                              <input
-                                type="color"
-                                class="effect-color-input"
-                                value={eff.color ?? '#4cd1ff'}
-                                onchange={(e) => surfaceStore.updateStageEffect(eff.id, {
-                                  color: (e.target as HTMLInputElement).value
-                                })}
-                              />
-                              {#if eff.color}
-                                <button
-                                  class="effect-color-clear"
-                                  onclick={() => surfaceStore.updateStageEffect(eff.id, { color: undefined })}
-                                  title="Clear color tint"
-                                >×</button>
-                              {:else}
-                                <span class="param-val">—</span>
-                              {/if}
                             </div>
                             {#each def?.paramSpecs ?? [] as spec (spec.key)}
                               <div class="param-row">
@@ -4709,17 +4656,6 @@
     font-size: 10px;
     font-family: monospace;
   }
-  .stage-auto-still {
-    margin-left: auto;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    color: #aaa;
-    font-size: 10.5px;
-    cursor: pointer;
-  }
-  .stage-auto-still input { cursor: pointer; }
-
   /* ── Stage Effects: live-radio + cycle toggle on each row ── */
   .effect-live-radio {
     width: 22px; height: 22px;
@@ -4762,38 +4698,6 @@
     background: rgba(76,209,255,0.04);
     border-left: 2px solid #4cd1ff;
   }
-  .still-item {
-    border-bottom: 1px dashed rgba(255,255,255,0.05);
-    opacity: 0.85;
-  }
-  .still-item.live { opacity: 1; }
-  .effect-still-hint {
-    margin-left: auto;
-    color: #555;
-    font-size: 9.5px;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-  }
-  .effect-color-input {
-    width: 60px;
-    height: 22px;
-    border: 1px solid #2a2a30;
-    border-radius: 3px;
-    background: transparent;
-    padding: 0;
-    cursor: pointer;
-  }
-  .effect-color-clear {
-    background: transparent;
-    border: 1px solid #2a2a30;
-    color: #888;
-    border-radius: 3px;
-    width: 18px; height: 18px;
-    cursor: pointer;
-    font-size: 12px;
-    padding: 0;
-  }
-  .effect-color-clear:hover { background: rgba(255,68,68,0.15); color: #ff8888; }
 
   .effects-list {
     display: flex;
