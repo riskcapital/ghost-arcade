@@ -36,6 +36,17 @@ export interface StageEffectDef {
 
 export const STAGE_EFFECT_CATALOG: StageEffectDef[] = [
   {
+    type: 'still',
+    label: 'Still',
+    icon: '∅',
+    // The "no effect" effect. Brightness is constant 1.0 so the
+    // slice's bound layer renders at its natural opacity. Add this to
+    // the auto-cycle as a rest beat between active effects, or use it
+    // as the default state when nothing else is live.
+    defaultParams: {},
+    paramSpecs: [],
+  },
+  {
     type: 'radial-pulse',
     label: 'Radial Pulse',
     icon: '◎',
@@ -657,6 +668,7 @@ function evalSplitFlash(eff: StageEffect, cx: number, cy: number, tSec: number, 
 
 function evaluate(eff: StageEffect, cx: number, cy: number, tSec: number, state: any): number {
   switch (eff.type) {
+    case 'still':                return 1; // no modulation; layer renders at natural opacity
     case 'radial-pulse':         return evalRadialPulse(eff, cx, cy, tSec, state);
     case 'linear-sweep':         return evalLinearSweep(eff, cx, cy, tSec, state);
     case 'noise-flicker':        return evalNoiseFlicker(eff, cx, cy, tSec, state);
@@ -726,11 +738,13 @@ function tick(nowMs: number) {
 }
 
 /** Resolve which effect (if any) is the live one for this surface.
- *  Honors `activeEffectId` — `null` or `'still'` returns null
- *  (no effect runs, slices render at their natural opacity). */
+ *  Honors `activeEffectId` — `null` returns null (no effect runs;
+ *  layers render at their natural opacity). A type='still' effect
+ *  evaluates to a constant brightness of 1.0 via the regular tick
+ *  path, so the user can position Still anywhere in the cycle. */
 function pickLiveEffect(surface: Surface): StageEffect | null {
   const id = surface.activeEffectId;
-  if (id == null || id === 'still') return null;
+  if (id == null) return null;
   const eff = (surface.effects ?? []).find(e => e.id === id);
   return eff ?? null;
 }
@@ -827,22 +841,23 @@ function advanceAutomation(nowMs: number) {
     // Pick the next slot. Land on the current activeEffectId then step
     // forward; if the current isn't in the cycle (e.g. user disabled
     // it mid-play), start from the first slot.
-    const currentId = surface.activeEffectId ?? 'still';
+    const currentId = surface.activeEffectId ?? '';
     let idx = cycle.indexOf(currentId);
     idx = idx < 0 ? 0 : (idx + 1) % cycle.length;
     const nextId = cycle[idx];
 
     void import('./surface').then(({ surfaceStore }) => {
-      surfaceStore.setActiveEffect(surface.id, nextId === 'still' ? 'still' : nextId);
+      surfaceStore.setActiveEffect(surface.id, nextId);
     });
   }
 }
 
 function buildAutomationCycle(surface: Surface): string[] {
-  const includeStill = surface.effectAutomation?.includeStill !== false;
-  const enabled = (surface.effects ?? []).filter(e => e.enabled).map(e => e.id);
-  if (enabled.length === 0) return includeStill ? ['still'] : [];
-  return includeStill ? ['still', ...enabled] : enabled;
+  // Cycle = the effects.[] entries the user has marked ↻-included.
+  // Still is just one of those types now — to insert a "rest beat"
+  // between active effects, add a Still entry and include it in the
+  // cycle like any other.
+  return (surface.effects ?? []).filter(e => e.enabled).map(e => e.id);
 }
 
 // ─── Public API ─────────────────────────────────────────────────────

@@ -4238,11 +4238,6 @@ export interface SurfaceEffectAutomation {
   mode: 'time' | 'beat';
   seconds: number;    // used when mode='time'
   beats: number;      // used when mode='beat'
-  /** Include the 'still' slot in the rotation. When false the cycle
-   *  skips it and goes straight from the last effect back to the
-   *  first; when true the user gets a beat of "no effect" between
-   *  each effect in the cycle. */
-  includeStill: boolean;
 }
 
 // ── Stage Effects ────────────────────────────────────────
@@ -4253,6 +4248,7 @@ export interface SurfaceEffectAutomation {
 // an opacity multiplier on the slice's bound mapping layer.
 
 export type StageEffectType =
+  | 'still'                 // no effect — slices render at their natural opacity; useful as a "rest beat" in auto-cycles
   | 'radial-pulse'          // expanding ring from configurable origin
   | 'linear-sweep'          // bar of light sweeping across the surface
   | 'noise-flicker'         // pseudo-random per-slice brightness (Perlin-ish)
