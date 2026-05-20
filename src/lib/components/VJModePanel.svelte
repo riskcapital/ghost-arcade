@@ -2256,9 +2256,27 @@
             </button>
           {/each}
         </div>
-        <button class="stage-preset-save-btn" onclick={() => saveStagePresetWithScope()} title="Save current mapping as stage preset">
+        <button class="stage-preset-save-btn" onclick={() => saveStagePresetWithScope()} title="Save current mapping as a new stage preset">
           + Save
         </button>
+        <!-- Update — overwrites the currently-active stage preset
+             with the current layers + effects bundle. Only shown
+             when a preset is active (no surprise overwrites of the
+             "wrong" preset). Two buttons (vs one chameleon) so the
+             destructive overwrite isn't reached by muscle memory
+             when the user means "save a new one." -->
+        {#if $vjClipLauncher.stagePresetId}
+          {@const activePreset = allStagePresets.find(p => p.id === $vjClipLauncher.stagePresetId)}
+          {#if activePreset}
+            <button
+              class="stage-preset-update-btn"
+              onclick={() => updateStagePresetInPlace(activePreset)}
+              title={`Overwrite "${activePreset.name}" with the current layers + effects`}
+            >
+              ↻ Update
+            </button>
+          {/if}
+        {/if}
         <button class="stage-scope-toggle"
           class:global={stageSaveScope === 'global'}
           onclick={() => stageSaveScope = stageSaveScope === 'project' ? 'global' : 'project'}
@@ -6942,6 +6960,25 @@
   .stage-preset-save-btn:hover {
     border-color: #f90;
     color: #f90;
+  }
+
+  /* Update-active-preset button — outlined cyan, distinct from
+     "+ Save" so the destructive overwrite isn't reached by muscle
+     memory. Filled on hover to confirm intent. */
+  .stage-preset-update-btn {
+    padding: 4px 10px;
+    background: transparent;
+    border: 1px solid #4cd1ff;
+    border-radius: 4px;
+    color: #4cd1ff;
+    font-size: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .stage-preset-update-btn:hover {
+    background: rgba(76,209,255,0.15);
+    color: #fff;
   }
 
   .stage-scope-toggle {

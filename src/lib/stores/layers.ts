@@ -2500,10 +2500,12 @@ void main() {
       }));
     },
 
-    /** Overwrite an existing stage preset's saved layers with the CURRENT
-     * project layers (and optionally a fresh thumbnail). Used by the
-     * right-click "Update Preset" action so the user can iterate on a
-     * mapping without having to delete + re-save under the same name. */
+    /** Overwrite an existing stage preset's saved layers + effects
+     * bundle with the CURRENT state. Used by the "+ Update" button
+     * and the right-click "Update Preset" item so the user can
+     * iterate on a stage without having to delete + re-save under
+     * the same name. Mirrors saveStagePreset's snapshot logic
+     * (layers + active surface's effects/active/automation). */
     updateStagePreset(presetId: string, thumbnail?: string) {
       const currentProject = get({ subscribe });
       const layersSnapshot: Layer[] = [];
@@ -2519,11 +2521,34 @@ void main() {
           console.warn('[Store] Failed to clone layer for stage preset update:', layer.id, e);
         }
       }
+      // Capture the active surface's effects bundle, same as saveStagePreset.
+      let stageEffectsSnap: StagePreset['stageEffects'] = undefined;
+      try {
+        const surfState = get(surfaceStore);
+        const activeSurf = surfState.surfaces.find(s => s.id === surfState.activeSurfaceId);
+        if (activeSurf) {
+          stageEffectsSnap = {
+            effects: JSON.parse(JSON.stringify(activeSurf.effects ?? [])),
+            activeEffectId: activeSurf.activeEffectId ?? null,
+            automation: activeSurf.effectAutomation
+              ? JSON.parse(JSON.stringify(activeSurf.effectAutomation))
+              : null,
+          };
+        }
+      } catch (err) {
+        console.warn('[Store] updateStagePreset: surface effects snapshot failed', err);
+      }
       update((project) => ({
         ...project,
         stagePresets: (project.stagePresets || []).map(p =>
           p.id === presetId
-            ? { ...p, layers: layersSnapshot, thumbnail: thumbnail ?? p.thumbnail, updatedAt: Date.now() }
+            ? {
+                ...p,
+                layers: layersSnapshot,
+                thumbnail: thumbnail ?? p.thumbnail,
+                stageEffects: stageEffectsSnap,
+                updatedAt: Date.now(),
+              }
             : p
         ),
       }));
