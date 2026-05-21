@@ -125,7 +125,12 @@
     return val;
   }
 
-  // Snap a Point2D to other layers, canvas edges, and optionally to grid
+  // Snap a Point2D to other layers, canvas edges, optionally to grid,
+  // AND (new) to the project's pixel grid so projectionists can hit
+  // exact target pixels with the mouse. Pixel snap is the lowest-
+  // priority step — runs after cross-layer / grid / edge snaps so it
+  // refines the already-snapped result without overriding a stronger
+  // match.
   function snapPoint(p: Point2D): Point2D {
     let { x, y } = p;
 
@@ -136,7 +141,7 @@
       const crossSnap = findSnapTarget({ x, y }, get(layers), $selectedLayer.id);
       if (crossSnap.snapped && crossSnap.target) {
         activeSnapTarget = crossSnap.target;
-        return crossSnap.point;
+        return pixelSnap(crossSnap.point);
       }
     }
     activeSnapTarget = null;
@@ -149,7 +154,28 @@
     // Canvas edge snap (overrides grid snap if near boundary)
     x = snapToEdge(x);
     y = snapToEdge(y);
-    return { x, y };
+    return pixelSnap({ x, y });
+  }
+
+  /** Snap a normalized 0..1 coord to the project's pixel grid, per
+   *  the user's `warpDragGranularity` setting. Bypasses cleanly when
+   *  the user picks 'free' OR when fine-tune mode is engaged (the
+   *  user is actively nudging with arrow keys, where the caller
+   *  already passed an exact pixel-aligned target). */
+  function pixelSnap(p: Point2D): Point2D {
+    const granularity = get(settings).ui.warpDragGranularity ?? '1px';
+    if (granularity === 'free') return p;
+    const step =
+      granularity === 'sub'  ? 0.5 :
+      granularity === '5px'  ? 5 :
+      granularity === '10px' ? 10 : 1;
+    const proj = get(project);
+    const pw = Math.max(1, proj.width);
+    const ph = Math.max(1, proj.height);
+    return {
+      x: Math.round(p.x * pw / step) * step / pw,
+      y: Math.round(p.y * ph / step) * step / ph,
+    };
   }
 
   // Convert normalized (0-1) to pixel coordinates
@@ -202,30 +228,46 @@
     window.addEventListener('mouseup', handleMouseUp);
   }
 
-  // Handle keyboard navigation for selected corner
+  // Handle keyboard navigation for selected corner. Step size honors
+  // the user's `warpDragGranularity` setting so arrow-key nudges
+  // move by exactly the same amount as a snapped mouse drag — 1
+  // project pixel by default. Shift gives 10x larger steps for
+  // gross positioning.
   function handleKeyDown(e: KeyboardEvent) {
     if (!selectedCorner || !$selectedLayer || $selectedLayer.locked) return;
 
-    const delta = e.shiftKey ? MOVE_DELTA_LARGE : MOVE_DELTA;
+    // Resolve project-pixel step from settings.
+    const granularity = get(settings).ui.warpDragGranularity ?? '1px';
+    const stepPx =
+      granularity === 'sub'  ? 0.5 :
+      granularity === '5px'  ? 5 :
+      granularity === '10px' ? 10 :
+      granularity === 'free' ? 1 : 1;
+    const proj = get(project);
+    const pw = Math.max(1, proj.width);
+    const ph = Math.max(1, proj.height);
+    const dxStep = (stepPx * (e.shiftKey ? 10 : 1)) / pw;
+    const dyStep = (stepPx * (e.shiftKey ? 10 : 1)) / ph;
     const currentPos = $selectedLayer.corners[selectedCorner];
     let dx = 0;
     let dy = 0;
 
     switch (e.key) {
       case 'ArrowUp':
-        dy = delta;
+        dy = dyStep;
         break;
       case 'ArrowDown':
-        dy = -delta;
+        dy = -dyStep;
         break;
       case 'ArrowLeft':
-        dx = -delta;
+        dx = -dxStep;
         break;
       case 'ArrowRight':
-        dx = delta;
+        dx = dxStep;
         break;
       case 'Escape':
         selectedCorner = null;
+        fineTuneCorner = null;
         return;
       default:
         return;
@@ -481,14 +523,61 @@
   }
 
   // Touch events
+  /** Per-corner timestamp of the previous tap. Used to detect a
+   *  double-tap that enters fine-tune mode. 350ms is the threshold —
+   *  longer than the typical iOS double-tap (~250ms) so users on
+   *  slower devices still register. */
+  const lastTapAt = new Map<keyof WarpCorners, number>();
+  const DOUBLE_TAP_MS = 350;
+
+  /** When set, the on-canvas arrow nudgers are visible and key-press
+   *  / button-tap events move this corner by 1 project pixel. */
+  let fineTuneCorner: keyof WarpCorners | null = null;
+
   function handleCornerTouchStart(corner: keyof WarpCorners, e: TouchEvent) {
     if ($selectedLayer?.locked) return;
     e.preventDefault();
+    // Detect double-tap on the same corner → enter fine-tune mode.
+    // Don't start a drag in that case; the user wants the nudgers.
+    const now = performance.now();
+    const prev = lastTapAt.get(corner) ?? 0;
+    if (now - prev < DOUBLE_TAP_MS) {
+      fineTuneCorner = corner;
+      selectedCorner = corner;
+      lastTapAt.delete(corner);
+      return;
+    }
+    lastTapAt.set(corner, now);
     dragging = 'corner';
     dragTarget = corner;
     window.addEventListener('touchmove', handleTouchMove, { passive: false });
     window.addEventListener('touchend', handleTouchEnd);
   }
+
+  /** Move the fine-tune corner by exactly one project-pixel step in
+   *  the given direction. Honors warpDragGranularity so a user who
+   *  sets the snap to 5px gets 5px nudges from the arrows too. */
+  function nudgeFineTune(dxPx: number, dyPx: number) {
+    if (!fineTuneCorner || !$selectedLayer || $selectedLayer.locked) return;
+    const granularity = get(settings).ui.warpDragGranularity ?? '1px';
+    const step =
+      granularity === 'sub'  ? 0.5 :
+      granularity === '5px'  ? 5 :
+      granularity === '10px' ? 10 : 1;
+    const proj = get(project);
+    const pw = Math.max(1, proj.width);
+    const ph = Math.max(1, proj.height);
+    const cur = $selectedLayer.corners[fineTuneCorner];
+    // Warp Y goes UP (1=top); arrow "up" should decrease canvas Y
+    // pixel coordinate which means INCREASE the corner Y. Sign flip.
+    const next = {
+      x: cur.x + (dxPx * step) / pw,
+      y: cur.y - (dyPx * step) / ph,
+    };
+    project.setCorner($selectedLayer.id, fineTuneCorner, next);
+  }
+
+  function exitFineTune() { fineTuneCorner = null; }
 
   function handleMoveTouchStart(e: TouchEvent) {
     if ($selectedLayer?.locked) return;
@@ -722,6 +811,18 @@
           style="left: {pos.x}px; top: {pos.y}px;"
           onmousedown={(e) => handleCornerMouseDown(corner as keyof WarpCorners, e)}
           ontouchstart={(e) => handleCornerTouchStart(corner as keyof WarpCorners, e)}
+          ondblclick={(e) => {
+            // Desktop double-click matches mobile double-tap: opens
+            // the on-canvas arrow-nudger pad for precise positioning.
+            // Keyboard arrows work without it, but the pad gives
+            // pointer-only users (or trackpad users who don't want
+            // to switch hands) the same fine-tune flow.
+            e.stopPropagation();
+            if ($selectedLayer && !$selectedLayer.locked) {
+              fineTuneCorner = corner as keyof WarpCorners;
+              selectedCorner = corner as keyof WarpCorners;
+            }
+          }}
           role="button"
           tabindex="0"
           aria-label="Warp corner {corner}"
@@ -802,6 +903,30 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
           <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
         </svg>
+      </div>
+    {/if}
+
+    <!-- Fine-tune nudger pad — appears after a double-tap on a
+         corner handle (mobile / touch primary, also clickable on
+         desktop). Each arrow tap moves the selected corner by one
+         project-pixel step. The pad floats just below-right of the
+         center handle so it doesn't cover the corners being adjusted.
+         Tap × to dismiss. -->
+    {#if fineTuneCorner && centerPosition}
+      <div
+        class="fine-tune-pad"
+        style="left: {centerPosition.x + 60}px; top: {centerPosition.y - 60}px;"
+        onmousedown={(e) => e.stopPropagation()}
+        ontouchstart={(e) => e.stopPropagation()}
+        role="group"
+        aria-label="Fine-tune {fineTuneCorner}"
+      >
+        <div class="ft-label">{fineTuneCorner.replace(/([A-Z])/g, ' $1').trim()}</div>
+        <button class="ft-btn ft-up"    onclick={() => nudgeFineTune(0, 1)}  aria-label="Up">▲</button>
+        <button class="ft-btn ft-left"  onclick={() => nudgeFineTune(-1, 0)} aria-label="Left">◀</button>
+        <button class="ft-btn ft-exit"  onclick={exitFineTune}                aria-label="Exit fine-tune">×</button>
+        <button class="ft-btn ft-right" onclick={() => nudgeFineTune(1, 0)}  aria-label="Right">▶</button>
+        <button class="ft-btn ft-down"  onclick={() => nudgeFineTune(0, -1)} aria-label="Down">▼</button>
       </div>
     {/if}
 
@@ -1048,4 +1173,60 @@
     from { opacity: 0.5; }
     to { opacity: 1; }
   }
+
+  /* ── Fine-tune nudger pad ── */
+  /* 3x3 grid of arrow buttons (up / left / × / right / down with the
+     diagonals empty) that floats over the canvas when fine-tune mode
+     is active. Each tap moves the selected corner by exactly one
+     project-pixel step. Sized for touch (44px hit targets per Apple's
+     guidelines) but works fine with mouse too. */
+  .fine-tune-pad {
+    position: absolute;
+    display: grid;
+    grid-template-columns: 44px 44px 44px;
+    grid-template-rows: auto 44px 44px 44px;
+    gap: 4px;
+    padding: 8px;
+    background: rgba(10, 10, 14, 0.92);
+    border: 1px solid #4cd1ff;
+    border-radius: 8px;
+    box-shadow: 0 4px 24px rgba(76, 209, 255, 0.25);
+    z-index: 30;
+    backdrop-filter: blur(8px);
+  }
+  .ft-label {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    text-align: center;
+    font-size: 10px;
+    letter-spacing: 1px;
+    color: #4cd1ff;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  .ft-btn {
+    width: 44px;
+    height: 44px;
+    background: #14141a;
+    border: 1px solid #2a2a30;
+    border-radius: 6px;
+    color: #ddd;
+    font-size: 14px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: manipulation;  /* suppress 300ms tap delay on iOS */
+  }
+  .ft-btn:hover, .ft-btn:active {
+    background: rgba(76, 209, 255, 0.18);
+    border-color: #4cd1ff;
+    color: #fff;
+  }
+  .ft-up    { grid-column: 2; grid-row: 2; }
+  .ft-left  { grid-column: 1; grid-row: 3; }
+  .ft-exit  { grid-column: 2; grid-row: 3; color: #ff8888; border-color: #3a2a2a; }
+  .ft-exit:hover { background: rgba(255, 68, 68, 0.15); border-color: #ff8888; }
+  .ft-right { grid-column: 3; grid-row: 3; }
+  .ft-down  { grid-column: 2; grid-row: 4; }
 </style>
