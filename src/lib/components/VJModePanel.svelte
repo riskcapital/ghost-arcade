@@ -1539,7 +1539,15 @@
         vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
       }
     } else if (draggedClip.type === 'spout') {
-      // Handle Spout source from plugin (FluidGen, Particles3D) - legacy
+      // Spout drag — covers two cases distinguished by whether the
+      // dragged source.id matches an NDI live source. NDI clips
+      // travel through the 'spout' clip type to reuse all the
+      // receiver / texture / render plumbing; Canvas tells them apart
+      // by source.ndiSource vs spoutSource. Naming is regrettable
+      // ("spout" became the umbrella for live-stream-from-elsewhere
+      // because Spout was the first one) — kept for back-compat with
+      // saved projects.
+      const ndiLive = vjLiveSources.find(s => s.id === draggedClip!.id && s.type === 'ndi');
       const vjClip: VJClip = {
         id: generateUUID(),
         type: 'spout',
@@ -1547,6 +1555,12 @@
         src: draggedClip.spoutName || draggedClip.id,
         spoutSource: draggedClip.spoutName,
       };
+      if (ndiLive) {
+        // Stash the NDI source name in the clip's media-source bundle
+        // so the Canvas receiver-loader picks the NDI branch instead
+        // of Spout's. ndiSenderName carried through from the live-source.
+        (vjClip as any).ndiSource = { senderName: ndiLive.ndiSourceName };
+      }
       vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
     } else if (draggedClip.type === 'effect') {
       // Handle integrated effect (FluidGen, Particles3D running natively)
@@ -3779,7 +3793,17 @@
                     class="media-item vj-source-item"
                     class:source-live={src.status === 'live'}
                     draggable={src.status === 'live' ? 'true' : 'false'}
-                    ondragstart={(e) => src.videoEl && handleDragStart(e, { type: 'video', id: src.id })}
+                    ondragstart={(e) => {
+                      // NDI sources route through the spout drag type
+                      // (handled by the spout branch in handleCellDrop)
+                      // — Canvas distinguishes NDI vs Spout via
+                      // ndiSource vs spoutSource on the MediaSource.
+                      if (src.type === 'ndi' && src.ndiSourceName) {
+                        handleDragStart(e, { type: 'spout', id: src.id, spoutName: src.ndiSourceName, pluginName: src.name });
+                      } else if (src.videoEl) {
+                        handleDragStart(e, { type: 'video', id: src.id });
+                      }
+                    }}
                     ondragend={handleDragEnd}
                     role="button"
                     tabindex="0"
