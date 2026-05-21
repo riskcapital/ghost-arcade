@@ -13,6 +13,7 @@ import { macros } from './macros';
 import { snapshots } from './snapshots';
 import { layerSequencer } from './layerSequencer';
 import { surfaceStore } from './surface';
+import { oscStore } from '../osc/oscStore';
 import { geoDeckStore } from './geoDeck';
 import { createDefaultShapeMesh } from '../drawing/types';
 import type { LineElement, LineShape, LinesContent, LineDrawAnimation, LineStroke } from '../lines/types';
@@ -4097,6 +4098,9 @@ void main() {
         keyframeTimelines: keyframeTimeline.exportAll(),
         // Include macro knobs (8 user-assignable knobs with destinations)
         macros: macros.serialize(),
+        // Include OSC config (port + bindings). The listener is
+        // restarted on project load if the saved state was enabled.
+        osc: oscStore.serialize(),
         // Include snapshot bank (16 captured-state slots)
         snapshots: snapshots.serialize(),
         // Include SynthVision performer state at project root
@@ -4810,6 +4814,15 @@ void main() {
           snapshots.hydrate((parsed as any).snapshots);
         } else {
           snapshots.reset();
+        }
+
+        // Import OSC config (port + bindings + enabled flag). Older
+        // saves don't carry it — reset to defaults so the listener
+        // isn't accidentally auto-started.
+        if ((parsed as any).osc) {
+          oscStore.hydrate((parsed as any).osc);
+        } else {
+          oscStore.reset();
         }
 
         // Import SynthVision PROJECT-ROOT state (added 1.9.1). Saves

@@ -126,6 +126,30 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 });
 
+// OSC (Open Sound Control) UDP listener bridge.
+//   start({ port }) → boots a dgram socket in main, listens for OSC
+//     packets, parses them, sends each parsed message via the
+//     'osc-msg' channel.
+//   stop() → closes the socket.
+//   status() → { listening, port, error }.
+//   onMessage(cb) → cb(messages[]) on every received batch.
+//   onStatus(cb) → cb({ listening, port, error }) on socket state change.
+contextBridge.exposeInMainWorld('ghostOSC', {
+  start: ({ port } = {}) => ipcRenderer.invoke('osc_start', { port }),
+  stop: () => ipcRenderer.invoke('osc_stop'),
+  status: () => ipcRenderer.invoke('osc_status'),
+  onMessage: (cb) => {
+    const handler = (_e, msgs) => { try { cb(msgs); } catch (err) { console.warn('[OSC] renderer handler', err); } };
+    ipcRenderer.on('osc-msg', handler);
+    return () => ipcRenderer.removeListener('osc-msg', handler);
+  },
+  onStatus: (cb) => {
+    const handler = (_e, s) => { try { cb(s); } catch (err) { console.warn('[OSC] renderer status handler', err); } };
+    ipcRenderer.on('osc-status', handler);
+    return () => ipcRenderer.removeListener('osc-status', handler);
+  },
+});
+
 // OSR zero-copy status events from main process
 contextBridge.exposeInMainWorld('electronOSR', {
   /**
