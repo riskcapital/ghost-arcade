@@ -126,6 +126,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 });
 
+// NDI (NewTek Network Device Interface) sender bridge — cross-platform
+// network video streaming. The native addon is only built when the
+// NDI Advanced SDK is present at compile time, so `available()`
+// reflects "is the addon loadable AND the NDI runtime initialized?".
+// On machines without NDI, every send returns { ok: false } and the
+// app continues with Spout / Syphon as the only output transports.
+contextBridge.exposeInMainWorld('ghostNDI', {
+  available: () => ipcRenderer.invoke('ndi_available'),
+  createSender: (name) => ipcRenderer.invoke('ndi_create_sender', { name }),
+  destroySender: (name) => ipcRenderer.invoke('ndi_destroy_sender', { name }),
+  // Buffer data is structured-cloned over IPC; renderer passes a
+  // Uint8Array, main receives a Node Buffer view of the same bytes.
+  sendImage: (name, data, width, height) =>
+    ipcRenderer.invoke('ndi_send_image', { name, data, width, height }),
+});
+
 // OSC (Open Sound Control) UDP listener bridge.
 //   start({ port }) → boots a dgram socket in main, listens for OSC
 //     packets, parses them, sends each parsed message via the

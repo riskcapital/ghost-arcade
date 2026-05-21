@@ -219,12 +219,24 @@
   let activeTab: 'general' | 'output' | 'performance' | 'midi' | 'osc' | 'ai' = 'general';
 
   // Hash-based deep link from the integrated-GPU banner.
-  onMount(() => {
+  // Is the NDI native addon built + the NDI runtime initialized? Drives
+  // the "NDI" option's disabled state in the per-slice transport
+  // dropdown. Probed once on mount; falls back to false if the
+  // ghostNDI bridge isn't available (non-Electron build).
+  let ndiAvailable = false;
+  onMount(async () => {
     const h = (typeof window !== 'undefined' ? window.location.hash : '').replace(/^#/, '');
-    if (h === 'performance' || h === 'output' || h === 'midi' || h === 'general' || h === 'ai') {
+    if (h === 'performance' || h === 'output' || h === 'midi' || h === 'osc' || h === 'general' || h === 'ai') {
       activeTab = h as typeof activeTab;
       try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch { /* */ }
     }
+    try {
+      const ndi = (window as any).ghostNDI;
+      if (ndi) {
+        const r = await ndi.available();
+        ndiAvailable = !!r?.available;
+      }
+    } catch { ndiAvailable = false; }
   });
   $: if (isOpen && typeof window !== 'undefined') {
     const h = window.location.hash.replace(/^#/, '');
@@ -1259,7 +1271,19 @@
                         oninput={(e) => updateSlice(slice.id, { name: (e.target as HTMLInputElement).value })} />
                     </div>
                     <div class="slice-row">
-                      <label class="slice-field-label">{tsLabel} Sender</label>
+                      <label class="slice-field-label">Transport</label>
+                      <select
+                        class="slice-input"
+                        value={slice.outputType ?? (tsLabel === 'Syphon' ? 'syphon' : 'spout')}
+                        onchange={(e) => updateSlice(slice.id, { outputType: (e.target as HTMLSelectElement).value as 'spout' | 'syphon' | 'ndi' })}
+                        title={ndiAvailable ? 'Pick the output transport for this slice' : 'NDI option requires the NDI Advanced SDK at build time (https://ndi.video/sdk)'}
+                      >
+                        <option value={tsLabel === 'Syphon' ? 'syphon' : 'spout'}>{tsLabel} (local GPU share)</option>
+                        <option value="ndi" disabled={!ndiAvailable}>NDI (network) {ndiAvailable ? '' : ' — not available'}</option>
+                      </select>
+                    </div>
+                    <div class="slice-row">
+                      <label class="slice-field-label">Sender Name</label>
                       <input type="text" class="slice-input" value={slice.spoutName}
                         oninput={(e) => updateSlice(slice.id, { spoutName: (e.target as HTMLInputElement).value })} />
                     </div>

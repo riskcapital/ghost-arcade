@@ -262,8 +262,14 @@ export interface OutputSlice {
   cropY: number;               // 0-1, top edge of slice
   cropW: number;               // 0-1, width of slice
   cropH: number;               // 0-1, height of slice
-  // Spout sender
-  spoutName: string;           // Sender name for this slice (e.g. "ghostArcade-Left")
+  /** Output transport. 'spout' / 'syphon' = platform-native local
+   *  GPU texture share (Windows / macOS); 'ndi' = network device
+   *  interface, cross-machine streaming. spoutName is reused as the
+   *  sender name regardless of transport (the field's name is
+   *  legacy from when only Spout was supported). */
+  outputType?: 'spout' | 'syphon' | 'ndi';
+  // Sender name for this slice (e.g. "ghostArcade-Left")
+  spoutName: string;
   // Edge blending (per-slice)
   edgeBlendLeft: number;       // 0-0.5
   edgeBlendRight: number;

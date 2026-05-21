@@ -126,6 +126,112 @@ elseif(APPLE)
         COMPILE_FLAGS "-x objective-c++ -fobjc-arc"
     )
 
+endif()
+
+# ============================================================
+# NDI (NewTek Network Device Interface) — cross-platform.
+# Detects either the "NDI Advanced SDK" or the regular NDI SDK
+# at standard install paths. Builds ndi_addon.node when found;
+# skips silently with a status message when not.
+#
+# Install instructions:
+#   macOS: https://ndi.video/sdk → NDI Advanced SDK for Apple.
+#          Installs to "/Library/NDI Advanced SDK for Apple".
+#   Windows: NDI Advanced SDK installer →
+#          "C:\\Program Files\\NDI\\NDI Advanced SDK".
+#   Linux: Self-extracting installer → /opt/.
+# ============================================================
+set(NDI_FOUND FALSE)
+set(NDI_INCLUDE_DIRS "")
+set(NDI_LIBRARY "")
+
+if(APPLE)
+    foreach(candidate
+        "/Library/NDI Advanced SDK for Apple"
+        "/Library/NDI SDK for Apple"
+    )
+        if(EXISTS "${candidate}/include/Processing.NDI.Lib.h"
+           AND EXISTS "${candidate}/lib/macOS/libndi.dylib")
+            set(NDI_INCLUDE_DIRS "${candidate}/include")
+            set(NDI_LIBRARY "${candidate}/lib/macOS/libndi.dylib")
+            set(NDI_FOUND TRUE)
+            break()
+        endif()
+    endforeach()
+elseif(WIN32)
+    foreach(candidate
+        "C:/Program Files/NDI/NDI Advanced SDK"
+        "C:/Program Files/NDI/NDI SDK"
+        "C:/Program Files/NewTek/NDI SDK"
+    )
+        if(EXISTS "${candidate}/Include/Processing.NDI.Lib.h"
+           AND EXISTS "${candidate}/Lib/x64/Processing.NDI.Lib.x64.lib")
+            set(NDI_INCLUDE_DIRS "${candidate}/Include")
+            set(NDI_LIBRARY "${candidate}/Lib/x64/Processing.NDI.Lib.x64.lib")
+            set(NDI_FOUND TRUE)
+            break()
+        endif()
+    endforeach()
+elseif(UNIX)
+    foreach(candidate "/opt/NDI Advanced SDK for Linux" "/opt/NDI SDK for Linux")
+        if(EXISTS "${candidate}/include/Processing.NDI.Lib.h"
+           AND EXISTS "${candidate}/lib/x86_64-linux-gnu/libndi.so")
+            set(NDI_INCLUDE_DIRS "${candidate}/include")
+            set(NDI_LIBRARY "${candidate}/lib/x86_64-linux-gnu/libndi.so")
+            set(NDI_FOUND TRUE)
+            break()
+        endif()
+    endforeach()
+endif()
+
+if(NDI_FOUND)
+    message(STATUS "NDI SDK found — building ndi_addon.node")
+    message(STATUS "  include: ${NDI_INCLUDE_DIRS}")
+    message(STATUS "  library: ${NDI_LIBRARY}")
+
+    add_library(ndi_addon SHARED
+        ndi_addon.cpp
+        ${CMAKE_JS_SRC}
+    )
+    target_include_directories(ndi_addon PRIVATE
+        ${NDI_INCLUDE_DIRS}
+        ${CMAKE_JS_INC}
+        ${NODE_ADDON_API_DIR}
+    )
+    target_link_libraries(ndi_addon PRIVATE
+        ${CMAKE_JS_LIB}
+        ${NDI_LIBRARY}
+    )
+    target_compile_definitions(ndi_addon PRIVATE
+        NAPI_VERSION=9
+        NODE_ADDON_API_DISABLE_DEPRECATED
+    )
+    set_target_properties(ndi_addon PROPERTIES
+        PREFIX ""
+        SUFFIX ".node"
+        CXX_STANDARD 17
+    )
+
+    if(APPLE)
+        # libndi.dylib's install_name points at the SDK install path.
+        # Same pattern as the Syphon framework: rewrite to @rpath and
+        # add search paths so the addon resolves the dylib both in
+        # dev (SDK install) and in a packaged .app (we'd ship the
+        # dylib in Contents/Frameworks/ via electron-builder).
+        set_target_properties(ndi_addon PROPERTIES
+            BUILD_WITH_INSTALL_RPATH TRUE
+            INSTALL_RPATH "/Library/NDI Advanced SDK for Apple/lib/macOS;/Library/NDI SDK for Apple/lib/macOS;@loader_path/../../../../../../Frameworks"
+        )
+        add_custom_command(TARGET ndi_addon POST_BUILD
+            COMMAND codesign --force --sign - "$<TARGET_FILE:ndi_addon>" || true
+            COMMENT "Re-signing ndi_addon ad-hoc for Apple Silicon"
+        )
+    endif()
+else()
+    message(STATUS
+        "NDI SDK not found at standard paths — skipping ndi_addon build. "
+        "Install the NDI Advanced SDK from https://ndi.video/sdk to enable.")
+
     # Syphon.framework has an install_name of
     #   @loader_path/../Frameworks/Syphon.framework/Versions/A/Syphon
     # which is baked in for bundled use inside a packaged .app

@@ -82,6 +82,14 @@
 
   // Multi-output slice state
   let sliceSendInFlight = new Set<string>(); // Track in-flight per-slice sends
+  // Tracks which NDI sender names have been created via the native
+  // addon. We lazy-create on first send (see the per-slice send loop)
+  // and never destroy in the renderer — the main process tears them
+  // down on app quit. Renaming or disabling a slice mid-session
+  // doesn't currently free its sender; acceptable for v1, can revisit
+  // when we add slice CRUD lifecycle hooks.
+  const sliceNdiActive = new Set<string>();
+  const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
   let sliceCanvas: HTMLCanvasElement | null = null; // Reusable 2D canvas for crop extraction
   let sliceCtx: CanvasRenderingContext2D | null = null;
   let sliceBlendCanvas: HTMLCanvasElement | null = null; // For per-slice edge blending
@@ -1548,8 +1556,25 @@
 
                 sliceSendInFlight.add(slice.id);
                 const senderName = slice.spoutName || `ghostArcade-${slice.name}`;
+                // Route by transport. 'ndi' goes to the new ndi_send_image
+                // IPC handler; the existing 'spout' / 'syphon' paths keep
+                // their behavior unchanged. Slice managers ensure
+                // ndi_create_sender was called for senderName before any
+                // sends (sliceNdiActive tracks this).
+                const outputType = (slice as any).outputType ?? (isElectron ? (isMac ? 'syphon' : 'spout') : 'spout');
 
-                if (isElectron) {
+                if (outputType === 'ndi' && isElectron) {
+                  if (!sliceNdiActive.has(senderName)) {
+                    // Lazy-create the NDI sender on first send. The
+                    // store/UI tracks intent (outputType=ndi), but the
+                    // actual sender lifecycle lives here so it survives
+                    // slice rename / re-config without UI complexity.
+                    sliceNdiActive.add(senderName);
+                    (window as any).ghostNDI?.createSender(senderName).catch(() => { sliceNdiActive.delete(senderName); });
+                  }
+                  (window as any).ghostNDI?.sendImage(senderName, new Uint8Array(slicePixels), sw, sh)
+                    .catch(() => {}).finally(() => { sliceSendInFlight.delete(slice.id); });
+                } else if (isElectron) {
                   invoke('spout_send_image', { data: new Uint8Array(slicePixels), width: sw, height: sh, senderName })
                     .catch(() => {}).finally(() => { sliceSendInFlight.delete(slice.id); });
                 } else {
