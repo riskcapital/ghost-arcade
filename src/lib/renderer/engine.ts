@@ -1055,7 +1055,7 @@ export class RenderEngine {
     if (!material) {
       // Initialize uniforms with array of Vector2 for points
       const pointUniforms: THREE.Vector2[] = [];
-      for (let i = 0; i < 64; i++) {
+      for (let i = 0; i < 256; i++) {
         pointUniforms.push(new THREE.Vector2(0, 0));
       }
 
@@ -1087,17 +1087,16 @@ export class RenderEngine {
    */
   private tessellateMaskShape(anchors: import('../types').BezierPoint[]): Point2D[] {
     const out: Point2D[] = [];
-    // The polygon mask shader carries a fixed 64-Vector2 uniform array
-    // (see getOrCreateMaskMaterial); anything beyond that gets dropped
-    // and produces a truncated / malformed mask which silently hides
-    // most of the layer's content. We BUDGET our tessellation against
-    // that cap: count how many anchor-pair segments carry beziers,
-    // then divide the remaining 64 minus the anchor count across
-    // those segments — giving each curve as many samples as fit
-    // without overflow. Worst case (32+ anchors with all-bezier
-    // segments) collapses to BEZIER_STEPS=1, i.e. straight segments,
-    // which is still a visually closed polygon (just less smooth).
-    const MAX_POINTS = 64;
+    // The polygon mask shader carries a fixed-size uniform array
+    // (see getOrCreateMaskMaterial — 256 Vector2s, bumped from 64 to
+    // accommodate dense SVG imports without truncation). We BUDGET
+    // tessellation against the cap: count anchor-pair segments that
+    // carry beziers, divide the remaining budget across them, fall
+    // back to straight segments when anchors alone approach the
+    // limit. Imported polygons keep their full anchor fidelity by
+    // default; the user can hit Simplify in the slice inspector to
+    // run RDP reduction when they want.
+    const MAX_POINTS = 256;
     const N = anchors.length;
     if (N >= MAX_POINTS) {
       // Already at or over the limit on anchors alone — emit
@@ -1149,7 +1148,7 @@ export class RenderEngine {
   private getOrCreateMaskUnionAccumMaterial(): THREE.ShaderMaterial {
     if (!this.maskUnionAccumMaterial) {
       const pointUniforms: THREE.Vector2[] = [];
-      for (let i = 0; i < 64; i++) pointUniforms.push(new THREE.Vector2(0, 0));
+      for (let i = 0; i < 256; i++) pointUniforms.push(new THREE.Vector2(0, 0));
       this.maskUnionAccumMaterial = new THREE.ShaderMaterial({
         vertexShader: effectVertexShader,
         fragmentShader: polygonMaskAlphaShader,
