@@ -30,7 +30,6 @@
     parseSurfaceSVG,
   } from '../stores/surface';
   import { layers as projectLayers } from '../stores/layers';
-  import { STAGE_EFFECT_CATALOG } from '../stores/stageEffects';
   import type { Point2D, BezierPoint, SurfaceSlice } from '../types';
 
   // ── Canvas pan/zoom state ─────────────────────────────────
@@ -1120,30 +1119,6 @@
         <div class="inspector-empty">Select a slice to edit its properties.</div>
       {/if}
 
-      <!-- Stage Effects live in the VJ deck now — drag from the
-           VJ "StageFX" tab onto a clip cell, fire to activate.
-           Designer no longer owns the activation UI; this hint
-           points the user to the right place. -->
-      {#if $activeSurface}
-        <div class="effects-section">
-          <div class="effects-header">
-            <span>Stage Effects</span>
-            <span class="effects-count">{STAGE_EFFECT_CATALOG.length} available</span>
-          </div>
-          <div class="effects-pointer">
-            <p>Stage Effects are managed from the <strong>VJ deck</strong>.</p>
-            <p>Open VJ Mode → effects panel (left) → <strong>Stage</strong> tab. Add procedural effects there with live param sliders. Effects keep running after Apply Stage so the cascading pulse animates over your mapping layers in real time.</p>
-            <div class="effects-catalog-list">
-              {#each STAGE_EFFECT_CATALOG as def}
-                <div class="effects-catalog-row">
-                  <span class="effects-catalog-icon">{def.icon}</span>
-                  <span class="effects-catalog-label">{def.label}</span>
-                </div>
-              {/each}
-            </div>
-          </div>
-        </div>
-      {/if}
     </aside>
   </div>
 </div>
