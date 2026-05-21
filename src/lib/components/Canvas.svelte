@@ -117,6 +117,20 @@
   }
   const spoutReceivers = new Map<string, SpoutReceiverContext>();
 
+  // NDI receiver context — mirrors SpoutReceiverContext. One entry per
+  // active NDI receiver clip (keyed by the per-layer cacheKey, same
+  // shape as the Spout map so the render path is structurally
+  // identical). poll loop calls ghostNDI.receiveFrame; non-null
+  // result → upload to the DataTexture.
+  interface NdiReceiverContext {
+    sourceName: string;
+    texture: THREE.DataTexture;
+    width: number;
+    height: number;
+    lastFrameCounter: number;   // monotonic counter from the addon — skip uploads when unchanged
+  }
+  const ndiReceivers = new Map<string, NdiReceiverContext>();
+
   let canvas: HTMLCanvasElement;
   let engine: RenderEngine | null = null;
   let animationId: number;
@@ -2055,6 +2069,15 @@
       invoke('spout_stop_receiver', { senderName: receiver.senderName }).catch(() => {});
     }
     spoutReceivers.clear();
+
+    // Dispose NDI receivers — stop the poll loop, tear down the
+    // addon-side receiver, free the DataTexture.
+    for (const ndiRecv of ndiReceivers.values()) {
+      if ((ndiRecv as any)._stopPolling) (ndiRecv as any)._stopPolling();
+      ndiRecv.texture.dispose();
+      (window as any).ghostNDI?.destroyReceiver(ndiRecv.sourceName).catch(() => {});
+    }
+    ndiReceivers.clear();
   });
 
   // Track active layer sources to detect changes
@@ -2824,6 +2847,108 @@
         if (receiver) {
           texture = receiver.texture;
         }
+      }
+
+      // NDI receiver source — pulls frames from a discovered NDI
+      // sender on the network. Structurally identical to the Spout
+      // receiver path above; differences are limited to the IPC
+      // endpoint name and the source-resolution lookup. The native
+      // addon's receiveFrame returns null when no new frame has
+      // arrived, so the poll loop quietly skips uploads on stale ticks.
+      if (source.type === 'spout' && source.ndiSource && isElectron && !isOsrMode) {
+        const ndiName = source.ndiSource.senderName;
+        let ndiRecv = ndiReceivers.get(cacheKey);
+        if (!ndiRecv) {
+          try {
+            const api = (window as any).ghostNDI;
+            if (api) {
+              await api.createReceiver(ndiName);
+              const initW = source.ndiSource.width || 1920;
+              const initH = source.ndiSource.height || 1080;
+              // Seed with a faint cyan pattern so the slot visibly
+              // exists before the first network frame arrives.
+              const initPixels = new Uint8Array(initW * initH * 4);
+              for (let i = 0; i < initPixels.length; i += 4) {
+                initPixels[i] = 20; initPixels[i+1] = 50; initPixels[i+2] = 70; initPixels[i+3] = 255;
+              }
+              const tex = new THREE.DataTexture(initPixels, initW, initH, THREE.RGBAFormat);
+              tex.minFilter = THREE.LinearFilter;
+              tex.magFilter = THREE.LinearFilter;
+              tex.needsUpdate = true;
+              ndiRecv = {
+                sourceName: ndiName,
+                texture: tex,
+                width: initW,
+                height: initH,
+                lastFrameCounter: 0,
+              };
+              ndiReceivers.set(cacheKey, ndiRecv);
+
+              // Poll loop — RAF cadence with an in-flight guard so we
+              // never have two ghostNDI.receiveFrame calls outstanding.
+              let pollActive = true;
+              let inFlight = false;
+              let rafId: number | null = null;
+              const recvKey = cacheKey;
+              const poll = () => {
+                if (!pollActive) return;
+                const recv = ndiReceivers.get(recvKey);
+                if (!recv) { pollActive = false; return; }
+                if (inFlight) { rafId = requestAnimationFrame(poll); return; }
+                inFlight = true;
+                api.receiveFrame(ndiName).then((frame: any) => {
+                  inFlight = false;
+                  if (!pollActive) return;
+                  if (!frame || !frame.data) {
+                    rafId = requestAnimationFrame(poll);
+                    return;
+                  }
+                  // Frame counter advances monotonically in the addon —
+                  // skip uploads when the same frame is returned twice
+                  // (NDI senders below display refresh).
+                  if (frame.frame === recv.lastFrameCounter) {
+                    rafId = requestAnimationFrame(poll);
+                    return;
+                  }
+                  recv.lastFrameCounter = frame.frame;
+                  const w = frame.width, h = frame.height;
+                  const bytes = new Uint8Array(frame.data);
+                  const t = recv.texture;
+                  if (t.image.width !== w || t.image.height !== h) {
+                    // Dimension change — rebuild the texture and
+                    // re-point the cache so downstream materials pick
+                    // up the new size.
+                    const replaced = new THREE.DataTexture(bytes, w, h, THREE.RGBAFormat);
+                    replaced.minFilter = THREE.LinearFilter;
+                    replaced.magFilter = THREE.LinearFilter;
+                    replaced.needsUpdate = true;
+                    recv.texture = replaced;
+                    recv.width = w;
+                    recv.height = h;
+                    t.dispose();
+                    textureCache.set(recvKey, replaced);
+                    evictTextureCache();
+                  } else if (t.image.data) {
+                    t.image.data.set(bytes);
+                    t.needsUpdate = true;
+                  }
+                  rafId = requestAnimationFrame(poll);
+                }).catch(() => {
+                  inFlight = false;
+                  if (pollActive) rafId = requestAnimationFrame(poll);
+                });
+              };
+              rafId = requestAnimationFrame(poll);
+              (ndiRecv as any)._stopPolling = () => {
+                pollActive = false;
+                if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+              };
+            }
+          } catch (err) {
+            console.error('[NDI] create receiver failed:', err);
+          }
+        }
+        if (ndiRecv) texture = ndiRecv.texture;
       }
 
       if (texture) {
