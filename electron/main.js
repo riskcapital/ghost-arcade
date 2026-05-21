@@ -20,11 +20,13 @@ import { spawn, fork, execSync } from 'child_process';
 import { createRequire } from 'module';
 import fs from 'fs';
 import net from 'net';
+import dgram from 'dgram';
 // License system removed in OSS build — see src/lib/stores/license.ts.
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
+const { parseOSCPacket } = require('./osc-parser.cjs');
 
 // Force Chromium to use the discrete GPU (NVIDIA/AMD) on Optimus laptops.
 // Must be set before app.whenReady() — affects the GPU process.
@@ -681,12 +683,92 @@ function listSpoutSenders() {
 // IPC Handlers
 // ============================================================
 
+// ─── OSC (Open Sound Control) UDP listener ──────────────────
+// Pure dgram socket; the parser lives in osc-parser.cjs. State is
+// module-scoped so handlers can start/stop/query it. Parsed messages
+// stream to the renderer via webContents.send('osc-msg', ...) — the
+// renderer-side router (src/lib/osc/oscRouter.ts) looks up bindings
+// and dispatches through midiRouter.dispatchPath.
+let oscSocket = null;
+let oscPort = 8000;
+let oscLastError = null;
+function stopOSC() {
+  if (oscSocket) {
+    try { oscSocket.close(); } catch (e) { /* socket already gone */ }
+    oscSocket = null;
+  }
+}
+function startOSC(port, win) {
+  stopOSC();
+  oscPort = port;
+  oscLastError = null;
+  return new Promise((resolve) => {
+    const sock = dgram.createSocket('udp4');
+    sock.on('error', (err) => {
+      oscLastError = String(err.message || err);
+      console.error('[OSC] socket error:', err);
+      try { sock.close(); } catch (e) {}
+      if (oscSocket === sock) oscSocket = null;
+      // Notify renderer so the Settings UI can flip its listening dot
+      // off + show the error string.
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('osc-status', { listening: false, port, error: oscLastError });
+      }
+      resolve({ ok: false, error: oscLastError });
+    });
+    sock.on('message', (buf, rinfo) => {
+      try {
+        const msgs = parseOSCPacket(buf);
+        if (msgs.length === 0) return;
+        if (win && !win.isDestroyed()) {
+          // Strip BigInt timetags (not structured-clone-friendly via
+          // IPC) — renderer doesn't schedule on them anyway.
+          const serializable = msgs.map(m => ({
+            address: m.address,
+            args: m.args.map(a => (typeof a === 'bigint' ? Number(a) : a)),
+            tags: m.tags,
+            from: rinfo.address + ':' + rinfo.port,
+          }));
+          win.webContents.send('osc-msg', serializable);
+        }
+      } catch (e) {
+        console.warn('[OSC] parse error:', e);
+      }
+    });
+    sock.bind(port, () => {
+      oscSocket = sock;
+      console.log('[OSC] listening on UDP port', port);
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('osc-status', { listening: true, port, error: null });
+      }
+      resolve({ ok: true, port });
+    });
+  });
+}
+
 function registerIpcHandlers() {
   // --- Diagnostics ---
   ipcMain.handle('ping', () => {
     console.log('[IPC] ping received from renderer!');
     return 'pong';
   });
+
+  // --- OSC ---
+  ipcMain.handle('osc_start', async (_, { port }) => {
+    return startOSC(port || 8000, mainWindow);
+  });
+  ipcMain.handle('osc_stop', () => {
+    stopOSC();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('osc-status', { listening: false, port: oscPort, error: null });
+    }
+    return { ok: true };
+  });
+  ipcMain.handle('osc_status', () => ({
+    listening: oscSocket !== null,
+    port: oscPort,
+    error: oscLastError,
+  }));
 
   // Restart the app. Used when toggling experimental flags
   // (editorWebGPU, etc.) that change which renderer path the

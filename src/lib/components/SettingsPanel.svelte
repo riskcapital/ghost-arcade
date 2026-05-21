@@ -34,6 +34,7 @@
   let isCheckingUpdate = false;
   import { midiStore } from '../midi/midiStore';
   import { midiManager } from '../midi/midiManager';
+  import { oscStore } from '../osc/oscStore';
   // LicensePanel + tier-related imports removed — OSS build has no license UI.
   // `maxOutputSlices` is the only remaining import (used as a slice-count
   // upper bound; resolves to Infinity in the OSS build, so all guards pass).
@@ -215,7 +216,7 @@
   }
 
   // Settings tab navigation (license tab removed in OSS build)
-  let activeTab: 'general' | 'output' | 'performance' | 'midi' | 'ai' = 'general';
+  let activeTab: 'general' | 'output' | 'performance' | 'midi' | 'osc' | 'ai' = 'general';
 
   // Hash-based deep link from the integrated-GPU banner.
   onMount(() => {
@@ -499,6 +500,7 @@
         <button class="settings-tab" class:active={activeTab === 'output'} onclick={() => activeTab = 'output'}>Output</button>
         <button class="settings-tab" class:active={activeTab === 'performance'} onclick={() => activeTab = 'performance'}>Performance</button>
         <button class="settings-tab" class:active={activeTab === 'midi'} onclick={() => activeTab = 'midi'}>MIDI</button>
+        <button class="settings-tab" class:active={activeTab === 'osc'} onclick={() => activeTab = 'osc'}>OSC</button>
         <button class="settings-tab" class:active={activeTab === 'ai'} onclick={() => activeTab = 'ai'}>AI</button>
       </div>
 
@@ -1816,6 +1818,163 @@
           {/if}
         </section>
 
+        {:else if activeTab === 'osc'}
+        <!-- OSC Settings Section — UDP listener + bindings table.
+             Enabling spins up a dgram socket in the Electron main
+             process; incoming OSC messages are dispatched through
+             the same midiRouter the MIDI mappings use, so every
+             MIDI-mappable param gets OSC for free. -->
+        <section class="settings-section">
+          <h3>OSC (Open Sound Control)</h3>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Enable OSC Listener</span>
+              <span class="label-hint">UDP socket in the desktop app — point TouchOSC / Lemur / your DAW at this machine's IP on the configured port.</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={$oscStore.enabled}
+                onchange={(e) => oscStore.setEnabled((e.target as HTMLInputElement).checked)}
+              />
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Port</span>
+              <span class="label-hint">UDP port to listen on. Common defaults: 8000 (TouchOSC default), 9000 (TouchDesigner). Restart on change is automatic.</span>
+            </div>
+            <input
+              type="number" min="1" max="65535" step="1"
+              class="port-input"
+              value={$oscStore.port}
+              onchange={(e) => oscStore.setPort(parseInt((e.target as HTMLInputElement).value) || 8000)}
+            />
+          </div>
+
+          <!-- Live status row — listening dot + error string. -->
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Status</span>
+              <span class="label-hint">
+                {#if $oscStore.listening}
+                  <span class="osc-status-dot listening" title="Listening"></span>
+                  Listening on UDP {$oscStore.port}
+                {:else if $oscStore.lastError}
+                  <span class="osc-status-dot error" title="Error"></span>
+                  {$oscStore.lastError}
+                {:else}
+                  <span class="osc-status-dot idle"></span>
+                  Not listening
+                {/if}
+              </span>
+            </div>
+          </div>
+
+          {#if $oscStore.lastMessage}
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="label-text">Last message</span>
+                <span class="label-hint">
+                  <code class="osc-last">{$oscStore.lastMessage.address}</code>
+                  <span style="color: #888;"> · args: </span>
+                  <code class="osc-last">{JSON.stringify($oscStore.lastMessage.args)}</code>
+                  <span style="color: #555;"> · from {$oscStore.lastMessage.from}</span>
+                </span>
+              </div>
+            </div>
+          {/if}
+
+          <!-- Learn state — when the user is mid-learn, show the
+               pending target + a cancel button. The next OSC message
+               will be bound to that path automatically. -->
+          {#if $oscStore.learnTarget}
+            <div class="osc-learn-banner">
+              <span class="osc-learn-pulse"></span>
+              <span>Listening for OSC message to bind <strong>{$oscStore.learnTarget.label ?? $oscStore.learnTarget.path}</strong> …</span>
+              <button class="osc-learn-cancel" onclick={() => oscStore.cancelLearn()}>Cancel</button>
+            </div>
+          {/if}
+
+          <h4 style="margin-top: 14px;">Bindings ({$oscStore.bindings.length})</h4>
+          <p class="settings-hint" style="margin-bottom: 8px;">
+            Each row maps an OSC address to a param path (the same path strings the MIDI router uses, e.g. <code>vj:layer:0:opacity</code>). Use <strong>+ Add</strong> to enter one manually, or <strong>+ Learn</strong> to bind by sending the next OSC message.
+          </p>
+
+          {#if $oscStore.bindings.length === 0}
+            <div class="osc-empty">
+              No bindings yet. Add one manually, or click <strong>+ Learn</strong>, type a target path, and send an OSC message from your controller.
+            </div>
+          {:else}
+            <div class="osc-bindings">
+              <div class="osc-binding-head">
+                <span>OSC Address</span>
+                <span>Param Path</span>
+                <span>Min</span>
+                <span>Max</span>
+                <span>Inv</span>
+                <span></span>
+              </div>
+              {#each $oscStore.bindings as b (b.id)}
+                <div class="osc-binding-row">
+                  <input
+                    type="text"
+                    value={b.address}
+                    onchange={(e) => oscStore.updateBinding(b.id, { address: (e.target as HTMLInputElement).value })}
+                    placeholder="/path/to/control"
+                  />
+                  <input
+                    type="text"
+                    value={b.path}
+                    onchange={(e) => oscStore.updateBinding(b.id, { path: (e.target as HTMLInputElement).value })}
+                    placeholder="vj:layer:0:opacity"
+                  />
+                  <input
+                    type="number" step="any"
+                    value={b.sourceMin}
+                    onchange={(e) => oscStore.updateBinding(b.id, { sourceMin: parseFloat((e.target as HTMLInputElement).value) })}
+                  />
+                  <input
+                    type="number" step="any"
+                    value={b.sourceMax}
+                    onchange={(e) => oscStore.updateBinding(b.id, { sourceMax: parseFloat((e.target as HTMLInputElement).value) })}
+                  />
+                  <label class="osc-inv">
+                    <input
+                      type="checkbox"
+                      checked={b.invert}
+                      onchange={(e) => oscStore.updateBinding(b.id, { invert: (e.target as HTMLInputElement).checked })}
+                    />
+                  </label>
+                  <button
+                    class="osc-binding-del"
+                    onclick={() => oscStore.removeBinding(b.id)}
+                    title="Remove binding"
+                  >×</button>
+                </div>
+              {/each}
+            </div>
+          {/if}
+
+          <div class="osc-add-row">
+            <button
+              class="osc-add-btn"
+              onclick={() => oscStore.addBinding({ address: '/example', argIndex: 0, path: 'vj:layer:0:opacity', sourceMin: 0, sourceMax: 1, invert: false })}
+            >+ Add binding</button>
+            <button
+              class="osc-add-btn learn"
+              onclick={() => {
+                const path = prompt('Target param path (e.g. vj:layer:0:opacity):');
+                if (path && path.trim()) oscStore.startLearn(path.trim());
+              }}
+              title="Wait for the next OSC message and bind it to a param path"
+            >+ Learn binding</button>
+          </div>
+        </section>
+
         {:else if activeTab === 'ai'}
         <!-- AI Settings Section -->
         <section class="settings-section">
@@ -2360,6 +2519,136 @@
   }
 
   /* Toggle switch */
+  /* ── OSC settings styles ── */
+  .port-input {
+    width: 90px;
+    background: #14141a;
+    border: 1px solid #2a2a30;
+    color: #ddd;
+    border-radius: 4px;
+    padding: 5px 8px;
+    font-family: monospace;
+    font-size: 12px;
+  }
+  .port-input:focus { border-color: #4cd1ff; outline: none; }
+  .osc-status-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .osc-status-dot.listening { background: #4ade80; box-shadow: 0 0 6px rgba(74,222,128,0.6); }
+  .osc-status-dot.error     { background: #ff5252; }
+  .osc-status-dot.idle      { background: #555; }
+  .osc-last {
+    font-family: monospace;
+    color: #b6e8ff;
+    font-size: 11px;
+    background: rgba(76,209,255,0.06);
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+  .osc-learn-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 12px 0;
+    padding: 8px 10px;
+    background: rgba(255,214,102,0.08);
+    border: 1px solid rgba(255,214,102,0.4);
+    border-radius: 5px;
+    color: #ffd166;
+    font-size: 12px;
+  }
+  .osc-learn-pulse {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: #ffd166;
+    animation: oscPulse 1s infinite;
+  }
+  @keyframes oscPulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(255,214,102,0.6); }
+    50% { opacity: 0.6; box-shadow: 0 0 0 6px rgba(255,214,102,0); }
+  }
+  .osc-learn-cancel {
+    margin-left: auto;
+    background: transparent;
+    border: 1px solid rgba(255,214,102,0.4);
+    color: #ffd166;
+    padding: 3px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+  }
+  .osc-learn-cancel:hover { background: rgba(255,214,102,0.15); color: #fff; }
+
+  .osc-empty {
+    padding: 16px;
+    background: #14141a;
+    border: 1px dashed #2a2a30;
+    border-radius: 5px;
+    font-size: 12px;
+    color: #888;
+    text-align: center;
+  }
+  .osc-bindings {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .osc-binding-head, .osc-binding-row {
+    display: grid;
+    grid-template-columns: 2fr 2fr 60px 60px 32px 28px;
+    gap: 6px;
+    align-items: center;
+  }
+  .osc-binding-head {
+    font-size: 9.5px;
+    letter-spacing: 1px;
+    color: #555;
+    text-transform: uppercase;
+    padding: 4px 4px;
+  }
+  .osc-binding-row input[type="text"], .osc-binding-row input[type="number"] {
+    background: #14141a;
+    border: 1px solid #2a2a30;
+    color: #ddd;
+    border-radius: 3px;
+    padding: 4px 6px;
+    font-family: monospace;
+    font-size: 11px;
+    width: 100%;
+  }
+  .osc-binding-row input:focus { border-color: #4cd1ff; outline: none; }
+  .osc-inv { display: flex; align-items: center; justify-content: center; cursor: pointer; }
+  .osc-binding-del {
+    background: transparent;
+    border: 1px solid #2a2a30;
+    color: #888;
+    width: 24px; height: 24px;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  .osc-binding-del:hover { background: rgba(255,68,68,0.15); color: #ff8888; }
+  .osc-add-row {
+    display: flex;
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .osc-add-btn {
+    background: #14141a;
+    border: 1px solid #2a2a30;
+    color: #ddd;
+    padding: 5px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+  }
+  .osc-add-btn:hover { border-color: #4cd1ff; color: #4cd1ff; }
+  .osc-add-btn.learn { border-color: rgba(255,214,102,0.5); color: #ffd166; }
+  .osc-add-btn.learn:hover { background: rgba(255,214,102,0.1); color: #fff; }
+
   .toggle {
     position: relative;
     display: inline-block;
