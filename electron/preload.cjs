@@ -134,12 +134,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
 // app continues with Spout / Syphon as the only output transports.
 contextBridge.exposeInMainWorld('ghostNDI', {
   available: () => ipcRenderer.invoke('ndi_available'),
+  // Sender API
   createSender: (name) => ipcRenderer.invoke('ndi_create_sender', { name }),
   destroySender: (name) => ipcRenderer.invoke('ndi_destroy_sender', { name }),
   // Buffer data is structured-cloned over IPC; renderer passes a
   // Uint8Array, main receives a Node Buffer view of the same bytes.
   sendImage: (name, data, width, height) =>
     ipcRenderer.invoke('ndi_send_image', { name, data, width, height }),
+  // Receiver API — discovery + per-source frame pull. Returns:
+  //   findSources() → [{ name, url }, ...]
+  //   createReceiver(name) → { ok, error? }
+  //   destroyReceiver(name) → { ok }
+  //   receiveFrame(name) → { width, height, frame, data } | null
+  findSources: () => ipcRenderer.invoke('ndi_find_sources'),
+  createReceiver: (sourceName) => ipcRenderer.invoke('ndi_create_receiver', { sourceName }),
+  destroyReceiver: (sourceName) => ipcRenderer.invoke('ndi_destroy_receiver', { sourceName }),
+  receiveFrame: (sourceName) => ipcRenderer.invoke('ndi_receive_frame', { sourceName }),
 });
 
 // OSC (Open Sound Control) UDP listener bridge.
