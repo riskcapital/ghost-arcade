@@ -353,10 +353,43 @@ export function parseSurfaceSVG(svgSource: string): {
             } catch {}
           }
         }
+      } else if (tag === 'circle' || tag === 'ellipse') {
+        // Exact 4-cubic-bezier representation — much better than the
+        // 64-sample polyline approximation (which produces visibly
+        // faceted edges at high zoom AND makes the slice unsuitable
+        // for clean rotate / scale). The "magic constant" 4/3·tan(π/8)
+        // ≈ 0.5523 produces a near-perfect circle: max error <0.027%
+        // of radius. Same shape the premade Circle / Ellipse buttons
+        // use, so SVG-imported circles edit identically.
+        const cxRaw = parseFloat(el.getAttribute('cx') || '0');
+        const cyRaw = parseFloat(el.getAttribute('cy') || '0');
+        const cx = cxRaw - vbX;
+        const cy = cyRaw - vbY;
+        let rx: number, ry: number;
+        if (tag === 'circle') {
+          const r = parseFloat(el.getAttribute('r') || '0');
+          rx = r; ry = r;
+        } else {
+          rx = parseFloat(el.getAttribute('rx') || '0');
+          ry = parseFloat(el.getAttribute('ry') || '0');
+        }
+        if (rx > 0 && ry > 0) {
+          const K = 0.5522847498307936;
+          const Kx = K * rx, Ky = K * ry;
+          polygon = [
+            // Top (12 o'clock) — handles flow toward 3 and 9
+            { x: cx,      y: cy - ry, cpIn: { x: cx + Kx, y: cy - ry }, cpOut: { x: cx - Kx, y: cy - ry } },
+            // Left (9 o'clock)
+            { x: cx - rx, y: cy,      cpIn: { x: cx - rx, y: cy - Ky }, cpOut: { x: cx - rx, y: cy + Ky } },
+            // Bottom (6 o'clock)
+            { x: cx,      y: cy + ry, cpIn: { x: cx - Kx, y: cy + ry }, cpOut: { x: cx + Kx, y: cy + ry } },
+            // Right (3 o'clock)
+            { x: cx + rx, y: cy,      cpIn: { x: cx + rx, y: cy + Ky }, cpOut: { x: cx + rx, y: cy - Ky } },
+          ];
+        }
       } else {
-        // rect / circle / ellipse / line — sample uniformly. Could be
-        // exactified later (circles → 4 cubic beziers, etc.) but the
-        // 64-sample approximation reads as smooth at any practical zoom.
+        // rect / line / other geometry — sample uniformly along
+        // SVGGeometryElement's total length.
         const steps = SVG_SAMPLE_POINTS;
         for (let s = 0; s < steps; s++) {
           const t = (s / steps) * len;
@@ -367,12 +400,11 @@ export function parseSurfaceSVG(svgSource: string): {
         }
       }
       if (polygon.length >= 3) {
-        // RDP-simplify to keep slices inside the engine's 64-point
-        // mask uniform budget (with headroom for bezier tessellation
-        // on the few anchors that carry handles). 28 anchors leaves
-        // 36 budget for curve samples; in practice most paths
-        // collapse to far fewer.
-        polygon = simplifyBezierPolygon(polygon, 28);
+        // Imported polygons are kept at full fidelity — the user
+        // can run Simplify from the slice inspector when they want
+        // to reduce points. The engine's mask shader is sized to
+        // accommodate dense SVG imports (see polygonMaskShader's
+        // uPoints budget).
         slices.push({ name: `Polygon ${++idx}`, polygon });
       }
     });
@@ -576,6 +608,30 @@ function createSurfaceStore() {
           return { ...surface, slices: newSlices };
         }),
       }));
+    },
+
+    /** Manually simplify one slice's polygon via RDP. Caller supplies
+     *  the target anchor count; lower = more aggressive simplification.
+     *  Anchors with bezier handles are protected (handles encode
+     *  curvature that can't be recovered after deletion). */
+    simplifySlice(sliceId: string, targetAnchors = 24) {
+      update(s => {
+        if (!s.activeSurfaceId) return s;
+        return {
+          ...s,
+          surfaces: s.surfaces.map(surface => {
+            if (surface.id !== s.activeSurfaceId) return surface;
+            return {
+              ...surface,
+              slices: surface.slices.map(sl =>
+                sl.id === sliceId
+                  ? { ...sl, polygon: simplifyBezierPolygon(sl.polygon, targetAnchors) }
+                  : sl
+              ),
+            };
+          }),
+        };
+      });
     },
 
     bindSliceSource(sliceId: string, binding: SurfaceSliceBinding | null) {

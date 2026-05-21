@@ -1921,7 +1921,7 @@ export const nightVisionShader = /* glsl */ `
 // ============================================================================
 export const polygonMaskShader = /* glsl */ `
   uniform sampler2D uTexture;
-  uniform vec2 uPoints[64];     // Up to 64 polygon points (normalized 0-1)
+  uniform vec2 uPoints[256];
   uniform int uPointCount;      // Actual number of points
   uniform float uFeather;       // Edge feather amount (0-1)
   uniform float uInvert;        // 0=normal, 1=inverted (show outside)
@@ -1933,7 +1933,7 @@ export const polygonMaskShader = /* glsl */ `
 
     int crossings = 0;
 
-    for (int i = 0; i < 64; i++) {
+    for (int i = 0; i < 256; i++) {
       if (i >= uPointCount) break;
 
       int j = i + 1;
@@ -1958,7 +1958,7 @@ export const polygonMaskShader = /* glsl */ `
 
     float minDist = 1000.0;
 
-    for (int i = 0; i < 64; i++) {
+    for (int i = 0; i < 256; i++) {
       if (i >= uPointCount) break;
 
       int j = i + 1;
@@ -2020,7 +2020,7 @@ export const polygonMaskShader = /* glsl */ `
 // RGB output is unused — the consumer only reads .a.
 // ============================================================================
 export const polygonMaskAlphaShader = /* glsl */ `
-  uniform vec2 uPoints[64];
+  uniform vec2 uPoints[256];
   uniform int uPointCount;
   uniform float uFeather;
   varying vec2 vUv;
@@ -2028,7 +2028,7 @@ export const polygonMaskAlphaShader = /* glsl */ `
   float pointInPolygon(vec2 p) {
     if (uPointCount < 3) return 0.0;
     int crossings = 0;
-    for (int i = 0; i < 64; i++) {
+    for (int i = 0; i < 256; i++) {
       if (i >= uPointCount) break;
       int j = i + 1;
       if (j >= uPointCount) j = 0;
@@ -2045,7 +2045,7 @@ export const polygonMaskAlphaShader = /* glsl */ `
   float distToPolygonEdge(vec2 p) {
     if (uPointCount < 3) return 1.0;
     float minDist = 1000.0;
-    for (int i = 0; i < 64; i++) {
+    for (int i = 0; i < 256; i++) {
       if (i >= uPointCount) break;
       int j = i + 1;
       if (j >= uPointCount) j = 0;

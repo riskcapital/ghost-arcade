@@ -1082,6 +1082,17 @@
             </label>
           </div>
           <div class="inspector-stat"><span>Vertices</span><span>{sl.polygon.length}</span></div>
+          <!-- Simplify — RDP-reduces the polygon to ~24 anchors, keeping
+               bezier-handled anchors intact. Useful for SVG imports
+               that arrived with hundreds of dense sample points; the
+               import itself preserves them so the user can choose. -->
+          {#if sl.polygon.length > 12}
+            <button
+              class="inspector-action"
+              onclick={() => surfaceStore.simplifySlice(sl.id, 24)}
+              title="Reduce point count (preserves bezier handles)"
+            >Simplify polygon →</button>
+          {/if}
           <!-- Binding section — shows what content source feeds this
                slice. After Apply Stage, sourceBinding.kind = 'layer'
                and points at the mapping layer the user can populate
@@ -1809,6 +1820,22 @@
   .inspector-stat span:last-child {
     color: #ddd;
     font-family: monospace;
+  }
+  .inspector-action {
+    margin-top: 4px;
+    background: transparent;
+    border: 1px solid #2a2a30;
+    color: #aaa;
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    text-align: left;
+  }
+  .inspector-action:hover {
+    border-color: #4cd1ff;
+    color: #4cd1ff;
+    background: rgba(76,209,255,0.06);
   }
   .inspector-note {
     font-size: 10px;
