@@ -53,6 +53,73 @@ interface ParsedSurfaceSlice {
   polygon: BezierPoint[];
 }
 
+/** Ramer-Douglas-Peucker polyline simplification, adapted for
+ *  BezierPoint arrays. Anchors with bezier handles (cpIn/cpOut) are
+ *  ALWAYS kept since their handles encode curvature the simplification
+ *  can't recover; only handle-less straight-segment anchors are
+ *  candidates for removal. Tolerance is measured against the polygon's
+ *  bbox so a sensible value works regardless of SVG units.
+ *
+ *  Cap controls the worst-case post-simplify point count — when the
+ *  RDP pass leaves more than `cap` points, we bump tolerance and
+ *  re-run. This keeps SVG-imported slices inside the engine's 64-point
+ *  polygon-mask uniform budget no matter how dense the source path. */
+function simplifyBezierPolygon(points: BezierPoint[], cap = 28): BezierPoint[] {
+  if (points.length <= 3) return points;
+  // Compute bbox for tolerance scaling.
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of points) {
+    if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+  }
+  const diag = Math.hypot(maxX - minX, maxY - minY) || 1;
+
+  function perpDistance(p: BezierPoint, a: BezierPoint, b: BezierPoint): number {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    if (len2 === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+    const t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+    const projX = a.x + t * dx, projY = a.y + t * dy;
+    return Math.hypot(p.x - projX, p.y - projY);
+  }
+
+  function rdp(pts: BezierPoint[], tol: number): BezierPoint[] {
+    if (pts.length < 3) return pts.slice();
+    // Find the farthest point from the line a→b (first to last).
+    let maxDist = 0, idx = 0;
+    for (let i = 1; i < pts.length - 1; i++) {
+      // Hard-keep anchors with handles — handles encode curvature
+      // that we can't reconstruct after dropping the anchor.
+      if (pts[i].cpIn || pts[i].cpOut) {
+        if (maxDist < tol) { maxDist = tol + 1; idx = i; }
+        continue;
+      }
+      const d = perpDistance(pts[i], pts[0], pts[pts.length - 1]);
+      if (d > maxDist) { maxDist = d; idx = i; }
+    }
+    if (maxDist <= tol) return [pts[0], pts[pts.length - 1]];
+    const left = rdp(pts.slice(0, idx + 1), tol);
+    const right = rdp(pts.slice(idx), tol);
+    return [...left.slice(0, -1), ...right];
+  }
+
+  // Iteratively raise tolerance until we're under the cap. Start at
+  // 0.2% of the diagonal — visually imperceptible at typical SVG
+  // sizes, removes redundant near-collinear samples from sampled
+  // SVG primitives (circles, paths fallback).
+  let tol = diag * 0.002;
+  let simplified = rdp(points, tol);
+  let guard = 8;
+  while (simplified.length > cap && guard-- > 0) {
+    tol *= 1.8;
+    simplified = rdp(points, tol);
+  }
+  // RDP works on open polylines; we never want the closing segment
+  // collapsed away, so guarantee at least 3 points.
+  if (simplified.length < 3) simplified = points.slice(0, Math.min(3, points.length));
+  return simplified;
+}
+
 /**
  * Minimal SVG path-d parser that turns C/Q/S/T commands into
  * BezierPoint anchors with cpIn/cpOut handles. M/L/H/V/Z become
@@ -300,6 +367,12 @@ export function parseSurfaceSVG(svgSource: string): {
         }
       }
       if (polygon.length >= 3) {
+        // RDP-simplify to keep slices inside the engine's 64-point
+        // mask uniform budget (with headroom for bezier tessellation
+        // on the few anchors that carry handles). 28 anchors leaves
+        // 36 budget for curve samples; in practice most paths
+        // collapse to far fewer.
+        polygon = simplifyBezierPolygon(polygon, 28);
         slices.push({ name: `Polygon ${++idx}`, polygon });
       }
     });

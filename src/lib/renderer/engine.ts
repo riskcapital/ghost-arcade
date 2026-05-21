@@ -1087,18 +1087,52 @@ export class RenderEngine {
    */
   private tessellateMaskShape(anchors: import('../types').BezierPoint[]): Point2D[] {
     const out: Point2D[] = [];
-    const BEZIER_STEPS = 24;
-    for (let i = 0; i < anchors.length; i++) {
+    // The polygon mask shader carries a fixed 64-Vector2 uniform array
+    // (see getOrCreateMaskMaterial); anything beyond that gets dropped
+    // and produces a truncated / malformed mask which silently hides
+    // most of the layer's content. We BUDGET our tessellation against
+    // that cap: count how many anchor-pair segments carry beziers,
+    // then divide the remaining 64 minus the anchor count across
+    // those segments — giving each curve as many samples as fit
+    // without overflow. Worst case (32+ anchors with all-bezier
+    // segments) collapses to BEZIER_STEPS=1, i.e. straight segments,
+    // which is still a visually closed polygon (just less smooth).
+    const MAX_POINTS = 64;
+    const N = anchors.length;
+    if (N >= MAX_POINTS) {
+      // Already at or over the limit on anchors alone — emit
+      // straight-segment polygon up to the cap.
+      for (let i = 0; i < Math.min(N, MAX_POINTS); i++) {
+        out.push({ x: anchors[i].x, y: anchors[i].y });
+      }
+      return out;
+    }
+    let curveSegments = 0;
+    for (let i = 0; i < N; i++) {
       const a = anchors[i];
-      const nextI = (i + 1) % anchors.length;
+      const b = anchors[(i + 1) % N];
+      if (a.cpOut || b.cpIn) curveSegments++;
+    }
+    // Per-segment step budget. Each segment ALREADY contributes the
+    // anchor's own point — extra interior samples eat from the
+    // remaining budget. Default to a smooth 12 steps when budget
+    // allows; clamp down when we're tight.
+    const budget = MAX_POINTS - N;
+    const stepsPerCurve = curveSegments === 0
+      ? 1
+      : Math.max(1, Math.min(12, Math.floor(budget / curveSegments) + 1));
+    for (let i = 0; i < N; i++) {
+      const a = anchors[i];
+      const nextI = (i + 1) % N;
       const b = anchors[nextI];
       const hasCurve = a.cpOut || b.cpIn;
       out.push({ x: a.x, y: a.y });
-      if (hasCurve) {
+      if (hasCurve && stepsPerCurve > 1) {
         const cp1 = a.cpOut ?? a;
         const cp2 = b.cpIn ?? b;
-        for (let s = 1; s < BEZIER_STEPS; s++) {
-          const t = s / BEZIER_STEPS;
+        for (let s = 1; s < stepsPerCurve; s++) {
+          if (out.length >= MAX_POINTS) break;
+          const t = s / stepsPerCurve;
           const mt = 1 - t;
           out.push({
             x: mt * mt * mt * a.x + 3 * mt * mt * t * cp1.x + 3 * mt * t * t * cp2.x + t * t * t * b.x,
@@ -1106,6 +1140,7 @@ export class RenderEngine {
           });
         }
       }
+      if (out.length >= MAX_POINTS) break;
     }
     return out;
   }
