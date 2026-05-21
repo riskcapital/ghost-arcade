@@ -14,6 +14,7 @@ import { writable, derived, get } from 'svelte/store';
 import type { Surface, SurfaceSlice, SurfaceSliceBinding, Point2D, BezierPoint, StageEffect, StageEffectType, SurfaceEffectAutomation } from '../types';
 import { generateUUID } from '../utils/uuid';
 import { syncStageEffectsFromSurfaces, createDefaultStageEffect } from './stageEffects';
+import { getStageTemplate } from './stageTemplates';
 
 // ─── State ───────────────────────────────────────────────
 
@@ -537,6 +538,45 @@ function createSurfaceStore() {
         const updatedTarget: Surface = { ...target, slices: updatedSlices };
         surfaces = surfaces.map(x => x.id === activeId ? updatedTarget : x);
         return { ...s, surfaces, activeSurfaceId: activeId };
+      });
+      return true;
+    },
+
+    /** Apply a predesigned template (see stageTemplates.ts catalog).
+     *  Replaces the active surface's existing slices with the template's
+     *  generated set so the user lands on a clean starter geometry.
+     *  Creates a default surface on demand if there isn't one yet —
+     *  same convenience as importSVG. */
+    applyTemplate(templateId: string) {
+      const template = getStageTemplate(templateId);
+      if (!template) {
+        console.warn('[surface] applyTemplate: unknown template', templateId);
+        return false;
+      }
+      update(s => {
+        let surfaces = s.surfaces;
+        let activeId = s.activeSurfaceId;
+        let target = surfaces.find(x => x.id === activeId);
+        if (!target) {
+          target = makeEmptySurface('Imported Stage', 1920, 1080);
+          surfaces = [...surfaces, target];
+          activeId = target.id;
+        }
+        const generated = template.build(target.width, target.height);
+        const newSlices: SurfaceSlice[] = generated.map((p, i) => ({
+          id: generateUUID(),
+          name: p.name,
+          polygon: p.polygon,
+          color: SLICE_PALETTE[i % SLICE_PALETTE.length],
+          visible: true,
+          locked: false,
+          sourceBinding: null,
+        }));
+        surfaces = surfaces.map(x => x.id === activeId
+          ? { ...x, slices: newSlices }
+          : x
+        );
+        return { ...s, surfaces, activeSurfaceId: activeId, selectedSliceId: null };
       });
       return true;
     },

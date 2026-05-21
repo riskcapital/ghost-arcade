@@ -30,6 +30,7 @@
     parseSurfaceSVG,
   } from '../stores/surface';
   import { layers as projectLayers } from '../stores/layers';
+  import { STAGE_TEMPLATES, type StageTemplate } from '../stores/stageTemplates';
   import type { Point2D, BezierPoint, SurfaceSlice } from '../types';
 
   // ── Canvas pan/zoom state ─────────────────────────────────
@@ -97,6 +98,35 @@
   let fileInput: HTMLInputElement;
   let isDraggingFile = false;
   function triggerFilePicker() { fileInput?.click(); }
+
+  /** One-click template apply. If the active surface already has
+   *  slices, confirm before replacing — easy to wipe a user's
+   *  in-progress design otherwise. */
+  function applyTemplate(tpl: StageTemplate) {
+    const sliceCount = $activeSurfaceSlices.length;
+    if (sliceCount > 0) {
+      const ok = confirm(`Replace ${sliceCount} existing slice${sliceCount === 1 ? '' : 's'} with the "${tpl.label}" template?`);
+      if (!ok) return;
+    }
+    surfaceStore.applyTemplate(tpl.id);
+  }
+
+  /** Compress long template labels for the narrow palette column.
+   *  Splits on spaces and keeps the most distinctive word, or
+   *  abbreviates when needed so the button label stays under 8 chars. */
+  function shortTemplateLabel(label: string): string {
+    const map: Record<string, string> = {
+      'Wall of Circles':  'Circles',
+      'Vertical Stripes': 'Stripes',
+      'Triptych':         'Triptych',
+      'Hexagon Wall':     'Hex Wall',
+      'Concert Stage':    'Concert',
+      'Pillar Array':     'Pillars',
+      'Horizontal Bars':  'Bars',
+      'Diamond Grid':     'Diamonds',
+    };
+    return map[label] ?? label;
+  }
   function handleFile(e: Event) {
     const f = (e.target as HTMLInputElement).files?.[0];
     if (!f) return;
@@ -704,6 +734,20 @@
       <button class="palette-btn" onclick={() => addPremade('pill')}     title="Add pill (stadium)">
         <span class="p-icon">▱</span><span class="p-label">Pill</span>
       </button>
+
+      <div class="palette-divider"></div>
+      <div class="palette-section">Templates</div>
+      <!-- Predesigned one-click stage layouts. Each replaces the
+           active surface's slices with a clean starter geometry. -->
+      {#each STAGE_TEMPLATES as tpl (tpl.id)}
+        <button
+          class="palette-btn"
+          onclick={() => applyTemplate(tpl)}
+          title={`${tpl.label} — replaces current slices with this layout`}
+        >
+          <span class="p-icon">{tpl.icon}</span><span class="p-label">{shortTemplateLabel(tpl.label)}</span>
+        </button>
+      {/each}
 
       <div class="palette-divider"></div>
       <div class="palette-section">Import</div>
