@@ -65,13 +65,34 @@
 
   // ── Slice-vertex drag state ───────────────────────────────
   // For the select tool: drag an anchor or a bezier handle of the
-  // selected slice to reshape it without leaving the panel.
+  // selected slice to reshape it without leaving the panel; OR drag
+  // the rotate / scale handles around the bounding box to transform
+  // the whole slice uniformly (point + handle counts preserved).
   type VertexDrag =
     | { kind: 'anchor';     sliceId: string; idx: number }
     | { kind: 'cpIn';       sliceId: string; idx: number }
     | { kind: 'cpOut';      sliceId: string; idx: number }
-    | { kind: 'sliceMove';  sliceId: string; startMouse: Point2D; startPolygon: BezierPoint[] };
+    | { kind: 'sliceMove';  sliceId: string; startMouse: Point2D; startPolygon: BezierPoint[] }
+    | { kind: 'sliceRotate'; sliceId: string; centroid: Point2D; startAngle: number; startPolygon: BezierPoint[] }
+    | { kind: 'sliceScale';  sliceId: string; centroid: Point2D; startDist: number; startPolygon: BezierPoint[] };
   let vertexDrag: VertexDrag | null = null;
+
+  /** Centroid of a polygon's anchors (ignores bezier handles).
+   *  Used as the pivot for rotation + uniform scaling. */
+  function polygonCentroid(poly: BezierPoint[]): Point2D {
+    let sx = 0, sy = 0;
+    for (const p of poly) { sx += p.x; sy += p.y; }
+    return { x: sx / poly.length, y: sy / poly.length };
+  }
+  /** Bounding box of a polygon's anchors. */
+  function polygonBBox(poly: BezierPoint[]): { minX: number; minY: number; maxX: number; maxY: number } {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of poly) {
+      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+    }
+    return { minX, minY, maxX, maxY };
+  }
 
   // ── File input for SVG import ─────────────────────────────
   let fileInput: HTMLInputElement;
@@ -262,6 +283,47 @@
           cpOut: p.cpOut ? { x: p.cpOut.x + dx, y: p.cpOut.y + dy } : undefined,
         }));
         surfaceStore.updateSlice(vertexDrag.sliceId, { polygon: moved });
+      } else if (vertexDrag.kind === 'sliceRotate') {
+        // Rotate every anchor + handle around the centroid by the
+        // angular delta from initial pointer position to current.
+        const c = vertexDrag.centroid;
+        const ang = Math.atan2(pt.y - c.y, pt.x - c.x);
+        const delta = ang - vertexDrag.startAngle;
+        const cos = Math.cos(delta), sin = Math.sin(delta);
+        const rotate = (p: Point2D): Point2D => {
+          const dx = p.x - c.x, dy = p.y - c.y;
+          return { x: c.x + dx * cos - dy * sin, y: c.y + dx * sin + dy * cos };
+        };
+        const next: BezierPoint[] = vertexDrag.startPolygon.map(p => {
+          const r = rotate(p);
+          return {
+            x: r.x, y: r.y,
+            cpIn:  p.cpIn  ? rotate(p.cpIn)  : undefined,
+            cpOut: p.cpOut ? rotate(p.cpOut) : undefined,
+          };
+        });
+        surfaceStore.updateSlice(vertexDrag.sliceId, { polygon: next });
+      } else if (vertexDrag.kind === 'sliceScale') {
+        // Uniform scale around centroid based on the ratio of the
+        // current pointer-to-centroid distance vs. the starting
+        // distance. Floor at 1% so the slice doesn't collapse to a
+        // point that's impossible to grab again.
+        const c = vertexDrag.centroid;
+        const curDist = Math.hypot(pt.x - c.x, pt.y - c.y);
+        const ratio = Math.max(0.01, curDist / Math.max(0.0001, vertexDrag.startDist));
+        const scale = (p: Point2D): Point2D => ({
+          x: c.x + (p.x - c.x) * ratio,
+          y: c.y + (p.y - c.y) * ratio,
+        });
+        const next: BezierPoint[] = vertexDrag.startPolygon.map(p => {
+          const s = scale(p);
+          return {
+            x: s.x, y: s.y,
+            cpIn:  p.cpIn  ? scale(p.cpIn)  : undefined,
+            cpOut: p.cpOut ? scale(p.cpOut) : undefined,
+          };
+        });
+        surfaceStore.updateSlice(vertexDrag.sliceId, { polygon: next });
       } else {
         // Single-vertex / single-handle drag. Reach into the slice
         // store; pull out the polygon, patch the one field, write back.
@@ -804,6 +866,98 @@
                     stroke-width={1.5 / zoom}
                   />
                 {/each}
+                <!-- Uniform scale + rotate handles, positioned at the
+                     polygon's bbox top-right and above-top so they
+                     don't overlap with anchor handles. Mouse-down on
+                     either kicks off a transform drag whose math
+                     lives in onWindowMouseMove. -->
+                {@const bbox = polygonBBox(slice.polygon)}
+                {@const cent = polygonCentroid(slice.polygon)}
+                <!-- Connector line: centroid → rotate handle (above bbox top edge) -->
+                {@const rotateY = bbox.minY - 40 / zoom}
+                {@const rotateX = (bbox.minX + bbox.maxX) / 2}
+                <line
+                  x1={rotateX} y1={bbox.minY}
+                  x2={rotateX} y2={rotateY}
+                  stroke={slice.color}
+                  stroke-width={0.8 / zoom}
+                  stroke-dasharray="{3 / zoom},{3 / zoom}"
+                  opacity="0.55"
+                />
+                <!-- Rotate handle (circle with ↻ icon) -->
+                <circle
+                  cx={rotateX} cy={rotateY}
+                  r={10 / zoom}
+                  fill="#0a0a0c"
+                  stroke={slice.color}
+                  stroke-width={1.5 / zoom}
+                  style="cursor: grab;"
+                  onmousedown={(e) => {
+                    e.stopPropagation();
+                    const c = polygonCentroid(slice.polygon);
+                    vertexDrag = {
+                      kind: 'sliceRotate',
+                      sliceId: slice.id,
+                      centroid: c,
+                      startAngle: Math.atan2(rotateY - c.y, rotateX - c.x),
+                      startPolygon: slice.polygon.map(p => ({
+                        x: p.x, y: p.y,
+                        cpIn:  p.cpIn  ? { ...p.cpIn  } : undefined,
+                        cpOut: p.cpOut ? { ...p.cpOut } : undefined,
+                      })),
+                    };
+                  }}
+                />
+                <text
+                  x={rotateX} y={rotateY + 4 / zoom}
+                  text-anchor="middle"
+                  font-size={11 / zoom}
+                  fill={slice.color}
+                  pointer-events="none"
+                  font-family="-apple-system, sans-serif"
+                >↻</text>
+                <!-- Scale handle (square at bottom-right of bbox) -->
+                {@const scaleX = bbox.maxX + 24 / zoom}
+                {@const scaleY = bbox.maxY + 24 / zoom}
+                <line
+                  x1={bbox.maxX} y1={bbox.maxY}
+                  x2={scaleX} y2={scaleY}
+                  stroke={slice.color}
+                  stroke-width={0.8 / zoom}
+                  stroke-dasharray="{3 / zoom},{3 / zoom}"
+                  opacity="0.55"
+                />
+                <rect
+                  x={scaleX - 8 / zoom} y={scaleY - 8 / zoom}
+                  width={16 / zoom} height={16 / zoom}
+                  fill="#0a0a0c"
+                  stroke={slice.color}
+                  stroke-width={1.5 / zoom}
+                  style="cursor: nwse-resize;"
+                  onmousedown={(e) => {
+                    e.stopPropagation();
+                    const c = polygonCentroid(slice.polygon);
+                    vertexDrag = {
+                      kind: 'sliceScale',
+                      sliceId: slice.id,
+                      centroid: c,
+                      startDist: Math.hypot(scaleX - c.x, scaleY - c.y),
+                      startPolygon: slice.polygon.map(p => ({
+                        x: p.x, y: p.y,
+                        cpIn:  p.cpIn  ? { ...p.cpIn  } : undefined,
+                        cpOut: p.cpOut ? { ...p.cpOut } : undefined,
+                      })),
+                    };
+                  }}
+                />
+                <text
+                  x={scaleX} y={scaleY + 4 / zoom}
+                  text-anchor="middle"
+                  font-size={11 / zoom}
+                  fill={slice.color}
+                  pointer-events="none"
+                  font-family="-apple-system, sans-serif"
+                >⤡</text>
               {/if}
             {/if}
           {/each}
