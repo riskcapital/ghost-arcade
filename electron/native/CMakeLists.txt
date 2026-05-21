@@ -126,6 +126,35 @@ elseif(APPLE)
         COMPILE_FLAGS "-x objective-c++ -fobjc-arc"
     )
 
+    # Syphon.framework has an install_name of
+    #   @loader_path/../Frameworks/Syphon.framework/Versions/A/Syphon
+    # which is baked in for bundled use inside a packaged .app
+    # (Contents/Frameworks/...). For our .node the relative lookup lands on
+    # electron/native/build/Frameworks/ which doesn't exist, so dlopen fails.
+    #
+    # Rewrite that reference to @rpath and give the .node two rpath search
+    # locations:
+    #   1. /Library/Frameworks — where a user installs Syphon for dev
+    #   2. @loader_path/../../../../../../Frameworks — where electron-builder
+    #      places Frameworks inside the packaged .app, relative to the .node's
+    #      location at Contents/Resources/app.asar.unpacked/electron/native/build/Release/
+    #
+    # install_name_tool invalidates the code signature on arm64 (required on
+    # Apple Silicon), so re-sign ad-hoc afterwards. Silent-fail the codesign
+    # on systems where it's not needed.
+    set_target_properties(${ADDON_NAME} PROPERTIES
+        BUILD_WITH_INSTALL_RPATH TRUE
+        INSTALL_RPATH "/Library/Frameworks;@loader_path/../../../../../../Frameworks"
+    )
+    add_custom_command(TARGET ${ADDON_NAME} POST_BUILD
+        COMMAND install_name_tool -change
+            "@loader_path/../Frameworks/Syphon.framework/Versions/A/Syphon"
+            "@rpath/Syphon.framework/Versions/A/Syphon"
+            "$<TARGET_FILE:${ADDON_NAME}>"
+        COMMAND codesign --force --sign - "$<TARGET_FILE:${ADDON_NAME}>" || true
+        COMMENT "Rewriting Syphon install_name to @rpath + re-signing for Apple Silicon"
+    )
+
 endif()
 
 # ============================================================
@@ -260,34 +289,4 @@ else()
     message(STATUS
         "NDI SDK not found at standard paths — skipping ndi_addon build. "
         "Install the NDI Advanced SDK from https://ndi.video/sdk to enable.")
-
-    # Syphon.framework has an install_name of
-    #   @loader_path/../Frameworks/Syphon.framework/Versions/A/Syphon
-    # which is baked in for bundled use inside a packaged .app
-    # (Contents/Frameworks/...). For our .node the relative lookup lands on
-    # electron/native/build/Frameworks/ which doesn't exist, so dlopen fails.
-    #
-    # Rewrite that reference to @rpath and give the .node two rpath search
-    # locations:
-    #   1. /Library/Frameworks — where a user installs Syphon for dev
-    #   2. @loader_path/../../../../../../Frameworks — where electron-builder
-    #      places Frameworks inside the packaged .app, relative to the .node's
-    #      location at Contents/Resources/app.asar.unpacked/electron/native/build/Release/
-    #
-    # install_name_tool invalidates the code signature on arm64 (required on
-    # Apple Silicon), so re-sign ad-hoc afterwards. Silent-fail the codesign
-    # on systems where it's not needed.
-    set_target_properties(${ADDON_NAME} PROPERTIES
-        BUILD_WITH_INSTALL_RPATH TRUE
-        INSTALL_RPATH "/Library/Frameworks;@loader_path/../../../../../../Frameworks"
-    )
-    add_custom_command(TARGET ${ADDON_NAME} POST_BUILD
-        COMMAND install_name_tool -change
-            "@loader_path/../Frameworks/Syphon.framework/Versions/A/Syphon"
-            "@rpath/Syphon.framework/Versions/A/Syphon"
-            "$<TARGET_FILE:${ADDON_NAME}>"
-        COMMAND codesign --force --sign - "$<TARGET_FILE:${ADDON_NAME}>" || true
-        COMMENT "Rewriting Syphon install_name to @rpath + re-signing for Apple Silicon"
-    )
-
 endif()
