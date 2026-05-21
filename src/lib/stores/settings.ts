@@ -228,6 +228,17 @@ export interface UISettings {
    * users opt-in via Settings → General.
    */
   safeMode: boolean;
+  /**
+   * Mouse warp-handle drag granularity. The mapping editor's corner /
+   * edge handles snap drag positions to this pixel grid by default,
+   * so projectionists can hit exact target pixels. '1px' is the
+   * default — finest practical granularity for projection alignment
+   * against physical surface edges. 'free' disables snap entirely
+   * (the legacy behavior). 'sub' snaps to 0.5px for HiDPI work.
+   * Step values are measured in PROJECT pixels (e.g. 1920×1080),
+   * not container pixels — so a 1px nudge is exactly one output
+   * pixel regardless of editor zoom. */
+  warpDragGranularity: 'free' | 'sub' | '1px' | '5px' | '10px';
 }
 
 export type FluidQualityMode = 'live' | 'balanced' | 'quality';
@@ -640,6 +651,7 @@ function createDefaultSettings(): AppSettings {
         snapToLayers: true,
       },
       vjLayoutReversed: false,
+      warpDragGranularity: '1px',
       safeMode: false,
     },
     ai: {

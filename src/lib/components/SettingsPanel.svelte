@@ -581,6 +581,33 @@
               <span class="toggle-slider"></span>
             </label>
           </div>
+
+          <!-- Mapping warp-handle drag granularity. Default 1px =
+               every mouse-drag of a corner / edge / move handle
+               snaps the result to an integer project pixel. Helps
+               hit exact target pixels when aligning a layer to a
+               physical surface edge. Fine-tune below 1px (sub) or
+               drop the snap entirely (free). -->
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Warp drag granularity</span>
+              <span class="label-hint">How precise mouse drags are in mapping mode. Snaps to the project's pixel grid (1920×1080 at default), independent of editor zoom. Lower = more precise; "free" disables snap entirely.</span>
+            </div>
+            <select
+              class="port-input"
+              value={$settings.ui.warpDragGranularity ?? '1px'}
+              onchange={(e) => {
+                const v = (e.target as HTMLSelectElement).value as 'free' | 'sub' | '1px' | '5px' | '10px';
+                settings.update(s => ({ ...s, ui: { ...s.ui, warpDragGranularity: v } }));
+              }}
+            >
+              <option value="1px">1 pixel (default)</option>
+              <option value="sub">0.5 pixel (sub)</option>
+              <option value="5px">5 pixels</option>
+              <option value="10px">10 pixels</option>
+              <option value="free">Free (no snap)</option>
+            </select>
+          </div>
         </section>
 
         <!-- Updates Section -->
