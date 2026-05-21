@@ -531,8 +531,18 @@
   const DOUBLE_TAP_MS = 350;
 
   /** When set, the on-canvas arrow nudgers are visible and key-press
-   *  / button-tap events move this corner by 1 project pixel. */
+   *  / button-tap events move this corner by 1 project pixel. The
+   *  pad only renders on touch-primary devices (mobile / tablet) —
+   *  desktop users have keyboard arrow keys for the same job, so
+   *  showing the pad there is just chrome. */
   let fineTuneCorner: keyof WarpCorners | null = null;
+  const isTouchPrimary = typeof window !== 'undefined' &&
+    (('ontouchstart' in window) || (navigator.maxTouchPoints ?? 0) > 0) &&
+    // Heuristic: phones / tablets report coarse pointer; laptops with
+    // touchscreens report fine. Suppresses the pad on Surface devices
+    // / touchscreen monitors where the user has a mouse + keyboard.
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(pointer: coarse)').matches;
 
   function handleCornerTouchStart(corner: keyof WarpCorners, e: TouchEvent) {
     if ($selectedLayer?.locked) return;
@@ -811,18 +821,6 @@
           style="left: {pos.x}px; top: {pos.y}px;"
           onmousedown={(e) => handleCornerMouseDown(corner as keyof WarpCorners, e)}
           ontouchstart={(e) => handleCornerTouchStart(corner as keyof WarpCorners, e)}
-          ondblclick={(e) => {
-            // Desktop double-click matches mobile double-tap: opens
-            // the on-canvas arrow-nudger pad for precise positioning.
-            // Keyboard arrows work without it, but the pad gives
-            // pointer-only users (or trackpad users who don't want
-            // to switch hands) the same fine-tune flow.
-            e.stopPropagation();
-            if ($selectedLayer && !$selectedLayer.locked) {
-              fineTuneCorner = corner as keyof WarpCorners;
-              selectedCorner = corner as keyof WarpCorners;
-            }
-          }}
           role="button"
           tabindex="0"
           aria-label="Warp corner {corner}"
@@ -912,7 +910,7 @@
          project-pixel step. The pad floats just below-right of the
          center handle so it doesn't cover the corners being adjusted.
          Tap × to dismiss. -->
-    {#if fineTuneCorner && centerPosition}
+    {#if fineTuneCorner && centerPosition && isTouchPrimary}
       <div
         class="fine-tune-pad"
         style="left: {centerPosition.x + 60}px; top: {centerPosition.y - 60}px;"
