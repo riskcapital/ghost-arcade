@@ -336,7 +336,8 @@ function loadNdiAddon() {
     return null;
   }
 }
-const ndiSenders = new Set();  // tracks live sender names so we can destroy on quit
+const ndiSenders = new Set();    // tracks live sender names so we can destroy on quit
+const ndiReceivers = new Set();  // tracks live receiver source names
 
 /**
  * Create a texture-sharing sender (platform-dispatched).
@@ -846,6 +847,42 @@ function registerIpcHandlers() {
       // per-slice in-flight guard.
       return { ok: false, error: String(err.message || err) };
     }
+  });
+  // Receiver side — discovery + per-source frame pulls. The renderer
+  // calls ndi_find_sources on an interval (1-2s) to update the UI
+  // list; ndi_receive_frame is polled per-frame for any source the
+  // user has bound to a clip.
+  ipcMain.handle('ndi_find_sources', () => {
+    const a = loadNdiAddon();
+    if (!a) return [];
+    try { return a.findSources(); }
+    catch (err) { console.error('[NDI] findSources:', err.message); return []; }
+  });
+  ipcMain.handle('ndi_create_receiver', (_, { sourceName }) => {
+    const a = loadNdiAddon();
+    if (!a) return { ok: false, error: 'NDI not available' };
+    try {
+      a.createReceiver({ sourceName });
+      ndiReceivers.add(sourceName);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: String(err.message || err) };
+    }
+  });
+  ipcMain.handle('ndi_destroy_receiver', (_, { sourceName }) => {
+    const a = loadNdiAddon();
+    if (!a) return { ok: false };
+    try {
+      a.destroyReceiver({ sourceName });
+      ndiReceivers.delete(sourceName);
+      return { ok: true };
+    } catch (err) { return { ok: false, error: String(err.message || err) }; }
+  });
+  ipcMain.handle('ndi_receive_frame', (_, { sourceName }) => {
+    const a = loadNdiAddon();
+    if (!a) return null;
+    try { return a.receiveFrame({ sourceName }) || null; }
+    catch (err) { return null; }
   });
 
   // Restart the app. Used when toggling experimental flags
@@ -2731,6 +2768,12 @@ function cleanupAndQuit() {
       try { ndiAddon.destroySender({ name }); } catch (e) { /* best-effort */ }
     }
     ndiSenders.clear();
+  }
+  if (ndiAddon && ndiReceivers.size > 0) {
+    for (const sourceName of ndiReceivers) {
+      try { ndiAddon.destroyReceiver({ sourceName }); } catch (e) { /* best-effort */ }
+    }
+    ndiReceivers.clear();
   }
   try { stopOSC(); } catch (e) { console.error('[Cleanup] stopOSC:', e.message); }
 

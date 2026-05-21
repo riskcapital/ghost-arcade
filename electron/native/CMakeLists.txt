@@ -216,16 +216,45 @@ if(NDI_FOUND)
         # libndi.dylib's install_name points at the SDK install path.
         # Same pattern as the Syphon framework: rewrite to @rpath and
         # add search paths so the addon resolves the dylib both in
-        # dev (SDK install) and in a packaged .app (we'd ship the
-        # dylib in Contents/Frameworks/ via electron-builder).
+        # dev (SDK install) and in a packaged .app (electron-builder
+        # ships the dylib in Contents/Frameworks/).
         set_target_properties(ndi_addon PROPERTIES
             BUILD_WITH_INSTALL_RPATH TRUE
-            INSTALL_RPATH "/Library/NDI Advanced SDK for Apple/lib/macOS;/Library/NDI SDK for Apple/lib/macOS;@loader_path/../../../../../../Frameworks"
+            INSTALL_RPATH "/Library/NDI Advanced SDK for Apple/lib/macOS;/Library/NDI SDK for Apple/lib/macOS;@loader_path/../../../../../../Frameworks;@loader_path"
         )
+        # Copy libndi.dylib into the build output dir so electron-builder
+        # can pick it up with a single relative path. Without this step
+        # the SDK install path would have to be exposed to electron-
+        # builder which varies between dev machines and CI runners.
         add_custom_command(TARGET ndi_addon POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${NDI_LIBRARY}"
+                "$<TARGET_FILE_DIR:ndi_addon>/libndi.dylib"
+            COMMAND install_name_tool -id "@rpath/libndi.dylib"
+                "$<TARGET_FILE_DIR:ndi_addon>/libndi.dylib" || true
+            COMMAND install_name_tool -change
+                "${NDI_LIBRARY}"
+                "@rpath/libndi.dylib"
+                "$<TARGET_FILE:ndi_addon>" || true
+            COMMAND codesign --force --sign - "$<TARGET_FILE_DIR:ndi_addon>/libndi.dylib" || true
             COMMAND codesign --force --sign - "$<TARGET_FILE:ndi_addon>" || true
-            COMMENT "Re-signing ndi_addon ad-hoc for Apple Silicon"
+            COMMENT "Bundling libndi.dylib + re-signing ad-hoc for Apple Silicon"
         )
+    elseif(WIN32)
+        # Copy Processing.NDI.Lib.x64.dll next to the .node so Windows'
+        # DLL search resolves it from the loading binary's directory.
+        # electron-builder ships the build/Release/ dir as-is via asarUnpack.
+        set(NDI_DLL "${NDI_INCLUDE_DIRS}/../Bin/x64/Processing.NDI.Lib.x64.dll")
+        if(EXISTS "${NDI_DLL}")
+            add_custom_command(TARGET ndi_addon POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${NDI_DLL}"
+                    "$<TARGET_FILE_DIR:ndi_addon>/Processing.NDI.Lib.x64.dll"
+                COMMENT "Bundling Processing.NDI.Lib.x64.dll alongside ndi_addon.node"
+            )
+        else()
+            message(WARNING "NDI runtime DLL not found at ${NDI_DLL} — built ndi_addon will fail to load at runtime")
+        endif()
     endif()
 else()
     message(STATUS

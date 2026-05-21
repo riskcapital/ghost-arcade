@@ -60,6 +60,31 @@ jobs:
         run: npm ci
         working-directory: electron/native
 
+      # NDI Advanced SDK — required to build the ndi_addon. The SDK
+      # download itself is gated by NewTek's terms, so CI fetches it
+      # from the org's own private storage URL (secrets.NDI_SDK_WIN_URL).
+      # When the secret isn't set the build SKIPS the NDI addon
+      # silently — Spout / Syphon stay functional, just no NDI.
+      - name: Install NDI Advanced SDK (Windows)
+        if: ${{ env.NDI_SDK_WIN_URL != '' }}
+        shell: pwsh
+        env:
+          NDI_SDK_WIN_URL: ${{ secrets.NDI_SDK_WIN_URL }}
+        run: |
+          $url = $env:NDI_SDK_WIN_URL
+          $installer = "$env:RUNNER_TEMP\NDI-SDK.exe"
+          Write-Host "Downloading NDI SDK from $url..."
+          Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
+          Write-Host "Installing silently..."
+          Start-Process -FilePath $installer -ArgumentList "/SILENT", "/SUPPRESSMSGBOXES" -Wait
+          # Confirm the expected install path resolved (the CMake detection
+          # logic checks these exact paths).
+          $sdk = "C:\Program Files\NDI\NDI Advanced SDK"
+          if (-Not (Test-Path "$sdk\Include\Processing.NDI.Lib.h")) {
+            $sdk = "C:\Program Files\NDI\NDI SDK"
+          }
+          Write-Host "NDI SDK installed:" (Test-Path "$sdk\Include\Processing.NDI.Lib.h")
+
       - name: Build Spout native addon
         run: npm run build
         working-directory: electron/native
@@ -134,6 +159,32 @@ jobs:
       - name: Install native addon dependencies
         run: npm ci
         working-directory: electron/native
+
+      # NDI Advanced SDK for Apple — same pattern as Windows. Fetched
+      # from a private URL exposed via secrets.NDI_SDK_MAC_URL because
+      # NewTek's distribution requires accepting the EULA before
+      # download. Missing secret = NDI addon build is skipped silently.
+      - name: Install NDI Advanced SDK (macOS)
+        if: ${{ env.NDI_SDK_MAC_URL != '' }}
+        env:
+          NDI_SDK_MAC_URL: ${{ secrets.NDI_SDK_MAC_URL }}
+        run: |
+          echo "Downloading NDI SDK..."
+          curl -L -o /tmp/ndi-sdk.pkg "$NDI_SDK_MAC_URL"
+          echo "Installing..."
+          sudo installer -pkg /tmp/ndi-sdk.pkg -target /
+          # Sanity-check that the expected install layout landed where
+          # CMake looks for it.
+          SDK="/Library/NDI Advanced SDK for Apple"
+          if [ ! -f "$SDK/include/Processing.NDI.Lib.h" ]; then
+            SDK="/Library/NDI SDK for Apple"
+          fi
+          if [ -f "$SDK/include/Processing.NDI.Lib.h" ]; then
+            echo "NDI SDK installed at $SDK"
+            ls "$SDK/lib/macOS/"
+          else
+            echo "::warning::NDI SDK install did not produce expected files — ndi_addon will be skipped"
+          fi
 
       - name: Build Syphon native addon
         run: npm run build

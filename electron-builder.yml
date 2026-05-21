@@ -35,6 +35,11 @@ extraResources:
 
 asarUnpack:
   - "electron/native/**/*.node"
+  # NDI Windows runtime DLL — sits next to ndi_addon.node so Windows'
+  # DLL search resolves it automatically. Only present on builds where
+  # the NDI SDK was found at compile time (electron/native/CMakeLists.txt
+  # copies it from the SDK install).
+  - "electron/native/build/Release/*.dll"
 
 # ─── File Associations ─────────────────────────────────────────────────────
 fileAssociations:
@@ -94,6 +99,18 @@ mac:
   entitlementsInherit: build-resources/entitlements.mac.plist
   notarize: true
   gatekeeperAssess: false
+  # Ship libndi.dylib inside the .app's Contents/Frameworks/ so
+  # ndi_addon.node's @rpath search resolves it at load time. The
+  # native build (electron/native/CMakeLists.txt POST_BUILD) copies
+  # libndi.dylib next to ndi_addon.node — this rule promotes it into
+  # the Frameworks directory at packaging time. Optional file: when
+  # the NDI SDK wasn't installed at build time, the file is absent
+  # and electron-builder skips it silently.
+  extraFiles:
+    - from: electron/native/build/Release/libndi.dylib
+      to: Frameworks/libndi.dylib
+      filter:
+        - "**/*"
 
 dmg:
   iconSize: 128

@@ -191,11 +191,216 @@ Napi::Value SendImage(const Napi::CallbackInfo& info) {
   return Napi::Boolean::New(env, true);
 }
 
+// ============================================================
+// Receiver path — discovery + per-source receivers.
+//
+// Discovery uses ONE global NDIlib_find instance (created lazily on
+// first findSources call). NDI's discovery is mDNS-based; the finder
+// keeps a running list of sources visible on the local network.
+// Calling findSources() snapshots that list and returns names + URLs.
+//
+// A receiver is a per-source object. Caller passes the source name
+// from findSources(), the addon resolves it to the underlying
+// NDIlib_source_t and creates an NDIlib_recv. The renderer polls
+// receiveFrame() at frame rate to pull the latest video frame as a
+// BGRA buffer (we ask NDI for BGRX_BGRA pixel format so swizzle is
+// avoided on the GL upload side).
+// ============================================================
+
+NDIlib_find_instance_t g_finder = nullptr;
+std::mutex g_finder_mutex;
+
+struct NdiReceiver {
+  NDIlib_recv_instance_t instance = nullptr;
+  std::string sourceName;
+  // Persistent buffer for the most recently received frame so we can
+  // copy out to a JS-owned Buffer without lifetime games against NDI's
+  // own free path.
+  std::vector<uint8_t> lastFrame;
+  int lastWidth = 0;
+  int lastHeight = 0;
+  // Monotonic counter so callers can detect "is there a NEW frame?"
+  // without comparing pixel content.
+  uint64_t framesReceived = 0;
+};
+std::map<std::string, std::unique_ptr<NdiReceiver>> g_receivers;
+std::mutex g_recv_mutex;
+
+NDIlib_find_instance_t ensureFinder() {
+  std::lock_guard<std::mutex> lock(g_finder_mutex);
+  if (g_finder) return g_finder;
+  NDIlib_find_create_t desc = {};
+  desc.show_local_sources = true;   // include senders on this machine
+  desc.p_groups = nullptr;
+  desc.p_extra_ips = nullptr;
+  g_finder = NDIlib_find_create_v2(&desc);
+  return g_finder;
+}
+
+Napi::Value FindSources(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (!ensureNDIInitialized()) {
+    return Napi::Array::New(env, 0);
+  }
+  NDIlib_find_instance_t finder = ensureFinder();
+  if (!finder) return Napi::Array::New(env, 0);
+
+  // wait_for_sources is non-blocking when called with timeout 0 — it
+  // returns immediately with the current source list. Renderer polls
+  // this periodically; we don't need NDI's blocking wait semantics.
+  NDIlib_find_wait_for_sources(finder, 0);
+  uint32_t count = 0;
+  const NDIlib_source_t* sources = NDIlib_find_get_current_sources(finder, &count);
+
+  Napi::Array arr = Napi::Array::New(env, count);
+  for (uint32_t i = 0; i < count; i++) {
+    Napi::Object obj = Napi::Object::New(env);
+    obj.Set("name", Napi::String::New(env, sources[i].p_ndi_name ? sources[i].p_ndi_name : ""));
+    obj.Set("url",  Napi::String::New(env, sources[i].p_url_address ? sources[i].p_url_address : ""));
+    arr.Set(i, obj);
+  }
+  return arr;
+}
+
+Napi::Value CreateReceiver(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1 || !info[0].IsObject()) {
+    Napi::TypeError::New(env, "Expected { sourceName }").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  if (!ensureNDIInitialized()) {
+    Napi::Error::New(env, "NDI runtime not initialized").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  std::string sourceName = info[0].As<Napi::Object>().Get("sourceName").As<Napi::String>().Utf8Value();
+
+  // Resolve sourceName → NDIlib_source_t via the global finder.
+  NDIlib_find_instance_t finder = ensureFinder();
+  if (!finder) {
+    Napi::Error::New(env, "Finder unavailable").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  NDIlib_find_wait_for_sources(finder, 100);
+  uint32_t count = 0;
+  const NDIlib_source_t* sources = NDIlib_find_get_current_sources(finder, &count);
+  const NDIlib_source_t* match = nullptr;
+  for (uint32_t i = 0; i < count; i++) {
+    if (sources[i].p_ndi_name && sourceName == sources[i].p_ndi_name) {
+      match = &sources[i];
+      break;
+    }
+  }
+  if (!match) {
+    Napi::Error::New(env, "Source not found in current network scan").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  NDIlib_recv_create_v3_t desc = {};
+  desc.source_to_connect_to = *match;
+  desc.color_format = NDIlib_recv_color_format_BGRX_BGRA;
+  desc.bandwidth = NDIlib_recv_bandwidth_highest;
+  desc.allow_video_fields = false;
+
+  auto receiver = std::make_unique<NdiReceiver>();
+  receiver->instance = NDIlib_recv_create_v3(&desc);
+  if (!receiver->instance) {
+    Napi::Error::New(env, "NDIlib_recv_create_v3 returned null").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  receiver->sourceName = sourceName;
+  {
+    std::lock_guard<std::mutex> lock(g_recv_mutex);
+    // If a receiver already exists for this name, tear it down first
+    // — caller shouldn't double-create but we defend.
+    auto it = g_receivers.find(sourceName);
+    if (it != g_receivers.end() && it->second->instance) {
+      NDIlib_recv_destroy(it->second->instance);
+      g_receivers.erase(it);
+    }
+    g_receivers[sourceName] = std::move(receiver);
+  }
+  return Napi::String::New(env, sourceName);
+}
+
+Napi::Value DestroyReceiver(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1 || !info[0].IsObject()) return Napi::Boolean::New(env, false);
+  std::string sourceName = info[0].As<Napi::Object>().Get("sourceName").As<Napi::String>().Utf8Value();
+  std::unique_ptr<NdiReceiver> recv;
+  {
+    std::lock_guard<std::mutex> lock(g_recv_mutex);
+    auto it = g_receivers.find(sourceName);
+    if (it == g_receivers.end()) return Napi::Boolean::New(env, false);
+    recv = std::move(it->second);
+    g_receivers.erase(it);
+  }
+  if (recv && recv->instance) NDIlib_recv_destroy(recv->instance);
+  return Napi::Boolean::New(env, true);
+}
+
+// Pull the next frame from a receiver. Returns:
+//   { width, height, data: Buffer<BGRA bytes>, frame: <monotonic counter> }
+// or `null` when no new frame is available (caller polls again).
+//
+// Frame counter lets the renderer skip texture uploads when no new
+// frame has arrived since the last poll — saves GPU bandwidth on
+// senders running below display refresh.
+Napi::Value ReceiveFrame(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1 || !info[0].IsObject()) return env.Null();
+  std::string sourceName = info[0].As<Napi::Object>().Get("sourceName").As<Napi::String>().Utf8Value();
+
+  NdiReceiver* recv = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(g_recv_mutex);
+    auto it = g_receivers.find(sourceName);
+    if (it == g_receivers.end()) return env.Null();
+    recv = it->second.get();
+  }
+
+  NDIlib_video_frame_v2_t videoFrame = {};
+  // Timeout 0 = non-blocking. We poll from the renderer at frame rate.
+  NDIlib_frame_type_e ft = NDIlib_recv_capture_v2(recv->instance, &videoFrame, nullptr, nullptr, 0);
+  if (ft != NDIlib_frame_type_video) {
+    // Audio / metadata / nothing — caller polls again next tick.
+    if (ft == NDIlib_frame_type_audio || ft == NDIlib_frame_type_metadata) {
+      // Free non-video frames immediately; we don't expose them.
+      NDIlib_recv_free_video_v2(recv->instance, &videoFrame);
+    }
+    return env.Null();
+  }
+  // Copy the BGRA pixels into our persistent buffer THEN free the NDI
+  // frame — keeping NDI's buffer around violates the "free before
+  // next capture" contract and breaks bandwidth.
+  size_t bytes = static_cast<size_t>(videoFrame.xres) * videoFrame.yres * 4;
+  recv->lastFrame.assign(videoFrame.p_data, videoFrame.p_data + bytes);
+  recv->lastWidth = videoFrame.xres;
+  recv->lastHeight = videoFrame.yres;
+  recv->framesReceived++;
+  NDIlib_recv_free_video_v2(recv->instance, &videoFrame);
+
+  Napi::Object out = Napi::Object::New(env);
+  out.Set("width",  Napi::Number::New(env, recv->lastWidth));
+  out.Set("height", Napi::Number::New(env, recv->lastHeight));
+  out.Set("frame",  Napi::Number::New(env, static_cast<double>(recv->framesReceived)));
+  // Buffer::Copy duplicates the bytes into a V8-owned buffer; the
+  // copy survives independent of our recv->lastFrame so the renderer
+  // can hold the data across ticks.
+  out.Set("data", Napi::Buffer<uint8_t>::Copy(env, recv->lastFrame.data(), bytes));
+  return out;
+}
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
-  exports.Set("available",      Napi::Function::New(env, Available));
-  exports.Set("createSender",   Napi::Function::New(env, CreateSender));
-  exports.Set("destroySender",  Napi::Function::New(env, DestroySender));
-  exports.Set("sendImage",      Napi::Function::New(env, SendImage));
+  exports.Set("available",       Napi::Function::New(env, Available));
+  // Sender API
+  exports.Set("createSender",    Napi::Function::New(env, CreateSender));
+  exports.Set("destroySender",   Napi::Function::New(env, DestroySender));
+  exports.Set("sendImage",       Napi::Function::New(env, SendImage));
+  // Receiver API
+  exports.Set("findSources",     Napi::Function::New(env, FindSources));
+  exports.Set("createReceiver",  Napi::Function::New(env, CreateReceiver));
+  exports.Set("destroyReceiver", Napi::Function::New(env, DestroyReceiver));
+  exports.Set("receiveFrame",    Napi::Function::New(env, ReceiveFrame));
   return exports;
 }
 

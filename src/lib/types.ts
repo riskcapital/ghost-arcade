@@ -156,6 +156,16 @@ export interface SpoutSource {
   height?: number;       // Optional resolution hint
 }
 
+/** NDI receiver source — the name string is what the native addon
+ *  uses to resolve the discovered network sender to an actual receiver
+ *  instance. width / height are hints set after the first frame
+ *  arrives so the engine can size its target texture early. */
+export interface NdiSource {
+  senderName: string;    // NDI source name as discovered on the network
+  width?: number;
+  height?: number;
+}
+
 // JavaScript animation types (Three.js or p5.js)
 export type JSAnimationType = 'threejs' | 'p5js';
 
@@ -510,6 +520,8 @@ export interface MediaSource {
   aiPrompt?: string; // Original prompt used to generate this content
   // Spout source (for plugin integrations like FluidGen, Particles3D)
   spoutSource?: SpoutSource;
+  // NDI receiver source (network video stream from another app/machine)
+  ndiSource?: NdiSource;
   // Integrated effect source (native WebGL fluid/particles)
   effectSource?: IntegratedEffectSource;
   // SynthVision: shared offscreen canvas the texture mirrors

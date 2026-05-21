@@ -558,6 +558,7 @@
     stopPreviewLoop();
     stopModGhostLoop();
     stopVjVideoTick();
+    vjStopNdiScan();
     if (vjRecorderHandle && vjIsRecording) {
       try { vjRecorderHandle.stop(); } catch {}
     }
@@ -796,13 +797,64 @@
   interface VJLiveSource {
     id: string;
     name: string;
-    type: 'spout' | 'webcam' | 'capture';
+    type: 'spout' | 'webcam' | 'capture' | 'ndi';
+    /** For NDI sources, the discovered sender name (used by the
+     *  native addon's createReceiver). Spout uses the sender name
+     *  directly in `name` so doesn't need this field. */
+    ndiSourceName?: string;
     status: 'disconnected' | 'connecting' | 'live';
     stream?: MediaStream;
     videoEl?: HTMLVideoElement;
   }
 
   let vjLiveSources: VJLiveSource[] = [];
+
+  // NDI source discovery state. The native addon's findSources is
+  // polled on an interval — the underlying NDIlib finder runs an
+  // mDNS scan in the background and we just sample its current
+  // result list. The 2s cadence is enough for users to notice when
+  // a new sender comes online without flooding IPC.
+  let vjDetectedNdiSources: { name: string; url: string }[] = [];
+  let vjNdiScanInterval: ReturnType<typeof setInterval> | null = null;
+  let vjNdiAvailable = false;
+  async function vjStartNdiScan() {
+    const api = (window as any).ghostNDI;
+    if (!api) return;
+    try {
+      const avail = await api.available();
+      vjNdiAvailable = !!avail?.available;
+    } catch { vjNdiAvailable = false; }
+    if (!vjNdiAvailable) return;
+    if (vjNdiScanInterval) return;
+    const tick = async () => {
+      try { vjDetectedNdiSources = await api.findSources(); }
+      catch { /* keep last list */ }
+    };
+    void tick();
+    vjNdiScanInterval = setInterval(tick, 2000);
+  }
+  function vjStopNdiScan() {
+    if (vjNdiScanInterval) { clearInterval(vjNdiScanInterval); vjNdiScanInterval = null; }
+  }
+  function vjAddNdiSource(sourceName: string) {
+    const api = (window as any).ghostNDI;
+    if (!api) return;
+    const src: VJLiveSource = {
+      id: crypto.randomUUID?.() || Date.now().toString(),
+      name: `NDI: ${sourceName}`,
+      type: 'ndi',
+      ndiSourceName: sourceName,
+      status: 'connecting',
+    };
+    vjLiveSources = [...vjLiveSources, src];
+    api.createReceiver(sourceName).then((res: any) => {
+      vjLiveSources = vjLiveSources.map(s =>
+        s.id === src.id ? { ...s, status: res?.ok ? 'live' : 'disconnected' } : s
+      );
+    }).catch(() => {
+      vjLiveSources = vjLiveSources.map(s => s.id === src.id ? { ...s, status: 'disconnected' as const } : s);
+    });
+  }
 
   async function vjStartWebcam() {
     try {
@@ -855,6 +907,7 @@
   }
 
   let vjShowSpoutPicker = false;
+  let vjShowNdiPicker = false;
   let vjSpoutInput = '';
   let vjDetectedSpoutSenders: string[] = [];
 
@@ -890,6 +943,11 @@
   function vjStopSource(id: string) {
     const s = vjLiveSources.find(s => s.id === id);
     if (s?.stream) s.stream.getTracks().forEach(t => t.stop());
+    if (s?.type === 'ndi' && s.ndiSourceName) {
+      // Tear down the addon-side receiver so the network stream stops.
+      const api = (window as any).ghostNDI;
+      if (api) api.destroyReceiver(s.ndiSourceName).catch(() => {});
+    }
     vjLiveSources = vjLiveSources.filter(s => s.id !== id);
   }
 
@@ -958,6 +1016,11 @@
 
   // Load shaders on mount
   onMount(() => {
+    // Start the NDI source scan loop. Polls findSources() every 2s
+    // so the Sources tab reflects new senders as they come/go on the
+    // network. No-ops cleanly when NDI isn't available.
+    void vjStartNdiScan();
+
     const init = async () => {
       try {
         const response = await fetch('./ISF/manifest.json');
@@ -3656,7 +3719,36 @@
                   </svg>
                   {getTextureShareLabel()}
                 </button>
+                <!-- NDI button — only shown when the native addon is
+                     available. Opens a picker with the network-
+                     discovered senders. -->
+                {#if vjNdiAvailable}
+                  <button class="vj-src-btn ndi-btn" class:active={vjShowNdiPicker} onclick={() => { vjShowNdiPicker = !vjShowNdiPicker; }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="11"/>
+                    </svg>
+                    NDI
+                  </button>
+                {/if}
               </div>
+              {#if vjShowNdiPicker}
+                <div class="vj-spout-picker">
+                  {#if vjDetectedNdiSources.length > 0}
+                    <div class="vj-spout-list">
+                      {#each vjDetectedNdiSources as src (src.name)}
+                        <button class="vj-spout-sender" onclick={() => { vjAddNdiSource(src.name); vjShowNdiPicker = false; }} title={src.url}>
+                          {src.name}
+                        </button>
+                      {/each}
+                    </div>
+                  {:else}
+                    <div class="empty-media" style="padding: 12px 14px;">
+                      <p>Scanning for NDI sources…</p>
+                      <p class="hint">Senders broadcasting on this network will appear here within a couple of seconds.</p>
+                    </div>
+                  {/if}
+                </div>
+              {/if}
               {#if vjShowSpoutPicker}
                 <div class="vj-spout-picker">
                   {#if vjDetectedSpoutSenders.length > 0}
