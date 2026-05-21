@@ -306,6 +306,38 @@ function loadSpoutAddon() {
   }
 }
 
+// NDI native addon — cross-platform sender via NewTek's NDI SDK.
+// Built by electron/native/CMakeLists.txt when the NDI SDK is detected
+// at install time; missing addon = graceful degradation (UI shows
+// "NDI not available" in the slice output-type picker, sends are
+// silently dropped). See electron/native/ndi_addon.cpp.
+let ndiAddon = null;
+let ndiAddonLoadAttempted = false;
+function loadNdiAddon() {
+  if (ndiAddon) return ndiAddon;
+  if (ndiAddonLoadAttempted) return null;
+  ndiAddonLoadAttempted = true;
+  try {
+    const addonPath = path.join(__dirname, 'native', 'build', 'Release', 'ndi_addon.node');
+    if (!fs.existsSync(addonPath)) {
+      console.log('[NDI] Addon not built (SDK was missing at compile time). Install the NDI Advanced SDK from https://ndi.video/sdk then rebuild electron/native.');
+      return null;
+    }
+    ndiAddon = require(addonPath);
+    if (!ndiAddon.available()) {
+      console.warn('[NDI] Addon loaded but NDIlib_initialize failed — runtime not available on this machine.');
+      ndiAddon = null;
+      return null;
+    }
+    console.log('[NDI] Addon loaded successfully');
+    return ndiAddon;
+  } catch (err) {
+    console.error('[NDI] Failed to load addon:', err.message);
+    return null;
+  }
+}
+const ndiSenders = new Set();  // tracks live sender names so we can destroy on quit
+
 /**
  * Create a texture-sharing sender (platform-dispatched).
  *
@@ -769,6 +801,52 @@ function registerIpcHandlers() {
     port: oscPort,
     error: oscLastError,
   }));
+
+  // --- NDI ---
+  // available() reflects WHETHER WE CAN SEND: addon built + NDI runtime
+  // initialized. Renderer uses this to disable the NDI option in the
+  // slice output-type picker on machines where NDI isn't ready.
+  ipcMain.handle('ndi_available', () => {
+    const a = loadNdiAddon();
+    return { available: !!a };
+  });
+  ipcMain.handle('ndi_create_sender', (_, { name }) => {
+    const a = loadNdiAddon();
+    if (!a) return { ok: false, error: 'NDI not available' };
+    try {
+      a.createSender({ name });
+      ndiSenders.add(name);
+      return { ok: true, name };
+    } catch (err) {
+      return { ok: false, error: String(err.message || err) };
+    }
+  });
+  ipcMain.handle('ndi_destroy_sender', (_, { name }) => {
+    const a = loadNdiAddon();
+    if (!a) return { ok: false };
+    try {
+      a.destroySender({ name });
+      ndiSenders.delete(name);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: String(err.message || err) };
+    }
+  });
+  ipcMain.handle('ndi_send_image', (_, { name, data, width, height }) => {
+    const a = loadNdiAddon();
+    if (!a) return { ok: false };
+    try {
+      // data arrives as Buffer (Node automatically deserializes
+      // structured-cloned Uint8Array). Addon expects Buffer<uint8_t>.
+      a.sendImage({ name, data, width, height });
+      return { ok: true };
+    } catch (err) {
+      // Log only periodically — a broken sender can spam at frame
+      // rate. The renderer handles its own back-pressure via the
+      // per-slice in-flight guard.
+      return { ok: false, error: String(err.message || err) };
+    }
+  });
 
   // Restart the app. Used when toggling experimental flags
   // (editorWebGPU, etc.) that change which renderer path the
@@ -2647,6 +2725,14 @@ function cleanupAndQuit() {
   try { stopSpoutSender(); } catch (e) { console.error('[Cleanup] stopSpoutSender:', e.message); }
   try { stopSpoutReceiver(); } catch (e) { console.error('[Cleanup] stopSpoutReceiver:', e.message); }
   try { stopServer(); } catch (e) { console.error('[Cleanup] stopServer:', e.message); }
+  // Destroy any live NDI senders so the network names go offline on exit.
+  if (ndiAddon && ndiSenders.size > 0) {
+    for (const name of ndiSenders) {
+      try { ndiAddon.destroySender({ name }); } catch (e) { /* best-effort */ }
+    }
+    ndiSenders.clear();
+  }
+  try { stopOSC(); } catch (e) { console.error('[Cleanup] stopOSC:', e.message); }
 
   // Kill any plugin child processes immediately
   for (const [name, plugin] of Object.entries(plugins)) {
