@@ -547,6 +547,11 @@
     // path that needed it can do an explicit one-shot render to a
     // dedicated render target.
     engine = new RenderEngine(canvas, projW, projH, { preserveDrawingBuffer: false });
+    // Register with the offline-render store so its frame loop can
+    // resize the engine + read the composite target each tick.
+    void import('../recording/offlineRender').then(({ offlineRender }) => {
+      offlineRender.registerEngine(engine!, canvas);
+    });
     // Set initial container size from wrapper layout dimensions
     sizeContainer(wrapW, wrapH);
 
