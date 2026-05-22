@@ -36,12 +36,16 @@ import { FFmpeg } from '@ffmpeg/ffmpeg';
 // surface "Failed to fetch" at the render-start moment. With Vite's
 // ?url query the wasm + js are emitted into the bundle and we get
 // back same-origin URLs we can pass straight to ffmpeg.load().
+// The @ffmpeg/core package's `exports` field only exposes `.` (the
+// JS) and `./wasm` (the WASM). Deep paths under ./dist/** are
+// blocked by Node's exports resolution which Vite honors. Use the
+// declared subpaths instead.
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore — Vite-specific ?url query, no .d.ts for it
-import ffmpegCoreUrl from '@ffmpeg/core/dist/umd/ffmpeg-core.js?url';
+import ffmpegCoreUrl from '@ffmpeg/core?url';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
-import ffmpegWasmUrl from '@ffmpeg/core/dist/umd/ffmpeg-core.wasm?url';
+import ffmpegWasmUrl from '@ffmpeg/core/wasm?url';
 import { setISFManualTime } from '../isf/renderer';
 import { setStageEffectsManualTime } from '../stores/stageEffects';
 import { keyframeTimeline } from '../stores/keyframeTimeline';

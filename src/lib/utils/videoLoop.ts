@@ -37,12 +37,16 @@ import type { FFmpeg as FFmpegType } from '@ffmpeg/ffmpeg';
 // CDN failed under Electron's renderer CSP / file:// origin,
 // surfacing as "Failed to create loop" the moment the user
 // tried it (which is what the user reported with a screenshot).
+// Use the package's declared subpath exports — `.` resolves to
+// ffmpeg-core.js, `./wasm` to ffmpeg-core.wasm. Deep ./dist/**
+// paths aren't whitelisted in the package's `exports` field so
+// Vite refuses to resolve them.
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore — Vite ?url query has no .d.ts
-import ffmpegCoreUrl from '@ffmpeg/core/dist/esm/ffmpeg-core.js?url';
+import ffmpegCoreUrl from '@ffmpeg/core?url';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
-import ffmpegWasmUrl from '@ffmpeg/core/dist/esm/ffmpeg-core.wasm?url';
+import ffmpegWasmUrl from '@ffmpeg/core/wasm?url';
 
 let ffmpeg: FFmpegType | null = null;
 let ffmpegLoaded = false;
