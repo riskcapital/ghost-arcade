@@ -1718,7 +1718,9 @@
 
   function getShaderModulation(paramName: string): ParamModulation | undefined {
     if (selectedLayerIdx < 0) return undefined;
-    return mappingModMap.get(modKeyShader(selectedLayerIdx, paramName));
+    // Target='mapping' — these mods write to project.layers[i].source.shaderValues
+    // via the mapping updater, not VJ deck slots.
+    return mappingModMap.get(modKeyShader(selectedLayerIdx, paramName, 'A', 'mapping'));
   }
 
   /** Update one field on an auto-mode modulation (mapping mode).
@@ -1731,9 +1733,9 @@
     value: ParamModulation[K],
   ) {
     if (selectedLayerIdx < 0) return;
-    const existing = modulationStore.getModulation(selectedLayerIdx, paramName);
+    const existing = modulationStore.getModulation(selectedLayerIdx, paramName, 'A', 'mapping');
     if (!existing) return;
-    modulationStore.setModulation(selectedLayerIdx, paramName, { ...existing, [field]: value });
+    modulationStore.setModulation(selectedLayerIdx, paramName, { ...existing, [field]: value }, 'A', 'mapping');
   }
 
   /** Reset every shader param on the open shader to its catalog
@@ -1743,9 +1745,9 @@
   function resetMappingShaderToDefaults() {
     if (!selectedShader || selectedLayerIdx < 0) return;
     for (const input of selectedShader.inputs) {
-      const existingMod = modulationStore.getModulation(selectedLayerIdx, input.NAME);
+      const existingMod = modulationStore.getModulation(selectedLayerIdx, input.NAME, 'A', 'mapping');
       if (existingMod && existingMod.source !== 'manual') {
-        setParamModSource(selectedLayerIdx, input.NAME, 'manual');
+        setParamModSource(selectedLayerIdx, input.NAME, 'manual', 'A', 'mapping');
       }
       if (input.DEFAULT === undefined || input.DEFAULT === null) continue;
       if (input.TYPE === 'float' || input.TYPE === 'long') {
@@ -2918,7 +2920,7 @@
               <div class="shader-param-header">
                 <span class="shader-param-name">{input.LABEL || input.NAME}</span>
                 <select class="mod-source-select" class:active={isModulated} value={mod?.source || 'manual'}
-                  onchange={(e) => setParamModSource(selectedLayerIdx, input.NAME, (e.target as HTMLSelectElement).value as ModSource)}>
+                  onchange={(e) => setParamModSource(selectedLayerIdx, input.NAME, (e.target as HTMLSelectElement).value as ModSource, 'A', 'mapping')}>
                   <optgroup label="Control"><option value="manual">Manual</option></optgroup>
                   <optgroup label="Audio">
                     <option value="sub">Sub</option><option value="bass">Bass</option><option value="lowMid">Low Mid</option>
