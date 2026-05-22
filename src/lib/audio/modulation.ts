@@ -1023,6 +1023,17 @@ class ModulationEngine {
         if (isMapping) {
           if (_mappingEffectUpdater) {
             _mappingEffectUpdater(layerIndex, effectId, { [paramName]: modulated });
+            // One-shot diagnostic per (layer, effect, param) so we
+            // can see in the console whether the engine is writing
+            // to the right layer when mods stop persisting after
+            // layer switches. The set deduplicates so we don't spam
+            // 60 lines/sec; clear it via window.__resetModFxLog().
+            if (!(globalThis as any).__modFxLogged) (globalThis as any).__modFxLogged = new Set<string>();
+            const tag = `${layerIndex}:${effectId}:${paramName}`;
+            if (!(globalThis as any).__modFxLogged.has(tag)) {
+              (globalThis as any).__modFxLogged.add(tag);
+              console.log('[modEngine] fx-write target=mapping layer=', layerIndex, ' effect=', effectId.slice(0, 8), ' param=', paramName, ' val=', modulated.toFixed(3));
+            }
           }
         } else {
           vjClipLauncher.updateLayerEffectParams(layerIndex, effectId, { [paramName]: modulated }, bank);
