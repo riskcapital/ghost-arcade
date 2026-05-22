@@ -2,33 +2,50 @@
  * Video Loop Creator
  *
  * Creates seamless loops using the "cross dissolve" technique:
- * 1. Read the video as two inputs
- * 2. Trim first input: 0 to midpoint (second half of original becomes start)
- * 3. Trim second input: midpoint to end (first half of original becomes end)
- * 4. Apply xfade crossfade at the junction
+ * 1. Treat the same input file as two virtual inputs.
+ * 2. Trim [0:v]: midpoint → end  (becomes the start of the loop).
+ * 3. Trim [1:v]: 0 → midpoint    (becomes the end of the loop).
+ * 4. xfade at the junction.
  *
- * Single-pass approach avoids keyframe alignment issues from stream-copy splits.
+ * Why this works: when the original video is played in a loop the
+ * abrupt cut happens at duration→0. By swapping halves the cut moves
+ * to the midpoint where we crossfade smoothly — and the new
+ * start/end land at the original midpoint frame which already
+ * matches itself.
+ *
+ * History notes (read before changing):
+ * - Earlier revisions of this module had two persistent bugs the
+ *   user reported as "weird long decimal percentages" + "never
+ *   completes":
+ *     1. ffmpeg.on('progress', cb) was attached inside the singleton
+ *        init() and only routed to the *first* caller's onProgress.
+ *        Subsequent calls saw no progress events at all — the bar
+ *        sat at the last value from the prior call, including stale
+ *        99%-or-greater readings.
+ *     2. FFmpeg's progress event for filter_complex+xfade is known
+ *        to overshoot 1.0 (it computes against input PTS not output
+ *        PTS). Math.round(1.85 * 100) → "185%". UI showed garbage.
+ * - HTML video duration detection is also unreliable for some
+ *   container/codec combos (Chrome reports Infinity for streamed
+ *   WebM, certain MP4s lack moov atoms until seek-to-end). We now
+ *   probe via FFmpeg first; HTML probe is fallback-only.
  */
 
-// NOTE: @ffmpeg/ffmpeg is ~10MB. We dynamic-import it inside initFFmpeg()
-// so the main bundle stays lean and only users who actually open the
-// video-loop creator pay the cost.
 import type { FFmpeg as FFmpegType } from '@ffmpeg/ffmpeg';
 
-// Singleton FFmpeg instance
 let ffmpeg: FFmpegType | null = null;
 let ffmpegLoaded = false;
 let ffmpegLoading = false;
 
 export interface LoopProgress {
   stage: 'loading' | 'processing' | 'rendering' | 'complete' | 'error';
-  progress: number; // 0-1
+  /** 0..1, always clamped — safe to multiply by 100 directly. */
+  progress: number;
   message: string;
 }
 
 export type ProgressCallback = (progress: LoopProgress) => void;
 
-// FFmpeg xfade transition types
 export type LoopTransitionType =
   | 'fade'
   | 'dissolve'
@@ -74,52 +91,76 @@ export const LOOP_TRANSITIONS: { value: LoopTransitionType; label: string }[] = 
   { value: 'vertopen', label: 'Vertical Open' },
 ];
 
-/**
- * Initialize FFmpeg (lazy load). Dynamic-imports the ~10MB library on demand.
- */
+// ─── Helpers ────────────────────────────────────────────────
+
+/** Clamp a number into [lo, hi], converting NaN/Infinity to lo.
+ *  Used everywhere a value could come from an external source
+ *  (FFmpeg progress events, HTMLMediaElement duration). */
+function clamp(v: number, lo: number, hi: number): number {
+  if (!Number.isFinite(v)) return lo;
+  return Math.max(lo, Math.min(hi, v));
+}
+
+/** Build a phase-scaled progress callback. The internal phases of
+ *  the loop process don't each cover 0..1 — they cover a SLICE of
+ *  the overall bar. This wraps onProgress so a phase's local 0..1
+ *  maps onto [start, end] of the user's bar.
+ *
+ *  Without this, the user sees the bar jump back to 0% three times
+ *  (load → probe → encode), which reads as "stuck / restarting". */
+function phasedProgress(
+  base: ProgressCallback | undefined,
+  start: number,
+  end: number,
+): ProgressCallback {
+  return (p: LoopProgress) => {
+    const local = clamp(p.progress, 0, 1);
+    const mapped = start + (end - start) * local;
+    base?.({
+      stage: p.stage,
+      progress: clamp(mapped, 0, 1),
+      message: p.message,
+    });
+  };
+}
+
+// ─── FFmpeg init ────────────────────────────────────────────
+
+/** Initialize FFmpeg singleton. Does NOT register a progress
+ *  handler — that's bound per-call in createLoopedVideo so each
+ *  caller sees its own progress and we never accumulate stale
+ *  handlers from prior calls. */
 async function initFFmpeg(onProgress?: ProgressCallback): Promise<FFmpegType> {
-  if (ffmpeg && ffmpegLoaded) {
-    return ffmpeg;
-  }
+  if (ffmpeg && ffmpegLoaded) return ffmpeg;
 
   if (ffmpegLoading) {
-    // Wait for existing load to complete
+    // Concurrent load — wait for the in-flight one rather than
+    // racing a second wasm-instance creation.
     while (ffmpegLoading) {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
-    if (ffmpeg && ffmpegLoaded) {
-      return ffmpeg;
-    }
+    if (ffmpeg && ffmpegLoaded) return ffmpeg;
   }
 
   ffmpegLoading = true;
-  onProgress?.({ stage: 'loading', progress: 0, message: 'Loading FFmpeg...' });
+  onProgress?.({ stage: 'loading', progress: 0, message: 'Loading FFmpeg…' });
 
   try {
-    // Dynamic imports — keeps @ffmpeg/ffmpeg out of the initial bundle (~10MB savings).
     const [{ FFmpeg }, { toBlobURL }] = await Promise.all([
       import('@ffmpeg/ffmpeg'),
       import('@ffmpeg/util'),
     ]);
     ffmpeg = new FFmpeg();
 
-    // Set up progress logging
+    // The 'log' subscription stays as a session-wide diagnostic
+    // (we do parse certain log lines per-call for duration probe,
+    // but those handlers are bound + removed locally below).
     ffmpeg.on('log', ({ message }) => {
       console.log('[FFmpeg]', message);
     });
 
-    ffmpeg.on('progress', ({ progress }) => {
-      onProgress?.({
-        stage: 'processing',
-        progress: Math.min(progress, 0.99),
-        message: `Processing: ${Math.round(progress * 100)}%`
-      });
-    });
-
-    // Load FFmpeg core from CDN
-    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
-
-    onProgress?.({ stage: 'loading', progress: 0.3, message: 'Downloading FFmpeg core...' });
+    const baseURL = 'https://unpkg.com/@ffmpeg/[email protected]/dist/esm';
+    onProgress?.({ stage: 'loading', progress: 0.3, message: 'Downloading FFmpeg core…' });
 
     await ffmpeg.load({
       coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
@@ -127,108 +168,123 @@ async function initFFmpeg(onProgress?: ProgressCallback): Promise<FFmpegType> {
     });
 
     ffmpegLoaded = true;
-    onProgress?.({ stage: 'loading', progress: 1, message: 'FFmpeg loaded' });
-
+    onProgress?.({ stage: 'loading', progress: 1, message: 'FFmpeg ready' });
     return ffmpeg;
-  } catch (error) {
-    ffmpegLoading = false;
-    throw error;
   } finally {
     ffmpegLoading = false;
   }
 }
 
-/**
- * Get video duration from a blob URL
- * Falls back to seeking to the end if metadata doesn't have duration
- */
-async function getVideoDuration(videoUrl: string): Promise<number> {
-  return new Promise((resolve, reject) => {
+// ─── Duration probes ────────────────────────────────────────
+
+/** Primary duration probe — runs FFmpeg's null muxer over the input
+ *  file and parses the Duration line from its log output. More
+ *  reliable than HTMLVideoElement.duration which lies for many MP4s
+ *  (returns Infinity for missing moov, NaN for variable framerate
+ *  containers, etc.). Returns NaN on failure so caller can fall
+ *  back to the HTML probe. */
+async function probeDurationViaFFmpeg(ff: FFmpegType): Promise<number> {
+  let detected = NaN;
+  const logHandler = ({ message }: { message: string }) => {
+    // FFmpeg's banner format: "Duration: 00:00:05.42, start: ..."
+    const m = message.match(/Duration:\s*(\d+):(\d+):(\d+)\.(\d+)/);
+    if (m) {
+      const h = parseInt(m[1], 10);
+      const min = parseInt(m[2], 10);
+      const sec = parseInt(m[3], 10);
+      // Centiseconds — parse as a fractional so 2 or 3 digits both
+      // work ("42" → 0.42, "423" → 0.423).
+      const frac = parseFloat(`0.${m[4]}`);
+      const val = h * 3600 + min * 60 + sec + frac;
+      if (Number.isFinite(val) && val > 0) detected = val;
+    }
+  };
+  ff.on('log', logHandler);
+  try {
+    // `-f null -` runs the demuxer but discards output. Banner
+    // (containing Duration) prints before any frame is processed
+    // so this is fast even on long videos.
+    await ff.exec(['-i', 'input.mp4', '-f', 'null', '-']);
+  } catch {
+    // Even when exec throws (non-zero exit), the banner has usually
+    // already printed by the time the muxer errors. Keep what we
+    // captured.
+  } finally {
+    ff.off('log', logHandler);
+  }
+  return detected;
+}
+
+/** Fallback HTML duration probe — used only if FFmpeg couldn't
+ *  parse a Duration line, since that path implies a malformed
+ *  container that the browser might also struggle with.
+ *  Bracketed in a hard 6s timeout so we don't hang forever. */
+async function probeDurationViaHTML(url: string): Promise<number> {
+  return new Promise((resolve) => {
     const video = document.createElement('video');
-    video.preload = 'auto';
+    video.preload = 'metadata';
     video.muted = true;
 
-    let resolved = false;
-    const done = (val: number) => {
-      if (resolved) return;
-      resolved = true;
+    let done = false;
+    const finish = (val: number) => {
+      if (done) return;
+      done = true;
       video.remove();
-      resolve(val);
-    };
-    const fail = (msg: string) => {
-      if (resolved) return;
-      resolved = true;
-      video.remove();
-      reject(new Error(msg));
+      resolve(Number.isFinite(val) && val > 0 ? val : NaN);
     };
 
     video.onloadedmetadata = () => {
-      // Check if duration is valid
-      if (video.duration && isFinite(video.duration) && video.duration > 0) {
-        done(video.duration);
-        return;
-      }
-
-      // Duration not available in metadata, try seeking to find it
-      video.currentTime = Number.MAX_SAFE_INTEGER;
-    };
-
-    video.onseeked = () => {
-      if (video.currentTime > 0 && isFinite(video.currentTime)) {
-        done(video.currentTime);
+      if (Number.isFinite(video.duration) && video.duration > 0) {
+        finish(video.duration);
       } else {
-        fail('Could not determine video duration');
+        // Trick: seek past the end so the browser is forced to
+        // index the file, then read currentTime.
+        video.currentTime = Number.MAX_SAFE_INTEGER;
       }
     };
+    video.onseeked = () => finish(video.currentTime);
+    video.onerror = () => finish(NaN);
+    setTimeout(() => finish(NaN), 6000);
 
-    video.onerror = () => {
-      fail('Failed to load video metadata');
-    };
-
-    // Timeout safety
-    setTimeout(() => fail('Duration detection timeout'), 8000);
-
-    video.src = videoUrl;
+    video.src = url;
     video.load();
   });
 }
 
-/**
- * Create a seamless loop from a video file using a single-pass filter approach.
- *
- * Algorithm:
- * - Use the same input file as two virtual inputs
- * - Trim input 0: from midpoint to end (this becomes the start of the loop)
- * - Trim input 1: from 0 to midpoint (this becomes the end of the loop)
- * - Apply xfade crossfade at the junction point
- *
- * This ensures a seamless loop: the original middle becomes the new start/end,
- * and the original start/end (which match when looped) get crossfaded together.
- *
- * @param videoFile - The video file or blob URL
- * @param crossfadeDuration - Duration of crossfade in seconds (default: 0.5)
- * @param onProgress - Progress callback
- * @returns Blob URL of the looped video
- */
+// ─── Core: create loop ─────────────────────────────────────
+
+const MIN_DURATION = 1.0;     // shorter than this, xfade gets unstable
+const MAX_DURATION = 60 * 30; // 30 minutes — past this, refuse (out-of-memory risk in wasm)
+const WATCHDOG_MS = 60_000;   // if FFmpeg hasn't logged in 60s, abort
+
 export async function createLoopedVideo(
   videoFile: File | Blob | string,
   crossfadeDuration: number = 0.5,
   onProgress?: ProgressCallback,
-  transitionType: LoopTransitionType = 'fade'
+  transitionType: LoopTransitionType = 'fade',
 ): Promise<string> {
-  const ff = await initFFmpeg(onProgress);
+  // Phase plan (progress bar slices):
+  //   load    : 0  – 20%
+  //   probe   : 20 – 30%
+  //   render  : 30 – 95%
+  //   read    : 95 – 100%
+  const loadProgress   = phasedProgress(onProgress, 0.00, 0.20);
+  const probeProgress  = phasedProgress(onProgress, 0.20, 0.30);
+  const renderProgress = phasedProgress(onProgress, 0.30, 0.95);
+  const readProgress   = phasedProgress(onProgress, 0.95, 1.00);
 
-  onProgress?.({ stage: 'processing', progress: 0, message: 'Preparing video...' });
+  const ff = await initFFmpeg(loadProgress);
 
-  // Get the video data
+  probeProgress({ stage: 'processing', progress: 0, message: 'Preparing video…' });
+
+  // Resolve the input to bytes we can hand FFmpeg.
   let videoData: Uint8Array;
   let videoUrl: string;
   let needsUrlCleanup = false;
-
   if (typeof videoFile === 'string') {
     videoUrl = videoFile;
-    const response = await fetch(videoFile);
-    const blob = await response.blob();
+    const resp = await fetch(videoFile);
+    const blob = await resp.blob();
     videoData = new Uint8Array(await blob.arrayBuffer());
   } else {
     videoUrl = URL.createObjectURL(videoFile);
@@ -236,147 +292,133 @@ export async function createLoopedVideo(
     videoData = new Uint8Array(await videoFile.arrayBuffer());
   }
 
-  onProgress?.({ stage: 'processing', progress: 0.05, message: 'Getting video duration...' });
-
-  // Get video duration
-  let duration: number;
-  try {
-    duration = await getVideoDuration(videoUrl);
-  } catch (e) {
-    console.warn('Could not get duration from video element:', e);
-    duration = 0;
-  }
-
-  if (needsUrlCleanup) {
-    URL.revokeObjectURL(videoUrl);
-  }
-
-  onProgress?.({ stage: 'processing', progress: 0.1, message: 'Analyzing video...' });
-
-  // Write input video to FFmpeg filesystem
   await ff.writeFile('input.mp4', videoData);
 
-  // Ensure crossfade doesn't exceed reasonable bounds
-  const fadeDuration = Math.min(crossfadeDuration, 1.0);
+  probeProgress({ stage: 'processing', progress: 0.4, message: 'Detecting duration…' });
 
-  if (!duration || !isFinite(duration) || duration <= 0) {
-    // Fallback: if we can't detect duration, use a simpler approach
-    // Re-encode to get proper metadata, then determine duration from FFmpeg logs
-    onProgress?.({ stage: 'processing', progress: 0.15, message: 'Detecting duration...' });
+  // FFmpeg-first duration probe; HTML fallback only if the
+  // container is malformed enough that FFmpeg can't parse it
+  // (rare — usually that means we can't loop it either).
+  let duration = await probeDurationViaFFmpeg(ff);
+  if (!Number.isFinite(duration) || duration <= 0) {
+    duration = await probeDurationViaHTML(videoUrl);
+  }
+  if (needsUrlCleanup) URL.revokeObjectURL(videoUrl);
 
-    // First pass: re-encode to normalize the container and extract duration
-    let detectedDuration = 0;
-
-    // Capture log messages to find duration
-    const logHandler = ({ message }: { message: string }) => {
-      // FFmpeg logs duration like "Duration: 00:00:05.00"
-      const match = message.match(/Duration:\s*(\d+):(\d+):(\d+)\.(\d+)/);
-      if (match) {
-        const hours = parseInt(match[1]);
-        const minutes = parseInt(match[2]);
-        const seconds = parseInt(match[3]);
-        const centiseconds = parseInt(match[4]);
-        detectedDuration = hours * 3600 + minutes * 60 + seconds + centiseconds / 100;
-      }
-    };
-
-    ff.on('log', logHandler);
-
-    // Quick probe pass - just copy to read metadata
-    try {
-      await ff.exec([
-        '-i', 'input.mp4',
-        '-c', 'copy',
-        '-f', 'null',
-        '-'
-      ]);
-    } catch {
-      // May fail but we just need the logs
-    }
-
-    // If still no duration, re-encode fully and try again
-    if (!detectedDuration || detectedDuration <= 0) {
-      try {
-        await ff.exec([
-          '-i', 'input.mp4',
-          '-c:v', 'libx264',
-          '-preset', 'ultrafast',
-          '-crf', '28',
-          '-an',
-          'normalized.mp4'
-        ]);
-
-        // Try to get duration from normalized version
-        await ff.exec([
-          '-i', 'normalized.mp4',
-          '-f', 'null',
-          '-'
-        ]);
-
-        // Use normalized as input
-        try { await ff.deleteFile('input.mp4'); } catch { /* ignore */ }
-        await ff.exec([
-          '-i', 'normalized.mp4',
-          '-c', 'copy',
-          'input.mp4'
-        ]);
-        try { await ff.deleteFile('normalized.mp4'); } catch { /* ignore */ }
-      } catch {
-        // If this also fails, use a default duration
-      }
-    }
-
-    ff.off('log', logHandler);
-
-    if (detectedDuration && detectedDuration > 0) {
-      duration = detectedDuration;
-    } else {
-      // Last resort fallback
-      duration = 5.0;
-      console.warn('Could not detect video duration, using default:', duration);
-    }
+  // Validate. A clear error here is much better than a silent
+  // FFmpeg hang downstream.
+  if (!Number.isFinite(duration) || duration <= 0) {
+    try { await ff.deleteFile('input.mp4'); } catch { /* ignore */ }
+    throw new Error('Could not detect video duration — the file may be corrupted.');
+  }
+  if (duration < MIN_DURATION) {
+    try { await ff.deleteFile('input.mp4'); } catch { /* ignore */ }
+    throw new Error(`Video is too short to loop (${duration.toFixed(2)}s; need at least ${MIN_DURATION}s).`);
+  }
+  if (duration > MAX_DURATION) {
+    try { await ff.deleteFile('input.mp4'); } catch { /* ignore */ }
+    throw new Error(`Video is too long to loop in-browser (${Math.round(duration)}s; max ${MAX_DURATION}s). Trim it first.`);
   }
 
-  // Now we have duration, use single-pass xfade approach
+  probeProgress({ stage: 'processing', progress: 1, message: `Duration ${duration.toFixed(2)}s detected` });
+
+  // xfade math — all derived values get explicit guards so a bad
+  // input duration produces a clean error, not a hang.
   const midpoint = duration / 2;
-  const safeXfade = Math.min(fadeDuration, midpoint * 0.8); // Don't let xfade exceed half duration
   const secondHalfDuration = duration - midpoint;
+  // Crossfade can't exceed 40% of the shorter half — leaves real
+  // (non-overlapped) content on both sides of the join, otherwise
+  // the loop looks like a constant fade with no "rest" in between.
+  // Hard upper cap at 1.0s matches the UI slider's range.
+  const fadeDuration = clamp(crossfadeDuration, 0.1, Math.min(1.0, midpoint * 0.4));
+  const xfadeOffset  = Math.max(0, secondHalfDuration - fadeDuration);
 
-  // The xfade offset = duration of first clip minus the fade duration
-  // First clip is the "second half" of the original (midpoint to end)
-  const xfadeOffset = Math.max(0, secondHalfDuration - safeXfade);
+  if (!Number.isFinite(midpoint) || !Number.isFinite(xfadeOffset) || !Number.isFinite(fadeDuration)) {
+    try { await ff.deleteFile('input.mp4'); } catch { /* ignore */ }
+    throw new Error('Loop math produced non-finite values — internal error.');
+  }
 
-  onProgress?.({ stage: 'rendering', progress: 0.3, message: 'Creating seamless loop...' });
+  renderProgress({ stage: 'rendering', progress: 0, message: 'Creating seamless loop…' });
 
-  // Single-pass approach using filter_complex with trim filters
-  // This avoids the keyframe-misalignment issues from stream-copy splitting
-  //
-  // [0:v] = second half (midpoint..end) - becomes start of loop
-  // [1:v] = first half (0..midpoint) - becomes end of loop
-  // xfade at the junction point creates the seamless transition
+  // Per-call progress handler. We bind it RIGHT before exec and
+  // unbind it in `finally`, so concurrent / sequential createLoop
+  // calls never share progress state. (Bug from earlier rev: the
+  // handler was registered in initFFmpeg() once at first-init
+  // time, closing over the first caller's onProgress forever.)
+  const progressHandler = ({ progress }: { progress: number }) => {
+    // FFmpeg's filter_complex progress can overshoot — we've seen
+    // up to 1.85 with xfade. Clamp before publishing or the user
+    // sees "187%" briefly.
+    const p = clamp(progress, 0, 1);
+    const pct = Math.round(p * 100);
+    renderProgress({
+      stage: 'rendering',
+      progress: p,
+      message: `Encoding ${pct}%`,
+    });
+  };
+
+  // Watchdog — if FFmpeg goes silent (no log lines for 60s) we
+  // assume the wasm worker has hung and bail. Without this the
+  // user could wait forever staring at a frozen bar.
+  let lastLogAt = performance.now();
+  const logHeartbeat = () => { lastLogAt = performance.now(); };
+  let watchdogTimedOut = false;
+  const watchdog = setInterval(() => {
+    if (performance.now() - lastLogAt > WATCHDOG_MS) {
+      watchdogTimedOut = true;
+      // We can't actually cancel ff.exec mid-flight in the current
+      // FFmpeg.wasm API — best we can do is mark it so we throw
+      // after exec eventually unblocks (or doesn't).
+      console.error('[VideoLoop] Watchdog: no FFmpeg log activity for', WATCHDOG_MS, 'ms');
+    }
+  }, 5000);
+
+  ff.on('progress', progressHandler);
+  ff.on('log', logHeartbeat);
+
+  let renderError: unknown = null;
   try {
+    // Filter graph:
+    //   [0:v]trim=start=midpoint, reset PTS  → [v0] (becomes loop start)
+    //   [1:v]trim=end=midpoint,   reset PTS  → [v1] (becomes loop end)
+    //   xfade [v0]→[v1] at offset = secondHalfDuration - fadeDuration
+    //
+    // fps=30 + format=yuv420p normalize both inputs so xfade doesn't
+    // bail on aspect/format mismatches between trim outputs.
     await ff.exec([
       '-i', 'input.mp4',
       '-i', 'input.mp4',
       '-filter_complex',
-      // Trim second half from first input, reset timestamps
       `[0:v]trim=start=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,fps=30,format=yuv420p[v0];` +
-      // Trim first half from second input, reset timestamps
       `[1:v]trim=end=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,fps=30,format=yuv420p[v1];` +
-      // Apply crossfade at the junction
-      `[v0][v1]xfade=transition=${transitionType}:duration=${safeXfade.toFixed(3)}:offset=${xfadeOffset.toFixed(3)}[outv]`,
+      `[v0][v1]xfade=transition=${transitionType}:duration=${fadeDuration.toFixed(3)}:offset=${xfadeOffset.toFixed(3)}[outv]`,
       '-map', '[outv]',
       '-c:v', 'libx264',
       '-preset', 'fast',
       '-crf', '23',
       '-movflags', '+faststart',
       '-an',
-      'output.mp4'
+      'output.mp4',
     ]);
   } catch (err) {
-    console.error('FFmpeg xfade failed, trying simple concat fallback:', err);
+    renderError = err;
+  } finally {
+    clearInterval(watchdog);
+    ff.off('progress', progressHandler);
+    ff.off('log', logHeartbeat);
+  }
 
-    // Fallback: simple concat without crossfade
+  if (watchdogTimedOut) {
+    try { await ff.deleteFile('input.mp4'); } catch { /* ignore */ }
+    throw new Error('Loop creation timed out — the encoder stopped responding. Try a shorter clip or a different transition.');
+  }
+
+  if (renderError) {
+    console.warn('[VideoLoop] xfade pass failed, attempting plain-concat fallback:', renderError);
+    // Fallback: drop the xfade — just concat the two halves. The
+    // junction will show a hard cut but at least the user gets
+    // *something*. Same trim layout, no xfade filter.
     try {
       await ff.exec([
         '-i', 'input.mp4',
@@ -391,43 +433,46 @@ export async function createLoopedVideo(
         '-crf', '23',
         '-movflags', '+faststart',
         '-an',
-        'output.mp4'
+        'output.mp4',
       ]);
     } catch (err2) {
-      console.error('Concat fallback also failed:', err2);
-      // Clean up
+      console.error('[VideoLoop] Concat fallback also failed:', err2);
       try { await ff.deleteFile('input.mp4'); } catch { /* ignore */ }
-      throw new Error('Failed to create video loop');
+      throw new Error('Failed to create video loop — both xfade and plain-concat paths failed. The video may be unsupported.');
     }
   }
 
-  onProgress?.({ stage: 'rendering', progress: 0.9, message: 'Finalizing...' });
+  readProgress({ stage: 'rendering', progress: 0, message: 'Finalizing…' });
 
-  // Read the output
   const outputData = await ff.readFile('output.mp4');
 
-  // Clean up FFmpeg filesystem
   try { await ff.deleteFile('input.mp4'); } catch { /* ignore */ }
   try { await ff.deleteFile('output.mp4'); } catch { /* ignore */ }
 
-  // Create blob URL for the result
-  // FFmpeg readFile returns FileData (Uint8Array), cast to ensure Blob compatibility
-  const outputBlob = new Blob([outputData as Uint8Array<ArrayBuffer>], { type: 'video/mp4' });
+  // FFmpeg's readFile typing is FileData; we narrow to the
+  // Uint8Array branch — for binary outputs that's always what
+  // comes back, but the union includes string for text outputs.
+  const u8 = outputData instanceof Uint8Array ? outputData : new Uint8Array(outputData as any);
+  // Cast to ArrayBuffer-backed Uint8Array so Blob accepts it
+  // across all TS lib targets (some target setups complain about
+  // the underlying buffer type).
+  const outputBlob = new Blob([u8 as Uint8Array<ArrayBuffer>], { type: 'video/mp4' });
   const outputUrl = URL.createObjectURL(outputBlob);
 
+  // Always publish a clean 100% on success — earlier the bar would
+  // get stuck at 95% because the readFile step had no progress.
   onProgress?.({ stage: 'complete', progress: 1, message: 'Loop created!' });
 
   return outputUrl;
 }
 
-/**
- * Smart loop creator - main entry point
- */
+/** Smart loop creator — main entry point. Thin wrapper that exists
+ *  for symmetry with the rest of the recording API surface. */
 export async function createLoop(
   videoFile: File | Blob | string,
   crossfadeDuration: number = 0.5,
   onProgress?: ProgressCallback,
-  transitionType: LoopTransitionType = 'fade'
+  transitionType: LoopTransitionType = 'fade',
 ): Promise<string> {
   return createLoopedVideo(videoFile, crossfadeDuration, onProgress, transitionType);
 }

@@ -3563,7 +3563,10 @@
                     </svg>
                     <span class="loop-progress-text">{loopProgress.message}</span>
                     <div class="loop-progress-bar-container">
-                      <div class="loop-progress-bar" style="width: {loopProgress.progress * 100}%"></div>
+                      <!-- Round to whole percent to avoid 12-digit decimals
+                           in the inspector / animations stuttering on
+                           floats the user can't see anyway. -->
+                      <div class="loop-progress-bar" style="width: {Math.round(loopProgress.progress * 100)}%"></div>
                     </div>
                   </div>
                 </div>
