@@ -82,12 +82,16 @@
   }
 
   // ---- Modulation source + amount ----
-  // Key shape differs by kind so the engine routes through the right
-  // updater path. The store has separate setters but both write into
-  // the same ModulationMap.
+  // EffectParamRow is used in mapping-mode panels (LayerPanel +
+  // EdgeEffectsPanel) so all keys are namespaced with `map:` —
+  // matches the engine's target-aware routing which uses the key
+  // prefix to decide whether to write through the VJ deck path or
+  // the mapping `_mappingEffectUpdater` callback. Before this
+  // namespace was added, effect mods routed as VJ regardless and
+  // never updated mapping layers' effect params.
   $: modKey = effectKind === 'edge'
-    ? `${layerIndex}:edge:${effectId}:${paramName}`
-    : `${layerIndex}:fx:${effectId}:${paramName}`;
+    ? `map:${layerIndex}:edge:${effectId}:${paramName}`
+    : `map:${layerIndex}:fx:${effectId}:${paramName}`;
   $: existingMod = ($modulationStore.get(modKey) as ParamModulation | undefined);
   $: currentSource = existingMod?.source ?? 'manual';
   $: currentAmount = existingMod?.amount ?? 1.0;
@@ -97,10 +101,11 @@
   $: isAuto = currentSource === 'auto';
 
   function writeMod(mod: ParamModulation) {
+    // Always write under the mapping namespace — see modKey above.
     if (effectKind === 'edge') {
-      modulationStore.setEdgeEffectModulation(layerIndex, effectId, paramName, mod);
+      modulationStore.setEdgeEffectModulation(layerIndex, effectId, paramName, mod, 'mapping');
     } else {
-      modulationStore.setEffectModulation(layerIndex, effectId, paramName, mod);
+      modulationStore.setEffectModulation(layerIndex, effectId, paramName, mod, 'A', 'mapping');
     }
   }
   function setSource(source: ModSource) {
