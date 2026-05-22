@@ -1381,12 +1381,38 @@ function registerIpcHandlers() {
         throw new Error('installer path outside updates directory');
       }
       console.log('[Update] Launching installer:', normalized);
-      // shell.openPath returns "" on success, error string on failure
+
+      // Per-platform install flow.
+      //
+      // Windows: the file is an NSIS .exe — running it actually
+      // installs over the current app. Quit ourselves shortly after
+      // so the installer's "remove existing" step doesn't get
+      // blocked by a running process.
+      //
+      // macOS: the file is a .dmg. There is NO auto-install — the
+      // DMG mounts in Finder and the user drags the new app into
+      // /Applications. Previous behavior was shell.openPath(dmg) +
+      // app.quit() after 500ms, which:
+      //   (a) raced the DMG mount with our process exiting, so on
+      //       slow machines the user saw "Ghost Arcade quit while
+      //       opening" with no DMG visible.
+      //   (b) gave no clear handoff explaining that they need to
+      //       drag the app over. Just looked broken.
+      // Now we showItemInFolder + leave the app running. The
+      // renderer's success state shows a clear "drag the new
+      // version to Applications, then relaunch" message.
+      if (process.platform === 'darwin') {
+        shell.showItemInFolder(normalized);
+        return { success: true, manualInstall: true };
+      }
+
+      // Windows (and any other future auto-install platform):
+      // shell.openPath returns "" on success, error string on failure.
       const result = await shell.openPath(normalized);
       if (result) throw new Error(result);
-      // Give the installer a moment to spawn before quitting ourselves
+      // Give the installer a moment to spawn before quitting ourselves.
       setTimeout(() => app.quit(), 500);
-      return { success: true };
+      return { success: true, manualInstall: false };
     } catch (err) {
       console.error('[Update] Launch error:', err?.message || err);
       return { success: false, error: err?.message || String(err) };

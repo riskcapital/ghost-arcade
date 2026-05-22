@@ -100,6 +100,15 @@
     }
   }
 
+  /** Set when the main-process launch handler signals "manual
+   *  install" — i.e. macOS where we reveal the downloaded DMG in
+   *  Finder and the user has to drag the app to Applications
+   *  themselves. Switches the modal copy from "app is closing,
+   *  installer is starting" to "we opened Finder, drag the new
+   *  version over". App stays running so the user doesn't lose
+   *  their session mid-install. */
+  let manualInstallShown = false;
+
   async function launchInstaller() {
     if (!installerPath) return;
     const api = (window as any).electronAPI;
@@ -109,8 +118,14 @@
       if (!result?.success) {
         errorMessage = `Failed to launch: ${result?.error || 'unknown error'}`;
         state = 'failed';
+        return;
       }
-      // On success, the app will quit ~500ms later (handled in main process)
+      if (result.manualInstall) {
+        // macOS DMG: Finder is showing it; user takes it from here.
+        manualInstallShown = true;
+      }
+      // Windows: main process will quit the app shortly so the
+      // NSIS installer can replace files. No additional UI needed.
     } catch (e: any) {
       errorMessage = e?.message || String(e);
       state = 'failed';
@@ -174,8 +189,18 @@
               <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
               <polyline points="22 4 12 14.01 9 11.01" />
             </svg>
-            <div class="update-progress-label">Download complete</div>
-            <p class="update-ready-hint">Click Install Now to launch the installer. Ghost Arcade will close so the upgrade can complete.</p>
+            {#if manualInstallShown}
+              <!-- macOS manual-install path. The DMG is open in
+                   Finder; the app stays running so the user can
+                   drag-replace without losing their session. -->
+              <div class="update-progress-label">DMG opened in Finder</div>
+              <p class="update-ready-hint">
+                In the new window, drag <strong>Ghost Arcade</strong> onto the <strong>Applications</strong> folder. macOS will ask to replace the existing copy — confirm, then relaunch from Applications to start the new version.
+              </p>
+            {:else}
+              <div class="update-progress-label">Download complete</div>
+              <p class="update-ready-hint">Click Install Now to launch the installer. Ghost Arcade will close so the upgrade can complete.</p>
+            {/if}
           </div>
         {/if}
       </div>
@@ -192,8 +217,16 @@
         {:else if state === 'downloading'}
           <button class="update-secondary" disabled>Downloading…</button>
         {:else if state === 'ready'}
-          <button class="update-secondary" onclick={close}>Install Later</button>
-          <button class="update-primary" onclick={launchInstaller}>Install Now</button>
+          {#if manualInstallShown}
+            <!-- macOS after we've already shown the DMG in Finder.
+                 No second action — the user finishes in Finder. -->
+            <button class="update-primary" onclick={close}>Done</button>
+          {:else}
+            <button class="update-secondary" onclick={close}>Install Later</button>
+            <button class="update-primary" onclick={launchInstaller}>
+              {isElectron() && (window as any).electronAPI?.platform === 'darwin' ? 'Show in Finder' : 'Install Now'}
+            </button>
+          {/if}
         {/if}
       </div>
     </div>
@@ -204,7 +237,10 @@
   .update-modal-backdrop {
     position: fixed;
     inset: 0;
-    z-index: 9999;
+    /* Above SettingsPanel (z-index 200000) — opening "Check for
+       updates" from Settings used to leave the panel covering the
+       update modal so the user couldn't see what they'd opened. */
+    z-index: 200001;
     background: rgba(10, 10, 10, 0.85);
     backdrop-filter: blur(8px);
     display: flex;
