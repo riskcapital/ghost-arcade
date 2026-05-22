@@ -2751,12 +2751,19 @@
                   <button class="shader-params-reset" onclick={resetShaderParamsToDefaults} title="Reset all params to defaults" aria-label="Reset all params to defaults">↺</button>
                   <button class="shader-params-close" onclick={() => showShaderParams = false}>×</button>
                 </div>
-                {#if !clipIsAudioReady && selectedClipShaderInputs.some(i => { const m = getParamModulation(selectedLayerIndex!, i.NAME); return m && m.source !== 'manual'; })}
+                {#if !clipIsAudioReady && selectedClipShaderInputs.some(i => { const m = modulationMap.get(modKeyShader(selectedLayerIndex!, i.NAME, paramDeck)); return m && m.source !== 'manual'; })}
                   <div class="audio-warn">This shader doesn't use audio uniforms — modulation controls parameters only, not the shader's internal audio response.</div>
                 {/if}
                 <div class="shader-params-panel-list">
                   {#each selectedClipShaderInputs as input (input.NAME)}
-                    {@const mod = getParamModulation(selectedLayerIndex!, input.NAME)}
+                    <!-- Inline the modulationMap lookup so the @const
+                         expression's reactive dependency on the store
+                         map is visible to Svelte's template tracker.
+                         Going through getParamModulation() hid the
+                         dependency since Svelte doesn't trace through
+                         function bodies — that's why earlier revs
+                         didn't re-render after the dropdown change. -->
+                    {@const mod = modulationMap.get(modKeyShader(selectedLayerIndex!, input.NAME, paramDeck))}
                     {@const isModulated = mod && mod.source !== 'manual'}
                     <div class="shader-param" class:modulated={isModulated}>
                       <div class="shader-param-header">
