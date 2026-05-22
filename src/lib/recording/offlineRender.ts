@@ -30,6 +30,18 @@
 
 import { writable, get } from 'svelte/store';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
+// Vendor FFmpeg core locally via Vite asset imports. Loading from a
+// CDN (unpkg) at runtime fails in packaged Electron — the renderer's
+// default CSP + file:// origin blocks the cross-origin fetch and we
+// surface "Failed to fetch" at the render-start moment. With Vite's
+// ?url query the wasm + js are emitted into the bundle and we get
+// back same-origin URLs we can pass straight to ffmpeg.load().
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore — Vite-specific ?url query, no .d.ts for it
+import ffmpegCoreUrl from '@ffmpeg/core/dist/umd/ffmpeg-core.js?url';
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import ffmpegWasmUrl from '@ffmpeg/core/dist/umd/ffmpeg-core.wasm?url';
 import { setISFManualTime } from '../isf/renderer';
 import { setStageEffectsManualTime } from '../stores/stageEffects';
 import { keyframeTimeline } from '../stores/keyframeTimeline';
@@ -105,26 +117,17 @@ let ffmpegInstance: FFmpeg | null = null;
 async function loadFFmpeg(): Promise<FFmpeg> {
   if (ffmpegInstance) return ffmpegInstance;
   const ffmpeg = new FFmpeg();
-  // unpkg CDN hosts the multi-threaded build; that's what works
-  // out-of-the-box without CORS gymnastics. Self-host this if you
-  // want offline-capable builds.
-  const baseUrl = 'https://unpkg.com/@ffmpeg/[email protected]/dist/umd';
+  // ffmpegCoreUrl / ffmpegWasmUrl come from Vite ?url imports at
+  // the top of this file — same-origin, no fetch needed, works in
+  // Electron prod where remote CDN fetches are blocked by CSP.
+  // Earlier rev fetched from unpkg.com which surfaced "Failed to
+  // fetch" the moment a user tried to render anything.
   await ffmpeg.load({
-    coreURL: await toBlobURL(`${baseUrl}/ffmpeg-core.js`, 'text/javascript'),
-    wasmURL: await toBlobURL(`${baseUrl}/ffmpeg-core.wasm`, 'application/wasm'),
+    coreURL: ffmpegCoreUrl,
+    wasmURL: ffmpegWasmUrl,
   });
   ffmpegInstance = ffmpeg;
   return ffmpeg;
-}
-
-// fetchFile wraps blob URLs already; toBlobURL is the standard way
-// to pin the core scripts so the wasm path resolves correctly when
-// run from a different origin (file:// in Electron prod).
-async function toBlobURL(url: string, mime: string): Promise<string> {
-  const resp = await fetch(url);
-  const buf = await resp.arrayBuffer();
-  const blob = new Blob([buf], { type: mime });
-  return URL.createObjectURL(blob);
 }
 
 // ─── Store ──────────────────────────────────────────────────

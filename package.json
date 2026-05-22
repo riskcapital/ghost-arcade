@@ -33,6 +33,7 @@
     "format": "prettier --write src"
   },
   "dependencies": {
+    "@ffmpeg/core": "^0.12.6",
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
     "extract-zip": "^2.0.1",

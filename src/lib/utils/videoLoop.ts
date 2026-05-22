@@ -32,6 +32,17 @@
  */
 
 import type { FFmpeg as FFmpegType } from '@ffmpeg/ffmpeg';
+// Vendor FFmpeg core locally — Vite ?url imports emit the files
+// into the bundle and give us same-origin URLs. Loading from a
+// CDN failed under Electron's renderer CSP / file:// origin,
+// surfacing as "Failed to create loop" the moment the user
+// tried it (which is what the user reported with a screenshot).
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore — Vite ?url query has no .d.ts
+import ffmpegCoreUrl from '@ffmpeg/core/dist/esm/ffmpeg-core.js?url';
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import ffmpegWasmUrl from '@ffmpeg/core/dist/esm/ffmpeg-core.wasm?url';
 
 let ffmpeg: FFmpegType | null = null;
 let ffmpegLoaded = false;
@@ -146,10 +157,7 @@ async function initFFmpeg(onProgress?: ProgressCallback): Promise<FFmpegType> {
   onProgress?.({ stage: 'loading', progress: 0, message: 'Loading FFmpeg…' });
 
   try {
-    const [{ FFmpeg }, { toBlobURL }] = await Promise.all([
-      import('@ffmpeg/ffmpeg'),
-      import('@ffmpeg/util'),
-    ]);
+    const { FFmpeg } = await import('@ffmpeg/ffmpeg');
     ffmpeg = new FFmpeg();
 
     // The 'log' subscription stays as a session-wide diagnostic
@@ -159,12 +167,15 @@ async function initFFmpeg(onProgress?: ProgressCallback): Promise<FFmpegType> {
       console.log('[FFmpeg]', message);
     });
 
-    const baseURL = 'https://unpkg.com/@ffmpeg/[email protected]/dist/esm';
-    onProgress?.({ stage: 'loading', progress: 0.3, message: 'Downloading FFmpeg core…' });
+    onProgress?.({ stage: 'loading', progress: 0.3, message: 'Loading FFmpeg core…' });
 
+    // ffmpegCoreUrl / ffmpegWasmUrl are Vite ?url imports (top of
+    // this file). Same-origin local URLs work under Electron's
+    // strict file://-origin CSP where unpkg fetches failed with
+    // "Failed to create loop".
     await ffmpeg.load({
-      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+      coreURL: ffmpegCoreUrl,
+      wasmURL: ffmpegWasmUrl,
     });
 
     ffmpegLoaded = true;
