@@ -109,6 +109,13 @@ export class RenderEngine {
 
   // Time tracking for animated effects
   private startTime: number;
+  /** When non-null, OVERRIDES the wall-clock-derived currentTime for
+   *  every shader / effect uniform. Set by the offline render
+   *  pipeline (src/lib/recording/offlineRender.ts) to drive frame
+   *  generation at a deterministic virtual rate — e.g. 60 frames at
+   *  manualTime = 0, 1/60, 2/60, ... regardless of how long each
+   *  frame takes to render. `null` = normal real-time playback. */
+  manualTime: number | null = null;
 
   // Output display
   private outputQuad: THREE.Mesh;
@@ -1477,7 +1484,15 @@ export class RenderEngine {
     }
 
     const nowMs = performance.now();
-    const currentTime = nowMs / 1000 - this.startTime;
+    // Honor offline-render's virtual clock — when manualTime is set
+    // every shader / effect uniform reads from it instead of the
+    // wall clock, so 60 deterministic frames at 1/60s steps can be
+    // emitted regardless of how long each frame actually takes to
+    // GPU-render. dt below also clamps the same way (the GPU sim
+    // effects' time-integration stays frame-stepped not wall-stepped).
+    const currentTime = this.manualTime !== null
+      ? this.manualTime
+      : (nowMs / 1000 - this.startTime);
     // Read live audio rms once per applyEffects call. Audio-reactive
     // shaders (Colorama, eventually VHS / Bloom / Glitch) declare a
     // `uAudio` uniform and pick this up automatically via
@@ -2613,6 +2628,29 @@ export class RenderEngine {
 
   public getCompositeTexture(): THREE.Texture {
     return this.compositeTarget.texture;
+  }
+
+  /** Read the current composite target back to a CPU buffer as
+   *  RGBA8. Used by the offline render pipeline to capture each
+   *  frame without relying on canvas.toBlob (which is unreliable
+   *  when the renderer is created with preserveDrawingBuffer:false).
+   *  Returns the buffer in standard top-down row order — readPixels
+   *  hands us bottom-up + we flip Y here so caller can feed it
+   *  straight to a PNG encoder. */
+  public readCompositePixels(): { width: number; height: number; data: Uint8Array } {
+    const w = (this as any).width as number;
+    const h = (this as any).height as number;
+    const raw = new Uint8Array(w * h * 4);
+    this.renderer.readRenderTargetPixels(this.compositeTarget, 0, 0, w, h, raw);
+    // Flip Y so row 0 is the top of the image (PNG / canvas
+    // convention). readRenderTargetPixels returns bottom-up bytes.
+    const flipped = new Uint8Array(w * h * 4);
+    const stride = w * 4;
+    for (let y = 0; y < h; y++) {
+      const src = (h - 1 - y) * stride;
+      flipped.set(raw.subarray(src, src + stride), y * stride);
+    }
+    return { width: w, height: h, data: flipped };
   }
 
   public dispose(): void {

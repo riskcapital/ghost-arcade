@@ -32,6 +32,7 @@
   import OutputWindow from './lib/components/OutputWindow.svelte';
   import VJModePanel from './lib/components/VJModePanel.svelte';
   import StageDesignerPanel from './lib/components/StageDesignerPanel.svelte';
+  import OfflineRenderModal from './lib/components/OfflineRenderModal.svelte';
   import { workspace } from './lib/stores/workspace';
   import PresetTray from './lib/components/PresetTray.svelte';
   import LayerSequencer from './lib/components/LayerSequencer.svelte';
@@ -262,6 +263,10 @@
 
   // First-run welcome modal (EULA gate removed in OSS build)
   let showWelcome = false;
+  // Offline render-to-video modal. File menu → "Render to Video…"
+  // toggles this; the modal owns its own progress + cancel flow via
+  // the offlineRender store.
+  let showOfflineRender = false;
 
   // Keyboard shortcut help overlay
   let showShortcutHelp = false;
@@ -4188,6 +4193,19 @@
                 <span class="menu-shortcut">Ctrl+Shift+S</span>
               </button>
               <div class="menu-separator"></div>
+              <!-- Offline render — opens the modal where the user
+                   picks duration / fps / resolution and the system
+                   deterministically renders + encodes to MP4. -->
+              <button class="menu-item" onclick={() => { fileMenuOpen = false; showOfflineRender = true; }}>
+                <span class="menu-icon">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="23 7 16 12 23 17 23 7"></polygon>
+                    <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+                  </svg>
+                </span>
+                <span class="menu-label">Render to Video...</span>
+              </button>
+              <div class="menu-separator"></div>
               <button class="menu-item" onclick={importPresetsFromFile}>
                 <span class="menu-icon">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -5362,6 +5380,14 @@
       <StageDesignerPanel />
     {/if}
 
+
+    <!-- Offline render-to-video modal — opened from File →
+         Render to Video. Owns its own progress + cancel + result
+         state via the offlineRender store. -->
+    <OfflineRenderModal
+      isOpen={showOfflineRender}
+      onClose={() => showOfflineRender = false}
+    />
 
     <!-- Welcome Modal (first run) — EULA gate removed in OSS build. -->
     {#if showWelcome}

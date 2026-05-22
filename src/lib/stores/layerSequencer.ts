@@ -356,6 +356,34 @@ function createLayerSequencerStore() {
       lastStepTime = performance.now();
     },
 
+    /** Deterministic seek to a virtual time in seconds. Computes
+     *  which step would be active at that time given the current
+     *  config (BPM-driven or fixed-step), applies the overrides as
+     *  if we'd ticked there. Used by the offline render pipeline to
+     *  step the sequencer one frame at a time without going through
+     *  RAF. */
+    seek(timeSec: number) {
+      const s = get({ subscribe });
+      const stepDur = getStepDuration(s.config);
+      if (stepDur <= 0) return;
+      const totalSteps = s.pattern.stepCount;
+      const cycleDur = stepDur * totalSteps;
+      // Loop if enabled, else clamp at the last step.
+      const tSec = s.config.loop ? (timeSec % cycleDur + cycleDur) % cycleDur : Math.min(timeSec, cycleDur - 1e-6);
+      const stepIdx = Math.max(0, Math.min(totalSteps - 1, Math.floor(tSec / stepDur)));
+      const stepPhase = (tSec - stepIdx * stepDur) / stepDur;
+      const crossfadeStart = 1 - Math.min(0.8, (s.config.crossfadeEnabled ? s.config.crossfadeDuration / stepDur : 0));
+      let overrides: Record<string, number>;
+      if (s.config.crossfadeEnabled && stepPhase >= crossfadeStart) {
+        const nextIdx = (stepIdx + 1) % totalSteps;
+        const fadeProgress = (stepPhase - crossfadeStart) / (1 - crossfadeStart);
+        overrides = applyTransitionOpacities(s, stepIdx, nextIdx, fadeProgress);
+      } else {
+        overrides = applyStepOpacities(s, stepIdx);
+      }
+      update(prev => ({ ...prev, currentStep: stepIdx, opacityOverrides: overrides }));
+    },
+
     /** Serialize the pattern + config for project save. Excludes runtime
      *  fields (isPlaying, currentStep, opacityOverrides) which are session
      *  state, not composition state. `isOpen` is kept because the user

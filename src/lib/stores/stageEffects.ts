@@ -692,9 +692,29 @@ function evaluate(eff: StageEffect, cx: number, cy: number, tSec: number, state:
 
 let rafId: number | null = null;
 let startMs = 0;
+/** Offline-render virtual clock. When set, the RAF tick (and the
+ *  automation scheduler) read time from here instead of the wall
+ *  clock — same pattern the engine + ISF renderer use. The offline
+ *  store sets this per-frame, runs tick() once, captures the canvas. */
+let _manualTime: number | null = null;
+export function setStageEffectsManualTime(time: number | null) {
+  _manualTime = time;
+  if (time !== null) {
+    // Mid-tick swaps would let one effect read wall clock and the
+    // next read virtual time — force the runtime through a clean
+    // pass at the requested virtual time so all effects converge.
+    tick(0);
+  }
+}
 
 function tick(nowMs: number) {
-  const tSec = (nowMs - startMs) / 1000;
+  // Offline render forces a deterministic virtual time via
+  // _manualTime; in real-time mode tSec advances with the wall
+  // clock. The advanceAutomation scheduler and per-effect tickers
+  // all read from this one value so they stay in lock-step.
+  const tSec = _manualTime !== null
+    ? _manualTime
+    : (nowMs - startMs) / 1000;
   // Drive any automation schedulers first — they may flip the
   // surface's activeEffectId between frames.
   advanceAutomation(nowMs);

@@ -14,6 +14,14 @@ export interface ISFShaderInstance {
   inputTextures: Map<string, THREE.Texture>;
 }
 
+/** Offline-render time override. When non-null every ISF shader's
+ *  TIME uniform reads `_manualTime` instead of `performance.now() -
+ *  shader.startTime`. Set by src/lib/recording/offlineRender.ts so
+ *  deterministic frame-by-frame rendering matches the engine's
+ *  manualTime virtual clock. `null` = normal real-time playback. */
+let _manualTime: number | null = null;
+export function setISFManualTime(time: number | null) { _manualTime = time; }
+
 // Simple passthrough vertex shader for fullscreen quad
 // Uses explicit attribute/uniform declarations for RawShaderMaterial
 // (RawShaderMaterial does NOT auto-inject Three.js built-in declarations)
@@ -292,7 +300,9 @@ export function updateISFShader(
   deltaTime: number = 0.016,
   audioState?: AudioState | null
 ): void {
-  const currentTime = performance.now() / 1000 - shader.startTime;
+  const currentTime = _manualTime !== null
+    ? _manualTime
+    : performance.now() / 1000 - shader.startTime;
 
   // Use THREE.Vector2/Vector4 for proper uniform handling
   // Update both RENDERSIZE (ISF standard) and renderSize (camelCase variant)
