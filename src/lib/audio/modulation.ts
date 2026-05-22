@@ -502,6 +502,12 @@ function createModulationStore() {
   // any mod regardless of source.
   subscribe(map => {
     rebuildParsedCache(map);
+    // Any store change is a chance to re-baseline the dt clock so
+    // the next applyModulations() doesn't compute a freak dt against
+    // a long-stale lastApplyTimeSec from a previous mode's session.
+    // Without this the first tick after a mode switch can clamp dt
+    // to 0 and the playhead appears paused for a moment.
+    modulationEngine.resetDtBaseline();
     if (parsedCache.length > 0 && !modulationEngine.running) {
       modulationEngine.start();
     }
@@ -682,7 +688,14 @@ export function setParamModSource(layerIndex: number, paramName: string, source:
       autoSpeedHz: existing?.autoSpeedHz ?? DEFAULT_MOD.autoSpeedHz,
       autoMin: existing?.autoMin ?? DEFAULT_MOD.autoMin,
       autoMax: existing?.autoMax ?? DEFAULT_MOD.autoMax,
-      autoPlaying: isAuto ? (existing?.autoPlaying ?? true) : DEFAULT_MOD.autoPlaying,
+      // Picking "Auto" from the dropdown always starts the playhead
+      // in PLAYING state — the user is asking for animation, not
+      // re-establishing a previously-paused config. They can pause
+      // via the button afterwards if they want. Previously we
+      // carried over `existing?.autoPlaying` which made a paused
+      // mod from a prior session re-open paused; the user reported
+      // this as "i have to click pause then play to get it to work".
+      autoPlaying: isAuto ? true : DEFAULT_MOD.autoPlaying,
     }, bank, target, clipId);
   }
   if (source !== 'manual' && !modulationEngine.running) {
@@ -751,6 +764,14 @@ class ModulationEngine {
       cancelAnimationFrame(this.animFrameId);
       this.animFrameId = null;
     }
+  }
+
+  /** External signal — called by the modulationStore subscriber when
+   *  the map changes (mode switch, user adds/removes mods, etc.) so
+   *  the next tick recomputes dt from the current `now` and doesn't
+   *  carry stale time deltas across the change. */
+  resetDtBaseline() {
+    this.lastApplyTimeSec = 0;
   }
 
   get running() {
