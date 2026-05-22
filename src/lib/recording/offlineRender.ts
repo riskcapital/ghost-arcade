@@ -93,6 +93,12 @@ export interface OfflineRenderState {
   status: OfflineRenderStatus;
   totalFrames: number;
   currentFrame: number;
+  /** Encode-phase progress 0..1. Separate from currentFrame so the
+   *  modal can show meaningful progress during the libx264 wasm
+   *  pass (slow — ~1-3× clip duration). Previously the bar froze
+   *  at 100% (last captured-frame value) during encode and looked
+   *  stuck even though work was happening. */
+  encodeProgress: number;
   /** Wall-clock ms when start() was called — drives the elapsed
    *  display in the modal. */
   startedAtMs: number;
@@ -107,6 +113,7 @@ const INITIAL_STATE: OfflineRenderState = {
   status: 'idle',
   totalFrames: 0,
   currentFrame: 0,
+  encodeProgress: 0,
   startedAtMs: 0,
   errorMessage: null,
   lastOutputUrl: null,
@@ -311,18 +318,39 @@ function createOfflineRenderStore() {
       // Encode. libx264 + yuv420p produces the broadest-compatible
       // MP4 (Quicktime, browsers, ffmpeg-built-in decoders). crf
       // picks quality vs. file size — lower = better.
+      //
+      // Subscribe to ffmpeg's progress events for the duration of
+      // this exec call so the modal's bar reflects actual encoder
+      // progress instead of staying frozen at the last captured-
+      // frame value (100%). filter_complex / xfade have known
+      // overshoot issues with this event but the straight-through
+      // image-sequence-to-libx264 pipeline gives clean 0..1.
       setStatus('encoding');
+      update(s => ({ ...s, encodeProgress: 0 }));
+      const encodeProgressHandler = ({ progress }: { progress: number }) => {
+        // Clamp — even on the simple pipeline ffmpeg occasionally
+        // reports slightly out-of-range values on the last frame.
+        const p = Math.max(0, Math.min(1, Number.isFinite(progress) ? progress : 0));
+        update(s => ({ ...s, encodeProgress: p }));
+      };
+      ffmpeg.on('progress', encodeProgressHandler);
+
       const crf = settings.quality === 'archive' ? '14' : settings.quality === 'web' ? '23' : '18';
       const outputName = `${settings.filename || 'render'}.mp4`;
-      await ffmpeg.exec([
-        '-framerate', String(settings.fps),
-        '-i', 'frame_%06d.jpg',
-        '-c:v', 'libx264',
-        '-pix_fmt', 'yuv420p',
-        '-crf', crf,
-        '-preset', settings.quality === 'archive' ? 'slow' : 'medium',
-        outputName,
-      ]);
+      try {
+        await ffmpeg.exec([
+          '-framerate', String(settings.fps),
+          '-i', 'frame_%06d.jpg',
+          '-c:v', 'libx264',
+          '-pix_fmt', 'yuv420p',
+          '-crf', crf,
+          '-preset', settings.quality === 'archive' ? 'slow' : 'medium',
+          outputName,
+        ]);
+      } finally {
+        ffmpeg.off('progress', encodeProgressHandler);
+      }
+      update(s => ({ ...s, encodeProgress: 1 }));
       if (cancelRequested) { _finish('cancelled'); return false; }
 
       setStatus('saving');

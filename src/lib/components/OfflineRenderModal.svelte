@@ -38,9 +38,19 @@
 
   $: state = $offlineRender;
   $: isRunning = state.status !== 'idle' && state.status !== 'complete' && state.status !== 'cancelled' && state.status !== 'error';
-  $: progressPct = state.totalFrames > 0
-    ? Math.round((state.currentFrame / state.totalFrames) * 100)
-    : 0;
+  // Progress bar source depends on phase. While capturing frames it
+  // tracks frame N / totalFrames. While encoding it tracks ffmpeg's
+  // own progress event (which the store re-publishes as
+  // encodeProgress). Previously the bar froze at 100% during the
+  // encode pass because we never updated currentFrame past total —
+  // user reported it as "stuck", which it wasn't, but it sure looked
+  // that way for the 30-90s the wasm libx264 takes.
+  $: progressPct =
+    state.status === 'encoding'
+      ? Math.round(state.encodeProgress * 100)
+      : state.totalFrames > 0
+        ? Math.round((state.currentFrame / state.totalFrames) * 100)
+        : 0;
   $: elapsedSec = state.startedAtMs > 0
     ? Math.floor((performance.now() - state.startedAtMs) / 1000)
     : 0;
@@ -134,6 +144,11 @@
       </div>
       {#if state.status === 'rendering'}
         <p class="progress-hint">The editor preview will look unusual while rendering — it's driven by the virtual clock instead of wall time. Don't switch projects or close the app.</p>
+      {:else if state.status === 'encoding'}
+        <!-- libx264 in wasm is single-threaded and slow — set
+             expectations honestly. A 10s/1080p clip is ~30-90s of
+             encode wall time on a typical laptop. -->
+        <p class="progress-hint">Compressing frames to MP4 with libx264. This usually takes 1-3× the clip's duration. Don't close the app.</p>
       {/if}
       <div class="actions">
         <button class="btn-secondary" onclick={cancel}>Cancel</button>
