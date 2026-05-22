@@ -2817,10 +2817,19 @@
                         </select>
                       </div>
                       {#if input.TYPE === 'float' || input.TYPE === 'event'}
+                        <!-- Inline the value read against paramLayerStates
+                             so Svelte sees the reactive dependency in the
+                             template — going through getShaderParamValue()
+                             hid the dep, so the slider thumb didn't move
+                             when the modulation engine wrote new values to
+                             the active clip. Same pattern fix as the
+                             {@const mod = ...} above. -->
+                        {@const _baseVal = paramLayerStates[selectedLayerIndex!]?.activeClip?.shaderValues?.[input.NAME] as number | undefined}
+                        {@const _sliderVal = typeof _baseVal === 'number' ? _baseVal : ((input.DEFAULT as number) ?? input.MIN ?? 0)}
                         <div class="shader-param-slider">
                           <div class="slider-track-wrap">
                             <input type="range" min={input.MIN ?? 0} max={input.MAX ?? 1} step={((input.MAX ?? 1) - (input.MIN ?? 0)) / 200}
-                              value={getShaderParamValue(selectedLayerIndex!, input.NAME, (input.DEFAULT as number) ?? input.MIN ?? 0)}
+                              value={_sliderVal}
                               oninput={(e) => { markUserInteracting(`vj:${selectedLayerIndex}:shader:${input.NAME}`); setShaderParamValue(selectedLayerIndex!, input.NAME, parseFloat((e.target as HTMLInputElement).value)); }} class="param-slider"
                               data-midi-path="vj:{selectedLayerIndex}:shader:{input.NAME}"
                               data-midi-label="{input.LABEL || input.NAME}"
@@ -2831,7 +2840,7 @@
                               <div class="mod-ghost" style="left: {((modGhostValues[input.NAME] - (input.MIN ?? 0)) / ((input.MAX ?? 1) - (input.MIN ?? 0))) * 100}%"></div>
                             {/if}
                           </div>
-                          <span class="param-val">{(isModulated && modGhostValues[input.NAME] !== undefined ? modGhostValues[input.NAME] : getShaderParamValue(selectedLayerIndex!, input.NAME, (input.DEFAULT as number) ?? input.MIN ?? 0)).toFixed(2)}</span>
+                          <span class="param-val">{(isModulated && modGhostValues[input.NAME] !== undefined ? modGhostValues[input.NAME] : _sliderVal).toFixed(2)}</span>
                         </div>
                         <!-- Auto-automation controls — only shown when
                              the param's modulation source is "auto".
