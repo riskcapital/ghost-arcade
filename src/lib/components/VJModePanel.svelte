@@ -1223,6 +1223,23 @@
     setBaseValue(layerIndex, paramName, value); // Keep modulation base in sync with slider
   }
 
+  /** Reset every shader input on the currently-open shader-params
+   *  panel back to its INPUT.DEFAULT value from the ISF metadata.
+   *  Non-numeric inputs (colors etc.) are left alone — the panel's
+   *  UI only edits floats / events / bools anyway and the reset
+   *  affordance is positioned in the float-heavy params section. */
+  function resetShaderParamsToDefaults() {
+    if (selectedLayerIndex === null) return;
+    for (const input of selectedClipShaderInputs) {
+      if (input.DEFAULT === undefined || input.DEFAULT === null) continue;
+      if (typeof input.DEFAULT === 'number') {
+        setShaderParamValue(selectedLayerIndex, input.NAME, input.DEFAULT);
+      } else if (typeof input.DEFAULT === 'boolean') {
+        setShaderParamValue(selectedLayerIndex, input.NAME, input.DEFAULT ? 1 : 0);
+      }
+    }
+  }
+
   // Modulation helpers — thin wrappers using shared functions from modulation.ts
   function getParamModulation(layerIndex: number, paramName: string): ParamModulation | undefined {
     return modulationStore.getModulation(layerIndex, paramName);
@@ -2682,6 +2699,10 @@
                       <span class="audio-ready-badge" title="Audio-reactive shader">♪</span>
                     {/if}
                   </span>
+                  <!-- ↺ Reset every shader param to its ISF
+                       INPUT.DEFAULT. Sits beside close — matches the
+                       per-effect reset button pattern in LayerPanel. -->
+                  <button class="shader-params-reset" onclick={resetShaderParamsToDefaults} title="Reset all params to defaults" aria-label="Reset all params to defaults">↺</button>
                   <button class="shader-params-close" onclick={() => showShaderParams = false}>×</button>
                 </div>
                 {#if !clipIsAudioReady && selectedClipShaderInputs.some(i => { const m = getParamModulation(selectedLayerIndex!, i.NAME); return m && m.source !== 'manual'; })}
@@ -5134,6 +5155,24 @@
 
   .shader-params-close:hover {
     color: #ff4444;
+  }
+
+  /* ↺ Reset-all-params button. Cyan to read as recoverable + tonal-
+     match the LayerPanel effect-reset button. Sits to the left of
+     the close × button in the shader-params header. */
+  .shader-params-reset {
+    background: none;
+    border: none;
+    color: #7ec8e3;
+    font-size: 14px;
+    cursor: pointer;
+    padding: 0 6px;
+    line-height: 1;
+    opacity: 0.6;
+    margin-right: 2px;
+  }
+  .shader-params-reset:hover {
+    opacity: 1;
   }
 
   .shader-params-panel-list {

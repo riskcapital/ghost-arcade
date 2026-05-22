@@ -13,6 +13,10 @@ import { macros } from './macros';
 import { snapshots } from './snapshots';
 import { layerSequencer } from './layerSequencer';
 import { surfaceStore } from './surface';
+// Catalog of per-effect default params. Used by resetEffectParams to
+// snap an effect back to its baseline values when the user hits the
+// per-effect reset button in LayerPanel.
+import { getDefaultEffectParams } from '../renderer/effects';
 import { oscStore } from '../osc/oscStore';
 import { geoDeckStore } from './geoDeck';
 import { createDefaultShapeMesh } from '../drawing/types';
@@ -2361,6 +2365,40 @@ void main() {
         if (typeof value !== 'number' && typeof value !== 'boolean') continue;
         const trackKey = `fx:${effectId}:${paramName}`;
         keyframeTimeline.autoRecord(layerId, trackKey, value, paramName, typeof value === 'boolean' ? 'boolean' : 'number');
+      }
+    },
+
+    /** Reset a layer effect's params back to the catalog defaults
+     *  (getDefaultEffectParams). Replaces the params object wholesale
+     *  rather than merging — half-set state from earlier tweaks
+     *  would otherwise leak through if a param had been added/removed
+     *  to the catalog since the effect was created. */
+    resetEffectParams(layerId: string, effectId: string) {
+      let resetType: EffectType | null = null;
+      let resetParams: EffectParams | null = null;
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((l) => {
+          if (l.id !== layerId) return l;
+          return {
+            ...l,
+            effects: l.effects.map((e) => {
+              if (e.id !== effectId) return e;
+              resetType = e.type;
+              resetParams = getDefaultEffectParams(e.type);
+              return { ...e, params: resetParams };
+            }),
+          };
+        }),
+      }));
+      // Auto-record the reset values too so a running timeline
+      // captures the snap-back as a keyframe at the playhead.
+      if (resetType && resetParams) {
+        for (const [paramName, value] of Object.entries(resetParams)) {
+          if (typeof value !== 'number' && typeof value !== 'boolean') continue;
+          const trackKey = `fx:${effectId}:${paramName}`;
+          keyframeTimeline.autoRecord(layerId, trackKey, value, paramName, typeof value === 'boolean' ? 'boolean' : 'number');
+        }
       }
     },
 

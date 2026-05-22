@@ -2056,6 +2056,18 @@
                       {getEffectLabel(effect.type)}
                     </button>
 
+                    <!-- Reset button — snaps params back to the
+                         catalog defaults from getDefaultEffectParams.
+                         Cluster of icon-buttons before delete; using
+                         a ↺ glyph that matches the existing reset
+                         affordance pattern used in macros + snapshots. -->
+                    <button
+                      class="effect-reset"
+                      onclick={(e) => { e.stopPropagation(); project.resetEffectParams(layer.id, effect.id); }}
+                      title="Reset to defaults"
+                      aria-label="Reset effect to defaults"
+                    >↺</button>
+
                     <!-- Delete button -->
                     <button
                       class="effect-delete"
@@ -3429,6 +3441,25 @@
   }
 
   .effect-delete:hover {
+    opacity: 1;
+  }
+
+  /* ↺ Reset-to-defaults button. Tonal-match with the delete button
+     (same size + cursor + padding) but in a friendly cyan instead
+     of warning red — it's a recoverable action and the eye should
+     read it as different from "destroy this". */
+  .effect-reset {
+    background: none;
+    border: none;
+    color: #7ec8e3;
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 4px;
+    opacity: 0.55;
+    flex-shrink: 0;
+  }
+  .effect-reset:hover {
     opacity: 1;
   }
 
