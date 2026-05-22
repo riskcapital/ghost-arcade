@@ -245,7 +245,11 @@ export function modKeyEffect(
  *  the right deep-merge instead of the flat `params` updater used by
  *  regular effects. `paramPath` is the dotted nested path
  *  (e.g. `'stroke.width'`). */
-export function modKeyEdgeEffect(layerIndex: number, effectId: string, paramPath: string, bank: 'A' | 'B' = 'A'): string {
+export function modKeyEdgeEffect(layerIndex: number, effectId: string, paramPath: string, bank: 'A' | 'B' = 'A', target: ModTarget = 'vj'): string {
+  // Edge effects only exist on mapping layers, but the key still
+  // honors the target prefix so the engine's parser routes them
+  // correctly through the target-aware isMapping check.
+  if (target === 'mapping') return `map:${layerIndex}:edge:${effectId}:${paramPath}`;
   return bank === 'B'
     ? `B:${layerIndex}:edge:${effectId}:${paramPath}`
     : `${layerIndex}:edge:${effectId}:${paramPath}`;
@@ -550,46 +554,58 @@ function createModulationStore() {
       return map.get(modKeyShader(layerIndex, paramName, bank, target, clipId));
     },
 
-    /** Set modulation for an effect parameter. Bank A by default. */
-    setEffectModulation(layerIndex: number, effectId: string, paramName: string, mod: ParamModulation, bank: 'A' | 'B' = 'A') {
+    /** Set modulation for an effect parameter. Target defaults to
+     *  'vj' for back-compat with callers that haven't been updated,
+     *  but mapping-mode UI (EffectParamRow et al.) passes 'mapping'
+     *  so the engine routes through the mapping updater instead of
+     *  the VJ deck updater. The `target` field on the stored mod is
+     *  stamped to match the key prefix so engine routing stays in
+     *  sync. */
+    setEffectModulation(layerIndex: number, effectId: string, paramName: string, mod: ParamModulation, bank: 'A' | 'B' = 'A', target?: ModTarget) {
+      const t = target ?? mod.target ?? 'vj';
+      const stored: ParamModulation = { ...mod, target: t };
       update(map => {
         const newMap = new Map(map);
-        const key = modKeyEffect(layerIndex, effectId, paramName, bank);
-        if (mod.source === 'manual') {
+        const key = modKeyEffect(layerIndex, effectId, paramName, bank, t);
+        if (stored.source === 'manual') {
           newMap.delete(key);
         } else {
-          newMap.set(key, mod);
+          newMap.set(key, stored);
         }
         return newMap;
       });
     },
 
-    /** Get modulation for an effect parameter. Bank A by default. */
-    getEffectModulation(layerIndex: number, effectId: string, paramName: string, bank: 'A' | 'B' = 'A'): ParamModulation | undefined {
+    /** Get modulation for an effect parameter. */
+    getEffectModulation(layerIndex: number, effectId: string, paramName: string, bank: 'A' | 'B' = 'A', target: ModTarget = 'vj'): ParamModulation | undefined {
       const map = get({ subscribe });
-      return map.get(modKeyEffect(layerIndex, effectId, paramName, bank));
+      return map.get(modKeyEffect(layerIndex, effectId, paramName, bank, target));
     },
 
     /** Set modulation on an edge-effect param. `paramPath` is the
      *  dotted nested path (e.g. `'stroke.width'`, `'fill.opacity'`).
-     *  Bank A only — edge effects don't participate in VJ A/B banking. */
-    setEdgeEffectModulation(layerIndex: number, effectId: string, paramPath: string, mod: ParamModulation) {
+     *  Bank A only — edge effects don't participate in VJ A/B banking.
+     *  Target defaults to 'mapping' since edge effects only live on
+     *  mapping layers; engine routing needs the map: prefix so it
+     *  goes through _mappingEdgeEffectUpdater. */
+    setEdgeEffectModulation(layerIndex: number, effectId: string, paramPath: string, mod: ParamModulation, target: ModTarget = 'mapping') {
+      const stored: ParamModulation = { ...mod, target };
       update(map => {
         const newMap = new Map(map);
-        const key = modKeyEdgeEffect(layerIndex, effectId, paramPath, 'A');
-        if (mod.source === 'manual') {
+        const key = modKeyEdgeEffect(layerIndex, effectId, paramPath, 'A', target);
+        if (stored.source === 'manual') {
           newMap.delete(key);
         } else {
-          newMap.set(key, mod);
+          newMap.set(key, stored);
         }
         return newMap;
       });
     },
 
     /** Get modulation for an edge-effect param. */
-    getEdgeEffectModulation(layerIndex: number, effectId: string, paramPath: string): ParamModulation | undefined {
+    getEdgeEffectModulation(layerIndex: number, effectId: string, paramPath: string, target: ModTarget = 'mapping'): ParamModulation | undefined {
       const map = get({ subscribe });
-      return map.get(modKeyEdgeEffect(layerIndex, effectId, paramPath, 'A'));
+      return map.get(modKeyEdgeEffect(layerIndex, effectId, paramPath, 'A', target));
     },
 
     /** Set modulation on the global VJ A/B crossfader value (0..1).
