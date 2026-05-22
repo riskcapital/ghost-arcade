@@ -80,9 +80,25 @@ export type ModSource =
   // See AutomationState below.
   | 'auto';
 
+/** Modulation target — which side of the app's render graph the
+ *  engine should write modulated values to. Independent of which UI
+ *  panel is currently open: a 'vj' modulation keeps driving the VJ
+ *  deck's active clip even while the user is browsing mapping mode,
+ *  and vice versa. Previously the engine routed based on a global
+ *  `project.vjMode.enabled` flag which made VJ and mapping mods
+ *  mutually exclusive — switching modes silently re-routed the same
+ *  modulation entries to the wrong side, producing the "params work
+ *  in mapping but not VJ" bug. */
+export type ModTarget = 'vj' | 'mapping';
+
 // A single parameter modulation assignment
 export interface ParamModulation {
   source: ModSource;
+  /** Which render-graph side this modulation drives. Optional for
+   *  back-compat with old project saves; when absent the engine
+   *  falls back to the legacy global-mode routing. New code paths
+   *  (UI panels creating modulations) always set this explicitly. */
+  target?: ModTarget;
   amount: number;    // 0-1 how much the source affects the parameter
   speed: number;     // LFO speed multiplier (only for LFO sources)
                      // - bpmSync=false: cycles per second (Hz). speed=1 → 1Hz → 60 BPM
@@ -145,6 +161,12 @@ interface ParsedModEntry {
   special?: 'xfade-value';
   // Bank tag for layer/effect targets. Default 'A'. Ignored when `special` is set.
   bank: 'A' | 'B';
+  /** Which render-graph side this entry writes to. 'vj' or 'mapping'.
+   *  Derived from the key prefix at parse time, then preferred over
+   *  the legacy `_isMappingLayer(layerIndex)` global flag during
+   *  routing — so VJ + mapping mods coexist independently regardless
+   *  of which workspace the user is currently in. */
+  target: ModTarget;
   layerIndex: number;
   isEffect: boolean;     // true for regular pixel effects (`layer.effects[]`)
   isEdgeEffect: boolean; // true for edge effects (`layer.edgeEffects.effects[]`)
@@ -163,10 +185,34 @@ interface ParsedModEntry {
 export type ModulationMap = Map<string, ParamModulation>;
 
 // Key builders so callers don't hand-craft strings.
-export function modKeyShader(layerIndex: number, paramName: string, bank: 'A' | 'B' = 'A'): string {
+//
+// Key format (with new target-aware prefix):
+//   target='vj'      bank='A'   →  "0:cameraSpeed"               (legacy / default)
+//   target='vj'      bank='B'   →  "B:0:cameraSpeed"             (legacy)
+//   target='mapping'            →  "map:0:cameraSpeed"           (new — no banks in mapping)
+//   target='vj'      effect     →  "0:fx:effectId:paramName"
+//   target='mapping' effect     →  "map:0:fx:effectId:paramName"
+//
+// The `map:` prefix keeps VJ and mapping mods in separate keyspace
+// slots so the user can have independent automation running on
+// both sides simultaneously, surviving mode switches.
+export function modKeyShader(
+  layerIndex: number,
+  paramName: string,
+  bank: 'A' | 'B' = 'A',
+  target: ModTarget = 'vj',
+): string {
+  if (target === 'mapping') return `map:${layerIndex}:${paramName}`;
   return bank === 'B' ? `B:${layerIndex}:${paramName}` : `${layerIndex}:${paramName}`;
 }
-export function modKeyEffect(layerIndex: number, effectId: string, paramName: string, bank: 'A' | 'B' = 'A'): string {
+export function modKeyEffect(
+  layerIndex: number,
+  effectId: string,
+  paramName: string,
+  bank: 'A' | 'B' = 'A',
+  target: ModTarget = 'vj',
+): string {
+  if (target === 'mapping') return `map:${layerIndex}:fx:${effectId}:${paramName}`;
   return bank === 'B'
     ? `B:${layerIndex}:fx:${effectId}:${paramName}`
     : `${layerIndex}:fx:${effectId}:${paramName}`;
@@ -316,6 +362,7 @@ function rebuildParsedCache(map: ModulationMap) {
         mod,
         special: 'xfade-value',
         bank: 'A',
+        target: 'vj',
         layerIndex: -1,
         isEffect: false,
         isEdgeEffect: false,
@@ -325,10 +372,16 @@ function rebuildParsedCache(map: ModulationMap) {
       continue;
     }
 
-    // Bank prefix detection: "B:..." → Bank B, otherwise Bank A (legacy default)
+    // Target prefix detection: "map:..." → mapping target (no banks).
+    // Bank prefix detection: "B:..." → Bank B (vj target only).
+    // Otherwise → vj target, Bank A (legacy default).
+    let target: ModTarget = 'vj';
     let bank: 'A' | 'B' = 'A';
     let cursor = 0;
-    if (parts[0] === 'B') {
+    if (parts[0] === 'map') {
+      target = 'mapping';
+      cursor = 1;
+    } else if (parts[0] === 'B') {
       bank = 'B';
       cursor = 1;
     }
@@ -340,6 +393,7 @@ function rebuildParsedCache(map: ModulationMap) {
       parsedCache.push({
         mod,
         bank,
+        target,
         layerIndex,
         isEffect: true,
         isEdgeEffect: false,
@@ -353,6 +407,7 @@ function rebuildParsedCache(map: ModulationMap) {
       parsedCache.push({
         mod,
         bank,
+        target,
         layerIndex,
         isEffect: false,
         isEdgeEffect: true,
@@ -363,6 +418,7 @@ function rebuildParsedCache(map: ModulationMap) {
       parsedCache.push({
         mod,
         bank,
+        target,
         layerIndex,
         isEffect: false,
         isEdgeEffect: false,
@@ -383,24 +439,32 @@ function createModulationStore() {
   return {
     subscribe,
 
-    /** Set modulation for a specific layer+param (shader). Bank A by default. */
-    setModulation(layerIndex: number, paramName: string, mod: ParamModulation, bank: 'A' | 'B' = 'A') {
+    /** Set modulation for a specific layer+param (shader). Bank A
+     *  by default; target defaults to the modulation's own target
+     *  field, falling back to 'vj' for back-compat with callers
+     *  that haven't been updated yet. */
+    setModulation(layerIndex: number, paramName: string, mod: ParamModulation, bank: 'A' | 'B' = 'A', target?: ModTarget) {
+      const t = target ?? mod.target ?? 'vj';
+      // Ensure the mod's target field matches the key we're storing
+      // it under — otherwise the engine would route based on the
+      // mod's stale target field, mismatched against the key.
+      const stored: ParamModulation = { ...mod, target: t };
       update(map => {
         const newMap = new Map(map);
-        const key = modKeyShader(layerIndex, paramName, bank);
-        if (mod.source === 'manual') {
+        const key = modKeyShader(layerIndex, paramName, bank, t);
+        if (stored.source === 'manual') {
           newMap.delete(key);
         } else {
-          newMap.set(key, mod);
+          newMap.set(key, stored);
         }
         return newMap;
       });
     },
 
-    /** Get modulation for a specific layer+param (shader). Bank A by default. */
-    getModulation(layerIndex: number, paramName: string, bank: 'A' | 'B' = 'A'): ParamModulation | undefined {
+    /** Get modulation for a specific layer+param (shader). */
+    getModulation(layerIndex: number, paramName: string, bank: 'A' | 'B' = 'A', target: ModTarget = 'vj'): ParamModulation | undefined {
       const map = get({ subscribe });
-      return map.get(modKeyShader(layerIndex, paramName, bank));
+      return map.get(modKeyShader(layerIndex, paramName, bank, target));
     },
 
     /** Set modulation for an effect parameter. Bank A by default. */
@@ -520,12 +584,16 @@ export const modulationStore = createModulationStore();
 
 // ─── Shared helpers (used by VJModePanel, MediaTray, SynthVision) ───
 
-/** Set or clear a shader param's modulation source. Starts engine if needed. */
-export function setParamModSource(layerIndex: number, paramName: string, source: ModSource, bank: 'A' | 'B' = 'A') {
+/** Set or clear a shader param's modulation source. Starts engine
+ *  if needed. `target` says which render-graph side this
+ *  modulation drives — 'vj' for clip-bound shaders, 'mapping' for
+ *  mapping-layer shaders. Each UI panel passes its own target so
+ *  VJ and mapping mods coexist in the store under separate keys. */
+export function setParamModSource(layerIndex: number, paramName: string, source: ModSource, bank: 'A' | 'B' = 'A', target: ModTarget = 'vj') {
   if (source === 'manual') {
-    modulationStore.setModulation(layerIndex, paramName, { source: 'manual', ...DEFAULT_MOD }, bank);
+    modulationStore.setModulation(layerIndex, paramName, { source: 'manual', target, ...DEFAULT_MOD }, bank, target);
   } else {
-    const existing = modulationStore.getModulation(layerIndex, paramName, bank);
+    const existing = modulationStore.getModulation(layerIndex, paramName, bank, target);
     // For 'auto' source, seed the playhead fields if the existing
     // mod doesn't have them (e.g. user is switching from 'manual'
     // straight to 'auto'). Without these defaults the engine would
@@ -533,6 +601,7 @@ export function setParamModSource(layerIndex: number, paramName: string, source:
     const isAuto = source === 'auto';
     modulationStore.setModulation(layerIndex, paramName, {
       source,
+      target,
       amount: existing?.amount ?? DEFAULT_MOD.amount,
       speed: existing?.speed ?? DEFAULT_MOD.speed,
       invert: existing?.invert ?? DEFAULT_MOD.invert,
@@ -546,7 +615,7 @@ export function setParamModSource(layerIndex: number, paramName: string, source:
       autoMin: existing?.autoMin ?? DEFAULT_MOD.autoMin,
       autoMax: existing?.autoMax ?? DEFAULT_MOD.autoMax,
       autoPlaying: isAuto ? (existing?.autoPlaying ?? true) : DEFAULT_MOD.autoPlaying,
-    }, bank);
+    }, bank, target);
   }
   if (source !== 'manual' && !modulationEngine.running) {
     modulationEngine.start();
@@ -681,7 +750,15 @@ class ModulationEngine {
         continue;
       }
 
-      const isMapping = _isMappingLayer ? _isMappingLayer(layerIndex) : false;
+      // Route by the modulation's own target (set at creation time
+      // by the UI panel that owns this binding) — NOT the legacy
+      // global `_isMappingLayer(layerIndex)` flag which assumed
+      // one mode active at a time. With target-aware routing, a VJ
+      // auto-modulation keeps driving its clip even while the user
+      // is browsing mapping mode in another panel, and vice versa.
+      // Falls back to the legacy probe only when target is absent
+      // (old projects loaded without the field).
+      const isMapping = entry.target === 'mapping';
       // Validate layer index. Bank B uses bankBLayerStates which is the same
       // length as numLayers (the store keeps them in sync).
       if (!isMapping && (layerIndex < 0 || layerIndex >= vjState.numLayers)) continue;
