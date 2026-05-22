@@ -134,19 +134,26 @@
   }
 
   // Compute the SVG path for the knob's value arc.
-  // Sweep from -135° (bottom-left) clockwise to value × 270°. Always-on
+  // Sweep from -225° (bottom-left) clockwise to value × 270°. Always-on
   // background ring sits underneath.
   function arcPath(value: number, radius: number): string {
     const v = Math.max(0, Math.min(1, value));
+    const sweepDeg = v * 270;
     const startAngle = -225;        // degrees (bottom-left)
-    const endAngle = startAngle + v * 270;
+    const endAngle = startAngle + sweepDeg;
     const cx = radius + 2;
     const cy = radius + 2;
     const sx = cx + radius * Math.cos(startAngle * Math.PI / 180);
     const sy = cy + radius * Math.sin(startAngle * Math.PI / 180);
     const ex = cx + radius * Math.cos(endAngle * Math.PI / 180);
     const ey = cy + radius * Math.sin(endAngle * Math.PI / 180);
-    const largeArc = v > 0.5 ? 1 : 0;
+    // SVG's large-arc-flag flips when the swept ANGLE exceeds 180°.
+    // The knob's total range is 270° (not 360°), so the flip happens
+    // at v = 180/270 ≈ 0.667 — NOT at 0.5. The old `v > 0.5` test
+    // flipped early at ~135° of sweep, making the path take the
+    // long-way-around and visibly bleed outside the background ring
+    // between roughly 50% and 67% of the knob travel.
+    const largeArc = sweepDeg > 180 ? 1 : 0;
     return `M ${sx} ${sy} A ${radius} ${radius} 0 ${largeArc} 1 ${ex} ${ey}`;
   }
 </script>
