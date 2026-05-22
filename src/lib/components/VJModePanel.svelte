@@ -25,7 +25,7 @@
   import { createAssetRefFromFile, createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
   import ClipPreviewPanel from './ClipPreviewPanel.svelte';
   import { markUserInteracting } from '../midi/midiRouter';
-  import { modulationStore, modulationEngine, setParamModSource, setParamModAmount, setParamModSpeed, registerParamRanges, getModulatedValue, setBaseValue, clearBaseValues, clearModulatedValues, type ModSource, type ParamModulation } from '../audio/modulation';
+  import { modulationStore, modulationEngine, setParamModSource, setParamModAmount, setParamModSpeed, registerParamRanges, getModulatedValue, setBaseValue, clearBaseValues, clearModulatedValues, modKeyShader, type ModSource, type ParamModulation } from '../audio/modulation';
   import { performanceStore } from '../audio/performanceEngine';
   import type { ISFInput } from '../isf/parser';
   import { getPluginByEffectType, type PluginParamDef } from '../plugins/registry';
@@ -1253,19 +1253,23 @@
 
   // Subscribe reactively to the modulation store so the
   // shader-params panel re-renders when the user picks a new
-  // source. modulationStore.getModulation does a SNAPSHOT read
-  // internally — without this dependency the {@const mod = ...}
-  // blocks in the template wouldn't re-evaluate after
-  // setParamModSource, so the auto-controls card (gated on
-  // mod?.source === 'auto') would never appear.
+  // source. getParamModulation READS DIRECTLY from this reactive
+  // value (not via modulationStore.getModulation which does a
+  // snapshot read) — that's the only way Svelte's template
+  // reactivity sees the call as dependent on the store. Earlier
+  // rev did `void modulationMap` inside the function which DID
+  // re-run the assignment but the template uses
+  // getParamModulation() not modulationMap, and Svelte doesn't
+  // trace dependencies through function calls.
   $: modulationMap = $modulationStore;
 
-  // Modulation helpers — thin wrappers using shared functions from modulation.ts
+  // Modulation helpers — read directly from the reactive map so
+  // Svelte tracks each call site (in {@const mod = ...}) as
+  // dependent on the store. Without this the auto-controls card
+  // gated on mod?.source === 'auto' would never appear because
+  // the template wouldn't re-render after the dropdown change.
   function getParamModulation(layerIndex: number, paramName: string): ParamModulation | undefined {
-    // Touch modulationMap so Svelte tracks this function call as
-    // dependent on the reactive store value.
-    void modulationMap;
-    return modulationStore.getModulation(layerIndex, paramName, paramDeck);
+    return modulationMap.get(modKeyShader(layerIndex, paramName, paramDeck));
   }
 
   /** Update one field on a param's auto-automation state.
@@ -2758,7 +2762,7 @@
                       <div class="shader-param-header">
                         <span class="shader-param-name">{input.LABEL || input.NAME}</span>
                         <select class="mod-source-select" class:active={isModulated} value={mod?.source || 'manual'}
-                          onchange={(e) => setParamModSource(selectedLayerIndex!, input.NAME, (e.target as HTMLSelectElement).value as ModSource)}>
+                          onchange={(e) => setParamModSource(selectedLayerIndex!, input.NAME, (e.target as HTMLSelectElement).value as ModSource, paramDeck)}>
                           <optgroup label="Control"><option value="manual">Manual</option></optgroup>
                           <optgroup label="Audio">
                             <option value="sub">Sub</option><option value="bass">Bass</option><option value="lowMid">Low Mid</option>

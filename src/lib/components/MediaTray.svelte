@@ -21,7 +21,7 @@
   import AIVideoGenerator from './AIVideoGenerator.svelte';
   import ShaderLibrary from './ShaderLibrary.svelte';
   import * as THREE from 'three';
-  import { modulationStore, setParamModSource, setParamModAmount, setBaseValue, registerParamRanges, type ModSource, type ParamModulation } from '../audio/modulation';
+  import { modulationStore, setParamModSource, setParamModAmount, setBaseValue, registerParamRanges, modKeyShader, type ModSource, type ParamModulation } from '../audio/modulation';
   import { mediaTrayShaders } from '../stores/mediaTrayShaders';
   import { createAssetRefFromFile, createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
   // Built-in Three.js / p5.js animations — auto-discovered from
@@ -1710,14 +1710,15 @@
   $: selectedLayerIdx = $layers.findIndex(l => l.id === $selectedLayerId);
 
   // Reactive subscription so the panel re-renders when a mod
-  // is added / changed (e.g. picking "Auto (playhead)" needs to
-  // immediately reveal the auto-controls card).
+  // is added / changed. getShaderModulation READS DIRECTLY from
+  // this reactive map (not via modulationStore.getModulation
+  // which is a snapshot read) — that's the only way Svelte's
+  // template tracking sees the call as a dependency on the store.
   $: mappingModMap = $modulationStore;
 
   function getShaderModulation(paramName: string): ParamModulation | undefined {
-    void mappingModMap;
     if (selectedLayerIdx < 0) return undefined;
-    return modulationStore.getModulation(selectedLayerIdx, paramName);
+    return mappingModMap.get(modKeyShader(selectedLayerIdx, paramName));
   }
 
   /** Update one field on an auto-mode modulation (mapping mode).
