@@ -2839,6 +2839,34 @@
                             {#if isModulated && modGhostValues[input.NAME] !== undefined}
                               <div class="mod-ghost" style="left: {((modGhostValues[input.NAME] - (input.MIN ?? 0)) / ((input.MAX ?? 1) - (input.MIN ?? 0))) * 100}%"></div>
                             {/if}
+                            <!-- Auto-mode slippers — when source='auto',
+                                 overlay two dual-thumb range inputs ON
+                                 the main slider track so the slippers'
+                                 0..1 axis aligns 1:1 with the slider's
+                                 input.MIN..input.MAX. Previously they
+                                 lived in a separate row below with
+                                 different padding, so the slipper
+                                 positions visually drifted from where
+                                 the playhead actually swept. Filled
+                                 bar between thumbs shows the active
+                                 sweep range at a glance. -->
+                            {#if mod?.source === 'auto'}
+                              {@const _amin = mod.autoMin ?? 0}
+                              {@const _amax = mod.autoMax ?? 1}
+                              <div class="slipper-fill" style="left: {_amin * 100}%; right: {(1 - _amax) * 100}%"></div>
+                              <input type="range" min="0" max="1" step="0.01" value={_amin}
+                                class="slipper slipper-min"
+                                oninput={(e) => {
+                                  const v = parseFloat((e.target as HTMLInputElement).value);
+                                  setAutoField(selectedLayerIndex!, input.NAME, 'autoMin', Math.min(v, _amax - 0.02));
+                                }} />
+                              <input type="range" min="0" max="1" step="0.01" value={_amax}
+                                class="slipper slipper-max"
+                                oninput={(e) => {
+                                  const v = parseFloat((e.target as HTMLInputElement).value);
+                                  setAutoField(selectedLayerIndex!, input.NAME, 'autoMax', Math.max(v, _amin + 0.02));
+                                }} />
+                            {/if}
                           </div>
                           <span class="param-val">{(isModulated && modGhostValues[input.NAME] !== undefined ? modGhostValues[input.NAME] : _sliderVal).toFixed(2)}</span>
                         </div>
@@ -2886,32 +2914,15 @@
                               <span class="auto-val">{(mod.autoSpeedHz ?? 0.15).toFixed(2)}Hz</span>
                             </div>
 
+                            <!-- Range slippers moved up onto the main
+                                 slider track itself — their 0..1 axis
+                                 now visually matches the slider's
+                                 input.MIN..input.MAX. See the
+                                 .slipper inputs inside slider-track-wrap.
+                                 Show the chosen sub-range as a label. -->
                             <div class="auto-row auto-row-range">
                               <span class="auto-label">Range</span>
-                              <!-- Two thumbs constrained against each other.
-                                   The dual-range visualization is the dark
-                                   bar with two pill handles — what users
-                                   asked for as "slippers" pulling in from
-                                   left and right. -->
-                              <div class="auto-range-track">
-                                <input type="range" min="0" max="1" step="0.01"
-                                  value={autoMin}
-                                  oninput={(e) => {
-                                    const v = parseFloat((e.target as HTMLInputElement).value);
-                                    const clamped = Math.min(v, autoMax - 0.02);
-                                    setAutoField(selectedLayerIndex!, input.NAME, 'autoMin', clamped);
-                                  }}
-                                  class="auto-range-input auto-range-min" />
-                                <input type="range" min="0" max="1" step="0.01"
-                                  value={autoMax}
-                                  oninput={(e) => {
-                                    const v = parseFloat((e.target as HTMLInputElement).value);
-                                    const clamped = Math.max(v, autoMin + 0.02);
-                                    setAutoField(selectedLayerIndex!, input.NAME, 'autoMax', clamped);
-                                  }}
-                                  class="auto-range-input auto-range-max" />
-                              </div>
-                              <span class="auto-val">{Math.round(autoMin * 100)}-{Math.round(autoMax * 100)}%</span>
+                              <span class="auto-val auto-val-grow">{Math.round(autoMin * 100)}-{Math.round(autoMax * 100)}%  (drag the cyan handles above)</span>
                             </div>
                           </div>
                         {/if}
@@ -6791,6 +6802,11 @@
   .slider-track-wrap {
     position: relative;
     flex: 1;
+    /* Extra vertical space when slippers overlay — keeps the cyan
+       thumbs visible above/below the main slider line. */
+    min-height: 14px;
+    display: flex;
+    align-items: center;
   }
 
   .param-slider {
@@ -6798,6 +6814,62 @@
     height: 3px;
     accent-color: #BB86FC;
   }
+
+  /* ─── Auto-mode slippers (overlay on slider track) ─── */
+  /* Two range inputs positioned absolutely over the main slider so
+     their 0..1 thumb positions line up exactly with the main
+     slider's input.MIN..input.MAX. Tracks are invisible so the
+     main slider shows through; only the cyan thumbs are visible.
+     The filled bar between thumbs highlights the active sweep
+     range. pointer-events: none on the input itself with auto on
+     the thumb pseudo-element lets users click the main slider's
+     track without the slippers eating the click. */
+  .slipper {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    pointer-events: none;
+    -webkit-appearance: none;
+    appearance: none;
+    margin: 0;
+  }
+  .slipper::-webkit-slider-runnable-track { background: transparent; height: 100%; }
+  .slipper::-moz-range-track             { background: transparent; height: 100%; }
+  .slipper::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    pointer-events: auto;
+    cursor: ew-resize;
+    width: 6px;
+    height: 18px;
+    border-radius: 2px;
+    background: #5ce1e6;
+    box-shadow: 0 0 4px rgba(92, 225, 230, 0.5);
+    border: none;
+  }
+  .slipper::-moz-range-thumb {
+    pointer-events: auto;
+    cursor: ew-resize;
+    width: 6px;
+    height: 18px;
+    border-radius: 2px;
+    background: #5ce1e6;
+    box-shadow: 0 0 4px rgba(92, 225, 230, 0.5);
+    border: none;
+  }
+  .slipper-fill {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 5px;
+    background: rgba(92, 225, 230, 0.18);
+    border-top: 1px solid rgba(92, 225, 230, 0.4);
+    border-bottom: 1px solid rgba(92, 225, 230, 0.4);
+    pointer-events: none;
+    z-index: 1;
+  }
+  .auto-val-grow { min-width: 0; flex: 1; text-align: left; color: #5ce1e6; opacity: 0.75; }
 
   .mod-ghost {
     position: absolute;

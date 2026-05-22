@@ -2943,15 +2943,37 @@
                 </select>
               </div>
               <div class="shader-param-slider">
-                <input
-                  type="range"
-                  min={input.MIN ?? 0}
-                  max={input.MAX ?? 1}
-                  step="0.01"
-                  value={selectedShader.values[input.NAME] ?? input.DEFAULT ?? 0}
-                  oninput={(e) => updateShaderParam(input.NAME, parseFloat((e.target as HTMLInputElement).value))}
-                  class="param-slider"
-                />
+                <div class="slider-track-wrap">
+                  <input
+                    type="range"
+                    min={input.MIN ?? 0}
+                    max={input.MAX ?? 1}
+                    step="0.01"
+                    value={selectedShader.values[input.NAME] ?? input.DEFAULT ?? 0}
+                    oninput={(e) => updateShaderParam(input.NAME, parseFloat((e.target as HTMLInputElement).value))}
+                    class="param-slider"
+                  />
+                  <!-- Auto-mode slippers overlay on the main slider so
+                       the 0..1 axis lines up 1:1 with the slider's
+                       input.MIN..input.MAX. Same approach as VJ panel. -->
+                  {#if mod?.source === 'auto'}
+                    {@const _amin = mod.autoMin ?? 0}
+                    {@const _amax = mod.autoMax ?? 1}
+                    <div class="slipper-fill" style="left: {_amin * 100}%; right: {(1 - _amax) * 100}%"></div>
+                    <input type="range" min="0" max="1" step="0.01" value={_amin}
+                      class="slipper slipper-min"
+                      oninput={(e) => {
+                        const v = parseFloat((e.target as HTMLInputElement).value);
+                        setMappingAutoField(input.NAME, 'autoMin', Math.min(v, _amax - 0.02));
+                      }} />
+                    <input type="range" min="0" max="1" step="0.01" value={_amax}
+                      class="slipper slipper-max"
+                      oninput={(e) => {
+                        const v = parseFloat((e.target as HTMLInputElement).value);
+                        setMappingAutoField(input.NAME, 'autoMax', Math.max(v, _amin + 0.02));
+                      }} />
+                  {/if}
+                </div>
                 <span class="param-val">
                   {(selectedShader.values[input.NAME] as number)?.toFixed(2) ?? '0.00'}
                 </span>
@@ -2991,21 +3013,12 @@
                       class="auto-speed-slider" />
                     <span class="auto-val">{(mod.autoSpeedHz ?? 0.15).toFixed(2)}Hz</span>
                   </div>
+                  <!-- Range slippers moved up onto the main slider
+                       track (see .slipper inputs in slider-track-wrap).
+                       Just show the chosen sub-range as a label here. -->
                   <div class="auto-row auto-row-range">
                     <span class="auto-label">Range</span>
-                    <div class="auto-range-track">
-                      <input type="range" min="0" max="1" step="0.01" value={autoMin}
-                        oninput={(e) => {
-                          const v = parseFloat((e.target as HTMLInputElement).value);
-                          setMappingAutoField(input.NAME, 'autoMin', Math.min(v, autoMax - 0.02));
-                        }} class="auto-range-input auto-range-min" />
-                      <input type="range" min="0" max="1" step="0.01" value={autoMax}
-                        oninput={(e) => {
-                          const v = parseFloat((e.target as HTMLInputElement).value);
-                          setMappingAutoField(input.NAME, 'autoMax', Math.max(v, autoMin + 0.02));
-                        }} class="auto-range-input auto-range-max" />
-                    </div>
-                    <span class="auto-val">{Math.round(autoMin * 100)}-{Math.round(autoMax * 100)}%</span>
+                    <span class="auto-val auto-val-grow">{Math.round(autoMin * 100)}-{Math.round(autoMax * 100)}%  (drag the cyan handles above)</span>
                   </div>
                 </div>
               {/if}
@@ -4484,11 +4497,70 @@
     align-items: center;
     gap: 4px;
   }
+  .slider-track-wrap {
+    position: relative;
+    flex: 1;
+    min-height: 18px;
+    display: flex;
+    align-items: center;
+  }
   .param-slider {
     flex: 1;
+    width: 100%;
     height: 6px;
     accent-color: #BB86FC;
   }
+  /* ─── Auto-mode slippers overlay (mapping mode) ─── */
+  /* Mirror of VJ panel — two range inputs absolutely positioned
+     over the main slider so the slipper 0..1 axis aligns 1:1 with
+     input.MIN..input.MAX. Track is invisible; only the cyan thumbs
+     show, with a filled bar between them indicating active range. */
+  .slipper {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    pointer-events: none;
+    -webkit-appearance: none;
+    appearance: none;
+    margin: 0;
+  }
+  .slipper::-webkit-slider-runnable-track { background: transparent; height: 100%; }
+  .slipper::-moz-range-track             { background: transparent; height: 100%; }
+  .slipper::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    pointer-events: auto;
+    cursor: ew-resize;
+    width: 6px;
+    height: 18px;
+    border-radius: 2px;
+    background: #5ce1e6;
+    box-shadow: 0 0 4px rgba(92, 225, 230, 0.5);
+    border: none;
+  }
+  .slipper::-moz-range-thumb {
+    pointer-events: auto;
+    cursor: ew-resize;
+    width: 6px;
+    height: 18px;
+    border-radius: 2px;
+    background: #5ce1e6;
+    box-shadow: 0 0 4px rgba(92, 225, 230, 0.5);
+    border: none;
+  }
+  .slipper-fill {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 8px;
+    background: rgba(92, 225, 230, 0.18);
+    border-top: 1px solid rgba(92, 225, 230, 0.4);
+    border-bottom: 1px solid rgba(92, 225, 230, 0.4);
+    pointer-events: none;
+    z-index: 1;
+  }
+  .auto-val-grow { min-width: 0; flex: 1; text-align: left; color: #5ce1e6; opacity: 0.75; }
   .param-val {
     font-size: 10px;
     color: #666;
