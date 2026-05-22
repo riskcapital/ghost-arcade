@@ -1224,16 +1224,25 @@
   }
 
   /** Reset every shader input on the currently-open shader-params
-   *  panel back to its INPUT.DEFAULT value from the ISF metadata.
-   *  Also clears any active audio / auto modulation — without that,
-   *  the modulation engine would keep overwriting the param values
-   *  the moment they reset, so the user would see the slider
-   *  bounce back to wherever the playhead/audio is driving it.
-   *  Non-numeric inputs (colors etc.) are left alone — the panel's
-   *  UI only edits floats / events / bools anyway and the reset
-   *  affordance is positioned in the float-heavy params section. */
+   *  panel back to the values the curator saved — the per-shader
+   *  manifest defaults. Falls back to INPUT.DEFAULT (the ISF
+   *  metadata baseline) when the curator hasn't set an override
+   *  for a given param. Also clears any active audio / auto
+   *  modulation so the engine doesn't immediately overwrite the
+   *  values we just snapped back; without that, the visible
+   *  slider would bounce right back to wherever the playhead /
+   *  audio is driving it. */
   function resetShaderParamsToDefaults() {
     if (selectedLayerIndex === null) return;
+    const activeClip = selectedLayerState?.activeClip;
+    // Locate the manifest entry for this clip's shader so we can
+    // read the curator defaults out of its `values` map. The
+    // shader library's loaded items have `values` already merged
+    // from manifest.defaults + INPUT.DEFAULT at load time.
+    const libraryEntry = activeClip
+      ? shaders.find(s => s.src === activeClip.src)
+        ?? shaders.find(s => s.shaderCode === activeClip.shaderCode)
+      : undefined;
     for (const input of selectedClipShaderInputs) {
       // Clear any active modulation first. setParamModSource with
       // 'manual' deletes the modulation entry, so the engine stops
@@ -1242,12 +1251,21 @@
       if (existingMod && existingMod.source !== 'manual') {
         setParamModSource(selectedLayerIndex, input.NAME, 'manual', paramDeck);
       }
-      if (input.DEFAULT === undefined || input.DEFAULT === null) continue;
-      if (typeof input.DEFAULT === 'number') {
-        setShaderParamValue(selectedLayerIndex, input.NAME, input.DEFAULT);
-      } else if (typeof input.DEFAULT === 'boolean') {
-        setShaderParamValue(selectedLayerIndex, input.NAME, input.DEFAULT ? 1 : 0);
+      // Prefer curator-saved value from the library entry; fall
+      // through to INPUT.DEFAULT for params the curator didn't
+      // explicitly override.
+      let target: number | boolean | undefined;
+      const curatorVal = libraryEntry?.values?.[input.NAME];
+      if (typeof curatorVal === 'number' || typeof curatorVal === 'boolean') {
+        target = curatorVal;
+      } else if (input.DEFAULT !== undefined && input.DEFAULT !== null) {
+        if (typeof input.DEFAULT === 'number' || typeof input.DEFAULT === 'boolean') {
+          target = input.DEFAULT;
+        }
       }
+      if (target === undefined) continue;
+      const numeric = typeof target === 'boolean' ? (target ? 1 : 0) : target;
+      setShaderParamValue(selectedLayerIndex, input.NAME, numeric);
     }
   }
 
@@ -2751,7 +2769,16 @@
                   <button class="shader-params-reset" onclick={resetShaderParamsToDefaults} title="Reset all params to defaults" aria-label="Reset all params to defaults">↺</button>
                   <button class="shader-params-close" onclick={() => showShaderParams = false}>×</button>
                 </div>
-                {#if !clipIsAudioReady && selectedClipShaderInputs.some(i => { const m = modulationMap.get(modKeyShader(selectedLayerIndex!, i.NAME, paramDeck)); return m && m.source !== 'manual'; })}
+                <!-- Audio-warn: only show when there's an actual AUDIO
+                     source bound to a param (not Auto / not Manual).
+                     The warning is specifically about audio uniforms
+                     vs the shader's lack of them; "Auto" is a
+                     playhead, not audio-reactive, so showing this
+                     for an auto-bound param is just noise. -->
+                {#if !clipIsAudioReady && selectedClipShaderInputs.some(i => {
+                  const m = modulationMap.get(modKeyShader(selectedLayerIndex!, i.NAME, paramDeck));
+                  return m && m.source !== 'manual' && m.source !== 'auto';
+                })}
                   <div class="audio-warn">This shader doesn't use audio uniforms — modulation controls parameters only, not the shader's internal audio response.</div>
                 {/if}
                 <div class="shader-params-panel-list">
@@ -2836,11 +2863,17 @@
 
                             <div class="auto-row auto-row-speed">
                               <span class="auto-label">Speed</span>
-                              <input type="range" min="0.05" max="4" step="0.01"
-                                value={mod.autoSpeedHz ?? 0.5}
+                              <!-- Range tuned after first-test feedback that
+                                   0.5Hz default felt frantic. 0.01-1Hz
+                                   covers ~100s slow drift to ~1s rapid
+                                   pulse — extreme stutter is still
+                                   reachable by typing a value in the
+                                   field below if needed. -->
+                              <input type="range" min="0.01" max="1" step="0.005"
+                                value={mod.autoSpeedHz ?? 0.15}
                                 oninput={(e) => setAutoField(selectedLayerIndex!, input.NAME, 'autoSpeedHz', parseFloat((e.target as HTMLInputElement).value))}
                                 class="auto-speed-slider" />
-                              <span class="auto-val">{(mod.autoSpeedHz ?? 0.5).toFixed(2)}Hz</span>
+                              <span class="auto-val">{(mod.autoSpeedHz ?? 0.15).toFixed(2)}Hz</span>
                             </div>
 
                             <div class="auto-row auto-row-range">

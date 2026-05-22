@@ -2974,11 +2974,11 @@
                   </div>
                   <div class="auto-row auto-row-speed">
                     <span class="auto-label">Speed</span>
-                    <input type="range" min="0.05" max="4" step="0.01"
-                      value={mod.autoSpeedHz ?? 0.5}
+                    <input type="range" min="0.01" max="1" step="0.005"
+                      value={mod.autoSpeedHz ?? 0.15}
                       oninput={(e) => setMappingAutoField(input.NAME, 'autoSpeedHz', parseFloat((e.target as HTMLInputElement).value))}
                       class="auto-speed-slider" />
-                    <span class="auto-val">{(mod.autoSpeedHz ?? 0.5).toFixed(2)}Hz</span>
+                    <span class="auto-val">{(mod.autoSpeedHz ?? 0.15).toFixed(2)}Hz</span>
                   </div>
                   <div class="auto-row auto-row-range">
                     <span class="auto-label">Range</span>
