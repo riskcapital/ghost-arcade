@@ -2790,9 +2790,10 @@
                          dependency since Svelte doesn't trace through
                          function bodies — that's why earlier revs
                          didn't re-render after the dropdown change. -->
-                    {@const mod = modulationMap.get(modKeyShader(selectedLayerIndex!, input.NAME, paramDeck))}
+                    {@const _modKey = modKeyShader(selectedLayerIndex!, input.NAME, paramDeck)}
+                    {@const mod = modulationMap.get(_modKey)}
                     {@const isModulated = mod && mod.source !== 'manual'}
-                    <div class="shader-param" class:modulated={isModulated}>
+                    <div class="shader-param" class:modulated={isModulated} data-modkey={_modKey} data-modsrc={mod?.source ?? 'none'}>
                       <div class="shader-param-header">
                         <span class="shader-param-name">{input.LABEL || input.NAME}</span>
                         <select class="mod-source-select" class:active={isModulated} value={mod?.source || 'manual'}
