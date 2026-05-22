@@ -360,24 +360,58 @@ export async function createLoopedVideo(
   // calls never share progress state. (Bug from earlier rev: the
   // handler was registered in initFFmpeg() once at first-init
   // time, closing over the first caller's onProgress forever.)
+  //
+  // Why we ALSO parse `time=HH:MM:SS.cc` from FFmpeg's log lines:
+  // the 'progress' event is unreliable for filter_complex / xfade
+  // outputs — it often doesn't fire at all during long encodes, or
+  // fires once at the very end with progress=1. Users reported the
+  // bar sitting at 0% (well, the 30% phase-entry value, which the
+  // narrow phase slice makes look near-0) for minutes during a
+  // multi-minute loop creation. Parsing `time=` from log gives us
+  // smooth incremental progress no matter which event path fires.
   const progressHandler = ({ progress }: { progress: number }) => {
     // FFmpeg's filter_complex progress can overshoot — we've seen
-    // up to 1.85 with xfade. Clamp before publishing or the user
-    // sees "187%" briefly.
+    // up to 1.85 with xfade. Clamp before publishing.
     const p = clamp(progress, 0, 1);
-    const pct = Math.round(p * 100);
-    renderProgress({
-      stage: 'rendering',
-      progress: p,
-      message: `Encoding ${pct}%`,
-    });
+    publishEncode(p);
   };
+  /** Last published encode-phase progress. Both the progress event
+   *  AND the log-time parser feed into this — we publish the higher
+   *  of the two so the bar never goes backwards (in case the
+   *  progress event eventually fires after we'd already estimated
+   *  ~80% from the log time). */
+  let lastEncodeProgress = 0;
+  function publishEncode(p: number) {
+    if (p <= lastEncodeProgress) return;
+    lastEncodeProgress = p;
+    const pct = Math.round(p * 100);
+    renderProgress({ stage: 'rendering', progress: p, message: `Encoding ${pct}%` });
+  }
 
-  // Watchdog — if FFmpeg goes silent (no log lines for 60s) we
-  // assume the wasm worker has hung and bail. Without this the
-  // user could wait forever staring at a frozen bar.
+  // Log-line parser for FFmpeg's per-frame progress reports.
+  // ffmpeg.wasm emits lines like:
+  //   "frame=  150 fps=25 q=23.0 size=512kB time=00:00:05.00 ...."
+  // We map `time` against the EXPECTED OUTPUT DURATION to compute
+  // progress. For our loop layout, the output is the same length as
+  // the input (we swap halves and crossfade in place), so the
+  // already-detected `duration` is the right total.
+  const expectedOutputSec = duration;
   let lastLogAt = performance.now();
-  const logHeartbeat = () => { lastLogAt = performance.now(); };
+  const logHeartbeat = ({ message }: { message: string }) => {
+    lastLogAt = performance.now();
+    // Match "time=HH:MM:SS.cc" — present in pretty much every
+    // ffmpeg progress line. Cents/millis is optional.
+    const m = message.match(/time=\s*(\d+):(\d+):(\d+)\.(\d+)/);
+    if (!m) return;
+    const h = parseInt(m[1], 10);
+    const min = parseInt(m[2], 10);
+    const sec = parseInt(m[3], 10);
+    const frac = parseFloat(`0.${m[4]}`);
+    const tSec = h * 3600 + min * 60 + sec + frac;
+    if (!Number.isFinite(tSec) || expectedOutputSec <= 0) return;
+    const p = clamp(tSec / expectedOutputSec, 0, 1);
+    publishEncode(p);
+  };
   let watchdogTimedOut = false;
   const watchdog = setInterval(() => {
     if (performance.now() - lastLogAt > WATCHDOG_MS) {
