@@ -806,7 +806,21 @@ class ModulationEngine {
             }
           }
         }
-        if (foundLayer < 0) continue;  // clip not on a deck — dormant
+        if (foundLayer < 0) {
+          // One-shot diagnostic so we can see clip-keyed mods being
+          // skipped because their clip isn't where we expect. Logs
+          // each entry once via a Set so the console stays sane
+          // during a 60Hz tick.
+          if (!(globalThis as any).__loggedDormantClips) (globalThis as any).__loggedDormantClips = new Set();
+          const tag = entry.clipId + ':' + entry.paramName;
+          if (!(globalThis as any).__loggedDormantClips.has(tag)) {
+            (globalThis as any).__loggedDormantClips.add(tag);
+            const a = vjState.layerStates.map(ls => ls?.activeClip?.id ?? '·').join('|');
+            const b = vjState.bankBLayerStates.map(ls => ls?.activeClip?.id ?? '·').join('|');
+            console.log('[modEngine] vjc dormant — clipId not active on any deck. clipId=', entry.clipId, ' param=', entry.paramName, ' deckA=', a, ' deckB=', b);
+          }
+          continue;
+        }
         layerIndex = foundLayer;
         bank = foundBank;
       }
