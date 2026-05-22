@@ -56,6 +56,13 @@ export async function checkForUpdates(): Promise<void> {
 
     if (!latestVersion) return;
 
+    // Strictly newer — equal or older versions must NOT trigger
+    // the update banner. The user reported "v1.1.3 is available"
+    // appearing on v1.3.1, traced to cached state in the OTHER
+    // checker (versionCheck.ts); this store is in-memory only so
+    // it shouldn't suffer from that, but enforce the invariant
+    // defensively here too in case GitHub ever returns a weird
+    // latest pointer (e.g. a re-tagged older release).
     const isNewer = compareVersions(latestVersion, CURRENT_VERSION) > 0;
 
     // Extract download URLs from assets
