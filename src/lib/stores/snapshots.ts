@@ -22,6 +22,7 @@ import { writable, get } from 'svelte/store';
 import { vjClipLauncher } from './vjClipLauncher';
 import { macros } from './macros';
 import { registerSnapshotRecaller } from '../midi/midiRouter';
+import { modulationStore, type ParamModulation } from '../audio/modulation';
 
 export interface SnapshotLayerState {
   opacity: number;
@@ -48,6 +49,24 @@ export interface Snapshot {
   masterOpacity?: number;
   selectedDeck?: 'A' | 'B';
   macroValues?: Record<string, number>;   // keyed by macro id
+
+  /** Currently-active clips per layer/deck. Recall fires the same
+   *  column on each layer so the visual return-to-look starts with
+   *  the right clips firing. Empty/null entry = layer was idle. */
+  activeColumnsA?: (number | null)[];
+  activeColumnsB?: (number | null)[];
+
+  /** Per-clip shader-value override snapshot. Keyed by clip id so a
+   *  recall finds the right clip after re-fire, restoring slider
+   *  positions / shader uniforms to where the user had them. Only
+   *  captures clips that exist in the deck grids at save time. */
+  clipShaderValues?: Record<string, Record<string, number | boolean | number[]>>;
+
+  /** Modulation map dump — all auto/audio/LFO bindings live at
+   *  save time. The user explicitly flagged that snaps were missing
+   *  this: configuring autoplay on a param was lost on snapshot
+   *  recall. Serialized as [key, mod][] pairs. */
+  modulations?: [string, ParamModulation][];
 
   /** Wall-clock time of last update (for "saved 5 minutes ago" hints). */
   capturedAt: number;
@@ -102,6 +121,39 @@ function captureLiveState(): Partial<Snapshot> {
   const macroValues: Record<string, number> = {};
   for (const m of macroState.macros) macroValues[m.id] = m.value;
 
+  // Active clips by column index per layer/deck.
+  const activeColumnsA = vj.layerStates.map(ls => ls.activeColumn);
+  const activeColumnsB = vj.bankBLayerStates.map(ls => ls.activeColumn);
+
+  // Per-clip shader values for every clip in either deck's grid.
+  // Saving by clip id (not layer/column) means re-firing a clip on
+  // a different cell still picks up its saved uniforms. Cheap dump
+  // — typical grid has dozens of clips, each shaderValues object
+  // is a small Record<string, number>.
+  const clipShaderValues: Record<string, Record<string, number | boolean | number[]>> = {};
+  for (const row of vj.clipGrid) {
+    for (const clip of row) {
+      if (clip && clip.shaderValues && Object.keys(clip.shaderValues).length > 0) {
+        clipShaderValues[clip.id] = { ...clip.shaderValues };
+      }
+    }
+  }
+  for (const row of vj.bankBClipGrid) {
+    for (const clip of row) {
+      if (clip && clip.shaderValues && Object.keys(clip.shaderValues).length > 0) {
+        clipShaderValues[clip.id] = { ...clip.shaderValues };
+      }
+    }
+  }
+
+  // Modulation dump — capture every non-manual binding so recall
+  // restores the auto / audio / LFO setup the user had configured.
+  const modMap = get(modulationStore);
+  const modulations: [string, ParamModulation][] = [];
+  for (const [key, mod] of modMap) {
+    if (mod.source !== 'manual') modulations.push([key, mod]);
+  }
+
   return {
     layerStatesA: vj.layerStates.map(ls => ({
       opacity: ls.opacity,
@@ -123,6 +175,10 @@ function captureLiveState(): Partial<Snapshot> {
     masterOpacity: vj.masterOpacity,
     selectedDeck: vj.selectedDeck,
     macroValues,
+    activeColumnsA,
+    activeColumnsB,
+    clipShaderValues,
+    modulations,
     capturedAt: Date.now(),
   };
 }
@@ -185,6 +241,76 @@ function applySnapshot(snap: Snapshot) {
       macros.setMacroValue(id, v);
     }
   }
+
+  // Restore modulations FIRST (before triggering clips) so when the
+  // engine writes its first frame after the clip becomes active,
+  // the auto-phase / audio-binding state is already in place. Wipe
+  // the existing store and replace with the snapshot's entries so
+  // modulations created BETWEEN save and recall don't leak through.
+  if (Array.isArray(snap.modulations)) {
+    modulationStore.bulkLoad(snap.modulations.map(([key, mod]) => ({ key, mod })));
+  }
+
+  // Restore per-clip shader values for every clip in the deck grids.
+  // We walk both grids and inject the saved values into matching
+  // clip ids, then write back to the store via batchUpdateShaderValues
+  // so the engine picks them up. Skips clips not in the current grid
+  // (they may have been deleted since save).
+  if (snap.clipShaderValues) {
+    const vjNow = get(vjClipLauncher);
+    const matchByCell = (rowList: typeof vjNow.clipGrid, deck: 'A' | 'B') => {
+      for (let li = 0; li < rowList.length; li++) {
+        const row = rowList[li];
+        for (const clip of row) {
+          if (!clip) continue;
+          const saved = snap.clipShaderValues?.[clip.id];
+          if (!saved) continue;
+          // Filter to numeric values — batchUpdateShaderValues
+          // type-restricts. Booleans + color arrays we apply per-key
+          // via updateActiveClipShaderValue which accepts any.
+          const nums: Record<string, number> = {};
+          for (const [k, v] of Object.entries(saved)) {
+            if (typeof v === 'number') nums[k] = v;
+            else vjClipLauncher.updateClipShaderValue(li, /*col*/ -1, k, v, deck);
+            void li; // index used above
+          }
+          // For numeric values, write through the per-cell path so
+          // the grid + active state stay in sync.
+          for (let ci = 0; ci < row.length; ci++) {
+            if (row[ci]?.id === clip.id) {
+              for (const [k, v] of Object.entries(nums)) {
+                vjClipLauncher.updateClipShaderValue(li, ci, k, v, deck);
+              }
+            }
+          }
+        }
+      }
+    };
+    matchByCell(vjNow.clipGrid, 'A');
+    matchByCell(vjNow.bankBClipGrid, 'B');
+  }
+
+  // Fire active clips per layer LAST so the visual snapshot lands
+  // with the saved slider + modulation state already in place — the
+  // user sees the right look the instant the clip starts rendering.
+  if (Array.isArray(snap.activeColumnsA)) {
+    snap.activeColumnsA.forEach((col, layer) => {
+      if (typeof col === 'number' && col >= 0) {
+        vjClipLauncher.triggerClipNow(layer, col, 'A');
+      } else {
+        vjClipLauncher.stopLayer(layer, 'A');
+      }
+    });
+  }
+  if (Array.isArray(snap.activeColumnsB)) {
+    snap.activeColumnsB.forEach((col, layer) => {
+      if (typeof col === 'number' && col >= 0) {
+        vjClipLauncher.triggerClipNow(layer, col, 'B');
+      } else {
+        vjClipLauncher.stopLayer(layer, 'B');
+      }
+    });
+  }
 }
 
 function createSnapshotsStore() {
@@ -245,6 +371,10 @@ function createSnapshotsStore() {
           masterOpacity: undefined,
           selectedDeck: undefined,
           macroValues: undefined,
+          activeColumnsA: undefined,
+          activeColumnsB: undefined,
+          clipShaderValues: undefined,
+          modulations: undefined,
           capturedAt: 0,
         };
         const newActiveId = s.activeId === slot.id ? null : s.activeId;
