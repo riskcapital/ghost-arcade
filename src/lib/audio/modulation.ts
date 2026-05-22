@@ -125,9 +125,13 @@ export const DEFAULT_MOD: Omit<ParamModulation, 'source'> = {
   invert: false,
   bpmSync: false,
   // Automation defaults — only consulted when source === 'auto'.
+  // 0.15Hz = ~6.7s for a full cycle (≈13s ping-pong round-trip);
+  // first-test feedback was that 0.5Hz felt frantic. Users can
+  // crank it up via the slider for stutter effects but the
+  // calm-starting-point matches typical "slow swirl" VJ pacing.
   autoPhase: 0,
   autoMode: 'loop',
-  autoSpeedHz: 0.5,
+  autoSpeedHz: 0.15,
   autoMin: 0,
   autoMax: 1,
   autoPlaying: true,
