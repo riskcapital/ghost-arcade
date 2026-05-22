@@ -2675,23 +2675,6 @@
         if (selectedLayerIdx >= 0 && found.inputs) {
           registerParamRanges(selectedLayerIdx, found.inputs, 'mapping');
         }
-        // When the panel opens after a mode switch, pause any auto
-        // mods on this layer's params so the user sees the play
-        // icon ("needs restart") instead of the pause icon (which
-        // would falsely claim animation is happening). One click on
-        // the play button resumes the playhead. User's note:
-        // "show the play icon so the user knows they need to
-        // restart." This is honest state representation rather
-        // than the lie of "playing" when the engine is in fact
-        // not advancing.
-        if (selectedLayerIdx >= 0 && found.inputs) {
-          for (const inp of found.inputs) {
-            const mod = modulationStore.getModulation(selectedLayerIdx, inp.NAME, 'A', 'mapping');
-            if (mod && mod.source === 'auto' && mod.autoPlaying !== false) {
-              modulationStore.setModulation(selectedLayerIdx, inp.NAME, { ...mod, autoPlaying: false }, 'A', 'mapping');
-            }
-          }
-        }
       }
     } else {
       selectedShader = null;
