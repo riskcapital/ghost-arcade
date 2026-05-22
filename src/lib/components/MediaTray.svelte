@@ -1709,9 +1709,54 @@
   // Shader param modulation — cached layer index, shared helpers from modulation.ts
   $: selectedLayerIdx = $layers.findIndex(l => l.id === $selectedLayerId);
 
+  // Reactive subscription so the panel re-renders when a mod
+  // is added / changed (e.g. picking "Auto (playhead)" needs to
+  // immediately reveal the auto-controls card).
+  $: mappingModMap = $modulationStore;
+
   function getShaderModulation(paramName: string): ParamModulation | undefined {
+    void mappingModMap;
     if (selectedLayerIdx < 0) return undefined;
     return modulationStore.getModulation(selectedLayerIdx, paramName);
+  }
+
+  /** Update one field on an auto-mode modulation (mapping mode).
+   *  Same shape as VJModePanel.setAutoField; lives here because
+   *  this component already owns the mapping-mode shader-params
+   *  editor. */
+  function setMappingAutoField<K extends keyof ParamModulation>(
+    paramName: string,
+    field: K,
+    value: ParamModulation[K],
+  ) {
+    if (selectedLayerIdx < 0) return;
+    const existing = modulationStore.getModulation(selectedLayerIdx, paramName);
+    if (!existing) return;
+    modulationStore.setModulation(selectedLayerIdx, paramName, { ...existing, [field]: value });
+  }
+
+  /** Reset every shader param on the open shader to its catalog
+   *  default. Also clears any active modulation so the
+   *  modulation engine doesn't immediately overwrite the values
+   *  we just snapped back. */
+  function resetMappingShaderToDefaults() {
+    if (!selectedShader || selectedLayerIdx < 0) return;
+    for (const input of selectedShader.inputs) {
+      const existingMod = modulationStore.getModulation(selectedLayerIdx, input.NAME);
+      if (existingMod && existingMod.source !== 'manual') {
+        setParamModSource(selectedLayerIdx, input.NAME, 'manual');
+      }
+      if (input.DEFAULT === undefined || input.DEFAULT === null) continue;
+      if (input.TYPE === 'float' || input.TYPE === 'long') {
+        if (typeof input.DEFAULT === 'number') {
+          updateShaderParam(input.NAME, input.DEFAULT);
+        }
+      } else if (input.TYPE === 'bool') {
+        if (typeof input.DEFAULT === 'boolean') {
+          updateShaderParam(input.NAME, input.DEFAULT);
+        }
+      }
+    }
   }
 
   // Update shader parameter value
@@ -2853,6 +2898,9 @@
     <div class="shader-params">
       <div class="params-header">
         <h4>{selectedShader.name}</h4>
+        <!-- ↺ Reset all params + clear modulation. Cyan to read as
+             recoverable, matching the VJ Mode shader-params reset. -->
+        <button class="reset-params" onclick={resetMappingShaderToDefaults} title="Reset all params to defaults" aria-label="Reset all params to defaults">↺</button>
         <button class="close-params" onclick={() => selectedShader = null}>x</button>
       </div>
       <div class="params-list">
@@ -2876,6 +2924,10 @@
                     <option value="lfo-sine">Sine</option><option value="lfo-saw">Saw</option>
                     <option value="lfo-square">Square</option><option value="lfo-tri">Triangle</option>
                   </optgroup>
+                  <!-- Per-param playhead automation — matches the VJ
+                       Mode shader-params Auto control. Selecting it
+                       reveals the play/speed/range card below. -->
+                  <optgroup label="Auto"><option value="auto">Auto (playhead)</option></optgroup>
                 </select>
               </div>
               <div class="shader-param-slider">
@@ -2892,12 +2944,57 @@
                   {(selectedShader.values[input.NAME] as number)?.toFixed(2) ?? '0.00'}
                 </span>
               </div>
-              {#if isModulated}
+              {#if isModulated && mod?.source !== 'auto'}
                 <div class="mod-amount-row">
                   <span class="mod-amount-label">Depth</span>
                   <input type="range" min="0" max="1" step="0.01" value={mod?.amount ?? 0.5}
                     oninput={(e) => setParamModAmount(selectedLayerIdx, input.NAME, parseFloat((e.target as HTMLInputElement).value))} class="mod-amount-slider" />
                   <span class="mod-amount-val">{((mod?.amount ?? 0.5) * 100).toFixed(0)}%</span>
+                </div>
+              {/if}
+              <!-- Auto-automation controls. Mirrors the VJ Mode panel
+                   exactly — playhead with speed, loop/pingpong, and
+                   dual-thumb range clippers. -->
+              {#if mod?.source === 'auto'}
+                {@const autoMin = mod.autoMin ?? 0}
+                {@const autoMax = mod.autoMax ?? 1}
+                <div class="auto-controls">
+                  <div class="auto-row">
+                    <button class="auto-play" class:playing={mod.autoPlaying !== false}
+                      onclick={() => setMappingAutoField(input.NAME, 'autoPlaying', mod!.autoPlaying === false)}
+                      title={mod.autoPlaying === false ? 'Resume' : 'Pause'}
+                    >{mod.autoPlaying === false ? '▶' : '❚❚'}</button>
+                    <div class="auto-mode-toggle">
+                      <button class:active={(mod.autoMode ?? 'loop') === 'loop'}
+                        onclick={() => setMappingAutoField(input.NAME, 'autoMode', 'loop')}>Loop</button>
+                      <button class:active={mod.autoMode === 'pingpong'}
+                        onclick={() => setMappingAutoField(input.NAME, 'autoMode', 'pingpong')}>Ping-pong</button>
+                    </div>
+                  </div>
+                  <div class="auto-row auto-row-speed">
+                    <span class="auto-label">Speed</span>
+                    <input type="range" min="0.05" max="4" step="0.01"
+                      value={mod.autoSpeedHz ?? 0.5}
+                      oninput={(e) => setMappingAutoField(input.NAME, 'autoSpeedHz', parseFloat((e.target as HTMLInputElement).value))}
+                      class="auto-speed-slider" />
+                    <span class="auto-val">{(mod.autoSpeedHz ?? 0.5).toFixed(2)}Hz</span>
+                  </div>
+                  <div class="auto-row auto-row-range">
+                    <span class="auto-label">Range</span>
+                    <div class="auto-range-track">
+                      <input type="range" min="0" max="1" step="0.01" value={autoMin}
+                        oninput={(e) => {
+                          const v = parseFloat((e.target as HTMLInputElement).value);
+                          setMappingAutoField(input.NAME, 'autoMin', Math.min(v, autoMax - 0.02));
+                        }} class="auto-range-input auto-range-min" />
+                      <input type="range" min="0" max="1" step="0.01" value={autoMax}
+                        oninput={(e) => {
+                          const v = parseFloat((e.target as HTMLInputElement).value);
+                          setMappingAutoField(input.NAME, 'autoMax', Math.max(v, autoMin + 0.02));
+                        }} class="auto-range-input auto-range-max" />
+                    </div>
+                    <span class="auto-val">{Math.round(autoMin * 100)}-{Math.round(autoMax * 100)}%</span>
+                  </div>
                 </div>
               {/if}
             </div>
@@ -4226,6 +4323,47 @@
   .close-params:hover {
     color: #eee;
   }
+
+  .reset-params {
+    background: none;
+    border: none;
+    color: #7ec8e3;
+    font-size: 14px;
+    cursor: pointer;
+    padding: 0 6px;
+    line-height: 1;
+    opacity: 0.6;
+    margin-right: 2px;
+  }
+  .reset-params:hover { opacity: 1; }
+
+  /* ─── Per-param auto-automation controls (mapping mode) ─── */
+  /* Mirrors VJModePanel exactly so users see the same UI affordances
+     in both modes. Compact stack of [play/mode] + [speed] + [range]. */
+  .auto-controls {
+    margin-top: 4px;
+    padding: 6px 8px;
+    background: rgba(120, 215, 220, 0.06);
+    border-left: 2px solid #5ce1e6;
+    border-radius: 0 4px 4px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .auto-row { display: flex; align-items: center; gap: 6px; font-size: 10px; }
+  .auto-row-speed input[type='range'], .auto-row-range .auto-range-track { flex: 1; }
+  .auto-label { color: rgba(255,255,255,0.55); width: 42px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.4px; }
+  .auto-val { color: #5ce1e6; font-variant-numeric: tabular-nums; font-size: 10px; min-width: 52px; text-align: right; }
+  .auto-play { width: 24px; height: 24px; border-radius: 4px; background: transparent; border: 1px solid rgba(255,255,255,0.18); color: #ccc; font-size: 9px; cursor: pointer; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+  .auto-play.playing { background: rgba(92,225,230,0.18); border-color: #5ce1e6; color: #5ce1e6; }
+  .auto-mode-toggle { display: flex; border: 1px solid rgba(255,255,255,0.12); border-radius: 4px; overflow: hidden; }
+  .auto-mode-toggle button { background: transparent; border: none; padding: 3px 8px; font-size: 10px; color: rgba(255,255,255,0.5); cursor: pointer; }
+  .auto-mode-toggle button.active { background: rgba(92,225,230,0.18); color: #5ce1e6; }
+  .auto-speed-slider { accent-color: #5ce1e6; height: 3px; }
+  .auto-range-track { position: relative; height: 16px; display: flex; align-items: center; }
+  .auto-range-input { position: absolute; inset: 0; width: 100%; accent-color: #5ce1e6; background: transparent; pointer-events: none; }
+  .auto-range-input::-webkit-slider-thumb { pointer-events: auto; }
+  .auto-range-input::-moz-range-thumb { pointer-events: auto; }
 
   .params-list {
     padding: 8px 12px;

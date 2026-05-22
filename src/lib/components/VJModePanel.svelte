@@ -1225,12 +1225,23 @@
 
   /** Reset every shader input on the currently-open shader-params
    *  panel back to its INPUT.DEFAULT value from the ISF metadata.
+   *  Also clears any active audio / auto modulation — without that,
+   *  the modulation engine would keep overwriting the param values
+   *  the moment they reset, so the user would see the slider
+   *  bounce back to wherever the playhead/audio is driving it.
    *  Non-numeric inputs (colors etc.) are left alone — the panel's
    *  UI only edits floats / events / bools anyway and the reset
    *  affordance is positioned in the float-heavy params section. */
   function resetShaderParamsToDefaults() {
     if (selectedLayerIndex === null) return;
     for (const input of selectedClipShaderInputs) {
+      // Clear any active modulation first. setParamModSource with
+      // 'manual' deletes the modulation entry, so the engine stops
+      // writing to this param on the next frame.
+      const existingMod = modulationStore.getModulation(selectedLayerIndex, input.NAME, paramDeck);
+      if (existingMod && existingMod.source !== 'manual') {
+        setParamModSource(selectedLayerIndex, input.NAME, 'manual', paramDeck);
+      }
       if (input.DEFAULT === undefined || input.DEFAULT === null) continue;
       if (typeof input.DEFAULT === 'number') {
         setShaderParamValue(selectedLayerIndex, input.NAME, input.DEFAULT);
@@ -1240,9 +1251,21 @@
     }
   }
 
+  // Subscribe reactively to the modulation store so the
+  // shader-params panel re-renders when the user picks a new
+  // source. modulationStore.getModulation does a SNAPSHOT read
+  // internally — without this dependency the {@const mod = ...}
+  // blocks in the template wouldn't re-evaluate after
+  // setParamModSource, so the auto-controls card (gated on
+  // mod?.source === 'auto') would never appear.
+  $: modulationMap = $modulationStore;
+
   // Modulation helpers — thin wrappers using shared functions from modulation.ts
   function getParamModulation(layerIndex: number, paramName: string): ParamModulation | undefined {
-    return modulationStore.getModulation(layerIndex, paramName);
+    // Touch modulationMap so Svelte tracks this function call as
+    // dependent on the reactive store value.
+    void modulationMap;
+    return modulationStore.getModulation(layerIndex, paramName, paramDeck);
   }
 
   /** Update one field on a param's auto-automation state.
