@@ -759,18 +759,20 @@
     return selectedLayerIndex !== null ? `LAYER ${selectedLayerIndex + 1} FX${deckTag}` : 'LAYER FX';
   })();
 
-  // Track active clip ID to force shader params re-render when clip changes
+  // Track active clip ID to force shader params re-render when clip changes.
   $: activeClipId = selectedLayerIndex !== null ? paramLayerStates[selectedLayerIndex]?.activeClip?.id : null;
-  // Clear modulation & base values when the active clip/shader changes on the selected layer
+  // We no longer clear modulations on clip switch — modulations are
+  // now keyed by clip ID (vjc:CLIPID:paramName) so they automatically
+  // become inactive when the clip leaves the deck and resume when
+  // the user re-fires it. That's the perform-ready behavior — set
+  // a clip up with its automation once, trigger it whenever, the
+  // automation just plays alongside without bleeding into other clips.
+  // Base values are also keyed per-bank-per-layer-per-param so they
+  // were never the right place for clip-switch invalidation anyway;
+  // the per-clip mod path captures fresh base on each (re-)activation.
   let _prevActiveClipId: string | null = null;
   $: {
     if (activeClipId !== _prevActiveClipId) {
-      if (_prevActiveClipId !== null && selectedLayerIndex !== null) {
-        // Clip changed — clear stale modulation assignments and base values
-        modulationStore.clearLayer(selectedLayerIndex);
-        clearBaseValues(selectedLayerIndex);
-        clearModulatedValues(selectedLayerIndex);
-      }
       _prevActiveClipId = activeClipId ?? null;
     }
   }
@@ -1244,9 +1246,16 @@
         ?? shaders.find(s => s.shaderCode === activeClip.shaderCode)
       : undefined;
     for (const input of selectedClipShaderInputs) {
-      // Clear any active modulation first. setParamModSource with
-      // 'manual' deletes the modulation entry, so the engine stops
-      // writing to this param on the next frame.
+      // Clear any active modulation first — try the clip-keyed entry
+      // first (preferred), then the legacy layer-keyed entry. Either
+      // way the entry gets deleted; the engine stops writing on the
+      // next frame.
+      if (activeClipId) {
+        const m = modulationStore.getModulation(selectedLayerIndex, input.NAME, paramDeck, 'vj', activeClipId);
+        if (m && m.source !== 'manual') {
+          setParamModSource(selectedLayerIndex, input.NAME, 'manual', paramDeck, 'vj', activeClipId);
+        }
+      }
       const existingMod = modulationStore.getModulation(selectedLayerIndex, input.NAME, paramDeck);
       if (existingMod && existingMod.source !== 'manual') {
         setParamModSource(selectedLayerIndex, input.NAME, 'manual', paramDeck);
@@ -1286,7 +1295,18 @@
   // dependent on the store. Without this the auto-controls card
   // gated on mod?.source === 'auto' would never appear because
   // the template wouldn't re-render after the dropdown change.
+  // VJ shader mods are keyed by CLIP ID, not layer index — so the
+  // automation travels with the clip across re-triggers and deck
+  // moves (perform-ready behavior). Falls through to layer-keyed
+  // when activeClipId isn't available yet.
   function getParamModulation(layerIndex: number, paramName: string): ParamModulation | undefined {
+    if (activeClipId) {
+      const k = modKeyShader(layerIndex, paramName, paramDeck, 'vj', activeClipId);
+      const m = modulationMap.get(k);
+      if (m) return m;
+    }
+    // Legacy lookup fallback so existing layer-keyed mods (older
+    // projects) still surface in the UI until they're migrated.
     return modulationMap.get(modKeyShader(layerIndex, paramName, paramDeck));
   }
 
@@ -1304,6 +1324,15 @@
     field: K,
     value: ParamModulation[K],
   ) {
+    // Per-clip path first (preferred — automation rides on the clip).
+    if (activeClipId) {
+      const existing = modulationStore.getModulation(layerIndex, paramName, paramDeck, 'vj', activeClipId);
+      if (existing) {
+        modulationStore.setModulation(layerIndex, paramName, { ...existing, [field]: value }, paramDeck, 'vj', activeClipId);
+        return;
+      }
+    }
+    // Legacy layer-keyed fallback.
     const existing = modulationStore.getModulation(layerIndex, paramName);
     if (!existing) return;
     modulationStore.setModulation(layerIndex, paramName, { ...existing, [field]: value }, paramDeck);
@@ -2776,7 +2805,8 @@
                      playhead, not audio-reactive, so showing this
                      for an auto-bound param is just noise. -->
                 {#if !clipIsAudioReady && selectedClipShaderInputs.some(i => {
-                  const m = modulationMap.get(modKeyShader(selectedLayerIndex!, i.NAME, paramDeck));
+                  const k = activeClipId ? modKeyShader(selectedLayerIndex!, i.NAME, paramDeck, 'vj', activeClipId) : modKeyShader(selectedLayerIndex!, i.NAME, paramDeck);
+                  const m = modulationMap.get(k);
                   return m && m.source !== 'manual' && m.source !== 'auto';
                 })}
                   <div class="audio-warn">This shader doesn't use audio uniforms — modulation controls parameters only, not the shader's internal audio response.</div>
@@ -2790,14 +2820,17 @@
                          dependency since Svelte doesn't trace through
                          function bodies — that's why earlier revs
                          didn't re-render after the dropdown change. -->
+                    {@const _modKeyClip = activeClipId ? modKeyShader(selectedLayerIndex!, input.NAME, paramDeck, 'vj', activeClipId) : null}
                     {@const _modKey = modKeyShader(selectedLayerIndex!, input.NAME, paramDeck, 'vj')}
-                    {@const mod = modulationMap.get(_modKey)}
+                    <!-- Prefer the clip-keyed entry (vjc:CLIPID:param);
+                         fall back to legacy layer-keyed for old projects. -->
+                    {@const mod = (_modKeyClip ? modulationMap.get(_modKeyClip) : undefined) ?? modulationMap.get(_modKey)}
                     {@const isModulated = mod && mod.source !== 'manual'}
                     <div class="shader-param" class:modulated={isModulated} data-modkey={_modKey} data-modsrc={mod?.source ?? 'none'}>
                       <div class="shader-param-header">
                         <span class="shader-param-name">{input.LABEL || input.NAME}</span>
                         <select class="mod-source-select" class:active={isModulated} value={mod?.source || 'manual'}
-                          onchange={(e) => setParamModSource(selectedLayerIndex!, input.NAME, (e.target as HTMLSelectElement).value as ModSource, paramDeck)}>
+                          onchange={(e) => setParamModSource(selectedLayerIndex!, input.NAME, (e.target as HTMLSelectElement).value as ModSource, paramDeck, 'vj', activeClipId ?? undefined)}>
                           <optgroup label="Control"><option value="manual">Manual</option></optgroup>
                           <optgroup label="Audio">
                             <option value="sub">Sub</option><option value="bass">Bass</option><option value="lowMid">Low Mid</option>
@@ -2839,32 +2872,39 @@
                             {#if isModulated && modGhostValues[input.NAME] !== undefined}
                               <div class="mod-ghost" style="left: {((modGhostValues[input.NAME] - (input.MIN ?? 0)) / ((input.MAX ?? 1) - (input.MIN ?? 0))) * 100}%"></div>
                             {/if}
-                            <!-- Auto-mode slippers — when source='auto',
-                                 overlay two dual-thumb range inputs ON
-                                 the main slider track so the slippers'
-                                 0..1 axis aligns 1:1 with the slider's
-                                 input.MIN..input.MAX. Previously they
-                                 lived in a separate row below with
-                                 different padding, so the slipper
-                                 positions visually drifted from where
-                                 the playhead actually swept. Filled
-                                 bar between thumbs shows the active
-                                 sweep range at a glance. -->
+                            <!-- Auto-mode slippers — overlay on the
+                                 main slider track. Slipper inputs use
+                                 the SAME min/max as the slider above
+                                 so the cyan thumb visually aligns
+                                 with the slider's actual range, even
+                                 for shaders with non-0..1 inputs
+                                 (e.g. MIN=-5 MAX=5 used to squish the
+                                 slippers into the left 10% of the
+                                 track). Internal storage stays as
+                                 0..1 fractions; we map to/from the
+                                 absolute slider range at the boundary. -->
                             {#if mod?.source === 'auto'}
                               {@const _amin = mod.autoMin ?? 0}
                               {@const _amax = mod.autoMax ?? 1}
+                              {@const _rMin = input.MIN ?? 0}
+                              {@const _rMax = input.MAX ?? 1}
+                              {@const _rSpan = (_rMax - _rMin) || 1}
+                              {@const _aminAbs = _rMin + _amin * _rSpan}
+                              {@const _amaxAbs = _rMin + _amax * _rSpan}
                               <div class="slipper-fill" style="left: {_amin * 100}%; right: {(1 - _amax) * 100}%"></div>
-                              <input type="range" min="0" max="1" step="0.01" value={_amin}
+                              <input type="range" min={_rMin} max={_rMax} step={_rSpan / 200} value={_aminAbs}
                                 class="slipper slipper-min"
                                 oninput={(e) => {
-                                  const v = parseFloat((e.target as HTMLInputElement).value);
-                                  setAutoField(selectedLayerIndex!, input.NAME, 'autoMin', Math.min(v, _amax - 0.02));
+                                  const vAbs = parseFloat((e.target as HTMLInputElement).value);
+                                  const frac = (vAbs - _rMin) / _rSpan;
+                                  setAutoField(selectedLayerIndex!, input.NAME, 'autoMin', Math.min(frac, _amax - 0.02));
                                 }} />
-                              <input type="range" min="0" max="1" step="0.01" value={_amax}
+                              <input type="range" min={_rMin} max={_rMax} step={_rSpan / 200} value={_amaxAbs}
                                 class="slipper slipper-max"
                                 oninput={(e) => {
-                                  const v = parseFloat((e.target as HTMLInputElement).value);
-                                  setAutoField(selectedLayerIndex!, input.NAME, 'autoMax', Math.max(v, _amin + 0.02));
+                                  const vAbs = parseFloat((e.target as HTMLInputElement).value);
+                                  const frac = (vAbs - _rMin) / _rSpan;
+                                  setAutoField(selectedLayerIndex!, input.NAME, 'autoMax', Math.max(frac, _amin + 0.02));
                                 }} />
                             {/if}
                           </div>
@@ -2914,16 +2954,12 @@
                               <span class="auto-val">{(mod.autoSpeedHz ?? 0.15).toFixed(2)}Hz</span>
                             </div>
 
-                            <!-- Range slippers moved up onto the main
-                                 slider track itself — their 0..1 axis
-                                 now visually matches the slider's
-                                 input.MIN..input.MAX. See the
-                                 .slipper inputs inside slider-track-wrap.
-                                 Show the chosen sub-range as a label. -->
-                            <div class="auto-row auto-row-range">
-                              <span class="auto-label">Range</span>
-                              <span class="auto-val auto-val-grow">{Math.round(autoMin * 100)}-{Math.round(autoMax * 100)}%  (drag the cyan handles above)</span>
-                            </div>
+                            <!-- Range slippers live on the main slider
+                                 track above (see .slipper inputs). No
+                                 redundant label here — the cyan handles
+                                 are self-explanatory now that they
+                                 visually align with the slider range. -->
+
                           </div>
                         {/if}
                       {:else if input.TYPE === 'bool'}

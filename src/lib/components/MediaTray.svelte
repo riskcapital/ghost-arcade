@@ -2953,24 +2953,33 @@
                     oninput={(e) => updateShaderParam(input.NAME, parseFloat((e.target as HTMLInputElement).value))}
                     class="param-slider"
                   />
-                  <!-- Auto-mode slippers overlay on the main slider so
-                       the 0..1 axis lines up 1:1 with the slider's
-                       input.MIN..input.MAX. Same approach as VJ panel. -->
+                  <!-- Auto-mode slippers overlay on the main slider.
+                       Slipper inputs use the same min/max as the
+                       slider above so the cyan thumb visually aligns
+                       with the slider's actual range — internal
+                       storage stays as 0..1 fractions. -->
                   {#if mod?.source === 'auto'}
                     {@const _amin = mod.autoMin ?? 0}
                     {@const _amax = mod.autoMax ?? 1}
+                    {@const _rMin = input.MIN ?? 0}
+                    {@const _rMax = input.MAX ?? 1}
+                    {@const _rSpan = (_rMax - _rMin) || 1}
+                    {@const _aminAbs = _rMin + _amin * _rSpan}
+                    {@const _amaxAbs = _rMin + _amax * _rSpan}
                     <div class="slipper-fill" style="left: {_amin * 100}%; right: {(1 - _amax) * 100}%"></div>
-                    <input type="range" min="0" max="1" step="0.01" value={_amin}
+                    <input type="range" min={_rMin} max={_rMax} step={_rSpan / 200} value={_aminAbs}
                       class="slipper slipper-min"
                       oninput={(e) => {
-                        const v = parseFloat((e.target as HTMLInputElement).value);
-                        setMappingAutoField(input.NAME, 'autoMin', Math.min(v, _amax - 0.02));
+                        const vAbs = parseFloat((e.target as HTMLInputElement).value);
+                        const frac = (vAbs - _rMin) / _rSpan;
+                        setMappingAutoField(input.NAME, 'autoMin', Math.min(frac, _amax - 0.02));
                       }} />
-                    <input type="range" min="0" max="1" step="0.01" value={_amax}
+                    <input type="range" min={_rMin} max={_rMax} step={_rSpan / 200} value={_amaxAbs}
                       class="slipper slipper-max"
                       oninput={(e) => {
-                        const v = parseFloat((e.target as HTMLInputElement).value);
-                        setMappingAutoField(input.NAME, 'autoMax', Math.max(v, _amin + 0.02));
+                        const vAbs = parseFloat((e.target as HTMLInputElement).value);
+                        const frac = (vAbs - _rMin) / _rSpan;
+                        setMappingAutoField(input.NAME, 'autoMax', Math.max(frac, _amin + 0.02));
                       }} />
                   {/if}
                 </div>
@@ -3013,13 +3022,10 @@
                       class="auto-speed-slider" />
                     <span class="auto-val">{(mod.autoSpeedHz ?? 0.15).toFixed(2)}Hz</span>
                   </div>
-                  <!-- Range slippers moved up onto the main slider
-                       track (see .slipper inputs in slider-track-wrap).
-                       Just show the chosen sub-range as a label here. -->
-                  <div class="auto-row auto-row-range">
-                    <span class="auto-label">Range</span>
-                    <span class="auto-val auto-val-grow">{Math.round(autoMin * 100)}-{Math.round(autoMax * 100)}%  (drag the cyan handles above)</span>
-                  </div>
+                  <!-- Range slippers live on the main slider above.
+                       No redundant label — slippers are self-explanatory
+                       now that they visually align. -->
+
                 </div>
               {/if}
             </div>
