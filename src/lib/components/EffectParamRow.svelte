@@ -19,7 +19,7 @@
    * in both editor and projector output windows (the engine ticks in
    * both via modulationBroadcast).
    */
-  import { modulationStore, registerEffectParamRange, registerEdgeEffectParamRange, type ModSource, type ParamModulation } from '../audio/modulation';
+  import { modulationStore, registerEffectParamRange, registerEdgeEffectParamRange, DEFAULT_MOD, type ModSource, type ParamModulation } from '../audio/modulation';
   import { tick } from 'svelte';
 
   export let label: string;
@@ -94,6 +94,7 @@
   $: currentBpmSync = existingMod?.bpmSync ?? false;
   $: isModulated = currentSource !== 'manual';
   $: isLfo = currentSource.startsWith('lfo-');
+  $: isAuto = currentSource === 'auto';
 
   function writeMod(mod: ParamModulation) {
     if (effectKind === 'edge') {
@@ -110,7 +111,23 @@
       const spd = existingMod?.speed ?? 1.0;
       const inv = existingMod?.invert ?? false;
       const sync = existingMod?.bpmSync ?? false;
-      writeMod({ source, amount: amt, speed: spd, invert: inv, bpmSync: sync });
+      // For 'auto' source, seed the playhead fields from DEFAULT_MOD
+      // so the engine ticks correctly on first frame. autoPlaying
+      // is FORCED to true (user just picked Auto, they want it
+      // playing — same fix the shader-param path uses).
+      if (source === 'auto') {
+        writeMod({
+          source, amount: amt, speed: spd, invert: inv, bpmSync: sync,
+          autoPhase: 0,
+          autoMode: existingMod?.autoMode ?? DEFAULT_MOD.autoMode,
+          autoSpeedHz: existingMod?.autoSpeedHz ?? DEFAULT_MOD.autoSpeedHz,
+          autoMin: existingMod?.autoMin ?? DEFAULT_MOD.autoMin,
+          autoMax: existingMod?.autoMax ?? DEFAULT_MOD.autoMax,
+          autoPlaying: true,
+        });
+      } else {
+        writeMod({ source, amount: amt, speed: spd, invert: inv, bpmSync: sync });
+      }
     }
   }
   function setAmount(amount: number) {
@@ -120,6 +137,10 @@
   function setBpmSync(bpmSync: boolean) {
     if (!existingMod || existingMod.source === 'manual') return;
     writeMod({ ...existingMod, bpmSync });
+  }
+  function setAutoField<K extends keyof ParamModulation>(field: K, value: ParamModulation[K]) {
+    if (!existingMod) return;
+    writeMod({ ...existingMod, [field]: value });
   }
 </script>
 
@@ -158,6 +179,7 @@
         <option value="lfo-square">Square</option>
         <option value="lfo-tri">Triangle</option>
       </optgroup>
+      <optgroup label="Auto"><option value="auto">Auto (playhead)</option></optgroup>
     </select>
     {#if editing}
       <input
@@ -176,27 +198,55 @@
     {/if}
   </div>
 
-  <!-- Row 2: the actual param slider -->
-  <input
-    class="epr-slider"
-    type="range"
-    {min}
-    {max}
-    {step}
-    {value}
-    data-midi-path={effectKind === 'edge' ? `map:edge:${effectId}:${paramName}` : `map:effect:${effectId}:${paramName}`}
-    data-midi-label={label}
-    data-midi-min={min}
-    data-midi-max={max}
-    data-midi-step={step}
-    oninput={(e) => onChange(parseFloat((e.target as HTMLInputElement).value))}
-  />
+  <!-- Row 2: the actual param slider (+ optional Auto-mode slippers
+       overlaid on the same track when source='auto'). -->
+  <div class="epr-track-wrap">
+    <input
+      class="epr-slider"
+      type="range"
+      {min}
+      {max}
+      {step}
+      {value}
+      data-midi-path={effectKind === 'edge' ? `map:edge:${effectId}:${paramName}` : `map:effect:${effectId}:${paramName}`}
+      data-midi-label={label}
+      data-midi-min={min}
+      data-midi-max={max}
+      data-midi-step={step}
+      oninput={(e) => onChange(parseFloat((e.target as HTMLInputElement).value))}
+    />
+    <!-- Slippers — two range inputs overlaid on the main slider so
+         their 0..1 axis lines up 1:1 with min..max above. Same
+         pattern as the shader-params overlay; cyan thumbs + a faint
+         fill band between them mark the active sweep sub-range. -->
+    {#if isAuto}
+      {@const _amin = existingMod?.autoMin ?? 0}
+      {@const _amax = existingMod?.autoMax ?? 1}
+      {@const _rSpan = (max - min) || 1}
+      {@const _aminAbs = min + _amin * _rSpan}
+      {@const _amaxAbs = min + _amax * _rSpan}
+      <div class="epr-slipper-fill" style="left: {_amin * 100}%; right: {(1 - _amax) * 100}%"></div>
+      <input type="range" min={min} max={max} step={_rSpan / 200} value={_aminAbs}
+        class="epr-slipper epr-slipper-min"
+        oninput={(e) => {
+          const v = parseFloat((e.target as HTMLInputElement).value);
+          const frac = (v - min) / _rSpan;
+          setAutoField('autoMin', Math.min(frac, _amax - 0.02));
+        }} />
+      <input type="range" min={min} max={max} step={_rSpan / 200} value={_amaxAbs}
+        class="epr-slipper epr-slipper-max"
+        oninput={(e) => {
+          const v = parseFloat((e.target as HTMLInputElement).value);
+          const frac = (v - min) / _rSpan;
+          setAutoField('autoMax', Math.max(frac, _amin + 0.02));
+        }} />
+    {/if}
+  </div>
 
-  <!-- Row 3: depth (amount) — only shown when something is modulating.
-       LFO sources also get a BPM-sync checkbox to the right of the depth
-       value, which reinterprets `speed` as a beat-division multiplier
-       instead of free-running Hz. -->
-  {#if isModulated}
+  <!-- Row 3: depth (amount) — for AUDIO / LFO sources. The auto
+       source has its own controls below; depth doesn't apply there
+       (raw value comes straight from autoMin..autoMax). -->
+  {#if isModulated && !isAuto}
     <div class="epr-depth-row">
       <span class="epr-depth-label">Depth</span>
       <input
@@ -219,6 +269,35 @@
           BPM
         </label>
       {/if}
+    </div>
+  {/if}
+
+  <!-- Row 3 (auto): playhead controls — play/pause + loop/pingpong
+       + speed. Range slippers live on the main slider track above
+       so the autoMin..autoMax visually aligns with the param's
+       actual range; this row just has the transport + speed dial. -->
+  {#if isAuto}
+    <div class="epr-auto-controls">
+      <div class="epr-auto-row">
+        <button class="epr-auto-play" class:playing={existingMod?.autoPlaying !== false}
+          onclick={() => setAutoField('autoPlaying', existingMod?.autoPlaying === false)}
+          title={existingMod?.autoPlaying === false ? 'Resume' : 'Pause'}
+        >{existingMod?.autoPlaying === false ? '▶' : '❚❚'}</button>
+        <div class="epr-auto-mode">
+          <button class:active={(existingMod?.autoMode ?? 'loop') === 'loop'}
+            onclick={() => setAutoField('autoMode', 'loop')}>Loop</button>
+          <button class:active={existingMod?.autoMode === 'pingpong'}
+            onclick={() => setAutoField('autoMode', 'pingpong')}>Ping-pong</button>
+        </div>
+      </div>
+      <div class="epr-auto-row epr-auto-speed">
+        <span class="epr-auto-label">Speed</span>
+        <input type="range" min="0.01" max="1" step="0.005"
+          value={existingMod?.autoSpeedHz ?? 0.15}
+          oninput={(e) => setAutoField('autoSpeedHz', parseFloat((e.target as HTMLInputElement).value))}
+          class="epr-auto-speed-slider" />
+        <span class="epr-auto-val">{(existingMod?.autoSpeedHz ?? 0.15).toFixed(2)}Hz</span>
+      </div>
     </div>
   {/if}
 </div>
@@ -299,6 +378,14 @@
   }
 
   /* Row 2: param slider — full width */
+  .epr-track-wrap {
+    position: relative;
+    /* Extra vertical room so the cyan slipper thumbs (18px tall)
+       have space above/below the slider line. */
+    min-height: 18px;
+    display: flex;
+    align-items: center;
+  }
   .epr-slider {
     width: 100%;
     accent-color: #67e8f9;
@@ -306,6 +393,83 @@
   .epr.modulated .epr-slider {
     accent-color: #ff00ff;
   }
+
+  /* ─── Auto-mode slippers (overlay on main slider) ─── */
+  /* Two range inputs absolutely positioned over the main slider so
+     the slipper thumb positions line up 1:1 with the slider's
+     min..max. Track invisible; only the cyan thumbs visible. */
+  .epr-slipper {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    pointer-events: none;
+    -webkit-appearance: none;
+    appearance: none;
+    margin: 0;
+  }
+  .epr-slipper::-webkit-slider-runnable-track { background: transparent; height: 100%; }
+  .epr-slipper::-moz-range-track             { background: transparent; height: 100%; }
+  .epr-slipper::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    pointer-events: auto;
+    cursor: ew-resize;
+    width: 6px;
+    height: 18px;
+    border-radius: 2px;
+    background: #5ce1e6;
+    box-shadow: 0 0 4px rgba(92, 225, 230, 0.5);
+    border: none;
+  }
+  .epr-slipper::-moz-range-thumb {
+    pointer-events: auto;
+    cursor: ew-resize;
+    width: 6px;
+    height: 18px;
+    border-radius: 2px;
+    background: #5ce1e6;
+    box-shadow: 0 0 4px rgba(92, 225, 230, 0.5);
+    border: none;
+  }
+  .epr-slipper-fill {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 6px;
+    background: rgba(92, 225, 230, 0.18);
+    border-top: 1px solid rgba(92, 225, 230, 0.4);
+    border-bottom: 1px solid rgba(92, 225, 230, 0.4);
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  /* ─── Auto controls card (transport + speed) ─── */
+  .epr-auto-controls {
+    margin-top: 2px;
+    padding: 5px 7px;
+    background: rgba(120, 215, 220, 0.06);
+    border-left: 2px solid #5ce1e6;
+    border-radius: 0 4px 4px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .epr-auto-row { display: flex; align-items: center; gap: 6px; font-size: 10px; }
+  .epr-auto-speed input[type='range'] { flex: 1; }
+  .epr-auto-label { color: rgba(255,255,255,0.55); width: 38px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.4px; }
+  .epr-auto-val { color: #5ce1e6; font-variant-numeric: tabular-nums; font-size: 10px; min-width: 48px; text-align: right; }
+  .epr-auto-play {
+    width: 22px; height: 22px; border-radius: 4px;
+    background: transparent; border: 1px solid rgba(255,255,255,0.18);
+    color: #ccc; font-size: 9px; cursor: pointer;
+    flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  }
+  .epr-auto-play.playing { background: rgba(92,225,230,0.18); border-color: #5ce1e6; color: #5ce1e6; }
+  .epr-auto-mode { display: flex; border: 1px solid rgba(255,255,255,0.12); border-radius: 4px; overflow: hidden; }
+  .epr-auto-mode button { background: transparent; border: none; padding: 2px 7px; font-size: 10px; color: rgba(255,255,255,0.5); cursor: pointer; }
+  .epr-auto-mode button.active { background: rgba(92,225,230,0.18); color: #5ce1e6; }
+  .epr-auto-speed-slider { accent-color: #5ce1e6; height: 3px; }
 
   /* Row 3: depth amount, only when modulated. Magenta to match the
      source dropdown so the two pieces of "this param is modulated"
