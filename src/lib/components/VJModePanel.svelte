@@ -1180,7 +1180,17 @@
     // Use clip ID + first 64 chars as cache key to distinguish different shaders
     const cacheKey = clip.id + ':' + clip.shaderCode.substring(0, 64);
     if (cachedShaderInputs.has(cacheKey)) {
-      return cachedShaderInputs.get(cacheKey)!;
+      const cached = cachedShaderInputs.get(cacheKey)!;
+      // Re-register param ranges every time — the registry is keyed
+      // by `${layerIndex}:${paramName}` and gets CLEARED when another
+      // shader registers for the same layer (registerParamRanges
+      // wipes that layer's keys at the top). Without this re-register
+      // on cache hit, switching shaders on the same layer back-and-
+      // forth leaves the engine without ranges for whichever shader
+      // wasn't last-registered, falling back to a generic 0..2 span
+      // that produces "not the full param length" sweeps.
+      registerParamRanges(layerIndex, cached);
+      return cached;
     }
 
     // Parse the ISF metadata from shader code
@@ -1246,9 +1256,15 @@
         ?? shaders.find(s => s.shaderCode === activeClip.shaderCode)
       : undefined;
     for (const input of selectedClipShaderInputs) {
-      // Clear any active modulation first. setParamModSource with
-      // 'manual' deletes the modulation entry, so the engine stops
-      // writing to this param on the next frame.
+      // Clear modulations on BOTH the per-clip and legacy layer
+      // keys so reset wipes everything regardless of which path
+      // the original binding used.
+      if (activeClipId) {
+        const m = modulationStore.getModulation(selectedLayerIndex, input.NAME, paramDeck, 'vj', activeClipId);
+        if (m && m.source !== 'manual') {
+          setParamModSource(selectedLayerIndex, input.NAME, 'manual', paramDeck, 'vj', activeClipId);
+        }
+      }
       const existingMod = modulationStore.getModulation(selectedLayerIndex, input.NAME, paramDeck);
       if (existingMod && existingMod.source !== 'manual') {
         setParamModSource(selectedLayerIndex, input.NAME, 'manual', paramDeck);
@@ -1306,6 +1322,15 @@
     field: K,
     value: ParamModulation[K],
   ) {
+    // Try the per-clip key first (preferred — automation lives on
+    // the clip). Fall back to layer-keyed for legacy mods.
+    if (activeClipId) {
+      const existing = modulationStore.getModulation(layerIndex, paramName, paramDeck, 'vj', activeClipId);
+      if (existing) {
+        modulationStore.setModulation(layerIndex, paramName, { ...existing, [field]: value }, paramDeck, 'vj', activeClipId);
+        return;
+      }
+    }
     const existing = modulationStore.getModulation(layerIndex, paramName, paramDeck);
     if (!existing) return;
     modulationStore.setModulation(layerIndex, paramName, { ...existing, [field]: value }, paramDeck);
@@ -2778,7 +2803,8 @@
                      playhead, not audio-reactive, so showing this
                      for an auto-bound param is just noise. -->
                 {#if !clipIsAudioReady && selectedClipShaderInputs.some(i => {
-                  const m = modulationMap.get(modKeyShader(selectedLayerIndex!, i.NAME, paramDeck));
+                  const kClip = activeClipId ? modulationMap.get(modKeyShader(selectedLayerIndex!, i.NAME, paramDeck, 'vj', activeClipId)) : undefined;
+                  const m = kClip ?? modulationMap.get(modKeyShader(selectedLayerIndex!, i.NAME, paramDeck));
                   return m && m.source !== 'manual' && m.source !== 'auto';
                 })}
                   <div class="audio-warn">This shader doesn't use audio uniforms — modulation controls parameters only, not the shader's internal audio response.</div>
@@ -2792,14 +2818,20 @@
                          dependency since Svelte doesn't trace through
                          function bodies — that's why earlier revs
                          didn't re-render after the dropdown change. -->
+                    <!-- Prefer the clip-keyed (vjc:) modulation so two
+                         different shaders with the same param name
+                         (e.g. both have "speed") don't share an auto
+                         binding. Falls back to legacy layer-keyed for
+                         older mods that haven't been migrated. -->
+                    {@const _modKeyClip = activeClipId ? modKeyShader(selectedLayerIndex!, input.NAME, paramDeck, 'vj', activeClipId) : null}
                     {@const _modKey = modKeyShader(selectedLayerIndex!, input.NAME, paramDeck, 'vj')}
-                    {@const mod = modulationMap.get(_modKey)}
+                    {@const mod = (_modKeyClip ? modulationMap.get(_modKeyClip) : undefined) ?? modulationMap.get(_modKey)}
                     {@const isModulated = mod && mod.source !== 'manual'}
                     <div class="shader-param" class:modulated={isModulated} data-modkey={_modKey} data-modsrc={mod?.source ?? 'none'}>
                       <div class="shader-param-header">
                         <span class="shader-param-name">{input.LABEL || input.NAME}</span>
                         <select class="mod-source-select" class:active={isModulated} value={mod?.source || 'manual'}
-                          onchange={(e) => setParamModSource(selectedLayerIndex!, input.NAME, (e.target as HTMLSelectElement).value as ModSource, paramDeck)}>
+                          onchange={(e) => setParamModSource(selectedLayerIndex!, input.NAME, (e.target as HTMLSelectElement).value as ModSource, paramDeck, 'vj', activeClipId ?? undefined)}>
                           <optgroup label="Control"><option value="manual">Manual</option></optgroup>
                           <optgroup label="Audio">
                             <option value="sub">Sub</option><option value="bass">Bass</option><option value="lowMid">Low Mid</option>
