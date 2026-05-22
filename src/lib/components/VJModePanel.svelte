@@ -1181,15 +1181,11 @@
     const cacheKey = clip.id + ':' + clip.shaderCode.substring(0, 64);
     if (cachedShaderInputs.has(cacheKey)) {
       const cached = cachedShaderInputs.get(cacheKey)!;
-      // Re-register param ranges every time — the registry is keyed
-      // by `${layerIndex}:${paramName}` and gets CLEARED when another
-      // shader registers for the same layer (registerParamRanges
-      // wipes that layer's keys at the top). Without this re-register
-      // on cache hit, switching shaders on the same layer back-and-
-      // forth leaves the engine without ranges for whichever shader
-      // wasn't last-registered, falling back to a generic 0..2 span
-      // that produces "not the full param length" sweeps.
-      registerParamRanges(layerIndex, cached);
+      // Re-register param ranges every time so they stay fresh after
+      // shader / mode switches. Namespace under the CLIP ID so
+      // mapping-mode ranges or other VJ shaders can't clobber this
+      // shader's range entries on mode switch.
+      registerParamRanges(layerIndex, cached, 'vj', clip.id);
       return cached;
     }
 
@@ -1200,8 +1196,8 @@
         i => i.TYPE !== 'image' && i.TYPE !== 'audio' && i.TYPE !== 'audioFFT'
       );
       cachedShaderInputs.set(cacheKey, inputs);
-      // Register param ranges for modulation clamping
-      registerParamRanges(layerIndex, inputs);
+      // Register param ranges in the per-clip namespace.
+      registerParamRanges(layerIndex, inputs, 'vj', clip.id);
       // Ensure all float/long params have their DEFAULT written to shaderValues
       // so modulation can find a base value even if the user hasn't moved the slider
       for (const inp of inputs) {

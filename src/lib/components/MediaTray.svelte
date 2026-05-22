@@ -2670,9 +2670,10 @@
             selectedShader.imageInputRefs[name] = ref;
           }
         }
-        // Register param ranges for modulation clamping (mapping mode)
+        // Register param ranges in the 'map:' namespace so VJ-mode
+        // ranges on the same layer index don't get clobbered.
         if (selectedLayerIdx >= 0 && found.inputs) {
-          registerParamRanges(selectedLayerIdx, found.inputs);
+          registerParamRanges(selectedLayerIdx, found.inputs, 'mapping');
         }
       }
     } else {

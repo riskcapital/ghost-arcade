@@ -255,8 +255,21 @@ export const MOD_KEY_XFADE_VALUE = 'xfade:value';
 // Pre-parsed cache rebuilt on store change — avoids per-frame string parsing
 let parsedCache: ParsedModEntry[] = [];
 
-// Parameter range registry — stores ISF min/max for shader params to enable clamping
-// Key format: "layerIndex:paramName"
+// Parameter range registry — stores ISF min/max for shader params to enable clamping.
+//
+// Key format:
+//   "vjc:CLIPID:paramName"   → per-clip VJ ranges (preferred; survives shader swap)
+//   "vj:layerIndex:paramName" → legacy layer-keyed VJ ranges
+//   "map:layerIndex:paramName" → mapping-mode ranges
+//
+// Why the namespace prefix: previously the key was just
+// "layerIndex:paramName", shared between VJ + mapping. When the user
+// opened a mapping shader on layer 0, registerParamRanges cleared
+// ALL `0:*` entries — wiping VJ's layer 0 ranges too. The engine
+// then fell back to a generic 0..2 span for VJ mods, which mapped
+// the slider's actual min/max badly enough that the thumb looked
+// frozen at one edge. Namespacing keeps the two mode keyspaces
+// isolated so mode switching doesn't clobber the other side.
 const paramRanges = new Map<string, { min: number; max: number }>();
 
 // Effect param range registry — same idea for layer effect params.
@@ -322,14 +335,22 @@ const lastModulatedValues = new Map<string, number>();
 const baseValues = new Map<string, number>();
 
 /** Register ISF parameter ranges for a layer so modulation can clamp correctly */
-export function registerParamRanges(layerIndex: number, inputs: ISFInput[]) {
-  // Clear old ranges for this layer
+/** Register the ISF min/max for a shader's params under a namespaced
+ *  key so VJ + mapping ranges don't clobber each other on mode
+ *  switch. When clipId is provided, ranges go under `vjc:CLIPID:`
+ *  (preferred for VJ — survives shader swap on the same layer).
+ *  Otherwise falls back to legacy `vj:layerIndex:` or `map:layerIndex:`
+ *  depending on target. */
+export function registerParamRanges(layerIndex: number, inputs: ISFInput[], target: ModTarget = 'vj', clipId?: string) {
+  const prefix = clipId ? `vjc:${clipId}:` : (target === 'mapping' ? `map:${layerIndex}:` : `vj:${layerIndex}:`);
+  // Clear only THIS namespace's old keys — leaves other modes' /
+  // other clips' ranges untouched.
   for (const key of paramRanges.keys()) {
-    if (key.startsWith(`${layerIndex}:`)) paramRanges.delete(key);
+    if (key.startsWith(prefix)) paramRanges.delete(key);
   }
   for (const input of inputs) {
     if (input.TYPE === 'float' || input.TYPE === 'long' || input.TYPE === 'event') {
-      paramRanges.set(`${layerIndex}:${input.NAME}`, {
+      paramRanges.set(`${prefix}${input.NAME}`, {
         min: input.MIN ?? 0,
         max: input.MAX ?? 1,
       });
@@ -964,8 +985,22 @@ class ModulationEngine {
       } else if (!isEffect) {
         // Shader params — works for VJ (both banks) and mapping mode.
         const bvKey = `${bank}:${layerIndex}:${paramName}`;
-        const rangeKey = `${layerIndex}:${paramName}`; // ranges live per-shader, not per-bank
-        const range = paramRanges.get(rangeKey);
+        // Range lookup uses the namespaced key matching whichever
+        // namespace the panel registered under. Clip-keyed entries
+        // get clip-prefixed ranges (shader-specific, independent of
+        // layer). Layer-keyed VJ entries get `vj:` ranges. Mapping
+        // entries get `map:` ranges. Falls through to the legacy
+        // unprefixed key for any data carried over from older builds.
+        let range = entry.clipId
+          ? paramRanges.get(`vjc:${entry.clipId}:${paramName}`)
+          : (isMapping
+              ? paramRanges.get(`map:${layerIndex}:${paramName}`)
+              : paramRanges.get(`vj:${layerIndex}:${paramName}`));
+        if (!range) {
+          // Legacy fallback so projects from before the namespace
+          // refactor still find their ranges.
+          range = paramRanges.get(`${layerIndex}:${paramName}`);
+        }
         let base = baseValues.get(bvKey);
 
         if (base === undefined) {
