@@ -1246,16 +1246,9 @@
         ?? shaders.find(s => s.shaderCode === activeClip.shaderCode)
       : undefined;
     for (const input of selectedClipShaderInputs) {
-      // Clear any active modulation first — try the clip-keyed entry
-      // first (preferred), then the legacy layer-keyed entry. Either
-      // way the entry gets deleted; the engine stops writing on the
-      // next frame.
-      if (activeClipId) {
-        const m = modulationStore.getModulation(selectedLayerIndex, input.NAME, paramDeck, 'vj', activeClipId);
-        if (m && m.source !== 'manual') {
-          setParamModSource(selectedLayerIndex, input.NAME, 'manual', paramDeck, 'vj', activeClipId);
-        }
-      }
+      // Clear any active modulation first. setParamModSource with
+      // 'manual' deletes the modulation entry, so the engine stops
+      // writing to this param on the next frame.
       const existingMod = modulationStore.getModulation(selectedLayerIndex, input.NAME, paramDeck);
       if (existingMod && existingMod.source !== 'manual') {
         setParamModSource(selectedLayerIndex, input.NAME, 'manual', paramDeck);
@@ -1292,21 +1285,10 @@
 
   // Modulation helpers — read directly from the reactive map so
   // Svelte tracks each call site (in {@const mod = ...}) as
-  // dependent on the store. Without this the auto-controls card
-  // gated on mod?.source === 'auto' would never appear because
-  // the template wouldn't re-render after the dropdown change.
-  // VJ shader mods are keyed by CLIP ID, not layer index — so the
-  // automation travels with the clip across re-triggers and deck
-  // moves (perform-ready behavior). Falls through to layer-keyed
-  // when activeClipId isn't available yet.
+  // dependent on the store. Mods are layer-keyed (same model as
+  // mapping mode): the modulation lives on the deck layer and
+  // applies to whichever clip is currently active there.
   function getParamModulation(layerIndex: number, paramName: string): ParamModulation | undefined {
-    if (activeClipId) {
-      const k = modKeyShader(layerIndex, paramName, paramDeck, 'vj', activeClipId);
-      const m = modulationMap.get(k);
-      if (m) return m;
-    }
-    // Legacy lookup fallback so existing layer-keyed mods (older
-    // projects) still surface in the UI until they're migrated.
     return modulationMap.get(modKeyShader(layerIndex, paramName, paramDeck));
   }
 
@@ -1324,16 +1306,7 @@
     field: K,
     value: ParamModulation[K],
   ) {
-    // Per-clip path first (preferred — automation rides on the clip).
-    if (activeClipId) {
-      const existing = modulationStore.getModulation(layerIndex, paramName, paramDeck, 'vj', activeClipId);
-      if (existing) {
-        modulationStore.setModulation(layerIndex, paramName, { ...existing, [field]: value }, paramDeck, 'vj', activeClipId);
-        return;
-      }
-    }
-    // Legacy layer-keyed fallback.
-    const existing = modulationStore.getModulation(layerIndex, paramName);
+    const existing = modulationStore.getModulation(layerIndex, paramName, paramDeck);
     if (!existing) return;
     modulationStore.setModulation(layerIndex, paramName, { ...existing, [field]: value }, paramDeck);
   }
@@ -2805,8 +2778,7 @@
                      playhead, not audio-reactive, so showing this
                      for an auto-bound param is just noise. -->
                 {#if !clipIsAudioReady && selectedClipShaderInputs.some(i => {
-                  const k = activeClipId ? modKeyShader(selectedLayerIndex!, i.NAME, paramDeck, 'vj', activeClipId) : modKeyShader(selectedLayerIndex!, i.NAME, paramDeck);
-                  const m = modulationMap.get(k);
+                  const m = modulationMap.get(modKeyShader(selectedLayerIndex!, i.NAME, paramDeck));
                   return m && m.source !== 'manual' && m.source !== 'auto';
                 })}
                   <div class="audio-warn">This shader doesn't use audio uniforms — modulation controls parameters only, not the shader's internal audio response.</div>
@@ -2820,17 +2792,14 @@
                          dependency since Svelte doesn't trace through
                          function bodies — that's why earlier revs
                          didn't re-render after the dropdown change. -->
-                    {@const _modKeyClip = activeClipId ? modKeyShader(selectedLayerIndex!, input.NAME, paramDeck, 'vj', activeClipId) : null}
                     {@const _modKey = modKeyShader(selectedLayerIndex!, input.NAME, paramDeck, 'vj')}
-                    <!-- Prefer the clip-keyed entry (vjc:CLIPID:param);
-                         fall back to legacy layer-keyed for old projects. -->
-                    {@const mod = (_modKeyClip ? modulationMap.get(_modKeyClip) : undefined) ?? modulationMap.get(_modKey)}
+                    {@const mod = modulationMap.get(_modKey)}
                     {@const isModulated = mod && mod.source !== 'manual'}
                     <div class="shader-param" class:modulated={isModulated} data-modkey={_modKey} data-modsrc={mod?.source ?? 'none'}>
                       <div class="shader-param-header">
                         <span class="shader-param-name">{input.LABEL || input.NAME}</span>
                         <select class="mod-source-select" class:active={isModulated} value={mod?.source || 'manual'}
-                          onchange={(e) => setParamModSource(selectedLayerIndex!, input.NAME, (e.target as HTMLSelectElement).value as ModSource, paramDeck, 'vj', activeClipId ?? undefined)}>
+                          onchange={(e) => setParamModSource(selectedLayerIndex!, input.NAME, (e.target as HTMLSelectElement).value as ModSource, paramDeck)}>
                           <optgroup label="Control"><option value="manual">Manual</option></optgroup>
                           <optgroup label="Audio">
                             <option value="sub">Sub</option><option value="bass">Bass</option><option value="lowMid">Low Mid</option>
