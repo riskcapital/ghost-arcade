@@ -30,7 +30,18 @@
   // instantly (without re-hitting GitHub). The "Check for updates"
   // button forces a fresh API call.
   const appVersion: string = (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '?');
+  // Seed from cache for instant render. getCachedVersionResult now
+  // returns null if the cached `current` doesn't match the running
+  // version — so on a fresh upgrade the badge stays hidden until a
+  // real check completes, instead of showing stale "v1.1.3
+  // available" data from a prior install.
   let versionInfo: VersionCheckResult | null = getCachedVersionResult();
+  // Kick a non-forced refresh on mount so the panel updates if the
+  // cache was invalidated (or absent). The cached-read above
+  // remains the instant-render seed; this fills in afterwards.
+  if (!versionInfo) {
+    checkForUpdate({ force: false }).then(r => { versionInfo = r; }).catch(() => { /* silent */ });
+  }
   let isCheckingUpdate = false;
   import { midiStore } from '../midi/midiStore';
   import { midiManager } from '../midi/midiManager';

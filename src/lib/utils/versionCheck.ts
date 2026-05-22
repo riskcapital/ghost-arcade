@@ -61,11 +61,53 @@ export function compareVersions(a: string, b: string): -1 | 0 | 1 {
   return 0;
 }
 
+/** Return the running app version (from Vite's __APP_VERSION__
+ *  define). Centralized so we don't drift between call sites. */
+function runtimeVersion(): string {
+  return (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0') as string;
+}
+
+/** Read the cached version-check result from localStorage AND
+ *  re-validate it against the currently running app version.
+ *
+ *  Defensive against the "stale cache" bug: a user could have
+ *  cached a check result while on v1.0.x (when v1.1.3 was the
+ *  latest available), then upgraded the binary to v1.3.1.
+ *  Without validation, both the footer pill and the Settings
+ *  banner would happily read that cache and announce "v1.1.3 is
+ *  available" — pointing the user at an OLDER version than the
+ *  one they're already running.
+ *
+ *  Two layers of defense:
+ *   1. If cached.current doesn't match the running app version,
+ *      return null. Forces a re-check.
+ *   2. Re-derive hasUpdate from compareVersions(latest, runtime)
+ *      instead of trusting the stored boolean. If we ever ship a
+ *      build with a buggy comparison and write `hasUpdate: true`
+ *      to localStorage, later builds with the fix should still
+ *      ignore that garbage. */
 function readCached(): VersionCheckResult | null {
   try {
     const raw = localStorage.getItem(LAST_RESULT_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as VersionCheckResult;
+    const cached = JSON.parse(raw) as VersionCheckResult;
+    const current = runtimeVersion();
+    if (cached.current !== current) {
+      // Version drift — the cache is from a previous install. Don't
+      // surface it; consumers will get null and either trigger a
+      // fresh check or just hide the badge.
+      return null;
+    }
+    // Re-derive hasUpdate so we don't trust a possibly-corrupt
+    // stored boolean. compareVersions handles 'v'-prefix stripping
+    // and numeric semver segments.
+    const recomputed: VersionCheckResult = { ...cached };
+    if (recomputed.latest) {
+      recomputed.hasUpdate = compareVersions(recomputed.latest, current) > 0;
+    } else {
+      recomputed.hasUpdate = false;
+    }
+    return recomputed;
   } catch {
     return null;
   }
@@ -119,11 +161,15 @@ async function fetchLatestTag(): Promise<{ tag: string; url: string } | null> {
  *   for the manual "Check for updates" button.
  */
 export async function checkForUpdate(opts: { force?: boolean } = {}): Promise<VersionCheckResult> {
-  const current = (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0') as string;
+  const current = runtimeVersion();
 
   if (!opts.force) {
+    // readCached() already validates cached.current === runtime
+    // version + re-derives hasUpdate from compareVersions, so we
+    // can trust whatever it returns here without re-checking those
+    // invariants ourselves.
     const cached = readCached();
-    if (cached && recentlyChecked() && cached.current === current) {
+    if (cached && recentlyChecked()) {
       return cached;
     }
   }
@@ -141,6 +187,8 @@ export async function checkForUpdate(opts: { force?: boolean } = {}): Promise<Ve
         error: 'No releases published yet',
       };
     } else {
+      // Use the strict-typed compareVersions output. > 0 means latest
+      // is genuinely NEWER than runtime — not equal, not older.
       const cmp = compareVersions(latest.tag, current);
       result = {
         current,
