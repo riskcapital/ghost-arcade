@@ -507,9 +507,18 @@ function createModulationStore() {
     // a long-stale lastApplyTimeSec from a previous mode's session.
     // Without this the first tick after a mode switch can clamp dt
     // to 0 and the playhead appears paused for a moment.
-    modulationEngine.resetDtBaseline();
-    if (parsedCache.length > 0 && !modulationEngine.running) {
-      modulationEngine.start();
+    //
+    // Both engine calls are gated on parsedCache.length > 0 because
+    // svelte writable invokes the subscriber synchronously with the
+    // initial empty map BEFORE `modulationEngine` is declared below
+    // — touching the const at that point would throw a TDZ
+    // ReferenceError. On the initial empty fire we have no work to
+    // do anyway.
+    if (parsedCache.length > 0) {
+      modulationEngine.resetDtBaseline();
+      if (!modulationEngine.running) {
+        modulationEngine.start();
+      }
     }
   });
 
