@@ -2910,9 +2910,13 @@
         {#each selectedShader.inputs as input}
           <!-- Inline modulationMap lookup so Svelte tracks the
                template's reactive dependency on the store (function
-               calls hide the dep). Matches the VJModePanel pattern. -->
+               calls hide the dep). target='mapping' so this picks
+               up the map:-prefixed key the mapping-mode setter
+               writes under — previously this was a legacy VJ-style
+               key lookup which never matched after the target-aware
+               refactor. -->
           {@const mod = input.TYPE === 'float' && selectedLayerIdx >= 0
-            ? mappingModMap.get(modKeyShader(selectedLayerIdx, input.NAME))
+            ? mappingModMap.get(modKeyShader(selectedLayerIdx, input.NAME, 'A', 'mapping'))
             : undefined}
           {@const isModulated = mod && mod.source !== 'manual'}
           {#if input.TYPE === 'float'}

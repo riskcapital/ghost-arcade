@@ -433,8 +433,18 @@ function rebuildParsedCache(map: ModulationMap) {
 function createModulationStore() {
   const { subscribe, update, set } = writable<ModulationMap>(new Map());
 
-  // Rebuild parsed cache whenever store changes
-  subscribe(map => rebuildParsedCache(map));
+  // Rebuild parsed cache whenever store changes. ALSO auto-start
+  // the modulation engine when there are mods to apply — previously
+  // the engine only started when audio.isActive flipped true, which
+  // froze pure-auto modulations indefinitely (they don't need
+  // audio). Triggering on parsedCache > 0 makes the engine pick up
+  // any mod regardless of source.
+  subscribe(map => {
+    rebuildParsedCache(map);
+    if (parsedCache.length > 0 && !modulationEngine.running) {
+      modulationEngine.start();
+    }
+  });
 
   return {
     subscribe,
