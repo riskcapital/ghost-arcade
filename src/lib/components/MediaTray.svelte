@@ -2906,7 +2906,12 @@
       </div>
       <div class="params-list">
         {#each selectedShader.inputs as input}
-          {@const mod = input.TYPE === 'float' ? getShaderModulation(input.NAME) : undefined}
+          <!-- Inline modulationMap lookup so Svelte tracks the
+               template's reactive dependency on the store (function
+               calls hide the dep). Matches the VJModePanel pattern. -->
+          {@const mod = input.TYPE === 'float' && selectedLayerIdx >= 0
+            ? mappingModMap.get(modKeyShader(selectedLayerIdx, input.NAME))
+            : undefined}
           {@const isModulated = mod && mod.source !== 'manual'}
           {#if input.TYPE === 'float'}
             <div class="shader-param" class:modulated={isModulated}>
