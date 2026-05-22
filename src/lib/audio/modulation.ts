@@ -680,11 +680,19 @@ class ModulationEngine {
     if (this.isRunning) return;
     this.isRunning = true;
     this.startTime = performance.now();
+    // Reset the dt-history reference too, otherwise after a stop /
+    // start cycle the new session's `now` (which starts back near 0
+    // because startTime was just reset) appears to go BACKWARDS
+    // relative to lastApplyTimeSec from the old session, making dt
+    // clamp to 0 for many seconds. That manifests as auto-mods
+    // looking "stuck" right after a re-trigger.
+    this.lastApplyTimeSec = 0;
     this.tick();
   }
 
   stop() {
     this.isRunning = false;
+    this.lastApplyTimeSec = 0;
     if (this.animFrameId !== null) {
       cancelAnimationFrame(this.animFrameId);
       this.animFrameId = null;
@@ -742,10 +750,18 @@ class ModulationEngine {
       // when the user moves the speed/range/play controls. Phase
       // wraps in [0, 1); the loop / pingpong shaping is done in
       // getSignal() where the wave shape lives next to the LFOs.
+      //
+      // Defensive: if autoPhase ever lands non-finite (e.g. dt was
+      // NaN once due to a misbehaving timer hook), the phase stays
+      // NaN forever and the mod looks "stuck". Reset to 0 here so
+      // it self-heals on the next tick.
       if (mod.source === 'auto' && mod.autoPlaying !== false) {
-        const speedHz = mod.autoSpeedHz ?? 0.5;
-        const phase = ((mod.autoPhase ?? 0) + speedHz * dt) % 1;
-        mod.autoPhase = phase < 0 ? phase + 1 : phase;
+        const speedHz = Number.isFinite(mod.autoSpeedHz) ? (mod.autoSpeedHz as number) : 0.15;
+        const prev = Number.isFinite(mod.autoPhase) ? (mod.autoPhase as number) : 0;
+        const safeDt = Number.isFinite(dt) ? dt : 0;
+        const advanced = (prev + speedHz * safeDt) % 1;
+        const wrapped = advanced < 0 ? advanced + 1 : advanced;
+        mod.autoPhase = Number.isFinite(wrapped) ? wrapped : 0;
       }
 
       let signal = this.getSignal(mod.source, audio, now, mod.speed, mod.bpmSync === true, mod);
