@@ -73,7 +73,12 @@ export type ModSource =
   | 'lfo-sine'   // Sine wave LFO
   | 'lfo-saw'    // Sawtooth LFO
   | 'lfo-square' // Square wave LFO
-  | 'lfo-tri';   // Triangle wave LFO
+  | 'lfo-tri'    // Triangle wave LFO
+  // Per-param playhead automation. Independent of audio entirely —
+  // each param has its own speed, loop/pingpong mode, and sub-range
+  // clippers (autoMin / autoMax). play/pause via mod.autoPlaying.
+  // See AutomationState below.
+  | 'auto';
 
 // A single parameter modulation assignment
 export interface ParamModulation {
@@ -90,6 +95,27 @@ export interface ParamModulation {
    *  `speed × (bpm / 60)` cycles per second, so speed acts as a beat-division
    *  multiplier rather than a Hz value. Ignored for non-LFO sources. */
   bpmSync?: boolean;
+
+  // ─── Per-param automation (source === 'auto') ─────────────────
+  /** Internal phase counter for the auto playhead, 0..1. Advanced by
+   *  `autoSpeedHz × dt` each frame when autoPlaying is true.
+   *  Persisted with the modulation so pause/resume continues from
+   *  where the user paused, not from now mod cycle. */
+  autoPhase?: number;
+  /** Loop = saw (0→1, wrap), pingpong = triangle (0→1→0). */
+  autoMode?: 'loop' | 'pingpong';
+  /** Cycles per second. Range 0.05 - 4.0 in the UI; the engine
+   *  doesn't clamp so MIDI / keyframe automation can push beyond. */
+  autoSpeedHz?: number;
+  /** Lower clip of the param's range, expressed as 0..1 fraction.
+   *  0 = the param's natural min, 1 = the natural max. Default 0. */
+  autoMin?: number;
+  /** Upper clip, same scale. Default 1. Always >= autoMin in the
+   *  UI (we swap if user inverts), but the engine handles either. */
+  autoMax?: number;
+  /** Play/pause. When false, the param sits at whatever value the
+   *  last frame published — the playhead doesn't advance. */
+  autoPlaying?: boolean;
 }
 
 // Default modulation values for new assignments
@@ -98,6 +124,13 @@ export const DEFAULT_MOD: Omit<ParamModulation, 'source'> = {
   speed: 1,
   invert: false,
   bpmSync: false,
+  // Automation defaults — only consulted when source === 'auto'.
+  autoPhase: 0,
+  autoMode: 'loop',
+  autoSpeedHz: 0.5,
+  autoMin: 0,
+  autoMax: 1,
+  autoPlaying: true,
 };
 
 // Pre-parsed key for hot-path use (avoids split(':') per frame)
@@ -489,11 +522,26 @@ export function setParamModSource(layerIndex: number, paramName: string, source:
     modulationStore.setModulation(layerIndex, paramName, { source: 'manual', ...DEFAULT_MOD }, bank);
   } else {
     const existing = modulationStore.getModulation(layerIndex, paramName, bank);
+    // For 'auto' source, seed the playhead fields if the existing
+    // mod doesn't have them (e.g. user is switching from 'manual'
+    // straight to 'auto'). Without these defaults the engine would
+    // tick with autoSpeedHz=undefined and the param would freeze.
+    const isAuto = source === 'auto';
     modulationStore.setModulation(layerIndex, paramName, {
       source,
       amount: existing?.amount ?? DEFAULT_MOD.amount,
       speed: existing?.speed ?? DEFAULT_MOD.speed,
       invert: existing?.invert ?? DEFAULT_MOD.invert,
+      // Carry over auto-fields when the mod was already in auto
+      // mode, otherwise seed from DEFAULT_MOD. autoPlaying defaults
+      // true so picking "Auto" immediately starts the sweep — user
+      // can hit pause if they want to dial in min/max first.
+      autoPhase: existing?.autoPhase ?? DEFAULT_MOD.autoPhase,
+      autoMode: existing?.autoMode ?? DEFAULT_MOD.autoMode,
+      autoSpeedHz: existing?.autoSpeedHz ?? DEFAULT_MOD.autoSpeedHz,
+      autoMin: existing?.autoMin ?? DEFAULT_MOD.autoMin,
+      autoMax: existing?.autoMax ?? DEFAULT_MOD.autoMax,
+      autoPlaying: isAuto ? (existing?.autoPlaying ?? true) : DEFAULT_MOD.autoPlaying,
     }, bank);
   }
   if (source !== 'manual' && !modulationEngine.running) {
@@ -573,9 +621,23 @@ class ModulationEngine {
     this.animFrameId = requestAnimationFrame(this.tick);
   };
 
+  /** Wall-clock time of the previous applyModulations call. Used to
+   *  derive `dt` so the auto-playhead phase advances by exactly
+   *  `speedHz × dt` per frame regardless of RAF cadence. */
+  private lastApplyTimeSec = 0;
+
   private applyModulations() {
     const audio = get(audioStore);
     const now = (performance.now() - this.startTime) / 1000;
+    // dt: clamp to a reasonable window so a tab-suspend / hitch
+    // doesn't dump 30s of phase advance into one frame and make
+    // automated params snap visibly. 100ms cap = 1.5x normal RAF
+    // frame which is enough headroom to recover from a stutter
+    // without producing a visible jump.
+    const dt = this.lastApplyTimeSec > 0
+      ? Math.min(0.1, Math.max(0, now - this.lastApplyTimeSec))
+      : 0.016;
+    this.lastApplyTimeSec = now;
     const vjState = get(vjClipLauncher);
 
     // Batch shader updates per (bank, layerIndex). Bank A and Bank B route
@@ -587,7 +649,19 @@ class ModulationEngine {
     for (const entry of parsedCache) {
       const { mod, bank, layerIndex, isEffect, isEdgeEffect, effectId, paramName, special } = entry;
 
-      let signal = this.getSignal(mod.source, audio, now, mod.speed, mod.bpmSync === true);
+      // Auto-source playhead advance. Mutates the modulation's
+      // autoPhase in-place — cheap because the parsedCache holds a
+      // reference to the same object the modulationStore writes to
+      // when the user moves the speed/range/play controls. Phase
+      // wraps in [0, 1); the loop / pingpong shaping is done in
+      // getSignal() where the wave shape lives next to the LFOs.
+      if (mod.source === 'auto' && mod.autoPlaying !== false) {
+        const speedHz = mod.autoSpeedHz ?? 0.5;
+        const phase = ((mod.autoPhase ?? 0) + speedHz * dt) % 1;
+        mod.autoPhase = phase < 0 ? phase + 1 : phase;
+      }
+
+      let signal = this.getSignal(mod.source, audio, now, mod.speed, mod.bpmSync === true, mod);
       if (mod.invert) signal = 1 - signal;
 
       // ===== Special: crossfader value =====
@@ -680,7 +754,11 @@ class ModulationEngine {
         const fxMin = fxRange?.min ?? 0;
         const fxMax = fxRange?.max ?? 1;
         const fxSpan = fxMax - fxMin;
-        const raw = fxBase + (signal - 0.5) * mod.amount * fxSpan;
+        // Auto source uses absolute-position routing (see the
+        // shader-params branch below for the rationale).
+        const raw = mod.source === 'auto'
+          ? fxMin + signal * fxSpan
+          : fxBase + (signal - 0.5) * mod.amount * fxSpan;
         const modulated = Math.max(fxMin, Math.min(fxMax, raw));
 
         if (isMapping) {
@@ -716,9 +794,22 @@ class ModulationEngine {
           baseValues.set(bvKey, base);
         }
 
-        // Scale modulation relative to param range, clamp to ISF min/max
+        // Scale modulation relative to param range, clamp to ISF min/max.
+        // Audio sources modulate AROUND the slider's base value
+        // (`(signal - 0.5) * amount` recentered formula). Auto source
+        // is different — the signal is already a fraction of the
+        // user's chosen sub-range (autoMin..autoMax) and should drive
+        // the param ABSOLUTELY to that position. Mixing the auto
+        // signal through the audio formula would just modulate
+        // around the base, which is the opposite of what the user
+        // wants from an automation slider.
         const span = range ? (range.max - range.min) : 2;
-        const raw = base + (signal - 0.5) * mod.amount * span;
+        let raw: number;
+        if (mod.source === 'auto') {
+          raw = (range ? range.min : 0) + signal * span;
+        } else {
+          raw = base + (signal - 0.5) * mod.amount * span;
+        }
         const modulated = range ? Math.max(range.min, Math.min(range.max, raw)) : raw;
         // Ghost-indicator cache also keyed by bank
         lastModulatedValues.set(bvKey, modulated);
@@ -752,7 +843,7 @@ class ModulationEngine {
     }
   }
 
-  private getSignal(source: ModSource, audio: AudioState, time: number, speed: number, bpmSync: boolean): number {
+  private getSignal(source: ModSource, audio: AudioState, time: number, speed: number, bpmSync: boolean, mod?: ParamModulation): number {
     switch (source) {
       case 'sub':       return audio.bands.sub;
       case 'bass':      return audio.bands.bass;
@@ -801,6 +892,24 @@ class ModulationEngine {
         const rate = bpmSync && audio.bpm > 0 ? speed * (audio.bpm / 60) : speed;
         const phase = (time * rate) % 1;
         return phase < 0.5 ? phase * 2 : 2 - phase * 2;
+      }
+      // Per-param playhead automation. Phase advancement happens
+      // in applyModulations() (so it can use frame dt and respect
+      // autoPlaying); here we just shape the stored phase into a
+      // saw (loop) or triangle (pingpong) and clip into the user's
+      // autoMin..autoMax sub-range. Result is a value 0..1 that
+      // the downstream `(signal - 0.5) * amount` formula maps onto
+      // the param's full range — to make the param sweep cleanly
+      // through autoMin..autoMax, callers should set amount=1.
+      case 'auto': {
+        if (!mod) return 0;
+        const phase = mod.autoPhase ?? 0;
+        const shaped = mod.autoMode === 'pingpong'
+          ? (phase < 0.5 ? phase * 2 : 2 - phase * 2)
+          : phase;
+        const lo = mod.autoMin ?? 0;
+        const hi = mod.autoMax ?? 1;
+        return lo + shaped * (hi - lo);
       }
       default: return 0;
     }
