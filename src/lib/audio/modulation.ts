@@ -167,6 +167,12 @@ interface ParsedModEntry {
    *  VJ + mapping mods coexist independently regardless of which
    *  workspace the user is currently in. */
   target: ModTarget;
+  /** When set (vjc:-prefixed key), the engine searches deck
+   *  layerStates for this clip ID at apply-time and writes there.
+   *  The `layerIndex` field is a sentinel (-1) in that case — the
+   *  clip's deck position is resolved per-frame, so automation
+   *  follows the clip wherever the user fires it. */
+  clipId?: string;
   layerIndex: number;
   isEffect: boolean;     // true for regular pixel effects (`layer.effects[]`)
   isEdgeEffect: boolean; // true for edge effects (`layer.edgeEffects.effects[]`)
@@ -187,27 +193,36 @@ export type ModulationMap = Map<string, ParamModulation>;
 // Key builders so callers don't hand-craft strings.
 //
 // Key format:
-//   target='vj'      bank='A'   →  "0:cameraSpeed"
-//   target='vj'      bank='B'   →  "B:0:cameraSpeed"
-//   target='mapping'            →  "map:0:cameraSpeed"           (no banks in mapping)
+//   target='vj' + clipId       →  "vjc:CLIPID:paramName"        (per-clip, preferred for VJ)
+//   target='vj'      bank='A'   →  "0:paramName"                 (legacy layer-keyed fallback)
+//   target='vj'      bank='B'   →  "B:0:paramName"               (legacy layer-keyed)
+//   target='mapping'            →  "map:0:paramName"             (no banks in mapping)
 //   target='vj'      effect     →  "0:fx:effectId:paramName"
 //   target='mapping' effect     →  "map:0:fx:effectId:paramName"
 //
-// VJ + mapping both layer-keyed — same architecture, just different
-// target prefix. Earlier rev added clip-keyed `vjc:` to give per-
-// clip independence but the UX wiring was fragile and the user
-// asked for "exactly like mapping" behavior. Layer-keyed means a
-// modulation lives on the deck LAYER and applies to whichever
-// clip is currently active there; switching clips on the layer
-// doesn't lose the modulation, and re-firing the original clip
-// keeps it active.
+// Why clip-keyed (vjc:) for VJ shaders:
+// Two different shaders might both expose a param called "speed".
+// With layer-keyed mods, picking Auto on shader A's "speed" silently
+// activates auto on shader B's "speed" the moment you switch to B
+// on the same layer — same key, applies to whichever clip happens
+// to be active. The user explicitly flagged this: "we need to use
+// the shader as an ID. cant have that." Clip-keyed mods sit on the
+// clip itself, dormant when the clip isn't on a deck, live when
+// it is. Two different clips on the same layer get independent
+// automation profiles.
+//
+// Mapping mode stays layer-keyed (`map:`): mapping layers are
+// stable persistent containers, layer index uniquely identifies
+// the shader.
 export function modKeyShader(
   layerIndex: number,
   paramName: string,
   bank: 'A' | 'B' = 'A',
   target: ModTarget = 'vj',
+  clipId?: string,
 ): string {
   if (target === 'mapping') return `map:${layerIndex}:${paramName}`;
+  if (clipId) return `vjc:${clipId}:${paramName}`;
   return bank === 'B' ? `B:${layerIndex}:${paramName}` : `${layerIndex}:${paramName}`;
 }
 export function modKeyEffect(
@@ -378,12 +393,31 @@ function rebuildParsedCache(map: ModulationMap) {
     }
 
     // Target prefix detection:
-    //   "map:..." → mapping target (no banks)
-    //   "B:..."   → vj target, Bank B
-    //   otherwise → vj target, Bank A
+    //   "vjc:CLIPID:..." → vj target, clip-keyed (preferred)
+    //   "map:..."        → mapping target (no banks)
+    //   "B:..."          → vj target, Bank B
+    //   otherwise        → vj target, Bank A (legacy layer-keyed)
     let target: ModTarget = 'vj';
     let bank: 'A' | 'B' = 'A';
     let cursor = 0;
+    if (parts[0] === 'vjc') {
+      // vjc:CLIPID:paramName  — layerIndex is resolved per-frame by
+      // searching deck layerStates for the clip ID. paramName can
+      // include colons (rare but possible) so rejoin everything
+      // after the clipId.
+      parsedCache.push({
+        mod,
+        bank: 'A',
+        target: 'vj',
+        clipId: parts[1],
+        layerIndex: -1,
+        isEffect: false,
+        isEdgeEffect: false,
+        effectId: '',
+        paramName: parts.slice(2).join(':'),
+      });
+      continue;
+    }
     if (parts[0] === 'map') {
       target = 'mapping';
       cursor = 1;
@@ -455,17 +489,16 @@ function createModulationStore() {
   return {
     subscribe,
 
-    /** Set modulation for a specific layer+param (shader). Bank
-     *  A by default; target defaults to 'vj' to match the legacy
-     *  layer-keyed format. The stored mod's `target` field is
-     *  always stamped to match the key so engine routing stays
-     *  in sync with the key prefix. */
-    setModulation(layerIndex: number, paramName: string, mod: ParamModulation, bank: 'A' | 'B' = 'A', target?: ModTarget) {
+    /** Set modulation for a specific layer+param (shader). When
+     *  clipId is provided for a VJ target, the mod is stored under
+     *  a per-clip (vjc:) key — survives clip switching, doesn't
+     *  bleed across shaders with the same param name. */
+    setModulation(layerIndex: number, paramName: string, mod: ParamModulation, bank: 'A' | 'B' = 'A', target?: ModTarget, clipId?: string) {
       const t = target ?? mod.target ?? 'vj';
       const stored: ParamModulation = { ...mod, target: t };
       update(map => {
         const newMap = new Map(map);
-        const key = modKeyShader(layerIndex, paramName, bank, t);
+        const key = modKeyShader(layerIndex, paramName, bank, t, clipId);
         if (stored.source === 'manual') {
           newMap.delete(key);
         } else {
@@ -476,9 +509,9 @@ function createModulationStore() {
     },
 
     /** Get modulation for a specific layer+param (shader). */
-    getModulation(layerIndex: number, paramName: string, bank: 'A' | 'B' = 'A', target: ModTarget = 'vj'): ParamModulation | undefined {
+    getModulation(layerIndex: number, paramName: string, bank: 'A' | 'B' = 'A', target: ModTarget = 'vj', clipId?: string): ParamModulation | undefined {
       const map = get({ subscribe });
-      return map.get(modKeyShader(layerIndex, paramName, bank, target));
+      return map.get(modKeyShader(layerIndex, paramName, bank, target, clipId));
     },
 
     /** Set modulation for an effect parameter. Bank A by default. */
@@ -603,11 +636,11 @@ export const modulationStore = createModulationStore();
  *  modulation drives — 'vj' for clip-bound shaders, 'mapping' for
  *  mapping-layer shaders. Each UI panel passes its own target so
  *  VJ and mapping mods coexist in the store under separate keys. */
-export function setParamModSource(layerIndex: number, paramName: string, source: ModSource, bank: 'A' | 'B' = 'A', target: ModTarget = 'vj') {
+export function setParamModSource(layerIndex: number, paramName: string, source: ModSource, bank: 'A' | 'B' = 'A', target: ModTarget = 'vj', clipId?: string) {
   if (source === 'manual') {
-    modulationStore.setModulation(layerIndex, paramName, { source: 'manual', target, ...DEFAULT_MOD }, bank, target);
+    modulationStore.setModulation(layerIndex, paramName, { source: 'manual', target, ...DEFAULT_MOD }, bank, target, clipId);
   } else {
-    const existing = modulationStore.getModulation(layerIndex, paramName, bank, target);
+    const existing = modulationStore.getModulation(layerIndex, paramName, bank, target, clipId);
     // For 'auto' source, seed the playhead fields if the existing
     // mod doesn't have them (e.g. user is switching from 'manual'
     // straight to 'auto'). Without these defaults the engine would
@@ -629,7 +662,7 @@ export function setParamModSource(layerIndex: number, paramName: string, source:
       autoMin: existing?.autoMin ?? DEFAULT_MOD.autoMin,
       autoMax: existing?.autoMax ?? DEFAULT_MOD.autoMax,
       autoPlaying: isAuto ? (existing?.autoPlaying ?? true) : DEFAULT_MOD.autoPlaying,
-    }, bank, target);
+    }, bank, target, clipId);
   }
   if (source !== 'manual' && !modulationEngine.running) {
     modulationEngine.start();
@@ -742,7 +775,41 @@ class ModulationEngine {
     const mappingBatch = new Map<number, Record<string, number>>();
 
     for (const entry of parsedCache) {
-      const { mod, bank, layerIndex, isEffect, isEdgeEffect, effectId, paramName, special } = entry;
+      // Per-iteration shadowing of bank/layerIndex — clip-keyed
+      // entries override these from the runtime deck search below.
+      let { bank, layerIndex } = entry;
+      const { mod, isEffect, isEdgeEffect, effectId, paramName, special } = entry;
+
+      // Clip-keyed (vjc:) entries — resolve which deck/layer
+      // currently has this clip active, write there. Mod stays in
+      // the store regardless; if the clip isn't on any deck right
+      // now, we just skip this frame's write (mod is dormant). This
+      // is what makes per-clip automation survive clip switching:
+      // the clip keeps its own auto setup, ready to resume when
+      // the user re-fires it.
+      if (entry.clipId) {
+        let foundLayer = -1;
+        let foundBank: 'A' | 'B' = 'A';
+        for (let i = 0; i < vjState.layerStates.length; i++) {
+          if (vjState.layerStates[i]?.activeClip?.id === entry.clipId) {
+            foundLayer = i;
+            foundBank = 'A';
+            break;
+          }
+        }
+        if (foundLayer < 0) {
+          for (let i = 0; i < vjState.bankBLayerStates.length; i++) {
+            if (vjState.bankBLayerStates[i]?.activeClip?.id === entry.clipId) {
+              foundLayer = i;
+              foundBank = 'B';
+              break;
+            }
+          }
+        }
+        if (foundLayer < 0) continue;  // clip not on a deck — dormant
+        layerIndex = foundLayer;
+        bank = foundBank;
+      }
 
       // Auto-source playhead advance. Mutates the modulation's
       // autoPhase in-place — cheap because the parsedCache holds a
