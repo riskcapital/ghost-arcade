@@ -159,15 +159,63 @@ function createOfflineRenderStore() {
     update(s => ({ ...s, status, errorMessage: msg ?? null }));
   }
 
-  /** Read the engine's composite render target back as raw RGBA8.
-   *  Bypasses canvas.toBlob, which depends on preserveDrawingBuffer
-   *  being true at WebGLRenderer construction — the live editor uses
-   *  the more efficient `preserveDrawingBuffer: false` path, so toBlob
-   *  often returns transparent bytes after a RAF tick. Raw pixels
-   *  from the render target always work and we let ffmpeg re-encode
-   *  them as PNG via a `-f rawvideo -pix_fmt rgba` input format. */
-  function captureFrameRaw(engine: RenderEngine): { width: number; height: number; data: Uint8Array } {
-    return (engine as any).readCompositePixels();
+  /** Read the engine's composite render target as JPEG bytes.
+   *
+   *  Why JPEG and not raw RGBA: ffmpeg.wasm runs in a ~2GB heap.
+   *  A 1080p RGBA frame is 8.3MB, so a 10s/30fps render produces
+   *  ~2.5GB of raw pixel data — wasm OOMs partway through and we
+   *  see `ErrnoError: FS error` from writeFile. JPEG at q≈0.92
+   *  drops that to ~5-15% per frame (so the same job uses
+   *  ~150-400MB), which fits comfortably.
+   *
+   *  Why we can't use canvas.toBlob('image/jpeg') directly on the
+   *  WebGL canvas: the live engine creates its renderer with
+   *  preserveDrawingBuffer:false (perf optimization), so the
+   *  drawing buffer is cleared after compositing and toBlob would
+   *  return blank bytes. Instead we readPixels from the engine's
+   *  composite RenderTarget into CPU memory, splat that into a
+   *  scratch 2D canvas via putImageData, and toBlob from THAT
+   *  canvas — which has the bytes regardless of WebGL state. */
+  let scratchCanvas: HTMLCanvasElement | null = null;
+  let scratchCtx: CanvasRenderingContext2D | null = null;
+  function getScratchCanvas(w: number, h: number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
+    if (!scratchCanvas) {
+      scratchCanvas = document.createElement('canvas');
+    }
+    if (scratchCanvas.width !== w || scratchCanvas.height !== h) {
+      scratchCanvas.width = w;
+      scratchCanvas.height = h;
+      scratchCtx = null;
+    }
+    if (!scratchCtx) {
+      // willReadFrequently=false because we only WRITE to this
+      // canvas, never readback from it.
+      scratchCtx = scratchCanvas.getContext('2d', { willReadFrequently: false });
+      if (!scratchCtx) throw new Error('Could not get 2d context for scratch canvas');
+    }
+    return { canvas: scratchCanvas, ctx: scratchCtx };
+  }
+  async function captureFrameJPEG(engine: RenderEngine, quality: number): Promise<Uint8Array> {
+    const { width, height, data } = (engine as any).readCompositePixels() as { width: number; height: number; data: Uint8Array };
+    const { canvas, ctx } = getScratchCanvas(width, height);
+    // ImageData wants Uint8ClampedArray with the same byte layout
+    // as the RGBA buffer we already produced — wrap the buffer
+    // in-place to avoid a multi-MB copy per frame.
+    const clamped = new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength);
+    // Cast to satisfy TS's preference for Uint8ClampedArray<ArrayBuffer>
+    // — the runtime is fine either way; this is purely the union-narrowing
+    // overload resolution that gets cranky with byte-pointer constructors.
+    const imgData = new ImageData(clamped as Uint8ClampedArray<ArrayBuffer>, width, height);
+    ctx.putImageData(imgData, 0, 0);
+    return new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          reject(new Error('toBlob returned null'));
+          return;
+        }
+        blob.arrayBuffer().then(buf => resolve(new Uint8Array(buf))).catch(reject);
+      }, 'image/jpeg', quality);
+    });
   }
 
   /** Wait one animation frame so the live RAF loop has a chance to
@@ -203,7 +251,7 @@ function createOfflineRenderStore() {
     try {
       ffmpeg = await loadFFmpeg();
     } catch (err) {
-      setStatus('error', `FFmpeg load failed: ${(err as Error).message}`);
+      setStatus('error', `FFmpeg load failed: ${formatErr(err)}`);
       return false;
     }
     if (cancelRequested) { _finish('cancelled'); return false; }
@@ -244,14 +292,16 @@ function createOfflineRenderStore() {
         // texture-update + composite stages entirely.)
         await nextFrame();
 
-        // Read the composite target's raw RGBA bytes (top-down).
-        // We write to ffmpeg's virtual FS as one concatenated
-        // rawvideo file rather than per-frame PNGs — saves ~40%
-        // encode time on the heavy-resolution jobs since libpng
-        // decode-on-input is the bottleneck for PNG-per-frame.
-        const frame = captureFrameRaw(engine);
-        const frameName = `frame_${String(i).padStart(6, '0')}.rgba`;
-        await ffmpeg.writeFile(frameName, frame.data);
+        // Capture the frame as a JPEG. Raw RGBA was 8MB/frame at
+        // 1080p — 300 frames OOM'd the wasm heap (~2GB) with an
+        // "ErrnoError: FS error" during writeFile. JPEG at q=0.92
+        // is roughly 100KB-1MB/frame depending on content, fitting
+        // the budget comfortably while still being near-lossless
+        // for typical VJ output. The final MP4 quality is set by
+        // libx264 CRF below, not by the intermediate JPEGs.
+        const jpegBytes = await captureFrameJPEG(engine, 0.92);
+        const frameName = `frame_${String(i).padStart(6, '0')}.jpg`;
+        await ffmpeg.writeFile(frameName, jpegBytes);
 
         update(s => ({ ...s, currentFrame: i + 1 }));
       }
@@ -265,11 +315,8 @@ function createOfflineRenderStore() {
       const crf = settings.quality === 'archive' ? '14' : settings.quality === 'web' ? '23' : '18';
       const outputName = `${settings.filename || 'render'}.mp4`;
       await ffmpeg.exec([
-        '-f', 'rawvideo',
-        '-pixel_format', 'rgba',
-        '-video_size', `${settings.width}x${settings.height}`,
         '-framerate', String(settings.fps),
-        '-i', 'frame_%06d.rgba',
+        '-i', 'frame_%06d.jpg',
         '-c:v', 'libx264',
         '-pix_fmt', 'yuv420p',
         '-crf', crf,
@@ -309,7 +356,7 @@ function createOfflineRenderStore() {
       // don't accumulate gigabytes of PNG state across sessions.
       try {
         for (let i = 0; i < totalFrames; i++) {
-          await ffmpeg.deleteFile(`frame_${String(i).padStart(6, '0')}.rgba`);
+          await ffmpeg.deleteFile(`frame_${String(i).padStart(6, '0')}.jpg`);
         }
         await ffmpeg.deleteFile(outputName);
       } catch (e) { /* best-effort */ }
@@ -318,7 +365,7 @@ function createOfflineRenderStore() {
       return true;
     } catch (err) {
       console.error('[offlineRender] error:', err);
-      setStatus('error', (err as Error).message);
+      setStatus('error', formatErr(err));
       return false;
     } finally {
       // Always restore engine state so the live editor returns to
@@ -353,6 +400,25 @@ function createOfflineRenderStore() {
 }
 
 // Local helpers (not part of the store API surface).
+
+/** Coerce any thrown value into a useful display string. Native
+ *  Error.message works in the common case but Emscripten's
+ *  `ErrnoError` (what ffmpeg.wasm throws on FS failures) has
+ *  `.message` empty + the useful text in `.name` or via String(err).
+ *  Earlier rev showed a blank red banner when this fired; users
+ *  saw "Render failed" with no clue what to do. */
+function formatErr(err: unknown): string {
+  if (err && typeof err === 'object') {
+    const e = err as { message?: unknown; name?: unknown; errno?: unknown };
+    if (typeof e.message === 'string' && e.message.length > 0) return e.message;
+    if (typeof e.name === 'string' && e.name.length > 0) {
+      const errnoSuffix = typeof e.errno === 'number' ? ` (errno ${e.errno})` : '';
+      return `${e.name}${errnoSuffix}`;
+    }
+  }
+  try { return String(err); } catch { return 'Unknown error'; }
+}
+
 
 async function thumbnailFromBlob(blob: Blob, url: string, atSeconds: number): Promise<string | undefined> {
   try {
