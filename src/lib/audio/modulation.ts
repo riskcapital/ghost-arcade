@@ -1000,9 +1000,31 @@ class ModulationEngine {
             const fxParam = (effect.params as Record<string, number>)[paramName];
             sv = typeof fxParam === 'number' ? fxParam : undefined;
           }
-          if (typeof sv !== 'number') continue;
-          fxBase = sv;
-          baseValues.set(fxKey, fxBase);
+          // Auto-source doesn't use the base value (raw = range.min +
+          // signal × span). Audio / LFO sources do, because their
+          // formula is `base + (signal − 0.5) × amount × span`. So:
+          //   - auto: missing base is fine, fall back to 0 and continue
+          //   - others: bail this frame, try again next tick
+          //
+          // Before this guard, picking Auto on a freshly-added effect
+          // whose params object was still empty made the engine `continue`
+          // forever — no value was ever written, the mod looked dormant.
+          // Most-recent-layer worked because by the time the user picked
+          // Auto there, they had moved the slider once (which writes a
+          // numeric value into params) so capture succeeded. Older
+          // layers that the user picked Auto on without first moving
+          // the slider were the ones stuck.
+          if (typeof sv !== 'number') {
+            if (mod.source === 'auto') {
+              fxBase = 0;
+              baseValues.set(fxKey, fxBase);
+            } else {
+              continue;
+            }
+          } else {
+            fxBase = sv;
+            baseValues.set(fxKey, fxBase);
+          }
         }
 
         // Pull the registered slider range so modulation scales naturally
