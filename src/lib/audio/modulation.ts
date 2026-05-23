@@ -824,6 +824,20 @@ class ModulationEngine {
   private applyModulations() {
     const audio = get(audioStore);
     const now = (performance.now() - this.startTime) / 1000;
+    // Every ~1s, dump the full parsedCache contents so we can see
+    // whether multiple mods are actually present and being iterated.
+    // Set window.__modCacheDebug=true in console to enable.
+    if ((globalThis as any).__modCacheDebug) {
+      if (!(globalThis as any).__modCacheDumpAt) (globalThis as any).__modCacheDumpAt = 0;
+      const nowMs = performance.now();
+      if (nowMs - (globalThis as any).__modCacheDumpAt > 1000) {
+        (globalThis as any).__modCacheDumpAt = nowMs;
+        console.log('[modEngine] parsedCache contents:', parsedCache.length, 'entries');
+        for (const e of parsedCache) {
+          console.log('  →', { target: e.target, layer: e.layerIndex, isEffect: e.isEffect, isEdge: e.isEdgeEffect, fx: e.effectId.slice(0, 8), param: e.paramName, src: e.mod.source, phase: typeof e.mod.autoPhase === 'number' ? e.mod.autoPhase.toFixed(3) : '-', playing: e.mod.autoPlaying });
+        }
+      }
+    }
     // dt: clamp to a reasonable window so a tab-suspend / hitch
     // doesn't dump 30s of phase advance into one frame and make
     // automated params snap visibly. 100ms cap = 1.5x normal RAF
