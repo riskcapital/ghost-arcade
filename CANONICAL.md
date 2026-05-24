@@ -39,3 +39,25 @@ If you are an AI assistant working in this repo:
 
 Release artifacts (signed Windows + notarized macOS installers) live in a separate repo:
 `riskcapital/ghost-arcade-releases`. CI pushes there on `v*` tags. That separation is intentional.
+
+## Website
+
+The marketing + download site (https://ghostarcade.live) is a **separate repo** —
+this app repo does not contain the website:
+
+- Repo: `riskcapital/ghostarcade-web` (https://github.com/riskcapital/ghostarcade-web)
+- Stack: Next.js, deployed on **Vercel** — every push to `main` auto-deploys to production.
+
+**Updating the download links after a release:** the site's download buttons and
+every version string derive from a single constant — `RELEASE_VERSION` in
+`src/lib/release.ts` (in the `ghostarcade-web` repo). After CI publishes a new
+`v*` release to `ghost-arcade-releases`, bump that constant to the new version and
+push to `main`; Vercel redeploys and the links update everywhere.
+
+The installer asset names the site expects (`Ghost-Arcade-Setup-{V}.exe`,
+`Ghost-Arcade-{V}-arm64.dmg`, `Ghost-Arcade-{V}-x64.dmg`) are produced by
+`electron-builder.yml` **in this repo** — so the two repos are coupled by that
+naming. Don't rename artifacts here without updating `release.ts` there.
+
+Full step-by-step runbook lives in the website repo:
+[`UPDATING.md`](https://github.com/riskcapital/ghostarcade-web/blob/main/UPDATING.md).
