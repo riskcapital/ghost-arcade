@@ -67,6 +67,7 @@
   import { recentFiles } from './lib/stores/recentFiles';
   import { initLicense, destroyLicense } from './lib/stores/license';
   import { startUpdateChecker, stopUpdateChecker } from './lib/stores/updateChecker';
+  import { startAutoEngine, stopAutoEngine } from './lib/audio/autoEngine';
   import { linesStore } from './lib/stores/lines';
   import { loadShadersFromServer, loadCloudShadersFromDisk, shaderLibrary } from './lib/stores/shaderLibrary';
   import { mediaTrayShaders } from './lib/stores/mediaTrayShaders';
@@ -673,6 +674,13 @@
     // Check for app updates (compares against latest GitHub release)
     startUpdateChecker();
 
+    // Start the per-param Auto playhead engine. Walks every layer's
+    // paramAuto / shaderValueAuto each frame and writes resolved
+    // values directly into the underlying param data — survives
+    // mode switching, layer reorder, and project save/load because
+    // the state lives on the layer, not in a side map.
+    startAutoEngine();
+
     // Start preloading shaders in background (non-blocking — don't wait for completion)
     preloadShaderLibrary().catch(() => {});
 
@@ -1055,6 +1063,8 @@
       document.removeEventListener('click', handleClickOutside);
       viewportResizeObserver.disconnect();
       destroyLicense();
+      stopUpdateChecker();
+      stopAutoEngine();
     };
   });
 

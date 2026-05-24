@@ -861,6 +861,13 @@ class ModulationEngine {
       let { bank, layerIndex } = entry;
       const { mod, isEffect, isEdgeEffect, effectId, paramName, special } = entry;
 
+      // Auto-source modulations are handled exclusively by autoEngine.ts
+      // now — state lives on the layer / clip data itself. Legacy
+      // project files may still carry `source: 'auto'` entries in their
+      // saved modulation map; ignore them here so the audio engine
+      // doesn't double-drive on top of the sidecar's writes.
+      if (mod.source === 'auto') continue;
+
       // Clip-keyed (vjc:) entries — resolve which deck/layer
       // currently has this clip active, write there. Mod stays in
       // the store regardless; if the clip isn't on any deck right
@@ -906,25 +913,11 @@ class ModulationEngine {
         bank = foundBank;
       }
 
-      // Auto-source playhead advance. Mutates the modulation's
-      // autoPhase in-place — cheap because the parsedCache holds a
-      // reference to the same object the modulationStore writes to
-      // when the user moves the speed/range/play controls. Phase
-      // wraps in [0, 1); the loop / pingpong shaping is done in
-      // getSignal() where the wave shape lives next to the LFOs.
-      //
-      // Defensive: if autoPhase ever lands non-finite (e.g. dt was
-      // NaN once due to a misbehaving timer hook), the phase stays
-      // NaN forever and the mod looks "stuck". Reset to 0 here so
-      // it self-heals on the next tick.
-      if (mod.source === 'auto' && mod.autoPlaying !== false) {
-        const speedHz = Number.isFinite(mod.autoSpeedHz) ? (mod.autoSpeedHz as number) : 0.15;
-        const prev = Number.isFinite(mod.autoPhase) ? (mod.autoPhase as number) : 0;
-        const safeDt = Number.isFinite(dt) ? dt : 0;
-        const advanced = (prev + speedHz * safeDt) % 1;
-        const wrapped = advanced < 0 ? advanced + 1 : advanced;
-        mod.autoPhase = Number.isFinite(wrapped) ? wrapped : 0;
-      }
+      // Auto-source phase advance + write was here. Now lives in
+      // autoEngine.ts which drives the per-param sidecar. Entries
+      // with source='auto' are skipped at the top of the loop so
+      // any legacy 'auto' mods loaded from old projects don't
+      // double-write on top of the autoEngine's output.
 
       let signal = this.getSignal(mod.source, audio, now, mod.speed, mod.bpmSync === true, mod);
       if (mod.invert) signal = 1 - signal;
@@ -1029,16 +1022,10 @@ class ModulationEngine {
           // layers that the user picked Auto on without first moving
           // the slider were the ones stuck.
           if (typeof sv !== 'number') {
-            if (mod.source === 'auto') {
-              fxBase = 0;
-              baseValues.set(fxKey, fxBase);
-            } else {
-              continue;
-            }
-          } else {
-            fxBase = sv;
-            baseValues.set(fxKey, fxBase);
+            continue;
           }
+          fxBase = sv;
+          baseValues.set(fxKey, fxBase);
         }
 
         // Pull the registered slider range so modulation scales naturally
@@ -1049,11 +1036,7 @@ class ModulationEngine {
         const fxMin = fxRange?.min ?? 0;
         const fxMax = fxRange?.max ?? 1;
         const fxSpan = fxMax - fxMin;
-        // Auto source uses absolute-position routing (see the
-        // shader-params branch below for the rationale).
-        const raw = mod.source === 'auto'
-          ? fxMin + signal * fxSpan
-          : fxBase + (signal - 0.5) * mod.amount * fxSpan;
+        const raw = fxBase + (signal - 0.5) * mod.amount * fxSpan;
         const modulated = Math.max(fxMin, Math.min(fxMax, raw));
 
         if (isMapping) {
@@ -1119,20 +1102,9 @@ class ModulationEngine {
 
         // Scale modulation relative to param range, clamp to ISF min/max.
         // Audio sources modulate AROUND the slider's base value
-        // (`(signal - 0.5) * amount` recentered formula). Auto source
-        // is different — the signal is already a fraction of the
-        // user's chosen sub-range (autoMin..autoMax) and should drive
-        // the param ABSOLUTELY to that position. Mixing the auto
-        // signal through the audio formula would just modulate
-        // around the base, which is the opposite of what the user
-        // wants from an automation slider.
+        // (`(signal - 0.5) * amount` recentered formula).
         const span = range ? (range.max - range.min) : 2;
-        let raw: number;
-        if (mod.source === 'auto') {
-          raw = (range ? range.min : 0) + signal * span;
-        } else {
-          raw = base + (signal - 0.5) * mod.amount * span;
-        }
+        const raw = base + (signal - 0.5) * mod.amount * span;
         const modulated = range ? Math.max(range.min, Math.min(range.max, raw)) : raw;
         // Ghost-indicator cache also keyed by bank
         lastModulatedValues.set(bvKey, modulated);

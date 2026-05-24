@@ -50,6 +50,10 @@ export interface VJClip {
   // For shaders
   shaderCode?: string;
   shaderValues?: Record<string, any>;
+  /** Per-param Auto playhead config. Mirrors `Effect.paramAuto` —
+   *  see AutoConfig in types.ts. Keyed by the same param names as
+   *  `shaderValues`. */
+  shaderValueAuto?: Record<string, import('../types').AutoConfig>;
   // For videos. videoElement is the runtime <video> created when the clip
   // is dropped into the grid (vjClipLauncher.setClip → videoElementCache).
   // The other fields control playback the same way MediaSource does for
@@ -1575,6 +1579,72 @@ function createVJClipLauncherStore() {
           return { ...state, clipGrid: newGrid, layerStates: newLayerStates, blocks: newBlocks };
         }
         return { ...state, bankBClipGrid: newGrid, bankBLayerStates: newLayerStates, blocks: newBlocks };
+      });
+    },
+
+    /** Set or clear the Auto playhead config for a single param on a
+     *  VJ-layer-state effect. Effects live on the layer slot (not the
+     *  clip) so the routing is by (layerIndex, bank, effectId). The
+     *  autoEngine reads paramAuto from layerStates / bankBLayerStates
+     *  and writes resolved values via updateLayerEffectParams. */
+    setLayerEffectParamAuto(layerIndex: number, effectId: string, paramName: string, auto: import('../types').AutoConfig | null, bank: VJDeck = 'A') {
+      update(state => {
+        const targetStates = bank === 'B' ? state.bankBLayerStates : state.layerStates;
+        if (!targetStates[layerIndex]) return state;
+        const updatedEffects = targetStates[layerIndex].effects.map(e => {
+          if (e.id !== effectId) return e;
+          const nextAuto: Record<string, import('../types').AutoConfig> = { ...(e.paramAuto ?? {}) };
+          if (auto === null) {
+            delete nextAuto[paramName];
+          } else {
+            nextAuto[paramName] = auto;
+          }
+          const hasAny = Object.keys(nextAuto).length > 0;
+          const { paramAuto: _drop, ...rest } = e;
+          return hasAny ? { ...rest, paramAuto: nextAuto } : rest;
+        });
+        const newStates = [...targetStates];
+        newStates[layerIndex] = { ...newStates[layerIndex], effects: updatedEffects };
+        if (bank === 'B') {
+          return { ...state, bankBLayerStates: newStates };
+        }
+        return { ...state, layerStates: newStates };
+      });
+    },
+
+    /** Set or clear the Auto playhead config for a single shader-param
+     *  on a clip. Walks every grid + layerState by clip id so the
+     *  sidecar updates wherever the clip lives (grid slot, active deck
+     *  slot, both decks if duplicated). Caller doesn't need to know
+     *  where the clip is sitting — this is paired with the autoEngine
+     *  which reads `clip.shaderValueAuto` from active deck slots. */
+    setClipShaderValueAuto(clipId: string, paramName: string, auto: import('../types').AutoConfig | null) {
+      update(state => {
+        const applyToClip = (clip: VJClip): VJClip => {
+          const nextAuto: Record<string, import('../types').AutoConfig> = { ...(clip.shaderValueAuto ?? {}) };
+          if (auto === null) {
+            delete nextAuto[paramName];
+          } else {
+            nextAuto[paramName] = auto;
+          }
+          const hasAny = Object.keys(nextAuto).length > 0;
+          const { shaderValueAuto: _drop, ...rest } = clip;
+          return hasAny ? { ...rest, shaderValueAuto: nextAuto } : rest;
+        };
+        const mapGrid = (grid: (VJClip | null)[][]) => grid.map(row =>
+          row.map(c => (c && c.id === clipId ? applyToClip(c) : c))
+        );
+        const mapStates = (states: any[]) => states.map(ls => {
+          if (!ls?.activeClip || ls.activeClip.id !== clipId) return ls;
+          return { ...ls, activeClip: applyToClip(ls.activeClip) };
+        });
+        return {
+          ...state,
+          clipGrid: mapGrid(state.clipGrid),
+          bankBClipGrid: mapGrid(state.bankBClipGrid),
+          layerStates: mapStates(state.layerStates),
+          bankBLayerStates: mapStates(state.bankBLayerStates),
+        };
       });
     },
 

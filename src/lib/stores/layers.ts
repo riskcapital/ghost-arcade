@@ -1,5 +1,5 @@
 import { writable, derived, get } from 'svelte/store';
-import type { Layer, Project, WarpCorners, Point2D, BezierPoint, MaskShape, MediaSource, BlendMode, WarpMode, Effect, EffectType, EffectParams, LayerType, SVGContent, SVGFillMode, SVGColorMode, ColorContent, LightPaintingContent, LightPaintingStroke, CropRegion, LayerShape, LayerShapeType, Composition, VJModeState, VJDeck, Timeline, TimelineClip, TextContent, TextAnimation, SplatContent, Model3DContent, MediaTrayFolder, StagePreset, SVKeyboardPreset, EdgeEffect, EdgeEffectsConfig, PixelFXContent, GPULayerContent } from '../types';
+import type { Layer, Project, WarpCorners, Point2D, BezierPoint, MaskShape, MediaSource, BlendMode, WarpMode, Effect, EffectType, EffectParams, LayerType, SVGContent, SVGFillMode, SVGColorMode, ColorContent, LightPaintingContent, LightPaintingStroke, CropRegion, LayerShape, LayerShapeType, Composition, VJModeState, VJDeck, Timeline, TimelineClip, TextContent, TextAnimation, SplatContent, Model3DContent, MediaTrayFolder, StagePreset, SVKeyboardPreset, EdgeEffect, EdgeEffectsConfig, PixelFXContent, GPULayerContent, AutoConfig } from '../types';
 import { createLayer, createProject, createDefaultCorners, createMeshGrid, createLinesLayer, createSVGLayer, createColorLayer, createLightPaintingLayer, createAdvLightPaintingLayer, createTextLayer, createSplatLayer, createDefaultSVGContent, createDefaultCropRegion, createDefaultLayerShape, createDefaultVJModeState, createDefaultTimeline, generateUUID, createDefaultModel3DContent, createDefaultEdgeEffect, convertShapeToCustom, createGroupLayer, createDefaultPixelFXContent, createDefaultGPULayerContent } from '../types';
 import type { GroupConfig } from '../types';
 import { mediaLibrary } from './media';
@@ -2366,6 +2366,91 @@ void main() {
         const trackKey = `fx:${effectId}:${paramName}`;
         keyframeTimeline.autoRecord(layerId, trackKey, value, paramName, typeof value === 'boolean' ? 'boolean' : 'number');
       }
+    },
+
+    /** Set or clear the Auto playhead config for a single effect param.
+     *  Pass `auto=null` to remove the entry (user switching back to
+     *  Manual / Audio / LFO). The autoEngine watches this map and
+     *  animates whichever params have a non-null entry. */
+    setEffectParamAuto(layerId: string, effectId: string, paramName: string, auto: AutoConfig | null) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((l) => {
+          if (l.id !== layerId) return l;
+          return {
+            ...l,
+            effects: l.effects.map((e) => {
+              if (e.id !== effectId) return e;
+              const nextAuto = { ...(e.paramAuto ?? {}) };
+              if (auto === null) {
+                delete nextAuto[paramName];
+              } else {
+                nextAuto[paramName] = auto;
+              }
+              // Drop the field entirely when empty so saves stay compact.
+              const hasAny = Object.keys(nextAuto).length > 0;
+              const { paramAuto: _drop, ...rest } = e;
+              return hasAny ? { ...rest, paramAuto: nextAuto } : rest;
+            }),
+          };
+        }),
+      }));
+    },
+
+    /** Set or clear the Auto playhead config for a single edge-effect
+     *  param. `paramPath` uses the same dot notation as the rest of the
+     *  edge-effect modulation path (`stroke.width`, `fill.speed`,
+     *  `animation.count`, or a top-level key like `opacity`). The auto
+     *  map is flat — keys are the dotted strings as-is. */
+    setEdgeEffectParamAuto(layerId: string, effectId: string, paramPath: string, auto: AutoConfig | null) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((l) => {
+          if (l.id !== layerId || !l.edgeEffects) return l;
+          return {
+            ...l,
+            edgeEffects: {
+              ...l.edgeEffects,
+              effects: l.edgeEffects.effects.map((e) => {
+                if (e.id !== effectId) return e;
+                const nextAuto = { ...(e.paramAuto ?? {}) };
+                if (auto === null) {
+                  delete nextAuto[paramPath];
+                } else {
+                  nextAuto[paramPath] = auto;
+                }
+                const hasAny = Object.keys(nextAuto).length > 0;
+                const { paramAuto: _drop, ...rest } = e;
+                return hasAny ? { ...rest, paramAuto: nextAuto } : rest;
+              }),
+            },
+          };
+        }),
+      }));
+    },
+
+    /** Set or clear the Auto playhead config for a single shader-param
+     *  input on a mapping layer's MediaSource. Mirrors
+     *  setEffectParamAuto. */
+    setShaderValueAuto(layerId: string, paramName: string, auto: AutoConfig | null) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((l) => {
+          if (l.id !== layerId || !l.source) return l;
+          const nextAuto = { ...(l.source.shaderValueAuto ?? {}) };
+          if (auto === null) {
+            delete nextAuto[paramName];
+          } else {
+            nextAuto[paramName] = auto;
+          }
+          const hasAny = Object.keys(nextAuto).length > 0;
+          const { shaderValueAuto: _drop, ...sourceRest } = l.source;
+          return {
+            ...l,
+            source: hasAny ? { ...sourceRest, shaderValueAuto: nextAuto } : sourceRest,
+          };
+        }),
+      }));
     },
 
     /** Reset a layer effect's params back to the catalog defaults

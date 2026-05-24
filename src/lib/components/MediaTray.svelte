@@ -1723,19 +1723,55 @@
     return mappingModMap.get(modKeyShader(selectedLayerIdx, paramName, 'A', 'mapping'));
   }
 
-  /** Update one field on an auto-mode modulation (mapping mode).
-   *  Same shape as VJModePanel.setAutoField; lives here because
-   *  this component already owns the mapping-mode shader-params
-   *  editor. */
-  function setMappingAutoField<K extends keyof ParamModulation>(
+  /** Read the current Auto config for a mapping-mode shader param,
+   *  reading from the live layer source so Svelte tracks the
+   *  dependency from template `{@const}` sites. */
+  function getMappingShaderAuto(paramName: string): import('../types').AutoConfig | undefined {
+    if (!$selectedLayer?.source) return undefined;
+    return $selectedLayer.source.shaderValueAuto?.[paramName];
+  }
+
+  /** Update one field on a mapping-mode shader param's Auto config.
+   *  Writes through project.setShaderValueAuto so the sidecar rides
+   *  with the layer and the autoEngine animates it. */
+  function setMappingAutoField<K extends keyof import('../types').AutoConfig>(
     paramName: string,
     field: K,
-    value: ParamModulation[K],
+    value: import('../types').AutoConfig[K],
   ) {
-    if (selectedLayerIdx < 0) return;
-    const existing = modulationStore.getModulation(selectedLayerIdx, paramName, 'A', 'mapping');
-    if (!existing) return;
-    modulationStore.setModulation(selectedLayerIdx, paramName, { ...existing, [field]: value }, 'A', 'mapping');
+    if (!$selectedLayerId) return;
+    const cur = getMappingShaderAuto(paramName);
+    if (!cur) return;
+    project.setShaderValueAuto($selectedLayerId, paramName, { ...cur, [field]: value });
+  }
+
+  /** Source-change handler for mapping-mode shader params. Splits
+   *  Auto onto the sidecar path; everything else stays on the audio
+   *  modulation store. */
+  function setMappingShaderSource(paramName: string, source: ModSource, paramMin: number, paramMax: number) {
+    if (!$selectedLayerId) return;
+    if (source === 'auto') {
+      const existingMod = selectedLayerIdx >= 0
+        ? modulationStore.getModulation(selectedLayerIdx, paramName, 'A', 'mapping')
+        : undefined;
+      if (existingMod && existingMod.source !== 'manual') {
+        setParamModSource(selectedLayerIdx, paramName, 'manual', 'A', 'mapping');
+      }
+      const existingAuto = getMappingShaderAuto(paramName);
+      project.setShaderValueAuto(
+        $selectedLayerId,
+        paramName,
+        existingAuto ?? { phase: 0, mode: 'loop', speedHz: 0.15, min: paramMin, max: paramMax, playing: true }
+      );
+      return;
+    }
+    // Switching away from Auto — clear the sidecar.
+    if (getMappingShaderAuto(paramName)) {
+      project.setShaderValueAuto($selectedLayerId, paramName, null);
+    }
+    if (selectedLayerIdx >= 0) {
+      setParamModSource(selectedLayerIdx, paramName, source, 'A', 'mapping');
+    }
   }
 
   /** Reset every shader param on the open shader to its catalog
@@ -1748,6 +1784,11 @@
       const existingMod = modulationStore.getModulation(selectedLayerIdx, input.NAME, 'A', 'mapping');
       if (existingMod && existingMod.source !== 'manual') {
         setParamModSource(selectedLayerIdx, input.NAME, 'manual', 'A', 'mapping');
+      }
+      // Clear Auto sidecar so the playhead stops driving the value
+      // we're about to snap back.
+      if ($selectedLayerId && $selectedLayer?.source?.shaderValueAuto?.[input.NAME]) {
+        project.setShaderValueAuto($selectedLayerId, input.NAME, null);
       }
       if (input.DEFAULT === undefined || input.DEFAULT === null) continue;
       if (input.TYPE === 'float' || input.TYPE === 'long') {
@@ -2919,14 +2960,19 @@
           {@const mod = input.TYPE === 'float' && selectedLayerIdx >= 0
             ? mappingModMap.get(modKeyShader(selectedLayerIdx, input.NAME, 'A', 'mapping'))
             : undefined}
-          {@const isModulated = mod && mod.source !== 'manual'}
+          {@const _mapAuto = input.TYPE === 'float' ? $selectedLayer?.source?.shaderValueAuto?.[input.NAME] : undefined}
+          {@const _currentSrc = _mapAuto ? 'auto' : (mod?.source ?? 'manual')}
+          {@const isModulated = _currentSrc !== 'manual'}
           {#if input.TYPE === 'float'}
             <div class="shader-param" class:modulated={isModulated}>
               <div class="shader-param-header">
                 <span class="shader-param-name">{input.LABEL || input.NAME}</span>
-                <select class="mod-source-select" class:active={isModulated} value={mod?.source || 'manual'}
-                  onchange={(e) => setParamModSource(selectedLayerIdx, input.NAME, (e.target as HTMLSelectElement).value as ModSource, 'A', 'mapping')}>
-                  <optgroup label="Control"><option value="manual">Manual</option></optgroup>
+                <select class="mod-source-select" class:active={isModulated} value={_currentSrc}
+                  onchange={(e) => setMappingShaderSource(input.NAME, (e.target as HTMLSelectElement).value as ModSource, input.MIN ?? 0, input.MAX ?? 1)}>
+                  <optgroup label="Control">
+                    <option value="manual">Manual</option>
+                    <option value="auto">Auto (playhead)</option>
+                  </optgroup>
                   <optgroup label="Audio">
                     <option value="sub">Sub</option><option value="bass">Bass</option><option value="lowMid">Low Mid</option>
                     <option value="mid">Mid</option><option value="highMid">Hi Mid</option><option value="high">High</option>
@@ -2937,10 +2983,6 @@
                     <option value="lfo-sine">Sine</option><option value="lfo-saw">Saw</option>
                     <option value="lfo-square">Square</option><option value="lfo-tri">Triangle</option>
                   </optgroup>
-                  <!-- Per-param playhead automation — matches the VJ
-                       Mode shader-params Auto control. Selecting it
-                       reveals the play/speed/range card below. -->
-                  <optgroup label="Auto"><option value="auto">Auto (playhead)</option></optgroup>
                 </select>
               </div>
               <div class="shader-param-slider">
@@ -2959,28 +3001,26 @@
                        slider above so the cyan thumb visually aligns
                        with the slider's actual range — internal
                        storage stays as 0..1 fractions. -->
-                  {#if mod?.source === 'auto'}
-                    {@const _amin = mod.autoMin ?? 0}
-                    {@const _amax = mod.autoMax ?? 1}
+                  {#if _mapAuto}
                     {@const _rMin = input.MIN ?? 0}
                     {@const _rMax = input.MAX ?? 1}
                     {@const _rSpan = (_rMax - _rMin) || 1}
-                    {@const _aminAbs = _rMin + _amin * _rSpan}
-                    {@const _amaxAbs = _rMin + _amax * _rSpan}
-                    <div class="slipper-fill" style="left: {_amin * 100}%; right: {(1 - _amax) * 100}%"></div>
-                    <input type="range" min={_rMin} max={_rMax} step={_rSpan / 200} value={_aminAbs}
+                    {@const _aMin = _mapAuto.min}
+                    {@const _aMax = _mapAuto.max}
+                    {@const _aMinFrac = (_aMin - _rMin) / _rSpan}
+                    {@const _aMaxFrac = (_aMax - _rMin) / _rSpan}
+                    <div class="slipper-fill" style="left: {_aMinFrac * 100}%; right: {(1 - _aMaxFrac) * 100}%"></div>
+                    <input type="range" min={_rMin} max={_rMax} step={_rSpan / 200} value={_aMin}
                       class="slipper slipper-min"
                       oninput={(e) => {
-                        const vAbs = parseFloat((e.target as HTMLInputElement).value);
-                        const frac = (vAbs - _rMin) / _rSpan;
-                        setMappingAutoField(input.NAME, 'autoMin', Math.min(frac, _amax - 0.02));
+                        const v = parseFloat((e.target as HTMLInputElement).value);
+                        setMappingAutoField(input.NAME, 'min', Math.min(v, _aMax - _rSpan * 0.02));
                       }} />
-                    <input type="range" min={_rMin} max={_rMax} step={_rSpan / 200} value={_amaxAbs}
+                    <input type="range" min={_rMin} max={_rMax} step={_rSpan / 200} value={_aMax}
                       class="slipper slipper-max"
                       oninput={(e) => {
-                        const vAbs = parseFloat((e.target as HTMLInputElement).value);
-                        const frac = (vAbs - _rMin) / _rSpan;
-                        setMappingAutoField(input.NAME, 'autoMax', Math.max(frac, _amin + 0.02));
+                        const v = parseFloat((e.target as HTMLInputElement).value);
+                        setMappingAutoField(input.NAME, 'max', Math.max(v, _aMin + _rSpan * 0.02));
                       }} />
                   {/if}
                 </div>
@@ -2988,7 +3028,7 @@
                   {(selectedShader.values[input.NAME] as number)?.toFixed(2) ?? '0.00'}
                 </span>
               </div>
-              {#if isModulated && mod?.source !== 'auto'}
+              {#if isModulated && !_mapAuto}
                 <div class="mod-amount-row">
                   <span class="mod-amount-label">Depth</span>
                   <input type="range" min="0" max="1" step="0.01" value={mod?.amount ?? 0.5}
@@ -2999,34 +3039,28 @@
               <!-- Auto-automation controls. Mirrors the VJ Mode panel
                    exactly — playhead with speed, loop/pingpong, and
                    dual-thumb range clippers. -->
-              {#if mod?.source === 'auto'}
-                {@const autoMin = mod.autoMin ?? 0}
-                {@const autoMax = mod.autoMax ?? 1}
+              {#if _mapAuto}
                 <div class="auto-controls">
                   <div class="auto-row">
-                    <button class="auto-play" class:playing={mod.autoPlaying !== false}
-                      onclick={() => setMappingAutoField(input.NAME, 'autoPlaying', mod!.autoPlaying === false)}
-                      title={mod.autoPlaying === false ? 'Resume' : 'Pause'}
-                    >{mod.autoPlaying === false ? '▶' : '❚❚'}</button>
+                    <button class="auto-play" class:playing={_mapAuto.playing}
+                      onclick={() => setMappingAutoField(input.NAME, 'playing', !_mapAuto!.playing)}
+                      title={_mapAuto.playing ? 'Pause' : 'Resume'}
+                    >{_mapAuto.playing ? '❚❚' : '▶'}</button>
                     <div class="auto-mode-toggle">
-                      <button class:active={(mod.autoMode ?? 'loop') === 'loop'}
-                        onclick={() => setMappingAutoField(input.NAME, 'autoMode', 'loop')}>Loop</button>
-                      <button class:active={mod.autoMode === 'pingpong'}
-                        onclick={() => setMappingAutoField(input.NAME, 'autoMode', 'pingpong')}>Ping-pong</button>
+                      <button class:active={_mapAuto.mode === 'loop'}
+                        onclick={() => setMappingAutoField(input.NAME, 'mode', 'loop')}>Loop</button>
+                      <button class:active={_mapAuto.mode === 'pingpong'}
+                        onclick={() => setMappingAutoField(input.NAME, 'mode', 'pingpong')}>Ping-pong</button>
                     </div>
                   </div>
                   <div class="auto-row auto-row-speed">
                     <span class="auto-label">Speed</span>
                     <input type="range" min="0.01" max="1" step="0.005"
-                      value={mod.autoSpeedHz ?? 0.15}
-                      oninput={(e) => setMappingAutoField(input.NAME, 'autoSpeedHz', parseFloat((e.target as HTMLInputElement).value))}
+                      value={_mapAuto.speedHz}
+                      oninput={(e) => setMappingAutoField(input.NAME, 'speedHz', parseFloat((e.target as HTMLInputElement).value))}
                       class="auto-speed-slider" />
-                    <span class="auto-val">{(mod.autoSpeedHz ?? 0.15).toFixed(2)}Hz</span>
+                    <span class="auto-val">{_mapAuto.speedHz.toFixed(2)}Hz</span>
                   </div>
-                  <!-- Range slippers live on the main slider above.
-                       No redundant label — slippers are self-explanatory
-                       now that they visually align. -->
-
                 </div>
               {/if}
             </div>

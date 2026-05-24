@@ -1464,8 +1464,8 @@ export class DrawingRenderer {
       strobe: 8,
       scanner: 9,
       fire: 10,
-      pulse: 4,     // maps to snake-style rendering
-      dotted: 6,    // maps to dashed
+      pulse: 4,            // maps to snake-style rendering
+      dotted: 6,           // maps to dashed
     };
     return types[type] ?? 2;
   }

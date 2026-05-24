@@ -26,6 +26,8 @@
   import ClipPreviewPanel from './ClipPreviewPanel.svelte';
   import { markUserInteracting } from '../midi/midiRouter';
   import { modulationStore, modulationEngine, setParamModSource, setParamModAmount, setParamModSpeed, registerParamRanges, getModulatedValue, setBaseValue, clearBaseValues, clearModulatedValues, modKeyShader, type ModSource, type ParamModulation } from '../audio/modulation';
+  import { defaultAutoFor } from '../audio/autoEngine';
+  import type { AutoConfig } from '../types';
   import { performanceStore } from '../audio/performanceEngine';
   import type { ISFInput } from '../isf/parser';
   import { getPluginByEffectType, type PluginParamDef } from '../plugins/registry';
@@ -46,9 +48,10 @@
   // standalone strip below the header was dropped — its contents are now
   // inline in the header (single source of truth, no second tap/tempo row).
   void VJAudioBar;
-  import { applyPresetToEffect, getEffectPresets, getNumericEffectParams } from '../effects/effectUX';
+  import { applyPresetToEffect, getEffectPresets, getNumericEffectParams, effectParamLabels } from '../effects/effectUX';
   import { EFFECT_CATALOG } from '../effects/effectCatalog';
   import { EFFECT_PARAM_DEFS } from '../effects/effectParamDefs';
+  import EffectParamRow from './EffectParamRow.svelte';
   // Tier-related imports removed — recording / Particles3D always available.
   import { getDefaultEffectParams as getRendererDefaultEffectParams } from '../renderer/effects';
   import EffectPickerModal from './EffectPickerModal.svelte';
@@ -1265,6 +1268,11 @@
       if (existingMod && existingMod.source !== 'manual') {
         setParamModSource(selectedLayerIndex, input.NAME, 'manual', paramDeck);
       }
+      // Drop any Auto sidecar on the clip so the playhead stops
+      // overriding the value we're about to restore to defaults.
+      if (activeClipId && getShaderAuto(input.NAME)) {
+        vjClipLauncher.setClipShaderValueAuto(activeClipId, input.NAME, null);
+      }
       // Prefer curator-saved value from the library entry; fall
       // through to INPUT.DEFAULT for params the curator didn't
       // explicitly override.
@@ -1304,34 +1312,59 @@
     return modulationMap.get(modKeyShader(layerIndex, paramName, paramDeck));
   }
 
-  /** Update one field on a param's auto-automation state.
-   *
-   *  The modulation is stored as a single ParamModulation object;
-   *  this writes a partial update through modulationStore.set so the
-   *  reactive store picks it up + the engine's parsedCache sees the
-   *  new value on the next tick (parsedCache holds the SAME object
-   *  reference). Used by the auto play / mode / speed / range
-   *  controls below the slider when source === 'auto'. */
-  function setAutoField<K extends keyof ParamModulation>(
-    layerIndex: number,
+  /** Read the live Auto config for a shader param on the active clip.
+   *  Reads through the reactive vjLauncherState so Svelte tracks the
+   *  dependency from template `{@const}` sites. */
+  function getShaderAuto(paramName: string): AutoConfig | undefined {
+    if (selectedLayerIndex === null) return undefined;
+    const ls = paramLayerStates[selectedLayerIndex];
+    return ls?.activeClip?.shaderValueAuto?.[paramName];
+  }
+
+  /** Update one field on a shader param's Auto config. Writes through
+   *  vjClipLauncher.setClipShaderValueAuto so the change rides with
+   *  the clip — survives clip-grid moves, deck swaps, project saves. */
+  function setShaderAutoField<K extends keyof AutoConfig>(
     paramName: string,
     field: K,
-    value: ParamModulation[K],
+    value: AutoConfig[K],
   ) {
-    // Try the per-clip key first (preferred — automation lives on
-    // the clip). Fall back to layer-keyed for legacy mods.
-    if (activeClipId) {
-      const existing = modulationStore.getModulation(layerIndex, paramName, paramDeck, 'vj', activeClipId);
-      if (existing) {
-        modulationStore.setModulation(layerIndex, paramName, { ...existing, [field]: value }, paramDeck, 'vj', activeClipId);
-        return;
-      }
-    }
-    const existing = modulationStore.getModulation(layerIndex, paramName, paramDeck);
-    if (!existing) return;
-    modulationStore.setModulation(layerIndex, paramName, { ...existing, [field]: value }, paramDeck);
+    if (!activeClipId) return;
+    const cur = getShaderAuto(paramName);
+    if (!cur) return;
+    vjClipLauncher.setClipShaderValueAuto(activeClipId, paramName, { ...cur, [field]: value });
   }
-  // setParamModSource and setParamModAmount imported from '../audio/modulation'
+
+  /** Replacement for setParamModSource that knows about the new
+   *  Auto-as-sidecar architecture. Auto goes to the clip's
+   *  shaderValueAuto; everything else continues through the audio
+   *  modulation store. Switching between auto and audio-source
+   *  clears the OTHER path to keep them mutually exclusive. */
+  function setShaderParamSource(layerIndex: number, paramName: string, source: ModSource, paramMin: number, paramMax: number) {
+    if (source === 'auto') {
+      // Clear any audio modulation for this param.
+      const mClip = activeClipId ? modulationStore.getModulation(layerIndex, paramName, paramDeck, 'vj', activeClipId) : undefined;
+      if (mClip && mClip.source !== 'manual' && activeClipId) {
+        setParamModSource(layerIndex, paramName, 'manual', paramDeck, 'vj', activeClipId);
+      }
+      const mLayer = modulationStore.getModulation(layerIndex, paramName, paramDeck);
+      if (mLayer && mLayer.source !== 'manual') {
+        setParamModSource(layerIndex, paramName, 'manual', paramDeck);
+      }
+      // Seed sidecar (or reuse if user is just toggling back).
+      if (activeClipId) {
+        const existing = getShaderAuto(paramName) ?? defaultAutoFor(paramMin, paramMax);
+        vjClipLauncher.setClipShaderValueAuto(activeClipId, paramName, existing);
+      }
+      return;
+    }
+    // Switching away from Auto — clear the sidecar.
+    if (activeClipId && getShaderAuto(paramName)) {
+      vjClipLauncher.setClipShaderValueAuto(activeClipId, paramName, null);
+    }
+    // Delegate to the audio modulation path.
+    setParamModSource(layerIndex, paramName, source, paramDeck, 'vj', activeClipId ?? undefined);
+  }
 
   // Live modulated values for ghost indicator on sliders
   let modGhostValues: Record<string, number> = {};
@@ -2698,49 +2731,125 @@
 
                           <details open>
                             <summary>Controls</summary>
-                          {#if (EFFECT_PARAM_DEFS[effect.type] || []).length > 0}
-                            {#each (EFFECT_PARAM_DEFS[effect.type] || []) as pd}
-                              {@const val = (effect.params as Record<string, number>)[pd.param] ?? pd.default}
-                              <div class="param-row">
-                                <span class="param-name">{pd.name}</span>
-                                {#if pd.type === 'select' && pd.options}
-                                  <select value={val}
-                                    onchange={(e) => updateEffectParam(effect.id, pd.param, parseFloat((e.target as HTMLSelectElement).value))}
-                                    style="flex:1; background:#222; color:#fff; border:1px solid #444; border-radius:3px; padding:2px 4px; font-size:11px;">
-                                    {#each pd.options as opt}
-                                      <option value={opt.value} selected={val === opt.value}>{opt.label}</option>
-                                    {/each}
-                                  </select>
-                                {:else if pd.type === 'color' && pd.colorParams}
-                                  {@const cr = (effect.params as Record<string, number>)[pd.colorParams.r] ?? 0}
-                                  {@const cg = (effect.params as Record<string, number>)[pd.colorParams.g] ?? 1}
-                                  {@const cb = (effect.params as Record<string, number>)[pd.colorParams.b] ?? 0.4}
-                                  {@const hexVal = '#' + [cr,cg,cb].map(c => Math.round(c * 255).toString(16).padStart(2, '0')).join('')}
-                                  <input type="color" value={hexVal}
-                                    oninput={(e) => {
-                                      const hex = (e.target as HTMLInputElement).value;
-                                      const r = parseInt(hex.slice(1,3), 16) / 255;
-                                      const g = parseInt(hex.slice(3,5), 16) / 255;
-                                      const b = parseInt(hex.slice(5,7), 16) / 255;
-                                      if (pd.colorParams) {
-                                        updateEffectParam(effect.id, pd.colorParams.r, r);
-                                        updateEffectParam(effect.id, pd.colorParams.g, g);
-                                        updateEffectParam(effect.id, pd.colorParams.b, b);
-                                      }
-                                    }}
-                                    style="flex:0 0 40px; height:22px; padding:0; border:1px solid #444; border-radius:3px; cursor:pointer;" />
+                          <!-- Param renderer mirrors LayerPanel: try
+                               effectParamLabels (rich metadata covering
+                               every effect with curated min/max/step),
+                               fall back to getNumericEffectParams which
+                               extracts numeric keys from the renderer's
+                               default-params catalog. This eliminates
+                               the "no available parameters" pit that
+                               older effects with no EFFECT_PARAM_DEFS
+                               entry used to fall into.
+
+                               For the 'layer' tab (deck slot effects),
+                               numeric params route through EffectParamRow
+                               so the user gets the Auto / audio
+                               modulation dropdown just like mapping mode.
+                               The 'clip' and 'composition' tabs use a
+                               simpler slider since their effects don't
+                               live on the layer state the audio engine
+                               + autoEngine drive. -->
+                          {#if (effectParamLabels[effect.type] && Object.keys(effectParamLabels[effect.type]!).length > 0) || getNumericEffectParams(effect.type).length > 0}
+                            {@const _paramMeta = effectParamLabels[effect.type]}
+                            {@const _fallbackKeys = !_paramMeta ? getNumericEffectParams(effect.type) : []}
+                            {#if _paramMeta}
+                              {#each Object.entries(_paramMeta) as [paramKey, meta]}
+                                {#if meta.type === 'select' && meta.options}
+                                  <div class="param-row">
+                                    <span class="param-name">{meta.label}</span>
+                                    <select
+                                      value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
+                                      onchange={(e) => updateEffectParam(effect.id, paramKey, parseFloat((e.target as HTMLSelectElement).value))}
+                                      style="flex:1; background:#222; color:#fff; border:1px solid #444; border-radius:3px; padding:2px 4px; font-size:11px;">
+                                      {#each meta.options as opt}
+                                        <option value={opt.value}>{opt.label}</option>
+                                      {/each}
+                                    </select>
+                                  </div>
+                                {:else if meta.type === 'color' && meta.colorParams}
+                                  <div class="param-row">
+                                    <span class="param-name">{meta.label}</span>
+                                    <input type="color"
+                                      value={'#' + [meta.colorParams.r, meta.colorParams.g, meta.colorParams.b].map(k => {
+                                        const v = (effect.params as Record<string, number>)[k] ?? 0;
+                                        return Math.round(v * 255).toString(16).padStart(2, '0');
+                                      }).join('')}
+                                      oninput={(e) => {
+                                        const hex = (e.target as HTMLInputElement).value;
+                                        const r = parseInt(hex.slice(1, 3), 16) / 255;
+                                        const g = parseInt(hex.slice(3, 5), 16) / 255;
+                                        const b = parseInt(hex.slice(5, 7), 16) / 255;
+                                        if (meta.colorParams) {
+                                          updateEffectParam(effect.id, meta.colorParams.r, r);
+                                          updateEffectParam(effect.id, meta.colorParams.g, g);
+                                          updateEffectParam(effect.id, meta.colorParams.b, b);
+                                        }
+                                      }}
+                                      style="flex:0 0 40px; height:22px; padding:0; border:1px solid #444; border-radius:3px; cursor:pointer;" />
+                                  </div>
+                                {:else if effectsTab === 'layer' && selectedLayerIndex !== null}
+                                  <EffectParamRow
+                                    label={meta.label}
+                                    value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
+                                    min={meta.min as number}
+                                    max={meta.max as number}
+                                    step={meta.step as number}
+                                    layerIndex={selectedLayerIndex}
+                                    effectId={effect.id}
+                                    paramName={paramKey}
+                                    target="vj"
+                                    vjBank={paramDeck}
+                                    displayValue={(v) => (meta.max as number) <= 1 ? (v * 100).toFixed(0) + '%' : v.toFixed(2)}
+                                    onChange={(v) => updateEffectParam(effect.id, paramKey, v)}
+                                  />
                                 {:else}
-                                  <input type="range" min={pd.min} max={pd.max} step={pd.step} value={val}
-                                    oninput={(e) => updateEffectParam(effect.id, pd.param, parseFloat((e.target as HTMLInputElement).value))}
-                                    data-midi-path="vj:fx:{effect.id}:{pd.param}"
-                                    data-midi-label="{effect.type} {pd.name}"
-                                    data-midi-min={pd.min}
-                                    data-midi-max={pd.max}
-                                    data-midi-step={pd.step} />
-                                  <span class="param-value">{val.toFixed(pd.step < 0.1 ? 2 : pd.step < 1 ? 1 : 0)}</span>
+                                  <!-- Composition / clip tabs: plain slider, no modulation dropdown. -->
+                                  {@const val = (effect.params as Record<string, number>)[paramKey] ?? meta.default}
+                                  <div class="param-row">
+                                    <span class="param-name">{meta.label}</span>
+                                    <input type="range" min={meta.min as number} max={meta.max as number} step={meta.step as number} value={val}
+                                      oninput={(e) => updateEffectParam(effect.id, paramKey, parseFloat((e.target as HTMLInputElement).value))}
+                                      data-midi-path="vj:fx:{effect.id}:{paramKey}"
+                                      data-midi-label="{effect.type} {meta.label}"
+                                      data-midi-min={meta.min}
+                                      data-midi-max={meta.max}
+                                      data-midi-step={meta.step} />
+                                    <span class="param-value">{val.toFixed((meta.step as number) < 0.1 ? 2 : (meta.step as number) < 1 ? 1 : 0)}</span>
+                                  </div>
                                 {/if}
-                              </div>
-                            {/each}
+                              {/each}
+                            {:else}
+                              <!-- Fallback: effect has no curated metadata.
+                                   Walk the numeric defaults so users still
+                                   get sliders (0..1 range, 0.01 step) for
+                                   every adjustable param. -->
+                              {#each _fallbackKeys as paramKey}
+                                {#if effectsTab === 'layer' && selectedLayerIndex !== null}
+                                  <EffectParamRow
+                                    label={paramKey}
+                                    value={(effect.params as Record<string, number>)[paramKey] ?? 0.5}
+                                    min={0}
+                                    max={1}
+                                    step={0.01}
+                                    layerIndex={selectedLayerIndex}
+                                    effectId={effect.id}
+                                    paramName={paramKey}
+                                    target="vj"
+                                    vjBank={paramDeck}
+                                    displayValue={(v) => (v * 100).toFixed(0) + '%'}
+                                    onChange={(v) => updateEffectParam(effect.id, paramKey, v)}
+                                  />
+                                {:else}
+                                  {@const val = (effect.params as Record<string, number>)[paramKey] ?? 0.5}
+                                  <div class="param-row">
+                                    <span class="param-name">{paramKey}</span>
+                                    <input type="range" min="0" max="1" step="0.01" value={val}
+                                      oninput={(e) => updateEffectParam(effect.id, paramKey, parseFloat((e.target as HTMLInputElement).value))} />
+                                    <span class="param-value">{(val * 100).toFixed(0)}%</span>
+                                  </div>
+                                {/if}
+                              {/each}
+                            {/if}
                           {:else}
                             <div class="param-row"><span class="no-params">No adjustable parameters</span></div>
                           {/if}
@@ -2822,13 +2931,22 @@
                     {@const _modKeyClip = activeClipId ? modKeyShader(selectedLayerIndex!, input.NAME, paramDeck, 'vj', activeClipId) : null}
                     {@const _modKey = modKeyShader(selectedLayerIndex!, input.NAME, paramDeck, 'vj')}
                     {@const mod = (_modKeyClip ? modulationMap.get(_modKeyClip) : undefined) ?? modulationMap.get(_modKey)}
-                    {@const isModulated = mod && mod.source !== 'manual'}
-                    <div class="shader-param" class:modulated={isModulated} data-modkey={_modKey} data-modsrc={mod?.source ?? 'none'}>
+                    <!-- Auto state lives on the clip itself (shaderValueAuto sidecar);
+                         audio / LFO sources still go through the modulation store.
+                         The select value reflects whichever is active — Auto wins
+                         if both somehow exist (mutually exclusive in normal flow). -->
+                    {@const _shaderAuto = paramLayerStates[selectedLayerIndex!]?.activeClip?.shaderValueAuto?.[input.NAME] as (AutoConfig | undefined)}
+                    {@const _currentSource = _shaderAuto ? 'auto' : (mod?.source ?? 'manual')}
+                    {@const isModulated = _currentSource !== 'manual'}
+                    <div class="shader-param" class:modulated={isModulated} data-modkey={_modKey} data-modsrc={_currentSource}>
                       <div class="shader-param-header">
                         <span class="shader-param-name">{input.LABEL || input.NAME}</span>
-                        <select class="mod-source-select" class:active={isModulated} value={mod?.source || 'manual'}
-                          onchange={(e) => setParamModSource(selectedLayerIndex!, input.NAME, (e.target as HTMLSelectElement).value as ModSource, paramDeck, 'vj', activeClipId ?? undefined)}>
-                          <optgroup label="Control"><option value="manual">Manual</option></optgroup>
+                        <select class="mod-source-select" class:active={isModulated} value={_currentSource}
+                          onchange={(e) => setShaderParamSource(selectedLayerIndex!, input.NAME, (e.target as HTMLSelectElement).value as ModSource, input.MIN ?? 0, input.MAX ?? 1)}>
+                          <optgroup label="Control">
+                            <option value="manual">Manual</option>
+                            <option value="auto">Auto (playhead)</option>
+                          </optgroup>
                           <optgroup label="Audio">
                             <option value="sub">Sub</option><option value="bass">Bass</option><option value="lowMid">Low Mid</option>
                             <option value="mid">Mid</option><option value="highMid">Hi Mid</option><option value="high">High</option>
@@ -2839,11 +2957,6 @@
                             <option value="lfo-sine">Sine</option><option value="lfo-saw">Saw</option>
                             <option value="lfo-square">Square</option><option value="lfo-tri">Triangle</option>
                           </optgroup>
-                          <!-- Per-param playhead automation. Separate
-                               from audio — has its own play/pause,
-                               speed, loop/pingpong, and range clippers
-                               (revealed inline below when selected). -->
-                          <optgroup label="Auto"><option value="auto">Auto (playhead)</option></optgroup>
                         </select>
                       </div>
                       {#if input.TYPE === 'float' || input.TYPE === 'event'}
@@ -2880,28 +2993,26 @@
                                  track). Internal storage stays as
                                  0..1 fractions; we map to/from the
                                  absolute slider range at the boundary. -->
-                            {#if mod?.source === 'auto'}
-                              {@const _amin = mod.autoMin ?? 0}
-                              {@const _amax = mod.autoMax ?? 1}
+                            {#if _shaderAuto}
                               {@const _rMin = input.MIN ?? 0}
                               {@const _rMax = input.MAX ?? 1}
                               {@const _rSpan = (_rMax - _rMin) || 1}
-                              {@const _aminAbs = _rMin + _amin * _rSpan}
-                              {@const _amaxAbs = _rMin + _amax * _rSpan}
-                              <div class="slipper-fill" style="left: {_amin * 100}%; right: {(1 - _amax) * 100}%"></div>
-                              <input type="range" min={_rMin} max={_rMax} step={_rSpan / 200} value={_aminAbs}
+                              {@const _aMin = _shaderAuto.min}
+                              {@const _aMax = _shaderAuto.max}
+                              {@const _aMinFrac = (_aMin - _rMin) / _rSpan}
+                              {@const _aMaxFrac = (_aMax - _rMin) / _rSpan}
+                              <div class="slipper-fill" style="left: {_aMinFrac * 100}%; right: {(1 - _aMaxFrac) * 100}%"></div>
+                              <input type="range" min={_rMin} max={_rMax} step={_rSpan / 200} value={_aMin}
                                 class="slipper slipper-min"
                                 oninput={(e) => {
-                                  const vAbs = parseFloat((e.target as HTMLInputElement).value);
-                                  const frac = (vAbs - _rMin) / _rSpan;
-                                  setAutoField(selectedLayerIndex!, input.NAME, 'autoMin', Math.min(frac, _amax - 0.02));
+                                  const v = parseFloat((e.target as HTMLInputElement).value);
+                                  setShaderAutoField(input.NAME, 'min', Math.min(v, _aMax - _rSpan * 0.02));
                                 }} />
-                              <input type="range" min={_rMin} max={_rMax} step={_rSpan / 200} value={_amaxAbs}
+                              <input type="range" min={_rMin} max={_rMax} step={_rSpan / 200} value={_aMax}
                                 class="slipper slipper-max"
                                 oninput={(e) => {
-                                  const vAbs = parseFloat((e.target as HTMLInputElement).value);
-                                  const frac = (vAbs - _rMin) / _rSpan;
-                                  setAutoField(selectedLayerIndex!, input.NAME, 'autoMax', Math.max(frac, _amin + 0.02));
+                                  const v = parseFloat((e.target as HTMLInputElement).value);
+                                  setShaderAutoField(input.NAME, 'max', Math.max(v, _aMin + _rSpan * 0.02));
                                 }} />
                             {/if}
                           </div>
@@ -2911,26 +3022,24 @@
                              the param's modulation source is "auto".
                              Owns play/pause, speed, loop/pingpong, and
                              a dual-range slider clipping the sweep. -->
-                        {#if mod?.source === 'auto'}
-                          {@const autoMin = mod.autoMin ?? 0}
-                          {@const autoMax = mod.autoMax ?? 1}
+                        {#if _shaderAuto}
                           <div class="auto-controls">
                             <div class="auto-row">
                               <button
                                 class="auto-play"
-                                class:playing={mod.autoPlaying !== false}
-                                onclick={() => setAutoField(selectedLayerIndex!, input.NAME, 'autoPlaying', mod!.autoPlaying === false)}
-                                title={mod.autoPlaying === false ? 'Resume' : 'Pause'}
-                                aria-label={mod.autoPlaying === false ? 'Resume automation' : 'Pause automation'}
-                              >{mod.autoPlaying === false ? '▶' : '❚❚'}</button>
+                                class:playing={_shaderAuto.playing}
+                                onclick={() => setShaderAutoField(input.NAME, 'playing', !_shaderAuto!.playing)}
+                                title={_shaderAuto.playing ? 'Pause' : 'Resume'}
+                                aria-label={_shaderAuto.playing ? 'Pause automation' : 'Resume automation'}
+                              >{_shaderAuto.playing ? '❚❚' : '▶'}</button>
 
                               <div class="auto-mode-toggle">
-                                <button class:active={(mod.autoMode ?? 'loop') === 'loop'}
-                                  onclick={() => setAutoField(selectedLayerIndex!, input.NAME, 'autoMode', 'loop')}
+                                <button class:active={_shaderAuto.mode === 'loop'}
+                                  onclick={() => setShaderAutoField(input.NAME, 'mode', 'loop')}
                                   title="Loop — sweeps min → max, then restarts at min"
                                 >Loop</button>
-                                <button class:active={mod.autoMode === 'pingpong'}
-                                  onclick={() => setAutoField(selectedLayerIndex!, input.NAME, 'autoMode', 'pingpong')}
+                                <button class:active={_shaderAuto.mode === 'pingpong'}
+                                  onclick={() => setShaderAutoField(input.NAME, 'mode', 'pingpong')}
                                   title="Ping-pong — sweeps min → max, reverses back"
                                 >Ping-pong</button>
                               </div>
@@ -2938,17 +3047,11 @@
 
                             <div class="auto-row auto-row-speed">
                               <span class="auto-label">Speed</span>
-                              <!-- Range tuned after first-test feedback that
-                                   0.5Hz default felt frantic. 0.01-1Hz
-                                   covers ~100s slow drift to ~1s rapid
-                                   pulse — extreme stutter is still
-                                   reachable by typing a value in the
-                                   field below if needed. -->
                               <input type="range" min="0.01" max="1" step="0.005"
-                                value={mod.autoSpeedHz ?? 0.15}
-                                oninput={(e) => setAutoField(selectedLayerIndex!, input.NAME, 'autoSpeedHz', parseFloat((e.target as HTMLInputElement).value))}
+                                value={_shaderAuto.speedHz}
+                                oninput={(e) => setShaderAutoField(input.NAME, 'speedHz', parseFloat((e.target as HTMLInputElement).value))}
                                 class="auto-speed-slider" />
-                              <span class="auto-val">{(mod.autoSpeedHz ?? 0.15).toFixed(2)}Hz</span>
+                              <span class="auto-val">{_shaderAuto.speedHz.toFixed(2)}Hz</span>
                             </div>
 
                             <!-- Range slippers live on the main slider

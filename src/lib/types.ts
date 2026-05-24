@@ -501,6 +501,9 @@ export interface MediaSource {
   shaderCode?: string; // ISF/GLSL shader source
   shaderInputs?: ISFInputDef[]; // ISF shader parameters
   shaderValues?: Record<string, number | boolean | number[]>; // Current parameter values
+  /** Per-param Auto playhead state for shader inputs. Same role as
+   *  Effect.paramAuto — see AutoConfig docs above. */
+  shaderValueAuto?: Record<string, AutoConfig>;
   shaderImageInputs?: Record<string, ImageInputRef>; // References to textures for 'image' type inputs
   isPlaying?: boolean; // For video playback control
   playbackMode?: VideoPlaybackMode; // Video playback mode (default: 'loop')
@@ -2170,6 +2173,11 @@ export interface EdgeEffect {
   animation: Animation;
   blendMode: BlendMode;
   opacity: number;
+  /** Per-param Auto playhead state. Keyed by the dotted param path
+   *  used in the UI (e.g. `stroke.width`, `fill.speed`, `animation.count`,
+   *  or top-level `opacity`). Same role as Effect.paramAuto — see
+   *  AutoConfig above. */
+  paramAuto?: Record<string, AutoConfig>;
 }
 
 export interface EdgeEffectsConfig {
@@ -3977,6 +3985,52 @@ export interface EffectParams {
   speed?: number;                 // 0-2, temporal sample rate / delay feedback
 }
 
+/**
+ * Per-param auto playhead config. Lives directly on the thing being
+ * automated (effect, shader source) — NOT in a separate modulation
+ * map keyed by layer index. That earlier architecture broke whenever
+ * layers were reordered or when the same param needed automation in
+ * VJ + mapping simultaneously, because the routing decided per-frame
+ * which target to write to and dropped entries on collision.
+ *
+ * The new rule: if it's in the data, it animates. The autoEngine
+ * walks every layer and writes resolved values into the underlying
+ * `effect.params[paramName]` / `source.shaderValues[paramName]`
+ * directly. Save/load survives because it's on the layer. Mode
+ * switches survive for the same reason. Per-clip in VJ survives
+ * because clip auto state lives on the clip.
+ *
+ * `phase` is intentionally persisted alongside the config so
+ * pause/resume continues from where the user paused — but the
+ * runtime mutates it in place via the store action without doing
+ * a full Svelte rerender per tick (see autoEngine).
+ */
+export interface AutoConfig {
+  /** Internal sweep counter, 0..1. Advanced by `speedHz × dt` per frame
+   *  when `playing` is true. */
+  phase: number;
+  /** loop = saw (0→1, wrap), pingpong = triangle (0→1→0). */
+  mode: 'loop' | 'pingpong';
+  /** Cycles per second. */
+  speedHz: number;
+  /** Lower sweep bound in the param's natural units (absolute, not fraction). */
+  min: number;
+  /** Upper sweep bound in the param's natural units (absolute). */
+  max: number;
+  /** Play/pause. When false the playhead doesn't advance and the
+   *  param sits at the last published value. */
+  playing: boolean;
+}
+
+export const DEFAULT_AUTO: AutoConfig = {
+  phase: 0,
+  mode: 'loop',
+  speedHz: 0.15,  // ~6.7s full cycle, calm VJ pacing
+  min: 0,
+  max: 1,
+  playing: true,
+};
+
 export interface Effect {
   id: string;
   type: EffectType;
@@ -3984,6 +4038,10 @@ export interface Effect {
   params: EffectParams;
   opacity?: number;       // 0-1, default 1 (fully opaque effect)
   blendMode?: BlendMode;  // How this effect composites onto the source, default 'normal'
+  /** Per-param Auto playhead state. Keyed by the same param names
+   *  as `params`. Persists across saves and rides with the effect
+   *  through every render path. */
+  paramAuto?: Record<string, AutoConfig>;
 }
 
 // Stage Preset - A saved mapping layout with VJ layer assignments for Stage Mode
