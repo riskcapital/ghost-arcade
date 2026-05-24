@@ -68,10 +68,11 @@
   import { onMount, onDestroy } from 'svelte';
   import { isWebGPUSupported, probeWebGPU } from '$lib/renderer/webgpuCapability';
   import { registerEditorCanvas, stopOutputSharedTexturePresenter, setOutputCursor, setOutputCursorStyle } from '$lib/sync/outputSharedTexturePresenter';
-  import { settings } from '$lib/stores/settings';
+  import { settings, outputFrozen } from '$lib/stores/settings';
   import { WebGPUPaintDrip } from '$lib/renderer/webgpuPaintDrip';
   import { WebGPUAdvLightPaint } from '$lib/renderer/webgpuAdvLightPaint';
   import { WebGPUStrokeParticles, collectGPUStrokes } from '$lib/renderer/webgpuStrokeParticles';
+  import { setGPUBrushCanvas } from '$lib/lightpainting/gpuBrushBridge';
   import { WebGPUPixelParticles } from '$lib/renderer/webgpuPixelParticles';
   // Dedicated renderer for pixel-fx layers in `flythrough` mode.
   // Routed separately from the standard WebGPUPixelParticles because
@@ -172,12 +173,32 @@
   let projectUnsub: (() => void) | null = null;
   let selectedLayerUnsub: (() => void) | null = null;
 
+  // Output freeze (top-toolbar Freeze button + mobile pause pill).
+  // Local mirror of the outputFrozen store so the per-frame tick can
+  // read it without a store get() each frame. When frozen we skip
+  // presentFrame() entirely — that halts the GPU brush compute passes
+  // (advPaint + strokeParticles) so they stop advancing, matching the
+  // WebGL engine's animate() gate. The present canvas keeps its last
+  // composited frame, so output is fully frozen (CPU brushes already
+  // froze via the engine; this brings GPU brushes in line).
+  let frozen = false;
+  let frozenUnsub: (() => void) | null = null;
+
   // Light Painting GPU brushes — spiral / firefly / sap-flow.
   // Reads strokes from Light Painting layers in the project, runs a
   // compute pass per frame, renders particles additively over the
   // bridge frame. setStrokes() is hash-keyed so re-uploads only
   // happen when the user adds/edits/removes a GPU-brush stroke.
   let strokeParticles: WebGPUStrokeParticles | null = null;
+  // Offscreen WebGPU canvas the stroke-particle brushes render into.
+  // Instead of compositing the brushes over the present (final) frame
+  // — which forced them to the top of the z-stack and out of the
+  // freeze gate — we render them here, transparent-cleared, and hand
+  // this canvas to Canvas.svelte (via gpuBrushBridge) so the engine
+  // composites it at the light-paint layer's real z-position. See
+  // gpuBrushBridge.ts for the full rationale.
+  let brushCanvas: HTMLCanvasElement | null = null;
+  let brushCtx: any = null;
   // Per-layer pixel-fx renderers, keyed by layer id. Each pixel-fx
   // layer gets its own WebGPUPixelParticles instance so they don't
   // step on each other's source textures or particle buffers.
@@ -404,9 +425,21 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       // non-fatal; the rest of the editor keeps working.
       try {
         strokeParticles = await WebGPUStrokeParticles.create(device, preferredFormat);
+        // Offscreen surface the brushes render into. Configured with
+        // premultiplied alpha so the transparent-cleared background +
+        // additive particles upload cleanly as a THREE.CanvasTexture.
+        brushCanvas = document.createElement('canvas');
+        brushCanvas.width = 1; brushCanvas.height = 1;
+        brushCtx = brushCanvas.getContext('webgpu');
+        if (brushCtx) {
+          brushCtx.configure({ device, format: preferredFormat, alphaMode: 'premultiplied' });
+          setGPUBrushCanvas(brushCanvas);
+        }
       } catch (err: any) {
         console.error('[WebGPUCanvas] stroke particles init failed (non-fatal):', err?.message || err);
         strokeParticles = null;
+        brushCanvas = null; brushCtx = null;
+        setGPUBrushCanvas(null);
       }
 
       initStatus = sourceCanvas ? 'running' : 'no-source';
@@ -509,7 +542,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       // keyed so it's a no-op when nothing immutable changed) AND
       // push current progress values (for the drawing-head animation
       // — particles "draw on" as the layer's playback timeline runs).
-      if (strokeParticles) {
+      if (strokeParticles && brushCanvas && brushCtx) {
         const proj = getProjectSync();
         if (proj) {
           const lpLayers = proj.layers
@@ -519,8 +552,30 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
           strokeParticles.setStrokes(gpuStrokes);
           strokeParticles.updateProgresses(progresses);
         }
-        strokeParticles.setViewport(presentCanvas.width, presentCanvas.height);
-        strokeParticles.encodeFrame(encoder, view);
+        // Render the brushes into the offscreen brush canvas (NOT the
+        // present view). Keep it sized to the present resolution. The
+        // engine picks this canvas up via gpuBrushBridge and composites
+        // it at the light-paint layer's z — see gpuBrushBridge.ts.
+        if (brushCanvas.width !== presentCanvas.width || brushCanvas.height !== presentCanvas.height) {
+          brushCanvas.width = presentCanvas.width;
+          brushCanvas.height = presentCanvas.height;
+        }
+        const brushView = brushCtx.getCurrentTexture().createView();
+        // Clear the brush surface transparent first — encodeFrame uses
+        // loadOp:'load' (composites additively onto existing content),
+        // so without this clear the brushes would accumulate frame over
+        // frame into a solid smear.
+        const clearPass = encoder.beginRenderPass({
+          colorAttachments: [{
+            view: brushView,
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+            loadOp: 'clear',
+            storeOp: 'store',
+          }],
+        });
+        clearPass.end();
+        strokeParticles.setViewport(brushCanvas.width, brushCanvas.height);
+        strokeParticles.encodeFrame(encoder, brushView);
       }
 
       // ── Pixel-FX layers ──
@@ -847,7 +902,10 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     const tick = () => {
       if (disposed) return;
       if (initStatus === 'no-source' && sourceCanvas) initStatus = 'running';
-      if (initStatus === 'running') presentFrame();
+      // Total output freeze: skip presenting so the GPU brush compute
+      // passes stop advancing. The canvas retains its last frame. RAF
+      // keeps rescheduling so we resume instantly on unfreeze.
+      if (initStatus === 'running' && !frozen) presentFrame();
       // Dev-mode VideoFrame leak watchdog — early-returns when
       // `window.__VIDEO_FRAME_DEBUG__` is falsy, so this is free
       // in production. When debug is on, warns if >1 frame stays
@@ -983,6 +1041,9 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       lastAudioBands = { bass: bands.bass, mid: bands.mid, treble: bands.treble };
     });
 
+    // Mirror the output-freeze store into a local flag the tick reads.
+    frozenUnsub = outputFrozen.subscribe((v) => { frozen = v; });
+
     // Subscribe to project + selected layer so we know:
     //  - whether ANY adv-lightpaint layer exists (controls render
     //    pass enable)
@@ -1033,6 +1094,9 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     window.removeEventListener('mouseup', onMouseUp, { capture: true } as any);
     window.removeEventListener('keydown', onKeyDown);
     if (audioUnsub) { try { audioUnsub(); } catch { /* */ } audioUnsub = null; }
+    if (frozenUnsub) { try { frozenUnsub(); } catch { /* */ } frozenUnsub = null; }
+    setGPUBrushCanvas(null);
+    brushCanvas = null; brushCtx = null;
     if (projectUnsub) { try { projectUnsub(); } catch { /* */ } projectUnsub = null; }
     if (selectedLayerUnsub) { try { selectedLayerUnsub(); } catch { /* */ } selectedLayerUnsub = null; }
     if (settingsUnsub) { try { settingsUnsub(); } catch { /* */ } settingsUnsub = null; }

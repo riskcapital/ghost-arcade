@@ -17,6 +17,7 @@
   import { SVGLayerRenderer } from '../svg/renderer';
   import { LightPaintingRenderer } from '../lightpainting/renderer';
   import { LightPaintingWebGLRenderer } from '../lightpainting/webglRenderer';
+  import { getGPUBrushCanvas } from '../lightpainting/gpuBrushBridge';
   import { TextRenderer } from '../text/renderer';
   import { SplatRenderer } from '../splat/SplatRenderer';
   import { loadPLY, loadSplatFromUrl } from '../splat';
@@ -406,6 +407,11 @@
   type LPRenderer = LightPaintingRenderer | LightPaintingWebGLRenderer;
   const lightPaintingRenderers = new Map<string, LPRenderer>();
   let lastLPUpdateTime = 0;
+  // THREE.CanvasTexture wrapping WebGPUCanvas's offscreen GPU-brush
+  // canvas. Created once and re-uploaded each frame (needsUpdate). The
+  // source ref guards against the brush canvas being swapped out.
+  let gpuBrushTexture: THREE.CanvasTexture | null = null;
+  let gpuBrushTextureSource: HTMLCanvasElement | null = null;
 
   // Text renderers (per layer)
   const textRenderers = new Map<string, TextRenderer>();
@@ -3475,6 +3481,37 @@
 
       // Store texture on layer for engine to pick up (same pattern as SVG/lines)
       (layer as any)._lightPaintingTexture = texture;
+    }
+
+    // ── GPU stroke-particle brushes → topmost light-paint layer ──
+    // WebGPUCanvas renders the GPU brushes (spiral / firefly / sap-flow
+    // / etc.) into an offscreen canvas (gpuBrushBridge). Slot it as the
+    // topmost light-paint layer's _lightPaintingGPUTexture so the engine
+    // composites it at that layer's real z-position (instead of the old
+    // always-on-top overlay). The brush canvas batches strokes from ALL
+    // light-paint layers, so it lands at the topmost one's z; layers
+    // stacked above that occlude it. Cleared from every other LP layer
+    // so it isn't composited more than once.
+    const brushCanvas = getGPUBrushCanvas();
+    const lpLayers = layerList.filter((l) => l.type === 'lightpainting');
+    // layerList index 0 = top of the panel (renders on top), so the
+    // topmost light-paint layer is the one with the lowest index.
+    let topLP: Layer | null = null;
+    for (const l of lpLayers) {
+      if (!topLP || layerList.indexOf(l) < layerList.indexOf(topLP)) topLP = l;
+    }
+    for (const l of lpLayers) {
+      if (l === topLP && brushCanvas && brushCanvas.width > 1) {
+        if (!gpuBrushTexture || gpuBrushTextureSource !== brushCanvas) {
+          gpuBrushTexture = new THREE.CanvasTexture(brushCanvas);
+          gpuBrushTexture.colorSpace = THREE.SRGBColorSpace;
+          gpuBrushTextureSource = brushCanvas;
+        }
+        gpuBrushTexture.needsUpdate = true;
+        (l as any)._lightPaintingGPUTexture = gpuBrushTexture;
+      } else {
+        (l as any)._lightPaintingGPUTexture = null;
+      }
     }
 
     // Clean up renderers for removed layers
