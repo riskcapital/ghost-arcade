@@ -19,7 +19,11 @@
    * in both editor and projector output windows (the engine ticks in
    * both via modulationBroadcast).
    */
-  import { modulationStore, registerEffectParamRange, registerEdgeEffectParamRange, DEFAULT_MOD, type ModSource, type ParamModulation } from '../audio/modulation';
+  import { modulationStore, registerEffectParamRange, registerEdgeEffectParamRange, type ModSource, type ParamModulation } from '../audio/modulation';
+  import { project, layers } from '../stores/layers';
+  import { vjClipLauncher } from '../stores/vjClipLauncher';
+  import { defaultAutoFor } from '../audio/autoEngine';
+  import type { AutoConfig } from '../types';
   import { tick } from 'svelte';
 
   export let label: string;
@@ -37,6 +41,15 @@
    *    'edge' — `layer.edgeEffects.effects[].<paramName>` (nested path)
    *  Defaults to 'fx' so existing call sites don't need updates. */
   export let effectKind: 'fx' | 'edge' = 'fx';
+  /** Which render graph this row writes to:
+   *    'mapping' — project.layers (LayerPanel, EdgeEffectsPanel)
+   *    'vj'      — vjClipLauncher.layerStates (VJ Mode performer panel)
+   *  Auto + audio modulation routing branches on this so the same
+   *  row component drives both paths without the caller having to
+   *  pre-wire different stores. */
+  export let target: 'mapping' | 'vj' = 'mapping';
+  /** Bank for VJ target. Ignored when target='mapping'. */
+  export let vjBank: 'A' | 'B' = 'A';
   export let onChange: (v: number) => void = () => {};
   export let displayValue: ((v: number) => string) | undefined = undefined;
 
@@ -82,33 +95,83 @@
   }
 
   // ---- Modulation source + amount ----
-  // EffectParamRow is used in mapping-mode panels (LayerPanel +
-  // EdgeEffectsPanel) so all keys are namespaced with `map:` —
-  // matches the engine's target-aware routing which uses the key
-  // prefix to decide whether to write through the VJ deck path or
-  // the mapping `_mappingEffectUpdater` callback. Before this
-  // namespace was added, effect mods routed as VJ regardless and
-  // never updated mapping layers' effect params.
+  // Auto (per-param playhead) lives on the effect data itself —
+  // `effect.paramAuto[paramName]` — handled by autoEngine.ts. Edge,
+  // audio, and LFO sources still go through the modulationStore.
+  // The two paths are mutually exclusive per param: picking Audio
+  // clears any Auto sidecar; picking Auto clears the audio mod.
+  //
+  // Routing branches on `target`:
+  //   - 'mapping' reads/writes project.layers (and uses 'map:' modKey prefix)
+  //   - 'vj'      reads/writes vjClipLauncher.layerStates (uses bank-prefixed key)
+  $: vjLauncherState = $vjClipLauncher;
   $: modKey = effectKind === 'edge'
     ? `map:${layerIndex}:edge:${effectId}:${paramName}`
-    : `map:${layerIndex}:fx:${effectId}:${paramName}`;
+    : target === 'vj'
+      ? `${vjBank === 'B' ? 'B:' : ''}${layerIndex}:fx:${effectId}:${paramName}`
+      : `map:${layerIndex}:fx:${effectId}:${paramName}`;
   $: existingMod = ($modulationStore.get(modKey) as ParamModulation | undefined);
-  $: currentSource = existingMod?.source ?? 'manual';
+
+  // Look up the live effect (mapping layer OR VJ layer state) so we
+  // can read the paramAuto sidecar for the Auto UI state.
+  $: currentMappingLayer = target === 'mapping' ? $layers[layerIndex] : undefined;
+  $: currentVjLayerState = target === 'vj'
+    ? (vjBank === 'B' ? vjLauncherState.bankBLayerStates : vjLauncherState.layerStates)[layerIndex]
+    : undefined;
+  $: currentEffect = target === 'vj'
+    ? currentVjLayerState?.effects.find(e => e.id === effectId)
+    : effectKind === 'edge'
+      ? (currentMappingLayer?.edgeEffects?.effects.find(e => e.id === effectId) as any)
+      : currentMappingLayer?.effects.find(e => e.id === effectId);
+  $: existingAuto = (currentEffect?.paramAuto as Record<string, AutoConfig> | undefined)?.[paramName];
+
+  $: currentSource = existingAuto
+    ? 'auto'
+    : (existingMod?.source ?? 'manual');
   $: currentAmount = existingMod?.amount ?? 1.0;
   $: currentBpmSync = existingMod?.bpmSync ?? false;
-  $: isModulated = currentSource !== 'manual';
-  $: isLfo = currentSource.startsWith('lfo-');
   $: isAuto = currentSource === 'auto';
+  $: isModulated = isAuto || (currentSource !== 'manual');
+  $: isLfo = !isAuto && currentSource.startsWith('lfo-');
 
   function writeMod(mod: ParamModulation) {
-    // Always write under the mapping namespace — see modKey above.
     if (effectKind === 'edge') {
       modulationStore.setEdgeEffectModulation(layerIndex, effectId, paramName, mod, 'mapping');
+    } else if (target === 'vj') {
+      modulationStore.setEffectModulation(layerIndex, effectId, paramName, mod, vjBank, 'vj');
     } else {
       modulationStore.setEffectModulation(layerIndex, effectId, paramName, mod, 'A', 'mapping');
     }
   }
+  function writeAuto(auto: AutoConfig | null) {
+    if (effectKind === 'edge') {
+      // Edge effect — paramName is a dotted path like `stroke.width`.
+      // The auto map keys by the same string so writes from this row
+      // line up with reads in autoEngine + the existing edge updater.
+      if (currentMappingLayer) {
+        project.setEdgeEffectParamAuto(currentMappingLayer.id, effectId, paramName, auto);
+      }
+      return;
+    }
+    if (target === 'vj') {
+      vjClipLauncher.setLayerEffectParamAuto(layerIndex, effectId, paramName, auto, vjBank);
+    } else if (currentMappingLayer) {
+      project.setEffectParamAuto(currentMappingLayer.id, effectId, paramName, auto);
+    }
+  }
   function setSource(source: ModSource) {
+    if (source === 'auto') {
+      // Switching TO auto. Clear any audio modulation (mutually
+      // exclusive) and seed a fresh AutoConfig spanning the param's
+      // natural range.
+      if (existingMod && existingMod.source !== 'manual') {
+        writeMod({ source: 'manual', amount: 0, speed: 1, invert: false, bpmSync: false });
+      }
+      writeAuto(existingAuto ?? defaultAutoFor(min, max));
+      return;
+    }
+    // Switching to anything else — clear the Auto sidecar first.
+    if (existingAuto) writeAuto(null);
     if (source === 'manual') {
       writeMod({ source: 'manual', amount: 0, speed: 1, invert: false, bpmSync: false });
     } else {
@@ -116,23 +179,7 @@
       const spd = existingMod?.speed ?? 1.0;
       const inv = existingMod?.invert ?? false;
       const sync = existingMod?.bpmSync ?? false;
-      // For 'auto' source, seed the playhead fields from DEFAULT_MOD
-      // so the engine ticks correctly on first frame. autoPlaying
-      // is FORCED to true (user just picked Auto, they want it
-      // playing — same fix the shader-param path uses).
-      if (source === 'auto') {
-        writeMod({
-          source, amount: amt, speed: spd, invert: inv, bpmSync: sync,
-          autoPhase: 0,
-          autoMode: existingMod?.autoMode ?? DEFAULT_MOD.autoMode,
-          autoSpeedHz: existingMod?.autoSpeedHz ?? DEFAULT_MOD.autoSpeedHz,
-          autoMin: existingMod?.autoMin ?? DEFAULT_MOD.autoMin,
-          autoMax: existingMod?.autoMax ?? DEFAULT_MOD.autoMax,
-          autoPlaying: true,
-        });
-      } else {
-        writeMod({ source, amount: amt, speed: spd, invert: inv, bpmSync: sync });
-      }
+      writeMod({ source, amount: amt, speed: spd, invert: inv, bpmSync: sync });
     }
   }
   function setAmount(amount: number) {
@@ -143,16 +190,16 @@
     if (!existingMod || existingMod.source === 'manual') return;
     writeMod({ ...existingMod, bpmSync });
   }
-  function setAutoField<K extends keyof ParamModulation>(field: K, value: ParamModulation[K]) {
-    if (!existingMod) return;
-    writeMod({ ...existingMod, [field]: value });
+  function setAutoField<K extends keyof AutoConfig>(field: K, value: AutoConfig[K]) {
+    if (!existingAuto) return;
+    writeAuto({ ...existingAuto, [field]: value });
   }
 </script>
 
 <div class="epr" class:modulated={isModulated}>
   <!-- Row 1: label · source dropdown · value -->
   <div class="epr-head">
-    <span class="epr-label">{label}</span>
+    <span class="epr-label" title={label}>{label}</span>
     <select
       class="epr-source"
       class:active={isModulated}
@@ -160,7 +207,14 @@
       title="Audio / LFO modulation source"
       onchange={(e) => setSource((e.target as HTMLSelectElement).value as ModSource)}
     >
-      <optgroup label="Control"><option value="manual">Manual</option></optgroup>
+      <optgroup label="Control">
+        <option value="manual">Manual</option>
+        <!-- Auto sits directly below Manual because it's the most
+             common automation choice. Short label so the dropdown
+             stays narrow on the VJ panel where the param label
+             column is tight. -->
+        <option value="auto">Auto</option>
+      </optgroup>
       <optgroup label="Audio">
         <option value="sub">Sub</option>
         <option value="bass">Bass</option>
@@ -184,7 +238,6 @@
         <option value="lfo-square">Square</option>
         <option value="lfo-tri">Triangle</option>
       </optgroup>
-      <optgroup label="Auto"><option value="auto">Auto (playhead)</option></optgroup>
     </select>
     {#if editing}
       <input
@@ -224,26 +277,24 @@
          their 0..1 axis lines up 1:1 with min..max above. Same
          pattern as the shader-params overlay; cyan thumbs + a faint
          fill band between them mark the active sweep sub-range. -->
-    {#if isAuto}
-      {@const _amin = existingMod?.autoMin ?? 0}
-      {@const _amax = existingMod?.autoMax ?? 1}
+    {#if isAuto && existingAuto}
       {@const _rSpan = (max - min) || 1}
-      {@const _aminAbs = min + _amin * _rSpan}
-      {@const _amaxAbs = min + _amax * _rSpan}
-      <div class="epr-slipper-fill" style="left: {_amin * 100}%; right: {(1 - _amax) * 100}%"></div>
-      <input type="range" min={min} max={max} step={_rSpan / 200} value={_aminAbs}
+      {@const _aMin = existingAuto.min}
+      {@const _aMax = existingAuto.max}
+      {@const _aMinFrac = (_aMin - min) / _rSpan}
+      {@const _aMaxFrac = (_aMax - min) / _rSpan}
+      <div class="epr-slipper-fill" style="left: {_aMinFrac * 100}%; right: {(1 - _aMaxFrac) * 100}%"></div>
+      <input type="range" min={min} max={max} step={_rSpan / 200} value={_aMin}
         class="epr-slipper epr-slipper-min"
         oninput={(e) => {
           const v = parseFloat((e.target as HTMLInputElement).value);
-          const frac = (v - min) / _rSpan;
-          setAutoField('autoMin', Math.min(frac, _amax - 0.02));
+          setAutoField('min', Math.min(v, _aMax - _rSpan * 0.02));
         }} />
-      <input type="range" min={min} max={max} step={_rSpan / 200} value={_amaxAbs}
+      <input type="range" min={min} max={max} step={_rSpan / 200} value={_aMax}
         class="epr-slipper epr-slipper-max"
         oninput={(e) => {
           const v = parseFloat((e.target as HTMLInputElement).value);
-          const frac = (v - min) / _rSpan;
-          setAutoField('autoMax', Math.max(frac, _amin + 0.02));
+          setAutoField('max', Math.max(v, _aMin + _rSpan * 0.02));
         }} />
     {/if}
   </div>
@@ -281,27 +332,27 @@
        + speed. Range slippers live on the main slider track above
        so the autoMin..autoMax visually aligns with the param's
        actual range; this row just has the transport + speed dial. -->
-  {#if isAuto}
+  {#if isAuto && existingAuto}
     <div class="epr-auto-controls">
       <div class="epr-auto-row">
-        <button class="epr-auto-play" class:playing={existingMod?.autoPlaying !== false}
-          onclick={() => setAutoField('autoPlaying', existingMod?.autoPlaying === false)}
-          title={existingMod?.autoPlaying === false ? 'Resume' : 'Pause'}
-        >{existingMod?.autoPlaying === false ? '▶' : '❚❚'}</button>
+        <button class="epr-auto-play" class:playing={existingAuto.playing}
+          onclick={() => setAutoField('playing', !existingAuto!.playing)}
+          title={existingAuto.playing ? 'Pause' : 'Resume'}
+        >{existingAuto.playing ? '❚❚' : '▶'}</button>
         <div class="epr-auto-mode">
-          <button class:active={(existingMod?.autoMode ?? 'loop') === 'loop'}
-            onclick={() => setAutoField('autoMode', 'loop')}>Loop</button>
-          <button class:active={existingMod?.autoMode === 'pingpong'}
-            onclick={() => setAutoField('autoMode', 'pingpong')}>Ping-pong</button>
+          <button class:active={existingAuto.mode === 'loop'}
+            onclick={() => setAutoField('mode', 'loop')}>Loop</button>
+          <button class:active={existingAuto.mode === 'pingpong'}
+            onclick={() => setAutoField('mode', 'pingpong')}>Ping-pong</button>
         </div>
       </div>
       <div class="epr-auto-row epr-auto-speed">
         <span class="epr-auto-label">Speed</span>
         <input type="range" min="0.01" max="1" step="0.005"
-          value={existingMod?.autoSpeedHz ?? 0.15}
-          oninput={(e) => setAutoField('autoSpeedHz', parseFloat((e.target as HTMLInputElement).value))}
+          value={existingAuto.speedHz}
+          oninput={(e) => setAutoField('speedHz', parseFloat((e.target as HTMLInputElement).value))}
           class="epr-auto-speed-slider" />
-        <span class="epr-auto-val">{(existingMod?.autoSpeedHz ?? 0.15).toFixed(2)}Hz</span>
+        <span class="epr-auto-val">{existingAuto.speedHz.toFixed(2)}Hz</span>
       </div>
     </div>
   {/if}
@@ -324,8 +375,13 @@
     gap: 8px;
   }
   .epr-label {
+    /* min-width keeps labels readable on narrow panels (VJ Mode's
+       effects column is tight). Was min-width:0 which let the
+       label shrink to 2–3 chars when the dropdown grew. The
+       dropdown got narrower at the same time so this trade-off
+       leaves the slider track full width. */
     flex: 1 1 auto;
-    min-width: 0;
+    min-width: 70px;
     font-size: 11px;
     color: #aaa;
     overflow: hidden;
@@ -340,7 +396,7 @@
     border-radius: 3px;
     padding: 1px 4px;
     font-size: 10px;
-    max-width: 90px;
+    max-width: 68px;
   }
   .epr-source.active {
     border-color: #ff00ff;
