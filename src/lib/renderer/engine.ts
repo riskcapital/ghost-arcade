@@ -2890,6 +2890,21 @@ export class RenderEngine {
       const compositeOpacity = layer.opacity * (typeof seqGate === 'number' ? seqGate : 1);
       this.compositeTexture(finalTexture, compositeOpacity, layer.blendMode, compositeIdx === 0);
       compositeIdx++;
+
+      // GPU stroke-particle brushes sit at the light-paint layer's z.
+      // Composited additively right after the layer's own (CPU) brush
+      // texture, so layers stacked above this one occlude the glow —
+      // and it freezes with the engine. The texture is the offscreen
+      // WebGPU brush canvas WebGPUCanvas renders into (set on the
+      // topmost light-paint layer by Canvas.svelte via gpuBrushBridge).
+      // Scaled by the layer's composite opacity so hiding/fading the
+      // layer affects the brushes too. Never the first unit (the layer
+      // itself was just composited), so it always blends on top.
+      const gpuBrushTex = (layer as any)._lightPaintingGPUTexture;
+      if (layer.type === 'lightpainting' && gpuBrushTex) {
+        this.compositeTexture(gpuBrushTex, compositeOpacity, 'add', false);
+        compositeIdx++;
+      }
     }
   }
 

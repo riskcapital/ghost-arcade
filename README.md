@@ -145,5 +145,6 @@ Logo design + visual identity: Risk Capital Media LLC.
 ## Links
 
 - **Website:** [ghostarcade.live](https://ghostarcade.live)
+- **Website source:** [`riskcapital/ghostarcade-web`](https://github.com/riskcapital/ghostarcade-web) — separate Next.js repo. Download links live in `src/lib/release.ts` (`RELEASE_VERSION`); see its `UPDATING.md`. Details in [CANONICAL.md](CANONICAL.md#website).
 - **Discussions:** [GitHub Discussions](https://github.com/riskcapital/ghost-arcade/discussions)
 - **Issues:** [GitHub Issues](https://github.com/riskcapital/ghost-arcade/issues)
