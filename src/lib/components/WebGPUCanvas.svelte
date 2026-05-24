@@ -68,7 +68,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { isWebGPUSupported, probeWebGPU } from '$lib/renderer/webgpuCapability';
   import { registerEditorCanvas, stopOutputSharedTexturePresenter, setOutputCursor, setOutputCursorStyle } from '$lib/sync/outputSharedTexturePresenter';
-  import { settings } from '$lib/stores/settings';
+  import { settings, outputFrozen } from '$lib/stores/settings';
   import { WebGPUPaintDrip } from '$lib/renderer/webgpuPaintDrip';
   import { WebGPUAdvLightPaint } from '$lib/renderer/webgpuAdvLightPaint';
   import { WebGPUStrokeParticles, collectGPUStrokes } from '$lib/renderer/webgpuStrokeParticles';
@@ -171,6 +171,17 @@
   let advPaintSelected = false;      // true when an adv-lightpaint layer is the selectedLayer
   let projectUnsub: (() => void) | null = null;
   let selectedLayerUnsub: (() => void) | null = null;
+
+  // Output freeze (top-toolbar Freeze button + mobile pause pill).
+  // Local mirror of the outputFrozen store so the per-frame tick can
+  // read it without a store get() each frame. When frozen we skip
+  // presentFrame() entirely — that halts the GPU brush compute passes
+  // (advPaint + strokeParticles) so they stop advancing, matching the
+  // WebGL engine's animate() gate. The present canvas keeps its last
+  // composited frame, so output is fully frozen (CPU brushes already
+  // froze via the engine; this brings GPU brushes in line).
+  let frozen = false;
+  let frozenUnsub: (() => void) | null = null;
 
   // Light Painting GPU brushes — spiral / firefly / sap-flow.
   // Reads strokes from Light Painting layers in the project, runs a
@@ -847,7 +858,10 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     const tick = () => {
       if (disposed) return;
       if (initStatus === 'no-source' && sourceCanvas) initStatus = 'running';
-      if (initStatus === 'running') presentFrame();
+      // Total output freeze: skip presenting so the GPU brush compute
+      // passes stop advancing. The canvas retains its last frame. RAF
+      // keeps rescheduling so we resume instantly on unfreeze.
+      if (initStatus === 'running' && !frozen) presentFrame();
       // Dev-mode VideoFrame leak watchdog — early-returns when
       // `window.__VIDEO_FRAME_DEBUG__` is falsy, so this is free
       // in production. When debug is on, warns if >1 frame stays
@@ -983,6 +997,9 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       lastAudioBands = { bass: bands.bass, mid: bands.mid, treble: bands.treble };
     });
 
+    // Mirror the output-freeze store into a local flag the tick reads.
+    frozenUnsub = outputFrozen.subscribe((v) => { frozen = v; });
+
     // Subscribe to project + selected layer so we know:
     //  - whether ANY adv-lightpaint layer exists (controls render
     //    pass enable)
@@ -1033,6 +1050,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     window.removeEventListener('mouseup', onMouseUp, { capture: true } as any);
     window.removeEventListener('keydown', onKeyDown);
     if (audioUnsub) { try { audioUnsub(); } catch { /* */ } audioUnsub = null; }
+    if (frozenUnsub) { try { frozenUnsub(); } catch { /* */ } frozenUnsub = null; }
     if (projectUnsub) { try { projectUnsub(); } catch { /* */ } projectUnsub = null; }
     if (selectedLayerUnsub) { try { selectedLayerUnsub(); } catch { /* */ } selectedLayerUnsub = null; }
     if (settingsUnsub) { try { settingsUnsub(); } catch { /* */ } settingsUnsub = null; }
