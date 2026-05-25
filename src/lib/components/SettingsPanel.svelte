@@ -227,7 +227,7 @@
   }
 
   // Settings tab navigation (license tab removed in OSS build)
-  let activeTab: 'general' | 'output' | 'performance' | 'midi' | 'osc' | 'ai' = 'general';
+  let activeTab: 'general' | 'output' | 'performance' | 'midi' | 'osc' | 'ai' | 'wled' = 'general';
 
   // Hash-based deep link from the integrated-GPU banner.
   // Is the NDI native addon built + the NDI runtime initialized? Drives
@@ -524,6 +524,7 @@
         <button class="settings-tab" class:active={activeTab === 'performance'} onclick={() => activeTab = 'performance'}>Performance</button>
         <button class="settings-tab" class:active={activeTab === 'midi'} onclick={() => activeTab = 'midi'}>MIDI</button>
         <button class="settings-tab" class:active={activeTab === 'osc'} onclick={() => activeTab = 'osc'}>OSC</button>
+        <button class="settings-tab" class:active={activeTab === 'wled'} onclick={() => activeTab = 'wled'}>WLED</button>
         <button class="settings-tab" class:active={activeTab === 'ai'} onclick={() => activeTab = 'ai'}>AI</button>
       </div>
 
@@ -2034,6 +2035,103 @@
               }}
               title="Wait for the next OSC message and bind it to a param path"
             >+ Learn binding</button>
+          </div>
+        </section>
+
+        {:else if activeTab === 'wled'}
+        <!-- WLED LED-controller section. Each controller is a WLED
+             device on the LAN that the renderer pushes per-frame pixel
+             data to via UDP (DRGB protocol). The shader's composite
+             output is downsampled to (ledCount × 1) and shipped as RGB
+             bytes through the main-process socket. See
+             src/lib/wled/sender.ts + electron/main.js → wled_send_frame. -->
+        <section class="settings-section">
+          <h3>WLED LED Controllers</h3>
+          <p class="settings-hint" style="margin-bottom: 12px;">
+            Send the shader's output to WLED LED strips on your local network. Each controller taps the final composite and ships RGB pixels over UDP at ~60Hz. WLED's default port is 21324; max 490 LEDs per controller for the DRGB protocol.
+          </p>
+
+          {#if ($project.wledControllers ?? []).length === 0}
+            <div class="osc-empty">
+              No WLED controllers configured. Click <strong>+ Add controller</strong> to send shader pixels to a WLED device on your LAN.
+            </div>
+          {:else}
+            <div class="osc-bindings" style="grid-template-columns: 1.4fr 1.4fr 0.8fr 0.8fr 1fr 1fr 0.6fr 36px;">
+              <div class="osc-binding-head" style="grid-template-columns: 1.4fr 1.4fr 0.8fr 0.8fr 1fr 1fr 0.6fr 36px;">
+                <span>Name</span>
+                <span>IP Address</span>
+                <span>Port</span>
+                <span>LEDs</span>
+                <span>Brightness</span>
+                <span>Gamma</span>
+                <span>On</span>
+                <span></span>
+              </div>
+              {#each ($project.wledControllers ?? []) as c (c.id)}
+                <div class="osc-binding-row" style="grid-template-columns: 1.4fr 1.4fr 0.8fr 0.8fr 1fr 1fr 0.6fr 36px;">
+                  <input
+                    type="text"
+                    value={c.name}
+                    onchange={(e) => project.updateWLEDController(c.id, { name: (e.target as HTMLInputElement).value })}
+                    placeholder="Strip name"
+                  />
+                  <input
+                    type="text"
+                    value={c.ipAddr}
+                    onchange={(e) => project.updateWLEDController(c.id, { ipAddr: (e.target as HTMLInputElement).value })}
+                    placeholder="192.168.1.50"
+                  />
+                  <input
+                    type="number" min="1" max="65535" step="1"
+                    value={c.port}
+                    onchange={(e) => project.updateWLEDController(c.id, { port: parseInt((e.target as HTMLInputElement).value) || 21324 })}
+                  />
+                  <input
+                    type="number" min="1" max="490" step="1"
+                    value={c.ledCount}
+                    onchange={(e) => project.updateWLEDController(c.id, { ledCount: Math.max(1, Math.min(490, parseInt((e.target as HTMLInputElement).value) || 1)) })}
+                  />
+                  <input
+                    type="number" min="0" max="1" step="0.05"
+                    value={c.brightness ?? 1}
+                    onchange={(e) => project.updateWLEDController(c.id, { brightness: Math.max(0, Math.min(1, parseFloat((e.target as HTMLInputElement).value))) })}
+                  />
+                  <input
+                    type="number" min="0.5" max="3" step="0.1"
+                    value={c.gamma ?? 1}
+                    onchange={(e) => project.updateWLEDController(c.id, { gamma: Math.max(0.5, Math.min(3, parseFloat((e.target as HTMLInputElement).value))) })}
+                  />
+                  <label class="osc-inv">
+                    <input
+                      type="checkbox"
+                      checked={c.enabled}
+                      onchange={(e) => project.updateWLEDController(c.id, { enabled: (e.target as HTMLInputElement).checked })}
+                    />
+                  </label>
+                  <button
+                    class="osc-binding-del"
+                    onclick={() => project.removeWLEDController(c.id)}
+                    title="Remove controller"
+                  >×</button>
+                </div>
+              {/each}
+            </div>
+          {/if}
+
+          <div class="osc-add-row">
+            <button
+              class="osc-add-btn"
+              onclick={() => project.addWLEDController({
+                id: 'wled-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7),
+                name: 'WLED ' + (($project.wledControllers ?? []).length + 1),
+                ipAddr: '',
+                port: 21324,
+                ledCount: 32,
+                enabled: false,
+                brightness: 1,
+                gamma: 1,
+              })}
+            >+ Add controller</button>
           </div>
         </section>
 

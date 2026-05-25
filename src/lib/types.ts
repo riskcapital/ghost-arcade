@@ -4264,6 +4264,42 @@ export interface Project {
   // projects load unchanged.
   surfaces?: Surface[];
   activeSurfaceId?: string | null;
+  // WLED LED-controller integration. Each entry describes one
+  // controller on the local network that the engine pushes pixel
+  // data to via UDP (DRGB protocol). Per-frame the renderer reads
+  // a tiny tap-texture (sized to ledCount × 1), packs it, and
+  // sends through the main process. Optional + defaults to empty
+  // so legacy projects load unchanged.
+  wledControllers?: WLEDController[];
+}
+
+/** A single WLED controller on the local network. Stored on the
+ *  Project so the same lighting rig follows a saved show. The
+ *  renderer subscribes to this list and runs one UDP sender per
+ *  enabled controller. */
+export interface WLEDController {
+  id: string;
+  /** Display name for the UI ("stage left strip", "back wall matrix"). */
+  name: string;
+  /** IPv4 address of the WLED controller, e.g. "192.168.1.42". */
+  ipAddr: string;
+  /** UDP port. WLED's realtime port is 21324 by default. */
+  port: number;
+  /** Number of LEDs on the strip / matrix. 1..490 fits in one DRGB
+   *  packet; v1 caps at 490 (DNRGB for larger comes later). */
+  ledCount: number;
+  /** Master enable. When false the controller stops receiving
+   *  packets — WLED falls back to whatever local effect it had
+   *  configured before. */
+  enabled: boolean;
+  /** Brightness multiplier 0..1 applied to RGB before send. Lets
+   *  the user dial down a too-bright strip without touching the
+   *  WLED side. */
+  brightness?: number;
+  /** Gamma correction 0.5..3.0 (default 1, no correction). LEDs
+   *  often need ~2.2 to look right because the eye perceives
+   *  brightness non-linearly. */
+  gamma?: number;
 }
 
 // ═══════════════════════════════════════════════════
@@ -4748,6 +4784,7 @@ export function createProject(name: string): Project {
     mediaFolders: [],
     stagePresets: [],
     svKeyboardPresets: [],
+    wledControllers: [],
   };
 }
 

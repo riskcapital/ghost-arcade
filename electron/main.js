@@ -786,6 +786,55 @@ function registerIpcHandlers() {
     return 'pong';
   });
 
+  // --- WLED ---
+  // Realtime DRGB packets sent over UDP to WLED controllers on the
+  // local network. Sockets are cached per-controller-id so we don't
+  // recreate one per frame; the renderer holds the lifecycle by
+  // calling wled_close_socket when a controller is removed.
+  //
+  // DRGB packet format (WLED protocol 2):
+  //   [0]    = 2          (protocol id)
+  //   [1]    = 255        (timeout in seconds; 255 ~= "stay live, don't fall back to effect")
+  //   [2..]  = R,G,B,R,G,B,...  for each LED (max ~490 LEDs per packet)
+  //
+  // For >490 LEDs we'd need DNRGB (protocol 4) with a 16-bit start
+  // index — v1 doesn't bother since most installs are under that.
+  const wledSockets = new Map();  // controllerId -> dgram.Socket
+
+  ipcMain.handle('wled_send_frame', async (_, { controllerId, ip, port, pixels }) => {
+    if (!ip || !pixels || pixels.length === 0) return { ok: false, error: 'missing ip or pixels' };
+    let sock = wledSockets.get(controllerId);
+    if (!sock) {
+      sock = dgram.createSocket('udp4');
+      sock.on('error', (err) => {
+        console.warn('[WLED] socket error for', controllerId, err.message);
+      });
+      wledSockets.set(controllerId, sock);
+    }
+    // pixels arrives as a Buffer (Node serializes Uint8Array → Buffer
+    // across IPC). Either way the bytes are R,G,B triples already
+    // packed by the renderer.
+    const payload = Buffer.isBuffer(pixels) ? pixels : Buffer.from(pixels);
+    const packet = Buffer.alloc(2 + payload.length);
+    packet[0] = 2;     // DRGB
+    packet[1] = 255;   // timeout
+    payload.copy(packet, 2);
+    return new Promise((resolve) => {
+      sock.send(packet, 0, packet.length, port || 21324, ip, (err) => {
+        resolve({ ok: !err, error: err?.message });
+      });
+    });
+  });
+
+  ipcMain.handle('wled_close_socket', async (_, { controllerId }) => {
+    const sock = wledSockets.get(controllerId);
+    if (sock) {
+      try { sock.close(); } catch {}
+      wledSockets.delete(controllerId);
+    }
+    return { ok: true };
+  });
+
   // --- OSC ---
   ipcMain.handle('osc_start', async (_, { port }) => {
     return startOSC(port || 8000, mainWindow);
