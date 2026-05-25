@@ -67,6 +67,8 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'native_renderer_start', 'native_renderer_stop', 'native_renderer_submit_batch',
   'native_renderer_submit_commands', 'native_renderer_upload_source_gpu_shared_texture',
   'native_renderer_prefetch_media', 'native_renderer_set_decode_policy',
+  // WLED — UDP DRGB packets to LED controllers on the LAN
+  'wled_send_frame', 'wled_close_socket',
 ]);
 
 // Expose a bridge that mirrors Tauri's invoke() API

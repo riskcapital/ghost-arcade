@@ -1,5 +1,5 @@
 import { writable, derived, get } from 'svelte/store';
-import type { Layer, Project, WarpCorners, Point2D, BezierPoint, MaskShape, MediaSource, BlendMode, WarpMode, Effect, EffectType, EffectParams, LayerType, SVGContent, SVGFillMode, SVGColorMode, ColorContent, LightPaintingContent, LightPaintingStroke, CropRegion, LayerShape, LayerShapeType, Composition, VJModeState, VJDeck, Timeline, TimelineClip, TextContent, TextAnimation, SplatContent, Model3DContent, MediaTrayFolder, StagePreset, SVKeyboardPreset, EdgeEffect, EdgeEffectsConfig, PixelFXContent, GPULayerContent, AutoConfig } from '../types';
+import type { Layer, Project, WarpCorners, Point2D, BezierPoint, MaskShape, MediaSource, BlendMode, WarpMode, Effect, EffectType, EffectParams, LayerType, SVGContent, SVGFillMode, SVGColorMode, ColorContent, LightPaintingContent, LightPaintingStroke, CropRegion, LayerShape, LayerShapeType, Composition, VJModeState, VJDeck, Timeline, TimelineClip, TextContent, TextAnimation, SplatContent, Model3DContent, MediaTrayFolder, StagePreset, SVKeyboardPreset, EdgeEffect, EdgeEffectsConfig, PixelFXContent, GPULayerContent, AutoConfig, WLEDController } from '../types';
 import { createLayer, createProject, createDefaultCorners, createMeshGrid, createLinesLayer, createSVGLayer, createColorLayer, createLightPaintingLayer, createAdvLightPaintingLayer, createTextLayer, createSplatLayer, createDefaultSVGContent, createDefaultCropRegion, createDefaultLayerShape, createDefaultVJModeState, createDefaultTimeline, generateUUID, createDefaultModel3DContent, createDefaultEdgeEffect, convertShapeToCustom, createGroupLayer, createDefaultPixelFXContent, createDefaultGPULayerContent } from '../types';
 import type { GroupConfig } from '../types';
 import { mediaLibrary } from './media';
@@ -2679,6 +2679,30 @@ void main() {
     },
 
     // ========== SV Keyboard Presets ==========
+
+    // ========== WLED controllers ==========
+    // Each controller is a WLED LED device on the LAN that the
+    // renderer pushes per-frame pixel data to via UDP.
+    addWLEDController(controller: WLEDController) {
+      update((project) => ({
+        ...project,
+        wledControllers: [...(project.wledControllers || []), controller],
+      }));
+    },
+    removeWLEDController(controllerId: string) {
+      update((project) => ({
+        ...project,
+        wledControllers: (project.wledControllers || []).filter(c => c.id !== controllerId),
+      }));
+    },
+    updateWLEDController(controllerId: string, fields: Partial<WLEDController>) {
+      update((project) => ({
+        ...project,
+        wledControllers: (project.wledControllers || []).map(c =>
+          c.id === controllerId ? { ...c, ...fields, id: controllerId } : c
+        ),
+      }));
+    },
 
     saveSVKeyboardPreset(preset: SVKeyboardPreset) {
       update((project) => ({

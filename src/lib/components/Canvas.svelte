@@ -37,6 +37,7 @@
   import { audioTextures } from '../audio/audioTextures';
   import { initStateBroadcast, destroyStateBroadcast } from '$lib/sync/stateBroadcast';
   import { startAudioBroadcast, stopAudioBroadcast, broadcastAudioFrame } from '$lib/sync/audioBroadcast';
+  import { startWLEDSenders, stopWLEDSenders, tickWLEDSenders } from '$lib/wled/sender';
   import { startModulationBroadcast, stopModulationBroadcast } from '$lib/sync/modulationBroadcast';
   import { startOutputPixelBroadcast, stopOutputPixelBroadcast } from '$lib/sync/outputPixelBroadcast';
   import {
@@ -558,6 +559,11 @@
     void import('../recording/offlineRender').then(({ offlineRender }) => {
       offlineRender.registerEngine(engine!, canvas);
     });
+    // Start WLED senders. Subscribes to project.wledControllers
+    // and reconciles tap canvases when controllers are added/removed.
+    // The per-frame tap+send happens via tickWLEDSenders() from
+    // inside the animate loop.
+    startWLEDSenders(canvas);
     // Set initial container size from wrapper layout dimensions
     sizeContainer(wrapW, wrapH);
 
@@ -1668,6 +1674,11 @@
         }
       }
 
+      // WLED tap: after frame is rendered, push pixel data to any
+      // configured LED controllers. Cheap (32-490 byte readback +
+      // UDP send to main process); throttled to ~60Hz per controller.
+      tickWLEDSenders();
+
       _consecutiveFrameErrors = 0; // successful frame — reset the error streak
       } catch (err) {
         _consecutiveFrameErrors++;
@@ -1947,6 +1958,7 @@
 
   onDestroy(() => {
     cancelAnimationFrame(animationId);
+    stopWLEDSenders();
     engine?.dispose();
 
     // S4 pilot teardown — unsubscribe from the settings reactive and
