@@ -12,9 +12,12 @@
  *   via a textured quad, THEN glReadPixels. Reading directly from the rect
  *   texture returns zeros on Intel Iris drivers — IOSurface shared memory
  *   hasn't been synced into a form readPixels can fetch.
- * - The sender exposes both sendImage (CPU-uploaded pixels, used today) and
- *   publishIOSurface (zero-copy: wraps an IOSurfaceID from Electron OSR into
- *   a rectangle texture via CGLTexImageIOSurface2D, then publishFrameTexture).
+ * - The sender exposes both sendImage (CPU-uploaded pixels, compatibility
+ *   fallback) and sendTexture / publishIOSurface (zero-copy: wraps an
+ *   IOSurfaceID from the Electron OSR paint event into a rectangle texture
+ *   via CGLTexImageIOSurface2D, then publishFrameTexture). sendTexture is
+ *   the primary path — sendImage is only used when OSR fails to start or
+ *   the main-process watchdog drops zero-copy after 3s of no frames.
  */
 
 #define GL_SILENCE_DEPRECATION 1
@@ -147,6 +150,18 @@ private:
     int w = info[1].As<Napi::Number>().Int32Value();
     int h = info[2].As<Napi::Number>().Int32Value();
 
+    // One-shot warning: sendImage is the CPU compatibility fallback. If it
+    // fires at all, we are NOT on the IOSurface zero-copy path and the
+    // renderer is doing a full-frame getImageData every other frame (~8 MB at
+    // 1080p, ~33 MB at 4K). Logged once per process so the operator notices
+    // without flooding the log at frame rate.
+    static bool fallbackWarned = false;
+    if (!fallbackWarned) {
+      fallbackWarned = true;
+      NSLog(@"[SyphonOutput] zero-copy NOT active — falling back to CPU sendImage path (%dx%d, ~%zu MB/frame). Check that the OSR window started and is producing paint events.",
+            w, h, (size_t)(w * h * 4) / (1024 * 1024));
+    }
+
     [context_ makeCurrentContext];
 
     if (!uploadTex_ || width_ != w || height_ != h) {
@@ -229,6 +244,17 @@ private:
                      imageRegion:NSMakeRect(0, 0, w, h)
                    textureDimensions:NSMakeSize(w, h)
                          flipped:flipped];
+
+    // One-shot confirmation that zero-copy publish is live. Logs once on the
+    // first success and then again whenever the IOSurface changes (resize /
+    // sender restart). Lets ops confirm from main-process logs that we're
+    // truly on the IOSurface path and not the silent sendImage compatibility
+    // fallback — which historically was indistinguishable in logs and burned
+    // ~8 MB/frame at 1080p for no good reason.
+    if (lastIOSurfaceID_ != surfaceID) {
+      NSLog(@"[SyphonOutput] zero-copy ACTIVE — IOSurfaceID=%u %dx%d (publishing via CGLTexImageIOSurface2D)",
+            surfaceID, w, h);
+    }
 
     width_ = w;
     height_ = h;

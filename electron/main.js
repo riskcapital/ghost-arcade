@@ -347,10 +347,13 @@ const ndiReceivers = new Set();  // tracks live receiver source names
  * from Chromium's compositor, forwarded via sendTexture().
  *
  * macOS: new addon.SyphonOutput() → IOSurface-backed texture via Syphon.
- * The OSR zero-copy path on darwin is a separate follow-up (would wire OSR
- * paint → IOSurfaceID → syphonOutput.publishIOSurface). For now darwin uses
- * the CPU path: renderer reads canvas pixels, pushes via spout_send_image
- * IPC, addon uploads to GL_TEXTURE_2D and publishFrameTexture()s it.
+ * Zero-copy is live on darwin too: the OSR paint handler hands the 4-byte
+ * io_surface_id_t off to SyphonOutput.sendTexture, which CGLTexImageIOSurface2D-
+ * wraps it into a GL_TEXTURE_RECTANGLE_ARB and publishFrameTexture()s it — no
+ * pixel data ever crosses the CPU boundary. The legacy CPU path (renderer
+ * getImageData → spout_send_image IPC → addon sendImage → glTexSubImage2D →
+ * publishFrameTexture) is now compatibility fallback only, triggered if OSR
+ * fails to start or the watchdog drops it after 3s of no frames.
  */
 function createSpoutSender(name, width, height) {
   const addon = loadSpoutAddon();
@@ -440,12 +443,12 @@ function stopSpoutSender() {
  */
 function createSpoutOsrWindow(width, height) {
   if (spoutOsrWindow || osrCreating) {
-    console.log('[Spout OSR] Window already exists or creating');
+    console.log(`[${textureShareLabel} OSR] Window already exists or creating`);
     return;
   }
 
   osrCreating = true;
-  console.log(`[Spout OSR] Creating ${width}x${height} window`);
+  console.log(`[${textureShareLabel} OSR] Creating ${width}x${height} window`);
 
   try {
     spoutOsrWindow = new BrowserWindow({
@@ -545,13 +548,13 @@ function createSpoutOsrWindow(width, height) {
 
     // Handle crashes — fall back to CPU path
     spoutOsrWindow.webContents.on('render-process-gone', (event, details) => {
-      console.error('[Spout OSR] Renderer process gone:', details.reason);
+      console.error(`[${textureShareLabel} OSR] Renderer process gone:`, details.reason);
       osrActive = false;
       notifyMainWindowOsrStatus(false, 'renderer-gone');
     });
 
     spoutOsrWindow.on('closed', () => {
-      console.log('[Spout OSR] Window closed');
+      console.log(`[${textureShareLabel} OSR] Window closed`);
       spoutOsrWindow = null;
       osrActive = false;
       stopOsrWatchdog();
@@ -574,9 +577,9 @@ function createSpoutOsrWindow(width, height) {
       spoutOsrWindow.loadFile(filePath, { query: { mode: 'spout-output', 'webgpu-disable': '1' } });
     }
 
-    console.log('[Spout OSR] Window created');
+    console.log(`[${textureShareLabel} OSR] Window created`);
   } catch (err) {
-    console.error('[Spout OSR] Failed to create window:', err.message);
+    console.error(`[${textureShareLabel} OSR] Failed to create window:`, err.message);
     spoutOsrWindow = null;
   } finally {
     osrCreating = false;
@@ -592,7 +595,7 @@ function destroySpoutOsrWindow() {
       spoutOsrWindow.close();
     } catch {}
     spoutOsrWindow = null;
-    console.log('[Spout OSR] Window destroyed');
+    console.log(`[${textureShareLabel} OSR] Window destroyed`);
   }
 
   // Notify main window to re-enable CPU readPixels path
@@ -615,8 +618,12 @@ function startOsrWatchdog() {
     if (!osrActive) return;
 
     if (osrFrameCount === lastFrameCount) {
-      // No new frames in 3 seconds
-      console.warn('[Spout OSR] Watchdog: no frames for 3s — falling back to CPU path');
+      // No new frames in 3 seconds — zero-copy is dead, switch to compatibility
+      // CPU path. This is a degraded mode: the renderer will resume the
+      // getImageData → spout_send_image readback pump, which is ~8 MB/frame at
+      // 1080p. Logged as warn so the operator notices it in `tail -f` of the
+      // main-process log.
+      console.warn(`[${textureShareLabel} OSR] Watchdog: no frames for 3s — zero-copy DEAD, falling back to CPU compatibility path`);
       osrActive = false;
       notifyMainWindowOsrStatus(false, 'stale');
     }
@@ -1154,7 +1161,7 @@ function registerIpcHandlers() {
 
   // --- OSR zero-copy lifecycle ---
   ipcMain.handle('spout_osr_ready', () => {
-    console.log('[Spout OSR] Renderer reports ready');
+    console.log(`[${textureShareLabel} OSR] Renderer reports ready`);
     osrActive = true;
     osrLastLogTime = Date.now();
     osrFrameCount = 0;
@@ -1178,9 +1185,9 @@ function registerIpcHandlers() {
         spoutOsrWindow.setSize(w, h);
         spoutSendW = w;
         spoutSendH = h;
-        console.log(`[Spout OSR] Resized to ${w}x${h}`);
+        console.log(`[${textureShareLabel} OSR] Resized to ${w}x${h}`);
       } catch (err) {
-        console.error('[Spout OSR] resize failed:', err?.message || err);
+        console.error(`[${textureShareLabel} OSR] resize failed:`, err?.message || err);
       }
     }
   });
@@ -2496,7 +2503,7 @@ function createMainWindow() {
 
     // Hot-reload: recreate OSR window when main window reloads (Vite HMR)
     if (spoutOsrWindow && spoutSendActive) {
-      console.log('[Spout OSR] Main window reloaded — recreating OSR window');
+      console.log(`[${textureShareLabel} OSR] Main window reloaded — recreating OSR window`);
       destroySpoutOsrWindow();
       setTimeout(() => {
         if (spoutSendActive) {
