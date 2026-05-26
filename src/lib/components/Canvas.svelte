@@ -133,6 +133,110 @@
   }
   const ndiReceivers = new Map<string, NdiReceiverContext>();
 
+  // ── MAP sub-mode layer cache ──────────────────────────────────────
+  // MAP mode renders each preset-slot's composition as a synthetic
+  // group + cloned layer stack. The clone strips runtime refs (texture,
+  // videoElement, renderTarget) for save-safety, but cloning EVERY
+  // FRAME meant the engine never got to attach a stable videoElement
+  // to source.videoElement — the field would be set on first call to
+  // updateTexturesSync and then thrown away when the next frame's
+  // fresh clone replaced the layer. Result: video presets froze on
+  // their first frame because needsUpdate=true never fired again.
+  //
+  // Cache key = `mapvj-<slotIdx>-<clipId>`. We rebuild only when the
+  // slot's clip changes (different cache key) or the underlying saved
+  // composition object reference changes (preset was edited). The
+  // group layer is mutated in-place each frame for opacity/blendMode
+  // updates — those are pure scalars, no runtime refs to leak.
+  interface MapPresetCacheEntry {
+    compositionRef: import('../types').Composition;
+    group: Layer;
+    layers: Layer[];  // cloned + namespaced preset layers (does NOT include group)
+  }
+  const mapPresetLayerCache = new Map<string, MapPresetCacheEntry>();
+
+  // JSON sanitizer for MAP-mode layer clones. Strips runtime THREE
+  // refs that would (a) re-introduce circular structure if persisted
+  // by syncState and (b) crash JSON.stringify on the wrapped DOM
+  // elements (HTMLVideoElement, HTMLIFrameElement). Keys starting
+  // with `_` and objects whose constructor begins with `_` are
+  // private-by-convention runtime state; same treatment.
+  function _mapCleanCloneLayer(l: Layer): Layer {
+    return JSON.parse(JSON.stringify(l, (key, value) => {
+      if (key === 'texture' || key === 'videoElement' || key === 'renderTarget' || key === 'iframeElement' || key === 'synthVisionCanvas') return undefined;
+      if (typeof key === 'string' && key.startsWith('_')) return undefined;
+      if (value && typeof value === 'object' && value.constructor?.name?.startsWith('_')) return undefined;
+      return value;
+    }));
+  }
+
+  // Construct a synthetic group + cloned layer stack for one MAP-mode
+  // preset slot. Called only on cache miss / composition edit — see
+  // mapPresetLayerCache. The returned `group` is mutated in-place each
+  // frame for opacity/blendMode updates; the `layers` array is the
+  // namespaced clone of the composition's saved layers, suitable for
+  // the engine to attach runtime refs (texture, videoElement) to on
+  // first updateTexturesSync pass and reuse forever after.
+  function buildMapPresetCacheEntry(
+    groupId: string,
+    comp: import('../types').Composition,
+    slotIdx: number,
+    opacity: number,
+    blendMode: any,
+  ): MapPresetCacheEntry {
+    const group: Layer = {
+      id: groupId,
+      name: `MAP L${slotIdx + 1}: ${comp.name}`,
+      type: 'group',
+      visible: true,
+      locked: false,
+      opacity,
+      blendMode,
+      source: null,
+      linesContent: null,
+      svgContent: null,
+      colorContent: null,
+      lightPaintingContent: null,
+      advLightPaintingContent: null,
+      textContent: null,
+      splatContent: null,
+      model3dContent: null,
+      pixelFXContent: null,
+      gpuLayerContent: null,
+      position: { x: 0, y: 0 },
+      scale: { x: 1, y: 1 },
+      rotation: 0,
+      flipH: false,
+      flipV: false,
+      warpMode: 'none',
+      corners: {
+        topLeft: { x: 0, y: 1 },
+        topRight: { x: 1, y: 1 },
+        bottomLeft: { x: 0, y: 0 },
+        bottomRight: { x: 1, y: 0 },
+      },
+      meshGrid: null,
+      mask: null,
+      cropRegion: null,
+      layerShape: null,
+      effects: [],
+      edgeEffects: null,
+      groupConfig: { shaderMode: 'individual', overrideStyles: false, shaderSource: null },
+    };
+    const layers: Layer[] = [];
+    for (const layer of comp.layers) {
+      const cloned = _mapCleanCloneLayer(layer);
+      // Namespace the child id so the same preset on two VJ layer
+      // slots doesn't fight over the engine's per-layer texture /
+      // render-target cache.
+      cloned.id = `${groupId}::${cloned.id}`;
+      cloned.parentGroupId = groupId;
+      cloned.bank = undefined;
+      layers.push(cloned);
+    }
+    return { compositionRef: comp, group, layers };
+  }
+
   let canvas: HTMLCanvasElement;
   let engine: RenderEngine | null = null;
   let animationId: number;
@@ -908,71 +1012,26 @@
           // Each VJ layer slot holding a preset clip is rendered as a
           // synthetic GROUP layer wrapping that preset's composition
           // layers. The group's opacity = VJ-layer-opacity × master,
-          // its blendMode = the VJ-layer blendMode. This way fading
-          // a VJ-layer slider fades the entire preset as a unit
-          // (preset renders to its own offscreen target, then
-          // composites with the configured opacity + blend) instead
-          // of just making each surface partially transparent —
-          // which produced no visible crossfade when surfaces didn't
-          // overlap.
+          // its blendMode = the VJ-layer blendMode. Fading the slot
+          // fader thus fades the entire preset as a single composite
+          // unit instead of making each surface partially transparent
+          // (which produced no visible crossfade when surfaces didn't
+          // overlap).
           //
-          // Deep-cloning each preset layer through a JSON sanitizer
-          // (strips runtime THREE.Texture / videoElement refs) is
-          // CRITICAL: the engine's per-frame texture-update path
-          // mutates layer.source.texture in-place; a shallow spread
-          // would share nested `source` references with the
-          // composition's saved layers, leaking THREE objects back
-          // into compositions[] and crashing syncState's
-          // JSON.stringify with a circular-structure error.
-          const cleanCloneLayer = (l: Layer): Layer => JSON.parse(JSON.stringify(l, (key, value) => {
-            if (key === 'texture' || key === 'videoElement' || key === 'renderTarget' || key === 'iframeElement' || key === 'synthVisionCanvas') return undefined;
-            if (typeof key === 'string' && key.startsWith('_')) return undefined;
-            if (value && typeof value === 'object' && value.constructor?.name?.startsWith('_')) return undefined;
-            return value;
-          }));
-          const makeSyntheticPresetGroup = (id: string, name: string, opacity: number, blendMode: any): Layer => ({
-            id,
-            name,
-            type: 'group',
-            visible: true,
-            locked: false,
-            opacity,
-            blendMode,
-            source: null,
-            linesContent: null,
-            svgContent: null,
-            colorContent: null,
-            lightPaintingContent: null,
-            advLightPaintingContent: null,
-            textContent: null,
-            splatContent: null,
-            model3dContent: null,
-            pixelFXContent: null,
-            gpuLayerContent: null,
-            position: { x: 0, y: 0 },
-            scale: { x: 1, y: 1 },
-            rotation: 0,
-            flipH: false,
-            flipV: false,
-            warpMode: 'none',
-            corners: {
-              topLeft: { x: 0, y: 1 },
-              topRight: { x: 1, y: 1 },
-              bottomLeft: { x: 0, y: 0 },
-              bottomRight: { x: 1, y: 0 },
-            },
-            meshGrid: null,
-            mask: null,
-            cropRegion: null,
-            layerShape: null,
-            effects: [],
-            edgeEffects: null,
-            groupConfig: { shaderMode: 'individual', overrideStyles: false, shaderSource: null },
-          });
-
+          // CACHING: cloned layers + the synthetic group live across
+          // frames in mapPresetLayerCache, keyed by `mapvj-<i>-<clipId>`.
+          // We rebuild only on slot/clip changes or composition edits
+          // (compositionRef !== entry.compositionRef). Previously we
+          // cloned every frame, which threw away the videoElement that
+          // updateTexturesSync had just attached to source.videoElement
+          // — videos in MAP-mode presets ended up with a texture but
+          // no live needsUpdate signal, so they froze on the first
+          // frame. Opacity / blendMode are mutated in-place each frame
+          // (pure scalars, safe to write).
           const presetLayers: Layer[] = [];
           const lsArr = vjState.layerStates;
           const hasSolo = lsArr.some((l) => l.solo);
+          const activeKeys = new Set<string>();
           for (let i = 0; i < lsArr.length; i++) {
             const ls = lsArr[i];
             if (ls.mute) continue;
@@ -985,18 +1044,28 @@
             if (groupOpacity <= 0) continue;
 
             const groupId = `mapvj-${i}-${clip.id}`;
-            presetLayers.push(makeSyntheticPresetGroup(groupId, `MAP L${i + 1}: ${comp.name}`, groupOpacity, ls.blendMode));
+            activeKeys.add(groupId);
 
-            for (const layer of comp.layers) {
-              const cloned = cleanCloneLayer(layer);
-              // Namespace the child id so the same preset on two VJ
-              // layer slots doesn't fight over the engine's per-layer
-              // render-target cache.
-              cloned.id = `${groupId}::${cloned.id}`;
-              cloned.parentGroupId = groupId;
-              cloned.bank = undefined;
-              presetLayers.push(cloned);
+            let entry = mapPresetLayerCache.get(groupId);
+            if (!entry || entry.compositionRef !== comp) {
+              entry = buildMapPresetCacheEntry(groupId, comp, i, groupOpacity, ls.blendMode);
+              mapPresetLayerCache.set(groupId, entry);
             }
+            // Live updates — these are scalars, safe to mutate without
+            // invalidating cached child layers.
+            entry.group.opacity = groupOpacity;
+            entry.group.blendMode = ls.blendMode;
+            entry.group.name = `MAP L${i + 1}: ${comp.name}`;
+
+            presetLayers.push(entry.group);
+            for (const child of entry.layers) presetLayers.push(child);
+          }
+          // Prune cache entries whose slot+clip no longer maps to a
+          // live preset (slot emptied, clip removed, mode toggled).
+          // Keeps the cache from growing unbounded across a session of
+          // shuffling clips between slots.
+          for (const key of mapPresetLayerCache.keys()) {
+            if (!activeKeys.has(key)) mapPresetLayerCache.delete(key);
           }
           layersToRender = presetLayers;
           compEffects = vjState.compositionEffects;
