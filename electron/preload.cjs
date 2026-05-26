@@ -15,11 +15,20 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 const ALLOWED_IPC_COMMANDS = new Set([
   // Spout
   'spout_is_available', 'spout_list_senders', 'spout_start_sender', 'spout_stop_sender',
-  'spout_send_frame', 'spout_send_image',
+  'spout_send_frame', 'spout_send_image', 'spout_get_status',
   'spout_start_receiver', 'spout_stop_receiver', 'spout_receive_frame',
   'spout_start_osr', 'spout_stop_osr', 'spout_send_shared_texture',
+  // OSR window → main lifecycle callbacks. Fired from the hidden
+  // SpoutOutputApp renderer when it's done initializing / has resized,
+  // so the main process can flip osrActive=true and start forwarding
+  // shared-texture paint events. Were missing from this allowlist
+  // until recently, which made every "ready" signal fail silently —
+  // osrActive stayed false, the CPU send pump ran instead, and the
+  // operator had no visible signal that zero-copy was off.
+  'spout_osr_ready', 'spout_osr_resize',
   // Display/window
-  'get_displays', 'create_output_window', 'configure_next_output_window',
+  'get_displays', 'get_output_display_info',
+  'create_output_window', 'configure_next_output_window',
   'close_output_window', 'move_output_window',
   'resize_output_window', 'show_main_window',
   // SRC tab Capture chooser — enumerates screens + app windows
