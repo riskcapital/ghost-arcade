@@ -121,8 +121,14 @@ export function startRecording(options: RecorderOptions = {}): RecorderHandle | 
   // Resizing would destroy the drawing buffer and break rendering.
   console.log(`[Recorder] Recording at canvas buffer size: ${canvas.width}x${canvas.height}`);
 
-  // Get video stream
-  const videoStream = canvas.captureStream(30);
+  // Get video stream at 60fps to match the editor's rAF cadence on
+  // high-refresh displays. Hardcoded 30 was the previous default — fine
+  // for slideshow content but produced visibly jittery playback when
+  // the canvas was actually rendering at 60+fps. captureStream(60) will
+  // duplicate frames internally if the canvas renders slower; the
+  // encoder handles duplicates fine and the resulting file plays back
+  // smoothly on any framerate target.
+  const videoStream = canvas.captureStream(60);
 
   // Get audio stream (if enabled and available)
   let combinedStream: MediaStream;
@@ -183,8 +189,23 @@ export function startRecording(options: RecorderOptions = {}): RecorderHandle | 
   const recordedChunks: Blob[] = [];
   let duration = 0;
   let isRecording = true;
+  // Two-phase start: the recorder is "armed" synchronously (handle is
+  // returned to the caller right away so the UI flips into recording
+  // state) but mediaRecorder.start() is deferred by two rAFs. This lets
+  // the editor's animate loop push at least one fresh canvas redraw
+  // into the captureStream pipe before the encoder starts consuming
+  // from it. Without this delay the encoder samples whatever stale
+  // frame was in the canvas at function-call time, writes it as the
+  // file's opening frame, and the player freezes on that frame for
+  // ~1s while waiting for the next keyframe to update the displayed
+  // image — visible as the "freezes for a second then plays smoothly"
+  // start-of-recording stutter.
+  let mediaRecorderStarted = false;
+  let stopBeforeStart = false;
 
-  // Duration timer
+  // Duration timer — kicks off immediately so the UI clock counts from
+  // user-perceived "I clicked record" rather than from when the encoder
+  // actually began. The ~33 ms warmup difference is invisible.
   const durationInterval = window.setInterval(() => {
     duration++;
     options.onDurationUpdate?.(duration);
@@ -212,17 +233,39 @@ export function startRecording(options: RecorderOptions = {}): RecorderHandle | 
     options.onComplete?.();
   };
 
-  // Start
-  mediaRecorder.start(1000);
-  console.log(`[Recorder] Started — ${mimeType} — audio: ${hasAudio}`);
+  // Defer start by two rAF ticks — see comment above. Two ticks (vs one)
+  // guarantees we cross at least one editor animate() boundary on every
+  // refresh-rate target, including 120/144 Hz where a single rAF can fire
+  // before the renderer has time to draw.
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (stopBeforeStart) {
+        // User clicked Stop within the warmup window. Skip start() and
+        // run cleanup paths directly so the caller's onComplete still
+        // fires and audio resources are released.
+        clearInterval(durationInterval);
+        if (audioCleanup) { audioCleanup(); audioCleanup = null; }
+        options.onComplete?.();
+        return;
+      }
+      mediaRecorder.start(1000);
+      mediaRecorderStarted = true;
+      console.log(`[Recorder] Started — ${mimeType} — audio: ${hasAudio} — fps: 60`);
+    });
+  });
 
   // Return handle
   const handle: RecorderHandle = {
     stop() {
-      if (isRecording) {
+      if (!isRecording) return;
+      isRecording = false;
+      clearInterval(durationInterval);
+      if (mediaRecorderStarted) {
         mediaRecorder.stop();
-        isRecording = false;
-        clearInterval(durationInterval);
+      } else {
+        // Recorder hasn't started yet — flag the warmup callback to
+        // skip start() entirely so we don't write an empty file.
+        stopBeforeStart = true;
       }
     },
     get isRecording() { return isRecording; },
