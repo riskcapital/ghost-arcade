@@ -2005,6 +2005,8 @@ export class RenderEngine {
       gc.bottomLeft.x !== 0 || gc.bottomLeft.y !== 0 ||
       gc.bottomRight.x !== 1 || gc.bottomRight.y !== 0;
 
+    let groupTexture: THREE.Texture = groupTarget.texture;
+
     if (hasGroupWarp) {
       // Render the group target through a warp layer object
       const groupObj = this.getOrCreateLayerObject(group);
@@ -2030,10 +2032,23 @@ export class RenderEngine {
       this.scene.remove(groupObj.mesh);
       this.renderer.setClearColor(prevClearColor, prevClearAlpha);
 
-      return groupObj.renderTarget.texture;
+      groupTexture = groupObj.renderTarget.texture;
     }
 
-    return groupTarget.texture;
+    // Post-composite effects pass. Runtime-only field (`_` prefix → never
+    // persisted) used by MAP sub-mode to apply each VJ-layer slot's effect
+    // chain to the rendered preset as a single unit. Different from
+    // `group.effects` (which propagates per-child via the existing append
+    // logic in renderGroup above): this is one effect chain on the final
+    // group composite, semantically equivalent to "the VJ layer's FX
+    // wrap the entire preset." Keyed by group.id so each slot has its
+    // own GPU effect state.
+    const postFx = (group as any)._postCompositeEffects as Effect[] | undefined;
+    if (postFx && postFx.length > 0) {
+      groupTexture = this.applyEffects(groupTexture, postFx, group.id);
+    }
+
+    return groupTexture;
   }
 
   /** Get the renderable texture for a layer */

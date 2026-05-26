@@ -1051,11 +1051,20 @@
               entry = buildMapPresetCacheEntry(groupId, comp, i, groupOpacity, ls.blendMode);
               mapPresetLayerCache.set(groupId, entry);
             }
-            // Live updates — these are scalars, safe to mutate without
-            // invalidating cached child layers.
+            // Live updates — these are scalars / array-of-data refs, safe
+            // to mutate without invalidating cached child layers.
             entry.group.opacity = groupOpacity;
             entry.group.blendMode = ls.blendMode;
             entry.group.name = `MAP L${i + 1}: ${comp.name}`;
+            // VJ-layer FX chain → applied to the preset's group composite
+            // as a single post-pass (see renderGroupToTexture's
+            // `_postCompositeEffects` handler). Echo / displacement /
+            // chroma key on the VJ layer now wrap the entire preset
+            // render, matching the user's mental model of "this slot's
+            // effects act on whatever's playing in this slot." Empty
+            // array is a no-op in applyEffects so it's safe to set even
+            // when the slot has no effects.
+            (entry.group as any)._postCompositeEffects = ls.effects ?? [];
 
             presetLayers.push(entry.group);
             for (const child of entry.layers) presetLayers.push(child);
