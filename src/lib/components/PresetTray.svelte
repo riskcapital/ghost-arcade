@@ -40,6 +40,20 @@
       const e = localStorage.getItem('ghostarcade-transition-enabled');
       if (e !== null) transitionEnabled = e === '1';
     } catch {}
+
+    // MIDI: bridge map:preset:<index> triggers into loadPreset(). The router
+    // dispatches the event but had no listener until this hook — bound notes
+    // appeared to do nothing. Index is into the *current* $compositions list,
+    // which matches the visual order in the tray. Loader includes any active
+    // transition so MIDI-fired preset changes feel the same as click-fires.
+    const handler = (e: Event) => {
+      const idx = (e as CustomEvent<{ index: number }>).detail?.index;
+      if (typeof idx !== 'number') return;
+      const comp = $compositions[idx];
+      if (comp) loadPreset(comp.id);
+    };
+    window.addEventListener('midi-mapping-preset', handler);
+    return () => window.removeEventListener('midi-mapping-preset', handler);
   });
   $: try { localStorage.setItem('ghostarcade-transition-type', transitionType); } catch {}
   $: try { localStorage.setItem('ghostarcade-transition-duration', String(transitionDuration)); } catch {}
@@ -464,7 +478,7 @@
           <p class="hint">Save your current mapping as a preset to quickly switch between different configurations</p>
         </div>
       {:else}
-        {#each $compositions as comp (comp.id)}
+        {#each $compositions as comp, compIdx (comp.id)}
           <div
             class="preset-item"
             class:active={$activeCompositionId === comp.id}
@@ -473,6 +487,9 @@
             role="button"
             tabindex="0"
             onkeydown={(e) => e.key === 'Enter' && loadPreset(comp.id)}
+            data-midi-path={`map:preset:${compIdx}`}
+            data-midi-label={`Mapping Preset: ${comp.name}`}
+            data-midi-mode="toggle"
           >
             <div class="preset-thumb">
               {#if comp.thumbnail}
