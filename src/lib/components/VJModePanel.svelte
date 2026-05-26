@@ -139,6 +139,18 @@
     ...$globalStagePresets.map(p => ({ ...p, _scope: 'global' as const })),
   ];
 
+  // MIDI: bridge vj:stage:<index> triggers into loadStagePreset(). The
+  // router fires `midi-stage-preset` events but nothing listened until
+  // now. Index targets the combined project+global list (allStagePresets)
+  // — same ordering the user binds against visually. Declared at module
+  // top so onDestroy can remove it; attached in onMount, detached below.
+  const stagePresetHandler = (e: Event) => {
+    const idx = (e as CustomEvent<{ index: number }>).detail?.index;
+    if (typeof idx !== 'number') return;
+    const preset = allStagePresets[idx];
+    if (preset) project.loadStagePreset(preset.id);
+  };
+
   // Stable index arrays for the clip-grid {#each ... (key)} loops. Without these,
   // `{#each Array($vjClipLauncher.numLayers)}` creates a fresh anonymous array
   // on every reactive tick, forcing Svelte to tear down and recreate every row
@@ -562,6 +574,7 @@
     stopModGhostLoop();
     stopVjVideoTick();
     vjStopNdiScan();
+    window.removeEventListener('midi-stage-preset', stagePresetHandler);
     if (vjRecorderHandle && vjIsRecording) {
       try { vjRecorderHandle.stop(); } catch {}
     }
@@ -1025,6 +1038,8 @@
     // so the Sources tab reflects new senders as they come/go on the
     // network. No-ops cleanly when NDI isn't available.
     void vjStartNdiScan();
+
+    window.addEventListener('midi-stage-preset', stagePresetHandler);
 
     const init = async () => {
       try {
@@ -2434,13 +2449,16 @@
       <div class="stage-presets-bar">
         <span class="stage-presets-label">Stage Presets</span>
         <div class="stage-presets-list">
-          {#each allStagePresets as preset (preset.id)}
+          {#each allStagePresets as preset, presetIdx (preset.id)}
             <button
               class="stage-preset-btn"
               class:active={$vjClipLauncher.stagePresetId === preset.id}
               onclick={() => stageRenamingPresetId !== preset.id && project.loadStagePreset(preset.id)}
               oncontextmenu={(e) => openStageContextMenu(e, preset)}
               title="{preset.name} — double-click name to rename · right-click for Update / Delete"
+              data-midi-path={`vj:stage:${presetIdx}`}
+              data-midi-label={`Stage Preset: ${preset.name}`}
+              data-midi-mode="toggle"
             >
               {#if preset._scope === 'global'}<span class="stage-preset-scope">G</span>{/if}
               {#if preset.thumbnail}
