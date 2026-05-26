@@ -226,10 +226,83 @@
     if (id) midiManager.selectDevice(id);
   }
 
-  // Settings tab navigation (license tab removed in OSS build)
-  let activeTab: 'general' | 'output' | 'performance' | 'midi' | 'osc' | 'ai' | 'wled' = 'general';
+  // ── Sidebar nav ──────────────────────────────────────────────────────
+  // Section IDs are namespaced category:slug. The sidebar lists categories
+  // with their sections; selecting a section displays only that section in
+  // the content pane. Advanced sections are hidden until showAdvanced is
+  // toggled on (persisted to localStorage so power users don't re-flip it
+  // every session).
+  type SectionId =
+    | 'app:appearance' | 'app:updates'
+    | 'project:canvas' | 'project:layers'
+    | 'output:display' | 'output:color'
+    | 'output:edge-blending' | 'output:dome' | 'output:multi-output'
+    | 'performance:gpu' | 'performance:render-quality' | 'performance:video-decoding'
+    | 'recording'
+    | 'integrations:midi' | 'integrations:osc' | 'integrations:wled'
+    | 'ai';
+  interface SidebarSection { id: SectionId; label: string; advanced?: boolean }
+  interface SidebarCategory { id: string; label: string; sections: SidebarSection[] }
+  const SIDEBAR: SidebarCategory[] = [
+    { id: 'app', label: 'App', sections: [
+      { id: 'app:appearance', label: 'Appearance' },
+      { id: 'app:updates', label: 'Updates' },
+    ]},
+    { id: 'project', label: 'Project', sections: [
+      { id: 'project:canvas', label: 'Canvas' },
+      { id: 'project:layers', label: 'Layers' },
+    ]},
+    { id: 'output', label: 'Output', sections: [
+      { id: 'output:display', label: 'Display' },
+      { id: 'output:color', label: 'Color Correction' },
+      { id: 'output:edge-blending', label: 'Edge Blending', advanced: true },
+      { id: 'output:dome', label: 'Dome Projection', advanced: true },
+      { id: 'output:multi-output', label: 'Multi-Output', advanced: true },
+    ]},
+    { id: 'performance', label: 'Performance', sections: [
+      { id: 'performance:gpu', label: 'GPU Acceleration', advanced: true },
+      { id: 'performance:render-quality', label: 'Render Quality' },
+      { id: 'performance:video-decoding', label: 'Video Decoding' },
+    ]},
+    { id: 'recording', label: 'Recording', sections: [
+      { id: 'recording', label: 'Recording' },
+    ]},
+    { id: 'integrations', label: 'Integrations', sections: [
+      { id: 'integrations:midi', label: 'MIDI' },
+      { id: 'integrations:osc', label: 'OSC' },
+      { id: 'integrations:wled', label: 'WLED' },
+    ]},
+    { id: 'ai', label: 'AI', sections: [
+      { id: 'ai', label: 'AI' },
+    ]},
+  ];
 
-  // Hash-based deep link from the integrated-GPU banner.
+  // Old top-tab hash values map to a section in the new layout — keeps
+  // the integrated-GPU banner's "go to Performance" link (and similar
+  // deep links) working without forcing every caller to learn the new
+  // section-id shape.
+  const HASH_TO_SECTION: Record<string, SectionId> = {
+    general: 'app:appearance',
+    output: 'output:display',
+    performance: 'performance:render-quality',
+    midi: 'integrations:midi',
+    osc: 'integrations:osc',
+    wled: 'integrations:wled',
+    ai: 'ai',
+  };
+
+  let selectedSection: SectionId = 'app:appearance';
+  let showAdvanced = false;
+  try {
+    const saved = localStorage.getItem('ghostarcade-settings-section');
+    if (saved && SIDEBAR.some(c => c.sections.some(s => s.id === saved))) {
+      selectedSection = saved as SectionId;
+    }
+    showAdvanced = localStorage.getItem('ghostarcade-settings-advanced') === '1';
+  } catch { /* ignore */ }
+  $: try { localStorage.setItem('ghostarcade-settings-section', selectedSection); } catch { /* */ }
+  $: try { localStorage.setItem('ghostarcade-settings-advanced', showAdvanced ? '1' : '0'); } catch { /* */ }
+
   // Is the NDI native addon built + the NDI runtime initialized? Drives
   // the "NDI" option's disabled state in the per-slice transport
   // dropdown. Probed once on mount; falls back to false if the
@@ -237,8 +310,8 @@
   let ndiAvailable = false;
   onMount(async () => {
     const h = (typeof window !== 'undefined' ? window.location.hash : '').replace(/^#/, '');
-    if (h === 'performance' || h === 'output' || h === 'midi' || h === 'osc' || h === 'general' || h === 'ai') {
-      activeTab = h as typeof activeTab;
+    if (h && HASH_TO_SECTION[h]) {
+      selectedSection = HASH_TO_SECTION[h];
       try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch { /* */ }
     }
     try {
@@ -251,17 +324,18 @@
   });
   $: if (isOpen && typeof window !== 'undefined') {
     const h = window.location.hash.replace(/^#/, '');
-    if (h === 'performance' || h === 'output' || h === 'midi' || h === 'general' || h === 'ai') {
-      activeTab = h as typeof activeTab;
+    if (h && HASH_TO_SECTION[h]) {
+      selectedSection = HASH_TO_SECTION[h];
       try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch { /* */ }
     }
   }
-  $: if (activeTab === 'performance' && !codecProbed) runCodecProbe();
-  // Re-probe WebGPU on first Performance tab open so the status panel shows
-  // fresh adapter info (and so the "Auto-enable on first launch" pathway,
-  // which depends on a successful probe, has had a chance to run).
+  // Lazy probes — run when the user first lands on a section that needs
+  // the data. Cheaper than probing at mount for sections the user may
+  // never open.
+  $: if (selectedSection === 'performance:render-quality' && !codecProbed) runCodecProbe();
+  $: if (selectedSection === 'performance:video-decoding' && !codecProbed) runCodecProbe();
   let webgpuProbedFromPanel = false;
-  $: if (activeTab === 'performance' && !webgpuProbedFromPanel) {
+  $: if (selectedSection === 'performance:gpu' && !webgpuProbedFromPanel) {
     webgpuProbedFromPanel = true;
     refreshWebGPUStatus();
   }
@@ -517,16 +591,30 @@
         </button>
       </div>
 
-      <!-- Tab Navigation -->
-      <div class="settings-tabs">
-        <button class="settings-tab" class:active={activeTab === 'general'} onclick={() => activeTab = 'general'}>General</button>
-        <button class="settings-tab" class:active={activeTab === 'output'} onclick={() => activeTab = 'output'}>Output</button>
-        <button class="settings-tab" class:active={activeTab === 'performance'} onclick={() => activeTab = 'performance'}>Performance</button>
-        <button class="settings-tab" class:active={activeTab === 'midi'} onclick={() => activeTab = 'midi'}>MIDI</button>
-        <button class="settings-tab" class:active={activeTab === 'osc'} onclick={() => activeTab = 'osc'}>OSC</button>
-        <button class="settings-tab" class:active={activeTab === 'wled'} onclick={() => activeTab = 'wled'}>WLED</button>
-        <button class="settings-tab" class:active={activeTab === 'ai'} onclick={() => activeTab = 'ai'}>AI</button>
-      </div>
+      <!-- Body: sidebar + content. Sidebar lists categories with their
+           sections; clicking a section swaps the content pane. Advanced
+           sections are filtered by the showAdvanced toggle at the
+           bottom of the sidebar. -->
+      <div class="settings-body">
+        <aside class="settings-sidebar">
+          {#each SIDEBAR as cat (cat.id)}
+            {@const visibleSections = cat.sections.filter(s => showAdvanced || !s.advanced)}
+            {#if visibleSections.length > 0}
+              <div class="sidebar-category">{cat.label}</div>
+              {#each visibleSections as sec (sec.id)}
+                <button
+                  class="sidebar-section"
+                  class:active={selectedSection === sec.id}
+                  onclick={() => selectedSection = sec.id}
+                >{sec.label}{#if sec.advanced}<span class="sidebar-adv-tag">ADV</span>{/if}</button>
+              {/each}
+            {/if}
+          {/each}
+          <label class="sidebar-advanced-toggle">
+            <input type="checkbox" bind:checked={showAdvanced} />
+            <span>Show advanced</span>
+          </label>
+        </aside>
 
       <div class="settings-content">
         <!-- Update Available Banner — single button opens the UpdateModal,
@@ -550,8 +638,8 @@
           </div>
         {/if}
 
-        {#if activeTab === 'general'}
         <!-- Appearance Section -->
+        {#if selectedSection === 'app:appearance'}
         <section class="settings-section">
           <h3>Appearance</h3>
 
@@ -622,7 +710,9 @@
           </div>
         </section>
 
+        {/if}
         <!-- Updates Section -->
+        {#if selectedSection === 'app:updates'}
         <section class="settings-section">
           <h3>Updates</h3>
           <div class="setting-row">
@@ -654,7 +744,9 @@
           </div>
         </section>
 
+        {/if}
         <!-- Canvas Size Section -->
+        {#if selectedSection === 'project:canvas'}
         <section class="settings-section">
           <h3>Canvas</h3>
 
@@ -705,7 +797,9 @@
           {/if}
         </section>
 
+        {/if}
         <!-- Default Layer Shader -->
+        {#if selectedSection === 'project:layers'}
         <section class="settings-section">
           <h3>Layers</h3>
 
@@ -725,7 +819,9 @@
           </div>
         </section>
 
+        {/if}
         <!-- Recording Settings Section -->
+        {#if selectedSection === 'recording'}
         <section class="settings-section">
           <h3>Recording</h3>
 
@@ -803,8 +899,9 @@
           </div>
         </section>
 
-        {:else if activeTab === 'output'}
+        {/if}
         <!-- Output Settings Section -->
+        {#if selectedSection === 'output:display'}
         <section class="settings-section">
           <h3>Render Quality</h3>
 
@@ -1076,8 +1173,9 @@
              every app launch (see App.svelte). -->
 
 
-        <!-- Edge Blending Section (hidden — multi-output not yet public) -->
-        {#if false}
+        {/if}
+        <!-- Edge Blending Section -->
+        {#if selectedSection === 'output:edge-blending'}
         <section class="settings-section">
           <h3>Edge Blending</h3>
           <p class="section-hint">Soft-edge correction for overlapping multi-projector setups</p>
@@ -1123,10 +1221,9 @@
             </button>
           </div>
         </section>
-
         {/if}
-
         <!-- Output Color Correction Section -->
+        {#if selectedSection === 'output:color'}
         <section class="settings-section">
           <h3>Color Correction</h3>
           <p class="section-hint">Adjust output signal to match projector characteristics</p>
@@ -1158,9 +1255,9 @@
             </button>
           </div>
         </section>
-
-        {#if false}
-        <!-- Dome Projection Section (hidden until tested with dome hardware) -->
+        {/if}<!-- /output:color -->
+        <!-- Dome Projection Section -->
+        {#if selectedSection === 'output:dome'}
         <section class="settings-section">
           <h3>Dome Projection</h3>
           <p class="section-hint">Fisheye reprojection for planetariums, domes, and immersive installations</p>
@@ -1263,7 +1360,9 @@
           {/if}
         </section>
 
+        {/if}
         <!-- Multi-Output Slices Section (hidden until multi-projector testing) -->
+        {#if selectedSection === 'output:multi-output'}
         <section class="settings-section">
           <h3>Multi-Output Routing</h3>
           <p class="section-hint">
@@ -1461,9 +1560,10 @@
              field is still in the store for the runtime selector but
              is no longer user-toggleable from the UI. -->
 
-        {:else if activeTab === 'performance'}
         <!-- Performance Tab — opt-in knobs for users on weaker hardware.
-             Defaults match the historical full-quality behaviour. -->
+             Defaults match the historical full-quality behaviour. Intro
+             card shows under GPU since that's first in the sidebar. -->
+        {#if selectedSection === 'performance:gpu'}
         <section class="settings-section">
           <div class="setting-row" style="border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 12px;">
             <div class="setting-label" style="flex: 1;">
@@ -1609,6 +1709,8 @@
           </div>
         </section>
 
+        {/if}
+        {#if selectedSection === 'performance:render-quality'}
         <section class="settings-section">
           <h3>Render Quality</h3>
           <div class="setting-row">
@@ -1738,6 +1840,8 @@
           </div>
         </section>
 
+        {/if}
+        {#if selectedSection === 'performance:video-decoding'}
         <section class="settings-section">
           <h3>Video Decoding (read-only)</h3>
           <div class="setting-row">
@@ -1765,8 +1869,9 @@
           </div>
         </section>
 
-        {:else if activeTab === 'midi'}
+        {/if}
         <!-- MIDI Settings Section -->
+        {#if selectedSection === 'integrations:midi'}
         <section class="settings-section">
           <h3>MIDI Controller</h3>
 
@@ -1881,12 +1986,13 @@
           {/if}
         </section>
 
-        {:else if activeTab === 'osc'}
+        {/if}
         <!-- OSC Settings Section — UDP listener + bindings table.
              Enabling spins up a dgram socket in the Electron main
              process; incoming OSC messages are dispatched through
              the same midiRouter the MIDI mappings use, so every
              MIDI-mappable param gets OSC for free. -->
+        {#if selectedSection === 'integrations:osc'}
         <section class="settings-section">
           <h3>OSC (Open Sound Control)</h3>
 
@@ -2038,13 +2144,14 @@
           </div>
         </section>
 
-        {:else if activeTab === 'wled'}
+        {/if}
         <!-- WLED LED-controller section. Each controller is a WLED
              device on the LAN that the renderer pushes per-frame pixel
              data to via UDP (DRGB protocol). The shader's composite
              output is downsampled to (ledCount × 1) and shipped as RGB
              bytes through the main-process socket. See
              src/lib/wled/sender.ts + electron/main.js → wled_send_frame. -->
+        {#if selectedSection === 'integrations:wled'}
         <section class="settings-section">
           <h3>WLED LED Controllers</h3>
           <p class="settings-hint" style="margin-bottom: 12px;">
@@ -2135,8 +2242,9 @@
           </div>
         </section>
 
-        {:else if activeTab === 'ai'}
+        {/if}
         <!-- AI Settings Section -->
+        {#if selectedSection === 'ai'}
         <section class="settings-section">
           <h3>AI</h3>
 
@@ -2286,6 +2394,7 @@
         </section>
         {/if}
       </div>
+      </div><!-- /.settings-body -->
 
       <div class="settings-footer">
         <!-- Diagnostics -->
@@ -2353,12 +2462,106 @@
     background: #0d0d10;
     border: 1px solid #333;
     border-radius: 12px;
-    width: 90%;
-    max-width: 680px;
+    width: 92%;
+    max-width: 900px;  /* widened to fit sidebar + content */
     max-height: 85vh;
     display: flex;
     flex-direction: column;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  }
+
+  /* Body: sidebar + content side-by-side, content scrolls independently */
+  .settings-body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .settings-sidebar {
+    width: 200px;
+    flex-shrink: 0;
+    border-right: 1px solid #1f1f24;
+    overflow-y: auto;
+    padding: 12px 0 80px;  /* bottom padding leaves room for the toggle */
+    background: #0a0a0d;
+    position: relative;
+  }
+
+  .sidebar-category {
+    padding: 14px 16px 4px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    user-select: none;
+  }
+
+  .sidebar-section {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    color: #aaa;
+    font-size: 13px;
+    padding: 7px 16px 7px 24px;
+    cursor: pointer;
+    border-left: 2px solid transparent;
+    transition: background 0.12s, color 0.12s;
+  }
+
+  .sidebar-section:hover {
+    color: #e0e0e0;
+    background: rgba(187, 134, 252, 0.04);
+  }
+
+  .sidebar-section.active {
+    color: #BB86FC;
+    background: rgba(187, 134, 252, 0.10);
+    border-left-color: #BB86FC;
+    padding-left: 22px;  /* compensate for 2px border */
+    font-weight: 500;
+  }
+
+  .sidebar-adv-tag {
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    padding: 1px 4px;
+    border-radius: 2px;
+    background: rgba(245, 158, 11, 0.18);
+    color: #f59e0b;
+  }
+
+  .sidebar-advanced-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    font-size: 11px;
+    color: #888;
+    cursor: pointer;
+    border-top: 1px solid #1f1f24;
+    background: #0a0a0d;
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    user-select: none;
+  }
+
+  .sidebar-advanced-toggle:hover {
+    color: #ccc;
+  }
+
+  .sidebar-advanced-toggle input[type="checkbox"] {
+    accent-color: #BB86FC;
+    cursor: pointer;
   }
 
   .settings-header {
