@@ -38,5 +38,6 @@ check_*.txt
 build_output*.txt
 shader-audit.md
 effect-audit.md
+cpu-update.md
 
 .vercel
