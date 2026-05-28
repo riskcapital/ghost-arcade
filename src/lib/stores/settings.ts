@@ -602,6 +602,16 @@ export interface OutputSettings {
   domeOffsetY: number;       // -1 to 1
   domeCurvature: number;     // 0 (flat) to 1 (full dome)
   domeTruncation: number;    // 0.5 to 1.0 (fraction of circle)
+  // ─── Global master warp ───────────────────────────────────────────────
+  // A single output-side warp applied to the ENTIRE master canvas before
+  // it reaches any transport — the main output window (WebGPU shared-
+  // texture OR WebRTC fallback) AND the senders. Per-Screen warp targets
+  // one slice; this corrects the whole composite at once (the operator's
+  // global keystone / surface-align rescue). Identity corners ⇒ visual
+  // no-op even when enabled. Applied editor-side on a dedicated capture
+  // canvas (see outputComposite.ts) so both output transports carry
+  // already-warped pixels — a single source of truth, no per-window code.
+  masterWarp?: OutputWarp;
 }
 
 export type DefaultLayerShader = 'crosshair' | 'grid' | 'outline' | 'testpattern' | 'none';
@@ -860,6 +870,9 @@ function createDefaultSettings(): AppSettings {
       domeOffsetY: 0,
       domeCurvature: 1.0,
       domeTruncation: 1.0,
+      // Global master warp — off + identity by default so existing
+      // projects present an un-warped composite exactly as before.
+      masterWarp: { enabled: false, mode: 'corners' },
     },
     ui: {
       colorScheme: 'midnight-coral', // Default to new dark coral theme
@@ -1529,6 +1542,20 @@ function createSettingsStore() {
     setReplicateApiKey(key: string) {
       update(s => {
         const newSettings = { ...s, ai: { ...s.ai, replicateApiKey: key } };
+        saveSettings(newSettings);
+        return newSettings;
+      });
+    },
+
+    // Global master warp — merge-patch so callers can set just
+    // { enabled } or just { corners } without clobbering the rest.
+    setMasterWarp(patch: Partial<OutputWarp>) {
+      update(s => {
+        const prev = s.output.masterWarp ?? { enabled: false, mode: 'corners' as const };
+        const newSettings = {
+          ...s,
+          output: { ...s.output, masterWarp: { ...prev, ...patch } },
+        };
         saveSettings(newSettings);
         return newSettings;
       });

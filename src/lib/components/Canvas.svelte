@@ -41,6 +41,7 @@
   import { startWLEDSenders, stopWLEDSenders, tickWLEDSenders } from '$lib/wled/sender';
   import { startModulationBroadcast, stopModulationBroadcast } from '$lib/sync/modulationBroadcast';
   import { startOutputPixelBroadcast, stopOutputPixelBroadcast } from '$lib/sync/outputPixelBroadcast';
+  import { startMasterWarpOutput, stopMasterWarpOutput } from '$lib/sync/outputComposite';
   import {
     registerEditorCanvas,
     stopOutputSharedTexturePresenter,
@@ -718,51 +719,78 @@
       startModulationBroadcast();
     }
 
-    // Register the editor canvas with the zero-copy presenter so that
-    // when the user opens the output window via window.open(), the
-    // pump can start without OutputWindow.svelte needing a canvas
-    // reference of its own. This is a no-op in OSR / output modes.
-    if (!isOsrMode && !isOutputMode && canvas) {
-      registerEditorCanvas(canvas, 60);
-    }
-
-    // Legacy WebRTC output transport reconcile. The zero-copy path
-    // (experimental.outputZeroCopy) is NOT started here — see top-of-
-    // file note. Only the WebRTC fallback runs under reconcile-control
-    // because it broadcasts blindly to a BroadcastChannel and doesn't
-    // need a target window reference.
+    // ── Output source resolution + master-warp pump ────────────────────
+    // Both projector-output transports capture from ONE canvas:
+    //   • WebGPU shared-texture presenter  (registerEditorCanvas)
+    //   • WebRTC fallback broadcast        (startOutputPixelBroadcast)
+    // When the global master warp is enabled we feed them a dedicated
+    // warped canvas (outputComposite applies the warp once, editor-side,
+    // so BOTH transports carry already-warped pixels — single source of
+    // truth, no per-output-window code). When disabled we feed the raw
+    // editor canvas directly, preserving the WebGPU zero-copy fast path.
     //
-    //   outputZeroCopy true                    → no-op here; OutputWindow
-    //                                            calls attachOutputWindow
-    //                                            on user click
-    //   outputZeroCopy false, outputWebRTC true → start WebRTC presenter
+    // The zero-copy presenter is only (re)registered here — it doesn't
+    // start pumping until OutputWindow.svelte opens the popup. The WebRTC
+    // path broadcasts blindly to a BroadcastChannel under flag control:
+    //   outputZeroCopy true                     → presenter registered;
+    //                                             OutputWindow attaches on click
+    //   outputZeroCopy false, outputWebRTC true → WebRTC broadcast started
     //   both false                              → no editor broadcast
-    //
-    // Both transports are no-ops in OSR / output modes.
-    {
+    // Both are no-ops in OSR / output modes.
+    if (!isOsrMode && !isOutputMode && canvas) {
+      const editorCanvas = canvas;
+      let currentOutputSource: HTMLCanvasElement = editorCanvas;
       let webrtcStarted = false;
-      const reconcileTransport = (zeroCopy: boolean, webrtc: boolean) => {
-        const eligible = !isOsrMode && !isOutputMode && !!canvas;
-        const wantWebRTC = eligible && !zeroCopy && webrtc;
-        if (wantWebRTC && !webrtcStarted) {
-          // Read perf knobs from Settings → Performance so users on weak
-          // hardware can dial down framerate / bitrate / codec.
+
+      const resolveOutputSource = (warpEnabled: boolean): HTMLCanvasElement => {
+        if (warpEnabled) {
+          const warped = startMasterWarpOutput(
+            editorCanvas,
+            () => get(settings).output?.masterWarp,
+            () => ({
+              w: get(settings).output?.masterCanvasWidth ?? 1920,
+              h: get(settings).output?.masterCanvasHeight ?? 1080,
+            }),
+          );
+          return warped ?? editorCanvas;
+        }
+        stopMasterWarpOutput();
+        return editorCanvas;
+      };
+
+      const reconcileOutput = (warpEnabled: boolean, zeroCopy: boolean, webrtc: boolean) => {
+        const nextSource = resolveOutputSource(warpEnabled);
+        const sourceChanged = nextSource !== currentOutputSource;
+        currentOutputSource = nextSource;
+
+        // WebGPU shared-texture presenter — registerEditorCanvas guards
+        // on identity, so this is a cheap no-op when the source is
+        // unchanged and a clean pump-swap when the master warp toggles.
+        registerEditorCanvas(currentOutputSource, 60);
+
+        // WebRTC fallback — start/stop per flags; also re-bind on a
+        // source swap so toggling the master warp live re-points the
+        // broadcast at the warped canvas (or back to the editor canvas).
+        const wantWebRTC = !zeroCopy && webrtc;
+        if (wantWebRTC && (!webrtcStarted || sourceChanged)) {
+          // Perf knobs from Settings → Performance so weak hardware can
+          // dial down framerate / bitrate / codec.
           const _perf = get(settings)?.performance;
-          startOutputPixelBroadcast(canvas, _perf?.outputFrameRate ?? 60, {
+          startOutputPixelBroadcast(currentOutputSource, _perf?.outputFrameRate ?? 60, {
             maxBitrate: _perf?.outputMaxBitrate,
             degradationPreference: _perf?.outputDegradationPreference,
             codecPreference: _perf?.outputCodecPreference,
           });
           webrtcStarted = true;
-          console.log('[Canvas] legacy WebRTC output transport started');
         } else if (!wantWebRTC && webrtcStarted) {
           stopOutputPixelBroadcast();
           webrtcStarted = false;
-          console.log('[Canvas] legacy WebRTC output transport stopped');
         }
       };
+
       outputWebRTCUnsub = settings.subscribe((s) => {
-        reconcileTransport(
+        reconcileOutput(
+          !!s.output?.masterWarp?.enabled,
           !!s.experimental?.outputZeroCopy,
           !!s.experimental?.outputWebRTC,
         );
@@ -2089,6 +2117,7 @@
     }
     stopOutputPixelBroadcast();
     stopOutputSharedTexturePresenter();
+    stopMasterWarpOutput();
 
     if (nativeRendererStatusTimer) {
       clearInterval(nativeRendererStatusTimer);
