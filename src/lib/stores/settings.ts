@@ -561,6 +561,23 @@ export interface OutputSettings {
    *  1920×1080 so legacy projects work unchanged. */
   masterCanvasWidth: number;
   masterCanvasHeight: number;
+  /** Master output warp — a SINGLE corner/mesh warp applied to the
+   *  whole composite, between the Screen compositing stage and the
+   *  projector. The "someone bumped the projector, nudge everything at
+   *  once" rescue: re-align the entire output without touching any
+   *  layer or per-screen warp. Applied UPSTREAM of slicing, so every
+   *  Screen crops from the warped composite (and every transport —
+   *  sender + physical display — inherits it from one definition).
+   *
+   *  Trade-off vs per-screen `OutputSlice.outputWarp`: the master warp
+   *  moves the whole composite, so in a multi-projector edge-blended
+   *  rig it shifts content across all seams together — use it for a
+   *  single combined output or a whole-rig nudge; use the per-screen
+   *  output warp when only ONE projector got bumped.
+   *
+   *  Geometry is in projector-unit-quad space (0..1, top-origin), same
+   *  convention as `OutputWarp`. Defaults to disabled. */
+  masterOutputWarp?: OutputWarp;
   // ── Output-window display transforms ────────────────────────────────────
   // These ONLY affect the dedicated output window (second-display projection).
   // They live in settings so they auto-broadcast via the BroadcastChannel
@@ -838,6 +855,7 @@ function createDefaultSettings(): AppSettings {
       slices: [],
       masterCanvasWidth: 1920,
       masterCanvasHeight: 1080,
+      masterOutputWarp: { enabled: false, mode: 'corners' },
       // Output-window display transforms (CSS-applied on output canvas)
       outputRotation: 0,
       outputCropX: 0,

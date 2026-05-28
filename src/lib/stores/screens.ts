@@ -297,6 +297,69 @@ export const screenActions = {
   },
 };
 
+// ─── Master output warp ──────────────────────────────────────────────────
+// A single warp on the whole composite (see OutputSettings.masterOutputWarp).
+// Lives in settings.output so it auto-broadcasts to output windows via the
+// BroadcastChannel sync, exactly like the per-screen slices.
+
+const DEFAULT_MASTER_WARP: OutputWarp = { enabled: false, mode: 'corners' };
+
+export const masterOutputWarp = derived(
+  settings,
+  ($s) => $s.output.masterOutputWarp ?? DEFAULT_MASTER_WARP,
+);
+
+function updateMasterWarp(fn: (w: OutputWarp) => OutputWarp) {
+  settings.update(s => ({
+    ...s,
+    output: { ...s.output, masterOutputWarp: fn(s.output.masterOutputWarp ?? DEFAULT_MASTER_WARP) },
+  }));
+}
+
+export const masterWarpActions = {
+  /** Switch corners ↔ mesh. Initializes the target geometry to identity
+   *  on first switch so flipping mode never changes the image until a
+   *  handle is dragged. */
+  setMode(mode: 'corners' | 'mesh') {
+    updateMasterWarp(prev => {
+      const next: OutputWarp = { ...prev, mode };
+      if (mode === 'corners' && !next.corners) next.corners = identityOutputCorners();
+      if (mode === 'mesh' && !next.meshGrid) next.meshGrid = identityOutputMesh();
+      return next;
+    });
+  },
+
+  /** Enable/disable without touching geometry, so the operator can A/B
+   *  the correction. Geometry is initialized lazily on first enable. */
+  setEnabled(enabled: boolean) {
+    updateMasterWarp(prev => {
+      const next: OutputWarp = { ...prev, enabled };
+      if (enabled) {
+        if (next.mode === 'corners' && !next.corners) next.corners = identityOutputCorners();
+        if (next.mode === 'mesh' && !next.meshGrid) next.meshGrid = identityOutputMesh();
+      }
+      return next;
+    });
+  },
+
+  /** Reset to identity (no distortion) but keep enabled state + mode so
+   *  the operator can re-warp from a clean slate. */
+  reset() {
+    updateMasterWarp(prev => ({
+      enabled: prev.enabled,
+      mode: prev.mode,
+      corners: identityOutputCorners(),
+      meshGrid: identityOutputMesh(),
+    }));
+  },
+
+  /** Direct write of warp geometry — used by the on-canvas drag
+   *  handlers. Preserves enabled + mode. */
+  setGeometry(geometry: Partial<Pick<OutputWarp, 'corners' | 'meshGrid'>>) {
+    updateMasterWarp(prev => ({ ...prev, ...geometry }));
+  },
+};
+
 /** Hydrate the screens store from a parsed project. Called by
  *  layers.ts importProject. We migrate each entry through the
  *  per-slice migration so older .gha files pick up new fields. */
@@ -304,11 +367,20 @@ export function hydrateScreensFromProject(
   outputSlices: unknown[],
   masterCanvasWidth?: number,
   masterCanvasHeight?: number,
+  masterWarp?: unknown,
 ) {
   if (!Array.isArray(outputSlices)) return;
   const migrated = outputSlices.map((s: any) =>
     migrateOutputSlice({ ...s, id: s?.id ?? generateId() })
   );
+  // Master warp is a plain OutputWarp; accept it only when it looks like
+  // one, otherwise leave the current/default in place. Older .gha files
+  // simply don't carry the field.
+  const mw = masterWarp as Partial<OutputWarp> | undefined;
+  const validMasterWarp: OutputWarp | undefined =
+    mw && typeof mw === 'object' && (mw.mode === 'corners' || mw.mode === 'mesh')
+      ? { enabled: !!mw.enabled, mode: mw.mode, corners: mw.corners, meshGrid: mw.meshGrid }
+      : undefined;
   settings.update(curr => ({
     ...curr,
     output: {
@@ -316,6 +388,7 @@ export function hydrateScreensFromProject(
       slices: migrated,
       ...(typeof masterCanvasWidth === 'number' ? { masterCanvasWidth } : {}),
       ...(typeof masterCanvasHeight === 'number' ? { masterCanvasHeight } : {}),
+      ...(validMasterWarp ? { masterOutputWarp: validMasterWarp } : {}),
     },
   }));
 }

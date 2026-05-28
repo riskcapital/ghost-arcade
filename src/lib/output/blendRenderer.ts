@@ -3,7 +3,7 @@
  * post-process with a single WebGL fragment-shader pass that does:
  *
  *   1.  Map projector-side UV (vUv) to a sample position on the master
- *       canvas, using one of three warp modes:
+ *       canvas, using one of three SOURCE warp modes:
  *          rect    — axis-aligned crop (uCrop).
  *          corners — 4-point quad warp (uCornerTL/TR/BL/BR).
  *          mesh    — per-cell bilinear over a uMeshTex DataTexture
@@ -16,6 +16,23 @@
  *   5.  Add a per-channel black-level lift on the NON-overlap region
  *       with feathered boundary so real projectors don't show a
  *       brighter overlap stripe.
+ *
+ * OUTPUT WARP (projector-side distortion) is handled separately, by
+ * displacing the render quad's GEOMETRY rather than inverse-mapping in
+ * the fragment shader. The vertex positions move to the warp's control
+ * points (projector unit-quad space) while the logical UV — and thus
+ * everything the fragment shader does — is unchanged. This is the
+ * industry-standard forward-mesh warp (MadMapper / Resolume) and avoids
+ * the per-fragment inverse-bilinear search that made the old
+ * `uOutWarpMode` path stall the GPU on enable. Two consumers share it:
+ *   • per-screen output warp — `renderSlicePixels` picks the slice's
+ *     output-warp geometry, so one bumped projector can be re-aligned.
+ *   • master output warp — `renderMasterWarpedCanvas` runs ONE full-frame
+ *     pass with the master warp geometry, producing a warped composite
+ *     that every slice then crops from (whole-rig nudge).
+ * An identity warp builds a geometry pixel-identical to the original
+ * full-screen quad, so warps that are disabled cost nothing and render
+ * exactly as before.
  *
  * The 2D-canvas path (outputPostProcess.applyEdgeBlending) is retained
  * as a fallback when WebGL is unavailable; this module just runs
@@ -31,7 +48,8 @@
  */
 
 import * as THREE from 'three';
-import type { OutputSlice } from '../stores/settings';
+import type { OutputSlice, OutputWarp } from '../stores/settings';
+import type { WarpCorners } from '../types';
 
 // ─── Module-singleton renderer ──────────────────────────────────────────
 let renderer: THREE.WebGLRenderer | null = null;
@@ -45,14 +63,17 @@ let sourceTexture: THREE.CanvasTexture | null = null;
 // behavior on some drivers. The shader gates on uWarpMode so the
 // placeholder is never actually sampled, but it must exist.
 let meshTexPlaceholder: THREE.DataTexture | null = null;
-// Per-slice mesh texture cache. Keyed by sliceId so we don't
+// Per-slice SOURCE mesh texture cache. Keyed by sliceId so we don't
 // reallocate a DataTexture every frame for a screen whose mesh hasn't
 // changed. Invalidated by a hash of the points array.
 const meshTexCache = new Map<string, { tex: THREE.DataTexture; hash: string; cols: number; rows: number }>();
-// Output-warp mesh texture cache. Parallel structure — output mesh
-// lives in projector unit-quad coords (different content from source
-// mesh) so we can't reuse the same texture.
-const outMeshTexCache = new Map<string, { tex: THREE.DataTexture; hash: string; cols: number; rows: number }>();
+
+// Output-warp GEOMETRY cache. Output warp displaces vertices, so it's a
+// BufferGeometry (not a texture). Keyed by a cache key (slice id +
+// purpose) and invalidated by a content hash. The identity geometry is
+// shared under a fixed key so every disabled-warp slice reuses one quad.
+const geoCache = new Map<string, { geo: THREE.BufferGeometry; hash: string }>();
+const IDENTITY_GEO_KEY = '__identity__';
 
 let backingCanvas: HTMLCanvasElement | OffscreenCanvas | null = null;
 
@@ -60,12 +81,19 @@ let readbackPixels: Uint8Array | null = null;
 let readbackW = 0;
 let readbackH = 0;
 
-// Largest mesh dimension we support (per-side). Mesh data is uploaded
-// as a `MAX_MESH × MAX_MESH` float DataTexture, sampled with nearest
-// filtering — only the actual (rows × cols) sub-region is meaningful;
-// the rest is unused padding. 32 is generous: a 32×32 control mesh is
-// way more than typical projection-mapping rigs need (~5×5 is the
-// MadMapper default).
+// Master-warp presentation canvas + reused ImageData. Separate from the
+// per-slice readback because it's a different (full-frame) size and is
+// consumed as a 2D canvas the slice loop crops from.
+let masterCanvas: HTMLCanvasElement | null = null;
+let masterCtx: CanvasRenderingContext2D | null = null;
+let masterImageData: ImageData | null = null;
+
+// Largest mesh dimension we support (per-side). SOURCE mesh data is
+// uploaded as a `MAX_MESH × MAX_MESH` float DataTexture, sampled with
+// nearest filtering — only the actual (rows × cols) sub-region is
+// meaningful; the rest is unused padding. 32 is generous: a 32×32
+// control mesh is way more than typical projection-mapping rigs need
+// (~5×5 is the MadMapper default).
 const MAX_MESH = 32;
 
 // ─── Shader source ─────────────────────────────────────────────────────
@@ -100,21 +128,6 @@ const FRAG_SHADER = /* glsl */ `
   uniform sampler2D uMeshTex;
   uniform int uMeshRows;
   uniform int uMeshCols;
-
-  // ─── Output warp (projector-side distortion) ───────────────────
-  // Applied AFTER source sampling logically, BEFORE in the shader
-  // (we run it as an inverse map: projector pixel → content UV →
-  // source UV → master canvas sample).
-  // uOutWarpMode: 0 = off, 1 = corners (4-point inverse bilinear),
-  //               2 = mesh (per-cell inverse bilinear).
-  uniform int uOutWarpMode;
-  uniform vec2 uOutCornerTL;
-  uniform vec2 uOutCornerTR;
-  uniform vec2 uOutCornerBL;
-  uniform vec2 uOutCornerBR;
-  uniform sampler2D uOutMeshTex;
-  uniform int uOutMeshRows;
-  uniform int uOutMeshCols;
 
   // Rotation: 0/1/2/3 = 0/90/180/270 degrees.
   uniform int uRotation;
@@ -151,51 +164,12 @@ const FRAG_SHADER = /* glsl */ `
     vec2 uv = vec2((float(ci) + 0.5) / texDim, (float(ri) + 0.5) / texDim);
     return texture2D(uMeshTex, uv).rg;
   }
-  vec2 outMeshAt(int ri, int ci) {
-    float texDim = ${MAX_MESH}.0;
-    vec2 uv = vec2((float(ci) + 0.5) / texDim, (float(ri) + 0.5) / texDim);
-    return texture2D(uOutMeshTex, uv).rg;
-  }
-
-  // Inverse bilinear: given a point p and a quad (a, b, c, d) where
-  // bilinear(a, b, c, d, u, v) = mix(mix(a, b, u), mix(d, c, u), v),
-  // find (u, v) such that the formula equals p. Returns (-1, -1) if
-  // p is outside the quad. Closed-form solution from Inigo Quilez:
-  // https://www.iquilezles.org/www/articles/ibilinear/ibilinear.htm
-  // Quad winding here: a=TL, b=TR, c=BR, d=BL.
-  float cross2D(vec2 v, vec2 w) { return v.x * w.y - v.y * w.x; }
-  vec2 invBilinear(vec2 p, vec2 a, vec2 b, vec2 c, vec2 d) {
-    vec2 e = b - a;
-    vec2 f = d - a;
-    vec2 g = a - b + c - d;
-    vec2 h = p - a;
-    float k2 = cross2D(g, f);
-    float k1 = cross2D(e, f) + cross2D(h, g);
-    float k0 = cross2D(h, e);
-    if (abs(k2) < 0.0001) {
-      // Degenerate to a parallelogram (k2 ≈ 0): linear solve.
-      float v = -k0 / k1;
-      float denomU = e.x + g.x * v;
-      float u = abs(denomU) > 0.0001
-        ? (h.x - f.x * v) / denomU
-        : (h.y - f.y * v) / (e.y + g.y * v);
-      return vec2(u, v);
-    }
-    float w = k1 * k1 - 4.0 * k0 * k2;
-    if (w < 0.0) return vec2(-1.0);
-    w = sqrt(w);
-    float v1 = (-k1 - w) / (2.0 * k2);
-    float v2 = (-k1 + w) / (2.0 * k2);
-    // Pick the root that lies in [0, 1].
-    float v = (v1 >= 0.0 && v1 <= 1.0) ? v1 : v2;
-    float denomU = e.x + g.x * v;
-    float u = abs(denomU) > 0.0001
-      ? (h.x - f.x * v) / denomU
-      : (h.y - f.y * v) / (e.y + g.y * v);
-    return vec2(u, v);
-  }
 
   void main() {
+    // vUv is the slice's LOGICAL projector UV. Output warp (when active)
+    // displaces the vertex positions, not this UV, so everything below —
+    // source sampling, rotation, edge-blend — runs in undistorted
+    // projector space and simply lands on the warped geometry.
     vec2 uv = vUv;
     // Rotate the projector-side UV first so "left" / "top" in the
     // operator's mental model always match the projector's physical
@@ -203,55 +177,6 @@ const FRAG_SHADER = /* glsl */ `
     if (uRotation == 1) uv = vec2(uv.y, 1.0 - uv.x);
     else if (uRotation == 2) uv = vec2(1.0 - uv.x, 1.0 - uv.y);
     else if (uRotation == 3) uv = vec2(1.0 - uv.y, uv.x);
-
-    // ─ Output warp (inverse map) ─
-    // The user defines the output warp as: the screen's content
-    // (unit quad) is stretched onto these projector positions. To
-    // sample for a given projector pixel uv, we need to find the
-    // content UV that maps to uv through the forward warp. That's
-    // an inverse bilinear (corners) or per-cell inverse (mesh).
-    // When uOutWarpMode == 0, output warp is off and uv passes
-    // through unchanged.
-    if (uOutWarpMode == 1) {
-      vec2 inv = invBilinear(uv, uOutCornerTL, uOutCornerTR, uOutCornerBR, uOutCornerBL);
-      if (inv.x < 0.0 || inv.x > 1.0 || inv.y < 0.0 || inv.y > 1.0) {
-        // Projector pixel lies outside the warped output quad. Black.
-        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-        return;
-      }
-      uv = inv;
-    } else if (uOutWarpMode == 2 && uOutMeshRows > 1 && uOutMeshCols > 1) {
-      // Mesh inverse warp. Scan all cells (slow but simple): for each
-      // mesh cell, run invBilinear and accept the first valid result.
-      // 5×5 mesh = 16 cells, well within shader budget for typical
-      // rigs; performance critical only at very high mesh densities.
-      bool found = false;
-      vec2 cellUv = vec2(0.0);
-      for (int ri = 0; ri < ${MAX_MESH} - 1; ri++) {
-        if (ri >= uOutMeshRows - 1) break;
-        for (int ci = 0; ci < ${MAX_MESH} - 1; ci++) {
-          if (ci >= uOutMeshCols - 1) break;
-          if (found) continue;
-          vec2 a = outMeshAt(ri,     ci);
-          vec2 b = outMeshAt(ri,     ci + 1);
-          vec2 c = outMeshAt(ri + 1, ci + 1);
-          vec2 d = outMeshAt(ri + 1, ci);
-          vec2 t = invBilinear(uv, a, b, c, d);
-          if (t.x >= 0.0 && t.x <= 1.0 && t.y >= 0.0 && t.y <= 1.0) {
-            // Cell-local (u, v) → global content UV (u, v).
-            float gu = (float(ci) + t.x) / float(uOutMeshCols - 1);
-            float gv = (float(ri) + t.y) / float(uOutMeshRows - 1);
-            cellUv = vec2(gu, gv);
-            found = true;
-          }
-        }
-      }
-      if (!found) {
-        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-        return;
-      }
-      uv = cellUv;
-    }
 
     // ─ Forward map: projector UV → master canvas sample position. ─
     vec2 srcUv;
@@ -327,30 +252,20 @@ function ensureMeshPlaceholder(): THREE.DataTexture {
   return meshTexPlaceholder;
 }
 
-// Stable hash of a mesh's contents for cache invalidation. JSON is
+// Stable hash of a SOURCE mesh's contents for cache invalidation. JSON is
 // fast enough for ≤32×32 grids (the upper bound).
 function meshHash(slice: OutputSlice): string {
   const g = slice.meshGrid;
   if (!g) return 'none';
   return `${g.rows}x${g.cols}:${JSON.stringify(g.points)}`;
 }
-function outMeshHash(slice: OutputSlice): string {
-  const g = slice.outputWarp?.meshGrid;
-  if (!g) return 'none';
-  return `${g.rows}x${g.cols}:${JSON.stringify(g.points)}`;
-}
 
-// Generic mesh-texture packer used by both source mesh (master-canvas
-// coords) and output mesh (projector-quad coords). Shape is identical;
-// only the cache + content differ. `mesh` is the MeshWarpGrid to pack.
-function packMeshToTexture(
-  cache: Map<string, { tex: THREE.DataTexture; hash: string; cols: number; rows: number }>,
-  sliceId: string,
-  mesh: { rows: number; cols: number; points: { x: number; y: number }[][] } | null | undefined,
-  hash: string,
-): THREE.DataTexture {
+// Pack a SOURCE mesh (master-canvas coords) into a DataTexture.
+function meshTextureFor(slice: OutputSlice): THREE.DataTexture {
+  const mesh = slice.meshGrid;
   if (!mesh || mesh.rows < 2 || mesh.cols < 2) return ensureMeshPlaceholder();
-  const cached = cache.get(sliceId);
+  const hash = meshHash(slice);
+  const cached = meshTexCache.get(slice.id);
   if (cached && cached.hash === hash) return cached.tex;
   const data = new Float32Array(MAX_MESH * MAX_MESH * 2);
   for (let r = 0; r < mesh.rows; r++) {
@@ -364,7 +279,7 @@ function packMeshToTexture(
   if (cached) {
     (cached.tex.image.data as Float32Array).set(data);
     cached.tex.needsUpdate = true;
-    cache.set(sliceId, { tex: cached.tex, hash, cols: mesh.cols, rows: mesh.rows });
+    meshTexCache.set(slice.id, { tex: cached.tex, hash, cols: mesh.cols, rows: mesh.rows });
     return cached.tex;
   }
   const tex = new THREE.DataTexture(data, MAX_MESH, MAX_MESH, THREE.RGFormat, THREE.FloatType);
@@ -373,19 +288,129 @@ function packMeshToTexture(
   tex.wrapS = THREE.ClampToEdgeWrapping;
   tex.wrapT = THREE.ClampToEdgeWrapping;
   tex.needsUpdate = true;
-  cache.set(sliceId, { tex, hash, cols: mesh.cols, rows: mesh.rows });
+  meshTexCache.set(slice.id, { tex, hash, cols: mesh.cols, rows: mesh.rows });
   return tex;
 }
 
-// Source mesh texture for a slice. Cached + content-hashed so drag
-// edits update GPU-side incrementally rather than reallocating.
-function meshTextureFor(slice: OutputSlice): THREE.DataTexture {
-  return packMeshToTexture(meshTexCache, slice.id, slice.meshGrid, meshHash(slice));
+// ─── Output-warp geometry (forward mesh warp) ───────────────────────────
+//
+// A warp's control points live in PROJECTOR unit-quad space, top-origin
+// 0..1 (TL = 0,0 / BR = 1,1). We build a tessellated quad whose vertex
+// positions are those control points mapped to clip space and whose UVs
+// are the regular lattice. The fragment shader then samples + blends in
+// undistorted logical UV space; the displacement is purely geometric.
+//
+// Identity (TL=0,0 TR=1,0 BL=0,1 BR=1,1, flat mesh) reproduces the
+// original full-screen quad exactly, so a disabled warp is a no-op.
+
+// Convert a projector-space point (top-origin 0..1) to clip-space NDC.
+// x: 0→-1, 1→+1.  y: 0(top)→+1, 1(bottom)→-1.
+function projToClipX(x: number): number { return 2 * x - 1; }
+function projToClipY(y: number): number { return 1 - 2 * y; }
+
+// Build a BufferGeometry from a rows×cols grid of projector-space points.
+// Vertex (r,c): position = clip(points[r][c]); uv = (c/(cols-1),
+// 1 - r/(rows-1)) so the top row carries uv.y=1 — matching the
+// orientation of the original PlaneGeometry(2,2).
+function buildGridGeometry(points: { x: number; y: number }[][], rows: number, cols: number): THREE.BufferGeometry {
+  const positions = new Float32Array(rows * cols * 3);
+  const uvs = new Float32Array(rows * cols * 2);
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const p = points[r]?.[c] ?? { x: c / (cols - 1), y: r / (rows - 1) };
+      const vi = r * cols + c;
+      positions[vi * 3]     = projToClipX(p.x);
+      positions[vi * 3 + 1] = projToClipY(p.y);
+      positions[vi * 3 + 2] = 0;
+      uvs[vi * 2]     = c / (cols - 1);
+      uvs[vi * 2 + 1] = 1 - r / (rows - 1);
+    }
+  }
+  const indices: number[] = [];
+  for (let r = 0; r < rows - 1; r++) {
+    for (let c = 0; c < cols - 1; c++) {
+      const v00 = r * cols + c;
+      const v10 = r * cols + (c + 1);
+      const v01 = (r + 1) * cols + c;
+      const v11 = (r + 1) * cols + (c + 1);
+      indices.push(v00, v01, v10, v10, v01, v11);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  return geo;
 }
-// Output-warp mesh texture for a slice. Separate cache so source +
-// output meshes coexist for the same screen.
-function outMeshTextureFor(slice: OutputSlice): THREE.DataTexture {
-  return packMeshToTexture(outMeshTexCache, slice.id, slice.outputWarp?.meshGrid, outMeshHash(slice));
+
+// Identity geometry (single full-screen quad) — shared, built once.
+function identityGeometry(): THREE.BufferGeometry {
+  const cached = geoCache.get(IDENTITY_GEO_KEY);
+  if (cached) return cached.geo;
+  const geo = buildGridGeometry(
+    [[{ x: 0, y: 0 }, { x: 1, y: 0 }], [{ x: 0, y: 1 }, { x: 1, y: 1 }]],
+    2, 2,
+  );
+  geoCache.set(IDENTITY_GEO_KEY, { geo, hash: 'identity' });
+  return geo;
+}
+
+function warpIsIdentity(warp: OutputWarp | null | undefined): boolean {
+  if (!warp || !warp.enabled) return true;
+  if (warp.mode === 'corners') {
+    const c = warp.corners;
+    if (!c) return true;
+    return (
+      c.topLeft.x === 0 && c.topLeft.y === 0 &&
+      c.topRight.x === 1 && c.topRight.y === 0 &&
+      c.bottomLeft.x === 0 && c.bottomLeft.y === 1 &&
+      c.bottomRight.x === 1 && c.bottomRight.y === 1
+    );
+  }
+  // mesh
+  const g = warp.meshGrid;
+  if (!g || g.rows < 2 || g.cols < 2) return true;
+  for (let r = 0; r < g.rows; r++) {
+    for (let c = 0; c < g.cols; c++) {
+      const p = g.points[r]?.[c];
+      if (!p) continue;
+      if (Math.abs(p.x - c / (g.cols - 1)) > 1e-6 || Math.abs(p.y - r / (g.rows - 1)) > 1e-6) return false;
+    }
+  }
+  return true;
+}
+
+function warpHash(warp: OutputWarp): string {
+  if (warp.mode === 'corners') return `c:${JSON.stringify(warp.corners)}`;
+  return `m:${warp.meshGrid?.rows}x${warp.meshGrid?.cols}:${JSON.stringify(warp.meshGrid?.points)}`;
+}
+
+function cornersToGrid(c: WarpCorners): { x: number; y: number }[][] {
+  return [
+    [{ x: c.topLeft.x, y: c.topLeft.y }, { x: c.topRight.x, y: c.topRight.y }],
+    [{ x: c.bottomLeft.x, y: c.bottomLeft.y }, { x: c.bottomRight.x, y: c.bottomRight.y }],
+  ];
+}
+
+// Resolve the geometry for an output warp, cached by key + content hash.
+// Returns the shared identity geometry when the warp is off / identity.
+function geometryForWarp(cacheKey: string, warp: OutputWarp | null | undefined): THREE.BufferGeometry {
+  if (warpIsIdentity(warp)) return identityGeometry();
+  const w = warp as OutputWarp;
+  const hash = warpHash(w);
+  const cached = geoCache.get(cacheKey);
+  if (cached && cached.hash === hash) return cached.geo;
+  if (cached) cached.geo.dispose();
+  let geo: THREE.BufferGeometry;
+  if (w.mode === 'corners' && w.corners) {
+    geo = buildGridGeometry(cornersToGrid(w.corners), 2, 2);
+  } else if (w.mode === 'mesh' && w.meshGrid && w.meshGrid.rows >= 2 && w.meshGrid.cols >= 2) {
+    geo = buildGridGeometry(w.meshGrid.points as { x: number; y: number }[][], w.meshGrid.rows, w.meshGrid.cols);
+  } else {
+    return identityGeometry();
+  }
+  geoCache.set(cacheKey, { geo, hash });
+  return geo;
 }
 
 function ensureRenderer(maxW: number, maxH: number): boolean {
@@ -419,6 +444,7 @@ function ensureRenderer(maxW: number, maxH: number): boolean {
     renderer.setPixelRatio(1);
     renderer.setSize(maxW, maxH, false);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.setClearColor(0x000000, 1);
     scene = new THREE.Scene();
     camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     material = new THREE.ShaderMaterial({
@@ -435,15 +461,6 @@ function ensureRenderer(maxW: number, maxH: number): boolean {
         uMeshTex: { value: ensureMeshPlaceholder() },
         uMeshRows: { value: 0 },
         uMeshCols: { value: 0 },
-        // Output warp uniforms — default identity (off).
-        uOutWarpMode: { value: 0 },
-        uOutCornerTL: { value: new THREE.Vector2(0, 0) },
-        uOutCornerTR: { value: new THREE.Vector2(1, 0) },
-        uOutCornerBL: { value: new THREE.Vector2(0, 1) },
-        uOutCornerBR: { value: new THREE.Vector2(1, 1) },
-        uOutMeshTex: { value: ensureMeshPlaceholder() },
-        uOutMeshRows: { value: 0 },
-        uOutMeshCols: { value: 0 },
         uRotation: { value: 0 },
         uBrightness: { value: 1 },
         uContrast: { value: 1 },
@@ -456,8 +473,12 @@ function ensureRenderer(maxW: number, maxH: number): boolean {
       },
       depthTest: false,
       depthWrite: false,
+      // Output-warp geometry winding can flip when corners are dragged
+      // past each other; render both faces so a crossed warp never
+      // culls to black.
+      side: THREE.DoubleSide,
     });
-    quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+    quad = new THREE.Mesh(identityGeometry(), material);
     scene.add(quad);
     return true;
   } catch (err) {
@@ -482,34 +503,19 @@ function setSourceFrame(source: HTMLCanvasElement | OffscreenCanvas | HTMLVideoE
   if (material) material.uniforms.uSource.value = sourceTexture;
 }
 
-/**
- * Render one slice into the backing WebGL canvas and read back the
- * pixels at the slice's output resolution. Returns Uint8Array of RGBA
- * bytes or null if WebGL is unavailable.
- *
- * `stageIntensity` (0..1) scales final output — used by the per-screen
- * stage effects (radial pulse, beat strobe, etc.). Defaults to 1.
- */
-export function renderSlicePixels(
-  source: HTMLCanvasElement | OffscreenCanvas | HTMLVideoElement | ImageBitmap,
-  slice: OutputSlice,
-  sliceW: number,
-  sliceH: number,
-  stageIntensity = 1,
-): Uint8Array | null {
-  if (sliceW <= 0 || sliceH <= 0) return null;
-  if (!ensureRenderer(sliceW, sliceH)) return null;
-  setSourceFrame(source);
-
+// Set the per-slice fragment uniforms (crop / source-warp / rotation /
+// color / blend / black-level / stage intensity). Shared by the slice
+// pass and indirectly by the neutral master-warp pass (which overrides
+// to identity before calling render).
+function applySliceUniforms(slice: OutputSlice, stageIntensity: number) {
   const u = material!.uniforms;
   u.uCrop.value.set(slice.cropX, slice.cropY, slice.cropW, slice.cropH);
-  // Warp mode dispatch. Corners and mesh modes self-heal: if the
+  // Source-warp mode dispatch. Corners and mesh modes self-heal: if the
   // operator flipped warpMode but the geometry initializer was bypassed
   // (e.g. older slice deserialized without corners), we synthesize
   // identity-from-rect corners/mesh on the fly so the shader still
   // takes the right path and the operator's mode pick isn't silently
-  // ignored. Without this, an out-of-sync slice falls back to plain
-  // rect crop and the warp looks like it's "not working."
+  // ignored.
   const mode = slice.warpMode ?? 'rect';
   if (mode === 'corners') {
     const c = slice.corners ?? {
@@ -533,16 +539,6 @@ export function renderSlicePixels(
     u.uMeshTex.value = ensureMeshPlaceholder();
   }
 
-  // Output warp dispatch — disabled. The source warp modes
-  // (rect/corners/mesh) cover the same use case (everything routed
-  // through this screen gets warped together), and the inverse-warp
-  // shader path here was tripping the GPU on enable. The uniforms
-  // stay in the shader for now to keep the binding shape stable;
-  // we just hold uOutWarpMode at 0 so the shader takes the no-op
-  // branch every frame.
-  u.uOutWarpMode.value = 0;
-  u.uOutMeshTex.value = ensureMeshPlaceholder();
-
   const rotEnum = slice.rotation === 90 ? 1 : slice.rotation === 180 ? 2 : slice.rotation === 270 ? 3 : 0;
   u.uRotation.value = rotEnum;
   u.uBrightness.value = slice.brightness;
@@ -559,20 +555,27 @@ export function renderSlicePixels(
   u.uBlackLevel.value.set(slice.blackLevelR ?? 0, slice.blackLevelG ?? 0, slice.blackLevelB ?? 0);
   u.uBlackFeather.value = slice.blackLevelFeather ?? 0.5;
   u.uStageIntensity.value = Math.max(0, Math.min(1, stageIntensity));
+}
 
+// Render the current scene into the (0,0,w,h) viewport and read the
+// pixels back, flipped upright. Returns the shared readback buffer.
+function renderAndReadback(w: number, h: number): Uint8Array | null {
   try {
-    renderer!.setViewport(0, 0, sliceW, sliceH);
-    renderer!.setScissor(0, 0, sliceW, sliceH);
+    renderer!.setViewport(0, 0, w, h);
+    renderer!.setScissor(0, 0, w, h);
     renderer!.setScissorTest(true);
+    // autoClear (default on) clears the scissored viewport to the
+    // opaque-black clear color before drawing — so regions the warp
+    // geometry doesn't cover read back as black, not stale pixels.
     renderer!.render(scene!, camera!);
     const gl = renderer!.getContext();
-    if (!readbackPixels || readbackW !== sliceW || readbackH !== sliceH) {
-      readbackPixels = new Uint8Array(sliceW * sliceH * 4);
-      readbackW = sliceW;
-      readbackH = sliceH;
+    if (!readbackPixels || readbackW !== w || readbackH !== h) {
+      readbackPixels = new Uint8Array(w * h * 4);
+      readbackW = w;
+      readbackH = h;
     }
-    gl.readPixels(0, 0, sliceW, sliceH, gl.RGBA, gl.UNSIGNED_BYTE, readbackPixels);
-    flipRowsInPlace(readbackPixels, sliceW, sliceH);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, readbackPixels);
+    flipRowsInPlace(readbackPixels, w, h);
     return readbackPixels;
   } catch (err) {
     console.warn('[blendRenderer] render/readback failed', err);
@@ -580,6 +583,91 @@ export function renderSlicePixels(
   } finally {
     if (renderer) renderer.setScissorTest(false);
   }
+}
+
+/**
+ * Render one slice into the backing WebGL canvas and read back the
+ * pixels at the slice's output resolution. Returns Uint8Array of RGBA
+ * bytes or null if WebGL is unavailable.
+ *
+ * `stageIntensity` (0..1) scales final output — used by the per-screen
+ * stage effects (radial pulse, beat strobe, etc.). Defaults to 1.
+ *
+ * Per-screen OUTPUT warp (`slice.outputWarp`) is applied here by
+ * selecting the slice's warp geometry; when off it uses the shared
+ * identity quad and renders exactly as before.
+ */
+export function renderSlicePixels(
+  source: HTMLCanvasElement | OffscreenCanvas | HTMLVideoElement | ImageBitmap,
+  slice: OutputSlice,
+  sliceW: number,
+  sliceH: number,
+  stageIntensity = 1,
+): Uint8Array | null {
+  if (sliceW <= 0 || sliceH <= 0) return null;
+  if (!ensureRenderer(sliceW, sliceH)) return null;
+  setSourceFrame(source);
+  applySliceUniforms(slice, stageIntensity);
+  // Per-screen output warp → geometry. Cache key namespaced per slice.
+  quad!.geometry = geometryForWarp(`slice:${slice.id}`, slice.outputWarp);
+  return renderAndReadback(sliceW, sliceH);
+}
+
+/**
+ * Apply the MASTER output warp to the full composite, returning a 2D
+ * canvas with the warped frame (upright, RGBA). Every slice then crops
+ * from this canvas, so a single warp re-aligns the entire rig at once —
+ * the "projector got bumped, nudge everything" rescue.
+ *
+ * Returns null when WebGL is unavailable or the warp is identity/off
+ * (caller should fall back to the unwarped source in that case).
+ *
+ * NOTE: this is a full-frame GPU pass + readback per frame. It only runs
+ * when the master warp is enabled AND non-identity, so the common case
+ * (no master warp) pays nothing.
+ */
+export function renderMasterWarpedCanvas(
+  source: HTMLCanvasElement | OffscreenCanvas | HTMLVideoElement | ImageBitmap,
+  warp: OutputWarp | null | undefined,
+  w: number,
+  h: number,
+): HTMLCanvasElement | null {
+  if (w <= 0 || h <= 0) return null;
+  if (warpIsIdentity(warp)) return null;
+  if (!ensureRenderer(w, h)) return null;
+  setSourceFrame(source);
+  // Neutral fragment params: pure passthrough sampling (identity crop,
+  // no color/blend/black-level). The warp is entirely geometric.
+  const u = material!.uniforms;
+  u.uCrop.value.set(0, 0, 1, 1);
+  u.uWarpMode.value = 0;
+  u.uMeshTex.value = ensureMeshPlaceholder();
+  u.uRotation.value = 0;
+  u.uBrightness.value = 1;
+  u.uContrast.value = 1;
+  u.uGamma.value = 1;
+  u.uBlendW.value.set(0, 0, 0, 0);
+  u.uBlackLevel.value.set(0, 0, 0);
+  u.uStageIntensity.value = 1;
+  quad!.geometry = geometryForWarp('master', warp);
+
+  const px = renderAndReadback(w, h);
+  if (!px) return null;
+
+  // Blit the upright bytes into a reused 2D canvas the slice loop can
+  // drawImage/crop from.
+  if (!masterCanvas || masterCanvas.width !== w || masterCanvas.height !== h) {
+    masterCanvas = document.createElement('canvas');
+    masterCanvas.width = w;
+    masterCanvas.height = h;
+    masterCtx = masterCanvas.getContext('2d', { willReadFrequently: false });
+    masterImageData = null;
+  }
+  if (!masterCtx) return null;
+  if (!masterImageData) masterImageData = masterCtx.createImageData(w, h);
+  masterImageData.data.set(px.subarray(0, w * h * 4));
+  masterCtx.putImageData(masterImageData, 0, 0);
+  return masterCanvas;
 }
 
 function flipRowsInPlace(buf: Uint8Array, w: number, h: number) {
@@ -596,18 +684,23 @@ function flipRowsInPlace(buf: Uint8Array, w: number, h: number) {
 
 export function disposeBlendRenderer() {
   if (sourceTexture) { sourceTexture.dispose(); sourceTexture = null; }
-  if (quad) { (quad.geometry as THREE.BufferGeometry).dispose(); quad = null; }
   if (material) { material.dispose(); material = null; }
   if (renderer) { renderer.dispose(); renderer = null; }
+  quad = null;
   scene = null;
   camera = null;
   backingCanvas = null;
   readbackPixels = null;
   readbackW = 0;
   readbackH = 0;
+  masterCanvas = null;
+  masterCtx = null;
+  masterImageData = null;
   if (meshTexPlaceholder) { meshTexPlaceholder.dispose(); meshTexPlaceholder = null; }
   for (const c of meshTexCache.values()) c.tex.dispose();
   meshTexCache.clear();
+  for (const g of geoCache.values()) g.geo.dispose();
+  geoCache.clear();
 }
 
 export function isBlendRendererAvailable(): boolean {

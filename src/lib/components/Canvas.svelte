@@ -30,7 +30,7 @@
   import { invoke, isDesktopApp, isOsrMode, isOutputMode } from '$lib/bridge';
   import { drawTestPattern, type TestPatternType } from '../utils/testPatterns';
   import { applyEdgeBlending } from '../output/outputPostProcess';
-  import { renderSlicePixels, isBlendRendererAvailable } from '../output/blendRenderer';
+  import { renderSlicePixels, renderMasterWarpedCanvas, isBlendRendererAvailable } from '../output/blendRenderer';
   import { FluidSimulation, type FluidMode } from '../effects/fluidSimulation';
   import { ParticleSystem3D } from '../effects/particleSystem3D';
   // ParticleSystem removed — Particles3D runs as standalone Bevy app via Spout
@@ -1597,6 +1597,19 @@
               fullFrameCanvas = spoutScaleCanvas;
               fullFrameCtx = spoutScaleCtx;
               const gpuPathAvailable = isBlendRendererAvailable();
+
+              // ── Master output warp ───────────────────────────────────────
+              // A single warp on the WHOLE composite, applied upstream of
+              // slicing so every screen crops from the warped frame. This is
+              // the "projector got bumped, nudge everything" rescue. Runs at
+              // most once per frame and only when enabled + non-identity;
+              // renderMasterWarpedCanvas returns null otherwise and we fall
+              // back to the unwarped composite at zero cost.
+              const masterWarp = $settings?.output?.masterOutputWarp;
+              if (gpuPathAvailable && masterWarp?.enabled) {
+                const warped = renderMasterWarpedCanvas(spoutScaleCanvas!, masterWarp, w, h);
+                if (warped) fullFrameCanvas = warped;
+              }
 
               for (const slice of activeSlices) {
                 if (sliceSendInFlight.has(slice.id)) continue; // Backpressure per-slice

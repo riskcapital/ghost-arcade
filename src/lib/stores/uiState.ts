@@ -17,3 +17,10 @@ export const updateModalOpen = writable<boolean>(false);
  *  projector that got bumped. */
 export type LeftSidebarTab = 'layers' | 'screens';
 export const leftSidebarTab = writable<LeftSidebarTab>('layers');
+
+/** When true (and the Screens tab is active), the editor shows the
+ *  MASTER output-warp handles — a single corner/mesh warp spanning the
+ *  whole canvas — instead of the per-screen handles. Toggled from the
+ *  "Master Warp" section of the Screens panel. Runtime-only (the warp
+ *  geometry itself persists; this is just which overlay is on screen). */
+export const masterWarpEditing = writable<boolean>(false);

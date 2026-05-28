@@ -4243,6 +4243,8 @@ void main() {
           outputSlices: get(settings).output?.slices ?? [],
           outputMasterCanvasWidth: get(settings).output?.masterCanvasWidth ?? 1920,
           outputMasterCanvasHeight: get(settings).output?.masterCanvasHeight ?? 1080,
+          // Master output warp (whole-composite projector-bump rescue).
+          outputMasterWarp: get(settings).output?.masterOutputWarp ?? { enabled: false, mode: 'corners' },
         },
         // Include media library
         mediaLibrary: exportMedia,
@@ -5094,7 +5096,20 @@ void main() {
         const incomingSlices = (proj as any).outputSlices;
         const incomingMW = (proj as any).outputMasterCanvasWidth;
         const incomingMH = (proj as any).outputMasterCanvasHeight;
-        if (Array.isArray(incomingSlices) || typeof incomingMW === 'number' || typeof incomingMH === 'number') {
+        // Master output warp — accept only a well-formed OutputWarp;
+        // older projects don't carry it and keep the current default.
+        const incomingMasterWarpRaw = (proj as any).outputMasterWarp;
+        const incomingMasterWarp =
+          incomingMasterWarpRaw && typeof incomingMasterWarpRaw === 'object' &&
+          (incomingMasterWarpRaw.mode === 'corners' || incomingMasterWarpRaw.mode === 'mesh')
+            ? {
+                enabled: !!incomingMasterWarpRaw.enabled,
+                mode: incomingMasterWarpRaw.mode,
+                corners: incomingMasterWarpRaw.corners,
+                meshGrid: incomingMasterWarpRaw.meshGrid,
+              }
+            : undefined;
+        if (Array.isArray(incomingSlices) || typeof incomingMW === 'number' || typeof incomingMH === 'number' || incomingMasterWarp) {
           settings.update(s => ({
             ...s,
             output: {
@@ -5106,6 +5121,7 @@ void main() {
               } : {}),
               ...(typeof incomingMW === 'number' ? { masterCanvasWidth: incomingMW } : {}),
               ...(typeof incomingMH === 'number' ? { masterCanvasHeight: incomingMH } : {}),
+              ...(incomingMasterWarp ? { masterOutputWarp: incomingMasterWarp } : {}),
             },
           }));
         }

@@ -12,6 +12,7 @@
   import WarpHandles from './lib/components/WarpHandles.svelte';
   import MeshWarpHandles from './lib/components/MeshWarpHandles.svelte';
   import ScreenWarpHandles from './lib/components/ScreenWarpHandles.svelte';
+  import MasterWarpHandles from './lib/components/MasterWarpHandles.svelte';
   import CustomShapeHandles from './lib/components/CustomShapeHandles.svelte';
   // LayerPanel now mounts via LeftSidebar (which swaps it for
   // ScreenPanel when the user is on the Screens tab).
@@ -47,7 +48,7 @@
   import WelcomeModal from './lib/components/WelcomeModal.svelte';
   // EULAModal removed — no EULA in the open-source build.
   import UpdateModal from './lib/components/UpdateModal.svelte';
-  import { updateModalOpen, leftSidebarTab } from './lib/stores/uiState';
+  import { updateModalOpen, leftSidebarTab, masterWarpEditing } from './lib/stores/uiState';
   import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback } from './lib/stores/layers';
   import { keyframeTimeline } from './lib/stores/keyframeTimeline';
   import { settings, outputFrozen } from './lib/stores/settings';
@@ -4608,7 +4609,14 @@
              the two overlays don't compete visually. -->
         {#if $leftSidebarTab === 'screens'}
           <div class="warp-handles-offset" style="left: {canvasOffsetX}px; top: {canvasOffsetY}px;">
-            <ScreenWarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
+            {#if $masterWarpEditing}
+              <!-- Master output warp — one warp over the whole composite.
+                   Replaces the per-screen handles so the two overlays
+                   don't fight; toggled from the Screens panel. -->
+              <MasterWarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
+            {:else}
+              <ScreenWarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
+            {/if}
           </div>
         {/if}
         {#if $selectedLayer && $leftSidebarTab !== 'screens'}

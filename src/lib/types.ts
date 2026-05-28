@@ -4281,6 +4281,19 @@ export interface Project {
   outputSlices?: OutputSliceShape[];
   outputMasterCanvasWidth?: number;
   outputMasterCanvasHeight?: number;
+  /** Master output warp — a single corner/mesh warp on the whole
+   *  composite (projector-bump rescue). Projector-unit-quad space,
+   *  0..1 top-origin. Optional; legacy projects load unchanged. */
+  outputMasterWarp?: OutputWarpShape;
+}
+
+/** Mirror of the OutputWarp shape from src/lib/stores/settings.ts —
+ *  duplicated here for the same import-graph reason as OutputSliceShape. */
+export interface OutputWarpShape {
+  enabled: boolean;
+  mode: 'corners' | 'mesh';
+  corners?: WarpCorners;
+  meshGrid?: MeshWarpGrid;
 }
 
 /** Mirror of the OutputSlice shape from src/lib/stores/settings.ts.

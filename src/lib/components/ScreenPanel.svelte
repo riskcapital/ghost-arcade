@@ -9,8 +9,9 @@
    * tabs.
    */
   import { onMount } from 'svelte';
-  import { screens, selectedScreenId, selectedScreen, screenActions } from '../stores/screens';
+  import { screens, selectedScreenId, selectedScreen, screenActions, masterOutputWarp, masterWarpActions } from '../stores/screens';
   import { settings, type OutputSlice } from '../stores/settings';
+  import { masterWarpEditing } from '../stores/uiState';
   import { maxOutputSlices } from '../stores/license';
   import { isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
   import OutputCanvasPreview from './OutputCanvasPreview.svelte';
@@ -228,6 +229,47 @@
         </button>
       </div>
     </details>
+
+    <!-- Master output warp — one warp over the WHOLE composite, applied
+         between the screen compositing stage and the projector. The
+         "projector got bumped, nudge everything at once" rescue: corner
+         or mesh-warp the entire output without touching any layer or
+         per-screen warp. (For a multi-projector rig where only ONE
+         projector moved, use a per-screen warp instead.) -->
+    <details class="master-details">
+      <summary>Master warp <span class="mw-hint">whole output</span></summary>
+      <div class="master-row">
+        <label class="mw-toggle">
+          <input
+            type="checkbox"
+            checked={$masterOutputWarp.enabled}
+            onchange={(e) => masterWarpActions.setEnabled((e.target as HTMLInputElement).checked)}
+          />
+          Enabled
+        </label>
+        <select
+          class="mw-mode"
+          value={$masterOutputWarp.mode}
+          onchange={(e) => masterWarpActions.setMode((e.target as HTMLSelectElement).value as 'corners' | 'mesh')}
+        >
+          <option value="corners">Corners</option>
+          <option value="mesh">Mesh</option>
+        </select>
+      </div>
+      <div class="master-row">
+        <button
+          class="mini-btn"
+          class:active={$masterWarpEditing}
+          onclick={() => masterWarpEditing.update(v => !v)}
+          title="Show the master-warp handles on the canvas"
+        >
+          {$masterWarpEditing ? 'Editing on canvas ✓' : 'Edit on canvas'}
+        </button>
+        <button class="mini-btn" onclick={() => masterWarpActions.reset()} title="Reset the master warp to no distortion">
+          Reset
+        </button>
+      </div>
+    </details>
   </div>
 
   <!-- Bottom: inspector for the selected screen -->
@@ -427,6 +469,41 @@
   }
   .mini-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.08); }
   .mini-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  /* Master-warp "editing on canvas" toggle uses the cyan accent that
+     matches the on-canvas master-warp handles. */
+  .mini-btn.active {
+    background: rgba(0, 229, 208, 0.15);
+    border-color: #00e5d0;
+    color: #00e5d0;
+  }
+  .mw-hint {
+    font-size: 9px;
+    color: #00e5d0;
+    opacity: 0.7;
+    margin-left: 4px;
+    letter-spacing: 0.03em;
+  }
+  .mw-toggle {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    color: #ccc;
+    cursor: pointer;
+  }
+  .mw-toggle input { cursor: pointer; }
+  .mw-mode {
+    flex: 1;
+    padding: 3px 6px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 3px;
+    color: #ccc;
+    font-size: 10px;
+    font-family: inherit;
+    cursor: pointer;
+  }
 
   .inspector-section {
     flex: 1 1 50%;

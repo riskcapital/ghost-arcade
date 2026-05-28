@@ -43,6 +43,7 @@
   import { initLicense } from './lib/stores/license';
   import { settings, type OutputSlice } from './lib/stores/settings';
   import { applyEdgeBlending } from './lib/output/outputPostProcess';
+  import { renderSlicePixels, renderMasterWarpedCanvas, isBlendRendererAvailable } from './lib/output/blendRenderer';
   import { invoke } from '$lib/bridge';
 
   const urlParams = new URLSearchParams(window.location.search);
@@ -52,6 +53,14 @@
   let presentCtx: CanvasRenderingContext2D | null = null;
   let rafId = 0;
   let mainCanvasEl: HTMLCanvasElement | null = null;
+  // Scratch canvas the GPU slice bytes are blitted onto (at slice
+  // resolution) before being scaled up to the window. Reused across
+  // frames; resized when the slice crop dimensions change.
+  let sliceTmpCanvas: HTMLCanvasElement | null = null;
+  let sliceTmpCtx: CanvasRenderingContext2D | null = null;
+  let sliceTmpImageData: ImageData | null = null;
+  let sliceTmpW = 0;
+  let sliceTmpH = 0;
   // Visible "ESC to close" hint. Shown on mount, fades after 5s.
   // Critical UX safety net: when a user accidentally opens a slice
   // window on their primary monitor (covering the whole desktop) they
@@ -101,76 +110,98 @@
     // Slice's crop region in main-canvas pixel coords.
     const mw = mainCanvasEl.width;
     const mh = mainCanvasEl.height;
-    const sx = Math.round(slice.cropX * mw);
-    const sy = Math.round(slice.cropY * mh);
     const sw = Math.round(slice.cropW * mw);
     const sh = Math.round(slice.cropH * mh);
     if (sw <= 0 || sh <= 0) return;
 
+    // ── Master output warp ───────────────────────────────────────────
+    // Applied to the whole composite BEFORE this screen crops from it,
+    // so a physical-display projector inherits the same whole-rig
+    // re-alignment as the sender path. Identity/off → returns null and
+    // we crop the unwarped composite at zero cost.
+    const masterWarp = $settings.output.masterOutputWarp;
+    let fullFrame: HTMLCanvasElement = mainCanvasEl;
+    const gpuAvailable = isBlendRendererAvailable();
+    if (gpuAvailable && masterWarp?.enabled) {
+      const warped = renderMasterWarpedCanvas(mainCanvasEl, masterWarp, mw, mh);
+      if (warped) fullFrame = warped;
+    }
+
     presentCtx.clearRect(0, 0, w, h);
 
-    // Apply rotation + crop. drawImage from a hardware-accelerated
-    // canvas to a 2D canvas is GPU-fast in Chromium; no readback.
-    if (slice.rotation === 0) {
-      presentCtx.drawImage(mainCanvasEl, sx, sy, sw, sh, 0, 0, w, h);
-    } else {
-      presentCtx.save();
-      presentCtx.translate(w / 2, h / 2);
-      presentCtx.rotate((slice.rotation * Math.PI) / 180);
-      // For 90/270 the destination's W and H are swapped relative to
-      // the rotated content. We rotate around center, then draw
-      // centered on (-W/2, -H/2) or (-H/2, -W/2) accordingly.
-      if (slice.rotation === 90 || slice.rotation === 270) {
-        presentCtx.drawImage(mainCanvasEl, sx, sy, sw, sh, -h / 2, -w / 2, h, w);
-      } else {
-        presentCtx.drawImage(mainCanvasEl, sx, sy, sw, sh, -w / 2, -h / 2, w, h);
+    // ── GPU path (parity with the sender export) ─────────────────────
+    // Route through the same blendRenderer the Spout/Syphon/NDI senders
+    // use, so physical-display output gets identical crop + source-warp
+    // + per-screen OUTPUT warp + rotation + linear-space color + Paul
+    // Bourke edge-blend + black-level lift. The slice is rendered at its
+    // crop resolution (sw×sh), then scaled to fill the display window.
+    let gpuOk = false;
+    if (gpuAvailable) {
+      const px = renderSlicePixels(fullFrame, slice, sw, sh);
+      if (px) {
+        if (!sliceTmpCanvas || sliceTmpW !== sw || sliceTmpH !== sh) {
+          sliceTmpCanvas = document.createElement('canvas');
+          sliceTmpCanvas.width = sw;
+          sliceTmpCanvas.height = sh;
+          sliceTmpCtx = sliceTmpCanvas.getContext('2d');
+          sliceTmpW = sw;
+          sliceTmpH = sh;
+          sliceTmpImageData = null;
+        }
+        if (sliceTmpCtx) {
+          if (!sliceTmpImageData) sliceTmpImageData = sliceTmpCtx.createImageData(sw, sh);
+          sliceTmpImageData.data.set(px.subarray(0, sw * sh * 4));
+          sliceTmpCtx.putImageData(sliceTmpImageData, 0, 0);
+          presentCtx.drawImage(sliceTmpCanvas, 0, 0, sw, sh, 0, 0, w, h);
+          gpuOk = true;
+        }
       }
-      presentCtx.restore();
     }
 
-    // Apply per-slice color correction via canvas filter. Brightness
-    // and contrast are GPU-accelerated; gamma is an approximation
-    // (CSS filters don't expose a real gamma curve — same caveat as
-    // the editor's preview path. For accurate gamma use a sender
-    // slice + the blendRenderer shader pipeline.)
-    // Color correction is composited via a SECOND drawImage with
-    // the filter set; doing it during the first drawImage would clip
-    // at edges. For zero-correction (the common case) skip the cost.
-    if (slice.brightness !== 1 || slice.contrast !== 1 || slice.gamma !== 1) {
-      const ratio = Math.pow(0.5, slice.gamma) / 0.5;
-      const filter = `brightness(${slice.brightness}) contrast(${slice.contrast}) brightness(${ratio.toFixed(3)})`;
-      presentCtx.save();
-      presentCtx.filter = filter;
-      presentCtx.globalCompositeOperation = 'source-over';
-      // No source — filter is applied to existing content via a
-      // self-blit. Drawing the canvas onto itself with a filter is
-      // the canonical post-process trick.
-      presentCtx.drawImage(presentCanvas, 0, 0);
-      presentCtx.filter = 'none';
-      presentCtx.restore();
-    }
-
-    // Edge blending — semi-transparent gradient strips. Same formula
-    // as the sender-export 2D fallback. Per-edge gamma supported.
-    const hasBlend = slice.edgeBlendLeft > 0 || slice.edgeBlendRight > 0
-      || slice.edgeBlendTop > 0 || slice.edgeBlendBottom > 0;
-    if (hasBlend) {
-      applyEdgeBlending(presentCtx, w, h, {
-        edgeBlendLeft: slice.edgeBlendLeft,
-        edgeBlendRight: slice.edgeBlendRight,
-        edgeBlendTop: slice.edgeBlendTop,
-        edgeBlendBottom: slice.edgeBlendBottom,
-        // Picks per-edge gamma if set, falls back to the slice's
-        // default. The 2D path uses one gamma per draw call, so we
-        // average the four edge gammas — close enough for the
-        // approximate canvas path; the GPU sender path remains the
-        // accurate one for asymmetric blend gammas.
-        edgeBlendGamma:
-          (((slice.edgeBlendLeftGamma ?? slice.edgeBlendGamma)
-            + (slice.edgeBlendRightGamma ?? slice.edgeBlendGamma)
-            + (slice.edgeBlendTopGamma ?? slice.edgeBlendGamma)
-            + (slice.edgeBlendBottomGamma ?? slice.edgeBlendGamma)) / 4),
-      });
+    // ── 2D fallback (WebGL unavailable) ──────────────────────────────
+    // The legacy drawImage + CSS-filter + 2D edge-blend path. No source
+    // warp / black-level lift here — it's the rare degraded mode.
+    if (!gpuOk) {
+      const sx = Math.round(slice.cropX * mw);
+      const sy = Math.round(slice.cropY * mh);
+      if (slice.rotation === 0) {
+        presentCtx.drawImage(fullFrame, sx, sy, sw, sh, 0, 0, w, h);
+      } else {
+        presentCtx.save();
+        presentCtx.translate(w / 2, h / 2);
+        presentCtx.rotate((slice.rotation * Math.PI) / 180);
+        if (slice.rotation === 90 || slice.rotation === 270) {
+          presentCtx.drawImage(fullFrame, sx, sy, sw, sh, -h / 2, -w / 2, h, w);
+        } else {
+          presentCtx.drawImage(fullFrame, sx, sy, sw, sh, -w / 2, -h / 2, w, h);
+        }
+        presentCtx.restore();
+      }
+      if (slice.brightness !== 1 || slice.contrast !== 1 || slice.gamma !== 1) {
+        const ratio = Math.pow(0.5, slice.gamma) / 0.5;
+        const filter = `brightness(${slice.brightness}) contrast(${slice.contrast}) brightness(${ratio.toFixed(3)})`;
+        presentCtx.save();
+        presentCtx.filter = filter;
+        presentCtx.globalCompositeOperation = 'source-over';
+        presentCtx.drawImage(presentCanvas, 0, 0);
+        presentCtx.filter = 'none';
+        presentCtx.restore();
+      }
+      const hasBlend = slice.edgeBlendLeft > 0 || slice.edgeBlendRight > 0
+        || slice.edgeBlendTop > 0 || slice.edgeBlendBottom > 0;
+      if (hasBlend) {
+        applyEdgeBlending(presentCtx, w, h, {
+          edgeBlendLeft: slice.edgeBlendLeft,
+          edgeBlendRight: slice.edgeBlendRight,
+          edgeBlendTop: slice.edgeBlendTop,
+          edgeBlendBottom: slice.edgeBlendBottom,
+          edgeBlendGamma:
+            (((slice.edgeBlendLeftGamma ?? slice.edgeBlendGamma)
+              + (slice.edgeBlendRightGamma ?? slice.edgeBlendGamma)
+              + (slice.edgeBlendTopGamma ?? slice.edgeBlendGamma)
+              + (slice.edgeBlendBottomGamma ?? slice.edgeBlendGamma)) / 4),
+        });
+      }
     }
   }
 
