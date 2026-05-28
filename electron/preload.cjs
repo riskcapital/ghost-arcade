@@ -59,6 +59,10 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'output_toggle_fullscreen',
   'output_fullscreen_external',
   'output_set_cursor',
+  // Per-slice multi-output windows (Phase 2 multi-output system)
+  'output_open_slice_window',
+  'output_close_slice_window',
+  'output_list_slice_windows',
   // Ping
   'ping',
   // Restart the app — used when experimental flags (renderer / GPU

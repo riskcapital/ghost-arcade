@@ -897,6 +897,59 @@ export const stageEffectColors = derived(stageEffectsRuntime, $rt => $rt.sliceCo
  *  effect output for a given layer in O(1). */
 export const layerToSliceMap = derived(stageEffectsRuntime, $rt => $rt.layerToSlice);
 
+// ─── One-shot evaluator for the Screens system ──────────────────────
+//
+// The Screens panel binds a stage-effect TYPE (not a full effect with
+// per-effect state, like the surface runtime). For per-screen
+// modulation we need a stateless evaluator that takes a screen's
+// centroid + the wall-clock time and returns a brightness in [0..1].
+//
+// State-keyed evaluators (twinkle, chase, random-hits) need persistent
+// per-screen state; we cache it in a screen-local Map keyed by
+// `screenId + ':' + type`. State is created lazily and lives for the
+// session — sufficient for the runtime, no persistence needed because
+// these patterns are time-only.
+const _screenStageState = new Map<string, Record<string, any>>();
+function _screenStateKey(screenId: string, type: StageEffectType): string {
+  return `${screenId}:${type}`;
+}
+
+/** Compute the stage-effect brightness for a Screen at a moment in
+ *  time. `cx` / `cy` are the screen's centroid in normalized 0..1
+ *  master-canvas coords — for radial / linear patterns this is what
+ *  the operator perceives as "position." Returns 1 (no modulation)
+ *  for unknown types and `still`. */
+export function evaluateStageEffectForScreen(
+  screenId: string,
+  type: StageEffectType,
+  params: Record<string, number>,
+  cx: number,
+  cy: number,
+  tSec: number,
+): number {
+  // Reconstruct a minimal StageEffect just to drive the existing
+  // evaluators — they expect this shape. Reuses every effect-type
+  // implementation already battle-tested by the surface runtime.
+  const eff: StageEffect = { id: screenId, type, enabled: true, opacity: 1, params };
+  const key = _screenStateKey(screenId, type);
+  let state = _screenStageState.get(key);
+  if (!state) { state = {}; _screenStageState.set(key, state); }
+  try {
+    return evaluate(eff, cx, cy, tSec, state);
+  } catch (err) {
+    console.warn('[stageEffects] screen evaluate failed', err);
+    return 1;
+  }
+}
+
+/** Tear down cached screen state — called when a screen is removed or
+ *  its stage-effect binding is cleared. Optional; state is small. */
+export function clearScreenStageEffectState(screenId: string) {
+  for (const k of Array.from(_screenStageState.keys())) {
+    if (k.startsWith(`${screenId}:`)) _screenStageState.delete(k);
+  }
+}
+
 /** Called by surface.ts whenever surfaces change. Rebuilds centroid
  *  cache + layer→slice map, then starts/stops the RAF tick based on
  *  whether any surface has at least one enabled effect. Idle when

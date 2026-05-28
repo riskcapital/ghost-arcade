@@ -51,6 +51,7 @@
   // upper bound; resolves to Infinity in the OSS build, so all guards pass).
   import { maxOutputSlices } from '../stores/license';
   import { createDefaultSlice, type OutputSlice } from '../stores/settings';
+  import OutputCanvasPreview from './OutputCanvasPreview.svelte';
   import { isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
   import { getErrorLog, clearErrorLog, type ErrorEntry } from '../utils/errorReporter';
   import { isWebGPUSupported, probeWebGPU, getWebGPUInfo, type WebGPUInfo } from '../renderer/webgpuCapability';
@@ -236,7 +237,7 @@
     | 'app:appearance' | 'app:updates'
     | 'project:canvas' | 'project:layers'
     | 'output:display' | 'output:color'
-    | 'output:edge-blending' | 'output:dome' | 'output:multi-output'
+    | 'output:edge-blending' | 'output:dome'
     | 'performance:gpu' | 'performance:render-quality' | 'performance:video-decoding'
     | 'recording'
     | 'integrations:midi' | 'integrations:osc' | 'integrations:wled'
@@ -253,11 +254,16 @@
       { id: 'project:layers', label: 'Layers' },
     ]},
     { id: 'output', label: 'Output', sections: [
+      // Display + color correction stay as global output post-process
+      // toggles (cursor overlay, rotation, blackout, dome projection).
+      // Multi-Output / per-slice config moved to the Screens tab in
+      // the left sidebar — see ScreenPanel.svelte. Edge Blending
+      // remains here as a legacy/single-output convenience for users
+      // who haven't adopted Screens yet.
       { id: 'output:display', label: 'Display' },
       { id: 'output:color', label: 'Color Correction' },
       { id: 'output:edge-blending', label: 'Edge Blending', advanced: true },
       { id: 'output:dome', label: 'Dome Projection', advanced: true },
-      { id: 'output:multi-output', label: 'Multi-Output', advanced: true },
     ]},
     { id: 'performance', label: 'Performance', sections: [
       { id: 'performance:gpu', label: 'GPU Acceleration', advanced: true },
@@ -423,6 +429,86 @@
   // Test pattern UI removed in v0.3.5 — kept import line empty to preserve
   // line numbers for any in-flight diffs. Re-add if reintroducing the UI.
 
+  // ── Multi-output: display enumeration ───────────────────────────────
+  // Polled when the Multi-Output section is opened so the "Send to →
+  // Display X" dropdown reflects whatever is plugged in *now* (users
+  // routinely hot-plug a projector between when the app launches and
+  // when they configure outputs). Re-runnable via the refresh button.
+  type DisplayInfo = {
+    id: number;
+    label: string;
+    width: number;
+    height: number;
+    x: number;
+    y: number;
+    isPrimary: boolean;
+    scaleFactor: number;
+  };
+  let displays: DisplayInfo[] = [];
+  async function refreshDisplays() {
+    if (!isDesktopApp) return;
+    try {
+      displays = ((await invoke('get_displays')) as DisplayInfo[]) || [];
+    } catch {
+      displays = [];
+    }
+  }
+  // Auto-refresh whenever the user lands on Multi-Output or Display.
+  // Idempotent and cheap (one Electron IPC round-trip).
+  $: if (selectedSection === 'output:multi-output' || selectedSection === 'output:display') {
+    refreshDisplays();
+  }
+
+  // ── Master canvas sizing helpers ────────────────────────────────────
+  function setMasterCanvas(w: number, h: number) {
+    const W = Math.max(128, Math.min(15360, Math.round(w)));
+    const H = Math.max(128, Math.min(15360, Math.round(h)));
+    settings.update(s => ({ ...s, output: { ...s.output, masterCanvasWidth: W, masterCanvasHeight: H } }));
+  }
+  // Push the master canvas dimensions into spoutResolution=custom so
+  // the per-frame slice extractor (Canvas.svelte:1588) reads pixels at
+  // master-canvas resolution. Without this, slice crops happen at
+  // whatever spoutResolution the operator picked separately — fine for
+  // most setups but introduces a pixel-mapping mismatch when the
+  // master canvas is non-standard (e.g. 6528×1080 horizontal blend).
+  function matchSpoutToMaster() {
+    settings.update(s => ({
+      ...s,
+      output: {
+        ...s.output,
+        spoutResolution: 'custom',
+        customWidth: s.output.masterCanvasWidth,
+        customHeight: s.output.masterCanvasHeight,
+      },
+    }));
+  }
+  // True when the spout pipeline is already sized to the master canvas.
+  // Drives the "Match Spout to Master" button's disabled state.
+  $: spoutMatchesMaster =
+    $settings.output.spoutResolution === 'custom' &&
+    $settings.output.customWidth === $settings.output.masterCanvasWidth &&
+    $settings.output.customHeight === $settings.output.masterCanvasHeight;
+  // Auto-fit master canvas: sum widths of slices assigned to displays,
+  // minus overlap. For users who don't want to do the arithmetic.
+  function autoFitMasterCanvas() {
+    const active = $settings.output.slices.filter(s => s.enabled && s.targetType === 'display' && s.displayId != null);
+    if (active.length === 0) return;
+    // Sum native display widths, subtract pixel-equivalent overlap from
+    // each slice (using the slice's edgeBlendLeft/Right). This assumes a
+    // horizontal-row layout; for grids the user should set master manually.
+    let totalW = 0;
+    let maxH = 0;
+    for (const slice of active) {
+      const d = displays.find(dd => dd.id === slice.displayId);
+      if (!d) continue;
+      const dw = d.width * d.scaleFactor;
+      const dh = d.height * d.scaleFactor;
+      totalW += dw - dw * (slice.edgeBlendLeft + slice.edgeBlendRight) / 2;
+      maxH = Math.max(maxH, dh);
+    }
+    if (totalW > 0 && maxH > 0) setMasterCanvas(totalW, maxH);
+  }
+
   // ── Slice management ──────────────────────────────────────────────────────
   let expandedSliceId: string | null = null;
 
@@ -454,6 +540,18 @@
   }
 
   function updateSlice(sliceId: string, updates: Partial<OutputSlice>) {
+    // If the operator changed the displayId of a slice whose window
+    // is currently open, the open window is now on the wrong monitor.
+    // Close + re-open on the new display in the background so the
+    // edit lands on the actual projector without an extra click.
+    const prev = $settings.output.slices.find(s => s.id === sliceId);
+    const displayChanged = isDesktopApp
+      && prev != null
+      && 'displayId' in updates
+      && openSliceWindowIds.includes(sliceId)
+      && updates.displayId != null
+      && prev.displayId !== updates.displayId;
+
     settings.update(s => ({
       ...s,
       output: {
@@ -461,6 +559,73 @@
         slices: s.output.slices.map(sl => sl.id === sliceId ? { ...sl, ...updates } : sl)
       }
     }));
+
+    if (displayChanged) {
+      (async () => {
+        try {
+          await invoke('output_close_slice_window', { sliceId });
+          await invoke('output_open_slice_window', { sliceId, displayId: updates.displayId });
+          await refreshOpenSliceWindows();
+        } catch (err) {
+          console.error('[SettingsPanel] displayId change re-open failed', err);
+        }
+      })();
+    }
+  }
+
+  // ── Slice → physical-display window controls ────────────────────────
+  // Open / close per-slice fullscreen windows on the assigned displays.
+  // Reactive `openSliceWindowIds` tracks which slice IDs are currently
+  // showing on a physical display so we can toggle the button label.
+  let openSliceWindowIds: string[] = [];
+  async function refreshOpenSliceWindows() {
+    if (!isDesktopApp) return;
+    try {
+      const ids = (await invoke('output_list_slice_windows')) as string[];
+      openSliceWindowIds = Array.isArray(ids) ? ids : [];
+    } catch {
+      openSliceWindowIds = [];
+    }
+  }
+  // Poll once on entering the section + every time the slice list
+  // changes (open/close happens outside our control via OS gestures).
+  $: if (selectedSection === 'output:multi-output') refreshOpenSliceWindows();
+
+  async function openSliceWindow(slice: OutputSlice) {
+    if (!isDesktopApp) return;
+    if (slice.displayId == null) return;
+    try {
+      await invoke('output_open_slice_window', { sliceId: slice.id, displayId: slice.displayId });
+      await refreshOpenSliceWindows();
+    } catch (err) {
+      console.error('[SettingsPanel] open_slice_window failed', err);
+    }
+  }
+  async function closeSliceWindow(slice: OutputSlice) {
+    if (!isDesktopApp) return;
+    try {
+      await invoke('output_close_slice_window', { sliceId: slice.id });
+      await refreshOpenSliceWindows();
+    } catch (err) {
+      console.error('[SettingsPanel] close_slice_window failed', err);
+    }
+  }
+
+  // Lifecycle sync: when the slice list changes, close any open
+  // window whose slice is gone, disabled, or no longer targets a
+  // physical display. Mirrors the operator's mental model —
+  // flipping a slice's transport away from 'display' (or deleting
+  // it) should immediately shut its dedicated projector window.
+  $: if (isDesktopApp && openSliceWindowIds.length > 0) {
+    const activeDisplaySliceIds = $settings.output.slices
+      .filter(s => s.enabled && (s.targetType ?? 'sender') === 'display' && s.displayId != null)
+      .map(s => s.id);
+    const stale = openSliceWindowIds.filter(id => !activeDisplaySliceIds.includes(id));
+    if (stale.length > 0) {
+      Promise.all(stale.map(id =>
+        invoke('output_close_slice_window', { sliceId: id }).catch(() => {})
+      )).then(() => refreshOpenSliceWindows());
+    }
   }
 
   function addPresetSlices(layout: '2-wide' | '3-wide' | '2x2') {
@@ -1360,196 +1525,6 @@
           {/if}
         </section>
 
-        {/if}
-        <!-- Multi-Output Slices Section (hidden until multi-projector testing) -->
-        {#if selectedSection === 'output:multi-output'}
-        <section class="settings-section">
-          <h3>Multi-Output Routing</h3>
-          <p class="section-hint">
-            Slice your canvas into regions and route each to a separate {tsLabel} output for multi-projector setups.
-          </p>
-
-            <!-- Layout presets -->
-            {#if $settings.output.slices.length === 0}
-              <div class="slice-presets">
-                <span class="slice-presets-label">Quick setup:</span>
-                <button class="secondary-btn" onclick={() => addPresetSlices('2-wide')}>2-Wide</button>
-                <button class="secondary-btn" onclick={() => addPresetSlices('3-wide')}
-                  disabled={$maxOutputSlices < 3}>3-Wide</button>
-                {#if $maxOutputSlices >= 4}
-                  <button class="secondary-btn" onclick={() => addPresetSlices('2x2')}>2×2 Grid</button>
-                {/if}
-              </div>
-            {/if}
-
-            <!-- Slice list -->
-            {#each $settings.output.slices as slice, i (slice.id)}
-              <div class="slice-card" class:expanded={expandedSliceId === slice.id}>
-                <div class="slice-header" role="button" tabindex="0"
-                  onclick={() => expandedSliceId = expandedSliceId === slice.id ? null : slice.id}
-                  onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); expandedSliceId = expandedSliceId === slice.id ? null : slice.id; } }}>
-                  <label class="toggle slice-toggle" onclick={(e) => e.stopPropagation()}>
-                    <input type="checkbox" checked={slice.enabled}
-                      onchange={(e) => updateSlice(slice.id, { enabled: (e.target as HTMLInputElement).checked })} />
-                    <span class="toggle-slider"></span>
-                  </label>
-                  <span class="slice-name">{slice.name}</span>
-                  <span class="slice-info">{Math.round(slice.cropX * 100)}–{Math.round((slice.cropX + slice.cropW) * 100)}% → {slice.spoutName}</span>
-                  <span class="slice-chevron">{expandedSliceId === slice.id ? '▾' : '▸'}</span>
-                  <button class="slice-remove" title="Remove slice"
-                    onclick={(e) => { e.stopPropagation(); removeSlice(slice.id); }}>×</button>
-                </div>
-
-                {#if expandedSliceId === slice.id}
-                  <div class="slice-body">
-                    <!-- Name + Spout sender -->
-                    <div class="slice-row">
-                      <label class="slice-field-label">Name</label>
-                      <input type="text" class="slice-input" value={slice.name}
-                        oninput={(e) => updateSlice(slice.id, { name: (e.target as HTMLInputElement).value })} />
-                    </div>
-                    <div class="slice-row">
-                      <label class="slice-field-label">Transport</label>
-                      <select
-                        class="slice-input"
-                        value={slice.outputType ?? (tsLabel === 'Syphon' ? 'syphon' : 'spout')}
-                        onchange={(e) => updateSlice(slice.id, { outputType: (e.target as HTMLSelectElement).value as 'spout' | 'syphon' | 'ndi' })}
-                        title={ndiAvailable ? 'Pick the output transport for this slice' : 'NDI option requires the NDI Advanced SDK at build time (https://ndi.video/sdk)'}
-                      >
-                        <option value={tsLabel === 'Syphon' ? 'syphon' : 'spout'}>{tsLabel} (local GPU share)</option>
-                        <option value="ndi" disabled={!ndiAvailable}>NDI (network) {ndiAvailable ? '' : ' — not available'}</option>
-                      </select>
-                    </div>
-                    <div class="slice-row">
-                      <label class="slice-field-label">Sender Name</label>
-                      <input type="text" class="slice-input" value={slice.spoutName}
-                        oninput={(e) => updateSlice(slice.id, { spoutName: (e.target as HTMLInputElement).value })} />
-                    </div>
-
-                    <!-- Crop region -->
-                    <div class="slice-subsection">
-                      <span class="slice-subsection-title">Source Crop Region</span>
-                      <div class="crop-grid">
-                        <div class="crop-item">
-                          <span class="crop-label">X</span>
-                          <input type="range" min="0" max="1" step="0.01" value={slice.cropX}
-                            oninput={(e) => updateSlice(slice.id, { cropX: parseFloat((e.target as HTMLInputElement).value) })} />
-                          <span class="crop-value">{Math.round(slice.cropX * 100)}%</span>
-                        </div>
-                        <div class="crop-item">
-                          <span class="crop-label">Y</span>
-                          <input type="range" min="0" max="1" step="0.01" value={slice.cropY}
-                            oninput={(e) => updateSlice(slice.id, { cropY: parseFloat((e.target as HTMLInputElement).value) })} />
-                          <span class="crop-value">{Math.round(slice.cropY * 100)}%</span>
-                        </div>
-                        <div class="crop-item">
-                          <span class="crop-label">W</span>
-                          <input type="range" min="0.05" max="1" step="0.01" value={slice.cropW}
-                            oninput={(e) => updateSlice(slice.id, { cropW: parseFloat((e.target as HTMLInputElement).value) })} />
-                          <span class="crop-value">{Math.round(slice.cropW * 100)}%</span>
-                        </div>
-                        <div class="crop-item">
-                          <span class="crop-label">H</span>
-                          <input type="range" min="0.05" max="1" step="0.01" value={slice.cropH}
-                            oninput={(e) => updateSlice(slice.id, { cropH: parseFloat((e.target as HTMLInputElement).value) })} />
-                          <span class="crop-value">{Math.round(slice.cropH * 100)}%</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <!-- Per-slice edge blending -->
-                    <div class="slice-subsection">
-                      <span class="slice-subsection-title">Edge Blending</span>
-                      <div class="crop-grid">
-                        <div class="crop-item">
-                          <span class="crop-label">L</span>
-                          <input type="range" min="0" max="0.5" step="0.01" value={slice.edgeBlendLeft}
-                            oninput={(e) => updateSlice(slice.id, { edgeBlendLeft: parseFloat((e.target as HTMLInputElement).value) })} />
-                          <span class="crop-value">{Math.round(slice.edgeBlendLeft * 100)}%</span>
-                        </div>
-                        <div class="crop-item">
-                          <span class="crop-label">R</span>
-                          <input type="range" min="0" max="0.5" step="0.01" value={slice.edgeBlendRight}
-                            oninput={(e) => updateSlice(slice.id, { edgeBlendRight: parseFloat((e.target as HTMLInputElement).value) })} />
-                          <span class="crop-value">{Math.round(slice.edgeBlendRight * 100)}%</span>
-                        </div>
-                        <div class="crop-item">
-                          <span class="crop-label">T</span>
-                          <input type="range" min="0" max="0.5" step="0.01" value={slice.edgeBlendTop}
-                            oninput={(e) => updateSlice(slice.id, { edgeBlendTop: parseFloat((e.target as HTMLInputElement).value) })} />
-                          <span class="crop-value">{Math.round(slice.edgeBlendTop * 100)}%</span>
-                        </div>
-                        <div class="crop-item">
-                          <span class="crop-label">B</span>
-                          <input type="range" min="0" max="0.5" step="0.01" value={slice.edgeBlendBottom}
-                            oninput={(e) => updateSlice(slice.id, { edgeBlendBottom: parseFloat((e.target as HTMLInputElement).value) })} />
-                          <span class="crop-value">{Math.round(slice.edgeBlendBottom * 100)}%</span>
-                        </div>
-                        <div class="crop-item">
-                          <span class="crop-label">γ</span>
-                          <input type="range" min="1" max="4" step="0.1" value={slice.edgeBlendGamma}
-                            oninput={(e) => updateSlice(slice.id, { edgeBlendGamma: parseFloat((e.target as HTMLInputElement).value) })} />
-                          <span class="crop-value">{slice.edgeBlendGamma.toFixed(1)}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <!-- Per-slice color correction -->
-                    <div class="slice-subsection">
-                      <span class="slice-subsection-title">Color Correction</span>
-                      <div class="crop-grid">
-                        <div class="crop-item">
-                          <span class="crop-label">Brt</span>
-                          <input type="range" min="0" max="2" step="0.01" value={slice.brightness}
-                            oninput={(e) => updateSlice(slice.id, { brightness: parseFloat((e.target as HTMLInputElement).value) })} />
-                          <span class="crop-value">{(slice.brightness * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="crop-item">
-                          <span class="crop-label">Con</span>
-                          <input type="range" min="0" max="2" step="0.01" value={slice.contrast}
-                            oninput={(e) => updateSlice(slice.id, { contrast: parseFloat((e.target as HTMLInputElement).value) })} />
-                          <span class="crop-value">{(slice.contrast * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="crop-item">
-                          <span class="crop-label">Gam</span>
-                          <input type="range" min="0.2" max="5" step="0.05" value={slice.gamma}
-                            oninput={(e) => updateSlice(slice.id, { gamma: parseFloat((e.target as HTMLInputElement).value) })} />
-                          <span class="crop-value">{slice.gamma.toFixed(2)}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <!-- Rotation -->
-                    <div class="slice-row">
-                      <label class="slice-field-label">Rotation</label>
-                      <select value={slice.rotation}
-                        onchange={(e) => updateSlice(slice.id, { rotation: parseInt((e.target as HTMLSelectElement).value) as 0 | 90 | 180 | 270 })}>
-                        <option value={0}>0°</option>
-                        <option value={90}>90°</option>
-                        <option value={180}>180°</option>
-                        <option value={270}>270°</option>
-                      </select>
-                    </div>
-                  </div>
-                {/if}
-              </div>
-            {/each}
-
-            <!-- Add slice button -->
-            {#if $settings.output.slices.length < $maxOutputSlices}
-              <button class="secondary-btn add-slice-btn" onclick={addSlice}>
-                + Add Output Slice
-              </button>
-            {/if}
-
-            <!-- Clear all -->
-            {#if $settings.output.slices.length > 0}
-              <button class="secondary-btn clear-slices-btn"
-                onclick={() => settings.update(s => ({ ...s, output: { ...s.output, slices: [] } }))}>
-                Clear All Slices
-              </button>
-            {/if}
-        </section>
         {/if}
 
         <!-- The standalone "Experimental: WebRTC output transport" toggle
@@ -3583,6 +3558,29 @@
 
   .add-slice-btn {
     margin-top: 8px;
+  }
+
+  .master-canvas-block {
+    margin-bottom: 10px;
+  }
+  .master-canvas-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .master-canvas-row .slice-input.num {
+    width: 80px;
+  }
+  .master-canvas-row .dim-x {
+    color: #777;
+    margin: 0 -4px;
+    font-family: ui-monospace, monospace;
+  }
+  .secondary-btn.small {
+    padding: 2px 8px;
+    font-size: 12px;
+    line-height: 1.4;
   }
 
   .clear-slices-btn {

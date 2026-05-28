@@ -3,6 +3,7 @@
 
 import { writable, get } from 'svelte/store';
 import { invoke, isDesktopApp } from '$lib/bridge';
+import type { WarpCorners, MeshWarpGrid, Effect } from '../types';
 
 // ============================================================================
 // COLOR SCHEME DEFINITIONS
@@ -262,17 +263,29 @@ export interface RecordingSettings {
 
 /**
  * A single output slice — represents one projector/display in a multi-output setup.
- * Each slice crops a region of the canvas and sends it to its own Spout sender.
+ * Each slice crops a region of the master canvas and routes it to either a
+ * texture-share sender (Spout / Syphon / NDI) or a dedicated fullscreen
+ * Electron window on a physical display.
  */
 export interface OutputSlice {
   id: string;
   name: string;                // User-friendly label (e.g. "Left", "Center", "Right")
   enabled: boolean;
-  // Source crop region (normalized 0-1 coordinates on the canvas)
+  // Source crop region (normalized 0-1 coordinates on the master canvas)
   cropX: number;               // 0-1, left edge of slice
   cropY: number;               // 0-1, top edge of slice
   cropW: number;               // 0-1, width of slice
   cropH: number;               // 0-1, height of slice
+  /** Where this slice routes its pixels:
+   *    'sender'  — Spout / Syphon / NDI (existing texture-share path).
+   *    'display' — a dedicated borderless fullscreen Electron window
+   *                on the display identified by `displayId`. The slice
+   *                renders its crop+blend at the display's native
+   *                resolution. */
+  targetType?: 'sender' | 'display';
+  /** Electron `screen.getAllDisplays()` id when targetType === 'display'.
+   *  Null/undefined means the slice falls back to sender output. */
+  displayId?: number | null;
   /** Output transport. 'spout' / 'syphon' = platform-native local
    *  GPU texture share (Windows / macOS); 'ndi' = network device
    *  interface, cross-machine streaming. spoutName is reused as the
@@ -281,19 +294,99 @@ export interface OutputSlice {
   outputType?: 'spout' | 'syphon' | 'ndi';
   // Sender name for this slice (e.g. "ghostArcade-Left")
   spoutName: string;
-  // Edge blending (per-slice)
+  // Edge blending (per-slice, overlap widths as a fraction of the slice)
   edgeBlendLeft: number;       // 0-0.5
   edgeBlendRight: number;
   edgeBlendTop: number;
   edgeBlendBottom: number;
-  edgeBlendGamma: number;      // Default 2.2
+  /** Default S-curve power used when a per-edge gamma is unset. ~2.2
+   *  matches sRGB encoding; bump toward 2.4–2.6 if the seam looks
+   *  bright in the middle of the overlap (Paul Bourke piecewise
+   *  formula — see src/lib/output/blendShader.ts). */
+  edgeBlendGamma: number;
+  /** Per-edge gamma overrides. Null/undefined falls back to
+   *  edgeBlendGamma. Useful when one edge of the rig faces a
+   *  different projector or screen material. */
+  edgeBlendLeftGamma?: number;
+  edgeBlendRightGamma?: number;
+  edgeBlendTopGamma?: number;
+  edgeBlendBottomGamma?: number;
+  /** Black-level lift on the NON-overlap region of this slice. Real
+   *  projectors emit some light at "black", so overlap zones look
+   *  brighter than non-overlap even with a perfect alpha curve. Raise
+   *  the floor of non-overlap pixels to match. Per-channel because
+   *  projector black levels are rarely neutral. Typical: 0..0.05. */
+  blackLevelR?: number;
+  blackLevelG?: number;
+  blackLevelB?: number;
+  /** How far the black-level lift feathers into the blend zone.
+   *  0 = hard step at the blend boundary, 1 = lift fades across the
+   *  full blend width. Default 0.5 is a soft cosine roll-off. */
+  blackLevelFeather?: number;
   // Color correction (per-slice)
   brightness: number;          // 0-2, default 1
   gamma: number;               // 0.2-5, default 1
   contrast: number;            // 0-2, default 1
   // Output rotation
   rotation: 0 | 90 | 180 | 270;
+
+  // ─── Screen geometry (output-side warp) ───────────────────────────────
+  // When `warpMode === 'rect'` (default) the screen's source region is
+  // the rectangular crop above. 'corners' adds a 4-point quad warp on
+  // top of that rect — useful for projector keystone correction.
+  // 'mesh' is a per-cell bezier mesh for non-flat surfaces. Both modes
+  // run in the GPU shader (blendRenderer.ts).
+  //
+  // These transforms are OUTPUT-SIDE — they apply after the editor's
+  // composite, so a bumped projector can be realigned without touching
+  // any layer or preset. The corners / mesh are sample positions on
+  // the master canvas, normalized 0..1, that map to the projector's
+  // unit quad (vUv 0..1 in the shader).
+  warpMode?: 'rect' | 'corners' | 'mesh';
+  /** Quad warp: 4 sample points on the master canvas. When omitted
+   *  the four corners are derived from cropX/Y/W/H. */
+  corners?: WarpCorners;
+  /** Mesh warp: grid of sample points on the master canvas. */
+  meshGrid?: MeshWarpGrid;
+
+  // ─── Per-screen effect chain (deprecated) ─────────────────────────
+  // Effects field retained for backward-compat with .gha files saved
+  // during the brief Phase-3 window; the inspector no longer exposes
+  // them and the renderer doesn't apply them. Will be removed in v2.
+  effects?: Effect[];
+  stageEffectId?: string | null;
+
+  // ─── Output warp (projector-side distortion) ──────────────────────
+  // Applied AFTER source sampling, BEFORE present. The operator's
+  // "projector got bumped" rescue: warp the entire screen output
+  // (every preset, every layer, all at once) to re-align with the
+  // physical surface, without touching any per-layer warp.
+  //
+  // Coordinate space: corners / meshGrid points are normalized 0..1
+  // in PROJECTOR space (the unit quad of what gets projected). The
+  // shader inverse-bilinears through these to find the content UV
+  // for each projector pixel — content stays bounded by the original
+  // screen rectangle even when the warp pushes corners inward.
+  outputWarp?: OutputWarp;
 }
+
+/** Output warp — see OutputSlice.outputWarp for context. */
+export interface OutputWarp {
+  enabled: boolean;
+  mode: 'corners' | 'mesh';
+  /** Corners mode: 4 positions on the projector's unit quad. When
+   *  identity (TL=0,0 / TR=1,0 / BL=0,1 / BR=1,1) the warp is a
+   *  no-op even when `enabled: true`. */
+  corners?: WarpCorners;
+  /** Mesh mode: grid of projector-unit-quad control points. */
+  meshGrid?: MeshWarpGrid;
+}
+
+/** Alias — the user-facing concept is "Screen" (one per projector or
+ *  sender). The OutputSlice name is retained internally for backward
+ *  compat with v1.x settings + .gha files; new code should reference
+ *  `Screen`. They are the same shape. */
+export type Screen = OutputSlice;
 
 export function createDefaultSlice(id: string, name: string, spoutSuffix: string, cropX = 0, cropW = 1): OutputSlice {
   return {
@@ -304,16 +397,132 @@ export function createDefaultSlice(id: string, name: string, spoutSuffix: string
     cropY: 0,
     cropW,
     cropH: 1,
+    targetType: 'sender',
+    displayId: null,
     spoutName: `ghostArcade-${spoutSuffix}`,
     edgeBlendLeft: 0,
     edgeBlendRight: 0,
     edgeBlendTop: 0,
     edgeBlendBottom: 0,
     edgeBlendGamma: 2.2,
+    blackLevelR: 0,
+    blackLevelG: 0,
+    blackLevelB: 0,
+    blackLevelFeather: 0.5,
     brightness: 1,
     gamma: 1,
     contrast: 1,
     rotation: 0,
+    warpMode: 'rect',
+    effects: [],
+    stageEffectId: null,
+    outputWarp: { enabled: false, mode: 'corners' },
+  };
+}
+
+/** Identity output-warp corners — the projector's unit quad untouched.
+ *  When the user toggles "Output Warp" on, this is the starting state
+ *  so flipping it on doesn't visually change anything; the operator
+ *  drags the orange handles to introduce distortion. */
+export function identityOutputCorners(): WarpCorners {
+  return {
+    topLeft:     { x: 0, y: 0 },
+    topRight:    { x: 1, y: 0 },
+    bottomLeft:  { x: 0, y: 1 },
+    bottomRight: { x: 1, y: 1 },
+  };
+}
+
+/** Identity output-warp mesh — a flat grid spanning the projector's
+ *  unit quad. Used when flipping output warp into mesh mode. */
+export function identityOutputMesh(rows = 5, cols = 5): MeshWarpGrid {
+  const points: { x: number; y: number }[][] = [];
+  for (let r = 0; r < rows; r++) {
+    const row: { x: number; y: number }[] = [];
+    for (let c = 0; c < cols; c++) {
+      row.push({ x: c / (cols - 1), y: r / (rows - 1) });
+    }
+    points.push(row);
+  }
+  return { rows, cols, points };
+}
+
+/** Build a 4-corner WarpCorners from a rect crop (master-canvas
+ *  normalized coords). Used when the user flips warpMode from 'rect'
+ *  to 'corners' so the quad starts visually identical to the rect
+ *  and the operator can drag from there. */
+export function cornersFromRect(s: { cropX: number; cropY: number; cropW: number; cropH: number }): WarpCorners {
+  return {
+    topLeft:     { x: s.cropX,           y: s.cropY },
+    topRight:    { x: s.cropX + s.cropW, y: s.cropY },
+    bottomLeft:  { x: s.cropX,           y: s.cropY + s.cropH },
+    bottomRight: { x: s.cropX + s.cropW, y: s.cropY + s.cropH },
+  };
+}
+
+/** Build a flat mesh grid (rows × cols control points) from a rect
+ *  crop. The points start on a regular lattice spanning the rect;
+ *  the operator drags individual ones to warp around obstacles. */
+export function meshFromRect(
+  s: { cropX: number; cropY: number; cropW: number; cropH: number },
+  rows = 5,
+  cols = 5,
+): MeshWarpGrid {
+  const points: { x: number; y: number }[][] = [];
+  for (let r = 0; r < rows; r++) {
+    const row: { x: number; y: number }[] = [];
+    for (let c = 0; c < cols; c++) {
+      row.push({
+        x: s.cropX + (s.cropW * c) / (cols - 1),
+        y: s.cropY + (s.cropH * r) / (rows - 1),
+      });
+    }
+    points.push(row);
+  }
+  return { rows, cols, points };
+}
+
+/** Migrate an OutputSlice loaded from older settings/.gha files to
+ *  the current shape. Idempotent — running it on an already-current
+ *  slice returns it unchanged. */
+export function migrateOutputSlice(s: Partial<OutputSlice> & { id: string }): OutputSlice {
+  return {
+    id: s.id,
+    name: s.name ?? 'Slice',
+    enabled: s.enabled ?? true,
+    cropX: s.cropX ?? 0,
+    cropY: s.cropY ?? 0,
+    cropW: s.cropW ?? 1,
+    cropH: s.cropH ?? 1,
+    targetType: s.targetType ?? 'sender',
+    displayId: s.displayId ?? null,
+    outputType: s.outputType,
+    spoutName: s.spoutName ?? `ghostArcade-${s.name ?? 'Slice'}`,
+    edgeBlendLeft: s.edgeBlendLeft ?? 0,
+    edgeBlendRight: s.edgeBlendRight ?? 0,
+    edgeBlendTop: s.edgeBlendTop ?? 0,
+    edgeBlendBottom: s.edgeBlendBottom ?? 0,
+    edgeBlendGamma: s.edgeBlendGamma ?? 2.2,
+    edgeBlendLeftGamma: s.edgeBlendLeftGamma,
+    edgeBlendRightGamma: s.edgeBlendRightGamma,
+    edgeBlendTopGamma: s.edgeBlendTopGamma,
+    edgeBlendBottomGamma: s.edgeBlendBottomGamma,
+    blackLevelR: s.blackLevelR ?? 0,
+    blackLevelG: s.blackLevelG ?? 0,
+    blackLevelB: s.blackLevelB ?? 0,
+    blackLevelFeather: s.blackLevelFeather ?? 0.5,
+    brightness: s.brightness ?? 1,
+    gamma: s.gamma ?? 1,
+    contrast: s.contrast ?? 1,
+    rotation: s.rotation ?? 0,
+    warpMode: s.warpMode ?? 'rect',
+    corners: s.corners,
+    meshGrid: s.meshGrid,
+    effects: s.effects ?? [],
+    stageEffectId: s.stageEffectId ?? null,
+    // Output warp — projector-side distortion. Defaults to disabled
+    // so legacy slices behave unchanged.
+    outputWarp: s.outputWarp ?? { enabled: false, mode: 'corners' },
   };
 }
 
@@ -341,6 +550,17 @@ export interface OutputSettings {
   contrast: number;
   // Multi-output slices (overrides legacy single-output when non-empty)
   slices: OutputSlice[];
+  /** Master-canvas resolution — the "virtual canvas" all slices crop
+   *  from. Convention (Resolume/MadMapper/Watchout): set this to the
+   *  union of the physical outputs minus their overlap regions, e.g.
+   *  for four 1920×1080 projectors with 15% horizontal overlap →
+   *  ~6528×1080. The editor composites at the editor canvas size; the
+   *  slice extractor scales the composite to masterCanvas before
+   *  cropping, so each slice is a pixel-accurate window into the
+   *  master regardless of editor zoom. Optional + defaults to
+   *  1920×1080 so legacy projects work unchanged. */
+  masterCanvasWidth: number;
+  masterCanvasHeight: number;
   // ── Output-window display transforms ────────────────────────────────────
   // These ONLY affect the dedicated output window (second-display projection).
   // They live in settings so they auto-broadcast via the BroadcastChannel
@@ -616,6 +836,8 @@ function createDefaultSettings(): AppSettings {
       gamma: 1,
       contrast: 1,
       slices: [],
+      masterCanvasWidth: 1920,
+      masterCanvasHeight: 1080,
       // Output-window display transforms (CSS-applied on output canvas)
       outputRotation: 0,
       outputCropX: 0,
@@ -820,6 +1042,14 @@ function loadSettings(): AppSettings {
         output: {
           ...defaults.output,
           ...parsed.output,
+          // Run per-slice migration so older saved slices that pre-date
+          // black-level / per-edge-gamma / display-target fields pick up
+          // their defaults without nuking the user's saved crops.
+          slices: Array.isArray(parsed.output?.slices)
+            ? parsed.output.slices.map((s: Partial<OutputSlice> & { id?: string }) =>
+                migrateOutputSlice({ ...s, id: s.id ?? Math.random().toString(36).slice(2) })
+              )
+            : [],
         },
         ui: {
           ...defaults.ui,

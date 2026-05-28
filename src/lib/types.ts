@@ -4271,6 +4271,51 @@ export interface Project {
   // sends through the main process. Optional + defaults to empty
   // so legacy projects load unchanged.
   wledControllers?: WLEDController[];
+  /** Multi-output slices — saved with the project so a recalled
+   *  show restores the operator's full projector / display layout
+   *  (master canvas resolution, every slice's crop, blend, color
+   *  correction, and target). The runtime mirrors this into
+   *  $settings.output for the per-frame slice extractor. Plain
+   *  data — no runtime refs. Optional + defaults to empty so
+   *  legacy projects load unchanged. */
+  outputSlices?: OutputSliceShape[];
+  outputMasterCanvasWidth?: number;
+  outputMasterCanvasHeight?: number;
+}
+
+/** Mirror of the OutputSlice shape from src/lib/stores/settings.ts.
+ *  Duplicated here so types.ts doesn't pull settings into its import
+ *  graph (settings depends on lots of UI stuff). The migrate function
+ *  in settings.ts is the single source of truth for defaults. */
+export interface OutputSliceShape {
+  id: string;
+  name: string;
+  enabled: boolean;
+  cropX: number;
+  cropY: number;
+  cropW: number;
+  cropH: number;
+  targetType?: 'sender' | 'display';
+  displayId?: number | null;
+  outputType?: 'spout' | 'syphon' | 'ndi';
+  spoutName: string;
+  edgeBlendLeft: number;
+  edgeBlendRight: number;
+  edgeBlendTop: number;
+  edgeBlendBottom: number;
+  edgeBlendGamma: number;
+  edgeBlendLeftGamma?: number;
+  edgeBlendRightGamma?: number;
+  edgeBlendTopGamma?: number;
+  edgeBlendBottomGamma?: number;
+  blackLevelR?: number;
+  blackLevelG?: number;
+  blackLevelB?: number;
+  blackLevelFeather?: number;
+  brightness: number;
+  gamma: number;
+  contrast: number;
+  rotation: 0 | 90 | 180 | 270;
 }
 
 /** A single WLED controller on the local network. Stored on the

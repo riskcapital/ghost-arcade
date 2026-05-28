@@ -155,6 +155,12 @@ protocol.registerSchemesAsPrivileged([
 let mainWindow = null;
 let outputWindow = null;
 let spoutOsrWindow = null;  // Hidden OSR window for zero-copy Spout output
+// Per-slice multi-output windows. Keyed by sliceId; each entry is a
+// borderless fullscreen BrowserWindow opened on a specific physical
+// display. Phase 2 multi-output system — see SliceOutputApp.svelte
+// for the renderer side and the `output_open_slice_window` /
+// `output_close_slice_window` IPC handlers below.
+const sliceWindows = new Map();
 // Placement config staged by `configure_next_output_window` IPC and
 // consumed by the next setWindowOpenHandler call for the WebGPU
 // zero-copy output window. Cleared after consumption (or after a 5s
@@ -1367,6 +1373,106 @@ function registerIpcHandlers() {
     }
     return false;
   });
+
+  // --- Per-slice multi-output windows (Phase 2) -------------------------
+  //
+  // Opens a borderless fullscreen BrowserWindow on a specific physical
+  // display for one OutputSlice. Each window mounts SliceOutputApp via
+  // `?mode=slice-display&sliceId=X`; that component mirrors the editor
+  // via BroadcastChannel state-sync and CSS-clips to the slice's crop.
+  //
+  // Multiple slice windows can be open simultaneously — one per slice
+  // assigned `targetType: 'display'`. The `sliceWindows` Map keeps the
+  // references so we can close/move them later without re-opening.
+  ipcMain.handle('output_open_slice_window', (_e, args) => {
+    const { sliceId, displayId } = args || {};
+    if (!sliceId || typeof sliceId !== 'string') {
+      return { ok: false, error: 'sliceId required' };
+    }
+
+    // Resolve the target display. Falls back to the primary display if
+    // the requested id is gone (operator unplugged a projector between
+    // configuration and open).
+    let target = null;
+    if (typeof displayId === 'number') {
+      target = screen.getAllDisplays().find(d => d.id === displayId) || null;
+    }
+    if (!target) target = screen.getPrimaryDisplay();
+
+    // Close any existing window for this slice — re-opening should
+    // always present a fresh state to the operator.
+    const existing = sliceWindows.get(sliceId);
+    if (existing && !existing.isDestroyed()) {
+      try { existing.close(); } catch {}
+      sliceWindows.delete(sliceId);
+    }
+
+    const bounds = target.bounds;
+    const win = new BrowserWindow({
+      width: bounds.width,
+      height: bounds.height,
+      x: bounds.x,
+      y: bounds.y,
+      title: `Ghost Arcade Output — slice ${sliceId}`,
+      frame: false,
+      fullscreen: true,
+      simpleFullscreen: process.platform === 'darwin',
+      autoHideMenuBar: true,
+      skipTaskbar: false,
+      backgroundColor: '#000000',
+      hasShadow: false,
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.cjs'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        webgl: true,
+        backgroundThrottling: false,
+      },
+    });
+    win.setMenuBarVisibility(false);
+
+    const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
+    const isDev = !app.isPackaged;
+    // The slice window doesn't use the S4 WebGPU pilot (it runs the
+    // legacy Three.js Canvas via state-sync). The webgpu-disable URL
+    // flag keeps the capability probe from spinning up GPU resources
+    // we don't need.
+    const queryParts = [`mode=slice-display`, `sliceId=${encodeURIComponent(sliceId)}`, 'webgpu-disable=1'];
+    if (isDev) {
+      win.loadURL(`${devUrl}?${queryParts.join('&')}`);
+    } else {
+      const filePath = path.join(__dirname, '..', 'dist', 'index.html');
+      win.loadFile(filePath, { query: { mode: 'slice-display', sliceId, 'webgpu-disable': '1' } });
+    }
+
+    sliceWindows.set(sliceId, win);
+    win.on('closed', () => {
+      if (sliceWindows.get(sliceId) === win) sliceWindows.delete(sliceId);
+    });
+
+    return { ok: true, sliceId, displayId: target.id };
+  });
+
+  ipcMain.handle('output_close_slice_window', (_e, args) => {
+    const { sliceId } = args || {};
+    if (!sliceId) return { ok: false, error: 'sliceId required' };
+    const win = sliceWindows.get(sliceId);
+    if (win && !win.isDestroyed()) {
+      try { win.close(); } catch {}
+    }
+    sliceWindows.delete(sliceId);
+    return { ok: true };
+  });
+
+  ipcMain.handle('output_list_slice_windows', () => {
+    // Returns the currently-open slice window IDs. The renderer uses
+    // this to render an "Open / Close" toggle state per slice without
+    // having to track window state locally.
+    return Array.from(sliceWindows.entries())
+      .filter(([, win]) => !win.isDestroyed())
+      .map(([id]) => id);
+  });
+
 
   // --- Show and focus main window ---
   ipcMain.handle('show_main_window', () => {
