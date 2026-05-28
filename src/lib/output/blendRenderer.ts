@@ -31,7 +31,8 @@
  */
 
 import * as THREE from 'three';
-import type { OutputSlice } from '../stores/settings';
+import type { OutputSlice, OutputWarp } from '../stores/settings';
+import { createDefaultSlice, identityOutputCorners } from '../stores/settings';
 
 // ─── Module-singleton renderer ──────────────────────────────────────────
 let renderer: THREE.WebGLRenderer | null = null;
@@ -580,6 +581,43 @@ export function renderSlicePixels(
   } finally {
     if (renderer) renderer.setScissorTest(false);
   }
+}
+
+// ─── Global master warp ─────────────────────────────────────────────────
+// Reused full-frame slice carrying ONLY the master warp's geometry. We
+// synthesize it once and mutate in place so the master warp shares the
+// exact, battle-tested corner/mesh sampler the per-Screen warp uses —
+// no second shader, no second code path to drift out of sync. The stable
+// id keeps the mesh-texture cache warm across frames.
+let masterSlice: OutputSlice | null = null;
+
+/**
+ * Render the FULL source through the warp shader using a single global
+ * master warp: identity crop, no edge-blend / black-level / color
+ * correction / rotation — just the corner or mesh geometry. Returns
+ * top-down RGBA pixels (already row-flipped) ready for `putImageData`,
+ * or null if WebGL is unavailable. Identity corners ⇒ the output equals
+ * the input, so an "enabled but untouched" master warp is a visual no-op.
+ */
+export function renderMasterWarpPixels(
+  source: HTMLCanvasElement | OffscreenCanvas | HTMLVideoElement | ImageBitmap,
+  warp: OutputWarp,
+  w: number,
+  h: number,
+): Uint8Array | null {
+  if (!masterSlice) masterSlice = createDefaultSlice('__master_warp__', 'Master', 'master');
+  const useMesh =
+    warp.mode === 'mesh' && !!warp.meshGrid && warp.meshGrid.rows >= 2 && warp.meshGrid.cols >= 2;
+  const m = masterSlice;
+  m.cropX = 0; m.cropY = 0; m.cropW = 1; m.cropH = 1;
+  m.warpMode = useMesh ? 'mesh' : 'corners';
+  m.corners = warp.corners ?? identityOutputCorners();
+  m.meshGrid = useMesh ? warp.meshGrid : undefined;
+  m.rotation = 0;
+  m.brightness = 1; m.contrast = 1; m.gamma = 1;
+  m.edgeBlendLeft = 0; m.edgeBlendRight = 0; m.edgeBlendTop = 0; m.edgeBlendBottom = 0;
+  m.blackLevelR = 0; m.blackLevelG = 0; m.blackLevelB = 0;
+  return renderSlicePixels(source, m, w, h, 1);
 }
 
 function flipRowsInPlace(buf: Uint8Array, w: number, h: number) {

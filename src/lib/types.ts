@@ -4281,6 +4281,15 @@ export interface Project {
   outputSlices?: OutputSliceShape[];
   outputMasterCanvasWidth?: number;
   outputMasterCanvasHeight?: number;
+  /** Global master warp — single output-side warp on the whole master
+   *  canvas. Mirrors OutputWarp from settings.ts (kept structural here
+   *  so types.ts doesn't import the settings module). */
+  outputMasterWarp?: {
+    enabled: boolean;
+    mode: 'corners' | 'mesh';
+    corners?: WarpCorners;
+    meshGrid?: MeshWarpGrid;
+  };
 }
 
 /** Mirror of the OutputSlice shape from src/lib/stores/settings.ts.

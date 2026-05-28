@@ -4243,6 +4243,9 @@ void main() {
           outputSlices: get(settings).output?.slices ?? [],
           outputMasterCanvasWidth: get(settings).output?.masterCanvasWidth ?? 1920,
           outputMasterCanvasHeight: get(settings).output?.masterCanvasHeight ?? 1080,
+          // Global master warp travels with the project so a venue's
+          // keystone correction survives a reload / file handoff.
+          outputMasterWarp: get(settings).output?.masterWarp ?? { enabled: false, mode: 'corners' },
         },
         // Include media library
         mediaLibrary: exportMedia,
@@ -5094,7 +5097,9 @@ void main() {
         const incomingSlices = (proj as any).outputSlices;
         const incomingMW = (proj as any).outputMasterCanvasWidth;
         const incomingMH = (proj as any).outputMasterCanvasHeight;
-        if (Array.isArray(incomingSlices) || typeof incomingMW === 'number' || typeof incomingMH === 'number') {
+        const incomingMasterWarp = (proj as any).outputMasterWarp;
+        if (Array.isArray(incomingSlices) || typeof incomingMW === 'number' || typeof incomingMH === 'number'
+            || (incomingMasterWarp && typeof incomingMasterWarp === 'object')) {
           settings.update(s => ({
             ...s,
             output: {
@@ -5106,6 +5111,9 @@ void main() {
               } : {}),
               ...(typeof incomingMW === 'number' ? { masterCanvasWidth: incomingMW } : {}),
               ...(typeof incomingMH === 'number' ? { masterCanvasHeight: incomingMH } : {}),
+              ...(incomingMasterWarp && typeof incomingMasterWarp === 'object'
+                ? { masterWarp: { enabled: false, mode: 'corners', ...incomingMasterWarp } }
+                : {}),
             },
           }));
         }
