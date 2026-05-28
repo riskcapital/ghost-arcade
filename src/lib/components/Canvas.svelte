@@ -30,6 +30,7 @@
   import { invoke, isDesktopApp, isOsrMode, isOutputMode } from '$lib/bridge';
   import { drawTestPattern, type TestPatternType } from '../utils/testPatterns';
   import { applyEdgeBlending } from '../output/outputPostProcess';
+  import { renderSlicePixels, isBlendRendererAvailable } from '../output/blendRenderer';
   import { FluidSimulation, type FluidMode } from '../effects/fluidSimulation';
   import { ParticleSystem3D } from '../effects/particleSystem3D';
   // ParticleSystem removed — Particles3D runs as standalone Bevy app via Spout
@@ -1586,91 +1587,106 @@
             }
             if (activeSlices.length > 0) {
               // ── Multi-output slice path ──────────────────────────────────
-              // spoutScaleCanvas already has the frame right-side-up at Spout resolution
-              // Use it directly as the source for slice cropping
+              // spoutScaleCanvas already has the frame right-side-up at Spout
+              // resolution. Each slice crops a normalized region; the GPU
+              // blend renderer (blendRenderer.ts) handles crop + rotation +
+              // brightness/contrast/gamma + edge-blend alpha + black-level
+              // lift in ONE shader pass, returning ready-to-send RGBA bytes.
+              // The legacy 2D path (sliceCanvas + applyEdgeBlending) is
+              // kept as a fallback when WebGL initialization fails.
               fullFrameCanvas = spoutScaleCanvas;
               fullFrameCtx = spoutScaleCtx;
+              const gpuPathAvailable = isBlendRendererAvailable();
 
               for (const slice of activeSlices) {
                 if (sliceSendInFlight.has(slice.id)) continue; // Backpressure per-slice
 
-                // Compute pixel crop from normalized coords
-                const sx = Math.round(slice.cropX * w);
-                const sy = Math.round(slice.cropY * h);
+                // Slice output dimensions = its fraction of the source
+                // canvas. For rotated 90°/270° slices the GPU shader
+                // rotates the sample uv, so output stays at sw × sh.
                 const sw = Math.round(slice.cropW * w);
                 const sh = Math.round(slice.cropH * h);
                 if (sw <= 0 || sh <= 0) continue;
 
-                // Create/resize slice extraction canvas
-                if (!sliceCanvas || sliceCanvas.width !== sw || sliceCanvas.height !== sh) {
-                  sliceCanvas = document.createElement('canvas');
-                  sliceCanvas.width = sw;
-                  sliceCanvas.height = sh;
-                  sliceCtx = sliceCanvas.getContext('2d');
+                // ── Pixel readout ────────────────────────────────────
+                // GPU path: one renderSlicePixels() call returns the
+                // final RGBA bytes (already crop+blend+color-corrected).
+                // 2D fallback: replicate the old crop + rotate +
+                // applyEdgeBlending flow.
+                let slicePixels: Uint8Array | Uint8ClampedArray | null = null;
+                if (gpuPathAvailable) {
+                  slicePixels = renderSlicePixels(fullFrameCanvas!, slice, sw, sh);
                 }
-                if (sliceCanvas.width !== sw || sliceCanvas.height !== sh) {
-                  sliceCanvas.width = sw;
-                  sliceCanvas.height = sh;
-                }
-                sliceCtx!.clearRect(0, 0, sw, sh);
-
-                // Handle rotation
-                if (slice.rotation === 0) {
-                  sliceCtx!.drawImage(fullFrameCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
-                } else {
-                  sliceCtx!.save();
-                  const cx = sw / 2, cy = sh / 2;
-                  sliceCtx!.translate(cx, cy);
-                  sliceCtx!.rotate((slice.rotation * Math.PI) / 180);
-                  if (slice.rotation === 90 || slice.rotation === 270) {
-                    sliceCtx!.drawImage(fullFrameCanvas, sx, sy, sw, sh, -sh / 2, -sw / 2, sh, sw);
+                if (!slicePixels) {
+                  // 2D fallback. Same code as the v1.5 path; only entered
+                  // if the WebGL renderer failed to initialize (rare).
+                  const sx = Math.round(slice.cropX * w);
+                  const sy = Math.round(slice.cropY * h);
+                  if (!sliceCanvas || sliceCanvas.width !== sw || sliceCanvas.height !== sh) {
+                    sliceCanvas = document.createElement('canvas');
+                    sliceCanvas.width = sw;
+                    sliceCanvas.height = sh;
+                    sliceCtx = sliceCanvas.getContext('2d');
+                  }
+                  sliceCtx!.clearRect(0, 0, sw, sh);
+                  if (slice.rotation === 0) {
+                    sliceCtx!.drawImage(fullFrameCanvas!, sx, sy, sw, sh, 0, 0, sw, sh);
                   } else {
-                    sliceCtx!.drawImage(fullFrameCanvas, sx, sy, sw, sh, -sw / 2, -sh / 2, sw, sh);
+                    sliceCtx!.save();
+                    sliceCtx!.translate(sw / 2, sh / 2);
+                    sliceCtx!.rotate((slice.rotation * Math.PI) / 180);
+                    if (slice.rotation === 90 || slice.rotation === 270) {
+                      sliceCtx!.drawImage(fullFrameCanvas!, sx, sy, sw, sh, -sh / 2, -sw / 2, sh, sw);
+                    } else {
+                      sliceCtx!.drawImage(fullFrameCanvas!, sx, sy, sw, sh, -sw / 2, -sh / 2, sw, sh);
+                    }
+                    sliceCtx!.restore();
                   }
-                  sliceCtx!.restore();
+                  const hasBlend = slice.edgeBlendLeft > 0 || slice.edgeBlendRight > 0 || slice.edgeBlendTop > 0 || slice.edgeBlendBottom > 0;
+                  if (hasBlend) {
+                    if (!sliceBlendCanvas || sliceBlendCanvas.width !== sw || sliceBlendCanvas.height !== sh) {
+                      sliceBlendCanvas = document.createElement('canvas');
+                      sliceBlendCanvas.width = sw;
+                      sliceBlendCanvas.height = sh;
+                      sliceBlendCtx = sliceBlendCanvas.getContext('2d');
+                    }
+                    sliceBlendCtx!.clearRect(0, 0, sw, sh);
+                    sliceBlendCtx!.drawImage(sliceCanvas, 0, 0);
+                    applyEdgeBlending(sliceBlendCtx!, sw, sh, {
+                      edgeBlendLeft: slice.edgeBlendLeft,
+                      edgeBlendRight: slice.edgeBlendRight,
+                      edgeBlendTop: slice.edgeBlendTop,
+                      edgeBlendBottom: slice.edgeBlendBottom,
+                      edgeBlendGamma: slice.edgeBlendGamma,
+                    });
+                    slicePixels = sliceBlendCtx!.getImageData(0, 0, sw, sh).data;
+                  } else {
+                    slicePixels = sliceCtx!.getImageData(0, 0, sw, sh).data;
+                  }
                 }
-
-                // Apply per-slice color correction via CSS filter on a secondary canvas
-                const hasBlend = slice.edgeBlendLeft > 0 || slice.edgeBlendRight > 0 || slice.edgeBlendTop > 0 || slice.edgeBlendBottom > 0;
-                const hasColor = slice.brightness !== 1 || slice.contrast !== 1 || slice.gamma !== 1;
-
-                let sendCanvas = sliceCanvas;
-
-                if (hasBlend) {
-                  // Apply per-slice edge blending
-                  if (!sliceBlendCanvas || sliceBlendCanvas.width !== sw || sliceBlendCanvas.height !== sh) {
-                    sliceBlendCanvas = document.createElement('canvas');
-                    sliceBlendCanvas.width = sw;
-                    sliceBlendCanvas.height = sh;
-                    sliceBlendCtx = sliceBlendCanvas.getContext('2d');
-                  }
-                  if (sliceBlendCanvas.width !== sw || sliceBlendCanvas.height !== sh) {
-                    sliceBlendCanvas.width = sw;
-                    sliceBlendCanvas.height = sh;
-                  }
-                  sliceBlendCtx!.clearRect(0, 0, sw, sh);
-                  sliceBlendCtx!.drawImage(sliceCanvas, 0, 0);
-                  applyEdgeBlending(sliceBlendCtx!, sw, sh, {
-                    edgeBlendLeft: slice.edgeBlendLeft,
-                    edgeBlendRight: slice.edgeBlendRight,
-                    edgeBlendTop: slice.edgeBlendTop,
-                    edgeBlendBottom: slice.edgeBlendBottom,
-                    edgeBlendGamma: slice.edgeBlendGamma,
-                  });
-                  sendCanvas = sliceBlendCanvas;
-                }
-
-                // Extract pixel data from the final slice canvas
-                const slicePixels = (hasBlend ? sliceBlendCtx! : sliceCtx!).getImageData(0, 0, sw, sh).data;
 
                 sliceSendInFlight.add(slice.id);
                 const senderName = slice.spoutName || `ghostArcade-${slice.name}`;
+                // Skip "physical display" target slices — the per-display
+                // window (Phase 2) handles its own send pipeline. Sender
+                // path stays for 'sender' target only.
+                const targetType = slice.targetType ?? 'sender';
+                if (targetType === 'display') {
+                  sliceSendInFlight.delete(slice.id);
+                  continue;
+                }
                 // Route by transport. 'ndi' goes to the new ndi_send_image
                 // IPC handler; the existing 'spout' / 'syphon' paths keep
                 // their behavior unchanged. Slice managers ensure
                 // ndi_create_sender was called for senderName before any
                 // sends (sliceNdiActive tracks this).
                 const outputType = (slice as any).outputType ?? (isElectron ? (isMac ? 'syphon' : 'spout') : 'spout');
+                // Re-wrap as Uint8Array for IPC (NDI/Spout expect Uint8Array).
+                // GPU path already returns Uint8Array; 2D fallback returns
+                // Uint8ClampedArray.
+                const sendBytes: Uint8Array = slicePixels instanceof Uint8Array
+                  ? slicePixels
+                  : new Uint8Array(slicePixels.buffer, slicePixels.byteOffset, slicePixels.byteLength);
 
                 if (outputType === 'ndi' && isElectron) {
                   if (!sliceNdiActive.has(senderName)) {
@@ -1681,15 +1697,18 @@
                     sliceNdiActive.add(senderName);
                     (window as any).ghostNDI?.createSender(senderName).catch(() => { sliceNdiActive.delete(senderName); });
                   }
-                  (window as any).ghostNDI?.sendImage(senderName, new Uint8Array(slicePixels), sw, sh)
+                  (window as any).ghostNDI?.sendImage(senderName, sendBytes, sw, sh)
                     .catch(() => {}).finally(() => { sliceSendInFlight.delete(slice.id); });
                 } else if (isElectron) {
-                  invoke('spout_send_image', { data: new Uint8Array(slicePixels), width: sw, height: sh, senderName })
+                  invoke('spout_send_image', { data: sendBytes, width: sw, height: sh, senderName })
                     .catch(() => {}).finally(() => { sliceSendInFlight.delete(slice.id); });
                 } else {
                   fetch(`http://127.0.0.1:9002/spout/send?width=${sw}&height=${sh}&sender=${encodeURIComponent(senderName)}`, {
                     method: 'POST',
-                    body: new Uint8Array(slicePixels),
+                    // BodyInit doesn't include the Uint8Array<ArrayBufferLike>
+                    // shape that TS 5.7+ produces for our bytes; coerce via
+                    // any to silence — the runtime accepts a typed array fine.
+                    body: sendBytes as any,
                   }).catch(() => {}).finally(() => { sliceSendInFlight.delete(slice.id); });
                 }
               }

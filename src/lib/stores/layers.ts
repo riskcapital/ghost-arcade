@@ -22,6 +22,7 @@ import { geoDeckStore } from './geoDeck';
 import { createDefaultShapeMesh } from '../drawing/types';
 import type { LineElement, LineShape, LinesContent, LineDrawAnimation, LineStroke } from '../lines/types';
 import { maxLayers } from './license';
+import { settings, migrateOutputSlice } from './settings';
 import { createLineElement, createDefaultLinesContent, createDefaultDrawAnimation } from '../lines/types';
 
 // History recording callback — set from App.svelte to avoid circular imports.
@@ -4234,6 +4235,14 @@ void main() {
           // runtime refs to strip.
           surfaces: currentProject.surfaces || [],
           activeSurfaceId: currentProject.activeSurfaceId ?? null,
+          // Multi-output slices snapshot — saved with the project so
+          // the operator's projector / display layout survives a
+          // reload. Read live from $settings.output because that's
+          // where the per-frame extractor consults; we mirror it
+          // into Project on export so future loads can rehydrate it.
+          outputSlices: get(settings).output?.slices ?? [],
+          outputMasterCanvasWidth: get(settings).output?.masterCanvasWidth ?? 1920,
+          outputMasterCanvasHeight: get(settings).output?.masterCanvasHeight ?? 1080,
         },
         // Include media library
         mediaLibrary: exportMedia,
@@ -5076,6 +5085,30 @@ void main() {
 
         set(importedProject);
         selectedLayerIdsState.set(importedProject.selectedLayerId ? [importedProject.selectedLayerId] : []);
+        // Hydrate $settings.output from the project's multi-output
+        // snapshot, if one was saved. Slices run through the migration
+        // shim so older .gha files without per-edge-gamma / black-level
+        // fields pick up sane defaults. We update settings (not project)
+        // because the per-frame slice extractor in Canvas.svelte reads
+        // from $settings.output; the project copy is just persistence.
+        const incomingSlices = (proj as any).outputSlices;
+        const incomingMW = (proj as any).outputMasterCanvasWidth;
+        const incomingMH = (proj as any).outputMasterCanvasHeight;
+        if (Array.isArray(incomingSlices) || typeof incomingMW === 'number' || typeof incomingMH === 'number') {
+          settings.update(s => ({
+            ...s,
+            output: {
+              ...s.output,
+              ...(Array.isArray(incomingSlices) ? {
+                slices: incomingSlices.map((sl: any) =>
+                  migrateOutputSlice({ ...sl, id: sl?.id ?? `slice-${Math.random().toString(36).slice(2)}` })
+                ),
+              } : {}),
+              ...(typeof incomingMW === 'number' ? { masterCanvasWidth: incomingMW } : {}),
+              ...(typeof incomingMH === 'number' ? { masterCanvasHeight: incomingMH } : {}),
+            },
+          }));
+        }
         // Hydrate the Stage Designer surface store from the imported
         // project. Deferred via dynamic import + microtask so the
         // surface module — which lazily loads here — doesn't introduce

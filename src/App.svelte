@@ -11,8 +11,11 @@
   // onboarding store files remain on disk but are no longer mounted.
   import WarpHandles from './lib/components/WarpHandles.svelte';
   import MeshWarpHandles from './lib/components/MeshWarpHandles.svelte';
+  import ScreenWarpHandles from './lib/components/ScreenWarpHandles.svelte';
   import CustomShapeHandles from './lib/components/CustomShapeHandles.svelte';
-  import LayerPanel from './lib/components/LayerPanel.svelte';
+  // LayerPanel now mounts via LeftSidebar (which swaps it for
+  // ScreenPanel when the user is on the Screens tab).
+  import LeftSidebar from './lib/components/LeftSidebar.svelte';
   import LinesPanel from './lib/components/LinesPanel.svelte';
   import SVGSourceTray from './lib/components/SVGSourceTray.svelte';
   import LightPaintingPanel from './lib/components/LightPaintingPanel.svelte';
@@ -44,7 +47,7 @@
   import WelcomeModal from './lib/components/WelcomeModal.svelte';
   // EULAModal removed — no EULA in the open-source build.
   import UpdateModal from './lib/components/UpdateModal.svelte';
-  import { updateModalOpen } from './lib/stores/uiState';
+  import { updateModalOpen, leftSidebarTab } from './lib/stores/uiState';
   import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback } from './lib/stores/layers';
   import { keyframeTimeline } from './lib/stores/keyframeTimeline';
   import { settings, outputFrozen } from './lib/stores/settings';
@@ -4528,8 +4531,11 @@
 
     <!-- Main Content -->
     <main class="main-content" class:kf-tray-open={$keyframeTimeline.isOpen}>
-      <!-- Layer Panel on left -->
-      <LayerPanel />
+      <!-- Left sidebar — Layers / Screens tabs.
+           LeftSidebar swaps LayerPanel ↔ ScreenPanel based on the
+           active tab (uiState.leftSidebarTab). Screens tab also
+           enables the warp-handle overlay in the editor viewport. -->
+      <LeftSidebar />
 
       <!-- Viewport with canvas and warp handles -->
       <div
@@ -4595,7 +4601,17 @@
             <GridOverlay />
           </div>
         {/if}
-        {#if $selectedLayer}
+        <!-- Screen warp overlay (Screens tab only).
+             Mounted at the same offset as the layer warp handles so
+             normalized 0..1 master-canvas coords map onto pixel coords
+             identically. Hides layer warp handles below when active so
+             the two overlays don't compete visually. -->
+        {#if $leftSidebarTab === 'screens'}
+          <div class="warp-handles-offset" style="left: {canvasOffsetX}px; top: {canvasOffsetY}px;">
+            <ScreenWarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
+          </div>
+        {/if}
+        {#if $selectedLayer && $leftSidebarTab !== 'screens'}
           <!-- Warp handles positioned to match the aspect-ratio-constrained canvas -->
           <div class="warp-handles-offset" style="left: {canvasOffsetX}px; top: {canvasOffsetY}px;">
             <WarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} hideCorners={$selectedLayer.warpMode === 'mesh'} shapeWarpActive={shapeWarpModeEnabled} />

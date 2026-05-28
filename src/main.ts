@@ -26,6 +26,11 @@ const isWebRTCDisplay = mode === 'webrtc-display';
 // — a WebGPU presenter that consumes editor VideoFrames via
 // importExternalTexture for true zero-copy GPU sampling.
 const isWebGPUDisplay = mode === 'webgpu-display';
+// `slice-display` is the per-slice multi-output window — one window per
+// slice routed to a physical display. Each one mirrors the editor via
+// BroadcastChannel state-sync and CSS-clips to its slice's region. See
+// SliceOutputApp.svelte for the full architecture.
+const isSliceDisplay = mode === 'slice-display';
 
 // Set global flags so Canvas.svelte knows not to create Spout sender/receiver
 // Use try/catch because Electron's contextBridge.exposeInMainWorld makes these read-only
@@ -33,12 +38,35 @@ if (isSpoutOutput && !window.__SPOUT_OSR_MODE__) {
   try { (window as any).__SPOUT_OSR_MODE__ = true; } catch { /* already set by preload */ }
 }
 
-if ((isOutputWindow || isWebRTCDisplay || isWebGPUDisplay) && !(window as any).__OUTPUT_WINDOW_MODE__) {
+if ((isOutputWindow || isWebRTCDisplay || isWebGPUDisplay || isSliceDisplay) && !(window as any).__OUTPUT_WINDOW_MODE__) {
   try { (window as any).__OUTPUT_WINDOW_MODE__ = true; } catch { /* already set by preload */ }
 }
 
 async function init() {
-  if (isWebGPUDisplay) {
+  if (isSliceDisplay) {
+    // Per-slice multi-output window. Lazy-load so the slice-only
+    // bundle doesn't ship to the editor process. Also needs the audio
+    // + modulation broadcast receivers because Canvas.svelte (mounted
+    // inside SliceOutputApp) reads from those stores during render.
+    const [
+      { default: SliceOutputApp },
+      { startAudioBroadcastReceiver },
+      { audioStore },
+      { startModulationBroadcastReceiver },
+    ] = await Promise.all([
+      import('./SliceOutputApp.svelte'),
+      import('./lib/sync/audioBroadcast'),
+      import('./lib/stores/audio'),
+      import('./lib/sync/modulationBroadcast'),
+    ]);
+    startAudioBroadcastReceiver({
+      onFrame: (frame) => audioStore.injectBroadcastedFrame(frame),
+    });
+    startModulationBroadcastReceiver();
+    mount(SliceOutputApp, {
+      target: document.getElementById('app')!,
+    });
+  } else if (isWebGPUDisplay) {
     // Production zero-copy: WebGPU presenter. Receives VideoFrames
     // from the editor via a cross-process MessagePort (paired by
     // main.js as a MessageChannelMain) and binds them via
