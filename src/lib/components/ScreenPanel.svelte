@@ -155,7 +155,11 @@
     mwPreviewRaf = requestAnimationFrame(mwPreviewLoop);
     if (!mwPreviewCanvas) return;
     const ctx = mwPreviewCanvas.getContext('2d');
-    const src = getMasterWarpCanvas();
+    // Warped output source: in WebGPU mode the warp is baked into the
+    // present canvas (.webgpu-present) — that IS the warped output. Else
+    // (WebGL fallback) the blendRenderer master canvas holds it.
+    const src = (document.querySelector('canvas.webgpu-present') as HTMLCanvasElement | null)
+      ?? getMasterWarpCanvas();
     if (!ctx) return;
     const W = mwPreviewCanvas.width, H = mwPreviewCanvas.height;
     ctx.clearRect(0, 0, W, H);
