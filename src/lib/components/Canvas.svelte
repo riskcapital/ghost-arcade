@@ -40,10 +40,9 @@
   import { startAudioBroadcast, stopAudioBroadcast, broadcastAudioFrame } from '$lib/sync/audioBroadcast';
   import { startWLEDSenders, stopWLEDSenders, tickWLEDSenders } from '$lib/wled/sender';
   import { startModulationBroadcast, stopModulationBroadcast } from '$lib/sync/modulationBroadcast';
-  import { startOutputPixelBroadcast, stopOutputPixelBroadcast } from '$lib/sync/outputPixelBroadcast';
-  import { startMasterWarpOutput, stopMasterWarpOutput, tickMasterWarpOutput, getMasterWarpCanvas } from '$lib/sync/outputComposite';
+  import { stopOutputPixelBroadcast } from '$lib/sync/outputPixelBroadcast';
+  import { stopMasterWarpOutput, tickMasterWarpOutput, getMasterWarpCanvas, reconcileMasterWarpOutput, resetMasterWarpReconcile } from '$lib/sync/outputComposite';
   import {
-    registerEditorCanvas,
     stopOutputSharedTexturePresenter,
   } from '$lib/sync/outputSharedTexturePresenter';
   // Note: zero-copy presenter is NOT auto-started by the reconcile.
@@ -719,90 +718,39 @@
       startModulationBroadcast();
     }
 
-    // ── Output source resolution + master-warp pump ────────────────────
-    // Both projector-output transports capture from ONE canvas:
-    //   • WebGPU shared-texture presenter  (registerEditorCanvas)
-    //   • WebRTC fallback broadcast        (startOutputPixelBroadcast)
-    // When the global master warp is enabled we feed them a dedicated
-    // warped canvas (outputComposite applies the warp once, editor-side,
-    // so BOTH transports carry already-warped pixels — single source of
-    // truth, no per-output-window code). When disabled we feed the raw
-    // editor canvas directly, preserving the WebGPU zero-copy fast path.
-    //
-    // The zero-copy presenter is only (re)registered here — it doesn't
-    // start pumping until OutputWindow.svelte opens the popup. The WebRTC
-    // path broadcasts blindly to a BroadcastChannel under flag control:
-    //   outputZeroCopy true                     → presenter registered;
-    //                                             OutputWindow attaches on click
-    //   outputZeroCopy false, outputWebRTC true → WebRTC broadcast started
-    //   both false                              → no editor broadcast
-    // Both are no-ops in OSR / output modes.
-    if (!isOsrMode && !isOutputMode && canvas) {
+    // ── Output source + master warp ───────────────────────────────────
+    // Register this WebGL editor canvas (or its master-warped derivative)
+    // with the output transports — BUT only when this is the real present
+    // surface. In bridgeMode (experimental.editorWebGPU) the WebGPU pilot
+    // canvas is the final surface and OWNS output registration (see
+    // WebGPUCanvas.svelte); registering here too would fight it and the
+    // master warp would silently do nothing. So skip when bridgeMode.
+    // reconcileMasterWarpOutput (outputComposite) is the single registrar
+    // and is itself diff-gated; it's fed from a settings subscription.
+    if (!isOsrMode && !isOutputMode && !bridgeMode && canvas) {
       const editorCanvas = canvas;
-      let currentOutputSource: HTMLCanvasElement = editorCanvas;
-      let webrtcStarted = false;
-
-      const resolveOutputSource = (warpActive: boolean): HTMLCanvasElement => {
-        if (warpActive) {
-          const warped = startMasterWarpOutput(
-            () => get(settings).output?.masterWarp,
-            () => ({
-              w: get(settings).output?.masterCanvasWidth ?? 1920,
-              h: get(settings).output?.masterCanvasHeight ?? 1080,
-            }),
-          );
-          return warped ?? editorCanvas;
-        }
-        stopMasterWarpOutput();
-        return editorCanvas;
-      };
-
-      const reconcileOutput = (warpActive: boolean, zeroCopy: boolean, webrtc: boolean) => {
-        const nextSource = resolveOutputSource(warpActive);
-        const sourceChanged = nextSource !== currentOutputSource;
-        currentOutputSource = nextSource;
-
-        // WebGPU shared-texture presenter — registerEditorCanvas guards
-        // on identity, so this is a cheap no-op when the source is
-        // unchanged and a clean pump-swap when the master warp toggles.
-        registerEditorCanvas(currentOutputSource, 60);
-
-        // WebRTC fallback — start/stop per flags; also re-bind on a
-        // source swap so toggling the master warp live re-points the
-        // broadcast at the warped canvas (or back to the editor canvas).
-        const wantWebRTC = !zeroCopy && webrtc;
-        if (wantWebRTC && (!webrtcStarted || sourceChanged)) {
-          // Perf knobs from Settings → Performance so weak hardware can
-          // dial down framerate / bitrate / codec.
-          const _perf = get(settings)?.performance;
-          startOutputPixelBroadcast(currentOutputSource, _perf?.outputFrameRate ?? 60, {
+      outputWebRTCUnsub = settings.subscribe((s) => {
+        const _perf = s?.performance;
+        reconcileMasterWarpOutput({
+          baseSource: editorCanvas,
+          // Only route through the warp pass when it would actually change
+          // the output — enabling alone (identity) stays passthrough so the
+          // zero-copy path is preserved until the operator drags a handle.
+          warpActive: masterWarpIsActive(s.output?.masterWarp),
+          zeroCopy: !!s.experimental?.outputZeroCopy,
+          webrtc: !!s.experimental?.outputWebRTC,
+          getWarp: () => get(settings).output?.masterWarp,
+          getSize: () => ({
+            w: get(settings).output?.masterCanvasWidth ?? 1920,
+            h: get(settings).output?.masterCanvasHeight ?? 1080,
+          }),
+          perf: {
+            frameRate: _perf?.outputFrameRate ?? 60,
             maxBitrate: _perf?.outputMaxBitrate,
             degradationPreference: _perf?.outputDegradationPreference,
             codecPreference: _perf?.outputCodecPreference,
-          });
-          webrtcStarted = true;
-        } else if (!wantWebRTC && webrtcStarted) {
-          stopOutputPixelBroadcast();
-          webrtcStarted = false;
-        }
-      };
-
-      // Diff-gate: settings.subscribe fires on EVERY settings change, but
-      // the output source only depends on these three flags. Recompute +
-      // reconcile only when they actually change, so unrelated UI/pref
-      // edits never churn the presenter (no needless source swaps).
-      let lastOutputKey = '';
-      outputWebRTCUnsub = settings.subscribe((s) => {
-        // Only route through the warp pass when it would actually change
-        // the output — enabling alone (identity) stays passthrough so the
-        // zero-copy path is preserved until the operator drags a handle.
-        const warpActive = masterWarpIsActive(s.output?.masterWarp);
-        const zeroCopy = !!s.experimental?.outputZeroCopy;
-        const webrtc = !!s.experimental?.outputWebRTC;
-        const key = `${warpActive ? 1 : 0}${zeroCopy ? 1 : 0}${webrtc ? 1 : 0}`;
-        if (key === lastOutputKey) return;
-        lastOutputKey = key;
-        reconcileOutput(warpActive, zeroCopy, webrtc);
+          },
+        });
       });
     }
 
@@ -1503,7 +1451,9 @@
         // preserveDrawingBuffer:false, so its pixels are only readable in
         // the same frame they're rendered; a standalone rAF would read an
         // empty buffer → black output. No-op unless the warp is active.
-        if (!isOsrMode && !isOutputMode && canvas) {
+        // Skip in bridgeMode — WebGPUCanvas owns the warp tick there
+        // (its present canvas is the real output surface).
+        if (!isOsrMode && !isOutputMode && !bridgeMode && canvas) {
           tickMasterWarpOutput(canvas);
         }
 
@@ -2150,6 +2100,7 @@
     stopOutputPixelBroadcast();
     stopOutputSharedTexturePresenter();
     stopMasterWarpOutput();
+    resetMasterWarpReconcile();
 
     if (nativeRendererStatusTimer) {
       clearInterval(nativeRendererStatusTimer);

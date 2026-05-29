@@ -67,8 +67,9 @@
    */
   import { onMount, onDestroy } from 'svelte';
   import { isWebGPUSupported, probeWebGPU } from '$lib/renderer/webgpuCapability';
-  import { registerEditorCanvas, stopOutputSharedTexturePresenter, setOutputCursor, setOutputCursorStyle } from '$lib/sync/outputSharedTexturePresenter';
-  import { settings, outputFrozen } from '$lib/stores/settings';
+  import { stopOutputSharedTexturePresenter, setOutputCursor, setOutputCursorStyle } from '$lib/sync/outputSharedTexturePresenter';
+  import { reconcileMasterWarpOutput, tickMasterWarpOutput, resetMasterWarpReconcile } from '$lib/sync/outputComposite';
+  import { settings, outputFrozen, masterWarpIsActive } from '$lib/stores/settings';
   import { WebGPUPaintDrip } from '$lib/renderer/webgpuPaintDrip';
   import { WebGPUAdvLightPaint } from '$lib/renderer/webgpuAdvLightPaint';
   import { WebGPUStrokeParticles, collectGPUStrokes } from '$lib/renderer/webgpuStrokeParticles';
@@ -906,6 +907,12 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       // passes stop advancing. The canvas retains its last frame. RAF
       // keeps rescheduling so we resume instantly on unfreeze.
       if (initStatus === 'running' && !frozen) presentFrame();
+      // Master-warp output tick — fill the warped output canvas from the
+      // WebGL source (blendRenderer-safe; identical content to the WebGPU
+      // present surface in bridge mode). No-op unless the warp is active.
+      // Runs here because WebGPUCanvas owns output registration in pilot
+      // mode (Canvas.svelte's tick is skipped under bridgeMode).
+      if (!isOutputMode && !isOsrMode && sourceCanvas) tickMasterWarpOutput(sourceCanvas);
       // Dev-mode VideoFrame leak watchdog — early-returns when
       // `window.__VIDEO_FRAME_DEBUG__` is falsy, so this is free
       // in production. When debug is on, warns if >1 frame stays
@@ -988,18 +995,37 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     if (initStatus === 'no-source' || initStatus === 'running') {
       startFrameLoop();
     }
-    if (!isOutputMode && !isOsrMode && presentCanvas) {
-      // The output presenter captureStream's the visible WebGPU
-      // canvas. Same registration call as Phase 2 — the WebGPU
-      // canvas is what the output sees.
-      registerEditorCanvas(presentCanvas, 60);
-    }
-
     // Subscribe to output settings for cursor — toggle, style, size,
     // thickness, color, opacity. Each settings change pushes a fresh
     // cursorStyle message to the output presenter; the cursor flag
     // gates whether mousemove forwards positions at all.
+    //
+    // This subscription ALSO owns output registration when the WebGPU
+    // pilot is on: presentCanvas is the real present surface, so we
+    // register it (or the master-warped derivative) with the transports
+    // via the single reconciler. (Canvas.svelte skips registration in
+    // bridgeMode so the two don't fight.)
     settingsUnsub = settings.subscribe((s) => {
+      if (!isOutputMode && !isOsrMode && presentCanvas) {
+        const _perf = s?.performance;
+        reconcileMasterWarpOutput({
+          baseSource: presentCanvas,
+          warpActive: masterWarpIsActive(s.output?.masterWarp),
+          zeroCopy: !!s.experimental?.outputZeroCopy,
+          webrtc: !!s.experimental?.outputWebRTC,
+          getWarp: () => getStore(settings).output?.masterWarp,
+          getSize: () => ({
+            w: getStore(settings).output?.masterCanvasWidth ?? 1920,
+            h: getStore(settings).output?.masterCanvasHeight ?? 1080,
+          }),
+          perf: {
+            frameRate: _perf?.outputFrameRate ?? 60,
+            maxBitrate: _perf?.outputMaxBitrate,
+            degradationPreference: _perf?.outputDegradationPreference,
+            codecPreference: _perf?.outputCodecPreference,
+          },
+        });
+      }
       outputShowCursor = s.output?.outputShowCursor ?? false;
       setOutputCursorStyle({
         style: s.output?.outputCursorStyle ?? 'crosshair',
@@ -1089,6 +1115,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     disposed = true;
     stopFrameLoop();
     stopOutputSharedTexturePresenter();
+    resetMasterWarpReconcile();
     window.removeEventListener('mousemove', onMouseMove, { capture: true } as any);
     window.removeEventListener('mousedown', onMouseDown, { capture: true } as any);
     window.removeEventListener('mouseup', onMouseUp, { capture: true } as any);
