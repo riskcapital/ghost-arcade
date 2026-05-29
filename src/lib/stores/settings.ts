@@ -490,13 +490,17 @@ export function meshFromRect(
 export function masterWarpIsActive(warp?: OutputWarp | null): boolean {
   if (!warp?.enabled) return false;
   // Corners and mesh COMBINE (forward warp). Active if EITHER is
-  // non-identity — a dragged corner quad OR a deformed mesh.
+  // non-identity — a dragged corner quad OR a deformed mesh. Use an
+  // epsilon (matching the mesh check below): a sub-pixel drag back toward
+  // identity must read as identity again, else the warp pass stays
+  // engaged forever and the zero-copy fast path is lost.
+  const EPS = 1e-4;
   const c = warp.corners;
-  const cornersWarped = !!c && !(
-    c.topLeft.x === 0 && c.topLeft.y === 0 &&
-    c.topRight.x === 1 && c.topRight.y === 0 &&
-    c.bottomLeft.x === 0 && c.bottomLeft.y === 1 &&
-    c.bottomRight.x === 1 && c.bottomRight.y === 1
+  const cornersWarped = !!c && (
+    Math.abs(c.topLeft.x - 0) > EPS || Math.abs(c.topLeft.y - 0) > EPS ||
+    Math.abs(c.topRight.x - 1) > EPS || Math.abs(c.topRight.y - 0) > EPS ||
+    Math.abs(c.bottomLeft.x - 0) > EPS || Math.abs(c.bottomLeft.y - 1) > EPS ||
+    Math.abs(c.bottomRight.x - 1) > EPS || Math.abs(c.bottomRight.y - 1) > EPS
   );
   if (cornersWarped) return true;
   const g = warp.meshGrid;

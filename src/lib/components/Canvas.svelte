@@ -2077,7 +2077,10 @@
     stopOutputPixelBroadcast();
     stopOutputSharedTexturePresenter();
     stopMasterWarpOutput();
-    resetMasterWarpReconcile();
+    // Owner-scoped: only clears the diff-gate if THIS canvas owns the
+    // current registration (in bridgeMode it never registered, so this
+    // is a no-op and the WebGPU owner's gate stays intact).
+    resetMasterWarpReconcile(canvas);
 
     if (nativeRendererStatusTimer) {
       clearInterval(nativeRendererStatusTimer);
