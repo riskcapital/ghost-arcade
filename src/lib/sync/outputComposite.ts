@@ -124,15 +124,12 @@ export function tickMasterWarpOutput(src: HTMLCanvasElement): void {
       /* source not ready this frame — keep last frame */
     }
   }
-  // Throttled heartbeat (~1/sec at 60fps) so the console isn't flooded.
+  // Throttled heartbeat (~1/sec at 60fps). Flat args so the console can't
+  // collapse the important fields behind a "…".
   if (mwDebug() && tickLogCounter++ % 60 === 0) {
-    console.log('[mwarp] tick', {
-      srcW: src?.width, srcH: src?.height,
-      enabled: warp?.enabled, mode: warp?.mode,
-      hasCorners: !!warp?.corners,
-      blendAvail: avail, pxOk, drew,
-      outW: outCanvas?.width, outH: outCanvas?.height,
-    });
+    console.log('[mwarp] tick — blendAvail=', avail, 'pxOk=', pxOk, 'drew=', drew,
+      'enabled=', warp?.enabled, 'mode=', warp?.mode, 'srcW=', src?.width, 'srcH=', src?.height,
+      'outW=', outCanvas?.width, 'outH=', outCanvas?.height);
   }
 }
 
