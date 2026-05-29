@@ -1085,14 +1085,17 @@ function loadSettings(): AppSettings {
         output: {
           ...defaults.output,
           ...parsed.output,
-          // Run per-slice migration so older saved slices that pre-date
-          // black-level / per-edge-gamma / display-target fields pick up
-          // their defaults without nuking the user's saved crops.
-          slices: Array.isArray(parsed.output?.slices)
-            ? parsed.output.slices.map((s: Partial<OutputSlice> & { id?: string }) =>
-                migrateOutputSlice({ ...s, id: s.id ?? Math.random().toString(36).slice(2) })
-              )
-            : [],
+          // ── Projection-mapping setup is SESSION-SCOPED ──────────────
+          // Slices (Screens), the master canvas size, and the master warp
+          // are "the setup" — they travel with the .gha project file, not
+          // localStorage. So they ALWAYS reset to defaults on launch; only
+          // loading a project (layers.ts importProject) restores them.
+          // This override comes AFTER `...parsed.output` deliberately, to
+          // discard any stale per-launch copy.
+          slices: [],
+          masterCanvasWidth: defaults.output.masterCanvasWidth,
+          masterCanvasHeight: defaults.output.masterCanvasHeight,
+          masterWarp: { enabled: false, mode: 'corners' as const },
         },
         ui: {
           ...defaults.ui,
