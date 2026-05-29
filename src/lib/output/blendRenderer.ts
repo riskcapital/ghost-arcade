@@ -50,10 +50,6 @@ let meshTexPlaceholder: THREE.DataTexture | null = null;
 // reallocate a DataTexture every frame for a screen whose mesh hasn't
 // changed. Invalidated by a hash of the points array.
 const meshTexCache = new Map<string, { tex: THREE.DataTexture; hash: string; cols: number; rows: number }>();
-// Output-warp mesh texture cache. Parallel structure — output mesh
-// lives in projector unit-quad coords (different content from source
-// mesh) so we can't reuse the same texture.
-const outMeshTexCache = new Map<string, { tex: THREE.DataTexture; hash: string; cols: number; rows: number }>();
 
 let backingCanvas: HTMLCanvasElement | OffscreenCanvas | null = null;
 
@@ -102,21 +98,6 @@ const FRAG_SHADER = /* glsl */ `
   uniform int uMeshRows;
   uniform int uMeshCols;
 
-  // ─── Output warp (projector-side distortion) ───────────────────
-  // Applied AFTER source sampling logically, BEFORE in the shader
-  // (we run it as an inverse map: projector pixel → content UV →
-  // source UV → master canvas sample).
-  // uOutWarpMode: 0 = off, 1 = corners (4-point inverse bilinear),
-  //               2 = mesh (per-cell inverse bilinear).
-  uniform int uOutWarpMode;
-  uniform vec2 uOutCornerTL;
-  uniform vec2 uOutCornerTR;
-  uniform vec2 uOutCornerBL;
-  uniform vec2 uOutCornerBR;
-  uniform sampler2D uOutMeshTex;
-  uniform int uOutMeshRows;
-  uniform int uOutMeshCols;
-
   // Rotation: 0/1/2/3 = 0/90/180/270 degrees.
   uniform int uRotation;
   // Color correction (linear-space).
@@ -151,11 +132,6 @@ const FRAG_SHADER = /* glsl */ `
     float texDim = ${MAX_MESH}.0;
     vec2 uv = vec2((float(ci) + 0.5) / texDim, (float(ri) + 0.5) / texDim);
     return texture2D(uMeshTex, uv).rg;
-  }
-  vec2 outMeshAt(int ri, int ci) {
-    float texDim = ${MAX_MESH}.0;
-    vec2 uv = vec2((float(ci) + 0.5) / texDim, (float(ri) + 0.5) / texDim);
-    return texture2D(uOutMeshTex, uv).rg;
   }
 
   // Inverse bilinear: given a point p and a quad (a, b, c, d) where
@@ -204,55 +180,6 @@ const FRAG_SHADER = /* glsl */ `
     if (uRotation == 1) uv = vec2(uv.y, 1.0 - uv.x);
     else if (uRotation == 2) uv = vec2(1.0 - uv.x, 1.0 - uv.y);
     else if (uRotation == 3) uv = vec2(1.0 - uv.y, uv.x);
-
-    // ─ Output warp (inverse map) ─
-    // The user defines the output warp as: the screen's content
-    // (unit quad) is stretched onto these projector positions. To
-    // sample for a given projector pixel uv, we need to find the
-    // content UV that maps to uv through the forward warp. That's
-    // an inverse bilinear (corners) or per-cell inverse (mesh).
-    // When uOutWarpMode == 0, output warp is off and uv passes
-    // through unchanged.
-    if (uOutWarpMode == 1) {
-      vec2 inv = invBilinear(uv, uOutCornerTL, uOutCornerTR, uOutCornerBR, uOutCornerBL);
-      if (inv.x < 0.0 || inv.x > 1.0 || inv.y < 0.0 || inv.y > 1.0) {
-        // Projector pixel lies outside the warped output quad. Black.
-        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-        return;
-      }
-      uv = inv;
-    } else if (uOutWarpMode == 2 && uOutMeshRows > 1 && uOutMeshCols > 1) {
-      // Mesh inverse warp. Scan all cells (slow but simple): for each
-      // mesh cell, run invBilinear and accept the first valid result.
-      // 5×5 mesh = 16 cells, well within shader budget for typical
-      // rigs; performance critical only at very high mesh densities.
-      bool found = false;
-      vec2 cellUv = vec2(0.0);
-      for (int ri = 0; ri < ${MAX_MESH} - 1; ri++) {
-        if (ri >= uOutMeshRows - 1) break;
-        for (int ci = 0; ci < ${MAX_MESH} - 1; ci++) {
-          if (ci >= uOutMeshCols - 1) break;
-          if (found) continue;
-          vec2 a = outMeshAt(ri,     ci);
-          vec2 b = outMeshAt(ri,     ci + 1);
-          vec2 c = outMeshAt(ri + 1, ci + 1);
-          vec2 d = outMeshAt(ri + 1, ci);
-          vec2 t = invBilinear(uv, a, b, c, d);
-          if (t.x >= 0.0 && t.x <= 1.0 && t.y >= 0.0 && t.y <= 1.0) {
-            // Cell-local (u, v) → global content UV (u, v).
-            float gu = (float(ci) + t.x) / float(uOutMeshCols - 1);
-            float gv = (float(ri) + t.y) / float(uOutMeshRows - 1);
-            cellUv = vec2(gu, gv);
-            found = true;
-          }
-        }
-      }
-      if (!found) {
-        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-        return;
-      }
-      uv = cellUv;
-    }
 
     // ─ Forward map: projector UV → master canvas sample position. ─
     vec2 srcUv;
@@ -382,11 +309,6 @@ function meshHash(slice: OutputSlice): string {
   if (!g) return 'none';
   return `${g.rows}x${g.cols}:${JSON.stringify(g.points)}`;
 }
-function outMeshHash(slice: OutputSlice): string {
-  const g = slice.outputWarp?.meshGrid;
-  if (!g) return 'none';
-  return `${g.rows}x${g.cols}:${JSON.stringify(g.points)}`;
-}
 
 // Generic mesh-texture packer used by both source mesh (master-canvas
 // coords) and output mesh (projector-quad coords). Shape is identical;
@@ -429,11 +351,6 @@ function packMeshToTexture(
 // edits update GPU-side incrementally rather than reallocating.
 function meshTextureFor(slice: OutputSlice): THREE.DataTexture {
   return packMeshToTexture(meshTexCache, slice.id, slice.meshGrid, meshHash(slice));
-}
-// Output-warp mesh texture for a slice. Separate cache so source +
-// output meshes coexist for the same screen.
-function outMeshTextureFor(slice: OutputSlice): THREE.DataTexture {
-  return packMeshToTexture(outMeshTexCache, slice.id, slice.outputWarp?.meshGrid, outMeshHash(slice));
 }
 
 function ensureRenderer(maxW: number, maxH: number): boolean {
@@ -483,15 +400,6 @@ function ensureRenderer(maxW: number, maxH: number): boolean {
         uMeshTex: { value: ensureMeshPlaceholder() },
         uMeshRows: { value: 0 },
         uMeshCols: { value: 0 },
-        // Output warp uniforms — default identity (off).
-        uOutWarpMode: { value: 0 },
-        uOutCornerTL: { value: new THREE.Vector2(0, 0) },
-        uOutCornerTR: { value: new THREE.Vector2(1, 0) },
-        uOutCornerBL: { value: new THREE.Vector2(0, 1) },
-        uOutCornerBR: { value: new THREE.Vector2(1, 1) },
-        uOutMeshTex: { value: ensureMeshPlaceholder() },
-        uOutMeshRows: { value: 0 },
-        uOutMeshCols: { value: 0 },
         uRotation: { value: 0 },
         uBrightness: { value: 1 },
         uContrast: { value: 1 },
@@ -617,16 +525,6 @@ export function renderSlicePixels(
     u.uWarpMode.value = 0;
     u.uMeshTex.value = ensureMeshPlaceholder();
   }
-
-  // Output warp dispatch — disabled. The source warp modes
-  // (rect/corners/mesh) cover the same use case (everything routed
-  // through this screen gets warped together), and the inverse-warp
-  // shader path here was tripping the GPU on enable. The uniforms
-  // stay in the shader for now to keep the binding shape stable;
-  // we just hold uOutWarpMode at 0 so the shader takes the no-op
-  // branch every frame.
-  u.uOutWarpMode.value = 0;
-  u.uOutMeshTex.value = ensureMeshPlaceholder();
 
   const rotEnum = slice.rotation === 90 ? 1 : slice.rotation === 180 ? 2 : slice.rotation === 270 ? 3 : 0;
   u.uRotation.value = rotEnum;
