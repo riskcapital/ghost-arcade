@@ -198,26 +198,32 @@ function sendFullState() {
     const safeClipGrid = stripClipGrid(vjState.clipGrid);
     const safeBankBClipGrid = (vjState as any).bankBClipGrid ? stripClipGrid((vjState as any).bankBClipGrid) : undefined;
 
+    // JSON-clean the ENTIRE payload before posting. The vjClipLauncher
+    // live state (clips' splatContent/model3dContent → three.js textures/
+    // scenes, compositionEffects, per-layerState effects) carries values
+    // structuredClone rejects, and the strip helpers don't catch them all.
+    // JSON.stringify drops functions and is robust to future fields;
+    // exportProject already broke any cycles. Matches the settings-update
+    // broadcast's approach.
+    const fullStatePayload = {
+      ...projectData,
+      vjClipLauncher: {
+        blocks: safeBlocks,
+        activeBlockId: vjState.activeBlockId,
+        clipGrid: safeClipGrid,
+        bankBClipGrid: safeBankBClipGrid,
+        layerStates: stripLayerStates(vjState.layerStates),
+        bankBLayerStates: stripLayerStates((vjState as any).bankBLayerStates),
+        compositionEffects: vjState.compositionEffects,
+        masterOpacity: vjState.masterOpacity,
+        isOpen: vjState.isOpen,
+        isLive: vjState.isLive,
+      },
+      settings: { output: settingsState?.output },
+    };
     channel.postMessage({
       type: 'project-state',
-      data: {
-        ...projectData,
-        vjClipLauncher: {
-          blocks: safeBlocks,
-          activeBlockId: vjState.activeBlockId,
-          clipGrid: safeClipGrid,
-          bankBClipGrid: safeBankBClipGrid,
-          layerStates: stripLayerStates(vjState.layerStates),
-          bankBLayerStates: stripLayerStates((vjState as any).bankBLayerStates),
-          compositionEffects: vjState.compositionEffects,
-          masterOpacity: vjState.masterOpacity,
-          isOpen: vjState.isOpen,
-          isLive: vjState.isLive,
-        },
-        settings: {
-          output: settingsState?.output,
-        },
-      },
+      data: JSON.parse(JSON.stringify(fullStatePayload)),
       timestamp: Date.now(),
     } satisfies StateMessage);
 
@@ -317,20 +323,23 @@ function doBroadcastVJState() {
     const safeClipGrid = stripClipGrid(vjState.clipGrid);
     const safeBankBClipGrid = (vjState as any).bankBClipGrid ? stripClipGrid((vjState as any).bankBClipGrid) : undefined;
 
+    // JSON-clean — same rationale as sendFullState: clip/effect runtime
+    // refs (three.js objects) survive JSON but throw on structuredClone.
+    const vjPayload = {
+      blocks: safeBlocks,
+      activeBlockId: vjState.activeBlockId,
+      clipGrid: safeClipGrid,
+      bankBClipGrid: safeBankBClipGrid,
+      layerStates: stripLayerStates(vjState.layerStates),
+      bankBLayerStates: stripLayerStates((vjState as any).bankBLayerStates),
+      compositionEffects: vjState.compositionEffects,
+      masterOpacity: vjState.masterOpacity,
+      isOpen: vjState.isOpen,
+      isLive: vjState.isLive,
+    };
     channel.postMessage({
       type: 'vj-state',
-      data: {
-        blocks: safeBlocks,
-        activeBlockId: vjState.activeBlockId,
-        clipGrid: safeClipGrid,
-        bankBClipGrid: safeBankBClipGrid,
-        layerStates: stripLayerStates(vjState.layerStates),
-        bankBLayerStates: stripLayerStates((vjState as any).bankBLayerStates),
-        compositionEffects: vjState.compositionEffects,
-        masterOpacity: vjState.masterOpacity,
-        isOpen: vjState.isOpen,
-        isLive: vjState.isLive,
-      },
+      data: JSON.parse(JSON.stringify(vjPayload)),
       timestamp: Date.now(),
     } satisfies StateMessage);
   } catch (err) {
@@ -393,7 +402,11 @@ function initSender() {
       try {
         channel.postMessage({
           type: 'settings-update',
-          data: { output: s.output },
+          // Post a JSON-cleaned snapshot, not the live object: output can
+          // carry non-structuredClone-able values (functions / proxies on
+          // nested slice + effect data) that throw DataCloneError on
+          // postMessage. `outJson` is already computed above, so free.
+          data: { output: JSON.parse(outJson) },
           timestamp: Date.now(),
         } satisfies StateMessage);
       } catch (err) {

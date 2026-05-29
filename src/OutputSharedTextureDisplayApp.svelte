@@ -484,6 +484,18 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     }
   }
 
+  function looksLikeVideoFrame(data: unknown): data is VideoFrame {
+    return !!data
+      && typeof data === 'object'
+      && typeof (data as any).close === 'function'
+      && typeof (data as any).codedWidth === 'number'
+      && typeof (data as any).codedHeight === 'number';
+  }
+
+  function isSameRealmVideoFrame(data: unknown): boolean {
+    return typeof VideoFrame !== 'undefined' && data instanceof VideoFrame;
+  }
+
   // ── Port intake (same-renderer-process MessageChannel handshake) ──
   // The output window is opened via window.open() from the editor,
   // putting both windows in the same renderer process. The editor
@@ -526,13 +538,15 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       if (rawMessagesReceived <= 3) {
         console.log('[OutputSharedTexture] raw message #' + rawMessagesReceived,
           'type=' + lastMessageTypeName,
-          'isVideoFrame=' + (data instanceof VideoFrame),
+          'isVideoFrame=' + isSameRealmVideoFrame(data),
           'data=', data);
       }
-      // Discriminate frames vs control messages. VideoFrame is an
-      // instance check; control messages are plain objects with
-      // `type` field.
-      if (data instanceof VideoFrame) {
+      // Discriminate frames vs control messages. Electron can put a
+      // same-origin window.open target in a different renderer process,
+      // which gives the received VideoFrame a different constructor
+      // identity. Shape-check it so those frames are not misclassified
+      // as control messages and leaked.
+      if (looksLikeVideoFrame(data)) {
         try {
           recordFrameStats(data);
           if (pipeline && device && canvasContext) {

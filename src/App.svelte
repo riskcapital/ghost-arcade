@@ -12,6 +12,7 @@
   import WarpHandles from './lib/components/WarpHandles.svelte';
   import MeshWarpHandles from './lib/components/MeshWarpHandles.svelte';
   import ScreenWarpHandles from './lib/components/ScreenWarpHandles.svelte';
+  import MasterWarpHandles from './lib/components/MasterWarpHandles.svelte';
   import CustomShapeHandles from './lib/components/CustomShapeHandles.svelte';
   // LayerPanel now mounts via LeftSidebar (which swaps it for
   // ScreenPanel when the user is on the Screens tab).
@@ -33,6 +34,16 @@
   preloadShaders();
   import MobileApp from './lib/components/MobileApp.svelte';
   import OutputWindow from './lib/components/OutputWindow.svelte';
+  import { getOutputSharedTexturePresenterStats } from './lib/sync/outputSharedTexturePresenter';
+  // Real "is a projector window attached" state, independent of the local
+  // outputIsOpen intent flag (which resets to false on editor reload while
+  // the output BrowserWindow lives on). Used to stop the Output/Fullscreen
+  // buttons from re-opening the same named window — a re-`window.open`
+  // reloads it and forces a full re-handshake (pump restart storm).
+  const isOutputAttached = () => {
+    try { return getOutputSharedTexturePresenterStats().targetAttached; }
+    catch { return false; }
+  };
   import VJModePanel from './lib/components/VJModePanel.svelte';
   import StageDesignerPanel from './lib/components/StageDesignerPanel.svelte';
   import OfflineRenderModal from './lib/components/OfflineRenderModal.svelte';
@@ -81,7 +92,8 @@
   import type { Point2D, BezierPoint, Layer, WarpCorners } from './lib/types';
   import { generateUUID } from './lib/types';
   import { createDefaultFreehandLine, createDefaultPointClickLine } from './lib/lines/types';
-  import QRCode from 'qrcode';
+  // qrcode is lazy-loaded inside generateQRCode() so it stays out of the
+  // main App chunk — it's only needed when the mobile-connect panel opens.
   import { midiManager } from './lib/midi/midiManager';
   import { midiStore } from './lib/midi/midiStore';
   import { synthVisionStore, sessionClipCache, isfShaderCache } from './lib/stores/synthVision';
@@ -586,21 +598,50 @@
     // Canvas's own onMount hasn't fired yet — bind:this fires after
     // mount but Canvas's `canvas` element binding is set inside
     // ITS onMount which runs in a separate microtask.
-    if ($settings.experimental?.editorWebGPU) {
+    // Push the WebGL source canvas into the WebGPU bridge whenever
+    // editorWebGPU is on. CRITICAL: must be reactive — the flag can be
+    // toggled at runtime via Settings. If we only ran this once at App
+    // mount, toggling the flag ON later would reactively mount
+    // WebGPUCanvas but nobody would ever call setSourceCanvas() on it,
+    // so presentFrame early-returns each frame and the visible
+    // presentCanvas stays black while Canvas's WebGL canvas is hidden
+    // via opacity:0 → total blackout.
+    let _bridgeWiringInFlight = false;
+    let _lastWiredSource: HTMLCanvasElement | null = null;
+    let _lastWiredBridge: WebGPUCanvas | null = null;
+    settings.subscribe((s) => {
+      if (!s.experimental?.editorWebGPU) return;
+      // Idempotent — only re-wire when the canvas or bridge instance
+      // actually changes (component remount). Otherwise every settings
+      // emit (every corner-drag frame) re-pushes the same canvas and
+      // floods the console.
+      const c0 = canvasComponent?.getCanvas?.();
+      if (c0 && webgpuBridgeComponent
+          && c0 === _lastWiredSource
+          && webgpuBridgeComponent === _lastWiredBridge) {
+        return;
+      }
+      if (_bridgeWiringInFlight) return;
+      _bridgeWiringInFlight = true;
       let attempts = 0;
       const tryPushSource = () => {
         const c = canvasComponent?.getCanvas?.();
         if (c && webgpuBridgeComponent) {
           webgpuBridgeComponent.setSourceCanvas(c);
+          _lastWiredSource = c;
+          _lastWiredBridge = webgpuBridgeComponent;
           console.log('[App] WebGPU bridge source canvas wired:', c.width, 'x', c.height);
+          _bridgeWiringInFlight = false;
           return;
         }
         if (attempts++ < 40) setTimeout(tryPushSource, 50);
-        else console.warn('[App] WebGPU bridge: source canvas never appeared (Canvas.getCanvas() returned null after 2s)');
+        else {
+          console.warn('[App] WebGPU bridge: source canvas never appeared (Canvas.getCanvas() returned null after 2s)');
+          _bridgeWiringInFlight = false;
+        }
       };
-      // Defer to next tick so bind:this has fired on both children.
       setTimeout(tryPushSource, 0);
-    }
+    });
 
     // Auto-report uncaught errors and promise rejections
     const onError = (e: ErrorEvent) => {
@@ -2502,6 +2543,14 @@
 
   function openOutputWindow() {
     outputMode = 'window';
+    // Already attached (e.g. after an editor reload) — don't re-open the
+    // 'ga-output' window; that reloads it and re-handshakes. Just resync
+    // local intent state.
+    if (isOutputAttached()) {
+      outputIsOpen = true;
+      settings.setOutputWindowOpen(true);
+      return;
+    }
     if (outputWindow) {
       outputWindow.openPopup();
       outputIsOpen = true;
@@ -2533,8 +2582,12 @@
   }
 
   async function toggleFullscreen() {
-    // If output window is already open, toggle its fullscreen
-    if (outputIsOpen && outputWindow) {
+    // If a projector window is already attached, toggle its fullscreen
+    // rather than re-opening (the latter reloads 'ga-output' → re-
+    // handshake storm). Check the presenter's real attached state, not
+    // just the local intent flag.
+    if ((outputIsOpen || isOutputAttached()) && outputWindow) {
+      outputIsOpen = true;
       await matchOutputDisplayResolution('fullscreen output');
       const isFs = await outputWindow.toggleFullscreen();
       outputMode = isFs ? 'fullscreen' : 'window';
@@ -2667,6 +2720,7 @@
     }
     const url = getMobileUrl(selectedIP);
     try {
+      const QRCode = (await import('qrcode')).default;
       qrCodeDataUrl = await QRCode.toDataURL(url, {
         width: 200,
         margin: 2,
@@ -4609,6 +4663,9 @@
         {#if $leftSidebarTab === 'screens'}
           <div class="warp-handles-offset" style="left: {canvasOffsetX}px; top: {canvasOffsetY}px;">
             <ScreenWarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
+            <!-- Global master-warp handles (orange) sit above the screen
+                 handles. Self-hides unless output.masterWarp.enabled. -->
+            <MasterWarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
           </div>
         {/if}
         {#if $selectedLayer && $leftSidebarTab !== 'screens'}

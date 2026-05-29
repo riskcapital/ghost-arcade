@@ -30,10 +30,7 @@ import {
   migrateOutputSlice,
   cornersFromRect,
   meshFromRect,
-  identityOutputCorners,
-  identityOutputMesh,
   type OutputSlice,
-  type OutputWarp,
 } from './settings';
 import { maxOutputSlices } from './license';
 import type { Effect, EffectType } from '../types';
@@ -241,60 +238,8 @@ export const screenActions = {
   bindStageEffect(screenId: string, stageEffectId: string | null) {
     this.update(screenId, { stageEffectId });
   },
-
-  // ─── Output warp (projector-side distortion) ───────────────────────
-  /** Set the output-warp mode. Initializes corners/mesh to identity
-   *  on first switch so toggling on doesn't visually change anything
-   *  until the operator drags a handle. */
-  setOutputWarpMode(screenId: string, mode: 'corners' | 'mesh') {
-    const s = get(screens).find(sc => sc.id === screenId);
-    if (!s) return;
-    const prev: OutputWarp = s.outputWarp ?? { enabled: false, mode: 'corners' };
-    const next: OutputWarp = { ...prev, mode };
-    if (mode === 'corners' && !next.corners) next.corners = identityOutputCorners();
-    if (mode === 'mesh' && !next.meshGrid) next.meshGrid = identityOutputMesh();
-    this.update(screenId, { outputWarp: next });
-  },
-
-  /** Enable/disable output warp without touching its geometry. Geometry
-   *  is initialized lazily on first enable so disabled-with-corners
-   *  state is preserved across toggles (operator can A/B compare). */
-  setOutputWarpEnabled(screenId: string, enabled: boolean) {
-    const s = get(screens).find(sc => sc.id === screenId);
-    if (!s) return;
-    const prev: OutputWarp = s.outputWarp ?? { enabled: false, mode: 'corners' };
-    const next: OutputWarp = { ...prev, enabled };
-    if (enabled) {
-      if (next.mode === 'corners' && !next.corners) next.corners = identityOutputCorners();
-      if (next.mode === 'mesh' && !next.meshGrid) next.meshGrid = identityOutputMesh();
-    }
-    this.update(screenId, { outputWarp: next });
-  },
-
-  /** Reset output warp to identity (no distortion) but keep it
-   *  enabled so the operator can re-warp from a clean slate. */
-  resetOutputWarp(screenId: string) {
-    const s = get(screens).find(sc => sc.id === screenId);
-    if (!s) return;
-    const prev: OutputWarp = s.outputWarp ?? { enabled: true, mode: 'corners' };
-    this.update(screenId, {
-      outputWarp: {
-        enabled: prev.enabled,
-        mode: prev.mode,
-        corners: identityOutputCorners(),
-        meshGrid: identityOutputMesh(),
-      },
-    });
-  },
-
-  /** Direct write of output-warp geometry — used by the on-canvas
-   *  drag handlers. Preserves the existing enabled + mode fields. */
-  setOutputWarpGeometry(screenId: string, geometry: Partial<Pick<OutputWarp, 'corners' | 'meshGrid'>>) {
-    const s = get(screens).find(sc => sc.id === screenId);
-    if (!s) return;
-    const prev: OutputWarp = s.outputWarp ?? { enabled: true, mode: 'corners' };
-    this.update(screenId, { outputWarp: { ...prev, ...geometry } });
-  },
+  // Per-Screen output-warp actions removed — geometric warping is now
+  // done globally by the Master Warp; a Screen is just a rect slice.
 };
 
 /** Hydrate the screens store from a parsed project. Called by

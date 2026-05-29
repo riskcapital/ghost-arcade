@@ -47,11 +47,8 @@
   import { midiManager } from '../midi/midiManager';
   import { oscStore } from '../osc/oscStore';
   // LicensePanel + tier-related imports removed — OSS build has no license UI.
-  // `maxOutputSlices` is the only remaining import (used as a slice-count
-  // upper bound; resolves to Infinity in the OSS build, so all guards pass).
-  import { maxOutputSlices } from '../stores/license';
-  import { createDefaultSlice, type OutputSlice } from '../stores/settings';
-  import OutputCanvasPreview from './OutputCanvasPreview.svelte';
+  // Multi-Output / per-slice config (createDefaultSlice, maxOutputSlices,
+  // OutputCanvasPreview) moved to the Screens tab — see ScreenPanel.svelte.
   import { isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
   import { getErrorLog, clearErrorLog, type ErrorEntry } from '../utils/errorReporter';
   import { isWebGPUSupported, probeWebGPU, getWebGPUInfo, type WebGPUInfo } from '../renderer/webgpuCapability';
@@ -237,7 +234,7 @@
     | 'app:appearance' | 'app:updates'
     | 'project:canvas' | 'project:layers'
     | 'output:display' | 'output:color'
-    | 'output:edge-blending' | 'output:dome'
+    | 'output:edge-blending'
     | 'performance:gpu' | 'performance:render-quality' | 'performance:video-decoding'
     | 'recording'
     | 'integrations:midi' | 'integrations:osc' | 'integrations:wled'
@@ -255,15 +252,15 @@
     ]},
     { id: 'output', label: 'Output', sections: [
       // Display + color correction stay as global output post-process
-      // toggles (cursor overlay, rotation, blackout, dome projection).
+      // toggles (cursor overlay, rotation, blackout).
       // Multi-Output / per-slice config moved to the Screens tab in
-      // the left sidebar — see ScreenPanel.svelte. Edge Blending
+      // the left sidebar — see ScreenPanel.svelte. Dome projection now
+      // lives there too because it is part of output calibration. Edge Blending
       // remains here as a legacy/single-output convenience for users
       // who haven't adopted Screens yet.
       { id: 'output:display', label: 'Display' },
       { id: 'output:color', label: 'Color Correction' },
       { id: 'output:edge-blending', label: 'Edge Blending', advanced: true },
-      { id: 'output:dome', label: 'Dome Projection', advanced: true },
     ]},
     { id: 'performance', label: 'Performance', sections: [
       { id: 'performance:gpu', label: 'GPU Acceleration', advanced: true },
@@ -428,232 +425,6 @@
 
   // Test pattern UI removed in v0.3.5 — kept import line empty to preserve
   // line numbers for any in-flight diffs. Re-add if reintroducing the UI.
-
-  // ── Multi-output: display enumeration ───────────────────────────────
-  // Polled when the Multi-Output section is opened so the "Send to →
-  // Display X" dropdown reflects whatever is plugged in *now* (users
-  // routinely hot-plug a projector between when the app launches and
-  // when they configure outputs). Re-runnable via the refresh button.
-  type DisplayInfo = {
-    id: number;
-    label: string;
-    width: number;
-    height: number;
-    x: number;
-    y: number;
-    isPrimary: boolean;
-    scaleFactor: number;
-  };
-  let displays: DisplayInfo[] = [];
-  async function refreshDisplays() {
-    if (!isDesktopApp) return;
-    try {
-      displays = ((await invoke('get_displays')) as DisplayInfo[]) || [];
-    } catch {
-      displays = [];
-    }
-  }
-  // Auto-refresh whenever the user lands on Multi-Output or Display.
-  // Idempotent and cheap (one Electron IPC round-trip).
-  $: if (selectedSection === 'output:multi-output' || selectedSection === 'output:display') {
-    refreshDisplays();
-  }
-
-  // ── Master canvas sizing helpers ────────────────────────────────────
-  function setMasterCanvas(w: number, h: number) {
-    const W = Math.max(128, Math.min(15360, Math.round(w)));
-    const H = Math.max(128, Math.min(15360, Math.round(h)));
-    settings.update(s => ({ ...s, output: { ...s.output, masterCanvasWidth: W, masterCanvasHeight: H } }));
-  }
-  // Push the master canvas dimensions into spoutResolution=custom so
-  // the per-frame slice extractor (Canvas.svelte:1588) reads pixels at
-  // master-canvas resolution. Without this, slice crops happen at
-  // whatever spoutResolution the operator picked separately — fine for
-  // most setups but introduces a pixel-mapping mismatch when the
-  // master canvas is non-standard (e.g. 6528×1080 horizontal blend).
-  function matchSpoutToMaster() {
-    settings.update(s => ({
-      ...s,
-      output: {
-        ...s.output,
-        spoutResolution: 'custom',
-        customWidth: s.output.masterCanvasWidth,
-        customHeight: s.output.masterCanvasHeight,
-      },
-    }));
-  }
-  // True when the spout pipeline is already sized to the master canvas.
-  // Drives the "Match Spout to Master" button's disabled state.
-  $: spoutMatchesMaster =
-    $settings.output.spoutResolution === 'custom' &&
-    $settings.output.customWidth === $settings.output.masterCanvasWidth &&
-    $settings.output.customHeight === $settings.output.masterCanvasHeight;
-  // Auto-fit master canvas: sum widths of slices assigned to displays,
-  // minus overlap. For users who don't want to do the arithmetic.
-  function autoFitMasterCanvas() {
-    const active = $settings.output.slices.filter(s => s.enabled && s.targetType === 'display' && s.displayId != null);
-    if (active.length === 0) return;
-    // Sum native display widths, subtract pixel-equivalent overlap from
-    // each slice (using the slice's edgeBlendLeft/Right). This assumes a
-    // horizontal-row layout; for grids the user should set master manually.
-    let totalW = 0;
-    let maxH = 0;
-    for (const slice of active) {
-      const d = displays.find(dd => dd.id === slice.displayId);
-      if (!d) continue;
-      const dw = d.width * d.scaleFactor;
-      const dh = d.height * d.scaleFactor;
-      totalW += dw - dw * (slice.edgeBlendLeft + slice.edgeBlendRight) / 2;
-      maxH = Math.max(maxH, dh);
-    }
-    if (totalW > 0 && maxH > 0) setMasterCanvas(totalW, maxH);
-  }
-
-  // ── Slice management ──────────────────────────────────────────────────────
-  let expandedSliceId: string | null = null;
-
-  function addSlice() {
-    const slices = $settings.output.slices;
-    const max = $maxOutputSlices;
-    if (slices.length >= max) return;
-    const index = slices.length;
-    const names = ['Left', 'Center', 'Right', 'Top', 'Bottom', 'Aux-1', 'Aux-2', 'Aux-3'];
-    const name = names[index] || `Output ${index + 1}`;
-    const id = `slice-${Date.now()}-${index}`;
-    // Auto-distribute crop horizontally for new slices
-    const count = slices.length + 1;
-    const newSlices = slices.map((s, i) => ({ ...s, cropX: i / count, cropW: 1 / count }));
-    newSlices.push(createDefaultSlice(id, name, name, (count - 1) / count, 1 / count));
-    settings.update(s => ({ ...s, output: { ...s.output, slices: newSlices } }));
-    expandedSliceId = id;
-  }
-
-  function removeSlice(sliceId: string) {
-    const slices = $settings.output.slices.filter(s => s.id !== sliceId);
-    // Re-distribute crop regions
-    const count = slices.length;
-    const redistributed = count > 0
-      ? slices.map((s, i) => ({ ...s, cropX: i / count, cropW: 1 / count }))
-      : [];
-    settings.update(s => ({ ...s, output: { ...s.output, slices: redistributed } }));
-    if (expandedSliceId === sliceId) expandedSliceId = null;
-  }
-
-  function updateSlice(sliceId: string, updates: Partial<OutputSlice>) {
-    // If the operator changed the displayId of a slice whose window
-    // is currently open, the open window is now on the wrong monitor.
-    // Close + re-open on the new display in the background so the
-    // edit lands on the actual projector without an extra click.
-    const prev = $settings.output.slices.find(s => s.id === sliceId);
-    const displayChanged = isDesktopApp
-      && prev != null
-      && 'displayId' in updates
-      && openSliceWindowIds.includes(sliceId)
-      && updates.displayId != null
-      && prev.displayId !== updates.displayId;
-
-    settings.update(s => ({
-      ...s,
-      output: {
-        ...s.output,
-        slices: s.output.slices.map(sl => sl.id === sliceId ? { ...sl, ...updates } : sl)
-      }
-    }));
-
-    if (displayChanged) {
-      (async () => {
-        try {
-          await invoke('output_close_slice_window', { sliceId });
-          await invoke('output_open_slice_window', { sliceId, displayId: updates.displayId });
-          await refreshOpenSliceWindows();
-        } catch (err) {
-          console.error('[SettingsPanel] displayId change re-open failed', err);
-        }
-      })();
-    }
-  }
-
-  // ── Slice → physical-display window controls ────────────────────────
-  // Open / close per-slice fullscreen windows on the assigned displays.
-  // Reactive `openSliceWindowIds` tracks which slice IDs are currently
-  // showing on a physical display so we can toggle the button label.
-  let openSliceWindowIds: string[] = [];
-  async function refreshOpenSliceWindows() {
-    if (!isDesktopApp) return;
-    try {
-      const ids = (await invoke('output_list_slice_windows')) as string[];
-      openSliceWindowIds = Array.isArray(ids) ? ids : [];
-    } catch {
-      openSliceWindowIds = [];
-    }
-  }
-  // Poll once on entering the section + every time the slice list
-  // changes (open/close happens outside our control via OS gestures).
-  $: if (selectedSection === 'output:multi-output') refreshOpenSliceWindows();
-
-  async function openSliceWindow(slice: OutputSlice) {
-    if (!isDesktopApp) return;
-    if (slice.displayId == null) return;
-    try {
-      await invoke('output_open_slice_window', { sliceId: slice.id, displayId: slice.displayId });
-      await refreshOpenSliceWindows();
-    } catch (err) {
-      console.error('[SettingsPanel] open_slice_window failed', err);
-    }
-  }
-  async function closeSliceWindow(slice: OutputSlice) {
-    if (!isDesktopApp) return;
-    try {
-      await invoke('output_close_slice_window', { sliceId: slice.id });
-      await refreshOpenSliceWindows();
-    } catch (err) {
-      console.error('[SettingsPanel] close_slice_window failed', err);
-    }
-  }
-
-  // Lifecycle sync: when the slice list changes, close any open
-  // window whose slice is gone, disabled, or no longer targets a
-  // physical display. Mirrors the operator's mental model —
-  // flipping a slice's transport away from 'display' (or deleting
-  // it) should immediately shut its dedicated projector window.
-  $: if (isDesktopApp && openSliceWindowIds.length > 0) {
-    const activeDisplaySliceIds = $settings.output.slices
-      .filter(s => s.enabled && (s.targetType ?? 'sender') === 'display' && s.displayId != null)
-      .map(s => s.id);
-    const stale = openSliceWindowIds.filter(id => !activeDisplaySliceIds.includes(id));
-    if (stale.length > 0) {
-      Promise.all(stale.map(id =>
-        invoke('output_close_slice_window', { sliceId: id }).catch(() => {})
-      )).then(() => refreshOpenSliceWindows());
-    }
-  }
-
-  function addPresetSlices(layout: '2-wide' | '3-wide' | '2x2') {
-    let newSlices: OutputSlice[];
-    if (layout === '2-wide') {
-      newSlices = [
-        createDefaultSlice(`slice-${Date.now()}-0`, 'Left', 'Left', 0, 0.5),
-        createDefaultSlice(`slice-${Date.now()}-1`, 'Right', 'Right', 0.5, 0.5),
-      ];
-    } else if (layout === '3-wide') {
-      newSlices = [
-        createDefaultSlice(`slice-${Date.now()}-0`, 'Left', 'Left', 0, 1/3),
-        createDefaultSlice(`slice-${Date.now()}-1`, 'Center', 'Center', 1/3, 1/3),
-        createDefaultSlice(`slice-${Date.now()}-2`, 'Right', 'Right', 2/3, 1/3),
-      ];
-    } else {
-      // 2x2 grid
-      newSlices = [
-        { ...createDefaultSlice(`slice-${Date.now()}-0`, 'Top-Left', 'TL', 0, 0.5), cropY: 0, cropH: 0.5 },
-        { ...createDefaultSlice(`slice-${Date.now()}-1`, 'Top-Right', 'TR', 0.5, 0.5), cropY: 0, cropH: 0.5 },
-        { ...createDefaultSlice(`slice-${Date.now()}-2`, 'Bottom-Left', 'BL', 0, 0.5), cropY: 0.5, cropH: 0.5 },
-        { ...createDefaultSlice(`slice-${Date.now()}-3`, 'Bottom-Right', 'BR', 0.5, 0.5), cropY: 0.5, cropH: 0.5 },
-      ];
-    }
-    // Respect max slices
-    const max = $maxOutputSlices;
-    settings.update(s => ({ ...s, output: { ...s.output, slices: newSlices.slice(0, max) } }));
-  }
 
   function handleSpoutToggle(e: Event) {
     const checked = (e.target as HTMLInputElement).checked;
@@ -1421,112 +1192,6 @@
           </div>
         </section>
         {/if}<!-- /output:color -->
-        <!-- Dome Projection Section -->
-        {#if selectedSection === 'output:dome'}
-        <section class="settings-section">
-          <h3>Dome Projection</h3>
-          <p class="section-hint">Fisheye reprojection for planetariums, domes, and immersive installations</p>
-
-          <div class="setting-row">
-            <div class="setting-label">
-              <span class="label-text">Enable Dome Output</span>
-              <span class="label-hint">Apply fisheye reprojection to final output</span>
-            </div>
-            <label class="toggle">
-              <input type="checkbox"
-                checked={$settings.output.domeEnabled ?? false}
-                onchange={(e) => settings.setDomeEnabled((e.target as HTMLInputElement).checked)} />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-
-          {#if $settings.output.domeEnabled ?? false}
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="label-text">Projection Mode</span>
-              </div>
-              <select value={$settings.output.domeMode ?? 'angular'}
-                onchange={(e) => settings.setDomeMode((e.target as HTMLSelectElement).value as OutputSettings['domeMode'])}>
-                <option value="angular">Angular (Equidistant)</option>
-                <option value="stereographic">Stereographic</option>
-                <option value="orthographic">Orthographic</option>
-                <option value="equirectangular">Equirectangular (360°)</option>
-              </select>
-            </div>
-
-            {@const dome = {
-              fov: $settings.output.domeFOV ?? 180,
-              rotation: $settings.output.domeRotation ?? 0,
-              tilt: $settings.output.domeTilt ?? 0,
-              curvature: $settings.output.domeCurvature ?? 1.0,
-              truncation: $settings.output.domeTruncation ?? 1.0,
-              offsetX: $settings.output.domeOffsetX ?? 0,
-              offsetY: $settings.output.domeOffsetY ?? 0,
-            }}
-            <div class="crop-grid">
-              <div class="crop-item">
-                <span class="crop-label">FOV</span>
-                <input type="range" min="90" max="360" step="1"
-                  value={dome.fov}
-                  oninput={(e) => settings.updateDomeSetting('domeFOV', parseFloat((e.target as HTMLInputElement).value))} />
-                <span class="crop-value">{dome.fov}°</span>
-              </div>
-              <div class="crop-item">
-                <span class="crop-label">Rotation</span>
-                <input type="range" min="0" max="360" step="1"
-                  value={dome.rotation}
-                  oninput={(e) => settings.updateDomeSetting('domeRotation', parseFloat((e.target as HTMLInputElement).value))} />
-                <span class="crop-value">{dome.rotation}°</span>
-              </div>
-              <div class="crop-item">
-                <span class="crop-label">Tilt</span>
-                <input type="range" min="-90" max="90" step="1"
-                  value={dome.tilt}
-                  oninput={(e) => settings.updateDomeSetting('domeTilt', parseFloat((e.target as HTMLInputElement).value))} />
-                <span class="crop-value">{dome.tilt}°</span>
-              </div>
-              <div class="crop-item">
-                <span class="crop-label">Curvature</span>
-                <input type="range" min="0" max="1" step="0.01"
-                  value={dome.curvature}
-                  oninput={(e) => settings.updateDomeSetting('domeCurvature', parseFloat((e.target as HTMLInputElement).value))} />
-                <span class="crop-value">{(dome.curvature * 100).toFixed(0)}%</span>
-              </div>
-              <div class="crop-item">
-                <span class="crop-label">Truncation</span>
-                <input type="range" min="0.5" max="1" step="0.01"
-                  value={dome.truncation}
-                  oninput={(e) => settings.updateDomeSetting('domeTruncation', parseFloat((e.target as HTMLInputElement).value))} />
-                <span class="crop-value">{(dome.truncation * 100).toFixed(0)}%</span>
-              </div>
-              <div class="crop-item">
-                <span class="crop-label">Offset X</span>
-                <input type="range" min="-1" max="1" step="0.01"
-                  value={dome.offsetX}
-                  oninput={(e) => settings.updateDomeSetting('domeOffsetX', parseFloat((e.target as HTMLInputElement).value))} />
-                <span class="crop-value">{dome.offsetX.toFixed(2)}</span>
-              </div>
-              <div class="crop-item">
-                <span class="crop-label">Offset Y</span>
-                <input type="range" min="-1" max="1" step="0.01"
-                  value={dome.offsetY}
-                  oninput={(e) => settings.updateDomeSetting('domeOffsetY', parseFloat((e.target as HTMLInputElement).value))} />
-                <span class="crop-value">{dome.offsetY.toFixed(2)}</span>
-              </div>
-              <button class="secondary-btn" onclick={() => settings.update(s => ({
-                ...s, output: { ...s.output,
-                  domeFOV: 180, domeRotation: 0, domeTilt: 0,
-                  domeOffsetX: 0, domeOffsetY: 0, domeCurvature: 1.0, domeTruncation: 1.0
-                }
-              }))}>
-                Reset Dome
-              </button>
-            </div>
-          {/if}
-        </section>
-
-        {/if}
-
         <!-- The standalone "Experimental: WebRTC output transport" toggle
              that used to live here was removed — WebRTC is the default
              output transport now (and WebGPU zero-copy supersedes it

@@ -14,25 +14,39 @@
   import { createISFShader, updateISFShader, setISFInputValue, setISFInputTexture, type ISFShaderInstance } from '../isf/renderer';
   import { LinesRenderer } from '../lines/renderer';
   import { DrawingRenderer } from '../drawing/renderer';
-  import { SVGLayerRenderer } from '../svg/renderer';
+  import type { SVGLayerRenderer } from '../svg/renderer';
   import { LightPaintingRenderer } from '../lightpainting/renderer';
   import { LightPaintingWebGLRenderer } from '../lightpainting/webglRenderer';
   import { getGPUBrushCanvas } from '../lightpainting/gpuBrushBridge';
   import { TextRenderer } from '../text/renderer';
   import { SplatRenderer } from '../splat/SplatRenderer';
   import { loadPLY, loadSplatFromUrl } from '../splat';
-  import { Model3DRenderer } from '../model3d/Model3DRenderer';
+  import type { Model3DRenderer } from '../model3d/Model3DRenderer';
   import { GpuLayerRenderer } from '$lib/renderer/gpuLayerRenderer';
   import { ensureWebGPUDevice, isWebGPUReady, getWebGPUDevice, getPreferredCanvasFormat } from '$lib/renderer/webgpuShared';
   import { getShaderDef } from '$lib/renderer/gpuShaderCatalog';
-  import { settings, outputFrozen, SHADER_QUALITY_MULTIPLIERS } from '../stores/settings';
+  import { settings, outputFrozen, SHADER_QUALITY_MULTIPLIERS, masterWarpIsActive } from '../stores/settings';
   import { showToast } from '../stores/errorToast';
   import { invoke, isDesktopApp, isOsrMode, isOutputMode } from '$lib/bridge';
   import { drawTestPattern, type TestPatternType } from '../utils/testPatterns';
   import { applyEdgeBlending } from '../output/outputPostProcess';
   import { renderSlicePixels, isBlendRendererAvailable } from '../output/blendRenderer';
-  import { FluidSimulation, type FluidMode } from '../effects/fluidSimulation';
-  import { ParticleSystem3D } from '../effects/particleSystem3D';
+  import type { FluidSimulation, FluidMode } from '../effects/fluidSimulation';
+  import type { ParticleSystem3D } from '../effects/particleSystem3D';
+  // Heavy renderer classes (three/addons GLTF/FBX/OBJ loaders, post-processing,
+  // Line2, fluid/particle sims) are lazy-loaded on first use so they stay out
+  // of the initial Canvas chunk. Constructors are cached after first import;
+  // a layer that needs one simply waits a frame or two for its chunk.
+  let _SVGLayerRendererCtor: typeof import('../svg/renderer').SVGLayerRenderer | null = null;
+  let _Model3DRendererCtor: typeof import('../model3d/Model3DRenderer').Model3DRenderer | null = null;
+  let _FluidSimulationCtor: typeof import('../effects/fluidSimulation').FluidSimulation | null = null;
+  let _ParticleSystem3DCtor: typeof import('../effects/particleSystem3D').ParticleSystem3D | null = null;
+  const _lazyLoading = new Set<string>();
+  function _lazyLoad(key: string, load: () => Promise<void>): void {
+    if (_lazyLoading.has(key)) return;
+    _lazyLoading.add(key);
+    load().catch((e) => { console.warn(`[Canvas] lazy-load ${key} failed:`, e); _lazyLoading.delete(key); });
+  }
   // ParticleSystem removed — Particles3D runs as standalone Bevy app via Spout
   import { audioStore, getLastRawAnalysis, audioBands } from '../stores/audio';
   import { audioTextures } from '../audio/audioTextures';
@@ -40,9 +54,9 @@
   import { startAudioBroadcast, stopAudioBroadcast, broadcastAudioFrame } from '$lib/sync/audioBroadcast';
   import { startWLEDSenders, stopWLEDSenders, tickWLEDSenders } from '$lib/wled/sender';
   import { startModulationBroadcast, stopModulationBroadcast } from '$lib/sync/modulationBroadcast';
-  import { startOutputPixelBroadcast, stopOutputPixelBroadcast } from '$lib/sync/outputPixelBroadcast';
+  import { stopOutputPixelBroadcast } from '$lib/sync/outputPixelBroadcast';
+  import { stopMasterWarpOutput, tickMasterWarpOutput, getMasterWarpCanvas, reconcileMasterWarpOutput, resetMasterWarpReconcile } from '$lib/sync/outputComposite';
   import {
-    registerEditorCanvas,
     stopOutputSharedTexturePresenter,
   } from '$lib/sync/outputSharedTexturePresenter';
   // Note: zero-copy presenter is NOT auto-started by the reconcile.
@@ -678,7 +692,11 @@
     // Sync dome projection settings
     const unsubDome = settings.subscribe(s => {
       if (!engine) return;
-      engine.setDomeEnabled(s.output.domeEnabled);
+      // In editor WebGPU bridge mode the hidden WebGL canvas is the raw
+      // source frame; WebGPUCanvas owns output-space reprojection so dome
+      // and master warp are baked exactly once before capture/slicing.
+      const webgpuBridgeOwnsDome = bridgeMode && !isOutputMode && !isOsrMode && !!s.experimental?.editorWebGPU;
+      engine.setDomeEnabled(webgpuBridgeOwnsDome ? false : s.output.domeEnabled);
       engine.setDomeSettings({
         mode: s.output.domeMode,
         fov: s.output.domeFOV,
@@ -718,54 +736,39 @@
       startModulationBroadcast();
     }
 
-    // Register the editor canvas with the zero-copy presenter so that
-    // when the user opens the output window via window.open(), the
-    // pump can start without OutputWindow.svelte needing a canvas
-    // reference of its own. This is a no-op in OSR / output modes.
-    if (!isOsrMode && !isOutputMode && canvas) {
-      registerEditorCanvas(canvas, 60);
-    }
-
-    // Legacy WebRTC output transport reconcile. The zero-copy path
-    // (experimental.outputZeroCopy) is NOT started here — see top-of-
-    // file note. Only the WebRTC fallback runs under reconcile-control
-    // because it broadcasts blindly to a BroadcastChannel and doesn't
-    // need a target window reference.
-    //
-    //   outputZeroCopy true                    → no-op here; OutputWindow
-    //                                            calls attachOutputWindow
-    //                                            on user click
-    //   outputZeroCopy false, outputWebRTC true → start WebRTC presenter
-    //   both false                              → no editor broadcast
-    //
-    // Both transports are no-ops in OSR / output modes.
-    {
-      let webrtcStarted = false;
-      const reconcileTransport = (zeroCopy: boolean, webrtc: boolean) => {
-        const eligible = !isOsrMode && !isOutputMode && !!canvas;
-        const wantWebRTC = eligible && !zeroCopy && webrtc;
-        if (wantWebRTC && !webrtcStarted) {
-          // Read perf knobs from Settings → Performance so users on weak
-          // hardware can dial down framerate / bitrate / codec.
-          const _perf = get(settings)?.performance;
-          startOutputPixelBroadcast(canvas, _perf?.outputFrameRate ?? 60, {
+    // ── Output source + master warp ───────────────────────────────────
+    // Register this WebGL editor canvas (or its master-warped derivative)
+    // with the output transports — BUT only when this is the real present
+    // surface. In bridgeMode (experimental.editorWebGPU) the WebGPU pilot
+    // canvas is the final surface and OWNS output registration (see
+    // WebGPUCanvas.svelte); registering here too would fight it and the
+    // master warp would silently do nothing. So skip when bridgeMode.
+    // reconcileMasterWarpOutput (outputComposite) is the single registrar
+    // and is itself diff-gated; it's fed from a settings subscription.
+    if (!isOsrMode && !isOutputMode && !bridgeMode && canvas) {
+      const editorCanvas = canvas;
+      outputWebRTCUnsub = settings.subscribe((s) => {
+        const _perf = s?.performance;
+        reconcileMasterWarpOutput({
+          baseSource: editorCanvas,
+          // Only route through the warp pass when it would actually change
+          // the output — enabling alone (identity) stays passthrough so the
+          // zero-copy path is preserved until the operator drags a handle.
+          warpActive: masterWarpIsActive(s.output?.masterWarp),
+          zeroCopy: !!s.experimental?.outputZeroCopy,
+          webrtc: !!s.experimental?.outputWebRTC,
+          getWarp: () => get(settings).output?.masterWarp,
+          getSize: () => ({
+            w: get(settings).output?.masterCanvasWidth ?? 1920,
+            h: get(settings).output?.masterCanvasHeight ?? 1080,
+          }),
+          perf: {
+            frameRate: _perf?.outputFrameRate ?? 60,
             maxBitrate: _perf?.outputMaxBitrate,
             degradationPreference: _perf?.outputDegradationPreference,
             codecPreference: _perf?.outputCodecPreference,
-          });
-          webrtcStarted = true;
-          console.log('[Canvas] legacy WebRTC output transport started');
-        } else if (!wantWebRTC && webrtcStarted) {
-          stopOutputPixelBroadcast();
-          webrtcStarted = false;
-          console.log('[Canvas] legacy WebRTC output transport stopped');
-        }
-      };
-      outputWebRTCUnsub = settings.subscribe((s) => {
-        reconcileTransport(
-          !!s.experimental?.outputZeroCopy,
-          !!s.experimental?.outputWebRTC,
-        );
+          },
+        });
       });
     }
 
@@ -1461,6 +1464,17 @@
           }
         }
 
+        // Master-warp output composite — tick HERE, in the render loop,
+        // right after the editor canvas is drawn. The editor canvas is
+        // preserveDrawingBuffer:false, so its pixels are only readable in
+        // the same frame they're rendered; a standalone rAF would read an
+        // empty buffer → black output. No-op unless the warp is active.
+        // Skip in bridgeMode — WebGPUCanvas owns the warp tick there
+        // (its present canvas is the real output surface).
+        if (!isOsrMode && !isOutputMode && !bridgeMode && canvas) {
+          tickMasterWarpOutput(canvas);
+        }
+
         // Send rendered frame to Spout output / output window
         // readPixels → send to native Spout sender (CPU fallback path)
         // Skip when: OSR zero-copy is active OR running inside OSR window
@@ -1506,13 +1520,6 @@
         }
 
         if (spoutOutputActive && glCanvas && !osrSpoutActive && !isOsrMode && !isOutputMode) {
-          // Checkpoint A: we're past the inner gate. Log 3 times so we know
-          // this branch is actually entered.
-          if (!(window as any).__sendCpA) (window as any).__sendCpA = 0;
-          if ((window as any).__sendCpA < 3) {
-            (window as any).__sendCpA++;
-            console.log('[syphon-path] A: gate open, entering send block');
-          }
           // Skip every other frame on the CPU path — getImageData is expensive
           // (~15-30ms for 1080p). This halves the readback overhead while still
           // delivering 30fps output at 60fps render rate.
@@ -1520,12 +1527,6 @@
           if (spoutFrameSkip % 2 !== 0 && !spoutSendInFlight) {
             // Skip this frame — let the render loop continue at full speed
           } else {
-          // Checkpoint B: past frame-skip, entering actual send path
-          if (!(window as any).__sendCpB) (window as any).__sendCpB = 0;
-          if ((window as any).__sendCpB < 3) {
-            (window as any).__sendCpB++;
-            console.log('[syphon-path] B: past frame-skip (inFlight=', spoutSendInFlight, ')');
-          }
           // Determine Spout output resolution from settings
           const spoutRes = $settings?.output?.spoutResolution || 'match';
           let targetW = 1920, targetH = 1080;
@@ -1554,37 +1555,31 @@
             spoutTargetH = targetH;
           }
 
-          // Draw WebGL canvas → 2D canvas (GPU-accelerated, handles Y-flip)
+          // Senders slice the TOTAL MAIN OUTPUT. When the master warp is
+          // active, that total output is the warped composite (the tick
+          // earlier this frame already filled getMasterWarpCanvas()), so
+          // each slice crops from the warped frame — not the raw editor
+          // canvas. Otherwise fall back to the raw WebGL canvas.
+          const _mwSenderSource = masterWarpIsActive($settings?.output?.masterWarp)
+            ? getMasterWarpCanvas()
+            : null;
+          const senderSource: CanvasImageSource =
+            _mwSenderSource && _mwSenderSource.width > 0 ? _mwSenderSource : glCanvas;
+
+          // Draw source → 2D canvas (GPU-accelerated, handles Y-flip).
+          // scale(1,-1) flips to the bottom-up orientation the native
+          // senders expect; both the WebGL canvas and the (upright) warped
+          // canvas are drawn upright by drawImage, so the same flip applies.
           spoutScaleCtx!.save();
-          spoutScaleCtx!.scale(1, -1); // Flip Y (WebGL is bottom-up)
-          spoutScaleCtx!.drawImage(glCanvas, 0, -targetH, targetW, targetH);
+          spoutScaleCtx!.scale(1, -1); // Flip Y (sender convention is bottom-up)
+          spoutScaleCtx!.drawImage(senderSource, 0, -targetH, targetW, targetH);
           spoutScaleCtx!.restore();
 
           // getImageData is the CPU readback — but at the target resolution, not canvas resolution
-          const imgData = spoutScaleCtx!.getImageData(0, 0, targetW, targetH);
           const w = targetW;
           const h = targetH;
-          // Reuse the Uint8Array wrapper if same size to reduce GC pressure.
-          // Note: `new Uint8Array(imgData.data.buffer)` is a *view* over the same
-          // ArrayBuffer (no copy) — the single .set() below is the only memcpy.
-          // Previously this code allocated the Uint8Array wrapper, copied bytes
-          // in, and allocated a second wrapper — this version avoids the
-          // redundant wrapper allocation each frame.
-          const expectedBytes = w * h * 4;
-          if (!spoutSendPixels || spoutSendPixels.byteLength !== expectedBytes) {
-            spoutSendPixels = new Uint8Array(expectedBytes);
-          }
-          spoutSendPixels.set(new Uint8Array(imgData.data.buffer, imgData.data.byteOffset, imgData.data.byteLength));
-          spoutSendW = w;
-          spoutSendH = h;
 
           {
-            // Checkpoint B2: which branch are we taking?
-            if (!(window as any).__sendCpB2) (window as any).__sendCpB2 = 0;
-            if ((window as any).__sendCpB2 < 3) {
-              (window as any).__sendCpB2++;
-              console.log('[syphon-path] B2: post-readback, activeSlices=', activeSlices.length, 'inFlight=', spoutSendInFlight);
-            }
             if (activeSlices.length > 0) {
               // ── Multi-output slice path ──────────────────────────────────
               // spoutScaleCanvas already has the frame right-side-up at Spout
@@ -1594,6 +1589,11 @@
               // lift in ONE shader pass, returning ready-to-send RGBA bytes.
               // The legacy 2D path (sliceCanvas + applyEdgeBlending) is
               // kept as a fallback when WebGL initialization fails.
+              // NOTE: the slice path re-renders each slice from
+              // spoutScaleCanvas, so we deliberately SKIP the full-frame
+              // getImageData readback here — it's only consumed by the
+              // single-output branch below. (Was an ~8/33 MB readback +
+              // memcpy per frame of dead work whenever slices exist.)
               fullFrameCanvas = spoutScaleCanvas;
               fullFrameCtx = spoutScaleCtx;
               const gpuPathAvailable = isBlendRendererAvailable();
@@ -1713,13 +1713,18 @@
                 }
               }
             } else if (!spoutSendInFlight) {
-              // ── Legacy single-output path ────────────────────────────────
-              // Checkpoint C: about to invoke IPC (single path)
-              if (!(window as any).__sendCpC) (window as any).__sendCpC = 0;
-              if ((window as any).__sendCpC < 3) {
-                (window as any).__sendCpC++;
-                console.log('[syphon-path] C: invoking spout_send_image (single path)', w, 'x', h, 'bytes=', spoutSendPixels.byteLength, 'isElectron=', isElectron);
+              // ── Legacy single-output path (no slices configured) ─────────
+              // Full-frame readback lives HERE (only consumer). Reuse the
+              // Uint8Array buffer across frames; the .set() is the lone
+              // memcpy (the wrapper is a zero-copy view over imgData).
+              const imgData = spoutScaleCtx!.getImageData(0, 0, w, h);
+              const expectedBytes = w * h * 4;
+              if (!spoutSendPixels || spoutSendPixels.byteLength !== expectedBytes) {
+                spoutSendPixels = new Uint8Array(expectedBytes);
               }
+              spoutSendPixels.set(new Uint8Array(imgData.data.buffer, imgData.data.byteOffset, imgData.data.byteLength));
+              spoutSendW = w;
+              spoutSendH = h;
               spoutSendInFlight = true;
               if (isElectron) {
                 invoke('spout_send_image', { data: spoutSendPixels, width: w, height: h })
@@ -2089,6 +2094,11 @@
     }
     stopOutputPixelBroadcast();
     stopOutputSharedTexturePresenter();
+    stopMasterWarpOutput();
+    // Owner-scoped: only clears the diff-gate if THIS canvas owns the
+    // current registration (in bridgeMode it never registered, so this
+    // is a no-op and the WebGPU owner's gate stays intact).
+    resetMasterWarpReconcile(canvas);
 
     if (nativeRendererStatusTimer) {
       clearInterval(nativeRendererStatusTimer);
@@ -3478,9 +3488,14 @@
       // Get or create SVG renderer for this layer
       let svgRenderer = svgRenderers.get(layer.id);
       if (!svgRenderer) {
+        if (!_SVGLayerRendererCtor) {
+          // Lazy-load the SVG renderer chunk; skip this layer until ready.
+          _lazyLoad('svg', async () => { _SVGLayerRendererCtor = (await import('../svg/renderer')).SVGLayerRenderer; });
+          continue;
+        }
         // Pass the main renderer to avoid creating multiple WebGL contexts
         const mainRenderer = engine.getRenderer();
-        svgRenderer = new SVGLayerRenderer(width, height, mainRenderer);
+        svgRenderer = new _SVGLayerRendererCtor(width, height, mainRenderer);
         svgRenderers.set(layer.id, svgRenderer);
 
         // Parse SVG source if provided
@@ -3941,6 +3956,11 @@
       let model3dCtx = model3dRenderers.get(layer.id);
 
       if (!model3dCtx) {
+        if (!_Model3DRendererCtor) {
+          // Lazy-load the model3d chunk (GLTF/FBX/OBJ loaders); skip until ready.
+          _lazyLoad('model3d', async () => { _Model3DRendererCtor = (await import('../model3d/Model3DRenderer')).Model3DRenderer; });
+          continue;
+        }
         // Create in standalone mode with its OWN WebGL context + offscreen
         // canvas at HALF resolution to reduce GPU load and texture upload cost.
         const modelW = Math.round(width / 2);
@@ -3951,7 +3971,7 @@
         offCanvas.style.display = 'none';
         document.body.appendChild(offCanvas);
 
-        const model3dRenderer = new Model3DRenderer(offCanvas, modelH);
+        const model3dRenderer = new _Model3DRendererCtor(offCanvas, modelH);
 
         // CanvasTexture reads from the offscreen canvas each frame — no
         // render target switch on the main renderer at all.
@@ -4084,6 +4104,19 @@
       // Only handle integrated effect types
       if (effectSource.effectType !== 'fluid' && effectSource.effectType !== 'particles') continue;
 
+      // Lazy-load the sim class chunk; skip this group until the ctor is
+      // ready (only matters on the very first frame the effect appears).
+      if (!effectCtx) {
+        if (effectSource.effectType === 'fluid' && !_FluidSimulationCtor) {
+          _lazyLoad('fluid', async () => { _FluidSimulationCtor = (await import('../effects/fluidSimulation')).FluidSimulation; });
+          continue;
+        }
+        if (effectSource.effectType === 'particles' && !_ParticleSystem3DCtor) {
+          _lazyLoad('particles3d', async () => { _ParticleSystem3DCtor = (await import('../effects/particleSystem3D')).ParticleSystem3D; });
+          continue;
+        }
+      }
+
       if (effectCtx && effectCtx.type !== effectSource.effectType) {
         // Flipping from fluid → particles (or back) must clean up webcam
         // resources from the previous effect. Without this, the MediaStream
@@ -4122,7 +4155,7 @@
 
         if (effectSource.effectType === 'fluid') {
           const simSize = getFluidSimulationSize(width, height);
-          const fluid = new FluidSimulation(simSize.width, simSize.height);
+          const fluid = new _FluidSimulationCtor!(simSize.width, simSize.height);
           fluid.init(renderer);
           if (effectSource.fluidMode !== undefined) {
             fluid.setMode(effectSource.fluidMode as FluidMode);
@@ -4131,7 +4164,7 @@
           effectCtx.simulationWidth = simSize.width;
           effectCtx.simulationHeight = simSize.height;
         } else if (effectSource.effectType === 'particles') {
-          const ps = new ParticleSystem3D(width, height);
+          const ps = new _ParticleSystem3DCtor!(width, height);
           ps.init(renderer);
           ps.setParams({
             mode: (effectSource.particleMode ?? 0) as any,
