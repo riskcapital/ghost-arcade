@@ -278,6 +278,53 @@ const FRAG_SHADER = /* glsl */ `
       vec2 p01 = meshAt(ri + 1, ci);
       vec2 p11 = meshAt(ri + 1, ci + 1);
       srcUv = mix(mix(p00, p10, u), mix(p01, p11, u), v);
+    } else if (uWarpMode == 3) {
+      // ─ Master warp: FORWARD / destination semantics (matches the
+      //   layer "map mode" feel). The four corners are where the
+      //   content's corners LAND on the output, and the mesh (if any)
+      //   deforms WITHIN that corner-pinned quad. We invert that forward
+      //   map to sample: output uv → quad-local q (inverse-bilinear over
+      //   the corner quad) → if a mesh is present, invert the mesh
+      //   deformation per-cell → content UV. Pixels outside the quad are
+      //   black — so pulling a corner inward crops/keystones the image,
+      //   exactly like dragging a layer's corner in map mode.
+      vec2 q = invBilinear(uv, uCornerTL, uCornerTR, uCornerBR, uCornerBL);
+      if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) {
+        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+      }
+      if (uMeshRows > 1 && uMeshCols > 1) {
+        // Invert the mesh deformation: the mesh control points are in
+        // quad-local 0..1 coords, so find the deformed cell containing q
+        // and inverse-bilinear to recover the content UV.
+        bool found = false;
+        vec2 cellUv = vec2(0.0);
+        for (int ri = 0; ri < ${MAX_MESH} - 1; ri++) {
+          if (ri >= uMeshRows - 1) break;
+          for (int ci = 0; ci < ${MAX_MESH} - 1; ci++) {
+            if (ci >= uMeshCols - 1) break;
+            if (found) continue;
+            vec2 a = meshAt(ri,     ci);
+            vec2 b = meshAt(ri,     ci + 1);
+            vec2 c = meshAt(ri + 1, ci + 1);
+            vec2 d = meshAt(ri + 1, ci);
+            vec2 t = invBilinear(q, a, b, c, d);
+            if (t.x >= 0.0 && t.x <= 1.0 && t.y >= 0.0 && t.y <= 1.0) {
+              float gu = (float(ci) + t.x) / float(uMeshCols - 1);
+              float gv = (float(ri) + t.y) / float(uMeshRows - 1);
+              cellUv = vec2(gu, gv);
+              found = true;
+            }
+          }
+        }
+        if (!found) {
+          gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+          return;
+        }
+        srcUv = cellUv;
+      } else {
+        srcUv = q;
+      }
     } else {
       // Rect (default fallback): the original axis-aligned crop.
       srcUv = uCrop.xy + uv * uCrop.zw;
@@ -505,6 +552,11 @@ export function renderSlicePixels(
   // un-warped drawImage(webglCanvas) passthrough, which is one flip the
   // other way. That path passes flip=false.
   flip = true,
+  // Master warp: route through the forward/destination warp branch
+  // (uWarpMode=3) — corners are where content lands + mesh deforms
+  // within the quad, matching the layer "map mode" feel. The synthetic
+  // master slice carries the corners/mesh; crop is ignored here.
+  masterForward = false,
 ): Uint8Array | null {
   if (sliceW <= 0 || sliceH <= 0) return null;
   if (!ensureRenderer(sliceW, sliceH)) return null;
@@ -520,7 +572,31 @@ export function renderSlicePixels(
   // ignored. Without this, an out-of-sync slice falls back to plain
   // rect crop and the warp looks like it's "not working."
   const mode = slice.warpMode ?? 'rect';
-  if (mode === 'corners') {
+  if (masterForward) {
+    // Forward master warp: always feed the corner quad (identity if the
+    // operator hasn't dragged it) and, additively, the mesh if present.
+    const c = slice.corners ?? {
+      topLeft:     { x: 0, y: 0 },
+      topRight:    { x: 1, y: 0 },
+      bottomLeft:  { x: 0, y: 1 },
+      bottomRight: { x: 1, y: 1 },
+    };
+    u.uWarpMode.value = 3;
+    u.uCornerTL.value.set(c.topLeft.x, c.topLeft.y);
+    u.uCornerTR.value.set(c.topRight.x, c.topRight.y);
+    u.uCornerBL.value.set(c.bottomLeft.x, c.bottomLeft.y);
+    u.uCornerBR.value.set(c.bottomRight.x, c.bottomRight.y);
+    if (slice.meshGrid && slice.meshGrid.rows >= 2 && slice.meshGrid.cols >= 2) {
+      u.uMeshRows.value = slice.meshGrid.rows;
+      u.uMeshCols.value = slice.meshGrid.cols;
+      u.uMeshTex.value = meshTextureFor(slice);
+    } else {
+      // rows ≤ 1 makes the shader skip the mesh path → corners only.
+      u.uMeshRows.value = 1;
+      u.uMeshCols.value = 1;
+      u.uMeshTex.value = ensureMeshPlaceholder();
+    }
+  } else if (mode === 'corners') {
     const c = slice.corners ?? {
       topLeft:     { x: slice.cropX,                y: slice.cropY },
       topRight:    { x: slice.cropX + slice.cropW,  y: slice.cropY },
@@ -614,20 +690,22 @@ export function renderMasterWarpPixels(
   h: number,
 ): Uint8Array | null {
   if (!masterSlice) masterSlice = createDefaultSlice('__master_warp__', 'Master', 'master');
-  const useMesh =
-    warp.mode === 'mesh' && !!warp.meshGrid && warp.meshGrid.rows >= 2 && warp.meshGrid.cols >= 2;
   const m = masterSlice;
   m.cropX = 0; m.cropY = 0; m.cropW = 1; m.cropH = 1;
-  m.warpMode = useMesh ? 'mesh' : 'corners';
+  // Forward warp: corners ALWAYS apply (identity until dragged) and the
+  // mesh is ADDITIVE — both combine, matching map mode (no exclusive
+  // corners-vs-mesh mode). A valid grid (≥2×2) means the mesh is in play.
+  m.warpMode = 'corners';
   m.corners = warp.corners ?? identityOutputCorners();
-  m.meshGrid = useMesh ? warp.meshGrid : undefined;
+  m.meshGrid = (warp.meshGrid && warp.meshGrid.rows >= 2 && warp.meshGrid.cols >= 2)
+    ? warp.meshGrid : undefined;
   m.rotation = 0;
   m.brightness = 1; m.contrast = 1; m.gamma = 1;
   m.edgeBlendLeft = 0; m.edgeBlendRight = 0; m.edgeBlendTop = 0; m.edgeBlendBottom = 0;
   m.blackLevelR = 0; m.blackLevelG = 0; m.blackLevelB = 0;
-  // flip=false: this output goes to putImageData on a 2D canvas captured
-  // upright, so it must match the un-warped drawImage passthrough.
-  return renderSlicePixels(source, m, w, h, 1, false);
+  // flip=false: 2D-canvas putImageData captured upright; masterForward=true
+  // routes through the uWarpMode=3 forward/destination branch.
+  return renderSlicePixels(source, m, w, h, 1, false, true);
 }
 
 function flipRowsInPlace(buf: Uint8Array, w: number, h: number) {

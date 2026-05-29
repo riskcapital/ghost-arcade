@@ -489,26 +489,27 @@ export function meshFromRect(
  *  path until the operator actually warps something. */
 export function masterWarpIsActive(warp?: OutputWarp | null): boolean {
   if (!warp?.enabled) return false;
-  if (warp.mode === 'mesh') {
-    const g = warp.meshGrid;
-    if (!g || g.rows < 2 || g.cols < 2) return false;
-    for (let r = 0; r < g.rows; r++) {
-      for (let c = 0; c < g.cols; c++) {
-        const p = g.points[r]?.[c];
-        if (!p) continue;
-        if (Math.abs(p.x - c / (g.cols - 1)) > 1e-4 || Math.abs(p.y - r / (g.rows - 1)) > 1e-4) return true;
-      }
-    }
-    return false;
-  }
+  // Corners and mesh COMBINE (forward warp). Active if EITHER is
+  // non-identity — a dragged corner quad OR a deformed mesh.
   const c = warp.corners;
-  if (!c) return false;
-  return !(
+  const cornersWarped = !!c && !(
     c.topLeft.x === 0 && c.topLeft.y === 0 &&
     c.topRight.x === 1 && c.topRight.y === 0 &&
     c.bottomLeft.x === 0 && c.bottomLeft.y === 1 &&
     c.bottomRight.x === 1 && c.bottomRight.y === 1
   );
+  if (cornersWarped) return true;
+  const g = warp.meshGrid;
+  if (g && g.rows >= 2 && g.cols >= 2) {
+    for (let r = 0; r < g.rows; r++) {
+      for (let cc = 0; cc < g.cols; cc++) {
+        const p = g.points[r]?.[cc];
+        if (!p) continue;
+        if (Math.abs(p.x - cc / (g.cols - 1)) > 1e-4 || Math.abs(p.y - r / (g.rows - 1)) > 1e-4) return true;
+      }
+    }
+  }
+  return false;
 }
 
 /** Migrate an OutputSlice loaded from older settings/.gha files to
