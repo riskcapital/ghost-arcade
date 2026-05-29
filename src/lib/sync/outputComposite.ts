@@ -32,9 +32,12 @@ let warpGetter: (() => OutputWarp | undefined) | null = null;
 let sizeGetter: (() => { w: number; h: number }) | null = null;
 
 // ─── Debug ───────────────────────────────────────────────────────────────
-// OFF by default; enable with `window.__MWARP_DEBUG__ = true` in devtools.
+// ON by default while the master-warp output is being debugged. Silence
+// with `window.__MWARP_DEBUG__ = false` in devtools.
 function mwDebug(): boolean {
-  return typeof window !== 'undefined' && (window as any).__MWARP_DEBUG__ === true;
+  if (typeof window === 'undefined') return false;
+  const flag = (window as any).__MWARP_DEBUG__;
+  return flag !== false; // default true unless explicitly disabled
 }
 function mwlog(...args: unknown[]) {
   if (mwDebug()) console.log('[mwarp]', ...args);

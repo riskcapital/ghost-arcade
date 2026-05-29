@@ -1,17 +1,15 @@
 <script lang="ts">
   /**
    * ScreenPanel — left-sidebar panel for managing output Screens.
-   * Parallel structure to LayerPanel: top half is the screen list
-   * (add/duplicate/remove, drag-reorder, click to select); bottom half
-   * is an inspector for the selected screen (warp mode, edge blend,
-   * effects, target display). Width and visual rhythm match LayerPanel
-   * so the user feels at home flipping between the Layers and Screens
-   * tabs.
+   * A single continuous scroll surface for the screen list, global output
+   * calibration (master canvas / master warp / dome projection), and the
+   * selected screen inspector. Keeping everything in one flow avoids the
+   * old split-panel trap where calibration controls disappeared in a
+   * separate lower scroll area.
    */
   import { onMount } from 'svelte';
   import { screens, selectedScreenId, selectedScreen, screenActions } from '../stores/screens';
-  import { getMasterWarpCanvas } from '../sync/outputComposite';
-  import { settings, identityOutputMesh, masterWarpIsActive, type OutputSlice } from '../stores/settings';
+  import { settings, identityOutputMesh, masterWarpIsActive, type OutputSettings, type OutputSlice } from '../stores/settings';
   import { maxOutputSlices } from '../stores/license';
   import { isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
   import OutputCanvasPreview from './OutputCanvasPreview.svelte';
@@ -57,13 +55,67 @@
     }
   }
 
+  // Track slice windows opened via window.open (zero-copy path) so we
+  // can close them locally without the editor losing the reference.
+  const _zeroCopySliceWindows = new Map<string, Window>();
+
   async function openOnDisplay(s: OutputSlice) {
     if (!isDesktopApp || s.displayId == null) return;
+    // Zero-copy path: open the slice window via window.open so it lives
+    // in the SAME renderer process as the editor. SliceOutputApp can
+    // then read the editor's already-warped presentCanvas via
+    // window.opener.document and crop its region from that — no local
+    // re-render, no fragile hidden-canvas → texture upload. Master warp
+    // applies on the slice display automatically because the source is
+    // the editor's WGSL-warped canvas.
+    const zeroCopy = !!$settings.experimental?.outputZeroCopy;
+    if (zeroCopy) {
+      try {
+        await invoke('configure_next_output_window', {
+          displayId: s.displayId,
+          fullscreen: true,
+        });
+        const url = new URL(window.location.href);
+        url.search = `?mode=slice-display&sliceId=${encodeURIComponent(s.id)}&webgpu-disable=1`;
+        const newWin = window.open(url.toString(), `ga-slice-${s.id}`, 'popup=true');
+        if (!newWin) {
+          alert('Slice display window failed to open. Check popup-blocker behaviour.');
+          return;
+        }
+        _zeroCopySliceWindows.set(s.id, newWin);
+        // Attach this slice window as an additional output target. The
+        // editor's pump fan-outs each VideoFrame to all attached ports —
+        // Fullscreen and slices can coexist. The slice window receives the
+        // same warped frame and crops its own region from it.
+        const { attachOutputWindow } = await import('$lib/sync/outputSharedTexturePresenter');
+        attachOutputWindow(newWin, `slice:${s.id}`);
+        console.log(`[ScreenPanel] slice ${s.id} opened on display ${s.displayId} [zero-copy]`);
+        refreshOpenWindows();
+        return;
+      } catch (err) {
+        console.error('[ScreenPanel] zero-copy open failed, falling back to IPC path:', err);
+        // fall through to legacy IPC
+      }
+    }
     await invoke('output_open_slice_window', { sliceId: s.id, displayId: s.displayId }).catch(() => {});
     refreshOpenWindows();
   }
   async function closeOnDisplay(s: OutputSlice) {
     if (!isDesktopApp) return;
+    // Close the zero-copy window proxy locally first if we opened it
+    // via window.open. Electron's did-create-window listener also tracks
+    // it in `sliceWindows`, so the editor's `output_close_slice_window`
+    // IPC also closes it as a belt-and-suspenders. Either path works.
+    const zc = _zeroCopySliceWindows.get(s.id);
+    if (zc && !zc.closed) {
+      try { zc.close(); } catch { /* */ }
+      _zeroCopySliceWindows.delete(s.id);
+    }
+    // Detach from the presenter so the pump stops fan-out to a dead port.
+    try {
+      const { detachOutputWindow } = await import('$lib/sync/outputSharedTexturePresenter');
+      detachOutputWindow(`slice:${s.id}`);
+    } catch { /* */ }
     await invoke('output_close_slice_window', { sliceId: s.id }).catch(() => {});
     refreshOpenWindows();
   }
@@ -123,7 +175,17 @@
     // passthrough no-op. Corner points are created only when the operator
     // drags a handle (MasterWarpHandles), so there are no "default" warp
     // points sitting on the canvas.
-    settings.setMasterWarp({ enabled });
+    //
+    // On ENABLE, also clear any stale corners/mesh that lingered from a
+    // previous in-session toggle-off-toggle-on cycle. Without this, a
+    // user who dragged corners, disabled, then re-enabled would surface
+    // the OLD geometry — and if that geometry was degenerate (collapsed
+    // quad from a misclick), output would render all-black on enable.
+    if (enabled) {
+      settings.setMasterWarp({ enabled: true, corners: undefined, meshGrid: undefined });
+    } else {
+      settings.setMasterWarp({ enabled: false });
+    }
   }
   function setMasterMode(mode: 'corners' | 'mesh') {
     // Mesh needs a control lattice to show handles, so seed an identity
@@ -143,37 +205,65 @@
     else settings.setMasterWarp({ corners: undefined });
   }
 
-  // ─── Live warped-output preview ─────────────────────────────────────
-  // Mirrors the master-warp output canvas (getMasterWarpCanvas) into a
-  // small canvas right here in the panel, so the operator SEES the warp
-  // as they drag — no dependency on a projector/output window being
-  // attached. Only runs while the warp is active (the canvas only
-  // updates then).
-  let mwPreviewCanvas: HTMLCanvasElement | null = null;
-  let mwPreviewRaf = 0;
-  function mwPreviewLoop() {
-    mwPreviewRaf = requestAnimationFrame(mwPreviewLoop);
-    if (!mwPreviewCanvas) return;
-    const ctx = mwPreviewCanvas.getContext('2d');
-    // Warped output source: in WebGPU mode the warp is baked into the
-    // present canvas (.webgpu-present) — that IS the warped output. Else
-    // (WebGL fallback) the blendRenderer master canvas holds it.
-    const src = (document.querySelector('canvas.webgpu-present') as HTMLCanvasElement | null)
-      ?? getMasterWarpCanvas();
-    if (!ctx) return;
-    const W = mwPreviewCanvas.width, H = mwPreviewCanvas.height;
-    ctx.clearRect(0, 0, W, H);
-    if (masterWarpActive && src && src.width > 0) {
-      try { ctx.drawImage(src, 0, 0, W, H); } catch { /* not ready */ }
-    } else {
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, W, H);
-    }
+  // ─── Dome projection ────────────────────────────────────────────────
+  type DomeNumberKey =
+    | 'domeFOV'
+    | 'domeRotation'
+    | 'domeTilt'
+    | 'domeOffsetX'
+    | 'domeOffsetY'
+    | 'domeCurvature'
+    | 'domeTruncation';
+
+  const domeModes: { value: OutputSettings['domeMode']; label: string }[] = [
+    { value: 'angular', label: 'Angular fisheye' },
+    { value: 'stereographic', label: 'Stereographic' },
+    { value: 'orthographic', label: 'Orthographic' },
+    { value: 'equirectangular', label: 'Equirectangular 360' },
+  ];
+
+  function clamp(value: number, min: number, max: number) {
+    return Math.max(min, Math.min(max, Number.isFinite(value) ? value : min));
   }
-  onMount(() => {
-    mwPreviewRaf = requestAnimationFrame(mwPreviewLoop);
-    return () => { if (mwPreviewRaf) cancelAnimationFrame(mwPreviewRaf); };
-  });
+  function eventNumber(e: Event, fallback = 0) {
+    const value = parseFloat((e.target as HTMLInputElement).value);
+    return Number.isFinite(value) ? value : fallback;
+  }
+  function updateDomeNumber(key: DomeNumberKey, value: number, min: number, max: number) {
+    settings.updateDomeSetting(key, clamp(value, min, max));
+  }
+  function resetDome() {
+    settings.update(s => ({
+      ...s,
+      output: {
+        ...s.output,
+        domeFOV: 180,
+        domeRotation: 0,
+        domeTilt: 0,
+        domeOffsetX: 0,
+        domeOffsetY: 0,
+        domeCurvature: 1,
+        domeTruncation: 1,
+      },
+    }));
+  }
+  function applyDomePreset(kind: 'domemaster' | 'panorama' | 'half') {
+    settings.update(s => ({
+      ...s,
+      output: {
+        ...s.output,
+        domeEnabled: true,
+        domeMode: kind === 'panorama' ? 'equirectangular' : 'angular',
+        domeFOV: kind === 'panorama' ? 360 : 180,
+        domeRotation: 0,
+        domeTilt: 0,
+        domeOffsetX: 0,
+        domeOffsetY: 0,
+        domeCurvature: 1,
+        domeTruncation: kind === 'half' ? 0.5 : 1,
+      },
+    }));
+  }
 
   // ─── Drag-reorder for the screen list ───────────────────────────────
   let dragFromIdx = -1;
@@ -196,7 +286,6 @@
 </script>
 
 <div class="screen-panel">
-  <!-- Top: screen list -->
   <div class="screens-section">
     <div class="section-head">
       <span class="section-title">Screens</span>
@@ -328,34 +417,121 @@
         </div>
         <div class="mw-hint">
           Drag the orange handles on the canvas to warp the whole output.
-          Live preview below shows the warped result.
         </div>
-        <!-- Live warped-output preview — shows the actual warp result so
-             you don't need a projector/output window open to see it. -->
-        <canvas bind:this={mwPreviewCanvas} class="mw-preview" width="240" height="135"></canvas>
         <div class="master-row">
           <button class="mini-btn" onclick={resetMasterWarp}>Reset to identity</button>
         </div>
       {/if}
     </details>
-  </div>
 
-  <!-- Bottom: inspector for the selected screen -->
-  <div class="inspector-section">
-    {#if $selectedScreen}
-      <ScreenInspector
-        screen={$selectedScreen}
-        displays={displays}
-        openWindowIds={openWindowIds}
-        onOpenOnDisplay={openOnDisplay}
-        onCloseOnDisplay={closeOnDisplay}
-        onRefreshDisplays={refreshDisplays}
-      />
-    {:else}
-      <div class="inspector-empty">
-        Select a Screen to edit warp, blend, color, and effects.
+    <!-- Dome projection — global fisheye/panorama reprojection for domes.
+         Kept beside Master canvas/warp because it changes the entire
+         master output before Screens slice it. -->
+    <details class="master-details dome-details" open={$settings.output.domeEnabled}>
+      <summary>
+        Dome projection
+        {#if $settings.output.domeEnabled}<span class="mw-active-dot dome-dot" title="Dome projection enabled"></span>{/if}
+      </summary>
+      <label class="mw-enable">
+        <input
+          type="checkbox"
+          checked={$settings.output.domeEnabled ?? false}
+          onchange={(e) => settings.setDomeEnabled((e.target as HTMLInputElement).checked)}
+        />
+        <span>Fisheye / domemaster output</span>
+      </label>
+      <div class="dome-presets">
+        <button class="dome-chip" onclick={() => applyDomePreset('domemaster')}>Domemaster 180</button>
+        <button class="dome-chip" onclick={() => applyDomePreset('half')}>Half dome</button>
+        <button class="dome-chip" onclick={() => applyDomePreset('panorama')}>Panorama 360</button>
       </div>
-    {/if}
+      {#if $settings.output.domeEnabled ?? false}
+        {@const dome = {
+          fov: $settings.output.domeFOV ?? 180,
+          rotation: $settings.output.domeRotation ?? 0,
+          tilt: $settings.output.domeTilt ?? 0,
+          curvature: $settings.output.domeCurvature ?? 1,
+          truncation: $settings.output.domeTruncation ?? 1,
+          offsetX: $settings.output.domeOffsetX ?? 0,
+          offsetY: $settings.output.domeOffsetY ?? 0,
+        }}
+        <label class="dome-field">
+          <span>Mode</span>
+          <select
+            value={$settings.output.domeMode ?? 'angular'}
+            onchange={(e) => settings.setDomeMode((e.target as HTMLSelectElement).value as OutputSettings['domeMode'])}
+          >
+            {#each domeModes as mode}
+              <option value={mode.value}>{mode.label}</option>
+            {/each}
+          </select>
+        </label>
+        <div class="dome-controls">
+          <label class="dome-row">
+            <span>FOV</span>
+            <input type="range" min="90" max="360" step="1" value={dome.fov}
+              oninput={(e) => updateDomeNumber('domeFOV', eventNumber(e, 180), 90, 360)} />
+            <em>{dome.fov.toFixed(0)}°</em>
+          </label>
+          <label class="dome-row">
+            <span>Rotation</span>
+            <input type="range" min="0" max="360" step="1" value={dome.rotation}
+              oninput={(e) => updateDomeNumber('domeRotation', eventNumber(e), 0, 360)} />
+            <em>{dome.rotation.toFixed(0)}°</em>
+          </label>
+          <label class="dome-row">
+            <span>Tilt</span>
+            <input type="range" min="-90" max="90" step="1" value={dome.tilt}
+              oninput={(e) => updateDomeNumber('domeTilt', eventNumber(e), -90, 90)} />
+            <em>{dome.tilt.toFixed(0)}°</em>
+          </label>
+          <label class="dome-row">
+            <span>Curvature</span>
+            <input type="range" min="0" max="1" step="0.01" value={dome.curvature}
+              oninput={(e) => updateDomeNumber('domeCurvature', eventNumber(e, 1), 0, 1)} />
+            <em>{(dome.curvature * 100).toFixed(0)}%</em>
+          </label>
+          <label class="dome-row">
+            <span>Truncation</span>
+            <input type="range" min="0.5" max="1" step="0.01" value={dome.truncation}
+              oninput={(e) => updateDomeNumber('domeTruncation', eventNumber(e, 1), 0.5, 1)} />
+            <em>{(dome.truncation * 100).toFixed(0)}%</em>
+          </label>
+          <label class="dome-row">
+            <span>Offset X</span>
+            <input type="range" min="-1" max="1" step="0.01" value={dome.offsetX}
+              oninput={(e) => updateDomeNumber('domeOffsetX', eventNumber(e), -1, 1)} />
+            <em>{dome.offsetX.toFixed(2)}</em>
+          </label>
+          <label class="dome-row">
+            <span>Offset Y</span>
+            <input type="range" min="-1" max="1" step="0.01" value={dome.offsetY}
+              oninput={(e) => updateDomeNumber('domeOffsetY', eventNumber(e), -1, 1)} />
+            <em>{dome.offsetY.toFixed(2)}</em>
+          </label>
+        </div>
+        <div class="master-row">
+          <button class="mini-btn" onclick={resetDome}>Reset dome</button>
+        </div>
+      {/if}
+    </details>
+
+    <div class="inspector-section">
+      {#if $selectedScreen}
+        <ScreenInspector
+          screen={$selectedScreen}
+          displays={displays}
+          openWindowIds={openWindowIds}
+          onOpenOnDisplay={openOnDisplay}
+          onCloseOnDisplay={closeOnDisplay}
+          onRefreshDisplays={refreshDisplays}
+        />
+      {:else}
+        <div class="inspector-empty">
+          Select a Screen to edit warp, blend, color, and effects.
+        </div>
+      {/if}
+    </div>
   </div>
 </div>
 
@@ -364,20 +540,15 @@
     width: 280px;
     background: #111114;
     border-right: 1px solid rgba(255, 255, 255, 0.06);
-    display: flex;
-    flex-direction: column;
     color: #eee;
     font-size: 13px;
     height: 100%;
-    overflow: hidden;
+    overflow: auto;
   }
   .screens-section {
     display: flex;
     flex-direction: column;
-    flex: 0 0 50%;
-    min-height: 200px;
-    max-height: 60%;
-    overflow: auto;
+    min-height: 100%;
     padding: 8px;
   }
   .section-head {
@@ -564,16 +735,6 @@
     line-height: 1.4;
     color: #777;
   }
-  .mw-preview {
-    display: block;
-    width: 100%;
-    height: auto;
-    margin-top: 8px;
-    border: 1px solid rgba(240, 163, 94, 0.4);
-    border-radius: 4px;
-    background: #000;
-    image-rendering: auto;
-  }
   .mw-modes {
     display: flex;
     gap: 6px;
@@ -596,12 +757,97 @@
     border-color: #f0a35e;
     color: #f0a35e;
   }
-
+  .dome-dot {
+    background: #79d6ff;
+    box-shadow: 0 0 5px rgba(121, 214, 255, 0.8);
+  }
+  .dome-presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 8px;
+  }
+  .dome-chip {
+    min-height: 24px;
+    padding: 4px 7px;
+    background: rgba(255, 255, 255, 0.045);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+    color: #b8b2c2;
+    font-size: 10px;
+    font-weight: 700;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .dome-chip:hover {
+    background: rgba(121, 214, 255, 0.12);
+    border-color: rgba(121, 214, 255, 0.32);
+    color: #cdefff;
+  }
+  .dome-field,
+  .dome-row {
+    display: grid;
+    grid-template-columns: 74px minmax(0, 1fr) 42px;
+    align-items: center;
+    gap: 6px;
+    margin-top: 7px;
+  }
+  .dome-field {
+    grid-template-columns: 74px minmax(0, 1fr);
+  }
+  .dome-field span,
+  .dome-row span {
+    color: #a29baa;
+    font-size: 11px;
+    font-weight: 650;
+  }
+  .dome-field select {
+    min-width: 0;
+    padding: 5px 7px;
+    background: rgba(0, 0, 0, 0.28);
+    border: 1px solid rgba(255, 255, 255, 0.11);
+    border-radius: 4px;
+    color: #e6e1ee;
+    font-size: 11px;
+    font-family: inherit;
+  }
+  .dome-row input[type="range"] {
+    width: 100%;
+    min-width: 0;
+    height: 4px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: #050507;
+    border-radius: 999px;
+    accent-color: #79d6ff;
+    cursor: pointer;
+  }
+  .dome-row input[type="range"]::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, rgba(121, 214, 255, 0.9), rgba(187, 134, 252, 0.55));
+  }
+  .dome-row input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px;
+    height: 12px;
+    margin-top: -4px;
+    border-radius: 50%;
+    border: 2px solid #111114;
+    background: #cdefff;
+    box-shadow: 0 0 0 1px rgba(121, 214, 255, 0.55);
+  }
+  .dome-row em {
+    color: #8f8998;
+    font-family: ui-monospace, monospace;
+    font-size: 10px;
+    font-style: normal;
+    text-align: right;
+  }
   .inspector-section {
-    flex: 1 1 50%;
-    min-height: 200px;
+    margin-top: 12px;
     border-top: 1px solid rgba(255, 255, 255, 0.08);
-    overflow: auto;
+    padding-top: 8px;
   }
   .inspector-empty {
     padding: 24px;

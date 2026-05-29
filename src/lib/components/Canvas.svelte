@@ -692,7 +692,11 @@
     // Sync dome projection settings
     const unsubDome = settings.subscribe(s => {
       if (!engine) return;
-      engine.setDomeEnabled(s.output.domeEnabled);
+      // In editor WebGPU bridge mode the hidden WebGL canvas is the raw
+      // source frame; WebGPUCanvas owns output-space reprojection so dome
+      // and master warp are baked exactly once before capture/slicing.
+      const webgpuBridgeOwnsDome = bridgeMode && !isOutputMode && !isOsrMode && !!s.experimental?.editorWebGPU;
+      engine.setDomeEnabled(webgpuBridgeOwnsDome ? false : s.output.domeEnabled);
       engine.setDomeSettings({
         mode: s.output.domeMode,
         fov: s.output.domeFOV,

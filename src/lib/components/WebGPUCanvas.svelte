@@ -195,6 +195,15 @@
   let warpStaging: ArrayBuffer | null = null;
   let warpU32: Uint32Array | null = null;
   let warpF32: Float32Array | null = null;
+  // Dome/output reprojection uniform. Kept separate from the master-warp
+  // block so older warp packing stays untouched.
+  //   cfg     = (enabled, mode, pad, pad) [u32×4]
+  //   params0 = (fovRad, rotationRad, tiltRad, curvature)
+  //   params1 = (offsetX, offsetY, truncation, aspect)
+  let domeUniformBuffer: any = null;
+  let domeStaging: ArrayBuffer | null = null;
+  let domeU32: Uint32Array | null = null;
+  let domeF32: Float32Array | null = null;
 
   let initStatus: 'init' | 'no-webgpu' | 'no-source' | 'running' | 'error' = 'init';
   let initError = '';
@@ -346,17 +355,25 @@
 // WITHIN the corner quad — same forward model as the WebGL blendRenderer.
 const MAXM: u32 = 16u;           // max mesh points per side (16×16 cap)
 // All-vec4 layout to avoid vec2 std140 alignment traps. JS packs to match:
-//   meta = (mode, rows, cols, pad)  [u32×4]
+//   cfg  = (mode, rows, cols, pad)  [u32×4]   (was "meta" — WGSL reserved word)
 //   c0   = (tl.x, tl.y, tr.x, tr.y)
 //   c1   = (bl.x, bl.y, br.x, br.y)
 //   mesh = 128 × vec4 = 256 xy pairs (row-major; pair idx = ri*cols+ci)
 struct Warp {
-  meta: vec4<u32>,
+  cfg: vec4<u32>,
   c0: vec4<f32>,
   c1: vec4<f32>,
   mesh: array<vec4<f32>, 128>,
 };
 @group(0) @binding(2) var<uniform> uWarp: Warp;
+// Dome reprojection. mode: 0 = angular/equidistant fisheye,
+// 1 = stereographic, 2 = orthographic, 3 = equirectangular panorama.
+struct Dome {
+  cfg: vec4<u32>,
+  params0: vec4<f32>,
+  params1: vec4<f32>,
+};
+@group(0) @binding(3) var<uniform> uDome: Dome;
 fn corner_tl() -> vec2<f32> { return uWarp.c0.xy; }
 fn corner_tr() -> vec2<f32> { return uWarp.c0.zw; }
 fn corner_bl() -> vec2<f32> { return uWarp.c1.xy; }
@@ -431,17 +448,119 @@ fn meshPt(idx: u32) -> vec2<f32> {
   return v.zw;
 }
 
+const PI: f32 = 3.141592653589793;
+
+fn rotate2d(p: vec2<f32>, angle: f32) -> vec2<f32> {
+  let c = cos(angle);
+  let s = sin(angle);
+  return vec2<f32>(p.x * c - p.y * s, p.x * s + p.y * c);
+}
+
+fn sampleSource(uv: vec2<f32>) -> vec4<f32> {
+  return textureSampleBaseClampToEdge(uTexture, uSampler, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)));
+}
+
+fn sampleWithDome(uv: vec2<f32>) -> vec4<f32> {
+  if (uDome.cfg.x == 0u) {
+    return sampleSource(uv);
+  }
+
+  let mode = uDome.cfg.y;
+  let fov = max(uDome.params0.x, 0.001);
+  let rotation = uDome.params0.y;
+  let tilt = uDome.params0.z;
+  let curvature = clamp(uDome.params0.w, 0.0, 1.0);
+  let offset = uDome.params1.xy;
+  let truncRadius = clamp(uDome.params1.z, 0.001, 2.0);
+  let aspect = max(uDome.params1.w, 0.001);
+
+  var p = (uv - vec2<f32>(0.5)) * 2.0;
+  // Domemaster reprojection is circular in output space, so compensate
+  // non-square master canvases before measuring radius.
+  if (aspect > 1.0) {
+    p.x = p.x * aspect;
+  } else {
+    p.y = p.y / aspect;
+  }
+  p = rotate2d(p - offset, rotation);
+
+  let r = length(p);
+  if (r > truncRadius) {
+    return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+  }
+
+  if (mode == 3u) {
+    let lon = p.x * PI;
+    let lat = p.y * PI * 0.5;
+    let texUv = clamp(vec2<f32>(
+      lon / PI * 0.5 + 0.5,
+      lat / (PI * 0.5) * 0.5 + 0.5,
+    ), vec2<f32>(0.0), vec2<f32>(1.0));
+    return sampleSource(texUv);
+  }
+
+  let halfFov = fov * 0.5;
+  var theta: f32;
+  if (mode == 1u) {
+    theta = 2.0 * atan(r * tan(halfFov * 0.5));
+  } else if (mode == 2u) {
+    theta = asin(min(r, 1.0)) * halfFov / (PI * 0.5);
+  } else {
+    theta = r * halfFov;
+  }
+
+  let phi = atan2(p.y, p.x);
+  let sinTheta = sin(theta);
+  let cosTheta = cos(theta);
+  var dir = vec3<f32>(
+    sinTheta * cos(phi),
+    sinTheta * sin(phi),
+    cosTheta,
+  );
+
+  let ct = cos(tilt);
+  let st = sin(tilt);
+  dir = vec3<f32>(
+    dir.x,
+    dir.y * ct - dir.z * st,
+    dir.y * st + dir.z * ct,
+  );
+
+  let z = max(dir.z, 0.001);
+  let domeUv = vec2<f32>(
+    dir.x / z * 0.5 + 0.5,
+    dir.y / z * 0.5 + 0.5,
+  );
+  let texUv = clamp(mix(uv, domeUv, curvature), vec2<f32>(0.0), vec2<f32>(1.0));
+  let sampled = sampleSource(texUv);
+  let edgeFade = 1.0 - smoothstep(max(truncRadius - 0.05, 0.0), truncRadius, r);
+  // WGSL forbids swizzle-assignment (color.rgb = ...) — rebuild the vec4
+  // from scratch with the faded RGB and forced-opaque alpha.
+  return vec4<f32>(sampled.rgb * edgeFade, 1.0);
+}
+
 @fragment
 fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
-  let mode = uWarp.meta.x;
-  let rows = uWarp.meta.y;
-  let cols = uWarp.meta.z;
+  let mode = uWarp.cfg.x;
+  let rows = uWarp.cfg.y;
+  let cols = uWarp.cfg.z;
   if (mode == 0u) {
-    return textureSampleBaseClampToEdge(uTexture, uSampler, in.uv);
+    return sampleWithDome(in.uv);
+  }
+  // Degenerate-quad guard: if the corner quad has near-zero area (all
+  // collapsed, inverted winding, etc.) bail to passthrough rather than
+  // produce all-black output. The geometric area of the quad is
+  // |cross(TR-TL, BL-TL) + cross(BR-BL, TR-BR)| / 2 (sum of triangles).
+  let tl = corner_tl(); let tr = corner_tr(); let bl = corner_bl(); let br = corner_br();
+  let tri1 = abs(cross2(tr - tl, bl - tl));
+  let tri2 = abs(cross2(br - bl, tr - br));
+  let quadArea = (tri1 + tri2) * 0.5;
+  if (quadArea < 0.01) {
+    return sampleWithDome(in.uv);
   }
   // Forward master warp: invert the corner quad → quad-local q. Outside
   // the quad → black (pulling a corner in crops/keystones).
-  let q = invBilinear(in.uv, corner_tl(), corner_tr(), corner_br(), corner_bl());
+  let q = invBilinear(in.uv, tl, tr, br, bl);
   if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) {
     return vec4<f32>(0.0, 0.0, 0.0, 1.0);
   }
@@ -467,9 +586,14 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
         }
       }
     }
-    if (!found) { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
+    // If no cell contained q, bail to passthrough rather than render black.
+    // The mesh search can miss legitimately (degenerate cell from a wild
+    // drag, NaN slipped in past the JS sanitize, floating-point boundary
+    // miss) — un-warped pixels are strictly better than total blackout,
+    // and the user can drag the handle back to recover.
+    if (!found) { return sampleWithDome(in.uv); }
   }
-  return textureSampleBaseClampToEdge(uTexture, uSampler, src);
+  return sampleWithDome(src);
 }
 `;
 
@@ -538,6 +662,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
           { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
           { binding: 1, visibility: GPUShaderStage.FRAGMENT, externalTexture: {} },
           { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+          { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
         ],
       });
       // Master-warp uniform: meta(16B) + c0/c1(32B) + mesh(128×16=2048B).
@@ -547,6 +672,14 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       warpF32 = new Float32Array(warpStaging);
       warpUniformBuffer = device.createBuffer({
         size: warpBytes,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      const domeBytes = 16 + 16 + 16; // cfg + params0 + params1
+      domeStaging = new ArrayBuffer(domeBytes);
+      domeU32 = new Uint32Array(domeStaging);
+      domeF32 = new Float32Array(domeStaging);
+      domeUniformBuffer = device.createBuffer({
+        size: domeBytes,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       });
       const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
@@ -624,6 +757,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   // WebGL forward-warp model: corners are destination positions (where
   // content lands); mesh deforms within the quad. mode=0 ⇒ passthrough.
   const IDENTITY_C = { tl: [0, 0], tr: [1, 0], bl: [0, 1], br: [1, 1] };
+  let warpUniformLogTick = 0;
   function updateWarpUniform(): void {
     if (!device || !warpUniformBuffer || !warpU32 || !warpF32 || !warpStaging) return;
     const warp = getStore(settings).output?.masterWarp;
@@ -631,7 +765,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     const c = warp?.corners ?? IDENTITY_C as any;
     const g = warp?.meshGrid;
     const useMesh = active && !!g && g.rows >= 2 && g.cols >= 2 && g.rows <= 16 && g.cols <= 16;
-    // meta (u32 ×4)
+    // cfg (u32 ×4) — was "meta" but that's a WGSL reserved word
     warpU32[0] = active ? 1 : 0;
     warpU32[1] = useMesh ? g!.rows : 0;
     warpU32[2] = useMesh ? g!.cols : 0;
@@ -653,6 +787,71 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       }
     }
     device.queue.writeBuffer(warpUniformBuffer, 0, warpStaging);
+    // Diagnostic: once a second, dump the actual uniform values + the
+    // bound source/present dims so we can tell whether the shader is
+    // being given degenerate input vs whether the issue is downstream
+    // (captureStream / output window). Opt out with __MWARP_DEBUG__=false.
+    if (warpUniformLogTick++ % 60 === 0) {
+      const dbg = (window as any).__MWARP_DEBUG__;
+      if (dbg !== false) {
+        // Mesh stats — min/max + NaN count, so we can spot NaN slippage
+        // or wildly-out-of-range points that would make the cell search
+        // miss all 16 cells.
+        let meshMin = Infinity, meshMax = -Infinity, meshNaN = 0;
+        const meshLen = useMesh ? g!.rows * g!.cols * 2 : 0;
+        for (let i = 0; i < meshLen; i++) {
+          const v = warpF32[12 + i];
+          if (Number.isNaN(v)) meshNaN++;
+          else { if (v < meshMin) meshMin = v; if (v > meshMax) meshMax = v; }
+        }
+        console.log('[mwarp] wgsl uniform',
+          'mode=', warpU32[0], 'rows=', warpU32[1], 'cols=', warpU32[2],
+          'TL=', warpF32[4].toFixed(3), warpF32[5].toFixed(3),
+          'TR=', warpF32[6].toFixed(3), warpF32[7].toFixed(3),
+          'BL=', warpF32[8].toFixed(3), warpF32[9].toFixed(3),
+          'BR=', warpF32[10].toFixed(3), warpF32[11].toFixed(3),
+          ...(useMesh
+            ? ['mesh min=', meshMin.toFixed(3), 'max=', meshMax.toFixed(3), 'NaN=', meshNaN]
+            : []),
+          'src=', sourceCanvas?.width, 'x', sourceCanvas?.height,
+          'present=', presentCanvas?.width, 'x', presentCanvas?.height,
+        );
+      }
+    }
+  }
+
+  function domeModeIndex(mode: string | undefined): number {
+    if (mode === 'stereographic') return 1;
+    if (mode === 'orthographic') return 2;
+    if (mode === 'equirectangular') return 3;
+    return 0;
+  }
+
+  function updateDomeUniform(): void {
+    if (!device || !domeUniformBuffer || !domeU32 || !domeF32 || !domeStaging) return;
+    const output = getStore(settings).output;
+    const fovDeg = output?.domeFOV ?? 180;
+    const rotationDeg = output?.domeRotation ?? 0;
+    const tiltDeg = output?.domeTilt ?? 0;
+    const aspect = (presentCanvas?.width && presentCanvas?.height)
+      ? presentCanvas.width / presentCanvas.height
+      : ((sourceCanvas?.width && sourceCanvas?.height) ? sourceCanvas.width / sourceCanvas.height : 16 / 9);
+
+    domeU32[0] = output?.domeEnabled ? 1 : 0;
+    domeU32[1] = domeModeIndex(output?.domeMode);
+    domeU32[2] = 0;
+    domeU32[3] = 0;
+
+    domeF32[4] = Math.max(1, fovDeg) * Math.PI / 180;
+    domeF32[5] = rotationDeg * Math.PI / 180;
+    domeF32[6] = tiltDeg * Math.PI / 180;
+    domeF32[7] = Math.max(0, Math.min(1, output?.domeCurvature ?? 1));
+    domeF32[8] = Math.max(-1, Math.min(1, output?.domeOffsetX ?? 0));
+    domeF32[9] = Math.max(-1, Math.min(1, output?.domeOffsetY ?? 0));
+    domeF32[10] = Math.max(0.001, Math.min(2, output?.domeTruncation ?? 1));
+    domeF32[11] = Number.isFinite(aspect) && aspect > 0 ? aspect : 16 / 9;
+
+    device.queue.writeBuffer(domeUniformBuffer, 0, domeStaging);
   }
 
   function presentFrame(): void {
@@ -660,7 +859,6 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       framesSkipped++;
       return;
     }
-    updateWarpUniform();
     // Resize the present canvas backing store to match the source
     // canvas dimensions. The source canvas is at project resolution
     // (e.g. 1920x1080) — we present at the same. CSS scales the
@@ -673,6 +871,8 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     }
     if (!sw || !sh) { framesSkipped++; return; }
     lastFrameDim = `${sw}x${sh}`;
+    updateWarpUniform();
+    updateDomeUniform();
 
     // The whole render pass runs inside withExternalTexture()'s
     // callback so the VideoFrame's lifetime brackets ALL of our GPU
@@ -698,6 +898,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
             { binding: 0, resource: sampler },
             { binding: 1, resource: externalTexture },
             { binding: 2, resource: { buffer: warpUniformBuffer } },
+            { binding: 3, resource: { buffer: domeUniformBuffer } },
           ],
         });
       const encoder = device.createCommandEncoder();
