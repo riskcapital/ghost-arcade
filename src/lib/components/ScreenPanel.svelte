@@ -10,7 +10,7 @@
    */
   import { onMount } from 'svelte';
   import { screens, selectedScreenId, selectedScreen, screenActions } from '../stores/screens';
-  import { settings, type OutputSlice } from '../stores/settings';
+  import { settings, identityOutputMesh, type OutputSlice } from '../stores/settings';
   import { maxOutputSlices } from '../stores/license';
   import { isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
   import OutputCanvasPreview from './OutputCanvasPreview.svelte';
@@ -105,40 +105,36 @@
 
   // ─── Master warp ────────────────────────────────────────────────────
   // One global output-side warp on the WHOLE master canvas — distinct
-  // from per-Screen warp (which targets a single slice). It's applied
-  // editor-side so BOTH output windows (WebGPU + WebRTC fallback) carry
-  // already-warped pixels. Corner positions are normalized 0..1 sample
-  // points on the master canvas; identity (0,0 / 1,0 / 0,1 / 1,1) is a
-  // visual no-op so flipping it on changes nothing until a corner moves.
+  // from per-Screen warp (which targets a single slice). Applied editor-
+  // side so BOTH output windows (WebGPU + WebRTC fallback) carry already-
+  // warped pixels. Two modes: Corners (4-point edge/quad) and Mesh (grid).
+  // Geometry is dragged directly on the editor canvas (MasterWarpHandles,
+  // orange handles) — there's no numeric entry. Identity is a visual
+  // no-op so flipping it on changes nothing until a handle moves.
   const IDENTITY_CORNERS = {
     topLeft: { x: 0, y: 0 }, topRight: { x: 1, y: 0 },
     bottomLeft: { x: 0, y: 1 }, bottomRight: { x: 1, y: 1 },
   };
   $: masterWarp = $settings.output.masterWarp ?? { enabled: false, mode: 'corners' as const };
-  $: masterCorners = masterWarp.corners ?? IDENTITY_CORNERS;
+  $: masterMode = masterWarp.mode === 'mesh' && masterWarp.meshGrid ? 'mesh' : 'corners';
+
   function toggleMasterWarp(enabled: boolean) {
-    // Seed identity corners on first enable so the warp shader has a
-    // well-defined (no-op) starting geometry to drag from.
+    // Seed identity corners on first enable so the shader has a well-
+    // defined (no-op) starting quad to drag from.
     settings.setMasterWarp({ enabled, corners: masterWarp.corners ?? IDENTITY_CORNERS });
   }
-  type Corner = 'topLeft' | 'topRight' | 'bottomLeft' | 'bottomRight';
-  function setMasterCorner(corner: Corner, axis: 'x' | 'y', value: number) {
-    const v = Math.max(-0.5, Math.min(1.5, value));
-    const next = { ...masterCorners, [corner]: { ...masterCorners[corner], [axis]: v } };
-    settings.setMasterWarp({ corners: next });
+  function setMasterMode(mode: 'corners' | 'mesh') {
+    if (mode === 'mesh') {
+      settings.setMasterWarp({ mode, meshGrid: masterWarp.meshGrid ?? identityOutputMesh() });
+    } else {
+      settings.setMasterWarp({ mode, corners: masterWarp.corners ?? IDENTITY_CORNERS });
+    }
   }
   function resetMasterWarp() {
-    settings.setMasterWarp({ corners: IDENTITY_CORNERS });
+    // Reset the active mode's geometry back to identity.
+    if (masterMode === 'mesh') settings.setMasterWarp({ meshGrid: identityOutputMesh() });
+    else settings.setMasterWarp({ corners: IDENTITY_CORNERS });
   }
-  $: masterWarpIsIdentity =
-    masterCorners.topLeft.x === 0 && masterCorners.topLeft.y === 0 &&
-    masterCorners.topRight.x === 1 && masterCorners.topRight.y === 0 &&
-    masterCorners.bottomLeft.x === 0 && masterCorners.bottomLeft.y === 1 &&
-    masterCorners.bottomRight.x === 1 && masterCorners.bottomRight.y === 1;
-  const MASTER_CORNER_FIELDS: { key: Corner; label: string }[] = [
-    { key: 'topLeft', label: 'TL' }, { key: 'topRight', label: 'TR' },
-    { key: 'bottomLeft', label: 'BL' }, { key: 'bottomRight', label: 'BR' },
-  ];
 
   // ─── Drag-reorder for the screen list ───────────────────────────────
   let dragFromIdx = -1;
@@ -266,13 +262,13 @@
       </div>
     </details>
 
-    <!-- Master warp — one global warp on the whole output composite.
-         Applies to both output windows (WebGPU + WebRTC) and senders.
-         Corner numeric entry for now; on-canvas drag handles to follow. -->
+    <!-- Master warp — one global warp on the whole output composite,
+         applied to both output windows (WebGPU + WebRTC). Drag the
+         orange handles on the canvas; this panel is just enable + mode. -->
     <details class="master-details" open={masterWarp.enabled}>
       <summary>
         Master warp
-        {#if masterWarp.enabled && !masterWarpIsIdentity}<span class="mw-active-dot" title="Warp active"></span>{/if}
+        {#if masterWarp.enabled}<span class="mw-active-dot" title="Warp active"></span>{/if}
       </summary>
       <label class="mw-enable">
         <input
@@ -283,31 +279,20 @@
         <span>Warp entire output</span>
       </label>
       {#if masterWarp.enabled}
-        <div class="mw-hint">
-          Normalized 0–1 corner sample points on the master canvas.
-          Identity = no change. Affects WebGPU + fallback output windows.
+        <div class="mw-modes" role="group" aria-label="Master warp mode">
+          <button class="mw-mode" class:active={masterMode === 'corners'} onclick={() => setMasterMode('corners')}>
+            Edge / Corners
+          </button>
+          <button class="mw-mode" class:active={masterMode === 'mesh'} onclick={() => setMasterMode('mesh')}>
+            Mesh
+          </button>
         </div>
-        <div class="mw-corners">
-          {#each MASTER_CORNER_FIELDS as f}
-            <div class="mw-corner-row">
-              <span class="mw-corner-label">{f.label}</span>
-              <input
-                type="number" min="-0.5" max="1.5" step="0.005" class="master-num"
-                value={masterCorners[f.key].x}
-                onchange={(e) => setMasterCorner(f.key, 'x', parseFloat((e.target as HTMLInputElement).value))}
-              />
-              <input
-                type="number" min="-0.5" max="1.5" step="0.005" class="master-num"
-                value={masterCorners[f.key].y}
-                onchange={(e) => setMasterCorner(f.key, 'y', parseFloat((e.target as HTMLInputElement).value))}
-              />
-            </div>
-          {/each}
+        <div class="mw-hint">
+          Drag the orange handles on the canvas to warp the whole output.
+          The editor preview stays straight — the warp shows on the output window.
         </div>
         <div class="master-row">
-          <button class="mini-btn" onclick={resetMasterWarp} disabled={masterWarpIsIdentity}>
-            Reset to identity
-          </button>
+          <button class="mini-btn" onclick={resetMasterWarp}>Reset to identity</button>
         </div>
       {/if}
     </details>
@@ -537,24 +522,28 @@
     line-height: 1.4;
     color: #777;
   }
-  .mw-corners {
-    margin-top: 6px;
+  .mw-modes {
     display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  .mw-corner-row {
-    display: flex;
-    align-items: center;
     gap: 6px;
+    margin-top: 8px;
   }
-  .mw-corner-label {
-    width: 22px;
-    font-family: ui-monospace, monospace;
+  .mw-mode {
+    flex: 1;
+    padding: 4px 8px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 3px;
+    color: #ccc;
     font-size: 10px;
-    color: #888;
+    cursor: pointer;
+    font-family: inherit;
   }
-  .mw-corner-row .master-num { width: 64px; }
+  .mw-mode:hover { background: rgba(255, 255, 255, 0.08); }
+  .mw-mode.active {
+    background: rgba(240, 163, 94, 0.18);
+    border-color: #f0a35e;
+    color: #f0a35e;
+  }
 
   .inspector-section {
     flex: 1 1 50%;
