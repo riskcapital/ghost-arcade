@@ -68,7 +68,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { isWebGPUSupported, probeWebGPU } from '$lib/renderer/webgpuCapability';
   import { stopOutputSharedTexturePresenter, setOutputCursor, setOutputCursorStyle } from '$lib/sync/outputSharedTexturePresenter';
-  import { reconcileMasterWarpOutput, tickMasterWarpOutput, resetMasterWarpReconcile } from '$lib/sync/outputComposite';
+  import { reconcileMasterWarpOutput, resetMasterWarpReconcile } from '$lib/sync/outputComposite';
   import { settings, outputFrozen, masterWarpIsActive } from '$lib/stores/settings';
   import { WebGPUPaintDrip } from '$lib/renderer/webgpuPaintDrip';
   import { WebGPUAdvLightPaint } from '$lib/renderer/webgpuAdvLightPaint';
@@ -136,13 +136,21 @@
   function reconcileOutputRegistration(): void {
     if (isOutputMode || isOsrMode) return;
     const webgpuLive = initStatus === 'running' || initStatus === 'no-source';
+    // When WebGPU is live, the master warp is baked into presentCanvas by
+    // the present shader (see updateWarpUniform + SHADER_WGSL), so the
+    // transports just capture presentCanvas directly — warpActive=false
+    // here (do NOT route through the WebGL blendRenderer/captureStream
+    // detour, which is what went black). Only when WebGPU is NOT live do
+    // we fall back to the WebGL source canvas + the WebGL warp path.
     const outSource = webgpuLive ? presentCanvas : sourceCanvas;
     if (!outSource) return;
     const s = getStore(settings);
     const _perf = s?.performance;
     reconcileMasterWarpOutput({
       baseSource: outSource,
-      warpActive: masterWarpIsActive(s.output?.masterWarp),
+      // Warp is in-shader on presentCanvas when WebGPU is live; only use
+      // the WebGL warp path on the non-WebGPU fallback source.
+      warpActive: webgpuLive ? false : masterWarpIsActive(s.output?.masterWarp),
       zeroCopy: !!s.experimental?.outputZeroCopy,
       webrtc: !!s.experimental?.outputWebRTC,
       getWarp: () => getStore(settings).output?.masterWarp,
@@ -178,6 +186,15 @@
   let pipeline: any = null;
   let sampler: any = null;
   let bindGroupLayout: any = null;
+  // Master-warp uniform buffer + a CPU-side staging ArrayBuffer. Layout:
+  //   [0..3]   meta u32 (mode, rows, cols, pad)
+  //   [16..47] corners: c0(tl.xy,tr.xy), c1(bl.xy,br.xy)
+  //   [48..]   mesh: 128 vec4 (256 xy pairs)
+  // 16-byte aligned throughout (vec4 blocks).
+  let warpUniformBuffer: any = null;
+  let warpStaging: ArrayBuffer | null = null;
+  let warpU32: Uint32Array | null = null;
+  let warpF32: Float32Array | null = null;
 
   let initStatus: 'init' | 'no-webgpu' | 'no-source' | 'running' | 'error' = 'init';
   let initError = '';
@@ -323,6 +340,28 @@
 @group(0) @binding(0) var uSampler: sampler;
 @group(0) @binding(1) var uTexture: texture_external;
 
+// Master warp uniform. mode: 0 = off (passthrough), 1 = corners (+optional
+// mesh). Corners are destination positions in 0..1 (where content lands);
+// we inverse-bilinear to find the source uv. Mesh (rows/cols ≥ 2) deforms
+// WITHIN the corner quad — same forward model as the WebGL blendRenderer.
+const MAXM: u32 = 16u;           // max mesh points per side (16×16 cap)
+// All-vec4 layout to avoid vec2 std140 alignment traps. JS packs to match:
+//   meta = (mode, rows, cols, pad)  [u32×4]
+//   c0   = (tl.x, tl.y, tr.x, tr.y)
+//   c1   = (bl.x, bl.y, br.x, br.y)
+//   mesh = 128 × vec4 = 256 xy pairs (row-major; pair idx = ri*cols+ci)
+struct Warp {
+  meta: vec4<u32>,
+  c0: vec4<f32>,
+  c1: vec4<f32>,
+  mesh: array<vec4<f32>, 128>,
+};
+@group(0) @binding(2) var<uniform> uWarp: Warp;
+fn corner_tl() -> vec2<f32> { return uWarp.c0.xy; }
+fn corner_tr() -> vec2<f32> { return uWarp.c0.zw; }
+fn corner_bl() -> vec2<f32> { return uWarp.c1.xy; }
+fn corner_br() -> vec2<f32> { return uWarp.c1.zw; }
+
 struct VSOut {
   @builtin(position) clip: vec4<f32>,
   @location(0) uv: vec2<f32>,
@@ -352,9 +391,85 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VSOut {
   return out;
 }
 
+fn cross2(a: vec2<f32>, b: vec2<f32>) -> f32 { return a.x * b.y - a.y * b.x; }
+
+// Inverse bilinear (Inigo Quilez). Quad winding a=TL,b=TR,c=BR,d=BL.
+// Returns (-1,-1) when p is outside the quad.
+fn invBilinear(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, d: vec2<f32>) -> vec2<f32> {
+  let e = b - a;
+  let f = d - a;
+  let g = a - b + c - d;
+  let h = p - a;
+  let k2 = cross2(g, f);
+  let k1 = cross2(e, f) + cross2(h, g);
+  let k0 = cross2(h, e);
+  var u: f32;
+  var v: f32;
+  if (abs(k2) < 0.0001) {
+    if (abs(k1) < 0.0001) { return vec2<f32>(-1.0, -1.0); }
+    v = -k0 / k1;
+    let denom = e.x + g.x * v;
+    if (abs(denom) > 0.0001) { u = (h.x - f.x * v) / denom; }
+    else { u = (h.y - f.y * v) / (e.y + g.y * v); }
+  } else {
+    let w = k1 * k1 - 4.0 * k0 * k2;
+    if (w < 0.0) { return vec2<f32>(-1.0, -1.0); }
+    let sw = sqrt(w);
+    let v1 = (-k1 - sw) / (2.0 * k2);
+    let v2 = (-k1 + sw) / (2.0 * k2);
+    if (v1 >= 0.0 && v1 <= 1.0) { v = v1; } else { v = v2; }
+    let denom = e.x + g.x * v;
+    if (abs(denom) > 0.0001) { u = (h.x - f.x * v) / denom; }
+    else { u = (h.y - f.y * v) / (e.y + g.y * v); }
+  }
+  return vec2<f32>(u, v);
+}
+
+fn meshPt(idx: u32) -> vec2<f32> {
+  let v = uWarp.mesh[idx / 2u];
+  if ((idx & 1u) == 0u) { return v.xy; }
+  return v.zw;
+}
+
 @fragment
 fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
-  return textureSampleBaseClampToEdge(uTexture, uSampler, in.uv);
+  let mode = uWarp.meta.x;
+  let rows = uWarp.meta.y;
+  let cols = uWarp.meta.z;
+  if (mode == 0u) {
+    return textureSampleBaseClampToEdge(uTexture, uSampler, in.uv);
+  }
+  // Forward master warp: invert the corner quad → quad-local q. Outside
+  // the quad → black (pulling a corner in crops/keystones).
+  let q = invBilinear(in.uv, corner_tl(), corner_tr(), corner_br(), corner_bl());
+  if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) {
+    return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+  }
+  var src = q;
+  // Mesh: invert the deformation within the quad (per-cell inverse-bilinear).
+  if (rows >= 2u && cols >= 2u) {
+    var found = false;
+    for (var ri: u32 = 0u; ri < MAXM - 1u; ri = ri + 1u) {
+      if (ri >= rows - 1u) { break; }
+      for (var ci: u32 = 0u; ci < MAXM - 1u; ci = ci + 1u) {
+        if (ci >= cols - 1u) { break; }
+        if (found) { continue; }
+        let a = meshPt(ri * cols + ci);
+        let b = meshPt(ri * cols + ci + 1u);
+        let c = meshPt((ri + 1u) * cols + ci + 1u);
+        let d = meshPt((ri + 1u) * cols + ci);
+        let t = invBilinear(q, a, b, c, d);
+        if (t.x >= 0.0 && t.x <= 1.0 && t.y >= 0.0 && t.y <= 1.0) {
+          let gu = (f32(ci) + t.x) / f32(cols - 1u);
+          let gv = (f32(ri) + t.y) / f32(rows - 1u);
+          src = vec2<f32>(gu, gv);
+          found = true;
+        }
+      }
+    }
+    if (!found) { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
+  }
+  return textureSampleBaseClampToEdge(uTexture, uSampler, src);
 }
 `;
 
@@ -422,7 +537,17 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
         entries: [
           { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
           { binding: 1, visibility: GPUShaderStage.FRAGMENT, externalTexture: {} },
+          { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
         ],
+      });
+      // Master-warp uniform: meta(16B) + c0/c1(32B) + mesh(128×16=2048B).
+      const warpBytes = 16 + 32 + 128 * 16; // = 2096
+      warpStaging = new ArrayBuffer(warpBytes);
+      warpU32 = new Uint32Array(warpStaging);
+      warpF32 = new Float32Array(warpStaging);
+      warpUniformBuffer = device.createBuffer({
+        size: warpBytes,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       });
       const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
       pipeline = device.createRenderPipeline({
@@ -495,11 +620,47 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     }
   }
 
+  // Pack the current master warp into the uniform buffer. Mirrors the
+  // WebGL forward-warp model: corners are destination positions (where
+  // content lands); mesh deforms within the quad. mode=0 ⇒ passthrough.
+  const IDENTITY_C = { tl: [0, 0], tr: [1, 0], bl: [0, 1], br: [1, 1] };
+  function updateWarpUniform(): void {
+    if (!device || !warpUniformBuffer || !warpU32 || !warpF32 || !warpStaging) return;
+    const warp = getStore(settings).output?.masterWarp;
+    const active = masterWarpIsActive(warp);
+    const c = warp?.corners ?? IDENTITY_C as any;
+    const g = warp?.meshGrid;
+    const useMesh = active && !!g && g.rows >= 2 && g.cols >= 2 && g.rows <= 16 && g.cols <= 16;
+    // meta (u32 ×4)
+    warpU32[0] = active ? 1 : 0;
+    warpU32[1] = useMesh ? g!.rows : 0;
+    warpU32[2] = useMesh ? g!.cols : 0;
+    warpU32[3] = 0;
+    // corners — f32 starting at byte 16 → index 4
+    warpF32[4] = c.topLeft?.x ?? c.tl?.[0] ?? 0; warpF32[5] = c.topLeft?.y ?? c.tl?.[1] ?? 0;
+    warpF32[6] = c.topRight?.x ?? c.tr?.[0] ?? 1; warpF32[7] = c.topRight?.y ?? c.tr?.[1] ?? 0;
+    warpF32[8] = c.bottomLeft?.x ?? c.bl?.[0] ?? 0; warpF32[9] = c.bottomLeft?.y ?? c.bl?.[1] ?? 1;
+    warpF32[10] = c.bottomRight?.x ?? c.br?.[0] ?? 1; warpF32[11] = c.bottomRight?.y ?? c.br?.[1] ?? 1;
+    // mesh xy pairs — f32 starting at byte 48 → index 12. Pair k at 12+2k.
+    if (useMesh) {
+      for (let r = 0; r < g!.rows; r++) {
+        for (let cc = 0; cc < g!.cols; cc++) {
+          const k = r * g!.cols + cc;
+          const p = g!.points[r]?.[cc];
+          warpF32[12 + k * 2] = p?.x ?? 0;
+          warpF32[12 + k * 2 + 1] = p?.y ?? 0;
+        }
+      }
+    }
+    device.queue.writeBuffer(warpUniformBuffer, 0, warpStaging);
+  }
+
   function presentFrame(): void {
     if (!sourceCanvas || !device || !pipeline || !canvasContext) {
       framesSkipped++;
       return;
     }
+    updateWarpUniform();
     // Resize the present canvas backing store to match the source
     // canvas dimensions. The source canvas is at project resolution
     // (e.g. 1920x1080) — we present at the same. CSS scales the
@@ -536,6 +697,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
           entries: [
             { binding: 0, resource: sampler },
             { binding: 1, resource: externalTexture },
+            { binding: 2, resource: { buffer: warpUniformBuffer } },
           ],
         });
       const encoder = device.createCommandEncoder();
@@ -949,12 +1111,9 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       // passes stop advancing. The canvas retains its last frame. RAF
       // keeps rescheduling so we resume instantly on unfreeze.
       if (initStatus === 'running' && !frozen) presentFrame();
-      // Master-warp output tick — fill the warped output canvas from the
-      // WebGL source (blendRenderer-safe; identical content to the WebGPU
-      // present surface in bridge mode). No-op unless the warp is active.
-      // Runs here because WebGPUCanvas owns output registration in pilot
-      // mode (Canvas.svelte's tick is skipped under bridgeMode).
-      if (!isOutputMode && !isOsrMode && sourceCanvas) tickMasterWarpOutput(sourceCanvas);
+      // Note: in WebGPU mode the master warp is applied IN presentFrame's
+      // shader (updateWarpUniform), so no separate WebGL warp tick here —
+      // presentCanvas is already warped and is what the transports capture.
       // Dev-mode VideoFrame leak watchdog — early-returns when
       // `window.__VIDEO_FRAME_DEBUG__` is falsy, so this is free
       // in production. When debug is on, warns if >1 frame stays
