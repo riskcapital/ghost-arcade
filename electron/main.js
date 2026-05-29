@@ -2469,7 +2469,9 @@ function createMainWindow() {
   // they see a normal BrowserWindow reference and don't care how it
   // was opened.
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    if (!details.url.includes('mode=webgpu-display')) {
+    const isWebgpuOutput = details.url.includes('mode=webgpu-display');
+    const isSliceDisplay = details.url.includes('mode=slice-display');
+    if (!isWebgpuOutput && !isSliceDisplay) {
       // Block any other window.open from the renderer — the editor
       // shouldn't be opening arbitrary windows for any other reason.
       // The legacy output modes still go through the IPC create_output_window
@@ -2478,7 +2480,11 @@ function createMainWindow() {
     }
 
     // Resolve placement from the pre-staged config (or sensible
-    // defaults if the editor opened without configuring).
+    // defaults if the editor opened without configuring). Both the
+    // webgpu-display output and the slice-display per-screen window
+    // share the same staging IPC + handler so the slice window inherits
+    // the same same-process / DOM-accessible properties that let it
+    // read the editor's already-warped presentCanvas via window.opener.
     const cfg = pendingOutputWindowConfig || {};
     pendingOutputWindowConfig = null;
     const allDisplays = screen.getAllDisplays();
@@ -2494,6 +2500,10 @@ function createMainWindow() {
     const winX = fullscreen ? bounds.x : Math.round(cfg.x ?? bounds.x + (bounds.width - winW) / 2);
     const winY = fullscreen ? bounds.y : Math.round(cfg.y ?? bounds.y + (bounds.height - winH) / 2);
 
+    // Slice windows are projector-targeted: borderless + always fullscreen
+    // matches the legacy `output_open_slice_window` behaviour. Output
+    // windows keep the framed, resizable chrome for in-app preview.
+    const isSliceWin = isSliceDisplay;
     return {
       action: 'allow',
       overrideBrowserWindowOptions: {
@@ -2501,15 +2511,15 @@ function createMainWindow() {
         height: winH,
         x: winX,
         y: winY,
-        title: 'Ghost Arcade Output',
-        resizable: true,
-        frame: true,
-        fullscreen,
+        title: isSliceWin ? 'Ghost Arcade Output — slice' : 'Ghost Arcade Output',
+        resizable: !isSliceWin,
+        frame: !isSliceWin,
+        fullscreen: isSliceWin ? true : fullscreen,
         simpleFullscreen: process.platform === 'darwin',
         autoHideMenuBar: true,
         skipTaskbar: false,
         backgroundColor: '#000000',
-        hasShadow: true,
+        hasShadow: !isSliceWin,
         webPreferences: {
           preload: path.join(__dirname, 'preload.cjs'),
           contextIsolation: true,
@@ -2531,7 +2541,42 @@ function createMainWindow() {
   // against it. Also wire the close handler so we clear the global
   // when the user closes the output window.
   mainWindow.webContents.on('did-create-window', (newWindow, details) => {
-    if (!details.url.includes('mode=webgpu-display')) return;
+    const url = details.url || '';
+    const isWebgpuOutput = url.includes('mode=webgpu-display');
+    const isSliceDisplay = url.includes('mode=slice-display');
+    if (!isWebgpuOutput && !isSliceDisplay) return;
+    if (isSliceDisplay) {
+      // Per-screen slice window opened via window.open from the editor.
+      // Lives in the SAME renderer process as the editor (Electron groups
+      // same-origin window.open targets), so SliceOutputApp can read the
+      // editor's already-warped presentCanvas via window.opener.document
+      // — that's the whole point of routing slice display through window.open
+      // instead of the legacy `output_open_slice_window` IPC (which spawns
+      // a separate process whose blendRenderer black-frames on hidden
+      // texture upload).
+      try {
+        const m = url.match(/sliceId=([^&]+)/);
+        const sliceId = m ? decodeURIComponent(m[1]) : null;
+        if (sliceId) {
+          const existing = sliceWindows.get(sliceId);
+          if (existing && existing !== newWindow && !existing.isDestroyed()) {
+            try { existing.close(); } catch { /* */ }
+          }
+          sliceWindows.set(sliceId, newWindow);
+          newWindow.on('closed', () => {
+            if (sliceWindows.get(sliceId) === newWindow) sliceWindows.delete(sliceId);
+          });
+          console.log(`[Output] slice display window captured (zero-copy) for slice ${sliceId}`);
+        }
+      } catch (err) {
+        console.warn('[Output] slice display capture failed:', err);
+      }
+      try { newWindow.setMenuBarVisibility(false); } catch { /* */ }
+      if (process.env.GHOSTARCADE_SLICE_DEVTOOLS === '1') {
+        try { newWindow.webContents.openDevTools({ mode: 'detach' }); } catch { /* */ }
+      }
+      return;
+    }
     outputWindow = newWindow;
     try { newWindow.setMenuBarVisibility(false); } catch { /* */ }
     console.log('[Output] zero-copy output window captured into outputWindow global');

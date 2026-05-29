@@ -598,21 +598,50 @@
     // Canvas's own onMount hasn't fired yet — bind:this fires after
     // mount but Canvas's `canvas` element binding is set inside
     // ITS onMount which runs in a separate microtask.
-    if ($settings.experimental?.editorWebGPU) {
+    // Push the WebGL source canvas into the WebGPU bridge whenever
+    // editorWebGPU is on. CRITICAL: must be reactive — the flag can be
+    // toggled at runtime via Settings. If we only ran this once at App
+    // mount, toggling the flag ON later would reactively mount
+    // WebGPUCanvas but nobody would ever call setSourceCanvas() on it,
+    // so presentFrame early-returns each frame and the visible
+    // presentCanvas stays black while Canvas's WebGL canvas is hidden
+    // via opacity:0 → total blackout.
+    let _bridgeWiringInFlight = false;
+    let _lastWiredSource: HTMLCanvasElement | null = null;
+    let _lastWiredBridge: WebGPUCanvas | null = null;
+    settings.subscribe((s) => {
+      if (!s.experimental?.editorWebGPU) return;
+      // Idempotent — only re-wire when the canvas or bridge instance
+      // actually changes (component remount). Otherwise every settings
+      // emit (every corner-drag frame) re-pushes the same canvas and
+      // floods the console.
+      const c0 = canvasComponent?.getCanvas?.();
+      if (c0 && webgpuBridgeComponent
+          && c0 === _lastWiredSource
+          && webgpuBridgeComponent === _lastWiredBridge) {
+        return;
+      }
+      if (_bridgeWiringInFlight) return;
+      _bridgeWiringInFlight = true;
       let attempts = 0;
       const tryPushSource = () => {
         const c = canvasComponent?.getCanvas?.();
         if (c && webgpuBridgeComponent) {
           webgpuBridgeComponent.setSourceCanvas(c);
+          _lastWiredSource = c;
+          _lastWiredBridge = webgpuBridgeComponent;
           console.log('[App] WebGPU bridge source canvas wired:', c.width, 'x', c.height);
+          _bridgeWiringInFlight = false;
           return;
         }
         if (attempts++ < 40) setTimeout(tryPushSource, 50);
-        else console.warn('[App] WebGPU bridge: source canvas never appeared (Canvas.getCanvas() returned null after 2s)');
+        else {
+          console.warn('[App] WebGPU bridge: source canvas never appeared (Canvas.getCanvas() returned null after 2s)');
+          _bridgeWiringInFlight = false;
+        }
       };
-      // Defer to next tick so bind:this has fired on both children.
       setTimeout(tryPushSource, 0);
-    }
+    });
 
     // Auto-report uncaught errors and promise rejections
     const onError = (e: ErrorEvent) => {

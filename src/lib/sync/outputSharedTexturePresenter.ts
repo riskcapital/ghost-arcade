@@ -61,11 +61,19 @@ type EditorFrame = VideoFrame;
 let sourceCanvas: HTMLCanvasElement | null = null;
 let captureFrameRate = 60;
 
-// One target window + one paired port. Multi-output extension would
-// turn these into Map<windowId, {target, port}>.
-let targetWindow: Window | null = null;
-let outboundPort: MessagePort | null = null;
-let pendingChannel: MessageChannel | null = null;
+// Multi-target: each attached output window (Fullscreen + N slice
+// displays) has its own MessagePort. The single editor pump reads
+// VideoFrames and fan-outs to all attached ports via VideoFrame.clone()
+// (refcount bump — still zero-copy on the underlying GpuMemoryBuffer).
+// Backwards-compat: callers that don't pass an id share the legacy
+// 'main' slot (the Fullscreen output's traditional slot).
+type TargetState = {
+  window: Window;
+  port: MessagePort | null;
+  pendingChannel: MessageChannel | null;
+  lastTransformJson: string;
+};
+const targets = new Map<string, TargetState>();
 
 let mediaStream: MediaStream | null = null;
 let processor: MediaStreamTrackProcessor<EditorFrame> | null = null;
@@ -73,7 +81,6 @@ let reader: ReadableStreamDefaultReader<EditorFrame> | null = null;
 let pumpRunning = false;
 
 let settingsUnsub: (() => void) | null = null;
-let lastTransformJson = '';
 
 // Listener for the output window's 'ready' message + 'bye' message.
 // Registered exactly once when the first attachOutputWindow call
@@ -103,64 +110,79 @@ function installMessageListener(): void {
   if (messageListenerInstalled) return;
   if (typeof window === 'undefined') return;
   window.addEventListener('message', (event: MessageEvent) => {
-    // Only consider messages from windows we have attached as targets
-    // (the output window sends from its own context). MessageEvent.source
-    // is a WindowProxy when the message comes from another window.
     if (!event?.data || typeof event.data !== 'object') return;
     const data = event.data;
     if (data.type === 'ghostarcade-output-ready') {
-      // The output window is ready to receive. Establish the channel.
-      // Validate source matches the target we attached, in case we
-      // somehow get a ready from an old window after a reattach.
-      if (event.source && targetWindow && event.source === (targetWindow as any)) {
-        establishChannel();
-      } else if (targetWindow) {
-        // No source check — accept anyway. Chromium doesn't always
-        // populate event.source for cross-window posts depending on
-        // the security context. The targetWindow check + the URL
-        // mode gate on the receiver side is enough.
-        establishChannel();
+      // Find which attached target sent this ready. event.source is a
+      // WindowProxy when the message came from another window. Compare
+      // against each attached target.window to route correctly.
+      let matchedId: string | null = null;
+      if (event.source) {
+        for (const [id, t] of targets) {
+          if (event.source === (t.window as any)) { matchedId = id; break; }
+        }
       }
+      if (!matchedId) {
+        // Chromium can drop event.source on cross-window posts in some
+        // security contexts. Fallback: if exactly one target is awaiting
+        // ready (no port yet), establish that one. With multiple racing
+        // attaches this isn't perfect but it's the historical behavior.
+        const awaiting = Array.from(targets.entries()).filter(([, t]) => !t.port);
+        if (awaiting.length === 1) matchedId = awaiting[0][0];
+      }
+      if (matchedId) establishChannel(matchedId);
     } else if (data.type === 'ghostarcade-output-bye') {
-      // Output is shutting down or reloading. Tear down the pump so
-      // we don't keep posting to a dead port.
-      console.log('[OutputSharedTexture] output window said bye — tearing down pump');
-      stopOutputSharedTexturePresenter();
+      // Route to the right target. If no source match (cross-process
+      // event.source loss), tear down all — the user has presumably
+      // closed everything.
+      let matchedId: string | null = null;
+      if (event.source) {
+        for (const [id, t] of targets) {
+          if (event.source === (t.window as any)) { matchedId = id; break; }
+        }
+      }
+      if (matchedId) {
+        console.log(`[OutputSharedTexture] target ${matchedId} said bye — detaching`);
+        detachOutputWindow(matchedId);
+      } else if (targets.size === 1) {
+        const [id] = targets.keys();
+        detachOutputWindow(id);
+      }
     }
   });
   messageListenerInstalled = true;
 }
 
-function establishChannel(): void {
-  if (!targetWindow) return;
-  if (outboundPort) {
+function establishChannel(id: string): void {
+  const t = targets.get(id);
+  if (!t) return;
+  if (t.port) {
     // Already established — re-establishing means the output reloaded.
-    // Tear down the old pump first.
-    teardownPort();
+    try { t.port.close(); } catch { /* */ }
+    t.port = null;
   }
   try {
-    pendingChannel = new MessageChannel();
-    // Post port2 to the output window. The transfer list MUST include
-    // port2 — otherwise the port gets cloned (which doesn't actually
-    // create a working MessagePort).
-    targetWindow.postMessage(
+    t.pendingChannel = new MessageChannel();
+    // Post port2 to the target window. transfer list MUST include port2.
+    t.window.postMessage(
       { type: 'ghostarcade-output-transport-port' },
       '*',
-      [pendingChannel.port2],
+      [t.pendingChannel.port2],
     );
-    outboundPort = pendingChannel.port1;
-    pendingChannel = null;
-    console.log('[OutputSharedTexture] MessageChannel established with output window — port1 retained, port2 sent');
-    // Push initial transform snapshot now that the port is live.
-    sendTransformSnapshot(get(settings));
+    t.port = t.pendingChannel.port1;
+    t.pendingChannel = null;
+    t.lastTransformJson = '';
+    console.log(`[OutputSharedTexture] MessageChannel established with target ${id}`);
+    // Push initial transform snapshot now that this port is live.
+    sendTransformSnapshotToTarget(t, get(settings));
     maybeStartPump();
   } catch (err) {
-    console.error('[OutputSharedTexture] failed to establish channel:', err);
+    console.error(`[OutputSharedTexture] failed to establish channel for ${id}:`, err);
   }
 }
 
-function sendTransformSnapshot(s: any): void {
-  if (!outboundPort) return;
+function sendTransformSnapshotToTarget(t: TargetState, s: any): void {
+  if (!t.port) return;
   const payload = {
     type: 'transform',
     rotation: s.output?.outputRotation ?? 0,
@@ -170,25 +192,23 @@ function sendTransformSnapshot(s: any): void {
     fit: (s.output as any)?.outputFit ?? 'cover',
   };
   const json = JSON.stringify(payload);
-  if (json === lastTransformJson) return;
-  lastTransformJson = json;
+  if (json === t.lastTransformJson) return;
+  t.lastTransformJson = json;
   try {
-    outboundPort.postMessage(payload);
+    t.port.postMessage(payload);
   } catch {
-    // Port may have closed since we last checked; pump's catch will
-    // detect it on the next frame.
+    // Port may have closed; pump will detect on next frame.
   }
 }
 
-// Output cursor position (0..1 normalized canvas coords). The editor
-// renderer pushes the latest mouse-over-canvas position via this
-// setter; the output receiver renders a CSS crosshair overlay at
-// that position when visible. De-duped on the JSON of the payload
-// so we don't spam the channel with identical messages between
-// frames where the cursor didn't actually move.
+function sendTransformSnapshot(s: any): void {
+  for (const t of targets.values()) sendTransformSnapshotToTarget(t, s);
+}
+
+// Output cursor position (0..1 normalized canvas coords).
 let lastCursorJson = '';
 export function setOutputCursor(u: number, v: number, visible: boolean): void {
-  if (!outboundPort) return;
+  if (targets.size === 0) return;
   const payload = {
     type: 'cursor',
     x: Math.max(0, Math.min(1, u)),
@@ -198,9 +218,10 @@ export function setOutputCursor(u: number, v: number, visible: boolean): void {
   const json = JSON.stringify(payload);
   if (json === lastCursorJson) return;
   lastCursorJson = json;
-  try {
-    outboundPort.postMessage(payload);
-  } catch { /* */ }
+  for (const t of targets.values()) {
+    if (!t.port) continue;
+    try { t.port.postMessage(payload); } catch { /* */ }
+  }
 }
 
 // Cursor STYLE — separate from position because it changes rarely
@@ -216,14 +237,15 @@ export interface OutputCursorStyle {
   opacity: number;
 }
 export function setOutputCursorStyle(s: OutputCursorStyle): void {
-  if (!outboundPort) return;
+  if (targets.size === 0) return;
   const payload = { type: 'cursorStyle', ...s };
   const json = JSON.stringify(payload);
   if (json === lastCursorStyleJson) return;
   lastCursorStyleJson = json;
-  try {
-    outboundPort.postMessage(payload);
-  } catch { /* */ }
+  for (const t of targets.values()) {
+    if (!t.port) continue;
+    try { t.port.postMessage(payload); } catch { /* */ }
+  }
 }
 
 /** Register the editor's main canvas with the presenter. Called once
@@ -260,44 +282,72 @@ export function registerEditorCanvas(canvas: HTMLCanvasElement, frameRate = 60):
   maybeStartPump();
 }
 
-/** Called from OutputWindow.svelte right after `window.open(...)`.
- *  The target Window proxy is the renderer-side handle to the new
- *  same-process child window. We start listening for the output's
- *  'ready' message; once received we establish the MessageChannel
- *  and start pumping frames (assuming the editor canvas was already
- *  registered via registerEditorCanvas). */
-export function attachOutputWindow(target: Window): void {
+/** Attach a new output window. `id` distinguishes simultaneously-
+ *  attached targets: Fullscreen uses 'main' (default), each slice
+ *  uses `slice:<sliceId>`. Multiple windows can attach concurrently;
+ *  the editor pump fan-outs each frame to all attached ports. */
+export function attachOutputWindow(target: Window, id: string = 'main'): void {
   if (!isPresenterEligible()) return;
-  // Idempotent: re-attaching the SAME window while the port is already
-  // live is a no-op. Without this, a stray re-attach (e.g. a duplicate
-  // open) re-probes and forces a fresh handshake + pump restart.
-  if (target === targetWindow && outboundPort) {
-    return;
-  }
   installMessageListener();
-  if (targetWindow && targetWindow !== target) {
-    // Re-attach: previous target was different (closed and reopened).
-    // Tear down the old channel before binding the new one.
-    teardownPort();
+  const existing = targets.get(id);
+  if (existing) {
+    if (existing.window === target && existing.port) {
+      return; // Idempotent — same window already attached.
+    }
+    // Same id, different window (close+reopen). Tear down the old port.
+    if (existing.port) { try { existing.port.close(); } catch { /* */ } }
+    targets.delete(id);
   }
-  targetWindow = target;
+  targets.set(id, {
+    window: target,
+    port: null,
+    pendingChannel: null,
+    lastTransformJson: '',
+  });
 
   if (!settingsUnsub) {
     settingsUnsub = settings.subscribe(sendTransformSnapshot);
   }
 
-  // The output window may have already been mounted by the time we
-  // get here. Send a probe 'editor-attach' message; the output's
-  // listener responds with 'output-ready' if it's set up. This
-  // handles the race where output's onMount finishes before our
-  // message listener is installed.
+  // Probe the target — if it mounted before this listener was installed,
+  // it'll respond with 'output-ready' which we route via event.source.
   try {
     target.postMessage({ type: 'ghostarcade-editor-attach' }, '*');
   } catch (err) {
-    console.warn('[OutputSharedTexture] could not post editor-attach probe:', err);
+    console.warn(`[OutputSharedTexture] could not post editor-attach probe to ${id}:`, err);
   }
+  console.log(`[OutputSharedTexture] attached output window ${id} — awaiting ready handshake`);
+}
 
-  console.log('[OutputSharedTexture] attached to output window — awaiting ready handshake');
+/** Detach a single target (closing its port). The pump keeps running
+ *  for the other attached targets. */
+export function detachOutputWindow(id: string = 'main'): void {
+  const t = targets.get(id);
+  if (!t) return;
+  if (t.port) { try { t.port.close(); } catch { /* */ } }
+  if (t.pendingChannel) {
+    try { t.pendingChannel.port1.close(); } catch { /* */ }
+    try { t.pendingChannel.port2.close(); } catch { /* */ }
+  }
+  targets.delete(id);
+  // Last target gone — stop the pump so we're not pinning a stream.
+  if (targets.size === 0) {
+    pumpRunning = false;
+    if (reader) {
+      try { reader.cancel('all targets detached'); } catch { /* */ }
+      try { reader.releaseLock(); } catch { /* */ }
+      reader = null;
+    }
+    processor = null;
+    if (mediaStream) {
+      try { mediaStream.getTracks().forEach((tr) => tr.stop()); } catch { /* */ }
+      mediaStream = null;
+    }
+    if (settingsUnsub) {
+      try { settingsUnsub(); } catch { /* */ }
+      settingsUnsub = null;
+    }
+  }
 }
 
 export function stopOutputSharedTexturePresenter(): void {
@@ -316,19 +366,12 @@ export function stopOutputSharedTexturePresenter(): void {
     try { settingsUnsub(); } catch { /* */ }
     settingsUnsub = null;
   }
-  teardownPort();
-  targetWindow = null;
+  for (const t of targets.values()) {
+    if (t.port) { try { t.port.close(); } catch { /* */ } }
+  }
+  targets.clear();
   sourceCanvas = null;
   resetStats();
-}
-
-function teardownPort(): void {
-  if (outboundPort) {
-    try { outboundPort.close(); } catch { /* */ }
-    outboundPort = null;
-  }
-  pendingChannel = null;
-  lastTransformJson = '';
 }
 
 function resetStats(): void {
@@ -344,10 +387,52 @@ function resetStats(): void {
   };
 }
 
+function anyPortLive(): boolean {
+  for (const t of targets.values()) if (t.port) return true;
+  return false;
+}
+
+function collectLivePorts(): { id: string; port: MessagePort }[] {
+  const livePorts: { id: string; port: MessagePort }[] = [];
+  for (const [id, t] of Array.from(targets.entries())) {
+    try {
+      if (t.window.closed) {
+        detachOutputWindow(id);
+        continue;
+      }
+    } catch {
+      // Some WindowProxy states throw on `.closed`; the next postMessage
+      // failure will detach it.
+    }
+    if (t.port) livePorts.push({ id, port: t.port });
+  }
+  return livePorts;
+}
+
+function cloneFrameForFanout(frame: VideoFrame): VideoFrame | null {
+  try {
+    const clone = (frame as any).clone?.();
+    if (clone) return clone as VideoFrame;
+  } catch { /* */ }
+
+  // Conservative fallback for Chromium builds where VideoFrame.clone()
+  // is missing or driver-buggy. This keeps secondary outputs alive at
+  // the cost of one extra VideoFrame wrapper creation from the already
+  // presented canvas.
+  if (!sourceCanvas) return null;
+  try {
+    return new VideoFrame(sourceCanvas as any, {
+      timestamp: (frame as any).timestamp,
+    } as any);
+  } catch {
+    return null;
+  }
+}
+
 function maybeStartPump(): void {
   if (pumpRunning) return;
   if (!sourceCanvas) return;
-  if (!outboundPort) return;
+  if (!anyPortLive()) return;
   if (typeof MediaStreamTrackProcessor === 'undefined') {
     console.warn('[OutputSharedTexture] MediaStreamTrackProcessor unavailable — Chromium feature flag may be off');
     return;
@@ -392,7 +477,9 @@ async function pump(): Promise<void> {
     }
     if (done) break;
     if (!value) continue;
-    if (!outboundPort) {
+    // Snapshot the live ports — pump can race with attach/detach.
+    const livePorts = collectLivePorts();
+    if (livePorts.length === 0) {
       stats.framesDroppedNoPort++;
       try { value.close(); } catch { /* */ }
       continue;
@@ -404,7 +491,7 @@ async function pump(): Promise<void> {
     if (stats.framesTransferred < 5) {
       console.log(
         `[OutputSharedTexture] frame ${stats.framesTransferred + 1} format=${fmt} ` +
-          `dim=${value.codedWidth}x${value.codedHeight} ts=${value.timestamp}`,
+          `dim=${value.codedWidth}x${value.codedHeight} ts=${value.timestamp} fanout=${livePorts.length}`,
       );
     }
 
@@ -416,19 +503,48 @@ async function pump(): Promise<void> {
     }
     stats.lastFrameAt = now;
 
+    if (livePorts.length === 1) {
+      try {
+        livePorts[0].port.postMessage(value, [value]);
+        stats.framesTransferred++;
+      } catch (err) {
+        stats.framesDroppedTransferError++;
+        try { value.close(); } catch { /* */ }
+        console.warn(`[OutputSharedTexture] postMessage to ${livePorts[0].id} failed:`, (err as any)?.message ?? err);
+        detachOutputWindow(livePorts[0].id);
+      }
+      continue;
+    }
+
+    // Fan out: one transferable VideoFrame per port. clone() bumps the
+    // refcount on the underlying GPU buffer — still zero-copy.
+    // Transfer the original to the FIRST port, clone for the rest.
     try {
-      outboundPort.postMessage(value, [value]);
-      stats.framesTransferred++;
+      const frames: VideoFrame[] = [value];
+      for (let i = 1; i < livePorts.length; i++) {
+        frames.push(cloneFrameForFanout(value) as any);
+      }
+      let sentAny = false;
+      for (let i = 0; i < livePorts.length; i++) {
+        const f = frames[i];
+        if (!f) continue;
+        try {
+          livePorts[i].port.postMessage(f, [f]);
+          sentAny = true;
+        } catch (err) {
+          try { f.close(); } catch { /* */ }
+          console.warn(`[OutputSharedTexture] postMessage to ${livePorts[i].id} failed:`, (err as any)?.message ?? err);
+          detachOutputWindow(livePorts[i].id);
+        }
+      }
+      if (sentAny) stats.framesTransferred++;
+      else stats.framesDroppedTransferError++;
     } catch (err) {
       stats.framesDroppedTransferError++;
       try { value.close(); } catch { /* */ }
-      console.warn('[OutputSharedTexture] postMessage failed — output likely closed:', (err as any)?.message ?? err);
-      // Tear down only the port + pump; keep the targetWindow
-      // reference because the user may reload the output. The next
-      // 'output-ready' will re-establish.
-      pumpRunning = false;
-      teardownPort();
-      return;
+      console.warn('[OutputSharedTexture] fan-out failed:', (err as any)?.message ?? err);
+      // Pump stays alive — individual port failures are handled per-port
+      // inside the fan-out loop. This catch is the outer safety net.
     }
   }
 }
@@ -436,11 +552,19 @@ async function pump(): Promise<void> {
 export function getOutputSharedTexturePresenterStats() {
   const histogram: Record<string, number> = {};
   stats.formatHistogram.forEach((v, k) => { histogram[k] = v; });
+  let liveTargets = 0;
+  let liveTargetsWithPort = 0;
+  for (const t of targets.values()) {
+    liveTargets++;
+    if (t.port) liveTargetsWithPort++;
+  }
   return {
     active: !!sourceCanvas,
     pumpRunning,
-    portConnected: !!outboundPort,
-    targetAttached: !!targetWindow,
+    portConnected: liveTargetsWithPort > 0,
+    targetAttached: liveTargets > 0,
+    targetCount: liveTargets,
+    targetsWithPort: liveTargetsWithPort,
     framesTransferred: stats.framesTransferred,
     framesDroppedNoPort: stats.framesDroppedNoPort,
     framesDroppedTransferError: stats.framesDroppedTransferError,

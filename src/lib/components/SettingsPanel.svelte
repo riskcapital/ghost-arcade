@@ -234,7 +234,7 @@
     | 'app:appearance' | 'app:updates'
     | 'project:canvas' | 'project:layers'
     | 'output:display' | 'output:color'
-    | 'output:edge-blending' | 'output:dome'
+    | 'output:edge-blending'
     | 'performance:gpu' | 'performance:render-quality' | 'performance:video-decoding'
     | 'recording'
     | 'integrations:midi' | 'integrations:osc' | 'integrations:wled'
@@ -252,15 +252,15 @@
     ]},
     { id: 'output', label: 'Output', sections: [
       // Display + color correction stay as global output post-process
-      // toggles (cursor overlay, rotation, blackout, dome projection).
+      // toggles (cursor overlay, rotation, blackout).
       // Multi-Output / per-slice config moved to the Screens tab in
-      // the left sidebar — see ScreenPanel.svelte. Edge Blending
+      // the left sidebar — see ScreenPanel.svelte. Dome projection now
+      // lives there too because it is part of output calibration. Edge Blending
       // remains here as a legacy/single-output convenience for users
       // who haven't adopted Screens yet.
       { id: 'output:display', label: 'Display' },
       { id: 'output:color', label: 'Color Correction' },
       { id: 'output:edge-blending', label: 'Edge Blending', advanced: true },
-      { id: 'output:dome', label: 'Dome Projection', advanced: true },
     ]},
     { id: 'performance', label: 'Performance', sections: [
       { id: 'performance:gpu', label: 'GPU Acceleration', advanced: true },
@@ -1192,112 +1192,6 @@
           </div>
         </section>
         {/if}<!-- /output:color -->
-        <!-- Dome Projection Section -->
-        {#if selectedSection === 'output:dome'}
-        <section class="settings-section">
-          <h3>Dome Projection</h3>
-          <p class="section-hint">Fisheye reprojection for planetariums, domes, and immersive installations</p>
-
-          <div class="setting-row">
-            <div class="setting-label">
-              <span class="label-text">Enable Dome Output</span>
-              <span class="label-hint">Apply fisheye reprojection to final output</span>
-            </div>
-            <label class="toggle">
-              <input type="checkbox"
-                checked={$settings.output.domeEnabled ?? false}
-                onchange={(e) => settings.setDomeEnabled((e.target as HTMLInputElement).checked)} />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-
-          {#if $settings.output.domeEnabled ?? false}
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="label-text">Projection Mode</span>
-              </div>
-              <select value={$settings.output.domeMode ?? 'angular'}
-                onchange={(e) => settings.setDomeMode((e.target as HTMLSelectElement).value as OutputSettings['domeMode'])}>
-                <option value="angular">Angular (Equidistant)</option>
-                <option value="stereographic">Stereographic</option>
-                <option value="orthographic">Orthographic</option>
-                <option value="equirectangular">Equirectangular (360°)</option>
-              </select>
-            </div>
-
-            {@const dome = {
-              fov: $settings.output.domeFOV ?? 180,
-              rotation: $settings.output.domeRotation ?? 0,
-              tilt: $settings.output.domeTilt ?? 0,
-              curvature: $settings.output.domeCurvature ?? 1.0,
-              truncation: $settings.output.domeTruncation ?? 1.0,
-              offsetX: $settings.output.domeOffsetX ?? 0,
-              offsetY: $settings.output.domeOffsetY ?? 0,
-            }}
-            <div class="crop-grid">
-              <div class="crop-item">
-                <span class="crop-label">FOV</span>
-                <input type="range" min="90" max="360" step="1"
-                  value={dome.fov}
-                  oninput={(e) => settings.updateDomeSetting('domeFOV', parseFloat((e.target as HTMLInputElement).value))} />
-                <span class="crop-value">{dome.fov}°</span>
-              </div>
-              <div class="crop-item">
-                <span class="crop-label">Rotation</span>
-                <input type="range" min="0" max="360" step="1"
-                  value={dome.rotation}
-                  oninput={(e) => settings.updateDomeSetting('domeRotation', parseFloat((e.target as HTMLInputElement).value))} />
-                <span class="crop-value">{dome.rotation}°</span>
-              </div>
-              <div class="crop-item">
-                <span class="crop-label">Tilt</span>
-                <input type="range" min="-90" max="90" step="1"
-                  value={dome.tilt}
-                  oninput={(e) => settings.updateDomeSetting('domeTilt', parseFloat((e.target as HTMLInputElement).value))} />
-                <span class="crop-value">{dome.tilt}°</span>
-              </div>
-              <div class="crop-item">
-                <span class="crop-label">Curvature</span>
-                <input type="range" min="0" max="1" step="0.01"
-                  value={dome.curvature}
-                  oninput={(e) => settings.updateDomeSetting('domeCurvature', parseFloat((e.target as HTMLInputElement).value))} />
-                <span class="crop-value">{(dome.curvature * 100).toFixed(0)}%</span>
-              </div>
-              <div class="crop-item">
-                <span class="crop-label">Truncation</span>
-                <input type="range" min="0.5" max="1" step="0.01"
-                  value={dome.truncation}
-                  oninput={(e) => settings.updateDomeSetting('domeTruncation', parseFloat((e.target as HTMLInputElement).value))} />
-                <span class="crop-value">{(dome.truncation * 100).toFixed(0)}%</span>
-              </div>
-              <div class="crop-item">
-                <span class="crop-label">Offset X</span>
-                <input type="range" min="-1" max="1" step="0.01"
-                  value={dome.offsetX}
-                  oninput={(e) => settings.updateDomeSetting('domeOffsetX', parseFloat((e.target as HTMLInputElement).value))} />
-                <span class="crop-value">{dome.offsetX.toFixed(2)}</span>
-              </div>
-              <div class="crop-item">
-                <span class="crop-label">Offset Y</span>
-                <input type="range" min="-1" max="1" step="0.01"
-                  value={dome.offsetY}
-                  oninput={(e) => settings.updateDomeSetting('domeOffsetY', parseFloat((e.target as HTMLInputElement).value))} />
-                <span class="crop-value">{dome.offsetY.toFixed(2)}</span>
-              </div>
-              <button class="secondary-btn" onclick={() => settings.update(s => ({
-                ...s, output: { ...s.output,
-                  domeFOV: 180, domeRotation: 0, domeTilt: 0,
-                  domeOffsetX: 0, domeOffsetY: 0, domeCurvature: 1.0, domeTruncation: 1.0
-                }
-              }))}>
-                Reset Dome
-              </button>
-            </div>
-          {/if}
-        </section>
-
-        {/if}
-
         <!-- The standalone "Experimental: WebRTC output transport" toggle
              that used to live here was removed — WebRTC is the default
              output transport now (and WebGPU zero-copy supersedes it
