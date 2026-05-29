@@ -28,7 +28,7 @@
 
 import { renderMasterWarpPixels, isBlendRendererAvailable } from '../output/blendRenderer';
 import type { OutputWarp } from '../stores/settings';
-import { registerEditorCanvas } from './outputSharedTexturePresenter';
+import { registerEditorCanvas, getOutputSharedTexturePresenterStats } from './outputSharedTexturePresenter';
 import { startOutputPixelBroadcast, stopOutputPixelBroadcast } from './outputPixelBroadcast';
 
 let outCanvas: HTMLCanvasElement | null = null;
@@ -52,6 +52,16 @@ function ensureOut(w: number, h: number) {
   }
 }
 
+// ─── Debug ───────────────────────────────────────────────────────────────
+// On by default; disable with `window.__MWARP_DEBUG__ = false` in devtools.
+function mwDebug(): boolean {
+  return typeof window !== 'undefined' && (window as any).__MWARP_DEBUG__ !== false;
+}
+function mwlog(...args: unknown[]) {
+  if (mwDebug()) console.log('[mwarp]', ...args);
+}
+let tickLogCounter = 0;
+
 /**
  * Mark the master-warp output active and return the dedicated canvas to
  * hand to the transports. Idempotent. Geometry/size are pulled lazily
@@ -65,11 +75,14 @@ export function startMasterWarpOutput(
   sizeGetter = getSize;
   const size = getSize();
   ensureOut(Math.max(2, Math.round(size.w)), Math.max(2, Math.round(size.h)));
+  const was = active;
   active = true;
+  if (!was) mwlog('startMasterWarpOutput → active', { w: outCanvas?.width, h: outCanvas?.height });
   return outCanvas!;
 }
 
 export function stopMasterWarpOutput(): void {
+  if (active) mwlog('stopMasterWarpOutput → inactive');
   active = false;
 }
 
@@ -88,7 +101,9 @@ export function tickMasterWarpOutput(src: HTMLCanvasElement): void {
   ensureOut(w, h);
 
   let drew = false;
-  if (warp?.enabled && isBlendRendererAvailable()) {
+  let pxOk = false;
+  const avail = isBlendRendererAvailable();
+  if (warp?.enabled && avail) {
     const px = renderMasterWarpPixels(src, warp, w, h);
     if (px) {
       const n = w * h * 4;
@@ -98,6 +113,7 @@ export function tickMasterWarpOutput(src: HTMLCanvasElement): void {
       scratchImage.data.set(px.subarray(0, n));
       outCtx!.putImageData(scratchImage, 0, 0);
       drew = true;
+      pxOk = true;
     }
   }
   if (!drew) {
@@ -107,6 +123,16 @@ export function tickMasterWarpOutput(src: HTMLCanvasElement): void {
     } catch {
       /* source not ready this frame — keep last frame */
     }
+  }
+  // Throttled heartbeat (~1/sec at 60fps) so the console isn't flooded.
+  if (mwDebug() && tickLogCounter++ % 60 === 0) {
+    console.log('[mwarp] tick', {
+      srcW: src?.width, srcH: src?.height,
+      enabled: warp?.enabled, mode: warp?.mode,
+      hasCorners: !!warp?.corners,
+      blendAvail: avail, pxOk, drew,
+      outW: outCanvas?.width, outH: outCanvas?.height,
+    });
   }
 }
 
@@ -150,13 +176,27 @@ export function reconcileMasterWarpOutput(opts: {
   const { baseSource, warpActive, zeroCopy, webrtc, getWarp, getSize, perf } = opts;
   const flags = `${warpActive ? 1 : 0}${zeroCopy ? 1 : 0}${webrtc ? 1 : 0}`;
   // Diff-gate: only act when the source surface or the flags change.
-  if (baseSource === lastBase && flags === lastFlags) return;
+  if (baseSource === lastBase && flags === lastFlags) {
+    return;
+  }
+  mwlog('reconcile', {
+    base: baseSource?.className || baseSource?.id || 'canvas',
+    warpActive, zeroCopy, webrtc,
+    prevFlags: lastFlags, newFlags: flags,
+    baseChanged: baseSource !== lastBase,
+  });
   lastBase = baseSource;
   lastFlags = flags;
 
   const source = warpActive ? startMasterWarpOutput(getWarp, getSize) : (stopMasterWarpOutput(), baseSource);
   const fps = perf?.frameRate ?? 60;
   registerEditorCanvas(source, fps);
+  const st = getOutputSharedTexturePresenterStats();
+  mwlog('registered', warpActive ? 'WARPED outCanvas' : 'base source', {
+    w: source.width, h: source.height,
+    presenterActive: st.active, pumpRunning: st.pumpRunning,
+    targetAttached: st.targetAttached, portConnected: st.portConnected,
+  });
 
   const wantWebRTC = !zeroCopy && webrtc;
   if (wantWebRTC) {
