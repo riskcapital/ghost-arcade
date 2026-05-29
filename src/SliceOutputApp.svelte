@@ -41,8 +41,9 @@
   import Canvas from './lib/components/Canvas.svelte';
   import { initStateBroadcast, destroyStateBroadcast } from './lib/sync/stateBroadcast';
   import { initLicense } from './lib/stores/license';
-  import { settings, type OutputSlice } from './lib/stores/settings';
+  import { settings, type OutputSlice, masterWarpIsActive } from './lib/stores/settings';
   import { applyEdgeBlending } from './lib/output/outputPostProcess';
+  import { startMasterWarpOutput, stopMasterWarpOutput, tickMasterWarpOutput, getMasterWarpCanvas } from './lib/sync/outputComposite';
   import { invoke } from '$lib/bridge';
 
   const urlParams = new URLSearchParams(window.location.search);
@@ -98,9 +99,30 @@
       return;
     }
 
-    // Slice's crop region in main-canvas pixel coords.
-    const mw = mainCanvasEl.width;
-    const mh = mainCanvasEl.height;
+    // Screens slice the MASTER-WARPED total output. When the master warp
+    // is active, run the same warp pass used by the main output window
+    // (outputComposite — its own module instance in this window) against
+    // our local composite, then crop from the warped canvas. Otherwise
+    // crop the raw main-canvas directly. This keeps the per-display
+    // window consistent with the Fullscreen/Output-window path.
+    const mw0 = $settings.output?.masterCanvasWidth ?? mainCanvasEl.width;
+    const mh0 = $settings.output?.masterCanvasHeight ?? mainCanvasEl.height;
+    let cropSource: CanvasImageSource = mainCanvasEl;
+    if (masterWarpIsActive($settings.output?.masterWarp)) {
+      startMasterWarpOutput(
+        () => $settings.output?.masterWarp,
+        () => ({ w: mw0, h: mh0 }),
+      );
+      tickMasterWarpOutput(mainCanvasEl);
+      const warped = getMasterWarpCanvas();
+      if (warped && warped.width > 0) cropSource = warped;
+    } else {
+      stopMasterWarpOutput();
+    }
+
+    // Slice's crop region in source pixel coords.
+    const mw = (cropSource as HTMLCanvasElement).width;
+    const mh = (cropSource as HTMLCanvasElement).height;
     const sx = Math.round(slice.cropX * mw);
     const sy = Math.round(slice.cropY * mh);
     const sw = Math.round(slice.cropW * mw);
@@ -112,7 +134,7 @@
     // Apply rotation + crop. drawImage from a hardware-accelerated
     // canvas to a 2D canvas is GPU-fast in Chromium; no readback.
     if (slice.rotation === 0) {
-      presentCtx.drawImage(mainCanvasEl, sx, sy, sw, sh, 0, 0, w, h);
+      presentCtx.drawImage(cropSource, sx, sy, sw, sh, 0, 0, w, h);
     } else {
       presentCtx.save();
       presentCtx.translate(w / 2, h / 2);
@@ -121,9 +143,9 @@
       // the rotated content. We rotate around center, then draw
       // centered on (-W/2, -H/2) or (-H/2, -W/2) accordingly.
       if (slice.rotation === 90 || slice.rotation === 270) {
-        presentCtx.drawImage(mainCanvasEl, sx, sy, sw, sh, -h / 2, -w / 2, h, w);
+        presentCtx.drawImage(cropSource, sx, sy, sw, sh, -h / 2, -w / 2, h, w);
       } else {
-        presentCtx.drawImage(mainCanvasEl, sx, sy, sw, sh, -w / 2, -h / 2, w, h);
+        presentCtx.drawImage(cropSource, sx, sy, sw, sh, -w / 2, -h / 2, w, h);
       }
       presentCtx.restore();
     }
@@ -251,6 +273,7 @@
 
   onDestroy(() => {
     cancelAnimationFrame(rafId);
+    stopMasterWarpOutput();
     destroyStateBroadcast();
   });
 </script>
