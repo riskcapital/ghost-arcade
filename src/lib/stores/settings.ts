@@ -482,6 +482,35 @@ export function meshFromRect(
   return { rows, cols, points };
 }
 
+/** True when a master warp would actually change the output — i.e. it's
+ *  enabled AND its geometry is non-identity. Enabling the warp without
+ *  moving a handle is a no-op, so callers use this to avoid routing the
+ *  output through the (costly) warp pass and to keep the zero-copy fast
+ *  path until the operator actually warps something. */
+export function masterWarpIsActive(warp?: OutputWarp | null): boolean {
+  if (!warp?.enabled) return false;
+  if (warp.mode === 'mesh') {
+    const g = warp.meshGrid;
+    if (!g || g.rows < 2 || g.cols < 2) return false;
+    for (let r = 0; r < g.rows; r++) {
+      for (let c = 0; c < g.cols; c++) {
+        const p = g.points[r]?.[c];
+        if (!p) continue;
+        if (Math.abs(p.x - c / (g.cols - 1)) > 1e-4 || Math.abs(p.y - r / (g.rows - 1)) > 1e-4) return true;
+      }
+    }
+    return false;
+  }
+  const c = warp.corners;
+  if (!c) return false;
+  return !(
+    c.topLeft.x === 0 && c.topLeft.y === 0 &&
+    c.topRight.x === 1 && c.topRight.y === 0 &&
+    c.bottomLeft.x === 0 && c.bottomLeft.y === 1 &&
+    c.bottomRight.x === 1 && c.bottomRight.y === 1
+  );
+}
+
 /** Migrate an OutputSlice loaded from older settings/.gha files to
  *  the current shape. Idempotent — running it on an already-current
  *  slice returns it unchanged. */

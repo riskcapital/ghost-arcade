@@ -60,7 +60,11 @@
       startClientX: e.clientX,
       startClientY: e.clientY,
       startCorners: { ...corners, topLeft: { ...corners.topLeft }, topRight: { ...corners.topRight }, bottomLeft: { ...corners.bottomLeft }, bottomRight: { ...corners.bottomRight } },
-      startMesh: meshGrid ? structuredClone(meshGrid) : null,
+      // Manual deep-copy (not structuredClone — it throws DataCloneError
+      // on some nested store values) of the {rows,cols,points} lattice.
+      startMesh: meshGrid
+        ? { rows: meshGrid.rows, cols: meshGrid.cols, points: meshGrid.points.map(r => r.map(p => ({ x: p.x, y: p.y }))) }
+        : null,
     };
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
