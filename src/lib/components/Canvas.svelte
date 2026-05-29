@@ -14,14 +14,14 @@
   import { createISFShader, updateISFShader, setISFInputValue, setISFInputTexture, type ISFShaderInstance } from '../isf/renderer';
   import { LinesRenderer } from '../lines/renderer';
   import { DrawingRenderer } from '../drawing/renderer';
-  import { SVGLayerRenderer } from '../svg/renderer';
+  import type { SVGLayerRenderer } from '../svg/renderer';
   import { LightPaintingRenderer } from '../lightpainting/renderer';
   import { LightPaintingWebGLRenderer } from '../lightpainting/webglRenderer';
   import { getGPUBrushCanvas } from '../lightpainting/gpuBrushBridge';
   import { TextRenderer } from '../text/renderer';
   import { SplatRenderer } from '../splat/SplatRenderer';
   import { loadPLY, loadSplatFromUrl } from '../splat';
-  import { Model3DRenderer } from '../model3d/Model3DRenderer';
+  import type { Model3DRenderer } from '../model3d/Model3DRenderer';
   import { GpuLayerRenderer } from '$lib/renderer/gpuLayerRenderer';
   import { ensureWebGPUDevice, isWebGPUReady, getWebGPUDevice, getPreferredCanvasFormat } from '$lib/renderer/webgpuShared';
   import { getShaderDef } from '$lib/renderer/gpuShaderCatalog';
@@ -31,8 +31,22 @@
   import { drawTestPattern, type TestPatternType } from '../utils/testPatterns';
   import { applyEdgeBlending } from '../output/outputPostProcess';
   import { renderSlicePixels, isBlendRendererAvailable } from '../output/blendRenderer';
-  import { FluidSimulation, type FluidMode } from '../effects/fluidSimulation';
-  import { ParticleSystem3D } from '../effects/particleSystem3D';
+  import type { FluidSimulation, FluidMode } from '../effects/fluidSimulation';
+  import type { ParticleSystem3D } from '../effects/particleSystem3D';
+  // Heavy renderer classes (three/addons GLTF/FBX/OBJ loaders, post-processing,
+  // Line2, fluid/particle sims) are lazy-loaded on first use so they stay out
+  // of the initial Canvas chunk. Constructors are cached after first import;
+  // a layer that needs one simply waits a frame or two for its chunk.
+  let _SVGLayerRendererCtor: typeof import('../svg/renderer').SVGLayerRenderer | null = null;
+  let _Model3DRendererCtor: typeof import('../model3d/Model3DRenderer').Model3DRenderer | null = null;
+  let _FluidSimulationCtor: typeof import('../effects/fluidSimulation').FluidSimulation | null = null;
+  let _ParticleSystem3DCtor: typeof import('../effects/particleSystem3D').ParticleSystem3D | null = null;
+  const _lazyLoading = new Set<string>();
+  function _lazyLoad(key: string, load: () => Promise<void>): void {
+    if (_lazyLoading.has(key)) return;
+    _lazyLoading.add(key);
+    load().catch((e) => { console.warn(`[Canvas] lazy-load ${key} failed:`, e); _lazyLoading.delete(key); });
+  }
   // ParticleSystem removed — Particles3D runs as standalone Bevy app via Spout
   import { audioStore, getLastRawAnalysis, audioBands } from '../stores/audio';
   import { audioTextures } from '../audio/audioTextures';
@@ -3470,9 +3484,14 @@
       // Get or create SVG renderer for this layer
       let svgRenderer = svgRenderers.get(layer.id);
       if (!svgRenderer) {
+        if (!_SVGLayerRendererCtor) {
+          // Lazy-load the SVG renderer chunk; skip this layer until ready.
+          _lazyLoad('svg', async () => { _SVGLayerRendererCtor = (await import('../svg/renderer')).SVGLayerRenderer; });
+          continue;
+        }
         // Pass the main renderer to avoid creating multiple WebGL contexts
         const mainRenderer = engine.getRenderer();
-        svgRenderer = new SVGLayerRenderer(width, height, mainRenderer);
+        svgRenderer = new _SVGLayerRendererCtor(width, height, mainRenderer);
         svgRenderers.set(layer.id, svgRenderer);
 
         // Parse SVG source if provided
@@ -3933,6 +3952,11 @@
       let model3dCtx = model3dRenderers.get(layer.id);
 
       if (!model3dCtx) {
+        if (!_Model3DRendererCtor) {
+          // Lazy-load the model3d chunk (GLTF/FBX/OBJ loaders); skip until ready.
+          _lazyLoad('model3d', async () => { _Model3DRendererCtor = (await import('../model3d/Model3DRenderer')).Model3DRenderer; });
+          continue;
+        }
         // Create in standalone mode with its OWN WebGL context + offscreen
         // canvas at HALF resolution to reduce GPU load and texture upload cost.
         const modelW = Math.round(width / 2);
@@ -3943,7 +3967,7 @@
         offCanvas.style.display = 'none';
         document.body.appendChild(offCanvas);
 
-        const model3dRenderer = new Model3DRenderer(offCanvas, modelH);
+        const model3dRenderer = new _Model3DRendererCtor(offCanvas, modelH);
 
         // CanvasTexture reads from the offscreen canvas each frame — no
         // render target switch on the main renderer at all.
@@ -4076,6 +4100,19 @@
       // Only handle integrated effect types
       if (effectSource.effectType !== 'fluid' && effectSource.effectType !== 'particles') continue;
 
+      // Lazy-load the sim class chunk; skip this group until the ctor is
+      // ready (only matters on the very first frame the effect appears).
+      if (!effectCtx) {
+        if (effectSource.effectType === 'fluid' && !_FluidSimulationCtor) {
+          _lazyLoad('fluid', async () => { _FluidSimulationCtor = (await import('../effects/fluidSimulation')).FluidSimulation; });
+          continue;
+        }
+        if (effectSource.effectType === 'particles' && !_ParticleSystem3DCtor) {
+          _lazyLoad('particles3d', async () => { _ParticleSystem3DCtor = (await import('../effects/particleSystem3D')).ParticleSystem3D; });
+          continue;
+        }
+      }
+
       if (effectCtx && effectCtx.type !== effectSource.effectType) {
         // Flipping from fluid → particles (or back) must clean up webcam
         // resources from the previous effect. Without this, the MediaStream
@@ -4114,7 +4151,7 @@
 
         if (effectSource.effectType === 'fluid') {
           const simSize = getFluidSimulationSize(width, height);
-          const fluid = new FluidSimulation(simSize.width, simSize.height);
+          const fluid = new _FluidSimulationCtor!(simSize.width, simSize.height);
           fluid.init(renderer);
           if (effectSource.fluidMode !== undefined) {
             fluid.setMode(effectSource.fluidMode as FluidMode);
@@ -4123,7 +4160,7 @@
           effectCtx.simulationWidth = simSize.width;
           effectCtx.simulationHeight = simSize.height;
         } else if (effectSource.effectType === 'particles') {
-          const ps = new ParticleSystem3D(width, height);
+          const ps = new _ParticleSystem3DCtor!(width, height);
           ps.init(renderer);
           ps.setParams({
             mode: (effectSource.particleMode ?? 0) as any,
