@@ -66,7 +66,7 @@
         ? { rows: meshGrid.rows, cols: meshGrid.cols, points: meshGrid.points.map(r => r.map(p => ({ x: p.x, y: p.y }))) }
         : null,
     };
-    if ((window as any).__MWARP_DEBUG__ !== false) console.log('[mwarp] handle drag start', kind, { enabled: warp.enabled, mode });
+    if ((window as any).__MWARP_DEBUG__ === true) console.log('[mwarp] handle drag start', kind, { enabled: warp.enabled, mode });
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
   }
@@ -95,7 +95,7 @@
       const c0 = drag.startCorners[k.corner];
       const next = { ...drag.startCorners, [k.corner]: { x: clamp01(c0.x + dxN), y: clamp01(c0.y + dyN) } };
       settings.setMasterWarp({ corners: next });
-      if ((window as any).__MWARP_DEBUG__ !== false) console.log('[mwarp] write corner', k.corner, next[k.corner]);
+      if ((window as any).__MWARP_DEBUG__ === true) console.log('[mwarp] write corner', k.corner, next[k.corner]);
     } else if (k.kind === 'corners-move') {
       const c = drag.startCorners;
       const next: WarpCorners = {
