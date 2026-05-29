@@ -6,33 +6,55 @@
  * Background: both projector-output paths capture from one canvas —
  *   • WebGPU shared-texture presenter  (registerEditorCanvas)
  *   • WebRTC fallback broadcast        (startOutputPixelBroadcast)
- * When the master warp is OFF, that canvas is the raw editor `.main-canvas`
- * (zero-copy fast path, untouched).
+ * Historically that canvas was the raw editor `.main-canvas`, so the
+ * main output window presented the un-warped composite.
  *
- * When the warp is ON, blendRenderer owns a dedicated WebGL canvas and the
- * editor render loop calls `tickMasterWarpOutput(srcCanvas)` once per frame
- * — RIGHT AFTER the editor renders — to warp the editor canvas straight
- * onto that GPU canvas. The transports captureStream() that GPU canvas
- * DIRECTLY: no readPixels, no putImageData, no CPU round-trip (the warp
- * pass is the only extra GPU work, on par with the un-warped path).
+ * This module owns a dedicated 2D canvas. When the master warp is
+ * enabled, the editor render loop calls `tickMasterWarpOutput(srcCanvas)`
+ * once per frame — RIGHT AFTER the editor renders — drawing the warped
+ * master composite into it (blendRenderer GPU warp + readback →
+ * putImageData). Transports then capture from THIS canvas.
  *
  * Why the render loop and not our own rAF: the editor canvas is created
- * with preserveDrawingBuffer:false, so its pixels are only sampleable in
- * the same frame they're drawn. A standalone rAF would sample a cleared
- * buffer → BLACK. The senders read the canvas in-loop for the same reason.
+ * with preserveDrawingBuffer:false, so its pixels are only readable in
+ * the same frame they're drawn. A standalone rAF fires at composite time
+ * when the drawing buffer is already cleared → reading it yields BLACK.
+ * The senders read the canvas in-loop for exactly this reason; the master
+ * warp must too.
+ *
+ * When the warp is disabled the tick no-ops and callers fall back to the
+ * raw editor canvas — preserving the WebGPU zero-copy fast path.
  */
 
-import { renderMasterWarpToCanvas, ensureMasterWarpCanvas, getMasterWarpRenderCanvas, isBlendRendererAvailable } from '../output/blendRenderer';
+import { renderMasterWarpPixels, isBlendRendererAvailable } from '../output/blendRenderer';
 import type { OutputWarp } from '../stores/settings';
 import { registerEditorCanvas, getOutputSharedTexturePresenterStats } from './outputSharedTexturePresenter';
 import { startOutputPixelBroadcast, stopOutputPixelBroadcast } from './outputPixelBroadcast';
 
+let outCanvas: HTMLCanvasElement | null = null;
+let outCtx: CanvasRenderingContext2D | null = null;
 let active = false;
 let warpGetter: (() => OutputWarp | undefined) | null = null;
 let sizeGetter: (() => { w: number; h: number }) | null = null;
+// Reused ImageData for putImageData (copy into its backing .data to
+// sidestep ArrayBuffer-vs-ArrayBufferLike typing and keep GC flat).
+let scratchImage: ImageData | null = null;
+
+function ensureOut(w: number, h: number) {
+  if (!outCanvas) {
+    outCanvas = document.createElement('canvas');
+    outCanvas.className = 'master-warp-output';
+    outCtx = outCanvas.getContext('2d', { alpha: false, desynchronized: true });
+  }
+  if (outCanvas.width !== w || outCanvas.height !== h) {
+    outCanvas.width = w;
+    outCanvas.height = h;
+  }
+}
 
 // ─── Debug ───────────────────────────────────────────────────────────────
-// OFF by default; enable with `window.__MWARP_DEBUG__ = true` in devtools.
+// OFF by default; enable with `window.__MWARP_DEBUG__ = true` in devtools
+// when diagnosing the master-warp pipeline.
 function mwDebug(): boolean {
   return typeof window !== 'undefined' && (window as any).__MWARP_DEBUG__ === true;
 }
@@ -42,26 +64,22 @@ function mwlog(...args: unknown[]) {
 let tickLogCounter = 0;
 
 /**
- * Mark the master-warp output active and return the dedicated GPU canvas to
- * hand to the transports. Idempotent. Geometry/size are pulled lazily each
- * tick via the getters so live edits are picked up. The canvas is created
- * eagerly here (sized from getSize) so the transports can register it before
- * the first warp frame renders.
+ * Mark the master-warp output active and return the dedicated canvas to
+ * hand to the transports. Idempotent. Geometry/size are pulled lazily
+ * each tick via the getters so live edits are picked up.
  */
 export function startMasterWarpOutput(
   getWarp: () => OutputWarp | undefined,
   getSize: () => { w: number; h: number },
-): HTMLCanvasElement | null {
+): HTMLCanvasElement {
   warpGetter = getWarp;
   sizeGetter = getSize;
   const size = getSize();
-  const w = Math.max(2, Math.round(size.w));
-  const h = Math.max(2, Math.round(size.h));
-  const canvas = ensureMasterWarpCanvas(w, h);
+  ensureOut(Math.max(2, Math.round(size.w)), Math.max(2, Math.round(size.h)));
   const was = active;
   active = true;
-  if (!was) mwlog('startMasterWarpOutput → active', { w, h, canvas: !!canvas });
-  return canvas;
+  if (!was) mwlog('startMasterWarpOutput → active', { w: outCanvas?.width, h: outCanvas?.height });
+  return outCanvas!;
 }
 
 export function stopMasterWarpOutput(): void {
@@ -70,37 +88,55 @@ export function stopMasterWarpOutput(): void {
 }
 
 /**
- * Warp one frame: render the live editor canvas through the forward master
- * warp directly onto the dedicated GPU canvas (zero-copy — the transports
- * capture that canvas). MUST be called from the editor render loop right
- * after the editor canvas is drawn. No-op unless the warp is active.
+ * Render one warped frame into the output canvas. MUST be called from the
+ * editor render loop immediately after the editor canvas is drawn (see
+ * file header). No-op unless the master warp is active. `src` is the live
+ * editor canvas — read in-loop while its drawing buffer is still valid.
  */
 export function tickMasterWarpOutput(src: HTMLCanvasElement): void {
-  if (!active) return;
+  if (!active || !outCtx) return;
   const warp = warpGetter?.();
   const size = sizeGetter?.() ?? { w: 1920, h: 1080 };
   const w = Math.max(2, Math.round(size.w));
   const h = Math.max(2, Math.round(size.h));
+  ensureOut(w, h);
 
   let drew = false;
+  let pxOk = false;
   const avail = isBlendRendererAvailable();
   if (warp?.enabled && avail) {
-    drew = !!renderMasterWarpToCanvas(src, warp, w, h);
+    const px = renderMasterWarpPixels(src, warp, w, h);
+    if (px) {
+      const n = w * h * 4;
+      if (!scratchImage || scratchImage.width !== w || scratchImage.height !== h) {
+        scratchImage = new ImageData(w, h);
+      }
+      scratchImage.data.set(px.subarray(0, n));
+      outCtx!.putImageData(scratchImage, 0, 0);
+      drew = true;
+      pxOk = true;
+    }
   }
-  // If the warp couldn't render (GPU unavailable / not enabled), there's
-  // nothing to draw — the transports keep showing the last good frame
-  // (preserveDrawingBuffer). The reconcile only registers this canvas when
-  // the warp is active, so a disabled warp never reaches here.
+  if (!drew) {
+    // Warp off / GPU unavailable — passthrough so we never black out.
+    try {
+      outCtx!.drawImage(src, 0, 0, w, h);
+    } catch {
+      /* source not ready this frame — keep last frame */
+    }
+  }
+  // Throttled heartbeat (~1/sec at 60fps). Flat args so the console can't
+  // collapse the important fields behind a "…".
   if (mwDebug() && tickLogCounter++ % 60 === 0) {
-    console.log('[mwarp] tick — blendAvail=', avail, 'drew=', drew,
-      'enabled=', warp?.enabled, 'srcW=', src?.width, 'srcH=', src?.height, 'out=', w, 'x', h);
+    console.log('[mwarp] tick — blendAvail=', avail, 'pxOk=', pxOk, 'drew=', drew,
+      'enabled=', warp?.enabled, 'mode=', warp?.mode, 'srcW=', src?.width, 'srcH=', src?.height,
+      'outW=', outCanvas?.width, 'outH=', outCanvas?.height);
   }
 }
 
-/** The dedicated warped output canvas, or null before the first render.
- *  Used by the sender path + the Screens-tab preview to read warped pixels.*/
+/** The dedicated warped output canvas, or null before the first start. */
 export function getMasterWarpCanvas(): HTMLCanvasElement | null {
-  return getMasterWarpRenderCanvas();
+  return outCanvas;
 }
 
 export function isMasterWarpRunning(): boolean {
@@ -150,11 +186,7 @@ export function reconcileMasterWarpOutput(opts: {
   lastBase = baseSource;
   lastFlags = flags;
 
-  // Warp active → capture the dedicated GPU warp canvas; if WebGL init
-  // failed it returns null, so fall back to the raw editor canvas (output
-  // un-warped beats output black). Warp inactive → raw editor canvas.
-  const warpCanvas = warpActive ? startMasterWarpOutput(getWarp, getSize) : (stopMasterWarpOutput(), null);
-  const source = warpCanvas ?? baseSource;
+  const source = warpActive ? startMasterWarpOutput(getWarp, getSize) : (stopMasterWarpOutput(), baseSource);
   const fps = perf?.frameRate ?? 60;
   registerEditorCanvas(source, fps);
   const st = getOutputSharedTexturePresenterStats();
