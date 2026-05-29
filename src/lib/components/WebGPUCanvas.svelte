@@ -121,6 +121,42 @@
     if (c && (initStatus === 'no-source' || initStatus === 'init')) {
       initStatus = 'running';
     }
+    // Source/owner may have just become valid — re-assert registration.
+    reconcileOutputRegistration();
+  }
+
+  // Register the surface the output transports should capture, via the
+  // single reconciler (Canvas.svelte skips registration in bridgeMode so
+  // the two never fight). Pick the WebGPU present canvas when WebGPU is
+  // actually live; otherwise fall back to the WebGL source canvas — if
+  // WebGPU failed to init or hasn't presented yet, presentCanvas is BLANK
+  // and registering it would black out the projector. Re-run on settings
+  // changes AND when init/source state transitions (those aren't settings
+  // events, so the subscription alone wouldn't catch them).
+  function reconcileOutputRegistration(): void {
+    if (isOutputMode || isOsrMode) return;
+    const webgpuLive = initStatus === 'running' || initStatus === 'no-source';
+    const outSource = webgpuLive ? presentCanvas : sourceCanvas;
+    if (!outSource) return;
+    const s = getStore(settings);
+    const _perf = s?.performance;
+    reconcileMasterWarpOutput({
+      baseSource: outSource,
+      warpActive: masterWarpIsActive(s.output?.masterWarp),
+      zeroCopy: !!s.experimental?.outputZeroCopy,
+      webrtc: !!s.experimental?.outputWebRTC,
+      getWarp: () => getStore(settings).output?.masterWarp,
+      getSize: () => ({
+        w: getStore(settings).output?.masterCanvasWidth ?? 1920,
+        h: getStore(settings).output?.masterCanvasHeight ?? 1080,
+      }),
+      perf: {
+        frameRate: _perf?.outputFrameRate ?? 60,
+        maxBitrate: _perf?.outputMaxBitrate,
+        degradationPreference: _perf?.outputDegradationPreference,
+        codecPreference: _perf?.outputCodecPreference,
+      },
+    });
   }
 
   // Match Canvas.svelte's mount-mode flags so behaviour stays
@@ -446,10 +482,16 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       initStatus = sourceCanvas ? 'running' : 'no-source';
       console.log('[WebGPUCanvas] WebGPU initialised. Adapter:',
         (adapter as any).info?.description || 'unknown');
+      // WebGPU is now presenting — switch output capture from the WebGL
+      // fallback to the live present canvas.
+      reconcileOutputRegistration();
     } catch (err: any) {
       initStatus = 'error';
       initError = `WebGPU init failed: ${err?.message || err}`;
       console.error('[WebGPUCanvas] ' + initError, err);
+      // Init failed — make sure the live WebGL source stays registered
+      // (presentCanvas would be blank).
+      reconcileOutputRegistration();
     }
   }
 
@@ -1006,26 +1048,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     // via the single reconciler. (Canvas.svelte skips registration in
     // bridgeMode so the two don't fight.)
     settingsUnsub = settings.subscribe((s) => {
-      if (!isOutputMode && !isOsrMode && presentCanvas) {
-        const _perf = s?.performance;
-        reconcileMasterWarpOutput({
-          baseSource: presentCanvas,
-          warpActive: masterWarpIsActive(s.output?.masterWarp),
-          zeroCopy: !!s.experimental?.outputZeroCopy,
-          webrtc: !!s.experimental?.outputWebRTC,
-          getWarp: () => getStore(settings).output?.masterWarp,
-          getSize: () => ({
-            w: getStore(settings).output?.masterCanvasWidth ?? 1920,
-            h: getStore(settings).output?.masterCanvasHeight ?? 1080,
-          }),
-          perf: {
-            frameRate: _perf?.outputFrameRate ?? 60,
-            maxBitrate: _perf?.outputMaxBitrate,
-            degradationPreference: _perf?.outputDegradationPreference,
-            codecPreference: _perf?.outputCodecPreference,
-          },
-        });
-      }
+      reconcileOutputRegistration();
       outputShowCursor = s.output?.outputShowCursor ?? false;
       setOutputCursorStyle({
         style: s.output?.outputCursorStyle ?? 'crosshair',
@@ -1115,7 +1138,10 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     disposed = true;
     stopFrameLoop();
     stopOutputSharedTexturePresenter();
-    resetMasterWarpReconcile();
+    // Owner-scoped: this renderer may have registered presentCanvas (live)
+    // or sourceCanvas (WebGPU-init-failed fallback). Only clears the gate
+    // if one of those owns the current registration.
+    resetMasterWarpReconcile(presentCanvas, sourceCanvas);
     window.removeEventListener('mousemove', onMouseMove, { capture: true } as any);
     window.removeEventListener('mousedown', onMouseDown, { capture: true } as any);
     window.removeEventListener('mouseup', onMouseUp, { capture: true } as any);

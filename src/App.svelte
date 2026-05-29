@@ -92,7 +92,8 @@
   import type { Point2D, BezierPoint, Layer, WarpCorners } from './lib/types';
   import { generateUUID } from './lib/types';
   import { createDefaultFreehandLine, createDefaultPointClickLine } from './lib/lines/types';
-  import QRCode from 'qrcode';
+  // qrcode is lazy-loaded inside generateQRCode() so it stays out of the
+  // main App chunk — it's only needed when the mobile-connect panel opens.
   import { midiManager } from './lib/midi/midiManager';
   import { midiStore } from './lib/midi/midiStore';
   import { synthVisionStore, sessionClipCache, isfShaderCache } from './lib/stores/synthVision';
@@ -2690,6 +2691,7 @@
     }
     const url = getMobileUrl(selectedIP);
     try {
+      const QRCode = (await import('qrcode')).default;
       qrCodeDataUrl = await QRCode.toDataURL(url, {
         width: 200,
         margin: 2,

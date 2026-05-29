@@ -210,9 +210,19 @@ export function reconcileMasterWarpOutput(opts: {
   }
 }
 
-/** Reset the reconcile diff-gate — call when output ownership tears down
- *  (renderer unmount) so the next owner re-registers from scratch. */
-export function resetMasterWarpReconcile(): void {
+/** Reset the reconcile diff-gate on renderer teardown so the next owner
+ *  re-registers from scratch. OWNER-SCOPED: both renderers (Canvas in
+ *  bridgeMode, WebGPUCanvas) can be alive at once during the editorWebGPU
+ *  {#if} swap. If the unmounting one resets unconditionally AFTER the
+ *  survivor already registered, it wipes the survivor's gate and output
+ *  freezes on the stale source until the next settings change. So only
+ *  reset if the caller actually owns the current registration. Pass the
+ *  canvas(es) this renderer might have registered; if none match lastBase,
+ *  the survivor keeps its gate. Call with no arg to force-reset. */
+export function resetMasterWarpReconcile(...ownedCanvases: (HTMLCanvasElement | null | undefined)[]): void {
+  if (ownedCanvases.length > 0 && lastBase && !ownedCanvases.includes(lastBase)) {
+    return; // Not our registration — leave the survivor's gate intact.
+  }
   lastBase = null;
   lastFlags = '';
 }

@@ -159,6 +159,11 @@
     const k0 = cross2(hx, hy, ex, ey);
     let v: number;
     if (Math.abs(k2) < 1e-6) {
+      // Parallelogram (k2≈0) → linear solve. Guard k1≈0: a degenerate /
+      // collapsed / collinear quad makes both k2 and k1 vanish → -k0/k1 is
+      // 0/0 = NaN, which clamp01 does NOT sanitize (Math.max(0,NaN)=NaN)
+      // and would persist into the stored mesh point. Bail to center.
+      if (Math.abs(k1) < 1e-6) return { u: 0.5, v: 0.5 };
       v = -k0 / k1;
     } else {
       const w = k1 * k1 - 4 * k0 * k2;
@@ -168,8 +173,14 @@
       v = (v1 >= 0 && v1 <= 1) ? v1 : v2;
     }
     const denomU = ex + gx * v;
-    const u = Math.abs(denomU) > 1e-6 ? (hx - fx * v) / denomU : (hy - fy * v) / (ey + gy * v);
-    return { u: clamp01(u), v: clamp01(v) };
+    const denomU2 = ey + gy * v;
+    const u = Math.abs(denomU) > 1e-6
+      ? (hx - fx * v) / denomU
+      : (Math.abs(denomU2) > 1e-6 ? (hy - fy * v) / denomU2 : 0.5);
+    // Final NaN/Int sanitize — never let a bad value reach the stored mesh.
+    const su = Number.isFinite(u) ? u : 0.5;
+    const sv = Number.isFinite(v) ? v : 0.5;
+    return { u: clamp01(su), v: clamp01(sv) };
   }
 
   function cornersCenter(c: WarpCorners) {
