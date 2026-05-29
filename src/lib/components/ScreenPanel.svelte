@@ -10,6 +10,7 @@
    */
   import { onMount } from 'svelte';
   import { screens, selectedScreenId, selectedScreen, screenActions } from '../stores/screens';
+  import { getMasterWarpCanvas } from '../sync/outputComposite';
   import { settings, identityOutputMesh, masterWarpIsActive, type OutputSlice } from '../stores/settings';
   import { maxOutputSlices } from '../stores/license';
   import { isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
@@ -141,6 +142,34 @@
     if (masterMode === 'mesh') settings.setMasterWarp({ meshGrid: identityOutputMesh() });
     else settings.setMasterWarp({ corners: undefined });
   }
+
+  // ─── Live warped-output preview ─────────────────────────────────────
+  // Mirrors the master-warp output canvas (getMasterWarpCanvas) into a
+  // small canvas right here in the panel, so the operator SEES the warp
+  // as they drag — no dependency on a projector/output window being
+  // attached. Only runs while the warp is active (the canvas only
+  // updates then).
+  let mwPreviewCanvas: HTMLCanvasElement | null = null;
+  let mwPreviewRaf = 0;
+  function mwPreviewLoop() {
+    mwPreviewRaf = requestAnimationFrame(mwPreviewLoop);
+    if (!mwPreviewCanvas) return;
+    const ctx = mwPreviewCanvas.getContext('2d');
+    const src = getMasterWarpCanvas();
+    if (!ctx) return;
+    const W = mwPreviewCanvas.width, H = mwPreviewCanvas.height;
+    ctx.clearRect(0, 0, W, H);
+    if (masterWarpActive && src && src.width > 0) {
+      try { ctx.drawImage(src, 0, 0, W, H); } catch { /* not ready */ }
+    } else {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, W, H);
+    }
+  }
+  onMount(() => {
+    mwPreviewRaf = requestAnimationFrame(mwPreviewLoop);
+    return () => { if (mwPreviewRaf) cancelAnimationFrame(mwPreviewRaf); };
+  });
 
   // ─── Drag-reorder for the screen list ───────────────────────────────
   let dragFromIdx = -1;
@@ -295,8 +324,11 @@
         </div>
         <div class="mw-hint">
           Drag the orange handles on the canvas to warp the whole output.
-          The editor preview stays straight — the warp shows on the output window.
+          Live preview below shows the warped result.
         </div>
+        <!-- Live warped-output preview — shows the actual warp result so
+             you don't need a projector/output window open to see it. -->
+        <canvas bind:this={mwPreviewCanvas} class="mw-preview" width="240" height="135"></canvas>
         <div class="master-row">
           <button class="mini-btn" onclick={resetMasterWarp}>Reset to identity</button>
         </div>
@@ -527,6 +559,16 @@
     font-size: 10px;
     line-height: 1.4;
     color: #777;
+  }
+  .mw-preview {
+    display: block;
+    width: 100%;
+    height: auto;
+    margin-top: 8px;
+    border: 1px solid rgba(240, 163, 94, 0.4);
+    border-radius: 4px;
+    background: #000;
+    image-rendering: auto;
   }
   .mw-modes {
     display: flex;
