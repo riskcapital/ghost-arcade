@@ -12,6 +12,7 @@
   import WarpHandles from './lib/components/WarpHandles.svelte';
   import MeshWarpHandles from './lib/components/MeshWarpHandles.svelte';
   import ScreenWarpHandles from './lib/components/ScreenWarpHandles.svelte';
+  import MasterWarpHandles from './lib/components/MasterWarpHandles.svelte';
   import CustomShapeHandles from './lib/components/CustomShapeHandles.svelte';
   // LayerPanel now mounts via LeftSidebar (which swaps it for
   // ScreenPanel when the user is on the Screens tab).
@@ -4609,6 +4610,9 @@
         {#if $leftSidebarTab === 'screens'}
           <div class="warp-handles-offset" style="left: {canvasOffsetX}px; top: {canvasOffsetY}px;">
             <ScreenWarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
+            <!-- Global master-warp handles (orange) sit above the screen
+                 handles. Self-hides unless output.masterWarp.enabled. -->
+            <MasterWarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
           </div>
         {/if}
         {#if $selectedLayer && $leftSidebarTab !== 'screens'}
