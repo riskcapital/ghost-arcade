@@ -1502,13 +1502,6 @@
         }
 
         if (spoutOutputActive && glCanvas && !osrSpoutActive && !isOsrMode && !isOutputMode) {
-          // Checkpoint A: we're past the inner gate. Log 3 times so we know
-          // this branch is actually entered.
-          if (!(window as any).__sendCpA) (window as any).__sendCpA = 0;
-          if ((window as any).__sendCpA < 3) {
-            (window as any).__sendCpA++;
-            console.log('[syphon-path] A: gate open, entering send block');
-          }
           // Skip every other frame on the CPU path — getImageData is expensive
           // (~15-30ms for 1080p). This halves the readback overhead while still
           // delivering 30fps output at 60fps render rate.
@@ -1516,12 +1509,6 @@
           if (spoutFrameSkip % 2 !== 0 && !spoutSendInFlight) {
             // Skip this frame — let the render loop continue at full speed
           } else {
-          // Checkpoint B: past frame-skip, entering actual send path
-          if (!(window as any).__sendCpB) (window as any).__sendCpB = 0;
-          if ((window as any).__sendCpB < 3) {
-            (window as any).__sendCpB++;
-            console.log('[syphon-path] B: past frame-skip (inFlight=', spoutSendInFlight, ')');
-          }
           // Determine Spout output resolution from settings
           const spoutRes = $settings?.output?.spoutResolution || 'match';
           let targetW = 1920, targetH = 1080;
@@ -1571,30 +1558,10 @@
           spoutScaleCtx!.restore();
 
           // getImageData is the CPU readback — but at the target resolution, not canvas resolution
-          const imgData = spoutScaleCtx!.getImageData(0, 0, targetW, targetH);
           const w = targetW;
           const h = targetH;
-          // Reuse the Uint8Array wrapper if same size to reduce GC pressure.
-          // Note: `new Uint8Array(imgData.data.buffer)` is a *view* over the same
-          // ArrayBuffer (no copy) — the single .set() below is the only memcpy.
-          // Previously this code allocated the Uint8Array wrapper, copied bytes
-          // in, and allocated a second wrapper — this version avoids the
-          // redundant wrapper allocation each frame.
-          const expectedBytes = w * h * 4;
-          if (!spoutSendPixels || spoutSendPixels.byteLength !== expectedBytes) {
-            spoutSendPixels = new Uint8Array(expectedBytes);
-          }
-          spoutSendPixels.set(new Uint8Array(imgData.data.buffer, imgData.data.byteOffset, imgData.data.byteLength));
-          spoutSendW = w;
-          spoutSendH = h;
 
           {
-            // Checkpoint B2: which branch are we taking?
-            if (!(window as any).__sendCpB2) (window as any).__sendCpB2 = 0;
-            if ((window as any).__sendCpB2 < 3) {
-              (window as any).__sendCpB2++;
-              console.log('[syphon-path] B2: post-readback, activeSlices=', activeSlices.length, 'inFlight=', spoutSendInFlight);
-            }
             if (activeSlices.length > 0) {
               // ── Multi-output slice path ──────────────────────────────────
               // spoutScaleCanvas already has the frame right-side-up at Spout
@@ -1604,6 +1571,11 @@
               // lift in ONE shader pass, returning ready-to-send RGBA bytes.
               // The legacy 2D path (sliceCanvas + applyEdgeBlending) is
               // kept as a fallback when WebGL initialization fails.
+              // NOTE: the slice path re-renders each slice from
+              // spoutScaleCanvas, so we deliberately SKIP the full-frame
+              // getImageData readback here — it's only consumed by the
+              // single-output branch below. (Was an ~8/33 MB readback +
+              // memcpy per frame of dead work whenever slices exist.)
               fullFrameCanvas = spoutScaleCanvas;
               fullFrameCtx = spoutScaleCtx;
               const gpuPathAvailable = isBlendRendererAvailable();
@@ -1723,13 +1695,18 @@
                 }
               }
             } else if (!spoutSendInFlight) {
-              // ── Legacy single-output path ────────────────────────────────
-              // Checkpoint C: about to invoke IPC (single path)
-              if (!(window as any).__sendCpC) (window as any).__sendCpC = 0;
-              if ((window as any).__sendCpC < 3) {
-                (window as any).__sendCpC++;
-                console.log('[syphon-path] C: invoking spout_send_image (single path)', w, 'x', h, 'bytes=', spoutSendPixels.byteLength, 'isElectron=', isElectron);
+              // ── Legacy single-output path (no slices configured) ─────────
+              // Full-frame readback lives HERE (only consumer). Reuse the
+              // Uint8Array buffer across frames; the .set() is the lone
+              // memcpy (the wrapper is a zero-copy view over imgData).
+              const imgData = spoutScaleCtx!.getImageData(0, 0, w, h);
+              const expectedBytes = w * h * 4;
+              if (!spoutSendPixels || spoutSendPixels.byteLength !== expectedBytes) {
+                spoutSendPixels = new Uint8Array(expectedBytes);
               }
+              spoutSendPixels.set(new Uint8Array(imgData.data.buffer, imgData.data.byteOffset, imgData.data.byteLength));
+              spoutSendW = w;
+              spoutSendH = h;
               spoutSendInFlight = true;
               if (isElectron) {
                 invoke('spout_send_image', { data: spoutSendPixels, width: w, height: h })

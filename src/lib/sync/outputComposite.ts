@@ -53,9 +53,10 @@ function ensureOut(w: number, h: number) {
 }
 
 // ─── Debug ───────────────────────────────────────────────────────────────
-// On by default; disable with `window.__MWARP_DEBUG__ = false` in devtools.
+// OFF by default; enable with `window.__MWARP_DEBUG__ = true` in devtools
+// when diagnosing the master-warp pipeline.
 function mwDebug(): boolean {
-  return typeof window !== 'undefined' && (window as any).__MWARP_DEBUG__ !== false;
+  return typeof window !== 'undefined' && (window as any).__MWARP_DEBUG__ === true;
 }
 function mwlog(...args: unknown[]) {
   if (mwDebug()) console.log('[mwarp]', ...args);
