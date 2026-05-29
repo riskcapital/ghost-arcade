@@ -35,6 +35,13 @@ const BROADCAST_INTERVAL_MS = 1000 / 60;
 
 let senderChannel: BroadcastChannel | null = null;
 let lastBroadcastAt = 0;
+// Receiver-presence gate. The editor's render loop calls broadcastAudioFrame
+// every frame, but with no output/OSR window open there's NOBODY listening —
+// posting ~16KB (two Float32Arrays) per frame at 60Hz (~1MB/s structured
+// clone on the main thread) is pure waste. Receivers announce themselves with
+// 'audio-receiver-hello' (on start) and 'audio-receiver-bye' (on close); we
+// only broadcast frames while at least one is alive.
+let receiverCount = 0;
 
 /** Start broadcasting audio analysis from this window. Call once from the
  *  editor's Canvas (or wherever the analyzer feeds audioTextures). Safe to
@@ -43,7 +50,19 @@ export function startAudioBroadcast(): void {
   if (senderChannel) return;
   try {
     senderChannel = new BroadcastChannel(CHANNEL_NAME);
-    console.log('[AudioSync] Editor: broadcasting audio analysis');
+    receiverCount = 0;
+    // Handshake: count receivers coming/going. Also answer a late receiver's
+    // hello so ordering (sender-first or receiver-first) both resolve.
+    senderChannel.onmessage = (ev) => {
+      const m = ev.data;
+      if (!m) return;
+      if (m.type === 'audio-receiver-hello') receiverCount++;
+      else if (m.type === 'audio-receiver-bye') receiverCount = Math.max(0, receiverCount - 1);
+    };
+    // Ping in case receivers opened BEFORE us (or we restarted): they
+    // re-announce on 'audio-sender-ping' so the count is rebuilt.
+    senderChannel.postMessage({ type: 'audio-sender-ping' });
+    console.log('[AudioSync] Editor: audio broadcast ready (gated on receivers)');
   } catch (err) {
     console.warn('[AudioSync] BroadcastChannel unavailable:', err);
   }
@@ -55,12 +74,14 @@ export function stopAudioBroadcast(): void {
   try { senderChannel.close(); } catch { /* */ }
   senderChannel = null;
   lastBroadcastAt = 0;
+  receiverCount = 0;
 }
 
 /** Push one frame of analysis to all listeners. The editor's per-frame
- *  audio update loop calls this; we throttle internally. */
+ *  audio update loop calls this; we throttle internally. No-op when no
+ *  receiver is listening (avoids ~1MB/s of dead structured-clone). */
 export function broadcastAudioFrame(analysis: AudioAnalysis, isActive: boolean): void {
-  if (!senderChannel) return;
+  if (!senderChannel || receiverCount <= 0) return;
   const now = performance.now();
   if (now - lastBroadcastAt < BROADCAST_INTERVAL_MS) return;
   lastBroadcastAt = now;
@@ -119,9 +140,17 @@ export function startAudioBroadcastReceiver(hooks: AudioReceiverHooks): () => vo
     return () => {};
   }
   const ch = receiverChannel;
+  // Announce presence so the editor only broadcasts while we're alive.
+  try { ch.postMessage({ type: 'audio-receiver-hello' }); } catch { /* */ }
   ch.onmessage = (ev) => {
     const m = ev.data;
-    if (!m || m.type !== 'audio-frame') return;
+    if (!m) return;
+    // Re-announce if the sender (re)started after us.
+    if (m.type === 'audio-sender-ping') {
+      try { ch.postMessage({ type: 'audio-receiver-hello' }); } catch { /* */ }
+      return;
+    }
+    if (m.type !== 'audio-frame') return;
     try {
       hooks.onFrame({
         isActive: !!m.isActive,
@@ -139,6 +168,7 @@ export function startAudioBroadcastReceiver(hooks: AudioReceiverHooks): () => vo
   };
   console.log('[AudioSync] Receiver started');
   return () => {
+    try { ch.postMessage({ type: 'audio-receiver-bye' }); } catch { /* */ }
     try { ch.close(); } catch { /* */ }
     if (receiverChannel === ch) receiverChannel = null;
   };

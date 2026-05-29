@@ -97,7 +97,11 @@
       startSlice: {
         ...slice,
         corners: slice.corners ? { ...slice.corners } : undefined,
-        meshGrid: slice.meshGrid ? structuredClone(slice.meshGrid) : undefined,
+        // Manual deep-copy — structuredClone throws DataCloneError on
+        // some nested store values; the mesh is just {rows,cols,points}.
+        meshGrid: slice.meshGrid
+          ? { rows: slice.meshGrid.rows, cols: slice.meshGrid.cols, points: slice.meshGrid.points.map(r => r.map(p => ({ x: p.x, y: p.y }))) }
+          : undefined,
       },
     };
     selectedScreenId.set(sliceId);

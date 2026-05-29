@@ -482,6 +482,40 @@ export function meshFromRect(
   return { rows, cols, points };
 }
 
+/** True when a master warp would actually change the output — i.e. it's
+ *  enabled AND its geometry is non-identity. Enabling the warp without
+ *  moving a handle is a no-op, so callers use this to avoid routing the
+ *  output through the (costly) warp pass and to keep the zero-copy fast
+ *  path until the operator actually warps something. */
+export function masterWarpIsActive(warp?: OutputWarp | null): boolean {
+  if (!warp?.enabled) return false;
+  // Corners and mesh COMBINE (forward warp). Active if EITHER is
+  // non-identity — a dragged corner quad OR a deformed mesh. Use an
+  // epsilon (matching the mesh check below): a sub-pixel drag back toward
+  // identity must read as identity again, else the warp pass stays
+  // engaged forever and the zero-copy fast path is lost.
+  const EPS = 1e-4;
+  const c = warp.corners;
+  const cornersWarped = !!c && (
+    Math.abs(c.topLeft.x - 0) > EPS || Math.abs(c.topLeft.y - 0) > EPS ||
+    Math.abs(c.topRight.x - 1) > EPS || Math.abs(c.topRight.y - 0) > EPS ||
+    Math.abs(c.bottomLeft.x - 0) > EPS || Math.abs(c.bottomLeft.y - 1) > EPS ||
+    Math.abs(c.bottomRight.x - 1) > EPS || Math.abs(c.bottomRight.y - 1) > EPS
+  );
+  if (cornersWarped) return true;
+  const g = warp.meshGrid;
+  if (g && g.rows >= 2 && g.cols >= 2) {
+    for (let r = 0; r < g.rows; r++) {
+      for (let cc = 0; cc < g.cols; cc++) {
+        const p = g.points[r]?.[cc];
+        if (!p) continue;
+        if (Math.abs(p.x - cc / (g.cols - 1)) > 1e-4 || Math.abs(p.y - r / (g.rows - 1)) > 1e-4) return true;
+      }
+    }
+  }
+  return false;
+}
+
 /** Migrate an OutputSlice loaded from older settings/.gha files to
  *  the current shape. Idempotent — running it on an already-current
  *  slice returns it unchanged. */
@@ -602,6 +636,16 @@ export interface OutputSettings {
   domeOffsetY: number;       // -1 to 1
   domeCurvature: number;     // 0 (flat) to 1 (full dome)
   domeTruncation: number;    // 0.5 to 1.0 (fraction of circle)
+  // ─── Global master warp ───────────────────────────────────────────────
+  // A single output-side warp applied to the ENTIRE master canvas before
+  // it reaches any transport — the main output window (WebGPU shared-
+  // texture OR WebRTC fallback) AND the senders. Per-Screen warp targets
+  // one slice; this corrects the whole composite at once (the operator's
+  // global keystone / surface-align rescue). Identity corners ⇒ visual
+  // no-op even when enabled. Applied editor-side on a dedicated capture
+  // canvas (see outputComposite.ts) so both output transports carry
+  // already-warped pixels — a single source of truth, no per-window code.
+  masterWarp?: OutputWarp;
 }
 
 export type DefaultLayerShader = 'crosshair' | 'grid' | 'outline' | 'testpattern' | 'none';
@@ -860,6 +904,9 @@ function createDefaultSettings(): AppSettings {
       domeOffsetY: 0,
       domeCurvature: 1.0,
       domeTruncation: 1.0,
+      // Global master warp — off + identity by default so existing
+      // projects present an un-warped composite exactly as before.
+      masterWarp: { enabled: false, mode: 'corners' },
     },
     ui: {
       colorScheme: 'midnight-coral', // Default to new dark coral theme
@@ -1042,14 +1089,17 @@ function loadSettings(): AppSettings {
         output: {
           ...defaults.output,
           ...parsed.output,
-          // Run per-slice migration so older saved slices that pre-date
-          // black-level / per-edge-gamma / display-target fields pick up
-          // their defaults without nuking the user's saved crops.
-          slices: Array.isArray(parsed.output?.slices)
-            ? parsed.output.slices.map((s: Partial<OutputSlice> & { id?: string }) =>
-                migrateOutputSlice({ ...s, id: s.id ?? Math.random().toString(36).slice(2) })
-              )
-            : [],
+          // ── Projection-mapping setup is SESSION-SCOPED ──────────────
+          // Slices (Screens), the master canvas size, and the master warp
+          // are "the setup" — they travel with the .gha project file, not
+          // localStorage. So they ALWAYS reset to defaults on launch; only
+          // loading a project (layers.ts importProject) restores them.
+          // This override comes AFTER `...parsed.output` deliberately, to
+          // discard any stale per-launch copy.
+          slices: [],
+          masterCanvasWidth: defaults.output.masterCanvasWidth,
+          masterCanvasHeight: defaults.output.masterCanvasHeight,
+          masterWarp: { enabled: false, mode: 'corners' as const },
         },
         ui: {
           ...defaults.ui,
@@ -1529,6 +1579,20 @@ function createSettingsStore() {
     setReplicateApiKey(key: string) {
       update(s => {
         const newSettings = { ...s, ai: { ...s.ai, replicateApiKey: key } };
+        saveSettings(newSettings);
+        return newSettings;
+      });
+    },
+
+    // Global master warp — merge-patch so callers can set just
+    // { enabled } or just { corners } without clobbering the rest.
+    setMasterWarp(patch: Partial<OutputWarp>) {
+      update(s => {
+        const prev = s.output.masterWarp ?? { enabled: false, mode: 'corners' as const };
+        const newSettings = {
+          ...s,
+          output: { ...s.output, masterWarp: { ...prev, ...patch } },
+        };
         saveSettings(newSettings);
         return newSettings;
       });
