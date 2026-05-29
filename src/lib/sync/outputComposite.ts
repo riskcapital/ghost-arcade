@@ -28,6 +28,8 @@
 
 import { renderMasterWarpPixels, isBlendRendererAvailable } from '../output/blendRenderer';
 import type { OutputWarp } from '../stores/settings';
+import { registerEditorCanvas } from './outputSharedTexturePresenter';
+import { startOutputPixelBroadcast, stopOutputPixelBroadcast } from './outputPixelBroadcast';
 
 let outCanvas: HTMLCanvasElement | null = null;
 let outCtx: CanvasRenderingContext2D | null = null;
@@ -115,4 +117,64 @@ export function getMasterWarpCanvas(): HTMLCanvasElement | null {
 
 export function isMasterWarpRunning(): boolean {
   return active;
+}
+
+// ─── Single output-registration owner ───────────────────────────────────
+// Both the WebGL editor renderer (Canvas.svelte) and the WebGPU pilot
+// (WebGPUCanvas.svelte, when experimental.editorWebGPU is on) can be the
+// "final present surface" the output transports capture. Whichever owns
+// output calls this on settings changes; it registers the master-warp
+// canvas (when the warp is active) or the renderer's raw `baseSource`
+// otherwise, with BOTH the WebGPU shared-texture presenter and the WebRTC
+// fallback. Centralizing here prevents the two renderers from fighting
+// over registerEditorCanvas (which is what made the master warp silently
+// do nothing in WebGPU-pilot mode).
+let lastBase: HTMLCanvasElement | null = null;
+let lastFlags = '';
+let webrtcOn = false;
+
+export function reconcileMasterWarpOutput(opts: {
+  baseSource: HTMLCanvasElement;
+  warpActive: boolean;
+  zeroCopy: boolean;
+  webrtc: boolean;
+  getWarp: () => OutputWarp | undefined;
+  getSize: () => { w: number; h: number };
+  perf?: {
+    frameRate?: number;
+    maxBitrate?: number;
+    degradationPreference?: 'maintain-resolution' | 'maintain-framerate' | 'balanced';
+    codecPreference?: 'auto' | 'h264' | 'vp8';
+  };
+}): void {
+  const { baseSource, warpActive, zeroCopy, webrtc, getWarp, getSize, perf } = opts;
+  const flags = `${warpActive ? 1 : 0}${zeroCopy ? 1 : 0}${webrtc ? 1 : 0}`;
+  // Diff-gate: only act when the source surface or the flags change.
+  if (baseSource === lastBase && flags === lastFlags) return;
+  lastBase = baseSource;
+  lastFlags = flags;
+
+  const source = warpActive ? startMasterWarpOutput(getWarp, getSize) : (stopMasterWarpOutput(), baseSource);
+  const fps = perf?.frameRate ?? 60;
+  registerEditorCanvas(source, fps);
+
+  const wantWebRTC = !zeroCopy && webrtc;
+  if (wantWebRTC) {
+    startOutputPixelBroadcast(source, fps, {
+      maxBitrate: perf?.maxBitrate,
+      degradationPreference: perf?.degradationPreference,
+      codecPreference: perf?.codecPreference,
+    });
+    webrtcOn = true;
+  } else if (webrtcOn) {
+    stopOutputPixelBroadcast();
+    webrtcOn = false;
+  }
+}
+
+/** Reset the reconcile diff-gate — call when output ownership tears down
+ *  (renderer unmount) so the next owner re-registers from scratch. */
+export function resetMasterWarpReconcile(): void {
+  lastBase = null;
+  lastFlags = '';
 }
