@@ -438,16 +438,39 @@ function setSourceFrame(source: HTMLCanvasElement | OffscreenCanvas | HTMLVideoE
   if (material) material.uniforms.uSource.value = sourceTexture;
 }
 
-// Shared warp-uniform setup, used by BOTH the readback sender path
-// (renderSlicePixels) and the zero-copy master path (renderMasterWarpToCanvas)
-// so there's exactly one warp-mode dispatch — no logic drift. `u` is the
-// ShaderMaterial.uniforms of whichever renderer (sender or master) is active.
-function applyWarpUniforms(
-  u: Record<string, { value: any }>,
+/**
+ * Render one slice into the backing WebGL canvas and read back the
+ * pixels at the slice's output resolution. Returns Uint8Array of RGBA
+ * bytes or null if WebGL is unavailable.
+ *
+ * `stageIntensity` (0..1) scales final output — used by the per-screen
+ * stage effects (radial pulse, beat strobe, etc.). Defaults to 1.
+ */
+export function renderSlicePixels(
+  source: HTMLCanvasElement | OffscreenCanvas | HTMLVideoElement | ImageBitmap,
   slice: OutputSlice,
-  stageIntensity: number,
-  masterForward: boolean,
-): void {
+  sliceW: number,
+  sliceH: number,
+  stageIntensity = 1,
+  // gl.readPixels returns bottom-up rows. The native senders (Spout/
+  // Syphon/NDI) consume the buffer directly and expect that flipped to
+  // top-down (flip=true, the default). The master-warp path instead
+  // feeds putImageData, which is ALSO top-down — but it draws the result
+  // onto a 2D canvas that's then captured upright, so it must match the
+  // un-warped drawImage(webglCanvas) passthrough, which is one flip the
+  // other way. That path passes flip=false.
+  flip = true,
+  // Master warp: route through the forward/destination warp branch
+  // (uWarpMode=3) — corners are where content lands + mesh deforms
+  // within the quad, matching the layer "map mode" feel. The synthetic
+  // master slice carries the corners/mesh; crop is ignored here.
+  masterForward = false,
+): Uint8Array | null {
+  if (sliceW <= 0 || sliceH <= 0) return null;
+  if (!ensureRenderer(sliceW, sliceH)) return null;
+  setSourceFrame(source);
+
+  const u = material!.uniforms;
   u.uCrop.value.set(slice.cropX, slice.cropY, slice.cropW, slice.cropH);
   // Warp mode dispatch. Corners and mesh modes self-heal: if the
   // operator flipped warpMode but the geometry initializer was bypassed
@@ -519,41 +542,6 @@ function applyWarpUniforms(
   u.uBlackLevel.value.set(slice.blackLevelR ?? 0, slice.blackLevelG ?? 0, slice.blackLevelB ?? 0);
   u.uBlackFeather.value = slice.blackLevelFeather ?? 0.5;
   u.uStageIntensity.value = Math.max(0, Math.min(1, stageIntensity));
-}
-
-/**
- * Render one slice into the backing WebGL canvas and read back the
- * pixels at the slice's output resolution. Returns Uint8Array of RGBA
- * bytes or null if WebGL is unavailable.
- *
- * `stageIntensity` (0..1) scales final output — used by the per-screen
- * stage effects (radial pulse, beat strobe, etc.). Defaults to 1.
- */
-export function renderSlicePixels(
-  source: HTMLCanvasElement | OffscreenCanvas | HTMLVideoElement | ImageBitmap,
-  slice: OutputSlice,
-  sliceW: number,
-  sliceH: number,
-  stageIntensity = 1,
-  // gl.readPixels returns bottom-up rows. The native senders (Spout/
-  // Syphon/NDI) consume the buffer directly and expect that flipped to
-  // top-down (flip=true, the default). The master-warp path instead
-  // feeds putImageData, which is ALSO top-down — but it draws the result
-  // onto a 2D canvas that's then captured upright, so it must match the
-  // un-warped drawImage(webglCanvas) passthrough, which is one flip the
-  // other way. That path passes flip=false.
-  flip = true,
-  // Master warp: route through the forward/destination warp branch
-  // (uWarpMode=3) — corners are where content lands + mesh deforms
-  // within the quad, matching the layer "map mode" feel. The synthetic
-  // master slice carries the corners/mesh; crop is ignored here.
-  masterForward = false,
-): Uint8Array | null {
-  if (sliceW <= 0 || sliceH <= 0) return null;
-  if (!ensureRenderer(sliceW, sliceH)) return null;
-  setSourceFrame(source);
-
-  applyWarpUniforms(material!.uniforms, slice, stageIntensity, masterForward);
 
   try {
     renderer!.setViewport(0, 0, sliceW, sliceH);
@@ -585,122 +573,26 @@ export function renderSlicePixels(
 // id keeps the mesh-texture cache warm across frames.
 let masterSlice: OutputSlice | null = null;
 
-// ─── Dedicated master-warp renderer (zero-copy) ──────────────────────────
-// The master warp gets its OWN three.js WebGLRenderer + visible
-// HTMLCanvasElement, separate from the shared sender renderer above. Two
-// reasons:
-//   1. The presenter captureStream()s this canvas DIRECTLY — no readPixels,
-//      no putImageData. The warp renders straight onto the captured surface.
-//   2. The sender renderer is resized/scissored per-slice every frame; the
-//      master warp can't share it without the two clobbering each other's
-//      framebuffer mid-frame.
-// Orientation: the readback path used readPixels(flip=false)+putImageData,
-// which lands framebuffer-BOTTOM at image-TOP and looked correct. Direct
-// canvas capture lands framebuffer-TOP at image-top — the opposite. So the
-// master vertex shader negates gl_Position.y, flipping the framebuffer once
-// to reproduce the validated orientation. All fragment/warp math is shared
-// (applyWarpUniforms + the same FRAG_SHADER) — identical pixels, just no
-// CPU round-trip.
-const MASTER_VERT_SHADER = /* glsl */ `
-  varying vec2 vUv;
-  void main() {
-    vUv = uv;
-    // Negate Y so the rendered framebuffer matches the orientation the old
-    // readPixels(flip=false)+putImageData path produced (see note above).
-    gl_Position = vec4(position.x, -position.y, position.z, 1.0);
-  }
-`;
-let masterRenderer: THREE.WebGLRenderer | null = null;
-let masterCanvas: HTMLCanvasElement | null = null;
-let masterScene: THREE.Scene | null = null;
-let masterCamera: THREE.OrthographicCamera | null = null;
-let masterMaterial: THREE.ShaderMaterial | null = null;
-let masterQuad: THREE.Mesh | null = null;
-let masterSourceTex: THREE.CanvasTexture | null = null;
-
-function ensureMasterRenderer(w: number, h: number): boolean {
-  if (masterRenderer && masterCanvas) {
-    if (masterCanvas.width !== w || masterCanvas.height !== h) {
-      masterCanvas.width = w; masterCanvas.height = h;
-      masterRenderer.setSize(w, h, false);
-    }
-    return true;
-  }
-  try {
-    masterCanvas = document.createElement('canvas');
-    masterCanvas.width = w; masterCanvas.height = h;
-    masterRenderer = new THREE.WebGLRenderer({
-      canvas: masterCanvas,
-      antialias: false,
-      alpha: false,
-      // Required so captureStream sees a stable frame even when the rAF
-      // cadence and the capture cadence differ.
-      preserveDrawingBuffer: true,
-      premultipliedAlpha: false,
-    });
-    masterRenderer.setPixelRatio(1);
-    masterRenderer.setSize(w, h, false);
-    masterRenderer.outputColorSpace = THREE.SRGBColorSpace;
-    masterScene = new THREE.Scene();
-    masterCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-    // Clone the proven uniform set so applyWarpUniforms drives it identically.
-    masterMaterial = new THREE.ShaderMaterial({
-      vertexShader: MASTER_VERT_SHADER,
-      fragmentShader: FRAG_SHADER,
-      uniforms: {
-        uSource: { value: null },
-        uCrop: { value: new THREE.Vector4(0, 0, 1, 1) },
-        uWarpMode: { value: 0 },
-        uCornerTL: { value: new THREE.Vector2(0, 0) },
-        uCornerTR: { value: new THREE.Vector2(1, 0) },
-        uCornerBL: { value: new THREE.Vector2(0, 1) },
-        uCornerBR: { value: new THREE.Vector2(1, 1) },
-        uMeshTex: { value: ensureMeshPlaceholder() },
-        uMeshRows: { value: 0 },
-        uMeshCols: { value: 0 },
-        uRotation: { value: 0 },
-        uBrightness: { value: 1 },
-        uContrast: { value: 1 },
-        uGamma: { value: 1 },
-        uBlendW: { value: new THREE.Vector4(0, 0, 0, 0) },
-        uBlendG: { value: new THREE.Vector4(2.2, 2.2, 2.2, 2.2) },
-        uBlackLevel: { value: new THREE.Vector3(0, 0, 0) },
-        uBlackFeather: { value: 0.5 },
-        uStageIntensity: { value: 1 },
-      },
-      depthTest: false,
-      depthWrite: false,
-    });
-    masterQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), masterMaterial);
-    masterScene.add(masterQuad);
-    return true;
-  } catch (err) {
-    console.warn('[blendRenderer] master renderer init failed', err);
-    masterRenderer = null; masterCanvas = null;
-    return false;
-  }
-}
-
 /**
- * ZERO-COPY master warp: render the FULL source through the forward warp
- * (corners + mesh combined) directly onto the dedicated master canvas, which
- * the presenter captureStream()s. No readPixels, no putImageData. Returns the
- * canvas (for the transports to capture / for the per-display crop), or null
- * if WebGL is unavailable. Identity corners ⇒ output equals input.
+ * Render the FULL source through the warp shader using a single global
+ * master warp: identity crop, no edge-blend / black-level / color
+ * correction / rotation — just the corner or mesh geometry. Returns
+ * top-down RGBA pixels (already row-flipped) ready for `putImageData`,
+ * or null if WebGL is unavailable. Identity corners ⇒ the output equals
+ * the input, so an "enabled but untouched" master warp is a visual no-op.
  */
-export function renderMasterWarpToCanvas(
+export function renderMasterWarpPixels(
   source: HTMLCanvasElement | OffscreenCanvas | HTMLVideoElement | ImageBitmap,
   warp: OutputWarp,
   w: number,
   h: number,
-): HTMLCanvasElement | null {
-  if (w <= 0 || h <= 0) return null;
-  if (!ensureMasterRenderer(w, h)) return null;
+): Uint8Array | null {
   if (!masterSlice) masterSlice = createDefaultSlice('__master_warp__', 'Master', 'master');
   const m = masterSlice;
   m.cropX = 0; m.cropY = 0; m.cropW = 1; m.cropH = 1;
-  // Forward warp: corners ALWAYS apply (identity until dragged); mesh is
-  // ADDITIVE (combines, matching map mode). Valid grid (≥2×2) ⇒ mesh active.
+  // Forward warp: corners ALWAYS apply (identity until dragged) and the
+  // mesh is ADDITIVE — both combine, matching map mode (no exclusive
+  // corners-vs-mesh mode). A valid grid (≥2×2) means the mesh is in play.
   m.warpMode = 'corners';
   m.corners = warp.corners ?? identityOutputCorners();
   m.meshGrid = (warp.meshGrid && warp.meshGrid.rows >= 2 && warp.meshGrid.cols >= 2)
@@ -709,53 +601,9 @@ export function renderMasterWarpToCanvas(
   m.brightness = 1; m.contrast = 1; m.gamma = 1;
   m.edgeBlendLeft = 0; m.edgeBlendRight = 0; m.edgeBlendTop = 0; m.edgeBlendBottom = 0;
   m.blackLevelR = 0; m.blackLevelG = 0; m.blackLevelB = 0;
-
-  // (Re)bind source texture only when the source object changes.
-  if (!masterSourceTex || (masterSourceTex as any).image !== source) {
-    if (masterSourceTex) masterSourceTex.dispose();
-    masterSourceTex = new THREE.CanvasTexture(source as any);
-    masterSourceTex.flipY = false;
-    masterSourceTex.minFilter = THREE.LinearFilter;
-    masterSourceTex.magFilter = THREE.LinearFilter;
-    masterSourceTex.wrapS = THREE.ClampToEdgeWrapping;
-    masterSourceTex.wrapT = THREE.ClampToEdgeWrapping;
-    (masterSourceTex as any).colorSpace = THREE.SRGBColorSpace;
-  }
-  masterSourceTex.needsUpdate = true;
-  masterMaterial!.uniforms.uSource.value = masterSourceTex;
-
-  applyWarpUniforms(masterMaterial!.uniforms, m, 1, true);
-
-  try {
-    masterRenderer!.render(masterScene!, masterCamera!);
-    return masterCanvas;
-  } catch (err) {
-    console.warn('[blendRenderer] master warp render failed', err);
-    return null;
-  }
-}
-
-/** The dedicated master-warp canvas (null before first render). */
-export function getMasterWarpRenderCanvas(): HTMLCanvasElement | null {
-  return masterCanvas;
-}
-
-/** Ensure the master canvas exists at (w,h) and return it — so the output
- *  transports can register/capture it before the first warp frame renders
- *  (one black frame until the first tick, then live). Null if WebGL fails. */
-export function ensureMasterWarpCanvas(w: number, h: number): HTMLCanvasElement | null {
-  if (w <= 0 || h <= 0) return null;
-  if (!ensureMasterRenderer(w, h)) return null;
-  return masterCanvas;
-}
-
-/** Dispose the dedicated master renderer (call on full teardown). */
-export function disposeMasterRenderer(): void {
-  if (masterSourceTex) { masterSourceTex.dispose(); masterSourceTex = null; }
-  if (masterQuad) { (masterQuad.geometry as THREE.BufferGeometry).dispose(); masterQuad = null; }
-  if (masterMaterial) { masterMaterial.dispose(); masterMaterial = null; }
-  if (masterRenderer) { masterRenderer.dispose(); masterRenderer = null; }
-  masterScene = null; masterCamera = null; masterCanvas = null;
+  // flip=false: 2D-canvas putImageData captured upright; masterForward=true
+  // routes through the uWarpMode=3 forward/destination branch.
+  return renderSlicePixels(source, m, w, h, 1, false, true);
 }
 
 function flipRowsInPlace(buf: Uint8Array, w: number, h: number) {
