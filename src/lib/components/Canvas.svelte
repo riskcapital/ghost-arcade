@@ -41,7 +41,7 @@
   import { startWLEDSenders, stopWLEDSenders, tickWLEDSenders } from '$lib/wled/sender';
   import { startModulationBroadcast, stopModulationBroadcast } from '$lib/sync/modulationBroadcast';
   import { startOutputPixelBroadcast, stopOutputPixelBroadcast } from '$lib/sync/outputPixelBroadcast';
-  import { startMasterWarpOutput, stopMasterWarpOutput, tickMasterWarpOutput } from '$lib/sync/outputComposite';
+  import { startMasterWarpOutput, stopMasterWarpOutput, tickMasterWarpOutput, getMasterWarpCanvas } from '$lib/sync/outputComposite';
   import {
     registerEditorCanvas,
     stopOutputSharedTexturePresenter,
@@ -787,16 +787,22 @@
         }
       };
 
+      // Diff-gate: settings.subscribe fires on EVERY settings change, but
+      // the output source only depends on these three flags. Recompute +
+      // reconcile only when they actually change, so unrelated UI/pref
+      // edits never churn the presenter (no needless source swaps).
+      let lastOutputKey = '';
       outputWebRTCUnsub = settings.subscribe((s) => {
-        reconcileOutput(
-          // Only route through the warp pass when it would actually
-          // change the output — enabling alone (identity) stays
-          // passthrough so the zero-copy path is preserved until the
-          // operator drags a handle.
-          masterWarpIsActive(s.output?.masterWarp),
-          !!s.experimental?.outputZeroCopy,
-          !!s.experimental?.outputWebRTC,
-        );
+        // Only route through the warp pass when it would actually change
+        // the output — enabling alone (identity) stays passthrough so the
+        // zero-copy path is preserved until the operator drags a handle.
+        const warpActive = masterWarpIsActive(s.output?.masterWarp);
+        const zeroCopy = !!s.experimental?.outputZeroCopy;
+        const webrtc = !!s.experimental?.outputWebRTC;
+        const key = `${warpActive ? 1 : 0}${zeroCopy ? 1 : 0}${webrtc ? 1 : 0}`;
+        if (key === lastOutputKey) return;
+        lastOutputKey = key;
+        reconcileOutput(warpActive, zeroCopy, webrtc);
       });
     }
 
@@ -1594,10 +1600,24 @@
             spoutTargetH = targetH;
           }
 
-          // Draw WebGL canvas → 2D canvas (GPU-accelerated, handles Y-flip)
+          // Senders slice the TOTAL MAIN OUTPUT. When the master warp is
+          // active, that total output is the warped composite (the tick
+          // earlier this frame already filled getMasterWarpCanvas()), so
+          // each slice crops from the warped frame — not the raw editor
+          // canvas. Otherwise fall back to the raw WebGL canvas.
+          const _mwSenderSource = masterWarpIsActive($settings?.output?.masterWarp)
+            ? getMasterWarpCanvas()
+            : null;
+          const senderSource: CanvasImageSource =
+            _mwSenderSource && _mwSenderSource.width > 0 ? _mwSenderSource : glCanvas;
+
+          // Draw source → 2D canvas (GPU-accelerated, handles Y-flip).
+          // scale(1,-1) flips to the bottom-up orientation the native
+          // senders expect; both the WebGL canvas and the (upright) warped
+          // canvas are drawn upright by drawImage, so the same flip applies.
           spoutScaleCtx!.save();
-          spoutScaleCtx!.scale(1, -1); // Flip Y (WebGL is bottom-up)
-          spoutScaleCtx!.drawImage(glCanvas, 0, -targetH, targetW, targetH);
+          spoutScaleCtx!.scale(1, -1); // Flip Y (sender convention is bottom-up)
+          spoutScaleCtx!.drawImage(senderSource, 0, -targetH, targetW, targetH);
           spoutScaleCtx!.restore();
 
           // getImageData is the CPU readback — but at the target resolution, not canvas resolution

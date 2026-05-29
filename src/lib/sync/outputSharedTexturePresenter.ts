@@ -268,6 +268,12 @@ export function registerEditorCanvas(canvas: HTMLCanvasElement, frameRate = 60):
  *  registered via registerEditorCanvas). */
 export function attachOutputWindow(target: Window): void {
   if (!isPresenterEligible()) return;
+  // Idempotent: re-attaching the SAME window while the port is already
+  // live is a no-op. Without this, a stray re-attach (e.g. a duplicate
+  // open) re-probes and forces a fresh handshake + pump restart.
+  if (target === targetWindow && outboundPort) {
+    return;
+  }
   installMessageListener();
   if (targetWindow && targetWindow !== target) {
     // Re-attach: previous target was different (closed and reopened).

@@ -111,37 +111,15 @@
     {/if}
   </section>
 
-  <!-- Warp ─────────────────────────────────────────────────────── -->
+  <!-- Slice ────────────────────────────────────────────────────────
+       Per-Screen geometric warp (corners/mesh) was removed — all
+       geometric warping is now done ONCE, globally, by the Master Warp.
+       A Screen is simply a rectangular SLICE of that warped total
+       output. Set the slice rectangle by dragging on the editor canvas
+       or the top-down preview; only orientation lives here. -->
   <section class="sec">
-    <h4>Warp</h4>
-    <label class="field">
-      <span class="lbl">Mode</span>
-      <select
-        value={screen.warpMode ?? 'rect'}
-        onchange={(e) => screenActions.setWarpMode(screen.id, (e.target as HTMLSelectElement).value as 'rect' | 'corners' | 'mesh')}
-      >
-        <option value="rect">Rectangle (axis-aligned crop)</option>
-        <option value="corners">Corners (quad warp — keystone)</option>
-        <option value="mesh">Mesh (bezier grid)</option>
-      </select>
-    </label>
-    {#if (screen.warpMode ?? 'rect') !== 'rect'}
-      <div class="field">
-        <span class="lbl">&nbsp;</span>
-        <button class="full-btn ghost" onclick={() => screenActions.resetWarp(screen.id)}>Reset warp to rect</button>
-      </div>
-      <p class="hint">Drag the {screen.warpMode === 'mesh' ? 'mesh points' : 'corner handles'} on the editor canvas to align with your projection surface.</p>
-    {:else}
-      <!-- Rectangle mode: numeric crop fields. Sliders handle this
-           visually via the OutputCanvasPreview but having numbers here
-           lets the operator type exact values when needed. -->
-      <div class="quad">
-        <label><span>X</span><input type="number" min="0" max="1" step="0.001" value={screen.cropX} onchange={(e) => update({ cropX: parseFloat((e.target as HTMLInputElement).value) })} /></label>
-        <label><span>Y</span><input type="number" min="0" max="1" step="0.001" value={screen.cropY} onchange={(e) => update({ cropY: parseFloat((e.target as HTMLInputElement).value) })} /></label>
-        <label><span>W</span><input type="number" min="0.01" max="1" step="0.001" value={screen.cropW} onchange={(e) => update({ cropW: parseFloat((e.target as HTMLInputElement).value) })} /></label>
-        <label><span>H</span><input type="number" min="0.01" max="1" step="0.001" value={screen.cropH} onchange={(e) => update({ cropH: parseFloat((e.target as HTMLInputElement).value) })} /></label>
-      </div>
-    {/if}
+    <h4>Slice</h4>
+    <p class="hint">This screen takes a rectangular slice of the total (master-warped) output. Drag its rectangle on the canvas or the preview above to set it.</p>
     <label class="field">
       <span class="lbl">Rotation</span>
       <select value={screen.rotation} onchange={(e) => update({ rotation: parseInt((e.target as HTMLSelectElement).value) as 0 | 90 | 180 | 270 })}>
@@ -298,30 +276,6 @@
     border-color: rgba(255, 100, 100, 0.3);
     color: #ff8080;
   }
-  .quad {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  .quad label {
-    display: grid;
-    grid-template-columns: 28px 1fr 42px;
-    align-items: center;
-    gap: 6px;
-    font-size: 11px;
-    color: #aaa;
-  }
-  .quad input[type="number"],
-  .quad input[type="range"] {
-    width: 100%;
-  }
-  .quad em {
-    font-style: normal;
-    color: #777;
-    font-family: ui-monospace, monospace;
-    text-align: right;
-    font-size: 10px;
-  }
   .hint {
     margin: 4px 0 0 0;
     color: #666;
@@ -338,26 +292,6 @@
     font-size: 11px;
     line-height: 1.4;
   }
-  /* Accent border for the Output Warp section — orange to match
-     the on-canvas handles, so the operator visually pairs the
-     control with the thing they're dragging. */
-  .sec.accent {
-    background: rgba(255, 150, 50, 0.06);
-    border-color: rgba(255, 150, 50, 0.35);
-  }
-  .sec.accent h4 { color: #ffb066; }
-  .toggle-inline {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 11px;
-    color: #aaa;
-    cursor: pointer;
-    text-transform: none;
-    letter-spacing: 0;
-    font-weight: 400;
-  }
-  .toggle-inline input { cursor: pointer; }
   .warn-banner kbd {
     background: rgba(255, 255, 255, 0.1);
     border: 1px solid rgba(255, 255, 255, 0.2);
