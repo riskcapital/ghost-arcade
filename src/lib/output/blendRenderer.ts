@@ -629,6 +629,18 @@ function ensureMasterRenderer(w: number, h: number): boolean {
   try {
     masterCanvas = document.createElement('canvas');
     masterCanvas.width = w; masterCanvas.height = h;
+    // Attach to the DOM, hidden but COMPOSITED. captureStream() only emits
+    // real pixels from a canvas the browser actually composites; a purely
+    // detached (never-appended) canvas yields BLACK frames in Chromium/
+    // Electron. We hide it without removing it from the compositor:
+    // off-screen position + 1px clip + aria-hidden. (display:none or
+    // visibility:hidden would stop compositing → black again, so we must
+    // NOT use those.)
+    masterCanvas.setAttribute('aria-hidden', 'true');
+    masterCanvas.style.cssText =
+      'position:fixed;left:-99999px;top:0;width:1px;height:1px;' +
+      'opacity:0.01;pointer-events:none;z-index:-1;';
+    document.body.appendChild(masterCanvas);
     masterRenderer = new THREE.WebGLRenderer({
       canvas: masterCanvas,
       antialias: false,
@@ -755,6 +767,7 @@ export function disposeMasterRenderer(): void {
   if (masterQuad) { (masterQuad.geometry as THREE.BufferGeometry).dispose(); masterQuad = null; }
   if (masterMaterial) { masterMaterial.dispose(); masterMaterial = null; }
   if (masterRenderer) { masterRenderer.dispose(); masterRenderer = null; }
+  if (masterCanvas) { try { masterCanvas.remove(); } catch { /* */ } }
   masterScene = null; masterCamera = null; masterCanvas = null;
 }
 
