@@ -34,6 +34,16 @@
   preloadShaders();
   import MobileApp from './lib/components/MobileApp.svelte';
   import OutputWindow from './lib/components/OutputWindow.svelte';
+  import { getOutputSharedTexturePresenterStats } from './lib/sync/outputSharedTexturePresenter';
+  // Real "is a projector window attached" state, independent of the local
+  // outputIsOpen intent flag (which resets to false on editor reload while
+  // the output BrowserWindow lives on). Used to stop the Output/Fullscreen
+  // buttons from re-opening the same named window — a re-`window.open`
+  // reloads it and forces a full re-handshake (pump restart storm).
+  const isOutputAttached = () => {
+    try { return getOutputSharedTexturePresenterStats().targetAttached; }
+    catch { return false; }
+  };
   import VJModePanel from './lib/components/VJModePanel.svelte';
   import StageDesignerPanel from './lib/components/StageDesignerPanel.svelte';
   import OfflineRenderModal from './lib/components/OfflineRenderModal.svelte';
@@ -2503,6 +2513,14 @@
 
   function openOutputWindow() {
     outputMode = 'window';
+    // Already attached (e.g. after an editor reload) — don't re-open the
+    // 'ga-output' window; that reloads it and re-handshakes. Just resync
+    // local intent state.
+    if (isOutputAttached()) {
+      outputIsOpen = true;
+      settings.setOutputWindowOpen(true);
+      return;
+    }
     if (outputWindow) {
       outputWindow.openPopup();
       outputIsOpen = true;
@@ -2534,8 +2552,12 @@
   }
 
   async function toggleFullscreen() {
-    // If output window is already open, toggle its fullscreen
-    if (outputIsOpen && outputWindow) {
+    // If a projector window is already attached, toggle its fullscreen
+    // rather than re-opening (the latter reloads 'ga-output' → re-
+    // handshake storm). Check the presenter's real attached state, not
+    // just the local intent flag.
+    if ((outputIsOpen || isOutputAttached()) && outputWindow) {
+      outputIsOpen = true;
       await matchOutputDisplayResolution('fullscreen output');
       const isFs = await outputWindow.toggleFullscreen();
       outputMode = isFs ? 'fullscreen' : 'window';

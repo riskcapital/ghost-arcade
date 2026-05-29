@@ -497,6 +497,14 @@ export function renderSlicePixels(
   sliceW: number,
   sliceH: number,
   stageIntensity = 1,
+  // gl.readPixels returns bottom-up rows. The native senders (Spout/
+  // Syphon/NDI) consume the buffer directly and expect that flipped to
+  // top-down (flip=true, the default). The master-warp path instead
+  // feeds putImageData, which is ALSO top-down — but it draws the result
+  // onto a 2D canvas that's then captured upright, so it must match the
+  // un-warped drawImage(webglCanvas) passthrough, which is one flip the
+  // other way. That path passes flip=false.
+  flip = true,
 ): Uint8Array | null {
   if (sliceW <= 0 || sliceH <= 0) return null;
   if (!ensureRenderer(sliceW, sliceH)) return null;
@@ -573,7 +581,7 @@ export function renderSlicePixels(
       readbackH = sliceH;
     }
     gl.readPixels(0, 0, sliceW, sliceH, gl.RGBA, gl.UNSIGNED_BYTE, readbackPixels);
-    flipRowsInPlace(readbackPixels, sliceW, sliceH);
+    if (flip) flipRowsInPlace(readbackPixels, sliceW, sliceH);
     return readbackPixels;
   } catch (err) {
     console.warn('[blendRenderer] render/readback failed', err);
@@ -617,7 +625,9 @@ export function renderMasterWarpPixels(
   m.brightness = 1; m.contrast = 1; m.gamma = 1;
   m.edgeBlendLeft = 0; m.edgeBlendRight = 0; m.edgeBlendTop = 0; m.edgeBlendBottom = 0;
   m.blackLevelR = 0; m.blackLevelG = 0; m.blackLevelB = 0;
-  return renderSlicePixels(source, m, w, h, 1);
+  // flip=false: this output goes to putImageData on a 2D canvas captured
+  // upright, so it must match the un-warped drawImage passthrough.
+  return renderSlicePixels(source, m, w, h, 1, false);
 }
 
 function flipRowsInPlace(buf: Uint8Array, w: number, h: number) {
