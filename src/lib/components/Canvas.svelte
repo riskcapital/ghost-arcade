@@ -25,7 +25,7 @@
   import { GpuLayerRenderer } from '$lib/renderer/gpuLayerRenderer';
   import { ensureWebGPUDevice, isWebGPUReady, getWebGPUDevice, getPreferredCanvasFormat } from '$lib/renderer/webgpuShared';
   import { getShaderDef } from '$lib/renderer/gpuShaderCatalog';
-  import { settings, outputFrozen, SHADER_QUALITY_MULTIPLIERS } from '../stores/settings';
+  import { settings, outputFrozen, SHADER_QUALITY_MULTIPLIERS, masterWarpIsActive } from '../stores/settings';
   import { showToast } from '../stores/errorToast';
   import { invoke, isDesktopApp, isOsrMode, isOutputMode } from '$lib/bridge';
   import { drawTestPattern, type TestPatternType } from '../utils/testPatterns';
@@ -41,7 +41,7 @@
   import { startWLEDSenders, stopWLEDSenders, tickWLEDSenders } from '$lib/wled/sender';
   import { startModulationBroadcast, stopModulationBroadcast } from '$lib/sync/modulationBroadcast';
   import { startOutputPixelBroadcast, stopOutputPixelBroadcast } from '$lib/sync/outputPixelBroadcast';
-  import { startMasterWarpOutput, stopMasterWarpOutput } from '$lib/sync/outputComposite';
+  import { startMasterWarpOutput, stopMasterWarpOutput, tickMasterWarpOutput } from '$lib/sync/outputComposite';
   import {
     registerEditorCanvas,
     stopOutputSharedTexturePresenter,
@@ -742,10 +742,9 @@
       let currentOutputSource: HTMLCanvasElement = editorCanvas;
       let webrtcStarted = false;
 
-      const resolveOutputSource = (warpEnabled: boolean): HTMLCanvasElement => {
-        if (warpEnabled) {
+      const resolveOutputSource = (warpActive: boolean): HTMLCanvasElement => {
+        if (warpActive) {
           const warped = startMasterWarpOutput(
-            editorCanvas,
             () => get(settings).output?.masterWarp,
             () => ({
               w: get(settings).output?.masterCanvasWidth ?? 1920,
@@ -758,8 +757,8 @@
         return editorCanvas;
       };
 
-      const reconcileOutput = (warpEnabled: boolean, zeroCopy: boolean, webrtc: boolean) => {
-        const nextSource = resolveOutputSource(warpEnabled);
+      const reconcileOutput = (warpActive: boolean, zeroCopy: boolean, webrtc: boolean) => {
+        const nextSource = resolveOutputSource(warpActive);
         const sourceChanged = nextSource !== currentOutputSource;
         currentOutputSource = nextSource;
 
@@ -790,7 +789,11 @@
 
       outputWebRTCUnsub = settings.subscribe((s) => {
         reconcileOutput(
-          !!s.output?.masterWarp?.enabled,
+          // Only route through the warp pass when it would actually
+          // change the output — enabling alone (identity) stays
+          // passthrough so the zero-copy path is preserved until the
+          // operator drags a handle.
+          masterWarpIsActive(s.output?.masterWarp),
           !!s.experimental?.outputZeroCopy,
           !!s.experimental?.outputWebRTC,
         );
@@ -1487,6 +1490,15 @@
             layer.opacity = (layer as any)._stageOrigOpacity;
             delete (layer as any)._stageOrigOpacity;
           }
+        }
+
+        // Master-warp output composite — tick HERE, in the render loop,
+        // right after the editor canvas is drawn. The editor canvas is
+        // preserveDrawingBuffer:false, so its pixels are only readable in
+        // the same frame they're rendered; a standalone rAF would read an
+        // empty buffer → black output. No-op unless the warp is active.
+        if (!isOsrMode && !isOutputMode && canvas) {
+          tickMasterWarpOutput(canvas);
         }
 
         // Send rendered frame to Spout output / output window

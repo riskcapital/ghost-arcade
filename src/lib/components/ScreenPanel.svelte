@@ -10,7 +10,7 @@
    */
   import { onMount } from 'svelte';
   import { screens, selectedScreenId, selectedScreen, screenActions } from '../stores/screens';
-  import { settings, identityOutputMesh, type OutputSlice } from '../stores/settings';
+  import { settings, identityOutputMesh, masterWarpIsActive, type OutputSlice } from '../stores/settings';
   import { maxOutputSlices } from '../stores/license';
   import { isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
   import OutputCanvasPreview from './OutputCanvasPreview.svelte';
@@ -111,29 +111,35 @@
   // Geometry is dragged directly on the editor canvas (MasterWarpHandles,
   // orange handles) — there's no numeric entry. Identity is a visual
   // no-op so flipping it on changes nothing until a handle moves.
-  const IDENTITY_CORNERS = {
-    topLeft: { x: 0, y: 0 }, topRight: { x: 1, y: 0 },
-    bottomLeft: { x: 0, y: 1 }, bottomRight: { x: 1, y: 1 },
-  };
   $: masterWarp = $settings.output.masterWarp ?? { enabled: false, mode: 'corners' as const };
   $: masterMode = masterWarp.mode === 'mesh' && masterWarp.meshGrid ? 'mesh' : 'corners';
+  // Lit only when the warp would actually change the output (non-identity),
+  // not merely enabled — so "on but untouched" reads as inert.
+  $: masterWarpActive = masterWarpIsActive(masterWarp);
 
   function toggleMasterWarp(enabled: boolean) {
-    // Seed identity corners on first enable so the shader has a well-
-    // defined (no-op) starting quad to drag from.
-    settings.setMasterWarp({ enabled, corners: masterWarp.corners ?? IDENTITY_CORNERS });
+    // No geometry seeded on enable — an enabled-but-identity warp is a
+    // passthrough no-op. Corner points are created only when the operator
+    // drags a handle (MasterWarpHandles), so there are no "default" warp
+    // points sitting on the canvas.
+    settings.setMasterWarp({ enabled });
   }
   function setMasterMode(mode: 'corners' | 'mesh') {
+    // Mesh needs a control lattice to show handles, so seed an identity
+    // grid when the operator explicitly picks Mesh (still a passthrough
+    // no-op until a point moves). Corners derive identity on the fly.
     if (mode === 'mesh') {
       settings.setMasterWarp({ mode, meshGrid: masterWarp.meshGrid ?? identityOutputMesh() });
     } else {
-      settings.setMasterWarp({ mode, corners: masterWarp.corners ?? IDENTITY_CORNERS });
+      settings.setMasterWarp({ mode });
     }
   }
   function resetMasterWarp() {
-    // Reset the active mode's geometry back to identity.
+    // Back to identity. Corners: clear so nothing is stored (handles
+    // derive identity); Mesh: reset to a flat lattice so its handles
+    // remain visible.
     if (masterMode === 'mesh') settings.setMasterWarp({ meshGrid: identityOutputMesh() });
-    else settings.setMasterWarp({ corners: IDENTITY_CORNERS });
+    else settings.setMasterWarp({ corners: undefined });
   }
 
   // ─── Drag-reorder for the screen list ───────────────────────────────
@@ -268,7 +274,7 @@
     <details class="master-details" open={masterWarp.enabled}>
       <summary>
         Master warp
-        {#if masterWarp.enabled}<span class="mw-active-dot" title="Warp active"></span>{/if}
+        {#if masterWarpActive}<span class="mw-active-dot" title="Warp active"></span>{/if}
       </summary>
       <label class="mw-enable">
         <input

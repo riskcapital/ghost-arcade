@@ -215,7 +215,9 @@ function sendFullState() {
           isLive: vjState.isLive,
         },
         settings: {
-          output: settingsState?.output,
+          // JSON-clean: output can carry non-cloneable nested values that
+          // otherwise throw DataCloneError on postMessage.
+          output: settingsState?.output ? JSON.parse(JSON.stringify(settingsState.output)) : undefined,
         },
       },
       timestamp: Date.now(),
@@ -393,7 +395,11 @@ function initSender() {
       try {
         channel.postMessage({
           type: 'settings-update',
-          data: { output: s.output },
+          // Post a JSON-cleaned snapshot, not the live object: output can
+          // carry non-structuredClone-able values (functions / proxies on
+          // nested slice + effect data) that throw DataCloneError on
+          // postMessage. `outJson` is already computed above, so free.
+          data: { output: JSON.parse(outJson) },
           timestamp: Date.now(),
         } satisfies StateMessage);
       } catch (err) {
