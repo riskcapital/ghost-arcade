@@ -181,7 +181,18 @@ class MediaPipeSource {
       // file names directly onto this base URL. Without the slash you get
       // requests like /mediapipe/wasmvision_wasm_internal.js → 404 → the
       // internal Module bootstrap fails with "ModuleFactory not set".
-      const wasmUrl = new URL('/mediapipe/wasm/', window.location.origin).toString();
+      //
+      // Resolve against document.baseURI (NOT window.location.origin):
+      //   Dev (http://localhost:1420/) → http://localhost:1420/mediapipe/wasm/
+      //   Electron prod (file:///.../dist/index.html) → file:///.../dist/mediapipe/wasm/
+      // Using `.origin` was wrong because Electron loads the bundle via
+      // file:// where `window.location.origin === 'null'`, which made
+      // `new URL('/mediapipe/wasm/', 'null')` resolve to
+      // `file:///mediapipe/wasm/` (literal filesystem root) — the
+      // exact error reported as `file:///mediapipe/wasm//vision_wasm_module_internal.js
+      // failed to fetch` in v1.7.1/v1.7.2 desktop builds. A document-
+      // relative URL inherits vite.config.ts's `base: './'` electron path.
+      const wasmUrl = new URL('./mediapipe/wasm/', document.baseURI).toString();
 
       const initDone = new Promise<void>((resolve, reject) => {
         const onMsg = (e: MessageEvent) => {
