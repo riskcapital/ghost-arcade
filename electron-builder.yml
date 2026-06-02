@@ -123,6 +123,30 @@ dmg:
       y: 170
       type: file
 
+# ─── Linux ─────────────────────────────────────────────────────────────────
+# AppImage is the single-file portable target — works on most distros without
+# admin install. .deb is the Ubuntu/Debian native package. Most VJ users on
+# Linux are on Ubuntu, so shipping both gives them a choice. No signing on
+# Linux (no equivalent to Authenticode / notarization in mainstream distros).
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  icon: build-resources/icons
+  category: AudioVideo
+  synopsis: "Open-source projection mapping + VJ software"
+  description: "Ghost Arcade — live performance visuals with projection mapping, shader effects, MediaPipe gesture input, and audio reactivity. AGPL-3.0."
+  desktop:
+    entry:
+      Name: "Ghost Arcade"
+      Comment: "Projection mapping and VJ software"
+      Categories: "AudioVideo;Graphics;"
+  # Same filename pattern as Windows/Mac so the website's URL templating
+  # in src/lib/release.ts stays predictable.
+  artifactName: "Ghost-Arcade-${version}-${arch}.${ext}"
+
 # ─── Publish ────────────────────────────────────────────────────────────────
 # Intentionally NO `publish:` block here. CI (.github/workflows/build.yml)
 # runs `electron-builder --publish never` and then uses

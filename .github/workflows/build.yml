@@ -37,7 +37,7 @@ jobs:
             gh release create "${{ github.ref_name }}" \
               --repo riskcapital/ghost-arcade-releases \
               --title "Ghost Arcade ${{ github.ref_name }}" \
-              --notes "Signed Windows installer + notarized macOS DMGs uploaded by CI." \
+              --notes "Signed Windows installer + notarized macOS DMGs + Linux AppImage/deb uploaded by CI." \
               --target main
             echo "Release ${{ github.ref_name }} created"
           fi
@@ -214,6 +214,101 @@ jobs:
           files: |
             dist-electron/*.dmg
             dist-electron/latest-mac.yml
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+
+  build-linux:
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # libfuse2 is required for AppImage runtime (Ubuntu 22+ ships
+      # libfuse3 by default; AppImages need the legacy lib). The other
+      # apt deps are electron-builder Linux extras that are routinely
+      # needed for icon / desktop-entry generation.
+      - name: Install Linux build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfuse2 \
+            rpm \
+            fakeroot \
+            dpkg
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install native addon dependencies
+        run: npm ci
+        working-directory: electron/native
+
+      # NDI Advanced SDK for Linux — same pattern as Win / Mac jobs.
+      # The .tar.gz installer lives behind NewTek's EULA; CI fetches
+      # from the private storage URL exposed via secrets.NDI_SDK_LINUX_URL.
+      # Missing secret = NDI addon build is skipped silently (CMake's
+      # NDI block already handles the no-SDK case without erroring).
+      - name: Install NDI Advanced SDK (Linux)
+        if: ${{ env.NDI_SDK_LINUX_URL != '' }}
+        env:
+          NDI_SDK_LINUX_URL: ${{ secrets.NDI_SDK_LINUX_URL }}
+        run: |
+          echo "Downloading NDI SDK..."
+          curl -L -o /tmp/ndi-sdk.tar.gz "$NDI_SDK_LINUX_URL"
+          mkdir -p /tmp/ndi-sdk-extract
+          tar -xzf /tmp/ndi-sdk.tar.gz -C /tmp/ndi-sdk-extract
+          # Installer is a self-extracting shell script bundled with the
+          # SDK contents. Run it non-interactively and direct it at /opt
+          # so CMake's Linux NDI detection (which checks
+          # /opt/NDI Advanced SDK for Linux) finds it.
+          INSTALLER=$(find /tmp/ndi-sdk-extract -name "Install_NDI_SDK_*.sh" | head -1)
+          if [ -n "$INSTALLER" ]; then
+            yes | sh "$INSTALLER" --noexec --target /opt/ndi-tmp || true
+            sudo cp -R /opt/ndi-tmp/* "/opt/" 2>/dev/null || true
+          fi
+          # Sanity-check
+          if [ -f "/opt/NDI Advanced SDK for Linux/include/Processing.NDI.Lib.h" ]; then
+            echo "NDI SDK installed at /opt/NDI Advanced SDK for Linux"
+          elif [ -f "/opt/NDI SDK for Linux/include/Processing.NDI.Lib.h" ]; then
+            echo "NDI SDK installed at /opt/NDI SDK for Linux"
+          else
+            echo "::warning::NDI SDK install did not produce expected files — ndi_addon will be skipped"
+          fi
+
+      # The main Spout/Syphon CMake branch silently no-ops on Linux
+      # (it has no `else()` for the if(WIN32)/elseif(APPLE) chain), so
+      # running `npm run build` here builds only the NDI addon when the
+      # SDK is present. Safe to run regardless.
+      - name: Build native addons (NDI only on Linux)
+        run: npm run build || echo "Native addon build had no targets on Linux — continuing"
+        working-directory: electron/native
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Build Electron (Linux AppImage + deb)
+        # --publish never: see windows job comment. No signing on Linux.
+        run: npx electron-builder --linux AppImage deb --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Linux installers to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: riskcapital/ghost-arcade-releases
+          token: ${{ secrets.RELEASES_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          files: |
+            dist-electron/*.AppImage
+            dist-electron/*.deb
+            dist-electron/latest-linux.yml
           draft: false
           prerelease: false
           generate_release_notes: true
