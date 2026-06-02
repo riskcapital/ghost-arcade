@@ -33,6 +33,13 @@ let _mappingEffectReader: ((layerIndex: number, effectId: string, paramName: str
 let _mappingEdgeEffectUpdater: ((layerIndex: number, effectId: string, paramPath: string, value: number) => void) | null = null;
 let _mappingEdgeEffectReader: ((layerIndex: number, effectId: string, paramPath: string) => number | undefined) | null = null;
 
+// GPU-layer param read/write callbacks. Writes go through
+// project.updateGPULayerParams so changes participate in the keyframe
+// auto-record path and the engine's per-frame batched updates feel
+// the same as a user slider drag.
+let _mappingGPUUpdater: ((layerIndex: number, values: Record<string, number>) => void) | null = null;
+let _mappingGPUReader: ((layerIndex: number, paramKey: string) => number | undefined) | null = null;
+
 /** Register mapping mode callbacks — called once from layers store init */
 export function registerMappingLayerCallbacks(
   updater: (layerIndex: number, values: Record<string, number>) => void,
@@ -42,6 +49,8 @@ export function registerMappingLayerCallbacks(
   effectReader?: (layerIndex: number, effectId: string, paramName: string) => number | undefined,
   edgeEffectUpdater?: (layerIndex: number, effectId: string, paramPath: string, value: number) => void,
   edgeEffectReader?: (layerIndex: number, effectId: string, paramPath: string) => number | undefined,
+  gpuUpdater?: (layerIndex: number, values: Record<string, number>) => void,
+  gpuReader?: (layerIndex: number, paramKey: string) => number | undefined,
 ) {
   _mappingLayerUpdater = updater;
   _mappingLayerReader = reader;
@@ -50,6 +59,8 @@ export function registerMappingLayerCallbacks(
   if (effectReader) _mappingEffectReader = effectReader;
   if (edgeEffectUpdater) _mappingEdgeEffectUpdater = edgeEffectUpdater;
   if (edgeEffectReader) _mappingEdgeEffectReader = edgeEffectReader;
+  if (gpuUpdater) _mappingGPUUpdater = gpuUpdater;
+  if (gpuReader) _mappingGPUReader = gpuReader;
 }
 
 // Modulation source types
@@ -176,6 +187,7 @@ interface ParsedModEntry {
   layerIndex: number;
   isEffect: boolean;     // true for regular pixel effects (`layer.effects[]`)
   isEdgeEffect: boolean; // true for edge effects (`layer.edgeEffects.effects[]`)
+  isGPU: boolean;        // true for GPU shader-layer params (`layer.gpuLayerContent.params[]`)
   effectId: string;      // '' for shader params
   paramName: string;     // for edge effects this is the nested path, e.g. 'stroke.width'
 }
@@ -254,6 +266,21 @@ export function modKeyEdgeEffect(layerIndex: number, effectId: string, paramPath
     ? `B:${layerIndex}:edge:${effectId}:${paramPath}`
     : `${layerIndex}:edge:${effectId}:${paramPath}`;
 }
+/** GPU layer params. Mapping-only (no VJ-mode GPU layer surface yet);
+ *  layer-keyed because GPU content is stable per-layer (swapping
+ *  shaders within the same gpu layer reuses the same modulations
+ *  applied to whichever param keys overlap). */
+export function modKeyGPU(
+  layerIndex: number,
+  paramKey: string,
+  target: ModTarget = 'mapping',
+): string {
+  // Format mirrors fx/edge so rebuildParsedCache's existing
+  // `parts[cursor + 1] === '...'` branch can pick it up.
+  if (target === 'mapping') return `map:${layerIndex}:gpu:${paramKey}`;
+  return `${layerIndex}:gpu:${paramKey}`;
+}
+
 export const MOD_KEY_XFADE_VALUE = 'xfade:value';
 
 // Pre-parsed cache rebuilt on store change — avoids per-frame string parsing
@@ -294,6 +321,27 @@ export function registerEffectParamRange(
   max: number,
 ) {
   effectParamRanges.set(`${layerIndex}:fx:${effectId}:${paramName}`, { min, max });
+}
+
+/** Register the min/max for a GPU shader-layer param. Called by the
+ *  param-row component when wiring its mod source dropdown so the
+ *  engine can clamp modulated values into the schema's natural range. */
+export function registerGPUParamRange(
+  layerIndex: number,
+  paramKey: string,
+  min: number,
+  max: number,
+) {
+  paramRanges.set(`map:${layerIndex}:gpu:${paramKey}`, { min, max });
+}
+
+/** Drop every GPU-range entry for a layer. Call when the layer's
+ *  shader id changes (different shader = different param set). */
+export function clearGPUParamRanges(layerIndex: number) {
+  const prefix = `map:${layerIndex}:gpu:`;
+  for (const key of paramRanges.keys()) {
+    if (key.startsWith(prefix)) paramRanges.delete(key);
+  }
 }
 
 /** Drop every effect-range entry for a layer. Call when the layer's
@@ -411,6 +459,7 @@ function rebuildParsedCache(map: ModulationMap) {
         layerIndex: -1,
         isEffect: false,
         isEdgeEffect: false,
+        isGPU: false,
         effectId: '',
         paramName: '',
       });
@@ -438,6 +487,7 @@ function rebuildParsedCache(map: ModulationMap) {
         layerIndex: -1,
         isEffect: false,
         isEdgeEffect: false,
+        isGPU: false,
         effectId: '',
         paramName: parts.slice(2).join(':'),
       });
@@ -462,6 +512,7 @@ function rebuildParsedCache(map: ModulationMap) {
         layerIndex,
         isEffect: true,
         isEdgeEffect: false,
+        isGPU: false,
         effectId: parts[cursor + 2],
         paramName: parts[cursor + 3],
       });
@@ -476,8 +527,23 @@ function rebuildParsedCache(map: ModulationMap) {
         layerIndex,
         isEffect: false,
         isEdgeEffect: true,
+        isGPU: false,
         effectId: parts[cursor + 2],
         paramName: parts.slice(cursor + 3).join(':'),
+      });
+    } else if (parts[cursor + 1] === 'gpu') {
+      // GPU shader-layer param: map:N:gpu:paramKey (mapping-only).
+      // paramKey may contain colons in theory, rejoin to preserve.
+      parsedCache.push({
+        mod,
+        bank,
+        target,
+        layerIndex,
+        isEffect: false,
+        isEdgeEffect: false,
+        isGPU: true,
+        effectId: '',
+        paramName: parts.slice(cursor + 2).join(':'),
       });
     } else {
       parsedCache.push({
@@ -487,6 +553,7 @@ function rebuildParsedCache(map: ModulationMap) {
         layerIndex,
         isEffect: false,
         isEdgeEffect: false,
+        isGPU: false,
         effectId: '',
         paramName: parts[cursor + 1],
       });
@@ -606,6 +673,29 @@ function createModulationStore() {
     getEdgeEffectModulation(layerIndex: number, effectId: string, paramPath: string, target: ModTarget = 'mapping'): ParamModulation | undefined {
       const map = get({ subscribe });
       return map.get(modKeyEdgeEffect(layerIndex, effectId, paramPath, 'A', target));
+    },
+
+    /** Set modulation on a GPU shader-layer param. Mapping-only —
+     *  there's no VJ-mode GPU surface yet. Stamps `target='mapping'`
+     *  on the stored mod so the engine routes through the gpu updater. */
+    setGPUParamModulation(layerIndex: number, paramKey: string, mod: ParamModulation) {
+      const stored: ParamModulation = { ...mod, target: 'mapping' };
+      update(map => {
+        const newMap = new Map(map);
+        const key = modKeyGPU(layerIndex, paramKey, 'mapping');
+        if (stored.source === 'manual') {
+          newMap.delete(key);
+        } else {
+          newMap.set(key, stored);
+        }
+        return newMap;
+      });
+    },
+
+    /** Get modulation for a GPU shader-layer param. */
+    getGPUParamModulation(layerIndex: number, paramKey: string): ParamModulation | undefined {
+      const map = get({ subscribe });
+      return map.get(modKeyGPU(layerIndex, paramKey, 'mapping'));
     },
 
     /** Set modulation on the global VJ A/B crossfader value (0..1).
@@ -854,12 +944,16 @@ class ModulationEngine {
     const vjBatchA = new Map<number, Record<string, number>>();
     const vjBatchB = new Map<number, Record<string, number>>();
     const mappingBatch = new Map<number, Record<string, number>>();
+    // GPU shader-layer params live on `layer.gpuLayerContent.params`,
+    // mapping-only. Batched per-layer just like shader params so one
+    // updater call writes all modulated entries for the frame.
+    const mappingGPUBatch = new Map<number, Record<string, number>>();
 
     for (const entry of parsedCache) {
       // Per-iteration shadowing of bank/layerIndex — clip-keyed
       // entries override these from the runtime deck search below.
       let { bank, layerIndex } = entry;
-      const { mod, isEffect, isEdgeEffect, effectId, paramName, special } = entry;
+      const { mod, isEffect, isEdgeEffect, isGPU, effectId, paramName, special } = entry;
 
       // Auto-source modulations are handled exclusively by autoEngine.ts
       // now — state lives on the layer / clip data itself. Legacy
@@ -984,6 +1078,34 @@ class ModulationEngine {
 
         _mappingEdgeEffectUpdater(layerIndex, effectId, paramName, modulatedE);
         lastModulatedValues.set(edgeKey, modulatedE);
+      } else if (isGPU) {
+        // GPU shader-layer param modulation. Mapping-only target — the
+        // GPU layer panel doesn't have a VJ surface yet. Same formula
+        // as shader params (base + (signal − 0.5) × amount × span) so
+        // audio sources modulate around the user's manual slider value.
+        const gpuKey = `M:${layerIndex}:gpu:${paramName}`;  // 'M' to disambiguate from VJ banks
+        const gpuRange = paramRanges.get(`map:${layerIndex}:gpu:${paramName}`);
+        const gMin = gpuRange?.min ?? 0;
+        const gMax = gpuRange?.max ?? 1;
+        const gSpan = gMax - gMin;
+        let gBase = baseValues.get(gpuKey);
+        if (gBase === undefined) {
+          const sv = _mappingGPUReader ? _mappingGPUReader(layerIndex, paramName) : undefined;
+          if (typeof sv !== 'number') {
+            // Param hasn't been written yet (e.g. shader just loaded and
+            // schema defaults not flushed). Retry next frame once the
+            // value lands.
+            continue;
+          }
+          gBase = sv;
+          baseValues.set(gpuKey, gBase);
+        }
+        const rawG = gBase + (signal - 0.5) * mod.amount * gSpan;
+        const modulatedG = Math.max(gMin, Math.min(gMax, rawG));
+        let gBatch = mappingGPUBatch.get(layerIndex);
+        if (!gBatch) { gBatch = {}; mappingGPUBatch.set(layerIndex, gBatch); }
+        gBatch[paramName] = modulatedG;
+        lastModulatedValues.set(gpuKey, modulatedG);
       } else if (isEffect) {
         // Effect param modulation. Mapping mode + VJ mode share the same
         // math (capture base on first hit, signal-driven offset, clamp to
@@ -1134,6 +1256,13 @@ class ModulationEngine {
     if (_mappingLayerUpdater) {
       for (const [layerIndex, values] of mappingBatch) {
         _mappingLayerUpdater(layerIndex, values);
+      }
+    }
+
+    // Apply batched GPU-layer param updates (mapping-only).
+    if (_mappingGPUUpdater) {
+      for (const [layerIndex, values] of mappingGPUBatch) {
+        _mappingGPUUpdater(layerIndex, values);
       }
     }
   }

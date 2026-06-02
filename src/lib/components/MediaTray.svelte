@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import { project, selectedLayerId, selectedLayer, selectedLayerIds, layers } from '../stores/layers';
+  import PluginIcon from './PluginIcon.svelte';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
   import { mediaLibrary, type MediaItem } from '../stores/media';
   import { shaderLibrary, type SavedShader } from '../stores/shaderLibrary';
@@ -2995,6 +2996,11 @@
                     value={selectedShader.values[input.NAME] ?? input.DEFAULT ?? 0}
                     oninput={(e) => updateShaderParam(input.NAME, parseFloat((e.target as HTMLInputElement).value))}
                     class="param-slider"
+                    data-midi-path={`map:shader:${input.NAME}`}
+                    data-midi-label={input.LABEL || input.NAME}
+                    data-midi-min={input.MIN ?? 0}
+                    data-midi-max={input.MAX ?? 1}
+                    data-midi-step="0.01"
                   />
                   <!-- Auto-mode slippers overlay on the main slider.
                        Slipper inputs use the same min/max as the
@@ -3359,30 +3365,8 @@
               disabled={!$selectedLayer}
               title={$selectedLayer ? `Apply ${plugin.name} to layer` : 'Select a layer first'}
             >
-              <div class="plugin-preview" style="background: {plugin.previewCSS}">
-                {#if plugin.id === 'fluidgen'}
-                  <svg class="plugin-icon-svg" width="36" height="36" viewBox="0 0 24 24" fill="none">
-                    <path d="M12 2C6.5 8 4 12 4 15a8 8 0 1 0 16 0c0-3-2.5-7-8-13Z" stroke="currentColor" stroke-width="1.5" fill="rgba(14,165,233,0.25)"/>
-                    <path d="M12 22c-2.5 0-4-1.5-4-4" stroke="currentColor" stroke-width="1.5" opacity="0.7"/>
-                    <path d="M9 14c0 2 1.3 3 3 3s3-1 3-3" stroke="currentColor" stroke-width="1" opacity="0.5"/>
-                  </svg>
-                {:else if plugin.id === 'particles3d'}
-                  <svg class="plugin-icon-svg" width="36" height="36" viewBox="0 0 24 24" fill="none">
-                    <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.5" fill="rgba(99,102,241,0.3)"/>
-                    <circle cx="6" cy="6" r="1.8" stroke="currentColor" stroke-width="1" fill="rgba(236,72,153,0.3)"/>
-                    <circle cx="18" cy="6" r="1.5" stroke="currentColor" stroke-width="1" fill="rgba(168,85,247,0.3)"/>
-                    <circle cx="6" cy="18" r="1.3" stroke="currentColor" stroke-width="1" fill="rgba(99,102,241,0.3)"/>
-                    <circle cx="18" cy="18" r="2" stroke="currentColor" stroke-width="1" fill="rgba(236,72,153,0.3)"/>
-                    <circle cx="3" cy="12" r="0.8" fill="currentColor" opacity="0.6"/>
-                    <circle cx="21" cy="12" r="0.8" fill="currentColor" opacity="0.6"/>
-                    <line x1="8.5" y1="9.5" x2="6.5" y2="7.5" stroke="currentColor" stroke-width="0.8" opacity="0.4"/>
-                    <line x1="15.5" y1="9.5" x2="17.5" y2="7.5" stroke="currentColor" stroke-width="0.8" opacity="0.4"/>
-                    <line x1="8.5" y1="14.5" x2="6.5" y2="16.5" stroke="currentColor" stroke-width="0.8" opacity="0.4"/>
-                    <line x1="15.5" y1="14.5" x2="17.5" y2="16.5" stroke="currentColor" stroke-width="0.8" opacity="0.4"/>
-                  </svg>
-                {:else}
-                  <span class="plugin-icon-emoji">{plugin.icon}</span>
-                {/if}
+              <div class="plugin-preview">
+                <PluginIcon pluginId={plugin.id} effectType={plugin.effectType} size={32} />
               </div>
               <div class="plugin-info">
                 <span class="plugin-name">{plugin.name}</span>
@@ -5943,34 +5927,43 @@
     gap: 8px;
   }
 
+  /* App-native plugin card — minimal dark surface with coral accent.
+     Palette comes from App.svelte CSS vars (--accent-primary #FF6B6B,
+     --border-primary rgba(255,107,107,0.15)). No per-plugin gradient
+     backgrounds — uniform look across every visualizer engine. */
   .plugin-card {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 10px;
-    background: #0d0d10;
-    border: 1px solid #333;
-    border-radius: 8px;
-    transition: all 0.2s;
+    padding: 9px 10px;
+    background: #0a0a0d;
+    border: 1px solid rgba(255, 107, 107, 0.10);
+    border-radius: 6px;
+    transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
     cursor: pointer;
     text-align: left;
     width: 100%;
   }
 
   .plugin-card:hover:not(:disabled) {
-    border-color: #BB86FC;
-    background: #1a1a2e;
-    box-shadow: 0 0 12px rgba(187, 134, 252, 0.15);
+    border-color: rgba(255, 107, 107, 0.55);
+    background: #100a0c;
+    box-shadow: 0 0 0 1px rgba(255, 107, 107, 0.06), 0 0 10px rgba(255, 107, 107, 0.10);
+  }
+
+  .plugin-card:hover:not(:disabled) .plugin-icon-svg {
+    color: var(--accent-primary, #FF6B6B);
+    filter: drop-shadow(0 0 4px rgba(255, 107, 107, 0.4));
   }
 
   .plugin-card:disabled {
-    opacity: 0.5;
+    opacity: 0.4;
     cursor: not-allowed;
   }
 
   .plugin-card.running {
-    border-color: #22c55e;
-    background: rgba(34, 197, 94, 0.08);
+    border-color: var(--accent-primary, #FF6B6B);
+    background: rgba(255, 107, 107, 0.05);
     position: relative;
   }
 
@@ -5978,64 +5971,69 @@
     position: absolute;
     top: 8px;
     right: 8px;
-    width: 8px;
-    height: 8px;
-    background: #22c55e;
+    width: 6px;
+    height: 6px;
+    background: var(--accent-primary, #FF6B6B);
     border-radius: 50%;
-    box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
+    box-shadow: 0 0 6px rgba(255, 107, 107, 0.6);
     animation: pulse-dot 2s infinite;
   }
 
   @keyframes pulse-dot {
     0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
+    50% { opacity: 0.35; }
   }
 
   .plugin-preview {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 44px;
-    height: 44px;
-    border-radius: 8px;
+    width: 40px;
+    height: 40px;
+    border-radius: 5px;
+    background: #050507;
+    border: 1px solid rgba(255, 107, 107, 0.08);
     flex-shrink: 0;
   }
 
   .plugin-icon-emoji {
-    font-size: 22px;
-    filter: drop-shadow(0 0 4px rgba(255,255,255,0.3));
+    font-size: 18px;
+    opacity: 0.85;
+    color: var(--accent-secondary, #FF8585);
   }
 
   .plugin-icon-svg {
-    color: rgba(255,255,255,0.9);
-    filter: drop-shadow(0 0 6px rgba(187, 134, 252, 0.4));
+    color: var(--accent-secondary, #FF8585);
+    transition: color 0.15s, filter 0.15s;
   }
 
   .plugin-info {
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 1px;
     min-width: 0;
   }
 
   .plugin-name {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
-    color: #fff;
+    color: var(--text-primary, #e8e8e8);
+    letter-spacing: 0.2px;
   }
 
   .plugin-desc {
     font-size: 9px;
-    color: #888;
-    line-height: 1.3;
+    color: var(--text-muted, #666);
+    line-height: 1.35;
   }
 
   .plugin-tier {
     font-size: 8px;
-    color: #BB86FC;
-    letter-spacing: 0.5px;
-    margin-top: 2px;
+    color: var(--accent-primary, #FF6B6B);
+    letter-spacing: 0.6px;
+    margin-top: 1px;
+    opacity: 0.55;
   }
 
   .plugins-hint-footer {

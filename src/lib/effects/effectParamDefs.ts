@@ -580,6 +580,12 @@ export const EFFECT_PARAM_DEFS: Record<string, EffectParamDef[]> = {
     { name: 'Detail', param: 'amount2', min: 0, max: 1, step: 0.01, default: 0.5 },
     { name: 'Threshold', param: 'threshold', min: 0, max: 1, step: 0.01, default: 0.5 },
   ],
+  geometricTilePro: [
+    { name: 'Tile Count', param: 'geomProTileCount', min: 0, max: 1, step: 0.01, default: 0.4 },
+    { name: 'Flip Range', param: 'geomProFlipRange', min: 0, max: 1, step: 0.01, default: 0.5 },
+    { name: 'Speed',      param: 'geomProSpeed',     min: 0, max: 1, step: 0.01, default: 0.3 },
+    { name: 'Gap Size',   param: 'geomProGap',       min: 0, max: 1, step: 0.01, default: 0.1 },
+  ],
   hexGrid: [
     { name: 'Blend', param: 'amount', min: 0, max: 1, step: 0.01, default: 0.8 },
     { name: 'Hex Size', param: 'amount2', min: 0, max: 1, step: 0.01, default: 0.4 },

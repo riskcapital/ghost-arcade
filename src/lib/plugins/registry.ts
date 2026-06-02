@@ -27,9 +27,27 @@ export interface PluginParamDef {
   step?: number;
   default: any;
   options?: { value: any; label: string }[];
+  /** Optional conditional visibility. When set, the param only shows in
+   *  the panel if the current value of `showWhen.param` is in
+   *  `showWhen.values`. Used by GhostFX to show scene-specific knobs
+   *  (e.g. Vortex Strength only for Drift; Light Direction only for
+   *  Ribbons). Generic — any plugin can use it. */
+  showWhen?: { param: string; values: any[] };
 }
 
 // ─── Plugin Manifest ────────────────────────────────────────────────────────
+
+/** Optional attribution for plugins that wrap third-party engines.
+ *  Surfaced as a "powered by …" badge at the top of the plugin's control
+ *  panel. Originals (FluidGen, Particles3D) leave this undefined — they
+ *  use only the `author` field. The rule: if any meaningful rendering
+ *  work is done by external code, it MUST be credited here. */
+export interface PluginCredit {
+  engine: string;        // e.g. "Butterchurn"
+  authors?: string;      // e.g. "Jordan Berg · Milkdrop by Ryan Geiss"
+  url?: string;          // upstream project page
+  license?: string;      // e.g. "MIT", "AGPL-3.0"
+}
 
 export interface PluginManifest {
   id: string;                          // Unique ID: 'fluidgen', 'particles3d'
@@ -37,13 +55,14 @@ export interface PluginManifest {
   description: string;                 // Short description for the card
   category: string;                    // 'Generators', 'Image Processing', etc.
   version: string;                     // Semver
-  author: string;                      // Creator
+  author: string;                      // Creator / maintainer of the plugin integration
   tier: 'free' | 'starter' | 'pro';   // License tier required
   icon: string;                        // Emoji for quick display
   previewCSS: string;                  // CSS gradient for thumbnail
   effectType: IntegratedEffectType;    // Maps to rendering pipeline
   paramDefs: PluginParamDef[];         // UI parameter definitions (flat, no groups)
   defaultSourceParams: Record<string, any>;  // Default effectSource params
+  poweredBy?: PluginCredit;            // Third-party engine credit (omit for originals)
 }
 
 // ─── Registry ───────────────────────────────────────────────────────────────
@@ -137,6 +156,380 @@ registerPlugin({
     fluidGlow: 0.5,
     fluidColor: [0.2, 0.5, 1.0],
     fluidBgColor: [0.0, 0.0, 0.0],
+  },
+});
+
+registerPlugin({
+  id: 'milkdrop',
+  name: 'Milkdrop',
+  description: 'Auto-evolving Milkdrop 2 visualizer with beat-sync, preset browser, and stem routing',
+  category: 'Generators',
+  version: '1.0.0',
+  // Ghost Arcade only built the layer integration + panel UI + preset
+  // cycling around butterchurn. All rendering and equation evaluation
+  // is butterchurn's; the visual aesthetic is Ryan Geiss's Milkdrop.
+  author: 'Ghost Arcade (integration)',
+  poweredBy: {
+    engine: 'Butterchurn',
+    authors: 'Jordan Berg · Milkdrop engine by Ryan Geiss',
+    url: 'https://github.com/jberg/butterchurn',
+    license: 'MIT',
+  },
+  tier: 'free',
+  icon: '🌀',
+  previewCSS: 'linear-gradient(135deg, #06001a, #7c3aed 25%, #f43f5e 55%, #fb923c 80%, #06001a)',
+  effectType: 'milkdrop',
+  paramDefs: [
+    // Stem source + routing matrix live in a custom panel block in
+    // PluginLayerPanel — keeping them out of paramDefs because the generic
+    // slider/select renderer can't express a matrix. Everything else is
+    // plain params so the standard panel still renders them.
+    { name: 'Preset Pack', param: 'milkdropPresetPack', type: 'select', default: 'full',
+      options: [
+        { value: 'minimal', label: 'Minimal' },
+        { value: 'full', label: 'Full' },
+        { value: 'extra', label: 'Extra' },
+        { value: 'extra2', label: 'Extra 2' },
+        { value: 'md1', label: 'MD1 (classic)' },
+      ]},
+    { name: 'Auto Evolve', param: 'milkdropAutoEvolve', type: 'toggle', default: true },
+    { name: 'Evolve Mode', param: 'milkdropEvolveMode', type: 'select', default: 1,
+      options: [
+        { value: 0, label: 'Timer' },
+        { value: 1, label: 'Beat-sync' },
+      ]},
+    { name: 'Evolve Interval (s)', param: 'milkdropEvolveInterval', type: 'slider', min: 5, max: 120, step: 1, default: 22 },
+    { name: 'Evolve Bars', param: 'milkdropEvolveBars', type: 'slider', min: 1, max: 32, step: 1, default: 8 },
+    { name: 'Preset Blend (s)', param: 'milkdropBlendTime', type: 'slider', min: 0, max: 10, step: 0.1, default: 2.7 },
+    { name: 'Audio Sensitivity', param: 'milkdropSensitivity', type: 'slider', min: 0.5, max: 4, step: 0.05, default: 1.5 },
+    { name: 'Bass Trim', param: 'milkdropBassGain', type: 'slider', min: 0, max: 3, step: 0.05, default: 1.0 },
+    { name: 'Mid Trim', param: 'milkdropMidGain', type: 'slider', min: 0, max: 3, step: 0.05, default: 1.0 },
+    { name: 'Treble Trim', param: 'milkdropTrebGain', type: 'slider', min: 0, max: 3, step: 0.05, default: 1.0 },
+    { name: 'Hard Cut on Beat', param: 'milkdropHardCutEnabled', type: 'toggle', default: false },
+    { name: 'Hard Cut Sensitivity', param: 'milkdropHardCutThreshold', type: 'slider', min: 0.3, max: 1.5, step: 0.05, default: 0.8 },
+    { name: 'Warp Mesh', param: 'milkdropMeshSize', type: 'slider', min: 32, max: 96, step: 4, default: 48 },
+    { name: 'Render Scale', param: 'milkdropPixelRatio', type: 'slider', min: 0.5, max: 2, step: 0.1, default: 1.0 },
+  ],
+  defaultSourceParams: {
+    milkdropPresetPack: 'full',
+    milkdropPresetName: '',
+    milkdropBlendTime: 2.7,
+    milkdropAutoEvolve: true,
+    milkdropEvolveMode: 1,
+    milkdropEvolveInterval: 22,
+    milkdropEvolveBars: 8,
+    milkdropSensitivity: 1.5,
+    milkdropBassGain: 1.0,
+    milkdropMidGain: 1.0,
+    milkdropTrebGain: 1.0,
+    milkdropHardCutEnabled: false,
+    milkdropHardCutThreshold: 0.8,
+    milkdropMeshSize: 48,
+    milkdropPixelRatio: 1.0,
+    milkdropStemSourceId: '',
+    milkdropRoutingMatrix: {
+      full:   { bass: 1, mid: 1, treb: 1 },
+      drums:  { bass: 1, mid: 0, treb: 0.6 },
+      bass:   { bass: 1, mid: 0, treb: 0 },
+      vocals: { bass: 0, mid: 1, treb: 0.3 },
+      other:  { bass: 0, mid: 0.5, treb: 1 },
+    },
+  },
+});
+
+registerPlugin({
+  id: 'wavejs',
+  name: 'Wave.js',
+  description: '10 canvas animations — Wave, Arcs, Circles, Cubes, Flower, Glob, Lines, Shine, Square, Turntable',
+  category: 'Generators',
+  version: '1.0.0',
+  // Wrapper around @foobar404/wave; all visualization work is the
+  // upstream library's.
+  author: 'Ghost Arcade (integration)',
+  poweredBy: {
+    engine: '@foobar404/wave',
+    authors: 'Curtis Hutten · Austin Michaud',
+    url: 'https://github.com/foobar404/Wave',
+    license: 'MIT',
+  },
+  tier: 'free',
+  icon: '🌐',
+  previewCSS: 'linear-gradient(135deg, #050508, #FF6B6B 45%, #FF8585 80%, #050508)',
+  effectType: 'wavejs',
+  paramDefs: [
+    { name: 'Animation', param: 'wavejsAnimation', type: 'select', default: 'Wave',
+      options: [
+        { value: 'Wave',      label: 'Wave' },
+        { value: 'Arcs',      label: 'Arcs' },
+        { value: 'Circles',   label: 'Circles' },
+        { value: 'Cubes',     label: 'Cubes' },
+        { value: 'Flower',    label: 'Flower' },
+        { value: 'Glob',      label: 'Glob' },
+        { value: 'Lines',     label: 'Lines' },
+        { value: 'Shine',     label: 'Shine' },
+        { value: 'Square',    label: 'Square' },
+        { value: 'Turntable', label: 'Turntable' },
+      ]},
+    { name: 'Flip Vertical', param: 'wavejsFlipY', type: 'toggle', default: false },
+    { name: 'Sensitivity', param: 'wavejsSensitivity', type: 'slider', min: 0.25, max: 6, step: 0.05, default: 1.5 },
+    { name: 'Line Width', param: 'wavejsLineWidth', type: 'slider', min: 1, max: 30, step: 0.5, default: 4 },
+    { name: 'Gradient', param: 'wavejsUseGradient', type: 'toggle', default: true },
+    { name: 'Gradient Angle', param: 'wavejsGradientRotate', type: 'slider', min: 0, max: 360, step: 1, default: 0 },
+    { name: 'Color A', param: 'wavejsColorA', type: 'color', default: [1.0, 0.42, 0.42] },
+    { name: 'Color B', param: 'wavejsColorB', type: 'color', default: [1.0, 0.55, 0.30] },
+    { name: 'Glow Strength', param: 'wavejsGlowStrength', type: 'slider', min: 0, max: 50, step: 0.5, default: 15 },
+    { name: 'Glow Color', param: 'wavejsGlowColor', type: 'color', default: [1.0, 0.42, 0.42] },
+    { name: 'Background Opacity', param: 'wavejsBgAlpha', type: 'slider', min: 0, max: 1, step: 0.01, default: 1.0 },
+  ],
+  defaultSourceParams: {
+    wavejsAnimation: 'Wave',
+    wavejsFlipY: false,
+    wavejsSensitivity: 1.5,
+    wavejsLineWidth: 4,
+    wavejsUseGradient: true,
+    wavejsGradientRotate: 0,
+    wavejsColorA: [1.0, 0.42, 0.42],
+    wavejsColorB: [1.0, 0.55, 0.30],
+    wavejsGlowStrength: 15,
+    wavejsGlowColor: [1.0, 0.42, 0.42],
+    wavejsBgAlpha: 1.0,
+  },
+});
+
+registerPlugin({
+  id: 'ghostfx',
+  name: 'GhostFX',
+  description: 'WebGPU raymarched audio-reactive visualizer — original Ghost Arcade engine',
+  category: 'Generators',
+  version: '0.1.0',
+  // Honestly ours — original WebGPU pipeline + original WGSL scenes.
+  // No poweredBy: there's no third-party engine to credit.
+  author: 'Ghost Arcade',
+  tier: 'free',
+  icon: '◈',
+  previewCSS: 'linear-gradient(135deg, #050010, #FF6B6B 35%, #ff80c0 60%, #5a2acc 85%, #050010)',
+  effectType: 'ghostfx',
+  paramDefs: [
+    { name: 'Scene', param: 'ghostfxScenePreset', type: 'select', default: 'drift',
+      options: [
+        { value: 'drift',   label: 'Drift — Particle Vortex' },
+        { value: 'ribbons', label: 'Ribbons — Aurora Trails' },
+        { value: 'liquid',  label: 'Liquid — Fluid Sim' },
+        // Next: SDF Tunnel (raymarched fractal), Nebula (volumetric
+        // smoke) — each built as its own pipeline, registered here.
+      ]},
+    // ── Global (all scenes) ──
+    { name: 'Sensitivity', param: 'ghostfxSensitivity', type: 'slider', min: 0.25, max: 4, step: 0.05, default: 1.4 },
+    { name: 'Hue Drift', param: 'ghostfxHueDriftSpeed', type: 'slider', min: 0, max: 2, step: 0.05, default: 0.15 },
+
+    // ── Drift-only ──
+    { name: 'Vortex Strength', param: 'ghostfxVortexStrength', type: 'slider', min: 0, max: 6, step: 0.05, default: 2.0,
+      showWhen: { param: 'ghostfxScenePreset', values: ['drift'] } },
+    { name: 'Trail Intensity', param: 'ghostfxTrailIntensity', type: 'slider', min: 0, max: 2, step: 0.05, default: 1.0,
+      showWhen: { param: 'ghostfxScenePreset', values: ['drift'] } },
+    { name: 'Lattice Range', param: 'ghostfxLatticeThreshold', type: 'slider', min: 0, max: 6, step: 0.05, default: 2.5,
+      showWhen: { param: 'ghostfxScenePreset', values: ['drift'] } },
+
+    // ── Ribbons-only ──
+    { name: 'Ribbon Width', param: 'ghostfxRibbonWidth', type: 'slider', min: 0.02, max: 0.30, step: 0.005, default: 0.10,
+      showWhen: { param: 'ghostfxScenePreset', values: ['ribbons'] } },
+    { name: 'Spawn Density', param: 'ghostfxRibbonSpawn', type: 'slider', min: 0.2, max: 3.0, step: 0.05, default: 1.0,
+      showWhen: { param: 'ghostfxScenePreset', values: ['ribbons'] } },
+    { name: 'Translucency', param: 'ghostfxRibbonTranslucency', type: 'slider', min: 0, max: 1, step: 0.02, default: 0.35,
+      showWhen: { param: 'ghostfxScenePreset', values: ['ribbons'] } },
+    { name: 'Blend Mode', param: 'ghostfxRibbonBlend', type: 'select', default: 'additive',
+      options: [
+        { value: 'additive', label: 'Additive' },
+        { value: 'lighten',  label: 'Lighten' },
+        { value: 'glass',    label: 'Glass (alpha)' },
+      ],
+      showWhen: { param: 'ghostfxScenePreset', values: ['ribbons'] } },
+    { name: 'Light Azimuth', param: 'ghostfxLightAzimuth', type: 'slider', min: 0, max: 360, step: 1, default: 35,
+      showWhen: { param: 'ghostfxScenePreset', values: ['ribbons'] } },
+    { name: 'Light Elevation', param: 'ghostfxLightElevation', type: 'slider', min: -90, max: 90, step: 1, default: 55,
+      showWhen: { param: 'ghostfxScenePreset', values: ['ribbons'] } },
+    { name: 'Light Strength', param: 'ghostfxLightStrength', type: 'slider', min: 0, max: 2, step: 0.05, default: 0.9,
+      showWhen: { param: 'ghostfxScenePreset', values: ['ribbons'] } },
+    { name: 'Ambient', param: 'ghostfxAmbient', type: 'slider', min: 0, max: 1, step: 0.02, default: 0.30,
+      showWhen: { param: 'ghostfxScenePreset', values: ['ribbons'] } },
+
+    // ── Liquid-only ──
+    { name: 'Splat Force', param: 'ghostfxLiquidSplatForce', type: 'slider', min: 0.2, max: 3.0, step: 0.05, default: 1.0,
+      showWhen: { param: 'ghostfxScenePreset', values: ['liquid'] } },
+    { name: 'Splat Size', param: 'ghostfxLiquidSplatRadius', type: 'slider', min: 0.01, max: 0.20, step: 0.005, default: 0.08,
+      showWhen: { param: 'ghostfxScenePreset', values: ['liquid'] } },
+    { name: 'Dye Fade', param: 'ghostfxLiquidDyeDecay', type: 'slider', min: 0.985, max: 1.0, step: 0.001, default: 0.995,
+      showWhen: { param: 'ghostfxScenePreset', values: ['liquid'] } },
+    { name: 'Fluid Damping', param: 'ghostfxLiquidVelDecay', type: 'slider', min: 0.95, max: 1.0, step: 0.002, default: 0.992,
+      showWhen: { param: 'ghostfxScenePreset', values: ['liquid'] } },
+    { name: 'Bass Drop Rate', param: 'ghostfxLiquidBassRate', type: 'slider', min: 0, max: 2, step: 0.05, default: 1.0,
+      showWhen: { param: 'ghostfxScenePreset', values: ['liquid'] } },
+
+    // ── Global post-stack (all scenes) ──
+    { name: 'Bloom Intensity', param: 'ghostfxBloomIntensity', type: 'slider', min: 0, max: 3, step: 0.05, default: 1.4 },
+    { name: 'Bloom Threshold', param: 'ghostfxBloomThreshold', type: 'slider', min: 0, max: 2, step: 0.02, default: 0.45 },
+    { name: 'Vignette', param: 'ghostfxVignette', type: 'slider', min: 0, max: 1, step: 0.02, default: 0.7 },
+    { name: 'Exposure', param: 'ghostfxExposure', type: 'slider', min: -1, max: 1, step: 0.02, default: 0.1 },
+    { name: 'Background Opacity', param: 'ghostfxBgAlpha', type: 'slider', min: 0, max: 1, step: 0.01, default: 0.0 },
+  ],
+  defaultSourceParams: {
+    ghostfxScenePreset: 'drift',
+    ghostfxSensitivity: 1.4,
+    ghostfxHueDriftSpeed: 0.15,
+    // Drift
+    ghostfxVortexStrength: 2.0,
+    ghostfxTrailIntensity: 1.0,
+    ghostfxLatticeThreshold: 2.5,
+    // Ribbons
+    ghostfxRibbonWidth: 0.10,
+    ghostfxRibbonSpawn: 1.0,
+    ghostfxRibbonTranslucency: 0.35,
+    ghostfxRibbonBlend: 'additive',
+    ghostfxLightAzimuth: 35,
+    ghostfxLightElevation: 55,
+    ghostfxLightStrength: 0.9,
+    ghostfxAmbient: 0.30,
+    // Liquid
+    ghostfxLiquidSplatForce: 1.0,
+    ghostfxLiquidSplatRadius: 0.08,
+    ghostfxLiquidDyeDecay: 0.995,
+    ghostfxLiquidVelDecay: 0.992,
+    ghostfxLiquidBassRate: 1.0,
+    // Post
+    ghostfxBloomIntensity: 1.4,
+    ghostfxBloomThreshold: 0.45,
+    ghostfxVignette: 0.7,
+    ghostfxExposure: 0.1,
+    ghostfxBgAlpha: 0.0,
+    ghostfxFeedbackAmount: 0.35,
+    ghostfxFeedbackZoom: 1.003,
+  },
+});
+
+registerPlugin({
+  id: 'hydra',
+  name: 'Hydra',
+  description: 'Live-codeable video synth — warping, feedback, audio-reactive sketches',
+  category: 'Generators',
+  version: '1.0.0',
+  // Wrapper around hydra-synth; Ghost Arcade adds the layer integration,
+  // panel UI, and the curated starter sketch library. All rendering and
+  // the sketch DSL is hydra's.
+  author: 'Ghost Arcade (integration)',
+  poweredBy: {
+    engine: 'hydra-synth',
+    authors: 'Olivia Jack',
+    url: 'https://github.com/ojack/hydra',
+    license: 'AGPL-3.0',
+  },
+  tier: 'free',
+  icon: '🌊',
+  previewCSS: 'linear-gradient(135deg, #050508, #FF6B6B 35%, #FF8585 70%, #050508)',
+  effectType: 'hydra',
+  paramDefs: [
+    // Sketch picker + transport live in the custom HydraPanel (preset
+    // browser, next/prev/random, favorites). Only the global knobs that
+    // make sense as flat sliders live here.
+    { name: 'Sensitivity', param: 'hydraSensitivity', type: 'slider', min: 0.25, max: 6, step: 0.05, default: 1.5 },
+    { name: 'Background Opacity', param: 'hydraBgAlpha', type: 'slider', min: 0, max: 1, step: 0.01, default: 1.0 },
+  ],
+  defaultSourceParams: {
+    hydraSketchName: 'Welcome',
+    hydraSketchCode: 'osc(20, 0.1, 1.4).rotate(0.1).out()',
+    hydraSensitivity: 1.5,
+    hydraBgAlpha: 1.0,
+  },
+});
+
+registerPlugin({
+  id: 'audiomotion',
+  name: 'AudioMotion',
+  description: 'High-resolution spectrum analyzer — octave bands, radial, LED meters, line / area modes',
+  category: 'Generators',
+  version: '1.0.0',
+  // Wrapper around audiomotion-analyzer; all rendering work is the
+  // upstream library's. Ghost Arcade only adds the layer integration.
+  author: 'Ghost Arcade (integration)',
+  poweredBy: {
+    engine: 'audioMotion-analyzer',
+    authors: 'Henrique Vianna',
+    url: 'https://github.com/hvianna/audioMotion-analyzer',
+    license: 'AGPL-3.0',
+  },
+  tier: 'free',
+  icon: '📊',
+  previewCSS: 'linear-gradient(135deg, #050508, #FF6B6B 40%, #FF8585 75%, #050508)',
+  effectType: 'audiomotion',
+  paramDefs: [
+    { name: 'Mode', param: 'audiomotionMode', type: 'select', default: 4,
+      options: [
+        { value: 0, label: 'Discrete' },
+        { value: 1, label: '1/24 Oct' },
+        { value: 2, label: '1/12 Oct' },
+        { value: 3, label: '1/8 Oct' },
+        { value: 4, label: '1/6 Oct' },
+        { value: 5, label: '1/4 Oct' },
+        { value: 6, label: '1/3 Oct' },
+        { value: 7, label: '1/2 Oct' },
+        { value: 8, label: 'Full Oct' },
+        { value: 10, label: 'Line' },
+        { value: 11, label: 'Area' },
+      ]},
+    { name: 'Gradient', param: 'audiomotionGradient', type: 'select', default: 'orangered',
+      options: [
+        { value: 'classic',   label: 'Classic' },
+        { value: 'prism',     label: 'Prism' },
+        { value: 'rainbow',   label: 'Rainbow' },
+        { value: 'orangered', label: 'Orange-Red' },
+        { value: 'steelblue', label: 'Steel Blue' },
+      ]},
+    { name: 'Radial', param: 'audiomotionRadial', type: 'toggle', default: false },
+    { name: 'Flip Vertical', param: 'audiomotionFlipY', type: 'toggle', default: false },
+    { name: 'Bar Style', param: 'audiomotionBarStyle', type: 'select', default: 'normal',
+      options: [
+        { value: 'normal',  label: 'Normal' },
+        { value: 'led',     label: 'LED' },
+        { value: 'lumi',    label: 'Lumi' },
+        { value: 'alpha',   label: 'Alpha' },
+        { value: 'outline', label: 'Outline' },
+      ]},
+    { name: 'Show Peaks (bars)', param: 'audiomotionShowPeaks', type: 'toggle', default: true },
+    { name: 'Peak Line (line/area)', param: 'audiomotionPeakLine', type: 'toggle', default: false },
+    { name: 'Mirror', param: 'audiomotionMirror', type: 'select', default: 0,
+      options: [
+        { value: -1, label: 'Left' },
+        { value: 0,  label: 'Off' },
+        { value: 1,  label: 'Right' },
+      ]},
+    { name: 'Reflex', param: 'audiomotionReflexRatio', type: 'slider', min: 0, max: 0.9, step: 0.05, default: 0 },
+    { name: 'Bar Spacing', param: 'audiomotionBarSpace', type: 'slider', min: 0, max: 1, step: 0.02, default: 0.1 },
+    { name: 'Min Freq (Hz)', param: 'audiomotionMinFreq', type: 'slider', min: 20, max: 500, step: 5, default: 30 },
+    { name: 'Max Freq (Hz)', param: 'audiomotionMaxFreq', type: 'slider', min: 2000, max: 22000, step: 100, default: 16000 },
+    { name: 'Sensitivity', param: 'audiomotionSensitivity', type: 'select', default: 1,
+      options: [
+        { value: 0, label: 'Low' },
+        { value: 1, label: 'Normal' },
+        { value: 2, label: 'High' },
+      ]},
+    { name: 'Smoothing', param: 'audiomotionSmoothing', type: 'slider', min: 0, max: 0.99, step: 0.01, default: 0.5 },
+    { name: 'Background Opacity', param: 'audiomotionBgAlpha', type: 'slider', min: 0, max: 1, step: 0.01, default: 1.0 },
+  ],
+  defaultSourceParams: {
+    audiomotionMode: 4,
+    audiomotionGradient: 'orangered',
+    audiomotionRadial: false,
+    audiomotionBarStyle: 'normal',
+    audiomotionPeakLine: false,
+    audiomotionShowPeaks: true,
+    audiomotionMirror: 0,
+    audiomotionFlipY: false,
+    audiomotionReflexRatio: 0,
+    audiomotionBarSpace: 0.1,
+    audiomotionMinFreq: 30,
+    audiomotionMaxFreq: 16000,
+    audiomotionSensitivity: 1,
+    audiomotionSmoothing: 0.5,
+    audiomotionBgAlpha: 1.0,
   },
 });
 
@@ -235,5 +628,216 @@ registerPlugin({
     particleAmbient: 0.35,
     particleAutoRotate: true,
     particleRotationSpeed: 0.15,
+  },
+});
+
+// ─── Analyzer Lab ──────────────────────────────────────────────────────
+// Original Canvas-2D multi-panel analyzer (spectrogram + chromagram +
+// waveform). Visual inspiration: Sonic Visualiser (Chris Cannam et al.,
+// GPL) — none of their code is used, just the aesthetic.
+registerPlugin({
+  id: 'analyzerlab',
+  name: 'Analyzer Lab',
+  description: 'Multi-panel real-time spectral analyzer — spectrogram waterfall, chromagram, waveform',
+  category: 'Generators',
+  version: '0.1.0',
+  author: 'Ghost Arcade (original; inspired by Sonic Visualiser)',
+  tier: 'free',
+  icon: '⎍',
+  previewCSS: 'linear-gradient(180deg, #110, #310, #720 35%, #b40 55%, #f80 70%, #ffc 90%)',
+  effectType: 'analyzerlab',
+  paramDefs: [
+    { name: 'Layout', param: 'analyzerLabLayout', type: 'select', default: 'stack',
+      options: [
+        { value: 'stack',       label: 'Stack (3 panels)' },
+        { value: 'spectrogram', label: 'Spectrogram (full)' },
+        { value: 'chromagram',  label: 'Chromagram (full)' },
+        { value: 'waveform',    label: 'Waveform (full)' },
+        { value: 'mirror',      label: 'Mirror (spectro)' },
+      ]},
+    { name: 'Colormap', param: 'analyzerLabColormap', type: 'select', default: 'inferno',
+      options: [
+        { value: 'inferno', label: 'Inferno' },
+        { value: 'viridis', label: 'Viridis' },
+        { value: 'magma',   label: 'Magma' },
+        { value: 'coral',   label: 'Coral (brand)' },
+        { value: 'ice',     label: 'Ice' },
+        { value: 'mono',    label: 'Monochrome' },
+      ]},
+    // ── Spectrogram-specific ──
+    { name: 'Spectro Orientation', param: 'analyzerLabSpectroOrientation', type: 'select', default: 'horizontal',
+      options: [
+        { value: 'horizontal', label: 'Horizontal (scroll left)' },
+        { value: 'vertical',   label: 'Vertical (scroll up)' },
+        { value: 'radial',     label: 'Radial (radar)' },
+      ],
+      showWhen: { param: 'analyzerLabLayout', values: ['stack', 'spectrogram', 'mirror'] } },
+    { name: 'Brightness', param: 'analyzerLabSpectroGain', type: 'slider', min: 0, max: 2, step: 0.05, default: 1.0 },
+    { name: 'Quiet Floor (dB)', param: 'analyzerLabSpectroMinDb', type: 'slider', min: -110, max: -40, step: 1, default: -85 },
+    { name: 'Loud Ceiling (dB)', param: 'analyzerLabSpectroMaxDb', type: 'slider', min: -40, max: 0, step: 1, default: -25 },
+    { name: 'Scroll Speed', param: 'analyzerLabScrollSpeed', type: 'slider', min: 0.25, max: 4, step: 0.05, default: 1.0 },
+    // ── Chromagram-specific ──
+    { name: 'Chroma Style', param: 'analyzerLabChromaStyle', type: 'select', default: 'bars',
+      options: [
+        { value: 'bars',   label: 'Bars (12 vertical)' },
+        { value: 'radial', label: 'Radial wheel (clock)' },
+      ],
+      showWhen: { param: 'analyzerLabLayout', values: ['stack', 'chromagram'] } },
+    { name: 'Chroma Glow', param: 'analyzerLabChromaGlow', type: 'slider', min: 0, max: 1, step: 0.02, default: 0.5 },
+    // ── Waveform-specific ──
+    { name: 'Wave Style', param: 'analyzerLabWaveStyle', type: 'select', default: 'line',
+      options: [
+        { value: 'line',   label: 'Line' },
+        { value: 'mirror', label: 'Mirror (top + bottom)' },
+        { value: 'filled', label: 'Filled area' },
+      ],
+      showWhen: { param: 'analyzerLabLayout', values: ['stack', 'waveform'] } },
+    { name: 'Wave Line Width', param: 'analyzerLabWaveLineWidth', type: 'slider', min: 1, max: 4, step: 0.5, default: 1.5 },
+    // ── Global ──
+    { name: 'Beat Markers', param: 'analyzerLabShowBeats', type: 'toggle', default: true },
+    { name: 'Show Labels', param: 'analyzerLabShowLabels', type: 'toggle', default: true },
+    { name: 'Background Opacity', param: 'analyzerLabBgAlpha', type: 'slider', min: 0, max: 1, step: 0.01, default: 1.0 },
+  ],
+  defaultSourceParams: {
+    analyzerLabLayout: 'stack',
+    analyzerLabColormap: 'inferno',
+    analyzerLabSpectroOrientation: 'horizontal',
+    analyzerLabSpectroGain: 1.0,
+    analyzerLabSpectroMinDb: -85,
+    analyzerLabSpectroMaxDb: -25,
+    analyzerLabScrollSpeed: 1.0,
+    analyzerLabChromaStyle: 'bars',
+    analyzerLabChromaGlow: 0.5,
+    analyzerLabWaveStyle: 'line',
+    analyzerLabWaveLineWidth: 1.5,
+    analyzerLabShowBeats: true,
+    analyzerLabShowLabels: true,
+    analyzerLabBgAlpha: 1.0,
+  },
+});
+
+// ─── HandFX (MediaPipe POC) ────────────────────────────────────────────
+// Original hand-gesture visualizer driven by the shared MediaPipe worker.
+// 5 modes; the headline "Panel" mode pairs with the layer's Difference
+// blend mode to invert colors of layers beneath the rectangle between
+// the user's palms.
+registerPlugin({
+  id: 'handfx',
+  name: 'HandFX',
+  description: 'Conduct visuals with your hands — paint, ink, pinch spray, neon skeleton, blend-mode panel',
+  category: 'Generators',
+  version: '0.2.0',
+  author: 'Ghost Arcade (original) · MediaPipe by Google (Apache-2.0)',
+  tier: 'free',
+  icon: '✋',
+  previewCSS: 'radial-gradient(circle at 30% 50%, #FF6B6B 0%, transparent 30%), radial-gradient(circle at 70% 50%, #ff80c0 0%, transparent 30%), #0a0a10',
+  effectType: 'handfx',
+  paramDefs: [
+    { name: 'Mode', param: 'handfxMode', type: 'select', default: 'trails',
+      options: [
+        { value: 'trails',   label: 'Paint (velocity brushstrokes + sparks)' },
+        { value: 'aurora',   label: 'Ink (drifting smoke blobs)' },
+        { value: 'bursts',   label: 'Pinch Spray (continuous from pinch)' },
+        { value: 'skeleton', label: 'Neon Skeleton' },
+        { value: 'panel',    label: 'Panel (set blend → Difference to invert)' },
+      ]},
+    { name: 'Camera On', param: 'handfxCameraOn', type: 'toggle', default: false },
+    { name: 'Smoothing', param: 'handfxSmoothing', type: 'slider', min: 0, max: 1, step: 0.01, default: 0.15 },
+    { name: 'Predict Ahead (ms)', param: 'handfxPredictMs', type: 'slider', min: 0, max: 40, step: 1, default: 18 },
+    { name: 'Background Opacity', param: 'handfxBgAlpha', type: 'slider', min: 0, max: 1, step: 0.01, default: 0.0 },
+    { name: 'Show Camera Feed', param: 'handfxShowCamera', type: 'toggle', default: false },
+    { name: 'Camera Opacity', param: 'handfxCameraOpacity', type: 'slider', min: 0, max: 1, step: 0.01, default: 0.5,
+      showWhen: { param: 'handfxShowCamera', values: [true] } },
+
+    // ── Panel ──
+    { name: 'Panel Opacity', param: 'handfxPanelOpacity', type: 'slider', min: 0, max: 1, step: 0.01, default: 1.0,
+      showWhen: { param: 'handfxMode', values: ['panel'] } },
+    { name: 'Panel Padding', param: 'handfxPanelPadding', type: 'slider', min: 0, max: 0.2, step: 0.005, default: 0.04,
+      showWhen: { param: 'handfxMode', values: ['panel'] } },
+    { name: 'Panel Corner Radius', param: 'handfxPanelCornerRadius', type: 'slider', min: 0, max: 0.1, step: 0.005, default: 0.02,
+      showWhen: { param: 'handfxMode', values: ['panel'] } },
+
+    // ── Paint (mode: 'trails') ──
+    { name: 'Paint Color', param: 'handfxTrailColorMode', type: 'select', default: 'rainbow',
+      options: [
+        { value: 'rainbow', label: 'Rainbow (per finger)' },
+        { value: 'coral',   label: 'Coral' },
+        { value: 'cyan',    label: 'Cyan' },
+        { value: 'white',   label: 'White' },
+      ],
+      showWhen: { param: 'handfxMode', values: ['trails'] } },
+    { name: 'Linger', param: 'handfxTrailFade', type: 'slider', min: 0.9, max: 0.999, step: 0.001, default: 0.985,
+      showWhen: { param: 'handfxMode', values: ['trails'] } },
+    { name: 'Brush Thickness', param: 'handfxTrailThickness', type: 'slider', min: 1, max: 8, step: 0.5, default: 3,
+      showWhen: { param: 'handfxMode', values: ['trails'] } },
+    { name: 'Velocity → Width', param: 'handfxTrailVelocityScale', type: 'slider', min: 0, max: 3, step: 0.05, default: 1.5,
+      showWhen: { param: 'handfxMode', values: ['trails'] } },
+    { name: 'Spark Density', param: 'handfxTrailSparkDensity', type: 'slider', min: 0, max: 2, step: 0.05, default: 0.5,
+      showWhen: { param: 'handfxMode', values: ['trails'] } },
+    { name: 'Flow Strength', param: 'handfxTrailFlowStrength', type: 'slider', min: 0, max: 2, step: 0.05, default: 0.7,
+      showWhen: { param: 'handfxMode', values: ['trails'] } },
+
+    // ── Ink (mode: 'aurora') ──
+    { name: 'Ink Color', param: 'handfxInkColorMode', type: 'select', default: 'coral',
+      options: [
+        { value: 'rainbow', label: 'Rainbow (per finger)' },
+        { value: 'coral',   label: 'Coral' },
+        { value: 'cyan',    label: 'Cyan' },
+        { value: 'white',   label: 'White' },
+      ],
+      showWhen: { param: 'handfxMode', values: ['aurora'] } },
+    { name: 'Blob Size', param: 'handfxInkSize', type: 'slider', min: 10, max: 120, step: 2, default: 55,
+      showWhen: { param: 'handfxMode', values: ['aurora'] } },
+    { name: 'Blob Opacity', param: 'handfxInkOpacity', type: 'slider', min: 0, max: 1, step: 0.01, default: 0.28,
+      showWhen: { param: 'handfxMode', values: ['aurora'] } },
+    { name: 'Drift Speed', param: 'handfxInkDrift', type: 'slider', min: 0, max: 3, step: 0.05, default: 1.0,
+      showWhen: { param: 'handfxMode', values: ['aurora'] } },
+
+    // ── Skeleton ──
+    { name: 'Skeleton Glow', param: 'handfxSkeletonGlow', type: 'slider', min: 0, max: 3, step: 0.1, default: 1.5,
+      showWhen: { param: 'handfxMode', values: ['skeleton'] } },
+
+    // ── Pinch Spray (mode: 'bursts') ──
+    { name: 'Spray Color', param: 'handfxSprayColorMode', type: 'select', default: 'rainbow',
+      options: [
+        { value: 'rainbow', label: 'Rainbow' },
+        { value: 'coral',   label: 'Coral' },
+        { value: 'cyan',    label: 'Cyan' },
+        { value: 'white',   label: 'White' },
+      ],
+      showWhen: { param: 'handfxMode', values: ['bursts'] } },
+    { name: 'Spray Intensity', param: 'handfxSprayIntensity', type: 'slider', min: 0.1, max: 3, step: 0.05, default: 1.5,
+      showWhen: { param: 'handfxMode', values: ['bursts'] } },
+    { name: 'Pinch Threshold', param: 'handfxSprayThreshold', type: 'slider', min: 0.05, max: 0.5, step: 0.01, default: 0.25,
+      showWhen: { param: 'handfxMode', values: ['bursts'] } },
+  ],
+  defaultSourceParams: {
+    handfxMode: 'trails',
+    handfxCameraOn: false,
+    handfxSmoothing: 0.15,
+    handfxPredictMs: 18,
+    handfxShowHelp: true,
+    handfxBgAlpha: 0.0,
+    handfxShowCamera: false,
+    handfxCameraOpacity: 0.5,
+    handfxPanelColor: '#FFFFFF',
+    handfxPanelOpacity: 1.0,
+    handfxPanelPadding: 0.04,
+    handfxPanelCornerRadius: 0.02,
+    handfxTrailFade: 0.985,
+    handfxTrailColorMode: 'rainbow',
+    handfxTrailThickness: 3,
+    handfxTrailVelocityScale: 1.5,
+    handfxTrailSparkDensity: 0.5,
+    handfxTrailFlowStrength: 0.7,
+    handfxInkColorMode: 'coral',
+    handfxInkSize: 55,
+    handfxInkOpacity: 0.28,
+    handfxInkDrift: 1.0,
+    handfxSkeletonColor: '#FF6B6B',
+    handfxSkeletonGlow: 1.5,
+    handfxSprayColorMode: 'rainbow',
+    handfxSprayIntensity: 1.5,
+    handfxSprayThreshold: 0.25,
   },
 });

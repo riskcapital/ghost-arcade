@@ -39,6 +39,14 @@ export const warpVertexShader = /* glsl */ `
 export const textureFragmentShader = /* glsl */ `
   uniform sampler2D uTexture;
   uniform float uOpacity;
+  // Luminance-keyed background opacity. Default 1.0 = bg fully opaque
+  // (no keying). Lower values fade the alpha proportionally to the
+  // pixel's brightness, so dark areas become transparent while
+  // bright content stays solid. Used by GPU shader layers (set per-
+  // layer via gpuLayerContent.bgOpacity) to "key out" their dark
+  // background so the layer below shows through. All other layer
+  // types leave it at 1.0.
+  uniform float uBgOpacity;
   uniform vec4 uCropRegion; // x, y, width, height (0-1 normalized)
   uniform bool uCropEnabled;
   uniform int uLayerShapeType; // 0=rectangle, 1=circle, 2=triangle
@@ -348,7 +356,13 @@ export const textureFragmentShader = /* glsl */ `
       mask *= customMask;
     }
 
-    gl_FragColor = vec4(texColor.rgb, texColor.a * uOpacity * mask * contentMask);
+    // BG keying: mix(luma, 1.0, uBgOpacity). When uBgOpacity=1 the
+    // key is a no-op; at 0 the alpha collapses to the pixel's value
+    // channel so black is transparent and bright stays opaque. The
+    // mix gives the user a continuous fade between the two.
+    float bgLuma = max(max(texColor.r, texColor.g), texColor.b);
+    float bgKey = mix(bgLuma, 1.0, uBgOpacity);
+    gl_FragColor = vec4(texColor.rgb, texColor.a * uOpacity * mask * contentMask * bgKey);
   }
 `;
 

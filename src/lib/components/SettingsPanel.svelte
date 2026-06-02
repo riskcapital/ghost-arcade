@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { settings, getSupportedFormats, COLOR_SCHEMES, CLAUDE_MODELS, GEMINI_MODELS, VEO_MODELS, LUMA_MODELS, DEFAULT_LAYER_SHADERS, type RecordingSettings, type OutputSettings, type ColorSchemeId, type FluidQualityMode, type ShaderQualityMode, type ShaderAIProvider, type VideoAIProvider } from '../stores/settings';
   import {
     probeDecodeSupport,
@@ -46,6 +46,7 @@
   import { midiStore } from '../midi/midiStore';
   import { midiManager } from '../midi/midiManager';
   import { oscStore } from '../osc/oscStore';
+  import MediaPipePanel from './MediaPipePanel.svelte';
   // LicensePanel + tier-related imports removed — OSS build has no license UI.
   // Multi-Output / per-slice config (createDefaultSlice, maxOutputSlices,
   // OutputCanvasPreview) moved to the Screens tab — see ScreenPanel.svelte.
@@ -237,7 +238,7 @@
     | 'output:edge-blending'
     | 'performance:gpu' | 'performance:render-quality' | 'performance:video-decoding'
     | 'recording'
-    | 'integrations:midi' | 'integrations:osc' | 'integrations:wled'
+    | 'integrations:midi' | 'integrations:osc' | 'integrations:wled' | 'integrations:mediapipe'
     | 'ai';
   interface SidebarSection { id: SectionId; label: string; advanced?: boolean }
   interface SidebarCategory { id: string; label: string; sections: SidebarSection[] }
@@ -274,6 +275,7 @@
       { id: 'integrations:midi', label: 'MIDI' },
       { id: 'integrations:osc', label: 'OSC' },
       { id: 'integrations:wled', label: 'WLED' },
+      { id: 'integrations:mediapipe', label: 'MediaPipe', advanced: true },
     ]},
     { id: 'ai', label: 'AI', sections: [
       { id: 'ai', label: 'AI' },
@@ -291,6 +293,7 @@
     midi: 'integrations:midi',
     osc: 'integrations:osc',
     wled: 'integrations:wled',
+    mediapipe: 'integrations:mediapipe',
     ai: 'ai',
   };
 
@@ -332,6 +335,18 @@
       try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch { /* */ }
     }
   }
+  // Listen for a `close-settings` event so other components (e.g. the
+  // MediaPipe binding form, which needs the user to reach a param
+  // outside this modal) can dismiss us programmatically.
+  function handleCloseRequest() { onClose(); }
+  onMount(() => {
+    if (typeof window === 'undefined') return;
+    window.addEventListener('close-settings', handleCloseRequest);
+  });
+  onDestroy(() => {
+    if (typeof window === 'undefined') return;
+    window.removeEventListener('close-settings', handleCloseRequest);
+  });
   // Lazy probes — run when the user first lands on a section that needs
   // the data. Cheaper than probing at mount for sections the user may
   // never open.
@@ -751,6 +766,22 @@
               {#each DEFAULT_LAYER_SHADERS as shader}
                 <option value={shader.id}>{shader.label}</option>
               {/each}
+            </select>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">New Layer Placement</span>
+              <span class="label-hint">Where a newly-created layer lands in the layer list (Top = renders on top of everything)</span>
+            </div>
+            <select
+              value={$settings.newLayerPlacement || 'top'}
+              onchange={(e) => settings.setNewLayerPlacement((e.target as HTMLSelectElement).value as any)}
+            >
+              <option value="top">Top of list</option>
+              <option value="aboveActive">Above active layer</option>
+              <option value="belowActive">Below active layer</option>
+              <option value="bottom">Bottom of list</option>
             </select>
           </div>
         </section>
@@ -1882,6 +1913,19 @@
           </div>
         </section>
 
+        {/if}
+        <!-- MediaPipe gesture input — runs Hand Landmarker + Gesture
+             Recognizer in a worker, maps signals (palm position,
+             pinch, canned gestures) to MIDI-style param paths via the
+             shared midiRouter. -->
+        {#if selectedSection === 'integrations:mediapipe'}
+        <section class="settings-section">
+          <h3>MediaPipe</h3>
+          <p class="settings-hint" style="margin-bottom: 12px;">
+            Use the webcam as a control input. Hand landmarks, pinch distance, palm position, and the canned MediaPipe gestures (open palm, fist, victory, thumb up/down, etc.) become signals that bind to any MIDI-mappable parameter through the same router OSC uses.
+          </p>
+          <MediaPipePanel />
+        </section>
         {/if}
         <!-- AI Settings Section -->
         {#if selectedSection === 'ai'}

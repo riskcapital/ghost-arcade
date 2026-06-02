@@ -52,6 +52,8 @@
   import LayerSequencer from './lib/components/LayerSequencer.svelte';
   import KeyframeTimeline from './lib/components/KeyframeTimeline.svelte';
   import SettingsPanel from './lib/components/SettingsPanel.svelte';
+  import MediaPipeLearnHUD from './lib/components/MediaPipeLearnHUD.svelte';
+  import MediaPipeLearnOverlay from './lib/components/MediaPipeLearnOverlay.svelte';
   import GridOverlay from './lib/components/GridOverlay.svelte';
   import ShortcutsOverlay from './lib/components/ShortcutsOverlay.svelte';
   import ConfirmPopover from './lib/components/ConfirmPopover.svelte';
@@ -536,7 +538,9 @@
   // Selected media layer plugin source state for sidebar tab routing
   $: selectedMediaSource = $selectedMediaLayer?.source ?? null;
   $: selectedPluginId = selectedMediaSource?.effectSource?.effectType ?? selectedMediaSource?.spoutSource?.pluginId ?? null;
-  $: hasPluginControls = selectedPluginId === 'fluid' || selectedPluginId === 'fluidgen' || selectedPluginId === 'particles' || selectedPluginId === 'particles3d';
+  // Show the plugin-controls tab for any registered integrated effect type
+  // (fluid, particles, milkdrop, …) plus the legacy Spout plugin ids.
+  $: hasPluginControls = selectedPluginId === 'fluid' || selectedPluginId === 'fluidgen' || selectedPluginId === 'particles' || selectedPluginId === 'particles3d' || selectedPluginId === 'milkdrop' || selectedPluginId === 'audiomotion' || selectedPluginId === 'wavejs' || selectedPluginId === 'hydra' || selectedPluginId === 'ghostfx' || selectedPluginId === 'analyzerlab' || selectedPluginId === 'handfx';
   // Auto-switch to plugin tab when a plugin layer is first selected
   let prevPluginId: string | null = null;
   $: if (hasPluginControls && selectedPluginId !== prevPluginId) {
@@ -5512,6 +5516,13 @@
       isOpen={showSettings}
       onClose={() => showSettings = false}
     />
+
+    <!-- Global learn-mode UI for MediaPipe bindings. Top-level so they
+         survive Settings modal closing during a binding tap. The overlay
+         outlines every bindable param; the modal stays open through the
+         whole session, sticky signal picker so the user can multi-bind. -->
+    <MediaPipeLearnOverlay />
+    <MediaPipeLearnHUD />
 
     <!-- Footer / Status bar -->
     <footer class="statusbar">

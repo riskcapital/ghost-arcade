@@ -18,6 +18,7 @@ import { surfaceStore } from './surface';
 // per-effect reset button in LayerPanel.
 import { getDefaultEffectParams } from '../renderer/effects';
 import { oscStore } from '../osc/oscStore';
+import { mediaPipeBus } from '../mediapipe/mediaPipeBus';
 import { geoDeckStore } from './geoDeck';
 import { createDefaultShapeMesh } from '../drawing/types';
 import type { LineElement, LineShape, LinesContent, LineDrawAnimation, LineStroke } from '../lines/types';
@@ -75,6 +76,31 @@ async function blobUrlToDataUrl(blobUrl: string): Promise<string | null> {
   } catch (err) {
     console.warn('[blobUrlToDataUrl] Failed to convert blob URL to data URL:', err);
     return null;
+  }
+}
+
+/** Insert a new layer at the position the user has chosen in Settings →
+ *  Project → New Layer Placement. Falls back to "top" if active-layer
+ *  variants are selected but nothing is currently selected. Single
+ *  source of truth — every addXxxLayer() helper below uses this. */
+function placeNewLayer(layers: Layer[], newLayer: Layer, selectedLayerId: string | null): Layer[] {
+  const placement = get(settings).newLayerPlacement ?? 'top';
+  switch (placement) {
+    case 'bottom':
+      return [...layers, newLayer];
+    case 'aboveActive': {
+      const i = selectedLayerId ? layers.findIndex(l => l.id === selectedLayerId) : -1;
+      if (i < 0) return [newLayer, ...layers];
+      return [...layers.slice(0, i), newLayer, ...layers.slice(i)];
+    }
+    case 'belowActive': {
+      const i = selectedLayerId ? layers.findIndex(l => l.id === selectedLayerId) : -1;
+      if (i < 0) return [...layers, newLayer];
+      return [...layers.slice(0, i + 1), newLayer, ...layers.slice(i + 1)];
+    }
+    case 'top':
+    default:
+      return [newLayer, ...layers];
   }
 }
 
@@ -240,7 +266,7 @@ void main() {
         }
         return {
           ...project,
-          layers: [newLayer, ...project.layers],
+          layers: placeNewLayer(project.layers, newLayer, project.selectedLayerId),
           selectedLayerId: id,
         };
       });
@@ -259,7 +285,7 @@ void main() {
         const newLayer = createLinesLayer(id, layerName);
         return {
           ...project,
-          layers: [newLayer, ...project.layers],
+          layers: placeNewLayer(project.layers, newLayer, project.selectedLayerId),
           selectedLayerId: id,
         };
       });
@@ -273,7 +299,7 @@ void main() {
         const newLayer = createSVGLayer(id, layerName);
         return {
           ...project,
-          layers: [newLayer, ...project.layers],
+          layers: placeNewLayer(project.layers, newLayer, project.selectedLayerId),
           selectedLayerId: id,
         };
       });
@@ -287,7 +313,7 @@ void main() {
         const newLayer = createColorLayer(id, layerName);
         return {
           ...project,
-          layers: [newLayer, ...project.layers],
+          layers: placeNewLayer(project.layers, newLayer, project.selectedLayerId),
           selectedLayerId: id,
         };
       });
@@ -429,7 +455,7 @@ void main() {
         const newLayer = createLightPaintingLayer(id, layerName);
         return {
           ...project,
-          layers: [newLayer, ...project.layers],
+          layers: placeNewLayer(project.layers, newLayer, project.selectedLayerId),
           selectedLayerId: id,
         };
       });
@@ -449,7 +475,7 @@ void main() {
         const newLayer = createAdvLightPaintingLayer(id, layerName);
         return {
           ...project,
-          layers: [newLayer, ...project.layers],
+          layers: placeNewLayer(project.layers, newLayer, project.selectedLayerId),
           selectedLayerId: id,
         };
       });
@@ -464,7 +490,7 @@ void main() {
         const newLayer = createTextLayer(id, layerName);
         return {
           ...project,
-          layers: [newLayer, ...project.layers],
+          layers: placeNewLayer(project.layers, newLayer, project.selectedLayerId),
           selectedLayerId: id,
         };
       });
@@ -479,7 +505,7 @@ void main() {
         const newLayer = createSplatLayer(id, layerName);
         return {
           ...project,
-          layers: [newLayer, ...project.layers],
+          layers: placeNewLayer(project.layers, newLayer, project.selectedLayerId),
           selectedLayerId: id,
         };
       });
@@ -599,7 +625,7 @@ void main() {
         };
         return {
           ...project,
-          layers: [newLayer, ...project.layers],
+          layers: placeNewLayer(project.layers, newLayer, project.selectedLayerId),
           selectedLayerId: id,
         };
       });
@@ -621,7 +647,7 @@ void main() {
         };
         return {
           ...project,
-          layers: [newLayer, ...project.layers],
+          layers: placeNewLayer(project.layers, newLayer, project.selectedLayerId),
           selectedLayerId: id,
         };
       });
@@ -642,7 +668,7 @@ void main() {
         };
         return {
           ...project,
-          layers: [newLayer, ...project.layers],
+          layers: placeNewLayer(project.layers, newLayer, project.selectedLayerId),
           selectedLayerId: id,
         };
       });
@@ -686,7 +712,7 @@ void main() {
         };
         return {
           ...project,
-          layers: [newLayer, ...project.layers],
+          layers: placeNewLayer(project.layers, newLayer, project.selectedLayerId),
           selectedLayerId: id,
         };
       });
@@ -705,7 +731,7 @@ void main() {
         const newLayer = createGroupLayer(id, layerName);
         return {
           ...project,
-          layers: [newLayer, ...project.layers],
+          layers: placeNewLayer(project.layers, newLayer, project.selectedLayerId),
           selectedLayerId: id,
         };
       });
@@ -2393,6 +2419,31 @@ void main() {
               const { paramAuto: _drop, ...rest } = e;
               return hasAny ? { ...rest, paramAuto: nextAuto } : rest;
             }),
+          };
+        }),
+      }));
+    },
+
+    /** Set or clear the Auto playhead config for a single GPU shader-
+     *  layer param. Lives on `layer.gpuLayerContent.paramAuto[paramKey]`.
+     *  Same drop-when-empty optimisation as setEffectParamAuto so saves
+     *  stay tidy when no Auto entries are active. */
+    setGPULayerParamAuto(layerId: string, paramKey: string, auto: AutoConfig | null) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((l) => {
+          if (l.id !== layerId || !l.gpuLayerContent) return l;
+          const nextAuto = { ...(l.gpuLayerContent.paramAuto ?? {}) };
+          if (auto === null) {
+            delete nextAuto[paramKey];
+          } else {
+            nextAuto[paramKey] = auto;
+          }
+          const hasAny = Object.keys(nextAuto).length > 0;
+          const { paramAuto: _drop, ...rest } = l.gpuLayerContent;
+          return {
+            ...l,
+            gpuLayerContent: hasAny ? { ...rest, paramAuto: nextAuto } : rest,
           };
         }),
       }));
@@ -4260,6 +4311,10 @@ void main() {
         // Include OSC config (port + bindings). The listener is
         // restarted on project load if the saved state was enabled.
         osc: oscStore.serialize(),
+        // Include MediaPipe gesture bindings (camera → param routing).
+        // Project-scoped so opening a different project doesn't carry
+        // the previous one's hand mappings.
+        mediaPipe: mediaPipeBus.serialize(),
         // Include snapshot bank (16 captured-state slots)
         snapshots: snapshots.serialize(),
         // Include SynthVision performer state at project root
@@ -4984,6 +5039,15 @@ void main() {
           oscStore.reset();
         }
 
+        // Import MediaPipe bindings. Older saves don't carry them —
+        // reset to empty so a project that wasn't built around gestures
+        // doesn't inherit them from whatever was loaded before.
+        if ((parsed as any).mediaPipe) {
+          mediaPipeBus.hydrate((parsed as any).mediaPipe);
+        } else {
+          mediaPipeBus.reset();
+        }
+
         // Import SynthVision PROJECT-ROOT state (added 1.9.1). Saves
         // before that only carry SynthVision inside compositions, so
         // this no-ops on legacy projects — the per-composition load
@@ -5476,6 +5540,22 @@ registerMappingLayerCallbacks(
     const topObj = (eff as any)[topKey];
     if (!topObj || typeof topObj !== 'object') return undefined;
     const v = topObj[nestedKey];
+    return typeof v === 'number' ? v : undefined;
+  },
+  // gpuUpdater: batch-apply modulated GPU shader-layer param values.
+  // Goes through project.updateGPULayerParams so keyframe auto-record
+  // sees the change just like a manual drag would.
+  (layerIndex: number, values: Record<string, number>) => {
+    const p = get(project);
+    const layer = p.layers[layerIndex];
+    if (!layer?.gpuLayerContent) return;
+    project.updateGPULayerParams(layer.id, values);
+  },
+  // gpuReader: capture current GPU param as the modulation base.
+  (layerIndex: number, paramKey: string) => {
+    const p = get(project);
+    const layer = p.layers[layerIndex];
+    const v = layer?.gpuLayerContent?.params?.[paramKey];
     return typeof v === 'number' ? v : undefined;
   },
 );

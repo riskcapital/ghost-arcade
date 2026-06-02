@@ -33,6 +33,13 @@
   /** When true (default), commits as the user drags the slider in
    *  realtime. When false, only commits on slider release. */
   export let live: boolean = true;
+  /** Optional MIDI / MediaPipe / OSC binding path. When set, this
+   *  slider is discoverable by the binding overlays — the underlying
+   *  range input gets `data-midi-path` (+ min/max/step/label) so
+   *  MidiOverlay and MediaPipeLearnOverlay treat it as a learn target.
+   *  Components that wrap NumericInput just pass these through. */
+  export let midiPath: string | undefined = undefined;
+  export let midiLabel: string | undefined = undefined;
 
   const dispatch = createEventDispatcher<{ input: number; change: number }>();
 
@@ -116,6 +123,11 @@
     {value}
     oninput={onSlider}
     onchange={onSliderChange}
+    data-midi-path={midiPath}
+    data-midi-label={midiLabel ?? label}
+    data-midi-min={midiPath ? min : undefined}
+    data-midi-max={midiPath ? max : undefined}
+    data-midi-step={midiPath ? step : undefined}
   />
 </div>
 

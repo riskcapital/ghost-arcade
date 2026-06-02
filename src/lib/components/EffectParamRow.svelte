@@ -19,7 +19,7 @@
    * in both editor and projector output windows (the engine ticks in
    * both via modulationBroadcast).
    */
-  import { modulationStore, registerEffectParamRange, registerEdgeEffectParamRange, type ModSource, type ParamModulation } from '../audio/modulation';
+  import { modulationStore, registerEffectParamRange, registerEdgeEffectParamRange, registerGPUParamRange, type ModSource, type ParamModulation } from '../audio/modulation';
   import { project, layers } from '../stores/layers';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
   import { defaultAutoFor } from '../audio/autoEngine';
@@ -39,8 +39,11 @@
   /** Discriminates which modulation slot the row writes into:
    *    'fx'   — `layer.effects[].params[paramName]`  (default)
    *    'edge' — `layer.edgeEffects.effects[].<paramName>` (nested path)
-   *  Defaults to 'fx' so existing call sites don't need updates. */
-  export let effectKind: 'fx' | 'edge' = 'fx';
+   *    'gpu'  — `layer.gpuLayerContent.params[paramName]` (mapping-only)
+   *  Defaults to 'fx' so existing call sites don't need updates. For
+   *  'gpu' the `effectId` prop is unused (every GPU layer has exactly
+   *  one shader at a time, so addressing is just layerIndex + paramKey). */
+  export let effectKind: 'fx' | 'edge' | 'gpu' = 'fx';
   /** Which render graph this row writes to:
    *    'mapping' — project.layers (LayerPanel, EdgeEffectsPanel)
    *    'vj'      — vjClipLauncher.layerStates (VJ Mode performer panel)
@@ -58,6 +61,8 @@
   // can find it under the same key it was stored with.
   $: if (effectKind === 'edge') {
     registerEdgeEffectParamRange(layerIndex, effectId, paramName, min, max);
+  } else if (effectKind === 'gpu') {
+    registerGPUParamRange(layerIndex, paramName, min, max);
   } else {
     registerEffectParamRange(layerIndex, effectId, paramName, min, max);
   }
@@ -107,23 +112,30 @@
   $: vjLauncherState = $vjClipLauncher;
   $: modKey = effectKind === 'edge'
     ? `map:${layerIndex}:edge:${effectId}:${paramName}`
-    : target === 'vj'
-      ? `${vjBank === 'B' ? 'B:' : ''}${layerIndex}:fx:${effectId}:${paramName}`
-      : `map:${layerIndex}:fx:${effectId}:${paramName}`;
+    : effectKind === 'gpu'
+      ? `map:${layerIndex}:gpu:${paramName}`
+      : target === 'vj'
+        ? `${vjBank === 'B' ? 'B:' : ''}${layerIndex}:fx:${effectId}:${paramName}`
+        : `map:${layerIndex}:fx:${effectId}:${paramName}`;
   $: existingMod = ($modulationStore.get(modKey) as ParamModulation | undefined);
 
   // Look up the live effect (mapping layer OR VJ layer state) so we
   // can read the paramAuto sidecar for the Auto UI state.
-  $: currentMappingLayer = target === 'mapping' ? $layers[layerIndex] : undefined;
-  $: currentVjLayerState = target === 'vj'
+  $: currentMappingLayer = target === 'mapping' || effectKind === 'gpu' ? $layers[layerIndex] : undefined;
+  $: currentVjLayerState = target === 'vj' && effectKind !== 'gpu'
     ? (vjBank === 'B' ? vjLauncherState.bankBLayerStates : vjLauncherState.layerStates)[layerIndex]
     : undefined;
-  $: currentEffect = target === 'vj'
-    ? currentVjLayerState?.effects.find(e => e.id === effectId)
-    : effectKind === 'edge'
-      ? (currentMappingLayer?.edgeEffects?.effects.find(e => e.id === effectId) as any)
-      : currentMappingLayer?.effects.find(e => e.id === effectId);
-  $: existingAuto = (currentEffect?.paramAuto as Record<string, AutoConfig> | undefined)?.[paramName];
+  $: currentEffect = effectKind === 'gpu'
+    ? null
+    : target === 'vj'
+      ? currentVjLayerState?.effects.find(e => e.id === effectId)
+      : effectKind === 'edge'
+        ? (currentMappingLayer?.edgeEffects?.effects.find(e => e.id === effectId) as any)
+        : currentMappingLayer?.effects.find(e => e.id === effectId);
+  // For gpu, the paramAuto sidecar lives on gpuLayerContent itself.
+  $: existingAuto = effectKind === 'gpu'
+    ? (currentMappingLayer?.gpuLayerContent?.paramAuto as Record<string, AutoConfig> | undefined)?.[paramName]
+    : (currentEffect?.paramAuto as Record<string, AutoConfig> | undefined)?.[paramName];
 
   $: currentSource = existingAuto
     ? 'auto'
@@ -137,6 +149,8 @@
   function writeMod(mod: ParamModulation) {
     if (effectKind === 'edge') {
       modulationStore.setEdgeEffectModulation(layerIndex, effectId, paramName, mod, 'mapping');
+    } else if (effectKind === 'gpu') {
+      modulationStore.setGPUParamModulation(layerIndex, paramName, mod);
     } else if (target === 'vj') {
       modulationStore.setEffectModulation(layerIndex, effectId, paramName, mod, vjBank, 'vj');
     } else {
@@ -150,6 +164,12 @@
       // line up with reads in autoEngine + the existing edge updater.
       if (currentMappingLayer) {
         project.setEdgeEffectParamAuto(currentMappingLayer.id, effectId, paramName, auto);
+      }
+      return;
+    }
+    if (effectKind === 'gpu') {
+      if (currentMappingLayer) {
+        project.setGPULayerParamAuto(currentMappingLayer.id, paramName, auto);
       }
       return;
     }
@@ -266,7 +286,7 @@
       {max}
       {step}
       {value}
-      data-midi-path={effectKind === 'edge' ? `map:edge:${effectId}:${paramName}` : `map:effect:${effectId}:${paramName}`}
+      data-midi-path={effectKind === 'edge' ? `map:edge:${effectId}:${paramName}` : effectKind === 'gpu' ? `map:gpu:${paramName}` : `map:effect:${effectId}:${paramName}`}
       data-midi-label={label}
       data-midi-min={min}
       data-midi-max={max}

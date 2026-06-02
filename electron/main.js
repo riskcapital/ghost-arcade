@@ -2316,21 +2316,25 @@ function setupPermissions() {
   // directly — namely the audio analyzer's system-audio capture.
   //
   // The audio analyzer doesn't care which video source it gets back (it
-  // uses the audio track and discards the video). For that path we keep
-  // the old auto-pick of the primary screen so we don't accidentally
-  // break system-audio capture for users on Windows. Renderers that want
-  // a specific screen or window go through the IPC + getUserMedia path
-  // instead — see MediaTray.svelte's startScreenCapture().
+  // uses the audio track and discards the video). It DOES care that the
+  // returned stream has a loopback audio track.
   //
-  // useSystemPicker is set true so on macOS 15+ the OS native screen
-  // share picker handles selection; on other platforms Electron falls
-  // back to invoking this handler.
+  // useSystemPicker is set to FALSE here on purpose. When true on macOS
+  // 15+ Electron defers to the OS native picker; the OS picker may
+  // return a stream WITHOUT an audio track unless the user explicitly
+  // toggles "Share audio" in the picker. Result: the analyzer throws
+  // "No audio track available" and the user has no idea what to do.
+  // Setting useSystemPicker:false makes Electron invoke our callback
+  // directly and honor our `audio: 'loopback'` request unconditionally
+  // — system audio capture "just works" with no extra prompt. Screen
+  // SELECTION (different feature) goes through the IPC path in
+  // MediaTray.svelte's startScreenCapture(), unaffected by this.
   session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
     try {
       const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
       const primaryScreen = sources.find(s => s.id.startsWith('screen:')) || sources[0];
       if (primaryScreen) {
-        console.log(`[DisplayMedia] Granting screen capture: ${primaryScreen.name}`);
+        console.log(`[DisplayMedia] Granting loopback audio + auto-pick screen: ${primaryScreen.name}`);
         callback({ video: primaryScreen, audio: 'loopback' });
       } else {
         console.warn('[DisplayMedia] No screen sources available');
@@ -2340,7 +2344,7 @@ function setupPermissions() {
       console.error('[DisplayMedia] Error getting sources:', err);
       callback({});
     }
-  }, { useSystemPicker: true });
+  }, { useSystemPicker: false });
 }
 
 // ============================================================

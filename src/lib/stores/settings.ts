@@ -804,12 +804,19 @@ export interface PerformanceSettings {
   useWebGL2LightPainting: boolean;
 }
 
+/** Where new layers land in the project's layer list when added in
+ *  mapping mode. 'top' = top of the list (legacy default, renders on
+ *  top of everything). 'bottom' = end of the list. 'aboveActive' /
+ *  'belowActive' = relative to the currently-selected layer. */
+export type NewLayerPlacement = 'top' | 'aboveActive' | 'belowActive' | 'bottom';
+
 export interface AppSettings {
   recording: RecordingSettings;
   output: OutputSettings;
   ui: UISettings;
   ai: AISettings;
   defaultLayerShader: DefaultLayerShader;
+  newLayerPlacement: NewLayerPlacement;
   experimental: ExperimentalSettings;
   performance: PerformanceSettings;
 }
@@ -936,6 +943,8 @@ function createDefaultSettings(): AppSettings {
       replicateApiKey: '',
     },
     defaultLayerShader: 'grid',
+    // Default 'top' matches legacy behavior (new layers prepended).
+    newLayerPlacement: 'top',
     experimental: {
       // S4 pilot. Off by default. Enabling requires both the user
       // toggle in dev preferences AND `webgpuCapability.probeWebGPU()`
@@ -1626,6 +1635,14 @@ function createSettingsStore() {
     setDefaultLayerShader(shader: DefaultLayerShader) {
       update(s => {
         const newSettings = { ...s, defaultLayerShader: shader };
+        saveSettings(newSettings);
+        return newSettings;
+      });
+    },
+
+    setNewLayerPlacement(placement: NewLayerPlacement) {
+      update(s => {
+        const newSettings = { ...s, newLayerPlacement: placement };
         saveSettings(newSettings);
         return newSettings;
       });

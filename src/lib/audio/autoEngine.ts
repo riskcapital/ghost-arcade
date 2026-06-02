@@ -98,6 +98,7 @@ function tick(now: number) {
   type EffectBatch = Map<string, Record<string, number>>; // effectId → values
   const effectBatches = new Map<string, EffectBatch>();   // layerId → batches
   const shaderBatches = new Map<string, Record<string, number>>(); // layerId → values
+  const gpuBatches = new Map<string, Record<string, number>>();    // layerId → gpu param values
 
   for (let layerIdx = 0; layerIdx < layers.length; layerIdx++) {
     const layer = layers[layerIdx];
@@ -184,6 +185,21 @@ function tick(now: number) {
         batch[paramName] = value;
       }
     }
+
+    // GPU shader-layer params — paramAuto sidecar on gpuLayerContent.
+    if (layer.gpuLayerContent?.paramAuto) {
+      for (const [paramKey, auto] of Object.entries(layer.gpuLayerContent.paramAuto)) {
+        if (!auto || !auto.playing) continue;
+        auto.phase = advancePhase(auto, dt);
+        const value = resolveValue(auto);
+        let batch = gpuBatches.get(layer.id);
+        if (!batch) {
+          batch = {};
+          gpuBatches.set(layer.id, batch);
+        }
+        batch[paramKey] = value;
+      }
+    }
   }
 
   // Commit effect writes
@@ -195,6 +211,10 @@ function tick(now: number) {
   // Commit shader writes
   for (const [layerId, values] of shaderBatches) {
     project.batchUpdateLayerShaderValues(layerId, values);
+  }
+  // Commit GPU param writes (mapping-only).
+  for (const [layerId, values] of gpuBatches) {
+    project.updateGPULayerParams(layerId, values);
   }
 
   // ──────────────────────────────────────────────────────────
