@@ -41,6 +41,16 @@
   let _Model3DRendererCtor: typeof import('../model3d/Model3DRenderer').Model3DRenderer | null = null;
   let _FluidSimulationCtor: typeof import('../effects/fluidSimulation').FluidSimulation | null = null;
   let _ParticleSystem3DCtor: typeof import('../effects/particleSystem3D').ParticleSystem3D | null = null;
+  let _MilkdropVisualizerCtor: typeof import('../effects/milkdropVisualizer').MilkdropVisualizer | null = null;
+  let _milkdropLoadPresetPack: typeof import('../effects/milkdropPresets').loadPresetPack | null = null;
+  let _milkdropPickNextPreset: typeof import('../effects/milkdropPresets').pickNextPreset | null = null;
+  let _AudioMotionVisualizerCtor: typeof import('../effects/audiomotionVisualizer').AudioMotionVisualizer | null = null;
+  let _AnalyzerLabVisualizerCtor: typeof import('../effects/analyzerLabVisualizer').AnalyzerLabVisualizer | null = null;
+  let _HandFXVisualizerCtor: typeof import('../effects/handfxVisualizer').HandFXVisualizer | null = null;
+  let _WaveJSVisualizerCtor: typeof import('../effects/wavejsVisualizer').WaveJSVisualizer | null = null;
+  let _HydraVisualizerCtor: typeof import('../effects/hydraVisualizer').HydraVisualizer | null = null;
+  let _hydraPresetsMod: typeof import('../effects/hydraPresets') | null = null;
+  let _GhostFXVisualizerCtor: typeof import('../effects/ghostfx/ghostfxVisualizer').GhostFXVisualizer | null = null;
   const _lazyLoading = new Set<string>();
   function _lazyLoad(key: string, load: () => Promise<void>): void {
     if (_lazyLoading.has(key)) return;
@@ -50,6 +60,11 @@
   // ParticleSystem removed — Particles3D runs as standalone Bevy app via Spout
   import { audioStore, getLastRawAnalysis, audioBands } from '../stores/audio';
   import { audioTextures } from '../audio/audioTextures';
+  import { audioAnalyzer } from '../audio/analyzer';
+  import { multiStemAnalyzer } from '../audio/multiStemAnalyzer';
+  import { StemRouter } from '../audio/stemRouter';
+  import { milkdropStore } from '../stores/milkdrop';
+  import { hydraStore } from '../stores/hydra';
   import { initStateBroadcast, destroyStateBroadcast } from '$lib/sync/stateBroadcast';
   import { startAudioBroadcast, stopAudioBroadcast, broadcastAudioFrame } from '$lib/sync/audioBroadcast';
   import { startWLEDSenders, stopWLEDSenders, tickWLEDSenders } from '$lib/wled/sender';
@@ -574,9 +589,34 @@
 
   // Integrated effects (FluidSimulation, ParticleSystem3D)
   interface IntegratedEffectContext {
-    type: 'fluid' | 'particles';
+    type: 'fluid' | 'particles' | 'milkdrop' | 'audiomotion' | 'wavejs' | 'hydra' | 'ghostfx' | 'analyzerlab' | 'handfx';
     fluid?: FluidSimulation;
     particles?: ParticleSystem3D;
+    milkdrop?: import('../effects/milkdropVisualizer').MilkdropVisualizer;
+    audiomotion?: import('../effects/audiomotionVisualizer').AudioMotionVisualizer;
+    audiomotionAudioAttached?: boolean;
+    analyzerlab?: import('../effects/analyzerLabVisualizer').AnalyzerLabVisualizer;
+    handfx?: import('../effects/handfxVisualizer').HandFXVisualizer;
+    wavejs?: import('../effects/wavejsVisualizer').WaveJSVisualizer;
+    wavejsAudioAttached?: boolean;
+    hydra?: import('../effects/hydraVisualizer').HydraVisualizer;
+    hydraLayerId?: string;
+    hydraLastCommandTag?: number;
+    hydraLoadedPresetName?: string;
+    ghostfx?: import('../effects/ghostfx/ghostfxVisualizer').GhostFXVisualizer;
+    // Milkdrop preset cycling state
+    milkdropPresets?: Record<string, any>;
+    milkdropPresetNames?: string[];      // cached sorted name list for next/prev navigation
+    milkdropPresetPack?: string;
+    milkdropLoadedPresetName?: string;
+    milkdropLastEvolveAt?: number;       // performance.now()
+    milkdropLastEvolveBeat?: number;     // beatCount snapshot
+    milkdropAudioAttached?: boolean;
+    milkdropAudioSource?: 'mono' | 'stems'; // which audio source butterchurn is currently wired to
+    milkdropStemRouter?: import('../audio/stemRouter').StemRouter;  // active when audioSource='stems'
+    milkdropLastCommandTag?: number;     // for edge-triggered next/prev/random/cut/load
+    milkdropLastHardCutAt?: number;      // refractory to avoid every-beat cut on dense kicks
+    milkdropLayerId?: string;            // first layer id in the group — used for store keying
     renderTarget: THREE.WebGLRenderTarget;
     simulationWidth: number;
     simulationHeight: number;
@@ -1979,6 +2019,14 @@
     for (const effect of integratedEffects.values()) {
       try { effect.fluid?.dispose(); } catch (e) { console.warn('[Canvas] fluid dispose error:', e); }
       try { effect.particles?.dispose(); } catch (e) { console.warn('[Canvas] particles dispose error:', e); }
+      try { effect.milkdrop?.dispose(); } catch (e) { console.warn('[Canvas] milkdrop dispose error:', e); }
+      try { effect.milkdropStemRouter?.dispose(); } catch {}
+      try { effect.audiomotion?.dispose(); } catch (e) { console.warn('[Canvas] audiomotion dispose error:', e); }
+      try { effect.wavejs?.dispose(); } catch (e) { console.warn('[Canvas] wavejs dispose error:', e); }
+      try { effect.hydra?.dispose(); } catch (e) { console.warn('[Canvas] hydra dispose error:', e); }
+      try { effect.ghostfx?.dispose(); } catch (e) { console.warn('[Canvas] ghostfx dispose error:', e); }
+      try { effect.analyzerlab?.dispose(); } catch (e) { console.warn('[Canvas] analyzerlab dispose error:', e); }
+      try { effect.handfx?.dispose(); } catch (e) { console.warn('[Canvas] handfx dispose error:', e); }
       try { if (effect.cameraTexture) { effect.cameraTexture.dispose(); effect.cameraTexture = undefined as any; } } catch {}
       try { if (effect.prevCameraTarget) { effect.prevCameraTarget.dispose(); effect.prevCameraTarget = undefined as any; } } catch {}
       try { effect.cameraStream?.getTracks().forEach(t => t.stop()); } catch {}
@@ -2039,6 +2087,14 @@
     for (const effect of integratedEffects.values()) {
       effect.fluid?.dispose();
       effect.particles?.dispose();
+      effect.milkdrop?.dispose();
+      try { effect.milkdropStemRouter?.dispose(); } catch {}
+      effect.audiomotion?.dispose();
+      effect.wavejs?.dispose();
+      effect.hydra?.dispose();
+      effect.ghostfx?.dispose();
+      effect.analyzerlab?.dispose();
+      effect.handfx?.dispose();
       effect.renderTarget.dispose();
     }
     integratedEffects.clear();
@@ -2165,6 +2221,14 @@
     for (const effect of integratedEffects.values()) {
       effect.fluid?.dispose();
       effect.particles?.dispose();
+      effect.milkdrop?.dispose();
+      try { effect.milkdropStemRouter?.dispose(); } catch {}
+      effect.audiomotion?.dispose();
+      effect.wavejs?.dispose();
+      effect.hydra?.dispose();
+      effect.ghostfx?.dispose();
+      effect.analyzerlab?.dispose();
+      effect.handfx?.dispose();
       effect.renderTarget.dispose();
     }
     integratedEffects.clear();
@@ -4102,7 +4166,7 @@
       // Get or create effect context
       let effectCtx = integratedEffects.get(cacheKey);
       // Only handle integrated effect types
-      if (effectSource.effectType !== 'fluid' && effectSource.effectType !== 'particles') continue;
+      if (effectSource.effectType !== 'fluid' && effectSource.effectType !== 'particles' && effectSource.effectType !== 'milkdrop' && effectSource.effectType !== 'audiomotion' && effectSource.effectType !== 'wavejs' && effectSource.effectType !== 'hydra' && effectSource.effectType !== 'ghostfx' && effectSource.effectType !== 'analyzerlab' && effectSource.effectType !== 'handfx') continue;
 
       // Lazy-load the sim class chunk; skip this group until the ctor is
       // ready (only matters on the very first frame the effect appears).
@@ -4113,6 +4177,59 @@
         }
         if (effectSource.effectType === 'particles' && !_ParticleSystem3DCtor) {
           _lazyLoad('particles3d', async () => { _ParticleSystem3DCtor = (await import('../effects/particleSystem3D')).ParticleSystem3D; });
+          continue;
+        }
+        if (effectSource.effectType === 'milkdrop' && (!_MilkdropVisualizerCtor || !_milkdropLoadPresetPack)) {
+          _lazyLoad('milkdrop', async () => {
+            const mod = await import('../effects/milkdropVisualizer');
+            _MilkdropVisualizerCtor = mod.MilkdropVisualizer;
+            const pmod = await import('../effects/milkdropPresets');
+            _milkdropLoadPresetPack = pmod.loadPresetPack;
+            _milkdropPickNextPreset = pmod.pickNextPreset;
+          });
+          continue;
+        }
+        if (effectSource.effectType === 'audiomotion' && !_AudioMotionVisualizerCtor) {
+          _lazyLoad('audiomotion', async () => {
+            const mod = await import('../effects/audiomotionVisualizer');
+            _AudioMotionVisualizerCtor = mod.AudioMotionVisualizer;
+          });
+          continue;
+        }
+        if (effectSource.effectType === 'wavejs' && !_WaveJSVisualizerCtor) {
+          _lazyLoad('wavejs', async () => {
+            const mod = await import('../effects/wavejsVisualizer');
+            _WaveJSVisualizerCtor = mod.WaveJSVisualizer;
+          });
+          continue;
+        }
+        if (effectSource.effectType === 'hydra' && (!_HydraVisualizerCtor || !_hydraPresetsMod)) {
+          _lazyLoad('hydra', async () => {
+            const mod = await import('../effects/hydraVisualizer');
+            _HydraVisualizerCtor = mod.HydraVisualizer;
+            _hydraPresetsMod = await import('../effects/hydraPresets');
+          });
+          continue;
+        }
+        if (effectSource.effectType === 'ghostfx' && !_GhostFXVisualizerCtor) {
+          _lazyLoad('ghostfx', async () => {
+            const mod = await import('../effects/ghostfx/ghostfxVisualizer');
+            _GhostFXVisualizerCtor = mod.GhostFXVisualizer;
+          });
+          continue;
+        }
+        if (effectSource.effectType === 'analyzerlab' && !_AnalyzerLabVisualizerCtor) {
+          _lazyLoad('analyzerlab', async () => {
+            const mod = await import('../effects/analyzerLabVisualizer');
+            _AnalyzerLabVisualizerCtor = mod.AnalyzerLabVisualizer;
+          });
+          continue;
+        }
+        if (effectSource.effectType === 'handfx' && !_HandFXVisualizerCtor) {
+          _lazyLoad('handfx', async () => {
+            const mod = await import('../effects/handfxVisualizer');
+            _HandFXVisualizerCtor = mod.HandFXVisualizer;
+          });
           continue;
         }
       }
@@ -4128,6 +4245,14 @@
         try { effectCtx.prevCameraTarget?.dispose(); } catch {}
         effectCtx.fluid?.dispose();
         effectCtx.particles?.dispose();
+        effectCtx.milkdrop?.dispose();
+        try { effectCtx.milkdropStemRouter?.dispose(); } catch {}
+        effectCtx.audiomotion?.dispose();
+        effectCtx.wavejs?.dispose();
+        effectCtx.hydra?.dispose();
+        effectCtx.ghostfx?.dispose();
+        effectCtx.analyzerlab?.dispose();
+        effectCtx.handfx?.dispose();
         effectCtx.renderTarget.dispose();
         integratedEffects.delete(cacheKey);
         effectCtx = undefined;
@@ -4142,7 +4267,7 @@
         });
 
         effectCtx = {
-          type: effectSource.effectType as 'fluid' | 'particles',
+          type: effectSource.effectType as 'fluid' | 'particles' | 'milkdrop' | 'audiomotion' | 'wavejs' | 'hydra' | 'ghostfx' | 'analyzerlab' | 'handfx',
           renderTarget,
           simulationWidth: width,
           simulationHeight: height,
@@ -4200,6 +4325,156 @@
             rotationSpeed: effectSource.particleRotationSpeed ?? 0.15,
           });
           effectCtx.particles = ps;
+        } else if (effectSource.effectType === 'milkdrop') {
+          // Lazily create the shared AudioContext so Milkdrop can initialise
+          // before any audio source has been started. Butterchurn renders
+          // silent visuals until connectAudio() is called later (we retry
+          // each frame in the render path below).
+          const audioCtx = audioAnalyzer.getOrCreateAudioContext();
+          const pixelRatio = effectSource.milkdropPixelRatio ?? 1;
+          const meshSize = effectSource.milkdropMeshSize ?? 48;
+          const mk = new _MilkdropVisualizerCtor!(audioCtx, {
+            width, height, pixelRatio, meshSize,
+          });
+          mk.init(renderer);
+          mk.setSensitivity(effectSource.milkdropSensitivity ?? 1.5);
+          effectCtx.milkdrop = mk;
+        } else if (effectSource.effectType === 'audiomotion') {
+          const audioCtx = audioAnalyzer.getOrCreateAudioContext();
+          const am = new _AudioMotionVisualizerCtor!(audioCtx, width, height);
+          am.init(renderer);
+          am.setParams({
+            mode: effectSource.audiomotionMode ?? 4,
+            gradient: effectSource.audiomotionGradient ?? 'orangered',
+            radial: effectSource.audiomotionRadial ?? false,
+            barStyle: effectSource.audiomotionBarStyle ?? 'normal',
+            peakLine: effectSource.audiomotionPeakLine ?? false,
+            showPeaks: effectSource.audiomotionShowPeaks ?? true,
+            mirror: effectSource.audiomotionMirror ?? 0,
+            flipY: effectSource.audiomotionFlipY ?? false,
+            reflexRatio: effectSource.audiomotionReflexRatio ?? 0,
+            barSpace: effectSource.audiomotionBarSpace ?? 0.1,
+            minFreq: effectSource.audiomotionMinFreq ?? 30,
+            maxFreq: effectSource.audiomotionMaxFreq ?? 16000,
+            sensitivity: effectSource.audiomotionSensitivity ?? 1,
+            smoothing: effectSource.audiomotionSmoothing ?? 0.5,
+            bgAlpha: effectSource.audiomotionBgAlpha ?? 1.0,
+          });
+          effectCtx.audiomotion = am;
+        } else if (effectSource.effectType === 'wavejs') {
+          const audioCtx = audioAnalyzer.getOrCreateAudioContext();
+          const wj = new _WaveJSVisualizerCtor!(audioCtx, width, height);
+          wj.init(renderer);
+          wj.setParams({
+            animation: effectSource.wavejsAnimation ?? 'Wave',
+            sensitivity: effectSource.wavejsSensitivity ?? 1.5,
+            lineWidth: effectSource.wavejsLineWidth ?? 4,
+            colorA: effectSource.wavejsColorA ?? [1.0, 0.42, 0.42],
+            colorB: effectSource.wavejsColorB ?? [1.0, 0.55, 0.30],
+            useGradient: effectSource.wavejsUseGradient ?? true,
+            gradientRotate: effectSource.wavejsGradientRotate ?? 0,
+            glowStrength: effectSource.wavejsGlowStrength ?? 15,
+            glowColor: effectSource.wavejsGlowColor ?? [1.0, 0.42, 0.42],
+            bgAlpha: effectSource.wavejsBgAlpha ?? 1.0,
+            flipY: effectSource.wavejsFlipY ?? false,
+          });
+          effectCtx.wavejs = wj;
+        } else if (effectSource.effectType === 'hydra') {
+          const hy = new _HydraVisualizerCtor!(width, height);
+          hy.init(renderer);
+          hy.setParams({
+            sketchName: effectSource.hydraSketchName ?? 'Welcome',
+            sketchCode: effectSource.hydraSketchCode ?? 'osc(20, 0.1, 1.4).rotate(0.1).out()',
+            sensitivity: effectSource.hydraSensitivity ?? 1.5,
+            bgAlpha: effectSource.hydraBgAlpha ?? 1.0,
+          });
+          effectCtx.hydra = hy;
+          effectCtx.hydraLoadedPresetName = effectSource.hydraSketchName ?? 'Welcome';
+        } else if (effectSource.effectType === 'ghostfx') {
+          const fx = new _GhostFXVisualizerCtor!(width, height);
+          fx.init(renderer);
+          fx.setParams({
+            scenePreset:        effectSource.ghostfxScenePreset        ?? 'drift',
+            sensitivity:        effectSource.ghostfxSensitivity        ?? 1.4,
+            hueDriftSpeed:      effectSource.ghostfxHueDriftSpeed      ?? 0.15,
+            bloomIntensity:     effectSource.ghostfxBloomIntensity     ?? 1.4,
+            bloomThreshold:     effectSource.ghostfxBloomThreshold     ?? 0.45,
+            vignette:           effectSource.ghostfxVignette           ?? 0.7,
+            exposure:           effectSource.ghostfxExposure           ?? 0.1,
+            bgAlpha:            effectSource.ghostfxBgAlpha            ?? 1.0,
+            vortexStrength:     effectSource.ghostfxVortexStrength     ?? 2.0,
+            latticeThreshold:   effectSource.ghostfxLatticeThreshold   ?? 2.5,
+            trailIntensity:     effectSource.ghostfxTrailIntensity     ?? 1.0,
+            feedbackAmount:     effectSource.ghostfxFeedbackAmount     ?? 0.35,
+            feedbackZoom:       effectSource.ghostfxFeedbackZoom       ?? 1.003,
+            ribbonWidth:        effectSource.ghostfxRibbonWidth        ?? 0.10,
+            ribbonSpawn:        effectSource.ghostfxRibbonSpawn        ?? 1.0,
+            ribbonTranslucency: effectSource.ghostfxRibbonTranslucency ?? 0.35,
+            ribbonBlend:        effectSource.ghostfxRibbonBlend        ?? 'additive',
+            lightAzimuth:       effectSource.ghostfxLightAzimuth       ?? 35,
+            lightElevation:     effectSource.ghostfxLightElevation     ?? 55,
+            lightStrength:      effectSource.ghostfxLightStrength      ?? 0.9,
+            ambient:            effectSource.ghostfxAmbient            ?? 0.30,
+            liquidSplatForce:   effectSource.ghostfxLiquidSplatForce   ?? 1.0,
+            liquidSplatRadius:  effectSource.ghostfxLiquidSplatRadius  ?? 0.08,
+            liquidDyeDecay:     effectSource.ghostfxLiquidDyeDecay     ?? 0.995,
+            liquidVelDecay:     effectSource.ghostfxLiquidVelDecay     ?? 0.992,
+            liquidBassRate:     effectSource.ghostfxLiquidBassRate     ?? 1.0,
+          });
+          effectCtx.ghostfx = fx;
+        } else if (effectSource.effectType === 'analyzerlab') {
+          const al = new _AnalyzerLabVisualizerCtor!(width, height);
+          al.init(renderer);
+          al.setParams({
+            layout:             effectSource.analyzerLabLayout             ?? 'stack',
+            colormap:           effectSource.analyzerLabColormap           ?? 'inferno',
+            spectroOrientation: effectSource.analyzerLabSpectroOrientation ?? 'horizontal',
+            spectroGain:        effectSource.analyzerLabSpectroGain        ?? 1.0,
+            spectroMinDb:       effectSource.analyzerLabSpectroMinDb       ?? -85,
+            spectroMaxDb:       effectSource.analyzerLabSpectroMaxDb       ?? -25,
+            scrollSpeed:        effectSource.analyzerLabScrollSpeed        ?? 1.0,
+            chromaStyle:        effectSource.analyzerLabChromaStyle        ?? 'bars',
+            chromaGlow:         effectSource.analyzerLabChromaGlow         ?? 0.5,
+            waveStyle:          effectSource.analyzerLabWaveStyle          ?? 'line',
+            waveLineWidth:      effectSource.analyzerLabWaveLineWidth      ?? 1.5,
+            showBeats:          effectSource.analyzerLabShowBeats          ?? true,
+            showLabels:         effectSource.analyzerLabShowLabels         ?? true,
+            bgAlpha:            effectSource.analyzerLabBgAlpha            ?? 1.0,
+          });
+          effectCtx.analyzerlab = al;
+        } else if (effectSource.effectType === 'handfx') {
+          const hx = new _HandFXVisualizerCtor!(width, height);
+          hx.init(renderer);
+          hx.setParams({
+            mode:                effectSource.handfxMode                ?? 'trails',
+            cameraOn:            effectSource.handfxCameraOn            ?? false,
+            smoothing:           effectSource.handfxSmoothing           ?? 0.15,
+            predictMs:           effectSource.handfxPredictMs           ?? 18,
+            showHelp:            effectSource.handfxShowHelp            ?? true,
+            bgAlpha:             effectSource.handfxBgAlpha             ?? 0.0,
+            panelColor:          effectSource.handfxPanelColor          ?? '#FFFFFF',
+            panelOpacity:        effectSource.handfxPanelOpacity        ?? 1.0,
+            panelPadding:        effectSource.handfxPanelPadding        ?? 0.04,
+            panelCornerRadius:   effectSource.handfxPanelCornerRadius   ?? 0.02,
+            trailFade:           effectSource.handfxTrailFade           ?? 0.985,
+            trailColorMode:      effectSource.handfxTrailColorMode      ?? 'rainbow',
+            trailThickness:      effectSource.handfxTrailThickness      ?? 3,
+            trailVelocityScale:  effectSource.handfxTrailVelocityScale  ?? 1.5,
+            trailSparkDensity:   effectSource.handfxTrailSparkDensity   ?? 0.5,
+            trailFlowStrength:   effectSource.handfxTrailFlowStrength   ?? 0.7,
+            inkColorMode:        effectSource.handfxInkColorMode        ?? 'coral',
+            inkSize:             effectSource.handfxInkSize             ?? 55,
+            inkOpacity:          effectSource.handfxInkOpacity          ?? 0.28,
+            inkDrift:            effectSource.handfxInkDrift            ?? 1.0,
+            skeletonColor:       effectSource.handfxSkeletonColor       ?? '#FF6B6B',
+            skeletonGlow:        effectSource.handfxSkeletonGlow        ?? 1.5,
+            sprayColorMode:      effectSource.handfxSprayColorMode      ?? 'rainbow',
+            sprayIntensity:      effectSource.handfxSprayIntensity      ?? 1.5,
+            sprayThreshold:      effectSource.handfxSprayThreshold      ?? 0.25,
+            showCamera:          effectSource.handfxShowCamera          ?? false,
+            cameraOpacity:       effectSource.handfxCameraOpacity       ?? 0.5,
+          });
+          effectCtx.handfx = hx;
         }
 
         integratedEffects.set(cacheKey, effectCtx);
@@ -4466,6 +4741,445 @@
         effectCtx.particles.renderToTarget(renderer, effectCtx.renderTarget);
       }
 
+      // ── Milkdrop path ──────────────────────────────────────────────────
+      if (effectCtx.milkdrop && effectSource.effectType === 'milkdrop') {
+        const mk = effectCtx.milkdrop;
+        const blendTime = effectSource.milkdropBlendTime ?? 2.7;
+
+        // Track first-layer id for store keying (panel commands target by layer id)
+        const layerId = groupedLayers[0]?.id ?? '';
+        effectCtx.milkdropLayerId = layerId;
+
+        // Resize on project-size change
+        if (
+          effectCtx.renderTarget.width !== width ||
+          effectCtx.renderTarget.height !== height
+        ) {
+          mk.resize(width, height, effectSource.milkdropPixelRatio ?? 1);
+        }
+
+        // Audio routing: when the multi-stem analyser is running AND the
+        // layer has a routing matrix, build a StemRouter and feed its
+        // weighted sum into butterchurn instead of the raw mono source.
+        // Otherwise late-attach the single-channel source as before.
+        const stemsRunning = multiStemAnalyzer.isRunning();
+        const wantStems = stemsRunning && !!effectSource.milkdropRoutingMatrix;
+        const wantSource: 'mono' | 'stems' = wantStems ? 'stems' : 'mono';
+        if (wantSource !== effectCtx.milkdropAudioSource) {
+          // Source mode flipped — rebuild
+          if (effectCtx.milkdropStemRouter) {
+            try { effectCtx.milkdropStemRouter.dispose(); } catch {}
+            effectCtx.milkdropStemRouter = undefined;
+          }
+          if (wantStems) {
+            const audioCtx = audioAnalyzer.getOrCreateAudioContext();
+            const router = new StemRouter(audioCtx);
+            router.setStems(multiStemAnalyzer.getStems());
+            router.setMatrix(effectSource.milkdropRoutingMatrix as any);
+            mk.connectAudio(router.getOutput());
+            effectCtx.milkdropStemRouter = router;
+            effectCtx.milkdropAudioSource = 'stems';
+            effectCtx.milkdropAudioAttached = true;
+            console.log('[Canvas] Milkdrop → stem router');
+          } else {
+            const src = audioAnalyzer.getSourceNode();
+            if (src) {
+              mk.connectAudio(src);
+              effectCtx.milkdropAudioSource = 'mono';
+              effectCtx.milkdropAudioAttached = true;
+              console.log('[Canvas] Milkdrop → mono source');
+            } else {
+              effectCtx.milkdropAudioAttached = false;
+            }
+          }
+        } else if (wantStems && effectCtx.milkdropStemRouter) {
+          // Source mode unchanged but matrix may have shifted — push
+          // current matrix every frame; setTargetAtTime smooths it.
+          effectCtx.milkdropStemRouter.setMatrix(effectSource.milkdropRoutingMatrix as any);
+        } else if (wantSource === 'mono' && !effectCtx.milkdropAudioAttached) {
+          const src = audioAnalyzer.getSourceNode();
+          if (src) {
+            mk.connectAudio(src);
+            effectCtx.milkdropAudioAttached = true;
+          }
+        }
+
+        // Push sensitivity each frame (cheap; no-op if unchanged in viz)
+        mk.setSensitivity(effectSource.milkdropSensitivity ?? 1.5);
+
+        // Preset pack load / pick-first-preset
+        const wantPack = effectSource.milkdropPresetPack ?? 'minimal';
+        if (effectCtx.milkdropPresetPack !== wantPack && _milkdropLoadPresetPack) {
+          effectCtx.milkdropPresetPack = wantPack;
+          // Fire-and-forget; once resolved, the next frame picks a preset.
+          _milkdropLoadPresetPack(wantPack as any).then(presets => {
+            effectCtx!.milkdropPresets = presets;
+            effectCtx!.milkdropPresetNames = Object.keys(presets).sort();
+            const first = _milkdropPickNextPreset!(presets, null);
+            if (first) {
+              mk.loadPreset(first, presets[first], 0);
+              effectCtx!.milkdropLoadedPresetName = first;
+              effectCtx!.milkdropLastEvolveAt = performance.now();
+              if (layerId) milkdropStore.reportPreset(layerId, first);
+            }
+          }).catch(e => console.warn('[Canvas] milkdrop preset pack load failed', e));
+        }
+
+        const presets = effectCtx.milkdropPresets;
+        const names = effectCtx.milkdropPresetNames ?? [];
+
+        // ── Edge-triggered commands from the panel ─────────────────────
+        if (layerId && presets && names.length > 0) {
+          const cmd = milkdropStore['subscribe'] ? undefined : undefined; // no-op
+          const state = get(milkdropStore);
+          const latest = state.commands[layerId];
+          if (latest && latest.tag !== effectCtx.milkdropLastCommandTag) {
+            effectCtx.milkdropLastCommandTag = latest.tag;
+            const curName = effectCtx.milkdropLoadedPresetName ?? null;
+            let target: string | null = null;
+            let cutBlend = blendTime;
+            switch (latest.kind) {
+              case 'next': {
+                const idx = curName ? names.indexOf(curName) : -1;
+                target = names[(idx + 1 + names.length) % names.length];
+                break;
+              }
+              case 'prev': {
+                const idx = curName ? names.indexOf(curName) : 0;
+                target = names[(idx - 1 + names.length) % names.length];
+                break;
+              }
+              case 'random': {
+                target = _milkdropPickNextPreset ? _milkdropPickNextPreset(presets, curName) : null;
+                break;
+              }
+              case 'cut': {
+                // Pick a fresh random preset with zero blend (hard cut feel).
+                target = _milkdropPickNextPreset ? _milkdropPickNextPreset(presets, curName) : null;
+                cutBlend = 0;
+                break;
+              }
+              case 'load': {
+                if (latest.presetName && presets[latest.presetName]) target = latest.presetName;
+                break;
+              }
+              // lock/unlock are state-only — handled in auto-evolve gate below
+            }
+            if (target && presets[target]) {
+              mk.loadPreset(target, presets[target], cutBlend);
+              effectCtx.milkdropLoadedPresetName = target;
+              effectCtx.milkdropLastEvolveAt = performance.now();
+              effectCtx.milkdropLastEvolveBeat = (getLastRawAnalysis()?.beat?.beatCount ?? 0);
+              milkdropStore.reportPreset(layerId, target);
+            }
+          }
+        }
+
+        // Locked? Skip auto-evolve and hard-cut entirely.
+        const lockedState = layerId ? get(milkdropStore).locked[layerId] : false;
+
+        // Hard-cut on beat (independent of auto-evolve; fires on strong beats only)
+        if (
+          !lockedState &&
+          presets && names.length > 0 &&
+          (effectSource.milkdropHardCutEnabled ?? false)
+        ) {
+          const audio = getLastRawAnalysis();
+          const beatIntensity = audio?.beat?.beatIntensity ?? 0;
+          const threshold = effectSource.milkdropHardCutThreshold ?? 0.8;
+          const now = performance.now();
+          // 500ms refractory — at 140 BPM that's ~1.2 beats, so we cut once
+          // per phrase-grade beat instead of every kick.
+          const refractoryOk = (now - (effectCtx.milkdropLastHardCutAt ?? 0)) > 500;
+          if (audio?.beat?.isBeat && beatIntensity >= threshold && refractoryOk && _milkdropPickNextPreset) {
+            const next = _milkdropPickNextPreset(presets, effectCtx.milkdropLoadedPresetName ?? null);
+            if (next) {
+              mk.loadPreset(next, presets[next], 0);
+              effectCtx.milkdropLoadedPresetName = next;
+              effectCtx.milkdropLastHardCutAt = now;
+              effectCtx.milkdropLastEvolveAt = now;
+              effectCtx.milkdropLastEvolveBeat = audio.beat.beatCount;
+              if (layerId) milkdropStore.reportPreset(layerId, next);
+            }
+          }
+        }
+
+        // Auto-evolve presets (timer or beat-sync). Pauses while locked.
+        if (!lockedState && presets && (effectSource.milkdropAutoEvolve ?? true) && _milkdropPickNextPreset) {
+          const mode = effectSource.milkdropEvolveMode ?? 1;
+          let shouldEvolve = false;
+          if (mode === 0) {
+            const intervalMs = (effectSource.milkdropEvolveInterval ?? 22) * 1000;
+            const lastAt = effectCtx.milkdropLastEvolveAt ?? 0;
+            shouldEvolve = (performance.now() - lastAt) >= intervalMs;
+          } else {
+            const audio = getLastRawAnalysis();
+            const beatCount = audio?.beat?.beatCount ?? 0;
+            const bars = effectSource.milkdropEvolveBars ?? 8;
+            const lastBeat = effectCtx.milkdropLastEvolveBeat ?? beatCount;
+            if (effectCtx.milkdropLastEvolveBeat === undefined) {
+              effectCtx.milkdropLastEvolveBeat = beatCount;
+            }
+            shouldEvolve = beatCount - lastBeat >= bars * 4;
+          }
+          if (shouldEvolve) {
+            const next = _milkdropPickNextPreset(presets, effectCtx.milkdropLoadedPresetName ?? null);
+            if (next) {
+              mk.loadPreset(next, presets[next], blendTime);
+              effectCtx.milkdropLoadedPresetName = next;
+              if (layerId) milkdropStore.reportPreset(layerId, next);
+            }
+            effectCtx.milkdropLastEvolveAt = performance.now();
+            effectCtx.milkdropLastEvolveBeat = (getLastRawAnalysis()?.beat?.beatCount ?? 0);
+          }
+        }
+
+        mk.render(renderer, effectCtx.renderTarget);
+      }
+
+      // ── AudioMotion path ───────────────────────────────────────────────
+      if (effectCtx.audiomotion && effectSource.effectType === 'audiomotion') {
+        const am = effectCtx.audiomotion;
+        if (effectCtx.renderTarget.width !== width || effectCtx.renderTarget.height !== height) {
+          am.resize(width, height);
+        }
+        // Late-attach audio (same pattern as Milkdrop) — connect to the
+        // shared source node as soon as the user starts mic/system audio.
+        if (!effectCtx.audiomotionAudioAttached) {
+          const src = audioAnalyzer.getSourceNode();
+          if (src) {
+            am.connectAudio(src);
+            effectCtx.audiomotionAudioAttached = true;
+            console.log('[Canvas] AudioMotion audio attached');
+          }
+        }
+        am.setParams({
+          mode: effectSource.audiomotionMode ?? 4,
+          gradient: effectSource.audiomotionGradient ?? 'orangered',
+          radial: effectSource.audiomotionRadial ?? false,
+          barStyle: effectSource.audiomotionBarStyle ?? 'normal',
+          peakLine: effectSource.audiomotionPeakLine ?? false,
+          showPeaks: effectSource.audiomotionShowPeaks ?? true,
+          mirror: effectSource.audiomotionMirror ?? 0,
+          flipY: effectSource.audiomotionFlipY ?? false,
+          reflexRatio: effectSource.audiomotionReflexRatio ?? 0,
+          barSpace: effectSource.audiomotionBarSpace ?? 0.1,
+          minFreq: effectSource.audiomotionMinFreq ?? 30,
+          maxFreq: effectSource.audiomotionMaxFreq ?? 16000,
+          sensitivity: effectSource.audiomotionSensitivity ?? 1,
+          smoothing: effectSource.audiomotionSmoothing ?? 0.5,
+          bgAlpha: effectSource.audiomotionBgAlpha ?? 1.0,
+        });
+        am.render(renderer, effectCtx.renderTarget);
+      }
+
+      // ── Analyzer Lab path ──────────────────────────────────────────────
+      if (effectCtx.analyzerlab && effectSource.effectType === 'analyzerlab') {
+        const al = effectCtx.analyzerlab;
+        if (effectCtx.renderTarget.width !== width || effectCtx.renderTarget.height !== height) {
+          al.resize(width, height);
+        }
+        al.setParams({
+          layout:             effectSource.analyzerLabLayout             ?? 'stack',
+          colormap:           effectSource.analyzerLabColormap           ?? 'inferno',
+          spectroOrientation: effectSource.analyzerLabSpectroOrientation ?? 'horizontal',
+          spectroGain:        effectSource.analyzerLabSpectroGain        ?? 1.0,
+          spectroMinDb:       effectSource.analyzerLabSpectroMinDb       ?? -85,
+          spectroMaxDb:       effectSource.analyzerLabSpectroMaxDb       ?? -25,
+          scrollSpeed:        effectSource.analyzerLabScrollSpeed        ?? 1.0,
+          chromaStyle:        effectSource.analyzerLabChromaStyle        ?? 'bars',
+          chromaGlow:         effectSource.analyzerLabChromaGlow         ?? 0.5,
+          waveStyle:          effectSource.analyzerLabWaveStyle          ?? 'line',
+          waveLineWidth:      effectSource.analyzerLabWaveLineWidth      ?? 1.5,
+          showBeats:          effectSource.analyzerLabShowBeats          ?? true,
+          showLabels:         effectSource.analyzerLabShowLabels         ?? true,
+          bgAlpha:            effectSource.analyzerLabBgAlpha            ?? 1.0,
+        });
+        al.render(renderer, effectCtx.renderTarget);
+      }
+
+      // ── HandFX path ────────────────────────────────────────────────────
+      if (effectCtx.handfx && effectSource.effectType === 'handfx') {
+        const hx = effectCtx.handfx;
+        if (effectCtx.renderTarget.width !== width || effectCtx.renderTarget.height !== height) {
+          hx.resize(width, height);
+        }
+        hx.setParams({
+          mode:                effectSource.handfxMode                ?? 'trails',
+          cameraOn:            effectSource.handfxCameraOn            ?? false,
+          smoothing:           effectSource.handfxSmoothing           ?? 0.15,
+          predictMs:           effectSource.handfxPredictMs           ?? 18,
+          showHelp:            effectSource.handfxShowHelp            ?? true,
+          bgAlpha:             effectSource.handfxBgAlpha             ?? 0.0,
+          panelColor:          effectSource.handfxPanelColor          ?? '#FFFFFF',
+          panelOpacity:        effectSource.handfxPanelOpacity        ?? 1.0,
+          panelPadding:        effectSource.handfxPanelPadding        ?? 0.04,
+          panelCornerRadius:   effectSource.handfxPanelCornerRadius   ?? 0.02,
+          trailFade:           effectSource.handfxTrailFade           ?? 0.985,
+          trailColorMode:      effectSource.handfxTrailColorMode      ?? 'rainbow',
+          trailThickness:      effectSource.handfxTrailThickness      ?? 3,
+          trailVelocityScale:  effectSource.handfxTrailVelocityScale  ?? 1.5,
+          trailSparkDensity:   effectSource.handfxTrailSparkDensity   ?? 0.5,
+          trailFlowStrength:   effectSource.handfxTrailFlowStrength   ?? 0.7,
+          inkColorMode:        effectSource.handfxInkColorMode        ?? 'coral',
+          inkSize:             effectSource.handfxInkSize             ?? 55,
+          inkOpacity:          effectSource.handfxInkOpacity          ?? 0.28,
+          inkDrift:            effectSource.handfxInkDrift            ?? 1.0,
+          skeletonColor:       effectSource.handfxSkeletonColor       ?? '#FF6B6B',
+          skeletonGlow:        effectSource.handfxSkeletonGlow        ?? 1.5,
+          sprayColorMode:      effectSource.handfxSprayColorMode      ?? 'rainbow',
+          sprayIntensity:      effectSource.handfxSprayIntensity      ?? 1.5,
+          sprayThreshold:      effectSource.handfxSprayThreshold      ?? 0.25,
+          showCamera:          effectSource.handfxShowCamera          ?? false,
+          cameraOpacity:       effectSource.handfxCameraOpacity       ?? 0.5,
+        });
+        hx.render(renderer, effectCtx.renderTarget);
+      }
+
+      // ── Wave.js path ───────────────────────────────────────────────────
+      if (effectCtx.wavejs && effectSource.effectType === 'wavejs') {
+        const wj = effectCtx.wavejs;
+        if (effectCtx.renderTarget.width !== width || effectCtx.renderTarget.height !== height) {
+          wj.resize(width, height);
+        }
+        if (!effectCtx.wavejsAudioAttached) {
+          const src = audioAnalyzer.getSourceNode();
+          if (src) {
+            wj.connectAudio(src);
+            effectCtx.wavejsAudioAttached = true;
+            console.log('[Canvas] Wave.js audio attached');
+          }
+        }
+        wj.setParams({
+          animation: effectSource.wavejsAnimation ?? 'Wave',
+          sensitivity: effectSource.wavejsSensitivity ?? 1.5,
+          lineWidth: effectSource.wavejsLineWidth ?? 4,
+          colorA: effectSource.wavejsColorA ?? [1.0, 0.42, 0.42],
+          colorB: effectSource.wavejsColorB ?? [1.0, 0.55, 0.30],
+          useGradient: effectSource.wavejsUseGradient ?? true,
+          gradientRotate: effectSource.wavejsGradientRotate ?? 0,
+          glowStrength: effectSource.wavejsGlowStrength ?? 15,
+          glowColor: effectSource.wavejsGlowColor ?? [1.0, 0.42, 0.42],
+          bgAlpha: effectSource.wavejsBgAlpha ?? 1.0,
+          flipY: effectSource.wavejsFlipY ?? false,
+        });
+        wj.render(renderer, effectCtx.renderTarget);
+      }
+
+      // ── Hydra path ─────────────────────────────────────────────────────
+      if (effectCtx.hydra && effectSource.effectType === 'hydra') {
+        const hy = effectCtx.hydra;
+        const layerId = groupedLayers[0]?.id ?? '';
+        effectCtx.hydraLayerId = layerId;
+
+        if (effectCtx.renderTarget.width !== width || effectCtx.renderTarget.height !== height) {
+          hy.resize(width, height);
+        }
+
+        // Apply param changes (sensitivity / sketch code)
+        hy.setParams({
+          sketchName: effectSource.hydraSketchName ?? 'Welcome',
+          sketchCode: effectSource.hydraSketchCode ?? '',
+          sensitivity: effectSource.hydraSensitivity ?? 1.5,
+          bgAlpha: effectSource.hydraBgAlpha ?? 1.0,
+        });
+
+        // Edge-triggered commands from the HydraPanel
+        if (layerId && _hydraPresetsMod) {
+          const presets = _hydraPresetsMod.HYDRA_PRESETS;
+          const pickNext = _hydraPresetsMod.pickNextHydraPreset;
+          const state = get(hydraStore);
+          const latest = state.commands[layerId];
+          if (latest && latest.tag !== effectCtx.hydraLastCommandTag) {
+            effectCtx.hydraLastCommandTag = latest.tag;
+            const curName = effectCtx.hydraLoadedPresetName ?? null;
+            let target = null as null | { name: string; code: string };
+            switch (latest.kind) {
+              case 'next': {
+                const idx = curName ? presets.findIndex(p => p.name === curName) : -1;
+                target = presets[(idx + 1 + presets.length) % presets.length];
+                break;
+              }
+              case 'prev': {
+                const idx = curName ? presets.findIndex(p => p.name === curName) : 0;
+                target = presets[(idx - 1 + presets.length) % presets.length];
+                break;
+              }
+              case 'random': target = pickNext(curName); break;
+              case 'load': {
+                if (latest.presetName) target = presets.find(p => p.name === latest.presetName) ?? null;
+                break;
+              }
+            }
+            if (target) {
+              // Persist the swap on the layer's effectSource so panels +
+              // saved projects see the right preset name on reload.
+              for (const layer of groupedLayers) {
+                if (layer.source?.effectSource) {
+                  project.setLayerSource(layer.id, {
+                    ...layer.source,
+                    effectSource: {
+                      ...layer.source.effectSource,
+                      hydraSketchName: target.name,
+                      hydraSketchCode: target.code,
+                    },
+                  });
+                }
+              }
+              effectCtx.hydraLoadedPresetName = target.name;
+              hydraStore.reportPreset(layerId, target.name);
+            }
+          }
+          // Keep the store's current-preset display in sync on first load
+          if (effectCtx.hydraLoadedPresetName && state.currentPreset[layerId] !== effectCtx.hydraLoadedPresetName) {
+            hydraStore.reportPreset(layerId, effectCtx.hydraLoadedPresetName);
+          }
+        }
+
+        hy.step(deltaTime, getLastRawAnalysis());
+        hy.render(renderer, effectCtx.renderTarget);
+      }
+
+      // ── GhostFX path ───────────────────────────────────────────────────
+      if (effectCtx.ghostfx && effectSource.effectType === 'ghostfx') {
+        const fx = effectCtx.ghostfx;
+        if (effectCtx.renderTarget.width !== width || effectCtx.renderTarget.height !== height) {
+          fx.resize(width, height);
+        }
+        fx.setParams({
+          scenePreset:        effectSource.ghostfxScenePreset        ?? 'drift',
+          sensitivity:        effectSource.ghostfxSensitivity        ?? 1.4,
+          hueDriftSpeed:      effectSource.ghostfxHueDriftSpeed      ?? 0.15,
+          exposure:           effectSource.ghostfxExposure           ?? 0,
+          bgAlpha:            effectSource.ghostfxBgAlpha            ?? 1.0,
+          bloomIntensity:     effectSource.ghostfxBloomIntensity     ?? 1.4,
+          bloomThreshold:     effectSource.ghostfxBloomThreshold     ?? 0.45,
+          vignette:           effectSource.ghostfxVignette           ?? 0.7,
+          vortexStrength:     effectSource.ghostfxVortexStrength     ?? 2.0,
+          latticeThreshold:   effectSource.ghostfxLatticeThreshold   ?? 2.5,
+          trailIntensity:     effectSource.ghostfxTrailIntensity     ?? 1.0,
+          feedbackAmount:     effectSource.ghostfxFeedbackAmount     ?? 0.35,
+          feedbackZoom:       effectSource.ghostfxFeedbackZoom       ?? 1.003,
+          ribbonWidth:        effectSource.ghostfxRibbonWidth        ?? 0.10,
+          ribbonSpawn:        effectSource.ghostfxRibbonSpawn        ?? 1.0,
+          ribbonTranslucency: effectSource.ghostfxRibbonTranslucency ?? 0.35,
+          ribbonBlend:        effectSource.ghostfxRibbonBlend        ?? 'additive',
+          lightAzimuth:       effectSource.ghostfxLightAzimuth       ?? 35,
+          lightElevation:     effectSource.ghostfxLightElevation     ?? 55,
+          lightStrength:      effectSource.ghostfxLightStrength      ?? 0.9,
+          ambient:            effectSource.ghostfxAmbient            ?? 0.30,
+          liquidSplatForce:   effectSource.ghostfxLiquidSplatForce   ?? 1.0,
+          liquidSplatRadius:  effectSource.ghostfxLiquidSplatRadius  ?? 0.08,
+          liquidDyeDecay:     effectSource.ghostfxLiquidDyeDecay     ?? 0.995,
+          liquidVelDecay:     effectSource.ghostfxLiquidVelDecay     ?? 0.992,
+          liquidBassRate:     effectSource.ghostfxLiquidBassRate     ?? 1.0,
+        });
+        // Pass the raw AudioAnalysis through; GhostFX's internal
+        // smoother + BPM-sync handle the "anticipate not react"
+        // shaping. The shader never sees raw audio.
+        fx.render(renderer, effectCtx.renderTarget, getLastRawAnalysis(), deltaTime);
+      }
+
       // Share the rendered texture across all layers referencing this effect source.
       for (const layer of groupedLayers) {
         layer.source!.texture = effectCtx.renderTarget.texture;
@@ -4482,6 +5196,17 @@
       if (!_activeEffectIds.has(effectId)) {
         effectCtx.fluid?.dispose();
         effectCtx.particles?.dispose();
+        effectCtx.milkdrop?.dispose();
+        effectCtx.audiomotion?.dispose();
+        effectCtx.wavejs?.dispose();
+        effectCtx.hydra?.dispose();
+        effectCtx.ghostfx?.dispose();
+        effectCtx.analyzerlab?.dispose();
+        // handfx.dispose unsubscribes from mediaPipeSource so the
+        // camera worker isn't holding a dead callback. We deliberately
+        // do NOT mediaPipeSource.stop() here — the MediaPipePanel and
+        // other gesture consumers may still be using it.
+        effectCtx.handfx?.dispose();
         effectCtx.renderTarget.dispose();
         // Clean up camera feed
         if (effectCtx.cameraStream) {

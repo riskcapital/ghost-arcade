@@ -615,6 +615,11 @@ export class RenderEngine {
       uniforms: {
         uTexture: { value: null },
         uOpacity: { value: 1.0 },
+        // Luminance-keyed background opacity. 1.0 = bg fully opaque
+        // (default, no keying). GPU shader layers can lower this via
+        // gpuLayerContent.bgOpacity to fade their dark background out
+        // and reveal the layer below.
+        uBgOpacity: { value: 1.0 },
         uTopLeft: { value: new THREE.Vector2(corners.topLeft.x, corners.topLeft.y) },
         uTopRight: { value: new THREE.Vector2(corners.topRight.x, corners.topRight.y) },
         uBottomLeft: { value: new THREE.Vector2(corners.bottomLeft.x, corners.bottomLeft.y) },
@@ -2071,6 +2076,12 @@ export class RenderEngine {
   private processLayerPipeline(layer: Layer, obj: LayerRenderObject, layerTexture: THREE.Texture): THREE.Texture {
     // Update material
     obj.material.uniforms.uTexture.value = layerTexture;
+    // GPU shader layers can fade their dark background by setting
+    // gpuLayerContent.bgOpacity < 1. All other layer types default
+    // to 1.0, which is a no-op in the keying math.
+    obj.material.uniforms.uBgOpacity.value = layer.type === 'gpu'
+      ? (layer.gpuLayerContent?.bgOpacity ?? 1.0)
+      : 1.0;
 
     const activeShapeType = layer.layerShape?.enabled ? layer.layerShape.type : 'rectangle';
     const inlineShapeTypeMap: Record<string, number> = { rectangle: 0, circle: 1, triangle: 2 };

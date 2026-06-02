@@ -67,12 +67,13 @@
   }
 
   // Plugin definitions for VJ mode (integrated effects - no external process needed)
+  type VJPluginEffectType = 'fluid' | 'particles' | 'splat' | 'model3d' | 'milkdrop' | 'audiomotion' | 'wavejs' | 'hydra' | 'ghostfx';
   interface VJPluginItem {
     id: string;
     name: string;
     description: string;
-    effectType: 'fluid' | 'particles' | 'splat' | 'model3d';
-    icon: 'fluid' | 'particles' | 'splat' | 'model3d';
+    effectType: VJPluginEffectType;
+    icon: VJPluginEffectType;
   }
 
   const vjPlugins: VJPluginItem[] = [
@@ -89,6 +90,41 @@
       description: '3D volumetric particles',
       effectType: 'particles',
       icon: 'particles',
+    },
+    {
+      id: 'milkdrop',
+      name: 'Milkdrop',
+      description: 'Butterchurn-powered Milkdrop visualizer',
+      effectType: 'milkdrop',
+      icon: 'milkdrop',
+    },
+    {
+      id: 'audiomotion',
+      name: 'AudioMotion',
+      description: 'Spectrum analyzer — bars, radial, LEDs',
+      effectType: 'audiomotion',
+      icon: 'audiomotion',
+    },
+    {
+      id: 'wavejs',
+      name: 'Wave.js',
+      description: 'Particle/geometric audio animations',
+      effectType: 'wavejs',
+      icon: 'wavejs',
+    },
+    {
+      id: 'hydra',
+      name: 'Hydra',
+      description: 'Live-codeable video synth — warping & feedback',
+      effectType: 'hydra',
+      icon: 'hydra',
+    },
+    {
+      id: 'ghostfx',
+      name: 'GhostFX',
+      description: 'WebGPU raymarched scenes — original Ghost Arcade',
+      effectType: 'ghostfx',
+      icon: 'ghostfx',
     },
     {
       id: 'pointcloud',
@@ -656,7 +692,7 @@
   }
 
   // Drag state for clips
-  let draggedClip: { type: 'shader' | 'video' | 'image' | 'threejs' | 'spout' | 'effect' | 'splat' | 'model3d' | 'preset'; id: string; spoutName?: string; pluginName?: string; effectType?: 'fluid' | 'particles' | 'splat' | 'model3d' } | null = null;
+  let draggedClip: { type: 'shader' | 'video' | 'image' | 'threejs' | 'spout' | 'effect' | 'splat' | 'model3d' | 'preset'; id: string; spoutName?: string; pluginName?: string; effectType?: VJPluginEffectType } | null = null;
   // Cells now carry a bank tag so cross-deck drag/drop works correctly when
   // the crossfader is on (drag from Bank A cell → Bank B cell, etc.)
   let dragOverCell: { layer: number; column: number; bank: VJDeck } | null = null;
@@ -1420,7 +1456,7 @@
   }
 
   // Drag handlers
-  function handleDragStart(e: DragEvent, clip: { type: 'shader' | 'video' | 'image' | 'threejs' | 'spout' | 'effect' | 'splat' | 'model3d' | 'preset'; id: string; spoutName?: string; pluginName?: string; effectType?: 'fluid' | 'particles' | 'splat' | 'model3d' }) {
+  function handleDragStart(e: DragEvent, clip: { type: 'shader' | 'video' | 'image' | 'threejs' | 'spout' | 'effect' | 'splat' | 'model3d' | 'preset'; id: string; spoutName?: string; pluginName?: string; effectType?: VJPluginEffectType }) {
     draggedClip = clip;
     // Electron/Chromium requires dataTransfer.setData() for drag to work
     if (e.dataTransfer) {
@@ -1715,14 +1751,22 @@
       }
       vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
     } else if (draggedClip.type === 'effect') {
-      // Handle integrated effect (FluidGen, Particles3D running natively)
+      // Handle integrated effect (FluidGen, Particles3D, Milkdrop running natively).
+      // Seed the effectSource with the plugin's defaultSourceParams so the
+      // clip behaves the same as a freshly-applied plugin layer — without
+      // this, a dropped Milkdrop clip would have no preset pack, no
+      // sensitivity, etc., and fall back to per-field "??" defaults in the
+      // Canvas hook (still works, but the panel shows empty values).
+      const effectType = draggedClip.effectType || 'fluid';
+      const manifest = getPluginByEffectType(effectType);
       const vjClip: VJClip = {
         id: generateUUID(),
         type: 'effect',
         name: draggedClip.pluginName || draggedClip.id,
-        src: draggedClip.effectType || 'fluid',
+        src: effectType,
         effectSource: {
-          effectType: draggedClip.effectType || 'fluid',
+          effectType,
+          ...(manifest?.defaultSourceParams ?? {}),
         },
       };
       vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
@@ -4198,10 +4242,44 @@
                   }}
                   ondragend={handleDragEnd}
                 >
-                  <div class="vj-plugin-icon" class:fluid={plugin.icon === 'fluid'} class:particles={plugin.icon === 'particles'} class:splat={plugin.icon === 'splat'} class:model3d={plugin.icon === 'model3d'}>
+                  <div class="vj-plugin-icon" class:fluid={plugin.icon === 'fluid'} class:particles={plugin.icon === 'particles'} class:splat={plugin.icon === 'splat'} class:model3d={plugin.icon === 'model3d'} class:milkdrop={plugin.icon === 'milkdrop'} class:audiomotion={plugin.icon === 'audiomotion'} class:wavejs={plugin.icon === 'wavejs'} class:hydra={plugin.icon === 'hydra'} class:ghostfx={plugin.icon === 'ghostfx'}>
                     {#if plugin.icon === 'fluid'}
                       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                         <path d="M12 2C6.5 8 4 12 4 15a8 8 0 1 0 16 0c0-3-2.5-7-8-13Z"/>
+                      </svg>
+                    {:else if plugin.icon === 'milkdrop'}
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <!-- Concentric warp spiral — the Milkdrop visual signature -->
+                        <path d="M12 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0-2 0"/>
+                        <path d="M12 12c0-2 2-3 3-2s1 4-1 5-5-1-5-4 3-6 7-6 7 4 7 8"/>
+                      </svg>
+                    {:else if plugin.icon === 'audiomotion'}
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                        <rect x="3"  y="14" width="2" height="6"  rx="0.5"/>
+                        <rect x="6"  y="10" width="2" height="10" rx="0.5"/>
+                        <rect x="9"  y="7"  width="2" height="13" rx="0.5"/>
+                        <rect x="12" y="5"  width="2" height="15" rx="0.5"/>
+                        <rect x="15" y="9"  width="2" height="11" rx="0.5"/>
+                        <rect x="18" y="13" width="2" height="7"  rx="0.5"/>
+                      </svg>
+                    {:else if plugin.icon === 'wavejs'}
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                        <circle cx="12" cy="12" r="3.5"/>
+                        <circle cx="12" cy="12" r="7"  opacity="0.6"/>
+                        <circle cx="12" cy="12" r="10" opacity="0.35"/>
+                        <path d="M2 12 Q 6 7, 12 12 T 22 12"/>
+                      </svg>
+                    {:else if plugin.icon === 'hydra'}
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                        <circle cx="12" cy="12" r="2"/>
+                        <path d="M12 4 L12 8 M12 16 L12 20 M4 12 L8 12 M16 12 L20 12"/>
+                        <path d="M6.3 6.3 L9.2 9.2 M14.8 14.8 L17.7 17.7 M17.7 6.3 L14.8 9.2 M9.2 14.8 L6.3 17.7" opacity="0.6"/>
+                      </svg>
+                    {:else if plugin.icon === 'ghostfx'}
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M12 3 L20 12 L12 21 L4 12 Z"/>
+                        <path d="M12 7 L17 12 L12 17 L7 12 Z" opacity="0.65"/>
+                        <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
                       </svg>
                     {:else if plugin.icon === 'splat'}
                       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -7263,26 +7341,35 @@
     gap: 8px;
   }
 
+  /* App-native VJ plugin card — matches MediaTray's coral-on-dark style.
+     One uniform look for every visualizer engine; the per-type icon
+     classes still set the SVG color but everything else stays unified. */
   .vj-plugin-card {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 10px;
-    background: linear-gradient(135deg, #1a1a2e, #16213e);
-    border: 1px solid #333;
+    padding: 9px 10px;
+    background: #0a0a0d;
+    border: 1px solid rgba(255, 107, 107, 0.10);
     border-radius: 6px;
     cursor: grab;
-    transition: all 0.2s;
+    transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
   }
 
   .vj-plugin-card:hover {
-    border-color: #BB86FC;
-    box-shadow: 0 0 8px rgba(187, 134, 252, 0.15);
+    border-color: rgba(255, 107, 107, 0.55);
+    background: #100a0c;
+    box-shadow: 0 0 0 1px rgba(255, 107, 107, 0.06), 0 0 10px rgba(255, 107, 107, 0.10);
+  }
+
+  .vj-plugin-card:hover .vj-plugin-icon {
+    color: var(--accent-primary, #FF6B6B);
+    filter: drop-shadow(0 0 4px rgba(255, 107, 107, 0.4));
   }
 
   .vj-plugin-card.running {
-    border-color: #4ade80;
-    background: linear-gradient(135deg, #1a2e1a, #16213e);
+    border-color: var(--accent-primary, #FF6B6B);
+    background: rgba(255, 107, 107, 0.05);
   }
 
   .vj-plugin-icon {
@@ -7292,18 +7379,23 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 6px;
-    background: rgba(0, 0, 0, 0.3);
+    border-radius: 5px;
+    background: #050507;
+    border: 1px solid rgba(255, 107, 107, 0.08);
+    color: var(--accent-secondary, #FF8585);
+    transition: color 0.15s, filter 0.15s;
   }
 
-  .vj-plugin-icon.fluid {
-    color: #60a5fa;
-    background: linear-gradient(135deg, rgba(96, 165, 250, 0.2), rgba(96, 165, 250, 0.05));
-  }
-
-  .vj-plugin-icon.particles {
-    color: #f472b6;
-    background: linear-gradient(135deg, rgba(244, 114, 182, 0.2), rgba(244, 114, 182, 0.05));
+  /* Per-type classes kept for selector specificity, but all share the
+     same coral tint so the row reads as one cohesive set of options. */
+  .vj-plugin-icon.fluid,
+  .vj-plugin-icon.particles,
+  .vj-plugin-icon.milkdrop,
+  .vj-plugin-icon.audiomotion,
+  .vj-plugin-icon.wavejs,
+  .vj-plugin-icon.hydra,
+  .vj-plugin-icon.ghostfx {
+    color: var(--accent-secondary, #FF8585);
   }
 
   /* Splat / Model3D param panel details sections */
@@ -7354,14 +7446,11 @@
     border-color: rgba(251, 191, 36, 0.2);
   }
 
-  .vj-plugin-icon.splat {
-    color: #34d399;
-    background: linear-gradient(135deg, rgba(52, 211, 153, 0.2), rgba(52, 211, 153, 0.05));
-  }
-
+  .vj-plugin-icon.splat,
   .vj-plugin-icon.model3d {
-    color: #fbbf24;
-    background: linear-gradient(135deg, rgba(251, 191, 36, 0.2), rgba(251, 191, 36, 0.05));
+    color: var(--accent-secondary, #FF8585);
+    background: #050507;
+    border: 1px solid rgba(255, 107, 107, 0.08);
   }
 
   .vj-plugin-info {

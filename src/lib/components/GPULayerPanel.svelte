@@ -9,7 +9,9 @@
    * driven UI picks it up automatically.
    */
   import { onMount, onDestroy } from 'svelte';
-  import { project, selectedLayer } from '../stores/layers';
+  import { project, selectedLayer, layers } from '../stores/layers';
+  import EffectParamRow from './EffectParamRow.svelte';
+  import { clearGPUParamRanges } from '../audio/modulation';
   import { GPU_SHADER_CATALOG, getShaderDef } from '../renderer/gpuShaderCatalog';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
   import { mediaLibrary } from '../stores/media';
@@ -28,6 +30,10 @@
   $: mediaLayers = ($project?.layers ?? []).filter(
     (l: Layer) => l.type === 'media' && l.source && (l.source.type === 'image' || l.source.type === 'video'),
   );
+  // Index into the project's layer list — needed by EffectParamRow so
+  // the modulation engine + autoEngine can route writes to the same
+  // layer that owns this panel's GPU content.
+  $: layerIndex = layerId ? $layers.findIndex(l => l.id === layerId) : -1;
   $: libraryItems = ($mediaLibrary ?? []).filter(
     (m: MediaItem) => m.type === 'image' || m.type === 'video',
   );
@@ -171,6 +177,11 @@
     if (!layerId || !content || content.shaderId === id) return;
     const def = getShaderDef(id);
     if (!def) return;
+    // The new shader will have a different set of param keys; clear
+    // the modulation-engine range cache for this layer so a stale key
+    // from the previous shader doesn't clamp a same-named param of the
+    // new shader to the wrong span.
+    if (layerIndex >= 0) clearGPUParamRanges(layerIndex);
     // Switching shader USED to wipe params to defaults — meant the source
     // picker selection (and every slider) was lost the moment the user
     // clicked another shader. Now we stash the outgoing shader's params
@@ -192,6 +203,15 @@
       params: nextParams,
       paramsByShader: stash,
     } as any);
+  }
+
+  // Layer-level (not per-shader) — fades the dark background of the
+  // shader output so the layer below shows through. Lives on
+  // gpuLayerContent itself, separate from the shader's paramSchema,
+  // so it persists across shader swaps.
+  function setBgOpacity(value: number) {
+    if (!layerId || !content) return;
+    project.updateGPULayerContent(layerId, { bgOpacity: value });
   }
 
   function setParam(key: string, value: any) {
@@ -230,6 +250,23 @@
       <div class="hint">{shaderDef.description}</div>
     {/if}
 
+    <!-- Universal layer-level controls (apply to every GPU shader,
+         not just the current one). Background Opacity keys out the
+         shader's dark areas so the layer below shows through. -->
+    <div class="sec-label sub">Layer</div>
+    <div class="slider-col">
+      <NumericInput
+        label="Background Opacity"
+        value={content.bgOpacity ?? 1.0}
+        min={0}
+        max={1}
+        step={0.01}
+        midiPath="map:gpu:__bgOpacity"
+        midiLabel="GPU Background Opacity"
+        on:input={(e) => setBgOpacity(e.detail)}
+      />
+    </div>
+
     <!-- Dynamic per-shader params, grouped. -->
     {#each groupedParams as [groupName, params]}
       {#if groupName}
@@ -238,35 +275,58 @@
       <div class="slider-col">
         {#each params as p}
           {#if p.kind === 'slider'}
-            <NumericInput
+            <EffectParamRow
               label={p.label}
               value={paramValue(p)}
               min={p.min}
               max={p.max}
               step={p.step}
-              on:input={(e) => setParam(p.key, e.detail)}
+              layerIndex={layerIndex}
+              effectId=""
+              paramName={p.key}
+              effectKind="gpu"
+              target="mapping"
+              onChange={(v) => setParam(p.key, v)}
             />
           {:else if p.kind === 'angle'}
-            <NumericInput
+            <EffectParamRow
               label={p.label}
               value={paramValue(p)}
               min={-180}
               max={360}
               step={0.5}
+              layerIndex={layerIndex}
+              effectId=""
+              paramName={p.key}
+              effectKind="gpu"
+              target="mapping"
               displayValue={(v) => `${v.toFixed(1)}°`}
-              on:input={(e) => setParam(p.key, e.detail)}
+              onChange={(v) => setParam(p.key, v)}
             />
           {:else if p.kind === 'toggle'}
             <label class="toggle-row">
               <input type="checkbox" checked={paramValue(p)}
-                onchange={(e) => setParam(p.key, (e.target as HTMLInputElement).checked)} />
+                onchange={(e) => setParam(p.key, (e.target as HTMLInputElement).checked)}
+                data-midi-path={`map:gpu:${p.key}`}
+                data-midi-label={p.label}
+                data-midi-min={0}
+                data-midi-max={1}
+                data-midi-step={1}
+                data-midi-mode="toggle" />
               {p.label}
             </label>
           {:else if p.kind === 'select'}
+            {@const _optValues = p.options.map(o => String(o.value))}
             <div class="select-row">
               <label>{p.label}</label>
               <select value={paramValue(p)}
-                onchange={(e) => setParam(p.key, (e.target as HTMLSelectElement).value)}>
+                onchange={(e) => setParam(p.key, (e.target as HTMLSelectElement).value)}
+                data-midi-path={`map:gpu:${p.key}`}
+                data-midi-label={p.label}
+                data-midi-min={0}
+                data-midi-max={Math.max(0, _optValues.length - 1)}
+                data-midi-step={1}
+                data-midi-discrete={_optValues.join(',')}>
                 {#each p.options as opt}
                   <option value={opt.value}>{opt.label}</option>
                 {/each}

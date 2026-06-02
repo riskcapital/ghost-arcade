@@ -6,6 +6,7 @@ import { project, selectedLayer } from '../stores/layers';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
 import { synthVisionStore } from '../stores/synthVision';
 import type { SVParamKey } from '../stores/synthVision';
+import { setBaseValue as setModulationBase } from '../audio/modulation';
 import type { MidiMapping, MidiMessageType } from './midiTypes';
 import type { BlendMode } from '../types';
 
@@ -257,6 +258,70 @@ class MidiRouter {
       return;
     }
 
+    // GPU shader-layer params: map:gpu:<paramKey>
+    // Writes through to layer.gpuLayerContent.params[paramKey] — same
+    // path GPULayerPanel uses. Handles toggles (mode=toggle), discrete
+    // dropdowns (mapping.discreteValues), and continuous values.
+    // Special: paramKeys starting with `__` are layer-level GPU content
+    // fields (bgOpacity, etc.) rather than per-shader params, so they
+    // route through updateGPULayerContent instead.
+    if (contentType === 'gpu') {
+      const paramKey = parts.slice(2).join(':');
+      if (!paramKey) return;
+      if (!layer.gpuLayerContent) return;
+      let next: any = value;
+      if (mapping.discreteValues && mapping.discreteValues.length > 0) {
+        const idx = Math.round(value);
+        next = mapping.discreteValues[Math.max(0, Math.min(mapping.discreteValues.length - 1, idx))];
+      }
+      if (paramKey.startsWith('__')) {
+        const fieldName = paramKey.slice(2);
+        project.updateGPULayerContent(layer.id, { [fieldName]: next } as any);
+      } else {
+        project.updateGPULayerParams(layer.id, { [paramKey]: next });
+      }
+      return;
+    }
+
+    // Shader uniforms: map:shader:<paramName>
+    // Writes through to layer.source.shaderValues[paramName] — same path
+    // MediaTray's slider uses. The shader engine reads shaderValues each
+    // frame so changes show up immediately on the rendered output.
+    if (contentType === 'shader') {
+      const paramName = parts.slice(2).join(':');
+      if (!paramName) return;
+      if (!layer.source?.shaderValues) return;
+      project.setLayerSource(layer.id, {
+        ...layer.source,
+        shaderValues: { ...layer.source.shaderValues, [paramName]: value },
+      });
+      return;
+    }
+
+    // Plugin params: map:plugin:<paramKey>
+    // Updates the selected layer's source.effectSource — same path the
+    // PluginLayerPanel uses for its sliders/toggles. By this point the
+    // earlier branches have already narrowed mapping.mode away from
+    // 'toggle' (that flow returns above), so we only need to handle
+    // continuous and discrete-select values here. A MediaPipe binding
+    // that wants toggle-style behaviour should use binding mode='latch'
+    // which dispatches a flipping 0/1.
+    if (contentType === 'plugin') {
+      const paramKey = parts.slice(2).join(':');
+      if (!paramKey) return;
+      if (!layer.source?.effectSource) return;
+      let next: any = value;
+      if (mapping.discreteValues && mapping.discreteValues.length > 0) {
+        const idx = Math.round(value);
+        next = mapping.discreteValues[Math.max(0, Math.min(mapping.discreteValues.length - 1, idx))];
+      }
+      project.setLayerSource(layer.id, {
+        ...layer.source,
+        effectSource: { ...layer.source.effectSource, [paramKey]: next } as any,
+      });
+      return;
+    }
+
     // Continuous value
     if (contentType === 'splat') {
       project.updateSplatContent(layer.id, { [property]: value });
@@ -432,6 +497,27 @@ class MidiRouter {
       return;
     }
 
+    // VJ effect parameters — vj:fx:<effectId>:<paramName>
+    // The data-midi-path doesn't encode WHERE the effect lives
+    // (composition vs per-layer vs per-clip), so we update everywhere
+    // an effect with this id is found. updateCompositionEffectParams
+    // and updateLayerEffectParams both no-op when the id doesn't
+    // match anything, so the redundant calls are cheap. Clip-level
+    // effects need layer + column to address and aren't covered here
+    // — bind those via per-clip UI for now.
+    if (layerPart === 'fx') {
+      const effectId = parts[2];
+      const paramName = parts[3];
+      if (!effectId || !paramName) return;
+      vjClipLauncher.updateCompositionEffectParams(effectId, { [paramName]: value });
+      const state = get(vjClipLauncher);
+      const layerStates = bank === 'B' ? state.bankBLayerStates : state.layerStates;
+      for (let i = 0; i < layerStates.length; i++) {
+        vjClipLauncher.updateLayerEffectParams(i, effectId, { [paramName]: value }, bank);
+      }
+      return;
+    }
+
     const layerIndex = parseInt(layerPart, 10);
     if (isNaN(layerIndex)) return;
 
@@ -459,6 +545,12 @@ class MidiRouter {
         const shaderParam = parts[3];
         if (shaderParam) {
           vjClipLauncher.updateActiveClipShaderValue(layerIndex, shaderParam, value, bank);
+          // Update the modulation engine's base value too — otherwise
+          // a modulated shader param has its slider value overwritten
+          // on the next applyModulations() tick (modulation reads from
+          // baseValues, not from shaderValues). Mirrors what the UI
+          // slider's setShaderParamValue does in VJModePanel.
+          setModulationBase(layerIndex, shaderParam, value, bank);
         }
         break;
       }

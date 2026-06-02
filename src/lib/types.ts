@@ -86,7 +86,14 @@ export type BlendMode =
 export type MediaType = 'image' | 'video' | 'shader' | 'color' | 'threejs' | 'p5js' | 'javascript' | 'spout' | 'effect' | 'synthvision';
 
 // Integrated effect types (FluidGen, Particles3D, Point Cloud, 3D Models running natively in WebGL)
-export type IntegratedEffectType = 'fluid' | 'particles' | 'splat' | 'model3d';
+export type IntegratedEffectType = 'fluid' | 'particles' | 'splat' | 'model3d' | 'milkdrop' | 'audiomotion' | 'wavejs' | 'hydra' | 'ghostfx' | 'analyzerlab' | 'handfx';
+
+// Stem identifiers for the multi-stem routing matrix (Milkdrop plugin).
+// 'full' is the unsplit mix; the rest match standard Demucs output names plus a
+// few common DAW stem buses. Routing matrix cells are stored as
+// Record<MilkdropStem, Record<MilkdropTarget, number>>.
+export type MilkdropStem = 'full' | 'drums' | 'bass' | 'vocals' | 'other' | 'ch1' | 'ch2' | 'ch3' | 'ch4' | 'ch5' | 'ch6' | 'ch7' | 'ch8';
+export type MilkdropTarget = 'bass' | 'mid' | 'treb';
 
 // Integrated effect source configuration
 export interface IntegratedEffectSource {
@@ -145,6 +152,135 @@ export interface IntegratedEffectSource {
   splatContent?: SplatContent;
   // 3D Model params (full config stored here for VJ clips)
   model3dContent?: Model3DContent;
+  // Milkdrop (Butterchurn) params
+  milkdropPresetName?: string;           // currently-active preset (undefined = first available)
+  milkdropPresetPack?: string;           // 'minimal' | 'full' | 'extra' | 'extra2' | 'md1' (default 'minimal')
+  milkdropBlendTime?: number;            // seconds for preset crossfade (0–10, default 2.7)
+  milkdropAutoEvolve?: boolean;          // cycle through presets automatically
+  milkdropEvolveMode?: number;           // 0=timer 1=beat-sync
+  milkdropEvolveInterval?: number;       // seconds (timer mode) — 5–120, default 22
+  milkdropEvolveBars?: number;           // bars (beat-sync mode, assumes 4/4) — 1–32, default 8
+  milkdropSensitivity?: number;          // global audio gain into butterchurn (0.5–4, default 1.5)
+  milkdropBassGain?: number;             // per-band trim (placeholder until phase 2 routing)
+  milkdropMidGain?: number;
+  milkdropTrebGain?: number;
+  milkdropHardCutEnabled?: boolean;      // cut to a fresh preset on big beats
+  milkdropHardCutThreshold?: number;     // beat intensity threshold for hard cut (0.3–1.5)
+  milkdropMeshSize?: number;             // warp mesh resolution 32–96 (perf knob, default 48)
+  milkdropPixelRatio?: number;           // render scale 0.5–2 (perf knob, default 1)
+  milkdropStemSourceId?: string;         // id of the active stem source (multiStemStore key) — empty = use built-in single-channel audio
+  milkdropRoutingMatrix?: Record<string, Record<string, number>>;  // stem -> {bass,mid,treb} gain 0–2
+  // AudioMotion params (audiomotion-analyzer by Henrique Vianna, AGPL-3.0)
+  audiomotionMode?: number;             // 0=Discrete, 1..8=Octave bands, 10=Line, 11=Area
+  audiomotionGradient?: string;
+  audiomotionRadial?: boolean;
+  audiomotionBarStyle?: 'normal' | 'led' | 'lumi' | 'alpha' | 'outline';
+  audiomotionPeakLine?: boolean;        // continuous peak line — Line/Area modes only
+  audiomotionShowPeaks?: boolean;       // falling peak indicators — bar modes only, hidden when barStyle='lumi'
+  audiomotionReflexRatio?: number;
+  audiomotionMirror?: number;           // -1, 0, 1 — horizontal mirror
+  audiomotionFlipY?: boolean;           // flip vertically (bars hang from top)
+  audiomotionBarSpace?: number;
+  audiomotionMinFreq?: number;
+  audiomotionMaxFreq?: number;
+  audiomotionSensitivity?: number;      // 0=low, 1=normal, 2=high
+  audiomotionBgAlpha?: number;
+  audiomotionSmoothing?: number;
+  // Wave.js params (@foobar404/wave by Curtis Hutten / Austin Michaud, MIT)
+  wavejsAnimation?: 'Wave' | 'Arcs' | 'Circles' | 'Cubes' | 'Flower' | 'Glob' | 'Lines' | 'Shine' | 'Square' | 'Turntable';
+  wavejsSensitivity?: number;             // input gain (0.25..6) applied before FFT
+  wavejsLineWidth?: number;
+  wavejsColorA?: [number, number, number];
+  wavejsColorB?: [number, number, number];
+  wavejsUseGradient?: boolean;
+  wavejsGradientRotate?: number;
+  wavejsGlowStrength?: number;
+  wavejsGlowColor?: [number, number, number];
+  wavejsBgAlpha?: number;
+  wavejsFlipY?: boolean;
+  // Hydra params (hydra-synth by Olivia Jack, AGPL)
+  hydraSketchName?: string;
+  hydraSketchCode?: string;
+  hydraSensitivity?: number;
+  hydraBgAlpha?: number;
+  // Analyzer Lab params (original Canvas-2D multi-panel analyzer)
+  analyzerLabLayout?: 'stack' | 'spectrogram' | 'chromagram' | 'waveform' | 'mirror';
+  analyzerLabColormap?: 'inferno' | 'viridis' | 'magma' | 'coral' | 'ice' | 'mono';
+  analyzerLabSpectroOrientation?: 'horizontal' | 'vertical' | 'radial';
+  analyzerLabSpectroGain?: number;       // 0..2
+  analyzerLabSpectroMinDb?: number;      // -110..-40
+  analyzerLabSpectroMaxDb?: number;      // -40..0
+  analyzerLabScrollSpeed?: number;       // 0.25..4
+  analyzerLabChromaStyle?: 'bars' | 'radial';
+  analyzerLabChromaGlow?: number;        // 0..1
+  analyzerLabWaveStyle?: 'line' | 'mirror' | 'filled';
+  analyzerLabWaveLineWidth?: number;     // 1..4
+  analyzerLabShowBeats?: boolean;
+  analyzerLabBgAlpha?: number;           // 0..1
+  analyzerLabShowLabels?: boolean;
+  // HandFX params (MediaPipe-driven hand visualizer)
+  handfxMode?: 'panel' | 'trails' | 'aurora' | 'skeleton' | 'bursts';
+  handfxCameraOn?: boolean;
+  handfxSmoothing?: number;
+  handfxPredictMs?: number;
+  handfxPanelColor?: string;
+  handfxPanelOpacity?: number;
+  handfxPanelPadding?: number;
+  handfxPanelCornerRadius?: number;
+  // Paint mode (mode === 'trails')
+  handfxTrailFade?: number;
+  handfxTrailColorMode?: 'rainbow' | 'coral' | 'white' | 'cyan';
+  handfxTrailThickness?: number;
+  handfxTrailVelocityScale?: number;
+  handfxTrailSparkDensity?: number;
+  handfxTrailFlowStrength?: number;
+  // Ink mode (mode === 'aurora')
+  handfxInkColorMode?: 'rainbow' | 'coral' | 'white' | 'cyan';
+  handfxInkSize?: number;
+  handfxInkOpacity?: number;
+  handfxInkDrift?: number;
+  // Skeleton
+  handfxSkeletonColor?: string;
+  handfxSkeletonGlow?: number;
+  // Pinch spray (mode === 'bursts')
+  handfxSprayColorMode?: 'rainbow' | 'coral' | 'white' | 'cyan';
+  handfxSprayIntensity?: number;
+  handfxSprayThreshold?: number;
+  // Global
+  handfxBgAlpha?: number;
+  handfxShowHelp?: boolean;
+  handfxShowCamera?: boolean;
+  handfxCameraOpacity?: number;
+  // GhostFX params (original WebGPU visualizer by Ghost Arcade)
+  ghostfxScenePreset?: string;          // 'drift' (v5); more in later sessions
+  ghostfxSensitivity?: number;          // 0.25..4 — audio drive multiplier
+  ghostfxHueDriftSpeed?: number;        // 0..2 — palette rotation rate
+  ghostfxBloomIntensity?: number;       // 0..3 — bloom add-back at composite
+  ghostfxBloomThreshold?: number;       // 0..2 — bright pass threshold
+  ghostfxVignette?: number;             // 0..1 — vignette strength
+  ghostfxExposure?: number;             // -1..1 — post-bloom exposure trim
+  ghostfxBgAlpha?: number;              // 0..1 — clear alpha
+  // Drift-scene controls
+  ghostfxVortexStrength?: number;       // 0..6 — curl-noise force gain
+  ghostfxLatticeThreshold?: number;     // 0..6 — max neighbor distance for connecting lines
+  ghostfxTrailIntensity?: number;       // 0..2 — trail brightness
+  ghostfxFeedbackAmount?: number;       // 0..1 — frame-feedback echo (wired in 5.5)
+  ghostfxFeedbackZoom?: number;         // 0.985..1.015 — per-frame zoom of feedback
+  // Ribbons-scene controls
+  ghostfxRibbonWidth?: number;          // 0.02..0.30 — head width (world units)
+  ghostfxRibbonSpawn?: number;          // 0.2..3.0 — spawn-probability multiplier
+  ghostfxRibbonTranslucency?: number;   // 0..1 — alpha gain (glass blend)
+  ghostfxRibbonBlend?: 'additive' | 'lighten' | 'glass';
+  ghostfxLightAzimuth?: number;         // 0..360 — light yaw degrees
+  ghostfxLightElevation?: number;       // -90..90 — light pitch degrees
+  ghostfxLightStrength?: number;        // 0..2 — directional light intensity
+  ghostfxAmbient?: number;              // 0..1 — ambient floor
+  // Liquid-scene controls
+  ghostfxLiquidSplatForce?: number;     // 0.2..3.0 — impulse intensity
+  ghostfxLiquidSplatRadius?: number;    // 0.01..0.20 — drop radius (uv)
+  ghostfxLiquidDyeDecay?: number;       // 0.985..1.0 — dye fade per frame
+  ghostfxLiquidVelDecay?: number;       // 0.95..1.0 — velocity damping
+  ghostfxLiquidBassRate?: number;       // 0..2 — bass-driven splat rate multiplier
 }
 
 // Spout source configuration (for plugin integrations)
@@ -220,6 +356,16 @@ export interface GPULayerContent {
    *  selection (and every slider) would be wiped every time the user
    *  bounced between shaders. */
   paramsByShader?: Record<string, Record<string, any>>;
+  /** Per-param auto-mode sidecar (playhead-driven sweep).
+   *  Keyed by paramKey. Engine = autoEngine.ts which reads this
+   *  field, advances phase, and writes back into `params`. */
+  paramAuto?: Record<string, AutoConfig>;
+  /** 0..1 — luminance-keyed background opacity. Default 1 = bg fully
+   *  opaque (no keying). Lower values fade alpha proportionally to
+   *  pixel brightness, so the shader's dark background becomes
+   *  transparent while bright content stays solid. Applied at composite
+   *  time by the layer's texture shader. */
+  bgOpacity?: number;
 }
 
 export function createDefaultGPULayerContent(): GPULayerContent {
@@ -898,6 +1044,20 @@ export interface LightPaintingBrush {
    *  colour so you can have e.g. a cool-blue glass tube containing
    *  warm-amber fireflies. Defaults to a soft white when unset. */
   gpuGlassTubeColor?: [number, number, number];
+  // ── Procedural brush params (consumed by procedural GPU brushes for
+  // particle-style strokes — internal glow, animated noise field, etc.) ──
+  /** Per-particle size multiplier inside a procedural stamp. Default 1. */
+  particleSize?: number;
+  /** Inner glow intensity inside each particle splat. Default 1. */
+  internalGlow?: number;
+  /** Spatial scale of the animated noise field warping particles. Default 1. */
+  noiseScale?: number;
+  /** Temporal speed of the noise field. Default 1. */
+  noiseSpeed?: number;
+  /** Strength of noise displacement applied to particle positions. Default 0.6. */
+  noiseAmount?: number;
+  /** Procedural-brush complexity multiplier (octaves / detail). Default 1. */
+  complexity?: number;
 }
 
 export interface LightPaintingStrokePoint {
@@ -1226,6 +1386,17 @@ export interface TextContent {
   lightAngle: number;         // Light direction angle in degrees (0-360)
   lightIntensity: number;     // 0-1, how much shading on depth faces
   bevelSize: number;          // Bevel/highlight on top face edge (0-10px)
+  // ── Optional aliases / flags read by the text renderer cache key ──
+  // Present on some serialized presets but not part of the canonical
+  // field set above (alignment / strokeColor / strokeWidth cover the
+  // same shapes). Kept optional so the cache-key signature compiles
+  // and old preset files still load.
+  textAlign?: TextAlignment;
+  verticalAlign?: 'top' | 'middle' | 'bottom';
+  shadowEnabled?: boolean;
+  outlineEnabled?: boolean;
+  outlineColor?: string;
+  outlineWidth?: number;
 }
 
 export function createDefaultTextContent(): TextContent {
@@ -2402,6 +2573,7 @@ export type EffectType =
   | 'fluidDistort'
   | 'wormhole'
   | 'geometricTile'
+  | 'geometricTilePro'
   | 'hexGrid'
   | 'spiralTile'
   | 'shingleStack'
@@ -3317,6 +3489,11 @@ export interface EffectParams {
   geomRotation?: number;           // 0-360
   geomOffsetX?: number;            // 0-1
   geomMix?: number;                // 0-1
+  // Geometric Tile Pro — premiumPack2 Mode 11 (flip-board)
+  geomProTileCount?: number;       // 0-1 → 3..18 tiles
+  geomProFlipRange?: number;       // 0-1 → 0..PI flip angle
+  geomProSpeed?: number;           // 0-1 → 0..2 flip speed
+  geomProGap?: number;             // 0-1 → 0..0.1 gap size
 
   // Motion Trails (hero)
   motionTrailsLength?: number;     // 0-1
@@ -3543,8 +3720,10 @@ export interface EffectParams {
   caColorR?: number;
   caColorG?: number;
   caColorB?: number;
-  caMode?: number;                 // 0=Conway, 1=Brian's Brain, 2=Burn
-  caMix?: number;                  // 0-1
+  // NOTE: caMode + caMix were re-declared here as separate cellular-automata
+  // params but conflict with the chromatic-aberration block's caMode/caMix
+  // (~line 3020). Cellular-automata effect reuses the same underlying keys
+  // — runtime code already does, this just dedupes the TS declaration.
 
   // Rorschach Mirror (hero)
   rmMode?: number;                 // 0=v, 1=h, 2=both, 3=4-fold
@@ -3917,7 +4096,8 @@ export interface EffectParams {
   invertStrobeRate?: number;      // 0-10 Hz strobe rate for mode 3
 
   // Plasma additional
-  plasmaMix?: number;             // 0-1 plasma mix amount
+  // NOTE: plasmaMix already declared in the Plasma block (~line 2781);
+  // this duplicate has been removed.
 
   // Edge detection additional
   edgeStrength?: number;          // 0-2 edge detection strength

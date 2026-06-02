@@ -2,6 +2,8 @@
   import { project, selectedLayerId, selectedLayer } from '../stores/layers';
   import { getPluginByEffectType, type PluginManifest, type PluginParamDef } from '../plugins/registry';
   import type { MediaSource, IntegratedEffectSource } from '../types';
+  import MilkdropPanel from './MilkdropPanel.svelte';
+  import HydraPanel from './HydraPanel.svelte';
 
   export let source: MediaSource | null = null;
 
@@ -56,15 +58,62 @@
       <span class="header-icon">{pluginManifest.icon}</span>
       <div class="header-text">
         <span class="header-title">{pluginManifest.name}</span>
-        <span class="header-version">v{pluginManifest.version} by {pluginManifest.author}</span>
+        <span class="header-version">v{pluginManifest.version} · {pluginManifest.author}</span>
       </div>
     </div>
+
+    <!-- Powered-by credit for plugins wrapping third-party engines.
+         Originals (FluidGen, Particles3D) omit poweredBy and skip this. -->
+    {#if pluginManifest.poweredBy}
+      <div class="powered-by">
+        <span class="pb-label">powered by</span>
+        {#if pluginManifest.poweredBy.url}
+          <a
+            href={pluginManifest.poweredBy.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="pb-engine"
+            title={pluginManifest.poweredBy.url}
+          >{pluginManifest.poweredBy.engine}</a>
+        {:else}
+          <span class="pb-engine">{pluginManifest.poweredBy.engine}</span>
+        {/if}
+        {#if pluginManifest.poweredBy.authors}
+          <span class="pb-authors">— {pluginManifest.poweredBy.authors}</span>
+        {/if}
+        {#if pluginManifest.poweredBy.license}
+          <span class="pb-license">{pluginManifest.poweredBy.license}</span>
+        {/if}
+      </div>
+    {/if}
+
+    <!-- Plugin-specific custom panel (rendered above the generic controls) -->
+    {#if effectSource.effectType === 'milkdrop' && $selectedLayerId}
+      <MilkdropPanel
+        layerId={$selectedLayerId}
+        presetPack={(effectSource as any).milkdropPresetPack ?? 'minimal'}
+        routingMatrix={(effectSource as any).milkdropRoutingMatrix ?? {}}
+      />
+    {/if}
+    {#if effectSource.effectType === 'hydra' && $selectedLayerId}
+      <HydraPanel layerId={$selectedLayerId} />
+    {/if}
 
     <!-- All controls, flat -->
     <div class="controls">
       {#each pluginManifest.paramDefs as def (def.param)}
+        {#if !def.showWhen || (def.showWhen.values || []).includes(getVal(def.showWhen.param, undefined))}
         {#if def.type === 'select'}
-          <div class="control-row">
+          {@const optValues = (def.options ?? []).map(o => String(o.value))}
+          <div
+            class="control-row"
+            data-midi-path={`map:plugin:${def.param}`}
+            data-midi-label={def.name}
+            data-midi-min={0}
+            data-midi-max={Math.max(0, optValues.length - 1)}
+            data-midi-step={1}
+            data-midi-discrete={optValues.join(',')}
+          >
             <span class="label">{def.name}</span>
             <div class="select-row">
               {#each (def.options || []) as opt}
@@ -84,6 +133,12 @@
               class="toggle-btn"
               class:active={!!getVal(def.param, def.default)}
               onclick={() => setParam(def.param, !getVal(def.param, def.default))}
+              data-midi-path={`map:plugin:${def.param}`}
+              data-midi-label={def.name}
+              data-midi-min={0}
+              data-midi-max={1}
+              data-midi-step={1}
+              data-midi-mode="toggle"
             >
               {getVal(def.param, def.default) ? 'ON' : 'OFF'}
             </button>
@@ -99,9 +154,15 @@
               step={def.step}
               value={getVal(def.param, def.default)}
               oninput={(e) => setParam(def.param, parseFloat((e.target as HTMLInputElement).value))}
+              data-midi-path={`map:plugin:${def.param}`}
+              data-midi-label={def.name}
+              data-midi-min={def.min ?? 0}
+              data-midi-max={def.max ?? 1}
+              data-midi-step={def.step ?? 0.01}
             />
             <span class="val">{fmt(getVal(def.param, def.default), def.step)}</span>
           </div>
+        {/if}
         {/if}
       {/each}
     </div>
@@ -151,6 +212,48 @@
   .header-version {
     font-size: 9px;
     color: #555;
+  }
+
+  /* ── Powered-by credit badge ── */
+  .powered-by {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 12px;
+    background: rgba(255, 107, 107, 0.04);
+    border-bottom: 1px solid rgba(255, 107, 107, 0.10);
+    font-size: 9px;
+    color: #666;
+    line-height: 1.3;
+    flex-wrap: wrap;
+  }
+  .pb-label {
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-size: 8px;
+  }
+  .pb-engine {
+    color: var(--accent-secondary, #FF8585);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  a.pb-engine:hover {
+    color: var(--accent-primary, #FF6B6B);
+    text-decoration: underline;
+  }
+  .pb-authors {
+    color: #888;
+  }
+  .pb-license {
+    margin-left: auto;
+    padding: 1px 5px;
+    background: rgba(255, 107, 107, 0.10);
+    border: 1px solid rgba(255, 107, 107, 0.20);
+    color: var(--accent-secondary, #FF8585);
+    border-radius: 2px;
+    font-size: 8px;
+    letter-spacing: 0.3px;
   }
 
   /* ── Controls ── */

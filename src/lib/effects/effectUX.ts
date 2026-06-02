@@ -1695,6 +1695,12 @@ export const effectParamLabels: Partial<Record<EffectType, Record<string, ParamM
     geomOffsetX: { label: 'Row Offset', min: 0, max: 1, step: 0.01, default: 0 },
     geomMix: { label: 'Mix', min: 0, max: 1, step: 0.01, default: 1 },
   },
+  geometricTilePro: {
+    geomProTileCount: { label: 'Tile Count', min: 0, max: 1, step: 0.01, default: 0.4 },
+    geomProFlipRange: { label: 'Flip Range', min: 0, max: 1, step: 0.01, default: 0.5 },
+    geomProSpeed:     { label: 'Speed',      min: 0, max: 1, step: 0.01, default: 0.3 },
+    geomProGap:       { label: 'Gap Size',   min: 0, max: 1, step: 0.01, default: 0.1 },
+  },
   hexGrid: {
     amount: { label: 'Blend', min: 0, max: 1, step: 0.01, default: 0.8 },
     amount2: { label: 'Hex Size', min: 0, max: 1, step: 0.01, default: 0.4 },

@@ -1,6 +1,6 @@
 {
   "name": "ghost-arcade",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "Ghost Arcade — open-source projection mapping & VJ software with WebGPU acceleration, real-time effects, MIDI control, and a mobile companion.",
   "license": "AGPL-3.0-only",
   "homepage": "https://ghostarcade.live",
@@ -36,7 +36,13 @@
     "@ffmpeg/core": "^0.12.6",
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
+    "@foobar404/wave": "^2.0.5",
+    "@mediapipe/tasks-vision": "^0.10.35",
+    "audiomotion-analyzer": "^4.5.4",
+    "butterchurn": "^2.6.7",
+    "butterchurn-presets": "^2.4.7",
     "extract-zip": "^2.0.1",
+    "hydra-synth": "^1.4.0",
     "qrcode": "^1.5.4",
     "three": "^0.184.0",
     "ws": "^8.19.0"

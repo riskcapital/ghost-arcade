@@ -16,6 +16,7 @@
    */
   import { audioStore } from '../stores/audio';
   import { isMac } from '../bridge';
+  import AudioWaveformIndicator from './AudioWaveformIndicator.svelte';
 
   // Internal popover state. Closes on outside click via window listener.
   let showMicPicker = false;
@@ -169,6 +170,8 @@
                     Share. Picking a Window returns silent video and
                     we surface a "No audio track" error. There is no
                     per-app capture on macOS via this API. -->
+  <AudioWaveformIndicator />
+
   <button
     class="aip-btn"
     class:active={$audioStore.inputType === 'system'}

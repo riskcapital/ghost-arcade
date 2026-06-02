@@ -385,6 +385,9 @@ export const effectShaders: Record<EffectType, string> = {
   fluidDistort: fluidDistortHeroShader,
   wormhole: wormholeHeroShader,
   geometricTile: geometricTileHeroShader,
+  // Geometric Tile Pro — 3D flip-board tile shader, per-tile randomized phase,
+  // perspective scaling, lighting from flip angle. Uses premium-pack2 Mode 11.
+  geometricTilePro: premiumPack2Shader,
   motionTrails: motionTrailsHeroShader,
   echoRepeat: echoRepeatHeroShader,
   ghostDouble: ghostDoubleHeroShader,
@@ -1752,6 +1755,21 @@ export function createEffectMaterial(effectType: EffectType): THREE.ShaderMateri
       uniforms.uRotation = { value: 90 };
       uniforms.uOffsetX = { value: 0 };
       uniforms.uMix = { value: 1 };
+      break;
+
+    case 'geometricTilePro':
+      // premiumPack2Shader Mode 11 — 3D flip-board tile shader.
+      // Params: uAmount=tile count (3..18), uAmount2=flip range (0..PI),
+      // uAmount3=flip speed (0..2), uThreshold=gap size (0..0.1).
+      uniforms.uMode = { value: premiumPack2Modes.geometricTile };
+      uniforms.uTime = { value: 0 };
+      uniforms.uAmount = { value: 0.4 };
+      uniforms.uAmount2 = { value: 0.5 };
+      uniforms.uAmount3 = { value: 0.3 };
+      uniforms.uThreshold = { value: 0.1 };
+      uniforms.uAngle = { value: 0 };
+      uniforms.uCenter = { value: new THREE.Vector2(0.5, 0.5) };
+      uniforms.uColor = { value: new THREE.Vector3(0.5, 0.5, 0.5) };
       break;
 
     case 'motionTrails':
@@ -3507,6 +3525,13 @@ export function updateEffectUniforms(
       if (u.uMix && p.geomMix !== undefined) u.uMix.value = p.geomMix;
       break;
 
+    case 'geometricTilePro':
+      if (u.uAmount    && p.geomProTileCount !== undefined) u.uAmount.value    = p.geomProTileCount;
+      if (u.uAmount2   && p.geomProFlipRange !== undefined) u.uAmount2.value   = p.geomProFlipRange;
+      if (u.uAmount3   && p.geomProSpeed     !== undefined) u.uAmount3.value   = p.geomProSpeed;
+      if (u.uThreshold && p.geomProGap       !== undefined) u.uThreshold.value = p.geomProGap;
+      break;
+
     case 'motionTrails':
       if (u.uLength && p.motionTrailsLength !== undefined) u.uLength.value = p.motionTrailsLength;
       if (u.uAngle && p.motionTrailsAngle !== undefined) u.uAngle.value = p.motionTrailsAngle;
@@ -4610,6 +4635,10 @@ export function getDefaultEffectParams(type: EffectType): EffectParams {
     case 'geometricTile':
       return {
         geomTiles: 4, geomMode: 0, geomRotation: 90, geomOffsetX: 0, geomMix: 1,
+      };
+    case 'geometricTilePro':
+      return {
+        geomProTileCount: 0.4, geomProFlipRange: 0.5, geomProSpeed: 0.3, geomProGap: 0.1,
       };
     // ── Premium Depth ──
     case 'tunnelFlight':

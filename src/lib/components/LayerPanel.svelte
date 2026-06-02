@@ -13,6 +13,7 @@
   import EffectPickerModal from './EffectPickerModal.svelte';
   import EdgeEffectsPanel from './EdgeEffectsPanel.svelte';
   import EffectParamRow from './EffectParamRow.svelte';
+  import PluginIcon from './PluginIcon.svelte';
   import { generateCachedThumbnail } from '../isf/thumbnail';
   import { webgpuSupportedStore } from '../renderer/webgpuCapability';
   import { createAssetRefFromFile } from '../storage/assetRegistry';
@@ -747,6 +748,11 @@
               class="color-thumb"
               style="background: hsl({layer.colorContent.hue}, {layer.colorContent.saturation}%, {layer.colorContent.lightness}%);"
             ></div>
+          {:else if layer.source?.type === 'effect' && layer.source.effectSource?.effectType}
+            <!-- Integrated plugin layer — show its custom glyph (same icon as the MediaTray card) -->
+            <div class="plugin-thumb">
+              <PluginIcon effectType={layer.source.effectSource.effectType} size={22} />
+            </div>
           {:else if layer.source?.type === 'image' && layer.source.src}
             <img src={layer.source.src} alt="" />
           {:else if layer.source?.type === 'video' && layer.source.videoElement}
@@ -3653,6 +3659,17 @@
     width: 100%;
     height: 100%;
     border-radius: 3px;
+  }
+
+  /* Plugin (integrated effect) thumbnail — centers the PluginIcon SVG */
+  .plugin-thumb {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    background: #0e0e10;
   }
 
   /* Color layer controls */

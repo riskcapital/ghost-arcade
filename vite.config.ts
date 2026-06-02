@@ -57,6 +57,13 @@ export default defineConfig({
   plugins: [svelte(), threejsBundlesPlugin()],
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
+    // Bridge for legacy CJS deps that reference Node's `global` (e.g.
+    // raf, used transitively by hydra-synth → raf-loop → raf). Vite's
+    // strict-ESM wrap leaves the bare identifier unresolved, throwing
+    // "ReferenceError: global is not defined" at module load. Vite's
+    // `define` substitution only replaces standalone identifiers, so
+    // `obj.global` style accesses are unaffected.
+    global: 'globalThis',
   },
   base: './', // Relative paths for Electron file:// protocol
   clearScreen: false,

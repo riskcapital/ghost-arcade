@@ -167,7 +167,7 @@ export class AudioAnalyzer {
         audio: audioConstraints,
       });
 
-      this.audioContext = new AudioContext();
+      this.audioContext = this.getOrCreateAudioContext();
       this.analyserNode = this.audioContext.createAnalyser();
       this.analyserNode.fftSize = this.fftSize;
       this.analyserNode.smoothingTimeConstant = 0.8;
@@ -199,7 +199,7 @@ export class AudioAnalyzer {
     await this.stop();
 
     try {
-      this.audioContext = new AudioContext();
+      this.audioContext = this.getOrCreateAudioContext();
       this.analyserNode = this.audioContext.createAnalyser();
       this.analyserNode.fftSize = this.fftSize;
       this.analyserNode.smoothingTimeConstant = 0.8;
@@ -243,18 +243,26 @@ export class AudioAnalyzer {
         },
       });
 
-      // Verify audio track exists
+      // Verify audio track exists. On macOS this most often means the
+      // Screen Recording permission hasn't been granted to Ghost
+      // Arcade — without it Electron's `audio: 'loopback'` request
+      // silently returns video-only. Surface that hint in the error
+      // so the user knows where to look.
       const audioTracks = this.stream!.getAudioTracks();
       if (audioTracks.length === 0) {
         this.stream!.getTracks().forEach(t => t.stop());
         this.stream = null;
-        throw new Error('No audio track available. Select a source with audio output.');
+        const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
+        const msg = isMac
+          ? 'No system audio track. Grant Screen Recording permission to Ghost Arcade (System Settings → Privacy & Security → Screen & System Audio Recording), then fully quit + relaunch the app.'
+          : 'No audio track. Pick a source that has audio output when the system picker appears.';
+        throw new Error(msg);
       }
 
       // Stop the video track - we only need audio
       this.stream!.getVideoTracks().forEach(t => t.stop());
 
-      this.audioContext = new AudioContext();
+      this.audioContext = this.getOrCreateAudioContext();
       this.analyserNode = this.audioContext.createAnalyser();
       this.analyserNode.fftSize = this.fftSize;
       this.analyserNode.smoothingTimeConstant = 0.8;
@@ -364,12 +372,38 @@ export class AudioAnalyzer {
       this.stream = null;
     }
 
+    // Keep the AudioContext alive across stop/start cycles. External
+    // consumers (Butterchurn/Milkdrop, future stem routers) attach to it
+    // once at boot and need it to outlive any single source. The context
+    // is only closed on full app teardown via closeAudioContext().
+    this.analyserNode = null;
+  }
+
+  /**
+   * Lazily create and return the singleton AudioContext for the whole
+   * audio subsystem. Shared across the analyzer's start/stop cycles and
+   * with downstream consumers (Milkdrop, stem mixers) so they can wire
+   * themselves up before any audio source has been picked.
+   */
+  getOrCreateAudioContext(): AudioContext {
+    if (!this.audioContext) {
+      this.audioContext = new AudioContext();
+    }
+    // Browsers auto-suspend new contexts created outside a user gesture.
+    // resume() is a no-op if already running, and harmless if the call
+    // pre-dates a gesture (the resume will then complete on the next one).
+    if (this.audioContext.state === 'suspended') {
+      this.audioContext.resume().catch(() => { /* fires on next user gesture */ });
+    }
+    return this.audioContext;
+  }
+
+  /** Permanently close the shared AudioContext — only safe at app shutdown. */
+  async closeAudioContext(): Promise<void> {
     if (this.audioContext) {
-      await this.audioContext.close();
+      try { await this.audioContext.close(); } catch {}
       this.audioContext = null;
     }
-
-    this.analyserNode = null;
   }
 
   /** Set the analysis callback */
@@ -717,6 +751,26 @@ export class AudioAnalyzer {
     } else {
       this.estimatedBPM = Math.round(this.estimatedBPM * 0.8 + rawBPM * 0.2);
     }
+  }
+
+  /**
+   * Expose the underlying AudioContext for downstream consumers that need
+   * to build their own audio graphs sharing this app's single context
+   * (Milkdrop/Butterchurn, future stem mixers, etc.). Returns null when no
+   * source is running.
+   */
+  getAudioContext(): AudioContext | null {
+    return this.audioContext;
+  }
+
+  /**
+   * Expose the live source node so external modules can connect() it into
+   * their own destinations (e.g. Butterchurn's internal analyser) without
+   * stealing audio from the existing analysis pipeline — Web Audio nodes
+   * support multiple consumers fan-out for free.
+   */
+  getSourceNode(): AudioNode | null {
+    return this.sourceNode;
   }
 }
 
