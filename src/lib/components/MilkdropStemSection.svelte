@@ -236,7 +236,7 @@
     flex: 1;
     background: #0a0612;
     border: 1px solid #2a2235;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     padding: 3px 6px;
     border-radius: 3px;
     font-size: 10px;
@@ -275,7 +275,7 @@
     line-height: 1.45;
     padding-top: 2px;
   }
-  .ss-hint strong { color: #888; font-weight: 600; }
+  .ss-hint strong { color: var(--text-muted, #888); font-weight: 600; }
 
   .ss-active {
     display: flex;
@@ -322,7 +322,7 @@
   }
   .ss-stem-label {
     font-size: 10px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     font-family: 'JetBrains Mono', monospace;
     white-space: nowrap;
     overflow: hidden;

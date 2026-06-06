@@ -2393,6 +2393,7 @@ export const vjOutputLayers = derived(
         model3dContent: clip.type === 'model3d' ? (clip.model3dContent || createDefaultModel3DContent()) : null,
         pixelFXContent: null,
         gpuLayerContent: null,
+        arcadeContent: null,
         // Transform identity — per-clip transforms are baked into
         // `corners` below so the engine's warp pipeline applies them
         // uniformly. position/scale/rotation are bypassed by the

@@ -187,7 +187,7 @@
     background: transparent;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 4px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.1em;
@@ -274,7 +274,7 @@
 
   .snap-name {
     font-size: 8px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     max-width: 32px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -299,7 +299,7 @@
   .snap-ctx {
     position: fixed;
     z-index: 9000;
-    background: #1a1a1e;
+    background: var(--bg-tertiary, #1a1a1e);
     border: 1px solid rgba(255, 255, 255, 0.14);
     border-radius: 5px;
     padding: 4px 0;
@@ -311,7 +311,7 @@
     width: 100%;
     background: none;
     border: none;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     font-size: 11px;
     text-align: left;
     padding: 6px 14px;

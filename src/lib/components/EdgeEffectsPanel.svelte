@@ -427,13 +427,17 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 4px 12px;
+    /* Reduced left padding from 12 → 0 so this title's left edge lines
+       up with the LAYER EFFECTS title (which sits at padding 4 0). */
+    padding: 4px 0;
   }
 
   .section-title {
     font-size: 11px;
     font-weight: 600;
-    color: #ff9800;
+    /* Match LAYER EFFECTS accent — was orange. Both effect surfaces
+       read as sibling sections of the layer inspector. */
+    color: var(--ga-violet, #9b87f5);
     text-transform: uppercase;
     letter-spacing: 0.5px;
     flex: 1;
@@ -444,7 +448,7 @@
     align-items: center;
     gap: 4px;
     font-size: 10px;
-    color: #888;
+    color: var(--text-muted, #888);
     cursor: pointer;
   }
 
@@ -492,7 +496,7 @@
     flex: 1;
     background: none;
     border: none;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     font-size: 11px;
     cursor: pointer;
     text-align: left;
@@ -507,7 +511,7 @@
   .blend-select {
     width: 75px;
     background: #333;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     border: 1px solid #444;
     border-radius: 3px;
     font-size: 10px;
@@ -581,7 +585,7 @@
   .control-row select {
     flex: 1;
     background: #222;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     border: 1px solid #444;
     padding: 3px 6px;
     border-radius: 3px;
@@ -602,7 +606,7 @@
     margin: 6px 8px;
     padding: 5px;
     background: #222;
-    color: #888;
+    color: var(--text-muted, #888);
     border: 1px dashed #444;
     border-radius: 4px;
     font-size: 10px;

@@ -2323,13 +2323,14 @@
 
 <style>
   .layer-panel {
-    width: 280px;
-    background: #111114;
-    border-right: 1px solid rgba(255, 255, 255, 0.06);
+    width: 300px;
+    background: var(--ga-panel, #0b0d11);
+    border-right: none;
     display: flex;
     flex-direction: column;
-    color: #eee;
-    font-size: 13px;
+    color: var(--ga-ink-0, #eef0f4);
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
+    font-size: 13.5px;
     height: 100%;
     overflow: hidden;
   }
@@ -2355,21 +2356,21 @@
     flex-direction: column;
     flex: 1 1 50%;
     min-height: 100px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
     overflow: hidden;
   }
 
   .properties-effects-content {
     flex: 1;
     overflow-y: auto;
-    padding: 8px;
+    padding: 13px 14px;
   }
 
   /* Effects section inside properties panel */
   .effects-section {
     margin-top: 12px;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
-    padding-top: 8px;
+    border-top: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
+    padding-top: 12px;
   }
 
   .effects-header {
@@ -2380,7 +2381,7 @@
     /* Match EdgeEffectsPanel's .section-header-row padding so the
        "LAYER EFFECTS" and "EDGE EFFECTS" titles line up at the same
        left edge — fixes visual mismatch where one was indented less. */
-    padding: 4px 12px;
+    padding: 4px 0;
   }
 
   .effects-header h4 {
@@ -2391,7 +2392,7 @@
        Effects, so the two sections read as siblings, not parent/child. */
     font-size: 11px;
     font-weight: 600;
-    color: #BB86FC;
+    color: var(--ga-violet, #9b87f5);
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
@@ -2400,61 +2401,82 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 12px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    padding: 13px 14px;
+    border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
   }
 
   .panel-header h3 {
     margin: 0;
-    font-size: 14px;
-    font-weight: 600;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .btn-add {
-    background: #BB86FC;
-    color: #000;
-    border: none;
-    padding: 6px 12px;
-    border-radius: 4px;
+    height: 30px;
+    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
+    color: var(--ga-violet, #9b87f5);
+    border: 1px solid var(--ga-violet-line, rgba(155, 135, 245, 0.36));
+    padding: 0 12px;
+    border-radius: var(--ga-r-soft, 7px);
     cursor: pointer;
     font-size: 12px;
     font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
   }
 
   .btn-add:hover {
-    background: #CF6EFF;
+    background: rgba(155, 135, 245, 0.18);
   }
 
   .layer-list {
     flex: 1;
     overflow-y: auto;
-    padding: 8px;
+    /* Tightened from 8px 14px 12px — visually align rows to the panel
+       edge so there's no inset gutter eating real estate. */
+    padding: 4px 8px 6px;
   }
 
   .layer-item {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 4px 8px;
-    background: rgba(255, 255, 255, 0.04);
-    border-radius: 4px;
-    margin-bottom: 2px;
+    gap: 8px;
+    /* Tightened from 9px 10px — rows pack more densely. */
+    padding: 6px 8px;
+    background: transparent;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 2px);
+    margin-bottom: 3px;
     cursor: pointer;
-    transition: background 0.15s;
+    position: relative;
+    transition: background 0.15s, border-color 0.15s;
   }
 
   .layer-item:hover {
-    background: #3a3a3a;
+    background: var(--ga-card, #13161c);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
 
   .layer-item.selected {
-    background: #BB86FC33;
-    border: 1px solid #BB86FC;
+    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
+    border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36));
+  }
+
+  .layer-item.selected::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--ga-violet, #9b87f5);
   }
 
   .layer-item.multi-selected {
-    background: rgba(103, 232, 249, 0.15);
-    border: 1px solid rgba(103, 232, 249, 0.55);
+    background: var(--ga-blue-soft, rgba(91, 141, 239, 0.10));
+    border: 1px solid var(--ga-blue-line, rgba(91, 141, 239, 0.38));
   }
 
   .layer-item.dragging {
@@ -2463,31 +2485,49 @@
   }
 
   .layer-item.drag-over-above {
-    border-top: 2px solid #BB86FC;
+    border-top: 2px solid var(--ga-violet, #9b87f5);
     margin-top: -2px;
   }
   .layer-item.drag-over-below {
-    border-bottom: 2px solid #BB86FC;
+    border-bottom: 2px solid var(--ga-violet, #9b87f5);
     margin-bottom: -2px;
   }
   .layer-item.drag-over-into {
-    outline: 2px solid #BB86FC;
+    outline: 2px solid var(--ga-violet, #9b87f5);
     outline-offset: -2px;
-    background: rgba(187, 134, 252, 0.1);
+    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
   }
 
   /* Group layer styles */
   .layer-item.group-layer {
-    background: rgba(187, 134, 252, 0.06);
-    border-left: 2px solid rgba(187, 134, 252, 0.4);
+    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
+    border-left: 2px solid var(--ga-violet-line, rgba(155, 135, 245, 0.36));
   }
   .layer-item.group-child {
+    /* Hierarchy indent + a vertical tree-line so the user sees which
+       layers belong to which group at a glance. Previously the only
+       cue was a small left-pad that disappeared once row padding was
+       tightened. */
     padding-left: 26px;
+    margin-left: 14px;
+    position: relative;
+  }
+  .layer-item.group-child::after {
+    content: "";
+    position: absolute;
+    left: 4px;
+    top: -3px;
+    bottom: 50%;
+    width: 10px;
+    border-left: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.18));
+    border-bottom: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.18));
+    border-bottom-left-radius: 4px;
+    pointer-events: none;
   }
   .group-collapse-btn {
     background: none;
     border: none;
-    color: #888;
+    color: var(--ga-ink-2, #5e6571);
     font-size: 12px;
     cursor: pointer;
     padding: 0 2px;
@@ -2495,16 +2535,16 @@
     line-height: 1;
   }
   .group-collapse-btn:hover {
-    color: #ccc;
+    color: var(--ga-ink-0, #eef0f4);
   }
   .group-thumb {
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #BB86FC;
+    color: var(--ga-violet, #9b87f5);
   }
   .layer-thumbnail.group {
-    background: rgba(187, 134, 252, 0.1);
+    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
   }
   .radio-group {
     display: flex;
@@ -2512,7 +2552,7 @@
   }
   .radio-label {
     font-size: 12px;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     display: flex;
     align-items: center;
     gap: 4px;
@@ -2529,12 +2569,12 @@
   }
   .property-value {
     font-size: 12px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     font-family: monospace;
   }
   .grouped-child-note {
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
     padding: 8px 12px;
     background: rgba(187, 134, 252, 0.06);
     border-left: 2px solid rgba(187, 134, 252, 0.3);
@@ -2551,7 +2591,7 @@
   .layer-ctx-menu {
     position: fixed;
     z-index: 9999;
-    background: #1a1a20;
+    background: var(--bg-tertiary, #1a1a20);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 6px;
     padding: 4px 0;
@@ -2564,7 +2604,7 @@
     text-align: left;
     background: none;
     border: none;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     font-size: 12px;
     padding: 6px 14px;
     cursor: pointer;
@@ -2586,7 +2626,7 @@
     margin: 4px 0;
   }
   .ctx-submenu {
-    background: #1a1a20;
+    background: var(--bg-tertiary, #1a1a20);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
     padding: 4px 0;
@@ -2595,7 +2635,7 @@
 
   .drag-handle {
     cursor: grab;
-    color: #555;
+    color: var(--ga-ink-3, #3a404a);
     padding: 2px;
     display: flex;
     align-items: center;
@@ -2604,7 +2644,7 @@
   }
 
   .drag-handle:hover {
-    color: #888;
+    color: var(--ga-ink-1, #9aa0ac);
   }
 
   .layer-item.dragging .drag-handle {
@@ -2612,12 +2652,13 @@
   }
 
   .layer-thumbnail {
-    width: 28px;
-    height: 28px;
+    width: 40px;
+    height: 25px;
     flex-shrink: 0;
-    border-radius: 3px;
+    border-radius: var(--ga-r-hard, 2px);
     overflow: hidden;
-    background: #222;
+    background: var(--ga-slot, #050607);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2631,7 +2672,7 @@
   }
 
   .empty-thumb {
-    color: #555;
+    color: var(--ga-ink-3, #3a404a);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2642,23 +2683,30 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    color: var(--ga-ink-1, #9aa0ac);
+    font-size: 13.5px;
+    font-weight: 600;
+  }
+
+  .layer-item.selected .layer-name {
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   /* Inline rename input — sits in the same flex slot as `.layer-name`
      so the row layout doesn't reflow when you double-click to edit. */
   .layer-name-input {
     flex: 1;
-    background: rgba(187, 134, 252, 0.12);
-    border: 1px solid #BB86FC;
-    border-radius: 3px;
-    color: #fff;
+    background: var(--ga-slot, #050607);
+    border: 1px solid var(--ga-violet-line, rgba(155, 135, 245, 0.36));
+    border-radius: var(--ga-r-hard, 2px);
+    color: var(--ga-ink-0, #eef0f4);
     font: inherit;
     font-size: 12px;
     padding: 2px 6px;
     outline: none;
     min-width: 0;
   }
-  .layer-name-input:focus { background: rgba(187, 134, 252, 0.18); }
+  .layer-name-input:focus { background: var(--ga-slot, #050607); }
 
   /* Inline hint that sits next to the Invert checkbox so the label stays
      short and stops wrapping into "stacked text". The hint is a single
@@ -2692,51 +2740,51 @@
   }
 
   .btn-visibility {
-    color: #03DAC6;
+    color: var(--ga-violet, #9b87f5);
     opacity: 0.85;
   }
   .btn-visibility:hover {
     opacity: 1;
-    color: #4AEADF;
+    color: var(--ga-violet, #9b87f5);
   }
   .btn-visibility.hidden {
-    color: #666;
+    color: var(--ga-ink-3, #3a404a);
     opacity: 0.35;
   }
   .btn-visibility.hidden:hover {
     opacity: 0.6;
-    color: #888;
+    color: var(--ga-ink-2, #5e6571);
   }
 
   .btn-lock {
-    color: #888;
+    color: var(--ga-ink-2, #5e6571);
     opacity: 0.5;
   }
   .btn-lock:hover {
     opacity: 0.8;
-    color: #aaa;
+    color: var(--ga-ink-1, #9aa0ac);
   }
   .btn-lock.locked {
-    color: #FFB300;
+    color: #fbbf24;
     opacity: 0.9;
   }
   .btn-lock.locked:hover {
     opacity: 1;
-    color: #FFC107;
+    color: #fde68a;
   }
 
   .btn-delete {
-    color: #ff4444;
+    color: var(--ga-ink-2, #5e6571);
     opacity: 0.5;
   }
   .btn-delete:hover {
     opacity: 1;
-    color: #ff6666;
+    color: var(--ga-rec, #ff4438);
   }
 
   .empty-state {
     text-align: center;
-    color: #666;
+    color: var(--ga-ink-2, #5e6571);
     padding: 20px;
   }
 
@@ -2745,16 +2793,16 @@
   }
 
   .layer-properties h4 {
-    margin: 0 0 8px 0;
-    font-size: 12px;
-    font-weight: 600;
-    color: #888;
+    margin: 0 0 11px 0;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .media-drop-zone {
-    background: rgba(255, 255, 255, 0.04);
-    border: 2px dashed #555;
-    border-radius: 4px;
+    background: var(--ga-card, #13161c);
+    border: 1px dashed var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 2px);
     padding: 10px;
     text-align: center;
     margin-bottom: 8px;
@@ -2762,19 +2810,19 @@
   }
 
   .media-drop-zone:hover {
-    border-color: #BB86FC;
+    border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36));
   }
 
   .source-name {
     display: block;
-    color: #BB86FC;
+    color: var(--ga-violet, #9b87f5);
     word-break: break-all;
   }
 
   .source-type {
     display: block;
     font-size: 10px;
-    color: #666;
+    color: var(--ga-ink-2, #5e6571);
     margin-bottom: 8px;
   }
 
@@ -2796,7 +2844,7 @@
 
   .vt-btn {
     background: rgba(255, 255, 255, 0.08);
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     border: none;
     width: 28px;
     height: 28px;
@@ -2818,7 +2866,7 @@
 
   .vt-time {
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-family: monospace;
     margin-left: 4px;
     flex: 1;
@@ -2827,7 +2875,7 @@
 
   .vt-speed {
     background: rgba(255, 255, 255, 0.08);
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 3px;
     font-size: 11px;
@@ -2927,7 +2975,7 @@
     gap: 4px;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 10px;
     padding: 4px 2px;
     border-radius: 3px;
@@ -2956,10 +3004,13 @@
   }
 
   .property-row {
-    display: flex;
+    display: grid;
+    grid-template-columns: 84px minmax(0, 1fr) auto;
     align-items: center;
-    gap: 6px;
-    margin-bottom: 6px;
+    gap: 8px;
+    /* Tightened from 13px so rows pack tighter — was eating real
+       estate while leaving plenty of empty whitespace between labels. */
+    margin-bottom: 7px;
   }
 
   .feather-row { flex-wrap: wrap; }
@@ -2967,33 +3018,39 @@
   .feather-slider { display: flex; align-items: center; gap: 4px; }
   .feather-label { width: 12px; font-size: 9px; color: #666; text-align: center; }
   .feather-slider input[type='range'] { flex: 1; }
-  .btn-small { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: #aaa; font-size: 10px; padding: 3px 8px; border-radius: 3px; cursor: pointer; }
+  .btn-small { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: var(--text-secondary, #aaa); font-size: 10px; padding: 3px 8px; border-radius: 3px; cursor: pointer; }
   .btn-small:hover { background: rgba(255,255,255,0.12); color: #fff; }
 
   .property-row label {
-    width: 80px;
-    color: #888;
+    width: auto;
+    color: var(--ga-ink-1, #9aa0ac);
+    font-size: 12.5px;
+    font-weight: 500;
   }
 
   .property-row input[type='range'] {
     flex: 1;
-    background: #000000;
+    background: var(--ga-slot, #050607);
   }
 
   .property-row select {
     flex: 1;
-    background: #1a1a1e;
-    color: #eee;
-    border: 1px solid #555;
-    padding: 4px 8px;
-    border-radius: 4px;
+    height: 32px;
+    background: transparent;
+    color: var(--ga-ink-0, #eef0f4);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    padding: 0 26px 0 11px;
+    border-radius: var(--ga-r-hard, 2px);
+    font-size: 13px;
+    font-weight: 500;
   }
 
   .property-row .value {
     width: 40px;
     text-align: right;
-    color: #888;
+    color: var(--ga-ink-1, #9aa0ac);
     font-size: 12px;
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
   }
 
   .vj-source-row {
@@ -3010,56 +3067,70 @@
 
   .vj-source-select {
     flex: 1;
-    background: #1a1a1e;
-    color: #eee;
+    background: var(--bg-tertiary, #1a1a1e);
+    color: var(--text-primary, #eee);
     border: 1px solid #555;
     padding: 4px 8px;
     border-radius: 4px;
     font-size: 11px;
   }
 
-  .btn-reset {
+  .btn-reset,
+  .reset-warp-btn {
     width: 100%;
-    background: rgba(255, 255, 255, 0.08);
-    color: #eee;
-    border: none;
-    padding: 8px;
-    border-radius: 4px;
+    height: 34px;
+    background: transparent;
+    color: var(--ga-ink-0, #eef0f4);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    padding: 0 12px;
+    border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
-    transition: background 0.15s;
+    font-size: 13px;
+    font-weight: 600;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
   }
 
-  .btn-reset:hover {
-    background: #555;
+  .btn-reset:hover,
+  .reset-warp-btn:hover {
+    background: var(--ga-card, #13161c);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
 
   .warp-mode-buttons {
     display: flex;
-    gap: 4px;
+    gap: 0;
     flex: 1;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 2px);
+    overflow: hidden;
   }
 
   .warp-mode-btn {
     flex: 1;
-    background: rgba(255, 255, 255, 0.04);
-    color: #aaa;
-    border: 1px solid #555;
-    padding: 6px 12px;
-    border-radius: 4px;
+    background: transparent;
+    color: var(--ga-ink-2, #5e6571);
+    border: none;
+    border-right: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    padding: 7px;
+    border-radius: 0;
     cursor: pointer;
     font-size: 12px;
+    font-weight: 600;
     transition: all 0.15s;
   }
 
+  .warp-mode-btn:last-child {
+    border-right: none;
+  }
+
   .warp-mode-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: #eee;
+    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
+    color: var(--ga-violet, #9b87f5);
   }
 
   .warp-mode-btn.active {
-    background: #BB86FC33;
-    color: #BB86FC;
-    border-color: #BB86FC;
+    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
+    color: var(--ga-violet, #9b87f5);
   }
 
   /* Mask Section Styles */
@@ -3081,7 +3152,7 @@
     align-items: center;
     gap: 6px;
     font-size: 12px;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
   }
 
   .mask-section .property-row label input[type="checkbox"] {
@@ -3090,7 +3161,7 @@
 
   .mask-point-count {
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
     margin-left: auto;
   }
 
@@ -3101,7 +3172,7 @@
 
   .mask-section .property-row .value {
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
     min-width: 35px;
     text-align: right;
   }
@@ -3166,10 +3237,10 @@
   .mask-shape-label {
     flex: 1;
     font-size: 11px;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
   }
   .mask-shape-meta {
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 10px;
   }
   .mask-shape-meta em {
@@ -3180,7 +3251,7 @@
   .mask-shape-delete {
     background: transparent;
     border: 1px solid #555;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     width: 22px; height: 22px;
     border-radius: 3px;
     font-size: 14px;
@@ -3200,7 +3271,7 @@
   .mask-shape-edit {
     background: transparent;
     border: 1px solid #555;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     width: 22px; height: 22px;
     border-radius: 3px;
     cursor: pointer;
@@ -3253,7 +3324,7 @@
     align-items: center;
     gap: 6px;
     font-size: 12px;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     min-width: 70px;
   }
 
@@ -3272,7 +3343,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    background: #1a1a1e;
+    background: var(--bg-tertiary, #1a1a1e);
     color: #9aa0a6;
     border: 1px solid #444;
     border-radius: 6px;
@@ -3294,7 +3365,7 @@
 
   .shape-mask-section .property-row select {
     flex: 1;
-    background: #1a1a1e;
+    background: var(--bg-tertiary, #1a1a1e);
     color: #fff;
     border: 1px solid #555;
     border-radius: 4px;
@@ -3309,7 +3380,7 @@
 
   .shape-mask-section .property-row .value {
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
     min-width: 35px;
     text-align: right;
   }
@@ -3407,7 +3478,7 @@
   }
 
   .effect-drag-handle:hover {
-    color: #888;
+    color: var(--text-muted, #888);
   }
 
   .effect-item.dragging .effect-drag-handle {
@@ -3424,7 +3495,7 @@
     flex: 1;
     background: none;
     border: none;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     font-size: 12px;
     cursor: pointer;
     text-align: left;
@@ -3493,7 +3564,7 @@
   .effect-opacity-ctrl label,
   .effect-blend-ctrl label {
     font-size: 10px;
-    color: #888;
+    color: var(--text-muted, #888);
     white-space: nowrap;
     min-width: 38px;
   }
@@ -3510,9 +3581,9 @@
   }
 
   .effect-blend-ctrl select {
-    background: #1a1a1e;
+    background: var(--bg-tertiary, #1a1a1e);
     border: 1px solid #333;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     font-size: 10px;
     padding: 2px 4px;
     border-radius: 3px;
@@ -3533,7 +3604,7 @@
   .param-row label {
     width: 70px;
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
     flex-shrink: 0;
   }
 
@@ -3545,8 +3616,8 @@
 
   .param-row select {
     flex: 1;
-    background: #1a1a1e;
-    color: #eee;
+    background: var(--bg-tertiary, #1a1a1e);
+    color: var(--text-primary, #eee);
     border: 1px solid #555;
     padding: 3px 6px;
     border-radius: 3px;
@@ -3597,7 +3668,7 @@
   .add-layer-menu {
     position: fixed;
     z-index: 9999;
-    background: #1a1a1e;
+    background: var(--bg-tertiary, #1a1a1e);
     border: 1px solid #444;
     border-radius: 6px;
     min-width: 170px;
@@ -3614,7 +3685,7 @@
     padding: 10px 14px;
     background: none;
     border: none;
-    color: #eee;
+    color: var(--text-primary, #eee);
     font-size: 12px;
     cursor: pointer;
     text-align: left;
@@ -3651,7 +3722,7 @@
 
   /* Color layer thumbnail */
   .layer-thumbnail.color {
-    background: #1a1a2e;
+    background: var(--bg-secondary, #1a1a2e);
     border: 1px solid #ff88ff44;
   }
 
@@ -3697,7 +3768,7 @@
     display: flex;
     justify-content: space-between;
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
   }
 
   .color-slider-group input[type="range"] {
@@ -3745,7 +3816,7 @@
     align-items: center;
     margin-bottom: 8px;
     font-size: 12px;
-    color: #888;
+    color: var(--text-muted, #888);
   }
 
   .add-shape-select {
@@ -3776,7 +3847,7 @@
     align-items: center;
     gap: 8px;
     padding: 6px 8px;
-    background: #1a1a1e;
+    background: var(--bg-tertiary, #1a1a1e);
     border-radius: 4px;
     cursor: pointer;
     transition: all 0.15s;
@@ -3833,7 +3904,7 @@
 
   .svg-info {
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
     text-align: center;
     padding: 12px 8px;
     background: rgba(255, 255, 255, 0.03);
@@ -3842,44 +3913,48 @@
 
   .orientation-controls {
     display: flex;
-    gap: 4px;
-    padding: 6px 8px;
+    gap: 6px;
+    padding: 0;
     align-items: center;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    border-bottom: none;
+    margin-bottom: 13px;
   }
 
   .orient-label {
-    font-size: 10px;
-    color: #666;
-    margin-right: 4px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    flex: 0 0 84px;
+    font-size: 12.5px;
+    color: var(--ga-ink-1, #9aa0ac);
+    margin-right: 0;
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 500;
   }
 
   .orient-btn {
-    width: 26px;
-    height: 26px;
+    width: 30px;
+    height: 30px;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 4px;
-    color: #666;
+    background: transparent;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 2px);
+    color: var(--ga-violet, #9b87f5);
     cursor: pointer;
     padding: 0;
     transition: all 0.15s;
   }
 
   .orient-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: #bbb;
+    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
+    border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36));
+    color: var(--ga-violet, #9b87f5);
   }
 
   .orient-btn.active {
-    background: rgba(187, 134, 252, 0.15);
-    border-color: rgba(187, 134, 252, 0.4);
-    color: #BB86FC;
+    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
+    border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36));
+    color: var(--ga-violet, #9b87f5);
   }
 
   .splat-info, .model3d-info {
@@ -3887,13 +3962,13 @@
     background: rgba(255, 255, 255, 0.03);
     border-radius: 4px;
     font-size: 11px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
   }
   .splat-info .file-loaded-info, .model3d-info .file-loaded-info {
     color: #8f8;
   }
   .splat-info .no-file-info, .model3d-info .no-file-info {
-    color: #888;
+    color: var(--text-muted, #888);
     font-style: italic;
   }
 
@@ -3908,17 +3983,17 @@
 
   .screen-label {
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
     white-space: nowrap;
   }
 
   .screen-vj-select {
     flex: 1;
     padding: 4px 8px;
-    background: #1a1a1e;
+    background: var(--bg-tertiary, #1a1a1e);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     font-size: 11px;
   }
 
@@ -3937,7 +4012,7 @@
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 4px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     font-size: 11px;
     cursor: pointer;
     transition: all 0.15s ease;

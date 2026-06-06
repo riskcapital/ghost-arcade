@@ -1,0 +1,4 @@
+/* Theme webfonts. Loaded once at boot so theme swaps don't re-fetch.
+   Studio: Hanken Grotesk + IBM Plex Mono.
+   Arcade: Archivo + Chakra Petch display + IBM Plex Mono + VT323. */
+@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Archivo:wght@400;500;600;700;800;900&family=Chakra+Petch:wght@500;600;700&family=VT323&display=swap');

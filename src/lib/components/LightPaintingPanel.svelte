@@ -1653,19 +1653,19 @@
     padding: 6px 12px;
     border-bottom: 1px solid #222;
   }
-  .row-label { font-size: 11px; color: #888; font-weight: 600; }
+  .row-label { font-size: 11px; color: var(--text-muted, #888); font-weight: 600; }
 
   .mode-btns { display: flex; border: 1px solid #444; border-radius: 5px; overflow: hidden; }
   .mode-btns button {
-    background: transparent; border: none; color: #888;
+    background: transparent; border: none; color: var(--text-muted, #888);
     padding: 4px 12px; font-size: 11px; font-weight: 600; cursor: pointer;
   }
-  .mode-btns button:hover { color: #ddd; background: rgba(255,255,255,0.04); }
+  .mode-btns button:hover { color: var(--text-primary, #ddd); background: rgba(255,255,255,0.04); }
   .mode-btns button.active { color: #BB86FC; background: rgba(103,232,249,0.1); }
   .mode-btns button + button { border-left: 1px solid #444; }
 
   .play-btn {
-    background: #161618; border: 1px solid #444; color: #eee;
+    background: var(--bg-tertiary, #161618); border: 1px solid #444; color: var(--text-primary, #eee);
     width: 26px; height: 26px; border-radius: 50%;
     display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0;
   }
@@ -1673,10 +1673,10 @@
   .play-btn.playing { background: #BB86FC; color: #000; border-color: #BB86FC; }
 
   .loop-btn {
-    background: #222; border: 1px solid #3a3a3a; color: #888;
+    background: #222; border: 1px solid #3a3a3a; color: var(--text-muted, #888);
     padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; cursor: pointer;
   }
-  .loop-btn:hover { color: #ccc; border-color: #555; }
+  .loop-btn:hover { color: var(--text-primary, #ccc); border-color: #555; }
   .loop-btn.active { color: #BB86FC; border-color: #BB86FC; background: rgba(103,232,249,0.08); }
 
   .stroke-badge {
@@ -1691,7 +1691,7 @@
     padding: 7px 4px; font-size: 11px; font-weight: 600; cursor: pointer;
     border-bottom: 2px solid transparent;
   }
-  .lp-tabs button:hover { color: #aaa; }
+  .lp-tabs button:hover { color: var(--text-secondary, #aaa); }
   .lp-tabs button.active { color: #BB86FC; border-bottom-color: #BB86FC; }
 
   /* Content */
@@ -1700,7 +1700,7 @@
   /* Section labels */
   .sec-label {
     display: flex; align-items: center; justify-content: space-between;
-    font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.4px;
+    font-size: 11px; font-weight: 600; color: var(--text-muted, #888); text-transform: uppercase; letter-spacing: 0.4px;
     margin: 10px 0 6px; padding-bottom: 4px; border-bottom: 1px solid #222;
   }
   .sec-label:first-child { margin-top: 0; }
@@ -1720,19 +1720,19 @@
     background: #BB86FC; cursor: pointer; border: 2px solid #141416;
   }
   .sc select {
-    width: 100%; background: #0d0d10; border: 1px solid #333; color: #ddd;
+    width: 100%; background: var(--bg-primary, #0d0d10); border: 1px solid #333; color: var(--text-primary, #ddd);
     border-radius: 5px; padding: 6px 8px; font-size: 11px; outline: none;
   }
 
   /* Brush grid */
   .brush-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 8px; }
   .brush-btn {
-    background: #0d0d10; border: 1px solid #333; color: #aaa;
+    background: var(--bg-primary, #0d0d10); border: 1px solid #333; color: var(--text-secondary, #aaa);
     border-radius: 5px; padding: 6px 2px; font-size: 10px; font-weight: 600;
     cursor: pointer; text-align: center;
     position: relative;
   }
-  .brush-btn:hover { background: #161618; color: #eee; border-color: #555; }
+  .brush-btn:hover { background: var(--bg-tertiary, #161618); color: var(--text-primary, #eee); border-color: #555; }
   .brush-btn.active { background: rgba(103,232,249,0.1); color: #BB86FC; border-color: #BB86FC; }
   /* GPU brush buttons get a subtle gradient hint so they're visually
      distinct from the CPU-rasterised ones in the picker. */
@@ -1781,7 +1781,7 @@
   .color-picker.sm { width: 18px; height: 18px; }
 
   .mini-toggle {
-    background: #161618; border: 1px solid #444; color: #888;
+    background: var(--bg-tertiary, #161618); border: 1px solid #444; color: var(--text-muted, #888);
     padding: 1px 6px; border-radius: 3px; font-size: 9px; font-weight: 600; cursor: pointer;
   }
   .mini-toggle.on { background: rgba(103,232,249,0.12); color: #BB86FC; border-color: #BB86FC; }
@@ -1790,7 +1790,7 @@
   .check-row label { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #bbb; cursor: pointer; }
   .check-row input[type="checkbox"] { accent-color: #BB86FC; width: 13px; height: 13px; }
   .mini-action {
-    background: #161618; border: 1px solid #333; color: #bbb;
+    background: var(--bg-tertiary, #161618); border: 1px solid #333; color: #bbb;
     border-radius: 5px; padding: 5px 8px; font-size: 11px; cursor: pointer;
   }
   .mini-action:hover { border-color: #BB86FC; color: #fff; }
@@ -1803,7 +1803,7 @@
     border: 1px solid #222; border-radius: 5px; margin-bottom: 4px;
     cursor: pointer; transition: border-color 0.15s, background 0.15s;
   }
-  .stroke-row:hover { background: #0d0d10; border-color: #333; }
+  .stroke-row:hover { background: var(--bg-primary, #0d0d10); border-color: #333; }
   .stroke-row.selected { border-color: #bb86fc; background: rgba(187, 134, 252, 0.08); }
   .stroke-row.selected:hover { background: rgba(187, 134, 252, 0.12); }
 
@@ -1839,10 +1839,10 @@
   .path-edit-toggle.active:hover { background: #8ff0fc; }
   .path-edit-checkbox {
     display: inline-flex; align-items: center; gap: 5px;
-    font-size: 10px; color: #aaa; cursor: pointer; user-select: none;
+    font-size: 10px; color: var(--text-secondary, #aaa); cursor: pointer; user-select: none;
   }
   .path-edit-checkbox input { width: 12px; height: 12px; cursor: pointer; accent-color: #67E8F9; }
-  .path-edit-hint { font-size: 10px; color: #888; flex-basis: 100%; }
+  .path-edit-hint { font-size: 10px; color: var(--text-muted, #888); flex-basis: 100%; }
   .path-edit-tools {
     display: inline-flex; gap: 0; align-items: stretch;
     border: 1px solid rgba(103, 232, 249, 0.3);
@@ -1874,7 +1874,7 @@
   }
   .stroke-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
   .stroke-info { flex: 1; min-width: 0; }
-  .sname { display: block; font-size: 12px; color: #ddd; }
+  .sname { display: block; font-size: 12px; color: var(--text-primary, #ddd); }
   .smeta { display: block; font-size: 10px; color: #666; }
   .del-btn {
     background: none; border: 1px solid transparent; color: #666;

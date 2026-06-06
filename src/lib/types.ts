@@ -326,7 +326,7 @@ export interface JSAnimationSource {
 // 'stretch' = distort to fill (default), 'fill' = maintain aspect + crop overflow (CSS cover), 'crop' = maintain aspect + letterbox (CSS contain)
 export type ContentFitMode = 'stretch' | 'fill' | 'crop';
 
-export type LayerType = 'media' | 'lines' | 'svg' | 'color' | 'lightpainting' | 'adv-lightpaint' | 'text' | 'splat' | 'model3d' | 'screen' | 'group' | 'pixel-fx' | 'gpu';
+export type LayerType = 'media' | 'lines' | 'svg' | 'color' | 'lightpainting' | 'adv-lightpaint' | 'text' | 'splat' | 'model3d' | 'screen' | 'group' | 'pixel-fx' | 'gpu' | 'arcade';
 
 /**
  * GPU layer — hosts a swappable WebGPU shader (similar to how a
@@ -373,6 +373,60 @@ export function createDefaultGPULayerContent(): GPULayerContent {
   return {
     shaderId: 'planet',
     params: {},   // shader populates defaults from its schema on first render
+  };
+}
+
+/**
+ * Arcade layer — gamified, audio-reactive visuals that share the host's
+ * audio bands, MIDI mapping, mesh warp, and effect chain. Each arcade
+ * layer mounts a single game pack (`.gapack`) at runtime. The bundled
+ * "Tendril Storm" pack is the default; future packs (community AGPL or
+ * paid commercial) drop in via the same loader contract.
+ *
+ * Renders to its own OffscreenCanvas / WebGL render target so the
+ * existing layer pipeline (warp / blend / per-layer effects /
+ * compositor) handles the output exactly like any other layer. The
+ * arcade engine is just the SOURCE of the pixels.
+ */
+export interface ArcadeLayerContent {
+  /** Game pack id — matches `manifest.id` in the loaded .gapack. The
+   *  bundled Tendril Storm pack uses id `ghostarcade.tendril-storm`. */
+  packId: string;
+  /** Active loadout id from the pack's `loadouts/`. The pack provides
+   *  curated starter loadouts; this picks one. Null until the user
+   *  chooses (defaults to the pack's first loadout at runtime). */
+  loadoutId: string | null;
+  /** World theme override — null means "use the pack's default theme"
+   *  from world-theme.json. When set, this slot can be remapped to
+   *  another of the pack's themes (e.g. dark/neon/wireframe variants). */
+  themeId: string | null;
+  /** Per-pack params (density / difficulty / spawn intensity / etc.).
+   *  Keys + types defined by the active pack's manifest schema. The
+   *  ArcadePanel renders controls accordingly. */
+  params: Record<string, any>;
+  /** Per-pack param history — same stash-on-switch pattern as
+   *  GPULayerContent.paramsByShader, so swapping packs mid-session
+   *  doesn't wipe the prior pack's tunings. */
+  paramsByPack?: Record<string, Record<string, any>>;
+  /** Controller binding overrides keyed by action id. Falls back to the
+   *  pack's `controls.json` recommended bindings when unset. */
+  controlOverrides?: Record<string, string>;
+  /** Performer-only UI overlay (crosshair / combo meter / ultimate
+   *  charge). Off by default so audience output stays clean — the
+   *  performer can flip it on for their monitor. */
+  showHUD?: boolean;
+}
+
+export function createDefaultArcadeContent(): ArcadeLayerContent {
+  return {
+    // Bundled pack id. PackLoader resolves this to the in-tree
+    // welcome-showcase pack source until Phase 6 migrates it to the
+    // .gapack runtime path.
+    packId: 'ghostarcade.tendril-storm',
+    loadoutId: null,
+    themeId: null,
+    params: {},
+    showHUD: false,
   };
 }
 
@@ -2375,6 +2429,7 @@ export interface Layer {
   model3dContent: Model3DContent | null;  // For 3D model layers
   pixelFXContent: PixelFXContent | null;  // For pixel-fx layers (WebGPU source-to-particles)
   gpuLayerContent: GPULayerContent | null; // For 'gpu' layers (swappable WebGPU shaders)
+  arcadeContent: ArcadeLayerContent | null; // For 'arcade' layers (gamified visuals + game packs)
 
   // Transform (applied to the whole layer quad)
   position: Point2D;  // Offset in normalized coords (0-1)
@@ -4242,6 +4297,12 @@ export interface StagePreset {
     activeEffectId: string | null;
     automation: SurfaceEffectAutomation | null;
   };
+  /** Full 3D Ghost Stage snapshot — venue, lighting, scenery overrides,
+   *  user-placed elements, per-screen 3D tweaks. Captured at save time
+   *  so loading the preset rebuilds the matching 3D view alongside the
+   *  2D mapping layout. Stored as an opaque JSON blob to avoid pulling
+   *  Stage3DScene into every consumer of StagePreset. */
+  stage3d?: unknown;
 }
 
 // SynthVision Keyboard Clip Assignment
@@ -4897,6 +4958,7 @@ export function createLayer(id: string, name: string, type: LayerType = 'media')
     model3dContent: type === 'model3d' ? createDefaultModel3DContent() : null,
     pixelFXContent: type === 'pixel-fx' ? createDefaultPixelFXContent() : null,
     gpuLayerContent: type === 'gpu' ? createDefaultGPULayerContent() : null,
+    arcadeContent: type === 'arcade' ? createDefaultArcadeContent() : null,
     position: { x: 0, y: 0 },
     scale: { x: 1, y: 1 },
     rotation: 0,
@@ -4968,6 +5030,10 @@ export function createPixelFXLayer(id: string, name: string): Layer {
 
 export function createGPULayer(id: string, name: string): Layer {
   return createLayer(id, name, 'gpu');
+}
+
+export function createArcadeLayer(id: string, name: string): Layer {
+  return createLayer(id, name, 'arcade');
 }
 
 export function createVJDeck(id: string): VJDeck {

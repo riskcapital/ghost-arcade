@@ -942,7 +942,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #888;
+    color: var(--text-muted, #888);
     font: 14px/1.4 ui-monospace, monospace;
     z-index: 100;
     pointer-events: none;

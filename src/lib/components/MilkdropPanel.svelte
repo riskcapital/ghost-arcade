@@ -228,7 +228,7 @@
   .mk-hotkey-hint kbd {
     background: #15102a;
     border: 1px solid #2a2235;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     border-radius: 3px;
     padding: 1px 5px;
     font-size: 9px;
@@ -281,7 +281,7 @@
     flex: 1;
     background: #0a0612;
     border: 1px solid #2a2235;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     padding: 4px 6px;
     border-radius: 3px;
     font-size: 10px;
@@ -312,7 +312,7 @@
   .mk-row-name {
     flex: 1;
     font-size: 10px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

@@ -196,6 +196,11 @@
           <!-- Center pip indicator -->
           <circle cx="17" cy="17" r="2" fill="var(--macro-color)" opacity={0.4 + m.value * 0.6} />
         </svg>
+        <span
+          class="macro-pointer"
+          style="transform: rotate({-135 + m.value * 270}deg)"
+          aria-hidden="true"
+        ></span>
         {#if fxCount > 0}
           <span class="macro-dest-count" style="--macro-color: {m.color}" title="{enabledFxCount} of {fxCount} effects enabled">{fxCount}</span>
         {/if}
@@ -485,6 +490,22 @@
 
   .macro-svg {
     pointer-events: none;
+    position: relative;
+    z-index: 1;
+  }
+
+  .macro-pointer {
+    display: none;
+    position: absolute;
+    top: 5px;
+    left: 50%;
+    z-index: 2;
+    width: 2px;
+    height: 12px;
+    margin-left: -1px;
+    border-radius: 999px;
+    transform-origin: 50% 12px;
+    pointer-events: none;
   }
 
   .macro-dest-count {
@@ -503,12 +524,13 @@
     align-items: center;
     justify-content: center;
     line-height: 1;
+    z-index: 3;
   }
 
   .macro-name {
     background: none;
     border: none;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 8px;
     font-weight: 700;
     letter-spacing: 0.06em;
@@ -519,7 +541,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .macro-name:hover { color: #ccc; }
+  .macro-name:hover { color: var(--text-primary, #ccc); }
 
   .macro-name-input {
     width: 50px;
@@ -580,7 +602,7 @@
     border-radius: 50%;
     background: rgba(255, 255, 255, 0.06);
     border: none;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     cursor: pointer;
     font-size: 14px;
     display: flex;
@@ -597,7 +619,7 @@
   .macro-popover-section-title {
     font-size: 9px;
     font-weight: 700;
-    color: #888;
+    color: var(--text-muted, #888);
     letter-spacing: 0.16em;
   }
   /* Header row inside a section: title on the left + action buttons on
@@ -653,7 +675,7 @@
   .macro-fx-expand {
     background: none;
     border: none;
-    color: #888;
+    color: var(--text-muted, #888);
     cursor: pointer;
     font-size: 9px;
     line-height: 1;
@@ -707,7 +729,7 @@
   }
   .macro-fx-param-label {
     font-size: 10px;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -749,7 +771,7 @@
     grid-column: 2 / 4;
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.12);
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     font-size: 11px;
     padding: 3px 6px;
     border-radius: 3px;
@@ -848,7 +870,7 @@
     flex: 1;
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.12);
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     font-size: 11px;
     padding: 4px 6px;
     border-radius: 3px;
@@ -864,7 +886,7 @@
     border-left: 2px solid #BB86FC;
     padding: 6px 8px;
     font-size: 10px;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     line-height: 1.45;
   }
 
@@ -910,7 +932,7 @@
   }
   .macro-dest-label {
     font-size: 11px;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -927,7 +949,7 @@
   .macro-dest-curve {
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     border-radius: 3px;
     font-size: 11px;
     padding: 2px;
@@ -937,7 +959,7 @@
     width: 100%;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     font-size: 10px;
     padding: 2px 4px;
     border-radius: 3px;
@@ -946,11 +968,132 @@
   .macro-dest-remove {
     background: none;
     border: none;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 14px;
     line-height: 1;
     cursor: pointer;
     padding: 0;
   }
   .macro-dest-remove:hover { color: #ff6b6b; }
+
+  :global(html[data-theme="arcade"]) .macro-bar {
+    gap: 7px;
+  }
+
+  :global(html[data-theme="arcade"]) .macro-slot {
+    gap: 4px;
+  }
+
+  :global(html[data-theme="arcade"]) .macro-knob {
+    width: 42px;
+    height: 42px;
+    background:
+      radial-gradient(circle at 50% 48%, #1a1814 0 45%, #090807 46% 62%, transparent 63%),
+      conic-gradient(from 210deg, #28231b 0 75%, #0c0b09 75% 100%);
+    border: 1px solid #050403;
+    box-shadow:
+      inset 0 2px 4px rgba(255, 255, 255, 0.10),
+      inset 0 -5px 8px rgba(0, 0, 0, 0.80),
+      0 0 0 3px #342b20,
+      0 0 0 4px rgba(245, 236, 222, 0.11),
+      0 7px 15px rgba(0, 0, 0, 0.65);
+  }
+
+  :global(html[data-theme="arcade"]) .macro-knob:hover {
+    background:
+      radial-gradient(circle at 50% 48%, #211d17 0 45%, #0b0908 46% 62%, transparent 63%),
+      conic-gradient(from 210deg, #3a2f22 0 75%, #0f0d0a 75% 100%);
+    border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.50));
+    box-shadow:
+      inset 0 2px 4px rgba(255, 255, 255, 0.12),
+      inset 0 -5px 8px rgba(0, 0, 0, 0.80),
+      0 0 0 3px #3b2f22,
+      0 0 0 4px var(--ga-coral-line, rgba(255, 111, 94, 0.50)),
+      0 0 14px color-mix(in srgb, var(--ga-coral, #ff6f5e) 25%, transparent),
+      0 7px 15px rgba(0, 0, 0, 0.65);
+  }
+
+  :global(html[data-theme="arcade"]) .macro-knob::before {
+    content: "";
+    position: absolute;
+    inset: 5px;
+    border-radius: 50%;
+    background:
+      radial-gradient(circle at 38% 28%, rgba(255, 255, 255, 0.10), transparent 26%),
+      linear-gradient(145deg, #242018, #0a0907 58%, #020202);
+    box-shadow:
+      inset 0 1px 1px rgba(255, 255, 255, 0.16),
+      inset 0 -4px 7px rgba(0, 0, 0, 0.82);
+  }
+
+  :global(html[data-theme="arcade"]) .macro-svg {
+    opacity: 0.92;
+    filter: drop-shadow(0 0 5px color-mix(in srgb, var(--macro-color) 35%, transparent));
+    z-index: 1;
+  }
+
+  :global(html[data-theme="arcade"]) .macro-svg path:first-child {
+    stroke: rgba(245, 236, 222, 0.13);
+  }
+
+  :global(html[data-theme="arcade"]) .macro-svg circle {
+    opacity: 0;
+  }
+
+  :global(html[data-theme="arcade"]) .macro-pointer {
+    display: block;
+    background: linear-gradient(180deg, #fff2d6, var(--ga-coral, #ff6f5e));
+    box-shadow: 0 0 6px var(--ga-coral-glow, rgba(255, 111, 94, 0.50));
+  }
+
+  :global(html[data-theme="arcade"]) .macro-name {
+    color: var(--ga-ink-2, #5e564a);
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    letter-spacing: 0.11em;
+  }
+
+  :global(html[data-theme="arcade"]) .macro-name:hover {
+    color: var(--ga-coral, #ff6f5e);
+    text-shadow: 0 0 7px var(--ga-coral-glow, rgba(255, 111, 94, 0.50));
+  }
+
+  :global(html[data-theme="arcade"]) .macro-dest-count {
+    background: var(--ga-coral, #ff6f5e);
+    color: #231009;
+    box-shadow: 0 0 8px var(--ga-coral-glow, rgba(255, 111, 94, 0.50));
+  }
+
+  :global(html[data-theme="arcade"]) .macro-popover {
+    background: var(--ga-faceplate-bg, #16140f);
+    border-color: var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 3px);
+    box-shadow:
+      inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.16)),
+      0 20px 60px rgba(0, 0, 0, 0.66);
+  }
+
+  :global(html[data-theme="arcade"]) .macro-fx-card.dragging,
+  :global(html[data-theme="arcade"]) .macro-fx-card.expanded,
+  :global(html[data-theme="arcade"]) .macro-fx-params,
+  :global(html[data-theme="arcade"]) .macro-popover-hint {
+    background: var(--ga-coral-soft, rgba(255, 111, 94, 0.13)) !important;
+    border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.50)) !important;
+  }
+
+  :global(html[data-theme="arcade"]) .macro-fx-expand.open,
+  :global(html[data-theme="arcade"]) .macro-popover-section-title,
+  :global(html[data-theme="arcade"]) .macro-popover-row strong,
+  :global(html[data-theme="arcade"]) .macro-dest-toggle {
+    color: var(--ga-coral, #ff6f5e);
+  }
+
+  :global(html[data-theme="arcade"]) .macro-fx-param-slider::-webkit-slider-thumb,
+  :global(html[data-theme="arcade"]) .macro-opacity-slider::-webkit-slider-thumb {
+    background: var(--ga-coral, #ff6f5e);
+  }
+
+  :global(html[data-theme="arcade"]) .macro-fx-param-slider::-moz-range-thumb,
+  :global(html[data-theme="arcade"]) .macro-opacity-slider::-moz-range-thumb {
+    background: var(--ga-coral, #ff6f5e);
+  }
 </style>

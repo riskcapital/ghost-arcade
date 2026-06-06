@@ -475,7 +475,7 @@
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 3px;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     font-size: 8px;
     padding: 2px 3px;
     cursor: pointer;

@@ -205,7 +205,7 @@
   .header-title {
     font-weight: 700;
     font-size: 13px;
-    color: #eee;
+    color: var(--text-primary, #eee);
     letter-spacing: 0.3px;
   }
 
@@ -243,7 +243,7 @@
     text-decoration: underline;
   }
   .pb-authors {
-    color: #888;
+    color: var(--text-muted, #888);
   }
   .pb-license {
     margin-left: auto;
@@ -293,10 +293,10 @@
     flex: 1;
     min-width: 40px;
     padding: 4px 6px;
-    background: #1a1a22;
+    background: var(--bg-tertiary, #1a1a22);
     border: 1px solid #333;
     border-radius: 3px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 9px;
     cursor: pointer;
     transition: all 0.12s;
@@ -304,7 +304,7 @@
 
   .sel-btn:hover {
     background: #2a2a38;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
   }
 
   .sel-btn.active {
@@ -326,7 +326,7 @@
 
   .toggle-btn {
     padding: 3px 14px;
-    background: #1a1a22;
+    background: var(--bg-tertiary, #1a1a22);
     border: 1px solid #333;
     border-radius: 3px;
     color: #666;

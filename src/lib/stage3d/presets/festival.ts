@@ -1,0 +1,151 @@
+// Festival preset — outdoor mainstage with a wide curved LED wall
+// behind the artist, two stack walls flanking, two delay walls further
+// out, and a long stage runway. Camera lands at front-of-house centre.
+//
+// Units are meters. All `id` values stable so the same preset reloaded
+// updates the existing nodes rather than spawning duplicates — useful
+// when the Director regenerates a stage from a tweak.
+
+import type { Stage3DScene } from '../types';
+
+export const FESTIVAL_PRESET: Stage3DScene = {
+  id: 'preset-festival',
+  name: 'Festival Mainstage',
+  schemaVersion: 1,
+  thumbnail: undefined,
+  environment: {
+    background: '#04060f',
+    ambient: 0.35,
+    showGround: true,
+    groundColor: '#0e1018',
+  },
+  camera: {
+    position: [0, 8, 24],
+    target: [0, 4, 0],
+    fov: 50,
+  },
+  platform: {
+    enabled: true,
+    position: [0, 0, -3],
+    width: 26,
+    height: 1.2,
+    depth: 9,
+    topColor: '#0a0a0e',
+    skirtColor: '#1c1418',
+    underglow: { enabled: true, color: '#FF8577', intensity: 1.8 },
+    bevelSize: 0.2,
+  },
+  nodes: [
+    // Main backdrop — wide curved wall, slightly concave so it hugs the camera.
+    {
+      id: 'fest-back-main',
+      name: 'Main Backdrop',
+      type: 'led-screen',
+      position: [0, 5, -8],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      visible: true,
+      width: 18,
+      height: 6,
+      curvature: -0.05,
+      finish: 'led',
+      frameDepth: 0.3,
+      source: 'auto',
+      brightness: 1.6,
+      showPixels: false,
+    },
+    // Left stack — vertical tower of three columns.
+    {
+      id: 'fest-stack-l',
+      name: 'Left Stack',
+      type: 'led-screen',
+      position: [-10, 4.5, -6],
+      rotation: [0, Math.PI / 7, 0],
+      scale: [1, 1, 1],
+      visible: true,
+      width: 3,
+      height: 7,
+      curvature: 0,
+      finish: 'led',
+      frameDepth: 0.3,
+      source: 'auto',
+      brightness: 1.6,
+      showPixels: false,
+    },
+    // Right stack — mirror of left.
+    {
+      id: 'fest-stack-r',
+      name: 'Right Stack',
+      type: 'led-screen',
+      position: [10, 4.5, -6],
+      rotation: [0, -Math.PI / 7, 0],
+      scale: [1, 1, 1],
+      visible: true,
+      width: 3,
+      height: 7,
+      curvature: 0,
+      finish: 'led',
+      frameDepth: 0.3,
+      source: 'auto',
+      brightness: 1.6,
+      showPixels: false,
+    },
+    // Front-of-stage vertical LED strip — replaces the previous floor
+    // apron that was hidden inside the deck. This sits along the front
+    // face of the platform skirt, facing the audience.
+    {
+      id: 'fest-front-strip',
+      name: 'Front Strip',
+      type: 'led-screen',
+      position: [0, 0.6, 1.55],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      visible: true,
+      width: 22,
+      height: 1.0,
+      curvature: 0,
+      finish: 'led',
+      frameDepth: 0.1,
+      source: 'auto',
+      brightness: 1.6,
+      showPixels: false,
+    },
+    // Delay screens, further into the crowd, angled inward.
+    {
+      id: 'fest-delay-l',
+      name: 'Delay Left',
+      type: 'led-screen',
+      position: [-22, 6, 10],
+      rotation: [0, Math.PI / 5, 0],
+      scale: [1, 1, 1],
+      visible: true,
+      width: 6,
+      height: 4,
+      curvature: 0,
+      finish: 'led',
+      frameDepth: 0.3,
+      source: 'auto',
+      brightness: 1.4,
+      showPixels: false,
+    },
+    {
+      id: 'fest-delay-r',
+      name: 'Delay Right',
+      type: 'led-screen',
+      position: [22, 6, 10],
+      rotation: [0, -Math.PI / 5, 0],
+      scale: [1, 1, 1],
+      visible: true,
+      width: 6,
+      height: 4,
+      curvature: 0,
+      finish: 'led',
+      frameDepth: 0.3,
+      source: 'auto',
+      brightness: 1.4,
+      showPixels: false,
+    },
+  ],
+  lightingCueId: null,
+  meta: { category: 'outdoor', scale: 'large' },
+};

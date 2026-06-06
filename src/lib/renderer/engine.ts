@@ -2270,6 +2270,7 @@ export class RenderEngine {
     // This runs AFTER all other material setup so it works with any shape type.
     let prevCropEnabled: boolean | undefined;
     let prevCropRegion: THREE.Vector4 | undefined;
+    let prevCustomShapeFit: number | undefined;
     if ((layer as any)._unifiedCrop) {
       const c = layer.corners;
       const minX = Math.min(c.topLeft.x, c.topRight.x, c.bottomLeft.x, c.bottomRight.x);
@@ -2285,6 +2286,15 @@ export class RenderEngine {
       // So xy = offset, zw = scale (portion of texture to show)
       obj.material.uniforms.uCropEnabled.value = true;
       obj.material.uniforms.uCropRegion.value.set(minX, 1 - maxY, maxX - minX, maxY - minY);
+
+      // CRITICAL: when the child screen has a polygon shape with fit
+      // mode 'warp' or 'fill', the shader's custom-shape pass (further
+      // down in shaders.ts) overwrites `sampledUv` with bbox-relative
+      // UVs and our unified crop is lost. Force the fit mode to 'mask'
+      // (0) for the unified pass so the polygon still masks the output
+      // but doesn't remap UVs. Restored below alongside the crop.
+      prevCustomShapeFit = obj.material.uniforms.uCustomShapeFit.value;
+      obj.material.uniforms.uCustomShapeFit.value = 0;
     }
 
     // Render to layer target
@@ -2298,10 +2308,13 @@ export class RenderEngine {
     this.scene.remove(obj.mesh);
     this.renderer.setClearColor(prevClearColor, prevClearAlpha);
 
-    // Restore crop if we overrode it for unified mode
+    // Restore crop + custom-shape fit if we overrode them for unified mode
     if ((layer as any)._unifiedCrop) {
       obj.material.uniforms.uCropEnabled.value = prevCropEnabled;
       obj.material.uniforms.uCropRegion.value.copy(prevCropRegion!);
+      if (prevCustomShapeFit !== undefined) {
+        obj.material.uniforms.uCustomShapeFit.value = prevCustomShapeFit;
+      }
       delete (layer as any)._unifiedCrop;
     }
 

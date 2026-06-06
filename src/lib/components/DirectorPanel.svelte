@@ -402,7 +402,7 @@
   /* ─── CHAT ─── */
   .dp-chat {
     flex: 1; display: flex; flex-direction: column;
-    background: #1a1a2e; border: 1px solid rgba(255,255,255,0.06);
+    background: var(--bg-secondary, #1a1a2e); border: 1px solid rgba(255,255,255,0.06);
     border-radius: 8px; margin: 0 14px; min-height: 0; overflow: hidden;
   }
 
@@ -455,7 +455,7 @@
   .dp-action-item {
     display: flex; align-items: center; gap: 6px;
     font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #a0a0b8;
-    padding: 4px 8px; background: #1a1a2e; border-radius: 3px; margin-bottom: 2px;
+    padding: 4px 8px; background: var(--bg-secondary, #1a1a2e); border-radius: 3px; margin-bottom: 2px;
   }
   .dp-action-check { font-size: 10px; color: #4ade80; }
   .dp-action-detail { color: #606078; margin-left: auto; font-size: 9px; }
@@ -554,7 +554,7 @@
   .dp-transport-btn {
     height: 34px; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px;
     cursor: pointer; display: flex; align-items: center; justify-content: center;
-    transition: all 0.2s; background: #1a1a2e; color: #a0a0b8; font-size: 11px; font-weight: 600;
+    transition: all 0.2s; background: var(--bg-secondary, #1a1a2e); color: #a0a0b8; font-size: 11px; font-weight: 600;
   }
   .dp-transport-btn.play {
     flex: 1; background: #e84393; border-color: #e84393; color: white; gap: 6px;
@@ -563,7 +563,7 @@
   .dp-transport-btn.stop { width: 34px; color: #ef4444; }
   .dp-transport-btn.stop:hover { background: rgba(239,68,68,0.12); }
   .dp-auto-select {
-    background: #1a1a2e; border: 1px solid rgba(255,255,255,0.08);
+    background: var(--bg-secondary, #1a1a2e); border: 1px solid rgba(255,255,255,0.08);
     color: #a0a0b8; font-size: 10px; padding: 6px 8px; border-radius: 5px;
   }
 

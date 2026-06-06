@@ -71,6 +71,14 @@
   function cancel() {
     offlineRender.cancel();
   }
+  // Esc closes when the modal is open AND we're not actively
+  // rendering — matches every other modal's behaviour and keeps
+  // keyboard-driven flows fast.
+  function onKey(e: KeyboardEvent) {
+    if (!isOpen) return;
+    if (e.key === 'Escape' && !isRunning) closeAndReset();
+  }
+
   function closeAndReset() {
     offlineRender.reset();
     onClose();
@@ -94,6 +102,10 @@
   // Reference _tickPulse so Svelte re-runs the elapsed derivations.
   $: void _tickPulse;
 </script>
+
+<!-- svelte:window must live at component root, not inside {#if}.
+     The handler itself short-circuits when the modal is closed. -->
+<svelte:window onkeydown={onKey} />
 
 {#if isOpen}
 <div class="modal-backdrop" onclick={closeAndReset} role="presentation"></div>
@@ -262,7 +274,7 @@
     width: 560px;
     max-width: calc(100vw - 40px);
     max-height: calc(100vh - 80px);
-    background: #0a0a0c;
+    background: var(--bg-primary, #0a0a0c);
     border: 1px solid #2a2a30;
     border-radius: 10px;
     box-shadow: 0 16px 60px rgba(0, 0, 0, 0.6);
@@ -287,14 +299,18 @@
     font-weight: 600;
   }
   .close-btn {
-    width: 28px; height: 28px;
-    border: 1px solid #2a2a30;
+    /* 32×32 satisfies the 32px tap-target accessibility floor. */
+    width: 32px; height: 32px;
+    border: 1px solid var(--border-secondary, #2a2a30);
     background: transparent;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     border-radius: 4px;
     font-size: 18px;
     line-height: 1;
     cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   .close-btn:hover:not(:disabled) { background: rgba(255,255,255,0.06); color: #fff; }
   .close-btn:disabled { opacity: 0.3; cursor: not-allowed; }
@@ -304,7 +320,7 @@
     overflow-y: auto;
   }
   .lede {
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     font-size: 12px;
     margin: 0 0 16px;
     line-height: 1.5;
@@ -320,13 +336,13 @@
     font-size: 10px;
     letter-spacing: 1px;
     text-transform: uppercase;
-    color: #888;
+    color: var(--text-muted, #888);
   }
   .field input,
   .field select {
-    background: #14141a;
+    background: var(--bg-tertiary, #14141a);
     border: 1px solid #2a2a30;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     border-radius: 4px;
     padding: 7px 10px;
     font-size: 12px;
@@ -350,10 +366,10 @@
     flex-direction: column;
     align-items: flex-start;
     padding: 7px 10px;
-    background: #14141a;
+    background: var(--bg-tertiary, #14141a);
     border: 1px solid #2a2a30;
     border-radius: 4px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     cursor: pointer;
     text-align: left;
   }
@@ -377,7 +393,7 @@
     padding: 8px 12px;
     border-radius: 0 4px 4px 0;
     font-size: 11px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     line-height: 1.5;
     margin-bottom: 14px;
   }
@@ -409,7 +425,7 @@
   .btn-secondary {
     background: transparent;
     border: 1px solid #2a2a30;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
   }
   .btn-secondary:hover {
     border-color: #4cd1ff;
@@ -426,7 +442,7 @@
   }
   .progress-bar {
     height: 10px;
-    background: #14141a;
+    background: var(--bg-tertiary, #14141a);
     border-radius: 5px;
     overflow: hidden;
     border: 1px solid #1d1d22;
@@ -442,7 +458,7 @@
     margin-top: 6px;
     font-size: 11px;
     font-family: monospace;
-    color: #888;
+    color: var(--text-muted, #888);
   }
   .progress-hint {
     font-size: 10.5px;
@@ -462,8 +478,8 @@
     line-height: 56px;
     margin: 6px auto 12px;
   }
-  .success h3 { margin: 0 0 4px; color: #ddd; font-size: 16px; }
-  .success-meta { color: #888; font-size: 11px; font-family: monospace; margin: 0 0 12px; }
+  .success h3 { margin: 0 0 4px; color: var(--text-primary, #ddd); font-size: 16px; }
+  .success-meta { color: var(--text-muted, #888); font-size: 11px; font-family: monospace; margin: 0 0 12px; }
   .preview {
     width: 100%;
     max-height: 280px;
@@ -485,6 +501,6 @@
     margin: 6px auto 12px;
     font-weight: 700;
   }
-  .error h3 { margin: 0 0 8px; color: #ddd; font-size: 16px; }
+  .error h3 { margin: 0 0 8px; color: var(--text-primary, #ddd); font-size: 16px; }
   .error-msg { color: #ff8888; font-size: 12px; font-family: monospace; word-break: break-word; }
 </style>

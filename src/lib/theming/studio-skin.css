@@ -1,0 +1,2096 @@
+/* Studio skin — global visual overrides.
+   Targets the actual class names in App.svelte / LayerPanel /
+   MediaLibrary / etc. so the existing markup re-skins to the v10 mock
+   without rewriting components.
+
+   Svelte adds scoped class hashes per component, which beat global
+   rules on specificity. Where the existing component CSS hardcodes a
+   property and we need to overwrite it, we use `!important`.
+
+   Rule of thumb:
+   - Surfaces (bg, color, border) → !important (must win the bridge)
+   - Layout (padding, gap, dimensions) → !important on key cases
+   - Hovers / states → !important so they don't fall back to defaults */
+
+/* ============================================================
+   GLOBAL TYPOGRAPHY
+   ============================================================ */
+body {
+  font-family: var(--ga-font-ui, 'Hanken Grotesk', system-ui, sans-serif);
+  -webkit-font-smoothing: antialiased;
+  font-size: 14px;
+  /* Studio: neon green glow trail under the knob. Solid (not
+     color-mixed with transparent) so the fill reads bright against the
+     dark slot. The glow comes from the box-shadow on the fill via the
+     slider rule lower in this file. */
+  --ga-slider-fill: var(--ga-green, #46d18a);
+  --ga-slider-glow: rgba(70, 209, 138, 0.55);
+}
+
+/* Arcade: deep retro blue fill (matches the marquee/CRT palette). */
+html[data-theme="arcade"] body {
+  --ga-slider-fill: #2f4ad6;
+  --ga-slider-glow: rgba(58, 88, 230, 0.55);
+}
+
+/* ============================================================
+   TOP TOOLBAR
+   ============================================================ */
+.toolbar {
+  height: 52px !important;
+  padding: 0 14px !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  background: var(--ga-bar, #0e1014) !important;
+  border-bottom: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+}
+
+.toolbar-left,
+.toolbar-center,
+.toolbar-right {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+}
+
+.toolbar-center { flex: 1 !important; }
+
+/* Logo size — keep your skull/ghost emblem at the v10's 24px */
+.toolbar .header-logo {
+  height: 28px !important;
+  width: auto !important;
+  margin-right: 8px !important;
+}
+
+.toolbar .app-name,
+.toolbar-left > span:first-of-type {
+  font-weight: 700 !important;
+  font-size: 13px !important;
+  letter-spacing: 0.01em !important;
+  color: var(--ga-ink-0, #eef0f4) !important;
+}
+
+/* GPU indicator pill — green dot + mono label */
+.gpu-indicator {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 7px !important;
+  height: 32px !important;
+  padding: 0 12px !important;
+  border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  border-radius: var(--ga-r-hard, 2px) !important;
+  background: var(--ga-card, #13161c) !important;
+  font-family: var(--ga-font-mono, 'IBM Plex Mono', monospace) !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  color: var(--ga-ink-1, #9aa0ac) !important;
+  white-space: nowrap !important;
+}
+.gpu-dot {
+  width: 7px !important;
+  height: 7px !important;
+  border-radius: 50% !important;
+  background: var(--ga-green, #46d18a) !important;
+  box-shadow: 0 0 7px rgba(70, 209, 138, 0.6) !important;
+}
+
+/* File menu chip */
+.file-menu-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 7px !important;
+  height: 32px !important;
+  padding: 0 12px !important;
+  border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  border-radius: var(--ga-r-hard, 2px) !important;
+  background: var(--ga-card, #13161c) !important;
+  color: var(--ga-ink-1, #9aa0ac) !important;
+  font-weight: 600 !important;
+  font-size: 12.5px !important;
+  cursor: pointer !important;
+  white-space: nowrap !important;
+}
+.file-menu-btn:hover,
+.file-menu-btn.active {
+  color: var(--ga-ink-0, #eef0f4) !important;
+  border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20)) !important;
+}
+
+/* Output Window / Fullscreen / Stage 3D — ghost chips */
+.output-btn,
+.stage3d-btn {
+  height: 32px !important;
+  padding: 0 13px !important;
+  border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  border-radius: var(--ga-r-hard, 2px) !important;
+  background: var(--ga-card, #13161c) !important;
+  color: var(--ga-ink-1, #9aa0ac) !important;
+  font-weight: 600 !important;
+  font-size: 12.5px !important;
+  cursor: pointer !important;
+  white-space: nowrap !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 7px !important;
+}
+.output-btn:hover,
+.stage3d-btn:hover {
+  color: var(--ga-ink-0, #eef0f4) !important;
+  border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20)) !important;
+  background: var(--ga-card, #13161c) !important;
+}
+.output-btn.active,
+.stage3d-btn.active {
+  color: var(--ga-violet, #9b87f5) !important;
+  border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36)) !important;
+  background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10)) !important;
+}
+
+/* Square icon buttons — blackout / freeze / testpattern / screenshot / settings */
+.blackout-btn,
+.freeze-btn,
+.testpattern-btn,
+.screenshot-btn,
+.settings-btn {
+  width: 34px !important;
+  height: 32px !important;
+  padding: 0 !important;
+  border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  border-radius: var(--ga-r-hard, 2px) !important;
+  background: var(--ga-card, #13161c) !important;
+  color: var(--ga-ink-1, #9aa0ac) !important;
+  display: grid !important;
+  place-items: center !important;
+  cursor: pointer !important;
+}
+.blackout-btn:hover,
+.freeze-btn:hover,
+.testpattern-btn:hover,
+.screenshot-btn:hover,
+.settings-btn:hover {
+  color: var(--ga-ink-0, #eef0f4) !important;
+  border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20)) !important;
+}
+.blackout-btn.active,
+.freeze-btn.active {
+  color: var(--ga-coral, #ff6f5e) !important;
+  border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.40)) !important;
+  background: var(--ga-coral-soft, rgba(255, 111, 94, 0.11)) !important;
+}
+
+/* REC button (outlined red) + stop-rec */
+.rec-btn {
+  width: 34px !important;
+  height: 32px !important;
+  padding: 0 !important;
+  display: grid !important;
+  place-items: center !important;
+  border: 1px solid rgba(255, 68, 56, 0.4) !important;
+  border-radius: var(--ga-r-hard, 2px) !important;
+  background: transparent !important;
+  color: var(--ga-rec, #ff4438) !important;
+  cursor: pointer !important;
+}
+.stop-rec-btn {
+  height: 32px !important;
+  padding: 0 12px !important;
+  border-radius: var(--ga-r-soft, 7px) !important;
+  background: var(--ga-rec, #ff4438) !important;
+  color: #fff !important;
+  font-weight: 700 !important;
+  font-size: 12px !important;
+  border: none !important;
+  cursor: pointer !important;
+}
+
+/* VJ button — coral pill */
+.vj-btn {
+  height: 32px !important;
+  padding: 0 18px !important;
+  border-radius: var(--ga-r-soft, 7px) !important;
+  border: 1px solid var(--ga-coral, #ff6f5e) !important;
+  background: var(--ga-coral, #ff6f5e) !important;
+  color: #23110c !important;
+  font-weight: 700 !important;
+  font-size: 12.5px !important;
+  cursor: pointer !important;
+  letter-spacing: 0.02em !important;
+}
+.vj-btn:hover { filter: brightness(1.06) !important; }
+
+/* STAGE button — ghost pill */
+.stage-btn {
+  height: 32px !important;
+  padding: 0 18px !important;
+  border-radius: var(--ga-r-soft, 7px) !important;
+  border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  background: var(--ga-card, #13161c) !important;
+  color: var(--ga-ink-1, #9aa0ac) !important;
+  font-weight: 700 !important;
+  font-size: 12.5px !important;
+  cursor: pointer !important;
+  letter-spacing: 0.02em !important;
+}
+.stage-btn:hover {
+  color: var(--ga-ink-0, #eef0f4) !important;
+  border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20)) !important;
+}
+.stage-btn.active {
+  background: var(--ga-violet, #9b87f5) !important;
+  border-color: var(--ga-violet, #9b87f5) !important;
+  color: #160f2e !important;
+}
+
+/* Connect Mobile — outline button */
+.connection-btn {
+  height: 32px !important;
+  padding: 0 13px !important;
+  border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  border-radius: var(--ga-r-hard, 2px) !important;
+  background: transparent !important;
+  color: var(--ga-ink-1, #9aa0ac) !important;
+  font-weight: 600 !important;
+  font-size: 12.5px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 7px !important;
+  cursor: pointer !important;
+}
+.connection-btn:hover {
+  color: var(--ga-ink-0, #eef0f4) !important;
+  border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20)) !important;
+}
+
+/* ============================================================
+   LEFT PANEL — Layers + Properties
+   ============================================================ */
+.layer-panel {
+  background: var(--ga-panel, #0b0d11) !important;
+  border-right: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  font-family: var(--ga-font-ui, inherit) !important;
+}
+
+/* Section headers — Layers / Properties */
+.layer-panel .panel-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 13px 14px !important;
+}
+.layer-panel .panel-header h3,
+.layer-panel h3 {
+  font-weight: 700 !important;
+  font-size: 15px !important;
+  color: var(--ga-ink-0, #eef0f4) !important;
+  margin: 0 !important;
+}
+
+/* "+ Add Layer" violet pill */
+.layer-panel .btn-add {
+  height: 30px !important;
+  padding: 0 12px !important;
+  border-radius: var(--ga-r-soft, 7px) !important;
+  border: 1px solid var(--ga-violet-line, rgba(155, 135, 245, 0.36)) !important;
+  background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10)) !important;
+  color: var(--ga-violet, #9b87f5) !important;
+  font-weight: 600 !important;
+  font-size: 12px !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+}
+.layer-panel .btn-add:hover {
+  background: rgba(155, 135, 245, 0.18) !important;
+}
+
+/* Layer row */
+.layer-panel .layer-item {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  padding: 9px 10px !important;
+  margin: 5px 14px !important;
+  border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  border-radius: var(--ga-r-hard, 2px) !important;
+  background: transparent !important;
+  cursor: pointer !important;
+  position: relative !important;
+}
+.layer-panel .layer-item.selected,
+.layer-panel .layer-item.active {
+  border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36)) !important;
+  background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10)) !important;
+}
+.layer-panel .layer-item.selected::before,
+.layer-panel .layer-item.active::before {
+  content: "" !important;
+  position: absolute !important;
+  left: 0 !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  width: 2px !important;
+  background: var(--ga-violet, #9b87f5) !important;
+}
+.layer-panel .layer-item .layer-name,
+.layer-panel .layer-item .name {
+  font-weight: 600 !important;
+  font-size: 13.5px !important;
+  color: var(--ga-ink-1, #9aa0ac) !important;
+}
+.layer-panel .layer-item.selected .layer-name,
+.layer-panel .layer-item.active .layer-name {
+  color: var(--ga-ink-0, #eef0f4) !important;
+}
+
+/* Property rows */
+.layer-panel .property-row {
+  display: grid !important;
+  grid-template-columns: 90px 1fr !important;
+  align-items: center !important;
+  gap: 10px !important;
+  padding: 7px 14px !important;
+  margin-bottom: 4px !important;
+}
+.layer-panel .property-row label,
+.layer-panel .property-label {
+  font-size: 12.5px !important;
+  color: var(--ga-ink-1, #9aa0ac) !important;
+  font-weight: 500 !important;
+}
+
+/* Ranges / faders inside left panel */
+.layer-panel input[type="range"]:not(.hue-slider),
+.property-row input[type="range"]:not(.hue-slider) {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  width: 100% !important;
+  height: 12px !important;
+  border: 0 !important;
+  border-radius: 8px !important;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent calc(16.666% - 1px),
+      rgba(255, 255, 255, 0.10) calc(16.666% - 1px),
+      rgba(255, 255, 255, 0.10) 16.666%
+    ),
+    linear-gradient(
+      90deg,
+      var(--ga-slider-fill, color-mix(in srgb, var(--ga-blue, #5b8def) 42%, transparent)) 0
+        calc(11px + (100% - 22px) * var(--ga-range-pct, 0)),
+      transparent calc(11px + (100% - 22px) * var(--ga-range-pct, 0)) 100%
+    ),
+    var(--ga-slot, #050607) !important;
+  box-shadow: inset 0 0 0 1px var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  outline: none !important;
+  padding: 0 !important;
+}
+.layer-panel input[type="range"]:not(.hue-slider)::-webkit-slider-runnable-track,
+.property-row input[type="range"]:not(.hue-slider)::-webkit-slider-runnable-track {
+  height: 12px !important;
+  border-radius: 8px !important;
+  background: transparent !important;
+}
+.layer-panel input[type="range"]:not(.hue-slider)::-webkit-slider-thumb,
+.property-row input[type="range"]:not(.hue-slider)::-webkit-slider-thumb {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  width: 22px !important;
+  height: 30px !important;
+  margin-top: -9px !important;
+  border-radius: 5px !important;
+  background:
+    linear-gradient(
+      90deg,
+      transparent 0 5px,
+      var(--ga-violet, #9b87f5) 5px calc(100% - 5px),
+      transparent calc(100% - 5px) 100%
+    ) center / 100% 2px no-repeat,
+    linear-gradient(180deg, #40394f 0%, #231d30 52%, #15111d 100%) !important;
+  border: 1px solid #050506 !important;
+  box-shadow:
+    0 2px 5px rgba(0, 0, 0, 0.65),
+    inset 0 1px 0 rgba(255, 255, 255, 0.10) !important;
+  cursor: pointer !important;
+}
+
+/* Selects inside left panel */
+.layer-panel select,
+.property-row select {
+  height: 32px !important;
+  padding: 0 11px !important;
+  border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  border-radius: var(--ga-r-hard, 2px) !important;
+  background: transparent !important;
+  color: var(--ga-ink-0, #eef0f4) !important;
+  font-weight: 500 !important;
+  font-size: 13px !important;
+}
+
+/* ============================================================
+   STATUS BAR
+   ============================================================ */
+.status-bar,
+.statusbar {
+  display: flex !important;
+  align-items: center !important;
+  gap: 0 !important;
+  height: 26px !important;
+  background: var(--ga-bar, #0e1014) !important;
+  border-top: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  font-family: var(--ga-font-mono, 'IBM Plex Mono', monospace) !important;
+  font-size: 10.5px !important;
+  color: var(--ga-ink-2, #5e6571) !important;
+}
+.status-bar > *,
+.statusbar > * {
+  padding: 0 13px !important;
+  height: 100% !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  border-right: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07)) !important;
+}
+.status-bar b,
+.statusbar b {
+  color: var(--ga-ink-1, #9aa0ac) !important;
+  font-weight: 500 !important;
+}
+
+/* ============================================================
+   MEDIA LIBRARY (right panel)
+   ============================================================ */
+.media-library {
+  background: var(--ga-panel, #0b0d11) !important;
+  border-left: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  font-family: var(--ga-font-ui, inherit) !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+.media-library .library-title,
+.media-library .library-header {
+  font-weight: 800 !important;
+  font-size: 18px !important;
+  color: var(--ga-ink-0, #eef0f4) !important;
+  padding: 14px 14px 10px !important;
+}
+
+/* ── Library tabs (FX / JS / Saved / Vid / Img / Src / Plug) ── */
+.media-library .library-tabs {
+  display: flex !important;
+  padding: 0 8px !important;
+  border-bottom: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  gap: 2px !important;
+}
+.media-library .library-tab,
+.media-library .tab-btn {
+  flex: 1 !important;
+  display: inline-flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  gap: 4px !important;
+  padding: 9px 2px !important;
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 2px solid transparent !important;
+  color: var(--ga-ink-2, #5e6571) !important;
+  font-family: var(--ga-font-mono, 'IBM Plex Mono', monospace) !important;
+  font-size: 9px !important;
+  letter-spacing: 0.04em !important;
+  text-transform: uppercase !important;
+  cursor: pointer !important;
+}
+.media-library .library-tab.active,
+.media-library .tab-btn.active {
+  color: var(--ga-ink-0, #eef0f4) !important;
+  border-bottom-color: var(--ga-blue, #5b8def) !important;
+}
+
+/* ── AI buttons row — violet generate + blue video, side-by-side ── */
+.media-library .ai-generator-row {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 9px !important;
+  padding: 12px 14px !important;
+  border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07)) !important;
+}
+.media-library .btn-ai-generate {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 7px !important;
+  height: 38px !important;
+  border-radius: var(--ga-r-soft, 7px) !important;
+  border: 1px solid var(--ga-violet-line, rgba(155, 135, 245, 0.36)) !important;
+  background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10)) !important;
+  color: var(--ga-violet, #9b87f5) !important;
+  font-weight: 700 !important;
+  font-size: 13px !important;
+  cursor: pointer !important;
+  padding: 0 !important;
+}
+.media-library .btn-ai-generate:hover {
+  background: rgba(155, 135, 245, 0.18) !important;
+}
+.media-library .btn-ai-video {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 7px !important;
+  height: 38px !important;
+  border-radius: var(--ga-r-soft, 7px) !important;
+  border: 1px solid var(--ga-blue-line, rgba(91, 141, 239, 0.38)) !important;
+  background: var(--ga-blue-soft, rgba(91, 141, 239, 0.10)) !important;
+  color: var(--ga-blue, #5b8def) !important;
+  font-weight: 700 !important;
+  font-size: 13px !important;
+  cursor: pointer !important;
+  padding: 0 !important;
+}
+.media-library .btn-ai-video:hover {
+  background: rgba(91, 141, 239, 0.18) !important;
+}
+
+/* ── Bottom footer — side-by-side Add / Library ── */
+.media-library .lib-footer {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 9px !important;
+  padding: 12px 14px !important;
+  border-top: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  margin-top: auto !important;
+}
+.media-library .lib-add-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  height: 36px !important;
+  padding: 0 !important;
+  border-radius: var(--ga-r-soft, 7px) !important;
+  border: none !important;
+  background: var(--ga-violet, #9b87f5) !important;
+  color: #160f2e !important;
+  font-weight: 700 !important;
+  font-size: 13px !important;
+  cursor: pointer !important;
+}
+.media-library .lib-add-btn:hover { filter: brightness(1.06) !important; }
+.media-library .lib-library-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  height: 36px !important;
+  padding: 0 !important;
+  border-radius: var(--ga-r-hard, 2px) !important;
+  border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  background: transparent !important;
+  color: var(--ga-ink-1, #9aa0ac) !important;
+  font-weight: 600 !important;
+  font-size: 12.5px !important;
+  cursor: pointer !important;
+}
+.media-library .lib-library-btn:hover {
+  color: var(--ga-ink-0, #eef0f4) !important;
+  border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20)) !important;
+}
+
+/* ============================================================
+   GLOBAL FADER STYLING — v10 violet slot + metal cap
+   Applies to every <input type="range"> in the panels right of the
+   stage (effect params, shader params, audio reactivity). Static
+   visual: track is the slot, thumb is the metal grad with the coral
+   line through it (matches the mock). True dynamic fill requires
+   per-input inline styles which we'd add later.
+   ============================================================ */
+.media-library input[type="range"]:not(.hue-slider),
+.epr-slider,
+.fx-panel input[type="range"]:not(.hue-slider) {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  width: 100% !important;
+  height: 12px !important;
+  border: 0 !important;
+  border-radius: 8px !important;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent calc(16.666% - 1px),
+      rgba(255, 255, 255, 0.10) calc(16.666% - 1px),
+      rgba(255, 255, 255, 0.10) 16.666%
+    ),
+    linear-gradient(
+      90deg,
+      var(--ga-slider-fill, color-mix(in srgb, var(--ga-blue, #5b8def) 42%, transparent)) 0
+        calc(11px + (100% - 22px) * var(--ga-range-pct, 0)),
+      transparent calc(11px + (100% - 22px) * var(--ga-range-pct, 0)) 100%
+    ),
+    var(--ga-slot, #050607) !important;
+  box-shadow: inset 0 0 0 1px var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  outline: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+.media-library input[type="range"]:not(.hue-slider)::-webkit-slider-runnable-track,
+.epr-slider::-webkit-slider-runnable-track,
+.fx-panel input[type="range"]:not(.hue-slider)::-webkit-slider-runnable-track {
+  height: 12px !important;
+  border-radius: 8px !important;
+  background: transparent !important;
+}
+.media-library input[type="range"]:not(.hue-slider)::-webkit-slider-thumb,
+.epr-slider::-webkit-slider-thumb,
+.fx-panel input[type="range"]:not(.hue-slider)::-webkit-slider-thumb {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  width: 22px !important;
+  height: 30px !important;
+  margin-top: -9px !important;
+  border-radius: 5px !important;
+  background:
+    linear-gradient(
+      90deg,
+      transparent 0 5px,
+      var(--ga-violet, #9b87f5) 5px calc(100% - 5px),
+      transparent calc(100% - 5px) 100%
+    ) center / 100% 2px no-repeat,
+    linear-gradient(180deg, #40394f 0%, #231d30 52%, #15111d 100%) !important;
+  border: 1px solid #050506 !important;
+  box-shadow:
+    0 2px 5px rgba(0, 0, 0, 0.65),
+    inset 0 1px 0 rgba(255, 255, 255, 0.10) !important;
+  cursor: pointer !important;
+  position: relative !important;
+}
+.media-library input[type="range"]:not(.hue-slider)::-moz-range-track,
+.epr-slider::-moz-range-track,
+.fx-panel input[type="range"]:not(.hue-slider)::-moz-range-track {
+  height: 12px !important;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent calc(16.666% - 1px),
+      rgba(255, 255, 255, 0.10) calc(16.666% - 1px),
+      rgba(255, 255, 255, 0.10) 16.666%
+    ),
+    var(--ga-slot, #050607) !important;
+  border: none !important;
+  border-radius: 8px !important;
+  box-shadow: inset 0 0 0 1px var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+}
+.media-library input[type="range"]:not(.hue-slider)::-moz-range-progress,
+.epr-slider::-moz-range-progress,
+.fx-panel input[type="range"]:not(.hue-slider)::-moz-range-progress {
+  height: 12px !important;
+  background: var(--ga-slider-fill, color-mix(in srgb, var(--ga-blue, #5b8def) 42%, transparent)) !important;
+  border-radius: 8px 0 0 8px !important;
+}
+.media-library input[type="range"]:not(.hue-slider)::-moz-range-thumb,
+.epr-slider::-moz-range-thumb,
+.fx-panel input[type="range"]:not(.hue-slider)::-moz-range-thumb {
+  width: 22px !important;
+  height: 30px !important;
+  border: 1px solid #050506 !important;
+  border-radius: 5px !important;
+  background:
+    linear-gradient(
+      90deg,
+      transparent 0 5px,
+      var(--ga-violet, #9b87f5) 5px calc(100% - 5px),
+      transparent calc(100% - 5px) 100%
+    ) center / 100% 2px no-repeat,
+    linear-gradient(180deg, #40394f 0%, #231d30 52%, #15111d 100%) !important;
+  cursor: pointer !important;
+}
+
+/* ============================================================
+   BOTTOM DOCK — pills already token-aware
+   ============================================================ */
+.bottom-dock {
+  background: var(--ga-bar, rgba(14, 16, 20, 0.92)) !important;
+  border-color: var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+}
+
+/* ============================================================
+   STUDIO SYSTEM BASE - shared surfaces, controls, and dialogs
+   ============================================================ */
+.app,
+.vj-overlay,
+.stage-overlay,
+.stage3d-root,
+.settings-panel,
+.mobile-app,
+.standalone-app,
+.output-app {
+  font-family: var(--ga-font-ui, 'Hanken Grotesk', system-ui, sans-serif) !important;
+  color: var(--ga-ink-0, #eef0f4) !important;
+}
+
+.left-sidebar,
+.layer-panel,
+.screen-panel,
+.inspector,
+.properties-effects-panel,
+.text-panel,
+.drawing-panel,
+.lines-panel,
+.splat-panel,
+.model3d-panel,
+.pfx-panel,
+.gpu-panel,
+.plugin-panel,
+.edge-effects-panel,
+.hy-panel,
+.mk-panel,
+.ss-panel,
+.mp-panel,
+.director-panel,
+.clip-preview-panel,
+.preset-tray,
+.seq-tray,
+.kf-tray,
+.svg-tray,
+.media-tray,
+.media-library,
+.settings-sidebar,
+.settings-content,
+.right-panel-vj,
+.effects-panel-vj,
+.shader-params-panel,
+.media-tray-vj,
+.vj-sources-panel,
+.vj-plugins-panel,
+.sources-panel,
+.plugins-panel {
+  background: var(--ga-panel, #0b0d11) !important;
+  color: var(--ga-ink-0, #eef0f4) !important;
+  border-color: var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+}
+
+.panel-header,
+.tray-header,
+.settings-header,
+.modal-head,
+.modal-header,
+.shader-params-panel-header,
+.effects-header,
+.media-library-header,
+.stage-header,
+.topbar {
+  background: var(--ga-bar, #0e1014) !important;
+  color: var(--ga-ink-0, #eef0f4) !important;
+  border-color: var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+}
+
+.panel-header h3,
+.tray-header h3,
+.settings-header h2,
+.settings-section h3,
+.modal-header h2,
+.modal-head h2,
+.shader-params-overlay-title,
+.close-modal-title,
+.welcome-panel h1,
+.update-modal-header h2,
+.shortcut-overlay-title {
+  color: var(--ga-ink-0, #eef0f4) !important;
+  font-weight: 800 !important;
+  letter-spacing: 0 !important;
+}
+
+.settings-section h3,
+.section-title,
+.panel-title,
+.tray-title,
+.library-section-label,
+.stage-presets-label,
+.shader-params-overlay-title,
+.amp-popover-title,
+.macro-popover-section-title {
+  color: var(--ga-violet, #9b87f5) !important;
+  font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace) !important;
+  font-size: 10.5px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+}
+
+:is(.app, .settings-panel, .stage-overlay, .stage3d-root, .mobile-app, .modal-shell, .modal-panel, .shader-library-modal) :is(input[type="text"], input[type="number"], input[type="password"], input[type="url"], input[type="search"], textarea, select) {
+  background-color: var(--ga-slot, #050607) !important;
+  color: var(--ga-ink-0, #eef0f4) !important;
+  border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  border-radius: var(--ga-r-hard, 2px) !important;
+  font-family: var(--ga-font-ui, inherit) !important;
+}
+
+:is(.app, .settings-panel, .stage-overlay, .stage3d-root, .mobile-app, .modal-shell, .modal-panel, .shader-library-modal) :is(input[type="text"], input[type="number"], input[type="password"], input[type="url"], input[type="search"], textarea, select):hover {
+  border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20)) !important;
+}
+
+:is(.app, .settings-panel, .stage-overlay, .stage3d-root, .mobile-app, .modal-shell, .modal-panel, .shader-library-modal) :is(input[type="text"], input[type="number"], input[type="password"], input[type="url"], input[type="search"], textarea, select):focus {
+  outline: none !important;
+  border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36)) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ga-violet, #9b87f5) 18%, transparent) !important;
+}
+
+:is(.primary-btn, .btn-save, .btn-recover, .apply-stage-btn, .empty-btn.primary, .pwa-install-btn, .connect-form button, .library-load-btn, .stage-preset-save-btn, .library-add-btn, .folder-input-ok) {
+  background: var(--ga-violet, #9b87f5) !important;
+  border: 1px solid var(--ga-violet, #9b87f5) !important;
+  color: #160f2e !important;
+  border-radius: var(--ga-r-soft, 7px) !important;
+  font-weight: 800 !important;
+  box-shadow: none !important;
+}
+
+:is(.primary-btn, .btn-save, .btn-recover, .apply-stage-btn, .empty-btn.primary, .pwa-install-btn, .connect-form button, .library-load-btn, .stage-preset-save-btn, .library-add-btn, .folder-input-ok):hover:not(:disabled) {
+  filter: brightness(1.06) !important;
+  transform: none !important;
+}
+
+:is(.secondary-btn, .text-btn, .back-btn, .tool-btn, .palette-btn, .zoom-btn, .tbtn, .icon-btn, .show-panels-btn, .empty-btn, .binding-action, .inspector-action, .stage-preset-btn, .stage-scope-toggle, .btn-check-update, .close-modal-btn, .modal-btn, .library-delete-btn, .browse-library-btn, .add-effect-btn, .brush-pill, .mode-pill, .media-btn, .disconnect-btn) {
+  background: var(--ga-card, #13161c) !important;
+  border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  color: var(--ga-ink-1, #9aa0ac) !important;
+  border-radius: var(--ga-r-hard, 2px) !important;
+  box-shadow: none !important;
+}
+
+:is(.secondary-btn, .text-btn, .back-btn, .tool-btn, .palette-btn, .zoom-btn, .tbtn, .icon-btn, .show-panels-btn, .empty-btn, .binding-action, .inspector-action, .stage-preset-btn, .stage-scope-toggle, .btn-check-update, .close-modal-btn, .modal-btn, .library-delete-btn, .browse-library-btn, .add-effect-btn, .brush-pill, .mode-pill, .media-btn, .disconnect-btn):hover:not(:disabled) {
+  color: var(--ga-ink-0, #eef0f4) !important;
+  border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20)) !important;
+  background: var(--ga-card, #13161c) !important;
+  transform: none !important;
+}
+
+:is(.tool-btn.active, .palette-btn.active, .mode-pill.active, .brush-pill.active, .stage-preset-btn.active, .sidebar-section.active, .tab.active, .library-tab.active, .stage-mix-btn.active, .seg-btn.on) {
+  background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10)) !important;
+  border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36)) !important;
+  color: var(--ga-violet, #9b87f5) !important;
+}
+
+.btn-discard,
+.btn-cancel,
+.library-delete-btn:hover,
+.effect-remove:hover,
+.slice-icon-btn.danger:hover {
+  color: var(--ga-rec, #ff4438) !important;
+  border-color: rgba(255, 68, 56, 0.45) !important;
+  background: rgba(255, 68, 56, 0.09) !important;
+}
+
+.modal-backdrop,
+.modal-overlay,
+.settings-overlay,
+.shader-library-backdrop,
+.welcome-overlay,
+.update-modal-backdrop,
+.shortcut-overlay-backdrop,
+.close-modal-backdrop,
+.kf-modal-backdrop,
+.effects-overlay,
+.media-library-overlay,
+.paint-sheet-backdrop {
+  background: rgba(3, 4, 6, 0.72) !important;
+  backdrop-filter: blur(10px) !important;
+}
+
+.modal-shell,
+.modal-panel,
+.settings-panel,
+.shader-library-modal,
+.welcome-panel,
+.update-modal,
+.shortcut-overlay,
+.close-modal,
+.kf-modal,
+.mp-learn-modal,
+.confirm-popover,
+.aip-popover,
+.amp-popover,
+.macro-popover,
+.loop-options-popover,
+.timelapse-popover,
+.capture-picker-modal,
+.modal-card,
+.launcher-sheet {
+  background: var(--ga-panel, #0b0d11) !important;
+  border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  border-radius: var(--ga-r-soft, 7px) !important;
+  color: var(--ga-ink-0, #eef0f4) !important;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.56) !important;
+}
+
+.close-modal-desc,
+.settings-hint,
+.label-hint,
+.help,
+.hint,
+.empty,
+.no-effects,
+.no-params,
+.inspector-empty,
+.slice-empty,
+.folder-status,
+.empty-hint {
+  color: var(--ga-ink-2, #5e6571) !important;
+}
+
+/* ============================================================
+   SETTINGS
+   ============================================================ */
+.settings-panel {
+  max-width: 980px !important;
+  border-radius: var(--ga-r-soft, 7px) !important;
+}
+
+.settings-sidebar {
+  background: var(--ga-bar, #0e1014) !important;
+  border-right: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+}
+
+.sidebar-category {
+  color: var(--ga-ink-3, #3a404a) !important;
+  font-family: var(--ga-font-mono, 'IBM Plex Mono', monospace) !important;
+  letter-spacing: 0.10em !important;
+}
+
+.sidebar-section {
+  border-left: 2px solid transparent !important;
+  color: var(--ga-ink-1, #9aa0ac) !important;
+  border-radius: 0 !important;
+}
+
+.sidebar-section.active {
+  border-left-color: var(--ga-violet, #9b87f5) !important;
+}
+
+.settings-content {
+  background: var(--ga-panel, #0b0d11) !important;
+}
+
+.setting-row {
+  border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07)) !important;
+}
+
+.label-text {
+  color: var(--ga-ink-0, #eef0f4) !important;
+  font-weight: 600 !important;
+}
+
+.toggle-slider {
+  background: var(--ga-slot, #050607) !important;
+  border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+}
+
+.toggle-slider::before {
+  background: var(--ga-ink-2, #5e6571) !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4) !important;
+}
+
+.toggle input:checked + .toggle-slider {
+  background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10)) !important;
+  border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36)) !important;
+}
+
+.toggle input:checked + .toggle-slider::before {
+  background: var(--ga-violet, #9b87f5) !important;
+}
+
+/* ============================================================
+   2D STAGE DESIGNER
+   ============================================================ */
+.stage-overlay {
+  background: var(--ga-void, #070809) !important;
+  font-family: var(--ga-font-ui, 'Hanken Grotesk', system-ui, sans-serif) !important;
+}
+
+.stage-header {
+  height: 52px !important;
+  flex-basis: 52px !important;
+  padding: 0 14px !important;
+}
+
+.stage-header .title,
+.effects-header,
+.empty-title,
+.binding-name,
+.inspector-note strong {
+  color: var(--ga-violet, #9b87f5) !important;
+}
+
+.surface-dims,
+.zoom-readout,
+.slice-count,
+.effects-count {
+  color: var(--ga-ink-2, #5e6571) !important;
+  font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace) !important;
+}
+
+.stage-body {
+  background: var(--ga-void, #070809) !important;
+}
+
+.tool-palette,
+.slice-list-panel,
+.inspector-panel {
+  background: var(--ga-panel, #0b0d11) !important;
+  border-color: var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+}
+
+.palette-section {
+  color: var(--ga-ink-3, #3a404a) !important;
+  font-family: var(--ga-font-mono, 'IBM Plex Mono', monospace) !important;
+}
+
+.palette-divider,
+.tool-sep,
+.header-sep {
+  background: var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+}
+
+.design-canvas {
+  background-color: var(--ga-slot, #050607) !important;
+  background-image:
+    linear-gradient(45deg, rgba(255,255,255,0.025) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255,255,255,0.025) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255,255,255,0.025) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255,255,255,0.025) 75%) !important;
+}
+
+.empty-card,
+.binding-card,
+.effects-pointer,
+.drop-card {
+  background: color-mix(in srgb, var(--ga-panel, #0b0d11) 88%, transparent) !important;
+  border-color: var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  border-radius: var(--ga-r-soft, 7px) !important;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45) !important;
+}
+
+.slice-row {
+  border-left-color: transparent !important;
+}
+
+.slice-row:hover {
+  background: var(--ga-card, #13161c) !important;
+}
+
+.slice-row.selected {
+  background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10)) !important;
+  border-left-color: var(--ga-violet, #9b87f5) !important;
+}
+
+.slice-name,
+.inspector-stat span:last-child {
+  color: var(--ga-ink-0, #eef0f4) !important;
+}
+
+.inspector-stat {
+  border-top: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07)) !important;
+  color: var(--ga-ink-2, #5e6571) !important;
+}
+
+/* ============================================================
+   3D STAGE DESIGNER
+   ============================================================ */
+.stage3d-root {
+  background: var(--ga-void, #070809) !important;
+  font-family: var(--ga-font-ui, 'Hanken Grotesk', system-ui, sans-serif) !important;
+}
+
+.stage3d-root.external {
+  background: transparent !important;
+}
+
+.stage3d-root .topbar {
+  height: 52px !important;
+  background: color-mix(in srgb, var(--ga-bar, #0e1014) 88%, transparent) !important;
+  border-bottom: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  border-radius: 0 !important;
+}
+
+.stage3d-root .logo,
+.stage3d-root .logo b {
+  color: var(--ga-ink-0, #eef0f4) !important;
+  background: none !important;
+  -webkit-text-fill-color: currentColor !important;
+}
+
+.stage3d-root .lib,
+.stage3d-root .props,
+.stage3d-root .hud,
+.stage3d-root .toast {
+  background: color-mix(in srgb, var(--ga-panel, #0b0d11) 86%, transparent) !important;
+  border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  border-radius: var(--ga-r-soft, 7px) !important;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.36) !important;
+}
+
+.stage3d-root .lib h3,
+.stage3d-root .props h3,
+.stage3d-root .ghd {
+  color: var(--ga-violet, #9b87f5) !important;
+  font-family: var(--ga-font-mono, 'IBM Plex Mono', monospace) !important;
+}
+
+.stage3d-root .ghd::before {
+  background: var(--ga-violet, #9b87f5) !important;
+}
+
+.stage3d-root .additem {
+  background: var(--ga-card, #13161c) !important;
+  border-color: var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  color: var(--ga-ink-0, #eef0f4) !important;
+  border-radius: var(--ga-r-hard, 2px) !important;
+}
+
+.stage3d-root .additem:hover,
+.stage3d-root .additem.screen.selected {
+  background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10)) !important;
+  border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36)) !important;
+  color: var(--ga-violet, #9b87f5) !important;
+  transform: none !important;
+}
+
+.stage3d-root .seg {
+  background: var(--ga-slot, #050607) !important;
+  border-color: var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  border-radius: var(--ga-r-hard, 2px) !important;
+}
+
+.stage3d-root .seg-btn {
+  border-radius: var(--ga-r-hard, 2px) !important;
+}
+
+.stage3d-root .seg-btn.on {
+  background: var(--ga-violet, #9b87f5) !important;
+  color: #160f2e !important;
+}
+
+/* ============================================================
+   MOBILE CONNECTION AND MOBILE CONTROLS
+   ============================================================ */
+.mobile-app {
+  background: var(--ga-void, #070809) !important;
+  color: var(--ga-ink-0, #eef0f4) !important;
+  font-family: var(--ga-font-ui, 'Hanken Grotesk', system-ui, sans-serif) !important;
+}
+
+.connect-screen {
+  background:
+    radial-gradient(circle at 50% 18%, color-mix(in srgb, var(--ga-violet, #9b87f5) 16%, transparent), transparent 34%),
+    var(--ga-void, #070809) !important;
+}
+
+.connect-logo {
+  filter: drop-shadow(0 0 16px color-mix(in srgb, var(--ga-violet, #9b87f5) 32%, transparent)) !important;
+}
+
+.connect-subtitle,
+.connect-screen .help,
+.connect-screen .error {
+  color: var(--ga-ink-1, #9aa0ac) !important;
+}
+
+.connect-form {
+  background: color-mix(in srgb, var(--ga-panel, #0b0d11) 88%, transparent) !important;
+  border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  border-radius: var(--ga-r-soft, 7px) !important;
+  padding: 14px !important;
+}
+
+.mode-strip,
+.view-mode-toggle,
+.mesh-controls,
+.paint-floating-controls {
+  background: color-mix(in srgb, var(--ga-bar, #0e1014) 86%, transparent) !important;
+  border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  border-radius: var(--ga-r-soft, 7px) !important;
+  backdrop-filter: blur(12px) !important;
+}
+
+.mode-switcher {
+  background: var(--ga-slot, #050607) !important;
+  border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  border-radius: var(--ga-r-hard, 2px) !important;
+}
+
+.warp-viewport,
+.paint-mode,
+.paint-surface {
+  background: var(--ga-slot, #050607) !important;
+}
+
+.mobile-app .canvas-boundary {
+  border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20)) !important;
+}
+
+.media-library-slideout,
+.effects-slideout,
+.paint-sheet,
+.vj-mixer-panel {
+  background: var(--ga-panel, #0b0d11) !important;
+  color: var(--ga-ink-0, #eef0f4) !important;
+  border-color: var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  box-shadow: 0 -22px 70px rgba(0, 0, 0, 0.50) !important;
+}
+
+.media-library-header,
+.effects-header,
+.paint-sheet-title {
+  color: var(--ga-ink-0, #eef0f4) !important;
+  border-color: var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+}
+
+.shader-thumb,
+.effect-item,
+.paint-empty,
+.pwa-install-banner {
+  background: var(--ga-card, #13161c) !important;
+  border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
+  border-radius: var(--ga-r-soft, 7px) !important;
+}
+
+.color-swatch {
+  border: 1px solid var(--ga-line-3, rgba(255, 255, 255, 0.20)) !important;
+  border-radius: var(--ga-r-hard, 2px) !important;
+}
+
+.color-swatch.active {
+  outline: 2px solid var(--ga-violet, #9b87f5) !important;
+  outline-offset: 2px !important;
+}
+
+/* ============================================================
+   ARCADE THEME — warm shifts on top
+   ============================================================ */
+html[data-theme="arcade"] {
+  --ga-slider-fill: rgba(34, 49, 108, 0.78);
+  --ga-faceplate-bg:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.030), transparent 3px),
+    repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.014) 0 1px, transparent 1px 3px),
+    linear-gradient(180deg, var(--ga-card, #16140f), var(--ga-void, #0a0908));
+  --ga-hardware-bg: linear-gradient(180deg, var(--ga-raise, #26221c), var(--ga-bar, #100f0d));
+  --ga-hardware-shadow:
+    inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.16)),
+    0 1px 2px rgba(0, 0, 0, 0.45);
+  --ga-marquee-shadow: 0 0 14px var(--ga-coral-glow, rgba(255, 111, 94, 0.50));
+}
+
+html[data-theme="arcade"] body {
+  background: var(--ga-void, #0a0908) !important;
+}
+
+html[data-theme="arcade"] .app,
+html[data-theme="arcade"] .mobile-app,
+html[data-theme="arcade"] .stage-overlay,
+html[data-theme="arcade"] .stage3d-root {
+  background:
+    radial-gradient(rgba(245, 236, 222, 0.018) 1px, transparent 1px) 0 0 / 24px 24px,
+    var(--ga-void, #0a0908) !important;
+  color: var(--ga-ink-0, #f2ede4) !important;
+  font-family: var(--ga-font-ui, 'Archivo', system-ui, sans-serif) !important;
+  letter-spacing: 0.004em !important;
+}
+
+html[data-theme="arcade"] :is(
+  .toolbar,
+  .status-bar,
+  .statusbar,
+  .stage-header,
+  .topbar,
+  .settings-header,
+  .panel-header,
+  .tray-header,
+  .modal-head,
+  .modal-header,
+  .media-library-header,
+  .effects-header
+) {
+  background: var(--ga-faceplate-bg) !important;
+  border-color: var(--ga-line, rgba(245, 236, 222, 0.07)) !important;
+  box-shadow: inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.16)) !important;
+}
+
+html[data-theme="arcade"] :is(
+  .left-sidebar,
+  .layer-panel,
+  .screen-panel,
+  .inspector,
+  .properties-effects-panel,
+  .text-panel,
+  .drawing-panel,
+  .lines-panel,
+  .splat-panel,
+  .model3d-panel,
+  .pfx-panel,
+  .gpu-panel,
+  .plugin-panel,
+  .edge-effects-panel,
+  .hy-panel,
+  .mk-panel,
+  .ss-panel,
+  .mp-panel,
+  .director-panel,
+  .clip-preview-panel,
+  .preset-tray,
+  .seq-tray,
+  .kf-tray,
+  .svg-tray,
+  .media-tray,
+  .media-library,
+  .settings-sidebar,
+  .settings-content,
+  .right-panel-vj,
+  .effects-panel-vj,
+  .shader-params-panel,
+  .media-tray-vj,
+  .vj-sources-panel,
+  .vj-plugins-panel,
+  .sources-panel,
+  .plugins-panel,
+  .slice-list-panel,
+  .tool-palette,
+  .inspector-panel,
+  .stage3d-root .lib,
+  .stage3d-root .props
+) {
+  background:
+    repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.010) 0 1px, transparent 1px 3px),
+    var(--ga-panel, #100f0d) !important;
+  border-color: var(--ga-line, rgba(245, 236, 222, 0.07)) !important;
+}
+
+html[data-theme="arcade"] :is(
+  .panel-header h3,
+  .tray-header h3,
+  .settings-header h2,
+  .settings-section h3,
+  .modal-header h2,
+  .modal-head h2,
+  .shader-params-overlay-title,
+  .close-modal-title,
+  .welcome-panel h1,
+  .update-modal-header h2,
+  .shortcut-overlay-title,
+  .lib-title,
+  .stage-header .title,
+  .stage3d-root .logo,
+  .gridhead h4
+) {
+  font-family: var(--ga-font-display, 'Chakra Petch', 'Archivo', system-ui, sans-serif) !important;
+  color: var(--ga-ink-0, #f2ede4) !important;
+  text-shadow: var(--ga-marquee-shadow) !important;
+  letter-spacing: 0.03em !important;
+}
+
+html[data-theme="arcade"] :is(
+  .settings-section h3,
+  .section-title,
+  .panel-title,
+  .tray-title,
+  .library-section-label,
+  .stage-presets-label,
+  .shader-params-overlay-title,
+  .amp-popover-title,
+  .macro-popover-section-title,
+  .palette-section,
+  .sidebar-category,
+  .lib-tab span,
+  .tab span,
+  .left-tab,
+  .category-name,
+  .effects-header,
+  .stage3d-root .lib h3,
+  .stage3d-root .props h3,
+  .stage3d-root .ghd
+) {
+  font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace) !important;
+  color: var(--ga-ink-2, #5e564a) !important;
+  letter-spacing: 0.14em !important;
+  text-transform: uppercase !important;
+  text-shadow: none !important;
+}
+
+html[data-theme="arcade"] :is(
+  .output-btn,
+  .stage3d-btn,
+  .file-menu-btn,
+  .gpu-indicator,
+  .freeze-btn,
+  .blackout-btn,
+  .testpattern-btn,
+  .screenshot-btn,
+  .settings-btn,
+  .connection-btn,
+  .stage-btn,
+  .secondary-btn,
+  .text-btn,
+  .back-btn,
+  .tool-btn,
+  .palette-btn,
+  .zoom-btn,
+  .tbtn,
+  .icon-btn,
+  .show-panels-btn,
+  .empty-btn,
+  .binding-action,
+  .inspector-action,
+  .stage-preset-btn,
+  .stage-scope-toggle,
+  .btn-check-update,
+  .close-modal-btn,
+  .modal-btn,
+  .library-delete-btn,
+  .browse-library-btn,
+  .add-effect-btn,
+  .brush-pill,
+  .mode-pill,
+  .media-btn,
+  .disconnect-btn,
+  .additem,
+  .ghd-action,
+  .btn-small
+) {
+  background: var(--ga-hardware-bg) !important;
+  border-color: var(--ga-line-2, rgba(245, 236, 222, 0.13)) !important;
+  border-radius: var(--ga-r-hard, 3px) !important;
+  color: var(--ga-ink-1, #998f81) !important;
+  box-shadow: var(--ga-hardware-shadow) !important;
+  font-family: var(--ga-font-display, 'Chakra Petch', 'Archivo', system-ui, sans-serif) !important;
+}
+
+html[data-theme="arcade"] :is(
+  .output-btn,
+  .stage3d-btn,
+  .file-menu-btn,
+  .connection-btn,
+  .stage-btn,
+  .secondary-btn,
+  .text-btn,
+  .back-btn,
+  .tool-btn,
+  .palette-btn,
+  .zoom-btn,
+  .tbtn,
+  .icon-btn,
+  .show-panels-btn,
+  .empty-btn,
+  .binding-action,
+  .inspector-action,
+  .stage-preset-btn,
+  .stage-scope-toggle,
+  .btn-check-update,
+  .close-modal-btn,
+  .modal-btn,
+  .library-delete-btn,
+  .browse-library-btn,
+  .add-effect-btn,
+  .brush-pill,
+  .mode-pill,
+  .media-btn,
+  .disconnect-btn,
+  .additem,
+  .ghd-action,
+  .btn-small
+):hover:not(:disabled) {
+  border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.50)) !important;
+  color: var(--ga-ink-0, #f2ede4) !important;
+  background: var(--ga-hardware-bg) !important;
+  box-shadow:
+    var(--ga-hardware-shadow),
+    0 0 10px color-mix(in srgb, var(--ga-coral, #ff6f5e) 18%, transparent) !important;
+}
+
+html[data-theme="arcade"] :is(
+  .vj-btn,
+  .primary-btn,
+  .btn-save,
+  .btn-recover,
+  .apply-stage-btn,
+  .empty-btn.primary,
+  .pwa-install-btn,
+  .connect-form button,
+  .library-load-btn,
+  .stage-preset-save-btn,
+  .library-add-btn,
+  .folder-input-ok,
+  .add-btn,
+  .ai-video-btn,
+  .lib-add-btn
+) {
+  background: linear-gradient(180deg, #ff8473, var(--ga-coral, #ff6f5e)) !important;
+  border: 1px solid var(--ga-coral, #ff6f5e) !important;
+  border-radius: var(--ga-r-hard, 3px) !important;
+  color: #231009 !important;
+  font-family: var(--ga-font-display, 'Chakra Petch', 'Archivo', system-ui, sans-serif) !important;
+  font-weight: 700 !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.38),
+    0 0 14px var(--ga-coral-glow, rgba(255, 111, 94, 0.50)),
+    0 1px 3px rgba(0, 0, 0, 0.45) !important;
+}
+
+html[data-theme="arcade"] :is(
+  .output-btn.active,
+  .stage3d-btn.active,
+  .tool-btn.active,
+  .palette-btn.active,
+  .mode-pill.active,
+  .brush-pill.active,
+  .stage-preset-btn.active,
+  .sidebar-section.active,
+  .tab.active,
+  .library-tab.active,
+  .stage-mix-btn.active,
+  .seg-btn.on,
+  .warp-mode-btn.active,
+  .left-tab.active,
+  .category-toggle.active,
+  .additem.screen.selected
+) {
+  background: var(--ga-coral-soft, rgba(255, 111, 94, 0.13)) !important;
+  border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.50)) !important;
+  color: var(--ga-coral, #ff6f5e) !important;
+  box-shadow:
+    inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.16)),
+    0 0 0 1px var(--ga-coral-line, rgba(255, 111, 94, 0.50)),
+    0 0 12px color-mix(in srgb, var(--ga-coral, #ff6f5e) 28%, transparent) !important;
+}
+
+html[data-theme="arcade"] :is(
+  .layer-item,
+  .media-item,
+  .library-item,
+  .shader-thumb,
+  .effect-item,
+  .paint-empty,
+  .pwa-install-banner,
+  .empty-card,
+  .binding-card,
+  .effects-pointer,
+  .drop-card,
+  .theme-template-card,
+  .macro-popover,
+  .confirm-popover
+) {
+  background:
+    linear-gradient(180deg, var(--ga-sub, #1e1b16), var(--ga-card, #16140f)) !important;
+  border-color: var(--ga-line-2, rgba(245, 236, 222, 0.13)) !important;
+  border-radius: var(--ga-r-hard, 3px) !important;
+  box-shadow: inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.16)) !important;
+}
+
+html[data-theme="arcade"] :is(
+  .layer-item.selected,
+  .layer-item.active,
+  .media-item.selected,
+  .media-item.item-selected,
+  .library-item.selected,
+  .shader-thumb.selected,
+  .slice-row.selected,
+  .theme-template-card.active
+) {
+  background: var(--ga-coral-soft, rgba(255, 111, 94, 0.13)) !important;
+  border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.50)) !important;
+  box-shadow:
+    inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.16)),
+    0 0 0 1px var(--ga-coral-line, rgba(255, 111, 94, 0.50)),
+    0 0 14px color-mix(in srgb, var(--ga-coral, #ff6f5e) 28%, transparent) !important;
+}
+
+html[data-theme="arcade"] .layer-item.selected::before,
+html[data-theme="arcade"] .layer-item.active::before {
+  background: var(--ga-coral, #ff6f5e) !important;
+  box-shadow: 0 0 10px var(--ga-coral-glow, rgba(255, 111, 94, 0.50)) !important;
+}
+
+html[data-theme="arcade"] :is(
+  .left-tab.active,
+  .tab.active,
+  .library-tab.active,
+  .tab-row .tab.active,
+  .lib-tab.on,
+  .stage-preset-btn.active
+) {
+  border-bottom-color: var(--ga-coral, #ff6f5e) !important;
+}
+
+html[data-theme="arcade"] :is(
+  input[type="text"],
+  input[type="number"],
+  input[type="password"],
+  input[type="url"],
+  input[type="search"],
+  textarea,
+  select,
+  .field,
+  .selbox
+) {
+  background-color: var(--ga-slot, #060504) !important;
+  border-color: var(--ga-line-2, rgba(245, 236, 222, 0.13)) !important;
+  border-radius: var(--ga-r-hard, 3px) !important;
+  color: var(--ga-ink-0, #f2ede4) !important;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.70) !important;
+}
+
+html[data-theme="arcade"] :is(
+  input[type="text"],
+  input[type="number"],
+  input[type="password"],
+  input[type="url"],
+  input[type="search"],
+  textarea,
+  select
+):focus {
+  border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.50)) !important;
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.70),
+    0 0 0 2px color-mix(in srgb, var(--ga-coral, #ff6f5e) 22%, transparent) !important;
+}
+
+html[data-theme="arcade"] input[type="checkbox"] {
+  background: var(--ga-slot, #060504) !important;
+  border-color: var(--ga-line-2, rgba(245, 236, 222, 0.13)) !important;
+  border-radius: 2px !important;
+}
+
+html[data-theme="arcade"] input[type="checkbox"]:checked {
+  background: var(--ga-coral, #ff6f5e) !important;
+  border-color: var(--ga-coral, #ff6f5e) !important;
+}
+
+html[data-theme="arcade"] input[type="checkbox"]:checked::after {
+  border-color: #231009 !important;
+}
+
+html[data-theme="arcade"] :is(
+  input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.hue-slider),
+  .layer-panel input[type="range"]:not(.hue-slider),
+  .property-row input[type="range"]:not(.hue-slider),
+  .media-library input[type="range"]:not(.hue-slider),
+  .media-tray input[type="range"]:not(.hue-slider),
+  .epr-slider,
+  .fx-panel input[type="range"]:not(.hue-slider)
+) {
+  height: 8px !important;
+  border-radius: 3px !important;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent calc(10% - 1px),
+      var(--ga-line-2, rgba(245, 236, 222, 0.13)) calc(10% - 1px),
+      var(--ga-line-2, rgba(245, 236, 222, 0.13)) 10%
+    ),
+    linear-gradient(
+      90deg,
+      var(--ga-slider-fill, rgba(34, 49, 108, 0.78)) 0
+        calc(7.5px + (100% - 15px) * var(--ga-range-pct, 0)),
+      transparent calc(7.5px + (100% - 15px) * var(--ga-range-pct, 0)) 100%
+    ),
+    var(--ga-slot, #060504) !important;
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.85),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.04) !important;
+}
+
+html[data-theme="arcade"] input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.hue-slider)::-webkit-slider-runnable-track,
+html[data-theme="arcade"] .layer-panel input[type="range"]:not(.hue-slider)::-webkit-slider-runnable-track,
+html[data-theme="arcade"] .property-row input[type="range"]:not(.hue-slider)::-webkit-slider-runnable-track,
+html[data-theme="arcade"] .media-library input[type="range"]:not(.hue-slider)::-webkit-slider-runnable-track,
+html[data-theme="arcade"] .media-tray input[type="range"]:not(.hue-slider)::-webkit-slider-runnable-track,
+html[data-theme="arcade"] .epr-slider::-webkit-slider-runnable-track,
+html[data-theme="arcade"] .fx-panel input[type="range"]:not(.hue-slider)::-webkit-slider-runnable-track {
+  height: 8px !important;
+  border-radius: 3px !important;
+}
+
+html[data-theme="arcade"] input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.hue-slider)::-webkit-slider-thumb,
+html[data-theme="arcade"] .layer-panel input[type="range"]:not(.hue-slider)::-webkit-slider-thumb,
+html[data-theme="arcade"] .property-row input[type="range"]:not(.hue-slider)::-webkit-slider-thumb,
+html[data-theme="arcade"] .media-library input[type="range"]:not(.hue-slider)::-webkit-slider-thumb,
+html[data-theme="arcade"] .media-tray input[type="range"]:not(.hue-slider)::-webkit-slider-thumb,
+html[data-theme="arcade"] .epr-slider::-webkit-slider-thumb,
+html[data-theme="arcade"] .fx-panel input[type="range"]:not(.hue-slider)::-webkit-slider-thumb {
+  width: 15px !important;
+  height: 22px !important;
+  margin-top: -7px !important;
+  border-radius: 2px !important;
+  border: 1px solid #000 !important;
+  background:
+    linear-gradient(
+      90deg,
+      transparent 0 3px,
+      var(--ga-slider-fill, #2f4ad6) 3px calc(100% - 3px),
+      transparent calc(100% - 3px) 100%
+    ) center / 100% 2px no-repeat,
+    linear-gradient(180deg, #46433d, #1b1916) !important;
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.60),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 0 5px var(--ga-slider-glow, rgba(58, 88, 230, 0.55)) !important;
+}
+
+html[data-theme="arcade"] .toggle-slider {
+  background: var(--ga-slot, #060504) !important;
+  border-radius: 3px !important;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.70) !important;
+}
+
+html[data-theme="arcade"] .toggle-slider::before {
+  border-radius: 2px !important;
+  background: linear-gradient(180deg, #46433d, #1b1916) !important;
+}
+
+html[data-theme="arcade"] .toggle input:checked + .toggle-slider {
+  background: var(--ga-coral-soft, rgba(255, 111, 94, 0.13)) !important;
+  border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.50)) !important;
+}
+
+html[data-theme="arcade"] .toggle input:checked + .toggle-slider::before {
+  background: var(--ga-coral, #ff6f5e) !important;
+}
+
+html[data-theme="arcade"] :is(.statusbar, .status-bar, .dock) {
+  background: var(--ga-void, #0a0908) !important;
+  font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace) !important;
+  color: var(--ga-ink-2, #5e564a) !important;
+  letter-spacing: 0.06em !important;
+}
+
+html[data-theme="arcade"] :is(.fps-counter, .version-label, .statusbar b, .status-bar b, .param-value, .value, .shader-param-name, .dim-label, .surface-dims, .zoom-readout) {
+  font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace) !important;
+}
+
+html[data-theme="arcade"] :is(.fps-counter.fps-good, .version-label.version-update, .output-status) {
+  color: var(--ga-coral, #ff6f5e) !important;
+  text-shadow: 0 0 7px var(--ga-coral-glow, rgba(255, 111, 94, 0.50)) !important;
+}
+
+html[data-theme="arcade"] :is(
+  .modal-shell,
+  .modal-panel,
+  .settings-panel,
+  .shader-library-modal,
+  .welcome-panel,
+  .update-modal,
+  .shortcut-overlay,
+  .close-modal,
+  .kf-modal,
+  .mp-learn-modal,
+  .confirm-popover,
+  .aip-popover,
+  .amp-popover,
+  .macro-popover,
+  .loop-options-popover,
+  .timelapse-popover,
+  .capture-picker-modal,
+  .modal-card,
+  .launcher-sheet
+) {
+  background: var(--ga-faceplate-bg) !important;
+  border-color: var(--ga-line-2, rgba(245, 236, 222, 0.13)) !important;
+  border-radius: var(--ga-r-hard, 3px) !important;
+  box-shadow:
+    inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.16)),
+    0 24px 80px rgba(0, 0, 0, 0.58) !important;
+}
+
+html[data-theme="arcade"] :is(
+  .modal-backdrop,
+  .modal-overlay,
+  .settings-overlay,
+  .shader-library-backdrop,
+  .welcome-overlay,
+  .update-modal-backdrop,
+  .shortcut-overlay-backdrop,
+  .close-modal-backdrop,
+  .kf-modal-backdrop,
+  .effects-overlay,
+  .media-library-overlay,
+  .paint-sheet-backdrop
+) {
+  background: rgba(10, 9, 8, 0.76) !important;
+  backdrop-filter: blur(8px) !important;
+}
+
+html[data-theme="arcade"] .settings-sidebar {
+  background: var(--ga-void, #0a0908) !important;
+}
+
+html[data-theme="arcade"] .sidebar-section.active {
+  border-left-color: var(--ga-coral, #ff6f5e) !important;
+}
+
+html[data-theme="arcade"] .design-canvas,
+html[data-theme="arcade"] .warp-viewport,
+html[data-theme="arcade"] .paint-mode,
+html[data-theme="arcade"] .paint-surface {
+  background-color: var(--ga-slot, #060504) !important;
+  background-image:
+    linear-gradient(45deg, rgba(245, 236, 222, 0.024) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(245, 236, 222, 0.024) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(245, 236, 222, 0.024) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(245, 236, 222, 0.024) 75%) !important;
+  background-size: 16px 16px !important;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0 !important;
+}
+
+html[data-theme="arcade"] .stage3d-root .hud,
+html[data-theme="arcade"] .stage3d-root .toast,
+html[data-theme="arcade"] .mode-strip,
+html[data-theme="arcade"] .view-mode-toggle,
+html[data-theme="arcade"] .mesh-controls,
+html[data-theme="arcade"] .paint-floating-controls,
+html[data-theme="arcade"] .connect-form {
+  background: color-mix(in srgb, var(--ga-panel, #100f0d) 90%, transparent) !important;
+  border-color: var(--ga-line-2, rgba(245, 236, 222, 0.13)) !important;
+  border-radius: var(--ga-r-hard, 3px) !important;
+  box-shadow:
+    inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.16)),
+    0 4px 18px rgba(0, 0, 0, 0.45) !important;
+}
+
+html[data-theme="arcade"] .connect-screen {
+  background:
+    radial-gradient(circle at 50% 16%, color-mix(in srgb, var(--ga-coral, #ff6f5e) 20%, transparent), transparent 34%),
+    radial-gradient(rgba(245, 236, 222, 0.018) 1px, transparent 1px) 0 0 / 24px 24px,
+    var(--ga-void, #0a0908) !important;
+}
+
+html[data-theme="arcade"] .connect-logo {
+  filter: drop-shadow(0 0 18px var(--ga-coral-glow, rgba(255, 111, 94, 0.50))) !important;
+}
+
+html[data-theme="arcade"] :is(.media-library-slideout, .effects-slideout, .paint-sheet, .vj-mixer-panel) {
+  background: var(--ga-faceplate-bg) !important;
+  border-color: var(--ga-line-2, rgba(245, 236, 222, 0.13)) !important;
+  border-radius: var(--ga-r-hard, 3px) var(--ga-r-hard, 3px) 0 0 !important;
+}
+
+html[data-theme="arcade"] .paint-sheet-handle {
+  background: var(--ga-coral, #ff6f5e) !important;
+  box-shadow: 0 0 8px var(--ga-coral-glow, rgba(255, 111, 94, 0.50)) !important;
+}
+
+html[data-theme="arcade"] .color-swatch.active {
+  outline-color: var(--ga-coral, #ff6f5e) !important;
+}
+
+html[data-theme="arcade"] .btn-discard,
+html[data-theme="arcade"] .btn-cancel,
+html[data-theme="arcade"] .library-delete-btn:hover,
+html[data-theme="arcade"] .effect-remove:hover,
+html[data-theme="arcade"] .slice-icon-btn.danger:hover {
+  color: var(--ga-rec, #ff3b30) !important;
+  border-color: rgba(255, 59, 48, 0.45) !important;
+  background: rgba(255, 59, 48, 0.10) !important;
+}
+
+html[data-theme="arcade"] .bottom-dock {
+  background: var(--ga-faceplate-bg) !important;
+  border-color: var(--ga-line-2, rgba(245, 236, 222, 0.13)) !important;
+  box-shadow:
+    inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.16)),
+    0 -10px 28px rgba(0, 0, 0, 0.58) !important;
+}
+
+html[data-theme="arcade"] .bottom-dock .pill {
+  background: var(--ga-hardware-bg) !important;
+  border-color: var(--ga-line-2, rgba(245, 236, 222, 0.13)) !important;
+  border-radius: var(--ga-r-hard, 3px) !important;
+  color: var(--ga-ink-1, #998f81) !important;
+  font-family: var(--ga-font-display, 'Chakra Petch', 'Archivo', system-ui, sans-serif) !important;
+  box-shadow: var(--ga-hardware-shadow) !important;
+}
+
+html[data-theme="arcade"] .bottom-dock .pill.on {
+  background: linear-gradient(180deg, #ff8473, var(--ga-coral, #ff6f5e)) !important;
+  border-color: var(--ga-coral, #ff6f5e) !important;
+  color: #231009 !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.38),
+    0 0 14px var(--ga-coral-glow, rgba(255, 111, 94, 0.50)) !important;
+}
+
+html[data-theme="arcade"] :is(
+  .add-layer-menu,
+  .layer-ctx-menu,
+  .file-menu-dropdown,
+  .preset-ctx-menu
+) {
+  background: var(--ga-faceplate-bg) !important;
+  border-color: var(--ga-line-2, rgba(245, 236, 222, 0.13)) !important;
+  border-radius: var(--ga-r-hard, 3px) !important;
+  box-shadow:
+    inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.16)),
+    0 14px 40px rgba(0, 0, 0, 0.62) !important;
+}
+
+html[data-theme="arcade"] :is(
+  .add-layer-menu button,
+  .layer-ctx-menu .ctx-item,
+  .file-menu-dropdown .menu-item,
+  .preset-ctx-menu .ctx-item
+) {
+  color: var(--ga-ink-1, #998f81) !important;
+}
+
+html[data-theme="arcade"] :is(
+  .add-layer-menu button:hover,
+  .layer-ctx-menu .ctx-item:hover,
+  .file-menu-dropdown .menu-item:hover,
+  .preset-ctx-menu .ctx-item:hover
+) {
+  background: var(--ga-coral-soft, rgba(255, 111, 94, 0.13)) !important;
+  color: var(--ga-coral, #ff6f5e) !important;
+}
+
+html[data-theme="arcade"] :is(
+  .add-layer-menu button svg,
+  button.btn-small,
+  button.btn-small:hover,
+  .connecting-status code
+) {
+  color: var(--ga-coral, #ff6f5e) !important;
+}
+
+html[data-theme="arcade"] :is(button.btn-small, button.btn-small:hover) {
+  background: var(--ga-coral-soft, rgba(255, 111, 94, 0.13)) !important;
+  border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.50)) !important;
+}
+
+html[data-theme="arcade"] :is(
+  select,
+  input[type="text"],
+  input[type="number"],
+  textarea
+):focus {
+  border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.50)) !important;
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.70),
+    0 0 0 2px color-mix(in srgb, var(--ga-coral, #ff6f5e) 22%, transparent) !important;
+}
+
+html[data-theme="arcade"] .stage3d-root {
+  background:
+    radial-gradient(rgba(245, 236, 222, 0.018) 1px, transparent 1px) 0 0 / 24px 24px,
+    var(--ga-void, #0a0908) !important;
+  color: var(--ga-ink-0, #f2ede4) !important;
+  font-family: var(--ga-font-ui, 'Archivo', system-ui, sans-serif) !important;
+}
+
+html[data-theme="arcade"] .stage3d-root :is(.topbar, .lib, .props, .hud, .toast, .show-panels-btn) {
+  background: var(--ga-faceplate-bg) !important;
+  border-color: var(--ga-line-2, rgba(245, 236, 222, 0.13)) !important;
+  border-radius: var(--ga-r-hard, 3px) !important;
+  box-shadow:
+    inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.16)),
+    0 8px 28px rgba(0, 0, 0, 0.48) !important;
+}
+
+html[data-theme="arcade"] .stage3d-root .logo,
+html[data-theme="arcade"] .stage3d-root .logo b {
+  background: none !important;
+  color: var(--ga-coral, #ff6f5e) !important;
+  -webkit-text-fill-color: var(--ga-coral, #ff6f5e) !important;
+  text-shadow: var(--ga-marquee-shadow) !important;
+}
+
+html[data-theme="arcade"] .stage3d-root :is(.seg, .seg-btn, .tbtn, .icon-btn, .vsel, .ghd-action, .additem, .pill, .reset-btn, .mini) {
+  background: var(--ga-hardware-bg) !important;
+  border-color: var(--ga-line-2, rgba(245, 236, 222, 0.13)) !important;
+  border-radius: var(--ga-r-hard, 3px) !important;
+  color: var(--ga-ink-1, #998f81) !important;
+  box-shadow: var(--ga-hardware-shadow) !important;
+}
+
+html[data-theme="arcade"] .stage3d-root :is(.seg-btn.on, .additem.screen.selected, .additem.screen.selected.primary, .pill.active) {
+  background: var(--ga-coral-soft, rgba(255, 111, 94, 0.13)) !important;
+  border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.50)) !important;
+  color: var(--ga-coral, #ff6f5e) !important;
+  box-shadow:
+    inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.16)),
+    0 0 12px color-mix(in srgb, var(--ga-coral, #ff6f5e) 28%, transparent) !important;
+}
+
+html[data-theme="arcade"] .stage3d-root :is(.ghd, .field label .v, .row .val, .slider-val, .badge, .multi-pill, .multi-banner b) {
+  color: var(--ga-coral, #ff6f5e) !important;
+  text-shadow: 0 0 7px var(--ga-coral-glow, rgba(255, 111, 94, 0.50)) !important;
+}
+
+html[data-theme="arcade"] .stage3d-root .ghd::before {
+  background: var(--ga-coral, #ff6f5e) !important;
+  box-shadow: 0 0 8px var(--ga-coral-glow, rgba(255, 111, 94, 0.50)) !important;
+}
+
+html[data-theme="arcade"] .stage3d-root :is(.multi-banner, .badge, .multi-pill) {
+  background: var(--ga-coral-soft, rgba(255, 111, 94, 0.13)) !important;
+  border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.50)) !important;
+}
+
+html[data-theme="arcade"] .stage3d-root input[type="range"] {
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  height: 8px !important;
+  border-radius: 3px !important;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent calc(10% - 1px),
+      var(--ga-line-2, rgba(245, 236, 222, 0.13)) calc(10% - 1px),
+      var(--ga-line-2, rgba(245, 236, 222, 0.13)) 10%
+    ),
+    linear-gradient(
+      90deg,
+      var(--ga-slider-fill, rgba(34, 49, 108, 0.78)) 0
+        calc(7.5px + (100% - 15px) * var(--ga-range-pct, 0)),
+      transparent calc(7.5px + (100% - 15px) * var(--ga-range-pct, 0)) 100%
+    ),
+    var(--ga-slot, #060504) !important;
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.85),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.04) !important;
+}
+
+html[data-theme="arcade"] .stage3d-root input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  width: 15px !important;
+  height: 22px !important;
+  margin-top: -7px !important;
+  border-radius: 2px !important;
+  border: 1px solid #000 !important;
+  background:
+    linear-gradient(
+      90deg,
+      transparent 0 3px,
+      var(--ga-slider-fill, #2f4ad6) 3px calc(100% - 3px),
+      transparent calc(100% - 3px) 100%
+    ) center / 100% 2px no-repeat,
+    linear-gradient(180deg, #46433d, #1b1916) !important;
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.60),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 0 5px var(--ga-slider-glow, rgba(58, 88, 230, 0.55)) !important;
+}
+
+html[data-theme="arcade"] .stage3d-root input[type="range"]::-moz-range-thumb {
+  width: 15px !important;
+  height: 22px !important;
+  border-radius: 2px !important;
+  border: 1px solid #000 !important;
+  background: linear-gradient(180deg, #46433d, #1b1916) !important;
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.60),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 0 5px var(--ga-slider-glow, rgba(58, 88, 230, 0.55)) !important;
+}

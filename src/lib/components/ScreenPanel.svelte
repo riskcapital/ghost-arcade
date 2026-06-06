@@ -538,9 +538,9 @@
 <style>
   .screen-panel {
     width: 280px;
-    background: #111114;
+    background: var(--bg-secondary, #111114);
     border-right: 1px solid rgba(255, 255, 255, 0.06);
-    color: #eee;
+    color: var(--text-primary, #eee);
     font-size: 13px;
     height: 100%;
     overflow: auto;
@@ -558,7 +558,7 @@
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: #888;
+    color: var(--text-muted, #888);
     margin-bottom: 6px;
   }
   .section-count {
@@ -579,7 +579,7 @@
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 4px;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     font-size: 11px;
     cursor: pointer;
   }
@@ -599,7 +599,7 @@
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid transparent;
     border-radius: 4px;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     font-size: 12px;
     cursor: pointer;
     width: 100%;
@@ -630,7 +630,7 @@
   }
   .row-target {
     font-size: 10px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-family: ui-monospace, monospace;
     background: rgba(255, 255, 255, 0.04);
     padding: 1px 4px;
@@ -639,7 +639,7 @@
   .row-act {
     background: transparent;
     border: none;
-    color: #888;
+    color: var(--text-muted, #888);
     cursor: pointer;
     padding: 0 4px;
     font-size: 14px;
@@ -675,7 +675,7 @@
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    color: #888;
+    color: var(--text-muted, #888);
     user-select: none;
   }
   .master-row {
@@ -690,7 +690,7 @@
     background: rgba(0, 0, 0, 0.3);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 3px;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     font-family: ui-monospace, monospace;
     font-size: 11px;
   }
@@ -701,7 +701,7 @@
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 3px;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     font-size: 10px;
     cursor: pointer;
     font-family: inherit;
@@ -725,7 +725,7 @@
     gap: 7px;
     margin-top: 6px;
     font-size: 11px;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     cursor: pointer;
   }
   .mw-enable input { cursor: pointer; }
@@ -746,7 +746,7 @@
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 3px;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     font-size: 10px;
     cursor: pointer;
     font-family: inherit;
@@ -817,7 +817,7 @@
     height: 4px;
     -webkit-appearance: none;
     appearance: none;
-    background: #050507;
+    background: var(--bg-primary, #050507);
     border-radius: 999px;
     accent-color: #79d6ff;
     cursor: pointer;

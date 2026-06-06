@@ -420,7 +420,7 @@
   }
   .xfade-track {
     position: relative;
-    background: #1a1a1e;
+    background: var(--bg-tertiary, #1a1a1e);
     border-radius: 6px;
     box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
     overflow: visible;
@@ -559,7 +559,7 @@
     background: #111;
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     font-size: 9px;
     cursor: pointer;
     text-align: center;

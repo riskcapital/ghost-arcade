@@ -309,7 +309,7 @@
     background: rgba(255, 255, 255, 0.06);
     border: none;
     border-radius: 50%;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -340,7 +340,7 @@
   .cpp-preview-note {
     margin-left: 12px;
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
     max-width: 80px;
     line-height: 1.4;
   }
@@ -359,7 +359,7 @@
   .cpp-preview-empty-type {
     font-size: 16px;
     font-weight: 600;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     text-transform: uppercase;
     letter-spacing: 0.1em;
   }
@@ -383,7 +383,7 @@
   .cpp-section-label {
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
     font-size: 10px;
-    color: #888;
+    color: var(--text-muted, #888);
     letter-spacing: 0.15em;
     text-transform: uppercase;
     margin-bottom: 10px;

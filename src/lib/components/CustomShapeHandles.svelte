@@ -815,7 +815,7 @@
     border: 1px solid transparent;
     border-radius: 4px;
     background: transparent;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     cursor: pointer;
     padding: 0;
   }
@@ -840,7 +840,7 @@
 
   .pen-hint {
     font-size: 10px;
-    color: #888;
+    color: var(--text-muted, #888);
     white-space: nowrap;
     user-select: none;
   }

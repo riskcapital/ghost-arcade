@@ -262,7 +262,7 @@
     width: 5px;
     height: 5px;
     border-radius: 1px;
-    background: #1a1a1e;
+    background: var(--bg-tertiary, #1a1a1e);
     border: 1px solid rgba(255, 255, 255, 0.04);
     transition: background 0.08s, box-shadow 0.08s;
   }
@@ -296,7 +296,7 @@
     position: relative;
     width: 8px;
     height: 100%;
-    background: #1a1a1e;
+    background: var(--bg-tertiary, #1a1a1e);
     border-radius: 4px;
     box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
     overflow: visible;
@@ -414,7 +414,7 @@
     position: relative;
     height: 28px;
     width: 100%;
-    background: #1a1a1e;
+    background: var(--bg-tertiary, #1a1a1e);
     border-radius: 6px;
     box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
     overflow: visible;
@@ -473,7 +473,7 @@
     flex: 1;
     height: 3px;
     border-radius: 1px;
-    background: #1a1a1e;
+    background: var(--bg-tertiary, #1a1a1e);
     transition: background 0.08s, box-shadow 0.08s;
   }
 

@@ -77,13 +77,13 @@
   .welcome-title {
     font-size: 22px;
     font-weight: 700;
-    color: #e0e0e0;
+    color: var(--text-primary, #e0e0e0);
     margin: 0 0 6px 0;
   }
 
   .welcome-subtitle {
     font-size: 13px;
-    color: #888;
+    color: var(--text-muted, #888);
     margin: 0 0 28px 0;
   }
 
@@ -121,7 +121,7 @@
 
   .welcome-btn.secondary {
     background: rgba(255, 255, 255, 0.08);
-    color: #e0e0e0;
+    color: var(--text-primary, #e0e0e0);
     border: 1px solid #444;
   }
 
@@ -137,7 +137,7 @@
   }
 
   .welcome-btn.outline:hover {
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     border-color: #555;
   }
 
@@ -152,13 +152,13 @@
   .activate-title {
     font-size: 18px;
     font-weight: 600;
-    color: #e0e0e0;
+    color: var(--text-primary, #e0e0e0);
     margin: 0 0 6px 0;
   }
 
   .activate-desc {
     font-size: 13px;
-    color: #888;
+    color: var(--text-muted, #888);
     margin: 0 0 20px 0;
   }
 
@@ -172,7 +172,7 @@
     border: 1px solid #444;
     border-radius: 8px;
     padding: 12px 16px;
-    color: #e0e0e0;
+    color: var(--text-primary, #e0e0e0);
     font-family: 'Fira Code', monospace;
     font-size: 14px;
     letter-spacing: 0.05em;

@@ -13,12 +13,25 @@ import { get } from 'svelte/store';
 import { project } from '$lib/stores/layers';
 import { settings } from '$lib/stores/settings';
 import { vjClipLauncher } from '$lib/stores/vjClipLauncher';
+import { stage3dScene } from '$lib/stage3d/store';
+import { invoke, isDesktopApp } from '$lib/bridge';
 
 const CHANNEL_NAME = 'ghostarcade-state-sync';
 
 let channel: BroadcastChannel | null = null;
 let mode: 'sender' | 'receiver' | null = null;
 let unsubscribers: (() => void)[] = [];
+let stage3dRelayFullPublishTimer: ReturnType<typeof setTimeout> | null = null;
+let stage3dRelayLivePublishTimer: ReturnType<typeof setTimeout> | null = null;
+let stage3dRelayScenePublishTimer: ReturnType<typeof setTimeout> | null = null;
+let stage3dRelaySettingsPublishTimer: ReturnType<typeof setTimeout> | null = null;
+let stage3dRelayPollTimer: ReturnType<typeof setInterval> | null = null;
+let stage3dRelayPollInFlight = false;
+let lastStage3DRelayFullTick = -1;
+let lastStage3DRelayLiveTick = -1;
+let lastStage3DRelaySceneTick = -1;
+let lastStage3DRelaySettingsTick = -1;
+let stage3dRelayWarned = false;
 
 // Debounce timer for project updates (avoid flooding during rapid changes)
 let projectDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -157,12 +170,21 @@ function tryBroadcastLayerPatchUpdate(): boolean {
   return broadcastLayerPatches(currentLayers);
 }
 
+function isStage3DWindow(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return new URLSearchParams(window.location.search).get('mode') === 'stage-3d';
+  } catch {
+    return false;
+  }
+}
+
 // ============================================================
 // Message Types
 // ============================================================
 
 interface StateMessage {
-  type: 'project-state' | 'vj-state' | 'settings-update' | 'osr-request-state' | 'layer-patch' | 'cursor-visibility' | 'cursor-position' | 'output-frozen';
+  type: 'project-state' | 'vj-state' | 'stage3d-state' | 'settings-update' | 'osr-request-state' | 'layer-patch' | 'cursor-visibility' | 'cursor-position' | 'output-frozen';
   data?: any;
   timestamp: number;
 }
@@ -175,59 +197,15 @@ function sendFullState() {
   if (!channel || mode !== 'sender') return;
 
   try {
-    // Use existing exportProject() which strips textures/video elements
-    const projectData = project.exportProject();
-    const vjState = get(vjClipLauncher);
-    const settingsState = get(settings);
-
-    // Strip non-serializable properties from clip grids (HTMLCanvasElement,
-    // HTMLVideoElement, HTMLIFrameElement). Must strip:
-    //   - the top-level Bank A clipGrid
-    //   - the Bank B clipGrid (when crossfader has it)
-    //   - the clipGrid AND bankBClipGrid inside every block
-    //   - layerStates[i].activeClip + bankBLayerStates[i].activeClip
-    //     (same VJClip object reference as in the grid, so same runtime fields)
-    // Pre-fix the activeClip path leaked HTMLVideoElement into structured
-    // clone and threw DataCloneError on every triggerClip / setClip /
-    // openVJMode — visible as a console flood and reported by the user.
-    const safeBlocks = vjState.blocks.map(block => ({
-      ...block,
-      clipGrid: stripClipGrid(block.clipGrid),
-      bankBClipGrid: block.bankBClipGrid ? stripClipGrid(block.bankBClipGrid) : undefined,
-    }));
-    const safeClipGrid = stripClipGrid(vjState.clipGrid);
-    const safeBankBClipGrid = (vjState as any).bankBClipGrid ? stripClipGrid((vjState as any).bankBClipGrid) : undefined;
-
-    // JSON-clean the ENTIRE payload before posting. The vjClipLauncher
-    // live state (clips' splatContent/model3dContent → three.js textures/
-    // scenes, compositionEffects, per-layerState effects) carries values
-    // structuredClone rejects, and the strip helpers don't catch them all.
-    // JSON.stringify drops functions and is robust to future fields;
-    // exportProject already broke any cycles. Matches the settings-update
-    // broadcast's approach.
-    const fullStatePayload = {
-      ...projectData,
-      vjClipLauncher: {
-        blocks: safeBlocks,
-        activeBlockId: vjState.activeBlockId,
-        clipGrid: safeClipGrid,
-        bankBClipGrid: safeBankBClipGrid,
-        layerStates: stripLayerStates(vjState.layerStates),
-        bankBLayerStates: stripLayerStates((vjState as any).bankBLayerStates),
-        compositionEffects: vjState.compositionEffects,
-        masterOpacity: vjState.masterOpacity,
-        isOpen: vjState.isOpen,
-        isLive: vjState.isLive,
-      },
-      settings: { output: settingsState?.output },
-    };
+    const fullStatePayload = buildSyncedStatePayload();
     channel.postMessage({
       type: 'project-state',
-      data: JSON.parse(JSON.stringify(fullStatePayload)),
+      data: fullStatePayload,
       timestamp: Date.now(),
     } satisfies StateMessage);
 
     resetLayerPatchSnapshot();
+    publishStage3DRelayFullState();
     console.log('[StateSync] Full state sent to OSR');
   } catch (err) {
     console.error('[StateSync] Failed to send full state:', err);
@@ -236,6 +214,135 @@ function sendFullState() {
 
 let hasActiveReceiver = false;
 
+function buildSyncedStatePayload(): any {
+  const projectData = project.exportProject() as any;
+  const vjState = get(vjClipLauncher) as any;
+  const settingsState = get(settings);
+  const liveVJState = buildLiveVJStatePayload(vjState, true);
+
+  const payload = {
+    ...projectData,
+    vjClipLauncher: liveVJState,
+    stage3dScene: get(stage3dScene),
+    settings: { output: settingsState?.output },
+  };
+
+  return JSON.parse(JSON.stringify(payload));
+}
+
+function buildLiveVJStatePayload(vjState = get(vjClipLauncher) as any, includeGrids = false): any {
+  const safeBlocks = includeGrids
+    ? (vjState.blocks || []).map((block: any) => ({
+        id: block.id,
+        name: block.name,
+        clipGrid: stripClipGrid(block.clipGrid),
+        bankBClipGrid: block.bankBClipGrid ? stripClipGrid(block.bankBClipGrid) : undefined,
+      }))
+    : undefined;
+  const safeClipGrid = includeGrids ? stripClipGrid(vjState.clipGrid) : undefined;
+  const safeBankBClipGrid = includeGrids && vjState.bankBClipGrid ? stripClipGrid(vjState.bankBClipGrid) : undefined;
+
+  const payload = {
+    numLayers: vjState.numLayers,
+    numColumns: vjState.numColumns,
+    ...(includeGrids ? { blocks: safeBlocks } : {}),
+    activeBlockId: vjState.activeBlockId,
+    ...(includeGrids ? { clipGrid: safeClipGrid } : {}),
+    ...(includeGrids ? { bankBClipGrid: safeBankBClipGrid } : {}),
+    layerStates: stripLayerStates(vjState.layerStates),
+    bankBLayerStates: stripLayerStates(vjState.bankBLayerStates),
+    selectedDeck: vjState.selectedDeck,
+    selectedLayerIndex: vjState.selectedLayerIndex,
+    compositionEffects: vjState.compositionEffects,
+    masterOpacity: vjState.masterOpacity,
+    isOpen: vjState.isOpen,
+    isLive: vjState.isLive,
+    stageMode: vjState.stageMode,
+    mapMode: vjState.mapMode,
+    stagePresetId: vjState.stagePresetId,
+    stoppedAll: vjState.stoppedAll,
+    crossfaderEnabled: vjState.crossfaderEnabled,
+    crossfaderValue: vjState.crossfaderValue,
+    crossfaderTransition: vjState.crossfaderTransition,
+    crossfaderCurve: vjState.crossfaderCurve,
+    crossfaderBlendMode: vjState.crossfaderBlendMode,
+    quantization: vjState.quantization,
+    pendingTriggers: [],
+  };
+
+  return JSON.parse(JSON.stringify(payload));
+}
+
+function publishStage3DRelay(kind: 'full' | 'live' | 'scene' | 'settings', state: any) {
+  if (!isDesktopApp || mode !== 'sender') return;
+  try {
+    void invoke('stage3d_publish_state', { kind, state }).catch((err) => {
+      if (!stage3dRelayWarned) {
+        stage3dRelayWarned = true;
+        console.warn('[StateSync] Stage 3D IPC relay publish failed:', err);
+      }
+    });
+  } catch (err) {
+    if (!stage3dRelayWarned) {
+      stage3dRelayWarned = true;
+      console.warn('[StateSync] Stage 3D IPC relay publish failed:', err);
+    }
+  }
+}
+
+function publishStage3DRelayFullState() {
+  publishStage3DRelay('full', buildSyncedStatePayload());
+}
+
+function publishStage3DRelayLiveState() {
+  publishStage3DRelay('live', buildLiveVJStatePayload(undefined, false));
+}
+
+function publishStage3DRelaySceneState() {
+  publishStage3DRelay('scene', JSON.parse(JSON.stringify(get(stage3dScene))));
+}
+
+function publishStage3DRelaySettingsState() {
+  const settingsState = get(settings);
+  publishStage3DRelay('settings', JSON.parse(JSON.stringify({ output: settingsState?.output })));
+}
+
+function scheduleStage3DRelayFullPublish(delay = 100) {
+  if (!isDesktopApp || mode !== 'sender') return;
+  if (stage3dRelayFullPublishTimer) return;
+  stage3dRelayFullPublishTimer = setTimeout(() => {
+    stage3dRelayFullPublishTimer = null;
+    publishStage3DRelayFullState();
+  }, delay);
+}
+
+function scheduleStage3DRelayLivePublish(delay = 33) {
+  if (!isDesktopApp || mode !== 'sender') return;
+  if (stage3dRelayLivePublishTimer) return;
+  stage3dRelayLivePublishTimer = setTimeout(() => {
+    stage3dRelayLivePublishTimer = null;
+    publishStage3DRelayLiveState();
+  }, delay);
+}
+
+function scheduleStage3DRelayScenePublish(delay = 50) {
+  if (!isDesktopApp || mode !== 'sender') return;
+  if (stage3dRelayScenePublishTimer) return;
+  stage3dRelayScenePublishTimer = setTimeout(() => {
+    stage3dRelayScenePublishTimer = null;
+    publishStage3DRelaySceneState();
+  }, delay);
+}
+
+function scheduleStage3DRelaySettingsPublish(delay = 100) {
+  if (!isDesktopApp || mode !== 'sender') return;
+  if (stage3dRelaySettingsPublishTimer) return;
+  stage3dRelaySettingsPublishTimer = setTimeout(() => {
+    stage3dRelaySettingsPublishTimer = null;
+    publishStage3DRelaySettingsState();
+  }, delay);
+}
+
 function broadcastProjectUpdate() {
   if (!channel || mode !== 'sender' || !hasActiveReceiver) return;
 
@@ -243,17 +350,41 @@ function broadcastProjectUpdate() {
   if (projectDebounceTimer) clearTimeout(projectDebounceTimer);
   projectDebounceTimer = setTimeout(() => {
     try {
-      const projectData = project.exportProject();
+      const projectData = buildSyncedStatePayload();
       channel!.postMessage({
         type: 'project-state',
         data: projectData,
         timestamp: Date.now(),
       } satisfies StateMessage);
       resetLayerPatchSnapshot();
+      publishStage3DRelayFullState();
     } catch (err) {
       console.error('[StateSync] Failed to broadcast project:', err);
     }
   }, DEBOUNCE_MS);
+}
+
+let stage3dDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+const STAGE3D_DEBOUNCE_MS = 33;
+
+function broadcastStage3DState() {
+  if (!channel || mode !== 'sender' || !hasActiveReceiver) return;
+  if (stage3dDebounceTimer !== null) return;
+
+  stage3dDebounceTimer = setTimeout(() => {
+    stage3dDebounceTimer = null;
+    if (!channel || mode !== 'sender' || !hasActiveReceiver) return;
+    try {
+      channel.postMessage({
+        type: 'stage3d-state',
+        data: JSON.parse(JSON.stringify(get(stage3dScene))),
+        timestamp: Date.now(),
+      } satisfies StateMessage);
+      scheduleStage3DRelayScenePublish(0);
+    } catch (err) {
+      console.error('[StateSync] Failed to broadcast Stage 3D state:', err);
+    }
+  }, STAGE3D_DEBOUNCE_MS);
 }
 
 // Debounce VJ-state broadcasts. Modulation engines write to the clip launcher
@@ -285,7 +416,8 @@ function stripClip(clip: any): any {
 }
 
 function stripClipGrid(grid: any[][]): any[][] {
-  return grid.map(row => row.map(stripClip));
+  if (!Array.isArray(grid)) return [];
+  return grid.map(row => Array.isArray(row) ? row.map(stripClip) : []);
 }
 
 // layerStates[i].activeClip points to the same VJClip object that lives in
@@ -336,12 +468,16 @@ function doBroadcastVJState() {
       masterOpacity: vjState.masterOpacity,
       isOpen: vjState.isOpen,
       isLive: vjState.isLive,
+      stageMode: vjState.stageMode,
+      mapMode: vjState.mapMode,
+      stagePresetId: vjState.stagePresetId,
     };
     channel.postMessage({
       type: 'vj-state',
       data: JSON.parse(JSON.stringify(vjPayload)),
       timestamp: Date.now(),
     } satisfies StateMessage);
+    scheduleStage3DRelayLivePublish(0);
   } catch (err) {
     console.error('[StateSync] Failed to broadcast VJ state:', err);
   }
@@ -372,6 +508,7 @@ function initSender() {
   // Layer patches (corners, opacity) are sent only when the output window
   // is actually open — otherwise they just waste CPU on JSON.stringify.
   const unsubProject = project.subscribe(() => {
+    scheduleStage3DRelayFullPublish();
     if (!tryBroadcastLayerPatchUpdate()) {
       broadcastProjectUpdate();
     }
@@ -380,9 +517,16 @@ function initSender() {
 
   // Subscribe to VJ clip launcher changes
   const unsubVJ = vjClipLauncher.subscribe(() => {
+    scheduleStage3DRelayLivePublish();
     broadcastVJState();
   });
   unsubscribers.push(unsubVJ);
+
+  const unsubStage3D = stage3dScene.subscribe(() => {
+    scheduleStage3DRelayScenePublish();
+    broadcastStage3DState();
+  });
+  unsubscribers.push(unsubStage3D);
 
   // Subscribe to settings.output changes so final-pass output transforms
   // (rotation, crop, brightness, contrast, gamma, cursor visibility) stay
@@ -392,6 +536,7 @@ function initSender() {
   // broadcast.
   let lastOutputJson = '';
   const unsubSettings = settings.subscribe(s => {
+    scheduleStage3DRelaySettingsPublish();
     if (!hasActiveReceiver) return;
     const outJson = JSON.stringify(s.output);
     if (outJson === lastOutputJson) return;
@@ -416,6 +561,10 @@ function initSender() {
   });
   unsubscribers.push(unsubSettings);
 
+  scheduleStage3DRelayFullPublish(0);
+  scheduleStage3DRelayLivePublish(0);
+  scheduleStage3DRelayScenePublish(0);
+  scheduleStage3DRelaySettingsPublish(0);
   console.log('[StateSync] Sender initialized');
 }
 
@@ -427,32 +576,128 @@ let settingsBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
 
 let receivedFirstState = false;
 
+function applyProjectStatePayload(data: any, sourceLabel: string) {
+  if (!data) return;
+  try {
+    // The relay payload is always shaped as exportProject() output:
+    // { project: {...}, mediaLibrary: [...], vjClipLauncher: ..., ... }.
+    // Some upstream paths (notably an older Stage 3D relay shape, and
+    // certain partial-state publishes) instead send the inner project
+    // object directly at the top level. Detect that case and re-wrap so
+    // importProject sees its expected shape — without this, the import
+    // logs "Invalid project data: missing project object" and the
+    // receiver's layers/screens dropdown stays empty.
+    let importPayload = data;
+    if (!data.project && (Array.isArray(data.layers) || typeof data.name === 'string' || typeof data.width === 'number')) {
+      importPayload = {
+        version: data.version ?? '1.9.3',
+        project: data,
+        mediaLibrary: data.mediaLibrary ?? [],
+        vjClipLauncher: data.vjClipLauncher,
+        modulation: data.modulation,
+      };
+    }
+    const importedOk = project.importProject(importPayload);
+    if (!importedOk) {
+      // Last-resort visibility: log what we actually received so a future
+      // debug session doesn't have to add console.logs to find it. Keys
+      // only — full payload is large enough to spam the console.
+      console.warn(`[StateSync] importProject rejected (${sourceLabel}); payload keys:`, data ? Object.keys(data) : 'null');
+    }
+    // importProject is intentionally conservative for file loads: it
+    // forces VJ live/stage/map mode off. State-sync receivers are not
+    // file loads, though; output and Stage 3D windows must mirror the
+    // sender's live deck state. Merge the live payload back after the
+    // structural import so active clips keep driving synced renderers.
+    if (data.vjClipLauncher) {
+      vjClipLauncher.update((state: any) => ({ ...state, ...data.vjClipLauncher }));
+    }
+    if (data.stage3dScene?.schemaVersion === 1 && Array.isArray(data.stage3dScene.nodes)) {
+      // Merge in a way that preserves the LOCAL window's stage3D editing
+      // surface — lighting overrides, scenery transforms, screen
+      // overrides, and user-placed elements all belong to whoever is
+      // looking at the 3D viewport (usually the popout that's on the
+      // external monitor for the show). Without this, every clip
+      // change in the editor triggers a full state publish, which used
+      // to clobber the popout's lighting back to defaults.
+      mergeStage3DScenePreservingLocal(data.stage3dScene);
+    }
+    // Pull settings.output through too. Output transforms (rotation,
+    // crop, color correction, cursor visibility) live in settings.output
+    // and are applied by the output renderer, so receivers need the
+    // latest values to actually show changes the user makes mid-session.
+    if (data.settings?.output) {
+      settings.update(s => ({ ...s, output: { ...s.output, ...data.settings.output } }));
+    }
+    if (!receivedFirstState) {
+      receivedFirstState = true;
+      console.log(`[StateSync] First project state received (${sourceLabel})`);
+    }
+  } catch (err) {
+    console.error(`[StateSync] Failed to import project state (${sourceLabel}):`, err);
+  }
+}
+
+function applyLiveVJStatePayload(data: any, sourceLabel: string) {
+  if (!data) return;
+  try {
+    vjClipLauncher.update((state: any) => ({ ...state, ...data }));
+  } catch (err) {
+    console.error(`[StateSync] Failed to import live VJ state (${sourceLabel}):`, err);
+  }
+}
+
+function applyStage3DScenePayload(data: any, sourceLabel: string) {
+  if (!data?.schemaVersion || data.schemaVersion !== 1 || !Array.isArray(data.nodes)) return;
+  try {
+    mergeStage3DScenePreservingLocal(data);
+  } catch (err) {
+    console.error(`[StateSync] Failed to import Stage 3D state (${sourceLabel}):`, err);
+  }
+}
+
+/** Merge an incoming stage3D scene payload while keeping the local
+ *  window's editing surface intact. The fields below are owned by the
+ *  window currently displaying the 3D viewport (lighting, scenery,
+ *  per-screen tweaks, user-placed elements) — they survive every
+ *  cross-window broadcast and never get reset by clip-change side
+ *  effects. Everything else (camera, environment, schema bumps) takes
+ *  the incoming value. */
+function mergeStage3DScenePreservingLocal(incoming: any): void {
+  const current: any = get(stage3dScene);
+  const merged: any = {
+    ...incoming,
+    // Local-owned: keep ours over incoming. `??` so an undefined local
+    // (e.g. fresh popout) still inherits whatever the sender had.
+    lighting:          current.lighting          ?? incoming.lighting,
+    sceneryOverrides:  current.sceneryOverrides  ?? incoming.sceneryOverrides,
+    screenOverrides:   current.screenOverrides   ?? incoming.screenOverrides,
+    userElements:      current.userElements      ?? incoming.userElements,
+  };
+  stage3dScene.loadScene(merged);
+}
+
+function applySettingsPayload(data: any, sourceLabel: string) {
+  if (!data?.output) return;
+  try {
+    settings.update(s => ({ ...s, output: { ...s.output, ...data.output } }));
+  } catch (err) {
+    console.error(`[StateSync] Failed to import settings (${sourceLabel}):`, err);
+  }
+}
+
 function handleReceivedMessage(event: MessageEvent<StateMessage>) {
   const msg = event.data;
   if (!msg || !msg.type) return;
 
   switch (msg.type) {
     case 'project-state': {
-      if (msg.data) {
-        try {
-          // Use existing importProject() which handles all store updates
-          project.importProject(msg.data);
-          // Pull settings.output through too. Output transforms (rotation,
-          // crop, color correction, cursor visibility) live in
-          // settings.output and are applied by the output renderer, so
-          // the output window needs the latest values to actually show
-          // changes the user makes mid-session.
-          if (msg.data.settings?.output) {
-            settings.update(s => ({ ...s, output: { ...s.output, ...msg.data.settings.output } }));
-          }
-          if (!receivedFirstState) {
-            receivedFirstState = true;
-            console.log('[StateSync] First project state received');
-          }
-        } catch (err) {
-          console.error('[StateSync] Failed to import project state:', err);
-        }
-      }
+      applyProjectStatePayload(msg.data, 'BroadcastChannel');
+      break;
+    }
+
+    case 'stage3d-state': {
+      applyStage3DScenePayload(msg.data, 'BroadcastChannel');
       break;
     }
 
@@ -583,7 +828,83 @@ function initReceiver() {
     timestamp: Date.now(),
   } satisfies StateMessage);
 
+  if (isStage3DWindow()) {
+    startStage3DRelayPolling();
+  }
+
   console.log('[StateSync] Receiver initialized, requesting state');
+}
+
+async function pollStage3DRelayState() {
+  if (!isDesktopApp || mode !== 'receiver' || !isStage3DWindow() || stage3dRelayPollInFlight) return;
+  stage3dRelayPollInFlight = true;
+  try {
+    const result = await invoke<{
+      full?: any;
+      fullTick?: number;
+      live?: any;
+      liveTick?: number;
+      scene?: any;
+      sceneTick?: number;
+      settings?: any;
+      settingsTick?: number;
+      state?: any;
+      tick?: number;
+    }>('stage3d_get_state', {
+      fullTick: lastStage3DRelayFullTick,
+      liveTick: lastStage3DRelayLiveTick,
+      sceneTick: lastStage3DRelaySceneTick,
+      settingsTick: lastStage3DRelaySettingsTick,
+    });
+
+    // Backward compatibility for an older main-process relay shape.
+    const legacyTick = typeof result?.tick === 'number' ? result.tick : -1;
+    if (result?.state && legacyTick !== lastStage3DRelayFullTick) {
+      lastStage3DRelayFullTick = legacyTick;
+      applyProjectStatePayload(result.state, 'Stage 3D IPC relay');
+      return;
+    }
+
+    const fullTick = typeof result?.fullTick === 'number' ? result.fullTick : lastStage3DRelayFullTick;
+    if (result?.full && fullTick !== lastStage3DRelayFullTick) {
+      lastStage3DRelayFullTick = fullTick;
+      applyProjectStatePayload(result.full, 'Stage 3D IPC relay');
+    }
+
+    const liveTick = typeof result?.liveTick === 'number' ? result.liveTick : lastStage3DRelayLiveTick;
+    if (result?.live && liveTick !== lastStage3DRelayLiveTick) {
+      lastStage3DRelayLiveTick = liveTick;
+      applyLiveVJStatePayload(result.live, 'Stage 3D IPC relay');
+    }
+
+    const sceneTick = typeof result?.sceneTick === 'number' ? result.sceneTick : lastStage3DRelaySceneTick;
+    if (result?.scene && sceneTick !== lastStage3DRelaySceneTick) {
+      lastStage3DRelaySceneTick = sceneTick;
+      applyStage3DScenePayload(result.scene, 'Stage 3D IPC relay');
+    }
+
+    const settingsTick = typeof result?.settingsTick === 'number' ? result.settingsTick : lastStage3DRelaySettingsTick;
+    if (result?.settings && settingsTick !== lastStage3DRelaySettingsTick) {
+      lastStage3DRelaySettingsTick = settingsTick;
+      applySettingsPayload(result.settings, 'Stage 3D IPC relay');
+    }
+  } catch (err) {
+    if (!stage3dRelayWarned) {
+      stage3dRelayWarned = true;
+      console.warn('[StateSync] Stage 3D IPC relay poll failed:', err);
+    }
+  } finally {
+    stage3dRelayPollInFlight = false;
+  }
+}
+
+function startStage3DRelayPolling() {
+  if (!isDesktopApp || stage3dRelayPollTimer) return;
+  void pollStage3DRelayState();
+  stage3dRelayPollTimer = setInterval(() => {
+    void pollStage3DRelayState();
+  }, 50);
+  console.log('[StateSync] Stage 3D IPC relay polling started');
 }
 
 // ============================================================
@@ -719,6 +1040,30 @@ export function destroyStateBroadcast() {
     clearTimeout(projectDebounceTimer);
     projectDebounceTimer = null;
   }
+  if (stage3dRelayFullPublishTimer) {
+    clearTimeout(stage3dRelayFullPublishTimer);
+    stage3dRelayFullPublishTimer = null;
+  }
+  if (stage3dRelayLivePublishTimer) {
+    clearTimeout(stage3dRelayLivePublishTimer);
+    stage3dRelayLivePublishTimer = null;
+  }
+  if (stage3dRelayScenePublishTimer) {
+    clearTimeout(stage3dRelayScenePublishTimer);
+    stage3dRelayScenePublishTimer = null;
+  }
+  if (stage3dRelaySettingsPublishTimer) {
+    clearTimeout(stage3dRelaySettingsPublishTimer);
+    stage3dRelaySettingsPublishTimer = null;
+  }
+  if (stage3dRelayPollTimer) {
+    clearInterval(stage3dRelayPollTimer);
+    stage3dRelayPollTimer = null;
+  }
+  if (stage3dDebounceTimer) {
+    clearTimeout(stage3dDebounceTimer);
+    stage3dDebounceTimer = null;
+  }
 
   if (channel) {
     channel.close();
@@ -727,5 +1072,10 @@ export function destroyStateBroadcast() {
 
   mode = null;
   receivedFirstState = false;
+  lastStage3DRelayFullTick = -1;
+  lastStage3DRelayLiveTick = -1;
+  lastStage3DRelaySceneTick = -1;
+  lastStage3DRelaySettingsTick = -1;
+  stage3dRelayPollInFlight = false;
   console.log('[StateSync] Destroyed');
 }

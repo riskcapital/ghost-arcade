@@ -1,6 +1,10 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { settings, getSupportedFormats, COLOR_SCHEMES, CLAUDE_MODELS, GEMINI_MODELS, VEO_MODELS, LUMA_MODELS, DEFAULT_LAYER_SHADERS, type RecordingSettings, type OutputSettings, type ColorSchemeId, type FluidQualityMode, type ShaderQualityMode, type ShaderAIProvider, type VideoAIProvider } from '../stores/settings';
+  // Theme template registry — full visual style swap (fonts + surfaces
+  // + corners + accents). See src/lib/theming/themes/.
+  import { activeThemeId, themes } from '../theming/store';
+  const themesList = themes.list();
   import {
     probeDecodeSupport,
     probeEncodeSupport,
@@ -231,11 +235,20 @@
   // the content pane. Advanced sections are hidden until showAdvanced is
   // toggled on (persisted to localStorage so power users don't re-flip it
   // every session).
+  // Consolidated layout (2026-06):
+  //   • Project (Canvas + Layers) folded into Output > Display — those
+  //     three sections are all "what comes out of the renderer" so
+  //     grouping them under Display matches users' mental model.
+  //   • Output > Color Correction and Output > Edge Blending REMOVED:
+  //     they now live on the Screens tab (per-slice) where they
+  //     belong with the rest of the projector/screen calibration UI.
+  //   • Recording and AI are top-level (no synthetic single-child
+  //     category to read).
+  //   • Advanced sections always visible; the Show-Advanced checkbox
+  //     was demoted to a power-user no-op.
   type SectionId =
     | 'app:appearance' | 'app:updates'
-    | 'project:canvas' | 'project:layers'
-    | 'output:display' | 'output:color'
-    | 'output:edge-blending'
+    | 'output:display'
     | 'performance:gpu' | 'performance:render-quality' | 'performance:video-decoding'
     | 'recording'
     | 'integrations:midi' | 'integrations:osc' | 'integrations:wled' | 'integrations:mediapipe'
@@ -247,24 +260,14 @@
       { id: 'app:appearance', label: 'Appearance' },
       { id: 'app:updates', label: 'Updates' },
     ]},
-    { id: 'project', label: 'Project', sections: [
-      { id: 'project:canvas', label: 'Canvas' },
-      { id: 'project:layers', label: 'Layers' },
-    ]},
     { id: 'output', label: 'Output', sections: [
-      // Display + color correction stay as global output post-process
-      // toggles (cursor overlay, rotation, blackout).
-      // Multi-Output / per-slice config moved to the Screens tab in
-      // the left sidebar — see ScreenPanel.svelte. Dome projection now
-      // lives there too because it is part of output calibration. Edge Blending
-      // remains here as a legacy/single-output convenience for users
-      // who haven't adopted Screens yet.
+      // Display is the single global-output section: cursor overlay,
+      // rotation, blackout, plus Canvas (size/aspect) and Layers
+      // (default layer behavior) which used to live under "Project".
       { id: 'output:display', label: 'Display' },
-      { id: 'output:color', label: 'Color Correction' },
-      { id: 'output:edge-blending', label: 'Edge Blending', advanced: true },
     ]},
     { id: 'performance', label: 'Performance', sections: [
-      { id: 'performance:gpu', label: 'GPU Acceleration', advanced: true },
+      { id: 'performance:gpu', label: 'GPU Acceleration' },
       { id: 'performance:render-quality', label: 'Render Quality' },
       { id: 'performance:video-decoding', label: 'Video Decoding' },
     ]},
@@ -275,7 +278,7 @@
       { id: 'integrations:midi', label: 'MIDI' },
       { id: 'integrations:osc', label: 'OSC' },
       { id: 'integrations:wled', label: 'WLED' },
-      { id: 'integrations:mediapipe', label: 'MediaPipe', advanced: true },
+      { id: 'integrations:mediapipe', label: 'MediaPipe' },
     ]},
     { id: 'ai', label: 'AI', sections: [
       { id: 'ai', label: 'AI' },
@@ -298,16 +301,18 @@
   };
 
   let selectedSection: SectionId = 'app:appearance';
-  let showAdvanced = false;
+  // Advanced sections are always visible now — the checkbox was hiding
+  // mildly intimidating but useful sections (MediaPipe, GPU Acceleration)
+  // from users who would have benefited from finding them. Variable kept
+  // as a constant so the existing visibility filter below still compiles.
+  const showAdvanced = true;
   try {
     const saved = localStorage.getItem('ghostarcade-settings-section');
     if (saved && SIDEBAR.some(c => c.sections.some(s => s.id === saved))) {
       selectedSection = saved as SectionId;
     }
-    showAdvanced = localStorage.getItem('ghostarcade-settings-advanced') === '1';
   } catch { /* ignore */ }
   $: try { localStorage.setItem('ghostarcade-settings-section', selectedSection); } catch { /* */ }
-  $: try { localStorage.setItem('ghostarcade-settings-advanced', showAdvanced ? '1' : '0'); } catch { /* */ }
 
   // Is the NDI native addon built + the NDI runtime initialized? Drives
   // the "NDI" option's disabled state in the per-slice transport
@@ -551,20 +556,22 @@
           {#each SIDEBAR as cat (cat.id)}
             {@const visibleSections = cat.sections.filter(s => showAdvanced || !s.advanced)}
             {#if visibleSections.length > 0}
-              <div class="sidebar-category">{cat.label}</div>
+              {#if visibleSections.length > 1}
+                <!-- Only show the category header when there's more
+                     than one section to group — single-section
+                     categories (Recording, AI) used to read as
+                     "Recording > Recording" which is silly. -->
+                <div class="sidebar-category">{cat.label}</div>
+              {/if}
               {#each visibleSections as sec (sec.id)}
                 <button
                   class="sidebar-section"
                   class:active={selectedSection === sec.id}
                   onclick={() => selectedSection = sec.id}
-                >{sec.label}{#if sec.advanced}<span class="sidebar-adv-tag">ADV</span>{/if}</button>
+                >{visibleSections.length === 1 ? cat.label : sec.label}</button>
               {/each}
             {/if}
           {/each}
-          <label class="sidebar-advanced-toggle">
-            <input type="checkbox" bind:checked={showAdvanced} />
-            <span>Show advanced</span>
-          </label>
         </aside>
 
       <div class="settings-content">
@@ -594,10 +601,52 @@
         <section class="settings-section">
           <h3>Appearance</h3>
 
+          <!-- Theme Templates — a complete style overhaul (fonts,
+               surfaces, accents, corner system) vs just an accent
+               swap. New themes plug in via src/lib/theming/themes/.  -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Color Scheme</span>
-              <span class="label-hint">Choose your preferred color theme</span>
+              <span class="label-text">Theme Template</span>
+              <span class="label-hint">Full visual style — fonts, surfaces, corner system, accents. Switches the whole app at once.</span>
+            </div>
+          </div>
+
+          <div class="theme-template-grid">
+            {#each themesList as theme}
+              <button
+                class="theme-template-card"
+                class:active={$activeThemeId === theme.id}
+                onclick={() => activeThemeId.set(theme.id)}
+              >
+                <div class="theme-preview" style="
+                  background: {theme.tokens.void};
+                  border-color: {theme.tokens.line3};
+                  font-family: {theme.tokens.fontUi};
+                ">
+                  <div class="theme-bar" style="
+                    background: {theme.tokens.bar};
+                    border-bottom-color: {theme.tokens.line2};
+                  "></div>
+                  <div class="theme-body">
+                    <div class="theme-panel" style="background: {theme.tokens.panel};">
+                      <div class="theme-card" style="background: {theme.tokens.card};">
+                        <i style="background: {theme.tokens.coral};"></i>
+                        <i style="background: {theme.tokens.violet};"></i>
+                        <i style="background: {theme.tokens.blue};"></i>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <span class="theme-name">{theme.name}</span>
+                <span class="theme-desc">{theme.description ?? ''}</span>
+              </button>
+            {/each}
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Accent Scheme</span>
+              <span class="label-hint">Fine-tune accent colours on top of the active theme template.</span>
             </div>
           </div>
 
@@ -629,6 +678,42 @@
             <label class="toggle">
               <input type="checkbox" checked={$settings.ui.safeMode ?? false}
                 onchange={(e) => settings.update(s => ({ ...s, ui: { ...s.ui, safeMode: (e.target as HTMLInputElement).checked } }))} />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <!-- Flip VJ layout — used to be an icon in the VJ top bar; we
+               moved it here because most users set it once and never touch
+               it again, so it doesn't deserve permanent header real estate. -->
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Reverse VJ layout (right-handed)</span>
+              <span class="label-hint">Mirrors the VJ mode layout so the clip grid sits on the right and the preview / controls land on the left. Useful for right-handed users who'd rather scrub the timeline with their dominant hand.</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" checked={$settings.ui.vjLayoutReversed ?? false}
+                onchange={(e) => settings.update(s => ({ ...s, ui: { ...s.ui, vjLayoutReversed: (e.target as HTMLInputElement).checked } }))} />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Snap to other layers</span>
+              <span class="label-hint">In mapping mode, snap warp handles to nearby layer edges, centers, and canvas edges. Turn off if the snap is fighting you — handles will then move pixel-by-pixel with no magnetism.</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" checked={$settings.ui.gridSettings?.snapToLayers !== false}
+                onchange={(e) => settings.update(s => ({
+                  ...s,
+                  ui: {
+                    ...s.ui,
+                    gridSettings: {
+                      ...(s.ui.gridSettings ?? { enabled: false, columns: 12, rows: 12, snapToGrid: false, snapToLayers: true }),
+                      snapToLayers: (e.target as HTMLInputElement).checked,
+                    },
+                  },
+                }))} />
               <span class="toggle-slider"></span>
             </label>
           </div>
@@ -697,7 +782,10 @@
 
         {/if}
         <!-- Canvas Size Section -->
-        {#if selectedSection === 'project:canvas'}
+        <!-- Canvas + Layers used to live under a "Project" category but
+             both describe output-frame behavior, so they were folded
+             into the Display section. -->
+        {#if selectedSection === 'output:display'}
         <section class="settings-section">
           <h3>Canvas</h3>
 
@@ -750,7 +838,7 @@
 
         {/if}
         <!-- Default Layer Shader -->
-        {#if selectedSection === 'project:layers'}
+        {#if selectedSection === 'output:display'}
         <section class="settings-section">
           <h3>Layers</h3>
 
@@ -1142,87 +1230,11 @@
 
         {/if}
         <!-- Edge Blending Section -->
-        {#if selectedSection === 'output:edge-blending'}
-        <section class="settings-section">
-          <h3>Edge Blending</h3>
-          <p class="section-hint">Soft-edge correction for overlapping multi-projector setups</p>
-
-          <div class="crop-grid">
-            <div class="crop-item">
-              <span class="crop-label">Left</span>
-              <input type="range" min="0" max="0.5" step="0.01"
-                value={$settings.output.edgeBlendLeft}
-                oninput={(e) => settings.update(s => ({ ...s, output: { ...s.output, edgeBlendLeft: parseFloat((e.target as HTMLInputElement).value) } }))} />
-              <span class="crop-value">{Math.round(($settings.output.edgeBlendLeft ?? 0) * 100)}%</span>
-            </div>
-            <div class="crop-item">
-              <span class="crop-label">Right</span>
-              <input type="range" min="0" max="0.5" step="0.01"
-                value={$settings.output.edgeBlendRight}
-                oninput={(e) => settings.update(s => ({ ...s, output: { ...s.output, edgeBlendRight: parseFloat((e.target as HTMLInputElement).value) } }))} />
-              <span class="crop-value">{Math.round(($settings.output.edgeBlendRight ?? 0) * 100)}%</span>
-            </div>
-            <div class="crop-item">
-              <span class="crop-label">Top</span>
-              <input type="range" min="0" max="0.5" step="0.01"
-                value={$settings.output.edgeBlendTop}
-                oninput={(e) => settings.update(s => ({ ...s, output: { ...s.output, edgeBlendTop: parseFloat((e.target as HTMLInputElement).value) } }))} />
-              <span class="crop-value">{Math.round(($settings.output.edgeBlendTop ?? 0) * 100)}%</span>
-            </div>
-            <div class="crop-item">
-              <span class="crop-label">Bottom</span>
-              <input type="range" min="0" max="0.5" step="0.01"
-                value={$settings.output.edgeBlendBottom}
-                oninput={(e) => settings.update(s => ({ ...s, output: { ...s.output, edgeBlendBottom: parseFloat((e.target as HTMLInputElement).value) } }))} />
-              <span class="crop-value">{Math.round(($settings.output.edgeBlendBottom ?? 0) * 100)}%</span>
-            </div>
-            <div class="crop-item">
-              <span class="crop-label">Gamma</span>
-              <input type="range" min="1" max="4" step="0.1"
-                value={$settings.output.edgeBlendGamma ?? 2.2}
-                oninput={(e) => settings.update(s => ({ ...s, output: { ...s.output, edgeBlendGamma: parseFloat((e.target as HTMLInputElement).value) } }))} />
-              <span class="crop-value">{($settings.output.edgeBlendGamma ?? 2.2).toFixed(1)}</span>
-            </div>
-            <button class="secondary-btn" onclick={() => settings.update(s => ({ ...s, output: { ...s.output, edgeBlendLeft: 0, edgeBlendRight: 0, edgeBlendTop: 0, edgeBlendBottom: 0, edgeBlendGamma: 2.2 } }))}>
-              Reset Blend
-            </button>
-          </div>
-        </section>
-        {/if}
-        <!-- Output Color Correction Section -->
-        {#if selectedSection === 'output:color'}
-        <section class="settings-section">
-          <h3>Color Correction</h3>
-          <p class="section-hint">Adjust output signal to match projector characteristics</p>
-
-          <div class="crop-grid">
-            <div class="crop-item">
-              <span class="crop-label">Brightness</span>
-              <input type="range" min="0" max="2" step="0.01"
-                value={$settings.output.brightness ?? 1}
-                oninput={(e) => settings.update(s => ({ ...s, output: { ...s.output, brightness: parseFloat((e.target as HTMLInputElement).value) } }))} />
-              <span class="crop-value">{(($settings.output.brightness ?? 1) * 100).toFixed(0)}%</span>
-            </div>
-            <div class="crop-item">
-              <span class="crop-label">Contrast</span>
-              <input type="range" min="0" max="2" step="0.01"
-                value={$settings.output.contrast ?? 1}
-                oninput={(e) => settings.update(s => ({ ...s, output: { ...s.output, contrast: parseFloat((e.target as HTMLInputElement).value) } }))} />
-              <span class="crop-value">{(($settings.output.contrast ?? 1) * 100).toFixed(0)}%</span>
-            </div>
-            <div class="crop-item">
-              <span class="crop-label">Gamma</span>
-              <input type="range" min="0.2" max="5" step="0.05"
-                value={$settings.output.gamma ?? 1}
-                oninput={(e) => settings.update(s => ({ ...s, output: { ...s.output, gamma: parseFloat((e.target as HTMLInputElement).value) } }))} />
-              <span class="crop-value">{($settings.output.gamma ?? 1).toFixed(2)}</span>
-            </div>
-            <button class="secondary-btn" onclick={() => settings.update(s => ({ ...s, output: { ...s.output, brightness: 1, contrast: 1, gamma: 1 } }))}>
-              Reset Color
-            </button>
-          </div>
-        </section>
-        {/if}<!-- /output:color -->
+        <!-- Edge Blending and Color Correction sections removed: both
+             live on the Screens tab now (per-slice), where they sit
+             next to the rest of the projector calibration tools. Their
+             underlying $settings.output.* fields stay in the store so
+             any leftover bindings continue to compile cleanly. -->
         <!-- The standalone "Experimental: WebRTC output transport" toggle
              that used to live here was removed — WebRTC is the default
              output transport now (and WebGPU zero-copy supersedes it
@@ -1720,7 +1732,7 @@
                 <span class="label-text">Last message</span>
                 <span class="label-hint">
                   <code class="osc-last">{$oscStore.lastMessage.address}</code>
-                  <span style="color: #888;"> · args: </span>
+                  <span style="color: var(--text-muted, #888);"> · args: </span>
                   <code class="osc-last">{JSON.stringify($oscStore.lastMessage.args)}</code>
                   <span style="color: #555;"> · from {$oscStore.lastMessage.from}</span>
                 </span>
@@ -2143,7 +2155,7 @@
   }
 
   .settings-panel {
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
     border: 1px solid #333;
     border-radius: 12px;
     width: 92%;
@@ -2191,7 +2203,7 @@
     text-align: left;
     background: none;
     border: none;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     font-size: 13px;
     padding: 7px 16px 7px 24px;
     cursor: pointer;
@@ -2200,7 +2212,7 @@
   }
 
   .sidebar-section:hover {
-    color: #e0e0e0;
+    color: var(--text-primary, #e0e0e0);
     background: rgba(187, 134, 252, 0.04);
   }
 
@@ -2228,7 +2240,7 @@
     gap: 8px;
     padding: 10px 16px;
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
     cursor: pointer;
     border-top: 1px solid #1f1f24;
     background: #0a0a0d;
@@ -2240,7 +2252,7 @@
   }
 
   .sidebar-advanced-toggle:hover {
-    color: #ccc;
+    color: var(--text-primary, #ccc);
   }
 
   .sidebar-advanced-toggle input[type="checkbox"] {
@@ -2260,13 +2272,13 @@
     margin: 0;
     font-size: 18px;
     font-weight: 600;
-    color: #eee;
+    color: var(--text-primary, #eee);
   }
 
   .close-btn {
     background: none;
     border: none;
-    color: #888;
+    color: var(--text-muted, #888);
     cursor: pointer;
     padding: 4px;
     border-radius: 4px;
@@ -2278,7 +2290,7 @@
 
   .close-btn:hover {
     background: #333;
-    color: #eee;
+    color: var(--text-primary, #eee);
   }
 
   .settings-tabs {
@@ -2292,7 +2304,7 @@
     background: none;
     border: none;
     border-bottom: 2px solid transparent;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 13px;
     font-weight: 600;
     padding: 10px 16px;
@@ -2301,7 +2313,7 @@
   }
 
   .settings-tab:hover {
-    color: #ccc;
+    color: var(--text-primary, #ccc);
   }
 
   .settings-tab.active {
@@ -2441,7 +2453,7 @@
   }
   .setting-row.sub-row .label-text {
     font-size: 11px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
   }
   .setting-row.sub-row .label-hint {
     font-size: 10px;
@@ -2461,7 +2473,7 @@
   }
   .select-input {
     background: #1c1c20;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     border: 1px solid #2a2a30;
     padding: 4px 8px;
     border-radius: 3px;
@@ -2479,7 +2491,7 @@
 
   .label-text {
     font-size: 14px;
-    color: #eee;
+    color: var(--text-primary, #eee);
   }
 
   .label-hint {
@@ -2488,11 +2500,11 @@
   }
 
   select {
-    background: #161618;
+    background: var(--bg-tertiary, #161618);
     border: 1px solid #444;
     border-radius: 6px;
     padding: 8px 12px;
-    color: #eee;
+    color: var(--text-primary, #eee);
     font-size: 13px;
     cursor: pointer;
     min-width: 180px;
@@ -2508,11 +2520,11 @@
   }
 
   .text-input {
-    background: #161618;
+    background: var(--bg-tertiary, #161618);
     border: 1px solid #444;
     border-radius: 6px;
     padding: 8px 12px;
-    color: #eee;
+    color: var(--text-primary, #eee);
     font-size: 13px;
     min-width: 180px;
   }
@@ -2532,11 +2544,11 @@
 
   /* Updates section buttons */
   .btn-check-update {
-    background: #161618;
+    background: var(--bg-tertiary, #161618);
     border: 1px solid #444;
     border-radius: 6px;
     padding: 8px 14px;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     font-size: 12px;
     cursor: pointer;
     white-space: nowrap;
@@ -2569,9 +2581,9 @@
   /* ── OSC settings styles ── */
   .port-input {
     width: 90px;
-    background: #14141a;
+    background: var(--bg-tertiary, #14141a);
     border: 1px solid #2a2a30;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     border-radius: 4px;
     padding: 5px 8px;
     font-family: monospace;
@@ -2632,11 +2644,11 @@
 
   .osc-empty {
     padding: 16px;
-    background: #14141a;
+    background: var(--bg-tertiary, #14141a);
     border: 1px dashed #2a2a30;
     border-radius: 5px;
     font-size: 12px;
-    color: #888;
+    color: var(--text-muted, #888);
     text-align: center;
   }
   .osc-bindings {
@@ -2658,9 +2670,9 @@
     padding: 4px 4px;
   }
   .osc-binding-row input[type="text"], .osc-binding-row input[type="number"] {
-    background: #14141a;
+    background: var(--bg-tertiary, #14141a);
     border: 1px solid #2a2a30;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     border-radius: 3px;
     padding: 4px 6px;
     font-family: monospace;
@@ -2672,7 +2684,7 @@
   .osc-binding-del {
     background: transparent;
     border: 1px solid #2a2a30;
-    color: #888;
+    color: var(--text-muted, #888);
     width: 24px; height: 24px;
     border-radius: 3px;
     cursor: pointer;
@@ -2684,9 +2696,9 @@
     margin-top: 10px;
   }
   .osc-add-btn {
-    background: #14141a;
+    background: var(--bg-tertiary, #14141a);
     border: 1px solid #2a2a30;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     padding: 5px 12px;
     border-radius: 4px;
     cursor: pointer;
@@ -2728,7 +2740,7 @@
     width: 20px;
     left: 3px;
     bottom: 3px;
-    background-color: #888;
+    background-color: var(--text-muted, #888);
     transition: 0.2s;
     border-radius: 50%;
   }
@@ -2753,7 +2765,7 @@
     border: 1px solid #444;
     border-radius: 6px;
     padding: 8px 14px;
-    color: #eee;
+    color: var(--text-primary, #eee);
     font-size: 13px;
     cursor: pointer;
     transition: all 0.15s;
@@ -2767,7 +2779,7 @@
   .text-btn {
     background: none;
     border: none;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 13px;
     cursor: pointer;
     padding: 8px 12px;
@@ -2775,7 +2787,7 @@
   }
 
   .text-btn:hover {
-    color: #eee;
+    color: var(--text-primary, #eee);
   }
 
   .primary-btn {
@@ -2798,7 +2810,7 @@
     display: flex;
     gap: 10px;
     padding: 12px;
-    background: #111114;
+    background: var(--bg-secondary, #111114);
     border-radius: 8px;
     margin-top: 12px;
   }
@@ -2812,12 +2824,12 @@
   .info-box p {
     margin: 0;
     font-size: 12px;
-    color: #888;
+    color: var(--text-muted, #888);
     line-height: 1.5;
   }
 
   .info-box strong {
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
   }
 
   .settings-footer {
@@ -2845,9 +2857,70 @@
   }
 
   .size-separator {
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 13px;
   }
+
+  /* Theme Template cards — bigger preview than the accent cards
+     because they need to convey font + surface + accent at once. */
+  .theme-template-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 14px;
+    margin: 8px 0 24px;
+  }
+  .theme-template-card {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 10px 10px 14px;
+    background: var(--bg-tertiary, #161618);
+    border: 2px solid transparent;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.18s;
+    text-align: left;
+  }
+  .theme-template-card:hover { background: var(--bg-tertiary, #1a1a1e); border-color: #444; }
+  .theme-template-card.active { background: var(--bg-tertiary, #1a1a1e); border-color: var(--accent-primary, #FF6B6B); }
+  .theme-preview {
+    width: 100%;
+    height: 96px;
+    border-radius: 8px;
+    border: 1px solid;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .theme-bar {
+    height: 18px;
+    border-bottom: 1px solid;
+  }
+  .theme-body { flex: 1; display: flex; padding: 8px; }
+  .theme-panel {
+    flex: 1;
+    border-radius: 6px;
+    padding: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .theme-card {
+    background: rgba(255,255,255,.04);
+    border-radius: 4px;
+    padding: 6px 10px;
+    display: flex;
+    gap: 6px;
+  }
+  .theme-card i {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    box-shadow: 0 0 8px currentColor;
+  }
+  .theme-name { font-size: 14px; font-weight: 600; color: var(--text-primary, #fff); margin-top: 2px; }
+  .theme-desc { font-size: 11px; color: var(--text-secondary, #888); line-height: 1.4; }
 
   /* Color Scheme Selector */
   .color-scheme-grid {
@@ -2863,7 +2936,7 @@
     align-items: center;
     gap: 8px;
     padding: 12px;
-    background: #161618;
+    background: var(--bg-tertiary, #161618);
     border: 2px solid transparent;
     border-radius: 10px;
     cursor: pointer;
@@ -2871,13 +2944,13 @@
   }
 
   .color-scheme-card:hover {
-    background: #1a1a1e;
+    background: var(--bg-tertiary, #1a1a1e);
     border-color: #444;
   }
 
   .color-scheme-card.active {
     border-color: var(--accent-primary, #FF6B6B);
-    background: #1a1a1e;
+    background: var(--bg-tertiary, #1a1a1e);
   }
 
   .scheme-preview {
@@ -2909,7 +2982,7 @@
   .scheme-name {
     font-size: 12px;
     font-weight: 600;
-    color: #eee;
+    color: var(--text-primary, #eee);
   }
 
   .scheme-desc {
@@ -2978,11 +3051,11 @@
   }
 
   .rot-btn {
-    background: #161618;
+    background: var(--bg-tertiary, #161618);
     border: 1px solid #444;
     border-radius: 6px;
     padding: 6px 12px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     font-size: 12px;
     cursor: pointer;
     transition: all 0.15s;
@@ -2990,7 +3063,7 @@
 
   .rot-btn:hover {
     border-color: #666;
-    color: #eee;
+    color: var(--text-primary, #eee);
   }
 
   .rot-btn.active {
@@ -3015,7 +3088,7 @@
 
   .crop-label {
     font-size: 12px;
-    color: #888;
+    color: var(--text-muted, #888);
     min-width: 16px;
     font-weight: 600;
   }
@@ -3040,7 +3113,7 @@
 
   .crop-value {
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
     min-width: 32px;
     text-align: right;
     font-family: monospace;
@@ -3093,7 +3166,7 @@
     max-height: 200px;
     overflow-y: auto;
     font-size: 11px;
-    background: #1a1a2e;
+    background: var(--bg-secondary, #1a1a2e);
     border-radius: 4px;
     padding: 6px;
     margin-top: 4px;
@@ -3108,7 +3181,7 @@
   }
 
   .error-time {
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 10px;
   }
 
@@ -3145,7 +3218,7 @@
   }
   .slice-presets-label {
     font-size: 12px;
-    color: #888;
+    color: var(--text-muted, #888);
   }
 
   .slice-card {
@@ -3179,7 +3252,7 @@
   .slice-name {
     font-size: 13px;
     font-weight: 600;
-    color: #e0e0e0;
+    color: var(--text-primary, #e0e0e0);
     min-width: 60px;
   }
 
@@ -3231,7 +3304,7 @@
 
   .slice-field-label {
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
     min-width: 80px;
     font-weight: 600;
   }
@@ -3240,7 +3313,7 @@
     flex: 1;
     background: #0a0a0e;
     border: 1px solid rgba(255, 255, 255, 0.08);
-    color: #e0e0e0;
+    color: var(--text-primary, #e0e0e0);
     border-radius: 4px;
     padding: 4px 8px;
     font-size: 12px;
@@ -3294,7 +3367,7 @@
 
   .clear-slices-btn {
     margin-top: 4px;
-    color: #888 !important;
+    color: var(--text-muted, #888) !important;
     border-color: rgba(255, 255, 255, 0.06) !important;
   }
 
@@ -3304,7 +3377,7 @@
     gap: 6px;
   }
   .custom-res-inputs span {
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 12px;
   }
   .small-input {

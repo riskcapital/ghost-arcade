@@ -126,8 +126,8 @@
   .audio-src-btn {
     padding: 4px 10px;
     border: 1px solid #444;
-    background: #0d0d10;
-    color: #888;
+    background: var(--bg-primary, #0d0d10);
+    color: var(--text-muted, #888);
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.5px;
@@ -145,7 +145,7 @@
 
   .audio-src-btn:hover {
     border-color: #666;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
   }
 
   .audio-src-btn.active {
@@ -202,8 +202,8 @@
     padding: 3px 10px;
     border: 1px solid #444;
     border-radius: 3px;
-    background: #0d0d10;
-    color: #aaa;
+    background: var(--bg-primary, #0d0d10);
+    color: var(--text-secondary, #aaa);
     font-size: 10px;
     font-weight: 700;
     cursor: pointer;
@@ -244,7 +244,7 @@
   }
 
   .bpm-clear:hover {
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     border-color: #666;
   }
 

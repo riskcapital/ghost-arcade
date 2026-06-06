@@ -41,7 +41,10 @@
     // Subtle baseline so the slot reads as a control even when silent
     const mid = h * 0.5;
     ctx.lineWidth = Math.max(1, Math.floor(dpr));
-    ctx.strokeStyle = live ? '#FF6B6B' : '#3a3a3a';
+    const styles = getComputedStyle(document.documentElement);
+    const liveColor = styles.getPropertyValue('--ga-coral').trim() || '#ff6f5e';
+    const idleColor = styles.getPropertyValue('--ga-ink-3').trim() || '#3a404a';
+    ctx.strokeStyle = live ? liveColor : idleColor;
     ctx.beginPath();
 
     if (live && data) {
@@ -93,11 +96,11 @@
   .awi {
     display: inline-block;
     vertical-align: middle;
-    background: transparent;
+    background: var(--ga-slot, #050607);
     /* Visually framed but quiet — sits between the icons without
        grabbing attention. */
-    border: 1px solid #1f1f1f;
-    border-radius: 3px;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 2px);
     padding: 0;
     margin: 0 4px;
     pointer-events: none;

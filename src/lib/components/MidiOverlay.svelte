@@ -351,7 +351,7 @@
     gap: 12px;
     padding: 0 12px;
     font-size: 11px;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     z-index: 100001;
     pointer-events: auto;
     backdrop-filter: blur(8px);
@@ -373,7 +373,7 @@
   }
 
   .midi-hint {
-    color: #888;
+    color: var(--text-muted, #888);
     flex: 1;
     font-size: 10px;
   }

@@ -132,7 +132,7 @@
     gap: 4px;
     padding: 0 6px;
     border-bottom: 1px solid rgba(255,255,255,0.02);
-    color: #888;
+    color: var(--text-muted, #888);
     box-sizing: border-box;
   }
   .track-row.has-kf { color: #bbb; }
@@ -164,7 +164,7 @@
   .ctx-menu {
     position: fixed;
     z-index: 10000;
-    background: #14141a;
+    background: var(--bg-tertiary, #14141a);
     border: 1px solid rgba(255, 107, 107, 0.3);
     border-radius: 4px;
     padding: 4px 0;
@@ -177,7 +177,7 @@
     padding: 6px 14px;
     background: none;
     border: none;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     font-size: 11px;
     text-align: left;
     cursor: pointer;

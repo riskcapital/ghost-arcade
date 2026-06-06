@@ -578,7 +578,7 @@
   .src-btn:hover { background: #262b3a; }
   .src-status { display: inline-block; width: 12px; opacity: 0.6; }
   .src-status.ok { color: #67e8f9; opacity: 1; }
-  .mini-btn { background: transparent; border: 1px solid #333a4a; color: #aaa; width: 26px; height: 26px; border-radius: 4px; cursor: pointer; font-size: 14px; }
+  .mini-btn { background: transparent; border: 1px solid #333a4a; color: var(--text-secondary, #aaa); width: 26px; height: 26px; border-radius: 4px; cursor: pointer; font-size: 14px; }
   .mini-btn:hover { background: #262b3a; color: #fff; }
   .mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
   .mode-btn { background: #1a1d27; border: 1px solid #2a2f3d; color: #b0b6c0; padding: 6px 8px; border-radius: 3px; cursor: pointer; font-size: 11px; transition: all 0.1s; }

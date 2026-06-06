@@ -1807,10 +1807,10 @@
 <style>
   .drawing-panel {
     width: 100%;
-    background: #111114;
+    background: var(--bg-secondary, #111114);
     display: flex;
     flex-direction: column;
-    color: #eee;
+    color: var(--text-primary, #eee);
     font-size: 13px;
     overflow-y: auto;
     flex: 1;
@@ -1841,9 +1841,9 @@
     justify-content: space-between;
     align-items: center;
     padding: 10px 12px;
-    background: #161618;
+    background: var(--bg-tertiary, #161618);
     border: none;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     cursor: pointer;
     font-size: 12px;
     font-weight: 600;
@@ -1878,7 +1878,7 @@
     border-radius: 6px;
     cursor: pointer;
     transition: all 0.15s;
-    color: #eee;
+    color: var(--text-primary, #eee);
   }
 
   .shape-item:hover {
@@ -1894,7 +1894,7 @@
 
   .shape-label {
     font-size: 9px;
-    color: #888;
+    color: var(--text-muted, #888);
   }
 
   .effect-controls {
@@ -1911,7 +1911,7 @@
   .control-label {
     width: 70px;
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
     flex-shrink: 0;
   }
 
@@ -1931,7 +1931,7 @@
   .control-row select {
     flex: 1;
     background: #333;
-    color: #eee;
+    color: var(--text-primary, #eee);
     border: 1px solid #555;
     padding: 4px 8px;
     border-radius: 4px;
@@ -2008,12 +2008,12 @@
     border-radius: 6px;
     cursor: pointer;
     transition: all 0.15s;
-    color: #eee;
+    color: var(--text-primary, #eee);
   }
 
   .tool-btn:hover {
     background: #444;
-    border-color: #888;
+    border-color: var(--text-muted, #888);
   }
 
   .tool-btn.active {
@@ -2028,7 +2028,7 @@
 
   .tool-label {
     font-size: 9px;
-    color: #888;
+    color: var(--text-muted, #888);
   }
 
   .tool-btn.active .tool-label {
@@ -2062,7 +2062,7 @@
 
   .corner-label {
     font-size: 10px;
-    color: #888;
+    color: var(--text-muted, #888);
     width: 20px;
   }
 
@@ -2070,7 +2070,7 @@
     width: 50px;
     background: #222;
     border: 1px solid #444;
-    color: #eee;
+    color: var(--text-primary, #eee);
     padding: 4px;
     border-radius: 3px;
     font-size: 11px;
@@ -2082,7 +2082,7 @@
     background: #333;
     border: 1px solid #555;
     border-radius: 4px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     font-size: 11px;
     cursor: pointer;
     transition: all 0.15s;
@@ -2090,7 +2090,7 @@
 
   .reset-btn:hover {
     background: #444;
-    border-color: #888;
+    border-color: var(--text-muted, #888);
     color: #fff;
   }
 

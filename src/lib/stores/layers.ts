@@ -13,6 +13,7 @@ import { macros } from './macros';
 import { snapshots } from './snapshots';
 import { layerSequencer } from './layerSequencer';
 import { surfaceStore } from './surface';
+import { stage3dScene } from '../stage3d/store';
 // Catalog of per-effect default params. Used by resetEffectParams to
 // snap an effect back to its baseline values when the user hits the
 // per-effect reset button in LayerPanel.
@@ -2597,6 +2598,18 @@ void main() {
         console.warn('[Store] saveStagePreset: surface effects snapshot failed', err);
       }
 
+      // Snapshot the 3D Ghost Stage too so loading the preset restores
+      // BOTH the 2D mapping layout AND the matching 3D viewport (venue,
+      // lighting, scenery overrides, user-placed elements, per-screen
+      // 3D tweaks). Stored as an opaque JSON blob — Stage3DScene's
+      // schemaVersion guards the load path.
+      let stage3dSnap: unknown;
+      try {
+        stage3dSnap = JSON.parse(JSON.stringify(get(stage3dScene)));
+      } catch (err) {
+        console.warn('[Store] saveStagePreset: 3D scene snapshot failed', err);
+      }
+
       const preset: StagePreset = {
         id: presetId,
         name,
@@ -2604,6 +2617,7 @@ void main() {
         createdAt: Date.now(),
         layers: layersSnapshot,
         stageEffects: stageEffectsSnap,
+        stage3d: stage3dSnap,
       };
 
       update((project) => ({
@@ -2616,15 +2630,17 @@ void main() {
 
     /** Load a stage preset — replaces project.layers with the preset's saved layers */
     loadStagePreset(presetId: string) {
-      // Capture the preset's effects snapshot here so we can apply
-      // it to the surface store AFTER the update() call returns
-      // (avoids nested-mutation hazards across two stores).
+      // Capture the preset's effects + 3D snapshot here so we can apply
+      // them AFTER the update() call returns (avoids nested-mutation
+      // hazards across multiple stores).
       let effectsSnap: StagePreset['stageEffects'] | undefined;
+      let stage3dSnap: any;
 
       update((project) => {
         const preset = (project.stagePresets || []).find(p => p.id === presetId);
         if (!preset) return project;
         effectsSnap = preset.stageEffects;
+        stage3dSnap = preset.stage3d;
 
         const loadedLayers = structuredClone(preset.layers);
         return { ...project, layers: loadedLayers };
@@ -2644,6 +2660,21 @@ void main() {
             activeEffectId: effectsSnap!.activeEffectId ?? null,
             automation: effectsSnap!.automation ?? null,
           });
+        });
+      }
+
+      // Restore the 3D Ghost Stage view if the preset captured one.
+      // schemaVersion guard keeps malformed / outdated blobs from
+      // clobbering the live scene. Deferred so it flushes after the
+      // layers update so the auto-built LEDs see the new screen layers
+      // and the new lighting / venue together.
+      if (stage3dSnap?.schemaVersion === 1 && Array.isArray(stage3dSnap?.nodes)) {
+        queueMicrotask(() => {
+          try {
+            stage3dScene.loadScene(stage3dSnap);
+          } catch (err) {
+            console.warn('[Store] loadStagePreset: 3D scene restore failed', err);
+          }
         });
       }
     },
@@ -4468,6 +4499,7 @@ void main() {
         model3dContent: layer.model3dContent || null,
         pixelFXContent: layer.pixelFXContent || null,
         gpuLayerContent: layer.gpuLayerContent || null,
+        arcadeContent: layer.arcadeContent || null,
         mask: migratedMask,
         cropRegion: layer.cropRegion || null,
         layerShape: layer.layerShape || null,

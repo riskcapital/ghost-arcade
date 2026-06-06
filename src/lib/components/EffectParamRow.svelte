@@ -403,7 +403,7 @@
     flex: 1 1 auto;
     min-width: 70px;
     font-size: 11px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -411,7 +411,7 @@
   .epr-source {
     flex: 0 0 auto;
     background: #0f0f10;
-    color: #888;
+    color: var(--text-muted, #888);
     border: 1px solid #444;
     border-radius: 3px;
     padding: 1px 4px;
@@ -543,7 +543,7 @@
   .epr-auto-play {
     width: 22px; height: 22px; border-radius: 4px;
     background: transparent; border: 1px solid rgba(255,255,255,0.18);
-    color: #ccc; font-size: 9px; cursor: pointer;
+    color: var(--text-primary, #ccc); font-size: 9px; cursor: pointer;
     flex-shrink: 0; display: flex; align-items: center; justify-content: center;
   }
   .epr-auto-play.playing { background: rgba(92,225,230,0.18); border-color: #5ce1e6; color: #5ce1e6; }

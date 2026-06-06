@@ -58,7 +58,7 @@
     flex-shrink: 0;
     background: none;
     border: none;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 18px;
     cursor: pointer;
     padding: 0 2px;

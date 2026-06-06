@@ -59,9 +59,9 @@
   import Model3DPanel from './Model3DPanel.svelte';
 
   // File menu callback (wired by parent App.svelte)
-  export let onFileAction: ((action: 'new' | 'open' | 'save' | 'saveAs' | 'importPresets' | 'loadDemo' | 'undo' | 'redo') => void) | null = null;
+  export let onFileAction: ((action: 'new' | 'open' | 'save' | 'saveAs' | 'importPresets' | 'undo' | 'redo') => void) | null = null;
   let vjFileMenuOpen = false;
-  function vjFileAction(action: 'new' | 'open' | 'save' | 'saveAs' | 'importPresets' | 'loadDemo' | 'undo' | 'redo') {
+  function vjFileAction(action: 'new' | 'open' | 'save' | 'saveAs' | 'importPresets' | 'undo' | 'redo') {
     vjFileMenuOpen = false;
     onFileAction?.(action);
   }
@@ -2306,7 +2306,6 @@
               <button class="vj-menu-item" onclick={() => vjFileAction('saveAs')}>Save As...<span class="vj-menu-sc">Ctrl+Shift+S</span></button>
               <div class="vj-menu-sep"></div>
               <button class="vj-menu-item" onclick={() => vjFileAction('importPresets')}>Import Presets...</button>
-              <button class="vj-menu-item" onclick={() => vjFileAction('loadDemo')}>Load Demo Project</button>
               <div class="vj-menu-sep"></div>
               <button class="vj-menu-item" onclick={() => vjFileAction('undo')}>Undo<span class="vj-menu-sc">Ctrl+Z</span></button>
               <button class="vj-menu-item" onclick={() => vjFileAction('redo')}>Redo<span class="vj-menu-sc">Ctrl+Y</span></button>
@@ -2352,19 +2351,6 @@
             <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
           </svg>
         </button>
-        {#if vjIsRecording}
-          <div class="vj-recording-indicator">
-            <span class="vj-rec-dot"></span>
-            <span class="vj-rec-time">{formatVJRecordingDuration(vjRecordingDuration)}</span>
-          </div>
-          <button class="vj-stop-rec-btn" onclick={vjStopRecording}>
-            Stop Rec
-          </button>
-        {:else}
-          <button class="vj-rec-btn" onclick={vjStartRecording} title="Record Output">
-            ● REC
-          </button>
-        {/if}
       </div>
 
       {#if $vjClipLauncher.isLive}
@@ -2372,23 +2358,6 @@
           <button class="stage-mix-btn" class:active={!$vjClipLauncher.stageMode && !$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('mix')} title="Raw VJ clip output">MIX</button>
           <button class="stage-mix-btn" class:active={$vjClipLauncher.stageMode} onclick={() => vjClipLauncher.setSubMode('stage')} title="Route VJ content through the active mapping topology">STAGE</button>
           <button class="stage-mix-btn" class:active={$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('map')} title="Preset-only mixer — VJ layer slots hold mapping presets that stack with opacity + blend modes">MAP</button>
-        </div>
-
-        <!-- A/B crossfader toggle — its own header section, orthogonal to MIX/STAGE.
-             Works in both modes; flips the deck into a two-bank side-by-side view.
-             Label shrunk to just "A/B" so the header fits on a 13" laptop. -->
-        <div class="header-xfade-toggle">
-          <button
-            class="ab-toggle-btn"
-            class:active={$vjClipLauncher.crossfaderEnabled}
-            onclick={() => vjClipLauncher.setCrossfaderEnabled(!$vjClipLauncher.crossfaderEnabled)}
-            title="A/B Crossfader: split the deck into two independent banks with a transition fader between them"
-            data-midi-path="vj:crossfader:enabled"
-            data-midi-label="Crossfader Enabled"
-            data-midi-mode="toggle"
-          >
-            <span class="ab-toggle-glyph">A/B</span>
-          </button>
         </div>
       {/if}
 
@@ -2403,9 +2372,17 @@
 
       <!-- Tap tempo + FFT meter + expandable EQ tweaks. Self-hides when
            audio is off so the header stays clean for users who haven't
-           enabled audio yet. Replaces the standalone audio strip below. -->
+           enabled audio yet. Replaces the standalone audio strip below.
+           Mic (AudioInputPicker) sits immediately after the meter so the
+           audio cluster reads as one logical group. -->
       <div class="header-meter">
         <AudioMeterPanel />
+
+        <!-- Audio input picker — same component + same location as mapping
+             mode. State flows through audioStore so toggling here also flips
+             mapping/Performer. Moved out of the right-cluster so the mic
+             lives next to the analyzer (input → output). -->
+        <AudioInputPicker />
 
         <!-- Launch quantization selector. OFF = instant trigger (default).
              1/4..4bar = beat-aligned launches anchored to detected beats
@@ -2436,11 +2413,41 @@
         </div>
       </div>
 
+      <!-- Right cluster — tight icon grid that mirrors the mapping-mode
+           toolbar-right. Order matches mapping (REC → mode toggles → Stage →
+           Settings → Back) so users moving between modes find the same
+           controls in the same places. Flip-layout was removed; the option
+           now lives in Settings → Appearance. -->
       <div class="header-right">
-        <!-- Audio input picker — same component + same location as mapping
-             mode top-right. State flows through audioStore so toggling here
-             also flips mapping/Performer. -->
-        <AudioInputPicker />
+        {#if vjIsRecording}
+          <div class="vj-recording-indicator">
+            <span class="vj-rec-dot"></span>
+            <span class="vj-rec-time">{formatVJRecordingDuration(vjRecordingDuration)}</span>
+          </div>
+          <button class="vj-stop-rec-btn" onclick={vjStopRecording}>
+            Stop Rec
+          </button>
+        {:else}
+          <button class="vj-rec-btn" onclick={vjStartRecording} title="Record Output">
+            ● REC
+          </button>
+        {/if}
+
+        {#if $vjClipLauncher.isLive}
+          <!-- A/B crossfader toggle moved into the right cluster so it
+               groups with the other compact icon buttons. -->
+          <button
+            class="ab-toggle-btn"
+            class:active={$vjClipLauncher.crossfaderEnabled}
+            onclick={() => vjClipLauncher.setCrossfaderEnabled(!$vjClipLauncher.crossfaderEnabled)}
+            title="A/B Crossfader: split the deck into two independent banks with a transition fader between them"
+            data-midi-path="vj:crossfader:enabled"
+            data-midi-label="Crossfader Enabled"
+            data-midi-mode="toggle"
+          >
+            <span class="ab-toggle-glyph">A/B</span>
+          </button>
+        {/if}
 
         <!-- Performer atom — opens the SynthVision keyboard launcher overlay.
              Compact icon takes the place of the old "PERFORMER" pill that
@@ -2467,11 +2474,9 @@
           </svg>
         </button>
 
-        <button class="minimize-btn" class:active={$settings.ui.vjLayoutReversed}
-          onclick={() => settings.update(s => ({ ...s, ui: { ...s.ui, vjLayoutReversed: !s.ui.vjLayoutReversed } }))}
-          title={$settings.ui.vjLayoutReversed ? 'Controls left (default)' : 'Controls right (right-handed)'}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3m10 0h3a2 2 0 0 0 2-2v-3"/>
+        <button class="minimize-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-stage3d'))} title="Open 3D Stage (no need to minimize VJ)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2L4 7l8 5 8-5z"/><path d="M4 12l8 5 8-5"/><path d="M4 17l8 5 8-5"/>
           </svg>
         </button>
         <button class="minimize-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-settings'))} title="Settings">
@@ -2479,12 +2484,15 @@
             <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
           </svg>
         </button>
-        <button class="minimize-btn" onclick={minimizeVJMode} title="Minimize (VJ stays live)">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-            <path d="M5 12h14"/>
+        <button class="minimize-btn" onclick={minimizeVJMode} title="Back to editor (VJ stays live)">
+          <!-- Unified ‹ Back arrow — matches the 3D Designer's exit
+               affordance so the mode-stack metaphor reads the same
+               everywhere. VJ output keeps running in the background. -->
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M15 18l-6-6 6-6"/>
           </svg>
         </button>
-        <button class="exit-btn" onclick={closeVJMode}>Exit VJ Mode</button>
+        <button class="exit-btn" onclick={closeVJMode}>Back</button>
       </div>
     </div>
 
@@ -4498,7 +4506,7 @@
     padding: 6px 16px;
     background: #1a1a1a;
     border: none;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 1px;
@@ -4520,33 +4528,32 @@
     color: #000;
   }
 
-  /* ===== A/B Crossfader toggle (header) ===== */
-  .header-xfade-toggle {
-    display: flex;
-    align-items: center;
-  }
-  /* Compact A/B toggle for the desktop top bar — was ~110px wide with
-     the "Crossfader" label, now ~46px so it fits on a 13" laptop. The
-     hover title still explains what it does. */
+  /* ===== A/B Crossfader toggle (right cluster) =====
+     Slot-in icon-button — same height (32px) and visual weight as the
+     other right-cluster controls so it reads as one tidy grid. The
+     gradient/glow stays for the active state so it remains the most
+     distinctive toggle in the row. */
   .ab-toggle-btn {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 4px 7px;
-    border-radius: 6px;
-    border: 1px solid #444;
-    background: #1a1a1a;
-    color: #aaa;
+    justify-content: center;
+    height: 32px;
+    padding: 0 10px;
+    border-radius: var(--ga-r-hard, 2px);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.18));
+    background: transparent;
+    color: var(--ga-ink-1, #b8bdc6);
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.06em;
     cursor: pointer;
     transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+    flex: 0 0 auto;
   }
   .ab-toggle-btn:hover {
-    color: #fff;
-    border-color: #666;
-    background: #222;
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.30);
+    color: var(--ga-ink-0, #eef0f4);
   }
   .ab-toggle-btn.active {
     background: linear-gradient(135deg, #FF8577, #7EC8E3);
@@ -4555,13 +4562,7 @@
     box-shadow: 0 0 12px rgba(255, 133, 119, 0.45);
   }
   .ab-toggle-glyph {
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    background: rgba(0, 0, 0, 0.25);
-    padding: 1px 5px;
-    border-radius: 4px;
-  }
-  .ab-toggle-btn.active .ab-toggle-glyph {
-    background: rgba(0, 0, 0, 0.18);
+    font-family: var(--ga-font-mono, ui-monospace, 'SF Mono', Menlo, monospace);
   }
   .ab-toggle-label {
     text-transform: uppercase;
@@ -4600,7 +4601,7 @@
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.18em;
-    color: #888;
+    color: var(--text-muted, #888);
     margin-bottom: 6px;
     padding: 2px 6px;
     align-self: flex-start;
@@ -4627,7 +4628,7 @@
     height: 22px;
     border: 1px solid #444;
     background: #181820;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     border-radius: 4px;
     font-size: 13px;
     line-height: 1;
@@ -4657,7 +4658,7 @@
     appearance: slider-vertical;
     width: 22px;
     height: 100%;
-    accent-color: #BB86FC;
+    accent-color: var(--accent-primary, #BB86FC);
     background: transparent;
     cursor: pointer;
   }
@@ -4665,7 +4666,7 @@
   .xfade-readout {
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
     font-size: 10px;
-    color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
     letter-spacing: 0.05em;
     padding: 2px 6px;
     background: rgba(187, 134, 252, 0.08);
@@ -4678,14 +4679,14 @@
     background: #181820;
     border: 1px solid #333;
     border-radius: 4px;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     font-size: 10px;
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
     cursor: pointer;
     text-align: center;
   }
   .xfade-select:hover { border-color: #555; }
-  .xfade-select.xfade-curve { color: #aaa; }
+  .xfade-select.xfade-curve { color: var(--text-secondary, #aaa); }
 
   /* When dual decks are active, individual deck-wrappers handle their own
      horizontal + vertical scroll so the vertical fader between them stays
@@ -4764,10 +4765,18 @@
     flex-shrink: 0;
   }
 
-  .header-left, .header-center, .header-right {
+  .header-left, .header-center {
     display: flex;
     align-items: center;
     gap: 20px;
+  }
+  /* Right cluster is a tight icon grid — REC, A/B, Performer, 3D Stage,
+     Settings, Back-arrow, Back text. 4px gap matches the mapping-mode
+     toolbar-right so the two modes feel like one product. */
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 4px;
   }
 
   /* Macro knob row — sits between the crossfader toggle and the audio
@@ -4806,12 +4815,12 @@
     font-size: 9px;
     font-weight: 700;
     letter-spacing: 0.1em;
-    color: #888;
+    color: var(--text-muted, #888);
   }
   .header-quant-select {
     background: transparent;
     border: 1px solid rgba(255, 255, 255, 0.12);
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.05em;
@@ -4827,18 +4836,16 @@
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
     font-size: 10px;
     font-weight: 700;
-    color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
     animation: quantPendingPulse 0.8s ease-in-out infinite;
   }
   @keyframes quantPendingPulse {
     0%, 100% { opacity: 0.6; }
     50%      { opacity: 1; }
   }
-  .header-right > :global(.audio-input-picker) {
-    /* The picker drops into the right cluster directly — make sure the
-       gap matches the rest of the right-side icons. */
-    margin-right: 4px;
-  }
+  /* Audio input picker now lives inside .header-meter (right of the
+     analyzer), so no positioning override is needed in the right
+     cluster anymore. */
 
   .vj-logo {
     height: 28px;
@@ -4850,18 +4857,18 @@
   .vj-file-menu-btn {
     display: flex; align-items: center; gap: 4px;
     background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
-    color: #ddd; font-size: 12px; padding: 5px 10px; border-radius: 4px; cursor: pointer;
+    color: var(--text-primary, #ddd); font-size: 12px; padding: 5px 10px; border-radius: 4px; cursor: pointer;
   }
   .vj-file-menu-btn:hover, .vj-file-menu-btn.active { background: rgba(255,255,255,0.14); color: #fff; }
   .vj-file-menu-dropdown {
     position: absolute; top: 100%; left: 0; margin-top: 4px;
-    background: #1a1a1e; border: 1px solid #333; border-radius: 6px;
+    background: var(--bg-tertiary, #1a1a1e); border: 1px solid #333; border-radius: 6px;
     min-width: 220px; padding: 4px 0; z-index: 10000;
     box-shadow: 0 8px 24px rgba(0,0,0,0.5);
   }
   .vj-menu-item {
     display: flex; justify-content: space-between; align-items: center;
-    width: 100%; background: none; border: none; color: #ddd;
+    width: 100%; background: none; border: none; color: var(--text-primary, #ddd);
     font-size: 12px; padding: 7px 14px; cursor: pointer; text-align: left;
   }
   .vj-menu-item:hover { background: rgba(255,255,255,0.08); color: #fff; }
@@ -4906,14 +4913,14 @@
     -webkit-appearance: none;
     width: 13px;
     height: 13px;
-    background: #BB86FC;
+    background: var(--accent-primary, #BB86FC);
     border-radius: 50%;
     cursor: pointer;
   }
 
   .master-value {
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
     min-width: 32px;
     font-variant-numeric: tabular-nums;
     text-align: right;
@@ -4947,26 +4954,31 @@
     transform: scale(0.94);
   }
 
-  /* VJ Recording */
+  /* VJ Recording — matches the mapping-mode rec-btn (transparent box,
+     red outline, fixed 32px height) so the same control reads the same
+     in both modes. */
   .vj-rec-btn {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 6px;
-    background: #333;
-    border: 1px solid #555;
-    color: #ff4444;
-    padding: 6px 12px;
-    border-radius: 4px;
+    height: 32px;
+    padding: 0 12px;
+    background: transparent;
+    border: 1px solid rgba(255, 68, 56, 0.4);
+    border-radius: var(--ga-r-hard, 2px);
+    color: var(--ga-rec, #ff4438);
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 700;
+    letter-spacing: 0.04em;
     cursor: pointer;
-    transition: all 0.15s;
+    transition: background 0.15s, border-color 0.15s;
+    white-space: nowrap;
   }
 
   .vj-rec-btn:hover {
-    background: #ff4444;
-    border-color: #ff4444;
-    color: #fff;
+    background: rgba(255, 68, 56, 0.12);
+    border-color: rgba(255, 68, 56, 0.6);
+    color: #ff6f5e;
   }
 
   .vj-stop-rec-btn {
@@ -5010,37 +5022,49 @@
     font-family: monospace;
   }
 
+  /* Compact square icon button — same footprint as mapping-mode's
+     settings/3D buttons (32×32). No padding around the SVG so the
+     icons crowd into a tidy grid. */
   .minimize-btn {
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    color: #ccc;
-    padding: 6px 10px;
-    border-radius: 4px;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    background: transparent;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.18));
+    color: var(--ga-ink-1, #b8bdc6);
+    border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
-    transition: all 0.15s;
-    display: flex;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
+    flex: 0 0 auto;
   }
 
   .minimize-btn:hover {
-    background: rgba(255, 255, 255, 0.2);
-    color: #fff;
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.30);
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .exit-btn {
-    background: #333;
-    border: 1px solid #555;
-    color: #aaa;
-    padding: 8px 16px;
-    border-radius: 4px;
+    height: 32px;
+    background: transparent;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.18));
+    color: var(--ga-ink-1, #b8bdc6);
+    padding: 0 14px;
+    border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
-    transition: all 0.15s;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    font-size: 12px;
+    font-weight: 600;
+    flex: 0 0 auto;
   }
 
   .exit-btn:hover {
-    background: #444;
-    color: #fff;
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.30);
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   /* Main Layout */
@@ -5129,12 +5153,12 @@
   }
 
   .fx-tab:hover {
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
   }
 
   .fx-tab.active {
-    color: #BB86FC;
-    border-bottom-color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
+    border-bottom-color: var(--accent-primary, #BB86FC);
     background: rgba(187, 134, 252, 0.05);
   }
 
@@ -5154,7 +5178,7 @@
   .effects-info-label {
     font-size: 10px;
     font-weight: 700;
-    color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
     letter-spacing: 0.5px;
   }
 
@@ -5175,13 +5199,13 @@
     align-items: center;
     justify-content: space-between;
     font-size: 10px;
-    color: #888;
+    color: var(--text-muted, #888);
   }
 
   .add-effect-btn {
     background: rgba(187, 134, 252, 0.1);
     border: 1px solid rgba(187, 134, 252, 0.3);
-    color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
     padding: 3px 10px;
     border-radius: 4px;
     font-size: 10px;
@@ -5191,7 +5215,7 @@
   }
   .add-effect-btn:hover {
     background: rgba(187, 134, 252, 0.2);
-    border-color: #BB86FC;
+    border-color: var(--accent-primary, #BB86FC);
   }
 
   /* Stage Effects tab — its own +Add row with a picker + button.
@@ -5207,9 +5231,9 @@
   }
   .stage-fx-select {
     flex: 1;
-    background: #14141a;
+    background: var(--bg-tertiary, #14141a);
     border: 1px solid #2a2a30;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     border-radius: 4px;
     padding: 5px 8px;
     font-size: 11px;
@@ -5235,7 +5259,7 @@
   }
   .stage-auto-play {
     width: 30px; height: 26px;
-    background: #14141a;
+    background: var(--bg-tertiary, #14141a);
     border: 1px solid #2a2a30;
     color: #4cd1ff;
     border-radius: 4px;
@@ -5249,9 +5273,9 @@
     border-color: #4cd1ff;
   }
   .stage-auto-mode {
-    background: #14141a;
+    background: var(--bg-tertiary, #14141a);
     border: 1px solid #2a2a30;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     border-radius: 4px;
     padding: 3px 5px;
     font-size: 11px;
@@ -5259,9 +5283,9 @@
   }
   .stage-auto-interval {
     width: 48px;
-    background: #14141a;
+    background: var(--bg-tertiary, #14141a);
     border: 1px solid #2a2a30;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     border-radius: 4px;
     padding: 3px 5px;
     font-size: 11px;
@@ -5269,7 +5293,7 @@
     height: 26px;
   }
   .stage-auto-unit {
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 10px;
     font-family: monospace;
   }
@@ -5289,7 +5313,7 @@
   }
   .effect-live-radio:hover {
     border-color: #4cd1ff;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
   }
   .effect-live-radio.active {
     color: #4cd1ff;
@@ -5306,7 +5330,7 @@
     font-size: 11px;
     padding: 2px 4px;
   }
-  .effect-cycle-toggle:hover { color: #aaa; border-color: #2a2a30; }
+  .effect-cycle-toggle:hover { color: var(--text-secondary, #aaa); border-color: #2a2a30; }
   .effect-cycle-toggle.included {
     color: #4cd1ff;
     border-color: rgba(76,209,255,0.35);
@@ -5323,7 +5347,7 @@
   }
 
   .effect-item {
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
     border-radius: 6px;
     overflow: hidden;
     border: 1px solid rgba(255, 255, 255, 0.04);
@@ -5344,12 +5368,12 @@
     transition: background 0.1s;
   }
 
-  .effect-header:hover { background: #111114; }
+  .effect-header:hover { background: var(--bg-secondary, #111114); }
 
   .effect-toggle {
     background: none;
     border: none;
-    color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
     font-size: 12px;
     cursor: pointer;
     padding: 2px;
@@ -5362,7 +5386,7 @@
   .effect-name {
     flex: 1;
     font-size: 11px;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     text-transform: capitalize;
     font-weight: 500;
     overflow: hidden;
@@ -5417,14 +5441,14 @@
     width: 56px;
     flex-shrink: 0;
     font-weight: 500;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     letter-spacing: 0.2px;
   }
 
   .param-row input[type="range"] {
     flex: 1;
     height: 6px;
-    accent-color: #BB86FC;
+    accent-color: var(--accent-primary, #BB86FC);
     border-radius: 3px;
     cursor: pointer;
   }
@@ -5535,7 +5559,7 @@
   .shader-params-overlay-title {
     font-size: 10px;
     font-weight: 600;
-    color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
     display: flex;
     align-items: center;
     gap: 6px;
@@ -5547,10 +5571,10 @@
   .shader-params-layer-badge {
     font-size: 8px;
     padding: 1px 4px;
-    background: #BB86FC30;
-    border: 1px solid #BB86FC50;
+    background: var(--accent-primary, #BB86FC)30;
+    border: 1px solid var(--accent-primary, #BB86FC)50;
     border-radius: 3px;
-    color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
     font-weight: 700;
   }
 
@@ -5625,14 +5649,14 @@
   }
 
   .layer-select-icon:hover {
-    border-color: #BB86FC;
-    color: #BB86FC;
+    border-color: var(--accent-primary, #BB86FC);
+    color: var(--accent-primary, #BB86FC);
   }
 
   .layer-select-icon.selected {
-    background: #BB86FC20;
-    border-color: #BB86FC;
-    color: #BB86FC;
+    background: var(--accent-primary, #BB86FC)20;
+    border-color: var(--accent-primary, #BB86FC);
+    color: var(--accent-primary, #BB86FC);
   }
 
   /* Grid Section */
@@ -5667,7 +5691,7 @@
     background: #222;
     border: 1px solid #444;
     border-radius: 4px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 11px;
     font-weight: 600;
     cursor: pointer;
@@ -5675,8 +5699,8 @@
   }
 
   .column-trigger:hover {
-    background: #BB86FC;
-    border-color: #BB86FC;
+    background: var(--accent-primary, #BB86FC);
+    border-color: var(--accent-primary, #BB86FC);
     color: #000;
   }
 
@@ -5691,13 +5715,13 @@
   .grid-section.reversed .layer-row { flex-direction: row-reverse; }
 
   .layer-row.selected .layer-controls {
-    border-color: #BB86FC;
+    border-color: var(--accent-primary, #BB86FC);
   }
 
   .layer-controls {
     width: 150px;
     flex-shrink: 0;
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
     border: 1px solid #333;
     border-radius: 6px;
     padding: 8px;
@@ -5721,7 +5745,7 @@
   .layer-num {
     font-size: 14px;
     font-weight: 700;
-    color: #888;
+    color: var(--text-muted, #888);
   }
 
   .layer-buttons {
@@ -5783,7 +5807,7 @@
   .opacity-slider {
     width: 100%;
     height: 18px;
-    accent-color: #BB86FC;
+    accent-color: var(--accent-primary, #BB86FC);
     cursor: pointer;
     -webkit-appearance: none;
     appearance: none;
@@ -5806,7 +5830,7 @@
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: #BB86FC;
+    background: var(--accent-primary, #BB86FC);
     cursor: pointer;
     border: 2px solid #111;
     margin-top: -5px;
@@ -5821,9 +5845,9 @@
 
   .blend-select {
     width: 100%;
-    background-color: #161618;
+    background-color: var(--bg-tertiary, #161618);
     border: 1px solid #444;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     padding: 5px 8px;
     border-radius: 3px;
     font-size: 10px;
@@ -5836,7 +5860,7 @@
     aspect-ratio: 16 / 9;
     min-width: 0;
     min-height: 60px;
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
     border: 1px solid #333;
     border-radius: 4px;
     overflow: hidden;
@@ -5850,11 +5874,11 @@
   }
 
   .clip-cell.has-clip:hover {
-    border-color: #BB86FC;
+    border-color: var(--accent-primary, #BB86FC);
   }
 
   .clip-cell.active {
-    border-color: #BB86FC;
+    border-color: var(--accent-primary, #BB86FC);
     box-shadow: 0 0 12px rgba(187, 134, 252, 0.4);
   }
 
@@ -5876,7 +5900,7 @@
   }
 
   .clip-cell.dragover {
-    border-color: #BB86FC;
+    border-color: var(--accent-primary, #BB86FC);
     background: #1a2530;
   }
 
@@ -5993,7 +6017,7 @@
     padding: 2px 4px;
     background: rgba(0, 0, 0, 0.8);
     font-size: 8px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -6035,7 +6059,7 @@
   .ctx-menu {
     position: fixed;
     z-index: 1000;
-    background: #1a1a1e;
+    background: var(--bg-tertiary, #1a1a1e);
     border: 1px solid #333;
     border-radius: 4px;
     padding: 4px 0;
@@ -6048,7 +6072,7 @@
     padding: 6px 14px;
     background: none;
     border: none;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     font-size: 11px;
     text-align: left;
     cursor: pointer;
@@ -6079,7 +6103,7 @@
   .ctx-shortcut {
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
     font-size: 10px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-weight: 400;
   }
   .ctx-separator {
@@ -6091,7 +6115,7 @@
   /* Media Tray (compact, matching mapping mode) */
   .media-tray-vj {
     width: 220px;
-    background: #111114;
+    background: var(--bg-secondary, #111114);
     border-left: 1px solid #161618;
     display: flex;
     flex-direction: column;
@@ -6107,10 +6131,10 @@
   .tray-collapse-btn {
     width: 100%;
     height: 36px;
-    background: #111114;
+    background: var(--bg-secondary, #111114);
     border: none;
     border-bottom: 1px solid #161618;
-    color: #888;
+    color: var(--text-muted, #888);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -6120,12 +6144,12 @@
   }
 
   .tray-collapse-btn:hover {
-    color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
   }
 
   /* VJ Tab Row (matching mapping mode icons) */
   .vj-tabs {
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
     border-bottom: 1px solid #161618;
   }
 
@@ -6151,13 +6175,13 @@
   }
 
   .vj-tab:hover {
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     background: rgba(187, 134, 252, 0.03);
   }
 
   .vj-tab.active {
-    color: #BB86FC;
-    border-bottom-color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
+    border-bottom-color: var(--accent-primary, #BB86FC);
     background: rgba(187, 134, 252, 0.06);
   }
 
@@ -6179,7 +6203,7 @@
   }
 
   .vj-tab.active .vj-tab-count {
-    color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
   }
 
   .vj-tab-count.live {
@@ -6191,7 +6215,7 @@
     display: flex;
     gap: 4px;
     padding: 6px 8px;
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
     border-bottom: 1px solid #161618;
   }
 
@@ -6273,7 +6297,7 @@
     background: rgba(255,255,255,0.06);
     border: 1px solid rgba(255,255,255,0.12);
     border-radius: 4px;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     font-size: 11px;
     cursor: pointer;
     transition: background 0.15s;
@@ -6370,7 +6394,7 @@
 
   .item-name {
     font-size: 9px;
-    color: #eee;
+    color: var(--text-primary, #eee);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -6378,7 +6402,7 @@
 
   .item-type {
     font-size: 8px;
-    color: #888;
+    color: var(--text-muted, #888);
     text-transform: uppercase;
   }
 
@@ -6438,7 +6462,7 @@
     align-items: center;
     gap: 6px;
     padding: 6px 12px;
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
     border: 1px solid #333;
     border-radius: 4px;
     cursor: pointer;
@@ -6448,13 +6472,13 @@
   }
 
   .block-tab:hover {
-    background: #111114;
+    background: var(--bg-secondary, #111114);
     border-color: #444;
   }
 
   .block-tab.active {
-    background: #BB86FC;
-    border-color: #BB86FC;
+    background: var(--accent-primary, #BB86FC);
+    border-color: var(--accent-primary, #BB86FC);
     color: #000;
   }
 
@@ -6465,7 +6489,7 @@
   .block-name {
     font-size: 11px;
     font-weight: 600;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -6473,7 +6497,7 @@
 
   .block-name-input {
     background: #111;
-    border: 1px solid #BB86FC;
+    border: 1px solid var(--accent-primary, #BB86FC);
     border-radius: 3px;
     color: #fff;
     font-size: 11px;
@@ -6537,8 +6561,8 @@
 
   .add-block-btn:hover {
     background: #333;
-    border-color: #BB86FC;
-    color: #BB86FC;
+    border-color: var(--accent-primary, #BB86FC);
+    color: var(--accent-primary, #BB86FC);
   }
 
   /* Layer Live Preview */
@@ -6562,7 +6586,7 @@
   }
 
   .layer-live-preview.has-clip {
-    border-color: #BB86FC;
+    border-color: var(--accent-primary, #BB86FC);
     box-shadow: 0 0 8px rgba(187, 134, 252, 0.3);
   }
 
@@ -6634,11 +6658,11 @@
 
   .layer-row.dragging {
     opacity: 0.5;
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
   }
 
   .layer-row.drag-over {
-    border-top: 2px solid #BB86FC;
+    border-top: 2px solid var(--accent-primary, #BB86FC);
     margin-top: -2px;
   }
 
@@ -6693,18 +6717,18 @@
     justify-content: center;
     gap: 4px;
     padding: 8px 4px;
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
     border: 1px solid #333;
     border-radius: 4px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     font-size: 10px;
     cursor: pointer;
     transition: all 0.15s;
   }
 
   .vj-src-btn:hover {
-    border-color: #BB86FC;
-    color: #BB86FC;
+    border-color: var(--accent-primary, #BB86FC);
+    color: var(--accent-primary, #BB86FC);
     background: #1a2a2d;
   }
 
@@ -6733,10 +6757,10 @@
 
   .vj-spout-sender {
     padding: 5px 8px;
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
     border: 1px solid #333;
     border-radius: 3px;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     font-size: 10px;
     cursor: pointer;
     text-align: left;
@@ -6755,10 +6779,10 @@
 
   .vj-spout-input {
     flex: 1;
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
     border: 1px solid #333;
     border-radius: 3px;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     padding: 5px 6px;
     font-size: 10px;
   }
@@ -6800,7 +6824,7 @@
   .source-type-icon {
     font-size: 9px;
     font-weight: 700;
-    color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
     letter-spacing: 0.5px;
   }
 
@@ -6824,7 +6848,7 @@
     border-radius: 3px;
     border: none;
     background: rgba(0,0,0,0.6);
-    color: #888;
+    color: var(--text-muted, #888);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -6848,7 +6872,7 @@
   /* ========== Shader Parameters ========== */
   .active-clip-name {
     font-size: 10px;
-    color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -6865,7 +6889,7 @@
     padding: 6px 0;
     font-size: 10px;
     font-weight: 700;
-    color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
     letter-spacing: 0.5px;
   }
 
@@ -6897,7 +6921,7 @@
 
   .shader-param-name {
     font-size: 10px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -6907,7 +6931,7 @@
   .mod-source-select {
     font-size: 9px;
     padding: 1px 2px;
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
     border: 1px solid #333;
     border-radius: 3px;
     color: #666;
@@ -6973,7 +6997,7 @@
     border-radius: 4px;
     background: transparent;
     border: 1px solid rgba(255, 255, 255, 0.18);
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     font-size: 9px;
     cursor: pointer;
     flex-shrink: 0;
@@ -7044,7 +7068,7 @@
   .param-slider {
     width: 100%;
     height: 3px;
-    accent-color: #BB86FC;
+    accent-color: var(--accent-primary, #BB86FC);
   }
 
   /* ─── Auto-mode slippers (overlay on slider track) ─── */
@@ -7133,7 +7157,7 @@
     padding: 2px 10px;
     border: 1px solid #333;
     border-radius: 3px;
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
     color: #666;
     font-size: 9px;
     font-weight: 700;
@@ -7155,10 +7179,10 @@
     width: 100%;
     font-size: 10px;
     padding: 5px 8px;
-    background-color: #0d0d10;
+    background-color: var(--bg-primary, #0d0d10);
     border: 1px solid #333;
     border-radius: 3px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
   }
 
   .audio-ready-badge {
@@ -7228,7 +7252,7 @@
     background: rgba(187, 134, 252, .08);
     border: 1px solid rgba(187, 134, 252, .25);
     border-radius: 4px;
-    color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
     cursor: pointer;
     transition: background .15s, border-color .15s, color .15s, box-shadow .15s, transform .08s;
   }
@@ -7380,7 +7404,7 @@
     align-items: center;
     justify-content: center;
     border-radius: 5px;
-    background: #050507;
+    background: var(--bg-primary, #050507);
     border: 1px solid rgba(255, 107, 107, 0.08);
     color: var(--accent-secondary, #FF8585);
     transition: color 0.15s, filter 0.15s;
@@ -7407,7 +7431,7 @@
     padding: 6px 8px;
     font-size: 11px;
     font-weight: 600;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     cursor: pointer;
     user-select: none;
     text-transform: uppercase;
@@ -7415,7 +7439,7 @@
   }
 
   .shader-params-panel summary:hover {
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     background: rgba(255, 255, 255, 0.03);
   }
 
@@ -7432,7 +7456,7 @@
     flex: 1;
     background-color: #1a1a1e;
     border: 1px solid #333;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     border-radius: 3px;
     font-size: 11px;
     padding: 2px 4px;
@@ -7449,7 +7473,7 @@
   .vj-plugin-icon.splat,
   .vj-plugin-icon.model3d {
     color: var(--accent-secondary, #FF8585);
-    background: #050507;
+    background: var(--bg-primary, #050507);
     border: 1px solid rgba(255, 107, 107, 0.08);
   }
 
@@ -7464,12 +7488,12 @@
   .vj-plugin-name {
     font-size: 12px;
     font-weight: 600;
-    color: #eee;
+    color: var(--text-primary, #eee);
   }
 
   .vj-plugin-desc {
     font-size: 10px;
-    color: #888;
+    color: var(--text-muted, #888);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -7546,7 +7570,7 @@
 
   .dim-label {
     font-size: 10px;
-    color: #888;
+    color: var(--text-muted, #888);
     text-transform: uppercase;
     letter-spacing: 0.5px;
     margin-right: 4px;
@@ -7558,7 +7582,7 @@
     background: #222;
     border: 1px solid #444;
     border-radius: 4px;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     font-size: 14px;
     font-weight: 600;
     cursor: pointer;
@@ -7570,8 +7594,8 @@
   }
 
   .dim-btn:hover {
-    background: #BB86FC;
-    border-color: #BB86FC;
+    background: var(--accent-primary, #BB86FC);
+    border-color: var(--accent-primary, #BB86FC);
     color: #000;
   }
 
@@ -7589,7 +7613,7 @@
     background: #222;
     border: 1px solid #444;
     border-radius: 4px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 1px;
@@ -7644,7 +7668,7 @@
     background: #1a1a1a;
     border: 1px solid #333;
     border-radius: 4px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     font-size: 10px;
     cursor: pointer;
     flex-shrink: 0;
@@ -7678,7 +7702,7 @@
   }
   .stage-preset-name-input {
     width: 70px;
-    background: #14141a;
+    background: var(--bg-tertiary, #14141a);
     border: 1px solid #4cd1ff;
     color: #fff;
     border-radius: 3px;
@@ -7693,7 +7717,7 @@
     background: #222;
     border: 1px dashed #555;
     border-radius: 4px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 10px;
     cursor: pointer;
     flex-shrink: 0;
@@ -7806,7 +7830,7 @@
   .xfade-trans-arrow {
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.12);
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     border-radius: 4px;
     width: 22px;
     height: 24px;
@@ -7836,7 +7860,7 @@
   .xfade-curve-select {
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.12);
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     border-radius: 4px;
     padding: 4px 8px;
     font-size: 10px;
@@ -7854,7 +7878,7 @@
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
     font-size: 11px;
     font-weight: 700;
-    color: #888;
+    color: var(--text-muted, #888);
     min-width: 16px;
     text-align: center;
     transition: color 0.15s, text-shadow 0.15s;
@@ -7928,7 +7952,7 @@
   .bank-pill-seg {
     background: transparent;
     border: none;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 9px;
     font-weight: 700;
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
@@ -7960,7 +7984,7 @@
   }
   .vt-btn {
     background: rgba(255, 255, 255, 0.08);
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     border: none;
     width: 28px;
     height: 28px;
@@ -7974,13 +7998,13 @@
   }
   .vt-btn:hover { background: rgba(255, 255, 255, 0.15); color: #fff; }
   .vt-play {
-    background: #BB86FC;
+    background: var(--accent-primary, #BB86FC);
     color: #111;
   }
   .vt-play:hover { background: #CF6EFF; color: #000; }
   .vt-time {
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-family: monospace;
     margin-left: 4px;
     flex: 1;
@@ -7988,7 +8012,7 @@
   }
   .vt-speed {
     background: rgba(255, 255, 255, 0.08);
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 3px;
     font-size: 11px;
@@ -8034,7 +8058,7 @@
     top: -2px;
     width: 2px;
     height: calc(100% + 4px);
-    background: #BB86FC;
+    background: var(--accent-primary, #BB86FC);
     box-shadow: 0 0 4px rgba(187, 134, 252, 0.6);
     z-index: 3;
     pointer-events: none;
@@ -8063,7 +8087,7 @@
     border-radius: 1px;
   }
   .vt-trim-handle:hover { background: rgba(187, 134, 252, 0.25); }
-  .vt-trim-handle:hover::after { background: #BB86FC; }
+  .vt-trim-handle:hover::after { background: var(--accent-primary, #BB86FC); }
 
   .vt-modes {
     display: flex;
@@ -8095,7 +8119,7 @@
   }
   .vt-tf-label {
     font-size: 10px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
   }
   .vt-tf-num {
     font-family: 'SF Mono', Menlo, Consolas, monospace;
@@ -8110,7 +8134,7 @@
   .vt-tf-select {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     padding: 3px 6px;
     border-radius: 3px;
     font-size: 10px;
@@ -8124,7 +8148,7 @@
     margin-top: 4px;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     padding: 5px;
     border-radius: 3px;
     font-size: 10px;
@@ -8142,7 +8166,7 @@
     gap: 4px;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 10px;
     padding: 4px 2px;
     border-radius: 3px;
@@ -8157,7 +8181,7 @@
   }
   .vt-mode-btn.active {
     background: rgba(187, 134, 252, 0.2);
-    color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
     border-color: rgba(187, 134, 252, 0.4);
   }
 </style>

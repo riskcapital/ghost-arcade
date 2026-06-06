@@ -3,6 +3,8 @@
   import { get } from 'svelte/store';
   import { RenderEngine, loadImageTexture, createVideoTexture, getThreeJSIframeContext, createThreeJSIframeContext, getJSAnimationContext, createJSAnimationContext } from '../renderer/engine';
   import { project, layers, compositions } from '../stores/layers';
+  import { stage3dScene } from '../stage3d/store';
+  import { Stage3DRenderer } from '../stage3d/Stage3DRenderer';
   import { mediaLibrary } from '../stores/media';
   import { vjOutputLayers, vjClipLauncher } from '../stores/vjClipLauncher';
   import { macros } from '../stores/macros';
@@ -98,6 +100,13 @@
   let fpsFrameCount = 0;
   let fpsLastTime = performance.now();
   let _fpsLogCount = 0; // throttles the [GPU] FPS log to every ~5s
+
+  /** When true, the normal layer compositor still renders into
+   *  RenderEngine.compositeTarget, but the visible canvas is overwritten
+   *  by a 3D stage render that samples that composite texture directly.
+   *  This keeps VJ content -> LED wall sampling in one WebGL context. */
+  export let stage3DOutput = false;
+  let stage3DRenderer: Stage3DRenderer | null = null;
 
   // Spout output state
   const isTauri = isDesktopApp || (typeof window !== 'undefined' && !!window.__ELECTRON__); // Backwards compat alias — works on both Tauri and Electron
@@ -233,6 +242,7 @@
       model3dContent: null,
       pixelFXContent: null,
       gpuLayerContent: null,
+      arcadeContent: null,
       position: { x: 0, y: 0 },
       scale: { x: 1, y: 1 },
       rotation: 0,
@@ -1031,10 +1041,14 @@
 
       // Render-rate gate. Reschedule rAF unconditionally so input
       // handlers stay responsive; bypass render body when early.
+      const _stage3DFpsCap = stage3DOutput && isOutputMode
+        ? (($settings as any)?.performance?.stage3DFrameRate ?? 30)
+        : 0;
       const _editorFpsCap = ($settings as any)?.performance?.editorMaxFps ?? 0;
-      if (_editorFpsCap > 0) {
+      const _fpsCap = _stage3DFpsCap > 0 ? _stage3DFpsCap : _editorFpsCap;
+      if (_fpsCap > 0) {
         const now = performance.now();
-        const interval = 1000 / _editorFpsCap;
+        const interval = 1000 / _fpsCap;
         if (now - _lastEditorRenderTime < interval) {
           animationId = requestAnimationFrame(animate);
           return;
@@ -1270,8 +1284,66 @@
           compEffects = vjState.compositionEffects;
         } else {
           // ── NORMAL MAPPING MODE ──
+          // VJ Source injection for groups + screen layers in regular
+          // mapping mode. When the user selects a VJ Layer from the
+          // group's "VJ Source" dropdown in the LayerPanel, that VJ
+          // Layer's currently-active clip should drive the group's
+          // unified shader — even without entering Stage live mode.
+          // We mirror the texture-resolution + injection path the
+          // stage-mode branch uses, gated on the presence of any
+          // vjLayerIndex bindings so the cost is paid only when needed.
           layersToRender = normalLayers;
           compEffects = undefined;
+          const anyVjBinding = vjLayers && normalLayers.some(l => l.vjLayerIndex !== undefined);
+          if (anyVjBinding) {
+            const resolveVjTextureMapping = (vjLayer: Layer): THREE.Texture | null => {
+              if (!vjLayer?.source) return null;
+              if (vjLayer.source.type === 'shader' && vjLayer.source.src) {
+                const rtKey = `${vjLayer.id}:${vjLayer.source.src}`;
+                const rt = shaderRenderTargets.get(rtKey);
+                if (rt) return rt.texture;
+              }
+              return (vjLayer.source.texture as THREE.Texture | null | undefined) ?? null;
+            };
+            // Bucket per VJ layer index → resolved texture. Simpler than
+            // the stage path because mapping mode doesn't currently run
+            // the A/B crossfader merge — single bank only.
+            const vjResolvedMap = new Map<number, { layer: Layer; texture: THREE.Texture }>();
+            for (const vjLayer of vjLayers!) {
+              const m = vjLayer.id.match(/^vj-layer-(\d+)(?:-([AB]))?$/);
+              if (!m) continue;
+              const idx = parseInt(m[1]);
+              // Take Bank A or the single-bank entry; ignore Bank B in
+              // mapping mode for now.
+              const bank = m[2] as 'A' | 'B' | undefined;
+              if (bank === 'B' && vjResolvedMap.has(idx)) continue;
+              const tex = resolveVjTextureMapping(vjLayer);
+              if (tex) vjResolvedMap.set(idx, { layer: vjLayer, texture: tex });
+            }
+            // Inject the resolved VJ texture into each managed layer.
+            // We clone the layer so the store's reactive copy isn't
+            // mutated. Tag with __vjStage so the upstream texture-
+            // update pass skips re-resolving (the VJ deck already
+            // produced the texture this frame).
+            layersToRender = normalLayers.map(layer => {
+              if (layer.vjLayerIndex === undefined) return layer;
+              const resolved = vjResolvedMap.get(layer.vjLayerIndex);
+              if (!resolved) return layer;
+              const injectedSource: any = {
+                ...resolved.layer.source,
+                texture: resolved.texture,
+                __vjStage: true,
+              };
+              if (layer.type === 'group') {
+                return { ...layer, source: injectedSource };
+              }
+              return {
+                ...layer,
+                source: injectedSource,
+                effects: [...(resolved.layer.effects || []), ...layer.effects],
+              };
+            });
+          }
         }
 
         // ── Keyframe timeline overrides (applied only during playback so sliders work freely when paused) ──
@@ -1475,6 +1547,16 @@
             }));
           }
           engine.render(layersToRender, null, compEffects, macroBundles);
+          if (stage3DOutput) {
+            if (!stage3DRenderer) stage3DRenderer = new Stage3DRenderer(glCanvas);
+            stage3DRenderer.render(
+              engine.getRenderer(),
+              get(stage3dScene),
+              engine.getCompositeTexture(),
+              $settings?.output?.slices ?? [],
+              layersToRender,
+            );
+          }
         } catch (e) {
           console.error('[Canvas] Render error:', e);
         }
@@ -1887,6 +1969,8 @@
       canvas.removeEventListener('mousemove', handleCanvasMouseMove);
       canvas.removeEventListener('mouseleave', handleCanvasMouseLeave);
       canvas.removeEventListener('mouseenter', handleCanvasMouseEnter);
+      stage3DRenderer?.dispose();
+      stage3DRenderer = null;
     };
   });
 

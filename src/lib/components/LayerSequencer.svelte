@@ -254,7 +254,7 @@
     gap: 8px;
     background: linear-gradient(135deg, #0d0d10, #111114);
     border: 1px solid #444;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     padding: 8px 16px;
     border-radius: 20px;
     cursor: pointer;
@@ -267,7 +267,7 @@
   }
   .seq-toggle:hover { border-color: #FF6B6B; box-shadow: 0 4px 30px rgba(255,107,107,0.2); }
   .seq-toggle.open { border-color: #FF6B6B; background: linear-gradient(135deg, #1a2020, #201515); }
-  .toggle-icon { font-size: 10px; color: #888; }
+  .toggle-icon { font-size: 10px; color: var(--text-muted, #888); }
   .toggle-label { font-size: 12px; font-weight: 600; }
 
   /* ═══════════════════════════════════
@@ -275,11 +275,11 @@
      ═══════════════════════════════════ */
   .seq-tray {
     position: fixed;
-    bottom: 0; left: 0; right: 0;
+    bottom: var(--ga-bottom-rail-offset, 74px); left: 0; right: 0;
     height: 280px;
-    background: #0a0a0c;
+    background: var(--bg-primary, #0a0a0c);
     border-top: 1px solid #333;
-    z-index: 99;
+    z-index: 90;
     display: flex;
     flex-direction: column;
     animation: seqSlideUp 0.2s ease-out;
@@ -296,7 +296,7 @@
     display: flex; align-items: center;
     padding: 6px 16px; gap: 12px;
     border-bottom: 1px solid #161618;
-    background: #0d0d10; flex-shrink: 0;
+    background: var(--bg-primary, #0d0d10); flex-shrink: 0;
   }
   .seq-header-left, .seq-header-center, .seq-header-right {
     display: flex; align-items: center; gap: 8px;
@@ -311,12 +311,12 @@
      CONTROLS
      ═══════════════════════════════════ */
   .seq-select {
-    background: #1a1a1e; border: 1px solid #333; color: #ccc;
+    background: var(--bg-tertiary, #1a1a1e); border: 1px solid #333; color: var(--text-primary, #ccc);
     padding: 3px 6px; border-radius: 4px; font-size: 11px; cursor: pointer; font-family: inherit;
   }
   .seq-select:hover { border-color: #FF6B6B; }
   .seq-input {
-    background: #1a1a1e; border: 1px solid #333; color: #ccc;
+    background: var(--bg-tertiary, #1a1a1e); border: 1px solid #333; color: var(--text-primary, #ccc);
     padding: 3px 6px; border-radius: 4px; font-size: 11px; font-family: inherit;
   }
   .seq-input:focus { border-color: #FF6B6B; outline: none; }
@@ -324,8 +324,8 @@
   .seq-density { width: 60px; padding: 0; height: 16px; accent-color: #FF6B6B; }
   .seq-btn {
     display: flex; align-items: center; justify-content: center;
-    width: 28px; height: 24px; background: #1a1a1e; border: 1px solid #444;
-    border-radius: 4px; color: #ccc; cursor: pointer; transition: all 0.15s;
+    width: 28px; height: 24px; background: var(--bg-tertiary, #1a1a1e); border: 1px solid #444;
+    border-radius: 4px; color: var(--text-primary, #ccc); cursor: pointer; transition: all 0.15s;
     font-family: inherit; padding: 0;
   }
   .seq-btn:hover { background: rgba(255,107,107,0.2); border-color: #FF6B6B; color: #FF6B6B; }
@@ -334,7 +334,7 @@
   .seq-tap { font-size: 9px; font-weight: 700; width: auto; padding: 0 8px; letter-spacing: 0.5px; }
   .seq-clear { opacity: 0.6; }
   .seq-clear:hover { opacity: 1; }
-  .seq-loop-label { display: flex; align-items: center; gap: 3px; cursor: pointer; color: #888; font-size: 11px; }
+  .seq-loop-label { display: flex; align-items: center; gap: 3px; cursor: pointer; color: var(--text-muted, #888); font-size: 11px; }
   .seq-loop-label input { display: none; }
   .seq-loop-label input:checked ~ svg { color: #FF6B6B; }
   .seq-step-display {
@@ -344,14 +344,14 @@
   .seq-step-sep { color: #555; }
   .seq-timing-toggle { display: flex; border: 1px solid #333; border-radius: 4px; overflow: hidden; }
   .seq-timing-btn {
-    padding: 3px 8px; font-size: 10px; background: #1a1a1e; border: none;
-    color: #888; cursor: pointer; transition: all 0.15s; font-family: inherit; font-weight: 600;
+    padding: 3px 8px; font-size: 10px; background: var(--bg-tertiary, #1a1a1e); border: none;
+    color: var(--text-muted, #888); cursor: pointer; transition: all 0.15s; font-family: inherit; font-weight: 600;
   }
   .seq-timing-btn:first-child { border-right: 1px solid #333; }
   .seq-timing-btn.active { background: rgba(255,107,107,0.2); color: #FF6B6B; }
-  .seq-timing-btn:hover:not(.active) { background: #222; color: #aaa; }
+  .seq-timing-btn:hover:not(.active) { background: #222; color: var(--text-secondary, #aaa); }
   .seq-xfade-label {
-    display: flex; align-items: center; gap: 4px; font-size: 10px; color: #888; cursor: pointer;
+    display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text-muted, #888); cursor: pointer;
   }
   .seq-xfade-label input[type="checkbox"] { accent-color: #FF6B6B; width: 12px; height: 12px; }
   .seq-xfade-dur { width: 52px; }
@@ -380,7 +380,7 @@
   /* Top-left corner cell */
   .seq-corner {
     position: sticky; left: 0; top: 0; z-index: 3;
-    background: #0a0a0c;
+    background: var(--bg-primary, #0a0a0c);
   }
 
   /* Step number headers (top row) */
@@ -389,7 +389,7 @@
     font-size: 9px; font-weight: 600; color: #555;
     font-family: 'JetBrains Mono', monospace;
     position: sticky; top: 0; z-index: 2;
-    background: #0a0a0c;
+    background: var(--bg-primary, #0a0a0c);
   }
   .seq-step-header.current {
     color: #4CAF50; font-weight: 700;
@@ -399,10 +399,10 @@
   .seq-layer-label {
     display: flex; align-items: center; gap: 5px;
     padding: 0 6px;
-    font-size: 10px; color: #aaa;
+    font-size: 10px; color: var(--text-secondary, #aaa);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     position: sticky; left: 0; z-index: 1;
-    background: #0a0a0c;
+    background: var(--bg-primary, #0a0a0c);
     border-radius: 3px;
   }
 
@@ -428,7 +428,7 @@
     transition: color 0.08s, border-color 0.08s, background 0.08s;
   }
   .seq-cont-btn:hover {
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     border-color: rgba(76,209,255,0.4);
   }
   .seq-cont-btn.active {
@@ -466,7 +466,7 @@
     width: 26px; height: 24px;
     border: 1px solid rgba(255,255,255,0.05);
     border-radius: 3px;
-    background: #161618;
+    background: var(--bg-tertiary, #161618);
     cursor: pointer;
     transition: background 0.06s, border-color 0.06s, box-shadow 0.06s;
     padding: 0;

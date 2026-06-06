@@ -476,7 +476,7 @@
   .sl-close {
     width: 28px; height: 28px; border-radius: 50%;
     background: rgba(255,255,255,0.06); border: none;
-    color: #888; font-size: 18px; cursor: pointer;
+    color: var(--text-muted, #888); font-size: 18px; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
     transition: all 0.15s;
   }
@@ -541,12 +541,12 @@
     background: rgba(255,255,255,0.04);
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 12px;
-    color: #888;
+    color: var(--text-muted, #888);
     cursor: pointer;
     transition: all 0.15s;
     white-space: nowrap;
   }
-  .sl-cat-btn:hover { border-color: rgba(255,255,255,0.2); color: #ccc; }
+  .sl-cat-btn:hover { border-color: rgba(255,255,255,0.2); color: var(--text-primary, #ccc); }
   .sl-cat-btn.active { background: rgba(255,133,119,0.15); border-color: rgba(255,133,119,0.3); color: #FF8577; }
 
   .sl-grid-container {
@@ -571,7 +571,7 @@
   }
 
   .sl-card {
-    background: #1a1a1e;
+    background: var(--bg-tertiary, #1a1a1e);
     border: 1px solid rgba(255,255,255,0.06);
     border-radius: 6px;
     cursor: pointer;
@@ -633,7 +633,7 @@
   }
 
   .sl-card-info { padding: 6px 8px; }
-  .sl-card-name { font-size: 10px; font-weight: 500; color: #ccc; display: block; line-height: 1.3; word-break: break-word; }
+  .sl-card-name { font-size: 10px; font-weight: 500; color: var(--text-primary, #ccc); display: block; line-height: 1.3; word-break: break-word; }
   .sl-card-cat { font-size: 9px; color: #555; display: block; margin-top: 2px; }
 
   .sl-footer {
@@ -651,11 +651,11 @@
     background: transparent;
     border: 1px solid rgba(255,255,255,0.15);
     border-radius: 4px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 12px;
     cursor: pointer;
   }
-  .sl-cancel:hover { border-color: rgba(255,255,255,0.3); color: #ccc; }
+  .sl-cancel:hover { border-color: rgba(255,255,255,0.3); color: var(--text-primary, #ccc); }
   .sl-add-btn {
     padding: 8px 20px;
     background: #FF8577;

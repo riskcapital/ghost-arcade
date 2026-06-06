@@ -40,6 +40,8 @@ cd ghost-arcade
 npm install
 ```
 
+> **Heads up:** `npm install` prints a handful of deprecation warnings (`glob@7`, `rimraf@2`, `boolean@3`, `core-js@2`). These are transitive dependencies of `electron-builder` and `butterchurn-presets` — packages we don't directly control — and they only affect install-time logging. The app builds and runs normally; you can ignore them.
+
 ### Run (Desktop — recommended)
 ```bash
 npm run desktop

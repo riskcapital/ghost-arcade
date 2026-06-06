@@ -206,7 +206,7 @@
     width: 280px;
     z-index: 99999;
     background: rgba(14, 8, 22, 0.97);
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     border: 1px solid rgba(255, 107, 107, 0.55);
     border-radius: 6px;
     box-shadow: 0 6px 28px rgba(255, 107, 107, 0.25), 0 2px 6px rgba(0, 0, 0, 0.6);
@@ -261,7 +261,7 @@
     align-items: center;
     gap: 6px;
     font-size: 10px;
-    color: #888;
+    color: var(--text-muted, #888);
   }
   .mp-learn-row > span:first-child {
     width: 56px;
@@ -274,9 +274,9 @@
   .mp-learn-row select,
   .mp-learn-row input[type="number"] {
     flex: 1;
-    background: #050507;
+    background: var(--bg-primary, #050507);
     border: 1px solid #2a1a35;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     padding: 3px 6px;
     border-radius: 3px;
     font-size: 10px;
@@ -307,13 +307,13 @@
     top: -1px;
     font-family: 'JetBrains Mono', monospace;
     font-size: 8px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     line-height: 8px;
   }
 
   .mp-learn-dash { color: #555; font-size: 11px; }
-  .mp-learn-check { display: flex; align-items: center; gap: 3px; font-size: 9px; color: #aaa; cursor: pointer; }
-  .mp-learn-val { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #aaa; width: 32px; text-align: right; }
+  .mp-learn-check { display: flex; align-items: center; gap: 3px; font-size: 9px; color: var(--text-secondary, #aaa); cursor: pointer; }
+  .mp-learn-val { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-secondary, #aaa); width: 32px; text-align: right; }
 
   .mp-learn-toggle {
     background: transparent;
@@ -326,11 +326,11 @@
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
-  .mp-learn-toggle:hover { color: #aaa; }
+  .mp-learn-toggle:hover { color: var(--text-secondary, #aaa); }
 
   .mp-learn-prompt {
     font-size: 10px;
-    color: #888;
+    color: var(--text-muted, #888);
     line-height: 1.5;
     padding: 4px 0;
   }
@@ -350,7 +350,7 @@
     border-top: 1px solid #1a1428;
     margin-top: 4px;
   }
-  .mp-learn-count { color: #888; font-family: 'JetBrains Mono', monospace; }
+  .mp-learn-count { color: var(--text-muted, #888); font-family: 'JetBrains Mono', monospace; }
 
   .mp-learn-list {
     display: flex;
@@ -376,7 +376,7 @@
   }
   .mp-learn-item-arr { color: #444; text-align: center; }
   .mp-learn-item-path {
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

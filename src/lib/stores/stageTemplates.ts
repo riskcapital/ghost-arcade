@@ -254,6 +254,180 @@ export const STAGE_TEMPLATES: StageTemplate[] = [
       return out;
     },
   },
+
+  // ─── New pro-grade stage layouts ──────────────────────────────────
+  // Each of these is shaped to match a real touring rig configuration.
+  // After Apply Stage they become VJ Screen layers and the 3D viewer
+  // builds matching LED meshes positioned per the slice geometry.
+
+  {
+    id: 'festival-mainstage',
+    label: 'Festival Mainstage',
+    icon: '⬓',
+    build: (w, h) => {
+      // Wide hero backdrop + 2 vertical side stacks + a long bottom
+      // strip running along the front of the stage. Matches the
+      // reference festival photos: side stacks angled slightly inward
+      // toward the audience.
+      const heroW = w * 0.58;
+      const heroH = h * 0.55;
+      const heroX = (w - heroW) / 2;
+      const heroY = h * 0.08;
+      const stackW = w * 0.13;
+      const stackH = h * 0.62;
+      const stackY = h * 0.13;
+      const stackGap = w * 0.025;
+      const stripW = w * 0.86;
+      const stripH = h * 0.08;
+      const stripX = (w - stripW) / 2;
+      const stripY = h - stripH - h * 0.06;
+      return [
+        { name: 'Hero Backdrop', polygon: rectPolygon(heroX, heroY, heroW, heroH) },
+        { name: 'Left Stack',    polygon: rectPolygon(heroX - stackGap - stackW, stackY, stackW, stackH) },
+        { name: 'Right Stack',   polygon: rectPolygon(heroX + heroW + stackGap, stackY, stackW, stackH) },
+        { name: 'Front Strip',   polygon: rectPolygon(stripX, stripY, stripW, stripH) },
+      ];
+    },
+  },
+
+  {
+    id: 'arena-hero',
+    label: 'Arena Hero + IMAG',
+    icon: '▭',
+    build: (w, h) => {
+      // Massive hero wall in the middle + two portrait IMAG screens
+      // flanking it (typical of bigger touring rigs — IMAGs project
+      // performer close-ups for the audience further back).
+      const heroW = w * 0.62;
+      const heroH = h * 0.68;
+      const heroX = (w - heroW) / 2;
+      const heroY = h * 0.12;
+      const imagW = w * 0.15;
+      const imagH = h * 0.78;
+      const imagY = h * 0.07;
+      const gap = w * 0.02;
+      return [
+        { name: 'IMAG Left',  polygon: rectPolygon(heroX - gap - imagW, imagY, imagW, imagH) },
+        { name: 'Hero Wall',  polygon: rectPolygon(heroX, heroY, heroW, heroH) },
+        { name: 'IMAG Right', polygon: rectPolygon(heroX + heroW + gap, imagY, imagW, imagH) },
+      ];
+    },
+  },
+
+  {
+    id: 'club-wrap',
+    label: 'Club Booth Wrap',
+    icon: '⌒',
+    build: (w, h) => {
+      // Wrap-around DJ booth front + tall backdrop behind + two
+      // narrow pillar screens flanking. Compact compared to festival
+      // / arena — fits the smaller club room footprint.
+      const boothW = w * 0.52;
+      const boothH = h * 0.22;
+      const boothX = (w - boothW) / 2;
+      const boothY = h * 0.62;
+      const backW = w * 0.58;
+      const backH = h * 0.42;
+      const backX = (w - backW) / 2;
+      const backY = h * 0.12;
+      const pillarW = w * 0.075;
+      const pillarH = h * 0.62;
+      const pillarY = h * 0.14;
+      return [
+        { name: 'Backdrop',     polygon: rectPolygon(backX, backY, backW, backH) },
+        { name: 'Booth Wrap',   polygon: rectPolygon(boothX, boothY, boothW, boothH) },
+        { name: 'Left Pillar',  polygon: rectPolygon(w * 0.04, pillarY, pillarW, pillarH) },
+        { name: 'Right Pillar', polygon: rectPolygon(w * 0.96 - pillarW, pillarY, pillarW, pillarH) },
+      ];
+    },
+  },
+
+  {
+    id: 'conference-curved',
+    label: 'Conference Hero',
+    icon: '⌃',
+    build: (w, h) => {
+      // Wide single hero wall, modest height, plus 2 small flanking
+      // side walls. Matches the polished corporate / keynote
+      // aesthetic from the reference images.
+      const heroW = w * 0.7;
+      const heroH = h * 0.5;
+      const heroX = (w - heroW) / 2;
+      const heroY = h * 0.22;
+      const sideW = w * 0.11;
+      const sideH = h * 0.5;
+      const sideY = h * 0.22;
+      const gap = w * 0.015;
+      return [
+        { name: 'Side Left',  polygon: rectPolygon(heroX - gap - sideW, sideY, sideW, sideH) },
+        { name: 'Hero Wall',  polygon: rectPolygon(heroX, heroY, heroW, heroH) },
+        { name: 'Side Right', polygon: rectPolygon(heroX + heroW + gap, sideY, sideW, sideH) },
+      ];
+    },
+  },
+
+  {
+    id: 'tetris-tower',
+    label: 'Tetris Tower',
+    icon: '▥',
+    build: (w, h) => {
+      // 7 vertical columns of varied heights — reads like a city
+      // skyline / Tetris-block wall of LED battens. Each column is
+      // randomised within bounds for visual interest, deterministic
+      // per surface dimensions so re-apply gives the same layout.
+      const cols = 7;
+      const cellW = w / cols;
+      const stripW = cellW * 0.6;
+      const offset = (cellW - stripW) / 2;
+      // Heights cycle through this pattern so the silhouette reads as
+      // intentional rather than random.
+      const heightSteps = [0.82, 0.55, 0.95, 0.7, 0.92, 0.6, 0.78];
+      const out: Array<{ name: string; polygon: BezierPoint[] }> = [];
+      for (let i = 0; i < cols; i++) {
+        const x = i * cellW + offset;
+        const colH = h * heightSteps[i % heightSteps.length];
+        const y = (h - colH) - h * 0.03; // anchored to the bottom of the surface
+        out.push({ name: `Column ${i + 1}`, polygon: rectPolygon(x, y, stripW, colH) });
+      }
+      return out;
+    },
+  },
+
+  {
+    id: 'festival-fan',
+    label: 'Festival Fan',
+    icon: '☰',
+    build: (w, h) => {
+      // 5 angled vertical walls in a slight arc — matches the "fan
+      // of LED panels" look from the red triangular reference image.
+      // Slight rotation per slice via skewed polygons (parallelogram
+      // shapes simulating the angle without rotation transforms).
+      const count = 5;
+      const wallW = w * 0.13;
+      const wallH = h * 0.78;
+      const cellW = w / count;
+      const baseY = h * 0.11;
+      const out: Array<{ name: string; polygon: BezierPoint[] }> = [];
+      for (let i = 0; i < count; i++) {
+        const t = (i + 0.5) / count;
+        const cx = t * w;
+        const x = cx - wallW / 2;
+        // Skew the rectangle so the wall slants inward — left edge
+        // tilts in toward centre, right edge tilts out.
+        const skew = (i - (count - 1) / 2) * (wallW * 0.18);
+        out.push({
+          name: `Fan ${i + 1}`,
+          polygon: [
+            { x: x + skew,         y: baseY },
+            { x: x + wallW + skew, y: baseY },
+            { x: x + wallW - skew, y: baseY + wallH },
+            { x: x - skew,         y: baseY + wallH },
+          ],
+        });
+      }
+      return out;
+    },
+  },
 ];
 
 export function getStageTemplate(id: string): StageTemplate | undefined {

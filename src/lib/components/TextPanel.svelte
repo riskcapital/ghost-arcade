@@ -441,7 +441,7 @@
     overflow-y: auto;
     max-height: 100%;
     font-size: 11px;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
   }
 
   h3 {
@@ -462,7 +462,7 @@
   .section-label {
     display: block;
     font-size: 10px;
-    color: #888;
+    color: var(--text-muted, #888);
     text-transform: uppercase;
     letter-spacing: 0.5px;
     margin-bottom: 4px;
@@ -496,7 +496,7 @@
   .property-row > label {
     min-width: 55px;
     font-size: 10px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     flex-shrink: 0;
   }
 
@@ -520,7 +520,7 @@
     flex: 1;
     background: #111;
     border: 1px solid #333;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     padding: 2px 4px;
     font-size: 10px;
     border-radius: 3px;
@@ -530,7 +530,7 @@
     min-width: 38px;
     text-align: right;
     font-size: 9px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-family: monospace;
   }
 
@@ -542,7 +542,7 @@
   .button-group button {
     background: #222;
     border: 1px solid #444;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     padding: 2px 8px;
     font-size: 10px;
     cursor: pointer;
@@ -562,7 +562,7 @@
   .btn-small {
     background: #222;
     border: 1px solid #444;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     padding: 1px 6px;
     font-size: 9px;
     cursor: pointer;

@@ -231,7 +231,7 @@
     height: 100%;
     overflow-y: auto;
     padding: 14px;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     background: #181820;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     font-size: 12px;
@@ -256,7 +256,7 @@
     font-weight: 700;
   }
   .panel-hint {
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 11px;
     margin-bottom: 16px;
   }
@@ -270,7 +270,7 @@
     font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.8px;
-    color: #888;
+    color: var(--text-muted, #888);
     margin-bottom: 8px;
   }
   .brush-grid {
@@ -282,7 +282,7 @@
   .brush-button {
     background: #25252e;
     border: 1px solid #333344;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     padding: 6px 4px;
     font-size: 11px;
     border-radius: 3px;
@@ -308,7 +308,7 @@
     gap: 8px;
     margin-bottom: 6px;
   }
-  .row span:first-child { color: #aaa; font-size: 11px; }
+  .row span:first-child { color: var(--text-secondary, #aaa); font-size: 11px; }
   .row .num {
     font-family: 'SF Mono', Menlo, Consolas, monospace;
     font-size: 10px;
@@ -334,7 +334,7 @@
     padding: 8px;
     background: #25252e;
     border: 1px solid #333344;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     font-size: 11px;
     border-radius: 3px;
     cursor: pointer;

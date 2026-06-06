@@ -31,6 +31,9 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'create_output_window', 'configure_next_output_window',
   'close_output_window', 'move_output_window',
   'resize_output_window', 'show_main_window',
+  // Stage 3D pop-out window + state relay
+  'open_stage3d_window', 'stage3d_window_closing',
+  'stage3d_publish_state', 'stage3d_get_state', 'stage3d_is_open',
   // SRC tab Capture chooser — enumerates screens + app windows
   // with thumbnails so the renderer can show a Zoom/Slack-style picker.
   'screen_sources_list',

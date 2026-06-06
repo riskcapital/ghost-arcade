@@ -315,7 +315,7 @@
     border-radius: 50%;
     background: rgba(255, 255, 255, 0.06);
     border: none;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     cursor: pointer;
     font-size: 16px;
     line-height: 1;
@@ -372,7 +372,7 @@
   }
   .ot-body {
     font-size: 14px;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     line-height: 1.55;
     margin: 0 0 16px;
   }
@@ -389,7 +389,7 @@
     position: relative;
     padding-left: 18px;
     font-size: 12px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     line-height: 1.5;
   }
   .ot-bullets li::before {
@@ -414,7 +414,7 @@
   .ot-keyhint-label {
     font-size: 9px;
     font-weight: 700;
-    color: #888;
+    color: var(--text-muted, #888);
     letter-spacing: 0.16em;
   }
   .ot-keyhint kbd {
@@ -457,14 +457,14 @@
   .ot-skip {
     background: transparent;
     border: 1px solid rgba(255, 255, 255, 0.1);
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 11px;
     font-weight: 600;
     padding: 7px 12px;
     border-radius: 4px;
     cursor: pointer;
   }
-  .ot-skip:hover { color: #ccc; border-color: rgba(255, 255, 255, 0.2); }
+  .ot-skip:hover { color: var(--text-primary, #ccc); border-color: rgba(255, 255, 255, 0.2); }
 
   .ot-counter {
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;

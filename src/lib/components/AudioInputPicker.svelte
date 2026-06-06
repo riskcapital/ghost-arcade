@@ -197,7 +197,7 @@
   .audio-input-picker {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 10px;
   }
 
   .aip-btn {
@@ -205,32 +205,32 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 28px;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    color: #a0a0a0;
-    border-radius: 6px;
+    width: 34px;
+    height: 32px;
+    background: var(--ga-card, #13161c);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #9aa0ac);
+    border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
     transition: all 0.15s;
   }
 
   .aip-btn:hover {
-    background: rgba(255, 255, 255, 0.12);
-    color: #e8e8e8;
-    border-color: rgba(255, 255, 255, 0.2);
+    background: var(--ga-card, #13161c);
+    color: var(--ga-ink-0, #eef0f4);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
 
   .aip-btn.active {
-    background: rgba(46, 213, 115, 0.15);
-    border-color: rgba(46, 213, 115, 0.4);
-    color: #2ED573;
-    box-shadow: 0 0 8px rgba(46, 213, 115, 0.2);
+    background: rgba(70, 209, 138, 0.08);
+    border-color: rgba(70, 209, 138, 0.28);
+    color: var(--ga-green, #46d18a);
+    box-shadow: none;
   }
 
   .aip-btn.active:hover {
-    background: rgba(46, 213, 115, 0.25);
-    color: #5AE08C;
+    background: rgba(70, 209, 138, 0.12);
+    color: var(--ga-green, #46d18a);
   }
 
   .aip-active-dot {
@@ -240,8 +240,8 @@
     width: 5px;
     height: 5px;
     border-radius: 50%;
-    background: #2ED573;
-    box-shadow: 0 0 6px #2ED57380;
+    background: var(--ga-green, #46d18a);
+    box-shadow: 0 0 6px rgba(70, 209, 138, 0.6);
     animation: aip-pulse 1.5s infinite;
   }
 
@@ -266,10 +266,10 @@
     border-top-left-radius: 0;
     border-bottom-left-radius: 0;
     padding: 0;
-    color: #808080;
+    color: var(--ga-ink-2, #5e6571);
   }
   .aip-mic-chevron:hover {
-    color: #e8e8e8;
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .aip-popover {
@@ -278,9 +278,9 @@
     right: 0;
     min-width: 220px;
     max-width: 320px;
-    background: #1a1a1a;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 6px;
+    background: var(--ga-card, #13161c);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-soft, 7px);
     padding: 6px;
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
     z-index: 1000;
@@ -291,7 +291,7 @@
   .aip-popover-label {
     font-size: 10px;
     font-weight: 600;
-    color: #808080;
+    color: var(--ga-ink-2, #5e6571);
     text-transform: uppercase;
     letter-spacing: 0.5px;
     padding: 4px 8px 2px;
@@ -299,7 +299,7 @@
   .aip-popover-item {
     text-align: left;
     font-size: 12px;
-    color: #d0d0d0;
+    color: var(--ga-ink-1, #9aa0ac);
     background: transparent;
     border: 1px solid transparent;
     padding: 6px 8px;
@@ -310,26 +310,26 @@
     text-overflow: ellipsis;
   }
   .aip-popover-item:hover {
-    background: rgba(255, 255, 255, 0.06);
-    color: #ffffff;
+    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
+    color: var(--ga-ink-0, #eef0f4);
   }
   .aip-popover-item.selected {
-    background: rgba(46, 213, 115, 0.12);
-    border-color: rgba(46, 213, 115, 0.3);
-    color: #2ED573;
+    background: rgba(70, 209, 138, 0.10);
+    border-color: rgba(70, 209, 138, 0.28);
+    color: var(--ga-green, #46d18a);
   }
   .aip-popover-empty {
     padding: 8px;
     font-size: 11px;
-    color: #707070;
+    color: var(--ga-ink-2, #5e6571);
     font-style: italic;
   }
   .aip-popover-hint {
     margin-top: 4px;
     padding: 6px 8px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
     font-size: 10px;
-    color: #808080;
+    color: var(--ga-ink-2, #5e6571);
     line-height: 1.4;
   }
 </style>

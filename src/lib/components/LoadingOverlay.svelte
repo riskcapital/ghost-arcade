@@ -45,7 +45,7 @@
   }
 
   .loading-text {
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     font-size: 13px;
     font-family: monospace;
     letter-spacing: 0.05em;
