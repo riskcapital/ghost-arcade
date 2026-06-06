@@ -547,7 +547,7 @@
   .context-menu {
     position: fixed;
     z-index: 10000;
-    background: #1a1a22;
+    background: var(--bg-tertiary, #1a1a22);
     border: 1px solid rgba(255,255,255,0.12);
     border-radius: 4px;
     padding: 4px 0;
@@ -560,7 +560,7 @@
     padding: 4px 12px;
     background: none;
     border: none;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     font-size: 11px;
     text-align: left;
     cursor: pointer;

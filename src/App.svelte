@@ -27,6 +27,7 @@
   import PixelFXPanel from './lib/components/PixelFXPanel.svelte';
   import GPULayerPanel from './lib/components/GPULayerPanel.svelte';
   import MediaTray from './lib/components/MediaTray.svelte';
+  import Stage3DDesigner from './lib/components/stage3d/Stage3DDesigner.svelte';
   import PluginLayerPanel from './lib/components/PluginLayerPanel.svelte';
   import { preloadShaders } from './lib/shaderPreload';
 
@@ -49,6 +50,7 @@
   import OfflineRenderModal from './lib/components/OfflineRenderModal.svelte';
   import { workspace } from './lib/stores/workspace';
   import PresetTray from './lib/components/PresetTray.svelte';
+  import BottomDock from './lib/components/BottomDock.svelte';
   import LayerSequencer from './lib/components/LayerSequencer.svelte';
   import KeyframeTimeline from './lib/components/KeyframeTimeline.svelte';
   import SettingsPanel from './lib/components/SettingsPanel.svelte';
@@ -63,6 +65,7 @@
   import { updateModalOpen, leftSidebarTab } from './lib/stores/uiState';
   import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback } from './lib/stores/layers';
   import { keyframeTimeline } from './lib/stores/keyframeTimeline';
+  import { layerSequencer } from './lib/stores/layerSequencer';
   import { settings, outputFrozen } from './lib/stores/settings';
   import { checkForUpdate, type VersionCheckResult } from './lib/utils/versionCheck';
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from './lib/recording/recorder';
@@ -120,6 +123,42 @@
 
   let outputWindow: OutputWindow;
   let outputIsOpen = false;
+  // 3D Stage Designer. Electron uses a separate BrowserWindow
+  // (`?mode=stage-3d`) so the stage can live on an external monitor
+  // while the editor remains available for performance. The pop-out
+  // renders its own synced compositor and draws Stage 3D in that same
+  // WebGL context, so LED screens sample the local composite texture
+  // without a canvas/media bridge.
+  let showStage3D = false;
+  let stage3DWindowOpen = false;
+  async function openStage3D() {
+    if (isDesktopApp) {
+      try {
+        await invoke('open_stage3d_window');
+        stage3DWindowOpen = true;
+        return;
+      } catch (e) {
+        console.warn('[Stage3D] IPC open failed, falling back to overlay:', e);
+      }
+    }
+    showStage3D = true;
+  }
+
+  let stage3dWindowPoll: ReturnType<typeof setInterval> | null = null;
+  $: if (isDesktopApp && stage3DWindowOpen && !stage3dWindowPoll) {
+    stage3dWindowPoll = setInterval(async () => {
+      try {
+        const open = await invoke<boolean>('stage3d_is_open');
+        if (!open) stage3DWindowOpen = false;
+      } catch {
+        stage3DWindowOpen = false;
+      }
+    }, 1000);
+  }
+  $: if ((!isDesktopApp || !stage3DWindowOpen) && stage3dWindowPoll) {
+    clearInterval(stage3dWindowPoll);
+    stage3dWindowPoll = null;
+  }
   let canvasComponent: Canvas;
   // Phase 3.0 bridge: bound when experimental.editorWebGPU is on so
   // we can push the WebGL canvas reference into it after both
@@ -314,6 +353,10 @@
 
   // VJ Preset name for saving from mapping mode
   let vjPresetName = '';
+  // PresetTray bottom drawer open flag, controlled by BottomDock's
+  // "Presets" pill. Bound to PresetTray so the existing toggle button
+  // inside it stays in sync.
+  let presetTrayOpen = false;
 
   // Unsaved changes tracking - increments on every project change, resets on save
   let lastSavedState: string | null = null;
@@ -713,9 +756,6 @@
       const welcomeSeen = localStorage.getItem('ghostarcade-welcome-seen');
       if (!welcomeSeen) {
         showWelcome = true;
-      } else {
-        // Welcome already seen — still try the first-launch demo import.
-        maybeAutoLoadDemo();
       }
     });
 
@@ -760,6 +800,10 @@
 
     // Allow child components (e.g. VJ mode) to open settings via custom event
     window.addEventListener('open-settings', () => { showSettings = true; });
+    // Launch 3D Stage from inside VJ mode without minimizing the panel.
+    // VJModePanel's header button dispatches this; we route to the same
+    // openStage3D() that the toolbar button hits.
+    window.addEventListener('open-stage3d', () => { openStage3D(); });
 
     // Load saved AI shaders from server
     loadShadersFromServer().catch(e => {
@@ -3280,88 +3324,6 @@
     history.record(get(project));
   }
 
-  // ─── Load Demo Project ───────────────────────────────────────────────
-  let demoLoading = false;
-  let demoProgress = 0;
-
-  // First-launch demo auto-import.
-  //
-  // Triggers loadDemoProject() exactly once, on the first launch after install
-  // (or after any state where 'ghostarcade-first-demo-imported' was cleared).
-  // Marked-as-imported BEFORE the actual download so a network failure or user
-  // cancel doesn't cause the auto-load to fire on every subsequent launch —
-  // they can still trigger it manually from File → Load Demo Project.
-  function maybeAutoLoadDemo() {
-    if (!isDesktopApp) return;
-    if (localStorage.getItem('ghostarcade-first-demo-imported')) return;
-    localStorage.setItem('ghostarcade-first-demo-imported', new Date().toISOString());
-    // Defer slightly so the welcome / EULA modal close animation finishes
-    // and the user sees the app UI before the demo overlay takes over.
-    // Pass silent=true so 404s / offline / network errors don't pop an alert
-    // — user just lands on the blank composition.
-    setTimeout(() => { loadDemoProject({ silent: true }); }, 400);
-  }
-
-  async function loadDemoProject(opts: { silent?: boolean } = {}) {
-    const silent = opts.silent === true;
-    fileMenuOpen = false;
-
-    if (!isDesktopApp) {
-      // Browser: redirect to website download
-      window.open('https://ghostarcade.live/demo', '_blank');
-      return;
-    }
-
-    demoLoading = true;
-    demoProgress = 0;
-
-    try {
-      // Listen for download progress
-      const progressHandler = (_event: any, data: { percent: number }) => {
-        demoProgress = data.percent;
-      };
-      if ((window as any).electronAPI?.on) {
-        (window as any).electronAPI.on('demo-download-progress', progressHandler);
-      }
-
-      console.log('[Demo] Downloading demo project...');
-
-      const result = await invoke<{ projectDir: string; projectJSON: string; alreadyExists: boolean }>('download_demo_zip', {
-        // Hosted on GitHub Releases (>100MB so can't live in shrinkwraplive's
-        // public/ directly — GitHub repo file size limit). Stable URL, no
-        // bandwidth charged to Vercel, served from GitHub's CDN.
-        url: 'https://github.com/riskcapital/ghost-arcade-releases/releases/download/demo-assets/ghost-arcade-demo.zip',
-      });
-
-      if (result.alreadyExists) {
-        console.log('[Demo] Demo already downloaded, loading...');
-      }
-
-      // Clear stale performer / session / runtime caches before loading so
-      // older demo files can't carry legacy clip bindings into the new build.
-      try { synthVisionStore.reset(); } catch {}
-      try { sessionClipCache.clear(); } catch {}
-      try { isfShaderCache.clear(); } catch {}
-      try { modulationStore.clearAll(); } catch {}
-
-      // Import the project with directory for relative path resolution
-      const success = project.importProjectJSON(result.projectJSON, result.projectDir);
-
-      if (success) {
-        markAsSaved();
-        console.log('[Demo] Demo project loaded successfully!');
-      } else if (!silent) {
-        alert('Failed to import demo project. The file may be corrupted.');
-      }
-    } catch (err: any) {
-      console.error('[Demo] Failed to load demo project:', err);
-      if (!silent) alert(`Demo download failed: ${err.message || err}`);
-    } finally {
-      demoLoading = false;
-      demoProgress = 0;
-    }
-  }
-
   function handleUndo() {
     fileMenuOpen = false;
     history.suppress();
@@ -4298,17 +4260,6 @@
                 <span class="menu-label">Export Presets...</span>
               </button>
               <div class="menu-separator"></div>
-              <button class="menu-item" onclick={() => loadDemoProject()} disabled={demoLoading}>
-                <span class="menu-icon">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                    <polyline points="7 10 12 15 17 10"></polyline>
-                    <line x1="12" y1="15" x2="12" y2="3"></line>
-                  </svg>
-                </span>
-                <span class="menu-label">{demoLoading ? `Downloading ${demoProgress}%...` : 'Load Demo Project'}</span>
-              </button>
-              <div class="menu-separator"></div>
               <button class="menu-item" onclick={handleUndo} disabled={!$canUndo}>
                 <span class="menu-icon">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -4332,19 +4283,8 @@
             </div>
           {/if}
         </div>
-        <!-- VJ Preset Save Area -->
-        <div class="vj-preset-save">
-          <input
-            type="text"
-            placeholder="Preset name..."
-            bind:value={vjPresetName}
-            onkeydown={(e) => e.key === 'Enter' && saveVJPreset()}
-            class="vj-preset-input"
-          />
-          <button class="vj-preset-btn" onclick={saveVJPreset} title="Save as Preset">
-            + Preset
-          </button>
-        </div>
+        <!-- VJ Preset Save moved to the Presets panel/tab —
+             top bar reserved for navigation only now. -->
       </div>
       <!-- Hidden file input for loading compositions -->
       <input
@@ -4358,13 +4298,6 @@
       <div class="toolbar-center">
         <button
           class="output-btn"
-          class:active={outputMode === 'embedded'}
-          onclick={() => { closeOutputWindow(); outputMode = 'embedded'; }}
-        >
-          Preview
-        </button>
-        <button
-          class="output-btn"
           class:active={outputMode === 'window'}
           onclick={outputIsOpen ? closeOutputWindow : openOutputWindow}
         >
@@ -4376,6 +4309,14 @@
           onclick={toggleFullscreen}
         >
           Fullscreen
+        </button>
+        <button
+          class="output-btn stage3d-btn"
+          class:active={showStage3D || stage3DWindowOpen}
+          onclick={openStage3D}
+          title="3D Stage Designer"
+        >
+          ◆ Stage 3D
         </button>
       </div>
 
@@ -4588,7 +4529,12 @@
     </header>
 
     <!-- Main Content -->
-    <main class="main-content" class:kf-tray-open={$keyframeTimeline.isOpen}>
+    <main
+      class="main-content"
+      class:preset-tray-open={presetTrayOpen}
+      class:seq-tray-open={$layerSequencer.isOpen}
+      class:kf-tray-open={$keyframeTimeline.isOpen}
+    >
       <!-- Left sidebar — Layers / Screens tabs.
            LeftSidebar swaps LayerPanel ↔ ScreenPanel based on the
            active tab (uiState.leftSidebarTab). Screens tab also
@@ -4638,10 +4584,10 @@
           See docs/WEBGPU_MIGRATION.md for the full roadmap.
         -->
         {#if $settings.experimental?.editorWebGPU}
-          <Canvas bind:this={canvasComponent} bridgeMode={true} />
+          <Canvas bind:this={canvasComponent} bridgeMode={true} stage3DOutput={showStage3D} />
           <WebGPUCanvas bind:this={webgpuBridgeComponent} />
         {:else}
-          <Canvas bind:this={canvasComponent} />
+          <Canvas bind:this={canvasComponent} stage3DOutput={showStage3D} />
         {/if}
         <!-- Grid overlay — mounted at App.svelte level (sibling to
              Canvas + WebGPUCanvas) so it stays visible regardless of
@@ -5427,16 +5373,25 @@
     </main>
 
     <!-- Preset Tray at bottom (only in map mode) -->
-    <PresetTray onBeforeLoad={(duration, type) => {
-      const engine = canvasComponent?.getEngine();
-      if (engine) engine.startTransition(duration, type);
-    }} />
+    <PresetTray
+      bind:isOpen={presetTrayOpen}
+      onBeforeLoad={(duration, type) => {
+        const engine = canvasComponent?.getEngine();
+        if (engine) engine.startTransition(duration, type);
+      }}
+    />
 
     <!-- Layer Sequencer (slide-up panel, next to Presets) -->
     <LayerSequencer />
 
     <!-- Keyframe Timeline (slide-up panel) -->
     <KeyframeTimeline />
+
+    <!-- Bottom dock pills (Presets / Sequencer / Keyframes) — coral-active. -->
+    <BottomDock
+      presetsOpen={presetTrayOpen}
+      onTogglePresets={() => presetTrayOpen = !presetTrayOpen}
+    />
 
     <!-- VJ Mode Panel (full screen overlay) -->
     <VJModePanel
@@ -5446,7 +5401,6 @@
         else if (action === 'save') saveComposition();
         else if (action === 'saveAs') saveCompositionAs();
         else if (action === 'importPresets') importPresetsFromFile();
-        else if (action === 'loadDemo') loadDemoProject();
         else if (action === 'undo') handleUndo();
         else if (action === 'redo') handleRedo();
       }}
@@ -5481,8 +5435,6 @@
       <WelcomeModal onClose={() => {
         showWelcome = false;
         localStorage.setItem('ghostarcade-welcome-seen', 'true');
-        // Welcome was the gate — kick off demo download once dismissed
-        maybeAutoLoadDemo();
       }} />
     {/if}
 
@@ -5495,27 +5447,20 @@
       <UpdateModal open={true} onClose={() => updateModalOpen.set(false)} />
     {/if}
 
-    <!-- Demo download progress overlay — shown whenever loadDemoProject()
-         is in flight, regardless of trigger source (auto-import or File menu).
-         Indeterminate spinner instead of a percentage bar — GitHub asset
-         downloads complete fast enough that the percentage often stayed at
-         0 until the whole transfer finished, looking stuck. -->
-    {#if demoLoading}
-      <div class="demo-loading-overlay">
-        <div class="demo-loading-card">
-          <div class="demo-spinner" aria-hidden="true"></div>
-          <h2>Loading demo project</h2>
-          <p class="demo-loading-subtitle">Downloading sample composition + media (~107 MB)</p>
-          <p class="demo-progress-hint">First-launch download — won't happen again</p>
-        </div>
-      </div>
-    {/if}
-
     <!-- Settings Panel — output transforms now read from $settings.output -->
     <SettingsPanel
       isOpen={showSettings}
       onClose={() => showSettings = false}
     />
+
+    <!-- Browser fallback: the main Canvas switches to stage3DOutput
+         and this component supplies only the floating authoring UI. -->
+    {#if showStage3D}
+      <Stage3DDesigner
+        renderViewport={false}
+        onClose={() => showStage3D = false}
+      />
+    {/if}
 
     <!-- Global learn-mode UI for MediaPipe bindings. Top-level so they
          survive Settings modal closing during a binding tap. The overlay
@@ -5540,6 +5485,40 @@
       {#if $settings.output.testPattern && $settings.output.testPattern !== 'none'}
         <span class="test-pattern-status">TEST: {$settings.output.testPattern}</span>
       {/if}
+      <span class="spacer"></span>
+
+      <!-- Inline tool pills — Presets / Sequencer / Keyframes live in
+           the status bar so they're always visible and the tray panels
+           open ABOVE this bar instead of covering it. Same toggle
+           handlers as the (now hidden) floating BottomDock. -->
+      <button
+        class="status-pill"
+        class:on={presetTrayOpen}
+        onclick={() => presetTrayOpen = !presetTrayOpen}
+        title="Presets (⌘P)"
+      >
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg>
+        Presets
+      </button>
+      <button
+        class="status-pill"
+        class:on={$layerSequencer.isOpen}
+        onclick={() => layerSequencer.toggleOpen()}
+        title="Sequencer (⌘B)"
+      >
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="3" height="6"/><rect x="9" y="6" width="3" height="12"/><rect x="15" y="11" width="3" height="4"/></svg>
+        Sequencer
+      </button>
+      <button
+        class="status-pill"
+        class:on={$keyframeTimeline.isOpen}
+        onclick={() => keyframeTimeline.toggleOpen()}
+        title="Keyframes (⌘K)"
+      >
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 9-9 9-9-9z"/></svg>
+        Keyframes
+      </button>
+
       <span class="spacer"></span>
       <span class="fps-counter" class:fps-good={$fpsStore > 50} class:fps-warn={$fpsStore >= 30 && $fpsStore <= 50} class:fps-bad={$fpsStore < 30 && $fpsStore > 0}>{$fpsStore} FPS</span>
       {#if versionInfo?.hasUpdate && versionInfo.releaseUrl}
@@ -5702,6 +5681,10 @@
     --danger: #FF4757;
     --success: #2ED573;
     --warning: #FFA502;
+    --ga-statusbar-height: 26px;
+    --ga-bottom-dock-height: 48px;
+    --ga-bottom-rail-offset: calc(var(--ga-statusbar-height) + var(--ga-bottom-dock-height));
+    --ga-slider-fill: color-mix(in srgb, var(--ga-blue, #5b8def) 42%, transparent);
   }
 
   :global(*) {
@@ -5741,7 +5724,7 @@
     padding: 5px 26px 5px 8px;
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
-    color: #e0e0e0;
+    color: var(--text-primary, #e0e0e0);
     font-size: 11px;
     font-family: inherit;
     cursor: pointer;
@@ -5756,8 +5739,8 @@
     box-shadow: 0 0 0 2px rgba(187, 134, 252, 0.15);
   }
   :global(select option) {
-    background: #1a1a22;
-    color: #e0e0e0;
+    background: var(--bg-tertiary, #1a1a22);
+    color: var(--text-primary, #e0e0e0);
     padding: 4px 8px;
   }
 
@@ -5810,7 +5793,7 @@
     transform: rotate(90deg);
   }
   :global(details summary:hover) {
-    color: #ccc;
+    color: var(--text-primary, #ccc);
   }
   :global(details[open] summary) {
     color: #bbb;
@@ -5821,7 +5804,7 @@
     background: #141418;
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
-    color: #e0e0e0;
+    color: var(--text-primary, #e0e0e0);
     font-size: 11px;
     font-family: inherit;
     padding: 5px 8px;
@@ -5839,7 +5822,7 @@
     appearance: none;
     width: 14px;
     height: 14px;
-    background: #161618;
+    background: var(--bg-tertiary, #161618);
     border: 1px solid #444;
     border-radius: 3px;
     cursor: pointer;
@@ -5866,66 +5849,148 @@
     border-color: #BB86FC;
   }
 
-  /* Global range slider styles (all browsers) */
-  :global(input[type="range"]) {
+  /* Global range slider style — v10 segmented slot + metal cap.
+     Special two-handle overlays, crossfaders, and hue/color ramps keep
+     their own classes so this skin doesn't flatten custom controls. */
+  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.hue-slider)) {
+    --ga-range-progress: 0%;
     -webkit-appearance: none;
     appearance: none;
-    height: 6px;
-    background: #000000;
-    border-radius: 3px;
+    width: 100%;
+    height: 12px;
+    border: 0;
+    border-radius: 8px;
+    background:
+      repeating-linear-gradient(
+        90deg,
+        transparent 0,
+        transparent calc(16.666% - 1px),
+        rgba(255, 255, 255, 0.10) calc(16.666% - 1px),
+        rgba(255, 255, 255, 0.10) 16.666%
+      ),
+      linear-gradient(
+        90deg,
+        var(--ga-slider-fill, color-mix(in srgb, var(--ga-blue, #5b8def) 42%, transparent)) 0 var(--ga-range-progress),
+        transparent var(--ga-range-progress) 100%
+      ),
+      var(--ga-slot, #050607);
+    box-shadow: inset 0 0 0 1px var(--ga-line-2, rgba(255, 255, 255, 0.12));
     cursor: pointer;
     outline: none;
+    padding: 0;
+    vertical-align: middle;
   }
-  :global(input[type="range"]::-webkit-slider-thumb) {
+  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.hue-slider):hover) {
+    box-shadow:
+      inset 0 0 0 1px var(--ga-line-3, rgba(255, 255, 255, 0.20)),
+      0 0 0 1px color-mix(in srgb, var(--ga-violet, #9b87f5) 18%, transparent);
+  }
+  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.hue-slider):focus-visible) {
+    box-shadow:
+      inset 0 0 0 1px var(--ga-violet-line, rgba(155, 135, 245, 0.36)),
+      0 0 0 2px color-mix(in srgb, var(--ga-violet, #9b87f5) 22%, transparent);
+  }
+  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.hue-slider)::-webkit-slider-runnable-track) {
+    height: 12px;
+    border-radius: 8px;
+    background: transparent;
+  }
+  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.hue-slider)::-webkit-slider-thumb) {
     -webkit-appearance: none;
-    width: 14px;
-    height: 14px;
-    background: #BB86FC;
-    border-radius: 50%;
+    appearance: none;
+    width: 22px;
+    height: 30px;
+    margin-top: -9px;
+    border-radius: 5px;
+    border: 1px solid #050506;
+    background:
+      linear-gradient(
+        90deg,
+        transparent 0 5px,
+        var(--ga-violet, #9b87f5) 5px calc(100% - 5px),
+        transparent calc(100% - 5px) 100%
+      ) center / 100% 2px no-repeat,
+      linear-gradient(180deg, #40394f 0%, #231d30 52%, #15111d 100%);
+    box-shadow:
+      0 2px 5px rgba(0, 0, 0, 0.65),
+      inset 0 1px 0 rgba(255, 255, 255, 0.10);
     cursor: pointer;
   }
-  :global(input[type="range"]::-moz-range-track) {
-    height: 6px;
-    background: #000000;
-    border-radius: 3px;
+  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.hue-slider)::-moz-range-track) {
+    height: 12px;
+    background:
+      repeating-linear-gradient(
+        90deg,
+        transparent 0,
+        transparent calc(16.666% - 1px),
+        rgba(255, 255, 255, 0.10) calc(16.666% - 1px),
+        rgba(255, 255, 255, 0.10) 16.666%
+      ),
+      var(--ga-slot, #050607);
+    border-radius: 8px;
     border: none;
+    box-shadow: inset 0 0 0 1px var(--ga-line-2, rgba(255, 255, 255, 0.12));
   }
-  :global(input[type="range"]::-moz-range-thumb) {
-    width: 14px;
-    height: 14px;
-    background: #BB86FC;
-    border-radius: 50%;
-    border: none;
+  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.hue-slider)::-moz-range-progress) {
+    height: 12px;
+    background: var(--ga-slider-fill, color-mix(in srgb, var(--ga-blue, #5b8def) 42%, transparent));
+    border-radius: 8px 0 0 8px;
+  }
+  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.hue-slider)::-moz-range-thumb) {
+    width: 22px;
+    height: 30px;
+    border-radius: 5px;
+    border: 1px solid #050506;
+    background:
+      linear-gradient(
+        90deg,
+        transparent 0 5px,
+        var(--ga-violet, #9b87f5) 5px calc(100% - 5px),
+        transparent calc(100% - 5px) 100%
+      ) center / 100% 2px no-repeat,
+      linear-gradient(180deg, #40394f 0%, #231d30 52%, #15111d 100%);
+    box-shadow:
+      0 2px 5px rgba(0, 0, 0, 0.65),
+      inset 0 1px 0 rgba(255, 255, 255, 0.10);
     cursor: pointer;
+  }
+  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.hue-slider):disabled) {
+    cursor: not-allowed;
+    opacity: 0.45;
   }
 
   .app {
     display: flex;
     flex-direction: column;
     height: 100vh;
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--ga-void, var(--bg-primary));
+    color: var(--ga-ink-0, var(--text-primary));
+    font-family: var(--ga-font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
   }
 
-  /* Toolbar */
+  /* Toolbar — uses theme tokens with the legacy accent vars as
+     fallback so existing component CSS keeps working before each
+     panel is migrated to the new system. */
   .toolbar {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 16px;
-    background: var(--bg-secondary);
+    padding: 0 14px;
+    background: var(--ga-bar, var(--bg-secondary));
     backdrop-filter: blur(12px);
-    border-bottom: 1px solid var(--border-secondary);
-    height: 48px;
+    border-bottom: 1px solid var(--ga-line-2, var(--border-secondary));
+    height: 52px;
     position: relative;
     z-index: 1000;
+    font-family: var(--ga-font-ui, inherit);
   }
 
   .toolbar-left {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
   }
 
   .header-logo {
@@ -5984,26 +6049,33 @@
   .gpu-warning-dismiss.persist:hover { background: rgba(245, 158, 11, 0.3); }
 
   .gpu-indicator {
-    font-size: 10px;
-    color: #4caf50;
-    background: rgba(76, 175, 80, 0.1);
-    padding: 2px 6px;
-    border-radius: 3px;
-    margin-left: 6px;
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 2px);
+    background: var(--ga-card, #13161c);
+    color: var(--ga-ink-1, #9aa0ac);
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
     cursor: default;
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 7px;
+    white-space: nowrap;
   }
   .gpu-indicator.integrated {
-    color: #ff9800;
-    background: rgba(255, 152, 0, 0.15);
+    color: var(--warning, #fbbf24);
+    background: rgba(245, 158, 11, 0.10);
+    border-color: rgba(245, 158, 11, 0.35);
   }
   .gpu-dot {
-    width: 6px;
-    height: 6px;
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
-    background: #4caf50;
+    background: var(--ga-green, #46d18a);
+    box-shadow: 0 0 7px rgba(70, 209, 138, 0.6);
     display: inline-block;
   }
   .gpu-indicator.integrated .gpu-dot {
@@ -6018,31 +6090,30 @@
   /* File Menu Dropdown */
   .file-menu-container {
     position: relative;
-    margin-left: 16px;
-    padding-left: 16px;
-    border-left: 1px solid rgba(255, 255, 255, 0.06);
   }
 
   .file-menu-btn {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 6px;
-    color: #aaa;
-    font-size: 12px;
-    font-weight: 500;
+    gap: 7px;
+    height: 32px;
+    padding: 0 12px;
+    background: var(--ga-card, #13161c);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 2px);
+    color: var(--ga-ink-1, #9aa0ac);
+    font-size: 12.5px;
+    font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
+    white-space: nowrap;
   }
 
   .file-menu-btn:hover,
   .file-menu-btn.active {
-    background: rgba(255, 255, 255, 0.08);
-    border-color: rgba(255, 255, 255, 0.1);
-    color: #fff;
+    background: var(--ga-card, #13161c);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.2));
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .file-menu-btn svg {
@@ -6060,10 +6131,10 @@
     top: 100%;
     left: 16px;
     margin-top: 4px;
-    background: rgba(20, 20, 28, 0.95);
+    background: color-mix(in srgb, var(--ga-card, #13161c) 94%, transparent);
     backdrop-filter: blur(20px);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 8px;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-soft, 7px);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
     min-width: 200px;
     z-index: 1000;
@@ -6077,7 +6148,7 @@
     padding: 8px 12px;
     background: transparent;
     border: none;
-    color: #ccc;
+    color: var(--ga-ink-1, #9aa0ac);
     font-size: 12px;
     cursor: pointer;
     transition: background 0.1s;
@@ -6085,7 +6156,8 @@
   }
 
   .menu-item:hover:not(:disabled) {
-    background: rgba(187, 134, 252, 0.1);
+    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .menu-item:disabled {
@@ -6102,7 +6174,7 @@
   }
 
   .menu-item:hover:not(:disabled) .menu-icon {
-    color: var(--accent-primary);
+    color: var(--ga-violet, #9b87f5);
   }
 
   .menu-label {
@@ -6156,38 +6228,39 @@
   }
 
   .vj-preset-input {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    color: #eee;
-    padding: 5px 10px;
-    border-radius: 6px;
-    font-size: 11px;
-    width: 120px;
+    height: 32px;
+    background: var(--ga-slot, #050607);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #9aa0ac);
+    padding: 0 12px;
+    border-radius: var(--ga-r-hard, 2px);
+    font-size: 12.5px;
+    width: 140px;
     transition: all 0.15s;
   }
 
   .vj-preset-input:focus {
     outline: none;
-    border-color: var(--accent-primary);
-    box-shadow: 0 0 12px rgba(187, 134, 252, 0.15);
+    border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36));
+    box-shadow: 0 0 0 2px var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
   }
 
   .vj-preset-btn {
-    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+    height: 32px;
+    background: var(--ga-coral, #ff6f5e);
     border: none;
-    color: #fff;
-    padding: 6px 12px;
-    border-radius: 6px;
-    font-size: 11px;
-    font-weight: 600;
+    color: #23110c;
+    padding: 0 13px;
+    border-radius: var(--ga-r-soft, 7px);
+    font-size: 12.5px;
+    font-weight: 700;
     cursor: pointer;
     transition: all 0.15s;
     white-space: nowrap;
   }
 
   .vj-preset-btn:hover {
-    background: linear-gradient(135deg, #CF6EFF, #50FF30);
-    box-shadow: 0 0 16px rgba(57, 255, 20, 0.3);
+    filter: brightness(1.06);
   }
 
   .vj-preset-btn:active {
@@ -6196,30 +6269,40 @@
 
   .toolbar-center {
     display: flex;
-    gap: 4px;
+    align-items: center;
+    gap: 10px;
     position: relative;
+    flex: 1;
+    justify-content: center;
   }
 
   .output-btn {
-    background: rgba(255, 255, 255, 0.04);
-    color: #888;
-    border: 1px solid transparent;
-    padding: 6px 14px;
-    border-radius: 6px;
+    height: 32px;
+    background: var(--ga-card, #13161c);
+    color: var(--ga-ink-1, #9aa0ac);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    padding: 0 13px;
+    border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
-    font-size: 12px;
+    font-size: 12.5px;
+    font-weight: 600;
     transition: all 0.15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    white-space: nowrap;
   }
 
   .output-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: #ddd;
+    background: var(--ga-card, #13161c);
+    color: var(--ga-ink-0, #eef0f4);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
 
   .output-btn.active {
-    background: rgba(187, 134, 252, 0.12);
-    color: var(--accent-primary);
-    border: 1px solid rgba(187, 134, 252, 0.3);
+    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
+    color: var(--ga-violet, #9b87f5);
+    border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36));
   }
 
   .output-btn.settings-btn {
@@ -6285,7 +6368,7 @@
 
   .output-settings-popover .rotation-buttons button:hover {
     background: rgba(255, 255, 255, 0.08);
-    color: #eee;
+    color: var(--text-primary, #eee);
   }
 
   .output-settings-popover .rotation-buttons button.active {
@@ -6338,7 +6421,7 @@
 
   .output-settings-popover .reset-crop:hover {
     background: rgba(255, 255, 255, 0.08);
-    color: #eee;
+    color: var(--text-primary, #eee);
   }
 
   .output-settings-popover .cursor-toggle {
@@ -6363,7 +6446,7 @@
   .toolbar-right {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     position: relative;
   }
 
@@ -6372,36 +6455,37 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    background: rgba(255, 68, 68, 0.08);
-    border: 1px solid rgba(255, 68, 68, 0.2);
-    color: #FF6B6B;
-    padding: 6px 12px;
-    border-radius: 6px;
-    font-size: 11px;
+    height: 32px;
+    background: transparent;
+    border: 1px solid rgba(255, 68, 56, 0.4);
+    color: var(--ga-rec, #ff4438);
+    padding: 0 12px;
+    border-radius: var(--ga-r-hard, 2px);
+    font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
   }
 
   .rec-btn:hover {
-    background: #FF6B6B;
-    border-color: #FF6B6B;
-    color: #fff;
+    background: rgba(255, 68, 56, 0.10);
+    border-color: rgba(255, 68, 56, 0.55);
   }
 
   .stop-rec-btn {
-    background: #FF6B6B;
+    height: 32px;
+    background: var(--ga-rec, #ff4438);
     border: none;
     color: #fff;
-    padding: 6px 12px;
-    border-radius: 6px;
-    font-size: 11px;
-    font-weight: 600;
+    padding: 0 12px;
+    border-radius: var(--ga-r-soft, 7px);
+    font-size: 12px;
+    font-weight: 700;
     cursor: pointer;
   }
 
   .stop-rec-btn:hover {
-    background: #FF8888;
+    filter: brightness(1.08);
   }
 
   .recording-indicator {
@@ -6413,7 +6497,7 @@
   .rec-dot {
     width: 8px;
     height: 8px;
-    background: #FF6B6B;
+    background: var(--ga-rec, #ff4438);
     border-radius: 50%;
     animation: header-blink 1s infinite;
   }
@@ -6426,8 +6510,8 @@
   .rec-time {
     font-size: 11px;
     font-weight: 600;
-    color: #FF6B6B;
-    font-family: monospace;
+    color: var(--ga-rec, #ff4438);
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
   }
 
   /* Freeze button in header */
@@ -6435,32 +6519,32 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 28px;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    color: #a0a0a0;
-    border-radius: 6px;
+    width: 34px;
+    height: 32px;
+    background: var(--ga-card, #13161c);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #9aa0ac);
+    border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
     transition: all 0.15s;
   }
 
   .freeze-btn:hover {
-    background: rgba(255, 255, 255, 0.12);
-    color: #e8e8e8;
-    border-color: rgba(255, 255, 255, 0.2);
+    background: var(--ga-card, #13161c);
+    color: var(--ga-ink-0, #eef0f4);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
 
   .freeze-btn.active {
-    background: rgba(100, 180, 255, 0.15);
-    border-color: rgba(100, 180, 255, 0.4);
-    color: #64B4FF;
-    box-shadow: 0 0 8px rgba(100, 180, 255, 0.2);
+    background: var(--ga-blue-soft, rgba(91, 141, 239, 0.10));
+    border-color: var(--ga-blue-line, rgba(91, 141, 239, 0.38));
+    color: var(--ga-blue, #5b8def);
+    box-shadow: none;
   }
 
   .freeze-btn.active:hover {
-    background: rgba(100, 180, 255, 0.25);
-    color: #8ECBFF;
+    background: var(--ga-blue-soft, rgba(91, 141, 239, 0.10));
+    color: var(--ga-blue, #5b8def);
   }
 
   /* Blackout button */
@@ -6468,24 +6552,25 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 28px;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    color: #a0a0a0;
-    border-radius: 6px;
+    width: 34px;
+    height: 32px;
+    background: var(--ga-card, #13161c);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #9aa0ac);
+    border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
     transition: all 0.15s;
   }
   .blackout-btn:hover {
-    background: rgba(255, 255, 255, 0.12);
-    color: #e8e8e8;
+    background: var(--ga-card, #13161c);
+    color: var(--ga-ink-0, #eef0f4);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
   .blackout-btn.active {
-    background: rgba(255, 60, 60, 0.2);
-    border-color: rgba(255, 60, 60, 0.5);
-    color: #ff4444;
-    box-shadow: 0 0 8px rgba(255, 60, 60, 0.3);
+    background: rgba(255, 68, 56, 0.10);
+    border-color: rgba(255, 68, 56, 0.55);
+    color: var(--ga-rec, #ff4438);
+    box-shadow: none;
     animation: blackout-pulse 1.5s ease-in-out infinite;
   }
   @keyframes blackout-pulse {
@@ -6501,24 +6586,25 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 28px;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    color: #a0a0a0;
-    border-radius: 6px;
+    width: 34px;
+    height: 32px;
+    background: var(--ga-card, #13161c);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #9aa0ac);
+    border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
     transition: all 0.15s;
   }
   .testpattern-btn:hover {
-    background: rgba(255, 255, 255, 0.12);
-    color: #e8e8e8;
+    background: var(--ga-card, #13161c);
+    color: var(--ga-ink-0, #eef0f4);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
   .testpattern-btn.active {
-    background: rgba(255, 165, 0, 0.22);
-    border-color: rgba(255, 165, 0, 0.6);
-    color: #ffb84a;
-    box-shadow: 0 0 12px rgba(255, 165, 0, 0.55);
+    background: rgba(245, 158, 11, 0.14);
+    border-color: rgba(245, 158, 11, 0.50);
+    color: #fbbf24;
+    box-shadow: none;
     animation: testpattern-pulse 1.2s ease-in-out infinite;
   }
   @keyframes testpattern-pulse {
@@ -6537,26 +6623,26 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 28px;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    color: #a0a0a0;
-    border-radius: 6px;
+    width: 34px;
+    height: 32px;
+    background: var(--ga-card, #13161c);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #9aa0ac);
+    border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
     transition: all 0.15s;
   }
 
   .screenshot-btn:hover {
-    background: rgba(255, 255, 255, 0.12);
-    color: #e8e8e8;
-    border-color: rgba(255, 255, 255, 0.2);
+    background: var(--ga-card, #13161c);
+    color: var(--ga-ink-0, #eef0f4);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
 
   .screenshot-btn:active {
-    background: rgba(255, 107, 107, 0.15);
-    color: #FF6B6B;
-    border-color: rgba(255, 107, 107, 0.4);
+    background: var(--ga-coral-soft, rgba(255, 111, 94, 0.11));
+    color: var(--ga-coral, #ff6f5e);
+    border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.4));
   }
 
   /* Mic/Audio toggle button in header */
@@ -6577,7 +6663,7 @@
 
   .mic-btn:hover {
     background: rgba(255, 255, 255, 0.12);
-    color: #e8e8e8;
+    color: var(--text-primary, #e8e8e8);
     border-color: rgba(255, 255, 255, 0.2);
   }
 
@@ -6624,7 +6710,7 @@
     color: #808080;
   }
   .mic-btn-group .mic-btn-chevron:hover {
-    color: #e8e8e8;
+    color: var(--text-primary, #e8e8e8);
   }
 
   .mic-picker {
@@ -6706,50 +6792,53 @@
 
   /* VJ Button in header */
   .vj-btn {
-    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-    border: none;
-    color: #fff;
-    padding: 6px 12px;
-    border-radius: 6px;
-    font-size: 12px;
+    height: 32px;
+    background: var(--ga-coral, #ff6f5e);
+    border: 1px solid var(--ga-coral, #ff6f5e);
+    color: #23110c;
+    padding: 0 18px;
+    border-radius: var(--ga-r-soft, 7px);
+    font-size: 12.5px;
     font-weight: 700;
     cursor: pointer;
-    transition: all 0.2s;
+    letter-spacing: 0.02em;
+    transition: filter 0.14s;
   }
 
   .vj-btn:hover {
-    background: linear-gradient(135deg, #CF6EFF, #50FF30);
-    transform: scale(1.05);
-    box-shadow: 0 0 20px rgba(57, 255, 20, 0.3);
+    filter: brightness(1.06);
   }
 
   /* Stage Designer button — sibling to VJ button, distinct cyan
      gradient so the user reads them as different workspaces at a
      glance. */
   .stage-btn {
-    background: linear-gradient(135deg, #4cd1ff, #6f5cff);
-    border: none;
-    color: #fff;
-    padding: 6px 12px;
-    border-radius: 6px;
-    font-size: 12px;
+    height: 32px;
+    background: var(--ga-card, #13161c);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #9aa0ac);
+    padding: 0 18px;
+    border-radius: var(--ga-r-soft, 7px);
+    font-size: 12.5px;
     font-weight: 700;
     cursor: pointer;
-    transition: all 0.2s;
-    margin-left: 6px;
+    letter-spacing: 0.02em;
+    transition: color 0.14s, border-color 0.14s, background 0.14s;
   }
   .stage-btn:hover {
-    background: linear-gradient(135deg, #80dfff, #8a7aff);
-    transform: scale(1.05);
-    box-shadow: 0 0 20px rgba(76, 209, 255, 0.3);
+    background: var(--ga-card, #13161c);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .settings-btn {
-    background: rgba(255, 255, 255, 0.04);
-    border: none;
-    color: #666;
-    padding: 6px 8px;
-    border-radius: 6px;
+    width: 34px;
+    height: 32px;
+    background: var(--ga-card, #13161c);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #9aa0ac);
+    padding: 0;
+    border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
     transition: all 0.15s;
     display: flex;
@@ -6758,8 +6847,9 @@
   }
 
   .settings-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: #ddd;
+    background: var(--ga-card, #13161c);
+    color: var(--ga-ink-0, #eef0f4);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
 
   .settings-btn svg {
@@ -6770,36 +6860,42 @@
   .connection-btn {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: #777;
-    background: rgba(255, 255, 255, 0.04);
-    border: none;
-    padding: 6px 12px;
-    border-radius: 6px;
+    gap: 7px;
+    height: 32px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ga-ink-1, #9aa0ac);
+    background: transparent;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    padding: 0 13px;
+    border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
     transition: all 0.15s;
+    white-space: nowrap;
   }
 
   .connection-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: #ddd;
+    background: transparent;
+    color: var(--ga-ink-0, #eef0f4);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
 
   .connection-btn.connected {
-    background: rgba(105, 240, 174, 0.1);
-    color: #69F0AE;
+    background: rgba(70, 209, 138, 0.08);
+    border-color: rgba(70, 209, 138, 0.28);
+    color: var(--ga-green, #46d18a);
   }
 
   .connection-btn .dot {
-    width: 8px;
-    height: 8px;
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
-    background: #FF6B6B;
+    background: var(--ga-rec, #ff4438);
   }
 
   .connection-btn.connected .dot {
-    background: #69F0AE;
+    background: var(--ga-green, #46d18a);
+    box-shadow: 0 0 6px rgba(70, 209, 138, 0.6);
   }
 
   .mobile-btn-wrapper {
@@ -6872,10 +6968,10 @@
   .ip-selector select {
     width: 100%;
     padding: 8px;
-    background: #1a1a1e;
+    background: var(--bg-tertiary, #1a1a1e);
     border: 1px solid #444;
     border-radius: 6px;
-    color: #eee;
+    color: var(--text-primary, #eee);
     font-size: 13px;
   }
 
@@ -6948,7 +7044,7 @@
     background: rgba(255, 255, 255, 0.06);
     border: none;
     border-radius: 6px;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     cursor: pointer;
     transition: all 0.15s;
   }
@@ -7015,16 +7111,23 @@
     flex: 1;
     display: flex;
     overflow: hidden;
+    background: var(--ga-void, #070809);
     transition: margin-bottom 0.2s ease-out;
   }
+  .main-content.preset-tray-open {
+    margin-bottom: calc(180px + var(--ga-bottom-rail-offset, 74px));
+  }
+  .main-content.seq-tray-open {
+    margin-bottom: calc(280px + var(--ga-bottom-rail-offset, 74px));
+  }
   .main-content.kf-tray-open {
-    margin-bottom: 300px; /* reflow above the keyframe tray */
+    margin-bottom: calc(300px + var(--ga-bottom-rail-offset, 74px));
   }
 
   .viewport {
     flex: 1;
     position: relative;
-    background: #080808;
+    background: var(--ga-void, #070809);
     overflow: hidden;
   }
 
@@ -7097,12 +7200,13 @@
     position: fixed;
     bottom: 8px;
     left: 250px;
-    background: rgba(10, 10, 14, 0.95);
+    background: color-mix(in srgb, var(--ga-bar, #0e1014) 92%, transparent);
     backdrop-filter: blur(8px);
-    color: #666;
+    color: var(--ga-ink-2, #5e6571);
+    border: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
     font-size: 11px;
     padding: 4px 8px;
-    border-radius: 6px;
+    border-radius: var(--ga-r-hard, 2px);
     pointer-events: auto;
     display: flex;
     align-items: center;
@@ -7111,18 +7215,19 @@
   }
 
   .reset-view-btn {
-    background: rgba(255, 255, 255, 0.06);
-    border: none;
-    color: #ccc;
+    background: var(--ga-card, #13161c);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #9aa0ac);
     padding: 2px 6px;
-    border-radius: 4px;
+    border-radius: var(--ga-r-hard, 2px);
     font-size: 10px;
     cursor: pointer;
     margin-left: 4px;
   }
 
   .reset-view-btn:hover {
-    background: rgba(255, 255, 255, 0.12);
+    color: var(--ga-ink-0, #eef0f4);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
 
   /* Grid controls */
@@ -7138,7 +7243,7 @@
   .grid-toggle-btn, .snap-toggle-btn {
     background: rgba(255, 255, 255, 0.06);
     border: none;
-    color: #888;
+    color: var(--text-muted, #888);
     padding: 3px 6px;
     border-radius: 4px;
     font-size: 10px;
@@ -7150,7 +7255,7 @@
 
   .grid-toggle-btn:hover, .snap-toggle-btn:hover {
     background: rgba(255, 255, 255, 0.12);
-    color: #ccc;
+    color: var(--text-primary, #ccc);
   }
 
   .grid-toggle-btn.active {
@@ -7166,7 +7271,7 @@
   .grid-size-select {
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     padding: 2px 4px;
     border-radius: 4px;
     font-size: 10px;
@@ -7218,25 +7323,88 @@
   .statusbar {
     display: flex;
     align-items: center;
-    gap: 24px;
-    padding: 6px 16px;
-    background: rgba(12, 12, 16, 0.95);
-    border-top: 1px solid rgba(255, 255, 255, 0.04);
+    gap: 0;
+    height: 30px;
+    padding: 0;
+    background: var(--ga-bar, #0e1014);
+    border-top: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    font-size: 10.5px;
+    color: var(--ga-ink-2, #5e6571);
+    letter-spacing: 0.02em;
+    flex: 0 0 30px;
+    z-index: 60;
+  }
+
+  /* Inline pill — Presets / Sequencer / Keyframes. Coral when active so
+     the user can spot the open tool in their peripheral vision. */
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 22px;
+    padding: 0 11px !important;
+    margin: 0 3px;
+    border: 1px solid transparent !important;
+    border-radius: var(--ga-r-pill, 999px);
+    background: transparent;
+    color: var(--ga-ink-1, #9aa0ac);
+    font-family: var(--ga-font-ui, inherit);
     font-size: 11px;
-    color: #555;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    transition: color 0.14s, background 0.14s, border-color 0.14s;
+  }
+  .status-pill:hover {
+    color: var(--ga-ink-0, #eef0f4);
+    background: var(--ga-card, rgba(255, 255, 255, 0.05));
+  }
+  .status-pill.on {
+    color: #23110c;
+    background: var(--ga-coral, #ff6f5e);
+    border-color: var(--ga-coral, #ff6f5e) !important;
+  }
+  .status-pill.on:hover { filter: brightness(1.06); }
+  .status-pill svg { flex: none; }
+
+  /* Hide the floating BottomDock since the pills now live inline in
+     the status bar. The dock component itself still mounts so the
+     keyboard shortcuts it registers (⌘P / ⌘B / ⌘K) keep working. */
+  :global(.bottom-dock) { display: none !important; }
+
+  /* Float-up trays used to anchor at bottom:0 and cover the status bar
+     with no way out. Push them up 30px so the status pills stay
+     visible and the user can always click the pill again to close. */
+  :global(.preset-tray),
+  :global(.seq-tray),
+  :global(.kf-tray) {
+    bottom: 30px !important;
   }
 
   .statusbar .spacer {
     flex: 1;
+    padding: 0;
+    border-right: none;
+  }
+
+  .statusbar > span,
+  .statusbar > a {
+    height: 100%;
+    padding: 0 13px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border-right: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
   }
 
   .output-status {
-    color: #69F0AE;
+    color: var(--ga-green, #46d18a);
     font-weight: 600;
   }
 
   .blackout-status {
-    color: #ff4444;
+    color: var(--ga-rec, #ff4438);
     font-weight: 700;
     animation: blackout-pulse 1.5s ease-in-out infinite;
     text-transform: uppercase;
@@ -7251,50 +7419,47 @@
   }
 
   .fps-counter {
-    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-family: var(--ga-font-mono, 'Consolas', 'Monaco', 'Courier New', monospace);
     font-size: 11px;
     font-weight: 600;
-    color: #888;
-    padding: 1px 6px;
-    border-radius: 3px;
-    background: rgba(255, 255, 255, 0.04);
+    color: var(--ga-ink-1, #9aa0ac);
+    padding: 0 13px;
+    border-radius: 0;
+    background: transparent;
   }
   .fps-counter.fps-good {
-    color: #69F0AE;
+    color: var(--ga-green, #46d18a);
   }
   .fps-counter.fps-warn {
     color: #FFD54F;
   }
   .fps-counter.fps-bad {
-    color: #FF5252;
+    color: var(--ga-rec, #ff4438);
   }
 
   .version-label {
-    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-    /* Boosted from 10px/#444 — was nearly invisible. Now it's
-       readable at a glance so users can verify what version they're
-       on without squinting. */
-    font-size: 12px;
-    color: #999;
-    background: rgba(255, 255, 255, 0.05);
-    padding: 2px 8px;
-    border-radius: 4px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    font-weight: 600;
+    font-family: var(--ga-font-mono, 'Consolas', 'Monaco', 'Courier New', monospace);
+    font-size: 10.5px;
+    color: var(--ga-ink-2, #5e6571);
+    background: transparent;
+    padding: 0 13px;
+    border-radius: 0;
+    border: none;
+    border-right: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
+    font-weight: 500;
     letter-spacing: 0.02em;
   }
   /* Active when an upgrade is available — clickable, accent-colored,
      subtle pulse to attract attention without being intrusive. */
   .version-label.version-update {
-    color: #BB86FC;
+    color: var(--ga-violet, #9b87f5);
     text-decoration: none;
-    background: rgba(187, 134, 252, 0.12);
-    border-color: rgba(187, 134, 252, 0.4);
+    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
+    border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36));
     cursor: pointer;
   }
   .version-label.version-update:hover {
-    background: rgba(187, 134, 252, 0.24);
-    color: #fff;
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   /* Shape Interaction Overlay for Lines Layers */
@@ -7500,7 +7665,7 @@
     border: 1px solid transparent;
     border-radius: 4px;
     background: transparent;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     cursor: pointer;
     padding: 0;
   }
@@ -7515,7 +7680,7 @@
   }
   .mask-pen-hint {
     font-size: 10px;
-    color: #888;
+    color: var(--text-muted, #888);
     white-space: nowrap;
     user-select: none;
     margin-left: 6px;
@@ -7523,21 +7688,21 @@
 
   .text-panel-sidebar {
     width: 100%;
-    background: #111114;
+    background: var(--bg-secondary, #111114);
     overflow-y: auto;
     flex: 1;
   }
 
   .splat-panel-sidebar {
     width: 100%;
-    background: #111114;
+    background: var(--bg-secondary, #111114);
     overflow-y: auto;
     flex: 1;
   }
 
   .model3d-panel-sidebar {
     width: 100%;
-    background: #111114;
+    background: var(--bg-secondary, #111114);
     overflow-y: auto;
     flex: 1;
   }
@@ -7546,7 +7711,7 @@
     display: flex;
     gap: 4px;
     padding: 8px;
-    background: #111114;
+    background: var(--bg-secondary, #111114);
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   }
 
@@ -7554,7 +7719,7 @@
     flex: 1;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    color: #888;
+    color: var(--text-muted, #888);
     padding: 7px 8px;
     border-radius: 6px;
     font-size: 11px;
@@ -7564,7 +7729,7 @@
 
   .media-sidebar-tab:hover {
     background: rgba(255, 255, 255, 0.08);
-    color: #ddd;
+    color: var(--text-primary, #ddd);
   }
 
   .media-sidebar-tab.active {
@@ -7574,10 +7739,10 @@
   }
 
   .right-sidebar {
-    width: 260px;
+    width: 348px;
     flex-shrink: 0;
-    background: #0d0d10;
-    border-left: 1px solid rgba(255, 255, 255, 0.04);
+    background: var(--ga-panel, #0b0d11);
+    border-left: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     display: flex;
     flex-direction: column;
     overflow-y: auto;
@@ -7732,7 +7897,7 @@
   }
   .shortcut-help-btn:hover {
     background: rgba(255, 255, 255, 0.12);
-    color: #e8e8e8;
+    color: var(--text-primary, #e8e8e8);
     border-color: rgba(255, 255, 255, 0.2);
   }
   .director-toolbar-btn {
@@ -7786,7 +7951,7 @@
   }
 
   .shortcut-overlay {
-    background: #1a1a1e;
+    background: var(--bg-tertiary, #1a1a1e);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 12px;
     padding: 28px 32px 32px;
@@ -7816,14 +7981,14 @@
     transition: all 0.15s ease;
   }
   .shortcut-overlay-close:hover {
-    color: #e8e8e8;
+    color: var(--text-primary, #e8e8e8);
     background: rgba(255, 255, 255, 0.08);
   }
 
   .shortcut-overlay-title {
     font-size: 18px;
     font-weight: 600;
-    color: #e8e8e8;
+    color: var(--text-primary, #e8e8e8);
     margin: 0 0 24px 0;
     letter-spacing: -0.01em;
   }
@@ -7849,7 +8014,7 @@
     gap: 8px;
     margin-bottom: 8px;
     font-size: 12px;
-    color: #e8e8e8;
+    color: var(--text-primary, #e8e8e8);
   }
 
   .shortcut-row span {
@@ -7867,70 +8032,11 @@
     font-family: inherit;
     font-size: 11px;
     font-weight: 600;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     line-height: 1.3;
     min-width: 20px;
     text-align: center;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-  }
-
-  /* ─── Demo download overlay ──────────────────────────────────────── */
-  .demo-loading-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 10000;
-    background: rgba(10, 10, 10, 0.85);
-    backdrop-filter: blur(8px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
-  }
-
-  .demo-loading-card {
-    background: #14141a;
-    border: 1px solid rgba(255, 133, 119, 0.15);
-    border-radius: 8px;
-    padding: 32px 36px;
-    width: 100%;
-    max-width: 460px;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-    text-align: center;
-  }
-
-  .demo-loading-card h2 {
-    font-size: 18px;
-    font-weight: 600;
-    margin: 0 0 6px 0;
-    color: #fff;
-  }
-
-  .demo-loading-subtitle {
-    font-size: 13px;
-    color: #888;
-    margin: 0 0 14px 0;
-  }
-
-  .demo-spinner {
-    width: 36px;
-    height: 36px;
-    margin: 0 auto 18px;
-    border: 3px solid rgba(255, 255, 255, 0.08);
-    border-top-color: #FF8577;
-    border-right-color: #7EC8E3;
-    border-radius: 50%;
-    animation: demo-spin 0.9s linear infinite;
-  }
-
-  @keyframes demo-spin {
-    to { transform: rotate(360deg); }
-  }
-
-  .demo-progress-hint {
-    font-size: 11px;
-    color: #666;
-    font-style: italic;
-    margin: 0;
   }
 
 </style>

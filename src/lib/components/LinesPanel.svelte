@@ -1014,7 +1014,7 @@
     flex-direction: column;
     overflow: hidden;
     flex: 1;
-    color: #eee;
+    color: var(--text-primary, #eee);
     font-size: 13px;
   }
 
@@ -1043,7 +1043,7 @@
     padding: 7px 4px; font-size: 11px; font-weight: 600; cursor: pointer;
     border-bottom: 2px solid transparent;
   }
-  .lp-tabs button:hover { color: #aaa; }
+  .lp-tabs button:hover { color: var(--text-secondary, #aaa); }
   .lp-tabs button.active { color: #BB86FC; border-bottom-color: #BB86FC; }
 
   /* Content */
@@ -1052,7 +1052,7 @@
   /* Section labels */
   .sec-label {
     display: flex; align-items: center; justify-content: space-between;
-    font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.4px;
+    font-size: 11px; font-weight: 600; color: var(--text-muted, #888); text-transform: uppercase; letter-spacing: 0.4px;
     margin: 10px 0 6px; padding-bottom: 4px; border-bottom: 1px solid #222;
   }
   .sec-label:first-child { margin-top: 0; }
@@ -1061,11 +1061,11 @@
   .tool-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 8px; }
   .tool-btn {
     display: flex; flex-direction: column; align-items: center; gap: 4px;
-    padding: 8px 4px; background: #0d0d10; border: 1px solid #333; color: #aaa;
+    padding: 8px 4px; background: var(--bg-primary, #0d0d10); border: 1px solid #333; color: var(--text-secondary, #aaa);
     border-radius: 6px; cursor: pointer; text-align: center;
     transition: all 0.15s;
   }
-  .tool-btn:hover { background: #161618; color: #eee; border-color: #555; }
+  .tool-btn:hover { background: var(--bg-tertiary, #161618); color: var(--text-primary, #eee); border-color: #555; }
   .tool-btn.active { background: rgba(187, 134, 252, 0.1); color: #BB86FC; border-color: #BB86FC; }
   .tool-icon { font-size: 18px; line-height: 1; }
   .tool-label { font-size: 9px; }
@@ -1085,7 +1085,7 @@
     display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
   }
   .control-label {
-    width: 70px; font-size: 11px; color: #888; flex-shrink: 0;
+    width: 70px; font-size: 11px; color: var(--text-muted, #888); flex-shrink: 0;
   }
   .control-row input[type="range"] {
     flex: 1; height: 4px; appearance: none; background: #333; border-radius: 2px; outline: none;
@@ -1098,7 +1098,7 @@
     width: 40px; height: 24px; border: none; border-radius: 4px; cursor: pointer; padding: 0;
   }
   .control-row select, .inline-select {
-    flex: 1; background: #333; color: #eee; border: 1px solid #555;
+    flex: 1; background: #333; color: var(--text-primary, #eee); border: 1px solid #555;
     padding: 4px 8px; border-radius: 4px; font-size: 11px;
   }
   .control-value {
@@ -1113,7 +1113,7 @@
   }
   .sc label b { color: #BB86FC; font-family: monospace; font-size: 11px; font-weight: 400; margin-left: auto; }
   .sc select {
-    background: #333; color: #eee; border: 1px solid #555;
+    background: #333; color: var(--text-primary, #eee); border: 1px solid #555;
     padding: 4px 8px; border-radius: 4px; font-size: 11px;
   }
   .sc input[type="range"] {
@@ -1131,7 +1131,7 @@
 
   /* Text input */
   .text-input {
-    flex: 1; background: #222; color: #eee; border: 1px solid #444;
+    flex: 1; background: #222; color: var(--text-primary, #eee); border: 1px solid #444;
     padding: 4px 8px; border-radius: 4px; font-size: 11px; outline: none;
   }
   .text-input:focus { border-color: #BB86FC; }
@@ -1143,10 +1143,10 @@
     border: 1px solid #222; border-radius: 5px; margin-bottom: 4px;
     cursor: pointer; transition: all 0.1s;
   }
-  .element-row:hover { background: #0d0d10; border-color: #333; }
+  .element-row:hover { background: var(--bg-primary, #0d0d10); border-color: #333; }
   .element-row.selected { background: rgba(187, 134, 252, 0.08); border-color: #BB86FC; }
   .el-info { flex: 1; min-width: 0; }
-  .el-name { display: block; font-size: 12px; color: #ddd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .el-name { display: block; font-size: 12px; color: var(--text-primary, #ddd); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .el-meta { display: block; font-size: 10px; color: #666; }
 
   .icon-btn {
@@ -1154,7 +1154,7 @@
     font-size: 12px; cursor: pointer; padding: 2px 4px; border-radius: 3px;
     line-height: 1; flex-shrink: 0;
   }
-  .icon-btn:hover { color: #ddd; background: rgba(255,255,255,0.05); }
+  .icon-btn:hover { color: var(--text-primary, #ddd); background: rgba(255,255,255,0.05); }
   .icon-btn.off { opacity: 0.4; }
   .icon-btn.on { color: #BB86FC; }
   .icon-btn.del:hover { color: #ff5555; background: rgba(255,85,85,0.1); border-color: rgba(255,85,85,0.3); }
@@ -1165,11 +1165,11 @@
   /* Elements strip — always visible above tabs */
   .elements-strip {
     border-bottom: 1px solid #1a1a1e;
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
   }
   .strip-toggle {
     width: 100%;
-    background: none; border: none; color: #888;
+    background: none; border: none; color: var(--text-muted, #888);
     font-size: 10px; font-weight: 600; text-align: left;
     padding: 5px 12px; cursor: pointer;
     text-transform: uppercase; letter-spacing: 0.3px;
@@ -1187,8 +1187,8 @@
     cursor: pointer; font-size: 11px; color: #bbb;
     text-align: left;
   }
-  .strip-el:hover { background: #1a1a1e; border-color: #333; }
-  .strip-el.selected { background: rgba(187, 134, 252, 0.08); border-color: #BB86FC; color: #eee; }
+  .strip-el:hover { background: var(--bg-tertiary, #1a1a1e); border-color: #333; }
+  .strip-el.selected { background: rgba(187, 134, 252, 0.08); border-color: #BB86FC; color: var(--text-primary, #eee); }
   .strip-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
   .strip-type { font-size: 9px; color: #666; flex-shrink: 0; }
   .strip-del {
@@ -1217,7 +1217,7 @@
     border: 1px solid #333; color: #999;
     border-radius: 4px; font-size: 11px; cursor: pointer;
   }
-  .reset-btn:hover { background: rgba(255, 255, 255, 0.08); color: #eee; border-color: #555; }
+  .reset-btn:hover { background: rgba(255, 255, 255, 0.08); color: var(--text-primary, #eee); border-color: #555; }
 
   /* Animation status */
   .anim-status {
@@ -1230,7 +1230,7 @@
   /* Toggle row */
   .toggle-row {
     display: flex; align-items: center; gap: 8px;
-    cursor: pointer; font-size: 12px; color: #ccc;
+    cursor: pointer; font-size: 12px; color: var(--text-primary, #ccc);
   }
   .toggle-row input[type="checkbox"] {
     accent-color: #BB86FC;
@@ -1238,7 +1238,7 @@
 
   /* Hint text */
   .hint-text {
-    font-size: 10px; color: #888;
+    font-size: 10px; color: var(--text-muted, #888);
     padding: 2px 0 4px; line-height: 1.35;
   }
 </style>

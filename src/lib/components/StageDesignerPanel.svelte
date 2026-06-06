@@ -1176,8 +1176,8 @@
        Stage, zoom controls — isn't cropped behind the app toolbar.
        Matches VJModePanel's overlay z-index. */
     z-index: 1001;
-    background: #050507;
-    color: #ddd;
+    background: var(--bg-primary, #050507);
+    color: var(--text-primary, #ddd);
     display: flex;
     flex-direction: column;
     font-family: -apple-system, BlinkMacSystemFont, sans-serif;
@@ -1203,8 +1203,8 @@
     height: 28px;
     padding: 0 12px;
     border: 1px solid #2a2a30;
-    background: #14141a;
-    color: #ccc;
+    background: var(--bg-tertiary, #14141a);
+    color: var(--text-primary, #ccc);
     border-radius: 4px;
     font-size: 12px;
     font-weight: 500;
@@ -1229,7 +1229,7 @@
     background: transparent;
     border: 1px solid transparent;
     border-radius: 3px;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     padding: 4px 6px;
     font-size: 13px;
     min-width: 160px;
@@ -1253,8 +1253,8 @@
     height: 30px;
     padding: 0 6px;
     border: 1px solid #2a2a30;
-    background: #14141a;
-    color: #aaa;
+    background: var(--bg-tertiary, #14141a);
+    color: var(--text-secondary, #aaa);
     border-radius: 4px;
     font-size: 14px;
     cursor: pointer;
@@ -1320,7 +1320,7 @@
     height: 28px;
     background: transparent;
     border: 1px solid #2a2a30;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     border-radius: 4px;
     cursor: pointer;
   }
@@ -1328,7 +1328,7 @@
   .zoom-readout {
     font-family: monospace;
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
     min-width: 44px;
     text-align: right;
   }
@@ -1377,7 +1377,7 @@
   .binding-label {
     font-size: 9.5px;
     letter-spacing: 1px;
-    color: #888;
+    color: var(--text-muted, #888);
     text-transform: uppercase;
     margin-bottom: 4px;
   }
@@ -1455,7 +1455,7 @@
     gap: 8px;
     padding: 4px 0;
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
     border-top: 1px solid rgba(76,209,255,0.08);
   }
   .effects-catalog-icon {
@@ -1511,14 +1511,14 @@
     padding: 6px 4px;
     border: 1px solid transparent;
     background: transparent;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     border-radius: 5px;
     cursor: pointer;
     transition: all 0.12s;
     min-height: 44px;
   }
   .palette-btn:hover {
-    background: #14141a;
+    background: var(--bg-tertiary, #14141a);
     color: #fff;
     border-color: #2a2a30;
   }
@@ -1535,7 +1535,7 @@
     font-size: 9px;
     letter-spacing: 0.3px;
     font-weight: 500;
-    color: #888;
+    color: var(--text-muted, #888);
   }
   .palette-btn:hover .p-label,
   .palette-btn.active .p-label {
@@ -1558,7 +1558,7 @@
 
   /* ─── Slice list (left) ─── */
   .slice-list-panel {
-    background: #0a0a0c;
+    background: var(--bg-primary, #0a0a0c);
     border-right: 1px solid #1d1d22;
     overflow-y: auto;
     display: flex;
@@ -1569,7 +1569,7 @@
     padding: 6px 12px;
     font-size: 10px;
     letter-spacing: 1.5px;
-    color: #888;
+    color: var(--text-muted, #888);
     background: #08080a;
     border-bottom: 1px solid #1d1d22;
     display: flex;
@@ -1609,7 +1609,7 @@
   }
   .slice-name {
     font-size: 12px;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1623,7 +1623,7 @@
     padding: 2px;
     border-radius: 3px;
   }
-  .slice-icon-btn.active { color: #aaa; }
+  .slice-icon-btn.active { color: var(--text-secondary, #aaa); }
   .slice-icon-btn:hover { background: rgba(255,255,255,0.06); color: #fff; }
   .slice-icon-btn.danger:hover { color: #ff8888; }
   .slice-empty {
@@ -1690,7 +1690,7 @@
   }
   .empty-sub {
     font-size: 13px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     margin: 0 0 22px;
     line-height: 1.5;
   }
@@ -1704,8 +1704,8 @@
     padding: 11px 18px;
     border-radius: 6px;
     border: 1px solid #2a2a30;
-    background: #14141a;
-    color: #ddd;
+    background: var(--bg-tertiary, #14141a);
+    color: var(--text-primary, #ddd);
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
@@ -1776,7 +1776,7 @@
 
   /* ─── Inspector (right) ─── */
   .inspector-panel {
-    background: #0a0a0c;
+    background: var(--bg-primary, #0a0a0c);
     border-left: 1px solid #1d1d22;
     overflow-y: auto;
     display: flex;
@@ -1794,7 +1794,7 @@
     gap: 4px;
     font-size: 10px;
     letter-spacing: 1px;
-    color: #888;
+    color: var(--text-muted, #888);
   }
   .inspector-section label.check {
     flex-direction: row;
@@ -1806,10 +1806,10 @@
     text-transform: none;
   }
   .inspector-section input[type="text"] {
-    background: #14141a;
+    background: var(--bg-tertiary, #14141a);
     border: 1px solid #2a2a30;
     border-radius: 3px;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     padding: 5px 8px;
     font-size: 12px;
   }
@@ -1820,7 +1820,7 @@
   .inspector-section input[type="color"] {
     width: 100%;
     height: 28px;
-    background: #14141a;
+    background: var(--bg-tertiary, #14141a);
     border: 1px solid #2a2a30;
     border-radius: 3px;
   }
@@ -1832,19 +1832,19 @@
     display: flex;
     justify-content: space-between;
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
     padding: 4px 0;
     border-top: 1px solid #1a1a20;
   }
   .inspector-stat span:last-child {
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     font-family: monospace;
   }
   .inspector-action {
     margin-top: 4px;
     background: transparent;
     border: 1px solid #2a2a30;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     padding: 5px 10px;
     border-radius: 4px;
     font-size: 11px;

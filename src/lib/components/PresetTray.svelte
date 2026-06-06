@@ -561,7 +561,7 @@
     gap: 8px;
     background: linear-gradient(135deg, #0d0d10, #111114);
     border: 1px solid #444;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     padding: 8px 16px;
     border-radius: 20px;
     cursor: pointer;
@@ -582,7 +582,7 @@
 
   .toggle-icon {
     font-size: 10px;
-    color: #888;
+    color: var(--text-muted, #888);
   }
 
   .toggle-label {
@@ -601,13 +601,13 @@
 
   .preset-tray {
     position: fixed;
-    bottom: 0;
+    bottom: var(--ga-bottom-rail-offset, 74px);
     left: 0;
     right: 0;
     height: 180px;
-    background: #0a0a0c;
+    background: var(--bg-primary, #0a0a0c);
     border-top: 1px solid #333;
-    z-index: 99;
+    z-index: 90;
     display: flex;
     flex-direction: column;
     animation: slideUp 0.2s ease-out;
@@ -629,7 +629,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 8px 16px;
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
     border-bottom: 1px solid #161618;
     flex-shrink: 0;
   }
@@ -656,7 +656,7 @@
     gap: 4px;
     cursor: pointer;
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
   }
 
   .transition-toggle input {
@@ -674,9 +674,9 @@
   }
 
   .transition-duration {
-    background: #161618;
+    background: var(--bg-tertiary, #161618);
     border: 1px solid #444;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     font-size: 10px;
     padding: 2px 4px;
     border-radius: 3px;
@@ -691,7 +691,7 @@
   .tray-title {
     font-size: 11px;
     font-weight: 600;
-    color: #888;
+    color: var(--text-muted, #888);
     letter-spacing: 0.5px;
   }
 
@@ -710,7 +710,7 @@
   .ap-btn {
     background: rgba(255,255,255,0.06);
     border: 1px solid rgba(255,255,255,0.12);
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     width: 28px;
     height: 26px;
     border-radius: 4px;
@@ -726,9 +726,9 @@
   .ap-btn.stop { color: #FF4757; }
   .ap-btn.loop.active { background: rgba(187,134,252,0.15); border-color: #BB86FC; color: #BB86FC; }
   .ap-select {
-    background: #161618;
+    background: var(--bg-tertiary, #161618);
     border: 1px solid #444;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     font-size: 10px;
     padding: 3px 4px;
     border-radius: 3px;
@@ -736,7 +736,7 @@
   }
   .ap-bpm {
     font-size: 10px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-family: monospace;
   }
   .ap-progress {
@@ -752,9 +752,9 @@
     transition: width 0.1s linear;
   }
   .preset-duration {
-    background: #161618;
+    background: var(--bg-tertiary, #161618);
     border: 1px solid #333;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 9px;
     padding: 2px;
     border-radius: 3px;
@@ -763,9 +763,9 @@
   }
 
   .save-preset input {
-    background: #161618;
+    background: var(--bg-tertiary, #161618);
     border: 1px solid #444;
-    color: #eee;
+    color: var(--text-primary, #eee);
     padding: 5px 10px;
     border-radius: 4px;
     font-size: 11px;
@@ -839,7 +839,7 @@
   .preset-ctx-menu .ctx-item {
     background: transparent;
     border: none;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     padding: 6px 10px;
     text-align: left;
     font-size: 12px;
@@ -866,17 +866,24 @@
 
   /* Recording controls */
   .rec-btn {
-    background: #333;
-    border: 1px solid #555;
-    color: #ff4444;
-    padding: 5px 12px;
-    border-radius: 4px;
+    background: var(--ga-card, #13161c);
+    border: 1px solid var(--ga-line-2, #555);
+    color: var(--ga-rec, #ff4444);
+    padding: 6px 14px;
+    border-radius: var(--ga-r-soft, 4px);
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 700;
     cursor: pointer;
-    display: flex;
+    display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
+    /* Fixes the "Record / Output" vertical wrap when the tray gives
+       us narrow space — was breaking into two lines because the flex
+       column ancestor was crushing this in. */
+    white-space: nowrap;
+    flex: 0 0 auto;
+    min-width: 130px;
   }
 
   .rec-btn:hover {
@@ -1014,7 +1021,7 @@
 
   .preset-name {
     font-size: 10px;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1029,7 +1036,7 @@
     width: 100%;
     background: #333;
     border: 1px solid #BB86FC;
-    color: #eee;
+    color: var(--text-primary, #eee);
     padding: 2px 4px;
     border-radius: 2px;
     font-size: 10px;
@@ -1067,7 +1074,7 @@
   }
 
   .preset-list::-webkit-scrollbar-track {
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
   }
 
   .preset-list::-webkit-scrollbar-thumb {

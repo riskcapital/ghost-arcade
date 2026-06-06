@@ -1579,7 +1579,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     left: 12px;
     background: rgba(20, 20, 30, 0.85);
     border: 1px solid rgba(255, 60, 60, 0.5);
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     padding: 10px 14px;
     border-radius: 4px;
     font-family: 'SF Mono', Menlo, Consolas, monospace;
@@ -1596,7 +1596,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   }
   .error-hint {
     font-size: 10px;
-    color: #888;
+    color: var(--text-muted, #888);
     margin-top: 8px;
   }
   code {

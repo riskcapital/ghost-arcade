@@ -458,7 +458,7 @@
     border-radius: 6px;
     border: 1px solid #333;
     font-size: 11px;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
   }
 
   .header {
@@ -476,7 +476,7 @@
   .close-btn {
     background: none;
     border: none;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 16px;
     cursor: pointer;
     padding: 0 4px;
@@ -494,7 +494,7 @@
     padding: 6px;
     background: #111;
     border: 1px solid #333;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 10px;
     font-weight: 500;
     cursor: pointer;
@@ -554,7 +554,7 @@
   .example-chip {
     background: #14141e;
     border: 1px solid #333;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     padding: 3px 8px;
     font-size: 9px;
     border-radius: 10px;
@@ -583,13 +583,13 @@
   }
   .setting label {
     font-size: 9px;
-    color: #888;
+    color: var(--text-muted, #888);
     text-transform: uppercase;
   }
   .setting select {
     background: #111;
     border: 1px solid #333;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     padding: 3px 6px;
     font-size: 10px;
     border-radius: 3px;
@@ -598,7 +598,7 @@
   .toggle-advanced {
     background: none;
     border: 1px solid #444;
-    color: #888;
+    color: var(--text-muted, #888);
     padding: 3px 8px;
     font-size: 9px;
     border-radius: 3px;
@@ -619,7 +619,7 @@
     align-items: center;
     gap: 5px;
     font-size: 10px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     cursor: pointer;
     padding: 3px 0;
   }
@@ -643,13 +643,13 @@
   }
   .field label {
     font-size: 9px;
-    color: #888;
+    color: var(--text-muted, #888);
     text-transform: uppercase;
   }
   .field input, .field select {
     background: #0d0d14;
     border: 1px solid #333;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     padding: 4px 6px;
     font-size: 10px;
     border-radius: 3px;
@@ -696,12 +696,12 @@
     background: #14141e;
     border-radius: 4px;
     font-size: 10px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
   }
   .status.done { color: #0f0; }
   .elapsed {
     font-family: monospace;
-    color: #888;
+    color: var(--text-muted, #888);
   }
 
   .error {

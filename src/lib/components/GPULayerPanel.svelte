@@ -516,7 +516,7 @@
   .src-active-label { font-size: 10.5px; opacity: 0.85; }
   .src-now { margin-left: auto; font-size: 9.5px; color: #67e8f9; background: rgba(103, 232, 249, 0.08); padding: 1px 6px; border-radius: 8px; max-width: 140px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .src-now.empty { color: #6b7280; background: transparent; opacity: 0.55; }
-  .mini-x { background: transparent; border: 1px solid #333a4a; color: #aaa; width: 22px; height: 22px; border-radius: 3px; cursor: pointer; font-size: 13px; }
+  .mini-x { background: transparent; border: 1px solid #333a4a; color: var(--text-secondary, #aaa); width: 22px; height: 22px; border-radius: 3px; cursor: pointer; font-size: 13px; }
   .mini-x:hover { background: #262b3a; color: #fff; }
   .src-select { width: 100%; background: #1f2330; border: 1px solid #333a4a; color: #d4d8e0; padding: 5px 8px; border-radius: 3px; font-size: 11px; cursor: pointer; margin-top: 6px; }
   .live-sources { margin-top: 10px; padding-top: 8px; border-top: 1px dashed #2a2f3d; display: flex; flex-direction: column; gap: 0; }

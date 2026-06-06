@@ -78,7 +78,7 @@
   .transport-btn {
     background: none;
     border: 1px solid rgba(255,255,255,0.1);
-    color: #888;
+    color: var(--text-muted, #888);
     width: 26px;
     height: 26px;
     border-radius: 4px;
@@ -93,7 +93,7 @@
   .time-display {
     font-family: var(--font-jetbrains), monospace;
     font-size: 12px;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     min-width: 55px;
     text-align: center;
   }
@@ -101,7 +101,7 @@
   .duration-select, .layer-select {
     background: rgba(0,0,0,0.4);
     border: 1px solid rgba(255,255,255,0.1);
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     font-size: 10px;
     border-radius: 3px;
     padding: 2px 4px;

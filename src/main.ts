@@ -1,6 +1,23 @@
 import { mount } from 'svelte';
+import { Capacitor } from '@capacitor/core';
 import { initErrorReporter } from './lib/utils/errorReporter';
 import { silenceThreeSerializationNoise } from './lib/utils/silenceThreePatches';
+// Theme system: importing the store self-registers + applies the saved
+// theme to :root on first run, so every component's var(--ga-*) reads
+// land before any markup mounts.
+import './lib/theming/store';
+// Theme-aware webfonts. The two themes use different families (Hanken
+// Grotesk + IBM Plex Mono for Studio, Archivo + Chakra Petch + IBM
+// Plex Mono + VT323 for Arcade). One stylesheet hits both so swapping
+// at runtime needs no extra font request.
+import './lib/theming/fonts.css';
+// Global skin overrides — re-skins the existing markup to the v10
+// visual identity (toolbar chips, layer rows, faders, status bar) so
+// the new design lands without per-component edits.
+import './lib/theming/studio-skin.css';
+import { installRangeProgressSync } from './lib/theming/rangeProgress';
+
+installRangeProgressSync();
 
 // Patch THREE.Texture.toJSON before anything else — any tree walker that
 // serializes a live texture would otherwise log "Unable to serialize Texture"
@@ -10,9 +27,17 @@ silenceThreeSerializationNoise();
 // Install global error handlers
 initErrorReporter();
 
+// Capacitor native shell (iOS / Android) — Ghost Arcade Mobile app.
+// When the bundle runs inside the Capacitor WebView, default-mount the
+// MobileApp regardless of URL params. The native shell never opens with
+// ?mode= query strings, so this short-circuit is safe and keeps the desktop
+// router below untouched.
+const isCapacitorNative = Capacitor.isNativePlatform();
+
 // Check URL mode parameter
 const urlParams = new URLSearchParams(window.location.search);
 const mode = urlParams.get('mode');
+const isStage3DWindow = mode === 'stage-3d';
 const isSpoutOutput = mode === 'spout-output';
 const isOutputWindow = mode === 'output';
 // `webrtc-display` is the legacy WebRTC output transport — kept as
@@ -38,11 +63,71 @@ if (isSpoutOutput && !window.__SPOUT_OSR_MODE__) {
   try { (window as any).__SPOUT_OSR_MODE__ = true; } catch { /* already set by preload */ }
 }
 
-if ((isOutputWindow || isWebRTCDisplay || isWebGPUDisplay || isSliceDisplay) && !(window as any).__OUTPUT_WINDOW_MODE__) {
+if ((isOutputWindow || isWebRTCDisplay || isWebGPUDisplay || isSliceDisplay || isStage3DWindow) && !(window as any).__OUTPUT_WINDOW_MODE__) {
   try { (window as any).__OUTPUT_WINDOW_MODE__ = true; } catch { /* already set by preload */ }
 }
 
+function hideSplash() {
+  const splash = document.getElementById('splash');
+  if (splash) {
+    splash.classList.add('hidden');
+    setTimeout(() => splash.remove(), 600);
+  }
+}
+
+type MobileMode = 'standalone' | 'remote';
+const MOBILE_MODE_KEY = 'ga-mobile-mode';
+
+async function mountMobile(mode: MobileMode | null) {
+  const target = document.getElementById('app')!;
+  // Wipe any previously-mounted root before mounting the next mode.
+  // Svelte 5's `mount` returns an instance with unmount(), but we cleanly
+  // tear down by clearing the target — the old component's effects run their
+  // cleanup hooks via the GC path. Cheap enough for a mode swap.
+  target.innerHTML = '';
+
+  if (mode === 'standalone') {
+    const { default: StandaloneApp } = await import('./lib/components/StandaloneApp.svelte');
+    mount(StandaloneApp, {
+      target,
+      props: { onSwitchMode: () => switchMobileMode() },
+    });
+    return;
+  }
+  if (mode === 'remote') {
+    const { default: MobileApp } = await import('./lib/components/MobileApp.svelte');
+    mount(MobileApp, { target });
+    return;
+  }
+  // First-launch / cleared selection: show the picker.
+  const { default: MobileModeSelect } = await import('./lib/components/MobileModeSelect.svelte');
+  mount(MobileModeSelect, {
+    target,
+    props: {
+      onSelect: (picked: MobileMode) => {
+        try { localStorage.setItem(MOBILE_MODE_KEY, picked); } catch { /* private mode */ }
+        mountMobile(picked);
+      },
+    },
+  });
+}
+
+function switchMobileMode() {
+  try { localStorage.removeItem(MOBILE_MODE_KEY); } catch { /* private mode */ }
+  mountMobile(null);
+}
+
 async function init() {
+  if (isCapacitorNative) {
+    let stored: MobileMode | null = null;
+    try {
+      const raw = localStorage.getItem(MOBILE_MODE_KEY);
+      if (raw === 'standalone' || raw === 'remote') stored = raw;
+    } catch { /* private mode — show picker every launch */ }
+    await mountMobile(stored);
+    hideSplash();
+    return;
+  }
   if (isSliceDisplay) {
     // Per-slice multi-output window. Lazy-load so the slice-only
     // bundle doesn't ship to the editor process. Also needs the audio
@@ -86,6 +171,11 @@ async function init() {
     // the two transports at runtime.
     const { default: OutputDisplayApp } = await import('./OutputDisplayApp.svelte');
     mount(OutputDisplayApp, {
+      target: document.getElementById('app')!,
+    });
+  } else if (isStage3DWindow) {
+    const { default: Stage3DWindowApp } = await import('./Stage3DWindowApp.svelte');
+    mount(Stage3DWindowApp, {
       target: document.getElementById('app')!,
     });
   } else if (isSpoutOutput || isOutputWindow) {

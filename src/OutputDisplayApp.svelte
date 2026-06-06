@@ -446,7 +446,7 @@ press S to hide</pre>
     position: fixed;
     bottom: 8px;
     left: 8px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     font-size: 11px;
     background: rgba(0, 0, 0, 0.6);

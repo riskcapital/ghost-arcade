@@ -139,7 +139,7 @@
     max-width: 320px;
     padding: 10px 12px 10px;
     background: #1c1c20;
-    color: #eee;
+    color: var(--text-primary, #eee);
     border: 1px solid #3a3a42;
     border-radius: 8px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.4);
@@ -186,7 +186,7 @@
 
   .confirm-subtitle {
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
     margin-bottom: 8px;
   }
 
@@ -204,12 +204,12 @@
     cursor: pointer;
     border: 1px solid transparent;
     background: transparent;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     transition: background 80ms ease, border-color 80ms ease;
   }
   .confirm-btn.cancel:hover {
     background: rgba(255, 255, 255, 0.06);
-    color: #eee;
+    color: var(--text-primary, #eee);
   }
   .confirm-btn.primary {
     background: #BB86FC;

@@ -474,7 +474,7 @@
   .full-btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .full-btn.ghost {
     background: transparent;
-    color: #888;
+    color: var(--text-muted, #888);
     border-color: rgba(255, 255, 255, 0.08);
   }
   .full-btn.danger {
@@ -543,7 +543,7 @@
     height: 4px;
     -webkit-appearance: none;
     appearance: none;
-    background: #050507;
+    background: var(--bg-primary, #050507);
     border-radius: 999px;
     accent-color: #BB86FC;
     cursor: pointer;

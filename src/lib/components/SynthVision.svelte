@@ -5374,7 +5374,7 @@ void main() {
   .sv-geo-scene-btn {
     border: 1px solid var(--sv-brd);
     background: rgba(255,255,255,.03);
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     font-size: 10px;
     padding: 5px 8px;
     display: flex;
@@ -5408,14 +5408,14 @@ void main() {
   .sv-geo-morph-controls select {
     height: 24px;
     background: rgba(255,255,255,.05);
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     border: 1px solid var(--sv-brd);
     font-size: 10px;
   }
   .sv-geo-form-btn {
     border: 1px solid var(--sv-brd);
     background: rgba(255,255,255,.03);
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     text-align: left;
     padding: 8px;
     cursor: pointer;
@@ -5505,7 +5505,7 @@ void main() {
   .sv-geo-slider-val {
     font-size: 11px;
     text-align: right;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
   }
   .sv-geo-action-grid {
     display: grid;
@@ -5953,7 +5953,7 @@ void main() {
   }
   .sv-shader-mix-hint {
     font-size: 9px;
-    color: #888;
+    color: var(--text-muted, #888);
     text-align: center;
     margin-top: 4px;
   }
@@ -6234,22 +6234,22 @@ void main() {
   /* ── Effects Panel ── */
   .sv-effects-panel { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; flex: 1; min-height: 0; }
   .sv-effects-header { display: flex; justify-content: space-between; align-items: center; padding: 2px 4px; }
-  .sv-effects-header span { font-size: 10px; color: #888; text-transform: uppercase; }
+  .sv-effects-header span { font-size: 10px; color: var(--text-muted, #888); text-transform: uppercase; }
   .sv-add-fx-btn { background: #BB86FC22; border: 1px solid #BB86FC44; border-radius: 4px; color: #BB86FC; font-size: 10px; padding: 2px 8px; cursor: pointer; transition: all 0.15s; }
   .sv-add-fx-btn:hover { background: #BB86FC33; border-color: #BB86FC88; }
   .sv-effects-list { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
-  .sv-effect-item { background: #1a1a1e; border: 1px solid #333; border-radius: 4px; overflow: hidden; }
+  .sv-effect-item { background: var(--bg-tertiary, #1a1a1e); border: 1px solid #333; border-radius: 4px; overflow: hidden; }
   .sv-effect-item.disabled { opacity: 0.5; }
   .sv-effect-header { display: flex; align-items: center; gap: 6px; padding: 4px 6px; cursor: pointer; }
   .sv-fx-toggle { background: none; border: none; color: #BB86FC; font-size: 10px; cursor: pointer; padding: 0; }
   .sv-fx-toggle.active { color: #BB86FC; }
-  .sv-fx-name { font-size: 10px; color: #ccc; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sv-fx-name { font-size: 10px; color: var(--text-primary, #ccc); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sv-fx-expand { font-size: 8px; color: #666; }
   .sv-fx-delete { background: none; border: none; color: #666; font-size: 12px; cursor: pointer; padding: 0 2px; }
   .sv-fx-delete:hover { color: #f44; }
   .sv-effect-params { padding: 4px 8px 6px; border-top: 1px solid #2a2a2a; }
   .sv-fx-param-row { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
-  .sv-fx-param-name { font-size: 9px; color: #888; min-width: 50px; }
+  .sv-fx-param-name { font-size: 9px; color: var(--text-muted, #888); min-width: 50px; }
   .sv-fx-param-row input[type=range] { flex: 1; height: 3px; accent-color: #BB86FC; }
   .sv-fx-param-val { font-size: 9px; color: #666; min-width: 28px; text-align: right; }
   .sv-fx-no-params, .sv-fx-empty { font-size: 10px; color: #555; text-align: center; padding: 8px; }
@@ -6402,11 +6402,11 @@ void main() {
   }
   .sv-mod-select option {
     background: #000;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
   }
   .sv-mod-select optgroup {
     background: #000;
-    color: #888;
+    color: var(--text-muted, #888);
   }
   .sv-mod-select.active {
     border-color: #a855f7;
@@ -6415,7 +6415,7 @@ void main() {
   }
   .sv-mod-select.active option {
     background: #111;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
   }
   .sv-mod-depth-row {
     display: flex;
@@ -6501,7 +6501,7 @@ void main() {
     outline: none;
   }
   .sv-isf-select:hover { border-color: var(--sv-y); }
-  .sv-isf-select option { background: #1a1a2e; }
+  .sv-isf-select option { background: var(--bg-secondary, #1a1a2e); }
   .sv-isf-toggle {
     width: 48px;
     height: 22px;
@@ -6729,7 +6729,7 @@ void main() {
     background: rgba(255,255,255,.06);
     border: 1px solid rgba(255,255,255,.12);
     border-radius: 4px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 1px;
@@ -6740,7 +6740,7 @@ void main() {
   }
   .sv-edit-btn:hover {
     background: rgba(255,255,255,.1);
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     border-color: rgba(255,255,255,.2);
   }
   .sv-edit-btn.active {
@@ -6792,7 +6792,7 @@ void main() {
     transition: all .12s;
     font-family: inherit;
   }
-  .sv-edit-tab:hover { color: #aaa; }
+  .sv-edit-tab:hover { color: var(--text-secondary, #aaa); }
   .sv-edit-tab.active {
     color: var(--sv-c);
     border-bottom-color: var(--sv-c);
@@ -6858,7 +6858,7 @@ void main() {
     padding: 2px 4px;
     background: rgba(0,0,0,.8);
     font-size: 9px;
-    color: #eee;
+    color: var(--text-primary, #eee);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -6954,7 +6954,7 @@ void main() {
     border: 1px solid var(--sv-brd);
     border-radius: 3px;
     background: rgba(255,255,255,.05);
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     cursor: pointer;
   }
   .sv-preset-save-confirm:hover { color: var(--sv-g); border-color: var(--sv-g); }

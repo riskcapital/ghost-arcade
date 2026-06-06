@@ -38,14 +38,16 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
+    height: 32px;
   }
 
   .bpm-tap-btn {
-    padding: 3px 10px;
-    border: 1px solid #444;
-    border-radius: 3px;
-    background: #0d0d10;
-    color: #aaa;
+    padding: 0 10px;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 2px);
+    background: var(--ga-card, #13161c);
+    color: var(--ga-ink-1, #9aa0ac);
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.5px;
@@ -53,38 +55,41 @@
     transition: all 0.1s;
     /* Match the height of the AudioInputPicker buttons (28px) so the row
        stays visually aligned in mapping mode's top bar. */
-    height: 28px;
+    height: 32px;
     min-width: 38px;
   }
 
   .bpm-tap-btn:hover {
-    border-color: #BB86FC;
-    color: #BB86FC;
+    border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36));
+    color: var(--ga-violet, #9b87f5);
   }
 
   .bpm-tap-btn:active {
-    background: #BB86FC;
-    color: #000;
+    background: var(--ga-violet, #9b87f5);
+    color: #160f2e;
   }
 
   .bpm-readout {
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
     font-size: 12px;
     font-weight: 700;
-    color: #555;
+    color: var(--ga-ink-2, #5e6571);
     font-variant-numeric: tabular-nums;
     min-width: 64px;
   }
 
   .bpm-readout.confident {
-    color: #BB86FC;
+    color: var(--ga-violet, #9b87f5);
   }
 
   .bpm-auto-btn {
-    padding: 2px 6px;
-    border: 1px solid #444;
-    border-radius: 3px;
+    height: 24px;
+    padding: 0 6px;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 2px);
     background: transparent;
-    color: #666;
+    color: var(--ga-ink-2, #5e6571);
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
     font-size: 9px;
     font-weight: 700;
     letter-spacing: 0.5px;
@@ -92,7 +97,7 @@
   }
 
   .bpm-auto-btn:hover {
-    color: #aaa;
-    border-color: #666;
+    color: var(--ga-ink-1, #9aa0ac);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
 </style>

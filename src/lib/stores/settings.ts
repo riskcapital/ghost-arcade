@@ -141,6 +141,14 @@ export function applyColorScheme(scheme: ColorScheme) {
   root.style.setProperty('--danger', c.danger);
   root.style.setProperty('--success', c.success);
   root.style.setProperty('--warning', c.warning);
+
+  // Reapply the active theme template AFTER the accent scheme writes
+  // so the theme's depth ladder + ink stay authoritative — only the
+  // accent vars come from the scheme. Late-bound import keeps the
+  // theme store out of settings.ts's hot path on first load.
+  void import('../theming/store').then(({ activeThemeId }) => {
+    activeThemeId.refresh();
+  }).catch(() => { /* boot ordering — theme not registered yet, ignore */ });
 }
 
 // ============================================================================
@@ -790,6 +798,7 @@ export interface PerformanceSettings {
   outputDegradationPreference: 'maintain-resolution' | 'maintain-framerate' | 'balanced';
   outputCodecPreference: 'auto' | 'h264' | 'vp8';
   editorMaxFps: 0 | 30 | 60;
+  stage3DFrameRate: 60 | 45 | 30 | 24;
   /**
    * Use the WebGL2 instanced renderer for the Light Painting layer.
    * Default true. Falls back to the legacy Canvas2D renderer
@@ -989,6 +998,7 @@ function createDefaultSettings(): AppSettings {
       outputDegradationPreference: 'maintain-resolution',
       outputCodecPreference: 'auto',
       editorMaxFps: 0,                // 0 = uncapped (match rAF / refresh rate)
+      stage3DFrameRate: 30,           // external Stage 3D view renders its own compositor
       useWebGL2LightPainting: true,   // WebGL2 instanced renderer ON by default
     },
   };

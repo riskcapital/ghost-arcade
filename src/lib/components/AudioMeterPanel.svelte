@@ -201,7 +201,7 @@
   .amp-bar:nth-child(8) { background: #ec4899; } /* presence */
 
   .amp-eq-glyph {
-    color: #888;
+    color: var(--text-muted, #888);
     line-height: 0;
     transition: transform 0.18s, color 0.18s;
   }
@@ -236,7 +236,7 @@
     transform: translateX(-50%);
     width: 280px;
     max-width: calc(100vw - 24px);
-    background: #1a1a1e;
+    background: var(--bg-tertiary, #1a1a1e);
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 8px;
     padding: 12px 12px 10px;
@@ -249,7 +249,7 @@
   .amp-popover-title {
     font-size: 9px;
     font-weight: 700;
-    color: #888;
+    color: var(--text-muted, #888);
     letter-spacing: 0.16em;
   }
   .amp-row {
@@ -260,7 +260,7 @@
   }
   .amp-row-label {
     font-size: 11px;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
   }
   .amp-slider {
     width: 100%;
@@ -274,7 +274,7 @@
   }
   .amp-popover-hint {
     font-size: 10px;
-    color: #888;
+    color: var(--text-muted, #888);
     line-height: 1.4;
     padding-top: 4px;
     border-top: 1px solid rgba(255, 255, 255, 0.06);
@@ -294,7 +294,7 @@
     justify-content: space-between;
     font-size: 9px;
     font-weight: 700;
-    color: #888;
+    color: var(--text-muted, #888);
     letter-spacing: 0.16em;
     padding-top: 4px;
     border-top: 1px solid rgba(255, 255, 255, 0.06);
@@ -302,7 +302,7 @@
   .amp-reset-btn {
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     font-size: 9px;
     font-weight: 700;
     letter-spacing: 0.12em;

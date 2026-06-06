@@ -317,12 +317,12 @@
     justify-content: space-between;
     align-items: center;
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
     margin-bottom: 6px;
     font-family: ui-monospace, monospace;
   }
   .preview-meta strong {
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     font-weight: 500;
   }
   .preview-legend {

@@ -1436,7 +1436,7 @@
     top: 48px;
     bottom: 28px;
     width: 320px;
-    background: #111114;
+    background: var(--bg-secondary, #111114);
     border-left: 1px solid #333;
     display: flex;
     flex-direction: column;
@@ -1470,7 +1470,7 @@
     margin: 0;
     font-size: 14px;
     font-weight: 600;
-    color: #eee;
+    color: var(--text-primary, #eee);
   }
 
   .tray-content {
@@ -1508,7 +1508,7 @@
     margin-bottom: 8px;
     border: 1px solid #333;
     border-radius: 4px;
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
   }
 
   .section-header {
@@ -1516,7 +1516,7 @@
     justify-content: space-between;
     align-items: center;
     padding: 8px;
-    background: #111114;
+    background: var(--bg-secondary, #111114);
     border: none;
     border-radius: 4px 4px 0 0;
     cursor: pointer;
@@ -1531,12 +1531,12 @@
   }
 
   .section-header:hover:not(.static) {
-    background: #161618;
+    background: var(--bg-tertiary, #161618);
   }
 
   .toggle {
     font-size: 14px;
-    color: #888;
+    color: var(--text-muted, #888);
   }
 
   .section-content {
@@ -1637,7 +1637,7 @@
 
   .action-btn.replace {
     background: #333;
-    color: #eee;
+    color: var(--text-primary, #eee);
   }
 
   .action-btn.replace:hover {
@@ -1665,9 +1665,9 @@
 
   .preset-btn {
     padding: 4px 8px;
-    background: #161618;
+    background: var(--bg-tertiary, #161618);
     border: 1px solid #444;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     border-radius: 3px;
     cursor: pointer;
     font-size: 11px;
@@ -1693,7 +1693,7 @@
     margin-top: 8px;
     background: #333;
     border: 1px solid #444;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     border-radius: 4px;
     cursor: pointer;
     font-size: 11px;
@@ -1715,7 +1715,7 @@
 
   .param-row label {
     flex: 0 0 70px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     display: flex;
     align-items: center;
     gap: 4px;
@@ -1743,7 +1743,7 @@
 
   .param-row select {
     flex: 1;
-    background: #161618;
+    background: var(--bg-tertiary, #161618);
     border: 1px solid #444;
     color: #fff;
     padding: 4px;
@@ -1754,7 +1754,7 @@
   .param-row .value {
     flex: 0 0 45px;
     text-align: right;
-    color: #888;
+    color: var(--text-muted, #888);
     font-family: monospace;
     font-size: 10px;
   }
@@ -1775,7 +1775,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     cursor: pointer;
     font-weight: 500;
     font-size: 11px;
@@ -1803,7 +1803,7 @@
   .mini-param span {
     flex: 0 0 52px;
     font-size: 10px;
-    color: #888;
+    color: var(--text-muted, #888);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1833,7 +1833,7 @@
     flex: 0 0 32px;
     text-align: right;
     font-size: 9px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-family: monospace;
   }
 
@@ -1846,9 +1846,9 @@
 
   .layer-list-header {
     padding: 6px 12px;
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
     font-size: 10px;
-    color: #888;
+    color: var(--text-muted, #888);
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
@@ -1862,7 +1862,7 @@
     background: none;
     border: none;
     border-bottom: 1px solid #333;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     font-size: 11px;
     cursor: pointer;
     transition: all 0.15s;
@@ -1874,7 +1874,7 @@
   }
 
   .layer-item.selected {
-    background: #161618;
+    background: var(--bg-tertiary, #161618);
     border-left: 3px solid #ff00aa;
     color: #fff;
   }

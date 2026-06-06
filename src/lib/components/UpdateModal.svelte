@@ -250,7 +250,7 @@
   }
 
   .update-modal {
-    background: #14141a;
+    background: var(--bg-tertiary, #14141a);
     border: 1px solid rgba(126, 200, 227, 0.18);
     border-radius: 8px;
     width: 100%;
@@ -288,7 +288,7 @@
 
   .update-version-line {
     font-size: 12px;
-    color: #888;
+    color: var(--text-muted, #888);
     margin: 0;
   }
 
@@ -298,7 +298,7 @@
     border-radius: 50%;
     background: rgba(255, 255, 255, 0.06);
     border: none;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     font-size: 22px;
     cursor: pointer;
     display: flex;
@@ -326,7 +326,7 @@
     font-weight: 600;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     margin: 0 0 10px;
   }
 
@@ -386,13 +386,13 @@
 
   .update-progress-meta {
     font-size: 12px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-variant-numeric: tabular-nums;
   }
 
   .update-ready-hint {
     font-size: 12px;
-    color: #888;
+    color: var(--text-muted, #888);
     margin: 12px auto 0;
     max-width: 360px;
     line-height: 1.5;
@@ -419,7 +419,7 @@
     background: transparent;
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 4px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     font-size: 13px;
     cursor: pointer;
     transition: all 0.15s;

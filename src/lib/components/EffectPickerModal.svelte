@@ -381,7 +381,7 @@
   }
 
   .modal-panel {
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
     border: 1px solid #333;
     border-radius: 12px;
     width: 94%;
@@ -405,7 +405,7 @@
     margin: 0;
     font-size: 16px;
     font-weight: 600;
-    color: #eee;
+    color: var(--text-primary, #eee);
   }
 
   .header-right {
@@ -421,20 +421,27 @@
   }
 
   .close-btn {
+    /* Sized for a comfortable 32×32 minimum tap target — was 22×22 before,
+       which failed the iOS / Android accessibility floor. */
     background: none;
     border: none;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 22px;
     cursor: pointer;
-    padding: 2px 6px;
+    width: 32px;
+    height: 32px;
+    padding: 0;
     border-radius: 4px;
     line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     transition: all 0.15s;
   }
 
   .close-btn:hover {
-    background: #333;
-    color: #eee;
+    background: var(--bg-tertiary, #333);
+    color: var(--text-primary, #eee);
   }
 
   /* Search row + expand/collapse controls share one bar so the
@@ -448,11 +455,11 @@
 
   .search-input {
     flex: 1;
-    background: #161618;
+    background: var(--bg-tertiary, #161618);
     border: 1px solid #333;
     border-radius: 6px;
     padding: 8px 12px;
-    color: #eee;
+    color: var(--text-primary, #eee);
     font-size: 13px;
     outline: none;
     transition: border-color 0.15s;
@@ -466,7 +473,7 @@
     flex-shrink: 0;
   }
   .ctrl-btn {
-    background: #161618;
+    background: var(--bg-tertiary, #161618);
     border: 1px solid #333;
     border-radius: 6px;
     padding: 6px 10px;
@@ -478,7 +485,7 @@
   }
   .ctrl-btn:hover {
     background: #1f1f23;
-    color: #eee;
+    color: var(--text-primary, #eee);
     border-color: #555;
   }
 
@@ -526,7 +533,7 @@
     text-align: left;
   }
   .cat-header:hover {
-    background: #1a1a20;
+    background: var(--bg-tertiary, #1a1a20);
   }
   .cat-header.empty {
     color: #555;
@@ -538,7 +545,7 @@
   .cat-chevron {
     display: inline-block;
     font-size: 9px;
-    color: #888;
+    color: var(--text-muted, #888);
     width: 10px;
     transition: transform 0.15s ease;
     flex-shrink: 0;
@@ -619,7 +626,7 @@
 
   .row-name {
     font-size: 12px;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
@@ -668,7 +675,7 @@
     border: 1px solid #444;
     border-radius: 6px;
     padding: 7px 14px;
-    color: #eee;
+    color: var(--text-primary, #eee);
     font-size: 12px;
     cursor: pointer;
     transition: all 0.15s;
@@ -755,11 +762,11 @@
   /* ── Custom-effect import UI ── */
   .import-btn,
   .template-btn {
-    background: #1a1a1e;
+    background: var(--bg-tertiary, #1a1a1e);
     border: 1px solid #333;
     border-radius: 6px;
     padding: 5px 10px;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     font-size: 11px;
     font-weight: 500;
     cursor: pointer;

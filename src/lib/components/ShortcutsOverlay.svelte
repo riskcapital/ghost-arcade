@@ -80,7 +80,7 @@
     width: 100%;
     overflow-y: auto;
     box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.04);
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     cursor: default;
   }
@@ -90,7 +90,7 @@
     right: 12px;
     background: transparent;
     border: none;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 22px;
     cursor: pointer;
     width: 32px;
@@ -127,9 +127,9 @@
     gap: 8px;
     padding: 4px 0;
     font-size: 12px;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
   }
-  .shortcut-row span { flex: 1; color: #aaa; }
+  .shortcut-row span { flex: 1; color: var(--text-secondary, #aaa); }
   .shortcut-row kbd {
     display: inline-block;
     padding: 2px 6px;
@@ -138,7 +138,7 @@
     border-radius: 3px;
     font-family: 'SF Mono', Menlo, Consolas, monospace;
     font-size: 11px;
-    color: #e0e0e0;
+    color: var(--text-primary, #e0e0e0);
     min-width: 18px;
     text-align: center;
   }

@@ -137,7 +137,7 @@
     text-transform: uppercase;
     background: rgba(60, 60, 60, 0.6);
     border: 2px solid #444;
-    color: #888;
+    color: var(--text-muted, #888);
     cursor: pointer;
     transition: all 0.2s;
     white-space: nowrap;

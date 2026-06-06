@@ -155,6 +155,7 @@ protocol.registerSchemesAsPrivileged([
 let mainWindow = null;
 let outputWindow = null;
 let spoutOsrWindow = null;  // Hidden OSR window for zero-copy Spout output
+let stage3dWindow = null;   // 3D Stage Designer pop-out (?mode=stage-3d)
 // Per-slice multi-output windows. Keyed by sliceId; each entry is a
 // borderless fullscreen BrowserWindow opened on a specific physical
 // display. Phase 2 multi-output system — see SliceOutputApp.svelte
@@ -172,6 +173,37 @@ let sidecarProcess = null;
 // Platform flags (used elsewhere in this file)
 const isWin = process.platform === 'win32';
 const isMac = process.platform === 'darwin';
+
+function closeAuxiliaryWindows() {
+  if (stage3dWindow && !stage3dWindow.isDestroyed()) {
+    const win = stage3dWindow;
+    stage3dWindow = null;
+    try { win.close(); } catch {}
+  } else {
+    stage3dWindow = null;
+  }
+
+  if (outputWindow && !outputWindow.isDestroyed()) {
+    const win = outputWindow;
+    outputWindow = null;
+    try { win.close(); } catch {}
+  } else {
+    outputWindow = null;
+  }
+
+  for (const [sliceId, win] of sliceWindows.entries()) {
+    if (win && !win.isDestroyed()) {
+      try { win.close(); } catch {}
+    }
+    sliceWindows.delete(sliceId);
+  }
+
+  if (spoutOsrWindow && !spoutOsrWindow.isDestroyed()) {
+    try { destroySpoutOsrWindow(); } catch {}
+  } else {
+    spoutOsrWindow = null;
+  }
+}
 
 // Spout native addon
 let spoutAddon = null;
@@ -1214,6 +1246,92 @@ function registerIpcHandlers() {
     createOutputWindow(width, height, x, y, fullscreen, displayId, !!experimentalWebRTC, !!experimentalZeroCopy);
   });
 
+  // ── Stage 3D pop-out window ────────────────────────────────────────
+  // Opens the 3D Stage Designer in its own BrowserWindow so the editor
+  // stays free for live performance. Idempotent — calling while the
+  // window is already open just brings it to the front. The renderer
+  // shape inside is identical to a regular full editor (mounts Canvas +
+  // Stage3DDesigner with state-sync over BroadcastChannel), so visuals
+  // flowing through the editor's layers appear on the LED-screen meshes.
+  ipcMain.handle('open_stage3d_window', () => {
+    if (stage3dWindow && !stage3dWindow.isDestroyed()) {
+      stage3dWindow.show();
+      stage3dWindow.focus();
+      return { alreadyOpen: true };
+    }
+    createStage3DWindow();
+    return { alreadyOpen: false };
+  });
+
+  // The renderer pings this when the user clicks the in-app close
+  // button so we can dispose the window from the main process side
+  // (renderer-initiated `window.close()` doesn't always fire on macOS).
+  ipcMain.handle('stage3d_window_closing', () => {
+    if (stage3dWindow && !stage3dWindow.isDestroyed()) {
+      stage3dWindow.close();
+    }
+  });
+
+  // ── Stage 3D state relay ──────────────────────────────────────────
+  // BroadcastChannel between two Electron BrowserWindows is flaky on
+  // some macOS configurations — Chromium's agent-cluster boundaries
+  // don't always allow same-origin cross-window broadcast. We instead
+  // route the editor's project JSON through the main process: the
+  // editor pushes serialised project state, Stage 3D polls for it.
+  //
+  // Full/layout state and live VJ state are held separately. The Stage 3D
+  // receiver asks for only the streams whose ticks changed, which keeps
+  // live clip/fader updates from re-sending or re-importing the whole
+  // project during performance.
+  let stage3dRelayedFullState = null;
+  let stage3dRelayedLiveState = null;
+  let stage3dRelayedSceneState = null;
+  let stage3dRelayedSettingsState = null;
+  let stage3dRelayFullTick = 0;
+  let stage3dRelayLiveTick = 0;
+  let stage3dRelaySceneTick = 0;
+  let stage3dRelaySettingsTick = 0;
+  ipcMain.handle('stage3d_publish_state', (_, payload) => {
+    const kind = payload && typeof payload === 'object' ? payload.kind : 'full';
+    const state = payload && typeof payload === 'object' && 'state' in payload ? payload.state : payload;
+    if (kind === 'live') {
+      stage3dRelayedLiveState = state;
+      stage3dRelayLiveTick++;
+    } else if (kind === 'scene') {
+      stage3dRelayedSceneState = state;
+      stage3dRelaySceneTick++;
+    } else if (kind === 'settings') {
+      stage3dRelayedSettingsState = state;
+      stage3dRelaySettingsTick++;
+    } else {
+      stage3dRelayedFullState = state;
+      stage3dRelayFullTick++;
+      if (state?.vjClipLauncher) {
+        stage3dRelayedLiveState = state.vjClipLauncher;
+        stage3dRelayLiveTick++;
+      }
+      if (state?.stage3dScene) {
+        stage3dRelayedSceneState = state.stage3dScene;
+        stage3dRelaySceneTick++;
+      }
+      if (state?.settings) {
+        stage3dRelayedSettingsState = state.settings;
+        stage3dRelaySettingsTick++;
+      }
+    }
+  });
+  ipcMain.handle('stage3d_get_state', (_, cursor = {}) => ({
+    full: cursor.fullTick === stage3dRelayFullTick ? null : stage3dRelayedFullState,
+    fullTick: stage3dRelayFullTick,
+    live: cursor.liveTick === stage3dRelayLiveTick ? null : stage3dRelayedLiveState,
+    liveTick: stage3dRelayLiveTick,
+    scene: cursor.sceneTick === stage3dRelaySceneTick ? null : stage3dRelayedSceneState,
+    sceneTick: stage3dRelaySceneTick,
+    settings: cursor.settingsTick === stage3dRelaySettingsTick ? null : stage3dRelayedSettingsState,
+    settingsTick: stage3dRelaySettingsTick,
+  }));
+  ipcMain.handle('stage3d_is_open', () => stage3dWindow !== null && !stage3dWindow.isDestroyed());
+
   // Pre-stage placement config for the next WebGPU zero-copy output
   // window opening. Called by the editor renderer immediately before
   // `window.open('?mode=webgpu-display', ...)`. The setWindowOpenHandler
@@ -2087,100 +2205,6 @@ function registerIpcHandlers() {
     return { content, dir: path.dirname(filePath) };
   });
 
-  // --- Download and extract demo project zip ---
-  ipcMain.handle('download_demo_zip', async (_, { url }) => {
-    const extractZip = (await import('extract-zip')).default;
-    const targetDir = path.join(app.getPath('documents'), 'Ghost Arcade', 'Demo Project');
-
-    // Check if already extracted
-    const demoFile = path.join(targetDir, 'demo.gha');
-    if (fs.existsSync(demoFile)) {
-      // Read and return the existing project
-      const content = fs.readFileSync(demoFile, 'utf-8');
-      return { projectDir: targetDir, projectJSON: content, alreadyExists: true };
-    }
-
-    // Create target directory
-    fs.mkdirSync(targetDir, { recursive: true });
-
-    // Download the zip
-    // Default URL: GitHub Releases asset (over Vercel/repo size limits, so
-    // we host the demo bundle on the releases repo). Override by passing
-    // `url` from the renderer if you need a different source.
-    const downloadUrl = url || 'https://github.com/riskcapital/ghost-arcade-releases/releases/download/demo-assets/ghost-arcade-demo.zip';
-    console.log('[Demo] Downloading from:', downloadUrl);
-
-    const response = await fetch(downloadUrl, { signal: AbortSignal.timeout(300000) });
-    if (!response.ok) throw new Error(`Download failed: ${response.status}`);
-
-    const contentLength = parseInt(response.headers.get('content-length') || '0', 10);
-    const reader = response.body.getReader();
-    const chunks = [];
-    let received = 0;
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      received += value.length;
-      // Report progress to renderer
-      if (contentLength > 0 && mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('demo-download-progress', {
-          received,
-          total: contentLength,
-          percent: Math.round((received / contentLength) * 100),
-        });
-      }
-    }
-
-    // Write zip to temp file
-    const zipBuffer = Buffer.concat(chunks);
-    const tempZip = path.join(app.getPath('temp'), 'ghost-arcade-demo.zip');
-    fs.writeFileSync(tempZip, zipBuffer);
-
-    // Extract
-    console.log('[Demo] Extracting to:', targetDir);
-    await extractZip(tempZip, { dir: targetDir });
-
-    // Cleanup temp zip
-    try { fs.unlinkSync(tempZip); } catch {}
-
-    // Find the .gha file (could be at root or in a subfolder)
-    let illFile = demoFile;
-    if (!fs.existsSync(illFile)) {
-      // Search one level deep
-      const entries = fs.readdirSync(targetDir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isFile() && entry.name.endsWith('.gha')) {
-          illFile = path.join(targetDir, entry.name);
-          break;
-        }
-        if (entry.isDirectory()) {
-          const subEntries = fs.readdirSync(path.join(targetDir, entry.name));
-          const found = subEntries.find(f => f.endsWith('.gha'));
-          if (found) {
-            // Move contents up to targetDir
-            const subDir = path.join(targetDir, entry.name);
-            for (const f of subEntries) {
-              fs.renameSync(path.join(subDir, f), path.join(targetDir, f));
-            }
-            try { fs.rmdirSync(subDir); } catch {}
-            illFile = path.join(targetDir, found);
-            break;
-          }
-        }
-      }
-    }
-
-    if (!fs.existsSync(illFile)) {
-      throw new Error('No .gha project file found in the demo zip');
-    }
-
-    const content = fs.readFileSync(illFile, 'utf-8');
-    console.log('[Demo] Project loaded:', illFile);
-    return { projectDir: targetDir, projectJSON: content, alreadyExists: false };
-  });
-
   // Native renderer commands — stub as not available in Electron mode
   // (these are only used by the Tauri D3D11 native renderer)
   const nativeRendererStubs = [
@@ -2670,11 +2694,67 @@ function createMainWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
-    // Close output window if open — cleanup handled by cleanupAndQuit via window-all-closed
-    if (outputWindow) {
-      try { outputWindow.close(); } catch {}
-      outputWindow = null;
-    }
+    // Close every performer/display pop-out so the app can actually exit.
+    closeAuxiliaryWindows();
+  });
+}
+
+// 3D Stage Designer pop-out window. Loads the Svelte app with
+// `?mode=stage-3d` which mounts Stage3DWindowApp.svelte — an off-screen
+// layer renderer (Canvas) + the Stage3DDesigner visible UI. State-sync
+// over BroadcastChannel keeps the off-screen renderer's layers in
+// lockstep with the editor.
+//
+// The window is resizable (so users can rearrange between monitors),
+// frame: true (so they get OS chrome to drag + close), and persists
+// across the editor lifetime only: closing the main app window also
+// closes this pop-out so it cannot keep Electron alive by itself.
+function createStage3DWindow() {
+  // Default size: a wide 16:10 that's bigger than typical editor
+  // sidebars but doesn't try to fill the whole screen. Users can
+  // resize or drag to a second monitor freely.
+  const winW = 1400;
+  const winH = 900;
+
+  // Place on a second display if one's available — Stage 3D is a
+  // performance / preview surface, the main editor wants the primary.
+  const allDisplays = screen.getAllDisplays();
+  const primary = screen.getPrimaryDisplay();
+  const target = allDisplays.find(d => d.id !== primary.id) || primary;
+  const winX = Math.round(target.bounds.x + (target.bounds.width - winW) / 2);
+  const winY = Math.round(target.bounds.y + (target.bounds.height - winH) / 2);
+
+  stage3dWindow = new BrowserWindow({
+    width: winW,
+    height: winH,
+    x: winX,
+    y: winY,
+    title: 'Ghost Arcade — 3D Stage Designer',
+    resizable: true,
+    frame: true,
+    autoHideMenuBar: true,
+    backgroundColor: '#04060a',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      webgl: true,
+      backgroundThrottling: false,
+    },
+  });
+  stage3dWindow.setMenuBarVisibility(false);
+
+  const devUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devUrl) {
+    stage3dWindow.loadURL(`${devUrl}?mode=stage-3d`);
+  } else {
+    stage3dWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), {
+      search: 'mode=stage-3d',
+    });
+  }
+
+  stage3dWindow.on('closed', () => {
+    stage3dWindow = null;
   });
 }
 
@@ -2985,8 +3065,10 @@ app.on('window-all-closed', () => {
   cleanupAndQuit();
 });
 
-app.on('before-quit', (event) => {
-  // Cleanup already handled by window-all-closed → cleanupAndQuit()
+app.on('before-quit', () => {
+  // Menu/Cmd+Q quits should tear down performer/display pop-outs too.
+  // `window-all-closed` still owns the heavier process cleanup.
+  closeAuxiliaryWindows();
 });
 
 let isQuitting = false;
@@ -2996,6 +3078,7 @@ function cleanupAndQuit() {
   console.log('[Main] Cleaning up before quit...');
 
   // Synchronous cleanup — fast, non-blocking
+  closeAuxiliaryWindows();
   try { stopSpoutSender(); } catch (e) { console.error('[Cleanup] stopSpoutSender:', e.message); }
   try { stopSpoutReceiver(); } catch (e) { console.error('[Cleanup] stopSpoutReceiver:', e.message); }
   try { stopServer(); } catch (e) { console.error('[Cleanup] stopServer:', e.message); }

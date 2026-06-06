@@ -502,13 +502,19 @@
       </button>
     </div>
 
-    <!-- AI Generator Button -->
+    <!-- AI Buttons row (Generate + Video, side-by-side per v10 mock) -->
     <div class="ai-generator-row">
       <button class="btn-ai-generate" onclick={() => showAIGenerator = !showAIGenerator}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/>
         </svg>
         {showAIGenerator ? 'Hide AI Generator' : 'AI Generate'}
+      </button>
+      <button class="btn-ai-video" onclick={() => window.dispatchEvent(new CustomEvent('open-ai-video'))} title="AI Video generation">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M8 5v14l11-7z"/>
+        </svg>
+        AI Video
       </button>
     </div>
 
@@ -743,13 +749,48 @@
         {/if}
       {/if}
     </div>
+
+    <!-- Bottom action row (per v10 mock) — short labels, side-by-side.
+         "+ Add" hits the hidden file input that the active tab's drop
+         zone shares; "Library" dispatches an event the host wires to
+         the Shader Library modal. -->
+    <div class="lib-footer">
+      <button class="lib-add-btn" onclick={() => {
+        const fileInputs = document.querySelectorAll<HTMLInputElement>('.library-drop-zone input[type=file]');
+        const inp = fileInputs[fileInputs.length - 1];
+        if (inp) inp.click();
+      }}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+        Add
+      </button>
+      <button class="lib-library-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-shader-library'))}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+          <path d="M3 9h18"/>
+        </svg>
+        Library
+      </button>
+    </div>
   {/if}
 </div>
 
 <style>
   .media-library {
-    background: #111114;
-    border-top: 1px solid #333;
+    background: var(--ga-panel, var(--bg-secondary, #0b0d11));
+    border-top: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    display: flex;
+    flex-direction: column;
+    font-family: var(--ga-font-ui, inherit);
+  }
+
+  /* Title in the v10: 18px bold "Media Library" — already lives in
+     .library-header h3 below. Just raises the weight there. */
+  .library-header h3 {
+    font-weight: 800;
+    font-size: 18px;
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .library-header {
@@ -762,7 +803,7 @@
   }
 
   .library-header:hover {
-    background: #161618;
+    background: var(--bg-tertiary, #161618);
   }
 
   .library-header h3 {
@@ -781,7 +822,7 @@
 
   .item-count {
     background: #333;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 11px;
     padding: 2px 8px;
     border-radius: 10px;
@@ -790,29 +831,33 @@
   .library-tabs {
     display: flex;
     padding: 0 8px;
-    gap: 4px;
-    border-bottom: 1px solid #333;
+    gap: 2px;
+    border-bottom: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
   }
 
+  /* v10 tab style: mono uppercase eyebrow label, blue underline on active. */
   .tab {
     flex: 1;
     background: none;
     border: none;
-    color: #888;
-    padding: 8px;
-    font-size: 12px;
+    color: var(--ga-ink-2, #5e6571);
+    padding: 9px 2px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', monospace);
+    font-size: 9px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
     cursor: pointer;
     border-bottom: 2px solid transparent;
-    transition: all 0.15s;
+    transition: color 0.14s, border-color 0.14s;
   }
 
   .tab:hover {
-    color: #eee;
+    color: var(--ga-ink-0, #eef0f4);
   }
 
   .tab.active {
-    color: #BB86FC;
-    border-bottom-color: #BB86FC;
+    color: var(--ga-ink-0, #eef0f4);
+    border-bottom-color: var(--ga-blue, #5b8def);
   }
 
   .library-drop-zone {
@@ -905,7 +950,7 @@
   .item-name {
     padding: 4px 6px;
     font-size: 10px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -951,32 +996,103 @@
   }
 
   /* AI Generator Button */
+  /* v10 AI row: violet Generate + blue Video, side-by-side. */
   .ai-generator-row {
-    padding: 8px;
-    border-bottom: 1px solid #333;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 9px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
   }
 
   .btn-ai-generate {
-    width: 100%;
-    padding: 10px 12px;
-    background: linear-gradient(135deg, #1a1a2e, #16213e);
-    border: 1px solid #333;
-    border-radius: 6px;
-    color: #BB86FC;
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    transition: all 0.2s;
+    gap: 7px;
+    height: 38px;
+    padding: 0;
+    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
+    border: 1px solid var(--ga-violet-line, rgba(155, 135, 245, 0.36));
+    border-radius: var(--ga-r-soft, 7px);
+    color: var(--ga-violet, #9b87f5);
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.14s;
   }
 
   .btn-ai-generate:hover {
-    background: linear-gradient(135deg, #1f1f3a, #1a2745);
-    border-color: #BB86FC;
-    box-shadow: 0 0 12px rgba(187, 134, 252, 0.2);
+    background: rgba(155, 135, 245, 0.18);
+  }
+
+  .btn-ai-video {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    height: 38px;
+    padding: 0;
+    background: var(--ga-blue-soft, rgba(91, 141, 239, 0.10));
+    border: 1px solid var(--ga-blue-line, rgba(91, 141, 239, 0.38));
+    border-radius: var(--ga-r-soft, 7px);
+    color: var(--ga-blue, #5b8def);
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.14s;
+  }
+
+  .btn-ai-video:hover {
+    background: rgba(91, 141, 239, 0.18);
+  }
+
+  /* Bottom footer: side-by-side Add (violet solid) + Library (ghost). */
+  .lib-footer {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 9px;
+    padding: 12px 14px;
+    border-top: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    margin-top: auto;
+  }
+
+  .lib-add-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0;
+    background: var(--ga-violet, #9b87f5);
+    border: none;
+    border-radius: var(--ga-r-soft, 7px);
+    color: #160f2e;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .lib-add-btn:hover { filter: brightness(1.06); }
+
+  .lib-library-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0;
+    background: transparent;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 2px);
+    color: var(--ga-ink-1, #9aa0ac);
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: color 0.14s, border-color 0.14s;
+  }
+  .lib-library-btn:hover {
+    color: var(--ga-ink-0, #eef0f4);
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
 
   .btn-ai-generate svg {
@@ -993,13 +1109,13 @@
     display: flex;
     gap: 4px;
     padding: 8px;
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
   }
 
   .media-search-row {
     position: relative;
     padding: 8px;
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   }
 
@@ -1009,7 +1125,7 @@
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
-    color: #e8e8e8;
+    color: var(--text-primary, #e8e8e8);
     font-size: 12px;
     outline: none;
   }
@@ -1051,17 +1167,17 @@
   .js-filter-btn {
     flex: 1;
     padding: 6px 8px;
-    background: #111114;
+    background: var(--bg-secondary, #111114);
     border: 1px solid #333;
     border-radius: 4px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 11px;
     cursor: pointer;
     transition: all 0.15s;
   }
 
   .js-filter-btn:hover {
-    background: #161618;
+    background: var(--bg-tertiary, #161618);
     color: #fff;
   }
 
@@ -1108,7 +1224,7 @@
     bottom: 20px;
     left: 4px;
     background: rgba(0, 0, 0, 0.7);
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 8px;
     font-weight: 600;
     padding: 2px 4px;
@@ -1180,13 +1296,13 @@
   .plugin-name {
     font-size: 13px;
     font-weight: 600;
-    color: #eee;
+    color: var(--text-primary, #eee);
     margin-bottom: 2px;
   }
 
   .plugin-desc {
     font-size: 10px;
-    color: #888;
+    color: var(--text-muted, #888);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1224,7 +1340,7 @@
 
   .status-text {
     font-size: 10px;
-    color: #888;
+    color: var(--text-muted, #888);
   }
 
   .plugin-actions {

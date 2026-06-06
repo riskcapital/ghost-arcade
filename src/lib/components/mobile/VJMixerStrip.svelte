@@ -167,7 +167,7 @@
     background: #111;
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     font-size: 9px;
     cursor: pointer;
     text-align: center;
@@ -252,7 +252,7 @@
     background: #111;
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 6px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     font-size: 9px;
     cursor: pointer;
     -webkit-appearance: none;

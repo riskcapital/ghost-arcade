@@ -123,7 +123,7 @@
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 4px;
-    color: #e8e8e8;
+    color: var(--text-primary, #e8e8e8);
     font-size: 11px;
   }
 
@@ -134,7 +134,7 @@
     padding: 2px 6px;
     font-size: 12px;
     cursor: pointer;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
   }
   .sv-scope-toggle.global {
     border-color: rgba(100, 200, 255, 0.3);
@@ -146,7 +146,7 @@
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 4px;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     padding: 3px 8px;
     font-size: 10px;
     cursor: pointer;
@@ -167,7 +167,7 @@
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     padding: 3px 10px;
     font-size: 10px;
     cursor: pointer;
@@ -176,12 +176,12 @@
   }
   .sv-preset-btn:hover {
     background: rgba(255, 255, 255, 0.12);
-    color: #e8e8e8;
+    color: var(--text-primary, #e8e8e8);
   }
   .sv-preset-btn.active {
     background: rgba(100, 200, 255, 0.15);
     border-color: rgba(100, 200, 255, 0.3);
-    color: #e8e8e8;
+    color: var(--text-primary, #e8e8e8);
   }
   .sv-preset-btn.global-preset {
     border-color: rgba(200, 150, 255, 0.2);
@@ -209,7 +209,7 @@
   .sv-ctx-menu {
     position: fixed;
     z-index: 10000;
-    background: #1a1a1e;
+    background: var(--bg-tertiary, #1a1a1e);
     border: 1px solid #333;
     border-radius: 4px;
     padding: 4px 0;
@@ -222,7 +222,7 @@
     padding: 6px 14px;
     background: none;
     border: none;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     font-size: 11px;
     text-align: left;
     cursor: pointer;

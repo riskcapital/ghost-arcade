@@ -738,9 +738,23 @@
     }
   }
 
+  // True when running inside the Capacitor native shell (Ghost Arcade Mobile
+  // app). Used to hide PWA "Add to Home Screen" hints — those make no sense
+  // when the user is already inside an installed native app.
+  const isCapacitorNative = !!(window as any).Capacitor?.isNativePlatform?.();
+
+  function switchMobileMode() {
+    try { localStorage.removeItem('ga-mobile-mode'); } catch { /* private mode */ }
+    // Force a reload so main.ts re-runs the boot router and shows the picker.
+    window.location.reload();
+  }
+
   onMount(() => {
     // ── PWA detection ──
-    isPWA = !!(window.navigator as any).standalone || window.matchMedia('(display-mode: standalone)').matches;
+    // Treat the Capacitor shell as "already installed" so PWA prompts hide.
+    isPWA = isCapacitorNative
+      || !!(window.navigator as any).standalone
+      || window.matchMedia('(display-mode: standalone)').matches;
 
     // Listen for the install prompt (Chrome/Edge on Android)
     window.addEventListener('beforeinstallprompt', (e: Event) => {
@@ -2183,6 +2197,9 @@
   {#if !connected}
     <!-- Connection Screen -->
     <div class="connect-screen">
+      {#if isCapacitorNative}
+        <button class="switch-mode-link" onclick={switchMobileMode}>‹ Switch mode</button>
+      {/if}
       <img class="connect-logo" src="{import.meta.env.BASE_URL}logo.png" alt="Ghost Arcade" />
 
       {#if connecting}
@@ -3167,8 +3184,8 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background: #0d0d10;
-    color: #eee;
+    background: var(--bg-primary, #0d0d10);
+    color: var(--text-primary, #eee);
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     display: flex;
     flex-direction: column;
@@ -3186,7 +3203,20 @@
     padding: 20px;
     touch-action: manipulation;
     gap: 4px;
+    position: relative;
   }
+  .switch-mode-link {
+    position: absolute;
+    top: max(env(safe-area-inset-top, 0px), 12px);
+    left: 16px;
+    background: transparent;
+    border: none;
+    color: var(--text-muted, #888);
+    font-size: 14px;
+    padding: 8px 4px;
+    cursor: pointer;
+  }
+  .switch-mode-link:active { color: #fff; }
 
   .connect-logo {
     width: 140px;
@@ -3196,13 +3226,13 @@
   }
 
   .connect-subtitle {
-    color: #888;
+    color: var(--text-muted, #888);
     margin-bottom: 16px;
     font-size: 14px;
   }
 
   .connect-screen p {
-    color: #888;
+    color: var(--text-muted, #888);
   }
 
   .connecting-indicator {
@@ -3214,7 +3244,7 @@
   }
 
   .connecting-indicator p {
-    color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
     font-size: 14px;
     margin: 0;
   }
@@ -3247,7 +3277,7 @@
     background: #333;
     border: 1px solid #444;
     border-radius: 8px;
-    color: #eee;
+    color: var(--text-primary, #eee);
     text-align: center;
     touch-action: manipulation;
   }
@@ -3323,7 +3353,7 @@
 
   .pwa-install-text strong {
     font-size: 13px;
-    color: #eee;
+    color: var(--text-primary, #eee);
   }
 
   .pwa-install-text span {
@@ -3359,7 +3389,7 @@
     vertical-align: middle;
   }
   .pwa-install-ios strong {
-    color: #eee;
+    color: var(--text-primary, #eee);
   }
 
   .pwa-dismiss {
@@ -3395,7 +3425,7 @@
     display: flex;
     align-items: center;
     padding: 12px 16px;
-    background: #111114;
+    background: var(--bg-secondary, #111114);
     border-bottom: 1px solid #333;
     gap: 12px;
   }
@@ -3429,7 +3459,7 @@
 
   .status.connected {
     background: #BB86FC33;
-    color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
   }
 
   /* Mode Switcher */
@@ -3608,13 +3638,13 @@
   /* Layer Selector */
   .layer-selector {
     padding: 12px;
-    background: #111114;
+    background: var(--bg-secondary, #111114);
     border-top: 1px solid #333;
   }
 
   .layer-selector h3 {
     font-size: 12px;
-    color: #888;
+    color: var(--text-muted, #888);
     margin-bottom: 8px;
   }
 
@@ -3629,15 +3659,15 @@
     background: #333;
     border: none;
     border-radius: 6px;
-    color: #eee;
+    color: var(--text-primary, #eee);
     font-size: 14px;
     cursor: pointer;
   }
 
   .layer-btn.selected {
     background: #BB86FC33;
-    border: 1px solid #BB86FC;
-    color: #BB86FC;
+    border: 1px solid var(--accent-primary, #BB86FC);
+    color: var(--accent-primary, #BB86FC);
   }
 
   .layer-btn.hidden {
@@ -3656,7 +3686,7 @@
      narrow phones. */
   .quick-controls {
     padding: 8px 12px;
-    background: #202020;
+    background: var(--bg-tertiary, #202020);
     border-top: 1px solid #333;
   }
 
@@ -3685,14 +3715,14 @@
   .quick-cell.quick-opacity input[type='range'] {
     flex: 1;
     min-width: 0;
-    accent-color: #BB86FC;
+    accent-color: var(--accent-primary, #BB86FC);
   }
 
   .quick-pct {
     width: 36px;
     text-align: right;
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
     flex-shrink: 0;
   }
 
@@ -3701,7 +3731,7 @@
     min-width: 0;
     padding: 8px;
     background: #333;
-    color: #eee;
+    color: var(--text-primary, #eee);
     border: 1px solid #444;
     border-radius: 6px;
     font-size: 13px;
@@ -3718,7 +3748,7 @@
     background: #333;
     border: 1px solid #444;
     border-radius: 6px;
-    color: #eee;
+    color: var(--text-primary, #eee);
     cursor: pointer;
     transition: background 0.15s, color 0.15s;
   }
@@ -3741,7 +3771,7 @@
     justify-content: center;
     padding: 8px;
     gap: 4px;
-    background: #111114;
+    background: var(--bg-secondary, #111114);
     border-bottom: 1px solid #333;
   }
 
@@ -3752,7 +3782,7 @@
     background: #333;
     border: none;
     border-radius: 6px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 13px;
     cursor: pointer;
     transition: all 0.15s;
@@ -3760,8 +3790,8 @@
 
   .view-mode-toggle button.active {
     background: #BB86FC33;
-    color: #BB86FC;
-    border: 1px solid #BB86FC;
+    color: var(--accent-primary, #BB86FC);
+    border: 1px solid var(--accent-primary, #BB86FC);
   }
 
   /* Mesh Grid Preset Controls */
@@ -3771,13 +3801,13 @@
     align-items: center;
     gap: 10px;
     padding: 8px 16px;
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
     border-bottom: 1px solid #333;
   }
 
   .mesh-preset-label {
     font-size: 13px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-weight: 600;
   }
 
@@ -3797,7 +3827,7 @@
   }
 
   .mesh-preset-select:focus {
-    border-color: #BB86FC;
+    border-color: var(--accent-primary, #BB86FC);
     outline: none;
   }
 
@@ -3818,7 +3848,7 @@
 
   .gesture-zoom-label {
     font-size: 12px;
-    color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
     font-family: monospace;
     font-weight: 600;
   }
@@ -3877,13 +3907,13 @@
     padding: 4px;
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s;
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     overflow: hidden;
   }
 
   .shader-thumb-item:active {
     background: rgba(187, 134, 252, 0.2);
-    border-color: #BB86FC;
+    border-color: var(--accent-primary, #BB86FC);
   }
 
   .shader-thumb-img {
@@ -3907,7 +3937,7 @@
 
   .shader-thumb-name {
     font-size: 10px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     text-align: center;
     line-height: 1.2;
     max-height: 2.4em;
@@ -3966,7 +3996,7 @@
     bottom: 0;
     width: 80%;
     max-width: 320px;
-    background: #111114;
+    background: var(--bg-secondary, #111114);
     z-index: 101;
     display: flex;
     flex-direction: column;
@@ -3984,7 +4014,7 @@
   .media-library-header h3 {
     margin: 0;
     font-size: 16px;
-    color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
   }
 
   .media-library-header button {
@@ -4015,7 +4045,7 @@
 
   .media-section h4 {
     font-size: 12px;
-    color: #888;
+    color: var(--text-muted, #888);
     margin: 0 0 12px 0;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -4036,7 +4066,7 @@
     background: #333;
     border: none;
     border-radius: 8px;
-    color: #eee;
+    color: var(--text-primary, #eee);
     cursor: pointer;
     transition: all 0.15s;
   }
@@ -4091,7 +4121,7 @@
     background: #333;
     border: none;
     border-radius: 8px;
-    color: #eee;
+    color: var(--text-primary, #eee);
     cursor: pointer;
     transition: all 0.15s;
     text-align: left;
@@ -4150,7 +4180,7 @@
   }
 
   .layer-target {
-    color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
     font-size: 14px;
     margin: 0;
     padding: 10px;
@@ -4165,7 +4195,7 @@
     gap: 4px;
     padding: 8px 16px;
     border-bottom: 1px solid #333;
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
   }
 
   .media-tabs button {
@@ -4174,7 +4204,7 @@
     background: #333;
     border: none;
     border-radius: 6px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 11px;
     cursor: pointer;
     transition: all 0.15s;
@@ -4182,8 +4212,8 @@
 
   .media-tabs button.active {
     background: #BB86FC33;
-    color: #BB86FC;
-    border: 1px solid #BB86FC;
+    color: var(--accent-primary, #BB86FC);
+    border: 1px solid var(--accent-primary, #BB86FC);
   }
 
   /* VJ Controls */
@@ -4199,7 +4229,7 @@
     background: #333;
     border: 2px solid #555;
     border-radius: 8px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 14px;
     font-weight: 600;
     cursor: pointer;
@@ -4233,7 +4263,7 @@
     background: #333;
     border: 2px solid #555;
     border-radius: 8px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
@@ -4242,13 +4272,13 @@
 
   .vj-mixer-btn.active {
     background: #BB86FC22;
-    border-color: #BB86FC;
-    color: #BB86FC;
+    border-color: var(--accent-primary, #BB86FC);
+    color: var(--accent-primary, #BB86FC);
   }
 
   /* VJ Mixer Panel */
   .vj-mixer-panel {
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
     border: 1px solid #333;
     border-radius: 8px;
     margin-bottom: 12px;
@@ -4257,11 +4287,11 @@
 
   .mixer-header {
     padding: 10px 12px;
-    background: #111114;
+    background: var(--bg-secondary, #111114);
     border-bottom: 1px solid #333;
     font-size: 12px;
     font-weight: 600;
-    color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
@@ -4297,18 +4327,18 @@
     justify-content: center;
     font-size: 11px;
     font-weight: 600;
-    color: #888;
+    color: var(--text-muted, #888);
   }
 
   .mixer-layer.active .mixer-layer-num {
     background: #BB86FC33;
-    color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
   }
 
   .mixer-layer-clip {
     flex: 1;
     font-size: 12px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -4393,7 +4423,7 @@
     width: 40px;
     text-align: right;
     font-size: 11px;
-    color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
     font-weight: 600;
     flex-shrink: 0;
   }
@@ -4410,14 +4440,14 @@
     background: #333;
     border: 1px solid #444;
     border-radius: 6px;
-    color: #eee;
+    color: var(--text-primary, #eee);
     font-size: 12px;
     cursor: pointer;
   }
 
   .mixer-select:focus {
     outline: none;
-    border-color: #BB86FC;
+    border-color: var(--accent-primary, #BB86FC);
   }
 
   /* Block Selector */
@@ -4433,15 +4463,15 @@
     background: #333;
     border: none;
     border-radius: 6px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 12px;
     cursor: pointer;
   }
 
   .block-selector button.active {
     background: #BB86FC33;
-    color: #BB86FC;
-    border: 1px solid #BB86FC;
+    color: var(--accent-primary, #BB86FC);
+    border: 1px solid var(--accent-primary, #BB86FC);
   }
 
   /* VJ Grid */
@@ -4511,7 +4541,7 @@
 
   .vj-clip.active {
     background: #BB86FC33;
-    border-color: #BB86FC;
+    border-color: var(--accent-primary, #BB86FC);
     box-shadow: 0 0 8px #BB86FC66;
   }
 
@@ -4530,13 +4560,13 @@
 
   .clip-type {
     font-size: 12px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-weight: bold;
   }
 
   .clip-name {
     font-size: 8px;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     position: absolute;
     bottom: 2px;
     left: 2px;
@@ -4567,14 +4597,14 @@
     background: #444;
     border: none;
     border-radius: 4px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 10px;
     cursor: pointer;
   }
 
   .col-trigger:active {
     background: #BB86FC33;
-    color: #BB86FC;
+    color: var(--accent-primary, #BB86FC);
   }
 
   /* Presets Grid */
@@ -4622,7 +4652,7 @@
 
   .preset-name {
     font-size: 12px;
-    color: #eee;
+    color: var(--text-primary, #eee);
     text-align: center;
     white-space: nowrap;
     overflow: hidden;
@@ -4636,7 +4666,7 @@
     background: #333;
     border: 1px solid #555;
     border-radius: 4px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 10px;
     font-weight: 600;
     cursor: pointer;
@@ -4685,7 +4715,7 @@
     bottom: 0;
     width: 90%;
     max-width: 360px;
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
     z-index: 201;
     display: flex;
     flex-direction: column;
@@ -4698,7 +4728,7 @@
     align-items: center;
     padding: 16px;
     border-bottom: 1px solid #333;
-    background: #111114;
+    background: var(--bg-secondary, #111114);
   }
 
   .effects-header h3 {
@@ -4733,7 +4763,7 @@
   }
 
   .effect-item {
-    background: #111114;
+    background: var(--bg-secondary, #111114);
     border: 1px solid #333;
     border-radius: 8px;
     overflow: hidden;
@@ -4774,7 +4804,7 @@
   .effect-name {
     flex: 1;
     font-size: 14px;
-    color: #eee;
+    color: var(--text-primary, #eee);
     text-transform: capitalize;
   }
 
@@ -4817,7 +4847,7 @@
   .param-name {
     width: 70px;
     font-size: 12px;
-    color: #888;
+    color: var(--text-muted, #888);
     flex-shrink: 0;
   }
 
@@ -4894,7 +4924,7 @@
 
   .add-effect-section h4 {
     font-size: 12px;
-    color: #888;
+    color: var(--text-muted, #888);
     margin: 0 0 12px 0;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -4933,7 +4963,7 @@
     background: #333;
     border: 1px solid #444;
     border-radius: 6px;
-    color: #eee;
+    color: var(--text-primary, #eee);
     font-size: 12px;
     cursor: pointer;
     transition: all 0.15s;
@@ -4985,7 +5015,7 @@
     background: rgba(22, 22, 24, 0.75);
     backdrop-filter: blur(8px);
     border: 1px solid rgba(255,255,255,0.1);
-    color: #eee;
+    color: var(--text-primary, #eee);
     padding: 8px 10px;
     border-radius: 8px;
     font-size: 13px;
@@ -5003,7 +5033,7 @@
     background: rgba(255,255,255,0.04);
     border: 1px solid rgba(255,255,255,0.1);
     border-radius: 20px;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     font-size: 12px;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
@@ -5137,7 +5167,7 @@
     cursor: pointer;
   }
   .paint-sheet-title {
-    color: #eee;
+    color: var(--text-primary, #eee);
     font-size: 16px;
     font-weight: 600;
     margin-bottom: 12px;
@@ -5168,7 +5198,7 @@
     padding: 5px 8px;
     border: 1px solid rgba(255,255,255,0.1);
     background: rgba(255,255,255,0.04);
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     border-radius: 12px;
     font-size: 10px;
     cursor: pointer;
@@ -5177,7 +5207,7 @@
   }
   .brush-pill.active {
     background: rgba(187,134,252,0.15);
-    border-color: #BB86FC;
+    border-color: var(--accent-primary, #BB86FC);
     color: #fff;
   }
   .color-swatches {
@@ -5201,7 +5231,7 @@
     align-items: center;
     gap: 8px;
   }
-  .slider-label { width: 48px; font-size: 11px; color: #888; flex-shrink: 0; }
+  .slider-label { width: 48px; font-size: 11px; color: var(--text-muted, #888); flex-shrink: 0; }
   .paint-slider-row input[type='range'] { flex: 1; }
   .slider-val { width: 36px; font-size: 10px; color: #666; text-align: right; font-family: monospace; }
 </style>

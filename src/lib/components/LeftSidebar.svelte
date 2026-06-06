@@ -55,37 +55,42 @@
        width via their existing CSS. We just provide the tab strip
        above. */
     flex-shrink: 0;
+    background: var(--ga-panel, #0b0d11);
+    border-right: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    font-family: var(--ga-font-ui, system-ui, sans-serif);
   }
   .left-tabs {
     display: flex;
-    gap: 2px;
-    padding: 4px 6px 0 6px;
-    background: var(--bg-panel, #0f0f15);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    gap: 0;
+    padding: 0 14px;
+    background: var(--ga-panel, #0b0d11);
+    border-bottom: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     flex-shrink: 0;
   }
   .left-tab {
-    flex: 1;
-    padding: 6px 10px;
+    flex: 0 0 auto;
+    padding: 13px 14px;
+    margin-right: 8px;
     background: transparent;
     border: none;
-    border-radius: 4px 4px 0 0;
-    color: #888;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    color: var(--ga-ink-2, #5e6571);
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.10em;
     cursor: pointer;
-    transition: background 80ms ease, color 80ms ease;
-    font-family: inherit;
+    transition: color 80ms ease, border-color 80ms ease;
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
   }
   .left-tab:hover {
-    background: rgba(255, 255, 255, 0.04);
-    color: #ccc;
+    color: var(--ga-ink-0, #eef0f4);
   }
   .left-tab.active {
-    background: var(--accent-faint, rgba(187, 134, 252, 0.15));
-    color: var(--accent, #BB86FC);
+    background: transparent;
+    color: var(--ga-ink-0, #eef0f4);
+    border-bottom-color: var(--ga-violet, #9b87f5);
   }
   .left-panel-host {
     flex: 1;

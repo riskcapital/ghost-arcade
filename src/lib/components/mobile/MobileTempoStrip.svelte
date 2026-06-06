@@ -268,7 +268,7 @@
     background: #111;
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     font-size: 10px;
     font-weight: 700;
     cursor: pointer;

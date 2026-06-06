@@ -324,7 +324,7 @@
 
 <style>
   .ai-generator {
-    background: #0d0d10;
+    background: var(--bg-primary, #0d0d10);
     border-radius: 8px;
     padding: 16px;
     display: flex;
@@ -352,7 +352,7 @@
   .btn-close {
     background: none;
     border: none;
-    color: #888;
+    color: var(--text-muted, #888);
     cursor: pointer;
     padding: 4px;
     border-radius: 4px;
@@ -373,7 +373,7 @@
     align-items: center;
     gap: 8px;
     padding: 6px 10px;
-    background: #111114;
+    background: var(--bg-secondary, #111114);
     border-radius: 6px;
     border: 1px solid #222;
     font-size: 11px;
@@ -404,7 +404,7 @@
     margin-left: auto;
     background: none;
     border: 1px solid #444;
-    color: #888;
+    color: var(--text-muted, #888);
     padding: 3px 8px;
     font-size: 10px;
     border-radius: 4px;
@@ -419,7 +419,7 @@
   .generation-type label,
   .description-section label {
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
     text-transform: uppercase;
     letter-spacing: 0.5px;
     margin-bottom: 6px;
@@ -434,9 +434,9 @@
   .type-tab {
     flex: 1;
     padding: 10px 8px;
-    background: #111114;
+    background: var(--bg-secondary, #111114);
     border: 1px solid #333;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 11px;
     cursor: pointer;
     border-radius: 6px;
@@ -448,7 +448,7 @@
   }
 
   .type-tab:hover {
-    background: #161618;
+    background: var(--bg-tertiary, #161618);
     border-color: #444;
     color: #fff;
   }
@@ -469,7 +469,7 @@
 
   textarea {
     width: 100%;
-    background: #111114;
+    background: var(--bg-secondary, #111114);
     border: 1px solid #333;
     border-radius: 6px;
     padding: 10px 12px;
@@ -511,17 +511,17 @@
 
   .example-chip {
     padding: 4px 8px;
-    background: #111114;
+    background: var(--bg-secondary, #111114);
     border: 1px solid #333;
     border-radius: 12px;
-    color: #888;
+    color: var(--text-muted, #888);
     font-size: 10px;
     cursor: pointer;
     transition: all 0.15s;
   }
 
   .example-chip:hover {
-    background: #161618;
+    background: var(--bg-tertiary, #161618);
     border-color: #BB86FC;
     color: #BB86FC;
   }
@@ -537,7 +537,7 @@
   }
 
   .advanced-options summary:hover {
-    color: #888;
+    color: var(--text-muted, #888);
   }
 
   .advanced-content {
@@ -546,7 +546,7 @@
 
   .advanced-content label {
     font-size: 11px;
-    color: #888;
+    color: var(--text-muted, #888);
     text-transform: uppercase;
     letter-spacing: 0.5px;
     margin-bottom: 6px;

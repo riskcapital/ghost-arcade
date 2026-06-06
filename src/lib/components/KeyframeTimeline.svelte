@@ -350,7 +350,7 @@
     gap: 8px;
     background: linear-gradient(135deg, #0d0d10, #111114);
     border: 1px solid #444;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     font-size: 12px;
     font-weight: 600;
     padding: 8px 16px;
@@ -371,11 +371,11 @@
 
   .kf-tray {
     position: fixed;
-    bottom: 0;
+    bottom: var(--ga-bottom-rail-offset, 74px);
     left: 0;
     right: 0;
     height: 300px;
-    z-index: 1001;
+    z-index: 90;
     background: rgba(10, 10, 14, 0.98);
     border-top: 1px solid rgba(255, 107, 107, 0.15);
     display: flex;
@@ -471,7 +471,7 @@
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 3px;
-    color: #e8e8e8;
+    color: var(--text-primary, #e8e8e8);
     font-size: 11px;
     padding: 3px 6px;
     width: 72px;
@@ -525,7 +525,7 @@
     justify-content: center;
   }
   .kf-modal {
-    background: #14141a;
+    background: var(--bg-tertiary, #14141a);
     border: 1px solid rgba(255, 107, 107, 0.4);
     border-radius: 8px;
     padding: 20px 24px;
@@ -542,7 +542,7 @@
   }
   .kf-modal p {
     margin: 0 0 16px 0;
-    color: #aaa;
+    color: var(--text-secondary, #aaa);
     font-size: 12px;
     line-height: 1.5;
   }
@@ -554,7 +554,7 @@
   .kf-modal-cancel {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.15);
-    color: #ccc;
+    color: var(--text-primary, #ccc);
     padding: 6px 14px;
     border-radius: 4px;
     font-size: 11px;

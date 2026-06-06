@@ -1205,10 +1205,10 @@
   .ft-btn {
     width: 44px;
     height: 44px;
-    background: #14141a;
+    background: var(--bg-tertiary, #14141a);
     border: 1px solid #2a2a30;
     border-radius: 6px;
-    color: #ddd;
+    color: var(--text-primary, #ddd);
     font-size: 14px;
     cursor: pointer;
     display: inline-flex;
