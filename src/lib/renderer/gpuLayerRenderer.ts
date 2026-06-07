@@ -44,8 +44,19 @@ export interface AudioBandsSnapshot {
 export class GpuLayerRenderer {
   readonly device: any;
   readonly presentFormat: any;
-  readonly canvas: HTMLCanvasElement;
+  /** Output surface — `OffscreenCanvas` so the per-frame handoff to
+   *  the host's WebGL2 compositor uses `transferToImageBitmap()` →
+   *  `texImage2D(ImageBitmap)` (Path D in
+   *  [[zero-copy-texture-paths]]). An HTMLCanvasElement with a WebGPU
+   *  context would force Chromium into a Skia readback path
+   *  (~14 ms / frame at 4K). Same fix as `arcade/engine/ArcadeRenderer`. */
+  readonly canvas: OffscreenCanvas;
   private context: any;
+  /** Latest output frame as a GPU-resident ImageBitmap. Created in
+   *  `renderFrame()` via `transferToImageBitmap()`. Consumed by
+   *  Canvas.svelte each frame; consumer takes ownership and must
+   *  close it when done. */
+  private latestBitmap: ImageBitmap | null = null;
   private impl: GpuShaderImpl | null = null;
   private currentShaderId: string | null = null;
   private lastFrameTime = performance.now();
@@ -79,9 +90,7 @@ export class GpuLayerRenderer {
   constructor(device: any, presentFormat: any, initialW: number = 1920, initialH: number = 1080) {
     this.device = device;
     this.presentFormat = presentFormat;
-    this.canvas = document.createElement('canvas');
-    this.canvas.width = initialW;
-    this.canvas.height = initialH;
+    this.canvas = new OffscreenCanvas(initialW, initialH);
     const ctx = this.canvas.getContext('webgpu') as any;
     if (!ctx) throw new Error('webgpu context unavailable on gpu-layer canvas');
     this.context = ctx;
@@ -147,6 +156,32 @@ export class GpuLayerRenderer {
       return;
     }
     this.device.queue.submit([encoder.finish()]);
+
+    // Zero-copy bitmap handoff. `transferToImageBitmap()` reparents
+    // the OffscreenCanvas's SharedImage backing (IOSurface on macOS)
+    // to the new ImageBitmap — no copy. The compositor's
+    // `texImage2D(ImageBitmap)` on the next consume call routes via
+    // SharedImageInterface, GPU-resident throughout.
+    try {
+      if (this.latestBitmap) {
+        // Caller didn't pick up the last bitmap — close it before
+        // replacing so its SharedImage backing isn't leaked.
+        try { this.latestBitmap.close(); } catch { /* */ }
+      }
+      this.latestBitmap = this.canvas.transferToImageBitmap();
+    } catch {
+      this.latestBitmap = null;
+    }
+  }
+
+  /** Hand the most recent ImageBitmap to the host compositor and
+   *  clear our reference. The caller takes ownership and is
+   *  responsible for closing the previous bitmap when a fresh one
+   *  arrives. Returns null when no fresh frame is available. */
+  consumeOutputBitmap(): ImageBitmap | null {
+    const b = this.latestBitmap;
+    this.latestBitmap = null;
+    return b;
   }
 
   /** Resolve the source param into an actual element + hand it to
@@ -446,6 +481,10 @@ export class GpuLayerRenderer {
     if (this.cachedVideoEl) {
       try { this.cachedVideoEl.pause(); this.cachedVideoEl.removeAttribute('src'); this.cachedVideoEl.load(); } catch { /* */ }
       this.cachedVideoEl = null;
+    }
+    if (this.latestBitmap) {
+      try { this.latestBitmap.close(); } catch { /* */ }
+      this.latestBitmap = null;
     }
   }
 }
