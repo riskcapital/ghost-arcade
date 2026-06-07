@@ -567,7 +567,13 @@
   // that canvas to the Three.js engine. Engine treats the result
   // like any other texture-backed layer (warp/blend/effects work).
   const gpuLayerRenderers = new Map<string, GpuLayerRenderer>();
-  const gpuLayerTextures = new Map<string, THREE.CanvasTexture>();
+  // Bare THREE.Texture (not CanvasTexture) — per-frame ImageBitmap is
+  // assigned to `.image` via gpuLayerRenderer.consumeOutputBitmap().
+  // CanvasTexture wrapping a WebGPU-context canvas forces Chromium
+  // into a Skia readback path (~14 ms @ 4K); the ImageBitmap path is
+  // GPU-resident SharedImage handoff. See memory
+  // `zero-copy-texture-paths`.
+  const gpuLayerTextures = new Map<string, THREE.Texture>();
   // Latch — try to init WebGPU once; subsequent gpu layers just
   // pull the existing device.
   let _gpuLayerWebGpuTried = false;
@@ -3970,10 +3976,14 @@
         continue;
       }
 
-      // Lazy-create the Three.js wrapper texture.
+      // Zero-copy bitmap handoff (Path D — see memory
+      // `zero-copy-texture-paths`). The GPU layer renderer's
+      // OffscreenCanvas → ImageBitmap → texImage2D(bitmap) path is
+      // GPU-resident SharedImage transfer throughout. Mirrors the
+      // arcade renderer's pattern.
       let tex = gpuLayerTextures.get(layer.id);
       if (!tex) {
-        tex = new THREE.CanvasTexture(renderer.canvas);
+        tex = new THREE.Texture();
         tex.minFilter = THREE.LinearFilter;
         tex.magFilter = THREE.LinearFilter;
         tex.generateMipmaps = false;
@@ -3983,7 +3993,15 @@
         tex.flipY = true;
         gpuLayerTextures.set(layer.id, tex);
       }
-      tex.needsUpdate = true;
+      const bitmap = renderer.consumeOutputBitmap();
+      if (bitmap) {
+        const prev = tex.image as ImageBitmap | undefined;
+        if (prev && typeof (prev as any).close === 'function') {
+          try { (prev as any).close(); } catch { /* */ }
+        }
+        tex.image = bitmap;
+        tex.needsUpdate = true;
+      }
       (layer as any)._gpuLayerTexture = tex;
     }
 
@@ -3993,6 +4011,10 @@
         try { r.dispose(); } catch { /* */ }
         gpuLayerRenderers.delete(id);
         const t = gpuLayerTextures.get(id);
+        const img = t?.image as ImageBitmap | undefined;
+        if (img && typeof (img as any).close === 'function') {
+          try { (img as any).close(); } catch { /* */ }
+        }
         try { t?.dispose(); } catch { /* */ }
         gpuLayerTextures.delete(id);
       }
