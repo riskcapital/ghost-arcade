@@ -1,5 +1,4 @@
 import { mount } from 'svelte';
-import { Capacitor } from '@capacitor/core';
 import { initErrorReporter } from './lib/utils/errorReporter';
 import { silenceThreeSerializationNoise } from './lib/utils/silenceThreePatches';
 // Theme system: importing the store self-registers + applies the saved
@@ -27,13 +26,6 @@ silenceThreeSerializationNoise();
 // Install global error handlers
 initErrorReporter();
 
-// Capacitor native shell (iOS / Android) — Ghost Arcade Mobile app.
-// When the bundle runs inside the Capacitor WebView, default-mount the
-// MobileApp regardless of URL params. The native shell never opens with
-// ?mode= query strings, so this short-circuit is safe and keeps the desktop
-// router below untouched.
-const isCapacitorNative = Capacitor.isNativePlatform();
-
 // Check URL mode parameter
 const urlParams = new URLSearchParams(window.location.search);
 const mode = urlParams.get('mode');
@@ -56,10 +48,10 @@ const isWebGPUDisplay = mode === 'webgpu-display';
 // BroadcastChannel state-sync and CSS-clips to its slice's region. See
 // SliceOutputApp.svelte for the full architecture.
 const isSliceDisplay = mode === 'slice-display';
-// Dev/QA escape hatch: `?mode=mobile-standalone` mounts the standalone
-// mobile shell in any desktop browser so we can iterate the mobile UI
-// without spinning up a sim or device. No Capacitor required.
-const isMobileStandalonePreview = mode === 'mobile-standalone';
+// Dev/QA escape hatch: `?mode=mobile-remote` mounts the desktop mobile
+// companion directly in a browser. The native iOS/Android standalone app
+// lives behind src/native-mobile-main.ts + vite.config.native-mobile.ts so
+// Capacitor-only code cannot leak into desktop installers.
 const isMobileRemotePreview = mode === 'mobile-remote';
 
 // Set global flags so Canvas.svelte knows not to create Spout sender/receiver
@@ -80,66 +72,10 @@ function hideSplash() {
   }
 }
 
-type MobileMode = 'standalone' | 'remote';
-const MOBILE_MODE_KEY = 'ga-mobile-mode';
-
-async function mountMobile(mode: MobileMode | null) {
-  const target = document.getElementById('app')!;
-  // Wipe any previously-mounted root before mounting the next mode.
-  // Svelte 5's `mount` returns an instance with unmount(), but we cleanly
-  // tear down by clearing the target — the old component's effects run their
-  // cleanup hooks via the GC path. Cheap enough for a mode swap.
-  target.innerHTML = '';
-
-  if (mode === 'standalone') {
-    const { default: StandaloneApp } = await import('./lib/components/StandaloneApp.svelte');
-    mount(StandaloneApp, {
-      target,
-      props: { onSwitchMode: () => switchMobileMode() },
-    });
-    return;
-  }
-  if (mode === 'remote') {
-    const { default: MobileApp } = await import('./lib/components/MobileApp.svelte');
-    mount(MobileApp, { target });
-    return;
-  }
-  // First-launch / cleared selection: show the picker.
-  const { default: MobileModeSelect } = await import('./lib/components/MobileModeSelect.svelte');
-  mount(MobileModeSelect, {
-    target,
-    props: {
-      onSelect: (picked: MobileMode) => {
-        try { localStorage.setItem(MOBILE_MODE_KEY, picked); } catch { /* private mode */ }
-        mountMobile(picked);
-      },
-    },
-  });
-}
-
-function switchMobileMode() {
-  try { localStorage.removeItem(MOBILE_MODE_KEY); } catch { /* private mode */ }
-  mountMobile(null);
-}
-
 async function init() {
-  if (isCapacitorNative) {
-    let stored: MobileMode | null = null;
-    try {
-      const raw = localStorage.getItem(MOBILE_MODE_KEY);
-      if (raw === 'standalone' || raw === 'remote') stored = raw;
-    } catch { /* private mode — show picker every launch */ }
-    await mountMobile(stored);
-    hideSplash();
-    return;
-  }
-  if (isMobileStandalonePreview) {
-    await mountMobile('standalone');
-    hideSplash();
-    return;
-  }
   if (isMobileRemotePreview) {
-    await mountMobile('remote');
+    const { default: MobileApp } = await import('./lib/components/MobileApp.svelte');
+    mount(MobileApp, { target: document.getElementById('app')! });
     hideSplash();
     return;
   }

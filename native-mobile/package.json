@@ -1,0 +1,26 @@
+{
+  "name": "ghost-arcade-native-mobile",
+  "version": "1.8.0",
+  "private": true,
+  "description": "Ghost Arcade native iOS/Android shell using the shared mobile code from the desktop workspace.",
+  "type": "module",
+  "scripts": {
+    "dev": "../node_modules/.bin/vite --config ../vite.config.native-mobile.ts",
+    "build": "../node_modules/.bin/vite build --config ../vite.config.native-mobile.ts",
+    "check": "../node_modules/.bin/svelte-check --tsconfig ../tsconfig.native-mobile.json",
+    "cap:sync": "cap sync",
+    "cap:copy": "cap copy",
+    "sync": "npm run build && npm run cap:sync",
+    "copy": "npm run build && npm run cap:copy",
+    "open:ios": "cap open ios",
+    "open:android": "cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.4.0",
+    "@capacitor/core": "^8.4.0",
+    "@capacitor/ios": "^8.4.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.4.0"
+  }
+}

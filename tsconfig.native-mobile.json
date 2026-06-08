@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/native-mobile-main.ts",
+    "src/lib/mobile/**/*.ts",
+    "src/lib/components/MobileApp.svelte",
+    "src/lib/components/MobileModeSelect.svelte",
+    "src/lib/components/StandaloneApp.svelte",
+    "src/lib/components/StandaloneProjectionMap.svelte",
+    "src/lib/components/StandaloneShaderPicker.svelte",
+    "src/lib/components/mobile/**/*.svelte",
+    "src/lib/effects/effectParamDefs.ts",
+    "src/lib/isf/**/*.ts",
+    "src/lib/theming/**/*.ts",
+    "src/lib/theming/**/*.css",
+    "src/lib/utils/errorReporter.ts",
+    "src/lib/utils/silenceThreePatches.ts"
+  ]
+}

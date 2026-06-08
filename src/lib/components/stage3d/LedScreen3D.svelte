@@ -112,6 +112,11 @@
       ? node.brightness * 0.6
       : node.brightness;
 
+  function handleMeshClick(e: Event) {
+    e.stopPropagation();
+    onSelect();
+  }
+
   onDestroy(() => {
     // Dispose the per-mesh clone but don't touch the master texture —
     // it's owned by the editor's RenderEngine and survives across
@@ -132,7 +137,7 @@
   {#if curvedGeometry}
     <T.Mesh
       geometry={curvedGeometry}
-      onclick={(e) => { e.stopPropagation(); onSelect(); }}
+      onclick={handleMeshClick}
     >
       <T.MeshStandardMaterial
         map={texture}
@@ -146,7 +151,7 @@
       />
     </T.Mesh>
   {:else}
-    <T.Mesh onclick={(e) => { e.stopPropagation(); onSelect(); }}>
+    <T.Mesh onclick={handleMeshClick}>
       <T.PlaneGeometry args={[node.width, node.height]} />
       <T.MeshStandardMaterial
         map={texture}

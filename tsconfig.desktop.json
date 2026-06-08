@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "src/native-mobile-main.ts",
+    "src/lib/mobile/**",
+    "src/lib/components/MobileModeSelect.svelte",
+    "src/lib/components/StandaloneApp.svelte",
+    "src/lib/components/StandaloneProjectionMap.svelte",
+    "src/lib/components/StandaloneShaderPicker.svelte",
+    "native-mobile/**",
+    "native-mobile.html",
+    "vite.config.native-mobile.ts"
+  ]
+}

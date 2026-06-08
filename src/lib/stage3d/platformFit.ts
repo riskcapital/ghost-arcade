@@ -6,7 +6,7 @@
 // Recomputed reactively from `Stage3DScene.nodes` so every Random,
 // every Add Screen, every node move updates the deck under the rig.
 
-import type { Stage3DScene, StagePlatform } from './types';
+import type { Stage3DScene, StageLedScreenNode, StagePlatform } from './types';
 
 const DEFAULT_PLATFORM: StagePlatform = {
   enabled: true,
@@ -33,7 +33,7 @@ export function fitPlatform(scene: Stage3DScene): StagePlatform | null {
   const baseStyle = scene.platform ?? DEFAULT_PLATFORM;
   if (baseStyle.enabled === false) return null;
 
-  const led = scene.nodes.filter(n => n.type === 'led-screen' && n.visible);
+  const led = scene.nodes.filter((n): n is StageLedScreenNode => n.type === 'led-screen' && n.visible);
   if (led.length === 0) {
     // No screens yet — keep the author-supplied platform as-is so the
     // empty scene doesn't lose its deck. Users get a sensible default

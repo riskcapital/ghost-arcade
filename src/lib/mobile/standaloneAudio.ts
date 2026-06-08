@@ -94,7 +94,7 @@ export class StandaloneAudio {
   private analyser: AnalyserNode | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
   private stream: MediaStream | null = null;
-  private freq: Uint8Array = new Uint8Array(0);
+  private freq: Uint8Array<ArrayBuffer> = new Uint8Array(new ArrayBuffer(0));
 
   // Beat detection: envelope follower on the bass band.
   // When the bass exceeds (running average * threshold), pop a beat that
@@ -137,7 +137,7 @@ export class StandaloneAudio {
     this.analyser.smoothingTimeConstant = 0.7;
     this.source = this.ctx.createMediaStreamSource(this.stream);
     this.source.connect(this.analyser);
-    this.freq = new Uint8Array(this.analyser.frequencyBinCount);
+    this.freq = new Uint8Array(new ArrayBuffer(this.analyser.frequencyBinCount));
     this.ready = true;
   }
 

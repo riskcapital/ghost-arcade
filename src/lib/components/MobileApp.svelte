@@ -745,7 +745,8 @@
 
   function switchMobileMode() {
     try { localStorage.removeItem('ga-mobile-mode'); } catch { /* private mode */ }
-    // Force a reload so main.ts re-runs the boot router and shows the picker.
+    // Force a reload so the native mobile entry re-runs its boot router
+    // and shows the picker.
     window.location.reload();
   }
 
