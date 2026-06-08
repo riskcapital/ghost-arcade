@@ -150,7 +150,7 @@ jobs:
       - name: Verify vendored Syphon framework
         run: |
           test -d electron/native/vendor/Syphon.framework
-          lipo -verify_arch x86_64 arm64 electron/native/vendor/Syphon.framework/Syphon
+          lipo electron/native/vendor/Syphon.framework/Syphon -verify_arch x86_64 arm64
           lipo -info electron/native/vendor/Syphon.framework/Syphon
 
       - name: Install native addon dependencies
