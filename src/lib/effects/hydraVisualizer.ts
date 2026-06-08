@@ -16,7 +16,7 @@
 
 import * as THREE from 'three';
 import HydraSynth from 'hydra-synth';
-import type { AudioAnalysis } from '../audio/analyzer';
+import type { VisualAudioState } from '../audio/visualAudio';
 
 export interface HydraParams {
   sketchCode: string;        // the active sketch source
@@ -151,9 +151,9 @@ export class HydraVisualizer {
    * audio is running). Hydra's render loop is already ticking via its own
    * RAF; we only need to keep `a.fft` fresh and blit each frame.
    */
-  step(_dt: number, audio: AudioAnalysis | null): void {
+  step(_dt: number, audio: VisualAudioState | null): void {
     const k = this.params.sensitivity;
-    if (audio?.bands) {
+    if (audio?.isActive && audio?.bands) {
       const b = audio.bands;
       // 4 bins map to: sub+bass / lowMid+mid / highMid+treble / air
       this.audioStub.fft[0] = Math.min(1, (b.sub + b.bass) * 0.5 * k);
@@ -161,7 +161,7 @@ export class HydraVisualizer {
       this.audioStub.fft[2] = Math.min(1, (b.highMid + b.treble) * 0.5 * k);
       this.audioStub.fft[3] = Math.min(1, b.air * k);
       this.audioStub.bins = this.audioStub.fft.slice();
-      this.audioStub.vol = (audio.amplitude ?? 0) * k;
+      this.audioStub.vol = (audio.level ?? 0) * k;
     } else {
       for (let i = 0; i < this.audioStub.fft.length; i++) this.audioStub.fft[i] = 0;
       this.audioStub.vol = 0;

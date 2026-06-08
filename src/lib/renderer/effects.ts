@@ -3,6 +3,7 @@
 
 import * as THREE from 'three';
 import type { Effect, EffectParams, EffectType } from '../types';
+import type { VisualAudioState } from '../audio/visualAudio';
 import {
   getCustomEffect,
   registerBuiltinTypes,
@@ -2280,19 +2281,26 @@ export function updateEffectUniforms(
   width: number,
   height: number,
   time: number,
-  audioRms: number = 0
+  audio?: VisualAudioState
 ): void {
   const u = material.uniforms;
   const p = effect.params;
+  const audioLevel = audio?.level ?? 0;
+  const audioEnergy = audio?.energy ?? 0;
+  const audioBass = Math.max(audio?.bass ?? 0, (audio?.bassFast ?? 0) * 0.95, (audio?.kick ?? 0) * 0.8);
+  const audioHigh = Math.max(audio?.high ?? 0, audio?.treble ?? 0, (audio?.air ?? 0) * 0.9);
+  const audioBeatPulse = Math.max(audio?.beat ?? 0, audio?.kick ?? 0, (audio?.snare ?? 0) * 0.75);
+  const audioDrive = Math.max(audioLevel, audioEnergy * 0.9, audioBeatPulse * 0.7);
 
   // Update common uniforms
   if (u.uResolution) u.uResolution.value.set(width, height);
   if (u.uTime) u.uTime.value = time;
-  // Global audio rms — set on any shader that declares uAudio. Saves us
-  // from having to wire audio per-effect; audio-reactive effects just
-  // pick up the value automatically. Clamped 0..1.5 to allow for slight
-  // overshoot on loud peaks.
-  if (u.uAudio) u.uAudio.value = Math.max(0, Math.min(1.5, audioRms));
+  // Shared smoothed audio drive. Most fragment FX want a gently-held
+  // loudness/energy feel with a little beat lift rather than raw RMS.
+  if (u.uAudio) u.uAudio.value = Math.max(0, Math.min(1.5, audioDrive * 1.35));
+  if (u.uAudioBass) u.uAudioBass.value = audioBass;
+  if (u.uAudioHigh) u.uAudioHigh.value = audioHigh;
+  if (u.uAudioBeatPulse) u.uAudioBeatPulse.value = audioBeatPulse;
 
   // Custom user-imported effects: plumb every param generically by its uniform name.
   const custom = getCustomEffect(effect.type as unknown as string);

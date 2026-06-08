@@ -72,19 +72,19 @@ export const SV_BLEND_NAMES = ['ADD','SUB','MULT','NORM'];
 // 3D World parameters - 6 params for each world type
 export const SV_WORLD_DEFS = [
   { name: 'PARTICLES', params: [{k:'count',l:'COUNT',d:.5},{k:'size',l:'SIZE',d:.4},{k:'spread',l:'SPREAD',d:.5},{k:'speed',l:'SPEED',d:.5},{k:'trail',l:'TRAIL',d:.3},{k:'gravity',l:'GRAVITY',d:.2}] },
-  { name: 'CUBES', params: [{k:'count',l:'COUNT',d:.5},{k:'size',l:'SIZE',d:.5},{k:'spacing',l:'SPACE',d:.5},{k:'rotate',l:'ROTATE',d:.5},{k:'explode',l:'EXPLODE',d:.3},{k:'color',l:'COLOR',d:.5}] },
+  { name: 'CUBES', params: [{k:'count',l:'COUNT',d:.5},{k:'size',l:'SIZE',d:.5},{k:'spacing',l:'SPACE',d:.5},{k:'rotate',l:'ROTATE',d:.5},{k:'explode',l:'EXPLODE',d:.3},{k:'thick',l:'THICK',d:.45}] },
   { name: 'FRACTAL', params: [{k:'depth',l:'DEPTH',d:.5},{k:'scale',l:'SCALE',d:.5},{k:'twist',l:'TWIST',d:.3},{k:'branch',l:'BRANCH',d:.5},{k:'glow',l:'GLOW',d:.4},{k:'animate',l:'ANIMATE',d:.5}] },
   { name: 'TERRAIN', params: [{k:'height',l:'HEIGHT',d:.5},{k:'detail',l:'DETAIL',d:.5},{k:'water',l:'WATER',d:.3},{k:'erosion',l:'EROSION',d:.4},{k:'fog',l:'FOG',d:.3},{k:'sun',l:'SUN',d:.6}] },
   { name: 'NODES', params: [{k:'count',l:'COUNT',d:.5},{k:'connect',l:'CONNECT',d:.6},{k:'pulse',l:'PULSE',d:.5},{k:'attract',l:'ATTRACT',d:.4},{k:'thick',l:'THICK',d:.3},{k:'glow',l:'GLOW',d:.5}] },
   { name: 'FLUID', params: [{k:'viscosity',l:'VISCOUS',d:.5},{k:'turbulence',l:'TURB',d:.5},{k:'density',l:'DENSE',d:.5},{k:'color',l:'COLOR',d:.5},{k:'flow',l:'FLOW',d:.5},{k:'splash',l:'SPLASH',d:.3}] },
-  { name: 'CRYSTAL', params: [{k:'facets',l:'FACETS',d:.5},{k:'size',l:'SIZE',d:.5},{k:'refract',l:'REFRACT',d:.6},{k:'cluster',l:'CLUSTER',d:.4},{k:'glow',l:'GLOW',d:.5},{k:'rotate',l:'ROTATE',d:.3}] },
+  { name: 'CRYSTAL', params: [{k:'facets',l:'FACETS',d:.5},{k:'size',l:'SIZE',d:.5},{k:'thick',l:'THICK',d:.55},{k:'cluster',l:'CLUSTER',d:.4},{k:'glow',l:'GLOW',d:.5},{k:'rotate',l:'ROTATE',d:.3}] },
   { name: 'VORTEX', params: [{k:'arms',l:'ARMS',d:.5},{k:'spin',l:'SPIN',d:.5},{k:'pull',l:'PULL',d:.5},{k:'depth',l:'DEPTH',d:.5},{k:'particles',l:'PARTS',d:.4},{k:'color',l:'COLOR',d:.5}] },
   { name: 'STARFIELD', params: [{k:'density',l:'DENSE',d:.5},{k:'speed',l:'SPEED',d:.5},{k:'size',l:'SIZE',d:.4},{k:'depth',l:'DEPTH',d:.6},{k:'nebula',l:'NEBULA',d:.3},{k:'twinkle',l:'TWINKLE',d:.5}] },
   { name: 'ORGANISM', params: [{k:'cells',l:'CELLS',d:.5},{k:'pulse',l:'PULSE',d:.5},{k:'branch',l:'BRANCH',d:.5},{k:'color',l:'COLOR',d:.5},{k:'flow',l:'FLOW',d:.4},{k:'mutate',l:'MUTATE',d:.3}] },
   { name: 'AURORA', params: [{k:'ribbons',l:'RIBBONS',d:.5},{k:'height',l:'HEIGHT',d:.5},{k:'wave',l:'WAVE',d:.5},{k:'shimmer',l:'SHIMMER',d:.5},{k:'color',l:'COLOR',d:.4},{k:'spread',l:'SPREAD',d:.5}] },
   { name: 'DNA', params: [{k:'twist',l:'TWIST',d:.5},{k:'rungs',l:'RUNGS',d:.5},{k:'radius',l:'RADIUS',d:.5},{k:'speed',l:'SPEED',d:.5},{k:'glow',l:'GLOW',d:.4},{k:'pairs',l:'PAIRS',d:.5}] },
   { name: 'SWARM', params: [{k:'count',l:'COUNT',d:.5},{k:'cohesion',l:'COHESION',d:.5},{k:'speed',l:'SPEED',d:.5},{k:'scatter',l:'SCATTER',d:.4},{k:'trail',l:'TRAIL',d:.3},{k:'color',l:'COLOR',d:.5}] },
-  { name: 'RINGS', params: [{k:'count',l:'COUNT',d:.5},{k:'radius',l:'RADIUS',d:.5},{k:'spin',l:'SPIN',d:.5},{k:'tilt',l:'TILT',d:.4},{k:'gap',l:'GAP',d:.5},{k:'glow',l:'GLOW',d:.5}] }
+  { name: 'RINGS', params: [{k:'count',l:'COUNT',d:.5},{k:'radius',l:'RADIUS',d:.5},{k:'spin',l:'SPIN',d:.5},{k:'tilt',l:'TILT',d:.4},{k:'gap',l:'GAP',d:.5},{k:'thick',l:'THICK',d:.5}] }
 ] as const;
 
 export type WorldParams = { [key: string]: number };
@@ -192,6 +192,14 @@ export interface SVLayer {
   p: SVParams;     // parameters
 }
 
+export type SVReactivityMode = 'off' | 'smooth' | 'default' | 'aggressive';
+export const SV_REACTIVITY_MODES: { id: SVReactivityMode; label: string; description: string }[] = [
+  { id: 'off',        label: 'OFF',        description: 'Audio silent — visuals run on their own.' },
+  { id: 'smooth',     label: 'SMOOTH',     description: 'Milkdrop-style smoothed normalized bass. Elegant, no woofer pulse.' },
+  { id: 'default',    label: 'DEFAULT',    description: 'Smooth + onset envelopes for accent moments (kick/snare punches).' },
+  { id: 'aggressive', label: 'AGGRESSIVE', description: 'Smooth + envelopes + BPM LFOs. Lively but busier.' },
+];
+
 export interface SVState {
   active: boolean;         // is synth vision open/running
   assignedLayer: number | null;  // VJ layer index it's assigned to
@@ -208,6 +216,26 @@ export interface SVState {
   mic: boolean;
   micLevel: number;
   bass: number;
+  // ── Audio reactivity smoothness ────────────────────────────────
+  // 'off'        — no audio drives anything; bass stays 0
+  // 'smooth'     — default. Bass tracks the Milkdrop bass_att
+  //                (asymmetric IIR over a long-baseline-normalized
+  //                ratio). No woofer-style back-and-forth.
+  // 'default'    — smoothed bass + onset envelopes for accents
+  //                (kick/snare fire a 30→350ms ADSR envelope).
+  // 'aggressive' — raw Milkdrop bass + envelopes + LFOs; lively
+  //                but can feel busier than smooth.
+  reactivityMode: SVReactivityMode;
+  // Live audio-reactive values, populated by the follower each
+  // frame. World code can read these directly for richer reactivity
+  // without going through bass. See `audio/milkdropFollower.ts`.
+  // All values are post-smoothing, normalized.
+  kickEnv: number;     // 0→1 envelope, fires on kick onset
+  snareEnv: number;    // 0→1 envelope, fires on snare onset
+  midPulse: number;    // smoothed mid (bass_att-equivalent for mids)
+  trebShimmer: number; // smoothed treble (for highlight/twinkle)
+  centroidHue: number; // smoothed centroid 0→1 for hue offset
+  lfoBeat: number;     // BPM-locked sine, 0→1, one cycle per beat
   cam: boolean;
   time: number;
   pump: number;
@@ -279,6 +307,13 @@ function createDefaultState(): SVState {
     mic: false,
     micLevel: 0,
     bass: 0,
+    reactivityMode: 'smooth',
+    kickEnv: 0,
+    snareEnv: 0,
+    midPulse: 0,
+    trebShimmer: 0,
+    centroidHue: 0,
+    lfoBeat: 0,
     cam: false,
     time: 0,
     pump: 0,
@@ -421,6 +456,7 @@ function createSynthVisionStore() {
 
     // BPM
     setBpm: (v: number) => update(s => ({ ...s, bpm: Math.max(40, Math.min(300, v)) })),
+    setReactivityMode: (m: SVReactivityMode) => update(s => ({ ...s, reactivityMode: m })),
     nudgeBpm: (d: number) => update(s => ({ ...s, bpm: Math.max(40, Math.min(300, s.bpm + d)) })),
     toggleSync: () => update(s => ({ ...s, bpmSync: !s.bpmSync })),
 

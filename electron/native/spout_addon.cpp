@@ -449,6 +449,7 @@ public:
     static Napi::Object Init(Napi::Env env, Napi::Object exports) {
         Napi::Function func = DefineClass(env, "SpoutReceiver", {
             InstanceMethod("connect", &SpoutReceiver::Connect),
+            InstanceMethod("receiveTextureInfo", &SpoutReceiver::ReceiveTextureInfo),
             InstanceMethod("receiveImage", &SpoutReceiver::ReceiveImage),
             InstanceMethod("isConnected", &SpoutReceiver::IsConnected),
             InstanceMethod("isUpdated", &SpoutReceiver::IsUpdated),
@@ -499,7 +500,6 @@ public:
 
 private:
     spoutDX m_receiver;
-    std::vector<uint8_t> m_buffer;
     bool m_connected;
     bool m_initialized;
     unsigned int m_width;
@@ -528,6 +528,46 @@ private:
     }
 
     /**
+     * Receive the sender texture on the GPU and return metadata for the
+     * shared DXGI texture. No staging texture, Map, readback, or pixel IPC.
+     * This is the production hand-off for a native compositor; the existing
+     * receiveImage path is a browser-preview compatibility path only.
+     */
+    Napi::Value ReceiveTextureInfo(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+
+        if (!m_connected || !m_initialized) return env.Null();
+
+        bool ok = m_receiver.ReceiveTexture();
+        bool updated = m_receiver.IsUpdated();
+        if (!ok) return env.Null();
+
+        HANDLE sharedHandle = m_receiver.GetSenderHandle();
+        unsigned int w = m_receiver.GetSenderWidth();
+        unsigned int h = m_receiver.GetSenderHeight();
+        DXGI_FORMAT format = m_receiver.GetSenderFormat();
+        if (!sharedHandle || w == 0 || h == 0) return env.Null();
+
+        m_width = w;
+        m_height = h;
+
+        Napi::Object result = Napi::Object::New(env);
+        result.Set("handle", Napi::Buffer<uint8_t>::Copy(
+            env,
+            reinterpret_cast<uint8_t*>(&sharedHandle),
+            sizeof(HANDLE)));
+        result.Set("width", Napi::Number::New(env, w));
+        result.Set("height", Napi::Number::New(env, h));
+        result.Set("format", Napi::Number::New(env, static_cast<uint32_t>(format)));
+        result.Set("updated", Napi::Boolean::New(env, updated));
+        result.Set("isNewFrame", Napi::Boolean::New(env, m_receiver.IsFrameNew()));
+        result.Set("frame", Napi::Number::New(env, static_cast<double>(m_receiver.GetSenderFrame())));
+        result.Set("fps", Napi::Number::New(env, m_receiver.GetSenderFps()));
+        result.Set("senderName", Napi::String::New(env, m_receiver.GetSenderName()));
+        return result;
+    }
+
+    /**
      * Receive a frame as RGBA pixel data.
      * Returns a Buffer containing the raw pixels, or null if no frame available.
      */
@@ -544,22 +584,13 @@ private:
             w = 1920; h = 1080;
         }
 
-        unsigned int bufSize = w * h * 4;
-        if (m_buffer.size() != bufSize) {
-            m_buffer.resize(bufSize, 0);
-        }
-
-        unsigned int tempSize = w * h * 4;
-        if (m_buffer.size() != tempSize) {
-            m_buffer.resize(tempSize, 0);
-        }
-        // DON'T zero the buffer — keep previous frame data so that when
-        // SpoutDX has no new frame, we retain the last good frame instead
-        // of flashing black (which causes strobe flicker).
+        size_t tempSize = (size_t)w * (size_t)h * 4;
+        Napi::ArrayBuffer frameBuffer = Napi::ArrayBuffer::New(env, tempSize);
+        uint8_t* frameData = static_cast<uint8_t*>(frameBuffer.Data());
 
         // ReceiveImage internally calls IsUpdated and handles connection
         // bInvert=true flips vertically to match Three.js/WebGL texture orientation
-        bool ok = m_receiver.ReceiveImage(m_buffer.data(), w, h, false, true);
+        bool ok = m_receiver.ReceiveImage(frameData, w, h, false, true);
 
         if (!ok) {
             static int nullLogCount = 0;
@@ -583,8 +614,6 @@ private:
             // Re-create buffer for new size
             w = m_receiver.GetSenderWidth();
             h = m_receiver.GetSenderHeight();
-            tempSize = w * h * 4;
-            m_buffer.resize(tempSize);
             return env.Null(); // Return null this frame, next frame will have data
         }
 
@@ -603,8 +632,8 @@ private:
         static int diagRecvCount = 0;
         if (diagRecvCount < 10) {
             int nonZero = 0;
-            for (unsigned int i = 0; i < tempSize && i < 4000; i++) {
-                if (m_buffer[i] != 0) nonZero++;
+            for (size_t i = 0; i < tempSize && i < 4000; i++) {
+                if (frameData[i] != 0) nonZero++;
             }
             printf("[SpoutAddon] ReceiveImage OK %ux%u: nonZero=%d/4000 (IsNewFrame=%d)\n",
                 m_width, m_height, nonZero, isNew ? 1 : 0);
@@ -618,7 +647,7 @@ private:
 
         // BGRA → RGBA in-place swizzle using uint32 batch processing
         unsigned int pixelCount = m_width * m_height;
-        uint32_t* px = reinterpret_cast<uint32_t*>(m_buffer.data());
+        uint32_t* px = reinterpret_cast<uint32_t*>(frameData);
         for (unsigned int i = 0; i < pixelCount; i++) {
             uint32_t v = px[i];
             // Little-endian: [B,G,R,A] = 0xAARRGGBB → [R,G,B,A] = 0xAABBGGRR
@@ -627,7 +656,9 @@ private:
             px[i] = (v & 0xFF00FF00u) | (r) | (b << 16);
         }
 
-        return Napi::Buffer<uint8_t>::Copy(env, m_buffer.data(), m_width * m_height * 4);
+        size_t frameBytes = (size_t)m_width * (size_t)m_height * 4;
+        if (frameBytes > tempSize) return env.Null();
+        return Napi::Uint8Array::New(env, frameBytes, frameBuffer, 0);
     }
 
     Napi::Value IsConnected(const Napi::CallbackInfo& info) {

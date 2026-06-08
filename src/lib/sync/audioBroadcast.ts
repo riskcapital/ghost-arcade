@@ -22,7 +22,7 @@
 //   uses structured clone over a shared message bus and is far cheaper than
 //   the per-frame canvas-blit the Spout window is already doing.
 
-import type { AudioAnalysis, AudioBands, BeatState } from '../audio/analyzer';
+import type { AudioAnalysis, AudioBands, BeatState, BandKickSnare } from '../audio/analyzer';
 
 const CHANNEL_NAME = 'ghostarcade-audio-sync';
 
@@ -98,6 +98,11 @@ export function broadcastAudioFrame(analysis: AudioAnalysis, isActive: boolean):
       peak: analysis.peak,
       rms: analysis.rms,
       beat: analysis.beat,
+      kickSnare: analysis.kickSnare,
+      bpm: analysis.bpm,
+      bpmConfidence: analysis.bpmConfidence,
+      beatPhase: analysis.beatPhase,
+      spectralCentroid: analysis.spectralCentroid,
     });
   } catch (err) {
     // Channel might be closed mid-send (window closing). Don't spam.
@@ -124,6 +129,11 @@ export interface ReceivedAudioFrame {
   peak: number;
   rms: number;
   beat: BeatState;
+  kickSnare: BandKickSnare;
+  bpm: number;
+  bpmConfidence: number;
+  beatPhase: number;
+  spectralCentroid: number;
 }
 
 /** Start receiving audio frames. Call once from output/OSR windows. Returns
@@ -161,6 +171,11 @@ export function startAudioBroadcastReceiver(hooks: AudioReceiverHooks): () => vo
         peak: m.peak,
         rms: m.rms,
         beat: m.beat,
+        kickSnare: m.kickSnare,
+        bpm: m.bpm,
+        bpmConfidence: m.bpmConfidence,
+        beatPhase: m.beatPhase,
+        spectralCentroid: m.spectralCentroid,
       });
     } catch (err) {
       console.error('[AudioSync] receiver hook threw:', err);

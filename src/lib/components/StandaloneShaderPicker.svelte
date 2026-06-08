@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import type { MobileShader, MobileShaderCategory } from '../mobile/standaloneShaderList';
+  import { getCachedThumb, warmThumbnails } from '../mobile/standaloneThumbnails';
 
   export let shaders: MobileShader[];
   export let onPick: (s: MobileShader) => void;
@@ -18,6 +20,39 @@
     { id: 'pattern', label: 'Pattern' },
     { id: 'kinetic', label: 'Kinetic' },
   ];
+
+  // Per-shader cached thumbnail data-URLs. Refreshes whenever a new
+  // shader's thumb generation completes — the {#key} block reads from
+  // this map so any card that gets a fresh thumb mid-warmup updates
+  // live without forcing a re-mount of unrelated cards.
+  let thumbs: Record<string, string> = {};
+  let warmDone = 0;
+  let warmTotal = 0;
+
+  function loadCachedThumbs(): void {
+    const next: Record<string, string> = {};
+    for (const s of shaders) {
+      const t = getCachedThumb(s.id);
+      if (t) next[s.id] = t;
+    }
+    thumbs = next;
+  }
+
+  onMount(() => {
+    loadCachedThumbs();
+    // Background warm — sequential, ~1.2s per shader. Cards
+    // pop from placeholder → real thumb live as each completes.
+    void warmThumbnails((done, total, lastId) => {
+      warmDone = done;
+      warmTotal = total;
+      if (lastId) {
+        const t = getCachedThumb(lastId);
+        if (t && !thumbs[lastId]) thumbs = { ...thumbs, [lastId]: t };
+      }
+    });
+  });
+
+  $: warming = warmTotal > 0 && warmDone < warmTotal;
 </script>
 
 <div class="picker-bg" onclick={onClose} role="presentation">
@@ -37,12 +72,24 @@
       {/each}
     </div>
 
+    {#if warming}
+      <div class="warm-row" aria-live="polite">
+        Generating shader previews… {warmDone}/{warmTotal}
+      </div>
+    {/if}
+
     <div class="picker-grid">
       {#each filtered as s (s.id)}
         <button class="picker-card" onclick={() => onPick(s)}>
-          <div class="picker-thumb cat-{s.category}">
-            <span class="picker-letter">{s.name.charAt(0)}</span>
-          </div>
+          {#if thumbs[s.id]}
+            <div class="picker-thumb has-img">
+              <img src={thumbs[s.id]} alt={s.name} loading="lazy" />
+            </div>
+          {:else}
+            <div class="picker-thumb cat-{s.category}">
+              <span class="picker-letter">{s.name.charAt(0)}</span>
+            </div>
+          {/if}
           <span class="picker-name">{s.name}</span>
           <span class="picker-meta">{s.category}{s.audioNative ? ' · audio' : ''}</span>
         </button>
@@ -140,13 +187,31 @@
     font-weight: 700;
     color: #fff;
   }
-  /* Category-coded gradient backgrounds — stand in for real thumbnails. */
+  /* Category-coded gradient backgrounds — fallback for shaders that
+     haven't been rendered to a thumbnail yet (first launch warmup). */
   .cat-audio  { background: linear-gradient(135deg, #FF6E6E, #BB86FC); }
   .cat-room   { background: linear-gradient(135deg, #34284A, #FF8577); }
   .cat-fluid  { background: linear-gradient(135deg, #1A5C8E, #69F0AE); }
   .cat-pattern{ background: linear-gradient(135deg, #2A2A30, #BB86FC); }
   .cat-kinetic{ background: linear-gradient(135deg, #FF8577, #FFC857); }
   .picker-letter { opacity: 0.95; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4); }
+
+  /* Real rendered thumbnail — fills the .picker-thumb square. */
+  .picker-thumb.has-img { background: #0a0a0d; overflow: hidden; }
+  .picker-thumb.has-img img {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  /* "Generating shader previews… N/30" indicator above the grid.
+     Sits between the category filters and the grid; disappears once
+     warmup completes. */
+  .warm-row {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.55);
+    padding: 4px 2px 8px;
+  }
 
   .picker-name {
     font-size: 11px;

@@ -3,7 +3,7 @@
 // Provides real-time audio data, beat events, and BPM for the entire app
 
 import { writable, derived, get } from 'svelte/store';
-import { audioAnalyzer, type AudioAnalysis, type AudioBands, type BeatState } from '../audio/analyzer';
+import { audioAnalyzer, type AudioAnalysis, type AudioBands, type BeatState, type BandKickSnare } from '../audio/analyzer';
 
 // Cache raw analysis for audio texture updates (textures need Float32Array data)
 let _lastRawAnalysis: AudioAnalysis | null = null;
@@ -396,6 +396,11 @@ function createAudioStore() {
       peak: number;
       rms: number;
       beat: BeatState;
+      kickSnare: BandKickSnare;
+      bpm: number;
+      bpmConfidence: number;
+      beatPhase: number;
+      spectralCentroid: number;
     }): void {
       _lastRawAnalysis = {
         fftData: frame.fft as unknown as Float32Array<ArrayBuffer>,
@@ -405,6 +410,11 @@ function createAudioStore() {
         peak: frame.peak,
         rms: frame.rms,
         beat: frame.beat,
+        kickSnare: frame.kickSnare,
+        bpm: frame.bpm,
+        bpmConfidence: frame.bpmConfidence,
+        beatPhase: frame.beatPhase,
+        spectralCentroid: frame.spectralCentroid,
       } as AudioAnalysis;
       update(state => ({
         ...state,
@@ -414,6 +424,11 @@ function createAudioStore() {
         peak: frame.peak,
         rms: frame.rms,
         beat: frame.beat,
+        kickSnare: frame.kickSnare,
+        bpm: frame.bpm,
+        bpmConfidence: frame.bpmConfidence,
+        beatPhase: frame.beatPhase,
+        spectralCentroid: frame.spectralCentroid,
       }));
     },
   };

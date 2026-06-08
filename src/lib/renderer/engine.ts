@@ -15,8 +15,7 @@ import { warpVertexShader, textureFragmentShader, blendShaders, passthroughVerte
 import { createEffectMaterial, updateEffectUniforms, effectVertexShader, polygonMaskShader, polygonMaskAlphaShader, applyExternalMaskShader, layerShapeMaskShader } from './effects';
 import { domeProjectionShader } from './shaders/dome';
 import { getTransition, applyFaderCurve, type TransitionDef } from './crossfadeTransitions';
-import { audioStore } from '../stores/audio';
-import { get as svelteGet } from 'svelte/store';
+import { getVisualAudioSnapshot } from '../audio/visualAudio';
 // Geometry imports kept for potential future use with shape control point warping
 // import { createShapeGeometry, updateGeometryFromControlPoints } from './geometry';
 
@@ -1498,13 +1497,9 @@ export class RenderEngine {
     const currentTime = this.manualTime !== null
       ? this.manualTime
       : (nowMs / 1000 - this.startTime);
-    // Read live audio rms once per applyEffects call. Audio-reactive
-    // shaders (Colorama, eventually VHS / Bloom / Glitch) declare a
-    // `uAudio` uniform and pick this up automatically via
-    // updateEffectUniforms. Cheap to read — audioStore is a writable
-    // store; svelteGet is O(1).
-    const audioState = svelteGet(audioStore);
-    const audioRms = audioState?.isActive ? (audioState.rms ?? 0) : 0;
+    // Read the shared visual-audio snapshot once per applyEffects call so
+    // every post effect sees the same smoothed musical control signals.
+    const visualAudio = getVisualAudioSnapshot();
     // dt for stateful GPU effects (fluid sim integrates over time).
     // Clamp to keep the sim stable even after a frame hitch.
     const dt = this.lastGpuEffectFrameTime > 0
@@ -1565,7 +1560,7 @@ export class RenderEngine {
 
       // ── WebGL fragment effect branch (existing path) ──
       const material = this.getOrCreateEffectMaterial(effect);
-      updateEffectUniforms(material, effect, this.width, this.height, currentTime, audioRms);
+      updateEffectUniforms(material, effect, this.width, this.height, currentTime, visualAudio);
       material.uniforms.uTexture.value = currentSource;
 
       // Feedback-buffer plumbing for shaders with uFeedback/uHasFeedback.

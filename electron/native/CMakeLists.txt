@@ -85,8 +85,24 @@ elseif(APPLE)
         ${NODE_ADDON_API_DIR}
     )
 
-    # Link Syphon framework + system frameworks
-    find_library(SYPHON_FRAMEWORK Syphon PATHS /Library/Frameworks ~/Library/Frameworks)
+    # Link Syphon framework + system frameworks. Prefer a vendored framework
+    # committed/copied under electron/native/vendor/ so CI/release builds do
+    # not depend on a machine-global /Library install; keep the user Frameworks
+    # paths for local development.
+    set(SYPHON_FRAMEWORK_SEARCH_PATHS
+        "${CMAKE_CURRENT_SOURCE_DIR}/vendor"
+        "${CMAKE_CURRENT_SOURCE_DIR}/vendor/Syphon"
+        "/Library/Frameworks"
+        "$ENV{HOME}/Library/Frameworks"
+    )
+    find_path(SYPHON_FRAMEWORK_PARENT
+        NAMES Syphon.framework
+        PATHS ${SYPHON_FRAMEWORK_SEARCH_PATHS}
+        NO_DEFAULT_PATH
+    )
+    if(SYPHON_FRAMEWORK_PARENT)
+        set(SYPHON_FRAMEWORK "${SYPHON_FRAMEWORK_PARENT}/Syphon.framework")
+    endif()
     find_library(COCOA_FRAMEWORK Cocoa)
     find_library(OPENGL_FRAMEWORK OpenGL)
 
@@ -95,13 +111,15 @@ elseif(APPLE)
         # build" without the framework can't even compile — the prior WARNING
         # path was misleading. Fail the build with install instructions instead.
         message(FATAL_ERROR
-            "Syphon.framework not found in /Library/Frameworks or ~/Library/Frameworks.\n"
-            "Install it before building:\n"
-            "  1. Download Syphon SDK 5: https://github.com/Syphon/Syphon-Framework/releases\n"
-            "  2. Copy Syphon.framework to /Library/Frameworks/\n"
-            "     sudo cp -R 'Syphon SDK 5/Syphon.framework' /Library/Frameworks/\n"
+            "Syphon.framework not found.\n"
+            "Release builds must vendor a universal arm64+x86_64 framework so the .app ships self-contained:\n"
+            "  1. Build Syphon.framework from https://github.com/Syphon/Syphon-Framework tag 5\n"
+            "     (the prebuilt SDK 5 framework is x86_64-only)\n"
+            "  2. Copy the universal framework to electron/native/vendor/Syphon.framework\n"
+            "     (local dev can also use ~/Library/Frameworks or /Library/Frameworks)\n"
             "  3. Re-run the build.")
     endif()
+    message(STATUS "Syphon.framework found: ${SYPHON_FRAMEWORK}")
 
     target_link_libraries(${ADDON_NAME} PRIVATE
         ${CMAKE_JS_LIB}
@@ -135,7 +153,9 @@ elseif(APPLE)
     # Rewrite that reference to @rpath and give the .node two rpath search
     # locations:
     #   1. /Library/Frameworks — where a user installs Syphon for dev
-    #   2. @loader_path/../../../../../../Frameworks — where electron-builder
+    #   2. @loader_path — local dev build output, where POST_BUILD stages a
+    #      copy next to syphon_addon.node
+    #   3. @loader_path/../../../../../../Frameworks — where electron-builder
     #      places Frameworks inside the packaged .app, relative to the .node's
     #      location at Contents/Resources/app.asar.unpacked/electron/native/build/Release/
     #
@@ -144,15 +164,18 @@ elseif(APPLE)
     # on systems where it's not needed.
     set_target_properties(${ADDON_NAME} PROPERTIES
         BUILD_WITH_INSTALL_RPATH TRUE
-        INSTALL_RPATH "/Library/Frameworks;@loader_path/../../../../../../Frameworks"
+        INSTALL_RPATH "/Library/Frameworks;@loader_path;@loader_path/../../../../../../Frameworks"
     )
     add_custom_command(TARGET ${ADDON_NAME} POST_BUILD
         COMMAND install_name_tool -change
             "@loader_path/../Frameworks/Syphon.framework/Versions/A/Syphon"
             "@rpath/Syphon.framework/Versions/A/Syphon"
             "$<TARGET_FILE:${ADDON_NAME}>"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${SYPHON_FRAMEWORK}"
+            "$<TARGET_FILE_DIR:${ADDON_NAME}>/Syphon.framework"
         COMMAND codesign --force --sign - "$<TARGET_FILE:${ADDON_NAME}>" || true
-        COMMENT "Rewriting Syphon install_name to @rpath + re-signing for Apple Silicon"
+        COMMENT "Rewriting Syphon install_name to @rpath, staging Syphon.framework, and re-signing for Apple Silicon"
     )
 
 endif()

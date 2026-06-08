@@ -16,6 +16,8 @@ files:
   - "!electron/native/node_modules/**/*"
   - "!electron/native/build/**/*.obj"
   - "!electron/native/build/**/*.pdb"
+  - "!electron/native/build/Release/Syphon.framework/**/*"
+  - "!electron/native/vendor/Syphon.framework/**/*"
 
 # Platform-specific extra resources
 extraResources:
@@ -99,14 +101,17 @@ mac:
   entitlementsInherit: build-resources/entitlements.mac.plist
   notarize: true
   gatekeeperAssess: false
-  # Ship libndi.dylib inside the .app's Contents/Frameworks/ so
-  # ndi_addon.node's @rpath search resolves it at load time. The
-  # native build (electron/native/CMakeLists.txt POST_BUILD) copies
-  # libndi.dylib next to ndi_addon.node — this rule promotes it into
-  # the Frameworks directory at packaging time. Optional file: when
-  # the NDI SDK wasn't installed at build time, the file is absent
-  # and electron-builder skips it silently.
+  # Ship native runtime frameworks/dylibs inside the .app's
+  # Contents/Frameworks/ so addon @rpath search resolves at load time.
+  # Syphon.framework is REQUIRED for macOS texture-share support; the
+  # native build stages it into electron/native/build/Release from either
+  # electron/native/vendor/Syphon.framework (release/CI preferred) or a
+  # local Frameworks install. NDI remains optional.
   extraFiles:
+    - from: electron/native/build/Release/Syphon.framework
+      to: Frameworks/Syphon.framework
+      filter:
+        - "**/*"
     - from: electron/native/build/Release/libndi.dylib
       to: Frameworks/libndi.dylib
       filter:

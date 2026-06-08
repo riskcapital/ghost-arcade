@@ -9,7 +9,9 @@
     SV_ALL_CLIPS, SV_CLIP_ROW1, SV_CLIP_ROW2, SV_CLIP_ROW3, SV_CLIP_ROW4,
     SV_PARAMS, SV_SPACE_FX, SV_CAM_MODES, SV_CAM_BLENDS,
     SV_SHADER_DEFS, SV_WORLD_DEFS,
-    type SVState, type SVLayer, type SVParams, type SVParamKey
+    SV_REACTIVITY_MODES,
+    type SVState, type SVLayer, type SVParams, type SVParamKey,
+    type SVReactivityMode
   } from '../stores/synthVision';
   import {
     performerDeckStore,
@@ -33,6 +35,11 @@
   import SynthVisionPresets from './SynthVisionPresets.svelte';
   import { modulationStore, setParamModSource, setParamModAmount, setBaseValue, registerParamRanges, getModulatedValue, type ModSource, type ParamModulation } from '../audio/modulation';
   import { audioStore } from '../stores/audio';
+  import { getVisualAudioSnapshot } from '../audio/visualAudio';
+  import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+  import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+  import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+  import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
   import AudioInputPicker from './AudioInputPicker.svelte';
   import { showLoading, hideLoading } from '../stores/loading';
 
@@ -230,10 +237,20 @@
   let renderer: THREE.WebGLRenderer | null = null;
   let scene: THREE.Scene;
   let camera: THREE.PerspectiveCamera;
+  // Post-processing chain — RenderPass → UnrealBloomPass → OutputPass.
+  // Built lazily in initThree. We render through this instead of
+  // renderer.render(scene, camera) for the entire visual lift
+  // (bloom on emissive surfaces + ACES tone mapping via OutputPass).
+  let composer: EffectComposer | null = null;
+  let bloomPass: UnrealBloomPass | null = null;
+  // Lighting rig — low ambient + key + rim. MeshBasicMaterial worlds
+  // ignore lights, but Phase B rewrites move to MeshStandardMaterial
+  // which picks these up.
+  let keyLight: THREE.PointLight | null = null;
+  let rimLight: THREE.PointLight | null = null;
   let worldObjects: THREE.Object3D[] = [];
   let currentWorldIdx = -1;
   let worldData: Record<string, any> = {};
-
   // Compositing canvas
   let compCtx: CanvasRenderingContext2D | null = null;
 
@@ -2055,9 +2072,50 @@ void main() {
     renderer = new THREE.WebGLRenderer({ canvas: threeCanvas, alpha: true, antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setClearColor(0x000000, 0);
+
+    // ACES Filmic tone-mapping — applied by OutputPass at the very
+    // end of the chain. Gives HDR-feel colour depth on what was
+    // previously linear/flat MeshBasicMaterial output. Worlds that
+    // push vertex colours past 1.0 in linear space now feed bloom
+    // cleanly instead of clipping.
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+
     scene = new THREE.Scene();
     camera = new THREE.PerspectiveCamera(55, threeCanvas.width / threeCanvas.height, 0.1, 500);
     camera.position.set(0, 0, 40);
+
+    // ── Lighting rig ────────────────────────────────────────────
+    // Soft fill + two coloured points. Most current SV worlds use
+    // MeshBasicMaterial which ignores lights — these are set up so
+    // Phase B's MeshStandardMaterial swaps see immediate depth.
+    scene.add(new THREE.AmbientLight(0x0a0e1a, 0.4));
+    keyLight = new THREE.PointLight(0xff4488, 1.2, 200, 1.5);
+    keyLight.position.set(20, 25, 30);
+    scene.add(keyLight);
+    rimLight = new THREE.PointLight(0x44aaff, 0.9, 200, 1.5);
+    rimLight.position.set(-25, -10, 20);
+    scene.add(rimLight);
+
+    // ── Post-processing chain ───────────────────────────────────
+    //   RenderPass:      scene → render target
+    //   UnrealBloomPass: HDR-style glow on bright pixels
+    //   OutputPass:      ACES tone-map + sRGB encode + present
+    composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene, camera));
+    bloomPass = new UnrealBloomPass(
+      new THREE.Vector2(threeCanvas.width, threeCanvas.height),
+      0.55,  // strength — moderate. Lifts emissive highlights without
+             // washing out the whole frame. Earlier 1.4 was a "neon
+             // club" overshoot that hid geometry detail.
+      0.5,   // radius — soft halo extent.
+      0.85,  // threshold — selective. Only HDR-pushed pixels (worlds
+             // that explicitly multiplyScalar above 1.0) contribute.
+             // Everything in [0..1] passes through clean so the
+             // geometry detail and user param effects stay visible.
+    );
+    composer.addPass(bloomPass);
+    composer.addPass(new OutputPass());
   }
 
   // ================================================================
@@ -2088,8 +2146,26 @@ void main() {
   function lineMat(op: number) {
     return new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: op || .5, blending: getBlend() });
   }
+  function solidMat(op: number) {
+    return new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: op || .2, blending: getBlend(), side: THREE.DoubleSide });
+  }
   function meshMat(op: number) {
     return new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: op || .4, blending: getBlend(), wireframe: true, side: THREE.DoubleSide });
+  }
+  function outlinedMeshGroup(geometry: THREE.BufferGeometry, fillOpacity = .16, outlineOpacity = .55, outlineLayers = 2) {
+    const group = new THREE.Group();
+    const fill = new THREE.Mesh(geometry, solidMat(fillOpacity));
+    group.add(fill);
+    const outlines: THREE.Mesh[] = [];
+    for (let i = 0; i < outlineLayers; i++) {
+      const shell = new THREE.Mesh(geometry.clone(), meshMat(outlineOpacity / (1 + i * .35)));
+      shell.scale.setScalar(1.015 + i * .025);
+      outlines.push(shell);
+      group.add(shell);
+    }
+    group.userData.fill = fill;
+    group.userData.outlines = outlines;
+    return group;
   }
 
   function clearWorld() {
@@ -2138,22 +2214,39 @@ void main() {
         worldData.pos = pos; worldData.vel = vel; worldData.col = col; worldData.sz = sz; worldData.N = N;
         break;
       }
-      case 1: { // CUBES
-        for (let i = 0; i < 60; i++) {
+      case 1: { // CUBES — solid cores with layered wire shells
+        for (let i = 0; i < 120; i++) {
           const s = 1 + Math.random() * 4;
-          const g = new T.BoxGeometry(s, s, s);
-          const m = new T.LineSegments(new T.EdgesGeometry(g), lineMat(.35));
-          m.position.z = -i * 5; m.position.x = (Math.random() - .5) * 20; m.position.y = (Math.random() - .5) * 15;
-          m.userData = { oz: -i * 5, rx: (Math.random() - .5) * .5, ry: (Math.random() - .5) * .5, hu: Math.random() };
-          addW(m);
+          const g = outlinedMeshGroup(new T.BoxGeometry(s, s, s), .12, .48, 2);
+          const baseX = (Math.random() - .5) * 24;
+          const baseY = (Math.random() - .5) * 18;
+          g.position.z = -i * 5; g.position.x = baseX; g.position.y = baseY;
+          g.userData = {
+            ...g.userData,
+            oz: -i * 5,
+            baseX,
+            baseY,
+            rx: (Math.random() - .5) * .5,
+            ry: (Math.random() - .5) * .5,
+            hu: Math.random()
+          };
+          addW(g);
         }
         break;
       }
-      case 2: { // FRACTAL
+      case 2: { // FRACTAL — solid bloom-friendly leaf boxes (Menger-cube variant)
+        // Sierpinski tetrahedron version had a userData.depth bug
+        // where all leaves shared depth=1 and got hidden by the
+        // DEPTH gate — went black. Reverted to the recursive
+        // box variant that ships visible.
         const fracBox = (x: number, y: number, z: number, s: number, d: number) => {
           if (d <= 0 || s < .15) {
             const g = new T.BoxGeometry(s, s, s);
-            const m = new T.LineSegments(new T.EdgesGeometry(g), lineMat(.3));
+            const mat = new T.MeshBasicMaterial({
+              color: 0xffffff, transparent: true, opacity: .55,
+              blending: getBlend(), side: T.DoubleSide,
+            });
+            const m = new T.Mesh(g, mat);
             m.position.set(x, y, z);
             m.userData = { hu: d * .15, rx: (Math.random() - .5) * .2, ry: (Math.random() - .5) * .2 };
             addW(m);
@@ -2224,14 +2317,18 @@ void main() {
         worldData.fPos = pos; worldData.fVel = vel; worldData.fCol = col; worldData.fSz = sz; worldData.fN = N;
         break;
       }
-      case 6: { // CRYSTAL
+      case 6: { // CRYSTAL — faceted cores with thicker wire shells
         const s = 3, r = 4;
         for (let x = -r; x <= r; x++) for (let y = -r; y <= r; y++) for (let z = -r; z <= r; z++) {
           if ((x + y + z) % 2 !== 0) continue;
-          const ico = new T.IcosahedronGeometry(.25, 0);
-          const m = new T.LineSegments(new T.EdgesGeometry(ico), lineMat(.3));
+          const m = outlinedMeshGroup(new T.IcosahedronGeometry(.38, 0), .09, .52, 2);
           m.position.set(x * s, y * s, z * s);
-          m.userData = { hu: ((x + r) / (r * 2) + (y + r) / (r * 2)) * .5, rx: .1, ry: .15 };
+          m.userData = {
+            ...m.userData,
+            hu: ((x + r) / (r * 2) + (y + r) / (r * 2)) * .5,
+            rx: .1,
+            ry: .15
+          };
           addW(m);
         }
         break;
@@ -2363,13 +2460,23 @@ void main() {
         worldData.swPos = pos; worldData.swVel = vel; worldData.swCol = col; worldData.swSz = sz; worldData.swN = N;
         break;
       }
-      case 13: { // RINGS - nested rotating rings
+      case 13: { // RINGS - nested rotating bands with wire shells
         const RING_COUNT = 12;
         for (let i = 0; i < RING_COUNT; i++) {
           const r = 4 + i * 2.5;
-          const tg = new T.TorusGeometry(r, .08, 4, 80);
-          const m = new T.LineSegments(new T.EdgesGeometry(tg), lineMat(.4));
-          m.userData = { ringIdx: i, baseR: r, hu: i / RING_COUNT, tiltX: (Math.random() - .5) * Math.PI * .8, tiltZ: (Math.random() - .5) * Math.PI * .4, spinDir: Math.random() > .5 ? 1 : -1 };
+          const tube = .12 + i * .01;
+          const tg = new T.TorusGeometry(r, tube, 10, 96);
+          const m = outlinedMeshGroup(tg, .06, .42, 2);
+          m.userData = {
+            ...m.userData,
+            ringIdx: i,
+            baseR: r,
+            baseTube: tube,
+            hu: i / RING_COUNT,
+            tiltX: (Math.random() - .5) * Math.PI * .8,
+            tiltZ: (Math.random() - .5) * Math.PI * .4,
+            spinDir: Math.random() > .5 ? 1 : -1
+          };
           addW(m);
         }
         worldData.ringCount = RING_COUNT;
@@ -2418,7 +2525,12 @@ void main() {
           vel[ix+2] += dz * attr / (dist * dist) * dt * .1;
           vel[ix] += (-pos[ix+1] * .0007 + p.warp * Math.sin(pos[ix+1] * .1 + t) * 2) * dt * 60 * wSpeed;
           vel[ix+1] += (pos[ix] * .0007 + p.warp * Math.cos(pos[ix] * .1 + t) * 2) * dt * 60 * wSpeed + wGravity;
-          if (state.bass > .2) { vel[ix] += (Math.random() - .5) * state.bass * 8 * dt; vel[ix+1] += (Math.random() - .5) * state.bass * 8 * dt; }
+          // Kick-triggered jitter — fires on every kick onset and
+          // decays smoothly via the AR envelope. Replaces the prior
+          // raw-bass amplitude trigger, which only fired on huge
+          // bass spikes in smooth mode and produced jagged motion
+          // in aggressive mode. kickEnv gives a clean punch + fall.
+          if (state.kickEnv > .1) { vel[ix] += (Math.random() - .5) * state.kickEnv * 9 * dt; vel[ix+1] += (Math.random() - .5) * state.kickEnv * 9 * dt; }
           vel[ix] *= wTrail; vel[ix+1] *= wTrail; vel[ix+2] *= .96;
           pos[ix] += vel[ix] * dt * 60; pos[ix+1] += vel[ix+1] * dt * 60; pos[ix+2] += vel[ix+2] * dt * 60;
           if (Math.abs(pos[ix]) > wSpread) vel[ix] *= -.5;
@@ -2437,40 +2549,89 @@ void main() {
         }
         break;
       }
-      case 1: { // CUBES - wp: count, size, spacing, rotate, explode, color
-        const wSize = wp.size * 2 + .5;  // 0.5 - 2.5 scale
-        const wRotate = wp.rotate * 3 + .5;  // 0.5 - 3.5 rotation speed
-        const wExplode = wp.explode;  // 0-1 explosion scatter
-        const wColor = wp.color;  // color shift
+      case 1: { // CUBES - wp: count, size, spacing, rotate, explode, thick
+        const wCount = wp.count;           // 0-1 visible fraction (gate)
+        const wSize = wp.size * 2 + .5;    // 0.5 - 2.5 scale
+        const wSpacing = wp.spacing * 1.6 + .4; // 0.4 - 2.0 z-stretch
+        const wRotate = wp.rotate * 3 + .5; // 0.5 - 3.5 rotation speed
+        const wExplode = wp.explode;       // 0-1 explosion scatter
+        const wThick = wp.thick * 1.8 + .2;
         const spd = 8 + p.speed * 30;
         worldObjects.forEach(m => {
           if (m.userData.oz === undefined) return;
           m.position.z += spd * dt;
-          if (m.position.z > 30) { m.position.z -= 300; m.position.x = (Math.random() - .5) * 20; m.position.y = (Math.random() - .5) * 15; }
+          // wSpacing stretches the z wrap window so the cubes spread
+          // farther apart in depth (or pack tighter). Cycle length
+          // scales 1.0 → 5.0 of the base 300-unit loop.
+          const wrap = 300 * (0.5 + wSpacing * 0.6);
+          if (m.position.z > 30) { m.position.z -= wrap; m.position.x = (Math.random() - .5) * 24; m.position.y = (Math.random() - .5) * 18; }
+          // wCount filters per-cube visibility — smoothstep edge
+          // so cubes fade in/out across a small band rather than
+          // snapping (the prior binary gate produced the flicker
+          // the user flagged). userData.hu is a stable 0-1 ID.
+          const gateEdge = wCount * 1.1;
+          const visible = Math.max(0, Math.min(1, (gateEdge - m.userData.hu) / 0.12 + 0.5));
+          const explodeDrift = wExplode * (5 + state.kickEnv * 8);
+          m.position.x = m.userData.baseX + Math.sin(t * (.6 + wRotate * .3) + m.userData.hu * 10) * explodeDrift;
+          m.position.y = m.userData.baseY + Math.cos(t * (.5 + wRotate * .25) + m.userData.hu * 8) * explodeDrift * (.55 + state.midPulse * .35);
           m.rotation.x += m.userData.rx * dt * wRotate * (1 + p.chaos * 3);
           m.rotation.y += m.userData.ry * dt * wRotate * (1 + p.chaos * 3);
           const fade = Math.max(0, 1 - Math.abs(m.position.z) / 150);
-          const sc = wSize * (1 + state.pump * .5 + bpulse * .2 + wExplode * Math.sin(t * 2 + m.userData.hu * 10) * .5);
+          // Scale = baseline × user size × subtle audio breath ×
+          // visibility gate. bpulse + state.pump give continuous
+          // smooth bounce; kickEnv gives a smooth punch via the AR
+          // envelope.
+          const sc = wSize * (1 + state.pump * .4 + bpulse * .15 + state.kickEnv * 0.35 + wExplode * Math.sin(t * 2 + m.userData.hu * 10) * .5) * visible;
           m.scale.setScalar(sc);
-          (m as any).material.color.copy(sCol((m.userData.hu + wColor) % 1));
-          (m as any).material.opacity = fade * .4;
+          const cubeCol = sCol((m.userData.hu + state.centroidHue * .18 + t * .01) % 1);
+          const fill = m.userData.fill as THREE.Mesh | undefined;
+          const outlines = (m.userData.outlines as THREE.Mesh[] | undefined) ?? [];
+          if (fill?.material instanceof THREE.MeshBasicMaterial) {
+            fill.material.color.copy(cubeCol);
+            fill.material.opacity = fade * (0.06 + visible * 0.16 + state.bass * 0.05);
+          }
+          outlines.forEach((shell, idx) => {
+            shell.scale.setScalar(1.018 + wThick * 0.085 + idx * 0.026 + state.kickEnv * 0.02);
+            if (shell.material instanceof THREE.MeshBasicMaterial) {
+              shell.material.color.copy(cubeCol);
+              shell.material.opacity = fade * visible * (0.16 + wThick * 0.22 + state.midPulse * 0.08) / (1 + idx * 0.35);
+            }
+          });
         });
         break;
       }
       case 2: { // FRACTAL - wp: depth, scale, twist, branch, glow, animate
+        const wDepth = wp.depth;          // 0-1 deep-leaf reveal
         const wScale = wp.scale * 1.5 + .5;  // 0.5 - 2.0
-        const wTwist = wp.twist * 2;  // 0 - 2 twist intensity
-        const wGlow = wp.glow * .4 + .15;  // 0.15 - 0.55 opacity
+        const wTwist = wp.twist * 2;     // 0 - 2 twist intensity
+        const wBranch = wp.branch * 2.5 + .25; // 0.25 - 2.75 chaos
+        const wGlow = wp.glow * .4 + .15; // 0.15 - 0.55 baseline
         const wAnimate = wp.animate * 2;  // 0 - 2 animation speed
+        // Treble drives the per-leaf twist amount so the fractal's
+        // small-scale flutter tracks the bright transients of the
+        // music; bass drives the overall scale via wpump + bpulse.
+        const trebTwist = 1 + state.trebShimmer * 1.5;
         worldObjects.forEach(m => {
           if (m.userData.hu === undefined) return;
-          m.rotation.x += (m.userData.rx || 0) * dt * (1 + p.chaos) * (1 + wAnimate);
-          m.rotation.y += (m.userData.ry || 0) * dt * (1 + p.chaos) * (1 + wAnimate);
+          // wBranch chaos-multiplies per-leaf rotation rates — at
+          // low values the fractal counter-rotates slowly, at high
+          // values each leaf spins at its own erratic rate.
+          m.rotation.x += (m.userData.rx || 0) * dt * (1 + p.chaos) * (1 + wAnimate) * trebTwist * wBranch;
+          m.rotation.y += (m.userData.ry || 0) * dt * (1 + p.chaos) * (1 + wAnimate) * trebTwist * wBranch;
           m.rotation.z += wTwist * Math.sin(t * .5 + m.userData.hu * 5) * dt;
-          const sc = wScale * (1 + state.pump * .4 + bpulse * .15);
+          // Smooth bass-driven breath + kick punch on the whole tree.
+          const sc = wScale * (1 + state.pump * .3 + bpulse * .12 + state.bass * 0.2 + state.kickEnv * 0.3);
           m.scale.setScalar(sc);
+          // Solid colour at unit intensity — bloom catches overlap
+          // when colours stack. No HDR multiplier so we don't blow
+          // the whole frame out into white.
           (m as any).material.color.copy(sCol(m.userData.hu + t * .01 * (1 + wAnimate)));
-          (m as any).material.opacity = wGlow + state.pump * .2;
+          // wDepth uses userData.hu (which Menger stores as
+          // d * 0.15, so deeper leaves have higher hu). Drag DEPTH
+          // low → only outer leaves visible; high → full density.
+          // wGlow controls baseline opacity headroom.
+          const depthGate = Math.max(0, 1 - (m.userData.hu - wDepth * .9));
+          (m as any).material.opacity = (0.35 + wGlow * 0.7) * depthGate;
         });
         break;
       }
@@ -2501,9 +2662,11 @@ void main() {
       case 4: { // NODES - wp: count, connect, pulse, attract, thick, glow
         if (!worldData.nodes) break;
         const nds = worldData.nodes, ep = worldData.edgePos;
+        const wCount = wp.count;
         const wConnect = wp.connect * 20 + 5;  // 5 - 25 connection threshold
         const wPulse = wp.pulse;  // pulsing intensity
         const wAttract = wp.attract * .001;  // mouse attraction strength
+        const wThick = wp.thick * 1.8 + .35;
         const wGlow = wp.glow * .6 + .3;  // 0.3 - 0.9 brightness
         let ec = 0; const thresh = wConnect + p.chaos * 15;
         nds.forEach((n: any) => {
@@ -2513,13 +2676,15 @@ void main() {
           n.position.add(v.clone().multiplyScalar(dt * 60));
           if (Math.abs(n.position.x) > 30) v.x *= -.8;
           if (Math.abs(n.position.y) > 22) v.y *= -.8;
+          const visible = Math.max(0, Math.min(1, (wCount * 1.15 - n.userData.hu) / 0.12 + 0.5));
           const pulseSc = 1 + wPulse * Math.sin(t * 3 + n.userData.hu * 10) * .5;
-          n.scale.setScalar(pulseSc);
+          n.scale.setScalar((0.35 + wThick * 0.75) * pulseSc * (0.35 + visible * 0.65 + state.kickEnv * 0.15));
           n.material.color.copy(sCol(n.userData.hu));
-          n.material.opacity = wGlow;
+          n.material.opacity = visible * (0.12 + wGlow * 0.55);
         });
         for (let i = 0; i < nds.length; i++) for (let j = i + 1; j < nds.length; j++) {
           if (ec >= worldData.NC * worldData.NC) break;
+          if (nds[i].scale.x < 0.1 || nds[j].scale.x < 0.1) continue;
           const d = nds[i].position.distanceTo(nds[j].position);
           if (d < thresh) {
             const k = ec * 6;
@@ -2531,7 +2696,7 @@ void main() {
         for (let i = ec * 6; i < Math.min(ec * 6 + 600, ep.length); i++) ep[i] = 0;
         worldData.edgeGeo.attributes.position.needsUpdate = true;
         worldData.edgeGeo.setDrawRange(0, ec * 2);
-        if (worldObjects[1]) (worldObjects[1] as any).material.opacity = wGlow * .4;
+        if (worldObjects[1]) (worldObjects[1] as any).material.opacity = (0.08 + wThick * 0.22 + state.midPulse * 0.12) * wGlow;
         break;
       }
       case 5: { // FLUID - wp: viscosity, turbulence, density, color, flow, splash
@@ -2574,19 +2739,46 @@ void main() {
         }
         break;
       }
-      case 6: { // CRYSTAL - wp: facets, size, refract, cluster, glow, rotate
-        const wSize = wp.size * 1.5 + .5;  // 0.5 - 2.0 scale
-        const wRefract = wp.refract;  // refraction shimmer
-        const wGlow = wp.glow * .5 + .3;  // 0.3 - 0.8 brightness
-        const wRotate = wp.rotate * 2;  // rotation speed
+      case 6: { // CRYSTAL - wp: facets, size, thick, cluster, glow, rotate
+        const wFacets = wp.facets * 8 + .5;  // 0.5 - 8.5 wobble freq
+        const wSize = wp.size * 1.5 + .5;    // 0.5 - 2.0 scale
+        const wThick = wp.thick * 1.8 + .25;
+        // Stash original lattice positions on first use so wCluster
+        // can lerp them toward/away from origin each frame without
+        // them being lost across param changes.
+        const wCluster = wp.cluster;         // 0-1 pull-tight factor
+        const wGlow = wp.glow * .5 + .3;     // 0.3 - 0.8 brightness
+        const wRotate = wp.rotate * 2;       // rotation speed
         worldObjects.forEach(m => {
           if (m.userData.hu === undefined) return;
-          m.rotation.x = Math.sin(t * (.3 + wRotate) + m.position.x * .2) * p.chaos * .5;
-          m.rotation.y = Math.sin(t * (.25 + wRotate) + m.position.y * .2) * p.chaos * .5;
-          m.rotation.z += wRotate * dt * .5;
-          m.scale.setScalar(wSize * (1 + state.pump * .3 + wRefract * Math.sin(t * 2 + m.userData.hu * 5) * .2));
-          (m as any).material.color.copy(sCol((m.userData.hu + t * .005 + wRefract * .2) % 1));
-          (m as any).material.opacity = wGlow;
+          if (!m.userData.origPos) m.userData.origPos = m.position.clone();
+          // wCluster lerps each crystal toward origin (1 = pulled in,
+          // 0 = at original lattice slot). Combined with wSize this
+          // gives "dispersed lattice" → "tight cluster" looks.
+          m.position.copy(m.userData.origPos).multiplyScalar(1 - wCluster * 0.72 + state.bass * 0.05);
+          // wFacets drives a high-frequency wobble baked onto the
+          // base rotation — reads as "facet shimmer" when high,
+          // smooth slow rotation when low.
+          const facWobble = Math.sin(t * wFacets + m.userData.hu * 8) * 0.15;
+          m.rotation.x = Math.sin(t * (.3 + wRotate) + m.position.x * .2) * p.chaos * .5 + facWobble;
+          m.rotation.y = Math.sin(t * (.25 + wRotate) + m.position.y * .2) * p.chaos * .5 + facWobble;
+          m.rotation.z += wRotate * dt * (.4 + state.lfoBeat * 0.25);
+          // Smooth audio breath via bass_att + kick punch.
+          m.scale.setScalar(wSize * (1 + state.pump * .22 + state.bass * 0.24 + state.kickEnv * 0.32 + state.trebShimmer * 0.16));
+          const crystalCol = sCol((m.userData.hu + t * .005 + state.centroidHue * .18) % 1);
+          const fill = m.userData.fill as THREE.Mesh | undefined;
+          const outlines = (m.userData.outlines as THREE.Mesh[] | undefined) ?? [];
+          if (fill?.material instanceof THREE.MeshBasicMaterial) {
+            fill.material.color.copy(crystalCol);
+            fill.material.opacity = 0.05 + wGlow * 0.14;
+          }
+          outlines.forEach((shell, idx) => {
+            shell.scale.setScalar(1.018 + wThick * 0.08 + idx * 0.03 + state.trebShimmer * 0.02);
+            if (shell.material instanceof THREE.MeshBasicMaterial) {
+              shell.material.color.copy(crystalCol);
+              shell.material.opacity = 0.14 + wThick * 0.2 + wGlow * 0.16 + state.trebShimmer * 0.08 - idx * 0.04;
+            }
+          });
         });
         break;
       }
@@ -2622,19 +2814,40 @@ void main() {
       case 8: { // STARFIELD - wp: density, speed, size, depth, nebula, twinkle
         if (!worldData.sPos) break;
         const N = worldData.sN, pos = worldData.sPos, col = worldData.sCol, orig = worldData.sOrig;
-        const wSpeed = wp.speed * 50 + 5;  // 5 - 55 warp speed
-        const wDepth = wp.depth * 1.5 + .5;  // 0.5 - 2.0 depth range
-        const wNebula = wp.nebula;  // nebula coloring
-        const wTwinkle = wp.twinkle;  // brightness variation
-        const warpSpd = wSpeed + p.speed * 40;
-        const stretch = p.chaos * 8 + .5;
+        const wDensity = wp.density;        // 0-1 visible fraction
+        const wSpeed = wp.speed * 50 + 5;   // 5 - 55 warp speed
+        const wSize = wp.size * 1.8 + .4;   // 0.4 - 2.2 brightness × stretch
+        const wDepth = wp.depth * 1.5 + .5; // 0.5 - 2.0 depth range
+        const wNebula = wp.nebula;          // nebula coloring
+        const wTwinkle = wp.twinkle;        // brightness variation
+        // Subtle audio-reactive warp — bass_att gives a smooth ~15%
+        // speed nudge; kickEnv adds a brief streak elongation on
+        // every kick. Original prefactor (1 + 0.8*bass + 1.4*kick)
+        // was over 3× — stars sped past faster than they could
+        // register. Now max ~1.3× which reads as "the music is
+        // pulling me forward" without losing visibility.
+        const audioWarp = 1 + state.bass * 0.15 + state.kickEnv * 0.18;
+        const audioStretch = 1 + state.kickEnv * 0.6;
+        const warpSpd = (wSpeed + p.speed * 40) * audioWarp;
+        const stretch = (p.chaos * 8 + .5) * audioStretch;
+        const audioBright = 1 + state.bass * 0.15 + state.kickEnv * 0.25;
         for (let i = 0; i < N; i++) {
           const ix = i * 6;
           let z = orig[i*3+2] * wDepth; z += t * warpSpd; z = ((z % 200) + 200) % 200 - 200;
           const x = orig[i*3], y = orig[i*3+1];
           pos[ix] = x; pos[ix+1] = y; pos[ix+2] = z;
-          pos[ix+3] = x; pos[ix+4] = y; pos[ix+5] = z + stretch + state.pump * 5;
-          const bright = Math.max(0, 1 + z / 200) * (1 - wTwinkle * .5 + wTwinkle * Math.sin(t * 5 + i) * .5);
+          // wSize stretches the streak length — small stars = short
+          // points, large stars = long warp streaks. Multiplies the
+          // base stretch + kickEnv accent.
+          pos[ix+3] = x; pos[ix+4] = y; pos[ix+5] = z + (stretch + state.pump * 5) * wSize;
+          // wDensity gates per-star visibility. Stable per-star hash
+          // (i / N) means the same stars dim out at low density
+          // rather than the field flickering.
+          const visible = (i / N) < wDensity ? 1 : 0;
+          // Brightness scales with wSize so larger stars also burn
+          // brighter (matches the "closer / bigger = visibly more
+          // luminous" intuition).
+          const bright = Math.max(0, 1 + z / 200) * (1 - wTwinkle * .5 + wTwinkle * Math.sin(t * 5 + i) * .5) * audioBright * wSize * visible;
           const c = sCol((bright * .5 + i / N * .3 + wNebula * .3) % 1);
           col[ix] = c.r * bright; col[ix+1] = c.g * bright; col[ix+2] = c.b * bright;
           col[ix+3] = c.r * bright * .3; col[ix+4] = c.g * bright * .3; col[ix+5] = c.b * bright * .3;
@@ -2675,6 +2888,7 @@ void main() {
         const pos = worldData.aPos, col = worldData.aCol;
         const RIBBONS = worldData.aRibbons, SEGS = worldData.aSegs;
         const offsets = worldData.aOffsets;
+        const wRibbonCount = Math.max(1, Math.round(1 + wp.ribbons * (RIBBONS - 1)));
         const wHeight = wp.height * 20 + 5;    // 5 - 25 ribbon height
         const wWave = wp.wave * 6 + 1;         // 1 - 7 wave complexity
         const wShimmer = wp.shimmer * 3 + .5;  // 0.5 - 3.5 shimmer speed
@@ -2682,6 +2896,7 @@ void main() {
         const wSpread = wp.spread * 40 + 20;   // 20 - 60 horizontal spread
         for (let r = 0; r < RIBBONS; r++) {
           const off = offsets[r];
+          const ribbonVisible = r < wRibbonCount ? 1 : 0;
           for (let s = 0; s < SEGS; s++) {
             const sv = s / SEGS;
             const ix = (r * SEGS + s) * 3;
@@ -2691,8 +2906,8 @@ void main() {
             const z = off.z + Math.cos(phase * .7 + t * .3) * 4 + Math.sin(sv * 5 + t * wShimmer * .4) * 2;
             pos[ix] = xBase; pos[ix+1] = y + state.pump * 3 * Math.sin(sv * Math.PI); pos[ix+2] = z;
             // Aurora colors: greens, teals, purples with shimmer
-            const hue = (.3 + wColor * .5 + sv * .15 + Math.sin(t * wShimmer + sv * 4) * .1) % 1;
-            const bright = .4 + Math.sin(sv * Math.PI) * .4 + Math.sin(t * wShimmer * 2 + sv * 8 + r) * .15;
+            const hue = (.3 + wColor * .5 + sv * .15 + Math.sin(t * wShimmer + sv * 4) * .1 + state.centroidHue * .12) % 1;
+            const bright = (.4 + Math.sin(sv * Math.PI) * .4 + Math.sin(t * wShimmer * 2 + sv * 8 + r) * .15 + state.trebShimmer * .2) * ribbonVisible;
             const c = new THREE.Color().setHSL(hue, .8, bright * (.3 + p.chaos * .2));
             col[ix] = c.r; col[ix+1] = c.g; col[ix+2] = c.b;
           }
@@ -2701,6 +2916,7 @@ void main() {
         if (obj10) {
           (obj10 as any).geometry.attributes.position.needsUpdate = true;
           (obj10 as any).geometry.attributes.color.needsUpdate = true;
+          (obj10 as any).material.opacity = 0.25 + wp.ribbons * 0.35 + state.trebShimmer * 0.12;
         }
         break;
       }
@@ -2710,6 +2926,7 @@ void main() {
         const rpos = worldData.dRungPos, rcol = worldData.dRungCol;
         const RUNGS = worldData.dRungs;
         const wTwist = wp.twist * 4 + 1;       // 1 - 5 helix twist rate
+        const wRungs = Math.max(2, Math.round(4 + wp.rungs * (RUNGS - 4)));
         const wRadius = wp.radius * 8 + 3;     // 3 - 11 helix radius
         const wSpeed = wp.speed * 3 + .5;      // 0.5 - 3.5 rotation speed
         const wGlow = wp.glow * .5 + .3;       // 0.3 - 0.8 brightness
@@ -2734,7 +2951,7 @@ void main() {
           scol[i*3] = c1.r; scol[i*3+1] = c1.g; scol[i*3+2] = c1.b;
           scol[(RUNGS + i)*3] = c2.r; scol[(RUNGS + i)*3+1] = c2.g; scol[(RUNGS + i)*3+2] = c2.b;
           // Rungs (base pairs) connecting strands
-          const rungVisible = (i % 3 === 0) && wPairs > .1;
+          const rungVisible = i < wRungs && (i % 3 === 0) && wPairs > .1;
           rpos[i*6] = rungVisible ? ax : 0; rpos[i*6+1] = rungVisible ? y : 0; rpos[i*6+2] = rungVisible ? az : 0;
           rpos[i*6+3] = rungVisible ? bx : 0; rpos[i*6+4] = rungVisible ? y : 0; rpos[i*6+5] = rungVisible ? bz : 0;
           const rc = new THREE.Color().setHSL((hue + .3) % 1, .6, wGlow * .7);
@@ -2748,6 +2965,7 @@ void main() {
         if (worldObjects[1]) {
           (worldObjects[1] as any).geometry.attributes.position.needsUpdate = true;
           (worldObjects[1] as any).geometry.attributes.color.needsUpdate = true;
+          (worldObjects[1] as any).material.opacity = 0.12 + wPairs * 0.4 + state.kickEnv * 0.1;
         }
         break;
       }
@@ -2775,7 +2993,10 @@ void main() {
           // Attractor
           vel[ix] += (atX - pos[ix]) * .0005; vel[ix+1] += (atY - pos[ix+1]) * .0005; vel[ix+2] += (atZ - pos[ix+2]) * .0003;
           // Scatter on beat
-          if (state.bass > .3) { vel[ix] += (Math.random() - .5) * wScatter * state.bass * dt; vel[ix+1] += (Math.random() - .5) * wScatter * state.bass * dt; }
+          // Snare-triggered scatter — pairs better with swarm feel
+          // (snares are the "step" in flock dynamics) than the prior
+          // raw-bass amplitude trigger.
+          if (state.snareEnv > .1) { vel[ix] += (Math.random() - .5) * wScatter * state.snareEnv * 1.2 * dt; vel[ix+1] += (Math.random() - .5) * wScatter * state.snareEnv * 1.2 * dt; }
           // Pump burst
           if (state.pump > .1) { const dx = pos[ix] - cx2, dy = pos[ix+1] - cy2; const d = Math.sqrt(dx*dx+dy*dy) + 1; vel[ix] += dx / d * state.pump * 8 * dt; vel[ix+1] += dy / d * state.pump * 8 * dt; }
           // Speed limit
@@ -2804,24 +3025,38 @@ void main() {
         }
         break;
       }
-      case 13: { // RINGS - wp: count, radius, spin, tilt, gap, glow
+      case 13: { // RINGS - wp: count, radius, spin, tilt, gap, thick
+        const wCount = wp.count;
         const wRadius = wp.radius * 1.5 + .5;   // 0.5 - 2.0 scale
         const wSpin = wp.spin * 3 + .5;          // 0.5 - 3.5 spin speed
         const wTilt = wp.tilt * 2;               // 0 - 2 tilt variation
         const wGap = wp.gap * 1.5 + .5;          // 0.5 - 2.0 gap between rings
-        const wGlow = wp.glow * .5 + .2;         // 0.2 - 0.7 opacity
+        const wThick = wp.thick * 1.7 + .25;
         worldObjects.forEach(m => {
           if (m.userData.ringIdx === undefined) return;
           const ri = m.userData.ringIdx;
+          const visible = Math.max(0, Math.min(1, (wCount * 1.15 - ri / Math.max(1, worldData.ringCount - 1)) / 0.14 + 0.5));
           const baseTiltX = m.userData.tiltX * wTilt;
           const baseTiltZ = m.userData.tiltZ * wTilt;
           m.rotation.x = baseTiltX + Math.sin(t * (.2 + ri * .05) * wSpin) * p.chaos * .3;
           m.rotation.y += m.userData.spinDir * dt * wSpin * (.5 + ri * .1) * (1 + p.speed);
           m.rotation.z = baseTiltZ + Math.cos(t * (.15 + ri * .04) * wSpin) * p.chaos * .2;
-          const sc = wRadius * (wGap * .5 + .5) * (1 + state.pump * .2 * Math.sin(ri + t * 3));
+          const sc = wRadius * (wGap * (.35 + ri * .045) + .35) * (1 + state.pump * .2 * Math.sin(ri + t * 3)) * visible;
           m.scale.setScalar(sc);
-          (m as any).material.color.copy(sCol((m.userData.hu + t * .01) % 1));
-          (m as any).material.opacity = wGlow + state.pump * .15 + Math.sin(t * 2 + ri * .8) * .05;
+          const ringCol = sCol((m.userData.hu + t * .01 + state.centroidHue * .16) % 1);
+          const fill = m.userData.fill as THREE.Mesh | undefined;
+          const outlines = (m.userData.outlines as THREE.Mesh[] | undefined) ?? [];
+          if (fill?.material instanceof THREE.MeshBasicMaterial) {
+            fill.material.color.copy(ringCol);
+            fill.material.opacity = visible * (0.04 + state.bass * 0.08);
+          }
+          outlines.forEach((shell, idx) => {
+            shell.scale.setScalar(1.015 + wThick * 0.08 + idx * 0.025 + state.kickEnv * 0.018);
+            if (shell.material instanceof THREE.MeshBasicMaterial) {
+              shell.material.color.copy(ringCol);
+              shell.material.opacity = visible * (0.15 + wThick * 0.24 + state.pump * 0.12 + Math.sin(t * 2 + ri * .8) * .04) / (1 + idx * 0.35);
+            }
+          });
         });
         break;
       }
@@ -2873,22 +3108,87 @@ void main() {
         break;
       }
     }
+
+    // ── Audio-reactive FOV breath ────────────────────────────────
+    // Cinematic "lens breath" — a 0-4° FOV expansion driven by the
+    // smoothed bass follower. Reads as a perspective punch on hits
+    // without touching any camera POSITION math (so all 6 space
+    // trajectories above stay clean). state.bass is bass_att-derived
+    // in smooth mode, so this rises fast on a kick and decays slowly.
+    // Lerp toward target at ~8/s so even sharp peaks don't snap.
+    const fovTarget = 55 + state.bass * 4 + state.kickEnv * 1.5;
+    camera.fov += (fovTarget - camera.fov) * Math.min(1, dt * 8);
+    camera.updateProjectionMatrix();
   }
 
   // ================================================================
-  //  Audio — reads from shared audioStore (VJ mode audio input)
+  //  Audio — reads from the shared visual-audio bus so SynthVision's
+  //  worlds move with the same Milkdrop-style smoothing as the rest of
+  //  the renderer. The reactivity modes simply decide how much of that
+  //  shared musical motion to expose.
   // ================================================================
   function updateAudio() {
-    const audio = $audioStore;
-    if (!audio.isActive) {
-      synthVisionStore.update(s => ({ ...s, micLevel: s.micLevel * .92, bass: s.bass * .92 }));
+    const audio = getVisualAudioSnapshot();
+
+    // ── Silent / inactive — decay every audio-derived value ─────
+    // Even with reactivityMode='off' we keep this branch so a paused
+    // song doesn't leave the visuals frozen on a hit.
+    if (!audio.isActive || state.reactivityMode === 'off') {
+      synthVisionStore.update(s => ({
+        ...s,
+        micLevel: s.micLevel * .92,
+        bass: s.bass * .92,
+        kickEnv: s.kickEnv * .85,
+        snareEnv: s.snareEnv * .85,
+        midPulse: s.midPulse * .92,
+        trebShimmer: s.trebShimmer * .92,
+        // centroidHue + lfoBeat we let live so the visuals don't
+        // freeze mid-cycle — they're cosmetic continuous oscillators
+        // not energy levels.
+      }));
       return;
     }
+
+    // ── Map shared visual audio → local world-facing controls ─────
+    let bassOut: number;
+    switch (state.reactivityMode) {
+      case 'smooth':     bassOut = audio.bass; break;
+      case 'default':    bassOut = audio.bass; break;
+      case 'aggressive': bassOut = Math.max(audio.bass, audio.bassFast * 0.9, audio.beat * 0.6); break;
+      default:           bassOut = 0; break;
+    }
+
+    // Envelopes only fire in 'default' / 'aggressive'. In 'smooth'
+    // mode we pin them to 0 so worlds that opted into envelope-based
+    // bursts don't add accent flashes when the user wants pure
+    // continuous reactivity.
+    const envScale = (state.reactivityMode === 'default' || state.reactivityMode === 'aggressive') ? 1 : 0;
+    const kickOut  = audio.kick * envScale;
+    const snareOut = audio.snare * envScale;
+
+    // BPM-locked LFO only in 'aggressive'. 0-1 sine at one cycle
+    // per beat — drives orbital motion / breathing in worlds that
+    // wire it up.
+    const lfoOut = state.reactivityMode === 'aggressive'
+      ? audio.lfoBeat
+      : 0.5; // neutral midpoint when off — worlds can ignore the
+              // signal by computing relative to 0.5.
+
+    // Centroid hue is always on (when audio is on) — it's a slow
+    // smoothed timbre signal, hard to make ugly.
+    const centroidOut = audio.centroid;
+
     synthVisionStore.update(s => ({
       ...s,
-      micLevel: audio.amplitude,
-      bass: audio.bands.bass,
-      mic: true,  // keep mic flag true so shader uniforms get set
+      mic: true,
+      micLevel: audio.level,
+      bass: bassOut,
+      kickEnv: kickOut,
+      snareEnv: snareOut,
+      midPulse: audio.mid,
+      trebShimmer: audio.high,
+      centroidHue: centroidOut,
+      lfoBeat: lfoOut,
     }));
   }
 
@@ -3270,9 +3570,15 @@ void main() {
       if (frameNum < 5) console.warn('SynthVision: Shader rendering skipped', { gl: !!gl, shaderProgram: !!shaderProgram });
     }
 
-    // Render Three.js (skip if worlds disabled)
+    // Render Three.js (skip if worlds disabled). Goes through the
+    // post chain (bloom + ACES tone map) when composer is up;
+    // falls back to direct render if anything in initThree failed.
     if (worldsEnabled && renderer && scene && camera) {
-      renderer.render(scene, camera);
+      if (composer) {
+        composer.render();
+      } else {
+        renderer.render(scene, camera);
+      }
     }
 
     // Render camera effects layer (separate visual layer, not data input)
@@ -3998,6 +4304,11 @@ void main() {
     if (gl) gl.viewport(0, 0, w, h);
     if (camGl) camGl.viewport(0, 0, w, h);
     if (renderer) { renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+    // Keep the post-processing chain's internal render targets in sync
+    // with the canvas size, otherwise the composer renders to a stale
+    // resolution and the output gets stretched / blurred.
+    if (composer) composer.setSize(w, h);
+    if (bloomPass) bloomPass.setSize(w, h);
     fboW = 0; // force FBO rebuild
     // Reinit camera FBOs on resize
     if (camGl && camCanvas) {
@@ -4468,6 +4779,26 @@ void main() {
       <button class="sv-tap-btn" on:click={tapBPM}>TAP</button>
       <div class="sv-beat-indicator" class:flash={state && state.bp < .15}></div>
       <button class="sv-sync-btn" class:on={state?.bpmSync} on:click={() => synthVisionStore.toggleSync()}>SYNC</button>
+    </div>
+
+    <!-- Reactivity Mode picker. Controls how the Milkdrop-style smooth
+         audio follower's outputs flow into world params:
+           OFF        — silent
+           SMOOTH     — bass_att only, no envelopes (elegant breathing)
+           DEFAULT    — smooth + kick/snare onset envelopes
+           AGGRESSIVE — smooth + envelopes + BPM LFO + raw bass blend
+         See `milkdropFollower.ts` for the underlying math. -->
+    <div class="sv-react-section" title={SV_REACTIVITY_MODES.find(m => m.id === state?.reactivityMode)?.description ?? ''}>
+      <span class="sv-react-lbl">REACT</span>
+      <select
+        class="sv-react-select"
+        value={state?.reactivityMode ?? 'smooth'}
+        on:change={(e) => synthVisionStore.setReactivityMode((e.currentTarget as HTMLSelectElement).value as SVReactivityMode)}
+      >
+        {#each SV_REACTIVITY_MODES as m}
+          <option value={m.id}>{m.label}</option>
+        {/each}
+      </select>
     </div>
 
     <!-- Quick Actions
@@ -5274,6 +5605,33 @@ void main() {
     border-color: var(--sv-g);
     color: var(--sv-g);
   }
+  .sv-react-section {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 8px;
+  }
+  .sv-react-lbl {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 8px;
+    letter-spacing: 1.5px;
+    opacity: .45;
+    color: #fff;
+  }
+  .sv-react-select {
+    padding: 4px 8px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid var(--sv-brd);
+    color: rgba(255,255,255,.7);
+    font-family: 'Orbitron', sans-serif;
+    font-size: 9px;
+    letter-spacing: 1px;
+    cursor: pointer;
+    outline: none;
+    border-radius: 2px;
+  }
+  .sv-react-select:hover { background: rgba(255,255,255,.08); color: #fff; }
+  .sv-react-select:focus { border-color: var(--sv-c); }
 
   /* Quick Actions */
   .sv-quick-actions {

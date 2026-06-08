@@ -29,7 +29,7 @@
   import { getShaderDef } from '$lib/renderer/gpuShaderCatalog';
   import { settings, outputFrozen, SHADER_QUALITY_MULTIPLIERS, masterWarpIsActive } from '../stores/settings';
   import { showToast } from '../stores/errorToast';
-  import { invoke, isDesktopApp, isOsrMode, isOutputMode } from '$lib/bridge';
+  import { getTextureShareLabel, invoke, isDesktopApp, isOsrMode, isOutputMode } from '$lib/bridge';
   import { drawTestPattern, type TestPatternType } from '../utils/testPatterns';
   import { applyEdgeBlending } from '../output/outputPostProcess';
   import { renderSlicePixels, isBlendRendererAvailable } from '../output/blendRenderer';
@@ -60,11 +60,12 @@
     load().catch((e) => { console.warn(`[Canvas] lazy-load ${key} failed:`, e); _lazyLoading.delete(key); });
   }
   // ParticleSystem removed — Particles3D runs as standalone Bevy app via Spout
-  import { audioStore, getLastRawAnalysis, audioBands } from '../stores/audio';
+  import { audioStore, getLastRawAnalysis } from '../stores/audio';
   import { audioTextures } from '../audio/audioTextures';
   import { audioAnalyzer } from '../audio/analyzer';
   import { multiStemAnalyzer } from '../audio/multiStemAnalyzer';
   import { StemRouter } from '../audio/stemRouter';
+  import { getVisualAudioSnapshot } from '../audio/visualAudio';
   import { milkdropStore } from '../stores/milkdrop';
   import { hydraStore } from '../stores/hydra';
   import { initStateBroadcast, destroyStateBroadcast } from '$lib/sync/stateBroadcast';
@@ -117,6 +118,9 @@
   let spoutSendW = 0;
   let spoutSendH = 0;
   let osrSpoutActive = false; // True when OSR zero-copy is handling Spout output
+  let spoutCpuFallbackAllowed = !isElectron;
+  let spoutZeroCopyFailed = false;
+  let spoutWasEnabled = false;
   let spoutFrameSkip = 0;     // Counter for frame skipping on CPU send path
   let spoutSendLogCount = 0; // Limit console spam from send errors
   const isTauriRuntime = typeof window !== 'undefined' && !!window.__TAURI_INTERNALS__;
@@ -157,6 +161,12 @@
     height: number;
   }
   const spoutReceivers = new Map<string, SpoutReceiverContext>();
+  type RawFrameData = ArrayBuffer | ArrayBufferView;
+  function asUint8FrameData(data: RawFrameData): Uint8Array {
+    return ArrayBuffer.isView(data)
+      ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+      : new Uint8Array(data);
+  }
 
   // NDI receiver context — mirrors SpoutReceiverContext. One entry per
   // active NDI receiver clip (keyed by the per-layer cacheKey, same
@@ -944,10 +954,22 @@
     if (window.electronOSR?.onOsrStatus) {
       window.electronOSR.onOsrStatus((status) => {
         osrSpoutActive = status.active;
+        spoutCpuFallbackAllowed = !isElectron || !!status.cpuFallbackAllowed;
         if (status.active) {
+          spoutZeroCopyFailed = false;
           console.log('[Canvas] OSR zero-copy active — disabling readPixels send');
+        } else if (spoutCpuFallbackAllowed) {
+          console.log('[Canvas] OSR inactive (reason:', status.reason, ') — CPU compatibility path is enabled');
+        } else if (status.reason && status.reason !== 'stopped') {
+          const wasAlreadyFailed = spoutZeroCopyFailed;
+          spoutZeroCopyFailed = true;
+          spoutOutputActive = false;
+          console.warn('[Canvas] OSR zero-copy unavailable (reason:', status.reason, ') — CPU sendImage fallback is disabled');
+          if (!wasAlreadyFailed) {
+            showToast(`${getTextureShareLabel()} zero-copy unavailable; CPU fallback is disabled.`, 'error');
+          }
         } else {
-          console.log('[Canvas] OSR inactive (reason:', status.reason, ') — re-enabling CPU send path');
+          console.log('[Canvas] OSR inactive (reason:', status.reason, ')');
         }
       });
     }
@@ -1294,7 +1316,8 @@
           // vjLayerIndex bindings so the cost is paid only when needed.
           layersToRender = normalLayers;
           compEffects = undefined;
-          const anyVjBinding = vjLayers && normalLayers.some(l => l.vjLayerIndex !== undefined);
+          const mappedVjLayers = (vjLayers ?? []) as Layer[];
+          const anyVjBinding = mappedVjLayers.length > 0 && normalLayers.some(l => l.vjLayerIndex !== undefined);
           if (anyVjBinding) {
             const resolveVjTextureMapping = (vjLayer: Layer): THREE.Texture | null => {
               if (!vjLayer?.source) return null;
@@ -1309,7 +1332,7 @@
             // the stage path because mapping mode doesn't currently run
             // the A/B crossfader merge — single bank only.
             const vjResolvedMap = new Map<number, { layer: Layer; texture: THREE.Texture }>();
-            for (const vjLayer of vjLayers!) {
+            for (const vjLayer of mappedVjLayers) {
               const m = vjLayer.id.match(/^vj-layer-(\d+)(?:-([AB]))?$/);
               if (!m) continue;
               const idx = parseInt(m[1]);
@@ -1632,8 +1655,9 @@
         // Spout output (spoutOutputActive) when zero-copy OSR isn't already
         // handling it (osrSpoutActive). Output-window state is window state,
         // not a CPU-readback trigger.
+        const cpuTextureShareSendAllowed = !isElectron || spoutCpuFallbackAllowed;
         const __syphonGateSkipped =
-          !spoutOutputActive || !glCanvas || osrSpoutActive || isOsrMode || isOutputMode;
+          !spoutOutputActive || !glCanvas || osrSpoutActive || isOsrMode || isOutputMode || !cpuTextureShareSendAllowed;
         if (__syphonGateSkipped && (window as any).__SPOUT_DEBUG__) {
           const __now2 = Date.now();
           if (!(window as any).__spoutInnerDbgLast || __now2 - (window as any).__spoutInnerDbgLast > 1000) {
@@ -1642,12 +1666,13 @@
               'outputWindowOpen=', outputWindowOpen,
               'glCanvas=', !!glCanvas,
               'osrSpoutActive=', osrSpoutActive,
+              'cpuFallbackAllowed=', spoutCpuFallbackAllowed,
               'isOsrMode=', isOsrMode,
               'isOutputMode=', isOutputMode);
           }
         }
 
-        if (spoutOutputActive && glCanvas && !osrSpoutActive && !isOsrMode && !isOutputMode) {
+        if (spoutOutputActive && glCanvas && !osrSpoutActive && !isOsrMode && !isOutputMode && cpuTextureShareSendAllowed) {
           // Skip every other frame on the CPU path — getImageData is expensive
           // (~15-30ms for 1080p). This halves the readback overhead while still
           // delivering 30fps output at 60fps render rate.
@@ -2062,7 +2087,14 @@
   $: spoutEnabled = isTauri && !isOsrMode && !!$settings?.output?.spoutEnabled;
   let spoutStarting = false; // Prevent concurrent start calls
 
-  $: if (spoutEnabled && !spoutOutputActive && !spoutStarting) {
+  $: {
+    if (spoutEnabled !== spoutWasEnabled) {
+      spoutZeroCopyFailed = false;
+      spoutWasEnabled = spoutEnabled;
+    }
+  }
+
+  $: if (spoutEnabled && !spoutZeroCopyFailed && !spoutOutputActive && !spoutStarting) {
     spoutStarting = true;
     const s = $settings?.output;
     const resSetting = s?.spoutResolution || 'match';
@@ -2083,15 +2115,27 @@
       width: spoutW,
       height: spoutH,
     }).then((result: any) => {
+      if (!result?.success) {
+        throw new Error(result?.error || `${getTextureShareLabel()} sender failed`);
+      }
+      const mode = result?.mode || 'unknown';
+      spoutCpuFallbackAllowed = !isElectron || !!result?.cpuFallbackAllowed;
+      if (mode === 'zero-copy-unavailable' && !spoutCpuFallbackAllowed) {
+        spoutZeroCopyFailed = true;
+        throw new Error(`${getTextureShareLabel()} zero-copy unavailable`);
+      }
       spoutOutputActive = true;
+      spoutZeroCopyFailed = false;
       spoutStarting = false;
       spoutSendLogCount = 0;
-      const mode = result?.mode || 'unknown';
       console.log(`Spout output started: ${s?.spoutName} (${mode})`);
-      showToast(`Spout started: ${s?.spoutName} ${spoutW}x${spoutH}`, 'info');
+      const label = getTextureShareLabel();
+      const modeLabel = mode === 'zero-copy-pending' ? 'zero-copy starting' : mode;
+      showToast(`${label} ${modeLabel}: ${s?.spoutName} ${spoutW}x${spoutH}`, 'info');
     }).catch((e: any) => {
       console.warn('Failed to start Spout sender:', e);
       showToast(`Spout failed: ${e?.message || e}`, 'error');
+      spoutZeroCopyFailed = true;
       spoutStarting = false;
     });
   } else if (!spoutEnabled && spoutOutputActive) {
@@ -2938,7 +2982,6 @@
               let recvLastDiag = Date.now();
               let recvRafId: number | null = null;
               let recvInFlight = false; // Prevent overlapping IPC calls
-              let recvReuseBuf: Uint8Array | null = null; // Reuse buffer to reduce GC
 
               const pollFrame = () => {
                 if (!recvActive) return;
@@ -2955,7 +2998,7 @@
                 }
                 recvInFlight = true;
 
-                invoke<{ data: ArrayBuffer; width: number; height: number } | null>('spout_receive_frame')
+                invoke<{ data: RawFrameData; width: number; height: number } | null>('spout_receive_frame')
                   .then((frame) => {
                     recvInFlight = false;
                     if (!recvActive) return;
@@ -2964,14 +3007,7 @@
                       const w = frame.width;
                       const h = frame.height;
                       const expectedSize = w * h * 4;
-
-                      // Reuse the Uint8Array wrapper to reduce GC pressure
-                      if (!recvReuseBuf || recvReuseBuf.byteLength !== expectedSize) {
-                        recvReuseBuf = new Uint8Array(frame.data);
-                      } else {
-                        recvReuseBuf.set(new Uint8Array(frame.data));
-                      }
-                      const frameData = recvReuseBuf;
+                      const frameData = asUint8FrameData(frame.data);
 
                       recvFrameCount++;
                       if (recvFrameCount <= 3) {
@@ -2993,8 +3029,7 @@
                       // Handle dimension change
                       if (tex.image.width !== w || tex.image.height !== h) {
                         console.log('[Spout] Resizing texture to:', w, 'x', h);
-                        const newData = new Uint8Array(frameData);
-                        const newTex = new THREE.DataTexture(newData, w, h, THREE.RGBAFormat);
+                        const newTex = new THREE.DataTexture(frameData, w, h, THREE.RGBAFormat);
                         newTex.minFilter = THREE.LinearFilter;
                         newTex.magFilter = THREE.LinearFilter;
                         newTex.needsUpdate = true;
@@ -3015,10 +3050,10 @@
                         // attempt to use a deleted object — once per poll, for
                         // the rest of the session. The resulting error spam
                         // dominated the console and wedged the renderer. Going
-                        // through tex.image.data.set + needsUpdate lets THREE
-                        // revalidate the GL texture each frame; the saving of
-                        // a single texSubImage2D is not worth the breakage.
-                        tex.image.data.set(frameData);
+                        // through tex.image.data + needsUpdate lets THREE
+                        // revalidate the GL texture each frame; avoiding a
+                        // stale handle matters more than a direct texSubImage2D.
+                        (tex.image as any).data = frameData;
                         tex.needsUpdate = true;
                       }
                       recvNullCount = 0;
@@ -3096,9 +3131,10 @@
                     // See comment in the Electron receive poll above — the
                     // cached-glTexture fast path was removed because its handle
                     // went stale and caused INVALID_OPERATION spam. Go through
-                    // THREE's normal upload path instead.
+                    // THREE's normal upload path instead while handing it the
+                    // latest frame buffer directly.
                     if (tex.image.data) {
-                      tex.image.data.set(frameData);
+                      (tex.image as any).data = frameData;
                       tex.needsUpdate = true;
                     }
                   }
@@ -3850,9 +3886,7 @@
     const height = projectData.height || 1080;
     const mainRenderer = engine.getRenderer();
 
-    // Get audio level for audio-reactive effects
-    const audioState = get(audioStore);
-    const audioLevel = audioState?.amplitude || 0;
+    const visual = getVisualAudioSnapshot();
 
     for (const layer of layerList) {
       if (layer.type !== 'splat' || !layer.splatContent) continue;
@@ -3959,9 +3993,11 @@
 
       // Update and render splat to the shared render target
       const splatBand = layer.splatContent.audioBand || 'all';
-      const splatBandLevel = splatBand === 'all' ? audioLevel : (audioState?.bands?.[splatBand] || 0);
+      const splatBandLevel = splatBand === 'all'
+        ? visual.level
+        : (visual.bands[splatBand as keyof typeof visual.bands] || 0);
       const splatSensitivity = layer.splatContent.audioSensitivity || 1;
-      splatCtx.renderer.update(layer.splatContent, splatBandLevel * splatSensitivity, audioState);
+      splatCtx.renderer.update(layer.splatContent, splatBandLevel * splatSensitivity, visual);
 
       // Render to the engine's WebGLRenderTarget (same GL context = no cross-context issues)
       // Save and restore the engine's clear color
@@ -4037,9 +4073,10 @@
           mediaItems: get(mediaLibrary),
         };
         // Audio bands for shaders that opt into reactivity (e.g.
-        // flythrough audioReactive toggle). audioBands is a derived
-        // store; get() is O(1) and the per-frame cost is negligible.
-        const bandsSnap = get(audioBands);
+        // flythrough audioReactive toggle). Pull from the shared
+        // visual-audio bus so these shaders inherit the same smoothing
+        // as the rest of the renderer.
+        const bandsSnap = getVisualAudioSnapshot();
         // Render-quality scaling — heavy shaders (planet clouds, fluid
         // sims) blow past 60fps budget at full project resolution on
         // Apple Silicon + integrated GPUs. The per-layer renderQuality
@@ -4051,9 +4088,9 @@
         const gpuW = Math.max(64, Math.round(width * gpuQuality));
         const gpuH = Math.max(64, Math.round(height * gpuQuality));
         renderer.renderFrame(c.shaderId, mergedParams, gpuW, gpuH, sourceCtx, {
-          bass: bandsSnap.bass ?? 0,
+          bass: bandsSnap.bassFast ?? 0,
           mid: bandsSnap.mid ?? 0,
-          treble: bandsSnap.treble ?? 0,
+          treble: bandsSnap.high ?? 0,
         });
       } catch (err: any) {
         console.warn('[Canvas] gpu-layer: render failed', err?.message || err);
@@ -4115,9 +4152,7 @@
     const height = projectData.height || 1080;
     const mainRenderer = engine.getRenderer();
 
-    // Get audio level for audio-reactive effects
-    const audioState = get(audioStore);
-    const audioLevel = audioState?.amplitude || 0;
+    const visual = getVisualAudioSnapshot();
 
     for (const layer of layerList) {
       if (layer.type !== 'model3d' || !layer.model3dContent) continue;
@@ -4205,8 +4240,10 @@
       // Update and render model to its own offscreen canvas (separate GL context)
       const content = layer.model3dContent;
       const modelBand = content.audio?.audioBand || 'all';
-      const modelBandLevel = modelBand === 'all' ? audioLevel : (audioState?.bands?.[modelBand] || 0);
-      model3dCtx.renderer.update(content, modelBandLevel, audioState);
+      const modelBandLevel = modelBand === 'all'
+        ? visual.level
+        : (visual.bands[modelBand as keyof typeof visual.bands] || 0);
+      model3dCtx.renderer.update(content, modelBandLevel, visual);
       model3dCtx.renderer.render();
 
       // Mark CanvasTexture as needing upload so Three.js picks up the new frame
@@ -4244,9 +4281,7 @@
     const deltaTime = Math.min(currentTime - lastEffectUpdateTime, 0.1);
     lastEffectUpdateTime = currentTime;
 
-    // Get audio level for reactivity
-    const audioState = get(audioStore);
-    const audioLevel = audioState?.amplitude || 0;
+    const visual = getVisualAudioSnapshot();
 
     // Track active effect sources
     const _activeEffectIds = new Set<string>();
@@ -5242,7 +5277,7 @@
           }
         }
 
-        hy.step(deltaTime, getLastRawAnalysis());
+        hy.step(deltaTime, visual);
         hy.render(renderer, effectCtx.renderTarget);
       }
 

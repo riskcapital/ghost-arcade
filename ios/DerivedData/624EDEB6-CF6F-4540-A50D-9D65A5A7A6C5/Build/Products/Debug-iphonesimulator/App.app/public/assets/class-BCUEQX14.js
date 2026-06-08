@@ -1,0 +1,1 @@
+import{a as g}from"./index-client-DfzeMwuN.js";function A(i,N,f,b,t,r){var u=i.__className;if(u!==f||u===void 0){var a=g(f,b,r);a==null?i.removeAttribute("class"):N?i.className=a:i.setAttribute("class",a),i.__className=f}else if(r&&t!==r)for(var l in r){var o=!!r[l];(t==null||o!==!!t[l])&&i.classList.toggle(l,o)}return r}export{A as s};

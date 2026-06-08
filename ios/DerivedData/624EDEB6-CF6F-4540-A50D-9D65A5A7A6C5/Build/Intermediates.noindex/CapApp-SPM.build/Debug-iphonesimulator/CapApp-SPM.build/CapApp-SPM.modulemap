@@ -1,0 +1,4 @@
+module CapApp_SPM {
+header "CapApp-SPM-Swift.h"
+export *
+}

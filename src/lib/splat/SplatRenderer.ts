@@ -1528,7 +1528,9 @@ export class SplatRenderer {
     u.audioScale.value = content.audioScale;
     u.audioColor.value = content.audioColor;
     // Beat reactivity from full audio state
-    u.beatIntensity.value = audioState?.beat?.beatIntensity || 0;
+    u.beatIntensity.value = typeof audioState?.beat === 'number'
+      ? audioState.beat
+      : (audioState?.beat?.beatIntensity || 0);
     u.beatPhase.value = audioState?.beatPhase || 0;
 
     // Transform
