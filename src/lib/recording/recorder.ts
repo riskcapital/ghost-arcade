@@ -17,6 +17,8 @@ import { createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
 export interface RecorderOptions {
   /** Label prefix for saved recordings (e.g., 'Recording', 'VJ Recording') */
   namePrefix?: string;
+  /** Explicit canvas to record. Defaults to the main output canvas. */
+  canvas?: HTMLCanvasElement | (() => HTMLCanvasElement | null);
   /** Called every second with updated duration */
   onDurationUpdate?: (seconds: number) => void;
   /** Called when recording completes and is saved */
@@ -90,6 +92,11 @@ function findCanvas(): HTMLCanvasElement | null {
   );
 }
 
+function resolveCanvas(source: RecorderOptions['canvas']): HTMLCanvasElement | null {
+  if (!source) return findCanvas();
+  return typeof source === 'function' ? source() : source;
+}
+
 // ============================================================================
 // RECORDING SERVICE
 // ============================================================================
@@ -99,7 +106,7 @@ function findCanvas(): HTMLCanvasElement | null {
  * Optionally captures audio from the shared audio system.
  */
 export function startRecording(options: RecorderOptions = {}): RecorderHandle | null {
-  const canvas = findCanvas();
+  const canvas = resolveCanvas(options.canvas);
   if (!canvas) {
     options.onError?.(new Error('No canvas found to record'));
     return null;

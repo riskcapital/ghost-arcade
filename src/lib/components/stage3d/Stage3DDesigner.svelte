@@ -27,6 +27,7 @@
   import { ELEMENT_TYPES, makeUserElement } from '../../stage3d/elementTypes';
   import { buildVenue, paPresetElements, type PAPreset } from '../../stage3d/venues';
   import type { Stage3DVenue, UserStageElement } from '../../stage3d/types';
+  import { startRecording as startCanvasRecording, formatRecordingDuration, type RecorderHandle } from '../../recording/recorder';
   import StageNodeProperties from './StageNodeProperties.svelte';
   import StageElementProperties from './StageElementProperties.svelte';
   import StageLightingPanel from './StageLightingPanel.svelte';
@@ -40,6 +41,9 @@
   let toastMessage = '';
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
   let panelsHidden = false;
+  let recorderHandle: RecorderHandle | null = null;
+  let recordingDuration = 0;
+  let isRecording = false;
 
   // Refresh undo/redo button state whenever historyVersion bumps.
   let canUndo = false;
@@ -189,6 +193,48 @@
     toastTimer = setTimeout(() => (toastMessage = ''), 1600);
   }
 
+  function getStageCanvas(): HTMLCanvasElement | null {
+    const popoutCanvas = document.querySelector('.stage3d-window canvas.main-canvas') as HTMLCanvasElement | null;
+    const fallbackCanvas = document.querySelector('canvas.main-canvas') as HTMLCanvasElement | null;
+    return popoutCanvas ?? fallbackCanvas;
+  }
+
+  function startStageRecording() {
+    if (recorderHandle) return;
+    recordingDuration = 0;
+    recorderHandle = startCanvasRecording({
+      namePrefix: 'Stage Recording',
+      canvas: getStageCanvas,
+      onDurationUpdate: (s) => { recordingDuration = s; },
+      onComplete: () => {
+        isRecording = false;
+        recorderHandle = null;
+        toast('Stage recording saved');
+      },
+      onError: (err) => {
+        isRecording = false;
+        recorderHandle = null;
+        toast(err.message || 'Recording failed');
+      },
+    });
+    if (recorderHandle) {
+      isRecording = true;
+      toast('Stage recording started');
+    }
+  }
+
+  function stopStageRecording() {
+    if (!recorderHandle) return;
+    recorderHandle.stop();
+    recorderHandle = null;
+    isRecording = false;
+  }
+
+  function toggleStageRecording() {
+    if (isRecording) stopStageRecording();
+    else startStageRecording();
+  }
+
   // Library grouped by category.
   $: libraryGroups = (() => {
     const groups: Record<string, [string, typeof ELEMENT_TYPES[string]][]> = {};
@@ -273,6 +319,8 @@
   });
   onDestroy(() => {
     window.removeEventListener('keydown', onKeydown);
+    recorderHandle?.stop();
+    recorderHandle = null;
   });
 </script>
 
@@ -317,8 +365,8 @@
 
     <div class="spacer"></div>
 
-    <label class="dim-label">PA</label>
-    <select class="vsel" value="" onchange={onPASelect}>
+    <label class="dim-label" for="stage3d-pa-select">PA</label>
+    <select id="stage3d-pa-select" class="vsel" value="" onchange={onPASelect}>
       <option value="">Add PA preset…</option>
       <option value="linearray">Flown Line Array L/R</option>
       <option value="festivalpa">Festival PA + Subs</option>
@@ -330,6 +378,14 @@
     <button class="tbtn" onclick={() => $stage3DRendererControls?.topCamera()}>⬓ Top</button>
     <button class="tbtn" onclick={() => $stage3DRendererControls?.frameCamera()}>⊡ Frame</button>
     <button class="tbtn" onclick={() => { $stage3DRendererControls?.reload(); toast('Scene reloaded'); }} title="Rebuild venue + screens">⟳ Reload</button>
+    <button
+      class="tbtn rec-btn"
+      class:recording={isRecording}
+      onclick={toggleStageRecording}
+      title={isRecording ? 'Stop stage recording' : 'Record stage scene'}
+    >
+      {isRecording ? `■ ${formatRecordingDuration(recordingDuration)}` : '● Rec'}
+    </button>
     <button class="tbtn" onclick={togglePanels} title="Hide panels (H)">▤ Hide</button>
     <button class="tbtn" onclick={saveDesign}>↓ Save</button>
     <button class="tbtn" onclick={loadDesign}>↑ Load</button>
@@ -542,6 +598,21 @@
   .tbtn:disabled { opacity: 0.35; cursor: not-allowed; }
   .tbtn:disabled:hover { border-color: rgba(255, 255, 255, 0.08); color: #e9edf4; }
   .tbtn.danger:hover { border-color: #ff5cb8; color: #ff5cb8; }
+  .rec-btn {
+    min-width: 66px;
+    text-align: center;
+  }
+  .rec-btn.recording {
+    background: rgba(255, 68, 91, 0.18);
+    border-color: rgba(255, 68, 91, 0.72);
+    color: #ff8d9b;
+    font-family: 'IBM Plex Mono', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  .rec-btn.recording:hover {
+    border-color: #ff445b;
+    color: #ffd2d8;
+  }
   .show-panels-btn {
     position: absolute;
     top: 14px; left: 50%;
