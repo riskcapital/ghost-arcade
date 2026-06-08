@@ -34,6 +34,10 @@
 #include <string>
 #include <mutex>
 
+@interface SyphonServerDirectory (GhostArcadeRefresh)
+- (void)requestServerAnnounce;
+@end
+
 // ============================================================
 // Shared context helpers
 // ============================================================
@@ -48,6 +52,26 @@ static NSOpenGLContext* CreateLegacyContext() {
   NSOpenGLPixelFormat* fmt = [[NSOpenGLPixelFormat alloc] initWithAttributes:attrs];
   if (!fmt) return nil;
   return [[NSOpenGLContext alloc] initWithFormat:fmt shareContext:nil];
+}
+
+static NSArray* GetSyphonServers(bool activelyRefresh) {
+  SyphonServerDirectory* directory = [SyphonServerDirectory sharedDirectory];
+  NSArray* servers = [directory servers];
+  if (!activelyRefresh || [servers count] > 0) return servers;
+
+  static CFAbsoluteTime lastAnnounce = 0;
+  CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+  if (now - lastAnnounce > 0.75) {
+    lastAnnounce = now;
+    [directory requestServerAnnounce];
+  }
+
+  // Syphon discovery is NSDistributedNotificationCenter-driven. Give Cocoa a
+  // brief chance to receive announce responses so a cold source picker does
+  // not report "no sources" while other Syphon clients already see them.
+  NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:0.05];
+  [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:deadline];
+  return [directory servers];
 }
 
 // ============================================================
@@ -88,6 +112,7 @@ private:
   // IOSurface-wrap rectangle texture (used by publishIOSurface)
   GLuint ioSurfaceTex_ = 0;
   IOSurfaceID lastIOSurfaceID_ = 0;
+  int zeroCopyLogCount_ = 0;
 
   int width_ = 0;
   int height_ = 0;
@@ -105,6 +130,7 @@ private:
     width_ = 0;
     height_ = 0;
     lastIOSurfaceID_ = 0;
+    zeroCopyLogCount_ = 0;
   }
 
   bool ensureContextAndServer() {
@@ -132,6 +158,8 @@ private:
     std::lock_guard<std::mutex> lock(mutex_);
     senderName_ = info[0].As<Napi::String>().Utf8Value();
     if (server_) { [server_ stop]; server_ = nil; }
+    lastIOSurfaceID_ = 0;
+    zeroCopyLogCount_ = 0;
     if (!ensureContextAndServer()) {
       Napi::Error::New(env, "Failed to create Syphon server").ThrowAsJavaScriptException();
       return env.Undefined();
@@ -199,22 +227,18 @@ private:
     return Napi::Boolean::New(env, true);
   }
 
-  // Zero-copy publish core. Looks up the IOSurface, wraps it as a
-  // GL_TEXTURE_RECTANGLE via CGLTexImageIOSurface2D, and hands the rect
-  // texture to SyphonServer. No pixel data crosses the CPU boundary —
-  // samplers in downstream Syphon clients read straight from the
-  // IOSurface's GPU memory. Caller must hold mutex_.
-  bool publishIOSurfaceLocked(IOSurfaceID surfaceID, int w, int h, bool flipped) {
-    if (!ensureContextAndServer()) return false;
-
-    IOSurfaceRef surface = IOSurfaceLookup(surfaceID);
-    if (!surface) {
-      static int missCount = 0;
-      if (missCount++ < 5) {
-        NSLog(@"[SyphonOutput] IOSurfaceLookup(%u) returned NULL — wrong id encoding?", surfaceID);
-      }
+  // Zero-copy publish core. Wraps the IOSurface as a GL_TEXTURE_RECTANGLE via
+  // CGLTexImageIOSurface2D and hands the rect texture to SyphonServer. No pixel
+  // data crosses the CPU boundary; downstream Syphon clients sample directly
+  // from the IOSurface-backed GPU memory. Caller must hold mutex_.
+  bool publishIOSurfaceRefLocked(IOSurfaceRef surface, int w, int h, bool flipped, bool releaseSurface) {
+    if (!surface) return false;
+    if (!ensureContextAndServer()) {
+      if (releaseSurface) CFRelease(surface);
       return false;
     }
+
+    IOSurfaceID surfaceID = IOSurfaceGetID(surface);
 
     [context_ makeCurrentContext];
 
@@ -230,7 +254,7 @@ private:
         GL_UNSIGNED_INT_8_8_8_8_REV,
         surface,
         0);
-    CFRelease(surface);
+    if (releaseSurface) CFRelease(surface);
 
     if (cglErr != kCGLNoError) {
       NSLog(@"[SyphonOutput] CGLTexImageIOSurface2D failed: %d", cglErr);
@@ -245,21 +269,34 @@ private:
                    textureDimensions:NSMakeSize(w, h)
                          flipped:flipped];
 
-    // One-shot confirmation that zero-copy publish is live. Logs once on the
-    // first success and then again whenever the IOSurface changes (resize /
-    // sender restart). Lets ops confirm from main-process logs that we're
-    // truly on the IOSurface path and not the silent sendImage compatibility
-    // fallback — which historically was indistinguishable in logs and burned
-    // ~8 MB/frame at 1080p for no good reason.
-    if (lastIOSurfaceID_ != surfaceID) {
+    // Confirmation that zero-copy publish is live. Chromium rotates through a
+    // small IOSurface pool, so do not log every surface-id change at frame rate.
+    // Emit the first few successes and any real size change.
+    bool sizeChanged = width_ != w || height_ != h;
+    if (zeroCopyLogCount_ < 3 || sizeChanged) {
       NSLog(@"[SyphonOutput] zero-copy ACTIVE — IOSurfaceID=%u %dx%d (publishing via CGLTexImageIOSurface2D)",
             surfaceID, w, h);
+      zeroCopyLogCount_++;
     }
 
     width_ = w;
     height_ = h;
     lastIOSurfaceID_ = surfaceID;
     return true;
+  }
+
+  // Compatibility path for older Electron builds that provide a 4-byte
+  // IOSurfaceID instead of the current IOSurfaceRef pointer.
+  bool publishIOSurfaceLocked(IOSurfaceID surfaceID, int w, int h, bool flipped) {
+    IOSurfaceRef surface = IOSurfaceLookup(surfaceID);
+    if (!surface) {
+      static int missCount = 0;
+      if (missCount++ < 5) {
+        NSLog(@"[SyphonOutput] IOSurfaceLookup(%u) returned NULL — wrong id encoding?", surfaceID);
+      }
+      return false;
+    }
+    return publishIOSurfaceRefLocked(surface, w, h, flipped, /*releaseSurface=*/true);
   }
 
   // Lower-level entry: caller passes an IOSurfaceID as a plain JS Number.
@@ -279,12 +316,10 @@ private:
   // SpoutOutput::SendTexture signature: takes the opaque sharedTextureHandle
   // Buffer from event.texture.textureInfo and width/height from codedSize.
   //
-  // On macOS, Electron's shared-texture handle is a 4-byte little-endian
-  // IOSurfaceID (io_surface_id_t). The first-frame NSLog below dumps the
-  // buffer size + bytes so we can catch a format mismatch if a future
-  // Electron version changes the serialization — IOSurfaceLookup returning
-  // NULL with the expected 4-byte size means the id is valid-shaped but
-  // referring to a surface not in this process's IOSurface table (rare).
+  // On current Electron, textureInfo.handle.ioSurface is an IOSurfaceRef
+  // pointer serialized as a Buffer. Older Electron builds exposed a 4-byte
+  // IOSurfaceID in sharedTextureHandle. The first-frame NSLog below dumps the
+  // buffer shape so we can catch future Electron serialization changes.
   //
   // flipped: Chromium OSR composites with image origin at top-left of the
   // IOSurface (page-top at pixel (0,0)), which is "flipped" relative to
@@ -317,9 +352,18 @@ private:
     if (handleBuffer.Length() < sizeof(IOSurfaceID)) {
       return Napi::Boolean::New(env, false);
     }
-    IOSurfaceID surfaceID = *reinterpret_cast<const IOSurfaceID*>(handleBuffer.Data());
 
     std::lock_guard<std::mutex> lock(mutex_);
+
+    if (handleBuffer.Length() >= sizeof(IOSurfaceRef)) {
+      IOSurfaceRef surface = *reinterpret_cast<IOSurfaceRef const*>(handleBuffer.Data());
+      if (surface) {
+        CFRetain(surface);
+        return Napi::Boolean::New(env, publishIOSurfaceRefLocked(surface, w, h, /*flipped=*/YES, /*releaseSurface=*/true));
+      }
+    }
+
+    IOSurfaceID surfaceID = *reinterpret_cast<const IOSurfaceID*>(handleBuffer.Data());
     return Napi::Boolean::New(env, publishIOSurfaceLocked(surfaceID, w, h, /*flipped=*/YES));
   }
 
@@ -487,7 +531,7 @@ private:
     // fall back to the raw ServerName alone.
     NSString* nsName = [NSString stringWithUTF8String:senderName.c_str()];
     NSDictionary* serverDesc = nil;
-    NSArray* servers = [[SyphonServerDirectory sharedDirectory] servers];
+    NSArray* servers = GetSyphonServers(true);
     for (NSDictionary* desc in servers) {
       NSString* name = [desc objectForKey:SyphonServerDescriptionNameKey];
       NSString* appName = [desc objectForKey:SyphonServerDescriptionAppNameKey];
@@ -533,7 +577,7 @@ private:
       // to the server. Log the first 5 nils to surface the failure.
       static int nilFrameLogged = 0;
       if (nilFrameLogged < 5) {
-        NSArray* servers = [[SyphonServerDirectory sharedDirectory] servers];
+        NSArray* servers = GetSyphonServers(false);
         NSLog(@"[SyphonReceiver] newFrameImage=nil (#%d), directory has %lu servers",
               nilFrameLogged, (unsigned long)[servers count]);
         nilFrameLogged++;
@@ -634,7 +678,7 @@ private:
 static Napi::Value ListSenders(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   Napi::Array result = Napi::Array::New(env);
-  NSArray* servers = [[SyphonServerDirectory sharedDirectory] servers];
+  NSArray* servers = GetSyphonServers(true);
   uint32_t idx = 0;
   for (NSDictionary* desc in servers) {
     NSString* name = [desc objectForKey:SyphonServerDescriptionNameKey];
@@ -677,7 +721,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   // before the first listSenders() call. The directory populates async via
   // Apple distributed notifications; lazy instantiation returns an empty
   // list on the first call.
-  (void)[SyphonServerDirectory sharedDirectory];
+  (void)GetSyphonServers(true);
 
   SyphonOutput::Init(env, exports);
   SyphonReceiver::Init(env, exports);

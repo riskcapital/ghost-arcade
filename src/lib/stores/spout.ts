@@ -9,8 +9,19 @@
 import { writable } from 'svelte/store';
 import { invoke, isDesktopApp } from '$lib/bridge';
 
+export interface TextureShareInfo {
+  platform: 'spout' | 'syphon';
+  label: string;
+  available: boolean;
+  addonPath?: string | null;
+  candidates?: string[];
+  error?: string | null;
+  cpuFallbackAllowed?: boolean;
+}
+
 /** List of currently available Spout senders */
 export const spoutSenders = writable<string[]>([]);
+export const textureShareInfo = writable<TextureShareInfo | null>(null);
 
 let scanInterval: ReturnType<typeof setInterval> | null = null;
 let scanning = false;
@@ -25,6 +36,14 @@ export async function scanSpoutSenders() {
   if (!isDesktop) return;
 
   try {
+    const info = await invoke<TextureShareInfo>('texture_share_info');
+    textureShareInfo.set(info);
+    if (!info.available) {
+      console.warn(`[${info.label}] native addon unavailable: ${info.error || 'unknown error'}`);
+      spoutSenders.set([]);
+      return;
+    }
+
     const senders = await invoke<string[]>('spout_list_senders');
     spoutSenders.set(senders || []);
   } catch (err) {

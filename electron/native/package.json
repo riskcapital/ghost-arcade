@@ -6,8 +6,10 @@
   "private": true,
   "scripts": {
     "install": "cmake-js compile",
-    "build": "cmake-js compile --runtime=electron --runtime-version=42.0.0",
-    "rebuild": "cmake-js rebuild --runtime=electron --runtime-version=42.0.0",
+    "build": "node scripts/build-native.mjs",
+    "build:single": "cmake-js compile --runtime=electron --runtime-version=42.0.0",
+    "rebuild": "node scripts/build-native.mjs --rebuild",
+    "rebuild:single": "cmake-js rebuild --runtime=electron --runtime-version=42.0.0",
     "clean": "cmake-js clean"
   },
   "dependencies": {

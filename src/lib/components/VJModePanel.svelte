@@ -964,14 +964,31 @@
   let vjShowNdiPicker = false;
   let vjSpoutInput = '';
   let vjDetectedSpoutSenders: string[] = [];
+  let vjTextureShareAvailable = true;
+  let vjTextureShareHint = `Open a ${getTextureShareLabel()} sender in MadMapper, Resolume, OBS, or another VJ app`;
 
   async function vjScanSpout() {
     const { invoke: bridgeInvoke, isDesktopApp } = await import('$lib/bridge');
     if (isDesktopApp) {
       try {
+        const info = await bridgeInvoke<{
+          label: string;
+          available: boolean;
+          error?: string | null;
+        }>('texture_share_info');
+        vjTextureShareAvailable = !!info.available;
+        vjTextureShareHint = info.available
+          ? `Open a ${info.label} sender in MadMapper, Resolume, OBS, or another VJ app`
+          : (info.error || `${info.label} native addon unavailable`);
+        if (!info.available) {
+          vjDetectedSpoutSenders = [];
+          return;
+        }
         vjDetectedSpoutSenders = await bridgeInvoke('spout_list_senders');
       } catch (err) {
         console.warn('VJ Spout scan failed:', err);
+        vjTextureShareAvailable = false;
+        vjTextureShareHint = err instanceof Error ? err.message : String(err);
         vjDetectedSpoutSenders = [];
       }
     } else {
@@ -4178,6 +4195,11 @@
                           {sender}
                         </button>
                       {/each}
+                    </div>
+                  {:else}
+                    <div class="empty-media" style="padding: 12px 14px;">
+                      <p>{vjTextureShareAvailable ? `No ${getTextureShareLabel()} senders detected` : `${getTextureShareLabel()} native bridge unavailable`}</p>
+                      <p class="hint">{vjTextureShareHint}</p>
                     </div>
                   {/if}
                   <div class="vj-spout-manual">

@@ -15,7 +15,7 @@ declare global {
       platform: string;
     };
     electronOSR?: {
-      onOsrStatus: (callback: (data: { active: boolean; reason?: string }) => void) => void;
+      onOsrStatus: (callback: (data: { active: boolean; reason?: string; cpuFallbackAllowed?: boolean }) => void) => void;
     };
   }
 }

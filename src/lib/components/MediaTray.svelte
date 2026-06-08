@@ -99,11 +99,15 @@
   // Check if running in desktop app (Electron)
   import { invoke as bridgeInvoke, isDesktopApp, getTextureShareLabel } from '$lib/bridge';
   const tsLabel = getTextureShareLabel();
-  import { spoutSenders, scanSpoutSenders } from '$lib/stores/spout';
+  import { spoutSenders, textureShareInfo, scanSpoutSenders } from '$lib/stores/spout';
   const isDesktop = isDesktopApp || (typeof window !== 'undefined' && !!window.__ELECTRON__);
 
   // Subscribe to global Spout sender list
   $: availableSpoutSenders = $spoutSenders;
+  $: textureShareUnavailable = !!$textureShareInfo && !$textureShareInfo.available;
+  $: textureShareStatusHint = textureShareUnavailable
+    ? ($textureShareInfo?.error || `${tsLabel} native addon unavailable`)
+    : `Open a ${tsLabel} sender in MadMapper, Resolume, OBS, or another VJ app`;
 
   // Enumerate webcams
   async function enumerateWebcams() {
@@ -3250,8 +3254,8 @@
               </div>
             {:else}
               <div class="spout-no-senders">
-                <p>No {tsLabel} senders detected</p>
-                <p class="hint">Open an app with {tsLabel} output (FluidGen, OBS, etc.)</p>
+                <p>{textureShareUnavailable ? `${tsLabel} native bridge unavailable` : `No ${tsLabel} senders detected`}</p>
+                <p class="hint">{textureShareStatusHint}</p>
                 <button class="spout-refresh-btn" onclick={() => scanSpoutSenders()}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>

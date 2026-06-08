@@ -2184,7 +2184,9 @@ export class Model3DRenderer {
     }
 
     // Beat-sync effects
-    const beatIntensity = audioState?.beat?.beatIntensity || 0;
+    const beatIntensity = typeof audioState?.beat === 'number'
+      ? audioState.beat
+      : (audioState?.beat?.beatIntensity || 0);
     const beatPhase = audioState?.beatPhase || 0;
 
     if (content.audio.enabled && beatIntensity > 0) {

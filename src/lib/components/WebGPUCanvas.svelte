@@ -94,7 +94,7 @@
   // compute-path blit helper.
   import { withExternalTexture, checkVideoFrameLeaks } from '$lib/utils/videoFrameBridge';
   import { mediaLibrary } from '$lib/stores/media';
-  import { audioBands } from '$lib/stores/audio';
+  import { visualAudio } from '$lib/audio/visualAudio';
   import { project, selectedLayer } from '$lib/stores/layers';
   import { get as getStore } from 'svelte/store';
   // Cheap synchronous read of the project store from inside the
@@ -212,7 +212,8 @@
 
   // Latest snapshot of the audio analyzer bands — kept in module
   // scope so the per-frame flythrough loop can read it synchronously
-  // without re-subscribing per layer. Updated inside the audioBands
+  // without re-subscribing per layer. Updated from the shared
+  // visual-audio bus subscription below.
   // subscription below. Null until the analyzer ticks once.
   let lastAudioBands: { bass: number; mid: number; treble: number } | null = null;
 
@@ -1438,16 +1439,16 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     window.addEventListener('mouseup', onMouseUp, { capture: true });
     window.addEventListener('keydown', onKeyDown);
 
-    // Subscribe to bass band — feeds the audio-reactive jolt that
-    // makes drips jump on the kick. audioBands is a derived store
-    // that re-emits as the audio analyzer ticks (60Hz callback).
-    // Also snapshots the full bass/mid/treble vector into
+    // Subscribe to the shared visual-audio bus so drips and flythrough
+    // motion inherit the same Milkdrop-style smoothing as the rest of
+    // the renderer. Also snapshots the full bass/mid/treble vector into
     // `lastAudioBands` so the per-frame flythrough loop can read
     // it without re-subscribing per layer.
-    audioUnsub = audioBands.subscribe((bands) => {
-      if (paintDrip) paintDrip.setBassEnergy(bands.bass);
-      if (advPaint) advPaint.setBassEnergy(bands.bass);
-      lastAudioBands = { bass: bands.bass, mid: bands.mid, treble: bands.treble };
+    audioUnsub = visualAudio.subscribe((audio) => {
+      const bassEnergy = Math.max(audio.bassFast, audio.kick * 0.85);
+      if (paintDrip) paintDrip.setBassEnergy(bassEnergy);
+      if (advPaint) advPaint.setBassEnergy(bassEnergy);
+      lastAudioBands = { bass: bassEnergy, mid: audio.mid, treble: audio.high };
     });
 
     // Mirror the output-freeze store into a local flag the tick reads.

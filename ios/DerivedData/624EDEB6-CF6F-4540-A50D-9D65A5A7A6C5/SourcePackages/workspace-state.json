@@ -1,0 +1,83 @@
+{
+  "object" : {
+    "artifacts" : [
+      {
+        "kind" : {
+          "xcframework" : {
+
+          }
+        },
+        "packageRef" : {
+          "identity" : "capacitor-swift-pm",
+          "kind" : "remoteSourceControl",
+          "location" : "https://github.com/ionic-team/capacitor-swift-pm.git",
+          "name" : "capacitor-swift-pm"
+        },
+        "path" : "/Users/justinwood/Documents/Ghost Dev/ghost-arcade/ios/DerivedData/624EDEB6-CF6F-4540-A50D-9D65A5A7A6C5/SourcePackages/artifacts/capacitor-swift-pm/Cordova/Cordova.xcframework",
+        "source" : {
+          "checksum" : "685b9d832d7e8b44e0da63366530708a5d70a4eba4a3271b47aa73f246d0eda7",
+          "type" : "remote",
+          "url" : "https://github.com/ionic-team/capacitor-swift-pm/releases/download/8.4.0/Cordova.xcframework.zip"
+        },
+        "targetName" : "Cordova"
+      },
+      {
+        "kind" : {
+          "xcframework" : {
+
+          }
+        },
+        "packageRef" : {
+          "identity" : "capacitor-swift-pm",
+          "kind" : "remoteSourceControl",
+          "location" : "https://github.com/ionic-team/capacitor-swift-pm.git",
+          "name" : "capacitor-swift-pm"
+        },
+        "path" : "/Users/justinwood/Documents/Ghost Dev/ghost-arcade/ios/DerivedData/624EDEB6-CF6F-4540-A50D-9D65A5A7A6C5/SourcePackages/artifacts/capacitor-swift-pm/Capacitor/Capacitor.xcframework",
+        "source" : {
+          "checksum" : "acba9b13179f5775f2124d47cb6689968eeb37c724392204ecf0deb9669d3324",
+          "type" : "remote",
+          "url" : "https://github.com/ionic-team/capacitor-swift-pm/releases/download/8.4.0/Capacitor.xcframework.zip"
+        },
+        "targetName" : "Capacitor"
+      }
+    ],
+    "dependencies" : [
+      {
+        "basedOn" : null,
+        "packageRef" : {
+          "identity" : "capacitor-swift-pm",
+          "kind" : "remoteSourceControl",
+          "location" : "https://github.com/ionic-team/capacitor-swift-pm.git",
+          "name" : "capacitor-swift-pm"
+        },
+        "state" : {
+          "checkoutState" : {
+            "revision" : "44ae2505f54a80c5e559533950886d0644fc2fca",
+            "version" : "8.4.0"
+          },
+          "name" : "sourceControlCheckout"
+        },
+        "subpath" : "capacitor-swift-pm"
+      },
+      {
+        "basedOn" : null,
+        "packageRef" : {
+          "identity" : "capapp-spm",
+          "kind" : "fileSystem",
+          "location" : "/Users/justinwood/Documents/Ghost Dev/ghost-arcade/ios/App/CapApp-SPM",
+          "name" : "CapApp-SPM"
+        },
+        "state" : {
+          "name" : "fileSystem",
+          "path" : "/Users/justinwood/Documents/Ghost Dev/ghost-arcade/ios/App/CapApp-SPM"
+        },
+        "subpath" : "capapp-spm"
+      }
+    ],
+    "prebuilts" : [
+
+    ]
+  },
+  "version" : 7
+}

@@ -34,6 +34,10 @@ const { parseOSCPacket } = require('./osc-parser.cjs');
 // presentation paths that can flicker or band on some Windows projector stacks.
 const PROJECTION_SAFE_MODE = process.argv.includes('--projection-safe-mode') || process.env.GA_PROJECTION_SAFE_MODE === '1';
 const EXPERIMENTAL_GPU_PRESENT = process.argv.includes('--experimental-gpu-present') || process.env.GA_EXPERIMENTAL_GPU_PRESENT === '1';
+const ALLOW_CPU_TEXTURE_SHARE_FALLBACK =
+  process.argv.includes('--allow-cpu-texture-share') ||
+  process.env.GA_ALLOW_CPU_TEXTURE_SHARE_FALLBACK === '1';
+const OSR_PAINT_FPS = Math.max(1, Math.min(240, Number(process.env.GA_OSR_PAINT_FPS || 60) || 60));
 app.commandLine.appendSwitch('force_high_performance_gpu');
 if (PROJECTION_SAFE_MODE) {
   app.commandLine.appendSwitch('disable-zero-copy');
@@ -74,7 +78,13 @@ console.error = (...args) => {
   try { fs.appendFileSync(_logFile, `[ERR] ${msg}\n`); } catch {}
   try { _origErr(...args); } catch {}
 };
-console.log(`[Main] Projection safe mode=${PROJECTION_SAFE_MODE} experimentalGpuPresent=${EXPERIMENTAL_GPU_PRESENT}`);
+const _origWarn = console.warn.bind(console);
+console.warn = (...args) => {
+  const msg = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+  try { fs.appendFileSync(_logFile, `[WARN] ${msg}\n`); } catch {}
+  try { _origWarn(...args); } catch {}
+};
+console.log(`[Main] Projection safe mode=${PROJECTION_SAFE_MODE} experimentalGpuPresent=${EXPERIMENTAL_GPU_PRESENT} cpuTextureShareFallback=${ALLOW_CPU_TEXTURE_SHARE_FALLBACK} osrPaintFps=${OSR_PAINT_FPS}`);
 
 // Prevent EPIPE crashes from killing the process
 process.stdout?.on?.('error', () => {});
@@ -207,6 +217,11 @@ function closeAuxiliaryWindows() {
 
 // Spout native addon
 let spoutAddon = null;
+let spoutAddonLoadAttempted = false;
+let spoutAddonLoadError = null;
+let spoutAddonLoadPath = null;
+let spoutAddonLoadCandidates = [];
+let textureShareSenderListLogKey = null;
 let spoutOutput = null;     // SpoutOutput instance (sender)
 let spoutReceiver = null;   // SpoutReceiver instance
 let spoutSendActive = false;
@@ -221,8 +236,13 @@ let osrCreating = false;     // Prevent concurrent OSR creation
 let osrFrameCount = 0;
 let osrLastLogTime = 0;
 let osrWatchdog = null;
+let osrPaintPump = null;
+let osrFailureReason = null;
+let osrPaintDiagCount = 0;
+let osrSendTextureFailCount = 0;
 let spoutSendW = 1920;      // Output resolution for OSR window
 let spoutSendH = 1080;
+let spoutCpuFallbackWarned = false;
 
 // ============================================================
 // Sidecar: Rust WS/HTTP/Spout backend
@@ -317,19 +337,59 @@ function getReceiverClass(addon) {
   return isMac ? addon.SyphonReceiver : addon.SpoutReceiver;
 }
 
+function getTextureShareAddonCandidates(addonName) {
+  const devPath = path.join(__dirname, 'native', 'build', 'Release', addonName);
+  const candidates = [];
+
+  // electron-builder unpacks native modules out of app.asar. Loading a .node
+  // from inside the archive fails, so packaged builds must prefer the sibling
+  // app.asar.unpacked path.
+  if (__dirname.includes('app.asar')) {
+    candidates.push(path.join(
+      __dirname.replace('app.asar', 'app.asar.unpacked'),
+      'native',
+      'build',
+      'Release',
+      addonName
+    ));
+  }
+
+  candidates.push(devPath);
+  return [...new Set(candidates)];
+}
+
+function getTextureShareLoadStatus() {
+  return {
+    platform: textureSharePlatform,
+    label: textureShareLabel,
+    available: spoutAddon !== null,
+    addonPath: spoutAddonLoadPath,
+    candidates: spoutAddonLoadCandidates,
+    error: spoutAddonLoadError,
+    cpuFallbackAllowed: ALLOW_CPU_TEXTURE_SHARE_FALLBACK,
+  };
+}
+
 function loadSpoutAddon() {
   if (spoutAddon) return spoutAddon;
+  if (spoutAddonLoadAttempted) return null;
+  spoutAddonLoadAttempted = true;
+  spoutAddonLoadError = null;
 
   const addonName = isMac ? 'syphon_addon.node' : 'spout_addon.node';
+  spoutAddonLoadCandidates = getTextureShareAddonCandidates(addonName);
+  spoutAddonLoadPath = null;
 
   try {
-    const addonPath = path.join(__dirname, 'native', 'build', 'Release', addonName);
-    if (!fs.existsSync(addonPath)) {
-      console.warn(`[${textureShareLabel}] Addon not found at:`, addonPath);
+    const addonPath = spoutAddonLoadCandidates.find(candidate => fs.existsSync(candidate));
+    if (!addonPath) {
+      spoutAddonLoadError = `native addon not found (${addonName})`;
+      console.warn(`[${textureShareLabel}] ${spoutAddonLoadError}. Checked: ${spoutAddonLoadCandidates.join(', ')}`);
       return null;
     }
+    spoutAddonLoadPath = addonPath;
     spoutAddon = require(addonPath);
-    console.log(`[${textureShareLabel}] Native addon loaded successfully`);
+    console.log(`[${textureShareLabel}] Native addon loaded successfully: ${addonPath}`);
     try {
       const gpuInfo = spoutAddon.getGpuInfo();
       console.log(`[${textureShareLabel}] GPU adapters:`, JSON.stringify(gpuInfo.adapters));
@@ -339,7 +399,8 @@ function loadSpoutAddon() {
     }
     return spoutAddon;
   } catch (err) {
-    console.error(`[${textureShareLabel}] Failed to load native addon:`, err.message);
+    spoutAddonLoadError = err?.message || String(err);
+    console.error(`[${textureShareLabel}] Failed to load native addon:`, spoutAddonLoadError);
     return null;
   }
 }
@@ -431,6 +492,10 @@ function createSpoutSender(name, width, height) {
     spoutSendH = height;
     spoutLastLogTime = Date.now();
     spoutFrameCount = 0;
+    osrFailureReason = null;
+    osrPaintDiagCount = 0;
+    osrSendTextureFailCount = 0;
+    spoutCpuFallbackWarned = false;
     console.log(`[${textureShareLabel}] Sender "${name}" created`);
 
     // Zero-copy OSR path — works on both Windows (DXGI shared handle) and
@@ -472,6 +537,48 @@ function stopSpoutSender() {
 // OSR Window — Zero-Copy Spout via useSharedTexture
 // ============================================================
 
+function normalizeOsrHandleBuffer(handle) {
+  if (!handle) return null;
+  if (Buffer.isBuffer(handle)) return handle;
+  if (ArrayBuffer.isView(handle)) {
+    return Buffer.from(handle.buffer, handle.byteOffset, handle.byteLength);
+  }
+  if (handle instanceof ArrayBuffer) {
+    return Buffer.from(handle);
+  }
+  return null;
+}
+
+function getBufferByteLength(buffer) {
+  return buffer?.byteLength ?? buffer?.length ?? 0;
+}
+
+function getOsrSharedTextureHandle(textureInfo) {
+  const currentHandle = isMac
+    ? textureInfo?.handle?.ioSurface
+    : textureInfo?.handle?.ntHandle;
+  const currentBuffer = normalizeOsrHandleBuffer(currentHandle);
+  if (currentBuffer) {
+    return {
+      handle: currentBuffer,
+      source: isMac ? 'handle.ioSurface' : 'handle.ntHandle',
+    };
+  }
+
+  const legacyBuffer = normalizeOsrHandleBuffer(textureInfo?.sharedTextureHandle);
+  if (legacyBuffer) {
+    return {
+      handle: legacyBuffer,
+      source: 'sharedTextureHandle',
+    };
+  }
+
+  return {
+    handle: null,
+    source: 'none',
+  };
+}
+
 /**
  * Create a hidden offscreen BrowserWindow with GPU shared texture output.
  *
@@ -486,6 +593,7 @@ function createSpoutOsrWindow(width, height) {
   }
 
   osrCreating = true;
+  osrFailureReason = null;
   console.log(`[${textureShareLabel} OSR] Creating ${width}x${height} window`);
 
   try {
@@ -497,6 +605,7 @@ function createSpoutOsrWindow(width, height) {
         preload: path.join(__dirname, 'preload.cjs'),
         contextIsolation: true,
         nodeIntegration: false,
+        backgroundThrottling: false,
         offscreen: {
           useSharedTexture: true,
         },
@@ -504,18 +613,19 @@ function createSpoutOsrWindow(width, height) {
       },
     });
 
-    // Max frame rate for shared texture mode
-    spoutOsrWindow.webContents.setFrameRate(240);
+    // Keep the hidden offscreen renderer on the same cadence as our explicit
+    // invalidate pump. Without this, Electron can create the Syphon server but
+    // never composite shared textures, which consumers display as black.
+    spoutOsrWindow.webContents.setFrameRate(OSR_PAINT_FPS);
 
     // Paint event handler — the core zero-copy path.
     //
     // Handle format by platform:
-    //   Windows: sharedTextureHandle is an 8-byte HANDLE (DXGI shared handle).
-    //            SpoutOutput.sendTexture(handle) opens it via OpenSharedResource1
-    //            and derives width/height from the D3D texture descriptor.
-    //   macOS:   sharedTextureHandle is a 4-byte io_surface_id_t little-endian.
-    //            SyphonOutput.sendTexture(handle, width, height) looks it up via
-    //            IOSurfaceLookup and passes through publishFrameTexture.
+    //   Windows: textureInfo.handle.ntHandle is an 8-byte HANDLE (DXGI shared
+    //            handle). Older Electron builds exposed sharedTextureHandle.
+    //   macOS:   textureInfo.handle.ioSurface is an 8-byte IOSurfaceRef pointer
+    //            in current Electron. Older builds exposed a 4-byte
+    //            sharedTextureHandle IOSurfaceID. The native addon accepts both.
     // The Windows addon ignores the extra width/height args, so we can call
     // with the same arg list on both platforms.
     const minHandleLen = isMac ? 4 : 8;
@@ -526,22 +636,44 @@ function createSpoutOsrWindow(width, height) {
       }
 
       try {
-        const info = event.texture.textureInfo;
-        const handle = info.sharedTextureHandle;
+        const info = event.texture.textureInfo || {};
+        const handleInfo = getOsrSharedTextureHandle(info);
+        const handle = handleInfo.handle;
+        const handleLen = getBufferByteLength(handle);
         const tw = info.codedSize?.width || width;
         const th = info.codedSize?.height || height;
-        if (handle && handle.length >= minHandleLen) {
-          spoutOutput.sendTexture(handle, tw, th);
-          osrFrameCount++;
 
-          const now = Date.now();
-          if (now - osrLastLogTime > 5000) {
-            const elapsed = (now - osrLastLogTime) / 1000;
-            const fps = osrFrameCount / elapsed;
-            console.log(`[${textureShareLabel} OSR] sendTexture ${tw}x${th} @ ${fps.toFixed(1)} fps`);
-            osrFrameCount = 0;
-            osrLastLogTime = now;
+        if (osrPaintDiagCount < 3) {
+          console.log(`[${textureShareLabel} OSR] paint #${osrPaintDiagCount + 1}: handle=${handleInfo.source} bytes=${handleLen} coded=${tw}x${th}`);
+          osrPaintDiagCount++;
+        }
+
+        if (!handle || handleLen < minHandleLen) {
+          if (osrSendTextureFailCount < 5) {
+            console.warn(`[${textureShareLabel} OSR] paint event missing shared texture handle (${handleLen} bytes, source=${handleInfo.source})`);
+            osrSendTextureFailCount++;
           }
+          return;
+        }
+
+        const ok = spoutOutput.sendTexture(handle, tw, th);
+        if (!ok) {
+          if (osrSendTextureFailCount < 5) {
+            console.warn(`[${textureShareLabel} OSR] sendTexture returned false for ${tw}x${th}`);
+            osrSendTextureFailCount++;
+          }
+          return;
+        }
+
+        osrFrameCount++;
+
+        const now = Date.now();
+        if (now - osrLastLogTime > 5000) {
+          const elapsed = (now - osrLastLogTime) / 1000;
+          const fps = osrFrameCount / elapsed;
+          console.log(`[${textureShareLabel} OSR] sendTexture ${tw}x${th} @ ${fps.toFixed(1)} fps`);
+          osrFrameCount = 0;
+          osrLastLogTime = now;
         }
       } catch (err) {
         console.error(`[${textureShareLabel} OSR] paint handler error:`, err.message);
@@ -554,6 +686,12 @@ function createSpoutOsrWindow(width, height) {
     // Verify which GPU Chromium is using after the page loads
     spoutOsrWindow.webContents.on('did-finish-load', async () => {
       console.log(`[${textureShareLabel} OSR] Page loaded`);
+      try {
+        spoutOsrWindow?.webContents?.startPainting?.();
+        spoutOsrWindow?.webContents?.invalidate?.();
+      } catch (err) {
+        console.warn(`[${textureShareLabel} OSR] initial paint kick failed:`, err?.message || err);
+      }
       try {
         const gpuRenderer = await spoutOsrWindow.webContents.executeJavaScript(`
           (() => {
@@ -588,6 +726,9 @@ function createSpoutOsrWindow(width, height) {
     spoutOsrWindow.webContents.on('render-process-gone', (event, details) => {
       console.error(`[${textureShareLabel} OSR] Renderer process gone:`, details.reason);
       osrActive = false;
+      osrFailureReason = 'renderer-gone';
+      stopOsrPaintPump();
+      stopOsrWatchdog();
       notifyMainWindowOsrStatus(false, 'renderer-gone');
     });
 
@@ -595,6 +736,7 @@ function createSpoutOsrWindow(width, height) {
       console.log(`[${textureShareLabel} OSR] Window closed`);
       spoutOsrWindow = null;
       osrActive = false;
+      stopOsrPaintPump();
       stopOsrWatchdog();
     });
 
@@ -619,6 +761,8 @@ function createSpoutOsrWindow(width, height) {
   } catch (err) {
     console.error(`[${textureShareLabel} OSR] Failed to create window:`, err.message);
     spoutOsrWindow = null;
+    osrFailureReason = 'create-failed';
+    notifyMainWindowOsrStatus(false, 'create-failed');
   } finally {
     osrCreating = false;
   }
@@ -626,6 +770,7 @@ function createSpoutOsrWindow(width, height) {
 
 function destroySpoutOsrWindow() {
   osrActive = false;
+  stopOsrPaintPump();
   stopOsrWatchdog();
 
   if (spoutOsrWindow) {
@@ -636,16 +781,81 @@ function destroySpoutOsrWindow() {
     console.log(`[${textureShareLabel} OSR] Window destroyed`);
   }
 
-  // Notify main window to re-enable CPU readPixels path
+  // Notify main window so it can clear OSR state and apply the current
+  // fallback policy.
   notifyMainWindowOsrStatus(false, 'stopped');
 }
 
 function notifyMainWindowOsrStatus(active, reason) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     try {
-      mainWindow.webContents.send('spout-osr-status', { active, reason });
+      mainWindow.webContents.send('spout-osr-status', {
+        active,
+        reason,
+        cpuFallbackAllowed: ALLOW_CPU_TEXTURE_SHARE_FALLBACK,
+      });
     } catch {}
   }
+}
+
+function startOsrPaintPump() {
+  stopOsrPaintPump();
+
+  if (!spoutOsrWindow || spoutOsrWindow.isDestroyed()) return;
+
+  const intervalMs = Math.max(4, Math.round(1000 / OSR_PAINT_FPS));
+  const tick = () => {
+    const win = spoutOsrWindow;
+    if (!win || win.isDestroyed()) {
+      stopOsrPaintPump();
+      return;
+    }
+
+    try {
+      const wc = win.webContents;
+      if (!wc || wc.isDestroyed()) {
+        stopOsrPaintPump();
+        return;
+      }
+
+      if (typeof wc.startPainting === 'function' && (typeof wc.isPainting !== 'function' || !wc.isPainting())) {
+        wc.startPainting();
+      }
+      if (typeof wc.invalidate === 'function') {
+        wc.invalidate();
+      }
+    } catch (err) {
+      console.warn(`[${textureShareLabel} OSR] paint pump failed:`, err?.message || err);
+      stopOsrPaintPump();
+    }
+  };
+
+  tick();
+  osrPaintPump = setInterval(tick, intervalMs);
+  console.log(`[${textureShareLabel} OSR] Paint pump started @ ${OSR_PAINT_FPS} fps`);
+}
+
+function stopOsrPaintPump() {
+  if (osrPaintPump) {
+    clearInterval(osrPaintPump);
+    osrPaintPump = null;
+  }
+
+  const win = spoutOsrWindow;
+  if (!win || win.isDestroyed()) return;
+
+  try {
+    const wc = win.webContents;
+    if (wc && !wc.isDestroyed() && typeof wc.stopPainting === 'function') {
+      wc.stopPainting();
+    }
+  } catch {}
+}
+
+function getTextureShareSenderMode() {
+  if (osrActive) return 'zero-copy';
+  if (ALLOW_CPU_TEXTURE_SHARE_FALLBACK) return 'cpu-sendimage';
+  return osrFailureReason ? 'zero-copy-unavailable' : 'zero-copy-pending';
 }
 
 function startOsrWatchdog() {
@@ -656,14 +866,19 @@ function startOsrWatchdog() {
     if (!osrActive) return;
 
     if (osrFrameCount === lastFrameCount) {
-      // No new frames in 3 seconds — zero-copy is dead, switch to compatibility
-      // CPU path. This is a degraded mode: the renderer will resume the
-      // getImageData → spout_send_image readback pump, which is ~8 MB/frame at
-      // 1080p. Logged as warn so the operator notices it in `tail -f` of the
-      // main-process log.
-      console.warn(`[${textureShareLabel} OSR] Watchdog: no frames for 3s — zero-copy DEAD, falling back to CPU compatibility path`);
+      osrFailureReason = 'stale';
       osrActive = false;
-      notifyMainWindowOsrStatus(false, 'stale');
+      stopOsrPaintPump();
+      stopOsrWatchdog();
+      if (ALLOW_CPU_TEXTURE_SHARE_FALLBACK) {
+        // Compatibility/debug mode only. This is visibly slower because the
+        // renderer resumes full-frame getImageData/readback traffic.
+        console.warn(`[${textureShareLabel} OSR] Watchdog: no frames for 3s — zero-copy DEAD, falling back to CPU compatibility path`);
+        notifyMainWindowOsrStatus(false, 'stale');
+      } else {
+        console.error(`[${textureShareLabel} OSR] Watchdog: no shared-texture frames for 3s — zero-copy unavailable. CPU fallback is disabled; launch with GA_ALLOW_CPU_TEXTURE_SHARE_FALLBACK=1 or --allow-cpu-texture-share only for compatibility testing.`);
+        notifyMainWindowOsrStatus(false, 'stale');
+      }
     }
     lastFrameCount = osrFrameCount;
   }, 3000);
@@ -750,7 +965,13 @@ function listSpoutSenders() {
   if (!addon) return [];
 
   try {
-    return addon.listSenders();
+    const senders = addon.listSenders();
+    const key = JSON.stringify(senders || []);
+    if (key !== textureShareSenderListLogKey) {
+      textureShareSenderListLogKey = key;
+      console.log(`[${textureShareLabel}] listSenders -> ${(senders || []).length}: ${(senders || []).join(', ')}`);
+    }
+    return senders;
   } catch (err) {
     console.error(`[${textureShareLabel}] listSenders error:`, err.message);
     return [];
@@ -996,17 +1217,15 @@ function registerIpcHandlers() {
   ipcMain.handle('spout_is_available', () => {
     const addon = loadSpoutAddon();
     const available = addon !== null;
-    const label = process.platform === 'darwin' ? 'Syphon' : 'Spout';
-    console.log(`[IPC] spout_is_available (${label}):`, available);
+    console.log(`[IPC] spout_is_available (${textureShareLabel}):`, available, spoutAddonLoadError || '');
     return available;
   });
 
   // Return which texture sharing system is in use
-  ipcMain.handle('texture_share_info', () => ({
-    platform: textureSharePlatform,
-    label: process.platform === 'darwin' ? 'Syphon' : 'Spout',
-    available: loadSpoutAddon() !== null,
-  }));
+  ipcMain.handle('texture_share_info', () => {
+    loadSpoutAddon();
+    return getTextureShareLoadStatus();
+  });
 
   ipcMain.handle('spout_list_senders', () => {
     return listSpoutSenders();
@@ -1023,7 +1242,8 @@ function registerIpcHandlers() {
         name: spoutSendName,
         width: width || 1920,
         height: height || 1080,
-        mode: osrActive ? 'zero-copy' : 'cpu-sendimage',
+        mode: getTextureShareSenderMode(),
+        cpuFallbackAllowed: ALLOW_CPU_TEXTURE_SHARE_FALLBACK,
       };
     }
 
@@ -1036,7 +1256,8 @@ function registerIpcHandlers() {
       name: spoutSendName,
       width: width || 1920,
       height: height || 1080,
-      mode: osrActive ? 'zero-copy' : 'cpu-sendimage',
+      mode: getTextureShareSenderMode(),
+      cpuFallbackAllowed: ALLOW_CPU_TEXTURE_SHARE_FALLBACK,
     };
     console.log('[IPC] spout_start_sender result:', JSON.stringify(result));
     return result;
@@ -1066,6 +1287,14 @@ function registerIpcHandlers() {
     // When OSR zero-copy is active, reject CPU readPixels frames —
     // they would stomp on the Spout sender with different resolution/timing
     if (osrActive) return true;
+
+    if (!ALLOW_CPU_TEXTURE_SHARE_FALLBACK) {
+      if (!spoutCpuFallbackWarned) {
+        spoutCpuFallbackWarned = true;
+        console.warn(`[${textureShareLabel}] CPU sendImage rejected — zero-copy is required. Set GA_ALLOW_CPU_TEXTURE_SHARE_FALLBACK=1 or pass --allow-cpu-texture-share to enable the legacy compatibility path for testing.`);
+      }
+      return false;
+    }
 
     // Validate argument shape before passing to the N-API addon. Malformed
     // args (e.g., a bug in the renderer sending a number instead of a
@@ -1190,8 +1419,10 @@ function registerIpcHandlers() {
     return {
       sender_active: spoutSendActive,
       sender_name: spoutSendName,
-      sender_mode: osrActive ? 'zero-copy' : 'cpu-sendimage',
+      sender_mode: getTextureShareSenderMode(),
       osr_active: osrActive,
+      osr_failure_reason: osrFailureReason,
+      cpu_fallback_allowed: ALLOW_CPU_TEXTURE_SHARE_FALLBACK,
       receiver_active: spoutReceiver !== null,
       receivers: [],
     };
@@ -1201,8 +1432,10 @@ function registerIpcHandlers() {
   ipcMain.handle('spout_osr_ready', () => {
     console.log(`[${textureShareLabel} OSR] Renderer reports ready`);
     osrActive = true;
+    osrFailureReason = null;
     osrLastLogTime = Date.now();
     osrFrameCount = 0;
+    startOsrPaintPump();
     startOsrWatchdog();
     // Notify main window to disable readPixels
     notifyMainWindowOsrStatus(true, 'ready');
@@ -1223,6 +1456,7 @@ function registerIpcHandlers() {
         spoutOsrWindow.setSize(w, h);
         spoutSendW = w;
         spoutSendH = h;
+        spoutOsrWindow.webContents.invalidate?.();
         console.log(`[${textureShareLabel} OSR] Resized to ${w}x${h}`);
       } catch (err) {
         console.error(`[${textureShareLabel} OSR] resize failed:`, err?.message || err);

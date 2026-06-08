@@ -1,0 +1,4033 @@
+{
+  "version": 2,
+  "shaders": [
+    {
+      "file": "DM-SolidColor.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {},
+      "featured": false
+    },
+    {
+      "file": "DM-TestPattern.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "DM-GridMatrix.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "gridSize": 4.8,
+        "lineWidth": 0.09455
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "DM-TestBars.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "DM-UVGrid.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "DM-SafeArea.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "lineWidth": 0.005205
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "crystal-dimension.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "rotationSpeed": 0.9,
+        "repetition": 2.18,
+        "tunnelRadius": 1.7825,
+        "objectScale": 0.4135
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "fractal-dimension-supreme.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "iterations": 3,
+        "power": 10.12,
+        "scale": 2.865,
+        "morphAmount": 0.58,
+        "foldAmount": 0.74,
+        "cameraMode": 5,
+        "cameraDistance": 2.295,
+        "renderMode": 3.045
+      },
+      "featured": false
+    },
+    {
+      "file": "fractal-tunnel-cosmos.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "fractalType": 5.58,
+        "fractalScale": 0.88,
+        "fractalDetail": 10
+      },
+      "featured": false
+    },
+    {
+      "file": "mega-blob-fusion.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "blobMode": 5.07,
+        "blobCount": 30,
+        "blobSize": 0.2696,
+        "blobMerge": 1.24625,
+        "morphSpeed": 2.025,
+        "flowSpeed": 1.08,
+        "vortexStrength": 1.6,
+        "explosionAmount": 1.76,
+        "turbulence": 0.57,
+        "gridIntensity": 1,
+        "cameraDistance": 2.98,
+        "colorVariation": 0.04,
+        "neonGlow": 5,
+        "rimPower": 1.9725,
+        "pulseAmount": 0,
+        "innerGlow": 0,
+        "fogAmount": 0,
+        "brightness": 0.5
+      },
+      "featured": false,
+      "defaultLoad": false
+    },
+    {
+      "file": "organic-dimension.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "driftAmount": 1.84
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "organic-fluids.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "flowSpeed": 1.53,
+        "turbulence": 0,
+        "blobCount": 9.12,
+        "blobSize": 0.05,
+        "threshold": 1.5
+      },
+      "featured": false
+    },
+    {
+      "file": "psychedelic-noise-flow.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "noiseMode": 5.88,
+        "scale": 2.675,
+        "flowSpeed": 1.185,
+        "flowAmount": 1.11,
+        "octaves": 7.65,
+        "turbulence": 0.84,
+        "edgeThreshold": 0.225,
+        "edgeThickness": 0.00850499999999992,
+        "ditherLevels": 16,
+        "ditherScale": 32,
+        "contourLevels": 20,
+        "contourThickness": 0.2,
+        "warpAmount": 1,
+        "posterize": 0.91,
+        "posterizeLevels": 16
+      },
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "quantum-grids.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "visualType": 2.58,
+        "scrollSpeed": 4.625,
+        "colorShift": 0.02,
+        "timeScale": 2.0575,
+        "depth": 60,
+        "spacing": 0.15,
+        "lineCount": 100,
+        "circleDensity": 35.5,
+        "lineWeight": 0.00410999999999992,
+        "glowIntensity": 1,
+        "baseHue": 1,
+        "colorCount": 6,
+        "paletteType": 6,
+        "bgGradient": 1
+      },
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "StarDrift.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "TrippyMandala.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "zoom_speed": 0.35,
+        "symmetry": 1
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "tron-organic-fusion.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "gridScale": 30,
+        "blobCount": 6.075,
+        "blobSize": 0.446
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "wireframe-mesh-3d.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "meshMode": 2.73,
+        "gridResolution": 24.625,
+        "deformAmount": 3,
+        "deformFrequency": 0.5,
+        "cameraDistance": 4.735,
+        "lineThickness": 0.0003,
+        "vertexSize": 0,
+        "animationSpeed": 0.15,
+        "depthFade": 1,
+        "lineGlow": 2
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "01_OrbitalWireframe.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "04_SacredGeometryGlow.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1.85,
+        "glowIntensity": 1.185,
+        "complexity": 11.45
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "11_RadialShards.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 2,
+        "shardCount": 48,
+        "explosionForce": 3
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "14_PentagonGeometry.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 2,
+        "layers": 6,
+        "glow": 0.33
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "15_NeuralNetwork.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 2,
+        "nodes": 19.625,
+        "threshold": 0.8
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "16_AtomicOrbital.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 0.89,
+        "orbits": 6,
+        "electronSize": 0.036275
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "17_IridescentPebbles.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "scale": 5.14,
+        "iridescence": 1
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "22_FractalAtomicFlower.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 2,
+        "foldSymmetry": 6.42,
+        "iterations": 8
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "23_StarCluster.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 2,
+        "density": 0.893,
+        "clusterTightness": 1
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "24_KineticSculpture.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 2,
+        "rodCount": 20,
+        "perspective": 2
+      },
+      "featured": false
+    },
+    {
+      "file": "25_PlasmaTendrils.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1.815,
+        "tendrils": 12,
+        "intensity": 3
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "26_DNAHelix.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1.19,
+        "helixTwist": 1.91,
+        "nodeSize": 0.01525
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "27_RadarHUD.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 0.38,
+        "rings": 20,
+        "scanSpeed": 3
+      },
+      "featured": false
+    },
+    {
+      "file": "31_QuantumField.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 0.58,
+        "shellCount": 8,
+        "probabilitySpread": 1,
+        "quantumNoise": 1,
+        "shellOpacity": 0.895,
+        "electronCount": 16,
+        "colorTemp": 0.085,
+        "nucleusGlow": 0,
+        "uncertainty": 1,
+        "zoom": 1.218
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "33_SignalPropagation.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "emitterCount": 5.2,
+        "wavelength": 0.1171,
+        "decay": 2.6725,
+        "emitterSpread": 0.26375,
+        "lineThickness": 1,
+        "emitterGlow": 0.45,
+        "interference": 2,
+        "rotation": 3.8622
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "35_WormholeTunnel.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "tunnelRadius": 0.8,
+        "ringCount": 19.86,
+        "gridLines": 31.02,
+        "convergence": 1,
+        "edgeGlow": 1.74
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "36_ConstellationMap.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1,
+        "constellationCount": 8,
+        "starsPerGroup": 9.405,
+        "bgStarDensity": 0.705,
+        "starBrightness": 0.2,
+        "gridOverlay": 0.5,
+        "drift": 1,
+        "colorVariation": 0.82,
+        "haloSize": 0
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "37_TorusKnot.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 0.54,
+        "knotP": 5.74,
+        "knotQ": 5.53,
+        "majorRadius": 0.324,
+        "minorRadius": 0.15,
+        "lineWeight": 0.008785,
+        "rotX": 0.985,
+        "rotY": 0.995,
+        "depthFade": 0.88,
+        "trailGlow": 2
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "38_ParticleCollider.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 2,
+        "trackCount": 35.275,
+        "curvature": 1,
+        "detectorRings": 8,
+        "trackBrightness": 3,
+        "collisionEnergy": 3,
+        "detectorOpacity": 1,
+        "decayVertices": 0.125,
+        "eventRate": 0.442
+      },
+      "featured": false
+    },
+    {
+      "file": "39_TensorField.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 2,
+        "fieldScale": 8,
+        "lineLength": 36.95,
+        "lineDensity": 30,
+        "lineOpacity": 0.77,
+        "singularityCount": 6,
+        "fieldType": 1,
+        "noiseInfluence": 1,
+        "arrowheads": 1,
+        "colorByMagnitude": 0.775
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "40_HolographicMoire.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1.53,
+        "gridLayers": 2.56,
+        "gridFrequency": 33.45,
+        "rotationOffset": 0.5,
+        "warp": 1,
+        "contrast": 2.5815,
+        "colorSeparation": 1,
+        "centerPull": 1
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "42_GyroscopicRings.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 2,
+        "ringPairs": 6,
+        "ringRadius": 0.5,
+        "ringWidth": 0.02,
+        "tiltRange": 0.1,
+        "precessionSpeed": 0.705,
+        "depthShading": 0.435,
+        "coreGlow": 0.66,
+        "colorSpread": 0
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "43_CosmicWeb.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1,
+        "webScale": 2.75,
+        "filamentBrightness": 1.04,
+        "nodeGlow": 4,
+        "voidDarkness": 0.885,
+        "turbulence": 1,
+        "colorTemp": 0.85,
+        "depth": 2,
+        "filamentWidth": 0.415,
+        "clusterSize": 0.7345
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "44_Oscilloscope.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 0.26,
+        "freqX": 10.46,
+        "freqY": 6.17,
+        "phaseShift": 2.4178,
+        "amplitude": 0.382,
+        "traceWidth": 0.01,
+        "persistence": 1,
+        "gridBrightness": 0.5,
+        "phosphorColor": 0.425
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "47_FractalDimension.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1,
+        "iterations": 10,
+        "rotationPer": 0.235,
+        "lineWeight": 2,
+        "fillMode": 0.62,
+        "colorByDepth": 1
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "48_PlasmaContainment.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "torusMajor": 0.298,
+        "torusMinor": 0.15,
+        "plasmaTemp": 0.298,
+        "magneticCoils": 9,
+        "coilVisibility": 0.58,
+        "instability": 0.43,
+        "viewAngle": 0,
+        "particleDensity": 80,
+        "containmentField": 1
+      },
+      "featured": false
+    },
+    {
+      "file": "51_SacredGeometryCathedral.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1,
+        "complexity": 2,
+        "seedOfLifeRadius": 0.25,
+        "outerEllipseCount": 1.98,
+        "ellipseEccentricity": 0.8,
+        "cubeSize": 0.0834,
+        "cubeRotSpeed": 0.93,
+        "lineGlow": 2.93,
+        "concentricRings": 24,
+        "flowerPetals": 6.8,
+        "innerRotation": 0.14
+      },
+      "featured": false
+    },
+    {
+      "file": "52_ChaoticOrbitalMesh.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1,
+        "orbitCount": 30,
+        "meshDensity": 2,
+        "geodesicDetail": 20,
+        "tiltChaos": 1.2675,
+        "particleCount": 17.65,
+        "coreRadius": 0.35,
+        "outerRadius": 0.5,
+        "lineWeight": 2.9865,
+        "tangledOverlap": 1,
+        "verticalStretch": 1,
+        "glowFalloff": 1.4625
+      },
+      "featured": false
+    },
+    {
+      "file": "54_ShatteredLattice.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1,
+        "recursionDepth": 10,
+        "baseSize": 0.5,
+        "rotationPerLevel": 0,
+        "shrinkRatio": 0.818,
+        "shardCount": 5,
+        "shardSpread": 1,
+        "particleDensity": 29.35,
+        "lineGlow": 2.811,
+        "diagonals": 1,
+        "shardRotation": 1,
+        "connectLines": 0.76
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "56_ConnectedCubes.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1,
+        "cubeCount": 40,
+        "cubeMinSize": 0.03,
+        "cubeMaxSize": 0.12,
+        "centralCubeSize": 0.15,
+        "signalWaves": 8,
+        "signalAmplitude": 0.08,
+        "signalFreq": 16.94,
+        "connectionRange": 0.6,
+        "fillOpacity": 0.5,
+        "blueIntensity": 1,
+        "rotationSpeed": 0.46
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "70_LiquidMetal.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "blobCount": 6.62,
+        "smoothness": 0.125
+      },
+      "featured": false
+    },
+    {
+      "file": "61_SingularityCollapse.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1.5,
+        "collapsePhase": 0,
+        "distortionPower": 1.905,
+        "accretionColor": [
+          0,
+          0.5,
+          1,
+          1
+        ],
+        "ringCount": 12,
+        "jetIntensity": 3,
+        "noiseDetail": 2,
+        "eventHorizon": 0.03,
+        "cameraDistance": 3.9075
+      },
+      "featured": false
+    },
+    {
+      "file": "62_HypercubeTesseract.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1,
+        "rotXW": 0.62,
+        "rotYZ": 1.09,
+        "innerScale": 0.2,
+        "lineWeight": 2.9865,
+        "glowHue": 0.69,
+        "trailLength": 0.455,
+        "vertexGlow": 2.12,
+        "perspective4D": 1
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "67_ParticleSupernova.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 2,
+        "explosionPhase": 0.655,
+        "particleCount": 120,
+        "shockwaveRadius": 0.8,
+        "debrisTrails": 1.5,
+        "cameraDistance": 3.9525,
+        "bloomIntensity": 2.84,
+        "turbulence": 0
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "68_MoebiusPortal.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1,
+        "ringRadius": 0.5,
+        "tubeRadius": 0.1,
+        "twists": 2.145,
+        "vortexIntensity": 0,
+        "cameraOrbit": 0.55,
+        "energyPulse": 0.225,
+        "distortion": 1.47
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "71_CosmicSpine.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1,
+        "vertebrae": 40,
+        "spineRadius": 0.1,
+        "discSpacing": 0.19,
+        "curvature": 0.9375,
+        "pulseSpeed": 5,
+        "ribCount": 4.88
+      },
+      "featured": false
+    },
+    {
+      "file": "72_ShatteredReality.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1,
+        "shardCount": 25,
+        "shardSize": 0.6,
+        "reflectivity": 1,
+        "scatter": 0.3,
+        "edgeGlow": 3.54
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "74_QuantumTunnel.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "tunnelRadius": 0.371,
+        "waveFreq": 15.59,
+        "waveAmplitude": 0.585,
+        "flySpeed": 0.5,
+        "interference": 1.02,
+        "depthRings": 2,
+        "probabilityGlow": 3
+      },
+      "featured": false
+    },
+    {
+      "file": "78_PlasmaVortex.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 0.35,
+        "vortexHeight": 3.16,
+        "vortexRadius": 1,
+        "spiralArms": 6,
+        "coreColor": [
+          0,
+          0.8,
+          0.4,
+          1
+        ],
+        "outerColor": [
+          0.55,
+          0.2,
+          0.8,
+          1
+        ],
+        "particleCount": 100,
+        "turbulence": 1.5,
+        "cameraDistance": 3.165,
+        "bloomIntensity": 2.46
+      },
+      "featured": false
+    },
+    {
+      "file": "84_ImageReliefTerrain.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "cameraAngleX": -18.45,
+        "depthScale": 0.465,
+        "heightChannel": 2.415,
+        "edgeLight": 1,
+        "shadowStrength": 1,
+        "animateAngle": 0.785,
+        "animateSpeed": 2
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "85_ImageDepthLayers.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {},
+      "featured": false
+    },
+    {
+      "file": "86_ImageLitSurface.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {},
+      "featured": false
+    },
+    {
+      "file": "87_ImageTileExtrude.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {},
+      "featured": false
+    },
+    {
+      "file": "88_ImageDepthRipple.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {},
+      "featured": false
+    },
+    {
+      "file": "DM-GradientWave.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "waveScale": 10,
+        "colorShift": 0.355,
+        "saturation": 0.84,
+        "brightness": 1.0255,
+        "waveDirection": 4.71
+      },
+      "featured": false
+    },
+    {
+      "file": "DM-RadialPulse.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "pulseSpeed": 0.59,
+        "ringCount": 4.895
+      },
+      "featured": false
+    },
+    {
+      "file": "DM-PlasmaFlow.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "scale": 4.33,
+        "complexity": 1.72
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "DM-ColorBreath.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "breathSpeed": 1.354,
+        "vignetteAmount": 0.82
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "DM-HexGrid.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "scale": 11.45,
+        "speed": 0.615,
+        "fillAmount": 1,
+        "edgeGlow": 2
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "DM-Kaleidoscope.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "segments": 15.675,
+        "rotationSpeed": 0.46,
+        "zoom": 2.3
+      },
+      "featured": false
+    },
+    {
+      "file": "DM-Tunnel.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "ringCount": 2,
+        "twist": 5
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "DM-SacredGeometry.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "pattern": 1.365,
+        "scale": 0.8825,
+        "lineWidth": 0.02395,
+        "glowAmount": 2
+      },
+      "featured": false
+    },
+    {
+      "file": "DM-Starfield.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "speed": 0.4335,
+        "starCount": 400,
+        "trailLength": 1,
+        "brightness": 2,
+        "colorShift": 0.82
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "DM-NoiseCloud.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "scale": 3.88,
+        "octaves": 3.275,
+        "contrast": 0.5
+      },
+      "featured": false
+    },
+    {
+      "file": "DM-GlitchBlocks.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "blockSize": 21.78,
+        "glitchRate": 6.035,
+        "intensity": 0.795,
+        "colorShift": 0.565
+      },
+      "featured": false
+    },
+    {
+      "file": "DM-FireParticles.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "speed": 0.5,
+        "density": 50,
+        "turbulence": 0.3,
+        "particleSize": 2.2875,
+        "baseY": 0
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "DM-VoronoiFlow.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "speed": 0.72,
+        "edgeWidth": 0.0495,
+        "edgeGlow": 2
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "DM-DigitalRain.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "speed": 0.95,
+        "density": 49.1,
+        "charSize": 2,
+        "trailLength": 1
+      },
+      "featured": false
+    },
+    {
+      "file": "DM-WaterRipple.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "rippleSpeed": 3.5825,
+        "rippleCount": 4.82,
+        "frequency": 22.55,
+        "amplitude": 0.029,
+        "decay": 0.5
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "DM-Oscilloscope.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "waveCount": 5,
+        "amplitude": 0.41,
+        "frequency": 6.445,
+        "lineWidth": 0.03875,
+        "glowAmount": 2
+      },
+      "featured": false
+    },
+    {
+      "file": "DM-LiquidMetal.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "speed": 0.309,
+        "scale": 4.735,
+        "distortion": 1,
+        "reflectivity": 1,
+        "colorBase": [
+          0.91,
+          0.96,
+          0.07,
+          1
+        ],
+        "colorHighlight": [
+          0.47,
+          0,
+          0.05,
+          1
+        ],
+        "colorShadow": [
+          1,
+          0,
+          0.02,
+          1
+        ]
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "DM-EnergyField.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "pulseSpeed": 0.7025,
+        "fieldIntensity": 2,
+        "distortionAmount": 1,
+        "arcFrequency": 0.06
+      },
+      "featured": false
+    },
+    {
+      "file": "DM-SmokeWisp.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "density": 1.4,
+        "turbulence": 0.56,
+        "wispSize": 1.7625
+      },
+      "featured": false
+    },
+    {
+      "file": "DM-CenterCrosshair.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "rings": 6.41,
+        "lineWidth": 0.00564
+      },
+      "featured": false
+    },
+    {
+      "file": "DM-CornerPins.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "markerSize": 0.12,
+        "lineWidth": 0.00726999999999993
+      },
+      "featured": false
+    },
+    {
+      "file": "DM-Strobe.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "DM-EdgeGlow.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "glowWidth": 0.3,
+        "glowIntensity": 2,
+        "pulseSpeed": 0.93
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "DM-Spotlight.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "spotSize": 0.239,
+        "softness": 0.4118
+      },
+      "featured": false
+    },
+    {
+      "file": "DM-NodeNetwork.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "nodeCount": 30,
+        "connectionDist": 0.5,
+        "nodeSize": 0.03,
+        "lineWidth": 0.01,
+        "hue": 0.48,
+        "pulseAmount": 1
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "DM-FractalZoom.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "zoomSpeed": 0.1665,
+        "iterations": 12,
+        "complexity": 5,
+        "colorSpeed": 0
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "DM-ParticleVortex.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "particleCount": 500,
+        "vortexStrength": 0.5,
+        "particleSize": 0.02,
+        "trailLength": 1
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "DM-NeonLines.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "enabled": true,
+      "defaultLoad": true
+    },
+    {
+      "file": "DM-MandelbrotPulse.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "iterations": 100
+      },
+      "featured": false
+    },
+    {
+      "file": "DM-ElectricStorm.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "intensity": 1.625,
+        "boltCount": 8,
+        "speed": 3.56,
+        "branches": 1,
+        "thickness": 0.0766
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "DM-WaveformBars.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "barCount": 64
+      },
+      "featured": false
+    },
+    {
+      "file": "DM-CellularNoise.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "scale": 4.285,
+        "speed": 0.25,
+        "edgeWidth": 0.21,
+        "cellStyle": 1.55
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "DM-InfiniteZoom.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "zoomSpeed": 0.216,
+        "rotateSpeed": 2,
+        "layers": 12,
+        "thickness": 0.2
+      },
+      "featured": false
+    },
+    {
+      "file": "DM-LaserBeams.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "beamCount": 16,
+        "glowAmount": 1
+      },
+      "featured": false
+    },
+    {
+      "file": "DM-FluidSimulation.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "scale": 2.4,
+        "speed": 0.404,
+        "complexity": 6,
+        "contrast": 1.45
+      },
+      "featured": false
+    },
+    {
+      "file": "DM-Spirograph.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "innerRadius": 0.36,
+        "penOffset": 0.5275,
+        "speed": 1.1545,
+        "lineWidth": 0.00821,
+        "glowSize": 0.097,
+        "trailLength": 2000
+      },
+      "featured": false
+    },
+    {
+      "file": "DM-RetroSun.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "sunSize": 0.372,
+        "sunY": 0.48,
+        "gridSpeed": 1.155,
+        "gridDensity": 11.125,
+        "stripeCount": 2.25
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "DM-PixelRain.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "pixelSize": 6.32,
+        "fallSpeed": 0.545,
+        "density": 0.9,
+        "trailLength": 10,
+        "colorVariation": 1
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "DM-PrismLight.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "spread": 0.982,
+        "angle": 5.495,
+        "bands": 3.945,
+        "softness": 0.165,
+        "intensity": 2,
+        "centerX": 0.475,
+        "centerY": 0
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "DM-CircuitBoard.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "gridSize": 17.125,
+        "flowSpeed": 0.99,
+        "traceWidth": 0.337,
+        "pulseIntensity": 1
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "DM-MorphingShapes.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "morphSpeed": 0.2995,
+        "shapeSize": 0.5,
+        "rotateSpeed": 2,
+        "edgeWidth": 0.1,
+        "glowAmount": 1
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "DM-AuroraBorealis.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "speed": 1.392,
+        "waveScale": 4.38,
+        "intensity": 2,
+        "verticalPos": 0.385,
+        "spread": 0.462
+      },
+      "featured": false
+    },
+    {
+      "file": "DM-GeometricPulse.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "pulseSpeed": 0.9375,
+        "shapeType": 3.22,
+        "ringCount": 7.52,
+        "thickness": 0.1,
+        "rotateSpeed": 0
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "DM-WormholeTravel.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "speed": 0.5,
+        "twist": 0.615,
+        "segments": 8.8,
+        "colorSpeed": 1.4
+      },
+      "featured": false
+    },
+    {
+      "file": "DM-DNAHelix.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "rotateSpeed": 0.1,
+        "verticalSpeed": 2,
+        "helixWidth": 0.5,
+        "baseSize": 0.05,
+        "basePairs": 20
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "DM-SpectrumWaves.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {},
+      "featured": false
+    },
+    {
+      "file": "DM-ConcentricRipples.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "sourceCount": 1.74,
+        "rippleSpeed": 0.8375,
+        "rippleFreq": 30,
+        "decay": 0.5,
+        "moveSpeed": 0.37
+      },
+      "featured": false,
+      "enabled": false
+    },
+    {
+      "file": "HexGrid.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "scale": 12.685,
+        "lineWidth": 0.2
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "SacredGeometry.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "rings": 8,
+        "rotation": 0.06,
+        "pulseSpeed": 0.27,
+        "lineThickness": 0.005,
+        "colorCycle": 0.065
+      },
+      "featured": false
+    },
+    {
+      "file": "VoronoiPulse.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {},
+      "featured": false
+    },
+    {
+      "file": "TriangleMesh.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {},
+      "featured": false
+    },
+    {
+      "file": "RadialBurst.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "rayCount": 47.2,
+        "rotSpeed": -0.78,
+        "pulseSpeed": 0.165,
+        "rayWidth": 0.9,
+        "centerGlow": 2
+      },
+      "featured": false
+    },
+    {
+      "file": "WarpTunnel.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {},
+      "featured": false
+    },
+    {
+      "file": "CircuitBoard.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "gridScale": 9.2,
+        "flowSpeed": 0.27,
+        "nodeGlow": 3,
+        "lineWidth": 0.05455,
+        "colorMode": 1
+      },
+      "featured": false
+    },
+    {
+      "file": "ConcentricRings.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "ringFreq": 14.45,
+        "expandSpeed": 1.92,
+        "thickness": 0.1,
+        "wobble": 1,
+        "colorSpread": 1
+      },
+      "featured": false
+    },
+    {
+      "file": "SpiralVortex.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {},
+      "featured": false
+    },
+    {
+      "file": "DiamondPattern.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "tileSize": 7.04,
+        "animSpeed": 1.08,
+        "glow": 0.8625,
+        "hueShift": 0.575
+      },
+      "featured": false,
+      "enabled": false
+    },
+    {
+      "file": "WaterRipples.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "rippleSpeed": 0.5,
+        "rippleCount": 10,
+        "amplitude": 0.2,
+        "decay": 1.315
+      },
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "FireEmber.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "emberCount": 164,
+        "riseSpeed": 0.271,
+        "emberSize": 0.01721,
+        "flickerSpeed": 5,
+        "spreadX": 1
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "CloudFlow.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "cloudSpeed": 0.505,
+        "cloudDensity": 0.442,
+        "cloudScale": 3.835,
+        "turbulence": 0.75,
+        "brightness": 0.9125
+      },
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "AuroraWaves.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "waveSpeed": 1.0025,
+        "waveCount": 8,
+        "intensity": 2.2625,
+        "verticalPos": 0.37
+      },
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "CellularLife.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "cellScale": 7.915,
+        "morphSpeed": 1.27,
+        "membraneWidth": 0.2,
+        "nucleusSize": 0.155,
+        "hueBase": 0
+      },
+      "featured": false,
+      "enabled": false
+    },
+    {
+      "file": "LiquidMetal.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "flowSpeed": 0.575,
+        "blobScale": 10,
+        "reflectivity": 1,
+        "metalTint": 0.97,
+        "surfaceTension": 0.1
+      },
+      "featured": false
+    },
+    {
+      "file": "ElectricStorm.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "boltFrequency": 5,
+        "branchCount": 7.195,
+        "boltThickness": 0.0184799999999998,
+        "glowIntensity": 2.3
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "OceanWaves.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "waveSpeed": 1.4395,
+        "waveHeight": 0.3,
+        "waveCount": 7.8,
+        "foamAmount": 0,
+        "depthFade": 1
+      },
+      "featured": false
+    },
+    {
+      "file": "TreeRings.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {},
+      "featured": false
+    },
+    {
+      "file": "NeonPulse.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "barCount": 20,
+        "pulseSpeed": 1.4225,
+        "glowAmount": 3,
+        "barWidth": 0.28
+      },
+      "featured": false
+    },
+    {
+      "file": "StrobeFlash.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {},
+      "featured": false
+    },
+    {
+      "file": "FractalZoom.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "zoomSpeed": 0.157,
+        "complexity": 6.26,
+        "colorSpeed": 0.145,
+        "brightness": 1.3175
+      },
+      "featured": false
+    },
+    {
+      "file": "LaserBeams.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "beamCount": 10.13,
+        "scanSpeed": 0.1435,
+        "beamWidth": 0.017905,
+        "glowSize": 0.1411,
+        "hueShift": 0.205
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "WaveformScope.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "amplitude": 0.402
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "GlitchBlocks.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "blockSize": 8.48,
+        "colorGlitch": 0.675,
+        "intensity": 0.55,
+        "rgbSplit": 0.069
+      },
+      "featured": false
+    },
+    {
+      "file": "RetroSun.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "sunSize": 0.288,
+        "gridSpeed": 1.99,
+        "lineCount": 20,
+        "glowAmount": 2
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "ParticleField.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "particleCount": 200,
+        "flySpeed": 0.1,
+        "particleSize": 0.02,
+        "trailLength": 0.28,
+        "colorVariation": 1
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "MoirePattern.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "lineFreq": 10,
+        "rotateSpeed": 0.275,
+        "offset": 0.1125,
+        "lineWidth": 0.264,
+        "layers": 4.54
+      },
+      "featured": false
+    },
+    {
+      "file": "ColorCycle.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "cycleSpeed": 0.2805
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "MeltingBlobs.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 0.271,
+        "scale": 3.87,
+        "meltiness": 0.88,
+        "colorShift": 0.41,
+        "metallic": 0.785
+      },
+      "featured": false
+    },
+    {
+      "file": "MorphingLava.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "flowSpeed": 1.601,
+        "cellScale": 6.42,
+        "heatIntensity": 0.455,
+        "morphAmount": 0.795,
+        "colorTemp": 0.59
+      },
+      "featured": false
+    },
+    {
+      "file": "FluidMorph.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "complexity": 3.625,
+        "smoothness": 0.8875
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "ChromeFlow.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "flowSpeed": 1.259,
+        "waveScale": 4.24,
+        "iridescence": 0.885,
+        "reflectivity": 1,
+        "warpAmount": 1
+      },
+      "featured": false
+    },
+    {
+      "file": "BlobbyMetal.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1.05,
+        "blobCount": 11.595,
+        "blobSize": 0.5815,
+        "metalness": 1
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "MercuryPool.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "rippleSpeed": 0.6795,
+        "turbulence": 0.385,
+        "reflectionSharp": 0.545
+      },
+      "featured": false
+    },
+    {
+      "file": "DeepMetalBlobs.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1.1355,
+        "blobCount": 10,
+        "depth": 0.425,
+        "fluidAmount": 1,
+        "metalness": 1
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "LiquidDepth.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1.0215,
+        "layers": 5,
+        "parallax": 0,
+        "fluidity": 0.86
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "OrganicMetal.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "TitaniumRipple.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "rippleScale": 5.725,
+        "roughness": 0,
+        "anisotropy": 1
+      },
+      "featured": false
+    },
+    {
+      "file": "CopperPatina.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1,
+        "patinaAmount": 0.465,
+        "detail": 1.02,
+        "copperTone": 1,
+        "shimmer": 0.795
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "ParticleSwarm.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "particleCount": 100,
+        "trailLength": 1,
+        "glow": 0.805
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "EmberCloud.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "emberCount": 144.6,
+        "emberSize": 1.6625,
+        "heatGlow": 0.93
+      },
+      "featured": false
+    },
+    {
+      "file": "MetalParticles.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1.115,
+        "particleCount": 80,
+        "particleSize": 2,
+        "metalDepth": 1,
+        "hue": 0.6,
+        "reflectionStrength": 1
+      },
+      "featured": false
+    },
+    {
+      "file": "DataStream.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "streamCount": 30,
+        "dataIntensity": 1,
+        "hue": 0.61,
+        "waveAmplitude": 0
+      },
+      "featured": false
+    },
+    {
+      "file": "WaveMatrix.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 0.24,
+        "waveFrequency": 2.215,
+        "gridSize": 9.75,
+        "perspective": 0,
+        "hue": 0.58,
+        "waveHeight": 1
+      },
+      "featured": false
+    },
+    {
+      "file": "DataPulse.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "waveCount": 8,
+        "amplitude": 1,
+        "complexity": 5,
+        "pulseSpeed": 2.13
+      },
+      "featured": false
+    },
+    {
+      "file": "SolLeWittCubes.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "cubeCount": 16,
+        "lineWidth": 1.7125
+      },
+      "featured": false
+    },
+    {
+      "file": "LeWittPyramid.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "pyramidCount": 11.45,
+        "lineWeight": 2.1125,
+        "zoom": 1.0965,
+        "rotateStyle": 1.18,
+        "divisions": 2.95,
+        "colorMode": 0.035
+      },
+      "featured": false
+    },
+    {
+      "file": "GeometricWall.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1,
+        "pattern": 4,
+        "density": 21.45,
+        "strokeWeight": 3,
+        "colorCount": 4
+      },
+      "featured": false
+    },
+    {
+      "file": "ModularGrid.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 0.115,
+        "gridSize": 6.71,
+        "variation": 0.625,
+        "strokeWeight": 1.4,
+        "depth": 0.04
+      },
+      "featured": false
+    },
+    {
+      "file": "NestedCubes.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "cubeCount": 20,
+        "lineWeight": 1.758,
+        "zoom": 2.379,
+        "colorGradient": 1,
+        "spacing": 0.0512
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "SM-BouncingBalls.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "ballCount": 12,
+        "ballSize": 0.1188,
+        "speed": 0.39,
+        "glowIntensity": 2.57,
+        "bgBrightness": 0
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "SM-LiquidFill.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "waveAmplitude": 0.2
+      },
+      "featured": false
+    },
+    {
+      "file": "SM-GravityDropBalls.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "ballCount": 20,
+        "gravity": 1.1545,
+        "bounceDamping": 0.95,
+        "colorMode": 1
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "SM-LavaLampBlobs.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "blobCount": 9.895,
+        "blobSize": 0.1,
+        "threshold": 0.828,
+        "speed": 0.917
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "SM-ParticleNodes.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "nodeCount": 30,
+        "nodeSize": 0.025,
+        "lineThickness": 0.01,
+        "speed": 1.0975,
+        "depthLayers": 3
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "SM-ConcentricEcho.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "layerCount": 30,
+        "lineWidth": 0.01143,
+        "animSpeed": 0.825,
+        "rotationSpeed": 0
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "SM-EdgePlasma.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "intensity": 1.8375,
+        "edgeWidth": 0.3,
+        "speed": 0.216,
+        "complexity": 1
+      },
+      "featured": false
+    },
+    {
+      "file": "SM-RippleTank.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {},
+      "featured": false
+    },
+    {
+      "file": "SM-RicochetLaser.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "SM-RainDrops.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "rainDensity": 40,
+        "fallSpeed": 0.92,
+        "dropLength": 0.02,
+        "splashSize": 0.08,
+        "puddleHeight": 0.15,
+        "windAngle": 0
+      },
+      "featured": false
+    },
+    {
+      "file": "SM-ElectricFence.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "SM-BubbleRise.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "bubbleCount": 30,
+        "maxSize": 0.1,
+        "riseSpeed": 0.252,
+        "wobble": 0.0675,
+        "iridescence": 1
+      },
+      "featured": false
+    },
+    {
+      "file": "SM-PongArena.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "ballCount": 30,
+        "ballSpeed": 1.446,
+        "trailLength": 1,
+        "ballGlow": 4,
+        "edgeReact": 1,
+        "sizeVariation": 1
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "SM-VineCrawl.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "SM-WaveformWalls.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {},
+      "featured": false
+    },
+    {
+      "file": "SM-Fireflies.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "fireflyCount": 60,
+        "glowRadius": 0.08,
+        "driftSpeed": 0.696
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "SM-DigitalRain.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "trailLength": 0.6,
+        "brightness": 1.8275
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "SM-GyroscopeRings.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "ringCount": 8,
+        "ringWidth": 0.02,
+        "rotSpeed": 0.4625
+      },
+      "featured": false
+    },
+    {
+      "file": "SM-TunnelDepth.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "SM-FacadeCrack.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "crackProgress": 0.09
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "SM-AsymmetricLightning.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "branchDepth": 0.2748,
+        "arcWidth": 0.008
+      },
+      "featured": false
+    },
+    {
+      "file": "SM-BrickCollapse.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "collapseProgress": 0.535
+      },
+      "featured": false
+    },
+    {
+      "file": "SM-GeometricAbyss.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "tileScale": 9.66
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "SM-SurfaceShatter.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "SM-WireframeCorridor.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "SM-ShatterGlass.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "SM-BreathingMembrane.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "speed": 2,
+        "breathRate": 0.1,
+        "membraneDepth": 0.76,
+        "rippleCount": 6.22,
+        "organicDetail": 0.995
+      },
+      "featured": false
+    },
+    {
+      "file": "SM-MagneticFilings.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "speed": 1,
+        "fieldStrength": 2.884,
+        "filingDensity": 80,
+        "filingLength": 1,
+        "poleCount": 8
+      },
+      "featured": false
+    },
+    {
+      "file": "SM-ErosionGrowth.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "speed": 0.955,
+        "growthRate": 1,
+        "crystalScale": 2,
+        "symmetry": 12
+      },
+      "featured": false
+    },
+    {
+      "file": "SM-GravitationalLensing.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "speed": 1,
+        "lensStrength": 3,
+        "starDensity": 293,
+        "accretionDisk": 1,
+        "eventHorizon": 0.01
+      },
+      "featured": false,
+      "defaultLoad": false
+    },
+    {
+      "file": "SM-PressureMap.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "sensitivity": 0.1,
+        "stressWave": 1,
+        "noiseAmount": 1
+      },
+      "featured": false
+    },
+    {
+      "file": "SM-TidalPool.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "speed": 1.26
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "SM-SwarmIntelligence.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "boidCount": 100,
+        "boidSize": 1,
+        "trailLength": 1,
+        "cohesion": 0
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "SM-SeismicPulse.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "speed": 0.31,
+        "pulseRate": 2.42,
+        "decayRate": 0.946
+      },
+      "featured": false
+    },
+    {
+      "file": "SM-MoltenCore.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "speed": 1,
+        "coreTemp": 0.3,
+        "crustThickness": 0.345,
+        "crackDensity": 16,
+        "crackWidth": 1
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "SM-SmokeChamber.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "speed": 0.6675,
+        "smokeDensity": 1,
+        "turbulence": 0,
+        "riseSpeed": 0.29,
+        "curlStrength": 0
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "SM-SpiderWeb.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "speed": 1,
+        "radialStrands": 16.2,
+        "spiralDensity": 40,
+        "strandWidth": 1,
+        "dewDrops": 1
+      },
+      "featured": false
+    },
+    {
+      "file": "SM-AuroraCurtain.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {},
+      "featured": false
+    },
+    {
+      "file": "SM-CellularMitosis.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "speed": 1,
+        "cellScale": 7.005,
+        "nucleusSize": 0.6,
+        "divisionRate": 0
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "SM-RadarSweep.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "speed": 0.24,
+        "sweepWidth": 0.8,
+        "blipSize": 1,
+        "fadeTrail": 1
+      },
+      "featured": false
+    },
+    {
+      "file": "SM-TopographicFlood.fs",
+      "tier": "demo",
+      "category": "Simulation",
+      "tags": [],
+      "defaults": {
+        "speed": 1,
+        "contourCount": 40,
+        "lineWidth": 0.1
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "AR-FrequencyRings.fs",
+      "tier": "demo",
+      "category": "Audio Reactive",
+      "tags": [],
+      "defaults": {},
+      "featured": false
+    },
+    {
+      "file": "AR-SDFMorph.fs",
+      "tier": "demo",
+      "category": "Audio Reactive",
+      "tags": [],
+      "defaults": {
+        "morphSpeed": 1.21,
+        "scale": 1.775,
+        "emission": 3.685,
+        "waveDisplace": 0.2205
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "AR-DisplacementSphere.fs",
+      "tier": "demo",
+      "category": "Audio Reactive",
+      "tags": [],
+      "defaults": {
+        "sphereRadius": 1.46,
+        "displaceAmount": 1,
+        "waveDetail": 0.3075,
+        "iridescence": 2.91,
+        "brightness": 3
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "AR-WaveletDecomp.fs",
+      "tier": "demo",
+      "category": "Audio Reactive",
+      "tags": [],
+      "defaults": {
+        "scaleCount": 8,
+        "waveAmplitude": 0.05,
+        "layerSpread": 0.1487,
+        "driftSpeed": 0.95,
+        "glowWidth": 0.00433,
+        "intensity": 2.4125
+      },
+      "featured": false
+    },
+    {
+      "file": "AR-SpectralAurora.fs",
+      "tier": "demo",
+      "category": "Audio Reactive",
+      "tags": [],
+      "defaults": {
+        "foldIntensity": 2,
+        "brightness": 2.6,
+        "verticalStretch": 0.99
+      },
+      "featured": false
+    },
+    {
+      "file": "AR-SmokeTendrils.fs",
+      "tier": "demo",
+      "category": "Audio Reactive",
+      "tags": [],
+      "defaults": {
+        "tendrilCount": 8.38,
+        "curlStrength": 2.4425,
+        "smokeDensity": 4,
+        "colorRichness": 1.37,
+        "turbulence": 2,
+        "breathRate": 0.56
+      },
+      "featured": false
+    },
+    {
+      "file": "AR-TopoMesh.fs",
+      "tier": "demo",
+      "category": "Audio Reactive",
+      "tags": [],
+      "defaults": {
+        "contourCount": 22.5,
+        "lineWidth": 1,
+        "heightScale": 1.8,
+        "noiseDetail": 1,
+        "colorIntensity": 1.925
+      },
+      "featured": false
+    },
+    {
+      "file": "AR-Ferrofluid.fs",
+      "tier": "demo",
+      "category": "Audio Reactive",
+      "tags": [],
+      "defaults": {
+        "spikeHeight": 0.9415,
+        "spikeCount": 11.36,
+        "metallic": 0.972,
+        "surfaceTension": 0.3545,
+        "baseRadius": 1.405
+      },
+      "featured": false
+    },
+    {
+      "file": "AR-FrequencyTerrain.fs",
+      "tier": "demo",
+      "category": "Audio Reactive",
+      "tags": [],
+      "defaults": {
+        "terrainHeight": 2.7925,
+        "flySpeed": 0.244,
+        "fogDensity": 0.02,
+        "erosion": 2,
+        "gridGlow": 0.13,
+        "colorIntensity": 2.35
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "AR-Lissajous.fs",
+      "tier": "demo",
+      "category": "Audio Reactive",
+      "tags": [],
+      "defaults": {
+        "trailLength": 0.99,
+        "lineThickness": 0.00786,
+        "glowRadius": 0.04,
+        "intensity": 4
+      },
+      "featured": false
+    },
+    {
+      "file": "AR-HarmonicVoronoi.fs",
+      "tier": "demo",
+      "category": "Audio Reactive",
+      "tags": [],
+      "defaults": {
+        "cellScale": 6.56,
+        "orbitRadius": 0.45,
+        "borderWidth": 0.088,
+        "borderGlow": 5.625
+      },
+      "featured": false
+    },
+    {
+      "file": "AR-StrangeAttractor.fs",
+      "tier": "demo",
+      "category": "Audio Reactive",
+      "tags": [],
+      "defaults": {
+        "pointBrightness": 4,
+        "glowSize": 0.02,
+        "audioModDepth": 2,
+        "cameraSpeed": 0.225,
+        "trailDecay": 0.99,
+        "intensity": 3
+      },
+      "featured": false
+    },
+    {
+      "file": "AR-SpectralFluid.fs",
+      "tier": "demo",
+      "category": "Audio Reactive",
+      "tags": [],
+      "defaults": {
+        "vortexScale": 1.65,
+        "colorCycleRate": 0.078,
+        "filamentSharp": 1.4875,
+        "fluidSpeed": 1.91,
+        "density": 1.425,
+        "beatPulse": 1.14
+      },
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "AR-ReactionDiffusion.fs",
+      "tier": "demo",
+      "category": "Audio Reactive",
+      "tags": [],
+      "defaults": {
+        "feedRate": 0.0791,
+        "killRate": 0.08,
+        "audioFeedMod": 0.0485,
+        "audioKillMod": 0.031,
+        "patternScale": 8.175,
+        "colorIntensity": 1.15
+      },
+      "featured": false
+    },
+    {
+      "file": "AR-WaveformHelix.fs",
+      "tier": "demo",
+      "category": "Audio Reactive",
+      "tags": [],
+      "defaults": {
+        "helixRadius": 0.965,
+        "helixPitch": 0.3
+      },
+      "featured": false
+    },
+    {
+      "file": "AR-GeodesicBloom.fs",
+      "tier": "demo",
+      "category": "Audio Reactive",
+      "tags": [],
+      "defaults": {
+        "domeRadius": 0.8
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "AR-MobiusStrip.fs",
+      "tier": "demo",
+      "category": "Audio Reactive",
+      "tags": [],
+      "defaults": {
+        "stripWidth": 0.304
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "90_CircuitTrace.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "traceScale": 10.32,
+        "glowWidth": 3.965,
+        "pulseSpeed": 4.0325,
+        "colorTemp": 0.96
+      },
+      "featured": false
+    },
+    {
+      "file": "91_StainedGlass.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1.29,
+        "cellCount": 7.93,
+        "edgeWidth": 0.01,
+        "saturation": 1,
+        "lightAngle": 3.768
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "92_WovenFabric.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1.5,
+        "weaveScale": 5.86,
+        "threadWidth": 0.81675,
+        "colorMix": 0.325,
+        "depth": 1
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "93_MosaicTiles.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 2,
+        "tileCount": 11.075,
+        "gapWidth": 0.0456999999999999,
+        "rotateAmount": 0,
+        "colorVariety": 2.94
+      },
+      "featured": false
+    },
+    {
+      "file": "94_NeonOutline.fs",
+      "tier": "demo",
+      "category": "Audio Reactive",
+      "tags": [],
+      "defaults": {
+        "speed": 2,
+        "shapeCount": 10,
+        "glowIntensity": 1.3915,
+        "lineWidth": 0.0237
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "95_PixelSort.fs",
+      "tier": "demo",
+      "category": "Audio Reactive",
+      "tags": [],
+      "defaults": {
+        "speed": 1.66,
+        "streakLength": 1,
+        "noiseScale": 5.815,
+        "sortDirection": 0.85,
+        "colorIntensity": 1.208
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "96_LinocutPrint.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1.5,
+        "hatchDensity": 57.95,
+        "hatchAngle": 1.6171,
+        "contrast": 1.0625
+      },
+      "featured": false
+    },
+    {
+      "file": "97_TopoContour.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "contourCount": 16.375,
+        "terrainScale": 2.015,
+        "lineSharp": 2.9865,
+        "colorMode": 1
+      },
+      "featured": false
+    },
+    {
+      "file": "98_LEDMatrix.fs",
+      "tier": "demo",
+      "category": "Audio Reactive",
+      "tags": [],
+      "defaults": {
+        "pixelCount": 12.48,
+        "pixelGap": 0.05
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "cube shaders/ROOM_01_EmberDrift.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "intensity": 2.958,
+        "emberDensity": 8.58,
+        "trailLength": 1
+      },
+      "featured": false
+    },
+    {
+      "file": "cube shaders/ROOM_02_SmokeLayers.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "speed": 0.802,
+        "intensity": 1.446,
+        "curlAmount": 1.5,
+        "smokeDetail": 3.05
+      },
+      "featured": false
+    },
+    {
+      "file": "cube shaders/ROOM_03_LavaLampDepth.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "intensity": 1.488,
+        "depth": 0.64,
+        "blobSize": 1.455,
+        "blobCount": 5.725
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "cube shaders/ROOM_04_FireflyGarden.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "speed": 3.142,
+        "intensity": 3,
+        "depth": 0.4955,
+        "wanderRadius": 1.793
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "cube shaders/ROOM_05_CrystalRain.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "speed": 0.1975,
+        "depth": 0.3,
+        "streakWidth": 2.9865,
+        "impactFlash": 1.71
+      },
+      "featured": false
+    },
+    {
+      "file": "cube shaders/ROOM_06_NeonGrid.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "speed": 1.7965,
+        "intensity": 3,
+        "depth": 1.0565,
+        "colorShift": 2.2294,
+        "gridDensity": 3.935,
+        "glowWidth": 0.813
+      },
+      "featured": false
+    },
+    {
+      "file": "cube shaders/ROOM_07_AuroraCurtains.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "intensity": 3,
+        "depth": 1.1755,
+        "swayAmount": 3,
+        "curtainWidth": 1.543
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "cube shaders/ROOM_08_ElectricTendrils.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "speed": 1.4455,
+        "intensity": 2.636,
+        "depth": 0.7675,
+        "colorShift": 6.2486,
+        "branchCount": 6,
+        "jitterAmount": 3
+      },
+      "featured": false
+    },
+    {
+      "file": "cube shaders/ROOM_09_LiquidChrome.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "intensity": 1.754,
+        "depth": 1.643,
+        "flowSpeed": 0.332,
+        "iridescence": 1.5
+      },
+      "featured": false
+    },
+    {
+      "file": "cube shaders/ROOM_11_StormCell.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "speed": 0.295,
+        "intensity": 2.748,
+        "colorShift": 5.2752,
+        "turbulence": 0.872,
+        "lightningRate": 0
+      },
+      "featured": false
+    },
+    {
+      "file": "cube shaders/ROOM_13_PortalVortex.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "speed": 0.6655,
+        "intensity": 2.706,
+        "depth": 1.0055,
+        "spiralTightness": 6.6,
+        "armCount": 2
+      },
+      "featured": false
+    },
+    {
+      "file": "cube shaders/ROOM_14_PlasmaWalls.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "speed": 0.3925,
+        "depth": 0.3,
+        "colorShift": 0.7222,
+        "plasmaScale": 0.3,
+        "edgeWidth": 0.6
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "cube shaders/ROOM_15_FogCathedral.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "intensity": 1.964,
+        "depth": 0.3,
+        "fogDensity": 0.8805,
+        "shaftWidth": 1.147
+      },
+      "featured": false
+    },
+    {
+      "file": "cube shaders/ROOM_16_CascadePour.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "speed": 0.451,
+        "intensity": 1.628,
+        "depth": 0.827,
+        "colorShift": 6.2172,
+        "flowRate": 1.978,
+        "viscosity": 0.872
+      },
+      "featured": false
+    },
+    {
+      "file": "cube shaders/ROOM_17_SporeCloud.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "speed": 2.4985,
+        "intensity": 3,
+        "depth": 0.3,
+        "colorShift": 6.2486,
+        "sporeDensity": 3,
+        "bloomSize": 2.489
+      },
+      "featured": false
+    },
+    {
+      "file": "cube shaders/ROOM_18_GlitchDepth.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "speed": 0.8605,
+        "intensity": 3,
+        "depth": 2,
+        "glitchRate": 0.485,
+        "corruption": 1
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "cube shaders/ROOM_19_CosmicNebula.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "speed": 4,
+        "intensity": 2.664,
+        "depth": 0.3,
+        "colorShift": 3.4226,
+        "starDensity": 2.9865,
+        "nebulaDetail": 1.059
+      },
+      "featured": false
+    },
+    {
+      "file": "cube shaders/ROOM_20_MoltenCore.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "speed": 0.841,
+        "intensity": 1.418,
+        "depth": 0.8525,
+        "colorShift": 2.669,
+        "coreSize": 1.543,
+        "heatWarp": 2.7
+      },
+      "featured": false
+    },
+    {
+      "file": "cube shaders/3D_01_SphereCluster.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "intensity": 1.012,
+        "camDist": 6.5,
+        "sphereSize": 0.281,
+        "density": 1.1125
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "cube shaders/3D_02_ChromeSpheres.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "speed": 1.38,
+        "intensity": 1.348,
+        "camDist": 4.55,
+        "reflectivity": 1,
+        "sphereCount": 7
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "cube shaders/3D_03_WireframeGeo.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "speed": 2.04,
+        "intensity": 1.124,
+        "camDist": 6.35,
+        "colorShift": 1.727,
+        "wireThickness": 0.0185,
+        "meshDensity": 2.9
+      },
+      "featured": false
+    },
+    {
+      "file": "cube shaders/3D_04_CubeField.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "intensity": 3,
+        "colorShift": 0.8792,
+        "objectSize": 0.32,
+        "spacing": 1.81
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "cube shaders/3D_05_NeonCubes.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "speed": 1.29,
+        "intensity": 2.841,
+        "camDist": 6.1,
+        "glowRadius": 0.5,
+        "cubeScale": 1.991
+      },
+      "featured": false
+    },
+    {
+      "file": "cube shaders/3D_06_MetaballBlob.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "intensity": 2.958,
+        "smoothness": 0.6605,
+        "blobScale": 0.674
+      },
+      "featured": false
+    },
+    {
+      "file": "cube shaders/3D_08_OrganicSculpt.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "intensity": 2.328,
+        "deformation": 2,
+        "complexity": 3.475
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "cube shaders/3D_10_ShatteredCube.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "intensity": 3,
+        "camDist": 2,
+        "colorShift": 3.6424,
+        "shatter": 2,
+        "fragmentCount": 12
+      },
+      "featured": false
+    },
+    {
+      "file": "cube shaders/3D_11_InfiniteHall.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "speed": 0.855,
+        "intensity": 0.2,
+        "camDist": 0.175,
+        "colorShift": 0.7222,
+        "hallWidth": 5,
+        "repeatDist": 2
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "cube shaders/3D_12_PlasmaSphere.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "intensity": 0.428,
+        "camDist": 4.37,
+        "plasmaSize": 1.6,
+        "tendrilLength": 3
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "cube shaders/3D_13_TorusKnot.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "tubeRadius": 0.41675,
+        "twistAmount": 8
+      },
+      "featured": false
+    },
+    {
+      "file": "cube shaders/3D_14_NebulaCloud.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "speed": 1.18,
+        "intensity": 0.922,
+        "camDist": 5.41,
+        "colorShift": 6.2486,
+        "cloudDensity": 1.418,
+        "starDensity": 2
+      },
+      "featured": false
+    },
+    {
+      "file": "cube shaders/3D_15_MorphCube.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "intensity": 1.096,
+        "camDist": 3.59,
+        "morphSpeed": 0.8995,
+        "surfaceRoughness": 1
+      },
+      "featured": false
+    },
+    {
+      "file": "cube shaders/3D_16_VoxelTerrain.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "intensity": 1.46,
+        "camDist": 5.51,
+        "colorShift": 5.809,
+        "terrainHeight": 5,
+        "voxelSize": 0.1
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "cube shaders/3D_17_BubbleMass.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "intensity": 2.496,
+        "camDist": 3.95,
+        "bubbleSize": 1.5,
+        "transparency": 0.8695
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "cube shaders/3D_18_LatticeWorld.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "cube shaders/3D_19_AbstractPillars.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "intensity": 1.516,
+        "pillarHeight": 6,
+        "pillarDensity": 3.425
+      },
+      "featured": false
+    },
+    {
+      "file": "cube shaders/3D_20_MoltenCore.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [],
+      "defaults": {
+        "intensity": 0.941,
+        "camDist": 4.16,
+        "lavaIntensity": 1.4195,
+        "deformation": 0.8475
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "ThreeBody.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "AbyssalHelix.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "spiralArms": 4.025,
+        "helixTightness": 0.1,
+        "biolumColor": 0.8,
+        "depthPressure": 1,
+        "tentacleLength": 0.996,
+        "chromatophores": 0.275,
+        "rotateView": -0.157,
+        "swimSpeed": 0.425,
+        "nervePulseWidth": 0.1,
+        "abyssalFog": 0.175
+      },
+      "featured": false
+    },
+    {
+      "file": "AstralCrystal.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "rotSpeed": 0.155,
+        "zoom": 1.055,
+        "noiseAmt": 1,
+        "noiseScale": 2.61,
+        "colorBase": 0.77,
+        "prismSpread": 0.7,
+        "brightness": 1.7705
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "CosmicVoronoiTunnel.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "wireGlow": 2.811,
+        "cellDim": 0.099,
+        "dustAmount": 0.42
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "DimensionalRift.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "riftWidth": 1,
+        "foldDepth": 4.04,
+        "dimensionBleed": 0.135,
+        "voronoiDensity": 5.165,
+        "extrudeRift": 0,
+        "energyColor": 0.475,
+        "volumetricDensity": 1
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "InfiniteOrigami.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "foldLayers": 1,
+        "creaseSharpness": 0.505,
+        "paperColor": 0.24,
+        "metallicInk": 1,
+        "rotateX": -0.18
+      },
+      "featured": false
+    },
+    {
+      "file": "MirrorRealm.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "horizonRadius": 0.944,
+        "realityShards": 7.65,
+        "timeDistortion": 0.3225,
+        "mirrorDepth": 80,
+        "hawkingRate": 0.03,
+        "gravityWell": 0,
+        "shardExtrude": 1,
+        "parallelWorlds": 1,
+        "viewRotate": 0.1256,
+        "colorRealm": 0.33,
+        "entropyRate": 0.575,
+        "singularityGlow": 0
+      },
+      "featured": false
+    },
+    {
+      "file": "MyceliumNetwork.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "growthRate": 0.9375,
+        "networkDensity": 0.712,
+        "soilLayers": 1.472,
+        "sporulation": 0.82,
+        "hyphaeWidth": 0.379,
+        "fruitingBodies": 1,
+        "biolumGlow": 1.5,
+        "rotateView": 0.09,
+        "tiltView": -0.21,
+        "signalColor": 0.62,
+        "decomposition": 0.81
+      },
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "NeuralVoronoiMatrix.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "cellScale": 3.43,
+        "bioLuminance": 1.08
+      },
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "OssiferousRadiolaria.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "shells": 4.64,
+        "spineThickness": 0.08,
+        "axopodLength": 2,
+        "axopodCount": 10.8,
+        "diffractionStrength": 1.5,
+        "silicaClarity": 1,
+        "zoom": 1.2855
+      },
+      "featured": false
+    },
+    {
+      "file": "PlasmaCalligraphy.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "brushLayers": 14.675,
+        "inkViscosity": 1,
+        "strokeWidth": 1,
+        "writingSpeed": 0.1725,
+        "inkColor": 0.52,
+        "poolingGlow": 2,
+        "evaporation": 0.885,
+        "paperTexture": 0.61,
+        "trailFade": 1,
+        "rotationBias": 12
+      },
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "PrismaticVoid.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "foldIterations": 9,
+        "zoom": 0.65,
+        "voronoiScale": 8,
+        "extrudeAmt": 1,
+        "brightness": 1.1925,
+        "colorBase": 0,
+        "reflections": 0
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "QuantumLattice.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "morphState": 0.59,
+        "speed": 0.125,
+        "voronoiScale": 1,
+        "rotateX": -2.7946
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "StellarNursery.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 0.42,
+        "hue": 0.225,
+        "marchStep": 0.334,
+        "density": 0.8,
+        "cameraX": 0.72,
+        "cameraY": 0.34,
+        "zoom": 0.967
+      },
+      "featured": false
+    },
+    {
+      "file": "VoronoiTerrainFlyover.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "waveSpeed": 1.425,
+        "rotAngle": 3.7052,
+        "expFalloff": 1,
+        "hue": 0.755,
+        "satScale": 0.1925,
+        "terrainBlend": 0.8695,
+        "edgeSharp": 18650,
+        "waveHeight": 0.675,
+        "cameraHeight": 1.9525,
+        "cameraTilt": 1.002
+      },
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "VoronoiWarpDrive.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "00-flowerz.fs",
+      "tier": "demo",
+      "category": "Uncategorized",
+      "tags": [],
+      "defaults": {
+        "fractalDepth": 3.875,
+        "fractalChaos": 3.181
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "08_ArmillarySphere.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 1.85,
+        "ringCount": 8,
+        "tilt": 0.25
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "18_SpiralGalaxy.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [],
+      "defaults": {
+        "speed": 2,
+        "arms": 6,
+        "twist": 5.7125
+      },
+      "featured": false,
+      "defaultLoad": true
+    },
+    {
+      "file": "00-refikky.fs",
+      "tier": "demo",
+      "category": "Uncategorized",
+      "tags": [],
+      "defaults": {
+        "fractalDepth": 2.025,
+        "fractalChaos": 1.621,
+        "flowSpeed": 1.183,
+        "zDepthScale": 3,
+        "warpIntensity": 1,
+        "plasticGloss": 2,
+        "posX": -0.06,
+        "posY": -0.46
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "AnotherGridThingy.fs",
+      "tier": "demo",
+      "category": "Uncategorized",
+      "tags": [],
+      "defaults": {
+        "grid_size": [
+          0.57,
+          1
+        ],
+        "bright": 0.212,
+        "glow_size": 20,
+        "rate": 0.74,
+        "rndseed": [
+          0,
+          0.29
+        ]
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "gpt.fs",
+      "tier": "demo",
+      "category": "Uncategorized",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "grigM_gs61327.fs",
+      "tier": "demo",
+      "category": "Uncategorized",
+      "tags": [],
+      "defaults": {
+        "speed": 1.44,
+        "r_par": 18.25,
+        "zoom": 0.97,
+        "par_2": 0.01
+      },
+      "featured": false,
+      "enabled": true,
+      "defaultLoad": true
+    },
+    {
+      "file": "InfiniteGrid.fs",
+      "tier": "demo",
+      "category": "Uncategorized",
+      "tags": [],
+      "defaults": {
+        "gridLayers": 15,
+        "gridIntensity": 2,
+        "orangeLineIntensity": 2,
+        "pillarIntensity": 2,
+        "coreIntensity": 2,
+        "dustAmount": 2,
+        "beamIntensity": 0.94,
+        "cameraHeight": 1,
+        "zoom": 0.725
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "ThreeBody-ButterflyI.fs",
+      "tier": "demo",
+      "category": "Uncategorized",
+      "tags": [],
+      "defaults": {
+        "effectStyle": 2,
+        "zoom": 1.5285
+      },
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "Trippy Mandala.fs",
+      "tier": "demo",
+      "category": "Uncategorized",
+      "tags": [],
+      "defaults": {
+        "zoom_speed": 0.075,
+        "color_speed": 1.275,
+        "chaos_factor": 1.32,
+        "symmetry": 4.515
+      },
+      "featured": false,
+      "enabled": true,
+      "defaultLoad": true
+    },
+    {
+      "file": "Untitled Shader.fs",
+      "tier": "demo",
+      "category": "Uncategorized",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "enabled": true
+    },
+    {
+      "file": "AstralJellyfish.fs",
+      "tier": "demo",
+      "category": "Uncategorized",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "enabled": true
+    }
+  ]
+}

@@ -56,6 +56,11 @@ const isWebGPUDisplay = mode === 'webgpu-display';
 // BroadcastChannel state-sync and CSS-clips to its slice's region. See
 // SliceOutputApp.svelte for the full architecture.
 const isSliceDisplay = mode === 'slice-display';
+// Dev/QA escape hatch: `?mode=mobile-standalone` mounts the standalone
+// mobile shell in any desktop browser so we can iterate the mobile UI
+// without spinning up a sim or device. No Capacitor required.
+const isMobileStandalonePreview = mode === 'mobile-standalone';
+const isMobileRemotePreview = mode === 'mobile-remote';
 
 // Set global flags so Canvas.svelte knows not to create Spout sender/receiver
 // Use try/catch because Electron's contextBridge.exposeInMainWorld makes these read-only
@@ -125,6 +130,16 @@ async function init() {
       if (raw === 'standalone' || raw === 'remote') stored = raw;
     } catch { /* private mode — show picker every launch */ }
     await mountMobile(stored);
+    hideSplash();
+    return;
+  }
+  if (isMobileStandalonePreview) {
+    await mountMobile('standalone');
+    hideSplash();
+    return;
+  }
+  if (isMobileRemotePreview) {
+    await mountMobile('remote');
     hideSplash();
     return;
   }

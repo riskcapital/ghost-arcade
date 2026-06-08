@@ -1,0 +1,12 @@
+Target dependency graph (5 targets)
+Target 'App' in project 'App'
+➜ Explicit dependency on target 'CapApp-SPM' in project 'CapApp-SPM'
+Target 'CapApp-SPM' in project 'CapApp-SPM'
+➜ Explicit dependency on target 'CapApp-SPM' in project 'CapApp-SPM'
+➜ Explicit dependency on target 'Capacitor' in project 'capacitor-swift-pm'
+➜ Explicit dependency on target 'Cordova' in project 'capacitor-swift-pm'
+Target 'CapApp-SPM' in project 'CapApp-SPM'
+➜ Explicit dependency on target 'Capacitor' in project 'capacitor-swift-pm'
+➜ Explicit dependency on target 'Cordova' in project 'capacitor-swift-pm'
+Target 'Cordova' in project 'capacitor-swift-pm' (no dependencies)
+Target 'Capacitor' in project 'capacitor-swift-pm' (no dependencies)

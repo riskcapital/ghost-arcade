@@ -5,6 +5,7 @@
 import { get } from 'svelte/store';
 import { writable } from 'svelte/store';
 import { audioStore, type AudioState } from '../stores/audio';
+import { getVisualAudioSnapshot } from './visualAudio';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
 import type { ISFInput } from '../isf/parser';
 
@@ -1268,34 +1269,30 @@ class ModulationEngine {
   }
 
   private getSignal(source: ModSource, audio: AudioState, time: number, speed: number, bpmSync: boolean, mod?: ParamModulation): number {
+    const visual = getVisualAudioSnapshot();
+    // Audio bands/envelopes are unipolar control signals: silence should
+    // mean "stay at the user's base value", not "pull below base". Map
+    // smooth 0..1 visual energy to 0.5..1 so the existing centered formula
+    // (`base + (signal - 0.5) * amount * span`) becomes additive. Invert
+    // still works as an intentional subtractive response.
+    const audioUp = (v: number) => 0.5 + Math.max(0, Math.min(1, v)) * 0.5;
     switch (source) {
-      case 'sub':       return audio.bands.sub;
-      case 'bass':      return audio.bands.bass;
-      case 'lowMid':    return audio.bands.lowMid;
-      case 'mid':       return audio.bands.mid;
-      case 'highMid':   return audio.bands.highMid;
-      case 'treble':    return audio.bands.treble;
-      case 'air':       return audio.bands.air;
-      case 'presence':  return audio.bands.presence;
-      case 'high':      return audio.bands.high;
-      case 'amplitude': return audio.amplitude;
-      case 'beatPhase': return audio.beatPhase;
+      case 'sub':       return audioUp(visual.sub);
+      case 'bass':      return audioUp(visual.bass);
+      case 'lowMid':    return audioUp(visual.lowMid);
+      case 'mid':       return audioUp(visual.mid);
+      case 'highMid':   return audioUp(visual.highMid);
+      case 'treble':    return audioUp(visual.treble);
+      case 'air':       return audioUp(visual.air);
+      case 'presence':  return audioUp(visual.presence);
+      case 'high':      return audioUp(visual.high);
+      case 'amplitude': return audioUp(visual.level);
+      case 'beatPhase': return visual.beatPhase;
       // Kick / snare are onset-based one-shots: shape an exponential decay
       // from the onset so the modulation reads as a hit, not a level.
       // ~150ms decay window matches the eye's perception of a flash.
-      case 'kick': {
-        const ks = audio.kickSnare;
-        if (!ks) return 0;
-        const t = ks.timeSinceLastKick / 1000; // seconds
-        // exp decay with τ=0.15s, peak intensity at hit
-        return Math.max(0, ks.kickIntensity * Math.exp(-t / 0.15));
-      }
-      case 'snare': {
-        const ks = audio.kickSnare;
-        if (!ks) return 0;
-        const t = ks.timeSinceLastSnare / 1000;
-        return Math.max(0, ks.snareIntensity * Math.exp(-t / 0.15));
-      }
+      case 'kick':      return audioUp(visual.kick);
+      case 'snare':     return audioUp(visual.snare);
       // LFOs: bpmSync reinterprets `speed` from "cycles per second" to
       // "cycles per beat". effectiveRate = speed × (bpm/60). When no BPM
       // is detected (bpm=0) fall back to the manual speed so the LFO

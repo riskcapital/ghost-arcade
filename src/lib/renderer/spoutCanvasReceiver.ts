@@ -12,7 +12,7 @@
  * Both desktop transports are supported:
  *   - Electron: invoke('spout_start_receiver') + RAF-polled
  *     invoke('spout_receive_frame'). The native addon hands back
- *     {data: ArrayBuffer, width, height} of premultiplied RGBA.
+ *     {data: ArrayBuffer | Uint8Array, width, height} of premultiplied RGBA.
  *   - Tauri: HTTP GET http://127.0.0.1:9002/spout/receive/<sender>
  *     with body = raw RGBA pixels for the previously-negotiated size.
  *
@@ -44,12 +44,13 @@ interface ReceiverState {
   active: boolean;
   rafId: number | null;
   inFlight: boolean;
-  reuseBuf: Uint8Array | null;
   /** Frame is null until the first successful receive, so consumers
    *  know whether the buffer has real pixels yet. */
   latestFrame: SpoutFrame | null;
   errorLogCount: number;
 }
+
+type RawFrameData = ArrayBuffer | ArrayBufferView;
 
 export class SpoutCanvasReceiver {
   private state: ReceiverState | null = null;
@@ -59,9 +60,9 @@ export class SpoutCanvasReceiver {
   get senderName(): string { return this.state?.senderName ?? ''; }
 
   /** Most recent frame, or null if none has arrived yet. The Uint8Array
-   *  is reused across frames — copy it if you need to retain it past
-   *  the next poll. WebGPU's writeTexture copies internally so calling
-   *  it inline is safe. */
+   *  is owned by that IPC response — copy it if you need to retain it
+   *  past the next poll. WebGPU's writeTexture copies internally so
+   *  calling it inline is safe. */
   getLatestFrame(): SpoutFrame | null { return this.state?.latestFrame ?? null; }
 
   /** Number of frames received since start. */
@@ -101,7 +102,6 @@ export class SpoutCanvasReceiver {
       active: true,
       rafId: null,
       inFlight: false,
-      reuseBuf: null,
       latestFrame: null,
       errorLogCount: 0,
     };
@@ -120,7 +120,7 @@ export class SpoutCanvasReceiver {
         return;
       }
       state.inFlight = true;
-      invoke<{ data: ArrayBuffer; width: number; height: number } | null>('spout_receive_frame')
+      invoke<{ data: RawFrameData; width: number; height: number } | null>('spout_receive_frame')
         .then((frame) => {
           state.inFlight = false;
           if (!state.active || !frame || !frame.data) {
@@ -167,24 +167,21 @@ export class SpoutCanvasReceiver {
     state.rafId = requestAnimationFrame(tick);
   }
 
-  /** Common path: stash the latest RGBA buffer for the consumer to
-   *  pull on its next render tick. Reuses the Uint8Array across frames
-   *  to avoid per-frame allocation churn. */
-  private acceptFrame(state: ReceiverState, data: ArrayBuffer, w: number, h: number): void {
+  /** Common path: stash a zero-copy view of the latest RGBA buffer for
+   *  the consumer to pull on its next render tick. */
+  private acceptFrame(state: ReceiverState, data: RawFrameData, w: number, h: number): void {
     const expected = w * h * 4;
-    const src = new Uint8Array(data);
+    const src = ArrayBuffer.isView(data)
+      ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+      : new Uint8Array(data);
     if (src.byteLength !== expected) return; // size mismatch — drop
 
-    if (!state.reuseBuf || state.reuseBuf.byteLength !== expected) {
-      state.reuseBuf = new Uint8Array(expected);
-    }
-    state.reuseBuf.set(src);
     state.width = w;
     state.height = h;
 
     const prev = state.latestFrame;
     state.latestFrame = {
-      data: state.reuseBuf,
+      data: src,
       width: w,
       height: h,
       frameId: (prev?.frameId ?? 0) + 1,

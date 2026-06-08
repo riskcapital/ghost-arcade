@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { parseISF, createUniformsFromInputs, type ISFMetadata } from './parser';
 import { audioTextures } from '../audio/audioTextures';
+import { getVisualAudioSnapshot } from '../audio/visualAudio';
 import type { AudioState } from '../stores/audio';
 
 export interface ISFShaderInstance {
@@ -361,30 +362,32 @@ export function updateISFShader(
     shader.uniforms.audioWaveform.value = audioTextures.waveform;
   }
 
-  if (audioState && audioState.isActive) {
+  const visual = getVisualAudioSnapshot();
+
+  if (visual.isActive || (audioState && audioState.isActive)) {
     if (shader.uniforms.audioLevel) {
-      shader.uniforms.audioLevel.value = audioState.amplitude;
+      shader.uniforms.audioLevel.value = visual.level;
     }
     if (shader.uniforms.audioBass) {
-      shader.uniforms.audioBass.value = audioState.bands.bass;
+      shader.uniforms.audioBass.value = Math.max(visual.bass, visual.bassFast * 0.9);
     }
     if (shader.uniforms.audioMid) {
-      shader.uniforms.audioMid.value = audioState.bands.mid;
+      shader.uniforms.audioMid.value = visual.mid;
     }
     if (shader.uniforms.audioHigh) {
-      shader.uniforms.audioHigh.value = audioState.bands.high;
+      shader.uniforms.audioHigh.value = visual.high;
     }
     if (shader.uniforms.audioBeat) {
-      shader.uniforms.audioBeat.value = audioState.beat.beatIntensity;
+      shader.uniforms.audioBeat.value = visual.beat;
     }
     if (shader.uniforms.audioBeatPhase) {
-      shader.uniforms.audioBeatPhase.value = audioState.beatPhase;
+      shader.uniforms.audioBeatPhase.value = visual.beatPhase;
     }
     if (shader.uniforms.audioBPM) {
-      shader.uniforms.audioBPM.value = audioState.bpm;
+      shader.uniforms.audioBPM.value = visual.bpm;
     }
     if (shader.uniforms.audioSpectralCentroid) {
-      shader.uniforms.audioSpectralCentroid.value = audioState.spectralCentroid ?? 0;
+      shader.uniforms.audioSpectralCentroid.value = visual.centroid;
     }
   } else {
     // Reset scalar uniforms to 0 so shader fallback branches activate
