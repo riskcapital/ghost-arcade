@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const nativeDir = path.resolve(__dirname, '..');
 const runtimeVersion = process.env.ELECTRON_RUNTIME_VERSION || '42.0.0';
-const cmakeJs = process.platform === 'win32' ? 'cmake-js.cmd' : 'cmake-js';
+const cmakeJsCli = path.join(nativeDir, 'node_modules', 'cmake-js', 'bin', 'cmake-js');
 const mode = process.argv.includes('--rebuild') ? 'rebuild' : 'compile';
 
 function run(command, args, options = {}) {
@@ -29,12 +29,13 @@ function run(command, args, options = {}) {
 
 function buildCmakeJs(verb, arch) {
   const args = [
+    cmakeJsCli,
     verb,
     '--runtime=electron',
     `--runtime-version=${runtimeVersion}`,
   ];
   if (arch) args.push(`--arch=${arch}`);
-  run(cmakeJs, args);
+  run(process.execPath, args);
 }
 
 if (process.platform !== 'darwin') {
