@@ -8,6 +8,8 @@ directories:
   output: dist-electron
   buildResources: build-resources
 
+afterPack: build-resources/afterPack.cjs
+
 files:
   - dist/**/*
   - electron/**/*
@@ -101,6 +103,9 @@ mac:
   entitlementsInherit: build-resources/entitlements.mac.plist
   notarize: true
   gatekeeperAssess: false
+  signIgnore:
+    - '/Syphon\.framework/Syphon$'
+    - '/Syphon\.framework/Versions/Current/Syphon$'
   # Ship native runtime frameworks/dylibs inside the .app's
   # Contents/Frameworks/ so addon @rpath search resolves at load time.
   # Syphon.framework is REQUIRED for macOS texture-share support; the
