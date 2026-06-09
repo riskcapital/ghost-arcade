@@ -82,7 +82,10 @@ jobs:
           Write-Host "Downloading NDI SDK from $url..."
           Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
           Write-Host "Installing silently..."
-          Start-Process -FilePath $installer -ArgumentList "/SILENT", "/SUPPRESSMSGBOXES" -Wait
+          $process = Start-Process -FilePath $installer -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-" -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "NDI SDK installer exited with code $($process.ExitCode)."
+          }
           # Confirm the expected install path resolved (the CMake detection
           # logic checks these exact paths).
           $sdk = "C:\Program Files\NDI\NDI Advanced SDK"
@@ -302,14 +305,33 @@ jobs:
           curl -L -o /tmp/ndi-sdk.tar.gz "$NDI_SDK_LINUX_URL"
           mkdir -p /tmp/ndi-sdk-extract
           tar -xzf /tmp/ndi-sdk.tar.gz -C /tmp/ndi-sdk-extract
-          # Installer is a self-extracting shell script bundled with the
-          # SDK contents. Run it non-interactively and direct it at /opt
-          # so CMake's Linux NDI detection (which checks
-          # /opt/NDI Advanced SDK for Linux) finds it.
+          # Installer is a self-extracting shell script bundled with the SDK
+          # contents. Extract it into /tmp first, then copy the resulting SDK
+          # folder into /opt where CMake's Linux NDI detection looks.
           INSTALLER=$(find /tmp/ndi-sdk-extract -name "Install_NDI_SDK_*.sh" | head -1)
           if [ -n "$INSTALLER" ]; then
-            yes | sh "$INSTALLER" --noexec --target /opt/ndi-tmp || true
-            sudo cp -R /opt/ndi-tmp/* "/opt/" 2>/dev/null || true
+            rm -rf /tmp/ndi-sdk-payload
+            mkdir -p /tmp/ndi-sdk-payload
+            yes | sh "$INSTALLER" --noexec --target /tmp/ndi-sdk-payload || true
+          fi
+          HEADER=$(find /tmp/ndi-sdk-payload /tmp/ndi-sdk-extract \
+            -path "*/include/Processing.NDI.Lib.h" \
+            -type f \
+            2>/dev/null | head -1)
+          if [ -z "$HEADER" ]; then
+            echo "NDI SDK install did not produce expected files." >&2
+            exit 1
+          fi
+          SDK_SRC=$(dirname "$(dirname "$HEADER")")
+          SDK_DEST="/opt/$(basename "$SDK_SRC")"
+          sudo rm -rf "$SDK_DEST"
+          sudo mkdir -p /opt
+          sudo cp -R "$SDK_SRC" "$SDK_DEST"
+          if [ ! -f "$SDK_DEST/lib/x86_64-linux-gnu/libndi.so" ]; then
+            NDI_SO=$(find "$SDK_DEST/lib/x86_64-linux-gnu" -maxdepth 1 -name "libndi.so.*" -type f | sort | tail -1)
+            if [ -n "$NDI_SO" ]; then
+              sudo ln -s "$(basename "$NDI_SO")" "$SDK_DEST/lib/x86_64-linux-gnu/libndi.so"
+            fi
           fi
           # Sanity-check
           if [ -f "/opt/NDI Advanced SDK for Linux/include/Processing.NDI.Lib.h" ]; then

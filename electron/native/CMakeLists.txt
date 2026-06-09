@@ -226,10 +226,16 @@ elseif(WIN32)
     endforeach()
 elseif(UNIX)
     foreach(candidate "/opt/NDI Advanced SDK for Linux" "/opt/NDI SDK for Linux")
+        file(GLOB NDI_LINUX_LIB_CANDIDATES
+            "${candidate}/lib/x86_64-linux-gnu/libndi.so"
+            "${candidate}/lib/x86_64-linux-gnu/libndi.so.*"
+        )
+        list(SORT NDI_LINUX_LIB_CANDIDATES)
         if(EXISTS "${candidate}/include/Processing.NDI.Lib.h"
-           AND EXISTS "${candidate}/lib/x86_64-linux-gnu/libndi.so")
+           AND NDI_LINUX_LIB_CANDIDATES)
+            list(GET NDI_LINUX_LIB_CANDIDATES 0 NDI_LINUX_LIB)
             set(NDI_INCLUDE_DIRS "${candidate}/include")
-            set(NDI_LIBRARY "${candidate}/lib/x86_64-linux-gnu/libndi.so")
+            set(NDI_LIBRARY "${NDI_LINUX_LIB}")
             set(NDI_FOUND TRUE)
             break()
         endif()
