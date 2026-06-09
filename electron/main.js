@@ -179,6 +179,7 @@ const sliceWindows = new Map();
 let pendingOutputWindowConfig = null;
 let pendingOutputWindowConfigTimer = null;
 let sidecarProcess = null;
+let embeddedServerModule = null;
 const wledSockets = new Map();  // controllerId -> dgram.Socket
 
 // Platform flags (used elsewhere in this file)
@@ -293,7 +294,7 @@ async function startNodeServer() {
   try {
     const serverUrl = new URL(`file:///${serverPath.replace(/\\/g, '/')}`).href;
     console.log('[Main] Importing server from:', serverUrl);
-    await import(serverUrl);
+    embeddedServerModule = await import(serverUrl);
     console.log('[Main] Server module loaded in-process');
   } catch (e) {
     console.error('[Main] Failed to load server in-process:', e.message);
@@ -318,9 +319,53 @@ async function startNodeServer() {
 }
 
 function stopServer() {
+  if (embeddedServerModule?.shutdownServer) {
+    try {
+      embeddedServerModule.shutdownServer({ force: true });
+    } catch (err) {
+      console.error('[Main] Embedded server shutdown failed:', err?.message || err);
+    }
+  }
+  embeddedServerModule = null;
+
   if (sidecarProcess) {
-    try { sidecarProcess.kill(); } catch {}
+    killChildProcess(sidecarProcess, 'server sidecar');
     sidecarProcess = null;
+  }
+}
+
+function cleanupError(label, err) {
+  console.error(`[Cleanup] ${label}:`, err?.message || err);
+}
+
+function runCleanupStep(label, fn) {
+  try {
+    fn();
+  } catch (err) {
+    cleanupError(label, err);
+  }
+}
+
+function killChildProcess(child, label = 'child process') {
+  if (!child) return;
+
+  const pid = child.pid;
+  try {
+    if (!child.killed) child.kill('SIGKILL');
+  } catch (err) {
+    cleanupError(`${label} kill`, err);
+  }
+
+  // On Windows, killing the parent handle is not always enough when helpers
+  // inherit file locks. taskkill /T /F clears the whole process tree.
+  if (isWin && pid) {
+    try {
+      execSync(`taskkill /PID ${pid} /T /F`, {
+        shell: 'cmd.exe',
+        stdio: 'ignore',
+        timeout: 3000,
+      });
+    } catch {}
   }
 }
 
@@ -3382,62 +3427,78 @@ app.on('window-all-closed', () => {
   cleanupAndQuit();
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  if (!isQuitting) {
+    event.preventDefault();
+    cleanupAndQuit();
+    return;
+  }
+
   // Menu/Cmd+Q quits should tear down performer/display pop-outs too.
-  // `window-all-closed` still owns the heavier process cleanup.
   closeAuxiliaryWindows();
 });
 
 let isQuitting = false;
+let hardExitTimer = null;
+
+function scheduleHardExit(delayMs) {
+  if (hardExitTimer) return;
+  hardExitTimer = setTimeout(() => {
+    console.log('[Main] Force exiting after cleanup timeout');
+    app.exit(0);
+  }, delayMs);
+  hardExitTimer.unref?.();
+}
+
+function destroyNdiSenders() {
+  if (!ndiAddon || ndiSenders.size === 0) return;
+  for (const name of Array.from(ndiSenders)) {
+    runCleanupStep(`NDI sender ${name}`, () => ndiAddon.destroySender({ name }));
+    ndiSenders.delete(name);
+  }
+}
+
+function destroyNdiReceivers() {
+  if (!ndiAddon || ndiReceivers.size === 0) return;
+  for (const sourceName of Array.from(ndiReceivers)) {
+    runCleanupStep(`NDI receiver ${sourceName}`, () => ndiAddon.destroyReceiver({ sourceName }));
+    ndiReceivers.delete(sourceName);
+  }
+}
+
+function killPluginProcesses() {
+  if (typeof plugins === 'undefined' || !plugins || typeof plugins !== 'object') return;
+
+  for (const [name, plugin] of Object.entries(plugins)) {
+    const child = plugin?.process;
+    if (!child) continue;
+    console.log(`[Cleanup] Killing plugin: ${name}`);
+    killChildProcess(child, `plugin ${name}`);
+    plugin.process = null;
+  }
+}
+
 function cleanupAndQuit() {
-  if (isQuitting) return;
+  if (isQuitting) {
+    scheduleHardExit(250);
+    return;
+  }
   isQuitting = true;
   console.log('[Main] Cleaning up before quit...');
 
-  // Hard quit — don't let anything block exit. Schedule this before
-  // cleanup so a stale cleanup branch cannot keep the process alive.
-  setTimeout(() => {
-    console.log('[Main] Force quitting');
-    app.exit(0);
-  }, 500);
+  // Schedule first so a stuck native addon/socket teardown cannot keep the
+  // single-instance lock alive in Task Manager.
+  scheduleHardExit(750);
 
-  try {
-    // Synchronous cleanup — fast, non-blocking
-    closeAuxiliaryWindows();
-    try { stopSpoutSender(); } catch (e) { console.error('[Cleanup] stopSpoutSender:', e.message); }
-    try { stopSpoutReceiver(); } catch (e) { console.error('[Cleanup] stopSpoutReceiver:', e.message); }
-    try { stopServer(); } catch (e) { console.error('[Cleanup] stopServer:', e.message); }
-    try { closeAllWledSockets(); } catch (e) { console.error('[Cleanup] closeAllWledSockets:', e.message); }
-    // Destroy any live NDI senders so the network names go offline on exit.
-    if (ndiAddon && ndiSenders.size > 0) {
-      for (const name of ndiSenders) {
-        try { ndiAddon.destroySender({ name }); } catch (e) { /* best-effort */ }
-      }
-      ndiSenders.clear();
-    }
-    if (ndiAddon && ndiReceivers.size > 0) {
-      for (const sourceName of ndiReceivers) {
-        try { ndiAddon.destroyReceiver({ sourceName }); } catch (e) { /* best-effort */ }
-      }
-      ndiReceivers.clear();
-    }
-    try { stopOSC(); } catch (e) { console.error('[Cleanup] stopOSC:', e.message); }
+  runCleanupStep('closeAuxiliaryWindows', closeAuxiliaryWindows);
+  runCleanupStep('stopSpoutSender', stopSpoutSender);
+  runCleanupStep('stopSpoutReceiver', stopSpoutReceiver);
+  runCleanupStep('destroyNdiSenders', destroyNdiSenders);
+  runCleanupStep('destroyNdiReceivers', destroyNdiReceivers);
+  runCleanupStep('stopOSC', stopOSC);
+  runCleanupStep('stopServer', stopServer);
+  runCleanupStep('closeAllWledSockets', closeAllWledSockets);
+  runCleanupStep('killPluginProcesses', killPluginProcesses);
 
-    // Kill any plugin child processes immediately when plugin tracking
-    // exists. Some builds no longer define this map.
-    if (typeof plugins !== 'undefined') {
-      for (const [name, plugin] of Object.entries(plugins)) {
-        if (plugin.process) {
-          console.log(`[Cleanup] Killing plugin: ${name}`);
-          try { plugin.process.kill(); } catch {}
-          plugin.process = null;
-        }
-      }
-    }
-  } catch (e) {
-    console.error('[Cleanup] cleanupAndQuit:', e?.message || e);
-  }
-
-  // Also try normal quit immediately
-  app.quit();
+  app.exit(0);
 }
