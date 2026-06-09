@@ -227,7 +227,7 @@ std::map<std::string, std::unique_ptr<NdiReceiver>> g_receivers;
 std::mutex g_recv_mutex;
 bool g_cleanup_hook_registered = false;
 
-void CleanupAddonResources(void*) {
+void CleanupAddonResources() {
   {
     std::lock_guard<std::mutex> lock(g_recv_mutex);
     for (auto& entry : g_receivers) {
@@ -430,7 +430,7 @@ Napi::Value ReceiveFrame(const Napi::CallbackInfo& info) {
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   if (!g_cleanup_hook_registered) {
-    env.AddCleanupHook(CleanupAddonResources, nullptr);
+    env.AddCleanupHook(CleanupAddonResources);
     g_cleanup_hook_registered = true;
   }
 
