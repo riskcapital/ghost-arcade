@@ -312,9 +312,12 @@ jobs:
           if [ -n "$INSTALLER" ]; then
             rm -rf /tmp/ndi-sdk-payload
             mkdir -p /tmp/ndi-sdk-payload
-            yes | sh "$INSTALLER" --noexec --target /tmp/ndi-sdk-payload || true
+            (
+              cd /tmp/ndi-sdk-payload
+              yes | sh "$INSTALLER" --noexec || true
+            )
           fi
-          HEADER=$(find /tmp/ndi-sdk-payload /tmp/ndi-sdk-extract \
+          HEADER=$(find /tmp/ndi-sdk-payload /tmp/ndi-sdk-extract "$GITHUB_WORKSPACE" \
             -path "*/include/Processing.NDI.Lib.h" \
             -type f \
             2>/dev/null | head -1)
