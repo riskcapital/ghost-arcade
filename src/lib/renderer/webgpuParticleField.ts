@@ -28,8 +28,8 @@
  *   points  — sharp dots (cheap, classic)
  *   glow    — soft additive billboard (the "star field" look)
  *   streaks — velocity-extruded quads (motion trails)
- *   sphere  — billboard with normal-from-uv shading; gives a 3D
- *             feel without volumetric raymarching
+ *   sphere  — billboard sphere impostor with diffuse/specular material
+ *             lighting and a cheap reflective environment
  *   softSphere — larger shaded sphere impostors with varied radii,
  *             depth testing, soft edges, and pastel volumetric mass
  *
@@ -256,7 +256,8 @@ fn behaviorGalaxy(i: u32, p: Particle) -> vec3<f32> {
   let armPhase = armIdx / arms;
   let r        = length(vec2<f32>(p.pos.x, p.pos.z)) + 1e-4;
   let theta    = atan2(p.pos.z, p.pos.x);
-  let omega    = mix(u.galaxyRotateOuter, u.galaxyRotateInner, smoothstep(1.0, 0.0, r));
+  let innerFalloff = 1.0 - smoothstep(0.0, 1.0, r);
+  let omega    = mix(u.galaxyRotateOuter, u.galaxyRotateInner, innerFalloff);
   // Target angle = current theta + omega; convert (r, theta+omega) to xz
   let nextTheta = theta + omega * u.dt;
   let tx = cos(nextTheta) * r;
@@ -399,7 +400,8 @@ fn behaviorGravity(i: u32, p: Particle) -> vec3<f32> {
 
     // Core repulsion mimics collision separation from the central body:
     // near the well, particles are pushed out instead of collapsing.
-    let repel = -dir * smoothstep(core * 2.2, core * 0.45, d) * strength * 2.2;
+    let repelMask = 1.0 - smoothstep(core * 0.45, core * 2.2, d);
+    let repel = -dir * repelMask * strength * 2.2;
     accel = accel + pull + spin + repel;
   }
 
@@ -635,6 +637,15 @@ struct UR {
   fogDensity:   f32,
   lightDir:     vec3<f32>,    // already normalized
   lightStrength: f32,
+  // sphere material
+  materialAmbient: f32,
+  materialDiffuse: f32,
+  materialSpecular: f32,
+  materialShininess: f32,
+  materialReflection: f32,
+  _p3: f32,
+  _p4: f32,
+  _p5: f32,
 };
 
 @group(0) @binding(0) var<storage, read> particles: array<Particle>;
@@ -735,35 +746,46 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     if (d > 1.0) { discard; }
     mask = exp(-d * d * 2.5);
   } else if (u.topology == 3u || u.topology == 4u) {
-    // Sphere — reconstruct a hemisphere normal from the billboard UV,
-    // shade with the light direction for a 3D-orb look.
+    // Sphere impostor: reconstruct a camera-facing hemisphere normal
+    // from billboard UV, then run a compact material model. This stays
+    // intentionally simple WGSL so stricter Windows/D3D12 backends do
+    // not fail the whole WebGPU layer with a black frame.
     let d2 = dot(in.uv, in.uv);
     if (d2 > 1.0) { discard; }
-    let z = sqrt(1.0 - d2);
+    let r = sqrt(d2);
+    let z = sqrt(max(1.0 - d2, 0.0));
     let n = normalize(vec3<f32>(in.uv.x, in.uv.y, z));
+    let viewDir = vec3<f32>(0.0, 0.0, 1.0);
     let ndl = max(dot(n, u.lightDir), 0.0);
+    let wrapped = pow(clamp(dot(n, u.lightDir) * 0.5 + 0.5, 0.0, 1.0), 1.35);
+    let halfDir = normalize(u.lightDir + viewDir);
+    let gloss = max(u.materialShininess, 1.0);
+    let spec = pow(max(dot(n, halfDir), 0.0), gloss) * u.materialSpecular * (0.25 + u.lightStrength * 1.75);
+    let fresnel = pow(clamp(1.0 - dot(n, viewDir), 0.0, 1.0), 3.0);
+    let ambient = max(u.materialAmbient, 0.22);
+    let diffuse = max(u.materialDiffuse, 0.0) * mix(wrapped, ndl, 0.62) * (0.28 + u.lightStrength);
+    let rimLift = fresnel * u.materialReflection * 0.55;
+    let surface = max(ambient + diffuse + rimLift, 0.24);
+    let reflectionTint = mix(vec3<f32>(0.18, 0.28, 0.42), vec3<f32>(0.86, 0.94, 1.0), clamp(n.y * 0.5 + 0.5, 0.0, 1.0));
+    litColor = in.color * surface
+      + vec3<f32>(1.0, 0.95, 0.86) * spec
+      + reflectionTint * u.materialReflection * (0.08 + fresnel * 0.42);
+
     if (u.topology == 4u) {
-      let rim = pow(clamp(1.0 - z, 0.0, 1.0), 2.4);
-      let wrap = pow(clamp(dot(n, u.lightDir) * 0.5 + 0.5, 0.0, 1.0), 1.7);
-      let halfDir = normalize(u.lightDir + vec3<f32>(0.0, 0.0, 1.0));
-      let highlight = pow(max(dot(n, halfDir), 0.0), 42.0) * u.lightStrength;
-      let bellyShadow = smoothstep(-0.75, 0.65, n.y * 0.85 + n.z * 0.35);
-      shade = (0.42 + ndl * 0.9 + wrap * 0.25) * mix(0.72, 1.08, bellyShadow);
-      litColor = in.color * shade + vec3<f32>(1.0, 0.94, 0.88) * highlight * 0.7;
-      litColor = mix(litColor, litColor + in.color * 0.18, rim * 0.45);
-      mask = smoothstep(1.0, 0.92, sqrt(d2));
+      let edge = 1.0 - smoothstep(0.88, 1.0, r);
+      let volume = mix(0.68, 1.0, pow(clamp(z, 0.0, 1.0), 0.48));
+      mask = edge * volume;
+      litColor = mix(litColor, litColor + in.color * 0.12, fresnel * 0.45);
       if (mask < 0.025) { discard; }
     } else {
-      shade = mix(1.0, ndl, u.lightStrength) + 0.15;  // ambient floor
-      // Sphere fragments have edges; use a quadratic falloff for soft edge.
-      mask = smoothstep(1.0, 0.85, sqrt(d2)) * 0.5 + 0.5;
-      litColor = in.color * shade;
+      mask = 1.0 - smoothstep(0.9, 1.0, r);
+      if (mask < 0.01) { discard; }
     }
   } else {
     // POINT — soft disc
     let d = length(in.uv);
     if (d > 1.0) { discard; }
-    mask = smoothstep(1.0, 0.2, d);
+    mask = 1.0 - smoothstep(0.2, 1.0, d);
   }
 
   // Per-particle directional lighting for non-sphere topologies.
@@ -796,9 +818,19 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   // before this one, far particles literally blend into the
   // background atmosphere — that's what makes the fog read as
   // volumetric rather than just "particles get a color tint."
-  let fog = exp(-u.fogDensity * in.worldDist);
+  let rawFog = exp(-u.fogDensity * in.worldDist);
+  var fog = rawFog;
+  var alphaFog = rawFog;
+  if (u.topology == 3u || u.topology == 4u) {
+    // Spheres are alpha-over + depth tested, so they cannot rely on
+    // additive accumulation to punch through dense dark fog. Keep
+    // enough lit surface contribution that Gravity Wells never turns
+    // into a black canvas when switching to sphere topologies.
+    fog = max(rawFog, 0.48);
+    alphaFog = max(rawFog, 0.58);
+  }
   let col = mix(u.fogColor, litColor, fog);
-  let a = in.alpha * mask * fog;
+  let a = in.alpha * mask * alphaFog;
   return vec4<f32>(col * a, a);
 }
 `;
@@ -988,6 +1020,11 @@ export interface ParticleFieldParams {
   lightY: number;
   lightZ: number;
   lightStrength: number;
+  materialAmbient: number;
+  materialDiffuse: number;
+  materialSpecular: number;
+  materialShininess: number;
+  materialReflection: number;
   // Camera + object rotation
   fovDeg: number;
   cameraZ: number;
@@ -1070,6 +1107,11 @@ const DEFAULT_PARAMS: ParticleFieldParams = {
   lightY: 0.6,
   lightZ: 0.7,
   lightStrength: 0.6,
+  materialAmbient: 0.34,
+  materialDiffuse: 0.92,
+  materialSpecular: 0.58,
+  materialShininess: 56,
+  materialReflection: 0.18,
   fovDeg: 50,
   cameraZ: 2.4,
   rotateX: 0,
@@ -1176,8 +1218,8 @@ export class WebGPUParticleField {
       size: 64,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-    // Render uniform: 64 (viewProj) + 16 + 16 + 16 (cam basis + topology + sizing block) +
-    // 16 (fog block) + 16 (light block) ≈ 144. Round to 192.
+    // Render uniform: matrices/camera + sizing + fog/light +
+    // two sphere-material blocks. Exactly 192 bytes.
     this.renderUniform = this.device.createBuffer({
       size: 192,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -1737,6 +1779,12 @@ export class WebGPUParticleField {
     // Block — light
     rF[36] = ldn[0]; rF[37] = ldn[1]; rF[38] = ldn[2];
     rF[39] = this.params.lightStrength;
+    // Blocks — sphere material
+    rF[40] = this.params.materialAmbient;
+    rF[41] = this.params.materialDiffuse;
+    rF[42] = this.params.materialSpecular;
+    rF[43] = this.params.materialShininess;
+    rF[44] = this.params.materialReflection;
     this.device.queue.writeBuffer(this.renderUniform, 0, rBuf);
 
     // ── Line uniform ───────────────────────────────────────────

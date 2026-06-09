@@ -160,12 +160,22 @@
     clearInterval(stage3dWindowPoll);
     stage3dWindowPoll = null;
   }
-  let canvasComponent: Canvas;
+  let canvasComponent: Canvas | null = null;
   // Phase 3.0 bridge: bound when experimental.editorWebGPU is on so
   // we can push the WebGL canvas reference into it after both
   // components mount. See the WebGPUCanvas mount block for the
   // explicit push.
   let webgpuBridgeComponent: WebGPUCanvas | null = null;
+  let lastReactiveBridgeSource: HTMLCanvasElement | null = null;
+  let lastReactiveBridge: WebGPUCanvas | null = null;
+  $: if ($settings.experimental?.editorWebGPU && !showStage3D && canvasComponent && webgpuBridgeComponent) {
+    const source = canvasComponent.getCanvas?.();
+    if (source && (source !== lastReactiveBridgeSource || webgpuBridgeComponent !== lastReactiveBridge)) {
+      webgpuBridgeComponent.setSourceCanvas(source);
+      lastReactiveBridgeSource = source;
+      lastReactiveBridge = webgpuBridgeComponent;
+    }
+  }
 
   // GPU info state (populated after engine init)
   let gpuInfo: { renderer: string; vendor: string; isIntegrated: boolean } | null = null;
@@ -4655,7 +4665,7 @@
 
           See docs/WEBGPU_MIGRATION.md for the full roadmap.
         -->
-        {#if $settings.experimental?.editorWebGPU}
+        {#if $settings.experimental?.editorWebGPU && !showStage3D}
           <Canvas bind:this={canvasComponent} bridgeMode={true} stage3DOutput={showStage3D} />
           <WebGPUCanvas bind:this={webgpuBridgeComponent} />
         {:else}
