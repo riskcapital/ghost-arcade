@@ -972,10 +972,34 @@ httpServer.listen(HTTP_PORT, '0.0.0.0', () => {
   console.log(`[*] HTTP server on port ${HTTP_PORT} (0.0.0.0 — LAN accessible)`);
 });
 
+let serverShuttingDown = false;
+
+export function shutdownServer({ force = false } = {}) {
+  if (serverShuttingDown) return;
+  serverShuttingDown = true;
+
+  console.log('[*] Shutting down GhostArcade server...');
+
+  for (const client of Array.from(clients)) {
+    try {
+      if (force) {
+        client.terminate();
+      } else if (client.readyState === WebSocket.OPEN) {
+        client.close(1001, 'server shutting down');
+      }
+    } catch {}
+  }
+  clients.clear();
+  desktopClient = null;
+
+  try { wss.close(); } catch {}
+  try { httpServer.closeIdleConnections?.(); } catch {}
+  try { httpServer.closeAllConnections?.(); } catch {}
+  try { httpServer.close(); } catch {}
+}
+
 // Graceful shutdown
 process.on('SIGINT', () => {
-  console.log('\n[*] Shutting down...');
-  wss.close();
-  httpServer.close();
+  shutdownServer({ force: true });
   process.exit(0);
 });
