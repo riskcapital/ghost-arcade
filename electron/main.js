@@ -2999,37 +2999,43 @@ function cleanupAndQuit() {
   try { stopSpoutSender(); } catch (e) { console.error('[Cleanup] stopSpoutSender:', e.message); }
   try { stopSpoutReceiver(); } catch (e) { console.error('[Cleanup] stopSpoutReceiver:', e.message); }
   try { stopServer(); } catch (e) { console.error('[Cleanup] stopServer:', e.message); }
-  // Destroy any live NDI senders so the network names go offline on exit.
-  if (ndiAddon && ndiSenders.size > 0) {
-    for (const name of ndiSenders) {
-      try { ndiAddon.destroySender({ name }); } catch (e) { /* best-effort */ }
-    }
-    ndiSenders.clear();
-  }
-  if (ndiAddon && ndiReceivers.size > 0) {
-    for (const sourceName of ndiReceivers) {
-      try { ndiAddon.destroyReceiver({ sourceName }); } catch (e) { /* best-effort */ }
-    }
-    ndiReceivers.clear();
-  }
   try { stopOSC(); } catch (e) { console.error('[Cleanup] stopOSC:', e.message); }
 
-  // Kill any plugin child processes immediately
-  for (const [name, plugin] of Object.entries(plugins)) {
-    if (plugin.process) {
-      console.log(`[Cleanup] Killing plugin: ${name}`);
-      try { plugin.process.kill(); } catch {}
-      plugin.process = null;
+  // Destroy any live NDI senders so the network names go offline on exit.
+  try {
+    if (ndiAddon) {
+      if (ndiSenders.size > 0) {
+        for (const name of ndiSenders) {
+          try { ndiAddon.destroySender({ name }); } catch (e) {}
+        }
+        ndiSenders.clear();
+      }
+      if (ndiReceivers.size > 0) {
+        for (const sourceName of ndiReceivers) {
+          try { ndiAddon.destroyReceiver({ sourceName }); } catch (e) {}
+        }
+        ndiReceivers.clear();
+      }
     }
+  } catch (e) {
+    console.error('[Cleanup] NDI clean failed:', e.message);
   }
 
-  // Hard quit — don't let anything block exit
-  // Give 500ms for cleanup IO to flush, then force quit
-  setTimeout(() => {
-    console.log('[Main] Force quitting');
-    app.exit(0);
-  }, 500);
+  // Kill any plugin child processes immediately
+  try {
+    if (plugins && typeof plugins === 'object') {
+      for (const [name, plugin] of Object.entries(plugins)) {
+        if (plugin && plugin.process) {
+          console.log(`[Cleanup] Forcing kill on plugin: ${name}`);
+          try { plugin.process.kill('SIGKILL'); } catch (e) {}
+          plugin.process = null;
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[Cleanup] Plugins clean failed:', e.message);
+  }
 
-  // Also try normal quit immediately
-  app.quit();
+  console.log('[Main] All cleanups completed or caught. Hard exit now.');
+  app.exit(0);
 }
