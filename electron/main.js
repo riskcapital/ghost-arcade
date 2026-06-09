@@ -1599,10 +1599,15 @@ function registerIpcHandlers() {
   let stage3dRelayedLiveState = null;
   let stage3dRelayedSceneState = null;
   let stage3dRelayedSettingsState = null;
+  // Cumulative per-layer patches (corners/opacity/meshGrid), merged by
+  // layer id so a slow poller still converges on the latest values.
+  // Cleared whenever a new full lands — the full already carries them.
+  let stage3dRelayedPatchState = {};
   let stage3dRelayFullTick = 0;
   let stage3dRelayLiveTick = 0;
   let stage3dRelaySceneTick = 0;
   let stage3dRelaySettingsTick = 0;
+  let stage3dRelayPatchTick = 0;
   ipcMain.handle('stage3d_publish_state', (_, payload) => {
     const kind = payload && typeof payload === 'object' ? payload.kind : 'full';
     const state = payload && typeof payload === 'object' && 'state' in payload ? payload.state : payload;
@@ -1615,9 +1620,18 @@ function registerIpcHandlers() {
     } else if (kind === 'settings') {
       stage3dRelayedSettingsState = state;
       stage3dRelaySettingsTick++;
+    } else if (kind === 'patch') {
+      if (Array.isArray(state)) {
+        for (const patch of state) {
+          if (!patch || typeof patch.id !== 'string') continue;
+          stage3dRelayedPatchState[patch.id] = { ...stage3dRelayedPatchState[patch.id], ...patch };
+        }
+        stage3dRelayPatchTick++;
+      }
     } else {
       stage3dRelayedFullState = state;
       stage3dRelayFullTick++;
+      stage3dRelayedPatchState = {};
       if (state?.vjClipLauncher) {
         stage3dRelayedLiveState = state.vjClipLauncher;
         stage3dRelayLiveTick++;
@@ -1641,6 +1655,8 @@ function registerIpcHandlers() {
     sceneTick: stage3dRelaySceneTick,
     settings: cursor.settingsTick === stage3dRelaySettingsTick ? null : stage3dRelayedSettingsState,
     settingsTick: stage3dRelaySettingsTick,
+    patch: cursor.patchTick === stage3dRelayPatchTick ? null : Object.values(stage3dRelayedPatchState),
+    patchTick: stage3dRelayPatchTick,
   }));
   ipcMain.handle('stage3d_is_open', () => stage3dWindow !== null && !stage3dWindow.isDestroyed());
 

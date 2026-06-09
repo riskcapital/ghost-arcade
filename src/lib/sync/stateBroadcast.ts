@@ -25,13 +25,23 @@ let stage3dRelayFullPublishTimer: ReturnType<typeof setTimeout> | null = null;
 let stage3dRelayLivePublishTimer: ReturnType<typeof setTimeout> | null = null;
 let stage3dRelayScenePublishTimer: ReturnType<typeof setTimeout> | null = null;
 let stage3dRelaySettingsPublishTimer: ReturnType<typeof setTimeout> | null = null;
+let stage3dRelayPatchPublishTimer: ReturnType<typeof setTimeout> | null = null;
 let stage3dRelayPollTimer: ReturnType<typeof setInterval> | null = null;
 let stage3dRelayPollInFlight = false;
 let lastStage3DRelayFullTick = -1;
 let lastStage3DRelayLiveTick = -1;
 let lastStage3DRelaySceneTick = -1;
 let lastStage3DRelaySettingsTick = -1;
+let lastStage3DRelayPatchTick = -1;
 let stage3dRelayWarned = false;
+// Whether the Stage 3D pop-out window is actually open. Sender-side
+// gate for ALL relay publishes: serializing the project (full exports
+// every 100ms in the worst case) is pure waste when no window is
+// polling for it. Polled via stage3d_is_open; on the closed→open
+// transition every stream is pushed fresh so a late-joining window
+// never waits for the next change.
+let stage3dRelayActive = false;
+let stage3dRelayActivePollTimer: ReturnType<typeof setInterval> | null = null;
 
 // Debounce timer for project updates (avoid flooding during rapid changes)
 let projectDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -114,12 +124,26 @@ function flushLayerPatches() {
   } catch {}
 }
 
-/** Send a lightweight per-layer patch instead of a full export. */
-function broadcastLayerPatches(currentLayers = get(project).layers): boolean {
-  if (!channel || mode !== 'sender') return false;
+type LayerPatch = { id: string; corners?: any; opacity?: number; meshGrid?: any };
 
-  const patches: Array<{ id: string; corners?: any; opacity?: number; meshGrid?: any }> = [];
+/** Diff the current project against the last-sent snapshot and decide
+ *  the cheapest sync that fully describes the change:
+ *    'full'  — layer set or non-volatile fields changed → full export
+ *    'patch' — only corners/opacity/meshGrid moved → tiny patches
+ *    'none'  — nothing observable changed → publish nothing at all
+ *  Patch detection also advances the snapshot for the patched fields. */
+function diffProjectForSync():
+  | { kind: 'none' | 'full' }
+  | { kind: 'patch'; patches: LayerPatch[] } {
+  const currentLayers = get(project).layers;
+  const currentIds = currentLayers.map(layer => layer.id).join('|');
+  if (!lastLayerIds || currentIds !== lastLayerIds) return { kind: 'full' };
 
+  for (const layer of currentLayers) {
+    if (lastLayerSignatures[layer.id] !== layerPatchSignature(layer)) return { kind: 'full' };
+  }
+
+  const patches: LayerPatch[] = [];
   for (const layer of currentLayers) {
     const prevCorners = lastLayerCorners[layer.id];
     const prevOpacity = lastLayerOpacities[layer.id];
@@ -129,7 +153,7 @@ function broadcastLayerPatches(currentLayers = get(project).layers): boolean {
     const meshGridChanged = JSON.stringify(layer.meshGrid) !== JSON.stringify(prevMeshGrid);
 
     if (cornersChanged || opacityChanged || meshGridChanged) {
-      const patch: any = { id: layer.id };
+      const patch: LayerPatch = { id: layer.id };
       if (cornersChanged) patch.corners = layer.corners;
       if (meshGridChanged) patch.meshGrid = layer.meshGrid;
       if (opacityChanged) patch.opacity = layer.opacity;
@@ -139,35 +163,40 @@ function broadcastLayerPatches(currentLayers = get(project).layers): boolean {
       lastLayerMeshGrids[layer.id] = cloneSerializable(layer.meshGrid);
     }
   }
-
-  if (patches.length > 0) {
-    for (const patch of patches) {
-      pendingLayerPatches.set(patch.id, { ...pendingLayerPatches.get(patch.id), ...patch });
-    }
-    if (!patchThrottle) {
-      patchThrottle = setTimeout(() => {
-        patchThrottle = null;
-        flushLayerPatches();
-      }, 16);
-    }
-  }
-  return true;
+  return patches.length ? { kind: 'patch', patches } : { kind: 'none' };
 }
 
-function tryBroadcastLayerPatchUpdate(): boolean {
-  if (!channel || mode !== 'sender' || !hasActiveReceiver) return true;
-  const projectState = get(project);
-  const currentLayers = projectState.layers;
-  const currentIds = currentLayers.map(layer => layer.id).join('|');
-
-  if (!lastLayerIds || currentIds !== lastLayerIds) return false;
-
-  for (const layer of currentLayers) {
-    const signature = layerPatchSignature(layer);
-    if (lastLayerSignatures[layer.id] !== signature) return false;
+/** Queue per-layer patches onto the BroadcastChannel (output windows). */
+function queueBroadcastLayerPatches(patches: LayerPatch[]): void {
+  if (!channel || mode !== 'sender' || !hasActiveReceiver) return;
+  for (const patch of patches) {
+    pendingLayerPatches.set(patch.id, { ...pendingLayerPatches.get(patch.id), ...patch });
   }
+  if (!patchThrottle) {
+    patchThrottle = setTimeout(() => {
+      patchThrottle = null;
+      flushLayerPatches();
+    }, 16);
+  }
+}
 
-  return broadcastLayerPatches(currentLayers);
+/** Queue per-layer patches onto the Stage 3D IPC relay. Coalesced to
+ *  ~30Hz; the main process merges batches per layer id so a window
+ *  that polls slowly still converges on the latest values. */
+let pendingRelayPatches = new Map<string, LayerPatch>();
+function queueStage3DRelayPatches(patches: LayerPatch[]): void {
+  if (!isDesktopApp || mode !== 'sender' || !stage3dRelayActive) return;
+  for (const patch of patches) {
+    pendingRelayPatches.set(patch.id, { ...pendingRelayPatches.get(patch.id), ...patch });
+  }
+  if (stage3dRelayPatchPublishTimer) return;
+  stage3dRelayPatchPublishTimer = setTimeout(() => {
+    stage3dRelayPatchPublishTimer = null;
+    if (pendingRelayPatches.size === 0) return;
+    const batch = Array.from(pendingRelayPatches.values());
+    pendingRelayPatches.clear();
+    publishStage3DRelay('patch', JSON.parse(JSON.stringify(batch)));
+  }, 33);
 }
 
 function isStage3DWindow(): boolean {
@@ -273,8 +302,8 @@ function buildLiveVJStatePayload(vjState = get(vjClipLauncher) as any, includeGr
   return JSON.parse(JSON.stringify(payload));
 }
 
-function publishStage3DRelay(kind: 'full' | 'live' | 'scene' | 'settings', state: any) {
-  if (!isDesktopApp || mode !== 'sender') return;
+function publishStage3DRelay(kind: 'full' | 'live' | 'scene' | 'settings' | 'patch', state: any) {
+  if (!isDesktopApp || mode !== 'sender' || !stage3dRelayActive) return;
   try {
     void invoke('stage3d_publish_state', { kind, state }).catch((err) => {
       if (!stage3dRelayWarned) {
@@ -291,7 +320,13 @@ function publishStage3DRelay(kind: 'full' | 'live' | 'scene' | 'settings', state
 }
 
 function publishStage3DRelayFullState() {
+  if (!isDesktopApp || mode !== 'sender' || !stage3dRelayActive) return;
   publishStage3DRelay('full', buildSyncedStatePayload());
+  // A full publish carries the latest corners/opacity, so the patch
+  // diff baseline must advance with it or the next diff re-detects
+  // already-sent changes.
+  resetLayerPatchSnapshot();
+  pendingRelayPatches.clear();
 }
 
 function publishStage3DRelayLiveState() {
@@ -308,7 +343,7 @@ function publishStage3DRelaySettingsState() {
 }
 
 function scheduleStage3DRelayFullPublish(delay = 100) {
-  if (!isDesktopApp || mode !== 'sender') return;
+  if (!isDesktopApp || mode !== 'sender' || !stage3dRelayActive) return;
   if (stage3dRelayFullPublishTimer) return;
   stage3dRelayFullPublishTimer = setTimeout(() => {
     stage3dRelayFullPublishTimer = null;
@@ -317,7 +352,7 @@ function scheduleStage3DRelayFullPublish(delay = 100) {
 }
 
 function scheduleStage3DRelayLivePublish(delay = 33) {
-  if (!isDesktopApp || mode !== 'sender') return;
+  if (!isDesktopApp || mode !== 'sender' || !stage3dRelayActive) return;
   if (stage3dRelayLivePublishTimer) return;
   stage3dRelayLivePublishTimer = setTimeout(() => {
     stage3dRelayLivePublishTimer = null;
@@ -326,7 +361,7 @@ function scheduleStage3DRelayLivePublish(delay = 33) {
 }
 
 function scheduleStage3DRelayScenePublish(delay = 50) {
-  if (!isDesktopApp || mode !== 'sender') return;
+  if (!isDesktopApp || mode !== 'sender' || !stage3dRelayActive) return;
   if (stage3dRelayScenePublishTimer) return;
   stage3dRelayScenePublishTimer = setTimeout(() => {
     stage3dRelayScenePublishTimer = null;
@@ -335,7 +370,7 @@ function scheduleStage3DRelayScenePublish(delay = 50) {
 }
 
 function scheduleStage3DRelaySettingsPublish(delay = 100) {
-  if (!isDesktopApp || mode !== 'sender') return;
+  if (!isDesktopApp || mode !== 'sender' || !stage3dRelayActive) return;
   if (stage3dRelaySettingsPublishTimer) return;
   stage3dRelaySettingsPublishTimer = setTimeout(() => {
     stage3dRelaySettingsPublishTimer = null;
@@ -504,13 +539,22 @@ function initSender() {
     }
   };
 
-  // Subscribe to project store changes. Full export is debounced.
-  // Layer patches (corners, opacity) are sent only when the output window
-  // is actually open — otherwise they just waste CPU on JSON.stringify.
+  // Subscribe to project store changes. Diff-routed: a structural
+  // change (layer add/remove/reorder, source/effect edits) triggers the
+  // debounced full export; corner/opacity/meshGrid moves go out as tiny
+  // patches; a no-op store tick publishes NOTHING. Skip the diff
+  // entirely when nobody is listening — that's the common case during
+  // a live set with no output/Stage-3D window, and layerPatchSignature
+  // JSON-stringifies every layer.
   const unsubProject = project.subscribe(() => {
-    scheduleStage3DRelayFullPublish();
-    if (!tryBroadcastLayerPatchUpdate()) {
+    if (!hasActiveReceiver && !stage3dRelayActive) return;
+    const diff = diffProjectForSync();
+    if (diff.kind === 'full') {
+      scheduleStage3DRelayFullPublish();
       broadcastProjectUpdate();
+    } else if (diff.kind === 'patch') {
+      queueStage3DRelayPatches(diff.patches);
+      queueBroadcastLayerPatches(diff.patches);
     }
   });
   unsubscribers.push(unsubProject);
@@ -561,11 +605,34 @@ function initSender() {
   });
   unsubscribers.push(unsubSettings);
 
-  scheduleStage3DRelayFullPublish(0);
-  scheduleStage3DRelayLivePublish(0);
-  scheduleStage3DRelayScenePublish(0);
-  scheduleStage3DRelaySettingsPublish(0);
+  startStage3DRelayActivePolling();
   console.log('[StateSync] Sender initialized');
+}
+
+/** Sender-side: track whether the Stage 3D window is open so relay
+ *  publishes (and their serialization cost) only happen while it is.
+ *  On closed→open, push every stream fresh so the window paints
+ *  immediately instead of waiting for the next state change. */
+function startStage3DRelayActivePolling() {
+  if (!isDesktopApp || mode !== 'sender' || stage3dRelayActivePollTimer) return;
+  const check = async () => {
+    try {
+      const open = await invoke<boolean>('stage3d_is_open');
+      if (open && !stage3dRelayActive) {
+        stage3dRelayActive = true;
+        publishStage3DRelayFullState();
+        publishStage3DRelayLiveState();
+        publishStage3DRelaySceneState();
+        publishStage3DRelaySettingsState();
+      } else if (!open) {
+        stage3dRelayActive = false;
+      }
+    } catch {
+      stage3dRelayActive = false;
+    }
+  };
+  void check();
+  stage3dRelayActivePollTimer = setInterval(() => { void check(); }, 1000);
 }
 
 let settingsBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -677,6 +744,28 @@ function mergeStage3DScenePreservingLocal(incoming: any): void {
   stage3dScene.loadScene(merged);
 }
 
+/** Apply lightweight corner/opacity/meshGrid patches in place — no
+ *  full import, no texture teardown. Shared by the BroadcastChannel
+ *  'layer-patch' message and the IPC relay 'patch' stream. */
+function applyLayerPatchesPayload(patches: any[]): void {
+  if (!Array.isArray(patches) || patches.length === 0) return;
+  try {
+    project.update((p: any) => {
+      const layers = [...p.layers];
+      for (const patch of patches) {
+        const idx = layers.findIndex((l: any) => l.id === patch.id);
+        if (idx < 0) continue;
+        const l = { ...layers[idx] };
+        if (patch.corners) l.corners = patch.corners;
+        if (patch.meshGrid) l.meshGrid = patch.meshGrid;
+        if (patch.opacity !== undefined) l.opacity = patch.opacity;
+        layers[idx] = l;
+      }
+      return { ...p, layers };
+    });
+  } catch {}
+}
+
 function applySettingsPayload(data: any, sourceLabel: string) {
   if (!data?.output) return;
   try {
@@ -735,23 +824,7 @@ function handleReceivedMessage(event: MessageEvent<StateMessage>) {
 
     case 'layer-patch': {
       // Lightweight corner/opacity patch — apply directly without full import
-      if (msg.data && Array.isArray(msg.data)) {
-        try {
-          project.update((p: any) => {
-            const layers = [...p.layers];
-            for (const patch of msg.data) {
-              const idx = layers.findIndex((l: any) => l.id === patch.id);
-              if (idx < 0) continue;
-              const l = { ...layers[idx] };
-              if (patch.corners) l.corners = patch.corners;
-              if (patch.meshGrid) l.meshGrid = patch.meshGrid;
-              if (patch.opacity !== undefined) l.opacity = patch.opacity;
-              layers[idx] = l;
-            }
-            return { ...p, layers };
-          });
-        } catch {}
-      }
+      applyLayerPatchesPayload(msg.data);
       break;
     }
 
@@ -848,6 +921,8 @@ async function pollStage3DRelayState() {
       sceneTick?: number;
       settings?: any;
       settingsTick?: number;
+      patch?: any[];
+      patchTick?: number;
       state?: any;
       tick?: number;
     }>('stage3d_get_state', {
@@ -855,6 +930,7 @@ async function pollStage3DRelayState() {
       liveTick: lastStage3DRelayLiveTick,
       sceneTick: lastStage3DRelaySceneTick,
       settingsTick: lastStage3DRelaySettingsTick,
+      patchTick: lastStage3DRelayPatchTick,
     });
 
     // Backward compatibility for an older main-process relay shape.
@@ -887,6 +963,15 @@ async function pollStage3DRelayState() {
     if (result?.settings && settingsTick !== lastStage3DRelaySettingsTick) {
       lastStage3DRelaySettingsTick = settingsTick;
       applySettingsPayload(result.settings, 'Stage 3D IPC relay');
+    }
+
+    // Apply patches AFTER full: the main process clears its patch
+    // accumulator when a new full lands, so a poll that picks up both
+    // applies the full first and the newer patches on top.
+    const patchTick = typeof result?.patchTick === 'number' ? result.patchTick : lastStage3DRelayPatchTick;
+    if (Array.isArray(result?.patch) && patchTick !== lastStage3DRelayPatchTick) {
+      lastStage3DRelayPatchTick = patchTick;
+      applyLayerPatchesPayload(result.patch);
     }
   } catch (err) {
     if (!stage3dRelayWarned) {
@@ -1056,9 +1141,17 @@ export function destroyStateBroadcast() {
     clearTimeout(stage3dRelaySettingsPublishTimer);
     stage3dRelaySettingsPublishTimer = null;
   }
+  if (stage3dRelayPatchPublishTimer) {
+    clearTimeout(stage3dRelayPatchPublishTimer);
+    stage3dRelayPatchPublishTimer = null;
+  }
   if (stage3dRelayPollTimer) {
     clearInterval(stage3dRelayPollTimer);
     stage3dRelayPollTimer = null;
+  }
+  if (stage3dRelayActivePollTimer) {
+    clearInterval(stage3dRelayActivePollTimer);
+    stage3dRelayActivePollTimer = null;
   }
   if (stage3dDebounceTimer) {
     clearTimeout(stage3dDebounceTimer);
@@ -1076,6 +1169,9 @@ export function destroyStateBroadcast() {
   lastStage3DRelayLiveTick = -1;
   lastStage3DRelaySceneTick = -1;
   lastStage3DRelaySettingsTick = -1;
+  lastStage3DRelayPatchTick = -1;
+  stage3dRelayActive = false;
+  pendingRelayPatches.clear();
   stage3dRelayPollInFlight = false;
   console.log('[StateSync] Destroyed');
 }
