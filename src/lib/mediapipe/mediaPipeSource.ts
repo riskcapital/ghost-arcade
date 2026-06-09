@@ -83,19 +83,23 @@ class MediaPipeSource {
   private running = false;
   private pendingStart: Promise<void> | null = null;
   private frameCounter = 0;
+  private startToken = 0;
 
   /** Start the pipeline. Idempotent — calling while running with the
    *  same opts is a no-op; with different opts, stops and restarts. */
   async start(opts: MediaPipeStartOptions = {}): Promise<void> {
     const next: Required<MediaPipeStartOptions> = { ...DEFAULT_OPTS, ...opts };
     if (this.running && optsEqual(this.opts, next)) return;
-    if (this.pendingStart) await this.pendingStart;
-    this.pendingStart = this._startInternal(next).finally(() => { this.pendingStart = null; });
+    if (this.running) await this.stop();
+    if (this.pendingStart) await this.pendingStart.catch(() => {});
+    const token = ++this.startToken;
+    this.pendingStart = this._startInternal(next, token).finally(() => { this.pendingStart = null; });
     return this.pendingStart;
   }
 
   /** Stop everything. Safe to call when not running. */
   async stop(): Promise<void> {
+    this.startToken++;
     this.running = false;
     if (this.rafId !== null) { cancelAnimationFrame(this.rafId); this.rafId = null; }
     if (this.worker) {
@@ -134,10 +138,32 @@ class MediaPipeSource {
 
   // ── Internal ─────────────────────────────────────────────────────────
 
-  private async _startInternal(opts: Required<MediaPipeStartOptions>): Promise<void> {
-    if (this.running) await this.stop();
+  private async _startInternal(opts: Required<MediaPipeStartOptions>, token: number): Promise<void> {
     this.error = null;
     this.opts = opts;
+    let localStream: MediaStream | null = null;
+    let localVideo: HTMLVideoElement | null = null;
+    let localWorker: Worker | null = null;
+    let localOffscreen: OffscreenCanvas | null = null;
+    let localOffCtx: OffscreenCanvasRenderingContext2D | null = null;
+    let adopted = false;
+
+    const isStale = () => token !== this.startToken;
+    const disposeLocals = () => {
+      if (adopted) return;
+      if (localWorker) {
+        try { localWorker.postMessage({ type: 'dispose' }); } catch {}
+        try { localWorker.terminate(); } catch {}
+      }
+      if (localStream) {
+        try { localStream.getTracks().forEach(t => t.stop()); } catch {}
+      }
+      if (localVideo) {
+        try { localVideo.pause(); } catch {}
+        try { localVideo.srcObject = null; } catch {}
+        try { localVideo.remove(); } catch {}
+      }
+    };
 
     try {
       // 1. Camera
@@ -147,32 +173,35 @@ class MediaPipeSource {
           ? { deviceId: { exact: opts.deviceId }, width: { ideal: 640 }, height: { ideal: 480 } }
           : { width: { ideal: 640 }, height: { ideal: 480 } },
       };
-      this.stream = await navigator.mediaDevices.getUserMedia(constraints);
+      localStream = await navigator.mediaDevices.getUserMedia(constraints);
+      if (isStale()) { disposeLocals(); return; }
 
-      this.video = document.createElement('video');
-      this.video.autoplay = true;
-      this.video.muted = true;
-      this.video.playsInline = true;
-      this.video.srcObject = this.stream;
-      this.video.style.cssText = 'position:absolute;top:-99999px;left:-99999px;pointer-events:none;';
-      document.body.appendChild(this.video);
+      localVideo = document.createElement('video');
+      localVideo.autoplay = true;
+      localVideo.muted = true;
+      localVideo.playsInline = true;
+      localVideo.srcObject = localStream;
+      localVideo.style.cssText = 'position:absolute;top:-99999px;left:-99999px;pointer-events:none;';
+      document.body.appendChild(localVideo);
       await new Promise<void>((resolve, reject) => {
-        const onReady = () => { this.video!.removeEventListener('loadedmetadata', onReady); resolve(); };
-        const onErr = (e: any) => { this.video!.removeEventListener('error', onErr); reject(e); };
-        this.video!.addEventListener('loadedmetadata', onReady);
-        this.video!.addEventListener('error', onErr);
+        const onReady = () => { localVideo!.removeEventListener('loadedmetadata', onReady); resolve(); };
+        const onErr = (e: any) => { localVideo!.removeEventListener('error', onErr); reject(e); };
+        localVideo!.addEventListener('loadedmetadata', onReady);
+        localVideo!.addEventListener('error', onErr);
       });
-      await this.video.play();
+      if (isStale()) { disposeLocals(); return; }
+      await localVideo.play();
+      if (isStale()) { disposeLocals(); return; }
 
       // 2. Offscreen canvas for grabbing ImageBitmaps to send to worker
-      this.offscreen = new OffscreenCanvas(this.video.videoWidth, this.video.videoHeight);
-      this.offCtx = this.offscreen.getContext('2d', { willReadFrequently: false });
-      if (!this.offCtx) throw new Error('Failed to create 2D context for camera capture');
+      localOffscreen = new OffscreenCanvas(localVideo.videoWidth, localVideo.videoHeight);
+      localOffCtx = localOffscreen.getContext('2d', { willReadFrequently: false });
+      if (!localOffCtx) throw new Error('Failed to create 2D context for camera capture');
 
       // 3. Worker — Vite resolves this at build time. The `type: 'module'`
       // is required because MediaPipe's bundle uses ESM imports.
-      this.worker = new Worker(new URL('./mediaPipeWorker.ts', import.meta.url), { type: 'module' });
-      this.worker.addEventListener('message', (e) => this._onWorkerMessage(e));
+      localWorker = new Worker(new URL('./mediaPipeWorker.ts', import.meta.url), { type: 'module' });
+      localWorker.addEventListener('message', (e) => this._onWorkerMessage(e));
 
       // Resolve WASM URL — copied to /public/mediapipe/wasm at install
       // time so it's served from our origin (avoids CDN dependency for
@@ -197,16 +226,16 @@ class MediaPipeSource {
       const initDone = new Promise<void>((resolve, reject) => {
         const onMsg = (e: MessageEvent) => {
           if (e.data?.type === 'ready') {
-            this.worker!.removeEventListener('message', onMsg);
+            localWorker!.removeEventListener('message', onMsg);
             resolve();
           } else if (e.data?.type === 'error') {
-            this.worker!.removeEventListener('message', onMsg);
+            localWorker!.removeEventListener('message', onMsg);
             reject(new Error(e.data.message));
           }
         };
-        this.worker!.addEventListener('message', onMsg);
+        localWorker!.addEventListener('message', onMsg);
       });
-      this.worker.postMessage({
+      localWorker.postMessage({
         type: 'init',
         wasmUrl,
         handModelUrl: HAND_MODEL_URL,
@@ -215,6 +244,14 @@ class MediaPipeSource {
         numHands: opts.numHands,
       });
       await initDone;
+      if (isStale()) { disposeLocals(); return; }
+
+      this.stream = localStream;
+      this.video = localVideo;
+      this.worker = localWorker;
+      this.offscreen = localOffscreen;
+      this.offCtx = localOffCtx;
+      adopted = true;
       this.workerReady = true;
       this.running = true;
 
@@ -228,6 +265,7 @@ class MediaPipeSource {
       this.rafId = requestAnimationFrame(tick);
     } catch (err: any) {
       this.error = String(err?.message || err);
+      disposeLocals();
       await this.stop();
       throw err;
     }

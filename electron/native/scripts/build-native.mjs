@@ -44,34 +44,52 @@ if (process.platform !== 'darwin') {
 }
 
 const outputDir = path.join(nativeDir, 'build', 'Release');
-const outputNode = path.join(outputDir, 'syphon_addon.node');
+const syphonNode = path.join(outputDir, 'syphon_addon.node');
+const ndiNode = path.join(outputDir, 'ndi_addon.node');
 const sliceDir = path.join(nativeDir, '.native-build-slices');
 const slices = [
   { cmakeArch: 'x64', lipoArch: 'x86_64' },
   { cmakeArch: 'arm64', lipoArch: 'arm64' },
 ];
 
+function lipoSlices(outputFile, basename, { required = false } = {}) {
+  const sliceFiles = slices.map((slice) => path.join(sliceDir, `${basename}-${slice.lipoArch}${path.extname(outputFile)}`));
+  const present = sliceFiles.filter((file) => fs.existsSync(file));
+  if (present.length === 0) {
+    if (required) {
+      console.error(`[native-build] Expected build output missing: ${outputFile}`);
+      process.exit(1);
+    }
+    fs.rmSync(outputFile, { force: true });
+    return false;
+  }
+  if (present.length !== sliceFiles.length) {
+    fs.rmSync(outputFile, { force: true });
+    console.warn(`[native-build] Skipping universal ${basename}; only found ${present.length}/${sliceFiles.length} slices; removed non-universal output`);
+    return false;
+  }
+  run('lipo', ['-create', '-output', outputFile, ...sliceFiles]);
+  run('codesign', ['--force', '--sign', '-', outputFile], { allowFailure: true });
+  run('lipo', ['-info', outputFile]);
+  return true;
+}
+
 fs.rmSync(sliceDir, { recursive: true, force: true });
 fs.mkdirSync(sliceDir, { recursive: true });
 
 for (const slice of slices) {
   buildCmakeJs('rebuild', slice.cmakeArch);
-  if (!fs.existsSync(outputNode)) {
-    console.error(`[native-build] Expected build output missing: ${outputNode}`);
+  if (!fs.existsSync(syphonNode)) {
+    console.error(`[native-build] Expected build output missing: ${syphonNode}`);
     process.exit(1);
   }
 
-  const sliceOutput = path.join(sliceDir, `syphon_addon-${slice.lipoArch}.node`);
-  fs.copyFileSync(outputNode, sliceOutput);
+  fs.copyFileSync(syphonNode, path.join(sliceDir, `syphon_addon-${slice.lipoArch}.node`));
+  if (fs.existsSync(ndiNode)) {
+    fs.copyFileSync(ndiNode, path.join(sliceDir, `ndi_addon-${slice.lipoArch}.node`));
+  }
 }
 
-run('lipo', [
-  '-create',
-  '-output',
-  outputNode,
-  ...slices.map((slice) => path.join(sliceDir, `syphon_addon-${slice.lipoArch}.node`)),
-]);
-
-run('codesign', ['--force', '--sign', '-', outputNode], { allowFailure: true });
-run('lipo', ['-info', outputNode]);
+lipoSlices(syphonNode, 'syphon_addon', { required: true });
+lipoSlices(ndiNode, 'ndi_addon');
 fs.rmSync(sliceDir, { recursive: true, force: true });

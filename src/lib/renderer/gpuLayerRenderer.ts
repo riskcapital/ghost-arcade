@@ -41,6 +41,8 @@ export interface AudioBandsSnapshot {
   treble: number;
 }
 
+export type GpuLayerHandoffMode = 'bitmap' | 'canvas';
+
 export class GpuLayerRenderer {
   readonly device: any;
   readonly presentFormat: any;
@@ -62,6 +64,7 @@ export class GpuLayerRenderer {
   private lastFrameTime = performance.now();
   private configuredW = 0;
   private configuredH = 0;
+  private handoffMode: GpuLayerHandoffMode;
 
   // Source-resolution state for shaders that consume external pixels
   // (pixel-particles etc). Cached per-renderer so videos don't have
@@ -87,9 +90,16 @@ export class GpuLayerRenderer {
   private spoutReceiver: SpoutCanvasReceiver | null = null;
   private lastSpoutFrameId = 0;
 
-  constructor(device: any, presentFormat: any, initialW: number = 1920, initialH: number = 1080) {
+  constructor(
+    device: any,
+    presentFormat: any,
+    initialW: number = 1920,
+    initialH: number = 1080,
+    options: { handoffMode?: GpuLayerHandoffMode } = {},
+  ) {
     this.device = device;
     this.presentFormat = presentFormat;
+    this.handoffMode = options.handoffMode ?? 'bitmap';
     this.canvas = new OffscreenCanvas(initialW, initialH);
     const ctx = this.canvas.getContext('webgpu') as any;
     if (!ctx) throw new Error('webgpu context unavailable on gpu-layer canvas');
@@ -156,6 +166,14 @@ export class GpuLayerRenderer {
       return;
     }
     this.device.queue.submit([encoder.finish()]);
+
+    if (this.handoffMode === 'canvas') {
+      if (this.latestBitmap) {
+        try { this.latestBitmap.close(); } catch { /* */ }
+        this.latestBitmap = null;
+      }
+      return;
+    }
 
     // Zero-copy bitmap handoff. `transferToImageBitmap()` reparents
     // the OffscreenCanvas's SharedImage backing (IOSurface on macOS)

@@ -68,7 +68,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { isWebGPUSupported, probeWebGPU } from '$lib/renderer/webgpuCapability';
   import { stopOutputSharedTexturePresenter, setOutputCursor, setOutputCursorStyle } from '$lib/sync/outputSharedTexturePresenter';
-  import { reconcileMasterWarpOutput, resetMasterWarpReconcile } from '$lib/sync/outputComposite';
+  import { reconcileMasterWarpOutput, disposeMasterWarpOutput } from '$lib/sync/outputComposite';
   import { settings, outputFrozen, masterWarpIsActive } from '$lib/stores/settings';
   import { WebGPUPaintDrip } from '$lib/renderer/webgpuPaintDrip';
   import { WebGPUAdvLightPaint } from '$lib/renderer/webgpuAdvLightPaint';
@@ -1500,9 +1500,9 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     stopFrameLoop();
     stopOutputSharedTexturePresenter();
     // Owner-scoped: this renderer may have registered presentCanvas (live)
-    // or sourceCanvas (WebGPU-init-failed fallback). Only clears the gate
+    // or sourceCanvas (WebGPU-init-failed fallback). Only clears/disposes
     // if one of those owns the current registration.
-    resetMasterWarpReconcile(presentCanvas, sourceCanvas);
+    disposeMasterWarpOutput(presentCanvas, sourceCanvas);
     window.removeEventListener('mousemove', onMouseMove, { capture: true } as any);
     window.removeEventListener('mousedown', onMouseDown, { capture: true } as any);
     window.removeEventListener('mouseup', onMouseUp, { capture: true } as any);

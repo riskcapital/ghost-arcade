@@ -25,6 +25,7 @@
   import { modulationStore, setParamModSource, setParamModAmount, setBaseValue, registerParamRanges, modKeyShader, type ModSource, type ParamModulation } from '../audio/modulation';
   import { mediaTrayShaders } from '../stores/mediaTrayShaders';
   import { createAssetRefFromFile, createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
+  import { listScreenCaptureSources, screenCaptureSourcePickerAvailable, type ScreenCaptureSource } from '$lib/capture/screenSources';
   // Built-in Three.js / p5.js animations — auto-discovered from
   // public/threejs/ at build time by the vite plugin (see vite.config.ts).
   // Add a folder there, rebuild, it appears in the JS tab automatically.
@@ -35,6 +36,9 @@
   const _win = window as any;
   if (!_win.__shaderCache) _win.__shaderCache = { shaders: null as ShaderItem[] | null, loading: false };
   const shaderCache = _win.__shaderCache;
+  let mediaTrayDestroyed = false;
+  let shaderCacheWaitInterval: ReturnType<typeof setInterval> | null = null;
+  let resolveShaderCacheWait: (() => void) | null = null;
 
   // Hidden shaders persistence
   const HIDDEN_SHADERS_KEY = 'ghost-arcade-hidden-shaders';
@@ -81,13 +85,14 @@
   interface LiveSource {
     id: string;
     name: string;
-    type: 'spout' | 'webcam' | 'capture';
+    type: 'spout' | 'webcam' | 'capture' | 'ndi';
     status: 'disconnected' | 'connecting' | 'live';
     deviceId?: string; // For webcam/capture device selection
     stream?: MediaStream;
     videoEl?: HTMLVideoElement;
     thumbnail?: string;
     spoutSenderName?: string; // Spout sender name for direct receiver in Canvas.svelte
+    ndiSourceName?: string; // NDI sender name for direct receiver in Canvas.svelte
   }
 
   let liveSources: LiveSource[] = [];
@@ -95,12 +100,65 @@
   let availableSpoutSenders: string[] = []; // Populated from spout store
   let sourcesInitialized = false;
   let showSpoutPicker = false;
+  let showNdiPicker = false;
+
+  interface NdiDetectedSource {
+    name: string;
+    url?: string;
+  }
+
+  let ndiSources: NdiDetectedSource[] = [];
+  let ndiAvailable = false;
+  let ndiChecked = false;
+  let ndiScanning = false;
+  let ndiScanInterval: ReturnType<typeof setInterval> | null = null;
+  let ndiStatusHint = 'Open an NDI® sender in MadMapper, Resolume, OBS, or another VJ app on this machine or network';
 
   // Check if running in desktop app (Electron)
   import { invoke as bridgeInvoke, isDesktopApp, getTextureShareLabel } from '$lib/bridge';
   const tsLabel = getTextureShareLabel();
   import { spoutSenders, textureShareInfo, scanSpoutSenders } from '$lib/stores/spout';
   const isDesktop = isDesktopApp || (typeof window !== 'undefined' && !!window.__ELECTRON__);
+
+  function liveSourceIsUsedByLayer(source: LiveSource): boolean {
+    const candidates = new Set([
+      `live://${source.type}/${source.id}`,
+      `live://spout/${source.id}`,
+      `live://ndi/${source.id}`,
+    ]);
+    return get(layers).some(layer => {
+      const layerSource = layer.source;
+      if (!layerSource) return false;
+      if (layerSource.videoElement && source.videoEl && layerSource.videoElement === source.videoEl) return true;
+      return candidates.has(layerSource.src);
+    });
+  }
+
+  function disposeLiveSource(source: LiveSource) {
+    try { source.stream?.getTracks().forEach(track => { track.onended = null; track.stop(); }); } catch {}
+    if (source.videoEl) {
+      try { source.videoEl.pause(); } catch {}
+      try { source.videoEl.srcObject = null; } catch {}
+      try { source.videoEl.removeAttribute('src'); } catch {}
+      try { source.videoEl.load(); } catch {}
+    }
+    if (source.type === 'spout' && isDesktop) {
+      const senderName = source.spoutSenderName || source.name.replace(`${tsLabel}: `, '').replace('Spout: ', '');
+      bridgeInvoke('spout_stop_receiver', { senderName })
+        .catch((err: any) => console.warn(`Failed to stop ${tsLabel} receiver:`, err));
+    }
+    if (source.type === 'ndi') {
+      const senderName = source.ndiSourceName || source.name.replace('NDI: ', '');
+      (window as any).ghostNDI?.destroyReceiver?.(senderName).catch((err: any) => console.warn('Failed to stop NDI receiver:', err));
+    }
+  }
+
+  function disposeUnusedLiveSources() {
+    for (const source of liveSources) {
+      if (!liveSourceIsUsedByLayer(source)) disposeLiveSource(source);
+    }
+    liveSources = [];
+  }
 
   // Subscribe to global Spout sender list
   $: availableSpoutSenders = $spoutSenders;
@@ -166,33 +224,25 @@
   // back to the old getDisplayMedia path so non-Electron contexts at least
   // still work.
 
-  interface ScreenSource {
-    id: string;
-    name: string;
-    display_id: string | null;
-    thumbnailDataUrl: string | null;
-    appIconDataUrl: string | null;
-    kind: 'screen' | 'window';
-  }
+  type ScreenSource = ScreenCaptureSource;
 
   let screenPickerOpen = false;
   let screenPickerSources: ScreenSource[] = [];
   let screenPickerLoading = false;
 
   async function startScreenCapture() {
-    const electronAPI = (window as any).electronAPI;
     // Non-Electron context: keep the old behaviour so the app still runs in browsers.
-    if (!electronAPI?.invoke) return startScreenCaptureBrowserFallback();
+    if (!screenCaptureSourcePickerAvailable()) return startScreenCaptureBrowserFallback();
 
     screenPickerOpen = true;
     screenPickerLoading = true;
     screenPickerSources = [];
     try {
-      const list = await electronAPI.invoke('screen_sources_list');
-      screenPickerSources = Array.isArray(list) ? list : [];
+      screenPickerSources = await listScreenCaptureSources();
     } catch (err) {
       console.error('Failed to enumerate screen sources:', err);
       screenPickerSources = [];
+      showToast('Could not list screen capture sources.', 'error');
     } finally {
       screenPickerLoading = false;
     }
@@ -332,18 +382,103 @@
     }
   }
 
+  function getNdiBridge() {
+    return typeof window !== 'undefined' ? (window as any).ghostNDI : null;
+  }
+
+  async function scanNdiSources() {
+    ndiScanning = true;
+    try {
+      if (!isDesktop) {
+        ndiChecked = true;
+        ndiAvailable = false;
+        ndiSources = [];
+        ndiStatusHint = 'NDI® sources are available in the desktop app';
+        return;
+      }
+
+      const api = getNdiBridge();
+      if (!api) {
+        ndiChecked = true;
+        ndiAvailable = false;
+        ndiSources = [];
+        ndiStatusHint = 'NDI® native bridge unavailable';
+        return;
+      }
+
+      const availability = await api.available();
+      ndiChecked = true;
+      ndiAvailable = !!availability?.available;
+      if (!ndiAvailable) {
+        ndiSources = [];
+        ndiStatusHint = availability?.error || 'NDI® runtime or native addon unavailable';
+        return;
+      }
+
+      const found = await api.findSources();
+      ndiSources = (Array.isArray(found) ? found : [])
+        .map((src: any) => ({
+          name: String(typeof src === 'string' ? src : src?.name || '').trim(),
+          url: typeof src === 'object' && src?.url ? String(src.url) : undefined,
+        }))
+        .filter((src: NdiDetectedSource) => src.name.length > 0);
+      ndiStatusHint = 'Open an NDI® sender in MadMapper, Resolume, OBS, or another VJ app on this machine or network';
+    } catch (err) {
+      ndiChecked = true;
+      ndiAvailable = false;
+      ndiSources = [];
+      ndiStatusHint = err instanceof Error ? err.message : String(err);
+    } finally {
+      ndiScanning = false;
+    }
+  }
+
+  function startNdiScan() {
+    void scanNdiSources();
+    if (!ndiScanInterval) {
+      ndiScanInterval = setInterval(() => {
+        void scanNdiSources();
+      }, 2000);
+    }
+  }
+
+  function stopNdiScan() {
+    if (ndiScanInterval) {
+      clearInterval(ndiScanInterval);
+      ndiScanInterval = null;
+    }
+  }
+
+  function toggleNdiPicker() {
+    showNdiPicker = !showNdiPicker;
+    if (showNdiPicker) {
+      showSpoutPicker = false;
+      startNdiScan();
+    } else {
+      stopNdiScan();
+    }
+  }
+
+  function addNdiSource(sourceName: string) {
+    const senderName = sourceName.trim();
+    if (!senderName) return;
+
+    const source: LiveSource = {
+      id: generateUUID(),
+      name: `NDI: ${senderName}`,
+      type: 'ndi',
+      status: 'live',
+      ndiSourceName: senderName,
+    };
+    liveSources = [...liveSources, source];
+    showNdiPicker = false;
+    stopNdiScan();
+  }
+
   // Stop and remove a live source
   async function stopSource(id: string) {
     const source = liveSources.find(s => s.id === id);
-    if (source?.stream) {
-      source.stream.getTracks().forEach(t => t.stop());
-    }
-    // Clean up Spout receiver via IPC
-    if (source?.type === 'spout' && isDesktop) {
-      const senderName = (source as any).spoutSenderName || source.name.replace('Spout: ', '');
-      bridgeInvoke('spout_stop_receiver', { senderName })
-        .catch((err: any) => console.warn('Failed to stop Spout receiver:', err));
-    }
+    if (source) disposeLiveSource(source);
     liveSources = liveSources.filter(s => s.id !== id);
   }
 
@@ -364,6 +499,20 @@
           src: `live://spout/${source.id}`,
           name: source.name,
           spoutSource: {
+            senderName,
+            width: 1920,
+            height: 1080,
+          },
+        };
+        project.setLayerSource(layerId, ms);
+      } else if (source.type === 'ndi') {
+        const senderName = source.ndiSourceName || source.name.replace('NDI: ', '');
+        const ms: MediaSource = {
+          id: `${source.id}-${layerId}-${Date.now()}`,
+          type: 'spout',
+          src: `live://ndi/${source.id}`,
+          name: source.name,
+          ndiSource: {
             senderName,
             width: 1920,
             height: 1080,
@@ -690,6 +839,7 @@
    * (whether from cache or fresh fetch).
    */
   async function generateMissingThumbnails() {
+    if (mediaTrayDestroyed) return;
     const needsGen = shaders.filter(s => !s.thumbnail);
     if (needsGen.length === 0) return;
 
@@ -702,8 +852,10 @@
     let preGenMap: Record<string, string> = {};
     try {
       const manifestResp = await fetch('./ISF/thumbnails/manifest.json');
+      if (mediaTrayDestroyed) return;
       if (manifestResp.ok) {
         const manifest = await manifestResp.json();
+        if (mediaTrayDestroyed) return;
         preGenMap = manifest.thumbnails || {};
         console.log(`[Thumbnails] Found ${Object.keys(preGenMap).length} pre-generated thumbnails`);
       }
@@ -713,6 +865,7 @@
 
     // Sequential generation loop — one shader at a time
     for (let i = 0; i < shaders.length; i++) {
+      if (mediaTrayDestroyed) return;
       const shader = shaders[i];
       if (shader.thumbnail) { continue; } // Already has one
 
@@ -737,6 +890,7 @@
         shaders = [...shaders];
 
         const thumbnail = await generateShaderThumbnail(shader.shaderCode, 0.5);
+        if (mediaTrayDestroyed) return;
         shader.thumbnail = thumbnail;
         shader.loadingProgress = 1;
 
@@ -871,6 +1025,7 @@
   }
 
   onMount(async () => {
+    mediaTrayDestroyed = false;
     // Seed built-in Three.js / p5 animations in the background so the JS
     // tab is never empty out of the box. Doesn't block shader loading.
     seedBuiltInThreeJSItems();
@@ -892,15 +1047,24 @@
     } else if (shaderCache.loading) {
       // If another instance is already loading, wait for it
       const waitForCache = () => new Promise<void>((resolve) => {
-        const check = setInterval(() => {
-          if (shaderCache.shaders) {
-            clearInterval(check);
+        resolveShaderCacheWait = resolve;
+        if (shaderCacheWaitInterval) clearInterval(shaderCacheWaitInterval);
+        shaderCacheWaitInterval = setInterval(() => {
+          if (mediaTrayDestroyed || shaderCache.shaders) {
+            if (shaderCacheWaitInterval) clearInterval(shaderCacheWaitInterval);
+            shaderCacheWaitInterval = null;
+          }
+          if (shaderCache.shaders && !mediaTrayDestroyed) {
             shaders = shaderCache.shaders!.map(withShaderLoadRating);
+          }
+          if (mediaTrayDestroyed || shaderCache.shaders) {
+            resolveShaderCacheWait = null;
             resolve();
           }
         }, 200);
       });
       await waitForCache();
+      if (mediaTrayDestroyed) return;
       hydrateUserShaders();
       // Fall through to generate thumbnails
     } else {
@@ -1623,7 +1787,16 @@
   });
 
   onDestroy(() => {
+    mediaTrayDestroyed = true;
+    if (shaderCacheWaitInterval) {
+      clearInterval(shaderCacheWaitInterval);
+      shaderCacheWaitInterval = null;
+    }
+    resolveShaderCacheWait?.();
+    resolveShaderCacheWait = null;
     document.removeEventListener('click', handleGlobalClick);
+    stopNdiScan();
+    disposeUnusedLiveSources();
     if (timelapseTimerId) clearInterval(timelapseTimerId);
   });
 
@@ -3230,11 +3403,17 @@
             </svg>
             Capture
           </button>
-          <button class="source-add-btn spout" class:active={showSpoutPicker} onclick={() => { showSpoutPicker = !showSpoutPicker; if (showSpoutPicker) scanSpoutSenders(); }}>
+          <button class="source-add-btn spout" class:active={showSpoutPicker} onclick={() => { showSpoutPicker = !showSpoutPicker; if (showSpoutPicker) { showNdiPicker = false; stopNdiScan(); scanSpoutSenders(); } }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1"/>
             </svg>
             {tsLabel} In
+          </button>
+          <button class="source-add-btn ndi" class:active={showNdiPicker} onclick={toggleNdiPicker}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="11"/>
+            </svg>
+            NDI® In
           </button>
         </div>
 
@@ -3267,6 +3446,39 @@
           </div>
         {/if}
 
+        {#if showNdiPicker}
+          <div class="spout-picker ndi-picker">
+            <div class="picker-label">NDI® Sources</div>
+            {#if ndiSources.length > 0}
+              <div class="spout-sender-list">
+                {#each ndiSources as src (src.name)}
+                  <button class="spout-sender-btn ndi-sender-btn" onclick={() => addNdiSource(src.name)} title={src.url || src.name}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7"/>
+                    </svg>
+                    {src.name}
+                  </button>
+                {/each}
+              </div>
+            {:else}
+              <div class="spout-no-senders">
+                <p>{!ndiChecked || ndiScanning ? 'Scanning for NDI® sources...' : ndiAvailable ? 'No NDI® sources detected' : 'NDI® native bridge unavailable'}</p>
+                <p class="hint">{ndiStatusHint}</p>
+                <button class="spout-refresh-btn" disabled={ndiScanning} onclick={() => scanNdiSources()}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                  </svg>
+                  Refresh
+                </button>
+              </div>
+            {/if}
+            <p class="hint">
+              <a href="https://ndi.video/" target="_blank" rel="noreferrer">NDI®</a>
+              is a registered trademark of Vizrt NDI AB.
+            </p>
+          </div>
+        {/if}
+
         {#if availableWebcams.length > 1}
           <div class="webcam-picker">
             <label class="picker-label">Camera Device</label>
@@ -3285,7 +3497,7 @@
               <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
             </svg>
             <p>No live sources</p>
-            <p class="hint">Add a webcam, screen capture, or {tsLabel} input</p>
+            <p class="hint">Add a webcam, screen capture, {tsLabel}, or NDI® input</p>
           </div>
         {:else}
           <div class="sources-list">
@@ -3309,7 +3521,11 @@
                     ></video>
                   {:else}
                     <div class="source-icon">
-                      {#if source.type === 'spout'}
+                      {#if source.type === 'ndi'}
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                          <circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="11"/>
+                        </svg>
+                      {:else if source.type === 'spout'}
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                           <path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1"/>
                         </svg>
@@ -3338,7 +3554,7 @@
                   </span>
                 </div>
                 <div class="source-actions">
-                  {#if source.status === 'live' && (source.videoEl || source.type === 'spout')}
+                  {#if source.status === 'live' && (source.videoEl || source.type === 'spout' || source.type === 'ndi')}
                     <button class="source-apply-btn" onclick={() => applySourceToLayer(source)} title="Apply to selected layer">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="20 6 9 17 4 12"/>
@@ -6168,6 +6384,17 @@
     background: #1e1a2d;
   }
 
+  .source-add-btn.ndi {
+    border-color: #444;
+  }
+
+  .source-add-btn.ndi:hover,
+  .source-add-btn.ndi.active {
+    border-color: #4cd1ff;
+    color: #4cd1ff;
+    background: #10242c;
+  }
+
   .spout-picker {
     display: flex;
     flex-direction: column;
@@ -6203,6 +6430,12 @@
     border-color: #a78bfa;
     color: #a78bfa;
     background: #1e1a2d;
+  }
+
+  .ndi-picker .ndi-sender-btn:hover {
+    border-color: #4cd1ff;
+    color: #4cd1ff;
+    background: #10242c;
   }
 
   .spout-no-senders {
@@ -6485,6 +6718,11 @@
     font-size: 18px;
     line-height: 1;
     cursor: pointer;
+  }
+
+  .spout-refresh-btn:disabled {
+    opacity: 0.55;
+    cursor: progress;
   }
 
   .cpm-close:hover {

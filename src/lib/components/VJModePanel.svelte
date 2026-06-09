@@ -38,6 +38,8 @@
   import { settings } from '../stores/settings';
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from '../recording/recorder';
   import { showLoading } from '../stores/loading';
+  import { showToast } from '../stores/errorToast';
+  import { listScreenCaptureSources, screenCaptureSourcePickerAvailable, type ScreenCaptureSource } from '$lib/capture/screenSources';
   import SynthVision from './SynthVision.svelte';
   import VJAudioBar from './VJAudioBar.svelte';
   import AudioInputPicker from './AudioInputPicker.svelte';
@@ -610,6 +612,7 @@
     stopModGhostLoop();
     stopVjVideoTick();
     vjStopNdiScan();
+    stopAllVjLiveSources();
     window.removeEventListener('midi-stage-preset', stagePresetHandler);
     if (vjRecorderHandle && vjIsRecording) {
       try { vjRecorderHandle.stop(); } catch {}
@@ -691,8 +694,16 @@
     return formatRecordingDuration(seconds);
   }
 
+  type VJDragPayload = {
+    type: 'shader' | 'video' | 'image' | 'threejs' | 'spout' | 'effect' | 'splat' | 'model3d' | 'preset' | 'live-source';
+    id: string;
+    spoutName?: string;
+    pluginName?: string;
+    effectType?: VJPluginEffectType;
+  };
+
   // Drag state for clips
-  let draggedClip: { type: 'shader' | 'video' | 'image' | 'threejs' | 'spout' | 'effect' | 'splat' | 'model3d' | 'preset'; id: string; spoutName?: string; pluginName?: string; effectType?: VJPluginEffectType } | null = null;
+  let draggedClip: VJDragPayload | null = null;
   // Cells now carry a bank tag so cross-deck drag/drop works correctly when
   // the crossfader is on (drag from Bank A cell → Bank B cell, etc.)
   let dragOverCell: { layer: number; column: number; bank: VJDeck } | null = null;
@@ -852,6 +863,7 @@
     id: string;
     name: string;
     type: 'spout' | 'webcam' | 'capture' | 'ndi';
+    spoutSenderName?: string;
     /** For NDI sources, the discovered sender name (used by the
      *  native addon's createReceiver). Spout uses the sender name
      *  directly in `name` so doesn't need this field. */
@@ -861,7 +873,123 @@
     videoEl?: HTMLVideoElement;
   }
 
+  type VJScreenSource = ScreenCaptureSource;
+
   let vjLiveSources: VJLiveSource[] = [];
+  let vjScreenPickerOpen = false;
+  let vjScreenPickerSources: VJScreenSource[] = [];
+  let vjScreenPickerLoading = false;
+
+  function disposeVjLiveSource(source: VJLiveSource) {
+    try { source.stream?.getTracks().forEach(track => { track.onended = null; track.stop(); }); } catch {}
+    if (source.videoEl) {
+      try { source.videoEl.pause(); } catch {}
+      try { source.videoEl.srcObject = null; } catch {}
+      try { source.videoEl.removeAttribute('src'); } catch {}
+      try { source.videoEl.load(); } catch {}
+    }
+  }
+
+  function stopAllVjLiveSources() {
+    for (const source of vjLiveSources) disposeVjLiveSource(source);
+    vjLiveSources = [];
+  }
+
+  function closeVjScreenPicker() {
+    vjScreenPickerOpen = false;
+    vjScreenPickerSources = [];
+    vjScreenPickerLoading = false;
+  }
+
+  function vjLiveSourceIconLabel(source: VJLiveSource): string {
+    if (source.type === 'webcam') return 'CAM';
+    if (source.type === 'capture') return 'SCR';
+    if (source.type === 'ndi') return 'NDI';
+    return getTextureShareLabel().slice(0, 3).toUpperCase();
+  }
+
+  function vjSpoutSenderName(source: VJLiveSource): string {
+    return source.spoutSenderName
+      || source.name.replace(`${getTextureShareLabel()}: `, '').replace('Spout: ', '').trim();
+  }
+
+  function createVJClipFromLiveSource(source: VJLiveSource): VJClip | null {
+    const id = generateUUID();
+    if ((source.type === 'webcam' || source.type === 'capture') && source.videoEl) {
+      return {
+        id,
+        type: 'video',
+        name: source.name,
+        src: `live://${source.type}/${source.id}`,
+        videoElement: source.videoEl,
+        playbackMode: 'loop',
+        isPlaying: true,
+      };
+    }
+
+    if (source.type === 'spout') {
+      const senderName = vjSpoutSenderName(source);
+      if (!senderName) return null;
+      return {
+        id,
+        type: 'spout',
+        name: source.name,
+        src: senderName,
+        spoutSource: senderName,
+      };
+    }
+
+    if (source.type === 'ndi') {
+      const senderName = source.ndiSourceName?.trim();
+      if (!senderName) return null;
+      return {
+        id,
+        type: 'spout',
+        name: source.name,
+        src: senderName,
+        ndiSource: {
+          senderName,
+          width: 1920,
+          height: 1080,
+        },
+      };
+    }
+
+    return null;
+  }
+
+  function activeVJDeckForAdd(): VJDeck {
+    return $vjClipLauncher.crossfaderEnabled ? $vjClipLauncher.selectedDeck : 'A';
+  }
+
+  function findNextEmptyVJCell(bank: VJDeck): { layer: number; column: number } | null {
+    const grid = deckGrid(bank);
+    const startLayer = selectedLayerIndex ?? 0;
+    const layerOrder = [
+      startLayer,
+      ...layerIndices.filter((idx) => idx !== startLayer),
+    ];
+    for (const layer of layerOrder) {
+      for (const column of columnIndices) {
+        if (!grid[layer]?.[column]) return { layer, column };
+      }
+    }
+    return null;
+  }
+
+  function addLiveSourceToDeck(source: VJLiveSource, bank: VJDeck = activeVJDeckForAdd()) {
+    const target = findNextEmptyVJCell(bank);
+    const clip = createVJClipFromLiveSource(source);
+    if (!target || !clip) return;
+    vjClipLauncher.setClip(target.layer, target.column, clip, bank);
+    selectedLayerIndex = target.layer;
+    if ($vjClipLauncher.crossfaderEnabled) vjClipLauncher.setSelectedDeck(bank);
+  }
+
+  function handleLiveSourceDragStart(e: DragEvent, source: VJLiveSource) {
+    if (source.status !== 'live') return;
+    handleDragStart(e, { type: 'live-source', id: source.id, pluginName: source.name });
+  }
 
   // NDI source discovery state. The native addon's findSources is
   // polled on an interval — the underlying NDIlib finder runs an
@@ -871,18 +999,50 @@
   let vjDetectedNdiSources: { name: string; url: string }[] = [];
   let vjNdiScanInterval: ReturnType<typeof setInterval> | null = null;
   let vjNdiAvailable = false;
+  let vjNdiChecked = false;
+  let vjNdiScanning = false;
+  let vjNdiStatusHint = 'Open an NDI® sender in MadMapper, Resolume, OBS, or another VJ app on this machine or network';
   async function vjStartNdiScan() {
     const api = (window as any).ghostNDI;
-    if (!api) return;
+    if (!api) {
+      vjNdiChecked = true;
+      vjNdiAvailable = false;
+      vjDetectedNdiSources = [];
+      vjNdiStatusHint = 'NDI® native bridge unavailable';
+      return;
+    }
     try {
       const avail = await api.available();
+      vjNdiChecked = true;
       vjNdiAvailable = !!avail?.available;
-    } catch { vjNdiAvailable = false; }
+      if (!vjNdiAvailable) {
+        vjDetectedNdiSources = [];
+        vjNdiStatusHint = avail?.error || 'NDI® runtime or native addon unavailable';
+      }
+    } catch {
+      vjNdiChecked = true;
+      vjNdiAvailable = false;
+      vjDetectedNdiSources = [];
+      vjNdiStatusHint = 'NDI® runtime or native addon unavailable';
+    }
     if (!vjNdiAvailable) return;
     if (vjNdiScanInterval) return;
     const tick = async () => {
-      try { vjDetectedNdiSources = await api.findSources(); }
-      catch { /* keep last list */ }
+      vjNdiScanning = true;
+      try {
+        const found = await api.findSources();
+        vjDetectedNdiSources = (Array.isArray(found) ? found : [])
+          .map((src: any) => ({
+            name: String(typeof src === 'string' ? src : src?.name || '').trim(),
+            url: typeof src === 'object' && src?.url ? String(src.url) : '',
+          }))
+          .filter((src: { name: string }) => src.name.length > 0);
+        vjNdiStatusHint = 'Open an NDI® sender in MadMapper, Resolume, OBS, or another VJ app on this machine or network';
+      } catch (err) {
+        vjNdiStatusHint = err instanceof Error ? err.message : String(err);
+      } finally {
+        vjNdiScanning = false;
+      }
     };
     void tick();
     vjNdiScanInterval = setInterval(tick, 2000);
@@ -891,23 +1051,16 @@
     if (vjNdiScanInterval) { clearInterval(vjNdiScanInterval); vjNdiScanInterval = null; }
   }
   function vjAddNdiSource(sourceName: string) {
-    const api = (window as any).ghostNDI;
-    if (!api) return;
+    const senderName = sourceName.trim();
+    if (!senderName) return;
     const src: VJLiveSource = {
       id: crypto.randomUUID?.() || Date.now().toString(),
-      name: `NDI: ${sourceName}`,
+      name: `NDI: ${senderName}`,
       type: 'ndi',
-      ndiSourceName: sourceName,
-      status: 'connecting',
+      ndiSourceName: senderName,
+      status: 'live',
     };
     vjLiveSources = [...vjLiveSources, src];
-    api.createReceiver(sourceName).then((res: any) => {
-      vjLiveSources = vjLiveSources.map(s =>
-        s.id === src.id ? { ...s, status: res?.ok ? 'live' : 'disconnected' } : s
-      );
-    }).catch(() => {
-      vjLiveSources = vjLiveSources.map(s => s.id === src.id ? { ...s, status: 'disconnected' as const } : s);
-    });
   }
 
   async function vjStartWebcam() {
@@ -935,10 +1088,41 @@
   }
 
   async function vjStartCapture() {
+    if (!screenCaptureSourcePickerAvailable()) return vjStartCaptureBrowserFallback();
+
+    vjShowSpoutPicker = false;
+    vjShowNdiPicker = false;
+    vjScreenPickerOpen = true;
+    vjScreenPickerLoading = true;
+    vjScreenPickerSources = [];
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      vjScreenPickerSources = await listScreenCaptureSources({ preferFast: true });
+    } catch (err) {
+      console.error('VJ capture source list error:', err);
+      vjScreenPickerSources = [];
+      showToast('Could not list screen capture sources.', 'error');
+    } finally {
+      vjScreenPickerLoading = false;
+    }
+  }
+
+  async function vjPickScreenSource(picked: VJScreenSource) {
+    closeVjScreenPicker();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          mandatory: {
+            chromeMediaSource: 'desktop',
+            chromeMediaSourceId: picked.id,
+            maxWidth: 1920,
+            maxHeight: 1080,
+            maxFrameRate: 60,
+          },
+        } as any,
+      });
       const videoTrack = stream.getVideoTracks()[0];
-      const label = videoTrack.label || 'Screen Capture';
+      const label = picked.name || videoTrack.label || 'Capture';
       const videoEl = document.createElement('video');
       videoEl.srcObject = stream;
       videoEl.muted = true;
@@ -956,7 +1140,37 @@
       videoTrack.onended = () => vjStopSource(src.id);
       vjLiveSources = [...vjLiveSources, src];
     } catch (err) {
-      if ((err as any).name !== 'AbortError') console.error('VJ capture error:', err);
+      console.error('VJ capture source error:', err);
+      showToast(`Could not capture "${picked.name}".`, 'error');
+    }
+  }
+
+  async function vjStartCaptureBrowserFallback() {
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { cursor: 'always' } as any,
+        audio: false,
+      });
+      const videoTrack = stream.getVideoTracks()[0];
+      const label = videoTrack.label || 'Screen Capture';
+      const videoEl = document.createElement('video');
+      videoEl.srcObject = stream;
+      videoEl.muted = true;
+      videoEl.playsInline = true;
+      videoEl.autoplay = true;
+      await videoEl.play();
+      const src: VJLiveSource = {
+        id: generateUUID(),
+        name: label,
+        type: 'capture',
+        status: 'live',
+        stream,
+        videoEl,
+      };
+      videoTrack.onended = () => vjStopSource(src.id);
+      vjLiveSources = [...vjLiveSources, src];
+    } catch (err) {
+      if ((err as any).name !== 'AbortError') console.error('VJ capture fallback error:', err);
     }
   }
 
@@ -1001,6 +1215,7 @@
       id: crypto.randomUUID?.() || Date.now().toString(),
       name: `${getTextureShareLabel()}: ${name}`,
       type: 'spout',
+      spoutSenderName: name,
       status: 'connecting',
     };
     vjLiveSources = [...vjLiveSources, src];
@@ -1013,12 +1228,7 @@
 
   function vjStopSource(id: string) {
     const s = vjLiveSources.find(s => s.id === id);
-    if (s?.stream) s.stream.getTracks().forEach(t => t.stop());
-    if (s?.type === 'ndi' && s.ndiSourceName) {
-      // Tear down the addon-side receiver so the network stream stops.
-      const api = (window as any).ghostNDI;
-      if (api) api.destroyReceiver(s.ndiSourceName).catch(() => {});
-    }
+    if (s) disposeVjLiveSource(s);
     vjLiveSources = vjLiveSources.filter(s => s.id !== id);
   }
 
@@ -1216,26 +1426,35 @@
   // Close VJ mode
   function closeVJMode() {
     console.log('[VJPanel] closeVJMode: start');
-    modulationEngine.stop();
-    performanceStore.stop();
-    // Clear synthvision clips from VJ grid FIRST (while VJ is still live)
-    // so Canvas properly disposes the stale canvas textures
-    vjClipLauncher.clearSynthVisionClips();
-    console.log('[VJPanel] closeVJMode: synthvision clips cleared');
-    // Destroy SynthVision component
+    closeVjScreenPicker();
+
+    // First make the workspace and renderer leave VJ. Cleanup below is
+    // best-effort; it must never leave the overlay visible or VJ output live.
+    try { vjClipLauncher.stopAll(); } catch (err) { console.warn('[VJPanel] stopAll failed during close:', err); }
+    try { vjClipLauncher.setLive(false); } catch (err) { console.warn('[VJPanel] setLive(false) failed during close:', err); }
+    try { vjClipLauncher.setOpen(false); } catch (err) { console.warn('[VJPanel] setOpen(false) failed during close:', err); }
+
+    try { modulationEngine.stop(); } catch (err) { console.warn('[VJPanel] modulation stop failed:', err); }
+    try { performanceStore.stop(); } catch (err) { console.warn('[VJPanel] performance stop failed:', err); }
+    try { stopAllVjLiveSources(); } catch (err) { console.warn('[VJPanel] live source cleanup failed:', err); }
+    try {
+      // Clear synthvision clips after VJ is no longer live so stale
+      // performer textures cannot keep feeding the renderer.
+      vjClipLauncher.clearSynthVisionClips();
+      console.log('[VJPanel] closeVJMode: synthvision clips cleared');
+    } catch (err) {
+      console.warn('[VJPanel] synthvision cleanup failed:', err);
+    }
     showPerformer = false;
     performerStarted = false;
     console.log('[VJPanel] closeVJMode: performer destroyed');
-    // Now close VJ — layers are clean, no stale performer texture
-    vjClipLauncher.setLive(false);
-    vjClipLauncher.setOpen(false);
     console.log('[VJPanel] closeVJMode: VJ closed');
   }
 
-  // Minimize VJ mode (keep live output running)
-  function minimizeVJMode() {
-    vjClipLauncher.setOpen(false);
-    // isLive stays true — VJ output continues
+  function handleExitVJClick(e?: MouseEvent) {
+    e?.preventDefault();
+    e?.stopPropagation();
+    closeVJMode();
   }
 
   // === Shader Parameter Controls ===
@@ -1473,7 +1692,7 @@
   }
 
   // Drag handlers
-  function handleDragStart(e: DragEvent, clip: { type: 'shader' | 'video' | 'image' | 'threejs' | 'spout' | 'effect' | 'splat' | 'model3d' | 'preset'; id: string; spoutName?: string; pluginName?: string; effectType?: VJPluginEffectType }) {
+  function handleDragStart(e: DragEvent, clip: VJDragPayload) {
     draggedClip = clip;
     // Electron/Chromium requires dataTransfer.setData() for drag to work
     if (e.dataTransfer) {
@@ -1717,7 +1936,13 @@
 
     if (!draggedClip) return;
 
-    if (draggedClip.type === 'shader') {
+    if (draggedClip.type === 'live-source') {
+      const liveSource = vjLiveSources.find((source) => source.id === draggedClip!.id);
+      const vjClip = liveSource ? createVJClipFromLiveSource(liveSource) : null;
+      if (vjClip) {
+        vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
+      }
+    } else if (draggedClip.type === 'shader') {
       const shader = shaders.find(s => s.id === draggedClip!.id);
       if (shader) {
         const vjClip: VJClip = {
@@ -1758,13 +1983,18 @@
         type: 'spout',
         name: draggedClip.pluginName || draggedClip.id,
         src: draggedClip.spoutName || draggedClip.id,
-        spoutSource: draggedClip.spoutName,
       };
       if (ndiLive) {
         // Stash the NDI source name in the clip's media-source bundle
         // so the Canvas receiver-loader picks the NDI branch instead
-        // of Spout's. ndiSenderName carried through from the live-source.
-        (vjClip as any).ndiSource = { senderName: ndiLive.ndiSourceName };
+        // of Spout's. ndiSourceName carried through from the live-source.
+        vjClip.ndiSource = {
+          senderName: ndiLive.ndiSourceName || draggedClip.spoutName || draggedClip.id,
+          width: 1920,
+          height: 1080,
+        };
+      } else {
+        vjClip.spoutSource = draggedClip.spoutName;
       }
       vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
     } else if (draggedClip.type === 'effect') {
@@ -2501,15 +2731,12 @@
             <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
           </svg>
         </button>
-        <button class="minimize-btn" onclick={minimizeVJMode} title="Back to editor (VJ stays live)">
-          <!-- Unified ‹ Back arrow — matches the 3D Designer's exit
-               affordance so the mode-stack metaphor reads the same
-               everywhere. VJ output keeps running in the background. -->
+        <button class="minimize-btn" onclick={handleExitVJClick} title="Exit VJ and stop live output" aria-label="Exit VJ">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M15 18l-6-6 6-6"/>
           </svg>
         </button>
-        <button class="exit-btn" onclick={closeVJMode}>Back</button>
+        <button class="exit-btn" onclick={handleExitVJClick}>Exit VJ</button>
       </div>
     </div>
 
@@ -4156,17 +4383,12 @@
                   </svg>
                   {getTextureShareLabel()}
                 </button>
-                <!-- NDI button — only shown when the native addon is
-                     available. Opens a picker with the network-
-                     discovered senders. -->
-                {#if vjNdiAvailable}
-                  <button class="vj-src-btn ndi-btn" class:active={vjShowNdiPicker} onclick={() => { vjShowNdiPicker = !vjShowNdiPicker; }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="11"/>
-                    </svg>
-                    NDI
-                  </button>
-                {/if}
+                <button class="vj-src-btn ndi-btn" class:active={vjShowNdiPicker} onclick={() => { vjShowNdiPicker = !vjShowNdiPicker; if (vjShowNdiPicker) { vjShowSpoutPicker = false; void vjStartNdiScan(); } }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="11"/>
+                  </svg>
+                  NDI®
+                </button>
               </div>
               {#if vjShowNdiPicker}
                 <div class="vj-spout-picker">
@@ -4180,10 +4402,14 @@
                     </div>
                   {:else}
                     <div class="empty-media" style="padding: 12px 14px;">
-                      <p>Scanning for NDI sources…</p>
-                      <p class="hint">Senders broadcasting on this network will appear here within a couple of seconds.</p>
+                      <p>{!vjNdiChecked || vjNdiScanning ? 'Scanning for NDI® sources...' : vjNdiAvailable ? 'No NDI® sources detected' : 'NDI® native bridge unavailable'}</p>
+                      <p class="hint">{vjNdiStatusHint}</p>
                     </div>
                   {/if}
+                  <p class="hint" style="padding: 0 14px 10px;">
+                    <a href="https://ndi.video/" target="_blank" rel="noreferrer">NDI®</a>
+                    is a registered trademark of Vizrt NDI AB.
+                  </p>
                 </div>
               {/if}
               {#if vjShowSpoutPicker}
@@ -4213,50 +4439,49 @@
               {#if vjLiveSources.length === 0}
                 <div class="empty-media">
                   <p>No live sources active</p>
-                  <p class="hint">Add webcam, capture, or Spout input above</p>
+                  <p class="hint">Add webcam, capture, {getTextureShareLabel()}, or NDI® input above</p>
                 </div>
               {:else}
-                {#each vjLiveSources as src (src.id)}
-                  <div
-                    class="media-item vj-source-item"
-                    class:source-live={src.status === 'live'}
-                    draggable={src.status === 'live' ? 'true' : 'false'}
-                    ondragstart={(e) => {
-                      // NDI sources route through the spout drag type
-                      // (handled by the spout branch in handleCellDrop)
-                      // — Canvas distinguishes NDI vs Spout via
-                      // ndiSource vs spoutSource on the MediaSource.
-                      if (src.type === 'ndi' && src.ndiSourceName) {
-                        handleDragStart(e, { type: 'spout', id: src.id, spoutName: src.ndiSourceName, pluginName: src.name });
-                      } else if (src.videoEl) {
-                        handleDragStart(e, { type: 'video', id: src.id });
-                      }
-                    }}
-                    ondragend={handleDragEnd}
-                    role="button"
-                    tabindex="0"
-                  >
-                    <div class="item-thumb">
-                      <div class="thumb-placeholder source-thumb">
-                        <span class="source-type-icon">
-                          {#if src.type === 'webcam'}CAM{:else if src.type === 'capture'}SCR{:else}SPT{/if}
-                        </span>
+                <div class="vj-live-source-list">
+                  {#each vjLiveSources as src (src.id)}
+                    <div
+                      class="vj-source-item"
+                      class:source-live={src.status === 'live'}
+                      class:source-pending={src.status !== 'live'}
+                      draggable={src.status === 'live' ? 'true' : 'false'}
+                      ondragstart={(e) => handleLiveSourceDragStart(e, src)}
+                      ondragend={handleDragEnd}
+                    >
+                      <div class="source-thumb">
+                        <span class="source-type-icon">{vjLiveSourceIconLabel(src)}</span>
                         {#if src.status === 'live'}
                           <span class="thumb-live-dot"></span>
                         {/if}
                       </div>
+                      <div class="source-info">
+                        <span class="source-name">{src.name}</span>
+                        <span class="source-status">{src.status}</span>
+                      </div>
+                      <div class="source-actions">
+                        <button
+                          class="vj-src-add"
+                          disabled={src.status !== 'live'}
+                          onclick={(e) => { e.stopPropagation(); addLiveSourceToDeck(src); }}
+                          title="Add to deck"
+                        >+</button>
+                        <button
+                          class="vj-src-stop"
+                          onclick={(e) => { e.stopPropagation(); vjStopSource(src.id); }}
+                          title="Stop"
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                          </svg>
+                        </button>
+                      </div>
                     </div>
-                    <div class="item-info">
-                      <span class="item-name">{src.name}</span>
-                      <span class="item-type">{src.status}</span>
-                    </div>
-                    <button class="vj-src-stop" onclick={() => vjStopSource(src.id)} title="Stop">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                      </svg>
-                    </button>
-                  </div>
-                {/each}
+                  {/each}
+                </div>
               {/if}
             </div>
           {:else if vjMediaTab === 'plugins'}
@@ -4475,6 +4700,73 @@
       </div> <!-- End vj-bottom -->
     </div>
 
+</div>
+{/if}
+
+{#if vjScreenPickerOpen}
+  <div
+    class="capture-picker-backdrop"
+    onclick={closeVjScreenPicker}
+    role="dialog"
+    aria-modal="true"
+    aria-label="Pick a screen or window to capture"
+  >
+    <div class="capture-picker-modal" onclick={(e) => e.stopPropagation()} role="document">
+      <div class="cpm-header">
+        <div class="cpm-title">Capture a screen or window</div>
+        <button class="cpm-close" onclick={closeVjScreenPicker} title="Close">x</button>
+      </div>
+
+      {#if vjScreenPickerLoading}
+        <div class="cpm-loading">Loading sources...</div>
+      {:else if vjScreenPickerSources.length === 0}
+        <div class="cpm-empty">
+          No capturable sources found. Make sure screen recording permission is enabled for Ghost Arcade.
+        </div>
+      {:else}
+        {@const screens = vjScreenPickerSources.filter(s => s.kind === 'screen')}
+        {@const windows = vjScreenPickerSources.filter(s => s.kind === 'window')}
+
+        <div class="cpm-body">
+          {#if screens.length > 0}
+            <div class="cpm-section-title">Screens</div>
+            <div class="cpm-grid">
+              {#each screens as src (src.id)}
+                <button class="cpm-card" onclick={() => vjPickScreenSource(src)} title={src.name}>
+                  {#if src.thumbnailDataUrl}
+                    <img class="cpm-thumb" src={src.thumbnailDataUrl} alt={src.name} />
+                  {:else}
+                    <div class="cpm-thumb cpm-thumb-empty">No preview</div>
+                  {/if}
+                  <div class="cpm-name">{src.name}</div>
+                </button>
+              {/each}
+            </div>
+          {/if}
+
+          {#if windows.length > 0}
+            <div class="cpm-section-title">Application windows</div>
+            <div class="cpm-grid">
+              {#each windows as src (src.id)}
+                <button class="cpm-card" onclick={() => vjPickScreenSource(src)} title={src.name}>
+                  {#if src.thumbnailDataUrl}
+                    <img class="cpm-thumb" src={src.thumbnailDataUrl} alt={src.name} />
+                  {:else}
+                    <div class="cpm-thumb cpm-thumb-empty">No preview</div>
+                  {/if}
+                  <div class="cpm-name-row">
+                    {#if src.appIconDataUrl}
+                      <img class="cpm-app-icon" src={src.appIconDataUrl} alt="" />
+                    {/if}
+                    <div class="cpm-name">{src.name}</div>
+                  </div>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/if}
+    </div>
   </div>
 {/if}
 
@@ -4519,6 +4811,7 @@
   /* Header Stage/Mix toggle */
   .header-stage {
     display: flex;
+    flex: 0 0 auto;
     border-radius: 6px;
     overflow: hidden;
     border: 1px solid #444;
@@ -4781,16 +5074,21 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    position: relative;
+    gap: 12px;
     padding: 10px 20px;
+    padding-right: 188px;
     background: #141414;
     border-bottom: 1px solid #333;
     flex-shrink: 0;
+    overflow: hidden;
   }
 
   .header-left, .header-center {
     display: flex;
     align-items: center;
     gap: 20px;
+    flex: 0 0 auto;
   }
   /* Right cluster is a tight icon grid — REC, A/B, Performer, 3D Stage,
      Settings, Back-arrow, Back text. 4px gap matches the mapping-mode
@@ -4799,6 +5097,14 @@
     display: flex;
     align-items: center;
     gap: 4px;
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 3;
+    flex: 0 0 auto;
+    background: #141414;
+    padding-left: 6px;
   }
 
   /* Macro knob row — sits between the crossfader toggle and the audio
@@ -4807,6 +5113,9 @@
   .header-macros {
     display: flex;
     align-items: center;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
     padding: 0 4px;
     border-left: 1px solid rgba(255, 255, 255, 0.06);
     border-right: 1px solid rgba(255, 255, 255, 0.06);
@@ -4818,6 +5127,8 @@
   .header-meter {
     display: flex;
     align-items: center;
+    flex: 0 1 auto;
+    min-width: 0;
     gap: 8px;
   }
 
@@ -5700,6 +6011,8 @@
     background: #0e0e0e;
     z-index: 10;
     padding-bottom: 8px;
+    min-width: 100%;
+    width: max-content;
   }
 
   .layer-controls-header {
@@ -5708,7 +6021,8 @@
   }
 
   .column-trigger {
-    flex: 1;
+    flex: 1 0 76px;
+    min-width: 76px;
     height: 28px;
     background: #222;
     border: 1px solid #444;
@@ -5730,6 +6044,8 @@
     display: flex;
     gap: 4px;
     margin-bottom: 4px;
+    min-width: 100%;
+    width: max-content;
   }
 
   /* Reversed layout: controls on right, clips flow left-to-right */
@@ -5878,9 +6194,9 @@
 
   /* Clip Cells */
   .clip-cell {
-    flex: 1;
+    flex: 1 0 76px;
     aspect-ratio: 16 / 9;
-    min-width: 0;
+    min-width: 76px;
     min-height: 60px;
     background: var(--bg-primary, #0d0d10);
     border: 1px solid #333;
@@ -6728,17 +7044,19 @@
   }
 
   .vj-sources-btns {
-    display: flex;
-    gap: 4px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
   }
 
   .vj-src-btn {
-    flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 4px;
-    padding: 8px 4px;
+    min-width: 0;
+    min-height: 32px;
+    padding: 7px 6px;
     background: var(--bg-primary, #0d0d10);
     border: 1px solid #333;
     border-radius: 4px;
@@ -6832,15 +7150,49 @@
 
   .vj-source-item {
     position: relative;
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    min-height: 54px;
+    padding: 7px;
+    background: rgba(255, 255, 255, 0.035);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+    cursor: grab;
+    transition: border-color 0.15s, background 0.15s, transform 0.15s;
+  }
+
+  .vj-source-item:hover {
+    border-color: rgba(120, 180, 255, 0.45);
+    background: rgba(120, 180, 255, 0.08);
+  }
+
+  .vj-source-item.source-pending {
+    cursor: progress;
+    opacity: 0.72;
   }
 
   .vj-source-item.source-live {
     border-left: 2px solid #22c55e;
   }
 
+  .vj-live-source-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
   .source-thumb {
-    background: #111 !important;
+    width: 42px;
+    height: 36px;
+    border-radius: 3px;
+    background: #111;
+    border: 1px solid rgba(255, 255, 255, 0.08);
     position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .source-type-icon {
@@ -6861,31 +7213,217 @@
     box-shadow: 0 0 6px #22c55e80;
   }
 
+  .source-info {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .source-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-primary, #ddd);
+    font-size: 11px;
+  }
+
+  .source-status {
+    color: var(--text-muted, #777);
+    font-size: 9px;
+    text-transform: uppercase;
+  }
+
+  .source-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .vj-src-add,
   .vj-src-stop {
-    position: absolute;
-    top: 4px;
-    right: 4px;
     width: 20px;
     height: 20px;
     border-radius: 3px;
-    border: none;
+    border: 1px solid rgba(255, 255, 255, 0.08);
     background: rgba(0,0,0,0.6);
     color: var(--text-muted, #888);
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    opacity: 0;
     transition: all 0.15s;
   }
 
-  .vj-source-item:hover .vj-src-stop {
-    opacity: 1;
+  .vj-src-add {
+    color: #8fd6ff;
+    background: rgba(76, 209, 255, 0.1);
+    border-color: rgba(76, 209, 255, 0.24);
+    font-size: 15px;
+    line-height: 1;
+  }
+
+  .vj-src-add:hover:not(:disabled) {
+    color: #d9f5ff;
+    background: rgba(76, 209, 255, 0.2);
+    border-color: rgba(76, 209, 255, 0.5);
+  }
+
+  .vj-src-add:disabled {
+    opacity: 0.35;
+    cursor: progress;
   }
 
   .vj-src-stop:hover {
     color: #f44;
     background: rgba(255,68,68,0.2);
+  }
+
+  .capture-picker-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(0, 0, 0, 0.78);
+    backdrop-filter: blur(4px);
+  }
+
+  .capture-picker-modal {
+    width: min(1100px, 92vw);
+    height: min(760px, 82vh);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: #141418;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    color: #e8e8ea;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  }
+
+  .cpm-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex: 0 0 auto;
+    padding: 14px 18px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .cpm-title {
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .cpm-close {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    color: var(--text-secondary, #aaa);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  .cpm-close:hover {
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+
+  .cpm-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding-bottom: 14px;
+  }
+
+  .cpm-loading,
+  .cpm-empty {
+    padding: 40px;
+    text-align: center;
+    color: var(--text-muted, #888);
+    font-size: 13px;
+  }
+
+  .cpm-section-title {
+    padding: 16px 18px 6px;
+    color: var(--text-muted, #888);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1.1px;
+  }
+
+  .cpm-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+    padding: 6px 18px 18px;
+  }
+
+  .cpm-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px;
+    background: #1c1c22;
+    color: inherit;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 120ms, background 120ms;
+  }
+
+  .cpm-card:hover {
+    background: #1f1c2a;
+    border-color: #BB86FC;
+  }
+
+  .cpm-thumb {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    background: #08080a;
+    border-radius: 4px;
+  }
+
+  .cpm-thumb-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted, #777);
+    font-size: 11px;
+  }
+
+  .cpm-name,
+  .cpm-name-row {
+    min-width: 0;
+  }
+
+  .cpm-name-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .cpm-app-icon {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 auto;
+    border-radius: 3px;
+  }
+
+  .cpm-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-primary, #ddd);
+    font-size: 12px;
   }
 
   /* ========== Audio Control Bar ========== */

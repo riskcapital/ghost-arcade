@@ -48,6 +48,7 @@
   import VJModePanel from './lib/components/VJModePanel.svelte';
   import StageDesignerPanel from './lib/components/StageDesignerPanel.svelte';
   import OfflineRenderModal from './lib/components/OfflineRenderModal.svelte';
+  import VideoConverterModal from './lib/components/VideoConverterModal.svelte';
   import { workspace } from './lib/stores/workspace';
   import PresetTray from './lib/components/PresetTray.svelte';
   import BottomDock from './lib/components/BottomDock.svelte';
@@ -91,7 +92,7 @@
   import { loadShadersFromServer, loadCloudShadersFromDisk, shaderLibrary } from './lib/stores/shaderLibrary';
   import { mediaTrayShaders } from './lib/stores/mediaTrayShaders';
   import { getNativeRendererStatus } from './lib/api/native-renderer';
-  import { startSpoutScanner } from './lib/stores/spout';
+  import { startSpoutScanner, stopSpoutScanner } from './lib/stores/spout';
   import { preloadShaderLibrary, populateShaderListForSync } from './lib/preload';
   import { invoke, isMac, isDesktopApp } from './lib/bridge';
   import type { Point2D, BezierPoint, Layer, WarpCorners } from './lib/types';
@@ -324,6 +325,7 @@
   // toggles this; the modal owns its own progress + cancel flow via
   // the offlineRender store.
   let showOfflineRender = false;
+  let showVideoConverter = false;
 
   // Keyboard shortcut help overlay
   let showShortcutHelp = false;
@@ -638,6 +640,17 @@
   }
 
   onMount(() => {
+    let appMounted = true;
+    const bridgeTimeouts = new Set<ReturnType<typeof setTimeout>>();
+    const scheduleBridgeTimeout = (fn: () => void, delay: number) => {
+      const id = setTimeout(() => {
+        bridgeTimeouts.delete(id);
+        if (appMounted) fn();
+      }, delay);
+      bridgeTimeouts.add(id);
+      return id;
+    };
+
     // Phase 3.0 WebGPU bridge: when editorWebGPU is on, both Canvas
     // and WebGPUCanvas are mounted. Push the WebGL canvas DOM ref
     // from Canvas (via getCanvas()) into the WebGPU bridge's setter
@@ -656,7 +669,8 @@
     let _bridgeWiringInFlight = false;
     let _lastWiredSource: HTMLCanvasElement | null = null;
     let _lastWiredBridge: WebGPUCanvas | null = null;
-    settings.subscribe((s) => {
+    const unsubscribeSettings = settings.subscribe((s) => {
+      if (!appMounted) return;
       if (!s.experimental?.editorWebGPU) return;
       // Idempotent — only re-wire when the canvas or bridge instance
       // actually changes (component remount). Otherwise every settings
@@ -681,13 +695,13 @@
           _bridgeWiringInFlight = false;
           return;
         }
-        if (attempts++ < 40) setTimeout(tryPushSource, 50);
+        if (attempts++ < 40) scheduleBridgeTimeout(tryPushSource, 50);
         else {
           console.warn('[App] WebGPU bridge: source canvas never appeared (Canvas.getCanvas() returned null after 2s)');
           _bridgeWiringInFlight = false;
         }
       };
-      setTimeout(tryPushSource, 0);
+      scheduleBridgeTimeout(tryPushSource, 0);
     });
 
     // Auto-report uncaught errors and promise rejections
@@ -794,16 +808,19 @@
 
     // Simple routing: check URL hash
     isMobile = window.location.hash === '#/mobile' || window.location.pathname.includes('mobile');
-    window.addEventListener('hashchange', () => {
+    const handleHashChange = () => {
       isMobile = window.location.hash === '#/mobile';
-    });
+    };
+    window.addEventListener('hashchange', handleHashChange);
 
     // Allow child components (e.g. VJ mode) to open settings via custom event
-    window.addEventListener('open-settings', () => { showSettings = true; });
+    const handleOpenSettings = () => { showSettings = true; };
+    window.addEventListener('open-settings', handleOpenSettings);
     // Launch 3D Stage from inside VJ mode without minimizing the panel.
     // VJModePanel's header button dispatches this; we route to the same
     // openStage3D() that the toolbar button hits.
-    window.addEventListener('open-stage3d', () => { openStage3D(); });
+    const handleOpenStage3D = () => { openStage3D(); };
+    window.addEventListener('open-stage3d', handleOpenStage3D);
 
     // Load saved AI shaders from server
     loadShadersFromServer().catch(e => {
@@ -827,6 +844,8 @@
 
     // Auto-connect to built-in WebSocket server (Tauri desktop or dev with server running)
     // Try connecting after a short delay to let the Rust WS server start
+    let autoConnectTimeout: ReturnType<typeof setTimeout> | null = null;
+    let retryInterval: ReturnType<typeof setInterval> | null = null;
     if (!isMobile) {
       const autoConnect = () => {
         if (!ws || ws.readyState === WebSocket.CLOSED) {
@@ -834,11 +853,14 @@
         }
       };
       // Initial attempt after 1s (give Rust server time to bind)
-      setTimeout(autoConnect, 1000);
+      autoConnectTimeout = setTimeout(autoConnect, 1000);
       // Retry every 5s if not connected
-      const retryInterval = setInterval(() => {
+      retryInterval = setInterval(() => {
         if (wsServerReady) {
-          clearInterval(retryInterval);
+          if (retryInterval) {
+            clearInterval(retryInterval);
+            retryInterval = null;
+          }
         } else {
           autoConnect();
         }
@@ -1124,6 +1146,7 @@
     const viewportResizeObserver = new ResizeObserver(() => {
       updateViewportSize();
     });
+    let canvasContainerObserver: MutationObserver | null = null;
     if (viewportEl) {
       viewportResizeObserver.observe(viewportEl);
       // Also observe the canvas container directly for size changes
@@ -1139,21 +1162,47 @@
       setTimeout(() => updateViewportSize(), 1000);
       setTimeout(() => updateViewportSize(), 2000);
       // Watch for canvas container appearing (if it mounts later)
-      const mo = new MutationObserver(() => {
+      canvasContainerObserver = new MutationObserver(() => {
         const cc = viewportEl.querySelector('.canvas-container');
-        if (cc) { viewportResizeObserver.observe(cc); updateViewportSize(); mo.disconnect(); }
+        if (cc) { viewportResizeObserver.observe(cc); updateViewportSize(); canvasContainerObserver?.disconnect(); canvasContainerObserver = null; }
       });
-      mo.observe(viewportEl, { childList: true, subtree: true });
+      canvasContainerObserver.observe(viewportEl, { childList: true, subtree: true });
     }
 
     return () => {
+      appMounted = false;
+      unsubscribeSettings();
+      for (const id of bridgeTimeouts) clearTimeout(id);
+      bridgeTimeouts.clear();
+      window.removeEventListener('error', onError);
+      window.removeEventListener('unhandledrejection', onRejection);
+      window.removeEventListener('pointerdown', collapseMultiSelectOnControl, true);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      window.removeEventListener('hashchange', handleHashChange);
+      window.removeEventListener('open-settings', handleOpenSettings);
+      window.removeEventListener('open-stage3d', handleOpenStage3D);
+      if (autoConnectTimeout) {
+        clearTimeout(autoConnectTimeout);
+        autoConnectTimeout = null;
+      }
+      if (retryInterval) {
+        clearInterval(retryInterval);
+        retryInterval = null;
+      }
       window.removeEventListener('lines-mode-change', handleLinesModeChange as EventListener);
       window.removeEventListener('toggle-layer-shape-warp', handleLayerShapeWarpToggle as EventListener);
       endShapeControlPointDrag();
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       document.removeEventListener('click', handleClickOutside);
+      viewportEl?.removeEventListener('wheel', handleViewportWheel);
       viewportResizeObserver.disconnect();
+      canvasContainerObserver?.disconnect();
+      stopSpoutScanner();
+      if (ws) {
+        try { ws.close(); } catch {}
+        ws = null;
+      }
       destroyLicense();
       stopUpdateChecker();
       stopAutoEngine();
@@ -1647,6 +1696,19 @@
   function connectToServer() {
     connectionError = '';
     const url = `ws://127.0.0.1:${wsPort}`;
+
+    if (ws) {
+      ws.onopen = null;
+      ws.onclose = null;
+      ws.onerror = null;
+      ws.onmessage = null;
+      try {
+        if (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN) {
+          ws.close();
+        }
+      } catch {}
+      ws = null;
+    }
 
     try {
       ws = new WebSocket(url);
@@ -4238,6 +4300,16 @@
                 </span>
                 <span class="menu-label">Render to Video...</span>
               </button>
+              <button class="menu-item" onclick={() => { fileMenuOpen = false; showVideoConverter = true; }}>
+                <span class="menu-icon">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <path d="m10 12 4 3-4 3v-6z"></path>
+                  </svg>
+                </span>
+                <span class="menu-label">Video Converter...</span>
+              </button>
               <div class="menu-separator"></div>
               <button class="menu-item" onclick={importPresetsFromFile}>
                 <span class="menu-icon">
@@ -5428,6 +5500,10 @@
     <OfflineRenderModal
       isOpen={showOfflineRender}
       onClose={() => showOfflineRender = false}
+    />
+    <VideoConverterModal
+      isOpen={showVideoConverter}
+      onClose={() => showVideoConverter = false}
     />
 
     <!-- Welcome Modal (first run) — EULA gate removed in OSS build. -->

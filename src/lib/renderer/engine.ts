@@ -78,6 +78,7 @@ export class RenderEngine {
   // Tracks which (layerId, effectId) pairs were used this frame so
   // stale instances can be reaped at the end of the frame.
   private gpuEffectLiveKeys: Set<string> = new Set();
+  private effectLiveKeys: Set<string> = new Set();
   private lastGpuEffectFrameTime: number = 0;
 
   // Composite quad
@@ -1518,6 +1519,7 @@ export class RenderEngine {
 
     for (let i = 0; i < enabledEffects.length; i++) {
       const effect = enabledEffects[i];
+      this.effectLiveKeys.add(effect.id);
       const effectOpacity = effect.opacity ?? 1;
       const effectBlend = effect.blendMode ?? 'normal';
       const needsBlendPass = effectOpacity < 1 || effectBlend !== 'normal';
@@ -1624,9 +1626,30 @@ export class RenderEngine {
    *  Called by the renderFrame loop after the layer pass completes
    *  so memory for removed effects gets freed promptly. */
   reapStaleGpuEffects(): void {
-    if (!this.gpuEffectRunner.isReady()) return;
-    this.gpuEffectRunner.reapStale(this.gpuEffectLiveKeys);
+    if (this.gpuEffectRunner.isReady()) {
+      this.gpuEffectRunner.reapStale(this.gpuEffectLiveKeys);
+    }
     this.gpuEffectLiveKeys.clear();
+  }
+
+  /** Dispose regular WebGL effect resources that were not used this frame. */
+  reapStaleEffectResources(): void {
+    for (const [effectId, material] of this.effectMaterials.entries()) {
+      if (!this.effectLiveKeys.has(effectId)) {
+        try { material.dispose(); } catch {}
+        this.effectMaterials.delete(effectId);
+      }
+    }
+
+    for (const [effectId, rt] of this.effectFeedbackTargets.entries()) {
+      if (!this.effectLiveKeys.has(effectId)) {
+        try { rt.dispose(); } catch {}
+        this.effectFeedbackTargets.delete(effectId);
+        this.effectFeedbackHasPrior.delete(effectId);
+      }
+    }
+
+    this.effectLiveKeys.clear();
   }
 
   /**
@@ -1847,6 +1870,7 @@ export class RenderEngine {
     // weren't referenced this frame (so we don't leak GPU memory
     // when the user removes a fluid-sim effect).
     this.reapStaleGpuEffects();
+    this.reapStaleEffectResources();
   }
 
   private swapTargets(): void {
@@ -2082,10 +2106,29 @@ export class RenderEngine {
     const inlineShapeTypeMap: Record<string, number> = { rectangle: 0, circle: 1, triangle: 2 };
     const inlineShapeType = inlineShapeTypeMap[activeShapeType] ?? 0;
 
+    // Source crop. Layer data stores y from the top for UI ergonomics;
+    // shader UVs are bottom-origin, so convert y when setting the uniform.
+    let activeCrop: { x: number; y: number; width: number; height: number } | null = null;
+    if (layer.cropRegion) {
+      const width = Math.min(1, Math.max(0.001, layer.cropRegion.width));
+      const height = Math.min(1, Math.max(0.001, layer.cropRegion.height));
+      activeCrop = {
+        x: Math.min(1 - width, Math.max(0, layer.cropRegion.x)),
+        y: Math.min(1 - height, Math.max(0, layer.cropRegion.y)),
+        width,
+        height,
+      };
+    }
+
     // Crop region
-    if (layer.cropRegion && inlineShapeType === 0) {
+    if (activeCrop) {
       obj.material.uniforms.uCropEnabled.value = true;
-      obj.material.uniforms.uCropRegion.value.set(layer.cropRegion.x, layer.cropRegion.y, layer.cropRegion.width, layer.cropRegion.height);
+      obj.material.uniforms.uCropRegion.value.set(
+        activeCrop.x,
+        1 - activeCrop.y - activeCrop.height,
+        activeCrop.width,
+        activeCrop.height
+      );
     } else {
       obj.material.uniforms.uCropEnabled.value = false;
       obj.material.uniforms.uCropRegion.value.set(0, 0, 1, 1);
@@ -2193,6 +2236,9 @@ export class RenderEngine {
       const img = (layerTexture as any).image;
       if (img.videoWidth && img.videoHeight) sourceAspect = img.videoWidth / img.videoHeight;
       else if (img.width && img.height) sourceAspect = img.width / img.height;
+    }
+    if (activeCrop) {
+      sourceAspect *= activeCrop.width / activeCrop.height;
     }
     obj.material.uniforms.uSourceAspect.value = sourceAspect;
     const corners = layer.corners;
@@ -2763,6 +2809,13 @@ export class RenderEngine {
       material.dispose();
       this.effectMaterials.delete(effectId);
     }
+    const feedback = this.effectFeedbackTargets.get(effectId);
+    if (feedback) {
+      feedback.dispose();
+      this.effectFeedbackTargets.delete(effectId);
+    }
+    this.effectFeedbackHasPrior.delete(effectId);
+    this.effectLiveKeys.delete(effectId);
   }
 
   /**

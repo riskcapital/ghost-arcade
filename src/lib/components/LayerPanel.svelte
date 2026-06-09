@@ -14,6 +14,7 @@
   import EdgeEffectsPanel from './EdgeEffectsPanel.svelte';
   import EffectParamRow from './EffectParamRow.svelte';
   import PluginIcon from './PluginIcon.svelte';
+  import SourceCropModal from './SourceCropModal.svelte';
   import { generateCachedThumbnail } from '../isf/thumbnail';
   import { webgpuSupportedStore } from '../renderer/webgpuCapability';
   import { createAssetRefFromFile } from '../storage/assetRegistry';
@@ -48,6 +49,8 @@
   // Layer type dropdown state
   let showAddLayerMenu = false;
   let addMenuPos = { top: 0, left: 0 };
+  let showSourceCropModal = false;
+  $: sourceCropLayer = showSourceCropModal ? $selectedLayer : null;
   // Context menu state. We snapshot the multi-selection IDs at the moment
   // the menu opens — otherwise some other UI action (canvas click, drag-
   // select clear, layer hit-test on the viewport) can reset the selection
@@ -1532,6 +1535,28 @@
           </div>
         {/if}
 
+        {#if layer.type === 'media' || layer.type === 'screen'}
+          <div class="property-row source-crop-row">
+            <label>Source Crop</label>
+            <button
+              class="btn-small source-crop-edit"
+              disabled={!layer.source}
+              onclick={() => { if (layer.source) showSourceCropModal = true; }}
+            >
+              {layer.source ? (layer.cropRegion ? 'Edit Crop' : 'Crop Source') : 'No Source'}
+            </button>
+            {#if layer.source && layer.cropRegion}
+              <button class="btn-small source-crop-reset" onclick={() => project.resetCropRegion(layer.id)}>
+                Reset
+              </button>
+            {:else if layer.source}
+              <span class="value source-crop-value">Full</span>
+            {:else}
+              <span class="value source-crop-value">--</span>
+            {/if}
+          </div>
+        {/if}
+
         <!-- Quick Edge Feather (adds/updates edgeFeather effect without effects panel) -->
         {#if layer.effects}
           {@const featherEffect = layer.effects.find(e => e.type === 'edgeFeather')}
@@ -2320,6 +2345,16 @@
   onClose={() => { showEffectPicker = false; }}
 />
 
+{#if sourceCropLayer?.source}
+  <SourceCropModal
+    bind:open={showSourceCropModal}
+    layerId={sourceCropLayer.id}
+    source={sourceCropLayer.source}
+    cropRegion={sourceCropLayer.cropRegion}
+    onClose={() => { showSourceCropModal = false; }}
+  />
+{/if}
+
 
 <style>
   .layer-panel {
@@ -3019,7 +3054,12 @@
   .feather-label { width: 12px; font-size: 9px; color: #666; text-align: center; }
   .feather-slider input[type='range'] { flex: 1; }
   .btn-small { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: var(--text-secondary, #aaa); font-size: 10px; padding: 3px 8px; border-radius: 3px; cursor: pointer; }
-  .btn-small:hover { background: rgba(255,255,255,0.12); color: #fff; }
+  .btn-small:hover:not(:disabled) { background: rgba(255,255,255,0.12); color: #fff; }
+  .btn-small:disabled { opacity: 0.45; cursor: not-allowed; }
+  .source-crop-row .btn-small { min-height: 26px; }
+  .source-crop-edit { color: var(--ga-ink-0, #eef0f4); border-color: rgba(76, 209, 255, 0.35); }
+  .source-crop-reset { color: var(--ga-ink-1, #9aa0ac); }
+  .source-crop-value { color: var(--ga-ink-2, #5e6571); }
 
   .property-row label {
     width: auto;

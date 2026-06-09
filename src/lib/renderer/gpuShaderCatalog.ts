@@ -78,20 +78,148 @@ const POINTCLOUD_FX_DEF: GpuShaderDef = {
   create: (device, presentFormat) => new WebGPUPointCloudFXShader(device, presentFormat),
 };
 
-// Particle Field — the everything-bagel particle shader. Six wildly
-// different behavior modes (galaxy / atomic / swarm / lattice / field /
-// media), four topologies (points / glow / streaks / sphere), GPU-side
-// nearest-neighbor edge generation with two-color local + bridge
-// connections, depth-fog atmosphere, directional lighting, full color
-// palette/mapping system. The user-facing "wow" shader.
+// Particle Field — the everything-bagel particle shader. Six visible
+// behavior modes (galaxy / atomic / swarm / lattice / field / gravity),
+// five topologies (points / glow / streaks / sphere / soft spheres),
+// GPU-side nearest-neighbor edge generation with two-color local +
+// bridge connections, depth-fog atmosphere, directional lighting, full
+// color palette/mapping system. The user-facing "wow" shader.
 const PARTICLE_FIELD_DEF: GpuShaderDef = {
   id: 'particle-field',
   label: 'Particle Field',
-  description: 'A particle universe: galaxy arms, atomic orbital shells, boid swarms, vibrating crystalline lattices, curl-noise fields, or image/video-driven Refik-style spawns. Optional cellular scaffold layer with local + long-range connection lines in their own colors. Fog, lighting, and the full palette/mapping system on top. Make it look like outer space, sub-atomic, or anywhere in between.',
-  category: 'Source-driven',
+  description: 'A particle universe: galaxy arms, atomic orbital shells, boid swarms, vibrating crystalline lattices, curl-noise fields, or gravity-well attractors. Optional cellular scaffold layer with local + long-range connection lines in their own colors. Fog, lighting, and the full palette/mapping system on top. Make it look like outer space, sub-atomic, or anywhere in between.',
+  category: 'Generative',
   paramSchema: particleFieldParamSchema,
   defaultParams: particleFieldParamDefaults,
+  // Keep this true so older saved projects that still have mode=media
+  // and a source continue to render, even though media is no longer a
+  // visible picker option.
   needsSource: true,
+  create: (device, presentFormat) => new WebGPUParticleFieldShader(device, presentFormat),
+};
+
+const volumetricBallsDefaultParams: Record<string, any> = {
+  ...particleFieldParamDefaults,
+  mode: 'gravity',
+  particleCount: 6500,
+  baseSize: 0.034,
+  opacity: 0.98,
+  topology: 'softSphere',
+  connectEnabled: false,
+  fogDensity: 0.055,
+  fogOpacity: 1.0,
+  fogColor: [238, 238, 236],
+  colorMode: 'random',
+  colorMap: 'group',
+  colorMix: 1,
+  colorCycleSpeed: 0.004,
+  hueShiftSpeed: 0.0,
+  randomSat: 0.72,
+  randomVal: 1.18,
+  saturation: 0.95,
+  brightness: 1.08,
+  colorA: [255, 96, 150],
+  colorB: [255, 162, 82],
+  colorC: [255, 222, 180],
+  colorD: [132, 215, 232],
+  lightX: -0.62,
+  lightY: 0.82,
+  lightZ: 1.22,
+  lightStrength: 0.95,
+  fovDeg: 45,
+  cameraZ: 2.55,
+  autoRotateX: -0.4,
+  autoRotateY: 3.2,
+  autoRotateZ: 0.15,
+  damping: 1.65,
+  burstGain: 0.82,
+  burstDecay: 3.4,
+  shimmerStrength: 0.012,
+  audioSmoothing: 0.9,
+  gravityWells: 5,
+  gravityStrength: 0.075,
+  gravityOrbit: 0.22,
+  gravityCoreSize: 0.14,
+  gravityVortex: 0.16,
+  gravityMaxVelocity: 1.7,
+  gravityAudioDrive: 1.35,
+  gravityChaos: 0.08,
+};
+
+const VOLUMETRIC_BALLS_DEF: GpuShaderDef = {
+  id: 'volumetric-balls',
+  label: 'Volumetric Balls',
+  description: 'Soft shaded sphere impostors in a pastel 3D mass: varied radii, depth-tested occlusion, gentle gravity-well motion, and smoothed audio breathing. Built for the pillowy ball-cluster look rather than a classic particle field.',
+  category: 'Generative',
+  paramSchema: particleFieldParamSchema,
+  defaultParams: volumetricBallsDefaultParams,
+  needsSource: false,
+  create: (device, presentFormat) => new WebGPUParticleFieldShader(device, presentFormat),
+};
+
+const gravityWellsDefaultParams: Record<string, any> = {
+  ...particleFieldParamDefaults,
+  mode: 'gravity',
+  particleCount: 140000,
+  baseSize: 0.010,
+  opacity: 0.9,
+  topology: 'sphere',
+  connectEnabled: true,
+  partnerCount: 16,
+  localRadius: 0.075,
+  bridgeRadius: 0.32,
+  alphaLocal: 0.18,
+  alphaBridge: 0.065,
+  fogDensity: 0.9,
+  fogOpacity: 0.9,
+  fogColor: [2, 3, 10],
+  colorMode: 'palette4',
+  colorMap: 'speed',
+  colorMix: 1,
+  colorCycleSpeed: 0.045,
+  hueShiftSpeed: 0.018,
+  saturation: 1.35,
+  brightness: 1.45,
+  colorA: [30, 90, 255],
+  colorB: [255, 55, 120],
+  colorC: [255, 190, 40],
+  colorD: [55, 240, 255],
+  colorLocal: [70, 230, 255],
+  colorBridge: [255, 70, 165],
+  lightX: -0.6,
+  lightY: 0.8,
+  lightZ: 0.35,
+  lightStrength: 0.85,
+  fovDeg: 48,
+  cameraZ: 2.7,
+  autoRotateX: 1.5,
+  autoRotateY: 8,
+  autoRotateZ: -1,
+  burstGain: 1.05,
+  burstDecay: 3.0,
+  shimmerStrength: 0.032,
+  audioSmoothing: 0.84,
+  gravityWells: 5,
+  gravityStrength: 0.22,
+  gravityOrbit: 0.55,
+  gravityCoreSize: 0.1,
+  gravityVortex: 0.48,
+  gravityMaxVelocity: 6.2,
+  gravityAudioDrive: 1.6,
+  gravityChaos: 0.24,
+};
+
+// Gravity Wells — original WGSL implementation inspired by WebGPU
+// compute-body demos: GPU-side attractors, softened core repulsion,
+// velocity clamp, filament connections, and smoothed audio drive.
+const GRAVITY_WELLS_DEF: GpuShaderDef = {
+  id: 'gravity-wells',
+  label: 'Gravity Wells',
+  description: 'A dramatic compute-particle field: swarms fall through orbiting gravity wells, braid into luminous filaments, repel from the cores instead of collapsing, and breathe smoothly with bass/treble. Built on the Particle Field GPU pipeline as a source-free generative shader.',
+  category: 'Generative',
+  paramSchema: particleFieldParamSchema,
+  defaultParams: gravityWellsDefaultParams,
+  needsSource: false,
   create: (device, presentFormat) => new WebGPUParticleFieldShader(device, presentFormat),
 };
 
@@ -136,6 +264,8 @@ export const GPU_SHADER_CATALOG: GpuShaderDef[] = [
   FLYTHROUGH_DEF,
   POINTCLOUD_FX_DEF,
   PARTICLE_FIELD_DEF,
+  VOLUMETRIC_BALLS_DEF,
+  GRAVITY_WELLS_DEF,
   INK_CLOUD_DEF,
   SMOKE_3D_DEF,
 ];

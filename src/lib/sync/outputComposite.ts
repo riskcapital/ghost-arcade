@@ -22,7 +22,7 @@
  * buffer → BLACK. The senders read the canvas in-loop for the same reason.
  */
 
-import { renderMasterWarpToCanvas, ensureMasterWarpCanvas, getMasterWarpRenderCanvas, isBlendRendererAvailable } from '../output/blendRenderer';
+import { renderMasterWarpToCanvas, ensureMasterWarpCanvas, getMasterWarpRenderCanvas, isBlendRendererAvailable, disposeMasterRenderer } from '../output/blendRenderer';
 import type { OutputWarp } from '../stores/settings';
 import { registerEditorCanvas, getOutputSharedTexturePresenterStats } from './outputSharedTexturePresenter';
 import { startOutputPixelBroadcast, stopOutputPixelBroadcast } from './outputPixelBroadcast';
@@ -70,6 +70,20 @@ export function startMasterWarpOutput(
 export function stopMasterWarpOutput(): void {
   if (active) mwlog('stopMasterWarpOutput → inactive');
   active = false;
+}
+
+/** Full teardown for the dedicated master-warp renderer/canvas.
+ *  Use this when the owning renderer/window is being destroyed; normal
+ *  warp enable/disable should keep using stopMasterWarpOutput(). */
+export function disposeMasterWarpOutput(...ownedCanvases: (HTMLCanvasElement | null | undefined)[]): void {
+  if (ownedCanvases.length > 0 && lastBase && !ownedCanvases.includes(lastBase)) {
+    return;
+  }
+  stopMasterWarpOutput();
+  warpGetter = null;
+  sizeGetter = null;
+  disposeMasterRenderer();
+  resetMasterWarpReconcile(...ownedCanvases);
 }
 
 /**

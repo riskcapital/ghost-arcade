@@ -307,6 +307,17 @@ if(NDI_FOUND)
         else()
             message(WARNING "NDI runtime DLL not found at ${NDI_DLL} — built ndi_addon will fail to load at runtime")
         endif()
+    elseif(UNIX)
+        set_target_properties(ndi_addon PROPERTIES
+            BUILD_WITH_INSTALL_RPATH TRUE
+            INSTALL_RPATH "$ORIGIN"
+        )
+        add_custom_command(TARGET ndi_addon POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${NDI_LIBRARY}"
+                "$<TARGET_FILE_DIR:ndi_addon>/libndi.so"
+            COMMENT "Bundling libndi.so alongside ndi_addon.node"
+        )
     endif()
 else()
     message(STATUS

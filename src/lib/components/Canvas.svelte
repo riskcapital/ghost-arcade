@@ -73,7 +73,7 @@
   import { startWLEDSenders, stopWLEDSenders, tickWLEDSenders } from '$lib/wled/sender';
   import { startModulationBroadcast, stopModulationBroadcast } from '$lib/sync/modulationBroadcast';
   import { stopOutputPixelBroadcast } from '$lib/sync/outputPixelBroadcast';
-  import { stopMasterWarpOutput, tickMasterWarpOutput, getMasterWarpCanvas, reconcileMasterWarpOutput, resetMasterWarpReconcile } from '$lib/sync/outputComposite';
+  import { tickMasterWarpOutput, getMasterWarpCanvas, reconcileMasterWarpOutput, disposeMasterWarpOutput } from '$lib/sync/outputComposite';
   import {
     stopOutputSharedTexturePresenter,
   } from '$lib/sync/outputSharedTexturePresenter';
@@ -151,6 +151,7 @@
   let nativeRendererStatusTimer: ReturnType<typeof setInterval> | null = null;
   let nativeLayersUnsub: (() => void) | null = null;
   let nativeProjectUnsub: (() => void) | null = null;
+  let stopOsrStatusListener: (() => void) | null = null;
 
   // Spout receive state for plugin layers — uses WebSocket binary push for zero-copy frames
   interface SpoutReceiverContext {
@@ -159,6 +160,7 @@
     frameWs: WebSocket | null;     // Dedicated WS for binary frame push
     width: number;
     height: number;
+    _stopPolling?: () => void;
   }
   const spoutReceivers = new Map<string, SpoutReceiverContext>();
   type RawFrameData = ArrayBuffer | ArrayBufferView;
@@ -179,8 +181,36 @@
     width: number;
     height: number;
     lastFrameCounter: number;   // monotonic counter from the addon — skip uploads when unchanged
+    _stopPolling?: () => void;
   }
   const ndiReceivers = new Map<string, NdiReceiverContext>();
+
+  function cleanupSpoutReceiver(cacheKey: string) {
+    const receiver = spoutReceivers.get(cacheKey);
+    if (!receiver) return;
+
+    receiver._stopPolling?.();
+    if (receiver.frameWs) {
+      try { receiver.frameWs.send(JSON.stringify({ type: 'unsubscribe_spout' })); } catch {}
+      try { receiver.frameWs.close(); } catch {}
+      receiver.frameWs = null;
+    }
+    try { receiver.texture.dispose(); } catch {}
+    spoutReceivers.delete(cacheKey);
+    textureCache.delete(cacheKey);
+    void invoke('spout_stop_receiver', { senderName: receiver.senderName }).catch(() => {});
+  }
+
+  function cleanupNdiReceiver(cacheKey: string) {
+    const receiver = ndiReceivers.get(cacheKey);
+    if (!receiver) return;
+
+    receiver._stopPolling?.();
+    try { receiver.texture.dispose(); } catch {}
+    ndiReceivers.delete(cacheKey);
+    textureCache.delete(cacheKey);
+    void (window as any).ghostNDI?.destroyReceiver(receiver.sourceName).catch(() => {});
+  }
 
   // ── MAP sub-mode layer cache ──────────────────────────────────────
   // MAP mode renders each preset-slot's composition as a synthetic
@@ -587,12 +617,14 @@
   // that canvas to the Three.js engine. Engine treats the result
   // like any other texture-backed layer (warp/blend/effects work).
   const gpuLayerRenderers = new Map<string, GpuLayerRenderer>();
-  // Bare THREE.Texture (not CanvasTexture) — per-frame ImageBitmap is
-  // assigned to `.image` via gpuLayerRenderer.consumeOutputBitmap().
-  // CanvasTexture wrapping a WebGPU-context canvas forces Chromium
-  // into a Skia readback path (~14 ms @ 4K); the ImageBitmap path is
-  // GPU-resident SharedImage handoff. See memory
-  // `zero-copy-texture-paths`.
+  // Electron 42/macOS and some Chromium builds can crash natively when
+  // a WebGPU OffscreenCanvas is bridged through transferToImageBitmap()
+  // into the WebGL compositor. Default to the stable canvas-backed
+  // texture path; keep bitmap handoff available as an explicit dev opt-in.
+  const gpuLayerUseBitmapHandoff = typeof window !== 'undefined'
+    && new URLSearchParams(window.location.search).get('gpu-layer-bitmap') === '1';
+  // Texture wrapper for each gpu layer. Default path is CanvasTexture;
+  // `?gpu-layer-bitmap=1` uses a bare THREE.Texture fed by ImageBitmap.
   const gpuLayerTextures = new Map<string, THREE.Texture>();
   // Latch — try to init WebGPU once; subsequent gpu layers just
   // pull the existing device.
@@ -612,6 +644,18 @@
     loadingModel: boolean;
   }
   const model3dRenderers = new Map<string, Model3DRendererContext>();
+
+  function disposeModel3DContext(ctx: Model3DRendererContext): void {
+    (ctx as any)._disposed = true;
+    try { ctx.renderer.dispose(); } catch {}
+    try { ctx.renderTarget.dispose(); } catch {}
+    try {
+      const offCanvas = (ctx as any)._offCanvas as HTMLCanvasElement | undefined;
+      offCanvas?.remove();
+    } catch {}
+    (ctx as any)._offCanvas = null;
+    (ctx as any)._canvasTex = null;
+  }
 
   // Integrated effects (FluidSimulation, ParticleSystem3D)
   interface IntegratedEffectContext {
@@ -671,6 +715,59 @@
     _camCopyCam?: THREE.OrthographicCamera;
   }
   const integratedEffects = new Map<string, IntegratedEffectContext>();
+
+  function disposeIntegratedCameraFeed(ctx: IntegratedEffectContext): void {
+    try {
+      ctx.cameraStream?.getTracks().forEach(track => {
+        try { track.onended = null; } catch {}
+        track.stop();
+      });
+    } catch {}
+    try {
+      if (ctx.cameraVideoEl) {
+        ctx.cameraVideoEl.pause();
+        ctx.cameraVideoEl.srcObject = null;
+        ctx.cameraVideoEl.removeAttribute('src');
+        ctx.cameraVideoEl.load();
+        ctx.cameraVideoEl.remove();
+      }
+    } catch {}
+    try { ctx.cameraTexture?.dispose(); } catch {}
+    try { ctx.prevCameraTarget?.dispose(); } catch {}
+    try { ctx._camCopyMat?.dispose(); } catch {}
+    try { ctx._camCopyMesh?.geometry?.dispose(); } catch {}
+    try {
+      if (ctx._camCopyScene && ctx._camCopyMesh) {
+        ctx._camCopyScene.remove(ctx._camCopyMesh);
+      }
+    } catch {}
+    ctx.cameraStream = undefined;
+    ctx.cameraVideoEl = undefined;
+    ctx.cameraTexture = undefined;
+    ctx.prevCameraTarget = undefined;
+    ctx.prevCameraCopied = false;
+    ctx.cameraRequested = false;
+    ctx._camCopyScene = undefined;
+    ctx._camCopyMat = undefined;
+    ctx._camCopyMesh = undefined;
+    ctx._camCopyCam = undefined;
+  }
+
+  function disposeIntegratedEffectContext(ctx: IntegratedEffectContext): void {
+    disposeIntegratedCameraFeed(ctx);
+    try { ctx.fluid?.dispose(); } catch (e) { console.warn('[Canvas] fluid dispose error:', e); }
+    try { ctx.particles?.dispose(); } catch (e) { console.warn('[Canvas] particles dispose error:', e); }
+    try { ctx.milkdrop?.dispose(); } catch (e) { console.warn('[Canvas] milkdrop dispose error:', e); }
+    try { ctx.milkdropStemRouter?.dispose(); } catch {}
+    try { ctx.audiomotion?.dispose(); } catch (e) { console.warn('[Canvas] audiomotion dispose error:', e); }
+    try { ctx.wavejs?.dispose(); } catch (e) { console.warn('[Canvas] wavejs dispose error:', e); }
+    try { ctx.hydra?.dispose(); } catch (e) { console.warn('[Canvas] hydra dispose error:', e); }
+    try { ctx.ghostfx?.dispose(); } catch (e) { console.warn('[Canvas] ghostfx dispose error:', e); }
+    try { ctx.analyzerlab?.dispose(); } catch (e) { console.warn('[Canvas] analyzerlab dispose error:', e); }
+    try { ctx.handfx?.dispose(); } catch (e) { console.warn('[Canvas] handfx dispose error:', e); }
+    try { ctx.renderTarget.dispose(); } catch {}
+  }
+
   let lastEffectUpdateTime = 0;
   const FLUID_QUALITY_PRESETS = {
     live: { scale: 0.65, minSize: 256, pressureIterations: 10 },
@@ -952,7 +1049,7 @@
 
     // Listen for OSR zero-copy status from main process
     if (window.electronOSR?.onOsrStatus) {
-      window.electronOSR.onOsrStatus((status) => {
+      const off = window.electronOSR.onOsrStatus((status) => {
         osrSpoutActive = status.active;
         spoutCpuFallbackAllowed = !isElectron || !!status.cpuFallbackAllowed;
         if (status.active) {
@@ -972,6 +1069,7 @@
           console.log('[Canvas] OSR inactive (reason:', status.reason, ')');
         }
       });
+      stopOsrStatusListener = typeof off === 'function' ? off : null;
     }
 
     // Expose canvas to window for VJ preview
@@ -2151,20 +2249,7 @@
     // Dispose integrated effects immediately to release GPU memory
     // Wrap each in try/catch so one failure doesn't stop cleanup of the rest
     for (const effect of integratedEffects.values()) {
-      try { effect.fluid?.dispose(); } catch (e) { console.warn('[Canvas] fluid dispose error:', e); }
-      try { effect.particles?.dispose(); } catch (e) { console.warn('[Canvas] particles dispose error:', e); }
-      try { effect.milkdrop?.dispose(); } catch (e) { console.warn('[Canvas] milkdrop dispose error:', e); }
-      try { effect.milkdropStemRouter?.dispose(); } catch {}
-      try { effect.audiomotion?.dispose(); } catch (e) { console.warn('[Canvas] audiomotion dispose error:', e); }
-      try { effect.wavejs?.dispose(); } catch (e) { console.warn('[Canvas] wavejs dispose error:', e); }
-      try { effect.hydra?.dispose(); } catch (e) { console.warn('[Canvas] hydra dispose error:', e); }
-      try { effect.ghostfx?.dispose(); } catch (e) { console.warn('[Canvas] ghostfx dispose error:', e); }
-      try { effect.analyzerlab?.dispose(); } catch (e) { console.warn('[Canvas] analyzerlab dispose error:', e); }
-      try { effect.handfx?.dispose(); } catch (e) { console.warn('[Canvas] handfx dispose error:', e); }
-      try { if (effect.cameraTexture) { effect.cameraTexture.dispose(); effect.cameraTexture = undefined as any; } } catch {}
-      try { if (effect.prevCameraTarget) { effect.prevCameraTarget.dispose(); effect.prevCameraTarget = undefined as any; } } catch {}
-      try { effect.cameraStream?.getTracks().forEach(t => t.stop()); } catch {}
-      try { effect.renderTarget.dispose(); } catch {}
+      disposeIntegratedEffectContext(effect);
     }
     integratedEffects.clear();
     contextLost = true;
@@ -2219,17 +2304,7 @@
 
     // Clear integrated effects
     for (const effect of integratedEffects.values()) {
-      effect.fluid?.dispose();
-      effect.particles?.dispose();
-      effect.milkdrop?.dispose();
-      try { effect.milkdropStemRouter?.dispose(); } catch {}
-      effect.audiomotion?.dispose();
-      effect.wavejs?.dispose();
-      effect.hydra?.dispose();
-      effect.ghostfx?.dispose();
-      effect.analyzerlab?.dispose();
-      effect.handfx?.dispose();
-      effect.renderTarget.dispose();
+      disposeIntegratedEffectContext(effect);
     }
     integratedEffects.clear();
 
@@ -2242,8 +2317,7 @@
 
     // Clear model3d renderers
     for (const model3dCtx of model3dRenderers.values()) {
-      model3dCtx.renderer.dispose();
-      model3dCtx.renderTarget.dispose();
+      disposeModel3DContext(model3dCtx);
     }
     model3dRenderers.clear();
   }
@@ -2284,11 +2358,11 @@
     }
     stopOutputPixelBroadcast();
     stopOutputSharedTexturePresenter();
-    stopMasterWarpOutput();
-    // Owner-scoped: only clears the diff-gate if THIS canvas owns the
+    // Owner-scoped: only clears the diff-gate and disposes master-warp GPU
+    // resources if THIS canvas owns the current registration
     // current registration (in bridgeMode it never registered, so this
     // is a no-op and the WebGPU owner's gate stays intact).
-    resetMasterWarpReconcile(canvas);
+    disposeMasterWarpOutput(canvas);
 
     if (nativeRendererStatusTimer) {
       clearInterval(nativeRendererStatusTimer);
@@ -2353,17 +2427,7 @@
 
     // Dispose integrated effects
     for (const effect of integratedEffects.values()) {
-      effect.fluid?.dispose();
-      effect.particles?.dispose();
-      effect.milkdrop?.dispose();
-      try { effect.milkdropStemRouter?.dispose(); } catch {}
-      effect.audiomotion?.dispose();
-      effect.wavejs?.dispose();
-      effect.hydra?.dispose();
-      effect.ghostfx?.dispose();
-      effect.analyzerlab?.dispose();
-      effect.handfx?.dispose();
-      effect.renderTarget.dispose();
+      disposeIntegratedEffectContext(effect);
     }
     integratedEffects.clear();
 
@@ -2376,36 +2440,22 @@
 
     // Dispose model3d renderers
     for (const model3dCtx of model3dRenderers.values()) {
-      model3dCtx.renderer.dispose();
-      model3dCtx.renderTarget.dispose();
+      disposeModel3DContext(model3dCtx);
     }
     model3dRenderers.clear();
 
     // Dispose Spout receivers
-    for (const receiver of spoutReceivers.values()) {
-      // Stop polling (Electron IPC path)
-      if ((receiver as any)._stopPolling) {
-        (receiver as any)._stopPolling();
-      }
-      // Close WebSocket (Tauri WS path)
-      if (receiver.frameWs) {
-        try { receiver.frameWs.send(JSON.stringify({ type: 'unsubscribe_spout' })); } catch {}
-        receiver.frameWs.close();
-      }
-      receiver.texture.dispose();
-      // Stop the receiver via IPC
-      invoke('spout_stop_receiver', { senderName: receiver.senderName }).catch(() => {});
+    for (const key of Array.from(spoutReceivers.keys())) {
+      cleanupSpoutReceiver(key);
     }
-    spoutReceivers.clear();
+    stopOsrStatusListener?.();
+    stopOsrStatusListener = null;
 
     // Dispose NDI receivers — stop the poll loop, tear down the
     // addon-side receiver, free the DataTexture.
-    for (const ndiRecv of ndiReceivers.values()) {
-      if ((ndiRecv as any)._stopPolling) (ndiRecv as any)._stopPolling();
-      ndiRecv.texture.dispose();
-      (window as any).ghostNDI?.destroyReceiver(ndiRecv.sourceName).catch(() => {});
+    for (const key of Array.from(ndiReceivers.keys())) {
+      cleanupNdiReceiver(key);
     }
-    ndiReceivers.clear();
   });
 
   // Track active layer sources to detect changes
@@ -2706,6 +2756,11 @@
   function cleanupLayerShader(layerId: string, src: string) {
     const cacheKey = `${layerId}:${src}`;
 
+    cleanupSpoutReceiver(src);
+    cleanupSpoutReceiver(cacheKey);
+    cleanupNdiReceiver(src);
+    cleanupNdiReceiver(cacheKey);
+
     // Dispose shader instance
     const shader = shaderInstances.get(cacheKey);
     if (shader) {
@@ -2740,6 +2795,7 @@
       console.log('[Canvas] Disposed stale texture for source:', src);
     }
     loadingTextures.delete(src);
+    loadingTextures.delete(cacheKey);
   }
 
   // Async texture loading
@@ -4051,7 +4107,9 @@
       let renderer = gpuLayerRenderers.get(layer.id);
       if (!renderer) {
         try {
-          renderer = new GpuLayerRenderer(device, presentFormat, width, height);
+          renderer = new GpuLayerRenderer(device, presentFormat, width, height, {
+            handoffMode: gpuLayerUseBitmapHandoff ? 'bitmap' : 'canvas',
+          });
           gpuLayerRenderers.set(layer.id, renderer);
         } catch (err: any) {
           console.warn('[Canvas] gpu-layer: failed to create renderer for', layer.id, err?.message || err);
@@ -4097,14 +4155,14 @@
         continue;
       }
 
-      // Zero-copy bitmap handoff (Path D — see memory
-      // `zero-copy-texture-paths`). The GPU layer renderer's
-      // OffscreenCanvas → ImageBitmap → texImage2D(bitmap) path is
-      // GPU-resident SharedImage transfer throughout. Mirrors the
-      // arcade renderer's pattern.
+      // Handoff into the Three/WebGL compositor. Default is the safer
+      // canvas-backed path; `?gpu-layer-bitmap=1` re-enables the
+      // ImageBitmap path for profiling on runtimes where it is stable.
       let tex = gpuLayerTextures.get(layer.id);
       if (!tex) {
-        tex = new THREE.Texture();
+        tex = gpuLayerUseBitmapHandoff
+          ? new THREE.Texture()
+          : new THREE.CanvasTexture(renderer.canvas as any);
         tex.minFilter = THREE.LinearFilter;
         tex.magFilter = THREE.LinearFilter;
         tex.generateMipmaps = false;
@@ -4114,13 +4172,18 @@
         tex.flipY = true;
         gpuLayerTextures.set(layer.id, tex);
       }
-      const bitmap = renderer.consumeOutputBitmap();
-      if (bitmap) {
-        const prev = tex.image as ImageBitmap | undefined;
-        if (prev && typeof (prev as any).close === 'function') {
-          try { (prev as any).close(); } catch { /* */ }
+      if (gpuLayerUseBitmapHandoff) {
+        const bitmap = renderer.consumeOutputBitmap();
+        if (bitmap) {
+          const prev = tex.image as ImageBitmap | undefined;
+          if (prev && typeof (prev as any).close === 'function') {
+            try { (prev as any).close(); } catch { /* */ }
+          }
+          tex.image = bitmap;
+          tex.needsUpdate = true;
         }
-        tex.image = bitmap;
+      } else {
+        tex.image = renderer.canvas as any;
         tex.needsUpdate = true;
       }
       (layer as any)._gpuLayerTexture = tex;
@@ -4210,16 +4273,19 @@
         console.log('[Canvas] Loading 3D model:', layer.model3dContent.modelName);
 
         const ctx = model3dCtx;
+        const layerId = layer.id;
         ctx.renderer.loadModel(currentModelUrl, layer.model3dContent.modelFormat)
           .then((result) => {
+            if ((ctx as any)._disposed || model3dRenderers.get(layerId) !== ctx) return;
             const { vertexCount, faceCount } = result;
             const hasAnimations = (result as any).hasAnimations ?? false;
             console.log('[Canvas] Model loaded:', vertexCount, 'vertices,', faceCount, 'faces', hasAnimations ? `(${hasAnimations} animations)` : '');
-            project.updateModel3DContent(layer.id, { vertexCount, faceCount, hasFileAnimations: hasAnimations });
+            project.updateModel3DContent(layerId, { vertexCount, faceCount, hasFileAnimations: hasAnimations });
             ctx.loadingModel = false;
             (ctx as any)._failedUrl = null;
           })
           .catch((err) => {
+            if ((ctx as any)._disposed || model3dRenderers.get(layerId) !== ctx) return;
             console.error('[Canvas] Failed to load model:', err);
             showToast('3D model could not be loaded. Re-add the model file to this layer.');
             ctx.loadingModel = false;
@@ -4257,11 +4323,7 @@
     // Clean up renderers for removed layers
     for (const [layerId, ctx] of model3dRenderers) {
       if (!layerList.find(l => l.id === layerId && l.type === 'model3d')) {
-        ctx.renderer.dispose();
-        ctx.renderTarget.dispose();
-        // Remove offscreen canvas from DOM
-        const offCanvas = (ctx as any)._offCanvas as HTMLCanvasElement;
-        if (offCanvas?.parentElement) offCanvas.remove();
+        disposeModel3DContext(ctx);
         model3dRenderers.delete(layerId);
         console.log('[Canvas] Disposed model3d renderer for layer:', layerId);
       }
@@ -4380,21 +4442,7 @@
         // resources from the previous effect. Without this, the MediaStream
         // tracks stayed live and the video/texture leaked GPU memory every
         // time the user changed effect type on a webcam-enabled layer.
-        try { effectCtx.cameraStream?.getTracks().forEach(t => t.stop()); } catch {}
-        try { effectCtx.cameraVideoEl?.remove(); } catch {}
-        try { effectCtx.cameraTexture?.dispose(); } catch {}
-        try { effectCtx.prevCameraTarget?.dispose(); } catch {}
-        effectCtx.fluid?.dispose();
-        effectCtx.particles?.dispose();
-        effectCtx.milkdrop?.dispose();
-        try { effectCtx.milkdropStemRouter?.dispose(); } catch {}
-        effectCtx.audiomotion?.dispose();
-        effectCtx.wavejs?.dispose();
-        effectCtx.hydra?.dispose();
-        effectCtx.ghostfx?.dispose();
-        effectCtx.analyzerlab?.dispose();
-        effectCtx.handfx?.dispose();
-        effectCtx.renderTarget.dispose();
+        disposeIntegratedEffectContext(effectCtx);
         integratedEffects.delete(cacheKey);
         effectCtx = undefined;
       }
@@ -4680,16 +4728,7 @@
       // Helper that tears down a webcam-backed effect context. Called both on
       // explicit disable and on hotplug (USB webcam yanked mid-set).
       function _teardownFluidWebcam(ctx: IntegratedEffectContext) {
-        try { ctx.cameraStream?.getTracks().forEach(t => t.stop()); } catch {}
-        try { ctx.cameraVideoEl?.remove(); } catch {}
-        try { ctx.cameraTexture?.dispose(); } catch {}
-        try { ctx.prevCameraTarget?.dispose(); } catch {}
-        ctx.cameraStream = undefined;
-        ctx.cameraVideoEl = undefined;
-        ctx.cameraTexture = undefined;
-        ctx.prevCameraTarget = undefined;
-        ctx.cameraRequested = false;
-        ctx.prevCameraCopied = false;
+        disposeIntegratedCameraFeed(ctx);
       }
 
       if (effectCtx.fluid && effectSource.cameraEnabled && !effectCtx.cameraStream && !effectCtx.cameraRequested) {
@@ -5335,27 +5374,11 @@
     // Clean up effects for removed layers
     for (const [effectId, effectCtx] of integratedEffects) {
       if (!_activeEffectIds.has(effectId)) {
-        effectCtx.fluid?.dispose();
-        effectCtx.particles?.dispose();
-        effectCtx.milkdrop?.dispose();
-        effectCtx.audiomotion?.dispose();
-        effectCtx.wavejs?.dispose();
-        effectCtx.hydra?.dispose();
-        effectCtx.ghostfx?.dispose();
-        effectCtx.analyzerlab?.dispose();
-        // handfx.dispose unsubscribes from mediaPipeSource so the
-        // camera worker isn't holding a dead callback. We deliberately
-        // do NOT mediaPipeSource.stop() here — the MediaPipePanel and
-        // other gesture consumers may still be using it.
-        effectCtx.handfx?.dispose();
-        effectCtx.renderTarget.dispose();
-        // Clean up camera feed
-        if (effectCtx.cameraStream) {
-          effectCtx.cameraStream.getTracks().forEach(t => t.stop());
-          effectCtx.cameraVideoEl?.remove();
-          effectCtx.cameraTexture?.dispose();
-          effectCtx.prevCameraTarget?.dispose();
-        }
+        // handfx.dispose unsubscribes from mediaPipeSource so the camera
+        // worker isn't holding a dead callback. We deliberately do NOT
+        // mediaPipeSource.stop() here — the MediaPipePanel and other
+        // gesture consumers may still be using it.
+        disposeIntegratedEffectContext(effectCtx);
         integratedEffects.delete(effectId);
         console.log('[Canvas] Disposed integrated effect:', effectId);
       }
