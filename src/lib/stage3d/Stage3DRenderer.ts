@@ -401,6 +401,8 @@ export class Stage3DRenderer {
   private downsampleScene: THREE.Scene | null = null;
   private downsampleCamera: THREE.OrthographicCamera | null = null;
   private downsampleMaterial: THREE.ShaderMaterial | null = null;
+  private downsampleFailed = false;
+  private composerFailed = false;
 
   /** Multi-selection pivot. When 2+ targets are selected, all of them
    *  reparent under this group via THREE.Object3D.attach() so dragging
@@ -730,7 +732,7 @@ export class Stage3DRenderer {
     // so the per-frame stall stays bounded at ~one readback. Lights
     // for off-cycle LEDs hold their last colour — fine for 60fps.
     const lightInfluence = lighting.screenLightInfluence ?? 1;
-    if (this.ledEntries.length > 0 && lightInfluence > 0.001) {
+    if (this.ledEntries.length > 0 && lightInfluence > 0.001 && !this.downsampleFailed) {
       this.ensureDownsample();
       const idx = this.frameTick % this.ledEntries.length;
       const led = this.ledEntries[idx];
@@ -740,16 +742,23 @@ export class Stage3DRenderer {
         led.material.uniforms.uHasTexture.value > 0.5 &&
         this.downsampleScene && this.downsampleCamera && this.downsampleMaterial
       ) {
-        this.downsampleMaterial.uniforms.uSrc.value = inputTex;
-        renderer.setRenderTarget(led.averageRT);
-        renderer.render(this.downsampleScene, this.downsampleCamera);
-        renderer.readRenderTargetPixels(led.averageRT, 0, 0, 1, 1, led.averagePixels);
-        renderer.setRenderTarget(null);
-        led.ambientLight.color.setRGB(
-          led.averagePixels[0] / 255,
-          led.averagePixels[1] / 255,
-          led.averagePixels[2] / 255,
-        );
+        try {
+          this.downsampleMaterial.uniforms.uSrc.value = inputTex;
+          renderer.setRenderTarget(led.averageRT);
+          renderer.render(this.downsampleScene, this.downsampleCamera);
+          renderer.readRenderTargetPixels(led.averageRT, 0, 0, 1, 1, led.averagePixels);
+          renderer.setRenderTarget(null);
+          led.ambientLight.color.setRGB(
+            led.averagePixels[0] / 255,
+            led.averagePixels[1] / 255,
+            led.averagePixels[2] / 255,
+          );
+        } catch (err) {
+          renderer.setRenderTarget(null);
+          this.downsampleFailed = true;
+          for (const e of this.ledEntries) e.ambientLight.intensity = 0;
+          console.warn('[Stage3D] LED average-colour readback disabled after GPU error:', err);
+        }
       }
       // Per-LED point-light intensity scales with:
       //   • lightInfluence  → user slider (master "glow" amount)
@@ -772,18 +781,7 @@ export class Stage3DRenderer {
     }
     this.frameTick++;
 
-    if (this.composer) {
-      this.composer.setSize(width, height);
-      this.bloomPass?.setSize(width, height);
-      renderer.setScissorTest(false);
-      renderer.setViewport(0, 0, width, height);
-      this.composer.render();
-    } else {
-      renderer.setRenderTarget(null);
-      renderer.setScissorTest(false);
-      renderer.setViewport(0, 0, width, height);
-      renderer.render(this.scene, this.camera);
-    }
+    this.renderScene(renderer, width, height);
   }
 
   /** Called by the Svelte UI / pointer pick when the user clicks a
@@ -932,6 +930,8 @@ export class Stage3DRenderer {
   private ensureRenderTargets(renderer: THREE.WebGLRenderer): void {
     if (this.renderer === renderer) return;
     this.renderer = renderer;
+    this.composerFailed = false;
+    this.downsampleFailed = false;
     // LinearToneMapping is just `color *= toneMappingExposure` inside
     // every built-in material's fragment shader. No filmic S-curve, no
     // gamma. At exposure 1.0 it's indistinguishable from NoToneMapping,
@@ -967,6 +967,38 @@ export class Stage3DRenderer {
       this.pmrem = pmrem;
       disposeObject(roomEnv);
     }).catch(err => console.warn('[Stage3D] RoomEnvironment load failed', err));
+  }
+
+  private prepareFinalRender(renderer: THREE.WebGLRenderer, width: number, height: number): void {
+    renderer.setRenderTarget(null);
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, width, height);
+    renderer.autoClear = true;
+    renderer.resetState?.();
+  }
+
+  private renderSceneDirect(renderer: THREE.WebGLRenderer, width: number, height: number): void {
+    this.prepareFinalRender(renderer, width, height);
+    renderer.render(this.scene, this.camera);
+  }
+
+  private renderScene(renderer: THREE.WebGLRenderer, width: number, height: number): void {
+    const bloomActive = (this.bloomPass?.strength ?? 0) > 0.001;
+    const useComposer = !!this.composer && bloomActive && !this.composerFailed;
+    if (!useComposer) {
+      this.renderSceneDirect(renderer, width, height);
+      return;
+    }
+    try {
+      this.composer!.setSize(width, height);
+      this.bloomPass?.setSize(width, height);
+      this.prepareFinalRender(renderer, width, height);
+      this.composer!.render();
+    } catch (err) {
+      this.composerFailed = true;
+      console.warn('[Stage3D] Postprocessing disabled after GPU error:', err);
+      this.renderSceneDirect(renderer, width, height);
+    }
   }
 
   // ── Venue swap ───────────────────────────────────────────────────────

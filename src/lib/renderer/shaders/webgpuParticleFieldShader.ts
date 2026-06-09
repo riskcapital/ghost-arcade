@@ -173,6 +173,30 @@ export const particleFieldParamSchema: ParamControl[] = [
   { kind: 'slider', key: 'lightStrength', label: 'Light Strength', group: 'Atmosphere',
     min: 0, max: 1, step: 0.01, default: 0.6 },
 
+  // ── Sphere Material ──────────────────────────────────────────
+  // Duplicated showWhen entries give us a simple OR for sphere and
+  // softSphere without complicating the generic param-panel logic.
+  { kind: 'slider', key: 'materialAmbient', label: 'Ambient', group: 'Sphere Material',
+    min: 0, max: 1, step: 0.01, default: 0.34, showWhen: { topology: 'sphere' } },
+  { kind: 'slider', key: 'materialDiffuse', label: 'Diffuse', group: 'Sphere Material',
+    min: 0, max: 2, step: 0.01, default: 0.92, showWhen: { topology: 'sphere' } },
+  { kind: 'slider', key: 'materialSpecular', label: 'Specular', group: 'Sphere Material',
+    min: 0, max: 2, step: 0.01, default: 0.58, showWhen: { topology: 'sphere' } },
+  { kind: 'slider', key: 'materialShininess', label: 'Gloss', group: 'Sphere Material',
+    min: 4, max: 160, step: 1, default: 56, showWhen: { topology: 'sphere' } },
+  { kind: 'slider', key: 'materialReflection', label: 'Reflection', group: 'Sphere Material',
+    min: 0, max: 1, step: 0.01, default: 0.18, showWhen: { topology: 'sphere' } },
+  { kind: 'slider', key: 'materialAmbient', label: 'Ambient', group: 'Sphere Material',
+    min: 0, max: 1, step: 0.01, default: 0.34, showWhen: { topology: 'softSphere' } },
+  { kind: 'slider', key: 'materialDiffuse', label: 'Diffuse', group: 'Sphere Material',
+    min: 0, max: 2, step: 0.01, default: 0.92, showWhen: { topology: 'softSphere' } },
+  { kind: 'slider', key: 'materialSpecular', label: 'Specular', group: 'Sphere Material',
+    min: 0, max: 2, step: 0.01, default: 0.58, showWhen: { topology: 'softSphere' } },
+  { kind: 'slider', key: 'materialShininess', label: 'Gloss', group: 'Sphere Material',
+    min: 4, max: 160, step: 1, default: 56, showWhen: { topology: 'softSphere' } },
+  { kind: 'slider', key: 'materialReflection', label: 'Reflection', group: 'Sphere Material',
+    min: 0, max: 1, step: 0.01, default: 0.18, showWhen: { topology: 'softSphere' } },
+
   // ── Audio ─────────────────────────────────────────────────────
   { kind: 'toggle', key: 'audioReactive', label: 'Audio Reactive', group: 'Audio', default: true },
   { kind: 'slider', key: 'burstGain', label: 'Bass Burst Gain', group: 'Audio',
@@ -389,6 +413,11 @@ export class WebGPUParticleFieldShader implements GpuShaderImpl {
       lightY: p.lightY ?? 0.6,
       lightZ: p.lightZ ?? 0.7,
       lightStrength: p.lightStrength ?? 0.6,
+      materialAmbient: p.materialAmbient ?? 0.34,
+      materialDiffuse: p.materialDiffuse ?? 0.92,
+      materialSpecular: p.materialSpecular ?? 0.58,
+      materialShininess: p.materialShininess ?? 56,
+      materialReflection: p.materialReflection ?? 0.18,
       fovDeg: p.fovDeg ?? 50,
       cameraZ: p.cameraZ ?? 2.4,
       rotateX: p.rotateX ?? 0,
