@@ -947,6 +947,10 @@ export class SplatRenderer {
   private _mouseIntersection = new THREE.Vector3();
   private pointCloudScale = 1; // Track current scale for mouse radius adjustment
   private pointCloudBounds = { min: new THREE.Vector3(), max: new THREE.Vector3(), size: 1 };
+  private boundMouseMove = (event: MouseEvent) => this.onMouseMove(event);
+  private boundMouseLeave = () => {
+    this.mousePosition.set(1000, 1000, 1000);
+  };
 
   /**
    * Create a SplatRenderer.
@@ -983,10 +987,8 @@ export class SplatRenderer {
       this.renderer.setPixelRatio(1);
 
       // Mouse event listeners (only in standalone mode with a real canvas)
-      canvasOrWidth.addEventListener('mousemove', this.onMouseMove.bind(this));
-      canvasOrWidth.addEventListener('mouseleave', () => {
-        this.mousePosition.set(1000, 1000, 1000);
-      });
+      canvasOrWidth.addEventListener('mousemove', this.boundMouseMove);
+      canvasOrWidth.addEventListener('mouseleave', this.boundMouseLeave);
     }
 
     this.startTime = performance.now();
@@ -1758,7 +1760,8 @@ export class SplatRenderer {
     if (this.renderer) this.renderer.dispose();
 
     if (this.canvas) {
-      this.canvas.removeEventListener('mousemove', this.onMouseMove);
+      this.canvas.removeEventListener('mousemove', this.boundMouseMove);
+      this.canvas.removeEventListener('mouseleave', this.boundMouseLeave);
     }
   }
 

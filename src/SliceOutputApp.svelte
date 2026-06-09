@@ -27,7 +27,7 @@
   import { initLicense } from './lib/stores/license';
   import { settings, type OutputSlice, masterWarpIsActive } from './lib/stores/settings';
   import { applyEdgeBlending } from './lib/output/outputPostProcess';
-  import { startMasterWarpOutput, stopMasterWarpOutput, tickMasterWarpOutput, getMasterWarpCanvas } from './lib/sync/outputComposite';
+  import { startMasterWarpOutput, stopMasterWarpOutput, tickMasterWarpOutput, getMasterWarpCanvas, disposeMasterWarpOutput } from './lib/sync/outputComposite';
   import { ensureWebGPUDevice } from './lib/renderer/webgpuShared';
   import { invoke } from '$lib/bridge';
 
@@ -829,7 +829,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 
   onDestroy(() => {
     cancelAnimationFrame(rafId);
-    stopMasterWarpOutput();
+    disposeMasterWarpOutput();
     destroyStateBroadcast();
     if (zeroCopySliceMode) {
       window.removeEventListener('message', handlePortIntake);

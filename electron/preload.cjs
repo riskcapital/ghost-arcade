@@ -201,7 +201,9 @@ contextBridge.exposeInMainWorld('electronOSR', {
    * Called when OSR zero-copy becomes active or falls back to CPU path.
    */
   onOsrStatus: (callback) => {
-    ipcRenderer.on('spout-osr-status', (_event, data) => callback(data));
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('spout-osr-status', handler);
+    return () => ipcRenderer.removeListener('spout-osr-status', handler);
   },
 });
 

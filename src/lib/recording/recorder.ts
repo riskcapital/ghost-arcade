@@ -136,6 +136,12 @@ export function startRecording(options: RecorderOptions = {}): RecorderHandle | 
   // encoder handles duplicates fine and the resulting file plays back
   // smoothly on any framerate target.
   const videoStream = canvas.captureStream(60);
+  let videoStreamCleaned = false;
+  const cleanupVideoStream = () => {
+    if (videoStreamCleaned) return;
+    videoStreamCleaned = true;
+    try { videoStream.getTracks().forEach(track => track.stop()); } catch {}
+  };
 
   // Get audio stream (if enabled and available)
   let combinedStream: MediaStream;
@@ -182,10 +188,20 @@ export function startRecording(options: RecorderOptions = {}): RecorderHandle | 
     // If audio codec fails, try video-only
     console.warn('[Recorder] Failed with audio codec, falling back to video-only:', err);
     const videoOnlyMime = findSupportedMimeType(getMimeType(recSettings.format), false);
-    mediaRecorder = new MediaRecorder(videoStream, {
-      mimeType: videoOnlyMime,
-      videoBitsPerSecond: recSettings.videoBitrate,
-    });
+    try {
+      mediaRecorder = new MediaRecorder(videoStream, {
+        mimeType: videoOnlyMime,
+        videoBitsPerSecond: recSettings.videoBitrate,
+      });
+    } catch (fallbackErr) {
+      cleanupVideoStream();
+      if (audioCleanup) {
+        audioCleanup();
+        audioCleanup = null;
+      }
+      options.onError?.(fallbackErr instanceof Error ? fallbackErr : new Error(String(fallbackErr)));
+      return null;
+    }
     hasAudio = false;
     if (audioCleanup) {
       audioCleanup();
@@ -227,17 +243,21 @@ export function startRecording(options: RecorderOptions = {}): RecorderHandle | 
 
   // Stop handler
   mediaRecorder.onstop = async () => {
-    const finalMime = mediaRecorder.mimeType || mimeType;
-    const blob = new Blob(recordedChunks, { type: finalMime });
-    await saveRecordingToLibrary(blob, finalMime, options.namePrefix || 'Recording');
-
-    // Cleanup audio destination node if created
-    if (audioCleanup) {
-      audioCleanup();
-      audioCleanup = null;
+    try {
+      const finalMime = mediaRecorder.mimeType || mimeType;
+      const blob = new Blob(recordedChunks, { type: finalMime });
+      await saveRecordingToLibrary(blob, finalMime, options.namePrefix || 'Recording');
+      options.onComplete?.();
+    } catch (err) {
+      options.onError?.(err instanceof Error ? err : new Error(String(err)));
+    } finally {
+      cleanupVideoStream();
+      // Cleanup audio destination node if created
+      if (audioCleanup) {
+        audioCleanup();
+        audioCleanup = null;
+      }
     }
-
-    options.onComplete?.();
   };
 
   // Defer start by two rAF ticks — see comment above. Two ticks (vs one)
@@ -251,13 +271,22 @@ export function startRecording(options: RecorderOptions = {}): RecorderHandle | 
         // run cleanup paths directly so the caller's onComplete still
         // fires and audio resources are released.
         clearInterval(durationInterval);
+        cleanupVideoStream();
         if (audioCleanup) { audioCleanup(); audioCleanup = null; }
         options.onComplete?.();
         return;
       }
-      mediaRecorder.start(1000);
-      mediaRecorderStarted = true;
-      console.log(`[Recorder] Started — ${mimeType} — audio: ${hasAudio} — fps: 60`);
+      try {
+        mediaRecorder.start(1000);
+        mediaRecorderStarted = true;
+        console.log(`[Recorder] Started — ${mimeType} — audio: ${hasAudio} — fps: 60`);
+      } catch (err) {
+        isRecording = false;
+        clearInterval(durationInterval);
+        cleanupVideoStream();
+        if (audioCleanup) { audioCleanup(); audioCleanup = null; }
+        options.onError?.(err instanceof Error ? err : new Error(String(err)));
+      }
     });
   });
 

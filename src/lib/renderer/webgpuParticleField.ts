@@ -19,6 +19,10 @@
  *   field   — pure curl-noise drift around home positions
  *   media   — positions sampled from an image / video luminance map;
  *             classic Refik-style media-driven particle field
+ *   gravity — particles fall through orbiting gravity wells with
+ *             core repulsion, velocity clamp, and audio-expanded
+ *             attractor radius. Inspired by WebGPU compute-body demos,
+ *             but implemented in this renderer's WGSL pipeline.
  *
  * TOPOLOGIES (per-particle render primitive):
  *   points  — sharp dots (cheap, classic)
@@ -26,6 +30,8 @@
  *   streaks — velocity-extruded quads (motion trails)
  *   sphere  — billboard with normal-from-uv shading; gives a 3D
  *             feel without volumetric raymarching
+ *   softSphere — larger shaded sphere impostors with varied radii,
+ *             depth testing, soft edges, and pastel volumetric mass
  *
  * CONNECTIONS (toggle):
  *   For each particle we deterministically pick K "partner candidates"
@@ -71,14 +77,14 @@ const MAX_PARTICLES = 500_000;
 const DEFAULT_PARTNERS = 16;
 const MAX_EDGES = 600_000;
 
-type BehaviorMode = 'galaxy' | 'atomic' | 'swarm' | 'lattice' | 'field' | 'media';
-type Topology     = 'points' | 'glow' | 'streaks' | 'sphere';
+type BehaviorMode = 'galaxy' | 'atomic' | 'swarm' | 'lattice' | 'field' | 'media' | 'gravity';
+type Topology     = 'points' | 'glow' | 'streaks' | 'sphere' | 'softSphere';
 
 const MODE_ID: Record<BehaviorMode, number> = {
-  'galaxy': 0, 'atomic': 1, 'swarm': 2, 'lattice': 3, 'field': 4, 'media': 5,
+  'galaxy': 0, 'atomic': 1, 'swarm': 2, 'lattice': 3, 'field': 4, 'media': 5, 'gravity': 6,
 };
 const TOPO_ID: Record<Topology, number> = {
-  'points': 0, 'glow': 1, 'streaks': 2, 'sphere': 3,
+  'points': 0, 'glow': 1, 'streaks': 2, 'sphere': 3, 'softSphere': 4,
 };
 
 // Color enums shared with the rest of the GPU edition. Kept in lockstep
@@ -168,6 +174,10 @@ struct U {
   colorB: vec3<f32>, _padB: f32,
   colorC: vec3<f32>, _padC: f32,
   colorD: vec3<f32>, _padD: f32,
+  // Block 17 — gravity well params
+  gravityWells: f32, gravityStrength: f32, gravityOrbit: f32, gravityCoreSize: f32,
+  // Block 18 — gravity shaping
+  gravityVortex: f32, gravityMaxVelocity: f32, gravityAudioDrive: f32, gravityChaos: f32,
 };
 
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
@@ -345,6 +355,66 @@ fn behaviorMedia(i: u32, p: Particle) -> vec3<f32> {
   return (targetPos - p.pos) / max(u.dt, 0.001);
 }
 
+fn behaviorGravity(i: u32, p: Particle) -> vec3<f32> {
+  // Multi-attractor particle-body field. Particles are assigned a
+  // primary well by group, but every well contributes a softened force.
+  // This gets the "compute-sim bodies around glowing masses" feeling
+  // without an O(N^2) particle/particle collision pass.
+  let wells = max(1.0, min(8.0, floor(u.gravityWells)));
+  let audio = clamp(u.bass * 0.8 + u.treble * 0.25, 0.0, 1.5);
+  let strength = u.gravityStrength * (1.0 + audio * u.gravityAudioDrive);
+  let core = max(0.02, u.gravityCoreSize * (1.0 + audio * 0.9));
+  let orbitT = u.time * u.gravityOrbit;
+
+  var accel = vec3<f32>(0.0);
+  for (var wi: u32 = 0u; wi < 8u; wi = wi + 1u) {
+    if (f32(wi) >= wells) { break; }
+    let wf = f32(wi);
+    let phase = wf / wells * 6.2831853;
+    let ring = mix(0.28, 0.88, fract(wf * 0.37 + 0.17));
+    let wob = sin(orbitT * 0.73 + phase * 1.9) * 0.25;
+    let center = vec3<f32>(
+      cos(orbitT + phase) * ring,
+      sin(orbitT * 0.41 + phase * 2.3) * 0.34,
+      sin(orbitT * 1.13 + phase + wob) * ring,
+    );
+
+    let dv = center - p.pos;
+    let d2 = dot(dv, dv) + 0.018;
+    let d = sqrt(d2);
+    let dir = dv / max(d, 1e-4);
+    let primary = select(0.45, 1.0, (p.group % u32(wells)) == wi);
+    let pull = dir * (strength * primary / d2);
+
+    // Tangential swirl turns a raw point attractor into a theatrical
+    // orbital well. Alternate handedness so multiple wells braid.
+    let up = normalize(vec3<f32>(
+      sin(phase + 0.3),
+      1.25,
+      cos(phase * 1.7 + 0.2),
+    ));
+    let tangent = normalize(cross(dir, up) + vec3<f32>(1e-4, 0.0, 0.0));
+    let spinSign = select(-1.0, 1.0, (wi % 2u) == 0u);
+    let spin = tangent * spinSign * u.gravityVortex * primary / max(d, 0.14);
+
+    // Core repulsion mimics collision separation from the central body:
+    // near the well, particles are pushed out instead of collapsing.
+    let repel = -dir * smoothstep(core * 2.2, core * 0.45, d) * strength * 2.2;
+    accel = accel + pull + spin + repel;
+  }
+
+  // Mild curl chaos keeps the cloud organic and lets treble shimmer
+  // read as nervous filament motion rather than random sparkle.
+  let chaos = curl3(p.pos * 3.0 + vec3<f32>(0.0, orbitT * 0.35, u.time * 0.12));
+  accel = accel + chaos * u.gravityChaos * (0.45 + u.treble * 1.4);
+
+  let speed = length(accel);
+  if (speed > u.gravityMaxVelocity) {
+    accel = accel * (u.gravityMaxVelocity / max(speed, 1e-4));
+  }
+  return accel;
+}
+
 // ── Color computation ──────────────────────────────────────────
 fn paletteColor(t: f32, i: u32) -> vec3<f32> {
   if (u.colorMode == 0u) { return u.colorA; }                                                // solid
@@ -389,6 +459,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   else if (u.mode == 3u) { targetVel = behaviorLattice(i, p); }
   else if (u.mode == 4u) { targetVel = behaviorField(i, p); }
   else if (u.mode == 5u) { targetVel = behaviorMedia(i, p); }
+  else if (u.mode == 6u) { targetVel = behaviorGravity(i, p); }
 
   // Bass burst — universal radial impulse, blends with the behavior.
   let outward = normalize(p.pos + vec3<f32>(1e-5, 0.0, 0.0));
@@ -443,8 +514,17 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   hsv.z = clamp(hsv.z * u.brightness, 0.0, 4.0);
   p.color = hsv2rgb(hsv);
 
-  // Size pulse on bass.
-  p.size = u.baseSize * (1.0 + u.bass * 1.2);
+  // Size pulse on bass. p.life carries a stable per-particle radius
+  // multiplier seeded on the CPU; soft spheres lean into it so the
+  // cloud reads like mixed 3D balls instead of same-size particles.
+  let radiusVar = max(p.life, 0.1);
+  if (u.topology == 4u) {
+    p.size = u.baseSize * radiusVar * (1.0 + u.bass * 0.75);
+  } else if (u.topology == 3u) {
+    p.size = u.baseSize * mix(1.0, radiusVar, 0.35) * (1.0 + u.bass * 1.0);
+  } else {
+    p.size = u.baseSize * (1.0 + u.bass * 1.2);
+  }
   p.alpha = 1.0;
 
   particles[i] = p;
@@ -527,7 +607,7 @@ fn cs_edges(@builtin(global_invocation_id) gid: vec3<u32>) {
 `;
 
 /* ============================================================== */
-/* PARTICLE RENDER — 4 topologies in one shader                   */
+/* PARTICLE RENDER — 5 topologies in one shader                   */
 /* ============================================================== */
 const RENDER_WGSL = /* wgsl */ `
 struct Particle {
@@ -609,8 +689,13 @@ fn vs_main(
     );
     let q = xy[vid];
     uvOut = vec2<f32>(q.x, q.y);  // -1..1 — used by sphere shading
-    // glow billboards are 2× the size to give a soft halo
-    let scale = select(p.size, p.size * 2.0, u.topology == 1u);
+    // Glow billboards are 2× the size to give a soft halo. Soft
+    // spheres are slightly overscanned so their anti-aliased rim has
+    // room to breathe.
+    var scale = select(p.size, p.size * 2.0, u.topology == 1u);
+    if (u.topology == 4u) {
+      scale = p.size * 1.35;
+    }
     offset = u.camRight * (q.x * scale) + u.camUp * (q.y * scale);
   }
 
@@ -637,6 +722,7 @@ fn vs_main(
 fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   var mask: f32 = 1.0;
   var shade: f32 = 1.0;
+  var litColor: vec3<f32> = in.color;
 
   if (u.topology == 2u) {
     // Stroke taper
@@ -648,17 +734,31 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     let d = length(in.uv);
     if (d > 1.0) { discard; }
     mask = exp(-d * d * 2.5);
-  } else if (u.topology == 3u) {
+  } else if (u.topology == 3u || u.topology == 4u) {
     // Sphere — reconstruct a hemisphere normal from the billboard UV,
     // shade with the light direction for a 3D-orb look.
     let d2 = dot(in.uv, in.uv);
     if (d2 > 1.0) { discard; }
     let z = sqrt(1.0 - d2);
-    let n = vec3<f32>(in.uv.x, in.uv.y, z);
+    let n = normalize(vec3<f32>(in.uv.x, in.uv.y, z));
     let ndl = max(dot(n, u.lightDir), 0.0);
-    shade = mix(1.0, ndl, u.lightStrength) + 0.15;  // ambient floor
-    // Sphere fragments have edges; use a quadratic falloff for soft edge.
-    mask = smoothstep(1.0, 0.85, sqrt(d2)) * 0.5 + 0.5;
+    if (u.topology == 4u) {
+      let rim = pow(clamp(1.0 - z, 0.0, 1.0), 2.4);
+      let wrap = pow(clamp(dot(n, u.lightDir) * 0.5 + 0.5, 0.0, 1.0), 1.7);
+      let halfDir = normalize(u.lightDir + vec3<f32>(0.0, 0.0, 1.0));
+      let highlight = pow(max(dot(n, halfDir), 0.0), 42.0) * u.lightStrength;
+      let bellyShadow = smoothstep(-0.75, 0.65, n.y * 0.85 + n.z * 0.35);
+      shade = (0.42 + ndl * 0.9 + wrap * 0.25) * mix(0.72, 1.08, bellyShadow);
+      litColor = in.color * shade + vec3<f32>(1.0, 0.94, 0.88) * highlight * 0.7;
+      litColor = mix(litColor, litColor + in.color * 0.18, rim * 0.45);
+      mask = smoothstep(1.0, 0.92, sqrt(d2));
+      if (mask < 0.025) { discard; }
+    } else {
+      shade = mix(1.0, ndl, u.lightStrength) + 0.15;  // ambient floor
+      // Sphere fragments have edges; use a quadratic falloff for soft edge.
+      mask = smoothstep(1.0, 0.85, sqrt(d2)) * 0.5 + 0.5;
+      litColor = in.color * shade;
+    }
   } else {
     // POINT — soft disc
     let d = length(in.uv);
@@ -679,13 +779,16 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   // This isn't physically accurate shadowing — but visually it reads
   // as "the cloud has a lit side and a dark side," which is what users
   // want when they put a light into a particle field.
-  if (u.topology != 3u && u.lightStrength > 0.001) {
+  if (u.topology != 3u && u.topology != 4u && u.lightStrength > 0.001) {
     let ndl = dot(in.particleDir, u.lightDir);          // [-1, 1]
     let lit = ndl * 0.5 + 0.5;                          // [0, 1]
     // Bias toward dark side getting darker than the unlit baseline —
     // gives the impression of self-occlusion.
     let shadeMod = mix(0.25, 1.35, lit);                // dark side ~0.25, lit side ~1.35
     shade = shade * mix(1.0, shadeMod, u.lightStrength);
+  }
+  if (u.topology != 3u && u.topology != 4u) {
+    litColor = in.color * shade;
   }
 
   // Depth-based fog. Particles farther from the camera fade INTO
@@ -694,7 +797,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   // background atmosphere — that's what makes the fog read as
   // volumetric rather than just "particles get a color tint."
   let fog = exp(-u.fogDensity * in.worldDist);
-  let col = mix(u.fogColor, in.color * shade, fog);
+  let col = mix(u.fogColor, litColor, fog);
   let a = in.alpha * mask * fog;
   return vec4<f32>(col * a, a);
 }
@@ -840,6 +943,14 @@ export interface ParticleFieldParams {
   latticeVibration: number;
   mediaDepthAmount: number;
   mediaSampleScale: number;
+  gravityWells: number;
+  gravityStrength: number;
+  gravityOrbit: number;
+  gravityCoreSize: number;
+  gravityVortex: number;
+  gravityMaxVelocity: number;
+  gravityAudioDrive: number;
+  gravityChaos: number;
   // Topology
   topology: Topology;
   strokeLength: number;
@@ -918,6 +1029,14 @@ const DEFAULT_PARAMS: ParticleFieldParams = {
   latticeVibration: 0.015,
   mediaDepthAmount: 0.6,
   mediaSampleScale: 1.0,
+  gravityWells: 4,
+  gravityStrength: 0.18,
+  gravityOrbit: 0.45,
+  gravityCoreSize: 0.09,
+  gravityVortex: 0.34,
+  gravityMaxVelocity: 5.0,
+  gravityAudioDrive: 1.15,
+  gravityChaos: 0.18,
   topology: 'glow',
   strokeLength: 0.04,
   strokeWidth: 0.004,
@@ -1004,7 +1123,12 @@ export class WebGPUParticleField {
   private behaviorPipeline: any;
   private edgePipeline: any;
   private renderPipeline: any;
+  private renderAlphaPipeline: any;
   private linePipeline: any;
+  private depthTexture: any = null;
+  private depthTextureView: any = null;
+  private depthW = 0;
+  private depthH = 0;
   // Bind groups
   private behaviorBindGroup: any = null;
   private edgeBindGroup: any = null;
@@ -1040,8 +1164,9 @@ export class WebGPUParticleField {
 
   private init(): void {
     // ── Allocate uniform buffers ────────────────────────────────
-    // Behavior uniform: ~17 16-byte blocks + 4 palette colors = 17 + 4 = 21 → 21*16 = 336.
-    // Round to 384 for headroom.
+    // Behavior uniform: core blocks + palette + gravity controls.
+    // Current layout uses 19 16-byte blocks (304 bytes); keep 384 for
+    // alignment and future headroom.
     this.behaviorUniform = this.device.createBuffer({
       size: 384,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -1142,6 +1267,7 @@ export class WebGPUParticleField {
       const off = i * 16;  // 64 bytes / 4 = 16 floats per particle
       let x = 0, y = 0, z = 0;
       let group = 0;
+      let radiusVar = 1;
       if (mode === 'galaxy') {
         // Spawn near the disc; arm index = i mod arms
         group = i % Math.max(1, this.params.galaxyArms | 0);
@@ -1173,6 +1299,22 @@ export class WebGPUParticleField {
         y = (iy / sz - 0.5) * this.params.latticeSpacing;
         z = (iz / sz - 0.5) * this.params.latticeSpacing;
         group = i;
+      } else if (mode === 'gravity') {
+        const wells = Math.max(1, Math.min(8, this.params.gravityWells | 0));
+        group = i % wells;
+        const phase = (group / wells) * Math.PI * 2;
+        const shell = Math.pow(Math.random(), 0.55) * 0.9 + 0.08;
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(Math.random() * 2 - 1);
+        const cx = Math.cos(phase) * 0.45;
+        const cz = Math.sin(phase) * 0.45;
+        x = cx + Math.sin(phi) * Math.cos(theta) * shell;
+        y = (Math.random() - 0.5) * 0.75 + Math.cos(phi) * shell * 0.35;
+        z = cz + Math.sin(phi) * Math.sin(theta) * shell;
+        const jumbo = i % 233 === 0;
+        radiusVar = jumbo
+          ? 4.2 + Math.random() * 2.4
+          : 0.36 + Math.pow(Math.random(), 2.35) * 2.8;
       } else {
         // swarm / field / media — random unit sphere
         let rx = 0, ry = 0, rz = 0, ll = 0;
@@ -1185,10 +1327,13 @@ export class WebGPUParticleField {
         x = rx; y = ry; z = rz;
         group = i & 15;
       }
+      if (mode !== 'gravity') {
+        radiusVar = 0.72 + Math.pow(Math.random(), 1.8) * 1.35;
+      }
 
       f[off + 0] = x; f[off + 1] = y; f[off + 2] = z; f[off + 3] = 1; // pos + alpha
       f[off + 4] = 0; f[off + 5] = 0; f[off + 6] = 0; f[off + 7] = this.params.baseSize; // vel + size
-      f[off + 8] = 0.6; f[off + 9] = 0.7; f[off + 10] = 0.95; f[off + 11] = 1; // color + life
+      f[off + 8] = 0.6; f[off + 9] = 0.7; f[off + 10] = 0.95; f[off + 11] = radiusVar; // color + radius var
       u[off + 12] = group >>> 0;  // group as u32
       f[off + 13] = 0;             // age
       f[off + 14] = 0;             // pad
@@ -1273,6 +1418,21 @@ export class WebGPUParticleField {
         targets: [{ format: this.presentFormat, blend: BLEND_ADD }],
       },
       primitive: { topology: 'triangle-list' },
+    });
+    this.renderAlphaPipeline = this.device.createRenderPipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.renderLayout] }),
+      vertex:   { module: renderMod, entryPoint: 'vs_main' },
+      fragment: {
+        module: renderMod,
+        entryPoint: 'fs_main',
+        targets: [{ format: this.presentFormat, blend: BLEND_PREMULT_OVER }],
+      },
+      primitive: { topology: 'triangle-list' },
+      depthStencil: {
+        format: 'depth24plus',
+        depthWriteEnabled: true,
+        depthCompare: 'less',
+      },
     });
 
     // ── Line render pipeline ───────────────────────────────────
@@ -1410,6 +1570,21 @@ export class WebGPUParticleField {
     this.rebuildBindGroups();
   }
 
+  private ensureDepthTexture(w: number, h: number): void {
+    w = Math.max(1, w | 0);
+    h = Math.max(1, h | 0);
+    if (this.depthTexture && this.depthW === w && this.depthH === h) return;
+    try { this.depthTexture?.destroy?.(); } catch { /* */ }
+    this.depthTexture = this.device.createTexture({
+      size: [w, h, 1],
+      format: 'depth24plus',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    this.depthTextureView = this.depthTexture.createView();
+    this.depthW = w;
+    this.depthH = h;
+  }
+
   encodeFrame(encoder: any, targetView: any): void {
     const now = performance.now() / 1000;
     let dt = this.prevFrameTime === 0 ? 1 / 60 : (now - this.prevFrameTime);
@@ -1474,6 +1649,12 @@ export class WebGPUParticleField {
     bF[56] = this.params.colorB[0]; bF[57] = this.params.colorB[1]; bF[58] = this.params.colorB[2];
     bF[60] = this.params.colorC[0]; bF[61] = this.params.colorC[1]; bF[62] = this.params.colorC[2];
     bF[64] = this.params.colorD[0]; bF[65] = this.params.colorD[1]; bF[66] = this.params.colorD[2];
+    // Block 17 — gravity wells
+    bF[68] = this.params.gravityWells; bF[69] = this.params.gravityStrength;
+    bF[70] = this.params.gravityOrbit; bF[71] = this.params.gravityCoreSize;
+    // Block 18 — gravity shaping
+    bF[72] = this.params.gravityVortex; bF[73] = this.params.gravityMaxVelocity;
+    bF[74] = this.params.gravityAudioDrive; bF[75] = this.params.gravityChaos;
     this.device.queue.writeBuffer(this.behaviorUniform, 0, bBuf);
 
     // ── Reset the indirect counter (instance_count = 0) ────────
@@ -1589,33 +1770,66 @@ export class WebGPUParticleField {
     // 2) Particles — premult alpha-over composites onto the fog.
     // 3) Lines — premult alpha-over so opacity controls really work
     //    rather than additive saturation to white.
-    const pass = encoder.beginRenderPass({
-      colorAttachments: [{
-        view: targetView,
-        loadOp: 'load',
-        storeOp: 'store',
-      }],
-    });
+    const useSphereDepth = this.params.topology === 'sphere' || this.params.topology === 'softSphere';
+    if (useSphereDepth) this.ensureDepthTexture(this.viewportW, this.viewportH);
+
     // (1) Fog fill — only if opacity > epsilon (skip the no-op).
     if (this.params.fogOpacity > 0.001) {
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: targetView,
+          loadOp: 'load',
+          storeOp: 'store',
+        }],
+      });
       pass.setPipeline(this.fogPipeline);
       pass.setBindGroup(0, this.fogBindGroup);
       pass.draw(3, 1, 0, 0);  // 3-vertex fullscreen triangle
+      pass.end();
     }
-    // (2) Particles
-    pass.setPipeline(this.renderPipeline);
-    pass.setBindGroup(0, this.renderBindGroup);
-    pass.draw(6, this.particleCount, 0, 0);
+
+    // (2) Particles. Sphere impostors use a depth attachment so they
+    // occlude like objects; point/glow/streak modes stay additive.
+    {
+      const renderPassDesc: any = {
+        colorAttachments: [{
+          view: targetView,
+          loadOp: 'load',
+          storeOp: 'store',
+        }],
+      };
+      if (useSphereDepth && this.depthTextureView) {
+        renderPassDesc.depthStencilAttachment = {
+          view: this.depthTextureView,
+          depthClearValue: 1.0,
+          depthLoadOp: 'clear',
+          depthStoreOp: 'discard',
+        };
+      }
+      const pass = encoder.beginRenderPass(renderPassDesc);
+      pass.setPipeline(useSphereDepth ? this.renderAlphaPipeline : this.renderPipeline);
+      pass.setBindGroup(0, this.renderBindGroup);
+      pass.draw(6, this.particleCount, 0, 0);
+      pass.end();
+    }
+
     // (3) Lines
     if (this.params.connectEnabled) {
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: targetView,
+          loadOp: 'load',
+          storeOp: 'store',
+        }],
+      });
       pass.setPipeline(this.linePipeline);
       pass.setBindGroup(0, this.lineBindGroup);
       // drawIndirect reads (vertex_count, instance_count, first_vertex,
       // first_instance) from the indirect buffer at offset 0. Edge-gen
       // has atomically populated instance_count this frame.
       pass.drawIndirect(this.indirectBuffer, 0);
+      pass.end();
     }
-    pass.end();
   }
 
   dispose(): void {
@@ -1628,8 +1842,13 @@ export class WebGPUParticleField {
     try { this.lineUniform?.destroy?.(); } catch { /* */ }
     try { this.fogUniform?.destroy?.(); } catch { /* */ }
     try { this.mediaTex?.destroy?.(); } catch { /* */ }
+    try { this.depthTexture?.destroy?.(); } catch { /* */ }
     this.particleBuffer = null;
     this.indirectBuffer = null;
     this.edgeBuffer = null;
+    this.mediaTex = null;
+    this.mediaTexView = null;
+    this.depthTexture = null;
+    this.depthTextureView = null;
   }
 }

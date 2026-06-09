@@ -44,6 +44,9 @@ asarUnpack:
   # the NDI SDK was found at compile time (electron/native/CMakeLists.txt
   # copies it from the SDK install).
   - "electron/native/build/Release/*.dll"
+  # NDI Linux runtime shared object — copied next to ndi_addon.node and
+  # resolved through the addon's $ORIGIN rpath.
+  - "electron/native/build/Release/*.so*"
 
 # ─── File Associations ─────────────────────────────────────────────────────
 fileAssociations:

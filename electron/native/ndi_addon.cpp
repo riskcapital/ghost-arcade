@@ -225,6 +225,44 @@ struct NdiReceiver {
 };
 std::map<std::string, std::unique_ptr<NdiReceiver>> g_receivers;
 std::mutex g_recv_mutex;
+bool g_cleanup_hook_registered = false;
+
+void CleanupAddonResources(void*) {
+  {
+    std::lock_guard<std::mutex> lock(g_recv_mutex);
+    for (auto& entry : g_receivers) {
+      if (entry.second && entry.second->instance) {
+        NDIlib_recv_destroy(entry.second->instance);
+        entry.second->instance = nullptr;
+      }
+    }
+    g_receivers.clear();
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    for (auto& entry : g_senders) {
+      if (entry.second && entry.second->instance) {
+        NDIlib_send_destroy(entry.second->instance);
+        entry.second->instance = nullptr;
+      }
+    }
+    g_senders.clear();
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(g_finder_mutex);
+    if (g_finder) {
+      NDIlib_find_destroy(g_finder);
+      g_finder = nullptr;
+    }
+  }
+
+  if (g_ndi_initialized) {
+    NDIlib_destroy();
+    g_ndi_initialized = false;
+  }
+}
 
 NDIlib_find_instance_t ensureFinder() {
   std::lock_guard<std::mutex> lock(g_finder_mutex);
@@ -391,6 +429,11 @@ Napi::Value ReceiveFrame(const Napi::CallbackInfo& info) {
 }
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
+  if (!g_cleanup_hook_registered) {
+    env.AddCleanupHook(CleanupAddonResources, nullptr);
+    g_cleanup_hook_registered = true;
+  }
+
   exports.Set("available",       Napi::Function::New(env, Available));
   // Sender API
   exports.Set("createSender",    Napi::Function::New(env, CreateSender));

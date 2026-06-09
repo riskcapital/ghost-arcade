@@ -123,10 +123,15 @@
           update({ targetType: t, ...(t === 'sender' ? { displayId: null } : {}) });
         }}
       >
-        <option value="sender">{tsLabel} / NDI sender</option>
+        <option value="sender">{tsLabel} / NDI® sender</option>
         <option value="display" disabled={!isDesktopApp}>Physical display</option>
       </select>
     </label>
+
+    <p class="ndi-attribution">
+      <a href="https://ndi.video/" target="_blank" rel="noreferrer">NDI®</a>
+      is a registered trademark of Vizrt NDI AB.
+    </p>
 
     {#if (screen.targetType ?? 'sender') === 'display'}
       <label class="field">
@@ -633,5 +638,18 @@
     padding: 0 5px;
     font-family: ui-monospace, monospace;
     font-size: 10px;
+  }
+  .ndi-attribution {
+    margin: -2px 0 4px;
+    color: #77717d;
+    font-size: 10px;
+    line-height: 1.35;
+  }
+  .ndi-attribution a {
+    color: #a9d7ff;
+    text-decoration: none;
+  }
+  .ndi-attribution a:hover {
+    text-decoration: underline;
   }
 </style>

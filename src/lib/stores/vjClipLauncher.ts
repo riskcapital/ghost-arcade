@@ -114,6 +114,8 @@ export interface VJClip {
   synthVisionCanvas?: HTMLCanvasElement;
   // For Spout sources (FluidGen, Particles3D plugins) - legacy
   spoutSource?: string;
+  // For NDI sources routed through the live-source receiver path
+  ndiSource?: MediaSource['ndiSource'];
   // For integrated effects (FluidGen, Particles3D running natively in WebGL)
   effectSource?: IntegratedEffectSource;
   // Durable file identity for image/video clips dragged from the media library.
@@ -556,7 +558,15 @@ function mediaTypeForClip(clip: VJClip): 'shader' | 'video' | 'image' | 'threejs
 }
 
 function ensureClipVideoElement(clip: VJClip): HTMLVideoElement | undefined {
-  if (!clip || clip.type !== 'video' || !clip.src) return clip.videoElement;
+  if (!clip || clip.type !== 'video') return clip.videoElement;
+
+  if (clip.videoElement && (clip.src?.startsWith('live://') || clip.videoElement.srcObject)) {
+    videoElementCache.set(clip.id, clip.videoElement);
+    clip.isPlaying = clip.isPlaying ?? true;
+    return clip.videoElement;
+  }
+
+  if (!clip.src) return clip.videoElement;
 
   let videoEl = videoElementCache.get(clip.id);
   if (videoEl && videoEl.src !== clip.src) {
@@ -590,6 +600,14 @@ function ensureClipVideoElement(clip: VJClip): HTMLVideoElement | undefined {
 
   clip.videoElement = videoEl;
   return videoEl;
+}
+
+function pauseClipRuntime(clip: VJClip | null | undefined): void {
+  if (!clip || clip.type !== 'video') return;
+  const videoEl = clip.videoElement || videoElementCache.get(clip.id);
+  if (!videoEl) return;
+  try { videoEl.pause(); } catch { /* ignore */ }
+  clip.isPlaying = false;
 }
 
 // Create the store
@@ -760,7 +778,7 @@ function createVJClipLauncherStore() {
         // frame. That's the "VJ video shows one stuck frame" bug.
         if (clip && clip.type === 'video') {
           ensureClipVideoElement(clip);
-          let videoEl = videoElementCache.get(clip.id);
+          let videoEl = videoElementCache.get(clip.id) || clip.videoElement;
           if (!videoEl) {
             videoEl = document.createElement('video');
             // Only set crossOrigin for remote URLs — blob:/file: would log a
@@ -1022,6 +1040,8 @@ function createVJClipLauncherStore() {
     // queued clips that fire seconds later when the bar boundary lands.
     stopAll() {
       update(state => {
+        for (const layerState of state.layerStates) pauseClipRuntime(layerState.activeClip);
+        for (const layerState of state.bankBLayerStates) pauseClipRuntime(layerState.activeClip);
         const newLayerStatesA = state.layerStates.map(ls => ({ ...ls, activeColumn: null, activeClip: null }));
         const newLayerStatesB = state.bankBLayerStates.map(ls => ({ ...ls, activeColumn: null, activeClip: null }));
         return {
@@ -2237,8 +2257,12 @@ export const vjOutputLayers = derived(
           source.threejsCanvas = clip.synthVisionCanvas;
         }
 
-        // For spout clips, set the spoutSource property for the renderer
-        if (clip.type === 'spout' && clip.spoutSource) {
+        // For live network clips, route to the correct renderer receiver.
+        // NDI reuses the legacy 'spout' clip type for compatibility, but
+        // Canvas distinguishes it by ndiSource vs spoutSource.
+        if (clip.type === 'spout' && clip.ndiSource) {
+          source.ndiSource = clip.ndiSource;
+        } else if (clip.type === 'spout' && clip.spoutSource) {
           source.spoutSource = {
             senderName: clip.spoutSource,
             name: clip.spoutSource, // Legacy compatibility
@@ -2296,6 +2320,23 @@ export const vjOutputLayers = derived(
         // For synthvision clips, update the canvas reference
         if (clip.type === 'synthvision' && clip.synthVisionCanvas) {
           source.threejsCanvas = clip.synthVisionCanvas;
+        }
+        // For live network clips, refresh receiver metadata and clear the
+        // opposite transport so cached sources cannot flip stale routes.
+        if (clip.type === 'spout' && clip.ndiSource) {
+          source.ndiSource = clip.ndiSource;
+          source.spoutSource = undefined;
+        } else if (clip.type === 'spout' && clip.spoutSource) {
+          source.spoutSource = {
+            senderName: clip.spoutSource,
+            name: clip.spoutSource,
+            width: 1920,
+            height: 1080,
+          };
+          source.ndiSource = undefined;
+        } else {
+          source.spoutSource = undefined;
+          source.ndiSource = undefined;
         }
         // For effect clips, update the effectSource (for parameter changes)
         if (clip.type === 'effect' && clip.effectSource) {

@@ -3,7 +3,7 @@
  * `WebGPUParticleField` particle universe.
  *
  * The shader's wild range of looks comes from the `mode` selector
- * (galaxy / atomic / swarm / lattice / field / media). Each mode
+ * (galaxy / atomic / swarm / lattice / field / gravity). Each mode
  * surfaces its own param group via the `showWhen` mechanism so the
  * panel only shows the controls that affect the active mode.
  *
@@ -27,7 +27,7 @@ export const particleFieldParamSchema: ParamControl[] = [
       { value: 'swarm',   label: 'Swarm — flocking' },
       { value: 'lattice', label: 'Lattice — crystalline grid' },
       { value: 'field',   label: 'Field — curl-noise drift' },
-      { value: 'media',   label: 'Media — image/video driven' },
+      { value: 'gravity', label: 'Gravity Wells — compute attractors' },
     ],
     default: 'galaxy' },
 
@@ -39,7 +39,7 @@ export const particleFieldParamSchema: ParamControl[] = [
   { kind: 'slider', key: 'particleCount', label: 'Count', group: 'Particles',
     min: 5000, max: 500000, step: 1000, default: 80000 },
   { kind: 'slider', key: 'baseSize',      label: 'Size',  group: 'Particles',
-    min: 0.001, max: 0.04, step: 0.0005, default: 0.006 },
+    min: 0.001, max: 0.12, step: 0.0005, default: 0.006 },
   { kind: 'slider', key: 'opacity',       label: 'Opacity', group: 'Particles',
     min: 0, max: 1, step: 0.01, default: 1.0 },
 
@@ -50,6 +50,7 @@ export const particleFieldParamSchema: ParamControl[] = [
       { value: 'glow',    label: 'Glow — soft halos (stars)' },
       { value: 'streaks', label: 'Streaks — velocity trails' },
       { value: 'sphere',  label: 'Sphere — fake-3D orbs' },
+      { value: 'softSphere', label: 'Soft Spheres — volumetric balls' },
     ],
     default: 'glow' },
   { kind: 'slider', key: 'strokeLength', label: 'Streak Length', group: 'Topology',
@@ -109,6 +110,24 @@ export const particleFieldParamSchema: ParamControl[] = [
   { kind: 'slider', key: 'mediaSampleScale', label: 'Sample Scale', group: 'Media Mode',
     min: 0.1, max: 4, step: 0.01, default: 1.0, showWhen: { mode: 'media' } },
 
+  // ── Gravity params ────────────────────────────────────────────
+  { kind: 'slider', key: 'gravityWells', label: 'Wells', group: 'Gravity Wells',
+    min: 1, max: 8, step: 1, default: 4, showWhen: { mode: 'gravity' } },
+  { kind: 'slider', key: 'gravityStrength', label: 'Pull', group: 'Gravity Wells',
+    min: 0, max: 0.8, step: 0.005, default: 0.18, showWhen: { mode: 'gravity' } },
+  { kind: 'slider', key: 'gravityOrbit', label: 'Orbit Speed', group: 'Gravity Wells',
+    min: -2, max: 2, step: 0.01, default: 0.45, showWhen: { mode: 'gravity' } },
+  { kind: 'slider', key: 'gravityCoreSize', label: 'Core Size', group: 'Gravity Wells',
+    min: 0.01, max: 0.35, step: 0.005, default: 0.09, showWhen: { mode: 'gravity' } },
+  { kind: 'slider', key: 'gravityVortex', label: 'Vortex', group: 'Gravity Wells',
+    min: -1.5, max: 1.5, step: 0.005, default: 0.34, showWhen: { mode: 'gravity' } },
+  { kind: 'slider', key: 'gravityMaxVelocity', label: 'Velocity Clamp', group: 'Gravity Wells',
+    min: 0.5, max: 14, step: 0.1, default: 5.0, showWhen: { mode: 'gravity' } },
+  { kind: 'slider', key: 'gravityAudioDrive', label: 'Audio Drive', group: 'Gravity Wells',
+    min: 0, max: 3, step: 0.05, default: 1.15, showWhen: { mode: 'gravity' } },
+  { kind: 'slider', key: 'gravityChaos', label: 'Filament Chaos', group: 'Gravity Wells',
+    min: 0, max: 1, step: 0.005, default: 0.18, showWhen: { mode: 'gravity' } },
+
   // ── Connections ───────────────────────────────────────────────
   // The cellular scaffold. Local lines connect very close pairs;
   // bridge lines connect medium-distance pairs in a different color.
@@ -162,6 +181,8 @@ export const particleFieldParamSchema: ParamControl[] = [
     min: 0.5, max: 8, step: 0.1, default: 2.5 },
   { kind: 'slider', key: 'shimmerStrength', label: 'Treble Shimmer', group: 'Audio',
     min: 0, max: 0.2, step: 0.001, default: 0.02 },
+  { kind: 'slider', key: 'audioSmoothing', label: 'Audio Smooth', group: 'Audio',
+    min: 0, max: 0.98, step: 0.01, default: 0.82 },
 
   // ── Damping (universal) ───────────────────────────────────────
   { kind: 'slider', key: 'damping', label: 'Damping', group: 'Motion',
@@ -244,6 +265,8 @@ export const particleFieldParamDefaults = deriveDefaults(particleFieldParamSchem
 export class WebGPUParticleFieldShader implements GpuShaderImpl {
   private inner: WebGPUParticleField;
   private bands: { bass: number; mid: number; treble: number } | null = null;
+  private smoothedBands = { bass: 0, mid: 0, treble: 0 };
+  private lastBandTime = 0;
   private lastParams: Record<string, any> = { ...particleFieldParamDefaults };
 
   constructor(device: any, presentFormat: any) {
@@ -251,7 +274,26 @@ export class WebGPUParticleFieldShader implements GpuShaderImpl {
   }
 
   setBands(bass: number, mid: number, treble: number): void {
-    this.bands = { bass, mid, treble };
+    const now = performance.now() / 1000;
+    const dt = this.lastBandTime === 0
+      ? 1 / 60
+      : Math.min(Math.max(now - this.lastBandTime, 1 / 240), 0.25);
+    this.lastBandTime = now;
+
+    const smoothing = Math.max(0, Math.min(0.98, Number(this.lastParams.audioSmoothing ?? 0.82)));
+    const attack = 1 - Math.pow(smoothing, dt * 90);
+    const release = 1 - Math.pow(smoothing, dt * 28);
+    const follow = (prev: number, target: number) => {
+      const amount = target > prev ? attack : release;
+      return prev + (target - prev) * amount;
+    };
+
+    this.smoothedBands = {
+      bass: follow(this.smoothedBands.bass, bass),
+      mid: follow(this.smoothedBands.mid, mid),
+      treble: follow(this.smoothedBands.treble, treble),
+    };
+    this.bands = this.smoothedBands;
     this.applyParamsToInner();
   }
 
@@ -273,7 +315,7 @@ export class WebGPUParticleFieldShader implements GpuShaderImpl {
   private applyParamsToInner(): void {
     const p = this.lastParams;
     const reactive = !!p.audioReactive && this.bands;
-    const liveBass = reactive ? this.bands!.bass : 0;
+    const liveBass = reactive ? Math.min(1.5, this.bands!.bass * 0.9 + this.bands!.mid * 0.28) : 0;
     const liveTreble = reactive ? this.bands!.treble : 0;
     this.inner.setParams({
       mode: (p.mode ?? 'galaxy') as ParticleFieldParams['mode'],
@@ -306,6 +348,14 @@ export class WebGPUParticleFieldShader implements GpuShaderImpl {
       latticeVibration: p.latticeVibration ?? 0.015,
       mediaDepthAmount: p.mediaDepthAmount ?? 0.6,
       mediaSampleScale: p.mediaSampleScale ?? 1.0,
+      gravityWells: Math.max(1, Math.min(8, Math.round(p.gravityWells ?? 4))),
+      gravityStrength: p.gravityStrength ?? 0.18,
+      gravityOrbit: p.gravityOrbit ?? 0.45,
+      gravityCoreSize: p.gravityCoreSize ?? 0.09,
+      gravityVortex: p.gravityVortex ?? 0.34,
+      gravityMaxVelocity: p.gravityMaxVelocity ?? 5.0,
+      gravityAudioDrive: p.gravityAudioDrive ?? 1.15,
+      gravityChaos: p.gravityChaos ?? 0.18,
       topology: (p.topology ?? 'glow') as ParticleFieldParams['topology'],
       strokeLength: p.strokeLength ?? 0.04,
       strokeWidth: p.strokeWidth ?? 0.004,

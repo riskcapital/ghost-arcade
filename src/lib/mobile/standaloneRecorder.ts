@@ -92,6 +92,7 @@ export class StandaloneRecorder {
   private ctx!: CanvasRenderingContext2D;
   private rafId = 0;
   private recorder: MediaRecorder | null = null;
+  private stream: MediaStream | null = null;
   private chunks: Blob[] = [];
   private mimeType = '';
   private startedAt = 0;
@@ -134,10 +135,16 @@ export class StandaloneRecorder {
     this.ctx.fillRect(0, 0, w, h);
 
     const stream = this.canvas.captureStream(this.opts.fps);
-    this.recorder = new MediaRecorder(stream, {
-      mimeType: mime,
-      videoBitsPerSecond: this.opts.bitrate,
-    });
+    this.stream = stream;
+    try {
+      this.recorder = new MediaRecorder(stream, {
+        mimeType: mime,
+        videoBitsPerSecond: this.opts.bitrate,
+      });
+    } catch (err) {
+      this.cleanupStream();
+      throw err;
+    }
     this.recorder.ondataavailable = (e) => { if (e.data && e.data.size) this.chunks.push(e.data); };
     this.startedAt = performance.now();
     this.lastFrame = 0;
@@ -171,7 +178,14 @@ export class StandaloneRecorder {
     });
     this.recorder = null;
     this.chunks = [];
+    this.cleanupStream();
     return result;
+  }
+
+  private cleanupStream(): void {
+    if (!this.stream) return;
+    try { this.stream.getTracks().forEach(track => track.stop()); } catch { /* ignore */ }
+    this.stream = null;
   }
 
   /** Current elapsed recording time in seconds. */

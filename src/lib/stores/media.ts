@@ -19,6 +19,26 @@ export interface MediaItem {
   _assetRef?: AssetRef;
 }
 
+function disposeMediaItem(item: MediaItem) {
+  try {
+    if (item.src?.startsWith('blob:')) URL.revokeObjectURL(item.src);
+  } catch {}
+  try {
+    if (item.thumbnail?.startsWith('blob:')) URL.revokeObjectURL(item.thumbnail);
+  } catch {}
+  try { item.texture?.dispose?.(); } catch {}
+  if (item.videoElement) {
+    try { item.videoElement.pause(); } catch {}
+    try {
+      const stream = item.videoElement.srcObject as MediaStream | null;
+      stream?.getTracks().forEach(track => track.stop());
+    } catch {}
+    try { item.videoElement.srcObject = null; } catch {}
+    try { item.videoElement.removeAttribute('src'); } catch {}
+    try { item.videoElement.load(); } catch {}
+  }
+}
+
 function createMediaStore() {
   const { subscribe, update, set } = writable<MediaItem[]>([]);
 
@@ -32,9 +52,7 @@ function createMediaStore() {
     removeItem: (id: string) => {
       update(items => {
         const item = items.find(i => i.id === id);
-        if (item?.src.startsWith('blob:')) {
-          URL.revokeObjectURL(item.src);
-        }
+        if (item) disposeMediaItem(item);
         return items.filter(i => i.id !== id);
       });
     },
@@ -55,7 +73,12 @@ function createMediaStore() {
       return items.find(item => item.id === id);
     },
 
-    reset: () => set([]),
+    reset: () => {
+      update(items => {
+        for (const item of items) disposeMediaItem(item);
+        return [];
+      });
+    },
   };
 }
 

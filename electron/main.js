@@ -179,6 +179,7 @@ const sliceWindows = new Map();
 let pendingOutputWindowConfig = null;
 let pendingOutputWindowConfigTimer = null;
 let sidecarProcess = null;
+const wledSockets = new Map();  // controllerId -> dgram.Socket
 
 // Platform flags (used elsewhere in this file)
 const isWin = process.platform === 'win32';
@@ -212,6 +213,13 @@ function closeAuxiliaryWindows() {
     try { destroySpoutOsrWindow(); } catch {}
   } else {
     spoutOsrWindow = null;
+  }
+}
+
+function closeAllWledSockets() {
+  for (const [controllerId, sock] of wledSockets.entries()) {
+    try { sock.close(); } catch {}
+    wledSockets.delete(controllerId);
   }
 }
 
@@ -412,26 +420,51 @@ function loadSpoutAddon() {
 // silently dropped). See electron/native/ndi_addon.cpp.
 let ndiAddon = null;
 let ndiAddonLoadAttempted = false;
+let ndiAddonLoadPath = null;
+let ndiAddonLoadError = null;
+let ndiAddonLoadCandidates = [];
+
+function getNdiAddonCandidates() {
+  return getTextureShareAddonCandidates('ndi_addon.node');
+}
+
+function getNdiLoadStatus() {
+  return {
+    available: ndiAddon !== null,
+    addonPath: ndiAddonLoadPath,
+    candidates: ndiAddonLoadCandidates,
+    error: ndiAddonLoadError,
+  };
+}
+
 function loadNdiAddon() {
   if (ndiAddon) return ndiAddon;
   if (ndiAddonLoadAttempted) return null;
   ndiAddonLoadAttempted = true;
+  ndiAddonLoadError = null;
+  ndiAddonLoadCandidates = getNdiAddonCandidates();
+  ndiAddonLoadPath = null;
+
   try {
-    const addonPath = path.join(__dirname, 'native', 'build', 'Release', 'ndi_addon.node');
-    if (!fs.existsSync(addonPath)) {
-      console.log('[NDI] Addon not built (SDK was missing at compile time). Install the NDI Advanced SDK from https://ndi.video/sdk then rebuild electron/native.');
+    const addonPath = ndiAddonLoadCandidates.find(candidate => fs.existsSync(candidate));
+    if (!addonPath) {
+      ndiAddonLoadError = 'native addon not found (ndi_addon.node)';
+      console.log(`[NDI] ${ndiAddonLoadError}. Checked: ${ndiAddonLoadCandidates.join(', ')}`);
       return null;
     }
+    ndiAddonLoadPath = addonPath;
     ndiAddon = require(addonPath);
     if (!ndiAddon.available()) {
-      console.warn('[NDI] Addon loaded but NDIlib_initialize failed — runtime not available on this machine.');
+      ndiAddonLoadError = 'NDIlib_initialize failed — runtime not available';
+      console.warn(`[NDI] Addon loaded but ${ndiAddonLoadError}.`);
       ndiAddon = null;
       return null;
     }
-    console.log('[NDI] Addon loaded successfully');
+    console.log(`[NDI] Addon loaded successfully: ${addonPath}`);
     return ndiAddon;
   } catch (err) {
-    console.error('[NDI] Failed to load addon:', err.message);
+    ndiAddonLoadError = err?.message || String(err);
+    console.error('[NDI] Failed to load addon:', ndiAddonLoadError);
     return null;
   }
 }
@@ -1065,8 +1098,6 @@ function registerIpcHandlers() {
   //
   // For >490 LEDs we'd need DNRGB (protocol 4) with a 16-bit start
   // index — v1 doesn't bother since most installs are under that.
-  const wledSockets = new Map();  // controllerId -> dgram.Socket
-
   ipcMain.handle('wled_send_frame', async (_, { controllerId, ip, port, pixels }) => {
     if (!ip || !pixels || pixels.length === 0) return { ok: false, error: 'missing ip or pixels' };
     let sock = wledSockets.get(controllerId);
@@ -1124,7 +1155,10 @@ function registerIpcHandlers() {
   // slice output-type picker on machines where NDI isn't ready.
   ipcMain.handle('ndi_available', () => {
     const a = loadNdiAddon();
-    return { available: !!a };
+    return {
+      ...getNdiLoadStatus(),
+      available: !!a,
+    };
   });
   ipcMain.handle('ndi_create_sender', (_, { name }) => {
     const a = loadNdiAddon();
@@ -1663,13 +1697,52 @@ function registerIpcHandlers() {
   // The thumbnails are PNG-encoded data URLs; ~30-50 KB each. With a
   // typical 5-15 capturable surfaces this is a few hundred KB total —
   // fine to send across IPC once when the modal opens.
-  ipcMain.handle('screen_sources_list', async () => {
+  function screenSourceListOptions(options) {
+    const raw = options && typeof options === 'object' ? options : {};
+    const requestedSize = raw.thumbnailSize && typeof raw.thumbnailSize === 'object'
+      ? raw.thumbnailSize
+      : {};
+    const width = Number.isFinite(Number(requestedSize.width))
+      ? Math.max(0, Math.min(640, Math.round(Number(requestedSize.width))))
+      : 320;
+    const height = Number.isFinite(Number(requestedSize.height))
+      ? Math.max(0, Math.min(360, Math.round(Number(requestedSize.height))))
+      : 180;
+    const timeoutMs = Number.isFinite(Number(raw.timeoutMs))
+      ? Math.max(500, Math.min(10000, Math.round(Number(raw.timeoutMs))))
+      : 5000;
+    return {
+      thumbnailSize: { width, height },
+      fetchWindowIcons: raw.fetchWindowIcons !== false,
+      timeoutMs,
+    };
+  }
+
+  async function withScreenSourceTimeout(promise, timeoutMs) {
+    let timer = null;
     try {
-      const sources = await desktopCapturer.getSources({
+      return await Promise.race([
+        promise,
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`desktopCapturer.getSources timed out after ${timeoutMs}ms`)),
+            timeoutMs,
+          );
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  ipcMain.handle('screen_sources_list', async (_event, options = {}) => {
+    try {
+      const opts = screenSourceListOptions(options);
+      const sources = await withScreenSourceTimeout(desktopCapturer.getSources({
         types: ['screen', 'window'],
-        thumbnailSize: { width: 320, height: 180 },
-        fetchWindowIcons: true,
-      });
+        thumbnailSize: opts.thumbnailSize,
+        fetchWindowIcons: opts.fetchWindowIcons,
+      }), opts.timeoutMs);
       return sources.map(s => ({
         id: s.id,
         name: s.name,
@@ -3023,7 +3096,7 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
   const winW = fullscreen ? bounds.width : Math.round(width || 1280);
   const winH = fullscreen ? bounds.height : Math.round(height || 720);
 
-  outputWindow = new BrowserWindow({
+  const win = new BrowserWindow({
     width: winW,
     height: winH,
     x: winX,
@@ -3045,9 +3118,10 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
       backgroundThrottling: false,
     },
   });
+  outputWindow = win;
 
   // Hide menu bar for clean look
-  outputWindow.setMenuBarVisibility(false);
+  win.setMenuBarVisibility(false);
 
   // Load the same Svelte app but in output mode (canvas only, no UI).
   //
@@ -3103,7 +3177,7 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
   const queryParts = [`mode=${outputMode}`];
   if (wantWebgpuDisable) queryParts.push('webgpu-disable=1');
   if (isDev) {
-    outputWindow.loadURL(`${devUrl}?${queryParts.join('&')}`);
+    win.loadURL(`${devUrl}?${queryParts.join('&')}`);
     // Auto-DevTools on output is a debugging convenience but it changes
     // the perf profile measurably (devtools allocates extra GPU surfaces
     // + renderer threads). Opt in via env or a launch arg so smoothness
@@ -3111,13 +3185,13 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
     // GHOSTARCADE_OUTPUT_DEVTOOLS=1 in the shell that runs `npm run
     // desktop` to enable.
     if (process.env.GHOSTARCADE_OUTPUT_DEVTOOLS === '1') {
-      try { outputWindow.webContents.openDevTools({ mode: 'detach' }); } catch {}
+      try { win.webContents.openDevTools({ mode: 'detach' }); } catch {}
     }
   } else {
     const filePath = path.join(__dirname, '..', 'dist', 'index.html');
     const fileQuery = { mode: outputMode };
     if (wantWebgpuDisable) fileQuery['webgpu-disable'] = '1';
-    outputWindow.loadFile(filePath, { query: fileQuery });
+    win.loadFile(filePath, { query: fileQuery });
   }
 
   // (MessageChannelMain pairing removed for webgpu-display mode.
@@ -3131,8 +3205,10 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
   // transferables work as designed. This IPC path remains for the
   // legacy `output` and `webrtc-display` modes which are unaffected.)
 
-  outputWindow.on('closed', () => {
-    outputWindow = null;
+  win.on('closed', () => {
+    if (outputWindow === win) {
+      outputWindow = null;
+    }
   });
 
   console.log(`[Output] Window created on display "${targetDisplay.label || targetDisplay.id}" at ${winX},${winY} ${winW}x${winH} fullscreen=${fullscreen}`);
@@ -3158,6 +3234,13 @@ app.on('second-instance', () => {
 });
 
 app.whenReady().then(async () => {
+  app.setAboutPanelOptions({
+    applicationName: 'Ghost Arcade',
+    applicationVersion: app.getVersion(),
+    copyright: 'Copyright (c) 2024-2026 Risk Capital Media LLC',
+    credits: 'NDI® is a registered trademark of Vizrt NDI AB. https://ndi.video/',
+  });
+
   setupPermissions();
   registerIpcHandlers();
 
@@ -3311,41 +3394,49 @@ function cleanupAndQuit() {
   isQuitting = true;
   console.log('[Main] Cleaning up before quit...');
 
-  // Synchronous cleanup — fast, non-blocking
-  closeAuxiliaryWindows();
-  try { stopSpoutSender(); } catch (e) { console.error('[Cleanup] stopSpoutSender:', e.message); }
-  try { stopSpoutReceiver(); } catch (e) { console.error('[Cleanup] stopSpoutReceiver:', e.message); }
-  try { stopServer(); } catch (e) { console.error('[Cleanup] stopServer:', e.message); }
-  // Destroy any live NDI senders so the network names go offline on exit.
-  if (ndiAddon && ndiSenders.size > 0) {
-    for (const name of ndiSenders) {
-      try { ndiAddon.destroySender({ name }); } catch (e) { /* best-effort */ }
-    }
-    ndiSenders.clear();
-  }
-  if (ndiAddon && ndiReceivers.size > 0) {
-    for (const sourceName of ndiReceivers) {
-      try { ndiAddon.destroyReceiver({ sourceName }); } catch (e) { /* best-effort */ }
-    }
-    ndiReceivers.clear();
-  }
-  try { stopOSC(); } catch (e) { console.error('[Cleanup] stopOSC:', e.message); }
-
-  // Kill any plugin child processes immediately
-  for (const [name, plugin] of Object.entries(plugins)) {
-    if (plugin.process) {
-      console.log(`[Cleanup] Killing plugin: ${name}`);
-      try { plugin.process.kill(); } catch {}
-      plugin.process = null;
-    }
-  }
-
-  // Hard quit — don't let anything block exit
-  // Give 500ms for cleanup IO to flush, then force quit
+  // Hard quit — don't let anything block exit. Schedule this before
+  // cleanup so a stale cleanup branch cannot keep the process alive.
   setTimeout(() => {
     console.log('[Main] Force quitting');
     app.exit(0);
   }, 500);
+
+  try {
+    // Synchronous cleanup — fast, non-blocking
+    closeAuxiliaryWindows();
+    try { stopSpoutSender(); } catch (e) { console.error('[Cleanup] stopSpoutSender:', e.message); }
+    try { stopSpoutReceiver(); } catch (e) { console.error('[Cleanup] stopSpoutReceiver:', e.message); }
+    try { stopServer(); } catch (e) { console.error('[Cleanup] stopServer:', e.message); }
+    try { closeAllWledSockets(); } catch (e) { console.error('[Cleanup] closeAllWledSockets:', e.message); }
+    // Destroy any live NDI senders so the network names go offline on exit.
+    if (ndiAddon && ndiSenders.size > 0) {
+      for (const name of ndiSenders) {
+        try { ndiAddon.destroySender({ name }); } catch (e) { /* best-effort */ }
+      }
+      ndiSenders.clear();
+    }
+    if (ndiAddon && ndiReceivers.size > 0) {
+      for (const sourceName of ndiReceivers) {
+        try { ndiAddon.destroyReceiver({ sourceName }); } catch (e) { /* best-effort */ }
+      }
+      ndiReceivers.clear();
+    }
+    try { stopOSC(); } catch (e) { console.error('[Cleanup] stopOSC:', e.message); }
+
+    // Kill any plugin child processes immediately when plugin tracking
+    // exists. Some builds no longer define this map.
+    if (typeof plugins !== 'undefined') {
+      for (const [name, plugin] of Object.entries(plugins)) {
+        if (plugin.process) {
+          console.log(`[Cleanup] Killing plugin: ${name}`);
+          try { plugin.process.kill(); } catch {}
+          plugin.process = null;
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[Cleanup] cleanupAndQuit:', e?.message || e);
+  }
 
   // Also try normal quit immediately
   app.quit();

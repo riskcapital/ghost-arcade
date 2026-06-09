@@ -60,13 +60,19 @@ jobs:
         run: npm ci
         working-directory: electron/native
 
-      # NDI Advanced SDK — required to build the ndi_addon. The SDK
-      # download itself is gated by NewTek's terms, so CI fetches it
-      # from the org's own private storage URL (secrets.NDI_SDK_WIN_URL).
-      # When the secret isn't set the build SKIPS the NDI addon
-      # silently — Spout / Syphon stay functional, just no NDI.
+      # NDI Advanced SDK — required to build and ship ndi_addon. The SDK
+      # download itself is gated by NDI's terms, so CI fetches it from
+      # the org's own private storage URL (secrets.NDI_SDK_WIN_URL).
+      - name: Require NDI SDK URL (Windows)
+        shell: pwsh
+        env:
+          NDI_SDK_WIN_URL: ${{ secrets.NDI_SDK_WIN_URL }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:NDI_SDK_WIN_URL)) {
+            throw "NDI_SDK_WIN_URL is required for release installers so NDI ships ready-to-use."
+          }
+
       - name: Install NDI Advanced SDK (Windows)
-        if: ${{ env.NDI_SDK_WIN_URL != '' }}
         shell: pwsh
         env:
           NDI_SDK_WIN_URL: ${{ secrets.NDI_SDK_WIN_URL }}
@@ -83,11 +89,24 @@ jobs:
           if (-Not (Test-Path "$sdk\Include\Processing.NDI.Lib.h")) {
             $sdk = "C:\Program Files\NDI\NDI SDK"
           }
-          Write-Host "NDI SDK installed:" (Test-Path "$sdk\Include\Processing.NDI.Lib.h")
+          if (-Not (Test-Path "$sdk\Include\Processing.NDI.Lib.h")) {
+            throw "NDI SDK install did not produce expected files."
+          }
+          Write-Host "NDI SDK installed at $sdk"
 
-      - name: Build Spout native addon
+      - name: Build native addons
         run: npm run build
         working-directory: electron/native
+
+      - name: Verify bundled NDI runtime (Windows)
+        shell: pwsh
+        run: |
+          if (-Not (Test-Path "electron/native/build/Release/ndi_addon.node")) {
+            throw "ndi_addon.node was not built."
+          }
+          if (-Not (Test-Path "electron/native/build/Release/Processing.NDI.Lib.x64.dll")) {
+            throw "Processing.NDI.Lib.x64.dll was not staged for packaging."
+          }
 
       - name: Build frontend
         run: npm run build
@@ -159,10 +178,17 @@ jobs:
 
       # NDI Advanced SDK for Apple — same pattern as Windows. Fetched
       # from a private URL exposed via secrets.NDI_SDK_MAC_URL because
-      # NewTek's distribution requires accepting the EULA before
-      # download. Missing secret = NDI addon build is skipped silently.
+      # NDI's distribution requires accepting the EULA before download.
+      - name: Require NDI SDK URL (macOS)
+        env:
+          NDI_SDK_MAC_URL: ${{ secrets.NDI_SDK_MAC_URL }}
+        run: |
+          if [ -z "$NDI_SDK_MAC_URL" ]; then
+            echo "NDI_SDK_MAC_URL is required for release installers so NDI ships ready-to-use." >&2
+            exit 1
+          fi
+
       - name: Install NDI Advanced SDK (macOS)
-        if: ${{ env.NDI_SDK_MAC_URL != '' }}
         env:
           NDI_SDK_MAC_URL: ${{ secrets.NDI_SDK_MAC_URL }}
         run: |
@@ -180,12 +206,22 @@ jobs:
             echo "NDI SDK installed at $SDK"
             ls "$SDK/lib/macOS/"
           else
-            echo "::warning::NDI SDK install did not produce expected files — ndi_addon will be skipped"
+            echo "NDI SDK install did not produce expected files." >&2
+            exit 1
           fi
 
-      - name: Build Syphon native addon
+      - name: Build native addons
         run: npm run build
         working-directory: electron/native
+
+      - name: Verify bundled NDI runtime (macOS)
+        run: |
+          test -f electron/native/build/Release/ndi_addon.node
+          test -f electron/native/build/Release/libndi.dylib
+          lipo electron/native/build/Release/ndi_addon.node -verify_arch x86_64 arm64
+          lipo electron/native/build/Release/libndi.dylib -verify_arch x86_64 arm64
+          lipo -info electron/native/build/Release/ndi_addon.node
+          lipo -info electron/native/build/Release/libndi.dylib
 
       - name: Build frontend
         run: npm run build
@@ -247,12 +283,18 @@ jobs:
         working-directory: electron/native
 
       # NDI Advanced SDK for Linux — same pattern as Win / Mac jobs.
-      # The .tar.gz installer lives behind NewTek's EULA; CI fetches
-      # from the private storage URL exposed via secrets.NDI_SDK_LINUX_URL.
-      # Missing secret = NDI addon build is skipped silently (CMake's
-      # NDI block already handles the no-SDK case without erroring).
+      # The .tar.gz installer lives behind NDI's EULA; CI fetches from
+      # the private storage URL exposed via secrets.NDI_SDK_LINUX_URL.
+      - name: Require NDI SDK URL (Linux)
+        env:
+          NDI_SDK_LINUX_URL: ${{ secrets.NDI_SDK_LINUX_URL }}
+        run: |
+          if [ -z "$NDI_SDK_LINUX_URL" ]; then
+            echo "NDI_SDK_LINUX_URL is required for release installers so NDI ships ready-to-use." >&2
+            exit 1
+          fi
+
       - name: Install NDI Advanced SDK (Linux)
-        if: ${{ env.NDI_SDK_LINUX_URL != '' }}
         env:
           NDI_SDK_LINUX_URL: ${{ secrets.NDI_SDK_LINUX_URL }}
         run: |
@@ -275,16 +317,20 @@ jobs:
           elif [ -f "/opt/NDI SDK for Linux/include/Processing.NDI.Lib.h" ]; then
             echo "NDI SDK installed at /opt/NDI SDK for Linux"
           else
-            echo "::warning::NDI SDK install did not produce expected files — ndi_addon will be skipped"
+            echo "NDI SDK install did not produce expected files." >&2
+            exit 1
           fi
 
-      # The main Spout/Syphon CMake branch silently no-ops on Linux
-      # (it has no `else()` for the if(WIN32)/elseif(APPLE) chain), so
-      # running `npm run build` here builds only the NDI addon when the
-      # SDK is present. Safe to run regardless.
+      # The main Spout/Syphon CMake branch silently no-ops on Linux,
+      # so this builds the NDI addon and stages libndi.so.
       - name: Build native addons (NDI only on Linux)
-        run: npm run build || echo "Native addon build had no targets on Linux — continuing"
+        run: npm run build
         working-directory: electron/native
+
+      - name: Verify bundled NDI runtime (Linux)
+        run: |
+          test -f electron/native/build/Release/ndi_addon.node
+          test -f electron/native/build/Release/libndi.so
 
       - name: Build frontend
         run: npm run build
