@@ -57,7 +57,7 @@ jobs:
         run: npm ci
 
       - name: Install native addon dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
         working-directory: electron/native
 
       # NDI Advanced SDK — required to build and ship ndi_addon. The SDK
@@ -98,7 +98,7 @@ jobs:
           Write-Host "NDI SDK installed at $sdk"
 
       - name: Build native addons
-        run: npm run build
+        run: npm run build -- --rebuild
         working-directory: electron/native
 
       - name: Verify bundled NDI runtime (Windows)
@@ -176,7 +176,7 @@ jobs:
           lipo -info electron/native/vendor/Syphon.framework/Syphon
 
       - name: Install native addon dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
         working-directory: electron/native
 
       # NDI Advanced SDK for Apple — same pattern as Windows. Fetched
@@ -214,7 +214,7 @@ jobs:
           fi
 
       - name: Build native addons
-        run: npm run build
+        run: npm run build -- --rebuild
         working-directory: electron/native
 
       - name: Verify bundled NDI runtime (macOS)
@@ -282,7 +282,7 @@ jobs:
         run: npm ci
 
       - name: Install native addon dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
         working-directory: electron/native
 
       # NDI Advanced SDK for Linux — same pattern as Win / Mac jobs.
@@ -349,7 +349,7 @@ jobs:
       # The main Spout/Syphon CMake branch silently no-ops on Linux,
       # so this builds the NDI addon and stages libndi.so.
       - name: Build native addons (NDI only on Linux)
-        run: npm run build
+        run: npm run build -- --rebuild
         working-directory: electron/native
 
       - name: Verify bundled NDI runtime (Linux)
