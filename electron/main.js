@@ -3095,8 +3095,9 @@ function createStage3DWindow() {
   });
   stage3dWindow.setMenuBarVisibility(false);
 
-  const devUrl = process.env.VITE_DEV_SERVER_URL;
-  if (devUrl) {
+  const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
+  const isDev = !app.isPackaged;
+  if (isDev) {
     stage3dWindow.loadURL(`${devUrl}?mode=stage-3d`);
   } else {
     stage3dWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), {
