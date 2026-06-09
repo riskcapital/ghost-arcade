@@ -460,9 +460,8 @@ function loadSpoutAddon() {
 
 // NDI native addon — cross-platform sender via NewTek's NDI SDK.
 // Built by electron/native/CMakeLists.txt when the NDI SDK is detected
-// at install time; missing addon = graceful degradation (UI shows
-// "NDI not available" in the slice output-type picker, sends are
-// silently dropped). See electron/native/ndi_addon.cpp.
+// at build time. Release installers do not bundle the SDK/runtime, so
+// missing addon/runtime = graceful degradation. See docs/ndi-setup.md.
 let ndiAddon = null;
 let ndiAddonLoadAttempted = false;
 let ndiAddonLoadPath = null;
@@ -493,14 +492,14 @@ function loadNdiAddon() {
   try {
     const addonPath = ndiAddonLoadCandidates.find(candidate => fs.existsSync(candidate));
     if (!addonPath) {
-      ndiAddonLoadError = 'native addon not found (ndi_addon.node)';
+      ndiAddonLoadError = 'NDI native bridge is not bundled in this build';
       console.log(`[NDI] ${ndiAddonLoadError}. Checked: ${ndiAddonLoadCandidates.join(', ')}`);
       return null;
     }
     ndiAddonLoadPath = addonPath;
     ndiAddon = require(addonPath);
     if (!ndiAddon.available()) {
-      ndiAddonLoadError = 'NDIlib_initialize failed — runtime not available';
+      ndiAddonLoadError = 'NDI runtime not available. Install NDI and restart Ghost Arcade.';
       console.warn(`[NDI] Addon loaded but ${ndiAddonLoadError}.`);
       ndiAddon = null;
       return null;

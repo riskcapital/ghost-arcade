@@ -196,12 +196,19 @@ endif()
 set(NDI_FOUND FALSE)
 set(NDI_INCLUDE_DIRS "")
 set(NDI_LIBRARY "")
+set(NDI_SDK_CANDIDATES "")
+
+if(DEFINED ENV{NDI_SDK_DIR} AND NOT "$ENV{NDI_SDK_DIR}" STREQUAL "")
+    file(TO_CMAKE_PATH "$ENV{NDI_SDK_DIR}" NDI_SDK_ENV_DIR)
+    list(APPEND NDI_SDK_CANDIDATES "${NDI_SDK_ENV_DIR}")
+endif()
 
 if(APPLE)
-    foreach(candidate
+    list(APPEND NDI_SDK_CANDIDATES
         "/Library/NDI Advanced SDK for Apple"
         "/Library/NDI SDK for Apple"
     )
+    foreach(candidate ${NDI_SDK_CANDIDATES})
         if(EXISTS "${candidate}/include/Processing.NDI.Lib.h"
            AND EXISTS "${candidate}/lib/macOS/libndi.dylib")
             set(NDI_INCLUDE_DIRS "${candidate}/include")
@@ -211,11 +218,12 @@ if(APPLE)
         endif()
     endforeach()
 elseif(WIN32)
-    foreach(candidate
+    list(APPEND NDI_SDK_CANDIDATES
         "C:/Program Files/NDI/NDI Advanced SDK"
         "C:/Program Files/NDI/NDI SDK"
         "C:/Program Files/NewTek/NDI SDK"
     )
+    foreach(candidate ${NDI_SDK_CANDIDATES})
         if(EXISTS "${candidate}/Include/Processing.NDI.Lib.h"
            AND EXISTS "${candidate}/Lib/x64/Processing.NDI.Lib.x64.lib")
             set(NDI_INCLUDE_DIRS "${candidate}/Include")
@@ -225,7 +233,11 @@ elseif(WIN32)
         endif()
     endforeach()
 elseif(UNIX)
-    foreach(candidate "/opt/NDI Advanced SDK for Linux" "/opt/NDI SDK for Linux")
+    list(APPEND NDI_SDK_CANDIDATES
+        "/opt/NDI Advanced SDK for Linux"
+        "/opt/NDI SDK for Linux"
+    )
+    foreach(candidate ${NDI_SDK_CANDIDATES})
         file(GLOB NDI_LINUX_LIB_CANDIDATES
             "${candidate}/lib/x86_64-linux-gnu/libndi.so"
             "${candidate}/lib/x86_64-linux-gnu/libndi.so.*"
@@ -272,18 +284,15 @@ if(NDI_FOUND)
 
     if(APPLE)
         # libndi.dylib's install_name points at the SDK install path.
-        # Same pattern as the Syphon framework: rewrite to @rpath and
-        # add search paths so the addon resolves the dylib both in
-        # dev (SDK install) and in a packaged .app (electron-builder
-        # ships the dylib in Contents/Frameworks/).
+        # Rewrite to @rpath for local developer testing. Release packaging
+        # excludes NDI runtime binaries unless we replace this with a proper
+        # dynamic-loader bridge.
         set_target_properties(ndi_addon PROPERTIES
             BUILD_WITH_INSTALL_RPATH TRUE
             INSTALL_RPATH "/Library/NDI Advanced SDK for Apple/lib/macOS;/Library/NDI SDK for Apple/lib/macOS;@loader_path/../../../../../../Frameworks;@loader_path"
         )
-        # Copy libndi.dylib into the build output dir so electron-builder
-        # can pick it up with a single relative path. Without this step
-        # the SDK install path would have to be exposed to electron-
-        # builder which varies between dev machines and CI runners.
+        # Stage a local runtime copy for developer testing. electron-builder
+        # excludes libndi.* from public installers.
         add_custom_command(TARGET ndi_addon POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${NDI_LIBRARY}"
@@ -296,19 +305,18 @@ if(NDI_FOUND)
                 "$<TARGET_FILE:ndi_addon>" || true
             COMMAND codesign --force --sign - "$<TARGET_FILE_DIR:ndi_addon>/libndi.dylib" || true
             COMMAND codesign --force --sign - "$<TARGET_FILE:ndi_addon>" || true
-            COMMENT "Bundling libndi.dylib + re-signing ad-hoc for Apple Silicon"
+            COMMENT "Staging libndi.dylib for local NDI testing and re-signing ad-hoc for Apple Silicon"
         )
     elseif(WIN32)
-        # Copy Processing.NDI.Lib.x64.dll next to the .node so Windows'
-        # DLL search resolves it from the loading binary's directory.
-        # electron-builder ships the build/Release/ dir as-is via asarUnpack.
+        # Stage a local runtime copy for developer testing. electron-builder
+        # excludes Processing.NDI.Lib*.dll from public installers.
         set(NDI_DLL "${NDI_INCLUDE_DIRS}/../Bin/x64/Processing.NDI.Lib.x64.dll")
         if(EXISTS "${NDI_DLL}")
             add_custom_command(TARGET ndi_addon POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${NDI_DLL}"
                     "$<TARGET_FILE_DIR:ndi_addon>/Processing.NDI.Lib.x64.dll"
-                COMMENT "Bundling Processing.NDI.Lib.x64.dll alongside ndi_addon.node"
+                COMMENT "Staging Processing.NDI.Lib.x64.dll alongside ndi_addon.node for local NDI testing"
             )
         else()
             message(WARNING "NDI runtime DLL not found at ${NDI_DLL} — built ndi_addon will fail to load at runtime")
@@ -322,7 +330,7 @@ if(NDI_FOUND)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${NDI_LIBRARY}"
                 "$<TARGET_FILE_DIR:ndi_addon>/libndi.so"
-            COMMENT "Bundling libndi.so alongside ndi_addon.node"
+            COMMENT "Staging libndi.so alongside ndi_addon.node for local NDI testing"
         )
     endif()
 else()
