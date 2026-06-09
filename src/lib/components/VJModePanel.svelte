@@ -1008,7 +1008,7 @@
       vjNdiChecked = true;
       vjNdiAvailable = false;
       vjDetectedNdiSources = [];
-      vjNdiStatusHint = 'NDI® native bridge unavailable';
+      vjNdiStatusHint = 'NDI® is optional and not bundled in this build';
       return;
     }
     try {
@@ -1017,13 +1017,13 @@
       vjNdiAvailable = !!avail?.available;
       if (!vjNdiAvailable) {
         vjDetectedNdiSources = [];
-        vjNdiStatusHint = avail?.error || 'NDI® runtime or native addon unavailable';
+        vjNdiStatusHint = avail?.error || 'Install NDI and restart Ghost Arcade';
       }
     } catch {
       vjNdiChecked = true;
       vjNdiAvailable = false;
       vjDetectedNdiSources = [];
-      vjNdiStatusHint = 'NDI® runtime or native addon unavailable';
+      vjNdiStatusHint = 'Install NDI and restart Ghost Arcade';
     }
     if (!vjNdiAvailable) return;
     if (vjNdiScanInterval) return;
@@ -4402,7 +4402,7 @@
                     </div>
                   {:else}
                     <div class="empty-media" style="padding: 12px 14px;">
-                      <p>{!vjNdiChecked || vjNdiScanning ? 'Scanning for NDI® sources...' : vjNdiAvailable ? 'No NDI® sources detected' : 'NDI® native bridge unavailable'}</p>
+                      <p>{!vjNdiChecked || vjNdiScanning ? 'Scanning for NDI® sources...' : vjNdiAvailable ? 'No NDI® sources detected' : 'NDI® unavailable'}</p>
                       <p class="hint">{vjNdiStatusHint}</p>
                     </div>
                   {/if}

@@ -402,7 +402,7 @@
         ndiChecked = true;
         ndiAvailable = false;
         ndiSources = [];
-        ndiStatusHint = 'NDI® native bridge unavailable';
+        ndiStatusHint = 'NDI® is optional and not bundled in this build';
         return;
       }
 
@@ -411,7 +411,7 @@
       ndiAvailable = !!availability?.available;
       if (!ndiAvailable) {
         ndiSources = [];
-        ndiStatusHint = availability?.error || 'NDI® runtime or native addon unavailable';
+        ndiStatusHint = availability?.error || 'Install NDI and restart Ghost Arcade';
         return;
       }
 
@@ -3462,7 +3462,7 @@
               </div>
             {:else}
               <div class="spout-no-senders">
-                <p>{!ndiChecked || ndiScanning ? 'Scanning for NDI® sources...' : ndiAvailable ? 'No NDI® sources detected' : 'NDI® native bridge unavailable'}</p>
+                <p>{!ndiChecked || ndiScanning ? 'Scanning for NDI® sources...' : ndiAvailable ? 'No NDI® sources detected' : 'NDI® unavailable'}</p>
                 <p class="hint">{ndiStatusHint}</p>
                 <button class="spout-refresh-btn" disabled={ndiScanning} onclick={() => scanNdiSources()}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

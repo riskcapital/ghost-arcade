@@ -60,56 +60,9 @@ jobs:
         run: npm ci --ignore-scripts
         working-directory: electron/native
 
-      # NDI Advanced SDK — required to build and ship ndi_addon. The SDK
-      # download itself is gated by NDI's terms, so CI fetches it from
-      # the org's own private storage URL (secrets.NDI_SDK_WIN_URL).
-      - name: Require NDI SDK URL (Windows)
-        shell: pwsh
-        env:
-          NDI_SDK_WIN_URL: ${{ secrets.NDI_SDK_WIN_URL }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:NDI_SDK_WIN_URL)) {
-            throw "NDI_SDK_WIN_URL is required for release installers so NDI ships ready-to-use."
-          }
-
-      - name: Install NDI Advanced SDK (Windows)
-        shell: pwsh
-        env:
-          NDI_SDK_WIN_URL: ${{ secrets.NDI_SDK_WIN_URL }}
-        run: |
-          $url = $env:NDI_SDK_WIN_URL
-          $installer = "$env:RUNNER_TEMP\NDI-SDK.exe"
-          Write-Host "Downloading NDI SDK from $url..."
-          Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
-          Write-Host "Installing silently..."
-          $process = Start-Process -FilePath $installer -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-" -Wait -PassThru
-          if ($process.ExitCode -ne 0) {
-            throw "NDI SDK installer exited with code $($process.ExitCode)."
-          }
-          # Confirm the expected install path resolved (the CMake detection
-          # logic checks these exact paths).
-          $sdk = "C:\Program Files\NDI\NDI Advanced SDK"
-          if (-Not (Test-Path "$sdk\Include\Processing.NDI.Lib.h")) {
-            $sdk = "C:\Program Files\NDI\NDI SDK"
-          }
-          if (-Not (Test-Path "$sdk\Include\Processing.NDI.Lib.h")) {
-            throw "NDI SDK install did not produce expected files."
-          }
-          Write-Host "NDI SDK installed at $sdk"
-
       - name: Build native addons
         run: npm run build -- --rebuild
         working-directory: electron/native
-
-      - name: Verify bundled NDI runtime (Windows)
-        shell: pwsh
-        run: |
-          if (-Not (Test-Path "electron/native/build/Release/ndi_addon.node")) {
-            throw "ndi_addon.node was not built."
-          }
-          if (-Not (Test-Path "electron/native/build/Release/Processing.NDI.Lib.x64.dll")) {
-            throw "Processing.NDI.Lib.x64.dll was not staged for packaging."
-          }
 
       - name: Build frontend
         run: npm run build
@@ -179,52 +132,9 @@ jobs:
         run: npm ci --ignore-scripts
         working-directory: electron/native
 
-      # NDI Advanced SDK for Apple — same pattern as Windows. Fetched
-      # from a private URL exposed via secrets.NDI_SDK_MAC_URL because
-      # NDI's distribution requires accepting the EULA before download.
-      - name: Require NDI SDK URL (macOS)
-        env:
-          NDI_SDK_MAC_URL: ${{ secrets.NDI_SDK_MAC_URL }}
-        run: |
-          if [ -z "$NDI_SDK_MAC_URL" ]; then
-            echo "NDI_SDK_MAC_URL is required for release installers so NDI ships ready-to-use." >&2
-            exit 1
-          fi
-
-      - name: Install NDI Advanced SDK (macOS)
-        env:
-          NDI_SDK_MAC_URL: ${{ secrets.NDI_SDK_MAC_URL }}
-        run: |
-          echo "Downloading NDI SDK..."
-          curl -L -o /tmp/ndi-sdk.pkg "$NDI_SDK_MAC_URL"
-          echo "Installing..."
-          sudo installer -pkg /tmp/ndi-sdk.pkg -target /
-          # Sanity-check that the expected install layout landed where
-          # CMake looks for it.
-          SDK="/Library/NDI Advanced SDK for Apple"
-          if [ ! -f "$SDK/include/Processing.NDI.Lib.h" ]; then
-            SDK="/Library/NDI SDK for Apple"
-          fi
-          if [ -f "$SDK/include/Processing.NDI.Lib.h" ]; then
-            echo "NDI SDK installed at $SDK"
-            ls "$SDK/lib/macOS/"
-          else
-            echo "NDI SDK install did not produce expected files." >&2
-            exit 1
-          fi
-
       - name: Build native addons
         run: npm run build -- --rebuild
         working-directory: electron/native
-
-      - name: Verify bundled NDI runtime (macOS)
-        run: |
-          test -f electron/native/build/Release/ndi_addon.node
-          test -f electron/native/build/Release/libndi.dylib
-          lipo electron/native/build/Release/ndi_addon.node -verify_arch x86_64 arm64
-          lipo electron/native/build/Release/libndi.dylib -verify_arch x86_64 arm64
-          lipo -info electron/native/build/Release/ndi_addon.node
-          lipo -info electron/native/build/Release/libndi.dylib
 
       - name: Build frontend
         run: npm run build
@@ -285,77 +195,12 @@ jobs:
         run: npm ci --ignore-scripts
         working-directory: electron/native
 
-      # NDI Advanced SDK for Linux — same pattern as Win / Mac jobs.
-      # The .tar.gz installer lives behind NDI's EULA; CI fetches from
-      # the private storage URL exposed via secrets.NDI_SDK_LINUX_URL.
-      - name: Require NDI SDK URL (Linux)
-        env:
-          NDI_SDK_LINUX_URL: ${{ secrets.NDI_SDK_LINUX_URL }}
-        run: |
-          if [ -z "$NDI_SDK_LINUX_URL" ]; then
-            echo "NDI_SDK_LINUX_URL is required for release installers so NDI ships ready-to-use." >&2
-            exit 1
-          fi
-
-      - name: Install NDI Advanced SDK (Linux)
-        env:
-          NDI_SDK_LINUX_URL: ${{ secrets.NDI_SDK_LINUX_URL }}
-        run: |
-          echo "Downloading NDI SDK..."
-          curl -L -o /tmp/ndi-sdk.tar.gz "$NDI_SDK_LINUX_URL"
-          mkdir -p /tmp/ndi-sdk-extract
-          tar -xzf /tmp/ndi-sdk.tar.gz -C /tmp/ndi-sdk-extract
-          # Installer is a self-extracting shell script bundled with the SDK
-          # contents. Extract it into /tmp first, then copy the resulting SDK
-          # folder into /opt where CMake's Linux NDI detection looks.
-          INSTALLER=$(find /tmp/ndi-sdk-extract -name "Install_NDI_SDK_*.sh" | head -1)
-          if [ -n "$INSTALLER" ]; then
-            rm -rf /tmp/ndi-sdk-payload
-            mkdir -p /tmp/ndi-sdk-payload
-            (
-              cd /tmp/ndi-sdk-payload
-              yes | sh "$INSTALLER" --noexec || true
-            )
-          fi
-          HEADER=$(find /tmp/ndi-sdk-payload /tmp/ndi-sdk-extract "$GITHUB_WORKSPACE" \
-            -path "*/include/Processing.NDI.Lib.h" \
-            -type f \
-            2>/dev/null | head -1)
-          if [ -z "$HEADER" ]; then
-            echo "NDI SDK install did not produce expected files." >&2
-            exit 1
-          fi
-          SDK_SRC=$(dirname "$(dirname "$HEADER")")
-          SDK_DEST="/opt/$(basename "$SDK_SRC")"
-          sudo rm -rf "$SDK_DEST"
-          sudo mkdir -p /opt
-          sudo cp -R "$SDK_SRC" "$SDK_DEST"
-          if [ ! -f "$SDK_DEST/lib/x86_64-linux-gnu/libndi.so" ]; then
-            NDI_SO=$(find "$SDK_DEST/lib/x86_64-linux-gnu" -maxdepth 1 -name "libndi.so.*" -type f | sort | tail -1)
-            if [ -n "$NDI_SO" ]; then
-              sudo ln -s "$(basename "$NDI_SO")" "$SDK_DEST/lib/x86_64-linux-gnu/libndi.so"
-            fi
-          fi
-          # Sanity-check
-          if [ -f "/opt/NDI Advanced SDK for Linux/include/Processing.NDI.Lib.h" ]; then
-            echo "NDI SDK installed at /opt/NDI Advanced SDK for Linux"
-          elif [ -f "/opt/NDI SDK for Linux/include/Processing.NDI.Lib.h" ]; then
-            echo "NDI SDK installed at /opt/NDI SDK for Linux"
-          else
-            echo "NDI SDK install did not produce expected files." >&2
-            exit 1
-          fi
-
-      # The main Spout/Syphon CMake branch silently no-ops on Linux,
-      # so this builds the NDI addon and stages libndi.so.
-      - name: Build native addons (NDI only on Linux)
+      # The native NDI addon is optional and only builds on machines where
+      # the NDI SDK is already installed. Release CI intentionally does not
+      # download, install, or redistribute the NDI SDK/runtime.
+      - name: Build native addons
         run: npm run build -- --rebuild
         working-directory: electron/native
-
-      - name: Verify bundled NDI runtime (Linux)
-        run: |
-          test -f electron/native/build/Release/ndi_addon.node
-          test -f electron/native/build/Release/libndi.so
 
       - name: Build frontend
         run: npm run build

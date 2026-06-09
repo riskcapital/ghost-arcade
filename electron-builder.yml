@@ -19,6 +19,8 @@ files:
   - "!electron/native/build/**/*.obj"
   - "!electron/native/build/**/*.pdb"
   - "!electron/native/build/Release/Syphon.framework/**/*"
+  - "!electron/native/build/Release/Processing.NDI.Lib*.dll"
+  - "!electron/native/build/Release/libndi.*"
   - "!electron/native/vendor/Syphon.framework/**/*"
 
 # Platform-specific extra resources
@@ -39,14 +41,6 @@ extraResources:
 
 asarUnpack:
   - "electron/native/**/*.node"
-  # NDI Windows runtime DLL — sits next to ndi_addon.node so Windows'
-  # DLL search resolves it automatically. Only present on builds where
-  # the NDI SDK was found at compile time (electron/native/CMakeLists.txt
-  # copies it from the SDK install).
-  - "electron/native/build/Release/*.dll"
-  # NDI Linux runtime shared object — copied next to ndi_addon.node and
-  # resolved through the addon's $ORIGIN rpath.
-  - "electron/native/build/Release/*.so*"
 
 # ─── File Associations ─────────────────────────────────────────────────────
 fileAssociations:
@@ -109,19 +103,14 @@ mac:
   signIgnore:
     - '/Syphon\.framework/Syphon$'
     - '/Syphon\.framework/Versions/Current/Syphon$'
-  # Ship native runtime frameworks/dylibs inside the .app's
-  # Contents/Frameworks/ so addon @rpath search resolves at load time.
+  # Ship native runtime frameworks inside the .app's Contents/Frameworks/.
   # Syphon.framework is REQUIRED for macOS texture-share support; the
   # native build stages it into electron/native/build/Release from either
-  # electron/native/vendor/Syphon.framework (release/CI preferred) or a
-  # local Frameworks install. NDI remains optional.
+  # electron/native/vendor/Syphon.framework (release/CI preferred) or
+  # a local Frameworks install.
   extraFiles:
     - from: electron/native/build/Release/Syphon.framework
       to: Frameworks/Syphon.framework
-      filter:
-        - "**/*"
-    - from: electron/native/build/Release/libndi.dylib
-      to: Frameworks/libndi.dylib
       filter:
         - "**/*"
 
