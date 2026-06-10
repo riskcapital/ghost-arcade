@@ -143,3 +143,29 @@ now.)
 ## Out of scope
 - NDI zero-copy (protocol is CPU-frame).
 - Per-slice physical-display windows (already zero-copy, unchanged).
+
+## Progress
+
+- ✅ **Phase 1** — `slice-atlas` renderer mode + layout packer + IPC stub.
+  - `src/lib/output/atlasLayout.ts` — shelf-packer (`packAtlas`), rotation-
+    aware sizing, sender-slice filter, layout signature. 9 unit tests.
+  - `src/lib/output/blendRenderer.ts` — atlas-present path
+    (`beginSliceAtlasFrame` / `renderSliceAtlasTile` / `endSliceAtlasFrame`)
+    on a 2nd renderer bound to a visible canvas; reuses the existing
+    warp/crop/color/blend FRAG_SHADER + `applyWarpUniforms` (no
+    duplication). Per-tile viewport+scissor (no bleed).
+  - `src/SliceAtlasApp.svelte` + `?mode=slice-atlas` in `main.ts` — own
+    master compositor, packs + renders all sender slices each frame,
+    publishes layout to main on change.
+  - `electron/main.js` — `texshare_atlas_layout` intake stub + `atlasState`
+    + `spout_get_status` atlas fields; preload allowlist entries.
+  - **Verified (Electron):** two half-width slices → atlas 1922×1080, left
+    tile = correct red crop, right tile = correct blue crop, 2px gap =
+    black (no bleed). Render math correct.
+  - **Open for Phase 2 — vertical orientation.** The atlas is GL-framebuffer
+    bottom-up: a source top-stripe lands at the displayed-atlas bottom.
+    The readback sender path corrects this with `flip=true`; the atlas
+    path must match the single-output `sendTexture` orientation. Pin the
+    flip direction against a real Spout receiver when the native sub-copy
+    lands (Phase 2) — likely a V-flip in `setAtlasSource` (flipY) or the
+    tile draw. Don't guess without a receiver.
