@@ -153,6 +153,17 @@ hidden CPU path with no error.
   handler) was already handled in main.js — audit claim was stale. Blob-URL revoke
   claims (P2-4) were WRONG — those URLs are media-library `src`es, intentionally
   long-lived; documented in code instead.
+- ✅ P1-1/2 render-loop injection cache — VJ→layer injection (stage + mapping
+  binding paths) now reuses the layer clone + merged effects array per layer with
+  identity-based invalidation; only the injected source object is rebuilt per
+  frame (textures change per frame; cached VJ sources are mutated in place, so a
+  frozen copy would drift). VJ id regex parse memoized; texture resolver hoisted
+  out of the frame body. Verified by driving stage mode synthetically.
+- ✅ P1-7 keyframe debug stringify behind `__GA_KF_DEBUG__` flag.
+- ⚠️ P1-3 render-plan caching REJECTED as unsafe: buildRenderPlan depends on
+  hasLayerTexture(), which flips when video/shader textures finish decoding on
+  the SAME layer objects — identity-keyed caching would leave late-arriving
+  textures permanently invisible. Removed a dead per-frame Set allocation instead.
 
 ## Suggested execution order
 

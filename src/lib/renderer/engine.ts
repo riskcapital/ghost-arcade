@@ -1659,7 +1659,6 @@ export class RenderEngine {
    */
   private buildRenderPlan(layers: Layer[]): RenderUnit[] {
     const units: RenderUnit[] = [];
-    const childIds = new Set(layers.filter(l => l.parentGroupId).map(l => l.id));
 
     for (const layer of layers) {
       // Skip children — they're handled by their parent group
