@@ -48,6 +48,11 @@ const isWebGPUDisplay = mode === 'webgpu-display';
 // BroadcastChannel state-sync and CSS-clips to its slice's region. See
 // SliceOutputApp.svelte for the full architecture.
 const isSliceDisplay = mode === 'slice-display';
+// `slice-atlas` is the hidden OSR compositor for multi-slice zero-copy
+// senders — renders every Spout/Syphon sender slice into one atlas
+// texture that the native addon fans out to per-name senders. See
+// SliceAtlasApp.svelte + docs/multi-slice-zerocopy-plan.md.
+const isSliceAtlas = mode === 'slice-atlas';
 // Dev/QA escape hatch: `?mode=mobile-remote` mounts the desktop mobile
 // companion directly in a browser. The native iOS/Android standalone app
 // lives behind src/native-mobile-main.ts + vite.config.native-mobile.ts so
@@ -60,7 +65,7 @@ if (isSpoutOutput && !window.__SPOUT_OSR_MODE__) {
   try { (window as any).__SPOUT_OSR_MODE__ = true; } catch { /* already set by preload */ }
 }
 
-if ((isOutputWindow || isWebRTCDisplay || isWebGPUDisplay || isSliceDisplay || isStage3DWindow) && !(window as any).__OUTPUT_WINDOW_MODE__) {
+if ((isOutputWindow || isWebRTCDisplay || isWebGPUDisplay || isSliceDisplay || isSliceAtlas || isStage3DWindow) && !(window as any).__OUTPUT_WINDOW_MODE__) {
   try { (window as any).__OUTPUT_WINDOW_MODE__ = true; } catch { /* already set by preload */ }
 }
 
@@ -122,6 +127,26 @@ async function init() {
     // the two transports at runtime.
     const { default: OutputDisplayApp } = await import('./OutputDisplayApp.svelte');
     mount(OutputDisplayApp, {
+      target: document.getElementById('app')!,
+    });
+  } else if (isSliceAtlas) {
+    // Hidden OSR compositor for multi-slice zero-copy senders. Needs the
+    // audio + modulation receivers because the master <Canvas/> it mounts
+    // reads those stores during render (same as the other output modes).
+    const [
+      { default: SliceAtlasApp },
+      { startAudioBroadcastReceiver },
+      { audioStore },
+      { startModulationBroadcastReceiver },
+    ] = await Promise.all([
+      import('./SliceAtlasApp.svelte'),
+      import('./lib/sync/audioBroadcast'),
+      import('./lib/stores/audio'),
+      import('./lib/sync/modulationBroadcast'),
+    ]);
+    startAudioBroadcastReceiver({ onFrame: (frame) => audioStore.injectBroadcastedFrame(frame) });
+    startModulationBroadcastReceiver();
+    mount(SliceAtlasApp, {
       target: document.getElementById('app')!,
     });
   } else if (isStage3DWindow) {

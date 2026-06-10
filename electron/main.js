@@ -294,6 +294,15 @@ let spoutSendW = 1920;      // Output resolution for OSR window
 let spoutSendH = 1080;
 let spoutCpuFallbackWarned = false;
 
+// Multi-slice zero-copy atlas state. Phase 1 records the layout the
+// slice-atlas OSR window publishes; Phase 2 adds the atlas OSR window +
+// per-name SpoutAtlasOutput/SyphonAtlasOutput fan-out driven from it.
+const atlasState = {
+  active: false,            // true once the atlas OSR window is forwarding
+  layout: null,             // last { atlasW, atlasH, tiles, overflow }
+  lastLoggedCount: -1,
+};
+
 // ============================================================
 // Sidecar: Rust WS/HTTP/Spout backend
 // ============================================================
@@ -1584,7 +1593,24 @@ function registerIpcHandlers() {
       cpu_fallback_allowed: ALLOW_CPU_TEXTURE_SHARE_FALLBACK,
       receiver_active: spoutReceiver !== null,
       receivers: [],
+      atlas_active: atlasState.active,
+      atlas_sender_count: atlasState.layout?.tiles?.length ?? 0,
     };
+  });
+
+  // --- Multi-slice zero-copy atlas (Phase 1: layout intake stub) ---
+  // The slice-atlas OSR window publishes its packed layout here whenever
+  // it changes. Phase 2 wires this to per-name SpoutAtlasOutput senders +
+  // resizes the atlas OSR window; for now we record it so spout_get_status
+  // can report sender count and the layout is ready for the fan-out.
+  ipcMain.handle('texshare_atlas_layout', (_, layout) => {
+    atlasState.layout = layout && typeof layout === 'object' ? layout : null;
+    const n = atlasState.layout?.tiles?.length ?? 0;
+    if (n !== atlasState.lastLoggedCount) {
+      atlasState.lastLoggedCount = n;
+      console.log(`[Atlas] layout: ${n} sender tile(s), atlas ${layout?.atlasW || 0}x${layout?.atlasH || 0}${layout?.overflow ? ' (OVERFLOW)' : ''}`);
+    }
+    return { ok: true };
   });
 
   // --- OSR zero-copy lifecycle ---

@@ -938,6 +938,165 @@ function flipRowsInPlace(buf: Uint8Array, w: number, h: number) {
   }
 }
 
+// ─── Atlas present path (multi-slice zero-copy senders) ──────────────────
+// A SECOND renderer bound to a caller-provided VISIBLE canvas. The
+// slice-atlas OSR window packs every Spout/Syphon sender slice into one
+// atlas canvas: each slice is rendered into its own viewport+scissor tile
+// using the SAME warp/crop/color/edge-blend shader as the readback path
+// (single source of truth — no warp logic duplicated natively). Chromium
+// captures the whole atlas as one shared GPU texture; the native addon
+// then sub-copies each tile into a per-name sender. No readPixels here:
+// the rendered atlas canvas IS the captured surface.
+let atlasRenderer: THREE.WebGLRenderer | null = null;
+let atlasCanvas: HTMLCanvasElement | null = null;
+let atlasScene: THREE.Scene | null = null;
+let atlasCamera: THREE.OrthographicCamera | null = null;
+let atlasQuad: THREE.Mesh | null = null;
+let atlasMaterial: THREE.ShaderMaterial | null = null;
+let atlasSourceTex: THREE.CanvasTexture | null = null;
+
+function ensureAtlasRenderer(canvas: HTMLCanvasElement, w: number, h: number): boolean {
+  if (atlasRenderer && atlasCanvas === canvas) {
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+      atlasRenderer.setSize(w, h, false);
+    }
+    return true;
+  }
+  // Canvas changed (remount) — tear down the old renderer first.
+  if (atlasRenderer) disposeAtlasRenderer();
+  try {
+    canvas.width = w;
+    canvas.height = h;
+    atlasRenderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: false,
+      alpha: false,
+      // The atlas canvas is the OSR-captured surface; Chromium reads it
+      // from the compositor, so we don't need preserveDrawingBuffer.
+      preserveDrawingBuffer: false,
+      premultipliedAlpha: false,
+    });
+    atlasRenderer.setPixelRatio(1);
+    atlasRenderer.setSize(w, h, false);
+    atlasRenderer.outputColorSpace = THREE.SRGBColorSpace;
+    atlasRenderer.autoClear = false;
+    atlasCanvas = canvas;
+    atlasScene = new THREE.Scene();
+    atlasCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    atlasMaterial = new THREE.ShaderMaterial({
+      vertexShader: VERT_SHADER,
+      fragmentShader: FRAG_SHADER,
+      uniforms: {
+        uSource: { value: null },
+        uCrop: { value: new THREE.Vector4(0, 0, 1, 1) },
+        uWarpMode: { value: 0 },
+        uCornerTL: { value: new THREE.Vector2(0, 0) },
+        uCornerTR: { value: new THREE.Vector2(1, 0) },
+        uCornerBL: { value: new THREE.Vector2(0, 1) },
+        uCornerBR: { value: new THREE.Vector2(1, 1) },
+        uMeshTex: { value: ensureMeshPlaceholder() },
+        uMeshRows: { value: 0 },
+        uMeshCols: { value: 0 },
+        uRotation: { value: 0 },
+        uBrightness: { value: 1 },
+        uContrast: { value: 1 },
+        uGamma: { value: 1 },
+        uBlendW: { value: new THREE.Vector4(0, 0, 0, 0) },
+        uBlendG: { value: new THREE.Vector4(2.2, 2.2, 2.2, 2.2) },
+        uBlackLevel: { value: new THREE.Vector3(0, 0, 0) },
+        uBlackFeather: { value: 0.5 },
+        uStageIntensity: { value: 1 },
+      },
+      depthTest: false,
+      depthWrite: false,
+    });
+    atlasQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), atlasMaterial);
+    atlasScene.add(atlasQuad);
+    return true;
+  } catch (err) {
+    console.warn('[blendRenderer] atlas renderer init failed', err);
+    atlasRenderer = null;
+    atlasCanvas = null;
+    return false;
+  }
+}
+
+function setAtlasSource(source: HTMLCanvasElement | OffscreenCanvas | HTMLVideoElement | ImageBitmap) {
+  if (!atlasSourceTex || (atlasSourceTex as any).image !== source) {
+    if (atlasSourceTex) atlasSourceTex.dispose();
+    atlasSourceTex = new THREE.CanvasTexture(source as any);
+    atlasSourceTex.flipY = false;
+    atlasSourceTex.minFilter = THREE.LinearFilter;
+    atlasSourceTex.magFilter = THREE.LinearFilter;
+    atlasSourceTex.wrapS = THREE.ClampToEdgeWrapping;
+    atlasSourceTex.wrapT = THREE.ClampToEdgeWrapping;
+    (atlasSourceTex as any).colorSpace = THREE.SRGBColorSpace;
+  }
+  atlasSourceTex.needsUpdate = true;
+  if (atlasMaterial) atlasMaterial.uniforms.uSource.value = atlasSourceTex;
+}
+
+/** Begin an atlas frame: bind the renderer to `canvas` at atlas size,
+ *  bind the master `source` frame, and clear the whole atlas to black.
+ *  Call once per frame, then renderSliceAtlasTile per slice. Returns
+ *  false if WebGL is unavailable (caller falls back to readback). */
+export function beginSliceAtlasFrame(
+  canvas: HTMLCanvasElement,
+  atlasW: number,
+  atlasH: number,
+  source: HTMLCanvasElement | OffscreenCanvas | HTMLVideoElement | ImageBitmap,
+): boolean {
+  if (atlasW <= 0 || atlasH <= 0) return false;
+  if (!ensureAtlasRenderer(canvas, atlasW, atlasH)) return false;
+  setAtlasSource(source);
+  atlasRenderer!.setScissorTest(false);
+  atlasRenderer!.setViewport(0, 0, atlasW, atlasH);
+  atlasRenderer!.setClearColor(0x000000, 1);
+  atlasRenderer!.clear(true, true, true);
+  return true;
+}
+
+/** Render one slice into its atlas tile (origin bottom-left, GL
+ *  convention). Scissor confines the draw to the tile so edge-blend
+ *  gradients never bleed into a neighbour. */
+export function renderSliceAtlasTile(
+  slice: OutputSlice,
+  tileX: number,
+  tileY: number,
+  tileW: number,
+  tileH: number,
+  stageIntensity = 1,
+): void {
+  if (!atlasRenderer || !atlasScene || !atlasCamera || !atlasMaterial) return;
+  if (tileW <= 0 || tileH <= 0) return;
+  applyWarpUniforms(atlasMaterial.uniforms, slice, stageIntensity, false);
+  atlasRenderer.setViewport(tileX, tileY, tileW, tileH);
+  atlasRenderer.setScissor(tileX, tileY, tileW, tileH);
+  atlasRenderer.setScissorTest(true);
+  atlasRenderer.render(atlasScene, atlasCamera);
+}
+
+/** Flush GL commands after all tiles are drawn so the compositor sees a
+ *  complete atlas this frame. */
+export function endSliceAtlasFrame(): void {
+  if (!atlasRenderer) return;
+  atlasRenderer.setScissorTest(false);
+  const gl = atlasRenderer.getContext();
+  gl.flush();
+}
+
+export function disposeAtlasRenderer(): void {
+  if (atlasSourceTex) { atlasSourceTex.dispose(); atlasSourceTex = null; }
+  if (atlasQuad) { (atlasQuad.geometry as THREE.BufferGeometry).dispose(); atlasQuad = null; }
+  if (atlasMaterial) { atlasMaterial.dispose(); atlasMaterial = null; }
+  if (atlasRenderer) { atlasRenderer.dispose(); atlasRenderer = null; }
+  atlasScene = null;
+  atlasCamera = null;
+  atlasCanvas = null;
+}
+
 export function disposeBlendRenderer() {
   if (renderer && sliceReadbackStates.size > 0) {
     const gl = renderer.getContext() as WebGL2RenderingContext;

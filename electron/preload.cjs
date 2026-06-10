@@ -18,6 +18,11 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'spout_send_frame', 'spout_send_image', 'spout_get_status',
   'spout_start_receiver', 'spout_stop_receiver', 'spout_receive_frame',
   'spout_start_osr', 'spout_stop_osr', 'spout_send_shared_texture',
+  // Multi-slice zero-copy senders (atlas OSR + native fan-out).
+  // slice-atlas window publishes its packed layout here; main (re)builds
+  // per-name senders + resizes the atlas OSR window. See
+  // docs/multi-slice-zerocopy-plan.md.
+  'texshare_atlas_layout', 'texshare_start_atlas', 'texshare_stop_atlas',
   // OSR window → main lifecycle callbacks. Fired from the hidden
   // SpoutOutputApp renderer when it's done initializing / has resized,
   // so the main process can flip osrActive=true and start forwarding
