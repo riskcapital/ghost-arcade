@@ -141,6 +141,19 @@ renderer** (same renderer process). Chromium silently drops GpuMemoryBuffer
 backing on cross-process MessagePort transfer, which turns "zero-copy" into a
 hidden CPU path with no error.
 
+## Progress
+
+- ✅ P0-1 modulation hot channel (`ce4b4d8`) — 0 store ticks per audio batch, verified live
+- ✅ P0-2 slim VJ broadcasts (`ce4b4d8`) — grids only on structural change, verified live
+- ✅ P0-4 async main-process logging (`01c436f`)
+- ✅ P1-5 WLED in-flight cap (`01c436f`)
+- ✅ P2-1/2/3/5 leak batch (`01c436f`) — video element release on clip clear/overwrite
+  (orphan-checked for duplicated clip ids), bounded shader-input cache, thumbnail
+  element cleanup, ISF image-input texture disposal. P2-6 (sliceWindows closed
+  handler) was already handled in main.js — audit claim was stale. Blob-URL revoke
+  claims (P2-4) were WRONG — those URLs are media-library `src`es, intentionally
+  long-lived; documented in code instead.
+
 ## Suggested execution order
 
 1. P0-1 + P0-2 together (one PR: modulation hot channel + VJ broadcast split) —
