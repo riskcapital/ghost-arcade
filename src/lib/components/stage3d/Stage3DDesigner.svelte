@@ -17,6 +17,7 @@
     selectedStage3DTargets,
     stage3DGizmoMode,
     stage3DRendererControls,
+    stage3DSceneryList,
     historyVersion,
     parseSelection,
     setStage3DSelection,
@@ -53,11 +54,31 @@
   $: screenLayers = $project.layers.filter(l => l.type === 'screen' && l.visible !== false);
   $: userElements = $stage3dScene.userElements ?? [];
   $: venue = ($stage3dScene.venue ?? 'festival') as Stage3DVenue;
+  // Venue scenery pieces (deck, trusses, movers, PA…) the renderer
+  // discovered for the current venue, plus their per-piece override so
+  // the tree can show deleted/moved state and offer restore.
+  $: sceneryItems = $stage3DSceneryList;
+  $: sceneryOverrides = $stage3dScene.sceneryOverrides ?? {};
+
+  function deleteScenery(id: string) {
+    stage3dScene.setSceneryOverride(id, { deleted: true });
+    setStage3DSelection(null);
+    toast('Venue piece hidden');
+  }
+  function restoreScenery(id: string) {
+    // null clears the whole override → piece returns to baseline
+    // transform AND visibility.
+    stage3dScene.setSceneryOverride(id, null);
+    toast('Venue piece restored');
+  }
   $: selection = parseSelection($selectedStage3DNodeId);
   $: selectedScreen = selection?.kind === 'screen'
     ? screenLayers.find(l => l.id === selection!.id) : null;
   $: selectedElement = selection?.kind === 'element'
     ? userElements.find(e => e.id === selection!.id) : null;
+  $: selectedScenery = selection?.kind === 'scenery'
+    ? (sceneryItems.find(s => s.id === selection!.id) ?? { id: selection!.id, label: selection!.id })
+    : null;
 
   function setVenue(v: Stage3DVenue) {
     stage3dScene.setVenue(v);
@@ -459,6 +480,42 @@
         {/each}
       </div>
     {/if}
+    {#if sceneryItems.length > 0}
+      <div class="grp">
+        <div class="ghd">
+          Venue elements
+          <button
+            class="ghd-action"
+            onclick={() => stage3dScene.clearSceneryOverrides()}
+            title="Restore all venue elements to default"
+          >reset</button>
+        </div>
+        {#each sceneryItems as item (item.id)}
+          {@const key = `scenery:${item.id}`}
+          {@const isDeleted = sceneryOverrides[item.id]?.deleted}
+          <div class="scenery-row">
+            <button
+              class="additem screen scenery-pick"
+              class:selected={$selectedStage3DTargets.has(key)}
+              class:primary={$selectedStage3DNodeId === key}
+              class:deleted={isDeleted}
+              disabled={isDeleted}
+              onclick={(e) => (e.shiftKey || e.metaKey)
+                ? toggleStage3DSelection(key)
+                : setStage3DSelection(key)}
+              title={isDeleted ? 'Hidden — click ⟲ to restore' : 'Shift+click to add to selection'}
+            >
+              <span class="ic">◇</span>{item.label}
+            </button>
+            {#if isDeleted}
+              <button class="scenery-act" onclick={() => restoreScenery(item.id)} title="Restore">⟲</button>
+            {:else}
+              <button class="scenery-act danger" onclick={() => deleteScenery(item.id)} title="Hide / delete">✕</button>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    {/if}
   </aside>
 
   <aside class="props">
@@ -473,6 +530,23 @@
       <StageNodeProperties layerId={selectedScreen.id} />
     {:else if selectedElement}
       <StageElementProperties elementId={selectedElement.id} />
+    {:else if selectedScenery}
+      <div class="scenery-inspect">
+        <div class="scenery-title">{selectedScenery.label}</div>
+        <div class="scenery-sub">Venue element</div>
+        <p class="scenery-note">
+          Drag the gizmo to move, rotate, or scale this piece — changes
+          persist with the project. Use <span class="kbd">W</span>
+          <span class="kbd">E</span> <span class="kbd">S</span> to switch
+          tools.
+        </p>
+        <button class="scenery-del" onclick={() => deleteScenery(selectedScenery.id)}>
+          ✕ Hide this element
+        </button>
+        <button class="scenery-restore" onclick={() => restoreScenery(selectedScenery.id)}>
+          ⟲ Reset to default position
+        </button>
+      </div>
     {:else}
       <StageLightingPanel />
       <div class="empty">
@@ -701,6 +775,50 @@
     border-color: #4af2ff;
   }
   .additem .ic { width: 16px; text-align: center; opacity: 0.8; }
+
+  /* ── Venue element rows (scenery) ─────────────────────────────── */
+  .scenery-row {
+    display: flex; align-items: center; gap: 4px; margin-bottom: 5px;
+  }
+  .scenery-row .scenery-pick { margin-bottom: 0; flex: 1; min-width: 0; }
+  .scenery-pick :global(span) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .scenery-pick.deleted {
+    opacity: 0.4;
+    text-decoration: line-through;
+    cursor: default;
+  }
+  .scenery-pick.deleted:hover { background: rgba(255, 255, 255, 0.03); border-color: rgba(255, 255, 255, 0.08); transform: none; }
+  .scenery-act {
+    flex: 0 0 auto;
+    width: 26px; height: 34px;
+    font: inherit; font-size: 12px;
+    color: #8a93a3;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .scenery-act:hover { color: #4af2ff; border-color: #4af2ff; }
+  .scenery-act.danger:hover { color: #ff5cb8; border-color: #ff5cb8; }
+
+  /* ── Venue element inspector ──────────────────────────────────── */
+  .scenery-inspect { display: flex; flex-direction: column; gap: 8px; }
+  .scenery-title { font-size: 15px; font-weight: 600; color: #e9edf4; }
+  .scenery-sub {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: #4af2ff;
+  }
+  .scenery-note { color: #8a93a3; font-size: 12px; line-height: 1.6; margin: 4px 0 8px; }
+  .scenery-del, .scenery-restore {
+    font: inherit; font-size: 12.5px; text-align: left;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px; padding: 9px 12px; cursor: pointer; color: #e9edf4;
+  }
+  .scenery-del:hover { border-color: #ff5cb8; color: #ff5cb8; }
+  .scenery-restore:hover { border-color: #4af2ff; color: #4af2ff; }
+
   .ghd-action {
     margin-left: auto;
     font: inherit;

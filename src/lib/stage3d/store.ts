@@ -408,6 +408,31 @@ export interface Stage3DRendererControls {
 }
 export const stage3DRendererControls = writable<Stage3DRendererControls | null>(null);
 
+/** Venue scenery pieces discovered by the renderer when it builds a
+ *  venue, published here so the Stage3DDesigner tree can list them and
+ *  let the user select / move / hide individual defaults — exactly like
+ *  user-placed elements. The renderer owns the THREE objects, so it's
+ *  the source of truth for which pieces exist in the current venue. */
+export interface Stage3DSceneryItem {
+  id: string;
+  label: string;
+}
+export const stage3DSceneryList = writable<Stage3DSceneryItem[]>([]);
+
+/** Turn a raw scenery id ("mover-front-0", "tower-front-L", "pa-L")
+ *  into a friendly, title-cased label ("Mover Front 1", "Tower Front L",
+ *  "PA L"). Numeric trailing segments are 1-indexed for display. */
+export function sceneryLabel(id: string): string {
+  const ACRONYMS = new Set(['pa', 'par', 'dj', 'led']);
+  return id.split(/[-_]/).map((part, _i, arr) => {
+    // 1-index a purely-numeric trailing segment.
+    if (/^\d+$/.test(part) && arr.length > 1) return String(parseInt(part, 10) + 1);
+    if (part.length <= 2) return part.toUpperCase();            // L / R / 3D
+    if (ACRONYMS.has(part.toLowerCase())) return part.toUpperCase();
+    return part.charAt(0).toUpperCase() + part.slice(1);
+  }).join(' ');
+}
+
 export function generateNodeId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }

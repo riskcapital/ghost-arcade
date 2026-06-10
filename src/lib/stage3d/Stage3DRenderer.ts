@@ -21,7 +21,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import { get } from 'svelte/store';
-import { stage3dScene, selectedStage3DNodeId, selectedStage3DTargets, stage3DGizmoMode, parseSelection, stage3DRendererControls } from './store';
+import { stage3dScene, selectedStage3DNodeId, selectedStage3DTargets, stage3DGizmoMode, parseSelection, stage3DRendererControls, stage3DSceneryList, sceneryLabel } from './store';
 import { buildVenue, type VenueBuild } from './venues';
 import { buildUserElement } from './elementTypes';
 import { stageEffectsRuntime } from '../stores/stageEffects';
@@ -1087,6 +1087,10 @@ export class Stage3DRenderer {
         baseScale:    [obj.scale.x, obj.scale.y, obj.scale.z],
       });
     });
+    // Publish the piece list so the designer tree can show + manage each
+    // venue default like a user element. Insertion order from traverse()
+    // groups related pieces (deck, trusses, towers, movers, pars, PA).
+    stage3DSceneryList.set([...this.sceneryEntries.keys()].map(id => ({ id, label: sceneryLabel(id) })));
     this.scene.background = new THREE.Color(build.backgroundColor);
     this.scene.fog = new THREE.FogExp2(new THREE.Color(build.fogColor).getHex(), build.fogDensity);
 
@@ -1518,9 +1522,11 @@ export class Stage3DRenderer {
     for (const key of targets) {
       const sel = parseSelection(key);
       if (!sel) continue;
-      const group = sel.kind === 'screen'
-        ? this.ledByLayerId.get(sel.id)?.group
-        : this.elementEntries.get(sel.id)?.group;
+      // Use the unified resolver — the previous inline lookup only
+      // handled screen/element, so scenery groups resolved to undefined
+      // and their drag was never persisted (the render loop then snapped
+      // the piece back to its baseline every frame).
+      const group = this.resolveTargetGroup(key);
       if (!group) continue;
       group.getWorldPosition(wp);
       group.getWorldQuaternion(wq);
