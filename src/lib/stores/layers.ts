@@ -378,10 +378,19 @@ void main() {
             cpIn:  p.cpIn  ? { x: (p.cpIn.x  - minX) / bw, y: 1 - (p.cpIn.y  - minY) / bh } : undefined,
             cpOut: p.cpOut ? { x: (p.cpOut.x - minX) / bw, y: 1 - (p.cpOut.y - minY) / bh } : undefined,
           }));
-          // 3. corners in project-normalized 0..1 with Y-flip.
+          // 3. corners in project-normalized 0..1, SAME Y-down convention
+          //    as the canvas/engine (y=0 top). Previously these were
+          //    Y-flipped ("UV convention") — but the engine renders and
+          //    unified-crops corners as Y-down (verified empirically:
+          //    a quad with corner y .85-.95 displays at the BOTTOM of
+          //    the canvas), so flipped corners made every Apply-Stage
+          //    layout render vertically mirrored. Symmetric layouts hid
+          //    the placement mirror, but unified-group screens sampled
+          //    the mirrored band of the shared texture — the "VJ stage
+          //    bands are reversed vs 3D stage" bug.
           const cMinX = minX / sw, cMaxX = maxX / sw;
-          const cTop  = 1 - (minY / sh);  // bbox top in canvas Y → high in corner Y
-          const cBot  = 1 - (maxY / sh);
+          const cTop  = minY / sh;
+          const cBot  = maxY / sh;
           const corners = {
             topLeft:     { x: cMinX, y: cTop },
             topRight:    { x: cMaxX, y: cTop },
