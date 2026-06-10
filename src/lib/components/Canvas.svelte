@@ -2391,6 +2391,13 @@
     }
     textureCache.clear();
 
+    // Dispose ISF image-input textures — unbounded, keyed by input ref,
+    // and previously never released.
+    for (const texture of imageInputTextureCache.values()) {
+      texture.dispose();
+    }
+    imageInputTextureCache.clear();
+
     // Dispose shader resources
     for (const shader of shaderInstances.values()) {
       shader.material.dispose();

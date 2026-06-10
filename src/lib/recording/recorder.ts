@@ -347,30 +347,43 @@ export async function downloadRecording(blob: Blob, filename: string): Promise<v
 
 async function saveRecordingToLibrary(blob: Blob, mimeType: string, namePrefix: string): Promise<void> {
   try {
+    // NOTE: this blob URL is intentionally long-lived — it becomes the
+    // media-library item's `src`, so revoking it would break playback.
     const url = URL.createObjectURL(blob);
     const video = document.createElement('video');
-    video.src = url;
-    video.muted = true;
-
-    await new Promise<void>((resolve, reject) => {
-      video.onloadeddata = () => resolve();
-      video.onerror = () => reject(new Error('Failed to load video'));
-      video.load();
-    });
-
-    video.currentTime = 0;
-    await new Promise<void>((resolve) => {
-      video.onseeked = () => resolve();
-    });
-
-    const thumbCanvas = document.createElement('canvas');
-    thumbCanvas.width = 120;
-    thumbCanvas.height = 68;
-    const ctx = thumbCanvas.getContext('2d');
     let thumbnail: string | undefined;
-    if (ctx) {
-      ctx.drawImage(video, 0, 0, thumbCanvas.width, thumbCanvas.height);
-      thumbnail = thumbCanvas.toDataURL('image/jpeg', 0.7);
+    try {
+      video.src = url;
+      video.muted = true;
+
+      await new Promise<void>((resolve, reject) => {
+        video.onloadeddata = () => resolve();
+        video.onerror = () => reject(new Error('Failed to load video'));
+        video.load();
+      });
+
+      video.currentTime = 0;
+      await new Promise<void>((resolve) => {
+        video.onseeked = () => resolve();
+      });
+
+      const thumbCanvas = document.createElement('canvas');
+      thumbCanvas.width = 120;
+      thumbCanvas.height = 68;
+      const ctx = thumbCanvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(video, 0, 0, thumbCanvas.width, thumbCanvas.height);
+        thumbnail = thumbCanvas.toDataURL('image/jpeg', 0.7);
+      }
+    } finally {
+      // Release the temporary element's decoder + buffered media — one
+      // of these leaked per recording before.
+      video.onloadeddata = null;
+      video.onerror = null;
+      video.onseeked = null;
+      try { video.pause(); } catch { /* ignore */ }
+      video.removeAttribute('src');
+      try { video.load(); } catch { /* ignore */ }
     }
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);

@@ -9,8 +9,14 @@ import { createThreeJSIframeContext, getThreeJSIframeContext, createJSAnimationC
 import { keyframeTimeline } from './keyframeTimeline';
 import { parseISF } from '../isf/parser';
 
-// Cache parsed ISF shader inputs per shader code to avoid re-parsing every frame
+// Cache parsed ISF shader inputs per shader code to avoid re-parsing every
+// frame. Bounded: keys are entire shader source strings, so an unbounded
+// map grows by full shader sources for every unique shader touched in a
+// session. On overflow the oldest entry is evicted (Map preserves
+// insertion order); re-parsing a long-untouched shader on a later cache
+// miss is cheap next to leaking sources for a whole show.
 const vjShaderInputCache = new Map<string, ISFInputDef[]>();
+const VJ_SHADER_INPUT_CACHE_MAX = 128;
 function getShaderInputs(shaderCode: string | undefined): ISFInputDef[] | undefined {
   if (!shaderCode) return undefined;
   const cached = vjShaderInputCache.get(shaderCode);
@@ -18,6 +24,10 @@ function getShaderInputs(shaderCode: string | undefined): ISFInputDef[] | undefi
   try {
     const parsed = parseISF(shaderCode);
     const inputs = (parsed?.metadata?.INPUTS || []) as ISFInputDef[];
+    if (vjShaderInputCache.size >= VJ_SHADER_INPUT_CACHE_MAX) {
+      const oldest = vjShaderInputCache.keys().next().value;
+      if (oldest !== undefined) vjShaderInputCache.delete(oldest);
+    }
     vjShaderInputCache.set(shaderCode, inputs);
     return inputs;
   } catch {
@@ -610,6 +620,31 @@ function pauseClipRuntime(clip: VJClip | null | undefined): void {
   clip.isPlaying = false;
 }
 
+/** Release a removed clip's cached video element unless the same clip id
+ *  is still referenced somewhere else (another cell, the other bank, an
+ *  inactive block, or an active deck slot — bank copies share clip ids).
+ *  Without this, every video clip deleted from the grid left its
+ *  HTMLVideoElement (decoder + buffered media) alive in the cache for
+ *  the rest of the session. Checked against the NEXT state so the cell
+ *  being cleared doesn't count as a reference. */
+function releaseClipRuntimeIfOrphaned(nextState: any, clipId: string): void {
+  if (!clipId || !videoElementCache.has(clipId)) return;
+  const gridHasClip = (grid: any) =>
+    Array.isArray(grid) && grid.some((row: any) => Array.isArray(row) && row.some((c: any) => c?.id === clipId));
+  const statesHaveClip = (ls: any) =>
+    Array.isArray(ls) && ls.some((l: any) => l?.activeClip?.id === clipId);
+  if (gridHasClip(nextState.clipGrid) || gridHasClip(nextState.bankBClipGrid)) return;
+  if (statesHaveClip(nextState.layerStates) || statesHaveClip(nextState.bankBLayerStates)) return;
+  for (const block of nextState.blocks ?? []) {
+    if (gridHasClip(block.clipGrid) || gridHasClip(block.bankBClipGrid)) return;
+  }
+  const video = videoElementCache.get(clipId)!;
+  try { video.pause(); } catch { /* ignore */ }
+  video.removeAttribute('src');
+  try { video.load(); } catch { /* ignore */ }
+  videoElementCache.delete(clipId);
+}
+
 // Create the store
 function createVJClipLauncherStore() {
   const { subscribe, set, update } = writable<VJClipLauncherState>(createDefaultState());
@@ -771,6 +806,15 @@ function createVJClipLauncherStore() {
         const targetGrid = pickGrid(state, deck);
         const newGrid = targetGrid.map(row => [...row]);
 
+        // Replacing/clearing an occupied cell: drop the old clip's cached
+        // render source, and release its video element if this was the
+        // last cell referencing it.
+        const replacedClip = targetGrid[layerIndex]?.[columnIndex];
+        if (replacedClip && replacedClip.id !== clip?.id) {
+          const bankSuffix = deck === 'B' ? '-B' : '';
+          vjSourceCache.delete(`vj-${layerIndex}${bankSuffix}-${replacedClip.id}`);
+        }
+
         // If setting a video, create/get the video element. Match
         // LayerPanel.createMediaSource() — without playsInline + preload + an
         // explicit load-then-play sequence the element starts in HAVE_NOTHING
@@ -840,10 +884,13 @@ function createVJClipLauncherStore() {
           return { ...block, bankBClipGrid: blockBankB };
         });
 
-        if (deck === 'A') {
-          return { ...state, clipGrid: newGrid, blocks: newBlocks };
+        const nextState = deck === 'A'
+          ? { ...state, clipGrid: newGrid, blocks: newBlocks }
+          : { ...state, bankBClipGrid: newGrid, blocks: newBlocks };
+        if (replacedClip && replacedClip.id !== clip?.id) {
+          releaseClipRuntimeIfOrphaned(nextState, replacedClip.id);
         }
-        return { ...state, bankBClipGrid: newGrid, blocks: newBlocks };
+        return nextState;
       });
     },
 
@@ -883,10 +930,11 @@ function createVJClipLauncherStore() {
           return { ...block, bankBClipGrid: blockBankB };
         });
 
-        if (deck === 'A') {
-          return { ...state, clipGrid: newGrid, layerStates: newLayerStates, blocks: newBlocks };
-        }
-        return { ...state, bankBClipGrid: newGrid, bankBLayerStates: newLayerStates, blocks: newBlocks };
+        const nextState = deck === 'A'
+          ? { ...state, clipGrid: newGrid, layerStates: newLayerStates, blocks: newBlocks }
+          : { ...state, bankBClipGrid: newGrid, bankBLayerStates: newLayerStates, blocks: newBlocks };
+        if (oldClip) releaseClipRuntimeIfOrphaned(nextState, oldClip.id);
+        return nextState;
       });
     },
 

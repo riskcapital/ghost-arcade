@@ -449,8 +449,10 @@ function formatErr(err: unknown): string {
 
 
 async function thumbnailFromBlob(blob: Blob, url: string, atSeconds: number): Promise<string | undefined> {
+  // `url` stays alive after this returns — it's the media-library item's
+  // src. Only the temporary <video> below must be released.
+  const v = document.createElement('video');
   try {
-    const v = document.createElement('video');
     v.src = url;
     v.muted = true;
     await new Promise<void>((resolve, reject) => {
@@ -467,6 +469,13 @@ async function thumbnailFromBlob(blob: Blob, url: string, atSeconds: number): Pr
     return c.toDataURL('image/jpeg', 0.7);
   } catch {
     return undefined;
+  } finally {
+    v.onloadeddata = null;
+    v.onerror = null;
+    v.onseeked = null;
+    try { v.pause(); } catch { /* ignore */ }
+    v.removeAttribute('src');
+    try { v.load(); } catch { /* ignore */ }
   }
 }
 

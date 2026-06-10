@@ -66,22 +66,63 @@ const _logDir = _isAsar
   : path.join(__dirname, '..');
 const _logFile = path.join(_logDir, _isAsar ? 'ghost-arcade-debug.log' : 'electron-debug.log');
 fs.writeFileSync(_logFile, `=== Electron started ${new Date().toISOString()} ===\n`);
+// Buffered async log writes. The old appendFileSync-per-line blocked the
+// main thread 1-5ms per console call — IPC handling, window management,
+// and native sends all jank when logging gets busy mid-show. Lines queue
+// in memory and flush every 250ms (or at 200 queued lines) via a single
+// async append; flushed synchronously on exit so crashes still leave a
+// complete log.
+let _logBuffer = [];
+let _logFlushTimer = null;
+let _logFlushInFlight = false;
+function _flushLogBuffer(sync = false) {
+  if (_logBuffer.length === 0) return;
+  const chunk = _logBuffer.join('');
+  _logBuffer = [];
+  if (sync) {
+    try { fs.appendFileSync(_logFile, chunk); } catch {}
+    return;
+  }
+  if (_logFlushInFlight) {
+    // A flush is mid-write; re-queue and let the next timer pick it up.
+    _logBuffer.unshift(chunk);
+    return;
+  }
+  _logFlushInFlight = true;
+  fs.appendFile(_logFile, chunk, () => { _logFlushInFlight = false; });
+}
+function _queueLogLine(line) {
+  _logBuffer.push(line);
+  if (_logBuffer.length >= 200) {
+    _flushLogBuffer();
+    return;
+  }
+  if (!_logFlushTimer) {
+    _logFlushTimer = setTimeout(() => {
+      _logFlushTimer = null;
+      _flushLogBuffer();
+    }, 250);
+    // Don't let a pending log flush keep the process alive on quit.
+    _logFlushTimer.unref?.();
+  }
+}
+process.on('exit', () => _flushLogBuffer(true));
 const _origLog = console.log.bind(console);
 console.log = (...args) => {
   const msg = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
-  try { fs.appendFileSync(_logFile, `${msg}\n`); } catch {}
+  _queueLogLine(`${msg}\n`);
   try { _origLog(...args); } catch {}
 };
 const _origErr = console.error.bind(console);
 console.error = (...args) => {
   const msg = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
-  try { fs.appendFileSync(_logFile, `[ERR] ${msg}\n`); } catch {}
+  _queueLogLine(`[ERR] ${msg}\n`);
   try { _origErr(...args); } catch {}
 };
 const _origWarn = console.warn.bind(console);
 console.warn = (...args) => {
   const msg = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
-  try { fs.appendFileSync(_logFile, `[WARN] ${msg}\n`); } catch {}
+  _queueLogLine(`[WARN] ${msg}\n`);
   try { _origWarn(...args); } catch {}
 };
 console.log(`[Main] Projection safe mode=${PROJECTION_SAFE_MODE} experimentalGpuPresent=${EXPERIMENTAL_GPU_PRESENT} cpuTextureShareFallback=${ALLOW_CPU_TEXTURE_SHARE_FALLBACK} osrPaintFps=${OSR_PAINT_FPS}`);
@@ -1150,7 +1191,15 @@ function registerIpcHandlers() {
       sock.on('error', (err) => {
         console.warn('[WLED] socket error for', controllerId, err.message);
       });
+      sock._gaInFlight = 0;
       wledSockets.set(controllerId, sock);
+    }
+    // Backpressure: UDP sends complete async. If the renderer pushes
+    // frames faster than the network stack drains (controller offline,
+    // congested Wi-Fi), the send queue grows without bound. Dropping a
+    // realtime LED frame is invisible; a multi-second backlog is not.
+    if (sock._gaInFlight >= 2) {
+      return { ok: false, dropped: true };
     }
     // pixels arrives as a Buffer (Node serializes Uint8Array → Buffer
     // across IPC). Either way the bytes are R,G,B triples already
@@ -1160,8 +1209,10 @@ function registerIpcHandlers() {
     packet[0] = 2;     // DRGB
     packet[1] = 255;   // timeout
     payload.copy(packet, 2);
+    sock._gaInFlight = (sock._gaInFlight || 0) + 1;
     return new Promise((resolve) => {
       sock.send(packet, 0, packet.length, port || 21324, ip, (err) => {
+        sock._gaInFlight = Math.max(0, (sock._gaInFlight || 1) - 1);
         resolve({ ok: !err, error: err?.message });
       });
     });
