@@ -577,6 +577,161 @@ export function renderSlicePixels(
   }
 }
 
+// ─── Async (PBO + fence) slice readback ─────────────────────────────────
+// renderSlicePixels above pays a full GPU pipeline stall per slice per
+// frame: gl.readPixels into client memory blocks until every queued
+// command has executed. With N projector slices that's N stalls per
+// frame on the render thread. The async variant double-buffers through
+// a PIXEL_PACK_BUFFER: this frame's readPixels targets the PBO (returns
+// immediately), a fence records completion, and the NEXT call retrieves
+// the finished bytes with getBufferSubData — by then the GPU is done,
+// so the copy is stall-free. Output is one frame late, which is
+// invisible on a Spout/Syphon/NDI stream.
+interface SliceReadbackState {
+  pbo: WebGLBuffer;
+  fence: WebGLSync | null;
+  /** Frames the fence has been pending — watchdog for a wedged GPU. */
+  fenceAge: number;
+  w: number;
+  h: number;
+  flip: boolean;
+  pixels: Uint8Array;
+}
+const sliceReadbackStates = new Map<string, SliceReadbackState>();
+let asyncReadbackBroken = false;
+
+function disposeSliceReadbackState(gl: WebGL2RenderingContext, st: SliceReadbackState): void {
+  try { if (st.fence) gl.deleteSync(st.fence); } catch { /* context loss */ }
+  try { gl.deleteBuffer(st.pbo); } catch { /* context loss */ }
+}
+
+/** Drop async-readback state for slices that no longer exist. Call when
+ *  the configured slice set changes — each state holds a GPU buffer. */
+export function pruneSliceReadbackStates(liveSliceIds: Set<string>): void {
+  if (sliceReadbackStates.size === 0) return;
+  const gl = renderer?.getContext() as WebGL2RenderingContext | undefined;
+  for (const [sliceId, st] of sliceReadbackStates) {
+    if (!liveSliceIds.has(sliceId)) {
+      if (gl) disposeSliceReadbackState(gl, st);
+      sliceReadbackStates.delete(sliceId);
+    }
+  }
+}
+
+/**
+ * Async version of renderSlicePixels. Returns the PREVIOUS completed
+ * frame's RGBA bytes (or null while the pipeline warms up / a readback
+ * is still in flight), and kicks a new render + readback for the
+ * current frame. Falls back to the synchronous path permanently if the
+ * context is WebGL1 or PBO readback ever throws.
+ */
+export function renderSlicePixelsAsync(
+  source: HTMLCanvasElement | OffscreenCanvas | HTMLVideoElement | ImageBitmap,
+  slice: OutputSlice,
+  sliceW: number,
+  sliceH: number,
+  stageIntensity = 1,
+  flip = true,
+  masterForward = false,
+): Uint8Array | null {
+  if (sliceW <= 0 || sliceH <= 0) return null;
+  if (asyncReadbackBroken) {
+    return renderSlicePixels(source, slice, sliceW, sliceH, stageIntensity, flip, masterForward);
+  }
+  if (!ensureRenderer(sliceW, sliceH)) return null;
+  const gl = renderer!.getContext() as WebGL2RenderingContext;
+  if (typeof gl.fenceSync !== 'function') {
+    asyncReadbackBroken = true; // WebGL1 — no PBOs/fences
+    return renderSlicePixels(source, slice, sliceW, sliceH, stageIntensity, flip, masterForward);
+  }
+
+  let st = sliceReadbackStates.get(slice.id);
+
+  // Resolution change invalidates an in-flight readback (its bytes are
+  // the old size and the caller labels sends with THIS frame's dims).
+  if (st && (st.w !== sliceW || st.h !== sliceH)) {
+    disposeSliceReadbackState(gl, st);
+    sliceReadbackStates.delete(slice.id);
+    st = undefined;
+  }
+
+  let result: Uint8Array | null = null;
+  try {
+    // 1. Retrieve the previous frame's readback if the GPU is done.
+    if (st?.fence) {
+      const status = gl.clientWaitSync(st.fence, 0, 0);
+      if (status === gl.ALREADY_SIGNALED || status === gl.CONDITION_SATISFIED) {
+        gl.deleteSync(st.fence);
+        st.fence = null;
+        st.fenceAge = 0;
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, st.pbo);
+        gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, st.pixels);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+        if (st.flip) flipRowsInPlace(st.pixels, st.w, st.h);
+        result = st.pixels;
+      } else if (++st.fenceAge > 120) {
+        // ~2s wedged — drop the fence and start over rather than
+        // freezing this slice's output forever.
+        gl.deleteSync(st.fence);
+        st.fence = null;
+        st.fenceAge = 0;
+      }
+    }
+
+    // 2. Render the current frame + kick a new readback, but only when
+    //    no readback is pending (the single PBO is busy until then).
+    if (!st || !st.fence) {
+      setSourceFrame(source);
+      applyWarpUniforms(material!.uniforms, slice, stageIntensity, masterForward);
+      renderer!.setViewport(0, 0, sliceW, sliceH);
+      renderer!.setScissor(0, 0, sliceW, sliceH);
+      renderer!.setScissorTest(true);
+      renderer!.render(scene!, camera!);
+
+      if (!st) {
+        const pbo = gl.createBuffer();
+        if (!pbo) throw new Error('PBO allocation failed');
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo);
+        gl.bufferData(gl.PIXEL_PACK_BUFFER, sliceW * sliceH * 4, gl.STREAM_READ);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+        st = {
+          pbo,
+          fence: null,
+          fenceAge: 0,
+          w: sliceW,
+          h: sliceH,
+          flip,
+          pixels: new Uint8Array(sliceW * sliceH * 4),
+        };
+        sliceReadbackStates.set(slice.id, st);
+      }
+      st.flip = flip;
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, st.pbo);
+      gl.readPixels(0, 0, sliceW, sliceH, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+      st.fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+      // MANDATORY after fenceSync: without a flush the driver may never
+      // process the readback commands (the spec allows clientWaitSync
+      // with timeout 0 to report UNSIGNALED forever on an unflushed
+      // queue). A busy render loop flushes incidentally; an idle or
+      // occluded window does not.
+      gl.flush();
+    }
+  } catch (err) {
+    console.warn('[blendRenderer] async readback failed — using sync path from now on:', err);
+    asyncReadbackBroken = true;
+    if (st) {
+      disposeSliceReadbackState(gl, st);
+      sliceReadbackStates.delete(slice.id);
+    }
+    return renderSlicePixels(source, slice, sliceW, sliceH, stageIntensity, flip, masterForward);
+  } finally {
+    if (renderer) renderer.setScissorTest(false);
+  }
+
+  return result;
+}
+
 // ─── Global master warp ─────────────────────────────────────────────────
 // Reused full-frame slice carrying ONLY the master warp's geometry. We
 // synthesize it once and mutate in place so the master warp shares the
@@ -784,6 +939,11 @@ function flipRowsInPlace(buf: Uint8Array, w: number, h: number) {
 }
 
 export function disposeBlendRenderer() {
+  if (renderer && sliceReadbackStates.size > 0) {
+    const gl = renderer.getContext() as WebGL2RenderingContext;
+    for (const st of sliceReadbackStates.values()) disposeSliceReadbackState(gl, st);
+  }
+  sliceReadbackStates.clear();
   if (sourceTexture) { sourceTexture.dispose(); sourceTexture = null; }
   if (quad) { (quad.geometry as THREE.BufferGeometry).dispose(); quad = null; }
   if (material) { material.dispose(); material = null; }

@@ -41,10 +41,15 @@ interface LedEntry {
    *  the "the room glows in sync with the visuals" effect. */
   ambientLight: THREE.PointLight;
   /** 1×1 render target used to compute the LED's average colour each
-   *  frame. Read back synchronously into `averagePixels` after the
-   *  downsample shader pass writes to it. */
+   *  frame. Read back ASYNC (PBO + fence via readRenderTargetPixelsAsync)
+   *  into `averagePixels` — the colour lands a frame or two later, which
+   *  is invisible on a room-glow light but removes the GPU sync stall
+   *  the old synchronous readback paid right after the downsample pass. */
   averageRT: THREE.WebGLRenderTarget;
   averagePixels: Uint8Array;
+  /** True while an async readback is in flight for this LED — prevents
+   *  stacking requests if the GPU falls behind. */
+  readbackPending?: boolean;
 }
 
 interface ElementEntry {
@@ -740,19 +745,32 @@ export class Stage3DRenderer {
       if (
         inputTex &&
         led.material.uniforms.uHasTexture.value > 0.5 &&
+        !led.readbackPending &&
         this.downsampleScene && this.downsampleCamera && this.downsampleMaterial
       ) {
         try {
           this.downsampleMaterial.uniforms.uSrc.value = inputTex;
           renderer.setRenderTarget(led.averageRT);
           renderer.render(this.downsampleScene, this.downsampleCamera);
-          renderer.readRenderTargetPixels(led.averageRT, 0, 0, 1, 1, led.averagePixels);
           renderer.setRenderTarget(null);
-          led.ambientLight.color.setRGB(
-            led.averagePixels[0] / 255,
-            led.averagePixels[1] / 255,
-            led.averagePixels[2] / 255,
-          );
+          // Async readback — no fence wait on the render thread. The
+          // resolved colour applies when the GPU finishes; a frame of
+          // latency is invisible on a glow light.
+          led.readbackPending = true;
+          renderer.readRenderTargetPixelsAsync(led.averageRT, 0, 0, 1, 1, led.averagePixels)
+            .then(() => {
+              led.ambientLight.color.setRGB(
+                led.averagePixels[0] / 255,
+                led.averagePixels[1] / 255,
+                led.averagePixels[2] / 255,
+              );
+            })
+            .catch((err: unknown) => {
+              this.downsampleFailed = true;
+              for (const e of this.ledEntries) e.ambientLight.intensity = 0;
+              console.warn('[Stage3D] LED average-colour readback disabled after GPU error:', err);
+            })
+            .finally(() => { led.readbackPending = false; });
         } catch (err) {
           renderer.setRenderTarget(null);
           this.downsampleFailed = true;

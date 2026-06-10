@@ -164,6 +164,23 @@ hidden CPU path with no error.
   hasLayerTexture(), which flips when video/shader textures finish decoding on
   the SAME layer objects — identity-keyed caching would leave late-arriving
   textures permanently invisible. Removed a dead per-frame Set allocation instead.
+- ✅ P1-4 OSC IPC batching — messages coalesce 8ms into one webContents.send,
+  queue capped at 512 (drop-oldest; OSC is realtime control). Note: per-packet
+  batching already existed; the audit claim of per-message sends was wrong —
+  the real gap was one-message-per-packet controllers at high rates.
+- ✅ P0-3b async PBO readback for the multi-slice Spout/Syphon/NDI path
+  (renderSlicePixelsAsync) — double-buffered through a PIXEL_PACK_BUFFER with a
+  fence; returns the previous frame's bytes stall-free, one frame of stream
+  latency. Includes the mandatory gl.flush() after fenceSync (without it the
+  fence never signals on an idle queue — caught live during verification),
+  wedge watchdog (~2s), resolution-change invalidation, per-slice state pruning,
+  and a permanent sync fallback on WebGL1/error. Verified live: correct pixel
+  content end-to-end, steady-state data every call. The single-output CPU
+  fallback intentionally stays sync — different orientation convention, and
+  OSR/DXGI zero-copy is already its default replacement.
+- ✅ P0-5 Stage 3D LED glow readback now async (readRenderTargetPixelsAsync)
+  with an in-flight guard — no more per-frame GPU sync stall; glow colour lands
+  a frame late, invisible on a room light.
 
 ## Suggested execution order
 
