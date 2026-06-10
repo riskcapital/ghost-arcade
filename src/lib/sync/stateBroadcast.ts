@@ -234,6 +234,9 @@ function sendFullState() {
     } satisfies StateMessage);
 
     resetLayerPatchSnapshot();
+    // Force the next vj-state broadcast to carry full grids — a receiver
+    // that just connected mid-session may have missed earlier grid sends.
+    lastSentVJStructure = null;
     publishStage3DRelayFullState();
     console.log('[StateSync] Full state sent to OSR');
   } catch (err) {
@@ -470,48 +473,57 @@ function stripLayerStates(layerStates: any[] | undefined): any[] | undefined {
   }));
 }
 
+// Identity snapshot of the last grids/blocks sent. Grid arrays only get
+// a new identity on structural ops (trigger/set/remove clip, bank or
+// block changes) — per-tick value churn (faders, modulated shader
+// params) reuses the same arrays — so an O(1) identity compare decides
+// whether this broadcast needs to carry the full grids or just the slim
+// live state. Serializing all grids on every tick (the old behavior)
+// cost a full stripClipGrid + JSON round-trip of every clip at 30Hz
+// whenever an output window was open.
+let lastSentVJStructure: {
+  blocks: any;
+  clipGrid: any;
+  bankBClipGrid: any;
+  activeBlockId: any;
+  numLayers: number;
+  numColumns: number;
+} | null = null;
+
 function doBroadcastVJState() {
   if (!channel || mode !== 'sender' || !hasActiveReceiver) return;
 
   try {
-    const vjState = get(vjClipLauncher);
+    const vjState = get(vjClipLauncher) as any;
 
-    // Strip the top-level clipGrid AND the clipGrid inside each block —
-    // also strip layerStates[i].activeClip (carries the same uncloneable
-    // VJClip reference) and bank B equivalents. Pre-fix only the top-level
-    // grid was stripped, so every triggerClip/setClip/openVJMode broadcast
-    // re-exposed an HTMLVideoElement to structured clone and threw
-    // DataCloneError.
-    const safeBlocks = vjState.blocks.map(block => ({
-      ...block,
-      clipGrid: stripClipGrid(block.clipGrid),
-      bankBClipGrid: block.bankBClipGrid ? stripClipGrid(block.bankBClipGrid) : undefined,
-    }));
-    const safeClipGrid = stripClipGrid(vjState.clipGrid);
-    const safeBankBClipGrid = (vjState as any).bankBClipGrid ? stripClipGrid((vjState as any).bankBClipGrid) : undefined;
+    const structuralChanged = !lastSentVJStructure
+      || lastSentVJStructure.blocks !== vjState.blocks
+      || lastSentVJStructure.clipGrid !== vjState.clipGrid
+      || lastSentVJStructure.bankBClipGrid !== vjState.bankBClipGrid
+      || lastSentVJStructure.activeBlockId !== vjState.activeBlockId
+      || lastSentVJStructure.numLayers !== vjState.numLayers
+      || lastSentVJStructure.numColumns !== vjState.numColumns;
 
-    // JSON-clean — same rationale as sendFullState: clip/effect runtime
-    // refs (three.js objects) survive JSON but throw on structuredClone.
-    const vjPayload = {
-      blocks: safeBlocks,
-      activeBlockId: vjState.activeBlockId,
-      clipGrid: safeClipGrid,
-      bankBClipGrid: safeBankBClipGrid,
-      layerStates: stripLayerStates(vjState.layerStates),
-      bankBLayerStates: stripLayerStates((vjState as any).bankBLayerStates),
-      compositionEffects: vjState.compositionEffects,
-      masterOpacity: vjState.masterOpacity,
-      isOpen: vjState.isOpen,
-      isLive: vjState.isLive,
-      stageMode: vjState.stageMode,
-      mapMode: vjState.mapMode,
-      stagePresetId: vjState.stagePresetId,
-    };
+    // buildLiveVJStatePayload strips uncloneable runtime refs (video/
+    // iframe/canvas elements) and JSON-cleans; with includeGrids=true it
+    // also carries blocks + clip grids. Receivers merge shallowly, so a
+    // slim payload leaves their existing grids untouched.
+    const vjPayload = buildLiveVJStatePayload(vjState, structuralChanged);
     channel.postMessage({
       type: 'vj-state',
-      data: JSON.parse(JSON.stringify(vjPayload)),
+      data: vjPayload,
       timestamp: Date.now(),
     } satisfies StateMessage);
+    if (structuralChanged) {
+      lastSentVJStructure = {
+        blocks: vjState.blocks,
+        clipGrid: vjState.clipGrid,
+        bankBClipGrid: vjState.bankBClipGrid,
+        activeBlockId: vjState.activeBlockId,
+        numLayers: vjState.numLayers,
+        numColumns: vjState.numColumns,
+      };
+    }
     scheduleStage3DRelayLivePublish(0);
   } catch (err) {
     console.error('[StateSync] Failed to broadcast VJ state:', err);
@@ -1172,6 +1184,7 @@ export function destroyStateBroadcast() {
   lastStage3DRelayPatchTick = -1;
   stage3dRelayActive = false;
   pendingRelayPatches.clear();
+  lastSentVJStructure = null;
   stage3dRelayPollInFlight = false;
   console.log('[StateSync] Destroyed');
 }
