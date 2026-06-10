@@ -19,6 +19,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import { get } from 'svelte/store';
 import { stage3dScene, selectedStage3DNodeId, selectedStage3DTargets, stage3DGizmoMode, parseSelection, stage3DRendererControls } from './store';
 import { buildVenue, type VenueBuild } from './venues';
@@ -38,8 +39,10 @@ interface LedEntry {
   defaultWidth: number;
   defaultHeight: number;
   /** Reactive room light coloured from the LED's average pixel — drives
-   *  the "the room glows in sync with the visuals" effect. */
-  ambientLight: THREE.PointLight;
+   *  the "the room glows in sync with the visuals" effect. RectAreaLight
+   *  sized to the panel so the spill reads as an LED-wall wash, not a
+   *  spotlight pool. */
+  ambientLight: THREE.RectAreaLight;
   /** 1×1 render target used to compute the LED's average colour each
    *  frame. Read back ASYNC (PBO + fence via readRenderTargetPixelsAsync)
    *  into `averagePixels` — the colour lands a frame or two later, which
@@ -56,6 +59,15 @@ interface ElementEntry {
   element: UserStageElement;
   group: THREE.Group;
   signature: string;
+}
+
+// RectAreaLight needs its LTC lookup textures registered once per app
+// before any material renders alongside an area light.
+let rectAreaUniformsReady = false;
+function ensureRectAreaLightUniforms(): void {
+  if (rectAreaUniformsReady) return;
+  RectAreaLightUniformsLib.init();
+  rectAreaUniformsReady = true;
 }
 
 // ── Shaders ────────────────────────────────────────────────────────────
@@ -730,10 +742,11 @@ export class Stage3DRenderer {
       entry.group.rotation.set(rot[0], rot[1], rot[2]);
       const scl = override.scale ?? [1, 1, 1];
       entry.group.scale.set(scl[0], scl[1], scl[2]);
-      // Keep the reactive PointLight glued to the LED's current
-      // position (+ a 6m forward offset) so moving the LED moves the
-      // glow with it.
-      entry.ambientLight.position.set(pos[0], pos[1], pos[2] + 6);
+      // Keep the reactive area light glued to the LED's current
+      // position (just in front of the panel) so moving the LED moves
+      // the glow with it; re-aim forward + slightly down each move.
+      entry.ambientLight.position.set(pos[0], pos[1], pos[2] + 0.3);
+      entry.ambientLight.lookAt(pos[0], pos[1] - entry.defaultHeight * 0.6, pos[2] + 12);
     }
 
     this.updateSelectionOutline();
@@ -796,10 +809,13 @@ export class Stage3DRenderer {
       //                       killed the screen-glow contribution too,
       //                       defeating the whole "dark room, glowing
       //                       LEDs" look.
-      const glowScale = lightInfluence * 12 * lighting.screenBoost / Math.max(0.1, exposureMul);
+      // RectAreaLight intensity is luminance (per unit area) — the panel
+      // itself is the emitter, so the multiplier is far smaller than the
+      // old PointLight's (which packed the whole wall's output into one
+      // point and read as a hard spotlight pool on the deck).
+      const glowScale = lightInfluence * 0.9 * lighting.screenBoost / Math.max(0.1, exposureMul);
       for (const e of this.ledEntries) {
         e.ambientLight.intensity = glowScale;
-        e.ambientLight.distance = 25 + lightInfluence * 15;
       }
     } else {
       for (const e of this.ledEntries) e.ambientLight.intensity = 0;
@@ -1156,14 +1172,26 @@ export class Stage3DRenderer {
 
       this.scene.add(group);
 
-      // Per-LED reactive PointLight + its average-colour readback RT.
-      // Light sits ~6m in front of the LED Wall (toward audience) so it
-      // tints the deck / trusses / fixtures rather than the back wall.
-      const ambientLight = new THREE.PointLight(0xffffff, 0, 35, 1.5);
+      // Per-LED reactive AREA light + its average-colour readback RT.
+      // A RectAreaLight the size of the panel, facing the audience and
+      // tilted slightly down, emits like the LED wall itself — a soft
+      // wash over the deck and fixtures. (Was a PointLight 6m out,
+      // which collapsed all that emission into a hard spotlight pool.)
+      ensureRectAreaLightUniforms();
+      const ambientLight = new THREE.RectAreaLight(
+        0xffffff, 0, placement.width, placement.height,
+      );
       ambientLight.position.set(
         placement.position[0],
         placement.position[1],
-        placement.position[2] + 6,
+        placement.position[2] + 0.3,
+      );
+      // Aim forward (toward the audience) with a slight downward tilt so
+      // the wash favours the deck in front of the wall.
+      ambientLight.lookAt(
+        placement.position[0],
+        placement.position[1] - placement.height * 0.6,
+        placement.position[2] + 12,
       );
       this.scene.add(ambientLight);
       const averageRT = new THREE.WebGLRenderTarget(1, 1, {

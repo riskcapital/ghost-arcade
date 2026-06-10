@@ -653,6 +653,20 @@
   // Cache for shader image input textures (persists across store updates)
   const imageInputTextureCache = new Map<string, THREE.Texture>();
 
+  // 1×1 opaque black placeholder, assigned to a layer's source while its
+  // content is swapped (new shader compiling, new video loading). Keeps
+  // the layer IN the render plan painting black instead of dropping out
+  // for a frame — dropping out flashed whatever layer sat underneath,
+  // which read as a jarring flicker on every clip/shader change.
+  let blackHoldTexture: THREE.DataTexture | null = null;
+  function getBlackHoldTexture(): THREE.DataTexture {
+    if (!blackHoldTexture) {
+      blackHoldTexture = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1, THREE.RGBAFormat);
+      blackHoldTexture.needsUpdate = true;
+    }
+    return blackHoldTexture;
+  }
+
   // Shader render scene (for rendering ISF to texture)
   let shaderScene: THREE.Scene;
   let shaderCamera: THREE.OrthographicCamera;
@@ -2590,6 +2604,12 @@
       const oldCacheKey = activeLayerSources.get(layer.id);
       if (oldCacheKey && oldCacheKey !== textureCacheKey) {
         cleanupLayerShader(layer.id, oldCacheKey);
+        // Hold black while the replacement compiles/loads. The real
+        // texture overwrites this the moment it's ready (cache assign
+        // below or the async load completion); until then the layer
+        // stays in the render plan painting opaque black instead of
+        // exposing the layer underneath for a few frames.
+        layer.source.texture = getBlackHoldTexture();
       }
       activeLayerSources.set(layer.id, textureCacheKey);
 
@@ -2962,6 +2982,22 @@
             magFilter: THREE.LinearFilter,
             format: THREE.RGBAFormat,
           });
+          // Initialize OPAQUE BLACK. A fresh RT samples as transparent
+          // black until the shader's first render; if that lands a frame
+          // later (async load completion mid-frame), the layer below
+          // bleeds through for a frame — same flicker the black-hold
+          // texture prevents during the swap.
+          const glr = engine?.getRenderer?.();
+          if (glr) {
+            const prevTarget = glr.getRenderTarget();
+            const prevColor = glr.getClearColor(new THREE.Color());
+            const prevAlpha = glr.getClearAlpha();
+            glr.setRenderTarget(renderTarget);
+            glr.setClearColor(0x000000, 1);
+            glr.clear();
+            glr.setRenderTarget(prevTarget);
+            glr.setClearColor(prevColor, prevAlpha);
+          }
           shaderRenderTargets.set(cacheKey, renderTarget);
           // Store quality so we can detect changes and resize
           shaderRenderTargetQualities.set(cacheKey, quality);
