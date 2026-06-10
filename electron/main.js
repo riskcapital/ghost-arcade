@@ -2846,6 +2846,12 @@ function createMainWindow() {
       nodeIntegration: false,
       webgl: true,
       zoomFactor: 1.0,
+      // The editor's render loop drives Spout/NDI/WLED sends and the
+      // audio/modulation broadcasts. Chromium suspends rAF in fully
+      // occluded windows by default — minimizing the editor (or covering
+      // it with another app) mid-show would freeze every editor-driven
+      // output. Every other window in this file already disables it.
+      backgroundThrottling: false,
     },
   });
 

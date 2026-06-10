@@ -311,7 +311,7 @@ html[data-theme="arcade"] body {
   align-items: center !important;
   gap: 10px !important;
   padding: 9px 10px !important;
-  margin: 5px 14px !important;
+  margin: 5px 6px !important;
   border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
   border-radius: var(--ga-r-hard, 2px) !important;
   background: transparent !important;
@@ -322,6 +322,23 @@ html[data-theme="arcade"] body {
 .layer-panel .layer-item.active {
   border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36)) !important;
   background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10)) !important;
+}
+/* Multi-selection — every selected row highlights, the primary one keeps
+   the brighter treatment above. Must live HERE: the base .layer-item rule
+   sets background/border with !important, which silently killed the
+   component-scoped .multi-selected style. */
+.layer-panel .layer-item.multi-selected {
+  border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.30)) !important;
+  background: var(--ga-violet-soft, rgba(155, 135, 245, 0.07)) !important;
+}
+.layer-panel .layer-item.multi-selected::before {
+  content: "" !important;
+  position: absolute !important;
+  left: 0 !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  width: 2px !important;
+  background: var(--ga-violet-line, rgba(155, 135, 245, 0.45)) !important;
 }
 .layer-panel .layer-item.selected::before,
 .layer-panel .layer-item.active::before {
@@ -1603,6 +1620,12 @@ html[data-theme="arcade"] :is(
     inset 0 1px 0 var(--ga-metal-hi, rgba(255, 255, 255, 0.16)),
     0 0 0 1px var(--ga-coral-line, rgba(255, 111, 94, 0.50)),
     0 0 14px color-mix(in srgb, var(--ga-coral, #ff6f5e) 28%, transparent) !important;
+}
+
+/* Arcade multi-selection — dimmer coral than the primary selection. */
+html[data-theme="arcade"] .layer-item.multi-selected {
+  background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 7%, transparent) !important;
+  border-color: color-mix(in srgb, var(--ga-coral, #ff6f5e) 32%, transparent) !important;
 }
 
 html[data-theme="arcade"] .layer-item.selected::before,

@@ -84,7 +84,9 @@ const LED_FRAGMENT = `
   // Unified-group support: when on, this screen samples a SHARED group
   // shader texture using a crop window. Each screen in the group shows
   // its own slice of the full canvas, so all screens together read like
-  // one continuous shader. Matches the engine's 2D unified-crop math.
+  // one continuous shader. uCropRegion is pre-converted to texture UV
+  // space on the CPU (offsetY = 1 - maxCornerY, same math as the 2D
+  // engine), so the shader applies it directly.
   uniform float uUnifiedCrop;
   uniform vec4  uCropRegion;   // (offsetX, offsetY, scaleX, scaleY) in texture UV space
 
@@ -187,9 +189,9 @@ const LED_FRAGMENT = `
       return;
     }
     // Unified-group fast path: bypass display-fit, sample the shared
-    // group texture using this screen's crop window. Layer corners use
-    // OpenGL Y-up (y=0 bottom, y=1 top) — same convention as texture
-    // UV — so no flip needed. uCropRegion = (minX, minY, width, height).
+    // group texture using this screen's crop window. The region arrives
+    // already in texture-UV space (CPU converts from canvas-Y-down
+    // corners), so it applies directly to vUv.
     if (uUnifiedCrop > 0.5) {
       vec2 srcUv = uCropRegion.xy + uCropRegion.zw * vUv;
       vec3 sampled = sRGBToLinear(texture2D(uTexture, srcUv).rgb);
@@ -275,7 +277,11 @@ function screenLayerPlacement(layer: Layer, wall: VenueBuild['ledWall']):
   return {
     position: [
       wall.centerX + (cx - 0.5) * wall.width,
-      wall.centerY + (cy - 0.5) * wall.height,
+      // Corner space is canvas Y-DOWN (y=0 top); wall space is Y-up.
+      // A screen at the top of the 2D canvas belongs at the top of the
+      // LED wall. (Was `cy - 0.5`, which matched the old Y-flipped
+      // Apply-Stage corners — both sides now use the canvas convention.)
+      wall.centerY + (0.5 - cy) * wall.height,
       wall.centerZ + 0.1,
     ],
     width: w,
@@ -675,10 +681,11 @@ export class Stage3DRenderer {
           texture = parentTex;
           useUnifiedCrop = true;
           // (offsetX, offsetY, width, height) in texture UV space.
-          // The fragment shader flips Y inside the offset to handle
-          // texture-Y-up vs canvas-Y-down, so this matches the engine's
-          // 2D crop layout exactly.
-          u.uCropRegion.value.set(minX, minY, maxX - minX, maxY - minY);
+          // Corners are canvas Y-DOWN (y=0 top); the texture is GL V-up.
+          // offsetY = 1 - maxY converts between the two — the SAME math
+          // engine.ts uses for the 2D unified crop, so both views sample
+          // identical bands of the shared group texture.
+          u.uCropRegion.value.set(minX, 1 - maxY, maxX - minX, maxY - minY);
         }
       }
       if (!texture) texture = textureForLayer(layer, masterTexture);
