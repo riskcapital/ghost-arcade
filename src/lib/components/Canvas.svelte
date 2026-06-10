@@ -32,7 +32,7 @@
   import { getTextureShareLabel, invoke, isDesktopApp, isOsrMode, isOutputMode } from '$lib/bridge';
   import { drawTestPattern, type TestPatternType } from '../utils/testPatterns';
   import { applyEdgeBlending } from '../output/outputPostProcess';
-  import { renderSlicePixels, isBlendRendererAvailable } from '../output/blendRenderer';
+  import { renderSlicePixelsAsync, pruneSliceReadbackStates, isBlendRendererAvailable } from '../output/blendRenderer';
   import type { FluidSimulation, FluidMode } from '../effects/fluidSimulation';
   import type { ParticleSystem3D } from '../effects/particleSystem3D';
   // Heavy renderer classes (three/addons GLTF/FBX/OBJ loaders, post-processing,
@@ -127,6 +127,9 @@
 
   // Multi-output slice state
   let sliceSendInFlight = new Set<string>(); // Track in-flight per-slice sends
+  // Signature of the active slice id set — used to prune async-readback
+  // PBO state in blendRenderer when slices are added/removed.
+  let lastSliceIdsKey = '';
   // Tracks which NDI sender names have been created via the native
   // addon. We lazy-create on first send (see the per-slice send loop)
   // and never destroy in the renderer — the main process tears them
@@ -1878,6 +1881,14 @@
               fullFrameCtx = spoutScaleCtx;
               const gpuPathAvailable = isBlendRendererAvailable();
 
+              // Drop PBO state for deleted slices (cheap string compare
+              // per frame; the prune itself only runs on config change).
+              const sliceIdsKey = activeSlices.map(s => s.id).join('|');
+              if (sliceIdsKey !== lastSliceIdsKey) {
+                lastSliceIdsKey = sliceIdsKey;
+                pruneSliceReadbackStates(new Set(activeSlices.map(s => s.id)));
+              }
+
               for (const slice of activeSlices) {
                 if (sliceSendInFlight.has(slice.id)) continue; // Backpressure per-slice
 
@@ -1889,13 +1900,18 @@
                 if (sw <= 0 || sh <= 0) continue;
 
                 // ── Pixel readout ────────────────────────────────────
-                // GPU path: one renderSlicePixels() call returns the
-                // final RGBA bytes (already crop+blend+color-corrected).
-                // 2D fallback: replicate the old crop + rotate +
-                // applyEdgeBlending flow.
+                // GPU path: async PBO readback — kicks this frame's
+                // render + returns LAST frame's completed bytes, so the
+                // render thread never stalls on the GPU. One frame of
+                // stream latency, invisible on Spout/Syphon/NDI. While
+                // the pipeline warms (null), skip the send this frame —
+                // do NOT fall into the 2D path, which would pay the
+                // exact synchronous readback this exists to avoid.
+                // 2D fallback: only when WebGL init failed entirely.
                 let slicePixels: Uint8Array | Uint8ClampedArray | null = null;
                 if (gpuPathAvailable) {
-                  slicePixels = renderSlicePixels(fullFrameCanvas!, slice, sw, sh);
+                  slicePixels = renderSlicePixelsAsync(fullFrameCanvas!, slice, sw, sh);
+                  if (!slicePixels) continue;
                 }
                 if (!slicePixels) {
                   // 2D fallback. Same code as the v1.5 path; only entered

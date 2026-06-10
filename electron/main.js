@@ -1109,11 +1109,41 @@ function listSpoutSenders() {
 let oscSocket = null;
 let oscPort = 8000;
 let oscLastError = null;
+// Coalesce OSC → renderer IPC. Controllers typically send ONE message
+// per UDP packet; a busy fader bank easily produces 200+ packets/sec,
+// and each webContents.send is a separate IPC round-trip. Messages
+// queue for up to 8ms (half a frame — imperceptible on a fader) and
+// flush as one batched send. Queue is capped: OSC is realtime control,
+// so when the renderer can't keep up the OLDEST values are the right
+// ones to drop.
+const OSC_FLUSH_MS = 8;
+const OSC_QUEUE_MAX = 512;
+let oscMsgQueue = [];
+let oscFlushTimer = null;
+function queueOscMessages(win, msgs) {
+  oscMsgQueue.push(...msgs);
+  if (oscMsgQueue.length > OSC_QUEUE_MAX) {
+    oscMsgQueue.splice(0, oscMsgQueue.length - OSC_QUEUE_MAX);
+  }
+  if (oscFlushTimer) return;
+  oscFlushTimer = setTimeout(() => {
+    oscFlushTimer = null;
+    const batch = oscMsgQueue;
+    oscMsgQueue = [];
+    if (batch.length === 0 || !win || win.isDestroyed()) return;
+    win.webContents.send('osc-msg', batch);
+  }, OSC_FLUSH_MS);
+}
 function stopOSC() {
   if (oscSocket) {
     try { oscSocket.close(); } catch (e) { /* socket already gone */ }
     oscSocket = null;
   }
+  if (oscFlushTimer) {
+    clearTimeout(oscFlushTimer);
+    oscFlushTimer = null;
+  }
+  oscMsgQueue = [];
 }
 function startOSC(port, win) {
   stopOSC();
@@ -1146,7 +1176,7 @@ function startOSC(port, win) {
             tags: m.tags,
             from: rinfo.address + ':' + rinfo.port,
           }));
-          win.webContents.send('osc-msg', serializable);
+          queueOscMessages(win, serializable);
         }
       } catch (e) {
         console.warn('[OSC] parse error:', e);
