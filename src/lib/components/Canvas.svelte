@@ -234,6 +234,94 @@
   }
   const mapPresetLayerCache = new Map<string, MapPresetCacheEntry>();
 
+  // ── VJ→layer injection cache (stage mode + mapping-mode bindings) ──
+  // The injected layer clone + merged effects array are reused across
+  // frames and rebuilt only when an identity changes (store layer
+  // object, resolved VJ layer, either effects array). The injected
+  // SOURCE is rebuilt every frame on purpose: VJ textures change each
+  // frame, and the cached VJ source objects are mutated in place
+  // (trim/isPlaying/shaderValues) so a frozen copy would go stale.
+  // Before this cache, stage mode allocated a layer clone + effects
+  // array per VJ-bound layer per frame.
+  interface StageInjectCacheEntry {
+    layerRef: Layer;
+    resolvedLayerRef: Layer;
+    layerFxRef: unknown;
+    resolvedFxRef: unknown;
+    clone: Layer;
+  }
+  const stageInjectCache = new Map<string, StageInjectCacheEntry>();
+  let stageInjectLayersRef: Layer[] | null = null;
+
+  function injectVjIntoLayer(layer: Layer, resolved: { layer: Layer; texture: THREE.Texture }): Layer {
+    let entry = stageInjectCache.get(layer.id);
+    if (
+      !entry
+      || entry.layerRef !== layer
+      || entry.resolvedLayerRef !== resolved.layer
+      || entry.layerFxRef !== layer.effects
+      || entry.resolvedFxRef !== resolved.layer.effects
+    ) {
+      entry = {
+        layerRef: layer,
+        resolvedLayerRef: resolved.layer,
+        layerFxRef: layer.effects,
+        resolvedFxRef: resolved.layer.effects,
+        // Group layers distribute the injected texture to children via
+        // renderGroupToTexture — no effects merge. Screen layers keep
+        // layer.type unchanged (engine treats 'screen' like 'media');
+        // VJ-layer effects run before the screen's own effects.
+        clone: layer.type === 'group'
+          ? { ...layer }
+          : { ...layer, effects: [...(resolved.layer.effects || []), ...layer.effects] },
+      };
+      stageInjectCache.set(layer.id, entry);
+    }
+    // Fresh every frame: live texture + passthrough reads. Tag with
+    // __vjStage so updateTexturesSync / updateShaderTextures skip this
+    // layer on the second pass — the VJ deck already produced the
+    // texture, the screen just samples it.
+    (entry.clone as any).source = { ...resolved.layer.source, texture: resolved.texture, __vjStage: true };
+    return entry.clone;
+  }
+
+  /** Drop cache entries for layers that no longer exist. Runs only when
+   *  the layers array identity changes (store update), not per frame. */
+  function pruneStageInjectCache(normalLayers: Layer[]): void {
+    if (stageInjectLayersRef === normalLayers) return;
+    stageInjectLayersRef = normalLayers;
+    if (stageInjectCache.size === 0) return;
+    const liveIds = new Set(normalLayers.map(l => l.id));
+    for (const id of stageInjectCache.keys()) {
+      if (!liveIds.has(id)) stageInjectCache.delete(id);
+    }
+  }
+
+  // Memoized parse of "vj-layer-N(-A|B)" ids — replaces a per-layer
+  // regex match per frame. Bounded by layer count × banks.
+  const vjIdParseCache = new Map<string, { idx: number; bank?: 'A' | 'B' } | null>();
+  function parseVjLayerId(id: string): { idx: number; bank?: 'A' | 'B' } | null {
+    let hit = vjIdParseCache.get(id);
+    if (hit === undefined) {
+      const m = id.match(/^vj-layer-(\d+)(?:-([AB]))?$/);
+      hit = m ? { idx: parseInt(m[1]), bank: m[2] as 'A' | 'B' | undefined } : null;
+      vjIdParseCache.set(id, hit);
+    }
+    return hit;
+  }
+
+  /** Resolve the actual GPU texture for a VJ layer entry — shader VJ
+   *  layers come from shaderRenderTargets, everything else (video /
+   *  threejs / synthvision / spout) carries its texture on the source. */
+  function resolveVjLayerTexture(vjLayer: Layer): THREE.Texture | null {
+    if (!vjLayer?.source) return null;
+    if (vjLayer.source.type === 'shader' && vjLayer.source.src) {
+      const rt = shaderRenderTargets.get(`${vjLayer.id}:${vjLayer.source.src}`);
+      if (rt) return rt.texture;
+    }
+    return (vjLayer.source.texture as THREE.Texture | null | undefined) ?? null;
+  }
+
   // JSON sanitizer for MAP-mode layer clones. Strips runtime THREE
   // refs that would (a) re-introduce circular structure if persisted
   // by syncState and (b) crash JSON.stringify on the wrapped DOM
@@ -1287,36 +1375,22 @@
           // banks active we ask the engine to render a per-layer crossfade
           // FBO and use that as the canonical texture. Single-bank indices
           // pass through unchanged (cheap path).
-          //
-          // Helper: resolve the actual GPU texture for a VJ layer entry —
-          // shader VJ layers come from shaderRenderTargets, everything else
-          // (video / threejs / synthvision / spout) carries its texture on
-          // the source object directly.
-          const resolveVjTexture = (vjLayer: Layer): THREE.Texture | null => {
-            if (!vjLayer?.source) return null;
-            if (vjLayer.source.type === 'shader' && vjLayer.source.src) {
-              const rtKey = `${vjLayer.id}:${vjLayer.source.src}`;
-              const rt = shaderRenderTargets.get(rtKey);
-              if (rt) return rt.texture;
-            }
-            return (vjLayer.source.texture as THREE.Texture | null | undefined) ?? null;
-          };
-
           // Bucket per VJ layer index → { A?, B?, single? }. `single` is set
           // for entries with no bank tag (crossfader off — only Bank A).
+          // Texture resolution + id parsing hoisted to component scope
+          // (resolveVjLayerTexture / parseVjLayerId) so the frame body
+          // doesn't re-allocate closures or re-run regexes.
           type VjBucket = { a?: Layer; b?: Layer; single?: Layer };
           const vjByIndex = new Map<number, VjBucket>();
           if (vjLayers) {
             for (const vjLayer of vjLayers) {
-              const m = vjLayer.id.match(/^vj-layer-(\d+)(?:-([AB]))?$/);
-              if (!m) continue;
-              const idx = parseInt(m[1]);
-              const bank = m[2] as 'A' | 'B' | undefined;
-              const slot = vjByIndex.get(idx) ?? {};
-              if (bank === 'A') slot.a = vjLayer;
-              else if (bank === 'B') slot.b = vjLayer;
+              const parsed = parseVjLayerId(vjLayer.id);
+              if (!parsed) continue;
+              const slot = vjByIndex.get(parsed.idx) ?? {};
+              if (parsed.bank === 'A') slot.a = vjLayer;
+              else if (parsed.bank === 'B') slot.b = vjLayer;
               else slot.single = vjLayer;
-              vjByIndex.set(idx, slot);
+              vjByIndex.set(parsed.idx, slot);
             }
           }
 
@@ -1329,24 +1403,24 @@
             // Single-bank or crossfader-off — fast path: use whichever side
             // exists, no merge.
             if (slot.single) {
-              const tex = resolveVjTexture(slot.single);
+              const tex = resolveVjLayerTexture(slot.single);
               if (tex) vjResolved.set(idx, { layer: slot.single, texture: tex });
               continue;
             }
             if (slot.a && !slot.b) {
-              const tex = resolveVjTexture(slot.a);
+              const tex = resolveVjLayerTexture(slot.a);
               if (tex) vjResolved.set(idx, { layer: slot.a, texture: tex });
               continue;
             }
             if (slot.b && !slot.a) {
-              const tex = resolveVjTexture(slot.b);
+              const tex = resolveVjLayerTexture(slot.b);
               if (tex) vjResolved.set(idx, { layer: slot.b, texture: tex });
               continue;
             }
             // Both banks present — run per-layer crossfade.
             if (slot.a && slot.b) {
-              const texA = resolveVjTexture(slot.a);
-              const texB = resolveVjTexture(slot.b);
+              const texA = resolveVjLayerTexture(slot.a);
+              const texB = resolveVjLayerTexture(slot.b);
               if (!texA && !texB) continue;
               const target = engine.getOrCreateVJCrossfadeTarget(idx);
               engine.renderVJCrossfadeToTarget(target, texA, texB);
@@ -1361,42 +1435,20 @@
 
           // 4. Inject VJ sources into Screen / Group layers.
           //
-          //    Rebuild every frame — VJ textures change each frame
-          //    (synthvision canvas, shaders, crossfade mix) and caching
-          //    causes stale texture references when clips swap.
-          //
-          //    The clone keeps source.type UNCHANGED (shader/video/threejs/…).
-          //    We tag with __vjStage so updateTexturesSync /
-          //    updateShaderTextures short-circuit on the second pass —
-          //    the VJ deck (and any A/B merge) already produced the texture,
-          //    Screens just sample from it.
-          const cachedStageLayers = normalLayers.map(layer => {
+          //    The injected source is rebuilt every frame — VJ textures
+          //    change each frame (synthvision canvas, shaders, crossfade
+          //    mix) and caching causes stale texture references when
+          //    clips swap. The layer clone + merged effects array are
+          //    cached per layer (injectVjIntoLayer) and rebuilt only on
+          //    identity change.
+          pruneStageInjectCache(normalLayers);
+          layersToRender = normalLayers.map(layer => {
             if (layer.vjLayerIndex !== undefined) {
               const resolved = vjResolved.get(layer.vjLayerIndex);
-              if (resolved) {
-                const injectedSource: any = {
-                  ...resolved.layer.source,
-                  texture: resolved.texture,
-                  __vjStage: true,
-                };
-                if (layer.type === 'group') {
-                  // Group layers distribute the injected texture to children
-                  // via renderGroupToTexture — no type change needed.
-                  return { ...layer, source: injectedSource };
-                }
-                return {
-                  ...layer,
-                  source: injectedSource,
-                  // Keep layer.type = 'screen'. engine.ts treats 'screen'
-                  // and 'media' identically in the render pipeline.
-                  effects: [...(resolved.layer.effects || []), ...layer.effects],
-                };
-              }
+              if (resolved) return injectVjIntoLayer(layer, resolved);
             }
             return layer;
           });
-
-          layersToRender = cachedStageLayers;
           compEffects = vjState.compositionEffects;
         } else if (vjLayers) {
           // ── PURE VJ MODE: VJ layers replace mapping layers ──
@@ -1417,52 +1469,27 @@
           const mappedVjLayers = (vjLayers ?? []) as Layer[];
           const anyVjBinding = mappedVjLayers.length > 0 && normalLayers.some(l => l.vjLayerIndex !== undefined);
           if (anyVjBinding) {
-            const resolveVjTextureMapping = (vjLayer: Layer): THREE.Texture | null => {
-              if (!vjLayer?.source) return null;
-              if (vjLayer.source.type === 'shader' && vjLayer.source.src) {
-                const rtKey = `${vjLayer.id}:${vjLayer.source.src}`;
-                const rt = shaderRenderTargets.get(rtKey);
-                if (rt) return rt.texture;
-              }
-              return (vjLayer.source.texture as THREE.Texture | null | undefined) ?? null;
-            };
             // Bucket per VJ layer index → resolved texture. Simpler than
             // the stage path because mapping mode doesn't currently run
             // the A/B crossfader merge — single bank only.
             const vjResolvedMap = new Map<number, { layer: Layer; texture: THREE.Texture }>();
             for (const vjLayer of mappedVjLayers) {
-              const m = vjLayer.id.match(/^vj-layer-(\d+)(?:-([AB]))?$/);
-              if (!m) continue;
-              const idx = parseInt(m[1]);
+              const parsed = parseVjLayerId(vjLayer.id);
+              if (!parsed) continue;
               // Take Bank A or the single-bank entry; ignore Bank B in
               // mapping mode for now.
-              const bank = m[2] as 'A' | 'B' | undefined;
-              if (bank === 'B' && vjResolvedMap.has(idx)) continue;
-              const tex = resolveVjTextureMapping(vjLayer);
-              if (tex) vjResolvedMap.set(idx, { layer: vjLayer, texture: tex });
+              if (parsed.bank === 'B' && vjResolvedMap.has(parsed.idx)) continue;
+              const tex = resolveVjLayerTexture(vjLayer);
+              if (tex) vjResolvedMap.set(parsed.idx, { layer: vjLayer, texture: tex });
             }
-            // Inject the resolved VJ texture into each managed layer.
-            // We clone the layer so the store's reactive copy isn't
-            // mutated. Tag with __vjStage so the upstream texture-
-            // update pass skips re-resolving (the VJ deck already
-            // produced the texture this frame).
+            // Inject the resolved VJ texture into each managed layer via
+            // the shared per-layer clone cache (see injectVjIntoLayer).
+            pruneStageInjectCache(normalLayers);
             layersToRender = normalLayers.map(layer => {
               if (layer.vjLayerIndex === undefined) return layer;
               const resolved = vjResolvedMap.get(layer.vjLayerIndex);
               if (!resolved) return layer;
-              const injectedSource: any = {
-                ...resolved.layer.source,
-                texture: resolved.texture,
-                __vjStage: true,
-              };
-              if (layer.type === 'group') {
-                return { ...layer, source: injectedSource };
-              }
-              return {
-                ...layer,
-                source: injectedSource,
-                effects: [...(resolved.layer.effects || []), ...layer.effects],
-              };
+              return injectVjIntoLayer(layer, resolved);
             });
           }
         }
@@ -1472,8 +1499,10 @@
         const kfOverrides = kfState.config.isPlaying ? kfState.activeOverrides : {};
         const kfStash: Array<{ layer: any; key: string; orig: any; target: any; prop: string }> = [];
 
-        // Debug: log once per second during playback
-        if (kfState.config.isPlaying && Object.keys(kfOverrides).length > 0) {
+        // Debug: log once per second during playback. Behind a manual
+        // flag — serializing the whole override map + layer-id array is
+        // pure waste in a show. Enable from devtools: __GA_KF_DEBUG__=1
+        if ((window as any).__GA_KF_DEBUG__ && kfState.config.isPlaying && Object.keys(kfOverrides).length > 0) {
           const now = performance.now();
           if (!(window as any)._kfCanvasLogTime || now - (window as any)._kfCanvasLogTime > 1000) {
             (window as any)._kfCanvasLogTime = now;
