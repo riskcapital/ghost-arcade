@@ -33,6 +33,8 @@
 #include <vector>
 #include <string>
 #include <mutex>
+#include <map>
+#include <memory>
 
 @interface SyphonServerDirectory (GhostArcadeRefresh)
 - (void)requestServerAnnounce;
@@ -397,6 +399,381 @@ private:
 };
 
 // ============================================================
+// SyphonAtlasOutput — multi-slice zero-copy fan-out (Phase 3).
+//
+// Mirrors SpoutAtlasOutput. One hidden OSR window renders ALL sender
+// slices into a single atlas IOSurface. Each paint we:
+//   1. CGLTexImageIOSurface2D the atlas IOSurface into a shared
+//      GL_TEXTURE_RECTANGLE_ARB (one wrap per paint).
+//   2. For each configured region, blit the sub-rect from the atlas
+//      rect texture into the sender's own GL_TEXTURE_2D via a FBO +
+//      fixed-function textured quad. publishFrameTexture sends each
+//      sender independently.
+//
+// Cost is one IOSurface bind + N GPU sub-blits per paint — flat per
+// sender, no CPU pixels.
+//
+// Orientation: Chromium OSR fills the atlas IOSurface top-down (row 0
+// = top of the page). The blit copies the slice into the FBO 2D
+// texture with row 0 = top of the slice (matching the single-output
+// SendTexture convention), so publishFrameTexture is flipped:YES like
+// the single-output path. Consumers that respect Syphon's `flipped`
+// flag (Simple Client, MadMapper, Resolume) display right-side-up
+// without an extra toggle.
+// ============================================================
+
+class SyphonAtlasOutput : public Napi::ObjectWrap<SyphonAtlasOutput> {
+public:
+  static Napi::Object Init(Napi::Env env, Napi::Object exports) {
+    Napi::Function func = DefineClass(env, "SyphonAtlasOutput", {
+      InstanceMethod("configure", &SyphonAtlasOutput::Configure),
+      InstanceMethod("sendAtlas", &SyphonAtlasOutput::SendAtlas),
+      InstanceMethod("release", &SyphonAtlasOutput::Release),
+      InstanceMethod("isInitialized", &SyphonAtlasOutput::IsInitialized),
+      InstanceMethod("getSenderNames", &SyphonAtlasOutput::GetSenderNames),
+      InstanceMethod("getAdapterIndex", &SyphonAtlasOutput::GetAdapterIndex),
+    });
+    exports.Set("SyphonAtlasOutput", func);
+    return exports;
+  }
+
+  SyphonAtlasOutput(const Napi::CallbackInfo& info)
+      : Napi::ObjectWrap<SyphonAtlasOutput>(info) {
+    context_ = CreateLegacyContext();
+    if (!context_) {
+      NSLog(@"[SyphonAtlasOutput] CreateLegacyContext failed — atlas fan-out unavailable");
+      return;
+    }
+    initialized_ = true;
+    NSLog(@"[SyphonAtlasOutput] context ready");
+  }
+
+  ~SyphonAtlasOutput() { cleanup(); }
+
+private:
+  struct AtlasSender {
+    SyphonServer* server = nil;
+    GLuint tex2D = 0;     // sender-owned GL_TEXTURE_2D (the published texture)
+    GLuint fbo = 0;       // FBO with tex2D as color attachment
+    GLuint w = 0;
+    GLuint h = 0;
+    GLuint x = 0;         // top-left within the atlas IOSurface (pixels)
+    GLuint y = 0;
+  };
+
+  NSOpenGLContext* context_ = nil;
+  GLuint atlasRectTex_ = 0;        // GL_TEXTURE_RECTANGLE_ARB wrapping the atlas IOSurface
+  IOSurfaceID lastAtlasSurfaceID_ = 0;
+  int lastAtlasW_ = 0;
+  int lastAtlasH_ = 0;
+  bool initialized_ = false;
+  int diagCount_ = 0;
+  std::map<std::string, std::unique_ptr<AtlasSender>> senders_;
+  std::mutex mutex_;
+
+  void releaseSenderEntry(AtlasSender& s) {
+    if (s.server) { [s.server stop]; s.server = nil; }
+    if (s.fbo)   { glDeleteFramebuffers(1, &s.fbo); s.fbo = 0; }
+    if (s.tex2D) { glDeleteTextures(1, &s.tex2D); s.tex2D = 0; }
+    s.w = s.h = s.x = s.y = 0;
+  }
+
+  void cleanup() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (context_) {
+      [context_ makeCurrentContext];
+      for (auto& [name, sp] : senders_) {
+        releaseSenderEntry(*sp);
+      }
+      if (atlasRectTex_) { glDeleteTextures(1, &atlasRectTex_); atlasRectTex_ = 0; }
+    } else {
+      for (auto& [name, sp] : senders_) {
+        if (sp->server) { [sp->server stop]; sp->server = nil; }
+      }
+    }
+    if (!senders_.empty()) {
+      NSLog(@"[SyphonAtlasOutput] released %zu sender(s)", senders_.size());
+    }
+    senders_.clear();
+    context_ = nil;
+    initialized_ = false;
+    lastAtlasSurfaceID_ = 0;
+    lastAtlasW_ = lastAtlasH_ = 0;
+  }
+
+  // Resize / create sender-owned tex2D + FBO. Caller must have context current.
+  bool ensureSenderTarget(AtlasSender& s, GLuint w, GLuint h) {
+    if (s.tex2D && s.fbo && s.w == w && s.h == h) return true;
+
+    if (s.fbo)   { glDeleteFramebuffers(1, &s.fbo); s.fbo = 0; }
+    if (s.tex2D) { glDeleteTextures(1, &s.tex2D); s.tex2D = 0; }
+
+    glGenTextures(1, &s.tex2D);
+    glBindTexture(GL_TEXTURE_2D, s.tex2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    glGenFramebuffers(1, &s.fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, s.fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s.tex2D, 0);
+    GLenum fbStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    if (fbStatus != GL_FRAMEBUFFER_COMPLETE) {
+      NSLog(@"[SyphonAtlasOutput] FBO incomplete (status=0x%x) for %ux%u", fbStatus, w, h);
+      glDeleteFramebuffers(1, &s.fbo); s.fbo = 0;
+      glDeleteTextures(1, &s.tex2D); s.tex2D = 0;
+      return false;
+    }
+
+    s.w = w;
+    s.h = h;
+    return true;
+  }
+
+  // Blit sub-rect of the atlas rect texture into the sender's 2D texture
+  // via FBO + fixed-function textured quad. Vertex/texcoord mapping puts
+  // atlas row y at the FBO's bottom (texel row 0), so the published 2D
+  // texture has row 0 = top of slice content — published flipped:YES.
+  void blitSubRectToSender(const AtlasSender& s) {
+    glBindFramebuffer(GL_FRAMEBUFFER, s.fbo);
+    glViewport(0, 0, s.w, s.h);
+
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    glOrtho(0, s.w, 0, s.h, -1, 1);
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glEnable(GL_TEXTURE_RECTANGLE_ARB);
+    glBindTexture(GL_TEXTURE_RECTANGLE_ARB, atlasRectTex_);
+
+    const GLfloat x0 = (GLfloat)s.x;
+    const GLfloat y0 = (GLfloat)s.y;
+    const GLfloat x1 = (GLfloat)(s.x + s.w);
+    const GLfloat y1 = (GLfloat)(s.y + s.h);
+
+    glColor4f(1, 1, 1, 1);
+    glBegin(GL_QUADS);
+      glTexCoord2f(x0, y0); glVertex2f(0,    0);
+      glTexCoord2f(x1, y0); glVertex2f(s.w,  0);
+      glTexCoord2f(x1, y1); glVertex2f(s.w,  s.h);
+      glTexCoord2f(x0, y1); glVertex2f(0,    s.h);
+    glEnd();
+
+    glBindTexture(GL_TEXTURE_RECTANGLE_ARB, 0);
+    glDisable(GL_TEXTURE_RECTANGLE_ARB);
+
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glPopMatrix();
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  }
+
+  Napi::Value Configure(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (!initialized_) return Napi::Boolean::New(env, false);
+    if (info.Length() < 1 || !info[0].IsArray()) {
+      Napi::TypeError::New(env, "Array of regions expected").ThrowAsJavaScriptException();
+      return Napi::Boolean::New(env, false);
+    }
+
+    Napi::Array regions = info[0].As<Napi::Array>();
+    std::lock_guard<std::mutex> lock(mutex_);
+    [context_ makeCurrentContext];
+
+    std::map<std::string, bool> wanted;
+    for (uint32_t i = 0; i < regions.Length(); i++) {
+      Napi::Value v = regions.Get(i);
+      if (!v.IsObject()) continue;
+      Napi::Object r = v.As<Napi::Object>();
+      std::string name = r.Get("name").ToString().Utf8Value();
+      GLuint x = r.Get("x").ToNumber().Uint32Value();
+      GLuint y = r.Get("y").ToNumber().Uint32Value();
+      GLuint w = r.Get("w").ToNumber().Uint32Value();
+      GLuint h = r.Get("h").ToNumber().Uint32Value();
+      if (name.empty() || w == 0 || h == 0) continue;
+      if (wanted.count(name)) {
+        NSLog(@"[SyphonAtlasOutput] duplicate sender name '%s' — skipping", name.c_str());
+        continue;
+      }
+      wanted[name] = true;
+
+      auto it = senders_.find(name);
+      if (it == senders_.end()) {
+        auto s = std::make_unique<AtlasSender>();
+        NSString* nsName = [NSString stringWithUTF8String:name.c_str()];
+        s->server = [[SyphonServer alloc] initWithName:nsName
+                                               context:context_.CGLContextObj
+                                               options:nil];
+        if (!s->server) {
+          NSLog(@"[SyphonAtlasOutput] SyphonServer init failed for '%s'", name.c_str());
+        }
+        it = senders_.emplace(name, std::move(s)).first;
+        NSLog(@"[SyphonAtlasOutput] sender '%s' created (%ux%u @ %u,%u)", name.c_str(), w, h, x, y);
+      }
+
+      AtlasSender& s = *it->second;
+      ensureSenderTarget(s, w, h);
+      s.x = x;
+      s.y = y;
+    }
+
+    // Drop senders no longer in the layout.
+    for (auto it = senders_.begin(); it != senders_.end(); ) {
+      if (!wanted.count(it->first)) {
+        NSLog(@"[SyphonAtlasOutput] sender '%s' removed", it->first.c_str());
+        releaseSenderEntry(*it->second);
+        it = senders_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+
+    return Napi::Boolean::New(env, true);
+  }
+
+  Napi::Value SendAtlas(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (!initialized_ || senders_.empty()) return Napi::Number::New(env, 0);
+    if (info.Length() < 1 || !info[0].IsBuffer()) {
+      Napi::TypeError::New(env, "Buffer argument expected (IOSurface handle)").ThrowAsJavaScriptException();
+      return Napi::Number::New(env, 0);
+    }
+    auto handleBuffer = info[0].As<Napi::Buffer<uint8_t>>();
+    if (handleBuffer.Length() < sizeof(IOSurfaceID)) {
+      return Napi::Number::New(env, 0);
+    }
+
+    // Resolve IOSurfaceRef from either the modern pointer-buffer or the
+    // legacy 4-byte IOSurfaceID encoding (mirrors SyphonOutput::SendTexture).
+    IOSurfaceRef surface = nullptr;
+    bool releaseSurface = false;
+    if (handleBuffer.Length() >= sizeof(IOSurfaceRef)) {
+      surface = *reinterpret_cast<IOSurfaceRef const*>(handleBuffer.Data());
+      if (surface) {
+        CFRetain(surface);
+        releaseSurface = true;
+      }
+    }
+    if (!surface) {
+      IOSurfaceID sid = *reinterpret_cast<const IOSurfaceID*>(handleBuffer.Data());
+      surface = IOSurfaceLookup(sid);
+      releaseSurface = (surface != nullptr);
+      if (!surface) {
+        static int missCount = 0;
+        if (missCount++ < 5) {
+          NSLog(@"[SyphonAtlasOutput] IOSurfaceLookup(%u) returned NULL", sid);
+        }
+        return Napi::Number::New(env, 0);
+      }
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    IOSurfaceID surfaceID = IOSurfaceGetID(surface);
+    int atlasW = (int)IOSurfaceGetWidth(surface);
+    int atlasH = (int)IOSurfaceGetHeight(surface);
+    if (atlasW <= 0 || atlasH <= 0) {
+      if (releaseSurface) CFRelease(surface);
+      return Napi::Number::New(env, 0);
+    }
+
+    [context_ makeCurrentContext];
+
+    if (!atlasRectTex_) glGenTextures(1, &atlasRectTex_);
+    glBindTexture(GL_TEXTURE_RECTANGLE_ARB, atlasRectTex_);
+    CGLError cglErr = CGLTexImageIOSurface2D(
+        CGLGetCurrentContext(),
+        GL_TEXTURE_RECTANGLE_ARB,
+        GL_RGBA,
+        atlasW, atlasH,
+        GL_BGRA,
+        GL_UNSIGNED_INT_8_8_8_8_REV,
+        surface,
+        0);
+    if (releaseSurface) CFRelease(surface);
+    if (cglErr != kCGLNoError) {
+      glBindTexture(GL_TEXTURE_RECTANGLE_ARB, 0);
+      NSLog(@"[SyphonAtlasOutput] CGLTexImageIOSurface2D failed: %d", cglErr);
+      return Napi::Number::New(env, 0);
+    }
+
+    if (diagCount_ < 3) {
+      NSLog(@"[SyphonAtlasOutput] sendAtlas IOSurfaceID=%u atlas=%dx%d sender(s)=%zu",
+            surfaceID, atlasW, atlasH, senders_.size());
+      diagCount_++;
+    }
+
+    int sent = 0;
+    for (auto& [name, sp] : senders_) {
+      AtlasSender& s = *sp;
+      if (!s.server || !s.tex2D || !s.fbo) continue;
+
+      // Out-of-bounds during a layout/resize race — skip a frame rather
+      // than sample garbage (matches SpoutAtlasOutput::SendAtlas).
+      if ((int)(s.x + s.w) > atlasW || (int)(s.y + s.h) > atlasH) {
+        static int skipCount = 0;
+        if (skipCount++ < 5) {
+          NSLog(@"[SyphonAtlasOutput] region '%s' %u,%u %ux%u outside atlas %dx%d — skipped",
+                name.c_str(), s.x, s.y, s.w, s.h, atlasW, atlasH);
+        }
+        continue;
+      }
+
+      blitSubRectToSender(s);
+
+      [s.server publishFrameTexture:s.tex2D
+                      textureTarget:GL_TEXTURE_2D
+                        imageRegion:NSMakeRect(0, 0, s.w, s.h)
+                  textureDimensions:NSMakeSize(s.w, s.h)
+                            flipped:YES];
+      sent++;
+    }
+    glFlush();
+
+    lastAtlasSurfaceID_ = surfaceID;
+    lastAtlasW_ = atlasW;
+    lastAtlasH_ = atlasH;
+    return Napi::Number::New(env, sent);
+  }
+
+  Napi::Value Release(const Napi::CallbackInfo& info) {
+    cleanup();
+    return info.Env().Undefined();
+  }
+
+  Napi::Value IsInitialized(const Napi::CallbackInfo& info) {
+    return Napi::Boolean::New(info.Env(), initialized_);
+  }
+
+  Napi::Value GetSenderNames(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    Napi::Array result = Napi::Array::New(env, senders_.size());
+    uint32_t i = 0;
+    for (auto& [name, sp] : senders_) {
+      result.Set(i++, Napi::String::New(env, name));
+    }
+    return result;
+  }
+
+  Napi::Value GetAdapterIndex(const Napi::CallbackInfo& info) {
+    // macOS IOSurface crosses GPU boundaries transparently — no adapter pick.
+    return Napi::Number::New(info.Env(), 0);
+  }
+};
+
+// ============================================================
 // SyphonReceiver — Receiver with blit-to-2D-then-readPixels
 // ============================================================
 
@@ -724,6 +1101,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   (void)GetSyphonServers(true);
 
   SyphonOutput::Init(env, exports);
+  SyphonAtlasOutput::Init(env, exports);
   SyphonReceiver::Init(env, exports);
   exports.Set("listSenders", Napi::Function::New(env, ListSenders));
   exports.Set("getGpuInfo", Napi::Function::New(env, GetGpuInfo));

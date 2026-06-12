@@ -314,7 +314,7 @@ const atlasState = {
   layout: null,             // last { atlasW, atlasH, tiles, overflow }
   lastLoggedCount: -1,
 };
-let atlasOutput = null;       // SpoutAtlasOutput instance (Windows; Phase 3 adds Syphon)
+let atlasOutput = null;       // SpoutAtlasOutput (Windows) or SyphonAtlasOutput (macOS)
 let atlasOsrWindow = null;    // hidden OSR window running ?mode=slice-atlas
 let atlasOsrCreating = false;
 let atlasPaintPump = null;
@@ -1123,28 +1123,23 @@ function startAtlasOutput() {
   if (atlasState.active) return true;
   if (atlasOsrCreating) return false;
 
-  if (isMac) {
-    // Phase 3 adds SyphonAtlasOutput; until then macOS keeps the
-    // per-slice CPU path.
-    console.log('[Atlas] macOS atlas fan-out not available yet (Phase 3)');
-    return false;
-  }
-
   const addon = loadSpoutAddon();
-  if (!addon || typeof addon.SpoutAtlasOutput !== 'function') {
-    console.error('[Atlas] addon missing SpoutAtlasOutput — rebuild electron/native');
+  const AtlasCtor = isMac ? addon?.SyphonAtlasOutput : addon?.SpoutAtlasOutput;
+  const ctorName = isMac ? 'SyphonAtlasOutput' : 'SpoutAtlasOutput';
+  if (typeof AtlasCtor !== 'function') {
+    console.error(`[Atlas] addon missing ${ctorName} — rebuild electron/native`);
     return false;
   }
 
   try {
-    atlasOutput = new addon.SpoutAtlasOutput();
+    atlasOutput = new AtlasCtor();
   } catch (err) {
-    console.error('[Atlas] SpoutAtlasOutput construction failed:', err?.message || err);
+    console.error(`[Atlas] ${ctorName} construction failed:`, err?.message || err);
     atlasOutput = null;
     return false;
   }
   if (!atlasOutput.isInitialized()) {
-    console.error('[Atlas] SpoutAtlasOutput device init failed — atlas unavailable');
+    console.error(`[Atlas] ${ctorName} init failed — atlas unavailable`);
     try { atlasOutput.release(); } catch {}
     atlasOutput = null;
     return false;
