@@ -181,6 +181,57 @@ elseif(APPLE)
 endif()
 
 # ============================================================
+# Ableton Link — cross-platform tempo/beat sync over the LAN.
+# Header-only (vendored at vendor/link + standalone asio). Built
+# whenever the vendor directory is present. GPLv2 — commercial
+# distribution requires Ableton's no-cost Link license (requested via
+# link-devs@ableton.com); see docs/time-sync-review-2026-06.md.
+# ============================================================
+set(LINK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/link")
+if(EXISTS "${LINK_DIR}/include/ableton/Link.hpp")
+    message(STATUS "Ableton Link vendored — building link_addon.node")
+    add_library(link_addon SHARED
+        link_addon.cpp
+        ${CMAKE_JS_SRC}
+    )
+    target_include_directories(link_addon PRIVATE
+        ${LINK_DIR}/include
+        ${LINK_DIR}/modules/asio-standalone/asio/include
+        ${CMAKE_JS_INC}
+        ${NODE_ADDON_API_DIR}
+    )
+    target_link_libraries(link_addon PRIVATE ${CMAKE_JS_LIB})
+    target_compile_definitions(link_addon PRIVATE
+        NAPI_VERSION=9
+        NODE_ADDON_API_DISABLE_DEPRECATED
+        ASIO_STANDALONE
+    )
+    if(WIN32)
+        target_compile_definitions(link_addon PRIVATE
+            LINK_PLATFORM_WINDOWS=1
+            _WIN32_WINNT=0x0601
+            NOMINMAX
+            WIN32_LEAN_AND_MEAN
+        )
+        target_link_libraries(link_addon PRIVATE ws2_32 iphlpapi winmm)
+        if(MSVC)
+            target_compile_options(link_addon PRIVATE /W0 /EHsc)
+        endif()
+    elseif(APPLE)
+        target_compile_definitions(link_addon PRIVATE LINK_PLATFORM_MACOSX=1)
+    elseif(UNIX)
+        target_compile_definitions(link_addon PRIVATE LINK_PLATFORM_LINUX=1)
+    endif()
+    set_target_properties(link_addon PROPERTIES
+        PREFIX ""
+        SUFFIX ".node"
+        CXX_STANDARD 17
+    )
+else()
+    message(STATUS "Ableton Link vendor not found at ${LINK_DIR} — skipping link_addon build.")
+endif()
+
+# ============================================================
 # NDI (NewTek Network Device Interface) — cross-platform.
 # Detects either the "NDI Advanced SDK" or the regular NDI SDK
 # at standard install paths. Builds ndi_addon.node when found;

@@ -585,6 +585,45 @@ function loadNdiAddon() {
 const ndiSenders = new Set();    // tracks live sender names so we can destroy on quit
 const ndiReceivers = new Set();  // tracks live receiver source names
 
+// Ableton Link — main-process singleton (Link spawns its own network
+// threads; one session per app). Lazily created on first link_enable.
+// GPLv2 vendor — commercial distribution needs Ableton's no-cost Link
+// license; see docs/time-sync-review-2026-06.md.
+let linkAddon = null;
+let linkAddonLoadAttempted = false;
+let linkAddonLoadError = null;
+let linkSession = null;
+
+function loadLinkAddon() {
+  if (linkAddon) return linkAddon;
+  if (linkAddonLoadAttempted) return null;
+  linkAddonLoadAttempted = true;
+  try {
+    const candidates = getTextureShareAddonCandidates('link_addon.node');
+    const addonPath = candidates.find(candidate => fs.existsSync(candidate));
+    if (!addonPath) {
+      linkAddonLoadError = 'link_addon.node not built';
+      console.log(`[Link] ${linkAddonLoadError}. Checked: ${candidates.join(', ')}`);
+      return null;
+    }
+    linkAddon = require(addonPath);
+    console.log(`[Link] Addon loaded: ${addonPath}`);
+    return linkAddon;
+  } catch (err) {
+    linkAddonLoadError = err?.message || String(err);
+    console.error('[Link] Failed to load addon:', linkAddonLoadError);
+    return null;
+  }
+}
+
+function shutdownLink() {
+  if (linkSession) {
+    try { linkSession.enable(false); } catch {}
+    linkSession = null;
+    console.log('[Link] Session disabled');
+  }
+}
+
 /**
  * Create a texture-sharing sender (platform-dispatched).
  *
@@ -1595,6 +1634,54 @@ function registerIpcHandlers() {
   // available() reflects WHETHER WE CAN SEND: addon built + NDI runtime
   // initialized. Renderer uses this to disable the NDI option in the
   // slice output-type picker on machines where NDI isn't ready.
+  // --- Ableton Link ---
+  // Renderer polls link_get_state (~4Hz) and re-anchors a local phase
+  // extrapolation; tempo writes flow both ways (tap tempo → setTempo,
+  // session tempo → audioStore.manualBPM in sync/abletonLink.ts).
+  ipcMain.handle('link_enable', (_, args) => {
+    const addon = loadLinkAddon();
+    if (!addon) return { ok: false, error: linkAddonLoadError || 'Link addon unavailable' };
+    try {
+      const bpm = Number(args?.bpm) || 120;
+      if (!linkSession) {
+        linkSession = new addon.LinkSession(bpm);
+        linkSession.enableStartStopSync(true);
+      }
+      linkSession.enable(true);
+      console.log(`[Link] Enabled (initial ${bpm} BPM)`);
+      return { ok: true };
+    } catch (err) {
+      console.error('[Link] enable failed:', err?.message || err);
+      return { ok: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('link_disable', () => {
+    try { linkSession?.enable(false); } catch {}
+    console.log('[Link] Disabled');
+    return { ok: true };
+  });
+
+  ipcMain.handle('link_set_tempo', (_, args) => {
+    if (!linkSession) return { ok: false, error: 'Link not enabled' };
+    const bpm = Number(args?.bpm);
+    if (!Number.isFinite(bpm)) return { ok: false, error: 'bad bpm' };
+    try {
+      return { ok: !!linkSession.setTempo(bpm) };
+    } catch (err) {
+      return { ok: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('link_get_state', () => {
+    if (!linkSession) return { available: !!loadLinkAddon(), enabled: false };
+    try {
+      return { available: true, ...linkSession.getState() };
+    } catch (err) {
+      return { available: true, enabled: false, error: err?.message || String(err) };
+    }
+  });
+
   ipcMain.handle('ndi_available', () => {
     const a = loadNdiAddon();
     return {
@@ -3962,6 +4049,7 @@ function cleanupAndQuit() {
   runCleanupStep('stopSpoutReceiver', stopSpoutReceiver);
   runCleanupStep('destroyNdiSenders', destroyNdiSenders);
   runCleanupStep('destroyNdiReceivers', destroyNdiReceivers);
+  runCleanupStep('shutdownLink', shutdownLink);
   runCleanupStep('stopOSC', stopOSC);
   runCleanupStep('stopServer', stopServer);
   runCleanupStep('closeAllWledSockets', closeAllWledSockets);
