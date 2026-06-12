@@ -550,6 +550,16 @@ export class Stage3DRenderer {
   };
   private pointerDownPos: { x: number; y: number } | null = null;
   private selectionUnsub: (() => void) | null = null;
+  /** Demo Reel camera drive — when set, render() applies this state and
+   *  bypasses OrbitControls so shot interpolation lands exactly. */
+  private drivenCamera: { position: [number, number, number]; target: [number, number, number]; fov: number } | null = null;
+  /** One-shot frame-capture request (Demo Reel offline render +
+   *  shot thumbnails). Fulfilled at the end of renderScene with a
+   *  synchronous default-framebuffer readback. */
+  private pendingCapture: {
+    resolve: (r: { data: Uint8Array; width: number; height: number }) => void;
+    reject: (e: Error) => void;
+  } | null = null;
   /** Frame counter for staggering the per-LED average-colour readback
    *  across multiple frames so we never pay 6× readback-stall cost in
    *  one frame. One readback per frame, cycled. */
@@ -603,6 +613,17 @@ export class Stage3DRenderer {
       topCamera:   () => this.topCamera(),
       setSnap:     (on) => this.setSnap(on),
       reload:      () => this.reload(),
+      getCameraState: () => ({
+        position: [this.camera.position.x, this.camera.position.y, this.camera.position.z],
+        target:   [this.controls.target.x, this.controls.target.y, this.controls.target.z],
+        fov:      this.camera.fov,
+      }),
+      setCameraState: (s) => { this.drivenCamera = s; },
+      releaseCamera:  () => { this.drivenCamera = null; },
+      captureFrame:   () => new Promise((resolve, reject) => {
+        if (this.pendingCapture) this.pendingCapture.reject(new Error('superseded'));
+        this.pendingCapture = { resolve, reject };
+      }),
     });
 
     // When the selection set changes from outside (library click,
@@ -773,8 +794,20 @@ export class Stage3DRenderer {
     const width = Math.max(1, this.canvas.width || this.canvas.clientWidth || 1);
     const height = Math.max(1, this.canvas.height || this.canvas.clientHeight || 1);
     this.camera.aspect = width / height;
-    this.camera.updateProjectionMatrix();
-    this.controls.update();
+    if (this.drivenCamera) {
+      // Demo Reel playback / offline render owns the camera: apply the
+      // driven state verbatim and skip OrbitControls (its damping would
+      // smear exact shot interpolation).
+      const d = this.drivenCamera;
+      this.camera.position.set(d.position[0], d.position[1], d.position[2]);
+      this.controls.target.set(d.target[0], d.target[1], d.target[2]);
+      this.camera.fov = d.fov;
+      this.camera.lookAt(this.controls.target);
+      this.camera.updateProjectionMatrix();
+    } else {
+      this.camera.updateProjectionMatrix();
+      this.controls.update();
+    }
 
     // Build a layer-id index so we can resolve each screen's parent
     // group (for unified-shader-mode crop). Cheap — one map per frame
@@ -1100,6 +1133,10 @@ export class Stage3DRenderer {
   }
 
   dispose(): void {
+    if (this.pendingCapture) {
+      this.pendingCapture.reject(new Error('renderer disposed'));
+      this.pendingCapture = null;
+    }
     for (const entry of this.ledEntries) entry.averageRT.dispose();
     this.downsampleMaterial?.dispose();
     disposeObject(this.scene);
@@ -1190,6 +1227,7 @@ export class Stage3DRenderer {
     const useComposer = !!this.composer && bloomActive && !this.composerFailed;
     if (!useComposer) {
       this.renderSceneDirect(renderer, width, height);
+      this.fulfillCapture(renderer, width, height);
       return;
     }
     try {
@@ -1201,6 +1239,37 @@ export class Stage3DRenderer {
       this.composerFailed = true;
       console.warn('[Stage3D] Postprocessing disabled after GPU error:', err);
       this.renderSceneDirect(renderer, width, height);
+    }
+    this.fulfillCapture(renderer, width, height);
+  }
+
+  /** Resolve a pending one-shot frame capture. MUST run synchronously
+   *  in the same task as the scene render: the renderer runs with
+   *  preserveDrawingBuffer:false, so the default framebuffer is only
+   *  valid until Chromium composites the page. readPixels returns
+   *  bottom-up rows; flip to top-down so consumers (putImageData /
+   *  JPEG encode) get a normal image. */
+  private fulfillCapture(renderer: THREE.WebGLRenderer, width: number, height: number): void {
+    if (!this.pendingCapture) return;
+    const pending = this.pendingCapture;
+    this.pendingCapture = null;
+    try {
+      const gl = renderer.getContext();
+      const data = new Uint8Array(width * height * 4);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, data);
+      const rowBytes = width * 4;
+      const tmp = new Uint8Array(rowBytes);
+      for (let y = 0; y < (height >> 1); y++) {
+        const top = y * rowBytes;
+        const bot = (height - 1 - y) * rowBytes;
+        tmp.set(data.subarray(top, top + rowBytes));
+        data.copyWithin(top, bot, bot + rowBytes);
+        data.set(tmp, bot);
+      }
+      pending.resolve({ data, width, height });
+    } catch (err) {
+      pending.reject(err instanceof Error ? err : new Error(String(err)));
     }
   }
 

@@ -405,6 +405,19 @@ export interface Stage3DRendererControls {
   topCamera: () => void;
   setSnap: (on: boolean) => void;
   reload: () => void;
+  /** Current live camera (position / orbit target / fov) — captured by
+   *  the Demo Reel's Save Shot. */
+  getCameraState: () => { position: Vec3; target: Vec3; fov: number };
+  /** Drive the camera explicitly (Demo Reel playback / offline reel
+   *  render). While driven, OrbitControls input + damping are bypassed
+   *  so shot interpolation is exact. Call releaseCamera() to hand the
+   *  camera back to the user. */
+  setCameraState: (s: { position: Vec3; target: Vec3; fov: number }) => void;
+  releaseCamera: () => void;
+  /** One-shot capture of the next rendered 3D frame (top-down RGBA).
+   *  Reads the default framebuffer synchronously right after the scene
+   *  render — the only reliable window with preserveDrawingBuffer off. */
+  captureFrame: () => Promise<{ data: Uint8Array; width: number; height: number }>;
 }
 export const stage3DRendererControls = writable<Stage3DRendererControls | null>(null);
 
