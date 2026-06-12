@@ -185,6 +185,9 @@ function festivalTruss(len: number, vertical = false): THREE.Group {
     }
   }
   if (vertical) g.rotation.z = Math.PI / 2;
+  // Length + orientation hints for the atmosphere rig's LED strips.
+  g.userData.trussLen = len;
+  g.userData.trussVertical = vertical;
   return g;
 }
 
@@ -216,6 +219,11 @@ function makeMover(x: number, y: number, z: number, tilt = 0.5, pan = 0): THREE.
   head.add(lens);
   yoke.rotation.y = pan;
   head.rotation.x = tilt;
+  // Expose the articulation + rest pose so the atmosphere rig can
+  // drive real pan/tilt (and parent beam cones to the head).
+  g.userData.moverYoke = yoke;
+  g.userData.moverHead = head;
+  g.userData.moverRest = { pan, tilt };
   return g;
 }
 
@@ -474,13 +482,28 @@ function room(w: number, d: number, h: number, wallColor: number, floorColor: nu
   );
   floor.rotation.x = -Math.PI / 2;
   g.add(floor);
+  // Walls + ceiling as individual inward-facing planes. The previous
+  // BackSide box included a BOTTOM face exactly coplanar with the
+  // floor plane — the two z-fought and the whole floor flickered.
   const wmat = new THREE.MeshStandardMaterial({
-    color: wallColor, roughness: 0.9, metalness: 0.05, side: THREE.BackSide,
+    color: wallColor, roughness: 0.9, metalness: 0.05,
   });
-  const walls = mesh(new THREE.BoxGeometry(w, h, d), wmat);
-  walls.position.y = h / 2;
-  walls.castShadow = false;
-  g.add(walls);
+  const addWall = (pw: number, ph: number, pos: [number, number, number], rotY: number) => {
+    const wall = mesh(new THREE.PlaneGeometry(pw, ph), wmat);
+    wall.position.set(...pos);
+    wall.rotation.y = rotY;
+    wall.castShadow = false;
+    g.add(wall);
+  };
+  addWall(w, h, [0, h / 2, -d / 2], 0);            // back
+  addWall(w, h, [0, h / 2, d / 2], Math.PI);       // front
+  addWall(d, h, [-w / 2, h / 2, 0], Math.PI / 2);  // left
+  addWall(d, h, [w / 2, h / 2, 0], -Math.PI / 2);  // right
+  const ceiling = mesh(new THREE.PlaneGeometry(w, d), wmat);
+  ceiling.position.y = h;
+  ceiling.rotation.x = Math.PI / 2;
+  ceiling.castShadow = false;
+  g.add(ceiling);
   return { group: g, floor };
 }
 
@@ -755,7 +778,7 @@ function buildClub(): VenueBuild {
     }),
   );
   danceFloor.rotation.x = -Math.PI / 2;
-  danceFloor.position.set(0, 0.02, -2);
+  danceFloor.position.set(0, 0.05, -2);
   danceFloor.castShadow = false;
   group.add(wrapped(danceFloor, 'dance-floor'));
 
@@ -877,7 +900,7 @@ function buildNightclub(): VenueBuild {
     }),
   );
   danceFloor.rotation.x = -Math.PI / 2;
-  danceFloor.position.set(0, 0.02, -1);
+  danceFloor.position.set(0, 0.05, -1);
   danceFloor.castShadow = false;
   group.add(wrapped(danceFloor, 'dance-floor'));
 

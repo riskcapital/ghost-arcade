@@ -336,6 +336,9 @@ export interface Stage3DScene {
    *  venue's lighting baseline. All in 0..2 except floorDarkness which
    *  is a 0..1 darkening factor. Defaults to neutral (1, 0, 1, 0). */
   lighting?: Stage3DLighting;
+  /** Atmosphere FX toggles (beams / lasers / haze / LED strips).
+   *  Absent = all off. */
+  atmosphere?: Stage3DAtmosphere;
   /** Free-form metadata for the marketplace + thumbnails system. */
   meta?: Record<string, string | number | boolean>;
 }
@@ -348,6 +351,28 @@ export type Stage3DBasePreset = 'festival' | 'arena' | 'club' | 'conference' | '
  *  Picked separately from `basePreset` (which is the legacy field).
  *  Each venue exposes a `stageW` / `frontZ` so PA presets place sensibly. */
 export type Stage3DVenue = 'festival' | 'arena' | 'club' | 'nightclub' | 'sphere';
+
+/** Atmosphere FX toggles — the "full rock show" layer. Each element is
+ *  independently toggleable; everything animates to the shared
+ *  visual-audio bus (beams sweep, lasers fan, strips chase the bass).
+ *  Persisted with the scene. */
+export interface Stage3DAtmosphere {
+  /** Volumetric beam cones on every venue mover, pan/tilt animated. */
+  beams: boolean;
+  /** Laser fan units on the rig — sharp saturated sweeps. */
+  lasers: boolean;
+  /** Dense haze: thickens scene fog and fattens beam glow. */
+  haze: boolean;
+  /** Emissive LED pixel-strips along the trusses, bass-chased. */
+  strips: boolean;
+}
+
+export const DEFAULT_ATMOSPHERE: Stage3DAtmosphere = {
+  beams: false,
+  lasers: false,
+  haze: false,
+  strips: false,
+};
 
 /** User-placed scene element (truss, light, speaker, deck, etc.) backed
  *  by an entry in the element-type registry. LED screens are NOT user

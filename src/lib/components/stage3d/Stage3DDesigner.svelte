@@ -49,6 +49,10 @@
   let isRecording = false;
   let reelOpen = false;
 
+  // Atmosphere FX toggle state — merged over defaults so scenes saved
+  // before the feature existed read as all-off.
+  $: atmo = { beams: false, lasers: false, haze: false, strips: false, ...($stage3dScene.atmosphere ?? {}) };
+
   // Refresh undo/redo button state whenever historyVersion bumps.
   let canUndo = false;
   let canRedo = false;
@@ -424,6 +428,23 @@
         oninput={(e) => $stage3DRendererControls?.setFov(parseFloat((e.target as HTMLInputElement).value))} />
       <span class="fov-val">{Math.round($stage3DCameraFov)}°</span>
     </div>
+
+    <!-- Atmosphere FX — independently-toggleable show elements, all
+         driven by the live audio bus. -->
+    <div class="atmo-ctl" title="Atmosphere FX — audio-driven show elements">
+      <button class="atmo-btn" class:on={atmo.beams}
+        onclick={() => stage3dScene.setAtmosphere({ beams: !atmo.beams })}
+        title="Volumetric mover beams — pan/tilt to the music">Beams</button>
+      <button class="atmo-btn" class:on={atmo.lasers}
+        onclick={() => stage3dScene.setAtmosphere({ lasers: !atmo.lasers })}
+        title="Laser fans — beat-locked sweeps from the rig">Lasers</button>
+      <button class="atmo-btn" class:on={atmo.haze}
+        onclick={() => stage3dScene.setAtmosphere({ haze: !atmo.haze })}
+        title="Haze — fills the room, fattens every beam">Haze</button>
+      <button class="atmo-btn" class:on={atmo.strips}
+        onclick={() => stage3dScene.setAtmosphere({ strips: !atmo.strips })}
+        title="LED pixel strips along the trusses — bass-chased">Strips</button>
+    </div>
     <button class="tbtn" onclick={() => { $stage3DRendererControls?.reload(); toast('Scene reloaded'); }} title="Rebuild venue + screens">⟳ Reload</button>
     <button
       class="tbtn rec-btn"
@@ -712,6 +733,33 @@
   }
   .tbtn:hover { border-color: #4af2ff; color: #4af2ff; }
   .cam-elev { padding: 7px 8px; font-size: 10px; }
+  .atmo-ctl {
+    display: inline-flex;
+    align-items: center;
+    height: 32px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.03);
+  }
+  .atmo-btn {
+    font: inherit;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.55);
+    background: transparent;
+    border: none;
+    border-right: 1px solid rgba(255, 255, 255, 0.07);
+    padding: 7px 9px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.12s, color 0.12s;
+  }
+  .atmo-btn:last-child { border-right: none; }
+  .atmo-btn:hover { color: #4af2ff; }
+  .atmo-btn.on {
+    background: rgba(74, 242, 255, 0.14);
+    color: #4af2ff;
+  }
   .fov-ctl {
     display: inline-flex;
     align-items: center;
