@@ -33,7 +33,8 @@
   import { getDefaultEffectParams as getRendererDefaultEffectParams } from '../renderer/effects';
   import EffectPickerModal from './EffectPickerModal.svelte';
   import SynthVisionPresets from './SynthVisionPresets.svelte';
-  import { modulationStore, setParamModSource, setParamModAmount, setBaseValue, registerParamRanges, getModulatedValue, type ModSource, type ParamModulation } from '../audio/modulation';
+  import { modulationStore, setParamModSource, updateParamMod, setBaseValue, registerParamRanges, getModulatedValue, type ModSource, type ParamModulation } from '../audio/modulation';
+  import ModTray, { modSourceLabel } from './ModTray.svelte';
   import { audioStore } from '../stores/audio';
   import { getVisualAudioSnapshot } from '../audio/visualAudio';
   import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
@@ -207,6 +208,23 @@
   // Shader param modulation — thin wrapper for getter, shared setters from modulation.ts
   function getSvShaderMod(paramName: string): ParamModulation | undefined {
     return modulationStore.getModulation(assignedVJLayer, paramName);
+  }
+
+  // ── Mod tray (anchored popover owning all modulation tuning) ──────
+  let svModTrayParam: string | null = null;
+  let svModTrayAnchor: HTMLElement | null = null;
+
+  function toggleSvModTray(paramName: string, anchor: HTMLElement) {
+    if (svModTrayParam === paramName) {
+      svModTrayParam = null;
+    } else {
+      svModTrayParam = paramName;
+      svModTrayAnchor = anchor;
+    }
+  }
+
+  function patchSvShaderMod(paramName: string, patch: Partial<ParamModulation>) {
+    updateParamMod(assignedVJLayer, paramName, patch);
   }
 
   // Hidden canvases for rendering (output goes to VJ layer)
@@ -5137,20 +5155,10 @@ void main() {
                 <div class="sv-isf-header">
                   <label class="sv-isf-label">{input.LABEL || input.NAME}</label>
                   {#if input.TYPE === 'float' || (input.TYPE === 'long' && !input.VALUES)}
-                    <select class="sv-mod-select" class:active={isModulated} value={mod?.source || 'manual'}
-                      on:change={(e) => setParamModSource(assignedVJLayer, input.NAME, e.currentTarget.value as ModSource)}>
-                      <optgroup label="Control"><option value="manual">Manual</option></optgroup>
-                      <optgroup label="Audio">
-                        <option value="sub">Sub</option><option value="bass">Bass</option><option value="lowMid">Low Mid</option>
-                        <option value="mid">Mid</option><option value="highMid">Hi Mid</option><option value="high">High</option>
-                        <option value="amplitude">Volume</option>
-                      </optgroup>
-                      <optgroup label="Sync"><option value="beatPhase">Beat</option></optgroup>
-                      <optgroup label="LFO">
-                        <option value="lfo-sine">Sine</option><option value="lfo-saw">Saw</option>
-                        <option value="lfo-square">Square</option><option value="lfo-tri">Triangle</option>
-                      </optgroup>
-                    </select>
+                    <button class="sv-mod-chip" class:active={isModulated} class:open={svModTrayParam === input.NAME}
+                      title="Modulation — audio bands, LFO with BPM sync"
+                      on:click={(e) => toggleSvModTray(input.NAME, e.currentTarget as HTMLElement)}
+                    >{modSourceLabel(mod?.source ?? 'manual', false)}</button>
                   {/if}
                 </div>
                 {#if input.TYPE === 'float'}
@@ -5209,16 +5217,29 @@ void main() {
                       setISFValue(input.NAME, [r, g, b, 1]);
                     }} />
                 {/if}
-                {#if isModulated}
-                  <div class="sv-mod-depth-row">
-                    <span class="sv-mod-depth-label">Depth</span>
-                    <input type="range" min="0" max="1" step="0.01" value={mod?.amount ?? 0.5}
-                      on:input={(e) => setParamModAmount(assignedVJLayer, input.NAME, parseFloat(e.currentTarget.value))} class="sv-mod-depth-slider" />
-                    <span class="sv-mod-depth-val">{((mod?.amount ?? 0.5) * 100).toFixed(0)}%</span>
-                  </div>
-                {/if}
               </div>
             {/each}
+
+            <!-- The mod tray — one instance for the panel, anchored
+                 to whichever param chip was clicked. SynthVision mods
+                 are layer-keyed VJ mods (no clip sidecar) so the Auto
+                 tab is hidden. -->
+            {#if svModTrayParam && svModTrayAnchor}
+              {@const _tInput = activeISFInputs.find(i => i.NAME === svModTrayParam)}
+              {@const _tMod = getSvShaderMod(svModTrayParam)}
+              <ModTray
+                label={_tInput?.LABEL || svModTrayParam}
+                anchor={svModTrayAnchor}
+                source={_tMod?.source ?? 'manual'}
+                mod={_tMod}
+                auto={undefined}
+                supportsAuto={false}
+                onClose={() => svModTrayParam = null}
+                onSetSource={(s) => setParamModSource(assignedVJLayer, svModTrayParam!, s)}
+                onPatchMod={(p) => patchSvShaderMod(svModTrayParam!, p)}
+                onPatchAuto={() => {}}
+              />
+            {/if}
           </div>
         {:else}
           <!-- Fallback: SynthVision built-in shader params -->
@@ -6747,61 +6768,35 @@ void main() {
     justify-content: space-between;
     gap: 4px;
   }
-  .sv-mod-select {
+  .sv-mod-chip {
     font-size: 8px;
-    padding: 1px 2px;
+    padding: 1px 6px;
     background: #000;
     border: 1px solid rgba(255,255,255,.12);
     border-radius: 3px;
     color: rgba(255,255,255,.5);
     cursor: pointer;
-    max-width: 65px;
+    max-width: 70px;
     font-family: 'Orbitron', sans-serif;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: border-color 0.12s, color 0.12s, background 0.12s;
   }
-  .sv-mod-select option {
-    background: #000;
-    color: var(--text-primary, #ccc);
+  .sv-mod-chip:hover {
+    border-color: rgba(255,255,255,.3);
+    color: rgba(255,255,255,.8);
   }
-  .sv-mod-select optgroup {
-    background: #000;
-    color: var(--text-muted, #888);
-  }
-  .sv-mod-select.active {
+  .sv-mod-chip.active {
     border-color: #a855f7;
     color: #a855f7;
     background: rgba(168, 85, 247, 0.15);
   }
-  .sv-mod-select.active option {
-    background: #111;
-    color: var(--text-primary, #ccc);
+  .sv-mod-chip.open {
+    border-color: #a855f7;
+    box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.35);
   }
-  .sv-mod-depth-row {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    margin-top: 1px;
-    padding-left: 2px;
-  }
-  .sv-mod-depth-label {
-    font-family: 'Orbitron', sans-serif;
-    font-size: 7px;
-    color: #a855f7;
-    min-width: 24px;
-    letter-spacing: .5px;
-    text-transform: uppercase;
-  }
-  .sv-mod-depth-slider {
-    flex: 1;
-    height: 2px;
-    accent-color: #a855f7;
-  }
-  .sv-mod-depth-val {
-    font-family: 'Orbitron', sans-serif;
-    font-size: 7px;
-    color: #a855f7;
-    min-width: 24px;
-    text-align: right;
-  }
+  /* Depth slider moved into the ModTray popover. */
   .sv-isf-label {
     font-family: 'Orbitron', sans-serif;
     font-size: 8px;

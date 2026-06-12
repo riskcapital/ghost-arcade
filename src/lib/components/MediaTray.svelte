@@ -22,7 +22,8 @@
   import AIVideoGenerator from './AIVideoGenerator.svelte';
   import ShaderLibrary from './ShaderLibrary.svelte';
   import * as THREE from 'three';
-  import { modulationStore, setParamModSource, setParamModAmount, setBaseValue, registerParamRanges, modKeyShader, type ModSource, type ParamModulation } from '../audio/modulation';
+  import { modulationStore, setParamModSource, setParamModAmount, updateParamMod, setBaseValue, registerParamRanges, modKeyShader, type ModSource, type ParamModulation } from '../audio/modulation';
+  import ModTray, { modSourceLabel } from './ModTray.svelte';
   import { mediaTrayShaders } from '../stores/mediaTrayShaders';
   import { createAssetRefFromFile, createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
   import { listScreenCaptureSources, screenCaptureSourcePickerAvailable, type ScreenCaptureSource } from '$lib/capture/screenSources';
@@ -1955,6 +1956,34 @@
     }
   }
 
+  // ── Mod tray (anchored popover owning all modulation tuning) ──────
+  let mapModTrayParam: string | null = null;
+  let mapModTrayAnchor: HTMLElement | null = null;
+
+  function toggleMapModTray(paramName: string, anchor: HTMLElement) {
+    if (mapModTrayParam === paramName) {
+      mapModTrayParam = null;
+    } else {
+      mapModTrayParam = paramName;
+      mapModTrayAnchor = anchor;
+    }
+  }
+
+  function patchMappingShaderMod(paramName: string, patch: Partial<ParamModulation>) {
+    if (selectedLayerIdx < 0) return;
+    updateParamMod(selectedLayerIdx, paramName, patch, 'A', 'mapping');
+  }
+
+  function patchMappingShaderAuto(paramName: string, patch: Partial<import('../types').AutoConfig>) {
+    if (!$selectedLayerId) return;
+    const cur = getMappingShaderAuto(paramName);
+    if (!cur) return;
+    project.setShaderValueAuto($selectedLayerId, paramName, { ...cur, ...patch });
+  }
+
+  // Close the tray when the shader panel goes away or layer changes.
+  $: if (!selectedShader || selectedLayerIdx < 0) mapModTrayParam = null;
+
   /** Reset every shader param on the open shader to its catalog
    *  default. Also clears any active modulation so the
    *  modulation engine doesn't immediately overwrite the values
@@ -3148,23 +3177,10 @@
             <div class="shader-param" class:modulated={isModulated}>
               <div class="shader-param-header">
                 <span class="shader-param-name">{input.LABEL || input.NAME}</span>
-                <select class="mod-source-select" class:active={isModulated} value={_currentSrc}
-                  onchange={(e) => setMappingShaderSource(input.NAME, (e.target as HTMLSelectElement).value as ModSource, input.MIN ?? 0, input.MAX ?? 1)}>
-                  <optgroup label="Control">
-                    <option value="manual">Manual</option>
-                    <option value="auto">Auto (playhead)</option>
-                  </optgroup>
-                  <optgroup label="Audio">
-                    <option value="sub">Sub</option><option value="bass">Bass</option><option value="lowMid">Low Mid</option>
-                    <option value="mid">Mid</option><option value="highMid">Hi Mid</option><option value="high">High</option>
-                    <option value="amplitude">Volume</option>
-                  </optgroup>
-                  <optgroup label="Sync"><option value="beatPhase">Beat</option></optgroup>
-                  <optgroup label="LFO">
-                    <option value="lfo-sine">Sine</option><option value="lfo-saw">Saw</option>
-                    <option value="lfo-square">Square</option><option value="lfo-tri">Triangle</option>
-                  </optgroup>
-                </select>
+                <button class="mod-source-chip" class:active={isModulated} class:open={mapModTrayParam === input.NAME}
+                  title="Modulation — audio bands, LFO with BPM sync, auto playhead"
+                  onclick={(e) => toggleMapModTray(input.NAME, e.currentTarget as HTMLElement)}
+                >{modSourceLabel(_currentSrc, !!_mapAuto)}</button>
               </div>
               <div class="shader-param-slider">
                 <div class="slider-track-wrap">
@@ -3214,41 +3230,9 @@
                   {(selectedShader.values[input.NAME] as number)?.toFixed(2) ?? '0.00'}
                 </span>
               </div>
-              {#if isModulated && !_mapAuto}
-                <div class="mod-amount-row">
-                  <span class="mod-amount-label">Depth</span>
-                  <input type="range" min="0" max="1" step="0.01" value={mod?.amount ?? 0.5}
-                    oninput={(e) => setParamModAmount(selectedLayerIdx, input.NAME, parseFloat((e.target as HTMLInputElement).value), 'A', 'mapping')} class="mod-amount-slider" />
-                  <span class="mod-amount-val">{((mod?.amount ?? 0.5) * 100).toFixed(0)}%</span>
-                </div>
-              {/if}
-              <!-- Auto-automation controls. Mirrors the VJ Mode panel
-                   exactly — playhead with speed, loop/pingpong, and
-                   dual-thumb range clippers. -->
-              {#if _mapAuto}
-                <div class="auto-controls">
-                  <div class="auto-row">
-                    <button class="auto-play" class:playing={_mapAuto.playing}
-                      onclick={() => setMappingAutoField(input.NAME, 'playing', !_mapAuto!.playing)}
-                      title={_mapAuto.playing ? 'Pause' : 'Resume'}
-                    >{_mapAuto.playing ? '❚❚' : '▶'}</button>
-                    <div class="auto-mode-toggle">
-                      <button class:active={_mapAuto.mode === 'loop'}
-                        onclick={() => setMappingAutoField(input.NAME, 'mode', 'loop')}>Loop</button>
-                      <button class:active={_mapAuto.mode === 'pingpong'}
-                        onclick={() => setMappingAutoField(input.NAME, 'mode', 'pingpong')}>Ping-pong</button>
-                    </div>
-                  </div>
-                  <div class="auto-row auto-row-speed">
-                    <span class="auto-label">Speed</span>
-                    <input type="range" min="0.01" max="1" step="0.005"
-                      value={_mapAuto.speedHz}
-                      oninput={(e) => setMappingAutoField(input.NAME, 'speedHz', parseFloat((e.target as HTMLInputElement).value))}
-                      class="auto-speed-slider" />
-                    <span class="auto-val">{_mapAuto.speedHz.toFixed(2)}Hz</span>
-                  </div>
-                </div>
-              {/if}
+              <!-- Depth / LFO speed / BPM-sync / auto transport all
+                   live in the ModTray popover now; only the range
+                   slippers stay on the track above. -->
             </div>
           {:else if input.TYPE === 'long' && input.VALUES && input.LABELS}
             <div class="shader-param">
@@ -3337,6 +3321,25 @@
           {/if}
         {/each}
       </div>
+
+      <!-- The mod tray — one instance for the whole panel, anchored
+           to whichever param chip was clicked. -->
+      {#if mapModTrayParam && mapModTrayAnchor && selectedShader && selectedLayerIdx >= 0}
+        {@const _tInput = selectedShader.inputs.find(i => i.NAME === mapModTrayParam)}
+        {@const _tMod = mappingModMap.get(modKeyShader(selectedLayerIdx, mapModTrayParam, 'A', 'mapping'))}
+        {@const _tAuto = $selectedLayer?.source?.shaderValueAuto?.[mapModTrayParam]}
+        <ModTray
+          label={_tInput?.LABEL || mapModTrayParam}
+          anchor={mapModTrayAnchor}
+          source={_tMod?.source ?? 'manual'}
+          mod={_tMod}
+          auto={_tAuto}
+          onClose={() => mapModTrayParam = null}
+          onSetSource={(s) => setMappingShaderSource(mapModTrayParam!, s, _tInput?.MIN ?? 0, _tInput?.MAX ?? 1)}
+          onPatchMod={(p) => patchMappingShaderMod(mapModTrayParam!, p)}
+          onPatchAuto={(p) => patchMappingShaderAuto(mapModTrayParam!, p)}
+        />
+      {/if}
     </div>
   {/if}
 
@@ -4634,30 +4637,8 @@
   /* ─── Per-param auto-automation controls (mapping mode) ─── */
   /* Mirrors VJModePanel exactly so users see the same UI affordances
      in both modes. Compact stack of [play/mode] + [speed] + [range]. */
-  .auto-controls {
-    margin-top: 4px;
-    padding: 6px 8px;
-    background: rgba(120, 215, 220, 0.06);
-    border-left: 2px solid #5ce1e6;
-    border-radius: 0 4px 4px 0;
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-  }
-  .auto-row { display: flex; align-items: center; gap: 6px; font-size: 10px; }
-  .auto-row-speed input[type='range'], .auto-row-range .auto-range-track { flex: 1; }
-  .auto-label { color: rgba(255,255,255,0.55); width: 42px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.4px; }
-  .auto-val { color: #5ce1e6; font-variant-numeric: tabular-nums; font-size: 10px; min-width: 52px; text-align: right; }
-  .auto-play { width: 24px; height: 24px; border-radius: 4px; background: transparent; border: 1px solid rgba(255,255,255,0.18); color: var(--text-primary, #ccc); font-size: 9px; cursor: pointer; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
-  .auto-play.playing { background: rgba(92,225,230,0.18); border-color: #5ce1e6; color: #5ce1e6; }
-  .auto-mode-toggle { display: flex; border: 1px solid rgba(255,255,255,0.12); border-radius: 4px; overflow: hidden; }
-  .auto-mode-toggle button { background: transparent; border: none; padding: 3px 8px; font-size: 10px; color: rgba(255,255,255,0.5); cursor: pointer; }
-  .auto-mode-toggle button.active { background: rgba(92,225,230,0.18); color: #5ce1e6; }
-  .auto-speed-slider { accent-color: #5ce1e6; height: 3px; }
-  .auto-range-track { position: relative; height: 16px; display: flex; align-items: center; }
-  .auto-range-input { position: absolute; inset: 0; width: 100%; accent-color: #5ce1e6; background: transparent; pointer-events: none; }
-  .auto-range-input::-webkit-slider-thumb { pointer-events: auto; }
-  .auto-range-input::-moz-range-thumb { pointer-events: auto; }
+  /* Auto transport/speed controls moved into the ModTray popover;
+     only the range slippers remain on the slider track. */
 
   .params-list {
     padding: 0 14px 12px;
@@ -4746,20 +4727,32 @@
     white-space: nowrap;
     flex: 1;
   }
-  .mod-source-select {
+  .mod-source-chip {
     font-size: 10px;
-    padding: 2px 4px;
+    padding: 2px 8px;
     background-color: var(--ga-slot, #050607);
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     border-radius: 3px;
     color: var(--ga-ink-2, #5e6571);
     cursor: pointer;
     max-width: 85px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: border-color 0.12s, color 0.12s, background 0.12s;
   }
-  .mod-source-select.active {
+  .mod-source-chip:hover {
+    border-color: var(--ga-line-1, rgba(255, 255, 255, 0.25));
+    color: var(--ga-ink-1, #aab1bd);
+  }
+  .mod-source-chip.active {
     border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36));
     color: var(--ga-violet, #9b87f5);
     background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
+  }
+  .mod-source-chip.open {
+    border-color: var(--ga-violet, #9b87f5);
+    box-shadow: 0 0 0 1px var(--ga-violet-line, rgba(155, 135, 245, 0.36));
   }
   .shader-param-slider {
     display: flex;
@@ -4859,29 +4852,7 @@
     cursor: pointer;
     background: transparent;
   }
-  .mod-amount-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-top: 6px;
-    padding-left: 2px;
-  }
-  .mod-amount-label {
-    font-size: 9px;
-    color: #a855f7;
-    min-width: 30px;
-  }
-  .mod-amount-slider {
-    flex: 1;
-    height: 4px;
-    accent-color: #a855f7;
-  }
-  .mod-amount-val {
-    font-size: 8px;
-    color: #a855f7;
-    min-width: 28px;
-    text-align: right;
-  }
+  /* Depth rows moved into the ModTray popover. */
 
   .image-select:hover {
     border-color: #BB86FC;
