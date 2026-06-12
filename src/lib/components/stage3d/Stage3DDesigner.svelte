@@ -419,32 +419,6 @@
 
     <button class="tbtn" onclick={() => $stage3DRendererControls?.topCamera()}>⬓ Top</button>
     <button class="tbtn" onclick={() => $stage3DRendererControls?.frameCamera()}>⊡ Frame</button>
-    <button class="tbtn cam-elev" onclick={() => $stage3DRendererControls?.nudgeElevation(1)} title="Camera up (↑ in viewport; right-drag also pans)">▲</button>
-    <button class="tbtn cam-elev" onclick={() => $stage3DRendererControls?.nudgeElevation(-1)} title="Camera down (↓ in viewport)">▼</button>
-    <div class="fov-ctl" title="Field of view — go wide to swallow the whole Sphere. Shift+scroll in the viewport works too.">
-      <span class="fov-label">FOV</span>
-      <input type="range" min="15" max="120" step="1"
-        value={$stage3DCameraFov}
-        oninput={(e) => $stage3DRendererControls?.setFov(parseFloat((e.target as HTMLInputElement).value))} />
-      <span class="fov-val">{Math.round($stage3DCameraFov)}°</span>
-    </div>
-
-    <!-- Atmosphere FX — independently-toggleable show elements, all
-         driven by the live audio bus. -->
-    <div class="atmo-ctl" title="Atmosphere FX — audio-driven show elements">
-      <button class="atmo-btn" class:on={atmo.beams}
-        onclick={() => stage3dScene.setAtmosphere({ beams: !atmo.beams })}
-        title="Volumetric mover beams — pan/tilt to the music">Beams</button>
-      <button class="atmo-btn" class:on={atmo.lasers}
-        onclick={() => stage3dScene.setAtmosphere({ lasers: !atmo.lasers })}
-        title="Laser fans — beat-locked sweeps from the rig">Lasers</button>
-      <button class="atmo-btn" class:on={atmo.haze}
-        onclick={() => stage3dScene.setAtmosphere({ haze: !atmo.haze })}
-        title="Haze — fills the room, fattens every beam">Haze</button>
-      <button class="atmo-btn" class:on={atmo.strips}
-        onclick={() => stage3dScene.setAtmosphere({ strips: !atmo.strips })}
-        title="LED pixel strips along the trusses — bass-chased">Strips</button>
-    </div>
     <button class="tbtn" onclick={() => { $stage3DRendererControls?.reload(); toast('Scene reloaded'); }} title="Rebuild venue + screens">⟳ Reload</button>
     <button
       class="tbtn rec-btn"
@@ -466,6 +440,37 @@
     <button class="tbtn danger" onclick={clearElements}>✕ Clear</button>
     <input bind:this={fileInput} type="file" accept="application/json" style="display:none" onchange={onFileChosen} />
   </header>
+
+  <!-- Camera + Atmosphere HUD — its own strip under the toolbar so it
+       never fights the (already packed) topbar for horizontal space. -->
+  <div class="viewport-hud">
+    <div class="hud-group" title="Camera elevation — ↑/↓ arrows in the viewport work too">
+      <button class="hud-btn" onclick={() => $stage3DRendererControls?.nudgeElevation(1)} title="Camera up (↑)">▲</button>
+      <button class="hud-btn" onclick={() => $stage3DRendererControls?.nudgeElevation(-1)} title="Camera down (↓)">▼</button>
+    </div>
+    <div class="hud-group fov-ctl" title="Field of view — go wide to swallow the whole Sphere. Shift+scroll in the viewport works too.">
+      <span class="fov-label">FOV</span>
+      <input type="range" min="15" max="120" step="1"
+        value={$stage3DCameraFov}
+        oninput={(e) => $stage3DRendererControls?.setFov(parseFloat((e.target as HTMLInputElement).value))} />
+      <span class="fov-val">{Math.round($stage3DCameraFov)}°</span>
+    </div>
+    <div class="hud-group atmo-ctl" title="Atmosphere FX — audio-driven show elements">
+      <span class="atmo-label">FX</span>
+      <button class="atmo-btn" class:on={atmo.beams}
+        onclick={() => stage3dScene.setAtmosphere({ beams: !atmo.beams })}
+        title="Volumetric mover beams — pan/tilt to the music">Beams</button>
+      <button class="atmo-btn" class:on={atmo.lasers}
+        onclick={() => stage3dScene.setAtmosphere({ lasers: !atmo.lasers })}
+        title="Laser fans — beat-locked sweeps from the rig">Lasers</button>
+      <button class="atmo-btn" class:on={atmo.haze}
+        onclick={() => stage3dScene.setAtmosphere({ haze: !atmo.haze })}
+        title="Haze — fills the room, fattens every beam">Haze</button>
+      <button class="atmo-btn" class:on={atmo.strips}
+        onclick={() => stage3dScene.setAtmosphere({ strips: !atmo.strips })}
+        title="LED pixel strips along the trusses — bass-chased">Strips</button>
+    </div>
+  </div>
   {/if}
 
   {#if !panelsHidden}
@@ -732,15 +737,44 @@
     white-space: nowrap;
   }
   .tbtn:hover { border-color: #4af2ff; color: #4af2ff; }
-  .cam-elev { padding: 7px 8px; font-size: 10px; }
-  .atmo-ctl {
+  /* ── Camera + FX HUD strip (under the topbar, right-aligned) ── */
+  .viewport-hud {
+    position: absolute;
+    top: 60px;
+    right: 14px;
+    z-index: 19;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .hud-group {
     display: inline-flex;
     align-items: center;
-    height: 32px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    height: 30px;
+    background: rgba(10, 12, 16, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 8px;
-    overflow: hidden;
-    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(8px);
+  }
+  .hud-btn {
+    font: inherit;
+    font-size: 10px;
+    color: #e9edf4;
+    background: transparent;
+    border: none;
+    border-right: 1px solid rgba(255, 255, 255, 0.07);
+    padding: 7px 9px;
+    cursor: pointer;
+  }
+  .hud-btn:last-child { border-right: none; }
+  .hud-btn:hover { color: #4af2ff; }
+  .atmo-ctl { overflow: hidden; }
+  .atmo-label {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: rgba(255, 255, 255, 0.45);
+    padding: 0 7px 0 10px;
   }
   .atmo-btn {
     font: inherit;
@@ -761,14 +795,8 @@
     color: #4af2ff;
   }
   .fov-ctl {
-    display: inline-flex;
-    align-items: center;
     gap: 6px;
-    padding: 0 8px;
-    height: 32px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 8px;
+    padding: 0 10px;
   }
   .fov-ctl .fov-label {
     font-size: 9px;
