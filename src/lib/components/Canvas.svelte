@@ -2291,9 +2291,14 @@
 
   // Reactive Spout output: start/stop sender when spoutEnabled changes.
   // Extract only the boolean to avoid re-triggering on every $settings change.
-  // OSR window must NOT create a Spout sender — the main process handles it via paint events.
+  // OSR window must NOT create a Spout sender — the main process handles it
+  // via paint events. Output-mode windows (slice-display, slice-atlas,
+  // visible output) must not either: state-sync mirrors spoutEnabled=true
+  // into them, and before the isOutputMode guard each one raced the editor
+  // for ownership of the master sender — closing/reloading such a window
+  // then issued spout_stop_sender and silently killed the editor's output.
   let spoutEnabled = false;
-  $: spoutEnabled = isTauri && !isOsrMode && !!$settings?.output?.spoutEnabled;
+  $: spoutEnabled = isTauri && !isOsrMode && !isOutputMode && !!$settings?.output?.spoutEnabled;
   let spoutStarting = false; // Prevent concurrent start calls
 
   $: {

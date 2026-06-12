@@ -71,11 +71,55 @@ texture (existing warp/crop/color/blend shader, per-tile viewport+scissor).
 - **Verified (Electron):** two half-width slices → atlas 1922×1080, left
   tile correct red crop, right tile correct blue crop, gap black (no bleed).
 
-### Phase 2 — 2a/2b/2c DONE (2026-06-11) — 2d (verify) REMAINING
-2a, 2b, 2c are written, compiled (addon builds clean via
-`electron/native: npm run build`), Vite build green, and committed.
-What remains is 2d: run it against a real Spout receiver and resolve
-the per-tile vertical flip (see the ⚠️ below).
+### Phase 2 — ALL DONE incl. 2d Windows verification (2026-06-12)
+End-to-end verified on Windows: quadrant test pattern → 2 sender
+slices → atlas OSR → SpoutAtlasOutput → two independent named senders
+(`atlasTestA`/`atlasTestB`, 960×1080 each) received with correct,
+independent content AND orientation matching the single-output
+reference convention. Verified programmatically with the addon's own
+SpoutReceiver (same receive path for reference + atlas senders, so the
+convention comparison is exact). Teardown verified (slices→0 stops the
+atlas + drops both senders).
+
+Fixes that came out of 2d:
+- **Vertical flip** — fixed via `ATLAS_VERT_SHADER` (V flipped) in
+  blendRenderer. NOTE: the shared VERT_SHADER bypasses camera/model
+  matrices (`gl_Position = vec4(position, 1.0)`), so a mirrored ortho
+  camera is IGNORED and a negative quad scale only flips THREE's
+  winding state → backface-culls the quad (black tiles). UV flip is
+  the only correct mechanism here.
+- **applyWarpUniforms NaN-black** — `slice.brightness/contrast/gamma/
+  edgeBlend*` had no `?? defaults`; a slice missing them uploaded NaN
+  uniforms → whole tile black. Now defaulted like blackLevel already
+  was.
+- **spoutEnabled gate** — output-mode windows (slice-atlas,
+  slice-display, visible output) were starting/stopping the MASTER
+  spout sender (state-sync mirrors spoutEnabled=true into them);
+  closing/reloading one issued spout_stop_sender and killed the
+  editor's output. Gate now also excludes `isOutputMode`.
+
+Open items for Phase 4/5 hardening:
+- Atlas window has NO context-loss recovery: observed one
+  `[webgpuShared] device lost` → all WebGL contexts lost → atlas black
+  forever (engine pauses, paint keeps sending black). Needs an
+  auto-reload watchdog in main (e.g. detect contextLost via console or
+  a heartbeat IPC).
+- Master sender didn't stop when spoutEnabled was flipped false via a
+  direct settings-store update (OSR kept sending @60fps) — verify the
+  normal UI toggle path, may be CDP-test artifact.
+- Eyeball check in OBS/Resolume still worthwhile (programmatic
+  verification used the addon receiver; convention matches the
+  production-proven single-output sender, so risk is low).
+
+Dev-loop gotchas that cost time (also in project memory):
+- CDP `Runtime.evaluate` with `replMode:true` silently breaks
+  `awaitPromise` (returns `{}`) — omit replMode.
+- Vite under OneDrive can serve STALE transforms after an edit
+  (file-watcher lag): `fetch('/src/...').then(t => t.includes(...))`
+  in the target window to confirm what's actually served before
+  concluding a fix "didn't work".
+- `scripts/cdp-eval.mjs`, `cdp-console.mjs`, `cdp-shot.mjs` were added
+  for driving/verifying headless windows (atlas window has no UI).
 
 **2a. `SpoutAtlasOutput` C++ class** — DONE (in `spout_addon.cpp`,
 registered in `Init`; `configure(regions)` + `sendAtlas(handle)` +
@@ -134,7 +178,8 @@ when the atlas dies). Original plan:
   slices, confirm TWO independent named senders appear with correct,
   independent content.
 
-### ⚠️ Known open issue to resolve in 2d — vertical orientation
+### ✅ RESOLVED (was: ⚠️ open issue) — vertical orientation
+Fixed via `ATLAS_VERT_SHADER` (see 2d fixes above). Original notes:
 Phase 1's atlas comes out GL-framebuffer bottom-up: a source TOP stripe
 lands at the displayed-atlas BOTTOM (confirmed via pixel probe). The
 captured atlas is therefore vertically flipped per tile. Fix by matching
@@ -144,7 +189,7 @@ direction — pin it against a real Spout receiver** (single-output is the
 right-side-up reference). This is the first thing to nail once 2a/2b are
 wired and a receiver is showing pixels.
 
-### Phase 3 — macOS Syphon parity (blocked on Phase 2)
+### Phase 3 — macOS Syphon parity (NOW UNBLOCKED — next up)
 `SyphonAtlasOutput` in `syphon_addon.mm`: `CGLTexImageIOSurface2D` the
 atlas once, sub-rect blit per tile → per-name `SyphonServer`. Built +
 verified on the Mac/codex dev (Syphon framework must be vendored — see
