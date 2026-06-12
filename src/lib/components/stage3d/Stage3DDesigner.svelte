@@ -386,6 +386,20 @@
 
     <div class="spacer"></div>
 
+    <label class="dim-label" for="stage3d-venue-select">Venue</label>
+    <select
+      id="stage3d-venue-select"
+      class="vsel"
+      value={venue}
+      onchange={(e) => setVenue((e.target as HTMLSelectElement).value as Stage3DVenue)}
+    >
+      <option value="festival">Festival Mainstage</option>
+      <option value="arena">Arena</option>
+      <option value="club">Club</option>
+      <option value="nightclub">Nightclub</option>
+      <option value="sphere">Sphere (Immersive Dome)</option>
+    </select>
+
     <label class="dim-label" for="stage3d-pa-select">PA</label>
     <select id="stage3d-pa-select" class="vsel" value="" onchange={onPASelect}>
       <option value="">Add PA preset…</option>
@@ -552,7 +566,7 @@
       <div class="empty">
         Click an element in the scene to edit it, or add one from the library.
         Shift+click any item (or in the library list) to add it to a multi-selection.
-        LED screens are synced from the 2D Stage Designer — they appear on the venue's back wall.
+        LED screens are synced from the 2D Stage Designer — they appear on the venue's back wall (or wrap the dome interior on the Sphere venue).
       </div>
     {/if}
   </aside>

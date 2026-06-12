@@ -15,6 +15,9 @@
 
   $: layer = $project.layers.find(l => l.id === layerId);
   $: override = ($stage3dScene.screenOverrides ?? {})[layerId] ?? {};
+  // Dome content mapping only applies on the sphere venue, where this
+  // screen is a spherical sector on the dome interior.
+  $: isDomeVenue = ($stage3dScene.venue ?? 'festival') === 'sphere';
 
   function patch(field: keyof Stage3DScreenOverride, value: any) {
     stage3dScene.setScreenOverride(layerId, { [field]: value });
@@ -125,6 +128,19 @@
       {/each}
     </div>
   </section>
+
+  {#if isDomeVenue}
+  <section class="prop-section">
+    <h4>Dome mapping</h4>
+    <div class="pill-row">
+      {#each ['wrap', 'domemaster', 'equirect'] as m}
+        <button class="pill" class:active={(override.domeMapping ?? 'wrap') === m}
+          onclick={() => patch('domeMapping', m as Stage3DScreenOverride['domeMapping'])}>{m}</button>
+      {/each}
+    </div>
+    <p class="hint">wrap = flat content spreads across the dome. domemaster / equirect consume the editor's Dome Projection output (Output settings → Dome) so real dome-formatted content lands correctly on the sphere.</p>
+  </section>
+  {/if}
 
   <section class="prop-section">
     <h4>Edge effect</h4>
