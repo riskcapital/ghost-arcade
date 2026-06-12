@@ -125,7 +125,10 @@ const INITIAL_STATE: OfflineRenderState = {
 // a render. Reuse across renders within a session.
 
 let ffmpegInstance: FFmpeg | null = null;
-async function loadFFmpeg(): Promise<FFmpeg> {
+/** Shared across this module AND the Demo Reel renderer
+ *  (stageReelRender.ts) so the ~30MB wasm core loads once per session
+ *  regardless of which pipeline fires first. */
+export async function loadFFmpeg(): Promise<FFmpeg> {
   if (ffmpegInstance) return ffmpegInstance;
   const ffmpeg = new FFmpeg();
   // ffmpegCoreUrl / ffmpegWasmUrl come from Vite ?url imports at
@@ -155,6 +158,12 @@ function createOfflineRenderStore() {
   function registerEngine(engine: RenderEngine, canvas: HTMLCanvasElement) {
     engineRef = engine;
     canvasRef = canvas;
+  }
+
+  /** Expose the registered engine/canvas to the Demo Reel renderer —
+   *  it shares the same per-window engine registration. */
+  function getEngine(): { engine: RenderEngine; canvas: HTMLCanvasElement } | null {
+    return engineRef && canvasRef ? { engine: engineRef, canvas: canvasRef } : null;
   }
 
   function unregister() {
@@ -424,6 +433,7 @@ function createOfflineRenderStore() {
     reset,
     registerEngine,
     unregister,
+    getEngine,
   };
 }
 
@@ -435,7 +445,7 @@ function createOfflineRenderStore() {
  *  `.message` empty + the useful text in `.name` or via String(err).
  *  Earlier rev showed a blank red banner when this fired; users
  *  saw "Render failed" with no clue what to do. */
-function formatErr(err: unknown): string {
+export function formatErr(err: unknown): string {
   if (err && typeof err === 'object') {
     const e = err as { message?: unknown; name?: unknown; errno?: unknown };
     if (typeof e.message === 'string' && e.message.length > 0) return e.message;
@@ -448,7 +458,7 @@ function formatErr(err: unknown): string {
 }
 
 
-async function thumbnailFromBlob(blob: Blob, url: string, atSeconds: number): Promise<string | undefined> {
+export async function thumbnailFromBlob(blob: Blob, url: string, atSeconds: number): Promise<string | undefined> {
   // `url` stays alive after this returns — it's the media-library item's
   // src. Only the temporary <video> below must be released.
   const v = document.createElement('video');
@@ -479,7 +489,7 @@ async function thumbnailFromBlob(blob: Blob, url: string, atSeconds: number): Pr
   }
 }
 
-function downloadBlob(blob: Blob, filename: string) {
+export function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

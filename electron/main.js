@@ -39,10 +39,19 @@ const ALLOW_CPU_TEXTURE_SHARE_FALLBACK =
   process.env.GA_ALLOW_CPU_TEXTURE_SHARE_FALLBACK === '1';
 const OSR_PAINT_FPS = Math.max(1, Math.min(240, Number(process.env.GA_OSR_PAINT_FPS || 60) || 60));
 app.commandLine.appendSwitch('force_high_performance_gpu');
+// Keep rendering when a window is fully covered by another window.
+// Chromium's native-occlusion tracker pauses BeginFrames for occluded
+// windows EVEN WITH backgroundThrottling:false — which froze rAF in the
+// Stage 3D window whenever the editor covered it (killing live LED
+// previews and hanging the Demo Reel offline render mid-sequence). VJs
+// stack windows constantly; never let occlusion stop a render loop.
+// NOTE: appendSwitch('disable-features') REPLACES on repeat calls — the
+// safe-mode branch below must merge its flag into one list.
 if (PROJECTION_SAFE_MODE) {
   app.commandLine.appendSwitch('disable-zero-copy');
-  app.commandLine.appendSwitch('disable-features', 'HardwareOverlays');
+  app.commandLine.appendSwitch('disable-features', 'HardwareOverlays,CalculateNativeWinOcclusion');
 } else {
+  app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
   app.commandLine.appendSwitch('enable-gpu-rasterization');
   if (EXPERIMENTAL_GPU_PRESENT) {
     app.commandLine.appendSwitch('enable-zero-copy');

@@ -32,6 +32,7 @@
   import StageNodeProperties from './StageNodeProperties.svelte';
   import StageElementProperties from './StageElementProperties.svelte';
   import StageLightingPanel from './StageLightingPanel.svelte';
+  import DemoReelPanel from './DemoReelPanel.svelte';
 
   /** When false, this component renders only the floating UI overlay;
    *  the viewport comes from Canvas.svelte's stage3DOutput mode. */
@@ -45,6 +46,7 @@
   let recorderHandle: RecorderHandle | null = null;
   let recordingDuration = 0;
   let isRecording = false;
+  let reelOpen = false;
 
   // Refresh undo/redo button state whenever historyVersion bumps.
   let canUndo = false;
@@ -421,6 +423,12 @@
     >
       {isRecording ? `■ ${formatRecordingDuration(recordingDuration)}` : '● Rec'}
     </button>
+    <button
+      class="tbtn"
+      class:reel-on={reelOpen}
+      onclick={() => { reelOpen = !reelOpen; }}
+      title="Demo Reel — shot-based sizzle-reel recorder"
+    >🎬 Reel</button>
     <button class="tbtn" onclick={togglePanels} title="Hide panels (H)">▤ Hide</button>
     <button class="tbtn" onclick={saveDesign}>↓ Save</button>
     <button class="tbtn" onclick={loadDesign}>↑ Load</button>
@@ -591,6 +599,12 @@
     <button class="show-panels-btn" onclick={togglePanels} title="Show panels (H)">▦ Show panels</button>
   {/if}
 
+  {#if reelOpen}
+    <div class="reel-host">
+      <DemoReelPanel onClose={() => { reelOpen = false; }} />
+    </div>
+  {/if}
+
   {#if toastMessage}
     <div class="toast">{toastMessage}</div>
   {/if}
@@ -614,7 +628,11 @@
   .stage3d-root.external .lib,
   .stage3d-root.external .props,
   .stage3d-root.external .hud,
+  .stage3d-root.external .reel-host,
   .stage3d-root.external .toast { pointer-events: auto; }
+  .reel-host { position: absolute; inset: 0; pointer-events: none; z-index: 25; }
+  .reel-host :global(.reel-panel) { pointer-events: auto; }
+  .tbtn.reel-on { background: #3b2a63; border-color: #5b46a3; }
   .viewport-fallback {
     position: absolute;
     inset: 0;
