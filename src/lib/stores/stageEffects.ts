@@ -23,6 +23,7 @@ import { writable, get, derived } from 'svelte/store';
 import type { StageEffect, StageEffectType, Surface } from '../types';
 import { generateUUID } from '../utils/uuid';
 import { audioStore } from './audio';
+import { getVisualAudioSnapshot } from '../audio/visualAudio';
 
 // ─── Per-effect-type catalog (UI + default params) ──────────────────
 
@@ -438,12 +439,17 @@ function evalNoiseFlicker(eff: StageEffect, cx: number, cy: number, tSec: number
 }
 
 function evalAudioRms(eff: StageEffect, _cx: number, _cy: number, _tSec: number, state: any): number {
-  const audio = get(audioStore);
-  const raw = (audio?.isActive ? (audio.rms ?? 0) : 0);
+  // Milkdrop-smoothed overall level from the shared visual-audio bus —
+  // asymmetric attack/release + long-baseline normalization, so loud and
+  // quiet songs light the stage the same and there's no woofer pumping.
+  // gain=3 (the legacy default, calibrated for raw RMS ≈ level/3) is the
+  // unity point for the normalized signal, so saved scenes keep their look.
+  const visual = getVisualAudioSnapshot();
+  const raw = visual.isActive ? visual.level : 0;
   const gain = eff.params.gain ?? 3;
   const floor = eff.params.floor ?? 0.05;
   const smoothing = eff.params.smoothing ?? 0.18;
-  const target = Math.max(floor, Math.min(1, raw * gain + floor));
+  const target = Math.max(floor, Math.min(1, raw * (gain / 3) + floor));
   // Single-pole IIR smoothing — `smoothing` 0 = instantaneous, 1 = frozen.
   const a = Math.max(0, Math.min(0.99, smoothing));
   const prev = state.lastValue ?? target;
@@ -519,14 +525,18 @@ function evalBeatPulse(eff: StageEffect, _cx: number, _cy: number, _tSec: number
   const threshold = eff.params.threshold ?? 0.08;
   const audio = get(audioStore);
   const raw = audio?.isActive ? (audio.rms ?? 0) : 0;
-  // Maintain a rolling baseline (EMA) so beats are detected as
-  // SPIKES above the recent average, not absolute level. Beats =
-  // current >= baseline * sensitivity AND current > threshold.
+  // Primary trigger: the analyzer's tuned kick/beat onset detection —
+  // event-driven, per the Milkdrop model, instead of amplitude-tracking.
+  // `threshold` still gates out quiet-room noise. The legacy RMS spike
+  // test stays as a fallback so the effect keeps firing (and `sensitivity`
+  // keeps meaning) when the analyzer's beat detector misses or is absent.
   const prevBaseline = state._baseline ?? raw;
   const baselineA = 0.92;  // ~10-frame smoothing
   const baseline = prevBaseline * baselineA + raw * (1 - baselineA);
   state._baseline = baseline;
-  if (raw > threshold && raw > baseline * sensitivity) {
+  const hostOnset = !!(audio?.isActive && (audio.kickSnare?.isKick || audio.beat?.isBeat));
+  const spikeOnset = raw > baseline * sensitivity;
+  if (raw > threshold && (hostOnset || spikeOnset)) {
     state._lastBeatTime = performance.now() / 1000;
   }
   const since = (performance.now() / 1000) - (state._lastBeatTime ?? -10);
