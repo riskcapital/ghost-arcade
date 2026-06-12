@@ -256,6 +256,8 @@ function closeAuxiliaryWindows() {
   } else {
     spoutOsrWindow = null;
   }
+
+  try { stopAtlasOutput('shutdown'); } catch {}
 }
 
 function closeAllWledSockets() {
@@ -294,14 +296,23 @@ let spoutSendW = 1920;      // Output resolution for OSR window
 let spoutSendH = 1080;
 let spoutCpuFallbackWarned = false;
 
-// Multi-slice zero-copy atlas state. Phase 1 records the layout the
-// slice-atlas OSR window publishes; Phase 2 adds the atlas OSR window +
-// per-name SpoutAtlasOutput/SyphonAtlasOutput fan-out driven from it.
+// Multi-slice zero-copy atlas state. The slice-atlas OSR window renders
+// every Spout/Syphon sender slice into one atlas texture and publishes
+// its packed layout; SpoutAtlasOutput sub-copies each tile into a
+// per-name native sender from the single captured atlas handle.
 const atlasState = {
   active: false,            // true once the atlas OSR window is forwarding
   layout: null,             // last { atlasW, atlasH, tiles, overflow }
   lastLoggedCount: -1,
 };
+let atlasOutput = null;       // SpoutAtlasOutput instance (Windows; Phase 3 adds Syphon)
+let atlasOsrWindow = null;    // hidden OSR window running ?mode=slice-atlas
+let atlasOsrCreating = false;
+let atlasPaintPump = null;
+let atlasFrameCount = 0;
+let atlasLastLogTime = 0;
+let atlasPaintDiagCount = 0;
+let atlasSendFailCount = 0;
 
 // ============================================================
 // Sidecar: Rust WS/HTTP/Spout backend
@@ -1018,6 +1029,294 @@ function stopOsrWatchdog() {
   }
 }
 
+// ============================================================
+// Atlas fan-out — multi-slice zero-copy senders
+//
+// One hidden OSR window (?mode=slice-atlas) composites EVERY sender
+// slice into a single atlas texture. Each Chromium paint hands us one
+// DXGI shared handle; SpoutAtlasOutput opens it once and sub-copies the
+// configured regions into per-name senders on the GPU. Flat cost in
+// slice count. See docs/multi-slice-zerocopy-plan.md.
+// ============================================================
+
+function notifyMainWindowAtlasStatus(active, reason) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try {
+      mainWindow.webContents.send('texshare-atlas-status', { active, reason });
+    } catch {}
+  }
+}
+
+function clampAtlasDim(v, fallback) {
+  if (!Number.isFinite(v) || v <= 0) return fallback;
+  return Math.max(64, Math.min(8192, Math.round(v)));
+}
+
+function configureAtlasSenders(layout) {
+  if (!atlasOutput) return;
+  const tiles = Array.isArray(layout?.tiles) ? layout.tiles : [];
+  const regions = tiles
+    .filter(t => t && t.senderName && t.w > 0 && t.h > 0)
+    .map(t => ({
+      name: String(t.senderName),
+      x: Math.max(0, Math.round(t.x)),
+      y: Math.max(0, Math.round(t.y)),
+      w: Math.round(t.w),
+      h: Math.round(t.h),
+    }));
+  try {
+    atlasOutput.configure(regions);
+  } catch (err) {
+    console.error('[Atlas] configure failed:', err?.message || err);
+  }
+}
+
+function startAtlasOutput() {
+  if (atlasState.active) return true;
+  if (atlasOsrCreating) return false;
+
+  if (isMac) {
+    // Phase 3 adds SyphonAtlasOutput; until then macOS keeps the
+    // per-slice CPU path.
+    console.log('[Atlas] macOS atlas fan-out not available yet (Phase 3)');
+    return false;
+  }
+
+  const addon = loadSpoutAddon();
+  if (!addon || typeof addon.SpoutAtlasOutput !== 'function') {
+    console.error('[Atlas] addon missing SpoutAtlasOutput — rebuild electron/native');
+    return false;
+  }
+
+  try {
+    atlasOutput = new addon.SpoutAtlasOutput();
+  } catch (err) {
+    console.error('[Atlas] SpoutAtlasOutput construction failed:', err?.message || err);
+    atlasOutput = null;
+    return false;
+  }
+  if (!atlasOutput.isInitialized()) {
+    console.error('[Atlas] SpoutAtlasOutput device init failed — atlas unavailable');
+    try { atlasOutput.release(); } catch {}
+    atlasOutput = null;
+    return false;
+  }
+
+  // The slice-atlas window publishes its real layout once it boots; start
+  // with the last known layout (editor may have sent one already) or a
+  // placeholder size that the first texshare_atlas_layout corrects.
+  const layout = atlasState.layout;
+  createAtlasOsrWindow(
+    clampAtlasDim(layout?.atlasW, 640),
+    clampAtlasDim(layout?.atlasH, 360),
+  );
+  if (!atlasOsrWindow) {
+    try { atlasOutput.release(); } catch {}
+    atlasOutput = null;
+    return false;
+  }
+  if (layout?.tiles?.length) configureAtlasSenders(layout);
+
+  atlasState.active = true;
+  atlasFrameCount = 0;
+  atlasLastLogTime = Date.now();
+  atlasPaintDiagCount = 0;
+  atlasSendFailCount = 0;
+  notifyMainWindowAtlasStatus(true, 'started');
+  console.log('[Atlas] Fan-out started');
+  return true;
+}
+
+function stopAtlasOutput(reason = 'stopped') {
+  const wasActive = atlasState.active;
+  atlasState.active = false;
+  destroyAtlasOsrWindow();
+  if (atlasOutput) {
+    try { atlasOutput.release(); } catch {}
+    atlasOutput = null;
+  }
+  if (wasActive) {
+    console.log(`[Atlas] Fan-out stopped (${reason})`);
+    notifyMainWindowAtlasStatus(false, reason);
+  }
+}
+
+function createAtlasOsrWindow(width, height) {
+  if (atlasOsrWindow || atlasOsrCreating) {
+    console.log('[Atlas OSR] Window already exists or creating');
+    return;
+  }
+
+  atlasOsrCreating = true;
+  console.log(`[Atlas OSR] Creating ${width}x${height} window`);
+
+  try {
+    atlasOsrWindow = new BrowserWindow({
+      width,
+      height,
+      show: false,
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.cjs'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        backgroundThrottling: false,
+        offscreen: {
+          useSharedTexture: true,
+        },
+        webgl: true,
+      },
+    });
+
+    atlasOsrWindow.webContents.setFrameRate(OSR_PAINT_FPS);
+
+    const minHandleLen = isMac ? 4 : 8;
+    atlasOsrWindow.webContents.on('paint', (event) => {
+      if (!atlasState.active || !atlasOutput || !event.texture) {
+        if (event.texture) event.texture.release();
+        return;
+      }
+
+      try {
+        const info = event.texture.textureInfo || {};
+        const handleInfo = getOsrSharedTextureHandle(info);
+        const handle = handleInfo.handle;
+        const handleLen = getBufferByteLength(handle);
+
+        if (atlasPaintDiagCount < 3) {
+          const tw = info.codedSize?.width || 0;
+          const th = info.codedSize?.height || 0;
+          console.log(`[Atlas OSR] paint #${atlasPaintDiagCount + 1}: handle=${handleInfo.source} bytes=${handleLen} coded=${tw}x${th}`);
+          atlasPaintDiagCount++;
+        }
+
+        if (!handle || handleLen < minHandleLen) {
+          if (atlasSendFailCount < 5) {
+            console.warn(`[Atlas OSR] paint missing shared texture handle (${handleLen} bytes, source=${handleInfo.source})`);
+            atlasSendFailCount++;
+          }
+          return;
+        }
+
+        const sent = atlasOutput.sendAtlas(handle);
+        if (sent > 0) {
+          atlasFrameCount++;
+          const now = Date.now();
+          if (now - atlasLastLogTime > 5000) {
+            const fps = atlasFrameCount / ((now - atlasLastLogTime) / 1000);
+            console.log(`[Atlas OSR] sendAtlas → ${sent} sender(s) @ ${fps.toFixed(1)} fps`);
+            atlasFrameCount = 0;
+            atlasLastLogTime = now;
+          }
+        } else if (atlasSendFailCount < 5 && (atlasState.layout?.tiles?.length ?? 0) > 0) {
+          console.warn('[Atlas OSR] sendAtlas fed 0 senders');
+          atlasSendFailCount++;
+        }
+      } catch (err) {
+        console.error('[Atlas OSR] paint handler error:', err.message);
+      } finally {
+        // CRITICAL: Always release to avoid shared texture pool exhaustion
+        event.texture.release();
+      }
+    });
+
+    // SliceAtlasApp doesn't invoke spout_osr_ready (that's the single-output
+    // app's contract) — start the paint pump as soon as the page loads.
+    atlasOsrWindow.webContents.on('did-finish-load', () => {
+      console.log('[Atlas OSR] Page loaded');
+      try {
+        atlasOsrWindow?.webContents?.startPainting?.();
+        atlasOsrWindow?.webContents?.invalidate?.();
+      } catch (err) {
+        console.warn('[Atlas OSR] initial paint kick failed:', err?.message || err);
+      }
+      startAtlasPaintPump();
+    });
+
+    atlasOsrWindow.webContents.on('render-process-gone', (event, details) => {
+      console.error('[Atlas OSR] Renderer process gone:', details.reason);
+      stopAtlasOutput('renderer-gone');
+    });
+
+    atlasOsrWindow.on('closed', () => {
+      atlasOsrWindow = null;
+      stopAtlasPaintPump();
+    });
+
+    const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
+    if (!app.isPackaged) {
+      atlasOsrWindow.loadURL(`${devUrl}?mode=slice-atlas&webgpu-disable=1`);
+    } else {
+      const filePath = path.join(__dirname, '..', 'dist', 'index.html');
+      atlasOsrWindow.loadFile(filePath, { query: { mode: 'slice-atlas', 'webgpu-disable': '1' } });
+    }
+
+    console.log('[Atlas OSR] Window created');
+  } catch (err) {
+    console.error('[Atlas OSR] Failed to create window:', err.message);
+    atlasOsrWindow = null;
+  } finally {
+    atlasOsrCreating = false;
+  }
+}
+
+function destroyAtlasOsrWindow() {
+  stopAtlasPaintPump();
+  if (atlasOsrWindow) {
+    try { atlasOsrWindow.close(); } catch {}
+    atlasOsrWindow = null;
+    console.log('[Atlas OSR] Window destroyed');
+  }
+}
+
+function startAtlasPaintPump() {
+  stopAtlasPaintPump();
+  if (!atlasOsrWindow || atlasOsrWindow.isDestroyed()) return;
+
+  const intervalMs = Math.max(4, Math.round(1000 / OSR_PAINT_FPS));
+  const tick = () => {
+    const win = atlasOsrWindow;
+    if (!win || win.isDestroyed()) {
+      stopAtlasPaintPump();
+      return;
+    }
+    try {
+      const wc = win.webContents;
+      if (!wc || wc.isDestroyed()) {
+        stopAtlasPaintPump();
+        return;
+      }
+      if (typeof wc.startPainting === 'function' && (typeof wc.isPainting !== 'function' || !wc.isPainting())) {
+        wc.startPainting();
+      }
+      if (typeof wc.invalidate === 'function') {
+        wc.invalidate();
+      }
+    } catch (err) {
+      console.warn('[Atlas OSR] paint pump failed:', err?.message || err);
+      stopAtlasPaintPump();
+    }
+  };
+
+  tick();
+  atlasPaintPump = setInterval(tick, intervalMs);
+  console.log(`[Atlas OSR] Paint pump started @ ${OSR_PAINT_FPS} fps`);
+}
+
+function stopAtlasPaintPump() {
+  if (atlasPaintPump) {
+    clearInterval(atlasPaintPump);
+    atlasPaintPump = null;
+  }
+  const win = atlasOsrWindow;
+  if (!win || win.isDestroyed()) return;
+  try {
+    const wc = win.webContents;
+    if (wc && !wc.isDestroyed() && typeof wc.stopPainting === 'function') {
+      wc.stopPainting();
+    }
+  } catch {}
+}
+
 let spoutReceiverName = null; // Track which sender we're connected to
 
 function startSpoutReceiver(senderName) {
@@ -1598,11 +1897,10 @@ function registerIpcHandlers() {
     };
   });
 
-  // --- Multi-slice zero-copy atlas (Phase 1: layout intake stub) ---
+  // --- Multi-slice zero-copy atlas ---
   // The slice-atlas OSR window publishes its packed layout here whenever
-  // it changes. Phase 2 wires this to per-name SpoutAtlasOutput senders +
-  // resizes the atlas OSR window; for now we record it so spout_get_status
-  // can report sender count and the layout is ready for the fan-out.
+  // it changes: (re)configure the per-name native senders and resize the
+  // atlas OSR window to the new atlas dimensions.
   ipcMain.handle('texshare_atlas_layout', (_, layout) => {
     atlasState.layout = layout && typeof layout === 'object' ? layout : null;
     const n = atlasState.layout?.tiles?.length ?? 0;
@@ -1610,7 +1908,38 @@ function registerIpcHandlers() {
       atlasState.lastLoggedCount = n;
       console.log(`[Atlas] layout: ${n} sender tile(s), atlas ${layout?.atlasW || 0}x${layout?.atlasH || 0}${layout?.overflow ? ' (OVERFLOW)' : ''}`);
     }
+
+    if (atlasOutput) {
+      configureAtlasSenders(atlasState.layout);
+    }
+    if (atlasOsrWindow && !atlasOsrWindow.isDestroyed() && n > 0) {
+      const w = clampAtlasDim(atlasState.layout?.atlasW, 0);
+      const h = clampAtlasDim(atlasState.layout?.atlasH, 0);
+      if (w > 0 && h > 0) {
+        try {
+          const [curW, curH] = atlasOsrWindow.getSize();
+          if (curW !== w || curH !== h) {
+            atlasOsrWindow.setSize(w, h);
+            console.log(`[Atlas OSR] Resized to ${w}x${h}`);
+          }
+          atlasOsrWindow.webContents.invalidate?.();
+        } catch (err) {
+          console.error('[Atlas OSR] resize failed:', err?.message || err);
+        }
+      }
+    }
     return { ok: true };
+  });
+
+  // Editor lifecycle: start/stop the atlas fan-out from the sender-slice
+  // set in Canvas.svelte (≥1 Spout/Syphon sender slice → start).
+  ipcMain.handle('texshare_start_atlas', () => {
+    return startAtlasOutput();
+  });
+
+  ipcMain.handle('texshare_stop_atlas', () => {
+    stopAtlasOutput('stopped');
+    return true;
   });
 
   // --- OSR zero-copy lifecycle ---

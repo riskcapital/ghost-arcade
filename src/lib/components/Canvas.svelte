@@ -33,6 +33,7 @@
   import { drawTestPattern, type TestPatternType } from '../utils/testPatterns';
   import { applyEdgeBlending } from '../output/outputPostProcess';
   import { renderSlicePixelsAsync, pruneSliceReadbackStates, isBlendRendererAvailable } from '../output/blendRenderer';
+  import { isAtlasSenderSlice } from '../output/atlasLayout';
   import type { FluidSimulation, FluidMode } from '../effects/fluidSimulation';
   import type { ParticleSystem3D } from '../effects/particleSystem3D';
   // Heavy renderer classes (three/addons GLTF/FBX/OBJ loaders, post-processing,
@@ -155,6 +156,18 @@
   let nativeLayersUnsub: (() => void) | null = null;
   let nativeProjectUnsub: (() => void) | null = null;
   let stopOsrStatusListener: (() => void) | null = null;
+
+  // Multi-slice zero-copy atlas fan-out. When ≥1 Spout/Syphon SENDER
+  // slice exists, main runs a hidden slice-atlas OSR window + native
+  // per-name senders; the per-slice CPU readback/send below is skipped
+  // for those slices (NDI slices keep the async readback path). When
+  // the atlas can't run (macOS until Phase 3, addon missing, device
+  // init failure) atlasFanoutActive stays false and the CPU path keeps
+  // working unchanged.
+  let atlasFanoutActive = false;
+  let atlasStartInFlight = false;
+  let lastAtlasWantOn: boolean | null = null;
+  let stopAtlasStatusListener: (() => void) | null = null;
 
   // Spout receive state for plugin layers — uses WebSocket binary push for zero-copy frames
   interface SpoutReceiverContext {
@@ -1177,6 +1190,17 @@
       stopOsrStatusListener = typeof off === 'function' ? off : null;
     }
 
+    // Atlas fan-out status from main (started / stopped / renderer-gone).
+    // Source of truth for skipping per-slice CPU sends: if the atlas dies,
+    // main says so and the CPU path resumes next frame.
+    if (isElectron && !isOsrMode && !isOutputMode && (window as any).electronAPI?.on) {
+      const offAtlas = (window as any).electronAPI.on('texshare-atlas-status', (status: any) => {
+        atlasFanoutActive = !!status?.active;
+        console.log(`[Canvas] Atlas fan-out ${atlasFanoutActive ? 'active' : `inactive (${status?.reason ?? 'unknown'})`}`);
+      });
+      stopAtlasStatusListener = typeof offAtlas === 'function' ? offAtlas : null;
+    }
+
     // Expose canvas to window for VJ preview
     (window as any).__ghostarcadeOutputCanvas = canvas;
 
@@ -1906,6 +1930,12 @@
               for (const slice of activeSlices) {
                 if (sliceSendInFlight.has(slice.id)) continue; // Backpressure per-slice
 
+                // Atlas fan-out handles Spout/Syphon sender slices natively
+                // (zero-copy) — skip their CPU readback + send entirely.
+                // Predicate MUST match packAtlas's so the skip set equals
+                // the atlas set; NDI + display slices fall through.
+                if (atlasFanoutActive && isAtlasSenderSlice(slice)) continue;
+
                 // Slice output dimensions = its fraction of the source
                 // canvas. For rotated 90°/270° slices the GPU shader
                 // rotates the sample uv, so output stays at sw × sh.
@@ -2237,6 +2267,28 @@
     }
   }).catch(() => {});
 
+  // Atlas fan-out lifecycle: driven purely by the sender-slice set —
+  // ≥1 enabled Spout/Syphon sender slice starts the atlas, zero stops
+  // it. Independent of the master spoutEnabled toggle (that's the
+  // full-frame sender; slices are their own named senders).
+  $: if (isElectron && !isOsrMode && !isOutputMode && !atlasStartInFlight) {
+    const wantOn = ($settings?.output?.slices ?? []).some(isAtlasSenderSlice);
+    if (wantOn !== lastAtlasWantOn) {
+      lastAtlasWantOn = wantOn;
+      atlasStartInFlight = true;
+      if (wantOn) {
+        invoke('texshare_start_atlas')
+          .then((ok: any) => { atlasFanoutActive = !!ok; })
+          .catch(() => { atlasFanoutActive = false; })
+          .finally(() => { atlasStartInFlight = false; });
+      } else {
+        invoke('texshare_stop_atlas')
+          .catch(() => {})
+          .finally(() => { atlasFanoutActive = false; atlasStartInFlight = false; });
+      }
+    }
+  }
+
   // Reactive Spout output: start/stop sender when spoutEnabled changes.
   // Extract only the boolean to avoid re-triggering on every $settings change.
   // OSR window must NOT create a Spout sender — the main process handles it via paint events.
@@ -2516,6 +2568,8 @@
     }
     stopOsrStatusListener?.();
     stopOsrStatusListener = null;
+    stopAtlasStatusListener?.();
+    stopAtlasStatusListener = null;
 
     // Dispose NDI receivers — stop the poll loop, tear down the
     // addon-side receiver, free the DataTexture.
