@@ -49,6 +49,8 @@
    * Milkdrop-smoothed visualAudio bus directly — display only.
    */
   import { onMount, onDestroy } from 'svelte';
+  import { scale } from 'svelte/transition';
+  import { quintOut } from 'svelte/easing';
   import type { ModSource, ParamModulation } from '../audio/modulation';
   import { getVisualAudioSnapshot } from '../audio/visualAudio';
   import { audioStore } from '../stores/audio';
@@ -194,15 +196,16 @@
   let left = 0;
   const WIDTH = 252;
 
+  let flipped = false;
+
   function position() {
     if (!anchor) return;
     const r = anchor.getBoundingClientRect();
     const h = trayEl?.offsetHeight ?? 320;
     left = Math.max(8, Math.min(r.right - WIDTH, window.innerWidth - WIDTH - 8));
     // Below the chip by default; flip above when there's no room.
-    top = r.bottom + 6 + h > window.innerHeight - 8
-      ? Math.max(8, r.top - h - 6)
-      : r.bottom + 6;
+    flipped = r.bottom + 6 + h > window.innerHeight - 8;
+    top = flipped ? Math.max(8, r.top - h - 6) : r.bottom + 6;
   }
 
   function onWindowPointerDown(e: PointerEvent) {
@@ -243,9 +246,11 @@
 <div
   class="mt"
   bind:this={trayEl}
-  style="top:{top}px; left:{left}px; width:{WIDTH}px"
+  style="top:{top}px; left:{left}px; width:{WIDTH}px; transform-origin: {flipped ? 'bottom' : 'top'} right"
   role="dialog"
   aria-label="Modulation settings for {label}"
+  in:scale={{ duration: 160, start: 0.94, opacity: 0, easing: quintOut }}
+  out:scale={{ duration: 110, start: 0.96, opacity: 0 }}
 >
   <div class="mt-head">
     <span class="mt-title" title={label}>{label}</span>
