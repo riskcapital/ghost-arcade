@@ -74,6 +74,25 @@ const VERT_SHADER = /* glsl */ `
   }
 `;
 
+// Atlas variant: V flipped. The atlas canvas is captured by Chromium
+// top-down and each tile is sub-copied to its sender as-is; drawn with
+// the normal mapping, the captured tile arrives vertically inverted
+// relative to the single-output SendTexture path (verified against a
+// Spout receiver with the single-output sender as the right-side-up
+// reference). Flipping V here mirrors content and edge-blend gradients
+// together; tile placement and crop semantics are unaffected. NOTE:
+// gl_Position bypasses the camera/model matrices (fullscreen-quad
+// style), so a mirrored camera or negative quad scale can NOT do this
+// flip — the former is ignored and the latter only flips THREE's
+// face-winding state, which backface-culls the quad.
+const ATLAS_VERT_SHADER = /* glsl */ `
+  varying vec2 vUv;
+  void main() {
+    vUv = vec2(uv.x, 1.0 - uv.y);
+    gl_Position = vec4(position, 1.0);
+  }
+`;
+
 const FRAG_SHADER = /* glsl */ `
   precision highp float;
   varying vec2 vUv;
@@ -505,11 +524,13 @@ function applyWarpUniforms(
 
   const rotEnum = slice.rotation === 90 ? 1 : slice.rotation === 180 ? 2 : slice.rotation === 270 ? 3 : 0;
   u.uRotation.value = rotEnum;
-  u.uBrightness.value = slice.brightness;
-  u.uContrast.value = slice.contrast;
-  u.uGamma.value = slice.gamma;
-  u.uBlendW.value.set(slice.edgeBlendLeft, slice.edgeBlendRight, slice.edgeBlendTop, slice.edgeBlendBottom);
-  const defG = slice.edgeBlendGamma;
+  // Default missing color fields like the blackLevel ones below — an
+  // undefined here uploads NaN and the whole tile renders black.
+  u.uBrightness.value = slice.brightness ?? 1;
+  u.uContrast.value = slice.contrast ?? 1;
+  u.uGamma.value = slice.gamma ?? 1;
+  u.uBlendW.value.set(slice.edgeBlendLeft ?? 0, slice.edgeBlendRight ?? 0, slice.edgeBlendTop ?? 0, slice.edgeBlendBottom ?? 0);
+  const defG = slice.edgeBlendGamma ?? 2.2;
   u.uBlendG.value.set(
     slice.edgeBlendLeftGamma ?? defG,
     slice.edgeBlendRightGamma ?? defG,
@@ -986,7 +1007,7 @@ function ensureAtlasRenderer(canvas: HTMLCanvasElement, w: number, h: number): b
     atlasScene = new THREE.Scene();
     atlasCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     atlasMaterial = new THREE.ShaderMaterial({
-      vertexShader: VERT_SHADER,
+      vertexShader: ATLAS_VERT_SHADER,
       fragmentShader: FRAG_SHADER,
       uniforms: {
         uSource: { value: null },
