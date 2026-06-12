@@ -19,8 +19,27 @@
   let popoverEl: HTMLDivElement | null = null;
   let anchorEl: HTMLDivElement | null = null;
 
+  // Fixed-position coordinates for the popover. position:absolute
+  // inside the header got clipped behind sibling panels (ancestor
+  // overflow/stacking contexts); position:fixed from the anchor's
+  // viewport rect escapes all of that.
+  let popTop = 0;
+  let popLeft = 0;
+  const POP_WIDTH = 280;
+
+  function positionPopover() {
+    if (!anchorEl) return;
+    const r = anchorEl.getBoundingClientRect();
+    popTop = r.bottom + 6;
+    popLeft = Math.max(8, Math.min(
+      r.left + r.width / 2 - POP_WIDTH / 2,
+      window.innerWidth - POP_WIDTH - 8,
+    ));
+  }
+
   function toggleEq() {
     showEq = !showEq;
+    if (showEq) positionPopover();
   }
 
   function handleWindowClick(e: MouseEvent) {
@@ -35,7 +54,7 @@
   function fmt(v: number): string { return v.toFixed(2) + '×'; }
 </script>
 
-<svelte:window onclick={handleWindowClick} />
+<svelte:window onclick={handleWindowClick} onresize={() => showEq && positionPopover()} />
 
 {#if $audioStore.isActive}
   <div class="amp-strip" bind:this={anchorEl}>
@@ -82,7 +101,7 @@
 
     <!-- Expandable EQ / input-tweaks popover -->
     {#if showEq}
-      <div class="amp-popover" bind:this={popoverEl}>
+      <div class="amp-popover" bind:this={popoverEl} style="top:{popTop}px; left:{popLeft}px">
         <div class="amp-popover-title">AUDIO INPUT TWEAKS</div>
 
         <div class="amp-row">
@@ -228,12 +247,9 @@
     padding: 0 4px;
   }
 
-  /* Popover */
+  /* Popover — fixed so no header overflow/stacking context clips it */
   .amp-popover {
-    position: absolute;
-    top: calc(100% + 6px);
-    left: 50%;
-    transform: translateX(-50%);
+    position: fixed;
     width: 280px;
     max-width: calc(100vw - 24px);
     background: var(--bg-tertiary, #1a1a1e);
@@ -241,7 +257,7 @@
     border-radius: 8px;
     padding: 12px 12px 10px;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
-    z-index: 1000;
+    z-index: 4000;
     display: flex;
     flex-direction: column;
     gap: 10px;

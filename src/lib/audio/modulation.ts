@@ -819,20 +819,35 @@ export function setParamModSource(layerIndex: number, paramName: string, source:
   }
 }
 
-/** Update modulation depth for a shader param */
-export function setParamModAmount(layerIndex: number, paramName: string, amount: number, bank: 'A' | 'B' = 'A') {
-  const existing = modulationStore.getModulation(layerIndex, paramName, bank);
+/** Merge a partial update into an existing shader-param modulation.
+ *  MUST be called with the same (bank, target, clipId) addressing the
+ *  mod was created with — a clip-keyed (vjc:) mod is invisible to a
+ *  layer-keyed lookup and vice versa. The old amount/speed setters
+ *  hardcoded the layer-keyed vj lookup, which made the VJ panel's
+ *  Depth/Speed sliders (clip-keyed) and MediaTray's depth slider
+ *  (mapping-keyed) silent no-ops. */
+export function updateParamMod(
+  layerIndex: number,
+  paramName: string,
+  patch: Partial<ParamModulation>,
+  bank: 'A' | 'B' = 'A',
+  target: ModTarget = 'vj',
+  clipId?: string,
+) {
+  const existing = modulationStore.getModulation(layerIndex, paramName, bank, target, clipId);
   if (existing) {
-    modulationStore.setModulation(layerIndex, paramName, { ...existing, amount }, bank);
+    modulationStore.setModulation(layerIndex, paramName, { ...existing, ...patch }, bank, target, clipId);
   }
 }
 
+/** Update modulation depth for a shader param */
+export function setParamModAmount(layerIndex: number, paramName: string, amount: number, bank: 'A' | 'B' = 'A', target: ModTarget = 'vj', clipId?: string) {
+  updateParamMod(layerIndex, paramName, { amount }, bank, target, clipId);
+}
+
 /** Update LFO speed for a shader param */
-export function setParamModSpeed(layerIndex: number, paramName: string, speed: number, bank: 'A' | 'B' = 'A') {
-  const existing = modulationStore.getModulation(layerIndex, paramName, bank);
-  if (existing) {
-    modulationStore.setModulation(layerIndex, paramName, { ...existing, speed }, bank);
-  }
+export function setParamModSpeed(layerIndex: number, paramName: string, speed: number, bank: 'A' | 'B' = 'A', target: ModTarget = 'vj', clipId?: string) {
+  updateParamMod(layerIndex, paramName, { speed }, bank, target, clipId);
 }
 
 /** Convenience: set/clear crossfader modulation source. Mirrors setParamModSource. */

@@ -25,7 +25,8 @@
   import { createAssetRefFromFile, createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
   import ClipPreviewPanel from './ClipPreviewPanel.svelte';
   import { markUserInteracting } from '../midi/midiRouter';
-  import { modulationStore, modulationEngine, setParamModSource, setParamModAmount, setParamModSpeed, registerParamRanges, getModulatedValue, setBaseValue, clearBaseValues, clearModulatedValues, modKeyShader, type ModSource, type ParamModulation } from '../audio/modulation';
+  import { modulationStore, modulationEngine, setParamModSource, updateParamMod, registerParamRanges, getModulatedValue, setBaseValue, clearBaseValues, clearModulatedValues, modKeyShader, type ModSource, type ParamModulation } from '../audio/modulation';
+  import ModTray, { modSourceLabel } from './ModTray.svelte';
   import { defaultAutoFor } from '../audio/autoEngine';
   import type { AutoConfig } from '../types';
   import { performanceStore } from '../audio/performanceEngine';
@@ -1653,6 +1654,45 @@
     setParamModSource(layerIndex, paramName, source, paramDeck, 'vj', activeClipId ?? undefined);
   }
 
+  // ── Mod tray (anchored popover owning all modulation tuning) ──────
+  // One tray instance for the whole shader-params panel; opens against
+  // the clicked param's chip. Replaces the old inline source <select> +
+  // Depth/Speed rows (whose writes were silently dropped — they looked
+  // the mod up by layer key while the mod was stored clip-keyed).
+  let modTrayParam: string | null = null;
+  let modTrayAnchor: HTMLElement | null = null;
+
+  function toggleModTray(paramName: string, anchor: HTMLElement) {
+    if (modTrayParam === paramName) {
+      modTrayParam = null;
+    } else {
+      modTrayParam = paramName;
+      modTrayAnchor = anchor;
+    }
+  }
+
+  /** Patch the param's modulation wherever it actually lives —
+   *  clip-keyed (vjc:) when present, legacy layer-keyed otherwise. */
+  function patchShaderMod(paramName: string, patch: Partial<ParamModulation>) {
+    if (selectedLayerIndex === null) return;
+    const keyClip = activeClipId ? modKeyShader(selectedLayerIndex, paramName, paramDeck, 'vj', activeClipId) : null;
+    if (keyClip && modulationMap.has(keyClip)) {
+      updateParamMod(selectedLayerIndex, paramName, patch, paramDeck, 'vj', activeClipId!);
+    } else {
+      updateParamMod(selectedLayerIndex, paramName, patch, paramDeck, 'vj');
+    }
+  }
+
+  function patchShaderAuto(paramName: string, patch: Partial<AutoConfig>) {
+    if (!activeClipId) return;
+    const cur = getShaderAuto(paramName);
+    if (!cur) return;
+    vjClipLauncher.setClipShaderValueAuto(activeClipId, paramName, { ...cur, ...patch });
+  }
+
+  // Close the tray when the params panel goes away.
+  $: if (!showShaderParams || selectedLayerIndex === null) modTrayParam = null;
+
   // Live modulated values for ghost indicator on sliders
   let modGhostValues: Record<string, number> = {};
   let modGhostRaf: number | null = null;
@@ -3255,23 +3295,10 @@
                     <div class="shader-param" class:modulated={isModulated} data-modkey={_modKey} data-modsrc={_currentSource}>
                       <div class="shader-param-header">
                         <span class="shader-param-name">{input.LABEL || input.NAME}</span>
-                        <select class="mod-source-select" class:active={isModulated} value={_currentSource}
-                          onchange={(e) => setShaderParamSource(selectedLayerIndex!, input.NAME, (e.target as HTMLSelectElement).value as ModSource, input.MIN ?? 0, input.MAX ?? 1)}>
-                          <optgroup label="Control">
-                            <option value="manual">Manual</option>
-                            <option value="auto">Auto (playhead)</option>
-                          </optgroup>
-                          <optgroup label="Audio">
-                            <option value="sub">Sub</option><option value="bass">Bass</option><option value="lowMid">Low Mid</option>
-                            <option value="mid">Mid</option><option value="highMid">Hi Mid</option><option value="high">High</option>
-                            <option value="amplitude">Volume</option>
-                          </optgroup>
-                          <optgroup label="Sync"><option value="beatPhase">Beat</option></optgroup>
-                          <optgroup label="LFO">
-                            <option value="lfo-sine">Sine</option><option value="lfo-saw">Saw</option>
-                            <option value="lfo-square">Square</option><option value="lfo-tri">Triangle</option>
-                          </optgroup>
-                        </select>
+                        <button class="mod-source-chip" class:active={isModulated} class:open={modTrayParam === input.NAME}
+                          title="Modulation — audio bands, LFO with BPM sync, auto playhead"
+                          onclick={(e) => toggleModTray(input.NAME, e.currentTarget as HTMLElement)}
+                        >{modSourceLabel(_currentSource, !!_shaderAuto)}</button>
                       </div>
                       {#if input.TYPE === 'float' || input.TYPE === 'event'}
                         <!-- Inline the value read against paramLayerStates
@@ -3332,50 +3359,12 @@
                           </div>
                           <span class="param-val">{(isModulated && modGhostValues[input.NAME] !== undefined ? modGhostValues[input.NAME] : _sliderVal).toFixed(2)}</span>
                         </div>
-                        <!-- Auto-automation controls — only shown when
-                             the param's modulation source is "auto".
-                             Owns play/pause, speed, loop/pingpong, and
-                             a dual-range slider clipping the sweep. -->
-                        {#if _shaderAuto}
-                          <div class="auto-controls">
-                            <div class="auto-row">
-                              <button
-                                class="auto-play"
-                                class:playing={_shaderAuto.playing}
-                                onclick={() => setShaderAutoField(input.NAME, 'playing', !_shaderAuto!.playing)}
-                                title={_shaderAuto.playing ? 'Pause' : 'Resume'}
-                                aria-label={_shaderAuto.playing ? 'Pause automation' : 'Resume automation'}
-                              >{_shaderAuto.playing ? '❚❚' : '▶'}</button>
+                        <!-- Auto transport / speed moved into the
+                             ModTray popover. Range slippers stay on
+                             the main slider track above (see .slipper
+                             inputs) since they map 1:1 to the param's
+                             pixels. -->
 
-                              <div class="auto-mode-toggle">
-                                <button class:active={_shaderAuto.mode === 'loop'}
-                                  onclick={() => setShaderAutoField(input.NAME, 'mode', 'loop')}
-                                  title="Loop — sweeps min → max, then restarts at min"
-                                >Loop</button>
-                                <button class:active={_shaderAuto.mode === 'pingpong'}
-                                  onclick={() => setShaderAutoField(input.NAME, 'mode', 'pingpong')}
-                                  title="Ping-pong — sweeps min → max, reverses back"
-                                >Ping-pong</button>
-                              </div>
-                            </div>
-
-                            <div class="auto-row auto-row-speed">
-                              <span class="auto-label">Speed</span>
-                              <input type="range" min="0.01" max="1" step="0.005"
-                                value={_shaderAuto.speedHz}
-                                oninput={(e) => setShaderAutoField(input.NAME, 'speedHz', parseFloat((e.target as HTMLInputElement).value))}
-                                class="auto-speed-slider" />
-                              <span class="auto-val">{_shaderAuto.speedHz.toFixed(2)}Hz</span>
-                            </div>
-
-                            <!-- Range slippers live on the main slider
-                                 track above (see .slipper inputs). No
-                                 redundant label here — the cyan handles
-                                 are self-explanatory now that they
-                                 visually align with the slider range. -->
-
-                          </div>
-                        {/if}
                       {:else if input.TYPE === 'bool'}
                         <div class="shader-param-toggle">
                           <button class="bool-toggle" class:on={getShaderParamValue(selectedLayerIndex!, input.NAME, 0) > 0.5}
@@ -3409,25 +3398,31 @@
                           <span class="param-val">{getShaderParamValue(selectedLayerIndex!, input.NAME, (input.DEFAULT as number) ?? 0)}</span>
                         </div>
                       {/if}
-                      {#if isModulated}
-                        <div class="mod-amount-row">
-                          <span class="mod-amount-label">Depth</span>
-                          <input type="range" min="0" max="1" step="0.01" value={mod?.amount ?? 0.5}
-                            oninput={(e) => setParamModAmount(selectedLayerIndex!, input.NAME, parseFloat((e.target as HTMLInputElement).value))} class="mod-amount-slider" />
-                          <span class="mod-amount-val">{((mod?.amount ?? 0.5) * 100).toFixed(0)}%</span>
-                        </div>
-                        {#if mod?.source?.startsWith('lfo-')}
-                          <div class="mod-amount-row">
-                            <span class="mod-amount-label">Speed</span>
-                            <input type="range" min="0.1" max="10" step="0.1" value={mod?.speed ?? 1}
-                              oninput={(e) => setParamModSpeed(selectedLayerIndex!, input.NAME, parseFloat((e.target as HTMLInputElement).value))} class="mod-amount-slider" />
-                            <span class="mod-amount-val">{(mod?.speed ?? 1).toFixed(1)}Hz</span>
-                          </div>
-                        {/if}
-                      {/if}
                     </div>
                   {/each}
                 </div>
+
+                <!-- The mod tray — one instance for the whole panel,
+                     anchored to whichever param chip was clicked. All
+                     depth / invert / LFO speed / BPM-sync / auto
+                     transport tuning lives here. -->
+                {#if modTrayParam && modTrayAnchor && selectedLayerIndex !== null}
+                  {@const _tInput = selectedClipShaderInputs.find(i => i.NAME === modTrayParam)}
+                  {@const _tModClipKey = activeClipId ? modKeyShader(selectedLayerIndex, modTrayParam, paramDeck, 'vj', activeClipId) : null}
+                  {@const _tMod = (_tModClipKey ? modulationMap.get(_tModClipKey) : undefined) ?? modulationMap.get(modKeyShader(selectedLayerIndex, modTrayParam, paramDeck, 'vj'))}
+                  {@const _tAuto = paramLayerStates[selectedLayerIndex]?.activeClip?.shaderValueAuto?.[modTrayParam] as (AutoConfig | undefined)}
+                  <ModTray
+                    label={_tInput?.LABEL || modTrayParam}
+                    anchor={modTrayAnchor}
+                    source={_tMod?.source ?? 'manual'}
+                    mod={_tMod}
+                    auto={_tAuto}
+                    onClose={() => modTrayParam = null}
+                    onSetSource={(s) => setShaderParamSource(selectedLayerIndex!, modTrayParam!, s, _tInput?.MIN ?? 0, _tInput?.MAX ?? 1)}
+                    onPatchMod={(p) => patchShaderMod(modTrayParam!, p)}
+                    onPatchAuto={(p) => patchShaderAuto(modTrayParam!, p)}
+                  />
+                {/if}
               </div>
             {/if}
           {/if}
@@ -7488,21 +7483,35 @@
     flex: 1;
   }
 
-  .mod-source-select {
+  .mod-source-chip {
     font-size: 9px;
-    padding: 1px 2px;
+    padding: 1px 8px;
     background: var(--bg-primary, #0d0d10);
     border: 1px solid #333;
     border-radius: 3px;
     color: #666;
     cursor: pointer;
-    max-width: 70px;
+    max-width: 78px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: border-color 0.12s, color 0.12s, background 0.12s;
   }
 
-  .mod-source-select.active {
+  .mod-source-chip:hover {
+    border-color: #777;
+    color: #bbb;
+  }
+
+  .mod-source-chip.active {
     border-color: #a855f7;
     color: #a855f7;
     background: #1a1a2a;
+  }
+
+  .mod-source-chip.open {
+    border-color: #a855f7;
+    box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.35);
   }
 
   .shader-param-slider {
@@ -7511,109 +7520,8 @@
     gap: 4px;
   }
 
-  /* ─── Per-param auto-automation controls ─── */
-  /* Compact stack of [play/mode] + [speed slider] + [range slider]
-     that appears below a shader param when the user picks "Auto"
-     as the modulation source. Sized to fit the same narrow column
-     the audio-source dropdown sits in; visually distinct from the
-     audio path via a subtle accent-color tint on the left edge. */
-  .auto-controls {
-    margin-top: 4px;
-    padding: 6px 8px;
-    background: rgba(120, 215, 220, 0.06);
-    border-left: 2px solid #5ce1e6;
-    border-radius: 0 4px 4px 0;
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-  }
-  .auto-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 10px;
-  }
-  .auto-row-speed input[type='range'],
-  .auto-row-range .auto-range-track {
-    flex: 1;
-  }
-  .auto-label {
-    color: rgba(255, 255, 255, 0.55);
-    width: 42px;
-    flex-shrink: 0;
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
-  }
-  .auto-val {
-    color: #5ce1e6;
-    font-variant-numeric: tabular-nums;
-    font-size: 10px;
-    min-width: 52px;
-    text-align: right;
-  }
-  .auto-play {
-    width: 24px;
-    height: 24px;
-    border-radius: 4px;
-    background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    color: var(--text-primary, #ccc);
-    font-size: 9px;
-    cursor: pointer;
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .auto-play.playing {
-    background: rgba(92, 225, 230, 0.18);
-    border-color: #5ce1e6;
-    color: #5ce1e6;
-  }
-  .auto-mode-toggle {
-    display: flex;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 4px;
-    overflow: hidden;
-  }
-  .auto-mode-toggle button {
-    background: transparent;
-    border: none;
-    padding: 3px 8px;
-    font-size: 10px;
-    color: rgba(255, 255, 255, 0.5);
-    cursor: pointer;
-  }
-  .auto-mode-toggle button.active {
-    background: rgba(92, 225, 230, 0.18);
-    color: #5ce1e6;
-  }
-  .auto-speed-slider {
-    accent-color: #5ce1e6;
-    height: 3px;
-  }
-  /* Dual-range track — both inputs stack overlapping so each thumb
-     is drag-controllable independently. The track background +
-     filled portion are drawn by the inputs themselves (browsers
-     render the bar around the thumb). For a perfectly polished
-     visual we'd add a custom track div underneath; this is the
-     pragmatic v1 that just works. */
-  .auto-range-track {
-    position: relative;
-    height: 16px;
-    display: flex;
-    align-items: center;
-  }
-  .auto-range-input {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    accent-color: #5ce1e6;
-    background: transparent;
-    pointer-events: none;
-  }
-  .auto-range-input::-webkit-slider-thumb { pointer-events: auto; }
-  .auto-range-input::-moz-range-thumb { pointer-events: auto; }
+  /* Per-param auto transport/speed controls moved into the ModTray
+     popover; only the range slippers remain on the slider track. */
 
   .slider-track-wrap {
     position: relative;
@@ -7769,32 +7677,7 @@
     line-height: 1.4;
   }
 
-  .mod-amount-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-top: 6px;
-    padding-left: 2px;
-  }
-
-  .mod-amount-label {
-    font-size: 9px;
-    color: #a855f7;
-    min-width: 30px;
-  }
-
-  .mod-amount-slider {
-    flex: 1;
-    height: 4px;
-    accent-color: #a855f7;
-  }
-
-  .mod-amount-val {
-    font-size: 8px;
-    color: #a855f7;
-    min-width: 28px;
-    text-align: right;
-  }
+  /* Depth / Speed rows moved into the ModTray popover. */
 
   /* Performer atom icon — compact 32×28 button matching the other
      header-right icons (settings/minimize/blackout shape). Purple to

@@ -3218,7 +3218,7 @@
                 <div class="mod-amount-row">
                   <span class="mod-amount-label">Depth</span>
                   <input type="range" min="0" max="1" step="0.01" value={mod?.amount ?? 0.5}
-                    oninput={(e) => setParamModAmount(selectedLayerIdx, input.NAME, parseFloat((e.target as HTMLInputElement).value))} class="mod-amount-slider" />
+                    oninput={(e) => setParamModAmount(selectedLayerIdx, input.NAME, parseFloat((e.target as HTMLInputElement).value), 'A', 'mapping')} class="mod-amount-slider" />
                   <span class="mod-amount-val">{((mod?.amount ?? 0.5) * 100).toFixed(0)}%</span>
                 </div>
               {/if}

@@ -34,6 +34,25 @@ export function installRangeProgressSync() {
   if (installed || typeof window === 'undefined' || typeof document === 'undefined') return;
   installed = true;
 
+  // Intercept programmatic `.value` writes. Svelte (and the modulation
+  // engine driving sliders through Svelte re-renders) sets `value` as a
+  // DOM PROPERTY — which fires no event and no attribute mutation, so
+  // neither the listeners nor the MutationObserver below ever see it.
+  // That left the gradient fill frozen at its last user-interaction
+  // position while the knob moved ("green fill not following the knob").
+  const proto = HTMLInputElement.prototype;
+  const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+  if (desc?.set && desc.configurable) {
+    const nativeSet = desc.set;
+    Object.defineProperty(proto, 'value', {
+      ...desc,
+      set(this: HTMLInputElement, v: string) {
+        nativeSet.call(this, v);
+        if (this.type === 'range') updateRangeSliderVisual(this);
+      },
+    });
+  }
+
   let raf = 0;
   const scheduleSync = () => {
     if (raf) return;
