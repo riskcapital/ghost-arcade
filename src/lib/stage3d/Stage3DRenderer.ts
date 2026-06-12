@@ -38,6 +38,18 @@ interface LedEntry {
   defaultPosition: [number, number, number];
   defaultWidth: number;
   defaultHeight: number;
+  /** Set when this screen is a spherical sector on the venue's ledDome
+   *  (sphere venue). Carries the angular rect (canvas-fraction space)
+   *  so the geometry can be rebuilt when the user changes domeMapping,
+   *  plus the glow light's local placement (relative to the dome
+   *  centre, which is the group position). */
+  dome?: {
+    u0: number; u1: number;        // canvas-x fraction → azimuth range
+    yTop: number; yBottom: number; // canvas-y fraction (Y-down) → elevation range
+    mapping: 'wrap' | 'domemaster' | 'equirect';
+    lightOffset: [number, number, number];
+    lightTarget: [number, number, number];
+  };
   /** Reactive room light coloured from the LED's average pixel — drives
    *  the "the room glows in sync with the visuals" effect. RectAreaLight
    *  sized to the panel so the spill reads as an LED-wall wash, not a
@@ -299,6 +311,129 @@ function screenLayerPlacement(layer: Layer, wall: VenueBuild['ledWall']):
     width: w,
     height: h,
   };
+}
+
+// ── Dome screens (sphere venue) ────────────────────────────────────────
+
+type LedDome = NonNullable<VenueBuild['ledDome']>;
+type DomeMapping = 'wrap' | 'domemaster' | 'equirect';
+
+/** Unit direction for a dome surface point. Azimuth 0 faces the stage
+ *  (-Z), positive azimuth toward +X; elevation 0 = horizon through the
+ *  dome centre, 90 = zenith. Y-up world. */
+function domeDirection(azDeg: number, elDeg: number): [number, number, number] {
+  const az = THREE.MathUtils.degToRad(azDeg);
+  const el = THREE.MathUtils.degToRad(elDeg);
+  const ce = Math.cos(el);
+  return [ce * Math.sin(az), Math.sin(el), -ce * Math.cos(az)];
+}
+
+/**
+ * TRUE spherical-sector geometry for a dome screen — a lat/long grid on
+ * the sphere's interior, NOT a bent plane. Vertices are relative to the
+ * dome centre (the mesh's group sits at the centre).
+ *
+ * The screen's 2D canvas rect (u0..u1 across, yTop..yBottom down,
+ * canvas Y-DOWN convention) maps onto the dome's angular extents: a
+ * full-canvas screen covers the whole sweep, smaller screens tile it.
+ *
+ * UVs depend on the content mapping:
+ *  `wrap`       — plain (u,v) across the sector: the screen's own
+ *                 source rectangle spreads over its patch of dome
+ *                 (equirect-style; flat content, Sphere-style look).
+ *  `domemaster` — per-vertex inverse 180° angular fisheye: the source
+ *                 is a circular domemaster frame (what the editor's
+ *                 Dome Projection output produces in fisheye modes);
+ *                 each vertex samples where its 3D direction lands in
+ *                 that circle (zenith = centre, horizon = rim).
+ *  `equirect`   — source is a 360×180 equirect panorama; u from
+ *                 azimuth, v from elevation.
+ */
+function buildDomeSectorGeometry(
+  dome: LedDome,
+  u0: number, u1: number,
+  yTop: number, yBottom: number,
+  mapping: DomeMapping,
+): THREE.BufferGeometry {
+  const az = (u: number) => (u - 0.5) * dome.hSweepDeg;
+  const el = (y: number) => dome.vEndDeg + y * (dome.vStartDeg - dome.vEndDeg);
+  const az0 = az(u0), az1 = az(u1);
+  const elBottom = el(yBottom), elTop = el(yTop);
+
+  // Segment density follows angular coverage so a small tile doesn't
+  // pay full-dome tessellation (and a full dome stays smooth).
+  const wSegs = Math.max(8, Math.round(((az1 - az0) / dome.hSweepDeg) * 128));
+  const hSegs = Math.max(8, Math.round(((elTop - elBottom) / Math.max(1, dome.vEndDeg - dome.vStartDeg)) * 64));
+
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+
+  for (let iy = 0; iy <= hSegs; iy++) {
+    const v = iy / hSegs;                       // 0 = bottom edge, 1 = top edge (GL convention)
+    const elev = elBottom + v * (elTop - elBottom);
+    for (let ix = 0; ix <= wSegs; ix++) {
+      const u = ix / wSegs;
+      const azim = az0 + u * (az1 - az0);
+      const d = domeDirection(azim, elev);
+      positions.push(d[0] * dome.radius, d[1] * dome.radius, d[2] * dome.radius);
+
+      if (mapping === 'domemaster') {
+        // Angle from zenith → fisheye radius (180° FOV: horizon at the
+        // rim); azimuth → angle around the circle. Below-horizon points
+        // clamp to the rim. Matches the angular mode of the editor's
+        // dome-projection output shader (renderer/shaders/dome.ts).
+        const psi = Math.acos(Math.min(1, Math.max(-1, d[1])));
+        const rr = Math.min(1, psi / (Math.PI / 2));
+        const phi = Math.atan2(d[0], -d[2]);
+        uvs.push(0.5 + 0.5 * rr * Math.sin(phi), 0.5 + 0.5 * rr * Math.cos(phi));
+      } else if (mapping === 'equirect') {
+        const phi = Math.atan2(d[0], -d[2]);
+        const elevRad = Math.asin(Math.min(1, Math.max(-1, d[1])));
+        uvs.push(0.5 + phi / (2 * Math.PI), 0.5 + elevRad / Math.PI);
+      } else {
+        uvs.push(u, v);
+      }
+    }
+  }
+  const stride = wSegs + 1;
+  for (let iy = 0; iy < hSegs; iy++) {
+    for (let ix = 0; ix < wSegs; ix++) {
+      const a = iy * stride + ix;
+      indices.push(a, a + 1, a + stride, a + 1, a + stride + 1, a + stride);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/** Map a screen layer's 2D canvas corner box onto the venue dome.
+ *  Returns the angular rect plus chord sizes (for aspect / glow). */
+function domeScreenPlacement(layer: Layer, dome: LedDome):
+  { u0: number; u1: number; yTop: number; yBottom: number; chordW: number; chordH: number } | null {
+  const corners = (layer as any).corners as
+    | { topLeft: { x: number; y: number }; topRight: { x: number; y: number }; bottomLeft: { x: number; y: number }; bottomRight: { x: number; y: number } }
+    | undefined;
+  if (!corners) return null;
+  const xs = [corners.topLeft.x, corners.topRight.x, corners.bottomLeft.x, corners.bottomRight.x];
+  const ys = [corners.topLeft.y, corners.topRight.y, corners.bottomLeft.y, corners.bottomRight.y];
+  const u0 = Math.max(0, Math.min(...xs));
+  const u1 = Math.min(1, Math.max(...xs));
+  const yTop = Math.max(0, Math.min(...ys));
+  const yBottom = Math.min(1, Math.max(...ys));
+  if (u1 - u0 < 0.005 || yBottom - yTop < 0.005) return null;
+
+  const vRange = dome.vEndDeg - dome.vStartDeg;
+  const elMid = dome.vEndDeg - ((yTop + yBottom) / 2) * vRange;
+  const azArc = (u1 - u0) * dome.hSweepDeg;
+  const chordW = dome.radius * THREE.MathUtils.degToRad(azArc) * Math.cos(THREE.MathUtils.degToRad(elMid));
+  const chordH = dome.radius * THREE.MathUtils.degToRad((yBottom - yTop) * vRange);
+  return { u0, u1, yTop, yBottom, chordW, chordH };
 }
 
 function textureForLayer(layer: Layer | undefined, masterTexture: THREE.Texture | null): THREE.Texture | null {
@@ -730,6 +865,24 @@ export class Stage3DRenderer {
       u.uEdgeEffect.value = EDGE_INDEX[override.edgeEffect ?? 'none'] ?? 0;
       u.uPanelSize.value.set(entry.defaultWidth, entry.defaultHeight);
 
+      // Dome screens: rebake the sector's UVs when the user switches
+      // content mapping (wrap / domemaster / equirect). Geometry-only —
+      // positions are identical, so this is a cheap one-off rebuild.
+      // Fisheye / equirect mappings carry exact per-vertex UVs that the
+      // display-fit letterboxing would corrupt — force stretch there.
+      if (entry.dome) {
+        const mapping = (override.domeMapping ?? 'wrap') as DomeMapping;
+        const domeRegion = this.venueBuild?.ledDome;
+        if (mapping !== entry.dome.mapping && domeRegion) {
+          entry.dome.mapping = mapping;
+          entry.surface.geometry.dispose();
+          entry.surface.geometry = buildDomeSectorGeometry(
+            domeRegion, entry.dome.u0, entry.dome.u1, entry.dome.yTop, entry.dome.yBottom, mapping,
+          );
+        }
+        if (mapping !== 'wrap') u.uDisplayFit.value = 0;
+      }
+
       // Transform writes are skipped when the entry is currently a
       // child of the multi-select pivot (pivot owns world transforms
       // during multi-edit) OR when the gizmo is actively dragging this
@@ -743,10 +896,19 @@ export class Stage3DRenderer {
       const scl = override.scale ?? [1, 1, 1];
       entry.group.scale.set(scl[0], scl[1], scl[2]);
       // Keep the reactive area light glued to the LED's current
-      // position (just in front of the panel) so moving the LED moves
-      // the glow with it; re-aim forward + slightly down each move.
-      entry.ambientLight.position.set(pos[0], pos[1], pos[2] + 0.3);
-      entry.ambientLight.lookAt(pos[0], pos[1] - entry.defaultHeight * 0.6, pos[2] + 12);
+      // position so moving the LED moves the glow with it. Dome
+      // screens carry a precomputed offset on the sector's
+      // mid-direction (group position = dome centre); flat panels sit
+      // the light just in front, aimed forward + slightly down.
+      if (entry.dome) {
+        const lo = entry.dome.lightOffset;
+        const lt = entry.dome.lightTarget;
+        entry.ambientLight.position.set(pos[0] + lo[0], pos[1] + lo[1], pos[2] + lo[2]);
+        entry.ambientLight.lookAt(pos[0] + lt[0], pos[1] + lt[1], pos[2] + lt[2]);
+      } else {
+        entry.ambientLight.position.set(pos[0], pos[1], pos[2] + 0.3);
+        entry.ambientLight.lookAt(pos[0], pos[1] - entry.defaultHeight * 0.6, pos[2] + 12);
+      }
     }
 
     this.updateSelectionOutline();
@@ -1129,10 +1291,90 @@ export class Stage3DRenderer {
     this.ledByLayerId.clear();
 
     const wall = this.venueBuild?.ledWall;
-    if (!wall) return;
+    const dome = this.venueBuild?.ledDome;
+    if (!wall && !dome) return;
+
+    const screenOverrides = get(stage3dScene).screenOverrides ?? {};
 
     for (const layer of screenLayers) {
-      const placement = screenLayerPlacement(layer, wall);
+      // ── Dome venue: screens are TRUE spherical sectors on the dome
+      //    interior — the layer's canvas rect maps onto the dome's
+      //    angular extents (full-canvas screen = the whole dome). ──
+      if (dome) {
+        const dp = domeScreenPlacement(layer, dome);
+        if (!dp) continue;
+        const mapping = (screenOverrides[layer.id]?.domeMapping ?? 'wrap') as DomeMapping;
+
+        const group = new THREE.Group();
+        group.position.set(dome.centerX, dome.centerY, dome.centerZ);
+        group.userData = { layerId: layer.id, kind: 'led-screen' };
+
+        const material = new THREE.ShaderMaterial({
+          uniforms: ledMaterialUniforms(),
+          vertexShader: LED_VERTEX,
+          fragmentShader: LED_FRAGMENT,
+          side: THREE.DoubleSide,
+          toneMapped: false,
+        });
+        const geometry = buildDomeSectorGeometry(dome, dp.u0, dp.u1, dp.yTop, dp.yBottom, mapping);
+        const surface = new THREE.Mesh(geometry, material);
+        surface.userData = { layerId: layer.id };
+        group.add(surface);
+        this.scene.add(group);
+
+        // Glow light sits on the sector's mid-direction, inside the
+        // dome, aimed at the bowl. Sized to the sector chord (capped —
+        // a full dome's 200m chord would blow the area-light math).
+        ensureRectAreaLightUniforms();
+        const azMid = ((dp.u0 + dp.u1) / 2 - 0.5) * dome.hSweepDeg;
+        const vRange = dome.vEndDeg - dome.vStartDeg;
+        const elMid = dome.vEndDeg - ((dp.yTop + dp.yBottom) / 2) * vRange;
+        const midDir = domeDirection(azMid, elMid);
+        const lightOffset: [number, number, number] = [
+          midDir[0] * dome.radius * 0.85,
+          midDir[1] * dome.radius * 0.85,
+          midDir[2] * dome.radius * 0.85,
+        ];
+        // Aim at the bowl centre (≈[0, 6, 5] world), expressed local to
+        // the group (which sits at the dome centre).
+        const lightTarget: [number, number, number] = [
+          -dome.centerX, 6 - dome.centerY, 5 - dome.centerZ,
+        ];
+        const ambientLight = new THREE.RectAreaLight(
+          0xffffff, 0, Math.min(40, dp.chordW), Math.min(40, dp.chordH),
+        );
+        ambientLight.position.set(
+          dome.centerX + lightOffset[0],
+          dome.centerY + lightOffset[1],
+          dome.centerZ + lightOffset[2],
+        );
+        ambientLight.lookAt(
+          dome.centerX + lightTarget[0],
+          dome.centerY + lightTarget[1],
+          dome.centerZ + lightTarget[2],
+        );
+        this.scene.add(ambientLight);
+        const averageRT = new THREE.WebGLRenderTarget(1, 1, {
+          format: THREE.RGBAFormat,
+          type: THREE.UnsignedByteType,
+          depthBuffer: false,
+          stencilBuffer: false,
+        });
+
+        this.ledEntries.push({
+          layer, group, surface, material,
+          defaultPosition: [dome.centerX, dome.centerY, dome.centerZ],
+          defaultWidth: dp.chordW,
+          defaultHeight: dp.chordH,
+          dome: { u0: dp.u0, u1: dp.u1, yTop: dp.yTop, yBottom: dp.yBottom, mapping, lightOffset, lightTarget },
+          ambientLight, averageRT,
+          averagePixels: new Uint8Array(4),
+        });
+        this.ledByLayerId.set(layer.id, this.ledEntries[this.ledEntries.length - 1]);
+        continue;
+      }
+
+      const placement = screenLayerPlacement(layer, wall!);
       if (!placement) continue;
 
       const group = new THREE.Group();

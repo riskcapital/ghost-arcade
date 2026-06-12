@@ -347,7 +347,7 @@ export type Stage3DBasePreset = 'festival' | 'arena' | 'club' | 'conference' | '
  *  (room/ground/walls), lighting baseline, fog, and grid visibility.
  *  Picked separately from `basePreset` (which is the legacy field).
  *  Each venue exposes a `stageW` / `frontZ` so PA presets place sensibly. */
-export type Stage3DVenue = 'festival' | 'arena' | 'club' | 'nightclub';
+export type Stage3DVenue = 'festival' | 'arena' | 'club' | 'nightclub' | 'sphere';
 
 /** User-placed scene element (truss, light, speaker, deck, etc.) backed
  *  by an entry in the element-type registry. LED screens are NOT user
@@ -439,6 +439,17 @@ export interface Stage3DScreenOverride {
   finish?: 'led' | 'projection' | 'clean';
   displayFit?: 'stretch' | 'contain' | 'cover';
   edgeEffect?: 'none' | 'bezel-glow' | 'soft-border' | 'scanlines' | 'pixel-grid';
+  /** How source content maps onto a DOME screen (sphere venue only;
+   *  ignored on flat-wall venues).
+   *  `wrap`       = the source rectangle spreads across the dome's
+   *                 lat/long extents (equirect-style, the default —
+   *                 flat 16:9 content wraps like the real Sphere),
+   *  `domemaster` = source is a 180° angular-fisheye circle (the
+   *                 editor's Dome Projection output in angular /
+   *                 stereographic / orthographic modes),
+   *  `equirect`   = source is a 360° equirectangular panorama (the
+   *                 Dome Projection output's equirectangular mode). */
+  domeMapping?: 'wrap' | 'domemaster' | 'equirect';
 }
 
 export const NEUTRAL_AUDIO_ROUTING: AudioRouting = {
