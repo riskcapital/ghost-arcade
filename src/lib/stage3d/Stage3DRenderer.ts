@@ -23,6 +23,9 @@ import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLigh
 import { get } from 'svelte/store';
 import { stage3dScene, selectedStage3DNodeId, selectedStage3DTargets, stage3DGizmoMode, parseSelection, stage3DRendererControls, stage3DSceneryList, sceneryLabel, stage3DCameraFov } from './store';
 import { buildVenue, type VenueBuild } from './venues';
+import { AtmosphereRig } from './atmosphere';
+import { DEFAULT_ATMOSPHERE } from './types';
+import { getVisualAudioSnapshot } from '../audio/visualAudio';
 import { buildUserElement } from './elementTypes';
 import { stageEffectsRuntime } from '../stores/stageEffects';
 import type { Stage3DScene, Stage3DScreenOverride, Stage3DVenue, UserStageElement } from './types';
@@ -551,6 +554,9 @@ export class Stage3DRenderer {
   };
   private pointerDownPos: { x: number; y: number } | null = null;
   private selectionUnsub: (() => void) | null = null;
+  /** Atmosphere FX rig — rebuilt per venue, ticked every render(). */
+  private atmosphereRig: AtmosphereRig | null = null;
+  private lastAtmoTime = 0;
   /** Demo Reel camera drive — when set, render() applies this state and
    *  bypasses OrbitControls so shot interpolation lands exactly. */
   private drivenCamera: { position: [number, number, number]; target: [number, number, number]; fov: number } | null = null;
@@ -842,6 +848,19 @@ export class Stage3DRenderer {
     const stageFxRt = get(stageEffectsRuntime);
     const stageFxOutputs = stageFxRt.sliceOutputs;
     const layerToSlice = stageFxRt.layerToSlice;
+
+    // Atmosphere FX — sync toggles from the scene, then tick the rig
+    // with the smoothed visual-audio bus so beams/lasers/strips ride
+    // the music. dt derives from the same clock as the LED uniforms.
+    const atmoNow = performance.now() * 0.001;
+    const atmoDt = this.lastAtmoTime > 0
+      ? Math.max(0.001, Math.min(0.1, atmoNow - this.lastAtmoTime))
+      : 0.016;
+    this.lastAtmoTime = atmoNow;
+    if (this.atmosphereRig) {
+      this.atmosphereRig.setFlags({ ...DEFAULT_ATMOSPHERE, ...(stage.atmosphere ?? {}) });
+      this.atmosphereRig.update(atmoDt, getVisualAudioSnapshot());
+    }
 
     // Per-frame LED uniforms + transforms.
     const time = performance.now() * 0.001;
@@ -1176,6 +1195,8 @@ export class Stage3DRenderer {
     this.canvas.removeEventListener('pointerdown', this.bound.pointerDown);
     window.removeEventListener('keydown', this.bound.keyDown);
     this.canvas.removeEventListener('wheel', this.bound.wheel, { capture: true } as EventListenerOptions);
+    this.atmosphereRig?.dispose();
+    this.atmosphereRig = null;
     this.fallbackTexture.dispose();
     this.envTexture?.dispose();
     this.pmrem?.dispose();
@@ -1298,6 +1319,10 @@ export class Stage3DRenderer {
   // ── Venue swap ───────────────────────────────────────────────────────
 
   private swapVenue(venue: Stage3DVenue): void {
+    // Tear the atmosphere rig down BEFORE the venue group disposes —
+    // its beams/strips are parented inside venue scenery.
+    this.atmosphereRig?.dispose();
+    this.atmosphereRig = null;
     if (this.venueBuild) {
       this.scene.remove(this.venueBuild.group);
       disposeObject(this.venueBuild.group);
@@ -1364,6 +1389,10 @@ export class Stage3DRenderer {
       this.controls.target.set(...build.cameraTarget);
       this.cameraInitialized = true;
     }
+
+    // Fresh atmosphere rig for the new venue — flags re-sync on the
+    // next render() tick from stage.atmosphere.
+    this.atmosphereRig = new AtmosphereRig(this.scene, build);
 
     // Force LED rebuild on next render — new wall geometry.
     this.currentLedSignature = '';

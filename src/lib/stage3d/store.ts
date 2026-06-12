@@ -7,8 +7,8 @@
 // import/export goes through the same JSON shape.
 
 import { writable, get } from 'svelte/store';
-import type { Stage3DScene, Stage3DNode, StageLedScreenNode, Stage3DBasePreset, Stage3DScreenOverride, Stage3DVenue, Stage3DLighting, StageSceneryOverride, UserStageElement, Vec3 } from './types';
-import { createEmptyScene, DEFAULT_LIGHTING } from './types';
+import type { Stage3DScene, Stage3DNode, StageLedScreenNode, Stage3DBasePreset, Stage3DScreenOverride, Stage3DVenue, Stage3DLighting, Stage3DAtmosphere, StageSceneryOverride, UserStageElement, Vec3 } from './types';
+import { createEmptyScene, DEFAULT_LIGHTING, DEFAULT_ATMOSPHERE } from './types';
 
 const STORAGE_KEY = 'ga-stage3d-active-scene';
 
@@ -267,6 +267,15 @@ function createStore() {
     resetLighting() {
       snapshot();
       update(s => ({ ...s, lighting: { ...DEFAULT_LIGHTING } }));
+      persist();
+    },
+
+    /** Patch the atmosphere FX toggles (beams / lasers / haze / strips). */
+    setAtmosphere(patch: Partial<Stage3DAtmosphere>) {
+      update(s => ({
+        ...s,
+        atmosphere: { ...DEFAULT_ATMOSPHERE, ...(s.atmosphere ?? {}), ...patch },
+      }));
       persist();
     },
 
