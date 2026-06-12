@@ -11,6 +11,10 @@
 
 #include <napi.h>
 
+#include <map>
+#include <memory>
+#include <string>
+
 // Windows headers
 #include <d3d11_1.h>
 #include <dxgi1_2.h>
@@ -438,6 +442,346 @@ private:
 
 
 // ============================================================
+// SpoutAtlasOutput — multi-slice zero-copy fan-out.
+//
+// One hidden OSR window renders ALL sender slices into a single atlas
+// texture. Each paint we open the atlas's DXGI shared handle ONCE, then
+// CopySubresourceRegion each configured sub-rect into a per-name BGRA
+// texture and SendTexture it through that name's spoutDX sender. Cost is
+// one shared-resource open + N GPU sub-copies — flat per slice, no CPU.
+//
+// All textures (atlas + every per-sender staging texture) live on the
+// same external D3D11 device; CopySubresourceRegion requires it and the
+// shared handle can't cross GPU adapters anyway.
+// ============================================================
+
+class SpoutAtlasOutput : public Napi::ObjectWrap<SpoutAtlasOutput> {
+public:
+    static Napi::Object Init(Napi::Env env, Napi::Object exports) {
+        Napi::Function func = DefineClass(env, "SpoutAtlasOutput", {
+            InstanceMethod("configure", &SpoutAtlasOutput::Configure),
+            InstanceMethod("sendAtlas", &SpoutAtlasOutput::SendAtlas),
+            InstanceMethod("release", &SpoutAtlasOutput::Release),
+            InstanceMethod("isInitialized", &SpoutAtlasOutput::IsInitialized),
+            InstanceMethod("getSenderNames", &SpoutAtlasOutput::GetSenderNames),
+            InstanceMethod("getAdapterIndex", &SpoutAtlasOutput::GetAdapterIndex),
+        });
+
+        exports.Set("SpoutAtlasOutput", func);
+        return exports;
+    }
+
+    SpoutAtlasOutput(const Napi::CallbackInfo& info)
+        : Napi::ObjectWrap<SpoutAtlasOutput>(info)
+        , m_initialized(false)
+        , m_adapterIndex(0)
+    {
+        m_adapterIndex = FindDiscreteGpuAdapter();
+        CreateExternalDevice();
+        // Unlike SpoutOutput there is NO CPU fallback here — the atlas path
+        // exists purely for zero-copy fan-out. Without an external device
+        // the caller should fall back to per-slice CPU sends.
+        if (m_extDevice && m_extDevice1) {
+            m_initialized = true;
+            printf("[SpoutAddon] AtlasOutput: external device ready on adapter %d\n", m_adapterIndex);
+        } else {
+            printf("[SpoutAddon] AtlasOutput: external device creation FAILED — atlas fan-out unavailable\n");
+        }
+    }
+
+    ~SpoutAtlasOutput() {
+        Cleanup();
+    }
+
+private:
+    struct AtlasSender {
+        spoutDX spout;
+        ComPtr<ID3D11Texture2D> texture;   // BGRA staging texture, slice-sized
+        unsigned int w = 0;
+        unsigned int h = 0;
+        unsigned int x = 0;                // top-left within the atlas
+        unsigned int y = 0;
+        bool opened = false;               // spout.OpenDirectX11 succeeded
+    };
+
+    ComPtr<ID3D11Device> m_extDevice;
+    ComPtr<ID3D11Device1> m_extDevice1;
+    ComPtr<ID3D11DeviceContext> m_extContext;
+    std::map<std::string, std::unique_ptr<AtlasSender>> m_senders;
+    bool m_initialized;
+    int m_adapterIndex;
+
+    void CreateExternalDevice() {
+        ComPtr<IDXGIFactory2> factory;
+        HRESULT hr = CreateDXGIFactory(IID_PPV_ARGS(&factory));
+        if (FAILED(hr)) return;
+
+        ComPtr<IDXGIAdapter> adapter;
+        hr = factory->EnumAdapters(m_adapterIndex, &adapter);
+        if (FAILED(hr)) {
+            printf("[SpoutAddon] AtlasOutput: EnumAdapters(%d) failed, falling back to 0\n", m_adapterIndex);
+            factory->EnumAdapters(0, &adapter);
+        }
+
+        D3D_FEATURE_LEVEL featureLevels[] = { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0 };
+        D3D_FEATURE_LEVEL actualLevel;
+
+        hr = D3D11CreateDevice(
+            adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr,
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            featureLevels, ARRAYSIZE(featureLevels),
+            D3D11_SDK_VERSION,
+            &m_extDevice, &actualLevel, &m_extContext);
+        if (FAILED(hr)) {
+            printf("[SpoutAddon] AtlasOutput: D3D11CreateDevice failed: 0x%08lx\n", hr);
+            return;
+        }
+
+        hr = m_extDevice->QueryInterface(IID_PPV_ARGS(&m_extDevice1));
+        if (FAILED(hr)) {
+            printf("[SpoutAddon] AtlasOutput: ID3D11Device1 not available: 0x%08lx\n", hr);
+            m_extDevice.Reset();
+            m_extContext.Reset();
+        }
+    }
+
+    bool EnsureSenderTexture(AtlasSender& s, unsigned int w, unsigned int h) {
+        if (s.texture && s.w == w && s.h == h) return true;
+
+        s.texture.Reset();
+        D3D11_TEXTURE2D_DESC td = {};
+        td.Width = w;
+        td.Height = h;
+        td.MipLevels = 1;
+        td.ArraySize = 1;
+        td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;   // Chromium OSR atlas format
+        td.SampleDesc.Count = 1;
+        td.Usage = D3D11_USAGE_DEFAULT;
+        td.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+
+        HRESULT hr = m_extDevice->CreateTexture2D(&td, nullptr, &s.texture);
+        if (FAILED(hr)) {
+            printf("[SpoutAddon] AtlasOutput: CreateTexture2D %ux%u failed: 0x%08lx\n", w, h, hr);
+            s.texture.Reset();
+            s.w = s.h = 0;
+            return false;
+        }
+        s.w = w;
+        s.h = h;
+        return true;
+    }
+
+    /**
+     * configure(regions) — regions: [{ name, x, y, w, h }] in atlas pixels
+     * (top-left origin, matching the captured top-down atlas texture).
+     * Creates/resizes per-name senders, drops senders no longer listed.
+     */
+    Napi::Value Configure(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+
+        if (!m_initialized) {
+            return Napi::Boolean::New(env, false);
+        }
+        if (info.Length() < 1 || !info[0].IsArray()) {
+            Napi::TypeError::New(env, "Array of regions expected").ThrowAsJavaScriptException();
+            return Napi::Boolean::New(env, false);
+        }
+
+        Napi::Array regions = info[0].As<Napi::Array>();
+        std::map<std::string, bool> wanted;
+
+        for (uint32_t i = 0; i < regions.Length(); i++) {
+            Napi::Value v = regions.Get(i);
+            if (!v.IsObject()) continue;
+            Napi::Object r = v.As<Napi::Object>();
+
+            std::string name = r.Get("name").ToString().Utf8Value();
+            unsigned int x = r.Get("x").ToNumber().Uint32Value();
+            unsigned int y = r.Get("y").ToNumber().Uint32Value();
+            unsigned int w = r.Get("w").ToNumber().Uint32Value();
+            unsigned int h = r.Get("h").ToNumber().Uint32Value();
+            if (name.empty() || w == 0 || h == 0) continue;
+            if (wanted.count(name)) {
+                printf("[SpoutAddon] AtlasOutput: duplicate sender name '%s' — skipping\n", name.c_str());
+                continue;
+            }
+            wanted[name] = true;
+
+            auto it = m_senders.find(name);
+            if (it == m_senders.end()) {
+                auto s = std::make_unique<AtlasSender>();
+                // Share OUR device so SendTexture + CopySubresourceRegion
+                // operate on the same device as the opened atlas resource.
+                if (s->spout.OpenDirectX11(m_extDevice.Get())) {
+                    s->spout.SetSenderName(name.c_str());
+                    s->opened = true;
+                    printf("[SpoutAddon] AtlasOutput: sender '%s' created (%ux%u @ %u,%u)\n",
+                        name.c_str(), w, h, x, y);
+                } else {
+                    printf("[SpoutAddon] AtlasOutput: OpenDirectX11 failed for sender '%s'\n", name.c_str());
+                }
+                it = m_senders.emplace(name, std::move(s)).first;
+            }
+
+            AtlasSender& s = *it->second;
+            if (s.w != w || s.h != h) {
+                EnsureSenderTexture(s, w, h);
+            }
+            s.x = x;
+            s.y = y;
+        }
+
+        // Drop senders that are no longer configured
+        for (auto it = m_senders.begin(); it != m_senders.end(); ) {
+            if (!wanted.count(it->first)) {
+                printf("[SpoutAddon] AtlasOutput: sender '%s' removed\n", it->first.c_str());
+                ReleaseSenderEntry(*it->second);
+                it = m_senders.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
+        return Napi::Boolean::New(env, true);
+    }
+
+    /**
+     * sendAtlas(handleBuffer, atlasW, atlasH) — open the atlas shared
+     * handle once, sub-copy each configured region into its sender's
+     * staging texture, SendTexture each. Returns # of senders fed.
+     */
+    Napi::Value SendAtlas(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+
+        if (!m_initialized || m_senders.empty()) {
+            return Napi::Number::New(env, 0);
+        }
+        if (info.Length() < 1 || !info[0].IsBuffer()) {
+            Napi::TypeError::New(env, "Buffer argument expected (shared texture handle)")
+                .ThrowAsJavaScriptException();
+            return Napi::Number::New(env, 0);
+        }
+
+        auto handleBuffer = info[0].As<Napi::Buffer<uint8_t>>();
+        if (handleBuffer.Length() < sizeof(HANDLE)) {
+            return Napi::Number::New(env, 0);
+        }
+        HANDLE sharedHandle = *reinterpret_cast<HANDLE*>(handleBuffer.Data());
+        if (!sharedHandle) {
+            return Napi::Number::New(env, 0);
+        }
+
+        ComPtr<ID3D11Texture2D> atlasTexture;
+        HRESULT hr = m_extDevice1->OpenSharedResource1(
+            sharedHandle, IID_PPV_ARGS(&atlasTexture));
+        if (FAILED(hr)) {
+            hr = m_extDevice->OpenSharedResource(
+                sharedHandle, IID_PPV_ARGS(&atlasTexture));
+            if (FAILED(hr)) {
+                static int errCount = 0;
+                if (errCount++ < 5)
+                    printf("[SpoutAddon] AtlasOutput: OpenSharedResource failed: 0x%08lx\n", hr);
+                return Napi::Number::New(env, 0);
+            }
+        }
+
+        D3D11_TEXTURE2D_DESC atlasDesc;
+        atlasTexture->GetDesc(&atlasDesc);
+
+        static int diagCount = 0;
+        if (diagCount < 3) {
+            printf("[SpoutAddon] AtlasOutput: atlas %ux%u format=%u, %zu sender(s)\n",
+                atlasDesc.Width, atlasDesc.Height, atlasDesc.Format, m_senders.size());
+            diagCount++;
+        }
+
+        int sent = 0;
+        for (auto& [name, sp] : m_senders) {
+            AtlasSender& s = *sp;
+            if (!s.opened || !s.texture) continue;
+
+            // Region must lie fully inside the captured atlas. During a
+            // layout change the OSR window resize races configure(); skip
+            // out-of-bounds regions for a frame rather than send garbage.
+            if (s.x + s.w > atlasDesc.Width || s.y + s.h > atlasDesc.Height) {
+                static int skipCount = 0;
+                if (skipCount++ < 5)
+                    printf("[SpoutAddon] AtlasOutput: region '%s' %u,%u %ux%u outside atlas %ux%u — skipped\n",
+                        name.c_str(), s.x, s.y, s.w, s.h, atlasDesc.Width, atlasDesc.Height);
+                continue;
+            }
+
+            D3D11_BOX box;
+            box.left = s.x;
+            box.top = s.y;
+            box.front = 0;
+            box.right = s.x + s.w;
+            box.bottom = s.y + s.h;
+            box.back = 1;
+            m_extContext->CopySubresourceRegion(
+                s.texture.Get(), 0, 0, 0, 0,
+                atlasTexture.Get(), 0, &box);
+
+            if (s.spout.SendTexture(s.texture.Get())) {
+                sent++;
+            }
+        }
+        m_extContext->Flush();
+
+        return Napi::Number::New(env, sent);
+    }
+
+    Napi::Value Release(const Napi::CallbackInfo& info) {
+        Cleanup();
+        return info.Env().Undefined();
+    }
+
+    Napi::Value IsInitialized(const Napi::CallbackInfo& info) {
+        return Napi::Boolean::New(info.Env(), m_initialized);
+    }
+
+    Napi::Value GetSenderNames(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        Napi::Array result = Napi::Array::New(env, m_senders.size());
+        uint32_t i = 0;
+        for (auto& [name, s] : m_senders) {
+            result.Set(i++, Napi::String::New(env, name));
+        }
+        return result;
+    }
+
+    Napi::Value GetAdapterIndex(const Napi::CallbackInfo& info) {
+        return Napi::Number::New(info.Env(), m_adapterIndex);
+    }
+
+    void ReleaseSenderEntry(AtlasSender& s) {
+        if (s.opened) {
+            s.spout.ReleaseSender();
+            // CloseDirectX11 won't release OUR device — spoutDX only frees
+            // a device it created itself.
+            s.spout.CloseDirectX11();
+            s.opened = false;
+        }
+        s.texture.Reset();
+    }
+
+    void Cleanup() {
+        for (auto& [name, s] : m_senders) {
+            ReleaseSenderEntry(*s);
+        }
+        if (!m_senders.empty()) {
+            printf("[SpoutAddon] AtlasOutput: released %zu sender(s)\n", m_senders.size());
+        }
+        m_senders.clear();
+        m_extDevice.Reset();
+        m_extDevice1.Reset();
+        m_extContext.Reset();
+        m_initialized = false;
+    }
+};
+
+
+// ============================================================
 // Spout Receiver
 //
 // Uses SpoutDX's own internal D3D11 device + SetAdapterAuto(true)
@@ -761,6 +1105,7 @@ Napi::Value GetGpuInfo(const Napi::CallbackInfo& info) {
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
     SpoutOutput::Init(env, exports);
+    SpoutAtlasOutput::Init(env, exports);
     SpoutReceiver::Init(env, exports);
     exports.Set("listSenders", Napi::Function::New(env, ListSenders));
     exports.Set("getGpuInfo", Napi::Function::New(env, GetGpuInfo));

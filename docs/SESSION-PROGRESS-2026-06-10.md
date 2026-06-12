@@ -71,11 +71,16 @@ texture (existing warp/crop/color/blend shader, per-tile viewport+scissor).
 - **Verified (Electron):** two half-width slices → atlas 1922×1080, left
   tile correct red crop, right tile correct blue crop, gap black (no bleed).
 
-### Phase 2 — IN PROGRESS (native + wiring) — NOTHING WRITTEN YET
-Investigation done; no code written. Next steps in order:
+### Phase 2 — 2a/2b/2c DONE (2026-06-11) — 2d (verify) REMAINING
+2a, 2b, 2c are written, compiled (addon builds clean via
+`electron/native: npm run build`), Vite build green, and committed.
+What remains is 2d: run it against a real Spout receiver and resolve
+the per-tile vertical flip (see the ⚠️ below).
 
-**2a. `SpoutAtlasOutput` C++ class** (add to `electron/native/spout_addon.cpp`,
-no CMake change — same .cpp).
+**2a. `SpoutAtlasOutput` C++ class** — DONE (in `spout_addon.cpp`,
+registered in `Init`; `configure(regions)` + `sendAtlas(handle)` +
+`release()`; per-name BGRA staging textures on one shared external
+device; out-of-bounds regions skipped during resize races).
 - Owns ONE external D3D11 device on the discrete GPU (mirror
   `SpoutOutput::CreateExternalDevice` / `FindDiscreteGpuAdapter`).
 - Holds `std::map<name, unique_ptr<Sender>>` where each Sender =
@@ -93,7 +98,11 @@ no CMake change — same .cpp).
   (Chromium OSR is B8G8R8A8). No keyed-mutex acquire (single-output path
   doesn't either).
 
-**2b. main.js orchestration**
+**2b. main.js orchestration** — DONE (`texshare_start_atlas`/`stop_atlas`
+handlers, atlas OSR window loading `?mode=slice-atlas` with its own
+paint pump, `texshare_atlas_layout` → `configure()` + window resize,
+paint → `sendAtlas`, teardown in `closeAuxiliaryWindows`, renderer
+status via new `texshare-atlas-status` channel). Original plan:
 - `texshare_start_atlas` (from editor when ≥1 spout/syphon sender slice):
   create `new addon.SpoutAtlasOutput()` + a hidden OSR window loading
   `?mode=slice-atlas` (mirror `createSpoutOsrWindow`: `offscreen:{
@@ -105,7 +114,11 @@ no CMake change — same .cpp).
   each paint (pool exhaustion guard, like single-output).
 - `texshare_stop_atlas` + teardown in `closeAuxiliaryWindows`.
 
-**2c. Renderer routing** (`Canvas.svelte`)
+**2c. Renderer routing** (`Canvas.svelte`) — DONE (reactive lifecycle on
+the sender-slice set via `isAtlasSenderSlice`, independent of the master
+`spoutEnabled` toggle; per-slice CPU readback+send skipped when
+`atlasFanoutActive`; `texshare-atlas-status` listener with CPU fallback
+when the atlas dies). Original plan:
 - When atlas is active, SKIP `renderSlicePixelsAsync` + `spout_send_image`
   for every spout/syphon SENDER slice (NDI slices keep the async readback).
 - Drive `texshare_start_atlas`/`stop_atlas` from the sender-slice set
