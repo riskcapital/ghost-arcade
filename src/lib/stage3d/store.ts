@@ -418,8 +418,20 @@ export interface Stage3DRendererControls {
    *  Reads the default framebuffer synchronously right after the scene
    *  render — the only reliable window with preserveDrawingBuffer off. */
   captureFrame: () => Promise<{ data: Uint8Array; width: number; height: number }>;
+  /** Set the camera field of view in degrees (clamped 15–120). Wide
+   *  FOVs are how you get the full drama of the Sphere dome in frame. */
+  setFov: (fov: number) => void;
+  /** Move the camera + orbit target vertically (dir=+1 up, -1 down).
+   *  Step scales with distance to target so it feels consistent
+   *  zoomed in or out. */
+  nudgeElevation: (dir: 1 | -1) => void;
 }
 export const stage3DRendererControls = writable<Stage3DRendererControls | null>(null);
+
+/** Live camera FOV in degrees — written by the renderer whenever the
+ *  FOV changes (toolbar slider, Shift+scroll, Demo Reel drive) so the
+ *  toolbar slider stays in sync no matter who changed it. */
+export const stage3DCameraFov = writable(50);
 
 /** Venue scenery pieces discovered by the renderer when it builds a
  *  venue, published here so the Stage3DDesigner tree can list them and

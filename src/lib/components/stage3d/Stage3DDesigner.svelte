@@ -17,6 +17,7 @@
     selectedStage3DTargets,
     stage3DGizmoMode,
     stage3DRendererControls,
+    stage3DCameraFov,
     stage3DSceneryList,
     historyVersion,
     parseSelection,
@@ -414,6 +415,15 @@
 
     <button class="tbtn" onclick={() => $stage3DRendererControls?.topCamera()}>⬓ Top</button>
     <button class="tbtn" onclick={() => $stage3DRendererControls?.frameCamera()}>⊡ Frame</button>
+    <button class="tbtn cam-elev" onclick={() => $stage3DRendererControls?.nudgeElevation(1)} title="Camera up (↑ in viewport; right-drag also pans)">▲</button>
+    <button class="tbtn cam-elev" onclick={() => $stage3DRendererControls?.nudgeElevation(-1)} title="Camera down (↓ in viewport)">▼</button>
+    <div class="fov-ctl" title="Field of view — go wide to swallow the whole Sphere. Shift+scroll in the viewport works too.">
+      <span class="fov-label">FOV</span>
+      <input type="range" min="15" max="120" step="1"
+        value={$stage3DCameraFov}
+        oninput={(e) => $stage3DRendererControls?.setFov(parseFloat((e.target as HTMLInputElement).value))} />
+      <span class="fov-val">{Math.round($stage3DCameraFov)}°</span>
+    </div>
     <button class="tbtn" onclick={() => { $stage3DRendererControls?.reload(); toast('Scene reloaded'); }} title="Rebuild venue + screens">⟳ Reload</button>
     <button
       class="tbtn rec-btn"
@@ -701,6 +711,34 @@
     white-space: nowrap;
   }
   .tbtn:hover { border-color: #4af2ff; color: #4af2ff; }
+  .cam-elev { padding: 7px 8px; font-size: 10px; }
+  .fov-ctl {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px;
+    height: 32px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+  }
+  .fov-ctl .fov-label {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: rgba(255, 255, 255, 0.55);
+  }
+  .fov-ctl input[type='range'] {
+    width: 84px;
+    accent-color: #4af2ff;
+  }
+  .fov-ctl .fov-val {
+    font-size: 10px;
+    color: #4af2ff;
+    font-variant-numeric: tabular-nums;
+    min-width: 30px;
+    text-align: right;
+  }
   .tbtn:disabled { opacity: 0.35; cursor: not-allowed; }
   .tbtn:disabled:hover { border-color: rgba(255, 255, 255, 0.08); color: #e9edf4; }
   .tbtn.danger:hover { border-color: #ff5cb8; color: #ff5cb8; }
