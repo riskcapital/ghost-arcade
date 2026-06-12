@@ -90,6 +90,9 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'native_renderer_prefetch_media', 'native_renderer_set_decode_policy',
   // WLED — UDP DRGB packets to LED controllers on the LAN
   'wled_send_frame', 'wled_close_socket',
+  // Ableton Link — LAN tempo/beat sync (session lives in main; the
+  // renderer polls state and bridges tempo into the master BPM).
+  'link_enable', 'link_disable', 'link_set_tempo', 'link_get_state',
 ]);
 
 // Expose a bridge that mirrors Tauri's invoke() API

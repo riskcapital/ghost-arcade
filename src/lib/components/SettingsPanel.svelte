@@ -49,6 +49,7 @@
   let isCheckingUpdate = false;
   import { midiStore } from '../midi/midiStore';
   import { midiManager } from '../midi/midiManager';
+  import { abletonLink } from '../sync/abletonLink';
   import { oscStore } from '../osc/oscStore';
   import MediaPipePanel from './MediaPipePanel.svelte';
   // LicensePanel + tier-related imports removed — OSS build has no license UI.
@@ -1654,6 +1655,40 @@
                     <option value={device.id}>{device.name}</option>
                   {/each}
                 </select>
+              </div>
+            {/if}
+
+            <!-- Ableton Link — WiFi/LAN tempo session with DAWs, DJ
+                 software, and other Link apps. Tempo flows both ways;
+                 a running MIDI clock-in takes priority over Link. -->
+            <h3 style="margin-top: 18px;">Ableton Link</h3>
+
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="label-text">Enable Ableton Link</span>
+                <span class="label-hint">Join the tempo session on your network — Serato, Rekordbox, Ableton Live, Resolume and other Link apps sync automatically</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox"
+                  checked={$abletonLink.enabled}
+                  onchange={(e) => (e.target as HTMLInputElement).checked ? abletonLink.enable() : abletonLink.disable()}
+                />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            {#if $abletonLink.enabled}
+              <div class="setting-row" style="padding-left: 16px;">
+                <div class="setting-label">
+                  <span class="label-text">Session</span>
+                  <span class="label-hint">{$abletonLink.peers} peer{$abletonLink.peers === 1 ? '' : 's'} · {$abletonLink.tempo.toFixed(1)} BPM{$midiStore.clockInEnabled && $midiStore.clockInRunning ? ' · deferring to MIDI clock-in' : ''}</span>
+                </div>
+                <span class="clock-status-dot" class:on={$abletonLink.peers > 0}></span>
+              </div>
+            {/if}
+            {#if $abletonLink.error}
+              <div class="setting-row" style="padding-left: 16px;">
+                <span class="label-hint">Link unavailable: {$abletonLink.error}</span>
               </div>
             {/if}
 

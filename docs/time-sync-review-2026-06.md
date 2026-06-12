@@ -26,10 +26,16 @@ per 4 beats, 4 = sixteenths) instead of Hz.
 
 ## Gaps vs Resolume / VDMX, ranked for DJ workflows
 
-1. **Ableton Link** (HIGH) — the modern way DJs/DAWs share tempo over
-   WiFi. Needs a native addon wrapping ableton/link (C++), ~150 lines
-   TS bridge + small CMake rule; tempo bidirectional with
-   `audioStore.manualBPM`.
+1. **Ableton Link** — ✅ SHIPPED 2026-06-12. Native addon
+   (`electron/native/link_addon.cpp`, vendor at `vendor/link`),
+   main-process singleton + IPC, renderer bridge
+   (`src/lib/sync/abletonLink.ts`) polling at 4Hz with local phase
+   extrapolation; tempo bidirectional with `audioStore.manualBPM`
+   (running MIDI clock-in takes priority). Toggle in Settings → MIDI.
+   Verified: two-peer discovery, tempo propagation both directions.
+   ⚠️ LICENSING: vendor is GPLv2 — request Ableton's no-cost
+   commercial Link license (link-devs@ableton.com) BEFORE shipping a
+   release with Link enabled.
 2. **MIDI clock mirror/throughput** (HIGH, trivial) — re-send incoming
    0xF8 to a second output device (lighting rig, second machine).
    ~30 lines in midiManager + a checkbox.

@@ -852,6 +852,11 @@
       if (ok) console.log('[MIDI] Ready — devices detected');
     });
 
+    // Rejoin the Ableton Link session if the user had it enabled last
+    // run (no-op otherwise; lazy — doesn't load the native addon until
+    // the flag is set).
+    void import('./lib/sync/abletonLink').then(({ abletonLink }) => abletonLink.restore());
+
     // Auto-connect to built-in WebSocket server (Tauri desktop or dev with server running)
     // Try connecting after a short delay to let the Rust WS server start
     let autoConnectTimeout: ReturnType<typeof setTimeout> | null = null;
