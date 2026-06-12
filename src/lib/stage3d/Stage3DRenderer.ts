@@ -21,7 +21,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import { get } from 'svelte/store';
-import { stage3dScene, selectedStage3DNodeId, selectedStage3DTargets, stage3DGizmoMode, parseSelection, stage3DRendererControls, stage3DSceneryList, sceneryLabel } from './store';
+import { stage3dScene, selectedStage3DNodeId, selectedStage3DTargets, stage3DGizmoMode, parseSelection, stage3DRendererControls, stage3DSceneryList, sceneryLabel, stage3DCameraFov } from './store';
 import { buildVenue, type VenueBuild } from './venues';
 import { buildUserElement } from './elementTypes';
 import { stageEffectsRuntime } from '../stores/stageEffects';
@@ -545,6 +545,7 @@ export class Stage3DRenderer {
   private bound = {
     pointerDown: this.onPointerDown.bind(this),
     keyDown: this.onKeyDown.bind(this),
+    wheel: this.onWheel.bind(this),
     transformDraggingChanged: this.onTransformDraggingChanged.bind(this),
     transformChange: this.onTransformChange.bind(this),
   };
@@ -593,6 +594,16 @@ export class Stage3DRenderer {
     this.controls.minPolarAngle = 0.05;
     this.controls.maxPolarAngle = Math.PI * 0.95;
     this.controls.target.set(0, 5, 0);
+    // Screen-space panning so a vertical drag moves the camera straight
+    // up/down instead of sliding along the ground plane — essential for
+    // climbing inside the Sphere dome. Middle-drag pans too (the wheel
+    // already owns dolly), alongside the default right-drag pan.
+    this.controls.screenSpacePanning = true;
+    this.controls.mouseButtons = {
+      LEFT: THREE.MOUSE.ROTATE,
+      MIDDLE: THREE.MOUSE.PAN,
+      RIGHT: THREE.MOUSE.PAN,
+    };
 
     this.transformControls = new TransformControls(this.camera, canvas);
     const helper = (this.transformControls as any).getHelper?.() ?? (this.transformControls as any);
@@ -602,6 +613,9 @@ export class Stage3DRenderer {
 
     canvas.addEventListener('pointerdown', this.bound.pointerDown);
     window.addEventListener('keydown', this.bound.keyDown);
+    // Shift+scroll = FOV (capture phase so OrbitControls' own wheel
+    // listener doesn't also dolly on the same gesture).
+    canvas.addEventListener('wheel', this.bound.wheel, { capture: true, passive: false });
 
     this.fallbackTexture = new THREE.DataTexture(new Uint8Array([12, 10, 18, 255]), 1, 1);
     this.fallbackTexture.colorSpace = THREE.SRGBColorSpace;
@@ -620,6 +634,8 @@ export class Stage3DRenderer {
       }),
       setCameraState: (s) => { this.drivenCamera = s; },
       releaseCamera:  () => { this.drivenCamera = null; },
+      setFov:         (f) => this.setFov(f),
+      nudgeElevation: (dir) => this.nudgeElevation(dir),
       captureFrame:   () => new Promise((resolve, reject) => {
         if (this.pendingCapture) this.pendingCapture.reject(new Error('superseded'));
         this.pendingCapture = { resolve, reject };
@@ -801,7 +817,12 @@ export class Stage3DRenderer {
       const d = this.drivenCamera;
       this.camera.position.set(d.position[0], d.position[1], d.position[2]);
       this.controls.target.set(d.target[0], d.target[1], d.target[2]);
-      this.camera.fov = d.fov;
+      if (this.camera.fov !== d.fov) {
+        this.camera.fov = d.fov;
+        // Keep the toolbar FOV slider tracking reel playback (write
+        // only on change so we don't spam the store at 60Hz).
+        stage3DCameraFov.set(d.fov);
+      }
       this.camera.lookAt(this.controls.target);
       this.camera.updateProjectionMatrix();
     } else {
@@ -1154,6 +1175,7 @@ export class Stage3DRenderer {
     this.transformControls.dispose();
     this.canvas.removeEventListener('pointerdown', this.bound.pointerDown);
     window.removeEventListener('keydown', this.bound.keyDown);
+    this.canvas.removeEventListener('wheel', this.bound.wheel, { capture: true } as EventListenerOptions);
     this.fallbackTexture.dispose();
     this.envTexture?.dispose();
     this.pmrem?.dispose();
@@ -1792,6 +1814,54 @@ export class Stage3DRenderer {
     else if (k === 'd') { this.duplicateSelection(); }
     else if (event.key === 'Delete' || event.key === 'Backspace') { this.deleteSelection(); }
     else if (event.key === 'Escape') { this.selectNode(null); }
+    // Camera flight: ↑/↓ raise/lower the rig, ←/→ truck sideways.
+    // Handled here (not OrbitControls.listenToKeyEvents) so typing in
+    // panel inputs never pans, thanks to the tag guard above.
+    else if (event.key === 'ArrowUp') { event.preventDefault(); this.nudgeElevation(1); }
+    else if (event.key === 'ArrowDown') { event.preventDefault(); this.nudgeElevation(-1); }
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      this.truck(event.key === 'ArrowLeft' ? -1 : 1);
+    }
+  }
+
+  /** Camera FOV in degrees — clamped to a usable creative range. Wide
+   *  (90–120°) is how you swallow the whole Sphere dome in one frame;
+   *  narrow (15–25°) gives a compressed long-lens look. */
+  private setFov(fov: number): void {
+    this.camera.fov = Math.max(15, Math.min(120, fov));
+    this.camera.updateProjectionMatrix();
+    stage3DCameraFov.set(this.camera.fov);
+  }
+
+  /** Move camera + orbit target straight up/down in world space. Step
+   *  scales with distance to target so the move feels the same whether
+   *  you're inside the dome or framing the whole venue. */
+  private nudgeElevation(dir: 1 | -1): void {
+    const dist = this.camera.position.distanceTo(this.controls.target);
+    const step = Math.max(0.5, dist * 0.06) * dir;
+    this.camera.position.y += step;
+    this.controls.target.y += step;
+  }
+
+  /** Truck sideways along the camera's right vector (ground-parallel). */
+  private truck(dir: 1 | -1): void {
+    const dist = this.camera.position.distanceTo(this.controls.target);
+    const step = Math.max(0.5, dist * 0.06) * dir;
+    const right = new THREE.Vector3();
+    this.camera.getWorldDirection(right);
+    right.cross(this.camera.up).normalize();
+    this.camera.position.addScaledVector(right, step);
+    this.controls.target.addScaledVector(right, step);
+  }
+
+  /** Shift+scroll adjusts FOV instead of dollying. Capture-phase with
+   *  stopPropagation so OrbitControls' wheel handler doesn't also fire. */
+  private onWheel(event: WheelEvent): void {
+    if (!event.shiftKey) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.setFov(this.camera.fov + (event.deltaY > 0 ? 2 : -2));
   }
 
   private onTransformDraggingChanged(event: any): void {
