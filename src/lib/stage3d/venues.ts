@@ -10,7 +10,6 @@
 // adaptations from the STAGEFORGE designer reference.
 
 import * as THREE from 'three';
-import { MAT, buildTruss } from './elementTypes';
 import type { Stage3DVenue } from './types';
 
 export interface VenueBuild {
@@ -89,6 +88,61 @@ function mesh(geo: THREE.BufferGeometry, mat: THREE.Material): THREE.Mesh {
   m.castShadow = true;
   m.receiveShadow = true;
   return m;
+}
+
+/** Tag an object with a sceneryId so the renderer's raycast picks it
+ *  up and the designer tree lists it as a movable/hidable piece. */
+function tagged(obj: THREE.Object3D, id: string): THREE.Object3D {
+  obj.userData.sceneryId = id;
+  return obj;
+}
+
+/** Wrap a leaf mesh in a sceneryId-tagged group (groups gizmo-attach
+ *  cleanly; bare meshes with shared geometry don't). */
+function wrapped(obj: THREE.Object3D, id: string): THREE.Group {
+  const g = new THREE.Group();
+  g.userData.sceneryId = id;
+  g.add(obj);
+  return g;
+}
+
+/** Stage PAR can — compact fixture for club-scale rigs. Same look as
+ *  the festival deck PARs but reusable at any position/aim. */
+function makePar(x: number, y: number, z: number, tiltX = -0.5): THREE.Group {
+  const g = new THREE.Group();
+  const can = mesh(
+    new THREE.CylinderGeometry(0.22, 0.22, 0.42, 12),
+    new THREE.MeshStandardMaterial({ color: 0x0c0e12, roughness: 0.6, metalness: 0.6 }),
+  );
+  can.rotation.x = tiltX;
+  g.add(can);
+  const lens = mesh(
+    new THREE.CircleGeometry(0.2, 14),
+    new THREE.MeshStandardMaterial({ color: 0x06070b, roughness: 0.2, metalness: 0.5 }),
+  );
+  lens.position.set(0, Math.cos(tiltX) * 0.22, Math.sin(-tiltX) * 0.22);
+  lens.rotation.x = tiltX - Math.PI / 2;
+  g.add(lens);
+  g.position.set(x, y, z);
+  return g;
+}
+
+/** Festival-style stage deck + polished edge trim, reused by every
+ *  venue that has a band/DJ stage so they all share the same premium
+ *  finish (dark deck, brushed-metal lip). */
+function makeDeck(w: number, d: number, h: number, z: number): THREE.Group {
+  const g = new THREE.Group();
+  const deckMat = new THREE.MeshStandardMaterial({ color: 0x111419, roughness: 0.7, metalness: 0.2 });
+  const deck = mesh(new THREE.BoxGeometry(w, h, d), deckMat);
+  deck.position.set(0, h / 2, z);
+  g.add(deck);
+  const edge = mesh(
+    new THREE.BoxGeometry(w + 0.2, 0.14, d + 0.2),
+    new THREE.MeshStandardMaterial({ color: 0x2a3138, roughness: 0.4, metalness: 0.8 }),
+  );
+  edge.position.set(0, h + 0.07, z);
+  g.add(edge);
+  return g;
 }
 
 // ── Festival (concert-stage.html port) ─────────────────────────────────
@@ -442,87 +496,287 @@ function backWall(w: number, h: number, z: number): THREE.Mesh {
   return wall;
 }
 
+/** Arena — indoor bowl in an end-stage concert configuration. Raked
+ *  lower + upper seating bowls (same stepped-tier builder as the
+ *  Sphere) wrap the floor; the stage gets the festival-grade deck,
+ *  truss rig with movers, flown line arrays, and a backdrop so the
+ *  LED wall reads against a definite surface. */
 function buildArena(): VenueBuild {
   const group = new THREE.Group();
-  const r = room(180, 180, 55, 0x0d1016, 0x0a0c10);
-  group.add(r.group);
-  group.add(backWall(60, 30, -11));
-  const sm = new THREE.MeshStandardMaterial({ color: 0x14181f, roughness: 0.9 });
-  for (let ri = 0; ri < 3; ri++) {
-    const ring = mesh(new THREE.TorusGeometry(60 + ri * 12, 5, 4, 40), sm);
-    ring.rotation.x = Math.PI / 2;
-    ring.position.y = 4 + ri * 4;
-    ring.scale.z = 0.4;
-    group.add(ring);
+
+  const STAGE_Z = -8;        // deck center
+  const BOWL_ARC_Z = -14;    // seating curves around the stage end
+
+  // ── Shell — cylindrical wall + ceiling disk instead of a giant box,
+  //    so every sightline ends on a curved arena wall, not a corner. ──
+  const shellMat = new THREE.MeshStandardMaterial({
+    color: 0x0c0f15, roughness: 0.95, metalness: 0.05, side: THREE.BackSide,
+  });
+  const shell = new THREE.Mesh(new THREE.CylinderGeometry(86, 86, 30, 48, 1, true), shellMat);
+  shell.position.y = 15;
+  shell.castShadow = false;
+  shell.receiveShadow = true;
+  group.add(shell);
+  const ceiling = new THREE.Mesh(
+    new THREE.CircleGeometry(86, 48),
+    new THREE.MeshStandardMaterial({ color: 0x080a0f, roughness: 1, metalness: 0 }),
+  );
+  ceiling.rotation.x = Math.PI / 2;
+  ceiling.position.y = 30;
+  ceiling.castShadow = false;
+  group.add(ceiling);
+
+  const floor = mesh(
+    new THREE.CircleGeometry(86, 48),
+    new THREE.MeshStandardMaterial({ color: 0x0a0c10, roughness: 0.55, metalness: 0.25 }),
+  );
+  floor.rotation.x = -Math.PI / 2;
+  floor.receiveShadow = true;
+  group.add(floor);
+
+  // ── Seating — lower + upper bowls with a concourse gap, arcing
+  //    around the stage so the whole room faces the show. ──
+  const lower = buildBowlTier(BOWL_ARC_Z, 30, 0.4, 11, 1.7, 0.78, 78);
+  group.add(wrapped(lower, 'bowl-lower'));
+  const upperStart = 30 + 11 * 1.7 + 3.2; // concourse walkway between bowls
+  const upper = buildBowlTier(BOWL_ARC_Z, upperStart, 0.4 + 11 * 0.78 + 1.6, 12, 1.7, 0.88, 86);
+  group.add(wrapped(upper, 'bowl-upper'));
+
+  // ── Stage — festival-grade deck + riser + backdrop ──
+  group.add(tagged(makeDeck(32, 16, 1.4, STAGE_Z), 'deck'));
+  const riser = mesh(
+    new THREE.BoxGeometry(9, 1.2, 6),
+    new THREE.MeshStandardMaterial({ color: 0x111419, roughness: 0.7, metalness: 0.2 }),
+  );
+  riser.position.set(0, 2.0, STAGE_Z - 4);
+  group.add(wrapped(riser, 'riser'));
+  const backdrop = mesh(
+    new THREE.PlaneGeometry(40, 19),
+    new THREE.MeshStandardMaterial({ color: 0x000000, roughness: 1, metalness: 0, envMapIntensity: 0 }),
+  );
+  backdrop.position.set(0, 9.5, STAGE_Z - 9.5);
+  backdrop.castShadow = false;
+  backdrop.receiveShadow = false;
+  group.add(wrapped(backdrop, 'backdrop'));
+
+  // ── Flown rig — front + back trusses over the deck with movers ──
+  const RIG_Y = 17;
+  const frontTruss = festivalTruss(34);
+  frontTruss.position.set(0, RIG_Y, STAGE_Z + 7);
+  group.add(tagged(frontTruss, 'truss-front'));
+  const backTruss = festivalTruss(34);
+  backTruss.position.set(0, RIG_Y, STAGE_Z - 6);
+  group.add(tagged(backTruss, 'truss-back'));
+  for (let i = 0; i < 7; i++) {
+    const m = makeMover(-14 + i * 4.7, RIG_Y - 0.55, STAGE_Z + 7, 0.6, (i - 3) * 0.06);
+    m.userData.sceneryId = `mover-front-${i}`;
+    group.add(m);
+  }
+  for (let i = 0; i < 6; i++) {
+    const m = makeMover(-12.5 + i * 5, RIG_Y - 0.55, STAGE_Z - 6, -0.5, (i - 2.5) * 0.05);
+    m.userData.sceneryId = `mover-back-${i}`;
+    group.add(m);
   }
 
-  // Simple deck so the LED wall hangs over something.
-  const deckMat = new THREE.MeshStandardMaterial({ color: 0x111419, roughness: 0.7, metalness: 0.2 });
-  const deck = mesh(new THREE.BoxGeometry(30, 1.4, 14), deckMat);
-  deck.position.set(0, 0.7, -4);
-  group.add(deck);
+  // ── Flown line arrays L/R + delay hangs over the bowl ──
+  const paL = buildSpeakerStack();
+  paL.position.set(-19, 13.5, STAGE_Z + 9);
+  group.add(tagged(paL, 'pa-L'));
+  const paR = buildSpeakerStack();
+  paR.position.set(19, 13.5, STAGE_Z + 9);
+  group.add(tagged(paR, 'pa-R'));
+  for (const [sx, id] of [[-26, 'delay-L'], [26, 'delay-R']] as const) {
+    const delay = buildSpeakerStack();
+    delay.scale.setScalar(0.7);
+    delay.position.set(sx, 14.5, 22);
+    delay.rotation.y = sx < 0 ? 0.5 : -0.5;
+    group.add(tagged(delay, id));
+  }
 
-  const hemi = new THREE.HemisphereLight(0xbcd0ee, 0x10131a, 0.3);
-  const key = new THREE.DirectionalLight(0xffffff, 0.7);
-  key.position.set(40, 70, 40);
+  // ── Lighting — dim house, show-ready ──
+  const hemi = new THREE.HemisphereLight(0xa8c0e0, 0x0a0c12, 0.28);
+  const ambient = new THREE.AmbientLight(0xffffff, 0.07);
+  const key = new THREE.DirectionalLight(0xffffff, 0.65);
+  key.position.set(30, 42, 36);
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
   Object.assign(key.shadow.camera, { near: 1, far: 200, left: -80, right: 80, top: 80, bottom: -80 });
   key.shadow.camera.updateProjectionMatrix();
-  const fill = new THREE.DirectionalLight(0x9fb4d8, 0.22);
-  fill.position.set(-50, 30, 20);
+  key.shadow.bias = -0.0004;
+  const fill = new THREE.DirectionalLight(0x9fb4d8, 0.2);
+  fill.position.set(-50, 28, 20);
+  const rim = new THREE.DirectionalLight(0xbfd0ee, 0.16);
+  rim.position.set(0, 24, -60);
 
-  const lights = [hemi, key, fill];
+  const lights = [hemi, ambient, key, fill, rim];
   return {
     group,
-    floor: r.floor,
+    floor,
     lights,
     baselineIntensities: lights.map(l => l.intensity),
     keyLight: key,
     keyPositionBaseline: [key.position.x, key.position.y, key.position.z],
     keyColorBaseline: key.color.getHex(),
-    backgroundColor: '#07090d',
-    fogDensity: 0.006,
-    fogColor: '#07090d',
-    showGrid: true,
-    cameraPosition: [28, 22, 40],
-    cameraTarget: [0, 4, -2],
-    ledWall: { centerX: 0, centerY: 7.5, centerZ: -9, width: 22, height: 12 },
-    stageW: 30,
-    frontZ: 6,
+    backgroundColor: '#06080c',
+    fogDensity: 0.005,
+    fogColor: '#06080c',
+    showGrid: false,
+    // FOH-riser view from the arena floor — over the crowd, full rig
+    // and both PA hangs in frame, seating bowls rising at the edges.
+    // (Stay inside radius ~28 from the bowl arc center or the camera
+    // ends up embedded in the seating tiers.)
+    cameraPosition: [9, 8, 26],
+    cameraTarget: [0, 7, STAGE_Z],
+    ledWall: { centerX: 0, centerY: 9.2, centerZ: STAGE_Z - 9.3, width: 26, height: 14.5 },
+    stageW: 32,
+    frontZ: STAGE_Z + 8,
     bloomStrength: 0,
     exposure: 1.0,
   };
 }
 
+/** Club — a ~1,200-cap live-music room. Proper raised stage with the
+ *  festival deck finish, exposed overhead trusses with movers + PARs,
+ *  a glowing bar along the left wall, support columns, and a raised
+ *  mezzanine with rail across the back — the depth cues that make a
+ *  mid-size room read as a real venue instead of a dark box. */
 function buildClub(): VenueBuild {
   const group = new THREE.Group();
-  const r = room(64, 52, 15, 0x140f1a, 0x0c0a10);
-  group.add(r.group);
-  group.add(backWall(40, 14, -17));
-  for (let i = -1; i <= 1; i++) {
-    const t = buildTruss(60);
-    t.position.set(0, 13.5, i * 14);
-    group.add(t);
-  }
-  const bar = mesh(
-    new THREE.BoxGeometry(18, 1.2, 2),
-    new THREE.MeshStandardMaterial({ color: 0x1a1420, roughness: 0.7 }),
-  );
-  bar.position.set(-20, 0.6, 18);
-  group.add(bar);
+  const W = 56, D = 44, H = 11;
+  const STAGE_Z = -16;
 
-  const hemi = new THREE.HemisphereLight(0xbcd0ee, 0x10131a, 0.28);
-  const key = new THREE.DirectionalLight(0xffffff, 0.55);
-  key.position.set(20, 30, 20);
+  const r = room(W, D, H, 0x14101a, 0x0c0a10);
+  group.add(r.group);
+  group.add(wrapped(backWall(W, H, -(D / 2) + 0.2), 'back-wall'));
+
+  // ── Stage — raised deck + riser, LED wall hangs above the deck ──
+  group.add(tagged(makeDeck(22, 9, 1.2, STAGE_Z), 'deck'));
+  const riser = mesh(
+    new THREE.BoxGeometry(7, 0.9, 4),
+    new THREE.MeshStandardMaterial({ color: 0x111419, roughness: 0.7, metalness: 0.2 }),
+  );
+  riser.position.set(0, 1.65, STAGE_Z - 2);
+  group.add(wrapped(riser, 'riser'));
+
+  // ── Overhead rig — stage truss + two room trusses, movers + PARs ──
+  const RIG_Y = H - 1.1;
+  const stageTruss = festivalTruss(26);
+  stageTruss.position.set(0, RIG_Y, STAGE_Z + 3);
+  group.add(tagged(stageTruss, 'truss-stage'));
+  const midTruss = festivalTruss(40);
+  midTruss.position.set(0, RIG_Y, -2);
+  group.add(tagged(midTruss, 'truss-mid'));
+  const frontTruss = festivalTruss(40);
+  frontTruss.position.set(0, RIG_Y, 10);
+  group.add(tagged(frontTruss, 'truss-front'));
+  for (let i = 0; i < 5; i++) {
+    const m = makeMover(-9 + i * 4.5, RIG_Y - 0.55, STAGE_Z + 3, 0.55, (i - 2) * 0.08);
+    m.userData.sceneryId = `mover-stage-${i}`;
+    group.add(m);
+  }
+  for (let i = 0; i < 4; i++) {
+    const m = makeMover(-10.5 + i * 7, RIG_Y - 0.55, -2, -0.15, (i - 1.5) * 0.1);
+    m.userData.sceneryId = `mover-floor-${i}`;
+    group.add(m);
+  }
+  for (let i = 0; i < 6; i++) {
+    const par = makePar(-10 + i * 4, RIG_Y - 0.4, 10, -0.65);
+    par.userData.sceneryId = `par-front-${i}`;
+    group.add(par);
+  }
+
+  // ── Bar along the left wall — counter, glowing service strip,
+  //    back-bar shelf with a soft amber wash ──
+  const barGroup = new THREE.Group();
+  barGroup.userData.sceneryId = 'bar';
+  const counter = mesh(
+    new THREE.BoxGeometry(2, 1.15, 16),
+    new THREE.MeshStandardMaterial({ color: 0x191320, roughness: 0.55, metalness: 0.25 }),
+  );
+  counter.position.set(-(W / 2) + 3.4, 0.575, 8);
+  barGroup.add(counter);
+  const barStrip = mesh(
+    new THREE.BoxGeometry(0.12, 0.06, 16),
+    new THREE.MeshStandardMaterial({
+      color: 0x110a16, emissive: 0xffa64d, emissiveIntensity: 1.6, roughness: 0.4,
+    }),
+  );
+  barStrip.position.set(-(W / 2) + 4.42, 1.05, 8);
+  barStrip.castShadow = false;
+  barGroup.add(barStrip);
+  const backBar = mesh(
+    new THREE.BoxGeometry(0.5, 2.6, 16),
+    new THREE.MeshStandardMaterial({
+      color: 0x16101c, roughness: 0.6, metalness: 0.2,
+      emissive: 0x462b10, emissiveIntensity: 0.6,
+    }),
+  );
+  backBar.position.set(-(W / 2) + 0.6, 1.8, 8);
+  barGroup.add(backBar);
+  group.add(barGroup);
+
+  // ── Mezzanine across the back — platform + rail ──
+  const mezz = new THREE.Group();
+  mezz.userData.sceneryId = 'mezzanine';
+  const mezzFloor = mesh(
+    new THREE.BoxGeometry(W - 4, 0.5, 6.5),
+    new THREE.MeshStandardMaterial({ color: 0x120e18, roughness: 0.8, metalness: 0.1 }),
+  );
+  mezzFloor.position.set(0, 3.4, (D / 2) - 3.6);
+  mezz.add(mezzFloor);
+  const railMat = new THREE.MeshStandardMaterial({ color: 0x2a3138, roughness: 0.35, metalness: 0.85 });
+  const rail = mesh(new THREE.BoxGeometry(W - 4, 0.07, 0.07), railMat);
+  rail.position.set(0, 4.6, (D / 2) - 6.8);
+  mezz.add(rail);
+  for (let i = 0; i <= 12; i++) {
+    const post = mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.95, 6), railMat);
+    post.position.set(-(W - 4) / 2 + (i * (W - 4)) / 12, 4.13, (D / 2) - 6.8);
+    mezz.add(post);
+  }
+  group.add(mezz);
+
+  // ── Support columns — industrial depth cues mid-room ──
+  for (const [cx, cz, i] of [[-16, 2, 0], [16, 2, 1], [-16, 14, 2], [16, 14, 3]] as const) {
+    const col = mesh(
+      new THREE.CylinderGeometry(0.45, 0.45, H, 12),
+      new THREE.MeshStandardMaterial({ color: 0x171219, roughness: 0.85, metalness: 0.15 }),
+    );
+    col.position.set(cx, H / 2, cz);
+    group.add(wrapped(col, `column-${i}`));
+  }
+
+  // ── Dance floor sheen in front of the stage ──
+  const danceFloor = mesh(
+    new THREE.PlaneGeometry(24, 16),
+    // Soft sheen only — low roughness + high metalness threw a harsh
+    // specular hotspot from the key light that read as a glitch.
+    new THREE.MeshStandardMaterial({
+      color: 0x110d18, roughness: 0.45, metalness: 0.3,
+    }),
+  );
+  danceFloor.rotation.x = -Math.PI / 2;
+  danceFloor.position.set(0, 0.02, -2);
+  danceFloor.castShadow = false;
+  group.add(wrapped(danceFloor, 'dance-floor'));
+
+  // ── Lighting — warm-dark, stage-focused. A notch brighter than the
+  //    festival baseline: a small room with bare walls needs its
+  //    features (bar, mezzanine, columns) discernible at idle. ──
+  const hemi = new THREE.HemisphereLight(0xb8a8d8, 0x0d0a12, 0.34);
+  const ambient = new THREE.AmbientLight(0xffffff, 0.09);
+  const key = new THREE.DirectionalLight(0xfff2e0, 0.5);
+  key.position.set(14, 18, 16);
   key.castShadow = true;
-  key.shadow.mapSize.set(1024, 1024);
+  key.shadow.mapSize.set(2048, 2048);
   Object.assign(key.shadow.camera, { near: 1, far: 100, left: -40, right: 40, top: 40, bottom: -40 });
   key.shadow.camera.updateProjectionMatrix();
-  const fill = new THREE.DirectionalLight(0x9fb4d8, 0.18);
-  fill.position.set(-30, 20, 10);
+  key.shadow.bias = -0.0004;
+  const fill = new THREE.DirectionalLight(0x9fb4d8, 0.16);
+  fill.position.set(-22, 14, 8);
+  const rim = new THREE.DirectionalLight(0xb39ddb, 0.14);
+  rim.position.set(0, 12, -26);
 
-  const lights = [hemi, key, fill];
+  const lights = [hemi, ambient, key, fill, rim];
   return {
     group,
     floor: r.floor,
@@ -532,56 +786,194 @@ function buildClub(): VenueBuild {
     keyPositionBaseline: [key.position.x, key.position.y, key.position.z],
     keyColorBaseline: key.color.getHex(),
     backgroundColor: '#0a0810',
-    fogDensity: 0.011,
+    fogDensity: 0.012,
     fogColor: '#0a0810',
-    showGrid: true,
-    cameraPosition: [22, 14, 24],
-    cameraTarget: [0, 3, -10],
-    ledWall: { centerX: 0, centerY: 4.5, centerZ: -15, width: 12, height: 7 },
-    stageW: 18,
-    frontZ: 5,
-    bloomStrength: 0,
+    showGrid: false,
+    // Three-quarter house view — stage + LED framed center, bar wall
+    // on the left, mezzanine rail catching the edge of frame.
+    cameraPosition: [14, 7, 16],
+    cameraTarget: [-2, 3.5, STAGE_Z],
+    ledWall: { centerX: 0, centerY: 6, centerZ: -(D / 2) + 0.45, width: 16, height: 8.5 },
+    stageW: 22,
+    frontZ: STAGE_Z + 5.5,
+    bloomStrength: 0.08,
     exposure: 1.0,
   };
 }
 
+/** Nightclub — an intimate underground electronic room. The DJ booth
+ *  is the focal point (raised platform, console, glowing booth front,
+ *  sub stacks flanking), with the LED wall directly behind it. Mirror
+ *  ball over the dance floor, banquette seating along the side walls,
+ *  a back bar with amber glow, and dense laser-ready haze. */
 function buildNightclub(): VenueBuild {
   const group = new THREE.Group();
-  const r = room(46, 42, 9.5, 0x110a16, 0x0a070e);
+  const W = 40, D = 36, H = 8.5;
+  const BOOTH_Z = -13;
+
+  const r = room(W, D, H, 0x110a16, 0x0a070e);
   group.add(r.group);
-  group.add(backWall(34, 9, -17.5));
-  for (let i = -2; i <= 2; i++) {
-    const t = buildTruss(44);
-    t.position.set(0, 8.6, i * 8);
-    group.add(t);
-  }
-  for (let i = -2; i <= 2; i++) {
-    const t = buildTruss(40);
-    t.rotation.y = Math.PI / 2;
-    t.position.set(i * 9, 8.6, 0);
-    group.add(t);
-  }
-  const danceFloor = mesh(
-    new THREE.PlaneGeometry(20, 20),
+  group.add(wrapped(backWall(W, H, -(D / 2) + 0.2), 'back-wall'));
+
+  // ── DJ booth — the centerpiece ──
+  const booth = new THREE.Group();
+  booth.userData.sceneryId = 'dj-booth';
+  const boothMat = new THREE.MeshStandardMaterial({ color: 0x101319, roughness: 0.7, metalness: 0.2 });
+  const plinth = mesh(new THREE.BoxGeometry(9, 0.7, 4), boothMat);
+  plinth.position.set(0, 0.35, BOOTH_Z);
+  booth.add(plinth);
+  // Console desk on the plinth
+  const desk = mesh(new THREE.BoxGeometry(5.2, 1.05, 1.5), boothMat);
+  desk.position.set(0, 1.225, BOOTH_Z + 0.6);
+  booth.add(desk);
+  const deskTop = mesh(
+    new THREE.BoxGeometry(5.3, 0.07, 1.6),
+    new THREE.MeshStandardMaterial({ color: 0x262c36, roughness: 0.35, metalness: 0.85 }),
+  );
+  deskTop.position.set(0, 1.79, BOOTH_Z + 0.6);
+  booth.add(deskTop);
+  // Glowing booth front — the classic club cue
+  const boothFront = mesh(
+    new THREE.PlaneGeometry(5.2, 0.95),
     new THREE.MeshStandardMaterial({
-      color: 0x1a1130, roughness: 0.3, metalness: 0.5, emissive: 0x140a26, emissiveIntensity: 0.3,
+      color: 0x0a0710, emissive: 0x8a2be2, emissiveIntensity: 1.1, roughness: 0.5,
+    }),
+  );
+  boothFront.position.set(0, 1.25, BOOTH_Z + 1.42);
+  boothFront.castShadow = false;
+  booth.add(boothFront);
+  // Monitor wedges either side of the desk
+  for (const dx of [-3.3, 3.3]) {
+    const wedge = mesh(new THREE.BoxGeometry(1, 0.8, 0.9), boothMat);
+    wedge.position.set(dx, 1.1, BOOTH_Z + 0.6);
+    wedge.rotation.z = dx < 0 ? 0.18 : -0.18;
+    booth.add(wedge);
+  }
+  group.add(booth);
+
+  // ── Sub stacks flanking the booth ──
+  const subMat = new THREE.MeshStandardMaterial({ color: 0x070809, roughness: 0.85, metalness: 0.1 });
+  const subConeMat = new THREE.MeshStandardMaterial({ color: 0x16181c, roughness: 0.5 });
+  for (const [sx, id] of [[-6.5, 'subs-L'], [6.5, 'subs-R']] as const) {
+    const stack = new THREE.Group();
+    stack.userData.sceneryId = id;
+    for (let i = 0; i < 2; i++) {
+      const sub = mesh(new THREE.BoxGeometry(1.7, 1.1, 1.5), subMat);
+      sub.position.set(sx, 0.55 + i * 1.15, BOOTH_Z);
+      stack.add(sub);
+      const cone = mesh(new THREE.CircleGeometry(0.42, 18), subConeMat);
+      cone.position.set(sx, 0.55 + i * 1.15, BOOTH_Z + 0.76);
+      stack.add(cone);
+    }
+    group.add(stack);
+  }
+
+  // ── Dance floor — reflective slab with a cool under-glow ──
+  const danceFloor = mesh(
+    new THREE.PlaneGeometry(18, 16),
+    new THREE.MeshStandardMaterial({
+      color: 0x161028, roughness: 0.22, metalness: 0.55,
+      emissive: 0x10081f, emissiveIntensity: 0.35,
     }),
   );
   danceFloor.rotation.x = -Math.PI / 2;
-  danceFloor.position.set(0, 0.02, 4);
-  group.add(danceFloor);
+  danceFloor.position.set(0, 0.02, -1);
+  danceFloor.castShadow = false;
+  group.add(wrapped(danceFloor, 'dance-floor'));
 
-  const hemi = new THREE.HemisphereLight(0xbcd0ee, 0x10131a, 0.18);
-  const key = new THREE.DirectionalLight(0xffffff, 0.4);
-  key.position.set(10, 20, 10);
+  // ── Mirror ball over the floor — faceted, catches the movers ──
+  const ballGroup = new THREE.Group();
+  ballGroup.userData.sceneryId = 'mirror-ball';
+  const wire = mesh(
+    new THREE.CylinderGeometry(0.015, 0.015, 1.2, 6),
+    new THREE.MeshStandardMaterial({ color: 0x222630, roughness: 0.5, metalness: 0.8 }),
+  );
+  wire.position.set(0, H - 0.6, -1);
+  wire.castShadow = false;
+  ballGroup.add(wire);
+  const ball = mesh(
+    new THREE.IcosahedronGeometry(0.8, 1),
+    new THREE.MeshStandardMaterial({
+      color: 0xd8e2f0, roughness: 0.12, metalness: 1.0, flatShading: true,
+      emissive: 0x39414f, emissiveIntensity: 0.5,
+    }),
+  );
+  ball.position.set(0, H - 2.0, -1);
+  ballGroup.add(ball);
+  group.add(ballGroup);
+
+  // ── Overhead rig — two trusses with floor-aimed movers + booth PARs ──
+  const RIG_Y = H - 0.9;
+  const boothTruss = festivalTruss(20);
+  boothTruss.position.set(0, RIG_Y, BOOTH_Z + 4);
+  group.add(tagged(boothTruss, 'truss-booth'));
+  const floorTruss = festivalTruss(26);
+  floorTruss.position.set(0, RIG_Y, 4);
+  group.add(tagged(floorTruss, 'truss-floor'));
+  for (let i = 0; i < 4; i++) {
+    const m = makeMover(-7.5 + i * 5, RIG_Y - 0.55, 4, -0.25, (i - 1.5) * 0.12);
+    m.userData.sceneryId = `mover-floor-${i}`;
+    group.add(m);
+  }
+  for (let i = 0; i < 3; i++) {
+    const m = makeMover(-5 + i * 5, RIG_Y - 0.55, BOOTH_Z + 4, 0.5, (i - 1) * 0.1);
+    m.userData.sceneryId = `mover-booth-${i}`;
+    group.add(m);
+  }
+  for (let i = 0; i < 4; i++) {
+    const par = makePar(-4.5 + i * 3, RIG_Y - 0.4, BOOTH_Z + 4.4, -0.8);
+    par.userData.sceneryId = `par-booth-${i}`;
+    group.add(par);
+  }
+
+  // ── Banquette seating along both side walls ──
+  const seatMat = new THREE.MeshStandardMaterial({ color: 0x1c0f14, roughness: 0.9, metalness: 0.02 });
+  for (const [sx, id] of [[-(W / 2) + 1.6, 'banquette-L'], [(W / 2) - 1.6, 'banquette-R']] as const) {
+    const bq = new THREE.Group();
+    bq.userData.sceneryId = id;
+    const seat = mesh(new THREE.BoxGeometry(1.9, 0.55, 14), seatMat);
+    seat.position.set(sx, 0.275, -1);
+    bq.add(seat);
+    const backRest = mesh(new THREE.BoxGeometry(0.45, 1.5, 14), seatMat);
+    backRest.position.set(sx < 0 ? sx - 0.72 : sx + 0.72, 0.75, -1);
+    bq.add(backRest);
+    group.add(bq);
+  }
+
+  // ── Back bar with amber glow strip ──
+  const barGroup = new THREE.Group();
+  barGroup.userData.sceneryId = 'bar';
+  const counter = mesh(
+    new THREE.BoxGeometry(12, 1.1, 1.8),
+    new THREE.MeshStandardMaterial({ color: 0x191320, roughness: 0.55, metalness: 0.25 }),
+  );
+  counter.position.set(0, 0.55, (D / 2) - 2.6);
+  barGroup.add(counter);
+  const barStrip = mesh(
+    new THREE.BoxGeometry(12, 0.06, 0.12),
+    new THREE.MeshStandardMaterial({
+      color: 0x110a16, emissive: 0xffa64d, emissiveIntensity: 1.5, roughness: 0.4,
+    }),
+  );
+  barStrip.position.set(0, 1.02, (D / 2) - 3.48);
+  barStrip.castShadow = false;
+  barGroup.add(barStrip);
+  group.add(barGroup);
+
+  // ── Lighting — near-dark; the booth glow + LEDs carry the room ──
+  const hemi = new THREE.HemisphereLight(0x9d8fc8, 0x0a070e, 0.16);
+  const ambient = new THREE.AmbientLight(0xffffff, 0.04);
+  const key = new THREE.DirectionalLight(0xe8d8ff, 0.32);
+  key.position.set(8, 14, 10);
   key.castShadow = true;
   key.shadow.mapSize.set(1024, 1024);
   Object.assign(key.shadow.camera, { near: 1, far: 60, left: -30, right: 30, top: 30, bottom: -30 });
   key.shadow.camera.updateProjectionMatrix();
-  const fill = new THREE.DirectionalLight(0x9fb4d8, 0.14);
-  fill.position.set(-20, 15, 5);
+  key.shadow.bias = -0.0004;
+  const fill = new THREE.DirectionalLight(0x9fb4d8, 0.1);
+  fill.position.set(-16, 10, 5);
 
-  const lights = [hemi, key, fill];
+  const lights = [hemi, ambient, key, fill];
   return {
     group,
     floor: r.floor,
@@ -591,15 +983,16 @@ function buildNightclub(): VenueBuild {
     keyPositionBaseline: [key.position.x, key.position.y, key.position.z],
     keyColorBaseline: key.color.getHex(),
     backgroundColor: '#070509',
-    fogDensity: 0.02,
+    fogDensity: 0.022,
     fogColor: '#070509',
     showGrid: false,
-    cameraPosition: [16, 10, 18],
-    cameraTarget: [0, 2, -8],
-    ledWall: { centerX: 0, centerY: 3.5, centerZ: -16, width: 10, height: 5.5 },
+    // Eye-level from the dance floor, booth + wall framed center.
+    cameraPosition: [6, 3.2, 9],
+    cameraTarget: [0, 2.5, BOOTH_Z],
+    ledWall: { centerX: 0, centerY: 4.2, centerZ: -(D / 2) + 0.45, width: 13, height: 6.5 },
     stageW: 14,
-    frontZ: 4,
-    bloomStrength: 0,
+    frontZ: BOOTH_Z + 3,
+    bloomStrength: 0.12,
     exposure: 1.0,
   };
 }
