@@ -12,6 +12,7 @@
 
 import * as THREE from 'three';
 import type { UserStageElement } from './types';
+import { buildPixelStrip } from './atmosphere';
 
 /** A single tweakable field — translates 1:1 into an inspector control. */
 export interface ElementField {
@@ -251,6 +252,53 @@ export const ELEMENT_TYPES: Record<string, ElementTypeDef> = {
     defaults: { color: '#4af2ff' },
     fields: [{ k: 'color', l: 'Beam Color', type: 'color' }],
     build(p) { return [fixture(new THREE.Color(p.color))]; },
+  },
+
+  ledstrip: {
+    group: 'Lighting', label: 'LED Strip', icon: '▬',
+    defaults: { len: 12, pixels: 24, color: '#4af2ff', mode: 0, glow: 1.6, speed: 1, sync: 1 },
+    fields: [
+      { k: 'len', l: 'Length', min: 1, max: 40, step: 0.5 },
+      { k: 'pixels', l: 'Pixels', min: 8, max: 64, step: 1, int: true },
+      { k: 'color', l: 'Color', type: 'color' },
+      { k: 'mode', l: 'Mode — 0 Fill · 1 Chase · 2 Pulse · 3 Solid', min: 0, max: 3, step: 1, int: true },
+      { k: 'glow', l: 'Glow', min: 0.2, max: 4, step: 0.1 },
+      { k: 'speed', l: 'Chase Speed', min: 0.1, max: 4, step: 0.05 },
+      { k: 'sync', l: 'Sync to Show Palette — 0 Off · 1 On', min: 0, max: 1, step: 1, int: true },
+    ],
+    build(p) {
+      // Channel rail + single-mesh pixel strip. The animation metadata
+      // rides on the holder group's userData; Stage3DRenderer collects
+      // these and hands them to the AtmosphereRig, which drives the
+      // pixels every frame (beat-fill / chase / pulse / solid),
+      // palette-synced to the show when `sync` is on.
+      const out: THREE.Object3D[] = [];
+      const rail = mesh(new THREE.BoxGeometry(p.len, 0.05, 0.08), MAT.darkMetal());
+      rail.position.z = -0.05;
+      out.push(rail);
+      const strip = buildPixelStrip(p.len * 0.98, Math.round(p.pixels));
+      const base = new THREE.Color(p.color);
+      // Pre-light the pixels so the strip reads before the rig ticks
+      // (and in scenes where the atmosphere layer is idle).
+      for (let i = 0; i < strip.segs; i++) {
+        for (let v = 0; v < 4; v++) {
+          strip.colors.setXYZ(i * 4 + v, base.r * p.glow * 0.5, base.g * p.glow * 0.5, base.b * p.glow * 0.5);
+        }
+      }
+      strip.colors.needsUpdate = true;
+      const holder = new THREE.Group();
+      holder.add(strip.mesh);
+      holder.userData.ledStripAnim = {
+        strip,
+        mode: Math.round(p.mode),
+        glow: p.glow,
+        speed: p.speed,
+        sync: Math.round(p.sync) === 1,
+        base,
+      };
+      out.push(holder);
+      return out;
+    },
   },
 
   lightbar: {
