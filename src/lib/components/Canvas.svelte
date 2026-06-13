@@ -54,6 +54,7 @@
   let _HydraVisualizerCtor: typeof import('../effects/hydraVisualizer').HydraVisualizer | null = null;
   let _hydraPresetsMod: typeof import('../effects/hydraPresets') | null = null;
   let _GhostFXVisualizerCtor: typeof import('../effects/ghostfx/ghostfxVisualizer').GhostFXVisualizer | null = null;
+  let _GhostPilotVisualizerCtor: typeof import('../effects/ghostPilot/ghostPilotVisualizer').GhostPilotVisualizer | null = null;
   const _lazyLoading = new Set<string>();
   function _lazyLoad(key: string, load: () => Promise<void>): void {
     if (_lazyLoading.has(key)) return;
@@ -777,7 +778,7 @@
 
   // Integrated effects (FluidSimulation, ParticleSystem3D)
   interface IntegratedEffectContext {
-    type: 'fluid' | 'particles' | 'milkdrop' | 'audiomotion' | 'wavejs' | 'hydra' | 'ghostfx' | 'analyzerlab' | 'handfx';
+    type: 'fluid' | 'particles' | 'milkdrop' | 'audiomotion' | 'wavejs' | 'hydra' | 'ghostfx' | 'analyzerlab' | 'handfx' | 'ghostpilot';
     fluid?: FluidSimulation;
     particles?: ParticleSystem3D;
     milkdrop?: import('../effects/milkdropVisualizer').MilkdropVisualizer;
@@ -792,6 +793,7 @@
     hydraLastCommandTag?: number;
     hydraLoadedPresetName?: string;
     ghostfx?: import('../effects/ghostfx/ghostfxVisualizer').GhostFXVisualizer;
+    ghostpilot?: import('../effects/ghostPilot/ghostPilotVisualizer').GhostPilotVisualizer;
     // Milkdrop preset cycling state
     milkdropPresets?: Record<string, any>;
     milkdropPresetNames?: string[];      // cached sorted name list for next/prev navigation
@@ -881,6 +883,7 @@
     try { ctx.wavejs?.dispose(); } catch (e) { console.warn('[Canvas] wavejs dispose error:', e); }
     try { ctx.hydra?.dispose(); } catch (e) { console.warn('[Canvas] hydra dispose error:', e); }
     try { ctx.ghostfx?.dispose(); } catch (e) { console.warn('[Canvas] ghostfx dispose error:', e); }
+    try { ctx.ghostpilot?.dispose(); } catch (e) { console.warn('[Canvas] ghostpilot dispose error:', e); }
     try { ctx.analyzerlab?.dispose(); } catch (e) { console.warn('[Canvas] analyzerlab dispose error:', e); }
     try { ctx.handfx?.dispose(); } catch (e) { console.warn('[Canvas] handfx dispose error:', e); }
     try { ctx.renderTarget.dispose(); } catch {}
@@ -4516,7 +4519,7 @@
       // Get or create effect context
       let effectCtx = integratedEffects.get(cacheKey);
       // Only handle integrated effect types
-      if (effectSource.effectType !== 'fluid' && effectSource.effectType !== 'particles' && effectSource.effectType !== 'milkdrop' && effectSource.effectType !== 'audiomotion' && effectSource.effectType !== 'wavejs' && effectSource.effectType !== 'hydra' && effectSource.effectType !== 'ghostfx' && effectSource.effectType !== 'analyzerlab' && effectSource.effectType !== 'handfx') continue;
+      if (effectSource.effectType !== 'fluid' && effectSource.effectType !== 'particles' && effectSource.effectType !== 'milkdrop' && effectSource.effectType !== 'audiomotion' && effectSource.effectType !== 'wavejs' && effectSource.effectType !== 'hydra' && effectSource.effectType !== 'ghostfx' && effectSource.effectType !== 'analyzerlab' && effectSource.effectType !== 'handfx' && effectSource.effectType !== 'ghostpilot') continue;
 
       // Lazy-load the sim class chunk; skip this group until the ctor is
       // ready (only matters on the very first frame the effect appears).
@@ -4565,6 +4568,17 @@
           _lazyLoad('ghostfx', async () => {
             const mod = await import('../effects/ghostfx/ghostfxVisualizer');
             _GhostFXVisualizerCtor = mod.GhostFXVisualizer;
+          });
+          continue;
+        }
+        if (effectSource.effectType === 'ghostpilot' && !_GhostPilotVisualizerCtor) {
+          _lazyLoad('ghostpilot', async () => {
+            const mod = await import('../effects/ghostPilot/ghostPilotVisualizer');
+            _GhostPilotVisualizerCtor = mod.GhostPilotVisualizer;
+            // First use arms gamepad polling so a controller is live the
+            // moment the world appears (no-op if already running).
+            const gp = await import('../input/gamepad');
+            gp.startGamepadPolling();
           });
           continue;
         }
@@ -4758,6 +4772,17 @@
             liquidBassRate:     effectSource.ghostfxLiquidBassRate     ?? 1.0,
           });
           effectCtx.ghostfx = fx;
+        } else if (effectSource.effectType === 'ghostpilot') {
+          const gpv = new _GhostPilotVisualizerCtor!(width, height);
+          gpv.init(renderer);
+          gpv.setParams({
+            sensitivity:  effectSource.ghostpilotSensitivity  ?? 1.4,
+            speedScale:   effectSource.ghostpilotSpeedScale   ?? 1.0,
+            hueBase:      effectSource.ghostpilotHueBase      ?? 0.0,
+            autopilot:    effectSource.ghostpilotAutopilot    ?? true,
+            steerAssist:  effectSource.ghostpilotSteerAssist  ?? 1.0,
+          });
+          effectCtx.ghostpilot = gpv;
         } else if (effectSource.effectType === 'analyzerlab') {
           const al = new _AnalyzerLabVisualizerCtor!(width, height);
           al.init(renderer);
@@ -5505,6 +5530,24 @@
         // smoother + BPM-sync handle the "anticipate not react"
         // shaping. The shader never sees raw audio.
         fx.render(renderer, effectCtx.renderTarget, getLastRawAnalysis(), deltaTime);
+      }
+
+      // ── Ghost Pilot path ───────────────────────────────────────────────
+      if (effectCtx.ghostpilot && effectSource.effectType === 'ghostpilot') {
+        const gpv = effectCtx.ghostpilot;
+        if (effectCtx.renderTarget.width !== width || effectCtx.renderTarget.height !== height) {
+          gpv.resize(width, height);
+        }
+        gpv.setParams({
+          sensitivity:  effectSource.ghostpilotSensitivity  ?? 1.4,
+          speedScale:   effectSource.ghostpilotSpeedScale   ?? 1.0,
+          hueBase:      effectSource.ghostpilotHueBase      ?? 0.0,
+          autopilot:    effectSource.ghostpilotAutopilot    ?? true,
+          steerAssist:  effectSource.ghostpilotSteerAssist  ?? 1.0,
+        });
+        // Reads the live gamepad internally each frame; audio builds the
+        // world; deltaTime drives physics + verb scheduling.
+        gpv.render(renderer, effectCtx.renderTarget, getLastRawAnalysis(), deltaTime);
       }
 
       // Share the rendered texture across all layers referencing this effect source.

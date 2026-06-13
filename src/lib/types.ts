@@ -86,7 +86,7 @@ export type BlendMode =
 export type MediaType = 'image' | 'video' | 'shader' | 'color' | 'threejs' | 'p5js' | 'javascript' | 'spout' | 'effect' | 'synthvision';
 
 // Integrated effect types (FluidGen, Particles3D, Point Cloud, 3D Models running natively in WebGL)
-export type IntegratedEffectType = 'fluid' | 'particles' | 'splat' | 'model3d' | 'milkdrop' | 'audiomotion' | 'wavejs' | 'hydra' | 'ghostfx' | 'analyzerlab' | 'handfx';
+export type IntegratedEffectType = 'fluid' | 'particles' | 'splat' | 'model3d' | 'milkdrop' | 'audiomotion' | 'wavejs' | 'hydra' | 'ghostfx' | 'analyzerlab' | 'handfx' | 'ghostpilot';
 
 // Stem identifiers for the multi-stem routing matrix (Milkdrop plugin).
 // 'full' is the unsplit mix; the rest match standard Demucs output names plus a
@@ -251,6 +251,12 @@ export interface IntegratedEffectSource {
   handfxShowHelp?: boolean;
   handfxShowCamera?: boolean;
   handfxCameraOpacity?: number;
+  // Ghost Pilot params (playable, audio-built world flown with a gamepad)
+  ghostpilotSensitivity?: number;       // 0.25..4 — audio drive multiplier
+  ghostpilotSpeedScale?: number;        // 0.5..2.5 — throttle/cruise multiplier
+  ghostpilotHueBase?: number;           // 0..1 — palette base rotation
+  ghostpilotAutopilot?: boolean;        // allow idle autopilot takeover
+  ghostpilotSteerAssist?: number;       // 0..1 — banking/yaw coupling to steer
   // GhostFX params (original WebGPU visualizer by Ghost Arcade)
   ghostfxScenePreset?: string;          // 'drift' (v5); more in later sessions
   ghostfxSensitivity?: number;          // 0.25..4 — audio drive multiplier
