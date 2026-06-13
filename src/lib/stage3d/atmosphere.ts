@@ -1,27 +1,34 @@
-// Atmosphere rig — the "full rock show" layer for Ghost Stage.
+// Atmosphere rig + show director — the "full rock show" layer.
 //
-// Four independently-toggleable elements, all driven by the shared
-// Milkdrop-smoothed visual-audio bus so they breathe with the music
-// instead of strobing with the meter:
+// Not lights flying around: a lighting-designer brain that runs
+// designed LOOKS and advances them musically.
 //
-//   beams  — volumetric light cones parented to every venue mover's
-//            head; the rig drives REAL yoke pan + head tilt so the
-//            fixtures visibly perform. Intensity rides the energy,
-//            kicks punch it, colors rotate on the beat.
-//   lasers — fan units mounted on the rig trusses (deck-mounted when
-//            a venue has no trusses, e.g. Sphere). Blade fans breathe
-//            with the beat-locked LFO, sweep with energy, sparkle on
-//            treble.
-//   haze   — thickens the venue's exponential fog toward a show-dense
-//            target and fattens beam/laser glow. Smoothing on the
-//            density change so toggling feels like a hazer spinning
-//            up, not a switch.
-//   strips — emissive LED pixel-strips clamped under every horizontal
-//            truss chord, hue-cycling and bass-chased.
+//   • Palette comes from the SCREENS. The renderer feeds the live
+//     average color of the LED content; the director builds a stage
+//     palette from it (saturated primary + complement + accent), so
+//     when the user fires a new clip the whole rig re-colors with it.
+//   • Looks are designed patterns — unison sweeps, mirrored
+//     alternates, center-out fans, chases, kick-gated punches, quiet
+//     searchlights — with fixture colors assigned by position, not
+//     random per-head rainbow.
+//   • The director advances looks on musical phrases (every 16
+//     detected beats), picks looks that match the current energy,
+//     and jumps immediately when the screen content changes — like
+//     an LD calling cues off the video feed.
+//   • Color changes ease over ~⅓s (real fixtures cross-fade; they
+//     don't snap), beam intensity rides the smoothed energy bus,
+//     kicks punch, silence falls back to a slow searchlight idle.
 //
-// Everything is built additively on top of the venue group and torn
-// down via dispose() on venue swap or toggle-off. Idle (no audio)
-// keeps a slow, pretty drift — never dead, never frantic.
+// Elements (independently toggleable, persisted per scene):
+//   beams — volumetric cones on every venue mover, real yoke/head drive
+//   lasers — blade fans on the rig, look-aware behavior
+//   haze  — fog eases toward show density, fattens all glow
+//   strips — venue truss pixel-strips (segmented: fill/chase/flash)
+//
+// Plus: user-placed `ledstrip` library elements (any position, with
+// their own mode/glow/speed params) animate through the same director
+// whenever the rig is ticking — palette-synced when their Sync param
+// is on.
 
 import * as THREE from 'three';
 import type { VenueBuild } from './venues';
@@ -29,24 +36,45 @@ import type { Stage3DAtmosphere } from './types';
 import { DEFAULT_ATMOSPHERE } from './types';
 import type { VisualAudioState } from '../audio/visualAudio';
 
-/** Show palette — saturated stage colors the beams/strips rotate
- *  through. Order matters: adjacent pairs read well together when
- *  half the rig is one step ahead of the other. */
-const SHOW_COLORS = [0x4af2ff, 0xff3df0, 0x8a5cff, 0xffb24d, 0x4dff88, 0xff4d6a];
-
 const BEAM_LENGTH = 24;
 const HAZE_FOG_MULT = 2.6;
+const PHRASE_BEATS = 16;
+const STRIP_SEGS = 24;
+
+// ── Looks — the designed cue list ─────────────────────────────────────
+
+type LookName = 'searchlight' | 'unison' | 'alternate' | 'fan' | 'chase' | 'punch';
+
+interface LookDef {
+  name: LookName;
+  /** Energy band (smoothed 0..1) this look suits. The director only
+   *  calls cues that fit the music's current intensity. */
+  energy: [number, number];
+  /** Venue strip behavior while this look runs. */
+  strip: 'fill' | 'chase' | 'pulse' | 'kickflash';
+  /** Laser behavior. */
+  laser: 'off' | 'sweep' | 'strobe';
+}
+
+const LOOKS: LookDef[] = [
+  { name: 'searchlight', energy: [0, 0.3],    strip: 'pulse',     laser: 'off' },
+  { name: 'unison',      energy: [0.1, 0.6],  strip: 'fill',      laser: 'sweep' },
+  { name: 'alternate',   energy: [0.25, 0.8], strip: 'fill',      laser: 'sweep' },
+  { name: 'fan',         energy: [0.25, 0.85], strip: 'fill',     laser: 'sweep' },
+  { name: 'chase',       energy: [0.4, 1],    strip: 'chase',     laser: 'sweep' },
+  { name: 'punch',       energy: [0.55, 1],   strip: 'kickflash', laser: 'strobe' },
+];
 
 // ── Volumetric beam material ──────────────────────────────────────────
 
-function makeBeamMaterial(color: number): THREE.ShaderMaterial {
+function makeBeamMaterial(color: THREE.Color): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
     side: THREE.DoubleSide,
     blending: THREE.AdditiveBlending,
     uniforms: {
-      uColor: { value: new THREE.Color(color) },
+      uColor: { value: color.clone() },
       uIntensity: { value: 0.5 },
       uLength: { value: BEAM_LENGTH },
     },
@@ -56,7 +84,6 @@ function makeBeamMaterial(color: number): THREE.ShaderMaterial {
       varying vec3 vViewDir;
       uniform float uLength;
       void main() {
-        // 0 at the fixture, 1 at the far end (geometry spans 0..-L in Y).
         vAlong = -position.y / uLength;
         vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
         vNormal = normalize(normalMatrix * normal);
@@ -71,10 +98,6 @@ function makeBeamMaterial(color: number): THREE.ShaderMaterial {
       uniform vec3 uColor;
       uniform float uIntensity;
       void main() {
-        // Length fade + view-dependent soft edge: alpha peaks looking
-        // THROUGH the cone's center (normal toward camera) and falls
-        // to zero at the silhouette — reads as light in haze instead
-        // of a solid plastic cone.
         float fade = pow(1.0 - vAlong, 2.0);
         float soft = pow(abs(dot(vNormal, vViewDir)), 1.4);
         gl_FragColor = vec4(uColor, fade * soft * uIntensity);
@@ -83,6 +106,57 @@ function makeBeamMaterial(color: number): THREE.ShaderMaterial {
   });
 }
 
+// ── Pixel-strip mesh (one draw call, per-segment vertex colors) ───────
+
+export interface PixelStrip {
+  mesh: THREE.Mesh;
+  colors: THREE.BufferAttribute;
+  segs: number;
+  phase: number;
+}
+
+/** Build a single-mesh LED pixel strip along local X: `segs` quads with
+ *  per-vertex colors the animator rewrites each frame. MeshBasic so the
+ *  pixels read as emitters regardless of room light; values above 1
+ *  push into bloom where the venue has it. */
+export function buildPixelStrip(len: number, segs: number, thickness = 0.09): PixelStrip {
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const segW = (len / segs) * 0.82;       // gap between pixels
+  const pitch = len / segs;
+  for (let i = 0; i < segs; i++) {
+    const cx = -len / 2 + (i + 0.5) * pitch;
+    const base = i * 4;
+    positions.push(
+      cx - segW / 2, -thickness / 2, 0,
+      cx + segW / 2, -thickness / 2, 0,
+      cx + segW / 2, thickness / 2, 0,
+      cx - segW / 2, thickness / 2, 0,
+    );
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  const colors = new THREE.Float32BufferAttribute(new Float32Array(segs * 4 * 3), 3);
+  geo.setAttribute('color', colors);
+  geo.setIndex(indices);
+  const mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
+  mesh.raycast = () => {};
+  return { mesh, colors: colors as THREE.BufferAttribute, segs, phase: 0 };
+}
+
+/** Write one segment's color (all 4 verts). */
+function setSeg(strip: PixelStrip, i: number, c: THREE.Color, scale: number) {
+  const a = strip.colors;
+  const r = c.r * scale, g = c.g * scale, b = c.b * scale;
+  for (let v = 0; v < 4; v++) a.setXYZ(i * 4 + v, r, g, b);
+}
+
+// ── Unit records ──────────────────────────────────────────────────────
+
 interface BeamUnit {
   yoke: THREE.Object3D;
   head: THREE.Object3D;
@@ -90,40 +164,127 @@ interface BeamUnit {
   restTilt: number;
   cone: THREE.Mesh;
   mat: THREE.ShaderMaterial;
-  phase: number;       // per-fixture animation offset
-  colorIdx: number;    // index into SHOW_COLORS
+  /** Eased color — lerped toward the look's assignment per frame. */
+  colorTarget: THREE.Color;
+  /** Stable rig position index (sorted by world X) so patterns read
+   *  spatially: fan from center, chase left→right, alternate odd/even. */
+  rigIndex: number;
+  phase: number;
 }
 
 interface LaserUnit {
   group: THREE.Group;
   blades: THREE.Mesh[];
   mat: THREE.MeshBasicMaterial;
+  colorTarget: THREE.Color;
   phase: number;
-  colorIdx: number;
 }
 
-interface StripUnit {
-  mesh: THREE.Mesh;
-  mat: THREE.MeshStandardMaterial;
-  phase: number;
+/** A user-placed `ledstrip` element discovered in the scene. */
+export interface UserStripAnim {
+  strip: PixelStrip;
+  mode: number;      // 0 fill · 1 chase · 2 pulse · 3 solid
+  glow: number;
+  speed: number;
+  sync: boolean;
+  base: THREE.Color;
 }
 
 export class AtmosphereRig {
   private flags: Stage3DAtmosphere = { ...DEFAULT_ATMOSPHERE };
   private beams: BeamUnit[] = [];
   private lasers: LaserUnit[] = [];
-  private strips: StripUnit[] = [];
+  private strips: PixelStrip[] = [];
+  private userStrips: UserStripAnim[] = [];
+
+  // ── Director state ──
+  private look: LookDef = LOOKS[1];
   private beatLatch = false;
-  private hue = 0;
+  private beatCount = 0;
+  private energyEma = 0.2;
   private elapsed = 0;
-  /** Smoothed fog density so haze fades in/out like a real hazer. */
   private fogCurrent: number;
+  /** Stage palette: [primary, secondary, accent, wash]. */
+  private palette = [
+    new THREE.Color(0x4af2ff),
+    new THREE.Color(0xff3df0),
+    new THREE.Color(0x8a5cff),
+    new THREE.Color(0x32404f),
+  ];
+  private contentColor = new THREE.Color(0x4af2ff);
+  private paletteDirty = false;
 
   constructor(
     private scene: THREE.Scene,
     private venue: VenueBuild,
   ) {
     this.fogCurrent = venue.fogDensity;
+  }
+
+  // ── Director inputs ─────────────────────────────────────────────────
+
+  /** Feed the live average color of the screen content (from the
+   *  renderer's per-LED readback). The director rebuilds the stage
+   *  palette when it drifts meaningfully. */
+  setContentColor(c: THREE.Color): void {
+    if (c.r + c.g + c.b < 0.02) return; // black frame — keep current palette
+    const hslA = { h: 0, s: 0, l: 0 };
+    const hslB = { h: 0, s: 0, l: 0 };
+    this.contentColor.getHSL(hslA);
+    c.getHSL(hslB);
+    const dh = Math.min(Math.abs(hslA.h - hslB.h), 1 - Math.abs(hslA.h - hslB.h));
+    this.contentColor.copy(c);
+    if (dh > 0.08 || this.paletteDirty) this.rebuildPalette();
+  }
+
+  /** Screen content changed (new clip / shader fired) — call a new cue
+   *  immediately, like an LD reacting to the video feed. */
+  notifyContentChange(): void {
+    this.paletteDirty = true;
+    this.advancePhrase();
+  }
+
+  private rebuildPalette(): void {
+    this.paletteDirty = false;
+    const hsl = { h: 0, s: 0, l: 0 };
+    this.contentColor.getHSL(hsl);
+    // Stage-ify the content color: keep its hue, force show-grade
+    // saturation and a lifted lightness so beams stay vivid even when
+    // the source frame is murky.
+    const h = hsl.h;
+    const s = Math.max(0.75, hsl.s);
+    this.palette[0].setHSL(h, s, 0.55);                       // primary
+    this.palette[1].setHSL((h + 0.5) % 1, s, 0.55);           // complement
+    this.palette[2].setHSL((h + 0.09) % 1, s, 0.66);          // accent
+    this.palette[3].setHSL(h, 0.25, 0.45);                    // wash
+  }
+
+  private advancePhrase(): void {
+    const fits = LOOKS.filter(l =>
+      l.name !== this.look.name &&
+      this.energyEma >= l.energy[0] && this.energyEma <= l.energy[1],
+    );
+    const pool = fits.length ? fits : LOOKS.filter(l => l.name !== this.look.name);
+    // Deterministic-ish rotation: pick by beat count so the cue list
+    // feels intentional rather than dice-rolled.
+    this.look = pool[this.beatCount % pool.length];
+  }
+
+  /** Color slot for a beam under the current look, by rig position. */
+  private beamColor(rigIndex: number, n: number): THREE.Color {
+    const [primary, secondary, accent, wash] = this.palette;
+    switch (this.look.name) {
+      case 'searchlight': return wash;
+      case 'unison': return primary;
+      case 'alternate': return rigIndex % 2 === 0 ? primary : secondary;
+      case 'fan': {
+        const center = (n - 1) / 2;
+        if (Math.abs(rigIndex - center) < 0.6) return accent;
+        return rigIndex < center ? primary : secondary;
+      }
+      case 'chase': return [primary, accent, secondary][rigIndex % 3];
+      case 'punch': return accent;
+    }
   }
 
   setFlags(flags: Stage3DAtmosphere): void {
@@ -139,34 +300,45 @@ export class AtmosphereRig {
     this.flags = { ...flags };
   }
 
-  // ── Beams ───────────────────────────────────────────────────────────
+  /** Replace the set of user-placed ledstrip elements (renderer calls
+   *  this whenever the element set / params change). */
+  setUserStrips(strips: UserStripAnim[]): void {
+    this.userStrips = strips;
+  }
+
+  // ── Builders / teardown ─────────────────────────────────────────────
 
   private buildBeams(): void {
     const coneGeo = new THREE.CylinderGeometry(0.09, 2.1, BEAM_LENGTH, 18, 1, true)
       .translate(0, -BEAM_LENGTH / 2, 0);
-    let i = 0;
+    const found: { obj: THREE.Object3D; x: number }[] = [];
     this.venue.group.traverse(obj => {
-      const yoke = obj.userData.moverYoke as THREE.Object3D | undefined;
-      const head = obj.userData.moverHead as THREE.Object3D | undefined;
-      if (!yoke || !head) return;
+      if (obj.userData.moverYoke && obj.userData.moverHead) {
+        found.push({ obj, x: obj.getWorldPosition(new THREE.Vector3()).x });
+      }
+    });
+    // Sort by world X so rigIndex maps to physical left→right order —
+    // fans open from center, chases run across the rig.
+    found.sort((a, b) => a.x - b.x);
+    found.forEach(({ obj }, i) => {
+      const yoke = obj.userData.moverYoke as THREE.Object3D;
+      const head = obj.userData.moverHead as THREE.Object3D;
       const rest = obj.userData.moverRest as { pan: number; tilt: number };
-      const colorIdx = i % SHOW_COLORS.length;
-      const mat = makeBeamMaterial(SHOW_COLORS[colorIdx]);
+      const color = this.palette[0].clone();
+      const mat = makeBeamMaterial(color);
       const cone = new THREE.Mesh(coneGeo, mat);
       cone.castShadow = false;
       cone.receiveShadow = false;
-      // Don't let the raycaster see beams — clicking through a beam
-      // should still pick the scenery behind it.
       cone.raycast = () => {};
       head.add(cone);
       this.beams.push({
         yoke, head, cone, mat,
         restPan: rest?.pan ?? 0,
         restTilt: rest?.tilt ?? 0.5,
-        phase: i * 1.318,
-        colorIdx,
+        colorTarget: color.clone(),
+        rigIndex: i,
+        phase: i * 0.55,
       });
-      i++;
     });
   }
 
@@ -174,7 +346,6 @@ export class AtmosphereRig {
     for (const b of this.beams) {
       b.head.remove(b.cone);
       b.mat.dispose();
-      // Return the fixture to its venue rest pose.
       b.yoke.rotation.y = b.restPan;
       b.head.rotation.x = b.restTilt;
     }
@@ -182,12 +353,8 @@ export class AtmosphereRig {
     this.beams = [];
   }
 
-  // ── Lasers ──────────────────────────────────────────────────────────
-
   private buildLasers(): void {
-    // Mount points: ends of the highest horizontal truss; deck corners
-    // when the venue has no trusses (Sphere).
-    const mounts: { pos: THREE.Vector3; aimY: number }[] = [];
+    const mounts: THREE.Vector3[] = [];
     let bestTruss: THREE.Object3D | null = null;
     let bestY = -Infinity;
     this.venue.group.traverse(obj => {
@@ -200,35 +367,33 @@ export class AtmosphereRig {
       const t = bestTruss as THREE.Object3D;
       const len = t.userData.trussLen as number;
       const wp = t.getWorldPosition(new THREE.Vector3());
-      const alongX = Math.abs(Math.sin((t as THREE.Group).rotation.y)) < 0.5;
+      const alongX = Math.abs(Math.sin(t.rotation.y)) < 0.5;
       for (const s of [-1, 1]) {
-        const pos = alongX
+        mounts.push(alongX
           ? new THREE.Vector3(wp.x + s * len * 0.38, wp.y - 0.6, wp.z)
-          : new THREE.Vector3(wp.x, wp.y - 0.6, wp.z + s * len * 0.38);
-        mounts.push({ pos, aimY: 0 });
+          : new THREE.Vector3(wp.x, wp.y - 0.6, wp.z + s * len * 0.38));
       }
     } else {
       const fz = this.venue.frontZ;
       const w = this.venue.stageW;
-      mounts.push({ pos: new THREE.Vector3(-w * 0.42, 2.4, fz - 1), aimY: 0 });
-      mounts.push({ pos: new THREE.Vector3(w * 0.42, 2.4, fz - 1), aimY: 0 });
+      mounts.push(new THREE.Vector3(-w * 0.42, 2.4, fz - 1));
+      mounts.push(new THREE.Vector3(w * 0.42, 2.4, fz - 1));
     }
 
     const BLADES = 9;
     const LEN = 38;
     const bladeGeo = new THREE.BoxGeometry(0.035, 0.035, LEN).translate(0, 0, LEN / 2);
-    mounts.forEach((m, mi) => {
-      const colorIdx = (mi * 2 + 1) % SHOW_COLORS.length;
+    mounts.forEach((pos, mi) => {
+      const color = this.palette[1].clone();
       const mat = new THREE.MeshBasicMaterial({
-        color: SHOW_COLORS[colorIdx],
+        color,
         transparent: true,
         opacity: 0.55,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       });
       const group = new THREE.Group();
-      group.position.copy(m.pos);
-      // Aim out over the audience (+Z), tipped slightly down.
+      group.position.copy(pos);
       group.rotation.x = -0.1;
       const blades: THREE.Mesh[] = [];
       for (let b = 0; b < BLADES; b++) {
@@ -239,7 +404,7 @@ export class AtmosphereRig {
         blades.push(blade);
       }
       this.scene.add(group);
-      this.lasers.push({ group, blades, mat, phase: mi * 2.4, colorIdx });
+      this.lasers.push({ group, blades, mat, colorTarget: color.clone(), phase: mi * 2.4 });
     });
   }
 
@@ -252,27 +417,16 @@ export class AtmosphereRig {
     this.lasers = [];
   }
 
-  // ── LED strips ──────────────────────────────────────────────────────
-
   private buildStrips(): void {
     let i = 0;
     this.venue.group.traverse(obj => {
       const len = obj.userData.trussLen as number | undefined;
       if (!len || obj.userData.trussVertical) return;
-      const mat = new THREE.MeshStandardMaterial({
-        color: 0x05060a,
-        emissive: SHOW_COLORS[i % SHOW_COLORS.length],
-        emissiveIntensity: 0.8,
-        roughness: 0.5,
-        metalness: 0.1,
-      });
-      const strip = new THREE.Mesh(new THREE.BoxGeometry(len * 0.96, 0.07, 0.07), mat);
-      // Clamp just under the bottom chords, audience side.
-      strip.position.set(0, -0.36, 0.3);
-      strip.castShadow = false;
-      strip.raycast = () => {};
-      obj.add(strip);
-      this.strips.push({ mesh: strip, mat, phase: i * 0.7 });
+      const strip = buildPixelStrip(len * 0.96, STRIP_SEGS);
+      strip.phase = i * 0.7;
+      strip.mesh.position.set(0, -0.36, 0.31);
+      obj.add(strip.mesh);
+      this.strips.push(strip);
       i++;
     });
   }
@@ -281,9 +435,64 @@ export class AtmosphereRig {
     for (const s of this.strips) {
       s.mesh.parent?.remove(s.mesh);
       s.mesh.geometry.dispose();
-      s.mat.dispose();
+      (s.mesh.material as THREE.Material).dispose();
     }
     this.strips = [];
+  }
+
+  // ── Strip pattern writer (shared by venue + user strips) ────────────
+
+  private writeStrip(
+    strip: PixelStrip,
+    mode: 'fill' | 'chase' | 'pulse' | 'kickflash' | 'solid',
+    color: THREE.Color,
+    altColor: THREE.Color,
+    audio: { beat: number; bass: number; kick: number },
+    t: number,
+    speed: number,
+    glow: number,
+  ): void {
+    const n = strip.segs;
+    const dim = 0.045;
+    switch (mode) {
+      case 'fill': {
+        // Beat envelope fills from the CENTER outward — the classic
+        // "meter" look, symmetric so it reads from anywhere.
+        const fill = Math.max(0.06, audio.beat) * (n / 2);
+        const center = (n - 1) / 2;
+        for (let i = 0; i < n; i++) {
+          const d = Math.abs(i - center);
+          const lit = THREE.MathUtils.clamp(fill - d + 0.5, 0, 1);
+          setSeg(strip, i, color, dim + lit * glow * (0.9 + audio.bass * 0.8));
+        }
+        break;
+      }
+      case 'chase': {
+        const head = ((t * speed * 6 + strip.phase * n) % n + n) % n;
+        for (let i = 0; i < n; i++) {
+          let d = Math.abs(i - head);
+          d = Math.min(d, n - d);
+          const lit = Math.max(0, 1 - d / 2.4);
+          setSeg(strip, i, d < 1.2 ? color : altColor, dim + lit * lit * glow * 1.4);
+        }
+        break;
+      }
+      case 'pulse': {
+        const v = dim + (0.18 + audio.bass * 1.4) * glow;
+        for (let i = 0; i < n; i++) setSeg(strip, i, color, v);
+        break;
+      }
+      case 'kickflash': {
+        const v = dim + audio.kick * 2.4 * glow;
+        for (let i = 0; i < n; i++) setSeg(strip, i, i % 2 === 0 ? color : altColor, v);
+        break;
+      }
+      case 'solid': {
+        for (let i = 0; i < n; i++) setSeg(strip, i, color, glow);
+        break;
+      }
+    }
+    strip.colors.needsUpdate = true;
   }
 
   // ── Per-frame drive ─────────────────────────────────────────────────
@@ -292,62 +501,118 @@ export class AtmosphereRig {
     this.elapsed += dt;
     const t = this.elapsed;
 
-    // Idle floor keeps everything alive in silence; energy opens it up.
-    const energy = audio.isActive ? audio.energy : 0.12;
-    const level = audio.isActive ? audio.level : 0.1;
-    const kick = audio.isActive ? audio.kick : 0;
-    const treble = audio.isActive ? audio.treble : 0.1;
-    const sweep = 0.45 + energy * 1.6;        // global motion speed
-    const hazeGlow = this.flags.haze ? 1.35 : 1;
+    const active = audio.isActive;
+    const energy = active ? audio.energy : 0.1;
+    const level = active ? audio.level : 0.08;
+    const kick = active ? audio.kick : 0;
+    const treble = active ? audio.treble : 0.08;
+    const beatEnv = active ? audio.beat : (Math.sin(t * 0.5) * 0.5 + 0.5) * 0.25;
+    const bass = active ? audio.bass : 0.12;
+    const hazeGlow = this.flags.haze ? 1.3 : 1;
 
-    // Beat rising-edge → rotate the palette.
-    const beatHot = audio.isActive && audio.beat > 0.85;
+    // Energy EMA for look selection (~2s window).
+    this.energyEma += (energy - this.energyEma) * (1 - Math.exp(-dt / 2));
+
+    // Beat counting → phrase advancement (16 beats ≈ 4 bars in 4/4).
+    const beatHot = active && audio.beat > 0.85;
     if (beatHot && !this.beatLatch) {
       this.beatLatch = true;
-      for (const b of this.beams) {
-        b.colorIdx = (b.colorIdx + 1) % SHOW_COLORS.length;
-        (b.mat.uniforms.uColor.value as THREE.Color).setHex(SHOW_COLORS[b.colorIdx]);
-      }
-      for (const l of this.lasers) {
-        l.colorIdx = (l.colorIdx + 1) % SHOW_COLORS.length;
-        l.mat.color.setHex(SHOW_COLORS[l.colorIdx]);
-      }
+      this.beatCount++;
+      if (this.beatCount % PHRASE_BEATS === 0) this.advancePhrase();
     } else if (!beatHot) {
       this.beatLatch = false;
     }
+    // Silence → settle into the searchlight idle.
+    if (!active && this.look.name !== 'searchlight') this.look = LOOKS[0];
 
-    // Slow hue drift for the strips.
-    this.hue = (this.hue + dt * (0.02 + energy * 0.06)) % 1;
+    const colorEase = 1 - Math.exp(-dt / 0.35);
+    const sweep = 0.4 + energy * 1.5;
+    const look = this.look.name;
+    const n = Math.max(1, this.beams.length);
 
+    // ── Beams ──
     for (const b of this.beams) {
-      // Pan/tilt figure-eights around the rest pose — phase-offset per
-      // fixture so the rig ripples instead of moving in lockstep.
-      b.yoke.rotation.y = b.restPan + Math.sin(t * sweep + b.phase) * 0.7;
-      b.head.rotation.x = b.restTilt + Math.sin(t * sweep * 0.63 + b.phase * 1.7) * 0.45;
-      b.mat.uniforms.uIntensity.value =
-        Math.min(0.85, (0.18 + level * 0.45 + kick * 0.5) * hazeGlow);
+      const i = b.rigIndex;
+      let pan = b.restPan;
+      let tilt = b.restTilt;
+      let inten = 0.18 + level * 0.45 + kick * 0.5;
+      switch (look) {
+        case 'searchlight':
+          pan += Math.sin(t * 0.28 + b.phase) * 0.9;
+          tilt += Math.sin(t * 0.2 + b.phase * 1.7) * 0.3;
+          inten *= 0.55;
+          break;
+        case 'unison':
+          pan += Math.sin(t * sweep) * 0.55;
+          tilt += Math.sin(t * sweep * 0.5) * 0.3;
+          break;
+        case 'alternate': {
+          const sign = i % 2 === 0 ? 1 : -1;
+          pan += sign * Math.sin(t * sweep) * 0.6;
+          tilt += sign * Math.cos(t * sweep * 0.63) * 0.32;
+          break;
+        }
+        case 'fan': {
+          const off = (i - (n - 1) / 2) / Math.max(1, n / 2);
+          pan += off * (0.3 + 0.4 * (Math.sin(t * sweep * 0.55) * 0.5 + 0.5));
+          tilt += Math.sin(t * sweep * 0.4) * 0.22;
+          break;
+        }
+        case 'chase': {
+          pan += Math.sin(t * 0.5 + b.phase) * 0.35;
+          tilt += Math.cos(t * 0.4 + b.phase) * 0.2;
+          const pulse = Math.max(0, Math.sin(t * sweep * 2.2 - i * 0.9));
+          inten *= 0.22 + pulse * pulse * 1.1;
+          break;
+        }
+        case 'punch':
+          tilt = b.restTilt + 0.45;
+          pan += Math.sin(t * 0.3 + b.phase) * 0.12;
+          inten = 0.1 + kick * 1.5;
+          break;
+      }
+      b.yoke.rotation.y = pan;
+      b.head.rotation.x = tilt;
+      b.mat.uniforms.uIntensity.value = Math.min(0.85, inten * hazeGlow);
+      b.colorTarget.copy(this.beamColor(i, n));
+      (b.mat.uniforms.uColor.value as THREE.Color).lerp(b.colorTarget, colorEase);
     }
 
+    // ── Lasers ──
     for (const l of this.lasers) {
-      // Fan breathes with the beat LFO, whole unit sweeps the room.
-      const fan = 0.12 + (audio.isActive ? audio.lfoBeat : (Math.sin(t * 0.5) * 0.5 + 0.5)) * 0.55;
-      const n = l.blades.length;
-      for (let b = 0; b < n; b++) {
-        l.blades[b].rotation.y = (b - (n - 1) / 2) * (fan / (n - 1)) * 2;
+      const mode = this.look.laser;
+      const fan = 0.12 + (active ? audio.lfoBeat : (Math.sin(t * 0.5) * 0.5 + 0.5)) * 0.55;
+      const bn = l.blades.length;
+      for (let b = 0; b < bn; b++) {
+        l.blades[b].rotation.y = (b - (bn - 1) / 2) * (fan / (bn - 1)) * 2;
       }
       l.group.rotation.y = Math.sin(t * sweep * 0.5 + l.phase) * 0.85;
       l.group.rotation.x = -0.1 + Math.sin(t * sweep * 0.31 + l.phase * 2.1) * 0.12;
-      l.mat.opacity = (0.3 + treble * 0.5 + kick * 0.25) * hazeGlow;
+      let op = 0.28 + treble * 0.45 + kick * 0.2;
+      if (mode === 'off') op = 0.05;
+      if (mode === 'strobe') op = 0.06 + kick * 0.9;
+      l.mat.opacity = Math.min(0.85, op * hazeGlow);
+      l.colorTarget.copy(this.palette[1]);
+      l.mat.color.lerp(l.colorTarget, colorEase);
     }
 
-    for (const s of this.strips) {
-      const pulse = 0.5 + (audio.isActive ? audio.bass : (Math.sin(t * 0.7 + s.phase) * 0.5 + 0.5) * 0.3) * 2.4 + kick * 1.2;
-      s.mat.emissiveIntensity = pulse;
-      s.mat.emissive.setHSL((this.hue + s.phase * 0.13) % 1, 0.95, 0.55);
+    // ── Venue strips ──
+    const stripAudio = { beat: beatEnv, bass, kick };
+    this.strips.forEach((s, si) => {
+      const color = si % 2 === 0 ? this.palette[0] : this.palette[2];
+      const alt = this.palette[1];
+      this.writeStrip(s, this.look.strip, color, alt, stripAudio, t, 1, 1.6 * hazeGlow);
+    });
+
+    // ── User-placed ledstrip elements ──
+    const MODES = ['fill', 'chase', 'pulse', 'solid'] as const;
+    for (const u of this.userStrips) {
+      const color = u.sync ? this.palette[0] : u.base;
+      const alt = u.sync ? this.palette[1] : u.base;
+      this.writeStrip(u.strip, MODES[u.mode] ?? 'fill', color, alt, stripAudio, t, u.speed, u.glow * hazeGlow);
     }
 
-    // Haze — ease the fog density toward its target like a hazer
-    // filling (or clearing) the room.
+    // ── Haze ──
     const fog = this.scene.fog as THREE.FogExp2 | null;
     if (fog) {
       const target = this.venue.fogDensity * (this.flags.haze ? HAZE_FOG_MULT : 1);
@@ -361,6 +626,7 @@ export class AtmosphereRig {
     this.teardownBeams();
     this.teardownLasers();
     this.teardownStrips();
+    this.userStrips = [];
     const fog = this.scene.fog as THREE.FogExp2 | null;
     if (fog) fog.density = this.venue.fogDensity;
   }

@@ -23,7 +23,7 @@ import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLigh
 import { get } from 'svelte/store';
 import { stage3dScene, selectedStage3DNodeId, selectedStage3DTargets, stage3DGizmoMode, parseSelection, stage3DRendererControls, stage3DSceneryList, sceneryLabel, stage3DCameraFov } from './store';
 import { buildVenue, type VenueBuild } from './venues';
-import { AtmosphereRig } from './atmosphere';
+import { AtmosphereRig, type UserStripAnim } from './atmosphere';
 import { DEFAULT_ATMOSPHERE } from './types';
 import { getVisualAudioSnapshot } from '../audio/visualAudio';
 import { buildUserElement } from './elementTypes';
@@ -557,6 +557,12 @@ export class Stage3DRenderer {
   /** Atmosphere FX rig — rebuilt per venue, ticked every render(). */
   private atmosphereRig: AtmosphereRig | null = null;
   private lastAtmoTime = 0;
+  /** Stable identity of the screens' CONTENT (clip/source ids) — when
+   *  it changes, the show director calls a new lighting cue. */
+  private lastContentSig = '';
+  /** Set when user elements are added/rebuilt/removed so the rig
+   *  re-collects ledstrip animation holders. */
+  private userStripsDirty = true;
   /** Demo Reel camera drive — when set, render() applies this state and
    *  bypasses OrbitControls so shot interpolation lands exactly. */
   private drivenCamera: { position: [number, number, number]; target: [number, number, number]; fov: number } | null = null;
@@ -858,8 +864,48 @@ export class Stage3DRenderer {
       : 0.016;
     this.lastAtmoTime = atmoNow;
     if (this.atmosphereRig) {
-      this.atmosphereRig.setFlags({ ...DEFAULT_ATMOSPHERE, ...(stage.atmosphere ?? {}) });
+      const atmoFlags = { ...DEFAULT_ATMOSPHERE, ...(stage.atmosphere ?? {}) };
+      this.atmosphereRig.setFlags(atmoFlags);
+
+      // Content sync — when the screens' source identity changes (new
+      // clip / shader fired), the director calls a new lighting cue.
+      const contentSig = screenLayers
+        .map(l => (l.source ? `${l.source.id}:${l.source.name}` : ''))
+        .join('|');
+      if (contentSig !== this.lastContentSig) {
+        if (this.lastContentSig !== '') this.atmosphereRig.notifyContentChange();
+        this.lastContentSig = contentSig;
+      }
+      // Palette from the screens: feed the live average color of the
+      // first LED's content (already async-read for the room glow).
+      if (this.ledEntries.length > 0) {
+        this.atmosphereRig.setContentColor(this.ledEntries[0].ambientLight.color);
+      }
+
+      // Hand user-placed ledstrip elements to the rig when the element
+      // set changed.
+      if (this.userStripsDirty) {
+        this.userStripsDirty = false;
+        const list: UserStripAnim[] = [];
+        for (const [, entry] of this.elementEntries) {
+          entry.group.traverse(o => {
+            const a = o.userData.ledStripAnim as UserStripAnim | undefined;
+            if (a) list.push(a);
+          });
+        }
+        this.atmosphereRig.setUserStrips(list);
+      }
+
       this.atmosphereRig.update(atmoDt, getVisualAudioSnapshot());
+
+      // Guarantee enough bloom for the show elements to glow even in
+      // venues that run bloom-free at idle (festival/arena).
+      if (this.bloomPass && this.venueBuild) {
+        const anyAtmo = atmoFlags.beams || atmoFlags.lasers || atmoFlags.haze || atmoFlags.strips;
+        this.bloomPass.strength = anyAtmo
+          ? Math.max(this.venueBuild.bloomStrength, 0.16)
+          : this.venueBuild.bloomStrength;
+      }
     }
 
     // Per-frame LED uniforms + transforms.
@@ -1391,8 +1437,10 @@ export class Stage3DRenderer {
     }
 
     // Fresh atmosphere rig for the new venue — flags re-sync on the
-    // next render() tick from stage.atmosphere.
+    // next render() tick from stage.atmosphere, and the user-strip
+    // holders need re-handing to the new instance.
     this.atmosphereRig = new AtmosphereRig(this.scene, build);
+    this.userStripsDirty = true;
 
     // Force LED rebuild on next render — new wall geometry.
     this.currentLedSignature = '';
@@ -1639,6 +1687,7 @@ export class Stage3DRenderer {
         this.scene.remove(entry.group);
         disposeObject(entry.group);
         this.elementEntries.delete(id);
+        this.userStripsDirty = true;
       }
     }
     for (const el of elements) {
@@ -1649,6 +1698,7 @@ export class Stage3DRenderer {
         this.scene.add(group);
         this.elementEntries.set(el.id, { element: el, group, signature: sig });
         this.collectTrussMaterials(group);
+        this.userStripsDirty = true;
       } else if (existing.signature !== sig) {
         // Params changed — rebuild children but preserve the wrapping
         // group so the gizmo stays attached.
@@ -1666,6 +1716,7 @@ export class Stage3DRenderer {
         existing.group.scale.setScalar(el.scale);
         // Re-tag any new truss materials.
         this.collectTrussMaterials(existing.group);
+        this.userStripsDirty = true;
       } else {
         // Skip transform write when this entry is being driven by the
         // multi-select pivot or actively dragged by the gizmo.
