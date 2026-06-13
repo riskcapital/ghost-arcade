@@ -651,6 +651,12 @@
 
   onMount(() => {
     let appMounted = true;
+    // Debug/automation hook: expose the live store singletons on window so
+    // CDP-driven tests and DevTools reach the SAME instances the render
+    // loop uses (a dynamic `import('/src/...')` over CDP can resolve to a
+    // separate module record after a Vite dep re-optimization). Harmless
+    // read/write surface; no behaviour depends on it.
+    try { (window as any).__ghostArcade = { project, settings }; } catch { /* sealed */ }
     const bridgeTimeouts = new Set<ReturnType<typeof setTimeout>>();
     const scheduleBridgeTimeout = (fn: () => void, delay: number) => {
       const id = setTimeout(() => {

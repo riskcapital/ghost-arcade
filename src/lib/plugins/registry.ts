@@ -407,6 +407,33 @@ registerPlugin({
 });
 
 registerPlugin({
+  id: 'ghostpilot',
+  name: 'Ghost Pilot',
+  description: 'Playable audio-built world — fly a neon canyon with a gamepad. Bass builds the terrain; beat-quantized verbs (pulse / flip / bloom / dive) land on the drop; let go and autopilot takes the wheel.',
+  category: 'Generators',
+  version: '0.1.0',
+  author: 'Ghost Arcade',
+  tier: 'free',
+  icon: '🎮',
+  previewCSS: 'linear-gradient(160deg, #03030a 0%, #0a1a3a 35%, #FF2bd0 70%, #18f0ff 100%)',
+  effectType: 'ghostpilot',
+  paramDefs: [
+    { name: 'Audio Drive', param: 'ghostpilotSensitivity', type: 'slider', min: 0.25, max: 4, step: 0.05, default: 1.4 },
+    { name: 'Speed', param: 'ghostpilotSpeedScale', type: 'slider', min: 0.5, max: 2.5, step: 0.05, default: 1.0 },
+    { name: 'Palette', param: 'ghostpilotHueBase', type: 'slider', min: 0, max: 1, step: 0.01, default: 0.0 },
+    { name: 'Steer Assist', param: 'ghostpilotSteerAssist', type: 'slider', min: 0, max: 1, step: 0.05, default: 1.0 },
+    { name: 'Idle Autopilot', param: 'ghostpilotAutopilot', type: 'toggle', default: true },
+  ],
+  defaultSourceParams: {
+    ghostpilotSensitivity: 1.4,
+    ghostpilotSpeedScale: 1.0,
+    ghostpilotHueBase: 0.0,
+    ghostpilotSteerAssist: 1.0,
+    ghostpilotAutopilot: true,
+  },
+});
+
+registerPlugin({
   id: 'hydra',
   name: 'Hydra',
   description: 'Live-codeable video synth — warping, feedback, audio-reactive sketches',
