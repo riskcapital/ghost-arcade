@@ -76,6 +76,71 @@ const wasPressed = new Array(NUM_BUTTONS).fill(false);
 // real hardware is ignored so tests are deterministic.
 let synthetic: Partial<GamepadState> | null = null;
 
+// ── Keyboard fallback (no controller) ───────────────────────────────
+// Maps WASD/arrows + action keys onto the standard gamepad snapshot so
+// Ghost Pilot is fully playable with no hardware. Only consulted when
+// no real/synthetic pad is present, and only while a pilot is active
+// (setKeyboardPilotActive) so we never hijack the app's keys otherwise.
+//
+//   Steer ........ A / D   (or ← / →)
+//   Throttle ..... W / ↑        Brake ... S / ↓
+//   Look (yaw) ... Q / E
+//   Pulse ........ Space        Bloom ... B
+//   Flip ......... F            Dive .... V
+//   Vortex ....... T  (toggle the background line-vortex / streaks)
+const PILOT_KEYS = new Set([
+  'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE',
+  'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+  'Space', 'KeyB', 'KeyF', 'KeyV', 'KeyT',
+]);
+const heldKeys = new Set<string>();
+let keyboardActive = false;
+let keyListenersOn = false;
+
+function onKeyDown(e: KeyboardEvent) {
+  if (!keyboardActive || !PILOT_KEYS.has(e.code)) return;
+  heldKeys.add(e.code);
+  e.preventDefault();   // stop Space/arrows from scrolling the page
+}
+function onKeyUp(e: KeyboardEvent) { heldKeys.delete(e.code); }
+function clearKeys() { heldKeys.clear(); }
+
+function ensureKeyListeners() {
+  if (keyListenersOn || typeof window === 'undefined') return;
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
+  window.addEventListener('blur', clearKeys);  // don't let a key "stick"
+  keyListenersOn = true;
+}
+
+/** Build a standard snapshot from currently-held keys. Verb buttons are
+ *  set to a full 1.0 so applySnapshot's rising-edge counter fires once
+ *  per keypress — identical semantics to a controller button. */
+function keyboardSnapshot(): GamepadState {
+  const s = emptyState();
+  s.connected = true;
+  s.id = 'keyboard';
+  const k = (code: string) => heldKeys.has(code);
+  s.lx = (k('KeyD') || k('ArrowRight') ? 1 : 0) - (k('KeyA') || k('ArrowLeft') ? 1 : 0);
+  s.rx = (k('KeyE') ? 1 : 0) - (k('KeyQ') ? 1 : 0);
+  s.rt = k('KeyW') || k('ArrowUp') ? 1 : 0;     // throttle
+  s.lt = k('KeyS') || k('ArrowDown') ? 1 : 0;   // brake
+  s.buttons[BTN.A] = k('Space') ? 1 : 0;        // pulse
+  s.buttons[BTN.X] = k('KeyB') ? 1 : 0;         // bloom
+  s.buttons[BTN.B] = k('KeyF') ? 1 : 0;         // flip
+  s.buttons[BTN.Y] = k('KeyV') ? 1 : 0;         // dive
+  s.buttons[BTN.RB] = k('KeyT') ? 1 : 0;        // toggle background vortex
+  return s;
+}
+
+/** Arm/disarm the keyboard pilot. Called by the Ghost Pilot visualizer
+ *  on construct/dispose so keyboard capture is scoped to active flight. */
+export function setKeyboardPilotActive(on: boolean): void {
+  keyboardActive = on;
+  if (on) ensureKeyListeners();
+  else clearKeys();
+}
+
 let pollHandle = 0;
 let running = false;
 let storeThrottle = 0;
@@ -103,7 +168,12 @@ function poll() {
   } else {
     const pad = readHardware();
     if (!pad) {
-      if (state.connected) { Object.assign(state, emptyState()); pushStore(); }
+      // No controller — fall back to the keyboard if a pilot is active.
+      if (keyboardActive) {
+        applySnapshot(keyboardSnapshot());
+      } else if (state.connected) {
+        Object.assign(state, emptyState()); pushStore();
+      }
     } else {
       const ax = pad.axes;
       const snap = emptyState();

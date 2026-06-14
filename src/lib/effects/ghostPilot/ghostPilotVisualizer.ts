@@ -19,7 +19,7 @@
 
 import * as THREE from 'three';
 import { CANYON_VERT, CANYON_FRAG } from './canyonShader';
-import { getGamepadState, BTN } from '../../input/gamepad';
+import { getGamepadState, setKeyboardPilotActive, BTN } from '../../input/gamepad';
 import type { AudioAnalysis } from '../../audio/analyzer';
 
 export interface GhostPilotParams {
@@ -81,6 +81,8 @@ export class GhostPilotVisualizer {
   private dive = 0;          // decays
   private pulseZ = -1;       // world z of ring (-1 inactive)
   private pulseStr = 0;
+  private shock = 0;         // 0..1 spacebar shockwave envelope (decays)
+  private beatFlash = 0;     // 0..1 beat-onset flash (decays)
   private lastPressCounts: number[] = [];
   private pending: VerbKind | null = null;
   private pendingAtMs = 0;
@@ -89,6 +91,10 @@ export class GhostPilotVisualizer {
   // ── Autopilot ──
   private idleTime = 0;
   private autoBlend = 0;     // 0 = manual, 1 = full autopilot
+
+  // ── Toggles ──
+  private streaksOn = true;      // background line-vortex (streaks)
+  private lastVortexCount = -1;  // rising-edge tracker for the toggle key
 
   private timeSec = 0;
 
@@ -105,11 +111,13 @@ export class GhostPilotVisualizer {
         uCamFwd: { value: new THREE.Vector3(0, 0, 1) },
         uCamRight: { value: new THREE.Vector3(1, 0, 0) },
         uCamUp: { value: new THREE.Vector3(0, 1, 0) },
-        uTanHalfFov: { value: Math.tan((65 * Math.PI / 180) / 2) },
+        uTanHalfFov: { value: Math.tan((78 * Math.PI / 180) / 2) },
         uBass: { value: 0 }, uMid: { value: 0 }, uTreble: { value: 0 },
         uEnergy: { value: 0 }, uLevel: { value: 0 },
         uHue: { value: 0 }, uFlip: { value: 0 }, uBloom: { value: 0 },
         uPulseZ: { value: -1 }, uPulseStr: { value: 0 },
+        uBeat: { value: 0 }, uShock: { value: 0 }, uSpeed: { value: 0 },
+        uStreaks: { value: 1 },
       },
     });
     this.quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.material);
@@ -118,6 +126,9 @@ export class GhostPilotVisualizer {
     // Debug hook — last-constructed pilot instance, for telemetry probes
     // and (later) a HUD overlay.
     try { (window as any).__ghostPilot = this; } catch { /* sealed */ }
+    // Arm the keyboard fallback so the world is playable with no
+    // controller; disarmed in dispose() so we don't hold the app's keys.
+    setKeyboardPilotActive(true);
   }
 
   init(_renderer: THREE.WebGLRenderer): void { /* nothing GPU-stateful yet */ }
@@ -173,8 +184,9 @@ export class GhostPilotVisualizer {
     this.sLevel = damp(this.sLevel, level, 8, dt);
     // Energy charges from sustained loudness, slow natural bleed.
     this.energy = clamp(this.energy + level * dt * 0.22 - dt * 0.02, 0, 1);
-    // Palette drifts with energy + a slow base rotation.
-    this.hue = (this.params.hueBase + this.timeSec * 0.01 + this.energy * 0.15) % 1;
+    // Palette churns through the spectrum — faster base rotation plus a
+    // big energy kick so drops sweep the whole rainbow.
+    this.hue = (this.params.hueBase + this.timeSec * 0.045 + this.energy * 0.5) % 1;
   }
 
   private updateInputAndPhysics(audio: AudioAnalysis | null, dt: number): void {
@@ -187,8 +199,10 @@ export class GhostPilotVisualizer {
     const wantAuto = this.params.autopilot && this.idleTime > 1.5;
     this.autoBlend = damp(this.autoBlend, wantAuto ? 1 : 0, wantAuto ? 0.6 : 3, dt);
 
-    // Autopilot inputs: lazy S-curve down the canyon, easy cruise.
-    const autoSteer = Math.sin(this.timeSec * 0.27) * 0.55 + Math.sin(this.timeSec * 0.11) * 0.25;
+    // Autopilot inputs: a GENTLE weave down the valley centre — small
+    // amplitude so the craft never wanders into the towering walls (where
+    // the camera would bury itself); the centering spring keeps it open.
+    const autoSteer = Math.sin(this.timeSec * 0.27) * 0.09 + Math.sin(this.timeSec * 0.11) * 0.05;
     const steer = lerp(gp.lx, autoSteer, this.autoBlend);
     const throttle = lerp(gp.rt, 0.25, this.autoBlend);
     const brake = lerp(gp.lt, 0, this.autoBlend);
@@ -203,11 +217,11 @@ export class GhostPilotVisualizer {
     // middle so the craft never drifts into a wall and gets buried; the
     // player steers AGAINST it. Keeps idle/autopilot flight in the open.
     this.velX += steer * 52 * dt;
-    this.velX += -this.posX * 2.6 * dt;        // centering spring
+    this.velX += -this.posX * 4.5 * dt;        // centering spring (firm)
     this.velX *= Math.exp(-2.6 * dt);
-    this.posX = clamp(this.posX + this.velX * dt, -3.4, 3.4);
+    this.posX = clamp(this.posX + this.velX * dt, -2.4, 2.4);
     // Hard stop at the navigable edge (walls tower just beyond).
-    if (Math.abs(this.posX) >= 3.4) this.velX *= -0.25;
+    if (Math.abs(this.posX) >= 2.4) this.velX *= -0.25;
 
     // Banking from lateral velocity + steer — the camera leans into turns.
     const targetRoll = clamp(-(this.velX * 0.045 + steer * 0.35 * sa), -0.7, 0.7);
@@ -230,13 +244,19 @@ export class GhostPilotVisualizer {
     // climb when pitching up. Fixed altitude (not terrain-following) so
     // the walls tower around you without JS/GLSL height parity headaches.
     const bob = this.sBass * 0.7;
-    const baseAlt = 1.9 + bob + Math.max(0, this.pitch) * 2.0;
+    const baseAlt = 2.4 + bob + Math.max(0, this.pitch) * 2.0;
     this.posY = damp(this.posY, baseAlt, 4, dt);
   }
 
   private updateVerbs(audio: AudioAnalysis | null, dt: number): void {
     const gp = getGamepadState();
     if (this.lastPressCounts.length === 0) this.lastPressCounts = [...gp.pressCounts];
+
+    // Toggle the background line-vortex (streaks) on RB / 'T' — rising edge.
+    const vc = gp.pressCounts[BTN.RB] ?? 0;
+    if (this.lastVortexCount < 0) this.lastVortexCount = vc;
+    if (vc > this.lastVortexCount) this.streaksOn = !this.streaksOn;
+    this.lastVortexCount = vc;
 
     // Queue a verb on a fresh button press (latest press wins).
     for (const v of VERB_BUTTONS) {
@@ -248,12 +268,16 @@ export class GhostPilotVisualizer {
       this.lastPressCounts[v.btn] = c;
     }
 
+    // Beat onset (rising edge) — flares the spawned gates so the world
+    // visibly reacts to the music even with no verb queued.
+    const beatNow = !!audio?.beat?.isBeat;
+    const beatOnset = beatNow && !this.lastBeat;
+    if (beatOnset) this.beatFlash = 1;
+
     // Fire the pending verb ON THE NEXT BEAT (the whole point — it lands
     // musically). Fallback: fire after ~half a beat if no onset arrives
     // so it never feels stuck on quiet passages.
     if (this.pending) {
-      const beatNow = !!audio?.beat?.isBeat;
-      const beatOnset = beatNow && !this.lastBeat;
       const bpm = audio?.bpm && audio.bpm > 0 ? audio.bpm : 120;
       const halfBeatMs = (60000 / bpm) * 0.5;
       const waited = this.timeSec * 1000 - this.pendingAtMs;
@@ -262,12 +286,14 @@ export class GhostPilotVisualizer {
         this.pending = null;
       }
     }
-    this.lastBeat = !!audio?.beat?.isBeat;
+    this.lastBeat = beatNow;
 
     // Decay envelopes.
     this.flip = damp(this.flip, this.flipTarget, 8, dt);
     this.bloom = Math.max(0, this.bloom - dt / 1.4);
     this.dive = Math.max(0, this.dive - dt / 0.8);
+    this.shock = Math.max(0, this.shock - dt / 1.0);      // ~1s wave
+    this.beatFlash = Math.max(0, this.beatFlash - dt / 0.18);
     if (this.pulseZ > 0) {
       this.pulseZ += (this.speed + 40) * dt;     // ring races down-canyon
       this.pulseStr = Math.max(0, this.pulseStr - dt / 1.6);
@@ -289,6 +315,8 @@ export class GhostPilotVisualizer {
       case 'pulse':
         this.pulseZ = this.posZ + 4;
         this.pulseStr = 1;
+        this.shock = 1;          // big screen-space shockwave
+        this.bloom = Math.max(this.bloom, 0.4);
         break;
       case 'flip':
         this.flipTarget = this.flipTarget > 0.5 ? 0 : 1;
@@ -325,7 +353,9 @@ export class GhostPilotVisualizer {
     (u.uCamFwd.value as THREE.Vector3).copy(fwd);
     (u.uCamRight.value as THREE.Vector3).copy(rolledRight);
     (u.uCamUp.value as THREE.Vector3).copy(rolledUp);
-    u.uTanHalfFov.value = Math.tan(((65 + this.dive * 22) * Math.PI / 180) / 2);
+    // Wide base lens; dive widens further and the pulse shock kicks a
+    // quick FOV punch for visceral impact as the wave fires.
+    u.uTanHalfFov.value = Math.tan(((78 + this.dive * 22 + this.shock * 16) * Math.PI / 180) / 2);
 
     u.uTime.value = this.timeSec;
     u.uBass.value = this.sBass;
@@ -338,9 +368,14 @@ export class GhostPilotVisualizer {
     u.uBloom.value = this.bloom;
     u.uPulseZ.value = this.pulseZ;
     u.uPulseStr.value = this.pulseStr;
+    u.uBeat.value = this.beatFlash;
+    u.uShock.value = this.shock;
+    u.uSpeed.value = clamp(this.speed / 60, 0, 1.5);   // particle stream drive
+    u.uStreaks.value = this.streaksOn ? 1 : 0;
   }
 
   dispose(): void {
+    try { setKeyboardPilotActive(false); } catch {}
     try { this.quad.geometry.dispose(); } catch {}
     try { this.material.dispose(); } catch {}
   }
