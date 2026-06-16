@@ -1,6 +1,9 @@
 <script lang="ts">
   import { project, selectedSVGLayer, selectedSVGContent, layers } from '../stores/layers';
-  import type { Layer, SVGFillMode, SVGColorMode, SVGContent } from '../types';
+  import type {
+    Layer, SVGFillMode, SVGColorMode, SVGContent,
+    SVGRenderMode, SVGMaterialPreset, SVGLightPreset, SVGOutlineStyle, SVGConnectionStyle,
+  } from '../types';
 
   // Tray state
   export let isOpen = false;
@@ -18,6 +21,42 @@
     { value: 'pulse', label: 'Pulse' },
     { value: 'noise', label: 'Noise' },
     { value: 'particles', label: 'Particles' },
+    { value: 'fluid', label: 'Fluid' },
+    { value: 'flow', label: 'Flow' },
+  ];
+
+  const renderModes: { value: SVGRenderMode; label: string }[] = [
+    { value: 'flat', label: 'Flat (2D)' },
+    { value: 'extrude', label: '3D Extrude' },
+  ];
+  const materialPresets: { value: SVGMaterialPreset; label: string }[] = [
+    { value: 'holographic', label: 'Holographic' },
+    { value: 'chrome', label: 'Chrome' },
+    { value: 'glass', label: 'Glass' },
+    { value: 'neon', label: 'Neon' },
+    { value: 'matte', label: 'Matte' },
+  ];
+  const lightPresets: { value: SVGLightPreset; label: string }[] = [
+    { value: 'studio', label: 'Studio' },
+    { value: 'neon', label: 'Neon' },
+    { value: 'rim', label: 'Rim' },
+  ];
+  const outlineStyles: { value: SVGOutlineStyle; label: string }[] = [
+    { value: 'solid', label: 'Solid' },
+    { value: 'dashed', label: 'Marching Ants' },
+    { value: 'gradient', label: 'Gradient' },
+    { value: 'double', label: 'Neon (Double)' },
+    { value: 'taper', label: 'Taper' },
+    { value: 'glow-pulse', label: 'Glow Pulse' },
+  ];
+  const connectionStyles: { value: SVGConnectionStyle; label: string }[] = [
+    { value: 'arc', label: 'Arc' },
+    { value: 'straight', label: 'Straight' },
+    { value: 'electric', label: 'Electric' },
+    { value: 'orbital', label: 'Orbital' },
+    { value: 'beaded', label: 'Beaded' },
+    { value: 'gravity', label: 'Gravity Sag' },
+    { value: 'dataflow', label: 'Data Flow' },
   ];
 
   // Color mode options
@@ -38,15 +77,20 @@
     { name: 'Neon', key: 'neon' },
     { name: 'Minimal', key: 'minimal' },
     { name: 'Chaos', key: 'chaos' },
+    { name: '✦ Hologram 3D', key: 'hologram' },
+    { name: '✦ Chrome Logo', key: 'chrome3d' },
+    { name: '✦ Liquid Glass', key: 'glass3d' },
   ];
 
   // Collapsed sections state
   let expandedSections: Record<string, boolean> = {
     source: true,
     position: true,
+    threeD: false,
     fillMode: false,
     colorMode: false,
     effects: false,
+    organic: false,
   };
 
   function toggleSection(section: string) {
@@ -69,6 +113,22 @@
     if ($selectedSVGLayer) {
       project.toggleSVGEffect($selectedSVGLayer.id, key);
     }
+  }
+
+  // Editable value readouts: typing a number commits it through the
+  // sibling slider (reuses that slider's oninput → store wiring, so no
+  // per-field param key needs threading). Clamps to the slider's range.
+  function syncFromNumber(e: Event) {
+    const num = e.currentTarget as HTMLInputElement;
+    const range = num.previousElementSibling as HTMLInputElement | null;
+    if (!range || range.type !== 'range') return;
+    let v = parseFloat(num.value);
+    if (Number.isNaN(v)) return;
+    const min = parseFloat(range.min), max = parseFloat(range.max);
+    if (!Number.isNaN(min)) v = Math.max(min, v);
+    if (!Number.isNaN(max)) v = Math.min(max, v);
+    range.value = String(v);
+    range.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
   // Handle SVG file upload
@@ -214,6 +274,39 @@
         colorCycleEnabled: true,
         colorCycleSpeed: 1,
       },
+      // ── 3D presets: drop a logo, pick one, it spins in 3D ──────────
+      hologram: {
+        renderMode: 'extrude', materialPreset: 'holographic',
+        extrudeDepth: 32, bevelEnabled: true, bevelSize: 2.5,
+        iridescence: 1, materialMetalness: 0.45, materialRoughness: 0.15,
+        envIntensity: 1.2, lightPreset: 'neon', lightIntensity: 1.1,
+        rotateSpeedY: 0.35, rotateSpeedX: 0.05, floatAmount: 10, floatSpeed: 0.8,
+        colorMode: 'rainbow', colorCycleEnabled: true,
+        bloomStrength: 0.5, bloomThreshold: 0.25, outlineStyle: 'double',
+        // calmer effect bed so the 3D solid is the star
+        particlesEnabled: false, lightningEnabled: false, plasmaEnabled: false,
+        nebulaEnabled: true, glowEnabled: true,
+      },
+      chrome3d: {
+        renderMode: 'extrude', materialPreset: 'chrome',
+        extrudeDepth: 26, bevelEnabled: true, bevelSize: 2,
+        materialMetalness: 1, materialRoughness: 0.08, envIntensity: 1.5,
+        lightPreset: 'studio', lightIntensity: 1.2,
+        rotateSpeedY: 0.4, floatAmount: 6, floatSpeed: 0.7,
+        colorMode: 'white', bloomStrength: 0.35, bloomThreshold: 0.3,
+        particlesEnabled: false, lightningEnabled: false, plasmaEnabled: false,
+        nebulaEnabled: true,
+      },
+      glass3d: {
+        renderMode: 'extrude', materialPreset: 'glass',
+        extrudeDepth: 40, bevelEnabled: true, bevelSize: 3,
+        glassTransmission: 0.95, materialRoughness: 0.06, envIntensity: 1.3,
+        lightPreset: 'rim', lightIntensity: 1.0,
+        rotateSpeedY: 0.3, rotateSpeedX: 0.08, floatAmount: 12, floatSpeed: 0.6,
+        colorMode: 'analogous', bloomStrength: 0.45, bloomThreshold: 0.28,
+        particlesEnabled: false, lightningEnabled: false, plasmaEnabled: false,
+        nebulaEnabled: true,
+      },
     };
 
     const config = presetConfigs[preset];
@@ -336,7 +429,7 @@
                 value={$selectedSVGContent.panX ?? 0}
                 oninput={(e) => updateParam('panX', parseFloat((e.target as HTMLInputElement).value))}
               />
-              <span class="value">{($selectedSVGContent.panX ?? 0).toFixed(2)}</span>
+              <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.panX ?? 0).toFixed(2)} />
             </div>
             <div class="param-row">
               <label>Pan Y</label>
@@ -348,7 +441,7 @@
                 value={$selectedSVGContent.panY ?? 0}
                 oninput={(e) => updateParam('panY', parseFloat((e.target as HTMLInputElement).value))}
               />
-              <span class="value">{($selectedSVGContent.panY ?? 0).toFixed(2)}</span>
+              <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.panY ?? 0).toFixed(2)} />
             </div>
             <div class="param-row">
               <label>Scale</label>
@@ -360,7 +453,7 @@
                 value={$selectedSVGContent.contentScale ?? 1}
                 oninput={(e) => updateParam('contentScale', parseFloat((e.target as HTMLInputElement).value))}
               />
-              <span class="value">{($selectedSVGContent.contentScale ?? 1).toFixed(2)}</span>
+              <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.contentScale ?? 1).toFixed(2)} />
             </div>
             <button class="reset-position-btn" onclick={() => {
               updateParam('panX', 0);
@@ -369,6 +462,182 @@
             }}>
               Reset Position
             </button>
+          </div>
+        {/if}
+      </div>
+
+      <!-- 3D / Material Section -->
+      <div class="section">
+        <button class="section-header" onclick={() => toggleSection('threeD')}>
+          <span>3D / Material</span>
+          <span class="toggle">{expandedSections.threeD ? '-' : '+'}</span>
+        </button>
+        {#if expandedSections.threeD && $selectedSVGContent}
+          <div class="section-content">
+            <div class="param-row">
+              <label>Render Mode</label>
+              <select
+                value={$selectedSVGContent.renderMode ?? 'flat'}
+                onchange={(e) => updateParam('renderMode', (e.target as HTMLSelectElement).value)}
+              >
+                {#each renderModes as m}<option value={m.value}>{m.label}</option>{/each}
+              </select>
+            </div>
+
+            {#if ($selectedSVGContent.renderMode ?? 'flat') === 'extrude'}
+              <div class="param-row">
+                <label>Material</label>
+                <select
+                  value={$selectedSVGContent.materialPreset ?? 'holographic'}
+                  onchange={(e) => updateParam('materialPreset', (e.target as HTMLSelectElement).value)}
+                >
+                  {#each materialPresets as m}<option value={m.value}>{m.label}</option>{/each}
+                </select>
+              </div>
+              <div class="param-row">
+                <label>Depth</label>
+                <input type="range" min="0" max="120" step="1"
+                  value={$selectedSVGContent.extrudeDepth ?? 28}
+                  oninput={(e) => updateParam('extrudeDepth', parseFloat((e.target as HTMLInputElement).value))} />
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={Math.round($selectedSVGContent.extrudeDepth ?? 28)} />
+              </div>
+              <div class="param-row">
+                <label>
+                  <input type="checkbox" checked={$selectedSVGContent.bevelEnabled ?? true}
+                    onchange={() => toggleParam('bevelEnabled')} />
+                  Bevel
+                </label>
+              </div>
+              {#if $selectedSVGContent.bevelEnabled ?? true}
+                <div class="param-row">
+                  <label>Bevel Size</label>
+                  <input type="range" min="0" max="6" step="0.1"
+                    value={$selectedSVGContent.bevelSize ?? 2}
+                    oninput={(e) => updateParam('bevelSize', parseFloat((e.target as HTMLInputElement).value))} />
+                  <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.bevelSize ?? 2).toFixed(1)} />
+                </div>
+              {/if}
+              {#if ($selectedSVGContent.materialPreset ?? 'holographic') === 'holographic'}
+                <div class="param-row">
+                  <label>Iridescence</label>
+                  <input type="range" min="0" max="1" step="0.01"
+                    value={$selectedSVGContent.iridescence ?? 1}
+                    oninput={(e) => updateParam('iridescence', parseFloat((e.target as HTMLInputElement).value))} />
+                  <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.iridescence ?? 1).toFixed(2)} />
+                </div>
+              {/if}
+              {#if ($selectedSVGContent.materialPreset ?? 'holographic') === 'glass'}
+                <div class="param-row">
+                  <label>Transmission</label>
+                  <input type="range" min="0" max="1" step="0.01"
+                    value={$selectedSVGContent.glassTransmission ?? 0.9}
+                    oninput={(e) => updateParam('glassTransmission', parseFloat((e.target as HTMLInputElement).value))} />
+                  <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.glassTransmission ?? 0.9).toFixed(2)} />
+                </div>
+              {/if}
+              <div class="param-row">
+                <label>Metalness</label>
+                <input type="range" min="0" max="1" step="0.01"
+                  value={$selectedSVGContent.materialMetalness ?? 0.6}
+                  oninput={(e) => updateParam('materialMetalness', parseFloat((e.target as HTMLInputElement).value))} />
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.materialMetalness ?? 0.6).toFixed(2)} />
+              </div>
+              <div class="param-row">
+                <label>Roughness</label>
+                <input type="range" min="0" max="1" step="0.01"
+                  value={$selectedSVGContent.materialRoughness ?? 0.25}
+                  oninput={(e) => updateParam('materialRoughness', parseFloat((e.target as HTMLInputElement).value))} />
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.materialRoughness ?? 0.25).toFixed(2)} />
+              </div>
+              <div class="param-row">
+                <label>Reflections</label>
+                <input type="range" min="0" max="2" step="0.01"
+                  value={$selectedSVGContent.envIntensity ?? 1}
+                  oninput={(e) => updateParam('envIntensity', parseFloat((e.target as HTMLInputElement).value))} />
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.envIntensity ?? 1).toFixed(2)} />
+              </div>
+              <div class="param-row">
+                <label>Lights</label>
+                <select
+                  value={$selectedSVGContent.lightPreset ?? 'studio'}
+                  onchange={(e) => updateParam('lightPreset', (e.target as HTMLSelectElement).value)}
+                >
+                  {#each lightPresets as m}<option value={m.value}>{m.label}</option>{/each}
+                </select>
+              </div>
+              <div class="param-row">
+                <label>Light Power</label>
+                <input type="range" min="0" max="3" step="0.05"
+                  value={$selectedSVGContent.lightIntensity ?? 1}
+                  oninput={(e) => updateParam('lightIntensity', parseFloat((e.target as HTMLInputElement).value))} />
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.lightIntensity ?? 1).toFixed(2)} />
+              </div>
+              <div class="param-row">
+                <label>FOV</label>
+                <input type="range" min="25" max="75" step="1"
+                  value={$selectedSVGContent.cameraFov ?? 40}
+                  oninput={(e) => updateParam('cameraFov', parseFloat((e.target as HTMLInputElement).value))} />
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={Math.round($selectedSVGContent.cameraFov ?? 40)} />
+              </div>
+              <div class="param-subhead">Rotate (manual)</div>
+              <div class="param-row">
+                <label>Rotate X</label>
+                <input type="range" min="-180" max="180" step="1"
+                  value={$selectedSVGContent.rotateX ?? 0}
+                  oninput={(e) => updateParam('rotateX', parseFloat((e.target as HTMLInputElement).value))} />
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={Math.round($selectedSVGContent.rotateX ?? 0)} />
+              </div>
+              <div class="param-row">
+                <label>Rotate Y</label>
+                <input type="range" min="-180" max="180" step="1"
+                  value={$selectedSVGContent.rotateY ?? 0}
+                  oninput={(e) => updateParam('rotateY', parseFloat((e.target as HTMLInputElement).value))} />
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={Math.round($selectedSVGContent.rotateY ?? 0)} />
+              </div>
+              <div class="param-row">
+                <label>Rotate Z</label>
+                <input type="range" min="-180" max="180" step="1"
+                  value={$selectedSVGContent.rotateZ ?? 0}
+                  oninput={(e) => updateParam('rotateZ', parseFloat((e.target as HTMLInputElement).value))} />
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={Math.round($selectedSVGContent.rotateZ ?? 0)} />
+              </div>
+              <div class="param-subhead">Auto-spin (speed)</div>
+              <div class="param-row">
+                <label>Spin X</label>
+                <input type="range" min="-1.5" max="1.5" step="0.01"
+                  value={$selectedSVGContent.rotateSpeedX ?? 0}
+                  oninput={(e) => updateParam('rotateSpeedX', parseFloat((e.target as HTMLInputElement).value))} />
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.rotateSpeedX ?? 0).toFixed(2)} />
+              </div>
+              <div class="param-row">
+                <label>Spin Y</label>
+                <input type="range" min="-1.5" max="1.5" step="0.01"
+                  value={$selectedSVGContent.rotateSpeedY ?? 0.25}
+                  oninput={(e) => updateParam('rotateSpeedY', parseFloat((e.target as HTMLInputElement).value))} />
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.rotateSpeedY ?? 0.25).toFixed(2)} />
+              </div>
+              <div class="param-row">
+                <label>Spin Z</label>
+                <input type="range" min="-1.5" max="1.5" step="0.01"
+                  value={$selectedSVGContent.rotateSpeedZ ?? 0}
+                  oninput={(e) => updateParam('rotateSpeedZ', parseFloat((e.target as HTMLInputElement).value))} />
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.rotateSpeedZ ?? 0).toFixed(2)} />
+              </div>
+              <div class="param-row">
+                <label>Float</label>
+                <input type="range" min="0" max="40" step="1"
+                  value={$selectedSVGContent.floatAmount ?? 8}
+                  oninput={(e) => updateParam('floatAmount', parseFloat((e.target as HTMLInputElement).value))} />
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={Math.round($selectedSVGContent.floatAmount ?? 8)} />
+              </div>
+              <div class="param-row">
+                <label>Bloom</label>
+                <input type="range" min="0" max="4" step="0.05"
+                  value={$selectedSVGContent.bloomStrength ?? 0}
+                  oninput={(e) => updateParam('bloomStrength', parseFloat((e.target as HTMLInputElement).value))} />
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.bloomStrength ?? 0).toFixed(2)} />
+              </div>
+            {/if}
           </div>
         {/if}
       </div>
@@ -431,7 +700,7 @@
                   value={$selectedSVGContent.liquidSpeed}
                   oninput={(e) => updateParam('liquidSpeed', parseFloat((e.target as HTMLInputElement).value))}
                 />
-                <span class="value">{$selectedSVGContent.liquidSpeed.toFixed(2)}</span>
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.liquidSpeed.toFixed(2)} />
               </div>
               <div class="param-row">
                 <label>Wave Amp</label>
@@ -443,7 +712,7 @@
                   value={$selectedSVGContent.liquidWaveAmp}
                   oninput={(e) => updateParam('liquidWaveAmp', parseFloat((e.target as HTMLInputElement).value))}
                 />
-                <span class="value">{$selectedSVGContent.liquidWaveAmp.toFixed(2)}</span>
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.liquidWaveAmp.toFixed(2)} />
               </div>
             {/if}
 
@@ -458,7 +727,7 @@
                   value={$selectedSVGContent.gradientAngle}
                   oninput={(e) => updateParam('gradientAngle', parseFloat((e.target as HTMLInputElement).value))}
                 />
-                <span class="value">{$selectedSVGContent.gradientAngle}deg</span>
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.gradientAngle} />
               </div>
               <div class="param-row">
                 <label>Spread</label>
@@ -470,7 +739,7 @@
                   value={$selectedSVGContent.gradientSpread}
                   oninput={(e) => updateParam('gradientSpread', parseFloat((e.target as HTMLInputElement).value))}
                 />
-                <span class="value">{$selectedSVGContent.gradientSpread.toFixed(2)}</span>
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.gradientSpread.toFixed(2)} />
               </div>
             {/if}
 
@@ -485,7 +754,7 @@
                   value={$selectedSVGContent.shimmerSpeed}
                   oninput={(e) => updateParam('shimmerSpeed', parseFloat((e.target as HTMLInputElement).value))}
                 />
-                <span class="value">{$selectedSVGContent.shimmerSpeed.toFixed(1)}</span>
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.shimmerSpeed.toFixed(1)} />
               </div>
               <div class="param-row">
                 <label>Scale</label>
@@ -497,7 +766,7 @@
                   value={$selectedSVGContent.shimmerScale}
                   oninput={(e) => updateParam('shimmerScale', parseFloat((e.target as HTMLInputElement).value))}
                 />
-                <span class="value">{$selectedSVGContent.shimmerScale.toFixed(2)}</span>
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.shimmerScale.toFixed(2)} />
               </div>
               <div class="param-row">
                 <label>Intensity</label>
@@ -509,7 +778,7 @@
                   value={$selectedSVGContent.shimmerIntensity}
                   oninput={(e) => updateParam('shimmerIntensity', parseFloat((e.target as HTMLInputElement).value))}
                 />
-                <span class="value">{$selectedSVGContent.shimmerIntensity.toFixed(2)}</span>
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.shimmerIntensity.toFixed(2)} />
               </div>
             {/if}
 
@@ -524,7 +793,7 @@
                   value={$selectedSVGContent.pulseSpeed}
                   oninput={(e) => updateParam('pulseSpeed', parseFloat((e.target as HTMLInputElement).value))}
                 />
-                <span class="value">{$selectedSVGContent.pulseSpeed.toFixed(1)}</span>
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.pulseSpeed.toFixed(1)} />
               </div>
               <div class="param-row">
                 <label>Ring Scale</label>
@@ -536,7 +805,7 @@
                   value={$selectedSVGContent.pulseRingScale}
                   oninput={(e) => updateParam('pulseRingScale', parseFloat((e.target as HTMLInputElement).value))}
                 />
-                <span class="value">{$selectedSVGContent.pulseRingScale}</span>
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.pulseRingScale} />
               </div>
             {/if}
 
@@ -551,7 +820,7 @@
                   value={$selectedSVGContent.noiseScale}
                   oninput={(e) => updateParam('noiseScale', parseFloat((e.target as HTMLInputElement).value))}
                 />
-                <span class="value">{$selectedSVGContent.noiseScale.toFixed(3)}</span>
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.noiseScale.toFixed(3)} />
               </div>
               <div class="param-row">
                 <label>Speed</label>
@@ -563,7 +832,7 @@
                   value={$selectedSVGContent.noiseSpeed}
                   oninput={(e) => updateParam('noiseSpeed', parseFloat((e.target as HTMLInputElement).value))}
                 />
-                <span class="value">{$selectedSVGContent.noiseSpeed.toFixed(2)}</span>
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.noiseSpeed.toFixed(2)} />
               </div>
             {/if}
 
@@ -578,7 +847,7 @@
                   value={$selectedSVGContent.particleFillDensity}
                   oninput={(e) => updateParam('particleFillDensity', parseFloat((e.target as HTMLInputElement).value))}
                 />
-                <span class="value">{$selectedSVGContent.particleFillDensity}</span>
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.particleFillDensity} />
               </div>
               <div class="param-row">
                 <label>Size</label>
@@ -590,11 +859,69 @@
                   value={$selectedSVGContent.particleFillSize}
                   oninput={(e) => updateParam('particleFillSize', parseFloat((e.target as HTMLInputElement).value))}
                 />
-                <span class="value">{$selectedSVGContent.particleFillSize.toFixed(1)}</span>
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.particleFillSize.toFixed(1)} />
               </div>
             {/if}
 
-            <!-- Outline thickness (always visible) -->
+            {#if $selectedSVGContent.fillMode === 'fluid' || $selectedSVGContent.fillMode === 'flow'}
+              <div class="param-row">
+                <label>Fluid Scale</label>
+                <input type="range" min="0.5" max="6" step="0.1"
+                  value={$selectedSVGContent.fluidScale ?? 2.5}
+                  oninput={(e) => updateParam('fluidScale', parseFloat((e.target as HTMLInputElement).value))} />
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.fluidScale ?? 2.5).toFixed(1)} />
+              </div>
+              <div class="param-row">
+                <label>Fluid Speed</label>
+                <input type="range" min="0.1" max="3" step="0.05"
+                  value={$selectedSVGContent.fluidSpeed ?? 0.6}
+                  oninput={(e) => updateParam('fluidSpeed', parseFloat((e.target as HTMLInputElement).value))} />
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.fluidSpeed ?? 0.6).toFixed(2)} />
+              </div>
+              <div class="param-row">
+                <label>Turbulence</label>
+                <input type="range" min="0" max="2" step="0.05"
+                  value={$selectedSVGContent.fluidTurbulence ?? 1}
+                  oninput={(e) => updateParam('fluidTurbulence', parseFloat((e.target as HTMLInputElement).value))} />
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.fluidTurbulence ?? 1).toFixed(2)} />
+              </div>
+            {/if}
+
+            <!-- Volumetric particle fill (fills the shape interior) -->
+            <div class="param-row">
+              <label>
+                <input type="checkbox" checked={$selectedSVGContent.particleFillEnabled ?? false}
+                  onchange={() => toggleParam('particleFillEnabled')} />
+                Particle Fill
+              </label>
+            </div>
+            {#if $selectedSVGContent.particleFillEnabled}
+              <div class="param-row">
+                <label>Fill Density</label>
+                <input type="range" min="50" max="500" step="10"
+                  value={$selectedSVGContent.particleFillDensity}
+                  oninput={(e) => updateParam('particleFillDensity', parseFloat((e.target as HTMLInputElement).value))} />
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.particleFillDensity} />
+              </div>
+              <div class="param-row">
+                <label>Fill Speed</label>
+                <input type="range" min="0.1" max="3" step="0.05"
+                  value={$selectedSVGContent.particleFillSpeed}
+                  oninput={(e) => updateParam('particleFillSpeed', parseFloat((e.target as HTMLInputElement).value))} />
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.particleFillSpeed.toFixed(2)} />
+              </div>
+            {/if}
+
+            <!-- Outline (always visible) -->
+            <div class="param-row">
+              <label>Outline Style</label>
+              <select
+                value={$selectedSVGContent.outlineStyle ?? 'solid'}
+                onchange={(e) => updateParam('outlineStyle', (e.target as HTMLSelectElement).value)}
+              >
+                {#each outlineStyles as s}<option value={s.value}>{s.label}</option>{/each}
+              </select>
+            </div>
             <div class="param-row">
               <label>Outline</label>
               <input
@@ -605,7 +932,7 @@
                 value={$selectedSVGContent.outlineThickness}
                 oninput={(e) => updateParam('outlineThickness', parseFloat((e.target as HTMLInputElement).value))}
               />
-              <span class="value">{$selectedSVGContent.outlineThickness.toFixed(1)}</span>
+              <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.outlineThickness.toFixed(1)} />
             </div>
           </div>
         {/if}
@@ -642,7 +969,7 @@
                   value={$selectedSVGContent.monochromeHue}
                   oninput={(e) => updateParam('monochromeHue', parseFloat((e.target as HTMLInputElement).value))}
                 />
-                <span class="value">{$selectedSVGContent.monochromeHue}deg</span>
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.monochromeHue} />
               </div>
             {/if}
 
@@ -668,7 +995,7 @@
                   value={$selectedSVGContent.colorCycleSpeed}
                   oninput={(e) => updateParam('colorCycleSpeed', parseFloat((e.target as HTMLInputElement).value))}
                 />
-                <span class="value">{$selectedSVGContent.colorCycleSpeed.toFixed(2)}</span>
+                <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.colorCycleSpeed.toFixed(2)} />
               </div>
             {/if}
           </div>
@@ -704,7 +1031,7 @@
                       value={$selectedSVGContent.energySpeed}
                       oninput={(e) => updateParam('energySpeed', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.energySpeed}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.energySpeed} />
                   </div>
                 </div>
               {/if}
@@ -723,6 +1050,27 @@
               {#if $selectedSVGContent.connectionsEnabled}
                 <div class="effect-params">
                   <div class="mini-param">
+                    <span>Style</span>
+                    <select
+                      value={$selectedSVGContent.connectionStyle ?? 'arc'}
+                      onchange={(e) => updateParam('connectionStyle', (e.target as HTMLSelectElement).value)}
+                    >
+                      {#each connectionStyles as s}<option value={s.value}>{s.label}</option>{/each}
+                    </select>
+                  </div>
+                  <div class="mini-param">
+                    <span>Range</span>
+                    <input
+                      type="range"
+                      min="50"
+                      max="400"
+                      step="10"
+                      value={$selectedSVGContent.connectionRange ?? 200}
+                      oninput={(e) => updateParam('connectionRange', parseFloat((e.target as HTMLInputElement).value))}
+                    />
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={Math.round($selectedSVGContent.connectionRange ?? 200)} />
+                  </div>
+                  <div class="mini-param">
                     <span>Pulse</span>
                     <input
                       type="range"
@@ -732,7 +1080,7 @@
                       value={$selectedSVGContent.connectionPulseSpeed}
                       oninput={(e) => updateParam('connectionPulseSpeed', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.connectionPulseSpeed?.toFixed(1)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.connectionPulseSpeed?.toFixed(1)} />
                   </div>
                   <div class="mini-param">
                     <span>Thickness</span>
@@ -744,7 +1092,7 @@
                       value={$selectedSVGContent.connectionThickness}
                       oninput={(e) => updateParam('connectionThickness', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.connectionThickness?.toFixed(1)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.connectionThickness?.toFixed(1)} />
                   </div>
                 </div>
               {/if}
@@ -772,7 +1120,7 @@
                       value={$selectedSVGContent.glowPulseSpeed}
                       oninput={(e) => updateParam('glowPulseSpeed', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.glowPulseSpeed?.toFixed(1)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.glowPulseSpeed?.toFixed(1)} />
                   </div>
                 </div>
               {/if}
@@ -800,7 +1148,7 @@
                       value={$selectedSVGContent.rippleSpeed}
                       oninput={(e) => updateParam('rippleSpeed', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.rippleSpeed?.toFixed(1)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.rippleSpeed?.toFixed(1)} />
                   </div>
                 </div>
               {/if}
@@ -828,7 +1176,7 @@
                       value={$selectedSVGContent.lightningFrequency}
                       oninput={(e) => updateParam('lightningFrequency', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.lightningFrequency?.toFixed(1)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.lightningFrequency?.toFixed(1)} />
                   </div>
                   <div class="mini-param">
                     <span>Thickness</span>
@@ -840,7 +1188,7 @@
                       value={$selectedSVGContent.lightningThickness}
                       oninput={(e) => updateParam('lightningThickness', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.lightningThickness?.toFixed(1)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.lightningThickness?.toFixed(1)} />
                   </div>
                   <div class="mini-param">
                     <span>Branches</span>
@@ -852,7 +1200,7 @@
                       value={$selectedSVGContent.lightningBranches}
                       oninput={(e) => updateParam('lightningBranches', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.lightningBranches}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.lightningBranches} />
                   </div>
                   <div class="mini-param">
                     <span>Duration</span>
@@ -864,7 +1212,7 @@
                       value={$selectedSVGContent.lightningDuration}
                       oninput={(e) => updateParam('lightningDuration', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.lightningDuration?.toFixed(2)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.lightningDuration?.toFixed(2)} />
                   </div>
                 </div>
               {/if}
@@ -892,7 +1240,7 @@
                       value={$selectedSVGContent.edgeFlowSpeed}
                       oninput={(e) => updateParam('edgeFlowSpeed', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.edgeFlowSpeed?.toFixed(1)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.edgeFlowSpeed?.toFixed(1)} />
                   </div>
                   <div class="mini-param">
                     <span>Thickness</span>
@@ -904,7 +1252,7 @@
                       value={$selectedSVGContent.edgeFlowThickness}
                       oninput={(e) => updateParam('edgeFlowThickness', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.edgeFlowThickness?.toFixed(1)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.edgeFlowThickness?.toFixed(1)} />
                   </div>
                 </div>
               {/if}
@@ -932,7 +1280,7 @@
                       value={$selectedSVGContent.innerGlowIntensity}
                       oninput={(e) => updateParam('innerGlowIntensity', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.innerGlowIntensity?.toFixed(2)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.innerGlowIntensity?.toFixed(2)} />
                   </div>
                 </div>
               {/if}
@@ -960,7 +1308,7 @@
                       value={$selectedSVGContent.nebulaIntensity}
                       oninput={(e) => updateParam('nebulaIntensity', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.nebulaIntensity?.toFixed(2)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.nebulaIntensity?.toFixed(2)} />
                   </div>
                   <div class="mini-param">
                     <span>Speed</span>
@@ -972,7 +1320,7 @@
                       value={$selectedSVGContent.nebulaSpeed}
                       oninput={(e) => updateParam('nebulaSpeed', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.nebulaSpeed?.toFixed(2)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.nebulaSpeed?.toFixed(2)} />
                   </div>
                 </div>
               {/if}
@@ -1000,7 +1348,7 @@
                       value={$selectedSVGContent.heartbeatSpeed}
                       oninput={(e) => updateParam('heartbeatSpeed', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.heartbeatSpeed?.toFixed(1)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.heartbeatSpeed?.toFixed(1)} />
                   </div>
                   <div class="mini-param">
                     <span>Intensity</span>
@@ -1012,7 +1360,7 @@
                       value={$selectedSVGContent.heartbeatIntensity}
                       oninput={(e) => updateParam('heartbeatIntensity', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.heartbeatIntensity?.toFixed(2)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.heartbeatIntensity?.toFixed(2)} />
                   </div>
                 </div>
               {/if}
@@ -1040,7 +1388,7 @@
                       value={$selectedSVGContent.plasmaIntensity}
                       oninput={(e) => updateParam('plasmaIntensity', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.plasmaIntensity?.toFixed(2)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.plasmaIntensity?.toFixed(2)} />
                   </div>
                   <div class="mini-param">
                     <span>Speed</span>
@@ -1052,7 +1400,7 @@
                       value={$selectedSVGContent.plasmaSpeed}
                       oninput={(e) => updateParam('plasmaSpeed', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.plasmaSpeed?.toFixed(1)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.plasmaSpeed?.toFixed(1)} />
                   </div>
                   <div class="mini-param">
                     <span>Thickness</span>
@@ -1064,7 +1412,7 @@
                       value={$selectedSVGContent.plasmaThickness}
                       oninput={(e) => updateParam('plasmaThickness', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.plasmaThickness?.toFixed(1)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.plasmaThickness?.toFixed(1)} />
                   </div>
                   <div class="mini-param">
                     <span>Opacity</span>
@@ -1076,7 +1424,7 @@
                       value={$selectedSVGContent.plasmaOpacity}
                       oninput={(e) => updateParam('plasmaOpacity', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.plasmaOpacity?.toFixed(2)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.plasmaOpacity?.toFixed(2)} />
                   </div>
                 </div>
               {/if}
@@ -1104,7 +1452,7 @@
                       value={$selectedSVGContent.particleLinkDistance}
                       oninput={(e) => updateParam('particleLinkDistance', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.particleLinkDistance}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.particleLinkDistance} />
                   </div>
                   <div class="mini-param">
                     <span>Opacity</span>
@@ -1116,7 +1464,7 @@
                       value={$selectedSVGContent.particleLinkOpacity}
                       oninput={(e) => updateParam('particleLinkOpacity', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.particleLinkOpacity?.toFixed(2)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.particleLinkOpacity?.toFixed(2)} />
                   </div>
                   <div class="mini-param">
                     <span>Thickness</span>
@@ -1128,7 +1476,7 @@
                       value={$selectedSVGContent.particleLinkThickness}
                       oninput={(e) => updateParam('particleLinkThickness', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.particleLinkThickness?.toFixed(1)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.particleLinkThickness?.toFixed(1)} />
                   </div>
                   <div class="mini-param">
                     <span>Max Links</span>
@@ -1140,7 +1488,7 @@
                       value={$selectedSVGContent.particleLinkMaxLinks}
                       oninput={(e) => updateParam('particleLinkMaxLinks', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.particleLinkMaxLinks}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.particleLinkMaxLinks} />
                   </div>
                 </div>
               {/if}
@@ -1168,7 +1516,7 @@
                       value={$selectedSVGContent.echoLayers}
                       oninput={(e) => updateParam('echoLayers', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.echoLayers}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.echoLayers} />
                   </div>
                   <div class="mini-param">
                     <span>Spacing</span>
@@ -1180,7 +1528,7 @@
                       value={$selectedSVGContent.echoSpacing}
                       oninput={(e) => updateParam('echoSpacing', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.echoSpacing}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.echoSpacing} />
                   </div>
                   <div class="mini-param">
                     <span>Thickness</span>
@@ -1192,7 +1540,7 @@
                       value={$selectedSVGContent.echoThickness}
                       oninput={(e) => updateParam('echoThickness', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.echoThickness?.toFixed(1)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.echoThickness?.toFixed(1)} />
                   </div>
                   <div class="mini-param">
                     <span>Opacity</span>
@@ -1204,7 +1552,7 @@
                       value={$selectedSVGContent.echoOpacity}
                       oninput={(e) => updateParam('echoOpacity', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.echoOpacity?.toFixed(2)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.echoOpacity?.toFixed(2)} />
                   </div>
                 </div>
               {/if}
@@ -1232,7 +1580,7 @@
                       value={$selectedSVGContent.arcBridgeHeight}
                       oninput={(e) => updateParam('arcBridgeHeight', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.arcBridgeHeight}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.arcBridgeHeight} />
                   </div>
                   <div class="mini-param">
                     <span>Thickness</span>
@@ -1244,7 +1592,7 @@
                       value={$selectedSVGContent.arcBridgeThickness}
                       oninput={(e) => updateParam('arcBridgeThickness', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.arcBridgeThickness?.toFixed(1)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.arcBridgeThickness?.toFixed(1)} />
                   </div>
                   <div class="mini-param">
                     <span>Opacity</span>
@@ -1256,7 +1604,61 @@
                       value={$selectedSVGContent.arcBridgeOpacity}
                       oninput={(e) => updateParam('arcBridgeOpacity', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.arcBridgeOpacity?.toFixed(2)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.arcBridgeOpacity?.toFixed(2)} />
+                  </div>
+                </div>
+              {/if}
+            </div>
+
+            <!-- Organic: Warp -->
+            <div class="effect-group">
+              <label class="effect-toggle">
+                <input type="checkbox" checked={$selectedSVGContent.organicWarpEnabled ?? false}
+                  onchange={() => toggleParam('organicWarpEnabled')} />
+                Organic Warp
+              </label>
+              {#if $selectedSVGContent.organicWarpEnabled}
+                <div class="effect-params">
+                  <div class="mini-param">
+                    <span>Amount</span>
+                    <input type="range" min="0" max="30" step="0.5"
+                      value={$selectedSVGContent.warpAmount ?? 6}
+                      oninput={(e) => updateParam('warpAmount', parseFloat((e.target as HTMLInputElement).value))} />
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.warpAmount ?? 6).toFixed(1)} />
+                  </div>
+                  <div class="mini-param">
+                    <span>Speed</span>
+                    <input type="range" min="0.1" max="3" step="0.05"
+                      value={$selectedSVGContent.warpSpeed ?? 0.8}
+                      oninput={(e) => updateParam('warpSpeed', parseFloat((e.target as HTMLInputElement).value))} />
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.warpSpeed ?? 0.8).toFixed(2)} />
+                  </div>
+                </div>
+              {/if}
+            </div>
+
+            <!-- Organic: Breathe -->
+            <div class="effect-group">
+              <label class="effect-toggle">
+                <input type="checkbox" checked={$selectedSVGContent.breatheEnabled ?? false}
+                  onchange={() => toggleParam('breatheEnabled')} />
+                Breathe
+              </label>
+              {#if $selectedSVGContent.breatheEnabled}
+                <div class="effect-params">
+                  <div class="mini-param">
+                    <span>Amount</span>
+                    <input type="range" min="0" max="0.3" step="0.01"
+                      value={$selectedSVGContent.breatheAmount ?? 0.08}
+                      oninput={(e) => updateParam('breatheAmount', parseFloat((e.target as HTMLInputElement).value))} />
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.breatheAmount ?? 0.08).toFixed(2)} />
+                  </div>
+                  <div class="mini-param">
+                    <span>Speed</span>
+                    <input type="range" min="0.2" max="3" step="0.05"
+                      value={$selectedSVGContent.breatheSpeed ?? 1}
+                      oninput={(e) => updateParam('breatheSpeed', parseFloat((e.target as HTMLInputElement).value))} />
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.breatheSpeed ?? 1).toFixed(2)} />
                   </div>
                 </div>
               {/if}
@@ -1284,7 +1686,7 @@
                       value={$selectedSVGContent.colorCycleSpeed}
                       oninput={(e) => updateParam('colorCycleSpeed', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.colorCycleSpeed?.toFixed(2)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.colorCycleSpeed?.toFixed(2)} />
                   </div>
                   <div class="mini-param">
                     <span>Saturation</span>
@@ -1296,7 +1698,7 @@
                       value={$selectedSVGContent.colorCycleSaturation}
                       oninput={(e) => updateParam('colorCycleSaturation', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.colorCycleSaturation?.toFixed(2)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.colorCycleSaturation?.toFixed(2)} />
                   </div>
                   <div class="mini-param">
                     <span>Lightness</span>
@@ -1308,7 +1710,7 @@
                       value={$selectedSVGContent.colorCycleLightness}
                       oninput={(e) => updateParam('colorCycleLightness', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.colorCycleLightness?.toFixed(2)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.colorCycleLightness?.toFixed(2)} />
                   </div>
                 </div>
               {/if}
@@ -1347,7 +1749,7 @@
                       value={$selectedSVGContent.particleSpeed}
                       oninput={(e) => updateParam('particleSpeed', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.particleSpeed}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.particleSpeed} />
                   </div>
                   <div class="mini-param">
                     <span>Size</span>
@@ -1359,7 +1761,7 @@
                       value={$selectedSVGContent.particleSize}
                       oninput={(e) => updateParam('particleSize', parseFloat((e.target as HTMLInputElement).value))}
                     />
-                    <span class="mini-value">{$selectedSVGContent.particleSize?.toFixed(1)}</span>
+                    <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.particleSize?.toFixed(1)} />
                   </div>
                 </div>
               {/if}
@@ -1709,9 +2111,23 @@
   .param-row {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 6px;
+    gap: 10px;
+    margin-bottom: 11px;
+    min-height: 22px;
   }
+
+  /* Sub-label that groups related rows (e.g. Rotate vs Auto-spin) with a
+     little breathing room above so dense panels don't read as a wall. */
+  .param-subhead {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted, #888);
+    margin: 12px 0 7px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  }
+  .param-subhead:first-child { margin-top: 2px; }
 
   .param-row label {
     flex: 0 0 70px;
@@ -1759,16 +2175,42 @@
     font-size: 10px;
   }
 
+  /* Editable numeric readouts — look like the old text values but you can
+     click in and type. Spinner chrome hidden; subtle affordance on hover. */
+  .vnum {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid transparent;
+    border-radius: 3px;
+    padding: 2px 4px;
+    margin: 0;
+    color: #cbd1da;
+    -moz-appearance: textfield;
+    appearance: textfield;
+    cursor: text;
+    transition: border-color 0.12s, background 0.12s;
+  }
+  .vnum:hover { border-color: rgba(255, 255, 255, 0.18); }
+  .vnum:focus {
+    outline: none;
+    border-color: #ff00aa;
+    background: rgba(0, 0, 0, 0.35);
+    color: #fff;
+  }
+  .vnum::-webkit-inner-spin-button,
+  .vnum::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  .param-row .value.vnum { flex: 0 0 58px; }
+  .mini-value.vnum { flex: 0 0 46px; text-align: right; font-size: 10px; }
+
   .effects-grid {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 9px;
   }
 
   .effect-group {
     background: #222;
     border-radius: 4px;
-    padding: 6px 8px;
+    padding: 9px 10px;
   }
 
   .effect-toggle {
@@ -1787,7 +2229,7 @@
   }
 
   .effect-params {
-    margin-top: 6px;
+    margin-top: 9px;
     padding-left: 12px;
     overflow: hidden;
   }
@@ -1795,10 +2237,12 @@
   .mini-param {
     display: flex;
     align-items: center;
-    gap: 4px;
-    margin-bottom: 4px;
+    gap: 8px;
+    margin-bottom: 9px;
+    min-height: 20px;
     min-width: 0;
   }
+  .mini-param:last-child { margin-bottom: 2px; }
 
   .mini-param span {
     flex: 0 0 52px;

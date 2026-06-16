@@ -5,6 +5,9 @@ import * as THREE from 'three';
 import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import type { SVGContent } from '../types';
 
 // ============================================================================
@@ -166,6 +169,9 @@ const FillShader = {
     uniform float uNoiseSpeed;
     uniform float uNoiseContrast;
     uniform float uHeartbeat;
+    uniform float uFluidScale;
+    uniform float uFluidSpeed;
+    uniform float uFluidTurbulence;
 
     varying vec2 vUv;
     varying vec3 vPosition;
@@ -245,6 +251,32 @@ const FillShader = {
         vec2 grid = fract(localUV * 20.0 + uTime * 0.1);
         float particle = smoothstep(0.1, 0.0, length(grid - 0.5));
         color.rgb += particle * 0.5;
+      } else if (uFillMode == 7) {
+        // Fluid — curl/domain-warped FBM advection. Two coupled noise
+        // fields warp the sample point over time so the fill reads like
+        // a slow, organic flowing liquid rather than a static gradient.
+        float t = uTime * uFluidSpeed;
+        vec2 p = localUV * uFluidScale;
+        vec2 q = vec2(fbm(p + vec2(0.0, 0.0)), fbm(p + vec2(5.2, 1.3)));
+        vec2 r = vec2(
+          fbm(p + uFluidTurbulence * q + vec2(1.7, 9.2) + 0.15 * t),
+          fbm(p + uFluidTurbulence * q + vec2(8.3, 2.8) + 0.126 * t)
+        );
+        float f = fbm(p + uFluidTurbulence * r);
+        float v = clamp(f * 1.6, 0.0, 1.0);
+        // Mix darker→base→hot so the flow has visible structure + highlights.
+        vec3 hot = min(color.rgb * 1.8 + 0.15, vec3(1.0));
+        color.rgb = mix(color.rgb * 0.35, hot, smoothstep(0.2, 0.9, v));
+        color.rgb += pow(max(v - 0.7, 0.0), 2.0) * 0.8; // bright filaments
+      } else if (uFillMode == 8) {
+        // Flow — directional advected bands (a flow field reading like
+        // brushed energy moving across the shape).
+        float t = uTime * uFluidSpeed;
+        vec2 p = localUV * uFluidScale;
+        float flow = fbm(p + vec2(t * 0.6, 0.0) + uFluidTurbulence * fbm(p * 1.7));
+        float bands = 0.5 + 0.5 * sin((localUV.x + localUV.y) * 12.0 + flow * 8.0 - t * 3.0);
+        color.rgb *= 0.5 + 0.9 * bands;
+        color.rgb += pow(bands, 6.0) * 0.6;
       }
 
       gl_FragColor = color;
@@ -288,9 +320,32 @@ export class SVGLayerRenderer {
   private arcBridges: THREE.Object3D[] = [];
   private particles: THREE.Points | null = null;
   private particleLinkPool: Line2[] = [];
+  // Real volumetric fill particles (live INSIDE the shapes), distinct from
+  // the edge-running `particles` system above.
+  private fillParticles: THREE.Points | null = null;
+  // 3D extruded shape solids (extrude render mode). Tracked separately from
+  // `liquidFills` (flat shader planes) so animate() doesn't poke PBR meshes
+  // with shader uniforms.
+  private extrudeMeshes: THREE.Mesh[] = [];
+
+  // ── 3D mode: perspective camera + light rig + IBL + bloom ────────────
+  private perspCamera: THREE.PerspectiveCamera;
+  private lightRig: THREE.Group;
+  private pmrem: THREE.PMREMGenerator | null = null;
+  private envTexture: THREE.Texture | null = null;
+  private envRequested = false;
+  private composer: EffectComposer | null = null;
+  private renderPass: RenderPass | null = null;
+  private bloomPass: UnrealBloomPass | null = null;
+  private composerFailed = false;
 
   // Animation state
   private animationTime = 0;
+  // Auto-spin accumulators (kept separate from mainGroup.rotation so the
+  // manual base orientation can be added on top each frame).
+  private spinX = 0;
+  private spinY = 0;
+  private spinZ = 0;
   private heartbeatPhase = 0;
   private colorCycleOffset = 0;
   private frameCount = 0;
@@ -355,6 +410,19 @@ export class SVGLayerRenderer {
     );
     this.camera.position.z = 500;
 
+    // Perspective camera for the 3D extrude mode. Positioned so the z=0
+    // plane frames identically to the ortho camera (camZ derived from FOV),
+    // so toggling render modes doesn't jump the framing — rotation then
+    // reveals the depth. Y-down to match the ortho/SVG convention (we look
+    // from +Z toward -Z with an inverted up vector).
+    this.perspCamera = new THREE.PerspectiveCamera(40, width / height, 1, 5000);
+    this.updatePerspectiveCamera(40);
+
+    // Light rig lives in scene space (NOT inside mainGroup) so the content
+    // can rotate THROUGH the lighting. Populated per-preset in buildScene.
+    this.lightRig = new THREE.Group();
+    this.scene.add(this.lightRig);
+
     // Create scene root group that will be scaled on resize
     this.sceneRoot = new THREE.Group();
     this.scene.add(this.sceneRoot);
@@ -362,6 +430,22 @@ export class SVGLayerRenderer {
     // Create main group inside scene root
     this.mainGroup = new THREE.Group();
     this.sceneRoot.add(this.mainGroup);
+  }
+
+  /** Place the perspective camera so the world z=0 plane subtends exactly
+   *  `height` vertically — i.e. matches the orthographic framing — for the
+   *  given vertical FOV. Looking down -Z with a Y-down up vector. */
+  private updatePerspectiveCamera(fovDeg: number): void {
+    const fov = THREE.MathUtils.degToRad(fovDeg);
+    const camZ = (this.height / 2) / Math.tan(fov / 2);
+    this.perspCamera.fov = fovDeg;
+    this.perspCamera.aspect = this.width / this.height;
+    this.perspCamera.position.set(0, 0, camZ);
+    this.perspCamera.up.set(0, -1, 0); // Y-down convention
+    this.perspCamera.lookAt(0, 0, 0);
+    this.perspCamera.near = Math.max(1, camZ - this.height * 2);
+    this.perspCamera.far = camZ + this.height * 4;
+    this.perspCamera.updateProjectionMatrix();
   }
 
   // Parse SVG source and extract polygons
@@ -507,7 +591,7 @@ export class SVGLayerRenderer {
     // This ensures we scale based on actual content, not viewBox padding
     let rawMinX = Infinity, rawMaxX = -Infinity, rawMinY = Infinity, rawMaxY = -Infinity;
     svgPolygons.forEach(poly => {
-      const coords = poly.points.trim().split(/\s+/).map(Number);
+      const coords = poly.points.trim().replace(/,/g, ' ').split(/\s+/).map(Number);
       for (let i = 0; i < coords.length; i += 2) {
         rawMinX = Math.min(rawMinX, coords[i]);
         rawMaxX = Math.max(rawMaxX, coords[i]);
@@ -764,7 +848,9 @@ export class SVGLayerRenderer {
   }
 
   private parsePolygonPoints(pointsStr: string): THREE.Vector3[] {
-    const coords = pointsStr.trim().split(/\s+/).map(Number);
+    // Accept both "x,y x,y" (comma-separated pairs — very common in real
+    // logos) and "x y x y": normalise commas to spaces before splitting.
+    const coords = pointsStr.trim().replace(/,/g, ' ').split(/\s+/).map(Number);
     const points: THREE.Vector3[] = [];
     for (let i = 0; i < coords.length; i += 2) {
       // Transform SVG coordinates to Three.js scene coordinates:
@@ -818,6 +904,11 @@ export class SVGLayerRenderer {
 
     if (this.polygons.length === 0) return;
 
+    // 3D mode: build the light rig and request the IBL env map. Both are
+    // no-ops (rig emptied, no env request) in flat mode.
+    this.setup3DLighting(params);
+    if ((params.renderMode ?? 'flat') === 'extrude') this.ensureEnvMap();
+
     // Create visual elements based on enabled features
     if (params.nebulaEnabled) {
       this.createNebulaBackground(params);
@@ -855,6 +946,10 @@ export class SVGLayerRenderer {
 
     if (params.particlesEnabled) {
       this.createEdgeParticleSystem(params);
+    }
+
+    if (params.particleFillEnabled) {
+      this.createParticleFill(params);
     }
 
     if (params.particleLinksEnabled && this.particles) {
@@ -907,6 +1002,8 @@ export class SVGLayerRenderer {
     this.arcBridges = [];
     this.particles = null;
     this.particleLinkPool = [];
+    this.fillParticles = null;
+    this.extrudeMeshes = [];
   }
 
   private hslToColor(h: number, s: number, l: number): THREE.Color {
@@ -952,6 +1049,172 @@ export class SVGLayerRenderer {
   }
 
   // ============================================================================
+  // 3D MODE: LIGHTING / MATERIALS / IBL
+  // ============================================================================
+
+  /** Build the light rig for extrude mode. Cleared + rebuilt per buildScene.
+   *  Lights are sized to the content (≈width px) and live in scene space so
+   *  the rotating shapes pass through the lighting. No-op visual cost in flat
+   *  mode (rig is emptied). */
+  private setup3DLighting(params: SVGContent): void {
+    // Clear previous rig.
+    while (this.lightRig.children.length) {
+      const l = this.lightRig.children[0];
+      this.lightRig.remove(l);
+    }
+    if ((params.renderMode ?? 'flat') !== 'extrude') return;
+
+    const intensity = params.lightIntensity ?? 1;
+    const D = Math.max(this.width, this.height);
+    const preset = params.lightPreset ?? 'studio';
+    const add = (light: THREE.Light) => this.lightRig.add(light);
+
+    // Ambient floor so cavities never go fully black.
+    add(new THREE.AmbientLight(0xffffff, 0.25 * intensity));
+
+    if (preset === 'neon') {
+      const pink = new THREE.PointLight(0xff3cb8, 2.2 * intensity, D * 4, 1.5);
+      pink.position.set(-D * 0.5, -D * 0.4, D * 0.6);
+      const cyan = new THREE.PointLight(0x4af2ff, 2.2 * intensity, D * 4, 1.5);
+      cyan.position.set(D * 0.5, D * 0.4, D * 0.6);
+      const key = new THREE.DirectionalLight(0xffffff, 0.5 * intensity);
+      key.position.set(0, 0, D);
+      add(pink); add(cyan); add(key);
+    } else if (preset === 'rim') {
+      const back = new THREE.DirectionalLight(0xffffff, 1.6 * intensity);
+      back.position.set(0, -D * 0.3, -D); // strong rim from behind
+      const fill = new THREE.DirectionalLight(0x88aaff, 0.4 * intensity);
+      fill.position.set(D * 0.4, D * 0.4, D);
+      add(back); add(fill);
+    } else {
+      // studio: classic key / fill / back three-point.
+      const key = new THREE.DirectionalLight(0xffffff, 1.4 * intensity);
+      key.position.set(-D * 0.4, -D * 0.5, D);
+      const fill = new THREE.DirectionalLight(0xbfd4ff, 0.55 * intensity);
+      fill.position.set(D * 0.6, D * 0.2, D * 0.5);
+      const back = new THREE.DirectionalLight(0xffffff, 0.5 * intensity);
+      back.position.set(0, D * 0.3, -D);
+      add(key); add(fill); add(back);
+    }
+  }
+
+  /** Lazily generate a PMREM environment map (RoomEnvironment) so chrome /
+   *  glass / holographic materials have something to reflect. Async import
+   *  keeps the cost out of flat-mode layers. */
+  private ensureEnvMap(): void {
+    if (this.envRequested) return;
+    this.envRequested = true;
+    import('three/examples/jsm/environments/RoomEnvironment.js')
+      .then(({ RoomEnvironment }) => {
+        try {
+          const pmrem = new THREE.PMREMGenerator(this.renderer);
+          const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+          this.scene.environment = env;
+          this.envTexture = env;
+          this.pmrem = pmrem;
+        } catch (e) {
+          console.warn('[SVG3D] env map generation failed', e);
+        }
+      })
+      .catch(err => console.warn('[SVG3D] RoomEnvironment load failed', err));
+  }
+
+  /** PBR material for an extruded shape, per the material preset. */
+  private makePBRMaterial(color: THREE.Color, params: SVGContent): THREE.MeshPhysicalMaterial {
+    const preset = params.materialPreset ?? 'holographic';
+    const base: THREE.MeshPhysicalMaterialParameters = {
+      color,
+      metalness: params.materialMetalness ?? 0.6,
+      roughness: params.materialRoughness ?? 0.25,
+      envMapIntensity: params.envIntensity ?? 1,
+      side: THREE.DoubleSide,
+    };
+    if (preset === 'holographic') {
+      base.metalness = 0.4;
+      base.roughness = 0.15;
+      base.iridescence = params.iridescence ?? 1;
+      base.iridescenceIOR = 1.6;
+      base.iridescenceThicknessRange = [120, 520];
+      base.clearcoat = 0.6;
+      base.clearcoatRoughness = 0.2;
+    } else if (preset === 'chrome') {
+      base.metalness = 1.0;
+      base.roughness = Math.min(params.materialRoughness ?? 0.08, 0.15);
+      base.envMapIntensity = Math.max(1.2, params.envIntensity ?? 1);
+    } else if (preset === 'glass') {
+      base.metalness = 0;
+      base.roughness = params.materialRoughness ?? 0.08;
+      base.transmission = params.glassTransmission ?? 0.9;
+      base.thickness = (params.extrudeDepth ?? 28) * 0.5;
+      base.ior = 1.45;
+      base.transparent = true;
+    } else if (preset === 'neon') {
+      base.metalness = 0.1;
+      base.roughness = 0.4;
+      base.emissive = color.clone();
+      base.emissiveIntensity = 1.8;
+    }
+    // matte = plain values from `base`.
+    return new THREE.MeshPhysicalMaterial(base);
+  }
+
+  /** Random point-in-polygon test (even-odd) against a polygon's 2D points. */
+  private pointInPolygon(x: number, y: number, pts: THREE.Vector3[]): boolean {
+    let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const xi = pts[i].x, yi = pts[i].y, xj = pts[j].x, yj = pts[j].y;
+      if (((yi > y) !== (yj > y)) && (x < ((xj - xi) * (y - yi)) / (yj - yi) + xi)) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+
+  /** Volumetric particle fill — scatter points INSIDE each polygon (rejection
+   *  sampling within bounds) and drift them with a curl-ish wander, respawning
+   *  inside the shape so the interior reads as alive with particles. */
+  private createParticleFill(params: SVGContent): void {
+    const perShape = Math.round(params.particleFillDensity ?? 200);
+    const seeds: { x: number; y: number; poly: number; phase: number; speed: number }[] = [];
+    this.polygons.forEach((poly, pIdx) => {
+      const b = poly.bounds;
+      let placed = 0, guard = 0;
+      while (placed < perShape && guard < perShape * 30) {
+        guard++;
+        const x = b.min.x + Math.random() * b.width;
+        const y = b.min.y + Math.random() * b.height;
+        if (this.pointInPolygon(x, y, poly.points)) {
+          seeds.push({ x, y, poly: pIdx, phase: Math.random() * Math.PI * 2, speed: 0.5 + Math.random() });
+          placed++;
+        }
+      }
+    });
+    if (seeds.length === 0) return;
+
+    const positions = new Float32Array(seeds.length * 3);
+    const colors = new Float32Array(seeds.length * 3);
+    seeds.forEach((s, i) => {
+      positions[i * 3] = s.x; positions[i * 3 + 1] = s.y; positions[i * 3 + 2] = 1;
+      const c = this.getColorForShape(s.poly, 0, params);
+      colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
+    });
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const material = new THREE.PointsMaterial({
+      size: params.particleFillSize ?? 3,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.9,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    this.fillParticles = new THREE.Points(geometry, material);
+    this.fillParticles.userData.seeds = seeds;
+    this.mainGroup.add(this.fillParticles);
+  }
+
+  // ============================================================================
   // VISUAL ELEMENT CREATORS
   // ============================================================================
 
@@ -975,16 +1238,13 @@ export class SVGLayerRenderer {
     this.nebulaPlanes.push(mesh);
   }
 
+  private static readonly FILL_MODE_MAP: Record<string, number> = {
+    'liquid': 0, 'solid': 1, 'gradient': 2, 'shimmer': 3,
+    'pulse': 4, 'noise': 5, 'particles': 6, 'fluid': 7, 'flow': 8,
+  };
+
   private createPolygonFills(params: SVGContent): void {
-    const fillModeMap: Record<string, number> = {
-      'liquid': 0,
-      'solid': 1,
-      'gradient': 2,
-      'shimmer': 3,
-      'pulse': 4,
-      'noise': 5,
-      'particles': 6,
-    };
+    const extrude = (params.renderMode ?? 'flat') === 'extrude';
 
     this.polygons.forEach((poly, idx) => {
       const shape = new THREE.Shape();
@@ -993,16 +1253,39 @@ export class SVGLayerRenderer {
         shape.lineTo(poly.points[i].x, poly.points[i].y);
       }
       shape.closePath();
-
-      const geometry = new THREE.ShapeGeometry(shape);
       const color = this.getColorForShape(idx, 0, params);
 
+      // ── 3D extrude path: solid beveled mesh with a PBR material ──────
+      if (extrude) {
+        const depth = Math.max(0.5, params.extrudeDepth ?? 28);
+        const bevel = (params.bevelEnabled ?? true) && (params.bevelSize ?? 2) > 0;
+        const geometry = new THREE.ExtrudeGeometry(shape, {
+          depth,
+          bevelEnabled: bevel,
+          bevelSize: params.bevelSize ?? 2,
+          bevelThickness: params.bevelSize ?? 2,
+          bevelSegments: 2,
+          curveSegments: 6,
+        });
+        // Front face at z=0, depth recedes to -depth (so flat effects at z=0
+        // sit on the front of the solid).
+        geometry.translate(0, 0, -depth);
+        const material = this.makePBRMaterial(color, params);
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.userData.polyIdx = idx;
+        this.mainGroup.add(mesh);
+        this.extrudeMeshes.push(mesh);
+        return;
+      }
+
+      // ── Flat path: animated shader plane (existing behaviour) ────────
+      const geometry = new THREE.ShapeGeometry(shape);
       const material = new THREE.ShaderMaterial({
         uniforms: {
           uTime: { value: 0 },
           uColor: { value: color },
           uOpacity: { value: 0.6 },
-          uFillMode: { value: fillModeMap[params.fillMode] || 0 },
+          uFillMode: { value: SVGLayerRenderer.FILL_MODE_MAP[params.fillMode] || 0 },
           uFillLevel: { value: params.liquidEnabled ? 0.5 : 1.0 },
           uWaveAmp: { value: params.liquidWaveAmp },
           uWaveSpeed: { value: params.liquidSpeed * 5 },
@@ -1020,6 +1303,9 @@ export class SVGLayerRenderer {
           uNoiseSpeed: { value: params.noiseSpeed },
           uNoiseContrast: { value: params.noiseContrast },
           uHeartbeat: { value: 0 },
+          uFluidScale: { value: params.fluidScale ?? 2.5 },
+          uFluidSpeed: { value: params.fluidSpeed ?? 0.6 },
+          uFluidTurbulence: { value: params.fluidTurbulence ?? 1.0 },
         },
         vertexShader: FillShader.vertexShader,
         fragmentShader: FillShader.fragmentShader,
@@ -1037,31 +1323,75 @@ export class SVGLayerRenderer {
   }
 
   private createPolygonOutlines(params: SVGContent): void {
+    const style = params.outlineStyle ?? 'solid';
     this.polygons.forEach((poly, idx) => {
       const positions: number[] = [];
-      poly.points.forEach(p => {
-        positions.push(p.x, p.y, 0);
-      });
-      // Close the loop
-      positions.push(poly.points[0].x, poly.points[0].y, 0);
-
-      const geometry = new LineGeometry();
-      geometry.setPositions(positions);
-
+      poly.points.forEach(p => positions.push(p.x, p.y, 0));
+      positions.push(poly.points[0].x, poly.points[0].y, 0); // close loop
       const color = this.getColorForShape(idx, 0, params);
-      const material = new LineMaterial({
-        color: color.getHex(),
-        linewidth: params.outlineThickness,
-        resolution: new THREE.Vector2(this.width, this.height),
-        transparent: true,
-        opacity: 0.8,
-        blending: THREE.AdditiveBlending,
-      });
+      const res = new THREE.Vector2(this.width, this.height);
 
-      const line = new Line2(geometry, material);
-      line.userData.polyIdx = idx;
-      this.mainGroup.add(line);
-      this.outlines.push(line);
+      // Helper: build one Line2 with shared base options.
+      const makeLine = (extra: Partial<ConstructorParameters<typeof LineMaterial>[0]>, dashed = false): Line2 => {
+        const geometry = new LineGeometry();
+        geometry.setPositions(positions);
+        const material = new LineMaterial({
+          color: color.getHex(),
+          linewidth: params.outlineThickness,
+          resolution: res,
+          transparent: true,
+          opacity: 0.85,
+          blending: THREE.AdditiveBlending,
+          ...extra,
+        });
+        const line = new Line2(geometry, material);
+        if (dashed) line.computeLineDistances();
+        line.userData.polyIdx = idx;
+        line.userData.style = style;
+        return line;
+      };
+
+      if (style === 'dashed') {
+        const span = Math.max(8, poly.perimeter * 0.04);
+        const line = makeLine({ dashed: true, dashSize: span, gapSize: span * 0.6 } as any, true);
+        this.mainGroup.add(line); this.outlines.push(line);
+      } else if (style === 'gradient' || style === 'taper') {
+        // Per-vertex colours: gradient cycles hue around the loop; taper
+        // ramps brightness so the stroke fades along its length.
+        const colors: number[] = [];
+        const n = poly.points.length + 1;
+        for (let i = 0; i < n; i++) {
+          const t = i / (n - 1);
+          let c: THREE.Color;
+          if (style === 'taper') {
+            c = color.clone().multiplyScalar(0.15 + (1 - Math.abs(t - 0.5) * 2) * 0.85);
+          } else {
+            c = new THREE.Color().setHSL((color.getHSL({ h: 0, s: 0, l: 0 }).h + t * (params.outlineGradientSpread ?? 0.5)) % 1, 0.9, 0.55);
+          }
+          colors.push(c.r, c.g, c.b);
+        }
+        const geometry = new LineGeometry();
+        geometry.setPositions(positions);
+        geometry.setColors(colors);
+        const material = new LineMaterial({
+          linewidth: params.outlineThickness, resolution: res,
+          transparent: true, opacity: 0.9, vertexColors: true,
+          blending: THREE.AdditiveBlending,
+        });
+        const line = new Line2(geometry, material);
+        line.userData.polyIdx = idx; line.userData.style = style;
+        this.mainGroup.add(line); this.outlines.push(line);
+      } else if (style === 'double') {
+        // Neon: a fat soft halo behind a bright thin core.
+        const halo = makeLine({ linewidth: params.outlineThickness * 2.6, opacity: 0.3 });
+        const core = makeLine({ linewidth: Math.max(1, params.outlineThickness * 0.6), opacity: 1.0 });
+        this.mainGroup.add(halo); this.mainGroup.add(core);
+        this.outlines.push(halo); this.outlines.push(core);
+      } else {
+        // solid / glow-pulse (glow-pulse animates opacity+width in animate())
+        const line = makeLine({});
+        this.mainGroup.add(line); this.outlines.push(line);
+      }
     });
   }
 
@@ -1149,38 +1479,77 @@ export class SVGLayerRenderer {
   }
 
   private createConnections(params: SVGContent): void {
+    const style = params.connectionStyle ?? 'arc';
+    const range = params.connectionRange ?? 200;
+    const res = new THREE.Vector2(this.width, this.height);
+
     for (let i = 0; i < this.polygons.length; i++) {
       for (let j = i + 1; j < this.polygons.length; j++) {
         const p1 = this.polygons[i].centroid;
         const p2 = this.polygons[j].centroid;
         const dist = p1.distanceTo(p2);
+        if (dist >= range) continue;
 
-        if (dist < 200) {
-          // Create quadratic bezier curve
+        // Build the path positions for this connection per style.
+        let positions: number[] = [];
+        const dir = new THREE.Vector3().subVectors(p2, p1);
+        const perp = new THREE.Vector3(-dir.y, dir.x, 0).normalize();
+
+        if (style === 'straight') {
+          positions = [p1.x, p1.y, p1.z, p2.x, p2.y, p2.z];
+        } else if (style === 'gravity') {
+          // Catenary-ish sag (downward = +y in this Y-down space).
+          const pts: THREE.Vector3[] = [];
+          for (let k = 0; k <= 20; k++) {
+            const t = k / 20;
+            const p = new THREE.Vector3().lerpVectors(p1, p2, t);
+            p.y += Math.sin(t * Math.PI) * dist * 0.28;
+            pts.push(p);
+          }
+          pts.forEach(p => positions.push(p.x, p.y, p.z));
+        } else if (style === 'orbital') {
+          // Curved bundle bowing to one side (alternating per pair).
+          const mid = new THREE.Vector3().lerpVectors(p1, p2, 0.5)
+            .add(perp.clone().multiplyScalar(dist * 0.3 * ((i + j) % 2 ? 1 : -1)));
+          new THREE.QuadraticBezierCurve3(p1, mid, p2).getPoints(20)
+            .forEach(p => positions.push(p.x, p.y, p.z));
+        } else if (style === 'electric') {
+          // Jagged bolt — re-jittered every frame in animate().
+          for (let k = 0; k <= 14; k++) {
+            const t = k / 14;
+            const p = new THREE.Vector3().lerpVectors(p1, p2, t);
+            if (k > 0 && k < 14) p.add(perp.clone().multiplyScalar((Math.random() - 0.5) * dist * 0.18));
+            positions.push(p.x, p.y, p.z);
+          }
+        } else {
+          // arc (default) / beaded / dataflow share the arc path
           const mid = new THREE.Vector3().lerpVectors(p1, p2, 0.5);
           mid.y += dist * 0.2;
-
-          const curve = new THREE.QuadraticBezierCurve3(p1, mid, p2);
-          const points = curve.getPoints(20);
-          const positions: number[] = [];
-          points.forEach(p => positions.push(p.x, p.y, p.z));
-
-          const geometry = new LineGeometry();
-          geometry.setPositions(positions);
-
-          const material = new LineMaterial({
-            color: 0xff4444,
-            linewidth: params.connectionThickness,
-            resolution: new THREE.Vector2(this.width, this.height),
-            transparent: true,
-            opacity: 0.4,
-            blending: THREE.AdditiveBlending,
-          });
-
-          const line = new Line2(geometry, material);
-          this.mainGroup.add(line);
-          this.connectionLines.push(line);
+          new THREE.QuadraticBezierCurve3(p1, mid, p2).getPoints(20)
+            .forEach(p => positions.push(p.x, p.y, p.z));
         }
+
+        const geometry = new LineGeometry();
+        geometry.setPositions(positions);
+        const dashed = style === 'dataflow' || style === 'beaded';
+        const material = new LineMaterial({
+          color: 0xff5a6e,
+          linewidth: params.connectionThickness,
+          resolution: res,
+          transparent: true,
+          opacity: 0.4,
+          blending: THREE.AdditiveBlending,
+          ...(dashed ? { dashed: true, dashSize: style === 'beaded' ? 2 : 14, gapSize: style === 'beaded' ? 10 : 18 } : {}),
+        } as any);
+        const line = new Line2(geometry, material);
+        if (dashed) line.computeLineDistances();
+        line.userData.style = style;
+        line.userData.p1 = p1.clone();
+        line.userData.p2 = p2.clone();
+        line.userData.perp = perp.clone();
+        line.userData.dist = dist;
+        this.mainGroup.add(line);
+        this.connectionLines.push(line);
       }
     }
   }
@@ -1443,16 +1812,50 @@ export class SVGLayerRenderer {
     this.animationTime += deltaTime;
     this.frameCount++;
 
+    const extrude = (params.renderMode ?? 'flat') === 'extrude';
+
     // Apply user pan and scale transforms to mainGroup
     // Pan: convert -1 to 1 range to pixel offset (half canvas size)
     const panOffsetX = (params.panX || 0) * (this.width / 2);
     const panOffsetY = (params.panY || 0) * (this.height / 2);
+    // Float bob (3D mode) — gentle vertical drift.
+    const floatY = extrude && (params.floatAmount ?? 0) > 0
+      ? Math.sin(this.animationTime * (params.floatSpeed ?? 0.8)) * (params.floatAmount ?? 0)
+      : 0;
     this.mainGroup.position.x = panOffsetX;
-    this.mainGroup.position.y = panOffsetY;
+    this.mainGroup.position.y = panOffsetY + floatY;
 
-    // Scale: apply user scale multiplier (default 1)
-    const userScale = params.contentScale || 1;
-    this.mainGroup.scale.set(userScale, userScale, 1);
+    // Breathing — per-scene scale pulse (organic).
+    const breathe = params.breatheEnabled
+      ? 1 + Math.sin(this.animationTime * (params.breatheSpeed ?? 1)) * (params.breatheAmount ?? 0.08)
+      : 1;
+    // Scale: apply user scale multiplier (default 1) × breathe. In 3D mode
+    // scale Z too so the extrude depth scales with the content.
+    const userScale = (params.contentScale || 1) * breathe;
+    this.mainGroup.scale.set(userScale, userScale, extrude ? userScale : 1);
+
+    // 3D rotation — manual base orientation (degrees) PLUS accumulated
+    // auto-spin. With all spin speeds at 0 the manual angles drive the
+    // orientation directly (hand-pose the logo); non-zero speeds spin on
+    // top of that pose.
+    if (extrude) {
+      // Per-axis: a non-zero speed accumulates spin; a zero speed resets
+      // its accumulator so the manual angle is ABSOLUTE (Rotate Y=40 with
+      // Spin Y=0 means exactly 40°, not 40° + leftover spin).
+      const sx = params.rotateSpeedX ?? 0, sy = params.rotateSpeedY ?? 0, sz = params.rotateSpeedZ ?? 0;
+      this.spinX = sx ? this.spinX + deltaTime * sx : 0;
+      this.spinY = sy ? this.spinY + deltaTime * sy : 0;
+      this.spinZ = sz ? this.spinZ + deltaTime * sz : 0;
+      const d2r = Math.PI / 180;
+      this.mainGroup.rotation.set(
+        (params.rotateX ?? 0) * d2r + this.spinX,
+        (params.rotateY ?? 0) * d2r + this.spinY,
+        (params.rotateZ ?? 0) * d2r + this.spinZ,
+      );
+    } else if (this.mainGroup.rotation.x || this.mainGroup.rotation.y || this.mainGroup.rotation.z) {
+      this.mainGroup.rotation.set(0, 0, 0); // reset when leaving 3D mode
+      this.spinX = this.spinY = this.spinZ = 0;
+    }
 
     // Heartbeat effect
     if (params.heartbeatEnabled) {
@@ -1479,17 +1882,8 @@ export class SVGLayerRenderer {
       ? Math.sin(this.heartbeatPhase) * params.heartbeatIntensity
       : 0;
 
-    // Map fillMode string to shader int
-    const fillModeMap: Record<string, number> = {
-      'liquid': 0,
-      'solid': 1,
-      'gradient': 2,
-      'shimmer': 3,
-      'pulse': 4,
-      'noise': 5,
-      'particles': 6,
-    };
-    const fillModeValue = fillModeMap[params.fillMode] || 0;
+    // Map fillMode string to shader int (shared map incl. fluid/flow).
+    const fillModeValue = SVGLayerRenderer.FILL_MODE_MAP[params.fillMode] || 0;
 
     this.liquidFills.forEach((mesh, _idx) => {
       const mat = mesh.material as THREE.ShaderMaterial;
@@ -1526,14 +1920,60 @@ export class SVGLayerRenderer {
       mat.uniforms.uNoiseScale.value = params.noiseScale;
       mat.uniforms.uNoiseSpeed.value = params.noiseSpeed;
       mat.uniforms.uNoiseContrast.value = params.noiseContrast;
+
+      // Fluid / flow parameters
+      if (mat.uniforms.uFluidScale) {
+        mat.uniforms.uFluidScale.value = params.fluidScale ?? 2.5;
+        mat.uniforms.uFluidSpeed.value = params.fluidSpeed ?? 0.6;
+        mat.uniforms.uFluidTurbulence.value = params.fluidTurbulence ?? 1.0;
+      }
     });
 
-    // Update outlines
+    // Update volumetric fill particles — drift inside the shapes with a
+    // wander, respawning at their seed when they stray out of the polygon.
+    if (this.fillParticles && params.particleFillEnabled) {
+      const arr = (this.fillParticles.geometry.attributes.position as THREE.BufferAttribute).array as Float32Array;
+      const seeds = this.fillParticles.userData.seeds as { x: number; y: number; poly: number; phase: number; speed: number }[];
+      const spd = (params.particleFillSpeed ?? 1) * 12;
+      for (let i = 0; i < seeds.length; i++) {
+        const s = seeds[i];
+        let x = arr[i * 3], y = arr[i * 3 + 1];
+        const a = this.animationTime * s.speed + s.phase;
+        x += Math.cos(a * 1.3) * spd * deltaTime;
+        y += Math.sin(a) * spd * deltaTime;
+        if (!this.pointInPolygon(x, y, this.polygons[s.poly].points)) { x = s.x; y = s.y; }
+        arr[i * 3] = x; arr[i * 3 + 1] = y;
+      }
+      this.fillParticles.geometry.attributes.position.needsUpdate = true;
+      (this.fillParticles.material as THREE.PointsMaterial).size = params.particleFillSize ?? 3;
+    }
+
+    // Organic warp — displace each extrude/flat fill + outline with a
+    // time-varying positional jitter so static shapes feel alive.
+    if (params.organicWarpEnabled) {
+      const amt = params.warpAmount ?? 6;
+      const wp = this.animationTime * (params.warpSpeed ?? 0.8);
+      this.mainGroup.position.x += Math.sin(wp * 1.7) * amt * 0.4;
+      this.mainGroup.position.y += Math.cos(wp * 1.3) * amt * 0.4;
+      this.mainGroup.rotation.z += Math.sin(wp) * 0.0006 * amt;
+    }
+
+    // Update outlines (style-aware)
     this.outlines.forEach(line => {
       const mat = (line as Line2).material as LineMaterial;
-      const color = this.getColorForShape(line.userData.polyIdx, this.animationTime, params);
-      mat.color = color;
+      const style = line.userData.style ?? 'solid';
+      // Gradient/taper drive colour per-vertex, so don't overwrite it.
+      if (style !== 'gradient' && style !== 'taper') {
+        mat.color = this.getColorForShape(line.userData.polyIdx, this.animationTime, params);
+      }
       mat.linewidth = params.outlineThickness;
+      if (style === 'dashed') {
+        (mat as any).dashOffset = -this.animationTime * (params.outlineDashSpeed ?? 1) * 12;
+      } else if (style === 'glow-pulse') {
+        const pulse = 0.5 + 0.5 * Math.sin(this.animationTime * 3 + line.userData.polyIdx);
+        mat.opacity = 0.35 + pulse * 0.65;
+        mat.linewidth = params.outlineThickness * (0.7 + pulse * 0.8);
+      }
     });
 
     // Update glow nodes
@@ -1692,11 +2132,35 @@ export class SVGLayerRenderer {
       }
     }
 
-    // Update connection lines
+    // Update connection lines (style-aware)
     this.connectionLines.forEach((line, idx) => {
-      const mat = (line as Line2).material as LineMaterial;
-      mat.opacity = 0.3 + Math.sin(this.animationTime * params.connectionPulseSpeed + idx) * 0.2;
+      const l = line as Line2;
+      const mat = l.material as LineMaterial;
+      const style = l.userData.style ?? 'arc';
       mat.linewidth = params.connectionThickness;
+      mat.opacity = 0.3 + Math.sin(this.animationTime * params.connectionPulseSpeed + idx) * 0.2;
+      if (style === 'dataflow' || style === 'beaded') {
+        // Travel the dashes along the path → reads as flowing data / beads.
+        (mat as any).dashOffset = -this.animationTime * (params.connectionDataFlowSpeed ?? 1.5)
+          * (style === 'beaded' ? 8 : 22);
+      } else if (style === 'electric') {
+        // Re-jitter the bolt every few frames for a crackling arc.
+        if (this.frameCount % 3 === 0) {
+          const p1 = l.userData.p1 as THREE.Vector3;
+          const p2 = l.userData.p2 as THREE.Vector3;
+          const perp = l.userData.perp as THREE.Vector3;
+          const dist = l.userData.dist as number;
+          const positions: number[] = [];
+          for (let k = 0; k <= 14; k++) {
+            const t = k / 14;
+            const p = new THREE.Vector3().lerpVectors(p1, p2, t);
+            if (k > 0 && k < 14) p.add(perp.clone().multiplyScalar((Math.random() - 0.5) * dist * 0.18));
+            positions.push(p.x, p.y, p.z);
+          }
+          (l.geometry as LineGeometry).setPositions(positions);
+        }
+        mat.opacity = 0.5 + Math.random() * 0.5; // flicker
+      }
     });
 
     // Update edge flow
@@ -1812,8 +2276,36 @@ export class SVGLayerRenderer {
   // RENDERING
   // ============================================================================
 
-  render(): THREE.Texture {
-    // Save renderer state when sharing renderer
+  /** Internal bloom composer (RenderPass → UnrealBloomPass), built lazily.
+   *  Keeps output LINEAR (no OutputPass) so the engine composites it the
+   *  same way as the direct path — only the glow is added. With both passes
+   *  `needsSwap=false` there are no buffer swaps, so `readBuffer` is stable. */
+  private ensureComposer(): void {
+    if (this.composer) return;
+    const composer = new EffectComposer(this.renderer);
+    composer.renderToScreen = false;
+    composer.setSize(this.renderTarget.width, this.renderTarget.height);
+    const renderPass = new RenderPass(this.scene, this.perspCamera);
+    composer.addPass(renderPass);
+    const bloom = new UnrealBloomPass(
+      new THREE.Vector2(this.renderTarget.width, this.renderTarget.height), 1.0, 0.4, 0.1,
+    );
+    composer.addPass(bloom);
+    this.composer = composer;
+    this.renderPass = renderPass;
+    this.bloomPass = bloom;
+  }
+
+  render(params?: SVGContent): THREE.Texture {
+    const extrude = (params?.renderMode ?? 'flat') === 'extrude';
+    const cam = extrude ? this.perspCamera : this.camera;
+    // Bloom is part of the 3D level-up only — flat mode keeps its exact
+    // prior look (the bloom params were inert before, and existing layers
+    // ship a non-zero default, so gating on extrude avoids regressing them).
+    const bloomOn = extrude && (params?.bloomStrength ?? 0) > 0.01 && !this.composerFailed;
+
+    // Save renderer state when sharing renderer (incl. tonemap so the 3D
+    // PBR lighting never leaks into the engine's other layers).
     const currentRenderTarget = this.renderer.getRenderTarget();
     const currentAutoClear = this.renderer.autoClear;
     const currentViewport = new THREE.Vector4();
@@ -1821,19 +2313,44 @@ export class SVGLayerRenderer {
     const currentScissor = new THREE.Vector4();
     this.renderer.getScissor(currentScissor);
     const currentScissorTest = this.renderer.getScissorTest();
+    const currentToneMapping = this.renderer.toneMapping;
+    const currentExposure = this.renderer.toneMappingExposure;
 
-    // Ensure proper state for our render
     this.renderer.autoClear = true;
+    // PBR tone mapping only in extrude mode — flat mode keeps its additive
+    // look untouched.
+    if (extrude) {
+      this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      this.renderer.toneMappingExposure = 1.0;
+    }
 
-    // Render directly to our render target
-    // When rendering to a render target, viewport should match render target size exactly
-    // The render target size is in actual pixels (not affected by pixel ratio)
-    this.renderer.setRenderTarget(this.renderTarget);
-    this.renderer.setViewport(0, 0, this.renderTarget.width, this.renderTarget.height);
-    this.renderer.setScissor(0, 0, this.renderTarget.width, this.renderTarget.height);
-    this.renderer.setScissorTest(true);
-    this.renderer.clear();
-    this.renderer.render(this.scene, this.camera);
+    const renderDirect = (): THREE.Texture => {
+      this.renderer.setRenderTarget(this.renderTarget);
+      this.renderer.setViewport(0, 0, this.renderTarget.width, this.renderTarget.height);
+      this.renderer.setScissor(0, 0, this.renderTarget.width, this.renderTarget.height);
+      this.renderer.setScissorTest(true);
+      this.renderer.clear();
+      this.renderer.render(this.scene, cam);
+      return this.renderTarget.texture;
+    };
+
+    let outTex: THREE.Texture;
+    if (bloomOn) {
+      try {
+        this.ensureComposer();
+        this.renderPass!.camera = cam;
+        this.bloomPass!.strength = params!.bloomStrength;
+        this.bloomPass!.threshold = params!.bloomThreshold ?? 0.1;
+        this.composer!.render();
+        outTex = this.composer!.readBuffer.texture;
+      } catch (e) {
+        this.composerFailed = true;
+        console.warn('[SVG] internal bloom disabled after GPU error:', e);
+        outTex = renderDirect();
+      }
+    } else {
+      outTex = renderDirect();
+    }
 
     // Restore renderer state
     this.renderer.setRenderTarget(currentRenderTarget);
@@ -1841,8 +2358,10 @@ export class SVGLayerRenderer {
     this.renderer.setScissor(currentScissor);
     this.renderer.setScissorTest(currentScissorTest);
     this.renderer.autoClear = currentAutoClear;
+    this.renderer.toneMapping = currentToneMapping;
+    this.renderer.toneMappingExposure = currentExposure;
 
-    return this.renderTarget.texture;
+    return outTex;
   }
 
   getTexture(): THREE.Texture {
@@ -1874,6 +2393,11 @@ export class SVGLayerRenderer {
     this.camera.bottom = height / 2;
     this.camera.updateProjectionMatrix();
 
+    // Keep the perspective camera + bloom composer in sync with the new size.
+    this.updatePerspectiveCamera(this.perspCamera.fov);
+    this.composer?.setSize(width, height);
+    this.bloomPass?.setSize(width, height);
+
     // Scale the scene root to fill the new canvas size
     // The geometry was built for initialWidth/initialHeight, so we scale to match new dimensions
     if (this.initialWidth > 0 && this.initialHeight > 0) {
@@ -1901,6 +2425,16 @@ export class SVGLayerRenderer {
 
   dispose(): void {
     this.clearScene();
+    this.composer?.dispose?.();
+    this.bloomPass?.dispose?.();
+    this.composer = null;
+    this.bloomPass = null;
+    this.renderPass = null;
+    this.envTexture?.dispose();
+    this.pmrem?.dispose();
+    this.envTexture = null;
+    this.pmrem = null;
+    this.scene.environment = null;
     // Only dispose renderer if we own it
     if (this.ownsRenderer) {
       this.renderer.dispose();

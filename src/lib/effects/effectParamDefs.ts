@@ -144,6 +144,18 @@ export const EFFECT_PARAM_DEFS: Record<string, EffectParamDef[]> = {
     { name: 'Intensity', param: 'scanlinesIntensity', min: 0, max: 1, step: 0.01, default: 0.5 },
     { name: 'Count', param: 'scanlinesCount', min: 50, max: 500, step: 10, default: 200 },
   ],
+  fmScanlines: [
+    { name: 'Layout', param: 'fmLinesMode', min: 0, max: 2, step: 1, default: 0, type: 'select',
+      options: [{ value: 0, label: 'Horizontal' }, { value: 1, label: 'Vertical' }, { value: 2, label: 'Concentric' }] },
+    { name: 'Lines', param: 'fmLinesCount', min: 20, max: 400, step: 1, default: 140 },
+    { name: 'Thickness', param: 'fmLinesWidth', min: 0.02, max: 1, step: 0.01, default: 0.32 },
+    { name: 'Base Freq', param: 'fmLinesFreq', min: 0, max: 1, step: 0.01, default: 0.25 },
+    { name: 'FM Depth', param: 'fmLinesFmDepth', min: 0, max: 1, step: 0.01, default: 0.55 },
+    { name: 'Amplitude', param: 'fmLinesAmp', min: 0, max: 1, step: 0.01, default: 0.5 },
+    { name: 'Speed', param: 'fmLinesSpeed', min: 0, max: 2, step: 0.01, default: 0.6 },
+    { name: 'Source Tint', param: 'fmLinesColorMix', min: 0, max: 1, step: 0.01, default: 0 },
+    { name: 'Invert', param: 'fmLinesInvert', min: 0, max: 1, step: 1, default: 0 },
+  ],
   pixelate: [
     { name: 'Size', param: 'pixelateSize', min: 1, max: 64, step: 1, default: 8 },
   ],

@@ -48,6 +48,13 @@
   let recordingDuration = 0;
   let isRecording = false;
   let reelOpen = false;
+  // Stage recordings are always a clean 16:9, independent of the project's
+  // output resolution (a wide 4000×1080 comp still records 1920×1080 / 4K).
+  const REC_RES = {
+    '1080': { w: 1920, h: 1080, label: '1080p' },
+    '4k':   { w: 3840, h: 2160, label: '4K' },
+  } as const;
+  let recRes: keyof typeof REC_RES = '1080';
 
   // Atmosphere FX toggle state — merged over defaults so scenes saved
   // before the feature existed read as all-off.
@@ -221,33 +228,38 @@
     toastTimer = setTimeout(() => (toastMessage = ''), 1600);
   }
 
-  function getStageCanvas(): HTMLCanvasElement | null {
-    const popoutCanvas = document.querySelector('.stage3d-window canvas.main-canvas') as HTMLCanvasElement | null;
-    const fallbackCanvas = document.querySelector('canvas.main-canvas') as HTMLCanvasElement | null;
-    return popoutCanvas ?? fallbackCanvas;
-  }
-
   function startStageRecording() {
     if (recorderHandle) return;
+    const controls = $stage3DRendererControls;
+    const res = REC_RES[recRes];
+    // Render into a fixed 16:9 offscreen canvas (decoupled from the
+    // project's output resolution) and record THAT — so a wide comp
+    // still produces a clean 1080p / 4K file.
+    const recordCanvas = controls?.beginRecording(res.w, res.h) ?? null;
+    if (!recordCanvas) { toast('Stage renderer not ready'); return; }
     recordingDuration = 0;
     recorderHandle = startCanvasRecording({
       namePrefix: 'Stage Recording',
-      canvas: getStageCanvas,
+      canvas: recordCanvas,
       onDurationUpdate: (s) => { recordingDuration = s; },
       onComplete: () => {
         isRecording = false;
         recorderHandle = null;
+        controls?.endRecording();
         toast('Stage recording saved');
       },
       onError: (err) => {
         isRecording = false;
         recorderHandle = null;
+        controls?.endRecording();
         toast(err.message || 'Recording failed');
       },
     });
     if (recorderHandle) {
       isRecording = true;
-      toast('Stage recording started');
+      toast(`Stage recording started · ${res.label}`);
+    } else {
+      controls?.endRecording();
     }
   }
 
@@ -420,11 +432,22 @@
     <button class="tbtn" onclick={() => $stage3DRendererControls?.topCamera()}>⬓ Top</button>
     <button class="tbtn" onclick={() => $stage3DRendererControls?.frameCamera()}>⊡ Frame</button>
     <button class="tbtn" onclick={() => { $stage3DRendererControls?.reload(); toast('Scene reloaded'); }} title="Rebuild venue + screens">⟳ Reload</button>
+    {#if !isRecording}
+      <select
+        class="vsel rec-res"
+        value={recRes}
+        onchange={(e) => (recRes = (e.target as HTMLSelectElement).value as keyof typeof REC_RES)}
+        title="Recording resolution — always 16:9, independent of output resolution"
+      >
+        <option value="1080">1080p</option>
+        <option value="4k">4K</option>
+      </select>
+    {/if}
     <button
       class="tbtn rec-btn"
       class:recording={isRecording}
       onclick={toggleStageRecording}
-      title={isRecording ? 'Stop stage recording' : 'Record stage scene'}
+      title={isRecording ? 'Stop stage recording' : `Record stage scene (${REC_RES[recRes].label}, 16:9)`}
     >
       {isRecording ? `■ ${formatRecordingDuration(recordingDuration)}` : '● Rec'}
     </button>
@@ -818,6 +841,10 @@
   .tbtn:disabled { opacity: 0.35; cursor: not-allowed; }
   .tbtn:disabled:hover { border-color: rgba(255, 255, 255, 0.08); color: #e9edf4; }
   .tbtn.danger:hover { border-color: #ff5cb8; color: #ff5cb8; }
+  .rec-res {
+    padding: 6px 6px;
+    font-size: 11px;
+  }
   .rec-btn {
     min-width: 66px;
     text-align: center;
