@@ -9,6 +9,7 @@ import {
   registerBuiltinTypes,
   type CustomEffect,
 } from '../effects/customEffects';
+import { fmScanlinesShader } from './shaders/fmScanlines';
 
 // ── Import all shader strings and mode mappings ──
 import {
@@ -254,6 +255,7 @@ export const effectShaders: Record<EffectType, string> = {
   glitch: glitchShader,
   rgbShift: rgbShiftShader,
   scanlines: scanlinesShader,
+  fmScanlines: fmScanlinesShader,
   pixelate: pixelateShader,
   blur: blurHeroShader,
   sharpen: sharpenHeroShader,
@@ -599,6 +601,19 @@ export function createEffectMaterial(effectType: EffectType): THREE.ShaderMateri
       uniforms.uRollingBar = { value: 0 };
       uniforms.uCurvature = { value: 0 };
       uniforms.uInterlace = { value: 0 };
+      break;
+
+    case 'fmScanlines':
+      // FM Lines — luminance-driven line displacement (the "FM portrait").
+      uniforms.uMode = { value: 0 };
+      uniforms.uCount = { value: 140 };
+      uniforms.uWidth = { value: 0.32 };
+      uniforms.uFreq = { value: 0.25 };
+      uniforms.uFmDepth = { value: 0.55 };
+      uniforms.uAmp = { value: 0.5 };
+      uniforms.uSpeed = { value: 0.6 };
+      uniforms.uColorMix = { value: 0 };
+      uniforms.uInvert = { value: 0 };
       break;
 
     case 'pixelate':
@@ -2417,6 +2432,18 @@ export function updateEffectUniforms(
       if (u.uInterlace && p.scanlinesInterlace !== undefined) u.uInterlace.value = p.scanlinesInterlace;
       break;
 
+    case 'fmScanlines':
+      if (u.uMode && p.fmLinesMode !== undefined) u.uMode.value = p.fmLinesMode;
+      if (u.uCount && p.fmLinesCount !== undefined) u.uCount.value = p.fmLinesCount;
+      if (u.uWidth && p.fmLinesWidth !== undefined) u.uWidth.value = p.fmLinesWidth;
+      if (u.uFreq && p.fmLinesFreq !== undefined) u.uFreq.value = p.fmLinesFreq;
+      if (u.uFmDepth && p.fmLinesFmDepth !== undefined) u.uFmDepth.value = p.fmLinesFmDepth;
+      if (u.uAmp && p.fmLinesAmp !== undefined) u.uAmp.value = p.fmLinesAmp;
+      if (u.uSpeed && p.fmLinesSpeed !== undefined) u.uSpeed.value = p.fmLinesSpeed;
+      if (u.uColorMix && p.fmLinesColorMix !== undefined) u.uColorMix.value = p.fmLinesColorMix;
+      if (u.uInvert && p.fmLinesInvert !== undefined) u.uInvert.value = p.fmLinesInvert;
+      break;
+
     case 'pixelate':
       if (u.uSize && p.pixelateSize !== undefined) u.uSize.value = p.pixelateSize;
       if (u.uMode && p.pixelateMode !== undefined) u.uMode.value = p.pixelateMode;
@@ -4089,6 +4116,12 @@ export function getDefaultEffectParams(type: EffectType): EffectParams {
       return {
         scanlinesIntensity: 0.5, scanlinesCount: 200, scanlinesSpeed: 0,
         scanlinesPhosphor: 0, scanlinesRollingBar: 0, scanlinesCurvature: 0, scanlinesInterlace: 0,
+      };
+    case 'fmScanlines':
+      return {
+        fmLinesMode: 0, fmLinesCount: 140, fmLinesWidth: 0.32, fmLinesFreq: 0.25,
+        fmLinesFmDepth: 0.55, fmLinesAmp: 0.5, fmLinesSpeed: 0.6,
+        fmLinesColorMix: 0, fmLinesInvert: 0,
       };
     case 'pixelate':
       return {

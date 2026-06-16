@@ -440,6 +440,27 @@ export const effectParamLabels: Partial<Record<EffectType, Record<string, ParamM
     scanlinesCurvature: { label: 'CRT Curvature', min: 0, max: 1, step: 0.01, default: 0 },
     scanlinesInterlace: { label: 'Interlace', min: 0, max: 1, step: 0.01, default: 0 },
   },
+  fmScanlines: {
+    fmLinesMode: {
+      label: 'Layout', min: 0, max: 2, step: 1, default: 0, type: 'select',
+      options: [
+        { value: 0, label: 'Horizontal' },
+        { value: 1, label: 'Vertical' },
+        { value: 2, label: 'Concentric' },
+      ],
+    },
+    fmLinesCount: { label: 'Lines', min: 20, max: 400, step: 1, default: 140 },
+    fmLinesWidth: { label: 'Thickness', min: 0.02, max: 1, step: 0.01, default: 0.32 },
+    fmLinesFreq: { label: 'Base Freq', min: 0, max: 1, step: 0.01, default: 0.25 },
+    fmLinesFmDepth: { label: 'FM Depth', min: 0, max: 1, step: 0.01, default: 0.55 },
+    fmLinesAmp: { label: 'Amplitude', min: 0, max: 1, step: 0.01, default: 0.5 },
+    fmLinesSpeed: { label: 'Speed', min: 0, max: 2, step: 0.01, default: 0.6 },
+    fmLinesColorMix: { label: 'Source Tint', min: 0, max: 1, step: 0.01, default: 0 },
+    fmLinesInvert: {
+      label: 'Invert', min: 0, max: 1, step: 1, default: 0, type: 'select',
+      options: [{ value: 0, label: 'Lines on Black' }, { value: 1, label: 'Field w/ Cutouts' }],
+    },
+  },
   pixelate: {
     pixelateMode: {
       label: 'Pattern', min: 0, max: 3, step: 1, default: 0, type: 'select',
@@ -3211,6 +3232,15 @@ export const effectPresets: Partial<Record<EffectType, EffectPreset[]>> = {
     { name: 'Rolling Sync',        params: { scanlinesIntensity: 0.55, scanlinesCount: 180, scanlinesSpeed: 0.4, scanlinesRollingBar: 0.6 } },
     { name: 'Heavy Phosphor',      params: { scanlinesIntensity: 0.85, scanlinesCount: 320, scanlinesPhosphor: 1, scanlinesCurvature: 0.5, scanlinesRollingBar: 0.25 } },
     { name: 'Soft Stripes',        params: { scanlinesIntensity: 0.25, scanlinesCount: 110, scanlinesSpeed: 0.15, scanlinesPhosphor: 0 } },
+  ],
+  // FM Lines — luminance-driven line-displacement portrait.
+  fmScanlines: [
+    { name: 'Portrait',      params: { fmLinesMode: 0, fmLinesCount: 140, fmLinesWidth: 0.32, fmLinesFreq: 0.25, fmLinesFmDepth: 0.55, fmLinesAmp: 0.5, fmLinesSpeed: 0.6, fmLinesColorMix: 0, fmLinesInvert: 0 } },
+    { name: 'Dense Ripples', params: { fmLinesMode: 0, fmLinesCount: 240, fmLinesWidth: 0.22, fmLinesFreq: 0.35, fmLinesFmDepth: 0.8, fmLinesAmp: 0.7, fmLinesSpeed: 0.9 } },
+    { name: 'Calm Contour',  params: { fmLinesMode: 0, fmLinesCount: 90, fmLinesWidth: 0.4, fmLinesFreq: 0.12, fmLinesFmDepth: 0.35, fmLinesAmp: 0.3, fmLinesSpeed: 0.25 } },
+    { name: 'Oscilloscope',  params: { fmLinesMode: 1, fmLinesCount: 120, fmLinesWidth: 0.28, fmLinesFreq: 0.3, fmLinesFmDepth: 0.7, fmLinesAmp: 0.6, fmLinesSpeed: 0.8, fmLinesColorMix: 0.6 } },
+    { name: 'Concentric',    params: { fmLinesMode: 2, fmLinesCount: 130, fmLinesWidth: 0.3, fmLinesFreq: 0.2, fmLinesFmDepth: 0.6, fmLinesAmp: 0.55, fmLinesSpeed: 0.5 } },
+    { name: 'Inked Field',   params: { fmLinesMode: 0, fmLinesCount: 160, fmLinesWidth: 0.3, fmLinesFmDepth: 0.6, fmLinesAmp: 0.5, fmLinesInvert: 1 } },
   ],
   // Pixelate (hero) — grid styles.
   pixelate: [

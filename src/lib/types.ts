@@ -749,10 +749,28 @@ export interface MediaSource {
 // (LinesContent replaces the old GenerativeContent)
 
 // SVG layer fill modes
-export type SVGFillMode = 'liquid' | 'solid' | 'gradient' | 'shimmer' | 'pulse' | 'noise' | 'particles';
+export type SVGFillMode = 'liquid' | 'solid' | 'gradient' | 'shimmer' | 'pulse' | 'noise' | 'particles' | 'fluid' | 'flow';
 
 // SVG layer color modes
 export type SVGColorMode = 'perShape' | 'rainbow' | 'monochrome' | 'complementary' | 'analogous' | 'white';
+
+// SVG 3D render mode — 'flat' is the classic orthographic look; 'extrude'
+// turns each shape into a beveled 3D solid under a perspective camera with
+// real lights + materials (drop a logo and spin it in 3D).
+export type SVGRenderMode = 'flat' | 'extrude';
+
+// PBR material look for extruded shapes. 'holographic' is the default —
+// iridescent thin-film that shifts colour by view angle.
+export type SVGMaterialPreset = 'holographic' | 'chrome' | 'glass' | 'neon' | 'matte';
+
+// Light rig for extrude mode.
+export type SVGLightPreset = 'studio' | 'neon' | 'rim';
+
+// Outline rendering styles (was a single solid Line2 per shape).
+export type SVGOutlineStyle = 'solid' | 'dashed' | 'gradient' | 'double' | 'taper' | 'glow-pulse';
+
+// Node-connection styles between shape centroids.
+export type SVGConnectionStyle = 'arc' | 'straight' | 'electric' | 'orbital' | 'beaded' | 'gravity' | 'dataflow';
 
 // SVG layer content (animated SVG with all parameters from the SVG animator)
 export interface SVGContent {
@@ -878,6 +896,56 @@ export interface SVGContent {
   arcBridgeHeight: number; // 5-40
   arcBridgeThickness: number; // 1-8
   arcBridgeOpacity: number; // 0.1-0.8
+
+  // ── 3D extrude / material (headline level-up) ──────────────────────
+  renderMode: SVGRenderMode;        // 'flat' (default, classic) | 'extrude'
+  extrudeDepth: number;             // 0-120 — depth of the 3D solid
+  bevelEnabled: boolean;
+  bevelSize: number;                // 0-6
+  materialPreset: SVGMaterialPreset; // default 'holographic'
+  materialMetalness: number;        // 0-1
+  materialRoughness: number;        // 0-1
+  iridescence: number;              // 0-1 (holographic strength)
+  glassTransmission: number;        // 0-1 (glass preset)
+  envIntensity: number;             // 0-2 — reflection/IBL strength
+  cameraFov: number;                // 25-75 degrees (perspective)
+  rotateX: number;                  // manual base orientation, DEGREES
+  rotateY: number;
+  rotateZ: number;
+  rotateSpeedX: number;             // auto-spin, radians/sec (adds on top of manual)
+  rotateSpeedY: number;
+  rotateSpeedZ: number;
+  floatAmount: number;              // 0-40 px vertical bob
+  floatSpeed: number;               // 0.1-3
+  lightPreset: SVGLightPreset;
+  lightIntensity: number;           // 0-3
+
+  // ── Fluid fill (new fill modes 'fluid' | 'flow') ───────────────────
+  fluidScale: number;               // 0.5-6
+  fluidSpeed: number;               // 0.1-3
+  fluidTurbulence: number;          // 0-2
+
+  // ── Real volumetric particle fill (fills the shape interior) ───────
+  particleFillEnabled: boolean;
+  // (particleFillDensity / particleFillSize / particleFillSpeed already exist above)
+
+  // ── Outline + connector styles ─────────────────────────────────────
+  outlineStyle: SVGOutlineStyle;
+  outlineDashSpeed: number;         // marching-ants speed
+  outlineGradientSpread: number;    // 0-1
+  connectionStyle: SVGConnectionStyle;
+  connectionRange: number;          // 50-400 — max centroid distance to link
+  connectionDataFlowSpeed: number;  // pulse travel speed (dataflow style)
+
+  // ── Organic effects ────────────────────────────────────────────────
+  organicWarpEnabled: boolean;
+  warpAmount: number;               // 0-30 px
+  warpSpeed: number;                // 0.1-3
+  growthEnabled: boolean;
+  growthSpeed: number;              // 0.1-2 (outline draw-on)
+  breatheEnabled: boolean;
+  breatheAmount: number;            // 0-0.3 scale
+  breatheSpeed: number;             // 0.2-3
 
   // Post processing
   bloomStrength: number; // 0.5-4
@@ -2529,6 +2597,7 @@ export type EffectType =
   | 'glitch'
   | 'rgbShift'
   | 'scanlines'
+  | 'fmScanlines'
   | 'pixelate'
   | 'halftone'
   | 'toon'
@@ -2802,6 +2871,17 @@ export interface EffectParams {
   scanlinesRollingBar?: number;   // 0-1 vertical rolling brightness bar
   scanlinesCurvature?: number;    // 0-1 CRT curvature warp
   scanlinesInterlace?: number;    // 0-1 odd/even field flicker
+
+  // FM Lines (fmScanlines) — luminance-driven line displacement portrait
+  fmLinesMode?: number;           // 0 horizontal, 1 vertical, 2 concentric
+  fmLinesCount?: number;          // 20-400 line density
+  fmLinesWidth?: number;          // 0-1 line thickness
+  fmLinesFreq?: number;           // 0-1 base wave frequency
+  fmLinesFmDepth?: number;        // 0-1 brightness → frequency (the "FM")
+  fmLinesAmp?: number;            // 0-1 brightness → amplitude
+  fmLinesSpeed?: number;          // 0-2 animation speed
+  fmLinesColorMix?: number;       // 0 white lines → 1 source-tinted
+  fmLinesInvert?: number;         // 0/1 dark lines on bright field
 
   // Pixelate (hero — modes + grid + animated)
   pixelateSize?: number;          // 1-64
@@ -4930,6 +5010,56 @@ export function createDefaultSVGContent(): SVGContent {
     arcBridgeHeight: 15,
     arcBridgeThickness: 3,
     arcBridgeOpacity: 0.4,
+
+    // 3D extrude / material — default to the classic flat look so existing
+    // layers are unchanged; holographic is the look when 3D is switched on.
+    renderMode: 'flat',
+    extrudeDepth: 28,
+    bevelEnabled: true,
+    bevelSize: 2,
+    materialPreset: 'holographic',
+    materialMetalness: 0.6,
+    materialRoughness: 0.25,
+    iridescence: 1.0,
+    glassTransmission: 0.9,
+    envIntensity: 1.0,
+    cameraFov: 40,
+    rotateX: 0,
+    rotateY: 0,
+    rotateZ: 0,
+    rotateSpeedX: 0,
+    rotateSpeedY: 0.25,
+    rotateSpeedZ: 0,
+    floatAmount: 8,
+    floatSpeed: 0.8,
+    lightPreset: 'studio',
+    lightIntensity: 1.0,
+
+    // Fluid fill
+    fluidScale: 2.5,
+    fluidSpeed: 0.6,
+    fluidTurbulence: 1.0,
+
+    // Volumetric particle fill
+    particleFillEnabled: false,
+
+    // Outline + connector styles
+    outlineStyle: 'solid',
+    outlineDashSpeed: 1.0,
+    outlineGradientSpread: 0.5,
+    connectionStyle: 'arc',
+    connectionRange: 200,
+    connectionDataFlowSpeed: 1.5,
+
+    // Organic
+    organicWarpEnabled: false,
+    warpAmount: 6,
+    warpSpeed: 0.8,
+    growthEnabled: false,
+    growthSpeed: 0.6,
+    breatheEnabled: false,
+    breatheAmount: 0.08,
+    breatheSpeed: 1.0,
 
     // Post processing
     bloomStrength: 1.8,

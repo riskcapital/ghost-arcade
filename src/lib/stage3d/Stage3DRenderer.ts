@@ -573,6 +573,25 @@ export class Stage3DRenderer {
     resolve: (r: { data: Uint8Array; width: number; height: number }) => void;
     reject: (e: Error) => void;
   } | null = null;
+  /** Fixed-16:9 recording path. When set, render() does a SECOND scene
+   *  render each frame through `composer` (bloom + output, matching the
+   *  live view) into `rt` at a fixed 16:9 resolution that's independent
+   *  of the project's output resolution — then async-reads it into the
+   *  2D `canvas` the MediaRecorder captures. Decoupling means a wide
+   *  comp (e.g. 4000×1080) keeps its LED content full-res while the
+   *  recorded frame stays a clean 1920×1080 / 4K 16:9. */
+  private recording: {
+    width: number;
+    height: number;
+    rt: THREE.WebGLRenderTarget;
+    composer: EffectComposer;
+    bloomPass: UnrealBloomPass;
+    canvas: HTMLCanvasElement;
+    ctx: CanvasRenderingContext2D;
+    pixels: Uint8Array;
+    image: ImageData;
+    readbackPending: boolean;
+  } | null = null;
   /** Frame counter for staggering the per-LED average-colour readback
    *  across multiple frames so we never pay 6× readback-stall cost in
    *  one frame. One readback per frame, cycled. */
@@ -652,6 +671,8 @@ export class Stage3DRenderer {
         if (this.pendingCapture) this.pendingCapture.reject(new Error('superseded'));
         this.pendingCapture = { resolve, reject };
       }),
+      beginRecording: (w, h) => this.beginRecording(w, h),
+      endRecording:   () => this.endRecording(),
     });
 
     // When the selection set changes from outside (library click,
@@ -821,7 +842,18 @@ export class Stage3DRenderer {
 
     const width = Math.max(1, this.canvas.width || this.canvas.clientWidth || 1);
     const height = Math.max(1, this.canvas.height || this.canvas.clientHeight || 1);
-    this.camera.aspect = width / height;
+    // Camera aspect follows the canvas's DISPLAYED size (the pop-out
+    // window), NOT the backing-store resolution. The shared GL canvas is
+    // sized to the project's OUTPUT resolution (engine.resize → e.g.
+    // vertical 4K), but the design viewport must stay proportional to the
+    // window it's shown in — otherwise a vertical/portrait output squishes
+    // the whole stage. The full backing store is still rendered (kept for
+    // crispness + recording); only the projection aspect decouples. This
+    // also keeps click-picking, which already maps in client space
+    // (pickAt uses getBoundingClientRect), consistent with the projection.
+    const displayW = this.canvas.clientWidth || width;
+    const displayH = this.canvas.clientHeight || height;
+    this.camera.aspect = displayW / Math.max(1, displayH);
     if (this.drivenCamera) {
       // Demo Reel playback / offline render owns the camera: apply the
       // driven state verbatim and skip OrbitControls (its damping would
@@ -1104,6 +1136,12 @@ export class Stage3DRenderer {
     this.frameTick++;
 
     this.renderScene(renderer, width, height);
+
+    // Fixed-16:9 recording: a SECOND render of the same scene through the
+    // record-sized bloom composer, captured at a resolution that ignores
+    // the project's output resolution. Runs after the display render so
+    // every uniform/transform is already current for this frame.
+    if (this.recording) this.renderRecordingFrame(renderer);
   }
 
   /** Called by the Svelte UI / pointer pick when the user clicks a
@@ -1219,6 +1257,7 @@ export class Stage3DRenderer {
   }
 
   dispose(): void {
+    this.endRecording();
     if (this.pendingCapture) {
       this.pendingCapture.reject(new Error('renderer disposed'));
       this.pendingCapture = null;
@@ -1360,6 +1399,108 @@ export class Stage3DRenderer {
     } catch (err) {
       pending.reject(err instanceof Error ? err : new Error(String(err)));
     }
+  }
+
+  // ── Fixed-16:9 stage recording ───────────────────────────────────────
+
+  /** Stand up the offscreen 16:9 capture path. The composer mirrors the
+   *  live chain (RenderPass → UnrealBloomPass → OutputPass) but renders
+   *  into an 8-bit sRGB target at `width`×`height` instead of the screen,
+   *  so MediaRecorder can grab a clean 16:9 frame regardless of the
+   *  project's output resolution. Returns the 2D canvas to record. */
+  beginRecording(width: number, height: number): HTMLCanvasElement | null {
+    if (!this.renderer) return null;
+    this.endRecording();
+    const w = Math.max(2, Math.round(width));
+    const h = Math.max(2, Math.round(height));
+
+    // 8-bit sRGB target so OutputPass writes display-encoded bytes we can
+    // read straight into ImageData (no float decode). Passing it to the
+    // EffectComposer makes BOTH its ping-pong buffers this format.
+    const rt = new THREE.WebGLRenderTarget(w, h, {
+      type: THREE.UnsignedByteType,
+      colorSpace: THREE.SRGBColorSpace,
+      depthBuffer: true,
+    });
+    const composer = new EffectComposer(this.renderer, rt);
+    // renderToScreen off → the final OutputPass result lands in
+    // composer.readBuffer (three swaps after the last needsSwap pass).
+    composer.renderToScreen = false;
+    composer.addPass(new RenderPass(this.scene, this.camera));
+    const bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.0, 0.45, 0.85);
+    composer.addPass(bloomPass);
+    composer.addPass(new OutputPass());
+
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) { composer.dispose(); rt.dispose(); return null; }
+
+    this.recording = {
+      width: w, height: h, rt, composer, bloomPass, canvas, ctx,
+      pixels: new Uint8Array(w * h * 4),
+      image: new ImageData(w, h),
+      readbackPending: false,
+    };
+    console.log(`[Stage3D] Recording capture armed at ${w}×${h} (16:9, output-res independent)`);
+    return canvas;
+  }
+
+  endRecording(): void {
+    const rec = this.recording;
+    if (!rec) return;
+    this.recording = null;
+    rec.composer.dispose();
+    rec.rt.dispose();
+  }
+
+  /** Render the scene a second time at the fixed 16:9 record resolution
+   *  and async-read it into the record canvas. Camera aspect is forced to
+   *  the record aspect for this pass only, then restored so picking and
+   *  OrbitControls (which run between frames) keep the window aspect. */
+  private renderRecordingFrame(renderer: THREE.WebGLRenderer): void {
+    const rec = this.recording;
+    if (!rec) return;
+    // Match the live bloom amount (venue + atmosphere drive it each frame).
+    rec.bloomPass.strength = this.bloomPass?.strength ?? 0;
+
+    const prevAspect = this.camera.aspect;
+    this.camera.aspect = rec.width / rec.height;
+    this.camera.updateProjectionMatrix();
+    try {
+      rec.composer.render();
+    } catch (err) {
+      console.warn('[Stage3D] Recording render pass failed:', err);
+    } finally {
+      renderer.setRenderTarget(null);
+      this.camera.aspect = prevAspect;
+      this.camera.updateProjectionMatrix();
+    }
+
+    // One readback in flight at a time — a frame or two of latency is
+    // invisible since captureStream samples the canvas continuously.
+    if (rec.readbackPending) return;
+    rec.readbackPending = true;
+    renderer.readRenderTargetPixelsAsync(rec.composer.readBuffer, 0, 0, rec.width, rec.height, rec.pixels)
+      .then(() => this.blitRecording())
+      .catch((err: unknown) => console.warn('[Stage3D] Recording readback failed:', err))
+      .finally(() => { if (this.recording === rec) rec.readbackPending = false; });
+  }
+
+  /** Flip the GL-bottom-up readback to top-down and push it into the
+   *  record canvas the MediaRecorder is sampling. */
+  private blitRecording(): void {
+    const rec = this.recording;
+    if (!rec) return;
+    const { width: w, height: h, pixels } = rec;
+    const dst = rec.image.data;
+    const rowBytes = w * 4;
+    for (let y = 0; y < h; y++) {
+      const src = (h - 1 - y) * rowBytes;
+      dst.set(pixels.subarray(src, src + rowBytes), y * rowBytes);
+    }
+    rec.ctx.putImageData(rec.image, 0, 0);
   }
 
   // ── Venue swap ───────────────────────────────────────────────────────

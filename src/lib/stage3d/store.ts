@@ -434,6 +434,14 @@ export interface Stage3DRendererControls {
    *  Step scales with distance to target so it feels consistent
    *  zoomed in or out. */
   nudgeElevation: (dir: 1 | -1) => void;
+  /** Begin recording the stage at a FIXED 16:9 resolution (decoupled
+   *  from the project's output resolution). Each frame the scene is
+   *  rendered a second time — through a record-sized bloom composer —
+   *  into an offscreen target, then blitted into the returned 2D canvas.
+   *  Feed that canvas to the MediaRecorder. Returns null if the renderer
+   *  isn't ready. Call endRecording() to tear the capture path down. */
+  beginRecording: (width: number, height: number) => HTMLCanvasElement | null;
+  endRecording: () => void;
 }
 export const stage3DRendererControls = writable<Stage3DRendererControls | null>(null);
 

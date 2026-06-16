@@ -3937,6 +3937,20 @@
         layer.svgContent.particleLinkMaxLinks, // Rebuild if max links changes (creates new line pool)
         layer.svgContent.echoEnabled,
         layer.svgContent.arcBridgesEnabled,
+        // 3D + new effect families — these change geometry/material/scene
+        // structure so they require a scene rebuild (uniform-only params
+        // like rotation speed / metalness update live and stay out of here).
+        layer.svgContent.renderMode,
+        layer.svgContent.materialPreset,
+        layer.svgContent.extrudeDepth,
+        layer.svgContent.bevelEnabled,
+        layer.svgContent.bevelSize,
+        layer.svgContent.lightPreset,
+        layer.svgContent.outlineStyle,
+        layer.svgContent.connectionStyle,
+        layer.svgContent.connectionRange,
+        layer.svgContent.particleFillEnabled,
+        layer.svgContent.particleFillDensity,
       ].join(',');
       const cachedEffectsKey = (svgRenderer as any)._lastEffectsKey || '';
       if (effectsKey !== cachedEffectsKey && currentSvgSource) {
@@ -3949,8 +3963,8 @@
         // Update animation
         svgRenderer.animate(Math.min(deltaTime, 0.1), layer.svgContent);
 
-        // Render to texture
-        const texture = svgRenderer.render();
+        // Render to texture (params drive 3D mode / bloom selection)
+        const texture = svgRenderer.render(layer.svgContent);
 
         // Store the texture on the layer for the engine to use
         (layer as any)._svgTexture = texture;
