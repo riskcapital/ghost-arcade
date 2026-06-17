@@ -51,6 +51,7 @@
   import { midiManager } from '../midi/midiManager';
   import { abletonLink } from '../sync/abletonLink';
   import { oscStore } from '../osc/oscStore';
+  import { keyboardStore, formatKeyCombo, type KeyActionMode } from '../keyboard/keyboardStore';
   import MediaPipePanel from './MediaPipePanel.svelte';
   // LicensePanel + tier-related imports removed — OSS build has no license UI.
   // Multi-Output / per-slice config (createDefaultSlice, maxOutputSlices,
@@ -252,7 +253,7 @@
     | 'output:display'
     | 'performance:gpu' | 'performance:render-quality' | 'performance:video-decoding'
     | 'recording'
-    | 'integrations:midi' | 'integrations:osc' | 'integrations:wled' | 'integrations:mediapipe'
+    | 'integrations:midi' | 'integrations:osc' | 'integrations:keyboard' | 'integrations:wled' | 'integrations:mediapipe'
     | 'ai';
   interface SidebarSection { id: SectionId; label: string; advanced?: boolean }
   interface SidebarCategory { id: string; label: string; sections: SidebarSection[] }
@@ -278,6 +279,7 @@
     { id: 'integrations', label: 'Integrations', sections: [
       { id: 'integrations:midi', label: 'MIDI' },
       { id: 'integrations:osc', label: 'OSC' },
+      { id: 'integrations:keyboard', label: 'Keyboard' },
       { id: 'integrations:wled', label: 'WLED' },
       { id: 'integrations:mediapipe', label: 'MediaPipe' },
     ]},
@@ -296,6 +298,7 @@
     performance: 'performance:render-quality',
     midi: 'integrations:midi',
     osc: 'integrations:osc',
+    keyboard: 'integrations:keyboard',
     wled: 'integrations:wled',
     mediapipe: 'integrations:mediapipe',
     ai: 'ai',
@@ -1863,6 +1866,132 @@
         </section>
 
         {/if}
+        <!-- Keyboard control section — bind computer-keyboard keys to the
+             same param paths MIDI/OSC use. Dispatched through midiRouter
+             so every mappable param works. Source is discrete (key down/
+             up), so each binding carries an action mode. -->
+        {#if selectedSection === 'integrations:keyboard'}
+        <section class="settings-section">
+          <h3>Keyboard Control</h3>
+          <p class="settings-hint" style="margin-bottom: 12px;">
+            Map computer-keyboard keys to any control — the same param paths MIDI and OSC use (e.g. <code>vj:column:0</code>, <code>vj:layer:0:opacity</code>). Works with or without a controller plugged in.
+          </p>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Enable Keyboard Control</span>
+              <span class="label-hint">While on, mapped keys act as dedicated controls and are intercepted (they won't also trigger app shortcuts). Keys typed into text fields are ignored.</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={$keyboardStore.enabled}
+                onchange={(e) => keyboardStore.setEnabled((e.target as HTMLInputElement).checked)}
+              />
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          {#if $keyboardStore.lastKey}
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="label-text">Last key</span>
+                <span class="label-hint">
+                  <code class="osc-last">{formatKeyCombo($keyboardStore.lastKey)}</code>
+                </span>
+              </div>
+            </div>
+          {/if}
+
+          {#if $keyboardStore.learnTarget}
+            <div class="osc-learn-banner">
+              <span class="osc-learn-pulse"></span>
+              <span>Press a key to bind <strong>{$keyboardStore.learnTarget.label ?? $keyboardStore.learnTarget.path}</strong> …</span>
+              <button class="osc-learn-cancel" onclick={() => keyboardStore.cancelLearn()}>Cancel</button>
+            </div>
+          {/if}
+
+          <h4 style="margin-top: 14px;">Bindings ({$keyboardStore.bindings.length})</h4>
+          <p class="settings-hint" style="margin-bottom: 8px;">
+            <strong>trigger</strong> fires on press (clips/columns/presets) · <strong>toggle</strong> flips min↔max · <strong>momentary</strong> = max while held, min on release · <strong>nudge</strong> steps by the step amount each press (use a negative step for a "down" key).
+          </p>
+
+          {#if $keyboardStore.bindings.length === 0}
+            <div class="osc-empty">
+              No keyboard bindings yet. Click <strong>+ Add binding</strong>, type a target path, then press the key you want to bind.
+            </div>
+          {:else}
+            <div class="osc-bindings" style="grid-template-columns: 0.9fr 1.5fr 0.9fr 0.55fr 0.55fr 0.6fr 28px;">
+              <div class="osc-binding-head" style="grid-template-columns: 0.9fr 1.5fr 0.9fr 0.55fr 0.55fr 0.6fr 28px;">
+                <span>Key</span>
+                <span>Param Path</span>
+                <span>Mode</span>
+                <span>Min</span>
+                <span>Max</span>
+                <span>Step</span>
+                <span></span>
+              </div>
+              {#each $keyboardStore.bindings as b (b.id)}
+                <div class="osc-binding-row" style="grid-template-columns: 0.9fr 1.5fr 0.9fr 0.55fr 0.55fr 0.6fr 28px;">
+                  <button
+                    class="kbd-combo"
+                    onclick={() => keyboardStore.startLearn(b.path, b.label, b.mode)}
+                    title="Click, then press a key to rebind"
+                  >{b.code ? formatKeyCombo(b) : 'Set key…'}</button>
+                  <input
+                    type="text"
+                    value={b.path}
+                    onchange={(e) => keyboardStore.updateBinding(b.id, { path: (e.target as HTMLInputElement).value })}
+                    placeholder="vj:layer:0:opacity"
+                  />
+                  <select
+                    value={b.mode}
+                    onchange={(e) => keyboardStore.updateBinding(b.id, { mode: (e.target as HTMLSelectElement).value as KeyActionMode })}
+                  >
+                    <option value="trigger">trigger</option>
+                    <option value="toggle">toggle</option>
+                    <option value="momentary">momentary</option>
+                    <option value="nudge">nudge</option>
+                  </select>
+                  <input
+                    type="number" step="any"
+                    value={b.min}
+                    onchange={(e) => keyboardStore.updateBinding(b.id, { min: parseFloat((e.target as HTMLInputElement).value) })}
+                  />
+                  <input
+                    type="number" step="any"
+                    value={b.max}
+                    onchange={(e) => keyboardStore.updateBinding(b.id, { max: parseFloat((e.target as HTMLInputElement).value) })}
+                  />
+                  <input
+                    type="number" step="any"
+                    value={b.step}
+                    disabled={b.mode !== 'nudge'}
+                    onchange={(e) => keyboardStore.updateBinding(b.id, { step: parseFloat((e.target as HTMLInputElement).value) })}
+                  />
+                  <button
+                    class="osc-binding-del"
+                    onclick={() => keyboardStore.removeBinding(b.id)}
+                    title="Remove binding"
+                  >×</button>
+                </div>
+              {/each}
+            </div>
+          {/if}
+
+          <div class="osc-add-row">
+            <button
+              class="osc-add-btn learn"
+              onclick={() => {
+                const path = prompt('Target param path (e.g. vj:column:0 or vj:layer:0:opacity):');
+                if (path && path.trim()) keyboardStore.startLearn(path.trim());
+              }}
+              title="Type a param path, then press the key to bind it to"
+            >+ Add binding</button>
+          </div>
+        </section>
+
+        {/if}
         <!-- WLED LED-controller section. Each controller is a WLED
              device on the LAN that the renderer pushes per-frame pixel
              data to via UDP (DRGB protocol). The shader's composite
@@ -2742,6 +2871,24 @@
   .osc-add-btn:hover { border-color: #4cd1ff; color: #4cd1ff; }
   .osc-add-btn.learn { border-color: rgba(255,214,102,0.5); color: #ffd166; }
   .osc-add-btn.learn:hover { background: rgba(255,214,102,0.1); color: #fff; }
+
+  /* Keyboard binding combo cell — a click-to-rebind chip. */
+  .kbd-combo {
+    background: var(--bg-tertiary, #14141a);
+    border: 1px solid #2a2a30;
+    color: var(--text-primary, #ddd);
+    height: 24px;
+    padding: 0 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .kbd-combo:hover { border-color: #ffd166; color: #ffd166; }
 
   .toggle {
     position: relative;

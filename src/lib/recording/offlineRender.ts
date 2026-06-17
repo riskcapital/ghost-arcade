@@ -50,6 +50,7 @@ import { setISFManualTime } from '../isf/renderer';
 import { setStageEffectsManualTime } from '../stores/stageEffects';
 import { keyframeTimeline } from '../stores/keyframeTimeline';
 import { layerSequencer } from '../stores/layerSequencer';
+import { vjLayerSequencer } from '../stores/vjLayerSequencer';
 import { mediaLibrary } from '../stores/media';
 import { generateUUID } from '../utils/uuid';
 import { createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
@@ -78,6 +79,16 @@ export const DEFAULT_OFFLINE_SETTINGS: OfflineRenderSettings = {
   filename: 'render',
   quality: 'high',
 };
+
+const MAX_SEGMENT_FRAMES = 180;
+const TARGET_SEGMENT_FRAME_PIXELS = 1920 * 1080 * 180;
+
+export function getOfflineSegmentFrameCount(settings: Pick<OfflineRenderSettings, 'width' | 'height' | 'fps'>): number {
+  const pixels = Math.max(1, settings.width * settings.height);
+  const byPixels = Math.max(12, Math.floor(TARGET_SEGMENT_FRAME_PIXELS / pixels));
+  const byTime = Math.max(1, Math.ceil(settings.fps * 2));
+  return Math.max(1, Math.min(MAX_SEGMENT_FRAMES, byTime, byPixels));
+}
 
 export type OfflineRenderStatus =
   | 'idle'
@@ -142,6 +153,65 @@ export async function loadFFmpeg(): Promise<FFmpeg> {
   });
   ffmpegInstance = ffmpeg;
   return ffmpeg;
+}
+
+export async function deleteOfflineFrameFiles(ffmpeg: FFmpeg, frameCount: number): Promise<void> {
+  for (let i = 0; i < frameCount; i++) {
+    try {
+      await ffmpeg.deleteFile(`frame_${String(i).padStart(6, '0')}.jpg`);
+    } catch { /* best-effort */ }
+  }
+}
+
+export async function encodeOfflineJpegSegment(
+  ffmpeg: FFmpeg,
+  frameCount: number,
+  fps: number,
+  quality: OfflineRenderSettings['quality'],
+  segmentName: string,
+  onProgress?: (progress: number) => void,
+): Promise<void> {
+  const crf = quality === 'archive' ? '14' : quality === 'web' ? '23' : '18';
+  const onFfmpegProgress = ({ progress }: { progress: number }) => {
+    const p = Math.max(0, Math.min(1, Number.isFinite(progress) ? progress : 0));
+    onProgress?.(p);
+  };
+  ffmpeg.on('progress', onFfmpegProgress);
+  try {
+    await ffmpeg.exec([
+      '-framerate', String(fps),
+      '-start_number', '0',
+      '-i', 'frame_%06d.jpg',
+      '-frames:v', String(frameCount),
+      '-c:v', 'libx264',
+      '-pix_fmt', 'yuv420p',
+      '-crf', crf,
+      '-preset', quality === 'archive' ? 'slow' : 'medium',
+      '-movflags', '+faststart',
+      segmentName,
+    ]);
+  } finally {
+    ffmpeg.off('progress', onFfmpegProgress);
+  }
+}
+
+export async function concatOfflineSegments(ffmpeg: FFmpeg, segmentNames: string[], outputName: string): Promise<string> {
+  if (segmentNames.length === 1) return segmentNames[0];
+  const listName = 'segments.txt';
+  const list = segmentNames.map(name => `file '${name.replace(/'/g, "'\\''")}'`).join('\n');
+  await ffmpeg.writeFile(listName, new TextEncoder().encode(list));
+  try {
+    await ffmpeg.exec([
+      '-f', 'concat',
+      '-safe', '0',
+      '-i', listName,
+      '-c', 'copy',
+      outputName,
+    ]);
+  } finally {
+    try { await ffmpeg.deleteFile(listName); } catch { /* best-effort */ }
+  }
+  return outputName;
 }
 
 // ─── Store ──────────────────────────────────────────────────
@@ -262,6 +332,7 @@ function createOfflineRenderStore() {
     const restoreWidth  = (engine as any).width  ?? canvas.width;
     const restoreHeight = (engine as any).height ?? canvas.height;
     const restoreManual = engine.manualTime;
+    const restoreCanvasVisibility = canvas.style.visibility;
 
     let ffmpeg: FFmpeg;
     try {
@@ -273,6 +344,11 @@ function createOfflineRenderStore() {
     if (cancelRequested) { _finish('cancelled'); return false; }
 
     setStatus('rendering');
+    canvas.style.visibility = 'hidden';
+    const segmentFrameCount = getOfflineSegmentFrameCount(settings);
+    const segmentNames: string[] = [];
+    let currentSegmentFrames = 0;
+    let readableOutputName = '';
 
     try {
       // Resize the engine to the offline resolution. Live editor will
@@ -287,9 +363,12 @@ function createOfflineRenderStore() {
       // Pump frames into ffmpeg's virtual filesystem. Names need
       // %06d to support up to ~16 hour renders at 60fps without
       // changing the format string.
-      for (let i = 0; i < totalFrames; i++) {
+      for (let segmentStart = 0; segmentStart < totalFrames; segmentStart += segmentFrameCount) {
+        currentSegmentFrames = Math.min(segmentFrameCount, totalFrames - segmentStart);
+        for (let localFrame = 0; localFrame < currentSegmentFrames; localFrame++) {
         if (cancelRequested) { _finish('cancelled'); return false; }
-        const virtualTime = i / settings.fps;
+        const globalFrame = segmentStart + localFrame;
+        const virtualTime = globalFrame / settings.fps;
 
         // Drive every time-dependent subsystem from the same virtual
         // clock. Engine = shader iTime; ISF = ISF shaders' TIME;
@@ -297,9 +376,10 @@ function createOfflineRenderStore() {
         // = parameter / opacity overrides.
         engine.manualTime = virtualTime;
         setISFManualTime(virtualTime);
-        setStageEffectsManualTime(virtualTime);
-        keyframeTimeline.seek(virtualTime);
-        layerSequencer.seek(virtualTime);
+          setStageEffectsManualTime(virtualTime);
+          keyframeTimeline.seek(virtualTime);
+          layerSequencer.seek(virtualTime);
+          vjLayerSequencer.seek(virtualTime);
 
         // Wait one RAF so the live render loop picks up the new
         // state. (True offline-rate rendering — where we'd call
@@ -316,10 +396,32 @@ function createOfflineRenderStore() {
         // for typical VJ output. The final MP4 quality is set by
         // libx264 CRF below, not by the intermediate JPEGs.
         const jpegBytes = await captureFrameJPEG(engine, 0.92);
-        const frameName = `frame_${String(i).padStart(6, '0')}.jpg`;
+        const frameName = `frame_${String(localFrame).padStart(6, '0')}.jpg`;
         await ffmpeg.writeFile(frameName, jpegBytes);
 
-        update(s => ({ ...s, currentFrame: i + 1 }));
+        update(s => ({ ...s, currentFrame: globalFrame + 1 }));
+        }
+
+        setStatus('encoding');
+        const segmentIndex = segmentNames.length;
+        const segmentName = `segment_${String(segmentIndex).padStart(4, '0')}.mp4`;
+        segmentNames.push(segmentName);
+        await encodeOfflineJpegSegment(
+          ffmpeg,
+          currentSegmentFrames,
+          settings.fps,
+          settings.quality,
+          segmentName,
+          (progress) => {
+            const segmentCount = Math.max(1, Math.ceil(totalFrames / segmentFrameCount));
+            const p = (segmentIndex + progress) / segmentCount;
+            update(s => ({ ...s, encodeProgress: Math.max(0, Math.min(0.95, p)) }));
+          },
+        );
+        await deleteOfflineFrameFiles(ffmpeg, currentSegmentFrames);
+        currentSegmentFrames = 0;
+        if (cancelRequested) { _finish('cancelled'); return false; }
+        setStatus('rendering');
       }
 
       if (cancelRequested) { _finish('cancelled'); return false; }
@@ -335,35 +437,13 @@ function createOfflineRenderStore() {
       // overshoot issues with this event but the straight-through
       // image-sequence-to-libx264 pipeline gives clean 0..1.
       setStatus('encoding');
-      update(s => ({ ...s, encodeProgress: 0 }));
-      const encodeProgressHandler = ({ progress }: { progress: number }) => {
-        // Clamp — even on the simple pipeline ffmpeg occasionally
-        // reports slightly out-of-range values on the last frame.
-        const p = Math.max(0, Math.min(1, Number.isFinite(progress) ? progress : 0));
-        update(s => ({ ...s, encodeProgress: p }));
-      };
-      ffmpeg.on('progress', encodeProgressHandler);
-
-      const crf = settings.quality === 'archive' ? '14' : settings.quality === 'web' ? '23' : '18';
+      readableOutputName = await concatOfflineSegments(ffmpeg, segmentNames, `${settings.filename || 'render'}.mp4`);
       const outputName = `${settings.filename || 'render'}.mp4`;
-      try {
-        await ffmpeg.exec([
-          '-framerate', String(settings.fps),
-          '-i', 'frame_%06d.jpg',
-          '-c:v', 'libx264',
-          '-pix_fmt', 'yuv420p',
-          '-crf', crf,
-          '-preset', settings.quality === 'archive' ? 'slow' : 'medium',
-          outputName,
-        ]);
-      } finally {
-        ffmpeg.off('progress', encodeProgressHandler);
-      }
       update(s => ({ ...s, encodeProgress: 1 }));
       if (cancelRequested) { _finish('cancelled'); return false; }
 
       setStatus('saving');
-      const data = await ffmpeg.readFile(outputName);
+      const data = await ffmpeg.readFile(readableOutputName);
       // ffmpeg.readFile returns Uint8Array; wrap in a Blob for save.
       const u8 = data instanceof Uint8Array ? data : new Uint8Array(data as any);
       const blob = new Blob([u8], { type: 'video/mp4' });
@@ -392,22 +472,26 @@ function createOfflineRenderStore() {
       // Cleanup ffmpeg virtual filesystem so subsequent renders
       // don't accumulate gigabytes of PNG state across sessions.
       try {
-        for (let i = 0; i < totalFrames; i++) {
-          await ffmpeg.deleteFile(`frame_${String(i).padStart(6, '0')}.jpg`);
-        }
-        await ffmpeg.deleteFile(outputName);
+        await deleteOfflineFrameFiles(ffmpeg, currentSegmentFrames || segmentFrameCount);
+        for (const segmentName of segmentNames) await ffmpeg.deleteFile(segmentName);
+        if (readableOutputName === outputName) await ffmpeg.deleteFile(outputName);
       } catch (e) { /* best-effort */ }
 
       update(s => ({ ...s, status: 'complete', lastOutputUrl: url, lastOutputName: niceName }));
       return true;
     } catch (err) {
       console.error('[offlineRender] error:', err);
+      try {
+        await deleteOfflineFrameFiles(ffmpeg, currentSegmentFrames || segmentFrameCount);
+        for (const segmentName of segmentNames) await ffmpeg.deleteFile(segmentName);
+      } catch { /* best-effort */ }
       setStatus('error', formatErr(err));
       return false;
     } finally {
       // Always restore engine state so the live editor returns to
       // normal regardless of how the render ended.
       engine.manualTime = restoreManual;
+      canvas.style.visibility = restoreCanvasVisibility;
       setISFManualTime(null);
       setStageEffectsManualTime(null);
       try { engine.resize(restoreWidth, restoreHeight); } catch (e) { /* nothing we can do */ }

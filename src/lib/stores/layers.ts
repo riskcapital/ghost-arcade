@@ -19,6 +19,7 @@ import { stage3dScene } from '../stage3d/store';
 // per-effect reset button in LayerPanel.
 import { getDefaultEffectParams } from '../renderer/effects';
 import { oscStore } from '../osc/oscStore';
+import { keyboardStore } from '../keyboard/keyboardStore';
 import { mediaPipeBus } from '../mediapipe/mediaPipeBus';
 import { geoDeckStore } from './geoDeck';
 import { createDefaultShapeMesh } from '../drawing/types';
@@ -4351,6 +4352,9 @@ void main() {
         // Include OSC config (port + bindings). The listener is
         // restarted on project load if the saved state was enabled.
         osc: oscStore.serialize(),
+        // Include keyboard control bindings (key combo → param path).
+        // Same router as MIDI/OSC, so the binding paths are identical.
+        keyboard: keyboardStore.serialize(),
         // Include MediaPipe gesture bindings (camera → param routing).
         // Project-scoped so opening a different project doesn't carry
         // the previous one's hand mappings.
@@ -5078,6 +5082,14 @@ void main() {
           oscStore.hydrate((parsed as any).osc);
         } else {
           oscStore.reset();
+        }
+
+        // Import keyboard control bindings. Older saves don't carry them
+        // — reset to empty/disabled so the surface isn't auto-armed.
+        if ((parsed as any).keyboard) {
+          keyboardStore.hydrate((parsed as any).keyboard);
+        } else {
+          keyboardStore.reset();
         }
 
         // Import MediaPipe bindings. Older saves don't carry them —
