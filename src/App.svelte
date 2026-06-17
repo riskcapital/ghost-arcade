@@ -5594,7 +5594,11 @@
         onclick={() => presetTrayOpen = !presetTrayOpen}
         title="Presets (⌘P)"
       >
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg>
+        <svg class="status-pill-icon preset-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M4 8.5h16v10H4z" fill="#ff725f" opacity="0.22"/>
+          <path d="M5 7h14l-2-3H7z" fill="#ff9a84"/>
+          <path d="M7 12h10M7 16h7" stroke="#ffd1c5" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
         Presets
       </button>
       <button
@@ -5603,7 +5607,12 @@
         onclick={() => layerSequencer.toggleOpen()}
         title="Sequencer (⌘B)"
       >
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="3" height="6"/><rect x="9" y="6" width="3" height="12"/><rect x="15" y="11" width="3" height="4"/></svg>
+        <svg class="status-pill-icon sequencer-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="3" y="9" width="4" height="9" rx="1" fill="#ff725f"/>
+          <rect x="10" y="5" width="4" height="13" rx="1" fill="#ffd166"/>
+          <rect x="17" y="11" width="4" height="7" rx="1" fill="#46d18a"/>
+          <path d="M3 20h18" stroke="#6cb6c9" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
         Sequencer
       </button>
       <button
@@ -5612,7 +5621,11 @@
         onclick={() => keyframeTimeline.toggleOpen()}
         title="Keyframes (⌘K)"
       >
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 9-9 9-9-9z"/></svg>
+        <svg class="status-pill-icon keyframe-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 3l9 9-9 9-9-9z" fill="#6cb6c9" opacity="0.9"/>
+          <path d="M12 8l4 4-4 4-4-4z" fill="#ff725f"/>
+          <circle cx="12" cy="12" r="1.6" fill="#fff1ec"/>
+        </svg>
         Keyframes
       </button>
 
@@ -5767,13 +5780,13 @@
     --bg-secondary: rgba(18, 18, 22, 0.95);
     --bg-tertiary: #141418;
     --bg-overlay: rgba(0, 0, 0, 0.85);
-    --accent-primary: #FF6B6B;
-    --accent-secondary: #FF8585;
-    --accent-hover: #FF5252;
+    --accent-primary: #FF725F;
+    --accent-secondary: #FF9A84;
+    --accent-hover: #FF5F4C;
     --text-primary: #e8e8e8;
     --text-secondary: #a0a0a0;
     --text-muted: #666666;
-    --border-primary: rgba(255, 107, 107, 0.15);
+    --border-primary: rgba(255, 114, 95, 0.22);
     --border-secondary: rgba(255, 255, 255, 0.06);
     --danger: #FF4757;
     --success: #2ED573;
@@ -5949,7 +5962,7 @@
   /* Global range slider style — v10 segmented slot + metal cap.
      Special two-handle overlays, crossfaders, and hue/color ramps keep
      their own classes so this skin doesn't flatten custom controls. */
-  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.hue-slider)) {
+  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.xfade-vertical-input):not(.hue-slider)) {
     --ga-range-progress: 0%;
     -webkit-appearance: none;
     appearance: none;
@@ -5977,22 +5990,22 @@
     padding: 0;
     vertical-align: middle;
   }
-  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.hue-slider):hover) {
+  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.xfade-vertical-input):not(.hue-slider):hover) {
     box-shadow:
       inset 0 0 0 1px var(--ga-line-3, rgba(255, 255, 255, 0.20)),
       0 0 0 1px color-mix(in srgb, var(--ga-violet, #9b87f5) 18%, transparent);
   }
-  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.hue-slider):focus-visible) {
+  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.xfade-vertical-input):not(.hue-slider):focus-visible) {
     box-shadow:
       inset 0 0 0 1px var(--ga-violet-line, rgba(155, 135, 245, 0.36)),
       0 0 0 2px color-mix(in srgb, var(--ga-violet, #9b87f5) 22%, transparent);
   }
-  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.hue-slider)::-webkit-slider-runnable-track) {
+  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.xfade-vertical-input):not(.hue-slider)::-webkit-slider-runnable-track) {
     height: 12px;
     border-radius: 8px;
     background: transparent;
   }
-  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.hue-slider)::-webkit-slider-thumb) {
+  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.xfade-vertical-input):not(.hue-slider)::-webkit-slider-thumb) {
     -webkit-appearance: none;
     appearance: none;
     width: 22px;
@@ -6013,7 +6026,7 @@
       inset 0 1px 0 rgba(255, 255, 255, 0.10);
     cursor: pointer;
   }
-  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.hue-slider)::-moz-range-track) {
+  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.xfade-vertical-input):not(.hue-slider)::-moz-range-track) {
     height: 12px;
     background:
       repeating-linear-gradient(
@@ -6028,12 +6041,12 @@
     border: none;
     box-shadow: inset 0 0 0 1px var(--ga-line-2, rgba(255, 255, 255, 0.12));
   }
-  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.hue-slider)::-moz-range-progress) {
+  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.xfade-vertical-input):not(.hue-slider)::-moz-range-progress) {
     height: 12px;
     background: var(--ga-slider-fill, color-mix(in srgb, var(--ga-blue, #5b8def) 42%, transparent));
     border-radius: 8px 0 0 8px;
   }
-  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.hue-slider)::-moz-range-thumb) {
+  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.xfade-vertical-input):not(.hue-slider)::-moz-range-thumb) {
     width: 22px;
     height: 30px;
     border-radius: 5px;
@@ -6051,7 +6064,7 @@
       inset 0 1px 0 rgba(255, 255, 255, 0.10);
     cursor: pointer;
   }
-  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.hue-slider):disabled) {
+  :global(input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.xfade-vertical-input):not(.hue-slider):disabled) {
     cursor: not-allowed;
     opacity: 0.45;
   }
@@ -7438,32 +7451,37 @@
   .status-pill {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    height: 22px;
-    padding: 0 11px !important;
-    margin: 0 3px;
-    border: 1px solid transparent !important;
+    gap: 6px;
+    height: 24px;
+    padding: 0 12px !important;
+    margin: 0 4px;
+    border: 1px solid var(--ga-line-2, rgba(255,255,255,.12)) !important;
     border-radius: var(--ga-r-pill, 999px);
-    background: transparent;
-    color: var(--ga-ink-1, #9aa0ac);
+    background: color-mix(in srgb, var(--ga-card, #13161c) 72%, transparent);
+    color: var(--ga-ink-0, #eef0f4);
     font-family: var(--ga-font-ui, inherit);
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.01em;
     cursor: pointer;
-    transition: color 0.14s, background 0.14s, border-color 0.14s;
+    transition: color 0.14s, background 0.14s, border-color 0.14s, box-shadow 0.14s;
   }
   .status-pill:hover {
     color: var(--ga-ink-0, #eef0f4);
-    background: var(--ga-card, rgba(255, 255, 255, 0.05));
+    background: var(--ga-coral-soft, rgba(255, 111, 94, 0.11));
+    border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.4)) !important;
   }
   .status-pill.on {
     color: #23110c;
     background: var(--ga-coral, #ff6f5e);
     border-color: var(--ga-coral, #ff6f5e) !important;
+    box-shadow: 0 0 12px color-mix(in srgb, var(--ga-coral, #ff6f5e) 30%, transparent);
   }
   .status-pill.on:hover { filter: brightness(1.06); }
-  .status-pill svg { flex: none; }
+  .status-pill-icon {
+    flex: none;
+    filter: drop-shadow(0 0 6px rgba(255, 114, 95, .16));
+  }
 
   /* Hide the floating BottomDock since the pills now live inline in
      the status bar. The dock component itself still mounts so the

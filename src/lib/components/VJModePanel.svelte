@@ -7,11 +7,12 @@
   import { get } from 'svelte/store';
   import { mediaLibrary } from '../stores/media';
   import { vjClipLauncher, type VJClip, type VJBlock, type VJDeck } from '../stores/vjClipLauncher';
+  import { vjLayerSequencer } from '../stores/vjLayerSequencer';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
   import { project, stagePresets, compositions, activeCompositionId } from '../stores/layers';
   import { STAGE_EFFECT_CATALOG, getEffectDef } from '../stores/stageEffects';
   import { surfaceStore, activeSurface } from '../stores/surface';
-  import type { StageEffectType } from '../types';
+  import type { StageEffectType, IntegratedEffectType } from '../types';
 
   // Stage Effects tab UX state — which effect type the user has
   // chosen in the "Add" picker. Defaults to the first catalog entry.
@@ -31,7 +32,8 @@
   import type { AutoConfig } from '../types';
   import { performanceStore } from '../audio/performanceEngine';
   import type { ISFInput } from '../isf/parser';
-  import { getPluginByEffectType, type PluginParamDef } from '../plugins/registry';
+  import { getPluginByEffectType, getAllPlugins, type PluginParamDef } from '../plugins/registry';
+  import PluginIcon from './PluginIcon.svelte';
   import AIShaderGenerator from './AIShaderGenerator.svelte';
   import AIVideoGenerator from './AIVideoGenerator.svelte';
   import { shaderLibrary } from '../stores/shaderLibrary';
@@ -47,6 +49,7 @@
   import AudioMeterPanel from './AudioMeterPanel.svelte';
   import MacroKnobBar from './MacroKnobBar.svelte';
   import SnapshotBank from './SnapshotBank.svelte';
+  import VJLayerSequencer from './VJLayerSequencer.svelte';
   // VJAudioBar import retained for fallback / type compatibility but the
   // standalone strip below the header was dropped — its contents are now
   // inline in the header (single source of truth, no second tap/tempo row).
@@ -69,80 +72,33 @@
     onFileAction?.(action);
   }
 
-  // Plugin definitions for VJ mode (integrated effects - no external process needed)
-  type VJPluginEffectType = 'fluid' | 'particles' | 'splat' | 'model3d' | 'milkdrop' | 'audiomotion' | 'wavejs' | 'hydra' | 'ghostfx';
-  interface VJPluginItem {
+  // VJ Plugins tab — mirrors the mapping-mode Media Library plugin set
+  // (the shared plugin registry) so the two stay identical. Each card is
+  // draggable: drop onto a clip slot to spawn an effect clip (the drop
+  // handler seeds defaults from the manifest via getPluginByEffectType).
+  // Point Cloud + 3D Model are VJ content types the registry doesn't
+  // cover, appended at the end with their own inline icons.
+  type VJPluginCard = {
     id: string;
     name: string;
     description: string;
-    effectType: VJPluginEffectType;
-    icon: VJPluginEffectType;
-  }
+    tier: string;
+    clipType: 'effect' | 'splat' | 'model3d';
+    effectType?: IntegratedEffectType;
+    inlineIcon?: 'splat' | 'model3d';
+  };
 
-  const vjPlugins: VJPluginItem[] = [
-    {
-      id: 'fluidgen',
-      name: 'FluidGen',
-      description: 'GPU fluid simulation',
-      effectType: 'fluid',
-      icon: 'fluid',
-    },
-    {
-      id: 'particles3d',
-      name: 'Particles3D',
-      description: '3D volumetric particles',
-      effectType: 'particles',
-      icon: 'particles',
-    },
-    {
-      id: 'milkdrop',
-      name: 'Milkdrop',
-      description: 'Butterchurn-powered Milkdrop visualizer',
-      effectType: 'milkdrop',
-      icon: 'milkdrop',
-    },
-    {
-      id: 'audiomotion',
-      name: 'AudioMotion',
-      description: 'Spectrum analyzer — bars, radial, LEDs',
-      effectType: 'audiomotion',
-      icon: 'audiomotion',
-    },
-    {
-      id: 'wavejs',
-      name: 'Wave.js',
-      description: 'Particle/geometric audio animations',
-      effectType: 'wavejs',
-      icon: 'wavejs',
-    },
-    {
-      id: 'hydra',
-      name: 'Hydra',
-      description: 'Live-codeable video synth — warping & feedback',
-      effectType: 'hydra',
-      icon: 'hydra',
-    },
-    {
-      id: 'ghostfx',
-      name: 'GhostFX',
-      description: 'WebGPU raymarched scenes — original Ghost Arcade',
-      effectType: 'ghostfx',
-      icon: 'ghostfx',
-    },
-    {
-      id: 'pointcloud',
-      name: 'Point Cloud',
-      description: 'PLY point cloud / splat',
-      effectType: 'splat',
-      icon: 'splat',
-    },
-    {
-      id: 'model3d',
-      name: '3D Model',
-      description: 'GLTF/OBJ/FBX models',
-      effectType: 'model3d',
-      icon: 'model3d',
-    },
+  const vjPluginCards: VJPluginCard[] = [
+    ...getAllPlugins().map((p): VJPluginCard => ({
+      id: p.id,
+      name: p.name,
+      description: p.description,
+      tier: p.tier,
+      clipType: 'effect',
+      effectType: p.effectType,
+    })),
+    { id: 'pointcloud', name: 'Point Cloud', description: 'PLY point cloud / splat', tier: 'free', clipType: 'splat', inlineIcon: 'splat' },
+    { id: 'model3d', name: '3D Model', description: 'GLTF/OBJ/FBX models', tier: 'free', clipType: 'model3d', inlineIcon: 'model3d' },
   ];
 
   // Performer panel state
@@ -700,7 +656,7 @@
     id: string;
     spoutName?: string;
     pluginName?: string;
-    effectType?: VJPluginEffectType;
+    effectType?: IntegratedEffectType;
   };
 
   // Drag state for clips
@@ -2720,6 +2676,21 @@
           </button>
         {/if}
 
+        <button
+          class="vj-seq-toggle-btn"
+          class:active={$vjLayerSequencer.isOpen}
+          onclick={() => vjLayerSequencer.toggleOpen()}
+          title="Layer Sequencer"
+          aria-label="Layer Sequencer"
+        >
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <rect x="3" y="5" width="4" height="14" rx="1.2" fill="#ff7a66"/>
+            <rect x="10" y="8" width="4" height="11" rx="1.2" fill="#ffd166"/>
+            <rect x="17" y="3" width="4" height="16" rx="1.2" fill="#46d18a"/>
+            <path d="M4 20h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </button>
+
         {#if $vjClipLauncher.isLive}
           <!-- A/B crossfader toggle moved into the right cluster so it
                groups with the other compact icon buttons. -->
@@ -4482,56 +4453,16 @@
           {:else if vjMediaTab === 'plugins'}
             <!-- Plugins Panel (FluidGen, Particles3D) - Integrated WebGL effects -->
             <div class="vj-plugins-panel">
-              {#each vjPlugins as plugin (plugin.id)}
+              {#each vjPluginCards as plugin (plugin.id)}
                 <div
                   class="vj-plugin-card running"
                   draggable="true"
-                  ondragstart={(e) => {
-                    const clipType = plugin.effectType === 'splat' ? 'splat' : plugin.effectType === 'model3d' ? 'model3d' : 'effect';
-                    handleDragStart(e, { type: clipType, id: plugin.id, effectType: plugin.effectType, pluginName: plugin.name });
-                  }}
+                  ondragstart={(e) => handleDragStart(e, { type: plugin.clipType, id: plugin.id, effectType: plugin.effectType, pluginName: plugin.name })}
                   ondragend={handleDragEnd}
+                  title="Drag {plugin.name} onto a clip slot"
                 >
-                  <div class="vj-plugin-icon" class:fluid={plugin.icon === 'fluid'} class:particles={plugin.icon === 'particles'} class:splat={plugin.icon === 'splat'} class:model3d={plugin.icon === 'model3d'} class:milkdrop={plugin.icon === 'milkdrop'} class:audiomotion={plugin.icon === 'audiomotion'} class:wavejs={plugin.icon === 'wavejs'} class:hydra={plugin.icon === 'hydra'} class:ghostfx={plugin.icon === 'ghostfx'}>
-                    {#if plugin.icon === 'fluid'}
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path d="M12 2C6.5 8 4 12 4 15a8 8 0 1 0 16 0c0-3-2.5-7-8-13Z"/>
-                      </svg>
-                    {:else if plugin.icon === 'milkdrop'}
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <!-- Concentric warp spiral — the Milkdrop visual signature -->
-                        <path d="M12 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0-2 0"/>
-                        <path d="M12 12c0-2 2-3 3-2s1 4-1 5-5-1-5-4 3-6 7-6 7 4 7 8"/>
-                      </svg>
-                    {:else if plugin.icon === 'audiomotion'}
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                        <rect x="3"  y="14" width="2" height="6"  rx="0.5"/>
-                        <rect x="6"  y="10" width="2" height="10" rx="0.5"/>
-                        <rect x="9"  y="7"  width="2" height="13" rx="0.5"/>
-                        <rect x="12" y="5"  width="2" height="15" rx="0.5"/>
-                        <rect x="15" y="9"  width="2" height="11" rx="0.5"/>
-                        <rect x="18" y="13" width="2" height="7"  rx="0.5"/>
-                      </svg>
-                    {:else if plugin.icon === 'wavejs'}
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-                        <circle cx="12" cy="12" r="3.5"/>
-                        <circle cx="12" cy="12" r="7"  opacity="0.6"/>
-                        <circle cx="12" cy="12" r="10" opacity="0.35"/>
-                        <path d="M2 12 Q 6 7, 12 12 T 22 12"/>
-                      </svg>
-                    {:else if plugin.icon === 'hydra'}
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-                        <circle cx="12" cy="12" r="2"/>
-                        <path d="M12 4 L12 8 M12 16 L12 20 M4 12 L8 12 M16 12 L20 12"/>
-                        <path d="M6.3 6.3 L9.2 9.2 M14.8 14.8 L17.7 17.7 M17.7 6.3 L14.8 9.2 M9.2 14.8 L6.3 17.7" opacity="0.6"/>
-                      </svg>
-                    {:else if plugin.icon === 'ghostfx'}
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path d="M12 3 L20 12 L12 21 L4 12 Z"/>
-                        <path d="M12 7 L17 12 L12 17 L7 12 Z" opacity="0.65"/>
-                        <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
-                      </svg>
-                    {:else if plugin.icon === 'splat'}
+                  <div class="vj-plugin-icon">
+                    {#if plugin.inlineIcon === 'splat'}
                       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                         <circle cx="12" cy="12" r="1.5"/>
                         <circle cx="8" cy="8" r="1"/>
@@ -4546,34 +4477,26 @@
                         <circle cx="9" cy="12" r="0.6"/>
                         <circle cx="15" cy="12" r="0.6"/>
                       </svg>
-                    {:else if plugin.icon === 'model3d'}
+                    {:else if plugin.inlineIcon === 'model3d'}
                       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                         <path d="M12 2L2 7l10 5 10-5-10-5Z"/>
                         <path d="M2 17l10 5 10-5"/>
                         <path d="M2 12l10 5 10-5"/>
                       </svg>
                     {:else}
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <circle cx="12" cy="12" r="3"/>
-                        <circle cx="5" cy="5" r="2"/>
-                        <circle cx="19" cy="5" r="2"/>
-                        <circle cx="5" cy="19" r="2"/>
-                        <circle cx="19" cy="19" r="2"/>
-                      </svg>
+                      <PluginIcon pluginId={plugin.id} effectType={plugin.effectType ?? null} size={24} />
                     {/if}
                   </div>
                   <div class="vj-plugin-info">
                     <span class="vj-plugin-name">{plugin.name}</span>
                     <span class="vj-plugin-desc">{plugin.description}</span>
-                    <span class="vj-plugin-status live">
-                      Native WebGL
-                    </span>
+                    <span class="vj-plugin-status live">{plugin.tier.toUpperCase()}</span>
                   </div>
                 </div>
               {/each}
               <div class="vj-plugin-hint">
                 <p>Drag effect onto a clip slot to use it</p>
-                <p>Effects run natively in WebGL - no external process needed</p>
+                <p>Same plugin set as the editor's Plugins tab</p>
               </div>
             </div>
           {:else if vjMediaTab === 'maps'}
@@ -4695,6 +4618,7 @@
       </div> <!-- End vj-bottom -->
     </div>
 
+    <VJLayerSequencer />
 </div>
 {/if}
 
@@ -4877,6 +4801,31 @@
   .ab-toggle-label {
     text-transform: uppercase;
   }
+  .vj-seq-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border-radius: var(--ga-r-hard, 2px);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.18));
+    background: transparent;
+    color: var(--ga-ink-1, #b8bdc6);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+    flex: 0 0 auto;
+  }
+  .vj-seq-toggle-btn:hover {
+    background: var(--ga-coral-soft, rgba(255, 111, 94, 0.11));
+    border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.4));
+    color: var(--ga-ink-0, #eef0f4);
+  }
+  .vj-seq-toggle-btn.active {
+    background: var(--ga-coral-soft, rgba(255, 111, 94, 0.11));
+    border-color: var(--ga-coral, #ff6f5e);
+    box-shadow: 0 0 12px var(--ga-coral-glow, rgba(255,111,94,.35));
+  }
 
   /* ===== Dual decks (crossfader on) ===== */
   /* When the crossfader is enabled the grid splits into two complete decks
@@ -4953,25 +4902,51 @@
     flex: 1;
     min-height: 140px;
     display: flex;
-    align-items: center;
+    align-items: stretch;
     justify-content: center;
     width: 30px;
   }
-  /* Vertical range input — modern approach uses `writing-mode: vertical-lr`
-     which is supported on Chrome 124+/Electron 33 (Chromium 130). Default
-     direction puts min (value=0, full Deck A) at TOP and max (value=1,
-     full Deck B) at BOTTOM — matches the order of the Cut A / Cut B
-     buttons above and below the fader. */
+  /* Vertical range input. Two things were breaking it:
+       1. The global skin (App.svelte + studio-skin.css) restyles every
+          range input into a HORIZONTAL custom slider unless the element is
+          on the crossfader exemption list — this class is now exempt there.
+       2. The old `appearance: slider-vertical` keyword is removed in current
+          Chromium (Electron 33 / Chromium 130) and collapses the control to
+          an unusable horizontal sliver. We use the standards-track
+          `writing-mode: vertical-lr` + `direction: rtl` and a custom
+          `::-webkit-slider-thumb` (same recipe as SynthVision's .sv-xf-range).
+     value=0 (full Deck A) sits at the TOP, value=1 (full Deck B) at the
+     BOTTOM — matching the Cut A / Cut B buttons above and below the fader. */
   .xfade-vertical-input {
     writing-mode: vertical-lr;
-    -webkit-appearance: slider-vertical; /* fallback for older Chromium */
-    appearance: slider-vertical;
-    width: 22px;
+    direction: rtl;
+    width: 28px;
     height: 100%;
-    accent-color: var(--accent-primary, #BB86FC);
+    min-height: 140px;
+    margin: 0;
+    padding: 0;
     background: transparent;
+    accent-color: var(--accent-primary, #BB86FC);
     cursor: pointer;
   }
+  .xfade-vertical-input::-webkit-slider-runnable-track {
+    width: 6px;
+    background: linear-gradient(to bottom, #7EC8E3, #FF8577);
+    border-radius: 3px;
+  }
+  .xfade-vertical-input::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 22px;
+    height: 12px;
+    background: #fff;
+    border-radius: 3px;
+    border: 1px solid #000;
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.3);
+    margin-left: -8px; /* center the 22px thumb on the 6px track */
+    cursor: grab;
+  }
+  .xfade-vertical-input::-webkit-slider-thumb:active { cursor: grabbing; }
 
   .xfade-readout {
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;

@@ -8,6 +8,7 @@ import { createDefaultSplatContent, createDefaultModel3DContent } from '../types
 import { createThreeJSIframeContext, getThreeJSIframeContext, createJSAnimationContext } from '../renderer/engine';
 import { keyframeTimeline } from './keyframeTimeline';
 import { parseISF } from '../isf/parser';
+import { vjLayerSequencer } from './vjLayerSequencer';
 
 // Cache parsed ISF shader inputs per shader code to avoid re-parsing every
 // frame. Bounded: keys are entire shader source strings, so an unbounded
@@ -2244,8 +2245,8 @@ export const activeVJLayers = derived(
 
 // Derived store: Get layers to render when VJ mode is live
 export const vjOutputLayers = derived(
-  [vjClipLauncher, activeVJLayers],
-  ([$vjClipLauncher, $activeVJLayers]) => {
+  [vjClipLauncher, activeVJLayers, vjLayerSequencer],
+  ([$vjClipLauncher, $activeVJLayers, $vjLayerSequencer]) => {
     if (!$vjClipLauncher.isLive) return null;
 
     const outputLayers: Layer[] = [];
@@ -2256,7 +2257,10 @@ export const vjOutputLayers = derived(
     for (const activeLayer of $activeVJLayers) {
       const vjLayerIndex = activeLayer.layerIndex;
       const clip = activeLayer.clip;
-      const vjLayerOpacity = activeLayer.opacity * $vjClipLauncher.masterOpacity;
+      const sequenceOpacity = $vjLayerSequencer.isPlaying
+        ? ($vjLayerSequencer.opacityOverrides[vjLayerIndex] ?? 1)
+        : 1;
+      const vjLayerOpacity = activeLayer.opacity * sequenceOpacity * $vjClipLauncher.masterOpacity;
       if (clip.type === 'video') {
         ensureClipVideoElement(clip);
       }

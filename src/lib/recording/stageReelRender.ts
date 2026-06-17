@@ -20,11 +20,22 @@
  */
 
 import { writable, get } from 'svelte/store';
-import { loadFFmpeg, formatErr, downloadBlob, thumbnailFromBlob, offlineRender } from './offlineRender';
+import {
+  loadFFmpeg,
+  formatErr,
+  downloadBlob,
+  thumbnailFromBlob,
+  offlineRender,
+  getOfflineSegmentFrameCount,
+  encodeOfflineJpegSegment,
+  deleteOfflineFrameFiles,
+  concatOfflineSegments,
+} from './offlineRender';
 import { setISFManualTime } from '../isf/renderer';
 import { setStageEffectsManualTime } from '../stores/stageEffects';
 import { keyframeTimeline } from '../stores/keyframeTimeline';
 import { layerSequencer } from '../stores/layerSequencer';
+import { vjLayerSequencer } from '../stores/vjLayerSequencer';
 import { mediaLibrary } from '../stores/media';
 import { generateUUID } from '../utils/uuid';
 import { createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
@@ -133,6 +144,10 @@ function createReelRenderStore() {
 
     setStatus('rendering');
     let lastShotIndex = -1;
+    const segmentFrameCount = getOfflineSegmentFrameCount(settings);
+    const segmentNames: string[] = [];
+    let currentSegmentFrames = 0;
+    let readableOutputName = '';
     try {
       // Resize the engine (and therefore the shared canvas the Stage3D
       // scene renders into) to the reel resolution.
@@ -141,9 +156,12 @@ function createReelRenderStore() {
       canvas.height = settings.height;
       await nextFrame();
 
-      for (let i = 0; i < totalFrames; i++) {
+      for (let segmentStart = 0; segmentStart < totalFrames; segmentStart += segmentFrameCount) {
+        currentSegmentFrames = Math.min(segmentFrameCount, totalFrames - segmentStart);
+        for (let localFrame = 0; localFrame < currentSegmentFrames; localFrame++) {
         if (cancelRequested) { setStatus('cancelled'); return false; }
-        const virtualTime = i / settings.fps;
+        const globalFrame = segmentStart + localFrame;
+        const virtualTime = globalFrame / settings.fps;
 
         // Content clock — identical to the 2D offline pipeline so LED
         // content (shaders, keyframes, sequencer) animates the same.
@@ -152,6 +170,7 @@ function createReelRenderStore() {
         setStageEffectsManualTime(virtualTime);
         keyframeTimeline.seek(virtualTime);
         layerSequencer.seek(virtualTime);
+        vjLayerSequencer.seek(virtualTime);
 
         // Shot clock — camera every frame, stage snapshot on entry.
         const at = shotAtTime(shots, virtualTime);
@@ -171,39 +190,42 @@ function createReelRenderStore() {
         const frame = await capturePromise;
 
         const jpegBytes = await rgbaToJpeg(frame.data, frame.width, frame.height, 0.92);
-        await ffmpeg.writeFile(`frame_${String(i).padStart(6, '0')}.jpg`, jpegBytes);
-        update(s => ({ ...s, currentFrame: i + 1 }));
+        await ffmpeg.writeFile(`frame_${String(localFrame).padStart(6, '0')}.jpg`, jpegBytes);
+        update(s => ({ ...s, currentFrame: globalFrame + 1 }));
+        }
+
+        setStatus('encoding');
+        const segmentIndex = segmentNames.length;
+        const segmentName = `stage_segment_${String(segmentIndex).padStart(4, '0')}.mp4`;
+        segmentNames.push(segmentName);
+        await encodeOfflineJpegSegment(
+          ffmpeg,
+          currentSegmentFrames,
+          settings.fps,
+          settings.quality,
+          segmentName,
+          (progress) => {
+            const segmentCount = Math.max(1, Math.ceil(totalFrames / segmentFrameCount));
+            const p = (segmentIndex + progress) / segmentCount;
+            update(s => ({ ...s, encodeProgress: Math.max(0, Math.min(0.95, p)) }));
+          },
+        );
+        await deleteOfflineFrameFiles(ffmpeg, currentSegmentFrames);
+        currentSegmentFrames = 0;
+        if (cancelRequested) { setStatus('cancelled'); return false; }
+        setStatus('rendering');
       }
 
       if (cancelRequested) { setStatus('cancelled'); return false; }
 
       setStatus('encoding');
-      update(s => ({ ...s, encodeProgress: 0 }));
-      const onProgress = ({ progress }: { progress: number }) => {
-        const p = Math.max(0, Math.min(1, Number.isFinite(progress) ? progress : 0));
-        update(s => ({ ...s, encodeProgress: p }));
-      };
-      ffmpeg.on('progress', onProgress);
-      const crf = settings.quality === 'archive' ? '14' : settings.quality === 'web' ? '23' : '18';
+      readableOutputName = await concatOfflineSegments(ffmpeg, segmentNames, `${settings.filename || 'stage-reel'}.mp4`);
       const outputName = `${settings.filename || 'stage-reel'}.mp4`;
-      try {
-        await ffmpeg.exec([
-          '-framerate', String(settings.fps),
-          '-i', 'frame_%06d.jpg',
-          '-c:v', 'libx264',
-          '-pix_fmt', 'yuv420p',
-          '-crf', crf,
-          '-preset', settings.quality === 'archive' ? 'slow' : 'medium',
-          outputName,
-        ]);
-      } finally {
-        ffmpeg.off('progress', onProgress);
-      }
       update(s => ({ ...s, encodeProgress: 1 }));
       if (cancelRequested) { setStatus('cancelled'); return false; }
 
       setStatus('saving');
-      const data = await ffmpeg.readFile(outputName);
+      const data = await ffmpeg.readFile(readableOutputName);
       const u8 = data instanceof Uint8Array ? data : new Uint8Array(data as any);
       const blob = new Blob([u8], { type: 'video/mp4' });
       const url = URL.createObjectURL(blob);
@@ -221,16 +243,19 @@ function createReelRenderStore() {
       downloadBlob(blob, `${niceName}.mp4`);
 
       try {
-        for (let i = 0; i < totalFrames; i++) {
-          await ffmpeg.deleteFile(`frame_${String(i).padStart(6, '0')}.jpg`);
-        }
-        await ffmpeg.deleteFile(outputName);
+        await deleteOfflineFrameFiles(ffmpeg, currentSegmentFrames || segmentFrameCount);
+        for (const segmentName of segmentNames) await ffmpeg.deleteFile(segmentName);
+        if (readableOutputName === outputName) await ffmpeg.deleteFile(outputName);
       } catch { /* best-effort */ }
 
       update(s => ({ ...s, status: 'complete', lastOutputUrl: url, lastOutputName: niceName }));
       return true;
     } catch (err) {
       console.error('[stageReelRender] error:', err);
+      try {
+        await deleteOfflineFrameFiles(ffmpeg, currentSegmentFrames || segmentFrameCount);
+        for (const segmentName of segmentNames) await ffmpeg.deleteFile(segmentName);
+      } catch { /* best-effort */ }
       setStatus('error', formatErr(err));
       return false;
     } finally {

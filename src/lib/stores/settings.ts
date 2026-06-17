@@ -49,13 +49,13 @@ export const SCHEME_MIDNIGHT_CORAL: ColorScheme = {
     bgSecondary: 'rgba(18, 18, 22, 0.95)',
     bgTertiary: '#141418',
     bgOverlay: 'rgba(0, 0, 0, 0.85)',
-    accentPrimary: '#FF6B6B',      // Coral red
-    accentSecondary: '#FF8585',    // Lighter coral
-    accentHover: '#FF5252',        // Brighter on hover
+    accentPrimary: '#FF725F',      // Coral red
+    accentSecondary: '#FF9A84',    // Lighter coral
+    accentHover: '#FF5F4C',        // Brighter on hover
     textPrimary: '#e8e8e8',
     textSecondary: '#a0a0a0',
     textMuted: '#666666',
-    borderPrimary: 'rgba(255, 107, 107, 0.15)',
+    borderPrimary: 'rgba(255, 114, 95, 0.22)',
     borderSecondary: 'rgba(255, 255, 255, 0.06)',
     danger: '#FF4757',
     success: '#2ED573',
