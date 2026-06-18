@@ -317,7 +317,7 @@
     border: none;
     color: var(--text-secondary, #aaa);
     cursor: pointer;
-    font-size: 16px;
+    font-size: 18px;
     line-height: 1;
     display: flex;
     align-items: center;
@@ -356,14 +356,14 @@
   }
 
   .ot-eyebrow {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     color: #FF8577;
     letter-spacing: 0.18em;
     margin-bottom: 6px;
   }
   .ot-title {
-    font-size: 22px;
+    font-size: 24px;
     font-weight: 700;
     color: #fff;
     margin: 0 0 12px;
@@ -371,7 +371,7 @@
     line-height: 1.2;
   }
   .ot-body {
-    font-size: 14px;
+    font-size: 16px;
     color: var(--text-primary, #ccc);
     line-height: 1.55;
     margin: 0 0 16px;
@@ -388,7 +388,7 @@
   .ot-bullets li {
     position: relative;
     padding-left: 18px;
-    font-size: 12px;
+    font-size: 14px;
     color: var(--text-secondary, #aaa);
     line-height: 1.5;
   }
@@ -398,7 +398,7 @@
     left: 0;
     top: 0;
     color: #7EC8E3;
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .ot-keyhint {
@@ -412,14 +412,14 @@
     margin-bottom: 14px;
   }
   .ot-keyhint-label {
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     color: var(--text-muted, #888);
     letter-spacing: 0.16em;
   }
   .ot-keyhint kbd {
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 11px;
+    font-size: 13px;
     color: #FF8577;
     background: rgba(255, 133, 119, 0.1);
     padding: 2px 6px;
@@ -432,7 +432,7 @@
     background: rgba(126, 200, 227, 0.12);
     border: 1px solid rgba(126, 200, 227, 0.45);
     color: #7EC8E3;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 700;
     letter-spacing: 0.04em;
     padding: 8px 14px;
@@ -458,7 +458,7 @@
     background: transparent;
     border: 1px solid rgba(255, 255, 255, 0.1);
     color: var(--text-muted, #888);
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     padding: 7px 12px;
     border-radius: 4px;
@@ -468,7 +468,7 @@
 
   .ot-counter {
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 10px;
+    font-size: 12px;
     color: #666;
     text-align: center;
   }
@@ -477,7 +477,7 @@
     background: linear-gradient(135deg, #FF8577, #7EC8E3);
     border: none;
     color: #0a0a0a;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 700;
     letter-spacing: 0.04em;
     padding: 9px 18px;

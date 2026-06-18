@@ -1172,7 +1172,7 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    font-size: 12px;
+    font-size: 14px;
     color: var(--text-primary, #e0e0e0);
     overflow-y: auto;
     max-height: 100%;
@@ -1180,7 +1180,7 @@
 
   h3 {
     margin: 0 0 8px 0;
-    font-size: 14px;
+    font-size: 16px;
     font-weight: 600;
     color: var(--accent-primary, #BB86FC);
     border-bottom: 1px solid var(--border-color, #333);
@@ -1195,7 +1195,7 @@
 
   .section-label {
     display: block;
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-secondary, #888);
     margin-bottom: 6px;
     text-transform: uppercase;
@@ -1216,7 +1216,7 @@
     border: none;
     color: var(--text-primary, #e0e0e0);
     cursor: pointer;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 500;
     text-align: left;
     border-radius: 6px;
@@ -1235,7 +1235,7 @@
   }
 
   .chevron {
-    font-size: 16px;
+    font-size: 18px;
     color: var(--text-secondary, #888);
   }
 
@@ -1250,7 +1250,7 @@
     max-width: 110px;
     flex-shrink: 0;
     color: var(--text-secondary, #aaa);
-    font-size: 11px;
+    font-size: 13px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1281,7 +1281,7 @@
     border: 1px solid var(--border-color, #333);
     border-radius: 4px;
     color: var(--text-primary, #e0e0e0);
-    font-size: 11px;
+    font-size: 13px;
     cursor: pointer;
   }
 
@@ -1299,7 +1299,7 @@
     min-width: 40px;
     text-align: right;
     color: var(--accent-primary, #BB86FC);
-    font-size: 10px;
+    font-size: 12px;
     font-family: monospace;
   }
 
@@ -1333,7 +1333,7 @@
     color: var(--bg-primary, #121212);
     border-radius: 4px;
     cursor: pointer;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 500;
     transition: background 0.2s;
   }
@@ -1350,7 +1350,7 @@
     padding: 6px;
     background: var(--bg-secondary, #0d0d10);
     border-radius: 4px;
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .filename {
@@ -1367,7 +1367,7 @@
   }
 
   .density-info {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-secondary, #888);
     margin-top: 4px;
     padding-left: 2px;
@@ -1389,7 +1389,7 @@
 
   .hint {
     color: var(--text-secondary, #666);
-    font-size: 10px;
+    font-size: 12px;
     margin: 6px 0 0 0;
     font-style: italic;
   }

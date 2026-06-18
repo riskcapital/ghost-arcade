@@ -120,7 +120,7 @@
 
 {:else}
   <!-- Fallback: manifest's unicode icon char -->
-  <span class="plugin-icon-emoji" style="font-size:{Math.round(size * 0.66)}px">{fallbackGlyph}</span>
+  <span class="plugin-icon-emoji" style="font-size:{Math.round(size * 0.66) + 2}px">{fallbackGlyph}</span>
 {/if}
 
 <style>

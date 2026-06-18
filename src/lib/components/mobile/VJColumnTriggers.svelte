@@ -66,7 +66,7 @@
     border-radius: 4px;
     background: rgba(255, 255, 255, 0.03);
     color: rgba(255, 255, 255, 0.4);
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     cursor: pointer;
     transition: all 0.1s cubic-bezier(0.25, 0.1, 0.25, 1.4);

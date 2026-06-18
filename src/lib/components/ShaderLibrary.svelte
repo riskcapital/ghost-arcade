@@ -447,8 +447,8 @@
   }
   .sl-header-left { display: flex; align-items: center; gap: 12px; }
   .sl-header-right { display: flex; align-items: center; gap: 8px; }
-  .sl-header h2 { font-size: 16px; font-weight: 600; margin: 0; color: #fff; }
-  .sl-count { font-size: 12px; color: #666; }
+  .sl-header h2 { font-size: 18px; font-weight: 600; margin: 0; color: #fff; }
+  .sl-count { font-size: 14px; color: #666; }
 
   .sl-find-latest {
     display: inline-flex;
@@ -459,7 +459,7 @@
     border: 1px solid rgba(126,200,227,0.25);
     border-radius: 4px;
     color: #7EC8E3;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     letter-spacing: 0.04em;
     cursor: pointer;
@@ -476,7 +476,7 @@
   .sl-close {
     width: 28px; height: 28px; border-radius: 50%;
     background: rgba(255,255,255,0.06); border: none;
-    color: var(--text-muted, #888); font-size: 18px; cursor: pointer;
+    color: var(--text-muted, #888); font-size: 20px; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
     transition: all 0.15s;
   }
@@ -487,7 +487,7 @@
     background: rgba(126,200,227,0.08);
     border-bottom: 1px solid rgba(126,200,227,0.15);
     color: #7EC8E3;
-    font-size: 12px;
+    font-size: 14px;
   }
 
   .sl-toolbar {
@@ -502,7 +502,7 @@
     border: 1px solid rgba(255,255,255,0.1);
     border-radius: 4px;
     color: #fff;
-    font-size: 13px;
+    font-size: 15px;
     outline: none;
     margin-bottom: 10px;
   }
@@ -537,7 +537,7 @@
   }
   .sl-cat-btn {
     padding: 4px 10px;
-    font-size: 11px;
+    font-size: 13px;
     background: rgba(255,255,255,0.04);
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 12px;
@@ -558,7 +558,7 @@
     text-align: center;
     color: #666;
     padding: 40px;
-    font-size: 13px;
+    font-size: 15px;
   }
   .sl-grid {
     display: grid;
@@ -566,7 +566,7 @@
     gap: 10px;
   }
   .sl-grid-end {
-    text-align: center; padding: 20px; color: #555; font-size: 11px;
+    text-align: center; padding: 20px; color: #555; font-size: 13px;
     grid-column: 1 / -1;
   }
 
@@ -603,7 +603,7 @@
     top: 6px;
     left: 6px;
     padding: 2px 6px;
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.08em;
     border-radius: 3px;
@@ -633,8 +633,8 @@
   }
 
   .sl-card-info { padding: 6px 8px; }
-  .sl-card-name { font-size: 10px; font-weight: 500; color: var(--text-primary, #ccc); display: block; line-height: 1.3; word-break: break-word; }
-  .sl-card-cat { font-size: 9px; color: #555; display: block; margin-top: 2px; }
+  .sl-card-name { font-size: 12px; font-weight: 500; color: var(--text-primary, #ccc); display: block; line-height: 1.3; word-break: break-word; }
+  .sl-card-cat { font-size: 11px; color: #555; display: block; margin-top: 2px; }
 
   .sl-footer {
     display: flex;
@@ -644,7 +644,7 @@
     border-top: 1px solid rgba(255,255,255,0.08);
     flex-shrink: 0;
   }
-  .sl-footer-info { font-size: 12px; color: #666; }
+  .sl-footer-info { font-size: 14px; color: #666; }
   .sl-footer-actions { display: flex; gap: 8px; }
   .sl-cancel {
     padding: 8px 16px;
@@ -652,7 +652,7 @@
     border: 1px solid rgba(255,255,255,0.15);
     border-radius: 4px;
     color: var(--text-muted, #888);
-    font-size: 12px;
+    font-size: 14px;
     cursor: pointer;
   }
   .sl-cancel:hover { border-color: rgba(255,255,255,0.3); color: var(--text-primary, #ccc); }
@@ -662,7 +662,7 @@
     border: none;
     border-radius: 4px;
     color: #0a0a0a;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 700;
     cursor: pointer;
     transition: all 0.15s;

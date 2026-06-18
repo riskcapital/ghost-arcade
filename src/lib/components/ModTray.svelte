@@ -67,6 +67,7 @@
   export let auto: AutoConfig | undefined = undefined;
   /** Hide the Auto tab for surfaces that don't support the playhead. */
   export let supportsAuto = true;
+  export let autoHint = 'Drag the cyan handles on the param slider to clip the sweep range.';
   export let onClose: () => void;
   export let onSetSource: (s: ModSource) => void;
   export let onPatchMod: (patch: Partial<ParamModulation>) => void;
@@ -361,7 +362,7 @@
           oninput={(e) => onPatchAuto({ speedHz: parseFloat((e.target as HTMLInputElement).value) })} />
         <span class="mt-row-val">{auto.speedHz.toFixed(2)}Hz</span>
       </div>
-      <div class="mt-hint">Drag the cyan handles on the param slider to clip the sweep range.</div>
+      <div class="mt-hint">{autoHint}</div>
     </div>
   {/if}
 </div>
@@ -378,7 +379,7 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-primary, #ccc);
   }
 
@@ -389,7 +390,7 @@
     gap: 8px;
   }
   .mt-title {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -402,7 +403,7 @@
     background: transparent;
     border: none;
     color: var(--text-muted, #777);
-    font-size: 11px;
+    font-size: 13px;
     cursor: pointer;
     padding: 2px 4px;
     border-radius: 3px;
@@ -423,7 +424,7 @@
     border: none;
     border-right: 1px solid rgba(255, 255, 255, 0.08);
     color: rgba(255, 255, 255, 0.5);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 600;
     padding: 5px 0;
     cursor: pointer;
@@ -438,7 +439,7 @@
   .mt-cats button.cat-auto.active { background: rgba(92, 225, 230, 0.18); color: #5ce1e6; }
 
   .mt-section-label {
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.14em;
     text-transform: uppercase;
@@ -459,7 +460,7 @@
     border: 1px solid rgba(255, 255, 255, 0.09);
     border-radius: 4px;
     color: rgba(255, 255, 255, 0.65);
-    font-size: 10px;
+    font-size: 12px;
     padding: 4px 2px;
     cursor: pointer;
     display: flex;
@@ -474,7 +475,7 @@
     border-color: #ff00ff;
     color: #ff7af5;
   }
-  .mt-glyph { font-size: 12px; line-height: 1; }
+  .mt-glyph { font-size: 14px; line-height: 1; }
 
   /* Tune rows */
   .mt-row {
@@ -484,7 +485,7 @@
   }
   .mt-row-label {
     flex: 0 0 42px;
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.1em;
     text-transform: uppercase;
@@ -498,7 +499,7 @@
   .mt-row-val {
     flex: 0 0 46px;
     text-align: right;
-    font-size: 10px;
+    font-size: 12px;
     color: #ff7af5;
     font-variant-numeric: tabular-nums;
   }
@@ -507,7 +508,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-secondary, #aaa);
     cursor: pointer;
     user-select: none;
@@ -521,7 +522,7 @@
   }
 
   .mt-hint {
-    font-size: 10px;
+    font-size: 12px;
     line-height: 1.45;
     color: var(--text-muted, #888);
   }
@@ -549,7 +550,7 @@
     background: transparent;
     border: 1px solid rgba(255, 255, 255, 0.18);
     color: var(--text-primary, #ccc);
-    font-size: 9px;
+    font-size: 11px;
     cursor: pointer;
     flex-shrink: 0;
     display: flex;
@@ -567,7 +568,7 @@
     background: transparent;
     border: none;
     padding: 3px 9px;
-    font-size: 10px;
+    font-size: 12px;
     color: rgba(255, 255, 255, 0.5);
     cursor: pointer;
   }

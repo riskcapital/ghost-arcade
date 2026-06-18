@@ -58,7 +58,7 @@
     border: 1px solid var(--border-color, #333);
     border-radius: 4px;
     padding: 2px 4px;
-    font-size: 11px;
+    font-size: 13px;
     max-width: 140px;
     cursor: pointer;
   }
@@ -71,7 +71,7 @@
     border: 1px solid var(--border-color, #333);
     border-radius: 4px;
     padding: 3px 6px;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 600;
     letter-spacing: 0.5px;
     cursor: pointer;
@@ -88,7 +88,7 @@
   }
   .midi-activity {
     color: #00ff88;
-    font-size: 8px;
+    font-size: 10px;
     animation: midi-blink 0.15s ease-out;
     cursor: default;
   }

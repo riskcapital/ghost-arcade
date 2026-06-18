@@ -419,14 +419,14 @@
 
   .source-crop-header h2 {
     margin: 0;
-    font-size: 16px;
+    font-size: 18px;
     font-weight: 700;
   }
 
   .source-crop-header p {
     margin: 4px 0 0;
     color: var(--ga-ink-2, #5e6571);
-    font-size: 12px;
+    font-size: 14px;
   }
 
   .source-crop-close {
@@ -440,7 +440,7 @@
     border-radius: 4px;
     color: var(--ga-ink-1, #9aa0ac);
     cursor: pointer;
-    font-size: 16px;
+    font-size: 18px;
   }
 
   .source-crop-close:hover {
@@ -508,14 +508,14 @@
   }
 
   .source-crop-placeholder span {
-    font-size: 13px;
+    font-size: 15px;
     font-weight: 700;
   }
 
   .source-crop-placeholder small {
     max-width: 260px;
     color: var(--ga-ink-2, #5e6571);
-    font-size: 11px;
+    font-size: 13px;
     line-height: 1.4;
   }
 
@@ -576,14 +576,14 @@
     gap: 10px;
     padding-bottom: 8px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    font-size: 12px;
+    font-size: 14px;
     color: var(--ga-ink-2, #5e6571);
   }
 
   .source-crop-stat strong {
     color: var(--ga-ink-0, #eef0f4);
     font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 12px;
+    font-size: 14px;
   }
 
   .source-crop-presets {
@@ -598,7 +598,7 @@
     min-height: 30px;
     border-radius: 4px;
     cursor: pointer;
-    font-size: 12px;
+    font-size: 14px;
   }
 
   .source-crop-presets button,
@@ -626,7 +626,7 @@
     align-items: center;
     gap: 8px;
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 12px;
+    font-size: 14px;
   }
 
   .source-crop-fields input {
@@ -639,7 +639,7 @@
     color: var(--ga-ink-0, #eef0f4);
     padding: 0 8px;
     font: inherit;
-    font-size: 12px;
+    font-size: 14px;
   }
 
   .source-crop-footer-actions {

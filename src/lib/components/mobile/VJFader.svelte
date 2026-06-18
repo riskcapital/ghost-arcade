@@ -235,7 +235,7 @@
   }
 
   .fader-label {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     color: var(--fader-color);
     text-transform: uppercase;
@@ -364,7 +364,7 @@
   }
 
   .fader-value {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 600;
     color: rgba(255, 255, 255, 0.5);
     font-variant-numeric: tabular-nums;
@@ -384,7 +384,7 @@
   }
 
   .vj-fader.horizontal .fader-label {
-    font-size: 10px;
+    font-size: 12px;
     min-width: 32px;
     text-align: right;
   }
@@ -490,7 +490,7 @@
   .vj-fader.horizontal .fader-value {
     min-width: 40px;
     text-align: left;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 700;
     color: rgba(255, 255, 255, 0.6);
   }

@@ -789,7 +789,7 @@
      .library-header h3 below. Just raises the weight there. */
   .library-header h3 {
     font-weight: 800;
-    font-size: 18px;
+    font-size: 20px;
     color: var(--ga-ink-0, #eef0f4);
   }
 
@@ -808,7 +808,7 @@
 
   .library-header h3 {
     margin: 0;
-    font-size: 13px;
+    font-size: 15px;
     font-weight: 600;
     display: flex;
     align-items: center;
@@ -816,14 +816,14 @@
   }
 
   .toggle-icon {
-    font-size: 10px;
+    font-size: 12px;
     color: #666;
   }
 
   .item-count {
     background: #333;
     color: var(--text-muted, #888);
-    font-size: 11px;
+    font-size: 13px;
     padding: 2px 8px;
     border-radius: 10px;
   }
@@ -843,7 +843,7 @@
     color: var(--ga-ink-2, #5e6571);
     padding: 9px 2px;
     font-family: var(--ga-font-mono, 'IBM Plex Mono', monospace);
-    font-size: 9px;
+    font-size: 11px;
     letter-spacing: 0.04em;
     text-transform: uppercase;
     cursor: pointer;
@@ -867,7 +867,7 @@
     border-radius: 6px;
     text-align: center;
     color: #666;
-    font-size: 12px;
+    font-size: 14px;
     transition: border-color 0.2s;
   }
 
@@ -949,7 +949,7 @@
 
   .item-name {
     padding: 4px 6px;
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-secondary, #aaa);
     white-space: nowrap;
     overflow: hidden;
@@ -966,7 +966,7 @@
     border: none;
     border-radius: 50%;
     color: #ff4444;
-    font-size: 14px;
+    font-size: 16px;
     cursor: pointer;
     opacity: 0;
     transition: opacity 0.15s;
@@ -988,7 +988,7 @@
     text-align: center;
     color: #555;
     padding: 20px;
-    font-size: 12px;
+    font-size: 14px;
   }
 
   .collapsed .library-header {
@@ -1016,7 +1016,7 @@
     border: 1px solid var(--ga-violet-line, rgba(155, 135, 245, 0.36));
     border-radius: var(--ga-r-soft, 7px);
     color: var(--ga-violet, #9b87f5);
-    font-size: 13px;
+    font-size: 15px;
     font-weight: 700;
     cursor: pointer;
     transition: background 0.14s;
@@ -1037,7 +1037,7 @@
     border: 1px solid var(--ga-blue-line, rgba(91, 141, 239, 0.38));
     border-radius: var(--ga-r-soft, 7px);
     color: var(--ga-blue, #5b8def);
-    font-size: 13px;
+    font-size: 15px;
     font-weight: 700;
     cursor: pointer;
     transition: background 0.14s;
@@ -1068,7 +1068,7 @@
     border: none;
     border-radius: var(--ga-r-soft, 7px);
     color: #160f2e;
-    font-size: 13px;
+    font-size: 15px;
     font-weight: 700;
     cursor: pointer;
   }
@@ -1085,7 +1085,7 @@
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     border-radius: var(--ga-r-hard, 2px);
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 12.5px;
+    font-size: 14.5px;
     font-weight: 600;
     cursor: pointer;
     transition: color 0.14s, border-color 0.14s;
@@ -1126,7 +1126,7 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
     color: var(--text-primary, #e8e8e8);
-    font-size: 12px;
+    font-size: 14px;
     outline: none;
   }
   .media-search-input::placeholder { color: rgba(255, 255, 255, 0.3); }
@@ -1140,7 +1140,7 @@
     background: none;
     border: none;
     color: rgba(255, 255, 255, 0.5);
-    font-size: 16px;
+    font-size: 18px;
     line-height: 1;
     cursor: pointer;
     padding: 2px 6px;
@@ -1171,7 +1171,7 @@
     border: 1px solid #333;
     border-radius: 4px;
     color: var(--text-muted, #888);
-    font-size: 11px;
+    font-size: 13px;
     cursor: pointer;
     transition: all 0.15s;
   }
@@ -1213,7 +1213,7 @@
     right: 4px;
     background: linear-gradient(135deg, #BB86FC, #A78BFA);
     color: #000;
-    font-size: 8px;
+    font-size: 10px;
     font-weight: 700;
     padding: 2px 4px;
     border-radius: 3px;
@@ -1225,7 +1225,7 @@
     left: 4px;
     background: rgba(0, 0, 0, 0.7);
     color: var(--text-muted, #888);
-    font-size: 8px;
+    font-size: 10px;
     font-weight: 600;
     padding: 2px 4px;
     border-radius: 2px;
@@ -1233,7 +1233,7 @@
 
   .empty-message .hint {
     margin-top: 4px;
-    font-size: 10px;
+    font-size: 12px;
     color: #444;
   }
 
@@ -1294,14 +1294,14 @@
   }
 
   .plugin-name {
-    font-size: 13px;
+    font-size: 15px;
     font-weight: 600;
     color: var(--text-primary, #eee);
     margin-bottom: 2px;
   }
 
   .plugin-desc {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     white-space: nowrap;
     overflow: hidden;
@@ -1339,7 +1339,7 @@
   }
 
   .status-text {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-muted, #888);
   }
 
@@ -1350,7 +1350,7 @@
   .btn-plugin {
     padding: 6px 12px;
     border-radius: 4px;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.15s;

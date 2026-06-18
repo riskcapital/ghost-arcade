@@ -7,13 +7,9 @@
   import { onDestroy, onMount } from 'svelte';
   import { milkdropStore } from '../stores/milkdrop';
   import { loadPresetPack, type MilkdropPresetPack } from '../effects/milkdropPresets';
-  import MilkdropStemSection from './MilkdropStemSection.svelte';
 
   export let layerId: string;
   export let presetPack: string = 'minimal';
-  /** Live routing matrix from the layer's effectSource — passed into the
-   *  stem section so it can read/write per-stem × per-band gains. */
-  export let routingMatrix: Record<string, Record<string, number>> = {};
 
   let presetNames: string[] = [];
   let loading = false;
@@ -107,8 +103,6 @@
     window.removeEventListener('keydown', onKeydown);
   });
 </script>
-
-<MilkdropStemSection {layerId} matrix={routingMatrix} />
 
 <div class="mk-panel">
   <!-- Transport row -->
@@ -208,7 +202,7 @@
     border: 1px solid #3a2960;
     border-radius: 3px;
     color: #c9b8ff;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 700;
     cursor: pointer;
     transition: all 0.12s;
@@ -219,7 +213,7 @@
   .mk-btn.lock.active { background: #0d3320; border-color: #22c55e; color: #4ade80; }
 
   .mk-hotkey-hint {
-    font-size: 9px;
+    font-size: 11px;
     color: #555;
     text-align: center;
     letter-spacing: 0.4px;
@@ -231,7 +225,7 @@
     color: var(--text-secondary, #aaa);
     border-radius: 3px;
     padding: 1px 5px;
-    font-size: 9px;
+    font-size: 11px;
     font-family: 'JetBrains Mono', monospace;
     margin: 0 2px;
   }
@@ -245,13 +239,13 @@
     padding: 4px 8px;
   }
   .mk-now-label {
-    font-size: 9px;
+    font-size: 11px;
     color: #555;
     letter-spacing: 0.6px;
   }
   .mk-now-name {
     flex: 1;
-    font-size: 11px;
+    font-size: 13px;
     color: #d4b8ff;
     white-space: nowrap;
     overflow: hidden;
@@ -262,7 +256,7 @@
     background: transparent;
     border: 1px solid #333;
     color: #555;
-    font-size: 11px;
+    font-size: 13px;
     padding: 2px 6px;
     border-radius: 3px;
     cursor: pointer;
@@ -284,7 +278,7 @@
     color: var(--text-primary, #ddd);
     padding: 4px 6px;
     border-radius: 3px;
-    font-size: 10px;
+    font-size: 12px;
     outline: none;
   }
   .mk-filter input[type="text"]:focus { border-color: #6938aa; }
@@ -311,7 +305,7 @@
   .mk-row.active .mk-row-name { color: #fff; }
   .mk-row-name {
     flex: 1;
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-secondary, #aaa);
     white-space: nowrap;
     overflow: hidden;
@@ -322,7 +316,7 @@
     background: transparent;
     border: none;
     color: #555;
-    font-size: 12px;
+    font-size: 14px;
     padding: 0 4px;
     cursor: pointer;
   }
@@ -331,7 +325,7 @@
   .mk-empty {
     padding: 12px;
     text-align: center;
-    font-size: 10px;
+    font-size: 12px;
     color: #555;
   }
   .mk-empty.err { color: #f87171; }

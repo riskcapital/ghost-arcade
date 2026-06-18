@@ -46,13 +46,13 @@
     border: none;
     border-radius: 4px;
     color: rgba(255, 255, 255, 0.4);
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 800;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
     transition: all 0.1s;
   }
-  .bank-toggle.compact .bank-btn { width: 26px; height: 22px; font-size: 10px; }
+  .bank-toggle.compact .bank-btn { width: 26px; height: 22px; font-size: 12px; }
 
   .bank-btn.a.active {
     background: rgba(79, 195, 247, 0.2);

@@ -274,7 +274,7 @@
         />
         {#if rect.w > 40 && rect.h > 16}
           <rect x={rect.x + 4} y={rect.y + 4} width={Math.min(rect.w - 8, 8 + slice.name.length * 6.5)} height="14" fill="rgba(0,0,0,0.55)" rx="2" pointer-events="none"/>
-          <text x={rect.x + 8} y={rect.y + 14} fill={color} font-size="11" font-family="ui-monospace, monospace" pointer-events="none">{slice.name}</text>
+          <text x={rect.x + 8} y={rect.y + 14} fill={color} font-size="13" font-family="ui-monospace, monospace" pointer-events="none">{slice.name}</text>
         {/if}
 
         <!-- Corner resize handles. 6px boxes, only shown for the
@@ -316,7 +316,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-muted, #888);
     margin-bottom: 6px;
     font-family: ui-monospace, monospace;

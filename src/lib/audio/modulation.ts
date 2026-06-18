@@ -861,6 +861,7 @@ export function setCrossfaderModSource(source: ModSource) {
       amount: existing?.amount ?? DEFAULT_MOD.amount,
       speed: existing?.speed ?? DEFAULT_MOD.speed,
       invert: existing?.invert ?? DEFAULT_MOD.invert,
+      bpmSync: existing?.bpmSync ?? DEFAULT_MOD.bpmSync,
     });
   }
   if (source !== 'manual' && !modulationEngine.running) {

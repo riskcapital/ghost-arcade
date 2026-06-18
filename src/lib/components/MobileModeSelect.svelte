@@ -40,13 +40,13 @@
     margin-bottom: 12px;
   }
   h1 {
-    font-size: 28px;
+    font-size: 30px;
     font-weight: 600;
     margin: 0 0 4px 0;
     letter-spacing: -0.5px;
   }
   .tagline {
-    font-size: 14px;
+    font-size: 16px;
     color: var(--text-muted, #888);
     margin: 0 0 36px 0;
     text-align: center;
@@ -73,17 +73,17 @@
     background: linear-gradient(135deg, rgba(187, 134, 252, 0.12), rgba(105, 240, 174, 0.06));
   }
   .mode-title {
-    font-size: 18px;
+    font-size: 20px;
     font-weight: 600;
     margin-bottom: 4px;
   }
   .mode-desc {
-    font-size: 13px;
+    font-size: 15px;
     color: var(--text-secondary, #aaa);
     line-height: 1.45;
   }
   .footnote {
-    font-size: 11px;
+    font-size: 13px;
     color: #555;
     margin-top: 16px;
     text-align: center;

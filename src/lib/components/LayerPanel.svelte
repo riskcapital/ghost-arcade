@@ -657,7 +657,7 @@
                   <ellipse cx="12" cy="12" rx="9" ry="3.2"/>
                   <path d="M3 12 a9 9 0 0 0 18 0"/>
                 </svg>
-                GPU Shader <span style="font-size:9px; opacity:0.7; padding:1px 4px; background:linear-gradient(135deg,#1e3a8a,#7c2d12); border-radius:2px; margin-left:4px;">WebGPU</span>
+                GPU Shader <span style="font-size:11px; opacity:0.7; padding:1px 4px; background:linear-gradient(135deg,#1e3a8a,#7c2d12); border-radius:2px; margin-left:4px;">WebGPU</span>
               </button>
             {/if}
             <button onclick={() => { project.addScreenLayer(); showAddLayerMenu = false; }}>
@@ -2365,7 +2365,7 @@
     flex-direction: column;
     color: var(--ga-ink-0, #eef0f4);
     font-family: var(--ga-font-ui, system-ui, sans-serif);
-    font-size: 13.5px;
+    font-size: 15.5px;
     height: 100%;
     overflow: hidden;
   }
@@ -2425,7 +2425,7 @@
        weight, size, uppercase, letter-spacing. Only difference is the
        accent color — purple (BB86FC) here vs orange (ff9800) for Edge
        Effects, so the two sections read as siblings, not parent/child. */
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     color: var(--ga-violet, #9b87f5);
     text-transform: uppercase;
@@ -2442,7 +2442,7 @@
 
   .panel-header h3 {
     margin: 0;
-    font-size: 15px;
+    font-size: 17px;
     font-weight: 700;
     color: var(--ga-ink-0, #eef0f4);
   }
@@ -2455,7 +2455,7 @@
     padding: 0 12px;
     border-radius: var(--ga-r-soft, 7px);
     cursor: pointer;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 600;
     display: inline-flex;
     align-items: center;
@@ -2563,7 +2563,7 @@
     background: none;
     border: none;
     color: var(--ga-ink-2, #5e6571);
-    font-size: 12px;
+    font-size: 14px;
     cursor: pointer;
     padding: 0 2px;
     flex-shrink: 0;
@@ -2586,7 +2586,7 @@
     gap: 12px;
   }
   .radio-label {
-    font-size: 12px;
+    font-size: 14px;
     color: var(--text-primary, #ccc);
     display: flex;
     align-items: center;
@@ -2597,18 +2597,18 @@
     accent-color: #BB86FC;
   }
   .property-hint {
-    font-size: 11px;
+    font-size: 13px;
     color: #666;
     margin: 4px 0 8px;
     line-height: 1.4;
   }
   .property-value {
-    font-size: 12px;
+    font-size: 14px;
     color: var(--text-secondary, #aaa);
     font-family: monospace;
   }
   .grouped-child-note {
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-muted, #888);
     padding: 8px 12px;
     background: rgba(187, 134, 252, 0.06);
@@ -2640,7 +2640,7 @@
     background: none;
     border: none;
     color: var(--text-primary, #ccc);
-    font-size: 12px;
+    font-size: 14px;
     padding: 6px 14px;
     cursor: pointer;
   }
@@ -2719,7 +2719,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 13.5px;
+    font-size: 15.5px;
     font-weight: 600;
   }
 
@@ -2736,7 +2736,7 @@
     border-radius: var(--ga-r-hard, 2px);
     color: var(--ga-ink-0, #eef0f4);
     font: inherit;
-    font-size: 12px;
+    font-size: 14px;
     padding: 2px 6px;
     outline: none;
     min-width: 0;
@@ -2748,7 +2748,7 @@
      italic muted span and is the only flex sibling that's allowed to
      shrink, so the row never overflows. */
   .invert-hint {
-    font-size: 10px;
+    font-size: 12px;
     color: #777;
     font-style: italic;
     flex: 1 1 auto;
@@ -2829,7 +2829,7 @@
 
   .layer-properties h4 {
     margin: 0 0 11px 0;
-    font-size: 14px;
+    font-size: 16px;
     font-weight: 700;
     color: var(--ga-ink-0, #eef0f4);
   }
@@ -2856,7 +2856,7 @@
 
   .source-type {
     display: block;
-    font-size: 10px;
+    font-size: 12px;
     color: var(--ga-ink-2, #5e6571);
     margin-bottom: 8px;
   }
@@ -2900,7 +2900,7 @@
   .vt-play:hover { background: #CF6EFF; color: #000; }
 
   .vt-time {
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-muted, #888);
     font-family: monospace;
     margin-left: 4px;
@@ -2913,7 +2913,7 @@
     color: var(--text-secondary, #aaa);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 3px;
-    font-size: 11px;
+    font-size: 13px;
     padding: 2px 4px;
     cursor: pointer;
     flex-shrink: 0;
@@ -3011,7 +3011,7 @@
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);
     color: var(--text-muted, #888);
-    font-size: 10px;
+    font-size: 12px;
     padding: 4px 2px;
     border-radius: 3px;
     cursor: pointer;
@@ -3051,9 +3051,9 @@
   .feather-row { flex-wrap: wrap; }
   .feather-sliders { width: 100%; display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
   .feather-slider { display: flex; align-items: center; gap: 4px; }
-  .feather-label { width: 12px; font-size: 9px; color: #666; text-align: center; }
+  .feather-label { width: 12px; font-size: 11px; color: #666; text-align: center; }
   .feather-slider input[type='range'] { flex: 1; }
-  .btn-small { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: var(--text-secondary, #aaa); font-size: 10px; padding: 3px 8px; border-radius: 3px; cursor: pointer; }
+  .btn-small { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: var(--text-secondary, #aaa); font-size: 12px; padding: 3px 8px; border-radius: 3px; cursor: pointer; }
   .btn-small:hover:not(:disabled) { background: rgba(255,255,255,0.12); color: #fff; }
   .btn-small:disabled { opacity: 0.45; cursor: not-allowed; }
   .source-crop-row .btn-small { min-height: 26px; }
@@ -3064,7 +3064,7 @@
   .property-row label {
     width: auto;
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 12.5px;
+    font-size: 14.5px;
     font-weight: 500;
   }
 
@@ -3081,7 +3081,7 @@
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     padding: 0 26px 0 11px;
     border-radius: var(--ga-r-hard, 2px);
-    font-size: 13px;
+    font-size: 15px;
     font-weight: 500;
   }
 
@@ -3089,7 +3089,7 @@
     width: 40px;
     text-align: right;
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 12px;
+    font-size: 14px;
     font-family: var(--ga-font-mono, ui-monospace, monospace);
   }
 
@@ -3112,7 +3112,7 @@
     border: 1px solid #555;
     padding: 4px 8px;
     border-radius: 4px;
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .btn-reset,
@@ -3125,7 +3125,7 @@
     padding: 0 12px;
     border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
-    font-size: 13px;
+    font-size: 15px;
     font-weight: 600;
     transition: color 0.15s, border-color 0.15s, background 0.15s;
   }
@@ -3154,7 +3154,7 @@
     padding: 7px;
     border-radius: 0;
     cursor: pointer;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 600;
     transition: all 0.15s;
   }
@@ -3191,7 +3191,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 12px;
+    font-size: 14px;
     color: var(--text-primary, #ccc);
   }
 
@@ -3200,7 +3200,7 @@
   }
 
   .mask-point-count {
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-muted, #888);
     margin-left: auto;
   }
@@ -3211,7 +3211,7 @@
   }
 
   .mask-section .property-row .value {
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-muted, #888);
     min-width: 35px;
     text-align: right;
@@ -3227,7 +3227,7 @@
     border: none;
     padding: 4px 10px;
     border-radius: 4px;
-    font-size: 11px;
+    font-size: 13px;
     cursor: pointer;
   }
 
@@ -3241,7 +3241,7 @@
   }
 
   .mask-hint {
-    font-size: 10px;
+    font-size: 12px;
     color: #666;
     font-style: italic;
   }
@@ -3276,12 +3276,12 @@
   }
   .mask-shape-label {
     flex: 1;
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-primary, #ddd);
   }
   .mask-shape-meta {
     color: var(--text-muted, #888);
-    font-size: 10px;
+    font-size: 12px;
   }
   .mask-shape-meta em {
     color: #ffd400;
@@ -3294,7 +3294,7 @@
     color: var(--text-secondary, #aaa);
     width: 22px; height: 22px;
     border-radius: 3px;
-    font-size: 14px;
+    font-size: 16px;
     line-height: 1;
     cursor: pointer;
     display: flex; align-items: center; justify-content: center;
@@ -3335,7 +3335,7 @@
     border: none;
     border-radius: 4px;
     color: #000;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s ease;
@@ -3363,7 +3363,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 12px;
+    font-size: 14px;
     color: var(--text-primary, #ccc);
     min-width: 70px;
   }
@@ -3410,7 +3410,7 @@
     border: 1px solid #555;
     border-radius: 4px;
     padding: 4px 8px;
-    font-size: 12px;
+    font-size: 14px;
   }
 
   .shape-mask-section .property-row input[type="range"] {
@@ -3419,7 +3419,7 @@
   }
 
   .shape-mask-section .property-row .value {
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-muted, #888);
     min-width: 35px;
     text-align: right;
@@ -3431,7 +3431,7 @@
   }
 
   .shape-mask-section .shape-help span {
-    font-size: 11px;
+    font-size: 13px;
     color: #9aa0a6;
     line-height: 1.35;
   }
@@ -3442,7 +3442,7 @@
     border: none;
     padding: 4px 10px;
     border-radius: 4px;
-    font-size: 11px;
+    font-size: 13px;
     cursor: pointer;
   }
 
@@ -3458,7 +3458,7 @@
     border: none;
     padding: 4px 10px;
     border-radius: 4px;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
     transition: background 0.15s;
@@ -3536,7 +3536,7 @@
     background: none;
     border: none;
     color: var(--text-primary, #ddd);
-    font-size: 12px;
+    font-size: 14px;
     cursor: pointer;
     text-align: left;
     padding: 4px 0;
@@ -3550,7 +3550,7 @@
     background: none;
     border: none;
     color: #ff4444;
-    font-size: 14px;
+    font-size: 16px;
     cursor: pointer;
     padding: 2px 4px;
     opacity: 0.6;
@@ -3569,7 +3569,7 @@
     background: none;
     border: none;
     color: #7ec8e3;
-    font-size: 14px;
+    font-size: 16px;
     line-height: 1;
     cursor: pointer;
     padding: 2px 4px;
@@ -3603,7 +3603,7 @@
 
   .effect-opacity-ctrl label,
   .effect-blend-ctrl label {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     white-space: nowrap;
     min-width: 38px;
@@ -3624,7 +3624,7 @@
     background: var(--bg-tertiary, #1a1a1e);
     border: 1px solid #333;
     color: var(--text-primary, #ccc);
-    font-size: 10px;
+    font-size: 12px;
     padding: 2px 4px;
     border-radius: 3px;
     max-width: 90px;
@@ -3643,7 +3643,7 @@
 
   .param-row label {
     width: 70px;
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-muted, #888);
     flex-shrink: 0;
   }
@@ -3661,33 +3661,33 @@
     border: 1px solid #555;
     padding: 3px 6px;
     border-radius: 3px;
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .param-value {
     width: 40px;
     text-align: right;
-    font-size: 10px;
+    font-size: 12px;
     color: #666;
     flex-shrink: 0;
   }
 
   .param-info {
-    font-size: 11px;
+    font-size: 13px;
     color: #666;
     font-style: italic;
     padding: 4px 0;
   }
 
   .macro-hint {
-    font-size: 10px;
+    font-size: 12px;
     color: #555;
     padding: 2px 6px 6px;
     font-style: italic;
   }
 
   .no-effects {
-    font-size: 11px;
+    font-size: 13px;
     color: #666;
     text-align: center;
     padding: 10px;
@@ -3726,7 +3726,7 @@
     background: none;
     border: none;
     color: var(--text-primary, #eee);
-    font-size: 12px;
+    font-size: 14px;
     cursor: pointer;
     text-align: left;
     transition: background 0.15s;
@@ -3755,7 +3755,7 @@
   }
 
   .lines-hint {
-    font-size: 9px;
+    font-size: 11px;
     opacity: 0.5;
     font-style: italic;
   }
@@ -3807,7 +3807,7 @@
   .color-slider-group label {
     display: flex;
     justify-content: space-between;
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-muted, #888);
   }
 
@@ -3855,7 +3855,7 @@
     justify-content: space-between;
     align-items: center;
     margin-bottom: 8px;
-    font-size: 12px;
+    font-size: 14px;
     color: var(--text-muted, #888);
   }
 
@@ -3865,7 +3865,7 @@
     border: none;
     padding: 4px 8px;
     border-radius: 4px;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
   }
@@ -3912,7 +3912,7 @@
 
   .element-name {
     flex: 1;
-    font-size: 11px;
+    font-size: 13px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -3922,7 +3922,7 @@
     background: none;
     border: none;
     color: #ff4444;
-    font-size: 12px;
+    font-size: 14px;
     cursor: pointer;
     padding: 2px 4px;
     opacity: 0.6;
@@ -3934,7 +3934,7 @@
   }
 
   .no-elements {
-    font-size: 11px;
+    font-size: 13px;
     color: #666;
     text-align: center;
     padding: 12px 8px;
@@ -3943,7 +3943,7 @@
   }
 
   .svg-info {
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-muted, #888);
     text-align: center;
     padding: 12px 8px;
@@ -3962,7 +3962,7 @@
 
   .orient-label {
     flex: 0 0 84px;
-    font-size: 12.5px;
+    font-size: 14.5px;
     color: var(--ga-ink-1, #9aa0ac);
     margin-right: 0;
     text-transform: none;
@@ -4001,7 +4001,7 @@
     padding: 8px;
     background: rgba(255, 255, 255, 0.03);
     border-radius: 4px;
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-secondary, #aaa);
   }
   .splat-info .file-loaded-info, .model3d-info .file-loaded-info {
@@ -4022,7 +4022,7 @@
   }
 
   .screen-label {
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-muted, #888);
     white-space: nowrap;
   }
@@ -4034,7 +4034,7 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
     color: var(--text-primary, #ddd);
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .flip-controls {
@@ -4053,7 +4053,7 @@
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 4px;
     color: var(--text-secondary, #aaa);
-    font-size: 11px;
+    font-size: 13px;
     cursor: pointer;
     transition: all 0.15s ease;
   }

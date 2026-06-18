@@ -76,7 +76,7 @@
     border-bottom: 2px solid transparent;
     border-radius: 0;
     color: var(--ga-ink-2, #5e6571);
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.10em;

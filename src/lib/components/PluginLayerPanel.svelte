@@ -1,17 +1,21 @@
 <script lang="ts">
   import { project, selectedLayerId, selectedLayer } from '../stores/layers';
-  import { getPluginByEffectType, type PluginManifest, type PluginParamDef } from '../plugins/registry';
+  import { getPluginByEffectType } from '../plugins/registry';
   import type { MediaSource, IntegratedEffectSource } from '../types';
   import MilkdropPanel from './MilkdropPanel.svelte';
   import HydraPanel from './HydraPanel.svelte';
 
   export let source: MediaSource | null = null;
+  export let onUpdateEffectSource: ((next: IntegratedEffectSource) => void) | null = null;
+  export let controlLayerId: string | null = null;
+  export let midiPrefix = 'map:plugin';
 
   // Resolve the plugin manifest from the source
   $: effectSource = source?.effectSource ?? null;
   $: pluginManifest = effectSource
     ? getPluginByEffectType(effectSource.effectType)
     : null;
+  $: panelLayerId = controlLayerId ?? $selectedLayerId ?? '';
 
   // Get current value of a param from the effectSource
   function getVal(paramKey: string, defaultVal: any): any {
@@ -19,22 +23,63 @@
     return (effectSource as any)[paramKey] ?? defaultVal;
   }
 
-  // Update a single param on the layer's effectSource
-  function setParam(paramKey: string, value: any) {
-    if (!$selectedLayerId || !effectSource) return;
+  function commitEffectSource(updated: IntegratedEffectSource) {
+    if (onUpdateEffectSource) {
+      onUpdateEffectSource(updated);
+      return;
+    }
+
+    if (!$selectedLayerId) return;
     const layerId = $selectedLayerId;
     const layer = $selectedLayer;
     if (!layer?.source?.effectSource) return;
-
-    const updated: IntegratedEffectSource = {
-      ...layer.source.effectSource,
-      [paramKey]: value,
-    };
-
     project.setLayerSource(layerId, {
       ...layer.source,
       effectSource: updated,
     });
+  }
+
+  // Update a single param on the current effectSource. Mapping mode writes
+  // through project.setLayerSource; VJ mode supplies onUpdateEffectSource.
+  function setParam(paramKey: string, value: any) {
+    if (!effectSource) return;
+
+    const base = onUpdateEffectSource
+      ? effectSource
+      : ($selectedLayer?.source?.effectSource ?? effectSource);
+    const updated: IntegratedEffectSource = {
+      ...base,
+      [paramKey]: value,
+    };
+
+    commitEffectSource(updated);
+  }
+
+  function colorToHex(value: any, fallback: any): string {
+    const color = Array.isArray(value) ? value : fallback;
+    if (typeof color === 'string') return color.startsWith('#') ? color : `#${color}`;
+    const parts = [0, 1, 2].map((i) => {
+      const n = Math.max(0, Math.min(1, Number(color?.[i] ?? 0)));
+      return Math.round(n * 255).toString(16).padStart(2, '0');
+    });
+    return `#${parts.join('')}`;
+  }
+
+  function hexToRgbArray(hex: string): [number, number, number] {
+    return [
+      parseInt(hex.slice(1, 3), 16) / 255,
+      parseInt(hex.slice(3, 5), 16) / 255,
+      parseInt(hex.slice(5, 7), 16) / 255,
+    ];
+  }
+
+  function handleHydraPresetSelect(preset: { name: string; code: string }) {
+    if (!effectSource || !onUpdateEffectSource) return;
+    commitEffectSource({
+      ...effectSource,
+      hydraSketchName: preset.name,
+      hydraSketchCode: preset.code,
+    } as IntegratedEffectSource);
   }
 
   // Format a number for display based on step size
@@ -88,15 +133,17 @@
     {/if}
 
     <!-- Plugin-specific custom panel (rendered above the generic controls) -->
-    {#if effectSource.effectType === 'milkdrop' && $selectedLayerId}
+    {#if effectSource.effectType === 'milkdrop' && panelLayerId}
       <MilkdropPanel
-        layerId={$selectedLayerId}
+        layerId={panelLayerId}
         presetPack={(effectSource as any).milkdropPresetPack ?? 'minimal'}
-        routingMatrix={(effectSource as any).milkdropRoutingMatrix ?? {}}
       />
     {/if}
-    {#if effectSource.effectType === 'hydra' && $selectedLayerId}
-      <HydraPanel layerId={$selectedLayerId} />
+    {#if effectSource.effectType === 'hydra' && panelLayerId}
+      <HydraPanel
+        layerId={panelLayerId}
+        onPresetSelect={onUpdateEffectSource ? handleHydraPresetSelect : null}
+      />
     {/if}
 
     <!-- All controls, flat -->
@@ -107,7 +154,7 @@
           {@const optValues = (def.options ?? []).map(o => String(o.value))}
           <div
             class="control-row"
-            data-midi-path={`map:plugin:${def.param}`}
+            data-midi-path={`${midiPrefix}:${def.param}`}
             data-midi-label={def.name}
             data-midi-min={0}
             data-midi-max={Math.max(0, optValues.length - 1)}
@@ -133,7 +180,7 @@
               class="toggle-btn"
               class:active={!!getVal(def.param, def.default)}
               onclick={() => setParam(def.param, !getVal(def.param, def.default))}
-              data-midi-path={`map:plugin:${def.param}`}
+              data-midi-path={`${midiPrefix}:${def.param}`}
               data-midi-label={def.name}
               data-midi-min={0}
               data-midi-max={1}
@@ -154,13 +201,24 @@
               step={def.step}
               value={getVal(def.param, def.default)}
               oninput={(e) => setParam(def.param, parseFloat((e.target as HTMLInputElement).value))}
-              data-midi-path={`map:plugin:${def.param}`}
+              data-midi-path={`${midiPrefix}:${def.param}`}
               data-midi-label={def.name}
               data-midi-min={def.min ?? 0}
               data-midi-max={def.max ?? 1}
               data-midi-step={def.step ?? 0.01}
             />
             <span class="val">{fmt(getVal(def.param, def.default), def.step)}</span>
+          </div>
+        {:else if def.type === 'color'}
+          <div class="control-row color-row">
+            <span class="label">{def.name}</span>
+            <input
+              type="color"
+              value={colorToHex(getVal(def.param, def.default), def.default)}
+              oninput={(e) => setParam(def.param, hexToRgbArray((e.target as HTMLInputElement).value))}
+              data-midi-path={`${midiPrefix}:${def.param}`}
+              data-midi-label={def.name}
+            />
           </div>
         {/if}
         {/if}
@@ -174,7 +232,7 @@
     padding: 20px;
     text-align: center;
     color: #555;
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .plugin-panel {
@@ -194,7 +252,7 @@
   }
 
   .header-icon {
-    font-size: 20px;
+    font-size: 22px;
   }
 
   .header-text {
@@ -204,13 +262,13 @@
 
   .header-title {
     font-weight: 700;
-    font-size: 13px;
+    font-size: 15px;
     color: var(--text-primary, #eee);
     letter-spacing: 0.3px;
   }
 
   .header-version {
-    font-size: 9px;
+    font-size: 11px;
     color: #555;
   }
 
@@ -222,7 +280,7 @@
     padding: 5px 12px;
     background: rgba(255, 107, 107, 0.04);
     border-bottom: 1px solid rgba(255, 107, 107, 0.10);
-    font-size: 9px;
+    font-size: 11px;
     color: #666;
     line-height: 1.3;
     flex-wrap: wrap;
@@ -231,7 +289,7 @@
     color: #555;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    font-size: 8px;
+    font-size: 10px;
   }
   .pb-engine {
     color: var(--accent-secondary, #FF8585);
@@ -252,7 +310,7 @@
     border: 1px solid rgba(255, 107, 107, 0.20);
     color: var(--accent-secondary, #FF8585);
     border-radius: 2px;
-    font-size: 8px;
+    font-size: 10px;
     letter-spacing: 0.3px;
   }
 
@@ -275,7 +333,7 @@
 
   .label {
     display: block;
-    font-size: 9px;
+    font-size: 11px;
     color: #777;
     text-transform: uppercase;
     letter-spacing: 0.4px;
@@ -297,7 +355,7 @@
     border: 1px solid #333;
     border-radius: 3px;
     color: var(--text-muted, #888);
-    font-size: 9px;
+    font-size: 11px;
     cursor: pointer;
     transition: all 0.12s;
   }
@@ -330,7 +388,7 @@
     border: 1px solid #333;
     border-radius: 3px;
     color: #666;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.12s;
@@ -376,7 +434,7 @@
   }
 
   .val {
-    font-size: 9px;
+    font-size: 11px;
     color: #666;
     min-width: 36px;
     text-align: right;

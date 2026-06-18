@@ -124,7 +124,7 @@
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 4px;
     color: var(--text-primary, #e8e8e8);
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .sv-scope-toggle {
@@ -132,7 +132,7 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
     padding: 2px 6px;
-    font-size: 12px;
+    font-size: 14px;
     cursor: pointer;
     color: var(--text-secondary, #aaa);
   }
@@ -148,7 +148,7 @@
     border-radius: 4px;
     color: var(--text-primary, #ccc);
     padding: 3px 8px;
-    font-size: 10px;
+    font-size: 12px;
     cursor: pointer;
   }
   .sv-preset-save-btn:hover,
@@ -169,7 +169,7 @@
     border-radius: 4px;
     color: var(--text-secondary, #aaa);
     padding: 3px 10px;
-    font-size: 10px;
+    font-size: 12px;
     cursor: pointer;
     white-space: nowrap;
     transition: all 0.1s ease;
@@ -188,14 +188,14 @@
   }
 
   .sv-preset-scope {
-    font-size: 8px;
+    font-size: 10px;
     margin-right: 3px;
     opacity: 0.6;
   }
 
   .sv-preset-hint {
     color: #555;
-    font-size: 10px;
+    font-size: 12px;
     font-style: italic;
   }
 
@@ -223,7 +223,7 @@
     background: none;
     border: none;
     color: var(--text-primary, #ccc);
-    font-size: 11px;
+    font-size: 13px;
     text-align: left;
     cursor: pointer;
     font-family: inherit;

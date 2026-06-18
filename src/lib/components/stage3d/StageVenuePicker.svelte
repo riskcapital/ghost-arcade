@@ -62,7 +62,7 @@
     justify-content: space-between;
     margin-bottom: 8px;
   }
-  h2 { margin: 0; font-size: 17px; font-weight: 600; }
+  h2 { margin: 0; font-size: 19px; font-weight: 600; }
   .close-x {
     background: #1c1e28;
     border: none;
@@ -73,7 +73,7 @@
     cursor: pointer;
   }
   .lead {
-    font-size: 12px;
+    font-size: 14px;
     color: #888;
     line-height: 1.5;
     margin: 0 0 14px 0;
@@ -109,11 +109,11 @@
     margin-bottom: 4px;
   }
   .thumb-letter {
-    font-size: 36px;
+    font-size: 38px;
     font-weight: 700;
     color: rgba(255, 255, 255, 0.9);
     text-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
   }
-  .venue-name { font-size: 13px; font-weight: 600; }
-  .venue-desc { font-size: 11px; color: #999; line-height: 1.4; }
+  .venue-name { font-size: 15px; font-weight: 600; }
+  .venue-desc { font-size: 13px; color: #999; line-height: 1.4; }
 </style>

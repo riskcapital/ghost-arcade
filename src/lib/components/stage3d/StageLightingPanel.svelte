@@ -136,7 +136,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 6px;
-    font-size: 10px;
+    font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.22em;
     color: #8a93a3;
@@ -145,7 +145,7 @@
   .sub-head { color: #6c7280; }
   .reset {
     font: inherit;
-    font-size: 10px;
+    font-size: 12px;
     background: transparent;
     border: 1px solid rgba(255, 255, 255, 0.08);
     color: #c4ccd8;
@@ -166,7 +166,7 @@
     grid-template-columns: 92px 1fr 52px;
     align-items: center;
     gap: 8px;
-    font-size: 11px;
+    font-size: 13px;
     color: #c4ccd8;
   }
   .row input[type=range] {
@@ -194,7 +194,7 @@
   .val {
     text-align: right;
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 10px;
+    font-size: 12px;
     color: #4af2ff;
   }
   .truss-row {
@@ -220,7 +220,7 @@
   }
   .mini {
     font: inherit;
-    font-size: 10px;
+    font-size: 12px;
     background: transparent;
     border: 1px solid rgba(255, 255, 255, 0.08);
     color: #c4ccd8;

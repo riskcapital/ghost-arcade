@@ -18,7 +18,7 @@
 body {
   font-family: var(--ga-font-ui, 'Hanken Grotesk', system-ui, sans-serif);
   -webkit-font-smoothing: antialiased;
-  font-size: 14px;
+  font-size: 16px;
   /* Studio: neon green glow trail under the knob. Solid (not
      color-mixed with transparent) so the fill reads bright against the
      dark slot. The glow comes from the box-shadow on the fill via the
@@ -66,7 +66,7 @@ html[data-theme="arcade"] body {
 .toolbar .app-name,
 .toolbar-left > span:first-of-type {
   font-weight: 700 !important;
-  font-size: 13px !important;
+  font-size: 15px !important;
   letter-spacing: 0.01em !important;
   color: var(--ga-ink-0, #eef0f4) !important;
 }
@@ -82,7 +82,7 @@ html[data-theme="arcade"] body {
   border-radius: var(--ga-r-hard, 2px) !important;
   background: var(--ga-card, #13161c) !important;
   font-family: var(--ga-font-mono, 'IBM Plex Mono', monospace) !important;
-  font-size: 11px !important;
+  font-size: 13px !important;
   font-weight: 600 !important;
   color: var(--ga-ink-1, #9aa0ac) !important;
   white-space: nowrap !important;
@@ -107,7 +107,7 @@ html[data-theme="arcade"] body {
   background: var(--ga-card, #13161c) !important;
   color: var(--ga-ink-1, #9aa0ac) !important;
   font-weight: 600 !important;
-  font-size: 12.5px !important;
+  font-size: 14.5px !important;
   cursor: pointer !important;
   white-space: nowrap !important;
 }
@@ -127,7 +127,7 @@ html[data-theme="arcade"] body {
   background: var(--ga-card, #13161c) !important;
   color: var(--ga-ink-1, #9aa0ac) !important;
   font-weight: 600 !important;
-  font-size: 12.5px !important;
+  font-size: 14.5px !important;
   cursor: pointer !important;
   white-space: nowrap !important;
   display: inline-flex !important;
@@ -199,7 +199,7 @@ html[data-theme="arcade"] body {
   background: var(--ga-rec, #ff4438) !important;
   color: #fff !important;
   font-weight: 700 !important;
-  font-size: 12px !important;
+  font-size: 14px !important;
   border: none !important;
   cursor: pointer !important;
 }
@@ -213,7 +213,7 @@ html[data-theme="arcade"] body {
   background: var(--ga-coral, #ff6f5e) !important;
   color: #23110c !important;
   font-weight: 700 !important;
-  font-size: 12.5px !important;
+  font-size: 14.5px !important;
   cursor: pointer !important;
   letter-spacing: 0.02em !important;
 }
@@ -228,7 +228,7 @@ html[data-theme="arcade"] body {
   background: var(--ga-card, #13161c) !important;
   color: var(--ga-ink-1, #9aa0ac) !important;
   font-weight: 700 !important;
-  font-size: 12.5px !important;
+  font-size: 14.5px !important;
   cursor: pointer !important;
   letter-spacing: 0.02em !important;
 }
@@ -251,7 +251,7 @@ html[data-theme="arcade"] body {
   background: transparent !important;
   color: var(--ga-ink-1, #9aa0ac) !important;
   font-weight: 600 !important;
-  font-size: 12.5px !important;
+  font-size: 14.5px !important;
   display: inline-flex !important;
   align-items: center !important;
   gap: 7px !important;
@@ -281,7 +281,7 @@ html[data-theme="arcade"] body {
 .layer-panel .panel-header h3,
 .layer-panel h3 {
   font-weight: 700 !important;
-  font-size: 15px !important;
+  font-size: 17px !important;
   color: var(--ga-ink-0, #eef0f4) !important;
   margin: 0 !important;
 }
@@ -295,7 +295,7 @@ html[data-theme="arcade"] body {
   background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10)) !important;
   color: var(--ga-violet, #9b87f5) !important;
   font-weight: 600 !important;
-  font-size: 12px !important;
+  font-size: 14px !important;
   cursor: pointer !important;
   display: inline-flex !important;
   align-items: center !important;
@@ -353,7 +353,7 @@ html[data-theme="arcade"] body {
 .layer-panel .layer-item .layer-name,
 .layer-panel .layer-item .name {
   font-weight: 600 !important;
-  font-size: 13.5px !important;
+  font-size: 15.5px !important;
   color: var(--ga-ink-1, #9aa0ac) !important;
 }
 .layer-panel .layer-item.selected .layer-name,
@@ -372,7 +372,7 @@ html[data-theme="arcade"] body {
 }
 .layer-panel .property-row label,
 .layer-panel .property-label {
-  font-size: 12.5px !important;
+  font-size: 14.5px !important;
   color: var(--ga-ink-1, #9aa0ac) !important;
   font-weight: 500 !important;
 }
@@ -444,7 +444,7 @@ html[data-theme="arcade"] body {
   background: transparent !important;
   color: var(--ga-ink-0, #eef0f4) !important;
   font-weight: 500 !important;
-  font-size: 13px !important;
+  font-size: 15px !important;
 }
 
 /* ============================================================
@@ -459,8 +459,8 @@ html[data-theme="arcade"] body {
   background: var(--ga-bar, #0e1014) !important;
   border-top: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
   font-family: var(--ga-font-mono, 'IBM Plex Mono', monospace) !important;
-  font-size: 10.5px !important;
-  color: var(--ga-ink-2, #5e6571) !important;
+  font-size: 12.5px !important;
+  color: rgba(238, 240, 244, 0.74) !important;
 }
 .status-bar > *,
 .statusbar > * {
@@ -490,7 +490,7 @@ html[data-theme="arcade"] body {
 .media-library .library-title,
 .media-library .library-header {
   font-weight: 800 !important;
-  font-size: 18px !important;
+  font-size: 20px !important;
   color: var(--ga-ink-0, #eef0f4) !important;
   padding: 14px 14px 10px !important;
 }
@@ -515,7 +515,7 @@ html[data-theme="arcade"] body {
   border-bottom: 2px solid transparent !important;
   color: var(--ga-ink-2, #5e6571) !important;
   font-family: var(--ga-font-mono, 'IBM Plex Mono', monospace) !important;
-  font-size: 9px !important;
+  font-size: 11px !important;
   letter-spacing: 0.04em !important;
   text-transform: uppercase !important;
   cursor: pointer !important;
@@ -545,7 +545,7 @@ html[data-theme="arcade"] body {
   background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10)) !important;
   color: var(--ga-violet, #9b87f5) !important;
   font-weight: 700 !important;
-  font-size: 13px !important;
+  font-size: 15px !important;
   cursor: pointer !important;
   padding: 0 !important;
 }
@@ -563,7 +563,7 @@ html[data-theme="arcade"] body {
   background: var(--ga-blue-soft, rgba(91, 141, 239, 0.10)) !important;
   color: var(--ga-blue, #5b8def) !important;
   font-weight: 700 !important;
-  font-size: 13px !important;
+  font-size: 15px !important;
   cursor: pointer !important;
   padding: 0 !important;
 }
@@ -592,7 +592,7 @@ html[data-theme="arcade"] body {
   background: var(--ga-violet, #9b87f5) !important;
   color: #160f2e !important;
   font-weight: 700 !important;
-  font-size: 13px !important;
+  font-size: 15px !important;
   cursor: pointer !important;
 }
 .media-library .lib-add-btn:hover { filter: brightness(1.06) !important; }
@@ -608,7 +608,7 @@ html[data-theme="arcade"] body {
   background: transparent !important;
   color: var(--ga-ink-1, #9aa0ac) !important;
   font-weight: 600 !important;
-  font-size: 12.5px !important;
+  font-size: 14.5px !important;
   cursor: pointer !important;
 }
 .media-library .lib-library-btn:hover {
@@ -832,7 +832,7 @@ html[data-theme="arcade"] body {
 .macro-popover-section-title {
   color: var(--ga-violet, #9b87f5) !important;
   font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace) !important;
-  font-size: 10.5px !important;
+  font-size: 12.5px !important;
   font-weight: 700 !important;
   letter-spacing: 0.08em !important;
   text-transform: uppercase !important;

@@ -30,6 +30,7 @@
   import { buildVenue, paPresetElements, type PAPreset } from '../../stage3d/venues';
   import type { Stage3DVenue, UserStageElement } from '../../stage3d/types';
   import { startRecording as startCanvasRecording, formatRecordingDuration, type RecorderHandle } from '../../recording/recorder';
+  import { invoke, isDesktopApp } from '../../bridge';
   import StageNodeProperties from './StageNodeProperties.svelte';
   import StageElementProperties from './StageElementProperties.svelte';
   import StageLightingPanel from './StageLightingPanel.svelte';
@@ -48,6 +49,11 @@
   let recordingDuration = 0;
   let isRecording = false;
   let reelOpen = false;
+  let stageFullscreen = false;
+  let fullscreenBusy = false;
+  let panelsWereHiddenBeforeFullscreen = false;
+  let removeStageFullscreenListener: (() => void) | null = null;
+  let removeDomFullscreenListener: (() => void) | null = null;
   // Stage recordings are always a clean 16:9, independent of the project's
   // output resolution (a wide 4000×1080 comp still records 1920×1080 / 4K).
   const REC_RES = {
@@ -288,6 +294,65 @@
   function redo() { stage3dScene.redo(); }
   function togglePanels() { panelsHidden = !panelsHidden; }
 
+  function syncStageFullscreen(fullScreen: boolean) {
+    const next = !!fullScreen;
+    if (next && !stageFullscreen) {
+      panelsWereHiddenBeforeFullscreen = panelsHidden;
+      panelsHidden = true;
+    }
+    stageFullscreen = next;
+    if (!next && !panelsWereHiddenBeforeFullscreen) panelsHidden = false;
+  }
+
+  async function setStageFullscreen(next: boolean) {
+    if (fullscreenBusy) return;
+    fullscreenBusy = true;
+    if (next) {
+      panelsWereHiddenBeforeFullscreen = panelsHidden;
+      panelsHidden = true;
+    }
+
+    try {
+      let applied = false;
+      if (isDesktopApp) {
+        try {
+          const result = await invoke<{ ok?: boolean; fullScreen?: boolean }>('stage3d_set_fullscreen', { fullScreen: next });
+          if (result?.ok) {
+            syncStageFullscreen(!!result.fullScreen);
+            applied = true;
+          }
+        } catch {
+          applied = false;
+        }
+      }
+
+      if (!applied) {
+        const target = document.querySelector('.stage3d-root') as HTMLElement | null;
+        if (next) {
+          if (!target?.requestFullscreen) throw new Error('Fullscreen unavailable');
+          await target.requestFullscreen();
+          syncStageFullscreen(!!document.fullscreenElement);
+        } else if (document.fullscreenElement) {
+          await document.exitFullscreen();
+          syncStageFullscreen(false);
+        } else {
+          syncStageFullscreen(false);
+        }
+      }
+
+      toast(next ? 'Stage fullscreen' : 'Exited fullscreen');
+    } catch {
+      if (next && !panelsWereHiddenBeforeFullscreen) panelsHidden = false;
+      toast(next ? 'Fullscreen unavailable' : 'Could not exit fullscreen');
+    } finally {
+      fullscreenBusy = false;
+    }
+  }
+
+  function toggleStageFullscreen() {
+    void setStageFullscreen(!stageFullscreen);
+  }
+
   // ── Copy / paste ────────────────────────────────────────────────
   // Module-local clipboard for selected user-placed elements. Scenery
   // and screens are owned by the venue / 2D designer respectively, so
@@ -356,9 +421,32 @@
 
   onMount(() => {
     window.addEventListener('keydown', onKeydown);
+    const onDomFullscreenChange = () => {
+      if (!isDesktopApp || stageFullscreen || document.fullscreenElement) {
+        syncStageFullscreen(!!document.fullscreenElement);
+      }
+    };
+    document.addEventListener('fullscreenchange', onDomFullscreenChange);
+    removeDomFullscreenListener = () => document.removeEventListener('fullscreenchange', onDomFullscreenChange);
+
+    if (isDesktopApp) {
+      invoke<{ ok?: boolean; fullScreen?: boolean }>('stage3d_get_fullscreen')
+        .then((result) => {
+          if (result?.ok) syncStageFullscreen(!!result.fullScreen);
+        })
+        .catch(() => {});
+      const off = (window as any).electronAPI?.on?.('stage3d-fullscreen-changed', (payload: { fullScreen?: boolean }) => {
+        syncStageFullscreen(!!payload?.fullScreen);
+      });
+      if (typeof off === 'function') removeStageFullscreenListener = off;
+    }
   });
   onDestroy(() => {
     window.removeEventListener('keydown', onKeydown);
+    removeDomFullscreenListener?.();
+    removeDomFullscreenListener = null;
+    removeStageFullscreenListener?.();
+    removeStageFullscreenListener = null;
     recorderHandle?.stop();
     recorderHandle = null;
   });
@@ -467,6 +555,17 @@
   <!-- Camera + Atmosphere HUD — its own strip under the toolbar so it
        never fights the (already packed) topbar for horizontal space. -->
   <div class="viewport-hud">
+    <div class="hud-group fullscreen-ctl">
+      <button
+        class="hud-btn fullscreen-toggle"
+        class:on={stageFullscreen}
+        onclick={toggleStageFullscreen}
+        disabled={fullscreenBusy}
+        title={stageFullscreen ? 'Exit fullscreen stage view' : 'Fullscreen stage view on this display'}
+      >
+        {stageFullscreen ? 'Exit Full' : 'Full Screen'}
+      </button>
+    </div>
     <div class="hud-group" title="Camera elevation — ↑/↓ arrows in the viewport work too">
       <button class="hud-btn" onclick={() => $stage3DRendererControls?.nudgeElevation(1)} title="Camera up (↑)">▲</button>
       <button class="hud-btn" onclick={() => $stage3DRendererControls?.nudgeElevation(-1)} title="Camera down (↓)">▼</button>
@@ -655,7 +754,11 @@
   {/if}
 
   {#if panelsHidden}
-    <button class="show-panels-btn" onclick={togglePanels} title="Show panels (H)">▦ Show panels</button>
+    {#if stageFullscreen}
+      <button class="show-panels-btn fullscreen-exit-btn" onclick={toggleStageFullscreen} title="Exit fullscreen stage view">Exit Full Screen</button>
+    {:else}
+      <button class="show-panels-btn" onclick={togglePanels} title="Show panels (H)">▦ Show panels</button>
+    {/if}
   {/if}
 
   {#if reelOpen}
@@ -699,7 +802,7 @@
     align-items: center;
     justify-content: center;
     color: #666;
-    font-size: 14px;
+    font-size: 16px;
   }
 
   /* ── Top bar ────────────────────────────────────────────────── */
@@ -722,13 +825,13 @@
     width: 36px; height: 36px; border-radius: 18px;
     border: 1px solid rgba(255, 255, 255, 0.08);
     background: rgba(20, 22, 30, 0.85);
-    color: #fff; font-size: 20px; cursor: pointer;
+    color: #fff; font-size: 22px; cursor: pointer;
   }
   .icon-btn:hover { background: rgba(40, 44, 56, 0.95); }
   .logo {
     font-weight: 700;
     letter-spacing: 0.14em;
-    font-size: 14px;
+    font-size: 16px;
   }
   .logo b {
     background: linear-gradient(92deg, #4af2ff, #ff5cb8);
@@ -744,7 +847,7 @@
     padding: 3px;
   }
   .seg-btn {
-    font: inherit; font-size: 12px; color: #8a93a3;
+    font: inherit; font-size: 14px; color: #8a93a3;
     background: none; border: none;
     padding: 6px 11px; border-radius: 6px;
     cursor: pointer;
@@ -752,7 +855,7 @@
   .seg-btn:hover { color: #e9edf4; }
   .seg-btn.on { background: #4af2ff; color: #04161a; font-weight: 600; }
   .tbtn {
-    font: inherit; font-size: 12px; color: #e9edf4;
+    font: inherit; font-size: 14px; color: #e9edf4;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
@@ -781,7 +884,7 @@
   }
   .hud-btn {
     font: inherit;
-    font-size: 10px;
+    font-size: 12px;
     color: #e9edf4;
     background: transparent;
     border: none;
@@ -791,9 +894,22 @@
   }
   .hud-btn:last-child { border-right: none; }
   .hud-btn:hover { color: #4af2ff; }
+  .hud-btn:disabled {
+    opacity: 0.45;
+    cursor: wait;
+  }
+  .fullscreen-ctl { overflow: hidden; }
+  .fullscreen-toggle {
+    min-width: 88px;
+    border-right: none;
+  }
+  .fullscreen-toggle.on {
+    background: rgba(74, 242, 255, 0.14);
+    color: #4af2ff;
+  }
   .atmo-ctl { overflow: hidden; }
   .atmo-label {
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.12em;
     color: rgba(255, 255, 255, 0.45);
@@ -801,7 +917,7 @@
   }
   .atmo-btn {
     font: inherit;
-    font-size: 11px;
+    font-size: 13px;
     color: rgba(255, 255, 255, 0.55);
     background: transparent;
     border: none;
@@ -822,7 +938,7 @@
     padding: 0 10px;
   }
   .fov-ctl .fov-label {
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.12em;
     color: rgba(255, 255, 255, 0.55);
@@ -832,7 +948,7 @@
     accent-color: #4af2ff;
   }
   .fov-ctl .fov-val {
-    font-size: 10px;
+    font-size: 12px;
     color: #4af2ff;
     font-variant-numeric: tabular-nums;
     min-width: 30px;
@@ -843,7 +959,7 @@
   .tbtn.danger:hover { border-color: #ff5cb8; color: #ff5cb8; }
   .rec-res {
     padding: 6px 6px;
-    font-size: 11px;
+    font-size: 13px;
   }
   .rec-btn {
     min-width: 66px;
@@ -865,7 +981,7 @@
     top: 14px; left: 50%;
     transform: translateX(-50%);
     z-index: 15;
-    font: inherit; font-size: 12px;
+    font: inherit; font-size: 14px;
     color: #e9edf4;
     background: rgba(16, 19, 26, 0.92);
     border: 1px solid #4af2ff;
@@ -877,15 +993,26 @@
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
   }
   .show-panels-btn:hover { background: rgba(74, 242, 255, 0.15); }
+  .show-panels-btn.fullscreen-exit-btn {
+    left: auto;
+    right: 14px;
+    transform: none;
+    border-color: #ff5cb8;
+    opacity: 0.42;
+  }
+  .show-panels-btn.fullscreen-exit-btn:hover {
+    background: rgba(255, 92, 184, 0.13);
+    opacity: 1;
+  }
   .spacer { flex: 1; }
   .dim-label {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 10px;
+    font-size: 12px;
     color: #8a93a3;
     letter-spacing: 0.1em;
   }
   .vsel {
-    font: inherit; font-size: 12px; color: #e9edf4;
+    font: inherit; font-size: 14px; color: #e9edf4;
     background: #10131a;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
@@ -906,13 +1033,13 @@
     overflow-y: auto;
   }
   .lib h3 {
-    font-size: 10px; letter-spacing: 0.22em;
+    font-size: 12px; letter-spacing: 0.22em;
     color: #8a93a3; text-transform: uppercase;
     margin: 0 0 9px;
   }
   .grp { margin-bottom: 16px; }
   .ghd {
-    font-size: 11px; letter-spacing: 0.14em;
+    font-size: 13px; letter-spacing: 0.14em;
     color: #4af2ff; text-transform: uppercase;
     margin-bottom: 7px;
     display: flex; align-items: center; gap: 6px;
@@ -924,7 +1051,7 @@
   }
   .additem {
     width: 100%; text-align: left;
-    font: inherit; font-size: 12.5px; color: #e9edf4;
+    font: inherit; font-size: 14.5px; color: #e9edf4;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
@@ -964,7 +1091,7 @@
   .scenery-act {
     flex: 0 0 auto;
     width: 26px; height: 34px;
-    font: inherit; font-size: 12px;
+    font: inherit; font-size: 14px;
     color: #8a93a3;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -976,15 +1103,15 @@
 
   /* ── Venue element inspector ──────────────────────────────────── */
   .scenery-inspect { display: flex; flex-direction: column; gap: 8px; }
-  .scenery-title { font-size: 15px; font-weight: 600; color: #e9edf4; }
+  .scenery-title { font-size: 17px; font-weight: 600; color: #e9edf4; }
   .scenery-sub {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+    font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;
     color: #4af2ff;
   }
-  .scenery-note { color: #8a93a3; font-size: 12px; line-height: 1.6; margin: 4px 0 8px; }
+  .scenery-note { color: #8a93a3; font-size: 14px; line-height: 1.6; margin: 4px 0 8px; }
   .scenery-del, .scenery-restore {
-    font: inherit; font-size: 12.5px; text-align: left;
+    font: inherit; font-size: 14.5px; text-align: left;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 8px; padding: 9px 12px; cursor: pointer; color: #e9edf4;
@@ -995,7 +1122,7 @@
   .ghd-action {
     margin-left: auto;
     font: inherit;
-    font-size: 10px;
+    font-size: 12px;
     color: #8a93a3;
     background: transparent;
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1021,13 +1148,13 @@
     overflow-y: auto;
   }
   .props h3 {
-    font-size: 10px; letter-spacing: 0.22em;
+    font-size: 12px; letter-spacing: 0.22em;
     color: #8a93a3; text-transform: uppercase;
     margin: 0 0 9px;
   }
   .empty {
     color: #8a93a3;
-    font-size: 12.5px;
+    font-size: 14.5px;
     line-height: 1.7;
     margin-top: 8px;
   }
@@ -1037,7 +1164,7 @@
     border-radius: 8px;
     padding: 9px 12px;
     margin-bottom: 12px;
-    font-size: 11.5px;
+    font-size: 13.5px;
     line-height: 1.5;
     color: #d8c8ff;
   }
@@ -1050,7 +1177,7 @@
     transform: translateX(-50%);
     z-index: 14;
     display: flex; gap: 14px; align-items: center;
-    font-size: 11px; color: #8a93a3;
+    font-size: 13px; color: #8a93a3;
     background: rgba(16, 19, 26, 0.86);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 30px;
@@ -1065,7 +1192,7 @@
     border-radius: 5px;
     padding: 1px 6px;
     color: #c4ccd8;
-    font-size: 10px;
+    font-size: 12px;
     margin: 0 2px;
   }
   .multi-pill {
@@ -1086,7 +1213,7 @@
     background: #10131a;
     border: 1px solid #4af2ff;
     color: #e9edf4;
-    font-size: 12.5px;
+    font-size: 14.5px;
     padding: 10px 18px;
     border-radius: 9px;
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);

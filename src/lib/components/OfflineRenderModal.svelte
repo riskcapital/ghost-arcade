@@ -293,7 +293,7 @@
   }
   .modal-head h2 {
     margin: 0;
-    font-size: 14px;
+    font-size: 16px;
     letter-spacing: 2px;
     color: #4cd1ff;
     font-weight: 600;
@@ -305,7 +305,7 @@
     background: transparent;
     color: var(--text-secondary, #aaa);
     border-radius: 4px;
-    font-size: 18px;
+    font-size: 20px;
     line-height: 1;
     cursor: pointer;
     display: inline-flex;
@@ -321,7 +321,7 @@
   }
   .lede {
     color: var(--text-secondary, #aaa);
-    font-size: 12px;
+    font-size: 14px;
     margin: 0 0 16px;
     line-height: 1.5;
   }
@@ -333,7 +333,7 @@
   }
   .field.small { flex: 1; }
   .field label {
-    font-size: 10px;
+    font-size: 12px;
     letter-spacing: 1px;
     text-transform: uppercase;
     color: var(--text-muted, #888);
@@ -345,7 +345,7 @@
     color: var(--text-primary, #ddd);
     border-radius: 4px;
     padding: 7px 10px;
-    font-size: 12px;
+    font-size: 14px;
     font-family: inherit;
   }
   .field input:focus,
@@ -383,8 +383,8 @@
     border-color: #4cd1ff;
     color: #4cd1ff;
   }
-  .preset-label { font-size: 11px; font-weight: 500; }
-  .preset-dims { font-size: 10px; font-family: monospace; color: #666; }
+  .preset-label { font-size: 13px; font-weight: 500; }
+  .preset-dims { font-size: 12px; font-family: monospace; color: #666; }
   .preset-btn.active .preset-dims { color: #4cd1ff; }
 
   .summary {
@@ -392,7 +392,7 @@
     border-left: 2px solid rgba(76, 209, 255, 0.4);
     padding: 8px 12px;
     border-radius: 0 4px 4px 0;
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-secondary, #aaa);
     line-height: 1.5;
     margin-bottom: 14px;
@@ -409,7 +409,7 @@
   .btn-secondary {
     padding: 8px 18px;
     border-radius: 5px;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
   }
@@ -434,7 +434,7 @@
 
   /* Progress + states */
   .progress .phase {
-    font-size: 13px;
+    font-size: 15px;
     color: #4cd1ff;
     margin-bottom: 8px;
     font-weight: 500;
@@ -456,12 +456,12 @@
     display: flex;
     justify-content: space-between;
     margin-top: 6px;
-    font-size: 11px;
+    font-size: 13px;
     font-family: monospace;
     color: var(--text-muted, #888);
   }
   .progress-hint {
-    font-size: 10.5px;
+    font-size: 12.5px;
     color: #666;
     line-height: 1.5;
     margin: 12px 0 0;
@@ -474,12 +474,12 @@
     color: #4ade80;
     border: 1px solid #4ade80;
     border-radius: 50%;
-    font-size: 28px;
+    font-size: 30px;
     line-height: 56px;
     margin: 6px auto 12px;
   }
-  .success h3 { margin: 0 0 4px; color: var(--text-primary, #ddd); font-size: 16px; }
-  .success-meta { color: var(--text-muted, #888); font-size: 11px; font-family: monospace; margin: 0 0 12px; }
+  .success h3 { margin: 0 0 4px; color: var(--text-primary, #ddd); font-size: 18px; }
+  .success-meta { color: var(--text-muted, #888); font-size: 13px; font-family: monospace; margin: 0 0 12px; }
   .preview {
     width: 100%;
     max-height: 280px;
@@ -487,7 +487,7 @@
     background: #000;
     margin-bottom: 8px;
   }
-  .success-hint { color: #4ade80; font-size: 11px; margin: 8px 0 0; }
+  .success-hint { color: #4ade80; font-size: 13px; margin: 8px 0 0; }
 
   .error { text-align: center; }
   .error-icon {
@@ -496,11 +496,11 @@
     color: #ff5252;
     border: 1px solid #ff5252;
     border-radius: 50%;
-    font-size: 28px;
+    font-size: 30px;
     line-height: 56px;
     margin: 6px auto 12px;
     font-weight: 700;
   }
-  .error h3 { margin: 0 0 8px; color: var(--text-primary, #ddd); font-size: 16px; }
-  .error-msg { color: #ff8888; font-size: 12px; font-family: monospace; word-break: break-word; }
+  .error h3 { margin: 0 0 8px; color: var(--text-primary, #ddd); font-size: 18px; }
+  .error-msg { color: #ff8888; font-size: 14px; font-family: monospace; word-break: break-word; }
 </style>

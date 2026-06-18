@@ -134,7 +134,7 @@
 <style>
   .ni { display: flex; flex-direction: column; gap: 2px; }
   .ni-label {
-    font-size: 10.5px;
+    font-size: 12.5px;
     opacity: 0.85;
     display: flex;
     justify-content: space-between;

@@ -455,14 +455,17 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 0 4px;
+    padding: 5px 6px 2px;
   }
 
   .macro-slot {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 2px;
+    gap: 3px;
+    flex: 0 0 58px;
+    width: 58px;
+    min-height: 56px;
   }
   .macro-slot.learning .macro-knob {
     box-shadow: 0 0 0 2px rgba(187, 134, 252, 0.6), 0 0 14px rgba(187, 134, 252, 0.45);
@@ -512,12 +515,12 @@
     position: absolute;
     top: -2px;
     right: -2px;
-    min-width: 14px;
-    height: 14px;
+    min-width: 17px;
+    height: 17px;
     padding: 0 3px;
     background: var(--macro-color);
     color: #000;
-    font-size: 9px;
+    font-size: 13px;
     font-weight: 800;
     border-radius: 7px;
     display: flex;
@@ -530,13 +533,14 @@
   .macro-name {
     background: none;
     border: none;
-    color: var(--text-muted, #888);
-    font-size: 8px;
+    color: rgba(238, 240, 244, 0.52);
+    font-size: 10px;
     font-weight: 700;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.03em;
     padding: 0 2px;
     cursor: pointer;
-    max-width: 50px;
+    max-width: 58px;
+    line-height: 1.05;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -544,11 +548,11 @@
   .macro-name:hover { color: var(--text-primary, #ccc); }
 
   .macro-name-input {
-    width: 50px;
+    width: 58px;
     background: rgba(0, 0, 0, 0.4);
     border: 1px solid rgba(255, 255, 255, 0.18);
     color: #fff;
-    font-size: 8px;
+    font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.06em;
     text-align: center;
@@ -581,7 +585,7 @@
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.12);
     color: #fff;
-    font-size: 12px;
+    font-size: 16px;
     font-weight: 700;
     letter-spacing: 0.06em;
     padding: 4px 8px;
@@ -604,7 +608,7 @@
     border: none;
     color: var(--text-secondary, #aaa);
     cursor: pointer;
-    font-size: 14px;
+    font-size: 18px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -617,7 +621,7 @@
     gap: 6px;
   }
   .macro-popover-section-title {
-    font-size: 9px;
+    font-size: 13px;
     font-weight: 700;
     color: var(--text-muted, #888);
     letter-spacing: 0.16em;
@@ -677,7 +681,7 @@
     border: none;
     color: var(--text-muted, #888);
     cursor: pointer;
-    font-size: 9px;
+    font-size: 13px;
     line-height: 1;
     padding: 4px 2px;
     transition: transform 0.15s, color 0.12s;
@@ -715,7 +719,7 @@
     background: rgba(0, 0, 0, 0.18);
   }
   .macro-fx-params-empty {
-    font-size: 10px;
+    font-size: 14px;
     color: #777;
     font-style: italic;
     padding: 2px 0;
@@ -728,7 +732,7 @@
     padding: 2px 0;
   }
   .macro-fx-param-label {
-    font-size: 10px;
+    font-size: 14px;
     color: var(--text-primary, #ccc);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -761,7 +765,7 @@
     cursor: pointer;
   }
   .macro-fx-param-value {
-    font-size: 10px;
+    font-size: 14px;
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
     color: #BB86FC;
     text-align: right;
@@ -772,7 +776,7 @@
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.12);
     color: var(--text-primary, #ddd);
-    font-size: 11px;
+    font-size: 15px;
     padding: 3px 6px;
     border-radius: 3px;
     cursor: pointer;
@@ -780,7 +784,7 @@
   .macro-fx-handle {
     cursor: grab;
     color: #555;
-    font-size: 12px;
+    font-size: 16px;
     line-height: 1;
     padding: 0 2px;
     user-select: none;
@@ -794,7 +798,7 @@
     gap: 1px;
   }
   .macro-fx-label {
-    font-size: 11px;
+    font-size: 15px;
     font-weight: 600;
     color: #fff;
     text-transform: capitalize;
@@ -803,7 +807,7 @@
     white-space: nowrap;
   }
   .macro-fx-sub {
-    font-size: 9px;
+    font-size: 13px;
     color: #777;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -839,7 +843,7 @@
     background: rgba(255, 133, 119, 0.1);
     border: 1px solid rgba(255, 133, 119, 0.4);
     color: #FF8577;
-    font-size: 10px;
+    font-size: 14px;
     font-weight: 700;
     letter-spacing: 0.05em;
     padding: 5px 10px;
@@ -871,7 +875,7 @@
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.12);
     color: var(--text-primary, #ddd);
-    font-size: 11px;
+    font-size: 15px;
     padding: 4px 6px;
     border-radius: 3px;
     cursor: pointer;
@@ -885,13 +889,13 @@
     background: rgba(187, 134, 252, 0.08);
     border-left: 2px solid #BB86FC;
     padding: 6px 8px;
-    font-size: 10px;
+    font-size: 14px;
     color: var(--text-primary, #ccc);
     line-height: 1.45;
   }
 
   .macro-popover-empty {
-    font-size: 10px;
+    font-size: 14px;
     color: #666;
     font-style: italic;
     padding: 6px 0;
@@ -922,7 +926,7 @@
     border: none;
     color: #BB86FC;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 18px;
     line-height: 1;
     padding: 0;
   }
@@ -931,7 +935,7 @@
     overflow: hidden;
   }
   .macro-dest-label {
-    font-size: 11px;
+    font-size: 15px;
     color: var(--text-primary, #ddd);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -939,7 +943,7 @@
   }
   .macro-dest-path {
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 9px;
+    font-size: 13px;
     color: #666;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -951,7 +955,7 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     color: var(--text-primary, #ccc);
     border-radius: 3px;
-    font-size: 11px;
+    font-size: 15px;
     padding: 2px;
     cursor: pointer;
   }
@@ -960,7 +964,7 @@
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);
     color: var(--text-primary, #ccc);
-    font-size: 10px;
+    font-size: 14px;
     padding: 2px 4px;
     border-radius: 3px;
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
@@ -969,7 +973,7 @@
     background: none;
     border: none;
     color: var(--text-muted, #888);
-    font-size: 14px;
+    font-size: 18px;
     line-height: 1;
     cursor: pointer;
     padding: 0;
@@ -977,7 +981,7 @@
   .macro-dest-remove:hover { color: #ff6b6b; }
 
   :global(html[data-theme="arcade"]) .macro-bar {
-    gap: 7px;
+    gap: 4px;
   }
 
   :global(html[data-theme="arcade"]) .macro-slot {
@@ -1047,9 +1051,9 @@
   }
 
   :global(html[data-theme="arcade"]) .macro-name {
-    color: var(--ga-ink-2, #5e564a);
+    color: rgba(238, 240, 244, 0.50);
     font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
-    letter-spacing: 0.11em;
+    letter-spacing: 0.04em;
   }
 
   :global(html[data-theme="arcade"]) .macro-name:hover {

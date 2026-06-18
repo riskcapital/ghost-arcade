@@ -75,7 +75,7 @@
     justify-content: space-between;
     margin-bottom: 16px;
   }
-  h2 { margin: 0; font-size: 17px; font-weight: 600; }
+  h2 { margin: 0; font-size: 19px; font-weight: 600; }
   .close-x {
     background: #1c1e28;
     border: none;
@@ -120,18 +120,18 @@
     border: 1px dashed #3a3c46;
   }
   .thumb-letter, .thumb-glyph {
-    font-size: 36px;
+    font-size: 38px;
     font-weight: 700;
     color: rgba(255, 255, 255, 0.85);
     text-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
   }
-  .thumb-glyph { color: #666; font-weight: 300; font-size: 44px; }
+  .thumb-glyph { color: #666; font-weight: 300; font-size: 46px; }
   .preset-name {
-    font-size: 13px;
+    font-size: 15px;
     font-weight: 600;
   }
   .preset-desc {
-    font-size: 11px;
+    font-size: 13px;
     color: #999;
     line-height: 1.4;
   }

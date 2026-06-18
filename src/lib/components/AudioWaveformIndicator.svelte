@@ -14,8 +14,8 @@
   import { audioStore } from '../stores/audio';
 
   // Logical pixel size; canvas backing-store gets devicePixelRatio'd.
-  const W = 64;
-  const H = 20;
+  const W = 92;
+  const H = 28;
 
   let canvas: HTMLCanvasElement | null = null;
   let raf = 0;

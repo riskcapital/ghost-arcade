@@ -20,7 +20,7 @@
  */
 
 import { writable, get, derived } from 'svelte/store';
-import type { StageEffect, StageEffectType, Surface } from '../types';
+import type { Layer, StageEffect, StageEffectType, Surface } from '../types';
 import { generateUUID } from '../utils/uuid';
 import { audioStore } from './audio';
 import { getVisualAudioSnapshot } from '../audio/visualAudio';
@@ -306,7 +306,7 @@ export function createDefaultStageEffect(type: StageEffectType): StageEffect {
 
 // ─── Per-slice output store ─────────────────────────────────────────
 
-interface StageEffectsRuntime {
+export interface StageEffectsRuntime {
   /** sliceId → current frame brightness (0..1). */
   sliceOutputs: Map<string, number>;
   /** sliceId → current frame color tint (`#rrggbb` or null when the
@@ -340,6 +340,8 @@ const { subscribe, set, update } = writable<StageEffectsRuntime>(initialRuntime)
 // so all effect generators work in a unified space regardless of the
 // surface's width/height.
 
+type Rect01 = { minX: number; minY: number; maxX: number; maxY: number };
+
 interface SliceMeta {
   sliceId: string;
   surfaceId: string;
@@ -347,13 +349,100 @@ interface SliceMeta {
   // Centroid in normalized 0..1 surface coords (origin top-left).
   cx: number;
   cy: number;
+  // Bounding rect in normalized 0..1 surface coords, used as a resilient
+  // fallback when a 3D screen layer lost its persisted slice binding.
+  rect: Rect01;
 }
 
 let sliceMetaCache: SliceMeta[] = [];
 let surfacesCache: Surface[] = [];
+let layerGeometrySliceCache = new Map<string, string | null>();
+
+function rectFromLayer(layer: Pick<Layer, 'corners'>): Rect01 | null {
+  const c = layer.corners;
+  if (!c) return null;
+  const xs = [c.topLeft.x, c.topRight.x, c.bottomLeft.x, c.bottomRight.x];
+  const ys = [c.topLeft.y, c.topRight.y, c.bottomLeft.y, c.bottomRight.y];
+  const minX = Math.max(0, Math.min(...xs));
+  const maxX = Math.min(1, Math.max(...xs));
+  const minY = Math.max(0, Math.min(...ys));
+  const maxY = Math.min(1, Math.max(...ys));
+  if (maxX - minX <= 0.0001 || maxY - minY <= 0.0001) return null;
+  return { minX, minY, maxX, maxY };
+}
+
+function rectFromSlice(surface: Surface, sliceId: string): Rect01 | null {
+  const slice = surface.slices.find(s => s.id === sliceId);
+  if (!slice || slice.polygon.length < 3) return null;
+  const sw = Math.max(1, surface.width);
+  const sh = Math.max(1, surface.height);
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of slice.polygon) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+  minX = Math.max(0, minX / sw);
+  maxX = Math.min(1, maxX / sw);
+  minY = Math.max(0, minY / sh);
+  maxY = Math.min(1, maxY / sh);
+  if (maxX - minX <= 0.0001 || maxY - minY <= 0.0001) return null;
+  return { minX, minY, maxX, maxY };
+}
+
+function rectIou(a: Rect01, b: Rect01): number {
+  const ix = Math.max(0, Math.min(a.maxX, b.maxX) - Math.max(a.minX, b.minX));
+  const iy = Math.max(0, Math.min(a.maxY, b.maxY) - Math.max(a.minY, b.minY));
+  const intersection = ix * iy;
+  if (intersection <= 0) return 0;
+  const areaA = Math.max(0.000001, (a.maxX - a.minX) * (a.maxY - a.minY));
+  const areaB = Math.max(0.000001, (b.maxX - b.minX) * (b.maxY - b.minY));
+  return intersection / (areaA + areaB - intersection);
+}
+
+function rectCacheKey(rect: Rect01): string {
+  return [
+    rect.minX.toFixed(4),
+    rect.minY.toFixed(4),
+    rect.maxX.toFixed(4),
+    rect.maxY.toFixed(4),
+  ].join(':');
+}
+
+function findSliceByLayerGeometry(layer: Pick<Layer, 'corners'>): string | null {
+  const layerRect = rectFromLayer(layer);
+  if (!layerRect) return null;
+  const cacheKey = rectCacheKey(layerRect);
+  if (layerGeometrySliceCache.has(cacheKey)) {
+    return layerGeometrySliceCache.get(cacheKey) ?? null;
+  }
+  let bestSliceId: string | null = null;
+  let bestScore = 0;
+  for (const meta of sliceMetaCache) {
+    const sliceRect = meta.rect;
+    const iou = rectIou(layerRect, sliceRect);
+    const centerDist = Math.hypot(
+      (layerRect.minX + layerRect.maxX - sliceRect.minX - sliceRect.maxX) * 0.5,
+      (layerRect.minY + layerRect.maxY - sliceRect.minY - sliceRect.maxY) * 0.5,
+    );
+    const sizeDist = Math.abs((layerRect.maxX - layerRect.minX) - (sliceRect.maxX - sliceRect.minX))
+      + Math.abs((layerRect.maxY - layerRect.minY) - (sliceRect.maxY - sliceRect.minY));
+    const closeEnough = iou >= 0.86 || (centerDist <= 0.012 && sizeDist <= 0.025);
+    if (!closeEnough) continue;
+    const score = iou - centerDist * 0.5 - sizeDist * 0.25;
+    if (score > bestScore) {
+      bestScore = score;
+      bestSliceId = meta.sliceId;
+    }
+  }
+  layerGeometrySliceCache.set(cacheKey, bestSliceId);
+  return bestSliceId;
+}
 
 function recomputeSliceMeta(surfaces: Surface[]) {
   sliceMetaCache = [];
+  layerGeometrySliceCache.clear();
   const newLayerToSlice = new Map<string, string>();
   for (const surface of surfaces) {
     const sw = Math.max(1, surface.width);
@@ -364,8 +453,10 @@ function recomputeSliceMeta(surfaces: Surface[]) {
       for (const p of slice.polygon) { sumX += p.x; sumY += p.y; }
       const cx = (sumX / slice.polygon.length) / sw;
       const cy = (sumY / slice.polygon.length) / sh;
+      const rect = rectFromSlice(surface, slice.id);
+      if (!rect) continue;
       const layerId = slice.sourceBinding?.kind === 'layer' ? slice.sourceBinding.layerId : null;
-      sliceMetaCache.push({ sliceId: slice.id, surfaceId: surface.id, layerId, cx, cy });
+      sliceMetaCache.push({ sliceId: slice.id, surfaceId: surface.id, layerId, cx, cy, rect });
       if (layerId) newLayerToSlice.set(layerId, slice.id);
     }
   }
@@ -906,6 +997,31 @@ export const stageEffectColors = derived(stageEffectsRuntime, $rt => $rt.sliceCo
 /** layerId → sliceId reverse lookup. Canvas uses this to find the
  *  effect output for a given layer in O(1). */
 export const layerToSliceMap = derived(stageEffectsRuntime, $rt => $rt.layerToSlice);
+
+export interface StageEffectLayerOutput {
+  sliceId: string | null;
+  brightness: number;
+  color: string | null;
+}
+
+/** Resolve the current stage-effect output for a rendered layer.
+ *
+ * Direct Apply-Stage links are authoritative. If a 3D stage screen was
+ * rebuilt, duplicated, or loaded without the persisted slice binding, we
+ * fall back to matching its normalized screen bounds against the stored
+ * surface-slice bounds so Stage FX still drive the 3D LEDs. */
+export function resolveStageEffectForLayer(
+  layer: Pick<Layer, 'id' | 'corners'>,
+  rt: StageEffectsRuntime = get({ subscribe }),
+): StageEffectLayerOutput {
+  const sliceId = rt.layerToSlice.get(layer.id) ?? findSliceByLayerGeometry(layer);
+  if (!sliceId) return { sliceId: null, brightness: 1, color: null };
+  return {
+    sliceId,
+    brightness: rt.sliceOutputs.get(sliceId) ?? 1,
+    color: rt.sliceColors.get(sliceId) ?? null,
+  };
+}
 
 // ─── One-shot evaluator for the Screens system ──────────────────────
 //

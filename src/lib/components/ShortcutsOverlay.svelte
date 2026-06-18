@@ -91,7 +91,7 @@
     background: transparent;
     border: none;
     color: var(--text-muted, #888);
-    font-size: 22px;
+    font-size: 24px;
     cursor: pointer;
     width: 32px;
     height: 32px;
@@ -104,7 +104,7 @@
   .shortcut-overlay-close:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
   .shortcut-overlay-title {
     margin: 0 0 18px;
-    font-size: 18px;
+    font-size: 20px;
     font-weight: 600;
     color: #BB86FC;
   }
@@ -115,7 +115,7 @@
   }
   .shortcut-section h3 {
     margin: 0 0 8px;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     color: #BB86FC;
     text-transform: uppercase;
@@ -126,7 +126,7 @@
     align-items: center;
     gap: 8px;
     padding: 4px 0;
-    font-size: 12px;
+    font-size: 14px;
     color: var(--text-primary, #ccc);
   }
   .shortcut-row span { flex: 1; color: var(--text-secondary, #aaa); }
@@ -137,7 +137,7 @@
     border: 1px solid #444;
     border-radius: 3px;
     font-family: 'SF Mono', Menlo, Consolas, monospace;
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-primary, #e0e0e0);
     min-width: 18px;
     text-align: center;
