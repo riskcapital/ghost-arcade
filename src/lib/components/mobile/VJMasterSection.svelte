@@ -89,12 +89,12 @@
     width: 180px;
   }
   .master-section.compact .master-label {
-    font-size: 9px;
+    font-size: 11px;
     letter-spacing: 1.2px;
   }
   .master-section.compact .stop-all-btn {
     padding: 6px 10px;
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .master-fader-row {
@@ -106,7 +106,7 @@
   }
 
   .master-label {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     color: var(--accent-primary, #FF6B6B);
     letter-spacing: 2px;
@@ -131,7 +131,7 @@
     gap: 6px;
     padding: 10px 18px;
     border-radius: 8px;
-    font-size: 13px;
+    font-size: 15px;
     font-weight: 800;
     letter-spacing: 2px;
     text-transform: uppercase;
@@ -197,7 +197,7 @@
     gap: 6px;
     padding: 10px 14px;
     border-radius: 8px;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 700;
     letter-spacing: 1px;
     background: rgba(255, 68, 68, 0.08);

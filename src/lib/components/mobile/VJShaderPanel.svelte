@@ -181,7 +181,7 @@
     border: 1px solid rgba(255, 255, 255, 0.08);
     background: rgba(255, 255, 255, 0.02);
     color: rgba(255, 255, 255, 0.4);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     cursor: pointer;
     flex-shrink: 0;
@@ -213,7 +213,7 @@
   }
 
   .layer-num {
-    font-size: 10px;
+    font-size: 12px;
   }
 
   /* ── Shader Content ── */
@@ -236,9 +236,9 @@
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   }
 
-  .shader-icon { color: #BB86FC; font-size: 11px; }
+  .shader-icon { color: #BB86FC; font-size: 13px; }
   .shader-name {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     color: rgba(255, 255, 255, 0.7);
     overflow: hidden;
@@ -259,7 +259,7 @@
   }
 
   .param-label {
-    font-size: 9px;
+    font-size: 11px;
     color: rgba(255, 255, 255, 0.45);
     min-width: 55px;
     max-width: 55px;
@@ -274,7 +274,7 @@
   }
 
   .param-val {
-    font-size: 8px;
+    font-size: 10px;
     color: rgba(255, 255, 255, 0.35);
     min-width: 30px;
     text-align: right;
@@ -288,7 +288,7 @@
     border: 1px solid rgba(255, 255, 255, 0.15);
     background: rgba(255, 255, 255, 0.04);
     color: rgba(255, 255, 255, 0.5);
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
@@ -311,18 +311,18 @@
   }
 
   .empty-icon {
-    font-size: 20px;
+    font-size: 22px;
     color: rgba(187, 134, 252, 0.25);
   }
 
   .empty-text {
-    font-size: 10px;
+    font-size: 12px;
     color: rgba(255, 255, 255, 0.3);
     line-height: 1.4;
   }
 
   .empty-sub {
-    font-size: 9px;
+    font-size: 11px;
     color: rgba(255, 255, 255, 0.2);
   }
 </style>

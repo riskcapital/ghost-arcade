@@ -29,7 +29,7 @@
     border-left: 4px solid;
     animation: slideUp 0.25s ease-out;
     pointer-events: auto;
-    font-size: 13px;
+    font-size: 15px;
     line-height: 1.4;
   }
 
@@ -59,7 +59,7 @@
     background: none;
     border: none;
     color: var(--text-muted, #888);
-    font-size: 18px;
+    font-size: 20px;
     cursor: pointer;
     padding: 0 2px;
     line-height: 1;

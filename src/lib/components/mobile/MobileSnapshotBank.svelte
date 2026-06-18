@@ -179,7 +179,7 @@
     display: none;  /* no room on a 30px-tall pad */
   }
   .snap-bank.top-row .slot-num {
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .bank-header {
@@ -189,13 +189,13 @@
     gap: 8px;
   }
   .bank-label {
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 800;
     color: rgba(255, 255, 255, 0.4);
     letter-spacing: 1.5px;
   }
   .bank-hint {
-    font-size: 8px;
+    font-size: 10px;
     color: rgba(255, 255, 255, 0.25);
     letter-spacing: 0.5px;
   }
@@ -262,13 +262,13 @@
   }
 
   .slot-num {
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 800;
     line-height: 1;
     font-variant-numeric: tabular-nums;
   }
   .snap-name {
-    font-size: 7px;
+    font-size: 9px;
     line-height: 1;
     overflow: hidden;
     text-overflow: ellipsis;

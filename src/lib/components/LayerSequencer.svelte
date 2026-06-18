@@ -261,14 +261,14 @@
     transition: all 0.2s ease;
     z-index: 100;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 600;
     font-family: inherit;
   }
   .seq-toggle:hover { border-color: #FF6B6B; box-shadow: 0 4px 30px rgba(255,107,107,0.2); }
   .seq-toggle.open { border-color: #FF6B6B; background: linear-gradient(135deg, #1a2020, #201515); }
-  .toggle-icon { font-size: 10px; color: var(--text-muted, #888); }
-  .toggle-label { font-size: 12px; font-weight: 600; }
+  .toggle-icon { font-size: 12px; color: var(--text-muted, #888); }
+  .toggle-label { font-size: 14px; font-weight: 600; }
 
   /* ═══════════════════════════════════
      TRAY PANEL
@@ -304,20 +304,20 @@
   .seq-header-left { flex: 1; }
   .seq-header-center { flex: 0 0 auto; }
   .seq-header-right { flex: 1; justify-content: flex-end; }
-  .seq-title { font-size: 11px; font-weight: 700; color: #FF6B6B; letter-spacing: 1px; margin-right: 4px; }
-  .seq-steps-label { font-size: 10px; color: #666; }
+  .seq-title { font-size: 13px; font-weight: 700; color: #FF6B6B; letter-spacing: 1px; margin-right: 4px; }
+  .seq-steps-label { font-size: 12px; color: #666; }
 
   /* ═══════════════════════════════════
      CONTROLS
      ═══════════════════════════════════ */
   .seq-select {
     background: var(--bg-tertiary, #1a1a1e); border: 1px solid #333; color: var(--text-primary, #ccc);
-    padding: 3px 6px; border-radius: 4px; font-size: 11px; cursor: pointer; font-family: inherit;
+    padding: 3px 6px; border-radius: 4px; font-size: 13px; cursor: pointer; font-family: inherit;
   }
   .seq-select:hover { border-color: #FF6B6B; }
   .seq-input {
     background: var(--bg-tertiary, #1a1a1e); border: 1px solid #333; color: var(--text-primary, #ccc);
-    padding: 3px 6px; border-radius: 4px; font-size: 11px; font-family: inherit;
+    padding: 3px 6px; border-radius: 4px; font-size: 13px; font-family: inherit;
   }
   .seq-input:focus { border-color: #FF6B6B; outline: none; }
   .seq-bpm { width: 50px; text-align: center; }
@@ -331,27 +331,27 @@
   .seq-btn:hover { background: rgba(255,107,107,0.2); border-color: #FF6B6B; color: #FF6B6B; }
   .seq-play { background: rgba(255,107,107,0.15); border-color: #FF6B6B; color: #FF6B6B; }
   .seq-play:hover { background: rgba(255,107,107,0.35); }
-  .seq-tap { font-size: 9px; font-weight: 700; width: auto; padding: 0 8px; letter-spacing: 0.5px; }
+  .seq-tap { font-size: 11px; font-weight: 700; width: auto; padding: 0 8px; letter-spacing: 0.5px; }
   .seq-clear { opacity: 0.6; }
   .seq-clear:hover { opacity: 1; }
-  .seq-loop-label { display: flex; align-items: center; gap: 3px; cursor: pointer; color: var(--text-muted, #888); font-size: 11px; }
+  .seq-loop-label { display: flex; align-items: center; gap: 3px; cursor: pointer; color: var(--text-muted, #888); font-size: 13px; }
   .seq-loop-label input { display: none; }
   .seq-loop-label input:checked ~ svg { color: #FF6B6B; }
   .seq-step-display {
-    font-size: 12px; color: #FF6B6B; font-family: 'JetBrains Mono', monospace;
+    font-size: 14px; color: #FF6B6B; font-family: 'JetBrains Mono', monospace;
     min-width: 40px; text-align: center; font-weight: 700;
   }
   .seq-step-sep { color: #555; }
   .seq-timing-toggle { display: flex; border: 1px solid #333; border-radius: 4px; overflow: hidden; }
   .seq-timing-btn {
-    padding: 3px 8px; font-size: 10px; background: var(--bg-tertiary, #1a1a1e); border: none;
+    padding: 3px 8px; font-size: 12px; background: var(--bg-tertiary, #1a1a1e); border: none;
     color: var(--text-muted, #888); cursor: pointer; transition: all 0.15s; font-family: inherit; font-weight: 600;
   }
   .seq-timing-btn:first-child { border-right: 1px solid #333; }
   .seq-timing-btn.active { background: rgba(255,107,107,0.2); color: #FF6B6B; }
   .seq-timing-btn:hover:not(.active) { background: #222; color: var(--text-secondary, #aaa); }
   .seq-xfade-label {
-    display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text-muted, #888); cursor: pointer;
+    display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-muted, #888); cursor: pointer;
   }
   .seq-xfade-label input[type="checkbox"] { accent-color: #FF6B6B; width: 12px; height: 12px; }
   .seq-xfade-dur { width: 52px; }
@@ -369,7 +369,7 @@
   .seq-grid-container::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
   .seq-grid-container::-webkit-scrollbar-thumb:hover { background: #555; }
 
-  .seq-empty { color: #666; font-size: 12px; padding: 24px; text-align: center; }
+  .seq-empty { color: #666; font-size: 14px; padding: 24px; text-align: center; }
 
   .seq-grid {
     display: grid;
@@ -386,7 +386,7 @@
   /* Step number headers (top row) */
   .seq-step-header {
     display: flex; align-items: center; justify-content: center;
-    font-size: 9px; font-weight: 600; color: #555;
+    font-size: 11px; font-weight: 600; color: #555;
     font-family: 'JetBrains Mono', monospace;
     position: sticky; top: 0; z-index: 2;
     background: var(--bg-primary, #0a0a0c);
@@ -399,7 +399,7 @@
   .seq-layer-label {
     display: flex; align-items: center; gap: 5px;
     padding: 0 6px;
-    font-size: 10px; color: var(--text-secondary, #aaa);
+    font-size: 12px; color: var(--text-secondary, #aaa);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     position: sticky; left: 0; z-index: 1;
     background: var(--bg-primary, #0a0a0c);
@@ -423,7 +423,7 @@
     border-radius: 3px;
     background: transparent;
     color: #555;
-    font-size: 10px; line-height: 1;
+    font-size: 12px; line-height: 1;
     cursor: pointer;
     transition: color 0.08s, border-color 0.08s, background 0.08s;
   }

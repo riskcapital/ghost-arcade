@@ -9,6 +9,7 @@ import type { SVParamKey } from '../stores/synthVision';
 import { setBaseValue as setModulationBase } from '../audio/modulation';
 import type { MidiMapping, MidiMessageType } from './midiTypes';
 import type { BlendMode } from '../types';
+import { getPluginByEffectType } from '../plugins/registry';
 
 // Prebuilt lookup: "cc:74" -> [MidiMapping, ...]
 // Rebuilt automatically when mappings change
@@ -232,8 +233,12 @@ class MidiRouter {
       } else if (contentType === 'model3d' && layer.model3dContent) {
         const current = (layer.model3dContent as any)[property];
         project.updateModel3DContent(layer.id, { [property]: !current });
+      } else if (contentType === 'plugin') {
+        // Handled below so plugin toggles can flip source.effectSource params.
+      } else {
+        return;
       }
-      return;
+      if (contentType !== 'plugin') return;
     }
 
     // Handle discrete values (dropdowns/selects)
@@ -242,10 +247,12 @@ class MidiRouter {
       const discreteVal = mapping.discreteValues[Math.min(index, mapping.discreteValues.length - 1)];
       if (contentType === 'splat') {
         project.updateSplatContent(layer.id, { [property]: discreteVal });
+        return;
       } else if (contentType === 'model3d') {
         project.updateModel3DContent(layer.id, { [property]: discreteVal });
+        return;
       }
-      return;
+      if (contentType !== 'plugin') return;
     }
 
     // Effect parameters: map:effect:<effectId>:<paramName>
@@ -310,11 +317,8 @@ class MidiRouter {
       const paramKey = parts.slice(2).join(':');
       if (!paramKey) return;
       if (!layer.source?.effectSource) return;
-      let next: any = value;
-      if (mapping.discreteValues && mapping.discreteValues.length > 0) {
-        const idx = Math.round(value);
-        next = mapping.discreteValues[Math.max(0, Math.min(mapping.discreteValues.length - 1, idx))];
-      }
+      if (mapping.mode === 'toggle' && value <= 0) return;
+      const next = this.resolvePluginParamValue(layer.source.effectSource, paramKey, value, mapping);
       project.setLayerSource(layer.id, {
         ...layer.source,
         effectSource: { ...layer.source.effectSource, [paramKey]: next } as any,
@@ -343,6 +347,20 @@ class MidiRouter {
     // parts: ['vj' | 'vj-b', layerIndex|'master'|'crossfader'|..., property, ...]
     const layerPart = parts[1];
     const property = parts[2];
+
+    // VJ Mode toggle: vj:mode. Rising edge enters/leaves the full VJ
+    // workspace so controller users can return to regular mapping mode
+    // without reaching for the UI.
+    if (layerPart === 'mode' && bank === 'A') {
+      if (value > 0) {
+        const state = get(vjClipLauncher);
+        const enable = !(state.isOpen || state.isLive);
+        if (!enable) vjClipLauncher.stopAll();
+        vjClipLauncher.setOpen(enable);
+        vjClipLauncher.setLive(enable);
+      }
+      return;
+    }
 
     if (layerPart === 'master') {
       if (property === 'opacity') {
@@ -395,6 +413,18 @@ class MidiRouter {
           }
           return;
         }
+        case 'blendMode': {
+          const modes = ['normal','multiply','screen','add','difference','darken','lighten','overlay','exclusion'] as const;
+          if (mapping.discreteValues && mapping.discreteValues.length > 0) {
+            const idx = Math.round(value);
+            const name = mapping.discreteValues[Math.min(idx, mapping.discreteValues.length - 1)];
+            if (typeof name === 'string') vjClipLauncher.setCrossfaderBlendMode(name as any);
+          } else {
+            const idx = Math.max(0, Math.min(modes.length - 1, Math.round(value)));
+            vjClipLauncher.setCrossfaderBlendMode(modes[idx]);
+          }
+          return;
+        }
         case 'cut-a':
           if (value > 0) vjClipLauncher.cutToA();
           return;
@@ -436,6 +466,17 @@ class MidiRouter {
     }
 
     // VJ Stop all: vj:stopall (sweeps both banks regardless of scope — store-side stopAll handles this)
+    if (layerPart === 'stage-effect' && bank === 'A') {
+      const effectId = parts[2];
+      const action = parts[3];
+      if (effectId && action === 'hold') {
+        window.dispatchEvent(new CustomEvent('vj-stage-effect-hold', {
+          detail: { effectId, pressed: value > 0, value },
+        }));
+      }
+      return;
+    }
+
     if (layerPart === 'stopall') {
       if (value > 0) vjClipLauncher.stopAll();
       return;
@@ -568,6 +609,29 @@ class MidiRouter {
         }
         break;
       }
+      case 'plugin': {
+        const paramKey = parts.slice(3).join(':');
+        if (!paramKey) break;
+        if (mapping.mode === 'toggle' && value <= 0) break;
+        const state = get(vjClipLauncher);
+        const layerStates = bank === 'B' ? state.bankBLayerStates : state.layerStates;
+        const grid = bank === 'B' ? state.bankBClipGrid : state.clipGrid;
+        const layerState = layerStates[layerIndex];
+        const clip = layerState?.activeClip;
+        if (!clip?.effectSource) break;
+        let columnIndex = layerState.activeColumn;
+        if (columnIndex === null || columnIndex === undefined) {
+          const found = grid[layerIndex]?.findIndex(candidate => candidate?.id === clip.id) ?? -1;
+          columnIndex = found >= 0 ? found : null;
+        }
+        if (columnIndex === null || columnIndex === undefined) break;
+        const next = this.resolvePluginParamValue(clip.effectSource, paramKey, value, mapping);
+        vjClipLauncher.updateClipEffectSource(layerIndex, columnIndex, {
+          ...clip.effectSource,
+          [paramKey]: next,
+        }, bank);
+        break;
+      }
       case 'trigger': {
         const colIdx = parseInt(parts[3], 10);
         if (!isNaN(colIdx) && value > 0) {
@@ -576,6 +640,28 @@ class MidiRouter {
         break;
       }
     }
+  }
+
+  private resolvePluginParamValue(effectSource: any, paramKey: string, value: number, mapping: MidiMapping): any {
+    const manifest = effectSource?.effectType ? getPluginByEffectType(effectSource.effectType) : undefined;
+    const def = manifest?.paramDefs.find(param => param.param === paramKey);
+
+    if (mapping.mode === 'toggle') {
+      return !((effectSource ?? {})[paramKey] ?? def?.default ?? false);
+    }
+
+    if (mapping.discreteValues && mapping.discreteValues.length > 0) {
+      const idx = Math.max(0, Math.min(mapping.discreteValues.length - 1, Math.round(value)));
+      const raw = mapping.discreteValues[idx];
+      const option = def?.options?.find(opt => String(opt.value) === raw);
+      return option ? option.value : raw;
+    }
+
+    if (def?.type === 'toggle') {
+      return value >= 0.5;
+    }
+
+    return value;
   }
 
   private dispatchPerformer(parts: string[], value: number, mapping: MidiMapping) {

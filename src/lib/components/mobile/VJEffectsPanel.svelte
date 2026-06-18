@@ -230,7 +230,7 @@
                       {#if paramDef.type === 'select' && paramDef.options}
                         <select value={currentVal}
                           on:change={(e) => handleUpdateParams(effect.id, paramDef.param, parseFloat(e.currentTarget.value))}
-                          style="flex:1; background:#222; color:#fff; border:1px solid #444; border-radius:3px; padding:4px; font-size:12px;">
+                          style="flex:1; background:#222; color:#fff; border:1px solid #444; border-radius:3px; padding:4px; font-size:14px;">
                           {#each paramDef.options as opt}
                             <option value={opt.value} selected={currentVal === opt.value}>{opt.label}</option>
                           {/each}
@@ -329,7 +329,7 @@
     border-bottom: none;
     background: rgba(255, 255, 255, 0.02);
     color: rgba(255, 255, 255, 0.4);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.5px;
     cursor: pointer;
@@ -371,7 +371,7 @@
     border: 1px solid rgba(255, 255, 255, 0.08);
     background: rgba(255, 255, 255, 0.02);
     color: rgba(255, 255, 255, 0.4);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     cursor: pointer;
     flex-shrink: 0;
@@ -404,11 +404,11 @@
   }
 
   .layer-sel-num {
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .layer-fx-count {
-    font-size: 8px;
+    font-size: 10px;
     background: rgba(187, 134, 252, 0.2);
     color: #BB86FC;
     padding: 1px 4px;
@@ -426,14 +426,14 @@
   }
 
   .tab-label {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     color: rgba(255, 255, 255, 0.5);
     letter-spacing: 1px;
   }
 
   .tab-hint {
-    font-size: 9px;
+    font-size: 11px;
     color: rgba(255, 255, 255, 0.25);
   }
 
@@ -445,7 +445,7 @@
   }
 
   .param-label {
-    font-size: 9px;
+    font-size: 11px;
     color: rgba(255, 255, 255, 0.45);
     min-width: 55px;
     max-width: 55px;
@@ -460,7 +460,7 @@
   }
 
   .param-val {
-    font-size: 8px;
+    font-size: 10px;
     color: rgba(255, 255, 255, 0.35);
     min-width: 30px;
     text-align: right;
@@ -485,7 +485,7 @@
     border: 1px dashed rgba(187, 134, 252, 0.25);
     background: rgba(187, 134, 252, 0.05);
     color: #BB86FC;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 700;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
@@ -524,7 +524,7 @@
     border: none;
     background: none;
     color: rgba(255, 255, 255, 0.3);
-    font-size: 16px;
+    font-size: 18px;
     cursor: pointer;
     padding: 8px;
     min-width: 36px;
@@ -539,13 +539,13 @@
 
   .effect-name {
     flex: 1;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     color: rgba(255, 255, 255, 0.7);
   }
 
   .expand-arrow {
-    font-size: 9px;
+    font-size: 11px;
     color: rgba(255, 255, 255, 0.25);
     padding: 4px;
   }
@@ -554,7 +554,7 @@
     border: none;
     background: none;
     color: rgba(255, 68, 68, 0.5);
-    font-size: 22px;
+    font-size: 24px;
     cursor: pointer;
     padding: 8px;
     min-width: 36px;
@@ -576,7 +576,7 @@
   }
 
   .empty-hint {
-    font-size: 10px;
+    font-size: 12px;
     color: rgba(255, 255, 255, 0.2);
     text-align: center;
     padding: 10px;

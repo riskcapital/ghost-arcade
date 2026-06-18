@@ -673,11 +673,11 @@
   }
   .empty-icon { opacity: 0.3; }
   .empty-title {
-    font-size: 16px;
+    font-size: 18px;
     font-weight: 600;
     color: rgba(255, 255, 255, 0.5);
   }
-  .empty-hint { font-size: 12px; }
+  .empty-hint { font-size: 14px; }
 
   /* ── Controller Container ── */
   .vj-controller {
@@ -781,7 +781,7 @@
   .deck-clips.a { border-right: 1px solid rgba(79, 195, 247, 0.18); }
   .deck-clips.b { border-left: 1px solid rgba(206, 147, 216, 0.18); }
   .deck-tag {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     text-align: center;
     padding: 4px 0;
@@ -897,7 +897,7 @@
     border: none;
     border-right: 1px solid rgba(255, 255, 255, 0.04);
     color: rgba(255, 255, 255, 0.45);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     letter-spacing: 1.5px;
     cursor: pointer;
@@ -1033,7 +1033,7 @@
   }
 
   .panel-header {
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 800;
     color: rgba(255, 255, 255, 0.35);
     letter-spacing: 1.5px;
@@ -1086,7 +1086,7 @@
     border: 1px solid rgba(255, 255, 255, 0.05);
     border-radius: 4px;
     color: rgba(255, 255, 255, 0.5);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     letter-spacing: 0.5px;
     cursor: pointer;

@@ -179,12 +179,12 @@
   .amp-fft-btn {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 4px;
-    padding: 3px 6px 3px 6px;
-    height: 28px;
+    padding: 4px 8px;
+    height: 34px;
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s;
   }
@@ -200,13 +200,13 @@
   .amp-bars {
     display: flex;
     align-items: flex-end;
-    gap: 2px;
-    height: 18px;
+    gap: 3px;
+    height: 24px;
   }
   .amp-bar {
-    width: 4px;
+    width: 5px;
     min-height: 1px;
-    border-radius: 1px;
+    border-radius: 2px;
     transition: height 0.05s ease-out;
   }
   /* 8-band rainbow — matches the per-band readout in the popover */
@@ -224,14 +224,18 @@
     line-height: 0;
     transition: transform 0.18s, color 0.18s;
   }
+  .amp-eq-glyph svg {
+    width: 10px;
+    height: 10px;
+  }
   .amp-eq-glyph.active {
     color: #BB86FC;
     transform: rotate(180deg);
   }
 
   .amp-beat {
-    width: 9px;
-    height: 9px;
+    width: 11px;
+    height: 11px;
     border-radius: 50%;
     background: #333;
     transition: background 0.06s, box-shadow 0.06s;
@@ -243,7 +247,7 @@
 
   .amp-error {
     color: #f44;
-    font-size: 12px;
+    font-size: 16px;
     padding: 0 4px;
   }
 
@@ -263,7 +267,7 @@
     gap: 10px;
   }
   .amp-popover-title {
-    font-size: 9px;
+    font-size: 13px;
     font-weight: 700;
     color: var(--text-muted, #888);
     letter-spacing: 0.16em;
@@ -275,7 +279,7 @@
     gap: 8px;
   }
   .amp-row-label {
-    font-size: 11px;
+    font-size: 15px;
     color: var(--text-primary, #ccc);
   }
   .amp-slider {
@@ -284,12 +288,12 @@
   }
   .amp-row-value {
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 10px;
+    font-size: 14px;
     color: #BB86FC;
     text-align: right;
   }
   .amp-popover-hint {
-    font-size: 10px;
+    font-size: 14px;
     color: var(--text-muted, #888);
     line-height: 1.4;
     padding-top: 4px;
@@ -308,7 +312,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 9px;
+    font-size: 13px;
     font-weight: 700;
     color: var(--text-muted, #888);
     letter-spacing: 0.16em;
@@ -319,7 +323,7 @@
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.1);
     color: var(--text-secondary, #aaa);
-    font-size: 9px;
+    font-size: 13px;
     font-weight: 700;
     letter-spacing: 0.12em;
     padding: 2px 6px;
@@ -338,7 +342,7 @@
     gap: 6px;
   }
   .amp-band-name {
-    font-size: 9px;
+    font-size: 13px;
     font-weight: 700;
     color: #999;
     letter-spacing: 0.08em;

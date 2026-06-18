@@ -250,7 +250,7 @@
 
   .knob-value {
     position: relative;
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     color: rgba(255, 255, 255, 0.7);
     font-variant-numeric: tabular-nums;
@@ -268,7 +268,7 @@
     border-radius: 7px;
     background: var(--macro-color);
     color: #000;
-    font-size: 8px;
+    font-size: 10px;
     font-weight: 800;
     display: flex;
     align-items: center;
@@ -279,7 +279,7 @@
   }
 
   .knob-name {
-    font-size: 8px;
+    font-size: 10px;
     font-weight: 700;
     color: rgba(255, 255, 255, 0.5);
     text-transform: uppercase;

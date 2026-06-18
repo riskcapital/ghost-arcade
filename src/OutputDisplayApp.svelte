@@ -448,7 +448,7 @@ press S to hide</pre>
     left: 8px;
     color: var(--text-muted, #888);
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    font-size: 11px;
+    font-size: 13px;
     background: rgba(0, 0, 0, 0.6);
     padding: 4px 8px;
     border-radius: 3px;
@@ -460,7 +460,7 @@ press S to hide</pre>
     right: 8px;
     color: #0f0;
     font-family: 'SF Mono', Menlo, Consolas, monospace;
-    font-size: 11px;
+    font-size: 13px;
     line-height: 1.4;
     background: rgba(0, 0, 0, 0.7);
     padding: 6px 10px;
@@ -477,7 +477,7 @@ press S to hide</pre>
     right: 12px;
     color: #fff;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 600;
     padding: 6px 10px;
     border-radius: 999px;
@@ -490,7 +490,7 @@ press S to hide</pre>
   }
   .health-hint {
     font-weight: 400;
-    font-size: 10px;
+    font-size: 12px;
     opacity: 0.7;
     letter-spacing: 0.3px;
   }

@@ -1828,7 +1828,7 @@
   .toggle-label {
     writing-mode: vertical-rl;
     text-orientation: mixed;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 600;
   }
 
@@ -1870,7 +1870,7 @@
 
   .tray-header h3 {
     margin: 0;
-    font-size: 14px;
+    font-size: 16px;
     font-weight: 600;
     color: var(--text-primary, #eee);
   }
@@ -1902,7 +1902,7 @@
   }
 
   .hint {
-    font-size: 11px;
+    font-size: 13px;
     color: #555;
   }
 
@@ -1925,7 +1925,7 @@
     width: 100%;
     color: #fff;
     font-weight: 500;
-    font-size: 12px;
+    font-size: 14px;
   }
 
   .section-header.static {
@@ -1937,7 +1937,7 @@
   }
 
   .toggle {
-    font-size: 14px;
+    font-size: 16px;
     color: var(--text-muted, #888);
   }
 
@@ -1970,7 +1970,7 @@
 
   .upload-area p {
     margin: 4px 0;
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .upload-btn {
@@ -1983,7 +1983,7 @@
     color: #fff;
     border: none;
     border-radius: 4px;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
     transition: background 0.15s;
@@ -2014,7 +2014,7 @@
   .svg-preview span {
     color: #BB86FC;
     font-weight: 600;
-    font-size: 12px;
+    font-size: 14px;
   }
 
   .svg-actions {
@@ -2031,7 +2031,7 @@
     padding: 6px;
     border: none;
     border-radius: 4px;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -2072,7 +2072,7 @@
     color: var(--text-primary, #ccc);
     border-radius: 3px;
     cursor: pointer;
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .preset-btn:hover {
@@ -2098,7 +2098,7 @@
     color: var(--text-primary, #ccc);
     border-radius: 4px;
     cursor: pointer;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 500;
     transition: all 0.15s;
   }
@@ -2119,7 +2119,7 @@
   /* Sub-label that groups related rows (e.g. Rotate vs Auto-spin) with a
      little breathing room above so dense panels don't read as a wall. */
   .param-subhead {
-    font-size: 10px;
+    font-size: 12px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--text-muted, #888);
@@ -2135,7 +2135,7 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .param-row input[type="range"] {
@@ -2164,7 +2164,7 @@
     color: #fff;
     padding: 4px;
     border-radius: 3px;
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .param-row .value {
@@ -2172,7 +2172,7 @@
     text-align: right;
     color: var(--text-muted, #888);
     font-family: monospace;
-    font-size: 10px;
+    font-size: 12px;
   }
 
   /* Editable numeric readouts — look like the old text values but you can
@@ -2199,7 +2199,7 @@
   .vnum::-webkit-inner-spin-button,
   .vnum::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
   .param-row .value.vnum { flex: 0 0 58px; }
-  .mini-value.vnum { flex: 0 0 46px; text-align: right; font-size: 10px; }
+  .mini-value.vnum { flex: 0 0 46px; text-align: right; font-size: 12px; }
 
   .effects-grid {
     display: flex;
@@ -2220,7 +2220,7 @@
     color: var(--text-primary, #ccc);
     cursor: pointer;
     font-weight: 500;
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .effect-toggle input[type="checkbox"] {
@@ -2246,7 +2246,7 @@
 
   .mini-param span {
     flex: 0 0 52px;
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     white-space: nowrap;
     overflow: hidden;
@@ -2276,7 +2276,7 @@
   .mini-value {
     flex: 0 0 32px;
     text-align: right;
-    font-size: 9px;
+    font-size: 11px;
     color: var(--text-muted, #888);
     font-family: monospace;
   }
@@ -2291,7 +2291,7 @@
   .layer-list-header {
     padding: 6px 12px;
     background: var(--bg-primary, #0d0d10);
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -2307,7 +2307,7 @@
     border: none;
     border-bottom: 1px solid #333;
     color: var(--text-primary, #ccc);
-    font-size: 11px;
+    font-size: 13px;
     cursor: pointer;
     transition: all 0.15s;
     text-align: left;
@@ -2331,7 +2331,7 @@
   }
 
   .layer-status {
-    font-size: 9px;
+    font-size: 11px;
     padding: 2px 5px;
     border-radius: 3px;
   }

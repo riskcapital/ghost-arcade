@@ -13,6 +13,8 @@
    */
   import { snapshots } from '../stores/snapshots';
 
+  export let placement: 'floating' | 'inline' = 'floating';
+
   let expanded = false;
 
   function handleClick(idx: number, e: MouseEvent) {
@@ -84,11 +86,12 @@
   // Live count of populated slots — drives the badge on the collapsed
   // launcher button. `$:` reactive so it tracks the snapshots store.
   $: populatedCount = $snapshots.snapshots.filter(s => s.capturedAt > 0).length;
+  $: inline = placement === 'inline';
 </script>
 
 <svelte:window onclick={onWindowClick} />
 
-<div class="snap-bank" class:expanded title="Snapshots — click to recall · shift-click to save · right-click for menu">
+<div class="snap-bank" class:expanded class:inline title="Snapshots — click to recall · shift-click to save · right-click for menu">
   <button class="snap-handle" onclick={() => expanded = !expanded} title={expanded ? 'Collapse snapshots' : 'Expand snapshots'}>
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <rect x="3" y="3" width="7" height="7"/>
@@ -178,6 +181,20 @@
   .snap-bank.expanded {
     padding: 8px;
   }
+  .snap-bank.inline {
+    position: relative;
+    inset: auto;
+    z-index: 40;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+  .snap-bank.inline.expanded {
+    padding: 0;
+  }
 
   .snap-handle {
     display: flex;
@@ -188,7 +205,7 @@
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 4px;
     color: var(--text-secondary, #aaa);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.1em;
     cursor: pointer;
@@ -198,11 +215,23 @@
     background: rgba(255, 255, 255, 0.08);
     color: #fff;
   }
+  .snap-bank.inline .snap-handle {
+    height: 30px;
+    padding: 0 10px 0 8px;
+    background: rgba(9, 11, 15, 0.88);
+    border-color: rgba(255, 255, 255, 0.14);
+  }
+  .snap-bank.inline .snap-handle:hover,
+  .snap-bank.inline.expanded .snap-handle {
+    border-color: rgba(187, 134, 252, 0.55);
+    color: #efe6ff;
+    background: rgba(187, 134, 252, 0.12);
+  }
   .snap-handle-label { letter-spacing: 0.16em; }
   .snap-handle-count {
     background: #BB86FC;
     color: #000;
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 800;
     padding: 1px 5px;
     border-radius: 7px;
@@ -216,6 +245,18 @@
     gap: 4px;
     margin-top: 6px;
     width: 290px;
+  }
+  .snap-bank.inline .snap-grid {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    margin-top: 0;
+    padding: 8px;
+    background: rgba(20, 20, 26, 0.96);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 8px;
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.58);
   }
 
   .snap-cell-wrap {
@@ -237,7 +278,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
     transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.12s;
@@ -273,7 +314,7 @@
   }
 
   .snap-name {
-    font-size: 8px;
+    font-size: 10px;
     color: var(--text-secondary, #aaa);
     max-width: 32px;
     overflow: hidden;
@@ -288,7 +329,7 @@
     background: rgba(0, 0, 0, 0.4);
     border: 1px solid rgba(255, 255, 255, 0.18);
     color: #fff;
-    font-size: 8px;
+    font-size: 10px;
     text-align: center;
     border-radius: 2px;
     margin-top: 2px;
@@ -312,7 +353,7 @@
     background: none;
     border: none;
     color: var(--text-primary, #ccc);
-    font-size: 11px;
+    font-size: 13px;
     text-align: left;
     padding: 6px 14px;
     cursor: pointer;

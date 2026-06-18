@@ -234,11 +234,11 @@
     color: var(--text-primary, #ddd);
     background: #181820;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    font-size: 12px;
+    font-size: 14px;
     box-sizing: border-box;
   }
   .panel-title {
-    font-size: 14px;
+    font-size: 16px;
     font-weight: 700;
     color: #fff;
     margin-bottom: 4px;
@@ -247,7 +247,7 @@
     gap: 8px;
   }
   .badge {
-    font-size: 9px;
+    font-size: 11px;
     background: linear-gradient(135deg, #6df, #b9f);
     color: #000;
     padding: 2px 6px;
@@ -257,7 +257,7 @@
   }
   .panel-hint {
     color: var(--text-muted, #888);
-    font-size: 11px;
+    font-size: 13px;
     margin-bottom: 16px;
   }
   .section {
@@ -267,7 +267,7 @@
   }
   .section:last-child { border-bottom: none; }
   .section-title {
-    font-size: 10px;
+    font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.8px;
     color: var(--text-muted, #888);
@@ -284,7 +284,7 @@
     border: 1px solid #333344;
     color: var(--text-secondary, #aaa);
     padding: 6px 4px;
-    font-size: 11px;
+    font-size: 13px;
     border-radius: 3px;
     cursor: pointer;
     transition: all 0.15s;
@@ -297,7 +297,7 @@
     border-color: transparent;
   }
   .brush-desc {
-    font-size: 10px;
+    font-size: 12px;
     color: #666;
     line-height: 1.4;
   }
@@ -308,10 +308,10 @@
     gap: 8px;
     margin-bottom: 6px;
   }
-  .row span:first-child { color: var(--text-secondary, #aaa); font-size: 11px; }
+  .row span:first-child { color: var(--text-secondary, #aaa); font-size: 13px; }
   .row .num {
     font-family: 'SF Mono', Menlo, Consolas, monospace;
-    font-size: 10px;
+    font-size: 12px;
     text-align: right;
     color: #6df;
   }
@@ -335,7 +335,7 @@
     background: #25252e;
     border: 1px solid #333344;
     color: var(--text-primary, #ddd);
-    font-size: 11px;
+    font-size: 13px;
     border-radius: 3px;
     cursor: pointer;
   }

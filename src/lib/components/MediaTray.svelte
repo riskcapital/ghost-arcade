@@ -7,7 +7,7 @@
   import { mediaLibrary, type MediaItem } from '../stores/media';
   import { shaderLibrary, type SavedShader } from '../stores/shaderLibrary';
   import { showToast } from '../stores/errorToast';
-  import type { MediaSource, ISFInputDef, ImageInputRef, JSAnimationSource, VideoPlaybackMode, MediaTrayFolder } from '../types';
+  import type { MediaSource, ISFInputDef, ImageInputRef, JSAnimationSource, VideoPlaybackMode, MediaTrayFolder, IntegratedEffectSource, IntegratedEffectType } from '../types';
   import { generateUUID } from '../types';
   import { videoLibrary, type SavedVideo } from '../stores/videoLibrary';
   import { parseISF, getInputDefault } from '../isf/parser';
@@ -53,6 +53,10 @@
   // Tray state
   export let isOpen = false;
   export let embedded = false;
+  export let vjMode = false;
+  export let onVJAddPayload: ((payload: VJTrayAddPayload) => void) | null = null;
+  export let onVJLiveSourcesChange: ((sources: VJTrayLiveSourcePayload[]) => void) | null = null;
+  export let isVJLiveSourceInUse: ((sourceId: string) => boolean) | null = null;
 
   // Active tab
   let activeTab: 'videos' | 'images' | 'shaders' | 'js' | 'library' | 'sources' | 'plugins' = 'shaders';
@@ -62,6 +66,45 @@
 
   // Get all registered plugins
   $: availablePlugins = getAllPlugins();
+
+  type VJTrayLiveSourcePayload = {
+    id: string;
+    type: 'live-source';
+    sourceType: 'spout' | 'webcam' | 'capture' | 'ndi';
+    name: string;
+    status: 'disconnected' | 'connecting' | 'live';
+    stream?: MediaStream;
+    videoEl?: HTMLVideoElement;
+    thumbnail?: string;
+    spoutSenderName?: string;
+    ndiSourceName?: string;
+  };
+
+  type VJTrayPluginPayload = {
+    id: string;
+    type: 'effect';
+    name: string;
+    pluginName: string;
+    src: string;
+    effectType: IntegratedEffectType;
+    effectSource: IntegratedEffectSource;
+  };
+
+  type VJTrayMediaPayload = {
+    id: string;
+    type: 'shader' | 'video' | 'image' | 'threejs' | 'p5js';
+    name: string;
+    src: string;
+    thumbnail?: string;
+    shaderCode?: string;
+    shaderInputs?: ISFInputDef[];
+    shaderValues?: Record<string, any>;
+    shaderImageInputs?: Record<string, ImageInputRef | null>;
+    jsAnimation?: JSAnimationSource;
+    _assetRef?: any;
+  };
+
+  type VJTrayAddPayload = VJTrayLiveSourcePayload | VJTrayPluginPayload | VJTrayMediaPayload;
 
   // Apply an integrated plugin to the selected layer
   async function applyPluginToLayer(plugin: PluginManifest) {
@@ -113,6 +156,7 @@
   let ndiChecked = false;
   let ndiScanning = false;
   let ndiScanInterval: ReturnType<typeof setInterval> | null = null;
+  let lastVJLiveSourcesSignature = '';
   let ndiStatusHint = 'Open an NDI® sender in MadMapper, Resolume, OBS, or another VJ app on this machine or network';
 
   // Check if running in desktop app (Electron)
@@ -122,6 +166,7 @@
   const isDesktop = isDesktopApp || (typeof window !== 'undefined' && !!window.__ELECTRON__);
 
   function liveSourceIsUsedByLayer(source: LiveSource): boolean {
+    if (vjMode && isVJLiveSourceInUse?.(source.id)) return true;
     const candidates = new Set([
       `live://${source.type}/${source.id}`,
       `live://spout/${source.id}`,
@@ -155,11 +200,71 @@
   }
 
   function disposeUnusedLiveSources() {
+    const retained: LiveSource[] = [];
     for (const source of liveSources) {
-      if (!liveSourceIsUsedByLayer(source)) disposeLiveSource(source);
+      if (liveSourceIsUsedByLayer(source)) {
+        retained.push(source);
+      } else {
+        disposeLiveSource(source);
+      }
     }
-    liveSources = [];
+    liveSources = retained;
+    notifyVJLiveSourcesChanged();
   }
+
+  function vjLiveSourcePayload(source: LiveSource): VJTrayLiveSourcePayload {
+    return {
+      id: source.id,
+      type: 'live-source',
+      sourceType: source.type,
+      name: source.name,
+      status: source.status,
+      stream: source.stream,
+      videoEl: source.videoEl,
+      thumbnail: source.thumbnail,
+      spoutSenderName: source.spoutSenderName,
+      ndiSourceName: source.ndiSourceName,
+    };
+  }
+
+  function vjPluginPayload(plugin: PluginManifest): VJTrayPluginPayload {
+    const effectSource = {
+      effectType: plugin.effectType,
+      ...plugin.defaultSourceParams,
+    } as IntegratedEffectSource;
+    return {
+      id: plugin.id,
+      type: 'effect',
+      name: plugin.name,
+      pluginName: plugin.name,
+      src: `plugin://${plugin.id}`,
+      effectType: plugin.effectType,
+      effectSource,
+    };
+  }
+
+  function notifyVJLiveSourcesChanged() {
+    if (!vjMode) return;
+    const payloads = liveSources.map(vjLiveSourcePayload);
+    (window as any).__ghostVJMediaTrayLiveSources = payloads;
+    if (!onVJLiveSourcesChange) return;
+    const signature = liveSources
+      .map((source) => [
+        source.id,
+        source.type,
+        source.status,
+        source.name,
+        !!source.videoEl,
+        source.spoutSenderName ?? '',
+        source.ndiSourceName ?? '',
+      ].join(':'))
+      .join('|');
+    if (signature === lastVJLiveSourcesSignature) return;
+    lastVJLiveSourcesSignature = signature;
+    onVJLiveSourcesChange(payloads);
+  }
+
+  $: notifyVJLiveSourcesChanged();
 
   // Subscribe to global Spout sender list
   $: availableSpoutSenders = $spoutSenders;
@@ -533,6 +638,75 @@
         project.setLayerSource(layerId, ms);
       }
     }
+  }
+
+  function addLiveSourceToCurrentMode(source: LiveSource) {
+    if (!vjMode) {
+      applySourceToLayer(source);
+      return;
+    }
+    if (source.status !== 'live') return;
+    notifyVJLiveSourcesChanged();
+    onVJAddPayload?.(vjLiveSourcePayload(source));
+  }
+
+  function addPluginToCurrentMode(plugin: PluginManifest) {
+    if (!vjMode) {
+      void applyPluginToLayer(plugin);
+      return;
+    }
+    onVJAddPayload?.(vjPluginPayload(plugin));
+  }
+
+  function liveSourceCardTitle(source: LiveSource): string {
+    if (source.status !== 'live') return '';
+    return vjMode ? 'Click or drag to add to VJ deck' : 'Double-click to apply to layer';
+  }
+
+  function onLiveSourceCardDragStart(source: LiveSource, e: DragEvent) {
+    if (!vjMode || source.status !== 'live' || !e.dataTransfer) return;
+    const payload = vjLiveSourcePayload(source);
+    (window as any).__ghostVJMediaTrayDragPayload = payload;
+    const serializablePayload = {
+      id: payload.id,
+      type: payload.type,
+      sourceType: payload.sourceType,
+      name: payload.name,
+      status: payload.status,
+      thumbnail: payload.thumbnail,
+      spoutSenderName: payload.spoutSenderName,
+      ndiSourceName: payload.ndiSourceName,
+    };
+    e.dataTransfer.effectAllowed = 'copy';
+    e.dataTransfer.setData('application/x-ghost-media-source', JSON.stringify(serializablePayload));
+    e.dataTransfer.setData('application/x-ghost-vj-clip', JSON.stringify({
+      type: 'live-source',
+      id: payload.id,
+      pluginName: payload.name,
+    }));
+    e.dataTransfer.setData('text/plain', payload.id);
+  }
+
+  function onPluginCardDragStart(plugin: PluginManifest, e: DragEvent) {
+    if (!vjMode || !e.dataTransfer) return;
+    const payload = vjPluginPayload(plugin);
+    (window as any).__ghostVJMediaTrayDragPayload = payload;
+    e.dataTransfer.effectAllowed = 'copy';
+    e.dataTransfer.setData('application/x-ghost-media-source', JSON.stringify(payload));
+    e.dataTransfer.setData('application/x-ghost-vj-clip', JSON.stringify({
+      type: 'effect',
+      id: plugin.id,
+      pluginName: plugin.name,
+      effectType: plugin.effectType,
+    }));
+    e.dataTransfer.setData('text/plain', plugin.id);
+  }
+
+  function clearVJMediaTrayDragPayload() {
+    if (!vjMode) return;
+    setTimeout(() => {
+      delete (window as any).__ghostVJMediaTrayDragPayload;
+    }, 0);
   }
 
   // Svelte action to set srcObject on video elements (for MediaStream)
@@ -2505,12 +2679,63 @@
     closeFolderContextMenu();
   }
 
-  function onTrayItemDragStart(itemId: string, e: DragEvent) {
-    draggedTrayItemId = itemId;
-    if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', itemId);
+  function mediaTrayDragPayload(item: MediaItem | ShaderItem | JSAnimationItem): VJTrayMediaPayload {
+    if ('shaderCode' in item) {
+      return {
+        id: item.id,
+        type: 'shader',
+        name: item.name,
+        src: item.src,
+        thumbnail: item.thumbnail,
+        shaderCode: item.shaderCode,
+        shaderInputs: item.inputs,
+        shaderValues: item.values,
+        shaderImageInputs: item.imageInputRefs,
+      };
     }
+    if ('jsAnimation' in item) {
+      return {
+        id: item.id,
+        type: item.type,
+        name: item.name,
+        src: 'js-animation',
+        thumbnail: item.thumbnail,
+        jsAnimation: item.jsAnimation,
+      };
+    }
+    return {
+      id: item.id,
+      type: item.type,
+      name: item.name,
+      src: item.src,
+      thumbnail: item.thumbnail,
+      _assetRef: (item as any)._assetRef,
+    };
+  }
+
+  function onTrayItemDragStart(item: MediaItem | ShaderItem | JSAnimationItem, e: DragEvent) {
+    draggedTrayItemId = item.id;
+    const payload = mediaTrayDragPayload(item);
+    if (vjMode) {
+      (window as any).__ghostVJMediaTrayDragPayload = payload;
+    }
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = vjMode ? 'copyMove' : 'move';
+      e.dataTransfer.setData('application/x-ghost-media-source', JSON.stringify(payload));
+      e.dataTransfer.setData('text/plain', item.id);
+    }
+  }
+
+  function addTrayItemToCurrentMode(item: MediaItem | ShaderItem | JSAnimationItem) {
+    if (!vjMode) {
+      applyToLayer(item);
+      return;
+    }
+    onVJAddPayload?.(mediaTrayDragPayload(item));
+  }
+
+  function trayItemActionTitle(): string {
+    return vjMode ? 'Click to add to VJ deck' : 'Click to apply to selected layer';
   }
 
   function onFolderDrop(folderId: string, e: DragEvent) {
@@ -3509,8 +3734,12 @@
                 class="source-card"
                 class:live={source.status === 'live'}
                 class:connecting={source.status === 'connecting'}
-                ondblclick={() => source.status === 'live' && applySourceToLayer(source)}
-                title={source.status === 'live' ? 'Double-click to apply to layer' : ''}
+                draggable={vjMode && source.status === 'live' ? 'true' : 'false'}
+                onclick={() => vjMode && source.status === 'live' && addLiveSourceToCurrentMode(source)}
+                ondblclick={() => !vjMode && source.status === 'live' && addLiveSourceToCurrentMode(source)}
+                ondragstart={(e) => onLiveSourceCardDragStart(source, e)}
+                ondragend={clearVJMediaTrayDragPayload}
+                title={liveSourceCardTitle(source)}
               >
                 <div class="source-preview">
                   {#if source.videoEl && source.status === 'live'}
@@ -3521,6 +3750,7 @@
                       muted
                       playsinline
                       autoplay
+                      draggable="false"
                     ></video>
                   {:else}
                     <div class="source-icon">
@@ -3558,13 +3788,13 @@
                 </div>
                 <div class="source-actions">
                   {#if source.status === 'live' && (source.videoEl || source.type === 'spout' || source.type === 'ndi')}
-                    <button class="source-apply-btn" onclick={() => applySourceToLayer(source)} title="Apply to selected layer">
+                    <button class="source-apply-btn" onclick={(e) => { e.stopPropagation(); addLiveSourceToCurrentMode(source); }} title={vjMode ? 'Add to VJ deck' : 'Apply to selected layer'}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="20 6 9 17 4 12"/>
                       </svg>
                     </button>
                   {/if}
-                  <button class="source-stop-btn" onclick={() => stopSource(source.id)} title="Stop source">
+                  <button class="source-stop-btn" onclick={(e) => { e.stopPropagation(); stopSource(source.id); }} title="Stop source">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                     </svg>
@@ -3580,16 +3810,18 @@
       <div class="plugins-panel">
         <div class="plugins-header">
           <span class="plugins-title">GPU Plugins</span>
-          <span class="plugins-hint">Click to apply to selected layer</span>
+          <span class="plugins-hint">{vjMode ? 'Click or drag to add to VJ deck' : 'Click to apply to selected layer'}</span>
         </div>
         <div class="plugins-grid">
           <!-- Integrated plugins (from registry) -->
           {#each availablePlugins as plugin (plugin.id)}
             <button
               class="plugin-card"
-              onclick={() => applyPluginToLayer(plugin)}
-              disabled={!$selectedLayer}
-              title={$selectedLayer ? `Apply ${plugin.name} to layer` : 'Select a layer first'}
+              onclick={() => addPluginToCurrentMode(plugin)}
+              disabled={!vjMode && !$selectedLayer}
+              draggable={vjMode ? 'true' : 'false'}
+              ondragstart={(e) => onPluginCardDragStart(plugin, e)}
+              title={vjMode ? `Add ${plugin.name} to VJ deck` : ($selectedLayer ? `Apply ${plugin.name} to layer` : 'Select a layer first')}
             >
               <div class="plugin-preview">
                 <PluginIcon pluginId={plugin.id} effectType={plugin.effectType} size={32} />
@@ -3604,7 +3836,7 @@
 
           <!-- Old standalone Bevy Particles3D removed — now integrated via registry above -->
         </div>
-        {#if !$selectedLayer}
+        {#if !vjMode && !$selectedLayer}
           <div class="plugins-hint-footer">
             Select a media layer, then click a plugin to apply it
           </div>
@@ -3741,11 +3973,14 @@
             class="media-item js-item"
             class:threejs={item.type === 'threejs'}
             class:p5js={item.type === 'p5js'}
-            onclick={() => applyJSAnimationToLayer(item)}
+            onclick={() => addTrayItemToCurrentMode(item)}
+            draggable="true"
+            ondragstart={(e) => onTrayItemDragStart(item, e)}
+            ondragend={clearVJMediaTrayDragPayload}
             role="button"
             tabindex="0"
-            onkeypress={(e) => e.key === 'Enter' && applyJSAnimationToLayer(item)}
-            title="Click to apply to selected layer"
+            onkeypress={(e) => e.key === 'Enter' && addTrayItemToCurrentMode(item)}
+            title={trayItemActionTitle()}
           >
             <div class="js-icon" class:threejs={item.type === 'threejs'} class:p5js={item.type === 'p5js'}>
               {#if item.type === 'threejs'}
@@ -3897,18 +4132,18 @@
               class:item-selected={selectedTrayItemIds.includes(item.id)}
               class:processing={loopingVideoId === item.id}
               class:drag-over-reorder={dragOverTrayItemId === item.id}
-              onclick={(e) => handleTrayItemClick(item.id, e, () => applyToLayer(item))}
+              onclick={(e) => handleTrayItemClick(item.id, e, () => addTrayItemToCurrentMode(item))}
               oncontextmenu={(e) => openTrayContextMenu(item.id, e)}
               draggable="true"
-              ondragstart={(e) => onTrayItemDragStart(item.id, e)}
+              ondragstart={(e) => onTrayItemDragStart(item, e)}
               ondragover={(e) => { e.preventDefault(); dragOverTrayItemId = item.id; }}
               ondragleave={() => { if (dragOverTrayItemId === item.id) dragOverTrayItemId = null; }}
               ondrop={(e) => { e.preventDefault(); e.stopPropagation(); reorderTrayItem(item.id); }}
-              ondragend={() => { draggedTrayItemId = null; dragOverTrayItemId = null; }}
+              ondragend={() => { draggedTrayItemId = null; dragOverTrayItemId = null; clearVJMediaTrayDragPayload(); }}
               role="button"
               tabindex="0"
-              onkeypress={(e) => e.key === 'Enter' && applyToLayer(item)}
-              title="Click to apply to selected layer"
+              onkeypress={(e) => e.key === 'Enter' && addTrayItemToCurrentMode(item)}
+              title={trayItemActionTitle()}
             >
               {#if 'shaderCode' in item && item.thumbnail}
                 <img src={item.thumbnail} alt={item.name} class="shader-thumb" />
@@ -4385,7 +4620,7 @@
   .toggle-label {
     writing-mode: vertical-rl;
     text-orientation: mixed;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 600;
   }
 
@@ -4426,7 +4661,7 @@
 
   .tray-header h3 {
     margin: 0;
-    font-size: 18px;
+    font-size: 20px;
     font-weight: 800;
     color: var(--ga-ink-0, #eef0f4);
     letter-spacing: 0.01em;
@@ -4452,9 +4687,9 @@
     background: none;
     border: none;
     padding: 9px 2px;
-    color: var(--ga-ink-2, #5e6571);
+    color: rgba(238, 240, 244, 0.74);
     font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 9px;
+    font-size: 11px;
     letter-spacing: 0.04em;
     text-transform: uppercase;
     cursor: pointer;
@@ -4466,7 +4701,7 @@
   }
 
   .tab svg {
-    opacity: 0.6;
+    opacity: 0.78;
     transition: opacity 0.15s;
     flex-shrink: 0;
   }
@@ -4499,7 +4734,7 @@
   }
 
   .tab-count {
-    font-size: 8px;
+    font-size: 10px;
     background: transparent;
     color: var(--ga-blue, #5b8def);
     padding: 0;
@@ -4518,7 +4753,7 @@
   }
 
   .tab-live {
-    font-size: 8px;
+    font-size: 10px;
     background: rgba(74, 222, 128, 0.2);
     color: #4ade80;
     padding: 1px 4px;
@@ -4548,7 +4783,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 10px;
+    font-size: 12px;
     color: var(--ga-ink-2, #5e6571);
     margin-bottom: 6px;
   }
@@ -4603,7 +4838,7 @@
   .params-header h4 {
     margin: 0;
     font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 12.5px;
+    font-size: 14.5px;
     font-weight: 600;
     color: var(--ga-violet, #9b87f5);
   }
@@ -4612,7 +4847,7 @@
     background: none;
     border: none;
     color: var(--ga-ink-2, #5e6571);
-    font-size: 16px;
+    font-size: 18px;
     cursor: pointer;
     padding: 0 4px;
   }
@@ -4625,7 +4860,7 @@
     background: none;
     border: none;
     color: var(--ga-blue, #5b8def);
-    font-size: 14px;
+    font-size: 16px;
     cursor: pointer;
     padding: 0 6px;
     line-height: 1;
@@ -4652,7 +4887,7 @@
   }
 
   .param-row label {
-    font-size: 11px;
+    font-size: 13px;
     color: var(--ga-ink-1, #9aa0ac);
     min-width: 80px;
     max-width: 80px;
@@ -4672,7 +4907,7 @@
   }
 
   .param-value {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--ga-ink-2, #5e6571);
     min-width: 36px;
     text-align: right;
@@ -4696,7 +4931,7 @@
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     padding: 6px 8px;
     border-radius: 4px;
-    font-size: 11px;
+    font-size: 13px;
     cursor: pointer;
   }
 
@@ -4720,7 +4955,7 @@
     margin-bottom: 3px;
   }
   .shader-param-name {
-    font-size: 11px;
+    font-size: 13px;
     color: var(--ga-ink-1, #9aa0ac);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -4728,7 +4963,7 @@
     flex: 1;
   }
   .mod-source-chip {
-    font-size: 10px;
+    font-size: 12px;
     padding: 2px 8px;
     background-color: var(--ga-slot, #050607);
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
@@ -4824,7 +5059,7 @@
   }
   .auto-val-grow { min-width: 0; flex: 1; text-align: left; color: #5ce1e6; opacity: 0.75; }
   .param-val {
-    font-size: 10px;
+    font-size: 12px;
     color: #666;
     min-width: 36px;
     text-align: right;
@@ -4836,7 +5071,7 @@
     border: 1px solid #333;
     border-radius: 3px;
     padding: 5px 8px;
-    font-size: 10px;
+    font-size: 12px;
     outline: none;
     cursor: pointer;
   }
@@ -4891,7 +5126,7 @@
   }
 
   .empty-state .hint {
-    font-size: 11px;
+    font-size: 13px;
     color: var(--ga-ink-3, #3a404a);
   }
 
@@ -4920,7 +5155,7 @@
     background: transparent;
     border: none;
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 12.5px;
+    font-size: 14.5px;
     cursor: pointer;
     transition: background 0.12s, color 0.12s;
     border-left: 2px solid transparent;
@@ -4967,7 +5202,7 @@
   }
 
   .category-count {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--ga-ink-2, #5e6571);
     font-variant-numeric: tabular-nums;
     min-width: 22px;
@@ -4995,7 +5230,7 @@
     color: #a0a4b8;
     border-radius: 999px;
     padding: 4px 10px;
-    font-size: 11px;
+    font-size: 13px;
     cursor: pointer;
   }
 
@@ -5029,7 +5264,7 @@
   }
 
   .folder-status {
-    font-size: 11px;
+    font-size: 13px;
     color: #9cb4c2;
     margin: 0 0 8px 2px;
   }
@@ -5101,7 +5336,7 @@
     color: #d7d9e0;
     padding: 8px 10px;
     border-radius: 6px;
-    font-size: 12px;
+    font-size: 14px;
     cursor: pointer;
   }
 
@@ -5113,7 +5348,7 @@
   .ctx-hint {
     display: block;
     padding: 6px 10px;
-    font-size: 10px;
+    font-size: 12px;
     color: #555;
     font-style: italic;
   }
@@ -5129,7 +5364,7 @@
     border: 1px solid var(--accent-primary, #a855f7);
     color: var(--text-primary, #e0e0e0);
     padding: 3px 6px;
-    font-size: 11px;
+    font-size: 13px;
     border-radius: 3px;
     outline: none;
   }
@@ -5138,7 +5373,7 @@
     color: #fff;
     border: none;
     padding: 2px 8px;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 600;
     border-radius: 3px;
     cursor: pointer;
@@ -5148,7 +5383,7 @@
     color: var(--text-muted, #666);
     border: 1px solid var(--border, #333);
     padding: 2px 6px;
-    font-size: 10px;
+    font-size: 12px;
     border-radius: 3px;
     cursor: pointer;
   }
@@ -5196,14 +5431,14 @@
   }
 
   .loading-text {
-    font-size: 9px;
+    font-size: 11px;
     color: var(--ga-ink-2, #5e6571);
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
 
   .shader-placeholder-text {
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 700;
     letter-spacing: 1px;
     color: var(--ga-violet, #9b87f5);
@@ -5227,7 +5462,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.2px;
     color: #111;
@@ -5273,7 +5508,7 @@
     background: rgba(5, 6, 7, 0.82);
     color: var(--ga-ink-1, #9aa0ac);
     font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 9px;
+    font-size: 11px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -5284,7 +5519,7 @@
     color: #5db4ff;
     font-weight: bold;
     margin-right: 3px;
-    font-size: 12px;
+    font-size: 14px;
     line-height: 0;
     vertical-align: middle;
   }
@@ -5294,7 +5529,7 @@
     color: #c08cff;
     font-weight: bold;
     margin-right: 3px;
-    font-size: 12px;
+    font-size: 14px;
     line-height: 0;
     vertical-align: middle;
   }
@@ -5308,7 +5543,7 @@
     color: #c08cff;
     border: 1px solid rgba(192, 140, 255, 0.4);
     border-radius: 4px;
-    font-size: 11px;
+    font-size: 13px;
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s;
   }
@@ -5349,7 +5584,7 @@
     border: 1px solid rgba(255, 68, 56, 0.35);
     border-radius: 50%;
     color: var(--ga-rec, #ff4438);
-    font-size: 12px;
+    font-size: 14px;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -5421,7 +5656,7 @@
   }
 
   :global(.loop-popover-title) {
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     color: #BB86FC;
     text-transform: uppercase;
@@ -5437,7 +5672,7 @@
   }
 
   :global(.loop-opt-row label) {
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-secondary, #aaa);
     white-space: nowrap;
   }
@@ -5446,7 +5681,7 @@
     background-color: var(--bg-tertiary, #161618);
     border: 1px solid #444;
     color: var(--text-primary, #ddd);
-    font-size: 11px;
+    font-size: 13px;
     padding: 3px 6px;
     border-radius: 4px;
     cursor: pointer;
@@ -5463,7 +5698,7 @@
     background: #BB86FC;
     border: none;
     color: #000;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     padding: 6px 12px;
     border-radius: 4px;
@@ -5493,7 +5728,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     color: var(--text-primary, #eee);
     margin-bottom: 10px;
@@ -5513,7 +5748,7 @@
   }
 
   :global(.timelapse-opt-row label) {
-    font-size: 10px;
+    font-size: 12px;
     color: #999;
     min-width: 45px;
   }
@@ -5525,7 +5760,7 @@
     border-radius: 4px;
     color: var(--text-primary, #eee);
     padding: 4px 6px;
-    font-size: 11px;
+    font-size: 13px;
     cursor: pointer;
   }
 
@@ -5535,7 +5770,7 @@
   }
 
   :global(.timelapse-interval-label) {
-    font-size: 9px;
+    font-size: 11px;
     color: #666;
     white-space: nowrap;
   }
@@ -5553,23 +5788,23 @@
   }
 
   :global(.timelapse-frame-current) {
-    font-size: 18px;
+    font-size: 20px;
     font-weight: 700;
     color: #BB86FC;
   }
 
   :global(.timelapse-frame-sep) {
-    font-size: 14px;
+    font-size: 16px;
     color: #555;
   }
 
   :global(.timelapse-frame-total) {
-    font-size: 14px;
+    font-size: 16px;
     color: var(--text-muted, #888);
   }
 
   :global(.timelapse-frame-label) {
-    font-size: 9px;
+    font-size: 11px;
     color: #555;
     margin-left: 4px;
   }
@@ -5605,7 +5840,7 @@
     padding: 6px 8px;
     border: 1px solid #444;
     border-radius: 5px;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -5649,7 +5884,7 @@
 
   :global(.timelapse-status) {
     text-align: center;
-    font-size: 9px;
+    font-size: 11px;
     padding: 4px;
     border-radius: 4px;
   }
@@ -5695,7 +5930,7 @@
   }
 
   .loop-progress-text {
-    font-size: 9px;
+    font-size: 11px;
     color: var(--text-primary, #ccc);
     text-align: center;
     max-width: 100px;
@@ -5730,7 +5965,7 @@
     border: none;
     color: var(--ga-ink-1, #9aa0ac);
     font-family: var(--ga-font-mono, 'IBM Plex Mono', monospace);
-    font-size: 10px;
+    font-size: 12px;
     letter-spacing: 0.18em;
     text-transform: uppercase;
     padding: 7px 8px;
@@ -5768,7 +6003,7 @@
     color: #160f2e;
     border: none;
     border-radius: var(--ga-r-soft, 7px);
-    font-size: 13px;
+    font-size: 15px;
     font-weight: 700;
     cursor: pointer;
     transition: background 0.15s;
@@ -5791,7 +6026,7 @@
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     border-radius: var(--ga-r-hard, 2px);
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 12.5px;
+    font-size: 14.5px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -5818,7 +6053,7 @@
     border: 1px solid var(--ga-violet-line, rgba(155, 135, 245, 0.36));
     border-radius: var(--ga-r-soft, 7px);
     color: var(--ga-violet, #9b87f5);
-    font-size: 13px;
+    font-size: 15px;
     font-weight: 700;
     cursor: pointer;
     display: flex;
@@ -5875,7 +6110,7 @@
     border: 1px solid #333;
     border-radius: 4px;
     color: var(--text-muted, #888);
-    font-size: 11px;
+    font-size: 13px;
     cursor: pointer;
     transition: all 0.15s;
   }
@@ -5937,7 +6172,7 @@
     right: 4px;
     background: linear-gradient(135deg, #BB86FC, #A78BFA);
     color: #000;
-    font-size: 8px;
+    font-size: 10px;
     font-weight: 700;
     padding: 2px 4px;
     border-radius: 3px;
@@ -5949,7 +6184,7 @@
     left: 4px;
     background: rgba(0, 0, 0, 0.7);
     color: var(--text-muted, #888);
-    font-size: 8px;
+    font-size: 10px;
     font-weight: 600;
     padding: 2px 4px;
     border-radius: 2px;
@@ -5996,7 +6231,7 @@
     align-items: center;
     padding: 4px 8px;
     background: var(--bg-primary, #0d0d10);
-    font-size: 9px;
+    font-size: 11px;
   }
 
   .library-type-badge {
@@ -6056,7 +6291,7 @@
 
   .library-name {
     padding: 6px 8px 2px;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 500;
     color: var(--text-primary, #eee);
     white-space: nowrap;
@@ -6066,7 +6301,7 @@
 
   .library-desc {
     padding: 0 8px 6px;
-    font-size: 9px;
+    font-size: 11px;
     color: var(--text-muted, #888);
     white-space: nowrap;
     overflow: hidden;
@@ -6089,7 +6324,7 @@
     border: none;
     border-radius: 4px;
     color: #000;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -6119,7 +6354,7 @@
   }
 
   .library-section-label {
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     color: var(--text-muted, #888);
     padding: 8px 0 4px;
@@ -6160,7 +6395,7 @@
   }
 
   .plugins-title {
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     color: var(--text-secondary, #aaa);
     text-transform: uppercase;
@@ -6168,7 +6403,7 @@
   }
 
   .plugins-hint {
-    font-size: 10px;
+    font-size: 12px;
     color: #666;
   }
 
@@ -6248,7 +6483,7 @@
   }
 
   .plugin-icon-emoji {
-    font-size: 18px;
+    font-size: 20px;
     opacity: 0.85;
     color: var(--accent-secondary, #FF8585);
   }
@@ -6267,20 +6502,20 @@
   }
 
   .plugin-name {
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 600;
     color: var(--text-primary, #e8e8e8);
     letter-spacing: 0.2px;
   }
 
   .plugin-desc {
-    font-size: 9px;
+    font-size: 11px;
     color: var(--text-muted, #666);
     line-height: 1.35;
   }
 
   .plugin-tier {
-    font-size: 8px;
+    font-size: 10px;
     color: var(--accent-primary, #FF6B6B);
     letter-spacing: 0.6px;
     margin-top: 1px;
@@ -6288,7 +6523,7 @@
   }
 
   .plugins-hint-footer {
-    font-size: 10px;
+    font-size: 12px;
     color: #555;
     text-align: center;
     padding: 8px;
@@ -6333,7 +6568,7 @@
     border: 1px solid #333;
     border-radius: 6px;
     color: var(--text-secondary, #aaa);
-    font-size: 10px;
+    font-size: 12px;
     cursor: pointer;
     transition: all 0.15s;
   }
@@ -6391,7 +6626,7 @@
     border: 1px solid #333;
     border-radius: 4px;
     color: var(--text-primary, #ccc);
-    font-size: 11px;
+    font-size: 13px;
     cursor: pointer;
     transition: all 0.15s;
     text-align: left;
@@ -6417,12 +6652,12 @@
 
   .spout-no-senders p {
     margin: 0 0 4px 0;
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .spout-no-senders .hint {
     color: #666;
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .spout-refresh-btn {
@@ -6435,7 +6670,7 @@
     border: 1px solid #444;
     border-radius: 4px;
     color: var(--text-secondary, #aaa);
-    font-size: 11px;
+    font-size: 13px;
     cursor: pointer;
     transition: all 0.15s ease;
   }
@@ -6459,7 +6694,7 @@
     border-radius: 4px;
     color: var(--text-primary, #ccc);
     padding: 6px 8px;
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .spout-name-input:focus {
@@ -6473,7 +6708,7 @@
     border: 1px solid #a78bfa;
     border-radius: 4px;
     color: #a78bfa;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -6496,7 +6731,7 @@
   }
 
   .picker-label {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -6508,7 +6743,7 @@
     border-radius: 4px;
     color: var(--text-primary, #ccc);
     padding: 6px 8px;
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .sources-list {
@@ -6567,7 +6802,7 @@
   }
 
   .source-name {
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-primary, #ddd);
     white-space: nowrap;
     overflow: hidden;
@@ -6578,7 +6813,7 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-muted, #888);
   }
 
@@ -6674,7 +6909,7 @@
   }
 
   .cpm-title {
-    font-size: 14px;
+    font-size: 16px;
     font-weight: 600;
     letter-spacing: 0.2px;
   }
@@ -6686,7 +6921,7 @@
     border-radius: 4px;
     width: 28px;
     height: 28px;
-    font-size: 18px;
+    font-size: 20px;
     line-height: 1;
     cursor: pointer;
   }
@@ -6706,12 +6941,12 @@
     padding: 40px;
     text-align: center;
     color: var(--text-muted, #888);
-    font-size: 13px;
+    font-size: 15px;
   }
 
   .cpm-section-title {
     padding: 16px 18px 6px;
-    font-size: 11px;
+    font-size: 13px;
     text-transform: uppercase;
     letter-spacing: 1.1px;
     color: var(--text-muted, #888);
@@ -6762,7 +6997,7 @@
     align-items: center;
     justify-content: center;
     color: #555;
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .cpm-name-row {
@@ -6780,7 +7015,7 @@
   }
 
   .cpm-name {
-    font-size: 12px;
+    font-size: 14px;
     color: #d8d8dc;
     white-space: nowrap;
     overflow: hidden;

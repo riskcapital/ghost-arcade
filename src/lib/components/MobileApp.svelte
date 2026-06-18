@@ -2942,7 +2942,7 @@
                                 const val = parseFloat((e.target as HTMLSelectElement).value);
                                 updateVJLayerEffectParams(effectsLayerIndex!, effect.id, { [paramDef.param]: val });
                               }}
-                              style="flex:1; background:#222; color:#fff; border:1px solid #444; border-radius:3px; padding:4px; font-size:12px;">
+                              style="flex:1; background:#222; color:#fff; border:1px solid #444; border-radius:3px; padding:4px; font-size:14px;">
                               {#each paramDef.options as opt}
                                 <option value={opt.value}>{opt.label}</option>
                               {/each}
@@ -3213,7 +3213,7 @@
     background: transparent;
     border: none;
     color: var(--text-muted, #888);
-    font-size: 14px;
+    font-size: 16px;
     padding: 8px 4px;
     cursor: pointer;
   }
@@ -3229,7 +3229,7 @@
   .connect-subtitle {
     color: var(--text-muted, #888);
     margin-bottom: 16px;
-    font-size: 14px;
+    font-size: 16px;
   }
 
   .connect-screen p {
@@ -3246,7 +3246,7 @@
 
   .connecting-indicator p {
     color: var(--accent-primary, #BB86FC);
-    font-size: 14px;
+    font-size: 16px;
     margin: 0;
   }
 
@@ -3274,7 +3274,7 @@
 
   .connect-form input {
     padding: 14px;
-    font-size: 16px;
+    font-size: 18px;
     background: #333;
     border: 1px solid #444;
     border-radius: 8px;
@@ -3285,7 +3285,7 @@
 
   .connect-form button {
     padding: 14px;
-    font-size: 16px;
+    font-size: 18px;
     background: #BB86FC;
     color: #000;
     border: none;
@@ -3310,7 +3310,7 @@
     margin-top: 32px;
     text-align: center;
     color: #666;
-    font-size: 14px;
+    font-size: 16px;
   }
 
   /* ── PWA Install Banner ── */
@@ -3353,12 +3353,12 @@
   }
 
   .pwa-install-text strong {
-    font-size: 13px;
+    font-size: 15px;
     color: var(--text-primary, #eee);
   }
 
   .pwa-install-text span {
-    font-size: 11px;
+    font-size: 13px;
     color: rgba(255, 255, 255, 0.4);
   }
 
@@ -3368,7 +3368,7 @@
     color: #000;
     border: none;
     border-radius: 8px;
-    font-size: 14px;
+    font-size: 16px;
     font-weight: 700;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
@@ -3376,7 +3376,7 @@
   .pwa-install-btn:active { opacity: 0.8; }
 
   .pwa-install-ios {
-    font-size: 12px;
+    font-size: 14px;
     color: rgba(255, 255, 255, 0.5);
     text-align: center;
     display: flex;
@@ -3400,7 +3400,7 @@
     background: none;
     border: none;
     color: rgba(255, 255, 255, 0.3);
-    font-size: 18px;
+    font-size: 20px;
     cursor: pointer;
     padding: 4px;
     line-height: 1;
@@ -3413,7 +3413,7 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 8px;
     color: rgba(255, 255, 255, 0.5);
-    font-size: 12px;
+    font-size: 14px;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
@@ -3452,7 +3452,7 @@
   }
 
   .status {
-    font-size: 12px;
+    font-size: 14px;
     padding: 4px 8px;
     border-radius: 4px;
     background: #333;
@@ -3479,7 +3479,7 @@
     padding: 6px 12px;
     border: none;
     border-radius: 6px;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -3513,7 +3513,7 @@
     border: none;
     padding: 8px 12px;
     border-radius: 6px;
-    font-size: 12px;
+    font-size: 14px;
     cursor: pointer;
   }
 
@@ -3621,7 +3621,7 @@
     transform: translateX(-50%);
     background: rgba(0, 0, 0, 0.8);
     color: #fff;
-    font-size: 11px;
+    font-size: 13px;
     padding: 4px 8px;
     border-radius: 4px;
     white-space: nowrap;
@@ -3644,7 +3644,7 @@
   }
 
   .layer-selector h3 {
-    font-size: 12px;
+    font-size: 14px;
     color: var(--text-muted, #888);
     margin-bottom: 8px;
   }
@@ -3661,7 +3661,7 @@
     border: none;
     border-radius: 6px;
     color: var(--text-primary, #eee);
-    font-size: 14px;
+    font-size: 16px;
     cursor: pointer;
   }
 
@@ -3677,7 +3677,7 @@
 
   .no-layers {
     color: #666;
-    font-size: 14px;
+    font-size: 16px;
   }
 
   /* Quick Controls — single 45/45/10 row.
@@ -3722,7 +3722,7 @@
   .quick-pct {
     width: 36px;
     text-align: right;
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-muted, #888);
     flex-shrink: 0;
   }
@@ -3735,7 +3735,7 @@
     color: var(--text-primary, #eee);
     border: 1px solid #444;
     border-radius: 6px;
-    font-size: 13px;
+    font-size: 15px;
   }
 
   .visibility-btn.quick-vis {
@@ -3784,7 +3784,7 @@
     border: none;
     border-radius: 6px;
     color: var(--text-muted, #888);
-    font-size: 13px;
+    font-size: 15px;
     cursor: pointer;
     transition: all 0.15s;
   }
@@ -3807,7 +3807,7 @@
   }
 
   .mesh-preset-label {
-    font-size: 13px;
+    font-size: 15px;
     color: var(--text-muted, #888);
     font-weight: 600;
   }
@@ -3818,7 +3818,7 @@
     border: 1px solid #555;
     border-radius: 6px;
     padding: 6px 12px;
-    font-size: 15px;
+    font-size: 17px;
     font-weight: 600;
     cursor: pointer;
     -webkit-appearance: none;
@@ -3848,7 +3848,7 @@
   }
 
   .gesture-zoom-label {
-    font-size: 12px;
+    font-size: 14px;
     color: var(--accent-primary, #BB86FC);
     font-family: monospace;
     font-weight: 600;
@@ -3860,7 +3860,7 @@
     border: none;
     border-radius: 4px;
     color: #fff;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 600;
     cursor: pointer;
   }
@@ -3882,7 +3882,7 @@
   }
 
   .viewport-gesture-hint span {
-    font-size: 10px;
+    font-size: 12px;
     color: rgba(255, 255, 255, 0.5);
     white-space: nowrap;
   }
@@ -3937,7 +3937,7 @@
   }
 
   .shader-thumb-name {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-secondary, #aaa);
     text-align: center;
     line-height: 1.2;
@@ -4014,7 +4014,7 @@
 
   .media-library-header h3 {
     margin: 0;
-    font-size: 16px;
+    font-size: 18px;
     color: var(--accent-primary, #BB86FC);
   }
 
@@ -4037,7 +4037,7 @@
     color: #666;
     text-align: center;
     margin-top: 40px;
-    font-size: 14px;
+    font-size: 16px;
   }
 
   .media-section {
@@ -4045,7 +4045,7 @@
   }
 
   .media-section h4 {
-    font-size: 12px;
+    font-size: 14px;
     color: var(--text-muted, #888);
     margin: 0 0 12px 0;
     text-transform: uppercase;
@@ -4093,7 +4093,7 @@
   }
 
   .media-item span {
-    font-size: 13px;
+    font-size: 15px;
   }
 
   .media-list {
@@ -4109,7 +4109,7 @@
 
   .empty-hint {
     color: #666;
-    font-size: 12px;
+    font-size: 14px;
     text-align: center;
     padding: 12px;
   }
@@ -4167,14 +4167,14 @@
 
   .media-name {
     flex: 1;
-    font-size: 14px;
+    font-size: 16px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
   .media-type-label {
-    font-size: 11px;
+    font-size: 13px;
     color: #666;
     text-transform: uppercase;
     flex-shrink: 0;
@@ -4182,7 +4182,7 @@
 
   .layer-target {
     color: var(--accent-primary, #BB86FC);
-    font-size: 14px;
+    font-size: 16px;
     margin: 0;
     padding: 10px;
     background: #333;
@@ -4206,7 +4206,7 @@
     border: none;
     border-radius: 6px;
     color: var(--text-muted, #888);
-    font-size: 11px;
+    font-size: 13px;
     cursor: pointer;
     transition: all 0.15s;
   }
@@ -4231,7 +4231,7 @@
     border: 2px solid #555;
     border-radius: 8px;
     color: var(--text-muted, #888);
-    font-size: 14px;
+    font-size: 16px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -4255,7 +4255,7 @@
     border: none;
     border-radius: 8px;
     color: #ff8888;
-    font-size: 12px;
+    font-size: 14px;
     cursor: pointer;
   }
 
@@ -4265,7 +4265,7 @@
     border: 2px solid #555;
     border-radius: 8px;
     color: var(--text-muted, #888);
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -4290,7 +4290,7 @@
     padding: 10px 12px;
     background: var(--bg-secondary, #111114);
     border-bottom: 1px solid #333;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 600;
     color: var(--accent-primary, #BB86FC);
     text-transform: uppercase;
@@ -4326,7 +4326,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     color: var(--text-muted, #888);
   }
@@ -4338,7 +4338,7 @@
 
   .mixer-layer-clip {
     flex: 1;
-    font-size: 12px;
+    font-size: 14px;
     color: var(--text-secondary, #aaa);
     white-space: nowrap;
     overflow: hidden;
@@ -4352,7 +4352,7 @@
     border: none;
     border-radius: 4px;
     color: #ff8888;
-    font-size: 16px;
+    font-size: 18px;
     font-weight: bold;
     cursor: pointer;
     display: flex;
@@ -4374,7 +4374,7 @@
 
   .mixer-label {
     width: 50px;
-    font-size: 11px;
+    font-size: 13px;
     color: #666;
     flex-shrink: 0;
   }
@@ -4423,7 +4423,7 @@
   .mixer-value {
     width: 40px;
     text-align: right;
-    font-size: 11px;
+    font-size: 13px;
     color: var(--accent-primary, #BB86FC);
     font-weight: 600;
     flex-shrink: 0;
@@ -4442,7 +4442,7 @@
     border: 1px solid #444;
     border-radius: 6px;
     color: var(--text-primary, #eee);
-    font-size: 12px;
+    font-size: 14px;
     cursor: pointer;
   }
 
@@ -4465,7 +4465,7 @@
     border: none;
     border-radius: 6px;
     color: var(--text-muted, #888);
-    font-size: 12px;
+    font-size: 14px;
     cursor: pointer;
   }
 
@@ -4497,7 +4497,7 @@
   }
 
   .layer-num {
-    font-size: 10px;
+    font-size: 12px;
     color: #666;
     width: 16px;
     text-align: center;
@@ -4511,7 +4511,7 @@
     border: none;
     border-radius: 4px;
     color: #ff8888;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: bold;
     cursor: pointer;
   }
@@ -4560,13 +4560,13 @@
   }
 
   .clip-type {
-    font-size: 12px;
+    font-size: 14px;
     color: var(--text-muted, #888);
     font-weight: bold;
   }
 
   .clip-name {
-    font-size: 8px;
+    font-size: 10px;
     color: var(--text-secondary, #aaa);
     position: absolute;
     bottom: 2px;
@@ -4599,7 +4599,7 @@
     border: none;
     border-radius: 4px;
     color: var(--text-muted, #888);
-    font-size: 10px;
+    font-size: 12px;
     cursor: pointer;
   }
 
@@ -4652,7 +4652,7 @@
   }
 
   .preset-name {
-    font-size: 12px;
+    font-size: 14px;
     color: var(--text-primary, #eee);
     text-align: center;
     white-space: nowrap;
@@ -4668,7 +4668,7 @@
     border: 1px solid #555;
     border-radius: 4px;
     color: var(--text-muted, #888);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     display: flex;
@@ -4691,7 +4691,7 @@
   .fx-count {
     background: #8b5cf6;
     color: #fff;
-    font-size: 9px;
+    font-size: 11px;
     padding: 1px 4px;
     border-radius: 8px;
     min-width: 14px;
@@ -4734,7 +4734,7 @@
 
   .effects-header h3 {
     margin: 0;
-    font-size: 16px;
+    font-size: 18px;
     color: #a78bfa;
   }
 
@@ -4744,7 +4744,7 @@
     padding: 8px 16px;
     border-radius: 6px;
     color: #fff;
-    font-size: 13px;
+    font-size: 15px;
     font-weight: 600;
     cursor: pointer;
   }
@@ -4789,7 +4789,7 @@
     background: none;
     border: none;
     color: #666;
-    font-size: 16px;
+    font-size: 18px;
     cursor: pointer;
     padding: 0;
     display: flex;
@@ -4804,14 +4804,14 @@
 
   .effect-name {
     flex: 1;
-    font-size: 14px;
+    font-size: 16px;
     color: var(--text-primary, #eee);
     text-transform: capitalize;
   }
 
   .effect-expand {
     color: #666;
-    font-size: 10px;
+    font-size: 12px;
     padding: 0 8px;
   }
 
@@ -4822,7 +4822,7 @@
     border: none;
     border-radius: 4px;
     color: #ff8888;
-    font-size: 18px;
+    font-size: 20px;
     font-weight: bold;
     cursor: pointer;
     display: flex;
@@ -4847,7 +4847,7 @@
 
   .param-name {
     width: 70px;
-    font-size: 12px;
+    font-size: 14px;
     color: var(--text-muted, #888);
     flex-shrink: 0;
   }
@@ -4896,14 +4896,14 @@
   .param-value {
     width: 45px;
     text-align: right;
-    font-size: 11px;
+    font-size: 13px;
     color: #a78bfa;
     font-weight: 600;
     flex-shrink: 0;
   }
 
   .no-params {
-    font-size: 12px;
+    font-size: 14px;
     color: #666;
     text-align: center;
     padding: 8px 0;
@@ -4914,7 +4914,7 @@
     color: #666;
     text-align: center;
     padding: 24px;
-    font-size: 14px;
+    font-size: 16px;
   }
 
   /* Add Effect Section */
@@ -4924,7 +4924,7 @@
   }
 
   .add-effect-section h4 {
-    font-size: 12px;
+    font-size: 14px;
     color: var(--text-muted, #888);
     margin: 0 0 12px 0;
     text-transform: uppercase;
@@ -4944,7 +4944,7 @@
   }
 
   .category-name {
-    font-size: 11px;
+    font-size: 13px;
     color: #666;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -4965,7 +4965,7 @@
     border: 1px solid #444;
     border-radius: 6px;
     color: var(--text-primary, #eee);
-    font-size: 12px;
+    font-size: 14px;
     cursor: pointer;
     transition: all 0.15s;
   }
@@ -4977,11 +4977,11 @@
   }
 
   .effect-icon {
-    font-size: 14px;
+    font-size: 16px;
   }
 
   .effect-btn-name {
-    font-size: 11px;
+    font-size: 13px;
   }
 
   /* ─── Paint Mode (iPad Apple Pencil) ─── */
@@ -5019,7 +5019,7 @@
     color: var(--text-primary, #eee);
     padding: 8px 10px;
     border-radius: 8px;
-    font-size: 13px;
+    font-size: 15px;
   }
   .paint-brush-chip {
     background: rgba(22, 22, 24, 0.75);
@@ -5035,7 +5035,7 @@
     border: 1px solid rgba(255,255,255,0.1);
     border-radius: 20px;
     color: var(--text-primary, #ddd);
-    font-size: 12px;
+    font-size: 14px;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
@@ -5048,7 +5048,7 @@
     border: 1px solid rgba(255,255,255,0.3);
   }
   .paint-brush-name { text-transform: capitalize; }
-  .paint-brush-size { color: rgba(255,255,255,0.5); font-size: 10px; }
+  .paint-brush-size { color: rgba(255,255,255,0.5); font-size: 12px; }
 
   /* Full-screen drawing surface — fills the whole paint-mode container,
      letterboxes the drawable to match project aspect ratio. */
@@ -5119,7 +5119,7 @@
     top: 12px;
     left: 50%;
     transform: translateX(-50%);
-    font-size: 11px;
+    font-size: 13px;
     color: rgba(255,255,255,0.4);
     pointer-events: none;
     background: rgba(0,0,0,0.4);
@@ -5135,9 +5135,9 @@
     transform: translate(-50%, -50%);
     text-align: center;
     color: #555;
-    font-size: 14px;
+    font-size: 16px;
   }
-  .paint-empty .hint { font-size: 11px; color: #444; margin-top: 6px; }
+  .paint-empty .hint { font-size: 13px; color: #444; margin-top: 6px; }
 
   /* ─── Slide-up brush settings sheet ─── */
   .paint-sheet-backdrop {
@@ -5169,13 +5169,13 @@
   }
   .paint-sheet-title {
     color: var(--text-primary, #eee);
-    font-size: 16px;
+    font-size: 18px;
     font-weight: 600;
     margin-bottom: 12px;
   }
   .paint-sheet-section-title {
     color: rgba(255,255,255,0.5);
-    font-size: 10px;
+    font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     margin-top: 12px;
@@ -5201,7 +5201,7 @@
     background: rgba(255,255,255,0.04);
     color: var(--text-secondary, #aaa);
     border-radius: 12px;
-    font-size: 10px;
+    font-size: 12px;
     cursor: pointer;
     text-transform: capitalize;
     -webkit-tap-highlight-color: transparent;
@@ -5232,7 +5232,7 @@
     align-items: center;
     gap: 8px;
   }
-  .slider-label { width: 48px; font-size: 11px; color: var(--text-muted, #888); flex-shrink: 0; }
+  .slider-label { width: 48px; font-size: 13px; color: var(--text-muted, #888); flex-shrink: 0; }
   .paint-slider-row input[type='range'] { flex: 1; }
-  .slider-val { width: 36px; font-size: 10px; color: #666; text-align: right; font-family: monospace; }
+  .slider-val { width: 36px; font-size: 12px; color: #666; text-align: right; font-family: monospace; }
 </style>

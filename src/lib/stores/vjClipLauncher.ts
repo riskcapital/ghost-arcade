@@ -116,6 +116,8 @@ export interface VJClip {
   /** Per-clip opacity 0..1, multiplied with the layer's opacity at
    *  composite time. Default 1. */
   opacity?: number;
+  /** Mirror source horizontally. Mostly useful for webcam selfie view. */
+  mirrorX?: boolean;
 
   // For three.js - iframe element for rendering
   iframeElement?: HTMLIFrameElement;
@@ -559,10 +561,12 @@ function shouldSkipVideoCors(src: string | undefined): boolean {
   return !src || /^(blob:|file:|data:)/i.test(src);
 }
 
-function mediaTypeForClip(clip: VJClip): 'shader' | 'video' | 'image' | 'threejs' | 'color' | 'spout' | 'effect' {
+function mediaTypeForClip(clip: VJClip): 'shader' | 'video' | 'image' | 'threejs' | 'p5js' | 'color' | 'spout' | 'effect' {
   if (clip.type === 'shader') return 'shader';
   if (clip.type === 'video') return 'video';
   if (clip.type === 'threejs' || clip.type === 'synthvision') return 'threejs';
+  if (clip.type === 'jsanimation') return clip.jsAnimation?.animationType === 'p5js' ? 'p5js' : 'threejs';
+  if (clip.type === 'p5js') return 'p5js';
   if (clip.type === 'spout') return 'spout';
   if (clip.type === 'effect') return 'effect';
   return 'image';
@@ -1050,6 +1054,8 @@ function createVJClipLauncherStore() {
     // Trigger an entire column on the given deck (all layers at once)
     triggerColumn(columnIndex: number, deck: VJDeck = 'A') {
       let didTrigger = false;
+      const incomingVideos: VJClip[] = [];
+      const outgoingVideos: VJClip[] = [];
       update(state => {
         const targetGrid = pickGrid(state, deck);
         const targetLayerStates = pickLayerStates(state, deck);
@@ -1058,9 +1064,19 @@ function createVJClipLauncherStore() {
           if (clip) {
             if (clip.type === 'video') {
               ensureClipVideoElement(clip);
+              incomingVideos.push(clip);
+            }
+            if (layerState.activeClip && layerState.activeClip.id !== clip.id) {
+              outgoingVideos.push(layerState.activeClip);
             }
             didTrigger = true;
             return { ...layerState, activeColumn: columnIndex, activeClip: clip };
+          }
+          if (layerState.activeClip) {
+            outgoingVideos.push(layerState.activeClip);
+          }
+          if (layerState.activeColumn !== null || layerState.activeClip !== null) {
+            return { ...layerState, activeColumn: null, activeClip: null };
           }
           return layerState;
         });
@@ -1068,6 +1084,24 @@ function createVJClipLauncherStore() {
         const next = withDeck(state, deck, newLayerStates);
         return { ...next, stoppedAll: false };
       });
+      if (didTrigger || outgoingVideos.length > 0) {
+        const incomingEls = new Set<HTMLVideoElement>();
+        for (const clip of incomingVideos) {
+          const videoEl = clip.videoElement || videoElementCache.get(clip.id);
+          if (!videoEl) continue;
+          incomingEls.add(videoEl);
+          try { videoEl.currentTime = 0; } catch { /* */ }
+          if (videoEl.paused) {
+            videoEl.play().catch(() => { /* AbortError on rapid column fire is fine */ });
+          }
+        }
+        for (const clip of outgoingVideos) {
+          if (clip.type !== 'video') continue;
+          const videoEl = clip.videoElement || videoElementCache.get(clip.id);
+          if (!videoEl || incomingEls.has(videoEl)) continue;
+          try { videoEl.pause(); } catch { /* */ }
+        }
+      }
       if (didTrigger) {
         keyframeTimeline.seek(0);
         keyframeTimeline.play();
@@ -1369,7 +1403,7 @@ function createVJClipLauncherStore() {
     // splat/model3d shape so the VJ video controls panel can write through to
     // the store without touching the live videoElement (the panel does that
     // separately on the DOM node).
-    updateActiveClipVideoProps(layerIndex: number, updates: Partial<Pick<VJClip, 'playbackMode' | 'playbackRate' | 'trimStart' | 'trimEnd' | 'isPlaying' | 'zoom' | 'fit' | 'anchorX' | 'anchorY' | 'rotation' | 'opacity'>>, deck: VJDeck = 'A') {
+    updateActiveClipVideoProps(layerIndex: number, updates: Partial<Pick<VJClip, 'playbackMode' | 'playbackRate' | 'trimStart' | 'trimEnd' | 'isPlaying' | 'zoom' | 'fit' | 'anchorX' | 'anchorY' | 'rotation' | 'opacity' | 'mirrorX'>>, deck: VJDeck = 'A') {
       update(state => {
         const targetLayerStates = pickLayerStates(state, deck);
         const targetGrid = pickGrid(state, deck);
@@ -2257,8 +2291,11 @@ export const vjOutputLayers = derived(
     for (const activeLayer of $activeVJLayers) {
       const vjLayerIndex = activeLayer.layerIndex;
       const clip = activeLayer.clip;
+      const sequenceOverrides = activeLayer.bank === 'B'
+        ? ($vjLayerSequencer.bankBOpacityOverrides ?? {})
+        : $vjLayerSequencer.opacityOverrides;
       const sequenceOpacity = $vjLayerSequencer.isPlaying
-        ? ($vjLayerSequencer.opacityOverrides[vjLayerIndex] ?? 1)
+        ? (sequenceOverrides[vjLayerIndex] ?? 1)
         : 1;
       const vjLayerOpacity = activeLayer.opacity * sequenceOpacity * $vjClipLauncher.masterOpacity;
       if (clip.type === 'video') {
@@ -2285,6 +2322,7 @@ export const vjOutputLayers = derived(
           shaderCode: clip.shaderCode,
           shaderInputs: getShaderInputs(clip.shaderCode),
           shaderValues: clip.shaderValues || {},
+          jsAnimation: clip.jsAnimation,
           videoElement: clip.videoElement,
           iframeElement: clip.iframeElement,
           // Forward video playback props so Canvas.svelte's updateTexturesSync
@@ -2340,6 +2378,7 @@ export const vjOutputLayers = derived(
         source.type = mediaType;
         source.name = clip.name;
         source.src = clip.src;
+        source.jsAnimation = clip.jsAnimation;
         if (srcChanged) {
           source.texture?.dispose?.();
           source.texture = undefined;
@@ -2427,6 +2466,7 @@ export const vjOutputLayers = derived(
       const clipZoom = clip.type === 'video' ? (clip.zoom ?? 1) : 1;
       const clipRotation = clip.type === 'video' ? (clip.rotation ?? 0) : 0;
       const clipOpacity = clip.type === 'video' ? (clip.opacity ?? 1) : 1;
+      const clipMirrorX = clip.type === 'video' ? !!clip.mirrorX : false;
       const ax = clip.type === 'video' ? (clip.anchorX ?? 0.5) : 0.5;
       const ay = clip.type === 'video' ? (clip.anchorY ?? 0.5) : 0.5;
       // Map VJ-friendly fit names to engine ContentFitMode.
@@ -2497,7 +2537,7 @@ export const vjOutputLayers = derived(
         position: { x: 0, y: 0 },
         scale: { x: 1, y: 1 },
         rotation: 0,
-        flipH: false,
+        flipH: clipMirrorX,
         flipV: false,
         contentFit: clipContentFit,
         // Warping - corners computed from per-clip zoom/anchor/rotation

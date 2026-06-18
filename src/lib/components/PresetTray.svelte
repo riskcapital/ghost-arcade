@@ -581,12 +581,12 @@
   }
 
   .toggle-icon {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-muted, #888);
   }
 
   .toggle-label {
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 600;
   }
 
@@ -595,7 +595,7 @@
     color: #000;
     padding: 2px 8px;
     border-radius: 10px;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
   }
 
@@ -655,7 +655,7 @@
     align-items: center;
     gap: 4px;
     cursor: pointer;
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-muted, #888);
   }
 
@@ -670,14 +670,14 @@
   }
 
   .transition-label {
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .transition-duration {
     background: var(--bg-tertiary, #161618);
     border: 1px solid #444;
     color: var(--text-primary, #ddd);
-    font-size: 10px;
+    font-size: 12px;
     padding: 2px 4px;
     border-radius: 3px;
     cursor: pointer;
@@ -689,7 +689,7 @@
   }
 
   .tray-title {
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     color: var(--text-muted, #888);
     letter-spacing: 0.5px;
@@ -715,7 +715,7 @@
     height: 26px;
     border-radius: 4px;
     cursor: pointer;
-    font-size: 11px;
+    font-size: 13px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -729,13 +729,13 @@
     background: var(--bg-tertiary, #161618);
     border: 1px solid #444;
     color: var(--text-primary, #ddd);
-    font-size: 10px;
+    font-size: 12px;
     padding: 3px 4px;
     border-radius: 3px;
     cursor: pointer;
   }
   .ap-bpm {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     font-family: monospace;
   }
@@ -755,7 +755,7 @@
     background: var(--bg-tertiary, #161618);
     border: 1px solid #333;
     color: var(--text-muted, #888);
-    font-size: 9px;
+    font-size: 11px;
     padding: 2px;
     border-radius: 3px;
     cursor: pointer;
@@ -768,7 +768,7 @@
     color: var(--text-primary, #eee);
     padding: 5px 10px;
     border-radius: 4px;
-    font-size: 11px;
+    font-size: 13px;
     width: 140px;
   }
 
@@ -783,7 +783,7 @@
     color: #000;
     padding: 5px 12px;
     border-radius: 4px;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
     white-space: nowrap;
@@ -804,7 +804,7 @@
     color: #BB86FC;
     padding: 4px 10px;
     border-radius: 4px;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
     white-space: nowrap;
@@ -842,7 +842,7 @@
     color: var(--text-primary, #ddd);
     padding: 6px 10px;
     text-align: left;
-    font-size: 12px;
+    font-size: 14px;
     border-radius: 4px;
     cursor: pointer;
     white-space: nowrap;
@@ -871,7 +871,7 @@
     color: var(--ga-rec, #ff4444);
     padding: 6px 14px;
     border-radius: var(--ga-r-soft, 4px);
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 700;
     cursor: pointer;
     display: inline-flex;
@@ -898,7 +898,7 @@
     color: #fff;
     padding: 5px 12px;
     border-radius: 4px;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
   }
@@ -927,7 +927,7 @@
   }
 
   .rec-time {
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     color: #ff4444;
     font-family: monospace;
@@ -955,11 +955,11 @@
 
   .empty-state p {
     margin: 0;
-    font-size: 12px;
+    font-size: 14px;
   }
 
   .empty-state .hint {
-    font-size: 10px;
+    font-size: 12px;
     color: #444;
     margin-top: 4px;
     max-width: 300px;
@@ -1008,7 +1008,7 @@
     justify-content: center;
     background: linear-gradient(135deg, #161618, #0d0d10);
     color: #666;
-    font-size: 18px;
+    font-size: 20px;
     font-weight: 700;
   }
 
@@ -1020,7 +1020,7 @@
   }
 
   .preset-name {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-primary, #ddd);
     white-space: nowrap;
     overflow: hidden;
@@ -1028,7 +1028,7 @@
   }
 
   .preset-layers {
-    font-size: 9px;
+    font-size: 11px;
     color: #666;
   }
 
@@ -1039,7 +1039,7 @@
     color: var(--text-primary, #eee);
     padding: 2px 4px;
     border-radius: 2px;
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .delete-btn {
@@ -1052,7 +1052,7 @@
     border: none;
     border-radius: 50%;
     color: #fff;
-    font-size: 12px;
+    font-size: 14px;
     cursor: pointer;
     opacity: 0;
     transition: opacity 0.1s;

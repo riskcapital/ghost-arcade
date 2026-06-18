@@ -351,7 +351,7 @@
     background: linear-gradient(135deg, #0d0d10, #111114);
     border: 1px solid #444;
     color: var(--text-primary, #ddd);
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 600;
     padding: 8px 16px;
     border-radius: 20px;
@@ -397,7 +397,7 @@
     background: rgba(255, 107, 107, 0.15);
     border: 1px solid rgba(255, 107, 107, 0.35);
     color: #FF8585;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 600;
     padding: 5px 10px;
     border-radius: 4px;
@@ -444,7 +444,7 @@
     padding: 6px 12px;
     background: #121217;
     border-top: 1px solid rgba(255, 255, 255, 0.06);
-    font-size: 11px;
+    font-size: 13px;
     color: #bbb;
     flex: 0 0 auto;
   }
@@ -458,7 +458,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    font-size: 10px;
+    font-size: 12px;
   }
   .kfi-field {
     display: flex;
@@ -472,7 +472,7 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 3px;
     color: var(--text-primary, #e8e8e8);
-    font-size: 11px;
+    font-size: 13px;
     padding: 3px 6px;
     width: 72px;
     outline: none;
@@ -492,7 +492,7 @@
     background: rgba(255, 71, 87, 0.1);
     border: 1px solid rgba(255, 71, 87, 0.4);
     color: #FF4757;
-    font-size: 11px;
+    font-size: 13px;
     padding: 3px 10px;
     border-radius: 3px;
     cursor: pointer;
@@ -502,7 +502,7 @@
     background: none;
     border: none;
     color: rgba(255,255,255,0.5);
-    font-size: 16px;
+    font-size: 18px;
     cursor: pointer;
     padding: 2px 6px;
     line-height: 1;
@@ -535,7 +535,7 @@
   .kf-modal h3 {
     margin: 0 0 10px 0;
     color: #FF6B6B;
-    font-size: 14px;
+    font-size: 16px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -543,7 +543,7 @@
   .kf-modal p {
     margin: 0 0 16px 0;
     color: var(--text-secondary, #aaa);
-    font-size: 12px;
+    font-size: 14px;
     line-height: 1.5;
   }
   .kf-modal-btns {
@@ -557,7 +557,7 @@
     color: var(--text-primary, #ccc);
     padding: 6px 14px;
     border-radius: 4px;
-    font-size: 11px;
+    font-size: 13px;
     cursor: pointer;
     font-family: inherit;
     font-weight: 600;
@@ -569,7 +569,7 @@
     color: #fff;
     padding: 6px 14px;
     border-radius: 4px;
-    font-size: 11px;
+    font-size: 13px;
     cursor: pointer;
     font-family: inherit;
     font-weight: 700;

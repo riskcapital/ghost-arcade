@@ -1625,8 +1625,8 @@
      is null when not editing. */
   .lp-draw-overlay.inactive { pointer-events: none; cursor: default; }
   .lp-preview-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
-  .draw-hint { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: rgba(255,255,255,0.25); font-size: 13px; pointer-events: none; text-align: center; max-width: 300px; }
-  .status-pill { position: absolute; top: 10px; left: 10px; padding: 3px 10px; border-radius: 12px; font-size: 10px; font-weight: 700; pointer-events: none; }
+  .draw-hint { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: rgba(255,255,255,0.25); font-size: 15px; pointer-events: none; text-align: center; max-width: 300px; }
+  .status-pill { position: absolute; top: 10px; left: 10px; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 700; pointer-events: none; }
   .status-pill.rec { background: rgba(255,50,50,0.85); color: #fff; animation: pulse-rec 1s infinite; }
   .status-pill.pen { background: rgba(103,232,249,0.85); color: #000; }
   @keyframes pulse-rec { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
@@ -1645,7 +1645,7 @@
     padding: 10px 12px 8px;
     border-bottom: 1px solid #161618;
   }
-  .lp-title { font-size: 13px; font-weight: 700; color: #BB86FC; letter-spacing: 0.5px; }
+  .lp-title { font-size: 15px; font-weight: 700; color: #BB86FC; letter-spacing: 0.5px; }
 
   /* Draw mode & playback rows */
   .lp-row {
@@ -1653,12 +1653,12 @@
     padding: 6px 12px;
     border-bottom: 1px solid #222;
   }
-  .row-label { font-size: 11px; color: var(--text-muted, #888); font-weight: 600; }
+  .row-label { font-size: 13px; color: var(--text-muted, #888); font-weight: 600; }
 
   .mode-btns { display: flex; border: 1px solid #444; border-radius: 5px; overflow: hidden; }
   .mode-btns button {
     background: transparent; border: none; color: var(--text-muted, #888);
-    padding: 4px 12px; font-size: 11px; font-weight: 600; cursor: pointer;
+    padding: 4px 12px; font-size: 13px; font-weight: 600; cursor: pointer;
   }
   .mode-btns button:hover { color: var(--text-primary, #ddd); background: rgba(255,255,255,0.04); }
   .mode-btns button.active { color: #BB86FC; background: rgba(103,232,249,0.1); }
@@ -1674,13 +1674,13 @@
 
   .loop-btn {
     background: #222; border: 1px solid #3a3a3a; color: var(--text-muted, #888);
-    padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; cursor: pointer;
+    padding: 3px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; cursor: pointer;
   }
   .loop-btn:hover { color: var(--text-primary, #ccc); border-color: #555; }
   .loop-btn.active { color: #BB86FC; border-color: #BB86FC; background: rgba(103,232,249,0.08); }
 
   .stroke-badge {
-    background: #BB86FC; color: #000; font-size: 9px; font-weight: 700;
+    background: #BB86FC; color: #000; font-size: 11px; font-weight: 700;
     padding: 1px 5px; border-radius: 8px; margin-left: auto;
   }
 
@@ -1688,7 +1688,7 @@
   .lp-tabs { display: flex; border-bottom: 1px solid #161618; flex-shrink: 0; }
   .lp-tabs button {
     flex: 1; background: none; border: none; color: #666;
-    padding: 7px 4px; font-size: 11px; font-weight: 600; cursor: pointer;
+    padding: 7px 4px; font-size: 13px; font-weight: 600; cursor: pointer;
     border-bottom: 2px solid transparent;
   }
   .lp-tabs button:hover { color: var(--text-secondary, #aaa); }
@@ -1700,7 +1700,7 @@
   /* Section labels */
   .sec-label {
     display: flex; align-items: center; justify-content: space-between;
-    font-size: 11px; font-weight: 600; color: var(--text-muted, #888); text-transform: uppercase; letter-spacing: 0.4px;
+    font-size: 13px; font-weight: 600; color: var(--text-muted, #888); text-transform: uppercase; letter-spacing: 0.4px;
     margin: 10px 0 6px; padding-bottom: 4px; border-bottom: 1px solid #222;
   }
   .sec-label:first-child { margin-top: 0; }
@@ -1709,9 +1709,9 @@
   .slider-col { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
   .sc { display: flex; flex-direction: column; }
   .sc label {
-    font-size: 11px; color: #bbb; margin-bottom: 4px; display: flex; align-items: baseline;
+    font-size: 13px; color: #bbb; margin-bottom: 4px; display: flex; align-items: baseline;
   }
-  .sc label b { color: #BB86FC; font-family: monospace; font-size: 11px; font-weight: 400; margin-left: auto; }
+  .sc label b { color: #BB86FC; font-family: monospace; font-size: 13px; font-weight: 400; margin-left: auto; }
   .sc input[type="range"] {
     width: 100%; height: 4px; appearance: none; background: #333; border-radius: 2px; outline: none;
   }
@@ -1721,14 +1721,14 @@
   }
   .sc select {
     width: 100%; background: var(--bg-primary, #0d0d10); border: 1px solid #333; color: var(--text-primary, #ddd);
-    border-radius: 5px; padding: 6px 8px; font-size: 11px; outline: none;
+    border-radius: 5px; padding: 6px 8px; font-size: 13px; outline: none;
   }
 
   /* Brush grid */
   .brush-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 8px; }
   .brush-btn {
     background: var(--bg-primary, #0d0d10); border: 1px solid #333; color: var(--text-secondary, #aaa);
-    border-radius: 5px; padding: 6px 2px; font-size: 10px; font-weight: 600;
+    border-radius: 5px; padding: 6px 2px; font-size: 12px; font-weight: 600;
     cursor: pointer; text-align: center;
     position: relative;
   }
@@ -1749,7 +1749,7 @@
     display: inline-block;
     background: linear-gradient(135deg, #6df, #b9f);
     color: #000;
-    font-size: 7px;
+    font-size: 9px;
     font-weight: 700;
     padding: 1px 3px;
     border-radius: 999px;
@@ -1757,14 +1757,14 @@
     margin-left: 3px;
     vertical-align: middle;
   }
-  .gpu-badge.inline { margin-left: 6px; font-size: 8px; padding: 1px 5px; }
+  .gpu-badge.inline { margin-left: 6px; font-size: 10px; padding: 1px 5px; }
   .gpu-hint {
     margin-top: 8px;
     padding: 6px 8px;
     background: rgba(109,221,255,0.06);
     border: 1px solid rgba(109,221,255,0.2);
     border-radius: 4px;
-    font-size: 10px;
+    font-size: 12px;
     color: #aac;
     line-height: 1.4;
   }
@@ -1782,22 +1782,22 @@
 
   .mini-toggle {
     background: var(--bg-tertiary, #161618); border: 1px solid #444; color: var(--text-muted, #888);
-    padding: 1px 6px; border-radius: 3px; font-size: 9px; font-weight: 600; cursor: pointer;
+    padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; cursor: pointer;
   }
   .mini-toggle.on { background: rgba(103,232,249,0.12); color: #BB86FC; border-color: #BB86FC; }
 
   .check-row { display: flex; gap: 12px; margin-bottom: 8px; }
-  .check-row label { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #bbb; cursor: pointer; }
+  .check-row label { display: flex; align-items: center; gap: 5px; font-size: 13px; color: #bbb; cursor: pointer; }
   .check-row input[type="checkbox"] { accent-color: #BB86FC; width: 13px; height: 13px; }
   .mini-action {
     background: var(--bg-tertiary, #161618); border: 1px solid #333; color: #bbb;
-    border-radius: 5px; padding: 5px 8px; font-size: 11px; cursor: pointer;
+    border-radius: 5px; padding: 5px 8px; font-size: 13px; cursor: pointer;
   }
   .mini-action:hover { border-color: #BB86FC; color: #fff; }
 
   /* Strokes list */
   .strokes-list { max-height: 240px; overflow-y: auto; }
-  .empty-msg { text-align: center; color: #555; font-size: 12px; padding: 20px; }
+  .empty-msg { text-align: center; color: #555; font-size: 14px; padding: 20px; }
   .stroke-row {
     display: flex; align-items: center; gap: 8px; padding: 5px 8px;
     border: 1px solid #222; border-radius: 5px; margin-bottom: 4px;
@@ -1811,12 +1811,12 @@
     display: flex; align-items: center; justify-content: space-between;
     padding: 6px 10px; margin-bottom: 6px;
     background: rgba(187, 134, 252, 0.1); border: 1px solid rgba(187, 134, 252, 0.3);
-    border-radius: 6px; font-size: 11px; color: #bb86fc;
+    border-radius: 6px; font-size: 13px; color: #bb86fc;
   }
   .editing-banner b { color: #fff; }
   .done-btn {
     padding: 2px 10px; background: #bb86fc; color: #000; border: none;
-    border-radius: 4px; font-size: 10px; font-weight: 600; cursor: pointer;
+    border-radius: 4px; font-size: 12px; font-weight: 600; cursor: pointer;
   }
   .done-btn:hover { background: #d4b8ff; }
   .path-edit-row {
@@ -1831,7 +1831,7 @@
     background: transparent; color: #67E8F9;
     border: 1px solid rgba(103, 232, 249, 0.45);
     border-radius: 4px;
-    font-size: 11px; font-weight: 600; cursor: pointer;
+    font-size: 13px; font-weight: 600; cursor: pointer;
     transition: background 0.15s, border-color 0.15s;
   }
   .path-edit-toggle:hover { background: rgba(103, 232, 249, 0.10); border-color: rgba(103, 232, 249, 0.7); }
@@ -1839,10 +1839,10 @@
   .path-edit-toggle.active:hover { background: #8ff0fc; }
   .path-edit-checkbox {
     display: inline-flex; align-items: center; gap: 5px;
-    font-size: 10px; color: var(--text-secondary, #aaa); cursor: pointer; user-select: none;
+    font-size: 12px; color: var(--text-secondary, #aaa); cursor: pointer; user-select: none;
   }
   .path-edit-checkbox input { width: 12px; height: 12px; cursor: pointer; accent-color: #67E8F9; }
-  .path-edit-hint { font-size: 10px; color: var(--text-muted, #888); flex-basis: 100%; }
+  .path-edit-hint { font-size: 12px; color: var(--text-muted, #888); flex-basis: 100%; }
   .path-edit-tools {
     display: inline-flex; gap: 0; align-items: stretch;
     border: 1px solid rgba(103, 232, 249, 0.3);
@@ -1853,7 +1853,7 @@
     background: transparent; color: #67E8F9;
     border: none;
     border-right: 1px solid rgba(103, 232, 249, 0.18);
-    font-size: 10px; font-weight: 600; cursor: pointer;
+    font-size: 12px; font-weight: 600; cursor: pointer;
     transition: background 0.12s, color 0.12s;
   }
   .path-tool-btn:last-child { border-right: none; }
@@ -1866,7 +1866,7 @@
   .path-tool-btn.insert:hover { background: rgba(128, 232, 156, 0.10); }
   .path-tool-btn.insert.active { background: #80E89C; color: #0a1a0c; }
   .path-edit-selcount {
-    font-size: 10px; font-weight: 600; color: #FFDD3C;
+    font-size: 12px; font-weight: 600; color: #FFDD3C;
     padding: 2px 6px;
     border: 1px solid rgba(255, 220, 60, 0.5);
     border-radius: 3px;
@@ -1874,16 +1874,16 @@
   }
   .stroke-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
   .stroke-info { flex: 1; min-width: 0; }
-  .sname { display: block; font-size: 12px; color: var(--text-primary, #ddd); }
-  .smeta { display: block; font-size: 10px; color: #666; }
+  .sname { display: block; font-size: 14px; color: var(--text-primary, #ddd); }
+  .smeta { display: block; font-size: 12px; color: #666; }
   .del-btn {
     background: none; border: 1px solid transparent; color: #666;
-    font-size: 11px; font-weight: 700; cursor: pointer; padding: 2px 6px; border-radius: 3px;
+    font-size: 13px; font-weight: 700; cursor: pointer; padding: 2px 6px; border-radius: 3px;
   }
   .del-btn:hover { color: #ff5555; background: rgba(255,85,85,0.1); border-color: rgba(255,85,85,0.3); }
   .clear-btn {
     width: 100%; background: rgba(255,85,85,0.06); border: 1px solid rgba(255,85,85,0.2);
-    color: #ff7777; padding: 7px; border-radius: 5px; font-size: 11px; font-weight: 600;
+    color: #ff7777; padding: 7px; border-radius: 5px; font-size: 13px; font-weight: 600;
     cursor: pointer; margin-top: 8px;
   }
   .clear-btn:hover { background: rgba(255,85,85,0.12); border-color: rgba(255,85,85,0.4); }

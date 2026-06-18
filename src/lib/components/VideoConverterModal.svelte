@@ -289,7 +289,7 @@
   }
   .modal-head h2 {
     margin: 0;
-    font-size: 14px;
+    font-size: 16px;
     letter-spacing: 2px;
     color: #4cd1ff;
     font-weight: 600;
@@ -301,7 +301,7 @@
     background: transparent;
     color: var(--text-secondary, #aaa);
     border-radius: 4px;
-    font-size: 18px;
+    font-size: 20px;
     line-height: 1;
     cursor: pointer;
     display: inline-flex;
@@ -316,7 +316,7 @@
   }
   .lede {
     color: var(--text-secondary, #aaa);
-    font-size: 12px;
+    font-size: 14px;
     margin: 0 0 16px;
     line-height: 1.5;
   }
@@ -345,11 +345,11 @@
   .drop-title {
     max-width: 100%;
     overflow-wrap: anywhere;
-    font-size: 13px;
+    font-size: 15px;
     font-weight: 700;
   }
   .drop-meta {
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-muted, #888);
   }
   .summary {
@@ -357,7 +357,7 @@
     border-left: 2px solid rgba(76, 209, 255, 0.4);
     padding: 8px 12px;
     border-radius: 0 4px 4px 0;
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-secondary, #aaa);
     line-height: 1.5;
     margin: 14px 0;
@@ -367,7 +367,7 @@
     margin-top: 14px;
   }
   .phase {
-    font-size: 13px;
+    font-size: 15px;
     color: #4cd1ff;
     margin-bottom: 8px;
     font-weight: 500;
@@ -388,13 +388,13 @@
     display: flex;
     justify-content: space-between;
     margin-top: 6px;
-    font-size: 11px;
+    font-size: 13px;
     font-family: monospace;
     color: var(--text-muted, #888);
   }
   .hint {
     color: #666;
-    font-size: 10.5px;
+    font-size: 12.5px;
     line-height: 1.5;
     margin: 10px 0 0;
   }
@@ -407,7 +407,7 @@
     margin-top: 14px;
     padding: 10px 12px;
     border-radius: 5px;
-    font-size: 12px;
+    font-size: 14px;
   }
   .error-box {
     background: rgba(255, 80, 80, 0.10);
@@ -446,7 +446,7 @@
   .btn-secondary {
     padding: 8px 18px;
     border-radius: 5px;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
   }

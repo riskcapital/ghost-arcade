@@ -433,7 +433,7 @@
   }
 
   .section-title {
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     /* Match LAYER EFFECTS accent — was orange. Both effect surfaces
        read as sibling sections of the layer inspector. */
@@ -447,7 +447,7 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     cursor: pointer;
   }
@@ -460,7 +460,7 @@
     border: 1px solid #ff9800;
     padding: 2px 10px;
     border-radius: 4px;
-    font-size: 10px;
+    font-size: 12px;
     cursor: pointer;
   }
   .btn-enable:hover { background: #ff9800; color: #000; }
@@ -470,7 +470,7 @@
     border: none;
     color: #666;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 16px;
     padding: 0 4px;
   }
   .btn-disable:hover { color: #f44; }
@@ -497,7 +497,7 @@
     background: none;
     border: none;
     color: var(--text-primary, #ccc);
-    font-size: 11px;
+    font-size: 13px;
     cursor: pointer;
     text-align: left;
     padding: 2px 0;
@@ -506,7 +506,7 @@
   }
   .effect-title:hover { color: #fff; }
 
-  .expand-icon { color: #666; font-size: 14px; }
+  .expand-icon { color: #666; font-size: 16px; }
 
   .blend-select {
     width: 75px;
@@ -514,7 +514,7 @@
     color: var(--text-primary, #ccc);
     border: 1px solid #444;
     border-radius: 3px;
-    font-size: 10px;
+    font-size: 12px;
     padding: 2px;
   }
 
@@ -528,7 +528,7 @@
     border: none;
     color: #666;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 16px;
     padding: 0 2px;
     flex-shrink: 0;
   }
@@ -544,7 +544,7 @@
   }
 
   .subsection-label {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 600;
     color: #666;
     text-transform: uppercase;
@@ -562,7 +562,7 @@
 
   .control-label {
     width: 60px;
-    font-size: 10px;
+    font-size: 12px;
     color: #777;
     flex-shrink: 0;
   }
@@ -589,13 +589,13 @@
     border: 1px solid #444;
     padding: 3px 6px;
     border-radius: 3px;
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .control-value {
     width: 38px;
     text-align: right;
-    font-size: 9px;
+    font-size: 11px;
     color: #555;
     flex-shrink: 0;
   }
@@ -609,7 +609,7 @@
     color: var(--text-muted, #888);
     border: 1px dashed #444;
     border-radius: 4px;
-    font-size: 10px;
+    font-size: 12px;
     cursor: pointer;
     text-align: center;
   }

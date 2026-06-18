@@ -164,11 +164,11 @@
   .layer-name {
     flex: 1;
     color: #fff;
-    font-size: 14px;
+    font-size: 16px;
     font-weight: 600;
   }
   .badge {
-    font-size: 9px;
+    font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.6px;
     background: rgba(187, 134, 252, 0.16);
@@ -179,13 +179,13 @@
   }
   .hint {
     margin: 0;
-    font-size: 11px;
+    font-size: 13px;
     color: #888;
     line-height: 1.4;
   }
-  .missing { color: #888; font-size: 12px; padding: 12px; text-align: center; }
+  .missing { color: #888; font-size: 14px; padding: 12px; text-align: center; }
   .prop-section h4 {
-    font-size: 10px;
+    font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.7px;
     color: #888;
@@ -198,21 +198,21 @@
     background: #14161e; border: 1px solid #2a2c36;
     border-radius: 6px; padding: 4px 6px; gap: 4px;
   }
-  .axis-label { font-size: 10px; color: #888; font-weight: 600; }
+  .axis-label { font-size: 12px; color: #888; font-weight: 600; }
   .prop-axis input[type=number] {
     flex: 1; background: transparent; border: none; color: #fff;
-    font-size: 12px; width: 100%; min-width: 0;
+    font-size: 14px; width: 100%; min-width: 0;
   }
   .prop-axis input[type=number]:focus { outline: none; }
   .slider-row {
     display: grid; grid-template-columns: 80px 1fr 50px;
-    align-items: center; gap: 6px; font-size: 11px; color: #ccc;
+    align-items: center; gap: 6px; font-size: 13px; color: #ccc;
     margin-bottom: 6px;
   }
   .slider-row input[type=range] { accent-color: #BB86FC; width: 100%; }
   .slider-val {
     text-align: right; font-variant-numeric: tabular-nums;
-    color: #888; font-size: 10px;
+    color: #888; font-size: 12px;
   }
   .pill-row { display: flex; gap: 4px; margin-top: 6px; }
   .pill-row.pill-wrap { flex-wrap: wrap; }
@@ -220,7 +220,7 @@
     flex: 1 1 auto;
     background: #14161e; border: 1px solid #2a2c36; color: #aaa;
     padding: 5px 8px; border-radius: 6px;
-    font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px;
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px;
     cursor: pointer; white-space: nowrap;
   }
   .pill.active { background: #BB86FC; color: #1a1a1f; border-color: #BB86FC; }
@@ -230,7 +230,7 @@
     color: #ff8e8e;
     padding: 8px;
     border-radius: 8px;
-    font-size: 11px;
+    font-size: 13px;
     text-transform: uppercase;
     letter-spacing: 0.6px;
     cursor: pointer;

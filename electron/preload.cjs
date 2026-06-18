@@ -39,6 +39,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // Stage 3D pop-out window + state relay
   'open_stage3d_window', 'stage3d_window_closing',
   'stage3d_publish_state', 'stage3d_get_state', 'stage3d_is_open',
+  'stage3d_set_fullscreen', 'stage3d_get_fullscreen',
   // SRC tab Capture chooser — enumerates screens + app windows
   // with thumbnails so the renderer can show a Zoom/Slack-style picker.
   'screen_sources_list',
@@ -113,7 +114,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * Returns a cleanup function that removes the listener.
    */
   on: (channel, callback) => {
-    const allowed = ['director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'update-download-progress', 'spout-osr-status', 'texshare-atlas-status'];
+    const allowed = ['director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'update-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed'];
     if (!allowed.includes(channel)) return () => {};
     const handler = (_event, ...args) => callback(...args);
     ipcRenderer.on(channel, handler);

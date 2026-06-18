@@ -403,7 +403,7 @@
 
   .modal-header h2 {
     margin: 0;
-    font-size: 16px;
+    font-size: 18px;
     font-weight: 600;
     color: var(--text-primary, #eee);
   }
@@ -415,7 +415,7 @@
   }
 
   .selection-count {
-    font-size: 12px;
+    font-size: 14px;
     color: #BB86FC;
     font-weight: 500;
   }
@@ -426,7 +426,7 @@
     background: none;
     border: none;
     color: var(--text-muted, #888);
-    font-size: 22px;
+    font-size: 24px;
     cursor: pointer;
     width: 32px;
     height: 32px;
@@ -460,7 +460,7 @@
     border-radius: 6px;
     padding: 8px 12px;
     color: var(--text-primary, #eee);
-    font-size: 13px;
+    font-size: 15px;
     outline: none;
     transition: border-color 0.15s;
   }
@@ -478,7 +478,7 @@
     border-radius: 6px;
     padding: 6px 10px;
     color: #999;
-    font-size: 11px;
+    font-size: 13px;
     cursor: pointer;
     transition: all 0.15s;
     white-space: nowrap;
@@ -523,7 +523,7 @@
     border-radius: 6px;
     padding: 8px 12px;
     color: #BB86FC;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -544,7 +544,7 @@
   /* Tiny chevron rotates 90° when section is open. */
   .cat-chevron {
     display: inline-block;
-    font-size: 9px;
+    font-size: 11px;
     color: var(--text-muted, #888);
     width: 10px;
     transition: transform 0.15s ease;
@@ -561,7 +561,7 @@
   .cat-count {
     color: #555;
     font-weight: 500;
-    font-size: 10px;
+    font-size: 12px;
     background: rgba(187, 134, 252, 0.08);
     border: 1px solid rgba(187, 134, 252, 0.18);
     border-radius: 999px;
@@ -625,7 +625,7 @@
   }
 
   .row-name {
-    font-size: 12px;
+    font-size: 14px;
     color: var(--text-primary, #ddd);
     font-weight: 500;
     white-space: nowrap;
@@ -638,7 +638,7 @@
   }
 
   .row-desc {
-    font-size: 10px;
+    font-size: 12px;
     color: #666;
     white-space: nowrap;
     overflow: hidden;
@@ -649,7 +649,7 @@
     text-align: center;
     padding: 40px 0;
     color: #666;
-    font-size: 13px;
+    font-size: 15px;
   }
 
   .modal-footer {
@@ -661,7 +661,7 @@
   }
 
   .hint {
-    font-size: 10px;
+    font-size: 12px;
     color: #555;
   }
 
@@ -676,7 +676,7 @@
     border-radius: 6px;
     padding: 7px 14px;
     color: var(--text-primary, #eee);
-    font-size: 12px;
+    font-size: 14px;
     cursor: pointer;
     transition: all 0.15s;
   }
@@ -692,7 +692,7 @@
     border-radius: 6px;
     padding: 7px 16px;
     color: #000;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -726,12 +726,12 @@
     justify-content: center;
     background: rgba(0, 0, 0, 0.5);
     border-radius: 5px;
-    font-size: 14px;
+    font-size: 16px;
   }
 
   .tier-badge {
     display: inline-block;
-    font-size: 8px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.06em;
     padding: 1px 4px;
@@ -748,7 +748,7 @@
     border-radius: 6px;
     padding: 8px 14px;
     margin: 0 18px;
-    font-size: 12px;
+    font-size: 14px;
     color: #f59e0b;
     text-align: center;
     animation: fadeIn 0.2s ease-out;
@@ -767,7 +767,7 @@
     border-radius: 6px;
     padding: 5px 10px;
     color: var(--text-primary, #ccc);
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.15s;
@@ -789,7 +789,7 @@
     margin: 8px 18px 0;
     padding: 8px 12px;
     border-radius: 6px;
-    font-size: 12px;
+    font-size: 14px;
     animation: fadeIn 0.2s ease-out;
   }
 
@@ -807,7 +807,7 @@
 
   .custom-badge {
     display: inline-block;
-    font-size: 7px;
+    font-size: 9px;
     font-weight: 700;
     letter-spacing: 0.08em;
     padding: 1px 4px;
@@ -832,7 +832,7 @@
     width: 18px;
     height: 18px;
     border-radius: 3px;
-    font-size: 14px;
+    font-size: 16px;
     line-height: 1;
     display: flex;
     align-items: center;

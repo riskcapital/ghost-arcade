@@ -259,13 +259,13 @@
     border-radius: 6px;
   }
   .mp-head { display: flex; flex-direction: column; }
-  .mp-title { font-size: 11px; color: var(--accent-secondary, #FF8585); letter-spacing: 0.6px; text-transform: uppercase; font-weight: 700; }
-  .mp-sub   { font-size: 9px; color: #555; }
+  .mp-title { font-size: 13px; color: var(--accent-secondary, #FF8585); letter-spacing: 0.6px; text-transform: uppercase; font-weight: 700; }
+  .mp-sub   { font-size: 11px; color: #555; }
 
   .mp-row { display: flex; align-items: center; gap: 8px; }
-  .mp-row-inline { gap: 12px; flex-wrap: wrap; font-size: 10px; color: var(--text-secondary, #aaa); }
+  .mp-row-inline { gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary, #aaa); }
   .mp-row-inline label { display: flex; gap: 4px; align-items: center; cursor: pointer; }
-  .mp-lbl { font-size: 9px; color: #777; width: 60px; }
+  .mp-lbl { font-size: 11px; color: #777; width: 60px; }
 
   select {
     background: var(--bg-primary, #050507);
@@ -273,7 +273,7 @@
     color: var(--text-primary, #ddd);
     padding: 3px 6px;
     border-radius: 3px;
-    font-size: 10px;
+    font-size: 12px;
     outline: none;
   }
   select:focus { border-color: var(--accent-primary, #FF6B6B); }
@@ -285,7 +285,7 @@
     border: 1px solid rgba(255, 107, 107, 0.20);
     border-radius: 3px;
     color: var(--accent-secondary, #FF8585);
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.12s;
@@ -293,10 +293,10 @@
   .mp-btn:hover:not(:disabled) { background: #20162e; border-color: rgba(255, 107, 107, 0.55); color: var(--accent-primary, #FF6B6B); }
   .mp-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .mp-btn.primary { background: rgba(255, 107, 107, 0.10); }
-  .mp-btn.small { padding: 3px 8px; font-size: 10px; }
+  .mp-btn.small { padding: 3px 8px; font-size: 12px; }
 
-  .mp-hint { font-size: 9px; color: #666; line-height: 1.45; }
-  .mp-err { font-size: 10px; color: #f87171; padding: 6px 8px; background: rgba(248, 113, 113, 0.08); border-radius: 3px; }
+  .mp-hint { font-size: 11px; color: #666; line-height: 1.45; }
+  .mp-err { font-size: 12px; color: #f87171; padding: 6px 8px; background: rgba(248, 113, 113, 0.08); border-radius: 3px; }
 
   .mp-active {
     display: flex;
@@ -315,7 +315,7 @@
     animation: mpDot 2s infinite;
   }
   @keyframes mpDot { 0%,100%{opacity:1} 50%{opacity:.35} }
-  .mp-active-name { flex: 1; font-size: 10px; color: var(--accent-secondary, #FF8585); }
+  .mp-active-name { flex: 1; font-size: 12px; color: var(--accent-secondary, #FF8585); }
 
   .mp-preview {
     position: relative;
@@ -344,7 +344,7 @@
     padding: 6px;
   }
   .mp-signals-head {
-    font-size: 8px;
+    font-size: 10px;
     color: #555;
     text-transform: uppercase;
     letter-spacing: 0.6px;
@@ -355,7 +355,7 @@
     grid-template-columns: 100px 1fr 36px;
     align-items: center;
     gap: 6px;
-    font-size: 10px;
+    font-size: 12px;
   }
   .mp-sig-id   { color: var(--text-muted, #888); font-family: 'JetBrains Mono', monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .mp-sig-val  { color: var(--text-secondary, #aaa); text-align: right; font-family: 'JetBrains Mono', monospace; }
@@ -386,14 +386,14 @@
   .mp-bindings-head {
     display: flex;
     justify-content: space-between;
-    font-size: 8px;
+    font-size: 10px;
     color: #555;
     text-transform: uppercase;
     letter-spacing: 0.6px;
   }
   .mp-bindings-count { color: var(--text-muted, #888); }
   .mp-bindings-empty {
-    font-size: 10px;
+    font-size: 12px;
     color: #555;
     line-height: 1.45;
     padding: 4px 0;
@@ -403,7 +403,7 @@
     grid-template-columns: minmax(0, 1.2fr) 14px minmax(0, 1.4fr) 60px 18px;
     gap: 6px;
     align-items: center;
-    font-size: 10px;
+    font-size: 12px;
     padding: 3px 0;
     border-bottom: 1px solid #110a1c;
   }
@@ -426,7 +426,7 @@
     border: none;
     color: #555;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 16px;
     line-height: 1;
     padding: 0;
   }

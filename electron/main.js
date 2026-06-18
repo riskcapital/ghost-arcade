@@ -276,6 +276,13 @@ function closeAllWledSockets() {
   }
 }
 
+function publishStage3DFullscreenState(fullScreen) {
+  if (!stage3dWindow || stage3dWindow.isDestroyed()) return;
+  try {
+    stage3dWindow.webContents.send('stage3d-fullscreen-changed', { fullScreen: !!fullScreen });
+  } catch {}
+}
+
 // Spout native addon
 let spoutAddon = null;
 let spoutAddonLoadAttempted = false;
@@ -2111,6 +2118,21 @@ function registerIpcHandlers() {
     }
   });
 
+  ipcMain.handle('stage3d_set_fullscreen', (_, { fullScreen } = {}) => {
+    if (!stage3dWindow || stage3dWindow.isDestroyed()) {
+      return { ok: false, fullScreen: false, error: 'Stage 3D window is not open' };
+    }
+    const next = !!fullScreen;
+    stage3dWindow.setFullScreen(next);
+    publishStage3DFullscreenState(next);
+    return { ok: true, fullScreen: next };
+  });
+
+  ipcMain.handle('stage3d_get_fullscreen', () => ({
+    ok: !!(stage3dWindow && !stage3dWindow.isDestroyed()),
+    fullScreen: !!(stage3dWindow && !stage3dWindow.isDestroyed() && stage3dWindow.isFullScreen()),
+  }));
+
   // ── Stage 3D state relay ──────────────────────────────────────────
   // BroadcastChannel between two Electron BrowserWindows is flaky on
   // some macOS configurations — Chromium's agent-cluster boundaries
@@ -3657,6 +3679,8 @@ function createStage3DWindow() {
   stage3dWindow.on('closed', () => {
     stage3dWindow = null;
   });
+  stage3dWindow.on('enter-full-screen', () => publishStage3DFullscreenState(true));
+  stage3dWindow.on('leave-full-screen', () => publishStage3DFullscreenState(false));
 }
 
 function createOutputWindow(width, height, x, y, fullscreen = false, displayId = null, experimentalWebRTC = false, experimentalZeroCopy = false) {

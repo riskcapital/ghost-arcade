@@ -271,7 +271,7 @@
   }
 
   .update-eyebrow {
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     letter-spacing: 0.15em;
     text-transform: uppercase;
@@ -280,14 +280,14 @@
   }
 
   .update-modal-header h2 {
-    font-size: 22px;
+    font-size: 24px;
     font-weight: 600;
     margin: 0 0 4px;
     color: #fff;
   }
 
   .update-version-line {
-    font-size: 12px;
+    font-size: 14px;
     color: var(--text-muted, #888);
     margin: 0;
   }
@@ -299,7 +299,7 @@
     background: rgba(255, 255, 255, 0.06);
     border: none;
     color: var(--text-secondary, #aaa);
-    font-size: 22px;
+    font-size: 24px;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -322,7 +322,7 @@
   }
 
   .update-notes-heading {
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 600;
     letter-spacing: 0.1em;
     text-transform: uppercase;
@@ -332,7 +332,7 @@
 
   .update-notes {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    font-size: 13px;
+    font-size: 15px;
     line-height: 1.5;
     color: #d4d4d4;
     white-space: pre-wrap;
@@ -344,7 +344,7 @@
   }
 
   .update-no-notes {
-    font-size: 13px;
+    font-size: 15px;
     color: #777;
     font-style: italic;
     margin: 0;
@@ -357,7 +357,7 @@
     background: rgba(255, 50, 50, 0.1);
     border: 1px solid rgba(255, 50, 50, 0.25);
     color: #ff8c7c;
-    font-size: 13px;
+    font-size: 15px;
   }
 
   .update-progress {
@@ -378,20 +378,20 @@
   @keyframes update-spin { to { transform: rotate(360deg); } }
 
   .update-progress-label {
-    font-size: 14px;
+    font-size: 16px;
     font-weight: 500;
     color: #fff;
     margin-bottom: 6px;
   }
 
   .update-progress-meta {
-    font-size: 12px;
+    font-size: 14px;
     color: var(--text-muted, #888);
     font-variant-numeric: tabular-nums;
   }
 
   .update-ready-hint {
-    font-size: 12px;
+    font-size: 14px;
     color: var(--text-muted, #888);
     margin: 12px auto 0;
     max-width: 360px;
@@ -408,7 +408,7 @@
 
   .update-link {
     color: #7EC8E3;
-    font-size: 12px;
+    font-size: 14px;
     text-decoration: none;
     margin-right: auto;
   }
@@ -420,7 +420,7 @@
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 4px;
     color: var(--text-secondary, #aaa);
-    font-size: 13px;
+    font-size: 15px;
     cursor: pointer;
     transition: all 0.15s;
   }
@@ -439,7 +439,7 @@
     border: none;
     border-radius: 4px;
     color: #0a0a0a;
-    font-size: 13px;
+    font-size: 15px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;

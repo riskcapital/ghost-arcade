@@ -27,7 +27,7 @@ import { AtmosphereRig, type UserStripAnim } from './atmosphere';
 import { DEFAULT_ATMOSPHERE } from './types';
 import { getVisualAudioSnapshot } from '../audio/visualAudio';
 import { buildUserElement } from './elementTypes';
-import { stageEffectsRuntime } from '../stores/stageEffects';
+import { resolveStageEffectForLayer, stageEffectsRuntime } from '../stores/stageEffects';
 import type { Stage3DScene, Stage3DScreenOverride, Stage3DVenue, UserStageElement } from './types';
 import { DEFAULT_LIGHTING } from './types';
 import type { OutputSlice } from '../stores/settings';
@@ -65,6 +65,8 @@ interface LedEntry {
    *  the old synchronous readback paid right after the downsample pass. */
   averageRT: THREE.WebGLRenderTarget;
   averagePixels: Uint8Array;
+  stageFxBrightness: number;
+  stageFxTint: THREE.Color;
   /** True while an async readback is in flight for this LED — prevents
    *  stacking requests if the GPU falls behind. */
   readbackPending?: boolean;
@@ -100,6 +102,7 @@ const LED_FRAGMENT = `
   varying vec2 vUv;
   uniform sampler2D uTexture;
   uniform float uBrightness;
+  uniform vec3 uStageTint;
   uniform float uHasTexture;
   uniform float uTime;
   uniform float uScreenAspect;
@@ -212,7 +215,7 @@ const LED_FRAGMENT = `
     if (uHasTexture < 0.5) {
       vec3 col = fallbackPattern(vUv);
       col = applyEdgeEffect(col, vUv);
-      gl_FragColor = vec4(sRGBToLinear(col) * uBrightness, 1.0);
+      gl_FragColor = vec4(sRGBToLinear(col) * uStageTint * uBrightness, 1.0);
       return;
     }
     // Unified-group fast path: bypass display-fit, sample the shared
@@ -222,7 +225,7 @@ const LED_FRAGMENT = `
     if (uUnifiedCrop > 0.5) {
       vec2 srcUv = uCropRegion.xy + uCropRegion.zw * vUv;
       vec3 sampled = sRGBToLinear(texture2D(uTexture, srcUv).rgb);
-      vec3 lit = sampled * uBrightness;
+      vec3 lit = sampled * uStageTint * uBrightness;
       lit = applyEdgeEffect(lit, vUv);
       gl_FragColor = vec4(lit, 1.0);
       return;
@@ -231,7 +234,7 @@ const LED_FRAGMENT = `
     vec3 fit = applyDisplayFit(vUv, panelMask);
     vec2 srcUv = fit.xy;
     vec3 sampled = sRGBToLinear(texture2D(uTexture, srcUv).rgb);
-    vec3 lit = sampled * uBrightness * panelMask;
+    vec3 lit = sampled * uStageTint * uBrightness * panelMask;
     lit = applyEdgeEffect(lit, vUv);
     gl_FragColor = vec4(lit, 1.0);
   }
@@ -462,6 +465,7 @@ function ledMaterialUniforms(): Record<string, THREE.IUniform> {
   return {
     uTexture:      { value: null },
     uBrightness:   { value: 1 },
+    uStageTint:    { value: new THREE.Color(1, 1, 1) },
     uHasTexture:   { value: 0 },
     uTime:         { value: 0 },
     uScreenAspect: { value: 1 },
@@ -879,13 +883,7 @@ export class Stage3DRenderer {
     // typed against the sourceLayers array Canvas.svelte hands us.
     const layerById = new Map<string, Layer>();
     for (const l of sourceLayers) layerById.set(l.id, l);
-
-    // Stage FX runtime: per-slice brightness modulation. Drives the
-    // Radial Pulse / Sweep / Strobe etc. effects so they animate the
-    // 3D LEDs the same way they animate the 2D mapped slices.
     const stageFxRt = get(stageEffectsRuntime);
-    const stageFxOutputs = stageFxRt.sliceOutputs;
-    const layerToSlice = stageFxRt.layerToSlice;
 
     // Atmosphere FX — sync toggles from the scene, then tick the rig
     // with the smoothed visual-audio bus so beams/lasers/strips ride
@@ -999,8 +997,16 @@ export class Stage3DRenderer {
       // 0..1 for that slice each frame — Radial Pulse / Sweep / Strobe
       // etc. all drive this. Multiply it into the LED so the 3D screens
       // pulse the same way the 2D mapped slices do.
-      const sliceId = layerToSlice.get(layer.id);
-      const fxBrightness = sliceId !== undefined ? (stageFxOutputs.get(sliceId) ?? 1) : 1;
+      const stageFx = resolveStageEffectForLayer(layer, stageFxRt);
+      const fxBrightness = stageFx.brightness;
+      const stageTint = u.uStageTint.value as THREE.Color;
+      if (stageFx.color) {
+        stageTint.set(stageFx.color).convertSRGBToLinear();
+      } else {
+        stageTint.setRGB(1, 1, 1);
+      }
+      entry.stageFxBrightness = fxBrightness;
+      entry.stageFxTint.copy(stageTint);
       // Note: exposureMul is intentionally NOT applied here. Exposure
       // is the master scenery brightness, and coupling it into the
       // LED makes a dark room (low exposure) inevitably dim the
@@ -1096,7 +1102,7 @@ export class Stage3DRenderer {
                 led.averagePixels[0] / 255,
                 led.averagePixels[1] / 255,
                 led.averagePixels[2] / 255,
-              );
+              ).multiply(led.stageFxTint);
             })
             .catch((err: unknown) => {
               this.downsampleFailed = true;
@@ -1128,7 +1134,7 @@ export class Stage3DRenderer {
       // point and read as a hard spotlight pool on the deck).
       const glowScale = lightInfluence * 0.9 * lighting.screenBoost / Math.max(0.1, exposureMul);
       for (const e of this.ledEntries) {
-        e.ambientLight.intensity = glowScale;
+        e.ambientLight.intensity = glowScale * e.stageFxBrightness;
       }
     } else {
       for (const e of this.ledEntries) e.ambientLight.intensity = 0;
@@ -1678,6 +1684,8 @@ export class Stage3DRenderer {
           dome: { u0: dp.u0, u1: dp.u1, yTop: dp.yTop, yBottom: dp.yBottom, mapping, lightOffset, lightTarget },
           ambientLight, averageRT,
           averagePixels: new Uint8Array(4),
+          stageFxBrightness: 1,
+          stageFxTint: new THREE.Color(1, 1, 1),
         });
         this.ledByLayerId.set(layer.id, this.ledEntries[this.ledEntries.length - 1]);
         continue;
@@ -1763,6 +1771,8 @@ export class Stage3DRenderer {
         defaultWidth: placement.width,
         defaultHeight: placement.height,
         ambientLight, averageRT, averagePixels,
+        stageFxBrightness: 1,
+        stageFxTint: new THREE.Color(1, 1, 1),
       };
       this.ledEntries.push(entry);
       this.ledByLayerId.set(layer.id, entry);

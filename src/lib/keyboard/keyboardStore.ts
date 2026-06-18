@@ -61,16 +61,27 @@ export interface KeyBinding {
 
 export interface KeyboardState {
   enabled: boolean;
+  editMode: boolean;
   bindings: KeyBinding[];
   /** Most recent captured key (for the learn banner + debug feed). */
   lastKey: { code: string; ctrl: boolean; shift: boolean; alt: boolean; meta: boolean; at: number } | null;
   /** When set, the next keypress is bound to this param path instead of
    *  being dispatched normally. Auto-exits on capture. */
-  learnTarget: { path: string; label?: string; mode?: KeyActionMode } | null;
+  learnTarget: {
+    path: string;
+    label?: string;
+    mode?: KeyActionMode;
+    min?: number;
+    max?: number;
+    step?: number;
+    value?: number;
+    discreteValues?: string[];
+  } | null;
 }
 
 const INITIAL_STATE: KeyboardState = {
   enabled: false,
+  editMode: false,
   bindings: [],
   lastKey: null,
   learnTarget: null,
@@ -152,6 +163,12 @@ function createKeyboardStore() {
     // capture even from a focused field so the user can learn right
     // after typing a path; normal dispatch (below) skips editable focus.
     if (state.learnTarget) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        update(s => ({ ...s, learnTarget: null, editMode: false }));
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
       const mode: KeyActionMode = state.learnTarget.mode
@@ -162,8 +179,12 @@ function createKeyboardStore() {
         ctrl: e.ctrlKey, shift: e.shiftKey, alt: e.altKey, meta: e.metaKey,
         path: state.learnTarget.path,
         mode,
-        min: 0, max: 1, step: 0.05, value: 1,
+        min: state.learnTarget.min ?? 0,
+        max: state.learnTarget.max ?? 1,
+        step: state.learnTarget.step ?? 0.05,
+        value: state.learnTarget.value ?? state.learnTarget.max ?? 1,
         label: state.learnTarget.label,
+        discreteValues: state.learnTarget.discreteValues,
       };
       update(s => ({
         ...s,
@@ -250,12 +271,42 @@ function createKeyboardStore() {
       update(s => ({ ...s, enabled, learnTarget: enabled ? s.learnTarget : null }));
       if (enabled) arm(); else disarm();
     },
+    toggleEditMode() {
+      update(s => {
+        const editMode = !s.editMode;
+        if (editMode) arm();
+        return {
+          ...s,
+          enabled: editMode ? true : s.enabled,
+          editMode,
+          learnTarget: editMode ? s.learnTarget : null,
+        };
+      });
+    },
+    setEditMode(editMode: boolean) {
+      update(s => ({
+        ...s,
+        enabled: editMode ? true : s.enabled,
+        editMode,
+        learnTarget: editMode ? s.learnTarget : null,
+      }));
+      if (editMode) arm();
+    },
 
     /** Begin learn mode. The next keypress becomes a binding for
      *  `targetPath`. Auto-exits on capture. Enables the listener so
      *  learn works even if the surface was off. */
-    startLearn(targetPath: string, label?: string, mode?: KeyActionMode) {
-      update(s => ({ ...s, enabled: true, learnTarget: { path: targetPath, label, mode } }));
+    startLearn(
+      targetPath: string,
+      label?: string,
+      mode?: KeyActionMode,
+      defaults?: Partial<Pick<KeyBinding, 'min' | 'max' | 'step' | 'value' | 'discreteValues'>>
+    ) {
+      update(s => ({
+        ...s,
+        enabled: true,
+        learnTarget: { path: targetPath, label, mode, ...defaults },
+      }));
       arm();
     },
     cancelLearn() {
@@ -288,6 +339,7 @@ function createKeyboardStore() {
         ...state,
         lastKey: null,
         learnTarget: null,
+        editMode: false,
       };
       set(next);
       if (next.enabled) arm(); else disarm();

@@ -130,19 +130,19 @@
   }
 
   .strip-label {
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 800;
     color: var(--strip-color);
     text-shadow: 0 0 8px var(--strip-color);
     letter-spacing: 1px;
   }
   .mixer-strip.vertical.compact .strip-label {
-    font-size: 10px;
+    font-size: 12px;
     line-height: 1;
   }
 
   .strip-clip-name {
-    font-size: 8px;
+    font-size: 10px;
     color: rgba(255, 255, 255, 0.35);
     text-align: center;
     overflow: hidden;
@@ -152,7 +152,7 @@
     min-height: 14px;
   }
   .mixer-strip.vertical.compact .strip-clip-name {
-    font-size: 7.5px;
+    font-size: 9.5px;
     max-width: calc(var(--tablet-mixer-width, 68px) - 10px);
     min-height: 10px;
     line-height: 10px;
@@ -168,7 +168,7 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
     color: var(--text-secondary, #aaa);
-    font-size: 9px;
+    font-size: 11px;
     cursor: pointer;
     text-align: center;
     -webkit-appearance: none;
@@ -177,7 +177,7 @@
     width: 100%;
     height: 20px;
     padding: 2px;
-    font-size: 8px;
+    font-size: 10px;
   }
   .blend-select:focus {
     border-color: var(--strip-color);
@@ -234,7 +234,7 @@
   }
 
   .mixer-strip.horizontal .strip-label {
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 800;
     min-width: 24px;
     text-align: center;
@@ -253,7 +253,7 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 6px;
     color: var(--text-secondary, #aaa);
-    font-size: 9px;
+    font-size: 11px;
     cursor: pointer;
     -webkit-appearance: none;
     flex-shrink: 0;

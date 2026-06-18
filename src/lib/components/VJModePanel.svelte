@@ -12,7 +12,7 @@
   import { project, stagePresets, compositions, activeCompositionId } from '../stores/layers';
   import { STAGE_EFFECT_CATALOG, getEffectDef } from '../stores/stageEffects';
   import { surfaceStore, activeSurface } from '../stores/surface';
-  import type { StageEffectType, IntegratedEffectType } from '../types';
+  import type { StageEffectType, IntegratedEffectType, IntegratedEffectSource, MediaSource } from '../types';
 
   // Stage Effects tab UX state — which effect type the user has
   // chosen in the "Add" picker. Defaults to the first catalog entry.
@@ -20,20 +20,22 @@
   import { globalStagePresets } from '../stores/globalPresets';
   import { parseISF, getInputDefault } from '../isf/parser';
   import { generateCachedThumbnail as generateShaderThumbnail } from '../isf/thumbnail';
-  import type { BlendMode, Effect, EffectType, ISFInputDef, SplatContent, Model3DContent, Model3DFormat, SplatAnimationType, SplatDisplacementType, Model3DAnimationType, Model3DDeformationType, Model3DMaterialType, Model3DWireframeMode, Model3DLightingPreset } from '../types';
+  import type { BlendMode, Effect, EffectType, ISFInputDef, JSAnimationSource, SplatContent, Model3DContent, Model3DFormat, SplatAnimationType, SplatDisplacementType, Model3DAnimationType, Model3DDeformationType, Model3DMaterialType, Model3DWireframeMode, Model3DLightingPreset } from '../types';
   import { generateUUID, createDefaultSplatContent, createDefaultModel3DContent } from '../types';
   import { audioStore } from '../stores/audio';
   import { createAssetRefFromFile, createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
   import ClipPreviewPanel from './ClipPreviewPanel.svelte';
   import { markUserInteracting } from '../midi/midiRouter';
-  import { modulationStore, modulationEngine, setParamModSource, updateParamMod, registerParamRanges, getModulatedValue, setBaseValue, clearBaseValues, clearModulatedValues, modKeyShader, type ModSource, type ParamModulation } from '../audio/modulation';
+  import { modulationStore, modulationEngine, setParamModSource, setCrossfaderModSource, updateParamMod, registerParamRanges, getModulatedValue, setBaseValue, clearBaseValues, clearModulatedValues, modKeyShader, MOD_KEY_XFADE_VALUE, type ModSource, type ParamModulation } from '../audio/modulation';
   import ModTray, { modSourceLabel } from './ModTray.svelte';
   import { defaultAutoFor } from '../audio/autoEngine';
   import type { AutoConfig } from '../types';
   import { performanceStore } from '../audio/performanceEngine';
   import type { ISFInput } from '../isf/parser';
-  import { getPluginByEffectType, getAllPlugins, type PluginParamDef } from '../plugins/registry';
+  import { getPluginByEffectType, getAllPlugins } from '../plugins/registry';
   import PluginIcon from './PluginIcon.svelte';
+  import PluginLayerPanel from './PluginLayerPanel.svelte';
+  import MediaTray from './MediaTray.svelte';
   import AIShaderGenerator from './AIShaderGenerator.svelte';
   import AIVideoGenerator from './AIVideoGenerator.svelte';
   import { shaderLibrary } from '../stores/shaderLibrary';
@@ -63,6 +65,9 @@
   import EffectPickerModal from './EffectPickerModal.svelte';
   import SplatPanel from './SplatPanel.svelte';
   import Model3DPanel from './Model3DPanel.svelte';
+  // Same build-time JS animation catalog used by mapping-mode MediaTray.
+  // @ts-expect-error virtual module supplied by vite plugin
+  import bundledThreeJSItems from 'virtual:threejs-bundles';
 
   // File menu callback (wired by parent App.svelte)
   export let onFileAction: ((action: 'new' | 'open' | 'save' | 'saveAs' | 'importPresets' | 'undo' | 'redo') => void) | null = null;
@@ -144,6 +149,92 @@
     if (typeof idx !== 'number') return;
     const preset = allStagePresets[idx];
     if (preset) project.loadStagePreset(preset.id);
+  };
+
+  let heldStageEffects: Record<string, boolean> = {};
+  let stageEffectHoldStack: string[] = [];
+  let stageEffectHoldRestoreId: string | null = null;
+  let stageEffectHoldRestoreAutomationPlaying: boolean | null = null;
+
+  function setStageActiveEffect(effectId: string | null) {
+    const surfaceId = $activeSurface?.id;
+    if (!surfaceId) return;
+    surfaceStore.setActiveEffect(surfaceId, effectId);
+  }
+
+  function setStageEffectHeld(effectId: string, held: boolean) {
+    const next = { ...heldStageEffects };
+    if (held) next[effectId] = true;
+    else delete next[effectId];
+    heldStageEffects = next;
+  }
+
+  function pressStageEffectHold(effectId: string) {
+    if (!effectId || heldStageEffects[effectId]) return;
+    if (stageEffectHoldStack.length === 0) {
+      stageEffectHoldRestoreId = $activeSurface?.activeEffectId ?? null;
+      stageEffectHoldRestoreAutomationPlaying = $activeSurface?.effectAutomation?.playing ?? false;
+      if (stageEffectHoldRestoreAutomationPlaying) {
+        surfaceStore.updateEffectAutomation({ playing: false });
+      }
+    } else {
+      heldStageEffects = {};
+      stageEffectHoldStack = [];
+    }
+    stageEffectHoldStack = [effectId];
+    setStageEffectHeld(effectId, true);
+    setStageActiveEffect(effectId);
+  }
+
+  function releaseStageEffectHold(effectId: string) {
+    if (!effectId || !heldStageEffects[effectId]) return;
+    const nextStack = stageEffectHoldStack.filter(id => id !== effectId);
+    setStageEffectHeld(effectId, false);
+    stageEffectHoldStack = nextStack;
+
+    if (nextStack.length > 0) {
+      setStageActiveEffect(nextStack[nextStack.length - 1]);
+      return;
+    }
+
+    setStageActiveEffect(stageEffectHoldRestoreId ?? null);
+    if (stageEffectHoldRestoreAutomationPlaying) {
+      surfaceStore.updateEffectAutomation({ playing: true });
+    }
+    stageEffectHoldRestoreId = null;
+    stageEffectHoldRestoreAutomationPlaying = null;
+  }
+
+  function releaseAllStageEffectHolds() {
+    const hadHeldEffect = stageEffectHoldStack.length > 0;
+    const restoreId = stageEffectHoldRestoreId;
+    const restoreAutomation = stageEffectHoldRestoreAutomationPlaying;
+    heldStageEffects = {};
+    stageEffectHoldStack = [];
+    stageEffectHoldRestoreId = null;
+    stageEffectHoldRestoreAutomationPlaying = null;
+    if (hadHeldEffect) setStageActiveEffect(restoreId ?? null);
+    if (hadHeldEffect && restoreAutomation) surfaceStore.updateEffectAutomation({ playing: true });
+  }
+
+  function handleStageEffectHoldPointerDown(event: PointerEvent, effectId: string) {
+    event.preventDefault();
+    event.stopPropagation();
+    (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
+    pressStageEffectHold(effectId);
+  }
+
+  function handleStageEffectHoldPointerEnd(event: PointerEvent, effectId: string) {
+    event.preventDefault();
+    event.stopPropagation();
+    releaseStageEffectHold(effectId);
+  }
+
+  const stageEffectHoldHandler = (e: Event) => {
+    const detail = (e as CustomEvent<{ effectId: string; pressed: boolean }>).detail;
+    if (!detail?.effectId) return;
+    if (detail.pressed) pressStageEffectHold(detail.effectId);
+    else releaseStageEffectHold(detail.effectId);
   };
 
   // Stable index arrays for the clip-grid {#each ... (key)} loops. Without these,
@@ -567,10 +658,13 @@
   onDestroy(() => {
     stopPreviewLoop();
     stopModGhostLoop();
+    stopCrossfaderAutoLoop();
     stopVjVideoTick();
     vjStopNdiScan();
     stopAllVjLiveSources();
     window.removeEventListener('midi-stage-preset', stagePresetHandler);
+    window.removeEventListener('vj-stage-effect-hold', stageEffectHoldHandler);
+    releaseAllStageEffectHolds();
     if (vjRecorderHandle && vjIsRecording) {
       try { vjRecorderHandle.stop(); } catch {}
     }
@@ -658,6 +752,43 @@
     pluginName?: string;
     effectType?: IntegratedEffectType;
   };
+
+  type MediaTrayMediaPayload = {
+    id: string;
+    type: 'shader' | 'video' | 'image' | 'threejs' | 'p5js';
+    name: string;
+    src: string;
+    thumbnail?: string;
+    shaderCode?: string;
+    shaderValues?: Record<string, any>;
+    jsAnimation?: JSAnimationSource;
+    _assetRef?: any;
+  };
+
+  type MediaTrayLiveSourcePayload = {
+    id: string;
+    type: 'live-source';
+    sourceType: 'spout' | 'webcam' | 'capture' | 'ndi';
+    name: string;
+    status?: 'disconnected' | 'connecting' | 'live';
+    stream?: MediaStream;
+    videoEl?: HTMLVideoElement;
+    thumbnail?: string;
+    spoutSenderName?: string;
+    ndiSourceName?: string;
+  };
+
+  type MediaTrayPluginPayload = {
+    id: string;
+    type: 'effect';
+    name: string;
+    pluginName?: string;
+    src?: string;
+    effectType?: IntegratedEffectType;
+    effectSource?: IntegratedEffectSource;
+  };
+
+  type MediaTrayDropPayload = MediaTrayMediaPayload | MediaTrayLiveSourcePayload | MediaTrayPluginPayload;
 
   // Drag state for clips
   let draggedClip: VJDragPayload | null = null;
@@ -833,6 +964,7 @@
   type VJScreenSource = ScreenCaptureSource;
 
   let vjLiveSources: VJLiveSource[] = [];
+  let mediaTrayLiveSources: MediaTrayLiveSourcePayload[] = [];
   let vjScreenPickerOpen = false;
   let vjScreenPickerSources: VJScreenSource[] = [];
   let vjScreenPickerLoading = false;
@@ -915,6 +1047,77 @@
     return null;
   }
 
+  function handleMediaTrayLiveSourcesChange(sources: MediaTrayLiveSourcePayload[]) {
+    mediaTrayLiveSources = sources;
+  }
+
+  function windowMediaTrayLiveSources(): MediaTrayLiveSourcePayload[] {
+    const sources = (window as any).__ghostVJMediaTrayLiveSources;
+    return Array.isArray(sources) ? sources : [];
+  }
+
+  function findMediaTrayLiveSource(sourceId: string): MediaTrayLiveSourcePayload | null {
+    return mediaTrayLiveSources.find((source) => source.id === sourceId)
+      || windowMediaTrayLiveSources().find((source) => source.id === sourceId)
+      || null;
+  }
+
+  function ensureMediaTrayLiveVideoElement(source: MediaTrayLiveSourcePayload): HTMLVideoElement | undefined {
+    if (source.videoEl) return source.videoEl;
+    if (!source.stream) return undefined;
+    const videoEl = document.createElement('video');
+    videoEl.srcObject = source.stream;
+    videoEl.muted = true;
+    videoEl.playsInline = true;
+    videoEl.autoplay = true;
+    videoEl.play().catch(() => {});
+    source.videoEl = videoEl;
+    return videoEl;
+  }
+
+  function mediaTraySourceAsVJLiveSource(source: MediaTrayLiveSourcePayload): VJLiveSource {
+    const videoEl = (source.sourceType === 'webcam' || source.sourceType === 'capture')
+      ? ensureMediaTrayLiveVideoElement(source)
+      : source.videoEl;
+    return {
+      id: source.id,
+      name: source.name,
+      type: source.sourceType,
+      status: source.status ?? 'live',
+      stream: source.stream,
+      videoEl,
+      spoutSenderName: source.spoutSenderName,
+      ndiSourceName: source.ndiSourceName,
+    };
+  }
+
+  function createVJClipFromMediaTrayLiveSource(source: MediaTrayLiveSourcePayload): VJClip | null {
+    return createVJClipFromLiveSource(mediaTraySourceAsVJLiveSource(source));
+  }
+
+  function isMediaTrayLiveSourceInUse(sourceId: string): boolean {
+    const source = findMediaTrayLiveSource(sourceId);
+    const sourceType = source?.sourceType;
+    const senderName = source?.spoutSenderName || source?.ndiSourceName || '';
+    const candidates = new Set([
+      `live://${sourceType ?? 'webcam'}/${sourceId}`,
+      `live://webcam/${sourceId}`,
+      `live://capture/${sourceId}`,
+      `live://spout/${sourceId}`,
+      `live://ndi/${sourceId}`,
+      sourceId,
+      senderName,
+    ].filter(Boolean));
+
+    const grids = [deckGrid('A'), deckGrid('B')];
+    return grids.some((grid) => grid.some((row) => row.some((clip) => {
+      if (!clip) return false;
+      if (candidates.has(clip.src) || (clip.spoutSource && candidates.has(clip.spoutSource))) return true;
+      if (clip.ndiSource?.senderName && candidates.has(clip.ndiSource.senderName)) return true;
+      return false;
+    })));
+  }
+
   function activeVJDeckForAdd(): VJDeck {
     return $vjClipLauncher.crossfaderEnabled ? $vjClipLauncher.selectedDeck : 'A';
   }
@@ -934,12 +1137,86 @@
     return null;
   }
 
+  function findNextEmptyVJColumn(layerIndex: number, bank: VJDeck): number | null {
+    const row = deckGrid(bank)[layerIndex];
+    if (!row) return null;
+    for (const column of columnIndices) {
+      if (!row[column]) return column;
+    }
+    return null;
+  }
+
+  function placeMediaTrayPayloadOnLayer(payload: MediaTrayDropPayload, layerIndex: number, bank: VJDeck): boolean {
+    const column = findNextEmptyVJColumn(layerIndex, bank);
+    if (column === null) {
+      showToast('No empty slot on that VJ layer.', 'warning');
+      return true;
+    }
+
+    const clip = createVJClipFromMediaTrayPayload(payload);
+    if (!clip) {
+      showToast('That source is not ready for the VJ deck yet.', 'warning');
+      return true;
+    }
+
+    vjClipLauncher.setClip(layerIndex, column, clip, bank);
+    selectedLayerIndex = layerIndex;
+    showShaderParams = true;
+    if ($vjClipLauncher.crossfaderEnabled) vjClipLauncher.setSelectedDeck(bank);
+    return true;
+  }
+
+  function mediaTrayPayloadFromDataTransfer(dataTransfer: DataTransfer | null): MediaTrayDropPayload | null {
+    const runtimePayload = (window as any).__ghostVJMediaTrayDragPayload as MediaTrayDropPayload | undefined;
+    const raw = dataTransfer?.getData('application/x-ghost-media-source');
+    if (!raw) {
+      return runtimePayload && typeof runtimePayload.type === 'string' && typeof runtimePayload.id === 'string'
+        ? runtimePayload
+        : null;
+    }
+    try {
+      const payload = JSON.parse(raw) as MediaTrayDropPayload;
+      if (payload && typeof payload.type === 'string' && typeof payload.id === 'string') {
+        if (payload.type === 'live-source' && runtimePayload?.type === 'live-source' && runtimePayload.id === payload.id) {
+          return runtimePayload;
+        }
+        return payload;
+      }
+    } catch {
+      return runtimePayload && typeof runtimePayload.type === 'string' && typeof runtimePayload.id === 'string'
+        ? runtimePayload
+        : null;
+    }
+    return runtimePayload && typeof runtimePayload.type === 'string' && typeof runtimePayload.id === 'string'
+      ? runtimePayload
+      : null;
+  }
+
   function addLiveSourceToDeck(source: VJLiveSource, bank: VJDeck = activeVJDeckForAdd()) {
     const target = findNextEmptyVJCell(bank);
     const clip = createVJClipFromLiveSource(source);
     if (!target || !clip) return;
     vjClipLauncher.setClip(target.layer, target.column, clip, bank);
     selectedLayerIndex = target.layer;
+    if ($vjClipLauncher.crossfaderEnabled) vjClipLauncher.setSelectedDeck(bank);
+  }
+
+  function addMediaTrayPayloadToDeck(payload: MediaTrayDropPayload, bank: VJDeck = activeVJDeckForAdd()) {
+    const target = findNextEmptyVJCell(bank);
+    if (!target) {
+      showToast('No empty VJ deck slot available.', 'warning');
+      return;
+    }
+
+    const clip = createVJClipFromMediaTrayPayload(payload);
+    if (!clip) {
+      showToast('That source is not ready for the VJ deck yet.', 'warning');
+      return;
+    }
+
+    vjClipLauncher.setClip(target.layer, target.column, clip, bank);
+    selectedLayerIndex = target.layer;
+    showShaderParams = true;
     if ($vjClipLauncher.crossfaderEnabled) vjClipLauncher.setSelectedDeck(bank);
   }
 
@@ -1197,9 +1474,12 @@
     thumbnail?: string;
   }
 
-  // Default Three.js items that ship with every build. Located under
-  // /public/threejs/<name>/index.html so vite copies them into dist.
-  const defaultThreeJSItems: ThreeJSItem[] = [
+  const bundledVJThreeJSItems: Array<{ id: string; folder: string; name: string; url: string }> =
+    bundledThreeJSItems as any;
+
+  // Default JS animation items that ship with every build. This mirrors
+  // MediaTray's virtual:threejs-bundles catalog so VJ sees the same built-ins.
+  const fallbackThreeJSItems: ThreeJSItem[] = [
     {
       id: 'threejs-embryo',
       name: 'Embryo',
@@ -1207,6 +1487,16 @@
       thumbnail: undefined,
     },
   ];
+
+  const defaultThreeJSItems: ThreeJSItem[] =
+    bundledVJThreeJSItems.length > 0
+      ? bundledVJThreeJSItems.map((def) => ({
+          id: def.id,
+          name: def.name,
+          src: def.url,
+          thumbnail: undefined,
+        }))
+      : fallbackThreeJSItems;
 
   let threejsItems: ThreeJSItem[] = [...defaultThreeJSItems];
 
@@ -1260,6 +1550,7 @@
     void vjStartNdiScan();
 
     window.addEventListener('midi-stage-preset', stagePresetHandler);
+    window.addEventListener('vj-stage-effect-hold', stageEffectHoldHandler);
 
     const init = async () => {
       try {
@@ -1646,6 +1937,127 @@
     vjClipLauncher.setClipShaderValueAuto(activeClipId, paramName, { ...cur, ...patch });
   }
 
+  // A/B crossfader modulation. Audio/LFO/sync use the shared
+  // modulation engine target; Auto is a tiny local playhead because
+  // the global fader is not a clip/layer param with an Auto sidecar.
+  let crossfaderModTrayAnchor: HTMLElement | null = null;
+  let crossfaderMod: ParamModulation | undefined;
+  let crossfaderCurrentSource: ModSource = 'manual';
+  let crossfaderModActive = false;
+  let crossfaderAuto: AutoConfig | undefined = undefined;
+  let crossfaderAutoRaf: number | null = null;
+  let crossfaderAutoLastTime = 0;
+
+  $: crossfaderMod = modulationMap.get(MOD_KEY_XFADE_VALUE);
+  $: crossfaderCurrentSource = crossfaderAuto ? 'auto' : (crossfaderMod?.source ?? 'manual');
+  $: crossfaderModActive = crossfaderCurrentSource !== 'manual';
+
+  function clamp01(value: number): number {
+    return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+  }
+
+  function resolveCrossfaderAutoValue(auto: AutoConfig): number {
+    const phase = Number.isFinite(auto.phase) ? auto.phase : 0;
+    const shaped = auto.mode === 'pingpong'
+      ? (phase < 0.5 ? phase * 2 : 2 - phase * 2)
+      : phase;
+    const min = clamp01(auto.min);
+    const max = clamp01(auto.max);
+    const lo = Math.min(min, max);
+    const hi = Math.max(min, max);
+    return clamp01(lo + shaped * (hi - lo));
+  }
+
+  function tickCrossfaderAuto(now: number) {
+    if (!crossfaderAuto) {
+      crossfaderAutoRaf = null;
+      crossfaderAutoLastTime = 0;
+      return;
+    }
+    crossfaderAutoRaf = requestAnimationFrame(tickCrossfaderAuto);
+    const dt = crossfaderAutoLastTime === 0 ? 0 : (now - crossfaderAutoLastTime) / 1000;
+    crossfaderAutoLastTime = now;
+    if (!$vjClipLauncher.crossfaderEnabled || !crossfaderAuto.playing || dt <= 0 || dt > 0.1) return;
+
+    const speedHz = Number.isFinite(crossfaderAuto.speedHz) ? crossfaderAuto.speedHz : 0.15;
+    const prev = Number.isFinite(crossfaderAuto.phase) ? crossfaderAuto.phase : 0;
+    const next = (prev + speedHz * dt) % 1;
+    crossfaderAuto.phase = next < 0 ? next + 1 : next;
+    vjClipLauncher.setCrossfaderValue(resolveCrossfaderAutoValue(crossfaderAuto));
+  }
+
+  function startCrossfaderAutoLoop() {
+    if (crossfaderAutoRaf !== null || !crossfaderAuto) return;
+    crossfaderAutoLastTime = 0;
+    crossfaderAutoRaf = requestAnimationFrame(tickCrossfaderAuto);
+  }
+
+  function stopCrossfaderAutoLoop() {
+    if (crossfaderAutoRaf !== null) {
+      cancelAnimationFrame(crossfaderAutoRaf);
+      crossfaderAutoRaf = null;
+    }
+    crossfaderAutoLastTime = 0;
+  }
+
+  function toggleCrossfaderModTray(anchor: HTMLElement) {
+    crossfaderModTrayAnchor = crossfaderModTrayAnchor === anchor ? null : anchor;
+  }
+
+  function setCrossfaderSource(source: ModSource) {
+    if (source === 'auto') {
+      setCrossfaderModSource('manual');
+      crossfaderAuto = crossfaderAuto ?? defaultAutoFor(0, 1);
+      vjClipLauncher.setCrossfaderValue(resolveCrossfaderAutoValue(crossfaderAuto));
+      startCrossfaderAutoLoop();
+      return;
+    }
+    crossfaderAuto = undefined;
+    stopCrossfaderAutoLoop();
+    setCrossfaderModSource(source);
+  }
+
+  function patchCrossfaderMod(patch: Partial<ParamModulation>) {
+    const cur = modulationStore.getCrossfaderModulation();
+    if (!cur) return;
+    modulationStore.setCrossfaderModulation({ ...cur, ...patch });
+    if (cur.source !== 'manual' && !modulationEngine.running) modulationEngine.start();
+  }
+
+  function patchCrossfaderAuto(patch: Partial<AutoConfig>) {
+    const cur = crossfaderAuto ?? defaultAutoFor(0, 1);
+    const next = { ...cur, ...patch };
+    const min = clamp01(next.min);
+    const max = clamp01(next.max);
+    crossfaderAuto = {
+      ...next,
+      min: Math.min(min, max),
+      max: Math.max(min, max),
+    };
+    if (crossfaderAuto.playing) {
+      startCrossfaderAutoLoop();
+    } else {
+      stopCrossfaderAutoLoop();
+    }
+  }
+
+  function setCrossfaderManualValue(value: number) {
+    if (crossfaderCurrentSource !== 'manual') {
+      crossfaderAuto = undefined;
+      stopCrossfaderAutoLoop();
+      setCrossfaderModSource('manual');
+    }
+    vjClipLauncher.setCrossfaderValue(clamp01(value));
+  }
+
+  $: if (!$vjClipLauncher.crossfaderEnabled) {
+    crossfaderModTrayAnchor = null;
+    stopCrossfaderAutoLoop();
+  }
+  $: if ($vjClipLauncher.crossfaderEnabled && crossfaderAuto?.playing) {
+    startCrossfaderAutoLoop();
+  }
+
   // Close the tray when the params panel goes away.
   $: if (!showShaderParams || selectedLayerIndex === null) modTrayParam = null;
 
@@ -1693,7 +2105,9 @@
     // Electron/Chromium requires dataTransfer.setData() for drag to work
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = 'copy';
-      e.dataTransfer.setData('text/plain', JSON.stringify(clip));
+      const payload = JSON.stringify(clip);
+      e.dataTransfer.setData('application/x-ghost-vj-clip', payload);
+      e.dataTransfer.setData('text/plain', payload);
     }
   }
 
@@ -1769,17 +2183,19 @@
   }
 
   async function vjHandleMediaDrop(e: DragEvent) {
-    e.preventDefault();
-    vjMediaDragOver = false;
     const files = e.dataTransfer?.files;
     if (!files || files.length === 0) return;
+    e.preventDefault();
+    vjMediaDragOver = false;
     for (const f of Array.from(files)) { await vjAddMediaFile(f); }
   }
 
   function vjHandleMediaDragOver(e: DragEvent) {
-    e.preventDefault();
     // Only show overlay for actual file drops, not clip drags from the grid
-    if (e.dataTransfer?.types.includes('Files')) vjMediaDragOver = true;
+    if (e.dataTransfer?.types.includes('Files')) {
+      e.preventDefault();
+      vjMediaDragOver = true;
+    }
   }
 
   function vjHandleMediaDragLeave(e: DragEvent) {
@@ -1894,8 +2310,80 @@
     }
   }
 
+  function createVJClipFromMediaTrayPayload(payload: MediaTrayDropPayload): VJClip | null {
+    if (payload.type === 'live-source') {
+      const registeredSource = findMediaTrayLiveSource(payload.id);
+      const source = (payload.videoEl || payload.stream) ? payload : (registeredSource ?? payload);
+      return createVJClipFromMediaTrayLiveSource(source);
+    }
+
+    if (payload.type === 'effect') {
+      const effectType = payload.effectSource?.effectType || payload.effectType || 'fluid';
+      const manifest = getPluginByEffectType(effectType);
+      return {
+        id: generateUUID(),
+        type: 'effect',
+        name: payload.pluginName || payload.name || manifest?.name || payload.id,
+        src: payload.src || effectType,
+        effectSource: {
+          effectType,
+          ...(manifest?.defaultSourceParams ?? {}),
+          ...(payload.effectSource ?? {}),
+        },
+      };
+    }
+
+    if (payload.type === 'shader') {
+      if (!payload.shaderCode) return null;
+      return {
+        id: generateUUID(),
+        type: 'shader',
+        name: payload.name,
+        src: payload.src,
+        thumbnail: payload.thumbnail,
+        shaderCode: payload.shaderCode,
+        shaderValues: { ...(payload.shaderValues ?? {}) },
+      };
+    }
+
+    if (payload.type === 'video' || payload.type === 'image') {
+      return {
+        id: generateUUID(),
+        type: payload.type,
+        name: payload.name,
+        src: payload.src,
+        thumbnail: payload.thumbnail,
+        _assetRef: payload._assetRef,
+      };
+    }
+
+    if (payload.jsAnimation) {
+      return {
+        id: generateUUID(),
+        type: payload.type === 'p5js' ? 'p5js' : 'jsanimation',
+        name: payload.name,
+        src: payload.src || 'js-animation',
+        thumbnail: payload.thumbnail,
+        jsAnimation: { ...payload.jsAnimation },
+      };
+    }
+
+    if (payload.type === 'threejs') {
+      return {
+        id: generateUUID(),
+        type: 'threejs',
+        name: payload.name,
+        src: payload.src,
+        thumbnail: payload.thumbnail,
+      };
+    }
+
+    return null;
+  }
+
   function handleCellDrop(e: DragEvent, layerIndex: number, columnIndex: number, bank: VJDeck = 'A') {
     e.preventDefault();
+    e.stopPropagation();
     dragOverCell = null;
 
     // Cell-to-cell move OR swap. Resolume-style behavior: if the
@@ -1930,11 +2418,47 @@
       return;
     }
 
+    if (!draggedClip && e.dataTransfer) {
+      const payload = mediaTrayPayloadFromDataTransfer(e.dataTransfer);
+      if (payload) {
+        const vjClip = createVJClipFromMediaTrayPayload(payload);
+        if (vjClip) {
+          vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
+          selectedLayerIndex = layerIndex;
+          showShaderParams = true;
+          if ($vjClipLauncher.crossfaderEnabled) vjClipLauncher.setSelectedDeck(bank);
+          return;
+        }
+      }
+    }
+
+    if (!draggedClip && e.dataTransfer) {
+      const raw = e.dataTransfer.getData('application/x-ghost-vj-clip') || e.dataTransfer.getData('text/plain');
+      try {
+        const parsed = raw ? JSON.parse(raw) as VJDragPayload : null;
+        if (parsed && typeof parsed.type === 'string' && typeof parsed.id === 'string') {
+          draggedClip = parsed;
+        }
+      } catch {
+        const media = raw ? $mediaLibrary.find(m => m.id === raw) : null;
+        if (media) {
+          draggedClip = { type: media.type, id: media.id };
+        } else if (raw && shaders.some(s => s.id === raw)) {
+          draggedClip = { type: 'shader', id: raw };
+        } else if (raw && threejsItems.some(t => t.id === raw)) {
+          draggedClip = { type: 'threejs', id: raw };
+        }
+      }
+    }
+
     if (!draggedClip) return;
 
     if (draggedClip.type === 'live-source') {
       const liveSource = vjLiveSources.find((source) => source.id === draggedClip!.id);
-      const vjClip = liveSource ? createVJClipFromLiveSource(liveSource) : null;
+      const traySource = findMediaTrayLiveSource(draggedClip.id);
+      const vjClip = liveSource
+        ? createVJClipFromLiveSource(liveSource)
+        : (traySource ? createVJClipFromMediaTrayLiveSource(traySource) : null);
       if (vjClip) {
         vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
       }
@@ -2240,8 +2764,16 @@
     dragOverLayerIndex = null;
   }
 
-  function handleLayerDrop(layerIndex: number, e: DragEvent) {
+  function handleLayerDrop(layerIndex: number, e: DragEvent, bank: VJDeck = 'A') {
     e.preventDefault();
+    const payload = mediaTrayPayloadFromDataTransfer(e.dataTransfer);
+    if (payload) {
+      placeMediaTrayPayloadOnLayer(payload, layerIndex, bank);
+      draggedLayerIndex = null;
+      dragOverLayerIndex = null;
+      return;
+    }
+
     if (draggedLayerIndex !== null && draggedLayerIndex !== layerIndex) {
       vjClipLauncher.reorderLayers(draggedLayerIndex, layerIndex);
     }
@@ -2508,6 +3040,41 @@
   $: paramClipGrid = paramDeck === 'B' ? $vjClipLauncher.bankBClipGrid : $vjClipLauncher.clipGrid;
   $: selectedLayerState = selectedLayerIndex !== null ? paramLayerStates[selectedLayerIndex] : null;
 
+  function vjEffectMediaSource(clip: VJClip): MediaSource | null {
+    if (clip.type !== 'effect' || !clip.effectSource) return null;
+    return {
+      id: clip.id,
+      type: 'effect',
+      name: clip.name,
+      src: clip.src,
+      effectSource: clip.effectSource,
+    };
+  }
+
+  function activeEffectColumn(layerIndex: number): number | null {
+    const state = paramLayerStates[layerIndex];
+    const activeClip = state?.activeClip;
+    if (!activeClip) return null;
+    if (state.activeColumn !== null && state.activeColumn !== undefined) {
+      return state.activeColumn;
+    }
+    const col = paramClipGrid[layerIndex]?.findIndex((clip) => clip?.id === activeClip.id) ?? -1;
+    return col >= 0 ? col : null;
+  }
+
+  function updateActiveEffectClipSource(next: IntegratedEffectSource) {
+    if (selectedLayerIndex === null) return;
+    const col = activeEffectColumn(selectedLayerIndex);
+    if (col === null) return;
+    vjClipLauncher.updateClipEffectSource(selectedLayerIndex, col, next, paramDeck);
+  }
+
+  function vjEffectControlLayerId(layerIndex: number, deck: VJDeck): string {
+    return $vjClipLauncher.crossfaderEnabled
+      ? `vj-layer-${layerIndex}-${deck}`
+      : `vj-layer-${layerIndex}`;
+  }
+
   // Drive the video-controls polling tick from the selected clip type. Same
   // pattern as LayerPanel's startVideoTick — only run when a video clip is
   // selected, so the rAF loop is dormant for shader/splat/model3d clips.
@@ -2524,11 +3091,6 @@
 />
 
 {#if $vjClipLauncher.isOpen}
-  <!-- Snapshot bank — bottom-right corner overlay. 16 slots that capture/
-       recall the live VJ state in one click. Self-collapses to a small
-       icon launcher when not in use. -->
-  <SnapshotBank />
-
   <div class="vj-overlay" class:kf-tray-open={$keyframeTimeline.isOpen}>
     <!-- Header -->
     <div class="vj-header">
@@ -2573,9 +3135,6 @@
           />
           <span class="master-value">{Math.round($vjClipLauncher.masterOpacity * 100)}%</span>
         </div>
-      </div>
-
-      <div class="header-center">
         <!-- Kill output: matches the mapping-mode blackout icon (circle
              with diagonal slash). Stops every clip on every layer + bank,
              which is the VJ-mode equivalent of "go dark". The previous
@@ -2611,6 +3170,10 @@
            once). Right-click a knob → destination editor + learn flow. -->
       <div class="header-macros">
         <MacroKnobBar />
+      </div>
+
+      <div class="header-snaps">
+        <SnapshotBank placement="inline" />
       </div>
 
       <!-- Tap tempo + FFT meter + expandable EQ tweaks. Self-hides when
@@ -2819,8 +3382,19 @@
         <button class="stage-scope-toggle"
           class:global={stageSaveScope === 'global'}
           onclick={() => stageSaveScope = stageSaveScope === 'project' ? 'global' : 'project'}
-          title={stageSaveScope === 'project' ? 'Save to project' : 'Save globally'}>
-          {stageSaveScope === 'project' ? '📁' : '🌐'}
+          title={stageSaveScope === 'project' ? 'Save to project' : 'Save globally'}
+          aria-label={stageSaveScope === 'project' ? 'Save stage preset to project' : 'Save stage preset globally'}>
+          {#if stageSaveScope === 'project'}
+            <svg class="stage-scope-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path class="scope-fill" d="M3.5 8.2h17v10.2h-17z"/>
+              <path class="scope-stroke" d="M3.5 8.2h17v10.2h-17zM5.6 8.2l1.8-3h4.6l1.7 3M7.2 12.2h9.6"/>
+            </svg>
+          {:else}
+            <svg class="stage-scope-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <circle class="scope-stroke" cx="12" cy="12" r="8.2"/>
+              <path class="scope-stroke" d="M3.8 12h16.4M12 3.8c2 2.3 3 5 3 8.2s-1 5.9-3 8.2M12 3.8c-2 2.3-3 5-3 8.2s1 5.9 3 8.2"/>
+            </svg>
+          {/if}
         </button>
       </div>
     {/if}
@@ -2830,7 +3404,7 @@
          no duplicate FFT bars, no two ways to switch audio source.) -->
 
     <!-- Main Layout -->
-    <div class="vj-main">
+    <div class="vj-main" class:tray-collapsed={mediaTrayCollapsed}>
       <!-- Preview Section: Effects (left) | Preview 16:9 (center) | Shader Params + Media (right) -->
       <div class="vj-preview-section" class:reversed={$settings.ui.vjLayoutReversed} style="height: {previewSectionHeight}px">
 
@@ -2949,6 +3523,31 @@
                                only ↻-included effects; muting this
                                doesn't deactivate the effect if it's
                                currently live. -->
+                          <button
+                            class="stage-effect-hold-button"
+                            class:active={isLive}
+                            class:pressed={!!heldStageEffects[eff.id]}
+                            type="button"
+                            title={`Hold to show ${def?.label ?? eff.type}`}
+                            aria-label={`Hold to show ${def?.label ?? eff.type}`}
+                            data-midi-path={`vj:stage-effect:${eff.id}:hold`}
+                            data-midi-label={`Stage FX Hold: ${def?.label ?? eff.type}`}
+                            data-midi-mode="toggle"
+                            data-midi-min="0"
+                            data-midi-max="1"
+                            data-keyboard-mode="momentary"
+                            onpointerdown={(e) => handleStageEffectHoldPointerDown(e, eff.id)}
+                            onpointerup={(e) => handleStageEffectHoldPointerEnd(e, eff.id)}
+                            onpointercancel={(e) => handleStageEffectHoldPointerEnd(e, eff.id)}
+                            onlostpointercapture={(e) => handleStageEffectHoldPointerEnd(e, eff.id)}
+                          >
+                            <span class="stage-effect-hold-light"></span>
+                            <svg class="stage-effect-fire-icon" viewBox="0 0 24 24" aria-hidden="true">
+                              <path d="M12.4 2.8c.6 3.1-.7 4.9-2.2 6.7-1.3 1.5-2.7 3.2-2.7 5.6 0 2.8 2.1 5.1 4.9 5.1s5.1-2.1 5.1-5.2c0-2.5-1.4-4.6-3-6.3-.2 2-1.2 3.1-2.5 3.9.4-2.6.2-6.2.4-9.8Z"/>
+                              <path d="M11.8 20.2c-1.5-.6-2.5-1.9-2.5-3.5 0-1.5.8-2.5 1.7-3.6.2 1.4.8 2.4 1.8 3-.1-1.1.1-2.4.8-3.8 1.1 1.2 1.8 2.6 1.8 4.2 0 1.9-1.4 3.3-3.6 3.7Z"/>
+                            </svg>
+                            <span class="stage-effect-hold-icon">▶</span>
+                          </button>
                           <button
                             class="effect-cycle-toggle"
                             class:included={eff.enabled}
@@ -3085,7 +3684,7 @@
                                     <select
                                       value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
                                       onchange={(e) => updateEffectParam(effect.id, paramKey, parseFloat((e.target as HTMLSelectElement).value))}
-                                      style="flex:1; background:#222; color:#fff; border:1px solid #444; border-radius:3px; padding:2px 4px; font-size:11px;">
+                                      style="flex:1; background:#222; color:#fff; border:1px solid #444; border-radius:3px; padding:2px 4px; font-size:13px;">
                                       {#each meta.options as opt}
                                         <option value={opt.value}>{opt.label}</option>
                                       {/each}
@@ -3200,14 +3799,26 @@
           </div>
         </div>
 
-        <!-- RIGHT: Shader Params (only shows when a shader clip is selected) -->
-        <div class="right-panel-vj" class:collapsed={!(selectedLayerIndex !== null && (
-          (selectedLayerState?.activeClip?.type === 'shader' && selectedLayerState?.activeClip?.shaderCode && showShaderParams) ||
-          (selectedLayerState?.activeClip?.type === 'splat') ||
-          (selectedLayerState?.activeClip?.type === 'model3d') ||
-          (selectedLayerState?.activeClip?.type === 'effect' && selectedLayerState?.activeClip?.effectSource) ||
-          (selectedLayerState?.activeClip?.type === 'video' && selectedLayerState?.activeClip?.videoElement)
-        ))}>
+        <!-- RIGHT: Full-height VJ tray. Uses the shared mapping MediaTray so browser controls stay identical. -->
+        <div class="right-panel-vj" class:collapsed={mediaTrayCollapsed}>
+          <button
+            class="vj-right-tray-toggle"
+            onclick={() => mediaTrayCollapsed = !mediaTrayCollapsed}
+            title={mediaTrayCollapsed ? 'Open media and controls' : 'Close media and controls'}
+            aria-label={mediaTrayCollapsed ? 'Open media and controls' : 'Close media and controls'}
+          >
+            <svg class="media-tray-glyph" viewBox="0 0 28 28" fill="none" aria-hidden="true">
+              <path class="ghost-body" d="M14 4.2c-4.25 0-7.5 3.35-7.5 7.7v10l2.55-1.9 2.35 2.05 2.6-2.05 2.6 2.05L18.95 20l2.55 1.9v-10c0-4.35-3.25-7.7-7.5-7.7Z" />
+              <circle class="ghost-eye" cx="11.1" cy="12.2" r="1.25" />
+              <circle class="ghost-eye" cx="16.9" cy="12.2" r="1.25" />
+              <path class="ghost-mouth" d="M12 16.1c1.25.85 2.75.85 4 0" />
+            </svg>
+            <span class="media-tray-tab-label">media</span>
+          </button>
+
+          {#if !mediaTrayCollapsed}
+          <div class="vj-right-tray-content">
+            <div class="vj-clip-controls-stack">
           <!-- Shader Parameters (above media tabs) -->
           {#if selectedLayerIndex !== null && selectedLayerState?.activeClip?.type === 'shader' && selectedLayerState?.activeClip?.shaderCode && showShaderParams}
             {#if selectedClipShaderInputs.length > 0}
@@ -3445,101 +4056,16 @@
           <!-- Plugin/Effect Parameters (FluidGen, Particles3D, etc.) -->
           {#if selectedLayerIndex !== null && selectedLayerState?.activeClip?.type === 'effect'}
             {@const effectClip = selectedLayerState.activeClip}
-            {@const vjEffectSource = effectClip.effectSource}
-            {@const pluginManifest = vjEffectSource ? getPluginByEffectType(vjEffectSource.effectType) : null}
-            {#if pluginManifest && vjEffectSource}
+            {@const vjPluginSource = vjEffectMediaSource(effectClip)}
+            {#if vjPluginSource}
               <div class="shader-params-panel effect-params-panel">
-                <div class="shader-params-panel-header">
-                  <span class="shader-params-overlay-title">
-                    {pluginManifest.name || effectClip.name || 'Plugin'}
-                    <span class="shader-params-layer-badge" style="background: rgba(16, 185, 129, 0.3); color: #10b981;">FX</span>
-                  </span>
-                </div>
-                <div class="shader-params-panel-list">
-                  {#each pluginManifest.paramDefs as pd}
-                    <div class="shader-param">
-                      <div class="shader-param-header">
-                        <span class="shader-param-name">{pd.name}</span>
-                      </div>
-                      {#if pd.type === 'slider'}
-                        <div class="shader-param-slider">
-                          <div class="slider-track-wrap">
-                            <input type="range" class="param-slider"
-                              min={pd.min ?? 0} max={pd.max ?? 1} step={pd.step ?? 0.01}
-                              value={(vjEffectSource as any)[pd.param] ?? pd.default ?? 0.5}
-                              oninput={(e) => {
-                                if (selectedLayerIndex === null) return;
-                                const val = parseFloat((e.target as HTMLInputElement).value);
-                                const col = paramLayerStates[selectedLayerIndex]?.activeColumn ?? 0;
-                                const clip = paramLayerStates[selectedLayerIndex]?.activeClip;
-                                if (clip?.effectSource) {
-                                  vjClipLauncher.updateClipEffectSource(selectedLayerIndex, col, { ...clip.effectSource, [pd.param]: val }, paramDeck);
-                                }
-                              }}
-                            />
-                          </div>
-                          <span class="param-val">{((vjEffectSource as any)[pd.param] ?? pd.default ?? 0).toFixed(pd.step && pd.step >= 1 ? 0 : 2)}</span>
-                        </div>
-                      {:else if pd.type === 'toggle'}
-                        <div class="shader-param-slider">
-                          <label class="toggle-label">
-                            <input type="checkbox"
-                              checked={(vjEffectSource as any)[pd.param] ?? pd.default ?? false}
-                              onchange={(e) => {
-                                if (selectedLayerIndex === null) return;
-                                const val = (e.target as HTMLInputElement).checked;
-                                const col = paramLayerStates[selectedLayerIndex]?.activeColumn ?? 0;
-                                const clip = paramLayerStates[selectedLayerIndex]?.activeClip;
-                                if (clip?.effectSource) {
-                                  vjClipLauncher.updateClipEffectSource(selectedLayerIndex, col, { ...clip.effectSource, [pd.param]: val }, paramDeck);
-                                }
-                              }}
-                            />
-                            <span class="toggle-slider"></span>
-                          </label>
-                        </div>
-                      {:else if pd.type === 'select' && pd.options}
-                        <div class="shader-param-slider">
-                          <select class="isf-select"
-                            value={(vjEffectSource as any)[pd.param] ?? pd.default ?? 0}
-                            onchange={(e) => {
-                              if (selectedLayerIndex === null) return;
-                              const val = parseFloat((e.target as HTMLSelectElement).value);
-                              const col = paramLayerStates[selectedLayerIndex]?.activeColumn ?? 0;
-                              const clip = paramLayerStates[selectedLayerIndex]?.activeClip;
-                              if (clip?.effectSource) {
-                                vjClipLauncher.updateClipEffectSource(selectedLayerIndex, col, { ...clip.effectSource, [pd.param]: val }, paramDeck);
-                              }
-                            }}
-                          >
-                            {#each pd.options as opt}
-                              <option value={opt.value}>{opt.label}</option>
-                            {/each}
-                          </select>
-                        </div>
-                      {:else if pd.type === 'color'}
-                        {@const colorVal = (vjEffectSource as any)[pd.param] ?? pd.default ?? [1,1,1]}
-                        <div class="shader-param-slider">
-                          <input type="color"
-                            value={'#' + [0,1,2].map(i => Math.round((colorVal[i] ?? 0) * 255).toString(16).padStart(2,'0')).join('')}
-                            oninput={(e) => {
-                              if (selectedLayerIndex === null) return;
-                              const hex = (e.target as HTMLInputElement).value;
-                              const r = parseInt(hex.slice(1,3), 16) / 255;
-                              const g = parseInt(hex.slice(3,5), 16) / 255;
-                              const b = parseInt(hex.slice(5,7), 16) / 255;
-                              const col = paramLayerStates[selectedLayerIndex]?.activeColumn ?? 0;
-                              const clip = paramLayerStates[selectedLayerIndex]?.activeClip;
-                              if (clip?.effectSource) {
-                                vjClipLauncher.updateClipEffectSource(selectedLayerIndex, col, { ...clip.effectSource, [pd.param]: [r, g, b] }, paramDeck);
-                              }
-                            }}
-                            style="width: 100%; height: 24px; border: 1px solid var(--border); border-radius: 3px; cursor: pointer; background: transparent;"
-                          />
-                        </div>
-                      {/if}
-                    </div>
-                  {/each}
+                <div class="shader-params-panel-list plugin-param-list">
+                  <PluginLayerPanel
+                    source={vjPluginSource}
+                    onUpdateEffectSource={updateActiveEffectClipSource}
+                    controlLayerId={vjEffectControlLayerId(selectedLayerIndex, paramDeck)}
+                    midiPrefix={paramDeck === 'B' ? `vj-b:${selectedLayerIndex}:plugin` : `vj:${selectedLayerIndex}:plugin`}
+                  />
                 </div>
               </div>
             {/if}
@@ -3560,6 +4086,7 @@
             {@const vAnchorY = vClip.anchorY ?? 0.5}
             {@const vRotation = vClip.rotation ?? 0}
             {@const vOpacity = vClip.opacity ?? 1}
+            {@const vMirrorX = !!vClip.mirrorX}
             <div class="shader-params-panel video-params-panel">
               <div class="shader-params-panel-header">
                 <span class="shader-params-overlay-title">
@@ -3690,6 +4217,21 @@
                       </select>
                     </label>
 
+                    <label class="vt-tf-row vt-tf-toggle-row">
+                      <span class="vt-tf-label">Mirror</span>
+                      <button
+                        class="vt-toggle-btn"
+                        class:active={vMirrorX}
+                        onclick={() => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { mirrorX: !vMirrorX }, paramDeck)}
+                        title="Mirror horizontally"
+                        data-midi-path="vj:{selectedLayerIndex}:video:mirror"
+                        data-midi-label="{vClip.name} Mirror"
+                        data-midi-discrete="true"
+                      >
+                        {vMirrorX ? 'On' : 'Off'}
+                      </button>
+                    </label>
+
                     <label class="vt-tf-row">
                       <span class="vt-tf-label">Zoom</span>
                       <input
@@ -3747,7 +4289,7 @@
 
                     <button
                       class="vt-tf-reset"
-                      onclick={() => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { zoom: 1, fit: 'cover', anchorX: 0.5, anchorY: 0.5, rotation: 0, opacity: 1 }, paramDeck)}
+                      onclick={() => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { zoom: 1, fit: 'cover', anchorX: 0.5, anchorY: 0.5, rotation: 0, opacity: 1, mirrorX: false }, paramDeck)}
                       title="Reset transform to defaults"
                     >
                       Reset transform
@@ -3756,6 +4298,18 @@
                 </div>
               </div>
             </div>
+          {/if}
+            </div>
+            <div class="vj-shared-media-host">
+              <MediaTray
+                embedded={true}
+                vjMode={true}
+                onVJAddPayload={addMediaTrayPayloadToDeck}
+                onVJLiveSourcesChange={handleMediaTrayLiveSourcesChange}
+                isVJLiveSourceInUse={isMediaTrayLiveSourceInUse}
+              />
+            </div>
+          </div>
           {/if}
       </div>
       </div>
@@ -3879,7 +4433,7 @@
               class:drag-over={dragOverLayerIndex === layerIdx}
               ondragover={(e) => handleLayerDragOver(layerIdx, e)}
               ondragleave={handleLayerDragLeave}
-              ondrop={(e) => handleLayerDrop(layerIdx, e)}
+              ondrop={(e) => handleLayerDrop(layerIdx, e, bank)}
             >
               <!-- Live Preview Thumbnail (drag handle for layer reorder) -->
               <div class="layer-live-preview" class:has-clip={activeClip !== null}
@@ -4031,10 +4585,21 @@
 
             <!-- Vertical crossfader strip between the two decks -->
             <div class="crossfader-strip">
+              <div class="xfade-mod-row">
+                <span class="xfade-mod-label">XFADE</span>
+                <button
+                  class="mod-source-chip xfade-mod-chip"
+                  class:active={crossfaderModActive}
+                  class:open={crossfaderModTrayAnchor !== null}
+                  class:auto={!!crossfaderAuto}
+                  title="Crossfader modulation - audio bands, LFO with BPM sync, auto playhead"
+                  onclick={(e) => toggleCrossfaderModTray(e.currentTarget as HTMLElement)}
+                >{modSourceLabel(crossfaderCurrentSource, !!crossfaderAuto)}</button>
+              </div>
               <button
                 class="cut-btn cut-a"
                 class:active={$vjClipLauncher.crossfaderValue === 0}
-                onclick={() => vjClipLauncher.cutToA()}
+                onclick={() => setCrossfaderManualValue(0)}
                 title="Cut to Deck A"
                 data-midi-path="vj:crossfader:cut-a"
                 data-midi-label="Cut to Deck A"
@@ -4046,8 +4611,8 @@
                   min="0"
                   max="1"
                   step="0.001"
-                  value={$vjClipLauncher.crossfaderValue}
-                  oninput={(e) => vjClipLauncher.setCrossfaderValue(parseFloat((e.target as HTMLInputElement).value))}
+                  value={1 - $vjClipLauncher.crossfaderValue}
+                  oninput={(e) => setCrossfaderManualValue(1 - parseFloat((e.target as HTMLInputElement).value))}
                   class="xfade-vertical-input"
                   data-midi-path="vj:crossfader:value"
                   data-midi-label="Crossfader"
@@ -4055,11 +4620,17 @@
                   data-midi-max="1"
                   data-midi-step="0.001"
                 />
+                <div class="xfade-vertical-rail" aria-hidden="true"></div>
+                <div
+                  class="xfade-vertical-knob"
+                  style={`top: clamp(9px, ${$vjClipLauncher.crossfaderValue * 100}%, calc(100% - 9px));`}
+                  aria-hidden="true"
+                ></div>
               </div>
               <button
                 class="cut-btn cut-b"
                 class:active={$vjClipLauncher.crossfaderValue === 1}
-                onclick={() => vjClipLauncher.cutToB()}
+                onclick={() => setCrossfaderManualValue(1)}
                 title="Cut to Deck B"
                 data-midi-path="vj:crossfader:cut-b"
                 data-midi-label="Cut to Deck B"
@@ -4116,6 +4687,21 @@
                 <option value="overlay">Overlay</option>
                 <option value="exclusion">Exclusion</option>
               </select>
+
+              {#if crossfaderModTrayAnchor}
+                <ModTray
+                  label="A/B Crossfader"
+                  anchor={crossfaderModTrayAnchor}
+                  source={crossfaderMod?.source ?? 'manual'}
+                  mod={crossfaderMod}
+                  auto={crossfaderAuto}
+                  autoHint="Auto sweeps the A/B fader between Deck A and Deck B."
+                  onClose={() => crossfaderModTrayAnchor = null}
+                  onSetSource={setCrossfaderSource}
+                  onPatchMod={patchCrossfaderMod}
+                  onPatchAuto={patchCrossfaderAuto}
+                />
+              {/if}
             </div>
 
             <div class="deck-wrapper deck-b" class:focused={$vjClipLauncher.selectedDeck === 'B'}>
@@ -4417,6 +5003,7 @@
                       draggable={src.status === 'live' ? 'true' : 'false'}
                       ondragstart={(e) => handleLiveSourceDragStart(e, src)}
                       ondragend={handleDragEnd}
+                      title="Drag onto a clip slot or click +"
                     >
                       <div class="source-thumb">
                         <span class="source-type-icon">{vjLiveSourceIconLabel(src)}</span>
@@ -4729,11 +5316,16 @@
 
   /* Header Stage/Mix toggle */
   .header-stage {
+    position: absolute;
+    right: calc(50% + 300px);
+    top: 50%;
+    transform: translateY(-50%);
     display: flex;
     flex: 0 0 auto;
     border-radius: 6px;
     overflow: hidden;
     border: 1px solid #444;
+    z-index: 2;
   }
 
   .stage-mix-btn {
@@ -4741,7 +5333,7 @@
     background: #1a1a1a;
     border: none;
     color: var(--text-muted, #888);
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 700;
     letter-spacing: 1px;
     cursor: pointer;
@@ -4777,7 +5369,7 @@
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.18));
     background: transparent;
     color: var(--ga-ink-1, #b8bdc6);
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 700;
     letter-spacing: 0.06em;
     cursor: pointer;
@@ -4857,7 +5449,7 @@
   }
   .deck-label {
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.18em;
     color: var(--text-muted, #888);
@@ -4882,6 +5474,43 @@
     border: 1px solid #2a2a2a;
     border-radius: 8px;
   }
+  .xfade-mod-row {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    margin-bottom: 1px;
+  }
+  .xfade-mod-label {
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    color: rgba(148, 163, 184, 0.72);
+    line-height: 1;
+  }
+  .crossfader-strip .mod-source-chip.xfade-mod-chip {
+    width: 58px;
+    max-width: 58px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 6px;
+    font-size: 11px;
+    line-height: 1;
+    text-align: center;
+  }
+  .crossfader-strip .mod-source-chip.xfade-mod-chip.active {
+    border-color: rgba(126, 200, 227, 0.85);
+    color: #bff2ff;
+    background: rgba(126, 200, 227, 0.10);
+  }
+  .crossfader-strip .mod-source-chip.xfade-mod-chip.auto {
+    border-color: rgba(34, 211, 238, 0.9);
+    color: #9af7ff;
+    background: rgba(34, 211, 238, 0.10);
+  }
   .cut-btn {
     width: 44px;
     height: 22px;
@@ -4889,7 +5518,7 @@
     background: #181820;
     color: var(--text-secondary, #aaa);
     border-radius: 4px;
-    font-size: 13px;
+    font-size: 15px;
     line-height: 1;
     cursor: pointer;
     transition: background 0.12s, border-color 0.12s, color 0.12s;
@@ -4904,7 +5533,8 @@
     display: flex;
     align-items: stretch;
     justify-content: center;
-    width: 30px;
+    width: 44px;
+    position: relative;
   }
   /* Vertical range input. Two things were breaking it:
        1. The global skin (App.svelte + studio-skin.css) restyles every
@@ -4918,39 +5548,120 @@
      value=0 (full Deck A) sits at the TOP, value=1 (full Deck B) at the
      BOTTOM — matching the Cut A / Cut B buttons above and below the fader. */
   .xfade-vertical-input {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
     writing-mode: vertical-lr;
     direction: rtl;
-    width: 28px;
+    -webkit-appearance: none;
+    appearance: none;
+    width: 44px;
     height: 100%;
     min-height: 140px;
     margin: 0;
     padding: 0;
     background: transparent;
+    opacity: 0;
     accent-color: var(--accent-primary, #BB86FC);
     cursor: pointer;
   }
+  .xfade-vertical-rail {
+    position: absolute;
+    top: 9px;
+    bottom: 9px;
+    left: 50%;
+    width: 6px;
+    transform: translateX(-50%);
+    background: linear-gradient(to bottom, #7EC8E3, #9f75ad 50%, #FF8577);
+    border-radius: 999px;
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+      0 0 12px rgba(126, 200, 227, 0.18),
+      0 0 18px rgba(255, 133, 119, 0.12);
+    pointer-events: none;
+  }
+  .xfade-vertical-knob {
+    position: absolute;
+    left: 50%;
+    z-index: 1;
+    width: 34px;
+    height: 18px;
+    transform: translate(-50%, -50%);
+    background:
+      linear-gradient(90deg, rgba(255, 255, 255, 0.2), transparent 24%, transparent 76%, rgba(0, 0, 0, 0.22)),
+      linear-gradient(180deg, #f7f8fb 0%, #d8dde8 48%, #8f98ab 52%, #f4f6fb 100%);
+    border-radius: 5px;
+    border: 1px solid rgba(4, 6, 12, 0.9);
+    box-shadow:
+      0 3px 8px rgba(0, 0, 0, 0.55),
+      0 0 12px rgba(255, 255, 255, 0.22),
+      inset 0 1px 0 rgba(255, 255, 255, 0.85),
+      inset 0 -1px 1px rgba(0, 0, 0, 0.28);
+    pointer-events: none;
+  }
+  .xfade-vertical-input:active ~ .xfade-vertical-knob {
+    box-shadow:
+      0 5px 12px rgba(0, 0, 0, 0.65),
+      0 0 16px rgba(255, 255, 255, 0.32),
+      inset 0 1px 0 rgba(255, 255, 255, 0.9),
+      inset 0 -1px 1px rgba(0, 0, 0, 0.32);
+  }
+  .xfade-vertical-input:focus-visible ~ .xfade-vertical-knob {
+    outline: 2px solid rgba(126, 200, 227, 0.8);
+    outline-offset: 3px;
+  }
   .xfade-vertical-input::-webkit-slider-runnable-track {
     width: 6px;
-    background: linear-gradient(to bottom, #7EC8E3, #FF8577);
+    background: linear-gradient(to bottom, #7EC8E3, #9f75ad 50%, #FF8577);
     border-radius: 3px;
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+      0 0 10px rgba(126, 200, 227, 0.18);
   }
   .xfade-vertical-input::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 22px;
-    height: 12px;
-    background: #fff;
-    border-radius: 3px;
-    border: 1px solid #000;
-    box-shadow: 0 0 6px rgba(255, 255, 255, 0.3);
-    margin-left: -8px; /* center the 22px thumb on the 6px track */
+    width: 34px;
+    height: 18px;
+    background:
+      linear-gradient(90deg, rgba(255, 255, 255, 0.2), transparent 24%, transparent 76%, rgba(0, 0, 0, 0.22)),
+      linear-gradient(180deg, #f7f8fb 0%, #d8dde8 48%, #8f98ab 52%, #f4f6fb 100%);
+    border-radius: 5px;
+    border: 1px solid rgba(4, 6, 12, 0.9);
+    box-shadow:
+      0 3px 8px rgba(0, 0, 0, 0.55),
+      0 0 12px rgba(255, 255, 255, 0.22),
+      inset 0 1px 0 rgba(255, 255, 255, 0.85),
+      inset 0 -1px 1px rgba(0, 0, 0, 0.28);
+    margin-left: -14px;
     cursor: grab;
   }
   .xfade-vertical-input::-webkit-slider-thumb:active { cursor: grabbing; }
+  .xfade-vertical-input::-moz-range-track {
+    width: 6px;
+    background: linear-gradient(to bottom, #7EC8E3, #9f75ad 50%, #FF8577);
+    border-radius: 3px;
+    border: 0;
+  }
+  .xfade-vertical-input::-moz-range-thumb {
+    width: 34px;
+    height: 18px;
+    background:
+      linear-gradient(90deg, rgba(255, 255, 255, 0.2), transparent 24%, transparent 76%, rgba(0, 0, 0, 0.22)),
+      linear-gradient(180deg, #f7f8fb 0%, #d8dde8 48%, #8f98ab 52%, #f4f6fb 100%);
+    border-radius: 5px;
+    border: 1px solid rgba(4, 6, 12, 0.9);
+    box-shadow:
+      0 3px 8px rgba(0, 0, 0, 0.55),
+      0 0 12px rgba(255, 255, 255, 0.22),
+      inset 0 1px 0 rgba(255, 255, 255, 0.85),
+      inset 0 -1px 1px rgba(0, 0, 0, 0.28);
+    cursor: grab;
+  }
 
   .xfade-readout {
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 10px;
+    font-size: 12px;
     color: var(--accent-primary, #BB86FC);
     letter-spacing: 0.05em;
     padding: 2px 6px;
@@ -4965,7 +5676,7 @@
     border: 1px solid #333;
     border-radius: 4px;
     color: var(--text-primary, #ddd);
-    font-size: 10px;
+    font-size: 12px;
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
     cursor: pointer;
     text-align: center;
@@ -5046,18 +5757,22 @@
     justify-content: space-between;
     position: relative;
     gap: 12px;
-    padding: 10px 20px;
+    min-height: 66px;
+    box-sizing: border-box;
+    padding: 8px 20px 10px;
     padding-right: 188px;
     background: #141414;
     border-bottom: 1px solid #333;
     flex-shrink: 0;
-    overflow: hidden;
+    overflow: visible;
+    font-size: 15px;
+    z-index: 20;
   }
 
-  .header-left, .header-center {
+  .header-left {
     display: flex;
     align-items: center;
-    gap: 20px;
+    gap: 14px;
     flex: 0 0 auto;
   }
   /* Right cluster is a tight icon grid — REC, A/B, Performer, 3D Stage,
@@ -5081,15 +5796,31 @@
      meter. Always visible; users can resize / reorder by editing the
      header layout. The bar self-sizes to its content. */
   .header-macros {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
     display: flex;
     align-items: center;
-    flex: 1 1 auto;
+    justify-content: center;
+    flex: 0 0 auto;
     min-width: 0;
-    overflow: hidden;
-    padding: 0 4px;
-    border-left: 1px solid rgba(255, 255, 255, 0.06);
-    border-right: 1px solid rgba(255, 255, 255, 0.06);
-    margin: 0 4px;
+    max-width: min(540px, calc(100% - 700px));
+    overflow: visible;
+    padding: 6px 0 3px;
+    margin: 0;
+    z-index: 2;
+  }
+
+  .header-snaps {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    min-width: 0;
+    margin-left: auto;
+    margin-right: 2px;
+    z-index: 4;
   }
 
   /* Audio meter slot in the header — sits between the MIX/STAGE/AB cluster
@@ -5115,7 +5846,7 @@
     height: 28px;
   }
   .header-quant-label {
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.1em;
     color: var(--text-muted, #888);
@@ -5124,7 +5855,7 @@
     background: transparent;
     border: 1px solid rgba(255, 255, 255, 0.12);
     color: var(--text-primary, #ddd);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.05em;
     padding: 2px 4px;
@@ -5137,7 +5868,7 @@
   }
   .header-quant-pending {
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     color: var(--accent-primary, #BB86FC);
     animation: quantPendingPulse 0.8s ease-in-out infinite;
@@ -5160,7 +5891,7 @@
   .vj-file-menu-btn {
     display: flex; align-items: center; gap: 4px;
     background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
-    color: var(--text-primary, #ddd); font-size: 12px; padding: 5px 10px; border-radius: 4px; cursor: pointer;
+    color: var(--text-primary, #ddd); font-size: 14px; padding: 5px 10px; border-radius: 4px; cursor: pointer;
   }
   .vj-file-menu-btn:hover, .vj-file-menu-btn.active { background: rgba(255,255,255,0.14); color: #fff; }
   .vj-file-menu-dropdown {
@@ -5172,10 +5903,10 @@
   .vj-menu-item {
     display: flex; justify-content: space-between; align-items: center;
     width: 100%; background: none; border: none; color: var(--text-primary, #ddd);
-    font-size: 12px; padding: 7px 14px; cursor: pointer; text-align: left;
+    font-size: 14px; padding: 7px 14px; cursor: pointer; text-align: left;
   }
   .vj-menu-item:hover { background: rgba(255,255,255,0.08); color: #fff; }
-  .vj-menu-sc { color: #666; font-size: 10px; margin-left: 16px; font-family: monospace; }
+  .vj-menu-sc { color: #666; font-size: 12px; margin-left: 16px; font-family: monospace; }
   .vj-menu-sep { height: 1px; background: #333; margin: 4px 0; }
 
   @keyframes blink {
@@ -5196,7 +5927,7 @@
   }
 
   .master-label {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     color: #999;
     width: 10px;
@@ -5222,7 +5953,7 @@
   }
 
   .master-value {
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-muted, #888);
     min-width: 32px;
     font-variant-numeric: tabular-nums;
@@ -5270,7 +6001,7 @@
     border: 1px solid rgba(255, 68, 56, 0.4);
     border-radius: var(--ga-r-hard, 2px);
     color: var(--ga-rec, #ff4438);
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 700;
     letter-spacing: 0.04em;
     cursor: pointer;
@@ -5290,7 +6021,7 @@
     color: #fff;
     padding: 6px 12px;
     border-radius: 4px;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
   }
@@ -5319,7 +6050,7 @@
   }
 
   .vj-rec-time {
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     color: #ff4444;
     font-family: monospace;
@@ -5359,7 +6090,7 @@
     border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s, color 0.15s;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 600;
     flex: 0 0 auto;
   }
@@ -5370,12 +6101,35 @@
     color: var(--ga-ink-0, #eef0f4);
   }
 
+  .vj-header :is(button, select) {
+    font-size: 14px;
+  }
+  .vj-header :is(.master-label, .header-quant-label) {
+    font-size: 12px;
+  }
+  .vj-header :is(.master-value, .header-quant-select, .header-quant-pending) {
+    font-size: 13px;
+  }
+  .vj-header .stage-mix-btn {
+    font-size: 13px;
+    padding: 7px 18px;
+  }
+
   /* Main Layout */
   .vj-main {
+    --vj-effects-center-offset: 236px;
+    --vj-media-tray-center-offset: 348px;
     flex: 1;
     display: flex;
     flex-direction: column;
+    position: relative;
+    padding-right: 348px;
     overflow: hidden;
+  }
+
+  .vj-main.tray-collapsed {
+    --vj-media-tray-center-offset: 0px;
+    padding-right: 0;
   }
 
   /* Preview Section - 3 columns: effects | preview | shader params */
@@ -5422,20 +6176,22 @@
 
   /* LEFT: Effects Panel */
   .effects-panel-vj {
-    width: 220px;
+    width: 270px;
     flex-shrink: 0;
-    background: #111;
-    border: 1px solid #161618;
-    border-radius: 4px;
+    background: #0d1015;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
   }
 
   .effects-tabs {
     display: flex;
-    background: #181818;
-    border-bottom: 1px solid #161618;
+    min-height: 36px;
+    background: #15181f;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.10);
   }
 
   .fx-tab {
@@ -5443,20 +6199,20 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 4px;
-    padding: 6px 4px;
+    gap: 5px;
+    padding: 9px 6px;
     background: transparent;
     border: none;
     border-bottom: 2px solid transparent;
-    color: #666;
-    font-size: 9px;
-    font-weight: 600;
+    color: rgba(238, 240, 244, 0.62);
+    font-size: 13px;
+    font-weight: 700;
     cursor: pointer;
     transition: all 0.15s;
   }
 
   .fx-tab:hover {
-    color: var(--text-secondary, #aaa);
+    color: var(--text-primary, #ddd);
   }
 
   .fx-tab.active {
@@ -5465,10 +6221,16 @@
     background: rgba(187, 134, 252, 0.05);
   }
 
+  .fx-tab svg {
+    width: 13px;
+    height: 13px;
+    flex: 0 0 auto;
+  }
+
   .effects-panel-content {
     flex: 1;
     overflow-y: auto;
-    padding: 8px;
+    padding: 12px;
   }
 
   .effects-panel-content::-webkit-scrollbar { width: 4px; }
@@ -5479,14 +6241,14 @@
   }
 
   .effects-info-label {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     color: var(--accent-primary, #BB86FC);
     letter-spacing: 0.5px;
   }
 
   .effects-info-hint {
-    font-size: 9px;
+    font-size: 11px;
     color: #555;
     margin: 2px 0 0;
   }
@@ -5501,7 +6263,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-muted, #888);
   }
 
@@ -5511,7 +6273,7 @@
     color: var(--accent-primary, #BB86FC);
     padding: 3px 10px;
     border-radius: 4px;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -5539,7 +6301,7 @@
     color: var(--text-primary, #ddd);
     border-radius: 4px;
     padding: 5px 8px;
-    font-size: 11px;
+    font-size: 13px;
   }
   .stage-fx-select:focus {
     border-color: #4cd1ff;
@@ -5566,7 +6328,7 @@
     border: 1px solid #2a2a30;
     color: #4cd1ff;
     border-radius: 4px;
-    font-size: 13px;
+    font-size: 15px;
     cursor: pointer;
   }
   .stage-auto-play:hover { background: rgba(76,209,255,0.12); border-color: #4cd1ff; }
@@ -5581,7 +6343,7 @@
     color: var(--text-primary, #ddd);
     border-radius: 4px;
     padding: 3px 5px;
-    font-size: 11px;
+    font-size: 13px;
     height: 26px;
   }
   .stage-auto-interval {
@@ -5591,13 +6353,13 @@
     color: var(--text-primary, #ddd);
     border-radius: 4px;
     padding: 3px 5px;
-    font-size: 11px;
+    font-size: 13px;
     font-family: monospace;
     height: 26px;
   }
   .stage-auto-unit {
     color: var(--text-muted, #888);
-    font-size: 10px;
+    font-size: 12px;
     font-family: monospace;
   }
   /* ── Stage Effects: live-radio + cycle toggle on each row ── */
@@ -5608,12 +6370,89 @@
     color: #555;
     border-radius: 50%;
     cursor: pointer;
-    font-size: 12px;
+    font-size: 14px;
     padding: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
   }
+
+  .stage-effect-hold-button {
+    position: relative;
+    width: 24px; height: 22px;
+    flex: 0 0 24px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 4px;
+    background:
+      radial-gradient(circle at 35% 20%, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0.06) 35%, transparent 60%),
+      linear-gradient(180deg, #35353a 0%, #202026 46%, #0e0f13 100%);
+    color: rgba(238, 242, 247, 0.82);
+    cursor: pointer;
+    padding: 0;
+    display: inline-grid;
+    place-items: center;
+    overflow: hidden;
+    box-shadow:
+      inset 0 1px 1px rgba(255, 255, 255, 0.2),
+      inset 0 -4px 6px rgba(0, 0, 0, 0.55),
+      0 1px 2px rgba(0, 0, 0, 0.6);
+    transform: translateY(0);
+    transition: transform 80ms ease, border-color 120ms ease, box-shadow 120ms ease, color 120ms ease;
+  }
+
+  .stage-effect-hold-button:hover {
+    border-color: rgba(255, 255, 255, 0.34);
+    color: #fff;
+    box-shadow:
+      inset 0 1px 1px rgba(255, 255, 255, 0.25),
+      inset 0 -4px 6px rgba(0, 0, 0, 0.55),
+      0 0 8px rgba(255, 255, 255, 0.08);
+  }
+
+  .stage-effect-hold-button.active {
+    border-color: rgba(255, 133, 119, 0.48);
+  }
+
+  .stage-effect-hold-button.pressed {
+    color: #fff;
+    border-color: rgba(255, 147, 102, 0.95);
+    background:
+      radial-gradient(circle at 50% 42%, rgba(255, 244, 218, 0.95), rgba(255, 126, 69, 0.72) 45%, rgba(84, 24, 18, 0.88) 100%),
+      linear-gradient(180deg, #4b1f18, #130b0a);
+    box-shadow:
+      inset 0 1px 2px rgba(255, 255, 255, 0.55),
+      inset 0 -5px 8px rgba(0, 0, 0, 0.46),
+      0 0 12px rgba(255, 110, 60, 0.72),
+      0 0 24px rgba(255, 110, 60, 0.22);
+    transform: translateY(1px);
+  }
+
+  .stage-effect-hold-light {
+    position: absolute;
+    inset: 4px;
+    border-radius: 4px;
+    background: radial-gradient(circle, rgba(255, 255, 255, 0.14), transparent 72%);
+    opacity: 0.8;
+  }
+
+  .stage-effect-hold-button.pressed .stage-effect-hold-light {
+    background: radial-gradient(circle, rgba(255, 244, 214, 0.9), rgba(255, 111, 56, 0.52) 46%, transparent 78%);
+    opacity: 1;
+    filter: blur(1px);
+  }
+
+  .stage-effect-hold-icon {
+    display: none;
+  }
+
+  .stage-effect-fire-icon {
+    position: relative;
+    z-index: 1;
+    width: 13px;
+    height: 13px;
+    fill: currentColor;
+  }
+
   .effect-live-radio:hover {
     border-color: #4cd1ff;
     color: var(--text-secondary, #aaa);
@@ -5630,7 +6469,7 @@
     color: #555;
     border-radius: 3px;
     cursor: pointer;
-    font-size: 11px;
+    font-size: 13px;
     padding: 2px 4px;
   }
   .effect-cycle-toggle:hover { color: var(--text-secondary, #aaa); border-color: #2a2a30; }
@@ -5677,7 +6516,7 @@
     background: none;
     border: none;
     color: var(--accent-primary, #BB86FC);
-    font-size: 12px;
+    font-size: 14px;
     cursor: pointer;
     padding: 2px;
     width: 18px;
@@ -5688,7 +6527,7 @@
 
   .effect-name {
     flex: 1;
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-primary, #ddd);
     text-transform: capitalize;
     font-weight: 500;
@@ -5698,7 +6537,7 @@
   }
 
   .effect-expand {
-    font-size: 8px;
+    font-size: 10px;
     color: #666;
     padding: 2px;
   }
@@ -5707,7 +6546,7 @@
     background: none;
     border: none;
     color: #555;
-    font-size: 16px;
+    font-size: 18px;
     cursor: pointer;
     padding: 2px;
     opacity: 0;
@@ -5730,7 +6569,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    font-size: 10px;
+    font-size: 12px;
     color: #999;
     padding: 6px 0;
   }
@@ -5766,15 +6605,16 @@
     text-align: right;
     color: #777;
     font-family: 'SF Mono', 'Fira Code', monospace;
-    font-size: 9px;
+    font-size: 11px;
     font-variant-numeric: tabular-nums;
   }
 
   .no-effects {
-    color: #555;
-    font-size: 10px;
+    color: rgba(157, 177, 201, 0.78);
+    font-size: 15px;
     text-align: center;
-    padding: 16px 8px;
+    padding: 28px 12px;
+    line-height: 1.45;
   }
 
   .no-params {
@@ -5793,7 +6633,7 @@
     position: absolute;
     top: 0;
     bottom: 0;
-    left: 50%;
+    left: calc(50% + ((var(--vj-media-tray-center-offset) - var(--vj-effects-center-offset)) / 2));
     transform: translateX(-50%);
     height: 100%;
     aspect-ratio: 16 / 9;
@@ -5815,7 +6655,7 @@
     position: absolute;
     top: 8px;
     left: 8px;
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 600;
     color: #555;
     background: rgba(0, 0, 0, 0.6);
@@ -5826,17 +6666,133 @@
 
   /* RIGHT: Shader Params Panel (above media tabs) */
   .right-panel-vj {
-    width: 240px;
-    flex-shrink: 0;
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 348px;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    background: var(--ga-panel, #0b0d11);
+    border-left: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    overflow: visible;
     transition: width 0.2s ease;
+    z-index: 12;
   }
 
   .right-panel-vj.collapsed {
     width: 0;
     padding: 0;
+    border-left: 0;
+    background: transparent;
+    pointer-events: none;
+  }
+
+  .vj-right-tray-toggle {
+    position: absolute;
+    top: 12px;
+    left: -46px;
+    width: 46px;
+    height: 64px;
+    flex: 0 0 auto;
+    background:
+      linear-gradient(180deg, rgba(16, 38, 18, 0.98), rgba(5, 15, 8, 0.98));
+    border: 1px solid rgba(57, 255, 20, 0.55);
+    border-right: 0;
+    border-radius: 8px 0 0 8px;
+    color: #39ff14;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    box-shadow:
+      0 0 18px rgba(57, 255, 20, 0.26),
+      inset 0 1px 0 rgba(183, 255, 170, 0.28),
+      inset -1px 0 0 rgba(57, 255, 20, 0.20);
+    pointer-events: auto;
+    z-index: 2;
+  }
+
+  .vj-right-tray-toggle:hover {
+    color: #b7ffaa;
+    border-color: rgba(57, 255, 20, 0.85);
+    background:
+      linear-gradient(180deg, rgba(26, 58, 25, 0.98), rgba(7, 23, 10, 0.98));
+    box-shadow:
+      0 0 24px rgba(57, 255, 20, 0.42),
+      inset 0 1px 0 rgba(214, 255, 206, 0.34),
+      inset -1px 0 0 rgba(57, 255, 20, 0.30);
+  }
+
+  .media-tray-glyph {
+    width: 25px;
+    height: 25px;
+    overflow: visible;
+    filter: drop-shadow(0 0 5px rgba(57, 255, 20, 0.65));
+  }
+
+  .media-tray-glyph .ghost-body {
+    stroke: currentColor;
+    stroke-width: 1.8;
+    fill: rgba(57, 255, 20, 0.08);
+  }
+
+  .media-tray-glyph .ghost-mouth {
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .media-tray-glyph .ghost-eye {
+    fill: currentColor;
+    opacity: 0.95;
+  }
+
+  .media-tray-tab-label {
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: currentColor;
+    text-shadow: 0 0 7px rgba(57, 255, 20, 0.72);
+  }
+
+  .vj-right-tray-content {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px;
+    overflow: hidden;
+  }
+
+  .vj-clip-controls-stack {
+    flex: 0 0 auto;
+    max-height: 45%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow: auto;
+  }
+
+  .vj-shared-media-host {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    overflow: hidden;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: 6px;
+    background: var(--ga-panel, #0b0d11);
+  }
+
+  .vj-shared-media-host :global(.media-tray.embedded) {
+    min-height: 0;
   }
 
   .shader-params-panel {
@@ -5860,7 +6816,7 @@
   }
 
   .shader-params-overlay-title {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--accent-primary, #BB86FC);
     display: flex;
@@ -5872,7 +6828,7 @@
   }
 
   .shader-params-layer-badge {
-    font-size: 8px;
+    font-size: 10px;
     padding: 1px 4px;
     background: var(--accent-primary, #BB86FC)30;
     border: 1px solid var(--accent-primary, #BB86FC)50;
@@ -5885,7 +6841,7 @@
     background: none;
     border: none;
     color: #666;
-    font-size: 16px;
+    font-size: 18px;
     cursor: pointer;
     padding: 0 2px;
     line-height: 1;
@@ -5902,7 +6858,7 @@
     background: none;
     border: none;
     color: #7ec8e3;
-    font-size: 14px;
+    font-size: 16px;
     cursor: pointer;
     padding: 0 6px;
     line-height: 1;
@@ -5998,7 +6954,7 @@
     border: 1px solid #444;
     border-radius: 4px;
     color: var(--text-muted, #888);
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.1s;
@@ -6051,7 +7007,7 @@
   }
 
   .layer-num {
-    font-size: 14px;
+    font-size: 16px;
     font-weight: 700;
     color: var(--text-muted, #888);
   }
@@ -6066,7 +7022,7 @@
     height: 20px;
     border: none;
     border-radius: 3px;
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     cursor: pointer;
     transition: all 0.1s;
@@ -6158,7 +7114,7 @@
     color: var(--text-secondary, #aaa);
     padding: 5px 8px;
     border-radius: 3px;
-    font-size: 10px;
+    font-size: 12px;
     cursor: pointer;
   }
 
@@ -6273,7 +7229,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 700;
   }
 
@@ -6324,7 +7280,7 @@
     right: 0;
     padding: 2px 4px;
     background: rgba(0, 0, 0, 0.8);
-    font-size: 8px;
+    font-size: 10px;
     color: var(--text-secondary, #aaa);
     white-space: nowrap;
     overflow: hidden;
@@ -6341,7 +7297,7 @@
     border: none;
     border-radius: 50%;
     color: #fff;
-    font-size: 10px;
+    font-size: 12px;
     cursor: pointer;
     opacity: 0;
     transition: opacity 0.1s;
@@ -6381,7 +7337,7 @@
     background: none;
     border: none;
     color: var(--text-primary, #ccc);
-    font-size: 11px;
+    font-size: 13px;
     text-align: left;
     cursor: pointer;
     font-family: inherit;
@@ -6410,7 +7366,7 @@
   }
   .ctx-shortcut {
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     font-weight: 400;
   }
@@ -6425,7 +7381,7 @@
     width: 220px;
     background: var(--bg-secondary, #111114);
     border-left: 1px solid #161618;
-    display: flex;
+    display: none;
     flex-direction: column;
     flex-shrink: 0;
     transition: width 0.2s ease;
@@ -6476,7 +7432,7 @@
     border: none;
     border-bottom: 2px solid transparent;
     color: #666;
-    font-size: 9px;
+    font-size: 11px;
     cursor: pointer;
     transition: all 0.15s;
     position: relative;
@@ -6505,7 +7461,7 @@
     position: absolute;
     top: 2px;
     right: 4px;
-    font-size: 8px;
+    font-size: 10px;
     color: #555;
     font-weight: 600;
   }
@@ -6538,7 +7494,7 @@
     border: 1px solid #a855f740;
     border-radius: 4px;
     color: #a855f7;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -6568,7 +7524,7 @@
 
   .loading {
     padding: 12px;
-    font-size: 11px;
+    font-size: 13px;
     color: #666;
     text-align: center;
   }
@@ -6606,7 +7562,7 @@
     border: 1px solid rgba(255,255,255,0.12);
     border-radius: 4px;
     color: var(--text-primary, #ddd);
-    font-size: 11px;
+    font-size: 13px;
     cursor: pointer;
     transition: background 0.15s;
   }
@@ -6621,11 +7577,11 @@
 
   .empty-media p {
     margin: 0;
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .empty-media .hint {
-    font-size: 9px;
+    font-size: 11px;
     color: #333;
     margin-top: 8px;
   }
@@ -6667,7 +7623,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 600;
   }
 
@@ -6701,7 +7657,7 @@
   }
 
   .item-name {
-    font-size: 9px;
+    font-size: 11px;
     color: var(--text-primary, #eee);
     white-space: nowrap;
     overflow: hidden;
@@ -6709,7 +7665,7 @@
   }
 
   .item-type {
-    font-size: 8px;
+    font-size: 10px;
     color: var(--text-muted, #888);
     text-transform: uppercase;
   }
@@ -6795,7 +7751,7 @@
   }
 
   .block-name {
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     color: var(--text-secondary, #aaa);
     flex: 1;
@@ -6808,7 +7764,7 @@
     border: 1px solid var(--accent-primary, #BB86FC);
     border-radius: 3px;
     color: #fff;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     padding: 2px 6px;
     width: 80px;
@@ -6819,7 +7775,7 @@
     background: none;
     border: none;
     color: #666;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 700;
     cursor: pointer;
     padding: 0;
@@ -6857,7 +7813,7 @@
     border: 1px dashed #444;
     border-radius: 4px;
     color: #666;
-    font-size: 18px;
+    font-size: 20px;
     font-weight: 300;
     cursor: pointer;
     transition: all 0.15s;
@@ -6910,7 +7866,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
   }
 
@@ -6941,7 +7897,7 @@
 
   .live-preview-empty {
     color: #333;
-    font-size: 14px;
+    font-size: 16px;
   }
 
   .live-indicator-dot {
@@ -6977,7 +7933,7 @@
   .live-preview-header {
     width: 56px;
     flex-shrink: 0;
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 600;
     color: #666;
     text-align: center;
@@ -6999,7 +7955,7 @@
     border-radius: 7px;
     background: #22c55e;
     color: #000;
-    font-size: 8px;
+    font-size: 10px;
     font-weight: 700;
     margin-left: 3px;
     vertical-align: middle;
@@ -7031,7 +7987,7 @@
     border: 1px solid #333;
     border-radius: 4px;
     color: var(--text-secondary, #aaa);
-    font-size: 10px;
+    font-size: 12px;
     cursor: pointer;
     transition: all 0.15s;
   }
@@ -7071,7 +8027,7 @@
     border: 1px solid #333;
     border-radius: 3px;
     color: var(--text-primary, #ccc);
-    font-size: 10px;
+    font-size: 12px;
     cursor: pointer;
     text-align: left;
     transition: all 0.15s;
@@ -7094,7 +8050,7 @@
     border-radius: 3px;
     color: var(--text-primary, #ccc);
     padding: 5px 6px;
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .vj-spout-input:focus {
@@ -7108,7 +8064,7 @@
     border: 1px solid #a78bfa;
     border-radius: 3px;
     color: #a78bfa;
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     cursor: pointer;
   }
@@ -7166,7 +8122,7 @@
   }
 
   .source-type-icon {
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     color: var(--accent-primary, #BB86FC);
     letter-spacing: 0.5px;
@@ -7195,12 +8151,12 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     color: var(--text-primary, #ddd);
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .source-status {
     color: var(--text-muted, #777);
-    font-size: 9px;
+    font-size: 11px;
     text-transform: uppercase;
   }
 
@@ -7229,7 +8185,7 @@
     color: #8fd6ff;
     background: rgba(76, 209, 255, 0.1);
     border-color: rgba(76, 209, 255, 0.24);
-    font-size: 15px;
+    font-size: 17px;
     line-height: 1;
   }
 
@@ -7284,7 +8240,7 @@
   }
 
   .cpm-title {
-    font-size: 14px;
+    font-size: 16px;
     font-weight: 600;
   }
 
@@ -7317,13 +8273,13 @@
     padding: 40px;
     text-align: center;
     color: var(--text-muted, #888);
-    font-size: 13px;
+    font-size: 15px;
   }
 
   .cpm-section-title {
     padding: 16px 18px 6px;
     color: var(--text-muted, #888);
-    font-size: 11px;
+    font-size: 13px;
     text-transform: uppercase;
     letter-spacing: 1.1px;
   }
@@ -7367,7 +8323,7 @@
     align-items: center;
     justify-content: center;
     color: var(--text-muted, #777);
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .cpm-name,
@@ -7393,7 +8349,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     color: var(--text-primary, #ddd);
-    font-size: 12px;
+    font-size: 14px;
   }
 
   /* ========== Audio Control Bar ========== */
@@ -7401,7 +8357,7 @@
 
   /* ========== Shader Parameters ========== */
   .active-clip-name {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--accent-primary, #BB86FC);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -7417,7 +8373,7 @@
 
   .section-header {
     padding: 6px 0;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     color: var(--accent-primary, #BB86FC);
     letter-spacing: 0.5px;
@@ -7450,7 +8406,7 @@
   }
 
   .shader-param-name {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-secondary, #aaa);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -7459,7 +8415,7 @@
   }
 
   .mod-source-chip {
-    font-size: 9px;
+    font-size: 11px;
     padding: 1px 8px;
     background: var(--bg-primary, #0d0d10);
     border: 1px solid #333;
@@ -7585,7 +8541,7 @@
   }
 
   .param-val {
-    font-size: 9px;
+    font-size: 11px;
     color: #555;
     font-variant-numeric: tabular-nums;
     min-width: 32px;
@@ -7602,7 +8558,7 @@
     border-radius: 3px;
     background: var(--bg-primary, #0d0d10);
     color: #666;
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     cursor: pointer;
     transition: all 0.1s;
@@ -7620,7 +8576,7 @@
 
   .long-select {
     width: 100%;
-    font-size: 10px;
+    font-size: 12px;
     padding: 5px 8px;
     background-color: var(--bg-primary, #0d0d10);
     border: 1px solid #333;
@@ -7630,7 +8586,7 @@
 
   .audio-ready-badge {
     display: inline-block;
-    font-size: 10px;
+    font-size: 12px;
     color: #5ce1e6;
     background: rgba(92, 225, 230, 0.15);
     border: 1px solid rgba(92, 225, 230, 0.3);
@@ -7642,7 +8598,7 @@
   }
 
   .audio-warn {
-    font-size: 9px;
+    font-size: 11px;
     color: #f59e0b;
     background: rgba(245, 158, 11, 0.08);
     border: 1px solid rgba(245, 158, 11, 0.2);
@@ -7847,7 +8803,7 @@
 
   .shader-params-panel summary {
     padding: 6px 8px;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     color: var(--text-secondary, #aaa);
     cursor: pointer;
@@ -7876,7 +8832,7 @@
     border: 1px solid #333;
     color: var(--text-primary, #ccc);
     border-radius: 3px;
-    font-size: 11px;
+    font-size: 13px;
     padding: 2px 4px;
   }
 
@@ -7904,13 +8860,13 @@
   }
 
   .vj-plugin-name {
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 600;
     color: var(--text-primary, #eee);
   }
 
   .vj-plugin-desc {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     white-space: nowrap;
     overflow: hidden;
@@ -7918,7 +8874,7 @@
   }
 
   .vj-plugin-status {
-    font-size: 9px;
+    font-size: 11px;
     color: #666;
   }
 
@@ -7933,7 +8889,7 @@
   .vj-plugin-btn {
     padding: 5px 10px;
     border-radius: 4px;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.15s;
@@ -7964,7 +8920,7 @@
     text-align: center;
     padding: 12px;
     color: #555;
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .vj-plugin-hint p {
@@ -7987,7 +8943,7 @@
   }
 
   .dim-label {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -8001,7 +8957,7 @@
     border: 1px solid #444;
     border-radius: 4px;
     color: var(--text-primary, #ccc);
-    font-size: 14px;
+    font-size: 16px;
     font-weight: 600;
     cursor: pointer;
     display: flex;
@@ -8018,7 +8974,7 @@
   }
 
   .dim-value {
-    font-size: 12px;
+    font-size: 14px;
     color: #fff;
     font-weight: 600;
     min-width: 20px;
@@ -8032,7 +8988,7 @@
     border: 1px solid #444;
     border-radius: 4px;
     color: var(--text-muted, #888);
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 700;
     letter-spacing: 1px;
     cursor: pointer;
@@ -8063,7 +9019,7 @@
   }
 
   .stage-presets-label {
-    font-size: 10px;
+    font-size: 12px;
     color: #f90;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -8087,7 +9043,7 @@
     border: 1px solid #333;
     border-radius: 4px;
     color: var(--text-secondary, #aaa);
-    font-size: 10px;
+    font-size: 12px;
     cursor: pointer;
     flex-shrink: 0;
     min-width: 60px;
@@ -8125,7 +9081,7 @@
     color: #fff;
     border-radius: 3px;
     padding: 1px 4px;
-    font-size: 11px;
+    font-size: 13px;
     font-family: inherit;
     outline: none;
   }
@@ -8136,7 +9092,7 @@
     border: 1px dashed #555;
     border-radius: 4px;
     color: var(--text-muted, #888);
-    font-size: 10px;
+    font-size: 12px;
     cursor: pointer;
     flex-shrink: 0;
   }
@@ -8155,7 +9111,7 @@
     border: 1px solid #4cd1ff;
     border-radius: 4px;
     color: #4cd1ff;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     flex-shrink: 0;
@@ -8166,20 +9122,50 @@
   }
 
   .stage-scope-toggle {
-    padding: 2px 6px;
-    font-size: 10px;
-    border: 1px solid rgba(255,255,255,0.2);
-    border-radius: 3px;
-    background: rgba(255,255,255,0.05);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid rgba(57, 255, 20, 0.34);
+    border-radius: 5px;
+    background: rgba(57, 255, 20, 0.06);
+    color: #39ff14;
     cursor: pointer;
-    min-width: 20px;
+    flex-shrink: 0;
+    filter: drop-shadow(0 0 8px rgba(57, 255, 20, 0.16));
+    transition: background 0.14s, border-color 0.14s, box-shadow 0.14s, color 0.14s;
+  }
+  .stage-scope-toggle:hover {
+    background: rgba(57, 255, 20, 0.12);
+    border-color: rgba(57, 255, 20, 0.7);
+    box-shadow: 0 0 14px rgba(57, 255, 20, 0.24);
   }
   .stage-scope-toggle.global {
-    border-color: rgba(100,200,255,0.4);
-    background: rgba(100,200,255,0.1);
+    border-color: rgba(57, 255, 20, 0.56);
+    background: rgba(57, 255, 20, 0.1);
+  }
+  .stage-scope-icon {
+    width: 16px;
+    height: 16px;
+    color: inherit;
+    overflow: visible;
+    filter: drop-shadow(0 0 6px rgba(57, 255, 20, 0.62));
+  }
+  .stage-scope-icon .scope-stroke {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .stage-scope-icon .scope-fill {
+    fill: currentColor;
+    opacity: 0.16;
   }
   .stage-preset-scope {
-    font-size: 8px;
+    font-size: 10px;
     font-weight: bold;
     color: rgba(100,200,255,0.8);
     margin-right: 2px;
@@ -8219,7 +9205,7 @@
     color: #d4d4d4;
     border-radius: 5px;
     padding: 5px 14px;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 700;
     letter-spacing: 0.05em;
     cursor: pointer;
@@ -8256,7 +9242,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 12px;
+    font-size: 14px;
     transition: all 0.15s;
   }
   .xfade-trans-arrow:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
@@ -8266,7 +9252,7 @@
     color: #fff;
     border-radius: 4px;
     padding: 4px 8px;
-    font-size: 11px;
+    font-size: 13px;
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -8281,7 +9267,7 @@
     color: var(--text-secondary, #aaa);
     border-radius: 4px;
     padding: 4px 8px;
-    font-size: 10px;
+    font-size: 12px;
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
     cursor: pointer;
   }
@@ -8294,7 +9280,7 @@
   }
   .xfade-end-label {
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 700;
     color: var(--text-muted, #888);
     min-width: 16px;
@@ -8371,7 +9357,7 @@
     background: transparent;
     border: none;
     color: var(--text-muted, #888);
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
     padding: 3px 6px;
@@ -8421,7 +9407,7 @@
   }
   .vt-play:hover { background: #CF6EFF; color: #000; }
   .vt-time {
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-muted, #888);
     font-family: monospace;
     margin-left: 4px;
@@ -8433,7 +9419,7 @@
     color: var(--text-secondary, #aaa);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 3px;
-    font-size: 11px;
+    font-size: 13px;
     padding: 2px 4px;
     cursor: pointer;
     flex-shrink: 0;
@@ -8523,7 +9509,7 @@
     border-top: 1px solid rgba(255, 255, 255, 0.06);
   }
   .vt-section-title {
-    font-size: 9px;
+    font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.6px;
     color: #777;
@@ -8536,12 +9522,12 @@
     gap: 8px;
   }
   .vt-tf-label {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-secondary, #aaa);
   }
   .vt-tf-num {
     font-family: 'SF Mono', Menlo, Consolas, monospace;
-    font-size: 10px;
+    font-size: 12px;
     color: #6df;
     text-align: right;
   }
@@ -8555,12 +9541,31 @@
     color: var(--text-primary, #ddd);
     padding: 3px 6px;
     border-radius: 3px;
-    font-size: 10px;
+    font-size: 12px;
     cursor: pointer;
     width: 100%;
   }
   .vt-tf-row:has(.vt-tf-select) {
     grid-template-columns: 56px 1fr;
+  }
+  .vt-tf-toggle-row {
+    grid-template-columns: 56px 1fr;
+  }
+  .vt-toggle-btn {
+    width: 100%;
+    height: 24px;
+    border-radius: 3px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-secondary, #aaa);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .vt-toggle-btn.active {
+    border-color: rgba(109, 240, 255, 0.45);
+    background: rgba(109, 240, 255, 0.16);
+    color: #6df;
   }
   .vt-tf-reset {
     margin-top: 4px;
@@ -8569,7 +9574,7 @@
     color: var(--text-secondary, #aaa);
     padding: 5px;
     border-radius: 3px;
-    font-size: 10px;
+    font-size: 12px;
     cursor: pointer;
   }
   .vt-tf-reset:hover {
@@ -8585,7 +9590,7 @@
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);
     color: var(--text-muted, #888);
-    font-size: 10px;
+    font-size: 12px;
     padding: 4px 2px;
     border-radius: 3px;
     cursor: pointer;

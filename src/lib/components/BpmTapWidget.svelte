@@ -48,7 +48,7 @@
     background: var(--ga-card, #13161c);
     color: var(--ga-ink-1, #9aa0ac);
     font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.5px;
     cursor: pointer;
@@ -71,7 +71,7 @@
 
   .bpm-readout {
     font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 700;
     color: var(--ga-ink-2, #5e6571);
     font-variant-numeric: tabular-nums;
@@ -90,7 +90,7 @@
     background: transparent;
     color: var(--ga-ink-2, #5e6571);
     font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.5px;
     cursor: pointer;

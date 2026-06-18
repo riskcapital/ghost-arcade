@@ -312,7 +312,7 @@
     gap: 4px;
   }
   .xfade-label {
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 800;
     color: rgba(255, 136, 0, 0.85);
     letter-spacing: 1px;
@@ -360,7 +360,7 @@
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 4px;
     color: rgba(255, 255, 255, 0.5);
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 800;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
@@ -560,7 +560,7 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
     color: var(--text-secondary, #aaa);
-    font-size: 9px;
+    font-size: 11px;
     cursor: pointer;
     text-align: center;
     -webkit-appearance: none;
@@ -568,7 +568,7 @@
   }
   .xfade.compact .xfade-select {
     padding: 3px 2px;
-    font-size: 8px;
+    font-size: 10px;
   }
   .xfade-select:focus { border-color: #ff8800; outline: none; }
   .xfade-select:disabled { opacity: 0.4; }

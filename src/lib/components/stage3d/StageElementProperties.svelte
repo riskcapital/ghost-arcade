@@ -121,7 +121,7 @@
 <style>
   .props-body { display: flex; flex-direction: column; gap: 4px; }
   .ptitle {
-    font-size: 15px;
+    font-size: 17px;
     font-weight: 600;
     color: #fff;
     margin-bottom: 14px;
@@ -130,7 +130,7 @@
     justify-content: space-between;
   }
   .badge {
-    font-size: 9px;
+    font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.16em;
     color: #4af2ff;
@@ -143,14 +143,14 @@
   .field label {
     display: flex;
     justify-content: space-between;
-    font-size: 11.5px;
+    font-size: 13.5px;
     color: #c4ccd8;
     margin-bottom: 6px;
   }
   .field label .v {
     color: #4af2ff;
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 11px;
+    font-size: 13px;
   }
   .field input[type=range] {
     -webkit-appearance: none;
@@ -190,7 +190,7 @@
   .xyz input {
     font: inherit;
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 11px;
+    font-size: 13px;
     background: #10131a;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 6px;
@@ -201,7 +201,7 @@
   }
   .xyz.lab-row { margin-top: 3px; }
   .xyz .lab {
-    font-size: 9px;
+    font-size: 11px;
     color: #8a93a3;
     text-align: center;
     letter-spacing: 0.1em;
@@ -209,7 +209,7 @@
   .prow { display: flex; gap: 7px; margin-top: 6px; }
   .tbtn {
     flex: 1;
-    font: inherit; font-size: 11.5px;
+    font: inherit; font-size: 13.5px;
     color: #e9edf4;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -222,7 +222,7 @@
   .tbtn.danger:hover { border-color: #ff5cb8; color: #ff5cb8; }
   .missing {
     color: #8a93a3;
-    font-size: 12.5px;
+    font-size: 14.5px;
     padding: 12px;
     text-align: center;
   }
