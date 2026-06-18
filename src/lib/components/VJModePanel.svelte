@@ -3172,10 +3172,6 @@
         <MacroKnobBar />
       </div>
 
-      <div class="header-snaps">
-        <SnapshotBank placement="inline" />
-      </div>
-
       <!-- Tap tempo + FFT meter + expandable EQ tweaks. Self-hides when
            audio is off so the header stays clean for users who haven't
            enabled audio yet. Replaces the standalone audio strip below.
@@ -4373,6 +4369,9 @@
           <button class="add-block-btn" onclick={handleAddBlock} title="Add new block">
             +
           </button>
+          <div class="grid-snaps">
+            <SnapshotBank placement="inline" />
+          </div>
         </div>
 
         <!-- Grid dimension controls -->
@@ -5309,6 +5308,30 @@
     display: flex;
     flex-direction: column;
     transition: bottom 0.2s ease-out;
+    --vj-header-h: 58px;
+    --vj-header-pad-x: 12px;
+    --vj-header-gap: 8px;
+    --vj-half-gap: 4px;
+    --vj-meter-gap: 6px;
+    --vj-right-gap: 4px;
+    --vj-control-h: 30px;
+    --vj-icon-btn: 30px;
+    --vj-header-font: 13px;
+    --vj-label-font: 11px;
+    --vj-stage-pad-x: 13px;
+    --vj-file-pad-x: 10px;
+    --vj-master-slider-w: 58px;
+    --vj-logo-h: 26px;
+    --vj-macro-slot: 46px;
+    --vj-macro-knob: 34px;
+    --vj-macro-bank-w: 382px;
+    --vj-macro-gap: 0px;
+    --vj-macro-name-font: 9px;
+    --vj-snap-font: 12px;
+    --vj-snap-pad-x: 9px;
+    --vj-aip-chevron-w: 14px;
+    --vj-amp-bar-w: 5px;
+    --vj-amp-bar-gap: 3px;
   }
   .vj-overlay.kf-tray-open {
     bottom: 300px;
@@ -5316,10 +5339,6 @@
 
   /* Header Stage/Mix toggle */
   .header-stage {
-    position: absolute;
-    right: calc(50% + 300px);
-    top: 50%;
-    transform: translateY(-50%);
     display: flex;
     flex: 0 0 auto;
     border-radius: 6px;
@@ -5329,11 +5348,12 @@
   }
 
   .stage-mix-btn {
-    padding: 6px 16px;
+    height: var(--vj-control-h);
+    padding: 0 var(--vj-stage-pad-x);
     background: #1a1a1a;
     border: none;
     color: var(--text-muted, #888);
-    font-size: 13px;
+    font-size: var(--vj-header-font);
     font-weight: 700;
     letter-spacing: 1px;
     cursor: pointer;
@@ -5363,13 +5383,13 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    height: 32px;
-    padding: 0 10px;
+    height: var(--vj-control-h);
+    padding: 0 calc(var(--vj-stage-pad-x) - 2px);
     border-radius: var(--ga-r-hard, 2px);
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.18));
     background: transparent;
     color: var(--ga-ink-1, #b8bdc6);
-    font-size: 13px;
+    font-size: var(--vj-header-font);
     font-weight: 700;
     letter-spacing: 0.06em;
     cursor: pointer;
@@ -5397,8 +5417,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 32px;
+    width: var(--vj-icon-btn);
+    height: var(--vj-control-h);
     padding: 0;
     border-radius: var(--ga-r-hard, 2px);
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.18));
@@ -5756,24 +5776,24 @@
     align-items: center;
     justify-content: space-between;
     position: relative;
-    gap: 12px;
-    min-height: 66px;
+    gap: var(--vj-header-gap);
+    min-height: var(--vj-header-h);
     box-sizing: border-box;
-    padding: 8px 20px 10px;
-    padding-right: 188px;
+    padding: 6px var(--vj-header-pad-x);
     background: #141414;
     border-bottom: 1px solid #333;
     flex-shrink: 0;
     overflow: visible;
-    font-size: 15px;
+    font-size: var(--vj-header-font);
     z-index: 20;
   }
 
   .header-left {
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: var(--vj-header-gap);
     flex: 0 0 auto;
+    min-width: 0;
   }
   /* Right cluster is a tight icon grid — REC, A/B, Performer, 3D Stage,
      Settings, Back-arrow, Back text. 4px gap matches the mapping-mode
@@ -5781,46 +5801,29 @@
   .header-right {
     display: flex;
     align-items: center;
-    gap: 4px;
-    position: absolute;
-    right: 12px;
-    top: 50%;
-    transform: translateY(-50%);
+    gap: var(--vj-right-gap);
+    margin-left: 0;
     z-index: 3;
     flex: 0 0 auto;
-    background: #141414;
-    padding-left: 6px;
+    background: transparent;
+    padding-left: 0;
   }
 
   /* Macro knob row — sits between the crossfader toggle and the audio
      meter. Always visible; users can resize / reorder by editing the
      header layout. The bar self-sizes to its content. */
   .header-macros {
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
     display: flex;
     align-items: center;
     justify-content: center;
-    flex: 0 0 auto;
+    flex: 0 0 var(--vj-macro-bank-w);
+    width: var(--vj-macro-bank-w);
     min-width: 0;
-    max-width: min(540px, calc(100% - 700px));
+    max-width: var(--vj-macro-bank-w);
     overflow: visible;
-    padding: 6px 0 3px;
+    padding: 0;
     margin: 0;
     z-index: 2;
-  }
-
-  .header-snaps {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex: 0 0 auto;
-    min-width: 0;
-    margin-left: auto;
-    margin-right: 2px;
-    z-index: 4;
   }
 
   /* Audio meter slot in the header — sits between the MIX/STAGE/AB cluster
@@ -5828,9 +5831,33 @@
   .header-meter {
     display: flex;
     align-items: center;
-    flex: 0 1 auto;
+    flex: 0 0 auto;
     min-width: 0;
-    gap: 8px;
+    gap: var(--vj-meter-gap);
+  }
+
+  .header-meter :global(.amp-strip) {
+    gap: var(--vj-meter-gap);
+    padding: 0;
+  }
+  .header-meter :global(.amp-fft-btn) {
+    height: var(--vj-control-h);
+    padding: 0 calc(var(--vj-file-pad-x) - 2px);
+    gap: var(--vj-meter-gap);
+  }
+  .header-meter :global(.amp-bars) {
+    height: calc(var(--vj-control-h) - 10px);
+    gap: var(--vj-amp-bar-gap);
+  }
+  .header-meter :global(.amp-bar) {
+    width: var(--vj-amp-bar-w);
+  }
+  .header-meter :global(.aip-btn) {
+    width: calc(var(--vj-icon-btn) + 2px);
+    height: var(--vj-control-h);
+  }
+  .header-meter :global(.aip-mic-chevron) {
+    width: var(--vj-aip-chevron-w);
   }
 
   /* Quantize selector — small inline label + native select. Pulses when
@@ -5839,14 +5866,14 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 2px 6px;
+    padding: 0 calc(var(--vj-file-pad-x) - 4px);
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 4px;
-    height: 28px;
+    height: var(--vj-control-h);
   }
   .header-quant-label {
-    font-size: 11px;
+    font-size: var(--vj-label-font);
     font-weight: 700;
     letter-spacing: 0.1em;
     color: var(--text-muted, #888);
@@ -5855,7 +5882,7 @@
     background: transparent;
     border: 1px solid rgba(255, 255, 255, 0.12);
     color: var(--text-primary, #ddd);
-    font-size: 12px;
+    font-size: calc(var(--vj-header-font) - 1px);
     font-weight: 700;
     letter-spacing: 0.05em;
     padding: 2px 4px;
@@ -5868,7 +5895,7 @@
   }
   .header-quant-pending {
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 12px;
+    font-size: calc(var(--vj-header-font) - 1px);
     font-weight: 700;
     color: var(--accent-primary, #BB86FC);
     animation: quantPendingPulse 0.8s ease-in-out infinite;
@@ -5882,16 +5909,16 @@
      cluster anymore. */
 
   .vj-logo {
-    height: 28px;
+    height: var(--vj-logo-h);
     width: auto;
-    margin-right: 12px;
+    margin-right: var(--vj-half-gap);
   }
 
-  .vj-file-menu-container { position: relative; margin-right: 12px; }
+  .vj-file-menu-container { position: relative; margin-right: var(--vj-half-gap); }
   .vj-file-menu-btn {
     display: flex; align-items: center; gap: 4px;
     background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
-    color: var(--text-primary, #ddd); font-size: 14px; padding: 5px 10px; border-radius: 4px; cursor: pointer;
+    color: var(--text-primary, #ddd); font-size: var(--vj-header-font); height: var(--vj-control-h); padding: 0 var(--vj-file-pad-x); border-radius: 4px; cursor: pointer;
   }
   .vj-file-menu-btn:hover, .vj-file-menu-btn.active { background: rgba(255,255,255,0.14); color: #fff; }
   .vj-file-menu-dropdown {
@@ -5921,13 +5948,13 @@
   .master-control {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding-left: 10px;
+    gap: var(--vj-meter-gap);
+    padding-left: var(--vj-file-pad-x);
     border-left: 1px solid #333;
   }
 
   .master-label {
-    font-size: 12px;
+    font-size: var(--vj-label-font);
     font-weight: 800;
     color: #999;
     width: 10px;
@@ -5935,7 +5962,7 @@
   }
 
   .master-slider {
-    width: 70px;
+    width: var(--vj-master-slider-w);
     -webkit-appearance: none;
     appearance: none;
     height: 5px;
@@ -5953,7 +5980,7 @@
   }
 
   .master-value {
-    font-size: 13px;
+    font-size: calc(var(--vj-header-font) - 1px);
     color: var(--text-muted, #888);
     min-width: 32px;
     font-variant-numeric: tabular-nums;
@@ -5968,8 +5995,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 28px;
+    width: var(--vj-icon-btn);
+    height: var(--vj-control-h);
     padding: 0;
     background: rgba(255, 51, 51, 0.12);
     border: 1px solid rgba(255, 51, 51, 0.4);
@@ -5995,13 +6022,13 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    height: 32px;
-    padding: 0 12px;
+    height: var(--vj-control-h);
+    padding: 0 var(--vj-file-pad-x);
     background: transparent;
     border: 1px solid rgba(255, 68, 56, 0.4);
     border-radius: var(--ga-r-hard, 2px);
     color: var(--ga-rec, #ff4438);
-    font-size: 13px;
+    font-size: var(--vj-header-font);
     font-weight: 700;
     letter-spacing: 0.04em;
     cursor: pointer;
@@ -6019,9 +6046,10 @@
     background: #ff4444;
     border: none;
     color: #fff;
-    padding: 6px 12px;
+    height: var(--vj-control-h);
+    padding: 0 var(--vj-file-pad-x);
     border-radius: 4px;
-    font-size: 13px;
+    font-size: var(--vj-header-font);
     font-weight: 600;
     cursor: pointer;
   }
@@ -6050,7 +6078,7 @@
   }
 
   .vj-rec-time {
-    font-size: 13px;
+    font-size: var(--vj-header-font);
     font-weight: 600;
     color: #ff4444;
     font-family: monospace;
@@ -6060,8 +6088,8 @@
      settings/3D buttons (32×32). No padding around the SVG so the
      icons crowd into a tidy grid. */
   .minimize-btn {
-    width: 32px;
-    height: 32px;
+    width: var(--vj-icon-btn);
+    height: var(--vj-control-h);
     padding: 0;
     background: transparent;
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.18));
@@ -6082,15 +6110,15 @@
   }
 
   .exit-btn {
-    height: 32px;
+    height: var(--vj-control-h);
     background: transparent;
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.18));
     color: var(--ga-ink-1, #b8bdc6);
-    padding: 0 14px;
+    padding: 0 calc(var(--vj-file-pad-x) + 2px);
     border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s, color 0.15s;
-    font-size: 14px;
+    font-size: var(--vj-header-font);
     font-weight: 600;
     flex: 0 0 auto;
   }
@@ -6102,17 +6130,118 @@
   }
 
   .vj-header :is(button, select) {
-    font-size: 14px;
+    font-size: var(--vj-header-font);
   }
   .vj-header :is(.master-label, .header-quant-label) {
-    font-size: 12px;
+    font-size: var(--vj-label-font);
   }
   .vj-header :is(.master-value, .header-quant-select, .header-quant-pending) {
-    font-size: 13px;
+    font-size: calc(var(--vj-header-font) - 1px);
   }
   .vj-header .stage-mix-btn {
-    font-size: 13px;
-    padding: 7px 18px;
+    font-size: var(--vj-header-font);
+    padding: 0 var(--vj-stage-pad-x);
+  }
+
+  @media (min-width: 1800px) {
+    .vj-overlay {
+      --vj-header-h: 64px;
+      --vj-header-pad-x: 18px;
+      --vj-header-gap: 10px;
+      --vj-half-gap: 5px;
+      --vj-meter-gap: 8px;
+      --vj-control-h: 34px;
+      --vj-icon-btn: 34px;
+      --vj-header-font: 14px;
+      --vj-label-font: 12px;
+      --vj-stage-pad-x: 16px;
+      --vj-file-pad-x: 12px;
+      --vj-master-slider-w: 72px;
+      --vj-logo-h: 28px;
+      --vj-macro-slot: 50px;
+      --vj-macro-knob: 36px;
+      --vj-macro-bank-w: 421px;
+      --vj-macro-gap: 1px;
+      --vj-macro-name-font: 10px;
+      --vj-snap-font: 12px;
+      --vj-snap-pad-x: 10px;
+      --vj-aip-chevron-w: 16px;
+      --vj-amp-bar-w: 5px;
+      --vj-amp-bar-gap: 3px;
+    }
+  }
+
+  @media (max-width: 1500px) {
+    .vj-overlay {
+      --vj-header-h: 54px;
+      --vj-header-pad-x: 8px;
+      --vj-header-gap: 5px;
+      --vj-half-gap: 3px;
+      --vj-meter-gap: 4px;
+      --vj-right-gap: 3px;
+      --vj-control-h: 28px;
+      --vj-icon-btn: 28px;
+      --vj-header-font: 12px;
+      --vj-label-font: 10px;
+      --vj-stage-pad-x: 9px;
+      --vj-file-pad-x: 8px;
+      --vj-master-slider-w: 44px;
+      --vj-logo-h: 24px;
+      --vj-macro-slot: 36px;
+      --vj-macro-knob: 28px;
+      --vj-macro-bank-w: 296px;
+      --vj-macro-gap: 0px;
+      --vj-macro-name-font: 8px;
+      --vj-snap-font: 11px;
+      --vj-snap-pad-x: 8px;
+      --vj-aip-chevron-w: 13px;
+      --vj-amp-bar-w: 4px;
+      --vj-amp-bar-gap: 2px;
+    }
+
+    .master-value {
+      min-width: 28px;
+    }
+
+    .header-quant-label {
+      display: none;
+    }
+
+    .exit-btn {
+      display: none;
+    }
+  }
+
+  @media (max-width: 1280px) {
+    .vj-overlay {
+      --vj-header-pad-x: 7px;
+      --vj-header-gap: 4px;
+      --vj-meter-gap: 3px;
+      --vj-right-gap: 2px;
+      --vj-stage-pad-x: 7px;
+      --vj-file-pad-x: 6px;
+      --vj-master-slider-w: 40px;
+      --vj-macro-slot: 34px;
+      --vj-macro-bank-w: 280px;
+      --vj-aip-chevron-w: 12px;
+      --vj-amp-bar-w: 3px;
+    }
+  }
+
+  @media (max-width: 1180px) {
+    .vj-header {
+      flex-wrap: wrap;
+      align-content: center;
+      row-gap: 3px;
+      min-height: calc(var(--vj-header-h) + 38px);
+    }
+
+    .header-macros {
+      order: 10;
+      flex: 1 0 100%;
+      max-width: none;
+      justify-content: center;
+    }
   }
 
   /* Main Layout */
@@ -7705,7 +7834,17 @@
     display: flex;
     gap: 4px;
     flex: 1;
+    min-width: 0;
     overflow-x: auto;
+  }
+
+  .grid-snaps {
+    display: flex;
+    align-items: center;
+    margin-left: auto;
+    flex: 0 0 auto;
+    position: relative;
+    z-index: 12;
   }
 
   .blocks-tabs::-webkit-scrollbar {
@@ -8620,8 +8759,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 28px;
+    width: var(--vj-icon-btn);
+    height: var(--vj-control-h);
     padding: 0;
     background: rgba(187, 134, 252, .08);
     border: 1px solid rgba(187, 134, 252, .25);
