@@ -216,10 +216,11 @@
     color: #fff;
   }
   .snap-bank.inline .snap-handle {
-    height: 30px;
-    padding: 0 10px 0 8px;
+    height: var(--vj-control-h, 30px);
+    padding: 0 var(--vj-snap-pad-x, 9px) 0 calc(var(--vj-snap-pad-x, 9px) - 2px);
     background: rgba(9, 11, 15, 0.88);
     border-color: rgba(255, 255, 255, 0.14);
+    font-size: var(--vj-snap-font, 12px);
   }
   .snap-bank.inline .snap-handle:hover,
   .snap-bank.inline.expanded .snap-handle {

@@ -454,18 +454,21 @@
   .macro-bar {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 5px 6px 2px;
+    gap: var(--vj-macro-gap, 1px);
+    padding: 4px 4px 1px;
+    width: var(--vj-macro-bank-w, auto);
+    box-sizing: border-box;
+    justify-content: center;
   }
 
   .macro-slot {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 3px;
-    flex: 0 0 58px;
-    width: 58px;
-    min-height: 56px;
+    gap: 2px;
+    flex: 0 0 var(--vj-macro-slot, 46px);
+    width: var(--vj-macro-slot, 46px);
+    min-height: calc(var(--vj-macro-knob, 34px) + 16px);
   }
   .macro-slot.learning .macro-knob {
     box-shadow: 0 0 0 2px rgba(187, 134, 252, 0.6), 0 0 14px rgba(187, 134, 252, 0.45);
@@ -473,8 +476,8 @@
 
   .macro-knob {
     position: relative;
-    width: 36px;
-    height: 36px;
+    width: var(--vj-macro-knob, 34px);
+    height: var(--vj-macro-knob, 34px);
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 50%;
@@ -492,6 +495,8 @@
   }
 
   .macro-svg {
+    width: calc(var(--vj-macro-knob, 34px) - 2px);
+    height: calc(var(--vj-macro-knob, 34px) - 2px);
     pointer-events: none;
     position: relative;
     z-index: 1;
@@ -534,12 +539,12 @@
     background: none;
     border: none;
     color: rgba(238, 240, 244, 0.52);
-    font-size: 10px;
+    font-size: var(--vj-macro-name-font, 9px);
     font-weight: 700;
     letter-spacing: 0.03em;
     padding: 0 2px;
     cursor: pointer;
-    max-width: 58px;
+    max-width: var(--vj-macro-slot, 46px);
     line-height: 1.05;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -548,11 +553,11 @@
   .macro-name:hover { color: var(--text-primary, #ccc); }
 
   .macro-name-input {
-    width: 58px;
+    width: var(--vj-macro-slot, 46px);
     background: rgba(0, 0, 0, 0.4);
     border: 1px solid rgba(255, 255, 255, 0.18);
     color: #fff;
-    font-size: 12px;
+    font-size: calc(var(--vj-macro-name-font, 9px) + 2px);
     font-weight: 700;
     letter-spacing: 0.06em;
     text-align: center;
