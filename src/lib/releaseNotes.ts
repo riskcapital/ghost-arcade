@@ -8,6 +8,22 @@ export interface AppReleaseNotes {
 }
 
 const RELEASE_NOTES: Record<string, AppReleaseNotes> = {
+  '1.9.6': {
+    title: 'Map Sim polish, sequencer fixes, and source point clouds',
+    summary: [
+      'Map Sim and Stage Sim now behave more cleanly across presets and sessions.',
+      'VJ sequencer cells update live, with slower crossfade and step timing options.',
+      'Photo/video point-cloud shaders can pull depth while preserving source color.',
+    ],
+    highlights: [
+      'Map Sim and Stage Sim now keep unsaved edits scoped to the active scene, ask whether to keep added elements when switching presets, and stop carrying unsaved objects into the next app launch.',
+      'Map Sim object editing is tighter: lockable projectors and objects, scene click selection, copy/paste, delete, snapping, even-spacing guides, GLB import parity with mapping-mode 3D model layers, and the focused isometric cube, fragmented cube, and museum presets.',
+      'Projection rendering has stronger real-world behavior with one-sided projection, darker backsides, floor hits when the projector is angled correctly, projector shadow controls, and smoother intensity changes.',
+      'VJ Layer Sequencer fixes live cell updates so clicks show immediately, adds slower crossfade timing, and expands movement intervals beyond 1/4 steps.',
+      'VJ layers and group layers can now choose the full VJ Mix as an output source when that is the cleanest routing path.',
+      'GPU Shader photo/video point-cloud effects now derive depth from the source image, preserve source colors, and add smoother particle motion controls for animated depth-cloud looks.',
+    ],
+  },
   '1.9.5': {
     title: 'Map Sim, keyboard control, and updater download fix',
     summary: [

@@ -2755,6 +2755,14 @@ void main() {
       } catch (err) {
         console.warn('[Store] updateStagePreset: surface effects snapshot failed', err);
       }
+
+      let stage3dSnap: unknown;
+      try {
+        stage3dSnap = JSON.parse(JSON.stringify(get(stage3dScene)));
+      } catch (err) {
+        console.warn('[Store] updateStagePreset: 3D scene snapshot failed', err);
+      }
+
       update((project) => ({
         ...project,
         stagePresets: (project.stagePresets || []).map(p =>
@@ -2764,6 +2772,7 @@ void main() {
                 layers: layersSnapshot,
                 thumbnail: thumbnail ?? p.thumbnail,
                 stageEffects: stageEffectsSnap,
+                stage3d: stage3dSnap ?? p.stage3d,
                 updatedAt: Date.now(),
               }
             : p
@@ -4266,6 +4275,7 @@ void main() {
         crossfaderTransition: currentVjClipLauncher.crossfaderTransition || 'dissolve',
         crossfaderCurve: currentVjClipLauncher.crossfaderCurve || 'constant-power',
         crossfaderBlendMode: currentVjClipLauncher.crossfaderBlendMode || 'normal',
+        crossfaderFadeDuration: currentVjClipLauncher.crossfaderFadeDuration ?? 0,
         selectedDeck: currentVjClipLauncher.selectedDeck || 'A',
         // Launch quantization grid — pendingTriggers are session-only
         // (in-flight live state, not part of the project).
@@ -4432,6 +4442,11 @@ void main() {
       // pixelFXContent / gpuLayerContent now actually export. Older saves
       // (1.9.x and earlier) still load via the legacy resolveSrc fallback.
       syncExport.version = '1.9.3';
+      try {
+        syncExport.project.stage3d = JSON.parse(JSON.stringify(get(stage3dScene)));
+      } catch (err) {
+        console.warn('[Store] exportProjectForSave: 3D scene snapshot failed', err);
+      }
       return syncExport;
     },
 
@@ -4554,6 +4569,7 @@ void main() {
             layers?: Layer[];
             vjMode?: any;
             mediaFolders?: MediaTrayFolder[];
+            stage3d?: unknown;
           };
           mediaLibrary?: any[];
           vjClipLauncher?: any;
@@ -5004,6 +5020,9 @@ void main() {
           const importedXfadeBlendMode = validBlendModes.includes(vjcl.crossfaderBlendMode)
             ? vjcl.crossfaderBlendMode
             : 'normal';
+          const importedXfadeFadeDuration = typeof vjcl.crossfaderFadeDuration === 'number'
+            ? Math.max(0, Math.min(8, vjcl.crossfaderFadeDuration))
+            : 0;
           const importedSelectedDeck: 'A' | 'B' = vjcl.selectedDeck === 'B' ? 'B' : 'A';
           const validQuant = ['off', '1/4', '1/2', '1bar', '2bar', '4bar'];
           const importedQuant = validQuant.includes(vjcl.quantization)
@@ -5041,6 +5060,7 @@ void main() {
             crossfaderTransition: importedXfadeTransition as any,
             crossfaderCurve: importedXfadeCurve as any,
             crossfaderBlendMode: importedXfadeBlendMode as any,
+            crossfaderFadeDuration: importedXfadeFadeDuration,
             quantization: importedQuant as any,
             // pendingTriggers are session-only — never persisted
             pendingTriggers: [],
@@ -5216,6 +5236,22 @@ void main() {
 
         set(importedProject);
         selectedLayerIdsState.set(importedProject.selectedLayerId ? [importedProject.selectedLayerId] : []);
+        const importedStage3d = (proj as any).stage3d;
+        const incomingSyncedStage3d = (parsed as any).stage3dScene;
+        queueMicrotask(() => {
+          try {
+            if (importedStage3d?.schemaVersion === 1 && Array.isArray(importedStage3d.nodes)) {
+              stage3dScene.loadScene(importedStage3d);
+            } else if (incomingSyncedStage3d?.schemaVersion === 1 && Array.isArray(incomingSyncedStage3d.nodes)) {
+              // State-sync payloads apply Stage 3D separately after
+              // project import. Do not clear the scene in between.
+            } else {
+              stage3dScene.newScene();
+            }
+          } catch (err) {
+            console.warn('[Store] importProject: 3D scene restore failed', err);
+          }
+        });
         // Hydrate $settings.output from the project's multi-output
         // snapshot, if one was saved. Slices run through the migration
         // shim so older .gha files without per-edge-gamma / black-level

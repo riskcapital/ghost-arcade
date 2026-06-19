@@ -13,6 +13,7 @@ import { get } from 'svelte/store';
 import { project } from '$lib/stores/layers';
 import { settings } from '$lib/stores/settings';
 import { vjClipLauncher } from '$lib/stores/vjClipLauncher';
+import { vjLayerSequencer } from '$lib/stores/vjLayerSequencer';
 import { stage3dScene } from '$lib/stage3d/store';
 import { invoke, isDesktopApp } from '$lib/bridge';
 
@@ -268,11 +269,58 @@ function buildSyncedStatePayload(): any {
   const payload = {
     ...projectData,
     vjClipLauncher: liveVJState,
+    vjLayerSequencer: buildVJLayerSequencerPayload(),
     stage3dScene: get(stage3dScene),
     settings: { output: settingsState?.output },
   };
 
   return JSON.parse(JSON.stringify(payload));
+}
+
+function buildVJLayerSequencerPayload(): any {
+  const state = get(vjLayerSequencer) as any;
+  return JSON.parse(JSON.stringify({
+    isOpen: state.isOpen,
+    minimized: state.minimized,
+    isPlaying: state.isPlaying,
+    currentStep: state.currentStep,
+    stepCount: state.stepCount,
+    bpm: state.bpm,
+    syncToMaster: state.syncToMaster,
+    masterBPM: state.masterBPM,
+    subdivision: state.subdivision,
+    crossfade: state.crossfade,
+    crossfadeDuration: state.crossfadeDuration,
+    randomDensity: state.randomDensity,
+    presetMode: state.presetMode,
+    bankBPresetMode: state.bankBPresetMode,
+    cells: state.cells,
+    bankBCells: state.bankBCells,
+    opacityOverrides: state.opacityOverrides,
+    bankBOpacityOverrides: state.bankBOpacityOverrides,
+    transportTimeSec: (vjLayerSequencer as any).getTransportTimeSec?.() ?? 0,
+  }));
+}
+
+function buildVJLayerSequencerSyncSignature(): string {
+  const state = get(vjLayerSequencer) as any;
+  return JSON.stringify({
+    isOpen: state.isOpen,
+    minimized: state.minimized,
+    isPlaying: state.isPlaying,
+    stepCount: state.stepCount,
+    bpm: state.bpm,
+    syncToMaster: state.syncToMaster,
+    masterBPM: state.masterBPM,
+    subdivision: state.subdivision,
+    crossfade: state.crossfade,
+    crossfadeDuration: state.crossfadeDuration,
+    randomDensity: state.randomDensity,
+    presetMode: state.presetMode,
+    bankBPresetMode: state.bankBPresetMode,
+    cells: state.cells,
+    bankBCells: state.bankBCells,
+  });
 }
 
 function buildLiveVJStatePayload(vjState = get(vjClipLauncher) as any, includeGrids = false): any {
@@ -311,8 +359,10 @@ function buildLiveVJStatePayload(vjState = get(vjClipLauncher) as any, includeGr
     crossfaderTransition: vjState.crossfaderTransition,
     crossfaderCurve: vjState.crossfaderCurve,
     crossfaderBlendMode: vjState.crossfaderBlendMode,
+    crossfaderFadeDuration: vjState.crossfaderFadeDuration ?? 0,
     quantization: vjState.quantization,
     pendingTriggers: [],
+    vjLayerSequencer: buildVJLayerSequencerPayload(),
   };
 
   return JSON.parse(JSON.stringify(payload));
@@ -591,6 +641,16 @@ function initSender() {
   });
   unsubscribers.push(unsubVJ);
 
+  let lastVJSequencerSignature = '';
+  const unsubVJSequencer = vjLayerSequencer.subscribe(() => {
+    const nextSignature = buildVJLayerSequencerSyncSignature();
+    if (nextSignature === lastVJSequencerSignature) return;
+    lastVJSequencerSignature = nextSignature;
+    scheduleStage3DRelayLivePublish();
+    broadcastVJState();
+  });
+  unsubscribers.push(unsubVJSequencer);
+
   const unsubStage3D = stage3dScene.subscribe(() => {
     scheduleStage3DRelayScenePublish();
     broadcastStage3DState();
@@ -711,7 +771,12 @@ function applyProjectStatePayload(data: any, sourceLabel: string) {
     // sender's live deck state. Merge the live payload back after the
     // structural import so active clips keep driving synced renderers.
     if (data.vjClipLauncher) {
-      vjClipLauncher.update((state: any) => ({ ...state, ...data.vjClipLauncher }));
+      const { vjLayerSequencer: sequencerPayload, ...clipPayload } = data.vjClipLauncher;
+      vjClipLauncher.update((state: any) => ({ ...state, ...clipPayload }));
+      if (sequencerPayload) vjLayerSequencer.hydrate(sequencerPayload);
+    }
+    if (data.vjLayerSequencer) {
+      vjLayerSequencer.hydrate(data.vjLayerSequencer);
     }
     if (data.stage3dScene?.schemaVersion === 1 && Array.isArray(data.stage3dScene.nodes)) {
       // Merge in a way that preserves the LOCAL window's stage3D editing
@@ -742,7 +807,9 @@ function applyProjectStatePayload(data: any, sourceLabel: string) {
 function applyLiveVJStatePayload(data: any, sourceLabel: string) {
   if (!data) return;
   try {
-    vjClipLauncher.update((state: any) => ({ ...state, ...data }));
+    const { vjLayerSequencer: sequencerPayload, ...clipPayload } = data;
+    vjClipLauncher.update((state: any) => ({ ...state, ...clipPayload }));
+    if (sequencerPayload) vjLayerSequencer.hydrate(sequencerPayload);
   } catch (err) {
     console.error(`[StateSync] Failed to import live VJ state (${sourceLabel}):`, err);
   }
@@ -866,7 +933,9 @@ function handleReceivedMessage(event: MessageEvent<StateMessage>) {
       if (msg.data) {
         try {
           // Merge incoming VJ state payload into current state shape.
-          vjClipLauncher.update((state: any) => ({ ...state, ...msg.data }));
+          const { vjLayerSequencer: sequencerPayload, ...clipPayload } = msg.data;
+          vjClipLauncher.update((state: any) => ({ ...state, ...clipPayload }));
+          if (sequencerPayload) vjLayerSequencer.hydrate(sequencerPayload);
         } catch (err) {
           console.error('[StateSync] Failed to import VJ state:', err);
         }

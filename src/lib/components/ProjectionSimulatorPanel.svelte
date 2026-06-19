@@ -14,6 +14,7 @@
     selectedProjectionSimTarget,
   } from '../projectionSim/store';
   import {
+    createProjectionSimScene,
     makeProjectionSimProjector,
     type ProjectionSimObject,
     type ProjectionSimPrimitiveKind,
@@ -22,7 +23,7 @@
     type ProjectionSimSelection,
     type ProjectionSimVec3,
   } from '../projectionSim/types';
-  import { PROJECTION_SIM_PRESETS } from '../projectionSim/presets';
+  import { PROJECTION_SIM_PRESETS, buildProjectionSimPreset } from '../projectionSim/presets';
   import {
     snapProjectionSimObjectTransform,
     spaceProjectionSimObjectsEvenly,
@@ -47,6 +48,7 @@
   let nativeFullScreen = false;
   let removeNativeFullscreenListener: (() => void) | null = null;
   let selectedPresetId = PROJECTION_SIM_PRESETS[0]?.id ?? '';
+  let loadedPresetId = selectedPresetId;
   let editProjectors = false;
   let snapEnabled = true;
   let snapTouch = true;
@@ -57,6 +59,7 @@
   let sceneClipboard: { kind: 'object'; object: ProjectionSimObject } | { kind: 'projector'; projector: ProjectionSimProjector } | null = null;
 
   const primitiveKinds: ProjectionSimPrimitiveKind[] = ['box', 'sphere', 'cylinder', 'cone', 'pyramid', 'column', 'plane'];
+  const BLANK_PRESET_ID = '__blank__';
 
   $: selectedTarget = $selectedProjectionSimTarget;
   $: selectedObject = findSelectedObject($projectionSimScene, selectedTarget);
@@ -68,6 +71,36 @@
 
   function cloneSceneValue<T>(value: T): T {
     return JSON.parse(JSON.stringify(value)) as T;
+  }
+
+  function buildReferenceScene(id: string): ProjectionSimScene | null {
+    if (id === BLANK_PRESET_ID) return createProjectionSimScene();
+    if (!id) return null;
+    return buildProjectionSimPreset(id);
+  }
+
+  function getSceneAdditions(scene: ProjectionSimScene, referenceId: string): {
+    objects: ProjectionSimObject[];
+    projectors: ProjectionSimProjector[];
+  } {
+    const reference = buildReferenceScene(referenceId);
+    if (!reference) {
+      return {
+        objects: scene.objects.map((object) => cloneSceneValue(object)),
+        projectors: scene.projectors.map((projector) => cloneSceneValue(projector)),
+      };
+    }
+
+    const referenceObjectNames = new Set(reference.objects.map((object) => object.name));
+    const referenceProjectorNames = new Set(reference.projectors.map((projector) => projector.name));
+    return {
+      objects: scene.objects
+        .filter((object) => !referenceObjectNames.has(object.name))
+        .map((object) => cloneSceneValue(object)),
+      projectors: scene.projectors
+        .filter((projector) => !referenceProjectorNames.has(projector.name))
+        .map((projector) => cloneSceneValue(projector)),
+    };
   }
 
   function makeSceneId(prefix: string): string {
@@ -237,15 +270,37 @@
   }
 
   function applyPreset(id: string) {
-    const count = $projectionSimScene.objects.length + $projectionSimScene.projectors.length;
-    if (count > 0 && !confirm('Replace the current simulator scene?')) return;
-    projectionSimScene.loadPreset(id);
+    const preset = buildProjectionSimPreset(id);
+    if (!preset) return;
+
+    const additions = getSceneAdditions(get(projectionSimScene), loadedPresetId);
+    const hasAdditions = additions.objects.length > 0 || additions.projectors.length > 0;
+    const keepAdditions = hasAdditions
+      ? confirm(`Keep your added objects/projectors when loading ${preset.name}?\n\nOK = Keep additions\nCancel = Clear for a clean preset`)
+      : false;
+
+    const next = keepAdditions
+      ? {
+          ...preset,
+          objects: [...preset.objects, ...additions.objects],
+          projectors: [...preset.projectors, ...additions.projectors],
+        }
+      : preset;
+
+    projectionSimScene.loadScene(next);
+    selectedPresetId = id;
+    loadedPresetId = id;
+  }
+
+  function handlePresetSelect(event: Event) {
+    selectedPresetId = (event.currentTarget as HTMLSelectElement).value;
   }
 
   function newBlankScene() {
     const count = $projectionSimScene.objects.length + $projectionSimScene.projectors.length;
     if (count > 0 && !confirm('Start a blank projection simulator scene?')) return;
     projectionSimScene.newScene();
+    loadedPresetId = BLANK_PRESET_ID;
   }
 
   function syncProjectorsFromSlices() {
@@ -374,6 +429,7 @@
     reader.onload = () => {
       const ok = projectionSimScene.importJSON(String(reader.result ?? ''));
       if (!ok) alert('That file is not a valid Ghost projection simulator scene.');
+      else loadedPresetId = '';
     };
     reader.readAsText(file);
     (event.target as HTMLInputElement).value = '';
@@ -529,7 +585,13 @@
         <div class="preset-picker">
           <label class="field mini">
             <span>Structure</span>
-            <select bind:value={selectedPresetId}>
+            <select
+              value={selectedPresetId}
+              onpointerdown={(event) => event.stopPropagation()}
+              onmousedown={(event) => event.stopPropagation()}
+              onclick={(event) => event.stopPropagation()}
+              onchange={handlePresetSelect}
+            >
               {#each PROJECTION_SIM_PRESETS as preset}
                 <option value={preset.id}>{preset.name}</option>
               {/each}
@@ -818,6 +880,7 @@
   .sim-right,
   .show-panels {
     position: absolute;
+    z-index: 2;
     border: 1px solid var(--ga-line-2, rgba(255,255,255,0.12));
     background: color-mix(in srgb, var(--ga-panel, #0b0d11) 97%, #05070b);
     box-shadow: 0 18px 50px rgba(0,0,0,0.35);

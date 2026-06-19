@@ -4,7 +4,7 @@
   // import AutoMapPanel from './AutoMapPanel.svelte';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
   import type { BlendMode, MediaSource, EffectType, ContentFitMode, VideoPlaybackMode } from '../types';
-  import { generateUUID } from '../types';
+  import { generateUUID, VJ_MIX_SOURCE_INDEX } from '../types';
   import { onDestroy } from 'svelte';
   // ShapeType import removed — Lines layer uses pen tools instead of shape library
   import { getDefaultEffectParams } from '../renderer/effects';
@@ -1021,6 +1021,7 @@
                 }}
               >
                 <option value="">None (use shader/media)</option>
+                <option value={String(VJ_MIX_SOURCE_INDEX)}>VJ Mix</option>
                 {#each Array($vjClipLauncher.numLayers) as _, i}
                   {@const activeClip = $vjClipLauncher.layerStates[i]?.activeClip}
                   <option value={String(i)}>VJ Layer {i + 1}{activeClip ? ` — ${activeClip.name}` : ''}</option>
@@ -1304,11 +1305,12 @@
             <label class="screen-label">VJ Layer Source</label>
             <select
               class="screen-vj-select"
-              value={layer.vjLayerIndex ?? 0}
+              value={String(layer.vjLayerIndex ?? 0)}
               onchange={(e) => project.setLayerVJIndex(layer.id, parseInt(e.currentTarget.value))}
             >
+              <option value={String(VJ_MIX_SOURCE_INDEX)}>VJ Mix</option>
               {#each Array($vjClipLauncher.numLayers) as _, i}
-                <option value={i}>VJ Layer {i + 1}</option>
+                <option value={String(i)}>VJ Layer {i + 1}</option>
               {/each}
             </select>
           </div>

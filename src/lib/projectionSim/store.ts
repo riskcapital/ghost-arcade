@@ -10,7 +10,7 @@ import type {
 import { createProjectionSimScene, makeProjectionSimPrimitive, makeProjectionSimProjector, type ProjectionSimPrimitiveKind } from './types';
 import { buildProjectionSimPreset } from './presets';
 
-const STORAGE_KEY = 'ga-projection-sim-scene';
+const LEGACY_STORAGE_KEY = 'ga-projection-sim-scene';
 const DEFAULT_ENVIRONMENT = createProjectionSimScene().environment;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -20,14 +20,8 @@ function clone<T>(value: T): T {
 
 function loadInitialScene(): ProjectionSimScene {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed?.schemaVersion === 1 && Array.isArray(parsed.objects) && Array.isArray(parsed.projectors)) {
-        return normalizeScene(parsed as ProjectionSimScene);
-      }
-    }
-  } catch { /* ignore corrupt local scene */ }
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
+  } catch { /* private mode */ }
   return buildProjectionSimPreset('cube-pyramid') ?? createProjectionSimScene();
 }
 
@@ -55,19 +49,10 @@ function normalizeScene(scene: ProjectionSimScene): ProjectionSimScene {
 }
 
 function persist(scene: ProjectionSimScene, immediate = false): void {
-  const write = () => {
-    persistTimer = null;
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(scene)); } catch { /* private mode */ }
-  };
-
-  if (immediate) {
-    if (persistTimer) clearTimeout(persistTimer);
-    write();
-    return;
-  }
-
   if (persistTimer) clearTimeout(persistTimer);
-  persistTimer = setTimeout(write, 180);
+  persistTimer = null;
+  void scene;
+  void immediate;
 }
 
 export function isProjectionSimTargetLocked(scene: ProjectionSimScene, target: ProjectionSimSelection): boolean {
