@@ -30,6 +30,7 @@ initErrorReporter();
 const urlParams = new URLSearchParams(window.location.search);
 const mode = urlParams.get('mode');
 const isStage3DWindow = mode === 'stage-3d';
+const isProjectionSimWindow = mode === 'projection-sim';
 const isSpoutOutput = mode === 'spout-output';
 const isOutputWindow = mode === 'output';
 // `webrtc-display` is the legacy WebRTC output transport — kept as
@@ -65,7 +66,7 @@ if (isSpoutOutput && !window.__SPOUT_OSR_MODE__) {
   try { (window as any).__SPOUT_OSR_MODE__ = true; } catch { /* already set by preload */ }
 }
 
-if ((isOutputWindow || isWebRTCDisplay || isWebGPUDisplay || isSliceDisplay || isSliceAtlas || isStage3DWindow) && !(window as any).__OUTPUT_WINDOW_MODE__) {
+if ((isOutputWindow || isWebRTCDisplay || isWebGPUDisplay || isSliceDisplay || isSliceAtlas || isStage3DWindow || isProjectionSimWindow) && !(window as any).__OUTPUT_WINDOW_MODE__) {
   try { (window as any).__OUTPUT_WINDOW_MODE__ = true; } catch { /* already set by preload */ }
 }
 
@@ -152,6 +153,11 @@ async function init() {
   } else if (isStage3DWindow) {
     const { default: Stage3DWindowApp } = await import('./Stage3DWindowApp.svelte');
     mount(Stage3DWindowApp, {
+      target: document.getElementById('app')!,
+    });
+  } else if (isProjectionSimWindow) {
+    const { default: ProjectionSimulatorWindowApp } = await import('./ProjectionSimulatorWindowApp.svelte');
+    mount(ProjectionSimulatorWindowApp, {
       target: document.getElementById('app')!,
     });
   } else if (isSpoutOutput || isOutputWindow) {

@@ -51,3 +51,19 @@ export async function invoke<T = any>(command: string, args?: Record<string, any
   }
   throw new Error(`invoke('${command}') called but Electron runtime not available`);
 }
+
+export async function openExternalUrl(url: string): Promise<void> {
+  if (!url) return;
+  if (typeof window === 'undefined') return;
+
+  if (window.__ELECTRON__ && window.electronAPI) {
+    try {
+      const result = await window.electronAPI.invoke('open_external_url', { url });
+      if (result?.success) return;
+    } catch (err) {
+      console.warn('[Bridge] open_external_url failed, falling back to window.open', err);
+    }
+  }
+
+  window.open(url, '_blank', 'noopener');
+}

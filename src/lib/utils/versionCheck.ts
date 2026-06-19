@@ -11,6 +11,8 @@
  * "Check now" from Settings bypasses the rate limit.
  */
 
+import { DOWNLOAD_PAGE_URL } from '../releaseNotes';
+
 const REPO = 'riskcapital/ghost-arcade-releases';
 const LAST_CHECK_KEY = 'ghostarcade-last-version-check';
 const LAST_RESULT_KEY = 'ghostarcade-last-version-result';
@@ -149,7 +151,7 @@ async function fetchLatestTag(): Promise<{ tag: string; url: string } | null> {
   if (!json?.tag_name) return null;
   return {
     tag: json.tag_name as string,
-    url: (json.html_url as string) || `https://github.com/${REPO}/releases/tag/${json.tag_name}`,
+    url: DOWNLOAD_PAGE_URL,
   };
 }
 

@@ -40,6 +40,9 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'open_stage3d_window', 'stage3d_window_closing',
   'stage3d_publish_state', 'stage3d_get_state', 'stage3d_is_open',
   'stage3d_set_fullscreen', 'stage3d_get_fullscreen',
+  // Projection Simulator pop-out window
+  'open_projection_sim_window', 'projection_sim_window_closing', 'projection_sim_is_open',
+  'projection_sim_set_fullscreen', 'projection_sim_get_fullscreen',
   // SRC tab Capture chooser — enumerates screens + app windows
   // with thumbnails so the renderer can show a Zoom/Slack-style picker.
   'screen_sources_list',
@@ -61,7 +64,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'open_project_dialog',
   'download_demo_zip', 'read_project_file',
   // Update installer download + launch
-  'download_update_installer', 'launch_update_installer',
+  'open_external_url', 'download_update_installer', 'launch_update_installer',
   // Texture sharing info (Spout/Syphon)
   'texture_share_info',
   // Output window controls
@@ -114,7 +117,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * Returns a cleanup function that removes the listener.
    */
   on: (channel, callback) => {
-    const allowed = ['director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'update-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed'];
+    const allowed = ['director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'update-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'projection-sim-fullscreen-changed'];
     if (!allowed.includes(channel)) return () => {};
     const handler = (_event, ...args) => callback(...args);
     ipcRenderer.on(channel, handler);

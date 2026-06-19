@@ -27,17 +27,31 @@ jobs:
   create-release:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Create empty release on ghost-arcade-releases (idempotent)
         env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
         run: |
+          NOTES_FILE="docs/releases/${{ github.ref_name }}.md"
           if gh release view "${{ github.ref_name }}" --repo riskcapital/ghost-arcade-releases > /dev/null 2>&1; then
             echo "Release ${{ github.ref_name }} already exists — skipping create"
+            if [ -f "$NOTES_FILE" ]; then
+              gh release edit "${{ github.ref_name }}" \
+                --repo riskcapital/ghost-arcade-releases \
+                --title "Ghost Arcade ${{ github.ref_name }}" \
+                --notes-file "$NOTES_FILE"
+              echo "Release ${{ github.ref_name }} notes refreshed from $NOTES_FILE"
+            fi
           else
+            NOTES_ARGS=(--notes "Signed Windows installer + notarized macOS DMGs + Linux AppImage/deb uploaded by CI.")
+            if [ -f "$NOTES_FILE" ]; then
+              NOTES_ARGS=(--notes-file "$NOTES_FILE")
+            fi
             gh release create "${{ github.ref_name }}" \
               --repo riskcapital/ghost-arcade-releases \
               --title "Ghost Arcade ${{ github.ref_name }}" \
-              --notes "Signed Windows installer + notarized macOS DMGs + Linux AppImage/deb uploaded by CI." \
+              "${NOTES_ARGS[@]}" \
               --target main
             echo "Release ${{ github.ref_name }} created"
           fi
@@ -102,7 +116,8 @@ jobs:
             dist-electron/latest.yml
           draft: false
           prerelease: false
-          generate_release_notes: true
+          generate_release_notes: false
+          overwrite_files: true
 
   build-macos:
     needs: create-release
@@ -162,7 +177,8 @@ jobs:
             dist-electron/latest-mac.yml
           draft: false
           prerelease: false
-          generate_release_notes: true
+          generate_release_notes: false
+          overwrite_files: true
 
   build-linux:
     needs: create-release
@@ -224,4 +240,5 @@ jobs:
             dist-electron/latest-linux.yml
           draft: false
           prerelease: false
-          generate_release_notes: true
+          generate_release_notes: false
+          overwrite_files: true

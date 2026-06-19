@@ -6,6 +6,7 @@
  *   'vj'    — VJModePanel overlay (legacy: still mirrored by
  *             vjClipLauncher.isOpen for back-compat).
  *   'stage' — StageDesignerPanel overlay (Phase 1+).
+ *   'projection-sim' — 3D projection simulator for mapping practice.
  *
  * Two reasons this exists as its own store instead of a flag on
  * vjClipLauncher:
@@ -26,7 +27,7 @@
 
 import { writable, get } from 'svelte/store';
 
-export type Workspace = 'main' | 'vj' | 'stage';
+export type Workspace = 'main' | 'vj' | 'stage' | 'projection-sim';
 
 function createWorkspaceStore() {
   const { subscribe, set, update } = writable<Workspace>('main');
@@ -57,6 +58,7 @@ function createWorkspaceStore() {
 
     openVJ()    { this.setActive('vj'); },
     openStage() { this.setActive('stage'); },
+    openProjectionSim() { this.setActive('projection-sim'); },
     closeAll()  { this.setActive('main'); },
   };
 }
