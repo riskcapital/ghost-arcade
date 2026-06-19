@@ -659,6 +659,7 @@
     stopPreviewLoop();
     stopModGhostLoop();
     stopCrossfaderAutoLoop();
+    stopCrossfaderGlide();
     stopVjVideoTick();
     vjStopNdiScan();
     stopAllVjLiveSources();
@@ -1947,6 +1948,7 @@
   let crossfaderAuto: AutoConfig | undefined = undefined;
   let crossfaderAutoRaf: number | null = null;
   let crossfaderAutoLastTime = 0;
+  let crossfaderGlideRaf: number | null = null;
 
   $: crossfaderMod = modulationMap.get(MOD_KEY_XFADE_VALUE);
   $: crossfaderCurrentSource = crossfaderAuto ? 'auto' : (crossfaderMod?.source ?? 'manual');
@@ -2000,6 +2002,13 @@
     crossfaderAutoLastTime = 0;
   }
 
+  function stopCrossfaderGlide() {
+    if (crossfaderGlideRaf !== null) {
+      cancelAnimationFrame(crossfaderGlideRaf);
+      crossfaderGlideRaf = null;
+    }
+  }
+
   function toggleCrossfaderModTray(anchor: HTMLElement) {
     crossfaderModTrayAnchor = crossfaderModTrayAnchor === anchor ? null : anchor;
   }
@@ -2042,6 +2051,7 @@
   }
 
   function setCrossfaderManualValue(value: number) {
+    stopCrossfaderGlide();
     if (crossfaderCurrentSource !== 'manual') {
       crossfaderAuto = undefined;
       stopCrossfaderAutoLoop();
@@ -2050,9 +2060,43 @@
     vjClipLauncher.setCrossfaderValue(clamp01(value));
   }
 
+  function glideCrossfaderTo(target: number) {
+    stopCrossfaderGlide();
+    if (crossfaderCurrentSource !== 'manual') {
+      crossfaderAuto = undefined;
+      stopCrossfaderAutoLoop();
+      setCrossfaderModSource('manual');
+    }
+
+    const start = clamp01($vjClipLauncher.crossfaderValue);
+    const end = clamp01(target);
+    const durationSec = Math.max(0, Math.min(8, $vjClipLauncher.crossfaderFadeDuration ?? 0));
+    if (durationSec <= 0 || Math.abs(start - end) < 0.0005) {
+      vjClipLauncher.setCrossfaderValue(end);
+      return;
+    }
+
+    const started = performance.now();
+    const ease = (t: number) => {
+      const c = Math.max(0, Math.min(1, t));
+      return c * c * (3 - 2 * c);
+    };
+    const tick = (now: number) => {
+      const t = ease((now - started) / (durationSec * 1000));
+      vjClipLauncher.setCrossfaderValue(start + (end - start) * t);
+      if (t < 1) {
+        crossfaderGlideRaf = requestAnimationFrame(tick);
+      } else {
+        crossfaderGlideRaf = null;
+      }
+    };
+    crossfaderGlideRaf = requestAnimationFrame(tick);
+  }
+
   $: if (!$vjClipLauncher.crossfaderEnabled) {
     crossfaderModTrayAnchor = null;
     stopCrossfaderAutoLoop();
+    stopCrossfaderGlide();
   }
   $: if ($vjClipLauncher.crossfaderEnabled && crossfaderAuto?.playing) {
     startCrossfaderAutoLoop();
@@ -4598,7 +4642,7 @@
               <button
                 class="cut-btn cut-a"
                 class:active={$vjClipLauncher.crossfaderValue === 0}
-                onclick={() => setCrossfaderManualValue(0)}
+                onclick={() => glideCrossfaderTo(0)}
                 title="Cut to Deck A"
                 data-midi-path="vj:crossfader:cut-a"
                 data-midi-label="Cut to Deck A"
@@ -4629,7 +4673,7 @@
               <button
                 class="cut-btn cut-b"
                 class:active={$vjClipLauncher.crossfaderValue === 1}
-                onclick={() => setCrossfaderManualValue(1)}
+                onclick={() => glideCrossfaderTo(1)}
                 title="Cut to Deck B"
                 data-midi-path="vj:crossfader:cut-b"
                 data-midi-label="Cut to Deck B"
@@ -4637,6 +4681,26 @@
               >▶</button>
 
               <div class="xfade-readout">{Math.round($vjClipLauncher.crossfaderValue * 100)}%</div>
+
+              <label class="xfade-time-control" title="Fade time for Cut A/B buttons">
+                <span>TIME</span>
+                <select
+                  class="xfade-select xfade-time"
+                  value={$vjClipLauncher.crossfaderFadeDuration ?? 0}
+                  onchange={(e) => vjClipLauncher.setCrossfaderFadeDuration(parseFloat((e.target as HTMLSelectElement).value))}
+                  data-midi-path="vj:crossfader:fadeDuration"
+                  data-midi-label="Crossfader Fade Time"
+                  data-midi-discrete="true"
+                >
+                  <option value={0}>0s</option>
+                  <option value={0.25}>0.25s</option>
+                  <option value={0.5}>0.5s</option>
+                  <option value={1}>1s</option>
+                  <option value={2}>2s</option>
+                  <option value={4}>4s</option>
+                  <option value={8}>8s</option>
+                </select>
+              </label>
 
               <select
                 class="xfade-select"
@@ -5689,6 +5753,20 @@
     border-radius: 3px;
   }
 
+  .xfade-time-control {
+    width: 76px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    align-items: center;
+    color: rgba(148, 163, 184, 0.72);
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    line-height: 1;
+  }
+
   .xfade-select {
     width: 76px;
     padding: 4px 6px;
@@ -5703,6 +5781,9 @@
   }
   .xfade-select:hover { border-color: #555; }
   .xfade-select.xfade-curve { color: var(--text-secondary, #aaa); }
+  .xfade-select.xfade-time {
+    color: #bff2ff;
+  }
 
   /* When dual decks are active, individual deck-wrappers handle their own
      horizontal + vertical scroll so the vertical fader between them stays

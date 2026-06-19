@@ -2484,6 +2484,8 @@ export interface EdgeEffectsConfig {
   effects: EdgeEffect[];
 }
 
+export const VJ_MIX_SOURCE_INDEX = -1;
+
 export interface Layer {
   id: string;
   name: string;
@@ -2539,7 +2541,7 @@ export interface Layer {
   // Lower values dramatically improve performance for heavy raymarched shaders
   renderQuality?: number;
 
-  // Stage Mode: which VJ layer feeds this mapping layer (undefined = use own source)
+  // Stage Mode: which VJ layer feeds this mapping layer (undefined = use own source, -1 = VJ Mix)
   vjLayerIndex?: number;
 
   // ── Group nesting ──────────────────────────────────────────────────────
@@ -4581,6 +4583,10 @@ export interface Project {
   compositions?: Composition[];
   // Stage Mode presets (mapping layouts with VJ layer assignments)
   stagePresets?: StagePreset[];
+  /** Active Ghost Stage 3D scene saved with the project file. This is
+   *  explicit file persistence only; scratch scene edits are no longer
+   *  auto-restored from localStorage on app launch. */
+  stage3d?: unknown;
   // SynthVision keyboard presets (performer mode keyboard assignments)
   svKeyboardPresets?: SVKeyboardPreset[];
   // Stage Designer surfaces: SVG-imported polygon slice layouts.

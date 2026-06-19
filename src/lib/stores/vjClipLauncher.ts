@@ -286,6 +286,7 @@ export interface VJClipLauncherState {
   crossfaderTransition: CrossfaderTransition;
   crossfaderCurve: CrossfaderCurve;    // shapes the fader response
   crossfaderBlendMode: CrossfaderBlendMode; // A↔B math at the mix point
+  crossfaderFadeDuration: number;      // seconds for Cut A/B glide; 0 = instant
 
   // ===== Launch quantization =====
   // Schedules clip triggers to land on a beat grid for tight musical
@@ -373,6 +374,7 @@ function createDefaultState(): VJClipLauncherState {
     crossfaderTransition: 'dissolve',
     crossfaderCurve: 'constant-power',
     crossfaderBlendMode: 'normal',
+    crossfaderFadeDuration: 0,
     // Default off so beginners get instant triggers without thinking about
     // beat-sync. Pros switch this on once they're locked to a tempo source.
     quantization: 'off',
@@ -2188,6 +2190,11 @@ function createVJClipLauncherStore() {
 
     setCrossfaderBlendMode(mode: CrossfaderBlendMode) {
       update(state => ({ ...state, crossfaderBlendMode: mode }));
+    },
+
+    setCrossfaderFadeDuration(duration: number) {
+      const clamped = Math.max(0, Math.min(8, Number(duration) || 0));
+      update(state => ({ ...state, crossfaderFadeDuration: clamped }));
     },
 
     cutToA() {

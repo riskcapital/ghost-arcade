@@ -36,7 +36,7 @@ const PLANET_DEF: GpuShaderDef = {
 const PIXEL_PARTICLES_DEF: GpuShaderDef = {
   id: 'pixel-particles',
   label: 'Pixel Particles',
-  description: '',
+  description: 'Source image/video point-cloud shader. Pulls depth from luminance, inverse luma, edges, or saturation while keeping each particle color pinned to its source pixel. Smooth drift, orbit, ripple, swarm, and breathing motion styles make photo/video clouds move cleanly without losing the picture.',
   category: 'Source-driven',
   paramSchema: pixelParticlesParamSchema,
   defaultParams: pixelParticlesParamDefaults,
@@ -70,7 +70,7 @@ const FLYTHROUGH_DEF: GpuShaderDef = {
 const POINTCLOUD_FX_DEF: GpuShaderDef = {
   id: 'point-cloud-fx',
   label: 'Point Cloud FX',
-  description: 'Drop a .ply or .splat. Audio-reactive bass bursts, curl-noise wind, an orbiting proximity-wave field, dissolve, hue cycling — turn any point cloud into a living visual instrument. Worm-stroke topology gives the volumetric brush look as the cloud breathes.',
+  description: 'Drop a .ply or .splat. Audio-reactive bass bursts, curl-noise wind, orbiting proximity waves, dissolve, hue cycling, and named gesture filters: drift, swarm, scan slice, contours, signal rift, prism split, and fog veil. Worm-stroke topology gives the volumetric brush look as the cloud breathes.',
   category: 'Source-driven',
   paramSchema: pointCloudFXParamSchema,
   defaultParams: pointCloudFXParamDefaults,

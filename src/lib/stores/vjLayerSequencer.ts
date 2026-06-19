@@ -4,6 +4,7 @@ import { currentBPM } from './audio';
 export type VJSequencerPresetMode = 'custom' | 'snake' | 'everyOther' | 'random';
 export type VJSequencerDeck = 'A' | 'B';
 export type VJSequencerTarget = VJSequencerDeck | 'both';
+export type VJSequencerSubdivision = 0.0625 | 0.125 | 0.25 | 0.5 | 1 | 2 | 4;
 
 export interface VJLayerSequencerState {
   isOpen: boolean;
@@ -14,8 +15,9 @@ export interface VJLayerSequencerState {
   bpm: number;
   syncToMaster: boolean;
   masterBPM: number;
-  subdivision: 1 | 2 | 4;
+  subdivision: VJSequencerSubdivision;
   crossfade: boolean;
+  crossfadeDuration: number;
   randomDensity: number;
   presetMode: VJSequencerPresetMode;
   bankBPresetMode: VJSequencerPresetMode;
@@ -30,6 +32,7 @@ export interface VJLayerSequencerState {
 }
 
 const DEFAULT_STEP_COUNT = 16;
+const SUBDIVISION_VALUES: VJSequencerSubdivision[] = [0.0625, 0.125, 0.25, 0.5, 1, 2, 4];
 
 function createCells(layerCount: number, stepCount: number): boolean[][] {
   return Array.from({ length: layerCount }, () => Array.from({ length: stepCount }, () => false));
@@ -46,6 +49,7 @@ const INITIAL: VJLayerSequencerState = {
   masterBPM: 0,
   subdivision: 1,
   crossfade: true,
+  crossfadeDuration: 0.2,
   randomDensity: 0.35,
   presetMode: 'custom',
   bankBPresetMode: 'custom',
@@ -58,6 +62,17 @@ const INITIAL: VJLayerSequencerState = {
 function smoothstep(t: number): number {
   const c = Math.max(0, Math.min(1, t));
   return c * c * (3 - 2 * c);
+}
+
+function clampCrossfadeDuration(value: unknown): number {
+  return Math.max(0.05, Math.min(8, Number(value) || 0.2));
+}
+
+function sanitizeSubdivision(value: unknown, fallback: VJSequencerSubdivision): VJSequencerSubdivision {
+  const numeric = Number(value);
+  return SUBDIVISION_VALUES.includes(numeric as VJSequencerSubdivision)
+    ? numeric as VJSequencerSubdivision
+    : fallback;
 }
 
 /** Tempo actually driving the steps: the master clock when synced (and live),
@@ -105,8 +120,9 @@ function blendedOpacities(cells: boolean[][], fromStep: number, toStep: number, 
 }
 
 function evaluateDeckAt(cells: boolean[][], state: VJLayerSequencerState, step: number, next: number, phase: number): Record<number, number> {
-  const fadeStart = 0.72;
-  return state.crossfade && phase >= fadeStart
+  const fadePortion = Math.min(0.95, clampCrossfadeDuration(state.crossfadeDuration) / Math.max(0.001, stepDuration(state)));
+  const fadeStart = 1 - fadePortion;
+  return state.crossfade && fadePortion > 0 && phase >= fadeStart
     ? blendedOpacities(cells, step, next, (phase - fadeStart) / (1 - fadeStart))
     : opacitiesAt(cells, step);
 }
@@ -121,6 +137,44 @@ function createPresetCells(mode: VJSequencerPresetMode, layerCount: number, step
     }
   }
   return cells;
+}
+
+function sanitizeSyncedState(current: VJLayerSequencerState, payload: Partial<VJLayerSequencerState> | null | undefined): VJLayerSequencerState {
+  if (!payload || typeof payload !== 'object') return current;
+
+  const stepCount = Math.max(4, Math.min(32, Number(payload.stepCount ?? current.stepCount) || current.stepCount));
+  const layerCount = Math.max(
+    current.cells.length,
+    Array.isArray(payload.cells) ? payload.cells.length : 0,
+    Array.isArray(payload.bankBCells) ? payload.bankBCells.length : 0,
+  );
+
+  return {
+    ...current,
+    ...payload,
+    isOpen: Boolean(payload.isOpen ?? current.isOpen),
+    minimized: Boolean(payload.minimized ?? current.minimized),
+    isPlaying: Boolean(payload.isPlaying ?? current.isPlaying),
+    currentStep: Math.max(0, Math.min(stepCount - 1, Number(payload.currentStep ?? current.currentStep) || 0)),
+    stepCount,
+    bpm: Math.max(1, Number(payload.bpm ?? current.bpm) || current.bpm),
+    syncToMaster: Boolean(payload.syncToMaster ?? current.syncToMaster),
+    masterBPM: Math.max(0, Number(payload.masterBPM ?? current.masterBPM) || 0),
+    subdivision: sanitizeSubdivision(payload.subdivision, current.subdivision),
+    crossfade: Boolean(payload.crossfade ?? current.crossfade),
+    crossfadeDuration: clampCrossfadeDuration(payload.crossfadeDuration ?? current.crossfadeDuration),
+    randomDensity: Math.max(0, Math.min(1, Number(payload.randomDensity ?? current.randomDensity) || 0)),
+    presetMode: payload.presetMode ?? current.presetMode,
+    bankBPresetMode: payload.bankBPresetMode ?? current.bankBPresetMode,
+    cells: ensureCellMatrix(payload.cells ?? current.cells, layerCount, stepCount),
+    bankBCells: ensureCellMatrix(payload.bankBCells ?? current.bankBCells ?? current.cells, layerCount, stepCount),
+    opacityOverrides: payload.opacityOverrides && typeof payload.opacityOverrides === 'object'
+      ? { ...payload.opacityOverrides }
+      : current.opacityOverrides,
+    bankBOpacityOverrides: payload.bankBOpacityOverrides && typeof payload.bankBOpacityOverrides === 'object'
+      ? { ...payload.bankBOpacityOverrides }
+      : current.bankBOpacityOverrides,
+  };
 }
 
 function evaluateAt(state: VJLayerSequencerState, timeSec: number): Pick<VJLayerSequencerState, 'currentStep' | 'opacityOverrides' | 'bankBOpacityOverrides'> {
@@ -139,10 +193,31 @@ function evaluateAt(state: VJLayerSequencerState, timeSec: number): Pick<VJLayer
   };
 }
 
+function sameOpacityMap(a: Record<number, number>, b: Record<number, number>): boolean {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  for (const key of aKeys) {
+    if (Math.abs((a as any)[key] - ((b as any)[key] ?? Number.NaN)) > 0.0005) return false;
+  }
+  return true;
+}
+
 function createVJLayerSequencerStore() {
   const { subscribe, update, set } = writable<VJLayerSequencerState>({ ...INITIAL });
   let raf: number | null = null;
   let startedAt = 0;
+
+  function stopLoop() {
+    if (raf) cancelAnimationFrame(raf);
+    raf = null;
+  }
+
+  function startLoop(transportTimeSec = 0) {
+    stopLoop();
+    startedAt = performance.now() - Math.max(0, transportTimeSec) * 1000;
+    raf = requestAnimationFrame(tick);
+  }
 
   // Follow the app's master tempo (tap / manual / MIDI / detected — all
   // resolved into `currentBPM`). Stored on state so stepDuration() and the
@@ -159,7 +234,13 @@ function createVJLayerSequencerStore() {
       return;
     }
     const next = evaluateAt(state, (now - startedAt) / 1000);
-    update(s => ({ ...s, ...next }));
+    if (
+      next.currentStep !== state.currentStep
+      || !sameOpacityMap(next.opacityOverrides, state.opacityOverrides)
+      || !sameOpacityMap(next.bankBOpacityOverrides, state.bankBOpacityOverrides ?? {})
+    ) {
+      update(s => ({ ...s, ...next }));
+    }
     raf = requestAnimationFrame(tick);
   }
 
@@ -205,8 +286,14 @@ function createVJLayerSequencerStore() {
         return { ...s, stepCount: next, currentStep: Math.min(s.currentStep, next - 1), cells, bankBCells };
       });
     },
-    updateConfig(updates: Partial<Pick<VJLayerSequencerState, 'bpm' | 'syncToMaster' | 'subdivision' | 'crossfade' | 'randomDensity'>>) {
-      update(s => ({ ...s, ...updates }));
+    updateConfig(updates: Partial<Pick<VJLayerSequencerState, 'bpm' | 'syncToMaster' | 'subdivision' | 'crossfade' | 'crossfadeDuration' | 'randomDensity'>>) {
+      update(s => ({
+        ...s,
+        ...updates,
+        crossfadeDuration: updates.crossfadeDuration === undefined
+          ? s.crossfadeDuration
+          : clampCrossfadeDuration(updates.crossfadeDuration),
+      }));
     },
     generate(mode: VJSequencerPresetMode, layerCount: number, target: VJSequencerTarget = 'A') {
       update(s => {
@@ -239,23 +326,37 @@ function createVJLayerSequencerStore() {
       }));
     },
     play() {
-      update(s => ({ ...s, isPlaying: true }));
-      startedAt = performance.now();
-      if (raf) cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(tick);
+      update(s => ({ ...s, isPlaying: true, ...evaluateAt(s, 0) }));
+      startLoop(0);
     },
     pause() {
-      if (raf) cancelAnimationFrame(raf);
-      raf = null;
+      stopLoop();
       update(s => ({ ...s, isPlaying: false }));
     },
     stop() {
-      if (raf) cancelAnimationFrame(raf);
-      raf = null;
+      stopLoop();
       update(s => ({ ...s, isPlaying: false, currentStep: 0, opacityOverrides: {}, bankBOpacityOverrides: {} }));
     },
     seek(timeSec: number) {
       update(s => ({ ...s, ...evaluateAt(s, timeSec) }));
+    },
+    hydrate(payload: Partial<VJLayerSequencerState> | null | undefined) {
+      const transportTimeSec = Math.max(0, Number((payload as any)?.transportTimeSec ?? 0) || 0);
+      let shouldPlay = false;
+      update(s => sanitizeSyncedState(s, payload));
+      update(s => {
+        shouldPlay = s.isPlaying;
+        return shouldPlay ? { ...s, ...evaluateAt(s, transportTimeSec) } : s;
+      });
+      if (shouldPlay) startLoop(transportTimeSec);
+      else stopLoop();
+    },
+    getTransportTimeSec(): number {
+      const state = get({ subscribe });
+      return state.isPlaying ? Math.max(0, (performance.now() - startedAt) / 1000) : 0;
+    },
+    serialize(): VJLayerSequencerState {
+      return JSON.parse(JSON.stringify(get({ subscribe }))) as VJLayerSequencerState;
     },
     reset() {
       if (raf) cancelAnimationFrame(raf);

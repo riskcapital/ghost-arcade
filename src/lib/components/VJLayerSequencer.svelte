@@ -1,8 +1,18 @@
 <script lang="ts">
   import { vjClipLauncher } from '../stores/vjClipLauncher';
-  import { vjLayerSequencer, type VJSequencerDeck, type VJSequencerPresetMode, type VJSequencerTarget } from '../stores/vjLayerSequencer';
+  import { vjLayerSequencer, type VJSequencerDeck, type VJSequencerPresetMode, type VJSequencerSubdivision, type VJSequencerTarget } from '../stores/vjLayerSequencer';
 
   const DECKS: VJSequencerDeck[] = ['A', 'B'];
+  const SUBDIVISIONS: { value: VJSequencerSubdivision; label: string }[] = [
+    { value: 0.0625, label: '4 bars' },
+    { value: 0.125, label: '2 bars' },
+    { value: 0.25, label: '1 bar' },
+    { value: 0.5, label: '1/2' },
+    { value: 1, label: '1/4' },
+    { value: 2, label: '1/8' },
+    { value: 4, label: '1/16' },
+  ];
+  let syncedLayerCount = -1;
 
   $: state = $vjLayerSequencer;
   $: launcher = $vjClipLauncher;
@@ -11,7 +21,10 @@
   $: layerIndices = Array.from({ length: layerCount }, (_, i) => i);
   $: splitDeck = launcher.crossfaderEnabled;
   $: visibleDecks = splitDeck ? DECKS : (['A'] as VJSequencerDeck[]);
-  $: vjLayerSequencer.syncLayerCount(layerCount);
+  $: if (layerCount !== syncedLayerCount) {
+    syncedLayerCount = layerCount;
+    vjLayerSequencer.syncLayerCount(layerCount);
+  }
   // Tempo shown in the BPM field: the live master clock when synced,
   // otherwise the sequencer's own manual value.
   $: shownBpm = state.syncToMaster && state.masterBPM > 0 ? state.masterBPM : state.bpm;
@@ -22,8 +35,12 @@
     vjLayerSequencer.generate(mode, layerCount, target);
   }
 
-  function deckCells(deck: VJSequencerDeck): boolean[][] {
-    return deck === 'B' ? (state.bankBCells ?? state.cells) : state.cells;
+  function onCrossfadeDurationChange(e: Event) {
+    vjLayerSequencer.updateConfig({ crossfadeDuration: parseFloat((e.target as HTMLSelectElement).value) });
+  }
+
+  function cellOn(cells: boolean[][], layerIndex: number, stepIndex: number): boolean {
+    return !!cells[layerIndex]?.[stepIndex];
   }
 
   function deckPresetMode(deck: VJSequencerDeck): VJSequencerPresetMode {
@@ -84,15 +101,27 @@
             onchange={(e) => vjLayerSequencer.updateConfig({ bpm: +(e.target as HTMLInputElement).value })}
           />
         </label>
-        <select value={state.subdivision} onchange={(e) => vjLayerSequencer.updateConfig({ subdivision: +(e.target as HTMLSelectElement).value as 1 | 2 | 4 })} title="Subdivision">
-          <option value={1}>1/4</option>
-          <option value={2}>1/8</option>
-          <option value={4}>1/16</option>
+        <select value={state.subdivision} onchange={(e) => vjLayerSequencer.updateConfig({ subdivision: +(e.target as HTMLSelectElement).value as VJSequencerSubdivision })} title="Step length">
+          {#each SUBDIVISIONS as option}
+            <option value={option.value}>{option.label}</option>
+          {/each}
         </select>
         <label class="vj-seq-check">
           <input type="checkbox" checked={state.crossfade} onchange={() => vjLayerSequencer.updateConfig({ crossfade: !state.crossfade })} />
           Xfade
         </label>
+        {#if state.crossfade}
+          <select class="vj-seq-xfade-dur" value={state.crossfadeDuration} onchange={onCrossfadeDurationChange} title="Sequencer crossfade duration">
+            <option value={0.1}>0.1s</option>
+            <option value={0.2}>0.2s</option>
+            <option value={0.3}>0.3s</option>
+            <option value={0.5}>0.5s</option>
+            <option value={1}>1s</option>
+            <option value={2}>2s</option>
+            <option value={4}>4s</option>
+            <option value={8}>8s</option>
+          </select>
+        {/if}
         <button
           class="vj-seq-min"
           onclick={() => vjLayerSequencer.toggleMinimized()}
@@ -111,7 +140,8 @@
     {#if !state.minimized}
       <div class="vj-seq-body" class:split={splitDeck}>
         {#each visibleDecks as deck}
-          {@const cells = deckCells(deck)}
+          {@const deckPattern = deck === 'B' ? (state.bankBCells ?? state.cells) : state.cells}
+          {#key deckPattern}
           <section class="vj-seq-deck" class:deck-a={deck === 'A'} class:deck-b={deck === 'B'}>
             {#if splitDeck}
               <div class="vj-seq-deck-head">
@@ -138,10 +168,13 @@
                   L{layer + 1}
                 </div>
                 {#each stepIndices as step}
+                  {@const isOn = cellOn(deckPattern, layer, step)}
                   <button
                     class="seq-cell"
-                    class:on={!!cells[layer]?.[step]}
+                    class:on={isOn}
                     class:current={step === state.currentStep}
+                    class:firing={state.isPlaying && step === state.currentStep && isOn}
+                    class:playhead={state.isPlaying && step === state.currentStep}
                     onclick={() => vjLayerSequencer.toggleCell(layer, step, deck)}
                     title="Deck {deck} Layer {layer + 1}, step {step + 1}"
                   ></button>
@@ -149,6 +182,7 @@
               {/each}
             </div>
           </section>
+          {/key}
         {/each}
       </div>
     {/if}
@@ -238,6 +272,9 @@
     width: 12px;
     height: 12px;
     accent-color: var(--ga-coral, #ff6f5e);
+  }
+  .vj-seq-xfade-dur {
+    width: 54px;
   }
   .sync-btn {
     height: 24px;
@@ -402,5 +439,29 @@
   }
   .seq-cell.current {
     box-shadow: inset 0 0 0 1px var(--ga-green, #46d18a);
+  }
+  .seq-cell.playhead {
+    border-color: color-mix(in srgb, var(--ga-green, #46d18a) 70%, white);
+    box-shadow:
+      inset 0 0 0 1px var(--ga-green, #46d18a),
+      0 0 8px rgba(70, 209, 138, 0.22);
+  }
+  .seq-cell.firing {
+    background: color-mix(in srgb, var(--ga-green, #46d18a) 54%, var(--ga-coral, #ff6f5e));
+    border-color: var(--ga-green, #46d18a);
+    box-shadow:
+      inset 0 0 0 1px rgba(255,255,255,0.35),
+      0 0 14px rgba(70, 209, 138, 0.55);
+    animation: vj-seq-fire 0.22s ease-out;
+  }
+  .vj-seq-body.split .deck-a .seq-cell.firing {
+    background: color-mix(in srgb, #7EC8E3 70%, var(--ga-green, #46d18a));
+  }
+  .vj-seq-body.split .deck-b .seq-cell.firing {
+    background: color-mix(in srgb, #FF8577 70%, var(--ga-green, #46d18a));
+  }
+  @keyframes vj-seq-fire {
+    from { transform: scale(0.92); filter: brightness(1.35); }
+    to { transform: scale(1); filter: brightness(1); }
   }
 </style>

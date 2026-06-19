@@ -67,6 +67,7 @@ export class RenderEngine {
   // Render targets for compositing
   private compositeTarget: THREE.WebGLRenderTarget;
   private tempTarget: THREE.WebGLRenderTarget;
+  private vjMixTarget: THREE.WebGLRenderTarget | null = null;
 
   // Layer render objects cache
   private layerObjects: Map<string, LayerRenderObject> = new Map();
@@ -1872,6 +1873,70 @@ export class RenderEngine {
     this.reapStaleEffectResources();
   }
 
+  private getOrCreateVJMixTarget(): THREE.WebGLRenderTarget {
+    if (!this.vjMixTarget) this.vjMixTarget = this.createRenderTarget();
+    return this.vjMixTarget;
+  }
+
+  public renderVJMixToTexture(layers: Layer[], compositionEffects?: Effect[]): THREE.Texture | null {
+    const target = this.getOrCreateVJMixTarget();
+    const originalCompositeTarget = this.compositeTarget;
+
+    try {
+      this.compositeTarget = target;
+
+      const renderPlan = this.buildRenderPlan(layers);
+      renderPlan.reverse();
+
+      if (this.crossfadeActive) {
+        const aUnits = renderPlan.filter(u => this.unitBank(u) === 'A');
+        const bUnits = renderPlan.filter(u => this.unitBank(u) === 'B');
+        const neutralUnits = renderPlan.filter(u => !this.unitBank(u));
+
+        this.ensureBankTargets();
+
+        this.compositeTarget = this.bankATarget!;
+        this.renderer.setRenderTarget(this.bankATarget);
+        this.renderer.setClearColor(0x000000, 1);
+        this.renderer.clear();
+        this.renderUnitsToCurrentTarget(aUnits);
+
+        this.compositeTarget = this.bankBTarget!;
+        this.renderer.setRenderTarget(this.bankBTarget);
+        this.renderer.setClearColor(0x000000, 1);
+        this.renderer.clear();
+        this.renderUnitsToCurrentTarget(bUnits);
+
+        this.compositeTarget = target;
+        this.applyBankCrossfade();
+
+        if (neutralUnits.length > 0) {
+          this.renderUnitsToCurrentTarget(neutralUnits, 1);
+        }
+      } else {
+        this.renderer.setRenderTarget(target);
+        this.renderer.setClearColor(0x000000, 1);
+        this.renderer.clear();
+        this.renderUnitsToCurrentTarget(renderPlan);
+      }
+
+      if (compositionEffects && compositionEffects.length > 0) {
+        let compositeTexture: THREE.Texture = target.texture;
+        compositeTexture = this.applyEffects(compositeTexture, compositionEffects, '__vj_mix__');
+
+        if (compositeTexture !== target.texture) {
+          this._copyMaterial.map = compositeTexture;
+          this.renderer.setRenderTarget(target);
+          this.renderer.render(this._copyScene, this.camera);
+        }
+      }
+
+      return target.texture;
+    } finally {
+      this.compositeTarget = originalCompositeTarget;
+    }
+  }
+
   private swapTargets(): void {
     // Copy composite to temp by rendering (using cached copy objects)
     this._copyMaterial.map = this.compositeTarget.texture;
@@ -2453,6 +2518,7 @@ export class RenderEngine {
     for (const rt of this.vjCrossfadeTargets.values()) {
       rt.setSize(projectW, projectH);
     }
+    if (this.vjMixTarget) this.vjMixTarget.setSize(projectW, projectH);
   }
 
   public getRenderer(): THREE.WebGLRenderer {
@@ -2475,6 +2541,8 @@ export class RenderEngine {
       try { this.effectTargetA.dispose(); } catch {}
       try { this.effectTargetB.dispose(); } catch {}
       try { this.effectBlendTarget.dispose(); } catch {}
+      try { this.vjMixTarget?.dispose(); } catch {}
+      this.vjMixTarget = null;
       this.effectFeedbackTargets.forEach((rt) => { try { rt.dispose(); } catch {} });
       this.effectFeedbackTargets.clear();
       this.effectFeedbackHasPrior.clear();
@@ -2741,6 +2809,8 @@ export class RenderEngine {
     this.effectFeedbackTargets.forEach((rt) => { try { rt.dispose(); } catch {} });
     this.effectFeedbackTargets.clear();
     this.effectFeedbackHasPrior.clear();
+    this.vjMixTarget?.dispose();
+    this.vjMixTarget = null;
     this.feedbackCopyMaterial?.dispose();
     this.feedbackCopyMaterial = null;
     this.blackTexture?.dispose();

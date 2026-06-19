@@ -23,7 +23,7 @@
  * underlying class's typed methods.
  */
 
-import { WebGPUPixelParticles, type PixelEffectMode } from '../webgpuPixelParticles';
+import { WebGPUPixelParticles, type PixelDepthMotion, type PixelDepthSource, type PixelEffectMode } from '../webgpuPixelParticles';
 import type { GpuShaderImpl, ParamControl } from '../gpuShaderTypes';
 import { deriveDefaults } from '../gpuShaderTypes';
 
@@ -44,7 +44,7 @@ export const pixelParticlesParamSchema: ParamControl[] = [
   // ── Mode ──
   { kind: 'select', key: 'mode', label: 'Mode', group: 'Mode',
     options: [
-      { value: 'depth-shift',   label: 'Depth Shift' },
+      { value: 'depth-shift',   label: 'Depth Point Cloud' },
       { value: 'sand-fall',     label: 'Sand Fall' },
       { value: 'scatter',       label: 'Scatter' },
       { value: 'halftone',      label: 'Halftone' },
@@ -63,6 +63,39 @@ export const pixelParticlesParamSchema: ParamControl[] = [
   { kind: 'slider', key: 'depthAmount',     label: 'Depth',           group: 'Mode Params', min: 0, max: 3, step: 0.01, default: 0.6, showWhen: { mode: 'depth-shift' } },
   { kind: 'slider', key: 'depthSpinSpeed',  label: 'Auto-spin Speed', group: 'Mode Params', min: -2, max: 2, step: 0.01, default: 0, showWhen: { mode: 'depth-shift' } },
   { kind: 'slider', key: 'depthSpinAxis',   label: 'Spin Axis (0=Y, 1=X)', group: 'Mode Params', min: 0, max: 1, step: 1, default: 0, showWhen: { mode: 'depth-shift' } },
+
+  // Depth extraction — source colour remains anchored to the
+  // original pixel; these controls only shape the derived Z field.
+  { kind: 'select', key: 'depthSource', label: 'Depth Source', group: 'Depth Shape',
+    options: [
+      { value: 'luminance', label: 'Luminance' },
+      { value: 'inverse-luminance', label: 'Inverse Luminance' },
+      { value: 'edge-density', label: 'Edge Density' },
+      { value: 'saturation', label: 'Saturation' },
+    ],
+    default: 'luminance', showWhen: { mode: 'depth-shift' } },
+  { kind: 'slider', key: 'depthCurve',     label: 'Depth Curve',     group: 'Depth Shape', min: 0.25, max: 3, step: 0.01, default: 1, showWhen: { mode: 'depth-shift' } },
+  { kind: 'slider', key: 'depthContrast',  label: 'Depth Contrast',  group: 'Depth Shape', min: 0.2, max: 3, step: 0.01, default: 1, showWhen: { mode: 'depth-shift' } },
+  { kind: 'slider', key: 'depthSmoothing', label: 'Depth Smoothing', group: 'Depth Shape', min: 0, max: 1, step: 0.01, default: 0.2, showWhen: { mode: 'depth-shift' } },
+  { kind: 'slider', key: 'depthCenter',    label: 'Depth Center',    group: 'Depth Shape', min: 0, max: 1, step: 0.01, default: 0.5, showWhen: { mode: 'depth-shift' } },
+
+  // Smooth depth-cloud motion. Stateless/reversible, so it keyframes
+  // cleanly and keeps source colour pinned to the original source UV.
+  { kind: 'select', key: 'depthMotion', label: 'Motion Style', group: 'Depth Motion',
+    options: [
+      { value: 'locked', label: 'Locked' },
+      { value: 'drift', label: 'Drift Field' },
+      { value: 'orbit', label: 'Orbital Layers' },
+      { value: 'ripple', label: 'Depth Ripple' },
+      { value: 'swarm', label: 'Swarm Flow' },
+      { value: 'breathe', label: 'Breathing Relief' },
+    ],
+    default: 'locked', showWhen: { mode: 'depth-shift' } },
+  { kind: 'slider', key: 'depthMotionAmount',   label: 'Amount',         group: 'Depth Motion', min: 0, max: 1.5, step: 0.005, default: 0.08, showWhen: { mode: 'depth-shift' } },
+  { kind: 'slider', key: 'depthMotionSpeed',    label: 'Speed',          group: 'Depth Motion', min: 0, max: 3, step: 0.01, default: 0.45, showWhen: { mode: 'depth-shift' } },
+  { kind: 'slider', key: 'depthMotionScale',    label: 'Scale',          group: 'Depth Motion', min: 0.5, max: 16, step: 0.05, default: 3.5, showWhen: { mode: 'depth-shift' } },
+  { kind: 'slider', key: 'depthMotionCoupling', label: 'Depth Coupling', group: 'Depth Motion', min: 0, max: 2.5, step: 0.01, default: 0.7, showWhen: { mode: 'depth-shift' } },
+  { kind: 'slider', key: 'depthMotionPhase',    label: 'Phase',          group: 'Depth Motion', min: 0, max: 6.283, step: 0.001, default: 0, showWhen: { mode: 'depth-shift' } },
   // Sand fall
   { kind: 'slider', key: 'sandFallSpeed',   label: 'Fall Speed',      group: 'Mode Params', min: 0.05, max: 3, step: 0.01, default: 0.4, showWhen: { mode: 'sand-fall' } },
   { kind: 'slider', key: 'sandFloorY',      label: 'Floor Y',         group: 'Mode Params', min: -1.5, max: 1.5, step: 0.01, default: -1.0, showWhen: { mode: 'sand-fall' } },
@@ -166,6 +199,21 @@ export class WebGPUPixelParticlesShader implements GpuShaderImpl {
     this.inner.setNoise(
       merged.noiseAmpXY ?? 0, merged.noiseAmpZ ?? 0,
       merged.noiseFreq ?? 4, merged.noiseSpeed ?? 0.5,
+    );
+    this.inner.setDepthShape(
+      (merged.depthSource ?? 'luminance') as PixelDepthSource,
+      merged.depthCurve ?? 1,
+      merged.depthContrast ?? 1,
+      merged.depthSmoothing ?? 0.2,
+      merged.depthCenter ?? 0.5,
+    );
+    this.inner.setDepthMotion(
+      (merged.depthMotion ?? 'locked') as PixelDepthMotion,
+      merged.depthMotionAmount ?? 0.08,
+      merged.depthMotionSpeed ?? 0.45,
+      merged.depthMotionScale ?? 3.5,
+      merged.depthMotionCoupling ?? 0.7,
+      merged.depthMotionPhase ?? 0,
     );
     this.inner.setParticleCount(merged.particleCount ?? 250000);
     this.inner.setMirrorX(!!merged.mirrorX);

@@ -7,11 +7,12 @@
   import { Stage3DRenderer } from '../stage3d/Stage3DRenderer';
   import { mediaLibrary } from '../stores/media';
   import { vjOutputLayers, vjClipLauncher } from '../stores/vjClipLauncher';
+  import { vjLayerSequencer } from '../stores/vjLayerSequencer';
   import { macros } from '../stores/macros';
   import { layerSequencer } from '../stores/layerSequencer';
   import { stageEffectsRuntime } from '../stores/stageEffects';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
-  import type { Layer } from '../types';
+  import { createLayer, VJ_MIX_SOURCE_INDEX, type Layer } from '../types';
   import * as THREE from 'three';
   import { createISFShader, updateISFShader, setISFInputValue, setISFInputTexture, type ISFShaderInstance } from '../isf/renderer';
   import { LinesRenderer } from '../lines/renderer';
@@ -269,6 +270,17 @@
   }
   const stageInjectCache = new Map<string, StageInjectCacheEntry>();
   let stageInjectLayersRef: Layer[] | null = null;
+  const vjMixCarrierLayer: Layer = {
+    ...createLayer('__vj-mix-source__', 'VJ Mix', 'media'),
+    source: {
+      id: '__vj-mix-source__',
+      type: 'image',
+      src: '',
+      name: 'VJ Mix',
+    },
+    layerShape: null,
+    effects: [],
+  };
 
   function injectVjIntoLayer(layer: Layer, resolved: { layer: Layer; texture: THREE.Texture }): Layer {
     let entry = stageInjectCache.get(layer.id);
@@ -1315,6 +1327,14 @@
         const normalLayers = $layers;
         const vjState = $vjClipLauncher;
 
+        engine.setCrossfade(
+          vjState.crossfaderEnabled === true && vjState.isLive,
+          vjState.crossfaderValue ?? 0,
+          vjState.crossfaderTransition || 'dissolve',
+          vjState.crossfaderCurve || 'constant-power',
+          vjState.crossfaderBlendMode || 'normal'
+        );
+
         let layersToRender: Layer[];
         let compEffects: import('../types').Effect[] | undefined;
         let didStageTexturePrepass = false;
@@ -1356,7 +1376,11 @@
             if (!clip || clip.type !== 'preset' || !clip.presetId) continue;
             const comp = $compositions.find((c) => c.id === clip.presetId);
             if (!comp) continue;
-            const groupOpacity = ls.opacity * (vjState.masterOpacity ?? 1);
+            const seqState = $vjLayerSequencer;
+            const sequenceOpacity = seqState.isPlaying
+              ? (seqState.opacityOverrides?.[i] ?? 1)
+              : 1;
+            const groupOpacity = ls.opacity * sequenceOpacity * (vjState.masterOpacity ?? 1);
             if (groupOpacity <= 0) continue;
 
             const groupId = `mapvj-${i}-${clip.id}`;
@@ -1477,6 +1501,11 @@
             }
           }
 
+          if (normalLayers.some(layer => layer.vjLayerIndex === VJ_MIX_SOURCE_INDEX) && vjLayers && vjLayers.length > 0) {
+            const mixTexture = engine.renderVJMixToTexture(vjLayers);
+            if (mixTexture) vjResolved.set(VJ_MIX_SOURCE_INDEX, { layer: vjMixCarrierLayer, texture: mixTexture });
+          }
+
           // 4. Inject VJ sources into Screen / Group layers.
           //
           //    The injected source is rebuilt every frame — VJ textures
@@ -1525,6 +1554,10 @@
               if (parsed.bank === 'B' && vjResolvedMap.has(parsed.idx)) continue;
               const tex = resolveVjLayerTexture(vjLayer);
               if (tex) vjResolvedMap.set(parsed.idx, { layer: vjLayer, texture: tex });
+            }
+            if (normalLayers.some(layer => layer.vjLayerIndex === VJ_MIX_SOURCE_INDEX)) {
+              const mixTexture = engine.renderVJMixToTexture(mappedVjLayers, vjState.compositionEffects);
+              if (mixTexture) vjResolvedMap.set(VJ_MIX_SOURCE_INDEX, { layer: vjMixCarrierLayer, texture: mixTexture });
             }
             // Inject the resolved VJ texture into each managed layer via
             // the shared per-layer clone cache (see injectVjIntoLayer).
@@ -1695,18 +1728,6 @@
         }
 
         try {
-          // Wire VJ A/B crossfader state into the engine each frame.
-          // engine.setCrossfade is cheap (just three field assignments
-          // + a curve calc). When crossfaderEnabled is false it puts the
-          // engine on the single-bank (default) render path.
-          const cfEnabled = $vjClipLauncher.crossfaderEnabled === true && $vjClipLauncher.isLive;
-          engine.setCrossfade(
-            cfEnabled,
-            $vjClipLauncher.crossfaderValue ?? 0,
-            $vjClipLauncher.crossfaderTransition || 'dissolve',
-            $vjClipLauncher.crossfaderCurve || 'constant-power',
-            $vjClipLauncher.crossfaderBlendMode || 'normal'
-          );
           // Macro bundles: post-composition effect chains scaled by
           // each macro's wet/dry value. Stored as a thin shape (id,
           // value, effects) so the renderer doesn't pull in the whole

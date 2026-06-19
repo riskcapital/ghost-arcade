@@ -11,6 +11,7 @@
    * else is user-placed via the library. Press H to hide all panels.
    */
   import { onMount, onDestroy } from 'svelte';
+  import { get } from 'svelte/store';
   import {
     stage3dScene,
     selectedStage3DNodeId,
@@ -100,9 +101,36 @@
     ? (sceneryItems.find(s => s.id === selection!.id) ?? { id: selection!.id, label: selection!.id })
     : null;
 
+  function hasStageAdditions(scene = $stage3dScene): boolean {
+    return (scene.userElements?.length ?? 0) > 0
+      || Object.keys(scene.sceneryOverrides ?? {}).length > 0
+      || Object.keys(scene.screenOverrides ?? {}).length > 0;
+  }
+
   function setVenue(v: Stage3DVenue) {
-    stage3dScene.setVenue(v);
-    toast(`Venue: ${v}`);
+    const current = get(stage3dScene);
+    const currentVenue = (current.venue ?? 'festival') as Stage3DVenue;
+    if (v === currentVenue) return;
+
+    const keepAdditions = hasStageAdditions(current)
+      ? confirm(`Keep your placed elements and 3D edits when switching to ${v}?\n\nOK = Keep additions\nCancel = Clear for a clean venue`)
+      : false;
+
+    if (keepAdditions) {
+      stage3dScene.setVenue(v);
+      toast(`Venue: ${v} · additions kept`);
+      return;
+    }
+
+    stage3dScene.loadScene({
+      ...current,
+      venue: v,
+      userElements: [],
+      sceneryOverrides: {},
+      screenOverrides: {},
+    });
+    setStage3DSelection(null);
+    toast(`Venue: ${v} · clean`);
   }
 
   function addElement(type: string) {

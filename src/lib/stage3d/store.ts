@@ -2,26 +2,20 @@
 // 3D panel, the output window, and the Director all read/write the same
 // scene state through this store.
 //
-// Persistence: scenes save to localStorage under per-project keys when
-// the user hits Save (similar to existing compositions). Marketplace
-// import/export goes through the same JSON shape.
+// Persistence: scenes move through explicit project / stage save-load
+// paths only. The live store is intentionally session-only so scratch
+// objects do not reappear after a clean app restart.
 
 import { writable, get } from 'svelte/store';
 import type { Stage3DScene, Stage3DNode, StageLedScreenNode, Stage3DBasePreset, Stage3DScreenOverride, Stage3DVenue, Stage3DLighting, Stage3DAtmosphere, StageSceneryOverride, UserStageElement, Vec3 } from './types';
 import { createEmptyScene, DEFAULT_LIGHTING, DEFAULT_ATMOSPHERE } from './types';
 
-const STORAGE_KEY = 'ga-stage3d-active-scene';
+const LEGACY_STORAGE_KEY = 'ga-stage3d-active-scene';
 
-function loadFromStorage(): Stage3DScene {
+function createInitialScene(): Stage3DScene {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object' && parsed.schemaVersion === 1) {
-        return parsed as Stage3DScene;
-      }
-    }
-  } catch { /* corrupt save — fall through to fresh */ }
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
+  } catch { /* private mode */ }
   return createEmptyScene();
 }
 
@@ -30,7 +24,7 @@ function loadFromStorage(): Stage3DScene {
 export const historyVersion = writable<number>(0);
 
 function createStore() {
-  const { subscribe, set, update } = writable<Stage3DScene>(loadFromStorage());
+  const { subscribe, set, update } = writable<Stage3DScene>(createInitialScene());
 
   // Undo / redo history. snapshot() captures the current scene onto
   // `past` before any mutation; clears `future` because once you
@@ -61,7 +55,7 @@ function createStore() {
   }
 
   function persist() {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(get({ subscribe }))); } catch { /* private mode */ }
+    // No implicit persistence. Explicit project/stage saves call exportJSON().
   }
 
   return {

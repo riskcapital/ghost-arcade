@@ -15,7 +15,7 @@
  * (same path as the flythrough shader).
  */
 
-import { WebGPUPointCloudFX, type PointCloudFXParams, type ColorMode, type ColorMap } from '../webgpuPointCloudFX';
+import { WebGPUPointCloudFX, type PointCloudFXParams, type ColorMode, type ColorMap, type PointCloudFilterMode, type PointCloudFilterAxis } from '../webgpuPointCloudFX';
 import { parsePLYBuffer } from '../../splat/plyLoader';
 import { parseSplatBuffer } from '../../splat/splatLoader';
 import type { PLYData } from '../../splat/plyLoader';
@@ -57,6 +57,48 @@ export const pointCloudFXParamSchema: ParamControl[] = [
     showWhen: { topology: 'strokes' } },
   { kind: 'slider', key: 'opacity', label: 'Opacity', group: 'Topology',
     min: 0, max: 1, step: 0.01, default: 1.0 },
+
+  // ── Filter Gesture ────────────────────────────────────────────
+  // Signal-loss-style point-cloud gestures: named, performable
+  // transforms on top of the raw cloud. The base controls below stay
+  // intentionally generic so they can be keyframed and MIDI-mapped.
+  { kind: 'select', key: 'filterMode', label: 'Gesture', group: 'Filter Gesture',
+    options: [
+      { value: 'none',    label: 'None' },
+      { value: 'drift',   label: 'Drift Field' },
+      { value: 'swarm',   label: 'Swarm Scatter' },
+      { value: 'slice',   label: 'Scan Slice' },
+      { value: 'contour', label: 'Depth Contours' },
+      { value: 'rift',    label: 'Signal Rift' },
+      { value: 'prism',   label: 'Prism Split' },
+      { value: 'fog',     label: 'Fog Veil' },
+    ],
+    default: 'none' },
+  { kind: 'slider', key: 'filterAmount', label: 'Amount', group: 'Filter Gesture',
+    min: 0, max: 1.5, step: 0.01, default: 0.75 },
+  { kind: 'select', key: 'filterAxis', label: 'Axis', group: 'Filter Gesture',
+    options: [
+      { value: 'x', label: 'X' },
+      { value: 'y', label: 'Y' },
+      { value: 'z', label: 'Z / Depth' },
+      { value: 'radial', label: 'Radial' },
+    ],
+    default: 'z' },
+  { kind: 'slider', key: 'filterSpeed', label: 'Motion Speed', group: 'Filter Gesture',
+    min: -2, max: 2, step: 0.01, default: 0.2 },
+  { kind: 'slider', key: 'filterPhase', label: 'Phase', group: 'Filter Gesture',
+    min: -1, max: 1, step: 0.01, default: 0.0 },
+  { kind: 'slider', key: 'filterWidth', label: 'Width', group: 'Filter Gesture',
+    min: 0.005, max: 1.5, step: 0.005, default: 0.18 },
+  { kind: 'slider', key: 'filterSoftness', label: 'Softness', group: 'Filter Gesture',
+    min: 0.005, max: 0.75, step: 0.005, default: 0.08 },
+  { kind: 'slider', key: 'contourBands', label: 'Contour Bands', group: 'Filter Gesture',
+    min: 2, max: 48, step: 1, default: 12 },
+  { kind: 'slider', key: 'fogDensity', label: 'Fog Density', group: 'Filter Gesture',
+    min: 0, max: 3, step: 0.01, default: 0.0 },
+  { kind: 'slider', key: 'fogOpacity', label: 'Fog Opacity', group: 'Filter Gesture',
+    min: 0, max: 1, step: 0.01, default: 0.0 },
+  { kind: 'color', key: 'fogColor', label: 'Fog Color', group: 'Filter Gesture', default: [5, 6, 9] },
 
   // ── Motion (Curl Wind + Anchor) ────────────────────────────────
   { kind: 'slider', key: 'windStrength', label: 'Wind Strength', group: 'Motion',
@@ -279,6 +321,17 @@ export class WebGPUPointCloudFXShader implements GpuShaderImpl {
       colorCycleSpeed: p.colorCycleSpeed ?? 0.0,
       randomSat: p.randomSat ?? 0.85,
       randomVal: p.randomVal ?? 1.0,
+      filterMode: (p.filterMode ?? 'none') as PointCloudFilterMode,
+      filterAxis: (p.filterAxis ?? 'z') as PointCloudFilterAxis,
+      filterAmount: p.filterAmount ?? 0.75,
+      filterSpeed: p.filterSpeed ?? 0.2,
+      filterPhase: p.filterPhase ?? 0.0,
+      filterWidth: p.filterWidth ?? 0.18,
+      filterSoftness: p.filterSoftness ?? 0.08,
+      contourBands: p.contourBands ?? 12,
+      fogDensity: p.fogDensity ?? 0.0,
+      fogOpacity: p.fogOpacity ?? 0.0,
+      fogColor: this.rgb01(p.fogColor, [0.02, 0.025, 0.035]),
       colorA: this.rgb01(p.colorA, [0.24, 0.39, 0.94]),
       colorB: this.rgb01(p.colorB, [0.94, 0.24, 0.71]),
       colorC: this.rgb01(p.colorC, [1.00, 0.78, 0.12]),

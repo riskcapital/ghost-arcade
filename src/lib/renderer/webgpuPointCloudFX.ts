@@ -161,8 +161,8 @@ struct U {
   // Block 8 — random-hue params
   randomSat:         f32,
   randomVal:         f32,
-  _pad0:             f32,
-  _pad1:             f32,
+  filterMode:        u32,    // 0=none 1=drift 2=swarm 3=slice 4=contour 5=rift 6=prism 7=fog
+  filterAxis:        u32,    // 0=x 1=y 2=z 3=radial
   // Blocks 9-12 — palette colors (vec3 + 4 bytes pad each)
   colorA:            vec3<f32>,
   _padA:             f32,
@@ -172,6 +172,17 @@ struct U {
   _padC:             f32,
   colorD:            vec3<f32>,
   _padD:             f32,
+  // Blocks 13-15 — Signal-loss style gesture layer
+  filterAmount:      f32,
+  filterSpeed:       f32,
+  filterPhase:       f32,
+  filterWidth:       f32,
+  filterSoftness:    f32,
+  contourBands:      f32,
+  fogDensity:        f32,
+  fogOpacity:        f32,
+  fogColor:          vec3<f32>,
+  _padFog:           f32,
 };
 
 @group(0) @binding(0) var<storage, read>       home: array<Home>;
@@ -229,6 +240,20 @@ fn curl(p: vec3<f32>) -> vec3<f32> {
   let cy = (ay1 - ay2) - (by1 - by2);
   let cz = (az1 - az2) - (bz1 - bz2);
   return vec3<f32>(cx, cy, cz) / (2.0 * e);
+}
+
+fn axisValue(p: vec3<f32>, axis: u32) -> f32 {
+  if (axis == 0u) { return p.x; }
+  if (axis == 1u) { return p.y; }
+  if (axis == 2u) { return p.z; }
+  return length(p);
+}
+
+fn axisNormal(axis: u32, p: vec3<f32>) -> vec3<f32> {
+  if (axis == 0u) { return vec3<f32>(1.0, 0.0, 0.0); }
+  if (axis == 1u) { return vec3<f32>(0.0, 1.0, 0.0); }
+  if (axis == 2u) { return vec3<f32>(0.0, 0.0, 1.0); }
+  return normalize(p + vec3<f32>(1e-5, 0.0, 0.0));
 }
 
 // HSV ↔ RGB helpers for the hue-shift / saturation pass.
@@ -324,6 +349,36 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     effHome = mix(effHome, snapped, u.voxelMix);
   }
 
+  // Gesture layer — named destructive/reconstructive looks inspired
+  // by photo point-cloud tools, but implemented as parametric GPU
+  // transforms so they remain performable and keyframeable.
+  let gesturePhase = u.filterPhase + u.time * u.filterSpeed;
+  let scanCenter = sin(gesturePhase * 6.2831853) * 0.85;
+  let axisVal = axisValue(effHome, u.filterAxis);
+  let axisN = axisNormal(u.filterAxis, effHome);
+  let amount = u.filterAmount;
+  if (u.filterMode == 1u) {
+    // DRIFT — slow procedural displacement of the home field, so the
+    // cloud breathes without losing its silhouette.
+    let drift = curl(effHome * (0.65 + u.windScale * 0.35) + vec3<f32>(0.0, gesturePhase * 0.25, 9.7));
+    effHome = effHome + drift * amount * 0.12;
+  } else if (u.filterMode == 5u) {
+    // RIFT — split across a moving plane and shear the two sides in
+    // opposite directions. Width controls the tear zone.
+    let plane = axisVal - scanCenter * 0.5;
+    let side = select(-1.0, 1.0, plane >= 0.0);
+    let tear = 1.0 - exp(-abs(plane) / max(u.filterWidth, 0.01));
+    let tangent = normalize(cross(axisN, vec3<f32>(0.0, 1.0, 0.37)) + vec3<f32>(1e-4, 0.0, 0.0));
+    effHome = effHome + (axisN * side * 0.32 + tangent * sin(axisVal * 8.0 + gesturePhase * 6.2831853) * 0.14) * amount * tear;
+  } else if (u.filterMode == 6u) {
+    // PRISM — chromatic scatter. Points fan apart by source color and
+    // depth, giving a refracted, impossible-camera read.
+    let lum = dot(h.homeColor, vec3<f32>(0.299, 0.587, 0.114));
+    let chroma = h.homeColor - vec3<f32>(lum);
+    let prismDir = normalize(vec3<f32>(chroma.r - chroma.b, chroma.g - chroma.r, chroma.b - chroma.g) + axisN * 0.35);
+    effHome = effHome + prismDir * amount * (0.04 + 0.22 * abs(axisVal));
+  }
+
   // ── Position update ────────────────────────────────────────────
   // Velocity = curl wind + bass burst + proximity wave + treble shimmer,
   // damped each frame so things settle when the audio drops.
@@ -350,11 +405,22 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let jz = (hash3(vec3<f32>(f32(i) * 0.13, u.time * 17.0, 2.0)) - 0.5) * 2.0;
   let shimmerV = vec3<f32>(jx, jy, jz) * jitterMag;
 
+  var gestureV = vec3<f32>(0.0);
+  if (u.filterMode == 2u) {
+    // SWARM — autonomous local steering around each point's home.
+    // Bass opens the flock; anchorPull still decides how fast it
+    // regroups.
+    let seed = hash3(vec3<f32>(f32(i) * 0.019, 31.0, 7.0));
+    let localCurl = curl(l.pos * (2.0 + u.windScale) + vec3<f32>(seed * 9.0, gesturePhase, -seed * 4.0));
+    let orbit = normalize(cross(outward, vec3<f32>(0.17 + seed, 0.81, 0.43)) + vec3<f32>(1e-4, 0.0, 0.0));
+    gestureV = (localCurl * 0.55 + orbit * sin(gesturePhase * 6.2831853 + seed * 6.2831853) * 0.35) * amount * (0.45 + u.bass * 1.25);
+  }
+
   // Anchor pull — yank toward the EFFECTIVE home (twisted + voxeled).
   let pullV = (effHome - l.pos) * u.anchorPull;
 
   // Integrate.
-  let targetVel = windV + burstV + waveV + shimmerV + pullV;
+  let targetVel = windV + burstV + waveV + shimmerV + gestureV + pullV;
   l.vel = mix(l.vel, targetVel, clamp(u.dt * 6.0, 0.0, 1.0));
   l.pos = l.pos + l.vel * u.dt;
   l.vel = l.vel * (1.0 - u.damping * u.dt);
@@ -390,6 +456,12 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
   // Reshape — scale + offset, then clamp.
   t = clamp(t * u.colorMapScale + u.colorMapOffset, 0.0, 1.0);
+  if (u.filterMode == 4u) {
+    let bands = max(u.contourBands, 2.0);
+    t = floor(t * bands) / max(bands - 1.0, 1.0);
+  } else if (u.filterMode == 6u) {
+    t = fract(t + axisVal * 0.18 + gesturePhase * 0.12);
+  }
 
   // 2. Get the mode color (or source if mode 0). Blend with source by
   //    colorMix — useful for tinting source colors without losing them.
@@ -405,14 +477,28 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   l.color = hsv2rgb(hsv);
 
   // ── Size pulse ─────────────────────────────────────────────────
-  let sizeBoost = 1.0 + u.bass * 1.2;
+  var sizeBoost = 1.0 + u.bass * 1.2;
+  if (u.filterMode == 4u) {
+    let bands = max(u.contourBands, 2.0);
+    let stripe = abs(fract((axisValue(effHome, u.filterAxis) * 0.5 + 0.5) * bands + gesturePhase) - 0.5) * 2.0;
+    sizeBoost = sizeBoost * mix(1.8, 0.55, smoothstep(0.0, 0.28, stripe));
+  }
   l.size = u.baseSize * sizeBoost;
 
   // ── Dissolve ───────────────────────────────────────────────────
   let distFromCenter = length(h.homePos);
   let softness = max(u.dissolveSoftness, 1e-4);
   let dissolveAlpha = 1.0 - smoothstep(u.dissolveRadius, u.dissolveRadius + softness, distFromCenter);
-  l.alpha = clamp(dissolveAlpha, 0.0, 1.0);
+  var gestureAlpha = 1.0;
+  if (u.filterMode == 3u) {
+    let planeDist = abs(axisValue(effHome, u.filterAxis) - scanCenter);
+    gestureAlpha = 1.0 - smoothstep(max(u.filterWidth, 0.001), max(u.filterWidth + u.filterSoftness, 0.002), planeDist);
+  } else if (u.filterMode == 4u) {
+    let bands = max(u.contourBands, 2.0);
+    let stripe = abs(fract((axisValue(effHome, u.filterAxis) * 0.5 + 0.5) * bands + gesturePhase) - 0.5) * 2.0;
+    gestureAlpha = mix(0.3, 1.0, 1.0 - smoothstep(0.0, max(u.filterSoftness, 0.02), stripe));
+  }
+  l.alpha = clamp(dissolveAlpha * gestureAlpha, 0.0, 1.0);
 
   live[i] = l;
 }
@@ -445,6 +531,12 @@ struct U {
   _pad2:        f32,
   _pad3:        f32,
   _pad4:        f32,
+  fogColor:     vec3<f32>,
+  fogOpacity:   f32,
+  fogDensity:   f32,
+  _pad5:        f32,
+  _pad6:        f32,
+  _pad7:        f32,
 };
 
 @group(0) @binding(0) var<storage, read> live: array<Live>;
@@ -455,6 +547,7 @@ struct VSOut {
   @location(0) uv:        vec2<f32>,
   @location(1) color:     vec3<f32>,
   @location(2) alpha:     f32,
+  @location(3) depth01:   f32,
 };
 
 @vertex
@@ -502,6 +595,7 @@ fn vs_main(
   out.uv     = cornerUV;
   out.color  = p.color;
   out.alpha  = p.alpha * u.opacity;
+  out.depth01 = clamp(out.pos.z / max(out.pos.w, 1e-5) * 0.5 + 0.5, 0.0, 1.0);
   return out;
 }
 
@@ -524,7 +618,9 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     mask = smoothstep(1.0, 0.2, d);
   }
   let a = in.alpha * mask;
-  return vec4<f32>(in.color * a, a);
+  let fogT = clamp((1.0 - exp(-in.depth01 * max(u.fogDensity, 0.0) * 4.0)) * u.fogOpacity, 0.0, 1.0);
+  let color = mix(in.color, u.fogColor, fogT);
+  return vec4<f32>(color * a, a);
 }
 `;
 
@@ -534,6 +630,8 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 
 export type ColorMode = 'source' | 'solid' | 'gradient2' | 'gradient3' | 'palette4' | 'rainbow' | 'random';
 export type ColorMap  = 'index' | 'depth-z' | 'depth-cam' | 'radial' | 'y-axis' | 'luminance' | 'noise';
+export type PointCloudFilterMode = 'none' | 'drift' | 'swarm' | 'slice' | 'contour' | 'rift' | 'prism' | 'fog';
+export type PointCloudFilterAxis = 'x' | 'y' | 'z' | 'radial';
 
 // Color mode + map enum strings → shader u32 IDs. Stays in lockstep
 // with the WGSL switch ladders in `paletteColor` and `cs_main`.
@@ -544,6 +642,12 @@ const COLOR_MODE_ID: Record<ColorMode, number> = {
 const COLOR_MAP_ID: Record<ColorMap, number> = {
   'index': 0, 'depth-z': 1, 'depth-cam': 2, 'radial': 3,
   'y-axis': 4, 'luminance': 5, 'noise': 6,
+};
+const FILTER_MODE_ID: Record<PointCloudFilterMode, number> = {
+  none: 0, drift: 1, swarm: 2, slice: 3, contour: 4, rift: 5, prism: 6, fog: 7,
+};
+const FILTER_AXIS_ID: Record<PointCloudFilterAxis, number> = {
+  x: 0, y: 1, z: 2, radial: 3,
 };
 
 export interface PointCloudFXParams {
@@ -584,6 +688,18 @@ export interface PointCloudFXParams {
   colorCycleSpeed: number;   // radians/sec of the rainbow / palette animation
   randomSat: number;         // 0..1 saturation for `random` mode
   randomVal: number;         // 0..2 value (brightness) for `random` mode
+  // signal-loss-style gesture layer
+  filterMode: PointCloudFilterMode;
+  filterAxis: PointCloudFilterAxis;
+  filterAmount: number;
+  filterSpeed: number;
+  filterPhase: number;
+  filterWidth: number;
+  filterSoftness: number;
+  contourBands: number;
+  fogDensity: number;
+  fogOpacity: number;
+  fogColor: [number, number, number];
   // color stops (RGB tuples in 0..1 — wrapper converts the panel's 0-255 ints)
   colorA: [number, number, number];
   colorB: [number, number, number];
@@ -645,6 +761,17 @@ const DEFAULT_PARAMS: PointCloudFXParams = {
   colorCycleSpeed: 0.0,
   randomSat: 0.85,
   randomVal: 1.0,
+  filterMode: 'none',
+  filterAxis: 'z',
+  filterAmount: 0.75,
+  filterSpeed: 0.2,
+  filterPhase: 0.0,
+  filterWidth: 0.18,
+  filterSoftness: 0.08,
+  contourBands: 12,
+  fogDensity: 0.0,
+  fogOpacity: 0.0,
+  fogColor: [0.02, 0.025, 0.035],
   // Default palette: cool neon spectrum that immediately reads as
   // "multi-colored worms" the moment users pick gradient2/3 or
   // palette4 + topology=strokes.
@@ -718,8 +845,9 @@ export class WebGPUPointCloudFX {
 
   private init(): void {
     this.computeUniformBuffer = this.device.createBuffer({
-      // 13 16-byte blocks for params + 4 16-byte blocks for the color
-      // palette = 17 × 16 = 272 bytes. Round to 288 for headroom.
+      // 9 16-byte blocks for core params + 4 palette blocks +
+      // 3 gesture/filter blocks = 16 × 16 = 256 bytes. Round to 288
+      // for headroom and backwards safety while iterating.
       size: 288,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
@@ -953,13 +1081,26 @@ export class WebGPUPointCloudFX {
     // Block 8 — random hue params
     cuF[32] = this.params.randomSat;
     cuF[33] = this.params.randomVal;
-    // cuF[34], cuF[35] pad → stay 0
+    cuU[34] = FILTER_MODE_ID[this.params.filterMode] >>> 0;
+    cuU[35] = FILTER_AXIS_ID[this.params.filterAxis] >>> 0;
     // Blocks 9-12 — palette colors. Each vec3 starts at a 16-byte
     // boundary; the float index is (16 + block*16) / 4 = 36, 40, 44, 48.
     cuF[36] = this.params.colorA[0]; cuF[37] = this.params.colorA[1]; cuF[38] = this.params.colorA[2];
     cuF[40] = this.params.colorB[0]; cuF[41] = this.params.colorB[1]; cuF[42] = this.params.colorB[2];
     cuF[44] = this.params.colorC[0]; cuF[45] = this.params.colorC[1]; cuF[46] = this.params.colorC[2];
     cuF[48] = this.params.colorD[0]; cuF[49] = this.params.colorD[1]; cuF[50] = this.params.colorD[2];
+    // Blocks 13-15 — filter/gesture controls.
+    cuF[52] = this.params.filterAmount;
+    cuF[53] = this.params.filterSpeed;
+    cuF[54] = this.params.filterPhase;
+    cuF[55] = this.params.filterWidth;
+    cuF[56] = this.params.filterSoftness;
+    cuF[57] = this.params.contourBands;
+    cuF[58] = this.params.fogDensity;
+    cuF[59] = this.params.fogOpacity;
+    cuF[60] = this.params.fogColor[0];
+    cuF[61] = this.params.fogColor[1];
+    cuF[62] = this.params.fogColor[2];
     this.device.queue.writeBuffer(this.computeUniformBuffer, 0, cuBuf);
 
     // ── Compute pass ───────────────────────────────────────────
@@ -1023,6 +1164,12 @@ export class WebGPUPointCloudFX {
     ruF[26] = this.params.strokeWidth;
     ruF[27] = this.params.opacity;
     ruU[28] = this.pointCount >>> 0;
+    const fogModeBoost = this.params.filterMode === 'fog' ? 1 : 0;
+    ruF[32] = this.params.fogColor[0];
+    ruF[33] = this.params.fogColor[1];
+    ruF[34] = this.params.fogColor[2];
+    ruF[35] = Math.max(this.params.fogOpacity, fogModeBoost * this.params.filterAmount * 0.65);
+    ruF[36] = Math.max(this.params.fogDensity, fogModeBoost * (0.45 + this.params.filterAmount * 1.4));
     this.device.queue.writeBuffer(this.renderUniformBuffer, 0, ruBuf);
 
     // ── Render pass ────────────────────────────────────────────

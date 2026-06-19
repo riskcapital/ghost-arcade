@@ -81,6 +81,20 @@ export type PixelEffectMode =
   | 'stipple-noise'
   | 'dissolve';
 
+export type PixelDepthSource =
+  | 'luminance'
+  | 'inverse-luminance'
+  | 'edge-density'
+  | 'saturation';
+
+export type PixelDepthMotion =
+  | 'locked'
+  | 'drift'
+  | 'orbit'
+  | 'ripple'
+  | 'swarm'
+  | 'breathe';
+
 const MODE_IDS: Record<PixelEffectMode, number> = {
   'identity':       0,
   'depth-shift':    1,
@@ -89,6 +103,22 @@ const MODE_IDS: Record<PixelEffectMode, number> = {
   'halftone':       4,
   'stipple-noise':  5,
   'dissolve':       6,
+};
+
+const DEPTH_SOURCE_IDS: Record<PixelDepthSource, number> = {
+  'luminance': 0,
+  'inverse-luminance': 1,
+  'edge-density': 2,
+  'saturation': 3,
+};
+
+const DEPTH_MOTION_IDS: Record<PixelDepthMotion, number> = {
+  'locked': 0,
+  'drift': 1,
+  'orbit': 2,
+  'ripple': 3,
+  'swarm': 4,
+  'breathe': 5,
 };
 
 const COMPUTE_WGSL = /* wgsl */ `
@@ -138,6 +168,16 @@ struct Globals {
   // had no consumer; using it for the source-mirror toggle keeps
   // the buffer size unchanged.
   fit_params:    vec4<f32>,    // x=mirror_source_x, y=canvas_aspect, z=view_x, w=view_y
+  // Depth-from-image controls for depth-shift mode. The shader keeps
+  // source colour stable, but this controls how source pixels become
+  // Z-depth: luma / inverse / edge-density / saturation, plus curve,
+  // contrast, and optional neighbor smoothing to calm noisy video.
+  depth_params:  vec4<f32>,    // x=source_id, y=curve, z=contrast, w=smoothing
+  // Smooth stateless motion on the derived 3D cloud. These are not
+  // particle-life sims; they are reversible fields around the source
+  // anchors, so the image stays readable while it breathes/moves.
+  depth_motion:  vec4<f32>,    // x=motion_id, y=amount, z=speed, w=scale
+  depth_motion2: vec4<f32>,    // x=center, y=depth_coupling, z=phase, w=_
 };
 
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
@@ -173,6 +213,107 @@ fn vnoise(p: vec2<f32>) -> f32 {
 // Luminance from RGB.
 fn lum(c: vec3<f32>) -> f32 {
   return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
+fn source_depth(sample_uv: vec2<f32>, rgb: vec3<f32>) -> f32 {
+  let mode = u.depth_params.x;
+  let px = vec2(1.0 / max(u.tex_size.x, 1.0), 0.0);
+  let py = vec2(0.0, 1.0 / max(u.tex_size.y, 1.0));
+  var raw = lum(rgb);
+
+  if (mode > 2.5 && mode < 3.5) {
+    let hi = max(max(rgb.r, rgb.g), rgb.b);
+    let lo = min(min(rgb.r, rgb.g), rgb.b);
+    raw = hi - lo;
+  } else if (mode > 1.5 && mode < 2.5) {
+    let lL = lum(textureSampleLevel(src, samp, clamp(sample_uv - px, vec2(0.0), vec2(1.0)), 0.0).rgb);
+    let lR = lum(textureSampleLevel(src, samp, clamp(sample_uv + px, vec2(0.0), vec2(1.0)), 0.0).rgb);
+    let lU = lum(textureSampleLevel(src, samp, clamp(sample_uv - py, vec2(0.0), vec2(1.0)), 0.0).rgb);
+    let lD = lum(textureSampleLevel(src, samp, clamp(sample_uv + py, vec2(0.0), vec2(1.0)), 0.0).rgb);
+    raw = clamp(length(vec2(lR - lL, lD - lU)) * 3.5, 0.0, 1.0);
+  } else {
+    let smoothing = clamp(u.depth_params.w, 0.0, 1.0);
+    if (smoothing > 0.001) {
+      let lL = lum(textureSampleLevel(src, samp, clamp(sample_uv - px, vec2(0.0), vec2(1.0)), 0.0).rgb);
+      let lR = lum(textureSampleLevel(src, samp, clamp(sample_uv + px, vec2(0.0), vec2(1.0)), 0.0).rgb);
+      let lU = lum(textureSampleLevel(src, samp, clamp(sample_uv - py, vec2(0.0), vec2(1.0)), 0.0).rgb);
+      let lD = lum(textureSampleLevel(src, samp, clamp(sample_uv + py, vec2(0.0), vec2(1.0)), 0.0).rgb);
+      let blurred = (raw + lL + lR + lU + lD) * 0.2;
+      raw = mix(raw, blurred, smoothing);
+    }
+    if (mode > 0.5 && mode < 1.5) {
+      raw = 1.0 - raw;
+    }
+  }
+
+  let contrast = max(u.depth_params.z, 0.01);
+  raw = clamp((raw - 0.5) * contrast + 0.5, 0.0, 1.0);
+  return pow(raw, max(u.depth_params.y, 0.05));
+}
+
+fn apply_depth_motion(base: vec3<f32>, uv: vec2<f32>, depth_v: f32, seed: f32) -> vec3<f32> {
+  let mode = u.depth_motion.x;
+  let amount = u.depth_motion.y;
+  if (mode < 0.5 || amount < 0.0001) { return base; }
+
+  let speed = u.depth_motion.z;
+  let scale = max(u.depth_motion.w, 0.001);
+  let phase = u.depth_motion2.z;
+  let depth_coupling = u.depth_motion2.y;
+  let depth_weight = max(0.05, 1.0 + (depth_v - 0.5) * depth_coupling);
+  let t = u.time * speed + phase;
+  var out = base;
+
+  if (mode > 0.5 && mode < 1.5) {
+    // Drift: calm, reversible field movement. Good default for
+    // photo/video point clouds because it keeps silhouettes readable.
+    let nx = vnoise(uv * scale + vec2(t * 0.17, seed * 0.00003)) - 0.5;
+    let ny = vnoise(uv * scale + vec2(19.17, t * 0.13 + seed * 0.00002)) - 0.5;
+    let nz = vnoise(uv * scale + vec2(41.7 + t * 0.11, 7.3)) - 0.5;
+    out.x = out.x + nx * amount * depth_weight;
+    out.y = out.y + ny * amount * depth_weight;
+    out.z = out.z + nz * amount * 0.85 * depth_weight;
+  } else if (mode > 1.5 && mode < 2.5) {
+    // Orbit: depth-separated layers gently swirl around the image
+    // center. The angle is bounded, so it never spins into chaos.
+    let rel = out.xy;
+    let radius = length(rel);
+    let angle = sin(t + depth_v * 6.28318 + radius * scale) * amount * 0.45 * depth_weight;
+    let s = sin(angle);
+    let c = cos(angle);
+    out.x = rel.x * c - rel.y * s;
+    out.y = rel.x * s + rel.y * c;
+  } else if (mode > 2.5 && mode < 3.5) {
+    // Ripple: radial waves travel through both XY and Z, using depth
+    // as phase so foreground/background breathe separately.
+    let rel = out.xy;
+    let radius = length(rel);
+    let dir = rel / max(radius, 0.001);
+    let wave = sin(radius * scale * 5.0 - t * 6.28318 + depth_v * 3.14159);
+    let ripple_xy = out.xy + dir * wave * amount * 0.32 * depth_weight;
+    out = vec3(ripple_xy.x, ripple_xy.y, out.z + wave * amount * 0.7 * depth_weight);
+  } else if (mode > 3.5 && mode < 4.5) {
+    // Swarm: a stronger organic vector field plus a mild vortex,
+    // still anchored to source UVs for stable colour.
+    let flow = vec2(
+      vnoise(uv * scale + vec2(t * 0.31, 5.7)),
+      vnoise(uv * scale + vec2(11.1, t * 0.29))
+    ) - vec2(0.5);
+    let rel = out.xy;
+    let vortex = vec2(-rel.y, rel.x) / (length(rel) + 0.35);
+    let swarm_xy = out.xy + (flow * 1.35 + vortex * 0.28) * amount * depth_weight;
+    let swarm_z = out.z + (vnoise(uv * scale + vec2(t * 0.19, 23.4)) - 0.5) * amount * depth_weight;
+    out = vec3(swarm_xy.x, swarm_xy.y, swarm_z);
+  } else if (mode > 4.5 && mode < 5.5) {
+    // Breathe: scales the cloud subtly by depth and pushes Z so it
+    // reads like a living relief sculpture rather than random noise.
+    let pulse = sin(t + depth_v * 6.28318);
+    let scale_pulse = 1.0 + pulse * amount * 0.12 * depth_weight;
+    let breathe_xy = out.xy * scale_pulse;
+    out = vec3(breathe_xy.x, breathe_xy.y, out.z + pulse * amount * 0.45 * depth_weight);
+  }
+
+  return out;
 }
 
 @compute @workgroup_size(64)
@@ -237,10 +378,13 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // normal computed from the source's luminance derivatives, then
     // diffuse term applied to the particle color.
     let depth = u.knobs.x;
+    let depth_v = source_depth(sample_uv, col.rgb);
     let spin_s = u.knobs.z;
     let axis = u.knobs.w;     // 0=Y axis, 1=X axis (rotate vertically)
-    let z = (l - 0.5) * depth;
+    let depth_center = clamp(u.depth_motion2.x, 0.0, 1.0);
+    let z = (depth_v - depth_center) * depth;
     var rotated = vec3(anchor_world, z);
+    rotated = apply_depth_motion(rotated, uv, depth_v, f32(i));
     if (abs(spin_s) > 0.001) {
       let ang = u.time * spin_s;
       let s_sin = sin(ang);
@@ -297,10 +441,14 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
       // small fixed offset when tex_size is missing.
       let px = vec2(1.0 / max(u.tex_size.x, 1.0), 0.0);
       let py = vec2(0.0, 1.0 / max(u.tex_size.y, 1.0));
-      let lL = lum(textureSampleLevel(src, samp, clamp(sample_uv - px, vec2(0.0), vec2(1.0)), 0.0).rgb);
-      let lR = lum(textureSampleLevel(src, samp, clamp(sample_uv + px, vec2(0.0), vec2(1.0)), 0.0).rgb);
-      let lU = lum(textureSampleLevel(src, samp, clamp(sample_uv - py, vec2(0.0), vec2(1.0)), 0.0).rgb);
-      let lD = lum(textureSampleLevel(src, samp, clamp(sample_uv + py, vec2(0.0), vec2(1.0)), 0.0).rgb);
+      let cL = textureSampleLevel(src, samp, clamp(sample_uv - px, vec2(0.0), vec2(1.0)), 0.0).rgb;
+      let cR = textureSampleLevel(src, samp, clamp(sample_uv + px, vec2(0.0), vec2(1.0)), 0.0).rgb;
+      let cU = textureSampleLevel(src, samp, clamp(sample_uv - py, vec2(0.0), vec2(1.0)), 0.0).rgb;
+      let cD = textureSampleLevel(src, samp, clamp(sample_uv + py, vec2(0.0), vec2(1.0)), 0.0).rgb;
+      let lL = source_depth(clamp(sample_uv - px, vec2(0.0), vec2(1.0)), cL);
+      let lR = source_depth(clamp(sample_uv + px, vec2(0.0), vec2(1.0)), cR);
+      let lU = source_depth(clamp(sample_uv - py, vec2(0.0), vec2(1.0)), cU);
+      let lD = source_depth(clamp(sample_uv + py, vec2(0.0), vec2(1.0)), cD);
       let dx = (lR - lL) * depth * h_scale * 4.0;
       let dy = (lD - lU) * depth * h_scale * 4.0;
       // Source plane lives in XY, depth in Z. Normal points toward
@@ -450,9 +598,10 @@ struct RU {
   // Aspect for billboard squareness, particle size in normalized
   // units, mode for size-modulation behaviour, opacity envelope.
   mu:           vec4<f32>,    // x=aspect_y, y=base_size, z=mode_id, w=opacity ('meta' is reserved in WGSL)
-  // Per-frame flags. x=mirror_source_x (mirrors the resample UV in
-  // the fragment so render-side particle re-sampling matches the
-  // compute-side mirror).
+  // Per-frame flags. x=mirror_source_x, y=active particle count,
+  // z=anchor jitter. The render shader recomputes each particle's
+  // original UV from instance id so source colour stays pinned to
+  // the source pixel even when motion moves the particle in 3D.
   flags:        vec4<f32>,
 };
 
@@ -460,6 +609,23 @@ struct RU {
 @group(0) @binding(1) var<uniform>            u: RU;
 @group(0) @binding(2) var src:                texture_2d<f32>;
 @group(0) @binding(3) var samp:               sampler;
+
+fn hash11(n: f32) -> f32 {
+  let s = sin(n * 78.233 + 12.9898) * 43758.5453;
+  return s - floor(s);
+}
+
+fn anchor_uv_for(iid: u32) -> vec2<f32> {
+  let total = max(u.flags.y, 1.0);
+  let cols = ceil(sqrt(total));
+  let cx = f32(iid % u32(cols));
+  let cy = floor(f32(iid) / cols);
+  let cell = vec2(cx, cy) / cols;
+  let jitter = clamp(u.flags.z, 0.0, 1.0);
+  let jx = (hash11(f32(iid) * 1.731) - 0.5) * jitter / cols;
+  let jy = (hash11(f32(iid) * 2.137) - 0.5) * jitter / cols;
+  return clamp(cell + vec2(jx, jy), vec2(0.0), vec2(0.99999));
+}
 
 struct VSOut {
   @builtin(position) clip:  vec4<f32>,
@@ -508,15 +674,10 @@ fn vs_main(@builtin(vertex_index) vid: u32, @builtin(instance_index) iid: u32) -
   let offset_clip = vec2(corner.x * size_x, corner.y * size_y) * clip_center.w;
   let clip_pos = vec4(clip_center.xy + offset_clip, clip_center.z, clip_center.w);
 
-  // Sample source color at this particle's anchor again — for
-  // identity/depth-shift modes the world-XY IS the anchor (mapped
-  // back to uv), but for sand/scatter the position has moved away.
-  // We stash the original sample once at compute and read it via
-  // a simple re-sample using anchor bookkeeping... easier: we
-  // re-sample using the world-XY converted back to UV, which is
-  // close enough for static modes and gives a "wipe" smear for
-  // dynamic ones (looks intentional).
-  var resample_uv = vec2(world.x * 0.5 + 0.5, 1.0 - (world.y * 0.5 + 0.5));
+  // Sample source color from the particle's ORIGINAL source anchor,
+  // not its moved world position. That keeps photo/video colour
+  // coherent while depth motion moves the point cloud around.
+  var resample_uv = anchor_uv_for(iid);
   if (u.flags.x > 0.5) { resample_uv.x = 1.0 - resample_uv.x; }
   let c = textureSampleLevel(src, samp, clamp(resample_uv, vec2(0.0), vec2(1.0)), 0.0);
   let opacity_env = u.mu.w;
@@ -630,6 +791,19 @@ export class WebGPUPixelParticles {
   private noiseAmpZ = 0;
   private noiseFreq = 4;
   private noiseSpeed = 0.5;
+  // Derived depth + smooth point-cloud motion for photo/video
+  // source clouds. These apply only to depth-shift mode.
+  private depthSource: PixelDepthSource = 'luminance';
+  private depthCurve = 1;
+  private depthContrast = 1;
+  private depthSmoothing = 0.2;
+  private depthCenter = 0.5;
+  private depthMotion: PixelDepthMotion = 'locked';
+  private depthMotionAmount = 0.08;
+  private depthMotionSpeed = 0.45;
+  private depthMotionScale = 3.5;
+  private depthMotionCoupling = 0.7;
+  private depthMotionPhase = 0;
   // Fit mode — 0=stretch, 1=contain, 2=cover. Default cover so
   // source aspect is preserved AND the canvas is filled.
   private fitMode = 2;
@@ -663,7 +837,7 @@ export class WebGPUPixelParticles {
       size: MAX_PARTICLES * PARTICLE_BYTES,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
-    // Globals struct is 112 bytes (added fit_params vec4):
+    // Globals struct is 160 bytes:
     //   time, dt, total(u32), mode(u32)            → 16
     //   knobs vec4                                  → 16
     //   tex_size vec2 + jitter + light_enabled f32  → 16
@@ -671,8 +845,11 @@ export class WebGPUPixelParticles {
     //   light_ambient_height vec4                   → 16
     //   noise_params vec4 (amp_xy, amp_z, freq, speed) → 16
     //   fit_params vec4 (fit_mode, canvas_aspect, _, _) → 16
+    //   depth_params vec4                           → 16
+    //   depth_motion vec4                           → 16
+    //   depth_motion2 vec4                          → 16
     this.globalsBuffer = device.createBuffer({
-      size: 112,
+      size: 160,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     // Render uniform: mat4x4 (64) + vec4 meta (16) + vec4 flags (16) = 96
@@ -907,6 +1084,30 @@ export class WebGPUPixelParticles {
     this.noiseSpeed = speed;
   }
 
+  /** Convert the source image/video into a usable depth field without
+   *  leaving the GPU. Luminance is the photographic default; inverse
+   *  works for backlit footage; edge-density turns outlines into
+   *  relief; saturation gives colorful sources extra dimensionality. */
+  setDepthShape(source: PixelDepthSource, curve: number, contrast: number, smoothing: number, center: number): void {
+    this.depthSource = source in DEPTH_SOURCE_IDS ? source : 'luminance';
+    this.depthCurve = Math.max(0.05, Math.min(4, curve));
+    this.depthContrast = Math.max(0.01, Math.min(4, contrast));
+    this.depthSmoothing = Math.max(0, Math.min(1, smoothing));
+    this.depthCenter = Math.max(0, Math.min(1, center));
+  }
+
+  /** Smooth, reversible motion on the depth cloud. This is deliberately
+   *  stateless so slider/MIDI/keyframe changes are immediate and do
+   *  not leave particles permanently scattered. */
+  setDepthMotion(mode: PixelDepthMotion, amount: number, speed: number, scale: number, coupling: number, phase: number): void {
+    this.depthMotion = mode in DEPTH_MOTION_IDS ? mode : 'locked';
+    this.depthMotionAmount = Math.max(0, Math.min(2, amount));
+    this.depthMotionSpeed = Math.max(0, Math.min(4, speed));
+    this.depthMotionScale = Math.max(0.1, Math.min(24, scale));
+    this.depthMotionCoupling = Math.max(0, Math.min(3, coupling));
+    this.depthMotionPhase = phase;
+  }
+
   /** Source fit mode — controls how the source's aspect ratio is
    *  honored when laying out particle anchors. 0=stretch (squashes
    *  to square — legacy behavior), 1=contain (preserve aspect, fit
@@ -1121,8 +1322,8 @@ export class WebGPUPixelParticles {
     const dt = Math.min(0.05, (now - this.lastFrameTime) / 1000);
     this.lastFrameTime = now;
 
-    // Globals uniform — 112 bytes, see WGSL Globals struct.
-    const gu = new ArrayBuffer(112);
+    // Globals uniform — 160 bytes, see WGSL Globals struct.
+    const gu = new ArrayBuffer(160);
     const guF = new Float32Array(gu);
     const guU = new Uint32Array(gu);
     guF[0] = totalTime;
@@ -1168,6 +1369,20 @@ export class WebGPUPixelParticles {
     guF[25] = canvasAspect;
     guF[26] = viewX;
     guF[27] = viewY;
+    // depth_params vec4 (source_id, curve, contrast, smoothing)
+    guF[28] = DEPTH_SOURCE_IDS[this.depthSource];
+    guF[29] = this.depthCurve;
+    guF[30] = this.depthContrast;
+    guF[31] = this.depthSmoothing;
+    // depth_motion vec4 (motion_id, amount, speed, scale)
+    guF[32] = DEPTH_MOTION_IDS[this.depthMotion];
+    guF[33] = this.depthMotionAmount;
+    guF[34] = this.depthMotionSpeed;
+    guF[35] = this.depthMotionScale;
+    // depth_motion2 vec4 (center, depth coupling, phase, _)
+    guF[36] = this.depthCenter;
+    guF[37] = this.depthMotionCoupling;
+    guF[38] = this.depthMotionPhase;
     this.device.queue.writeBuffer(this.globalsBuffer, 0, gu);
 
     // Render uniform: vp (16 floats) + mu (4) + flags (4) = 24 floats / 96 B
@@ -1180,7 +1395,9 @@ export class WebGPUPixelParticles {
     ruF[18] = MODE_IDS[this.mode];
     ruF[19] = this.opacity;
     ruF[20] = this.mirrorX ? 1 : 0; // flags.x = mirror_source_x
-    // ruF[21..23] reserved for future flags
+    ruF[21] = this.particleCount;   // flags.y = total particles
+    ruF[22] = this.anchorJitter;     // flags.z = anchor jitter
+    // ruF[23] reserved for future flags
     this.device.queue.writeBuffer(this.renderUniformBuffer, 0, ru);
 
     // Compute pass
