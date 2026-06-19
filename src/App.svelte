@@ -47,6 +47,7 @@
   };
   import VJModePanel from './lib/components/VJModePanel.svelte';
   import StageDesignerPanel from './lib/components/StageDesignerPanel.svelte';
+  import ProjectionSimulatorPanel from './lib/components/ProjectionSimulatorPanel.svelte';
   import OfflineRenderModal from './lib/components/OfflineRenderModal.svelte';
   import VideoConverterModal from './lib/components/VideoConverterModal.svelte';
   import { workspace } from './lib/stores/workspace';
@@ -94,7 +95,7 @@
   import { getNativeRendererStatus } from './lib/api/native-renderer';
   import { startSpoutScanner, stopSpoutScanner } from './lib/stores/spout';
   import { preloadShaderLibrary, populateShaderListForSync } from './lib/preload';
-  import { invoke, isMac, isDesktopApp } from './lib/bridge';
+  import { invoke, isMac, isDesktopApp, openExternalUrl } from './lib/bridge';
   import type { Point2D, BezierPoint, Layer, WarpCorners } from './lib/types';
   import { generateUUID } from './lib/types';
   import { createDefaultFreehandLine, createDefaultPointClickLine } from './lib/lines/types';
@@ -134,6 +135,7 @@
   // without a canvas/media bridge.
   let showStage3D = false;
   let stage3DWindowOpen = false;
+  let projectionSimWindowOpen = false;
   async function openStage3D() {
     if (isDesktopApp) {
       try {
@@ -145,6 +147,19 @@
       }
     }
     showStage3D = true;
+  }
+
+  async function openProjectionSim() {
+    if (isDesktopApp) {
+      try {
+        await invoke('open_projection_sim_window');
+        projectionSimWindowOpen = true;
+        return;
+      } catch (e) {
+        console.warn('[ProjectionSim] IPC open failed, falling back to overlay:', e);
+      }
+    }
+    workspace.openProjectionSim();
   }
 
   let stage3dWindowPoll: ReturnType<typeof setInterval> | null = null;
@@ -161,6 +176,21 @@
   $: if ((!isDesktopApp || !stage3DWindowOpen) && stage3dWindowPoll) {
     clearInterval(stage3dWindowPoll);
     stage3dWindowPoll = null;
+  }
+  let projectionSimWindowPoll: ReturnType<typeof setInterval> | null = null;
+  $: if (isDesktopApp && projectionSimWindowOpen && !projectionSimWindowPoll) {
+    projectionSimWindowPoll = setInterval(async () => {
+      try {
+        const open = await invoke<boolean>('projection_sim_is_open');
+        if (!open) projectionSimWindowOpen = false;
+      } catch {
+        projectionSimWindowOpen = false;
+      }
+    }, 1000);
+  }
+  $: if ((!isDesktopApp || !projectionSimWindowOpen) && projectionSimWindowPoll) {
+    clearInterval(projectionSimWindowPoll);
+    projectionSimWindowPoll = null;
   }
   let canvasComponent: Canvas | null = null;
   // Phase 3.0 bridge: bound when experimental.editorWebGPU is on so
@@ -4420,12 +4450,35 @@
           Fullscreen
         </button>
         <button
-          class="output-btn stage3d-btn"
+          class="output-btn sim-launch-btn stage-sim-btn"
           class:active={showStage3D || stage3DWindowOpen}
           onclick={openStage3D}
-          title="3D Stage Designer"
+          title="Open Stage Simulator"
+          aria-label="Open Stage Simulator"
         >
-          ◆ Stage 3D
+          <svg class="sim-launch-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4 16.4 12 12l8 4.4-8 4.5-8-4.5Z" />
+            <path d="M7.2 14.7V8.6L12 5.5l4.8 3.1v6.1" />
+            <path d="M7.2 8.6 12 11.5l4.8-2.9" />
+            <path d="M12 5.5v6" />
+          </svg>
+          Stage Sim
+        </button>
+        <button
+          class="output-btn sim-launch-btn map-sim-btn"
+          class:active={$workspace === 'projection-sim' || projectionSimWindowOpen}
+          onclick={openProjectionSim}
+          title="Open Projection Mapping Simulator"
+          aria-label="Open Projection Mapping Simulator"
+        >
+          <svg class="sim-launch-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M3.5 8.2h4.2l2.2 1.7v4.2l-2.2 1.7H3.5V8.2Z" />
+            <path d="M9.9 10.1 20.5 5v14L9.9 13.9" />
+            <path d="M16.8 6.8v10.4" />
+            <path d="M5.5 15.8v2.3" />
+            <path d="M4.4 18.1h3.4" />
+          </svg>
+          Map Sim
         </button>
       </div>
 
@@ -4539,8 +4592,20 @@
         <!-- Stage Designer Button — opens the SVG-import / polygon-slice
              projection-mapping workspace. Mutually exclusive with VJ
              mode via the activeWorkspace flag in the workspace store. -->
-        <button class="stage-btn" onclick={() => workspace.openStage()} title="Open Stage Designer">
-          STAGE
+        <button
+          class="stage-btn stage-edit-btn"
+          class:active={$workspace === 'stage'}
+          onclick={() => workspace.openStage()}
+          title="Open Stage Editor"
+          aria-label="Open Stage Editor"
+        >
+          <svg class="stage-edit-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4 20l4.1-.9L19.2 8l-3.3-3.3L4.9 15.8 4 20Z" />
+            <path d="M14.8 5.8 18.1 9.1" />
+            <path d="M13.5 19.5h6" />
+            <path d="M16.5 16.5v6" />
+          </svg>
+          Stage
         </button>
 
         <!-- Settings Button -->
@@ -5537,6 +5602,10 @@
       <StageDesignerPanel />
     {/if}
 
+    {#if $workspace === 'projection-sim'}
+      <ProjectionSimulatorPanel sourceCanvas={canvasComponent?.getCanvas?.() ?? null} />
+    {/if}
+
 
     <!-- Offline render-to-video modal — opened from File →
          Render to Video. Owns its own progress + cancel + result
@@ -5652,15 +5721,15 @@
       <span class="spacer"></span>
       <span class="fps-counter" class:fps-good={$fpsStore > 50} class:fps-warn={$fpsStore >= 30 && $fpsStore <= 50} class:fps-bad={$fpsStore < 30 && $fpsStore > 0}>{$fpsStore} FPS</span>
       {#if versionInfo?.hasUpdate && versionInfo.releaseUrl}
-        <!-- Update available — clickable badge that opens the release
-             page. Replaces the version label with an actionable link
-             so users immediately know an upgrade is available. -->
+        <!-- Update available — clickable badge that opens the download page. -->
         <a
           class="version-label version-update"
           href={versionInfo.releaseUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          title="A newer version is available — click to download"
+          onclick={(event) => {
+            event.preventDefault();
+            openExternalUrl(versionInfo?.releaseUrl || '');
+          }}
+          title="A newer version is available - open the download page"
         >v{appVersion} → {versionInfo.latest}</a>
       {:else}
         <span class="version-label" title="Ghost Arcade v{appVersion}">v{appVersion}</span>
@@ -6430,16 +6499,49 @@
     border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
 
-  .output-btn.active {
-    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
-    color: var(--ga-violet, #9b87f5);
-    border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36));
-  }
+	  .output-btn.active {
+	    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
+	    color: var(--ga-violet, #9b87f5);
+	    border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36));
+	  }
 
-  .output-btn.settings-btn {
-    padding: 6px 10px;
-    font-size: 16px;
-  }
+	  .sim-launch-btn {
+	    padding: 0 12px;
+	    font-weight: 700;
+	  }
+
+	  .sim-launch-icon,
+	  .stage-edit-icon {
+	    flex: 0 0 auto;
+	    stroke: currentColor;
+	    stroke-width: 1.8;
+	    stroke-linecap: round;
+	    stroke-linejoin: round;
+	  }
+
+	  .sim-launch-icon {
+	    width: 17px;
+	    height: 17px;
+	  }
+
+	  .stage-sim-btn:hover,
+	  .stage-sim-btn.active {
+	    background: rgba(91, 141, 239, 0.10);
+	    border-color: rgba(91, 141, 239, 0.40);
+	    color: #8fb9ff;
+	  }
+
+	  .map-sim-btn:hover,
+	  .map-sim-btn.active {
+	    background: rgba(245, 158, 11, 0.12);
+	    border-color: rgba(245, 158, 11, 0.42);
+	    color: #fbbf24;
+	  }
+
+	  .output-btn.settings-btn {
+	    padding: 6px 10px;
+	    font-size: 16px;
+	  }
 
   .output-settings-popover {
     position: absolute;
@@ -6943,24 +7045,39 @@
   /* Stage Designer button — sibling to VJ button, distinct cyan
      gradient so the user reads them as different workspaces at a
      glance. */
-  .stage-btn {
-    height: 32px;
-    background: var(--ga-card, #13161c);
-    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
-    color: var(--ga-ink-1, #9aa0ac);
-    padding: 0 18px;
-    border-radius: var(--ga-r-soft, 7px);
-    font-size: 14.5px;
-    font-weight: 700;
-    cursor: pointer;
-    letter-spacing: 0.02em;
-    transition: color 0.14s, border-color 0.14s, background 0.14s;
-  }
-  .stage-btn:hover {
-    background: var(--ga-card, #13161c);
-    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
-    color: var(--ga-ink-0, #eef0f4);
-  }
+	  .stage-btn {
+	    height: 32px;
+	    background: var(--ga-card, #13161c);
+	    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+	    color: var(--ga-ink-1, #9aa0ac);
+	    padding: 0 13px;
+	    border-radius: var(--ga-r-soft, 7px);
+	    font-size: 14.5px;
+	    font-weight: 700;
+	    cursor: pointer;
+	    letter-spacing: 0.02em;
+	    transition: color 0.14s, border-color 0.14s, background 0.14s;
+	    display: inline-flex;
+	    align-items: center;
+	    gap: 7px;
+	  }
+	  .stage-btn:hover,
+	  .stage-btn.active {
+	    background: var(--ga-card, #13161c);
+	    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
+	    color: var(--ga-ink-0, #eef0f4);
+	  }
+
+	  .stage-btn.active {
+	    background: rgba(91, 141, 239, 0.10);
+	    border-color: rgba(91, 141, 239, 0.38);
+	    color: #8fb9ff;
+	  }
+
+	  .stage-edit-icon {
+	    width: 15px;
+	    height: 15px;
+	  }
 
   .settings-btn {
     width: 34px;

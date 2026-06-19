@@ -13,7 +13,7 @@
  * No pixels touch CPU memory in the send path.
  */
 
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, net as electronNet, protocol, screen, session, utilityProcess } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, net as electronNet, protocol, screen, session, shell, utilityProcess } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn, fork, execSync } from 'child_process';
@@ -216,6 +216,7 @@ let mainWindow = null;
 let outputWindow = null;
 let spoutOsrWindow = null;  // Hidden OSR window for zero-copy Spout output
 let stage3dWindow = null;   // 3D Stage Designer pop-out (?mode=stage-3d)
+let projectionSimWindow = null; // Projection Simulator pop-out (?mode=projection-sim)
 // Per-slice multi-output windows. Keyed by sliceId; each entry is a
 // borderless fullscreen BrowserWindow opened on a specific physical
 // display. Phase 2 multi-output system — see SliceOutputApp.svelte
@@ -243,6 +244,14 @@ function closeAuxiliaryWindows() {
     try { win.close(); } catch {}
   } else {
     stage3dWindow = null;
+  }
+
+  if (projectionSimWindow && !projectionSimWindow.isDestroyed()) {
+    const win = projectionSimWindow;
+    projectionSimWindow = null;
+    try { win.close(); } catch {}
+  } else {
+    projectionSimWindow = null;
   }
 
   if (outputWindow && !outputWindow.isDestroyed()) {
@@ -280,6 +289,13 @@ function publishStage3DFullscreenState(fullScreen) {
   if (!stage3dWindow || stage3dWindow.isDestroyed()) return;
   try {
     stage3dWindow.webContents.send('stage3d-fullscreen-changed', { fullScreen: !!fullScreen });
+  } catch {}
+}
+
+function publishProjectionSimFullscreenState(fullScreen) {
+  if (!projectionSimWindow || projectionSimWindow.isDestroyed()) return;
+  try {
+    projectionSimWindow.webContents.send('projection-sim-fullscreen-changed', { fullScreen: !!fullScreen });
   } catch {}
 }
 
@@ -2133,6 +2149,42 @@ function registerIpcHandlers() {
     fullScreen: !!(stage3dWindow && !stage3dWindow.isDestroyed() && stage3dWindow.isFullScreen()),
   }));
 
+  // ── Projection Simulator pop-out window ───────────────────────────
+  // Same performer workflow as Stage 3D: keep the editor/mapping UI
+  // available while the 3D simulation lives on another monitor.
+  ipcMain.handle('open_projection_sim_window', () => {
+    if (projectionSimWindow && !projectionSimWindow.isDestroyed()) {
+      projectionSimWindow.show();
+      projectionSimWindow.focus();
+      return { alreadyOpen: true };
+    }
+    createProjectionSimWindow();
+    return { alreadyOpen: false };
+  });
+
+  ipcMain.handle('projection_sim_window_closing', () => {
+    if (projectionSimWindow && !projectionSimWindow.isDestroyed()) {
+      projectionSimWindow.close();
+    }
+  });
+
+  ipcMain.handle('projection_sim_set_fullscreen', (_, { fullScreen } = {}) => {
+    if (!projectionSimWindow || projectionSimWindow.isDestroyed()) {
+      return { ok: false, fullScreen: false, error: 'Projection Simulator window is not open' };
+    }
+    const next = !!fullScreen;
+    projectionSimWindow.setFullScreen(next);
+    publishProjectionSimFullscreenState(next);
+    return { ok: true, fullScreen: next };
+  });
+
+  ipcMain.handle('projection_sim_get_fullscreen', () => ({
+    ok: !!(projectionSimWindow && !projectionSimWindow.isDestroyed()),
+    fullScreen: !!(projectionSimWindow && !projectionSimWindow.isDestroyed() && projectionSimWindow.isFullScreen()),
+  }));
+
+  ipcMain.handle('projection_sim_is_open', () => projectionSimWindow !== null && !projectionSimWindow.isDestroyed());
+
   // ── Stage 3D state relay ──────────────────────────────────────────
   // BroadcastChannel between two Electron BrowserWindows is flaky on
   // some macOS configurations — Chromium's agent-cluster boundaries
@@ -2513,6 +2565,22 @@ function registerIpcHandlers() {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.show();
       mainWindow.focus();
+    }
+  });
+
+  ipcMain.handle('open_external_url', async (_, args) => {
+    const rawUrl = typeof args === 'string' ? args : args?.url;
+    try {
+      const url = new URL(rawUrl);
+      const isGhostArcade = url.hostname === 'ghostarcade.live' || url.hostname === 'www.ghostarcade.live';
+      const isReleaseRepo = url.hostname === 'github.com' && url.pathname.startsWith('/riskcapital/ghost-arcade-releases/');
+      if (url.protocol !== 'https:' || (!isGhostArcade && !isReleaseRepo)) {
+        throw new Error('URL is not allowed');
+      }
+      await shell.openExternal(url.toString());
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error?.message || String(error) };
     }
   });
 
@@ -3681,6 +3749,53 @@ function createStage3DWindow() {
   });
   stage3dWindow.on('enter-full-screen', () => publishStage3DFullscreenState(true));
   stage3dWindow.on('leave-full-screen', () => publishStage3DFullscreenState(false));
+}
+
+function createProjectionSimWindow() {
+  const winW = 1400;
+  const winH = 900;
+
+  const allDisplays = screen.getAllDisplays();
+  const primary = screen.getPrimaryDisplay();
+  const target = allDisplays.find(d => d.id !== primary.id) || primary;
+  const winX = Math.round(target.bounds.x + (target.bounds.width - winW) / 2);
+  const winY = Math.round(target.bounds.y + (target.bounds.height - winH) / 2);
+
+  projectionSimWindow = new BrowserWindow({
+    width: winW,
+    height: winH,
+    x: winX,
+    y: winY,
+    title: 'Ghost Arcade — Projection Simulator',
+    resizable: true,
+    frame: true,
+    autoHideMenuBar: true,
+    backgroundColor: '#05070b',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      webgl: true,
+      backgroundThrottling: false,
+    },
+  });
+  projectionSimWindow.setMenuBarVisibility(false);
+
+  const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
+  const isDev = !app.isPackaged;
+  if (isDev) {
+    projectionSimWindow.loadURL(`${devUrl}?mode=projection-sim`);
+  } else {
+    projectionSimWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), {
+      search: 'mode=projection-sim',
+    });
+  }
+
+  projectionSimWindow.on('closed', () => {
+    projectionSimWindow = null;
+  });
+  projectionSimWindow.on('enter-full-screen', () => publishProjectionSimFullscreenState(true));
+  projectionSimWindow.on('leave-full-screen', () => publishProjectionSimFullscreenState(false));
 }
 
 function createOutputWindow(width, height, x, y, fullscreen = false, displayId = null, experimentalWebRTC = false, experimentalZeroCopy = false) {

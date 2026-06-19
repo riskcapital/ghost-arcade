@@ -28,6 +28,7 @@
   import { updateModalOpen } from '../stores/uiState';
   import { project } from '../stores/layers';
   import { checkForUpdate, getCachedVersionResult, type VersionCheckResult } from '../utils/versionCheck';
+  import { openExternalUrl } from '../bridge';
 
   // Version-check state for the Settings → Updates section.
   // Reads cached result on mount so the row shows last-known state
@@ -607,9 +608,7 @@
 
       <div class="settings-content">
         <!-- Update Available Banner — single button opens the UpdateModal,
-             which handles release notes, download progress, and auto-launch
-             of the installer. Replaces the old banner that opened blank
-             child windows for each platform-specific download link. -->
+             which shows release notes and links to the public download page. -->
         {#if $updateInfo.available}
           <div class="update-banner">
             <div class="update-banner-content">
@@ -790,7 +789,7 @@
                 {#if versionInfo?.error}
                   Last check failed: {versionInfo.error}.
                 {:else if versionInfo?.hasUpdate && versionInfo.latest}
-                  <strong style="color: #BB86FC;">{versionInfo.latest}</strong> is available — open the link to download.
+                  <strong style="color: #BB86FC;">{versionInfo.latest}</strong> is available — open the download page to install it.
                 {:else if versionInfo?.latest && !versionInfo.hasUpdate}
                   You're on the latest release.
                 {:else}
@@ -800,7 +799,14 @@
             </div>
             <div style="display: flex; gap: 8px; align-items: center;">
               {#if versionInfo?.hasUpdate && versionInfo.releaseUrl}
-                <a class="btn-update-link" href={versionInfo.releaseUrl} target="_blank" rel="noopener noreferrer">Open release</a>
+                <a
+                  class="btn-update-link"
+                  href={versionInfo.releaseUrl}
+                  onclick={(event) => {
+                    event.preventDefault();
+                    openExternalUrl(versionInfo?.releaseUrl || '');
+                  }}
+                >Download page</a>
               {/if}
               <button
                 class="btn-check-update"

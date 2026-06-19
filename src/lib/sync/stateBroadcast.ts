@@ -208,6 +208,19 @@ function isStage3DWindow(): boolean {
   }
 }
 
+function isProjectionSimWindow(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return new URLSearchParams(window.location.search).get('mode') === 'projection-sim';
+  } catch {
+    return false;
+  }
+}
+
+function isExternalPreviewWindow(): boolean {
+  return isStage3DWindow() || isProjectionSimWindow();
+}
+
 // ============================================================
 // Message Types
 // ============================================================
@@ -628,18 +641,27 @@ function initSender() {
 function startStage3DRelayActivePolling() {
   if (!isDesktopApp || mode !== 'sender' || stage3dRelayActivePollTimer) return;
   const check = async () => {
+    let open = false;
     try {
-      const open = await invoke<boolean>('stage3d_is_open');
-      if (open && !stage3dRelayActive) {
-        stage3dRelayActive = true;
-        publishStage3DRelayFullState();
-        publishStage3DRelayLiveState();
-        publishStage3DRelaySceneState();
-        publishStage3DRelaySettingsState();
-      } else if (!open) {
-        stage3dRelayActive = false;
-      }
+      open = !!(await invoke<boolean>('stage3d_is_open'));
     } catch {
+      open = false;
+    }
+    if (!open) {
+      try {
+        open = !!(await invoke<boolean>('projection_sim_is_open'));
+      } catch {
+        open = false;
+      }
+    }
+
+    if (open && !stage3dRelayActive) {
+      stage3dRelayActive = true;
+      publishStage3DRelayFullState();
+      publishStage3DRelayLiveState();
+      publishStage3DRelaySceneState();
+      publishStage3DRelaySettingsState();
+    } else if (!open) {
       stage3dRelayActive = false;
     }
   };
@@ -913,7 +935,7 @@ function initReceiver() {
     timestamp: Date.now(),
   } satisfies StateMessage);
 
-  if (isStage3DWindow()) {
+  if (isExternalPreviewWindow()) {
     startStage3DRelayPolling();
   }
 
@@ -921,7 +943,7 @@ function initReceiver() {
 }
 
 async function pollStage3DRelayState() {
-  if (!isDesktopApp || mode !== 'receiver' || !isStage3DWindow() || stage3dRelayPollInFlight) return;
+  if (!isDesktopApp || mode !== 'receiver' || !isExternalPreviewWindow() || stage3dRelayPollInFlight) return;
   stage3dRelayPollInFlight = true;
   try {
     const result = await invoke<{

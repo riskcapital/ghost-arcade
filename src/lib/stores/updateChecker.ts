@@ -4,6 +4,7 @@
  */
 
 import { writable } from 'svelte/store';
+import { CHANGELOG_PAGE_URL, DOWNLOAD_PAGE_URL, releaseNotesForVersion } from '../releaseNotes';
 
 const RELEASES_API = 'https://api.github.com/repos/riskcapital/ghost-arcade-releases/releases/latest';
 const CURRENT_VERSION = __APP_VERSION__;
@@ -15,6 +16,10 @@ export interface UpdateInfo {
   latestVersion: string;
   releaseUrl: string;
   releaseNotes: string;
+  releaseTitle: string;
+  releaseHighlights: string[];
+  downloadPageUrl: string;
+  changelogUrl: string;
   downloadUrls: {
     windows?: string;
     macArm?: string;
@@ -28,6 +33,10 @@ export const updateInfo = writable<UpdateInfo>({
   latestVersion: CURRENT_VERSION,
   releaseUrl: '',
   releaseNotes: '',
+  releaseTitle: '',
+  releaseHighlights: [],
+  downloadPageUrl: DOWNLOAD_PAGE_URL,
+  changelogUrl: CHANGELOG_PAGE_URL,
   downloadUrls: {},
 });
 
@@ -65,24 +74,19 @@ export async function checkForUpdates(): Promise<void> {
     // latest pointer (e.g. a re-tagged older release).
     const isNewer = compareVersions(latestVersion, CURRENT_VERSION) > 0;
 
-    // Extract download URLs from assets
-    const assets = data.assets || [];
-    const downloadUrls: UpdateInfo['downloadUrls'] = {};
-    for (const asset of assets) {
-      const name = (asset.name || '').toLowerCase();
-      if (name.endsWith('.exe')) downloadUrls.windows = asset.browser_download_url;
-      else if (name.includes('arm64') && name.endsWith('.dmg')) downloadUrls.macArm = asset.browser_download_url;
-      else if (name.includes('x64') && name.endsWith('.dmg')) downloadUrls.macIntel = asset.browser_download_url;
-      else if (name.endsWith('.dmg') && !downloadUrls.macArm) downloadUrls.macArm = asset.browser_download_url;
-    }
+    const notes = releaseNotesForVersion(latestVersion, data.body || '');
 
     updateInfo.set({
       available: isNewer,
       currentVersion: CURRENT_VERSION,
       latestVersion,
-      releaseUrl: data.html_url || '',
-      releaseNotes: data.body || '',
-      downloadUrls,
+      releaseUrl: DOWNLOAD_PAGE_URL,
+      releaseNotes: notes.highlights.join('\n'),
+      releaseTitle: notes.title,
+      releaseHighlights: notes.highlights,
+      downloadPageUrl: DOWNLOAD_PAGE_URL,
+      changelogUrl: CHANGELOG_PAGE_URL,
+      downloadUrls: {},
     });
 
     if (isNewer) {
