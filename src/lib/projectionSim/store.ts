@@ -90,18 +90,19 @@ function createProjectionSimStore() {
 
     loadScene(scene: ProjectionSimScene) {
       setScene(normalizeScene(clone(scene)));
+      setProjectionSimSelection(null);
     },
 
     newScene() {
       setScene(createProjectionSimScene());
-      selectedProjectionSimTarget.set(null);
+      setProjectionSimSelection(null);
     },
 
     loadPreset(id: string) {
       const preset = buildProjectionSimPreset(id);
       if (!preset) return false;
       setScene(preset);
-      selectedProjectionSimTarget.set(null);
+      setProjectionSimSelection(null);
       return true;
     },
 
@@ -120,7 +121,7 @@ function createProjectionSimStore() {
         persist(next);
         return next;
       });
-      selectedProjectionSimTarget.set(`object:${obj.id}`);
+      setProjectionSimSelection(`object:${obj.id}`);
       return obj;
     },
 
@@ -130,7 +131,7 @@ function createProjectionSimStore() {
         persist(next);
         return next;
       });
-      selectedProjectionSimTarget.set(`object:${object.id}`);
+      setProjectionSimSelection(`object:${object.id}`);
     },
 
     setObjects(objects: ProjectionSimObject[]) {
@@ -178,7 +179,7 @@ function createProjectionSimStore() {
         persist(next, true);
         return next;
       });
-      if (removed && get(selectedProjectionSimTarget) === `object:${id}`) selectedProjectionSimTarget.set(null);
+      if (removed) removeProjectionSimTargetFromSelection(`object:${id}`);
     },
 
     addProjector() {
@@ -189,7 +190,7 @@ function createProjectionSimStore() {
         persist(next);
         return next;
       });
-      selectedProjectionSimTarget.set(`projector:${projector.id}`);
+      setProjectionSimSelection(`projector:${projector.id}`);
       return projector;
     },
 
@@ -199,7 +200,7 @@ function createProjectionSimStore() {
         persist(next);
         return next;
       });
-      selectedProjectionSimTarget.set(`projector:${projector.id}`);
+      setProjectionSimSelection(`projector:${projector.id}`);
     },
 
     setProjectors(projectors: ProjectionSimProjector[]) {
@@ -208,7 +209,7 @@ function createProjectionSimStore() {
         persist(next);
         return next;
       });
-      selectedProjectionSimTarget.set(projectors[0] ? `projector:${projectors[0].id}` : null);
+      setProjectionSimSelection(projectors[0] ? `projector:${projectors[0].id}` : null);
     },
 
     updateProjector(id: string, patch: Partial<ProjectionSimProjector>) {
@@ -248,7 +249,7 @@ function createProjectionSimStore() {
         persist(next, true);
         return next;
       });
-      if (removed && get(selectedProjectionSimTarget) === `projector:${id}`) selectedProjectionSimTarget.set(null);
+      if (removed) removeProjectionSimTargetFromSelection(`projector:${id}`);
     },
 
     setEnvironment(patch: Partial<ProjectionSimScene['environment']>) {
@@ -289,7 +290,7 @@ function createProjectionSimStore() {
         const data = JSON.parse(text);
         if (data?.schemaVersion === 1 && Array.isArray(data.objects) && Array.isArray(data.projectors)) {
           setScene(normalizeScene(data as ProjectionSimScene));
-          selectedProjectionSimTarget.set(null);
+          setProjectionSimSelection(null);
           return true;
         }
       } catch { /* invalid */ }
@@ -300,4 +301,40 @@ function createProjectionSimStore() {
 
 export const projectionSimScene = createProjectionSimStore();
 export const selectedProjectionSimTarget = writable<ProjectionSimSelection>(null);
+export const selectedProjectionSimTargets = writable<Set<NonNullable<ProjectionSimSelection>>>(new Set());
 export const projectionSimGizmoMode = writable<ProjectionSimGizmoMode>('translate');
+
+export function setProjectionSimSelection(target: ProjectionSimSelection): void {
+  selectedProjectionSimTarget.set(target);
+  selectedProjectionSimTargets.set(target ? new Set([target]) : new Set());
+}
+
+export function toggleProjectionSimSelection(target: NonNullable<ProjectionSimSelection>): void {
+  const current = new Set(get(selectedProjectionSimTargets));
+  if (current.has(target)) {
+    current.delete(target);
+    if (get(selectedProjectionSimTarget) === target) {
+      const remaining = [...current];
+      selectedProjectionSimTarget.set(remaining[remaining.length - 1] ?? null);
+    }
+  } else {
+    current.add(target);
+    selectedProjectionSimTarget.set(target);
+  }
+  selectedProjectionSimTargets.set(current);
+}
+
+export function setProjectionSimMultiSelection(targets: NonNullable<ProjectionSimSelection>[]): void {
+  selectedProjectionSimTargets.set(new Set(targets));
+  selectedProjectionSimTarget.set(targets[targets.length - 1] ?? null);
+}
+
+export function removeProjectionSimTargetFromSelection(target: NonNullable<ProjectionSimSelection>): void {
+  const current = new Set(get(selectedProjectionSimTargets));
+  current.delete(target);
+  selectedProjectionSimTargets.set(current);
+  if (get(selectedProjectionSimTarget) === target) {
+    const remaining = [...current];
+    selectedProjectionSimTarget.set(remaining[remaining.length - 1] ?? null);
+  }
+}

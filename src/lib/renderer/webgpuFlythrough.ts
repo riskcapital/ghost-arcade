@@ -813,14 +813,17 @@ export class WebGPUFlythrough {
   /** Encode the per-frame compute + render passes into the supplied
    *  encoder. The host (WebGPUCanvas) owns the encoder + the final
    *  queue.submit so we composite cleanly with other render passes. */
-  encodeFrame(encoder: any, targetView: any): void {
+  encodeFrame(encoder: any, targetView: any, time?: number, frameDt?: number): void {
     if (!this.computePipeline || !this.renderPipelinePoints) return;
 
-    const now = performance.now() / 1000;
-    let dt = this.prevFrameTime === 0 ? 1 / 60 : (now - this.prevFrameTime);
+    const wallNow = performance.now() / 1000;
+    const now = typeof time === 'number' && Number.isFinite(time) ? Math.max(0, time) : wallNow;
+    let dt = typeof frameDt === 'number' && Number.isFinite(frameDt)
+      ? frameDt
+      : (this.prevFrameTime === 0 ? 1 / 60 : (now - this.prevFrameTime));
     // Clamp dt so a tab-switch or stall doesn't catapult particles
     // halfway across the universe.
-    dt = Math.min(Math.max(dt, 0.001), 1 / 15);
+    dt = Math.min(Math.max(dt, 0), 1 / 15);
     this.prevFrameTime = now;
     this.flyDistance += this.params.flySpeed * dt;
 

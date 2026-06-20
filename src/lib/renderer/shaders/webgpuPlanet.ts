@@ -1233,14 +1233,15 @@ export class WebGPUPlanet implements GpuShaderImpl {
     return pipeline;
   }
 
-  encodeFrame(encoder: any, targetView: any, targetFormat: any, width: number, height: number, dt: number): void {
-    // Advance internal state from real elapsed time.
+  encodeFrame(encoder: any, targetView: any, targetFormat: any, width: number, height: number, dt: number, time?: number): void {
     const now = performance.now();
-    const wallDt = Math.min(0.1, (now - this.lastFrameTime) / 1000);
     this.lastFrameTime = now;
-    this.accumRotation = (this.accumRotation + (this.params.rotationSpeed ?? 0) * wallDt) % 360;
-    this.cloudPhase += (this.params.cloudSpeed ?? 0) * wallDt;
-    const totalTime = (now - this.startTime) / 1000;
+    const frameDt = Math.max(0, Math.min(0.1, dt));
+    this.accumRotation = (this.accumRotation + (this.params.rotationSpeed ?? 0) * frameDt) % 360;
+    this.cloudPhase += (this.params.cloudSpeed ?? 0) * frameDt;
+    const totalTime = typeof time === 'number' && Number.isFinite(time)
+      ? Math.max(0, time)
+      : (now - this.startTime) / 1000;
 
     const planetId = PLANET_IDS[String(this.params.planet ?? 'earth')] ?? 0;
 

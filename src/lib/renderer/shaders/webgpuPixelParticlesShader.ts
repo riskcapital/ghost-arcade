@@ -245,7 +245,7 @@ export class WebGPUPixelParticlesShader implements GpuShaderImpl {
     this.inner.updateSourceFromBytes(data, w, h);
   }
 
-  encodeFrame(encoder: any, targetView: any, targetFormat: any, width: number, height: number, _dt: number): void {
+  encodeFrame(encoder: any, targetView: any, targetFormat: any, width: number, height: number, dt: number, time?: number): void {
     // Match the canvas size + target format. The inner class's
     // encodeFrame only takes (encoder, view) so we stash the
     // viewport via setViewport before encoding.
@@ -264,7 +264,7 @@ export class WebGPUPixelParticlesShader implements GpuShaderImpl {
     clearPass.end();
     // Now run the inner pipeline; it loads the cleared target and
     // composites particles + trails + tubes additively.
-    this.inner.encodeFrame(encoder, targetView);
+    this.inner.encodeFrame(encoder, targetView, time, dt);
   }
 
   resize(_w: number, _h: number): void {

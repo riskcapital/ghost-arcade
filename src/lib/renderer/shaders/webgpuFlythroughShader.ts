@@ -208,7 +208,8 @@ export class WebGPUFlythroughShader implements GpuShaderImpl {
     _targetFormat: any,
     width: number,
     height: number,
-    _dt: number,
+    dt: number,
+    time?: number,
   ): void {
     this.inner.setViewport(width, height);
     // Clear the layer canvas first — the inner renderer's pass uses
@@ -224,7 +225,7 @@ export class WebGPUFlythroughShader implements GpuShaderImpl {
       }],
     });
     clearPass.end();
-    this.inner.encodeFrame(encoder, targetView);
+    this.inner.encodeFrame(encoder, targetView, time, dt);
   }
 
   resize(_w: number, _h: number): void {

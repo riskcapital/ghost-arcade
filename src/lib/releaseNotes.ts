@@ -9,11 +9,11 @@ export interface AppReleaseNotes {
 
 const RELEASE_NOTES: Record<string, AppReleaseNotes> = {
   '1.9.6': {
-    title: 'Map Sim polish, sequencer fixes, and source point clouds',
+    title: 'Map Sim polish, sequencer fixes, source point clouds, and frame export',
     summary: [
       'Map Sim and Stage Sim now behave more cleanly across presets and sessions.',
       'VJ sequencer cells update live, with slower crossfade and step timing options.',
-      'Photo/video point-cloud shaders can pull depth while preserving source color.',
+      'Photo/video point-cloud shaders and offline frame exports render more predictably.',
     ],
     highlights: [
       'Map Sim and Stage Sim now keep unsaved edits scoped to the active scene, ask whether to keep added elements when switching presets, and stop carrying unsaved objects into the next app launch.',
@@ -22,6 +22,7 @@ const RELEASE_NOTES: Record<string, AppReleaseNotes> = {
       'VJ Layer Sequencer fixes live cell updates so clicks show immediately, adds slower crossfade timing, and expands movement intervals beyond 1/4 steps.',
       'VJ layers and group layers can now choose the full VJ Mix as an output source when that is the cleanest routing path.',
       'GPU Shader photo/video point-cloud effects now derive depth from the source image, preserve source colors, and add smoother particle motion controls for animated depth-cloud looks.',
+      'Render to Video adds a JPEG frame-sequence output path and fixes GPU Shader offline timing so exported frames advance one virtual frame at a time, including slow-motion workflows compiled at a lower FPS.',
     ],
   },
   '1.9.5': {

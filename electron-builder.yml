@@ -41,6 +41,7 @@ extraResources:
 
 asarUnpack:
   - "electron/native/**/*.node"
+  - "node_modules/ffmpeg-static/**/*"
 
 # ─── File Associations ─────────────────────────────────────────────────────
 fileAssociations:

@@ -439,7 +439,7 @@ export class WebGPUParticleFieldShader implements GpuShaderImpl {
     }
   }
 
-  encodeFrame(encoder: any, targetView: any, _format: any, w: number, h: number, _dt: number): void {
+  encodeFrame(encoder: any, targetView: any, _format: any, w: number, h: number, dt: number, time?: number): void {
     this.inner.setViewport(w, h);
     // Clear our layer canvas — additive blend in the inner pipelines
     // accumulates onto whatever's there, but we want a fresh frame.
@@ -452,7 +452,7 @@ export class WebGPUParticleFieldShader implements GpuShaderImpl {
       }],
     });
     clearPass.end();
-    this.inner.encodeFrame(encoder, targetView);
+    this.inner.encodeFrame(encoder, targetView, time, dt);
   }
 
   resize(_w: number, _h: number): void { /* no-op */ }

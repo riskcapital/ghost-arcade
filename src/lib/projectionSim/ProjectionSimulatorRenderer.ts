@@ -54,6 +54,21 @@ interface LoadedModelData {
   animations: THREE.AnimationClip[];
 }
 
+interface MultiTransformItem {
+  target: NonNullable<ProjectionSimSelection>;
+  position: THREE.Vector3;
+  quaternion: THREE.Quaternion;
+  scale: THREE.Vector3;
+  projectorTarget?: THREE.Vector3;
+}
+
+interface MultiTransformSnapshot {
+  matrixInverse: THREE.Matrix4;
+  quaternionInverse: THREE.Quaternion;
+  scale: THREE.Vector3;
+  items: MultiTransformItem[];
+}
+
 function vec3(v: [number, number, number]): THREE.Vector3 {
   return new THREE.Vector3(v[0], v[1], v[2]);
 }
@@ -299,6 +314,8 @@ export class ProjectionSimulatorRenderer {
   private grid: THREE.GridHelper | null = null;
   private roomHemi = new THREE.HemisphereLight('#f4efe4', '#10131a', 0.32);
   private selectionOutline = new THREE.BoxHelper(new THREE.Object3D(), '#ff725f');
+  private multiTransformGroup = new THREE.Group();
+  private multiSelectionBox = new THREE.Box3Helper(new THREE.Box3(), '#ff725f');
   private transformHelper: THREE.Object3D;
   private depthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
   private depthTargets: THREE.WebGLRenderTarget[] = [];
@@ -323,7 +340,9 @@ export class ProjectionSimulatorRenderer {
   private uniformDepths: Array<THREE.Texture | null> = new Array(MAX_PROJECTORS).fill(null);
   private projectorShadowStrength = 1;
   private selected: ProjectionSimSelection = null;
-  private attachedSelection: ProjectionSimSelection = null;
+  private selectedTargets: NonNullable<ProjectionSimSelection>[] = [];
+  private attachedSelection: ProjectionSimSelection | '__multi__' = null;
+  private multiTransformStart: MultiTransformSnapshot | null = null;
   private currentGizmoMode: ProjectionSimGizmoMode = 'translate';
   private currentScene: ProjectionSimScene | null = null;
   private modelCache = new Map<string, Promise<LoadedModelData>>();
@@ -334,13 +353,14 @@ export class ProjectionSimulatorRenderer {
   private transformDragging = false;
   private pointerDown: { x: number; y: number } | null = null;
   private raf = 0;
-  private onSelect: (target: ProjectionSimSelection) => void;
+  private recordingMode = false;
+  private onSelect: (target: ProjectionSimSelection, event?: PointerEvent) => void;
   private onTransform: (target: ProjectionSimSelection, patch: ProjectionSimTransformPatch) => void;
 
   constructor(
     private canvas: HTMLCanvasElement,
     opts: {
-      onSelect: (target: ProjectionSimSelection) => void;
+      onSelect: (target: ProjectionSimSelection, event?: PointerEvent) => void;
       onTransform: (target: ProjectionSimSelection, patch: ProjectionSimTransformPatch) => void;
     },
   ) {
@@ -367,6 +387,12 @@ export class ProjectionSimulatorRenderer {
     this.transformControls.addEventListener('dragging-changed', (event: any) => {
       this.transformDragging = !!event.value;
       this.controls.enabled = !event.value;
+      if (event.value && this.attachedSelection === '__multi__') {
+        this.multiTransformStart = this.captureMultiTransformStart();
+      } else if (!event.value && this.attachedSelection === '__multi__') {
+        this.multiTransformStart = null;
+        this.updateMultiTransformGroup();
+      }
     });
     this.transformControls.addEventListener('objectChange', () => this.publishTransform());
     this.transformHelper = (this.transformControls as any).getHelper?.() ?? (this.transformControls as any);
@@ -374,10 +400,16 @@ export class ProjectionSimulatorRenderer {
 
     this.scene.add(this.root);
     this.scene.add(this.projectorRoot);
+    this.multiTransformGroup.userData.projectionSimPickable = false;
+    this.multiTransformGroup.visible = false;
+    this.scene.add(this.multiTransformGroup);
     this.scene.add(this.roomHemi);
     this.selectionOutline.visible = false;
     this.selectionOutline.userData.projectionSimPickable = false;
     this.scene.add(this.selectionOutline);
+    this.multiSelectionBox.visible = false;
+    this.multiSelectionBox.userData.projectionSimPickable = false;
+    this.scene.add(this.multiSelectionBox);
 
     this.whiteDepthTexture = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, THREE.RGBAFormat);
     this.whiteDepthTexture.needsUpdate = true;
@@ -400,6 +432,8 @@ export class ProjectionSimulatorRenderer {
     this.depthMaterial.dispose();
     this.selectionOutline.geometry.dispose();
     (this.selectionOutline.material as THREE.Material).dispose();
+    this.multiSelectionBox.geometry.dispose();
+    (this.multiSelectionBox.material as THREE.Material).dispose();
     for (const target of this.depthTargets) target.dispose();
     this.whiteDepthTexture.dispose();
     this.renderer.dispose();
@@ -416,26 +450,60 @@ export class ProjectionSimulatorRenderer {
 
   setSelection(target: ProjectionSimSelection): void {
     this.selected = target;
+    if (target && !this.selectedTargets.includes(target)) this.selectedTargets = [target];
+    if (!target) this.selectedTargets = [];
+    this.refreshSelectionAttachment();
+  }
+
+  setSelections(targets: ProjectionSimSelection[]): void {
+    const next = [...new Set(targets.filter(Boolean) as NonNullable<ProjectionSimSelection>[])];
+    this.selectedTargets = next;
+    if (this.selected && !next.includes(this.selected)) this.selected = next[next.length - 1] ?? null;
+    if (!this.selected && next.length) this.selected = next[next.length - 1];
     this.refreshSelectionAttachment();
   }
 
   private refreshSelectionAttachment(): void {
-    if (!this.selected) {
-      this.transformControls.detach();
-      this.attachedSelection = null;
+    const transformableTargets = this.getTransformableSelectedTargets();
+    if (transformableTargets.length > 1) {
+      this.updateMultiTransformGroup(transformableTargets);
+      if (this.attachedSelection !== '__multi__') {
+        this.transformControls.attach(this.multiTransformGroup);
+        this.attachedSelection = '__multi__';
+      }
       return;
     }
 
-    const obj = this.selectable.get(this.selected);
-    if (!obj || !obj.visible || this.isTargetLocked(this.selected)) {
+    if (!this.selected || !transformableTargets.length) {
       this.transformControls.detach();
       this.attachedSelection = null;
+      this.multiTransformGroup.visible = false;
       return;
     }
 
-    if (this.attachedSelection === this.selected) return;
+    const singleTarget = transformableTargets[0];
+    const obj = this.selectable.get(singleTarget);
+    if (!obj || !obj.visible || this.isTargetLocked(singleTarget)) {
+      this.transformControls.detach();
+      this.attachedSelection = null;
+      this.multiTransformGroup.visible = false;
+      return;
+    }
+
+    this.multiTransformGroup.visible = false;
+    if (this.attachedSelection === singleTarget) return;
     this.transformControls.attach(obj);
-    this.attachedSelection = this.selected;
+    this.attachedSelection = singleTarget;
+  }
+
+  private getTransformableSelectedTargets(): NonNullable<ProjectionSimSelection>[] {
+    const source = this.selectedTargets.length
+      ? this.selectedTargets
+      : (this.selected ? [this.selected] : []);
+    return source.filter((target) => {
+      const obj = this.selectable.get(target);
+      return Boolean(obj?.visible) && !this.isTargetLocked(target);
+    }) as NonNullable<ProjectionSimSelection>[];
   }
 
   private isTargetLocked(target: ProjectionSimSelection): boolean {
@@ -443,6 +511,64 @@ export class ProjectionSimulatorRenderer {
     const [kind, id] = target.split(':') as ['object' | 'projector', string];
     if (kind === 'object') return this.currentScene.objects.find((object) => object.id === id)?.locked ?? false;
     return this.currentScene.projectors.find((projector) => projector.id === id)?.locked ?? false;
+  }
+
+  private getSelectionBox(targets: NonNullable<ProjectionSimSelection>[]): THREE.Box3 | null {
+    const box = new THREE.Box3();
+    let hasBox = false;
+    for (const target of targets) {
+      const obj = this.selectable.get(target);
+      if (!obj || !obj.visible) continue;
+      obj.updateMatrixWorld(true);
+      box.expandByObject(obj);
+      hasBox = true;
+    }
+    return hasBox ? box : null;
+  }
+
+  private updateMultiTransformGroup(targets = this.getTransformableSelectedTargets()): void {
+    if (this.transformDragging) return;
+    const box = this.getSelectionBox(targets);
+    if (!box) {
+      this.multiTransformGroup.visible = false;
+      return;
+    }
+    const center = box.getCenter(new THREE.Vector3());
+    this.multiTransformGroup.position.copy(center);
+    this.multiTransformGroup.rotation.set(0, 0, 0);
+    this.multiTransformGroup.scale.set(1, 1, 1);
+    this.multiTransformGroup.visible = true;
+    this.multiTransformGroup.updateMatrixWorld(true);
+  }
+
+  private captureMultiTransformStart(): MultiTransformSnapshot | null {
+    const targets = this.getTransformableSelectedTargets();
+    if (targets.length <= 1) return null;
+    this.multiTransformGroup.updateMatrixWorld(true);
+    const items: MultiTransformItem[] = [];
+    for (const target of targets) {
+      const obj = this.selectable.get(target);
+      if (!obj) continue;
+      const item: MultiTransformItem = {
+        target,
+        position: obj.position.clone(),
+        quaternion: obj.quaternion.clone(),
+        scale: obj.scale.clone(),
+      };
+      if (target.startsWith('projector:')) {
+        const id = target.slice('projector:'.length);
+        const projector = this.currentScene?.projectors.find((p) => p.id === id);
+        item.projectorTarget = projector ? vec3(projector.target) : obj.position.clone().add(new THREE.Vector3(0, 0, -5).applyQuaternion(obj.quaternion));
+      }
+      items.push(item);
+    }
+    if (items.length <= 1) return null;
+    return {
+      matrixInverse: this.multiTransformGroup.matrixWorld.clone().invert(),
+      quaternionInverse: this.multiTransformGroup.quaternion.clone().invert(),
+      scale: this.multiTransformGroup.scale.clone(),
+      items,
+    };
   }
 
   frameCamera(): void {
@@ -460,8 +586,14 @@ export class ProjectionSimulatorRenderer {
   }
 
   beginRecording(width = 1920, height = 1080): HTMLCanvasElement {
+    this.recordingMode = true;
     this.resize(width, height, true);
     return this.canvas;
+  }
+
+  endRecording(): void {
+    this.recordingMode = false;
+    this.resize(undefined, undefined, true);
   }
 
   render(sceneState: ProjectionSimScene, sourceCanvas: HTMLCanvasElement | null, outputSlices: OutputSlice[]): void {
@@ -487,7 +619,31 @@ export class ProjectionSimulatorRenderer {
     this.updateShadowDirtyState(sceneState, depthHash);
 
     this.controls.update();
+    this.renderMainScene();
+  }
+
+  private renderMainScene(): void {
+    if (!this.recordingMode) {
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+
+    const hidden: THREE.Object3D[] = [];
+    const hide = (object: THREE.Object3D | null | undefined) => {
+      if (!object?.visible) return;
+      object.visible = false;
+      hidden.push(object);
+    };
+    hide(this.transformHelper);
+    hide(this.selectionOutline);
+    hide(this.multiSelectionBox);
+    this.projectorRoot.traverse((child) => {
+      if (child.userData.projectionSimBeam) hide(child);
+    });
+
     this.renderer.render(this.scene, this.camera);
+
+    for (const object of hidden) object.visible = true;
   }
 
   private resize(width?: number, height?: number, force = false): void {
@@ -827,6 +983,7 @@ export class ProjectionSimulatorRenderer {
     const group = new THREE.Group();
     group.name = 'Projection beam';
     group.userData.projectionSimPickable = false;
+    group.userData.projectionSimBeam = true;
 
     const distance = vec3(projector.position).distanceTo(vec3(projector.target));
     const far = Math.max(2.5, distance * 1.18);
@@ -889,6 +1046,7 @@ export class ProjectionSimulatorRenderer {
     group.add(volume);
     group.traverse((child) => {
       child.userData.projectionSimPickable = false;
+      child.userData.projectionSimBeam = true;
     });
     return group;
   }
@@ -913,13 +1071,40 @@ export class ProjectionSimulatorRenderer {
 
   private applyProjectorTransform(group: THREE.Object3D, projector: ProjectionSimProjector): void {
     group.visible = projector.enabled;
-    group.position.set(...projector.position);
-    const target = vec3(projector.target);
+    this.applyProjectorObjectTransform(group, vec3(projector.position), vec3(projector.target));
+  }
+
+  private applyProjectorObjectTransform(group: THREE.Object3D, position: THREE.Vector3, target: THREE.Vector3): void {
+    group.position.copy(position);
     LOOK_AT_MATRIX.lookAt(group.position, target, group.up);
     group.quaternion.setFromRotationMatrix(LOOK_AT_MATRIX);
   }
 
   private updateSelectionOutline(): void {
+    if (this.recordingMode) {
+      this.selectionOutline.visible = false;
+      this.multiSelectionBox.visible = false;
+      return;
+    }
+
+    const selectedVisibleTargets = (this.selectedTargets.length ? this.selectedTargets : (this.selected ? [this.selected] : []))
+      .filter((target): target is NonNullable<ProjectionSimSelection> => Boolean(target && this.selectable.get(target)?.visible));
+
+    if (selectedVisibleTargets.length > 1) {
+      const box = this.getSelectionBox(selectedVisibleTargets);
+      if (!box) {
+        this.multiSelectionBox.visible = false;
+        this.selectionOutline.visible = false;
+        return;
+      }
+      this.multiSelectionBox.box.copy(box);
+      this.multiSelectionBox.visible = true;
+      this.selectionOutline.visible = false;
+      return;
+    }
+
+    this.multiSelectionBox.visible = false;
+
     if (!this.selected?.startsWith('object:')) {
       this.selectionOutline.visible = false;
       return;
@@ -1018,6 +1203,7 @@ export class ProjectionSimulatorRenderer {
     const previousGridVisible = this.grid?.visible ?? true;
     const previousTransformVisible = this.transformHelper.visible;
     const previousSelectionOutlineVisible = this.selectionOutline.visible;
+    const previousMultiSelectionBoxVisible = this.multiSelectionBox.visible;
 
     this.scene.background = null;
     this.scene.overrideMaterial = this.depthMaterial;
@@ -1026,6 +1212,7 @@ export class ProjectionSimulatorRenderer {
     if (this.grid) this.grid.visible = false;
     this.transformHelper.visible = false;
     this.selectionOutline.visible = false;
+    this.multiSelectionBox.visible = false;
 
     for (let i = 0; i < this.projectors.length; i++) {
       const target = this.getDepthTarget(i);
@@ -1045,6 +1232,7 @@ export class ProjectionSimulatorRenderer {
     if (this.grid) this.grid.visible = previousGridVisible;
     this.transformHelper.visible = previousTransformVisible;
     this.selectionOutline.visible = previousSelectionOutlineVisible;
+    this.multiSelectionBox.visible = previousMultiSelectionBoxVisible;
   }
 
   private getDepthTarget(index: number): THREE.WebGLRenderTarget {
@@ -1192,6 +1380,10 @@ export class ProjectionSimulatorRenderer {
   }
 
   private publishTransform(): void {
+    if (this.attachedSelection === '__multi__') {
+      this.publishMultiTransform();
+      return;
+    }
     if (!this.selected) return;
     const obj = this.selectable.get(this.selected);
     if (!obj) return;
@@ -1213,6 +1405,50 @@ export class ProjectionSimulatorRenderer {
         position: arr3(obj.position),
         rotation: [round(obj.rotation.x), round(obj.rotation.y), round(obj.rotation.z)],
         scale: arr3(obj.scale),
+      });
+    }
+  }
+
+  private publishMultiTransform(): void {
+    const snapshot = this.multiTransformStart ?? this.captureMultiTransformStart();
+    if (!snapshot) return;
+    if (!this.multiTransformStart) this.multiTransformStart = snapshot;
+
+    this.multiTransformGroup.updateMatrixWorld(true);
+    const deltaMatrix = this.multiTransformGroup.matrixWorld.clone().multiply(snapshot.matrixInverse);
+    const deltaQuat = this.multiTransformGroup.quaternion.clone().multiply(snapshot.quaternionInverse);
+    const scaleRatio = new THREE.Vector3(
+      snapshot.scale.x !== 0 ? this.multiTransformGroup.scale.x / snapshot.scale.x : 1,
+      snapshot.scale.y !== 0 ? this.multiTransformGroup.scale.y / snapshot.scale.y : 1,
+      snapshot.scale.z !== 0 ? this.multiTransformGroup.scale.z / snapshot.scale.z : 1,
+    );
+
+    for (const item of snapshot.items) {
+      const obj = this.selectable.get(item.target);
+      if (!obj) continue;
+      const nextPosition = item.position.clone().applyMatrix4(deltaMatrix);
+      if (item.target.startsWith('projector:')) {
+        const baseTarget = item.projectorTarget?.clone()
+          ?? item.position.clone().add(new THREE.Vector3(0, 0, -5).applyQuaternion(item.quaternion));
+        const nextTarget = baseTarget.applyMatrix4(deltaMatrix);
+        this.applyProjectorObjectTransform(obj, nextPosition, nextTarget);
+        this.onTransform(item.target, {
+          position: arr3(nextPosition),
+          target: arr3(nextTarget),
+        });
+        continue;
+      }
+
+      const nextQuaternion = deltaQuat.clone().multiply(item.quaternion);
+      const nextScale = item.scale.clone().multiply(scaleRatio);
+      obj.position.copy(nextPosition);
+      obj.quaternion.copy(nextQuaternion);
+      obj.scale.copy(nextScale);
+      const euler = new THREE.Euler().setFromQuaternion(nextQuaternion, obj.rotation.order);
+      this.onTransform(item.target, {
+        position: arr3(nextPosition),
+        rotation: [round(euler.x), round(euler.y), round(euler.z)],
+        scale: arr3(nextScale),
       });
     }
   }
@@ -1239,13 +1475,20 @@ export class ProjectionSimulatorRenderer {
 
     const objectTarget = this.pickTarget('object');
     if (objectTarget) {
-      this.onSelect(objectTarget);
+      this.onSelect(objectTarget, event);
       return;
     }
 
     if (this.pickProjectors) {
       const projectorTarget = this.pickTarget('projector');
-      if (projectorTarget) this.onSelect(projectorTarget);
+      if (projectorTarget) {
+        this.onSelect(projectorTarget, event);
+        return;
+      }
+    }
+
+    if (!event.shiftKey && !event.metaKey && !event.ctrlKey) {
+      this.onSelect(null, event);
     }
   };
 

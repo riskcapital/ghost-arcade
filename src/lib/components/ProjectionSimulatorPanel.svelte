@@ -11,7 +11,10 @@
     isProjectionSimTargetLocked,
     projectionSimGizmoMode,
     projectionSimScene,
+    selectedProjectionSimTargets,
     selectedProjectionSimTarget,
+    setProjectionSimSelection,
+    toggleProjectionSimSelection,
   } from '../projectionSim/store';
   import {
     createProjectionSimScene,
@@ -62,9 +65,14 @@
   const BLANK_PRESET_ID = '__blank__';
 
   $: selectedTarget = $selectedProjectionSimTarget;
+  $: selectedTargets = $selectedProjectionSimTargets;
+  $: selectedTargetList = [...selectedTargets];
+  $: multiSelectionCount = selectedTargetList.length;
   $: selectedObject = findSelectedObject($projectionSimScene, selectedTarget);
   $: selectedProjector = findSelectedProjector($projectionSimScene, selectedTarget);
-  $: selectedLocked = isProjectionSimTargetLocked($projectionSimScene, selectedTarget);
+  $: selectedLocked = multiSelectionCount > 1
+    ? selectedTargetList.every((target) => isProjectionSimTargetLocked($projectionSimScene, target))
+    : isProjectionSimTargetLocked($projectionSimScene, selectedTarget);
   $: selectedPreset = PROJECTION_SIM_PRESETS.find((preset) => preset.id === selectedPresetId) ?? PROJECTION_SIM_PRESETS[0];
   $: canCopySceneItem = Boolean(selectedObject || selectedProjector);
   $: canPasteSceneItem = Boolean(sceneClipboard);
@@ -131,9 +139,26 @@
     return scene.projectors.find((projector) => projector.id === id) ?? null;
   }
 
-  function select(target: ProjectionSimSelection) {
-    selectedProjectionSimTarget.set(target);
-    renderer?.setSelection(target);
+  function select(target: ProjectionSimSelection, additive = false) {
+    if (target && additive) {
+      toggleProjectionSimSelection(target);
+    } else {
+      setProjectionSimSelection(target);
+    }
+    renderer?.setSelection(get(selectedProjectionSimTarget));
+    renderer?.setSelections([...get(selectedProjectionSimTargets)]);
+  }
+
+  function asSelectionTarget(target: string): NonNullable<ProjectionSimSelection> {
+    return target as NonNullable<ProjectionSimSelection>;
+  }
+
+  function isSelectedTarget(target: string): boolean {
+    return selectedTargets.has(asSelectionTarget(target));
+  }
+
+  function selectFromEvent(event: MouseEvent, target: string) {
+    select(asSelectionTarget(target), event.shiftKey || event.metaKey || event.ctrlKey);
   }
 
   function setGizmo(mode: typeof $projectionSimGizmoMode) {
@@ -195,12 +220,15 @@
   }
 
   function deleteSelected() {
-    const target = get(selectedProjectionSimTarget);
-    if (!target) return;
-    if (isProjectionSimTargetLocked(get(projectionSimScene), target)) return;
-    const [kind, id] = target.split(':') as ['object' | 'projector', string];
-    if (kind === 'object') projectionSimScene.removeObject(id);
-    else projectionSimScene.removeProjector(id);
+    const scene = get(projectionSimScene);
+    const targets = [...get(selectedProjectionSimTargets)];
+    if (!targets.length) return;
+    for (const target of targets) {
+      if (isProjectionSimTargetLocked(scene, target)) continue;
+      const [kind, id] = target.split(':') as ['object' | 'projector', string];
+      if (kind === 'object') projectionSimScene.removeObject(id);
+      else projectionSimScene.removeProjector(id);
+    }
   }
 
   function copySelectedSceneItem() {
@@ -265,7 +293,7 @@
       event.preventDefault();
       pasteSceneItem();
     } else if (event.key === 'Escape') {
-      selectedProjectionSimTarget.set(null);
+      setProjectionSimSelection(null);
     }
   }
 
@@ -461,28 +489,33 @@
 
   function startRecording() {
     if (recorderHandle || !canvas) return;
+    const recordCanvas = renderer?.beginRecording(1920, 1080) ?? canvas;
     recordingDuration = 0;
     recorderHandle = startCanvasRecording({
       namePrefix: 'Projection Simulator',
-      canvas,
+      canvas: recordCanvas,
       onDurationUpdate: (seconds) => { recordingDuration = seconds; },
       onComplete: () => {
         isRecording = false;
         recorderHandle = null;
+        renderer?.endRecording();
       },
       onError: (err) => {
         isRecording = false;
         recorderHandle = null;
+        renderer?.endRecording();
         alert(err.message || 'Projection simulator recording failed');
       },
     });
     isRecording = !!recorderHandle;
+    if (!isRecording) renderer?.endRecording();
   }
 
   function stopRecording() {
     recorderHandle?.stop();
     recorderHandle = null;
     isRecording = false;
+    renderer?.endRecording();
   }
 
   function tick() {
@@ -492,12 +525,13 @@
 
   onMount(() => {
     renderer = new ProjectionSimulatorRenderer(canvas, {
-      onSelect: select,
+      onSelect: (target, event) => select(target, !!(event?.shiftKey || event?.metaKey || event?.ctrlKey)),
       onTransform: handleTransform,
     });
     renderer.setGizmoMode($projectionSimGizmoMode);
     renderer.setPickProjectors(editProjectors);
     renderer.setSelection($selectedProjectionSimTarget);
+    renderer.setSelections([...$selectedProjectionSimTargets]);
     raf = requestAnimationFrame(tick);
 
     if (nativeWindowMode && isDesktopApp) {
@@ -521,6 +555,7 @@
     removeNativeFullscreenListener = null;
     recorderHandle?.stop();
     recorderHandle = null;
+    renderer?.endRecording();
     renderer?.dispose();
     renderer = null;
   });
@@ -528,6 +563,7 @@
   $: renderer?.setGizmoMode($projectionSimGizmoMode);
   $: renderer?.setPickProjectors(editProjectors);
   $: renderer?.setSelection($selectedProjectionSimTarget);
+  $: renderer?.setSelections([...$selectedProjectionSimTargets]);
 </script>
 
 <div class="projection-sim-root" bind:this={rootEl}>
@@ -563,7 +599,7 @@
       <button class="tbtn" class:on={editProjectors} onclick={() => editProjectors = !editProjectors}>Edit Projectors</button>
       <button class="tbtn" disabled={!canCopySceneItem} onclick={copySelectedSceneItem}>Copy</button>
       <button class="tbtn" disabled={!canPasteSceneItem} onclick={pasteSceneItem}>Paste</button>
-      <button class="tbtn danger-mini" disabled={!$selectedProjectionSimTarget || selectedLocked} onclick={deleteSelected}>Delete</button>
+      <button class="tbtn danger-mini" disabled={!multiSelectionCount || selectedLocked} onclick={deleteSelected}>Delete</button>
       <button class="tbtn" onclick={syncProjectorsFromSlices}>Sync Slices</button>
       <button class="tbtn" onclick={toggleFullscreen}>Full Screen</button>
       <button class="tbtn" onclick={saveDesign}>Save</button>
@@ -677,8 +713,9 @@
         <h3>Objects</h3>
         <div class="tree">
           {#each $projectionSimScene.objects as object}
-            <div class="tree-item" class:selected={$selectedProjectionSimTarget === `object:${object.id}`}>
-              <button class="tree-row" onclick={() => select(`object:${object.id}`)}>
+            {@const key = `object:${object.id}`}
+            <div class="tree-item" class:selected={isSelectedTarget(key)} class:primary={$selectedProjectionSimTarget === key}>
+              <button class="tree-row" onclick={(event) => selectFromEvent(event, key)} title="Shift+click to add/remove from selection">
                 <span>{object.type === 'pointcloud' ? 'PLY' : object.primitive ?? 'model'}</span>
                 <b>{object.name}</b>
               </button>
@@ -699,8 +736,9 @@
         <h3>Projectors</h3>
         <div class="tree">
           {#each $projectionSimScene.projectors as projector}
-            <div class="tree-item" class:selected={$selectedProjectionSimTarget === `projector:${projector.id}`}>
-              <button class="tree-row projector" onclick={() => select(`projector:${projector.id}`)}>
+            {@const key = `projector:${projector.id}`}
+            <div class="tree-item" class:selected={isSelectedTarget(key)} class:primary={$selectedProjectionSimTarget === key}>
+              <button class="tree-row projector" onclick={(event) => selectFromEvent(event, key)} title="Shift+click to add/remove from selection">
                 <span>{projector.source}</span>
                 <b>{projector.name}</b>
               </button>
@@ -719,7 +757,13 @@
     </aside>
 
     <aside class="sim-right">
-      {#if selectedObject}
+      {#if multiSelectionCount > 1}
+        <section>
+          <h3>{multiSelectionCount} items selected</h3>
+          <p class="empty">Use Move, Rotate, or Scale to transform the selected items together. Locked items stay protected.</p>
+          <button class="danger wide-btn" disabled={selectedLocked} onclick={deleteSelected}>Delete Selection</button>
+        </section>
+      {:else if selectedObject}
         <section>
           <h3>{selectedObject.name}</h3>
           <label class="field">
@@ -1061,6 +1105,9 @@
   .tree-item.selected .tree-row {
     background: rgba(255,114,95,0.16);
     border-color: rgba(255,114,95,0.5);
+  }
+  .tree-item.primary .tree-row {
+    box-shadow: inset 3px 0 0 #ff725f;
   }
   .tree-delete {
     min-height: 40px;
