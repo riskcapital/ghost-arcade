@@ -17,12 +17,20 @@
   // Settings start at defaults, but seed width/height from the current
   // project so users land on a sensible matching resolution.
   let settings: OfflineRenderSettings = { ...DEFAULT_OFFLINE_SETTINGS };
-  $: if (isOpen) {
+  let seededForOpen = false;
+  function seedSettingsFromProject() {
     settings = {
       ...DEFAULT_OFFLINE_SETTINGS,
       width: $project.width || 1920,
       height: $project.height || 1080,
     };
+  }
+  $: if (isOpen && !seededForOpen) {
+    seedSettingsFromProject();
+    seededForOpen = true;
+  }
+  $: if (!isOpen && seededForOpen) {
+    seededForOpen = false;
   }
 
   const RESOLUTION_PRESETS = [
@@ -37,14 +45,9 @@
   const FPS_PRESETS = [24, 30, 60];
 
   $: state = $offlineRender;
+  $: isFrameOutput = settings.outputMode === 'frames';
   $: isRunning = state.status !== 'idle' && state.status !== 'complete' && state.status !== 'cancelled' && state.status !== 'error';
-  // Progress bar source depends on phase. While capturing frames it
-  // tracks frame N / totalFrames. While encoding it tracks ffmpeg's
-  // own progress event (which the store re-publishes as
-  // encodeProgress). Previously the bar froze at 100% during the
-  // encode pass because we never updated currentFrame past total —
-  // user reported it as "stuck", which it wasn't, but it sure looked
-  // that way for the 30-90s the wasm libx264 takes.
+  // Capture and encode report progress from different counters.
   $: progressPct =
     state.status === 'encoding'
       ? Math.round(state.encodeProgress * 100)
@@ -66,7 +69,7 @@
   }
 
   function start() {
-    offlineRender.start(settings);
+    offlineRender.start({ ...settings });
   }
   function cancel() {
     offlineRender.cancel();
@@ -115,7 +118,22 @@
     <button class="close-btn" onclick={closeAndReset} disabled={isRunning} title={isRunning ? 'Cancel before closing' : 'Close'}>×</button>
   </header>
 
-  {#if state.status === 'complete' && state.lastOutputUrl}
+  {#if state.status === 'complete' && state.lastOutputKind === 'frames'}
+    <!-- Success state — frame sequence folder. -->
+    <div class="modal-body success">
+      <div class="success-icon">✓</div>
+      <h3>Frames exported</h3>
+      <p class="success-meta">{state.lastOutputName ?? 'render'}_%06d.jpg · {state.totalFrames} frames · {fmtTime(elapsedSec)}</p>
+      {#if state.lastOutputPath}
+        <p class="success-hint">Saved to {state.lastOutputPath}</p>
+      {/if}
+      <p class="success-hint">A manifest with an FFmpeg compile command was written beside the frames.</p>
+      <div class="actions">
+        <button class="btn-primary" onclick={closeAndReset}>Done</button>
+      </div>
+    </div>
+
+  {:else if state.status === 'complete' && state.lastOutputUrl}
     <!-- Success state — preview thumbnail + actions. -->
     <div class="modal-body success">
       <div class="success-icon">✓</div>
@@ -132,14 +150,16 @@
     <!-- Progress state — bar + phase + cancel. -->
     <div class="modal-body progress">
       <div class="phase">
-        {#if state.status === 'loading-ffmpeg'}
+        {#if state.status === 'choosing-folder'}
+          Choose an output folder…
+        {:else if state.status === 'loading-ffmpeg'}
           Loading FFmpeg encoder…
         {:else if state.status === 'rendering'}
-          Rendering frame {state.currentFrame} / {state.totalFrames}
+          {isFrameOutput ? 'Writing' : 'Rendering'} frame {state.currentFrame} / {state.totalFrames}
         {:else if state.status === 'encoding'}
           Encoding to MP4…
         {:else if state.status === 'saving'}
-          Saving to library…
+          {isFrameOutput ? 'Writing manifest…' : 'Saving to library…'}
         {/if}
       </div>
       <div class="progress-bar">
@@ -154,14 +174,6 @@
           {/if}
         </span>
       </div>
-      {#if state.status === 'rendering'}
-        <p class="progress-hint">The editor preview will look unusual while rendering — it's driven by the virtual clock instead of wall time. Don't switch projects or close the app.</p>
-      {:else if state.status === 'encoding'}
-        <!-- libx264 in wasm is single-threaded and slow — set
-             expectations honestly. A 10s/1080p clip is ~30-90s of
-             encode wall time on a typical laptop. -->
-        <p class="progress-hint">Compressing frames to MP4 with libx264. This usually takes 1-3× the clip's duration. Don't close the app.</p>
-      {/if}
       <div class="actions">
         <button class="btn-secondary" onclick={cancel}>Cancel</button>
       </div>
@@ -184,8 +196,6 @@
   {:else}
     <!-- Settings form. -->
     <div class="modal-body">
-      <p class="lede">Deterministic frame-by-frame render. No drops, exact timing, any resolution.</p>
-
       <div class="field">
         <label>Filename</label>
         <input type="text" bind:value={settings.filename} placeholder="render" />
@@ -235,7 +245,15 @@
       </div>
 
       <div class="field">
-        <label>Quality</label>
+        <label>Output</label>
+        <select bind:value={settings.outputMode}>
+          <option value="mp4">MP4 video</option>
+          <option value="frames">JPEG frame sequence</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>{isFrameOutput ? 'Compile quality preset' : 'Quality'}</label>
         <select bind:value={settings.quality}>
           <option value="web">Web (smaller file, CRF 23)</option>
           <option value="high">High (recommended, CRF 18)</option>
@@ -244,9 +262,13 @@
       </div>
 
       <div class="summary">
-        Will produce <strong>{Math.round(settings.durationSeconds * settings.fps)}</strong> frames at
-        <strong>{settings.width}×{settings.height}</strong>.
-        FFmpeg loads on first run (~30MB).
+        {#if isFrameOutput}
+          Will write <strong>{Math.round(settings.durationSeconds * settings.fps)}</strong> JPEG frames at
+          <strong>{settings.width}×{settings.height}</strong> to a folder.
+        {:else}
+          Will produce <strong>{Math.round(settings.durationSeconds * settings.fps)}</strong> frames at
+          <strong>{settings.width}×{settings.height}</strong>.
+        {/if}
       </div>
 
       <div class="actions">
@@ -318,12 +340,6 @@
   .modal-body {
     padding: 18px;
     overflow-y: auto;
-  }
-  .lede {
-    color: var(--text-secondary, #aaa);
-    font-size: 14px;
-    margin: 0 0 16px;
-    line-height: 1.5;
   }
   .field {
     display: flex;
@@ -460,13 +476,6 @@
     font-family: monospace;
     color: var(--text-muted, #888);
   }
-  .progress-hint {
-    font-size: 12.5px;
-    color: #666;
-    line-height: 1.5;
-    margin: 12px 0 0;
-  }
-
   .success { text-align: center; }
   .success-icon {
     width: 56px; height: 56px;

@@ -15,7 +15,9 @@ export interface GpuShaderImpl {
   /** Encode the per-frame work into the supplied encoder, rendering
    *  to the given target view (the gpu layer's canvas surface).
    *  width/height are the canvas pixel dimensions. dt is seconds
-   *  since the previous frame for stateful animation. */
+   *  since the previous frame for stateful animation. time is an
+   *  optional absolute seconds clock supplied by deterministic
+   *  offline export; realtime renderers may omit it. */
   encodeFrame(
     encoder: any,
     targetView: any,
@@ -23,6 +25,7 @@ export interface GpuShaderImpl {
     width: number,
     height: number,
     dt: number,
+    time?: number,
   ): void;
   /** Optional: shaders that read pixels from a media source (image,
    *  video, layer) override this. The runner resolves the user's

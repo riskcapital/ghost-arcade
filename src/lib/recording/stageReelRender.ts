@@ -30,6 +30,13 @@ import {
   encodeOfflineJpegSegment,
   deleteOfflineFrameFiles,
   concatOfflineSegments,
+  chooseFrameSequenceTarget,
+  writeFrameTargetBytes,
+  writeFrameTargetText,
+  frameSequenceManifest,
+  frameSequenceBaseName,
+  describeFrameTarget,
+  type FrameSequenceTarget,
 } from './offlineRender';
 import { setISFManualTime } from '../isf/renderer';
 import { setStageEffectsManualTime } from '../stores/stageEffects';
@@ -46,7 +53,7 @@ import {
 } from '../stage3d/demoReel';
 
 export type ReelRenderStatus =
-  | 'idle' | 'loading-ffmpeg' | 'rendering' | 'encoding' | 'saving'
+  | 'idle' | 'choosing-folder' | 'loading-ffmpeg' | 'rendering' | 'encoding' | 'saving'
   | 'complete' | 'cancelled' | 'error';
 
 export interface ReelRenderState {
@@ -58,6 +65,8 @@ export interface ReelRenderState {
   errorMessage: string | null;
   lastOutputUrl: string | null;
   lastOutputName: string | null;
+  lastOutputKind: 'video' | 'frames' | null;
+  lastOutputPath: string | null;
 }
 
 const INITIAL: ReelRenderState = {
@@ -69,6 +78,8 @@ const INITIAL: ReelRenderState = {
   errorMessage: null,
   lastOutputUrl: null,
   lastOutputName: null,
+  lastOutputKind: null,
+  lastOutputPath: null,
 };
 
 function nextFrame(): Promise<void> {
@@ -123,8 +134,14 @@ function createReelRenderStore() {
     const { engine, canvas } = engineReg;
     const durationSeconds = sequenceDuration(shots);
     const totalFrames = Math.max(1, Math.round(durationSeconds * settings.fps));
+    const outputMode = settings.outputMode ?? 'mp4';
     cancelRequested = false;
-    set({ ...INITIAL, status: 'loading-ffmpeg', totalFrames, startedAtMs: performance.now() });
+    set({
+      ...INITIAL,
+      status: outputMode === 'frames' ? 'choosing-folder' : 'loading-ffmpeg',
+      totalFrames,
+      startedAtMs: performance.now(),
+    });
 
     // Restore points: engine size + manual time + the stage scene the
     // user was looking at (shot snapshots will overwrite it).
@@ -133,18 +150,32 @@ function createReelRenderStore() {
     const restoreManual = engine.manualTime;
     const restoreScene = JSON.parse(JSON.stringify(get(stage3dScene)));
 
-    let ffmpeg;
-    try {
-      ffmpeg = await loadFFmpeg();
-    } catch (err) {
-      setStatus('error', `FFmpeg load failed: ${formatErr(err)}`);
-      return false;
+    let ffmpeg: Awaited<ReturnType<typeof loadFFmpeg>> | null = null;
+    let frameTarget: FrameSequenceTarget | null = null;
+    const frameBaseName = frameSequenceBaseName(settings.filename, 'stage-reel');
+    if (outputMode === 'frames') {
+      try {
+        frameTarget = await chooseFrameSequenceTarget();
+        if (!frameTarget) { setStatus('cancelled'); return false; }
+      } catch (err) {
+        setStatus('error', formatErr(err));
+        return false;
+      }
+    } else {
+      try {
+        ffmpeg = await loadFFmpeg();
+      } catch (err) {
+        setStatus('error', `FFmpeg load failed: ${formatErr(err)}`);
+        return false;
+      }
     }
     if (cancelRequested) { setStatus('cancelled'); return false; }
 
     setStatus('rendering');
     let lastShotIndex = -1;
-    const segmentFrameCount = getOfflineSegmentFrameCount(settings);
+    const segmentFrameCount = outputMode === 'frames'
+      ? totalFrames
+      : getOfflineSegmentFrameCount(settings);
     const segmentNames: string[] = [];
     let currentSegmentFrames = 0;
     let readableOutputName = '';
@@ -190,10 +221,23 @@ function createReelRenderStore() {
         const frame = await capturePromise;
 
         const jpegBytes = await rgbaToJpeg(frame.data, frame.width, frame.height, 0.92);
-        await ffmpeg.writeFile(`frame_${String(localFrame).padStart(6, '0')}.jpg`, jpegBytes);
+        if (outputMode === 'frames') {
+          if (!frameTarget) throw new Error('Frame export folder not ready');
+          const frameName = `${frameBaseName}_${String(globalFrame).padStart(6, '0')}.jpg`;
+          await writeFrameTargetBytes(frameTarget, frameName, jpegBytes);
+        } else {
+          if (!ffmpeg) throw new Error('FFmpeg encoder not ready');
+          await ffmpeg.writeFile(`frame_${String(localFrame).padStart(6, '0')}.jpg`, jpegBytes);
+        }
         update(s => ({ ...s, currentFrame: globalFrame + 1 }));
         }
 
+        if (outputMode === 'frames') {
+          currentSegmentFrames = 0;
+          continue;
+        }
+
+        if (!ffmpeg) throw new Error('FFmpeg encoder not ready');
         setStatus('encoding');
         const segmentIndex = segmentNames.length;
         const segmentName = `stage_segment_${String(segmentIndex).padStart(4, '0')}.mp4`;
@@ -217,6 +261,30 @@ function createReelRenderStore() {
       }
 
       if (cancelRequested) { setStatus('cancelled'); return false; }
+
+      if (outputMode === 'frames') {
+        if (!frameTarget) throw new Error('Frame export folder not ready');
+        setStatus('saving');
+        const manifestName = `${frameBaseName}_manifest.txt`;
+        await writeFrameTargetText(frameTarget, manifestName, frameSequenceManifest({
+          baseName: frameBaseName,
+          fps: settings.fps,
+          width: settings.width,
+          height: settings.height,
+          totalFrames,
+          quality: settings.quality,
+        }));
+        update(s => ({
+          ...s,
+          status: 'complete',
+          lastOutputName: frameBaseName,
+          lastOutputKind: 'frames',
+          lastOutputPath: describeFrameTarget(frameTarget!),
+        }));
+        return true;
+      }
+
+      if (!ffmpeg) throw new Error('FFmpeg encoder not ready');
 
       setStatus('encoding');
       readableOutputName = await concatOfflineSegments(ffmpeg, segmentNames, `${settings.filename || 'stage-reel'}.mp4`);
@@ -243,18 +311,22 @@ function createReelRenderStore() {
       downloadBlob(blob, `${niceName}.mp4`);
 
       try {
-        await deleteOfflineFrameFiles(ffmpeg, currentSegmentFrames || segmentFrameCount);
-        for (const segmentName of segmentNames) await ffmpeg.deleteFile(segmentName);
-        if (readableOutputName === outputName) await ffmpeg.deleteFile(outputName);
+        if (ffmpeg) {
+          await deleteOfflineFrameFiles(ffmpeg, currentSegmentFrames || segmentFrameCount);
+          for (const segmentName of segmentNames) await ffmpeg.deleteFile(segmentName);
+          if (readableOutputName === outputName) await ffmpeg.deleteFile(outputName);
+        }
       } catch { /* best-effort */ }
 
-      update(s => ({ ...s, status: 'complete', lastOutputUrl: url, lastOutputName: niceName }));
+      update(s => ({ ...s, status: 'complete', lastOutputUrl: url, lastOutputName: niceName, lastOutputKind: 'video' }));
       return true;
     } catch (err) {
       console.error('[stageReelRender] error:', err);
       try {
-        await deleteOfflineFrameFiles(ffmpeg, currentSegmentFrames || segmentFrameCount);
-        for (const segmentName of segmentNames) await ffmpeg.deleteFile(segmentName);
+        if (ffmpeg) {
+          await deleteOfflineFrameFiles(ffmpeg, currentSegmentFrames || segmentFrameCount);
+          for (const segmentName of segmentNames) await ffmpeg.deleteFile(segmentName);
+        }
       } catch { /* best-effort */ }
       setStatus('error', formatErr(err));
       return false;

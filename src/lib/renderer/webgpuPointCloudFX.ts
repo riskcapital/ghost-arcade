@@ -996,12 +996,15 @@ export class WebGPUPointCloudFX {
     this.viewportH = h;
   }
 
-  encodeFrame(encoder: any, targetView: any): void {
+  encodeFrame(encoder: any, targetView: any, time?: number, frameDt?: number): void {
     if (!this.pointCount || !this.homeBuffer || !this.liveBuffer) return;
 
-    const now = performance.now() / 1000;
-    let dt = this.prevFrameTime === 0 ? 1 / 60 : (now - this.prevFrameTime);
-    dt = Math.min(Math.max(dt, 0.001), 1 / 15);
+    const wallNow = performance.now() / 1000;
+    const now = typeof time === 'number' && Number.isFinite(time) ? Math.max(0, time) : wallNow;
+    let dt = typeof frameDt === 'number' && Number.isFinite(frameDt)
+      ? frameDt
+      : (this.prevFrameTime === 0 ? 1 / 60 : (now - this.prevFrameTime));
+    dt = Math.min(Math.max(dt, 0), 1 / 15);
     this.prevFrameTime = now;
 
     // ── CPU-side effect accumulators ───────────────────────────

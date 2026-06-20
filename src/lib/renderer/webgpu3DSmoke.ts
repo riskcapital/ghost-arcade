@@ -1071,16 +1071,19 @@ export class WebGPU3DSmoke {
   /** Encode one full sim step + render. The sim splats one emitter
    *  per call (round-robin through emitters across frames so we
    *  don't issue N pipelines per frame for N emitters). */
-  encodeFrame(encoder: any, targetView: any): void {
+  encodeFrame(encoder: any, targetView: any, time?: number, frameDt?: number): void {
     if (!this._loggedFirstFrame) {
       this._loggedFirstFrame = true;
       console.log('[3D Smoke] first frame — grid:', this.grid, 'cells:', this.cellCount,
         'viewport:', this.viewportW, 'x', this.viewportH,
         'cameraZ:', this.params.cameraZ, 'fogColor:', this.params.fogColor);
     }
-    const now = performance.now() / 1000;
-    let dt = this.prevFrameTime === 0 ? 1 / 60 : (now - this.prevFrameTime);
-    dt = Math.min(Math.max(dt, 0.001), 1 / 15);
+    const wallNow = performance.now() / 1000;
+    const now = typeof time === 'number' && Number.isFinite(time) ? Math.max(0, time) : wallNow;
+    let dt = typeof frameDt === 'number' && Number.isFinite(frameDt)
+      ? frameDt
+      : (this.prevFrameTime === 0 ? 1 / 60 : (now - this.prevFrameTime));
+    dt = Math.min(Math.max(dt, 0), 1 / 15);
     this.prevFrameTime = now;
 
     // Auto-rotate accumulators (degrees)

@@ -25,7 +25,7 @@
   $: settings = $demoReel.settings;
   $: totalSec = sequenceDuration(shots);
   $: render = $stageReelRender;
-  $: rendering = render.status === 'loading-ffmpeg' || render.status === 'rendering'
+  $: rendering = render.status === 'choosing-folder' || render.status === 'loading-ffmpeg' || render.status === 'rendering'
     || render.status === 'encoding' || render.status === 'saving';
 
   let selectedShotId: string | null = null;
@@ -179,8 +179,10 @@
 
   {#if rendering || render.status === 'error' || render.status === 'complete'}
     <div class="reel-progress" class:error={render.status === 'error'}>
-      {#if render.status === 'rendering'}
-        <span>Rendering frame {render.currentFrame}/{render.totalFrames}</span>
+      {#if render.status === 'choosing-folder'}
+        <span>Choose an output folder…</span>
+      {:else if render.status === 'rendering'}
+        <span>{settings.outputMode === 'frames' ? 'Writing' : 'Rendering'} frame {render.currentFrame}/{render.totalFrames}</span>
         <progress max={render.totalFrames} value={render.currentFrame}></progress>
       {:else if render.status === 'encoding'}
         <span>Encoding MP4…</span>
@@ -193,7 +195,11 @@
         <span>Render failed: {render.errorMessage}</span>
         <button class="rbtn" onclick={() => stageReelRender.reset()}>Dismiss</button>
       {:else if render.status === 'complete'}
-        <span>✓ Saved “{render.lastOutputName}” to the media library + downloads.</span>
+        {#if render.lastOutputKind === 'frames'}
+          <span>✓ Saved “{render.lastOutputName}” frames to {render.lastOutputPath ?? 'the selected folder'}.</span>
+        {:else}
+          <span>✓ Saved “{render.lastOutputName}” to the media library + downloads.</span>
+        {/if}
         <button class="rbtn" onclick={() => stageReelRender.reset()}>Dismiss</button>
       {/if}
       {#if rendering}
@@ -311,6 +317,15 @@
           <option value="24">24</option>
           <option value="30">30</option>
           <option value="60">60</option>
+        </select>
+      </label>
+      <label class="insp-row">
+        <span>Type</span>
+        <select
+          value={settings.outputMode ?? 'mp4'}
+          onchange={(e) => demoReel.setSettings({ outputMode: (e.target as HTMLSelectElement).value as 'mp4' | 'frames' })}>
+          <option value="mp4">MP4</option>
+          <option value="frames">Frames</option>
         </select>
       </label>
       <label class="insp-row">

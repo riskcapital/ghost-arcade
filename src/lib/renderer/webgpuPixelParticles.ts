@@ -1313,13 +1313,17 @@ export class WebGPUPixelParticles {
 
   /** Encode a frame: compute pass + render pass. Additive over
    *  finalView. No-op if no source has been provided. */
-  encodeFrame(encoder: any, finalView: any): void {
+  encodeFrame(encoder: any, finalView: any, time?: number, frameDt?: number): void {
     if (!this.sourceTexture || !this.computeBindGroup || !this.renderBindGroup) return;
     if (this.needsParticleReset) this.resetParticles();
 
     const now = performance.now();
-    const totalTime = (now - this.startTime) / 1000;
-    const dt = Math.min(0.05, (now - this.lastFrameTime) / 1000);
+    const totalTime = typeof time === 'number' && Number.isFinite(time)
+      ? Math.max(0, time)
+      : (now - this.startTime) / 1000;
+    const dt = typeof frameDt === 'number' && Number.isFinite(frameDt)
+      ? Math.max(0, Math.min(0.05, frameDt))
+      : Math.min(0.05, (now - this.lastFrameTime) / 1000);
     this.lastFrameTime = now;
 
     // Globals uniform — 160 bytes, see WGSL Globals struct.

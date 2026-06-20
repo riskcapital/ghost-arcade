@@ -186,6 +186,8 @@
   let pipeline: any = null;
   let sampler: any = null;
   let bindGroupLayout: any = null;
+  let configuredPresentW = 0;
+  let configuredPresentH = 0;
   // Master-warp uniform buffer + a CPU-side staging ArrayBuffer. Layout:
   //   [0..3]   meta u32 (mode, rows, cols, pad)
   //   [16..47] corners: c0(tl.xy,tr.xy), c1(bl.xy,br.xy)
@@ -263,6 +265,8 @@
   // gpuBrushBridge.ts for the full rationale.
   let brushCanvas: HTMLCanvasElement | null = null;
   let brushCtx: any = null;
+  let configuredBrushW = 0;
+  let configuredBrushH = 0;
   // Per-layer pixel-fx renderers, keyed by layer id. Each pixel-fx
   // layer gets its own WebGPUPixelParticles instance so they don't
   // step on each other's source textures or particle buffers.
@@ -338,6 +342,7 @@
   let fpsEMA = 0;
   let renderTimeUsEMA = 0;
   let lastFrameDim = '';
+  let frameLoopErrorCount = 0;
 
   // Pass-through WGSL shader. No transform / colour correction here
   // — those are still done by Canvas.svelte's WebGL composite. The
@@ -612,6 +617,37 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     return { x: r.left - wr.left, y: r.top - wr.top, width: r.width, height: r.height };
   }
 
+  function configurePresentCanvasContext(): void {
+    if (!canvasContext || !device || !preferredFormat || !presentCanvas) return;
+    const w = presentCanvas.width | 0;
+    const h = presentCanvas.height | 0;
+    if (w <= 0 || h <= 0) return;
+    if (configuredPresentW === w && configuredPresentH === h) return;
+    canvasContext.configure({
+      device,
+      format: preferredFormat,
+      alphaMode: 'opaque',
+      colorSpace: 'srgb',
+    });
+    configuredPresentW = w;
+    configuredPresentH = h;
+  }
+
+  function configureBrushCanvasContext(): void {
+    if (!brushCtx || !device || !preferredFormat || !brushCanvas) return;
+    const w = brushCanvas.width | 0;
+    const h = brushCanvas.height | 0;
+    if (w <= 0 || h <= 0) return;
+    if (configuredBrushW === w && configuredBrushH === h) return;
+    brushCtx.configure({
+      device,
+      format: preferredFormat,
+      alphaMode: 'premultiplied',
+    });
+    configuredBrushW = w;
+    configuredBrushH = h;
+  }
+
   async function initWebGPU(): Promise<void> {
     // ── Drop any stale per-layer GPU renderers from a previous
     // device. HMR + device-lost both trigger re-init; per-layer
@@ -650,12 +686,9 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       preferredFormat = shared.presentFormat;
       canvasContext = presentCanvas.getContext('webgpu');
       if (!canvasContext) throw new Error('getContext("webgpu") returned null');
-      canvasContext.configure({
-        device,
-        format: preferredFormat,
-        alphaMode: 'opaque',
-        colorSpace: 'srgb',
-      });
+      configuredPresentW = 0;
+      configuredPresentH = 0;
+      configurePresentCanvasContext();
 
       const shaderModule = device.createShaderModule({ code: SHADER_WGSL });
       bindGroupLayout = device.createBindGroupLayout({
@@ -728,7 +761,9 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
         brushCanvas.width = 1; brushCanvas.height = 1;
         brushCtx = brushCanvas.getContext('webgpu');
         if (brushCtx) {
-          brushCtx.configure({ device, format: preferredFormat, alphaMode: 'premultiplied' });
+          configuredBrushW = 0;
+          configuredBrushH = 0;
+          configureBrushCanvasContext();
           setGPUBrushCanvas(brushCanvas);
         }
       } catch (err: any) {
@@ -869,7 +904,10 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     if (sw > 0 && sh > 0 && (presentCanvas.width !== sw || presentCanvas.height !== sh)) {
       presentCanvas.width = sw;
       presentCanvas.height = sh;
+      configurePresentCanvasContext();
+      reconcileOutputRegistration();
     }
+    configurePresentCanvasContext();
     if (!sw || !sh) { framesSkipped++; return; }
     lastFrameDim = `${sw}x${sh}`;
     updateWarpUniform();
@@ -966,7 +1004,9 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
         if (brushCanvas.width !== presentCanvas.width || brushCanvas.height !== presentCanvas.height) {
           brushCanvas.width = presentCanvas.width;
           brushCanvas.height = presentCanvas.height;
+          configureBrushCanvasContext();
         }
+        configureBrushCanvasContext();
         const brushView = brushCtx.getCurrentTexture().createView();
         // Clear the brush surface transparent first — encodeFrame uses
         // loadOp:'load' (composites additively onto existing content),
@@ -1312,7 +1352,18 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       // Total output freeze: skip presenting so the GPU brush compute
       // passes stop advancing. The canvas retains its last frame. RAF
       // keeps rescheduling so we resume instantly on unfreeze.
-      if (initStatus === 'running' && !frozen) presentFrame();
+      if (initStatus === 'running' && !frozen) {
+        try {
+          presentFrame();
+          frameLoopErrorCount = 0;
+        } catch (err) {
+          frameLoopErrorCount++;
+          framesSkipped++;
+          if (frameLoopErrorCount <= 3 || frameLoopErrorCount % 60 === 0) {
+            console.error('[WebGPUCanvas] frame loop recovered after present error:', err);
+          }
+        }
+      }
       // Note: in WebGPU mode the master warp is applied IN presentFrame's
       // shader (updateWarpUniform), so no separate WebGL warp tick here —
       // presentCanvas is already warped and is what the transports capture.

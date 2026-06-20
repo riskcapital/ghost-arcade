@@ -55,8 +55,11 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // Cloud shader source persistence (saves synced .fs files to userData)
   'save_shader_source', 'list_shader_sources', 'delete_shader_source',
   // File system
-  'pick_directory', 'save_file_binary', 'save_file_text', 'save_project_dialog',
+  'pick_directory', 'save_file_binary', 'save_file_bytes', 'save_file_text', 'save_project_dialog',
   'save_generated_asset',
+  // Native FFmpeg converter
+  'video_converter_pick_webm', 'video_converter_pick_sequence_folder', 'video_converter_pick_output',
+  'video_converter_start', 'video_converter_cancel', 'video_converter_reveal_path',
   // Fast sibling-asset materialization. Copies a known-on-disk file to a
   // destination path without round-tripping its bytes through base64+IPC.
   // Saves seconds per gigabyte over save_file_binary for large videos/.glb.
@@ -117,7 +120,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * Returns a cleanup function that removes the listener.
    */
   on: (channel, callback) => {
-    const allowed = ['director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'update-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'projection-sim-fullscreen-changed'];
+    const allowed = ['director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'update-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'projection-sim-fullscreen-changed', 'video-converter-progress'];
     if (!allowed.includes(channel)) return () => {};
     const handler = (_event, ...args) => callback(...args);
     ipcRenderer.on(channel, handler);

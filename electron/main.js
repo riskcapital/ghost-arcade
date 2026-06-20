@@ -232,10 +232,295 @@ let pendingOutputWindowConfigTimer = null;
 let sidecarProcess = null;
 let embeddedServerModule = null;
 const wledSockets = new Map();  // controllerId -> dgram.Socket
+let activeVideoConverterJob = null;
 
 // Platform flags (used elsewhere in this file)
 const isWin = process.platform === 'win32';
 const isMac = process.platform === 'darwin';
+
+function clampNumber(value, min, max, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
+function sanitizeOutputBase(name, fallback = 'converted-video') {
+  const base = String(name || fallback)
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^\w .-]+/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 90);
+  return base || fallback;
+}
+
+function resolveFfmpegPath() {
+  const envPath = process.env.GA_FFMPEG_PATH;
+  if (envPath && fs.existsSync(envPath)) return envPath;
+
+  try {
+    const staticPath = require('ffmpeg-static');
+    if (typeof staticPath === 'string' && staticPath) {
+      const unpackedPath = staticPath.replace('app.asar', 'app.asar.unpacked');
+      const candidate = fs.existsSync(unpackedPath) ? unpackedPath : staticPath;
+      if (fs.existsSync(candidate)) {
+        if (process.platform !== 'win32') {
+          try { fs.chmodSync(candidate, 0o755); } catch { /* signed app resources may be read-only */ }
+        }
+        return candidate;
+      }
+    }
+  } catch (err) {
+    console.warn('[VideoConverter] ffmpeg-static unavailable, falling back to PATH:', err?.message || err);
+  }
+
+  return isWin ? 'ffmpeg.exe' : 'ffmpeg';
+}
+
+function assertAbsolutePath(filePath, label = 'file path') {
+  if (typeof filePath !== 'string' || !filePath.trim()) {
+    throw new Error(`Invalid ${label}.`);
+  }
+  const normalized = path.normalize(filePath);
+  if (!path.isAbsolute(normalized)) {
+    throw new Error(`${label} must be an absolute path.`);
+  }
+  return normalized;
+}
+
+function parseFfmpegClock(value) {
+  const match = String(value || '').match(/(\d+):(\d+):(\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const h = Number(match[1]);
+  const m = Number(match[2]);
+  const s = Number(match[3]);
+  const total = h * 3600 + m * 60 + s;
+  return Number.isFinite(total) ? total : null;
+}
+
+function parseDurationLine(line) {
+  const match = String(line || '').match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const h = Number(match[1]);
+  const m = Number(match[2]);
+  const s = Number(match[3]);
+  const total = h * 3600 + m * 60 + s;
+  return Number.isFinite(total) ? total : null;
+}
+
+function naturalCompare(a, b) {
+  const ax = String(a).match(/\d+|\D+/g) || [];
+  const bx = String(b).match(/\d+|\D+/g) || [];
+  const len = Math.max(ax.length, bx.length);
+  for (let i = 0; i < len; i++) {
+    const ap = ax[i] ?? '';
+    const bp = bx[i] ?? '';
+    const an = /^\d+$/.test(ap) ? Number(ap) : NaN;
+    const bn = /^\d+$/.test(bp) ? Number(bp) : NaN;
+    if (Number.isFinite(an) && Number.isFinite(bn) && an !== bn) return an - bn;
+    const cmp = ap.localeCompare(bp, undefined, { sensitivity: 'base' });
+    if (cmp !== 0) return cmp;
+  }
+  return 0;
+}
+
+function listImageSequenceFrames(folderPath) {
+  const folder = assertAbsolutePath(folderPath, 'sequence folder');
+  if (!fs.existsSync(folder) || !fs.statSync(folder).isDirectory()) {
+    throw new Error('Choose a folder that contains JPG frames.');
+  }
+
+  const exts = new Set(['.jpg', '.jpeg', '.png']);
+  const frames = fs.readdirSync(folder, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && exts.has(path.extname(entry.name).toLowerCase()))
+    .map((entry) => ({
+      name: entry.name,
+      path: path.join(folder, entry.name),
+      ext: path.extname(entry.name).toLowerCase(),
+    }))
+    .sort((a, b) => naturalCompare(a.name, b.name));
+
+  if (!frames.length) {
+    throw new Error('No .jpg, .jpeg, or .png frames were found in that folder.');
+  }
+
+  return {
+    folder,
+    frames,
+    frameCount: frames.length,
+    firstFrame: frames[0].name,
+    lastFrame: frames[frames.length - 1].name,
+  };
+}
+
+function quoteFfconcatPath(filePath) {
+  const normalized = path.resolve(filePath).replace(/\\/g, '/');
+  return `'${normalized.replace(/'/g, "'\\''")}'`;
+}
+
+function makeConcatList(frames, fps) {
+  const tmpDir = fs.mkdtempSync(path.join(app.getPath('temp'), 'ghost-arcade-seq-'));
+  const listPath = path.join(tmpDir, 'frames.ffconcat');
+  const duration = (1 / Math.max(1, fps)).toFixed(8);
+  const lines = ['ffconcat version 1.0'];
+  for (const frame of frames) {
+    lines.push(`file ${quoteFfconcatPath(frame.path)}`);
+    lines.push(`duration ${duration}`);
+  }
+  // ffconcat uses the last file's duration only when the file appears twice.
+  lines.push(`file ${quoteFfconcatPath(frames[frames.length - 1].path)}`);
+  fs.writeFileSync(listPath, `${lines.join('\n')}\n`, 'utf8');
+  return { tmpDir, listPath };
+}
+
+function publishVideoConverterProgress(sender, payload) {
+  if (!sender || sender.isDestroyed?.()) return;
+  const progress = clampNumber(payload.progress ?? 0, 0, 1, 0);
+  sender.send('video-converter-progress', {
+    ...payload,
+    progress,
+  });
+}
+
+function spawnFfmpegConversion({
+  sender,
+  jobId,
+  args,
+  durationSec,
+  outputPath,
+  startMessage,
+  completeMessage,
+  cleanup,
+  progressMode = 'time',
+  totalFrames = 0,
+}) {
+  if (activeVideoConverterJob) {
+    throw new Error('A video conversion is already running.');
+  }
+
+  return new Promise((resolve, reject) => {
+    const ffmpegPath = resolveFfmpegPath();
+    const child = spawn(ffmpegPath, args, { windowsHide: true });
+    const job = { id: jobId, process: child, cancelled: false, cleanup };
+    activeVideoConverterJob = job;
+
+    let stderr = '';
+    let settled = false;
+    let bestProgress = 0;
+    let detectedDuration = durationSec > 0 ? durationSec : 0;
+    const startedAt = Date.now();
+
+    const settle = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      if (activeVideoConverterJob === job) activeVideoConverterJob = null;
+      try { cleanup?.(); } catch (err) { console.warn('[VideoConverter] cleanup failed:', err?.message || err); }
+      fn(value);
+    };
+
+    const send = (progress, message, stage = 'converting') => {
+      const bounded = stage === 'converting'
+        ? clampNumber(progress, 0, 0.99, 0)
+        : clampNumber(progress, 0, 1, 0);
+      if (bounded >= bestProgress || stage !== 'converting') {
+        bestProgress = stage === 'converting'
+          ? Math.max(bestProgress, bounded)
+          : bounded;
+        publishVideoConverterProgress(sender, { jobId, stage, progress: bestProgress, message, outputPath });
+      }
+    };
+
+    const sendPercent = (rawProgress) => {
+      const bounded = clampNumber(rawProgress, 0, 0.99, 0);
+      const pct = Math.max(1, Math.min(99, Math.floor(bounded * 100)));
+      send(bounded, `Encoding MP4 (${pct}%)...`);
+    };
+
+    publishVideoConverterProgress(sender, { jobId, stage: 'converting', progress: 0.01, message: startMessage, outputPath });
+
+    const heartbeat = setInterval(() => {
+      const elapsed = (Date.now() - startedAt) / 1000;
+      const drift = detectedDuration > 0
+        ? Math.min(0.96, elapsed / Math.max(1, detectedDuration))
+        : Math.min(0.88, 0.04 + (1 - Math.exp(-elapsed / 90)) * 0.84);
+      send(drift, `Encoding MP4 (${Math.floor(elapsed)}s elapsed)...`);
+    }, 1000);
+    heartbeat.unref?.();
+
+    child.stderr?.setEncoding?.('utf8');
+    child.stderr?.on('data', (chunk) => {
+      const text = String(chunk);
+      stderr += text;
+      if (stderr.length > 12_000) stderr = stderr.slice(-12_000);
+
+      for (const rawLine of text.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line) continue;
+        const duration = parseDurationLine(line);
+        if (duration && duration > 0) detectedDuration = duration;
+
+        const kv = line.match(/^([A-Za-z_]+)=(.*)$/);
+        if (kv) {
+          const key = kv[1];
+          const value = kv[2];
+          if (progressMode === 'frames' && key === 'frame') {
+            const frame = Number(value);
+            if (Number.isFinite(frame) && totalFrames > 0) {
+              sendPercent(frame / totalFrames);
+            }
+          } else if (key === 'progress' && value === 'end') {
+            send(0.99, 'Finalizing MP4...');
+          } else if (progressMode !== 'frames' && (key === 'out_time_ms' || key === 'out_time_us')) {
+            const raw = Number(value);
+            if (Number.isFinite(raw) && detectedDuration > 0) {
+              const seconds = raw > 10_000 ? raw / 1_000_000 : raw / 1000;
+              sendPercent(seconds / detectedDuration);
+            }
+          } else if (progressMode !== 'frames' && key === 'out_time') {
+            const seconds = parseFfmpegClock(value);
+            if (seconds !== null && detectedDuration > 0) {
+              sendPercent(seconds / detectedDuration);
+            }
+          }
+          continue;
+        }
+
+        const frameMatch = progressMode === 'frames' ? line.match(/frame=\s*(\d+)/) : null;
+        if (frameMatch && totalFrames > 0) {
+          sendPercent(Number(frameMatch[1]) / totalFrames);
+          continue;
+        }
+
+        const timeMatch = progressMode !== 'frames' ? line.match(/time=\s*(\d+:\d+:\d+(?:\.\d+)?)/) : null;
+        if (timeMatch && detectedDuration > 0) {
+          const seconds = parseFfmpegClock(timeMatch[1]);
+          if (seconds !== null) sendPercent(seconds / detectedDuration);
+        }
+      }
+    });
+
+    child.on('error', (err) => {
+      clearInterval(heartbeat);
+      settle(reject, new Error(`FFmpeg failed to start. ${err?.message || err}`));
+    });
+
+    child.on('close', (code, signal) => {
+      clearInterval(heartbeat);
+      if (job.cancelled) {
+        publishVideoConverterProgress(sender, { jobId, stage: 'cancelled', progress: bestProgress, message: 'Conversion cancelled.', outputPath });
+        settle(reject, new Error('Conversion cancelled.'));
+        return;
+      }
+      if (code !== 0) {
+        const tail = stderr.split(/\r?\n/).filter(Boolean).slice(-8).join('\n');
+        settle(reject, new Error(`FFmpeg exited with code ${code}${signal ? ` (${signal})` : ''}.${tail ? `\n${tail}` : ''}`));
+        return;
+      }
+      publishVideoConverterProgress(sender, { jobId, stage: 'complete', progress: 1, message: completeMessage, outputPath });
+      settle(resolve, { success: true, outputPath, ffmpegPath });
+    });
+  });
+}
 
 function closeAuxiliaryWindows() {
   if (stage3dWindow && !stage3dWindow.isDestroyed()) {
@@ -3097,6 +3382,179 @@ function registerIpcHandlers() {
     return { path: dirPath, name: dirName };
   });
 
+  // --- Native FFmpeg video converter ---
+  ipcMain.handle('video_converter_pick_webm', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile'],
+      title: 'Choose WebM Video',
+      filters: [
+        { name: 'WebM Video', extensions: ['webm'] },
+        { name: 'Video Files', extensions: ['webm', 'mkv', 'mov', 'mp4'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+    if (result.canceled || !result.filePaths[0]) return null;
+    const filePath = result.filePaths[0];
+    const stat = fs.statSync(filePath);
+    const base = sanitizeOutputBase(path.basename(filePath));
+    return {
+      path: filePath,
+      name: path.basename(filePath),
+      size: stat.size,
+      defaultOutputPath: path.join(path.dirname(filePath), `${base}.mp4`),
+    };
+  });
+
+  ipcMain.handle('video_converter_pick_sequence_folder', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openDirectory'],
+      title: 'Choose JPG Frame Sequence Folder',
+    });
+    if (result.canceled || !result.filePaths[0]) return null;
+    const sequence = listImageSequenceFrames(result.filePaths[0]);
+    const base = sanitizeOutputBase(path.basename(sequence.folder), 'image-sequence');
+    return {
+      path: sequence.folder,
+      name: path.basename(sequence.folder),
+      frameCount: sequence.frameCount,
+      firstFrame: sequence.firstFrame,
+      lastFrame: sequence.lastFrame,
+      defaultOutputPath: path.join(path.dirname(sequence.folder), `${base}.mp4`),
+    };
+  });
+
+  ipcMain.handle('video_converter_pick_output', async (_, args = {}) => {
+    const suggested = typeof args.defaultPath === 'string' && args.defaultPath
+      ? args.defaultPath
+      : path.join(app.getPath('videos'), `${sanitizeOutputBase(args.defaultName, 'converted-video')}.mp4`);
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save MP4',
+      defaultPath: suggested,
+      filters: [
+        { name: 'MP4 Video', extensions: ['mp4'] },
+      ],
+    });
+    if (result.canceled || !result.filePath) return null;
+    return { path: result.filePath.toLowerCase().endsWith('.mp4') ? result.filePath : `${result.filePath}.mp4` };
+  });
+
+  ipcMain.handle('video_converter_reveal_path', async (_, args = {}) => {
+    const filePath = assertAbsolutePath(args.path, 'output path');
+    if (fs.existsSync(filePath)) shell.showItemInFolder(filePath);
+    else shell.openPath(path.dirname(filePath));
+    return { success: true };
+  });
+
+  ipcMain.handle('video_converter_cancel', async () => {
+    const job = activeVideoConverterJob;
+    if (!job) return { success: false, error: 'No active conversion.' };
+    job.cancelled = true;
+    try { job.process?.kill?.('SIGTERM'); } catch { /* ignore */ }
+    setTimeout(() => {
+      if (activeVideoConverterJob === job) {
+        try { job.process?.kill?.('SIGKILL'); } catch { /* ignore */ }
+      }
+    }, 1500).unref?.();
+    return { success: true };
+  });
+
+  ipcMain.handle('video_converter_start', async (event, args = {}) => {
+    const mode = args.mode === 'sequence' ? 'sequence' : 'webm';
+    const jobId = typeof args.jobId === 'string' && args.jobId ? args.jobId : `vc-${Date.now().toString(36)}`;
+    const outputPath = assertAbsolutePath(args.outputPath, 'output path');
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+
+    const crf = Math.round(clampNumber(args.crf, 10, 32, 18));
+    const preset = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium'].includes(args.preset)
+      ? args.preset
+      : 'veryfast';
+    const commonOutput = [
+      '-c:v', 'libx264',
+      '-preset', preset,
+      '-crf', String(crf),
+      '-pix_fmt', 'yuv420p',
+      '-movflags', '+faststart',
+      outputPath,
+    ];
+
+    if (mode === 'sequence') {
+      const sequence = listImageSequenceFrames(args.folderPath);
+      const fps = clampNumber(args.fps, 1, 240, 30);
+      const { tmpDir, listPath } = makeConcatList(sequence.frames, fps);
+      const durationSec = sequence.frameCount / fps;
+      publishVideoConverterProgress(event.sender, {
+        jobId,
+        stage: 'scanning',
+        progress: 0,
+        message: `Found ${sequence.frameCount} frames. Preparing encoder...`,
+        outputPath,
+      });
+      return spawnFfmpegConversion({
+        sender: event.sender,
+        jobId,
+        durationSec,
+        outputPath,
+        startMessage: `Encoding ${sequence.frameCount} frames at ${fps} fps...`,
+        completeMessage: 'Image sequence MP4 complete.',
+        progressMode: 'frames',
+        totalFrames: sequence.frameCount,
+        cleanup: () => {
+          try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+        },
+        args: [
+          '-hide_banner',
+          '-nostdin',
+          '-y',
+          '-progress', 'pipe:2',
+          '-nostats',
+          '-f', 'concat',
+          '-safe', '0',
+          '-i', listPath,
+          '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p',
+          '-r', String(fps),
+          ...commonOutput,
+        ],
+      });
+    }
+
+    const inputPath = assertAbsolutePath(args.inputPath, 'input video path');
+    if (!fs.existsSync(inputPath)) throw new Error('Input video not found.');
+    publishVideoConverterProgress(event.sender, {
+      jobId,
+      stage: 'preparing',
+      progress: 0,
+      message: 'Preparing native FFmpeg encoder...',
+      outputPath,
+    });
+    return spawnFfmpegConversion({
+      sender: event.sender,
+      jobId,
+      durationSec: 0,
+      outputPath,
+      startMessage: 'Converting WebM to MP4...',
+      completeMessage: 'WebM MP4 conversion complete.',
+      args: [
+        '-hide_banner',
+        '-nostdin',
+        '-y',
+        '-progress', 'pipe:2',
+        '-nostats',
+        '-fflags', '+genpts',
+        '-i', inputPath,
+        '-map', '0:v:0',
+        '-map', '0:a:0?',
+        '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p',
+        '-c:a', 'aac',
+        '-b:a', '192k',
+        '-ar', '48000',
+        '-ac', '2',
+        '-avoid_negative_ts', 'make_zero',
+        '-max_muxing_queue_size', '1024',
+        ...commonOutput,
+      ],
+    });
+  });
+
   // --- Save binary file from base64 ---
   // Previously: zero validation + zero error handling. A locked/read-only path,
   // disk-full condition, OneDrive sync contention, or `base64Data === undefined`
@@ -3125,6 +3583,39 @@ function registerIpcHandlers() {
       return { success: true };
     } catch (err) {
       console.error('[Main] save_file_binary error:', err?.message || err);
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
+  // --- Save binary file from structured-cloned bytes ---
+  // Frame-sequence export writes thousands of JPEGs; sending Uint8Array bytes
+  // avoids the CPU + memory hit of base64 expanding every frame by ~33%.
+  ipcMain.handle('save_file_bytes', async (_, args) => {
+    try {
+      if (!args || typeof args !== 'object') return { success: false, error: 'Invalid arguments' };
+      const { path: filePath, bytes } = args;
+      if (typeof filePath !== 'string' || !filePath) return { success: false, error: 'Invalid file path' };
+      const normalized = path.normalize(filePath);
+      if (!path.isAbsolute(normalized) || normalized.includes('..')) {
+        return { success: false, error: 'Invalid file path (must be absolute, no traversal)' };
+      }
+
+      let buffer;
+      if (Buffer.isBuffer(bytes)) {
+        buffer = bytes;
+      } else if (bytes instanceof ArrayBuffer) {
+        buffer = Buffer.from(bytes);
+      } else if (ArrayBuffer.isView(bytes)) {
+        buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      } else if (Array.isArray(bytes)) {
+        buffer = Buffer.from(bytes);
+      } else {
+        return { success: false, error: 'Invalid bytes payload' };
+      }
+      fs.writeFileSync(normalized, buffer);
+      return { success: true };
+    } catch (err) {
+      console.error('[Main] save_file_bytes error:', err?.message || err);
       return { success: false, error: err?.message || String(err) };
     }
   });

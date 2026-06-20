@@ -48,6 +48,7 @@ export interface DemoReelSettings {
   fps: 24 | 30 | 60;
   width: number;
   height: number;
+  outputMode: 'mp4' | 'frames';
   quality: 'high' | 'web' | 'archive';
   filename: string;
 }
@@ -56,6 +57,7 @@ export const DEFAULT_REEL_SETTINGS: DemoReelSettings = {
   fps: 30,
   width: 1920,
   height: 1080,
+  outputMode: 'mp4',
   quality: 'high',
   filename: 'stage-reel',
 };

@@ -55,6 +55,7 @@ import { mediaLibrary } from '../stores/media';
 import { generateUUID } from '../utils/uuid';
 import { createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
 import type { RenderEngine } from '../renderer/engine';
+import { invoke, isElectron } from '../bridge';
 
 // ─── Settings + state ───────────────────────────────────────
 
@@ -65,6 +66,9 @@ export interface OfflineRenderSettings {
   height: number;
   /** Output filename WITHOUT extension. ".mp4" appended automatically. */
   filename: string;
+  /** MP4 encodes in-app via ffmpeg.wasm. Frame sequence writes JPEGs
+   *  directly to a folder so 4K jobs avoid the slow wasm encode step. */
+  outputMode: 'mp4' | 'frames';
   /** Render quality tier. 'high' = libx264 yuv420p crf 18 (visually
    *  lossless), 'web' = crf 23 (smaller file), 'archive' = crf 14
    *  (close to lossless, big file). */
@@ -77,6 +81,7 @@ export const DEFAULT_OFFLINE_SETTINGS: OfflineRenderSettings = {
   width: 1920,
   height: 1080,
   filename: 'render',
+  outputMode: 'mp4',
   quality: 'high',
 };
 
@@ -92,6 +97,7 @@ export function getOfflineSegmentFrameCount(settings: Pick<OfflineRenderSettings
 
 export type OfflineRenderStatus =
   | 'idle'
+  | 'choosing-folder'
   | 'loading-ffmpeg'
   | 'rendering'
   | 'encoding'
@@ -118,6 +124,8 @@ export interface OfflineRenderState {
    *  preview + download link). Cleared on next start. */
   lastOutputUrl: string | null;
   lastOutputName: string | null;
+  lastOutputKind: 'video' | 'frames' | null;
+  lastOutputPath: string | null;
 }
 
 const INITIAL_STATE: OfflineRenderState = {
@@ -129,7 +137,108 @@ const INITIAL_STATE: OfflineRenderState = {
   errorMessage: null,
   lastOutputUrl: null,
   lastOutputName: null,
+  lastOutputKind: null,
+  lastOutputPath: null,
 };
+
+export interface FrameSequenceTarget {
+  kind: 'electron' | 'browser';
+  name: string;
+  path?: string;
+  handle?: any;
+}
+
+function sanitizeFilenamePart(input: string, fallback = 'render'): string {
+  return (input || fallback)
+    .trim()
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^a-zA-Z0-9._-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80) || fallback;
+}
+
+export function describeFrameTarget(target: FrameSequenceTarget): string {
+  return target.path || target.name;
+}
+
+export async function chooseFrameSequenceTarget(): Promise<FrameSequenceTarget | null> {
+  if (isElectron && window.electronAPI) {
+    const picked = await invoke<{ path: string; name: string } | null>('pick_directory');
+    if (!picked?.path) return null;
+    return { kind: 'electron', path: picked.path, name: picked.name || picked.path };
+  }
+
+  if (!('showDirectoryPicker' in window)) {
+    throw new Error('Folder export requires the desktop app or a browser with folder-write support.');
+  }
+
+  const handle = await (window as any).showDirectoryPicker({
+    mode: 'readwrite',
+    startIn: 'videos',
+  });
+  return { kind: 'browser', handle, name: handle.name || 'selected folder' };
+}
+
+export async function writeFrameTargetBytes(target: FrameSequenceTarget, filename: string, bytes: Uint8Array): Promise<void> {
+  if (target.kind === 'electron') {
+    if (!target.path) throw new Error('Frame export folder path is missing');
+    const result = await invoke<{ success?: boolean; error?: string }>('save_file_bytes', {
+      path: `${target.path}/${filename}`,
+      bytes,
+    });
+    if (!result?.success) throw new Error(result?.error || `Could not save ${filename}`);
+    return;
+  }
+
+  const fileHandle = await target.handle.getFileHandle(filename, { create: true });
+  const writable = await fileHandle.createWritable();
+  await writable.write(new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'image/jpeg' }));
+  await writable.close();
+}
+
+export async function writeFrameTargetText(target: FrameSequenceTarget, filename: string, text: string): Promise<void> {
+  if (target.kind === 'electron') {
+    if (!target.path) throw new Error('Frame export folder path is missing');
+    const result = await invoke<{ success?: boolean; error?: string }>('save_file_text', {
+      path: `${target.path}/${filename}`,
+      content: text,
+    });
+    if (!result?.success) throw new Error(result?.error || `Could not save ${filename}`);
+    return;
+  }
+
+  const fileHandle = await target.handle.getFileHandle(filename, { create: true });
+  const writable = await fileHandle.createWritable();
+  await writable.write(text);
+  await writable.close();
+}
+
+export function frameSequenceManifest(args: {
+  baseName: string;
+  fps: number;
+  width: number;
+  height: number;
+  totalFrames: number;
+  quality: OfflineRenderSettings['quality'];
+}): string {
+  const crf = args.quality === 'archive' ? '14' : args.quality === 'web' ? '23' : '18';
+  return [
+    'Ghost Arcade frame sequence',
+    '',
+    `Base name: ${args.baseName}`,
+    `Frames: ${args.totalFrames}`,
+    `Frame rate: ${args.fps}`,
+    `Resolution: ${args.width}x${args.height}`,
+    '',
+    'Compile to MP4 with:',
+    `ffmpeg -framerate ${args.fps} -i "${args.baseName}_%06d.jpg" -c:v libx264 -pix_fmt yuv420p -crf ${crf} -movflags +faststart "${args.baseName}.mp4"`,
+    '',
+  ].join('\n');
+}
+
+export function frameSequenceBaseName(filename: string, fallback = 'render'): string {
+  return sanitizeFilenamePart(filename, fallback);
+}
 
 // ─── FFmpeg lazy loader ─────────────────────────────────────
 // The wasm binary is ~30MB; load only when the user actually fires
@@ -317,11 +426,12 @@ function createOfflineRenderStore() {
     }
     const engine = engineRef;
     const canvas = canvasRef;
+    const outputMode = settings.outputMode ?? 'mp4';
     const totalFrames = Math.max(1, Math.round(settings.durationSeconds * settings.fps));
     cancelRequested = false;
     set({
       ...INITIAL_STATE,
-      status: 'loading-ffmpeg',
+      status: outputMode === 'frames' ? 'choosing-folder' : 'loading-ffmpeg',
       totalFrames,
       currentFrame: 0,
       startedAtMs: performance.now(),
@@ -334,18 +444,32 @@ function createOfflineRenderStore() {
     const restoreManual = engine.manualTime;
     const restoreCanvasVisibility = canvas.style.visibility;
 
-    let ffmpeg: FFmpeg;
-    try {
-      ffmpeg = await loadFFmpeg();
-    } catch (err) {
-      setStatus('error', `FFmpeg load failed: ${formatErr(err)}`);
-      return false;
+    let ffmpeg: FFmpeg | null = null;
+    let frameTarget: FrameSequenceTarget | null = null;
+    const frameBaseName = frameSequenceBaseName(settings.filename, 'render');
+    if (outputMode === 'frames') {
+      try {
+        frameTarget = await chooseFrameSequenceTarget();
+        if (!frameTarget) { _finish('cancelled'); return false; }
+      } catch (err) {
+        setStatus('error', formatErr(err));
+        return false;
+      }
+    } else {
+      try {
+        ffmpeg = await loadFFmpeg();
+      } catch (err) {
+        setStatus('error', `FFmpeg load failed: ${formatErr(err)}`);
+        return false;
+      }
     }
     if (cancelRequested) { _finish('cancelled'); return false; }
 
     setStatus('rendering');
     canvas.style.visibility = 'hidden';
-    const segmentFrameCount = getOfflineSegmentFrameCount(settings);
+    const segmentFrameCount = outputMode === 'frames'
+      ? totalFrames
+      : getOfflineSegmentFrameCount(settings);
     const segmentNames: string[] = [];
     let currentSegmentFrames = 0;
     let readableOutputName = '';
@@ -396,12 +520,25 @@ function createOfflineRenderStore() {
         // for typical VJ output. The final MP4 quality is set by
         // libx264 CRF below, not by the intermediate JPEGs.
         const jpegBytes = await captureFrameJPEG(engine, 0.92);
-        const frameName = `frame_${String(localFrame).padStart(6, '0')}.jpg`;
-        await ffmpeg.writeFile(frameName, jpegBytes);
+        if (outputMode === 'frames') {
+          if (!frameTarget) throw new Error('Frame export folder not ready');
+          const frameName = `${frameBaseName}_${String(globalFrame).padStart(6, '0')}.jpg`;
+          await writeFrameTargetBytes(frameTarget, frameName, jpegBytes);
+        } else {
+          if (!ffmpeg) throw new Error('FFmpeg encoder not ready');
+          const frameName = `frame_${String(localFrame).padStart(6, '0')}.jpg`;
+          await ffmpeg.writeFile(frameName, jpegBytes);
+        }
 
         update(s => ({ ...s, currentFrame: globalFrame + 1 }));
         }
 
+        if (outputMode === 'frames') {
+          currentSegmentFrames = 0;
+          continue;
+        }
+
+        if (!ffmpeg) throw new Error('FFmpeg encoder not ready');
         setStatus('encoding');
         const segmentIndex = segmentNames.length;
         const segmentName = `segment_${String(segmentIndex).padStart(4, '0')}.mp4`;
@@ -425,6 +562,30 @@ function createOfflineRenderStore() {
       }
 
       if (cancelRequested) { _finish('cancelled'); return false; }
+
+      if (outputMode === 'frames') {
+        if (!frameTarget) throw new Error('Frame export folder not ready');
+        setStatus('saving');
+        const manifestName = `${frameBaseName}_manifest.txt`;
+        await writeFrameTargetText(frameTarget, manifestName, frameSequenceManifest({
+          baseName: frameBaseName,
+          fps: settings.fps,
+          width: settings.width,
+          height: settings.height,
+          totalFrames,
+          quality: settings.quality,
+        }));
+        update(s => ({
+          ...s,
+          status: 'complete',
+          lastOutputKind: 'frames',
+          lastOutputName: frameBaseName,
+          lastOutputPath: describeFrameTarget(frameTarget!),
+        }));
+        return true;
+      }
+
+      if (!ffmpeg) throw new Error('FFmpeg encoder not ready');
 
       // Encode. libx264 + yuv420p produces the broadest-compatible
       // MP4 (Quicktime, browsers, ffmpeg-built-in decoders). crf
@@ -472,18 +633,22 @@ function createOfflineRenderStore() {
       // Cleanup ffmpeg virtual filesystem so subsequent renders
       // don't accumulate gigabytes of PNG state across sessions.
       try {
-        await deleteOfflineFrameFiles(ffmpeg, currentSegmentFrames || segmentFrameCount);
-        for (const segmentName of segmentNames) await ffmpeg.deleteFile(segmentName);
-        if (readableOutputName === outputName) await ffmpeg.deleteFile(outputName);
+        if (ffmpeg) {
+          await deleteOfflineFrameFiles(ffmpeg, currentSegmentFrames || segmentFrameCount);
+          for (const segmentName of segmentNames) await ffmpeg.deleteFile(segmentName);
+          if (readableOutputName === outputName) await ffmpeg.deleteFile(outputName);
+        }
       } catch (e) { /* best-effort */ }
 
-      update(s => ({ ...s, status: 'complete', lastOutputUrl: url, lastOutputName: niceName }));
+      update(s => ({ ...s, status: 'complete', lastOutputUrl: url, lastOutputName: niceName, lastOutputKind: 'video' }));
       return true;
     } catch (err) {
       console.error('[offlineRender] error:', err);
       try {
-        await deleteOfflineFrameFiles(ffmpeg, currentSegmentFrames || segmentFrameCount);
-        for (const segmentName of segmentNames) await ffmpeg.deleteFile(segmentName);
+        if (ffmpeg) {
+          await deleteOfflineFrameFiles(ffmpeg, currentSegmentFrames || segmentFrameCount);
+          for (const segmentName of segmentNames) await ffmpeg.deleteFile(segmentName);
+        }
       } catch { /* best-effort */ }
       setStatus('error', formatErr(err));
       return false;

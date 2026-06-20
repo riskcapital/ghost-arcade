@@ -43,6 +43,10 @@ export interface AudioBandsSnapshot {
 
 export type GpuLayerHandoffMode = 'bitmap' | 'canvas';
 
+export interface GpuLayerFrameTiming {
+  time?: number | null;
+}
+
 export class GpuLayerRenderer {
   readonly device: any;
   readonly presentFormat: any;
@@ -62,6 +66,7 @@ export class GpuLayerRenderer {
   private impl: GpuShaderImpl | null = null;
   private currentShaderId: string | null = null;
   private lastFrameTime = performance.now();
+  private lastManualTime: number | null = null;
   private configuredW = 0;
   private configuredH = 0;
   private handoffMode: GpuLayerHandoffMode;
@@ -129,6 +134,7 @@ export class GpuLayerRenderer {
     h: number,
     sourceCtx?: SourceContext,
     bands?: AudioBandsSnapshot,
+    timing?: GpuLayerFrameTiming,
   ): void {
     if (!this.impl || this.currentShaderId !== shaderId) {
       this.swapShader(shaderId);
@@ -153,14 +159,30 @@ export class GpuLayerRenderer {
       this.feedSource(params, sourceCtx);
     }
 
+    const manualTime = typeof timing?.time === 'number' && Number.isFinite(timing.time)
+      ? Math.max(0, timing.time)
+      : null;
     const now = performance.now();
-    const dt = Math.min(0.1, (now - this.lastFrameTime) / 1000);
-    this.lastFrameTime = now;
+    let frameTime: number | undefined;
+    let dt: number;
+    if (manualTime !== null) {
+      frameTime = manualTime;
+      dt = this.lastManualTime !== null
+        ? Math.max(0, Math.min(0.1, manualTime - this.lastManualTime))
+        : 0;
+      this.lastManualTime = manualTime;
+      this.lastFrameTime = now;
+    } else {
+      this.lastManualTime = null;
+      frameTime = undefined;
+      dt = Math.min(0.1, (now - this.lastFrameTime) / 1000);
+      this.lastFrameTime = now;
+    }
 
     const encoder = this.device.createCommandEncoder();
     try {
       const view = this.context.getCurrentTexture().createView();
-      this.impl.encodeFrame(encoder, view, this.presentFormat, this.canvas.width, this.canvas.height, dt);
+      this.impl.encodeFrame(encoder, view, this.presentFormat, this.canvas.width, this.canvas.height, dt, frameTime);
     } catch (err: any) {
       console.warn('[gpuLayerRenderer] encode failed:', err?.message || err);
       return;

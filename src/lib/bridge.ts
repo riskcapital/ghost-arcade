@@ -12,6 +12,8 @@ declare global {
     __TAURI_INTERNALS__?: unknown;
     electronAPI?: {
       invoke: (command: string, args?: any) => Promise<any>;
+      on?: (channel: string, callback: (...args: any[]) => void) => (() => void);
+      getPathForFile?: (file: File) => string;
       platform: string;
     };
     electronOSR?: {

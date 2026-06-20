@@ -203,7 +203,7 @@ export class WebGPUFluidSmokeShader implements GpuShaderImpl {
     } catch { /* */ }
   }
 
-  encodeFrame(encoder: any, targetView: any, format: any, _w: number, _h: number, dt: number): void {
+  encodeFrame(encoder: any, targetView: any, format: any, _w: number, _h: number, dt: number, _time?: number): void {
     // 1) Step the simulation one tick (inject → advect velocity →
     //    divergence → Jacobi × 25 → subtract gradient → advect dye →
     //    decay). All on the GPU; no CPU-side waiting.

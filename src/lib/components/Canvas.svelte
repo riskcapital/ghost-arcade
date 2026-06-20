@@ -1310,7 +1310,7 @@
         : 0;
       const _editorFpsCap = ($settings as any)?.performance?.editorMaxFps ?? 0;
       const _fpsCap = _stage3DFpsCap > 0 ? _stage3DFpsCap : _editorFpsCap;
-      if (_fpsCap > 0) {
+      if (_fpsCap > 0 && engine?.manualTime === null) {
         const now = performance.now();
         const interval = 1000 / _fpsCap;
         if (now - _lastEditorRenderTime < interval) {
@@ -4334,6 +4334,8 @@
           bass: bandsSnap.bassFast ?? 0,
           mid: bandsSnap.mid ?? 0,
           treble: bandsSnap.high ?? 0,
+        }, {
+          time: engine.manualTime,
         });
       } catch (err: any) {
         console.warn('[Canvas] gpu-layer: render failed', err?.message || err);

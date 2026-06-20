@@ -712,10 +712,13 @@ export class WebGPUInkCloud {
 
   setViewport(w: number, h: number): void { this.viewportW = w; this.viewportH = h; }
 
-  encodeFrame(encoder: any, targetView: any): void {
-    const now = performance.now() / 1000;
-    let dt = this.prevFrameTime === 0 ? 1 / 60 : (now - this.prevFrameTime);
-    dt = Math.min(Math.max(dt, 0.001), 1 / 15);
+  encodeFrame(encoder: any, targetView: any, time?: number, frameDt?: number): void {
+    const wallNow = performance.now() / 1000;
+    const now = typeof time === 'number' && Number.isFinite(time) ? Math.max(0, time) : wallNow;
+    let dt = typeof frameDt === 'number' && Number.isFinite(frameDt)
+      ? frameDt
+      : (this.prevFrameTime === 0 ? 1 / 60 : (now - this.prevFrameTime));
+    dt = Math.min(Math.max(dt, 0), 1 / 15);
     this.prevFrameTime = now;
 
     // Audio burst — bass rising edge spikes the burst hold timer.

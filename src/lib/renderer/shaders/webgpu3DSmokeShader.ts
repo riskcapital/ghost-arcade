@@ -251,7 +251,7 @@ export class WebGPU3DSmokeShader implements GpuShaderImpl {
     });
   }
 
-  encodeFrame(encoder: any, targetView: any, _format: any, w: number, h: number, _dt: number): void {
+  encodeFrame(encoder: any, targetView: any, _format: any, w: number, h: number, dt: number, time?: number): void {
     this.inner.setViewport(w, h);
     // Clear to transparent — the raymarcher's fog-bg accumulation
     // produces the background tint inside the same render pass.
@@ -264,7 +264,7 @@ export class WebGPU3DSmokeShader implements GpuShaderImpl {
       }],
     });
     clearPass.end();
-    this.inner.encodeFrame(encoder, targetView);
+    this.inner.encodeFrame(encoder, targetView, time, dt);
   }
 
   resize(_w: number, _h: number): void { /* no-op — raymarcher reads viewport via setViewport */ }
