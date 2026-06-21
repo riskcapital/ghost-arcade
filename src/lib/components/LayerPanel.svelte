@@ -3,13 +3,14 @@
   import { confirmDeleteIfSafeMode } from '../utils/safeMode';
   // import AutoMapPanel from './AutoMapPanel.svelte';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
-  import type { BlendMode, MediaSource, EffectType, ContentFitMode, VideoPlaybackMode } from '../types';
-  import { generateUUID, VJ_MIX_SOURCE_INDEX } from '../types';
-  import { onDestroy } from 'svelte';
+  import type { BlendMode, MediaSource, Effect, EffectType, ContentFitMode, VideoPlaybackMode, StageEffectType } from '../types';
+  import { createDefaultMappingCompositionState, generateUUID, VJ_MIX_SOURCE_INDEX } from '../types';
+  import { onDestroy, onMount } from 'svelte';
   // ShapeType import removed — Lines layer uses pen tools instead of shape library
   import { getDefaultEffectParams } from '../renderer/effects';
   import { applyPresetToEffect, getEffectPresets, getNumericEffectParams, effectParamLabels } from '../effects/effectUX';
   import { EFFECT_CATALOG } from '../effects/effectCatalog';
+  import { createDefaultStageEffect, getEffectDef, STAGE_EFFECT_CATALOG } from '../stores/stageEffects';
   import EffectPickerModal from './EffectPickerModal.svelte';
   import EdgeEffectsPanel from './EdgeEffectsPanel.svelte';
   import EffectParamRow from './EffectParamRow.svelte';
@@ -431,10 +432,24 @@
   let expandedEffectId: string | null = null;
   let showEffectPicker = false;
   let effectPickerLayerId: string | null = null;
+  let effectPickerTarget: 'layer' | 'mappingComposition' = 'layer';
   let layerPresetSelection: Record<string, string> = {};
+  let compositionPanelOpen = false;
+  let compositionTab: 'effects' | 'stage' = 'effects';
+  let expandedCompositionEffectId: string | null = null;
+  let expandedMappingStageEffectId: string | null = null;
+  let compositionPresetSelection: Record<string, string> = {};
+  let mappingStageAddType: StageEffectType = STAGE_EFFECT_CATALOG[0].type;
+  let heldMappingStageEffects: Record<string, boolean> = {};
+  let mappingStageEffectHoldStack: string[] = [];
+  let mappingStageEffectHoldRestoreId: string | null = null;
+  let mappingStageEffectHoldRestoreAutomationPlaying: boolean | null = null;
   let layerMacro1 = 0.5;
   let layerMacro2 = 0.5;
   let layerMacroBindings: Record<string, { m1?: string; m2?: string }> = {};
+
+  const defaultMappingComposition = createDefaultMappingCompositionState();
+  $: mappingComposition = $project.mappingComposition ?? defaultMappingComposition;
 
   function getLayerMacroBinding(effectId: string, which: 'm1' | 'm2'): string {
     return layerMacroBindings[effectId]?.[which] || '';
@@ -458,6 +473,147 @@
     if (!patch) return;
     project.updateEffectParams(layerId, effect.id, patch);
   }
+
+  function toggleMappingCompositionEnabled(enabled: boolean) {
+    project.setMappingCompositionEnabled(enabled);
+    if (enabled) compositionPanelOpen = true;
+  }
+
+  function addMappingCompositionEffect(effectType: EffectType) {
+    project.addMappingCompositionEffect(effectType, getDefaultEffectParams(effectType));
+  }
+
+  function applyCompositionPreset(effect: Effect, idx?: number) {
+    const presetIndex = idx ?? parseInt(compositionPresetSelection[effect.id] ?? '', 10);
+    if (Number.isNaN(presetIndex)) return;
+    const patch = applyPresetToEffect(effect as any, presetIndex);
+    if (!patch) return;
+    project.updateMappingCompositionEffectParams(effect.id, patch);
+  }
+
+  function updateCompositionColorParam(effect: Effect, meta: any) {
+    return (event: Event) => {
+      const hex = (event.target as HTMLInputElement).value;
+      const r = parseInt(hex.slice(1, 3), 16) / 255;
+      const g = parseInt(hex.slice(3, 5), 16) / 255;
+      const b = parseInt(hex.slice(5, 7), 16) / 255;
+      project.updateMappingCompositionEffectParams(effect.id, {
+        [meta.colorParams.r]: r,
+        [meta.colorParams.g]: g,
+        [meta.colorParams.b]: b,
+      } as any);
+    };
+  }
+
+  function getCompositionColorValue(effect: Effect, meta: any): string {
+    return '#' + [meta.colorParams.r, meta.colorParams.g, meta.colorParams.b].map((key) => {
+      const v = (effect.params as Record<string, number>)[key] ?? 0;
+      return Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0');
+    }).join('');
+  }
+
+  function addMappingStageEffect(type: StageEffectType) {
+    project.addMappingStageEffect(createDefaultStageEffect(type));
+    compositionPanelOpen = true;
+    compositionTab = 'stage';
+  }
+
+  function mappingStageEffectExists(effectId: string | null): boolean {
+    return !!effectId && mappingComposition.stageEffects.some(effect => effect.id === effectId);
+  }
+
+  function setMappingStageEffectHeld(effectId: string, held: boolean) {
+    const next = { ...heldMappingStageEffects };
+    if (held) next[effectId] = true;
+    else delete next[effectId];
+    heldMappingStageEffects = next;
+  }
+
+  function pressMappingStageEffectHold(effectId: string) {
+    if (!effectId || heldMappingStageEffects[effectId]) return;
+    if (mappingStageEffectHoldStack.length === 0) {
+      mappingStageEffectHoldRestoreId = mappingComposition.activeStageEffectId ?? null;
+      mappingStageEffectHoldRestoreAutomationPlaying = mappingComposition.stageEffectAutomation?.playing ?? false;
+      if (mappingStageEffectHoldRestoreAutomationPlaying) {
+        project.updateMappingStageEffectAutomation({ playing: false });
+      }
+    } else {
+      heldMappingStageEffects = {};
+      mappingStageEffectHoldStack = [];
+    }
+    mappingStageEffectHoldStack = [effectId];
+    setMappingStageEffectHeld(effectId, true);
+    project.setMappingStageEffectActive(effectId);
+  }
+
+  function releaseMappingStageEffectHold(effectId: string) {
+    if (!effectId || !heldMappingStageEffects[effectId]) return;
+    const nextStack = mappingStageEffectHoldStack.filter(id => id !== effectId);
+    setMappingStageEffectHeld(effectId, false);
+    mappingStageEffectHoldStack = nextStack;
+
+    if (nextStack.length > 0) {
+      project.setMappingStageEffectActive(nextStack[nextStack.length - 1]);
+      return;
+    }
+
+    const restoreId = mappingStageEffectExists(mappingStageEffectHoldRestoreId)
+      ? mappingStageEffectHoldRestoreId
+      : null;
+    project.setMappingStageEffectActive(restoreId);
+    if (mappingStageEffectHoldRestoreAutomationPlaying) {
+      project.updateMappingStageEffectAutomation({ playing: true });
+    }
+    mappingStageEffectHoldRestoreId = null;
+    mappingStageEffectHoldRestoreAutomationPlaying = null;
+  }
+
+  function releaseAllMappingStageEffectHolds() {
+    const hadHeldEffect = mappingStageEffectHoldStack.length > 0;
+    const restoreId = mappingStageEffectExists(mappingStageEffectHoldRestoreId)
+      ? mappingStageEffectHoldRestoreId
+      : null;
+    const restoreAutomation = mappingStageEffectHoldRestoreAutomationPlaying;
+    heldMappingStageEffects = {};
+    mappingStageEffectHoldStack = [];
+    mappingStageEffectHoldRestoreId = null;
+    mappingStageEffectHoldRestoreAutomationPlaying = null;
+    if (hadHeldEffect) project.setMappingStageEffectActive(restoreId);
+    if (hadHeldEffect && restoreAutomation) project.updateMappingStageEffectAutomation({ playing: true });
+  }
+
+  function handleMappingStageEffectHoldPointerDown(event: PointerEvent, effectId: string) {
+    event.preventDefault();
+    event.stopPropagation();
+    (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
+    pressMappingStageEffectHold(effectId);
+  }
+
+  function handleMappingStageEffectHoldPointerEnd(event: PointerEvent, effectId: string) {
+    event.preventDefault();
+    event.stopPropagation();
+    releaseMappingStageEffectHold(effectId);
+  }
+
+  function handleMappingStageEffectHoldEvent(event: Event) {
+    const detail = (event as CustomEvent<{ effectId?: string; pressed?: boolean; value?: number }>).detail;
+    const effectId = detail?.effectId;
+    if (!effectId) return;
+    const pressed = typeof detail.pressed === 'boolean'
+      ? detail.pressed
+      : (detail.value ?? 0) > 0.001;
+    if (pressed) pressMappingStageEffectHold(effectId);
+    else releaseMappingStageEffectHold(effectId);
+  }
+
+  onMount(() => {
+    window.addEventListener('map-stage-effect-hold', handleMappingStageEffectHoldEvent);
+  });
+
+  onDestroy(() => {
+    window.removeEventListener('map-stage-effect-hold', handleMappingStageEffectHoldEvent);
+    releaseAllMappingStageEffectHolds();
+  });
 
   function applyLayerMacroValue(effectId: string, macro: 'm1' | 'm2', value: number) {
     const selected = $selectedLayer;
@@ -657,7 +813,7 @@
                   <ellipse cx="12" cy="12" rx="9" ry="3.2"/>
                   <path d="M3 12 a9 9 0 0 0 18 0"/>
                 </svg>
-                GPU Shader <span style="font-size:11px; opacity:0.7; padding:1px 4px; background:linear-gradient(135deg,#1e3a8a,#7c2d12); border-radius:2px; margin-left:4px;">WebGPU</span>
+                GPU Shader <span style="font-size:10px; opacity:0.7; padding:1px 4px; background:linear-gradient(135deg,#1e3a8a,#7c2d12); border-radius:2px; margin-left:4px;">WebGPU</span>
               </button>
             {/if}
             <button onclick={() => { project.addScreenLayer(); showAddLayerMenu = false; }}>
@@ -680,6 +836,352 @@
         {/if}
       </div>
     </div>
+
+    <div class="mapping-composition-row" class:enabled={mappingComposition.enabled}>
+      <label class="mapping-composition-toggle">
+        <input
+          type="checkbox"
+          checked={mappingComposition.enabled}
+          onchange={(e) => toggleMappingCompositionEnabled((e.target as HTMLInputElement).checked)}
+        />
+        <span>Composition</span>
+      </label>
+      {#if mappingComposition.enabled}
+        <button
+          class="composition-edit-btn"
+          onclick={() => compositionPanelOpen = !compositionPanelOpen}
+        >{compositionPanelOpen ? 'Hide' : 'Edit'}</button>
+      {/if}
+    </div>
+
+    {#if mappingComposition.enabled && compositionPanelOpen}
+      <div class="mapping-composition-panel">
+        <div class="composition-tabs">
+          <button class:active={compositionTab === 'effects'} onclick={() => compositionTab = 'effects'}>Effects</button>
+          <button class:active={compositionTab === 'stage'} onclick={() => compositionTab = 'stage'}>Screen FX</button>
+        </div>
+
+        {#if compositionTab === 'effects'}
+          <div class="composition-section-header">
+            <span>Output Effects</span>
+            <button
+              class="add-effect-btn"
+              onclick={() => {
+                effectPickerTarget = 'mappingComposition';
+                effectPickerLayerId = null;
+                showEffectPicker = true;
+              }}
+            >+ Add</button>
+          </div>
+
+          {#if mappingComposition.effects.length > 0}
+            <div class="composition-effect-list">
+              {#each mappingComposition.effects as effect, index (effect.id)}
+                <div class="composition-effect-item" class:disabled={!effect.enabled}>
+                  <div class="composition-effect-header">
+                    <input
+                      type="checkbox"
+                      checked={effect.enabled}
+                      onchange={() => project.toggleMappingCompositionEffect(effect.id)}
+                    />
+                    <button
+                      class="composition-effect-name"
+                      onclick={() => expandedCompositionEffectId = expandedCompositionEffectId === effect.id ? null : effect.id}
+                    >{getEffectLabel(effect.type)}</button>
+                    <button
+                      class="composition-mini-btn"
+                      disabled={index === 0}
+                      onclick={() => project.reorderMappingCompositionEffects(index, index - 1)}
+                      title="Move up"
+                    >↑</button>
+                    <button
+                      class="composition-mini-btn"
+                      disabled={index === mappingComposition.effects.length - 1}
+                      onclick={() => project.reorderMappingCompositionEffects(index, index + 1)}
+                      title="Move down"
+                    >↓</button>
+                    <button
+                      class="effect-reset"
+                      onclick={() => project.resetMappingCompositionEffectParams(effect.id)}
+                      title="Reset"
+                    >↺</button>
+                    <button
+                      class="effect-delete"
+                      onclick={() => project.removeMappingCompositionEffect(effect.id)}
+                      title="Remove"
+                    >x</button>
+                  </div>
+
+                  {#if expandedCompositionEffectId === effect.id}
+                    <div class="composition-effect-params">
+                      <div class="effect-mix-row">
+                        <div class="effect-opacity-ctrl">
+                          <span class="param-label">Opacity</span>
+                          <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.01"
+                            value={effect.opacity ?? 1}
+                            oninput={(e) => project.updateMappingCompositionEffect(effect.id, { opacity: parseFloat((e.target as HTMLInputElement).value) })}
+                          />
+                          <span class="param-value">{(((effect.opacity ?? 1) * 100)).toFixed(0)}%</span>
+                        </div>
+                        <div class="effect-blend-ctrl">
+                          <span class="param-label">Blend</span>
+                          <select
+                            value={effect.blendMode ?? 'normal'}
+                            onchange={(e) => project.updateMappingCompositionEffect(effect.id, { blendMode: (e.target as HTMLSelectElement).value as BlendMode })}
+                          >
+                            {#each blendModes as mode}
+                              <option value={mode}>{mode}</option>
+                            {/each}
+                          </select>
+                        </div>
+                      </div>
+
+                      {#if getEffectPresets(effect.type).length > 0}
+                        <details open>
+                          <summary>Presets</summary>
+                          <div class="param-row">
+                            <span class="param-label">Preset</span>
+                            <select
+                              value={compositionPresetSelection[effect.id] ?? ''}
+                              onchange={(e) => {
+                                const val = (e.target as HTMLSelectElement).value;
+                                compositionPresetSelection = { ...compositionPresetSelection, [effect.id]: val };
+                                if (val !== '') applyCompositionPreset(effect, parseInt(val, 10));
+                              }}
+                            >
+                              <option value="">Select preset</option>
+                              {#each getEffectPresets(effect.type) as preset, i}
+                                <option value={String(i)}>{preset.name}</option>
+                              {/each}
+                            </select>
+                          </div>
+                        </details>
+                      {/if}
+
+                      {#each [effectParamLabels[effect.type]] as paramMeta}
+                        <details open>
+                          <summary>Controls</summary>
+                          {#if paramMeta}
+                            {#each Object.entries(paramMeta) as [paramKey, meta]}
+                              {#if meta.type === 'select' && meta.options}
+                                <div class="param-row">
+                                  <span class="param-label">{meta.label}</span>
+                                  <select
+                                    value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
+                                    onchange={(e) => project.updateMappingCompositionEffectParams(effect.id, { [paramKey]: parseFloat((e.target as HTMLSelectElement).value) })}
+                                  >
+                                    {#each meta.options as opt}
+                                      <option value={opt.value}>{opt.label}</option>
+                                    {/each}
+                                  </select>
+                                </div>
+                              {:else if meta.type === 'color' && meta.colorParams}
+                                <div class="param-row">
+                                  <span class="param-label">{meta.label}</span>
+                                  <input
+                                    type="color"
+                                    value={getCompositionColorValue(effect, meta)}
+                                    oninput={updateCompositionColorParam(effect, meta)}
+                                  />
+                                </div>
+                              {:else}
+                                <div class="param-row">
+                                  <span class="param-label">{meta.label}</span>
+                                  <input
+                                    type="range"
+                                    min={meta.min as number}
+                                    max={meta.max as number}
+                                    step={meta.step as number}
+                                    value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
+                                    oninput={(e) => project.updateMappingCompositionEffectParams(effect.id, { [paramKey]: parseFloat((e.target as HTMLInputElement).value) })}
+                                  />
+                                  <span class="param-value">
+                                    {((effect.params as Record<string, number>)[paramKey] ?? meta.default).toFixed(2)}
+                                  </span>
+                                </div>
+                              {/if}
+                            {/each}
+                          {:else}
+                            {#each getNumericEffectParams(effect.type) as paramKey}
+                              <div class="param-row">
+                                <span class="param-label">{paramKey}</span>
+                                <input
+                                  type="range"
+                                  min="0"
+                                  max="1"
+                                  step="0.01"
+                                  value={(effect.params as Record<string, number>)[paramKey] ?? 0.5}
+                                  oninput={(e) => project.updateMappingCompositionEffectParams(effect.id, { [paramKey]: parseFloat((e.target as HTMLInputElement).value) })}
+                                />
+                                <span class="param-value">{((effect.params as Record<string, number>)[paramKey] ?? 0.5).toFixed(2)}</span>
+                              </div>
+                            {/each}
+                          {/if}
+                        </details>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <div class="composition-empty">No composition effects.</div>
+          {/if}
+        {:else}
+          {@const auto = mappingComposition.stageEffectAutomation}
+          <div class="stage-auto-bar mapping-stage-auto">
+            <button
+              class="stage-auto-play"
+              class:playing={auto.playing}
+              onclick={() => project.toggleMappingStageEffectAutomation()}
+              title={auto.playing ? 'Stop timeline' : 'Start timeline'}
+            >{auto.playing ? '⏸' : '▶'}</button>
+            <select
+              class="stage-auto-mode"
+              value={auto.mode}
+              onchange={(e) => project.updateMappingStageEffectAutomation({ mode: (e.target as HTMLSelectElement).value as 'time' | 'beat' })}
+            >
+              <option value="beat">Beat</option>
+              <option value="time">Time</option>
+            </select>
+            {#if auto.mode === 'beat'}
+              <input
+                type="number"
+                min="1"
+                max="64"
+                step="1"
+                class="stage-auto-interval"
+                value={auto.beats}
+                onchange={(e) => project.updateMappingStageEffectAutomation({ beats: parseInt((e.target as HTMLInputElement).value) || 4 })}
+              />
+              <span class="stage-auto-unit">bts</span>
+            {:else}
+              <input
+                type="number"
+                min="0.5"
+                max="60"
+                step="0.5"
+                class="stage-auto-interval"
+                value={auto.seconds}
+                onchange={(e) => project.updateMappingStageEffectAutomation({ seconds: parseFloat((e.target as HTMLInputElement).value) || 4 })}
+              />
+              <span class="stage-auto-unit">sec</span>
+            {/if}
+          </div>
+
+          <div class="stage-fx-add mapping-stage-add">
+            <select bind:value={mappingStageAddType} class="stage-fx-select">
+              {#each STAGE_EFFECT_CATALOG as def (def.type)}
+                <option value={def.type}>{def.icon} {def.label}</option>
+              {/each}
+            </select>
+            <button class="add-effect-btn" onclick={() => addMappingStageEffect(mappingStageAddType)}>+ Add</button>
+          </div>
+
+          {#if mappingComposition.stageEffects.length > 0}
+            <div class="effects-section mapping-stage-effects">
+              <div class="effects-list">
+              {#each mappingComposition.stageEffects as eff (eff.id)}
+                {@const def = getEffectDef(eff.type)}
+                {@const isLive = mappingComposition.activeStageEffectId === eff.id}
+                <div class="effect-item" class:live={isLive}>
+                  <div class="effect-header" onclick={() => expandedMappingStageEffectId = expandedMappingStageEffectId === eff.id ? null : eff.id}>
+                    <button
+                      class="effect-live-radio"
+                      class:active={isLive}
+                      onclick={(e) => { e.stopPropagation(); project.setMappingStageEffectActive(eff.id); }}
+                      title="Activate this effect"
+                    >{isLive ? '◉' : '○'}</button>
+                    <span class="effect-name"
+                    >
+                      <span class="stage-fx-icon">{def?.icon ?? '◆'}</span>
+                      {def?.label ?? eff.type}
+                    </span>
+                    <button
+                      class="stage-effect-hold-button"
+                      class:active={isLive}
+                      class:pressed={!!heldMappingStageEffects[eff.id]}
+                      type="button"
+                      title={`Hold to show ${def?.label ?? eff.type}`}
+                      aria-label={`Hold to show ${def?.label ?? eff.type}`}
+                      data-midi-path={`map:stage-effect:${eff.id}:hold`}
+                      data-midi-label={`Mapping Stage FX Hold: ${def?.label ?? eff.type}`}
+                      data-midi-mode="toggle"
+                      data-midi-min="0"
+                      data-midi-max="1"
+                      data-keyboard-path={`map:stage-effect:${eff.id}:hold`}
+                      data-keyboard-label={`Mapping Stage FX Hold: ${def?.label ?? eff.type}`}
+                      data-keyboard-mode="momentary"
+                      onpointerdown={(e) => handleMappingStageEffectHoldPointerDown(e, eff.id)}
+                      onpointerup={(e) => handleMappingStageEffectHoldPointerEnd(e, eff.id)}
+                      onpointercancel={(e) => handleMappingStageEffectHoldPointerEnd(e, eff.id)}
+                      onlostpointercapture={(e) => handleMappingStageEffectHoldPointerEnd(e, eff.id)}
+                    >
+                      <span class="stage-effect-hold-light"></span>
+                      <svg class="stage-effect-fire-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M12.4 2.8c.6 3.1-.7 4.9-2.2 6.7-1.3 1.5-2.7 3.2-2.7 5.6 0 2.8 2.1 5.1 4.9 5.1s5.1-2.1 5.1-5.2c0-2.5-1.4-4.6-3-6.3-.2 2-1.2 3.1-2.5 3.9.4-2.6.2-6.2.4-9.8Z"/>
+                        <path d="M11.8 20.2c-1.5-.6-2.5-1.9-2.5-3.5 0-1.5.8-2.5 1.7-3.6.2 1.4.8 2.4 1.8 3-.1-1.1.1-2.4.8-3.8 1.1 1.2 1.8 2.6 1.8 4.2 0 1.9-1.4 3.3-3.6 3.7Z"/>
+                      </svg>
+                      <span class="stage-effect-hold-icon">▶</span>
+                    </button>
+                    <button
+                      class="effect-cycle-toggle"
+                      class:included={eff.enabled}
+                      onclick={(e) => { e.stopPropagation(); project.toggleMappingStageEffectInTimeline(eff.id); }}
+                      title={eff.enabled ? 'Included in timeline' : 'Excluded from timeline'}
+                    >{eff.enabled ? '↻' : '⊘'}</button>
+                    <span class="effect-expand">{expandedMappingStageEffectId === eff.id ? '▼' : '▶'}</span>
+                    <button
+                      class="effect-delete"
+                      onclick={(e) => { e.stopPropagation(); project.removeMappingStageEffect(eff.id); }}
+                      title="Remove"
+                    >×</button>
+                  </div>
+
+                  {#if expandedMappingStageEffectId === eff.id}
+                    <div class="effect-params">
+                      <div class="param-row">
+                        <span class="param-label">Opacity</span>
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.01"
+                          value={eff.opacity}
+                          oninput={(e) => project.updateMappingStageEffect(eff.id, { opacity: parseFloat((e.target as HTMLInputElement).value) })}
+                        />
+                        <span class="param-value">{eff.opacity.toFixed(2)}</span>
+                      </div>
+                      {#each def?.paramSpecs ?? [] as spec (spec.key)}
+                        <div class="param-row">
+                          <span class="param-label">{spec.label}</span>
+                          <input
+                            type="range"
+                            min={spec.min}
+                            max={spec.max}
+                            step={spec.step ?? 0.01}
+                            value={eff.params[spec.key] ?? def?.defaultParams[spec.key] ?? 0}
+                            oninput={(e) => project.updateMappingStageEffectParam(eff.id, spec.key, parseFloat((e.target as HTMLInputElement).value))}
+                          />
+                          <span class="param-value">{(eff.params[spec.key] ?? def?.defaultParams[spec.key] ?? 0).toFixed(2)}</span>
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              {/each}
+              </div>
+            </div>
+          {:else}
+            <div class="composition-empty">No screen effects. Add one to animate the visible mapping layers.</div>
+          {/if}
+        {/if}
+      </div>
+    {/if}
 
     <div class="layer-list">
     {#each $layers as layer, index (layer.id)}
@@ -2040,7 +2542,7 @@
               <h4>Layer Effects</h4>
               <button
                 class="add-effect-btn"
-                onclick={() => { effectPickerLayerId = layer.id; showEffectPicker = true; }}
+                onclick={() => { effectPickerTarget = 'layer'; effectPickerLayerId = layer.id; showEffectPicker = true; }}
               >+ Add Effect</button>
             </div>
 
@@ -2339,12 +2841,16 @@
 <EffectPickerModal
   bind:open={showEffectPicker}
   onAdd={(types) => {
-    if (effectPickerLayerId) {
+    if (effectPickerTarget === 'mappingComposition') {
+      for (const t of types) addMappingCompositionEffect(t);
+    } else if (effectPickerLayerId) {
       for (const t of types) addEffect(effectPickerLayerId, t);
     }
+    effectPickerTarget = 'layer';
+    effectPickerLayerId = null;
     showEffectPicker = false;
   }}
-  onClose={() => { showEffectPicker = false; }}
+  onClose={() => { effectPickerTarget = 'layer'; effectPickerLayerId = null; showEffectPicker = false; }}
 />
 
 {#if sourceCropLayer?.source}
@@ -2367,7 +2873,7 @@
     flex-direction: column;
     color: var(--ga-ink-0, #eef0f4);
     font-family: var(--ga-font-ui, system-ui, sans-serif);
-    font-size: 15.5px;
+    font-size: 14.5px;
     height: 100%;
     overflow: hidden;
   }
@@ -2427,7 +2933,7 @@
        weight, size, uppercase, letter-spacing. Only difference is the
        accent color — purple (BB86FC) here vs orange (ff9800) for Edge
        Effects, so the two sections read as siblings, not parent/child. */
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--ga-violet, #9b87f5);
     text-transform: uppercase;
@@ -2444,9 +2950,420 @@
 
   .panel-header h3 {
     margin: 0;
-    font-size: 17px;
+    font-size: 16px;
     font-weight: 700;
     color: var(--ga-ink-0, #eef0f4);
+  }
+
+  .mapping-composition-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
+    background: rgba(255, 255, 255, 0.015);
+  }
+
+  .mapping-composition-row.enabled {
+    background: rgba(55, 178, 227, 0.07);
+  }
+
+  .mapping-composition-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--ga-ink-1, #b7bdc9);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+
+  .mapping-composition-toggle input {
+    width: 15px;
+    height: 15px;
+    accent-color: var(--ga-blue, #37b2e3);
+  }
+
+  .composition-edit-btn,
+  .composition-mini-btn,
+  .mapping-stage-live {
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    background: rgba(255, 255, 255, 0.035);
+    color: var(--ga-ink-1, #b7bdc9);
+    border-radius: var(--ga-r-hard, 2px);
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .composition-edit-btn {
+    height: 25px;
+    padding: 0 9px;
+  }
+
+  .composition-edit-btn:hover,
+  .composition-mini-btn:hover:not(:disabled),
+  .mapping-stage-live:hover {
+    border-color: rgba(55, 178, 227, 0.45);
+    color: #fff;
+  }
+
+  .composition-mini-btn {
+    min-width: 24px;
+    height: 24px;
+    padding: 0 5px;
+  }
+
+  .composition-mini-btn:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+
+  .composition-mini-btn.active,
+  .mapping-stage-live.active {
+    background: rgba(55, 178, 227, 0.18);
+    border-color: rgba(55, 178, 227, 0.58);
+    color: #63d6ff;
+  }
+
+  .mapping-composition-panel {
+    border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
+    padding: 8px;
+    background: rgba(7, 11, 16, 0.72);
+  }
+
+  .composition-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    margin-bottom: 8px;
+  }
+
+  .composition-tabs button {
+    height: 28px;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    background: rgba(255, 255, 255, 0.025);
+    color: var(--ga-ink-2, #8b93a2);
+    border-radius: var(--ga-r-hard, 2px);
+    cursor: pointer;
+    font-weight: 700;
+  }
+
+  .composition-tabs button.active {
+    color: #e9fbff;
+    border-color: rgba(55, 178, 227, 0.55);
+    background: rgba(55, 178, 227, 0.14);
+  }
+
+  .composition-section-header,
+  .stage-fx-add,
+  .stage-auto-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .composition-section-header {
+    justify-content: space-between;
+    color: var(--ga-ink-1, #b7bdc9);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    margin-bottom: 7px;
+  }
+
+  .composition-effect-list {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .composition-effect-item {
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    background: rgba(255, 255, 255, 0.025);
+    border-radius: var(--ga-r-hard, 2px);
+    overflow: hidden;
+  }
+
+  .composition-effect-item.disabled {
+    opacity: 0.58;
+  }
+
+  .composition-effect-item.live {
+    border-color: rgba(55, 178, 227, 0.5);
+  }
+
+  .composition-effect-header {
+    min-height: 32px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px;
+  }
+
+  .composition-effect-name {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    background: transparent;
+    color: var(--ga-ink-0, #eef0f4);
+    text-align: left;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .composition-effect-params {
+    padding: 8px;
+    border-top: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
+    background: rgba(0, 0, 0, 0.16);
+  }
+
+  .composition-empty {
+    border: 1px dashed var(--ga-line-2, rgba(255, 255, 255, 0.14));
+    color: var(--ga-ink-3, #747c89);
+    padding: 10px;
+    font-size: 12px;
+    text-align: center;
+  }
+
+  .stage-auto-bar {
+    margin-bottom: 8px;
+  }
+
+  .stage-auto-play {
+    width: 30px;
+    height: 28px;
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    background: rgba(255, 255, 255, 0.035);
+    color: var(--ga-ink-1, #b7bdc9);
+    border-radius: var(--ga-r-hard, 2px);
+    cursor: pointer;
+  }
+
+  .stage-auto-play.playing {
+    color: #59f0b8;
+    border-color: rgba(89, 240, 184, 0.5);
+    background: rgba(89, 240, 184, 0.11);
+  }
+
+  .stage-auto-mode,
+  .stage-fx-select,
+  .stage-auto-interval {
+    height: 28px;
+    background: var(--bg-tertiary, #11141a);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-0, #eef0f4);
+    border-radius: var(--ga-r-hard, 2px);
+    padding: 0 7px;
+    min-width: 0;
+  }
+
+  .stage-auto-mode,
+  .stage-fx-select {
+    flex: 1;
+  }
+
+  .stage-auto-interval {
+    width: 58px;
+  }
+
+  .stage-auto-unit {
+    color: var(--ga-ink-3, #747c89);
+    font-size: 11px;
+    width: 24px;
+  }
+
+  .mapping-stage-add {
+    margin-bottom: 8px;
+  }
+
+  .mapping-stage-live {
+    min-width: 44px;
+    height: 24px;
+    padding: 0 7px;
+  }
+
+  .mapping-stage-effects .effects-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .mapping-stage-effects .effect-item {
+    background: var(--bg-primary, #0d0d10);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  .mapping-stage-effects .effect-item.live {
+    background: rgba(76, 209, 255, 0.04);
+    border-left: 2px solid #4cd1ff;
+  }
+
+  .mapping-stage-effects .effect-header {
+    gap: 8px;
+    padding: 7px 10px;
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+
+  .mapping-stage-effects .effect-header:hover {
+    background: var(--bg-secondary, #111114);
+  }
+
+  .mapping-stage-effects .effect-header:active {
+    cursor: pointer;
+  }
+
+  .mapping-stage-effects .effect-name {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    color: var(--text-primary, #ddd);
+    font-size: 13px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .stage-fx-icon {
+    color: #4cd1ff;
+    flex: 0 0 auto;
+  }
+
+  .effect-live-radio {
+    width: 22px;
+    height: 22px;
+    border: 1px solid #2a2a30;
+    background: transparent;
+    color: #555;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .effect-live-radio:hover {
+    border-color: #4cd1ff;
+    color: var(--text-secondary, #aaa);
+  }
+
+  .effect-live-radio.active {
+    color: #4cd1ff;
+    border-color: #4cd1ff;
+    background: rgba(76, 209, 255, 0.12);
+    box-shadow: 0 0 8px rgba(76, 209, 255, 0.35);
+  }
+
+  .stage-effect-hold-button {
+    position: relative;
+    width: 24px;
+    height: 22px;
+    flex: 0 0 24px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 4px;
+    background:
+      radial-gradient(circle at 35% 20%, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0.06) 35%, transparent 60%),
+      linear-gradient(180deg, #35353a 0%, #202026 46%, #0e0f13 100%);
+    color: rgba(238, 242, 247, 0.82);
+    cursor: pointer;
+    padding: 0;
+    display: inline-grid;
+    place-items: center;
+    overflow: hidden;
+    box-shadow:
+      inset 0 1px 1px rgba(255, 255, 255, 0.2),
+      inset 0 -4px 6px rgba(0, 0, 0, 0.55),
+      0 1px 2px rgba(0, 0, 0, 0.6);
+    transform: translateY(0);
+    transition: transform 80ms ease, border-color 120ms ease, box-shadow 120ms ease, color 120ms ease;
+  }
+
+  .stage-effect-hold-button:hover {
+    border-color: rgba(255, 255, 255, 0.34);
+    color: #fff;
+    box-shadow:
+      inset 0 1px 1px rgba(255, 255, 255, 0.25),
+      inset 0 -4px 6px rgba(0, 0, 0, 0.55),
+      0 0 8px rgba(255, 255, 255, 0.08);
+  }
+
+  .stage-effect-hold-button.active {
+    border-color: rgba(255, 133, 119, 0.48);
+  }
+
+  .stage-effect-hold-button.pressed {
+    color: #fff;
+    border-color: rgba(255, 147, 102, 0.95);
+    background:
+      radial-gradient(circle at 50% 42%, rgba(255, 244, 218, 0.95), rgba(255, 126, 69, 0.72) 45%, rgba(84, 24, 18, 0.88) 100%),
+      linear-gradient(180deg, #4b1f18, #130b0a);
+    box-shadow:
+      inset 0 1px 2px rgba(255, 255, 255, 0.55),
+      inset 0 -5px 8px rgba(0, 0, 0, 0.46),
+      0 0 12px rgba(255, 110, 60, 0.72),
+      0 0 24px rgba(255, 110, 60, 0.22);
+    transform: translateY(1px);
+  }
+
+  .stage-effect-hold-light {
+    position: absolute;
+    inset: 4px;
+    border-radius: 4px;
+    background: radial-gradient(circle, rgba(255, 255, 255, 0.14), transparent 72%);
+    opacity: 0.8;
+  }
+
+  .stage-effect-hold-button.pressed .stage-effect-hold-light {
+    background: radial-gradient(circle, rgba(255, 244, 214, 0.9), rgba(255, 111, 56, 0.52) 46%, transparent 78%);
+    opacity: 1;
+    filter: blur(1px);
+  }
+
+  .stage-effect-hold-icon {
+    display: none;
+  }
+
+  .stage-effect-fire-icon {
+    position: relative;
+    z-index: 1;
+    width: 13px;
+    height: 13px;
+    fill: currentColor;
+  }
+
+  .effect-cycle-toggle {
+    background: transparent;
+    border: 1px solid transparent;
+    color: #555;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px 4px;
+  }
+
+  .effect-cycle-toggle:hover {
+    color: var(--text-secondary, #aaa);
+    border-color: #2a2a30;
+  }
+
+  .effect-cycle-toggle.included {
+    color: #4cd1ff;
+    border-color: rgba(76, 209, 255, 0.35);
   }
 
   .btn-add {
@@ -2457,7 +3374,7 @@
     padding: 0 12px;
     border-radius: var(--ga-r-soft, 7px);
     cursor: pointer;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
     display: inline-flex;
     align-items: center;
@@ -2565,7 +3482,7 @@
     background: none;
     border: none;
     color: var(--ga-ink-2, #5e6571);
-    font-size: 14px;
+    font-size: 13px;
     cursor: pointer;
     padding: 0 2px;
     flex-shrink: 0;
@@ -2588,7 +3505,7 @@
     gap: 12px;
   }
   .radio-label {
-    font-size: 14px;
+    font-size: 13px;
     color: var(--text-primary, #ccc);
     display: flex;
     align-items: center;
@@ -2599,18 +3516,18 @@
     accent-color: #BB86FC;
   }
   .property-hint {
-    font-size: 13px;
+    font-size: 12px;
     color: #666;
     margin: 4px 0 8px;
     line-height: 1.4;
   }
   .property-value {
-    font-size: 14px;
+    font-size: 13px;
     color: var(--text-secondary, #aaa);
-    font-family: monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
   .grouped-child-note {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     padding: 8px 12px;
     background: rgba(187, 134, 252, 0.06);
@@ -2642,7 +3559,7 @@
     background: none;
     border: none;
     color: var(--text-primary, #ccc);
-    font-size: 14px;
+    font-size: 13px;
     padding: 6px 14px;
     cursor: pointer;
   }
@@ -2721,7 +3638,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 15.5px;
+    font-size: 14.5px;
     font-weight: 600;
   }
 
@@ -2738,7 +3655,7 @@
     border-radius: var(--ga-r-hard, 2px);
     color: var(--ga-ink-0, #eef0f4);
     font: inherit;
-    font-size: 14px;
+    font-size: 13px;
     padding: 2px 6px;
     outline: none;
     min-width: 0;
@@ -2750,7 +3667,7 @@
      italic muted span and is the only flex sibling that's allowed to
      shrink, so the row never overflows. */
   .invert-hint {
-    font-size: 12px;
+    font-size: 11px;
     color: #777;
     font-style: italic;
     flex: 1 1 auto;
@@ -2831,7 +3748,7 @@
 
   .layer-properties h4 {
     margin: 0 0 11px 0;
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 700;
     color: var(--ga-ink-0, #eef0f4);
   }
@@ -2858,7 +3775,7 @@
 
   .source-type {
     display: block;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--ga-ink-2, #5e6571);
     margin-bottom: 8px;
   }
@@ -2902,9 +3819,9 @@
   .vt-play:hover { background: #CF6EFF; color: #000; }
 
   .vt-time {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-muted, #888);
-    font-family: monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     margin-left: 4px;
     flex: 1;
     white-space: nowrap;
@@ -2915,7 +3832,7 @@
     color: var(--text-secondary, #aaa);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 3px;
-    font-size: 13px;
+    font-size: 12px;
     padding: 2px 4px;
     cursor: pointer;
     flex-shrink: 0;
@@ -3013,7 +3930,7 @@
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);
     color: var(--text-muted, #888);
-    font-size: 12px;
+    font-size: 11px;
     padding: 4px 2px;
     border-radius: 3px;
     cursor: pointer;
@@ -3053,9 +3970,9 @@
   .feather-row { flex-wrap: wrap; }
   .feather-sliders { width: 100%; display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
   .feather-slider { display: flex; align-items: center; gap: 4px; }
-  .feather-label { width: 12px; font-size: 11px; color: #666; text-align: center; }
+  .feather-label { width: 12px; font-size: 10px; color: #666; text-align: center; }
   .feather-slider input[type='range'] { flex: 1; }
-  .btn-small { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: var(--text-secondary, #aaa); font-size: 12px; padding: 3px 8px; border-radius: 3px; cursor: pointer; }
+  .btn-small { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: var(--text-secondary, #aaa); font-size: 11px; padding: 3px 8px; border-radius: 3px; cursor: pointer; }
   .btn-small:hover:not(:disabled) { background: rgba(255,255,255,0.12); color: #fff; }
   .btn-small:disabled { opacity: 0.45; cursor: not-allowed; }
   .source-crop-row .btn-small { min-height: 26px; }
@@ -3066,7 +3983,7 @@
   .property-row label {
     width: auto;
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 14.5px;
+    font-size: 13.5px;
     font-weight: 500;
   }
 
@@ -3083,7 +4000,7 @@
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     padding: 0 26px 0 11px;
     border-radius: var(--ga-r-hard, 2px);
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 500;
   }
 
@@ -3091,7 +4008,7 @@
     width: 40px;
     text-align: right;
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 14px;
+    font-size: 13px;
     font-family: var(--ga-font-mono, ui-monospace, monospace);
   }
 
@@ -3114,7 +4031,7 @@
     border: 1px solid #555;
     padding: 4px 8px;
     border-radius: 4px;
-    font-size: 13px;
+    font-size: 12px;
   }
 
   .btn-reset,
@@ -3127,7 +4044,7 @@
     padding: 0 12px;
     border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
     transition: color 0.15s, border-color 0.15s, background 0.15s;
   }
@@ -3156,7 +4073,7 @@
     padding: 7px;
     border-radius: 0;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
     transition: all 0.15s;
   }
@@ -3193,7 +4110,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 14px;
+    font-size: 13px;
     color: var(--text-primary, #ccc);
   }
 
@@ -3202,7 +4119,7 @@
   }
 
   .mask-point-count {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     margin-left: auto;
   }
@@ -3213,7 +4130,7 @@
   }
 
   .mask-section .property-row .value {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     min-width: 35px;
     text-align: right;
@@ -3229,7 +4146,7 @@
     border: none;
     padding: 4px 10px;
     border-radius: 4px;
-    font-size: 13px;
+    font-size: 12px;
     cursor: pointer;
   }
 
@@ -3243,7 +4160,7 @@
   }
 
   .mask-hint {
-    font-size: 12px;
+    font-size: 11px;
     color: #666;
     font-style: italic;
   }
@@ -3278,12 +4195,12 @@
   }
   .mask-shape-label {
     flex: 1;
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-primary, #ddd);
   }
   .mask-shape-meta {
     color: var(--text-muted, #888);
-    font-size: 12px;
+    font-size: 11px;
   }
   .mask-shape-meta em {
     color: #ffd400;
@@ -3296,7 +4213,7 @@
     color: var(--text-secondary, #aaa);
     width: 22px; height: 22px;
     border-radius: 3px;
-    font-size: 16px;
+    font-size: 15px;
     line-height: 1;
     cursor: pointer;
     display: flex; align-items: center; justify-content: center;
@@ -3337,7 +4254,7 @@
     border: none;
     border-radius: 4px;
     color: #000;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s ease;
@@ -3365,7 +4282,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 14px;
+    font-size: 13px;
     color: var(--text-primary, #ccc);
     min-width: 70px;
   }
@@ -3412,7 +4329,7 @@
     border: 1px solid #555;
     border-radius: 4px;
     padding: 4px 8px;
-    font-size: 14px;
+    font-size: 13px;
   }
 
   .shape-mask-section .property-row input[type="range"] {
@@ -3421,7 +4338,7 @@
   }
 
   .shape-mask-section .property-row .value {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     min-width: 35px;
     text-align: right;
@@ -3433,7 +4350,7 @@
   }
 
   .shape-mask-section .shape-help span {
-    font-size: 13px;
+    font-size: 12px;
     color: #9aa0a6;
     line-height: 1.35;
   }
@@ -3444,7 +4361,7 @@
     border: none;
     padding: 4px 10px;
     border-radius: 4px;
-    font-size: 13px;
+    font-size: 12px;
     cursor: pointer;
   }
 
@@ -3460,7 +4377,7 @@
     border: none;
     padding: 4px 10px;
     border-radius: 4px;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     transition: background 0.15s;
@@ -3538,7 +4455,7 @@
     background: none;
     border: none;
     color: var(--text-primary, #ddd);
-    font-size: 14px;
+    font-size: 13px;
     cursor: pointer;
     text-align: left;
     padding: 4px 0;
@@ -3552,7 +4469,7 @@
     background: none;
     border: none;
     color: #ff4444;
-    font-size: 16px;
+    font-size: 15px;
     cursor: pointer;
     padding: 2px 4px;
     opacity: 0.6;
@@ -3571,7 +4488,7 @@
     background: none;
     border: none;
     color: #7ec8e3;
-    font-size: 16px;
+    font-size: 15px;
     line-height: 1;
     cursor: pointer;
     padding: 2px 4px;
@@ -3604,8 +4521,10 @@
   }
 
   .effect-opacity-ctrl label,
-  .effect-blend-ctrl label {
-    font-size: 12px;
+  .effect-blend-ctrl label,
+  .effect-opacity-ctrl .param-label,
+  .effect-blend-ctrl .param-label {
+    font-size: 11px;
     color: var(--text-muted, #888);
     white-space: nowrap;
     min-width: 38px;
@@ -3626,7 +4545,7 @@
     background: var(--bg-tertiary, #1a1a1e);
     border: 1px solid #333;
     color: var(--text-primary, #ccc);
-    font-size: 12px;
+    font-size: 11px;
     padding: 2px 4px;
     border-radius: 3px;
     max-width: 90px;
@@ -3643,9 +4562,10 @@
     margin-bottom: 0;
   }
 
-  .param-row label {
+  .param-row label,
+  .param-row .param-label {
     width: 70px;
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     flex-shrink: 0;
   }
@@ -3663,33 +4583,33 @@
     border: 1px solid #555;
     padding: 3px 6px;
     border-radius: 3px;
-    font-size: 13px;
+    font-size: 12px;
   }
 
   .param-value {
     width: 40px;
     text-align: right;
-    font-size: 12px;
+    font-size: 11px;
     color: #666;
     flex-shrink: 0;
   }
 
   .param-info {
-    font-size: 13px;
+    font-size: 12px;
     color: #666;
     font-style: italic;
     padding: 4px 0;
   }
 
   .macro-hint {
-    font-size: 12px;
+    font-size: 11px;
     color: #555;
     padding: 2px 6px 6px;
     font-style: italic;
   }
 
   .no-effects {
-    font-size: 13px;
+    font-size: 12px;
     color: #666;
     text-align: center;
     padding: 10px;
@@ -3728,7 +4648,7 @@
     background: none;
     border: none;
     color: var(--text-primary, #eee);
-    font-size: 14px;
+    font-size: 13px;
     cursor: pointer;
     text-align: left;
     transition: background 0.15s;
@@ -3757,7 +4677,7 @@
   }
 
   .lines-hint {
-    font-size: 11px;
+    font-size: 10px;
     opacity: 0.5;
     font-style: italic;
   }
@@ -3809,7 +4729,7 @@
   .color-slider-group label {
     display: flex;
     justify-content: space-between;
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-muted, #888);
   }
 
@@ -3857,7 +4777,7 @@
     justify-content: space-between;
     align-items: center;
     margin-bottom: 8px;
-    font-size: 14px;
+    font-size: 13px;
     color: var(--text-muted, #888);
   }
 
@@ -3867,7 +4787,7 @@
     border: none;
     padding: 4px 8px;
     border-radius: 4px;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     cursor: pointer;
   }
@@ -3914,7 +4834,7 @@
 
   .element-name {
     flex: 1;
-    font-size: 13px;
+    font-size: 12px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -3924,7 +4844,7 @@
     background: none;
     border: none;
     color: #ff4444;
-    font-size: 14px;
+    font-size: 13px;
     cursor: pointer;
     padding: 2px 4px;
     opacity: 0.6;
@@ -3936,7 +4856,7 @@
   }
 
   .no-elements {
-    font-size: 13px;
+    font-size: 12px;
     color: #666;
     text-align: center;
     padding: 12px 8px;
@@ -3945,7 +4865,7 @@
   }
 
   .svg-info {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     text-align: center;
     padding: 12px 8px;
@@ -3964,7 +4884,7 @@
 
   .orient-label {
     flex: 0 0 84px;
-    font-size: 14.5px;
+    font-size: 13.5px;
     color: var(--ga-ink-1, #9aa0ac);
     margin-right: 0;
     text-transform: none;
@@ -4003,7 +4923,7 @@
     padding: 8px;
     background: rgba(255, 255, 255, 0.03);
     border-radius: 4px;
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-secondary, #aaa);
   }
   .splat-info .file-loaded-info, .model3d-info .file-loaded-info {
@@ -4024,7 +4944,7 @@
   }
 
   .screen-label {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     white-space: nowrap;
   }
@@ -4036,7 +4956,7 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
     color: var(--text-primary, #ddd);
-    font-size: 13px;
+    font-size: 12px;
   }
 
   .flip-controls {
@@ -4055,7 +4975,7 @@
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 4px;
     color: var(--text-secondary, #aaa);
-    font-size: 13px;
+    font-size: 12px;
     cursor: pointer;
     transition: all 0.15s ease;
   }

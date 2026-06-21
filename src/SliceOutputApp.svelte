@@ -972,7 +972,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     padding: 1px 6px;
     margin: 0 2px;
     font-family: inherit;
-    font-size: 13px;
+    font-size: 12px;
   }
   @keyframes esc-fade {
     0% { opacity: 0; transform: translateY(-4px); }

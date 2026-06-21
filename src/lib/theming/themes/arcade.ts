@@ -1,5 +1,5 @@
-// Arcade — retro faceplate. Warm-toned depths, Archivo + Chakra Petch
-// display labels, IBM Plex Mono readouts, coral-on-black marquee accents.
+// Arcade — retro faceplate. Warm-toned depths, same Space Grotesk +
+// IBM Plex Mono type system, coral-on-black marquee accents.
 
 import type { Theme } from '../types';
 
@@ -8,10 +8,10 @@ export const ARCADE_THEME: Theme = {
   name: 'Arcade',
   description: 'Retro arcade faceplate — warm depths, LED segment numerals, coral marquee.',
   tokens: {
-    fontUi:      "'Archivo', system-ui, sans-serif",
-    fontDisplay: "'Chakra Petch', 'Archivo', system-ui, sans-serif",
+    fontUi:      "'Space Grotesk', system-ui, sans-serif",
+    fontDisplay: "'Space Grotesk', system-ui, sans-serif",
     fontMono:    "'IBM Plex Mono', ui-monospace, monospace",
-    fontLed:     "'VT323', monospace",
+    fontLed:     "'IBM Plex Mono', ui-monospace, monospace",
 
     void:  '#0a0908',
     bar:   '#100f0d',

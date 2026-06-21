@@ -1634,20 +1634,20 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     color: var(--text-primary, #ddd);
     padding: 10px 14px;
     border-radius: 4px;
-    font-family: 'SF Mono', Menlo, Consolas, monospace;
-    font-size: 13px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 12px;
     line-height: 1.5;
     pointer-events: none;
     max-width: 360px;
   }
   .error-title {
     font-weight: 700;
-    font-size: 14px;
+    font-size: 13px;
     color: #fff;
     margin-bottom: 6px;
   }
   .error-hint {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-muted, #888);
     margin-top: 8px;
   }
@@ -1655,6 +1655,6 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     background: rgba(255, 255, 255, 0.08);
     padding: 1px 4px;
     border-radius: 2px;
-    font-size: 12px;
+    font-size: 11px;
   }
 </style>

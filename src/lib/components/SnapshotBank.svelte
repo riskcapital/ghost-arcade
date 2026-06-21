@@ -205,7 +205,7 @@
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 4px;
     color: var(--text-secondary, #aaa);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.1em;
     cursor: pointer;
@@ -232,7 +232,7 @@
   .snap-handle-count {
     background: #BB86FC;
     color: #000;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 800;
     padding: 1px 5px;
     border-radius: 7px;
@@ -279,9 +279,9 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.12s;
   }
   .snap-cell:hover {
@@ -315,7 +315,7 @@
   }
 
   .snap-name {
-    font-size: 10px;
+    font-size: 9px;
     color: var(--text-secondary, #aaa);
     max-width: 32px;
     overflow: hidden;
@@ -330,7 +330,7 @@
     background: rgba(0, 0, 0, 0.4);
     border: 1px solid rgba(255, 255, 255, 0.18);
     color: #fff;
-    font-size: 10px;
+    font-size: 9px;
     text-align: center;
     border-radius: 2px;
     margin-top: 2px;
@@ -354,7 +354,7 @@
     background: none;
     border: none;
     color: var(--text-primary, #ccc);
-    font-size: 13px;
+    font-size: 12px;
     text-align: left;
     padding: 6px 14px;
     cursor: pointer;

@@ -288,14 +288,14 @@
   }
   .cpp-header-left { min-width: 0; flex: 1; }
   .cpp-eyebrow {
-    font-size: 12px;
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 11px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     color: #7EC8E3;
     letter-spacing: 0.1em;
     margin-bottom: 2px;
   }
   .cpp-title {
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 600;
     color: #fff;
     overflow: hidden;
@@ -339,7 +339,7 @@
   }
   .cpp-preview-note {
     margin-left: 12px;
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     max-width: 80px;
     line-height: 1.4;
@@ -357,14 +357,14 @@
     color: #666;
   }
   .cpp-preview-empty-type {
-    font-size: 18px;
+    font-size: 17px;
     font-weight: 600;
     color: var(--text-secondary, #aaa);
     text-transform: uppercase;
     letter-spacing: 0.1em;
   }
   .cpp-preview-empty-note {
-    font-size: 13px;
+    font-size: 12px;
     color: #666;
   }
 
@@ -381,8 +381,8 @@
   }
 
   .cpp-section-label {
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 12px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 11px;
     color: var(--text-muted, #888);
     letter-spacing: 0.15em;
     text-transform: uppercase;
@@ -401,7 +401,7 @@
   }
   .cpp-row-label {
     flex: 1;
-    font-size: 13px;
+    font-size: 12px;
     color: #d4d4d4;
     text-transform: capitalize;
   }
@@ -410,14 +410,14 @@
     border: none;
     color: #666;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 13px;
     padding: 0 4px;
     line-height: 1;
   }
   .cpp-reset:hover { color: #fff; }
   .cpp-value {
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 12px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 11px;
     color: #7EC8E3;
     min-width: 36px;
     text-align: right;
@@ -459,7 +459,7 @@
   }
 
   .cpp-empty-params {
-    font-size: 13px;
+    font-size: 12px;
     color: #666;
     font-style: italic;
   }
@@ -479,7 +479,7 @@
     border: none;
     border-radius: 6px;
     padding: 10px 16px;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -498,8 +498,8 @@
   }
   .cpp-trigger:active { transform: translateY(0); }
   .cpp-hint {
-    font-size: 12px;
+    font-size: 11px;
     color: #666;
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
 </style>

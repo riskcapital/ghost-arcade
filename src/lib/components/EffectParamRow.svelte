@@ -335,7 +335,7 @@
        leaves the slider track full width. */
     flex: 1 1 auto;
     min-width: 70px;
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-secondary, #aaa);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -348,7 +348,7 @@
     border: 1px solid #444;
     border-radius: 3px;
     padding: 1px 7px;
-    font-size: 12px;
+    font-size: 11px;
     max-width: 76px;
     cursor: pointer;
     white-space: nowrap;
@@ -376,7 +376,7 @@
     border: 1px dashed transparent;
     color: #67e8f9;
     font: inherit;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 500;
     font-variant-numeric: tabular-nums;
     cursor: text;
@@ -395,7 +395,7 @@
     border: 1px solid #67e8f9;
     color: #e0e7ef;
     font: inherit;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 500;
     font-variant-numeric: tabular-nums;
     padding: 1px 6px;

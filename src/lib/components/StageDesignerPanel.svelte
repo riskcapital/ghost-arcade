@@ -856,7 +856,7 @@
                   y={slice.polygon[0].y - 8 / zoom}
                   fill={slice.color}
                   font-size={11 / zoom}
-                  font-family="monospace"
+                  font-family="IBM Plex Mono, ui-monospace, monospace"
                   pointer-events="none"
                 >{slice.name}</text>
               {/if}
@@ -957,7 +957,7 @@
                   font-size={11 / zoom}
                   fill={slice.color}
                   pointer-events="none"
-                  font-family="-apple-system, sans-serif"
+                  font-family="Space Grotesk, system-ui, sans-serif"
                 >↻</text>
                 <!-- Scale handle (square at bottom-right of bbox) -->
                 {@const scaleX = bbox.maxX + 24 / zoom}
@@ -999,7 +999,7 @@
                   font-size={11 / zoom}
                   fill={slice.color}
                   pointer-events="none"
-                  font-family="-apple-system, sans-serif"
+                  font-family="Space Grotesk, system-ui, sans-serif"
                 >⤡</text>
               {/if}
             {/if}
@@ -1180,7 +1180,7 @@
     color: var(--text-primary, #ddd);
     display: flex;
     flex-direction: column;
-    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: var(--ga-font-ui, 'Space Grotesk', system-ui, sans-serif);
     user-select: none;
   }
 
@@ -1206,7 +1206,7 @@
     background: var(--bg-tertiary, #14141a);
     color: var(--text-primary, #ccc);
     border-radius: 4px;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 500;
     cursor: pointer;
     display: inline-flex;
@@ -1218,9 +1218,9 @@
     border-color: #4cd1ff;
     color: #fff;
   }
-  .back-arrow { font-size: 16px; line-height: 1; }
+  .back-arrow { font-size: 15px; line-height: 1; }
   .title {
-    font-size: 13px;
+    font-size: 12px;
     letter-spacing: 2px;
     color: #4cd1ff;
     font-weight: 600;
@@ -1231,15 +1231,15 @@
     border-radius: 3px;
     color: var(--text-primary, #ddd);
     padding: 4px 6px;
-    font-size: 15px;
+    font-size: 14px;
     min-width: 160px;
   }
   .surface-name-input:hover { border-color: #2a2a30; }
   .surface-name-input:focus { border-color: #4cd1ff; outline: none; }
   .surface-dims {
     color: #666;
-    font-size: 13px;
-    font-family: monospace;
+    font-size: 12px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
 
   /* ─── Toolbar ─── */
@@ -1256,7 +1256,7 @@
     background: var(--bg-tertiary, #14141a);
     color: var(--text-secondary, #aaa);
     border-radius: 4px;
-    font-size: 16px;
+    font-size: 15px;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
@@ -1267,11 +1267,11 @@
     padding: 0 9px 0 7px;
   }
   .tool-btn .t-icon {
-    font-size: 16px;
+    font-size: 15px;
     line-height: 1;
   }
   .tool-btn .t-label {
-    font-size: 13px;
+    font-size: 12px;
     letter-spacing: 0.3px;
     font-weight: 500;
   }
@@ -1287,7 +1287,7 @@
   .tool-btn.import-btn {
     width: auto;
     padding: 0 14px;
-    font-size: 13.5px;
+    font-size: 12.5px;
     letter-spacing: 0.5px;
     font-weight: 600;
     background: linear-gradient(180deg, rgba(76,209,255,0.18), rgba(76,209,255,0.08));
@@ -1301,7 +1301,7 @@
     color: #fff;
   }
   .tool-btn.import-btn .import-icon {
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 700;
   }
   .tool-sep {
@@ -1326,8 +1326,8 @@
   }
   .zoom-btn:hover { background: rgba(255,255,255,0.06); color: #fff; }
   .zoom-readout {
-    font-family: monospace;
-    font-size: 13px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 12px;
     color: var(--text-muted, #888);
     min-width: 44px;
     text-align: right;
@@ -1348,7 +1348,7 @@
     border: none;
     padding: 7px 14px;
     border-radius: 5px;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 700;
     letter-spacing: 0.4px;
     cursor: pointer;
@@ -1375,14 +1375,14 @@
     margin-top: 4px;
   }
   .binding-label {
-    font-size: 11.5px;
+    font-size: 10.5px;
     letter-spacing: 1px;
     color: var(--text-muted, #888);
     text-transform: uppercase;
     margin-bottom: 4px;
   }
   .binding-name {
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
     color: #4cd1ff;
     margin-bottom: 8px;
@@ -1393,7 +1393,7 @@
     color: #4cd1ff;
     padding: 5px 10px;
     border-radius: 4px;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 500;
     cursor: pointer;
     width: 100%;
@@ -1414,7 +1414,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 12px;
+    font-size: 11px;
     letter-spacing: 1.5px;
     color: #4cd1ff;
     text-transform: uppercase;
@@ -1423,12 +1423,12 @@
   }
   .effects-count {
     color: #555;
-    font-family: monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     font-weight: normal;
   }
 
   .effects-pointer {
-    font-size: 13px;
+    font-size: 12px;
     color: #bbb;
     line-height: 1.6;
     padding: 10px 12px;
@@ -1454,13 +1454,13 @@
     align-items: center;
     gap: 8px;
     padding: 4px 0;
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     border-top: 1px solid rgba(76,209,255,0.08);
   }
   .effects-catalog-icon {
     color: #4cd1ff;
-    font-size: 15px;
+    font-size: 14px;
     width: 18px;
     text-align: center;
   }
@@ -1490,7 +1490,7 @@
     gap: 4px;
   }
   .palette-section {
-    font-size: 11px;
+    font-size: 10px;
     letter-spacing: 1.2px;
     color: #555;
     text-transform: uppercase;
@@ -1528,11 +1528,11 @@
     color: #4cd1ff;
   }
   .palette-btn .p-icon {
-    font-size: 18px;
+    font-size: 17px;
     line-height: 1;
   }
   .palette-btn .p-label {
-    font-size: 11px;
+    font-size: 10px;
     letter-spacing: 0.3px;
     font-weight: 500;
     color: var(--text-muted, #888);
@@ -1567,7 +1567,7 @@
   .panel-header {
     flex: 0 0 28px;
     padding: 6px 12px;
-    font-size: 12px;
+    font-size: 11px;
     letter-spacing: 1.5px;
     color: var(--text-muted, #888);
     background: #08080a;
@@ -1578,7 +1578,7 @@
   }
   .slice-count {
     color: #555;
-    font-family: monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
   .slice-list {
     flex: 1;
@@ -1608,7 +1608,7 @@
     flex-shrink: 0;
   }
   .slice-name {
-    font-size: 14px;
+    font-size: 13px;
     color: var(--text-primary, #ccc);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1619,7 +1619,7 @@
     border: none;
     color: #555;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 13px;
     padding: 2px;
     border-radius: 3px;
   }
@@ -1629,7 +1629,7 @@
   .slice-empty {
     padding: 24px 12px;
     color: #555;
-    font-size: 13px;
+    font-size: 12px;
     line-height: 1.5;
     text-align: center;
   }
@@ -1682,14 +1682,14 @@
     backdrop-filter: blur(8px);
   }
   .empty-title {
-    font-size: 20px;
+    font-size: 19px;
     font-weight: 700;
     color: #4cd1ff;
     letter-spacing: 2px;
     margin: 0 0 6px;
   }
   .empty-sub {
-    font-size: 15px;
+    font-size: 14px;
     color: var(--text-secondary, #aaa);
     margin: 0 0 22px;
     line-height: 1.5;
@@ -1706,7 +1706,7 @@
     border: 1px solid #2a2a30;
     background: var(--bg-tertiary, #14141a);
     color: var(--text-primary, #ddd);
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.15s;
@@ -1727,12 +1727,12 @@
     transform: scale(1.02);
   }
   .empty-hint {
-    font-size: 13px;
+    font-size: 12px;
     color: #777;
     margin: 0 0 4px;
   }
   .empty-shortcut {
-    font-size: 12.5px;
+    font-size: 11.5px;
     color: #555;
     margin: 0;
     letter-spacing: 0.3px;
@@ -1764,12 +1764,12 @@
   }
   .drop-icon {
     display: block;
-    font-size: 34px;
+    font-size: 33px;
     margin-bottom: 6px;
   }
   .drop-card p {
     margin: 0;
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 600;
     letter-spacing: 1px;
   }
@@ -1792,7 +1792,7 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
-    font-size: 12px;
+    font-size: 11px;
     letter-spacing: 1px;
     color: var(--text-muted, #888);
   }
@@ -1800,7 +1800,7 @@
     flex-direction: row;
     align-items: center;
     gap: 6px;
-    font-size: 13px;
+    font-size: 12px;
     letter-spacing: 0;
     color: #bbb;
     text-transform: none;
@@ -1811,7 +1811,7 @@
     border-radius: 3px;
     color: var(--text-primary, #ddd);
     padding: 5px 8px;
-    font-size: 14px;
+    font-size: 13px;
   }
   .inspector-section input[type="text"]:focus {
     border-color: #4cd1ff;
@@ -1831,14 +1831,14 @@
   .inspector-stat {
     display: flex;
     justify-content: space-between;
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     padding: 4px 0;
     border-top: 1px solid #1a1a20;
   }
   .inspector-stat span:last-child {
     color: var(--text-primary, #ddd);
-    font-family: monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
   .inspector-action {
     margin-top: 4px;
@@ -1847,7 +1847,7 @@
     color: var(--text-secondary, #aaa);
     padding: 5px 10px;
     border-radius: 4px;
-    font-size: 13px;
+    font-size: 12px;
     cursor: pointer;
     text-align: left;
   }
@@ -1857,7 +1857,7 @@
     background: rgba(76,209,255,0.06);
   }
   .inspector-note {
-    font-size: 12px;
+    font-size: 11px;
     color: #555;
     line-height: 1.5;
     padding: 8px;
@@ -1868,7 +1868,7 @@
   .inspector-empty {
     padding: 24px 12px;
     color: #555;
-    font-size: 13px;
+    font-size: 12px;
     text-align: center;
   }
 </style>

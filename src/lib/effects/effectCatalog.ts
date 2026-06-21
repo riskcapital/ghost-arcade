@@ -38,6 +38,9 @@ const RAW_CATALOG: RawEntry[] = [
     description: 'Real-time Navier-Stokes fluid simulation on GPU compute. The source feeds dye + force into the fluid; colors swirl, billow, and dissipate like watercolor in water. Try over a video for surreal flowing imagery.',
     previewCSS: 'radial-gradient(circle at 30% 70%, #06f 0%, #08f 20%, #0cf 35%, #f80 55%, #f44 75%, #311 95%)',
     requiresWebGPU: true },
+  { type: 'eulerianMagnify', label: 'Eulerian Magnify', category: 'Vision Lab',
+    description: 'Live Eulerian/phase-style video magnification. Band-pass subtle color pulses or tiny motion from ordinary camera/video sources, amplify them, or attenuate them.',
+    previewCSS: 'radial-gradient(circle at 40% 45%, #ffd0c8 0%, #ff6060 16%, #3b0d1d 28%, transparent 44%), repeating-radial-gradient(circle at 50% 50%, #0ff4 0px, #0ff1 4px, transparent 9px, transparent 18px), #06070a' },
 
   // ── Masking (2) ──
   { type: 'vignette', label: 'Vignette', category: 'Masking',
@@ -94,7 +97,7 @@ const RAW_CATALOG: RawEntry[] = [
     description: 'Target and shift specific hue ranges',
     previewCSS: 'conic-gradient(from 0deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)' },
 
-  // ── Stylize (17) — includes blob analysis effects per roadmap ──
+  // ── Stylize (18) — includes blob analysis effects per roadmap ──
   { type: 'dither', label: 'Dither', category: 'Stylize',
     description: 'Retro dithering patterns — Bayer, noise, halftone',
     previewCSS: 'repeating-linear-gradient(45deg, #000 0px, #000 2px, #fff 2px, #fff 4px)' },
@@ -122,6 +125,9 @@ const RAW_CATALOG: RawEntry[] = [
   { type: 'fmScanlines', label: 'FM Lines', category: 'Stylize',
     description: "Luminance-driven line displacement — brightness pushes scanlines off-baseline and modulates a sine wave's frequency & amplitude, so lit areas churn into dense ripples (the 'FM portrait' look). Horizontal, vertical, or concentric.",
     previewCSS: 'repeating-linear-gradient(180deg, #000 0px, #000 2px, #fff 3px, #000 4px, #000 7px, #fff 8px, #000 9px)' },
+  { type: 'phaseLab', label: 'Phase Lab', category: 'Stylize',
+    description: 'Source-driven phase/interference looks for any layer: BOS schlieren refraction, photoelastic stress fringes, Lippmann color, InSAR phase wraps, catoptric anamorphosis, and DTI ribbons.',
+    previewCSS: 'radial-gradient(circle at 35% 45%, #ff5 0%, #f4a 18%, #67f 36%, #5ff 50%, transparent 66%), repeating-conic-gradient(from 20deg, #101 0deg, #063 18deg, #fd4 36deg, #101 54deg)' },
   { type: 'pixelate', label: 'Pixelate', category: 'Stylize',
     description: 'Mosaic / pixelation effect',
     previewCSS: 'repeating-conic-gradient(#888 0% 25%, #aaa 25% 50%) 0 0/20px 20px' },

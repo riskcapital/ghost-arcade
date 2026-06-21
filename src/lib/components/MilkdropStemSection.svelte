@@ -232,11 +232,11 @@
     gap: 6px;
   }
   .ss-header { display: flex; align-items: baseline; gap: 6px; }
-  .ss-title { font-size: 12px; color: var(--accent-secondary, #FF8585); letter-spacing: 0.6px; text-transform: uppercase; font-weight: 700; }
-  .ss-sub   { font-size: 11px; color: #555; }
+  .ss-title { font-size: 11px; color: var(--accent-secondary, #FF8585); letter-spacing: 0.6px; text-transform: uppercase; font-weight: 700; }
+  .ss-sub   { font-size: 10px; color: #555; }
 
   .ss-row { display: flex; align-items: center; gap: 6px; }
-  .ss-label { font-size: 11px; color: #666; width: 50px; }
+  .ss-label { font-size: 10px; color: #666; width: 50px; }
   select {
     flex: 1;
     background: #0a0612;
@@ -244,7 +244,7 @@
     color: var(--text-primary, #ddd);
     padding: 3px 6px;
     border-radius: 3px;
-    font-size: 12px;
+    font-size: 11px;
     outline: none;
   }
   select:focus { border-color: var(--accent-primary, #FF6B6B); }
@@ -257,7 +257,7 @@
     border: 1px solid rgba(255, 107, 107, 0.20);
     border-radius: 3px;
     color: var(--accent-secondary, #FF8585);
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.12s;
@@ -268,14 +268,14 @@
   .ss-btn.primary { background: rgba(255, 107, 107, 0.10); }
 
   .ss-err {
-    font-size: 11px;
+    font-size: 10px;
     color: #f87171;
     padding: 4px 6px;
     background: rgba(248, 113, 113, 0.08);
     border-radius: 3px;
   }
   .ss-hint {
-    font-size: 11px;
+    font-size: 10px;
     color: #666;
     line-height: 1.45;
     padding-top: 2px;
@@ -299,7 +299,7 @@
     animation: ssDot 2s infinite;
   }
   @keyframes ssDot { 0%,100%{opacity:1} 50%{opacity:.35} }
-  .ss-active-name { flex: 1; font-size: 12px; color: var(--accent-secondary, #FF8585); }
+  .ss-active-name { flex: 1; font-size: 11px; color: var(--accent-secondary, #FF8585); }
 
   .ss-matrix {
     display: flex;
@@ -319,16 +319,16 @@
   }
   .ss-matrix-head { padding: 2px 0; }
   .ss-matrix-head span {
-    font-size: 10px;
+    font-size: 9px;
     color: #555;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     text-align: center;
   }
   .ss-stem-label {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-secondary, #aaa);
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

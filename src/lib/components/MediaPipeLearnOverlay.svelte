@@ -205,8 +205,8 @@
     color: #1a0e08;
     padding: 1px 5px;
     border-radius: 3px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 10px;
     font-weight: 700;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
     pointer-events: none;

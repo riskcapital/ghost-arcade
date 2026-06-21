@@ -1309,7 +1309,7 @@
              effect / layer that disappeared from their picker.
              ───────────────────────────────────────────────────────── -->
         <section class="settings-section">
-          <h3>GPU Acceleration <span style="font-size: 12px; padding: 2px 6px; margin-left: 6px; background: linear-gradient(135deg, #1e3a8a, #7c2d12); color: #fff; border-radius: 3px; vertical-align: middle;">EXPERIMENTAL</span></h3>
+          <h3>GPU Acceleration <span style="font-size: 11px; padding: 2px 6px; margin-left: 6px; background: linear-gradient(135deg, #1e3a8a, #7c2d12); color: #fff; border-radius: 3px; vertical-align: middle;">EXPERIMENTAL</span></h3>
           <!-- Restart-required banner. The renderer chooses which canvas
                and effect-chain path to mount at boot, so toggling these
                flags mid-session leaves a broken state (grid disappears,
@@ -2429,7 +2429,7 @@
 
   .sidebar-category {
     padding: 14px 16px 4px;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     color: #555;
     text-transform: uppercase;
@@ -2447,7 +2447,7 @@
     background: none;
     border: none;
     color: var(--text-secondary, #aaa);
-    font-size: 15px;
+    font-size: 14px;
     padding: 7px 16px 7px 24px;
     cursor: pointer;
     border-left: 2px solid transparent;
@@ -2468,7 +2468,7 @@
   }
 
   .sidebar-adv-tag {
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 700;
     letter-spacing: 0.08em;
     padding: 1px 4px;
@@ -2482,7 +2482,7 @@
     align-items: center;
     gap: 8px;
     padding: 10px 16px;
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     cursor: pointer;
     border-top: 1px solid #1f1f24;
@@ -2513,7 +2513,7 @@
 
   .settings-header h2 {
     margin: 0;
-    font-size: 20px;
+    font-size: 19px;
     font-weight: 600;
     color: var(--text-primary, #eee);
   }
@@ -2548,7 +2548,7 @@
     border: none;
     border-bottom: 2px solid transparent;
     color: var(--text-muted, #888);
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
     padding: 10px 16px;
     cursor: pointer;
@@ -2566,7 +2566,7 @@
 
   .tier-indicator {
     display: inline-block;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.05em;
     padding: 1px 5px;
@@ -2595,7 +2595,7 @@
   }
 
   .dev-tier-label {
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.08em;
     padding: 2px 6px;
@@ -2605,7 +2605,7 @@
   }
 
   .dev-tier-sublabel {
-    font-size: 13px;
+    font-size: 12px;
     color: #f59e0b;
     font-weight: 500;
   }
@@ -2616,7 +2616,7 @@
     border-radius: 6px;
     padding: 6px 10px;
     color: var(--text-primary, #e0e0e0);
-    font-size: 14px;
+    font-size: 13px;
     cursor: pointer;
     min-width: 200px;
   }
@@ -2628,7 +2628,7 @@
 
   .pro-badge {
     display: inline-block;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.06em;
     padding: 2px 6px;
@@ -2639,7 +2639,7 @@
   }
 
   .locked-label {
-    font-size: 18px;
+    font-size: 17px;
     opacity: 0.5;
   }
 
@@ -2648,7 +2648,7 @@
     border: 1px solid rgba(245, 158, 11, 0.2);
     border-radius: 6px;
     padding: 10px 12px;
-    font-size: 14px;
+    font-size: 13px;
     color: #999;
     line-height: 1.5;
   }
@@ -2669,7 +2669,7 @@
 
   .settings-section h3 {
     margin: 0 0 16px 0;
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 600;
     color: #BB86FC;
     text-transform: uppercase;
@@ -2695,11 +2695,11 @@
     border-bottom: 1px solid #131315;
   }
   .setting-row.sub-row .label-text {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-secondary, #aaa);
   }
   .setting-row.sub-row .label-hint {
-    font-size: 12px;
+    font-size: 11px;
     color: #666;
   }
   .setting-row.sub-row input[type="range"] {
@@ -2720,7 +2720,7 @@
     border: 1px solid #2a2a30;
     padding: 4px 8px;
     border-radius: 3px;
-    font-size: 13px;
+    font-size: 12px;
     cursor: pointer;
   }
 
@@ -2733,12 +2733,12 @@
   }
 
   .label-text {
-    font-size: 16px;
+    font-size: 15px;
     color: var(--text-primary, #eee);
   }
 
   .label-hint {
-    font-size: 14px;
+    font-size: 13px;
     color: #666;
   }
 
@@ -2748,7 +2748,7 @@
     border-radius: 6px;
     padding: 8px 12px;
     color: var(--text-primary, #eee);
-    font-size: 15px;
+    font-size: 14px;
     cursor: pointer;
     min-width: 180px;
   }
@@ -2768,7 +2768,7 @@
     border-radius: 6px;
     padding: 8px 12px;
     color: var(--text-primary, #eee);
-    font-size: 15px;
+    font-size: 14px;
     min-width: 180px;
   }
 
@@ -2792,7 +2792,7 @@
     border-radius: 6px;
     padding: 8px 14px;
     color: var(--text-primary, #ddd);
-    font-size: 14px;
+    font-size: 13px;
     cursor: pointer;
     white-space: nowrap;
   }
@@ -2811,7 +2811,7 @@
     border-radius: 6px;
     padding: 8px 14px;
     color: #BB86FC;
-    font-size: 14px;
+    font-size: 13px;
     text-decoration: none;
     white-space: nowrap;
   }
@@ -2829,8 +2829,8 @@
     color: var(--text-primary, #ddd);
     border-radius: 4px;
     padding: 5px 8px;
-    font-family: monospace;
-    font-size: 14px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 13px;
   }
   .port-input:focus { border-color: #4cd1ff; outline: none; }
   .osc-status-dot {
@@ -2844,9 +2844,9 @@
   .osc-status-dot.error     { background: #ff5252; }
   .osc-status-dot.idle      { background: #555; }
   .osc-last {
-    font-family: monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     color: #b6e8ff;
-    font-size: 13px;
+    font-size: 12px;
     background: rgba(76,209,255,0.06);
     padding: 1px 4px;
     border-radius: 3px;
@@ -2861,7 +2861,7 @@
     border: 1px solid rgba(255,214,102,0.4);
     border-radius: 5px;
     color: #ffd166;
-    font-size: 14px;
+    font-size: 13px;
   }
   .osc-learn-pulse {
     width: 10px; height: 10px;
@@ -2881,7 +2881,7 @@
     padding: 3px 10px;
     border-radius: 4px;
     cursor: pointer;
-    font-size: 13px;
+    font-size: 12px;
   }
   .osc-learn-cancel:hover { background: rgba(255,214,102,0.15); color: #fff; }
 
@@ -2890,7 +2890,7 @@
     background: var(--bg-tertiary, #14141a);
     border: 1px dashed #2a2a30;
     border-radius: 5px;
-    font-size: 14px;
+    font-size: 13px;
     color: var(--text-muted, #888);
     text-align: center;
   }
@@ -2906,7 +2906,7 @@
     align-items: center;
   }
   .osc-binding-head {
-    font-size: 11.5px;
+    font-size: 10.5px;
     letter-spacing: 1px;
     color: #555;
     text-transform: uppercase;
@@ -2918,8 +2918,8 @@
     color: var(--text-primary, #ddd);
     border-radius: 3px;
     padding: 4px 6px;
-    font-family: monospace;
-    font-size: 13px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 12px;
     width: 100%;
   }
   .osc-binding-row input:focus { border-color: #4cd1ff; outline: none; }
@@ -2945,7 +2945,7 @@
     padding: 5px 12px;
     border-radius: 4px;
     cursor: pointer;
-    font-size: 13px;
+    font-size: 12px;
   }
   .osc-add-btn:hover { border-color: #4cd1ff; color: #4cd1ff; }
   .osc-add-btn.learn { border-color: rgba(255,214,102,0.5); color: #ffd166; }
@@ -2975,7 +2975,7 @@
     border-radius: 3px;
     cursor: pointer;
     font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
@@ -3049,7 +3049,7 @@
     border-radius: 6px;
     padding: 8px 14px;
     color: var(--text-primary, #eee);
-    font-size: 15px;
+    font-size: 14px;
     cursor: pointer;
     transition: all 0.15s;
   }
@@ -3063,7 +3063,7 @@
     background: none;
     border: none;
     color: var(--text-muted, #888);
-    font-size: 15px;
+    font-size: 14px;
     cursor: pointer;
     padding: 8px 12px;
     transition: color 0.15s;
@@ -3079,7 +3079,7 @@
     border-radius: 6px;
     padding: 10px 20px;
     color: #000;
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -3106,7 +3106,7 @@
 
   .info-box p {
     margin: 0;
-    font-size: 14px;
+    font-size: 13px;
     color: var(--text-muted, #888);
     line-height: 1.5;
   }
@@ -3141,7 +3141,7 @@
 
   .size-separator {
     color: var(--text-muted, #888);
-    font-size: 15px;
+    font-size: 14px;
   }
 
   /* Theme Template cards — bigger preview than the accent cards
@@ -3202,8 +3202,8 @@
     border-radius: 50%;
     box-shadow: 0 0 8px currentColor;
   }
-  .theme-name { font-size: 16px; font-weight: 600; color: var(--text-primary, #fff); margin-top: 2px; }
-  .theme-desc { font-size: 13px; color: var(--text-secondary, #888); line-height: 1.4; }
+  .theme-name { font-size: 15px; font-weight: 600; color: var(--text-primary, #fff); margin-top: 2px; }
+  .theme-desc { font-size: 12px; color: var(--text-secondary, #888); line-height: 1.4; }
 
   /* Color Scheme Selector */
   .color-scheme-grid {
@@ -3263,13 +3263,13 @@
   }
 
   .scheme-name {
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
     color: var(--text-primary, #eee);
   }
 
   .scheme-desc {
-    font-size: 12px;
+    font-size: 11px;
     color: #666;
     text-align: center;
   }
@@ -3283,7 +3283,7 @@
 
   .key-input {
     flex: 1;
-    font-family: monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     min-width: 120px;
   }
 
@@ -3294,7 +3294,7 @@
 
   .key-badge {
     display: inline-block;
-    font-size: 12px;
+    font-size: 11px;
     padding: 1px 6px;
     border-radius: 4px;
     margin-left: 6px;
@@ -3339,7 +3339,7 @@
     border-radius: 6px;
     padding: 6px 12px;
     color: var(--text-secondary, #aaa);
-    font-size: 14px;
+    font-size: 13px;
     cursor: pointer;
     transition: all 0.15s;
   }
@@ -3370,7 +3370,7 @@
   }
 
   .crop-label {
-    font-size: 14px;
+    font-size: 13px;
     color: var(--text-muted, #888);
     min-width: 16px;
     font-weight: 600;
@@ -3395,11 +3395,11 @@
   }
 
   .crop-value {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     min-width: 32px;
     text-align: right;
-    font-family: monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
 
   .crop-grid .secondary-btn {
@@ -3448,7 +3448,7 @@
   .error-log {
     max-height: 200px;
     overflow-y: auto;
-    font-size: 13px;
+    font-size: 12px;
     background: var(--bg-secondary, #1a1a2e);
     border-radius: 4px;
     padding: 6px;
@@ -3465,7 +3465,7 @@
 
   .error-time {
     color: var(--text-muted, #888);
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .error-msg {
@@ -3475,7 +3475,7 @@
 
   .error-source {
     color: #666;
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .diag-actions {
@@ -3485,7 +3485,7 @@
   }
 
   .section-hint {
-    font-size: 13px;
+    font-size: 12px;
     color: #666;
     margin: -4px 0 12px 0;
     line-height: 1.4;
@@ -3500,7 +3500,7 @@
     flex-wrap: wrap;
   }
   .slice-presets-label {
-    font-size: 14px;
+    font-size: 13px;
     color: var(--text-muted, #888);
   }
 
@@ -3533,14 +3533,14 @@
   }
 
   .slice-name {
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
     color: var(--text-primary, #e0e0e0);
     min-width: 60px;
   }
 
   .slice-info {
-    font-size: 13px;
+    font-size: 12px;
     color: #666;
     flex: 1;
     overflow: hidden;
@@ -3549,7 +3549,7 @@
   }
 
   .slice-chevron {
-    font-size: 14px;
+    font-size: 13px;
     color: #666;
     flex-shrink: 0;
   }
@@ -3558,7 +3558,7 @@
     background: none;
     border: none;
     color: #555;
-    font-size: 20px;
+    font-size: 19px;
     cursor: pointer;
     padding: 0 4px;
     line-height: 1;
@@ -3586,7 +3586,7 @@
   }
 
   .slice-field-label {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     min-width: 80px;
     font-weight: 600;
@@ -3599,8 +3599,8 @@
     color: var(--text-primary, #e0e0e0);
     border-radius: 4px;
     padding: 4px 8px;
-    font-size: 14px;
-    font-family: monospace;
+    font-size: 13px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
   .slice-input:focus {
     border-color: rgba(187, 134, 252, 0.4);
@@ -3612,7 +3612,7 @@
   }
 
   .slice-subsection-title {
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -3640,11 +3640,11 @@
   .master-canvas-row .dim-x {
     color: #777;
     margin: 0 -4px;
-    font-family: ui-monospace, monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
   .secondary-btn.small {
     padding: 2px 8px;
-    font-size: 14px;
+    font-size: 13px;
     line-height: 1.4;
   }
 
@@ -3661,7 +3661,7 @@
   }
   .custom-res-inputs span {
     color: var(--text-muted, #888);
-    font-size: 14px;
+    font-size: 13px;
   }
   .small-input {
     width: 70px !important;
@@ -3682,7 +3682,7 @@
     margin-bottom: 8px;
   }
   .update-badge {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 800;
     letter-spacing: 0.1em;
     background: #a855f7;
@@ -3691,11 +3691,11 @@
     border-radius: 3px;
   }
   .update-text {
-    font-size: 14px;
+    font-size: 13px;
     color: var(--text-primary, #e0e0e0);
   }
   .update-current {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-muted, #666);
   }
   .update-links {
@@ -3704,7 +3704,7 @@
     flex-wrap: wrap;
   }
   .update-link {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     padding: 4px 10px;
     background: rgba(168, 85, 247, 0.15);
@@ -3718,7 +3718,7 @@
     background: rgba(168, 85, 247, 0.25);
   }
   .update-link-notes {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-secondary, #888);
     text-decoration: none;
     padding: 4px 8px;
@@ -3728,7 +3728,7 @@
     text-decoration: underline;
   }
   .update-cta-btn {
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
     padding: 6px 14px;
     background: linear-gradient(90deg, #FF8577, #7EC8E3);
@@ -3760,7 +3760,7 @@
   .gpu-restart-text {
     flex: 1;
     color: #e6c66a;
-    font-size: 14px;
+    font-size: 13px;
     line-height: 1.45;
   }
   .gpu-restart-text strong {

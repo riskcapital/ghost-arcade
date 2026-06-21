@@ -146,7 +146,7 @@
     color: #fff;
     padding: 6px 12px;
     border-radius: 14px;
-    font-size: 14px;
+    font-size: 13px;
   }
   .reset-btn:active { background: #BB86FC; color: #1a1a1f; }
 </style>

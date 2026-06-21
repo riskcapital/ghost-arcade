@@ -130,7 +130,7 @@
     justify-content: space-between;
     margin-bottom: 10px;
   }
-  .picker-head h2 { font-size: 18px; margin: 0; }
+  .picker-head h2 { font-size: 17px; margin: 0; }
   .close-x {
     width: 30px; height: 30px;
     border: none;
@@ -154,7 +154,7 @@
     color: var(--text-primary, #ccc);
     padding: 6px 12px;
     border-radius: 14px;
-    font-size: 14px;
+    font-size: 13px;
   }
   .filter-pill.active { background: #BB86FC; color: #1a1a1f; border-color: #BB86FC; }
 
@@ -183,7 +183,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 30px;
+    font-size: 29px;
     font-weight: 700;
     color: #fff;
   }
@@ -208,13 +208,13 @@
      Sits between the category filters and the grid; disappears once
      warmup completes. */
   .warm-row {
-    font-size: 13px;
+    font-size: 12px;
     color: rgba(255, 255, 255, 0.55);
     padding: 4px 2px 8px;
   }
 
   .picker-name {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     line-height: 1.25;
     overflow: hidden;
@@ -224,7 +224,7 @@
     -webkit-box-orient: vertical;
   }
   .picker-meta {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--text-muted, #888);
     text-transform: uppercase;
     letter-spacing: 0.5px;

@@ -8,6 +8,22 @@ export interface AppReleaseNotes {
 }
 
 const RELEASE_NOTES: Record<string, AppReleaseNotes> = {
+  '1.9.7': {
+    title: 'Mapping Composition effects, visual polish, and sharper downloads',
+    summary: [
+      'Mapping Mode gets composition-level effects and VJ-style stage-effect triggers.',
+      'Map Sim controls are cleaner, faster to scan, and easier to perform with.',
+      'The interface now uses a tighter two-font system across the app.',
+    ],
+    highlights: [
+      'Mapping Mode now has a Composition section that can run effects across the mapped layer stack and trigger stage-style screen effects with the same live, hold, cycle, and MIDI-friendly behavior used in VJ Mode.',
+      'Map Sim top controls are reorganized for real work: New, Save, Load, Copy, Paste, Delete, transform tools, view controls, sync, fullscreen, and record are grouped with clearer iconography.',
+      'New effect-library visuals include phase/magnification-inspired tools and the recent experimental visuals as reusable effects, so they can be applied to any source instead of living as isolated shader layers.',
+      'SRC webcam feeds now mirror by default for natural performer-facing camera control.',
+      'The UI typography pass moves Ghost Arcade onto a consistent Space Grotesk + IBM Plex Mono system, trims front-facing UI type by 1px, and normalizes mixed font weights/casing across panels.',
+      'The website download flow now starts the download immediately and then asks users to follow the project/community accounts, keeping the app free while helping the community grow.',
+    ],
+  },
   '1.9.6': {
     title: 'Map Sim polish, sequencer fixes, source point clouds, and frame export',
     summary: [

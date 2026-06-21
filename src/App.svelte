@@ -5003,7 +5003,7 @@
                           color: {warpModeEnabled ? '#00ffff' : '#aaa'};
                           padding: 4px 10px;
                           border-radius: 12px;
-                          font-size: 12px;
+                          font-size: 11px;
                           cursor: pointer;
                           width: 100%;
                           font-weight: {warpModeEnabled ? 'bold' : 'normal'};
@@ -5925,7 +5925,7 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
     color: var(--text-primary, #e0e0e0);
-    font-size: 13px;
+    font-size: 12px;
     font-family: inherit;
     cursor: pointer;
     transition: border-color 0.15s, box-shadow 0.15s;
@@ -5949,7 +5949,7 @@
     background: rgba(187, 134, 252, 0.1);
     border: 1px solid rgba(187, 134, 252, 0.3);
     color: #BB86FC;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     padding: 4px 10px;
     border-radius: 4px;
@@ -5968,7 +5968,7 @@
   }
   :global(details summary) {
     cursor: pointer;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.08em;
@@ -5985,7 +5985,7 @@
   }
   :global(details summary::before) {
     content: '▸';
-    font-size: 12px;
+    font-size: 11px;
     color: #666;
     transition: transform 0.15s;
   }
@@ -6005,7 +6005,7 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
     color: var(--text-primary, #e0e0e0);
-    font-size: 13px;
+    font-size: 12px;
     font-family: inherit;
     padding: 5px 8px;
     transition: border-color 0.15s;
@@ -6166,7 +6166,7 @@
     background: var(--ga-void, var(--bg-primary));
     color: var(--ga-ink-0, var(--text-primary));
     font-family: var(--ga-font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
-    font-size: 16px;
+    font-size: 15px;
     -webkit-font-smoothing: antialiased;
   }
 
@@ -6200,7 +6200,7 @@
   }
 
   .version {
-    font-size: 13px;
+    font-size: 12px;
     color: #555;
     background: rgba(255, 255, 255, 0.04);
     padding: 2px 6px;
@@ -6216,7 +6216,7 @@
     background: linear-gradient(90deg, rgba(245, 158, 11, 0.18), rgba(245, 158, 11, 0.08));
     border-bottom: 1px solid rgba(245, 158, 11, 0.35);
     color: #fde68a;
-    font-size: 14.5px;
+    font-size: 13.5px;
     line-height: 1.4;
   }
   .gpu-warning-icon { flex: 0 0 auto; color: #fbbf24; display: flex; align-items: center; }
@@ -6224,8 +6224,8 @@
   .gpu-warning-body strong { color: #fef3c7; }
   .gpu-warning-detail { color: #fde68a; opacity: 0.9; }
   .gpu-warning-detail code {
-    font-family: 'SF Mono', Menlo, Consolas, monospace;
-    font-size: 13px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 12px;
     background: rgba(0, 0, 0, 0.25);
     padding: 1px 5px;
     border-radius: 3px;
@@ -6240,7 +6240,7 @@
     border: 1px solid rgba(245, 158, 11, 0.35);
     border-radius: 4px;
     padding: 4px 10px;
-    font-size: 13px;
+    font-size: 12px;
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s;
   }
@@ -6256,7 +6256,7 @@
     background: var(--ga-card, #13161c);
     color: var(--ga-ink-1, #9aa0ac);
     font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     letter-spacing: 0.02em;
     cursor: default;
@@ -6302,7 +6302,7 @@
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     border-radius: var(--ga-r-hard, 2px);
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 14.5px;
+    font-size: 13.5px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -6349,7 +6349,7 @@
     background: transparent;
     border: none;
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 14px;
+    font-size: 13px;
     cursor: pointer;
     transition: background 0.1s;
     text-align: left;
@@ -6382,7 +6382,7 @@
   }
 
   .menu-shortcut {
-    font-size: 12px;
+    font-size: 11px;
     color: #555;
     margin-left: 16px;
   }
@@ -6395,7 +6395,7 @@
 
   .menu-section-label {
     padding: 6px 12px 4px;
-    font-size: 12px;
+    font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: rgba(255, 255, 255, 0.45);
@@ -6403,7 +6403,7 @@
   }
 
   .menu-item-recent .menu-label {
-    font-size: 14px;
+    font-size: 13px;
   }
 
   .menu-label-truncate {
@@ -6414,7 +6414,7 @@
   }
 
   .menu-item-small .menu-label {
-    font-size: 13px;
+    font-size: 12px;
     color: rgba(255, 255, 255, 0.55);
   }
 
@@ -6434,7 +6434,7 @@
     color: var(--ga-ink-1, #9aa0ac);
     padding: 0 12px;
     border-radius: var(--ga-r-hard, 2px);
-    font-size: 14.5px;
+    font-size: 13.5px;
     width: 140px;
     transition: all 0.15s;
   }
@@ -6452,7 +6452,7 @@
     color: #23110c;
     padding: 0 13px;
     border-radius: var(--ga-r-soft, 7px);
-    font-size: 14.5px;
+    font-size: 13.5px;
     font-weight: 700;
     cursor: pointer;
     transition: all 0.15s;
@@ -6484,7 +6484,7 @@
     padding: 0 13px;
     border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
-    font-size: 14.5px;
+    font-size: 13.5px;
     font-weight: 600;
     transition: all 0.15s;
     display: inline-flex;
@@ -6540,7 +6540,7 @@
 
 	  .output-btn.settings-btn {
 	    padding: 6px 10px;
-	    font-size: 16px;
+	    font-size: 15px;
 	  }
 
   .output-settings-popover {
@@ -6561,7 +6561,7 @@
 
   .output-settings-popover .settings-header {
     font-weight: 600;
-    font-size: 14px;
+    font-size: 13px;
     color: var(--accent-primary);
     margin-bottom: 12px;
     text-transform: uppercase;
@@ -6578,7 +6578,7 @@
 
   .output-settings-popover .settings-section > label {
     display: block;
-    font-size: 13px;
+    font-size: 12px;
     color: #777;
     margin-bottom: 6px;
   }
@@ -6595,7 +6595,7 @@
     border: 1px solid transparent;
     padding: 6px 8px;
     border-radius: 6px;
-    font-size: 13px;
+    font-size: 12px;
     cursor: pointer;
   }
 
@@ -6623,7 +6623,7 @@
   }
 
   .output-settings-popover .crop-row span {
-    font-size: 13px;
+    font-size: 12px;
     color: #777;
     min-width: 20px;
   }
@@ -6647,7 +6647,7 @@
     border: none;
     padding: 6px 12px;
     border-radius: 6px;
-    font-size: 13px;
+    font-size: 12px;
     cursor: pointer;
     margin-top: 4px;
   }
@@ -6661,7 +6661,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 14px;
+    font-size: 13px;
     color: #bbb;
     cursor: pointer;
   }
@@ -6671,7 +6671,7 @@
   }
 
   .output-settings-popover .cursor-hint {
-    font-size: 12px;
+    font-size: 11px;
     color: #555;
     margin-top: 4px;
   }
@@ -6694,7 +6694,7 @@
     color: var(--ga-rec, #ff4438);
     padding: 0 12px;
     border-radius: var(--ga-r-hard, 2px);
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -6712,7 +6712,7 @@
     color: #fff;
     padding: 0 12px;
     border-radius: var(--ga-r-soft, 7px);
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 700;
     cursor: pointer;
   }
@@ -6741,7 +6741,7 @@
   }
 
   .rec-time {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--ga-rec, #ff4438);
     font-family: var(--ga-font-mono, ui-monospace, monospace);
@@ -6963,7 +6963,7 @@
     gap: 2px;
   }
   .mic-picker-label {
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     color: #808080;
     text-transform: uppercase;
@@ -6972,7 +6972,7 @@
   }
   .mic-picker-item {
     text-align: left;
-    font-size: 14px;
+    font-size: 13px;
     color: #d0d0d0;
     background: transparent;
     border: 1px solid transparent;
@@ -6994,7 +6994,7 @@
   }
   .mic-picker-empty {
     padding: 8px;
-    font-size: 13px;
+    font-size: 12px;
     color: #707070;
     font-style: italic;
   }
@@ -7002,7 +7002,7 @@
     margin-top: 4px;
     padding: 6px 8px;
     border-top: 1px solid rgba(255, 255, 255, 0.08);
-    font-size: 12px;
+    font-size: 11px;
     color: #808080;
     line-height: 1.4;
   }
@@ -7012,7 +7012,7 @@
     bottom: -1px;
     left: 50%;
     transform: translateX(-50%);
-    font-size: 8px;
+    font-size: 7px;
     font-weight: 700;
     color: #2ED573;
     letter-spacing: 0.5px;
@@ -7031,7 +7031,7 @@
     color: #23110c;
     padding: 0 18px;
     border-radius: var(--ga-r-soft, 7px);
-    font-size: 14.5px;
+    font-size: 13.5px;
     font-weight: 700;
     cursor: pointer;
     letter-spacing: 0.02em;
@@ -7052,7 +7052,7 @@
 	    color: var(--ga-ink-1, #9aa0ac);
 	    padding: 0 13px;
 	    border-radius: var(--ga-r-soft, 7px);
-	    font-size: 14.5px;
+	    font-size: 13.5px;
 	    font-weight: 700;
 	    cursor: pointer;
 	    letter-spacing: 0.02em;
@@ -7110,7 +7110,7 @@
     align-items: center;
     gap: 7px;
     height: 32px;
-    font-size: 14.5px;
+    font-size: 13.5px;
     font-weight: 600;
     color: var(--ga-ink-1, #9aa0ac);
     background: transparent;
@@ -7172,7 +7172,7 @@
   }
 
   .mobile-info-popup p {
-    font-size: 14px;
+    font-size: 13px;
     color: #999;
     margin-bottom: 8px;
   }
@@ -7196,7 +7196,7 @@
 
   .qr-hint {
     margin-top: 8px;
-    font-size: 13px;
+    font-size: 12px;
     color: #666;
     text-align: center;
   }
@@ -7208,7 +7208,7 @@
 
   .ip-selector label {
     display: block;
-    font-size: 13px;
+    font-size: 12px;
     color: #777;
     margin-bottom: 4px;
   }
@@ -7220,7 +7220,7 @@
     border: 1px solid #444;
     border-radius: 6px;
     color: var(--text-primary, #eee);
-    font-size: 15px;
+    font-size: 14px;
   }
 
   /* Connection Details */
@@ -7242,7 +7242,7 @@
   }
 
   .detail-label {
-    font-size: 13px;
+    font-size: 12px;
     color: #777;
     width: 70px;
     flex-shrink: 0;
@@ -7250,7 +7250,7 @@
 
   .detail-value {
     flex: 1;
-    font-size: 13px;
+    font-size: 12px;
     color: var(--accent-primary);
     word-break: break-all;
     background: transparent;
@@ -7272,7 +7272,7 @@
   .mobile-info-popup .instructions ol {
     margin: 0;
     padding-left: 18px;
-    font-size: 13px;
+    font-size: 12px;
     color: #999;
   }
 
@@ -7281,7 +7281,7 @@
   }
 
   .mobile-info-popup .hint {
-    font-size: 13px;
+    font-size: 12px;
     color: #555;
   }
 
@@ -7338,7 +7338,7 @@
   }
 
   .connecting-status .hint {
-    font-size: 13px;
+    font-size: 12px;
     color: #666;
     margin-top: 8px;
   }
@@ -7452,7 +7452,7 @@
     backdrop-filter: blur(8px);
     color: var(--ga-ink-2, #5e6571);
     border: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
-    font-size: 13px;
+    font-size: 12px;
     padding: 4px 8px;
     border-radius: var(--ga-r-hard, 2px);
     pointer-events: auto;
@@ -7468,7 +7468,7 @@
     color: var(--ga-ink-1, #9aa0ac);
     padding: 2px 6px;
     border-radius: var(--ga-r-hard, 2px);
-    font-size: 12px;
+    font-size: 11px;
     cursor: pointer;
     margin-left: 4px;
   }
@@ -7494,7 +7494,7 @@
     color: var(--text-muted, #888);
     padding: 3px 6px;
     border-radius: 4px;
-    font-size: 12px;
+    font-size: 11px;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -7522,7 +7522,7 @@
     color: var(--text-secondary, #aaa);
     padding: 2px 4px;
     border-radius: 4px;
-    font-size: 12px;
+    font-size: 11px;
     cursor: pointer;
   }
 
@@ -7541,7 +7541,7 @@
     border: 1px solid rgba(255, 60, 60, 0.4);
     border-radius: 8px;
     color: #ff6b6b;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -7577,7 +7577,7 @@
     background: var(--ga-bar, #0e1014);
     border-top: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 12.5px;
+    font-size: 11.5px;
     color: var(--ga-ink-2, #5e6571);
     letter-spacing: 0.02em;
     flex: 0 0 30px;
@@ -7598,7 +7598,7 @@
     background: color-mix(in srgb, var(--ga-card, #13161c) 72%, transparent);
     color: var(--ga-ink-0, #eef0f4);
     font-family: var(--ga-font-ui, inherit);
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     letter-spacing: 0.01em;
     cursor: pointer;
@@ -7688,12 +7688,12 @@
     color: #FFD740;
     font-weight: 600;
     text-transform: uppercase;
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .fps-counter {
     font-family: var(--ga-font-mono, 'Consolas', 'Monaco', 'Courier New', monospace);
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--ga-ink-1, #9aa0ac);
     padding: 0 13px;
@@ -7712,7 +7712,7 @@
 
   .version-label {
     font-family: var(--ga-font-mono, 'Consolas', 'Monaco', 'Courier New', monospace);
-    font-size: 12.5px;
+    font-size: 11.5px;
     color: var(--ga-ink-2, #5e6571);
     background: transparent;
     padding: 0 13px;
@@ -7791,7 +7791,7 @@
     color: var(--accent-primary);
     padding: 6px 12px;
     border-radius: 6px;
-    font-size: 14px;
+    font-size: 13px;
     pointer-events: none;
   }
 
@@ -7810,7 +7810,7 @@
     color: var(--accent-secondary);
     padding: 8px 16px;
     border-radius: 20px;
-    font-size: 14px;
+    font-size: 13px;
     display: flex;
     align-items: center;
     gap: 12px;
@@ -7822,7 +7822,7 @@
     color: var(--accent-secondary);
     padding: 4px 10px;
     border-radius: 12px;
-    font-size: 13px;
+    font-size: 12px;
     cursor: pointer;
     transition: all 0.15s;
   }
@@ -7861,7 +7861,7 @@
     color: var(--accent-secondary);
     padding: 8px 16px;
     border-radius: 20px;
-    font-size: 14px;
+    font-size: 13px;
     pointer-events: none;
   }
 
@@ -7901,7 +7901,7 @@
     color: var(--accent-secondary);
     padding: 8px 16px;
     border-radius: 20px;
-    font-size: 14px;
+    font-size: 13px;
     pointer-events: none;
     white-space: nowrap;
   }
@@ -7952,7 +7952,7 @@
     color: #ff00ff;
   }
   .mask-pen-hint {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-muted, #888);
     white-space: nowrap;
     user-select: none;
@@ -7995,7 +7995,7 @@
     color: var(--text-muted, #888);
     padding: 7px 8px;
     border-radius: 6px;
-    font-size: 13px;
+    font-size: 12px;
     cursor: pointer;
     transition: all 0.15s ease;
   }
@@ -8057,7 +8057,7 @@
   }
 
   .close-modal-title {
-    font-size: 20px;
+    font-size: 19px;
     font-weight: 600;
     color: var(--text-primary);
     margin-bottom: 8px;
@@ -8065,7 +8065,7 @@
   }
 
   .close-modal-desc {
-    font-size: 15px;
+    font-size: 14px;
     color: var(--text-secondary);
     line-height: 1.5;
     margin-bottom: 28px;
@@ -8084,7 +8084,7 @@
     gap: 8px;
     padding: 11px 20px;
     border-radius: 10px;
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 500;
     cursor: pointer;
     border: 1px solid transparent;
@@ -8157,7 +8157,7 @@
     width: 22px;
     height: 22px;
     border-radius: 6px;
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 700;
     cursor: pointer;
     display: flex;
@@ -8246,7 +8246,7 @@
     background: none;
     border: none;
     color: #666;
-    font-size: 26px;
+    font-size: 25px;
     cursor: pointer;
     padding: 4px 8px;
     line-height: 1;
@@ -8259,7 +8259,7 @@
   }
 
   .shortcut-overlay-title {
-    font-size: 20px;
+    font-size: 19px;
     font-weight: 600;
     color: var(--text-primary, #e8e8e8);
     margin: 0 0 24px 0;
@@ -8273,7 +8273,7 @@
   }
 
   .shortcut-section h3 {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.08em;
@@ -8286,7 +8286,7 @@
     align-items: center;
     gap: 8px;
     margin-bottom: 8px;
-    font-size: 14px;
+    font-size: 13px;
     color: var(--text-primary, #e8e8e8);
   }
 
@@ -8303,7 +8303,7 @@
     border-radius: 4px;
     padding: 2px 6px;
     font-family: inherit;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--text-primary, #ccc);
     line-height: 1.3;

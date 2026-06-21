@@ -232,7 +232,7 @@
     padding: 20px;
     text-align: center;
     color: #555;
-    font-size: 13px;
+    font-size: 12px;
   }
 
   .plugin-panel {
@@ -252,7 +252,7 @@
   }
 
   .header-icon {
-    font-size: 22px;
+    font-size: 21px;
   }
 
   .header-text {
@@ -262,13 +262,13 @@
 
   .header-title {
     font-weight: 700;
-    font-size: 15px;
+    font-size: 14px;
     color: var(--text-primary, #eee);
     letter-spacing: 0.3px;
   }
 
   .header-version {
-    font-size: 11px;
+    font-size: 10px;
     color: #555;
   }
 
@@ -280,7 +280,7 @@
     padding: 5px 12px;
     background: rgba(255, 107, 107, 0.04);
     border-bottom: 1px solid rgba(255, 107, 107, 0.10);
-    font-size: 11px;
+    font-size: 10px;
     color: #666;
     line-height: 1.3;
     flex-wrap: wrap;
@@ -289,7 +289,7 @@
     color: #555;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    font-size: 10px;
+    font-size: 9px;
   }
   .pb-engine {
     color: var(--accent-secondary, #FF8585);
@@ -310,7 +310,7 @@
     border: 1px solid rgba(255, 107, 107, 0.20);
     color: var(--accent-secondary, #FF8585);
     border-radius: 2px;
-    font-size: 10px;
+    font-size: 9px;
     letter-spacing: 0.3px;
   }
 
@@ -333,7 +333,7 @@
 
   .label {
     display: block;
-    font-size: 11px;
+    font-size: 10px;
     color: #777;
     text-transform: uppercase;
     letter-spacing: 0.4px;
@@ -355,7 +355,7 @@
     border: 1px solid #333;
     border-radius: 3px;
     color: var(--text-muted, #888);
-    font-size: 11px;
+    font-size: 10px;
     cursor: pointer;
     transition: all 0.12s;
   }
@@ -388,7 +388,7 @@
     border: 1px solid #333;
     border-radius: 3px;
     color: #666;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.12s;
@@ -434,10 +434,10 @@
   }
 
   .val {
-    font-size: 11px;
+    font-size: 10px;
     color: #666;
     min-width: 36px;
     text-align: right;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
 </style>

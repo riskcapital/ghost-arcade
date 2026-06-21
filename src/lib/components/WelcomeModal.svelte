@@ -75,14 +75,14 @@
   }
 
   .welcome-title {
-    font-size: 24px;
+    font-size: 23px;
     font-weight: 700;
     color: var(--text-primary, #e0e0e0);
     margin: 0 0 6px 0;
   }
 
   .welcome-subtitle {
-    font-size: 15px;
+    font-size: 14px;
     color: var(--text-muted, #888);
     margin: 0 0 28px 0;
   }
@@ -97,7 +97,7 @@
   .welcome-btn {
     padding: 12px 20px;
     border-radius: 8px;
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -142,7 +142,7 @@
   }
 
   .welcome-hint {
-    font-size: 13px;
+    font-size: 12px;
     color: #555;
     line-height: 1.6;
     margin: 0;
@@ -150,14 +150,14 @@
 
   /* Activate mode */
   .activate-title {
-    font-size: 20px;
+    font-size: 19px;
     font-weight: 600;
     color: var(--text-primary, #e0e0e0);
     margin: 0 0 6px 0;
   }
 
   .activate-desc {
-    font-size: 15px;
+    font-size: 14px;
     color: var(--text-muted, #888);
     margin: 0 0 20px 0;
   }
@@ -174,7 +174,7 @@
     padding: 12px 16px;
     color: var(--text-primary, #e0e0e0);
     font-family: 'Fira Code', monospace;
-    font-size: 16px;
+    font-size: 15px;
     letter-spacing: 0.05em;
     text-align: center;
     box-sizing: border-box;
@@ -191,7 +191,7 @@
 
   .error-msg {
     color: #ef4444;
-    font-size: 14px;
+    font-size: 13px;
     margin: 8px 0 0 0;
   }
 

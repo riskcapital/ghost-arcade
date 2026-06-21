@@ -476,7 +476,7 @@
     position: absolute;
     top: 4px;
     left: 3px;
-    font-size: 10px;
+    font-size: 9px;
     color: #555;
     font-family: var(--font-jetbrains), monospace;
     white-space: nowrap;
@@ -500,7 +500,7 @@
     top: 50%;
     transform: translate(-50%, -50%);
     color: #FF6B6B;
-    font-size: 18px;
+    font-size: 17px;
     cursor: grab;
     padding: 2px 4px;
     z-index: 5;
@@ -508,7 +508,7 @@
     user-select: none;
     pointer-events: auto;
   }
-  .kf-mark:hover { color: #FF8585; font-size: 20px; }
+  .kf-mark:hover { color: #FF8585; font-size: 19px; }
   .kf-mark:active { cursor: grabbing; color: #FFAAAA; }
   .kf-mark.bool { color: #7EC8E3; }
   .kf-mark.selected {
@@ -561,7 +561,7 @@
     background: none;
     border: none;
     color: var(--text-primary, #ccc);
-    font-size: 13px;
+    font-size: 12px;
     text-align: left;
     cursor: pointer;
   }
@@ -569,5 +569,5 @@
   .ctx-item:disabled { opacity: 0.4; cursor: default; }
   .ctx-delete { color: #FF4757; }
   .ctx-sep { height: 1px; background: rgba(255,255,255,0.06); margin: 2px 0; }
-  .ctx-shortcut { float: right; color: rgba(255,255,255,0.35); font-size: 12px; padding-left: 8px; }
+  .ctx-shortcut { float: right; color: rgba(255,255,255,0.35); font-size: 11px; padding-left: 8px; }
 </style>

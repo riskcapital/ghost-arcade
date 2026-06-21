@@ -46,8 +46,8 @@
 
   .loading-text {
     color: var(--text-primary, #ccc);
-    font-size: 15px;
-    font-family: monospace;
+    font-size: 14px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     letter-spacing: 0.05em;
   }
 

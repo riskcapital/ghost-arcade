@@ -839,7 +839,7 @@
   }
 
   .pen-hint {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-muted, #888);
     white-space: nowrap;
     user-select: none;
@@ -854,7 +854,7 @@
     color: #fff;
     padding: 6px 14px;
     border-radius: 6px;
-    font-size: 14px;
+    font-size: 13px;
     pointer-events: none;
     white-space: nowrap;
   }

@@ -5091,7 +5091,7 @@ void main() {
                         {#if pd.type === 'select' && pd.options}
                           <select value={val}
                             on:change={(e) => updateSvEffectParam(effect.id, pd.param, parseFloat(e.currentTarget.value))}
-                            style="flex:1; background:#222; color:#fff; border:1px solid #444; border-radius:3px; padding:2px 4px; font-size:13px;">
+                            style="flex:1; background:#222; color:#fff; border:1px solid #444; border-radius:3px; padding:2px 4px; font-size:12px;">
                             {#each pd.options as opt}
                               <option value={opt.value} selected={val === opt.value}>{opt.label}</option>
                             {/each}
@@ -5478,7 +5478,7 @@ void main() {
   .sv-logo {
     font-family: 'Orbitron', sans-serif;
     font-weight: 900;
-    font-size: 16px;
+    font-size: 15px;
     letter-spacing: 3px;
     color: var(--sv-c);
     text-shadow: 0 0 10px rgba(187,134,252,.3);
@@ -5497,7 +5497,7 @@ void main() {
     border: 1px solid var(--sv-brd);
     background: rgba(255,255,255,.04);
     color: rgba(255,255,255,.55);
-    font-size: 12px;
+    font-size: 11px;
     letter-spacing: .08em;
     font-weight: 700;
     cursor: pointer;
@@ -5526,7 +5526,7 @@ void main() {
     margin-left: 8px;
   }
   .sv-vj-lbl {
-    font-size: 11px;
+    font-size: 10px;
     opacity: .4;
     letter-spacing: 1px;
     text-transform: uppercase;
@@ -5538,7 +5538,7 @@ void main() {
     border: 1px solid var(--sv-brd);
     color: rgba(255,255,255,.4);
     font-family: 'Orbitron', sans-serif;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     cursor: pointer;
     transition: all .1s;
@@ -5564,7 +5564,7 @@ void main() {
     border: 1px solid var(--sv-brd);
     color: rgba(255,255,255,.5);
     font-family: 'Orbitron', sans-serif;
-    font-size: 11px;
+    font-size: 10px;
     cursor: pointer;
     transition: all .1s;
   }
@@ -5577,13 +5577,13 @@ void main() {
   }
   .sv-bpm-val {
     font-family: 'Orbitron', sans-serif;
-    font-size: 20px;
+    font-size: 19px;
     font-weight: 700;
     color: var(--sv-c);
     line-height: 1;
   }
   .sv-bpm-lbl {
-    font-size: 9px;
+    font-size: 8px;
     opacity: .3;
     letter-spacing: 1px;
   }
@@ -5593,7 +5593,7 @@ void main() {
     border: 1px solid rgba(187,134,252,.3);
     color: var(--sv-c);
     font-family: 'Orbitron', sans-serif;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     cursor: pointer;
     transition: all .1s;
@@ -5617,7 +5617,7 @@ void main() {
     border: 1px solid var(--sv-brd);
     color: rgba(255,255,255,.4);
     font-family: 'Orbitron', sans-serif;
-    font-size: 11px;
+    font-size: 10px;
     cursor: pointer;
     transition: all .1s;
   }
@@ -5634,7 +5634,7 @@ void main() {
   }
   .sv-react-lbl {
     font-family: 'Orbitron', sans-serif;
-    font-size: 10px;
+    font-size: 9px;
     letter-spacing: 1.5px;
     opacity: .45;
     color: #fff;
@@ -5645,7 +5645,7 @@ void main() {
     border: 1px solid var(--sv-brd);
     color: rgba(255,255,255,.7);
     font-family: 'Orbitron', sans-serif;
-    font-size: 11px;
+    font-size: 10px;
     letter-spacing: 1px;
     cursor: pointer;
     outline: none;
@@ -5665,7 +5665,7 @@ void main() {
     border: 1px solid var(--sv-brd);
     color: rgba(255,255,255,.5);
     font-family: 'Orbitron', sans-serif;
-    font-size: 11px;
+    font-size: 10px;
     cursor: pointer;
     transition: all .1s;
   }
@@ -5683,7 +5683,7 @@ void main() {
     border: 1px solid rgba(255,0,170,.3);
     color: var(--sv-m);
     font-family: 'Orbitron', sans-serif;
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 700;
     cursor: pointer;
     transition: all .1s;
@@ -5731,7 +5731,7 @@ void main() {
     border: 1px solid var(--sv-brd);
     background: rgba(255,255,255,.04);
     color: rgba(255,255,255,.6);
-    font-size: 12px;
+    font-size: 11px;
     letter-spacing: .06em;
     font-weight: 700;
     cursor: pointer;
@@ -5754,7 +5754,7 @@ void main() {
     border: 1px solid var(--sv-brd);
     background: rgba(255,255,255,.03);
     color: var(--text-primary, #ddd);
-    font-size: 12px;
+    font-size: 11px;
     padding: 5px 8px;
     display: flex;
     justify-content: space-between;
@@ -5762,7 +5762,7 @@ void main() {
     cursor: pointer;
   }
   .sv-geo-scene-btn small {
-    font-size: 11px;
+    font-size: 10px;
     color: rgba(255,255,255,.55);
   }
   .sv-geo-scene-btn.on {
@@ -5774,7 +5774,7 @@ void main() {
     border: 1px solid var(--sv-brd);
     background: rgba(255,255,255,.03);
     color: rgba(255,255,255,.65);
-    font-size: 11px;
+    font-size: 10px;
     letter-spacing: .06em;
     cursor: pointer;
   }
@@ -5789,7 +5789,7 @@ void main() {
     background: rgba(255,255,255,.05);
     color: var(--text-primary, #ddd);
     border: 1px solid var(--sv-brd);
-    font-size: 12px;
+    font-size: 11px;
   }
   .sv-geo-form-btn {
     border: 1px solid var(--sv-brd);
@@ -5812,14 +5812,14 @@ void main() {
   }
   .sv-geo-form-name {
     display: block;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 800;
     letter-spacing: .08em;
     margin-bottom: 4px;
   }
   .sv-geo-form-hint {
     display: block;
-    font-size: 12px;
+    font-size: 11px;
     color: rgba(255,255,255,.55);
   }
   .sv-geo-shortcuts {
@@ -5830,7 +5830,7 @@ void main() {
     gap: 4px;
   }
   .sv-geo-shortcut {
-    font-size: 12px;
+    font-size: 11px;
     color: rgba(255,255,255,.6);
     letter-spacing: .05em;
   }
@@ -5856,12 +5856,12 @@ void main() {
     gap: 4px;
   }
   .sv-geo-stat-label {
-    font-size: 11px;
+    font-size: 10px;
     letter-spacing: .1em;
     color: rgba(255,255,255,.5);
   }
   .sv-geo-stat-value {
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 800;
     color: #fff;
     letter-spacing: .06em;
@@ -5874,7 +5874,7 @@ void main() {
     margin-top: 8px;
   }
   .sv-geo-slider-label {
-    font-size: 12px;
+    font-size: 11px;
     letter-spacing: .08em;
     color: rgba(255,255,255,.7);
   }
@@ -5882,7 +5882,7 @@ void main() {
     width: 100%;
   }
   .sv-geo-slider-val {
-    font-size: 13px;
+    font-size: 12px;
     text-align: right;
     color: var(--text-primary, #ddd);
   }
@@ -5896,7 +5896,7 @@ void main() {
     border: 1px solid var(--sv-brd);
     background: rgba(255,255,255,.03);
     color: #dcdcdc;
-    font-size: 12px;
+    font-size: 11px;
     letter-spacing: .08em;
     font-weight: 700;
     padding: 8px 6px;
@@ -5931,20 +5931,20 @@ void main() {
     gap: 4px;
   }
   .sv-geo-route label {
-    font-size: 12px;
+    font-size: 11px;
     color: rgba(255,255,255,.72);
     display: flex;
     gap: 6px;
     align-items: center;
   }
   .sv-geo-route span {
-    font-size: 12px;
+    font-size: 11px;
     color: rgba(255,255,255,.6);
     text-align: right;
   }
 
   .sv-section-title {
-    font-size: 11px;
+    font-size: 10px;
     opacity: .35;
     letter-spacing: 1.5px;
     text-transform: uppercase;
@@ -6027,14 +6027,14 @@ void main() {
   }
   .sv-layer-letter {
     font-family: 'Orbitron', sans-serif;
-    font-size: 20px;
+    font-size: 19px;
     font-weight: 900;
     color: var(--sv-c);
   }
   .sv-layer-box:last-child .sv-layer-letter { color: var(--sv-m); }
   .sv-layer-box:last-child.active { border-color: var(--sv-m); background: rgba(255,0,170,.05); }
   .sv-layer-shader {
-    font-size: 10px;
+    font-size: 9px;
     opacity: .5;
     margin-top: 2px;
     text-align: center;
@@ -6154,7 +6154,7 @@ void main() {
   }
   .sv-clip-key {
     font-family: 'Orbitron', sans-serif;
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 700;
     color: rgba(255,255,255,.45);
     line-height: 1;
@@ -6175,7 +6175,7 @@ void main() {
   .sv-clip-btn.assigned .sv-clip-name { opacity: .85; color: var(--sv-y); }
   .sv-clip-btn.assigned .sv-clip-desc { color: var(--sv-y); }
   .sv-clip-name {
-    font-size: 9px;
+    font-size: 8px;
     opacity: .55;
     text-align: center;
     overflow: hidden;
@@ -6186,7 +6186,7 @@ void main() {
   }
   .sv-clip-btn.on .sv-clip-name { opacity: .85; }
   .sv-clip-desc {
-    font-size: 8px;
+    font-size: 7px;
     opacity: .4;
     text-align: center;
     overflow: hidden;
@@ -6211,7 +6211,7 @@ void main() {
     border: 1px solid rgba(255,0,170,.2);
     border-radius: 4px;
     color: rgba(255,255,255,.55);
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 500;
     cursor: pointer;
     transition: all .08s;
@@ -6236,7 +6236,7 @@ void main() {
     border: 1px solid rgba(255,0,170,.2);
     border-radius: 4px;
     color: rgba(255,255,255,.4);
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
     cursor: pointer;
     transition: all .12s;
@@ -6262,7 +6262,7 @@ void main() {
     gap: 8px;
   }
   .sv-sel-lbl {
-    font-size: 12px;
+    font-size: 11px;
     opacity: .5;
     font-weight: 500;
     min-width: 45px;
@@ -6273,7 +6273,7 @@ void main() {
     background: rgba(255,255,255,.05);
     border: 1px solid var(--sv-brd);
     color: rgba(255,255,255,.6);
-    font-size: 18px;
+    font-size: 17px;
     cursor: pointer;
     transition: all .1s;
     border-radius: 4px;
@@ -6283,7 +6283,7 @@ void main() {
     min-width: 80px;
     text-align: center;
     font-family: 'Orbitron', sans-serif;
-    font-size: 14px;
+    font-size: 13px;
     color: var(--sv-c);
   }
 
@@ -6319,19 +6319,19 @@ void main() {
     50% { box-shadow: 0 0 24px rgba(187,134,252,.4); }
   }
   .sv-shader-mix-icon {
-    font-size: 20px;
+    font-size: 19px;
     color: #BB86FC;
   }
   .sv-shader-mix-label {
     font-family: 'Orbitron', sans-serif;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     color: #BB86FC;
     letter-spacing: .08em;
     margin-top: 2px;
   }
   .sv-shader-mix-hint {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--text-muted, #888);
     text-align: center;
     margin-top: 4px;
@@ -6342,7 +6342,7 @@ void main() {
     border-radius: 3px;
     padding: 1px 4px;
     font-family: 'Orbitron', sans-serif;
-    font-size: 11px;
+    font-size: 10px;
     color: #BB86FC;
   }
 
@@ -6371,12 +6371,12 @@ void main() {
   }
   .sv-cam-icon {
     font-family: 'Orbitron', sans-serif;
-    font-size: 18px;
+    font-size: 17px;
     font-weight: 700;
     color: var(--sv-g);
   }
   .sv-cam-label {
-    font-size: 11px;
+    font-size: 10px;
     opacity: .55;
     margin-top: 4px;
   }
@@ -6395,7 +6395,7 @@ void main() {
     border-radius: 5px;
   }
   .sv-cam-blend-lbl {
-    font-size: 10px;
+    font-size: 9px;
     opacity: .5;
     text-align: center;
   }
@@ -6410,7 +6410,7 @@ void main() {
     background: rgba(255,255,255,.05);
     border: 1px solid var(--sv-brd);
     color: rgba(255,255,255,.6);
-    font-size: 14px;
+    font-size: 13px;
     cursor: pointer;
     border-radius: 3px;
     flex-shrink: 0;
@@ -6420,7 +6420,7 @@ void main() {
     flex: 1;
     text-align: center;
     font-family: 'Orbitron', sans-serif;
-    font-size: 11px;
+    font-size: 10px;
     color: var(--sv-g);
   }
   .sv-cam-opacity-vert {
@@ -6434,7 +6434,7 @@ void main() {
     border-radius: 4px;
   }
   .sv-cam-opacity-lbl {
-    font-size: 10px;
+    font-size: 9px;
     opacity: .5;
   }
   .sv-cam-opacity-vert input[type="range"] {
@@ -6454,7 +6454,7 @@ void main() {
   }
   .sv-cam-opacity-val {
     font-family: 'Orbitron', sans-serif;
-    font-size: 14px;
+    font-size: 13px;
     color: var(--sv-g);
   }
   .sv-cam-mode-row {
@@ -6467,7 +6467,7 @@ void main() {
     border-radius: 5px;
   }
   .sv-cam-mode-lbl {
-    font-size: 10px;
+    font-size: 9px;
     opacity: .5;
     min-width: 36px;
   }
@@ -6475,7 +6475,7 @@ void main() {
     flex: 1;
     text-align: center;
     font-family: 'Orbitron', sans-serif;
-    font-size: 11px;
+    font-size: 10px;
     color: var(--sv-g);
   }
   .sv-cam-nav {
@@ -6484,7 +6484,7 @@ void main() {
     background: rgba(255,255,255,.05);
     border: 1px solid var(--sv-brd);
     color: rgba(255,255,255,.5);
-    font-size: 14px;
+    font-size: 13px;
     cursor: pointer;
     transition: all .1s;
     border-radius: 3px;
@@ -6497,13 +6497,13 @@ void main() {
   /* Duplicate sv-cam-mode-name removed - defined above */
   .sv-cam-mode-name-old {
     font-family: 'Orbitron', sans-serif;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     color: var(--sv-g);
     display: block;
   }
   .sv-cam-mode-desc {
-    font-size: 10px;
+    font-size: 9px;
     opacity: .4;
   }
   .sv-cam-mode-grid {
@@ -6518,7 +6518,7 @@ void main() {
     border: 1px solid rgba(105,240,174,.15);
     border-radius: 3px;
     color: rgba(255,255,255,.5);
-    font-size: 9px;
+    font-size: 8px;
     cursor: pointer;
     transition: all .08s;
   }
@@ -6545,7 +6545,7 @@ void main() {
     gap: 4px;
   }
   .sv-cam-blend-lbl, .sv-cam-opacity-lbl {
-    font-size: 10px;
+    font-size: 9px;
     opacity: .4;
     width: 40px;
   }
@@ -6555,7 +6555,7 @@ void main() {
     background: rgba(255,255,255,.04);
     border: 1px solid var(--sv-brd);
     color: rgba(255,255,255,.5);
-    font-size: 12px;
+    font-size: 11px;
     cursor: pointer;
     transition: all .1s;
   }
@@ -6565,7 +6565,7 @@ void main() {
   }
   .sv-cam-blend-val {
     font-family: 'Orbitron', sans-serif;
-    font-size: 11px;
+    font-size: 10px;
     color: var(--sv-g);
     min-width: 55px;
     text-align: center;
@@ -6596,7 +6596,7 @@ void main() {
   }
   .sv-cam-opacity-val {
     font-family: 'Orbitron', sans-serif;
-    font-size: 11px;
+    font-size: 10px;
     color: var(--sv-g);
     min-width: 30px;
     text-align: right;
@@ -6613,25 +6613,25 @@ void main() {
   /* ── Effects Panel ── */
   .sv-effects-panel { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; flex: 1; min-height: 0; }
   .sv-effects-header { display: flex; justify-content: space-between; align-items: center; padding: 2px 4px; }
-  .sv-effects-header span { font-size: 12px; color: var(--text-muted, #888); text-transform: uppercase; }
-  .sv-add-fx-btn { background: #BB86FC22; border: 1px solid #BB86FC44; border-radius: 4px; color: #BB86FC; font-size: 12px; padding: 2px 8px; cursor: pointer; transition: all 0.15s; }
+  .sv-effects-header span { font-size: 11px; color: var(--text-muted, #888); text-transform: uppercase; }
+  .sv-add-fx-btn { background: #BB86FC22; border: 1px solid #BB86FC44; border-radius: 4px; color: #BB86FC; font-size: 11px; padding: 2px 8px; cursor: pointer; transition: all 0.15s; }
   .sv-add-fx-btn:hover { background: #BB86FC33; border-color: #BB86FC88; }
   .sv-effects-list { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
   .sv-effect-item { background: var(--bg-tertiary, #1a1a1e); border: 1px solid #333; border-radius: 4px; overflow: hidden; }
   .sv-effect-item.disabled { opacity: 0.5; }
   .sv-effect-header { display: flex; align-items: center; gap: 6px; padding: 4px 6px; cursor: pointer; }
-  .sv-fx-toggle { background: none; border: none; color: #BB86FC; font-size: 12px; cursor: pointer; padding: 0; }
+  .sv-fx-toggle { background: none; border: none; color: #BB86FC; font-size: 11px; cursor: pointer; padding: 0; }
   .sv-fx-toggle.active { color: #BB86FC; }
-  .sv-fx-name { font-size: 12px; color: var(--text-primary, #ccc); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .sv-fx-expand { font-size: 10px; color: #666; }
-  .sv-fx-delete { background: none; border: none; color: #666; font-size: 14px; cursor: pointer; padding: 0 2px; }
+  .sv-fx-name { font-size: 11px; color: var(--text-primary, #ccc); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sv-fx-expand { font-size: 9px; color: #666; }
+  .sv-fx-delete { background: none; border: none; color: #666; font-size: 13px; cursor: pointer; padding: 0 2px; }
   .sv-fx-delete:hover { color: #f44; }
   .sv-effect-params { padding: 4px 8px 6px; border-top: 1px solid #2a2a2a; }
   .sv-fx-param-row { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
-  .sv-fx-param-name { font-size: 11px; color: var(--text-muted, #888); min-width: 50px; }
+  .sv-fx-param-name { font-size: 10px; color: var(--text-muted, #888); min-width: 50px; }
   .sv-fx-param-row input[type=range] { flex: 1; height: 3px; accent-color: #BB86FC; }
-  .sv-fx-param-val { font-size: 11px; color: #666; min-width: 28px; text-align: right; }
-  .sv-fx-no-params, .sv-fx-empty { font-size: 12px; color: #555; text-align: center; padding: 8px; }
+  .sv-fx-param-val { font-size: 10px; color: #666; min-width: 28px; text-align: right; }
+  .sv-fx-no-params, .sv-fx-empty { font-size: 11px; color: #555; text-align: center; padding: 8px; }
 
   .sv-dial-grid {
     display: grid;
@@ -6671,12 +6671,12 @@ void main() {
     left: 50%;
     transform: translate(-50%, -50%);
     font-family: 'Orbitron', sans-serif;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     color: #fff;
   }
   .sv-dial-lbl {
-    font-size: 10px;
+    font-size: 9px;
     opacity: .55;
     margin-top: 2px;
     text-transform: uppercase;
@@ -6698,7 +6698,7 @@ void main() {
     border-radius: 4px;
     color: rgba(255,255,255,.5);
     font-family: 'Orbitron', sans-serif;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
     cursor: pointer;
     transition: all .15s;
@@ -6721,7 +6721,7 @@ void main() {
   }
   .sv-shader-name {
     font-family: 'Orbitron', sans-serif;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     color: var(--sv-m);
     letter-spacing: 1px;
@@ -6737,7 +6737,7 @@ void main() {
   /* ISF Shader controls */
   .sv-shader-name.isf {
     color: var(--sv-y);
-    font-size: 12px;
+    font-size: 11px;
   }
   .sv-isf-controls {
     display: flex;
@@ -6769,7 +6769,7 @@ void main() {
     gap: 4px;
   }
   .sv-mod-chip {
-    font-size: 10px;
+    font-size: 9px;
     padding: 1px 6px;
     background: #000;
     border: 1px solid rgba(255,255,255,.12);
@@ -6799,7 +6799,7 @@ void main() {
   /* Depth slider moved into the ModTray popover. */
   .sv-isf-label {
     font-family: 'Orbitron', sans-serif;
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 600;
     letter-spacing: .8px;
     color: var(--sv-y);
@@ -6835,7 +6835,7 @@ void main() {
   }
   .sv-isf-val {
     font-family: 'Orbitron', sans-serif;
-    font-size: 11px;
+    font-size: 10px;
     color: rgba(255,255,255,.6);
     min-width: 32px;
     text-align: right;
@@ -6848,7 +6848,7 @@ void main() {
     border-radius: 3px;
     color: #fff;
     font-family: 'Orbitron', sans-serif;
-    font-size: 11px;
+    font-size: 10px;
     padding: 0 6px;
     cursor: pointer;
     outline: none;
@@ -6863,7 +6863,7 @@ void main() {
     background: rgba(255,255,255,.03);
     color: rgba(255,255,255,.5);
     font-family: 'Orbitron', sans-serif;
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 700;
     letter-spacing: 1px;
     cursor: pointer;
@@ -6924,7 +6924,7 @@ void main() {
     border-radius: 4px;
     color: rgba(255,255,255,.6);
     font-family: 'Orbitron', sans-serif;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     cursor: pointer;
     transition: all .1s;
@@ -6952,7 +6952,7 @@ void main() {
     border: 2px solid rgba(255,0,170,.4);
     border-radius: 6px;
     font-family: 'Orbitron', sans-serif;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 800;
     color: var(--sv-m);
     cursor: pointer;
@@ -6985,7 +6985,7 @@ void main() {
     border-radius: 4px;
     color: rgba(255,255,255,.5);
     font-family: 'Orbitron', sans-serif;
-    font-size: 14px;
+    font-size: 13px;
     cursor: pointer;
     transition: all .1s;
   }
@@ -7006,13 +7006,13 @@ void main() {
   }
   .sv-spacefx-name {
     font-family: 'Orbitron', sans-serif;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     color: var(--sv-c);
     letter-spacing: 1px;
   }
   .sv-spacefx-desc {
-    font-size: 9px;
+    font-size: 8px;
     opacity: .4;
     text-transform: uppercase;
     letter-spacing: .5px;
@@ -7034,7 +7034,7 @@ void main() {
     position: absolute;
     bottom: 2px;
     right: 3px;
-    font-size: 8px;
+    font-size: 7px;
     opacity: .5;
     letter-spacing: .5px;
   }
@@ -7069,7 +7069,7 @@ void main() {
 
   /* ═══ Assign Hint ═══ */
   .sv-assign-hint {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 400;
     color: rgba(255,255,255,.3);
     font-family: inherit;
@@ -7083,7 +7083,7 @@ void main() {
     border: 1px solid rgba(255,255,255,.12);
     border-radius: 4px;
     color: var(--text-secondary, #aaa);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 1px;
     cursor: pointer;
@@ -7138,7 +7138,7 @@ void main() {
     border: none;
     border-bottom: 2px solid transparent;
     color: #666;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 1px;
     cursor: pointer;
@@ -7182,7 +7182,7 @@ void main() {
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
   }
   .sv-edit-item-thumb img {
@@ -7210,7 +7210,7 @@ void main() {
     right: 0;
     padding: 2px 4px;
     background: rgba(0,0,0,.8);
-    font-size: 11px;
+    font-size: 10px;
     color: var(--text-primary, #eee);
     white-space: nowrap;
     overflow: hidden;
@@ -7219,7 +7219,7 @@ void main() {
   .sv-edit-empty {
     grid-column: 1 / -1;
     padding: 16px 8px;
-    font-size: 12px;
+    font-size: 11px;
     color: #555;
     text-align: center;
   }
@@ -7248,7 +7248,7 @@ void main() {
   /* Reset button */
   .sv-reset-btn {
     font-family: 'Orbitron', sans-serif;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     padding: 4px 8px;
     border: 1px solid rgba(255,80,80,.4);
@@ -7277,7 +7277,7 @@ void main() {
   }
   .sv-preset-save-btn {
     font-family: 'Orbitron', sans-serif;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     padding: 4px 10px;
     border: 1px solid rgba(187,134,252,.4);
@@ -7289,7 +7289,7 @@ void main() {
   .sv-preset-save-btn:hover { background: rgba(187,134,252,.25); }
   .sv-preset-input {
     font-family: 'Orbitron', sans-serif;
-    font-size: 11px;
+    font-size: 10px;
     width: 100px;
     padding: 3px 6px;
     border: 1px solid rgba(187,134,252,.4);
@@ -7301,7 +7301,7 @@ void main() {
   .sv-preset-input:focus { border-color: var(--sv-c); }
   .sv-preset-save-confirm, .sv-preset-save-cancel {
     font-family: 'Orbitron', sans-serif;
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 700;
     padding: 3px 6px;
     border: 1px solid var(--sv-brd);
@@ -7323,7 +7323,7 @@ void main() {
   .sv-preset-list::-webkit-scrollbar { display: none; }
   .sv-preset-btn {
     font-family: 'Orbitron', sans-serif;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
     padding: 4px 10px;
     border: 1px solid var(--sv-brd);
@@ -7341,13 +7341,13 @@ void main() {
     color: var(--sv-c);
   }
   .sv-preset-hint {
-    font-size: 11px;
+    font-size: 10px;
     color: rgba(255,255,255,.2);
     font-style: italic;
   }
   .sv-scope-toggle {
     padding: 2px 6px;
-    font-size: 13px;
+    font-size: 12px;
     border: 1px solid rgba(255,255,255,0.2);
     border-radius: 3px;
     background: rgba(255,255,255,0.05);
@@ -7359,7 +7359,7 @@ void main() {
     background: rgba(100,200,255,0.1);
   }
   .sv-preset-scope {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: bold;
     color: rgba(100,200,255,0.8);
     margin-right: 3px;

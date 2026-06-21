@@ -174,7 +174,7 @@
     border: 1px solid rgba(255, 107, 107, 0.20);
     border-radius: 3px;
     color: var(--accent-secondary, #FF8585);
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     cursor: pointer;
     transition: all 0.12s;
@@ -182,7 +182,7 @@
   .hy-btn:hover { background: #20162e; color: var(--accent-primary, #FF6B6B); border-color: rgba(255, 107, 107, 0.55); }
 
   .hy-hotkey-hint {
-    font-size: 11px;
+    font-size: 10px;
     color: #555;
     text-align: center;
     letter-spacing: 0.4px;
@@ -193,8 +193,8 @@
     color: var(--text-secondary, #aaa);
     border-radius: 3px;
     padding: 1px 5px;
-    font-size: 11px;
-    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     margin: 0 2px;
   }
 
@@ -207,24 +207,24 @@
     padding: 4px 8px;
   }
   .hy-now-label {
-    font-size: 11px;
+    font-size: 10px;
     color: #555;
     letter-spacing: 0.6px;
   }
   .hy-now-name {
     flex: 1;
-    font-size: 13px;
+    font-size: 12px;
     color: var(--accent-secondary, #FF8585);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
   .hy-fav-btn, .hy-fav-only {
     background: transparent;
     border: 1px solid #333;
     color: #555;
-    font-size: 13px;
+    font-size: 12px;
     padding: 2px 6px;
     border-radius: 3px;
     cursor: pointer;
@@ -236,7 +236,7 @@
   }
 
   .hy-by {
-    font-size: 11px;
+    font-size: 10px;
     color: #555;
     padding: 0 2px;
   }
@@ -245,14 +245,14 @@
     background: transparent;
     border: 1px dashed rgba(255, 107, 107, 0.20);
     color: var(--text-muted, #888);
-    font-size: 11px;
+    font-size: 10px;
     padding: 3px 6px;
     border-radius: 3px;
     cursor: pointer;
   }
   .hy-code-toggle:hover { color: var(--accent-secondary, #FF8585); border-color: rgba(255, 107, 107, 0.45); }
   .hy-code {
-    font-size: 11.5px;
+    font-size: 10.5px;
     color: #b8a8d4;
     background: #060410;
     border: 1px solid #1a1428;
@@ -262,7 +262,7 @@
     overflow-x: auto;
     white-space: pre-wrap;
     word-break: break-word;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
 
   .hy-filter { display: flex; gap: 4px; }
@@ -273,7 +273,7 @@
     color: var(--text-primary, #ddd);
     padding: 4px 6px;
     border-radius: 3px;
-    font-size: 12px;
+    font-size: 11px;
     outline: none;
   }
   .hy-filter input[type="text"]:focus { border-color: var(--accent-primary, #FF6B6B); }
@@ -300,18 +300,18 @@
   .hy-row.active .hy-row-name { color: #fff; }
   .hy-row-name {
     flex: 1;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-secondary, #aaa);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
   .hy-row-fav {
     background: transparent;
     border: none;
     color: #555;
-    font-size: 14px;
+    font-size: 13px;
     padding: 0 4px;
     cursor: pointer;
   }
@@ -320,7 +320,7 @@
   .hy-empty {
     padding: 12px;
     text-align: center;
-    font-size: 12px;
+    font-size: 11px;
     color: #555;
   }
 </style>

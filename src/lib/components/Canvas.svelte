@@ -10,9 +10,9 @@
   import { vjLayerSequencer } from '../stores/vjLayerSequencer';
   import { macros } from '../stores/macros';
   import { layerSequencer } from '../stores/layerSequencer';
-  import { stageEffectsRuntime } from '../stores/stageEffects';
+  import { evaluateStageEffectForScreen, stageEffectsRuntime } from '../stores/stageEffects';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
-  import { createLayer, VJ_MIX_SOURCE_INDEX, type Layer } from '../types';
+  import { createLayer, VJ_MIX_SOURCE_INDEX, type Layer, type MappingCompositionState } from '../types';
   import * as THREE from 'three';
   import { createISFShader, updateISFShader, setISFInputValue, setISFInputTexture, type ISFShaderInstance } from '../isf/renderer';
   import { LinesRenderer } from '../lines/renderer';
@@ -432,6 +432,129 @@
       layers.push(cloned);
     }
     return { compositionRef: comp, group, layers };
+  }
+
+  const mappingCompositionAutomationState: {
+    lastAdvanceMs?: number;
+    lastBeatPhase?: number;
+    beatsAccum?: number;
+  } = {};
+
+  function getLayerCentroid01(layer: Layer): { x: number; y: number } {
+    const corners = layer.corners;
+    if (!corners) return { x: 0.5, y: 0.5 };
+    const points = [corners.topLeft, corners.topRight, corners.bottomLeft, corners.bottomRight];
+    const x = points.reduce((sum, p) => sum + (p?.x ?? 0.5), 0) / points.length;
+    const y = points.reduce((sum, p) => sum + (p?.y ?? 0.5), 0) / points.length;
+    return {
+      x: Math.max(0, Math.min(1, x)),
+      y: Math.max(0, Math.min(1, y)),
+    };
+  }
+
+  function getMappingCompositionStageLayers(renderLayers: Layer[]): Layer[] {
+    const seen = new Set<string>();
+    return renderLayers.filter((layer) => {
+      if (!layer.visible || layer.parentGroupId) return false;
+      if (seen.has(layer.id)) return false;
+      seen.add(layer.id);
+      return true;
+    });
+  }
+
+  function applyLayerOpacityModulation(layer: Layer, multiplier: number): void {
+    const m = Math.max(0, Math.min(1, multiplier));
+    if (m >= 0.999) return;
+    const mutable = layer as any;
+    if (mutable._stageOrigOpacity === undefined) {
+      mutable._stageOrigOpacity = layer.opacity;
+    }
+    layer.opacity = layer.opacity * m;
+  }
+
+  function advanceMappingCompositionAutomation(mappingComposition: MappingCompositionState, nowMs: number): void {
+    const auto = mappingComposition.stageEffectAutomation;
+    if (!auto?.playing) {
+      mappingCompositionAutomationState.lastAdvanceMs = undefined;
+      mappingCompositionAutomationState.lastBeatPhase = undefined;
+      mappingCompositionAutomationState.beatsAccum = undefined;
+      return;
+    }
+
+    const cycle = (mappingComposition.stageEffects ?? []).filter((effect) => effect.enabled).map((effect) => effect.id);
+    if (cycle.length === 0) return;
+
+    let shouldAdvance = false;
+    if (auto.mode === 'time') {
+      const intervalMs = Math.max(0.1, auto.seconds ?? 4) * 1000;
+      if (mappingCompositionAutomationState.lastAdvanceMs == null) {
+        mappingCompositionAutomationState.lastAdvanceMs = nowMs;
+        shouldAdvance = true;
+      } else if (nowMs - mappingCompositionAutomationState.lastAdvanceMs >= intervalMs) {
+        mappingCompositionAutomationState.lastAdvanceMs = nowMs;
+        shouldAdvance = true;
+      }
+    } else {
+      const audio = get(audioStore);
+      const phase = audio?.beatPhase ?? 0;
+      if (mappingCompositionAutomationState.lastBeatPhase == null) {
+        mappingCompositionAutomationState.lastBeatPhase = phase;
+        mappingCompositionAutomationState.beatsAccum = 0;
+        shouldAdvance = true;
+      } else {
+        if (phase < (mappingCompositionAutomationState.lastBeatPhase ?? 0)) {
+          mappingCompositionAutomationState.beatsAccum = (mappingCompositionAutomationState.beatsAccum ?? 0) + 1;
+        }
+        mappingCompositionAutomationState.lastBeatPhase = phase;
+        const target = Math.max(1, Math.round(auto.beats ?? 4));
+        if ((mappingCompositionAutomationState.beatsAccum ?? 0) >= target) {
+          mappingCompositionAutomationState.beatsAccum = 0;
+          shouldAdvance = true;
+        }
+      }
+    }
+
+    if (!shouldAdvance) return;
+
+    const currentId = mappingComposition.activeStageEffectId ?? '';
+    let idx = cycle.indexOf(currentId);
+    idx = idx < 0 ? 0 : (idx + 1) % cycle.length;
+    project.setMappingStageEffectActive(cycle[idx]);
+  }
+
+  function applyMappingCompositionStageEffects(
+    mappingComposition: MappingCompositionState | undefined,
+    renderLayers: Layer[],
+    nowMs: number,
+  ): void {
+    if (!mappingComposition?.enabled || mappingComposition.stageEffects.length === 0) return;
+    advanceMappingCompositionAutomation(mappingComposition, nowMs);
+    const live = mappingComposition.stageEffects.find((effect) => effect.id === mappingComposition.activeStageEffectId);
+    if (!live) return;
+    const stageLayers = getMappingCompositionStageLayers(renderLayers);
+    const sliceCount = stageLayers.length;
+    if (sliceCount === 0) return;
+
+    const tSec = nowMs / 1000;
+    for (let i = 0; i < sliceCount; i++) {
+      const layer = stageLayers[i];
+      const { x, y } = getLayerCentroid01(layer);
+      const brightness = evaluateStageEffectForScreen(
+        `mapping-composition:${layer.id}`,
+        live.type,
+        live.params,
+        x,
+        1 - y,
+        tSec,
+        {
+          effectId: live.id,
+          opacity: live.opacity ?? 1,
+          sliceIndex: i,
+          sliceCount,
+        },
+      );
+      applyLayerOpacityModulation(layer, brightness);
+    }
   }
 
   let canvas: HTMLCanvasElement;
@@ -1538,7 +1661,10 @@
           // stage-mode branch uses, gated on the presence of any
           // vjLayerIndex bindings so the cost is paid only when needed.
           layersToRender = normalLayers;
-          compEffects = undefined;
+          const mappingComposition = $project.mappingComposition;
+          compEffects = mappingComposition?.enabled && mappingComposition.effects.length > 0
+            ? mappingComposition.effects
+            : undefined;
           const mappedVjLayers = (vjLayers ?? []) as Layer[];
           const anyVjBinding = mappedVjLayers.length > 0 && normalLayers.some(l => l.vjLayerIndex !== undefined);
           if (anyVjBinding) {
@@ -1695,10 +1821,11 @@
             if (!sliceId) continue;
             const brightness = stageRt.sliceOutputs.get(sliceId);
             if (brightness === undefined || brightness >= 1) continue;
-            (layer as any)._stageOrigOpacity = layer.opacity;
-            layer.opacity = layer.opacity * brightness;
+            applyLayerOpacityModulation(layer, brightness);
           }
         }
+
+        applyMappingCompositionStageEffects($project.mappingComposition, layersToRender, performance.now());
 
         if (seqOverrides) {
           // Continuous-mode rows take a separate side-channel path:

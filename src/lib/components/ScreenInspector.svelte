@@ -374,7 +374,7 @@
   .sec > h4,
   .section-row h4 {
     margin: 0;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0;
@@ -396,7 +396,7 @@
     border: 1px solid rgba(255, 255, 255, 0.09);
     border-radius: 4px;
     color: #a9a4b4;
-    font-size: 12px;
+    font-size: 11px;
     font-family: inherit;
     cursor: pointer;
   }
@@ -412,7 +412,7 @@
     border: 1px solid rgba(255, 255, 255, 0.11);
     border-radius: 4px;
     color: #f0edf6;
-    font-size: 15px;
+    font-size: 14px;
     margin-bottom: 10px;
     font-family: inherit;
   }
@@ -434,7 +434,7 @@
   .field .lbl {
     flex: 0 0 66px;
     color: #918b9b;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
   }
   .field input[type="text"],
@@ -447,7 +447,7 @@
     border: 1px solid rgba(255, 255, 255, 0.11);
     border-radius: 4px;
     color: #e6e1ee;
-    font-size: 13px;
+    font-size: 12px;
     font-family: inherit;
   }
   .icon-btn {
@@ -457,7 +457,7 @@
     color: #c9c3d2;
     cursor: pointer;
     padding: 4px 8px;
-    font-size: 14px;
+    font-size: 13px;
   }
   .icon-btn:hover {
     background: rgba(255, 255, 255, 0.095);
@@ -470,7 +470,7 @@
     border: 1px solid rgba(187, 134, 252, 0.25);
     border-radius: 4px;
     color: #BB86FC;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     cursor: pointer;
     font-family: inherit;
@@ -490,7 +490,7 @@
   .hint {
     margin: 4px 0 0 0;
     color: #7a7481;
-    font-size: 12.5px;
+    font-size: 11.5px;
     line-height: 1.4;
   }
   .controls-sec {
@@ -509,7 +509,7 @@
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 4px;
     color: #b8b2c2;
-    font-size: 12px;
+    font-size: 11px;
     font-family: inherit;
     font-weight: 700;
     cursor: pointer;
@@ -537,7 +537,7 @@
     align-items: center;
     gap: 5px;
     color: #a29baa;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 650;
     min-width: 0;
     white-space: nowrap;
@@ -598,8 +598,8 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
     color: #e7e1ef;
-    font-size: 12.5px;
-    font-family: ui-monospace, monospace;
+    font-size: 11.5px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     text-align: right;
   }
   .no-unit .value-box {
@@ -608,8 +608,8 @@
   .unit {
     width: 11px;
     color: #77717d;
-    font-size: 12px;
-    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
   .swatch {
     width: 7px;
@@ -628,7 +628,7 @@
     border: 1px solid rgba(255, 180, 60, 0.35);
     border-radius: 4px;
     color: #ffc875;
-    font-size: 13px;
+    font-size: 12px;
     line-height: 1.4;
   }
   .warn-banner kbd {
@@ -636,13 +636,13 @@
     border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 3px;
     padding: 0 5px;
-    font-family: ui-monospace, monospace;
-    font-size: 12px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 11px;
   }
   .ndi-attribution {
     margin: -2px 0 4px;
     color: #77717d;
-    font-size: 12px;
+    font-size: 11px;
     line-height: 1.35;
   }
   .ndi-attribution a {

@@ -1015,11 +1015,11 @@
     overflow: hidden;
     flex: 1;
     color: var(--text-primary, #eee);
-    font-size: 15px;
+    font-size: 14px;
   }
 
   .lines-panel.compact {
-    font-size: 13px;
+    font-size: 12px;
   }
 
   /* Header */
@@ -1030,9 +1030,9 @@
     padding: 10px 12px 8px;
     border-bottom: 1px solid #161618;
   }
-  .lp-title { font-size: 15px; font-weight: 700; color: #BB86FC; letter-spacing: 0.5px; }
+  .lp-title { font-size: 14px; font-weight: 700; color: #BB86FC; letter-spacing: 0.5px; }
   .el-badge {
-    background: #BB86FC; color: #000; font-size: 11px; font-weight: 700;
+    background: #BB86FC; color: #000; font-size: 10px; font-weight: 700;
     padding: 1px 5px; border-radius: 8px;
   }
 
@@ -1040,7 +1040,7 @@
   .lp-tabs { display: flex; border-bottom: 1px solid #161618; flex-shrink: 0; }
   .lp-tabs button {
     flex: 1; background: none; border: none; color: #666;
-    padding: 7px 4px; font-size: 13px; font-weight: 600; cursor: pointer;
+    padding: 7px 4px; font-size: 12px; font-weight: 600; cursor: pointer;
     border-bottom: 2px solid transparent;
   }
   .lp-tabs button:hover { color: var(--text-secondary, #aaa); }
@@ -1052,7 +1052,7 @@
   /* Section labels */
   .sec-label {
     display: flex; align-items: center; justify-content: space-between;
-    font-size: 13px; font-weight: 600; color: var(--text-muted, #888); text-transform: uppercase; letter-spacing: 0.4px;
+    font-size: 12px; font-weight: 600; color: var(--text-muted, #888); text-transform: uppercase; letter-spacing: 0.4px;
     margin: 10px 0 6px; padding-bottom: 4px; border-bottom: 1px solid #222;
   }
   .sec-label:first-child { margin-top: 0; }
@@ -1067,14 +1067,14 @@
   }
   .tool-btn:hover { background: var(--bg-tertiary, #161618); color: var(--text-primary, #eee); border-color: #555; }
   .tool-btn.active { background: rgba(187, 134, 252, 0.1); color: #BB86FC; border-color: #BB86FC; }
-  .tool-icon { font-size: 20px; line-height: 1; }
-  .tool-label { font-size: 11px; }
+  .tool-icon { font-size: 19px; line-height: 1; }
+  .tool-label { font-size: 10px; }
   .tool-btn.active .tool-label { color: #BB86FC; }
 
   /* Drawing hint */
   .drawing-hint {
     padding: 6px 8px; margin: 6px 0;
-    font-size: 12px; color: #BB86FC;
+    font-size: 11px; color: #BB86FC;
     background: rgba(187, 134, 252, 0.06);
     border: 1px solid rgba(187, 134, 252, 0.15);
     border-radius: 4px;
@@ -1085,7 +1085,7 @@
     display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
   }
   .control-label {
-    width: 70px; font-size: 13px; color: var(--text-muted, #888); flex-shrink: 0;
+    width: 70px; font-size: 12px; color: var(--text-muted, #888); flex-shrink: 0;
   }
   .control-row input[type="range"] {
     flex: 1; height: 4px; appearance: none; background: #333; border-radius: 2px; outline: none;
@@ -1099,22 +1099,22 @@
   }
   .control-row select, .inline-select {
     flex: 1; background: #333; color: var(--text-primary, #eee); border: 1px solid #555;
-    padding: 4px 8px; border-radius: 4px; font-size: 13px;
+    padding: 4px 8px; border-radius: 4px; font-size: 12px;
   }
   .control-value {
-    width: 45px; text-align: right; font-size: 12px; color: #666; flex-shrink: 0;
+    width: 45px; text-align: right; font-size: 11px; color: #666; flex-shrink: 0;
   }
 
   /* Full-width slider column */
   .slider-col { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
   .sc { display: flex; flex-direction: column; }
   .sc label {
-    font-size: 13px; color: #bbb; margin-bottom: 4px; display: flex; align-items: baseline;
+    font-size: 12px; color: #bbb; margin-bottom: 4px; display: flex; align-items: baseline;
   }
-  .sc label b { color: #BB86FC; font-family: monospace; font-size: 13px; font-weight: 400; margin-left: auto; }
+  .sc label b { color: #BB86FC; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); font-size: 12px; font-weight: 400; margin-left: auto; }
   .sc select {
     background: #333; color: var(--text-primary, #eee); border: 1px solid #555;
-    padding: 4px 8px; border-radius: 4px; font-size: 13px;
+    padding: 4px 8px; border-radius: 4px; font-size: 12px;
   }
   .sc input[type="range"] {
     width: 100%; height: 4px; appearance: none; background: #333; border-radius: 2px; outline: none;
@@ -1126,13 +1126,13 @@
 
   /* Check row */
   .check-row { display: flex; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
-  .check-row label { display: flex; align-items: center; gap: 5px; font-size: 13px; color: #bbb; cursor: pointer; }
+  .check-row label { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #bbb; cursor: pointer; }
   .check-row input[type="checkbox"] { accent-color: #BB86FC; width: 13px; height: 13px; }
 
   /* Text input */
   .text-input {
     flex: 1; background: #222; color: var(--text-primary, #eee); border: 1px solid #444;
-    padding: 4px 8px; border-radius: 4px; font-size: 13px; outline: none;
+    padding: 4px 8px; border-radius: 4px; font-size: 12px; outline: none;
   }
   .text-input:focus { border-color: #BB86FC; }
 
@@ -1146,12 +1146,12 @@
   .element-row:hover { background: var(--bg-primary, #0d0d10); border-color: #333; }
   .element-row.selected { background: rgba(187, 134, 252, 0.08); border-color: #BB86FC; }
   .el-info { flex: 1; min-width: 0; }
-  .el-name { display: block; font-size: 14px; color: var(--text-primary, #ddd); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .el-meta { display: block; font-size: 12px; color: #666; }
+  .el-name { display: block; font-size: 13px; color: var(--text-primary, #ddd); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .el-meta { display: block; font-size: 11px; color: #666; }
 
   .icon-btn {
     background: none; border: 1px solid transparent; color: #666;
-    font-size: 14px; cursor: pointer; padding: 2px 4px; border-radius: 3px;
+    font-size: 13px; cursor: pointer; padding: 2px 4px; border-radius: 3px;
     line-height: 1; flex-shrink: 0;
   }
   .icon-btn:hover { color: var(--text-primary, #ddd); background: rgba(255,255,255,0.05); }
@@ -1160,7 +1160,7 @@
   .icon-btn.del:hover { color: #ff5555; background: rgba(255,85,85,0.1); border-color: rgba(255,85,85,0.3); }
 
   /* Empty state */
-  .empty-msg { text-align: center; color: #555; font-size: 14px; padding: 20px; }
+  .empty-msg { text-align: center; color: #555; font-size: 13px; padding: 20px; }
 
   /* Elements strip — always visible above tabs */
   .elements-strip {
@@ -1170,7 +1170,7 @@
   .strip-toggle {
     width: 100%;
     background: none; border: none; color: var(--text-muted, #888);
-    font-size: 12px; font-weight: 600; text-align: left;
+    font-size: 11px; font-weight: 600; text-align: left;
     padding: 5px 12px; cursor: pointer;
     text-transform: uppercase; letter-spacing: 0.3px;
   }
@@ -1184,15 +1184,15 @@
     display: flex; align-items: center; gap: 6px;
     padding: 3px 8px; background: #141416;
     border: 1px solid #222; border-radius: 4px;
-    cursor: pointer; font-size: 13px; color: #bbb;
+    cursor: pointer; font-size: 12px; color: #bbb;
     text-align: left;
   }
   .strip-el:hover { background: var(--bg-tertiary, #1a1a1e); border-color: #333; }
   .strip-el.selected { background: rgba(187, 134, 252, 0.08); border-color: #BB86FC; color: var(--text-primary, #eee); }
-  .strip-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
-  .strip-type { font-size: 11px; color: #666; flex-shrink: 0; }
+  .strip-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+  .strip-type { font-size: 10px; color: #666; flex-shrink: 0; }
   .strip-del {
-    background: none; border: none; color: #555; font-size: 12px;
+    background: none; border: none; color: #555; font-size: 11px;
     cursor: pointer; padding: 0 2px; line-height: 1; flex-shrink: 0;
   }
   .strip-del:hover { color: #ff5555; }
@@ -1203,7 +1203,7 @@
     background: rgba(187, 134, 252, 0.1);
     border: 1px solid rgba(187, 134, 252, 0.25);
     color: #BB86FC; border-radius: 4px;
-    font-size: 13px; font-weight: 600; cursor: pointer;
+    font-size: 12px; font-weight: 600; cursor: pointer;
   }
   .apply-all-btn:hover {
     background: rgba(187, 134, 252, 0.2);
@@ -1215,13 +1215,13 @@
     width: 100%; padding: 5px 12px; margin: 6px 0;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid #333; color: #999;
-    border-radius: 4px; font-size: 13px; cursor: pointer;
+    border-radius: 4px; font-size: 12px; cursor: pointer;
   }
   .reset-btn:hover { background: rgba(255, 255, 255, 0.08); color: var(--text-primary, #eee); border-color: #555; }
 
   /* Animation status */
   .anim-status {
-    font-size: 12px; color: #BB86FC;
+    font-size: 11px; color: #BB86FC;
     padding: 4px 0 6px; margin-bottom: 4px;
     border-bottom: 1px solid #222;
     text-align: center; font-weight: 600;
@@ -1230,7 +1230,7 @@
   /* Toggle row */
   .toggle-row {
     display: flex; align-items: center; gap: 8px;
-    cursor: pointer; font-size: 14px; color: var(--text-primary, #ccc);
+    cursor: pointer; font-size: 13px; color: var(--text-primary, #ccc);
   }
   .toggle-row input[type="checkbox"] {
     accent-color: #BB86FC;
@@ -1238,7 +1238,7 @@
 
   /* Hint text */
   .hint-text {
-    font-size: 12px; color: var(--text-muted, #888);
+    font-size: 11px; color: var(--text-muted, #888);
     padding: 2px 0 4px; line-height: 1.35;
   }
 </style>

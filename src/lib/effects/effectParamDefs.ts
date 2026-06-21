@@ -19,6 +19,28 @@ export interface EffectParamDef {
 }
 
 export const EFFECT_PARAM_DEFS: Record<string, EffectParamDef[]> = {
+  eulerianMagnify: [
+    { name: 'Mode', param: 'eulerianMode', min: 0, max: 3, step: 1, default: 0, type: 'select',
+      options: [
+        { value: 0, label: 'Color Pulse' },
+        { value: 1, label: 'Motion Phase' },
+        { value: 2, label: 'Hybrid' },
+        { value: 3, label: 'Attenuate' },
+      ] },
+    { name: 'Amplification', param: 'eulerianAmplification', min: 0, max: 80, step: 0.5, default: 24 },
+    { name: 'Low Hz', param: 'eulerianLowHz', min: 0.05, max: 8, step: 0.01, default: 0.75 },
+    { name: 'High Hz', param: 'eulerianHighHz', min: 0.1, max: 12, step: 0.01, default: 2.5 },
+    { name: 'Color Mix', param: 'eulerianColorMix', min: 0, max: 1, step: 0.01, default: 1 },
+    { name: 'Motion Mix', param: 'eulerianMotionMix', min: 0, max: 1, step: 0.01, default: 0.35 },
+    { name: 'Spatial Radius', param: 'eulerianSpatialRadius', min: 1, max: 12, step: 0.25, default: 2 },
+    { name: 'Noise Floor', param: 'eulerianNoiseFloor', min: 0.00001, max: 0.02, step: 0.00001, default: 0.0008 },
+    { name: 'Max Shift', param: 'eulerianMaxShift', min: 1, max: 120, step: 1, default: 24 },
+    { name: 'Output Mix', param: 'eulerianOutputMix', min: 0, max: 1, step: 0.01, default: 1 },
+    { name: 'Show Band', param: 'eulerianShowBand', min: 0, max: 1, step: 1, default: 0, type: 'select',
+      options: [{ value: 0, label: 'Off' }, { value: 1, label: 'On' }] },
+    { name: 'Chroma Only', param: 'eulerianChromaOnly', min: 0, max: 1, step: 1, default: 0, type: 'select',
+      options: [{ value: 0, label: 'Off' }, { value: 1, label: 'On' }] },
+  ],
   // ═══════════════════════════════
   // ── Masking (2) ──
   // ═══════════════════════════════
@@ -155,6 +177,37 @@ export const EFFECT_PARAM_DEFS: Record<string, EffectParamDef[]> = {
     { name: 'Speed', param: 'fmLinesSpeed', min: 0, max: 2, step: 0.01, default: 0.6 },
     { name: 'Source Tint', param: 'fmLinesColorMix', min: 0, max: 1, step: 0.01, default: 0 },
     { name: 'Invert', param: 'fmLinesInvert', min: 0, max: 1, step: 1, default: 0 },
+  ],
+  phaseLab: [
+    { name: 'Mode', param: 'phaseLabMode', min: 0, max: 7, step: 1, default: 0, type: 'select',
+      options: [
+        { value: 0, label: 'BOS / Schlieren' },
+        { value: 1, label: 'Photoelastic' },
+        { value: 2, label: 'Lippmann' },
+        { value: 3, label: 'InSAR' },
+        { value: 4, label: 'Catoptric Cylinder' },
+        { value: 5, label: 'Catoptric Cone' },
+        { value: 6, label: 'DTI Ribbons' },
+        { value: 7, label: 'Composite' },
+      ] },
+    { name: 'Intensity', param: 'phaseLabIntensity', min: 0, max: 4, step: 0.01, default: 1.35 },
+    { name: 'Scale', param: 'phaseLabScale', min: 0.25, max: 24, step: 0.05, default: 6 },
+    { name: 'Speed', param: 'phaseLabSpeed', min: -4, max: 4, step: 0.01, default: 0.35 },
+    { name: 'Phase', param: 'phaseLabPhase', min: -6.283, max: 6.283, step: 0.001, default: 0 },
+    { name: 'Mix', param: 'phaseLabMix', min: 0, max: 1, step: 0.01, default: 0.92 },
+    { name: 'Color Gain', param: 'phaseLabColorGain', min: 0.2, max: 4, step: 0.01, default: 1.25 },
+    { name: 'Source Bleed', param: 'phaseLabSourceBleed', min: 0, max: 1, step: 0.01, default: 0.22 },
+    { name: 'Gradient Boost', param: 'phaseLabEdgeBoost', min: 0, max: 8, step: 0.01, default: 2.4 },
+    { name: 'Refraction', param: 'phaseLabDistortion', min: -0.25, max: 0.25, step: 0.001, default: 0.04 },
+    { name: 'Fringe Density', param: 'phaseLabLineDensity', min: 1, max: 80, step: 0.1, default: 18 },
+    { name: 'Polarizer', param: 'phaseLabPolarizerAngle', min: 0, max: 180, step: 1, default: 35 },
+    { name: 'Spectral Shift', param: 'phaseLabSpectralShift', min: -2, max: 2, step: 0.005, default: 0.35 },
+    { name: 'Mirror Focus', param: 'phaseLabFocus', min: 0.1, max: 4, step: 0.01, default: 1.45 },
+    { name: 'Mirror Radius', param: 'phaseLabMirrorRadius', min: 0.03, max: 0.45, step: 0.005, default: 0.16 },
+    { name: 'Cone Lift', param: 'phaseLabConeLift', min: 0.2, max: 3, step: 0.01, default: 1.2 },
+    { name: 'Audio Reactive', param: 'phaseLabAudioReactive', min: 0, max: 1, step: 1, default: 1, type: 'select',
+      options: [{ value: 0, label: 'Off' }, { value: 1, label: 'On' }] },
+    { name: 'Audio Drive', param: 'phaseLabAudioDrive', min: 0, max: 3, step: 0.01, default: 0.65 },
   ],
   pixelate: [
     { name: 'Size', param: 'pixelateSize', min: 1, max: 64, step: 1, default: 8 },

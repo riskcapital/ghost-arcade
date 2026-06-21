@@ -221,7 +221,7 @@
   .vj-seq-right { flex: 1; justify-content: flex-end; }
   .vj-seq-title {
     color: var(--ga-coral, #ff6f5e);
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 800;
     letter-spacing: .08em;
   }
@@ -233,7 +233,7 @@
     color: var(--ga-ink-0, #eef0f4);
     border-radius: var(--ga-r-hard, 2px);
     font: inherit;
-    font-size: 13px;
+    font-size: 12px;
   }
   input { width: 52px; padding: 0 6px; }
   .vj-seq-transport button {
@@ -259,14 +259,14 @@
     min-width: 42px;
     color: var(--ga-ink-1, #9aa0ac);
     font-family: var(--ga-font-mono, ui-monospace);
-    font-size: 13px;
+    font-size: 12px;
   }
   .vj-seq-check {
     display: inline-flex;
     align-items: center;
     gap: 4px;
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 13px;
+    font-size: 12px;
   }
   .vj-seq-check input {
     width: 12px;
@@ -284,7 +284,7 @@
     color: var(--ga-ink-1, #9aa0ac);
     border-radius: var(--ga-r-hard, 2px);
     font: inherit;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 800;
     letter-spacing: .06em;
     cursor: pointer;
@@ -347,7 +347,7 @@
   }
   .vj-seq-deck-title {
     min-width: 54px;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 900;
     letter-spacing: 0.12em;
   }
@@ -394,7 +394,7 @@
     justify-content: center;
     color: var(--ga-ink-2, #5e6571);
     font-family: var(--ga-font-mono, ui-monospace);
-    font-size: 12px;
+    font-size: 11px;
   }
   .step-head.current {
     color: var(--ga-green, #46d18a);
@@ -402,7 +402,7 @@
   .layer-label {
     gap: 6px;
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
   }
   .layer-dot {

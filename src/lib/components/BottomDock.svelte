@@ -119,7 +119,7 @@
     font: inherit;
     font-family: var(--ga-font-ui, system-ui, sans-serif);
     font-weight: 600;
-    font-size: 13.5px;
+    font-size: 12.5px;
     letter-spacing: 0.01em;
     cursor: pointer;
     transition: background 0.14s, color 0.14s, border-color 0.14s;
@@ -147,7 +147,7 @@
     background: rgba(255, 255, 255, 0.1);
     color: inherit;
     font-family: var(--ga-font-mono, ui-monospace);
-    font-size: 11.5px;
+    font-size: 10.5px;
     font-weight: 500;
     letter-spacing: 0;
   }
