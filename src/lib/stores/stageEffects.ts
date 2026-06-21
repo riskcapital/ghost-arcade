@@ -1052,16 +1052,26 @@ export function evaluateStageEffectForScreen(
   cx: number,
   cy: number,
   tSec: number,
+  options: {
+    effectId?: string;
+    opacity?: number;
+    sliceIndex?: number;
+    sliceCount?: number;
+  } = {},
 ): number {
   // Reconstruct a minimal StageEffect just to drive the existing
   // evaluators — they expect this shape. Reuses every effect-type
   // implementation already battle-tested by the surface runtime.
-  const eff: StageEffect = { id: screenId, type, enabled: true, opacity: 1, params };
-  const key = _screenStateKey(screenId, type);
+  const eff: StageEffect = { id: options.effectId ?? screenId, type, enabled: true, opacity: options.opacity ?? 1, params };
+  const key = _screenStateKey(`${screenId}:${eff.id}`, type);
   let state = _screenStageState.get(key);
   if (!state) { state = {}; _screenStageState.set(key, state); }
+  state._sliceIndex = options.sliceIndex ?? 0;
+  state._sliceCount = Math.max(1, options.sliceCount ?? 1);
   try {
-    return evaluate(eff, cx, cy, tSec, state);
+    const raw = evaluate(eff, cx, cy, tSec, state);
+    const wet = Math.max(0, Math.min(1, eff.opacity ?? 1));
+    return raw * wet + 1 * (1 - wet);
   } catch (err) {
     console.warn('[stageEffects] screen evaluate failed', err);
     return 1;

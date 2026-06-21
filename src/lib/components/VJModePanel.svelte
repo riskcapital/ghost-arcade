@@ -1014,6 +1014,7 @@
         videoElement: source.videoEl,
         playbackMode: 'loop',
         isPlaying: true,
+        mirrorX: source.type === 'webcam',
       };
     }
 
@@ -3724,7 +3725,7 @@
                                     <select
                                       value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
                                       onchange={(e) => updateEffectParam(effect.id, paramKey, parseFloat((e.target as HTMLSelectElement).value))}
-                                      style="flex:1; background:#222; color:#fff; border:1px solid #444; border-radius:3px; padding:2px 4px; font-size:13px;">
+                                      style="flex:1; background:#222; color:#fff; border:1px solid #444; border-radius:3px; padding:2px 4px; font-size:12px;">
                                       {#each meta.options as opt}
                                         <option value={opt.value}>{opt.label}</option>
                                       {/each}
@@ -5472,7 +5473,7 @@
     box-shadow: 0 0 12px rgba(255, 133, 119, 0.45);
   }
   .ab-toggle-glyph {
-    font-family: var(--ga-font-mono, ui-monospace, 'SF Mono', Menlo, monospace);
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
   .ab-toggle-label {
     text-transform: uppercase;
@@ -5532,8 +5533,8 @@
     border-color: #555;
   }
   .deck-label {
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 12px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.18em;
     color: var(--text-muted, #888);
@@ -5567,7 +5568,7 @@
     margin-bottom: 1px;
   }
   .xfade-mod-label {
-    font-size: 9px;
+    font-size: 8px;
     font-weight: 800;
     letter-spacing: 0.12em;
     color: rgba(148, 163, 184, 0.72);
@@ -5581,7 +5582,7 @@
     align-items: center;
     justify-content: center;
     padding: 0 6px;
-    font-size: 11px;
+    font-size: 10px;
     line-height: 1;
     text-align: center;
   }
@@ -5602,7 +5603,7 @@
     background: #181820;
     color: var(--text-secondary, #aaa);
     border-radius: 4px;
-    font-size: 15px;
+    font-size: 14px;
     line-height: 1;
     cursor: pointer;
     transition: background 0.12s, border-color 0.12s, color 0.12s;
@@ -5744,8 +5745,8 @@
   }
 
   .xfade-readout {
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 12px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 11px;
     color: var(--accent-primary, #BB86FC);
     letter-spacing: 0.05em;
     padding: 2px 6px;
@@ -5760,8 +5761,8 @@
     gap: 3px;
     align-items: center;
     color: rgba(148, 163, 184, 0.72);
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 9px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 8px;
     font-weight: 800;
     letter-spacing: 0.12em;
     line-height: 1;
@@ -5774,8 +5775,8 @@
     border: 1px solid #333;
     border-radius: 4px;
     color: var(--text-primary, #ddd);
-    font-size: 12px;
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 11px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     cursor: pointer;
     text-align: center;
   }
@@ -5969,13 +5970,13 @@
     padding: 2px 4px;
     border-radius: 3px;
     cursor: pointer;
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
   .header-quant-select:hover {
     border-color: rgba(255, 255, 255, 0.3);
   }
   .header-quant-pending {
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     font-size: calc(var(--vj-header-font) - 1px);
     font-weight: 700;
     color: var(--accent-primary, #BB86FC);
@@ -6011,10 +6012,10 @@
   .vj-menu-item {
     display: flex; justify-content: space-between; align-items: center;
     width: 100%; background: none; border: none; color: var(--text-primary, #ddd);
-    font-size: 14px; padding: 7px 14px; cursor: pointer; text-align: left;
+    font-size: 13px; padding: 7px 14px; cursor: pointer; text-align: left;
   }
   .vj-menu-item:hover { background: rgba(255,255,255,0.08); color: #fff; }
-  .vj-menu-sc { color: #666; font-size: 12px; margin-left: 16px; font-family: monospace; }
+  .vj-menu-sc { color: #666; font-size: 11px; margin-left: 16px; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); }
   .vj-menu-sep { height: 1px; background: #333; margin: 4px 0; }
 
   @keyframes blink {
@@ -6162,7 +6163,7 @@
     font-size: var(--vj-header-font);
     font-weight: 600;
     color: #ff4444;
-    font-family: monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
 
   /* Compact square icon button — same footprint as mapping-mode's
@@ -6415,7 +6416,7 @@
     border: none;
     border-bottom: 2px solid transparent;
     color: rgba(238, 240, 244, 0.62);
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     cursor: pointer;
     transition: all 0.15s;
@@ -6451,14 +6452,14 @@
   }
 
   .effects-info-label {
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     color: var(--accent-primary, #BB86FC);
     letter-spacing: 0.5px;
   }
 
   .effects-info-hint {
-    font-size: 11px;
+    font-size: 10px;
     color: #555;
     margin: 2px 0 0;
   }
@@ -6473,7 +6474,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-muted, #888);
   }
 
@@ -6483,7 +6484,7 @@
     color: var(--accent-primary, #BB86FC);
     padding: 3px 10px;
     border-radius: 4px;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -6511,7 +6512,7 @@
     color: var(--text-primary, #ddd);
     border-radius: 4px;
     padding: 5px 8px;
-    font-size: 13px;
+    font-size: 12px;
   }
   .stage-fx-select:focus {
     border-color: #4cd1ff;
@@ -6538,7 +6539,7 @@
     border: 1px solid #2a2a30;
     color: #4cd1ff;
     border-radius: 4px;
-    font-size: 15px;
+    font-size: 14px;
     cursor: pointer;
   }
   .stage-auto-play:hover { background: rgba(76,209,255,0.12); border-color: #4cd1ff; }
@@ -6553,7 +6554,7 @@
     color: var(--text-primary, #ddd);
     border-radius: 4px;
     padding: 3px 5px;
-    font-size: 13px;
+    font-size: 12px;
     height: 26px;
   }
   .stage-auto-interval {
@@ -6563,14 +6564,14 @@
     color: var(--text-primary, #ddd);
     border-radius: 4px;
     padding: 3px 5px;
-    font-size: 13px;
-    font-family: monospace;
+    font-size: 12px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     height: 26px;
   }
   .stage-auto-unit {
     color: var(--text-muted, #888);
-    font-size: 12px;
-    font-family: monospace;
+    font-size: 11px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
   /* ── Stage Effects: live-radio + cycle toggle on each row ── */
   .effect-live-radio {
@@ -6580,7 +6581,7 @@
     color: #555;
     border-radius: 50%;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 13px;
     padding: 0;
     display: inline-flex;
     align-items: center;
@@ -6679,7 +6680,7 @@
     color: #555;
     border-radius: 3px;
     cursor: pointer;
-    font-size: 13px;
+    font-size: 12px;
     padding: 2px 4px;
   }
   .effect-cycle-toggle:hover { color: var(--text-secondary, #aaa); border-color: #2a2a30; }
@@ -6726,7 +6727,7 @@
     background: none;
     border: none;
     color: var(--accent-primary, #BB86FC);
-    font-size: 14px;
+    font-size: 13px;
     cursor: pointer;
     padding: 2px;
     width: 18px;
@@ -6737,7 +6738,7 @@
 
   .effect-name {
     flex: 1;
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-primary, #ddd);
     text-transform: capitalize;
     font-weight: 500;
@@ -6747,7 +6748,7 @@
   }
 
   .effect-expand {
-    font-size: 10px;
+    font-size: 9px;
     color: #666;
     padding: 2px;
   }
@@ -6756,7 +6757,7 @@
     background: none;
     border: none;
     color: #555;
-    font-size: 18px;
+    font-size: 17px;
     cursor: pointer;
     padding: 2px;
     opacity: 0;
@@ -6779,7 +6780,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    font-size: 12px;
+    font-size: 11px;
     color: #999;
     padding: 6px 0;
   }
@@ -6814,14 +6815,14 @@
     width: 38px;
     text-align: right;
     color: #777;
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    font-size: 11px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 10px;
     font-variant-numeric: tabular-nums;
   }
 
   .no-effects {
     color: rgba(157, 177, 201, 0.78);
-    font-size: 15px;
+    font-size: 14px;
     text-align: center;
     padding: 28px 12px;
     line-height: 1.45;
@@ -6865,7 +6866,7 @@
     position: absolute;
     top: 8px;
     left: 8px;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
     color: #555;
     background: rgba(0, 0, 0, 0.6);
@@ -6962,7 +6963,7 @@
   }
 
   .media-tray-tab-label {
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 800;
     line-height: 1;
     letter-spacing: 0.08em;
@@ -7026,7 +7027,7 @@
   }
 
   .shader-params-overlay-title {
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     color: var(--accent-primary, #BB86FC);
     display: flex;
@@ -7038,7 +7039,7 @@
   }
 
   .shader-params-layer-badge {
-    font-size: 10px;
+    font-size: 9px;
     padding: 1px 4px;
     background: var(--accent-primary, #BB86FC)30;
     border: 1px solid var(--accent-primary, #BB86FC)50;
@@ -7051,7 +7052,7 @@
     background: none;
     border: none;
     color: #666;
-    font-size: 18px;
+    font-size: 17px;
     cursor: pointer;
     padding: 0 2px;
     line-height: 1;
@@ -7068,7 +7069,7 @@
     background: none;
     border: none;
     color: #7ec8e3;
-    font-size: 16px;
+    font-size: 15px;
     cursor: pointer;
     padding: 0 6px;
     line-height: 1;
@@ -7164,7 +7165,7 @@
     border: 1px solid #444;
     border-radius: 4px;
     color: var(--text-muted, #888);
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.1s;
@@ -7217,7 +7218,7 @@
   }
 
   .layer-num {
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 700;
     color: var(--text-muted, #888);
   }
@@ -7232,7 +7233,7 @@
     height: 20px;
     border: none;
     border-radius: 3px;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     cursor: pointer;
     transition: all 0.1s;
@@ -7324,7 +7325,7 @@
     color: var(--text-secondary, #aaa);
     padding: 5px 8px;
     border-radius: 3px;
-    font-size: 12px;
+    font-size: 11px;
     cursor: pointer;
   }
 
@@ -7439,7 +7440,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
   }
 
@@ -7490,7 +7491,7 @@
     right: 0;
     padding: 2px 4px;
     background: rgba(0, 0, 0, 0.8);
-    font-size: 10px;
+    font-size: 9px;
     color: var(--text-secondary, #aaa);
     white-space: nowrap;
     overflow: hidden;
@@ -7507,7 +7508,7 @@
     border: none;
     border-radius: 50%;
     color: #fff;
-    font-size: 12px;
+    font-size: 11px;
     cursor: pointer;
     opacity: 0;
     transition: opacity 0.1s;
@@ -7547,7 +7548,7 @@
     background: none;
     border: none;
     color: var(--text-primary, #ccc);
-    font-size: 13px;
+    font-size: 12px;
     text-align: left;
     cursor: pointer;
     font-family: inherit;
@@ -7575,8 +7576,8 @@
     color: #ffa899;
   }
   .ctx-shortcut {
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 12px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 11px;
     color: var(--text-muted, #888);
     font-weight: 400;
   }
@@ -7642,7 +7643,7 @@
     border: none;
     border-bottom: 2px solid transparent;
     color: #666;
-    font-size: 11px;
+    font-size: 10px;
     cursor: pointer;
     transition: all 0.15s;
     position: relative;
@@ -7671,7 +7672,7 @@
     position: absolute;
     top: 2px;
     right: 4px;
-    font-size: 10px;
+    font-size: 9px;
     color: #555;
     font-weight: 600;
   }
@@ -7704,7 +7705,7 @@
     border: 1px solid #a855f740;
     border-radius: 4px;
     color: #a855f7;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -7734,7 +7735,7 @@
 
   .loading {
     padding: 12px;
-    font-size: 13px;
+    font-size: 12px;
     color: #666;
     text-align: center;
   }
@@ -7772,7 +7773,7 @@
     border: 1px solid rgba(255,255,255,0.12);
     border-radius: 4px;
     color: var(--text-primary, #ddd);
-    font-size: 13px;
+    font-size: 12px;
     cursor: pointer;
     transition: background 0.15s;
   }
@@ -7787,11 +7788,11 @@
 
   .empty-media p {
     margin: 0;
-    font-size: 13px;
+    font-size: 12px;
   }
 
   .empty-media .hint {
-    font-size: 11px;
+    font-size: 10px;
     color: #333;
     margin-top: 8px;
   }
@@ -7833,7 +7834,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
   }
 
@@ -7867,7 +7868,7 @@
   }
 
   .item-name {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--text-primary, #eee);
     white-space: nowrap;
     overflow: hidden;
@@ -7875,7 +7876,7 @@
   }
 
   .item-type {
-    font-size: 10px;
+    font-size: 9px;
     color: var(--text-muted, #888);
     text-transform: uppercase;
   }
@@ -7971,7 +7972,7 @@
   }
 
   .block-name {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--text-secondary, #aaa);
     flex: 1;
@@ -7984,7 +7985,7 @@
     border: 1px solid var(--accent-primary, #BB86FC);
     border-radius: 3px;
     color: #fff;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     padding: 2px 6px;
     width: 80px;
@@ -7995,7 +7996,7 @@
     background: none;
     border: none;
     color: #666;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 700;
     cursor: pointer;
     padding: 0;
@@ -8033,7 +8034,7 @@
     border: 1px dashed #444;
     border-radius: 4px;
     color: #666;
-    font-size: 20px;
+    font-size: 19px;
     font-weight: 300;
     cursor: pointer;
     transition: all 0.15s;
@@ -8086,7 +8087,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
   }
 
@@ -8117,7 +8118,7 @@
 
   .live-preview-empty {
     color: #333;
-    font-size: 16px;
+    font-size: 15px;
   }
 
   .live-indicator-dot {
@@ -8153,7 +8154,7 @@
   .live-preview-header {
     width: 56px;
     flex-shrink: 0;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
     color: #666;
     text-align: center;
@@ -8175,7 +8176,7 @@
     border-radius: 7px;
     background: #22c55e;
     color: #000;
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 700;
     margin-left: 3px;
     vertical-align: middle;
@@ -8207,7 +8208,7 @@
     border: 1px solid #333;
     border-radius: 4px;
     color: var(--text-secondary, #aaa);
-    font-size: 12px;
+    font-size: 11px;
     cursor: pointer;
     transition: all 0.15s;
   }
@@ -8247,7 +8248,7 @@
     border: 1px solid #333;
     border-radius: 3px;
     color: var(--text-primary, #ccc);
-    font-size: 12px;
+    font-size: 11px;
     cursor: pointer;
     text-align: left;
     transition: all 0.15s;
@@ -8270,7 +8271,7 @@
     border-radius: 3px;
     color: var(--text-primary, #ccc);
     padding: 5px 6px;
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .vj-spout-input:focus {
@@ -8284,7 +8285,7 @@
     border: 1px solid #a78bfa;
     border-radius: 3px;
     color: #a78bfa;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     cursor: pointer;
   }
@@ -8342,7 +8343,7 @@
   }
 
   .source-type-icon {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     color: var(--accent-primary, #BB86FC);
     letter-spacing: 0.5px;
@@ -8371,12 +8372,12 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     color: var(--text-primary, #ddd);
-    font-size: 13px;
+    font-size: 12px;
   }
 
   .source-status {
     color: var(--text-muted, #777);
-    font-size: 11px;
+    font-size: 10px;
     text-transform: uppercase;
   }
 
@@ -8405,7 +8406,7 @@
     color: #8fd6ff;
     background: rgba(76, 209, 255, 0.1);
     border-color: rgba(76, 209, 255, 0.24);
-    font-size: 17px;
+    font-size: 16px;
     line-height: 1;
   }
 
@@ -8460,7 +8461,7 @@
   }
 
   .cpm-title {
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 600;
   }
 
@@ -8493,13 +8494,13 @@
     padding: 40px;
     text-align: center;
     color: var(--text-muted, #888);
-    font-size: 15px;
+    font-size: 14px;
   }
 
   .cpm-section-title {
     padding: 16px 18px 6px;
     color: var(--text-muted, #888);
-    font-size: 13px;
+    font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 1.1px;
   }
@@ -8543,7 +8544,7 @@
     align-items: center;
     justify-content: center;
     color: var(--text-muted, #777);
-    font-size: 13px;
+    font-size: 12px;
   }
 
   .cpm-name,
@@ -8569,7 +8570,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     color: var(--text-primary, #ddd);
-    font-size: 14px;
+    font-size: 13px;
   }
 
   /* ========== Audio Control Bar ========== */
@@ -8577,7 +8578,7 @@
 
   /* ========== Shader Parameters ========== */
   .active-clip-name {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--accent-primary, #BB86FC);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -8593,7 +8594,7 @@
 
   .section-header {
     padding: 6px 0;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     color: var(--accent-primary, #BB86FC);
     letter-spacing: 0.5px;
@@ -8626,7 +8627,7 @@
   }
 
   .shader-param-name {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-secondary, #aaa);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -8635,7 +8636,7 @@
   }
 
   .mod-source-chip {
-    font-size: 11px;
+    font-size: 10px;
     padding: 1px 8px;
     background: var(--bg-primary, #0d0d10);
     border: 1px solid #333;
@@ -8761,7 +8762,7 @@
   }
 
   .param-val {
-    font-size: 11px;
+    font-size: 10px;
     color: #555;
     font-variant-numeric: tabular-nums;
     min-width: 32px;
@@ -8778,7 +8779,7 @@
     border-radius: 3px;
     background: var(--bg-primary, #0d0d10);
     color: #666;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     cursor: pointer;
     transition: all 0.1s;
@@ -8796,7 +8797,7 @@
 
   .long-select {
     width: 100%;
-    font-size: 12px;
+    font-size: 11px;
     padding: 5px 8px;
     background-color: var(--bg-primary, #0d0d10);
     border: 1px solid #333;
@@ -8806,7 +8807,7 @@
 
   .audio-ready-badge {
     display: inline-block;
-    font-size: 12px;
+    font-size: 11px;
     color: #5ce1e6;
     background: rgba(92, 225, 230, 0.15);
     border: 1px solid rgba(92, 225, 230, 0.3);
@@ -8818,7 +8819,7 @@
   }
 
   .audio-warn {
-    font-size: 11px;
+    font-size: 10px;
     color: #f59e0b;
     background: rgba(245, 158, 11, 0.08);
     border: 1px solid rgba(245, 158, 11, 0.2);
@@ -9023,7 +9024,7 @@
 
   .shader-params-panel summary {
     padding: 6px 8px;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--text-secondary, #aaa);
     cursor: pointer;
@@ -9052,7 +9053,7 @@
     border: 1px solid #333;
     color: var(--text-primary, #ccc);
     border-radius: 3px;
-    font-size: 13px;
+    font-size: 12px;
     padding: 2px 4px;
   }
 
@@ -9080,13 +9081,13 @@
   }
 
   .vj-plugin-name {
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
     color: var(--text-primary, #eee);
   }
 
   .vj-plugin-desc {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-muted, #888);
     white-space: nowrap;
     overflow: hidden;
@@ -9094,7 +9095,7 @@
   }
 
   .vj-plugin-status {
-    font-size: 11px;
+    font-size: 10px;
     color: #666;
   }
 
@@ -9109,7 +9110,7 @@
   .vj-plugin-btn {
     padding: 5px 10px;
     border-radius: 4px;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.15s;
@@ -9140,7 +9141,7 @@
     text-align: center;
     padding: 12px;
     color: #555;
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .vj-plugin-hint p {
@@ -9163,7 +9164,7 @@
   }
 
   .dim-label {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-muted, #888);
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -9177,7 +9178,7 @@
     border: 1px solid #444;
     border-radius: 4px;
     color: var(--text-primary, #ccc);
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 600;
     cursor: pointer;
     display: flex;
@@ -9194,7 +9195,7 @@
   }
 
   .dim-value {
-    font-size: 14px;
+    font-size: 13px;
     color: #fff;
     font-weight: 600;
     min-width: 20px;
@@ -9208,7 +9209,7 @@
     border: 1px solid #444;
     border-radius: 4px;
     color: var(--text-muted, #888);
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     letter-spacing: 1px;
     cursor: pointer;
@@ -9239,7 +9240,7 @@
   }
 
   .stage-presets-label {
-    font-size: 12px;
+    font-size: 11px;
     color: #f90;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -9263,7 +9264,7 @@
     border: 1px solid #333;
     border-radius: 4px;
     color: var(--text-secondary, #aaa);
-    font-size: 12px;
+    font-size: 11px;
     cursor: pointer;
     flex-shrink: 0;
     min-width: 60px;
@@ -9301,7 +9302,7 @@
     color: #fff;
     border-radius: 3px;
     padding: 1px 4px;
-    font-size: 13px;
+    font-size: 12px;
     font-family: inherit;
     outline: none;
   }
@@ -9312,7 +9313,7 @@
     border: 1px dashed #555;
     border-radius: 4px;
     color: var(--text-muted, #888);
-    font-size: 12px;
+    font-size: 11px;
     cursor: pointer;
     flex-shrink: 0;
   }
@@ -9331,7 +9332,7 @@
     border: 1px solid #4cd1ff;
     border-radius: 4px;
     color: #4cd1ff;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     cursor: pointer;
     flex-shrink: 0;
@@ -9385,7 +9386,7 @@
     opacity: 0.16;
   }
   .stage-preset-scope {
-    font-size: 10px;
+    font-size: 9px;
     font-weight: bold;
     color: rgba(100,200,255,0.8);
     margin-right: 2px;
@@ -9425,12 +9426,12 @@
     color: #d4d4d4;
     border-radius: 5px;
     padding: 5px 14px;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.05em;
     cursor: pointer;
     transition: all 0.15s;
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
   .xfade-cut-btn:hover {
     background: rgba(255, 133, 119, 0.18);
@@ -9462,7 +9463,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 14px;
+    font-size: 13px;
     transition: all 0.15s;
   }
   .xfade-trans-arrow:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
@@ -9472,8 +9473,8 @@
     color: #fff;
     border-radius: 4px;
     padding: 4px 8px;
-    font-size: 13px;
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 12px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     min-width: 110px;
@@ -9487,8 +9488,8 @@
     color: var(--text-secondary, #aaa);
     border-radius: 4px;
     padding: 4px 8px;
-    font-size: 12px;
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 11px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     cursor: pointer;
   }
 
@@ -9499,8 +9500,8 @@
     padding: 0 4px;
   }
   .xfade-end-label {
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 13px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 12px;
     font-weight: 700;
     color: var(--text-muted, #888);
     min-width: 16px;
@@ -9577,9 +9578,9 @@
     background: transparent;
     border: none;
     color: var(--text-muted, #888);
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     padding: 3px 6px;
     cursor: pointer;
     transition: background 0.15s, color 0.15s;
@@ -9627,9 +9628,9 @@
   }
   .vt-play:hover { background: #CF6EFF; color: #000; }
   .vt-time {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-muted, #888);
-    font-family: monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     margin-left: 4px;
     flex: 1;
     white-space: nowrap;
@@ -9639,7 +9640,7 @@
     color: var(--text-secondary, #aaa);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 3px;
-    font-size: 13px;
+    font-size: 12px;
     padding: 2px 4px;
     cursor: pointer;
     flex-shrink: 0;
@@ -9729,7 +9730,7 @@
     border-top: 1px solid rgba(255, 255, 255, 0.06);
   }
   .vt-section-title {
-    font-size: 11px;
+    font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.6px;
     color: #777;
@@ -9742,12 +9743,12 @@
     gap: 8px;
   }
   .vt-tf-label {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-secondary, #aaa);
   }
   .vt-tf-num {
-    font-family: 'SF Mono', Menlo, Consolas, monospace;
-    font-size: 12px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 11px;
     color: #6df;
     text-align: right;
   }
@@ -9761,7 +9762,7 @@
     color: var(--text-primary, #ddd);
     padding: 3px 6px;
     border-radius: 3px;
-    font-size: 12px;
+    font-size: 11px;
     cursor: pointer;
     width: 100%;
   }
@@ -9778,7 +9779,7 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     background: rgba(255, 255, 255, 0.05);
     color: var(--text-secondary, #aaa);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     cursor: pointer;
   }
@@ -9794,7 +9795,7 @@
     color: var(--text-secondary, #aaa);
     padding: 5px;
     border-radius: 3px;
-    font-size: 12px;
+    font-size: 11px;
     cursor: pointer;
   }
   .vt-tf-reset:hover {
@@ -9810,7 +9811,7 @@
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);
     color: var(--text-muted, #888);
-    font-size: 12px;
+    font-size: 11px;
     padding: 4px 2px;
     border-radius: 3px;
     cursor: pointer;

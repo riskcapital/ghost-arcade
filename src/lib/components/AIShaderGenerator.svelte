@@ -340,7 +340,7 @@
 
   .header h3 {
     margin: 0;
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 600;
     flex: 1;
     background: linear-gradient(90deg, #BB86FC, #A78BFA);
@@ -359,7 +359,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 22px;
+    font-size: 21px;
     line-height: 1;
   }
 
@@ -376,7 +376,7 @@
     background: var(--bg-secondary, #111114);
     border-radius: 6px;
     border: 1px solid #222;
-    font-size: 13px;
+    font-size: 12px;
   }
 
   .ai-provider-badge {
@@ -385,19 +385,19 @@
     padding: 2px 8px;
     border-radius: 4px;
     font-weight: 500;
-    font-size: 12px;
+    font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
 
   .ai-key-ok {
     color: #22c55e;
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .ai-key-missing {
     color: #ef4444;
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .btn-configure {
@@ -406,7 +406,7 @@
     border: 1px solid #444;
     color: var(--text-muted, #888);
     padding: 3px 8px;
-    font-size: 12px;
+    font-size: 11px;
     border-radius: 4px;
     cursor: pointer;
   }
@@ -418,7 +418,7 @@
 
   .generation-type label,
   .description-section label {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -437,7 +437,7 @@
     background: var(--bg-secondary, #111114);
     border: 1px solid #333;
     color: var(--text-muted, #888);
-    font-size: 13px;
+    font-size: 12px;
     cursor: pointer;
     border-radius: 6px;
     transition: all 0.15s;
@@ -474,7 +474,7 @@
     border-radius: 6px;
     padding: 10px 12px;
     color: #fff;
-    font-size: 15px;
+    font-size: 14px;
     font-family: inherit;
     resize: vertical;
     min-height: 70px;
@@ -497,7 +497,7 @@
   }
 
   .examples-label {
-    font-size: 13px;
+    font-size: 12px;
     color: #666;
     padding-top: 4px;
   }
@@ -515,7 +515,7 @@
     border: 1px solid #333;
     border-radius: 12px;
     color: var(--text-muted, #888);
-    font-size: 12px;
+    font-size: 11px;
     cursor: pointer;
     transition: all 0.15s;
   }
@@ -527,7 +527,7 @@
   }
 
   .advanced-options {
-    font-size: 14px;
+    font-size: 13px;
     color: #666;
   }
 
@@ -545,7 +545,7 @@
   }
 
   .advanced-content label {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -559,7 +559,7 @@
     border-radius: 4px;
     padding: 8px 12px;
     color: #ef4444;
-    font-size: 14px;
+    font-size: 13px;
   }
 
   .btn-generate {
@@ -568,7 +568,7 @@
     border: none;
     border-radius: 6px;
     color: #000;
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s;

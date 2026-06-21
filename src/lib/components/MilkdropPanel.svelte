@@ -202,7 +202,7 @@
     border: 1px solid #3a2960;
     border-radius: 3px;
     color: #c9b8ff;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     cursor: pointer;
     transition: all 0.12s;
@@ -213,7 +213,7 @@
   .mk-btn.lock.active { background: #0d3320; border-color: #22c55e; color: #4ade80; }
 
   .mk-hotkey-hint {
-    font-size: 11px;
+    font-size: 10px;
     color: #555;
     text-align: center;
     letter-spacing: 0.4px;
@@ -225,8 +225,8 @@
     color: var(--text-secondary, #aaa);
     border-radius: 3px;
     padding: 1px 5px;
-    font-size: 11px;
-    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     margin: 0 2px;
   }
 
@@ -239,24 +239,24 @@
     padding: 4px 8px;
   }
   .mk-now-label {
-    font-size: 11px;
+    font-size: 10px;
     color: #555;
     letter-spacing: 0.6px;
   }
   .mk-now-name {
     flex: 1;
-    font-size: 13px;
+    font-size: 12px;
     color: #d4b8ff;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
   .mk-fav-btn, .mk-fav-only {
     background: transparent;
     border: 1px solid #333;
     color: #555;
-    font-size: 13px;
+    font-size: 12px;
     padding: 2px 6px;
     border-radius: 3px;
     cursor: pointer;
@@ -278,7 +278,7 @@
     color: var(--text-primary, #ddd);
     padding: 4px 6px;
     border-radius: 3px;
-    font-size: 12px;
+    font-size: 11px;
     outline: none;
   }
   .mk-filter input[type="text"]:focus { border-color: #6938aa; }
@@ -305,18 +305,18 @@
   .mk-row.active .mk-row-name { color: #fff; }
   .mk-row-name {
     flex: 1;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-secondary, #aaa);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
   .mk-row-fav {
     background: transparent;
     border: none;
     color: #555;
-    font-size: 14px;
+    font-size: 13px;
     padding: 0 4px;
     cursor: pointer;
   }
@@ -325,7 +325,7 @@
   .mk-empty {
     padding: 12px;
     text-align: center;
-    font-size: 12px;
+    font-size: 11px;
     color: #555;
   }
   .mk-empty.err { color: #f87171; }

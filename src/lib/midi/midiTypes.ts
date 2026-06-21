@@ -5,6 +5,7 @@
 // Mapping mode:  "map:model3d:<property>"        e.g. "map:model3d:materialOpacity"
 // Mapping mode:  "map:model3d:echo.<property>"   e.g. "map:model3d:echo.count"
 // Mapping mode:  "map:layer:<property>"          e.g. "map:layer:opacity"
+// Mapping mode:  "map:stage-effect:<id>:hold"    (Momentary trigger)
 // VJ mode:       "vj:<layerIndex>:opacity"       e.g. "vj:0:opacity"
 // VJ mode:       "vj:<layerIndex>:shader:<name>" e.g. "vj:2:shader:speed"
 // VJ mode:       "vj:master:opacity"

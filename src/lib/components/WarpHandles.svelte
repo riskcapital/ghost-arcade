@@ -995,7 +995,7 @@
     transform: translateX(-50%);
     background: rgba(0, 0, 0, 0.8);
     color: #fff;
-    font-size: 12px;
+    font-size: 11px;
     padding: 2px 6px;
     border-radius: 3px;
     white-space: nowrap;
@@ -1196,7 +1196,7 @@
     grid-column: 1 / -1;
     grid-row: 1;
     text-align: center;
-    font-size: 12px;
+    font-size: 11px;
     letter-spacing: 1px;
     color: #4cd1ff;
     text-transform: uppercase;
@@ -1209,7 +1209,7 @@
     border: 1px solid #2a2a30;
     border-radius: 6px;
     color: var(--text-primary, #ddd);
-    font-size: 16px;
+    font-size: 15px;
     cursor: pointer;
     display: inline-flex;
     align-items: center;

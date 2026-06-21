@@ -210,7 +210,7 @@
     border: 1px solid rgba(255, 107, 107, 0.55);
     border-radius: 6px;
     box-shadow: 0 6px 28px rgba(255, 107, 107, 0.25), 0 2px 6px rgba(0, 0, 0, 0.6);
-    font-size: 13px;
+    font-size: 12px;
     pointer-events: auto;
     backdrop-filter: blur(6px);
   }
@@ -233,7 +233,7 @@
   .mp-learn-title {
     flex: 1;
     color: var(--accent-secondary, #FF8585);
-    font-size: 13px;
+    font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.6px;
     font-weight: 700;
@@ -244,7 +244,7 @@
     color: var(--accent-primary, #FF6B6B);
     padding: 3px 10px;
     border-radius: 3px;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     cursor: pointer;
   }
@@ -260,13 +260,13 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-muted, #888);
   }
   .mp-learn-row > span:first-child {
     width: 56px;
     flex-shrink: 0;
-    font-size: 11px;
+    font-size: 10px;
     color: #666;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -279,7 +279,7 @@
     color: var(--text-primary, #ddd);
     padding: 3px 6px;
     border-radius: 3px;
-    font-size: 12px;
+    font-size: 11px;
     outline: none;
     min-width: 0;
   }
@@ -305,15 +305,15 @@
     position: absolute;
     right: 4px;
     top: -1px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 10px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 9px;
     color: var(--text-secondary, #aaa);
     line-height: 8px;
   }
 
-  .mp-learn-dash { color: #555; font-size: 13px; }
-  .mp-learn-check { display: flex; align-items: center; gap: 3px; font-size: 11px; color: var(--text-secondary, #aaa); cursor: pointer; }
-  .mp-learn-val { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-secondary, #aaa); width: 32px; text-align: right; }
+  .mp-learn-dash { color: #555; font-size: 12px; }
+  .mp-learn-check { display: flex; align-items: center; gap: 3px; font-size: 10px; color: var(--text-secondary, #aaa); cursor: pointer; }
+  .mp-learn-val { font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); font-size: 11px; color: var(--text-secondary, #aaa); width: 32px; text-align: right; }
 
   .mp-learn-toggle {
     background: transparent;
@@ -321,7 +321,7 @@
     color: #777;
     text-align: left;
     padding: 2px 0;
-    font-size: 11px;
+    font-size: 10px;
     cursor: pointer;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -329,7 +329,7 @@
   .mp-learn-toggle:hover { color: var(--text-secondary, #aaa); }
 
   .mp-learn-prompt {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-muted, #888);
     line-height: 1.5;
     padding: 4px 0;
@@ -342,7 +342,7 @@
   .mp-learn-list-head {
     display: flex;
     justify-content: space-between;
-    font-size: 10px;
+    font-size: 9px;
     color: #666;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -350,7 +350,7 @@
     border-top: 1px solid #1a1428;
     margin-top: 4px;
   }
-  .mp-learn-count { color: var(--text-muted, #888); font-family: 'JetBrains Mono', monospace; }
+  .mp-learn-count { color: var(--text-muted, #888); font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); }
 
   .mp-learn-list {
     display: flex;
@@ -364,12 +364,12 @@
     grid-template-columns: minmax(0, 1fr) 12px minmax(0, 1.4fr) 16px;
     gap: 4px;
     align-items: center;
-    font-size: 12px;
+    font-size: 11px;
     padding: 2px 0;
   }
   .mp-learn-item-sig {
     color: #ffd166;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -386,7 +386,7 @@
     border: none;
     color: #555;
     cursor: pointer;
-    font-size: 16px;
+    font-size: 15px;
     line-height: 1;
     padding: 0;
   }

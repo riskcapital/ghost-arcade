@@ -92,24 +92,24 @@
   .transport-btn.active { color: #FF6B6B; border-color: rgba(255,107,107,0.4); }
   .time-display {
     font-family: var(--font-jetbrains), monospace;
-    font-size: 14px;
+    font-size: 13px;
     color: var(--text-primary, #ccc);
     min-width: 55px;
     text-align: center;
   }
-  .time-sep { color: #444; font-size: 13px; }
+  .time-sep { color: #444; font-size: 12px; }
   .duration-select, .layer-select {
     background: rgba(0,0,0,0.4);
     border: 1px solid rgba(255,255,255,0.1);
     color: var(--text-secondary, #aaa);
-    font-size: 12px;
+    font-size: 11px;
     border-radius: 3px;
     padding: 2px 4px;
     outline: none;
   }
   .layer-select { max-width: 160px; }
   .transport-label {
-    font-size: 12px;
+    font-size: 11px;
     color: #666;
     text-transform: uppercase;
   }

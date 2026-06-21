@@ -91,7 +91,7 @@
     overflow-x: hidden;
     border-right: 1px solid rgba(255,255,255,0.06);
     background: rgba(10, 10, 14, 0.98);
-    font-size: 12px;
+    font-size: 11px;
   }
   .ruler-spacer {
     height: 20px;
@@ -117,14 +117,14 @@
     border: none;
     border-bottom: 1px solid rgba(255,255,255,0.04);
     color: #999;
-    font-size: 11px;
+    font-size: 10px;
     text-transform: uppercase;
     cursor: pointer;
     text-align: left;
     box-sizing: border-box;
   }
   .group-header:hover { background: rgba(255,255,255,0.06); }
-  .group-chevron { font-size: 10px; width: 10px; color: #666; }
+  .group-chevron { font-size: 9px; width: 10px; color: #666; }
   .group-name { flex: 1; }
   .track-row {
     display: flex;
@@ -141,7 +141,7 @@
     background: none;
     border: none;
     color: #444;
-    font-size: 10px;
+    font-size: 9px;
     cursor: pointer;
     padding: 0;
     width: 14px;
@@ -159,7 +159,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     flex: 1;
-    font-size: 12px;
+    font-size: 11px;
   }
   .ctx-menu {
     position: fixed;
@@ -178,7 +178,7 @@
     background: none;
     border: none;
     color: var(--text-primary, #ddd);
-    font-size: 13px;
+    font-size: 12px;
     text-align: left;
     cursor: pointer;
     font-family: inherit;

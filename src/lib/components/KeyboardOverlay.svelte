@@ -303,7 +303,7 @@
     background: #7cffc4;
     color: #00140a;
     font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 9px;
+    font-size: 8px;
     font-weight: 800;
     padding: 1px 4px;
     border-radius: 2px;
@@ -314,7 +314,7 @@
     background: #ffd166;
     color: #111;
     font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 900;
     padding: 2px 6px;
     border-radius: 3px;
@@ -339,7 +339,7 @@
     border: 1px solid rgba(255, 214, 102, 0.36);
     border-radius: 6px;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
-    font-size: 13px;
+    font-size: 12px;
   }
 
   .keyboard-status-title {
@@ -374,7 +374,7 @@
     background: rgba(255, 214, 102, 0.08);
     padding: 4px 10px;
     cursor: pointer;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 800;
   }
 

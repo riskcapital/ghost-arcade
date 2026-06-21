@@ -830,7 +830,7 @@
     align-items: center;
     justify-content: center;
     color: #666;
-    font-size: 16px;
+    font-size: 15px;
   }
 
   /* ── Top bar ────────────────────────────────────────────────── */
@@ -853,13 +853,13 @@
     width: 36px; height: 36px; border-radius: 18px;
     border: 1px solid rgba(255, 255, 255, 0.08);
     background: rgba(20, 22, 30, 0.85);
-    color: #fff; font-size: 22px; cursor: pointer;
+    color: #fff; font-size: 21px; cursor: pointer;
   }
   .icon-btn:hover { background: rgba(40, 44, 56, 0.95); }
   .logo {
     font-weight: 700;
     letter-spacing: 0.14em;
-    font-size: 16px;
+    font-size: 15px;
   }
   .logo b {
     background: linear-gradient(92deg, #4af2ff, #ff5cb8);
@@ -875,7 +875,7 @@
     padding: 3px;
   }
   .seg-btn {
-    font: inherit; font-size: 14px; color: #8a93a3;
+    font: inherit; font-size: 13px; color: #8a93a3;
     background: none; border: none;
     padding: 6px 11px; border-radius: 6px;
     cursor: pointer;
@@ -883,7 +883,7 @@
   .seg-btn:hover { color: #e9edf4; }
   .seg-btn.on { background: #4af2ff; color: #04161a; font-weight: 600; }
   .tbtn {
-    font: inherit; font-size: 14px; color: #e9edf4;
+    font: inherit; font-size: 13px; color: #e9edf4;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
@@ -912,7 +912,7 @@
   }
   .hud-btn {
     font: inherit;
-    font-size: 12px;
+    font-size: 11px;
     color: #e9edf4;
     background: transparent;
     border: none;
@@ -937,7 +937,7 @@
   }
   .atmo-ctl { overflow: hidden; }
   .atmo-label {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.12em;
     color: rgba(255, 255, 255, 0.45);
@@ -945,7 +945,7 @@
   }
   .atmo-btn {
     font: inherit;
-    font-size: 13px;
+    font-size: 12px;
     color: rgba(255, 255, 255, 0.55);
     background: transparent;
     border: none;
@@ -966,7 +966,7 @@
     padding: 0 10px;
   }
   .fov-ctl .fov-label {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.12em;
     color: rgba(255, 255, 255, 0.55);
@@ -976,7 +976,7 @@
     accent-color: #4af2ff;
   }
   .fov-ctl .fov-val {
-    font-size: 12px;
+    font-size: 11px;
     color: #4af2ff;
     font-variant-numeric: tabular-nums;
     min-width: 30px;
@@ -987,7 +987,7 @@
   .tbtn.danger:hover { border-color: #ff5cb8; color: #ff5cb8; }
   .rec-res {
     padding: 6px 6px;
-    font-size: 13px;
+    font-size: 12px;
   }
   .rec-btn {
     min-width: 66px;
@@ -1009,7 +1009,7 @@
     top: 14px; left: 50%;
     transform: translateX(-50%);
     z-index: 15;
-    font: inherit; font-size: 14px;
+    font: inherit; font-size: 13px;
     color: #e9edf4;
     background: rgba(16, 19, 26, 0.92);
     border: 1px solid #4af2ff;
@@ -1035,12 +1035,12 @@
   .spacer { flex: 1; }
   .dim-label {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 12px;
+    font-size: 11px;
     color: #8a93a3;
     letter-spacing: 0.1em;
   }
   .vsel {
-    font: inherit; font-size: 14px; color: #e9edf4;
+    font: inherit; font-size: 13px; color: #e9edf4;
     background: #10131a;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
@@ -1061,13 +1061,13 @@
     overflow-y: auto;
   }
   .lib h3 {
-    font-size: 12px; letter-spacing: 0.22em;
+    font-size: 11px; letter-spacing: 0.22em;
     color: #8a93a3; text-transform: uppercase;
     margin: 0 0 9px;
   }
   .grp { margin-bottom: 16px; }
   .ghd {
-    font-size: 13px; letter-spacing: 0.14em;
+    font-size: 12px; letter-spacing: 0.14em;
     color: #4af2ff; text-transform: uppercase;
     margin-bottom: 7px;
     display: flex; align-items: center; gap: 6px;
@@ -1079,7 +1079,7 @@
   }
   .additem {
     width: 100%; text-align: left;
-    font: inherit; font-size: 14.5px; color: #e9edf4;
+    font: inherit; font-size: 13.5px; color: #e9edf4;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
@@ -1119,7 +1119,7 @@
   .scenery-act {
     flex: 0 0 auto;
     width: 26px; height: 34px;
-    font: inherit; font-size: 14px;
+    font: inherit; font-size: 13px;
     color: #8a93a3;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1131,15 +1131,15 @@
 
   /* ── Venue element inspector ──────────────────────────────────── */
   .scenery-inspect { display: flex; flex-direction: column; gap: 8px; }
-  .scenery-title { font-size: 17px; font-weight: 600; color: #e9edf4; }
+  .scenery-title { font-size: 16px; font-weight: 600; color: #e9edf4; }
   .scenery-sub {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;
+    font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
     color: #4af2ff;
   }
-  .scenery-note { color: #8a93a3; font-size: 14px; line-height: 1.6; margin: 4px 0 8px; }
+  .scenery-note { color: #8a93a3; font-size: 13px; line-height: 1.6; margin: 4px 0 8px; }
   .scenery-del, .scenery-restore {
-    font: inherit; font-size: 14.5px; text-align: left;
+    font: inherit; font-size: 13.5px; text-align: left;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 8px; padding: 9px 12px; cursor: pointer; color: #e9edf4;
@@ -1150,7 +1150,7 @@
   .ghd-action {
     margin-left: auto;
     font: inherit;
-    font-size: 12px;
+    font-size: 11px;
     color: #8a93a3;
     background: transparent;
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1176,13 +1176,13 @@
     overflow-y: auto;
   }
   .props h3 {
-    font-size: 12px; letter-spacing: 0.22em;
+    font-size: 11px; letter-spacing: 0.22em;
     color: #8a93a3; text-transform: uppercase;
     margin: 0 0 9px;
   }
   .empty {
     color: #8a93a3;
-    font-size: 14.5px;
+    font-size: 13.5px;
     line-height: 1.7;
     margin-top: 8px;
   }
@@ -1192,7 +1192,7 @@
     border-radius: 8px;
     padding: 9px 12px;
     margin-bottom: 12px;
-    font-size: 13.5px;
+    font-size: 12.5px;
     line-height: 1.5;
     color: #d8c8ff;
   }
@@ -1205,7 +1205,7 @@
     transform: translateX(-50%);
     z-index: 14;
     display: flex; gap: 14px; align-items: center;
-    font-size: 13px; color: #8a93a3;
+    font-size: 12px; color: #8a93a3;
     background: rgba(16, 19, 26, 0.86);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 30px;
@@ -1220,7 +1220,7 @@
     border-radius: 5px;
     padding: 1px 6px;
     color: #c4ccd8;
-    font-size: 12px;
+    font-size: 11px;
     margin: 0 2px;
   }
   .multi-pill {
@@ -1241,7 +1241,7 @@
     background: #10131a;
     border: 1px solid #4af2ff;
     color: #e9edf4;
-    font-size: 14.5px;
+    font-size: 13.5px;
     padding: 10px 18px;
     border-radius: 9px;
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);

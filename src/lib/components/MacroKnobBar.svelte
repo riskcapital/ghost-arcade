@@ -525,7 +525,7 @@
     padding: 0 3px;
     background: var(--macro-color);
     color: #000;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 800;
     border-radius: 7px;
     display: flex;
@@ -590,7 +590,7 @@
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.12);
     color: #fff;
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 700;
     letter-spacing: 0.06em;
     padding: 4px 8px;
@@ -613,7 +613,7 @@
     border: none;
     color: var(--text-secondary, #aaa);
     cursor: pointer;
-    font-size: 18px;
+    font-size: 17px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -626,7 +626,7 @@
     gap: 6px;
   }
   .macro-popover-section-title {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     color: var(--text-muted, #888);
     letter-spacing: 0.16em;
@@ -686,7 +686,7 @@
     border: none;
     color: var(--text-muted, #888);
     cursor: pointer;
-    font-size: 13px;
+    font-size: 12px;
     line-height: 1;
     padding: 4px 2px;
     transition: transform 0.15s, color 0.12s;
@@ -724,7 +724,7 @@
     background: rgba(0, 0, 0, 0.18);
   }
   .macro-fx-params-empty {
-    font-size: 14px;
+    font-size: 13px;
     color: #777;
     font-style: italic;
     padding: 2px 0;
@@ -737,7 +737,7 @@
     padding: 2px 0;
   }
   .macro-fx-param-label {
-    font-size: 14px;
+    font-size: 13px;
     color: var(--text-primary, #ccc);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -770,8 +770,8 @@
     cursor: pointer;
   }
   .macro-fx-param-value {
-    font-size: 14px;
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 13px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     color: #BB86FC;
     text-align: right;
     user-select: none;
@@ -781,7 +781,7 @@
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.12);
     color: var(--text-primary, #ddd);
-    font-size: 15px;
+    font-size: 14px;
     padding: 3px 6px;
     border-radius: 3px;
     cursor: pointer;
@@ -789,7 +789,7 @@
   .macro-fx-handle {
     cursor: grab;
     color: #555;
-    font-size: 16px;
+    font-size: 15px;
     line-height: 1;
     padding: 0 2px;
     user-select: none;
@@ -803,7 +803,7 @@
     gap: 1px;
   }
   .macro-fx-label {
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
     color: #fff;
     text-transform: capitalize;
@@ -812,7 +812,7 @@
     white-space: nowrap;
   }
   .macro-fx-sub {
-    font-size: 13px;
+    font-size: 12px;
     color: #777;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -848,7 +848,7 @@
     background: rgba(255, 133, 119, 0.1);
     border: 1px solid rgba(255, 133, 119, 0.4);
     color: #FF8577;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 700;
     letter-spacing: 0.05em;
     padding: 5px 10px;
@@ -880,7 +880,7 @@
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.12);
     color: var(--text-primary, #ddd);
-    font-size: 15px;
+    font-size: 14px;
     padding: 4px 6px;
     border-radius: 3px;
     cursor: pointer;
@@ -894,13 +894,13 @@
     background: rgba(187, 134, 252, 0.08);
     border-left: 2px solid #BB86FC;
     padding: 6px 8px;
-    font-size: 14px;
+    font-size: 13px;
     color: var(--text-primary, #ccc);
     line-height: 1.45;
   }
 
   .macro-popover-empty {
-    font-size: 14px;
+    font-size: 13px;
     color: #666;
     font-style: italic;
     padding: 6px 0;
@@ -931,7 +931,7 @@
     border: none;
     color: #BB86FC;
     cursor: pointer;
-    font-size: 18px;
+    font-size: 17px;
     line-height: 1;
     padding: 0;
   }
@@ -940,15 +940,15 @@
     overflow: hidden;
   }
   .macro-dest-label {
-    font-size: 15px;
+    font-size: 14px;
     color: var(--text-primary, #ddd);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .macro-dest-path {
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 13px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 12px;
     color: #666;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -960,7 +960,7 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     color: var(--text-primary, #ccc);
     border-radius: 3px;
-    font-size: 15px;
+    font-size: 14px;
     padding: 2px;
     cursor: pointer;
   }
@@ -969,16 +969,16 @@
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);
     color: var(--text-primary, #ccc);
-    font-size: 14px;
+    font-size: 13px;
     padding: 2px 4px;
     border-radius: 3px;
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
   .macro-dest-remove {
     background: none;
     border: none;
     color: var(--text-muted, #888);
-    font-size: 18px;
+    font-size: 17px;
     line-height: 1;
     cursor: pointer;
     padding: 0;

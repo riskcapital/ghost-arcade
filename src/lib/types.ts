@@ -712,6 +712,7 @@ export interface MediaSource {
   shaderValueAuto?: Record<string, AutoConfig>;
   shaderImageInputs?: Record<string, ImageInputRef>; // References to textures for 'image' type inputs
   isPlaying?: boolean; // For video playback control
+  mirrorX?: boolean; // Source-owned horizontal mirror, used for webcam/selfie feeds
   playbackMode?: VideoPlaybackMode; // Video playback mode (default: 'loop')
   playbackRate?: number; // Playback speed multiplier (default: 1.0)
   trimStart?: number; // 0-1 normalized start point (default 0)
@@ -2571,6 +2572,7 @@ export type EffectType =
   // Names are prefixed `gpu` so the engine can dispatch them via the
   // gpuEffectRunner instead of the regular WebGL effect chain.
   | 'gpuFluidSim'
+  | 'eulerianMagnify'
   // Masking (2)
   | 'vignette'
   | 'edgeFeather'
@@ -2600,6 +2602,7 @@ export type EffectType =
   | 'rgbShift'
   | 'scanlines'
   | 'fmScanlines'
+  | 'phaseLab'
   | 'pixelate'
   | 'halftone'
   | 'toon'
@@ -2789,6 +2792,20 @@ export interface EffectParams {
   outputBoost?: number;             // 0.5..4 — visual brightness multiplier
   timeScale?: number;               // 0.1..3 — sim speed independent of fps
 
+  // Eulerian / phase-style motion magnification params
+  eulerianMode?: number;             // 0=color pulse, 1=motion phase, 2=hybrid, 3=attenuate
+  eulerianAmplification?: number;    // 0-80
+  eulerianLowHz?: number;            // lower temporal cutoff
+  eulerianHighHz?: number;           // upper temporal cutoff
+  eulerianColorMix?: number;         // 0-1 color temporal band contribution
+  eulerianMotionMix?: number;        // 0-1 phase-flow contribution
+  eulerianSpatialRadius?: number;    // gradient sampling radius in pixels
+  eulerianNoiseFloor?: number;       // gradient denominator guard
+  eulerianMaxShift?: number;         // max motion displacement in pixels
+  eulerianOutputMix?: number;        // wet/dry
+  eulerianShowBand?: number;         // 0/1 debug temporal band
+  eulerianChromaOnly?: number;       // 0/1 remove luma from color pulse band
+
   // Vignette params (hero rewrite)
   vignetteSize?: number;          // 0-1, how far vignette extends
   vignetteSoftness?: number;      // 0-1, edge softness
@@ -2884,6 +2901,26 @@ export interface EffectParams {
   fmLinesSpeed?: number;          // 0-2 animation speed
   fmLinesColorMix?: number;       // 0 white lines → 1 source-tinted
   fmLinesInvert?: number;         // 0/1 dark lines on bright field
+
+  // Phase Lab — source-driven scientific imaging modes
+  phaseLabMode?: number;           // 0=BOS, 1=photoelastic, 2=Lippmann, 3=InSAR, 4/5=catoptric, 6=DTI, 7=composite
+  phaseLabIntensity?: number;      // 0-4
+  phaseLabScale?: number;          // 0.25-24
+  phaseLabSpeed?: number;          // -4-4
+  phaseLabPhase?: number;          // -TAU-TAU
+  phaseLabMix?: number;            // 0-1
+  phaseLabColorGain?: number;      // 0.2-4
+  phaseLabSourceBleed?: number;    // 0-1
+  phaseLabEdgeBoost?: number;      // 0-8
+  phaseLabDistortion?: number;     // -0.25-0.25
+  phaseLabLineDensity?: number;    // 1-80
+  phaseLabPolarizerAngle?: number; // degrees
+  phaseLabSpectralShift?: number;  // -2-2
+  phaseLabFocus?: number;          // 0.1-4
+  phaseLabMirrorRadius?: number;   // 0.03-0.45
+  phaseLabConeLift?: number;       // 0.2-3
+  phaseLabAudioReactive?: number;  // 0/1
+  phaseLabAudioDrive?: number;     // 0-3
 
   // Pixelate (hero — modes + grid + animated)
   pixelateSize?: number;          // 1-64
@@ -4575,6 +4612,10 @@ export interface Project {
   height: number;
   layers: Layer[];
   selectedLayerId: string | null;
+  /** Mapping-mode composition controls. When enabled, the whole mapping
+   *  layer stack can receive post-composite effects and stage-style
+   *  layer-list animation without entering VJ mode. */
+  mappingComposition?: MappingCompositionState;
   // VJ Mode data (optional - null when not used)
   vjMode: VJModeState | null;
   // Media tray organization folders (project-scoped)
@@ -4741,6 +4782,14 @@ export interface SurfaceEffectAutomation {
   mode: 'time' | 'beat';
   seconds: number;    // used when mode='time'
   beats: number;      // used when mode='beat'
+}
+
+export interface MappingCompositionState {
+  enabled: boolean;
+  effects: Effect[];
+  stageEffects: StageEffect[];
+  activeStageEffectId: string | null;
+  stageEffectAutomation: SurfaceEffectAutomation;
 }
 
 // ── Stage Effects ────────────────────────────────────────
@@ -5214,6 +5263,21 @@ export function createDefaultVJModeState(): VJModeState {
   };
 }
 
+export function createDefaultMappingCompositionState(): MappingCompositionState {
+  return {
+    enabled: false,
+    effects: [],
+    stageEffects: [],
+    activeStageEffectId: null,
+    stageEffectAutomation: {
+      playing: false,
+      mode: 'time',
+      seconds: 4,
+      beats: 4,
+    },
+  };
+}
+
 export function createProject(name: string): Project {
   return {
     id: generateUUID(),
@@ -5222,6 +5286,7 @@ export function createProject(name: string): Project {
     height: 1080,
     layers: [],
     selectedLayerId: null,
+    mappingComposition: createDefaultMappingCompositionState(),
     vjMode: null,
     mediaFolders: [],
     stagePresets: [],

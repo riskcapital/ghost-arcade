@@ -210,6 +210,19 @@ class MidiRouter {
       }
       return;
     }
+
+    // Mapping Composition stage-effect momentary fire: map:stage-effect:<effectId>:hold
+    if (contentType === 'stage-effect') {
+      const effectId = parts[2];
+      const action = parts[3];
+      if (effectId && action === 'hold') {
+        window.dispatchEvent(new CustomEvent('map-stage-effect-hold', {
+          detail: { effectId, pressed: value > 0, value },
+        }));
+      }
+      return;
+    }
+
     const property = parts.slice(2).join('.'); // supports nested like 'echo.count'
     const layer = get(selectedLayer);
     if (!layer) return;

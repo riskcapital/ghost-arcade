@@ -13,6 +13,7 @@ import { createDefaultShapeWarp, createDefaultShapeMesh } from '../drawing/types
 import type { LineElement } from '../lines/types';
 import { warpVertexShader, textureFragmentShader, blendShaders, passthroughVertexShader, opaqueOutputFragmentShader } from './shaders';
 import { createEffectMaterial, updateEffectUniforms, effectVertexShader, polygonMaskShader, polygonMaskAlphaShader, applyExternalMaskShader, layerShapeMaskShader } from './effects';
+import { TemporalMagnificationRunner, isTemporalMagnificationEffect } from './temporalMagnificationRunner';
 import { domeProjectionShader } from './shaders/dome';
 import { getTransition, applyFaderCurve, type TransitionDef } from './crossfadeTransitions';
 import { getVisualAudioSnapshot } from '../audio/visualAudio';
@@ -79,6 +80,8 @@ export class RenderEngine {
   // Tracks which (layerId, effectId) pairs were used this frame so
   // stale instances can be reaped at the end of the frame.
   private gpuEffectLiveKeys: Set<string> = new Set();
+  private temporalMagnificationRunner: TemporalMagnificationRunner = new TemporalMagnificationRunner();
+  private temporalEffectLiveKeys: Set<string> = new Set();
   private effectLiveKeys: Set<string> = new Set();
   private lastGpuEffectFrameTime: number = 0;
 
@@ -1561,6 +1564,29 @@ export class RenderEngine {
         continue;
       }
 
+      if (isTemporalMagnificationEffect(effect.type)) {
+        const key = `${layerId}::${effect.id}`;
+        this.temporalEffectLiveKeys.add(key);
+        const temporalOutput = this.temporalMagnificationRunner.run(
+          currentSource, effect, layerId, dt, this.renderer, this.width, this.height,
+        );
+        if (needsBlendPass) {
+          const blendMat = this.blendMaterials.get(effectBlend) || this.blendMaterials.get('normal')!;
+          blendMat.uniforms.uBase.value = preEffectSource;
+          blendMat.uniforms.uLayer.value = temporalOutput;
+          blendMat.uniforms.uOpacity.value = effectOpacity;
+          this.effectQuad.material = blendMat;
+          this.renderer.setRenderTarget(this.effectBlendTarget);
+          this.renderer.clear();
+          this.renderer.render(this.effectScene, this.camera);
+          currentSource = this.effectBlendTarget.texture;
+          const temp = writeTarget; writeTarget = readTarget; readTarget = temp;
+        } else {
+          currentSource = temporalOutput;
+        }
+        continue;
+      }
+
       // ── WebGL fragment effect branch (existing path) ──
       const material = this.getOrCreateEffectMaterial(effect);
       updateEffectUniforms(material, effect, this.width, this.height, currentTime, visualAudio);
@@ -1635,6 +1661,9 @@ export class RenderEngine {
 
   /** Dispose regular WebGL effect resources that were not used this frame. */
   reapStaleEffectResources(): void {
+    this.temporalMagnificationRunner.reapStale(this.temporalEffectLiveKeys);
+    this.temporalEffectLiveKeys.clear();
+
     for (const [effectId, material] of this.effectMaterials.entries()) {
       if (!this.effectLiveKeys.has(effectId)) {
         try { material.dispose(); } catch {}
@@ -2291,7 +2320,7 @@ export class RenderEngine {
     }
 
     // Flip, content fit, aspect
-    obj.material.uniforms.uFlipH.value = layer.flipH || false;
+    obj.material.uniforms.uFlipH.value = !!layer.flipH !== !!layer.source?.mirrorX;
     obj.material.uniforms.uFlipV.value = layer.flipV || false;
     const contentFitMap: Record<string, number> = { stretch: 0, fill: 1, crop: 2 };
     obj.material.uniforms.uContentFit.value = contentFitMap[layer.contentFit || 'stretch'] ?? 0;
@@ -2809,6 +2838,7 @@ export class RenderEngine {
     this.effectFeedbackTargets.forEach((rt) => { try { rt.dispose(); } catch {} });
     this.effectFeedbackTargets.clear();
     this.effectFeedbackHasPrior.clear();
+    this.temporalMagnificationRunner.dispose();
     this.vjMixTarget?.dispose();
     this.vjMixTarget = null;
     this.feedbackCopyMaterial?.dispose();

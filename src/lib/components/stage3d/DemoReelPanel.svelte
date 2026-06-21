@@ -355,7 +355,7 @@
     flex-direction: column;
     max-height: 46vh;
     color: #cfd3e0;
-    font-size: 14px;
+    font-size: 13px;
   }
   .reel-head {
     display: flex; align-items: center; gap: 10px;
@@ -368,7 +368,7 @@
   .rbtn {
     background: #1a1d28; color: #cfd3e0;
     border: 1px solid #2a2d3a; border-radius: 6px;
-    padding: 5px 10px; cursor: pointer; font-size: 14px;
+    padding: 5px 10px; cursor: pointer; font-size: 13px;
   }
   .rbtn:hover:not(:disabled) { background: #232737; }
   .rbtn:disabled { opacity: 0.45; cursor: default; }
@@ -396,7 +396,7 @@
     display: flex; flex-direction: column; gap: 4px;
   }
   .tray-head {
-    color: #8a8fa3; text-transform: uppercase; font-size: 12px;
+    color: #8a8fa3; text-transform: uppercase; font-size: 11px;
     letter-spacing: 0.8px; margin-bottom: 4px;
     display: flex; justify-content: space-between;
   }
@@ -405,7 +405,7 @@
     display: flex; align-items: center; gap: 8px;
     background: #161927; color: #cfd3e0;
     border: 1px solid #252938; border-radius: 6px;
-    padding: 6px 8px; cursor: grab; font-size: 14px;
+    padding: 6px 8px; cursor: grab; font-size: 13px;
     text-align: left;
   }
   .tpl-card:hover { background: #1e2233; border-color: #3a4055; }
@@ -420,7 +420,7 @@
   .strip-empty {
     display: flex; align-items: center; justify-content: center;
     flex: 1; color: #6b7088; border: 1px dashed #2a2d3a;
-    border-radius: 8px; padding: 18px; font-size: 14px;
+    border-radius: 8px; padding: 18px; font-size: 13px;
   }
   .shot-card {
     position: relative;
@@ -434,16 +434,16 @@
   .shot-thumb { width: 100%; height: 72px; object-fit: cover; background: #0a0b12; }
   .shot-thumb.placeholder {
     display: flex; align-items: center; justify-content: center;
-    font-size: 28px; color: #4a4f66;
+    font-size: 27px; color: #4a4f66;
   }
   .shot-meta { display: flex; flex-direction: column; padding: 5px 7px; gap: 2px; }
-  .shot-name { font-weight: 600; font-size: 13px; }
-  .shot-move { color: #8a8fa3; font-size: 12px; }
+  .shot-name { font-weight: 600; font-size: 12px; }
+  .shot-move { color: #8a8fa3; font-size: 11px; }
   .shot-del {
     position: absolute; top: 3px; right: 3px;
     background: rgba(10, 11, 17, 0.75); color: #9aa;
     border: none; border-radius: 4px; cursor: pointer;
-    width: 18px; height: 18px; font-size: 12px; line-height: 1;
+    width: 18px; height: 18px; font-size: 11px; line-height: 1;
   }
   .shot-del:hover { color: #ff7a7a; }
   .inspector {
@@ -453,7 +453,7 @@
     display: flex; flex-direction: column; gap: 6px;
   }
   .insp-head {
-    font-weight: 700; font-size: 13px; letter-spacing: 0.5px;
+    font-weight: 700; font-size: 12px; letter-spacing: 0.5px;
     color: #9fa6c0; text-transform: uppercase;
   }
   .insp-empty { color: #6b7088; padding: 8px 0; }
@@ -466,7 +466,7 @@
     flex: 1; min-width: 0;
     background: #10121c; color: #cfd3e0;
     border: 1px solid #252938; border-radius: 5px;
-    padding: 4px 6px; font-size: 14px;
+    padding: 4px 6px; font-size: 13px;
   }
   .insp-row .unit { width: auto; color: #6b7088; }
 </style>

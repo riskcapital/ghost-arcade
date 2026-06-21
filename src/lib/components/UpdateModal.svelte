@@ -111,7 +111,7 @@
   }
 
   .update-eyebrow {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     letter-spacing: 0.15em;
     text-transform: uppercase;
@@ -120,14 +120,14 @@
   }
 
   .update-modal-header h2 {
-    font-size: 24px;
+    font-size: 23px;
     font-weight: 600;
     margin: 0 0 4px;
     color: #fff;
   }
 
   .update-version-line {
-    font-size: 14px;
+    font-size: 13px;
     color: var(--text-muted, #888);
     margin: 0;
   }
@@ -139,7 +139,7 @@
     background: rgba(255, 255, 255, 0.06);
     border: none;
     color: var(--text-secondary, #aaa);
-    font-size: 20px;
+    font-size: 19px;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -158,7 +158,7 @@
   }
 
   .update-notes-heading {
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 650;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -181,7 +181,7 @@
     border-radius: 6px;
     background: rgba(255, 255, 255, 0.035);
     color: #d8d8d8;
-    font-size: 14px;
+    font-size: 13px;
     line-height: 1.48;
   }
 
@@ -199,7 +199,7 @@
 
   .update-page-copy,
   .update-no-notes {
-    font-size: 14px;
+    font-size: 13px;
     line-height: 1.5;
     color: var(--text-muted, #888);
     margin: 14px 0 0;
@@ -223,7 +223,7 @@
     background: transparent;
     border: none;
     color: #7EC8E3;
-    font-size: 14px;
+    font-size: 13px;
     text-decoration: none;
     margin-right: auto;
     cursor: pointer;
@@ -237,7 +237,7 @@
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 4px;
     color: var(--text-secondary, #aaa);
-    font-size: 15px;
+    font-size: 14px;
     cursor: pointer;
     transition: all 0.15s;
   }
@@ -252,7 +252,7 @@
     border: none;
     border-radius: 4px;
     color: #0a0a0a;
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;

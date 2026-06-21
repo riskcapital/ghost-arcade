@@ -163,7 +163,7 @@
     border-color: #00ffaa;
   }
   .tap-label {
-    font-size: 13px;
+    font-size: 12px;
     letter-spacing: 1px;
     text-shadow: 0 0 8px #00ffaa;
     z-index: 2;
@@ -194,7 +194,7 @@
     padding: 0 6px;
   }
   .bpm-num {
-    font-size: 24px;
+    font-size: 23px;
     font-weight: 800;
     color: #fff;
     font-variant-numeric: tabular-nums;
@@ -215,13 +215,13 @@
     line-height: 1;
   }
   .bpm-unit {
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 800;
     color: rgba(255, 255, 255, 0.4);
     letter-spacing: 1px;
   }
   .bpm-source {
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 700;
     color: rgba(255, 255, 255, 0.3);
     letter-spacing: 0.5px;
@@ -236,7 +236,7 @@
     border-radius: 9px;
     background: rgba(255, 170, 0, 0.08);
     color: #ffaa00;
-    font-size: 14px;
+    font-size: 13px;
     line-height: 1;
     cursor: pointer;
     padding: 0;
@@ -255,7 +255,7 @@
     border-left: 1px solid rgba(255, 255, 255, 0.06);
   }
   .quant-label {
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 800;
     color: rgba(255, 255, 255, 0.4);
     letter-spacing: 1px;
@@ -269,7 +269,7 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
     color: var(--text-primary, #ddd);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     cursor: pointer;
     text-align: center;
@@ -283,7 +283,7 @@
     border-radius: 10px;
     background: rgba(255, 170, 0, 0.12);
     color: #ffaa00;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;

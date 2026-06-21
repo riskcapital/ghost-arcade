@@ -319,7 +319,7 @@
     right: -2px;
     background: #00ff88;
     color: #000;
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 700;
     padding: 1px 3px;
     border-radius: 2px;
@@ -330,7 +330,7 @@
   }
 
   .midi-learn-label {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     color: #00e5ff;
     letter-spacing: 1px;
@@ -350,7 +350,7 @@
     align-items: center;
     gap: 12px;
     padding: 0 12px;
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-primary, #ccc);
     z-index: 100001;
     pointer-events: auto;
@@ -361,7 +361,7 @@
     color: #bb86fc;
     font-weight: 700;
     letter-spacing: 1px;
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .midi-learn-status {
@@ -375,18 +375,18 @@
   .midi-hint {
     color: var(--text-muted, #888);
     flex: 1;
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .midi-last-msg {
     color: #666;
-    font-size: 12px;
-    font-family: monospace;
+    font-size: 11px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
 
   .midi-map-count {
     color: #00ff88;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
   }
 
@@ -394,7 +394,7 @@
     background: transparent;
     border: 1px solid #bb86fc;
     color: #bb86fc;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     padding: 2px 8px;
     border-radius: 3px;

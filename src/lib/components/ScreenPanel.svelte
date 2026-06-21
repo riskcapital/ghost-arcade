@@ -541,7 +541,7 @@
     background: var(--bg-secondary, #111114);
     border-right: 1px solid rgba(255, 255, 255, 0.06);
     color: var(--text-primary, #eee);
-    font-size: 15px;
+    font-size: 14px;
     height: 100%;
     overflow: auto;
   }
@@ -555,7 +555,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    font-size: 13px;
+    font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: var(--text-muted, #888);
@@ -563,7 +563,7 @@
   }
   .section-count {
     color: #555;
-    font-family: ui-monospace, monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
   .preview-host {
     margin-bottom: 8px;
@@ -580,7 +580,7 @@
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 4px;
     color: var(--text-primary, #ccc);
-    font-size: 13px;
+    font-size: 12px;
     cursor: pointer;
   }
   .preset-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.1); }
@@ -600,7 +600,7 @@
     border: 1px solid transparent;
     border-radius: 4px;
     color: var(--text-primary, #ddd);
-    font-size: 14px;
+    font-size: 13px;
     cursor: pointer;
     width: 100%;
     text-align: left;
@@ -615,7 +615,7 @@
   .row-handle {
     color: #555;
     cursor: grab;
-    font-size: 12px;
+    font-size: 11px;
     user-select: none;
   }
   .row-enable {
@@ -629,9 +629,9 @@
     text-overflow: ellipsis;
   }
   .row-target {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-muted, #888);
-    font-family: ui-monospace, monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     background: rgba(255, 255, 255, 0.04);
     padding: 1px 4px;
     border-radius: 2px;
@@ -642,7 +642,7 @@
     color: var(--text-muted, #888);
     cursor: pointer;
     padding: 0 4px;
-    font-size: 16px;
+    font-size: 15px;
     line-height: 1;
   }
   .row-act:hover { color: #fff; }
@@ -656,7 +656,7 @@
     border: 1px solid rgba(187, 134, 252, 0.2);
     border-radius: 4px;
     color: #BB86FC;
-    font-size: 14px;
+    font-size: 13px;
     cursor: pointer;
     font-family: inherit;
   }
@@ -672,7 +672,7 @@
   }
   .master-details summary {
     cursor: pointer;
-    font-size: 13px;
+    font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--text-muted, #888);
@@ -691,10 +691,10 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 3px;
     color: var(--text-primary, #ddd);
-    font-family: ui-monospace, monospace;
-    font-size: 13px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 12px;
   }
-  .dim-x { color: #666; font-family: ui-monospace, monospace; }
+  .dim-x { color: #666; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); }
   .mini-btn {
     flex: 1;
     padding: 3px 8px;
@@ -702,7 +702,7 @@
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 3px;
     color: var(--text-primary, #ccc);
-    font-size: 12px;
+    font-size: 11px;
     cursor: pointer;
     font-family: inherit;
   }
@@ -724,14 +724,14 @@
     align-items: center;
     gap: 7px;
     margin-top: 6px;
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-primary, #ccc);
     cursor: pointer;
   }
   .mw-enable input { cursor: pointer; }
   .mw-hint {
     margin-top: 6px;
-    font-size: 12px;
+    font-size: 11px;
     line-height: 1.4;
     color: #777;
   }
@@ -747,7 +747,7 @@
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 3px;
     color: var(--text-primary, #ccc);
-    font-size: 12px;
+    font-size: 11px;
     cursor: pointer;
     font-family: inherit;
   }
@@ -774,7 +774,7 @@
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 4px;
     color: #b8b2c2;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     font-family: inherit;
     cursor: pointer;
@@ -798,7 +798,7 @@
   .dome-field span,
   .dome-row span {
     color: #a29baa;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 650;
   }
   .dome-field select {
@@ -808,7 +808,7 @@
     border: 1px solid rgba(255, 255, 255, 0.11);
     border-radius: 4px;
     color: #e6e1ee;
-    font-size: 13px;
+    font-size: 12px;
     font-family: inherit;
   }
   .dome-row input[type="range"] {
@@ -839,8 +839,8 @@
   }
   .dome-row em {
     color: #8f8998;
-    font-family: ui-monospace, monospace;
-    font-size: 12px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 11px;
     font-style: normal;
     text-align: right;
   }
@@ -852,7 +852,7 @@
   .inspector-empty {
     padding: 24px;
     color: #666;
-    font-size: 14px;
+    font-size: 13px;
     text-align: center;
     line-height: 1.4;
   }

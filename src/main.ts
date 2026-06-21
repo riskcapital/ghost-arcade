@@ -5,10 +5,8 @@ import { silenceThreeSerializationNoise } from './lib/utils/silenceThreePatches'
 // theme to :root on first run, so every component's var(--ga-*) reads
 // land before any markup mounts.
 import './lib/theming/store';
-// Theme-aware webfonts. The two themes use different families (Hanken
-// Grotesk + IBM Plex Mono for Studio, Archivo + Chakra Petch + IBM
-// Plex Mono + VT323 for Arcade). One stylesheet hits both so swapping
-// at runtime needs no extra font request.
+// Theme-aware webfonts. The app uses two families globally: Space
+// Grotesk for UI/display and IBM Plex Mono for technical readouts.
 import './lib/theming/fonts.css';
 // Global skin overrides — re-skins the existing markup to the v10
 // visual identity (toolbar chips, layer rows, faders, status bar) so

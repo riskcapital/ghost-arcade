@@ -1811,7 +1811,7 @@
     display: flex;
     flex-direction: column;
     color: var(--text-primary, #eee);
-    font-size: 15px;
+    font-size: 14px;
     overflow-y: auto;
     flex: 1;
   }
@@ -1827,7 +1827,7 @@
 
   .panel-header h3 {
     margin: 0;
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 600;
   }
 
@@ -1845,7 +1845,7 @@
     border: none;
     color: var(--text-secondary, #aaa);
     cursor: pointer;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
     text-align: left;
   }
@@ -1856,7 +1856,7 @@
   }
 
   .expand-icon {
-    font-size: 14px;
+    font-size: 13px;
     font-weight: bold;
   }
 
@@ -1888,12 +1888,12 @@
   }
 
   .shape-icon {
-    font-size: 22px;
+    font-size: 21px;
     line-height: 1;
   }
 
   .shape-label {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--text-muted, #888);
   }
 
@@ -1910,7 +1910,7 @@
 
   .control-label {
     width: 70px;
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     flex-shrink: 0;
   }
@@ -1935,13 +1935,13 @@
     border: 1px solid #555;
     padding: 4px 8px;
     border-radius: 4px;
-    font-size: 13px;
+    font-size: 12px;
   }
 
   .control-value {
     width: 45px;
     text-align: right;
-    font-size: 12px;
+    font-size: 11px;
     color: #666;
     flex-shrink: 0;
   }
@@ -1954,7 +1954,7 @@
     border: 1px solid #ff4444;
     border-radius: 4px;
     color: #ff4444;
-    font-size: 14px;
+    font-size: 13px;
     cursor: pointer;
     transition: all 0.15s;
   }
@@ -1971,18 +1971,18 @@
 
   .no-selection p, .no-layer p {
     margin: 0 0 10px 0;
-    font-size: 14px;
+    font-size: 13px;
   }
 
   .hint {
-    font-size: 13px;
+    font-size: 12px;
     color: #555;
   }
 
   /* Line tools */
   .subsection-header {
     padding: 8px 10px;
-    font-size: 12px;
+    font-size: 11px;
     color: #666;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -2023,11 +2023,11 @@
   }
 
   .tool-icon {
-    font-size: 20px;
+    font-size: 19px;
   }
 
   .tool-label {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--text-muted, #888);
   }
 
@@ -2037,7 +2037,7 @@
 
   .drawing-hint {
     padding: 6px 10px;
-    font-size: 12px;
+    font-size: 11px;
     color: #BB86FC;
     background: #BB86FC11;
     border-top: 1px solid #BB86FC33;
@@ -2061,7 +2061,7 @@
   }
 
   .corner-label {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-muted, #888);
     width: 20px;
   }
@@ -2073,7 +2073,7 @@
     color: var(--text-primary, #eee);
     padding: 4px;
     border-radius: 3px;
-    font-size: 13px;
+    font-size: 12px;
   }
 
   .reset-btn {
@@ -2083,7 +2083,7 @@
     border: 1px solid #555;
     border-radius: 4px;
     color: var(--text-secondary, #aaa);
-    font-size: 13px;
+    font-size: 12px;
     cursor: pointer;
     transition: all 0.15s;
   }

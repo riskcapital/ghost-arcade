@@ -447,8 +447,8 @@ press S to hide</pre>
     bottom: 8px;
     left: 8px;
     color: var(--text-muted, #888);
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    font-size: 13px;
+    font-family: var(--ga-font-ui, 'Space Grotesk', system-ui, sans-serif);
+    font-size: 12px;
     background: rgba(0, 0, 0, 0.6);
     padding: 4px 8px;
     border-radius: 3px;
@@ -459,8 +459,8 @@ press S to hide</pre>
     top: 8px;
     right: 8px;
     color: #0f0;
-    font-family: 'SF Mono', Menlo, Consolas, monospace;
-    font-size: 13px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 12px;
     line-height: 1.4;
     background: rgba(0, 0, 0, 0.7);
     padding: 6px 10px;
@@ -476,8 +476,8 @@ press S to hide</pre>
     bottom: 12px;
     right: 12px;
     color: #fff;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    font-size: 14px;
+    font-family: var(--ga-font-ui, 'Space Grotesk', system-ui, sans-serif);
+    font-size: 13px;
     font-weight: 600;
     padding: 6px 10px;
     border-radius: 999px;
@@ -490,7 +490,7 @@ press S to hide</pre>
   }
   .health-hint {
     font-weight: 400;
-    font-size: 12px;
+    font-size: 11px;
     opacity: 0.7;
     letter-spacing: 0.3px;
   }

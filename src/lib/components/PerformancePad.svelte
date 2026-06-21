@@ -404,7 +404,7 @@
     justify-content: space-between;
     align-items: center;
     padding: 2px 6px;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.1em;
     color: rgba(255, 255, 255, 0.5);
@@ -415,7 +415,7 @@
   }
 
   .pad-status {
-    font-size: 10px;
+    font-size: 9px;
     padding: 1px 5px;
     border-radius: 3px;
     background: rgba(255, 255, 255, 0.05);
@@ -462,7 +462,7 @@
   }
 
   .axis-label {
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 700;
     color: rgba(187, 134, 252, 0.6);
     min-width: 16px;
@@ -476,7 +476,7 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 3px;
     color: var(--text-primary, #ccc);
-    font-size: 10px;
+    font-size: 9px;
     padding: 2px 3px;
     cursor: pointer;
   }
@@ -527,7 +527,7 @@
     border: 1px solid color-mix(in srgb, var(--trigger-color) 30%, transparent);
     border-radius: 4px;
     color: var(--trigger-color);
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 800;
     letter-spacing: 0.05em;
     padding: 8px 4px;

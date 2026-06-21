@@ -586,33 +586,99 @@
       </button>
       <div class="brand">PROJECTION<b>SIM</b></div>
 
-      <div class="seg" role="tablist">
-        <button class="seg-btn" class:on={$projectionSimGizmoMode === 'translate'} onclick={() => setGizmo('translate')}>Move</button>
-        <button class="seg-btn" class:on={$projectionSimGizmoMode === 'rotate'} onclick={() => setGizmo('rotate')}>Rotate</button>
-        <button class="seg-btn" class:on={$projectionSimGizmoMode === 'scale'} onclick={() => setGizmo('scale')}>Scale</button>
+      <div class="toolbar-cluster primary-actions" aria-label="Scene file actions">
+        <button class="tbtn primary" onclick={newBlankScene} title="New blank scene">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M12 11v6"/><path d="M9 14h6"/></svg>
+          <span>New</span>
+        </button>
+        <button class="tbtn primary" onclick={saveDesign} title="Save projection sim scene">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>
+          <span>Save</span>
+        </button>
+        <button class="tbtn primary" onclick={loadDesign} title="Load projection sim scene">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h5l2 3h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 7V5a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v2"/></svg>
+          <span>Load</span>
+        </button>
       </div>
 
-      <button class="tbtn" onclick={() => renderer?.frameCamera()}>Frame</button>
-      <button class="tbtn" onclick={() => renderer?.topCamera()}>Top</button>
-      <button class="tbtn" onclick={newBlankScene}>New</button>
-      <button class="tbtn" class:on={snapEnabled} onclick={() => snapEnabled = !snapEnabled}>Snap</button>
-      <button class="tbtn" class:on={editProjectors} onclick={() => editProjectors = !editProjectors}>Edit Projectors</button>
-      <button class="tbtn" disabled={!canCopySceneItem} onclick={copySelectedSceneItem}>Copy</button>
-      <button class="tbtn" disabled={!canPasteSceneItem} onclick={pasteSceneItem}>Paste</button>
-      <button class="tbtn danger-mini" disabled={!multiSelectionCount || selectedLocked} onclick={deleteSelected}>Delete</button>
-      <button class="tbtn" onclick={syncProjectorsFromSlices}>Sync Slices</button>
-      <button class="tbtn" onclick={toggleFullscreen}>Full Screen</button>
-      <button class="tbtn" onclick={saveDesign}>Save</button>
-      <button class="tbtn" onclick={loadDesign}>Load</button>
+      <div class="toolbar-divider"></div>
+
+      <div class="toolbar-cluster edit-actions" aria-label="Edit actions">
+        <button class="tbtn" disabled={!canCopySceneItem} onclick={copySelectedSceneItem} title="Copy selected object">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>
+          <span>Copy</span>
+        </button>
+        <button class="tbtn" disabled={!canPasteSceneItem} onclick={pasteSceneItem} title="Paste copied object">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-2"/><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M4 13h8"/><path d="M8 9v8"/></svg>
+          <span>Paste</span>
+        </button>
+        <button class="tbtn danger-mini" disabled={!multiSelectionCount || selectedLocked} onclick={deleteSelected} title="Delete selected object">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 15H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+          <span>Delete</span>
+        </button>
+      </div>
+
+      <div class="toolbar-divider"></div>
+
+      <div class="seg" role="tablist">
+        <button class="seg-btn" class:on={$projectionSimGizmoMode === 'translate'} onclick={() => setGizmo('translate')} title="Move objects">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v20"/><path d="M2 12h20"/><path d="M12 2l3 3"/><path d="M12 2L9 5"/><path d="M12 22l3-3"/><path d="M12 22l-3-3"/><path d="M2 12l3-3"/><path d="M2 12l3 3"/><path d="M22 12l-3-3"/><path d="M22 12l-3 3"/></svg>
+          <span>Move</span>
+        </button>
+        <button class="seg-btn" class:on={$projectionSimGizmoMode === 'rotate'} onclick={() => setGizmo('rotate')} title="Rotate objects">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v7h-7"/></svg>
+          <span>Rotate</span>
+        </button>
+        <button class="seg-btn" class:on={$projectionSimGizmoMode === 'scale'} onclick={() => setGizmo('scale')} title="Scale objects">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14v6h6"/><path d="M20 10V4h-6"/><path d="M14 4h6v6"/><path d="M10 20H4v-6"/><path d="M14 10l6-6"/><path d="M4 20l6-6"/></svg>
+          <span>Scale</span>
+        </button>
+      </div>
+
+      <div class="toolbar-cluster view-actions" aria-label="View and mapping actions">
+        <button class="tbtn" onclick={() => renderer?.frameCamera()} title="Frame scene">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5"/><path d="M20 9V4h-5"/><path d="M4 15v5h5"/><path d="M20 15v5h-5"/></svg>
+          <span>Frame</span>
+        </button>
+        <button class="tbtn" onclick={() => renderer?.topCamera()} title="Top camera">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 5-8 5-8-5z"/><path d="M4 13l8 5 8-5"/></svg>
+          <span>Top</span>
+        </button>
+        <button class="tbtn" class:on={snapEnabled} onclick={() => snapEnabled = !snapEnabled} title="Toggle snapping">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3v7a6 6 0 0 0 12 0V3"/><path d="M6 7h4"/><path d="M14 7h4"/><path d="M6 21v-4"/><path d="M18 21v-4"/></svg>
+          <span>Snap</span>
+        </button>
+        <button class="tbtn" class:on={editProjectors} onclick={() => editProjectors = !editProjectors} title="Toggle projector selection">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h9a3 3 0 0 1 3 3v2a3 3 0 0 1-3 3H4z"/><path d="M16 10l5-3v10l-5-3"/><path d="M7 12h3"/></svg>
+          <span>Projectors</span>
+        </button>
+        <button class="tbtn" onclick={syncProjectorsFromSlices} title="Sync projectors from screen slices">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10"/><path d="M10 3l4 4-4 4"/><path d="M20 17H10"/><path d="M14 13l-4 4 4 4"/></svg>
+          <span>Sync Slices</span>
+        </button>
+        <button class="tbtn" onclick={toggleFullscreen} title="Fullscreen output">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5"/><path d="M20 9V4h-5"/><path d="M4 15v5h5"/><path d="M20 15v5h-5"/></svg>
+          <span>Full Screen</span>
+        </button>
+      </div>
 
       <div class="spacer"></div>
 
       {#if isRecording}
-        <button class="tbtn rec recording" onclick={stopRecording}>Stop {formatRecordingDuration(recordingDuration)}</button>
+        <button class="tbtn rec recording" onclick={stopRecording}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10"/></svg>
+          <span>Stop {formatRecordingDuration(recordingDuration)}</span>
+        </button>
       {:else}
-        <button class="tbtn rec" onclick={startRecording}>Rec</button>
+        <button class="tbtn rec" onclick={startRecording}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="6"/></svg>
+          <span>Rec</span>
+        </button>
       {/if}
-      <button class="tbtn" onclick={togglePanels}>Hide</button>
+      <button class="tbtn" onclick={togglePanels} title="Hide controls">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 10.6A2 2 0 0 0 13.4 13.4"/><path d="M9.9 4.2A10.9 10.9 0 0 1 12 4c5 0 8.3 4 10 8a16.7 16.7 0 0 1-2.1 3.4"/><path d="M6.6 6.6A15.4 15.4 0 0 0 2 12c1.7 4 5 8 10 8a10.8 10.8 0 0 0 4.1-.8"/></svg>
+        <span>Hide</span>
+      </button>
     </header>
 
     <aside class="sim-left">
@@ -938,12 +1004,18 @@
     align-items: center;
     gap: 8px;
     padding: 0 10px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
   }
+  .sim-topbar::-webkit-scrollbar { display: none; }
   .brand {
     font-family: var(--ga-font-mono, ui-monospace, monospace);
     letter-spacing: 0.08em;
-    font-size: 13px;
-    margin-right: 8px;
+    font-size: 12px;
+    margin-right: 2px;
+    white-space: nowrap;
+    flex: 0 0 auto;
   }
   .brand b { color: var(--ga-coral, #ff725f); }
   .spacer { flex: 1; }
@@ -964,18 +1036,73 @@
     color: inherit;
     cursor: pointer;
   }
+  .toolbar-cluster {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 34px;
+    padding: 3px;
+    border: 1px solid rgba(255,255,255,0.10);
+    background: rgba(255,255,255,0.025);
+    flex: 0 0 auto;
+  }
+  .toolbar-cluster.primary-actions {
+    border-color: rgba(97, 214, 164, 0.18);
+    background: linear-gradient(180deg, rgba(97, 214, 164, 0.075), rgba(255,255,255,0.02));
+  }
+  .toolbar-cluster.edit-actions {
+    border-color: rgba(91, 141, 239, 0.20);
+    background: linear-gradient(180deg, rgba(91, 141, 239, 0.065), rgba(255,255,255,0.02));
+  }
+  .toolbar-cluster.view-actions {
+    border-color: rgba(255,255,255,0.09);
+  }
+  .toolbar-divider {
+    width: 1px;
+    height: 28px;
+    background: linear-gradient(180deg, transparent, rgba(255,255,255,0.18), transparent);
+    flex: 0 0 auto;
+  }
   .icon-btn {
     width: 30px;
     height: 30px;
     display: grid;
     place-items: center;
+    flex: 0 0 auto;
   }
   .tbtn {
     height: 30px;
     padding: 0 10px;
-    font-size: 12px;
+    font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+  .tbtn svg,
+  .seg-btn svg,
+  .icon-btn svg {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    flex: 0 0 auto;
+  }
+  .tbtn.primary {
+    border-color: rgba(97, 214, 164, 0.30);
+    color: #d2ffe5;
+    background: rgba(97, 214, 164, 0.08);
+  }
+  .tbtn.primary:hover {
+    border-color: rgba(97, 214, 164, 0.54);
+    background: rgba(97, 214, 164, 0.14);
   }
   .tbtn:hover,
   .seg-btn:hover,
@@ -1014,13 +1141,18 @@
     display: flex;
     border: 1px solid rgba(255,255,255,0.12);
     overflow: hidden;
+    flex: 0 0 auto;
   }
   .seg-btn {
     height: 30px;
     border: 0;
     border-right: 1px solid rgba(255,255,255,0.1);
     padding: 0 10px;
-    font-size: 12px;
+    font-size: 11px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
   }
   .seg-btn:last-child { border-right: 0; }
   .seg-btn.on {
@@ -1042,7 +1174,7 @@
   }
   h3 {
     margin: 0 0 10px;
-    font-size: 12px;
+    font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.12em;
     color: var(--ga-ink-2, #9ca3af);
@@ -1062,12 +1194,12 @@
     gap: 8px;
   }
   .tree-row b {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 650;
   }
   .tree-row span,
   .empty {
-    font-size: 11px;
+    font-size: 10px;
     line-height: 1.45;
     color: var(--ga-ink-2, #9ca3af);
   }
@@ -1116,7 +1248,7 @@
   .tree-lock {
     min-height: 40px;
     padding: 0 6px;
-    font-size: 10px;
+    font-size: 9px;
     text-transform: uppercase;
     letter-spacing: 0.02em;
     color: var(--ga-ink-2, #9ca3af);
@@ -1131,7 +1263,7 @@
     display: grid;
     gap: 6px;
     margin-bottom: 10px;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--ga-ink-2, #9ca3af);
   }
   .field.mini {
@@ -1171,7 +1303,7 @@
   .quad label {
     display: grid;
     gap: 5px;
-    font-size: 11px;
+    font-size: 10px;
     color: var(--ga-ink-2, #9ca3af);
   }
   .show-panels {
@@ -1181,7 +1313,7 @@
     padding: 0 14px;
     text-transform: uppercase;
     letter-spacing: 0.07em;
-    font-size: 12px;
+    font-size: 11px;
   }
   .snap-hud {
     position: absolute;
@@ -1201,7 +1333,7 @@
     background: rgba(5, 8, 12, 0.82);
     color: #bbf7d0;
     padding: 0 10px;
-    font-size: 11px;
+    font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     box-shadow: 0 10px 28px rgba(0,0,0,0.34);

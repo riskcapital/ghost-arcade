@@ -128,7 +128,7 @@
     border: 1px solid #444;
     background: var(--bg-primary, #0d0d10);
     color: var(--text-muted, #888);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.5px;
     cursor: pointer;
@@ -156,7 +156,7 @@
 
   .audio-error {
     color: #f44;
-    font-size: 12px;
+    font-size: 11px;
   }
 
   /* FFT Bars */
@@ -188,7 +188,7 @@
   .fft-bar:nth-child(6) { background: #a855f7; }
 
   .fft-label {
-    font-size: 10px;
+    font-size: 9px;
     color: #555;
     letter-spacing: 0.5px;
   }
@@ -204,7 +204,7 @@
     border-radius: 3px;
     background: var(--bg-primary, #0d0d10);
     color: var(--text-secondary, #aaa);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     cursor: pointer;
     transition: all 0.1s;
@@ -221,7 +221,7 @@
   }
 
   .bpm-display {
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 700;
     color: #555;
     font-variant-numeric: tabular-nums;
@@ -238,7 +238,7 @@
     border-radius: 3px;
     background: transparent;
     color: #666;
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 700;
     cursor: pointer;
   }
@@ -264,7 +264,7 @@
 
   /* Sensitivity */
   .sens-label {
-    font-size: 10px;
+    font-size: 9px;
     color: #555;
     letter-spacing: 0.5px;
   }

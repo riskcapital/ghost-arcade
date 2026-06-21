@@ -110,7 +110,7 @@
   }
 
   .layer-num {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     color: var(--layer-color);
     text-shadow: 0 0 6px var(--layer-color);
@@ -215,7 +215,7 @@
   }
 
   .clip-type-icon {
-    font-size: 16px;
+    font-size: 15px;
     color: rgba(255, 255, 255, 0.4);
     line-height: 1;
   }
@@ -226,7 +226,7 @@
   }
 
   .clip-name {
-    font-size: 9px;
+    font-size: 8px;
     color: rgba(255, 255, 255, 0.5);
     text-align: center;
     overflow: hidden;
@@ -244,11 +244,11 @@
   }
 
   .clip-grid.tablet .clip-name {
-    font-size: 11px;
+    font-size: 10px;
   }
 
   .clip-grid.tablet .clip-type-icon {
-    font-size: 20px;
+    font-size: 19px;
   }
 
   .clip-grid.tablet .layer-label {
@@ -257,6 +257,6 @@
   }
 
   .clip-grid.tablet .layer-num {
-    font-size: 13px;
+    font-size: 12px;
   }
 </style>

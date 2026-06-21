@@ -1,6 +1,6 @@
 import { writable, derived, get } from 'svelte/store';
-import type { Layer, Project, WarpCorners, Point2D, BezierPoint, MaskShape, MediaSource, BlendMode, WarpMode, Effect, EffectType, EffectParams, LayerType, SVGContent, SVGFillMode, SVGColorMode, ColorContent, LightPaintingContent, LightPaintingStroke, CropRegion, LayerShape, LayerShapeType, Composition, VJModeState, VJDeck, Timeline, TimelineClip, TextContent, TextAnimation, SplatContent, Model3DContent, MediaTrayFolder, StagePreset, SVKeyboardPreset, EdgeEffect, EdgeEffectsConfig, PixelFXContent, GPULayerContent, AutoConfig, WLEDController } from '../types';
-import { createLayer, createProject, createDefaultCorners, createMeshGrid, createLinesLayer, createSVGLayer, createColorLayer, createLightPaintingLayer, createAdvLightPaintingLayer, createTextLayer, createSplatLayer, createDefaultSVGContent, createDefaultCropRegion, createDefaultLayerShape, createDefaultVJModeState, createDefaultTimeline, generateUUID, createDefaultModel3DContent, createDefaultEdgeEffect, convertShapeToCustom, createGroupLayer, createDefaultPixelFXContent, createDefaultGPULayerContent } from '../types';
+import type { Layer, Project, WarpCorners, Point2D, BezierPoint, MaskShape, MediaSource, BlendMode, WarpMode, Effect, EffectType, EffectParams, LayerType, SVGContent, SVGFillMode, SVGColorMode, ColorContent, LightPaintingContent, LightPaintingStroke, CropRegion, LayerShape, LayerShapeType, Composition, VJModeState, VJDeck, Timeline, TimelineClip, TextContent, TextAnimation, SplatContent, Model3DContent, MediaTrayFolder, StagePreset, SVKeyboardPreset, EdgeEffect, EdgeEffectsConfig, PixelFXContent, GPULayerContent, AutoConfig, WLEDController, StageEffect, SurfaceEffectAutomation, MappingCompositionState } from '../types';
+import { createLayer, createProject, createDefaultCorners, createMeshGrid, createLinesLayer, createSVGLayer, createColorLayer, createLightPaintingLayer, createAdvLightPaintingLayer, createTextLayer, createSplatLayer, createDefaultSVGContent, createDefaultCropRegion, createDefaultLayerShape, createDefaultVJModeState, createDefaultMappingCompositionState, createDefaultTimeline, generateUUID, createDefaultModel3DContent, createDefaultEdgeEffect, convertShapeToCustom, createGroupLayer, createDefaultPixelFXContent, createDefaultGPULayerContent } from '../types';
 import type { GroupConfig } from '../types';
 import { mediaLibrary } from './media';
 import { vjClipLauncher, type VJClip, type VJBlock, type VJLayerState, DEFAULT_VJ_LAYERS, DEFAULT_VJ_COLUMNS } from './vjClipLauncher';
@@ -62,6 +62,24 @@ function normalizeMediaTrayFolders(folders: MediaTrayFolder[] | undefined): Medi
       tab: folder.tab,
       itemIds: Array.from(new Set(folder.itemIds || [])),
     }));
+}
+
+function normalizeMappingCompositionState(input: unknown): MappingCompositionState {
+  const base = createDefaultMappingCompositionState();
+  const raw = input && typeof input === 'object' ? input as Partial<MappingCompositionState> : {};
+  const auto = raw.stageEffectAutomation || base.stageEffectAutomation;
+  return {
+    enabled: !!raw.enabled,
+    effects: Array.isArray(raw.effects) ? raw.effects : [],
+    stageEffects: Array.isArray(raw.stageEffects) ? raw.stageEffects : [],
+    activeStageEffectId: raw.activeStageEffectId ?? null,
+    stageEffectAutomation: {
+      playing: !!auto.playing,
+      mode: auto.mode === 'beat' ? 'beat' : 'time',
+      seconds: typeof auto.seconds === 'number' ? Math.max(0.1, auto.seconds) : base.stageEffectAutomation.seconds,
+      beats: typeof auto.beats === 'number' ? Math.max(1, Math.round(auto.beats)) : base.stageEffectAutomation.beats,
+    },
+  };
 }
 
 // ── Utility: convert a session-only blob URL to a persistable data URL ──
@@ -2550,6 +2568,267 @@ void main() {
       }
     },
 
+    // ========== Mapping Composition ==========
+
+    setMappingCompositionEnabled(enabled: boolean) {
+      update((p) => {
+        const mappingComposition = normalizeMappingCompositionState(p.mappingComposition);
+        return {
+          ...p,
+          mappingComposition: {
+            ...mappingComposition,
+            enabled,
+          },
+        };
+      });
+      recordDiscreteAction();
+    },
+
+    addMappingCompositionEffect(effectType: EffectType, params?: EffectParams) {
+      update((p) => {
+        const mappingComposition = normalizeMappingCompositionState(p.mappingComposition);
+        const effect: Effect = {
+          id: generateUUID(),
+          type: effectType,
+          enabled: true,
+          params: params ?? getDefaultEffectParams(effectType),
+          opacity: 1,
+          blendMode: 'normal',
+        };
+        return {
+          ...p,
+          mappingComposition: {
+            ...mappingComposition,
+            enabled: true,
+            effects: [...mappingComposition.effects, effect],
+          },
+        };
+      });
+      recordDiscreteAction();
+    },
+
+    removeMappingCompositionEffect(effectId: string) {
+      update((p) => {
+        const mappingComposition = normalizeMappingCompositionState(p.mappingComposition);
+        return {
+          ...p,
+          mappingComposition: {
+            ...mappingComposition,
+            effects: mappingComposition.effects.filter((effect) => effect.id !== effectId),
+          },
+        };
+      });
+      recordDiscreteAction();
+    },
+
+    toggleMappingCompositionEffect(effectId: string) {
+      update((p) => {
+        const mappingComposition = normalizeMappingCompositionState(p.mappingComposition);
+        return {
+          ...p,
+          mappingComposition: {
+            ...mappingComposition,
+            effects: mappingComposition.effects.map((effect) =>
+              effect.id === effectId ? { ...effect, enabled: !effect.enabled } : effect
+            ),
+          },
+        };
+      });
+    },
+
+    updateMappingCompositionEffect(effectId: string, updates: Partial<Effect>) {
+      update((p) => {
+        const mappingComposition = normalizeMappingCompositionState(p.mappingComposition);
+        return {
+          ...p,
+          mappingComposition: {
+            ...mappingComposition,
+            effects: mappingComposition.effects.map((effect) =>
+              effect.id === effectId ? { ...effect, ...updates } : effect
+            ),
+          },
+        };
+      });
+    },
+
+    updateMappingCompositionEffectParams(effectId: string, params: Partial<EffectParams>) {
+      update((p) => {
+        const mappingComposition = normalizeMappingCompositionState(p.mappingComposition);
+        return {
+          ...p,
+          mappingComposition: {
+            ...mappingComposition,
+            effects: mappingComposition.effects.map((effect) =>
+              effect.id === effectId ? { ...effect, params: { ...effect.params, ...params } } : effect
+            ),
+          },
+        };
+      });
+    },
+
+    resetMappingCompositionEffectParams(effectId: string) {
+      update((p) => {
+        const mappingComposition = normalizeMappingCompositionState(p.mappingComposition);
+        return {
+          ...p,
+          mappingComposition: {
+            ...mappingComposition,
+            effects: mappingComposition.effects.map((effect) =>
+              effect.id === effectId ? { ...effect, params: getDefaultEffectParams(effect.type) } : effect
+            ),
+          },
+        };
+      });
+    },
+
+    reorderMappingCompositionEffects(fromIndex: number, toIndex: number) {
+      update((p) => {
+        const mappingComposition = normalizeMappingCompositionState(p.mappingComposition);
+        const effects = [...mappingComposition.effects];
+        if (fromIndex < 0 || fromIndex >= effects.length || toIndex < 0 || toIndex >= effects.length) {
+          return p;
+        }
+        const [moved] = effects.splice(fromIndex, 1);
+        effects.splice(toIndex, 0, moved);
+        return {
+          ...p,
+          mappingComposition: {
+            ...mappingComposition,
+            effects,
+          },
+        };
+      });
+      recordDiscreteAction();
+    },
+
+    addMappingStageEffect(effect: StageEffect) {
+      update((p) => {
+        const mappingComposition = normalizeMappingCompositionState(p.mappingComposition);
+        const stageEffects = [...mappingComposition.stageEffects, effect];
+        return {
+          ...p,
+          mappingComposition: {
+            ...mappingComposition,
+            enabled: true,
+            stageEffects,
+            activeStageEffectId: mappingComposition.activeStageEffectId ?? effect.id,
+          },
+        };
+      });
+      recordDiscreteAction();
+    },
+
+    removeMappingStageEffect(effectId: string) {
+      update((p) => {
+        const mappingComposition = normalizeMappingCompositionState(p.mappingComposition);
+        const stageEffects = mappingComposition.stageEffects.filter((effect) => effect.id !== effectId);
+        const activeStageEffectId = mappingComposition.activeStageEffectId === effectId
+          ? (stageEffects[0]?.id ?? null)
+          : mappingComposition.activeStageEffectId;
+        return {
+          ...p,
+          mappingComposition: {
+            ...mappingComposition,
+            stageEffects,
+            activeStageEffectId,
+          },
+        };
+      });
+      recordDiscreteAction();
+    },
+
+    setMappingStageEffectActive(effectId: string | null) {
+      update((p) => {
+        const mappingComposition = normalizeMappingCompositionState(p.mappingComposition);
+        return {
+          ...p,
+          mappingComposition: {
+            ...mappingComposition,
+            activeStageEffectId: effectId,
+          },
+        };
+      });
+    },
+
+    toggleMappingStageEffectInTimeline(effectId: string) {
+      update((p) => {
+        const mappingComposition = normalizeMappingCompositionState(p.mappingComposition);
+        return {
+          ...p,
+          mappingComposition: {
+            ...mappingComposition,
+            stageEffects: mappingComposition.stageEffects.map((effect) =>
+              effect.id === effectId ? { ...effect, enabled: !effect.enabled } : effect
+            ),
+          },
+        };
+      });
+    },
+
+    updateMappingStageEffect(effectId: string, updates: Partial<StageEffect>) {
+      update((p) => {
+        const mappingComposition = normalizeMappingCompositionState(p.mappingComposition);
+        return {
+          ...p,
+          mappingComposition: {
+            ...mappingComposition,
+            stageEffects: mappingComposition.stageEffects.map((effect) =>
+              effect.id === effectId ? { ...effect, ...updates } : effect
+            ),
+          },
+        };
+      });
+    },
+
+    updateMappingStageEffectParam(effectId: string, key: string, value: number) {
+      update((p) => {
+        const mappingComposition = normalizeMappingCompositionState(p.mappingComposition);
+        return {
+          ...p,
+          mappingComposition: {
+            ...mappingComposition,
+            stageEffects: mappingComposition.stageEffects.map((effect) =>
+              effect.id === effectId
+                ? { ...effect, params: { ...effect.params, [key]: value } }
+                : effect
+            ),
+          },
+        };
+      });
+    },
+
+    updateMappingStageEffectAutomation(updates: Partial<SurfaceEffectAutomation>) {
+      update((p) => {
+        const mappingComposition = normalizeMappingCompositionState(p.mappingComposition);
+        return {
+          ...p,
+          mappingComposition: {
+            ...mappingComposition,
+            stageEffectAutomation: {
+              ...mappingComposition.stageEffectAutomation,
+              ...updates,
+            },
+          },
+        };
+      });
+    },
+
+    toggleMappingStageEffectAutomation() {
+      update((p) => {
+        const mappingComposition = normalizeMappingCompositionState(p.mappingComposition);
+        return {
+          ...p,
+          mappingComposition: {
+            ...mappingComposition,
+            stageEffectAutomation: {
+              ...mappingComposition.stageEffectAutomation,
+              playing: !mappingComposition.stageEffectAutomation.playing,
+            },
+          },
+        };
+      });
+    },
+
     // ========== Stage Mode: VJ Source Assignment ==========
 
     /** Set or clear which VJ layer feeds a mapping layer */
@@ -4339,6 +4618,7 @@ void main() {
           height: currentProject.height,
           selectedLayerId: currentProject.selectedLayerId,
           layers: currentProject.layers.map(layer => this._exportLayer(layer)),
+          mappingComposition: normalizeMappingCompositionState(currentProject.mappingComposition),
           vjMode: exportVjMode,
           mediaFolders: normalizeMediaTrayFolders(currentProject.mediaFolders),
           stagePresets: currentProject.stagePresets || [],
@@ -4567,6 +4847,7 @@ void main() {
             height?: number;
             selectedLayerId?: string | null;
             layers?: Layer[];
+            mappingComposition?: MappingCompositionState;
             vjMode?: any;
             mediaFolders?: MediaTrayFolder[];
             stage3d?: unknown;
@@ -5226,6 +5507,7 @@ void main() {
             }
             return imported;
           }),
+          mappingComposition: normalizeMappingCompositionState(proj.mappingComposition),
           vjMode: importedVjMode,
           mediaFolders: normalizeMediaTrayFolders(proj.mediaFolders),
           stagePresets: (proj as any).stagePresets || [],

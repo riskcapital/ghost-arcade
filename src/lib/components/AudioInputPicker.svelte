@@ -289,7 +289,7 @@
     gap: 2px;
   }
   .aip-popover-label {
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
     color: var(--ga-ink-2, #5e6571);
     text-transform: uppercase;
@@ -298,7 +298,7 @@
   }
   .aip-popover-item {
     text-align: left;
-    font-size: 16px;
+    font-size: 15px;
     color: var(--ga-ink-1, #9aa0ac);
     background: transparent;
     border: 1px solid transparent;
@@ -320,7 +320,7 @@
   }
   .aip-popover-empty {
     padding: 8px;
-    font-size: 15px;
+    font-size: 14px;
     color: var(--ga-ink-2, #5e6571);
     font-style: italic;
   }
@@ -328,7 +328,7 @@
     margin-top: 4px;
     padding: 6px 8px;
     border-top: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
-    font-size: 14px;
+    font-size: 13px;
     color: var(--ga-ink-2, #5e6571);
     line-height: 1.4;
   }

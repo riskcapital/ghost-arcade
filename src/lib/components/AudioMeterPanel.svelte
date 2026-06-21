@@ -247,7 +247,7 @@
 
   .amp-error {
     color: #f44;
-    font-size: 16px;
+    font-size: 15px;
     padding: 0 4px;
   }
 
@@ -267,7 +267,7 @@
     gap: 10px;
   }
   .amp-popover-title {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     color: var(--text-muted, #888);
     letter-spacing: 0.16em;
@@ -279,7 +279,7 @@
     gap: 8px;
   }
   .amp-row-label {
-    font-size: 15px;
+    font-size: 14px;
     color: var(--text-primary, #ccc);
   }
   .amp-slider {
@@ -287,13 +287,13 @@
     accent-color: #BB86FC;
   }
   .amp-row-value {
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 14px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 13px;
     color: #BB86FC;
     text-align: right;
   }
   .amp-popover-hint {
-    font-size: 14px;
+    font-size: 13px;
     color: var(--text-muted, #888);
     line-height: 1.4;
     padding-top: 4px;
@@ -312,7 +312,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     color: var(--text-muted, #888);
     letter-spacing: 0.16em;
@@ -323,7 +323,7 @@
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.1);
     color: var(--text-secondary, #aaa);
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.12em;
     padding: 2px 6px;
@@ -342,7 +342,7 @@
     gap: 6px;
   }
   .amp-band-name {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     color: #999;
     letter-spacing: 0.08em;

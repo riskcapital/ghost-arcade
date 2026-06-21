@@ -143,8 +143,8 @@
     border: 1px solid #3a3a42;
     border-radius: 8px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.4);
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    font-size: 14px;
+    font-family: var(--ga-font-ui, 'Space Grotesk', system-ui, sans-serif);
+    font-size: 13px;
     line-height: 1.35;
     animation: confirm-pop 90ms ease-out;
   }
@@ -178,14 +178,14 @@
   }
 
   .confirm-title {
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
     color: #fff;
     margin-bottom: 2px;
   }
 
   .confirm-subtitle {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-muted, #888);
     margin-bottom: 8px;
   }
@@ -199,7 +199,7 @@
 
   .confirm-btn {
     padding: 4px 12px;
-    font-size: 13px;
+    font-size: 12px;
     border-radius: 4px;
     cursor: pointer;
     border: 1px solid transparent;

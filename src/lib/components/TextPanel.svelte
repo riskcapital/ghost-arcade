@@ -440,13 +440,13 @@
     padding: 8px;
     overflow-y: auto;
     max-height: 100%;
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-primary, #ccc);
   }
 
   h3 {
     margin: 0 0 6px 0;
-    font-size: 15px;
+    font-size: 14px;
     color: #fff;
     border-bottom: 1px solid #444;
     padding-bottom: 4px;
@@ -461,7 +461,7 @@
 
   .section-label {
     display: block;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-muted, #888);
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -474,7 +474,7 @@
     border: 1px solid #333;
     color: #fff;
     padding: 6px;
-    font-size: 14px;
+    font-size: 13px;
     border-radius: 3px;
     resize: vertical;
     font-family: inherit;
@@ -495,7 +495,7 @@
 
   .property-row > label {
     min-width: 55px;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-secondary, #aaa);
     flex-shrink: 0;
   }
@@ -522,16 +522,16 @@
     border: 1px solid #333;
     color: var(--text-primary, #ccc);
     padding: 2px 4px;
-    font-size: 12px;
+    font-size: 11px;
     border-radius: 3px;
   }
 
   .value {
     min-width: 38px;
     text-align: right;
-    font-size: 11px;
+    font-size: 10px;
     color: var(--text-muted, #888);
-    font-family: monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
 
   .button-group {
@@ -544,7 +544,7 @@
     border: 1px solid #444;
     color: var(--text-secondary, #aaa);
     padding: 2px 8px;
-    font-size: 12px;
+    font-size: 11px;
     cursor: pointer;
     border-radius: 2px;
   }
@@ -564,7 +564,7 @@
     border: 1px solid #444;
     color: var(--text-secondary, #aaa);
     padding: 1px 6px;
-    font-size: 11px;
+    font-size: 10px;
     cursor: pointer;
     border-radius: 2px;
   }
@@ -574,11 +574,11 @@
   }
 
   .animation-section select {
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .anim-description {
-    font-size: 11px;
+    font-size: 10px;
     color: #666;
     font-style: italic;
     padding: 2px 6px;

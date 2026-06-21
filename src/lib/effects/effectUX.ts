@@ -23,6 +23,34 @@ export interface ParamMeta {
 // The keys match the generic param names in EffectParams (amount, amount2, etc.)
 // but the labels give them meaningful names in the UI.
 export const effectParamLabels: Partial<Record<EffectType, Record<string, ParamMeta>>> = {
+  eulerianMagnify: {
+    eulerianMode: {
+      label: 'Mode', min: 0, max: 3, step: 1, default: 0, type: 'select',
+      options: [
+        { value: 0, label: 'Color Pulse' },
+        { value: 1, label: 'Motion Phase' },
+        { value: 2, label: 'Hybrid' },
+        { value: 3, label: 'Attenuate' },
+      ],
+    },
+    eulerianAmplification: { label: 'Amplification', min: 0, max: 80, step: 0.5, default: 24 },
+    eulerianLowHz: { label: 'Low Hz', min: 0.05, max: 8, step: 0.01, default: 0.75 },
+    eulerianHighHz: { label: 'High Hz', min: 0.1, max: 12, step: 0.01, default: 2.5 },
+    eulerianColorMix: { label: 'Color Mix', min: 0, max: 1, step: 0.01, default: 1 },
+    eulerianMotionMix: { label: 'Motion Mix', min: 0, max: 1, step: 0.01, default: 0.35 },
+    eulerianSpatialRadius: { label: 'Spatial Radius', min: 1, max: 12, step: 0.25, default: 2 },
+    eulerianNoiseFloor: { label: 'Noise Floor', min: 0.00001, max: 0.02, step: 0.00001, default: 0.0008 },
+    eulerianMaxShift: { label: 'Max Shift', min: 1, max: 120, step: 1, default: 24 },
+    eulerianOutputMix: { label: 'Output Mix', min: 0, max: 1, step: 0.01, default: 1 },
+    eulerianShowBand: {
+      label: 'Show Band', min: 0, max: 1, step: 1, default: 0, type: 'select',
+      options: [{ value: 0, label: 'Off' }, { value: 1, label: 'On' }],
+    },
+    eulerianChromaOnly: {
+      label: 'Chroma Only', min: 0, max: 1, step: 1, default: 0, type: 'select',
+      options: [{ value: 0, label: 'Off' }, { value: 1, label: 'On' }],
+    },
+  },
   // ── Masking ──
   // Vignette (hero) — shape modes, off-center, color tint, breathing.
   vignette: {
@@ -460,6 +488,41 @@ export const effectParamLabels: Partial<Record<EffectType, Record<string, ParamM
       label: 'Invert', min: 0, max: 1, step: 1, default: 0, type: 'select',
       options: [{ value: 0, label: 'Lines on Black' }, { value: 1, label: 'Field w/ Cutouts' }],
     },
+  },
+  phaseLab: {
+    phaseLabMode: {
+      label: 'Mode', min: 0, max: 7, step: 1, default: 0, type: 'select',
+      options: [
+        { value: 0, label: 'BOS / Schlieren' },
+        { value: 1, label: 'Photoelastic' },
+        { value: 2, label: 'Lippmann' },
+        { value: 3, label: 'InSAR' },
+        { value: 4, label: 'Catoptric Cylinder' },
+        { value: 5, label: 'Catoptric Cone' },
+        { value: 6, label: 'DTI Ribbons' },
+        { value: 7, label: 'Composite' },
+      ],
+    },
+    phaseLabIntensity: { label: 'Intensity', min: 0, max: 4, step: 0.01, default: 1.35 },
+    phaseLabScale: { label: 'Scale', min: 0.25, max: 24, step: 0.05, default: 6 },
+    phaseLabSpeed: { label: 'Speed', min: -4, max: 4, step: 0.01, default: 0.35 },
+    phaseLabPhase: { label: 'Phase', min: -6.283, max: 6.283, step: 0.001, default: 0 },
+    phaseLabMix: { label: 'Mix', min: 0, max: 1, step: 0.01, default: 0.92 },
+    phaseLabColorGain: { label: 'Color Gain', min: 0.2, max: 4, step: 0.01, default: 1.25 },
+    phaseLabSourceBleed: { label: 'Source Bleed', min: 0, max: 1, step: 0.01, default: 0.22 },
+    phaseLabEdgeBoost: { label: 'Gradient Boost', min: 0, max: 8, step: 0.01, default: 2.4 },
+    phaseLabDistortion: { label: 'Refraction', min: -0.25, max: 0.25, step: 0.001, default: 0.04 },
+    phaseLabLineDensity: { label: 'Fringe Density', min: 1, max: 80, step: 0.1, default: 18 },
+    phaseLabPolarizerAngle: { label: 'Polarizer', min: 0, max: 180, step: 1, default: 35 },
+    phaseLabSpectralShift: { label: 'Spectral Shift', min: -2, max: 2, step: 0.005, default: 0.35 },
+    phaseLabFocus: { label: 'Mirror Focus', min: 0.1, max: 4, step: 0.01, default: 1.45 },
+    phaseLabMirrorRadius: { label: 'Mirror Radius', min: 0.03, max: 0.45, step: 0.005, default: 0.16 },
+    phaseLabConeLift: { label: 'Cone Lift', min: 0.2, max: 3, step: 0.01, default: 1.2 },
+    phaseLabAudioReactive: {
+      label: 'Audio Reactive', min: 0, max: 1, step: 1, default: 1, type: 'select',
+      options: [{ value: 0, label: 'Off' }, { value: 1, label: 'On' }],
+    },
+    phaseLabAudioDrive: { label: 'Audio Drive', min: 0, max: 3, step: 0.01, default: 0.65 },
   },
   pixelate: {
     pixelateMode: {
@@ -2493,6 +2556,15 @@ export const effectParamLabels: Partial<Record<EffectType, Record<string, ParamM
 
 // ── Presets ──
 export const effectPresets: Partial<Record<EffectType, EffectPreset[]>> = {
+  eulerianMagnify: [
+    { name: 'Pulse Finder', params: { eulerianMode: 0, eulerianAmplification: 26, eulerianLowHz: 0.75, eulerianHighHz: 2.5, eulerianColorMix: 1, eulerianMotionMix: 0, eulerianSpatialRadius: 2, eulerianNoiseFloor: 0.0008, eulerianMaxShift: 8, eulerianOutputMix: 1, eulerianChromaOnly: 1 } },
+    { name: 'Blood Flow', params: { eulerianMode: 0, eulerianAmplification: 42, eulerianLowHz: 0.8, eulerianHighHz: 3.0, eulerianColorMix: 1, eulerianMotionMix: 0, eulerianNoiseFloor: 0.0012, eulerianChromaOnly: 1 } },
+    { name: 'Breathing Wall', params: { eulerianMode: 1, eulerianAmplification: 32, eulerianLowHz: 0.12, eulerianHighHz: 0.55, eulerianColorMix: 0, eulerianMotionMix: 0.7, eulerianSpatialRadius: 4, eulerianNoiseFloor: 0.001, eulerianMaxShift: 42 } },
+    { name: 'Motion Reveal', params: { eulerianMode: 1, eulerianAmplification: 44, eulerianLowHz: 0.4, eulerianHighHz: 4.5, eulerianColorMix: 0, eulerianMotionMix: 0.9, eulerianSpatialRadius: 2.5, eulerianNoiseFloor: 0.0014, eulerianMaxShift: 52 } },
+    { name: 'Hybrid Aura', params: { eulerianMode: 2, eulerianAmplification: 28, eulerianLowHz: 0.55, eulerianHighHz: 2.8, eulerianColorMix: 0.8, eulerianMotionMix: 0.45, eulerianSpatialRadius: 2.5, eulerianNoiseFloor: 0.001, eulerianMaxShift: 28 } },
+    { name: 'Attenuate Room', params: { eulerianMode: 3, eulerianAmplification: 20, eulerianLowHz: 0.4, eulerianHighHz: 5.0, eulerianColorMix: 0.5, eulerianMotionMix: 0.65, eulerianSpatialRadius: 3, eulerianNoiseFloor: 0.0012, eulerianMaxShift: 28 } },
+    { name: 'Band Monitor', params: { eulerianMode: 0, eulerianAmplification: 30, eulerianLowHz: 0.75, eulerianHighHz: 2.5, eulerianColorMix: 1, eulerianMotionMix: 0, eulerianShowBand: 1, eulerianChromaOnly: 0 } },
+  ],
   // Vignette (hero) — utility fades through to stage spotlights and oval portrait.
   vignette: [
     { name: 'Off',                 params: { vignetteSize: 1.5 } },
@@ -3241,6 +3313,17 @@ export const effectPresets: Partial<Record<EffectType, EffectPreset[]>> = {
     { name: 'Oscilloscope',  params: { fmLinesMode: 1, fmLinesCount: 120, fmLinesWidth: 0.28, fmLinesFreq: 0.3, fmLinesFmDepth: 0.7, fmLinesAmp: 0.6, fmLinesSpeed: 0.8, fmLinesColorMix: 0.6 } },
     { name: 'Concentric',    params: { fmLinesMode: 2, fmLinesCount: 130, fmLinesWidth: 0.3, fmLinesFreq: 0.2, fmLinesFmDepth: 0.6, fmLinesAmp: 0.55, fmLinesSpeed: 0.5 } },
     { name: 'Inked Field',   params: { fmLinesMode: 0, fmLinesCount: 160, fmLinesWidth: 0.3, fmLinesFmDepth: 0.6, fmLinesAmp: 0.5, fmLinesInvert: 1 } },
+  ],
+  // Phase Lab — source-driven scientific imaging looks.
+  phaseLab: [
+    { name: 'Schlieren Glass', params: { phaseLabMode: 0, phaseLabIntensity: 1.35, phaseLabScale: 6, phaseLabSpeed: 0.35, phaseLabMix: 0.92, phaseLabEdgeBoost: 2.4, phaseLabDistortion: 0.04, phaseLabSourceBleed: 0.18 } },
+    { name: 'Stress Fringes',  params: { phaseLabMode: 1, phaseLabIntensity: 1.5, phaseLabScale: 7, phaseLabSpeed: 0.28, phaseLabLineDensity: 20, phaseLabPolarizerAngle: 35, phaseLabColorGain: 1.35, phaseLabSourceBleed: 0.12 } },
+    { name: 'Lippmann Color',  params: { phaseLabMode: 2, phaseLabIntensity: 1.1, phaseLabScale: 9, phaseLabSpeed: 0.22, phaseLabSpectralShift: 0.4, phaseLabColorGain: 1.5, phaseLabSourceBleed: 0.2 } },
+    { name: 'Radar Wraps',     params: { phaseLabMode: 3, phaseLabIntensity: 1.3, phaseLabScale: 5.5, phaseLabSpeed: 0.4, phaseLabLineDensity: 19, phaseLabColorGain: 1.25, phaseLabSourceBleed: 0.15 } },
+    { name: 'Mirror Cylinder', params: { phaseLabMode: 4, phaseLabIntensity: 1.1, phaseLabSpeed: 0.25, phaseLabFocus: 1.45, phaseLabMirrorRadius: 0.16, phaseLabSourceBleed: 0.08 } },
+    { name: 'Cone Anamorph',   params: { phaseLabMode: 5, phaseLabIntensity: 1.1, phaseLabSpeed: 0.25, phaseLabConeLift: 1.2, phaseLabMirrorRadius: 0.16, phaseLabSourceBleed: 0.08 } },
+    { name: 'Tensor Ribbons',  params: { phaseLabMode: 6, phaseLabIntensity: 1.4, phaseLabScale: 8, phaseLabLineDensity: 22, phaseLabSpeed: 0.35, phaseLabSourceBleed: 0.25 } },
+    { name: 'Phase Composite', params: { phaseLabMode: 7, phaseLabIntensity: 1.3, phaseLabScale: 6.5, phaseLabSpeed: 0.32, phaseLabLineDensity: 18, phaseLabSourceBleed: 0.18 } },
   ],
   // Pixelate (hero) — grid styles.
   pixelate: [

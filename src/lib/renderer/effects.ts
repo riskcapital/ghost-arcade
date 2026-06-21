@@ -226,6 +226,7 @@ import {
   timeSmearShader,
   chronoShader,
 } from './shaders/time-effects';
+import { phaseLabShader } from './shaders/phaseLabEffect';
 
 // Re-export shader strings consumed by engine.ts and other modules
 export { effectVertexShader, polygonMaskShader, polygonMaskAlphaShader, applyExternalMaskShader, layerShapeMaskShader };
@@ -240,6 +241,8 @@ export const effectShaders: Record<EffectType, string> = {
   // GLSL material path for these. The empty string here is just to
   // satisfy the Record<EffectType, string> requirement.
   gpuFluidSim: '',
+  // Stateful temporal effect dispatched by TemporalMagnificationRunner.
+  eulerianMagnify: '',
   // Dedicated shaders (24)
   vignette: vignetteShader,
   edgeFeather: edgeFeatherShader,
@@ -256,6 +259,7 @@ export const effectShaders: Record<EffectType, string> = {
   rgbShift: rgbShiftShader,
   scanlines: scanlinesShader,
   fmScanlines: fmScanlinesShader,
+  phaseLab: phaseLabShader,
   pixelate: pixelateShader,
   blur: blurHeroShader,
   sharpen: sharpenHeroShader,
@@ -614,6 +618,30 @@ export function createEffectMaterial(effectType: EffectType): THREE.ShaderMateri
       uniforms.uSpeed = { value: 0.6 };
       uniforms.uColorMix = { value: 0 };
       uniforms.uInvert = { value: 0 };
+      break;
+
+    case 'phaseLab':
+      // Phase Lab — source-driven scientific imaging modes as a regular effect.
+      uniforms.uMode = { value: 0 };
+      uniforms.uIntensity = { value: 1.35 };
+      uniforms.uScale = { value: 6.0 };
+      uniforms.uSpeed = { value: 0.35 };
+      uniforms.uPhase = { value: 0.0 };
+      uniforms.uMix = { value: 0.92 };
+      uniforms.uColorGain = { value: 1.25 };
+      uniforms.uSourceBleed = { value: 0.22 };
+      uniforms.uEdgeBoost = { value: 2.4 };
+      uniforms.uDistortion = { value: 0.04 };
+      uniforms.uLineDensity = { value: 18.0 };
+      uniforms.uPolarizerAngle = { value: 35 };
+      uniforms.uSpectralShift = { value: 0.35 };
+      uniforms.uFocus = { value: 1.45 };
+      uniforms.uMirrorRadius = { value: 0.16 };
+      uniforms.uConeLift = { value: 1.2 };
+      uniforms.uAudioReactive = { value: 1 };
+      uniforms.uAudioDrive = { value: 0.65 };
+      uniforms.uAudio = { value: 0 };
+      uniforms.uAudioBass = { value: 0 };
       break;
 
     case 'pixelate':
@@ -2444,6 +2472,27 @@ export function updateEffectUniforms(
       if (u.uInvert && p.fmLinesInvert !== undefined) u.uInvert.value = p.fmLinesInvert;
       break;
 
+    case 'phaseLab':
+      if (u.uMode && p.phaseLabMode !== undefined) u.uMode.value = p.phaseLabMode;
+      if (u.uIntensity && p.phaseLabIntensity !== undefined) u.uIntensity.value = p.phaseLabIntensity;
+      if (u.uScale && p.phaseLabScale !== undefined) u.uScale.value = p.phaseLabScale;
+      if (u.uSpeed && p.phaseLabSpeed !== undefined) u.uSpeed.value = p.phaseLabSpeed;
+      if (u.uPhase && p.phaseLabPhase !== undefined) u.uPhase.value = p.phaseLabPhase;
+      if (u.uMix && p.phaseLabMix !== undefined) u.uMix.value = p.phaseLabMix;
+      if (u.uColorGain && p.phaseLabColorGain !== undefined) u.uColorGain.value = p.phaseLabColorGain;
+      if (u.uSourceBleed && p.phaseLabSourceBleed !== undefined) u.uSourceBleed.value = p.phaseLabSourceBleed;
+      if (u.uEdgeBoost && p.phaseLabEdgeBoost !== undefined) u.uEdgeBoost.value = p.phaseLabEdgeBoost;
+      if (u.uDistortion && p.phaseLabDistortion !== undefined) u.uDistortion.value = p.phaseLabDistortion;
+      if (u.uLineDensity && p.phaseLabLineDensity !== undefined) u.uLineDensity.value = p.phaseLabLineDensity;
+      if (u.uPolarizerAngle && p.phaseLabPolarizerAngle !== undefined) u.uPolarizerAngle.value = p.phaseLabPolarizerAngle;
+      if (u.uSpectralShift && p.phaseLabSpectralShift !== undefined) u.uSpectralShift.value = p.phaseLabSpectralShift;
+      if (u.uFocus && p.phaseLabFocus !== undefined) u.uFocus.value = p.phaseLabFocus;
+      if (u.uMirrorRadius && p.phaseLabMirrorRadius !== undefined) u.uMirrorRadius.value = p.phaseLabMirrorRadius;
+      if (u.uConeLift && p.phaseLabConeLift !== undefined) u.uConeLift.value = p.phaseLabConeLift;
+      if (u.uAudioReactive && p.phaseLabAudioReactive !== undefined) u.uAudioReactive.value = p.phaseLabAudioReactive;
+      if (u.uAudioDrive && p.phaseLabAudioDrive !== undefined) u.uAudioDrive.value = p.phaseLabAudioDrive;
+      break;
+
     case 'pixelate':
       if (u.uSize && p.pixelateSize !== undefined) u.uSize.value = p.pixelateSize;
       if (u.uMode && p.pixelateMode !== undefined) u.uMode.value = p.pixelateMode;
@@ -4066,6 +4115,21 @@ export function getDefaultEffectParams(type: EffectType): EffectParams {
         outputBoost: 0.7,
         timeScale: 1.6,
       };
+    case 'eulerianMagnify':
+      return {
+        eulerianMode: 0,
+        eulerianAmplification: 24,
+        eulerianLowHz: 0.75,
+        eulerianHighHz: 2.5,
+        eulerianColorMix: 1,
+        eulerianMotionMix: 0.35,
+        eulerianSpatialRadius: 2,
+        eulerianNoiseFloor: 0.0008,
+        eulerianMaxShift: 24,
+        eulerianOutputMix: 1,
+        eulerianShowBand: 0,
+        eulerianChromaOnly: 0,
+      };
     case 'vignette':
       return {
         vignetteSize: 0.8, vignetteSoftness: 0.4, vignetteRoundness: 0.5,
@@ -4122,6 +4186,27 @@ export function getDefaultEffectParams(type: EffectType): EffectParams {
         fmLinesMode: 0, fmLinesCount: 140, fmLinesWidth: 0.32, fmLinesFreq: 0.25,
         fmLinesFmDepth: 0.55, fmLinesAmp: 0.5, fmLinesSpeed: 0.6,
         fmLinesColorMix: 0, fmLinesInvert: 0,
+      };
+    case 'phaseLab':
+      return {
+        phaseLabMode: 0,
+        phaseLabIntensity: 1.35,
+        phaseLabScale: 6.0,
+        phaseLabSpeed: 0.35,
+        phaseLabPhase: 0,
+        phaseLabMix: 0.92,
+        phaseLabColorGain: 1.25,
+        phaseLabSourceBleed: 0.22,
+        phaseLabEdgeBoost: 2.4,
+        phaseLabDistortion: 0.04,
+        phaseLabLineDensity: 18.0,
+        phaseLabPolarizerAngle: 35,
+        phaseLabSpectralShift: 0.35,
+        phaseLabFocus: 1.45,
+        phaseLabMirrorRadius: 0.16,
+        phaseLabConeLift: 1.2,
+        phaseLabAudioReactive: 1,
+        phaseLabAudioDrive: 0.65,
       };
     case 'pixelate':
       return {

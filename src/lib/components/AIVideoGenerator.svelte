@@ -457,7 +457,7 @@
     background: #0d0d14;
     border-radius: 6px;
     border: 1px solid #333;
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-primary, #ccc);
   }
 
@@ -469,7 +469,7 @@
 
   h4 {
     margin: 0;
-    font-size: 14px;
+    font-size: 13px;
     color: #fff;
   }
 
@@ -477,7 +477,7 @@
     background: none;
     border: none;
     color: var(--text-muted, #888);
-    font-size: 18px;
+    font-size: 17px;
     cursor: pointer;
     padding: 0 4px;
   }
@@ -495,7 +495,7 @@
     background: #111;
     border: 1px solid #333;
     color: var(--text-muted, #888);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 500;
     cursor: pointer;
     border-radius: 4px;
@@ -521,7 +521,7 @@
     border: 1px solid #662233;
     border-radius: 4px;
     color: #ff6688;
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .configure-hint {
@@ -535,7 +535,7 @@
     border: 1px solid #333;
     color: #fff;
     padding: 8px;
-    font-size: 13px;
+    font-size: 12px;
     border-radius: 4px;
     resize: vertical;
     font-family: inherit;
@@ -556,7 +556,7 @@
     border: 1px solid #333;
     color: var(--text-secondary, #aaa);
     padding: 3px 8px;
-    font-size: 11px;
+    font-size: 10px;
     border-radius: 10px;
     cursor: pointer;
     white-space: nowrap;
@@ -582,7 +582,7 @@
     gap: 2px;
   }
   .setting label {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--text-muted, #888);
     text-transform: uppercase;
   }
@@ -591,7 +591,7 @@
     border: 1px solid #333;
     color: var(--text-primary, #ccc);
     padding: 3px 6px;
-    font-size: 12px;
+    font-size: 11px;
     border-radius: 3px;
   }
 
@@ -600,7 +600,7 @@
     border: 1px solid #444;
     color: var(--text-muted, #888);
     padding: 3px 8px;
-    font-size: 11px;
+    font-size: 10px;
     border-radius: 3px;
     cursor: pointer;
     margin-left: auto;
@@ -618,7 +618,7 @@
     display: flex;
     align-items: center;
     gap: 5px;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-secondary, #aaa);
     cursor: pointer;
     padding: 3px 0;
@@ -642,7 +642,7 @@
     gap: 2px;
   }
   .field label {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--text-muted, #888);
     text-transform: uppercase;
   }
@@ -651,7 +651,7 @@
     border: 1px solid #333;
     color: var(--text-primary, #ccc);
     padding: 4px 6px;
-    font-size: 12px;
+    font-size: 11px;
     border-radius: 3px;
   }
 
@@ -664,7 +664,7 @@
     border: none;
     color: #fff;
     padding: 8px 16px;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
     border-radius: 4px;
     cursor: pointer;
@@ -695,12 +695,12 @@
     padding: 6px 8px;
     background: #14141e;
     border-radius: 4px;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-secondary, #aaa);
   }
   .status.done { color: #0f0; }
   .elapsed {
-    font-family: monospace;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     color: var(--text-muted, #888);
   }
 
@@ -710,7 +710,7 @@
     border: 1px solid #662233;
     border-radius: 4px;
     color: #ff6688;
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .preview {
@@ -730,7 +730,7 @@
     border: none;
     color: #fff;
     padding: 8px;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     border-radius: 4px;
     cursor: pointer;
