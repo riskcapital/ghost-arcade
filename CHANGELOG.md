@@ -5,6 +5,7 @@
 ## Unreleased
 
 - Fixed the OSC listener control in Settings by replacing the hidden toggle with a visible button, allowing users to start and stop the OSC UDP listener from the desktop app.
+- Fixed slice display fullscreen sizing on Windows so Screens > Open on display fills the selected physical output without border clipping.
 
 ---
 
