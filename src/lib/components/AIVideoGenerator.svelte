@@ -8,7 +8,6 @@
   } from '../api/ai-client';
   import { settings, VEO_MODELS, LUMA_MODELS } from '../stores/settings';
   import { downloadRecording } from '../recording/recorder';
-  import { get } from 'svelte/store';
   import { generateUUID } from '../types';
 
   const dispatch = createEventDispatcher<{
@@ -29,7 +28,11 @@
 
   // Veo settings
   let veoAspectRatio: '16:9' | '9:16' = '16:9';
-  let veoDuration: 5 | 6 | 7 | 8 = 8;
+  let veoDuration: 4 | 6 | 8 = 8;
+  let veoFirstFrameFile: File | null = null;
+  let veoLastFrameFile: File | null = null;
+  let veoFirstFramePreview = '';
+  let veoLastFramePreview = '';
 
   // Luma settings
   let lumaAspectRatio: LumaAspectRatio = '16:9';
@@ -61,6 +64,38 @@
 
   function useExample(ex: string) {
     prompt = ex;
+  }
+
+  function setVeoFrame(kind: 'first' | 'last', event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0] || null;
+    const priorPreview = kind === 'first' ? veoFirstFramePreview : veoLastFramePreview;
+    if (priorPreview) URL.revokeObjectURL(priorPreview);
+
+    if (kind === 'first') {
+      veoFirstFrameFile = file;
+      veoFirstFramePreview = file ? URL.createObjectURL(file) : '';
+    } else {
+      veoLastFrameFile = file;
+      veoLastFramePreview = file ? URL.createObjectURL(file) : '';
+      if (file) veoDuration = 8;
+    }
+  }
+
+  function clearVeoFrame(kind: 'first' | 'last') {
+    if (kind === 'first') {
+      if (veoFirstFramePreview) URL.revokeObjectURL(veoFirstFramePreview);
+      veoFirstFrameFile = null;
+      veoFirstFramePreview = '';
+    } else {
+      if (veoLastFramePreview) URL.revokeObjectURL(veoLastFramePreview);
+      veoLastFrameFile = null;
+      veoLastFramePreview = '';
+    }
+  }
+
+  $: if (!isLuma && veoLastFrameFile && veoDuration !== 8) {
+    veoDuration = 8;
   }
 
   // ─── Generation ─────────────────────────────────────────────────────
@@ -95,14 +130,26 @@
 
   async function generateVeo() {
     statusMessage = 'Submitting to Veo...';
+    if (veoLastFrameFile && !veoFirstFrameFile) {
+      error = 'Veo last frame requires a first frame too.';
+      cleanup();
+      return;
+    }
+    if (veoLastFrameFile && !String(currentModel).startsWith('veo-3.1')) {
+      error = 'Veo first/last frame generation requires a Veo 3.1 model.';
+      cleanup();
+      return;
+    }
 
     const startResult = await startVeoGeneration({
       apiKey,
       prompt: prompt.trim(),
       model: currentModel as VeoModel,
       aspectRatio: veoAspectRatio,
-      durationSeconds: veoDuration,
+      durationSeconds: veoLastFrameFile ? 8 : veoDuration,
       negativePrompt: negativePrompt.trim() || undefined,
+      firstFrame: veoFirstFrameFile || undefined,
+      lastFrame: veoLastFrameFile || undefined,
     });
 
     if (startResult.error || !startResult.operationName) {
@@ -254,10 +301,8 @@
   onDestroy(() => {
     cleanup();
     if (previewUrl) URL.revokeObjectURL(previewUrl);
-    // startFramePreview / endFramePreview were removed when first/last
-    // keyframe support was pulled from Luma. Referencing them here threw
-    // a ReferenceError during unmount that bricked the renderer after
-    // a successful Add to Library.
+    if (veoFirstFramePreview) URL.revokeObjectURL(veoFirstFramePreview);
+    if (veoLastFramePreview) URL.revokeObjectURL(veoLastFramePreview);
   });
 </script>
 
@@ -356,10 +401,9 @@
           <option value="9s">9s</option>
         </select>
       {:else}
-        <select bind:value={veoDuration} disabled={isGenerating}>
-          <option value={5}>5s</option>
+        <select bind:value={veoDuration} disabled={isGenerating || !!veoLastFrameFile}>
+          <option value={4}>4s</option>
           <option value={6}>6s</option>
-          <option value={7}>7s</option>
           <option value={8}>8s</option>
         </select>
       {/if}
@@ -386,6 +430,47 @@
         <input type="checkbox" bind:checked={loopEnabled} disabled={isGenerating} />
         <span>Seamless Loop</span>
       </label>
+    </div>
+
+  {:else}
+    <div class="veo-keyframes">
+      <div class="keyframe-slot">
+        <label class="keyframe-pick" for="veo-first-frame">
+          <span>First Frame</span>
+          <input
+            id="veo-first-frame"
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            onchange={(e) => setVeoFrame('first', e)}
+            disabled={isGenerating}
+          />
+        </label>
+        {#if veoFirstFramePreview}
+          <div class="keyframe-preview">
+            <img src={veoFirstFramePreview} alt="First frame" />
+            <button type="button" onclick={() => clearVeoFrame('first')} disabled={isGenerating}>Clear</button>
+          </div>
+        {/if}
+      </div>
+
+      <div class="keyframe-slot">
+        <label class="keyframe-pick" for="veo-last-frame">
+          <span>Last Frame</span>
+          <input
+            id="veo-last-frame"
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            onchange={(e) => setVeoFrame('last', e)}
+            disabled={isGenerating}
+          />
+        </label>
+        {#if veoLastFramePreview}
+          <div class="keyframe-preview">
+            <img src={veoLastFramePreview} alt="Last frame" />
+            <button type="button" onclick={() => clearVeoFrame('last')} disabled={isGenerating}>Clear</button>
+          </div>
+        {/if}
+      </div>
     </div>
   {/if}
 
@@ -626,6 +711,61 @@
 
   .loop-toggle input[type="checkbox"] {
     accent-color: #ff00aa;
+  }
+
+  .veo-keyframes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .keyframe-slot {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .keyframe-pick {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-size: 10px;
+    color: var(--text-muted, #888);
+    text-transform: uppercase;
+  }
+
+  .keyframe-pick input {
+    width: 100%;
+    color: var(--text-secondary, #aaa);
+    font-size: 10px;
+  }
+
+  .keyframe-preview {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 4px;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .keyframe-preview img {
+    width: 100%;
+    height: 44px;
+    object-fit: cover;
+    border-radius: 3px;
+    background: #000;
+    border: 1px solid #333;
+  }
+
+  .keyframe-preview button {
+    background: #222;
+    border: 1px solid #444;
+    color: var(--text-secondary, #aaa);
+    font-size: 10px;
+    border-radius: 3px;
+    padding: 3px 5px;
+    cursor: pointer;
   }
 
   .advanced-section {

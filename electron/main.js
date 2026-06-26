@@ -233,6 +233,8 @@ let sidecarProcess = null;
 let embeddedServerModule = null;
 const wledSockets = new Map();  // controllerId -> dgram.Socket
 let activeVideoConverterJob = null;
+const activeJpegSequenceJobs = new Map();
+const activeVideoLoopJobs = new Map();
 
 // Platform flags (used elsewhere in this file)
 const isWin = process.platform === 'win32';
@@ -353,6 +355,193 @@ function listImageSequenceFrames(folderPath) {
   };
 }
 
+function bytesToBuffer(bytes) {
+  if (Buffer.isBuffer(bytes)) return bytes;
+  if (bytes instanceof ArrayBuffer) return Buffer.from(bytes);
+  if (ArrayBuffer.isView(bytes)) return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (Array.isArray(bytes)) return Buffer.from(bytes);
+  throw new Error('Invalid bytes payload');
+}
+
+function safeJpegSequenceBaseName(name) {
+  return String(name || 'render')
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^a-zA-Z0-9._-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80) || 'render';
+}
+
+function startJpegSequenceJob(args = {}) {
+  const jobId = String(args.jobId || '').trim();
+  if (!jobId) throw new Error('Missing JPEG sequence job id.');
+  if (activeJpegSequenceJobs.has(jobId)) throw new Error('JPEG sequence job already exists.');
+
+  const folderPath = assertAbsolutePath(args.folderPath, 'JPEG sequence folder');
+  fs.mkdirSync(folderPath, { recursive: true });
+  if (!fs.statSync(folderPath).isDirectory()) throw new Error('JPEG sequence target is not a folder.');
+
+  const width = Math.round(clampNumber(args.width, 1, 16384, 0));
+  const height = Math.round(clampNumber(args.height, 1, 16384, 0));
+  const fps = clampNumber(args.fps, 1, 240, 30);
+  const totalFrames = Math.round(clampNumber(args.totalFrames, 1, 10_000_000, 1));
+  if (!width || !height) throw new Error('Invalid JPEG sequence dimensions.');
+
+  const baseName = safeJpegSequenceBaseName(args.baseName);
+  const outputPattern = path.join(folderPath, `${baseName}_%06d.jpg`);
+  const ffmpegPath = resolveFfmpegPath();
+  const ffmpegArgs = [
+    '-hide_banner',
+    '-loglevel', 'warning',
+    '-y',
+    '-f', 'rawvideo',
+    '-pix_fmt', 'rgba',
+    '-s:v', `${width}x${height}`,
+    '-framerate', String(fps),
+    '-i', 'pipe:0',
+    '-frames:v', String(totalFrames),
+    '-c:v', 'mjpeg',
+    '-q:v', '2',
+    '-pix_fmt', 'yuvj444p',
+    '-f', 'image2',
+    '-start_number', '0',
+    outputPattern,
+  ];
+
+  const child = spawn(ffmpegPath, ffmpegArgs, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] });
+  const job = {
+    id: jobId,
+    process: child,
+    folderPath,
+    baseName,
+    width,
+    height,
+    totalFrames,
+    frameBytes: width * height * 4,
+    writtenFrames: 0,
+    stderr: '',
+    settled: false,
+    cancelled: false,
+    exitCode: null,
+    exitSignal: null,
+    exitPromise: null,
+  };
+
+  job.exitPromise = new Promise((resolve) => {
+    child.stderr?.setEncoding?.('utf8');
+    child.stderr?.on('data', (chunk) => {
+      job.stderr += String(chunk);
+      if (job.stderr.length > 12_000) job.stderr = job.stderr.slice(-12_000);
+    });
+    child.on('error', (err) => {
+      job.stderr += `\n${err?.message || err}`;
+    });
+    child.on('close', (code, signal) => {
+      job.settled = true;
+      job.exitCode = code;
+      job.exitSignal = signal;
+      resolve({ code, signal });
+    });
+  });
+
+  activeJpegSequenceJobs.set(jobId, job);
+  return {
+    jobId,
+    outputPattern,
+    ffmpegPath,
+  };
+}
+
+async function writeJpegSequenceFrame(args = {}) {
+  const jobId = String(args.jobId || '').trim();
+  const job = activeJpegSequenceJobs.get(jobId);
+  if (!job) throw new Error('JPEG sequence job is not active.');
+  if (job.settled) {
+    throw new Error(`JPEG sequence encoder exited early.${job.stderr ? ` ${job.stderr.trim()}` : ''}`);
+  }
+  const buffer = bytesToBuffer(args.bytes);
+  if (buffer.byteLength !== job.frameBytes) {
+    throw new Error(`JPEG sequence frame has ${buffer.byteLength} bytes; expected ${job.frameBytes}.`);
+  }
+
+  const frameIndex = Math.round(clampNumber(args.frameIndex, 0, Number.MAX_SAFE_INTEGER, job.writtenFrames));
+  if (frameIndex !== job.writtenFrames) {
+    throw new Error(`JPEG sequence frame order mismatch: got ${frameIndex}, expected ${job.writtenFrames}.`);
+  }
+
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      job.process.stdin?.off?.('error', onError);
+      job.process.off?.('close', onClose);
+    };
+    const finish = (err) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (err) reject(err);
+      else resolve();
+    };
+    const onError = (err) => finish(err);
+    const onClose = () => finish(new Error(`JPEG sequence encoder closed while writing frame ${frameIndex}.`));
+    job.process.stdin?.once?.('error', onError);
+    job.process.once?.('close', onClose);
+    job.process.stdin.write(buffer, (err) => finish(err));
+  });
+
+  job.writtenFrames++;
+  return { success: true, writtenFrames: job.writtenFrames };
+}
+
+async function finishJpegSequenceJob(jobIdInput) {
+  const jobId = String(jobIdInput || '').trim();
+  const job = activeJpegSequenceJobs.get(jobId);
+  if (!job) return { success: true, alreadyFinished: true };
+
+  try {
+    if (!job.process.stdin.destroyed && !job.process.stdin.writableEnded) {
+      job.process.stdin.end();
+    }
+  } catch { /* ignore */ }
+
+  const { code, signal } = await job.exitPromise;
+  activeJpegSequenceJobs.delete(jobId);
+
+  if (job.cancelled) return { success: false, cancelled: true };
+  if (code !== 0) {
+    const detail = job.stderr.trim() || `exit code ${code}${signal ? ` (${signal})` : ''}`;
+    throw new Error(`JPEG sequence encoder failed: ${detail}`);
+  }
+  if (job.writtenFrames !== job.totalFrames) {
+    throw new Error(`JPEG sequence ended after ${job.writtenFrames} frames; expected ${job.totalFrames}.`);
+  }
+  return {
+    success: true,
+    path: job.folderPath,
+    baseName: job.baseName,
+    frames: job.writtenFrames,
+  };
+}
+
+async function cancelJpegSequenceJob(jobIdInput) {
+  const jobId = String(jobIdInput || '').trim();
+  const job = activeJpegSequenceJobs.get(jobId);
+  if (!job) return { success: true };
+  job.cancelled = true;
+  try {
+    job.process.stdin?.destroy?.();
+  } catch { /* ignore */ }
+  try {
+    job.process.kill('SIGTERM');
+  } catch { /* ignore */ }
+  setTimeout(() => {
+    if (activeJpegSequenceJobs.get(jobId) === job) {
+      try { job.process.kill('SIGKILL'); } catch { /* ignore */ }
+      activeJpegSequenceJobs.delete(jobId);
+    }
+  }, 1500).unref?.();
+  return { success: true };
+}
+
 function quoteFfconcatPath(filePath) {
   const normalized = path.resolve(filePath).replace(/\\/g, '/');
   return `'${normalized.replace(/'/g, "'\\''")}'`;
@@ -371,6 +560,371 @@ function makeConcatList(frames, fps) {
   lines.push(`file ${quoteFfconcatPath(frames[frames.length - 1].path)}`);
   fs.writeFileSync(listPath, `${lines.join('\n')}\n`, 'utf8');
   return { tmpDir, listPath };
+}
+
+const LOOP_TRANSITIONS = new Set([
+  'fade', 'dissolve', 'pixelize',
+  'wipeleft', 'wiperight', 'wipeup', 'wipedown',
+  'slideleft', 'slideright', 'slideup', 'slidedown',
+  'smoothleft', 'smoothright', 'smoothup', 'smoothdown',
+  'circlecrop', 'circleclose', 'circleopen',
+  'radial', 'horzclose', 'horzopen', 'vertclose', 'vertopen',
+]);
+
+function safeLoopTransition(value) {
+  const name = String(value || 'fade').trim();
+  return LOOP_TRANSITIONS.has(name) ? name : 'fade';
+}
+
+function evenDimension(value, fallback) {
+  const n = Math.round(clampNumber(value, 2, 8192, fallback));
+  return Math.max(2, n % 2 === 0 ? n : n - 1);
+}
+
+function extensionFromVideoMime(mime) {
+  const m = String(mime || '').toLowerCase();
+  if (m.includes('webm')) return '.webm';
+  if (m.includes('quicktime')) return '.mov';
+  return '.mp4';
+}
+
+function safeGeneratedVideoFilename(filename, mime = 'video/mp4') {
+  const parsed = path.parse(String(filename || 'asset'));
+  const base = (parsed.name || 'asset')
+    .replace(/[^a-zA-Z0-9._ -]/g, '_')
+    .replace(/\s+/g, '_')
+    .slice(0, 80) || 'asset';
+  const ext = (parsed.ext && parsed.ext.length <= 12)
+    ? parsed.ext.replace(/[^a-zA-Z0-9.]/g, '')
+    : extensionFromVideoMime(mime);
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `${base}_${stamp}_${rand}${ext || extensionFromVideoMime(mime)}`;
+}
+
+function safeGeneratedVideoPath(filename) {
+  const dir = path.join(app.getPath('userData'), 'project-assets');
+  fs.mkdirSync(dir, { recursive: true });
+  return path.join(dir, safeGeneratedVideoFilename(filename || 'Loop.mp4', 'video/mp4'));
+}
+
+function videoBitrateForSize(width, height) {
+  const pixels = Math.max(0, Number(width) || 0) * Math.max(0, Number(height) || 0);
+  if (pixels >= 7_000_000) return '65000k'; // 4K-ish
+  if (pixels >= 3_000_000) return '42000k';
+  if (pixels >= 1_800_000) return '26000k'; // 1080p-ish
+  if (pixels >= 900_000) return '16000k';
+  return '10000k';
+}
+
+function videoLoopEncoderArgs(outputPath, meta = {}, preferHardware = true) {
+  const common = [
+    '-pix_fmt', 'yuv420p',
+    '-movflags', '+faststart',
+    '-max_muxing_queue_size', '1024',
+    '-an',
+    outputPath,
+  ];
+
+  if (preferHardware && process.platform === 'darwin') {
+    return [
+      '-map', '[outv]',
+      '-c:v', 'h264_videotoolbox',
+      '-b:v', videoBitrateForSize(meta.width, meta.height),
+      '-profile:v', 'high',
+      '-allow_sw', '1',
+      ...common,
+    ];
+  }
+
+  return [
+    '-map', '[outv]',
+    '-c:v', 'libx264',
+    '-preset', 'ultrafast',
+    '-crf', '18',
+    ...common,
+  ];
+}
+
+function writeTempVideoFile(prefix, filename, bytes) {
+  const tmpDir = fs.mkdtempSync(path.join(app.getPath('temp'), prefix));
+  const filePath = path.join(tmpDir, filename);
+  fs.writeFileSync(filePath, bytesToBuffer(bytes));
+  return { tmpDir, filePath };
+}
+
+function resolveLoopInput(args = {}, fieldPrefix = 'input') {
+  const pathKey = `${fieldPrefix}Path`;
+  const bytesKey = `${fieldPrefix}Bytes`;
+  if (typeof args[pathKey] === 'string' && args[pathKey]) {
+    const filePath = assertAbsolutePath(args[pathKey], `${fieldPrefix} path`);
+    if (!fs.existsSync(filePath)) throw new Error(`${fieldPrefix} video not found.`);
+    return { filePath, cleanup: () => {} };
+  }
+
+  if (args[bytesKey]) {
+    const staged = writeTempVideoFile(`ghost-arcade-${fieldPrefix}-`, `${fieldPrefix}.mp4`, args[bytesKey]);
+    return {
+      filePath: staged.filePath,
+      cleanup: () => {
+        try { fs.rmSync(staged.tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      },
+    };
+  }
+
+  throw new Error(`Missing ${fieldPrefix} video.`);
+}
+
+function probeVideoMetadata(inputPath) {
+  return new Promise((resolve) => {
+    const ffmpegPath = resolveFfmpegPath();
+    const child = spawn(ffmpegPath, ['-hide_banner', '-i', inputPath], { windowsHide: true });
+    const meta = { duration: 0, width: 0, height: 0 };
+    let settled = false;
+    let timeout = null;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+      try { child.kill('SIGKILL'); } catch { /* ffmpeg usually exits by itself */ }
+      resolve(meta);
+    };
+
+    timeout = setTimeout(settle, 15000);
+    timeout.unref?.();
+
+    child.stderr?.setEncoding?.('utf8');
+    child.stderr?.on('data', (chunk) => {
+      for (const rawLine of String(chunk).split(/\r?\n/)) {
+        const line = rawLine.trim();
+        const duration = parseDurationLine(line);
+        if (duration && duration > 0) meta.duration = duration;
+
+        if (line.includes('Video:')) {
+          const dim = line.match(/,\s*(\d{2,5})x(\d{2,5})(?:\s|,|\[)/);
+          if (dim) {
+            const w = Number(dim[1]);
+            const h = Number(dim[2]);
+            if (Number.isFinite(w) && Number.isFinite(h)) {
+              meta.width = w;
+              meta.height = h;
+            }
+          }
+        }
+
+        if (meta.duration > 0 && meta.width > 0 && meta.height > 0) {
+          settle();
+        }
+      }
+    });
+    child.on('error', settle);
+    child.on('close', () => {
+      settle();
+    });
+  });
+}
+
+function probeVideoDurationByDecode(inputPath) {
+  return new Promise((resolve) => {
+    const ffmpegPath = resolveFfmpegPath();
+    const child = spawn(ffmpegPath, [
+      '-hide_banner',
+      '-nostdin',
+      '-i', inputPath,
+      '-map', '0:v:0',
+      '-f', 'null',
+      '-',
+    ], { windowsHide: true });
+
+    let bestDuration = 0;
+    let settled = false;
+    let timeout = null;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+      try { child.kill('SIGKILL'); } catch { /* ffmpeg usually exits by itself */ }
+      resolve(bestDuration);
+    };
+
+    timeout = setTimeout(settle, 5 * 60 * 1000);
+    timeout.unref?.();
+
+    const ingestLine = (line) => {
+      const duration = parseDurationLine(line);
+      if (duration && duration > 0) bestDuration = Math.max(bestDuration, duration);
+
+      const timeMatch = String(line || '').match(/time=\s*(\d+:\d+:\d+(?:\.\d+)?)/);
+      if (timeMatch) {
+        const seconds = parseFfmpegClock(timeMatch[1]);
+        if (seconds !== null && seconds > 0) bestDuration = Math.max(bestDuration, seconds);
+      }
+    };
+
+    child.stderr?.setEncoding?.('utf8');
+    child.stderr?.on('data', (chunk) => {
+      for (const rawLine of String(chunk).split(/\r?\n/)) {
+        ingestLine(rawLine.trim());
+      }
+    });
+    child.stdout?.setEncoding?.('utf8');
+    child.stdout?.on('data', (chunk) => {
+      for (const rawLine of String(chunk).split(/\r?\n/)) {
+        ingestLine(rawLine.trim());
+      }
+    });
+    child.on('error', settle);
+    child.on('close', settle);
+  });
+}
+
+function publishVideoLoopProgress(sender, payload) {
+  if (!sender || sender.isDestroyed?.()) return;
+  sender.send('video-loop-progress', {
+    ...payload,
+    progress: clampNumber(payload.progress ?? 0, 0, 1, 0),
+  });
+}
+
+function spawnFfmpegVideoLoop({
+  sender,
+  jobId,
+  args,
+  durationSec,
+  outputPath,
+  startMessage,
+  completeMessage,
+}) {
+  if (!jobId) throw new Error('Missing video loop job id.');
+  if (activeVideoLoopJobs.has(jobId)) throw new Error('A video loop job with this id is already running.');
+
+  return new Promise((resolve, reject) => {
+    const ffmpegPath = resolveFfmpegPath();
+    const child = spawn(ffmpegPath, args, { windowsHide: true });
+    const job = { id: jobId, process: child, cancelled: false };
+    activeVideoLoopJobs.set(jobId, job);
+
+    let stderr = '';
+    let settled = false;
+    let bestProgress = 0;
+    let detectedDuration = durationSec > 0 ? durationSec : 0;
+    const startedAt = Date.now();
+
+    const settle = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      activeVideoLoopJobs.delete(jobId);
+      fn(value);
+    };
+
+    const send = (progress, message, stage = 'rendering') => {
+      const bounded = stage === 'rendering'
+        ? clampNumber(progress, 0, 0.99, 0)
+        : clampNumber(progress, 0, 1, 0);
+      if (bounded >= bestProgress || stage !== 'rendering') {
+        bestProgress = stage === 'rendering'
+          ? Math.max(bestProgress, bounded)
+          : bounded;
+        publishVideoLoopProgress(sender, { jobId, stage, progress: bestProgress, message, outputPath });
+      }
+    };
+
+    const sendPercent = (rawProgress) => {
+      const bounded = clampNumber(rawProgress, 0, 0.99, 0);
+      const pct = Math.max(1, Math.min(99, Math.floor(bounded * 100)));
+      send(bounded, `Encoding loop (${pct}%)...`);
+    };
+
+    publishVideoLoopProgress(sender, {
+      jobId,
+      stage: 'rendering',
+      progress: 0.01,
+      message: startMessage,
+      outputPath,
+    });
+
+    const heartbeat = setInterval(() => {
+      const elapsed = (Date.now() - startedAt) / 1000;
+      const drift = detectedDuration > 0
+        ? Math.min(0.96, elapsed / Math.max(1, detectedDuration))
+        : Math.min(0.88, 0.04 + (1 - Math.exp(-elapsed / 90)) * 0.84);
+      send(drift, `Encoding loop (${Math.floor(elapsed)}s elapsed)...`);
+    }, 1000);
+    heartbeat.unref?.();
+
+    child.stderr?.setEncoding?.('utf8');
+    child.stderr?.on('data', (chunk) => {
+      const text = String(chunk);
+      stderr += text;
+      if (stderr.length > 12_000) stderr = stderr.slice(-12_000);
+
+      for (const rawLine of text.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line) continue;
+
+        const duration = parseDurationLine(line);
+        if (duration && duration > 0) detectedDuration = duration;
+
+        const kv = line.match(/^([A-Za-z_]+)=(.*)$/);
+        if (kv) {
+          const key = kv[1];
+          const value = kv[2];
+          if (key === 'progress' && value === 'end') {
+            send(0.99, 'Finalizing loop...');
+          } else if (key === 'out_time_ms' || key === 'out_time_us') {
+            const raw = Number(value);
+            if (Number.isFinite(raw) && detectedDuration > 0) {
+              const seconds = raw > 10_000 ? raw / 1_000_000 : raw / 1000;
+              sendPercent(seconds / detectedDuration);
+            }
+          } else if (key === 'out_time') {
+            const seconds = parseFfmpegClock(value);
+            if (seconds !== null && detectedDuration > 0) sendPercent(seconds / detectedDuration);
+          }
+          continue;
+        }
+
+        const timeMatch = line.match(/time=\s*(\d+:\d+:\d+(?:\.\d+)?)/);
+        if (timeMatch && detectedDuration > 0) {
+          const seconds = parseFfmpegClock(timeMatch[1]);
+          if (seconds !== null) sendPercent(seconds / detectedDuration);
+        }
+      }
+    });
+
+    child.on('error', (err) => {
+      clearInterval(heartbeat);
+      settle(reject, new Error(`FFmpeg failed to start. ${err?.message || err}`));
+    });
+
+    child.on('close', (code, signal) => {
+      clearInterval(heartbeat);
+      if (job.cancelled) {
+        publishVideoLoopProgress(sender, {
+          jobId,
+          stage: 'error',
+          progress: bestProgress,
+          message: 'Loop creation cancelled.',
+          outputPath,
+        });
+        settle(reject, new Error('Loop creation cancelled.'));
+        return;
+      }
+      if (code !== 0) {
+        const tail = stderr.split(/\r?\n/).filter(Boolean).slice(-8).join('\n');
+        settle(reject, new Error(`FFmpeg exited with code ${code}${signal ? ` (${signal})` : ''}.${tail ? `\n${tail}` : ''}`));
+        return;
+      }
+      publishVideoLoopProgress(sender, {
+        jobId,
+        stage: 'complete',
+        progress: 1,
+        message: completeMessage,
+        outputPath,
+      });
+      settle(resolve, { success: true, outputPath, ffmpegPath });
+    });
+  });
 }
 
 function publishVideoConverterProgress(sender, payload) {
@@ -3353,13 +3907,19 @@ function registerIpcHandlers() {
   // --- Binary PUT from base64 ---
   ipcMain.handle('http_put_binary', async (_, args) => {
     try {
-      const { url, headers, data } = args;
+      const { url, headers, data, base64Body, contentType } = args;
       validateProxyUrl(url);
-      const buf = Buffer.from(data, 'base64');
+      const encoded = data || base64Body;
+      if (typeof encoded !== 'string') throw new Error('Missing binary payload');
+      const buf = Buffer.from(encoded, 'base64');
       if (buf.length > 100 * 1024 * 1024) throw new Error('Payload too large (100MB max)');
+      const requestHeaders = { ...(headers || {}) };
+      if (!requestHeaders['Content-Type'] && !requestHeaders['content-type']) {
+        requestHeaders['Content-Type'] = contentType || 'application/octet-stream';
+      }
       const resp = await fetch(url, {
         method: 'PUT',
-        headers: { ...(headers || {}), 'Content-Type': 'application/octet-stream' },
+        headers: requestHeaders,
         body: buf,
         signal: AbortSignal.timeout(60000),
       });
@@ -3380,6 +3940,265 @@ function registerIpcHandlers() {
     const dirPath = result.filePaths[0];
     const dirName = path.basename(dirPath);
     return { path: dirPath, name: dirName };
+  });
+
+  ipcMain.handle('jpeg_sequence_start', async (_, args = {}) => {
+    try {
+      const job = startJpegSequenceJob(args);
+      return { success: true, ...job };
+    } catch (err) {
+      console.error('[Main] jpeg_sequence_start error:', err?.message || err);
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('jpeg_sequence_write_frame', async (_, args = {}) => {
+    try {
+      return await writeJpegSequenceFrame(args);
+    } catch (err) {
+      console.error('[Main] jpeg_sequence_write_frame error:', err?.message || err);
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('jpeg_sequence_finish', async (_, args = {}) => {
+    try {
+      return await finishJpegSequenceJob(args.jobId);
+    } catch (err) {
+      console.error('[Main] jpeg_sequence_finish error:', err?.message || err);
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('jpeg_sequence_cancel', async (_, args = {}) => {
+    try {
+      return await cancelJpegSequenceJob(args.jobId);
+    } catch (err) {
+      console.error('[Main] jpeg_sequence_cancel error:', err?.message || err);
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
+  // --- Native FFmpeg video loop creation ---
+  ipcMain.handle('video_loop_create', async (event, args = {}) => {
+    let input = null;
+    let outputPath = '';
+    try {
+      const jobId = typeof args.jobId === 'string' && args.jobId ? args.jobId : `loop-${Date.now().toString(36)}`;
+      input = resolveLoopInput(args, 'input');
+      const outputName = typeof args.outputName === 'string' && args.outputName
+        ? args.outputName
+        : `${sanitizeOutputBase(args.inputName, 'Loop')} (Loop).mp4`;
+      outputPath = safeGeneratedVideoPath(outputName);
+
+      publishVideoLoopProgress(event.sender, {
+        jobId,
+        stage: 'processing',
+        progress: 0.02,
+        message: 'Preparing native loop encoder...',
+        outputPath,
+      });
+
+      const meta = await probeVideoMetadata(input.filePath);
+      let duration = meta.duration;
+      if (!Number.isFinite(duration) || duration <= 0) {
+        publishVideoLoopProgress(event.sender, {
+          jobId,
+          stage: 'processing',
+          progress: 0.04,
+          message: 'Scanning video duration...',
+          outputPath,
+        });
+        duration = await probeVideoDurationByDecode(input.filePath);
+        meta.duration = duration;
+      }
+      if (!Number.isFinite(duration) || duration <= 0) {
+        throw new Error('Could not detect video duration.');
+      }
+      if (duration < 1) {
+        throw new Error(`Video is too short to loop (${duration.toFixed(2)}s).`);
+      }
+
+      const midpoint = duration / 2;
+      const secondHalfDuration = duration - midpoint;
+      const fadeDuration = clampNumber(
+        args.crossfadeDuration,
+        0.1,
+        Math.min(3, midpoint * 0.4),
+        0.5,
+      );
+      const xfadeOffset = Math.max(0, secondHalfDuration - fadeDuration);
+      const transition = safeLoopTransition(args.transitionType);
+      const normalize = 'fps=30,scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1,format=yuv420p';
+      const xfadeFilter =
+        `[0:v]trim=start=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,${normalize}[v0];` +
+        `[1:v]trim=end=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,${normalize}[v1];` +
+        `[v0][v1]xfade=transition=${transition}:duration=${fadeDuration.toFixed(3)}:offset=${xfadeOffset.toFixed(3)}[outv]`;
+
+      const makeXfadeArgs = (preferHardware) => [
+        '-hide_banner',
+        '-nostdin',
+        '-y',
+        '-progress', 'pipe:2',
+        '-nostats',
+        '-i', input.filePath,
+        '-i', input.filePath,
+        '-filter_complex', xfadeFilter,
+        ...videoLoopEncoderArgs(outputPath, meta, preferHardware),
+      ];
+
+      try {
+        try {
+          await spawnFfmpegVideoLoop({
+            sender: event.sender,
+            jobId,
+            durationSec: duration,
+            outputPath,
+            startMessage: process.platform === 'darwin'
+              ? 'Creating loop with hardware H.264...'
+              : 'Creating seamless loop with native FFmpeg...',
+            completeMessage: 'Loop video complete.',
+            args: makeXfadeArgs(true),
+          });
+        } catch (hardwareErr) {
+          if (process.platform !== 'darwin') throw hardwareErr;
+          console.warn('[VideoLoop] hardware encode failed, retrying software x264:', hardwareErr?.message || hardwareErr);
+          try { fs.rmSync(outputPath, { force: true }); } catch { /* ignore */ }
+          await spawnFfmpegVideoLoop({
+            sender: event.sender,
+            jobId,
+            durationSec: duration,
+            outputPath,
+            startMessage: 'Hardware encode failed; retrying software H.264...',
+            completeMessage: 'Loop video complete.',
+            args: makeXfadeArgs(false),
+          });
+        }
+      } catch (xfadeErr) {
+        console.warn('[VideoLoop] xfade pass failed, trying concat fallback:', xfadeErr?.message || xfadeErr);
+        try { fs.rmSync(outputPath, { force: true }); } catch { /* ignore */ }
+        const concatFilter =
+          `[0:v]trim=start=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,${normalize}[v0];` +
+          `[1:v]trim=end=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,${normalize}[v1];` +
+          `[v0][v1]concat=n=2:v=1:a=0[outv]`;
+        await spawnFfmpegVideoLoop({
+          sender: event.sender,
+          jobId,
+          durationSec: duration,
+          outputPath,
+          startMessage: 'Crossfade failed; creating hard-cut loop...',
+          completeMessage: 'Loop video complete.',
+          args: [
+            '-hide_banner',
+            '-nostdin',
+            '-y',
+            '-progress', 'pipe:2',
+            '-nostats',
+            '-i', input.filePath,
+            '-i', input.filePath,
+            '-filter_complex', concatFilter,
+            ...videoLoopEncoderArgs(outputPath, meta, false),
+          ],
+        });
+      }
+
+      const stat = fs.statSync(outputPath);
+      return { success: true, outputPath, size: stat.size, duration };
+    } catch (err) {
+      if (outputPath) {
+        try { fs.rmSync(outputPath, { force: true }); } catch { /* ignore */ }
+      }
+      console.error('[Main] video_loop_create error:', err?.message || err);
+      return { success: false, error: err?.message || String(err) };
+    } finally {
+      try { input?.cleanup?.(); } catch { /* ignore */ }
+    }
+  });
+
+  ipcMain.handle('video_append_segment', async (event, args = {}) => {
+    let input = null;
+    let segment = null;
+    let outputPath = '';
+    try {
+      const jobId = typeof args.jobId === 'string' && args.jobId ? args.jobId : `append-${Date.now().toString(36)}`;
+      input = resolveLoopInput(args, 'input');
+      segment = resolveLoopInput(args, 'segment');
+      const outputName = typeof args.outputName === 'string' && args.outputName
+        ? args.outputName
+        : `${sanitizeOutputBase(args.inputName, 'Video')} (Assembled).mp4`;
+      outputPath = safeGeneratedVideoPath(outputName);
+
+      publishVideoLoopProgress(event.sender, {
+        jobId,
+        stage: 'processing',
+        progress: 0.02,
+        message: 'Preparing native video assembly...',
+        outputPath,
+      });
+
+      const inputMeta = await probeVideoMetadata(input.filePath);
+      const segmentMeta = await probeVideoMetadata(segment.filePath);
+      if (!inputMeta.duration) inputMeta.duration = await probeVideoDurationByDecode(input.filePath);
+      if (!segmentMeta.duration) segmentMeta.duration = await probeVideoDurationByDecode(segment.filePath);
+
+      const targetW = evenDimension(args.width || inputMeta.width, 1920);
+      const targetH = evenDimension(args.height || inputMeta.height, 1080);
+      const durationSec = Math.max(1, (inputMeta.duration || 0) + (segmentMeta.duration || 0));
+      const fitToTarget = `fps=30,scale=${targetW}:${targetH}:force_original_aspect_ratio=decrease,` +
+        `pad=${targetW}:${targetH}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p`;
+
+      const appendArgs = (preferHardware) => [
+        '-hide_banner',
+        '-nostdin',
+        '-y',
+        '-progress', 'pipe:2',
+        '-nostats',
+        '-i', input.filePath,
+        '-i', segment.filePath,
+        '-filter_complex',
+        `[0:v]${fitToTarget}[v0];[1:v]${fitToTarget}[v1];[v0][v1]concat=n=2:v=1:a=0[outv]`,
+        ...videoLoopEncoderArgs(outputPath, { width: targetW, height: targetH }, preferHardware),
+      ];
+
+      try {
+        await spawnFfmpegVideoLoop({
+          sender: event.sender,
+          jobId,
+          durationSec,
+          outputPath,
+          startMessage: process.platform === 'darwin'
+            ? 'Appending segment with hardware H.264...'
+            : 'Appending segment with native FFmpeg...',
+          completeMessage: 'Video assembly complete.',
+          args: appendArgs(true),
+        });
+      } catch (hardwareErr) {
+        if (process.platform !== 'darwin') throw hardwareErr;
+        console.warn('[VideoAppend] hardware encode failed, retrying software x264:', hardwareErr?.message || hardwareErr);
+        try { fs.rmSync(outputPath, { force: true }); } catch { /* ignore */ }
+        await spawnFfmpegVideoLoop({
+          sender: event.sender,
+          jobId,
+          durationSec,
+          outputPath,
+          startMessage: 'Hardware encode failed; retrying software H.264...',
+          completeMessage: 'Video assembly complete.',
+          args: appendArgs(false),
+        });
+      }
+
+      const stat = fs.statSync(outputPath);
+      return { success: true, outputPath, size: stat.size, width: targetW, height: targetH };
+    } catch (err) {
+      if (outputPath) {
+        try { fs.rmSync(outputPath, { force: true }); } catch { /* ignore */ }
+      }
+      console.error('[Main] video_append_segment error:', err?.message || err);
+      return { success: false, error: err?.message || String(err) };
+    } finally {
+      try { input?.cleanup?.(); } catch { /* ignore */ }
+      try { segment?.cleanup?.(); } catch { /* ignore */ }
+    }
   });
 
   // --- Native FFmpeg video converter ---

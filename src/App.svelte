@@ -84,6 +84,22 @@
   // reactive blocks like syncVJClips.
   import { snapshots as snapshotsStore } from './lib/stores/snapshots';
   import { mediaLibrary } from './lib/stores/media';
+  import {
+    PHONE_CAMERA_MEDIA_ID,
+    PHONE_CAMERA_SOURCE_PREFIX,
+    defaultPhoneVisionCapabilities,
+    defaultPhoneVisionState,
+    phoneVision,
+    type PhoneVisionAuraPreset,
+    type PhoneVisionCalibrationPoint,
+    type PhoneVisionCapabilities,
+    type PhoneVisionCaptureProfile,
+    type PhoneVisionDepthPipeline,
+    type PhoneVisionNativeFrame,
+    type PhoneVisionNativeRasterSample,
+    type PhoneVisionPointCloudPreset,
+    type PhoneVisionSegmentationPipeline,
+  } from './lib/stores/phoneVision';
   import { history, canUndo, canRedo } from './lib/stores/history';
   import { recentFiles } from './lib/stores/recentFiles';
   import { initLicense, destroyLicense } from './lib/stores/license';
@@ -96,8 +112,8 @@
   import { startSpoutScanner, stopSpoutScanner } from './lib/stores/spout';
   import { preloadShaderLibrary, populateShaderListForSync } from './lib/preload';
   import { invoke, isMac, isDesktopApp, openExternalUrl } from './lib/bridge';
-  import type { Point2D, BezierPoint, Layer, WarpCorners } from './lib/types';
-  import { generateUUID } from './lib/types';
+  import type { Point2D, BezierPoint, Layer, WarpCorners, MediaSource, LayerShapeParams, LayerShapeType } from './lib/types';
+  import { createDefaultCorners, generateUUID } from './lib/types';
   import { createDefaultFreehandLine, createDefaultPointClickLine } from './lib/lines/types';
   // qrcode is lazy-loaded inside generateQRCode() so it stays out of the
   // main App chunk — it's only needed when the mobile-connect panel opens.
@@ -442,6 +458,7 @@
       autosaveInterval = null;
     }
     viewportEl?.removeEventListener('wheel', handleViewportWheel);
+    destroyPhoneVisionSession(true);
   });
 
   // Recovery modal actions
@@ -1760,6 +1777,791 @@
   // Connect to WebSocket server as desktop host
   let connectionError = '';
 
+  let phoneVisionPeer: RTCPeerConnection | null = null;
+  let phoneVisionSessionId: string | null = null;
+  let phoneVisionVideoEl: HTMLVideoElement | null = null;
+  let phoneVisionDataChannel: RTCDataChannel | null = null;
+  let pendingPhoneVisionIce: RTCIceCandidateInit[] = [];
+
+  function isPhoneVisionRecord(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  function clampPhoneVision01(value: unknown): number {
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0;
+  }
+
+  function phoneVisionFacingMode(raw: Record<string, unknown>): 'environment' | 'user' {
+    return raw.facingMode === 'user' ? 'user' : 'environment';
+  }
+
+  function phoneVisionCaptureProfileFrom(raw: unknown): PhoneVisionCaptureProfile {
+    return raw === 'rgb-fast' || raw === 'person-aura' || raw === 'lidar-depth' || raw === 'object-relief'
+      ? raw
+      : 'object-relief';
+  }
+
+  function phoneVisionDepthPipelineFrom(raw: unknown, fallback: PhoneVisionDepthPipeline): PhoneVisionDepthPipeline {
+    return raw === 'none' || raw === 'image-estimated' || raw === 'native-depth'
+      ? raw
+      : fallback;
+  }
+
+  function phoneVisionSegmentationPipelineFrom(
+    raw: unknown,
+    fallback: PhoneVisionSegmentationPipeline,
+  ): PhoneVisionSegmentationPipeline {
+    return raw === 'none' || raw === 'person-mask' || raw === 'object-edge'
+      ? raw
+      : fallback;
+  }
+
+  function phoneVisionCapabilitiesFrom(raw: unknown, facingMode: 'environment' | 'user'): PhoneVisionCapabilities {
+    const fallback = defaultPhoneVisionCapabilities(facingMode);
+    if (!isPhoneVisionRecord(raw)) return fallback;
+    const captureProfile = phoneVisionCaptureProfileFrom(raw.captureProfile ?? fallback.captureProfile);
+    const profiledFallback = defaultPhoneVisionCapabilities(facingMode, captureProfile);
+    const depthPipeline = phoneVisionDepthPipelineFrom(raw.depthPipeline, profiledFallback.depthPipeline);
+    const segmentationPipeline = phoneVisionSegmentationPipelineFrom(raw.segmentationPipeline, profiledFallback.segmentationPipeline);
+    const nativeDepth = raw.nativeDepth === true || depthPipeline === 'native-depth';
+    return {
+      transport: raw.transport === 'browser-rtc' ? 'browser-rtc' : 'native-rtc',
+      captureProfile,
+      depthPipeline,
+      segmentationPipeline,
+      color: raw.color !== false,
+      depth: raw.depth === true || depthPipeline !== 'none',
+      nativeDepth,
+      segmentation: raw.segmentation === true || segmentationPipeline !== 'none',
+      calibration: raw.calibration !== false,
+      facingMode: raw.facingMode === 'user' ? 'user' : facingMode,
+      width: Number.isFinite(Number(raw.width)) ? Math.max(1, Math.floor(Number(raw.width))) : profiledFallback.width,
+      height: Number.isFinite(Number(raw.height)) ? Math.max(1, Math.floor(Number(raw.height))) : profiledFallback.height,
+      frameRate: Number.isFinite(Number(raw.frameRate)) ? Math.max(1, Math.min(120, Number(raw.frameRate))) : profiledFallback.frameRate,
+    };
+  }
+
+  function phoneVisionRasterSampleFrom(raw: unknown, allowedFormats: string[]): PhoneVisionNativeRasterSample | undefined {
+    if (!isPhoneVisionRecord(raw)) return undefined;
+    const width = Math.floor(Number(raw.width));
+    const height = Math.floor(Number(raw.height));
+    const data = typeof raw.data === 'string' ? raw.data : '';
+    const format = typeof raw.format === 'string' ? raw.format : '';
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return undefined;
+    if (width > 256 || height > 256 || !allowedFormats.includes(format)) return undefined;
+    if (!data || data.length > width * height * 4) return undefined;
+    const sample: PhoneVisionNativeRasterSample = {
+      kind: typeof raw.kind === 'string' ? raw.kind : 'sample',
+      format,
+      width,
+      height,
+      timestamp: Number.isFinite(Number(raw.timestamp)) ? Number(raw.timestamp) : Date.now(),
+      data,
+    };
+    if (Number.isFinite(Number(raw.minDepth))) sample.minDepth = Number(raw.minDepth);
+    if (Number.isFinite(Number(raw.maxDepth))) sample.maxDepth = Number(raw.maxDepth);
+    return sample;
+  }
+
+  function phoneVisionNativeFrameFrom(raw: Record<string, unknown>): PhoneVisionNativeFrame {
+    const depthSample = phoneVisionRasterSampleFrom(raw.depthSample, ['r8-depth-normalized']);
+    const maskSample = phoneVisionRasterSampleFrom(raw.maskSample, ['r8-mask']);
+    return {
+      timestamp: Number.isFinite(Number(raw.timestamp)) ? Number(raw.timestamp) : Date.now(),
+      width: Number.isFinite(Number(raw.width)) ? Math.max(1, Math.floor(Number(raw.width))) : 0,
+      height: Number.isFinite(Number(raw.height)) ? Math.max(1, Math.floor(Number(raw.height))) : 0,
+      captureProfile: phoneVisionCaptureProfileFrom(raw.captureProfile),
+      facingMode: phoneVisionFacingMode(raw),
+      depth: raw.depth === true || !!depthSample,
+      ...(depthSample ? { depthSample } : {}),
+      ...(maskSample ? { maskSample } : {}),
+    };
+  }
+
+  function handlePhoneVisionNativeFrame(raw: Record<string, unknown>) {
+    if (!phoneVisionSessionId && typeof raw.sessionId === 'string') {
+      registerPhoneVisionNativeSession(raw.sessionId, raw);
+    }
+    if (raw.sessionId && raw.sessionId !== phoneVisionSessionId) return;
+    const nativeFrame = phoneVisionNativeFrameFrom(raw);
+    phoneVision.update(state => ({
+      ...state,
+      nativeFrame,
+      capabilities: {
+        ...state.capabilities,
+        captureProfile: nativeFrame.captureProfile,
+        facingMode: nativeFrame.facingMode,
+        depth: state.capabilities.depth || !!nativeFrame.depthSample,
+        nativeDepth: state.capabilities.nativeDepth || !!nativeFrame.depthSample,
+        depthPipeline: nativeFrame.depthSample ? 'native-depth' : state.capabilities.depthPipeline,
+        segmentation: state.capabilities.segmentation || !!nativeFrame.maskSample,
+        segmentationPipeline: nativeFrame.maskSample ? 'person-mask' : state.capabilities.segmentationPipeline,
+      },
+    }));
+  }
+
+  function registerPhoneVisionNativeSession(
+    sessionId: string,
+    detail: Record<string, unknown> = {},
+  ) {
+    destroyPhoneVisionSession(false);
+    phoneVisionSessionId = sessionId;
+    const facingMode = phoneVisionFacingMode(detail);
+    const capabilityDetail = isPhoneVisionRecord(detail.capabilities)
+      ? {
+          ...detail.capabilities,
+          captureProfile: detail.capabilities.captureProfile ?? detail.captureProfile,
+        }
+      : {
+          captureProfile: detail.captureProfile,
+        };
+    const capabilities = phoneVisionCapabilitiesFrom(capabilityDetail, facingMode);
+    phoneVision.set({
+      status: 'live',
+      sessionId,
+      label: 'Phone Vision',
+      error: '',
+      capabilities,
+      nativeFrame: null,
+      calibrationPoints: [],
+      activeLayers: [],
+      lastEffect: null,
+    });
+    sendPhoneVisionStatus('live', { nativeOnly: true });
+  }
+
+  function phoneVisionCalibrationFrom(raw: unknown): PhoneVisionCalibrationPoint[] {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((entry, fallbackIndex) => {
+        if (!isPhoneVisionRecord(entry)) return null;
+        const rawIndex = Number(entry.index);
+        const index = Number.isFinite(rawIndex)
+          ? Math.max(0, Math.min(3, Math.floor(rawIndex)))
+          : Math.max(0, Math.min(3, fallbackIndex));
+        return {
+          x: clampPhoneVision01(entry.x),
+          y: clampPhoneVision01(entry.y),
+          index,
+        };
+      })
+      .filter((point): point is PhoneVisionCalibrationPoint => !!point)
+      .slice(0, 4);
+  }
+
+  function phoneVisionCornersFrom(raw: unknown): WarpCorners | null {
+    const points = phoneVisionCalibrationFrom(raw);
+    const byIndex = new Map<number, PhoneVisionCalibrationPoint>();
+    for (const point of points) byIndex.set(point.index, point);
+    const tl = byIndex.get(0);
+    const tr = byIndex.get(1);
+    const br = byIndex.get(2);
+    const bl = byIndex.get(3);
+    if (!tl || !tr || !br || !bl) return null;
+    return {
+      topLeft: { x: tl.x, y: tl.y },
+      topRight: { x: tr.x, y: tr.y },
+      bottomRight: { x: br.x, y: br.y },
+      bottomLeft: { x: bl.x, y: bl.y },
+    };
+  }
+
+  function applyPhoneVisionCalibration(layerId: string, raw: unknown): boolean {
+    const corners = phoneVisionCornersFrom(raw);
+    if (!corners) return false;
+    project.updateLayer(layerId, { warpMode: 'corners', corners });
+    return true;
+  }
+
+  function applyPhoneVisionCalibrationToActiveLayers(raw: unknown): number {
+    const corners = phoneVisionCornersFrom(raw);
+    if (!corners) return 0;
+    const active = get(phoneVision).activeLayers;
+    if (active.length === 0) return 0;
+    const existingIds = new Set(get(project).layers.map(layer => layer.id));
+    let calibratedCount = 0;
+    for (const activeLayer of active) {
+      if (!existingIds.has(activeLayer.id)) continue;
+      project.updateLayer(activeLayer.id, { warpMode: 'corners', corners });
+      calibratedCount += 1;
+    }
+    const existingActiveCount = active.filter(layer => existingIds.has(layer.id)).length;
+    if (calibratedCount > 0 || existingActiveCount !== active.length) {
+      phoneVision.update(state => ({
+        ...state,
+        activeLayers: state.activeLayers
+          .filter(layer => existingIds.has(layer.id))
+          .map(layer => ({ ...layer, calibrated: calibratedCount > 0 ? true : layer.calibrated })),
+      }));
+    }
+    return calibratedCount;
+  }
+
+  function resetPhoneVisionActiveLayerCalibration(): number {
+    const active = get(phoneVision).activeLayers;
+    if (active.length === 0) return 0;
+    const existingIds = new Set(get(project).layers.map(layer => layer.id));
+    const corners = createDefaultCorners();
+    let resetCount = 0;
+    for (const activeLayer of active) {
+      if (!existingIds.has(activeLayer.id)) continue;
+      project.updateLayer(activeLayer.id, { warpMode: 'corners', corners });
+      resetCount += 1;
+    }
+    phoneVision.update(state => ({
+      ...state,
+      activeLayers: state.activeLayers
+        .filter(layer => existingIds.has(layer.id))
+        .map(layer => ({ ...layer, calibrated: false })),
+    }));
+    return resetCount;
+  }
+
+  function phoneVisionAuraParams(raw: Record<string, unknown>): Record<string, any> {
+    const preset = (raw.auraPreset === 'object-halo' || raw.auraPreset === 'edge-trace' || raw.auraPreset === 'body-glow')
+      ? raw.auraPreset as PhoneVisionAuraPreset
+      : 'body-glow';
+    const capabilities = phoneVisionCapabilitiesFrom(raw.capabilities, phoneVisionFacingMode(raw));
+    const base = {
+      afIntensity: 1.25,
+      afRadius: 18,
+      afEdgeAmount: 0.75,
+      afLumaAmount: 0.35,
+      afAudioReact: 0.35,
+      afHueShift: 0.2,
+      afTintR: 0.45,
+      afTintG: 0.9,
+      afTintB: 1,
+      afMode: 1,
+    };
+    const presets: Record<PhoneVisionAuraPreset, Partial<typeof base>> = {
+      'body-glow': {
+        afIntensity: 1.35,
+        afRadius: 22,
+        afEdgeAmount: 0.55,
+        afLumaAmount: 0.42,
+        afAudioReact: 0.42,
+      },
+      'object-halo': {
+        afIntensity: 1.1,
+        afRadius: 14,
+        afEdgeAmount: 0.9,
+        afLumaAmount: 0.25,
+        afHueShift: 0.05,
+        afTintR: 0.55,
+        afTintG: 1,
+        afTintB: 0.78,
+      },
+      'edge-trace': {
+        afIntensity: 1.6,
+        afRadius: 8,
+        afEdgeAmount: 1,
+        afLumaAmount: 0.12,
+        afAudioReact: 0.2,
+        afHueShift: 0.38,
+        afTintR: 0.25,
+        afTintG: 0.75,
+        afTintB: 1,
+      },
+    };
+    const pipelineTuning = capabilities.segmentationPipeline === 'person-mask'
+      ? { afEdgeAmount: 0.78, afLumaAmount: 0.48, afRadius: 24 }
+      : capabilities.segmentationPipeline === 'object-edge'
+        ? { afEdgeAmount: 0.95, afLumaAmount: 0.28 }
+        : {};
+    const nativeFrame = get(phoneVision).nativeFrame;
+    const wantsNativeMask = capabilities.segmentationPipeline === 'person-mask' || !!nativeFrame?.maskSample;
+    const nativeTuning = wantsNativeMask
+      ? {
+          nativeMaskStream: true,
+          ...(nativeFrame?.maskSample ? {
+            nativeMaskWidth: nativeFrame.maskSample.width,
+            nativeMaskHeight: nativeFrame.maskSample.height,
+            nativeMaskFormat: nativeFrame.maskSample.format,
+          } : {}),
+        }
+      : {};
+    return { ...base, ...presets[preset], ...pipelineTuning, ...nativeTuning };
+  }
+
+  function phoneVisionPointCloudParams(raw: Record<string, unknown>) {
+    const rawPreset = raw.pointCloudPreset;
+    const preset = (rawPreset === 'human-ghost' || rawPreset === 'liquid-swarm' || rawPreset === 'object-relief')
+      ? rawPreset as PhoneVisionPointCloudPreset
+      : 'object-relief';
+    const capabilities = phoneVisionCapabilitiesFrom(raw.capabilities, phoneVisionFacingMode(raw));
+    const profile = capabilities.captureProfile;
+    const nativeFrame = get(phoneVision).nativeFrame;
+    const hasNativeDepth = capabilities.nativeDepth || !!nativeFrame?.depthSample;
+    let depthSource = 'edge-density';
+    if (hasNativeDepth) {
+      depthSource = 'native-depth';
+    } else if (profile === 'person-aura') {
+      depthSource = 'luminance';
+    } else if (profile === 'rgb-fast') {
+      depthSource = 'saturation';
+    }
+    const base = {
+      source: { type: 'media', mediaId: PHONE_CAMERA_MEDIA_ID },
+      mirrorX: phoneVisionFacingMode(raw) === 'user',
+      captureProfile: profile,
+      depthPipeline: capabilities.depthPipeline,
+      segmentationPipeline: capabilities.segmentationPipeline,
+      mode: 'depth-shift',
+      depthAmount: 1.15,
+      depthSource,
+      depthCurve: 1.15,
+      depthContrast: 1.35,
+      depthSmoothing: 0.28,
+      depthCenter: 0.42,
+      depthMotion: 'breathe',
+      depthMotionAmount: 0.22,
+      depthMotionSpeed: 0.42,
+      depthMotionScale: 4.2,
+      depthMotionCoupling: 0.85,
+      particleCount: 360000,
+      baseSize: 0.0045,
+      opacity: 1,
+      anchorJitter: 0.45,
+      fovDeg: 48,
+      cameraZ: 2.15,
+      lightEnabled: true,
+      lightX: 0.7,
+      lightY: 1.1,
+      lightZ: 1.5,
+      lightIntensity: 1.65,
+      lightAmbient: 0.22,
+      lightHeightStrength: 1.8,
+      noiseAmpXY: 0,
+      noiseAmpZ: 0,
+      noiseFreq: 4,
+      noiseSpeed: 0.5,
+    };
+    const presets: Record<PhoneVisionPointCloudPreset, Partial<typeof base>> = {
+      'object-relief': {},
+      'human-ghost': {
+        depthAmount: 0.95,
+        depthSource: 'luminance',
+        depthContrast: 1.18,
+        depthCenter: 0.5,
+        depthMotion: 'drift',
+        depthMotionAmount: 0.18,
+        depthMotionSpeed: 0.32,
+        depthMotionScale: 6.5,
+        particleCount: 300000,
+        baseSize: 0.0052,
+        anchorJitter: 0.34,
+        fovDeg: 54,
+        lightAmbient: 0.34,
+      },
+      'liquid-swarm': {
+        depthAmount: 1.45,
+        depthSource: 'saturation',
+        depthCurve: 0.82,
+        depthContrast: 1.55,
+        depthSmoothing: 0.36,
+        depthMotion: 'swarm',
+        depthMotionAmount: 0.44,
+        depthMotionSpeed: 0.62,
+        depthMotionScale: 8,
+        depthMotionCoupling: 1.45,
+        particleCount: 460000,
+        baseSize: 0.0038,
+        anchorJitter: 0.68,
+        noiseAmpXY: 0.035,
+        noiseAmpZ: 0.22,
+        noiseFreq: 7.5,
+        noiseSpeed: 0.7,
+      },
+    };
+    const pipelineTuning = hasNativeDepth
+      ? { depthSource: 'native-depth', depthAmount: 1.65, depthSmoothing: 0.18, depthContrast: 1.1, depthCenter: 0.5 }
+      : capabilities.segmentationPipeline === 'person-mask'
+        ? { depthAmount: 1.05, depthSmoothing: 0.34, depthMotion: 'drift' }
+        : {};
+    const nativeTuning = nativeFrame?.depthSample
+      ? {
+          nativeDepthStream: true,
+          nativeDepthWidth: nativeFrame.depthSample.width,
+          nativeDepthHeight: nativeFrame.depthSample.height,
+          nativeDepthFormat: nativeFrame.depthSample.format,
+          nativeDepthMin: nativeFrame.depthSample.minDepth ?? 0,
+          nativeDepthMax: nativeFrame.depthSample.maxDepth ?? 0,
+        }
+      : {};
+    return { ...base, ...presets[preset], ...pipelineTuning, ...nativeTuning };
+  }
+
+  function phoneVisionMediaSrc(sessionId: string) {
+    return `${PHONE_CAMERA_SOURCE_PREFIX}/${sessionId}`;
+  }
+
+  function sendPhoneVisionSignal(payload: Record<string, unknown>) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify(payload));
+  }
+
+  function sendPhoneVisionStatus(status: string, detail: Record<string, unknown> = {}) {
+    const payload = {
+      type: 'phone_vision_status',
+      sessionId: phoneVisionSessionId,
+      status,
+      ...detail,
+    };
+    sendPhoneVisionSignal(payload);
+    try {
+      if (phoneVisionDataChannel?.readyState === 'open') {
+        phoneVisionDataChannel.send(JSON.stringify(payload));
+      }
+    } catch {}
+  }
+
+  function destroyPhoneVisionSession(updateState = true) {
+    try { phoneVisionDataChannel?.close(); } catch {}
+    try { phoneVisionPeer?.close(); } catch {}
+    phoneVisionDataChannel = null;
+    phoneVisionPeer = null;
+    pendingPhoneVisionIce = [];
+
+    const hadMedia = !!get(mediaLibrary).find(item => item.id === PHONE_CAMERA_MEDIA_ID);
+    if (hadMedia) {
+      mediaLibrary.removeItem(PHONE_CAMERA_MEDIA_ID);
+    } else if (phoneVisionVideoEl) {
+      try { phoneVisionVideoEl.pause(); } catch {}
+      try { phoneVisionVideoEl.srcObject = null; } catch {}
+    }
+    phoneVisionVideoEl = null;
+    phoneVisionSessionId = null;
+
+    if (updateState) {
+      phoneVision.set(defaultPhoneVisionState());
+    }
+  }
+
+  async function publishPhoneCameraMedia(stream: MediaStream, sessionId: string) {
+    const video = document.createElement('video');
+    video.autoplay = true;
+    video.muted = true;
+    video.loop = false;
+    video.playsInline = true;
+    video.srcObject = stream;
+    phoneVisionVideoEl = video;
+
+    try { await video.play(); } catch {
+      // Metadata may not be ready yet on mobile WebRTC tracks; the
+      // renderer can still consume the element once playback starts.
+    }
+
+    const existing = get(mediaLibrary).find(item => item.id === PHONE_CAMERA_MEDIA_ID);
+    const mediaItem = {
+      id: PHONE_CAMERA_MEDIA_ID,
+      name: 'Phone Camera',
+      src: phoneVisionMediaSrc(sessionId),
+      type: 'video' as const,
+      videoElement: video,
+    };
+    if (existing) mediaLibrary.updateItem(PHONE_CAMERA_MEDIA_ID, mediaItem);
+    else mediaLibrary.addItem(mediaItem);
+
+    phoneVision.update(state => ({
+      ...state,
+      status: 'live',
+      sessionId,
+      label: 'Phone Camera',
+      error: '',
+    }));
+    sendPhoneVisionStatus('live');
+  }
+
+  function phoneCameraMediaSource(emitError = true): MediaSource | null {
+    const item = get(mediaLibrary).find(i => i.id === PHONE_CAMERA_MEDIA_ID);
+    if (!item?.videoElement || !phoneVisionSessionId) {
+      if (emitError) sendPhoneVisionStatus('error', { error: 'Start the phone camera first.' });
+      return null;
+    }
+    return {
+      id: `phone-camera-${Date.now()}`,
+      type: 'video',
+      src: item.src,
+      name: 'Phone Camera',
+      videoElement: item.videoElement,
+      isPlaying: true,
+      mirrorX: false,
+    };
+  }
+
+  function phoneVisionCanCreateNativeAura(raw: Record<string, unknown>): boolean {
+    const capabilities = phoneVisionCapabilitiesFrom(raw.capabilities, phoneVisionFacingMode(raw));
+    const state = get(phoneVision);
+    return capabilities.segmentationPipeline === 'person-mask'
+      || state.capabilities.segmentationPipeline === 'person-mask'
+      || !!state.nativeFrame?.maskSample;
+  }
+
+  function phoneVisionCanCreateNativeDepth(raw: Record<string, unknown>): boolean {
+    const capabilities = phoneVisionCapabilitiesFrom(raw.capabilities, phoneVisionFacingMode(raw));
+    const state = get(phoneVision);
+    return capabilities.nativeDepth
+      || capabilities.depthPipeline === 'native-depth'
+      || state.capabilities.nativeDepth
+      || state.capabilities.depthPipeline === 'native-depth'
+      || !!state.nativeFrame?.depthSample;
+  }
+
+  function createPhoneAuraLayer(raw: Record<string, unknown> = {}) {
+    const source = phoneCameraMediaSource(false);
+    const nativeOnly = !source && phoneVisionCanCreateNativeAura(raw);
+    if (!source && !nativeOnly) {
+      sendPhoneVisionStatus('error', { error: 'Start the phone camera first.' });
+      return;
+    }
+    if (source) {
+      project.addLayer('Phone Aura', 'media');
+    } else {
+      project.addColorLayer('Phone Aura');
+    }
+    const layerId = get(project).selectedLayerId;
+    if (!layerId) return;
+    if (source) {
+      project.setLayerSource(layerId, source);
+    } else {
+      project.updateColorContent(layerId, { hue: 0, saturation: 0, lightness: 0, alpha: 1 });
+    }
+    project.setLayerBlendMode(layerId, 'screen');
+    const calibrated = applyPhoneVisionCalibration(layerId, raw.calibrationPoints);
+    project.addEffect(layerId, 'auraField', phoneVisionAuraParams(raw));
+    phoneVision.update(state => ({
+      ...state,
+      activeLayers: [
+        ...state.activeLayers.filter(layer => layer.id !== layerId),
+        {
+          id: layerId,
+          kind: 'aura',
+          preset: (raw.auraPreset === 'object-halo' || raw.auraPreset === 'edge-trace' || raw.auraPreset === 'body-glow')
+            ? raw.auraPreset
+            : 'body-glow',
+          calibrated,
+        },
+      ],
+      lastEffect: 'aura',
+    }));
+    sendPhoneVisionStatus('created_aura_layer', {
+      layerId,
+      calibrated,
+      effectKind: 'aura',
+      preset: raw.auraPreset || 'body-glow',
+    });
+  }
+
+  function createPhonePointCloudLayer(raw: Record<string, unknown> = {}) {
+    const item = get(mediaLibrary).find(i => i.id === PHONE_CAMERA_MEDIA_ID);
+    const nativeOnly = !item?.videoElement && phoneVisionCanCreateNativeDepth(raw);
+    if ((!item?.videoElement && !nativeOnly) || !phoneVisionSessionId) {
+      sendPhoneVisionStatus('error', { error: 'Start the phone camera first.' });
+      return;
+    }
+    project.addGPULayer('Phone Point Cloud');
+    const layerId = get(project).selectedLayerId;
+    if (!layerId) return;
+
+    const params = phoneVisionPointCloudParams(raw);
+    if (nativeOnly) {
+      delete (params as Record<string, unknown>).source;
+      params.depthSource = 'native-depth';
+      params.nativeDepthStream = true;
+      params.depthPipeline = 'native-depth';
+      params.blendMode = 'screen';
+    }
+
+    project.updateGPULayerContent(layerId, {
+      shaderId: 'pixel-particles',
+      params,
+      paramsByShader: { 'pixel-particles': params },
+      bgOpacity: 0,
+    });
+    project.setLayerBlendMode(layerId, 'screen');
+    const calibrated = applyPhoneVisionCalibration(layerId, raw.calibrationPoints);
+    phoneVision.update(state => ({
+      ...state,
+      activeLayers: [
+        ...state.activeLayers.filter(layer => layer.id !== layerId),
+        {
+          id: layerId,
+          kind: 'point-cloud',
+          preset: (raw.pointCloudPreset === 'human-ghost' || raw.pointCloudPreset === 'liquid-swarm' || raw.pointCloudPreset === 'object-relief')
+            ? raw.pointCloudPreset
+            : 'object-relief',
+          calibrated,
+        },
+      ],
+      lastEffect: 'point-cloud',
+    }));
+    sendPhoneVisionStatus('created_point_cloud_layer', {
+      layerId,
+      calibrated,
+      effectKind: 'point-cloud',
+      preset: raw.pointCloudPreset || 'object-relief',
+    });
+  }
+
+  function setPhoneCalibrationPoint(point: { x?: unknown; y?: unknown; index?: unknown }) {
+    const x = Math.max(0, Math.min(1, Number(point.x) || 0));
+    const y = Math.max(0, Math.min(1, Number(point.y) || 0));
+    let resolvedIndex = 0;
+    let nextCalibrationPoints: PhoneVisionCalibrationPoint[] = [];
+    phoneVision.update(state => {
+      const next = [...state.calibrationPoints];
+      const rawIndex = Number(point.index);
+      const index = Number.isFinite(rawIndex) ? Math.max(0, Math.min(3, Math.floor(rawIndex))) : Math.min(3, next.length);
+      resolvedIndex = index;
+      const p: PhoneVisionCalibrationPoint = { x, y, index };
+      const existing = next.findIndex(item => item.index === index);
+      if (existing >= 0) next[existing] = p;
+      else next.push(p);
+      next.sort((a, b) => a.index - b.index);
+      nextCalibrationPoints = next.slice(0, 4);
+      return { ...state, calibrationPoints: nextCalibrationPoints };
+    });
+    const calibratedLayerCount = applyPhoneVisionCalibrationToActiveLayers(nextCalibrationPoints);
+    sendPhoneVisionStatus('calibration_point', { x, y, index: resolvedIndex, calibratedLayerCount });
+  }
+
+  function resetPhoneCalibration() {
+    phoneVision.update(state => ({ ...state, calibrationPoints: [] }));
+    const resetLayerCount = resetPhoneVisionActiveLayerCalibration();
+    sendPhoneVisionStatus('calibration_reset', { resetLayerCount });
+  }
+
+  function handlePhoneVisionCommand(raw: Record<string, unknown>) {
+    const command = String(raw.command || raw.action || '');
+    switch (command) {
+      case 'create_point_cloud_layer':
+        createPhonePointCloudLayer(raw);
+        break;
+      case 'create_aura_layer':
+        createPhoneAuraLayer(raw);
+        break;
+      case 'calibration_point':
+        setPhoneCalibrationPoint(raw);
+        break;
+      case 'calibration_reset':
+        resetPhoneCalibration();
+        break;
+    }
+  }
+
+  function attachPhoneVisionDataChannel(channel: RTCDataChannel) {
+    phoneVisionDataChannel = channel;
+    channel.onopen = () => sendPhoneVisionStatus(get(phoneVision).status);
+    channel.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(String(event.data));
+        if (msg?.type === 'phone_vision_native_frame') handlePhoneVisionNativeFrame(msg);
+        else if (msg?.type === 'phone_vision_command') handlePhoneVisionCommand(msg);
+        else handlePhoneVisionCommand(msg);
+      } catch (err) {
+        console.warn('[PhoneVision] Bad data channel message:', err);
+      }
+    };
+    channel.onclose = () => {
+      if (phoneVisionDataChannel === channel) phoneVisionDataChannel = null;
+    };
+  }
+
+  async function handlePhoneCameraOffer(
+    sessionId: string,
+    offer: RTCSessionDescriptionInit,
+    detail: Record<string, unknown> = {},
+  ) {
+    destroyPhoneVisionSession(false);
+    phoneVisionSessionId = sessionId;
+    const facingMode = phoneVisionFacingMode(detail);
+    const capabilityDetail = isPhoneVisionRecord(detail.capabilities)
+      ? {
+          ...detail.capabilities,
+          captureProfile: detail.capabilities.captureProfile ?? detail.captureProfile,
+        }
+      : {
+          captureProfile: detail.captureProfile,
+        };
+    const capabilities = phoneVisionCapabilitiesFrom(capabilityDetail, facingMode);
+    phoneVision.set({
+      status: 'connecting',
+      sessionId,
+      label: 'Phone Camera',
+      error: '',
+      capabilities,
+      nativeFrame: null,
+      calibrationPoints: [],
+      activeLayers: [],
+      lastEffect: null,
+    });
+
+    const peer = new RTCPeerConnection();
+    phoneVisionPeer = peer;
+
+    peer.onicecandidate = (event) => {
+      if (!event.candidate) return;
+      sendPhoneVisionSignal({
+        type: 'phone_camera_ice',
+        sessionId,
+        candidate: event.candidate.toJSON ? event.candidate.toJSON() : event.candidate,
+      });
+    };
+
+    peer.ondatachannel = (event) => attachPhoneVisionDataChannel(event.channel);
+
+    peer.ontrack = (event) => {
+      const stream = event.streams[0] || new MediaStream([event.track]);
+      void publishPhoneCameraMedia(stream, sessionId);
+    };
+
+    peer.onconnectionstatechange = () => {
+      if (phoneVisionPeer !== peer) return;
+      if (peer.connectionState === 'failed') {
+        phoneVision.update(state => ({ ...state, status: 'failed', error: 'Phone camera connection failed.' }));
+        sendPhoneVisionStatus('failed', { error: 'Phone camera connection failed.' });
+      } else if (peer.connectionState === 'disconnected') {
+        phoneVision.update(state => ({ ...state, status: 'connecting', error: 'Phone camera reconnecting.' }));
+        sendPhoneVisionStatus('reconnecting');
+      } else if (peer.connectionState === 'closed') {
+        destroyPhoneVisionSession(true);
+      }
+    };
+
+    try {
+      await peer.setRemoteDescription(new RTCSessionDescription(offer));
+      for (const candidate of pendingPhoneVisionIce.splice(0)) {
+        try { await peer.addIceCandidate(new RTCIceCandidate(candidate)); } catch {}
+      }
+      const answer = await peer.createAnswer();
+      await peer.setLocalDescription(answer);
+      sendPhoneVisionSignal({
+        type: 'phone_camera_answer',
+        sessionId,
+        sdp: peer.localDescription,
+      });
+    } catch (err: any) {
+      console.error('[PhoneVision] Failed to accept camera offer:', err);
+      phoneVision.update(state => ({ ...state, status: 'failed', error: err?.message || 'Failed to start phone camera.' }));
+      sendPhoneVisionStatus('failed', { error: err?.message || 'Failed to start phone camera.' });
+      destroyPhoneVisionSession(false);
+    }
+  }
+
+  async function handlePhoneCameraIce(sessionId: string, candidate: RTCIceCandidateInit) {
+    if (!candidate || sessionId !== phoneVisionSessionId) return;
+    const peer = phoneVisionPeer;
+    if (!peer || !peer.remoteDescription) {
+      pendingPhoneVisionIce.push(candidate);
+      return;
+    }
+    try { await peer.addIceCandidate(new RTCIceCandidate(candidate)); } catch (err) {
+      console.warn('[PhoneVision] ICE candidate rejected:', err);
+    }
+  }
+
   function connectToServer() {
     connectionError = '';
     const url = `ws://127.0.0.1:${wsPort}`;
@@ -1839,6 +2641,46 @@
         // reflects reality from the moment it mounts (rather than waiting
         // for the user to toggle it for the first time).
         syncOutputFreeze(get(outputFrozen));
+        break;
+
+      case 'phone_camera_offer': {
+        const { sessionId, sdp } = (msg as unknown) as {
+          sessionId?: string;
+          sdp?: RTCSessionDescriptionInit;
+        };
+        if (sessionId && sdp) void handlePhoneCameraOffer(sessionId, sdp, msg);
+        break;
+      }
+
+      case 'phone_camera_ice': {
+        const { sessionId, candidate } = (msg as unknown) as {
+          sessionId?: string;
+          candidate?: RTCIceCandidateInit;
+        };
+        if (sessionId && candidate) void handlePhoneCameraIce(sessionId, candidate);
+        break;
+      }
+
+      case 'phone_camera_stop': {
+        const { sessionId } = (msg as unknown) as { sessionId?: string };
+        if (!sessionId || sessionId === phoneVisionSessionId) {
+          destroyPhoneVisionSession(true);
+        }
+        break;
+      }
+
+      case 'phone_vision_native_start': {
+        const { sessionId } = (msg as unknown) as { sessionId?: string };
+        if (sessionId) registerPhoneVisionNativeSession(sessionId, msg);
+        break;
+      }
+
+      case 'phone_vision_command':
+        handlePhoneVisionCommand(msg);
+        break;
+
+      case 'phone_vision_native_frame':
+        handlePhoneVisionNativeFrame(msg);
         break;
 
       case 'control_point': {
@@ -2191,6 +3033,89 @@
           // in one place. Calling it directly keeps mobile in lockstep
           // with whatever toggleFreeze grows to do in the future.
           toggleFreeze();
+        }
+        break;
+      }
+
+      case 'add_mapping_layer_effect': {
+        const { layerId, effect } = (msg as unknown) as {
+          layerId: string;
+          effect: import('./lib/types').Effect;
+        };
+        if (layerId && effect?.id && effect.type) {
+          project.addEffectInstance(layerId, effect);
+        }
+        break;
+      }
+
+      case 'remove_mapping_layer_effect': {
+        const { layerId, effectId } = (msg as unknown) as {
+          layerId: string;
+          effectId: string;
+        };
+        if (layerId && effectId) {
+          project.removeEffect(layerId, effectId);
+        }
+        break;
+      }
+
+      case 'toggle_mapping_layer_effect': {
+        const { layerId, effectId } = (msg as unknown) as {
+          layerId: string;
+          effectId: string;
+        };
+        if (layerId && effectId) {
+          project.toggleEffect(layerId, effectId);
+        }
+        break;
+      }
+
+      case 'update_mapping_layer_effect_params': {
+        const { layerId, effectId, params } = (msg as unknown) as {
+          layerId: string;
+          effectId: string;
+          params: Partial<import('./lib/types').EffectParams>;
+        };
+        if (layerId && effectId && params) {
+          project.updateEffectParams(layerId, effectId, params);
+        }
+        break;
+      }
+
+      case 'set_mapping_layer_shape': {
+        const { layerId, shapeType } = (msg as unknown) as {
+          layerId: string;
+          shapeType: LayerShapeType | null;
+        };
+        if (layerId) {
+          project.setLayerShape(layerId, shapeType);
+        }
+        break;
+      }
+
+      case 'toggle_mapping_layer_shape': {
+        const { layerId } = (msg as unknown) as { layerId: string };
+        if (layerId) {
+          project.toggleLayerShapeEnabled(layerId);
+        }
+        break;
+      }
+
+      case 'clear_mapping_layer_shape': {
+        const { layerId } = (msg as unknown) as { layerId: string };
+        if (layerId) {
+          project.clearLayerShape(layerId);
+        }
+        break;
+      }
+
+      case 'update_mapping_layer_shape_params': {
+        const { layerId, params } = (msg as unknown) as {
+          layerId: string;
+          params: Partial<LayerShapeParams>;
+        };
+        if (layerId && params) {
+          project.updateLayerShapeParams(layerId, params);
         }
         break;
       }

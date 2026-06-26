@@ -1,6 +1,6 @@
 /**
  * AI API Client for shader/animation generation
- * Supports Claude Opus 4.6 / Sonnet 4.6 and Gemini 3.1 Pro / 2.5 Flash
+ * Supports Claude Opus 4.8 / Sonnet 4.6 and Gemini 3.1+ models.
  */
 
 import { invoke } from '$lib/bridge';
@@ -419,7 +419,7 @@ async function callClaude(apiKey: string, systemPrompt: string, userPrompt: stri
 /**
  * Call Gemini API (Google)
  */
-async function callGemini(apiKey: string, systemPrompt: string, userPrompt: string, model: string = 'gemini-2.5-flash'): Promise<string> {
+async function callGemini(apiKey: string, systemPrompt: string, userPrompt: string, model: string = 'gemini-3.5-flash'): Promise<string> {
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: 'POST',
     headers: {
@@ -714,15 +714,21 @@ Make it VISUALLY SPECTACULAR — this will be projected at large scale in live p
 
 // ─── Veo Video Generation ───────────────────────────────────────────────
 
-export type VeoModel = 'veo-2.0-generate-001';
+export type VeoModel =
+  | 'veo-3.1-generate-preview'
+  | 'veo-3.1-fast-generate-preview'
+  | 'veo-3.1-lite-generate-preview'
+  | 'veo-2.0-generate-001';
 
 export interface VeoGenerationRequest {
   apiKey: string;
   prompt: string;
   model?: VeoModel;
   aspectRatio?: '16:9' | '9:16';
-  durationSeconds?: 5 | 6 | 7 | 8;
+  durationSeconds?: 4 | 6 | 8;
   negativePrompt?: string;
+  firstFrame?: Blob;
+  lastFrame?: Blob;
 }
 
 export interface VeoGenerationStatus {
@@ -736,44 +742,116 @@ export interface VeoGenerationStatus {
  * Start a Veo video generation job.
  * Returns the operation name for polling.
  */
+type VeoImageEncoding = {
+  mimeType: string;
+  data: string;
+};
+
+type VeoImagePayloadStyle = 'bytes' | 'inline';
+
+async function blobToVeoImageEncoding(blob: Blob): Promise<VeoImageEncoding> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Failed to read image.'));
+    reader.readAsDataURL(blob);
+  });
+  const match = dataUrl.match(/^data:([^;,]+);base64,(.*)$/);
+  if (!match) throw new Error('Failed to encode image for Veo.');
+  return {
+    mimeType: blob.type || match[1] || 'image/jpeg',
+    data: match[2],
+  };
+}
+
+function veoImagePayload(
+  image: VeoImageEncoding,
+  style: VeoImagePayloadStyle,
+): { bytesBase64Encoded: string; mimeType: string } | { inlineData: { mimeType: string; data: string } } {
+  if (style === 'inline') {
+    return {
+      inlineData: {
+        mimeType: image.mimeType,
+        data: image.data,
+      },
+    };
+  }
+  return {
+    bytesBase64Encoded: image.data,
+    mimeType: image.mimeType,
+  };
+}
+
 export async function startVeoGeneration(request: VeoGenerationRequest): Promise<{ operationName?: string; error?: string }> {
   const {
     apiKey,
     prompt,
-    model = 'veo-2.0-generate-001',
+    model = 'veo-3.1-generate-preview',
     aspectRatio = '16:9',
     durationSeconds = 8,
     negativePrompt,
+    firstFrame,
+    lastFrame,
   } = request;
+
+  if (lastFrame && !firstFrame) {
+    return { error: 'Veo last-frame generation requires a first frame too.' };
+  }
+  if (lastFrame && !String(model).startsWith('veo-3.1')) {
+    return { error: 'Veo first/last frame generation requires a Veo 3.1 model.' };
+  }
 
   const params: Record<string, unknown> = {
     aspectRatio,
-    durationSeconds,
+    durationSeconds: lastFrame ? 8 : durationSeconds,
   };
   if (negativePrompt) {
     params.negativePrompt = negativePrompt;
   }
 
   try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:predictLongRunning`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
-        },
-        body: JSON.stringify({
-          instances: [{ prompt }],
-          parameters: params,
-        }),
-      }
-    );
+    const firstImage = firstFrame ? await blobToVeoImageEncoding(firstFrame) : null;
+    const lastImage = lastFrame ? await blobToVeoImageEncoding(lastFrame) : null;
+
+    const postGenerationRequest = async (imagePayloadStyle: VeoImagePayloadStyle) => {
+      const instance: Record<string, unknown> = { prompt };
+      if (firstImage) instance.image = veoImagePayload(firstImage, imagePayloadStyle);
+      if (lastImage) instance.lastFrame = veoImagePayload(lastImage, imagePayloadStyle);
+
+      return fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:predictLongRunning`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey,
+          },
+          body: JSON.stringify({
+            instances: [instance],
+            parameters: params,
+          }),
+        }
+      );
+    };
+
+    const readStartError = async (response: Response) => {
+      const errorData = await response.json().catch(() => ({}));
+      return errorData.error?.message || `Veo API error: ${response.status}`;
+    };
+
+    let response = await postGenerationRequest('bytes');
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      const msg = errorData.error?.message || `Veo API error: ${response.status}`;
-      return { error: msg };
+      let msg = await readStartError(response);
+      if ((firstImage || lastImage) && /bytesBase64Encoded/i.test(msg)) {
+        response = await postGenerationRequest('inline');
+        if (!response.ok) {
+          msg = await readStartError(response);
+        }
+      }
+      if (!response.ok) {
+        return { error: msg };
+      }
     }
 
     const data = await response.json();
@@ -885,7 +963,7 @@ export async function validateAPIKey(provider: AIProvider, apiKey: string, model
       });
       return response.ok;
     } else {
-      const geminiModel = model || 'gemini-2.5-flash';
+      const geminiModel = model || 'gemini-3.5-flash';
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
@@ -909,11 +987,6 @@ export type LumaModel = 'ray-2' | 'ray-flash-2';
 export type LumaAspectRatio = '16:9' | '9:16' | '1:1' | '4:3' | '3:4' | '21:9' | '9:21';
 export type LumaResolution = '540p' | '720p' | '1080p' | '4k';
 
-export interface LumaKeyframe {
-  type: 'image';
-  url: string;
-}
-
 export interface LumaGenerationRequest {
   apiKey: string;
   prompt: string;
@@ -922,10 +995,6 @@ export interface LumaGenerationRequest {
   duration?: '5s' | '9s';
   resolution?: LumaResolution;
   loop?: boolean;
-  keyframes?: {
-    frame0?: LumaKeyframe;
-    frame1?: LumaKeyframe;
-  };
 }
 
 export interface LumaGenerationStatus {
@@ -988,7 +1057,6 @@ export async function startLumaGeneration(request: LumaGenerationRequest): Promi
     duration = '5s',
     resolution = '720p',
     loop = false,
-    keyframes,
   } = request;
 
   const body: Record<string, unknown> = {
@@ -999,10 +1067,6 @@ export async function startLumaGeneration(request: LumaGenerationRequest): Promi
     resolution,
     loop,
   };
-
-  if (keyframes) {
-    body.keyframes = keyframes;
-  }
 
   try {
     const { status, data } = await lumaFetch('POST', `${LUMA_API_BASE}/generations`, apiKey, body);
@@ -1085,7 +1149,7 @@ export async function downloadLumaVideo(videoUrl: string): Promise<{ blob?: Blob
       // CORS blocked — fall through to proxy
     }
 
-    const result = await invoke<{ status: number; contentType: string; base64: string }>(
+    const result = await invoke<{ status: number; contentType?: string; base64?: string; data?: string; headers?: Record<string, string> }>(
       'http_fetch_binary',
       { url: videoUrl, headers: {} },
     );
@@ -1095,72 +1159,20 @@ export async function downloadLumaVideo(videoUrl: string): Promise<{ blob?: Blob
     }
 
     // Decode base64 safely — handle potential data URL prefix or padding issues
-    let b64 = result.base64;
+    let b64 = result.base64 || result.data || '';
+    if (!b64) return { error: 'Download failed: empty video payload' };
     if (b64.includes(',')) b64 = b64.split(',')[1]; // Strip data URL prefix if present
     const binaryString = atob(b64);
     const bytes = new Uint8Array(binaryString.length);
     for (let i = 0; i < binaryString.length; i++) {
       bytes[i] = binaryString.charCodeAt(i);
     }
-    const contentType = result.contentType.startsWith('video/') ? result.contentType : 'video/mp4';
+    const headerContentType = result.contentType || result.headers?.['content-type'] || result.headers?.['Content-Type'] || '';
+    const contentType = headerContentType.startsWith('video/') ? headerContentType : 'video/mp4';
     const blob = new Blob([bytes], { type: contentType });
     return { blob };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Network error downloading Luma video' };
-  }
-}
-
-/**
- * Upload an image to Luma for use as a keyframe.
- * Uses Luma's presigned upload flow, proxied through Tauri.
- */
-export async function uploadImageToLuma(apiKey: string, imageBlob: Blob, filename: string = 'keyframe.png'): Promise<{ url?: string; error?: string }> {
-  try {
-    // Step 1: Request presigned upload URL via Tauri proxy
-    const { status: presignStatus, data: presignData } = await lumaFetch(
-      'POST',
-      `${LUMA_API_BASE}/generations/file_upload`,
-      apiKey,
-      { file_type: imageBlob.type || 'image/png', filename },
-    );
-
-    if (presignStatus < 200 || presignStatus >= 300) {
-      return { error: (presignData.detail || `Upload request failed: ${presignStatus}`) as string };
-    }
-
-    const uploadUrl = presignData.presigned_url as string | undefined;
-    const publicUrl = presignData.public_url as string | undefined;
-
-    if (!uploadUrl || !publicUrl) {
-      return { error: 'Invalid presigned upload response from Luma' };
-    }
-
-    // Step 2: Convert blob to base64 and upload via Tauri proxy
-    const arrayBuffer = await imageBlob.arrayBuffer();
-    const bytes = new Uint8Array(arrayBuffer);
-    let binary = '';
-    for (let i = 0; i < bytes.length; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    const base64Body = btoa(binary);
-
-    const uploadResult = await invoke<{ status: number; body: string }>(
-      'http_put_binary',
-      {
-        url: uploadUrl,
-        headers: {},
-        base64Body: base64Body,
-        contentType: imageBlob.type || 'image/png',
-      },
-    );
-
-    if (uploadResult.status < 200 || uploadResult.status >= 300) {
-      return { error: `Image upload failed: ${uploadResult.status}` };
-    }
-
-    return { url: publicUrl };
-  } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to upload image to Luma' };
   }
 }
 

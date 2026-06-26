@@ -8,6 +8,22 @@ export interface AppReleaseNotes {
 }
 
 const RELEASE_NOTES: Record<string, AppReleaseNotes> = {
+  '1.9.8': {
+    title: 'Faster exports, Veo loop bridges, and render-clock fixes',
+    summary: [
+      'JPEG sequence export now uses a native encoder path for much faster frame saves.',
+      'Particles, GPU shaders, and offline renders stay locked to the render clock.',
+      'Video loops can now use a Veo bridge between the last and first frame.',
+    ],
+    highlights: [
+      'Render to Video now drives JPEG sequence export through a persistent native FFmpeg encoder instead of saving every frame through a slower per-image path, making long 4K frame sequences much more practical.',
+      'Offline rendering now keeps GPU shader layers, Pixel Particles GPU Shader, and Particles 3D tied to the virtual render clock so exported videos advance frame-by-frame instead of sampling runaway live animation time.',
+      'Standard video loop creation uses the native FFmpeg path with hardware H.264 where available, better progress reporting, and a browser fallback if the desktop encoder cannot run.',
+      'The loop creator adds a Veo Bridge mode: Ghost Arcade captures the source video last frame and first frame, asks Veo 3.1 to generate the transition, then appends the bridge to the original clip.',
+      'AI video generation now supports Veo first-frame and first/last-frame uploads, including the live endpoint payload shape Veo expects for keyframed generation.',
+      'The mobile controller groundwork adds Phone Vision source state, native OSC layouts, and native vision hooks for future iOS/Android capture workflows.',
+    ],
+  },
   '1.9.7': {
     title: 'Mapping Composition effects, visual polish, and sharper downloads',
     summary: [

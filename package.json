@@ -1,6 +1,6 @@
 {
   "name": "ghost-arcade",
-  "version": "1.9.7",
+  "version": "1.9.8",
   "description": "Ghost Arcade — open-source projection mapping & VJ software with WebGPU acceleration, real-time effects, MIDI control, and a mobile companion.",
   "license": "AGPL-3.0-only",
   "homepage": "https://ghostarcade.live",
@@ -35,6 +35,9 @@
     "check:native-mobile": "svelte-check --tsconfig ./tsconfig.native-mobile.json",
     "native-mobile:sync": "npm run build:native-mobile && cd native-mobile && npm run cap:sync",
     "native-mobile:copy": "npm run build:native-mobile && cd native-mobile && npm run cap:copy",
+    "native-mobile:ios:doctor": "cd native-mobile && npm run ios:testflight:doctor",
+    "native-mobile:ios:archive": "cd native-mobile && npm run ios:archive",
+    "native-mobile:testflight": "cd native-mobile && npm run ios:testflight",
     "server": "node server/ws-server.js",
     "start": "concurrently \"npm run dev\" \"npm run server\"",
     "legacy:electron": "concurrently \"npm run dev\" \"electron .\"",

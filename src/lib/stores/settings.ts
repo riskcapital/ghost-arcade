@@ -161,21 +161,26 @@ export interface AIModelOption {
 }
 
 export const CLAUDE_MODELS: AIModelOption[] = [
-  { id: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
+  { id: 'claude-fable-5', label: 'Claude Fable 5' },
+  { id: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
   { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
   { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 (Fast)' },
-  { id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5 (Legacy)' },
 ];
 
 export const GEMINI_MODELS: AIModelOption[] = [
-  { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro' },
-  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+  { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview' },
+  { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
+  { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview' },
+  { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite' },
   { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-  { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite (Fast)' },
+  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (Legacy)' },
 ];
 
 export const VEO_MODELS: AIModelOption[] = [
-  { id: 'veo-2.0-generate-001', label: 'Veo 2.0' },
+  { id: 'veo-3.1-generate-preview', label: 'Veo 3.1 Preview' },
+  { id: 'veo-3.1-fast-generate-preview', label: 'Veo 3.1 Fast Preview' },
+  { id: 'veo-3.1-lite-generate-preview', label: 'Veo 3.1 Lite Preview' },
+  { id: 'veo-2.0-generate-001', label: 'Veo 2.0 (Deprecated)' },
 ];
 
 export const LUMA_MODELS: AIModelOption[] = [
@@ -944,11 +949,11 @@ function createDefaultSettings(): AppSettings {
       claudeApiKey: '',
       claudeModel: 'claude-sonnet-4-6',
       geminiApiKey: '',
-      geminiModel: 'gemini-2.5-flash',
+      geminiModel: 'gemini-3.5-flash',
       videoProvider: 'veo',
       lumaApiKey: '',
       lumaModel: 'ray-2',
-      veoModel: 'veo-2.0-generate-001',
+      veoModel: 'veo-3.1-generate-preview',
       replicateApiKey: '',
     },
     defaultLayerShader: 'grid',

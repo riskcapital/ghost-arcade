@@ -8133,6 +8133,8 @@ export const auraFieldHeroShader = /* glsl */ `
   uniform float uTintG;
   uniform float uTintB;
   uniform float uMode;          // 0=add, 1=screen, 2=replace
+  uniform sampler2D uNativeMask;
+  uniform float uHasNativeMask;
   uniform float uTime;
   uniform vec2 uResolution;
   varying vec2 vUv;
@@ -8146,6 +8148,9 @@ export const auraFieldHeroShader = /* glsl */ `
 
   void main() {
     vec3 src = texture2D(uTexture, vUv).rgb;
+    float maskCenter = texture2D(uNativeMask, vUv).r;
+    float hasMask = step(0.5, uHasNativeMask);
+    float maskSoft = smoothstep(0.08, 0.85, maskCenter);
     vec2 texel = 1.0 / uResolution;
 
     // Compute aura from neighborhood: blur weighted by source brightness + edges
@@ -8157,16 +8162,21 @@ export const auraFieldHeroShader = /* glsl */ `
         if (abs(x) + abs(y) > 6) continue;
         vec2 off = vec2(float(x), float(y)) * texel * r * 0.4;
         vec3 s = texture2D(uTexture, vUv + off).rgb;
+        float m = texture2D(uNativeMask, vUv + off).r;
         // Edge component (delta from center)
         vec3 d = abs(s - src);
-        float edgeW = (d.r + d.g + d.b) * uEdgeAmount;
-        float lumaW = luma(s) * uLumaAmount;
+        float rgbEdge = d.r + d.g + d.b;
+        float maskEdge = abs(m - maskCenter) * 3.0;
+        float edgeW = mix(rgbEdge, max(rgbEdge * 0.35, maskEdge), hasMask) * uEdgeAmount;
+        float lumaW = mix(luma(s), max(luma(s) * 0.35, m), hasMask) * uLumaAmount;
         float w = exp(-(float(x*x + y*y)) / 8.0) * (edgeW + lumaW);
-        aura += s * w;
+        vec3 auraSource = mix(s, mix(s, vec3(1.0), 0.55), hasMask * m);
+        aura += auraSource * w;
         wsum += w;
       }
     }
     aura = (wsum > 0.0001) ? aura / wsum : vec3(0.0);
+    aura *= mix(1.0, 0.45 + maskSoft * 0.75 + smoothstep(0.02, 0.32, abs(aura.r + aura.g + aura.b)) * 0.25, hasMask);
     aura *= uIntensity * (1.0 + uAudio * uAudioReact);
 
     // Optional hue cycle

@@ -13,8 +13,15 @@
   import { parseISF, getInputDefault } from '../isf/parser';
   import { generateCachedThumbnail as generateShaderThumbnail } from '../isf/thumbnail';
   import { estimateShaderLoadRating, type ShaderLoadRating } from '../isf/loadRating';
-  import { createLoop, type LoopProgress, type LoopTransitionType, LOOP_TRANSITIONS } from '../utils/videoLoop';
+  import { appendNativeVideoSegment, createLoopWithResult, runtimeVideoUrlToPath, type LoopProgress, type LoopTransitionType, LOOP_TRANSITIONS } from '../utils/videoLoop';
   import { downloadRecording } from '../recording/recorder';
+  import {
+    downloadVeoVideo,
+    pollVeoOperation,
+    startVeoGeneration,
+    type VeoModel,
+  } from '../api/ai-client';
+  import { settings } from '../stores/settings';
   import { updateJSAnimationParams } from '../renderer/js-animation';
   import { confirmDeleteIfSafeMode } from '../utils/safeMode';
   // Tier-related imports removed — FluidGen plugin always available.
@@ -887,8 +894,10 @@
   // Loop creation state
   let loopingVideoId: string | null = null;
   let loopProgress: LoopProgress | null = null;
+  let loopCreationMode: 'crossfade' | 'veo' = 'crossfade';
   let loopTransitionType: LoopTransitionType = 'fade';
   let loopCrossfadeDuration: number = 0.5;
+  let loopVeoPrompt = 'Create a smooth seamless visual transition from the first image to the second image with continuous flowing motion.';
   let showLoopOptions: string | null = null; // item.id when options panel is shown
   let loopPopoverPos = { x: 0, y: 0 };
 
@@ -2344,45 +2353,63 @@
     generateMissingThumbnails();
   }
 
-  // Create a seamless loop from a video
-  async function createLoopFromVideo(item: MediaItem) {
-    if (loopingVideoId) return; // Already processing
-    if (item.type !== 'video') return;
+  function getMediaItemLocalPath(item: MediaItem): string | null {
+    return item._assetRef?.originalPath || runtimeVideoUrlToPath(item.src);
+  }
 
-    loopingVideoId = item.id;
-    showLoopOptions = null;
-    loopProgress = { stage: 'loading', progress: 0, message: 'Initializing...' };
+  function loopAssetRefFromPath(outputPath: string | undefined, name: string, size?: number): MediaItem['_assetRef'] {
+    if (!outputPath) return undefined;
+    return {
+      kind: 'local-file',
+      originalPath: outputPath,
+      name,
+      mime: 'video/mp4',
+      size,
+      lastModified: Date.now(),
+    };
+  }
 
-    try {
-      const loopedUrl = await createLoop(item.src, loopCrossfadeDuration, (progress) => {
-        loopProgress = progress;
-      }, loopTransitionType);
+  async function waitForVideoFrame(video: HTMLVideoElement): Promise<void> {
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        video.removeEventListener('loadeddata', done);
+        resolve();
+      };
+      video.addEventListener('loadeddata', done, { once: true });
+      if (video.readyState >= 2) done();
+      setTimeout(done, 5000);
+    });
+  }
 
-      // Create a new video element for the looped version
-      const video = document.createElement('video');
-      video.crossOrigin = 'anonymous';
-      video.loop = true;
-      video.muted = true;
-      video.playsInline = true;
-      video.preload = 'auto';
-      video.src = loopedUrl;
+  async function blobFromUrl(url: string): Promise<Blob> {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`Failed to read generated loop (${resp.status})`);
+    return await resp.blob();
+  }
 
-      // `.src=` already initiated the load — don't call `.load()`.
-      await new Promise<void>((resolve) => {
-        const done = () => { video.removeEventListener('loadeddata', done); resolve(); };
-        video.addEventListener('loadeddata', done, { once: true });
-        if (video.readyState >= 2) done();
-      });
+  async function addLoopResultToLibrary(
+    item: MediaItem,
+    result: { url: string; outputPath?: string; size?: number },
+    generatedName: string,
+    savePrefix: string,
+  ) {
+    const loopedUrl = result.url;
+    const video = document.createElement('video');
+    video.crossOrigin = 'anonymous';
+    video.loop = true;
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'auto';
+    video.src = loopedUrl;
 
-      // Persist the generated loop once so project save/reload has a real
-      // disk-backed AssetRef instead of a session-only blob URL.
-      const baseName = item.name.replace(/\.[^/.]+$/, ''); // Remove extension
-      const generatedName = `${baseName} (Loop).mp4`;
-      let loopBlob: Blob | null = null;
-      let loopAssetRef: any = undefined;
+    await waitForVideoFrame(video);
+
+    let loopBlob: Blob | null = null;
+    let loopAssetRef = loopAssetRefFromPath(result.outputPath, generatedName, result.size);
+
+    if (!loopAssetRef) {
       try {
-        const resp = await fetch(loopedUrl);
-        loopBlob = await resp.blob();
+        loopBlob = await blobFromUrl(loopedUrl);
         const captured = await createAssetRefFromGeneratedBlob(
           loopBlob,
           generatedName,
@@ -2393,36 +2420,222 @@
       } catch (err) {
         console.warn('[Loop] Failed to persist generated loop asset:', err);
       }
+    }
 
-      // Add to media library with "(Loop)" suffix
-      const newItem: MediaItem = {
-        id: generateUUID(),
-        name: generatedName,
-        src: loopedUrl,
-        type: 'video',
-        videoElement: video,
-        thumbnail: await captureVideoThumbnail(video),
-        _assetRef: loopAssetRef,
+    const newItem: MediaItem = {
+      id: generateUUID(),
+      name: generatedName,
+      src: loopedUrl,
+      type: 'video',
+      videoElement: video,
+      thumbnail: await captureVideoThumbnail(video),
+      _assetRef: loopAssetRef,
+    };
+
+    mediaLibrary.addItem(newItem);
+
+    try {
+      if (!loopBlob) loopBlob = await blobFromUrl(loopedUrl);
+      const baseName = item.name.replace(/\.[^/.]+$/, '');
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const safeName = baseName.replace(/[^a-zA-Z0-9_\- ]/g, '').trim().replace(/\s+/g, '_');
+      await downloadRecording(loopBlob, `${savePrefix}_${safeName}_${timestamp}.mp4`);
+    } catch (err) {
+      console.warn('[Loop] Disk save failed (non-fatal):', err);
+    }
+  }
+
+  function veoAspectFromSize(width: number, height: number): '16:9' | '9:16' {
+    return width > 0 && height > 0 && height > width ? '9:16' : '16:9';
+  }
+
+  async function seekVideo(video: HTMLVideoElement, time: number): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => {
+        video.removeEventListener('seeked', onSeeked);
+        video.removeEventListener('error', onError);
       };
+      const finish = (err?: Error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (err) reject(err);
+        else resolve();
+      };
+      const onSeeked = () => finish();
+      const onError = () => finish(new Error('Failed to seek video frame.'));
+      video.addEventListener('seeked', onSeeked, { once: true });
+      video.addEventListener('error', onError, { once: true });
+      video.currentTime = Math.max(0, time);
+      setTimeout(() => finish(), 2500);
+    });
+  }
 
-      mediaLibrary.addItem(newItem);
+  async function canvasToJpegBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92));
+    if (!blob) throw new Error('Failed to encode video frame.');
+    return blob;
+  }
 
-      // Save loop video to disk (same recordings folder as output recording)
-      try {
-        if (!loopBlob) {
-          const resp = await fetch(loopedUrl);
-          loopBlob = await resp.blob();
-        }
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        const safeName = baseName.replace(/[^a-zA-Z0-9_\- ]/g, '').trim().replace(/\s+/g, '_');
-        await downloadRecording(loopBlob, `Loop_${safeName}_${timestamp}.mp4`);
-      } catch (err) {
-        console.warn('[Loop] Disk save failed (non-fatal):', err);
+  async function captureLoopBridgeFrames(src: string): Promise<{
+    firstFrame: Blob;
+    lastFrame: Blob;
+    width: number;
+    height: number;
+    duration: number;
+  }> {
+    const video = document.createElement('video');
+    video.crossOrigin = 'anonymous';
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'auto';
+
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => {
+        video.removeEventListener('loadedmetadata', onLoaded);
+        video.removeEventListener('error', onError);
+      };
+      const finish = (err?: Error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (err) reject(err);
+        else resolve();
+      };
+      const onLoaded = () => finish();
+      const onError = () => finish(new Error('Failed to load video for loop frames.'));
+      video.addEventListener('loadedmetadata', onLoaded, { once: true });
+      video.addEventListener('error', onError, { once: true });
+      video.src = src;
+      video.load();
+      setTimeout(() => finish(new Error('Timed out loading video frames.')), 8000);
+    });
+
+    const sourceW = video.videoWidth || 1280;
+    const sourceH = video.videoHeight || 720;
+    const scale = Math.min(1, 1920 / Math.max(sourceW, sourceH));
+    const width = Math.max(2, Math.round(sourceW * scale));
+    const height = Math.max(2, Math.round(sourceH * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Could not capture video frames.');
+
+    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
+    await seekVideo(video, Math.min(0.08, Math.max(0, duration * 0.05)));
+    ctx.drawImage(video, 0, 0, width, height);
+    const firstFrame = await canvasToJpegBlob(canvas);
+
+    await seekVideo(video, Math.max(0, duration - 0.08));
+    ctx.drawImage(video, 0, 0, width, height);
+    const lastFrame = await canvasToJpegBlob(canvas);
+
+    video.removeAttribute('src');
+    video.load();
+    return { firstFrame, lastFrame, width, height, duration };
+  }
+
+  async function createCrossfadeLoopFromVideo(item: MediaItem, generatedName: string) {
+    const result = await createLoopWithResult(item.src, loopCrossfadeDuration, (progress) => {
+      loopProgress = progress;
+    }, loopTransitionType, {
+      inputPath: getMediaItemLocalPath(item),
+      inputName: item.name,
+      outputName: generatedName,
+    });
+
+    await addLoopResultToLibrary(item, result, generatedName, 'Loop');
+  }
+
+  async function createVeoBridgeLoopFromVideo(item: MediaItem, generatedName: string) {
+    const ai = get(settings).ai;
+    if (!ai.geminiApiKey) {
+      throw new Error('Gemini API key required. Configure it in Settings > AI.');
+    }
+    if (!String(ai.veoModel).startsWith('veo-3.1')) {
+      throw new Error('Veo Bridge requires a Veo 3.1 model.');
+    }
+
+    loopProgress = { stage: 'processing', progress: 0.05, message: 'Capturing loop frames...' };
+    const frames = await captureLoopBridgeFrames(item.src);
+
+    loopProgress = { stage: 'processing', progress: 0.15, message: 'Submitting Veo bridge...' };
+    const startResult = await startVeoGeneration({
+      apiKey: ai.geminiApiKey,
+      prompt: loopVeoPrompt.trim() || 'Create a smooth seamless visual transition.',
+      model: ai.veoModel as VeoModel,
+      aspectRatio: veoAspectFromSize(frames.width, frames.height),
+      durationSeconds: 8,
+      firstFrame: frames.lastFrame,
+      lastFrame: frames.firstFrame,
+    });
+    if (startResult.error || !startResult.operationName) {
+      throw new Error(startResult.error || 'Failed to start Veo bridge generation.');
+    }
+
+    const opName = startResult.operationName;
+    const pollStarted = performance.now();
+    let bridgeBlob: Blob | null = null;
+    while (!bridgeBlob) {
+      await new Promise(resolve => setTimeout(resolve, 10000));
+      const elapsed = (performance.now() - pollStarted) / 1000;
+      loopProgress = {
+        stage: 'processing',
+        progress: Math.min(0.78, 0.18 + (1 - Math.exp(-elapsed / 120)) * 0.6),
+        message: 'Waiting for Veo bridge...',
+      };
+      const status = await pollVeoOperation(ai.geminiApiKey, opName);
+      if (status.error && status.done) throw new Error(status.error);
+      if (status.done && status.videoUri) {
+        loopProgress = { stage: 'processing', progress: 0.80, message: 'Downloading Veo bridge...' };
+        const download = await downloadVeoVideo(ai.geminiApiKey, status.videoUri);
+        if (download.error || !download.blob) throw new Error(download.error || 'Failed to download Veo bridge.');
+        bridgeBlob = download.blob;
+      }
+    }
+
+    const result = await appendNativeVideoSegment(item.src, bridgeBlob, (progress) => {
+      loopProgress = {
+        ...progress,
+        progress: 0.82 + progress.progress * 0.16,
+      };
+    }, {
+      inputPath: getMediaItemLocalPath(item),
+      inputName: item.name,
+      outputName: generatedName,
+      width: frames.width,
+      height: frames.height,
+    });
+
+    await addLoopResultToLibrary(item, result, generatedName, 'Veo_Loop');
+  }
+
+  // Create a seamless loop from a video
+  async function createLoopFromVideo(item: MediaItem) {
+    if (loopingVideoId) return; // Already processing
+    if (item.type !== 'video') return;
+
+    loopingVideoId = item.id;
+    showLoopOptions = null;
+    loopProgress = { stage: 'loading', progress: 0, message: 'Initializing...' };
+
+    const baseName = item.name.replace(/\.[^/.]+$/, '');
+    const generatedName = loopCreationMode === 'veo'
+      ? `${baseName} (Veo Loop).mp4`
+      : `${baseName} (Loop).mp4`;
+
+    try {
+      if (loopCreationMode === 'veo') {
+        await createVeoBridgeLoopFromVideo(item, generatedName);
+      } else {
+        await createCrossfadeLoopFromVideo(item, generatedName);
       }
 
       loopProgress = { stage: 'complete', progress: 1, message: 'Loop created & saved!' };
 
-      // Clear progress after a short delay
       setTimeout(() => {
         loopingVideoId = null;
         loopProgress = null;
@@ -2430,12 +2643,16 @@
 
     } catch (error) {
       console.error('Failed to create loop:', error);
-      loopProgress = { stage: 'error', progress: 0, message: 'Failed to create loop' };
+      loopProgress = {
+        stage: 'error',
+        progress: 0,
+        message: error instanceof Error ? error.message : 'Failed to create loop',
+      };
 
       setTimeout(() => {
         loopingVideoId = null;
         loopProgress = null;
-      }, 3000);
+      }, 4000);
     }
   }
 
@@ -4408,26 +4625,40 @@
     >
       <div class="loop-popover-title">Create Seamless Loop</div>
       <div class="loop-opt-row">
-        <label>Transition</label>
-        <select bind:value={loopTransitionType}>
-          {#each LOOP_TRANSITIONS as t}
-            <option value={t.value}>{t.label}</option>
-          {/each}
+        <label for="loop-creation-mode">Mode</label>
+        <select id="loop-creation-mode" bind:value={loopCreationMode}>
+          <option value="crossfade">Crossfade</option>
+          <option value="veo">Veo Bridge</option>
         </select>
       </div>
-      <div class="loop-opt-row">
-        <label>Duration</label>
-        <select bind:value={loopCrossfadeDuration}>
-          <option value={0.2}>0.2s</option>
-          <option value={0.5}>0.5s</option>
-          <option value={1.0}>1.0s</option>
-          <option value={1.5}>1.5s</option>
-          <option value={2.0}>2.0s</option>
-          <option value={3.0}>3.0s</option>
-        </select>
-      </div>
+      {#if loopCreationMode === 'crossfade'}
+        <div class="loop-opt-row">
+          <label for="loop-transition-type">Transition</label>
+          <select id="loop-transition-type" bind:value={loopTransitionType}>
+            {#each LOOP_TRANSITIONS as t}
+              <option value={t.value}>{t.label}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="loop-opt-row">
+          <label for="loop-crossfade-duration">Duration</label>
+          <select id="loop-crossfade-duration" bind:value={loopCrossfadeDuration}>
+            <option value={0.2}>0.2s</option>
+            <option value={0.5}>0.5s</option>
+            <option value={1.0}>1.0s</option>
+            <option value={1.5}>1.5s</option>
+            <option value={2.0}>2.0s</option>
+            <option value={3.0}>3.0s</option>
+          </select>
+        </div>
+      {:else}
+        <div class="loop-opt-column">
+          <label for="loop-veo-prompt">Prompt</label>
+          <textarea id="loop-veo-prompt" bind:value={loopVeoPrompt} rows="3"></textarea>
+        </div>
+      {/if}
       <button class="loop-create-btn" onclick={() => createLoopFromVideo(loopItem)}>
-        Create Loop
+        {loopCreationMode === 'veo' ? 'Create Veo Loop' : 'Create Loop'}
       </button>
     </div>
   {/if}
@@ -5653,7 +5884,8 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    min-width: 200px;
+    min-width: 220px;
+    max-width: 280px;
     box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7);
   }
 
@@ -5692,6 +5924,37 @@
   }
 
   :global(.loop-opt-row select:focus) {
+    outline: none;
+    border-color: #BB86FC;
+  }
+
+  :global(.loop-opt-column) {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  :global(.loop-opt-column label) {
+    font-size: 12px;
+    color: var(--text-secondary, #aaa);
+  }
+
+  :global(.loop-opt-column textarea) {
+    width: 100%;
+    min-height: 58px;
+    background-color: var(--bg-tertiary, #161618);
+    border: 1px solid #444;
+    color: var(--text-primary, #ddd);
+    font-size: 12px;
+    line-height: 1.35;
+    padding: 5px 6px;
+    border-radius: 4px;
+    box-sizing: border-box;
+    resize: vertical;
+    font-family: inherit;
+  }
+
+  :global(.loop-opt-column textarea:focus) {
     outline: none;
     border-color: #BB86FC;
   }

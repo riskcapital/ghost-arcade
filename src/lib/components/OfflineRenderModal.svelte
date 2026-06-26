@@ -159,7 +159,7 @@
         {:else if state.status === 'encoding'}
           Encoding to MP4…
         {:else if state.status === 'saving'}
-          {isFrameOutput ? 'Writing manifest…' : 'Saving to library…'}
+          {isFrameOutput ? 'Finalizing frame sequence…' : 'Saving to library…'}
         {/if}
       </div>
       <div class="progress-bar">

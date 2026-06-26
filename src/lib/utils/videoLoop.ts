@@ -32,6 +32,8 @@
  */
 
 import type { FFmpeg as FFmpegType } from '@ffmpeg/ffmpeg';
+import { invoke, isDesktopApp } from '$lib/bridge';
+import { pathToFileUrl } from '../storage/assetRegistry';
 // Vendor FFmpeg core locally — Vite ?url imports emit the files
 // into the bundle and give us same-origin URLs. Loading from a
 // CDN failed under Electron's renderer CSP / file:// origin,
@@ -60,6 +62,21 @@ export interface LoopProgress {
 }
 
 export type ProgressCallback = (progress: LoopProgress) => void;
+
+export interface LoopCreateResult {
+  url: string;
+  outputPath?: string;
+  size?: number;
+  duration?: number;
+}
+
+export interface NativeLoopOptions {
+  inputPath?: string | null;
+  inputName?: string;
+  outputName?: string;
+  width?: number;
+  height?: number;
+}
 
 export type LoopTransitionType =
   | 'fade'
@@ -114,6 +131,160 @@ export const LOOP_TRANSITIONS: { value: LoopTransitionType; label: string }[] = 
 function clamp(v: number, lo: number, hi: number): number {
   if (!Number.isFinite(v)) return lo;
   return Math.max(lo, Math.min(hi, v));
+}
+
+export function runtimeVideoUrlToPath(src: string | undefined | null): string | null {
+  if (!src) return null;
+  try {
+    if (/^ghost-asset:/i.test(src)) {
+      const url = new URL(src);
+      let p = decodeURIComponent(url.pathname);
+      if (p.startsWith('/') && /^\/[A-Za-z]:\//.test(p)) p = p.slice(1);
+      return p || null;
+    }
+    if (/^file:/i.test(src)) {
+      const url = new URL(src);
+      let p = decodeURIComponent(url.pathname);
+      if (p.startsWith('/') && /^\/[A-Za-z]:\//.test(p)) p = p.slice(1);
+      return p || null;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function canUseNativeLoop(): boolean {
+  return isDesktopApp
+    && typeof window !== 'undefined'
+    && !!window.electronAPI?.invoke
+    && !!window.electronAPI?.on;
+}
+
+function makeLoopJobId(prefix: string): string {
+  const cryptoId = globalThis.crypto?.randomUUID?.();
+  return `${prefix}-${cryptoId || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`}`;
+}
+
+function subscribeNativeLoopProgress(jobId: string, onProgress?: ProgressCallback): (() => void) | undefined {
+  if (!onProgress || typeof window === 'undefined') return undefined;
+  return window.electronAPI?.on?.('video-loop-progress', (payload: any) => {
+    if (!payload || payload.jobId !== jobId) return;
+    onProgress({
+      stage: payload.stage === 'complete' ? 'complete'
+        : payload.stage === 'error' ? 'error'
+          : payload.stage === 'processing' ? 'processing'
+            : 'rendering',
+      progress: clamp(Number(payload.progress), 0, 1),
+      message: String(payload.message || 'Creating loop...'),
+    });
+  });
+}
+
+async function nativeInputPayload(
+  videoFile: File | Blob | string,
+  options?: NativeLoopOptions,
+): Promise<{ inputPath?: string; inputBytes?: ArrayBuffer }> {
+  const explicitPath = options?.inputPath || (typeof videoFile === 'string' ? runtimeVideoUrlToPath(videoFile) : null);
+  if (explicitPath) return { inputPath: explicitPath };
+
+  if (typeof videoFile === 'string') {
+    const resp = await fetch(videoFile);
+    if (!resp.ok) throw new Error(`Failed to read video for loop: ${resp.status}`);
+    const blob = await resp.blob();
+    return { inputBytes: await blob.arrayBuffer() };
+  }
+  return { inputBytes: await videoFile.arrayBuffer() };
+}
+
+export async function createNativeLoopedVideo(
+  videoFile: File | Blob | string,
+  crossfadeDuration: number = 0.5,
+  onProgress?: ProgressCallback,
+  transitionType: LoopTransitionType = 'fade',
+  options: NativeLoopOptions = {},
+): Promise<LoopCreateResult> {
+  if (!canUseNativeLoop()) {
+    throw new Error('Native loop creation is only available in the desktop app.');
+  }
+
+  const jobId = makeLoopJobId('video-loop');
+  const unsubscribe = subscribeNativeLoopProgress(jobId, onProgress);
+  try {
+    onProgress?.({ stage: 'processing', progress: 0, message: 'Preparing native loop...' });
+    const input = await nativeInputPayload(videoFile, options);
+    const result = await invoke<{
+      success?: boolean;
+      error?: string;
+      outputPath?: string;
+      size?: number;
+      duration?: number;
+    }>('video_loop_create', {
+      jobId,
+      ...input,
+      inputName: options.inputName,
+      outputName: options.outputName,
+      crossfadeDuration,
+      transitionType,
+    });
+
+    if (!result?.success || !result.outputPath) {
+      throw new Error(result?.error || 'Native loop creation failed.');
+    }
+    onProgress?.({ stage: 'complete', progress: 1, message: 'Loop created!' });
+    return {
+      url: pathToFileUrl(result.outputPath),
+      outputPath: result.outputPath,
+      size: result.size,
+      duration: result.duration,
+    };
+  } finally {
+    unsubscribe?.();
+  }
+}
+
+export async function appendNativeVideoSegment(
+  videoFile: File | Blob | string,
+  segmentBlob: Blob,
+  onProgress?: ProgressCallback,
+  options: NativeLoopOptions = {},
+): Promise<LoopCreateResult> {
+  if (!canUseNativeLoop()) {
+    throw new Error('Native video assembly is only available in the desktop app.');
+  }
+
+  const jobId = makeLoopJobId('video-append-segment');
+  const unsubscribe = subscribeNativeLoopProgress(jobId, onProgress);
+  try {
+    onProgress?.({ stage: 'processing', progress: 0, message: 'Preparing video assembly...' });
+    const input = await nativeInputPayload(videoFile, options);
+    const result = await invoke<{
+      success?: boolean;
+      error?: string;
+      outputPath?: string;
+      size?: number;
+    }>('video_append_segment', {
+      jobId,
+      ...input,
+      segmentBytes: await segmentBlob.arrayBuffer(),
+      inputName: options.inputName,
+      outputName: options.outputName,
+      width: options.width,
+      height: options.height,
+    });
+
+    if (!result?.success || !result.outputPath) {
+      throw new Error(result?.error || 'Native video assembly failed.');
+    }
+    onProgress?.({ stage: 'complete', progress: 1, message: 'Video assembled!' });
+    return {
+      url: pathToFileUrl(result.outputPath),
+      outputPath: result.outputPath,
+      size: result.size,
+    };
+  } finally {
+    unsubscribe?.();
+  }
 }
 
 /** Build a phase-scaled progress callback. The internal phases of
@@ -517,11 +688,31 @@ export async function createLoopedVideo(
 
 /** Smart loop creator — main entry point. Thin wrapper that exists
  *  for symmetry with the rest of the recording API surface. */
+export async function createLoopWithResult(
+  videoFile: File | Blob | string,
+  crossfadeDuration: number = 0.5,
+  onProgress?: ProgressCallback,
+  transitionType: LoopTransitionType = 'fade',
+  options: NativeLoopOptions = {},
+): Promise<LoopCreateResult> {
+  if (canUseNativeLoop()) {
+    try {
+      return await createNativeLoopedVideo(videoFile, crossfadeDuration, onProgress, transitionType, options);
+    } catch (err) {
+      console.warn('[VideoLoop] Native loop path failed; falling back to FFmpeg.wasm:', err);
+      onProgress?.({ stage: 'processing', progress: 0, message: 'Native loop failed, trying browser encoder...' });
+    }
+  }
+
+  const url = await createLoopedVideo(videoFile, crossfadeDuration, onProgress, transitionType);
+  return { url };
+}
+
 export async function createLoop(
   videoFile: File | Blob | string,
   crossfadeDuration: number = 0.5,
   onProgress?: ProgressCallback,
   transitionType: LoopTransitionType = 'fade',
 ): Promise<string> {
-  return createLoopedVideo(videoFile, crossfadeDuration, onProgress, transitionType);
+  return (await createLoopWithResult(videoFile, crossfadeDuration, onProgress, transitionType)).url;
 }

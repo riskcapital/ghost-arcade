@@ -2,14 +2,68 @@
 // Shader GLSL strings live in ./shaders/; this file handles lookup, material creation, and uniform wiring.
 
 import * as THREE from 'three';
+import { get } from 'svelte/store';
 import type { Effect, EffectParams, EffectType } from '../types';
 import type { VisualAudioState } from '../audio/visualAudio';
+import { phoneVision, type PhoneVisionNativeRasterSample } from '../stores/phoneVision';
 import {
   getCustomEffect,
   registerBuiltinTypes,
   type CustomEffect,
 } from '../effects/customEffects';
 import { fmScanlinesShader } from './shaders/fmScanlines';
+
+let phoneVisionMaskTexture: THREE.DataTexture | null = null;
+let phoneVisionMaskKey = '';
+let phoneVisionMaskFallbackTexture: THREE.DataTexture | null = null;
+
+function getPhoneVisionMaskFallbackTexture(): THREE.DataTexture {
+  if (phoneVisionMaskFallbackTexture) return phoneVisionMaskFallbackTexture;
+  phoneVisionMaskFallbackTexture = new THREE.DataTexture(new Uint8Array([0]), 1, 1, THREE.RedFormat, THREE.UnsignedByteType);
+  phoneVisionMaskFallbackTexture.minFilter = THREE.LinearFilter;
+  phoneVisionMaskFallbackTexture.magFilter = THREE.LinearFilter;
+  phoneVisionMaskFallbackTexture.wrapS = THREE.ClampToEdgeWrapping;
+  phoneVisionMaskFallbackTexture.wrapT = THREE.ClampToEdgeWrapping;
+  phoneVisionMaskFallbackTexture.needsUpdate = true;
+  return phoneVisionMaskFallbackTexture;
+}
+
+function decodeBase64Bytes(data: string): Uint8Array {
+  const raw = atob(data);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  return bytes;
+}
+
+function getPhoneVisionMaskTexture(sample: PhoneVisionNativeRasterSample | undefined): THREE.DataTexture | null {
+  if (!sample || sample.format !== 'r8-mask' || !sample.data) return null;
+  const width = Math.max(1, Math.floor(sample.width || 0));
+  const height = Math.max(1, Math.floor(sample.height || 0));
+  const key = `${sample.timestamp}:${width}x${height}:${sample.data.length}`;
+  if (phoneVisionMaskTexture && phoneVisionMaskKey === key) return phoneVisionMaskTexture;
+
+  let bytes: Uint8Array;
+  try {
+    bytes = decodeBase64Bytes(sample.data);
+  } catch {
+    return null;
+  }
+  if (bytes.byteLength !== width * height) return null;
+
+  if (!phoneVisionMaskTexture || phoneVisionMaskTexture.image.width !== width || phoneVisionMaskTexture.image.height !== height) {
+    phoneVisionMaskTexture?.dispose();
+    phoneVisionMaskTexture = new THREE.DataTexture(bytes, width, height, THREE.RedFormat, THREE.UnsignedByteType);
+    phoneVisionMaskTexture.minFilter = THREE.LinearFilter;
+    phoneVisionMaskTexture.magFilter = THREE.LinearFilter;
+    phoneVisionMaskTexture.wrapS = THREE.ClampToEdgeWrapping;
+    phoneVisionMaskTexture.wrapT = THREE.ClampToEdgeWrapping;
+  } else {
+    phoneVisionMaskTexture.image.data = bytes;
+  }
+  phoneVisionMaskTexture.needsUpdate = true;
+  phoneVisionMaskKey = key;
+  return phoneVisionMaskTexture;
+}
 
 // ── Import all shader strings and mode mappings ──
 import {
@@ -2068,6 +2122,8 @@ export function createEffectMaterial(effectType: EffectType): THREE.ShaderMateri
       uniforms.uTintG = { value: 0.85 };
       uniforms.uTintB = { value: 1 };
       uniforms.uMode = { value: 1 };
+      uniforms.uNativeMask = { value: getPhoneVisionMaskFallbackTexture() };
+      uniforms.uHasNativeMask = { value: 0 };
       break;
 
     case 'smokeDisintegrate':
@@ -3862,6 +3918,14 @@ export function updateEffectUniforms(
       if (u.uTintG && p.afTintG !== undefined) u.uTintG.value = p.afTintG;
       if (u.uTintB && p.afTintB !== undefined) u.uTintB.value = p.afTintB;
       if (u.uMode && p.afMode !== undefined) u.uMode.value = p.afMode;
+      if (u.uNativeMask && u.uHasNativeMask) {
+        const wantsNativeMask = p.nativeMaskStream === true;
+        const maskTexture = wantsNativeMask
+          ? getPhoneVisionMaskTexture(get(phoneVision).nativeFrame?.maskSample)
+          : null;
+        u.uNativeMask.value = maskTexture ?? getPhoneVisionMaskFallbackTexture();
+        u.uHasNativeMask.value = maskTexture ? 1 : 0;
+      }
       break;
 
     case 'smokeDisintegrate':

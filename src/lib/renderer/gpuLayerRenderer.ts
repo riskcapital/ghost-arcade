@@ -21,6 +21,7 @@
 import type { GpuShaderImpl } from './gpuShaderTypes';
 import { getShaderDef } from './gpuShaderCatalog';
 import { SpoutCanvasReceiver } from './spoutCanvasReceiver';
+import type { PhoneVisionNativeFrame } from '../stores/phoneVision';
 
 // Lightweight context the renderer needs to resolve sources for
 // shaders with `needsSource: true`. The caller (Canvas.svelte) hands
@@ -29,6 +30,7 @@ import { SpoutCanvasReceiver } from './spoutCanvasReceiver';
 export interface SourceContext {
   layers: any[];           // project.layers
   mediaItems: any[];       // mediaLibrary store value
+  phoneVisionNativeFrame?: PhoneVisionNativeFrame | null;
 }
 
 /** Audio-bands snapshot for shaders that opt into reactivity (e.g.
@@ -158,6 +160,7 @@ export class GpuLayerRenderer {
     if (def?.needsSource && this.impl.setSource && sourceCtx) {
       this.feedSource(params, sourceCtx);
     }
+    this.feedNativeVisionSample(params, sourceCtx);
 
     const manualTime = typeof timing?.time === 'number' && Number.isFinite(timing.time)
       ? Math.max(0, timing.time)
@@ -373,6 +376,20 @@ export class GpuLayerRenderer {
         this.lastResolvedSourceKey = `spout:${src.senderName}`;
       }
     }
+  }
+
+  private feedNativeVisionSample(params: Record<string, any>, ctx?: SourceContext): void {
+    if (!this.impl) return;
+    const setDepth = (this.impl as any).setNativeDepthSample;
+    const clearDepth = (this.impl as any).clearNativeDepthSample;
+    if (typeof setDepth !== 'function' && typeof clearDepth !== 'function') return;
+    const wantsNativeDepth = !!params.nativeDepthStream || params.depthSource === 'native-depth';
+    const sample = wantsNativeDepth ? ctx?.phoneVisionNativeFrame?.depthSample : undefined;
+    if (wantsNativeDepth && sample && typeof setDepth === 'function') {
+      setDepth.call(this.impl, sample);
+      return;
+    }
+    if (typeof clearDepth === 'function') clearDepth.call(this.impl);
   }
 
   /** Open a webcam stream + attach to the shared cachedVideoEl. The

@@ -87,6 +87,28 @@ void main() {
 }
 `;
 
+const MEDIA_FRAGMENT_SHADER = `
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D uMedia;
+uniform vec2 uResolution;
+uniform vec2 uMediaResolution;
+
+void main() {
+  vec2 outAspect = vec2(uResolution.x / max(uResolution.y, 1.0), 1.0);
+  vec2 mediaAspect = vec2(uMediaResolution.x / max(uMediaResolution.y, 1.0), 1.0);
+  vec2 uv = vUv;
+  vec2 scale = vec2(1.0);
+  if (outAspect.x > mediaAspect.x) {
+    scale.y = mediaAspect.x / outAspect.x;
+  } else {
+    scale.x = outAspect.x / mediaAspect.x;
+  }
+  uv = (uv - 0.5) * scale + 0.5;
+  gl_FragColor = texture2D(uMedia, clamp(uv, 0.0, 1.0));
+}
+`;
+
 interface UniformLoc {
   TIME: WebGLUniformLocation | null;
   TIMEDELTA: WebGLUniformLocation | null;
@@ -100,6 +122,12 @@ interface UniformLoc {
   audioFFT: WebGLUniformLocation | null;
   audioWaveform: WebGLUniformLocation | null;
   inputs: Map<string, WebGLUniformLocation | null>;
+}
+
+interface MediaLoc {
+  uMedia: WebGLUniformLocation | null;
+  uResolution: WebGLUniformLocation | null;
+  uMediaResolution: WebGLUniformLocation | null;
 }
 
 /** Compiled effect program + its uniform locations, cached so we don't
@@ -125,7 +153,10 @@ export class StandaloneRenderer {
   private quadBuffer: WebGLBuffer;
   private program: WebGLProgram | null = null;
   private locs: UniformLoc | null = null;
+  private mediaLocs: MediaLoc | null = null;
   private inputs: ISFInput[] = [];
+  private mediaElement: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement | null = null;
+  private mediaTexture: WebGLTexture | null = null;
   private audioFFTTex: WebGLTexture;
   private audioWaveformTex: WebGLTexture;
   private startTime = performance.now();
@@ -196,11 +227,43 @@ export class StandaloneRenderer {
     const program = this.compile(VERTEX_SHADER, frag);
     if (this.program) this.gl.deleteProgram(this.program);
     this.program = program;
+    this.mediaElement = null;
+    this.mediaLocs = null;
     this.inputs = parsed.metadata.INPUTS ?? [];
     this.locs = this.cacheLocations(program, this.inputs);
     this.startTime = performance.now();
     this.frameIndex = 0;
     this.scaledTime = 0;
+  }
+
+  /** Use an image/video/canvas element as the layer source. It still
+   *  runs through the same post-process effect chain as shader layers. */
+  loadMediaSource(source: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement): void {
+    const program = this.compile(VERTEX_SHADER, MEDIA_FRAGMENT_SHADER);
+    if (this.program) this.gl.deleteProgram(this.program);
+    this.program = program;
+    this.locs = null;
+    this.inputs = [];
+    this.mediaElement = source;
+    if (!this.mediaTexture) this.mediaTexture = this.createMediaTexture();
+    this.mediaLocs = {
+      uMedia: this.gl.getUniformLocation(program, 'uMedia'),
+      uResolution: this.gl.getUniformLocation(program, 'uResolution'),
+      uMediaResolution: this.gl.getUniformLocation(program, 'uMediaResolution'),
+    };
+    this.startTime = performance.now();
+    this.lastFrameTime = this.startTime;
+    this.frameIndex = 0;
+    this.scaledTime = 0;
+  }
+
+  clearSource(): void {
+    if (this.program) this.gl.deleteProgram(this.program);
+    this.program = null;
+    this.locs = null;
+    this.mediaLocs = null;
+    this.mediaElement = null;
+    this.inputs = [];
   }
 
   /** Updated each frame by the host (StandaloneApp) before render. */
@@ -256,6 +319,7 @@ export class StandaloneRenderer {
     gl.deleteBuffer(this.quadBuffer);
     gl.deleteTexture(this.audioFFTTex);
     gl.deleteTexture(this.audioWaveformTex);
+    if (this.mediaTexture) gl.deleteTexture(this.mediaTexture);
     if (this.program) gl.deleteProgram(this.program);
     for (const fbo of this.fbos) {
       if (!fbo) continue;
@@ -271,7 +335,7 @@ export class StandaloneRenderer {
 
   private render() {
     const gl = this.gl;
-    if (!this.program || !this.locs) return;
+    if (!this.program) return;
 
     const now = performance.now();
     const dt = (now - this.lastFrameTime) / 1000;
@@ -299,6 +363,13 @@ export class StandaloneRenderer {
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     }
 
+    if (this.mediaElement) {
+      this.renderMediaSource();
+      if (usingChain) this.runEffectChain(time);
+      return;
+    }
+
+    if (!this.locs) return;
     gl.useProgram(this.program);
 
     // Quad
@@ -373,6 +444,44 @@ export class StandaloneRenderer {
     this.frameIndex++;
 
     if (usingChain) this.runEffectChain(time);
+  }
+
+  private renderMediaSource(): void {
+    const gl = this.gl;
+    const source = this.mediaElement;
+    const loc = this.mediaLocs;
+    if (!source || !loc || !this.mediaTexture || !this.program) return;
+
+    const mediaW = (source instanceof HTMLVideoElement ? source.videoWidth : source.width) || 1;
+    const mediaH = (source instanceof HTMLVideoElement ? source.videoHeight : source.height) || 1;
+    if (source instanceof HTMLVideoElement && source.readyState < 2) return;
+
+    gl.useProgram(this.program);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuffer);
+    const posLoc = gl.getAttribLocation(this.program, 'position');
+    const uvLoc = gl.getAttribLocation(this.program, 'uv');
+    gl.enableVertexAttribArray(posLoc);
+    gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 5 * 4, 0);
+    if (uvLoc >= 0) {
+      gl.enableVertexAttribArray(uvLoc);
+      gl.vertexAttribPointer(uvLoc, 2, gl.FLOAT, false, 5 * 4, 3 * 4);
+    }
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.mediaTexture);
+    try {
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+    } catch {
+      return;
+    } finally {
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
+    }
+    if (loc.uMedia) gl.uniform1i(loc.uMedia, 0);
+    if (loc.uResolution) gl.uniform2f(loc.uResolution, this.canvas.width, this.canvas.height);
+    if (loc.uMediaResolution) gl.uniform2f(loc.uMediaResolution, mediaW, mediaH);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    this.frameIndex++;
   }
 
   /** Walk the effect chain, ping-ponging between FBO 0 and FBO 1. The
@@ -570,6 +679,19 @@ export class StandaloneRenderer {
     gl.bindTexture(gl.TEXTURE_2D, tex);
     const data = new Uint8Array(size * 4);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, size, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return tex;
+  }
+
+  private createMediaTexture(): WebGLTexture {
+    const gl = this.gl;
+    const tex = gl.createTexture();
+    if (!tex) throw new Error('createTexture failed');
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);

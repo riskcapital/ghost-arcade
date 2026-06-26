@@ -1,6 +1,6 @@
 {
   "name": "ghost-arcade-native-mobile",
-  "version": "1.8.0",
+  "version": "1.9.8",
   "private": true,
   "description": "Ghost Arcade native iOS/Android shell using the shared mobile code from the desktop workspace.",
   "type": "module",
@@ -13,9 +13,17 @@
     "sync": "npm run build && npm run cap:sync",
     "copy": "npm run build && npm run cap:copy",
     "open:ios": "cap open ios",
-    "open:android": "cap open android"
+    "open:android": "cap open android",
+    "ios:testflight:doctor": "node scripts/ios-testflight.mjs doctor",
+    "ios:archive": "node scripts/ios-testflight.mjs archive",
+    "ios:export": "node scripts/ios-testflight.mjs export",
+    "ios:validate": "node scripts/ios-testflight.mjs validate",
+    "ios:upload": "node scripts/ios-testflight.mjs upload",
+    "ios:testflight": "node scripts/ios-testflight.mjs all"
   },
   "dependencies": {
+    "@ghost-arcade/capacitor-osc": "file:plugins/ghost-osc",
+    "@ghost-arcade/capacitor-vision": "file:plugins/ghost-vision",
     "@capacitor/android": "^8.4.0",
     "@capacitor/core": "^8.4.0",
     "@capacitor/ios": "^8.4.0"

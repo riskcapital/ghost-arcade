@@ -2379,6 +2379,18 @@ void main() {
       recordDiscreteAction();
     },
 
+    addEffectInstance(layerId: string, effect: Effect) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((l) => {
+          if (l.id !== layerId) return l;
+          if (l.effects.some((existing) => existing.id === effect.id)) return l;
+          return { ...l, effects: [...l.effects, effect] };
+        }),
+      }));
+      recordDiscreteAction();
+    },
+
     removeEffect(layerId: string, effectId: string) {
       update((project) => ({
         ...project,
