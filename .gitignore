@@ -65,7 +65,9 @@ ios/.build/
 native-mobile/ios/App/build/
 native-mobile/ios/App/DerivedData/
 native-mobile/ios/App/Pods/
+native-mobile/ios/build/
 native-mobile/ios/.build/
+*.xcarchive
 android/.gradle/
 android/.idea/
 android/build/
@@ -78,6 +80,7 @@ native-mobile/android/.gradle/
 native-mobile/android/.idea/
 native-mobile/android/build/
 native-mobile/android/app/build/
+native-mobile/plugins/*/android/build/
 native-mobile/android/captures/
 native-mobile/android/local.properties
 native-mobile/android/keystore.properties

@@ -85,7 +85,8 @@ export type PixelDepthSource =
   | 'luminance'
   | 'inverse-luminance'
   | 'edge-density'
-  | 'saturation';
+  | 'saturation'
+  | 'native-depth';
 
 export type PixelDepthMotion =
   | 'locked'
@@ -110,6 +111,7 @@ const DEPTH_SOURCE_IDS: Record<PixelDepthSource, number> = {
   'inverse-luminance': 1,
   'edge-density': 2,
   'saturation': 3,
+  'native-depth': 4,
 };
 
 const DEPTH_MOTION_IDS: Record<PixelDepthMotion, number> = {
@@ -178,12 +180,14 @@ struct Globals {
   // anchors, so the image stays readable while it breathes/moves.
   depth_motion:  vec4<f32>,    // x=motion_id, y=amount, z=speed, w=scale
   depth_motion2: vec4<f32>,    // x=center, y=depth_coupling, z=phase, w=_
+  native_depth_params: vec4<f32>, // x=enabled, y=minDepth, z=maxDepth, w=_
 };
 
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
 @group(0) @binding(1) var<uniform>             u: Globals;
 @group(0) @binding(2) var src:                 texture_2d<f32>;
 @group(0) @binding(3) var samp:                sampler;
+@group(0) @binding(4) var native_depth:        texture_2d<f32>;
 
 // Cheap deterministic hash for per-particle randomness. Returns
 // 0..1. A full PRNG is overkill for our use — phase noise reads as
@@ -221,7 +225,13 @@ fn source_depth(sample_uv: vec2<f32>, rgb: vec3<f32>) -> f32 {
   let py = vec2(0.0, 1.0 / max(u.tex_size.y, 1.0));
   var raw = lum(rgb);
 
-  if (mode > 2.5 && mode < 3.5) {
+  if (mode > 3.5 && mode < 4.5) {
+    if (u.native_depth_params.x > 0.5) {
+      // Native depth samples arrive normalized from near=min to far=max.
+      // Invert so nearer surfaces protrude toward the virtual camera.
+      raw = 1.0 - textureSampleLevel(native_depth, samp, sample_uv, 0.0).r;
+    }
+  } else if (mode > 2.5 && mode < 3.5) {
     let hi = max(max(rgb.r, rgb.g), rgb.b);
     let lo = min(min(rgb.r, rgb.g), rgb.b);
     raw = hi - lo;
@@ -750,6 +760,7 @@ export class WebGPUPixelParticles {
   private globalsBuffer: any;
   private renderUniformBuffer: any;
   private sourceTexture: any = null;
+  private nativeDepthTexture: any = null;
   private sourceSampler: any;
 
   private computePipeline: any;
@@ -814,6 +825,11 @@ export class WebGPUPixelParticles {
   private mirrorX = false;
   private texW = 1;
   private texH = 1;
+  private nativeDepthW = 1;
+  private nativeDepthH = 1;
+  private nativeDepthEnabled = false;
+  private nativeDepthMin = 0;
+  private nativeDepthMax = 1;
 
   private viewportW = 1920;
   private viewportH = 1080;
@@ -837,7 +853,7 @@ export class WebGPUPixelParticles {
       size: MAX_PARTICLES * PARTICLE_BYTES,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
-    // Globals struct is 160 bytes:
+    // Globals struct is 176 bytes:
     //   time, dt, total(u32), mode(u32)            → 16
     //   knobs vec4                                  → 16
     //   tex_size vec2 + jitter + light_enabled f32  → 16
@@ -848,8 +864,9 @@ export class WebGPUPixelParticles {
     //   depth_params vec4                           → 16
     //   depth_motion vec4                           → 16
     //   depth_motion2 vec4                          → 16
+    //   native_depth_params vec4                    → 16
     this.globalsBuffer = device.createBuffer({
-      size: 160,
+      size: 176,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     // Render uniform: mat4x4 (64) + vec4 meta (16) + vec4 flags (16) = 96
@@ -874,6 +891,7 @@ export class WebGPUPixelParticles {
         { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
         { binding: 2, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } },
         { binding: 3, visibility: GPUShaderStage.COMPUTE, sampler: {} },
+        { binding: 4, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } },
       ],
     });
     this.computePipeline = device.createComputePipeline({
@@ -894,8 +912,27 @@ export class WebGPUPixelParticles {
     // Pre-create the default ('add') pipeline so identity / noop case
     // works without a lazy build on first frame.
     this.renderPipeline = this.getOrCreateRenderPipeline('add');
+    this.ensureNativeDepthTexture(1, 1);
+    this.ensureFallbackSourceTexture();
 
     console.log('[WebGPUPixelParticles] initialised');
+  }
+
+  private ensureFallbackSourceTexture(): void {
+    if (this.sourceTexture) return;
+    this.ensureSourceTexture(1, 1);
+    try {
+      this.device.queue.writeTexture(
+        { texture: this.sourceTexture },
+        new Uint8Array([255, 255, 255, 255]),
+        { bytesPerRow: 4, rowsPerImage: 1 },
+        [1, 1, 1],
+      );
+    } catch {
+      // The next real image/video/native frame path will rebuild the
+      // texture. A failed fallback upload should not break shader init.
+    }
+    this.rebuildBindGroups();
   }
 
   /** Replace the source texture from an image / canvas / bitmap.
@@ -1019,6 +1056,58 @@ export class WebGPUPixelParticles {
     });
     this.texW = w;
     this.texH = h;
+  }
+
+  private ensureNativeDepthTexture(w: number, h: number): void {
+    const width = Math.max(1, Math.floor(w));
+    const height = Math.max(1, Math.floor(h));
+    if (this.nativeDepthTexture && this.nativeDepthW === width && this.nativeDepthH === height) return;
+    try { this.nativeDepthTexture?.destroy?.(); } catch { /* */ }
+    this.nativeDepthTexture = this.device.createTexture({
+      size: [width, height, 1],
+      format: 'r8unorm',
+      usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.nativeDepthW = width;
+    this.nativeDepthH = height;
+    try {
+      this.device.queue.writeTexture(
+        { texture: this.nativeDepthTexture },
+        new Uint8Array(width * height),
+        { bytesPerRow: width, rowsPerImage: height },
+        [width, height, 1],
+      );
+    } catch {
+      // Some runtimes are picky during device restore; the next valid
+      // sidecar upload will replace the fallback texture.
+    }
+  }
+
+  updateNativeDepthFromBytes(data: Uint8Array, w: number, h: number, minDepth = 0, maxDepth = 1): void {
+    if (w <= 0 || h <= 0) return;
+    if (data.byteLength !== w * h) return;
+    const sizeChanged = !this.nativeDepthTexture || this.nativeDepthW !== w || this.nativeDepthH !== h;
+    if (sizeChanged) {
+      this.ensureNativeDepthTexture(w, h);
+      this.rebuildBindGroups();
+    }
+    try {
+      this.device.queue.writeTexture(
+        { texture: this.nativeDepthTexture },
+        data,
+        { bytesPerRow: w, rowsPerImage: h },
+        [w, h, 1],
+      );
+      this.nativeDepthEnabled = true;
+      this.nativeDepthMin = Number.isFinite(minDepth) ? minDepth : 0;
+      this.nativeDepthMax = Number.isFinite(maxDepth) ? maxDepth : 1;
+    } catch {
+      this.nativeDepthEnabled = false;
+    }
+  }
+
+  clearNativeDepth(): void {
+    this.nativeDepthEnabled = false;
   }
 
   setMode(mode: PixelEffectMode): void {
@@ -1227,7 +1316,9 @@ export class WebGPUPixelParticles {
 
   private rebuildBindGroups(): void {
     if (!this.sourceTexture) return;
+    this.ensureNativeDepthTexture(this.nativeDepthW, this.nativeDepthH);
     const view = this.sourceTexture.createView();
+    const nativeDepthView = this.nativeDepthTexture.createView();
     this.computeBindGroup = this.device.createBindGroup({
       layout: this.computeBindGroupLayout,
       entries: [
@@ -1235,6 +1326,7 @@ export class WebGPUPixelParticles {
         { binding: 1, resource: { buffer: this.globalsBuffer } },
         { binding: 2, resource: view },
         { binding: 3, resource: this.sourceSampler },
+        { binding: 4, resource: nativeDepthView },
       ],
     });
     this.renderBindGroup = this.device.createBindGroup({
@@ -1326,8 +1418,8 @@ export class WebGPUPixelParticles {
       : Math.min(0.05, (now - this.lastFrameTime) / 1000);
     this.lastFrameTime = now;
 
-    // Globals uniform — 160 bytes, see WGSL Globals struct.
-    const gu = new ArrayBuffer(160);
+    // Globals uniform — 176 bytes, see WGSL Globals struct.
+    const gu = new ArrayBuffer(176);
     const guF = new Float32Array(gu);
     const guU = new Uint32Array(gu);
     guF[0] = totalTime;
@@ -1387,6 +1479,10 @@ export class WebGPUPixelParticles {
     guF[36] = this.depthCenter;
     guF[37] = this.depthMotionCoupling;
     guF[38] = this.depthMotionPhase;
+    // native_depth_params vec4 (enabled, minDepth, maxDepth, _)
+    guF[40] = this.nativeDepthEnabled ? 1 : 0;
+    guF[41] = this.nativeDepthMin;
+    guF[42] = this.nativeDepthMax;
     this.device.queue.writeBuffer(this.globalsBuffer, 0, gu);
 
     // Render uniform: vp (16 floats) + mu (4) + flags (4) = 24 floats / 96 B
@@ -1434,6 +1530,7 @@ export class WebGPUPixelParticles {
     try { this.globalsBuffer?.destroy?.(); } catch { /* */ }
     try { this.renderUniformBuffer?.destroy?.(); } catch { /* */ }
     try { this.sourceTexture?.destroy?.(); } catch { /* */ }
+    try { this.nativeDepthTexture?.destroy?.(); } catch { /* */ }
   }
 }
 

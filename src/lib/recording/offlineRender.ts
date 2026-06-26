@@ -148,6 +148,12 @@ export interface FrameSequenceTarget {
   handle?: any;
 }
 
+interface NativeJpegSequenceSession {
+  jobId: string;
+  baseName: string;
+  target: FrameSequenceTarget;
+}
+
 function sanitizeFilenamePart(input: string, fallback = 'render'): string {
   return (input || fallback)
     .trim()
@@ -211,6 +217,57 @@ export async function writeFrameTargetText(target: FrameSequenceTarget, filename
   const writable = await fileHandle.createWritable();
   await writable.write(text);
   await writable.close();
+}
+
+async function startNativeJpegSequence(
+  target: FrameSequenceTarget,
+  settings: OfflineRenderSettings,
+  baseName: string,
+  totalFrames: number,
+): Promise<NativeJpegSequenceSession | null> {
+  if (target.kind !== 'electron' || !target.path || !isElectron) return null;
+  const jobId = `jpeg-seq-${generateUUID()}`;
+  const result = await invoke<{ success?: boolean; error?: string }>('jpeg_sequence_start', {
+    jobId,
+    folderPath: target.path,
+    baseName,
+    width: settings.width,
+    height: settings.height,
+    fps: settings.fps,
+    totalFrames,
+  });
+  if (!result?.success) {
+    throw new Error(result?.error || 'Could not start native JPEG sequence encoder');
+  }
+  return { jobId, baseName, target };
+}
+
+async function writeNativeJpegSequenceFrame(
+  session: NativeJpegSequenceSession,
+  frameIndex: number,
+  pixels: { width: number; height: number; data: Uint8Array },
+): Promise<void> {
+  const result = await invoke<{ success?: boolean; error?: string }>('jpeg_sequence_write_frame', {
+    jobId: session.jobId,
+    frameIndex,
+    bytes: pixels.data,
+  });
+  if (!result?.success) {
+    throw new Error(result?.error || `Could not write JPEG frame ${frameIndex}`);
+  }
+}
+
+async function finishNativeJpegSequence(session: NativeJpegSequenceSession): Promise<void> {
+  const result = await invoke<{ success?: boolean; error?: string }>('jpeg_sequence_finish', {
+    jobId: session.jobId,
+  });
+  if (!result?.success) {
+    throw new Error(result?.error || 'Could not finalize native JPEG sequence');
+  }
+}
+
+async function cancelNativeJpegSequence(session: NativeJpegSequenceSession): Promise<void> {
+  await invoke('jpeg_sequence_cancel', { jobId: session.jobId }).catch(() => {});
 }
 
 export function frameSequenceManifest(args: {
@@ -446,6 +503,8 @@ function createOfflineRenderStore() {
 
     let ffmpeg: FFmpeg | null = null;
     let frameTarget: FrameSequenceTarget | null = null;
+    let nativeJpegSequence: NativeJpegSequenceSession | null = null;
+    let nativeJpegSequenceFinished = false;
     const frameBaseName = frameSequenceBaseName(settings.filename, 'render');
     if (outputMode === 'frames') {
       try {
@@ -481,6 +540,9 @@ function createOfflineRenderStore() {
       engine.resize(settings.width, settings.height);
       canvas.width = settings.width;
       canvas.height = settings.height;
+      if (outputMode === 'frames' && frameTarget) {
+        nativeJpegSequence = await startNativeJpegSequence(frameTarget, settings, frameBaseName, totalFrames);
+      }
       // Let the resize settle before the first capture.
       await nextFrame();
 
@@ -512,20 +574,21 @@ function createOfflineRenderStore() {
         // texture-update + composite stages entirely.)
         await nextFrame();
 
-        // Capture the frame as a JPEG. Raw RGBA was 8MB/frame at
-        // 1080p — 300 frames OOM'd the wasm heap (~2GB) with an
-        // "ErrnoError: FS error" during writeFile. JPEG at q=0.92
-        // is roughly 100KB-1MB/frame depending on content, fitting
-        // the budget comfortably while still being near-lossless
-        // for typical VJ output. The final MP4 quality is set by
-        // libx264 CRF below, not by the intermediate JPEGs.
-        const jpegBytes = await captureFrameJPEG(engine, 0.92);
         if (outputMode === 'frames') {
           if (!frameTarget) throw new Error('Frame export folder not ready');
-          const frameName = `${frameBaseName}_${String(globalFrame).padStart(6, '0')}.jpg`;
-          await writeFrameTargetBytes(frameTarget, frameName, jpegBytes);
+          if (nativeJpegSequence) {
+            const pixels = (engine as any).readCompositePixels() as { width: number; height: number; data: Uint8Array };
+            await writeNativeJpegSequenceFrame(nativeJpegSequence, globalFrame, pixels);
+          } else {
+            const jpegBytes = await captureFrameJPEG(engine, 0.92);
+            const frameName = `${frameBaseName}_${String(globalFrame).padStart(6, '0')}.jpg`;
+            await writeFrameTargetBytes(frameTarget, frameName, jpegBytes);
+          }
         } else {
           if (!ffmpeg) throw new Error('FFmpeg encoder not ready');
+          // MP4 export still feeds compressed JPEG intermediates into
+          // ffmpeg.wasm so the wasm heap stays below its ~2GB limit.
+          const jpegBytes = await captureFrameJPEG(engine, 0.92);
           const frameName = `frame_${String(localFrame).padStart(6, '0')}.jpg`;
           await ffmpeg.writeFile(frameName, jpegBytes);
         }
@@ -566,6 +629,10 @@ function createOfflineRenderStore() {
       if (outputMode === 'frames') {
         if (!frameTarget) throw new Error('Frame export folder not ready');
         setStatus('saving');
+        if (nativeJpegSequence) {
+          await finishNativeJpegSequence(nativeJpegSequence);
+          nativeJpegSequenceFinished = true;
+        }
         const manifestName = `${frameBaseName}_manifest.txt`;
         await writeFrameTargetText(frameTarget, manifestName, frameSequenceManifest({
           baseName: frameBaseName,
@@ -655,6 +722,9 @@ function createOfflineRenderStore() {
     } finally {
       // Always restore engine state so the live editor returns to
       // normal regardless of how the render ended.
+      if (nativeJpegSequence && !nativeJpegSequenceFinished) {
+        await cancelNativeJpegSequence(nativeJpegSequence);
+      }
       engine.manualTime = restoreManual;
       canvas.style.visibility = restoreCanvasVisibility;
       setISFManualTime(null);

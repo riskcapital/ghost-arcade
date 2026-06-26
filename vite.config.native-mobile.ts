@@ -1,7 +1,7 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
-import { readFileSync } from 'fs';
+import { copyFileSync, existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -11,7 +11,17 @@ const pkg = JSON.parse(readFileSync(resolve(rootDir, 'package.json'), 'utf-8'));
 export default defineConfig({
   root: rootDir,
   publicDir: resolve(rootDir, 'public'),
-  plugins: [svelte()],
+  plugins: [
+    svelte(),
+    {
+      name: 'ghost-native-mobile-index',
+      writeBundle() {
+        const source = resolve(rootDir, 'dist-native-mobile/native-mobile.html');
+        const target = resolve(rootDir, 'dist-native-mobile/index.html');
+        if (existsSync(source)) copyFileSync(source, target);
+      },
+    },
+  ],
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
     global: 'globalThis',

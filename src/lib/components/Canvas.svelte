@@ -6,6 +6,7 @@
   import { stage3dScene } from '../stage3d/store';
   import { Stage3DRenderer } from '../stage3d/Stage3DRenderer';
   import { mediaLibrary } from '../stores/media';
+  import { phoneVision } from '../stores/phoneVision';
   import { vjOutputLayers, vjClipLauncher } from '../stores/vjClipLauncher';
   import { vjLayerSequencer } from '../stores/vjLayerSequencer';
   import { macros } from '../stores/macros';
@@ -1025,6 +1026,25 @@
   }
 
   let lastEffectUpdateTime = 0;
+  let lastIntegratedEffectManualTime: number | null = null;
+  function getIntegratedEffectDeltaTime(): number {
+    const manualTime = engine?.manualTime;
+    if (typeof manualTime === 'number' && Number.isFinite(manualTime)) {
+      const previousManualTime = lastIntegratedEffectManualTime;
+      lastIntegratedEffectManualTime = manualTime;
+      // Keep the live wall-clock baseline warm so returning from export
+      // does not create one large catch-up step.
+      lastEffectUpdateTime = performance.now() / 1000;
+      if (previousManualTime === null || manualTime < previousManualTime) return 0;
+      return Math.max(0, Math.min(manualTime - previousManualTime, 0.1));
+    }
+
+    lastIntegratedEffectManualTime = null;
+    const currentTime = performance.now() / 1000;
+    const deltaTime = Math.min(currentTime - lastEffectUpdateTime, 0.1);
+    lastEffectUpdateTime = currentTime;
+    return Math.max(0, deltaTime);
+  }
   const FLUID_QUALITY_PRESETS = {
     live: { scale: 0.65, minSize: 256, pressureIterations: 10 },
     balanced: { scale: 0.78, minSize: 256, pressureIterations: 14 },
@@ -4441,6 +4461,7 @@
         const sourceCtx = {
           layers: projectData?.layers ?? [],
           mediaItems: get(mediaLibrary),
+          phoneVisionNativeFrame: get(phoneVision).nativeFrame,
         };
         // Audio bands for shaders that opt into reactivity (e.g.
         // flythrough audioReactive toggle). Pull from the shared
@@ -4652,10 +4673,10 @@
     const width = projectData.width || 1920;
     const height = projectData.height || 1080;
 
-    // Calculate delta time
-    const currentTime = performance.now() / 1000;
-    const deltaTime = Math.min(currentTime - lastEffectUpdateTime, 0.1);
-    lastEffectUpdateTime = currentTime;
+    // In offline render mode, engine.manualTime is the world clock.
+    // Integrated effects must advance from that clock as well; otherwise
+    // slow frame capture lets stateful effects run ahead on live RAF ticks.
+    const deltaTime = getIntegratedEffectDeltaTime();
 
     const visual = getVisualAudioSnapshot();
 
@@ -4785,7 +4806,7 @@
           renderTarget,
           simulationWidth: width,
           simulationHeight: height,
-          lastUpdateTime: currentTime,
+          lastUpdateTime: performance.now() / 1000,
           mouseX: 0.5,
           mouseY: 0.5,
           lastMouseX: 0.5,

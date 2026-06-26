@@ -60,6 +60,87 @@ function createMeshGrid(rows, cols) {
   return { rows, cols, points };
 }
 
+const ALLOWED_LAYER_SHAPES = new Set([
+  'rectangle',
+  'circle',
+  'ellipse',
+  'triangle',
+  'polygon',
+  'star',
+  'line',
+  'polyline',
+  'custom',
+]);
+
+function createDefaultLayerShape(type = 'rectangle') {
+  const baseParams = { feather: 0, rotation: 0 };
+  switch (type) {
+    case 'circle':
+      return {
+        type,
+        enabled: true,
+        params: { ...baseParams, radiusX: 1.0, radiusY: 1.0 },
+        controlPoints: [
+          { x: 0.2, y: 0.8 },
+          { x: 0.8, y: 0.8 },
+          { x: 0.2, y: 0.2 },
+          { x: 0.8, y: 0.2 },
+          { x: 0.5, y: 0.5 },
+        ],
+      };
+    case 'ellipse':
+      return { type, enabled: true, params: { ...baseParams, radiusX: 1.0, radiusY: 0.7 } };
+    case 'triangle':
+      return {
+        type,
+        enabled: true,
+        params: { ...baseParams, triangleType: 'equilateral' },
+        controlPoints: [
+          { x: 0.5, y: 0.88 },
+          { x: 0.14, y: 0.14 },
+          { x: 0.86, y: 0.14 },
+        ],
+      };
+    case 'polygon':
+      return { type, enabled: true, params: { ...baseParams, sides: 6 } };
+    case 'star':
+      return { type, enabled: true, params: { ...baseParams, sides: 5, innerRadius: 0.4 } };
+    case 'line':
+      return {
+        type,
+        enabled: true,
+        params: {
+          ...baseParams,
+          lineWidth: 0.05,
+          linePoints: [{ x: 0.2, y: 0.5 }, { x: 0.8, y: 0.5 }],
+          lineCap: 'round',
+        },
+      };
+    case 'polyline':
+      return {
+        type,
+        enabled: true,
+        params: {
+          ...baseParams,
+          lineWidth: 0.03,
+          linePoints: [
+            { x: 0.1, y: 0.5 },
+            { x: 0.3, y: 0.2 },
+            { x: 0.5, y: 0.8 },
+            { x: 0.7, y: 0.3 },
+            { x: 0.9, y: 0.6 },
+          ],
+          lineCap: 'round',
+        },
+      };
+    case 'custom':
+      return { type: 'custom', enabled: true, params: { ...baseParams, customPoints: [], customClosed: false } };
+    case 'rectangle':
+    default:
+      return { type: 'rectangle', enabled: true, params: baseParams };
+  }
+}
+
 // Current project state (synchronized from desktop app)
 let projectState = {
   id: 'default',
@@ -355,6 +436,89 @@ function handleMessage(sender, msg) {
       broadcastAll(msg);
       break;
 
+    case 'add_mapping_layer_effect': {
+      const layer = projectState.layers.find(l => l.id === msg.layerId);
+      if (layer && msg.effect && typeof msg.effect.id === 'string' && typeof msg.effect.type === 'string') {
+        if (!Array.isArray(layer.effects)) layer.effects = [];
+        if (!layer.effects.some(e => e.id === msg.effect.id)) {
+          layer.effects.push(msg.effect);
+        }
+        console.log(`[*] Add mapping layer effect: ${msg.layerId} -> ${msg.effect.type}`);
+        broadcast(sender, msg);
+      }
+      break;
+    }
+
+    case 'remove_mapping_layer_effect': {
+      const layer = projectState.layers.find(l => l.id === msg.layerId);
+      if (layer && typeof msg.effectId === 'string') {
+        layer.effects = (layer.effects || []).filter(e => e.id !== msg.effectId);
+        console.log(`[*] Remove mapping layer effect: ${msg.layerId} -> ${msg.effectId}`);
+        broadcast(sender, msg);
+      }
+      break;
+    }
+
+    case 'toggle_mapping_layer_effect': {
+      const layer = projectState.layers.find(l => l.id === msg.layerId);
+      const effect = layer?.effects?.find(e => e.id === msg.effectId);
+      if (effect) {
+        effect.enabled = !effect.enabled;
+        console.log(`[*] Toggle mapping layer effect: ${msg.layerId} -> ${msg.effectId}`);
+        broadcast(sender, msg);
+      }
+      break;
+    }
+
+    case 'update_mapping_layer_effect_params': {
+      const layer = projectState.layers.find(l => l.id === msg.layerId);
+      const effect = layer?.effects?.find(e => e.id === msg.effectId);
+      if (effect && msg.params && typeof msg.params === 'object' && !Array.isArray(msg.params)) {
+        effect.params = { ...(effect.params || {}), ...msg.params };
+        broadcast(sender, msg);
+      }
+      break;
+    }
+
+    case 'set_mapping_layer_shape': {
+      const layer = projectState.layers.find(l => l.id === msg.layerId);
+      const shapeType = msg.shapeType === null ? null : msg.shapeType;
+      if (layer && (shapeType === null || ALLOWED_LAYER_SHAPES.has(shapeType))) {
+        layer.cropRegion = null;
+        layer.layerShape = shapeType ? createDefaultLayerShape(shapeType) : null;
+        console.log(`[*] Set mapping layer shape: ${msg.layerId} -> ${shapeType || 'none'}`);
+        broadcast(sender, msg);
+      }
+      break;
+    }
+
+    case 'toggle_mapping_layer_shape': {
+      const layer = projectState.layers.find(l => l.id === msg.layerId);
+      if (layer?.layerShape) {
+        layer.layerShape.enabled = !layer.layerShape.enabled;
+        broadcast(sender, msg);
+      }
+      break;
+    }
+
+    case 'clear_mapping_layer_shape': {
+      const layer = projectState.layers.find(l => l.id === msg.layerId);
+      if (layer) {
+        layer.layerShape = null;
+        broadcast(sender, msg);
+      }
+      break;
+    }
+
+    case 'update_mapping_layer_shape_params': {
+      const layer = projectState.layers.find(l => l.id === msg.layerId);
+      if (layer?.layerShape && msg.params && typeof msg.params === 'object' && !Array.isArray(msg.params)) {
+        layer.layerShape.params = { ...(layer.layerShape.params || {}), ...msg.params };
+        broadcast(sender, msg);
+      }
+      break;
+    }
+
     case 'library_sync':
       // Desktop sends media library update
       mediaLibraryState = msg.library || [];
@@ -533,6 +697,20 @@ function handleMessage(sender, msg) {
     case 'lightpainting_stroke_start':
     case 'lightpainting_stroke_point':
     case 'lightpainting_stroke_end':
+      broadcast(sender, msg);
+      break;
+
+    // Phone Vision: WebRTC media path. The WebSocket server only
+    // relays setup/control messages; camera video travels as a native
+    // RTCPeerConnection media track.
+    case 'phone_camera_offer':
+    case 'phone_camera_answer':
+    case 'phone_camera_ice':
+    case 'phone_camera_stop':
+    case 'phone_vision_native_start':
+    case 'phone_vision_command':
+    case 'phone_vision_status':
+    case 'phone_vision_native_frame':
       broadcast(sender, msg);
       break;
 

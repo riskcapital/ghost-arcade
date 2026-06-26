@@ -12,6 +12,8 @@
 // phones from ~2022 onward. Aspect-ratio adapts to the source canvas
 // once recording starts, so portrait phone output stays portrait.
 
+import type { Pt } from './standaloneHomography';
+
 /** CSS mix-blend-mode → canvas2D globalCompositeOperation. Almost all
  *  values map 1:1; 'normal' is canvas-2D's 'source-over' default. */
 const BLEND_MAP: Record<string, GlobalCompositeOperation> = {
@@ -59,6 +61,9 @@ export interface LayerSnapshot {
    *  `"blur(4px) hue-rotate(30deg)"`) so the recorder matches what the
    *  user sees in the live CSS stack. */
   filter: string;
+  /** Normalized quadrilateral corners (TL, TR, BR, BL) for projection
+   *  mapping. Null/undefined means draw full-frame. */
+  corners?: Pt[] | null;
 }
 
 export interface RecorderOptions {
@@ -225,7 +230,10 @@ export class StandaloneRecorder {
       ctx.globalAlpha = Math.max(0, Math.min(1, l.opacity));
       // Canvas2D filter takes CSS-filter syntax — same string as CSS.
       ctx.filter = l.filter && l.filter !== 'none' ? l.filter : 'none';
-      try { ctx.drawImage(l.canvas, 0, 0, w, h); }
+      try {
+        if (l.corners?.length === 4) drawMappedImage(ctx, l.canvas, l.corners, w, h);
+        else ctx.drawImage(l.canvas, 0, 0, w, h);
+      }
       catch { /* layer canvas mid-resize — skip frame */ }
       isFirstEnabled = false;
     }
@@ -235,6 +243,96 @@ export class StandaloneRecorder {
     ctx.globalAlpha = 1;
     ctx.filter = 'none';
   };
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+function bilerp(corners: Pt[], u: number, v: number, w: number, h: number): Pt {
+  const tl = corners[0];
+  const tr = corners[1];
+  const br = corners[2];
+  const bl = corners[3];
+  const top = { x: lerp(tl.x, tr.x, u), y: lerp(tl.y, tr.y, u) };
+  const bot = { x: lerp(bl.x, br.x, u), y: lerp(bl.y, br.y, u) };
+  return {
+    x: lerp(top.x, bot.x, v) * w,
+    y: lerp(top.y, bot.y, v) * h,
+  };
+}
+
+function drawMappedImage(
+  ctx: CanvasRenderingContext2D,
+  source: HTMLCanvasElement,
+  corners: Pt[],
+  outW: number,
+  outH: number,
+): void {
+  const grid = 14;
+  const srcW = source.width;
+  const srcH = source.height;
+  for (let y = 0; y < grid; y++) {
+    const v0 = y / grid;
+    const v1 = (y + 1) / grid;
+    for (let x = 0; x < grid; x++) {
+      const u0 = x / grid;
+      const u1 = (x + 1) / grid;
+      const p00 = bilerp(corners, u0, v0, outW, outH);
+      const p10 = bilerp(corners, u1, v0, outW, outH);
+      const p11 = bilerp(corners, u1, v1, outW, outH);
+      const p01 = bilerp(corners, u0, v1, outW, outH);
+      const sx0 = u0 * srcW;
+      const sx1 = u1 * srcW;
+      const sy0 = v0 * srcH;
+      const sy1 = v1 * srcH;
+      drawImageTriangle(ctx, source, sx0, sy0, sx1, sy0, sx1, sy1, p00, p10, p11);
+      drawImageTriangle(ctx, source, sx0, sy0, sx1, sy1, sx0, sy1, p00, p11, p01);
+    }
+  }
+}
+
+function drawImageTriangle(
+  ctx: CanvasRenderingContext2D,
+  source: HTMLCanvasElement,
+  sx0: number,
+  sy0: number,
+  sx1: number,
+  sy1: number,
+  sx2: number,
+  sy2: number,
+  p0: Pt,
+  p1: Pt,
+  p2: Pt,
+): void {
+  const denom = sx0 * (sy1 - sy2) + sx1 * (sy2 - sy0) + sx2 * (sy0 - sy1);
+  if (Math.abs(denom) < 1e-6) return;
+
+  const a = (p0.x * (sy1 - sy2) + p1.x * (sy2 - sy0) + p2.x * (sy0 - sy1)) / denom;
+  const b = (p0.y * (sy1 - sy2) + p1.y * (sy2 - sy0) + p2.y * (sy0 - sy1)) / denom;
+  const c = (p0.x * (sx2 - sx1) + p1.x * (sx0 - sx2) + p2.x * (sx1 - sx0)) / denom;
+  const d = (p0.y * (sx2 - sx1) + p1.y * (sx0 - sx2) + p2.y * (sx1 - sx0)) / denom;
+  const e = (
+    p0.x * (sx1 * sy2 - sx2 * sy1) +
+    p1.x * (sx2 * sy0 - sx0 * sy2) +
+    p2.x * (sx0 * sy1 - sx1 * sy0)
+  ) / denom;
+  const f = (
+    p0.y * (sx1 * sy2 - sx2 * sy1) +
+    p1.y * (sx2 * sy0 - sx0 * sy2) +
+    p2.y * (sx0 * sy1 - sx1 * sy0)
+  ) / denom;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(p0.x, p0.y);
+  ctx.lineTo(p1.x, p1.y);
+  ctx.lineTo(p2.x, p2.y);
+  ctx.closePath();
+  ctx.clip();
+  ctx.setTransform(a, b, c, d, e, f);
+  ctx.drawImage(source, 0, 0);
+  ctx.restore();
 }
 
 function pad2(n: number): string { return n < 10 ? `0${n}` : String(n); }

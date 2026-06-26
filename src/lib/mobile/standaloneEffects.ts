@@ -35,6 +35,8 @@ export interface MobileEffectDef {
   fragment: string;
   /** Default param values keyed by EFFECT_PARAM_DEFS param names. */
   defaults: Record<string, number>;
+  /** Hidden utility passes used by mobile tools rather than the FX picker. */
+  internal?: boolean;
 }
 
 const COMMON_PREAMBLE = `
@@ -200,6 +202,29 @@ export const MOBILE_EFFECTS: MobileEffectDef[] = [
       `float n = fract(sin(dot(uv * uResolution + uTime * 60.0, vec2(12.9898, 78.233))) * 43758.5453);
        float g = (n - 0.5) * filmGrainAmount * 0.6;
        gl_FragColor = vec4(c.rgb + g, c.a);`,
+    ),
+  },
+  {
+    type: 'edgeFade',
+    label: 'Edge Fade',
+    category: 'Masking',
+    internal: true,
+    defaults: { edgeFeather: 0.08, edgeGamma: 1 },
+    fragment: wrapEffect(
+      `uniform float edgeFeather;
+       uniform float edgeGamma;`,
+      `float f = clamp(edgeFeather, 0.0, 0.49);
+       if (f <= 0.0001) {
+         gl_FragColor = c;
+       } else {
+         vec2 d = min(uv, 1.0 - uv);
+         float m = min(
+           smoothstep(0.0, f, d.x),
+           smoothstep(0.0, f, d.y)
+         );
+         m = pow(clamp(m, 0.0, 1.0), max(0.05, edgeGamma));
+         gl_FragColor = vec4(c.rgb * m, c.a * m);
+       }`,
     ),
   },
 ];

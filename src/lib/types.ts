@@ -3862,6 +3862,10 @@ export interface EffectParams {
   afTintG?: number;
   afTintB?: number;
   afMode?: number;                 // 0=add, 1=screen, 2=replace
+  nativeMaskStream?: boolean;      // phone vision native person/object mask
+  nativeMaskWidth?: number;
+  nativeMaskHeight?: number;
+  nativeMaskFormat?: string;
 
   // Smoke Disintegrate (hero)
   smokeAmount?: number;            // 0-1

@@ -56,7 +56,9 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'save_shader_source', 'list_shader_sources', 'delete_shader_source',
   // File system
   'pick_directory', 'save_file_binary', 'save_file_bytes', 'save_file_text', 'save_project_dialog',
+  'jpeg_sequence_start', 'jpeg_sequence_write_frame', 'jpeg_sequence_finish', 'jpeg_sequence_cancel',
   'save_generated_asset',
+  'video_loop_create', 'video_append_segment',
   // Native FFmpeg converter
   'video_converter_pick_webm', 'video_converter_pick_sequence_folder', 'video_converter_pick_output',
   'video_converter_start', 'video_converter_cancel', 'video_converter_reveal_path',
@@ -120,7 +122,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * Returns a cleanup function that removes the listener.
    */
   on: (channel, callback) => {
-    const allowed = ['director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'update-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'projection-sim-fullscreen-changed', 'video-converter-progress'];
+    const allowed = ['director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'update-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'projection-sim-fullscreen-changed', 'video-converter-progress', 'video-loop-progress'];
     if (!allowed.includes(channel)) return () => {};
     const handler = (_event, ...args) => callback(...args);
     ipcRenderer.on(channel, handler);

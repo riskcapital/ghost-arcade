@@ -1,0 +1,29 @@
+{
+  "name": "@ghost-arcade/capacitor-osc",
+  "version": "0.1.0",
+  "description": "Native UDP OSC listener for Ghost Arcade mobile.",
+  "license": "AGPL-3.0-only",
+  "main": "dist/esm/index.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/esm/index.d.ts",
+  "files": [
+    "android/src/main/",
+    "android/build.gradle",
+    "ios/Sources/",
+    "ios/Package.swift",
+    "GhostArcadeCapacitorOsc.podspec",
+    "GhostArcadeOsc.podspec",
+    "dist/"
+  ],
+  "capacitor": {
+    "android": {
+      "src": "android"
+    },
+    "ios": {
+      "src": "ios"
+    }
+  },
+  "peerDependencies": {
+    "@capacitor/core": ">=8.0.0"
+  }
+}

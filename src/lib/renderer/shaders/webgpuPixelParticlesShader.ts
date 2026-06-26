@@ -72,6 +72,7 @@ export const pixelParticlesParamSchema: ParamControl[] = [
       { value: 'inverse-luminance', label: 'Inverse Luminance' },
       { value: 'edge-density', label: 'Edge Density' },
       { value: 'saturation', label: 'Saturation' },
+      { value: 'native-depth', label: 'Native Phone Depth' },
     ],
     default: 'luminance', showWhen: { mode: 'depth-shift' } },
   { kind: 'slider', key: 'depthCurve',     label: 'Depth Curve',     group: 'Depth Shape', min: 0.25, max: 3, step: 0.01, default: 1, showWhen: { mode: 'depth-shift' } },
@@ -147,6 +148,23 @@ export const pixelParticlesParamSchema: ParamControl[] = [
 
 export const pixelParticlesParamDefaults = deriveDefaults(pixelParticlesParamSchema);
 
+interface NativeDepthRasterSample {
+  format?: string;
+  width: number;
+  height: number;
+  timestamp?: number;
+  data: string;
+  minDepth?: number;
+  maxDepth?: number;
+}
+
+function decodeBase64Bytes(data: string): Uint8Array {
+  const raw = atob(data);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  return bytes;
+}
+
 /** Map mode name → knobs[0..3] tuple. The compute shader reads
  *  these positions; the panel exposes them as named keys for UX. */
 function knobsForMode(mode: string, p: Record<string, any>): [number, number, number, number] {
@@ -170,6 +188,7 @@ function knobsForMode(mode: string, p: Record<string, any>): [number, number, nu
 
 export class WebGPUPixelParticlesShader implements GpuShaderImpl {
   private inner: WebGPUPixelParticles;
+  private nativeDepthKey = '';
 
   constructor(device: any, presentFormat: any) {
     // Use the `create` static — synchronous in the existing class
@@ -243,6 +262,33 @@ export class WebGPUPixelParticlesShader implements GpuShaderImpl {
    *  canvas / ImageBitmap intermediate. */
   setSourceFromBytes(data: Uint8Array, w: number, h: number): void {
     this.inner.updateSourceFromBytes(data, w, h);
+  }
+
+  setNativeDepthSample(sample: NativeDepthRasterSample | null | undefined): void {
+    if (!sample || sample.format !== 'r8-depth-normalized' || !sample.data) {
+      this.clearNativeDepthSample();
+      return;
+    }
+    const w = Math.max(1, Math.floor(sample.width || 0));
+    const h = Math.max(1, Math.floor(sample.height || 0));
+    const key = `${sample.timestamp ?? 0}:${w}x${h}:${sample.data.length}`;
+    if (key === this.nativeDepthKey) return;
+    try {
+      const bytes = decodeBase64Bytes(sample.data);
+      if (bytes.byteLength !== w * h) {
+        this.clearNativeDepthSample();
+        return;
+      }
+      this.inner.updateNativeDepthFromBytes(bytes, w, h, sample.minDepth ?? 0, sample.maxDepth ?? 1);
+      this.nativeDepthKey = key;
+    } catch {
+      this.clearNativeDepthSample();
+    }
+  }
+
+  clearNativeDepthSample(): void {
+    this.nativeDepthKey = '';
+    this.inner.clearNativeDepth();
   }
 
   encodeFrame(encoder: any, targetView: any, targetFormat: any, width: number, height: number, dt: number, time?: number): void {

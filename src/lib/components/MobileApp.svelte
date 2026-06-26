@@ -1,8 +1,31 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
-  import type { Project, Point2D, WarpCorners, BlendMode, Effect, EffectType, EffectParams } from '../types';
+  import { createDefaultLayerShape } from '../types';
+  import type { Project, Point2D, WarpCorners, BlendMode, Effect, EffectType, EffectParams, LayerShape, LayerShapeParams, LayerShapeType } from '../types';
+  import { EFFECT_CATALOG } from '../effects/effectCatalog';
   import { EFFECT_PARAM_DEFS } from '../effects/effectParamDefs';
   import MobileVJController from './mobile/MobileVJController.svelte';
+  import {
+    addNativeVisionListeners,
+    getNativeVisionCapabilities,
+    startNativeVisionCapture,
+    stopNativeVisionCapture,
+    isNativeVisionBridgeAvailable,
+    nativeVisionProfileHints,
+    type NativeVisionCapabilities,
+    type NativeVisionFrame,
+    type NativeVisionStatus,
+  } from '../mobile/nativeVision';
+  import {
+    PHONE_VISION_CAPTURE_PROFILES,
+    PHONE_VISION_AURA_PRESETS,
+    PHONE_VISION_POINT_CLOUD_PRESETS,
+    defaultPhoneVisionCapabilities,
+    phoneVisionCaptureProfileConfig,
+    type PhoneVisionAuraPreset,
+    type PhoneVisionCaptureProfile,
+    type PhoneVisionPointCloudPreset,
+  } from '../stores/phoneVision';
 
   // Connection state
   let connected = false;
@@ -41,8 +64,8 @@
     }, delay);
   }
 
-  // Mobile mode switcher: mapping (warp controls) or VJ (clip launcher / mixer)
-  let mobileMode: 'mapping' | 'vj' | 'paint' = 'mapping';
+  // Mobile mode switcher: mapping, VJ, phone vision, or paint.
+  let mobileMode: 'mapping' | 'vj' | 'vision' | 'paint' = 'mapping';
 
   // ─── Light Painting (iPad Apple Pencil) ─────────────────────────
   let paintLayerId: string | null = null;
@@ -376,6 +399,7 @@
 
   // Media library state
   let showMediaLibrary = false;
+  let showShapePanel = false;
 
   // Output freeze state — mirrored from desktop. Mobile shows a play/pause
   // pill in the top mode-strip in mapping mode that toggles this; the
@@ -390,6 +414,527 @@
     // if anything went wrong on the desktop side.
     outputFrozen = !outputFrozen;
     ws.send(JSON.stringify({ type: 'set_output_freeze', frozen: outputFrozen }));
+  }
+
+  // Phone Vision — native WebRTC camera stream plus a data channel for
+  // live mapping commands. The existing WebSocket is signaling/control
+  // fallback only; no camera frames are sent through it.
+  type VisionStatus = 'idle' | 'starting' | 'connecting' | 'live' | 'failed';
+  let visionStatus: VisionStatus = 'idle';
+  let visionError = '';
+  let visionFacingMode: 'environment' | 'user' = 'environment';
+  let visionStream: MediaStream | null = null;
+  let visionVideoEl: HTMLVideoElement | null = null;
+  let visionPeer: RTCPeerConnection | null = null;
+  let visionDataChannel: RTCDataChannel | null = null;
+  let visionSessionId = '';
+  let visionLastAction = '';
+  let visionLastPointCloudAction = '';
+  let visionLastAuraAction = '';
+  let visionCalibrationPoints: { x: number; y: number; index: number }[] = [];
+  let pendingVisionIce: RTCIceCandidateInit[] = [];
+
+  let visionPointCloudPreset: PhoneVisionPointCloudPreset = 'object-relief';
+  let visionAuraPreset: PhoneVisionAuraPreset = 'body-glow';
+  let visionCaptureProfile: PhoneVisionCaptureProfile = 'object-relief';
+  let nativeVisionCapabilities: NativeVisionCapabilities | null = null;
+  let nativeVisionBridgeAvailable = false;
+  let nativeVisionActive = false;
+  let nativeVisionFrameCount = 0;
+  let nativeVisionHasDepth = false;
+  let nativeVisionLastFrameAt = 0;
+  let nativeVisionError = '';
+  let nativeVisionListenerHandles: Array<{ remove: () => Promise<void> | void }> = [];
+  let visionNativeOnly = false;
+
+  $: visionHasCapture = !!visionStream || nativeVisionActive;
+  $: visionIsLive = visionStatus === 'live' || visionStatus === 'connecting';
+  $: visionCaptureConfig = phoneVisionCaptureProfileConfig(visionCaptureProfile);
+  $: visionNativeHints = nativeVisionProfileHints(nativeVisionCapabilities, visionCaptureProfile);
+  $: visionCaptureWidth = visionNativeHints?.width ?? visionCaptureConfig.width;
+  $: visionCaptureHeight = visionNativeHints?.height ?? visionCaptureConfig.height;
+  $: visionCaptureFrameRate = visionNativeHints?.frameRate ?? visionCaptureConfig.frameRate;
+  $: nativeVisionSummary = nativeVisionActive
+    ? nativeVisionHasDepth
+      ? `Depth ${nativeVisionFrameCount}`
+      : `Native ${nativeVisionFrameCount}`
+    : nativeVisionCapabilities?.available
+      ? nativeVisionCapabilities.nativeDepth
+        ? 'Native Depth'
+        : nativeVisionCapabilities.personSegmentation
+          ? 'Native Mask'
+          : 'Native RGB'
+    : nativeVisionBridgeAvailable
+      ? 'Native Ready'
+      : 'Browser RGB';
+  $: visionStatusLabel = visionStatus === 'idle'
+    ? 'Camera idle'
+    : visionStatus === 'starting'
+      ? 'Starting camera'
+      : visionStatus === 'connecting'
+        ? 'Connecting'
+        : visionStatus === 'live'
+          ? 'Live'
+          : 'Camera failed';
+
+  function sendVisionSignal(payload: Record<string, unknown>) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify(payload));
+  }
+
+  function browserVisionCameraAvailable(): boolean {
+    const nav = typeof navigator !== 'undefined' ? navigator : undefined;
+    return typeof RTCPeerConnection !== 'undefined'
+      && typeof nav?.mediaDevices?.getUserMedia === 'function';
+  }
+
+  function currentNativeVisionHints() {
+    return nativeVisionProfileHints(nativeVisionCapabilities, visionCaptureProfile);
+  }
+
+  function attachVisionDataChannel(channel: RTCDataChannel) {
+    visionDataChannel = channel;
+    channel.onopen = () => {
+      if (visionStatus === 'connecting') visionStatus = 'live';
+    };
+    channel.onclose = () => {
+      if (visionDataChannel === channel) visionDataChannel = null;
+    };
+    channel.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(String(event.data));
+        handleVisionStatus(msg);
+      } catch {
+        // Status messages are best-effort; bad packets should not
+        // interrupt the camera stream.
+      }
+    };
+  }
+
+  function stopPhoneVision(sendStop = true) {
+    if (sendStop && visionSessionId) {
+      sendVisionSignal({ type: 'phone_camera_stop', sessionId: visionSessionId });
+    }
+    void stopNativeVisionSession();
+    try { visionDataChannel?.close(); } catch {}
+    try { visionPeer?.close(); } catch {}
+    try { visionStream?.getTracks().forEach(track => track.stop()); } catch {}
+    if (visionVideoEl) {
+      try { visionVideoEl.pause(); } catch {}
+      try { visionVideoEl.srcObject = null; } catch {}
+    }
+    visionDataChannel = null;
+    visionPeer = null;
+    visionStream = null;
+    visionNativeOnly = false;
+    pendingVisionIce = [];
+    visionSessionId = '';
+    visionStatus = 'idle';
+    visionError = '';
+    visionLastAction = '';
+    visionLastPointCloudAction = '';
+    visionLastAuraAction = '';
+    nativeVisionFrameCount = 0;
+    nativeVisionHasDepth = false;
+    nativeVisionLastFrameAt = 0;
+    nativeVisionError = '';
+    nativeVisionActive = false;
+  }
+
+  function createVisionSessionId() {
+    try {
+      return crypto.randomUUID();
+    } catch {
+      return `phone-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
+  }
+
+  function visionCapabilitiesPayload() {
+    const base = {
+      ...defaultPhoneVisionCapabilities(visionFacingMode, visionCaptureProfile),
+      transport: nativeVisionBridgeAvailable ? 'native-rtc' as const : 'browser-rtc' as const,
+    };
+    const hints = currentNativeVisionHints();
+    if (!hints) return base;
+    const nativeDepthLive = nativeVisionActive && nativeVisionHasDepth;
+    const depthPipeline = nativeDepthLive ? 'native-depth' : hints.depthPipeline;
+    return {
+      ...base,
+      transport: nativeVisionCapabilities?.available ? 'native-rtc' : base.transport,
+      depthPipeline,
+      segmentationPipeline: hints.segmentationPipeline,
+      depth: depthPipeline !== 'none',
+      nativeDepth: depthPipeline === 'native-depth',
+      segmentation: hints.segmentationPipeline !== 'none',
+      width: hints.width,
+      height: hints.height,
+      frameRate: hints.frameRate,
+    };
+  }
+
+  async function refreshNativeVisionCapabilities() {
+    nativeVisionBridgeAvailable = isNativeVisionBridgeAvailable();
+    if (!nativeVisionBridgeAvailable) {
+      nativeVisionCapabilities = null;
+      return;
+    }
+    nativeVisionCapabilities = await getNativeVisionCapabilities(visionFacingMode, visionCaptureProfile);
+  }
+
+  function nativeVisionShouldRun() {
+    const hints = currentNativeVisionHints();
+    return !!hints
+      && (hints.depthPipeline !== 'none' || hints.segmentationPipeline !== 'none');
+  }
+
+  async function ensureNativeVisionListeners() {
+    if (nativeVisionListenerHandles.length > 0 || !nativeVisionBridgeAvailable) return;
+    nativeVisionListenerHandles = await addNativeVisionListeners({
+      status: handleNativeVisionStatus,
+      frame: handleNativeVisionFrame,
+    });
+  }
+
+  function handleNativeVisionStatus(status: NativeVisionStatus) {
+    nativeVisionActive = status.active;
+    nativeVisionError = status.error || '';
+    if (status.capabilities) nativeVisionCapabilities = status.capabilities;
+  }
+
+  function handleNativeVisionFrame(frame: NativeVisionFrame) {
+    nativeVisionFrameCount += 1;
+    nativeVisionHasDepth = !!frame.depth || !!frame.depthSample;
+    nativeVisionLastFrameAt = Date.now();
+    sendVisionNativeFrame(frame);
+  }
+
+  function sendVisionNativeFrame(frame: NativeVisionFrame) {
+    if (!visionSessionId) return;
+    const payload = {
+      type: 'phone_vision_native_frame',
+      sessionId: visionSessionId,
+      facingMode: visionFacingMode,
+      captureProfile: visionCaptureProfile,
+      timestamp: frame.timestamp,
+      width: frame.width,
+      height: frame.height,
+      depth: !!frame.depth || !!frame.depthSample,
+      ...(frame.depthWidth ? { depthWidth: frame.depthWidth } : {}),
+      ...(frame.depthHeight ? { depthHeight: frame.depthHeight } : {}),
+      ...(frame.depthSample ? { depthSample: frame.depthSample } : {}),
+      ...(frame.maskSample ? { maskSample: frame.maskSample } : {}),
+    };
+    try {
+      if (visionDataChannel?.readyState === 'open') {
+        visionDataChannel.send(JSON.stringify(payload));
+        return;
+      }
+    } catch {}
+    sendVisionSignal(payload);
+  }
+
+  async function startNativeVisionSession() {
+    await refreshNativeVisionCapabilities();
+    if (!nativeVisionBridgeAvailable || !nativeVisionShouldRun()) return;
+    try {
+      await ensureNativeVisionListeners();
+      nativeVisionFrameCount = 0;
+      nativeVisionHasDepth = false;
+      nativeVisionLastFrameAt = 0;
+      nativeVisionError = '';
+      const status = await startNativeVisionCapture(visionFacingMode, visionCaptureProfile, visionCaptureFrameRate);
+      if (status) handleNativeVisionStatus(status);
+    } catch (err: any) {
+      nativeVisionActive = false;
+      nativeVisionError = err?.message || 'Native vision unavailable.';
+    }
+  }
+
+  async function stopNativeVisionSession() {
+    if (!nativeVisionBridgeAvailable) return;
+    try {
+      const status = await stopNativeVisionCapture();
+      if (status) handleNativeVisionStatus(status);
+    } catch {
+      nativeVisionActive = false;
+    }
+    nativeVisionActive = false;
+    nativeVisionHasDepth = false;
+  }
+
+  async function disposeNativeVisionListeners() {
+    const handles = nativeVisionListenerHandles;
+    nativeVisionListenerHandles = [];
+    await Promise.all(handles.map(async (handle) => {
+      try { await handle.remove(); } catch {}
+    }));
+  }
+
+  async function startPhoneVision() {
+    if (!isCapacitorNative) {
+      visionError = 'Phone Vision is available in the native mobile app.';
+      visionStatus = 'failed';
+      return;
+    }
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      visionError = 'Connect to desktop first.';
+      visionStatus = 'failed';
+      return;
+    }
+    stopPhoneVision(false);
+    visionStatus = 'starting';
+    visionError = '';
+    visionLastAction = '';
+    visionLastPointCloudAction = '';
+    visionLastAuraAction = '';
+    nativeVisionError = '';
+    visionNativeOnly = false;
+    visionSessionId = createVisionSessionId();
+
+    try {
+      await refreshNativeVisionCapabilities();
+      if (!browserVisionCameraAvailable()) {
+        if (nativeVisionBridgeAvailable && nativeVisionShouldRun()) {
+          visionNativeOnly = true;
+          visionStatus = 'connecting';
+          sendVisionSignal({
+            type: 'phone_vision_native_start',
+            sessionId: visionSessionId,
+            facingMode: visionFacingMode,
+            captureProfile: visionCaptureProfile,
+            capabilities: visionCapabilitiesPayload(),
+          });
+          await startNativeVisionSession();
+          if (nativeVisionActive) {
+            visionStatus = 'live';
+            visionError = '';
+            visionLastAction = 'Native vision live';
+            return;
+          }
+          throw new Error(nativeVisionError || 'Native vision did not start.');
+        }
+        throw new Error('Phone Vision camera needs the native app or a secure HTTPS browser session. The QR browser page cannot use the camera over LAN HTTP.');
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { ideal: visionFacingMode },
+          width: { ideal: visionCaptureWidth },
+          height: { ideal: visionCaptureHeight },
+          frameRate: { ideal: visionCaptureFrameRate, max: Math.max(visionCaptureFrameRate, 60) },
+        },
+      });
+      visionStream = stream;
+      visionNativeOnly = false;
+      await tick();
+      if (visionVideoEl) {
+        visionVideoEl.srcObject = stream;
+        try { await visionVideoEl.play(); } catch {}
+      }
+
+      const peer = new RTCPeerConnection();
+      visionPeer = peer;
+      attachVisionDataChannel(peer.createDataChannel('ghost-vision'));
+
+      stream.getTracks().forEach(track => peer.addTrack(track, stream));
+      peer.onicecandidate = (event) => {
+        if (!event.candidate) return;
+        sendVisionSignal({
+          type: 'phone_camera_ice',
+          sessionId: visionSessionId,
+          candidate: event.candidate.toJSON ? event.candidate.toJSON() : event.candidate,
+        });
+      };
+      peer.onconnectionstatechange = () => {
+        if (visionPeer !== peer) return;
+        if (peer.connectionState === 'connected') {
+          visionStatus = 'live';
+          visionError = '';
+        } else if (peer.connectionState === 'failed') {
+          visionStatus = 'failed';
+          visionError = 'Connection failed.';
+        } else if (peer.connectionState === 'disconnected') {
+          visionStatus = 'connecting';
+        } else if (peer.connectionState === 'closed') {
+          visionStatus = 'idle';
+        }
+      };
+
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      visionStatus = 'connecting';
+      sendVisionSignal({
+        type: 'phone_camera_offer',
+        sessionId: visionSessionId,
+        sdp: peer.localDescription,
+        facingMode: visionFacingMode,
+        captureProfile: visionCaptureProfile,
+        capabilities: visionCapabilitiesPayload(),
+      });
+      void startNativeVisionSession();
+    } catch (err: any) {
+      console.error('[PhoneVision] camera start failed:', err);
+      visionStatus = 'failed';
+      visionError = err?.message || 'Camera failed.';
+      stopPhoneVision(true);
+      visionStatus = 'failed';
+      visionError = err?.message || 'Camera failed.';
+    }
+  }
+
+  async function handlePhoneCameraAnswer(sessionId: string, sdp: RTCSessionDescriptionInit) {
+    if (!visionPeer || sessionId !== visionSessionId) return;
+    try {
+      await visionPeer.setRemoteDescription(new RTCSessionDescription(sdp));
+      for (const candidate of pendingVisionIce.splice(0)) {
+        try { await visionPeer.addIceCandidate(new RTCIceCandidate(candidate)); } catch {}
+      }
+    } catch (err: any) {
+      visionStatus = 'failed';
+      visionError = err?.message || 'Could not connect camera.';
+    }
+  }
+
+  async function handlePhoneCameraIce(sessionId: string, candidate: RTCIceCandidateInit) {
+    if (!candidate || sessionId !== visionSessionId) return;
+    if (!visionPeer || !visionPeer.remoteDescription) {
+      pendingVisionIce.push(candidate);
+      return;
+    }
+    try { await visionPeer.addIceCandidate(new RTCIceCandidate(candidate)); } catch {}
+  }
+
+  function visionPresetLabel(kind: 'aura' | 'point-cloud', presetId: unknown): string {
+    const id = typeof presetId === 'string' ? presetId : '';
+    const presets = kind === 'aura' ? PHONE_VISION_AURA_PRESETS : PHONE_VISION_POINT_CLOUD_PRESETS;
+    return presets.find(preset => preset.id === id)?.label ?? (kind === 'aura' ? 'Aura' : 'Point Cloud');
+  }
+
+  function visionLayerAction(kind: 'aura' | 'point-cloud', msg: Record<string, unknown>): string {
+    const label = visionPresetLabel(kind, msg.preset);
+    const calibrated = msg.calibrated === true ? ' · calibrated' : '';
+    return `${label}${calibrated}`;
+  }
+
+  function handleVisionStatus(msg: Record<string, unknown>) {
+    const status = String(msg.status || '');
+    if (status === 'live') {
+      visionStatus = 'live';
+      visionError = '';
+      return;
+    }
+    if (status === 'failed' || status === 'error') {
+      visionStatus = 'failed';
+      visionError = String(msg.error || 'Phone vision error.');
+      return;
+    }
+    if (status === 'created_aura_layer') {
+      visionLastAuraAction = visionLayerAction('aura', msg);
+      visionLastAction = 'Aura layer added';
+    }
+    if (status === 'created_point_cloud_layer') {
+      visionLastPointCloudAction = visionLayerAction('point-cloud', msg);
+      visionLastAction = 'Point cloud layer added';
+    }
+    if (status === 'calibration_reset') {
+      visionLastAction = 'Calibration cleared';
+      visionLastPointCloudAction = '';
+      visionLastAuraAction = '';
+    }
+  }
+
+  function sendVisionCommand(command: string, detail: Record<string, unknown> = {}) {
+    const payload = {
+      type: 'phone_vision_command',
+      sessionId: visionSessionId,
+      command,
+      ...detail,
+    };
+    try {
+      if (visionDataChannel?.readyState === 'open') {
+        visionDataChannel.send(JSON.stringify(payload));
+        return;
+      }
+    } catch {}
+    sendVisionSignal(payload);
+  }
+
+  function visionCalibrationPayload() {
+    return {
+      calibrationPoints: visionCalibrationPoints.map((p) => ({
+        x: p.x,
+        y: p.y,
+        index: p.index,
+      })),
+    };
+  }
+
+  function createVisionPointCloudLayer() {
+    sendVisionCommand('create_point_cloud_layer', {
+      pointCloudPreset: visionPointCloudPreset,
+      effectKind: 'point-cloud',
+      nativeOnly: visionNativeOnly,
+      facingMode: visionFacingMode,
+      captureProfile: visionCaptureProfile,
+      capabilities: visionCapabilitiesPayload(),
+      calibrationPointCount: visionCalibrationPoints.length,
+      ...visionCalibrationPayload(),
+    });
+  }
+
+  function createVisionAuraLayer() {
+    sendVisionCommand('create_aura_layer', {
+      auraPreset: visionAuraPreset,
+      effectKind: 'aura',
+      nativeOnly: visionNativeOnly,
+      facingMode: visionFacingMode,
+      captureProfile: visionCaptureProfile,
+      capabilities: visionCapabilitiesPayload(),
+      calibrationPointCount: visionCalibrationPoints.length,
+      ...visionCalibrationPayload(),
+    });
+  }
+
+  async function switchVisionCamera() {
+    visionFacingMode = visionFacingMode === 'environment' ? 'user' : 'environment';
+    await refreshNativeVisionCapabilities();
+    if (visionIsLive) {
+      await startPhoneVision();
+    }
+  }
+
+  async function setVisionCaptureProfile(profile: PhoneVisionCaptureProfile) {
+    visionCaptureProfile = profile;
+    if (profile === 'person-aura' && visionAuraPreset === 'object-halo') {
+      visionAuraPreset = 'body-glow';
+    }
+    if (profile === 'rgb-fast' && visionPointCloudPreset === 'object-relief') {
+      visionPointCloudPreset = 'human-ghost';
+    }
+    await refreshNativeVisionCapabilities();
+    if (visionIsLive) {
+      await startPhoneVision();
+    }
+  }
+
+  function handleVisionPreviewTap(e: MouseEvent | TouchEvent | PointerEvent) {
+    if (!visionHasCapture) return;
+    const target = e.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
+    const point = 'touches' in e && e.touches[0] ? e.touches[0] : (e as MouseEvent);
+    const x = Math.max(0, Math.min(1, (point.clientX - rect.left) / rect.width));
+    const y = Math.max(0, Math.min(1, (point.clientY - rect.top) / rect.height));
+    const index = visionCalibrationPoints.length >= 4 ? 0 : visionCalibrationPoints.length;
+    const nextPoint = { x, y, index };
+    const next = visionCalibrationPoints.filter(p => p.index !== index);
+    next.push(nextPoint);
+    visionCalibrationPoints = next.sort((a, b) => a.index - b.index);
+    sendVisionCommand('calibration_point', nextPoint);
+  }
+
+  function resetVisionCalibration() {
+    visionCalibrationPoints = [];
+    sendVisionCommand('calibration_reset');
   }
 
   // Mesh grid size
@@ -418,71 +963,46 @@
   // Effects panel state
   let showEffectsPanel = false;
   let effectsLayerIndex: number | null = null;
+  let effectsPanelTarget: 'mapping' | 'vj' = 'vj';
+  let effectSearch = '';
 
-  // Available effect types organized by category for easy selection
-  const effectCategories = [
-    {
-      name: 'Color',
-      effects: [
-        { type: 'colorama' as EffectType, name: 'Colorama', icon: '🎨' },
-        { type: 'thermal' as EffectType, name: 'Thermal', icon: '🔥' },
-        { type: 'invert' as EffectType, name: 'Invert', icon: '🔄' },
-        { type: 'posterize' as EffectType, name: 'Posterize', icon: '🎭' },
-      ]
-    },
-    {
-      name: 'Distort',
-      effects: [
-        { type: 'glitch' as EffectType, name: 'Glitch', icon: '⚡' },
-        { type: 'wave' as EffectType, name: 'Wave', icon: '🌊' },
-        { type: 'fisheye' as EffectType, name: 'Fisheye', icon: '👁️' },
-        { type: 'mirror' as EffectType, name: 'Mirror', icon: '🪞' },
-        { type: 'kaleidoscope' as EffectType, name: 'Kaleidoscope', icon: '❄️' },
-      ]
-    },
-    {
-      name: 'Filter',
-      effects: [
-        { type: 'blur' as EffectType, name: 'Blur', icon: '💨' },
-        { type: 'sharpen' as EffectType, name: 'Sharpen', icon: '🔪' },
-        { type: 'pixelate' as EffectType, name: 'Pixelate', icon: '🧱' },
-        { type: 'dither' as EffectType, name: 'Dither', icon: '📺' },
-      ]
-    },
-    {
-      name: 'Edge',
-      effects: [
-        { type: 'edgeDetect' as EffectType, name: 'Edge Detect', icon: '📐' },
-        { type: 'outline' as EffectType, name: 'Outline', icon: '✏️' },
-        { type: 'emboss' as EffectType, name: 'Emboss', icon: '🏔️' },
-      ]
-    },
-    {
-      name: 'Retro',
-      effects: [
-        { type: 'vhs' as EffectType, name: 'VHS', icon: '📼' },
-        { type: 'scanlines' as EffectType, name: 'Scanlines', icon: '📡' },
-        { type: 'noise' as EffectType, name: 'Noise', icon: '📻' },
-        { type: 'nightVision' as EffectType, name: 'Night Vision', icon: '🌙' },
-      ]
-    },
-    {
-      name: 'Mask',
-      effects: [
-        { type: 'vignette' as EffectType, name: 'Vignette', icon: '⭕' },
-        { type: 'edgeFeather' as EffectType, name: 'Edge Feather', icon: '🪶' },
-      ]
-    },
-    {
-      name: 'Procedural',
-      effects: [
-        { type: 'plasma' as EffectType, name: 'Plasma', icon: '🌈' },
-      ]
-    },
-  ];
+  // Mobile uses the same Ghost-native effect library as desktop/VJ.
+  const effectCategories = (() => {
+    const groups = new Map<string, {
+      name: string;
+      effects: { type: EffectType; name: string; previewCSS: string; requiresWebGPU?: boolean }[];
+    }>();
+    for (const entry of EFFECT_CATALOG) {
+      if (!groups.has(entry.category)) {
+        groups.set(entry.category, { name: entry.category, effects: [] });
+      }
+      groups.get(entry.category)!.effects.push({
+        type: entry.type,
+        name: entry.label,
+        previewCSS: entry.previewCSS,
+        requiresWebGPU: entry.requiresWebGPU,
+      });
+    }
+    return Array.from(groups.values());
+  })();
+
+  const effectLabels = new Map(EFFECT_CATALOG.map(entry => [entry.type, entry.label]));
 
   // Use shared effect parameter definitions (covers all 81+ effects)
   const effectParamDefs = EFFECT_PARAM_DEFS;
+
+  const layerShapeOptions: { type: LayerShapeType; label: string; glyph: string }[] = [
+    { type: 'rectangle', label: 'Rectangle', glyph: '▭' },
+    { type: 'circle', label: 'Circle', glyph: '○' },
+    { type: 'ellipse', label: 'Ellipse', glyph: '◖' },
+    { type: 'triangle', label: 'Triangle', glyph: '△' },
+    { type: 'polygon', label: 'Polygon', glyph: '⬡' },
+    { type: 'star', label: 'Star', glyph: '✦' },
+    { type: 'line', label: 'Line', glyph: '╱' },
+    { type: 'polyline', label: 'Polyline', glyph: '⌁' },
+  ];
+
+  const shapeLabels = new Map(layerShapeOptions.map(option => [option.type, option.label]));
 
   // Shaders for the picker. Two sources, in priority order:
   //   1. shader_library_sync from the desktop (preferred — same list +
@@ -742,6 +1262,12 @@
   // app). Used to hide PWA "Add to Home Screen" hints — those make no sense
   // when the user is already inside an installed native app.
   const isCapacitorNative = !!(window as any).Capacitor?.isNativePlatform?.();
+  const showVisionMode = isCapacitorNative;
+
+  $: if (!showVisionMode && mobileMode === 'vision') {
+    stopPhoneVision(false);
+    mobileMode = 'mapping';
+  }
 
   function switchMobileMode() {
     try { localStorage.removeItem('ga-mobile-mode'); } catch { /* private mode */ }
@@ -793,8 +1319,9 @@
     // pushes a real sync via WS first, the fallback's eventual write
     // is suppressed by the shadersFromSync flag.
     loadShaderManifestFallback();
+    void refreshNativeVisionCapabilities();
 
-    // If running as PWA, auto-connect
+	    // If running as PWA, auto-connect
     if (isPWA && serverUrl) {
       connect();
     }
@@ -802,6 +1329,7 @@
 
   onDestroy(() => {
     disconnect();
+    void disposeNativeVisionListeners();
     window.removeEventListener('resize', updateViewportSize);
   });
 
@@ -890,6 +1418,7 @@
     socket.onclose = () => {
       console.log('[Mobile] WebSocket closed');
       const wasConnected = connected;
+      stopPhoneVision(false);
       connected = false;
       connecting = false;
       if (connectTimeout) {
@@ -924,6 +1453,7 @@
   }
 
   function disconnect() {
+    stopPhoneVision(true);
     if (ws) {
       ws.close();
       ws = null;
@@ -937,10 +1467,45 @@
     }
   }
 
+  function preserveMappingEffectDragValues(incoming: Project) {
+    if (!projectState || activeDrags.size === 0) return;
+
+    for (const key of activeDrags) {
+      if (!key.startsWith('mapping-effect-param:')) continue;
+      const [, layerId, effectId, paramKey] = key.split(':');
+      if (!layerId || !effectId || !paramKey) continue;
+
+      const localEffect = projectState.layers
+        .find(layer => layer.id === layerId)
+        ?.effects?.find(effect => effect.id === effectId);
+      const incomingEffect = incoming.layers
+        .find(layer => layer.id === layerId)
+        ?.effects?.find(effect => effect.id === effectId);
+
+      if (localEffect && incomingEffect) {
+        (incomingEffect.params as any)[paramKey] = (localEffect.params as any)[paramKey];
+      }
+    }
+
+    for (const key of activeDrags) {
+      if (!key.startsWith('mapping-shape-param:')) continue;
+      const [, layerId, paramKey] = key.split(':');
+      if (!layerId || !paramKey) continue;
+
+      const localShape = projectState.layers.find(layer => layer.id === layerId)?.layerShape;
+      const incomingShape = incoming.layers.find(layer => layer.id === layerId)?.layerShape;
+      if (localShape && incomingShape) {
+        (incomingShape.params as any)[paramKey] = (localShape.params as any)[paramKey];
+      }
+    }
+  }
+
   function handleMessage(msg: { type: string; [key: string]: unknown }) {
     switch (msg.type) {
-      case 'sync':
-        projectState = msg.project as Project;
+      case 'sync': {
+        const incomingProject = msg.project as Project;
+        preserveMappingEffectDragValues(incomingProject);
+        projectState = incomingProject;
         selectedLayerId = projectState?.selectedLayerId || null;
         // Update mesh size from selected layer if available
         if (selectedLayer?.meshGrid) {
@@ -948,6 +1513,7 @@
           meshCols = selectedLayer.meshGrid.cols;
         }
         break;
+      }
 
       case 'control_point': {
         const { layerId, corner, position } = (msg.payload as unknown) as {
@@ -1000,6 +1566,89 @@
         break;
       }
 
+      case 'add_mapping_layer_effect': {
+        const { layerId, effect } = (msg as unknown) as { layerId: string; effect: Effect };
+        if (layerId && effect) {
+          updateMappingLayerEffects(layerId, effects =>
+            effects.some(existing => existing.id === effect.id) ? effects : [...effects, effect]
+          );
+        }
+        break;
+      }
+
+      case 'remove_mapping_layer_effect': {
+        const { layerId, effectId } = (msg as unknown) as { layerId: string; effectId: string };
+        if (layerId && effectId) {
+          updateMappingLayerEffects(layerId, effects => effects.filter(effect => effect.id !== effectId));
+        }
+        break;
+      }
+
+      case 'toggle_mapping_layer_effect': {
+        const { layerId, effectId } = (msg as unknown) as { layerId: string; effectId: string };
+        if (layerId && effectId) {
+          updateMappingLayerEffects(layerId, effects => effects.map(effect =>
+            effect.id === effectId ? { ...effect, enabled: !effect.enabled } : effect
+          ));
+        }
+        break;
+      }
+
+      case 'update_mapping_layer_effect_params': {
+        const { layerId, effectId, params } = (msg as unknown) as {
+          layerId: string;
+          effectId: string;
+          params: Partial<EffectParams>;
+        };
+        if (layerId && effectId && params) {
+          updateMappingLayerEffects(layerId, effects => effects.map(effect =>
+            effect.id === effectId
+              ? { ...effect, params: { ...effect.params, ...params } }
+              : effect
+          ));
+        }
+        break;
+      }
+
+      case 'set_mapping_layer_shape': {
+        const { layerId, shapeType } = (msg as unknown) as { layerId: string; shapeType: LayerShapeType | null };
+        if (layerId) {
+          updateMappingLayerShape(layerId, () => shapeType ? createDefaultLayerShape(shapeType) : null);
+        }
+        break;
+      }
+
+      case 'toggle_mapping_layer_shape': {
+        const { layerId } = (msg as unknown) as { layerId: string };
+        if (layerId) {
+          updateMappingLayerShape(layerId, shape =>
+            shape ? { ...shape, enabled: !shape.enabled } : shape
+          );
+        }
+        break;
+      }
+
+      case 'clear_mapping_layer_shape': {
+        const { layerId } = (msg as unknown) as { layerId: string };
+        if (layerId) {
+          updateMappingLayerShape(layerId, () => null);
+        }
+        break;
+      }
+
+      case 'update_mapping_layer_shape_params': {
+        const { layerId, params } = (msg as unknown) as {
+          layerId: string;
+          params: Partial<LayerShapeParams>;
+        };
+        if (layerId && params) {
+          updateMappingLayerShape(layerId, shape =>
+            shape ? { ...shape, params: { ...shape.params, ...params } } : shape
+          );
+        }
+        break;
+      }
+
       case 'select_layer':
         selectedLayerId = msg.layerId as string;
         break;
@@ -1041,6 +1690,28 @@
         shadersLoading = false;
         break;
       }
+
+      case 'phone_camera_answer': {
+        const { sessionId, sdp } = (msg as unknown) as {
+          sessionId?: string;
+          sdp?: RTCSessionDescriptionInit;
+        };
+        if (sessionId && sdp) void handlePhoneCameraAnswer(sessionId, sdp);
+        break;
+      }
+
+      case 'phone_camera_ice': {
+        const { sessionId, candidate } = (msg as unknown) as {
+          sessionId?: string;
+          candidate?: RTCIceCandidateInit;
+        };
+        if (sessionId && candidate) void handlePhoneCameraIce(sessionId, candidate);
+        break;
+      }
+
+      case 'phone_vision_status':
+        handleVisionStatus(msg);
+        break;
 
       case 'vj_clips_sync': {
         // Receive VJ clips state from desktop
@@ -1392,23 +2063,162 @@
     }
   }
 
-  // VJ Layer Effect functions
-  function addVJLayerEffect(layerIndex: number, effectType: EffectType) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-
-    // Create effect with default params
+  function createDefaultEffectParams(effectType: EffectType): EffectParams {
     const params: EffectParams = {};
     const paramDefs = effectParamDefs[effectType] || [];
     for (const def of paramDefs) {
       (params as Record<string, number>)[def.param as string] = def.default;
     }
+    return params;
+  }
 
-    const effect: Effect = {
+  function createMobileEffect(effectType: EffectType): Effect {
+    return {
       id: generateUUID(),
       type: effectType,
       enabled: true,
-      params,
+      params: createDefaultEffectParams(effectType),
     };
+  }
+
+  function updateMappingLayerEffects(layerId: string, updater: (effects: Effect[]) => Effect[]) {
+    if (!projectState) return;
+    projectState = {
+      ...projectState,
+      layers: projectState.layers.map(layer => {
+        if (layer.id !== layerId) return layer;
+        return { ...layer, effects: updater([...(layer.effects || [])]) };
+      }),
+    };
+  }
+
+  function updateMappingLayerShape(layerId: string, updater: (shape: LayerShape | null) => LayerShape | null) {
+    if (!projectState) return;
+    projectState = {
+      ...projectState,
+      layers: projectState.layers.map(layer => {
+        if (layer.id !== layerId) return layer;
+        return { ...layer, cropRegion: null, layerShape: updater(layer.layerShape || null) };
+      }),
+    };
+  }
+
+  function setMappingLayerShape(layerId: string, shapeType: LayerShapeType | null) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({
+      type: 'set_mapping_layer_shape',
+      layerId,
+      shapeType,
+    }));
+
+    updateMappingLayerShape(layerId, current => {
+      if ((current?.type ?? null) === shapeType) return current;
+      return shapeType ? createDefaultLayerShape(shapeType) : null;
+    });
+  }
+
+  function toggleMappingLayerShape(layerId: string) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({
+      type: 'toggle_mapping_layer_shape',
+      layerId,
+    }));
+
+    updateMappingLayerShape(layerId, shape =>
+      shape ? { ...shape, enabled: !shape.enabled } : shape
+    );
+  }
+
+  function clearMappingLayerShape(layerId: string) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({
+      type: 'clear_mapping_layer_shape',
+      layerId,
+    }));
+
+    updateMappingLayerShape(layerId, () => null);
+  }
+
+  function updateMappingLayerShapeParams(layerId: string, params: Partial<LayerShapeParams>) {
+    for (const key of Object.keys(params)) {
+      markDragActive(`mapping-shape-param:${layerId}:${key}`);
+    }
+
+    updateMappingLayerShape(layerId, shape =>
+      shape ? { ...shape, params: { ...shape.params, ...params } } : shape
+    );
+
+    throttledSendEffectParams('update_mapping_layer_shape_params', { layerId, params });
+  }
+
+  function onMappingShapeParamDragEnd(layerId: string, paramKey: string) {
+    markDragEnd(`mapping-shape-param:${layerId}:${paramKey}`);
+  }
+
+  function addMappingLayerEffect(layerId: string, effectType: EffectType) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const effect = createMobileEffect(effectType);
+
+    ws.send(JSON.stringify({
+      type: 'add_mapping_layer_effect',
+      layerId,
+      effect,
+    }));
+
+    updateMappingLayerEffects(layerId, effects => [...effects, effect]);
+    expandedEffectId = effect.id;
+  }
+
+  function removeMappingLayerEffect(layerId: string, effectId: string) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({
+      type: 'remove_mapping_layer_effect',
+      layerId,
+      effectId,
+    }));
+
+    updateMappingLayerEffects(layerId, effects => effects.filter(effect => effect.id !== effectId));
+    if (expandedEffectId === effectId) {
+      expandedEffectId = null;
+    }
+  }
+
+  function toggleMappingLayerEffect(layerId: string, effectId: string) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({
+      type: 'toggle_mapping_layer_effect',
+      layerId,
+      effectId,
+    }));
+
+    updateMappingLayerEffects(layerId, effects => effects.map(effect =>
+      effect.id === effectId ? { ...effect, enabled: !effect.enabled } : effect
+    ));
+  }
+
+  function updateMappingLayerEffectParams(layerId: string, effectId: string, params: Partial<EffectParams>) {
+    for (const key of Object.keys(params)) {
+      markDragActive(`mapping-effect-param:${layerId}:${effectId}:${key}`);
+    }
+
+    updateMappingLayerEffects(layerId, effects => effects.map(effect =>
+      effect.id === effectId
+        ? { ...effect, params: { ...effect.params, ...params } }
+        : effect
+    ));
+
+    throttledSendEffectParams('update_mapping_layer_effect_params', { layerId, effectId, params });
+  }
+
+  function onMappingEffectParamDragEnd(layerId: string, effectId: string, paramKey: string) {
+    markDragEnd(`mapping-effect-param:${layerId}:${effectId}:${paramKey}`);
+  }
+
+  // VJ Layer Effect functions
+  function addVJLayerEffect(layerIndex: number, effectType: EffectType) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    const effect = createMobileEffect(effectType);
 
     ws.send(JSON.stringify({
       type: 'add_vj_layer_effect',
@@ -1880,21 +2690,101 @@
 
   // Open effects panel for a specific layer
   function openEffectsPanel(layerIndex: number) {
+    effectsPanelTarget = 'vj';
     effectsLayerIndex = layerIndex;
     showEffectsPanel = true;
     expandedEffectId = null;
   }
 
-  function closeEffectsPanel() {
-    showEffectsPanel = false;
+  function openMappingEffectsPanel() {
+    if (!selectedLayerId) return;
+    effectsPanelTarget = 'mapping';
     effectsLayerIndex = null;
+    showEffectsPanel = true;
     expandedEffectId = null;
   }
 
+  function openShapePanel() {
+    if (!selectedLayerId) return;
+    showShapePanel = true;
+  }
+
+  function closeShapePanel() {
+    showShapePanel = false;
+  }
+
+  function closeEffectsPanel() {
+    showEffectsPanel = false;
+    effectsLayerIndex = null;
+    effectsPanelTarget = 'vj';
+    expandedEffectId = null;
+    effectSearch = '';
+  }
+
   // Get current layer effects
-  $: currentLayerEffects = effectsLayerIndex !== null && vjClipsState
-    ? (vjClipsState.layerStates[effectsLayerIndex]?.effects || [])
-    : [];
+  $: currentLayerEffects = effectsPanelTarget === 'mapping'
+    ? (selectedLayer?.effects || [])
+    : (effectsLayerIndex !== null && vjClipsState
+      ? (vjClipsState.layerStates[effectsLayerIndex]?.effects || [])
+      : []);
+  $: effectsPanelTitle = effectsPanelTarget === 'mapping'
+    ? `${selectedLayer?.name || 'Layer'} Effects`
+    : `Layer ${(effectsLayerIndex ?? 0) + 1} Effects`;
+  $: effectsPanelReady = effectsPanelTarget === 'mapping'
+    ? !!selectedLayerId
+    : effectsLayerIndex !== null;
+  $: visibleEffectCategories = effectCategories
+    .map(category => ({
+      ...category,
+      effects: category.effects.filter(effect => {
+        const query = effectSearch.trim().toLowerCase();
+        if (!query) return true;
+        return effect.name.toLowerCase().includes(query)
+          || effect.type.toLowerCase().includes(query)
+          || category.name.toLowerCase().includes(query);
+      }),
+    }))
+    .filter(category => category.effects.length > 0);
+
+  function addPanelEffect(effectType: EffectType) {
+    if (effectsPanelTarget === 'mapping') {
+      if (selectedLayerId) addMappingLayerEffect(selectedLayerId, effectType);
+      return;
+    }
+    if (effectsLayerIndex !== null) addVJLayerEffect(effectsLayerIndex, effectType);
+  }
+
+  function togglePanelEffect(effectId: string) {
+    if (effectsPanelTarget === 'mapping') {
+      if (selectedLayerId) toggleMappingLayerEffect(selectedLayerId, effectId);
+      return;
+    }
+    if (effectsLayerIndex !== null) toggleVJLayerEffect(effectsLayerIndex, effectId);
+  }
+
+  function removePanelEffect(effectId: string) {
+    if (effectsPanelTarget === 'mapping') {
+      if (selectedLayerId) removeMappingLayerEffect(selectedLayerId, effectId);
+      return;
+    }
+    if (effectsLayerIndex !== null) removeVJLayerEffect(effectsLayerIndex, effectId);
+  }
+
+  function updatePanelEffectParams(effectId: string, params: Partial<EffectParams>) {
+    if (effectsPanelTarget === 'mapping') {
+      if (selectedLayerId) updateMappingLayerEffectParams(selectedLayerId, effectId, params);
+      return;
+    }
+    if (effectsLayerIndex !== null) updateVJLayerEffectParams(effectsLayerIndex, effectId, params);
+  }
+
+  function onPanelEffectParamDragEnd(effectId: string, paramKey: string) {
+    if (effectsPanelTarget === 'mapping') {
+      if (selectedLayerId) onMappingEffectParamDragEnd(selectedLayerId, effectId, paramKey);
+      return;
+    }
+    if (effectsLayerIndex !== null) onEffectParamDragEnd(effectsLayerIndex, effectId, paramKey);
+  }
 
   // VJ Mixer panel visibility
   let showVJMixer = false;
@@ -2277,6 +3167,13 @@
           class:active={mobileMode === 'vj'}
           onclick={() => mobileMode = 'vj'}
         >VJ</button>
+        {#if showVisionMode}
+          <button
+            class="mode-pill"
+            class:active={mobileMode === 'vision'}
+            onclick={() => mobileMode = 'vision'}
+          >Vision</button>
+        {/if}
         <button
           class="mode-pill"
           class:active={mobileMode === 'paint'}
@@ -2364,20 +3261,73 @@
         {beatPulseIntensity}
       />
     {:else if mobileMode === 'mapping'}
-    <!-- View Mode Toggle - Always visible -->
+    <!-- Layer Selector -->
+    <div class="layer-selector mapping-layer-selector">
+      <div class="layer-selector-heading">
+        <h3>Layers</h3>
+        {#if selectedLayer}
+          <span class="layer-effect-chip">{selectedLayer.effects?.length || 0} FX</span>
+        {/if}
+      </div>
+      <div class="layer-list">
+        {#if projectState?.layers.length}
+          {#each projectState.layers as layer}
+            <button
+              class="layer-btn"
+              class:selected={selectedLayerId === layer.id}
+              class:hidden={!layer.visible}
+              onclick={() => selectLayer(layer.id)}
+            >
+              <span class="layer-dot"></span>
+              <span>{layer.name}</span>
+            </button>
+          {/each}
+        {:else}
+          <p class="no-layers">No layers in project</p>
+        {/if}
+      </div>
+    </div>
+
+    <!-- Layer tools -->
     {#if selectedLayer}
-      <div class="view-mode-toggle">
+      <div class="mapping-layer-tools">
         <button
           class:active={viewMode === 'corners'}
           onclick={() => setViewMode('corners')}
+          aria-label="Corner warp"
         >
           Corners
         </button>
         <button
           class:active={viewMode === 'mesh'}
           onclick={() => setViewMode('mesh')}
+          aria-label="Mesh warp"
         >
           Mesh Grid
+        </button>
+        <button
+          class="layer-tool-fx"
+          onclick={openMappingEffectsPanel}
+          aria-label="Layer effects"
+        >
+          FX
+          {#if selectedLayer.effects?.length}
+            <span>{selectedLayer.effects.length}</span>
+          {/if}
+        </button>
+        <button
+          class="layer-tool-shape"
+          class:active={!!selectedLayer.layerShape && selectedLayer.layerShape.type !== 'rectangle'}
+          onclick={openShapePanel}
+          aria-label="Layer shape"
+        >
+          Shape
+        </button>
+        <button
+          onclick={() => { showMediaLibrary = true; mediaTab = 'shaders'; }}
+          aria-label="Layer source"
+        >
+          Source
         </button>
       </div>
     {/if}
@@ -2504,27 +3454,6 @@
       {/if}
       <div class="viewport-gesture-hint">
         <span>Pinch to zoom &bull; Two fingers to pan</span>
-      </div>
-    </div>
-
-    <!-- Layer Selector -->
-    <div class="layer-selector">
-      <h3>Layers</h3>
-      <div class="layer-list">
-        {#if projectState?.layers.length}
-          {#each projectState.layers as layer}
-            <button
-              class="layer-btn"
-              class:selected={selectedLayerId === layer.id}
-              class:hidden={!layer.visible}
-              onclick={() => selectLayer(layer.id)}
-            >
-              {layer.name}
-            </button>
-          {/each}
-        {:else}
-          <p class="no-layers">No layers in project</p>
-        {/if}
       </div>
     </div>
 
@@ -2898,12 +3827,235 @@
       </div>
     {/if}
 
+    <!-- Shape Panel Slideout -->
+    {#if showShapePanel && selectedLayer}
+      {@const shape = selectedLayer.layerShape}
+      {@const shapeType = shape?.type ?? 'rectangle'}
+      <div class="effects-overlay" onclick={closeShapePanel}></div>
+      <div class="effects-slideout shape-slideout">
+        <div class="effects-header">
+          <h3>{selectedLayer.name} Shape</h3>
+          <button class="effects-close-btn" onclick={closeShapePanel}>Done</button>
+        </div>
+
+        <div class="effects-content">
+          <div class="shape-picker-grid">
+            {#each layerShapeOptions as option}
+              <button
+                class="shape-pick-btn"
+                class:active={shapeType === option.type}
+                onclick={() => setMappingLayerShape(selectedLayer.id, option.type)}
+              >
+                <span class="shape-glyph">{option.glyph}</span>
+                <span>{option.label}</span>
+              </button>
+            {/each}
+          </div>
+
+          <div class="shape-current-row">
+            <div>
+              <span class="shape-current-label">Current</span>
+              <strong>{shapeLabels.get(shapeType) || shapeType}</strong>
+            </div>
+            <div class="shape-current-actions">
+              {#if shape}
+                <button
+                  class:active={shape.enabled}
+                  onclick={() => toggleMappingLayerShape(selectedLayer.id)}
+                >
+                  {shape.enabled ? 'On' : 'Off'}
+                </button>
+              {/if}
+              <button onclick={() => clearMappingLayerShape(selectedLayer.id)} disabled={!shape}>
+                Clear
+              </button>
+            </div>
+          </div>
+
+          {#if shape}
+            <div class="shape-param-list">
+              {#if shapeType === 'circle' || shapeType === 'ellipse'}
+                <div class="effect-param-row">
+                  <span class="param-name">{shapeType === 'ellipse' ? 'Radius X' : 'Radius'}</span>
+                  <input
+                    class="effect-slider"
+                    type="range"
+                    min="0.05"
+                    max="1"
+                    step="0.01"
+                    value={shape.params.radiusX ?? 1}
+                    oninput={(e) => {
+                      const val = parseFloat(e.currentTarget.value);
+                      updateMappingLayerShapeParams(selectedLayer.id, shapeType === 'circle' ? { radiusX: val, radiusY: val } : { radiusX: val });
+                    }}
+                    onpointerup={() => {
+                      onMappingShapeParamDragEnd(selectedLayer.id, 'radiusX');
+                      if (shapeType === 'circle') onMappingShapeParamDragEnd(selectedLayer.id, 'radiusY');
+                    }}
+                    onblur={() => {
+                      onMappingShapeParamDragEnd(selectedLayer.id, 'radiusX');
+                      if (shapeType === 'circle') onMappingShapeParamDragEnd(selectedLayer.id, 'radiusY');
+                    }}
+                  />
+                  <span class="param-value">{Math.round((shape.params.radiusX ?? 1) * 100)}%</span>
+                </div>
+                {#if shapeType === 'ellipse'}
+                  <div class="effect-param-row">
+                    <span class="param-name">Radius Y</span>
+                    <input
+                      class="effect-slider"
+                      type="range"
+                      min="0.05"
+                      max="1"
+                      step="0.01"
+                      value={shape.params.radiusY ?? 0.7}
+                      oninput={(e) => updateMappingLayerShapeParams(selectedLayer.id, { radiusY: parseFloat(e.currentTarget.value) })}
+                      onpointerup={() => onMappingShapeParamDragEnd(selectedLayer.id, 'radiusY')}
+                      onblur={() => onMappingShapeParamDragEnd(selectedLayer.id, 'radiusY')}
+                    />
+                    <span class="param-value">{Math.round((shape.params.radiusY ?? 0.7) * 100)}%</span>
+                  </div>
+                {/if}
+              {/if}
+
+              {#if shapeType === 'polygon' || shapeType === 'star'}
+                <div class="effect-param-row">
+                  <span class="param-name">{shapeType === 'star' ? 'Points' : 'Sides'}</span>
+                  <input
+                    class="effect-slider"
+                    type="range"
+                    min="3"
+                    max="12"
+                    step="1"
+                    value={shape.params.sides ?? (shapeType === 'star' ? 5 : 6)}
+                    oninput={(e) => updateMappingLayerShapeParams(selectedLayer.id, { sides: parseInt(e.currentTarget.value, 10) })}
+                    onpointerup={() => onMappingShapeParamDragEnd(selectedLayer.id, 'sides')}
+                    onblur={() => onMappingShapeParamDragEnd(selectedLayer.id, 'sides')}
+                  />
+                  <span class="param-value">{shape.params.sides ?? (shapeType === 'star' ? 5 : 6)}</span>
+                </div>
+              {/if}
+
+              {#if shapeType === 'star'}
+                <div class="effect-param-row">
+                  <span class="param-name">Inner</span>
+                  <input
+                    class="effect-slider"
+                    type="range"
+                    min="0.1"
+                    max="0.9"
+                    step="0.01"
+                    value={shape.params.innerRadius ?? 0.4}
+                    oninput={(e) => updateMappingLayerShapeParams(selectedLayer.id, { innerRadius: parseFloat(e.currentTarget.value) })}
+                    onpointerup={() => onMappingShapeParamDragEnd(selectedLayer.id, 'innerRadius')}
+                    onblur={() => onMappingShapeParamDragEnd(selectedLayer.id, 'innerRadius')}
+                  />
+                  <span class="param-value">{Math.round((shape.params.innerRadius ?? 0.4) * 100)}%</span>
+                </div>
+              {/if}
+
+              {#if shapeType === 'line' || shapeType === 'polyline'}
+                <div class="effect-param-row">
+                  <span class="param-name">Width</span>
+                  <input
+                    class="effect-slider"
+                    type="range"
+                    min="0.005"
+                    max="0.2"
+                    step="0.005"
+                    value={shape.params.lineWidth ?? 0.04}
+                    oninput={(e) => updateMappingLayerShapeParams(selectedLayer.id, { lineWidth: parseFloat(e.currentTarget.value) })}
+                    onpointerup={() => onMappingShapeParamDragEnd(selectedLayer.id, 'lineWidth')}
+                    onblur={() => onMappingShapeParamDragEnd(selectedLayer.id, 'lineWidth')}
+                  />
+                  <span class="param-value">{Math.round((shape.params.lineWidth ?? 0.04) * 100)}%</span>
+                </div>
+                <div class="effect-param-row">
+                  <span class="param-name">Cap</span>
+                  <select
+                    class="shape-select"
+                    value={shape.params.lineCap ?? 'round'}
+                    onchange={(e) => updateMappingLayerShapeParams(selectedLayer.id, { lineCap: e.currentTarget.value as 'butt' | 'round' | 'square' })}
+                    onblur={() => onMappingShapeParamDragEnd(selectedLayer.id, 'lineCap')}
+                  >
+                    <option value="round">Round</option>
+                    <option value="butt">Butt</option>
+                    <option value="square">Square</option>
+                  </select>
+                </div>
+              {/if}
+
+              {#if shapeType !== 'rectangle'}
+                <div class="effect-param-row">
+                  <span class="param-name">Rotate</span>
+                  <input
+                    class="effect-slider"
+                    type="range"
+                    min="0"
+                    max="360"
+                    step="1"
+                    value={shape.params.rotation ?? 0}
+                    oninput={(e) => updateMappingLayerShapeParams(selectedLayer.id, { rotation: parseFloat(e.currentTarget.value) })}
+                    onpointerup={() => onMappingShapeParamDragEnd(selectedLayer.id, 'rotation')}
+                    onblur={() => onMappingShapeParamDragEnd(selectedLayer.id, 'rotation')}
+                  />
+                  <span class="param-value">{Math.round(shape.params.rotation ?? 0)}°</span>
+                </div>
+                <div class="effect-param-row">
+                  <span class="param-name">Scale</span>
+                  <input
+                    class="effect-slider"
+                    type="range"
+                    min="0.1"
+                    max="3"
+                    step="0.01"
+                    value={shape.params.scale ?? 1}
+                    oninput={(e) => updateMappingLayerShapeParams(selectedLayer.id, { scale: parseFloat(e.currentTarget.value) })}
+                    onpointerup={() => onMappingShapeParamDragEnd(selectedLayer.id, 'scale')}
+                    onblur={() => onMappingShapeParamDragEnd(selectedLayer.id, 'scale')}
+                  />
+                  <span class="param-value">{Math.round((shape.params.scale ?? 1) * 100)}%</span>
+                </div>
+              {/if}
+
+              <div class="effect-param-row">
+                <span class="param-name">Feather</span>
+                <input
+                  class="effect-slider"
+                  type="range"
+                  min="0"
+                  max="0.2"
+                  step="0.005"
+                  value={shape.params.feather ?? 0}
+                  oninput={(e) => updateMappingLayerShapeParams(selectedLayer.id, { feather: parseFloat(e.currentTarget.value) })}
+                  onpointerup={() => onMappingShapeParamDragEnd(selectedLayer.id, 'feather')}
+                  onblur={() => onMappingShapeParamDragEnd(selectedLayer.id, 'feather')}
+                />
+                <span class="param-value">{Math.round((shape.params.feather ?? 0) * 100)}%</span>
+              </div>
+
+              <label class="shape-check-row">
+                <input
+                  type="checkbox"
+                  checked={shape.params.invert ?? false}
+                  onchange={(e) => updateMappingLayerShapeParams(selectedLayer.id, { invert: e.currentTarget.checked })}
+                />
+                <span>Invert shape</span>
+              </label>
+            </div>
+          {:else}
+            <p class="no-effects">No layer shape assigned</p>
+          {/if}
+        </div>
+      </div>
+    {/if}
+
     <!-- Effects Panel Slideout -->
-    {#if showEffectsPanel && effectsLayerIndex !== null}
+    {#if showEffectsPanel && effectsPanelReady}
       <div class="effects-overlay" onclick={closeEffectsPanel}></div>
       <div class="effects-slideout">
         <div class="effects-header">
-          <h3>Layer {effectsLayerIndex + 1} Effects</h3>
+          <h3>{effectsPanelTitle}</h3>
           <button class="effects-close-btn" onclick={closeEffectsPanel}>Done</button>
         </div>
 
@@ -2917,15 +4069,15 @@
                     <button
                       class="effect-toggle"
                       class:enabled={effect.enabled}
-                      onclick={(e) => { e.stopPropagation(); toggleVJLayerEffect(effectsLayerIndex!, effect.id); }}
+                      onclick={(e) => { e.stopPropagation(); togglePanelEffect(effect.id); }}
                     >
                       {effect.enabled ? '●' : '○'}
                     </button>
-                    <span class="effect-name">{effect.type}</span>
+                    <span class="effect-name">{effectLabels.get(effect.type) || effect.type}</span>
                     <span class="effect-expand">{expandedEffectId === effect.id ? '▲' : '▼'}</span>
                     <button
                       class="effect-remove"
-                      onclick={(e) => { e.stopPropagation(); removeVJLayerEffect(effectsLayerIndex!, effect.id); }}
+                      onclick={(e) => { e.stopPropagation(); removePanelEffect(effect.id); }}
                     >
                       ×
                     </button>
@@ -2940,8 +4092,9 @@
                             <select value={(effect.params as Record<string, number>)[paramDef.param as string] ?? paramDef.default}
                               oninput={(e) => {
                                 const val = parseFloat((e.target as HTMLSelectElement).value);
-                                updateVJLayerEffectParams(effectsLayerIndex!, effect.id, { [paramDef.param]: val });
+                                updatePanelEffectParams(effect.id, { [paramDef.param]: val });
                               }}
+                              onblur={() => onPanelEffectParamDragEnd(effect.id, paramDef.param as string)}
                               style="flex:1; background:#222; color:#fff; border:1px solid #444; border-radius:3px; padding:4px; font-size:13px;">
                               {#each paramDef.options as opt}
                                 <option value={opt.value}>{opt.label}</option>
@@ -2959,11 +4112,18 @@
                                 const g = parseInt(hex.slice(3,5), 16) / 255;
                                 const b = parseInt(hex.slice(5,7), 16) / 255;
                                 if (paramDef.colorParams) {
-                                  updateVJLayerEffectParams(effectsLayerIndex!, effect.id, {
+                                  updatePanelEffectParams(effect.id, {
                                     [paramDef.colorParams.r]: r,
                                     [paramDef.colorParams.g]: g,
                                     [paramDef.colorParams.b]: b,
                                   });
+                                }
+                              }}
+                              onblur={() => {
+                                if (paramDef.colorParams) {
+                                  onPanelEffectParamDragEnd(effect.id, paramDef.colorParams.r);
+                                  onPanelEffectParamDragEnd(effect.id, paramDef.colorParams.g);
+                                  onPanelEffectParamDragEnd(effect.id, paramDef.colorParams.b);
                                 }
                               }}
                               style="flex:0 0 44px; height:28px; padding:0; border:1px solid #444; border-radius:3px; cursor:pointer;" />
@@ -2976,8 +4136,10 @@
                               value={(effect.params as Record<string, number>)[paramDef.param as string] ?? paramDef.default}
                               oninput={(e) => {
                                 const val = parseFloat(e.currentTarget.value);
-                                updateVJLayerEffectParams(effectsLayerIndex!, effect.id, { [paramDef.param]: val });
+                                updatePanelEffectParams(effect.id, { [paramDef.param]: val });
                               }}
+                              onpointerup={() => onPanelEffectParamDragEnd(effect.id, paramDef.param as string)}
+                              onblur={() => onPanelEffectParamDragEnd(effect.id, paramDef.param as string)}
                               class="effect-slider"
                             />
                             <span class="param-value">
@@ -3000,29 +4162,153 @@
 
           <!-- Add Effect Section -->
           <div class="add-effect-section">
-            <h4>Add Effect</h4>
+            <div class="add-effect-heading">
+              <h4>Add Effect</h4>
+              <input
+                class="effect-search"
+                type="search"
+                placeholder="Search FX"
+                bind:value={effectSearch}
+                aria-label="Search effects"
+              />
+            </div>
             <div class="effect-categories">
-              {#each effectCategories as category}
+              {#each visibleEffectCategories as category}
                 <div class="effect-category">
                   <span class="category-name">{category.name}</span>
                   <div class="category-effects">
                     {#each category.effects as effectDef}
                       <button
                         class="add-effect-btn"
-                        onclick={() => addVJLayerEffect(effectsLayerIndex!, effectDef.type)}
+                        onclick={() => addPanelEffect(effectDef.type)}
+                        title={effectDef.requiresWebGPU ? `${effectDef.name} · WebGPU` : effectDef.name}
                       >
-                        <span class="effect-icon">{effectDef.icon}</span>
+                        <span class="effect-swatch" style="background: {effectDef.previewCSS};"></span>
                         <span class="effect-btn-name">{effectDef.name}</span>
+                        {#if effectDef.requiresWebGPU}
+                          <span class="effect-badge">GPU</span>
+                        {/if}
                       </button>
                     {/each}
                   </div>
                 </div>
               {/each}
+              {#if visibleEffectCategories.length === 0}
+                <p class="no-effects">No matching effects</p>
+              {/if}
             </div>
           </div>
         </div>
       </div>
     {/if}
+    {:else if showVisionMode && mobileMode === 'vision'}
+      <div class="vision-mode">
+        <div class="vision-preview-card">
+          <div
+            class="vision-preview"
+            class:live={visionHasCapture}
+            onpointerdown={handleVisionPreviewTap}
+          >
+            <video
+              class:hidden={!visionStream}
+              bind:this={visionVideoEl}
+              autoplay
+              muted
+              playsinline
+            ></video>
+            {#if !visionStream}
+              <div class="vision-empty">{nativeVisionActive ? 'Native Vision' : 'Phone Camera'}</div>
+            {/if}
+            {#each visionCalibrationPoints as point}
+              <div
+                class="vision-cal-point"
+                style="left: {point.x * 100}%; top: {point.y * 100}%"
+              >{point.index + 1}</div>
+            {/each}
+          </div>
+          <div class="vision-status-row">
+            <span class="vision-dot" class:live={visionStatus === 'live'} class:failed={visionStatus === 'failed'}></span>
+            <span>{visionStatusLabel}</span>
+            {#if visionLastAction}<span class="vision-action">{visionLastAction}</span>{/if}
+          </div>
+          {#if visionError}<div class="vision-error">{visionError}</div>{/if}
+          {#if nativeVisionError}<div class="vision-error subtle">{nativeVisionError}</div>{/if}
+        </div>
+
+        <div class="vision-controls">
+          <button
+            class="vision-primary"
+            class:danger={visionIsLive}
+            onclick={() => visionIsLive ? stopPhoneVision(true) : startPhoneVision()}
+          >
+            {visionIsLive ? 'Stop Camera' : 'Start Camera'}
+          </button>
+          <button class="vision-secondary" onclick={switchVisionCamera}>
+            {visionFacingMode === 'environment' ? 'Rear Camera' : 'Front Camera'}
+          </button>
+        </div>
+
+        <div class="vision-preset-grid">
+          <label class="vision-field wide">
+            <span>Capture</span>
+            <select
+              value={visionCaptureProfile}
+              onchange={(e) => void setVisionCaptureProfile((e.currentTarget as HTMLSelectElement).value as PhoneVisionCaptureProfile)}
+            >
+              {#each PHONE_VISION_CAPTURE_PROFILES as profile}
+                <option value={profile.id}>{profile.label}</option>
+              {/each}
+            </select>
+          </label>
+          <label class="vision-field">
+            <span>Point Cloud</span>
+            <select bind:value={visionPointCloudPreset}>
+              {#each PHONE_VISION_POINT_CLOUD_PRESETS as preset}
+                <option value={preset.id}>{preset.label}</option>
+              {/each}
+            </select>
+          </label>
+          <label class="vision-field">
+            <span>Aura</span>
+            <select bind:value={visionAuraPreset}>
+              {#each PHONE_VISION_AURA_PRESETS as preset}
+                <option value={preset.id}>{preset.label}</option>
+              {/each}
+            </select>
+          </label>
+        </div>
+        <div class="vision-profile-strip">
+          <span>{visionCaptureWidth}×{visionCaptureHeight}</span>
+          <span>{visionCaptureFrameRate} fps</span>
+          <span>{visionCapabilitiesPayload().depthPipeline}</span>
+          <span>{visionCapabilitiesPayload().segmentationPipeline}</span>
+          <span>{nativeVisionSummary}</span>
+        </div>
+
+        <div class="vision-effect-actions">
+          <div class="vision-effect-card point-cloud">
+            <button disabled={!visionHasCapture} onclick={createVisionPointCloudLayer}>
+              Create Point Cloud
+            </button>
+            <span>{visionLastPointCloudAction || (visionNativeOnly ? 'Depth particles from native sidecar' : 'Depth particles from phone color')}</span>
+          </div>
+          <div class="vision-effect-card aura">
+            <button disabled={!visionHasCapture} onclick={createVisionAuraLayer}>
+              Create Aura
+            </button>
+            <span>{visionLastAuraAction || (visionNativeOnly ? 'Halo from native person mask' : 'Halo and edge field from phone feed')}</span>
+          </div>
+        </div>
+
+        <div class="vision-calibration">
+          <div class="vision-section-title">Calibration</div>
+          <div class="vision-cal-row">
+            <span>{visionCalibrationPoints.length}/4 points</span>
+            <span class="vision-cal-order">TL · TR · BR · BL</span>
+            <button onclick={resetVisionCalibration} disabled={visionCalibrationPoints.length === 0}>Clear</button>
+          </div>
+        </div>
+      </div>
     {:else if mobileMode === 'paint'}
       <!-- Light Painting — full-screen drawing surface w/ Apple Pencil hover crosshair -->
       <div class="paint-mode">
@@ -3471,15 +4757,15 @@
     padding: 2px;
     gap: 2px;
     flex: 1;
-    max-width: 280px;
+    max-width: 360px;
   }
 
   .mode-pill {
     flex: 1;
-    padding: 6px 12px;
+    padding: 6px 8px;
     border: none;
     border-radius: 6px;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -3638,41 +4924,83 @@
 
   /* Layer Selector */
   .layer-selector {
-    padding: 12px;
+    padding: 10px 12px;
     background: var(--bg-secondary, #111114);
-    border-top: 1px solid #333;
+    border-bottom: 1px solid #333;
+  }
+
+  .layer-selector-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
   }
 
   .layer-selector h3 {
     font-size: 13px;
     color: var(--text-muted, #888);
-    margin-bottom: 8px;
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
   }
 
   .layer-list {
     display: flex;
     gap: 8px;
-    flex-wrap: wrap;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    -webkit-overflow-scrolling: touch;
   }
 
   .layer-btn {
-    padding: 8px 16px;
-    background: #333;
-    border: none;
-    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 12px;
+    background: #171a20;
+    border: 1px solid #2b313a;
+    border-radius: 7px;
     color: var(--text-primary, #eee);
-    font-size: 15px;
+    font-size: 14px;
     cursor: pointer;
+    white-space: nowrap;
+    flex: 0 0 auto;
   }
 
   .layer-btn.selected {
-    background: #BB86FC33;
-    border: 1px solid var(--accent-primary, #BB86FC);
-    color: var(--accent-primary, #BB86FC);
+    background: rgba(103, 232, 249, 0.12);
+    border-color: #67e8f9;
+    color: #e7fbff;
+    box-shadow: inset 0 0 0 1px rgba(103, 232, 249, 0.22);
   }
 
   .layer-btn.hidden {
     opacity: 0.5;
+  }
+
+  .layer-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #6b7280;
+    flex: 0 0 auto;
+  }
+
+  .layer-btn.selected .layer-dot {
+    background: #67e8f9;
+    box-shadow: 0 0 8px rgba(103, 232, 249, 0.9);
+  }
+
+  .layer-effect-chip {
+    flex: 0 0 auto;
+    padding: 3px 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(103, 232, 249, 0.35);
+    color: #67e8f9;
+    background: rgba(103, 232, 249, 0.1);
+    font-size: 11px;
+    font-weight: 700;
   }
 
   .no-layers {
@@ -3766,33 +5094,61 @@
     border-color: #ff444466;
   }
 
-  /* View Mode Toggle */
-  .view-mode-toggle {
+  /* Mapping layer tools */
+  .mapping-layer-tools {
     display: flex;
     justify-content: center;
     padding: 8px;
-    gap: 4px;
+    gap: 6px;
     background: var(--bg-secondary, #111114);
     border-bottom: 1px solid #333;
   }
 
-  .view-mode-toggle button {
+  .mapping-layer-tools button {
     flex: 1;
     max-width: 140px;
     padding: 8px 16px;
-    background: #333;
-    border: none;
-    border-radius: 6px;
+    background: #181c22;
+    border: 1px solid #2c333d;
+    border-radius: 7px;
     color: var(--text-muted, #888);
     font-size: 14px;
+    font-weight: 700;
     cursor: pointer;
     transition: all 0.15s;
   }
 
-  .view-mode-toggle button.active {
-    background: #BB86FC33;
-    color: var(--accent-primary, #BB86FC);
-    border: 1px solid var(--accent-primary, #BB86FC);
+  .mapping-layer-tools button:active {
+    transform: scale(0.97);
+  }
+
+  .mapping-layer-tools button span {
+    display: inline-flex;
+    min-width: 17px;
+    height: 17px;
+    margin-left: 5px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: #67e8f9;
+    color: #071014;
+    font-size: 11px;
+  }
+
+  .mapping-layer-tools .layer-tool-fx {
+    color: #67e8f9;
+    border-color: rgba(103, 232, 249, 0.35);
+  }
+
+  .mapping-layer-tools .layer-tool-shape {
+    color: #e5d2ff;
+    border-color: rgba(187, 134, 252, 0.36);
+  }
+
+  .mapping-layer-tools button.active {
+    background: rgba(103, 232, 249, 0.12);
+    color: #67e8f9;
+    border-color: #67e8f9;
   }
 
   /* Mesh Grid Preset Controls */
@@ -4755,6 +6111,135 @@
     overflow-y: auto;
   }
 
+  .shape-picker-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  .shape-pick-btn {
+    min-height: 54px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid #2b313a;
+    background: #171a20;
+    color: var(--text-primary, #eee);
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .shape-pick-btn.active {
+    color: #67e8f9;
+    border-color: #67e8f9;
+    background: rgba(103, 232, 249, 0.1);
+  }
+
+  .shape-glyph {
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 7px;
+    background: rgba(255, 255, 255, 0.06);
+    color: inherit;
+    font-size: 20px;
+    line-height: 1;
+    flex: 0 0 auto;
+  }
+
+  .shape-current-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid #2b313a;
+    border-radius: 8px;
+    background: var(--bg-secondary, #111114);
+    margin-bottom: 16px;
+  }
+
+  .shape-current-label {
+    display: block;
+    margin-bottom: 3px;
+    color: var(--text-muted, #888);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .shape-current-row strong {
+    color: var(--text-primary, #eee);
+    font-size: 15px;
+  }
+
+  .shape-current-actions {
+    display: flex;
+    gap: 6px;
+    flex: 0 0 auto;
+  }
+
+  .shape-current-actions button {
+    min-width: 54px;
+    min-height: 34px;
+    padding: 0 10px;
+    border-radius: 7px;
+    border: 1px solid #333b45;
+    background: #171a20;
+    color: var(--text-primary, #eee);
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  .shape-current-actions button.active {
+    color: #071014;
+    background: #67e8f9;
+    border-color: #67e8f9;
+  }
+
+  .shape-current-actions button:disabled {
+    opacity: 0.38;
+  }
+
+  .shape-param-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .shape-select {
+    flex: 1;
+    min-height: 34px;
+    border-radius: 6px;
+    border: 1px solid #444;
+    background: #222;
+    color: #fff;
+    padding: 0 10px;
+    font-size: 13px;
+  }
+
+  .shape-check-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 42px;
+    color: var(--text-primary, #eee);
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .shape-check-row input {
+    width: 20px;
+    height: 20px;
+    accent-color: #67e8f9;
+  }
+
   /* Effects List */
   .effects-list {
     display: flex;
@@ -4923,12 +6408,31 @@
     padding-top: 16px;
   }
 
+  .add-effect-heading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
   .add-effect-section h4 {
     font-size: 13px;
     color: var(--text-muted, #888);
-    margin: 0 0 12px 0;
+    margin: 0;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    flex: 0 0 auto;
+  }
+
+  .effect-search {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 10px;
+    border-radius: 7px;
+    border: 1px solid #333b45;
+    background: #0b0d11;
+    color: var(--text-primary, #eee);
+    font-size: 13px;
   }
 
   .effect-categories {
@@ -4951,8 +6455,8 @@
   }
 
   .category-effects {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
   }
 
@@ -4960,14 +6464,16 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 8px 12px;
-    background: #333;
-    border: 1px solid #444;
-    border-radius: 6px;
+    min-width: 0;
+    padding: 8px;
+    background: #171a20;
+    border: 1px solid #2b313a;
+    border-radius: 7px;
     color: var(--text-primary, #eee);
     font-size: 13px;
     cursor: pointer;
     transition: all 0.15s;
+    text-align: left;
   }
 
   .add-effect-btn:active {
@@ -4976,12 +6482,307 @@
     transform: scale(0.98);
   }
 
-  .effect-icon {
-    font-size: 15px;
+  .effect-swatch {
+    width: 22px;
+    height: 22px;
+    border-radius: 5px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    flex: 0 0 auto;
   }
 
   .effect-btn-name {
     font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .effect-badge {
+    margin-left: auto;
+    flex: 0 0 auto;
+    padding: 2px 4px;
+    border-radius: 4px;
+    background: rgba(103, 232, 249, 0.14);
+    color: #67e8f9;
+    font-size: 9px;
+    font-weight: 800;
+  }
+
+  /* Phone Vision */
+  .vision-mode {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex: 1;
+    min-height: 0;
+    padding: 56px 14px 18px;
+    overflow-y: auto;
+    background: #07090c;
+  }
+
+  .vision-preview-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .vision-preview {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 10;
+    overflow: hidden;
+    border-radius: 10px;
+    background: #020306;
+    border: 1px solid rgba(255,255,255,0.12);
+    touch-action: none;
+  }
+
+  .vision-preview.live {
+    border-color: rgba(46, 213, 115, 0.45);
+  }
+
+  .vision-preview video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .vision-preview video.hidden {
+    display: none;
+  }
+
+  .vision-empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255,255,255,0.45);
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .vision-cal-point {
+    position: absolute;
+    width: 28px;
+    height: 28px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #67e8f9;
+    border: 2px solid #031014;
+    color: #031014;
+    font-size: 13px;
+    font-weight: 800;
+    box-shadow: 0 0 16px rgba(103,232,249,0.55);
+    pointer-events: none;
+  }
+
+  .vision-status-row,
+  .vision-cal-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: rgba(255,255,255,0.72);
+    font-size: 13px;
+  }
+
+  .vision-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #6b7280;
+    box-shadow: 0 0 0 4px rgba(107,114,128,0.12);
+  }
+
+  .vision-dot.live {
+    background: #2ed573;
+    box-shadow: 0 0 0 4px rgba(46,213,115,0.16);
+  }
+
+  .vision-dot.failed {
+    background: #ff6b5f;
+    box-shadow: 0 0 0 4px rgba(255,107,95,0.16);
+  }
+
+  .vision-action {
+    margin-left: auto;
+    color: #67e8f9;
+    font-weight: 700;
+  }
+
+  .vision-cal-order {
+    color: rgba(103,232,249,0.8);
+    font-weight: 800;
+    letter-spacing: 0.08em;
+  }
+
+  .vision-error {
+    color: #ff8f86;
+    font-size: 12px;
+  }
+
+  .vision-error.subtle {
+    color: rgba(255, 143, 134, 0.68);
+  }
+
+  .vision-controls,
+  .vision-effect-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .vision-effect-card {
+    min-width: 0;
+    display: grid;
+    gap: 6px;
+    padding: 10px;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px;
+    background: rgba(255,255,255,0.035);
+  }
+
+  .vision-effect-card.point-cloud {
+    border-color: rgba(103,232,249,0.2);
+  }
+
+  .vision-effect-card.aura {
+    border-color: rgba(187,134,252,0.22);
+  }
+
+  .vision-effect-card span {
+    min-height: 28px;
+    color: rgba(255,255,255,0.46);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.25;
+  }
+
+  .vision-preset-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+	  .vision-field {
+	    display: flex;
+	    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+    color: rgba(255,255,255,0.5);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+	    text-transform: uppercase;
+	  }
+
+	  .vision-field.wide {
+	    grid-column: 1 / -1;
+	  }
+
+	  .vision-field select {
+    width: 100%;
+    min-height: 44px;
+    border-radius: 8px;
+    border: 1px solid rgba(103,232,249,0.24);
+    background: #0e141b;
+    color: rgba(255,255,255,0.9);
+    font-size: 14px;
+    font-weight: 700;
+    padding: 0 12px;
+	    appearance: none;
+	  }
+
+	  .vision-profile-strip {
+	    display: grid;
+	    grid-template-columns: repeat(5, minmax(0, 1fr));
+	    gap: 6px;
+	  }
+
+	  .vision-profile-strip span {
+	    min-width: 0;
+	    padding: 7px 6px;
+	    border-radius: 7px;
+	    border: 1px solid rgba(255,255,255,0.08);
+	    background: rgba(255,255,255,0.035);
+	    color: rgba(255,255,255,0.58);
+	    font-size: 10px;
+	    font-weight: 800;
+	    text-align: center;
+	    text-transform: uppercase;
+	    white-space: nowrap;
+	    overflow: hidden;
+	    text-overflow: ellipsis;
+	  }
+
+  .vision-controls button,
+  .vision-effect-card button,
+  .vision-cal-row button {
+    min-height: 46px;
+    border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: #15191f;
+    color: rgba(255,255,255,0.86);
+    font-size: 15px;
+    font-weight: 700;
+  }
+
+  .vision-primary {
+    background: linear-gradient(135deg, #26d07c, #35d7f5) !important;
+    color: #041014 !important;
+    border-color: transparent !important;
+  }
+
+  .vision-primary.danger {
+    background: #4a1f22 !important;
+    color: #ffb4ad !important;
+    border-color: rgba(255,107,95,0.42) !important;
+  }
+
+  .vision-effect-card button {
+    background: #111827;
+    border-color: rgba(103,232,249,0.28);
+  }
+
+  .vision-effect-card.aura button {
+    border-color: rgba(187,134,252,0.34);
+  }
+
+  .vision-effect-card button:disabled,
+  .vision-cal-row button:disabled {
+    opacity: 0.4;
+  }
+
+  .vision-calibration {
+    padding: 12px;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px;
+    background: rgba(255,255,255,0.035);
+  }
+
+  .vision-section-title {
+    color: rgba(255,255,255,0.45);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  .vision-cal-row {
+    justify-content: space-between;
+  }
+
+  .vision-cal-row button {
+    min-height: 34px;
+    padding: 0 14px;
   }
 
   /* ─── Paint Mode (iPad Apple Pencil) ─── */
