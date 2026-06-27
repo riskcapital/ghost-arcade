@@ -148,7 +148,7 @@ export interface FrameSequenceTarget {
   handle?: any;
 }
 
-interface NativeJpegSequenceSession {
+export interface NativeJpegSequenceSession {
   jobId: string;
   baseName: string;
   target: FrameSequenceTarget;
@@ -219,9 +219,9 @@ export async function writeFrameTargetText(target: FrameSequenceTarget, filename
   await writable.close();
 }
 
-async function startNativeJpegSequence(
+export async function startNativeJpegSequence(
   target: FrameSequenceTarget,
-  settings: OfflineRenderSettings,
+  settings: Pick<OfflineRenderSettings, 'width' | 'height' | 'fps'>,
   baseName: string,
   totalFrames: number,
 ): Promise<NativeJpegSequenceSession | null> {
@@ -242,7 +242,7 @@ async function startNativeJpegSequence(
   return { jobId, baseName, target };
 }
 
-async function writeNativeJpegSequenceFrame(
+export async function writeNativeJpegSequenceFrame(
   session: NativeJpegSequenceSession,
   frameIndex: number,
   pixels: { width: number; height: number; data: Uint8Array },
@@ -257,7 +257,7 @@ async function writeNativeJpegSequenceFrame(
   }
 }
 
-async function finishNativeJpegSequence(session: NativeJpegSequenceSession): Promise<void> {
+export async function finishNativeJpegSequence(session: NativeJpegSequenceSession): Promise<void> {
   const result = await invoke<{ success?: boolean; error?: string }>('jpeg_sequence_finish', {
     jobId: session.jobId,
   });
@@ -266,7 +266,7 @@ async function finishNativeJpegSequence(session: NativeJpegSequenceSession): Pro
   }
 }
 
-async function cancelNativeJpegSequence(session: NativeJpegSequenceSession): Promise<void> {
+export async function cancelNativeJpegSequence(session: NativeJpegSequenceSession): Promise<void> {
   await invoke('jpeg_sequence_cancel', { jobId: session.jobId }).catch(() => {});
 }
 

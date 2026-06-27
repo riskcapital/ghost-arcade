@@ -70,6 +70,203 @@ function setRot<T extends { rotation: ProjectionSimVec3 }>(object: T, rotation: 
   return object;
 }
 
+function clonePresetScene(scene: ProjectionSimScene): ProjectionSimScene {
+  return JSON.parse(JSON.stringify(scene)) as ProjectionSimScene;
+}
+
+const DEFAULT_CUBE_PYRAMID_SCENE: ProjectionSimScene = {
+  id: 'psim-default-cube-pyramid',
+  name: 'Isometric Cube Pyramid',
+  schemaVersion: 1,
+  environment: {
+    background: '#040507',
+    ambient: 0.18,
+    roomExposure: 1,
+    surfaceStyle: 'light-gray',
+    floorColor: '#111318',
+    showGrid: true,
+    shadows: true,
+    shadowStrength: 1,
+  },
+  camera: {
+    position: [5.6, 4.1, 6.6],
+    target: [0, 1.55, -0.75],
+    fov: 48,
+  },
+  objects: [
+    {
+      id: 'psobj-default-cube-1',
+      name: 'Pyramid cube 1',
+      type: 'primitive',
+      primitive: 'box',
+      position: [0.105, 0.6, -1.005],
+      rotation: [0, 0.735, 0],
+      scale: [1.01, 1.01, 1.01],
+      color: '#d9ddd8',
+      roughness: 0.82,
+      visible: true,
+      locked: false,
+      castShadow: true,
+      receiveProjection: true,
+    },
+    {
+      id: 'psobj-default-cube-2',
+      name: 'Pyramid cube 2',
+      type: 'primitive',
+      primitive: 'box',
+      position: [0.25, 0.6, -2.35],
+      rotation: [0, 0.735, 0],
+      scale: [1.01, 1.01, 1.01],
+      color: '#cbd1d4',
+      roughness: 0.82,
+      visible: true,
+      locked: false,
+      castShadow: true,
+      receiveProjection: true,
+    },
+    {
+      id: 'psobj-default-cube-3',
+      name: 'Pyramid cube 3',
+      type: 'primitive',
+      primitive: 'box',
+      position: [0.854, 0.6, -1.683],
+      rotation: [0, 0.735, 0],
+      scale: [1.01, 1.01, 1.01],
+      color: '#bcc4c8',
+      roughness: 0.82,
+      visible: true,
+      locked: false,
+      castShadow: true,
+      receiveProjection: true,
+    },
+    {
+      id: 'psobj-default-cube-4',
+      name: 'Pyramid cube 4',
+      type: 'primitive',
+      primitive: 'box',
+      position: [1.539, 0.6, -0.94],
+      rotation: [0, 0.735, 0],
+      scale: [1.01, 1.01, 1.01],
+      color: '#d9ddd8',
+      roughness: 0.82,
+      visible: true,
+      locked: false,
+      castShadow: true,
+      receiveProjection: true,
+    },
+    {
+      id: 'psobj-default-cube-5',
+      name: 'Pyramid cube 5',
+      type: 'primitive',
+      primitive: 'box',
+      position: [-0.566, 0.6, -1.747],
+      rotation: [0, 0.735, 0],
+      scale: [1.01, 1.01, 1.01],
+      color: '#cbd1d4',
+      roughness: 0.82,
+      visible: true,
+      locked: false,
+      castShadow: true,
+      receiveProjection: true,
+    },
+    {
+      id: 'psobj-default-cube-6',
+      name: 'Pyramid cube 6',
+      type: 'primitive',
+      primitive: 'box',
+      position: [-1.308, 0.6, -1.076],
+      rotation: [0, 0.735, 0],
+      scale: [1.01, 1.01, 1.01],
+      color: '#bcc4c8',
+      roughness: 0.82,
+      visible: true,
+      locked: false,
+      castShadow: true,
+      receiveProjection: true,
+    },
+    {
+      id: 'psobj-default-cube-7',
+      name: 'Pyramid cube 7',
+      type: 'primitive',
+      primitive: 'box',
+      position: [0.854, 1.6, -1.683],
+      rotation: [0, 0.735, 0],
+      scale: [1.01, 1.01, 1.01],
+      color: '#d9ddd8',
+      roughness: 0.82,
+      visible: true,
+      locked: false,
+      castShadow: true,
+      receiveProjection: true,
+    },
+    {
+      id: 'psobj-default-cube-8',
+      name: 'Pyramid cube 8',
+      type: 'primitive',
+      primitive: 'box',
+      position: [0.258, 1.61, -2.357],
+      rotation: [0, 0.735, 0],
+      scale: [1.01, 1.01, 1.01],
+      color: '#cbd1d4',
+      roughness: 0.82,
+      visible: true,
+      locked: false,
+      castShadow: true,
+      receiveProjection: true,
+    },
+    {
+      id: 'psobj-default-cube-9',
+      name: 'Pyramid cube 9',
+      type: 'primitive',
+      primitive: 'box',
+      position: [-0.559, 1.6, -1.753],
+      rotation: [0, 0.735, 0],
+      scale: [1.01, 1.01, 1.01],
+      color: '#bcc4c8',
+      roughness: 0.82,
+      visible: true,
+      locked: false,
+      castShadow: true,
+      receiveProjection: true,
+    },
+    {
+      id: 'psobj-default-cube-10',
+      name: 'Pyramid cube 10',
+      type: 'primitive',
+      primitive: 'box',
+      position: [0.25, 2.61, -2.35],
+      rotation: [0, 0.735, 0],
+      scale: [1.01, 1.01, 1.01],
+      color: '#d9ddd8',
+      roughness: 0.82,
+      visible: true,
+      locked: false,
+      castShadow: true,
+      receiveProjection: true,
+    },
+  ],
+  projectors: [
+    {
+      id: 'psproj-default-center',
+      name: 'Center Projector',
+      enabled: true,
+      locked: false,
+      position: [0, 3.8, 7.2],
+      target: [0, 1.55, -0.75],
+      fov: 34,
+      aspect: 16 / 9,
+      intensity: 3.2,
+      opacity: 1,
+      color: '#ffffff',
+      source: 'master',
+      sliceId: null,
+      crop: [0, 0, 1, 1],
+      edgeBlend: [0, 0, 0, 0],
+      showFrustum: true,
+    },
+  ],
+};
+
 function addWindowGrid(
   objects: ProjectionSimObject[],
   opts: {
@@ -100,43 +297,7 @@ function addWindowGrid(
 }
 
 function cubePyramid(): ProjectionSimScene {
-  const scene = makeScene('Isometric Cube Pyramid');
-  scene.camera.position = [5.6, 4.1, 6.6];
-  scene.camera.target = [0, 1.55, -0.75];
-  scene.projectors = [
-    singleProjector('Center Projector', [0, 3.8, 7.2], [0, 1.55, -0.75], 34),
-  ];
-
-  const objects: ProjectionSimObject[] = [
-    box('Matte floor plinth', [0, 0.04, -0.78], [4.2, 0.08, 3.25], '#8c9298', { receiveProjection: false }),
-  ];
-
-  const size = 1;
-  const depthStep = 1;
-  const cubeScale: ProjectionSimVec3 = [1.01, 1.01, 1.01];
-  const colors = ['#d9ddd8', '#cbd1d4', '#bcc4c8'];
-  const cubePositions: Array<[number, number, number]> = [
-    [-1, 0, 0],
-    [0, 0, 0],
-    [1, 0, 0],
-    [-1, 0, -depthStep],
-    [0, 0, -depthStep],
-    [-1, 0, -depthStep * 2],
-    [-0.5, 1, -0.5],
-    [0.5, 1, -0.5],
-    [-0.5, 1, -1.5],
-    [0, 2, -1],
-  ];
-
-  for (let i = 0; i < cubePositions.length; i++) {
-    const [x, layer, z] = cubePositions[i];
-    const y = 0.1 + size / 2 + layer * size;
-    const tone = colors[i % colors.length];
-    objects.push(box(`Pyramid cube ${i + 1}`, [x * size, y, z * size], cubeScale, tone));
-  }
-
-  scene.objects = objects;
-  return scene;
+  return clonePresetScene(DEFAULT_CUBE_PYRAMID_SCENE);
 }
 
 function museumFacade(): ProjectionSimScene {

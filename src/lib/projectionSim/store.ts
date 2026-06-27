@@ -12,10 +12,18 @@ import { buildProjectionSimPreset } from './presets';
 
 const LEGACY_STORAGE_KEY = 'ga-projection-sim-scene';
 const DEFAULT_ENVIRONMENT = createProjectionSimScene().environment;
+const MAX_HISTORY = 100;
+const HISTORY_COALESCE_MS = 400;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function nowMs(): number {
+  return typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
 }
 
 function loadInitialScene(): ProjectionSimScene {
@@ -77,23 +85,74 @@ function projectorPatchWithoutTransform(patch: Partial<ProjectionSimProjector>):
   return next;
 }
 
+function sceneHasTarget(scene: ProjectionSimScene, target: ProjectionSimSelection): boolean {
+  if (!target) return false;
+  const [kind, id] = target.split(':') as ['object' | 'projector', string];
+  return kind === 'object'
+    ? scene.objects.some((object) => object.id === id)
+    : scene.projectors.some((projector) => projector.id === id);
+}
+
 function createProjectionSimStore() {
   const { subscribe, set, update } = writable<ProjectionSimScene>(loadInitialScene());
+  const past: ProjectionSimScene[] = [];
+  const future: ProjectionSimScene[] = [];
+  let suppressSnapshot = false;
+  let lastSnapshotAt = 0;
 
   function setScene(scene: ProjectionSimScene) {
     set(scene);
     persist(scene, true);
   }
 
+  function bumpHistoryVersion() {
+    projectionSimHistoryVersion.update((value) => value + 1);
+  }
+
+  function snapshot(options: { coalesce?: boolean } = {}) {
+    if (suppressSnapshot) return;
+    const coalesce = options.coalesce !== false;
+    const now = nowMs();
+    if (coalesce && now - lastSnapshotAt < HISTORY_COALESCE_MS) {
+      lastSnapshotAt = now;
+      future.length = 0;
+      bumpHistoryVersion();
+      return;
+    }
+
+    past.push(clone(get({ subscribe })));
+    if (past.length > MAX_HISTORY) past.shift();
+    future.length = 0;
+    lastSnapshotAt = coalesce ? now : 0;
+    bumpHistoryVersion();
+  }
+
+  function restoreScene(scene: ProjectionSimScene) {
+    suppressSnapshot = true;
+    setScene(scene);
+    suppressSnapshot = false;
+    lastSnapshotAt = 0;
+    const selected = get(selectedProjectionSimTarget);
+    if (selected && !sceneHasTarget(scene, selected)) {
+      setProjectionSimSelection(null);
+    } else {
+      const validTargets = [...get(selectedProjectionSimTargets)].filter((target) => sceneHasTarget(scene, target));
+      setProjectionSimMultiSelection(validTargets);
+    }
+    bumpHistoryVersion();
+  }
+
   return {
     subscribe,
 
     loadScene(scene: ProjectionSimScene) {
+      snapshot({ coalesce: false });
       setScene(normalizeScene(clone(scene)));
       setProjectionSimSelection(null);
     },
 
     newScene() {
+      snapshot({ coalesce: false });
       setScene(createProjectionSimScene());
       setProjectionSimSelection(null);
     },
@@ -101,12 +160,14 @@ function createProjectionSimStore() {
     loadPreset(id: string) {
       const preset = buildProjectionSimPreset(id);
       if (!preset) return false;
+      snapshot({ coalesce: false });
       setScene(preset);
       setProjectionSimSelection(null);
       return true;
     },
 
     setName(name: string) {
+      snapshot();
       update((scene) => {
         const next = { ...scene, name };
         persist(next);
@@ -116,6 +177,7 @@ function createProjectionSimStore() {
 
     addPrimitive(kind: ProjectionSimPrimitiveKind) {
       const obj = makeProjectionSimPrimitive(kind);
+      snapshot({ coalesce: false });
       update((scene) => {
         const next = { ...scene, objects: [...scene.objects, obj] };
         persist(next);
@@ -126,6 +188,7 @@ function createProjectionSimStore() {
     },
 
     addImportedObject(object: ProjectionSimObject) {
+      snapshot({ coalesce: false });
       update((scene) => {
         const next = { ...scene, objects: [...scene.objects, object] };
         persist(next);
@@ -135,6 +198,7 @@ function createProjectionSimStore() {
     },
 
     setObjects(objects: ProjectionSimObject[]) {
+      snapshot({ coalesce: false });
       update((scene) => {
         const next = { ...scene, objects };
         persist(next);
@@ -143,6 +207,7 @@ function createProjectionSimStore() {
     },
 
     updateObject(id: string, patch: Partial<ProjectionSimObject>) {
+      snapshot();
       update((scene) => {
         const next = {
           ...scene,
@@ -160,6 +225,7 @@ function createProjectionSimStore() {
     },
 
     toggleObjectLock(id: string) {
+      snapshot({ coalesce: false });
       update((scene) => {
         const next = {
           ...scene,
@@ -172,6 +238,7 @@ function createProjectionSimStore() {
 
     removeObject(id: string) {
       let removed = false;
+      snapshot({ coalesce: false });
       update((scene) => {
         if (scene.objects.find((obj) => obj.id === id)?.locked) return scene;
         const next = { ...scene, objects: scene.objects.filter((obj) => obj.id !== id) };
@@ -185,6 +252,7 @@ function createProjectionSimStore() {
     addProjector() {
       const idx = get({ subscribe }).projectors.length + 1;
       const projector = makeProjectionSimProjector(`Projector ${idx}`, [-6 + (idx - 1) * 3, 4.5, 8], [0, 2, 0]);
+      snapshot({ coalesce: false });
       update((scene) => {
         const next = { ...scene, projectors: [...scene.projectors, projector] };
         persist(next);
@@ -195,6 +263,7 @@ function createProjectionSimStore() {
     },
 
     addProjectorFrom(projector: ProjectionSimProjector) {
+      snapshot({ coalesce: false });
       update((scene) => {
         const next = { ...scene, projectors: [...scene.projectors, projector] };
         persist(next);
@@ -204,6 +273,7 @@ function createProjectionSimStore() {
     },
 
     setProjectors(projectors: ProjectionSimProjector[]) {
+      snapshot({ coalesce: false });
       update((scene) => {
         const next = { ...scene, projectors };
         persist(next);
@@ -213,6 +283,7 @@ function createProjectionSimStore() {
     },
 
     updateProjector(id: string, patch: Partial<ProjectionSimProjector>) {
+      snapshot();
       update((scene) => {
         const next = {
           ...scene,
@@ -230,6 +301,7 @@ function createProjectionSimStore() {
     },
 
     toggleProjectorLock(id: string) {
+      snapshot({ coalesce: false });
       update((scene) => {
         const next = {
           ...scene,
@@ -242,6 +314,7 @@ function createProjectionSimStore() {
 
     removeProjector(id: string) {
       let removed = false;
+      snapshot({ coalesce: false });
       update((scene) => {
         if (scene.projectors.find((projector) => projector.id === id)?.locked) return scene;
         const next = { ...scene, projectors: scene.projectors.filter((projector) => projector.id !== id) };
@@ -253,6 +326,7 @@ function createProjectionSimStore() {
     },
 
     setEnvironment(patch: Partial<ProjectionSimScene['environment']>) {
+      snapshot();
       update((scene) => {
         const next = { ...scene, environment: { ...scene.environment, ...patch } };
         persist(next);
@@ -261,6 +335,7 @@ function createProjectionSimStore() {
     },
 
     setCamera(camera: ProjectionSimScene['camera']) {
+      snapshot();
       update((scene) => {
         const next = { ...scene, camera };
         persist(next);
@@ -289,6 +364,7 @@ function createProjectionSimStore() {
       try {
         const data = JSON.parse(text);
         if (data?.schemaVersion === 1 && Array.isArray(data.objects) && Array.isArray(data.projectors)) {
+          snapshot({ coalesce: false });
           setScene(normalizeScene(data as ProjectionSimScene));
           setProjectionSimSelection(null);
           return true;
@@ -296,9 +372,32 @@ function createProjectionSimStore() {
       } catch { /* invalid */ }
       return false;
     },
+
+    undo() {
+      const previous = past.pop();
+      if (!previous) return false;
+      future.push(clone(get({ subscribe })));
+      if (future.length > MAX_HISTORY) future.shift();
+      restoreScene(previous);
+      return true;
+    },
+
+    redo() {
+      const next = future.pop();
+      if (!next) return false;
+      past.push(clone(get({ subscribe })));
+      if (past.length > MAX_HISTORY) past.shift();
+      restoreScene(next);
+      return true;
+    },
+
+    getHistoryCounts() {
+      return { past: past.length, future: future.length };
+    },
   };
 }
 
+export const projectionSimHistoryVersion = writable<number>(0);
 export const projectionSimScene = createProjectionSimStore();
 export const selectedProjectionSimTarget = writable<ProjectionSimSelection>(null);
 export const selectedProjectionSimTargets = writable<Set<NonNullable<ProjectionSimSelection>>>(new Set());

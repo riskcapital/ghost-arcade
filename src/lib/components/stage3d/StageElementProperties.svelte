@@ -32,6 +32,16 @@
     stage3dScene.updateUserElementParams(elementId, { [key]: value });
   }
 
+  function fieldValue(key: string): number | string {
+    if (!element || !def) return '';
+    return element.params[key] ?? def.defaults[key] ?? '';
+  }
+
+  function setSelectParam(key: string, raw: string, options: { value: number | string; label: string }[] = []) {
+    const option = options.find(o => String(o.value) === raw);
+    setParam(key, option?.value ?? raw);
+  }
+
   function duplicate() {
     if (!element) return;
     const clone: UserStageElement = {
@@ -91,11 +101,23 @@
     {#if f.type === 'color'}
       <div class="field">
         <label>{f.l}</label>
-        <input type="color" value={element.params[f.k] as string}
+        <input type="color" value={fieldValue(f.k) as string}
           oninput={(e) => setParam(f.k, (e.target as HTMLInputElement).value)} />
       </div>
+    {:else if f.type === 'select'}
+      <div class="field">
+        <label>{f.l}</label>
+        <select
+          value={String(fieldValue(f.k))}
+          onchange={(e) => setSelectParam(f.k, (e.target as HTMLSelectElement).value, f.options)}
+        >
+          {#each f.options ?? [] as opt}
+            <option value={String(opt.value)}>{opt.label}</option>
+          {/each}
+        </select>
+      </div>
     {:else}
-      {@const cur = element.params[f.k] as number}
+      {@const cur = Number(fieldValue(f.k))}
       <div class="field">
         <label>{f.l} <span class="v">{f.int ? cur : (Math.round(cur * 100) / 100)}</span></label>
         <input type="range"
@@ -181,6 +203,22 @@
     background: none;
     cursor: pointer;
     padding: 2px;
+  }
+  .field select {
+    width: 100%;
+    height: 31px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 7px;
+    background: #10131a;
+    color: #e9edf4;
+    font: inherit;
+    font-size: 12.5px;
+    padding: 0 8px;
+    cursor: pointer;
+  }
+  .field select:focus {
+    outline: none;
+    border-color: #4af2ff;
   }
   .xyz {
     display: grid;

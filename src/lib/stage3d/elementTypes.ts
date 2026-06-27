@@ -18,11 +18,12 @@ import { buildPixelStrip } from './atmosphere';
 export interface ElementField {
   k: string;
   l: string;
-  type?: 'range' | 'color';
+  type?: 'range' | 'color' | 'select';
   min?: number;
   max?: number;
   step?: number;
   int?: boolean;
+  options?: { value: number | string; label: string }[];
 }
 
 export interface ElementTypeDef {
@@ -33,6 +34,138 @@ export interface ElementTypeDef {
   fields: ElementField[];
   build(p: Record<string, any>): THREE.Object3D[];
 }
+
+export interface UserLightAnim {
+  kind: 'mover' | 'wash' | 'blinder';
+  elementId?: string;
+  light?: THREE.SpotLight;
+  lens?: THREE.Mesh;
+  yoke?: THREE.Object3D;
+  head?: THREE.Object3D;
+  target?: THREE.Object3D;
+  restPan?: number;
+  restTilt?: number;
+  index: number;
+  total: number;
+  phase: number;
+  color: string;
+  color2: string;
+  intensity: number;
+  pattern: string;
+  timing: string;
+  speed: number;
+  pan: number;
+  tilt: number;
+  spread: number;
+  angle: number;
+  distance: number;
+}
+
+const LIGHT_PATTERN_OPTIONS = [
+  { value: 'static', label: 'Static' },
+  { value: 'pulse', label: 'Pulse' },
+  { value: 'breathe', label: 'Breathe' },
+  { value: 'chase', label: 'Chase' },
+  { value: 'alternate', label: 'Alternate' },
+  { value: 'sweep', label: 'Sweep' },
+  { value: 'strobe', label: 'Strobe' },
+  { value: 'blackout', label: 'Blackout' },
+] as const;
+
+const TIMING_OPTIONS = [
+  { value: 'manual', label: 'Manual speed' },
+  { value: 'bpm', label: 'BPM sync' },
+  { value: 'audio', label: 'Audio reactive' },
+] as const;
+
+const LED_MODE_OPTIONS = [
+  { value: 0, label: 'Fill' },
+  { value: 1, label: 'Chase' },
+  { value: 2, label: 'Pulse' },
+  { value: 3, label: 'Solid' },
+] as const;
+
+const PALETTE_SYNC_OPTIONS = [
+  { value: 0, label: 'Own color' },
+  { value: 1, label: 'Show palette' },
+] as const;
+
+function num(p: Record<string, any>, k: string, fallback: number): number {
+  const value = Number(p[k]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function str(p: Record<string, any>, k: string, fallback: string): string {
+  const value = p[k];
+  return typeof value === 'string' && value.length > 0 ? value : fallback;
+}
+
+function userLightAnim(
+  kind: UserLightAnim['kind'],
+  light: THREE.SpotLight | null,
+  lens: THREE.Mesh | undefined,
+  p: Record<string, any>,
+  index: number,
+  total: number,
+  extras: Partial<UserLightAnim> = {},
+): UserLightAnim {
+  return {
+    kind,
+    ...(light ? { light } : {}),
+    lens,
+    index,
+    total,
+    phase: index * 0.73,
+    color: str(p, 'color', '#ffffff'),
+    color2: str(p, 'color2', str(p, 'color', '#ffffff')),
+    intensity: num(p, 'intensity', 1),
+    pattern: str(p, 'pattern', 'static'),
+    timing: str(p, 'timing', 'manual'),
+    speed: num(p, 'speed', 1),
+    pan: THREE.MathUtils.degToRad(num(p, 'pan', 0)),
+    tilt: THREE.MathUtils.degToRad(num(p, 'tilt', 0)),
+    spread: num(p, 'spread', 0.65),
+    angle: THREE.MathUtils.degToRad(num(p, 'beamAngle', 28)),
+    distance: num(p, 'distance', 28),
+    ...extras,
+  };
+}
+
+const MOVING_LIGHT_FIELDS: ElementField[] = [
+  { k: 'color', l: 'Color A', type: 'color' },
+  { k: 'color2', l: 'Color B', type: 'color' },
+  { k: 'intensity', l: 'Output', min: 0, max: 4, step: 0.05 },
+  { k: 'pattern', l: 'Pattern', type: 'select', options: [...LIGHT_PATTERN_OPTIONS] },
+  { k: 'timing', l: 'Timing', type: 'select', options: [...TIMING_OPTIONS] },
+  { k: 'speed', l: 'Speed', min: 0, max: 4, step: 0.05 },
+  { k: 'pan', l: 'Pan Offset', min: -90, max: 90, step: 1 },
+  { k: 'tilt', l: 'Tilt Offset', min: -50, max: 50, step: 1 },
+  { k: 'spread', l: 'Sweep Width', min: 0, max: 1.5, step: 0.02 },
+  { k: 'beamAngle', l: 'Beam Angle', min: 8, max: 55, step: 1 },
+  { k: 'distance', l: 'Throw', min: 4, max: 80, step: 1 },
+];
+
+const WASH_LIGHT_FIELDS: ElementField[] = [
+  { k: 'color', l: 'Color A', type: 'color' },
+  { k: 'color2', l: 'Color B', type: 'color' },
+  { k: 'intensity', l: 'Output', min: 0, max: 4, step: 0.05 },
+  { k: 'pattern', l: 'Pattern', type: 'select', options: [...LIGHT_PATTERN_OPTIONS] },
+  { k: 'timing', l: 'Timing', type: 'select', options: [...TIMING_OPTIONS] },
+  { k: 'speed', l: 'Speed', min: 0, max: 4, step: 0.05 },
+  { k: 'beamAngle', l: 'Wash Angle', min: 18, max: 90, step: 1 },
+  { k: 'distance', l: 'Throw', min: 4, max: 60, step: 1 },
+];
+
+const BLINDER_FIELDS: ElementField[] = [
+  { k: 'color', l: 'Color A', type: 'color' },
+  { k: 'color2', l: 'Color B', type: 'color' },
+  { k: 'intensity', l: 'Output', min: 0, max: 5, step: 0.05 },
+  { k: 'pattern', l: 'Pattern', type: 'select', options: [...LIGHT_PATTERN_OPTIONS] },
+  { k: 'timing', l: 'Timing', type: 'select', options: [...TIMING_OPTIONS] },
+  { k: 'speed', l: 'Speed', min: 0, max: 4, step: 0.05 },
+  { k: 'beamAngle', l: 'Beam Angle', min: 20, max: 90, step: 1 },
+  { k: 'distance', l: 'Throw', min: 4, max: 70, step: 1 },
+];
 
 // ── Shared material helpers ─────────────────────────────────────────────
 
@@ -95,7 +228,8 @@ export function buildTruss(len: number): THREE.Group {
 }
 
 /** Single moving-head fixture — base + yoke + head with a glowing lens. */
-function fixture(color: THREE.Color): THREE.Group {
+function fixture(p: Record<string, any>, index = 0, total = 1, realOutput = true): THREE.Group {
+  const color = new THREE.Color(str(p, 'color', '#4af2ff'));
   const g = new THREE.Group();
   const dm = MAT.darkMetal();
   g.add(mesh(new THREE.BoxGeometry(0.7, 0.34, 0.7), dm));
@@ -113,6 +247,28 @@ function fixture(color: THREE.Color): THREE.Group {
   lens.rotation.x = -Math.PI / 2;
   head.add(lens);
   head.rotation.x = 0.5;
+  const target = new THREE.Object3D();
+  target.position.set(0, -20, 0);
+  const spot = realOutput
+    ? new THREE.SpotLight(color, 0, num(p, 'distance', 28), THREE.MathUtils.degToRad(num(p, 'beamAngle', 28)), 0.72, 1.3)
+    : null;
+  if (spot) {
+    spot.position.set(0, -0.08, 0);
+    spot.target = target;
+    spot.castShadow = false;
+    head.add(spot);
+  }
+  head.add(target);
+  g.userData.moverYoke = yoke;
+  g.userData.moverHead = head;
+  g.userData.moverRest = { pan: 0, tilt: head.rotation.x };
+  g.userData.stageLightAnim = userLightAnim('mover', spot, lens, p, index, total, {
+    yoke,
+    head,
+    target,
+    restPan: 0,
+    restTilt: head.rotation.x,
+  });
   return g;
 }
 
@@ -249,22 +405,35 @@ export const ELEMENT_TYPES: Record<string, ElementTypeDef> = {
 
   movinghead: {
     group: 'Lighting', label: 'Moving Head', icon: '✦',
-    defaults: { color: '#4af2ff' },
-    fields: [{ k: 'color', l: 'Beam Color', type: 'color' }],
-    build(p) { return [fixture(new THREE.Color(p.color))]; },
+    defaults: {
+      color: '#4af2ff',
+      color2: '#ff3df0',
+      intensity: 1.2,
+      pattern: 'sweep',
+      timing: 'bpm',
+      speed: 1,
+      pan: 0,
+      tilt: 0,
+      spread: 0.65,
+      beamAngle: 26,
+      distance: 32,
+    },
+    fields: MOVING_LIGHT_FIELDS,
+    build(p) { return [fixture(p, 0, 1)]; },
   },
 
   ledstrip: {
     group: 'Lighting', label: 'LED Strip', icon: '▬',
-    defaults: { len: 12, pixels: 24, color: '#4af2ff', mode: 0, glow: 1.6, speed: 1, sync: 1 },
+    defaults: { len: 12, pixels: 24, color: '#4af2ff', mode: 1, glow: 1.6, speed: 1, sync: 1, timing: 'bpm' },
     fields: [
       { k: 'len', l: 'Length', min: 1, max: 40, step: 0.5 },
       { k: 'pixels', l: 'Pixels', min: 8, max: 64, step: 1, int: true },
       { k: 'color', l: 'Color', type: 'color' },
-      { k: 'mode', l: 'Mode — 0 Fill · 1 Chase · 2 Pulse · 3 Solid', min: 0, max: 3, step: 1, int: true },
+      { k: 'mode', l: 'Pattern', type: 'select', options: [...LED_MODE_OPTIONS] },
+      { k: 'timing', l: 'Timing', type: 'select', options: [...TIMING_OPTIONS] },
       { k: 'glow', l: 'Glow', min: 0.2, max: 4, step: 0.1 },
       { k: 'speed', l: 'Chase Speed', min: 0.1, max: 4, step: 0.05 },
-      { k: 'sync', l: 'Sync to Show Palette — 0 Off · 1 On', min: 0, max: 1, step: 1, int: true },
+      { k: 'sync', l: 'Palette', type: 'select', options: [...PALETTE_SYNC_OPTIONS] },
     ],
     build(p) {
       // Channel rail + single-mesh pixel strip. The animation metadata
@@ -294,6 +463,7 @@ export const ELEMENT_TYPES: Record<string, ElementTypeDef> = {
         glow: p.glow,
         speed: p.speed,
         sync: Math.round(p.sync) === 1,
+        timing: str(p, 'timing', 'bpm'),
         base,
       };
       out.push(holder);
@@ -303,18 +473,34 @@ export const ELEMENT_TYPES: Record<string, ElementTypeDef> = {
 
   lightbar: {
     group: 'Lighting', label: 'Lighting Bar', icon: '≣',
-    defaults: { count: 6, len: 14, color: '#ff5cb8' },
+    defaults: {
+      count: 6,
+      len: 14,
+      color: '#ff5cb8',
+      color2: '#4af2ff',
+      intensity: 1,
+      pattern: 'chase',
+      timing: 'bpm',
+      speed: 1,
+      pan: 0,
+      tilt: 0,
+      spread: 0.75,
+      beamAngle: 28,
+      distance: 32,
+    },
     fields: [
       { k: 'count', l: 'Fixtures', min: 1, max: 16, step: 1, int: true },
       { k: 'len', l: 'Bar Length', min: 2, max: 40, step: 0.5 },
-      { k: 'color', l: 'Beam Color', type: 'color' },
+      ...MOVING_LIGHT_FIELDS,
     ],
     build(p) {
       const out: THREE.Object3D[] = [buildTruss(p.len)];
-      const c = new THREE.Color(p.color);
-      for (let i = 0; i < p.count; i++) {
-        const f = fixture(c);
-        f.position.set(-p.len / 2 + (i + 0.5) * (p.len / p.count), -0.45, 0);
+      const count = Math.max(1, Math.round(num(p, 'count', 6)));
+      const len = num(p, 'len', 14);
+      const realLightStep = Math.max(1, Math.ceil(count / 8));
+      for (let i = 0; i < count; i++) {
+        const f = fixture(p, i, count, i % realLightStep === 0);
+        f.position.set(-len / 2 + (i + 0.5) * (len / count), -0.45, 0);
         out.push(f);
       }
       return out;
@@ -323,20 +509,34 @@ export const ELEMENT_TYPES: Record<string, ElementTypeDef> = {
 
   parbar: {
     group: 'Lighting', label: 'PAR Wash Bar', icon: '⋯',
-    defaults: { count: 8, len: 14, color: '#ffb648' },
+    defaults: {
+      count: 8,
+      len: 14,
+      color: '#ffb648',
+      color2: '#3478ff',
+      intensity: 1,
+      pattern: 'chase',
+      timing: 'bpm',
+      speed: 1,
+      beamAngle: 55,
+      distance: 24,
+    },
     fields: [
       { k: 'count', l: 'PARs', min: 1, max: 18, step: 1, int: true },
       { k: 'len', l: 'Bar Length', min: 2, max: 40, step: 0.5 },
-      { k: 'color', l: 'Color', type: 'color' },
+      ...WASH_LIGHT_FIELDS,
     ],
     build(p) {
       const out: THREE.Object3D[] = [];
-      const bar = mesh(new THREE.CylinderGeometry(0.06, 0.06, p.len, 8), MAT.metal());
+      const len = num(p, 'len', 14);
+      const count = Math.max(1, Math.round(num(p, 'count', 8)));
+      const bar = mesh(new THREE.CylinderGeometry(0.06, 0.06, len, 8), MAT.metal());
       bar.rotation.z = Math.PI / 2;
       out.push(bar);
-      const c = new THREE.Color(p.color);
-      for (let i = 0; i < p.count; i++) {
-        const x = -p.len / 2 + (i + 0.5) * (p.len / p.count);
+      const c = new THREE.Color(str(p, 'color', '#ffb648'));
+      const realLightStep = Math.max(1, Math.ceil(count / 4));
+      for (let i = 0; i < count; i++) {
+        const x = -len / 2 + (i + 0.5) * (len / count);
         const can = mesh(new THREE.CylinderGeometry(0.22, 0.26, 0.42, 12), MAT.darkMetal());
         can.position.set(x, -0.3, 0);
         can.rotation.x = Math.PI / 2;
@@ -347,6 +547,21 @@ export const ELEMENT_TYPES: Record<string, ElementTypeDef> = {
         );
         lens.position.set(x, -0.3, 0.22);
         out.push(lens);
+        const spot = i % realLightStep === 0
+          ? new THREE.SpotLight(c, 0, num(p, 'distance', 24), THREE.MathUtils.degToRad(num(p, 'beamAngle', 55)), 0.9, 1.1)
+          : null;
+        const target = new THREE.Object3D();
+        target.position.set(x, -1.4, 14);
+        const holder = new THREE.Group();
+        if (spot) {
+          spot.position.set(x, -0.3, 0.28);
+          spot.castShadow = false;
+          spot.target = target;
+          holder.add(spot);
+        }
+        holder.add(target);
+        holder.userData.stageLightAnim = userLightAnim('wash', spot, lens, p, i, count, { target, phase: i * 0.42 });
+        out.push(holder);
       }
       return out;
     },
@@ -354,28 +569,59 @@ export const ELEMENT_TYPES: Record<string, ElementTypeDef> = {
 
   blinder: {
     group: 'Lighting', label: 'Blinder Array', icon: '☷',
-    defaults: { cols: 4, rows: 2, color: '#fff4d6' },
+    defaults: {
+      cols: 4,
+      rows: 2,
+      color: '#fff4d6',
+      color2: '#ff9a3d',
+      intensity: 1,
+      pattern: 'pulse',
+      timing: 'audio',
+      speed: 1,
+      beamAngle: 62,
+      distance: 34,
+    },
     fields: [
       { k: 'cols', l: 'Columns', min: 1, max: 8, step: 1, int: true },
       { k: 'rows', l: 'Rows', min: 1, max: 4, step: 1, int: true },
-      { k: 'color', l: 'Lamp', type: 'color' },
+      ...BLINDER_FIELDS,
     ],
     build(p) {
       const out: THREE.Object3D[] = [];
-      const c = new THREE.Color(p.color);
+      const c = new THREE.Color(str(p, 'color', '#fff4d6'));
       const cell = 0.6;
-      const w = p.cols * cell;
-      const h = p.rows * cell;
+      const cols = Math.max(1, Math.round(num(p, 'cols', 4)));
+      const rows = Math.max(1, Math.round(num(p, 'rows', 2)));
+      const total = cols * rows;
+      const w = cols * cell;
+      const h = rows * cell;
       const frame = mesh(new THREE.BoxGeometry(w + 0.2, h + 0.2, 0.25), MAT.darkMetal());
       out.push(frame);
-      for (let y = 0; y < p.rows; y++)
-        for (let x = 0; x < p.cols; x++) {
+      const realLightStep = Math.max(1, Math.ceil(total / 4));
+      for (let y = 0; y < rows; y++)
+        for (let x = 0; x < cols; x++) {
+          const idx = y * cols + x;
           const lamp = mesh(
             new THREE.CircleGeometry(cell * 0.42, 12),
             new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0.8, roughness: 0.4 }),
           );
           lamp.position.set(-w / 2 + (x + 0.5) * cell, -h / 2 + (y + 0.5) * cell, 0.14);
           out.push(lamp);
+          const spot = idx % realLightStep === 0
+            ? new THREE.SpotLight(c, 0, num(p, 'distance', 34), THREE.MathUtils.degToRad(num(p, 'beamAngle', 62)), 0.82, 1.0)
+            : null;
+          const target = new THREE.Object3D();
+          target.position.set(lamp.position.x, lamp.position.y - 0.6, 18);
+          const holder = new THREE.Group();
+          if (spot) {
+            spot.position.set(lamp.position.x, lamp.position.y, 0.18);
+            spot.castShadow = false;
+            spot.target = target;
+            holder.add(spot);
+          }
+          holder.add(target);
+          holder.userData.stageLightAnim = userLightAnim('blinder', spot, lamp, p, idx, total, { target, phase: idx * 0.3 });
+          out.push(holder);
         }
       return out;
     },
@@ -496,5 +742,9 @@ export function buildUserElement(el: UserStageElement): THREE.Group {
   wrap.userData = { kind: 'user-element', elementId: el.id, elementType: el.type };
   if (!def) return wrap;
   def.build(el.params).forEach(c => wrap.add(c));
+  wrap.traverse(obj => {
+    const anim = obj.userData.stageLightAnim as UserLightAnim | undefined;
+    if (anim) anim.elementId = el.id;
+  });
   return wrap;
 }

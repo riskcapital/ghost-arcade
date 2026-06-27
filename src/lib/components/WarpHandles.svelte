@@ -35,15 +35,16 @@
   // Active cross-layer snap target for visual feedback
   let activeSnapTarget: SnapTarget | null = null;
 
-  // Multi-select: store initial corners for all selected layers during batch transforms
+  // Multi-select: store initial corners for selected layers during batch transforms.
   let batchInitialCorners: Map<string, WarpCorners> = new Map();
+  let batchScaleCenter: Point2D | null = null;
 
   // Get all selected layers that should be batch-transformed (excluding locked)
-  function getBatchLayers(): Layer[] {
+  function getBatchLayers(includePrimary = false): Layer[] {
     const ids = get(selectedLayerIds);
     const allLayers = get(layers);
     if (ids.length <= 1) return [];
-    return allLayers.filter(l => ids.includes(l.id) && !l.locked && l.id !== $selectedLayer?.id);
+    return allLayers.filter(l => ids.includes(l.id) && !l.locked && (includePrimary || l.id !== $selectedLayer?.id));
   }
 
   // Apply a corner delta to all batch-selected layers
@@ -56,11 +57,14 @@
     }
   }
 
-  // Apply scale to all batch-selected layers around their own centers
-  function applyBatchScale(scaleFactor: number) {
+  // Apply scale to all batch-selected layers. For the multi-select scale
+  // handle we scale around the shared selection center, preserving spacing
+  // between layers. Legacy single-layer companion scaling can still pass no
+  // center to scale each layer around itself.
+  function applyBatchScale(scaleFactor: number, sharedCenter: Point2D | null = null) {
     for (const [layerId, initial] of batchInitialCorners) {
-      const cx = (initial.topLeft.x + initial.topRight.x + initial.bottomLeft.x + initial.bottomRight.x) / 4;
-      const cy = (initial.topLeft.y + initial.topRight.y + initial.bottomLeft.y + initial.bottomRight.y) / 4;
+      const cx = sharedCenter?.x ?? (initial.topLeft.x + initial.topRight.x + initial.bottomLeft.x + initial.bottomRight.x) / 4;
+      const cy = sharedCenter?.y ?? (initial.topLeft.y + initial.topRight.y + initial.bottomLeft.y + initial.bottomRight.y) / 4;
       project.setCorner(layerId, 'topLeft', { x: cx + (initial.topLeft.x - cx) * scaleFactor, y: cy + (initial.topLeft.y - cy) * scaleFactor });
       project.setCorner(layerId, 'topRight', { x: cx + (initial.topRight.x - cx) * scaleFactor, y: cy + (initial.topRight.y - cy) * scaleFactor });
       project.setCorner(layerId, 'bottomLeft', { x: cx + (initial.bottomLeft.x - cx) * scaleFactor, y: cy + (initial.bottomLeft.y - cy) * scaleFactor });
@@ -87,9 +91,25 @@
   }
 
   // Capture initial corners for all batch layers (+ children of group layers)
-  function captureBatchInitial() {
+  function getCornersBounds(cornerSets: Iterable<WarpCorners>): { minX: number; maxX: number; minY: number; maxY: number } | null {
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const c of cornerSets) {
+      for (const p of [c.topLeft, c.topRight, c.bottomLeft, c.bottomRight]) {
+        minX = Math.min(minX, p.x);
+        maxX = Math.max(maxX, p.x);
+        minY = Math.min(minY, p.y);
+        maxY = Math.max(maxY, p.y);
+      }
+    }
+    return Number.isFinite(minX) ? { minX, maxX, minY, maxY } : null;
+  }
+
+  function captureBatchInitial(includePrimary = false) {
     batchInitialCorners.clear();
-    for (const layer of getBatchLayers()) {
+    for (const layer of getBatchLayers(includePrimary)) {
       batchInitialCorners.set(layer.id, structuredClone(layer.corners));
     }
     // If the selected layer is a group, also capture children so they move with it
@@ -101,6 +121,10 @@
         }
       }
     }
+    const bounds = getCornersBounds(batchInitialCorners.values());
+    batchScaleCenter = bounds
+      ? { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }
+      : null;
   }
 
   // Movement delta for arrow keys (normalized coordinates)
@@ -234,7 +258,15 @@
   // project pixel by default. Shift gives 10x larger steps for
   // gross positioning.
   function handleKeyDown(e: KeyboardEvent) {
-    if (!selectedCorner || !$selectedLayer || $selectedLayer.locked) return;
+    if (!$selectedLayer) return;
+    const tag = (e.target as HTMLElement | null)?.tagName;
+    const active = document.activeElement as HTMLElement | null;
+    const activeTag = active?.tagName;
+    if (
+      tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' ||
+      activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT' ||
+      active?.isContentEditable
+    ) return;
 
     // Resolve project-pixel step from settings.
     const granularity = get(settings).ui.warpDragGranularity ?? '1px';
@@ -248,7 +280,6 @@
     const ph = Math.max(1, proj.height);
     const dxStep = (stepPx * (e.shiftKey ? 10 : 1)) / pw;
     const dyStep = (stepPx * (e.shiftKey ? 10 : 1)) / ph;
-    const currentPos = $selectedLayer.corners[selectedCorner];
     let dx = 0;
     let dy = 0;
 
@@ -276,22 +307,45 @@
     e.preventDefault();
     e.stopPropagation();
 
-    const newPos: Point2D = {
-      x: currentPos.x + dx,
-      y: currentPos.y + dy,
-    };
+    if (selectedCorner) {
+      if ($selectedLayer.locked) return;
+      const currentPos = $selectedLayer.corners[selectedCorner];
+      project.setCorner($selectedLayer.id, selectedCorner, {
+        x: currentPos.x + dx,
+        y: currentPos.y + dy,
+      });
+      history.record(get(project));
+      return;
+    }
 
-    project.setCorner($selectedLayer.id, selectedCorner, newPos);
+    const ids = get(selectedLayerIds);
+    const selectedIds = ids.length ? ids : [$selectedLayer.id];
+    const allLayers = get(layers);
+    const movable = allLayers.filter(l => selectedIds.includes(l.id) && !l.locked);
+    for (const layer of movable) {
+      project.setCorner(layer.id, 'topLeft', { x: layer.corners.topLeft.x + dx, y: layer.corners.topLeft.y + dy });
+      project.setCorner(layer.id, 'topRight', { x: layer.corners.topRight.x + dx, y: layer.corners.topRight.y + dy });
+      project.setCorner(layer.id, 'bottomLeft', { x: layer.corners.bottomLeft.x + dx, y: layer.corners.bottomLeft.y + dy });
+      project.setCorner(layer.id, 'bottomRight', { x: layer.corners.bottomRight.x + dx, y: layer.corners.bottomRight.y + dy });
+    }
+    if (movable.length > 0) history.record(get(project));
   }
 
   // Set up keyboard event listener
   onMount(() => {
     window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('ghost-clear-warp-corner-selection', clearCornerSelection);
   });
 
   onDestroy(() => {
     window.removeEventListener('keydown', handleKeyDown);
+    window.removeEventListener('ghost-clear-warp-corner-selection', clearCornerSelection);
   });
+
+  function clearCornerSelection() {
+    selectedCorner = null;
+    fineTuneCorner = null;
+  }
 
   // Handle edge drag (moves both corners on that edge)
   function handleEdgeMouseDown(edge: 'top' | 'bottom' | 'left' | 'right', e: MouseEvent) {
@@ -358,7 +412,7 @@
     scaleStartY = (e.clientY - rect.top) / zoom;
     scaleInitialCorners = $selectedLayer ? structuredClone($selectedLayer.corners) : null;
     initialCorners = scaleInitialCorners;
-    captureBatchInitial();
+    captureBatchInitial(true);
 
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
@@ -482,6 +536,10 @@
       const deltaY = scaleStartY - y; // positive = up = bigger
       const sensitivity = 0.005;
       const scaleFactor = Math.max(0.05, Math.min(10, 1 + deltaY * sensitivity));
+      if (batchInitialCorners.size > 1 && batchScaleCenter) {
+        applyBatchScale(scaleFactor, batchScaleCenter);
+        return;
+      }
       const center = getCenter(scaleInitialCorners);
 
       function scalePoint(p: Point2D, cx: number, cy: number): Point2D {
@@ -516,6 +574,7 @@
     initialCorners = null;
     scaleStartY = 0;
     scaleInitialCorners = null;
+    batchScaleCenter = null;
     activeSnapTarget = null;
     batchInitialCorners.clear();
     window.removeEventListener('mousemove', handleMouseMove);
@@ -659,6 +718,7 @@
     dragStartPos = null;
     initialCorners = null;
     activeSnapTarget = null;
+    batchScaleCenter = null;
     batchInitialCorners.clear();
     window.removeEventListener('touchmove', handleTouchMove);
     window.removeEventListener('touchend', handleTouchEnd);
@@ -697,6 +757,27 @@
   $: scalePosition = edgePositions
     ? { x: edgePositions.bottom.x, y: edgePositions.bottom.y + 40 }
     : null;
+
+  $: selectedTransformLayers = (() => {
+    const ids = $selectedLayerIds;
+    if (!ids || ids.length <= 1) return [];
+    return $layers.filter(l => ids.includes(l.id) && !l.locked && l.corners);
+  })();
+  $: selectionBounds = selectedTransformLayers.length > 1
+    ? getCornersBounds(selectedTransformLayers.map(l => l.corners))
+    : null;
+  $: selectionBoundsPx = selectionBounds
+    ? {
+        left: selectionBounds.minX * containerWidth,
+        right: selectionBounds.maxX * containerWidth,
+        top: (1 - selectionBounds.maxY) * containerHeight,
+        bottom: (1 - selectionBounds.minY) * containerHeight,
+      }
+    : null;
+  $: groupScalePosition = selectionBoundsPx
+    ? { x: selectionBoundsPx.right + 26, y: selectionBoundsPx.bottom + 26 }
+    : null;
+  $: visibleScalePosition = groupScalePosition ?? scalePosition;
 
   // Draw the dashed bounding rectangle connecting the four corner
   // warp handles. We HIDE this rectangle whenever the layer has a
@@ -794,12 +875,24 @@
       {/if}
 
       <!-- Line to scale handle -->
-      {#if scalePosition}
+      {#if selectionBoundsPx}
+        <rect
+          x={selectionBoundsPx.left}
+          y={selectionBoundsPx.top}
+          width={selectionBoundsPx.right - selectionBoundsPx.left}
+          height={selectionBoundsPx.bottom - selectionBoundsPx.top}
+          fill="rgba(255, 111, 94, 0.04)"
+          stroke="#ff6f5e"
+          stroke-width="2"
+          stroke-dasharray="7,4"
+        />
+      {/if}
+      {#if visibleScalePosition}
         <line
-          x1={edgePositions.bottom.x}
-          y1={edgePositions.bottom.y}
-          x2={scalePosition.x}
-          y2={scalePosition.y}
+          x1={selectionBoundsPx ? selectionBoundsPx.right : edgePositions.bottom.x}
+          y1={selectionBoundsPx ? selectionBoundsPx.bottom : edgePositions.bottom.y}
+          x2={visibleScalePosition.x}
+          y2={visibleScalePosition.y}
           stroke="#00ccff"
           stroke-width="1"
           stroke-dasharray="3,3"
@@ -887,16 +980,17 @@
     {/if}
 
     <!-- Scale handle -->
-    {#if scalePosition}
+    {#if visibleScalePosition}
       <div
         class="handle scale-handle"
+        class:group-scale={!!selectionBoundsPx}
         class:dragging={dragging === 'scale'}
         class:locked={$selectedLayer.locked}
-        style="left: {scalePosition.x}px; top: {scalePosition.y}px;"
+        style="left: {visibleScalePosition.x}px; top: {visibleScalePosition.y}px;"
         onmousedown={handleScaleMouseDown}
         role="button"
         tabindex="0"
-        aria-label="Scale layer"
+        aria-label={selectionBoundsPx ? 'Scale selected layers' : 'Scale layer'}
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
           <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>

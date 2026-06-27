@@ -50,6 +50,8 @@ export interface DemoReelSettings {
   height: number;
   outputMode: 'mp4' | 'frames';
   quality: 'high' | 'web' | 'archive';
+  transition: 'cut' | 'cross-dissolve';
+  transitionDurationSec: number;
   filename: string;
 }
 
@@ -59,6 +61,8 @@ export const DEFAULT_REEL_SETTINGS: DemoReelSettings = {
   height: 1080,
   outputMode: 'mp4',
   quality: 'high',
+  transition: 'cut',
+  transitionDurationSec: 0.75,
   filename: 'stage-reel',
 };
 

@@ -33,10 +33,15 @@ import {
   chooseFrameSequenceTarget,
   writeFrameTargetBytes,
   writeFrameTargetText,
+  startNativeJpegSequence,
+  writeNativeJpegSequenceFrame,
+  finishNativeJpegSequence,
+  cancelNativeJpegSequence,
   frameSequenceManifest,
   frameSequenceBaseName,
   describeFrameTarget,
   type FrameSequenceTarget,
+  type NativeJpegSequenceSession,
 } from './offlineRender';
 import { setISFManualTime } from '../isf/renderer';
 import { setStageEffectsManualTime } from '../stores/stageEffects';
@@ -91,6 +96,18 @@ function nextFrame(): Promise<void> {
  *  ffmpeg wasm FS on any non-trivial reel. */
 let scratch: HTMLCanvasElement | null = null;
 let scratchCtx: CanvasRenderingContext2D | null = null;
+type CapturedFrame = { data: Uint8Array; width: number; height: number };
+function opaqueRgba(data: Uint8Array): Uint8Array {
+  let needsCopy = false;
+  for (let i = 3; i < data.length; i += 4) {
+    if (data[i] !== 255) { needsCopy = true; break; }
+  }
+  if (!needsCopy) return data;
+  const out = new Uint8Array(data);
+  for (let i = 3; i < out.length; i += 4) out[i] = 255;
+  return out;
+}
+
 async function rgbaToJpeg(data: Uint8Array, width: number, height: number, quality: number): Promise<Uint8Array> {
   if (!scratch) scratch = document.createElement('canvas');
   if (scratch.width !== width || scratch.height !== height) {
@@ -102,7 +119,8 @@ async function rgbaToJpeg(data: Uint8Array, width: number, height: number, quali
     scratchCtx = scratch.getContext('2d', { willReadFrequently: false });
     if (!scratchCtx) throw new Error('scratch 2d context unavailable');
   }
-  const clamped = new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength);
+  const opaque = opaqueRgba(data);
+  const clamped = new Uint8ClampedArray(opaque.buffer, opaque.byteOffset, opaque.byteLength);
   scratchCtx.putImageData(new ImageData(clamped as Uint8ClampedArray<ArrayBuffer>, width, height), 0, 0);
   return new Promise((resolve, reject) => {
     scratch!.toBlob((blob) => {
@@ -110,6 +128,95 @@ async function rgbaToJpeg(data: Uint8Array, width: number, height: number, quali
       blob.arrayBuffer().then(buf => resolve(new Uint8Array(buf))).catch(reject);
     }, 'image/jpeg', quality);
   });
+}
+
+function frameLooksBlank(frame: CapturedFrame): boolean {
+  const { data } = frame;
+  if (data.length === 0) return true;
+  const pixels = data.length >> 2;
+  const step = Math.max(1, Math.floor(pixels / 4096));
+  let samples = 0;
+  let lit = 0;
+  for (let p = 0; p < pixels; p += step) {
+    const i = p << 2;
+    samples++;
+    if (data[i] + data[i + 1] + data[i + 2] > 18) lit++;
+  }
+  return lit <= Math.max(2, samples * 0.002);
+}
+
+function frameStats(frame: CapturedFrame): string {
+  const { data } = frame;
+  const pixels = data.length >> 2;
+  const step = Math.max(1, Math.floor(pixels / 4096));
+  let samples = 0;
+  let max = 0;
+  let sum = 0;
+  for (let p = 0; p < pixels; p += step) {
+    const i = p << 2;
+    const rgb = data[i] + data[i + 1] + data[i + 2];
+    samples++;
+    sum += rgb;
+    if (rgb > max) max = rgb;
+  }
+  const avg = samples > 0 ? sum / samples : 0;
+  return `${frame.width}x${frame.height}, avgRGB=${avg.toFixed(1)}, maxRGB=${max}`;
+}
+
+function blendFrames(a: CapturedFrame, b: CapturedFrame, amount: number): CapturedFrame {
+  if (a.width !== b.width || a.height !== b.height || a.data.length !== b.data.length) {
+    return amount < 0.5 ? a : b;
+  }
+  const t = Math.max(0, Math.min(1, amount));
+  const eased = t * t * (3 - 2 * t);
+  const inv = 1 - eased;
+  const out = new Uint8Array(a.data.length);
+  for (let i = 0; i < out.length; i += 4) {
+    out[i] = Math.round(a.data[i] * inv + b.data[i] * eased);
+    out[i + 1] = Math.round(a.data[i + 1] * inv + b.data[i + 1] * eased);
+    out[i + 2] = Math.round(a.data[i + 2] * inv + b.data[i + 2] * eased);
+    out[i + 3] = 255;
+  }
+  return { data: out, width: a.width, height: a.height };
+}
+
+interface ShotSpan {
+  index: number;
+  shot: DemoShot;
+  start: number;
+  duration: number;
+}
+
+function shotTimeline(shots: DemoShot[]): ShotSpan[] {
+  let t = 0;
+  return shots.map((shot, index) => {
+    const duration = Math.max(0.1, shot.durationSec);
+    const span = { index, shot, start: t, duration };
+    t += duration;
+    return span;
+  });
+}
+
+function transitionAtTime(spans: ShotSpan[], t: number, transitionSec: number) {
+  const requested = Math.max(0, transitionSec);
+  if (requested <= 0 || spans.length < 2) return null;
+  for (let i = 1; i < spans.length; i++) {
+    const prev = spans[i - 1];
+    const next = spans[i];
+    const duration = Math.max(0.001, Math.min(requested, prev.duration * 0.85, next.duration * 0.85));
+    const start = next.start - duration * 0.5;
+    const end = next.start + duration * 0.5;
+    if (t < start || t >= end) continue;
+    const alpha = (t - start) / duration;
+    return {
+      prev,
+      next,
+      alpha,
+      prevProgress: Math.max(0, Math.min(1, (t - prev.start) / prev.duration)),
+      nextProgress: Math.max(0, Math.min(1, (t - next.start) / next.duration)),
+    };
+  }
+  return null;
 }
 
 function createReelRenderStore() {
@@ -121,12 +228,13 @@ function createReelRenderStore() {
   }
 
   async function start(shots: DemoShot[], settings: DemoReelSettings): Promise<boolean> {
-    const controls = get(stage3DRendererControls);
+    const rendererControls = get(stage3DRendererControls);
     const engineReg = offlineRender.getEngine();
-    if (!controls || !engineReg) {
+    if (!rendererControls || !engineReg) {
       setStatus('error', 'Stage 3D renderer not ready — open the Stage 3D window first');
       return false;
     }
+    const controls = rendererControls;
     if (shots.length === 0) {
       setStatus('error', 'No shots in the sequence');
       return false;
@@ -152,6 +260,8 @@ function createReelRenderStore() {
 
     let ffmpeg: Awaited<ReturnType<typeof loadFFmpeg>> | null = null;
     let frameTarget: FrameSequenceTarget | null = null;
+    let nativeJpegSequence: NativeJpegSequenceSession | null = null;
+    let nativeJpegSequenceFinished = false;
     const frameBaseName = frameSequenceBaseName(settings.filename, 'stage-reel');
     if (outputMode === 'frames') {
       try {
@@ -173,6 +283,7 @@ function createReelRenderStore() {
 
     setStatus('rendering');
     let lastShotIndex = -1;
+    const spans = shotTimeline(shots);
     const segmentFrameCount = outputMode === 'frames'
       ? totalFrames
       : getOfflineSegmentFrameCount(settings);
@@ -185,51 +296,79 @@ function createReelRenderStore() {
       engine.resize(settings.width, settings.height);
       canvas.width = settings.width;
       canvas.height = settings.height;
+      if (outputMode === 'frames' && frameTarget) {
+        nativeJpegSequence = await startNativeJpegSequence(frameTarget, settings, frameBaseName, totalFrames);
+      }
       await nextFrame();
+
+      async function captureShotFrame(index: number, shot: DemoShot, progress: number): Promise<CapturedFrame> {
+        if (index !== lastShotIndex) {
+          lastShotIndex = index;
+          stage3dScene.loadScene(JSON.parse(JSON.stringify(shot.stage)));
+        }
+        controls.setCameraState(evaluateShotCamera(shot, progress));
+        let frame: CapturedFrame | null = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          await nextFrame();
+          if (controls.captureFrameAt) {
+            frame = await controls.captureFrameAt(settings.width, settings.height);
+          } else {
+            const capturePromise = controls.captureFrame();
+            await nextFrame();
+            frame = await capturePromise;
+          }
+          if (!frameLooksBlank(frame)) return frame;
+          await nextFrame();
+        }
+        throw new Error(`Stage reel captured a black frame (${frame ? frameStats(frame) : 'no frame'}). Make sure the Stage 3D window is open and visible, then try again.`);
+      }
 
       for (let segmentStart = 0; segmentStart < totalFrames; segmentStart += segmentFrameCount) {
         currentSegmentFrames = Math.min(segmentFrameCount, totalFrames - segmentStart);
         for (let localFrame = 0; localFrame < currentSegmentFrames; localFrame++) {
-        if (cancelRequested) { setStatus('cancelled'); return false; }
-        const globalFrame = segmentStart + localFrame;
-        const virtualTime = globalFrame / settings.fps;
+          if (cancelRequested) { setStatus('cancelled'); return false; }
+          const globalFrame = segmentStart + localFrame;
+          const virtualTime = globalFrame / settings.fps;
 
-        // Content clock — identical to the 2D offline pipeline so LED
-        // content (shaders, keyframes, sequencer) animates the same.
-        engine.manualTime = virtualTime;
-        setISFManualTime(virtualTime);
-        setStageEffectsManualTime(virtualTime);
-        keyframeTimeline.seek(virtualTime);
-        layerSequencer.seek(virtualTime);
-        vjLayerSequencer.seek(virtualTime);
+          // Content clock — identical to the 2D offline pipeline so LED
+          // content (shaders, keyframes, sequencer) animates the same.
+          engine.manualTime = virtualTime;
+          setISFManualTime(virtualTime);
+          setStageEffectsManualTime(virtualTime);
+          keyframeTimeline.seek(virtualTime);
+          layerSequencer.seek(virtualTime);
+          vjLayerSequencer.seek(virtualTime);
 
-        // Shot clock — camera every frame, stage snapshot on entry.
-        const at = shotAtTime(shots, virtualTime);
-        if (at) {
-          if (at.index !== lastShotIndex) {
-            lastShotIndex = at.index;
-            stage3dScene.loadScene(JSON.parse(JSON.stringify(at.shot.stage)));
+          // Shot clock — camera every frame, stage snapshot on entry.
+          let frame: CapturedFrame | null = null;
+          const transition = (settings.transition ?? 'cut') === 'cross-dissolve'
+            ? transitionAtTime(spans, virtualTime, settings.transitionDurationSec ?? 0.75)
+            : null;
+          if (transition) {
+            const outgoing = await captureShotFrame(transition.prev.index, transition.prev.shot, transition.prevProgress);
+            const incoming = await captureShotFrame(transition.next.index, transition.next.shot, transition.nextProgress);
+            frame = blendFrames(outgoing, incoming, transition.alpha);
+          } else {
+            const at = shotAtTime(shots, virtualTime);
+            if (at) frame = await captureShotFrame(at.index, at.shot, at.progress);
           }
-          controls.setCameraState(evaluateShotCamera(at.shot, at.progress));
-        }
+          if (!frame) throw new Error('Could not capture Stage 3D frame');
 
-        // One RAF: the live loop renders engine layers + the 3D scene
-        // with everything we just set; capture resolves right after the
-        // scene render inside that same frame.
-        const capturePromise = controls.captureFrame();
-        await nextFrame();
-        const frame = await capturePromise;
-
-        const jpegBytes = await rgbaToJpeg(frame.data, frame.width, frame.height, 0.92);
-        if (outputMode === 'frames') {
-          if (!frameTarget) throw new Error('Frame export folder not ready');
-          const frameName = `${frameBaseName}_${String(globalFrame).padStart(6, '0')}.jpg`;
-          await writeFrameTargetBytes(frameTarget, frameName, jpegBytes);
-        } else {
-          if (!ffmpeg) throw new Error('FFmpeg encoder not ready');
-          await ffmpeg.writeFile(`frame_${String(localFrame).padStart(6, '0')}.jpg`, jpegBytes);
-        }
-        update(s => ({ ...s, currentFrame: globalFrame + 1 }));
+          if (outputMode === 'frames') {
+            if (!frameTarget) throw new Error('Frame export folder not ready');
+            if (nativeJpegSequence) {
+              await writeNativeJpegSequenceFrame(nativeJpegSequence, globalFrame, frame);
+            } else {
+              const jpegBytes = await rgbaToJpeg(frame.data, frame.width, frame.height, 0.92);
+              const frameName = `${frameBaseName}_${String(globalFrame).padStart(6, '0')}.jpg`;
+              await writeFrameTargetBytes(frameTarget, frameName, jpegBytes);
+            }
+          } else {
+            if (!ffmpeg) throw new Error('FFmpeg encoder not ready');
+            const jpegBytes = await rgbaToJpeg(frame.data, frame.width, frame.height, 0.92);
+            await ffmpeg.writeFile(`frame_${String(localFrame).padStart(6, '0')}.jpg`, jpegBytes);
+          }
+          update(s => ({ ...s, currentFrame: globalFrame + 1 }));
         }
 
         if (outputMode === 'frames') {
@@ -265,6 +404,10 @@ function createReelRenderStore() {
       if (outputMode === 'frames') {
         if (!frameTarget) throw new Error('Frame export folder not ready');
         setStatus('saving');
+        if (nativeJpegSequence) {
+          await finishNativeJpegSequence(nativeJpegSequence);
+          nativeJpegSequenceFinished = true;
+        }
         const manifestName = `${frameBaseName}_manifest.txt`;
         await writeFrameTargetText(frameTarget, manifestName, frameSequenceManifest({
           baseName: frameBaseName,
@@ -327,12 +470,19 @@ function createReelRenderStore() {
           await deleteOfflineFrameFiles(ffmpeg, currentSegmentFrames || segmentFrameCount);
           for (const segmentName of segmentNames) await ffmpeg.deleteFile(segmentName);
         }
+        if (nativeJpegSequence && !nativeJpegSequenceFinished) {
+          await cancelNativeJpegSequence(nativeJpegSequence);
+          nativeJpegSequenceFinished = true;
+        }
       } catch { /* best-effort */ }
       setStatus('error', formatErr(err));
       return false;
     } finally {
       // Hand everything back: camera, content clock, engine size, and
       // the stage scene the user had before the reel ran.
+      if (nativeJpegSequence && !nativeJpegSequenceFinished) {
+        await cancelNativeJpegSequence(nativeJpegSequence).catch(() => {});
+      }
       controls.releaseCamera();
       engine.manualTime = restoreManual;
       setISFManualTime(null);

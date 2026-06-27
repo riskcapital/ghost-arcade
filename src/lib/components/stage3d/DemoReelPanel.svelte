@@ -337,6 +337,23 @@
         </select>
       </label>
       <label class="insp-row">
+        <span>Trans</span>
+        <select
+          value={settings.transition ?? 'cut'}
+          onchange={(e) => demoReel.setSettings({ transition: (e.target as HTMLSelectElement).value as 'cut' | 'cross-dissolve' })}>
+          <option value="cut">Cut</option>
+          <option value="cross-dissolve">Cross dissolve</option>
+        </select>
+      </label>
+      {#if (settings.transition ?? 'cut') === 'cross-dissolve'}
+        <label class="insp-row">
+          <span>Fade</span>
+          <input type="number" min="0.1" max="5" step="0.1" value={settings.transitionDurationSec ?? 0.75}
+            oninput={(e) => demoReel.setSettings({ transitionDurationSec: Math.max(0.1, Math.min(5, parseFloat((e.target as HTMLInputElement).value) || 0.75)) })} />
+          <span class="unit">s</span>
+        </label>
+      {/if}
+      <label class="insp-row">
         <span>Name</span>
         <input type="text" value={settings.filename} oninput={(e) => demoReel.setSettings({ filename: (e.target as HTMLInputElement).value })} />
       </label>

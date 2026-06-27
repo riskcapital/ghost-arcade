@@ -425,9 +425,9 @@ export class ProjectionSimulatorRenderer {
     this.transformControls.detach();
     this.controls.dispose();
     (this.transformControls as any).dispose?.();
+    this.disposeProjectorLights();
     this.clearGroup(this.root);
     this.clearGroup(this.projectorRoot);
-    this.projectorLights.clear();
     this.sourceTexture?.dispose();
     this.depthMaterial.dispose();
     this.selectionOutline.geometry.dispose();
@@ -1469,9 +1469,9 @@ export class ProjectionSimulatorRenderer {
     this.pointer.y = -(((event.clientY - rect.top) / Math.max(1, rect.height)) * 2 - 1);
     this.raycaster.setFromCamera(this.pointer, this.camera);
 
-    if (this.transformHelper.visible && this.raycaster.intersectObject(this.transformHelper, true).length) {
-      return;
-    }
+    const helperHit = this.transformHelper.visible
+      && this.raycaster.intersectObject(this.transformHelper, true)
+        .some((hit) => this.isVisibleTransformHelperPart(hit.object));
 
     const objectTarget = this.pickTarget('object');
     if (objectTarget) {
@@ -1486,6 +1486,10 @@ export class ProjectionSimulatorRenderer {
         return;
       }
     }
+
+    // TransformControls exposes broad helper planes, so normal scene picks need
+    // priority or the first selected object can block future click selections.
+    if (helperHit) return;
 
     if (!event.shiftKey && !event.metaKey && !event.ctrlKey) {
       this.onSelect(null, event);
@@ -1508,6 +1512,15 @@ export class ProjectionSimulatorRenderer {
       if (target) return target;
     }
     return null;
+  }
+
+  private isVisibleTransformHelperPart(object: THREE.Object3D): boolean {
+    let current: THREE.Object3D | null = object;
+    while (current && current !== this.transformHelper) {
+      if (!current.visible) return false;
+      current = current.parent;
+    }
+    return true;
   }
 
   private pickTargetFromObject(object: THREE.Object3D, prefix: string): ProjectionSimSelection {

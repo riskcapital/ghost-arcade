@@ -23,12 +23,15 @@ interface SurfaceState {
   activeSurfaceId: string | null;
   /** Selected slice id within the active surface. Null = nothing selected. */
   selectedSliceId: string | null;
+  /** Full slice selection, with selectedSliceId acting as the primary item. */
+  selectedSliceIds: string[];
 }
 
 const INITIAL_STATE: SurfaceState = {
   surfaces: [],
   activeSurfaceId: null,
   selectedSliceId: null,
+  selectedSliceIds: [],
 };
 
 // ─── SVG → polygon import ────────────────────────────────
@@ -469,20 +472,21 @@ function createSurfaceStore() {
     subscribe,
 
     /** Create a new empty surface and make it active. */
-    createSurface(name = 'Untitled Stage', width = 1920, height = 1080) {
-      const surface = makeEmptySurface(name, width, height);
-      update(s => ({
-        ...s,
-        surfaces: [...s.surfaces, surface],
-        activeSurfaceId: surface.id,
-        selectedSliceId: null,
-      }));
-      return surface.id;
-    },
+	    createSurface(name = 'Untitled Stage', width = 1920, height = 1080) {
+	      const surface = makeEmptySurface(name, width, height);
+	      update(s => ({
+	        ...s,
+	        surfaces: [...s.surfaces, surface],
+	        activeSurfaceId: surface.id,
+	        selectedSliceId: null,
+	        selectedSliceIds: [],
+	      }));
+	      return surface.id;
+	    },
 
-    setActiveSurface(id: string | null) {
-      update(s => ({ ...s, activeSurfaceId: id, selectedSliceId: null }));
-    },
+	    setActiveSurface(id: string | null) {
+	      update(s => ({ ...s, activeSurfaceId: id, selectedSliceId: null, selectedSliceIds: [] }));
+	    },
 
     deleteSurface(id: string) {
       update(s => {
@@ -490,9 +494,9 @@ function createSurfaceStore() {
         const activeSurfaceId = s.activeSurfaceId === id
           ? (surfaces[0]?.id ?? null)
           : s.activeSurfaceId;
-        return { ...s, surfaces, activeSurfaceId, selectedSliceId: null };
-      });
-    },
+	        return { ...s, surfaces, activeSurfaceId, selectedSliceId: null, selectedSliceIds: [] };
+	      });
+	    },
 
     renameSurface(id: string, name: string) {
       update(s => ({
@@ -576,10 +580,10 @@ function createSurfaceStore() {
           ? { ...x, slices: newSlices }
           : x
         );
-        return { ...s, surfaces, activeSurfaceId: activeId, selectedSliceId: null };
-      });
-      return true;
-    },
+	        return { ...s, surfaces, activeSurfaceId: activeId, selectedSliceId: null, selectedSliceIds: [] };
+	      });
+	      return true;
+	    },
 
     // ─── Slice CRUD ───
 
@@ -598,13 +602,14 @@ function createSurfaceStore() {
       };
       update(s => ({
         ...s,
-        surfaces: s.surfaces.map(x =>
-          x.id === target.id ? { ...x, slices: [...x.slices, slice] } : x
-        ),
-        selectedSliceId: slice.id,
-      }));
-      return slice.id;
-    },
+	        surfaces: s.surfaces.map(x =>
+	          x.id === target.id ? { ...x, slices: [...x.slices, slice] } : x
+	        ),
+	        selectedSliceId: slice.id,
+	        selectedSliceIds: [slice.id],
+	      }));
+	      return slice.id;
+	    },
 
     updateSlice(sliceId: string, patch: Partial<SurfaceSlice>) {
       update(s => ({
@@ -622,17 +627,24 @@ function createSurfaceStore() {
       }));
     },
 
-    deleteSlice(sliceId: string) {
-      update(s => ({
-        ...s,
-        surfaces: s.surfaces.map(surface =>
-          surface.id === s.activeSurfaceId
-            ? { ...surface, slices: surface.slices.filter(sl => sl.id !== sliceId) }
-            : surface
-        ),
-        selectedSliceId: s.selectedSliceId === sliceId ? null : s.selectedSliceId,
-      }));
-    },
+	    deleteSlice(sliceId: string) {
+	      update(s => {
+	        const selectedSliceIds = s.selectedSliceIds.filter(id => id !== sliceId);
+	        const selectedSliceId = s.selectedSliceId === sliceId
+	          ? selectedSliceIds[0] ?? null
+	          : s.selectedSliceId;
+	        return {
+	          ...s,
+	          surfaces: s.surfaces.map(surface =>
+	            surface.id === s.activeSurfaceId
+	              ? { ...surface, slices: surface.slices.filter(sl => sl.id !== sliceId) }
+	              : surface
+	          ),
+	          selectedSliceId,
+	          selectedSliceIds,
+	        };
+	      });
+	    },
 
     reorderSlice(sliceId: string, toIndex: number) {
       update(s => ({
@@ -682,9 +694,29 @@ function createSurfaceStore() {
       this.updateSlice(sliceId, { outputDestination: destination });
     },
 
-    selectSlice(sliceId: string | null) {
-      update(s => ({ ...s, selectedSliceId: sliceId }));
-    },
+	    selectSlice(sliceId: string | null) {
+	      update(s => ({ ...s, selectedSliceId: sliceId, selectedSliceIds: sliceId ? [sliceId] : [] }));
+	    },
+
+	    setSliceSelection(primarySliceId: string | null, sliceIds: string[]) {
+	      update(s => {
+	        const active = s.surfaces.find(surface => surface.id === s.activeSurfaceId);
+	        const validIds = new Set(active?.slices.map(slice => slice.id) ?? []);
+	        const normalized: string[] = [];
+	        for (const id of sliceIds) {
+	          if (!validIds.has(id) || normalized.includes(id)) continue;
+	          normalized.push(id);
+	        }
+	        const nextPrimary = primarySliceId && normalized.includes(primarySliceId)
+	          ? primarySliceId
+	          : normalized[0] ?? null;
+	        return {
+	          ...s,
+	          selectedSliceId: nextPrimary,
+	          selectedSliceIds: normalized.length > 0 ? normalized : (nextPrimary ? [nextPrimary] : []),
+	        };
+	      });
+	    },
 
     // ─── Stage Effects ─────────────────────────────────────────────
     // Effects live on the active surface. CRUD is identical in shape
@@ -902,11 +934,12 @@ function createSurfaceStore() {
      *  loaded data with this store's prior state. */
     hydrateFromProject(surfaces: Surface[], activeId: string | null) {
       _isHydrating = true;
-      set({
-        surfaces: surfaces ?? [],
-        activeSurfaceId: activeId ?? null,
-        selectedSliceId: null,
-      });
+	      set({
+	        surfaces: surfaces ?? [],
+	        activeSurfaceId: activeId ?? null,
+	        selectedSliceId: null,
+	        selectedSliceIds: [],
+	      });
       // Re-enable mirror writes after the set propagates. Microtask
       // is enough — the subscriber has already fired synchronously.
       queueMicrotask(() => { _isHydrating = false; });
@@ -997,3 +1030,5 @@ export const activeSurfaceSlices = derived(activeSurface, $s => $s?.slices ?? []
 export const selectedSlice = derived([surfaceStore, activeSurface], ([$s, $surface]) =>
   $surface?.slices.find(sl => sl.id === $s.selectedSliceId) ?? null
 );
+
+export const selectedSliceIds = derived(surfaceStore, $s => $s.selectedSliceIds ?? []);

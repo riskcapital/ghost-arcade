@@ -25,8 +25,8 @@ import { stage3dScene, selectedStage3DNodeId, selectedStage3DTargets, stage3DGiz
 import { buildVenue, type VenueBuild } from './venues';
 import { AtmosphereRig, type UserStripAnim } from './atmosphere';
 import { DEFAULT_ATMOSPHERE } from './types';
-import { getVisualAudioSnapshot } from '../audio/visualAudio';
-import { buildUserElement } from './elementTypes';
+import { getVisualAudioSnapshot, type VisualAudioState } from '../audio/visualAudio';
+import { buildUserElement, type UserLightAnim } from './elementTypes';
 import { resolveStageEffectForLayer, stageEffectsRuntime } from '../stores/stageEffects';
 import type { Stage3DScene, Stage3DScreenOverride, Stage3DVenue, UserStageElement } from './types';
 import { DEFAULT_LIGHTING } from './types';
@@ -39,6 +39,8 @@ interface LedEntry {
   surface: THREE.Mesh;
   material: THREE.ShaderMaterial;
   defaultPosition: [number, number, number];
+  defaultRotation: [number, number, number];
+  defaultScale: [number, number, number];
   defaultWidth: number;
   defaultHeight: number;
   /** Set when this screen is a spherical sector on the venue's ledDome
@@ -50,6 +52,7 @@ interface LedEntry {
     u0: number; u1: number;        // canvas-x fraction → azimuth range
     yTop: number; yBottom: number; // canvas-y fraction (Y-down) → elevation range
     mapping: 'wrap' | 'domemaster' | 'equirect';
+    uvSignature: string;
     lightOffset: [number, number, number];
     lightTarget: [number, number, number];
   };
@@ -76,6 +79,21 @@ interface ElementEntry {
   element: UserStageElement;
   group: THREE.Group;
   signature: string;
+}
+
+interface DirectDragState {
+  pointerId: number;
+  startClient: { x: number; y: number };
+  plane: THREE.Plane;
+  startHit: THREE.Vector3;
+  objects: { object: THREE.Object3D; startWorld: THREE.Vector3 }[];
+  active: boolean;
+}
+
+interface MaterialBaseline {
+  color?: THREE.Color;
+  emissive?: THREE.Color;
+  envMapIntensity?: number;
 }
 
 // RectAreaLight needs its LTC lookup textures registered once per app
@@ -324,6 +342,64 @@ function screenLayerPlacement(layer: Layer, wall: VenueBuild['ledWall']):
 type LedDome = NonNullable<VenueBuild['ledDome']>;
 type DomeMapping = 'wrap' | 'domemaster' | 'equirect';
 
+interface DomeUvSettings {
+  panX: number;
+  panY: number;
+  zoom: number;
+  roll: number;
+  edgeBlend: number;
+  verticalBlend: number;
+}
+
+const DEFAULT_DOME_UV: DomeUvSettings = {
+  panX: 0,
+  panY: 0,
+  zoom: 1,
+  roll: 0,
+  edgeBlend: 0.35,
+  verticalBlend: 0,
+};
+
+function domeUvSettingsFromOverride(override: Stage3DScreenOverride): DomeUvSettings {
+  const clamp = (v: unknown, min: number, max: number, fallback: number) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(min, Math.min(max, n));
+  };
+  return {
+    panX: clamp(override.domePanX, -0.5, 0.5, DEFAULT_DOME_UV.panX),
+    panY: clamp(override.domePanY, -0.5, 0.5, DEFAULT_DOME_UV.panY),
+    zoom: clamp(override.domeZoom, 0.35, 3, DEFAULT_DOME_UV.zoom),
+    roll: clamp(override.domeRoll, -180, 180, DEFAULT_DOME_UV.roll),
+    edgeBlend: clamp(override.domeEdgeBlend, 0, 1, DEFAULT_DOME_UV.edgeBlend),
+    verticalBlend: clamp(override.domeVerticalBlend, 0, 1, DEFAULT_DOME_UV.verticalBlend),
+  };
+}
+
+function domeUvSignature(settings: DomeUvSettings): string {
+  return [
+    settings.panX,
+    settings.panY,
+    settings.zoom,
+    settings.roll,
+    settings.edgeBlend,
+    settings.verticalBlend,
+  ].map(v => v.toFixed(4)).join('|');
+}
+
+function applyDomeUvControls(u: number, v: number, settings: DomeUvSettings): [number, number] {
+  const roll = THREE.MathUtils.degToRad(settings.roll);
+  const c = Math.cos(roll);
+  const s = Math.sin(roll);
+  const dx = u - 0.5;
+  const dy = v - 0.5;
+  const zoom = Math.max(0.0001, settings.zoom);
+  return [
+    0.5 + (dx * c - dy * s) / zoom + settings.panX,
+    0.5 + (dx * s + dy * c) / zoom + settings.panY,
+  ];
+}
+
 /** Unit direction for a dome surface point. Azimuth 0 faces the stage
  *  (-Z), positive azimuth toward +X; elevation 0 = horizon through the
  *  dome centre, 90 = zenith. Y-up world. */
@@ -344,9 +420,9 @@ function domeDirection(azDeg: number, elDeg: number): [number, number, number] {
  * full-canvas screen covers the whole sweep, smaller screens tile it.
  *
  * UVs depend on the content mapping:
- *  `wrap`       — plain (u,v) across the sector: the screen's own
- *                 source rectangle spreads over its patch of dome
- *                 (equirect-style; flat content, Sphere-style look).
+ *  `wrap`       — stretch/projection mode: the screen's own source is
+ *                 projected over the visible spherical cap so flat
+ *                 content does not pinch into the apex.
  *  `domemaster` — per-vertex inverse 180° angular fisheye: the source
  *                 is a circular domemaster frame (what the editor's
  *                 Dome Projection output produces in fisheye modes);
@@ -360,11 +436,14 @@ function buildDomeSectorGeometry(
   u0: number, u1: number,
   yTop: number, yBottom: number,
   mapping: DomeMapping,
+  uvSettings: DomeUvSettings = DEFAULT_DOME_UV,
 ): THREE.BufferGeometry {
   const az = (u: number) => (u - 0.5) * dome.hSweepDeg;
   const el = (y: number) => dome.vEndDeg + y * (dome.vStartDeg - dome.vEndDeg);
   const az0 = az(u0), az1 = az(u1);
   const elBottom = el(yBottom), elTop = el(yTop);
+  const yUnit0 = Math.sin(THREE.MathUtils.degToRad(elBottom));
+  const yUnit1 = Math.sin(THREE.MathUtils.degToRad(elTop));
 
   // Segment density follows angular coverage so a small tile doesn't
   // pay full-dome tessellation (and a full dome stays smooth).
@@ -374,10 +453,27 @@ function buildDomeSectorGeometry(
   const positions: number[] = [];
   const uvs: number[] = [];
   const indices: number[] = [];
+  const projectionSamples: [number, number][] = [];
+  for (const sampleEl of [elBottom, elTop]) {
+    for (const sampleAz of [az0, az1, (az0 + az1) * 0.5]) {
+      const d = domeDirection(sampleAz, sampleEl);
+      projectionSamples.push([d[0], d[1]]);
+    }
+  }
+  const minProjX = Math.min(...projectionSamples.map(p => p[0]));
+  const maxProjX = Math.max(...projectionSamples.map(p => p[0]));
+  const minProjY = Math.min(yUnit0, yUnit1);
+  const maxProjY = Math.max(yUnit0, yUnit1);
+  const projW = Math.max(0.0001, maxProjX - minProjX);
+  const projH = Math.max(0.0001, maxProjY - minProjY);
 
   for (let iy = 0; iy <= hSegs; iy++) {
     const v = iy / hSegs;                       // 0 = bottom edge, 1 = top edge (GL convention)
-    const elev = elBottom + v * (elTop - elBottom);
+    // Equal-area-ish vertical stepping: interpolate the unit-sphere Y
+    // instead of raw latitude degrees so the top of the dome does not
+    // bunch rows into a pinched-looking polar strip.
+    const yUnit = yUnit0 + v * (yUnit1 - yUnit0);
+    const elev = THREE.MathUtils.radToDeg(Math.asin(Math.max(-1, Math.min(1, yUnit))));
     for (let ix = 0; ix <= wSegs; ix++) {
       const u = ix / wSegs;
       const azim = az0 + u * (az1 - az0);
@@ -396,9 +492,18 @@ function buildDomeSectorGeometry(
       } else if (mapping === 'equirect') {
         const phi = Math.atan2(d[0], -d[2]);
         const elevRad = Math.asin(Math.min(1, Math.max(-1, d[1])));
-        uvs.push(0.5 + phi / (2 * Math.PI), 0.5 + elevRad / Math.PI);
+        uvs.push(...applyDomeUvControls(0.5 + phi / (2 * Math.PI), 0.5 + elevRad / Math.PI, uvSettings));
       } else {
-        uvs.push(u, v);
+        // Stretch mode behaves like content projected onto the visible
+        // spherical cap from the premium audience view. Unlike raw
+        // lat/long UVs, it does not squeeze the whole image width into
+        // the tiny top rows near the apex, so visuals read evenly across
+        // the curve.
+        const projectedU = (d[0] - minProjX) / projW;
+        const projectedV = (d[1] - minProjY) / projH;
+        const tunedU = THREE.MathUtils.lerp(projectedU, u, uvSettings.edgeBlend);
+        const tunedV = THREE.MathUtils.lerp(projectedV, v, uvSettings.verticalBlend);
+        uvs.push(...applyDomeUvControls(tunedU, tunedV, uvSettings));
       }
     }
   }
@@ -489,7 +594,27 @@ const EDGE_INDEX: Record<NonNullable<Stage3DScreenOverride['edgeEffect']>, numbe
 /** Signature of an element's identity for rebuild detection. When this
  *  changes, the element's THREE.Group is rebuilt from scratch. */
 function elementSignature(el: UserStageElement): string {
+  const structuralKeys: Record<string, string[]> = {
+    movinghead: [],
+    lightbar: ['count', 'len'],
+    parbar: ['count', 'len'],
+    blinder: ['cols', 'rows'],
+  };
+  const keys = structuralKeys[el.type];
+  if (keys) {
+    return `${el.type}|${keys.map(k => `${k}:${el.params[k] ?? ''}`).join('|')}`;
+  }
   return `${el.type}|${JSON.stringify(el.params)}`;
+}
+
+function paramNumber(params: Record<string, number | string>, key: string, fallback: number): number {
+  const value = Number(params[key]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function paramString(params: Record<string, number | string>, key: string, fallback: string): string {
+  const value = params[key];
+  return typeof value === 'string' && value.length > 0 ? value : fallback;
 }
 
 // ── Renderer ───────────────────────────────────────────────────────────
@@ -517,6 +642,7 @@ export class Stage3DRenderer {
   private venueFloorBaseMetalness = 0;
   private venueFloorBaseRoughness = 1;
   private venueFloorBaseEnvMapIntensity = 1;
+  private venueMaterialBaselines = new Map<THREE.Material, MaterialBaseline>();
   /** Every truss material in the venue + user elements, tagged via
    *  `userData.role === 'truss'`. Rebuilt on venue swap / element sync
    *  so the trussColor lighting override applies live without per-frame
@@ -551,50 +677,59 @@ export class Stage3DRenderer {
   private selectionOutlines = new Map<string, THREE.BoxHelper>();
   private bound = {
     pointerDown: this.onPointerDown.bind(this),
+    pointerMove: this.onPointerMove.bind(this),
+    pointerUp: this.onPointerUp.bind(this),
     keyDown: this.onKeyDown.bind(this),
     wheel: this.onWheel.bind(this),
     transformDraggingChanged: this.onTransformDraggingChanged.bind(this),
     transformChange: this.onTransformChange.bind(this),
   };
   private pointerDownPos: { x: number; y: number } | null = null;
+  private directDrag: DirectDragState | null = null;
+  private pendingClickPointerUpCleanup: (() => void) | null = null;
   private selectionUnsub: (() => void) | null = null;
   /** Atmosphere FX rig — rebuilt per venue, ticked every render(). */
   private atmosphereRig: AtmosphereRig | null = null;
-  private lastAtmoTime = 0;
+  private lastAtmoTime: number | null = null;
+  private lastAtmoClockIsManual = false;
   /** Stable identity of the screens' CONTENT (clip/source ids) — when
    *  it changes, the show director calls a new lighting cue. */
   private lastContentSig = '';
   /** Set when user elements are added/rebuilt/removed so the rig
    *  re-collects ledstrip animation holders. */
   private userStripsDirty = true;
+  private userFixturesDirty = true;
+  private userLightAnimsDirty = true;
+  private userLightAnims: UserLightAnim[] = [];
   /** Demo Reel camera drive — when set, render() applies this state and
    *  bypasses OrbitControls so shot interpolation lands exactly. */
   private drivenCamera: { position: [number, number, number]; target: [number, number, number]; fov: number } | null = null;
   /** One-shot frame-capture request (Demo Reel offline render +
    *  shot thumbnails). Fulfilled at the end of renderScene with a
-   *  synchronous default-framebuffer readback. */
+   *  synchronous copy from the just-rendered WebGL canvas. */
   private pendingCapture: {
     resolve: (r: { data: Uint8Array; width: number; height: number }) => void;
     reject: (e: Error) => void;
+    width?: number;
+    height?: number;
   } | null = null;
-  /** Fixed-16:9 recording path. When set, render() does a SECOND scene
-   *  render each frame through `composer` (bloom + output, matching the
-   *  live view) into `rt` at a fixed 16:9 resolution that's independent
-   *  of the project's output resolution — then async-reads it into the
-   *  2D `canvas` the MediaRecorder captures. Decoupling means a wide
-   *  comp (e.g. 4000×1080) keeps its LED content full-res while the
-   *  recorded frame stays a clean 1920×1080 / 4K 16:9. */
-  private recording: {
+  private captureCanvas: HTMLCanvasElement | null = null;
+  private captureCtx: CanvasRenderingContext2D | null = null;
+  private frameCaptureRig: {
+    renderer: THREE.WebGLRenderer;
     width: number;
     height: number;
     rt: THREE.WebGLRenderTarget;
-    composer: EffectComposer;
-    bloomPass: UnrealBloomPass;
+    pixels: Uint8Array;
+  } | null = null;
+  /** Fixed-size recording path. When set, render() copies the just-rendered
+   *  live WebGL canvas into a hidden-but-composited 2D canvas that
+   *  MediaRecorder captures. */
+  private recording: {
+    width: number;
+    height: number;
     canvas: HTMLCanvasElement;
     ctx: CanvasRenderingContext2D;
-    pixels: Uint8Array;
-    image: ImageData;
-    readbackPending: boolean;
   } | null = null;
   /** Frame counter for staggering the per-LED average-colour readback
    *  across multiple frames so we never pay 6× readback-stall cost in
@@ -675,6 +810,7 @@ export class Stage3DRenderer {
         if (this.pendingCapture) this.pendingCapture.reject(new Error('superseded'));
         this.pendingCapture = { resolve, reject };
       }),
+      captureFrameAt: (w, h) => this.captureFrameAt(w, h),
       beginRecording: (w, h) => this.beginRecording(w, h),
       endRecording:   () => this.endRecording(),
     });
@@ -730,8 +866,11 @@ export class Stage3DRenderer {
     masterTexture: THREE.Texture | null,
     _outputSlices: OutputSlice[],
     sourceLayers: Layer[] = [],
+    clockTimeSeconds: number | null = null,
   ): void {
     this.ensureRenderTargets(renderer);
+    const clockIsManual = typeof clockTimeSeconds === 'number' && Number.isFinite(clockTimeSeconds);
+    const renderClockTime = clockIsManual ? Math.max(0, clockTimeSeconds) : performance.now() * 0.001;
     const venue = stage.venue ?? 'festival';
     if (venue !== this.currentVenue) this.swapVenue(venue);
 
@@ -786,6 +925,7 @@ export class Stage3DRenderer {
     }
     if (this.venueBuild) {
       const base = this.venueBuild.baselineIntensities;
+      const roomDark = Math.max(0, Math.min(1, lighting.roomDarkness));
       for (let i = 0; i < this.venueLights.length; i++) {
         // Lights scale by roomIntensity only — exposure is applied
         // downstream via toneMappingExposure so the metals + IBL
@@ -793,9 +933,11 @@ export class Stage3DRenderer {
         this.venueLights[i].intensity = (base[i] ?? this.venueLights[i].intensity)
           * lighting.roomIntensity;
       }
+      this.applyVenueMaterialDarkness(roomDark);
       if (this.venueFloorBaseColor) {
         const floorMat = this.venueBuild.floor.material as THREE.MeshStandardMaterial;
         const dark = Math.max(0, Math.min(1, lighting.floorDarkness));
+        const roomVisible = 1 - roomDark;
         // Lerp ALL the PBR knobs that contribute light to the floor:
         //   • color goes to black (kills diffuse from any direct light)
         //   • metalness to zero (kills metal-tinted spec)
@@ -803,11 +945,11 @@ export class Stage3DRenderer {
         //   • roughness to 1 (spreads dielectric F0 spec across all
         //     directions so no white grazing-angle highlight reads)
         //   • visible = false at fully dark — last-ditch guarantee
-        floorMat.color.copy(this.venueFloorBaseColor).multiplyScalar(1 - dark);
-        floorMat.metalness = this.venueFloorBaseMetalness * (1 - dark);
-        floorMat.envMapIntensity = this.venueFloorBaseEnvMapIntensity * (1 - dark);
+        floorMat.color.copy(this.venueFloorBaseColor).multiplyScalar((1 - dark) * roomVisible);
+        floorMat.metalness = this.venueFloorBaseMetalness * (1 - dark) * roomVisible;
+        floorMat.envMapIntensity = this.venueFloorBaseEnvMapIntensity * (1 - dark) * roomVisible;
         floorMat.roughness = this.venueFloorBaseRoughness * (1 - dark) + 1.0 * dark;
-        this.venueBuild.floor.visible = dark < 0.995;
+        this.venueBuild.floor.visible = dark < 0.995 && roomDark < 0.995;
       }
       if (this.bloomPass) {
         this.bloomPass.strength = this.venueBuild.bloomStrength;
@@ -815,9 +957,11 @@ export class Stage3DRenderer {
       // Truss colour
       if (lighting.trussColor) {
         const c = new THREE.Color(lighting.trussColor);
+        c.multiplyScalar(1 - roomDark);
         for (const mat of this.trussMaterials) mat.color.copy(c);
       } else {
-        for (const mat of this.trussMaterials) mat.color.copy(this.trussBaseColor);
+        const c = this.trussBaseColor.clone().multiplyScalar(1 - roomDark);
+        for (const mat of this.trussMaterials) mat.color.copy(c);
       }
       // Key light position + colour overrides — null/empty restore baseline.
       const key = this.venueBuild.keyLight;
@@ -876,6 +1020,7 @@ export class Stage3DRenderer {
     } else {
       this.camera.updateProjectionMatrix();
       this.controls.update();
+      if (this.clampCameraToVenueBounds()) this.controls.update();
     }
 
     // Build a layer-id index so we can resolve each screen's parent
@@ -888,13 +1033,21 @@ export class Stage3DRenderer {
     // Atmosphere FX — sync toggles from the scene, then tick the rig
     // with the smoothed visual-audio bus so beams/lasers/strips ride
     // the music. dt derives from the same clock as the LED uniforms.
-    const atmoNow = performance.now() * 0.001;
-    const atmoDt = this.lastAtmoTime > 0
-      ? Math.max(0.001, Math.min(0.1, atmoNow - this.lastAtmoTime))
-      : 0.016;
+    const atmoNow = renderClockTime;
+    const clockModeChanged = this.lastAtmoTime === null || this.lastAtmoClockIsManual !== clockIsManual;
+    const rawAtmoDt = clockModeChanged || this.lastAtmoTime === null ? 0 : atmoNow - this.lastAtmoTime;
+    const atmoDt = rawAtmoDt > 0 ? Math.min(rawAtmoDt, 0.1) : (clockIsManual ? 0 : 0.016);
+    this.lastAtmoClockIsManual = clockIsManual;
     this.lastAtmoTime = atmoNow;
+    const visualAudio = getVisualAudioSnapshot();
+    if (this.userLightAnimsDirty) this.collectUserLightAnims();
+    this.updateUserLightAnims(renderClockTime, visualAudio);
     if (this.atmosphereRig) {
       const atmoFlags = { ...DEFAULT_ATMOSPHERE, ...(stage.atmosphere ?? {}) };
+      if (this.userFixturesDirty) {
+        this.userFixturesDirty = false;
+        this.atmosphereRig.setFixtureRoots([...this.elementEntries.values()].map(entry => entry.group));
+      }
       this.atmosphereRig.setFlags(atmoFlags);
 
       // Content sync — when the screens' source identity changes (new
@@ -926,7 +1079,7 @@ export class Stage3DRenderer {
         this.atmosphereRig.setUserStrips(list);
       }
 
-      this.atmosphereRig.update(atmoDt, getVisualAudioSnapshot());
+      this.atmosphereRig.update(atmoDt, visualAudio, clockIsManual ? renderClockTime : undefined);
 
       // Guarantee enough bloom for the show elements to glow even in
       // venues that run bloom-free at idle (festival/arena).
@@ -939,7 +1092,7 @@ export class Stage3DRenderer {
     }
 
     // Per-frame LED uniforms + transforms.
-    const time = performance.now() * 0.001;
+    const time = renderClockTime;
     const overrides = stage.screenOverrides ?? {};
     for (const entry of this.ledEntries) {
       // CRITICAL: pull the FRESH layer clone from layerById each
@@ -1029,12 +1182,15 @@ export class Stage3DRenderer {
       // display-fit letterboxing would corrupt — force stretch there.
       if (entry.dome) {
         const mapping = (override.domeMapping ?? 'wrap') as DomeMapping;
+        const uvSettings = domeUvSettingsFromOverride(override);
+        const uvSignature = domeUvSignature(uvSettings);
         const domeRegion = this.venueBuild?.ledDome;
-        if (mapping !== entry.dome.mapping && domeRegion) {
+        if ((mapping !== entry.dome.mapping || uvSignature !== entry.dome.uvSignature) && domeRegion) {
           entry.dome.mapping = mapping;
+          entry.dome.uvSignature = uvSignature;
           entry.surface.geometry.dispose();
           entry.surface.geometry = buildDomeSectorGeometry(
-            domeRegion, entry.dome.u0, entry.dome.u1, entry.dome.yTop, entry.dome.yBottom, mapping,
+            domeRegion, entry.dome.u0, entry.dome.u1, entry.dome.yTop, entry.dome.yBottom, mapping, uvSettings,
           );
         }
         if (mapping !== 'wrap') u.uDisplayFit.value = 0;
@@ -1044,13 +1200,14 @@ export class Stage3DRenderer {
       // child of the multi-select pivot (pivot owns world transforms
       // during multi-edit) OR when the gizmo is actively dragging this
       // single target (avoids fighting the gizmo every frame).
+      const transformLocked = !!entry.dome && this.screenTransformsLocked();
       if (this.pivotedIds.has(layer.id)) continue;
       if (this.gizmoDragging && this.transformControls.object === entry.group) continue;
-      const pos = override.position ?? entry.defaultPosition;
+      const pos = transformLocked ? entry.defaultPosition : (override.position ?? entry.defaultPosition);
       entry.group.position.set(pos[0], pos[1], pos[2]);
-      const rot = override.rotation ?? [0, 0, 0];
+      const rot = transformLocked ? entry.defaultRotation : (override.rotation ?? entry.defaultRotation);
       entry.group.rotation.set(rot[0], rot[1], rot[2]);
-      const scl = override.scale ?? [1, 1, 1];
+      const scl = transformLocked ? entry.defaultScale : (override.scale ?? entry.defaultScale);
       entry.group.scale.set(scl[0], scl[1], scl[2]);
       // Keep the reactive area light glued to the LED's current
       // position so moving the LED moves the glow with it. Dome
@@ -1143,11 +1300,9 @@ export class Stage3DRenderer {
 
     this.renderScene(renderer, width, height);
 
-    // Fixed-16:9 recording: a SECOND render of the same scene through the
-    // record-sized bloom composer, captured at a resolution that ignores
-    // the project's output resolution. Runs after the display render so
-    // every uniform/transform is already current for this frame.
-    if (this.recording) this.renderRecordingFrame(renderer);
+    // Recording/reel preview copy: sample the live canvas immediately
+    // after render so the encoded frame matches the on-screen lighting.
+    if (this.recording) this.renderRecordingFrame();
   }
 
   /** Called by the Svelte UI / pointer pick when the user clicks a
@@ -1199,13 +1354,56 @@ export class Stage3DRenderer {
     const r = Math.max(sz.x, sz.y, sz.z) * 0.9 + 18;
     this.controls.target.copy(c);
     this.camera.position.set(c.x + r * 0.8, c.y + r * 0.55, c.z + r);
+    this.clampCameraToVenueBounds();
     this.controls.update();
   }
 
   topCamera(): void {
     this.controls.target.set(0, 0, 0);
     this.camera.position.set(0, 90, 0.01);
+    this.clampCameraToVenueBounds();
     this.controls.update();
+  }
+
+  private clampCameraToVenueBounds(): boolean {
+    const bounds = this.venueBuild?.cameraBounds;
+    if (!bounds) return false;
+    let changed = false;
+    const clamp = (value: number, min?: number, max?: number): number => {
+      let next = value;
+      if (min !== undefined && next < min) next = min;
+      if (max !== undefined && next > max) next = max;
+      return next;
+    };
+    const apply = (value: number, min?: number, max?: number): number => {
+      const next = clamp(value, min, max);
+      if (next !== value) changed = true;
+      return next;
+    };
+
+    const p = this.camera.position;
+    p.set(
+      apply(p.x, bounds.minX, bounds.maxX),
+      apply(p.y, bounds.minY, bounds.maxY),
+      apply(p.z, bounds.minZ, bounds.maxZ),
+    );
+
+    const t = this.controls.target;
+    t.set(
+      apply(t.x, bounds.targetMinX, bounds.targetMaxX),
+      apply(t.y, bounds.targetMinY, bounds.targetMaxY),
+      apply(t.z, bounds.targetMinZ, bounds.targetMaxZ),
+    );
+    return changed;
+  }
+
+  private screenTransformsLocked(): boolean {
+    return !!this.venueBuild?.lockScreenTransforms;
+  }
+
+  private targetCanTransform(key: string): boolean {
+    const sel = parseSelection(key);
+    return !(sel?.kind === 'screen' && this.screenTransformsLocked());
   }
 
   setGizmoMode(mode: 'translate' | 'rotate' | 'scale'): void {
@@ -1284,6 +1482,10 @@ export class Stage3DRenderer {
     this.transformControls.removeEventListener('change', this.bound.transformChange as any);
     this.transformControls.dispose();
     this.canvas.removeEventListener('pointerdown', this.bound.pointerDown);
+    this.pendingClickPointerUpCleanup?.();
+    this.pendingClickPointerUpCleanup = null;
+    window.removeEventListener('pointermove', this.bound.pointerMove);
+    window.removeEventListener('pointerup', this.bound.pointerUp);
     window.removeEventListener('keydown', this.bound.keyDown);
     this.canvas.removeEventListener('wheel', this.bound.wheel, { capture: true } as EventListenerOptions);
     this.atmosphereRig?.dispose();
@@ -1294,6 +1496,7 @@ export class Stage3DRenderer {
     this.composer?.dispose?.();
     this.bloomPass?.dispose?.();
     this.outputPass?.dispose?.();
+    this.disposeFrameCaptureRig();
     this.selectionUnsub?.();
     this.selectionUnsub = null;
     stage3DRendererControls.set(null);
@@ -1377,6 +1580,108 @@ export class Stage3DRenderer {
     this.fulfillCapture(renderer, width, height);
   }
 
+  private frameLooksBlankRgb(data: Uint8Array): boolean {
+    if (data.length === 0) return true;
+    const pixels = data.length >> 2;
+    const step = Math.max(1, Math.floor(pixels / 4096));
+    let samples = 0;
+    let lit = 0;
+    for (let p = 0; p < pixels; p += step) {
+      const i = p << 2;
+      samples++;
+      if (data[i] + data[i + 1] + data[i + 2] > 18) lit++;
+    }
+    return lit <= Math.max(2, samples * 0.002);
+  }
+
+  private copyFlippedOpaqueFrame(src: Uint8Array, width: number, height: number): Uint8Array {
+    const data = new Uint8Array(src.length);
+    const rowBytes = width * 4;
+    for (let y = 0; y < height; y++) {
+      const srcRow = (height - 1 - y) * rowBytes;
+      const dstRow = y * rowBytes;
+      data.set(src.subarray(srcRow, srcRow + rowBytes), dstRow);
+      for (let x = 0; x < width; x++) data[dstRow + x * 4 + 3] = 255;
+    }
+    return data;
+  }
+
+  private captureCanvasFrame(width?: number, height?: number): { data: Uint8Array; width: number; height: number } {
+    const sourceW = Math.max(1, Math.round(this.canvas.width || this.canvas.clientWidth || 1));
+    const sourceH = Math.max(1, Math.round(this.canvas.height || this.canvas.clientHeight || 1));
+    const w = Math.max(1, Math.round(width ?? sourceW));
+    const h = Math.max(1, Math.round(height ?? sourceH));
+    if (!this.captureCanvas) this.captureCanvas = document.createElement('canvas');
+    if (this.captureCanvas.width !== w || this.captureCanvas.height !== h) {
+      this.captureCanvas.width = w;
+      this.captureCanvas.height = h;
+      this.captureCtx = null;
+    }
+    if (!this.captureCtx) {
+      this.captureCtx = this.captureCanvas.getContext('2d', { willReadFrequently: true });
+      if (!this.captureCtx) throw new Error('Stage capture 2D context unavailable');
+    }
+    this.captureCtx.clearRect(0, 0, w, h);
+    this.captureCtx.drawImage(this.canvas, 0, 0, w, h);
+    const image = this.captureCtx.getImageData(0, 0, w, h);
+    const data = new Uint8Array(image.data.buffer.slice(0));
+    for (let i = 3; i < data.length; i += 4) data[i] = 255;
+    return { data, width: w, height: h };
+  }
+
+  private readComposerPixels(
+    renderer: THREE.WebGLRenderer,
+    composer: EffectComposer,
+    width: number,
+    height: number,
+    pixels: Uint8Array,
+    fallbackTarget?: THREE.WebGLRenderTarget,
+  ): void {
+    renderer.readRenderTargetPixels(composer.readBuffer, 0, 0, width, height, pixels);
+    if (!this.frameLooksBlankRgb(pixels)) return;
+    const writeBuffer = (composer as unknown as { writeBuffer?: THREE.WebGLRenderTarget }).writeBuffer;
+    if (writeBuffer && writeBuffer !== composer.readBuffer) {
+      renderer.readRenderTargetPixels(writeBuffer, 0, 0, width, height, pixels);
+      if (!this.frameLooksBlankRgb(pixels)) return;
+    }
+    if (fallbackTarget) {
+      this.renderDirectToTarget(renderer, fallbackTarget, width, height, pixels);
+    }
+  }
+
+  private renderDirectToTarget(
+    renderer: THREE.WebGLRenderer,
+    target: THREE.WebGLRenderTarget,
+    width: number,
+    height: number,
+    pixels: Uint8Array,
+  ): void {
+    const previousTarget = renderer.getRenderTarget();
+    const previousAutoClear = renderer.autoClear;
+    try {
+      renderer.setRenderTarget(target);
+      renderer.setScissorTest(false);
+      renderer.setViewport(0, 0, width, height);
+      renderer.autoClear = true;
+      renderer.resetState?.();
+      renderer.clear(true, true, true);
+      renderer.render(this.scene, this.camera);
+      renderer.readRenderTargetPixels(target, 0, 0, width, height, pixels);
+    } finally {
+      renderer.setRenderTarget(previousTarget);
+      renderer.autoClear = previousAutoClear;
+    }
+  }
+
+  private captureDefaultFramebuffer(renderer: THREE.WebGLRenderer, width: number, height: number): { data: Uint8Array; width: number; height: number } {
+    const w = Math.max(1, Math.round(width));
+    const h = Math.max(1, Math.round(height));
+    const pixels = new Uint8Array(w * h * 4);
+    const gl = renderer.getContext();
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    return { data: this.copyFlippedOpaqueFrame(pixels, w, h), width: w, height: h };
+  }
+
   /** Resolve a pending one-shot frame capture. MUST run synchronously
    *  in the same task as the scene render: the renderer runs with
    *  preserveDrawingBuffer:false, so the default framebuffer is only
@@ -1388,68 +1693,101 @@ export class Stage3DRenderer {
     const pending = this.pendingCapture;
     this.pendingCapture = null;
     try {
-      const gl = renderer.getContext();
-      const data = new Uint8Array(width * height * 4);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, data);
-      const rowBytes = width * 4;
-      const tmp = new Uint8Array(rowBytes);
-      for (let y = 0; y < (height >> 1); y++) {
-        const top = y * rowBytes;
-        const bot = (height - 1 - y) * rowBytes;
-        tmp.set(data.subarray(top, top + rowBytes));
-        data.copyWithin(top, bot, bot + rowBytes);
-        data.set(tmp, bot);
+      const canvasFrame = this.captureCanvasFrame(pending.width ?? width, pending.height ?? height);
+      if (!this.frameLooksBlankRgb(canvasFrame.data)) {
+        pending.resolve(canvasFrame);
+        return;
       }
-      pending.resolve({ data, width, height });
+      const visibleFrame = this.captureDefaultFramebuffer(renderer, width, height);
+      if (!this.frameLooksBlankRgb(visibleFrame.data)) {
+        pending.resolve(visibleFrame);
+        return;
+      }
+      pending.resolve(this.captureOffscreenFrame(renderer, pending.width ?? width, pending.height ?? height));
     } catch (err) {
       pending.reject(err instanceof Error ? err : new Error(String(err)));
     }
   }
 
+  private disposeFrameCaptureRig(): void {
+    const rig = this.frameCaptureRig;
+    if (!rig) return;
+    this.frameCaptureRig = null;
+    rig.rt.dispose();
+  }
+
+  private ensureFrameCaptureRig(renderer: THREE.WebGLRenderer, width: number, height: number) {
+    const w = Math.max(1, Math.round(width));
+    const h = Math.max(1, Math.round(height));
+    const rig = this.frameCaptureRig;
+    if (rig && rig.renderer === renderer && rig.width === w && rig.height === h) return rig;
+    this.disposeFrameCaptureRig();
+    const rt = new THREE.WebGLRenderTarget(w, h, {
+      type: THREE.UnsignedByteType,
+      depthBuffer: true,
+    });
+    rt.texture.colorSpace = THREE.SRGBColorSpace;
+    this.frameCaptureRig = {
+      renderer,
+      width: w,
+      height: h,
+      rt,
+      pixels: new Uint8Array(w * h * 4),
+    };
+    return this.frameCaptureRig;
+  }
+
+  private captureOffscreenFrame(renderer: THREE.WebGLRenderer, width: number, height: number): { data: Uint8Array; width: number; height: number } {
+    const rig = this.ensureFrameCaptureRig(renderer, width, height);
+    const previousTarget = renderer.getRenderTarget();
+    const previousAutoClear = renderer.autoClear;
+    try {
+      this.renderDirectToTarget(renderer, rig.rt, rig.width, rig.height, rig.pixels);
+    } finally {
+      renderer.setRenderTarget(previousTarget);
+      renderer.autoClear = previousAutoClear;
+    }
+    const data = this.copyFlippedOpaqueFrame(rig.pixels, rig.width, rig.height);
+    return { data, width: rig.width, height: rig.height };
+  }
+
+  private captureFrameAt(width: number, height: number): Promise<{ data: Uint8Array; width: number; height: number }> {
+    const w = Math.max(2, Math.round(width));
+    const h = Math.max(2, Math.round(height));
+    return new Promise((resolve, reject) => {
+      if (this.pendingCapture) this.pendingCapture.reject(new Error('superseded'));
+      this.pendingCapture = { resolve, reject, width: w, height: h };
+    });
+  }
+
   // ── Fixed-16:9 stage recording ───────────────────────────────────────
 
-  /** Stand up the offscreen 16:9 capture path. The composer mirrors the
-   *  live chain (RenderPass → UnrealBloomPass → OutputPass) but renders
-   *  into an 8-bit sRGB target at `width`×`height` instead of the screen,
-   *  so MediaRecorder can grab a clean 16:9 frame regardless of the
-   *  project's output resolution. Returns the 2D canvas to record. */
+  /** Stand up the fixed-size recording canvas. Each animation frame copies
+   *  the live WebGL canvas into this 2D canvas so recording matches exactly
+   *  what the user sees, including lighting/exposure/post effects. */
   beginRecording(width: number, height: number): HTMLCanvasElement | null {
-    if (!this.renderer) return null;
     this.endRecording();
     const w = Math.max(2, Math.round(width));
     const h = Math.max(2, Math.round(height));
 
-    // 8-bit sRGB target so OutputPass writes display-encoded bytes we can
-    // read straight into ImageData (no float decode). Passing it to the
-    // EffectComposer makes BOTH its ping-pong buffers this format.
-    const rt = new THREE.WebGLRenderTarget(w, h, {
-      type: THREE.UnsignedByteType,
-      colorSpace: THREE.SRGBColorSpace,
-      depthBuffer: true,
-    });
-    const composer = new EffectComposer(this.renderer, rt);
-    // renderToScreen off → the final OutputPass result lands in
-    // composer.readBuffer (three swaps after the last needsSwap pass).
-    composer.renderToScreen = false;
-    composer.addPass(new RenderPass(this.scene, this.camera));
-    const bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.0, 0.45, 0.85);
-    composer.addPass(bloomPass);
-    composer.addPass(new OutputPass());
-
     const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
+    canvas.setAttribute('aria-hidden', 'true');
+    canvas.style.cssText =
+      'position:fixed;left:-99999px;top:0;width:1px;height:1px;' +
+      'opacity:0.01;pointer-events:none;z-index:-1;';
+    document.body.appendChild(canvas);
     const ctx = canvas.getContext('2d');
-    if (!ctx) { composer.dispose(); rt.dispose(); return null; }
+    if (!ctx) {
+      canvas.remove();
+      return null;
+    }
 
     this.recording = {
-      width: w, height: h, rt, composer, bloomPass, canvas, ctx,
-      pixels: new Uint8Array(w * h * 4),
-      image: new ImageData(w, h),
-      readbackPending: false,
+      width: w, height: h, canvas, ctx,
     };
-    console.log(`[Stage3D] Recording capture armed at ${w}×${h} (16:9, output-res independent)`);
+    console.log(`[Stage3D] Recording capture armed at ${w}×${h} from the live canvas`);
     return canvas;
   }
 
@@ -1457,56 +1795,19 @@ export class Stage3DRenderer {
     const rec = this.recording;
     if (!rec) return;
     this.recording = null;
-    rec.composer.dispose();
-    rec.rt.dispose();
+    rec.canvas.remove();
   }
 
-  /** Render the scene a second time at the fixed 16:9 record resolution
-   *  and async-read it into the record canvas. Camera aspect is forced to
-   *  the record aspect for this pass only, then restored so picking and
-   *  OrbitControls (which run between frames) keep the window aspect. */
-  private renderRecordingFrame(renderer: THREE.WebGLRenderer): void {
+  /** Copy the just-rendered live canvas into the MediaRecorder canvas. */
+  private renderRecordingFrame(): void {
     const rec = this.recording;
     if (!rec) return;
-    // Match the live bloom amount (venue + atmosphere drive it each frame).
-    rec.bloomPass.strength = this.bloomPass?.strength ?? 0;
-
-    const prevAspect = this.camera.aspect;
-    this.camera.aspect = rec.width / rec.height;
-    this.camera.updateProjectionMatrix();
     try {
-      rec.composer.render();
+      rec.ctx.clearRect(0, 0, rec.width, rec.height);
+      rec.ctx.drawImage(this.canvas, 0, 0, rec.width, rec.height);
     } catch (err) {
-      console.warn('[Stage3D] Recording render pass failed:', err);
-    } finally {
-      renderer.setRenderTarget(null);
-      this.camera.aspect = prevAspect;
-      this.camera.updateProjectionMatrix();
+      console.warn('[Stage3D] Recording canvas copy failed:', err);
     }
-
-    // One readback in flight at a time — a frame or two of latency is
-    // invisible since captureStream samples the canvas continuously.
-    if (rec.readbackPending) return;
-    rec.readbackPending = true;
-    renderer.readRenderTargetPixelsAsync(rec.composer.readBuffer, 0, 0, rec.width, rec.height, rec.pixels)
-      .then(() => this.blitRecording())
-      .catch((err: unknown) => console.warn('[Stage3D] Recording readback failed:', err))
-      .finally(() => { if (this.recording === rec) rec.readbackPending = false; });
-  }
-
-  /** Flip the GL-bottom-up readback to top-down and push it into the
-   *  record canvas the MediaRecorder is sampling. */
-  private blitRecording(): void {
-    const rec = this.recording;
-    if (!rec) return;
-    const { width: w, height: h, pixels } = rec;
-    const dst = rec.image.data;
-    const rowBytes = w * 4;
-    for (let y = 0; y < h; y++) {
-      const src = (h - 1 - y) * rowBytes;
-      dst.set(pixels.subarray(src, src + rowBytes), y * rowBytes);
-    }
-    rec.ctx.putImageData(rec.image, 0, 0);
   }
 
   // ── Venue swap ───────────────────────────────────────────────────────
@@ -1520,6 +1821,7 @@ export class Stage3DRenderer {
       this.scene.remove(this.venueBuild.group);
       disposeObject(this.venueBuild.group);
     }
+    this.venueMaterialBaselines.clear();
     for (const l of this.venueLights) this.scene.remove(l);
     this.venueLights = [];
     if (this.gridHelper) {
@@ -1533,6 +1835,8 @@ export class Stage3DRenderer {
     this.venueBuild = build;
     this.currentVenue = venue;
     this.scene.add(build.group);
+    this.controls.minDistance = build.cameraBounds?.minDistance ?? 0;
+    this.controls.maxDistance = build.cameraBounds?.maxDistance ?? Infinity;
     for (const l of build.lights) { this.scene.add(l); this.venueLights.push(l); }
     // Capture floor baseline PBR params so floorDarkness can lerp them
     // all the way to zero (truly black) and back to venue baseline.
@@ -1541,6 +1845,7 @@ export class Stage3DRenderer {
     this.venueFloorBaseMetalness = floorMat.metalness;
     this.venueFloorBaseRoughness = floorMat.roughness;
     this.venueFloorBaseEnvMapIntensity = floorMat.envMapIntensity ?? 1;
+    this.collectVenueMaterialBaselines(build.group);
     // Re-collect tagged truss materials (venue scenery only — element
     // entries register their own via syncUserElements).
     this.trussMaterials.clear();
@@ -1550,7 +1855,7 @@ export class Stage3DRenderer {
     this.sceneryEntries.clear();
     build.group.traverse(obj => {
       const id = obj.userData.sceneryId as string | undefined;
-      if (!id || this.sceneryEntries.has(id)) return;
+      if (!id || build.lockedSceneryIds?.includes(id) || this.sceneryEntries.has(id)) return;
       this.sceneryEntries.set(id, {
         group: obj,
         basePosition: [obj.position.x, obj.position.y, obj.position.z],
@@ -1577,9 +1882,15 @@ export class Stage3DRenderer {
     // slider stays authoritative.
     if (this.bloomPass) this.bloomPass.strength = build.bloomStrength;
 
-    if (!this.cameraInitialized) {
+    if (!this.cameraInitialized || build.resetCameraOnLoad) {
       this.camera.position.set(...build.cameraPosition);
       this.controls.target.set(...build.cameraTarget);
+      if (build.cameraFov) {
+        this.camera.fov = build.cameraFov;
+        stage3DCameraFov.set(build.cameraFov);
+        this.camera.updateProjectionMatrix();
+      }
+      this.clampCameraToVenueBounds();
       this.cameraInitialized = true;
     }
 
@@ -1588,6 +1899,8 @@ export class Stage3DRenderer {
     // holders need re-handing to the new instance.
     this.atmosphereRig = new AtmosphereRig(this.scene, build);
     this.userStripsDirty = true;
+    this.userFixturesDirty = true;
+    this.userLightAnimsDirty = true;
 
     // Force LED rebuild on next render — new wall geometry.
     this.currentLedSignature = '';
@@ -1618,10 +1931,18 @@ export class Stage3DRenderer {
       if (dome) {
         const dp = domeScreenPlacement(layer, dome);
         if (!dp) continue;
-        const mapping = (screenOverrides[layer.id]?.domeMapping ?? 'wrap') as DomeMapping;
+        const screenOverride = screenOverrides[layer.id] ?? {};
+        const mapping = (screenOverride.domeMapping ?? 'wrap') as DomeMapping;
+        const uvSettings = domeUvSettingsFromOverride(screenOverride);
+        const uvSignature = domeUvSignature(uvSettings);
+        const defaultPosition = this.venueBuild?.defaultScreenTransform?.position ?? [dome.centerX, dome.centerY, dome.centerZ];
+        const defaultRotation = this.venueBuild?.defaultScreenTransform?.rotation ?? [0, 0, 0];
+        const defaultScale = this.venueBuild?.defaultScreenTransform?.scale ?? [1, 1, 1];
 
         const group = new THREE.Group();
-        group.position.set(dome.centerX, dome.centerY, dome.centerZ);
+        group.position.set(...defaultPosition);
+        group.rotation.set(...defaultRotation);
+        group.scale.set(...defaultScale);
         group.userData = { layerId: layer.id, kind: 'led-screen' };
 
         const material = new THREE.ShaderMaterial({
@@ -1631,7 +1952,7 @@ export class Stage3DRenderer {
           side: THREE.DoubleSide,
           toneMapped: false,
         });
-        const geometry = buildDomeSectorGeometry(dome, dp.u0, dp.u1, dp.yTop, dp.yBottom, mapping);
+        const geometry = buildDomeSectorGeometry(dome, dp.u0, dp.u1, dp.yTop, dp.yBottom, mapping, uvSettings);
         const surface = new THREE.Mesh(geometry, material);
         surface.userData = { layerId: layer.id };
         group.add(surface);
@@ -1678,10 +1999,12 @@ export class Stage3DRenderer {
 
         this.ledEntries.push({
           layer, group, surface, material,
-          defaultPosition: [dome.centerX, dome.centerY, dome.centerZ],
+          defaultPosition,
+          defaultRotation,
+          defaultScale,
           defaultWidth: dp.chordW,
           defaultHeight: dp.chordH,
-          dome: { u0: dp.u0, u1: dp.u1, yTop: dp.yTop, yBottom: dp.yBottom, mapping, lightOffset, lightTarget },
+          dome: { u0: dp.u0, u1: dp.u1, yTop: dp.yTop, yBottom: dp.yBottom, mapping, uvSignature, lightOffset, lightTarget },
           ambientLight, averageRT,
           averagePixels: new Uint8Array(4),
           stageFxBrightness: 1,
@@ -1768,6 +2091,8 @@ export class Stage3DRenderer {
       const entry: LedEntry = {
         layer, group, surface, material,
         defaultPosition: placement.position,
+        defaultRotation: [0, 0, 0],
+        defaultScale: [1, 1, 1],
         defaultWidth: placement.width,
         defaultHeight: placement.height,
         ambientLight, averageRT, averagePixels,
@@ -1829,6 +2154,33 @@ export class Stage3DRenderer {
     });
   }
 
+  private collectVenueMaterialBaselines(root: THREE.Object3D): void {
+    this.venueMaterialBaselines.clear();
+    root.traverse((obj: any) => {
+      const mats = Array.isArray(obj.material) ? obj.material : (obj.material ? [obj.material] : []);
+      for (const mat of mats) {
+        if (!mat || this.venueMaterialBaselines.has(mat)) continue;
+        const baseline: MaterialBaseline = {};
+        if (mat.color instanceof THREE.Color) baseline.color = mat.color.clone();
+        if (mat.emissive instanceof THREE.Color) baseline.emissive = mat.emissive.clone();
+        if (typeof mat.envMapIntensity === 'number') baseline.envMapIntensity = mat.envMapIntensity;
+        if (baseline.color || baseline.emissive || baseline.envMapIntensity !== undefined) {
+          this.venueMaterialBaselines.set(mat, baseline);
+        }
+      }
+    });
+  }
+
+  private applyVenueMaterialDarkness(dark: number): void {
+    const visible = 1 - Math.max(0, Math.min(1, dark));
+    for (const [mat, baseline] of this.venueMaterialBaselines) {
+      const m = mat as any;
+      if (baseline.color && m.color instanceof THREE.Color) m.color.copy(baseline.color).multiplyScalar(visible);
+      if (baseline.emissive && m.emissive instanceof THREE.Color) m.emissive.copy(baseline.emissive).multiplyScalar(visible);
+      if (baseline.envMapIntensity !== undefined) m.envMapIntensity = baseline.envMapIntensity * visible;
+    }
+  }
+
   // ── User-element sync ────────────────────────────────────────────────
 
   private syncUserElements(elements: UserStageElement[]): void {
@@ -1839,6 +2191,8 @@ export class Stage3DRenderer {
         disposeObject(entry.group);
         this.elementEntries.delete(id);
         this.userStripsDirty = true;
+        this.userFixturesDirty = true;
+        this.userLightAnimsDirty = true;
       }
     }
     for (const el of elements) {
@@ -1850,6 +2204,8 @@ export class Stage3DRenderer {
         this.elementEntries.set(el.id, { element: el, group, signature: sig });
         this.collectTrussMaterials(group);
         this.userStripsDirty = true;
+        this.userFixturesDirty = true;
+        this.userLightAnimsDirty = true;
       } else if (existing.signature !== sig) {
         // Params changed — rebuild children but preserve the wrapping
         // group so the gizmo stays attached.
@@ -1868,6 +2224,8 @@ export class Stage3DRenderer {
         // Re-tag any new truss materials.
         this.collectTrussMaterials(existing.group);
         this.userStripsDirty = true;
+        this.userFixturesDirty = true;
+        this.userLightAnimsDirty = true;
       } else {
         // Skip transform write when this entry is being driven by the
         // multi-select pivot or actively dragged by the gizmo.
@@ -1879,6 +2237,135 @@ export class Stage3DRenderer {
           existing.group.scale.setScalar(el.scale);
         }
         existing.element = el;
+      }
+    }
+  }
+
+  private collectUserLightAnims(): void {
+    this.userLightAnimsDirty = false;
+    const list: UserLightAnim[] = [];
+    for (const [, entry] of this.elementEntries) {
+      entry.group.traverse(obj => {
+        const anim = obj.userData.stageLightAnim as UserLightAnim | undefined;
+        if (anim) list.push(anim);
+      });
+    }
+    this.userLightAnims = list;
+  }
+
+  private lightPhase(anim: UserLightAnim, audio: VisualAudioState, time: number): number {
+    const speed = Math.max(0, anim.speed || 0);
+    if (anim.timing === 'bpm') {
+      const bpm = audio.bpm > 0 ? audio.bpm : 120;
+      return time * (bpm / 60) * Math.max(0.05, speed);
+    }
+    if (anim.timing === 'audio') {
+      const drive = audio.isActive ? 0.35 + audio.energy * 1.8 + audio.bass * 0.9 : 0.65;
+      return time * Math.max(0.05, speed) * drive + audio.beatPhase;
+    }
+    return time * speed;
+  }
+
+  private lightPatternGain(anim: UserLightAnim, phase: number, audio: VisualAudioState): number {
+    const p = phase + anim.phase;
+    const wave = Math.sin(p * Math.PI * 2) * 0.5 + 0.5;
+    const total = Math.max(1, anim.total);
+    const slot = anim.index / total;
+    switch (anim.pattern) {
+      case 'blackout':
+        return 0;
+      case 'pulse':
+        return anim.timing === 'audio'
+          ? 0.18 + Math.max(audio.beat, audio.kick, audio.bass * 0.8) * 0.95
+          : 0.22 + wave * 0.78;
+      case 'breathe':
+        return 0.18 + wave * wave * 0.82;
+      case 'chase': {
+        const head = ((phase % 1) + 1) % 1;
+        let d = Math.abs(slot - head);
+        d = Math.min(d, 1 - d);
+        return 0.12 + Math.max(0, 1 - d * Math.max(2.5, total * 0.72)) ** 2 * 0.98;
+      }
+      case 'alternate': {
+        const even = anim.index % 2 === 0;
+        return 0.2 + (even ? wave : 1 - wave) * 0.8;
+      }
+      case 'sweep':
+        return 0.45 + wave * 0.55;
+      case 'strobe': {
+        if (anim.timing === 'audio') return audio.kick > 0.45 || audio.beat > 0.88 ? 1.25 : 0.04;
+        return Math.sin(p * Math.PI * 12) > 0.35 ? 1.15 : 0.03;
+      }
+      case 'static':
+      default:
+        return 1;
+    }
+  }
+
+  private refreshUserLightAnim(anim: UserLightAnim): void {
+    if (!anim.elementId) return;
+    const entry = this.elementEntries.get(anim.elementId);
+    if (!entry) return;
+    const p = entry.element.params;
+    anim.color = paramString(p, 'color', anim.color || '#ffffff');
+    anim.color2 = paramString(p, 'color2', anim.color2 || anim.color || '#ffffff');
+    anim.intensity = paramNumber(p, 'intensity', anim.intensity || 1);
+    anim.pattern = paramString(p, 'pattern', anim.pattern || 'static');
+    anim.timing = paramString(p, 'timing', anim.timing || 'manual');
+    anim.speed = paramNumber(p, 'speed', anim.speed || 1);
+    anim.pan = THREE.MathUtils.degToRad(paramNumber(p, 'pan', THREE.MathUtils.radToDeg(anim.pan || 0)));
+    anim.tilt = THREE.MathUtils.degToRad(paramNumber(p, 'tilt', THREE.MathUtils.radToDeg(anim.tilt || 0)));
+    anim.spread = paramNumber(p, 'spread', anim.spread || 0.65);
+    anim.angle = THREE.MathUtils.degToRad(paramNumber(p, 'beamAngle', THREE.MathUtils.radToDeg(anim.angle || THREE.MathUtils.degToRad(28))));
+    anim.distance = paramNumber(p, 'distance', anim.distance || 28);
+  }
+
+  private updateUserLightAnims(time: number, audio: VisualAudioState): void {
+    if (this.userLightAnims.length === 0) return;
+    const colorA = new THREE.Color();
+    const colorB = new THREE.Color();
+    const color = new THREE.Color();
+    for (const anim of this.userLightAnims) {
+      this.refreshUserLightAnim(anim);
+      const phase = this.lightPhase(anim, audio, time);
+      const gain = Math.max(0, Math.min(1.35, this.lightPatternGain(anim, phase, audio)));
+      colorA.set(anim.color || '#ffffff');
+      colorB.set(anim.color2 || anim.color || '#ffffff');
+      const blend = anim.pattern === 'alternate'
+        ? (anim.index % 2 === 0 ? 0 : 1)
+        : anim.pattern === 'chase'
+          ? Math.max(0, Math.min(1, gain))
+          : Math.sin((phase + anim.phase) * Math.PI * 2) * 0.5 + 0.5;
+      color.copy(colorA).lerp(colorB, blend);
+
+      if (anim.light) {
+        anim.light.color.copy(color);
+        anim.light.distance = Math.max(1, anim.distance);
+        anim.light.angle = Math.max(THREE.MathUtils.degToRad(4), anim.angle);
+        anim.light.intensity = anim.intensity * gain * (anim.kind === 'blinder' ? 5.5 : anim.kind === 'wash' ? 3.0 : 4.2);
+      }
+
+      const mat = anim.lens ? (anim.lens.material as THREE.MeshStandardMaterial | undefined) : undefined;
+      if (mat) {
+        mat.color.copy(color);
+        mat.emissive.copy(color);
+        mat.emissiveIntensity = 0.18 + anim.intensity * gain * (anim.kind === 'blinder' ? 1.7 : 1.15);
+      }
+
+      if (anim.kind === 'mover' && anim.yoke && anim.head) {
+        const sweep = anim.pattern === 'static' || anim.pattern === 'blackout' ? 0 : anim.spread;
+        const move = Math.sin((phase + anim.index / Math.max(1, anim.total)) * Math.PI * 2);
+        const fan = (anim.index - (anim.total - 1) / 2) / Math.max(1, anim.total / 2);
+        const chasePulse = anim.pattern === 'chase' ? gain : 0.5;
+        const pan = (anim.restPan ?? 0)
+          + anim.pan
+          + (anim.pattern === 'alternate' ? (anim.index % 2 === 0 ? 1 : -1) : 1) * move * sweep
+          + (anim.pattern === 'sweep' || anim.pattern === 'chase' ? fan * sweep * chasePulse : 0);
+        const tilt = (anim.restTilt ?? 0.5)
+          + anim.tilt
+          + Math.cos((phase * 0.7 + anim.phase) * Math.PI * 2) * sweep * 0.42;
+        anim.yoke.rotation.y = pan;
+        anim.head.rotation.x = tilt;
       }
     }
   }
@@ -1942,18 +2429,21 @@ export class Stage3DRenderer {
     const targets = [...get(selectedStage3DTargets)]
       .map(key => ({ key, group: this.resolveTargetGroup(key) }))
       .filter((t): t is { key: string; group: THREE.Group } => t.group !== null);
+    this.updateSelectionOutline();
 
     if (targets.length === 0) return;
-    if (targets.length === 1) {
-      this.transformControls.attach(targets[0].group);
+    const transformable = targets.filter(t => this.targetCanTransform(t.key));
+    if (transformable.length === 0) return;
+    if (transformable.length === 1) {
+      this.transformControls.attach(transformable[0].group);
       this.transformControls.setMode(get(stage3DGizmoMode));
       return;
     }
 
     // Multi — pivot at centroid.
     const centroid = new THREE.Vector3();
-    for (const t of targets) centroid.add(t.group.getWorldPosition(new THREE.Vector3()));
-    centroid.divideScalar(targets.length);
+    for (const t of transformable) centroid.add(t.group.getWorldPosition(new THREE.Vector3()));
+    centroid.divideScalar(transformable.length);
 
     const pivot = new THREE.Group();
     pivot.position.copy(centroid);
@@ -1963,7 +2453,7 @@ export class Stage3DRenderer {
     // attach() reads matrixWorld to preserve world transforms — force a
     // refresh so reparented children land in the correct local space.
     this.scene.updateMatrixWorld(true);
-    for (const t of targets) {
+    for (const t of transformable) {
       pivot.attach(t.group);
       const sel = parseSelection(t.key);
       if (sel) this.pivotedIds.add(sel.id);
@@ -1988,11 +2478,39 @@ export class Stage3DRenderer {
   // ── Pointer / keyboard ───────────────────────────────────────────────
 
   private onPointerDown(event: PointerEvent): void {
+    if (event.button !== 0) return;
     if ((this.transformControls as any).dragging) return;
+    if ((this.transformControls as any).axis) return;
     this.pointerDownPos = { x: event.clientX, y: event.clientY };
     const additive = event.shiftKey || event.metaKey;
+    const targetKey = this.pickTargetKey(event.clientX, event.clientY);
+    const directMove = !!targetKey && this.targetCanTransform(targetKey) && !additive && get(stage3DGizmoMode) === 'translate';
+    if (targetKey && directMove) {
+      const selected = get(selectedStage3DTargets);
+      if (selected.has(targetKey)) {
+        if (get(selectedStage3DNodeId) !== targetKey) {
+          selectedStage3DNodeId.set(targetKey);
+          this.applySelection(targetKey);
+        }
+      } else {
+        this.selectNode(targetKey, false);
+      }
+      const drag = this.createDirectDragState(event);
+      if (drag) {
+        this.directDrag = drag;
+        this.controls.enabled = false;
+        window.addEventListener('pointermove', this.bound.pointerMove);
+        window.addEventListener('pointerup', this.bound.pointerUp);
+        try { this.canvas.setPointerCapture(event.pointerId); } catch { /* capture unavailable */ }
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+    }
+
     const onUp = (upEvent: PointerEvent) => {
       window.removeEventListener('pointerup', onUp);
+      this.pendingClickPointerUpCleanup = null;
       if (!this.pointerDownPos) return;
       const dx = upEvent.clientX - this.pointerDownPos.x;
       const dy = upEvent.clientY - this.pointerDownPos.y;
@@ -2000,17 +2518,24 @@ export class Stage3DRenderer {
       if (Math.hypot(dx, dy) > 5) return;
       this.pickAt(upEvent.clientX, upEvent.clientY, additive);
     };
+    this.pendingClickPointerUpCleanup?.();
+    this.pendingClickPointerUpCleanup = () => window.removeEventListener('pointerup', onUp);
     window.addEventListener('pointerup', onUp);
   }
 
-  private pickAt(clientX: number, clientY: number, additive: boolean): void {
+  private setPointerRay(clientX: number, clientY: number): boolean {
     const rect = this.canvas.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return;
+    if (rect.width <= 0 || rect.height <= 0) return false;
     this.pointerNDC.set(
       ((clientX - rect.left) / rect.width) * 2 - 1,
       -(((clientY - rect.top) / rect.height) * 2 - 1),
     );
     this.raycaster.setFromCamera(this.pointerNDC, this.camera);
+    return true;
+  }
+
+  private pickTargetKey(clientX: number, clientY: number): string | null {
+    if (!this.setPointerRay(clientX, clientY)) return null;
     // Also raycast against the venue group so trusses/deck/fixtures
     // become pickable. Sourced from sceneryEntries' indexed groups so
     // we never snag hidden (deleted) or pivot-wrapped pieces.
@@ -2021,18 +2546,104 @@ export class Stage3DRenderer {
       if (e.group.visible) targets.push(e.group);
     }
     const hits = this.raycaster.intersectObjects(targets, true);
-    if (hits.length === 0) {
-      if (!additive) this.selectNode(null);
-      return;
-    }
+    if (hits.length === 0) return null;
     let o: THREE.Object3D | null = hits[0].object;
     while (o) {
-      if (o.userData?.layerId)    { this.selectNode(`screen:${o.userData.layerId}`,   additive); return; }
-      if (o.userData?.elementId)  { this.selectNode(`element:${o.userData.elementId}`, additive); return; }
-      if (o.userData?.sceneryId)  { this.selectNode(`scenery:${o.userData.sceneryId}`, additive); return; }
+      if (o.userData?.layerId) return `screen:${o.userData.layerId}`;
+      if (o.userData?.elementId) return `element:${o.userData.elementId}`;
+      if (o.userData?.sceneryId) return `scenery:${o.userData.sceneryId}`;
       o = o.parent;
     }
+    return null;
+  }
+
+  private pickAt(clientX: number, clientY: number, additive: boolean): void {
+    const key = this.pickTargetKey(clientX, clientY);
+    if (key) {
+      this.selectNode(key, additive);
+      return;
+    }
     if (!additive) this.selectNode(null);
+  }
+
+  private createDirectDragState(event: PointerEvent): DirectDragState | null {
+    const primaryKey = get(selectedStage3DNodeId);
+    const primary = primaryKey ? this.resolveTargetGroup(primaryKey) : null;
+    const dragObject = this.gizmoPivot ?? primary;
+    if (!dragObject) return null;
+    this.scene.updateMatrixWorld(true);
+    const anchor = dragObject.getWorldPosition(new THREE.Vector3());
+    const normal = new THREE.Vector3();
+    this.camera.getWorldDirection(normal).normalize();
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, anchor);
+    const startHit = new THREE.Vector3();
+    if (!this.intersectDragPlane(event.clientX, event.clientY, plane, startHit)) return null;
+
+    const objects: { object: THREE.Object3D; startWorld: THREE.Vector3 }[] = [];
+    if (this.gizmoPivot) {
+      objects.push({ object: this.gizmoPivot, startWorld: this.gizmoPivot.getWorldPosition(new THREE.Vector3()) });
+    } else {
+      for (const key of get(selectedStage3DTargets)) {
+        const object = this.resolveTargetGroup(key);
+        if (object) objects.push({ object, startWorld: object.getWorldPosition(new THREE.Vector3()) });
+      }
+    }
+    if (!objects.length) return null;
+    return {
+      pointerId: event.pointerId,
+      startClient: { x: event.clientX, y: event.clientY },
+      plane,
+      startHit,
+      objects,
+      active: false,
+    };
+  }
+
+  private intersectDragPlane(clientX: number, clientY: number, plane: THREE.Plane, out: THREE.Vector3): boolean {
+    if (!this.setPointerRay(clientX, clientY)) return false;
+    return this.raycaster.ray.intersectPlane(plane, out) !== null;
+  }
+
+  private setWorldPosition(object: THREE.Object3D, world: THREE.Vector3): void {
+    const local = world.clone();
+    object.parent?.worldToLocal(local);
+    object.position.copy(local);
+    object.updateMatrixWorld(true);
+  }
+
+  private onPointerMove(event: PointerEvent): void {
+    const drag = this.directDrag;
+    if (!drag) return;
+    const moved = Math.hypot(event.clientX - drag.startClient.x, event.clientY - drag.startClient.y);
+    if (!drag.active && moved < 4) return;
+    const hit = new THREE.Vector3();
+    if (!this.intersectDragPlane(event.clientX, event.clientY, drag.plane, hit)) return;
+    drag.active = true;
+    const delta = hit.sub(drag.startHit);
+    for (const item of drag.objects) {
+      this.setWorldPosition(item.object, item.startWorld.clone().add(delta));
+    }
+    this.persistAllSelected();
+    this.updateSelectionOutline();
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  private onPointerUp(event: PointerEvent): void {
+    const drag = this.directDrag;
+    window.removeEventListener('pointermove', this.bound.pointerMove);
+    window.removeEventListener('pointerup', this.bound.pointerUp);
+    this.directDrag = null;
+    this.pointerDownPos = null;
+    this.controls.enabled = true;
+    try { this.canvas.releasePointerCapture(drag?.pointerId ?? event.pointerId); } catch { /* capture unavailable */ }
+    if (!drag) return;
+    if (drag.active) {
+      this.persistAllSelected();
+      this.applySelection(get(selectedStage3DNodeId));
+      event.preventDefault();
+      event.stopPropagation();
+    }
   }
 
   private onKeyDown(event: KeyboardEvent): void {
@@ -2145,6 +2756,7 @@ export class Stage3DRenderer {
       group.getWorldScale(ws);
       we.setFromQuaternion(wq, 'XYZ');
       if (sel.kind === 'screen') {
+        if (this.screenTransformsLocked()) continue;
         const entry = this.ledByLayerId.get(sel.id);
         if (!entry) continue;
         stage3dScene.setScreenOverride(entry.layer.id, {

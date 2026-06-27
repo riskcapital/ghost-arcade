@@ -421,6 +421,10 @@ export interface Stage3DRendererControls {
    *  Reads the default framebuffer synchronously right after the scene
    *  render — the only reliable window with preserveDrawingBuffer off. */
   captureFrame: () => Promise<{ data: Uint8Array; width: number; height: number }>;
+  /** Immediate offscreen capture at an explicit output size. Used by
+   *  offline Demo Reel export after the live frame has advanced to the
+   *  desired world-clock time. */
+  captureFrameAt: (width: number, height: number) => Promise<{ data: Uint8Array; width: number; height: number }>;
   /** Set the camera field of view in degrees (clamped 15–120). Wide
    *  FOVs are how you get the full drama of the Sphere dome in frame. */
   setFov: (fov: number) => void;
