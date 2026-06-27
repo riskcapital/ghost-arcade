@@ -8,6 +8,23 @@ export interface AppReleaseNotes {
 }
 
 const RELEASE_NOTES: Record<string, AppReleaseNotes> = {
+  '1.9.9': {
+    title: 'Stage 3D venues, recording reliability, mapping polish, and cleanup',
+    summary: [
+      'Stage 3D recording and Demo Reel export now capture the live rendered canvas.',
+      'Sphere, lighting, mapping, and Map Sim workflows are more polished and reliable.',
+      'Runtime cleanup now releases Stage 3D, VJ, and Map Sim GPU resources more carefully.',
+    ],
+    highlights: [
+      'Stage 3D recording and Demo Reel export now capture from the live rendered canvas, fixing black MP4 output and preserving the exact on-screen lighting, exposure, haze, and screen glow.',
+      'Demo Reel rendering now supports cross-dissolve transitions while keeping shader content, camera motion, and lighting FX locked to the same virtual render clock.',
+      'The Sphere venue now uses a true dome-style screen with better default framing, editable dome tuning controls, screen/room inspector tabs, locked venue defaults, and a more recognizable room layout.',
+      'Stage 3D lighting fixtures now have richer per-fixture controls, patterns, colors, timing modes, and lower-cost beams so movers, washes, blinders, strips, lasers, and haze read more like a live rig.',
+      'Mapping and Stage Designer workflows gained marquee multi-select, multi-layer transform improvements, arrow-key movement, clearer layer drop indicators, restored grid/snap access, and fixed warp editing after marquee selection.',
+      'Map Sim ships with the refreshed isometric cube pyramid default scene, more reliable click selection, undo behavior, and recording that respects the visible lighting result.',
+      'VJ Mode clip cells keep their grid sizing stable during drag/drop, and runtime texture caches now dispose cleanly when clips are swapped or VJ mode closes.',
+    ],
+  },
   '1.9.8': {
     title: 'Faster exports, Veo loop bridges, and render-clock fixes',
     summary: [

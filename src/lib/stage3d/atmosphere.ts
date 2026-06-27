@@ -37,6 +37,7 @@ import { DEFAULT_ATMOSPHERE } from './types';
 import type { VisualAudioState } from '../audio/visualAudio';
 
 const BEAM_LENGTH = 24;
+const MAX_BEAM_UNITS = 32;
 const HAZE_FOG_MULT = 2.6;
 const PHRASE_BEATS = 16;
 const STRIP_SEGS = 24;
@@ -187,11 +188,14 @@ export interface UserStripAnim {
   glow: number;
   speed: number;
   sync: boolean;
+  timing?: string;
   base: THREE.Color;
 }
 
 export class AtmosphereRig {
   private flags: Stage3DAtmosphere = { ...DEFAULT_ATMOSPHERE };
+  private fixtureRoots: THREE.Object3D[] = [];
+  private fixtureRootSig = '';
   private beams: BeamUnit[] = [];
   private lasers: LaserUnit[] = [];
   private strips: PixelStrip[] = [];
@@ -272,8 +276,9 @@ export class AtmosphereRig {
 
   /** Color slot for a beam under the current look, by rig position. */
   private beamColor(rigIndex: number, n: number): THREE.Color {
-    const [primary, secondary, accent, wash] = this.palette;
-    switch (this.look.name) {
+    const [primary, secondary, accent, wash] = this.paletteFor('beam');
+    const lookName = this.flags.beamPattern === 'auto' ? this.look.name : this.flags.beamPattern;
+    switch (lookName) {
       case 'searchlight': return wash;
       case 'unison': return primary;
       case 'alternate': return rigIndex % 2 === 0 ? primary : secondary;
@@ -288,16 +293,11 @@ export class AtmosphereRig {
   }
 
   setFlags(flags: Stage3DAtmosphere): void {
-    if (
-      flags.beams === this.flags.beams &&
-      flags.lasers === this.flags.lasers &&
-      flags.haze === this.flags.haze &&
-      flags.strips === this.flags.strips
-    ) return;
-    if (flags.beams !== this.flags.beams) flags.beams ? this.buildBeams() : this.teardownBeams();
-    if (flags.lasers !== this.flags.lasers) flags.lasers ? this.buildLasers() : this.teardownLasers();
-    if (flags.strips !== this.flags.strips) flags.strips ? this.buildStrips() : this.teardownStrips();
-    this.flags = { ...flags };
+    const next = { ...DEFAULT_ATMOSPHERE, ...flags };
+    if (next.beams !== this.flags.beams) next.beams ? this.buildBeams() : this.teardownBeams();
+    if (next.lasers !== this.flags.lasers) next.lasers ? this.buildLasers() : this.teardownLasers();
+    if (next.strips !== this.flags.strips) next.strips ? this.buildStrips() : this.teardownStrips();
+    this.flags = next;
   }
 
   /** Replace the set of user-placed ledstrip elements (renderer calls
@@ -306,21 +306,97 @@ export class AtmosphereRig {
     this.userStrips = strips;
   }
 
+  /** Replace the user-placed fixture roots that participate in beams.
+   *  If Beams is already live, rebuild immediately so newly-added
+   *  movers light up without toggling the FX off/on. */
+  setFixtureRoots(roots: THREE.Object3D[]): void {
+    const sig = roots.map(r => r.uuid).join('|');
+    if (sig === this.fixtureRootSig) return;
+    this.fixtureRootSig = sig;
+    this.fixtureRoots = roots;
+    if (this.flags.beams) {
+      this.teardownBeams();
+      this.buildBeams();
+    }
+  }
+
+  private paletteFor(kind: 'beam' | 'laser'): THREE.Color[] {
+    const palette = kind === 'beam' ? this.flags.beamPalette : this.flags.laserPalette;
+    const custom = new THREE.Color(kind === 'beam' ? this.flags.beamColor : this.flags.laserColor);
+    const wash = custom.clone().lerp(new THREE.Color(0xffffff), 0.35).multiplyScalar(0.45);
+    switch (palette) {
+      case 'screen':
+        return this.palette;
+      case 'custom': {
+        const hsl = { h: 0, s: 0, l: 0 };
+        custom.getHSL(hsl);
+        return [
+          custom.clone(),
+          new THREE.Color().setHSL((hsl.h + 0.5) % 1, Math.max(0.75, hsl.s), 0.56),
+          new THREE.Color().setHSL((hsl.h + 0.1) % 1, Math.max(0.75, hsl.s), 0.64),
+          wash,
+        ];
+      }
+      case 'cyan-magenta':
+        return [
+          new THREE.Color('#4af2ff'),
+          new THREE.Color('#ff3df0'),
+          new THREE.Color('#8a5cff'),
+          new THREE.Color('#32404f'),
+        ];
+      case 'amber-blue':
+        return [
+          new THREE.Color('#ffb648'),
+          new THREE.Color('#3478ff'),
+          new THREE.Color('#fff0b8'),
+          new THREE.Color('#403b2f'),
+        ];
+      case 'rainbow':
+        return [
+          new THREE.Color('#ff3864'),
+          new THREE.Color('#28f0ff'),
+          new THREE.Color('#b4ff37'),
+          new THREE.Color('#4f375f'),
+        ];
+      case 'white':
+        return [
+          new THREE.Color('#ffffff'),
+          new THREE.Color('#d8f7ff'),
+          new THREE.Color('#fff0cf'),
+          new THREE.Color('#4c535c'),
+        ];
+    }
+    return this.palette;
+  }
+
   // ── Builders / teardown ─────────────────────────────────────────────
 
   private buildBeams(): void {
-    const coneGeo = new THREE.CylinderGeometry(0.09, 2.1, BEAM_LENGTH, 18, 1, true)
+    const coneGeo = new THREE.CylinderGeometry(0.09, 2.1, BEAM_LENGTH, 10, 1, true)
       .translate(0, -BEAM_LENGTH / 2, 0);
     const found: { obj: THREE.Object3D; x: number }[] = [];
-    this.venue.group.traverse(obj => {
-      if (obj.userData.moverYoke && obj.userData.moverHead) {
-        found.push({ obj, x: obj.getWorldPosition(new THREE.Vector3()).x });
-      }
-    });
+    const scanRoot = (root: THREE.Object3D) => {
+      root.traverse(obj => {
+        if (obj.userData.moverYoke && obj.userData.moverHead) {
+          found.push({ obj, x: obj.getWorldPosition(new THREE.Vector3()).x });
+        }
+      });
+    };
+    scanRoot(this.venue.group);
+    for (const root of this.fixtureRoots) scanRoot(root);
     // Sort by world X so rigIndex maps to physical left→right order —
     // fans open from center, chases run across the rig.
     found.sort((a, b) => a.x - b.x);
-    found.forEach(({ obj }, i) => {
+    const picked: { obj: THREE.Object3D; x: number }[] = found.length <= MAX_BEAM_UNITS
+      ? found
+      : Array.from({ length: MAX_BEAM_UNITS }, (_, i) =>
+          found[Math.min(found.length - 1, Math.round(i * (found.length - 1) / Math.max(1, MAX_BEAM_UNITS - 1)))]!,
+        );
+    if (picked.length === 0) {
+      coneGeo.dispose();
+      return;
+    }
+    picked.forEach(({ obj }, i) => {
       const yoke = obj.userData.moverYoke as THREE.Object3D;
       const head = obj.userData.moverHead as THREE.Object3D;
       const rest = obj.userData.moverRest as { pan: number; tilt: number };
@@ -497,8 +573,12 @@ export class AtmosphereRig {
 
   // ── Per-frame drive ─────────────────────────────────────────────────
 
-  update(dt: number, audio: VisualAudioState): void {
-    this.elapsed += dt;
+  update(dt: number, audio: VisualAudioState, absoluteTimeSeconds?: number): void {
+    if (typeof absoluteTimeSeconds === 'number' && Number.isFinite(absoluteTimeSeconds)) {
+      this.elapsed = Math.max(0, absoluteTimeSeconds);
+    } else {
+      this.elapsed += dt;
+    }
     const t = this.elapsed;
 
     const active = audio.isActive;
@@ -508,7 +588,11 @@ export class AtmosphereRig {
     const treble = active ? audio.treble : 0.08;
     const beatEnv = active ? audio.beat : (Math.sin(t * 0.5) * 0.5 + 0.5) * 0.25;
     const bass = active ? audio.bass : 0.12;
-    const hazeGlow = this.flags.haze ? 1.3 : 1;
+    const beamBrightness = Math.max(0, this.flags.beamBrightness ?? 1);
+    const laserBrightness = Math.max(0, this.flags.laserBrightness ?? 1);
+    const stripBrightness = Math.max(0, this.flags.stripBrightness ?? 1);
+    const hazeAmount = Math.max(0.1, this.flags.hazeDensity ?? 1);
+    const hazeGlow = this.flags.haze ? 1 + 0.3 * hazeAmount : 1;
 
     // Energy EMA for look selection (~2s window).
     this.energyEma += (energy - this.energyEma) * (1 - Math.exp(-dt / 2));
@@ -527,7 +611,7 @@ export class AtmosphereRig {
 
     const colorEase = 1 - Math.exp(-dt / 0.35);
     const sweep = 0.4 + energy * 1.5;
-    const look = this.look.name;
+    const look = this.flags.beamPattern === 'auto' ? this.look.name : this.flags.beamPattern;
     const n = Math.max(1, this.beams.length);
 
     // ── Beams ──
@@ -573,35 +657,45 @@ export class AtmosphereRig {
       }
       b.yoke.rotation.y = pan;
       b.head.rotation.x = tilt;
-      b.mat.uniforms.uIntensity.value = Math.min(0.85, inten * hazeGlow);
+      const beamLevel = Math.min(1.25, inten * hazeGlow * beamBrightness);
+      b.mat.uniforms.uIntensity.value = Math.min(0.95, beamLevel);
       b.colorTarget.copy(this.beamColor(i, n));
       (b.mat.uniforms.uColor.value as THREE.Color).lerp(b.colorTarget, colorEase);
     }
 
     // ── Lasers ──
+    const laserPalette = this.paletteFor('laser');
+    const forcedLaser = this.flags.laserPattern;
     for (const l of this.lasers) {
-      const mode = this.look.laser;
-      const fan = 0.12 + (active ? audio.lfoBeat : (Math.sin(t * 0.5) * 0.5 + 0.5)) * 0.55;
+      const mode = forcedLaser === 'auto'
+        ? this.look.laser
+        : forcedLaser === 'fan'
+          ? 'sweep'
+          : forcedLaser;
+      const fanBase = forcedLaser === 'fan' ? 0.42 : 0.12;
+      const fanRange = forcedLaser === 'fan' ? 0.72 : 0.55;
+      const fan = fanBase + (active ? audio.lfoBeat : (Math.sin(t * 0.5) * 0.5 + 0.5)) * fanRange;
       const bn = l.blades.length;
       for (let b = 0; b < bn; b++) {
         l.blades[b].rotation.y = (b - (bn - 1) / 2) * (fan / (bn - 1)) * 2;
       }
-      l.group.rotation.y = Math.sin(t * sweep * 0.5 + l.phase) * 0.85;
+      l.group.rotation.y = Math.sin(t * sweep * 0.5 + l.phase) * (forcedLaser === 'fan' ? 0.38 : 0.85);
       l.group.rotation.x = -0.1 + Math.sin(t * sweep * 0.31 + l.phase * 2.1) * 0.12;
       let op = 0.28 + treble * 0.45 + kick * 0.2;
       if (mode === 'off') op = 0.05;
       if (mode === 'strobe') op = 0.06 + kick * 0.9;
-      l.mat.opacity = Math.min(0.85, op * hazeGlow);
-      l.colorTarget.copy(this.palette[1]);
+      l.mat.opacity = Math.min(0.92, op * hazeGlow * laserBrightness);
+      l.colorTarget.copy(laserPalette[1]);
       l.mat.color.lerp(l.colorTarget, colorEase);
     }
 
     // ── Venue strips ──
     const stripAudio = { beat: beatEnv, bass, kick };
+    const stripMode = this.flags.stripPattern === 'auto' ? this.look.strip : this.flags.stripPattern;
     this.strips.forEach((s, si) => {
       const color = si % 2 === 0 ? this.palette[0] : this.palette[2];
       const alt = this.palette[1];
-      this.writeStrip(s, this.look.strip, color, alt, stripAudio, t, 1, 1.6 * hazeGlow);
+      this.writeStrip(s, stripMode, color, alt, stripAudio, t, 1, 1.6 * hazeGlow * stripBrightness);
     });
 
     // ── User-placed ledstrip elements ──
@@ -609,13 +703,18 @@ export class AtmosphereRig {
     for (const u of this.userStrips) {
       const color = u.sync ? this.palette[0] : u.base;
       const alt = u.sync ? this.palette[1] : u.base;
-      this.writeStrip(u.strip, MODES[u.mode] ?? 'fill', color, alt, stripAudio, t, u.speed, u.glow * hazeGlow);
+      const stripTime = u.timing === 'bpm' && active && audio.bpm > 0
+        ? t * (audio.bpm / 60)
+        : u.timing === 'audio'
+          ? t * (0.35 + bass * 2.2 + beatEnv)
+          : t;
+      this.writeStrip(u.strip, MODES[u.mode] ?? 'fill', color, alt, stripAudio, stripTime, u.speed, u.glow * hazeGlow * stripBrightness);
     }
 
     // ── Haze ──
     const fog = this.scene.fog as THREE.FogExp2 | null;
     if (fog) {
-      const target = this.venue.fogDensity * (this.flags.haze ? HAZE_FOG_MULT : 1);
+      const target = this.venue.fogDensity * (this.flags.haze ? HAZE_FOG_MULT * hazeAmount : 1);
       const alpha = 1 - Math.exp(-dt / 1.2);
       this.fogCurrent += (target - this.fogCurrent) * alpha;
       fog.density = this.fogCurrent;

@@ -703,19 +703,22 @@
     position: absolute;
     top: 0;
     left: 0;
-    pointer-events: auto;
+    pointer-events: none;
     z-index: 15;
   }
 
   .custom-shape-handles.draw-mode {
+    pointer-events: auto;
     cursor: crosshair;
   }
 
   .custom-shape-handles.add-mode {
+    pointer-events: auto;
     cursor: crosshair;
   }
 
   .custom-shape-handles.remove-mode {
+    pointer-events: auto;
     cursor: not-allowed;
   }
 

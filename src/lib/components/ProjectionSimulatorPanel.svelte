@@ -10,6 +10,7 @@
   import {
     isProjectionSimTargetLocked,
     projectionSimGizmoMode,
+    projectionSimHistoryVersion,
     projectionSimScene,
     selectedProjectionSimTargets,
     selectedProjectionSimTarget,
@@ -60,6 +61,8 @@
   let snapGuides: ProjectionSimSnapGuide[] = [];
   let snapGuideTimer: number | null = null;
   let sceneClipboard: { kind: 'object'; object: ProjectionSimObject } | { kind: 'projector'; projector: ProjectionSimProjector } | null = null;
+  let canUndoScene = false;
+  let canRedoScene = false;
 
   const primitiveKinds: ProjectionSimPrimitiveKind[] = ['box', 'sphere', 'cylinder', 'cone', 'pyramid', 'column', 'plane'];
   const BLANK_PRESET_ID = '__blank__';
@@ -76,6 +79,12 @@
   $: selectedPreset = PROJECTION_SIM_PRESETS.find((preset) => preset.id === selectedPresetId) ?? PROJECTION_SIM_PRESETS[0];
   $: canCopySceneItem = Boolean(selectedObject || selectedProjector);
   $: canPasteSceneItem = Boolean(sceneClipboard);
+  $: {
+    $projectionSimHistoryVersion;
+    const historyCounts = projectionSimScene.getHistoryCounts();
+    canUndoScene = historyCounts.past > 0;
+    canRedoScene = historyCounts.future > 0;
+  }
 
   function cloneSceneValue<T>(value: T): T {
     return JSON.parse(JSON.stringify(value)) as T;
@@ -270,6 +279,18 @@
     sceneClipboard = { kind: 'projector', projector: cloneSceneValue(pasted) };
   }
 
+  function undoScene() {
+    projectionSimScene.undo();
+    renderer?.setSelection(get(selectedProjectionSimTarget));
+    renderer?.setSelections([...get(selectedProjectionSimTargets)]);
+  }
+
+  function redoScene() {
+    projectionSimScene.redo();
+    renderer?.setSelection(get(selectedProjectionSimTarget));
+    renderer?.setSelections([...get(selectedProjectionSimTargets)]);
+  }
+
   function toggleObjectLock(event: MouseEvent, id: string) {
     event.stopPropagation();
     projectionSimScene.toggleObjectLock(id);
@@ -283,13 +304,21 @@
   function handleKeydown(event: KeyboardEvent) {
     const target = event.target as HTMLElement | null;
     if (target?.closest('input, textarea, select')) return;
-    if (event.key === 'Delete' || event.key === 'Backspace') {
+    const key = event.key.toLowerCase();
+    if ((event.metaKey || event.ctrlKey) && key === 'z') {
+      event.preventDefault();
+      if (event.shiftKey) redoScene();
+      else undoScene();
+    } else if ((event.metaKey || event.ctrlKey) && key === 'y') {
+      event.preventDefault();
+      redoScene();
+    } else if (event.key === 'Delete' || event.key === 'Backspace') {
       event.preventDefault();
       deleteSelected();
-    } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'c') {
+    } else if ((event.metaKey || event.ctrlKey) && key === 'c') {
       event.preventDefault();
       copySelectedSceneItem();
-    } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'v') {
+    } else if ((event.metaKey || event.ctrlKey) && key === 'v') {
       event.preventDefault();
       pasteSceneItem();
     } else if (event.key === 'Escape') {
@@ -604,6 +633,14 @@
       <div class="toolbar-divider"></div>
 
       <div class="toolbar-cluster edit-actions" aria-label="Edit actions">
+        <button class="tbtn" disabled={!canUndoScene} onclick={undoScene} title="Undo">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14l-4-4 4-4"/><path d="M5 10h9a5 5 0 0 1 0 10h-2"/></svg>
+          <span>Undo</span>
+        </button>
+        <button class="tbtn" disabled={!canRedoScene} onclick={redoScene} title="Redo">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 14l4-4-4-4"/><path d="M19 10h-9a5 5 0 0 0 0 10h2"/></svg>
+          <span>Redo</span>
+        </button>
         <button class="tbtn" disabled={!canCopySceneItem} onclick={copySelectedSceneItem} title="Copy selected object">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>
           <span>Copy</span>

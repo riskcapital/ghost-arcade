@@ -63,10 +63,6 @@
   } as const;
   let recRes: keyof typeof REC_RES = '1080';
 
-  // Atmosphere FX toggle state — merged over defaults so scenes saved
-  // before the feature existed read as all-off.
-  $: atmo = { beams: false, lasers: false, haze: false, strips: false, ...($stage3dScene.atmosphere ?? {}) };
-
   // Refresh undo/redo button state whenever historyVersion bumps.
   let canUndo = false;
   let canRedo = false;
@@ -98,8 +94,24 @@
   $: selectedElement = selection?.kind === 'element'
     ? userElements.find(e => e.id === selection!.id) : null;
   $: selectedScenery = selection?.kind === 'scenery'
-    ? (sceneryItems.find(s => s.id === selection!.id) ?? { id: selection!.id, label: selection!.id })
+    ? (sceneryItems.find(s => s.id === selection!.id) ?? null)
     : null;
+  let sphereInspectorTab: 'screen' | 'room' = 'screen';
+  $: sphereScreenLayer = selectedScreen ?? screenLayers[0] ?? null;
+  $: if (venue === 'sphere' && sphereInspectorTab === 'screen' && !sphereScreenLayer) {
+    sphereInspectorTab = 'room';
+  }
+
+  function showSphereScreenInspector() {
+    const layer = selectedScreen ?? screenLayers[0] ?? null;
+    if (!layer) return;
+    sphereInspectorTab = 'screen';
+    setStage3DSelection(`screen:${layer.id}`);
+  }
+
+  function showSphereRoomInspector() {
+    sphereInspectorTab = 'room';
+  }
 
   function hasStageAdditions(scene = $stage3dScene): boolean {
     return (scene.userElements?.length ?? 0) > 0
@@ -475,6 +487,10 @@
     removeDomFullscreenListener = null;
     removeStageFullscreenListener?.();
     removeStageFullscreenListener = null;
+    if (toastTimer) {
+      clearTimeout(toastTimer);
+      toastTimer = null;
+    }
     recorderHandle?.stop();
     recorderHandle = null;
   });
@@ -494,8 +510,6 @@
         <path d="M15 18l-6-6 6-6"/>
       </svg>
     </button>
-    <div class="logo">GHOST<b>STAGE</b></div>
-
     <div class="seg" role="tablist">
       <button
         class="seg-btn"
@@ -580,7 +594,7 @@
     <input bind:this={fileInput} type="file" accept="application/json" style="display:none" onchange={onFileChosen} />
   </header>
 
-  <!-- Camera + Atmosphere HUD — its own strip under the toolbar so it
+  <!-- Camera HUD — its own strip under the toolbar so it
        never fights the (already packed) topbar for horizontal space. -->
   <div class="viewport-hud">
     <div class="hud-group fullscreen-ctl">
@@ -604,21 +618,6 @@
         value={$stage3DCameraFov}
         oninput={(e) => $stage3DRendererControls?.setFov(parseFloat((e.target as HTMLInputElement).value))} />
       <span class="fov-val">{Math.round($stage3DCameraFov)}°</span>
-    </div>
-    <div class="hud-group atmo-ctl" title="Atmosphere FX — audio-driven show elements">
-      <span class="atmo-label">FX</span>
-      <button class="atmo-btn" class:on={atmo.beams}
-        onclick={() => stage3dScene.setAtmosphere({ beams: !atmo.beams })}
-        title="Volumetric mover beams — pan/tilt to the music">Beams</button>
-      <button class="atmo-btn" class:on={atmo.lasers}
-        onclick={() => stage3dScene.setAtmosphere({ lasers: !atmo.lasers })}
-        title="Laser fans — beat-locked sweeps from the rig">Lasers</button>
-      <button class="atmo-btn" class:on={atmo.haze}
-        onclick={() => stage3dScene.setAtmosphere({ haze: !atmo.haze })}
-        title="Haze — fills the room, fattens every beam">Haze</button>
-      <button class="atmo-btn" class:on={atmo.strips}
-        onclick={() => stage3dScene.setAtmosphere({ strips: !atmo.strips })}
-        title="LED pixel strips along the trusses — bass-chased">Strips</button>
     </div>
   </div>
   {/if}
@@ -734,7 +733,30 @@
         Inspector shows the primary{selectedScreen ? ' (cyan outline)' : selectedElement ? ' (cyan outline)' : ''}.
       </div>
     {/if}
-    {#if selectedScreen}
+    {#if venue === 'sphere' && !selectedElement && !selectedScenery}
+      <div class="inspector-tabs" role="tablist" aria-label="Sphere inspector">
+        <button
+          class="inspector-tab"
+          class:active={sphereInspectorTab === 'screen'}
+          disabled={!sphereScreenLayer}
+          onclick={showSphereScreenInspector}
+          role="tab"
+          aria-selected={sphereInspectorTab === 'screen'}
+        >Screen</button>
+        <button
+          class="inspector-tab"
+          class:active={sphereInspectorTab === 'room'}
+          onclick={showSphereRoomInspector}
+          role="tab"
+          aria-selected={sphereInspectorTab === 'room'}
+        >Room</button>
+      </div>
+      {#if sphereInspectorTab === 'screen' && sphereScreenLayer}
+        <StageNodeProperties layerId={sphereScreenLayer.id} />
+      {:else}
+        <StageLightingPanel />
+      {/if}
+    {:else if selectedScreen}
       <StageNodeProperties layerId={selectedScreen.id} />
     {:else if selectedElement}
       <StageElementProperties elementId={selectedElement.id} />
@@ -843,8 +865,8 @@
     z-index: 20;
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 0 14px;
+    gap: 6px;
+    padding: 0 8px;
     background: linear-gradient(180deg, rgba(10, 12, 16, 0.92), rgba(10, 12, 16, 0.4));
     backdrop-filter: blur(10px);
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
@@ -856,17 +878,6 @@
     color: #fff; font-size: 21px; cursor: pointer;
   }
   .icon-btn:hover { background: rgba(40, 44, 56, 0.95); }
-  .logo {
-    font-weight: 700;
-    letter-spacing: 0.14em;
-    font-size: 15px;
-  }
-  .logo b {
-    background: linear-gradient(92deg, #4af2ff, #ff5cb8);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-  }
   .seg {
     display: flex; gap: 2px;
     background: rgba(255, 255, 255, 0.04);
@@ -875,27 +886,27 @@
     padding: 3px;
   }
   .seg-btn {
-    font: inherit; font-size: 13px; color: #8a93a3;
+    font: inherit; font-size: 12px; color: #8a93a3;
     background: none; border: none;
-    padding: 6px 11px; border-radius: 6px;
+    padding: 6px 9px; border-radius: 6px;
     cursor: pointer;
   }
   .seg-btn:hover { color: #e9edf4; }
   .seg-btn.on { background: #4af2ff; color: #04161a; font-weight: 600; }
   .tbtn {
-    font: inherit; font-size: 13px; color: #e9edf4;
+    font: inherit; font-size: 12px; color: #e9edf4;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
-    padding: 7px 11px; cursor: pointer;
+    padding: 7px 9px; cursor: pointer;
     white-space: nowrap;
   }
   .tbtn:hover { border-color: #4af2ff; color: #4af2ff; }
-  /* ── Camera + FX HUD strip (under the topbar, right-aligned) ── */
+  /* ── Camera HUD strip (under the topbar, clear of the inspector) ── */
   .viewport-hud {
     position: absolute;
-    top: 60px;
-    right: 14px;
+    top: 76px;
+    right: 322px;
     z-index: 19;
     display: flex;
     align-items: center;
@@ -932,32 +943,6 @@
     border-right: none;
   }
   .fullscreen-toggle.on {
-    background: rgba(74, 242, 255, 0.14);
-    color: #4af2ff;
-  }
-  .atmo-ctl { overflow: hidden; }
-  .atmo-label {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    color: rgba(255, 255, 255, 0.45);
-    padding: 0 7px 0 10px;
-  }
-  .atmo-btn {
-    font: inherit;
-    font-size: 12px;
-    color: rgba(255, 255, 255, 0.55);
-    background: transparent;
-    border: none;
-    border-right: 1px solid rgba(255, 255, 255, 0.07);
-    padding: 7px 9px;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: background 0.12s, color 0.12s;
-  }
-  .atmo-btn:last-child { border-right: none; }
-  .atmo-btn:hover { color: #4af2ff; }
-  .atmo-btn.on {
     background: rgba(74, 242, 255, 0.14);
     color: #4af2ff;
   }
@@ -1032,7 +1017,7 @@
     background: rgba(255, 92, 184, 0.13);
     opacity: 1;
   }
-  .spacer { flex: 1; }
+  .spacer { flex: 1 1 0; min-width: 0; }
   .dim-label {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 11px;
@@ -1040,11 +1025,39 @@
     letter-spacing: 0.1em;
   }
   .vsel {
-    font: inherit; font-size: 13px; color: #e9edf4;
+    min-width: 0;
+    font: inherit; font-size: 12px; color: #e9edf4;
     background: #10131a;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
-    padding: 7px 10px; cursor: pointer;
+    padding: 7px 8px; cursor: pointer;
+  }
+  #stage3d-venue-select { width: clamp(145px, 12vw, 220px); }
+  #stage3d-pa-select { width: clamp(140px, 11vw, 205px); }
+  @media (max-width: 1900px) {
+    .dim-label { display: none; }
+    .topbar { gap: 5px; }
+    .tbtn { padding-inline: 8px; }
+    .seg-btn { padding-inline: 8px; }
+    #stage3d-pa-select { width: 185px; }
+    #stage3d-venue-select { width: 205px; }
+  }
+  @media (max-width: 1740px) {
+    .tbtn.danger { display: none; }
+    #stage3d-pa-select { width: 168px; }
+    #stage3d-venue-select { width: 185px; }
+  }
+  @media (max-width: 1620px) {
+    .tbtn { padding-inline: 7px; font-size: 11px; }
+    .seg-btn { padding-inline: 7px; font-size: 11px; }
+    .vsel { font-size: 11px; padding-inline: 7px; }
+    #stage3d-pa-select { width: 150px; }
+    #stage3d-venue-select { width: 168px; }
+  }
+  @media (max-width: 1500px) {
+    .tbtn:nth-last-of-type(2) { display: none; } /* Load */
+    #stage3d-pa-select { width: 138px; }
+    #stage3d-venue-select { width: 154px; }
   }
 
   /* ── Library ────────────────────────────────────────────────── */
@@ -1059,6 +1072,8 @@
     border-radius: 11px;
     padding: 14px;
     overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-gutter: stable;
   }
   .lib h3 {
     font-size: 11px; letter-spacing: 0.22em;
@@ -1197,6 +1212,39 @@
     color: #d8c8ff;
   }
   .multi-banner b { color: #fff; }
+  .inspector-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    margin: 0 0 12px;
+    padding: 4px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+  }
+  .inspector-tab {
+    font: inherit;
+    font-size: 12px;
+    color: #aeb5c2;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 7px 8px;
+    cursor: pointer;
+  }
+  .inspector-tab:hover:not(:disabled) {
+    border-color: rgba(187, 134, 252, 0.45);
+    color: #fff;
+  }
+  .inspector-tab.active {
+    background: #bb86fc;
+    color: #150d22;
+    font-weight: 700;
+  }
+  .inspector-tab:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
 
   /* ── HUD ────────────────────────────────────────────────────── */
   .hud {

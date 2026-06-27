@@ -18,8 +18,22 @@
   // Dome content mapping only applies on the sphere venue, where this
   // screen is a spherical sector on the dome interior.
   $: isDomeVenue = ($stage3dScene.venue ?? 'festival') === 'sphere';
+  const domeModes: { value: NonNullable<Stage3DScreenOverride['domeMapping']>; label: string }[] = [
+    { value: 'wrap', label: 'stretch' },
+    { value: 'domemaster', label: 'domemaster' },
+    { value: 'equirect', label: 'equirect' },
+  ];
+  const domeDefaults = {
+    domePanX: 0,
+    domePanY: 0,
+    domeZoom: 1,
+    domeRoll: 0,
+    domeEdgeBlend: 0.35,
+    domeVerticalBlend: 0,
+  } as const;
 
   function patch(field: keyof Stage3DScreenOverride, value: any) {
+    if (isDomeVenue && (field === 'position' || field === 'rotation' || field === 'scale' || field === 'curvature' || field === 'frameDepth')) return;
     stage3dScene.setScreenOverride(layerId, { [field]: value });
   }
 
@@ -28,10 +42,18 @@
       stage3dScene.setScreenOverride(layerId, null);
     }
   }
+  function resetDomeTuning() {
+    stage3dScene.setScreenOverride(layerId, { ...domeDefaults });
+  }
+  function domeNumber(field: keyof typeof domeDefaults): number {
+    const value = override[field];
+    return typeof value === 'number' && Number.isFinite(value) ? value : domeDefaults[field];
+  }
 
   $: pitchDeg = ((override.rotation ?? [0, 0, 0])[0] * 180 / Math.PI);
   $: yawDeg = ((override.rotation ?? [0, 0, 0])[1] * 180 / Math.PI);
   $: rollDeg = ((override.rotation ?? [0, 0, 0])[2] * 180 / Math.PI);
+  $: scaleValue = override.scale ?? [1, 1, 1];
 
   function setRotationAxis(axis: 0 | 1 | 2, degrees: number) {
     const current = override.rotation ?? [0, 0, 0];
@@ -42,10 +64,17 @@
   }
 
   function setPositionAxis(axis: 0 | 1 | 2, value: number) {
-    const current = override.position ?? [0, 0, 0];
+    const current = override.position ?? (isDomeVenue ? [0, 9, 7] : [0, 0, 0]);
     const next: [number, number, number] = [current[0], current[1], current[2]];
     next[axis] = value;
     patch('position', next);
+  }
+
+  function setScaleAxis(axis: 0 | 1 | 2, value: number) {
+    const current = override.scale ?? [1, 1, 1];
+    const next: [number, number, number] = [current[0], current[1], current[2]];
+    next[axis] = Math.max(0.05, value);
+    patch('scale', next);
   }
 </script>
 
@@ -56,40 +85,59 @@
     <span class="badge">screen</span>
   </header>
   <p class="hint">Rename / reorder this screen in the 2D Stage Designer. The 3D tweaks below are presentation-only.</p>
+  {#if isDomeVenue}
+    <p class="hint">Sphere screens are fixed to the venue. Use Dome mapping and tuning for content alignment.</p>
+  {:else}
+    <section class="prop-section">
+      <h4>Position (m)</h4>
+      <div class="vec3-row">
+        {#each ['X', 'Y', 'Z'] as label, i}
+          <label class="prop-axis">
+            <span class="axis-label">{label}</span>
+            <input
+              type="number" step="0.1"
+              value={(override.position ?? [0, 0, 0])[i].toFixed(2)}
+              oninput={(e) => setPositionAxis(i as 0|1|2, parseFloat((e.target as HTMLInputElement).value) || 0)}
+            />
+          </label>
+        {/each}
+      </div>
+    </section>
 
-  <section class="prop-section">
-    <h4>Position (m)</h4>
-    <div class="vec3-row">
-      {#each ['X', 'Y', 'Z'] as label, i}
-        <label class="prop-axis">
-          <span class="axis-label">{label}</span>
-          <input
-            type="number" step="0.1"
-            value={(override.position ?? [0, 0, 0])[i].toFixed(2)}
-            oninput={(e) => setPositionAxis(i as 0|1|2, parseFloat((e.target as HTMLInputElement).value) || 0)}
-          />
+    <section class="prop-section">
+      <h4>Rotation (°)</h4>
+      <div class="vec3-row">
+        <label class="prop-axis"><span class="axis-label">P</span>
+          <input type="number" step="5" value={pitchDeg.toFixed(0)}
+            oninput={(e) => setRotationAxis(0, parseFloat((e.target as HTMLInputElement).value) || 0)} />
         </label>
-      {/each}
-    </div>
-  </section>
+        <label class="prop-axis"><span class="axis-label">Y</span>
+          <input type="number" step="5" value={yawDeg.toFixed(0)}
+            oninput={(e) => setRotationAxis(1, parseFloat((e.target as HTMLInputElement).value) || 0)} />
+        </label>
+        <label class="prop-axis"><span class="axis-label">R</span>
+          <input type="number" step="5" value={rollDeg.toFixed(0)}
+            oninput={(e) => setRotationAxis(2, parseFloat((e.target as HTMLInputElement).value) || 0)} />
+        </label>
+      </div>
+    </section>
 
-  <section class="prop-section">
-    <h4>Rotation (°)</h4>
-    <div class="vec3-row">
-      <label class="prop-axis"><span class="axis-label">P</span>
-        <input type="number" step="5" value={pitchDeg.toFixed(0)}
-          oninput={(e) => setRotationAxis(0, parseFloat((e.target as HTMLInputElement).value) || 0)} />
-      </label>
-      <label class="prop-axis"><span class="axis-label">Y</span>
-        <input type="number" step="5" value={yawDeg.toFixed(0)}
-          oninput={(e) => setRotationAxis(1, parseFloat((e.target as HTMLInputElement).value) || 0)} />
-      </label>
-      <label class="prop-axis"><span class="axis-label">R</span>
-        <input type="number" step="5" value={rollDeg.toFixed(0)}
-          oninput={(e) => setRotationAxis(2, parseFloat((e.target as HTMLInputElement).value) || 0)} />
-      </label>
-    </div>
-  </section>
+    <section class="prop-section">
+      <h4>Scale</h4>
+      <div class="vec3-row">
+        {#each ['X', 'Y', 'Z'] as label, i}
+          <label class="prop-axis">
+            <span class="axis-label">{label}</span>
+            <input
+              type="number" step="0.05" min="0.05"
+              value={scaleValue[i].toFixed(2)}
+              oninput={(e) => setScaleAxis(i as 0|1|2, parseFloat((e.target as HTMLInputElement).value) || 1)}
+            />
+          </label>
+        {/each}
+      </div>
+    </section>
+  {/if}
 
   <section class="prop-section">
     <h4>Visual</h4>
@@ -99,18 +147,20 @@
         oninput={(e) => patch('brightness', parseFloat((e.target as HTMLInputElement).value))} />
       <span class="slider-val">{(override.brightness ?? 1.0).toFixed(1)}</span>
     </label>
-    <label class="slider-row">
-      <span>Curvature</span>
-      <input type="range" min="-0.2" max="0.2" step="0.01" value={override.curvature ?? 0}
-        oninput={(e) => patch('curvature', parseFloat((e.target as HTMLInputElement).value))} />
-      <span class="slider-val">{(override.curvature ?? 0).toFixed(2)}</span>
-    </label>
-    <label class="slider-row">
-      <span>Frame depth</span>
-      <input type="range" min="0" max="1" step="0.05" value={override.frameDepth ?? 0.25}
-        oninput={(e) => patch('frameDepth', parseFloat((e.target as HTMLInputElement).value))} />
-      <span class="slider-val">{(override.frameDepth ?? 0.25).toFixed(2)}m</span>
-    </label>
+    {#if !isDomeVenue}
+      <label class="slider-row">
+        <span>Curvature</span>
+        <input type="range" min="-0.2" max="0.2" step="0.01" value={override.curvature ?? 0}
+          oninput={(e) => patch('curvature', parseFloat((e.target as HTMLInputElement).value))} />
+        <span class="slider-val">{(override.curvature ?? 0).toFixed(2)}</span>
+      </label>
+      <label class="slider-row">
+        <span>Frame depth</span>
+        <input type="range" min="0" max="1" step="0.05" value={override.frameDepth ?? 0.25}
+          oninput={(e) => patch('frameDepth', parseFloat((e.target as HTMLInputElement).value))} />
+        <span class="slider-val">{(override.frameDepth ?? 0.25).toFixed(2)}m</span>
+      </label>
+    {/if}
     <div class="pill-row">
       {#each ['led', 'projection', 'clean'] as f}
         <button class="pill" class:active={(override.finish ?? 'led') === f}
@@ -133,12 +183,55 @@
   <section class="prop-section">
     <h4>Dome mapping</h4>
     <div class="pill-row">
-      {#each ['wrap', 'domemaster', 'equirect'] as m}
-        <button class="pill" class:active={(override.domeMapping ?? 'wrap') === m}
-          onclick={() => patch('domeMapping', m as Stage3DScreenOverride['domeMapping'])}>{m}</button>
+      {#each domeModes as mode}
+        <button class="pill" class:active={(override.domeMapping ?? 'wrap') === mode.value}
+          onclick={() => patch('domeMapping', mode.value)}>{mode.label}</button>
       {/each}
     </div>
-    <p class="hint">wrap = flat content spreads across the dome. domemaster / equirect consume the editor's Dome Projection output (Output settings → Dome) so real dome-formatted content lands correctly on the sphere.</p>
+    <p class="hint">stretch = flat content projected over the spherical cap. domemaster / equirect consume the editor's Dome Projection output so dome-formatted content lands correctly.</p>
+  </section>
+
+  <section class="prop-section">
+    <div class="section-title-row">
+      <h4>Dome tuning</h4>
+      <button class="mini-reset" onclick={resetDomeTuning}>reset</button>
+    </div>
+    <label class="slider-row">
+      <span>Center X</span>
+      <input type="range" min="-0.5" max="0.5" step="0.01" value={domeNumber('domePanX')}
+        oninput={(e) => patch('domePanX', parseFloat((e.target as HTMLInputElement).value))} />
+      <span class="slider-val">{domeNumber('domePanX').toFixed(2)}</span>
+    </label>
+    <label class="slider-row">
+      <span>Center Y</span>
+      <input type="range" min="-0.5" max="0.5" step="0.01" value={domeNumber('domePanY')}
+        oninput={(e) => patch('domePanY', parseFloat((e.target as HTMLInputElement).value))} />
+      <span class="slider-val">{domeNumber('domePanY').toFixed(2)}</span>
+    </label>
+    <label class="slider-row">
+      <span>Zoom</span>
+      <input type="range" min="0.35" max="3" step="0.01" value={domeNumber('domeZoom')}
+        oninput={(e) => patch('domeZoom', parseFloat((e.target as HTMLInputElement).value))} />
+      <span class="slider-val">{domeNumber('domeZoom').toFixed(2)}x</span>
+    </label>
+    <label class="slider-row">
+      <span>Roll</span>
+      <input type="range" min="-180" max="180" step="1" value={domeNumber('domeRoll')}
+        oninput={(e) => patch('domeRoll', parseFloat((e.target as HTMLInputElement).value))} />
+      <span class="slider-val">{domeNumber('domeRoll').toFixed(0)}°</span>
+    </label>
+    <label class="slider-row">
+      <span>Edge relief</span>
+      <input type="range" min="0" max="1" step="0.01" value={domeNumber('domeEdgeBlend')}
+        oninput={(e) => patch('domeEdgeBlend', parseFloat((e.target as HTMLInputElement).value))} />
+      <span class="slider-val">{Math.round(domeNumber('domeEdgeBlend') * 100)}%</span>
+    </label>
+    <label class="slider-row">
+      <span>Vertical curve</span>
+      <input type="range" min="0" max="1" step="0.01" value={domeNumber('domeVerticalBlend')}
+        oninput={(e) => patch('domeVerticalBlend', parseFloat((e.target as HTMLInputElement).value))} />
+      <span class="slider-val">{Math.round(domeNumber('domeVerticalBlend') * 100)}%</span>
+    </label>
   </section>
   {/if}
 
@@ -159,7 +252,17 @@
 {/if}
 
 <style>
-  .props { display: flex; flex-direction: column; gap: 14px; padding: 8px 2px; }
+  .props {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    width: 100%;
+    min-width: 0;
+    padding: 8px 0;
+    overflow: hidden;
+    box-sizing: border-box;
+  }
+  .props * { box-sizing: border-box; min-width: 0; }
   .props-head { display: flex; align-items: center; gap: 8px; }
   .layer-name {
     flex: 1;
@@ -192,6 +295,26 @@
     margin: 0 0 6px 0;
     font-weight: 500;
   }
+  .section-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .section-title-row h4 { margin: 0; }
+  .mini-reset {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: #aaa;
+    padding: 3px 7px;
+    border-radius: 5px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    cursor: pointer;
+  }
+  .mini-reset:hover { color: #fff; border-color: rgba(187, 134, 252, 0.45); }
   .vec3-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
   .prop-axis {
     display: flex; align-items: center;
@@ -205,7 +328,7 @@
   }
   .prop-axis input[type=number]:focus { outline: none; }
   .slider-row {
-    display: grid; grid-template-columns: 80px 1fr 50px;
+    display: grid; grid-template-columns: minmax(68px, 0.9fr) minmax(72px, 1fr) minmax(40px, auto);
     align-items: center; gap: 6px; font-size: 12px; color: #ccc;
     margin-bottom: 6px;
   }
@@ -214,14 +337,22 @@
     text-align: right; font-variant-numeric: tabular-nums;
     color: #888; font-size: 11px;
   }
-  .pill-row { display: flex; gap: 4px; margin-top: 6px; }
-  .pill-row.pill-wrap { flex-wrap: wrap; }
+  .pill-row {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+    margin-top: 6px;
+    width: 100%;
+  }
+  .pill-row.pill-wrap { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pill-row.pill-wrap .pill:last-child:nth-child(odd) { grid-column: 1 / -1; }
   .pill {
-    flex: 1 1 auto;
     background: #14161e; border: 1px solid #2a2c36; color: #aaa;
-    padding: 5px 8px; border-radius: 6px;
-    font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px;
+    padding: 5px 5px; border-radius: 6px;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.25px;
     cursor: pointer; white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .pill.active { background: #BB86FC; color: #1a1a1f; border-color: #BB86FC; }
   .reset-btn {
@@ -235,6 +366,8 @@
     letter-spacing: 0.6px;
     cursor: pointer;
     margin-top: 8px;
+    white-space: normal;
+    line-height: 1.25;
   }
   .reset-btn:hover { background: rgba(255, 110, 110, 0.2); }
 </style>

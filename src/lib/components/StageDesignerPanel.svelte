@@ -22,13 +22,14 @@
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import { workspace } from '../stores/workspace';
-  import {
-    surfaceStore,
-    activeSurface,
-    activeSurfaceSlices,
-    selectedSlice,
-    parseSurfaceSVG,
-  } from '../stores/surface';
+	import {
+	  surfaceStore,
+	  activeSurface,
+	  activeSurfaceSlices,
+	  selectedSlice,
+	  selectedSliceIds,
+	  parseSurfaceSVG,
+	} from '../stores/surface';
   import { layers as projectLayers } from '../stores/layers';
   import { STAGE_TEMPLATES, type StageTemplate } from '../stores/stageTemplates';
   import type { Point2D, BezierPoint, SurfaceSlice } from '../types';
@@ -68,14 +69,34 @@
   // selected slice to reshape it without leaving the panel; OR drag
   // the rotate / scale handles around the bounding box to transform
   // the whole slice uniformly (point + handle counts preserved).
-  type VertexDrag =
-    | { kind: 'anchor';     sliceId: string; idx: number }
-    | { kind: 'cpIn';       sliceId: string; idx: number }
-    | { kind: 'cpOut';      sliceId: string; idx: number }
-    | { kind: 'sliceMove';  sliceId: string; startMouse: Point2D; startPolygon: BezierPoint[] }
-    | { kind: 'sliceRotate'; sliceId: string; centroid: Point2D; startAngle: number; startPolygon: BezierPoint[] }
-    | { kind: 'sliceScale';  sliceId: string; centroid: Point2D; startDist: number; startPolygon: BezierPoint[] };
-  let vertexDrag: VertexDrag | null = null;
+	type VertexDrag =
+	    | { kind: 'anchor';     sliceId: string; idx: number }
+	    | { kind: 'cpIn';       sliceId: string; idx: number }
+	    | { kind: 'cpOut';      sliceId: string; idx: number }
+	    | { kind: 'sliceMove';  sliceId: string; startMouse: Point2D; startPolygons: { sliceId: string; polygon: BezierPoint[] }[] }
+	    | { kind: 'sliceRotate'; sliceId: string; centroid: Point2D; startAngle: number; startPolygon: BezierPoint[] }
+	    | { kind: 'sliceScale';  sliceId: string; centroid: Point2D; startDist: number; startPolygon: BezierPoint[] };
+	  let vertexDrag: VertexDrag | null = null;
+	  const DRAG_SELECT_THRESHOLD_PX = 5;
+	  let sliceDragSelect: {
+	    startSurface: Point2D;
+	    startClient: Point2D;
+	    hitSliceId: string | null;
+	    additive: boolean;
+	    initialIds: string[];
+	    active: boolean;
+	  } | null = null;
+	  let sliceMarqueeStart: Point2D | null = null;
+	  let sliceMarqueeCurrent: Point2D | null = null;
+	  let isSliceMarqueeSelecting = false;
+
+	  function clonePolygon(poly: BezierPoint[]): BezierPoint[] {
+	    return poly.map(p => ({
+	      x: p.x, y: p.y,
+	      cpIn:  p.cpIn  ? { ...p.cpIn  } : undefined,
+	      cpOut: p.cpOut ? { ...p.cpOut } : undefined,
+	    }));
+	  }
 
   /** Centroid of a polygon's anchors (ignores bezier handles).
    *  Used as the pivot for rotation + uniform scaling. */
@@ -124,6 +145,10 @@
       'Pillar Array':     'Pillars',
       'Horizontal Bars':  'Bars',
       'Diamond Grid':     'Diamonds',
+      'Festival Mainstage': 'Festival',
+      'Arena Hero + IMAG':  'Arena',
+      'Club Booth Wrap':    'Club',
+      'Conference Hero':    'Conf.',
     };
     return map[label] ?? label;
   }
@@ -222,11 +247,11 @@
       return;
     }
 
-    // Select tool: hit-test in priority order — handles, anchors,
-    // slice body, empty canvas (clears selection).
-    if (tool === 'select' && $selectedSlice) {
-      const sl = $selectedSlice;
-      const hitR = 8 / zoom;
+	    // Select tool: hit-test in priority order — handles, anchors,
+	    // selected slice body for moving, then pending click/marquee select.
+	    if (tool === 'select' && $selectedSlice) {
+	      const sl = $selectedSlice;
+	      const hitR = 8 / zoom;
       for (let idx = 0; idx < sl.polygon.length; idx++) {
         const v = sl.polygon[idx];
         // Handles only show while selected; check them first so a
@@ -247,35 +272,60 @@
           return;
         }
       }
-      // Click inside the slice body → start a move drag.
-      if (!sl.locked && pointInPolygon(pt, sl.polygon)) {
-        vertexDrag = {
-          kind: 'sliceMove', sliceId: sl.id,
-          startMouse: pt,
-          startPolygon: sl.polygon.map(p => ({
-            x: p.x, y: p.y,
-            cpIn:  p.cpIn  ? { ...p.cpIn  } : undefined,
-            cpOut: p.cpOut ? { ...p.cpOut } : undefined,
-          })),
-        };
-        e.preventDefault();
-        return;
-      }
-    }
-    // Empty canvas → clear selection (only when clicking the canvas
-    // background, not propagated from a slice path).
-    if (tool === 'select' && e.target === canvasEl) {
-      surfaceStore.selectSlice(null);
-    }
-  }
-  function onWindowMouseMove(e: MouseEvent) {
-    if (isPanning) {
+	      // Click inside an already-selected slice body → start a move drag.
+	      if (!sl.locked && $selectedSliceIds.includes(sl.id) && pointInPolygon(pt, sl.polygon)) {
+	        const selectedSet = new Set($selectedSliceIds.length > 0 ? $selectedSliceIds : [sl.id]);
+	        const startPolygons = $activeSurfaceSlices
+	          .filter(slice => selectedSet.has(slice.id) && !slice.locked)
+	          .map(slice => ({ sliceId: slice.id, polygon: clonePolygon(slice.polygon) }));
+	        vertexDrag = {
+	          kind: 'sliceMove', sliceId: sl.id,
+	          startMouse: pt,
+	          startPolygons,
+	        };
+	        e.preventDefault();
+	        return;
+	      }
+	    }
+	    if (tool === 'select') {
+	      const hitSlice = hitTestSlices(pt);
+	      sliceDragSelect = {
+	        startSurface: pt,
+	        startClient: { x: e.clientX, y: e.clientY },
+	        hitSliceId: hitSlice?.id ?? null,
+	        additive: e.metaKey || e.ctrlKey,
+	        initialIds: [...$selectedSliceIds],
+	        active: false,
+	      };
+	      e.preventDefault();
+	    }
+	  }
+	  function onWindowMouseMove(e: MouseEvent) {
+	    if (isPanning) {
       panX = panStart.px + (e.clientX - panStart.x);
       panY = panStart.py + (e.clientY - panStart.y);
       return;
     }
-    const pt = screenToSurface(e.clientX, e.clientY);
-    if (!pt) return;
+	    const pt = screenToSurface(e.clientX, e.clientY);
+	    if (!pt) return;
+
+	    if (sliceDragSelect) {
+	      const start = sliceDragSelect.startClient;
+	      const distance = Math.hypot(e.clientX - start.x, e.clientY - start.y);
+	      if (!sliceDragSelect.active && distance < DRAG_SELECT_THRESHOLD_PX) return;
+	      if (!sliceDragSelect.active) {
+	        sliceDragSelect.active = true;
+	        isSliceMarqueeSelecting = true;
+	        sliceMarqueeStart = sliceDragSelect.startSurface;
+	      }
+	      sliceMarqueeCurrent = pt;
+	      const hits = collectSlicesInRect(sliceDragSelect.startSurface, pt);
+	      const next = sliceDragSelect.additive
+	        ? [...sliceDragSelect.initialIds, ...hits.filter(id => !sliceDragSelect!.initialIds.includes(id))]
+	        : hits;
+	      surfaceStore.setSliceSelection(next[0] ?? null, next);
+	      return;
+	    }
 
     // Pen-tool bezier-handle pull-out. While the mouse is held after
     // placing a vertex, drag distance > ~3px (in surface units)
@@ -302,17 +352,19 @@
       return;
     }
 
-    if (vertexDrag) {
-      if (vertexDrag.kind === 'sliceMove') {
-        const dx = pt.x - vertexDrag.startMouse.x;
-        const dy = pt.y - vertexDrag.startMouse.y;
-        const moved: BezierPoint[] = vertexDrag.startPolygon.map(p => ({
-          x: p.x + dx, y: p.y + dy,
-          cpIn:  p.cpIn  ? { x: p.cpIn.x  + dx, y: p.cpIn.y  + dy } : undefined,
-          cpOut: p.cpOut ? { x: p.cpOut.x + dx, y: p.cpOut.y + dy } : undefined,
-        }));
-        surfaceStore.updateSlice(vertexDrag.sliceId, { polygon: moved });
-      } else if (vertexDrag.kind === 'sliceRotate') {
+	    if (vertexDrag) {
+	      if (vertexDrag.kind === 'sliceMove') {
+	        const dx = pt.x - vertexDrag.startMouse.x;
+	        const dy = pt.y - vertexDrag.startMouse.y;
+	        for (const item of vertexDrag.startPolygons) {
+	          const moved: BezierPoint[] = item.polygon.map(p => ({
+	            x: p.x + dx, y: p.y + dy,
+	            cpIn:  p.cpIn  ? { x: p.cpIn.x  + dx, y: p.cpIn.y  + dy } : undefined,
+	            cpOut: p.cpOut ? { x: p.cpOut.x + dx, y: p.cpOut.y + dy } : undefined,
+	          }));
+	          surfaceStore.updateSlice(item.sliceId, { polygon: moved });
+	        }
+	      } else if (vertexDrag.kind === 'sliceRotate') {
         // Rotate every anchor + handle around the centroid by the
         // angular delta from initial pointer position to current.
         const c = vertexDrag.centroid;
@@ -384,16 +436,38 @@
       }
     }
   }
-  function onWindowMouseUp(_e: MouseEvent) {
-    isPanning = false;
-    penPulling = null;
-    vertexDrag = null;
-  }
+	  function onWindowMouseUp(_e: MouseEvent) {
+	    if (sliceDragSelect) {
+	      const pending = sliceDragSelect;
+	      if (!pending.active) {
+	        if (pending.hitSliceId) {
+	          if (pending.additive) {
+	            const exists = pending.initialIds.includes(pending.hitSliceId);
+	            const next = exists
+	              ? pending.initialIds.filter(id => id !== pending.hitSliceId)
+	              : [...pending.initialIds, pending.hitSliceId];
+	            surfaceStore.setSliceSelection(pending.hitSliceId, next.length > 0 ? next : [pending.hitSliceId]);
+	          } else {
+	            surfaceStore.selectSlice(pending.hitSliceId);
+	          }
+	        } else if (!pending.additive) {
+	          surfaceStore.selectSlice(null);
+	        }
+	      }
+	      sliceDragSelect = null;
+	      sliceMarqueeStart = null;
+	      sliceMarqueeCurrent = null;
+	      isSliceMarqueeSelecting = false;
+	    }
+	    isPanning = false;
+	    penPulling = null;
+	    vertexDrag = null;
+	  }
 
   /** Ray-cast point-in-polygon test for hit-detecting slice bodies.
    *  Uses anchor positions only — beziers may slightly under/over-test
    *  near curve apexes; acceptable for a click-tolerance test. */
-  function pointInPolygon(p: Point2D, poly: BezierPoint[]): boolean {
+	  function pointInPolygon(p: Point2D, poly: BezierPoint[]): boolean {
     let inside = false;
     for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
       const xi = poly[i].x, yi = poly[i].y;
@@ -402,8 +476,41 @@
         (p.x < ((xj - xi) * (p.y - yi)) / ((yj - yi) || 1e-9) + xi);
       if (intersect) inside = !inside;
     }
-    return inside;
-  }
+	    return inside;
+	  }
+
+	  function hitTestSlices(p: Point2D): SurfaceSlice | null {
+	    for (let i = $activeSurfaceSlices.length - 1; i >= 0; i--) {
+	      const slice = $activeSurfaceSlices[i];
+	      if (!slice.visible || slice.locked) continue;
+	      if (pointInPolygon(p, slice.polygon)) return slice;
+	    }
+	    return null;
+	  }
+
+	  function collectSlicesInRect(a: Point2D, b: Point2D): string[] {
+	    const minX = Math.min(a.x, b.x);
+	    const maxX = Math.max(a.x, b.x);
+	    const minY = Math.min(a.y, b.y);
+	    const maxY = Math.max(a.y, b.y);
+	    const rectCorners: Point2D[] = [
+	      { x: minX, y: minY },
+	      { x: maxX, y: minY },
+	      { x: maxX, y: maxY },
+	      { x: minX, y: maxY },
+	    ];
+	    const ids: string[] = [];
+	    for (const slice of $activeSurfaceSlices) {
+	      if (!slice.visible || slice.locked) continue;
+	      const bbox = polygonBBox(slice.polygon);
+	      const bboxOverlaps = bbox.maxX >= minX && bbox.minX <= maxX && bbox.maxY >= minY && bbox.minY <= maxY;
+	      if (!bboxOverlaps) continue;
+	      const anchorInRect = slice.polygon.some(p => p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY);
+	      const rectHitsSlice = rectCorners.some(p => pointInPolygon(p, slice.polygon));
+	      if (anchorInRect || rectHitsSlice || bboxOverlaps) ids.push(slice.id);
+	    }
+	    return ids;
+	  }
   function onCanvasWheel(e: WheelEvent) {
     if (!canvasEl) return;
     e.preventDefault();
@@ -440,20 +547,28 @@
       e.preventDefault();
       return;
     }
-    if ((e.key === 'Delete' || e.key === 'Backspace') && $selectedSlice) {
-      surfaceStore.deleteSlice($selectedSlice.id);
-      e.preventDefault();
-      return;
-    }
+	    if ((e.key === 'Delete' || e.key === 'Backspace') && ($selectedSliceIds.length > 0 || $selectedSlice)) {
+	      const ids = $selectedSliceIds.length > 0 ? $selectedSliceIds : [$selectedSlice!.id];
+	      for (const id of ids) surfaceStore.deleteSlice(id);
+	      e.preventDefault();
+	      return;
+	    }
     if (e.key === 'v' || e.key === 'V') { tool = 'select'; return; }
     if (e.key === 'p' || e.key === 'P') { tool = 'pen'; return; }
   }
 
   // ── Slice interactions ────────────────────────────────────
-  function onSliceClick(slice: SurfaceSlice, e: MouseEvent) {
-    e.stopPropagation();
-    surfaceStore.selectSlice(slice.id);
-  }
+	  function selectSliceFromList(slice: SurfaceSlice, e: MouseEvent | KeyboardEvent) {
+	    if (e.metaKey || e.ctrlKey) {
+	      const exists = $selectedSliceIds.includes(slice.id);
+	      const next = exists
+	        ? $selectedSliceIds.filter(id => id !== slice.id)
+	        : [...$selectedSliceIds, slice.id];
+	      surfaceStore.setSliceSelection(slice.id, next.length > 0 ? next : [slice.id]);
+	    } else {
+	      surfaceStore.selectSlice(slice.id);
+	    }
+	  }
 
   // ── Helpers ──────────────────────────────────────────────
   /**
@@ -764,14 +879,15 @@
       </div>
       <div class="slice-list">
         {#each $activeSurfaceSlices as slice, idx (slice.id)}
-          <div
-            class="slice-row"
-            class:selected={$selectedSlice?.id === slice.id}
-            onclick={() => surfaceStore.selectSlice(slice.id)}
-            role="button"
-            tabindex="0"
-            onkeydown={(e) => e.key === 'Enter' && surfaceStore.selectSlice(slice.id)}
-          >
+	          <div
+	            class="slice-row"
+	            class:selected={$selectedSliceIds.includes(slice.id)}
+	            class:primary={$selectedSlice?.id === slice.id}
+	            onclick={(e) => selectSliceFromList(slice, e)}
+	            role="button"
+	            tabindex="0"
+	            onkeydown={(e) => e.key === 'Enter' && selectSliceFromList(slice, e)}
+	          >
             <span class="slice-color-dot" style="background: {slice.color}"></span>
             <span class="slice-name">{slice.name}</span>
             <button
@@ -835,20 +951,20 @@
           />
 
           <!-- Existing slices -->
-          {#each $activeSurfaceSlices as slice (slice.id)}
-            {#if slice.visible}
-              {@const isSelected = $selectedSlice?.id === slice.id}
-              <path
-                d={polygonToPath(slice.polygon)}
-                fill={isSelected ? slice.color + '33' : slice.color + '18'}
-                stroke={slice.color}
-                stroke-width={(isSelected ? 2 : 1.2) / zoom}
-                style="cursor: {tool === 'select' && !slice.locked ? 'pointer' : 'default'};"
-                onclick={(e) => onSliceClick(slice, e)}
-                onkeydown={(e) => e.key === 'Enter' && surfaceStore.selectSlice(slice.id)}
-                role="button"
-                tabindex="0"
-              />
+	          {#each $activeSurfaceSlices as slice (slice.id)}
+	            {#if slice.visible}
+	              {@const isSelected = $selectedSliceIds.includes(slice.id)}
+	              {@const isPrimary = $selectedSlice?.id === slice.id}
+	              <path
+	                d={polygonToPath(slice.polygon)}
+	                fill={isSelected ? slice.color + '33' : slice.color + '18'}
+	                stroke={slice.color}
+	                stroke-width={(isPrimary ? 2.4 : isSelected ? 1.8 : 1.2) / zoom}
+	                style="cursor: {tool === 'select' && !slice.locked ? 'pointer' : 'default'};"
+	                onkeydown={(e) => e.key === 'Enter' && selectSliceFromList(slice, e)}
+	                role="button"
+	                tabindex="0"
+	              />
               <!-- Label at first vertex -->
               {#if slice.polygon.length > 0}
                 <text
@@ -865,7 +981,7 @@
                    are smaller circles joined to their anchor by a
                    thin tangent line — matches Illustrator/Figma
                    convention so the user gets a free legible UX. -->
-              {#if isSelected}
+	              {#if isPrimary}
                 {#each slice.polygon as v, vi}
                   <!-- Bezier handle tangent lines + nubs -->
                   {#if v.cpIn}
@@ -1003,9 +1119,25 @@
                 >⤡</text>
               {/if}
             {/if}
-          {/each}
+	          {/each}
 
-          <!-- Pen-tool live draft. The committed segments render
+	          {#if isSliceMarqueeSelecting && sliceMarqueeStart && sliceMarqueeCurrent}
+	            {@const mx = Math.min(sliceMarqueeStart.x, sliceMarqueeCurrent.x)}
+	            {@const my = Math.min(sliceMarqueeStart.y, sliceMarqueeCurrent.y)}
+	            {@const mw = Math.abs(sliceMarqueeCurrent.x - sliceMarqueeStart.x)}
+	            {@const mh = Math.abs(sliceMarqueeCurrent.y - sliceMarqueeStart.y)}
+	            <rect
+	              class="slice-marquee"
+	              x={mx}
+	              y={my}
+	              width={mw}
+	              height={mh}
+	              stroke-width={1.5 / zoom}
+	              rx={2 / zoom}
+	            />
+	          {/if}
+
+	          <!-- Pen-tool live draft. The committed segments render
                with their bezier curves (since penDraft is BezierPoint[]);
                the trailing segment from last vertex to cursor renders
                separately as a dashed preview so the user knows it's
@@ -1597,10 +1729,13 @@
   .slice-row:hover {
     background: rgba(255,255,255,0.03);
   }
-  .slice-row.selected {
-    background: rgba(76,209,255,0.08);
-    border-left-color: #4cd1ff;
-  }
+	  .slice-row.selected {
+	    background: rgba(76,209,255,0.08);
+	    border-left-color: #4cd1ff;
+	  }
+	  .slice-row.selected.primary {
+	    background: rgba(76,209,255,0.14);
+	  }
   .slice-color-dot {
     width: 10px;
     height: 10px;
@@ -1651,15 +1786,21 @@
   .design-canvas.tool-pen {
     cursor: crosshair;
   }
-  .canvas-svg {
-    position: absolute;
-    top: 0;
-    left: 0;
+	  .canvas-svg {
+	    position: absolute;
+	    top: 0;
+	    left: 0;
     transform-origin: 0 0;
     /* Wrapper transform scales the SVG via width/height — keeps text
        and stroke widths legible at any zoom via the /zoom divisions
-       above. */
-  }
+	       above. */
+	  }
+	  .slice-marquee {
+	    fill: rgba(76, 209, 255, 0.10);
+	    stroke: rgba(76, 209, 255, 0.85);
+	    stroke-dasharray: 6 4;
+	    pointer-events: none;
+	  }
   /* Empty-state card — replaces the previous tiny hint, gives users
      three actionable buttons + clear instructions to drop an SVG. */
   .canvas-empty {

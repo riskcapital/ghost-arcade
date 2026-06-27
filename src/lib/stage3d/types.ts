@@ -356,6 +356,26 @@ export type Stage3DVenue = 'festival' | 'arena' | 'club' | 'nightclub' | 'sphere
  *  independently toggleable; everything animates to the shared
  *  visual-audio bus (beams sweep, lasers fan, strips chase the bass).
  *  Persisted with the scene. */
+export type Stage3DAtmospherePalette =
+  | 'screen'
+  | 'custom'
+  | 'cyan-magenta'
+  | 'amber-blue'
+  | 'rainbow'
+  | 'white';
+
+export type Stage3DBeamPattern =
+  | 'auto'
+  | 'searchlight'
+  | 'unison'
+  | 'alternate'
+  | 'fan'
+  | 'chase'
+  | 'punch';
+
+export type Stage3DLaserPattern = 'auto' | 'sweep' | 'fan' | 'strobe';
+export type Stage3DStripPattern = 'auto' | 'fill' | 'chase' | 'pulse' | 'kickflash';
+
 export interface Stage3DAtmosphere {
   /** Volumetric beam cones on every venue mover, pan/tilt animated. */
   beams: boolean;
@@ -365,6 +385,28 @@ export interface Stage3DAtmosphere {
   haze: boolean;
   /** Emissive LED pixel-strips along the trusses, bass-chased. */
   strips: boolean;
+  /** Master output level for volumetric beams + their realtime spot wash. */
+  beamBrightness: number;
+  /** Custom beam color used when beamPalette === 'custom'. */
+  beamColor: string;
+  /** Color-combo source for beam looks. */
+  beamPalette: Stage3DAtmospherePalette;
+  /** Auto follows the show director; other values force a look. */
+  beamPattern: Stage3DBeamPattern;
+  /** Multiplier for haze density while haze is enabled. */
+  hazeDensity: number;
+  /** Master output level for laser fans. */
+  laserBrightness: number;
+  /** Custom laser color used when laserPalette === 'custom'. */
+  laserColor: string;
+  /** Color-combo source for laser looks. */
+  laserPalette: Stage3DAtmospherePalette;
+  /** Auto follows the show director; other values force laser behavior. */
+  laserPattern: Stage3DLaserPattern;
+  /** Scene-wide brightness multiplier for truss/user LED strip FX. */
+  stripBrightness: number;
+  /** Auto follows the show director; other values force strip behavior. */
+  stripPattern: Stage3DStripPattern;
 }
 
 export const DEFAULT_ATMOSPHERE: Stage3DAtmosphere = {
@@ -372,6 +414,17 @@ export const DEFAULT_ATMOSPHERE: Stage3DAtmosphere = {
   lasers: false,
   haze: false,
   strips: false,
+  beamBrightness: 1,
+  beamColor: '#4af2ff',
+  beamPalette: 'screen',
+  beamPattern: 'auto',
+  hazeDensity: 1,
+  laserBrightness: 1,
+  laserColor: '#ff3df0',
+  laserPalette: 'screen',
+  laserPattern: 'auto',
+  stripBrightness: 1,
+  stripPattern: 'auto',
 };
 
 /** User-placed scene element (truss, light, speaker, deck, etc.) backed
@@ -397,6 +450,8 @@ export interface Stage3DLighting {
   /** Multiplier on hemi/ambient/key/fill/rim intensities. 1 = baseline,
    *  0 = totally dark room. Useful when the room over-lights the LEDs. */
   roomIntensity: number;
+  /** Darkens venue scenery materials while leaving LED brightness alone. */
+  roomDarkness: number;
   /** 0 = floor as venue defined, 1 = pitch-black floor. Linear darken. */
   floorDarkness: number;
   /** Multiplier on LED brightness (screen boost). 1 = baseline. */
@@ -428,6 +483,7 @@ export interface Stage3DLighting {
 
 export const DEFAULT_LIGHTING: Stage3DLighting = {
   roomIntensity: 1,
+  roomDarkness: 0,
   floorDarkness: 0,
   screenBoost: 1,
   exposure: 0,
@@ -466,15 +522,26 @@ export interface Stage3DScreenOverride {
   edgeEffect?: 'none' | 'bezel-glow' | 'soft-border' | 'scanlines' | 'pixel-grid';
   /** How source content maps onto a DOME screen (sphere venue only;
    *  ignored on flat-wall venues).
-   *  `wrap`       = the source rectangle spreads across the dome's
-   *                 lat/long extents (equirect-style, the default —
-   *                 flat 16:9 content wraps like the real Sphere),
+   *  `wrap`       = stretch/projection mode: the source rectangle is
+   *                 projected over the spherical cap without pinching
+   *                 the whole top row into the apex,
    *  `domemaster` = source is a 180° angular-fisheye circle (the
    *                 editor's Dome Projection output in angular /
    *                 stereographic / orthographic modes),
    *  `equirect`   = source is a 360° equirectangular panorama (the
    *                 Dome Projection output's equirectangular mode). */
   domeMapping?: 'wrap' | 'domemaster' | 'equirect';
+  /** Dome source tuning. Applied after the selected dome mapping:
+   *  pan shifts the source centre, zoom scales around centre, roll
+   *  rotates around centre, edgeBlend blends stretch mode toward angular
+   *  side distribution, and verticalBlend blends stretch mode toward
+   *  latitude-style vertical distribution. */
+  domePanX?: number;
+  domePanY?: number;
+  domeZoom?: number;
+  domeRoll?: number;
+  domeEdgeBlend?: number;
+  domeVerticalBlend?: number;
 }
 
 export const NEUTRAL_AUDIO_ROUTING: AudioRouting = {

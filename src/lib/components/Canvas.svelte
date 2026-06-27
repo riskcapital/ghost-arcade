@@ -271,6 +271,7 @@
   }
   const stageInjectCache = new Map<string, StageInjectCacheEntry>();
   let stageInjectLayersRef: Layer[] | null = null;
+  let previousVjLive = false;
   const vjMixCarrierLayer: Layer = {
     ...createLayer('__vj-mix-source__', 'VJ Mix', 'media'),
     source: {
@@ -325,6 +326,16 @@
     for (const id of stageInjectCache.keys()) {
       if (!liveIds.has(id)) stageInjectCache.delete(id);
     }
+  }
+
+  $: {
+    const vjLive = $vjClipLauncher.isLive;
+    if (previousVjLive && !vjLive) {
+      mapPresetLayerCache.clear();
+      stageInjectCache.clear();
+      stageInjectLayersRef = null;
+    }
+    previousVjLive = vjLive;
   }
 
   // Memoized parse of "vj-layer-N(-A|B)" ids — replaces a per-layer
@@ -1845,7 +1856,11 @@
           }
         }
 
-        applyMappingCompositionStageEffects($project.mappingComposition, layersToRender, performance.now());
+        const renderClockSeconds = typeof engine.manualTime === 'number' && Number.isFinite(engine.manualTime)
+          ? engine.manualTime
+          : null;
+        const stageEffectNowMs = renderClockSeconds !== null ? renderClockSeconds * 1000 : performance.now();
+        applyMappingCompositionStageEffects($project.mappingComposition, layersToRender, stageEffectNowMs);
 
         if (seqOverrides) {
           // Continuous-mode rows take a separate side-channel path:
@@ -1917,6 +1932,7 @@
               engine.getCompositeTexture(),
               $settings?.output?.slices ?? [],
               layersToRender,
+              renderClockSeconds,
             );
           }
         } catch (e) {

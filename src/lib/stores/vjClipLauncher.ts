@@ -553,6 +553,19 @@ const videoElementCache = new Map<string, HTMLVideoElement>();
 // Cache for VJ source objects (keeps textures persistent)
 const vjSourceCache = new Map<string, MediaSource>();
 
+function releaseVJSourceCacheEntry(key: string): void {
+  const source = vjSourceCache.get(key);
+  if (source?.texture) {
+    try { source.texture.dispose?.(); } catch { /* ignore */ }
+    source.texture = undefined;
+  }
+  vjSourceCache.delete(key);
+}
+
+function clearVJSourceCache(): void {
+  for (const key of [...vjSourceCache.keys()]) releaseVJSourceCacheEntry(key);
+}
+
 function shouldSkipVideoCors(src: string | undefined): boolean {
   // Skip only schemes that are same-origin or in-memory. `ghost-asset://`
   // is served by Electron's custom protocol on a DIFFERENT origin, so the
@@ -786,8 +799,15 @@ function createVJClipLauncherStore() {
         video.src = '';
       }
       videoElementCache.clear();
-      vjSourceCache.clear();
+      clearVJSourceCache();
       set(createDefaultState());
+    },
+
+    // Drop transient renderer-side VJ sources without touching the user's
+    // clip grid. Used when exiting VJ so stale shader/canvas textures do
+    // not linger behind the main editor.
+    clearRuntimeSourceCache() {
+      clearVJSourceCache();
     },
 
     // Set VJ mode open state. Mirrors into the workspace store so the
@@ -819,7 +839,7 @@ function createVJClipLauncherStore() {
         const replacedClip = targetGrid[layerIndex]?.[columnIndex];
         if (replacedClip && replacedClip.id !== clip?.id) {
           const bankSuffix = deck === 'B' ? '-B' : '';
-          vjSourceCache.delete(`vj-${layerIndex}${bankSuffix}-${replacedClip.id}`);
+          releaseVJSourceCacheEntry(`vj-${layerIndex}${bankSuffix}-${replacedClip.id}`);
         }
 
         // If setting a video, create/get the video element. Match
@@ -912,7 +932,7 @@ function createVJClipLauncherStore() {
         const oldClip = targetGrid[layerIndex]?.[columnIndex];
         if (oldClip) {
           const bankSuffix = deck === 'B' ? '-B' : '';
-          vjSourceCache.delete(`vj-${layerIndex}${bankSuffix}-${oldClip.id}`);
+          releaseVJSourceCacheEntry(`vj-${layerIndex}${bankSuffix}-${oldClip.id}`);
         }
 
         const newGrid = targetGrid.map(row => [...row]);
@@ -954,7 +974,7 @@ function createVJClipLauncherStore() {
         const newGridA = state.clipGrid.map((row, li) =>
           row.map((clip, ci) => {
             if (clip?.type === 'synthvision') {
-              vjSourceCache.delete(`vj-${li}-${clip.id}`);
+              releaseVJSourceCacheEntry(`vj-${li}-${clip.id}`);
               changed = true;
               return null;
             }
@@ -965,7 +985,7 @@ function createVJClipLauncherStore() {
         const newGridB = state.bankBClipGrid.map((row, li) =>
           row.map((clip, ci) => {
             if (clip?.type === 'synthvision') {
-              vjSourceCache.delete(`vj-${li}-B-${clip.id}`);
+              releaseVJSourceCacheEntry(`vj-${li}-B-${clip.id}`);
               changed = true;
               return null;
             }

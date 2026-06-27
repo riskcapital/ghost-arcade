@@ -186,6 +186,13 @@
     dragOverZone = 'above';
   }
 
+  function insertionIndex(fromIndex: number, targetIndex: number, zone: 'above' | 'below'): number {
+    if (zone === 'above') {
+      return fromIndex < targetIndex ? targetIndex - 1 : targetIndex;
+    }
+    return fromIndex < targetIndex ? targetIndex : targetIndex + 1;
+  }
+
   function handleLayerDrop(toIndex: number, e: DragEvent) {
     e.preventDefault();
     if (draggedIndex !== null && draggedIndex !== toIndex) {
@@ -205,18 +212,18 @@
           if (groupIdx >= 0) {
             // Redirect: above goes above the group, below goes below last child
             if (dragOverZone === 'above') {
-              project.reorderLayers(draggedIndex, groupIdx);
+              project.reorderLayers(draggedIndex, insertionIndex(draggedIndex, groupIdx, 'above'));
             } else {
               let lastChildIdx = groupIdx;
               for (let i = groupIdx + 1; i < $layers.length; i++) {
                 if ($layers[i].parentGroupId === targetLayer.parentGroupId) lastChildIdx = i;
                 else break;
               }
-              project.reorderLayers(draggedIndex, lastChildIdx + 1);
+              project.reorderLayers(draggedIndex, insertionIndex(draggedIndex, lastChildIdx, 'below'));
             }
           }
         } else {
-          project.reorderLayers(draggedIndex, toIndex);
+          project.reorderLayers(draggedIndex, insertionIndex(draggedIndex, toIndex, dragOverZone === 'below' ? 'below' : 'above'));
         }
       }
     }
@@ -3439,12 +3446,48 @@
   }
 
   .layer-item.drag-over-above {
-    border-top: 2px solid var(--ga-violet, #9b87f5);
-    margin-top: -2px;
+    border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.4));
   }
   .layer-item.drag-over-below {
-    border-bottom: 2px solid var(--ga-violet, #9b87f5);
-    margin-bottom: -2px;
+    border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.4));
+  }
+  .layer-item.drag-over-above::after,
+  .layer-item.drag-over-below::after {
+    content: "";
+    position: absolute;
+    left: 6px;
+    right: 6px;
+    height: 3px;
+    border-radius: 999px;
+    background: var(--ga-coral, #ff6f5e);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18), 0 0 18px rgba(255, 111, 94, 0.7);
+    pointer-events: none;
+    z-index: 4;
+  }
+  .layer-item.drag-over-above::after {
+    top: -5px;
+  }
+  .layer-item.drag-over-below::after {
+    bottom: -5px;
+  }
+  .layer-item.drag-over-above::before,
+  .layer-item.drag-over-below::before {
+    content: "";
+    position: absolute;
+    left: 2px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--ga-coral, #ff6f5e);
+    box-shadow: 0 0 14px rgba(255, 111, 94, 0.85);
+    pointer-events: none;
+    z-index: 5;
+  }
+  .layer-item.drag-over-above::before {
+    top: -8px;
+  }
+  .layer-item.drag-over-below::before {
+    bottom: -8px;
   }
   .layer-item.drag-over-into {
     outline: 2px solid var(--ga-violet, #9b87f5);

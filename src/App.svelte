@@ -811,6 +811,22 @@
       project.selectLayer(active.id);
     };
     window.addEventListener('pointerdown', collapseMultiSelectOnControl, true);
+    const handleViewportSelectionWindowMove = (e: MouseEvent) => {
+      if (viewportSelectionGesture) updateViewportSelectionGesture(e);
+    };
+    const handleViewportSelectionWindowUp = (e: MouseEvent) => {
+      if (e.button === 0 && viewportSelectionGesture) finishViewportSelectionGesture(e);
+    };
+    const handleViewportSelectionWindowPointerMove = (e: PointerEvent) => {
+      if (viewportSelectionGesture && e.isPrimary !== false) updateViewportSelectionGesture(e);
+    };
+    const handleViewportSelectionWindowPointerUp = (e: PointerEvent) => {
+      if (e.button === 0 && viewportSelectionGesture && e.isPrimary !== false) finishViewportSelectionGesture(e);
+    };
+    window.addEventListener('mousemove', handleViewportSelectionWindowMove, true);
+    window.addEventListener('mouseup', handleViewportSelectionWindowUp, true);
+    window.addEventListener('pointermove', handleViewportSelectionWindowPointerMove, true);
+    window.addEventListener('pointerup', handleViewportSelectionWindowPointerUp, true);
 
     // Save-on-close modal: existing showCloseModal infrastructure (modal
     // body + Save/Discard/Cancel buttons + handlers) was wired but never
@@ -1261,6 +1277,10 @@
       window.removeEventListener('error', onError);
       window.removeEventListener('unhandledrejection', onRejection);
       window.removeEventListener('pointerdown', collapseMultiSelectOnControl, true);
+      window.removeEventListener('mousemove', handleViewportSelectionWindowMove, true);
+      window.removeEventListener('mouseup', handleViewportSelectionWindowUp, true);
+      window.removeEventListener('pointermove', handleViewportSelectionWindowPointerMove, true);
+      window.removeEventListener('pointerup', handleViewportSelectionWindowPointerUp, true);
       window.removeEventListener('beforeunload', onBeforeUnload);
       window.removeEventListener('hashchange', handleHashChange);
       window.removeEventListener('open-settings', handleOpenSettings);
@@ -1563,6 +1583,126 @@
   // Clipboard state for copy/paste
   let clipboardLayers: string[] = []; // Serialized JSON strings (safe to clone)
 
+  const DRAG_SELECT_THRESHOLD_PX = 5;
+  const VIEWPORT_SELECTION_INTERACTIVE_SELECTOR = [
+    '.viewport-info',
+    '.warp-handles-offset .handle',
+    '.custom-shape-handles',
+    '.layer-shape-warp-overlay',
+    '.shape-interaction-overlay',
+    '.mask-anchor',
+    '.mask-handle',
+    '.mask-pen-toolbar',
+    '.light-painting-overlay',
+  ].join(', ');
+
+  function viewportClientToCanvasCoords(clientX: number, clientY: number): Point2D {
+    const rect = viewportEl.getBoundingClientRect();
+    const mouseX = clientX - rect.left;
+    const mouseY = clientY - rect.top;
+    const contentX = (mouseX - viewportPanX) / viewportZoom;
+    const contentY = (mouseY - viewportPanY) / viewportZoom;
+    return {
+      x: (contentX - canvasOffsetX) / canvasWidth,
+      y: 1 - ((contentY - canvasOffsetY) / canvasHeight),
+    };
+  }
+
+  function viewportClientToLocalCoords(clientX: number, clientY: number): { x: number; y: number } {
+    const rect = viewportEl.getBoundingClientRect();
+    return {
+      x: clientX - rect.left,
+      y: clientY - rect.top,
+    };
+  }
+
+  function layerIntersectsSelectionRect(layer: Layer, minX: number, maxX: number, minY: number, maxY: number): boolean {
+    if (!layer.corners) return false;
+    const c = layer.corners;
+    const points = [c.topLeft, c.topRight, c.bottomLeft, c.bottomRight];
+    if (points.some(pt => pt.x >= minX && pt.x <= maxX && pt.y >= minY && pt.y <= maxY)) return true;
+
+    const layerMinX = Math.min(...points.map(pt => pt.x));
+    const layerMaxX = Math.max(...points.map(pt => pt.x));
+    const layerMinY = Math.min(...points.map(pt => pt.y));
+    const layerMaxY = Math.max(...points.map(pt => pt.y));
+    const centerX = (layerMinX + layerMaxX) / 2;
+    const centerY = (layerMinY + layerMaxY) / 2;
+    if (centerX >= minX && centerX <= maxX && centerY >= minY && centerY <= maxY) return true;
+
+    const rectCorners: Point2D[] = [
+      { x: minX, y: minY },
+      { x: maxX, y: minY },
+      { x: maxX, y: maxY },
+      { x: minX, y: maxY },
+    ];
+    if (rectCorners.some(pt => pointInQuad(pt.x, pt.y, c))) return true;
+
+    return layerMaxX >= minX && layerMinX <= maxX && layerMaxY >= minY && layerMinY <= maxY;
+  }
+
+  function collectLayerIdsInSelectionRect(a: Point2D, b: Point2D): string[] {
+    const minX = Math.max(0, Math.min(a.x, b.x));
+    const maxX = Math.min(1, Math.max(a.x, b.x));
+    const minY = Math.max(0, Math.min(a.y, b.y));
+    const maxY = Math.min(1, Math.max(a.y, b.y));
+    if (maxX < minX || maxY < minY) return [];
+
+    const hitIds: string[] = [];
+    for (const layer of get(project).layers) {
+      if (!layer.visible || layer.locked || !layer.corners) continue;
+      if (layerIntersectsSelectionRect(layer, minX, maxX, minY, maxY)) hitIds.push(layer.id);
+    }
+    return hitIds;
+  }
+
+  function pointIsInsideCanvas(p: Point2D): boolean {
+    return p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1;
+  }
+
+  function beginViewportSelectionGesture(e: MouseEvent | PointerEvent): boolean {
+    if (!viewportEl) return false;
+    if (viewportSelectionGesture) {
+      e.preventDefault();
+      return true;
+    }
+    const target = e.target instanceof Element ? e.target : null;
+    if (
+      target?.closest(VIEWPORT_SELECTION_INTERACTIVE_SELECTOR)
+    ) return false;
+
+    const start = viewportClientToCanvasCoords(e.clientX, e.clientY);
+    const hitLayerId = pointIsInsideCanvas(start) ? hitTestLayers(start.x, start.y) : null;
+    const isToggle = e.ctrlKey || e.metaKey;
+    viewportSelectionGesture = {
+      start,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      hitLayerId,
+      isToggle,
+      initialSelection: get(selectedLayerIds),
+      active: false,
+    };
+
+    if (!hitLayerId && !isToggle) {
+      window.dispatchEvent(new CustomEvent('ghost-clear-warp-corner-selection'));
+    }
+    e.preventDefault();
+    return true;
+  }
+
+  function handleViewportPointerDown(e: PointerEvent) {
+    if (e.button !== 0 || e.isPrimary === false) return;
+    if (e.altKey || isSpacePressed) return;
+    if (beginViewportSelectionGesture(e)) {
+      try {
+        (e.currentTarget as HTMLElement | null)?.setPointerCapture?.(e.pointerId);
+      } catch {
+        // Pointer capture is best-effort; window listeners still keep the drag alive.
+      }
+    }
+  }
+
   function handleViewportMouseDown(e: MouseEvent) {
     // Middle mouse button, Alt+left click, or Space+left click for panning
     if (e.button === 1 || (e.button === 0 && e.altKey) || (e.button === 0 && isSpacePressed)) {
@@ -1576,110 +1716,103 @@
       return;
     }
 
-    // Left click: hit-test layers for click-to-select (supports Ctrl/Cmd multi-select)
+    // Left click: click-to-select, or drag into marquee select even when
+    // the drag starts on top of an existing slice/layer body.
     if (e.button === 0 && viewportEl) {
-      // Only fire when clicking the viewport background or canvas — not on handles/overlays
-      const target = e.target as HTMLElement;
-      if (target.closest('.warp-handles-offset') || target.closest('.shape-interaction-overlay')) return;
-
-      const rect = viewportEl.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
-
-      // Convert to content coordinates (undo pan and zoom)
-      const contentX = (mouseX - viewportPanX) / viewportZoom;
-      const contentY = (mouseY - viewportPanY) / viewportZoom;
-
-      // Convert to normalized 0-1 coords within the canvas area
-      const normalizedX = (contentX - canvasOffsetX) / canvasWidth;
-      const normalizedY = 1 - ((contentY - canvasOffsetY) / canvasHeight); // Flip Y for OpenGL
-
-      // Only test if click is within canvas bounds
-      if (normalizedX >= 0 && normalizedX <= 1 && normalizedY >= 0 && normalizedY <= 1) {
-        const hitLayerId = hitTestLayers(normalizedX, normalizedY);
-        const isToggle = e.ctrlKey || e.metaKey;
-
-        if (hitLayerId) {
-          if (isToggle) {
-            // Ctrl/Cmd+click: toggle layer in/out of multi-selection
-            const currentIds = get(selectedLayerIds);
-            const exists = currentIds.includes(hitLayerId);
-            const nextIds = exists
-              ? currentIds.filter(id => id !== hitLayerId)
-              : [...currentIds, hitLayerId];
-            project.setLayerSelection(hitLayerId, nextIds.length > 0 ? nextIds : [hitLayerId]);
-          } else {
-            // Normal click: single select
-            project.selectLayer(hitLayerId);
-          }
-        } else if (!isToggle) {
-          // Click on empty area: deselect
-          project.selectLayer(null);
-        }
-
-        // Start drag-select box tracking (for marquee selection)
-        if (!hitLayerId && !isToggle) {
-          dragSelectStart = { x: normalizedX, y: normalizedY };
-          dragSelectCurrent = null;
-          isDragSelecting = false;
-
-          const onDragMove = (me: MouseEvent) => {
-            const r = viewportEl!.getBoundingClientRect();
-            const mx = me.clientX - r.left;
-            const my = me.clientY - r.top;
-            const cx = (mx - viewportPanX) / viewportZoom;
-            const cy = (my - viewportPanY) / viewportZoom;
-            const nx = (cx - canvasOffsetX) / canvasWidth;
-            const ny = 1 - ((cy - canvasOffsetY) / canvasHeight);
-            dragSelectCurrent = { x: nx, y: ny };
-            isDragSelecting = true;
-
-            // Hit-test all layers within the drag rectangle
-            const minX = Math.min(dragSelectStart!.x, nx);
-            const maxX = Math.max(dragSelectStart!.x, nx);
-            const minY = Math.min(dragSelectStart!.y, ny);
-            const maxY = Math.max(dragSelectStart!.y, ny);
-
-            const currentLayers = get(project).layers;
-            const hitIds: string[] = [];
-            for (const layer of currentLayers) {
-              if (!layer.visible || layer.locked || !layer.corners) continue;
-              // Check if any corner of the layer falls within the selection box
-              const c = layer.corners;
-              const corners = [c.topLeft, c.topRight, c.bottomLeft, c.bottomRight];
-              const layerInBox = corners.some(pt => pt.x >= minX && pt.x <= maxX && pt.y >= minY && pt.y <= maxY);
-              // Also check if the center of the layer is in the box
-              const centerX = (c.topLeft.x + c.topRight.x + c.bottomLeft.x + c.bottomRight.x) / 4;
-              const centerY = (c.topLeft.y + c.topRight.y + c.bottomLeft.y + c.bottomRight.y) / 4;
-              const centerInBox = centerX >= minX && centerX <= maxX && centerY >= minY && centerY <= maxY;
-              if (layerInBox || centerInBox) hitIds.push(layer.id);
-            }
-            if (hitIds.length > 0) {
-              project.setLayerSelection(hitIds[0], hitIds);
-            }
-          };
-
-          const onDragUp = () => {
-            window.removeEventListener('mousemove', onDragMove);
-            window.removeEventListener('mouseup', onDragUp);
-            dragSelectStart = null;
-            dragSelectCurrent = null;
-            isDragSelecting = false;
-          };
-
-          window.addEventListener('mousemove', onDragMove);
-          window.addEventListener('mouseup', onDragUp);
-        }
-      }
+      beginViewportSelectionGesture(e);
     }
   }
 
   // Drag-select state
   let dragSelectStart: { x: number; y: number } | null = null;
   let dragSelectCurrent: { x: number; y: number } | null = null;
+  let dragSelectViewportStart: { x: number; y: number } | null = null;
+  let dragSelectViewportCurrent: { x: number; y: number } | null = null;
   let isDragSelecting = false;
+  let viewportSelectionGesture: {
+    start: Point2D;
+    startClientX: number;
+    startClientY: number;
+    hitLayerId: string | null;
+    isToggle: boolean;
+    initialSelection: string[];
+    active: boolean;
+  } | null = null;
+
+  function updateViewportSelectionGesture(e: MouseEvent | PointerEvent): boolean {
+    const gesture = viewportSelectionGesture;
+    if (!gesture) return false;
+
+    const distance = Math.hypot(e.clientX - gesture.startClientX, e.clientY - gesture.startClientY);
+    if (!gesture.active && distance < DRAG_SELECT_THRESHOLD_PX) return true;
+
+    e.preventDefault();
+    if (!gesture.active) {
+      gesture.active = true;
+      isDragSelecting = true;
+      dragSelectStart = gesture.start;
+      dragSelectViewportStart = viewportClientToLocalCoords(gesture.startClientX, gesture.startClientY);
+      window.dispatchEvent(new CustomEvent('ghost-clear-warp-corner-selection'));
+    }
+
+    const current = viewportClientToCanvasCoords(e.clientX, e.clientY);
+    dragSelectCurrent = current;
+    dragSelectViewportCurrent = viewportClientToLocalCoords(e.clientX, e.clientY);
+
+    const hitIds = collectLayerIdsInSelectionRect(gesture.start, current);
+    const nextIds = gesture.isToggle
+      ? [...gesture.initialSelection, ...hitIds.filter(id => !gesture.initialSelection.includes(id))]
+      : hitIds;
+    if (nextIds.length > 0) {
+      project.setLayerSelection(nextIds[0], nextIds);
+    } else if (!gesture.isToggle) {
+      project.selectLayer(null);
+    }
+    return true;
+  }
+
+  function finishViewportSelectionGesture(e?: MouseEvent | PointerEvent): boolean {
+    const gesture = viewportSelectionGesture;
+    if (!gesture) return false;
+
+    if (!gesture.active) {
+      window.dispatchEvent(new CustomEvent('ghost-clear-warp-corner-selection'));
+      if (gesture.hitLayerId) {
+        if (gesture.isToggle) {
+          const exists = gesture.initialSelection.includes(gesture.hitLayerId);
+          const nextIds = exists
+            ? gesture.initialSelection.filter(id => id !== gesture.hitLayerId)
+            : [...gesture.initialSelection, gesture.hitLayerId];
+          project.setLayerSelection(gesture.hitLayerId, nextIds.length > 0 ? nextIds : [gesture.hitLayerId]);
+        } else {
+          project.selectLayer(gesture.hitLayerId);
+        }
+      } else if (!gesture.isToggle) {
+        project.selectLayer(null);
+      }
+    } else {
+      e?.preventDefault();
+    }
+
+    viewportSelectionGesture = null;
+    dragSelectStart = null;
+    dragSelectCurrent = null;
+    dragSelectViewportStart = null;
+    dragSelectViewportCurrent = null;
+    isDragSelecting = false;
+    if (e && 'pointerId' in e) {
+      try {
+        viewportEl?.releasePointerCapture?.(e.pointerId);
+      } catch {
+        // Capture auto-releases on pointerup in browsers that support it.
+      }
+    }
+    return true;
+  }
 
   function handleViewportMouseMove(e: MouseEvent) {
+    if (updateViewportSelectionGesture(e)) return;
+
     if (isPanning) {
       viewportPanX = panStartPanX + (e.clientX - panStartX);
       viewportPanY = panStartPanY + (e.clientY - panStartY);
@@ -1695,6 +1828,8 @@
   }
 
   function handleViewportMouseUp(e: MouseEvent) {
+    if (e.button === 0 && finishViewportSelectionGesture(e)) return;
+
     if (e.button === 1 || e.button === 0) {
       isPanning = false;
     }
@@ -2365,7 +2500,7 @@
     const layerId = get(project).selectedLayerId;
     if (!layerId) return;
 
-    const params = phoneVisionPointCloudParams(raw);
+    const params: Record<string, any> = phoneVisionPointCloudParams(raw);
     if (nativeOnly) {
       delete (params as Record<string, unknown>).source;
       params.depthSource = 'native-depth';
@@ -5651,6 +5786,7 @@
       <div
         class="viewport"
         bind:this={viewportEl}
+        onpointerdown={handleViewportPointerDown}
         onmousedown={handleViewportMouseDown}
         onmousemove={handleViewportMouseMove}
         onmouseup={handleViewportMouseUp}
@@ -6305,20 +6441,22 @@
             </div>
           </div>
         {/if}
-        <!-- Drag-select box overlay -->
-        {#if isDragSelecting && dragSelectStart && dragSelectCurrent}
-          {@const x1 = Math.min(dragSelectStart.x, dragSelectCurrent.x)}
-          {@const y1 = Math.min(dragSelectStart.y, dragSelectCurrent.y)}
-          {@const x2 = Math.max(dragSelectStart.x, dragSelectCurrent.x)}
-          {@const y2 = Math.max(dragSelectStart.y, dragSelectCurrent.y)}
+        </div><!-- End viewport-content -->
+
+        <!-- Drag-select box overlay: viewport-local so zoom/pan and canvas
+             overlay stacking cannot hide or offset the marquee feedback. -->
+        {#if isDragSelecting && dragSelectViewportStart && dragSelectViewportCurrent}
+          {@const vx1 = Math.min(dragSelectViewportStart.x, dragSelectViewportCurrent.x)}
+          {@const vy1 = Math.min(dragSelectViewportStart.y, dragSelectViewportCurrent.y)}
+          {@const vx2 = Math.max(dragSelectViewportStart.x, dragSelectViewportCurrent.x)}
+          {@const vy2 = Math.max(dragSelectViewportStart.y, dragSelectViewportCurrent.y)}
           <div class="drag-select-box" style="
-            left: {canvasOffsetX + x1 * canvasWidth}px;
-            top: {canvasOffsetY + (1 - y2) * canvasHeight}px;
-            width: {(x2 - x1) * canvasWidth}px;
-            height: {(y2 - y1) * canvasHeight}px;
+            left: {vx1}px;
+            top: {vy1}px;
+            width: {vx2 - vx1}px;
+            height: {vy2 - vy1}px;
           "></div>
         {/if}
-        </div><!-- End viewport-content -->
 
         <!-- Viewport info overlay (outside transform so it stays fixed) -->
         <div class="viewport-info">
@@ -6333,41 +6471,6 @@
             | Zoom: {(viewportZoom * 100).toFixed(0)}%
             <button class="reset-view-btn" onclick={resetViewportTransform}>Reset View</button>
           {/if}
-          <span class="grid-controls">
-            <button
-              class="grid-toggle-btn"
-              class:active={$settings.ui.gridSettings?.enabled}
-              onclick={() => settings.toggleGrid()}
-              title="Toggle grid"
-            >
-              <svg width="14" height="14" viewBox="0 0 14 14"><path d="M0 4.5h14M0 9.5h14M4.5 0v14M9.5 0v14" stroke="currentColor" stroke-width="1" fill="none"/></svg>
-            </button>
-            {#if $settings.ui.gridSettings?.enabled}
-              <select
-                class="grid-size-select"
-                value="{$settings.ui.gridSettings?.columns || 12}x{$settings.ui.gridSettings?.rows || 12}"
-                onchange={(e) => {
-                  const [c, r] = e.currentTarget.value.split('x').map(Number);
-                  settings.setGridDimensions(c, r);
-                }}
-              >
-                <option value="8x8">8×8</option>
-                <option value="12x12">12×12</option>
-                <option value="16x16">16×16</option>
-                <option value="32x32">32×32</option>
-                <option value="64x64">64×64</option>
-              </select>
-              <button
-                class="snap-toggle-btn"
-                class:active={$settings.ui.gridSettings?.snapToGrid}
-                onclick={() => settings.toggleSnap()}
-                title="Snap to grid"
-              >
-                <svg width="12" height="12" viewBox="0 0 12 12"><path d="M1 6h4l2-4 2 4h2" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="6" r="1.5" fill="currentColor"/></svg>
-                Snap
-              </button>
-            {/if}
-          </span>
         </div>
 
         <!-- Light Painting draw overlay (inside viewport for correct
@@ -6601,6 +6704,49 @@
       {/if}
       <span class="spacer"></span>
 
+      {#if $workspace === 'main'}
+        <button
+          class="status-pill map-tool-pill"
+          class:on={$settings.ui.gridSettings?.enabled}
+          onclick={() => settings.toggleGrid()}
+          title="Toggle mapping grid"
+        >
+          <svg class="status-pill-icon grid-icon" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
+            <path class="ga-neon-stroke" d="M4 8h16M4 16h16M8 4v16M16 4v16"/>
+            <path class="ga-neon-stroke ga-neon-thin" d="M4 4h16v16H4z"/>
+          </svg>
+          Grid
+        </button>
+        {#if $settings.ui.gridSettings?.enabled}
+          <select
+            class="status-grid-select"
+            value="{$settings.ui.gridSettings?.columns || 12}x{$settings.ui.gridSettings?.rows || 12}"
+            title="Grid size"
+            onchange={(e) => {
+              const [c, r] = e.currentTarget.value.split('x').map(Number);
+              settings.setGridDimensions(c, r);
+            }}
+          >
+            <option value="8x8">8×8</option>
+            <option value="12x12">12×12</option>
+            <option value="16x16">16×16</option>
+            <option value="32x32">32×32</option>
+            <option value="64x64">64×64</option>
+          </select>
+          <button
+            class="status-pill map-tool-pill snap-pill"
+            class:on={$settings.ui.gridSettings?.snapToGrid}
+            onclick={() => settings.toggleSnap()}
+            title="Snap mapping handles to grid"
+          >
+            <svg class="status-pill-icon snap-icon" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
+              <path class="ga-neon-stroke" d="M5 12h6l2-5 2 5h4"/>
+              <circle class="ga-neon-fill" cx="12" cy="12" r="4"/>
+            </svg>
+            Snap
+          </button>
+        {/if}
+      {/if}
       <!-- Inline tool pills — Presets / Sequencer / Keyframes live in
            the status bar so they're always visible and the tray panels
            open ABOVE this bar instead of covering it. Same toggle
@@ -8302,6 +8448,8 @@
     position: relative;
     background: var(--ga-void, #070809);
     overflow: hidden;
+    user-select: none;
+    touch-action: none;
   }
 
   .viewport.panning {
@@ -8564,6 +8712,35 @@
   .status-pill.on .status-pill-icon {
     color: var(--ga-neon-green, #39ff14);
     filter: drop-shadow(0 0 7px rgba(57, 255, 20, .75)) drop-shadow(0 0 14px rgba(57, 255, 20, .34));
+  }
+  .map-tool-pill {
+    margin-right: 2px;
+  }
+  .map-tool-pill.on {
+    background: var(--ga-coral, #ff6f5e);
+  }
+  .snap-pill.on {
+    color: #061418;
+    background: var(--ga-neon-cyan, #5ce1e6);
+    border-color: var(--ga-neon-cyan, #5ce1e6) !important;
+    box-shadow: 0 0 12px rgba(92, 225, 230, 0.38);
+  }
+  .status-grid-select {
+    height: 24px;
+    margin: 0 4px 0 0;
+    padding: 0 26px 0 10px;
+    border: 1px solid var(--ga-line-2, rgba(255,255,255,.12));
+    border-radius: var(--ga-r-pill, 999px);
+    background-color: color-mix(in srgb, var(--ga-card, #13161c) 78%, transparent);
+    color: var(--ga-ink-0, #eef0f4);
+    font-family: var(--ga-font-ui, inherit);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .status-grid-select:hover {
+    border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.4));
+    background-color: var(--ga-coral-soft, rgba(255, 111, 94, 0.11));
   }
 
   /* Hide the floating BottomDock since the pills now live inline in

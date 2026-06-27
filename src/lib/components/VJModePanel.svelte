@@ -9,6 +9,7 @@
   import { vjClipLauncher, type VJClip, type VJBlock, type VJDeck } from '../stores/vjClipLauncher';
   import { vjLayerSequencer } from '../stores/vjLayerSequencer';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
+  import { workspace } from '../stores/workspace';
   import { project, stagePresets, compositions, activeCompositionId } from '../stores/layers';
   import { STAGE_EFFECT_CATALOG, getEffectDef } from '../stores/stageEffects';
   import { surfaceStore, activeSurface } from '../stores/surface';
@@ -1682,11 +1683,14 @@
     // best-effort; it must never leave the overlay visible or VJ output live.
     try { vjClipLauncher.stopAll(); } catch (err) { console.warn('[VJPanel] stopAll failed during close:', err); }
     try { vjClipLauncher.setLive(false); } catch (err) { console.warn('[VJPanel] setLive(false) failed during close:', err); }
-    try { vjClipLauncher.setOpen(false); } catch (err) { console.warn('[VJPanel] setOpen(false) failed during close:', err); }
+    try { vjClipLauncher.setOpen(false, { fromWorkspace: true }); } catch (err) { console.warn('[VJPanel] setOpen(false) failed during close:', err); }
+    try { workspace.closeAll(); } catch (err) { console.warn('[VJPanel] workspace close failed during close:', err); }
 
     try { modulationEngine.stop(); } catch (err) { console.warn('[VJPanel] modulation stop failed:', err); }
     try { performanceStore.stop(); } catch (err) { console.warn('[VJPanel] performance stop failed:', err); }
+    try { releaseAllStageEffectHolds(); } catch (err) { console.warn('[VJPanel] stage effect hold cleanup failed:', err); }
     try { stopAllVjLiveSources(); } catch (err) { console.warn('[VJPanel] live source cleanup failed:', err); }
+    try { vjClipLauncher.clearRuntimeSourceCache(); } catch (err) { console.warn('[VJPanel] runtime source cache cleanup failed:', err); }
     try {
       // Clear synthvision clips after VJ is no longer live so stale
       // performer textures cannot keep feeding the renderer.
@@ -7158,8 +7162,9 @@
   }
 
   .column-trigger {
-    flex: 1 0 76px;
+    flex: 1 1 0;
     min-width: 76px;
+    box-sizing: border-box;
     height: 28px;
     background: #222;
     border: 1px solid #444;
@@ -7331,10 +7336,11 @@
 
   /* Clip Cells */
   .clip-cell {
-    flex: 1 0 76px;
+    flex: 1 1 0;
     aspect-ratio: 16 / 9;
     min-width: 76px;
     min-height: 60px;
+    box-sizing: border-box;
     background: var(--bg-primary, #0d0d10);
     border: 1px solid #333;
     border-radius: 4px;
@@ -7342,6 +7348,7 @@
     cursor: pointer;
     transition: all 0.1s;
     position: relative;
+    contain: layout paint;
   }
 
   .clip-cell:hover {
@@ -7426,12 +7433,18 @@
     width: 100%;
     height: 100%;
     position: relative;
+    min-width: 0;
+    overflow: hidden;
   }
 
   .clip-thumb {
     width: 100%;
     height: 100%;
     object-fit: cover;
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    pointer-events: none;
   }
 
   .clip-placeholder {
@@ -7442,6 +7455,7 @@
     justify-content: center;
     font-size: 12px;
     font-weight: 700;
+    min-width: 0;
   }
 
   .clip-placeholder.shader {
@@ -7496,6 +7510,8 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    min-width: 0;
+    pointer-events: none;
   }
 
   .clear-btn {
