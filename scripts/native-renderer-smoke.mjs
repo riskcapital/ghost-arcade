@@ -854,6 +854,27 @@ async function main() {
     if (Number(status.native_instrument_frame_renders ?? 0) < 4) {
       throw new Error(`native instrument frames were not rendered: ${JSON.stringify(status)}`);
     }
+    if (Number(status.compute_graph_runs ?? 0) < 4) {
+      throw new Error(`native compute graph runs were not counted: ${JSON.stringify(status)}`);
+    }
+    if (Number(status.compute_graph_passes ?? 0) < 6) {
+      throw new Error(`native compute graph passes were not counted: ${JSON.stringify(status)}`);
+    }
+    if (Number(status.compute_graph_render_passes ?? 0) < 2) {
+      throw new Error(`native compute graph render passes were not counted: ${JSON.stringify(status)}`);
+    }
+    if (Number(status.compute_graph_snapshot_renders ?? 0) < 1) {
+      throw new Error(`native compute graph snapshot renders were not counted: ${JSON.stringify(status)}`);
+    }
+    if (Number(status.compute_graph_source_frame_renders ?? 0) < 1) {
+      throw new Error(`native compute graph source-frame renders were not counted: ${JSON.stringify(status)}`);
+    }
+    if (Number(status.compute_graph_readbacks ?? 0) < 5 || Number(status.compute_graph_readback_bytes ?? 0) < 5120) {
+      throw new Error(`native compute graph readbacks were not counted: ${JSON.stringify(status)}`);
+    }
+    if (Number(status.compute_graph_persistent_buffers ?? 0) < 2) {
+      throw new Error(`native persistent compute graph buffers were not reported: ${JSON.stringify(status)}`);
+    }
     if (Number(status.source_frame_size ?? 0) < 1536) {
       throw new Error(`native source frame size regressed below 1536px: ${JSON.stringify(status)}`);
     }
@@ -937,6 +958,8 @@ async function main() {
       `graph=${outputReadback.checksum}/${computeGraph.pass_count}`,
       `graphRender=${graphRenderSnapshot.checksum}`,
       `graphSource=${graphSourceFrameSnapshot?.checksum ?? 'none'}`,
+      `graphRuns=${status.compute_graph_runs}/${status.compute_graph_passes}`,
+      `graphSrcFrames=${status.compute_graph_source_frame_renders}`,
       `persist=${persistentOutput.checksum}/${persistentSeedWord}`,
       `gpu=${gpuA.checksum}->${gpuB.checksum}/detail=${gpuHighDetail.checksum}`,
       `particle=${particleA.checksum}->${particleB.checksum}`,

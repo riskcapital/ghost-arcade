@@ -188,6 +188,10 @@ describe('3D Smoke native renderer integration', () => {
 
     const status = await rpc.send('status', {}, 5000);
     expect(Number(status.source_frames_active ?? 0)).toBeGreaterThanOrEqual(1);
-    expect(Number(status.persistent_buffer_count ?? graphResult.persistent_buffer_count ?? 0)).toBeGreaterThanOrEqual(7);
+    expect(Number(status.compute_graph_runs ?? 0)).toBeGreaterThanOrEqual(3);
+    expect(Number(status.compute_graph_passes ?? 0)).toBeGreaterThanOrEqual(75);
+    expect(Number(status.compute_graph_render_passes ?? 0)).toBeGreaterThanOrEqual(3);
+    expect(Number(status.compute_graph_source_frame_renders ?? 0)).toBeGreaterThanOrEqual(3);
+    expect(Number(status.compute_graph_persistent_buffers ?? graphResult.persistent_buffer_count ?? 0)).toBeGreaterThanOrEqual(7);
   }, 60000);
 });
