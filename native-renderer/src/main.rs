@@ -33,6 +33,8 @@ const SOURCE_FRAME_SIZE_INSANE: usize = 3072;
 const SOURCE_FRAME_MIP_LEVELS_MAX: u32 = 5;
 const SOURCE_FRAME_FORMAT_FALLBACK: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const SOURCE_FRAME_FORMAT_HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+const DEFAULT_COMMAND_QUEUE_CAPACITY: u32 = 8192;
+const DEFAULT_COMMAND_DRAIN_LIMIT: u32 = 1024;
 const GHOST_AUDIO_LAYOUT_SCHEMA_VERSION: u32 = 1;
 const GHOST_AUDIO0_FIELDS: [&str; 4] = ["level", "bass", "mid", "treble"];
 const GHOST_AUDIO1_FIELDS: [&str; 4] = ["high", "beat", "beat_phase", "bpm"];
@@ -67,6 +69,8 @@ const CORE_RPC_METHODS: &[&str] = &[
     "submit_commands",
     "set_output",
     "set_present_policy",
+    "set_command_drain_policy",
+    "set_auto_present_policy",
     "attach_output_window",
     "detach_output_window",
     "set_target_fps",
@@ -86,6 +90,9 @@ const CORE_RPC_METHODS: &[&str] = &[
 const CORE_COMMAND_TYPES: &[&str] = &[
     "set_output",
     "set_present_policy",
+    "set_command_drain_policy",
+    "set_command_drain_limit",
+    "set_auto_present_policy",
     "upsert_layer",
     "set_layer_visibility",
     "set_layer_color",
@@ -156,6 +163,11 @@ struct CoreStatus {
     allow_tearing: bool,
     max_frame_latency: u32,
     use_waitable_object: bool,
+    command_queue_capacity: u32,
+    command_drain_limit: u32,
+    auto_present_on_state_change: bool,
+    command_drain_limit_hits: u64,
+    queued_commands_after_drain: u64,
     source_preview_size: u32,
     source_previews_active: u32,
     source_preview_slots: u32,
@@ -421,9 +433,14 @@ impl NativeQualityState {
 struct CoreStats {
     frames_submitted: u64,
     frames_presented: u64,
+    frames_presented_explicit: u64,
+    frames_presented_auto: u64,
     commands_applied: u64,
     commands_dropped: u64,
+    batch_commands_coalesced: u64,
     command_queue_peak: u64,
+    command_drain_limit_hits: u64,
+    queued_commands_after_drain: u64,
     draw_calls: u64,
     shader_precompile_queued: u64,
     shader_precompile_compiled: u64,
@@ -1166,6 +1183,10 @@ struct App {
     allow_tearing: bool,
     max_frame_latency: u32,
     use_waitable_object: bool,
+    command_queue_capacity: u32,
+    command_drain_limit: u32,
+    auto_present_on_state_change: bool,
+    auto_present_requested: bool,
     output_window_attached: bool,
     layers_seen: u32,
     command_phase: f32,
@@ -1212,6 +1233,10 @@ impl App {
             allow_tearing: false,
             max_frame_latency: 2,
             use_waitable_object: false,
+            command_queue_capacity: DEFAULT_COMMAND_QUEUE_CAPACITY,
+            command_drain_limit: DEFAULT_COMMAND_DRAIN_LIMIT,
+            auto_present_on_state_change: true,
+            auto_present_requested: false,
             output_window_attached: true,
             layers_seen: 0,
             command_phase: 0.0,
@@ -1302,6 +1327,8 @@ impl App {
             "compute_graph_render": true,
             "compute_graph_source_frame_target": true,
             "persistent_compute_buffers": true,
+            "command_drain_policy": true,
+            "auto_present_policy": true,
             "multi_pass_instruments": false,
             "storage_buffer_instruments": true,
             "shared_texture_upload": false,
@@ -1319,7 +1346,9 @@ impl App {
             "source_preview_slots": MAX_SOURCE_PREVIEWS,
             "source_frame_slots": MAX_SOURCE_FRAME_SLOTS,
             "source_frame_size": self.renderer.as_ref().map(|renderer| renderer.source_frame_size).unwrap_or(SOURCE_FRAME_SIZE_DEFAULT),
-            "source_frame_mip_levels": self.renderer.as_ref().map(|renderer| renderer.source_frame_mip_levels).unwrap_or(1)
+            "source_frame_mip_levels": self.renderer.as_ref().map(|renderer| renderer.source_frame_mip_levels).unwrap_or(1),
+            "command_queue_capacity": self.command_queue_capacity,
+            "command_drain_limit": self.command_drain_limit
         });
         json!({
             "schema_version": 1,
@@ -1381,6 +1410,11 @@ impl App {
             allow_tearing: self.allow_tearing,
             max_frame_latency: self.max_frame_latency,
             use_waitable_object: false,
+            command_queue_capacity: self.command_queue_capacity,
+            command_drain_limit: self.command_drain_limit,
+            auto_present_on_state_change: self.auto_present_on_state_change,
+            command_drain_limit_hits: self.stats.command_drain_limit_hits,
+            queued_commands_after_drain: self.stats.queued_commands_after_drain,
             source_preview_size: SOURCE_PREVIEW_SIZE as u32,
             source_previews_active: self.source_previews.len().min(1024) as u32,
             source_preview_slots: MAX_SOURCE_PREVIEWS as u32,
@@ -1643,10 +1677,12 @@ impl App {
             }
             "submit_batch" => {
                 self.apply_batch(&req.params);
+                self.request_auto_present();
                 Ok(json!(true))
             }
             "submit_commands" => {
                 self.apply_commands(req.params.get("commands").unwrap_or(&req.params));
+                self.request_auto_present();
                 Ok(json!(true))
             }
             "set_output" => {
@@ -1655,6 +1691,14 @@ impl App {
             }
             "set_present_policy" => {
                 self.apply_present_policy(&req.params);
+                Ok(json!(self.status()))
+            }
+            "set_command_drain_policy" => {
+                self.apply_command_drain_policy(&req.params);
+                Ok(json!(self.status()))
+            }
+            "set_auto_present_policy" => {
+                self.apply_auto_present_policy(&req.params);
                 Ok(json!(self.status()))
             }
             "attach_output_window" => {
@@ -1725,6 +1769,8 @@ impl App {
             .round()
             .clamp(1.0, 240.0) as u32;
         self.apply_present_policy(config);
+        self.apply_command_drain_policy(config);
+        self.apply_auto_present_policy(config);
         self.apply_native_quality_policy(config);
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.resize(PhysicalSize::new(self.pending_width, self.pending_height));
@@ -1768,6 +1814,26 @@ impl App {
         }
     }
 
+    fn apply_command_drain_policy(&mut self, params: &Value) {
+        let config = params.get("config").unwrap_or(params);
+        self.command_queue_capacity = number_at(config, &["command_queue_capacity"])
+            .unwrap_or(self.command_queue_capacity as f64)
+            .round()
+            .clamp(1.0, 1_000_000.0) as u32;
+        self.command_drain_limit = number_at(config, &["max_commands_per_tick"])
+            .or_else(|| number_at(config, &["command_drain_limit"]))
+            .unwrap_or(self.command_drain_limit as f64)
+            .round()
+            .clamp(1.0, self.command_queue_capacity.max(1) as f64)
+            as u32;
+    }
+
+    fn apply_auto_present_policy(&mut self, params: &Value) {
+        let config = params.get("config").unwrap_or(params);
+        self.auto_present_on_state_change = bool_at(config, &["auto_present_on_state_change"])
+            .unwrap_or(self.auto_present_on_state_change);
+    }
+
     fn apply_output_window_attached(&mut self, attached: bool) {
         self.output_window_attached = attached;
         if let Some(renderer) = self.renderer.as_ref() {
@@ -1775,6 +1841,17 @@ impl App {
             if attached {
                 renderer.window.request_redraw();
             }
+        }
+    }
+
+    fn request_auto_present(&mut self) {
+        if !self.auto_present_on_state_change {
+            return;
+        }
+        if let Some(renderer) = self.renderer.as_ref() {
+            self.auto_present_requested = true;
+            self.last_redraw = Instant::now();
+            renderer.window.request_redraw();
         }
     }
 
@@ -1829,6 +1906,11 @@ impl App {
         let mut applied = 0u64;
         let mut dropped = 0u64;
         self.stats.command_queue_peak = self.stats.command_queue_peak.max(count);
+        if count > self.command_drain_limit as u64 {
+            self.stats.command_drain_limit_hits =
+                self.stats.command_drain_limit_hits.saturating_add(1);
+            self.stats.queued_commands_after_drain = 0;
+        }
 
         for command in commands {
             match command
@@ -1843,6 +1925,10 @@ impl App {
                 "set_layer_native_params" => self.apply_layer_native_params(command),
                 "set_effect_chain" => self.apply_effect_chain(command),
                 "set_present_policy" => self.apply_present_policy(command),
+                "set_command_drain_policy" | "set_command_drain_limit" => {
+                    self.apply_command_drain_policy(command)
+                }
+                "set_auto_present_policy" => self.apply_auto_present_policy(command),
                 "set_texture_pool_cap" => self.apply_texture_pool_cap(command),
                 "set_shader_precompile_policy" => self.apply_shader_precompile_policy(command),
                 "set_metadata_cache_caps" => self.apply_metadata_cache_caps(command),
@@ -1977,6 +2063,14 @@ impl App {
         ) {
             Ok(()) => {
                 self.stats.frames_presented = self.stats.frames_presented.saturating_add(1);
+                if self.auto_present_requested {
+                    self.stats.frames_presented_auto =
+                        self.stats.frames_presented_auto.saturating_add(1);
+                    self.auto_present_requested = false;
+                } else {
+                    self.stats.frames_presented_explicit =
+                        self.stats.frames_presented_explicit.saturating_add(1);
+                }
                 self.stats.draw_calls = self.stats.draw_calls.saturating_add(1);
                 let ms = started.elapsed().as_secs_f64() * 1000.0;
                 self.stats.last_render_cpu_ms = ms;

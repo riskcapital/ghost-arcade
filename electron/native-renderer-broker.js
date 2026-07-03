@@ -60,8 +60,6 @@ const BROKER_UNSUPPORTED_COMMANDS = new Map([
   ['native_renderer_clear_decode_preview_cache', 'native decode preview cache is not implemented yet'],
   ['native_renderer_clear_runtime_caches', 'native runtime cache clearing is not implemented yet'],
   ['native_renderer_set_vram_budget', 'native VRAM budget enforcement is not implemented yet'],
-  ['native_renderer_set_command_drain_policy', 'native command-drain policy is not implemented yet'],
-  ['native_renderer_set_auto_present_policy', 'native auto-present policy is not implemented yet'],
   ['native_renderer_set_decode_cpu_backup_policy', 'native decode CPU backup is not implemented yet'],
   ['native_renderer_set_decode_synthetic_fallback_policy', 'native decode fallback policy is not implemented yet'],
   ['native_renderer_set_media_prefetch_policy', 'native media prefetch policy is not implemented yet'],
@@ -176,6 +174,10 @@ class NativeRendererBroker {
         return this.sendIfRunning('set_target_fps', args, { fallback: null });
       case 'native_renderer_set_present_policy':
         return this.sendIfRunning('set_present_policy', args, { fallback: null });
+      case 'native_renderer_set_command_drain_policy':
+        return this.sendIfRunning('set_command_drain_policy', args, { fallback: null });
+      case 'native_renderer_set_auto_present_policy':
+        return this.sendIfRunning('set_auto_present_policy', args, { fallback: null });
       case 'native_renderer_attach_output_window':
         return this.sendIfRunning('attach_output_window', args, { fallback: null });
       case 'native_renderer_detach_output_window':
@@ -686,6 +688,17 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     allow_tearing: !!(status.allow_tearing ?? previous.allow_tearing ?? false),
     max_frame_latency: Number(status.max_frame_latency ?? previous.max_frame_latency ?? 2),
     use_waitable_object: !!(status.use_waitable_object ?? previous.use_waitable_object ?? false),
+    command_queue_capacity: Number(status.command_queue_capacity ?? previous.command_queue_capacity ?? 8192),
+    command_drain_limit: Number(status.command_drain_limit ?? previous.command_drain_limit ?? 1024),
+    auto_present_on_state_change: !!(
+      status.auto_present_on_state_change ?? previous.auto_present_on_state_change ?? true
+    ),
+    command_drain_limit_hits: Number(
+      status.command_drain_limit_hits ?? previous.command_drain_limit_hits ?? 0,
+    ),
+    queued_commands_after_drain: Number(
+      status.queued_commands_after_drain ?? previous.queued_commands_after_drain ?? 0,
+    ),
     output_refresh_hz: Number(status.output_refresh_hz ?? previous.output_refresh_hz ?? status.target_fps ?? 60),
     output_window_attached: !!(status.output_window_attached ?? previous.output_window_attached ?? false),
     output_swapchain_ready: !!(status.output_swapchain_ready ?? previous.output_swapchain_ready ?? false),
@@ -737,7 +750,18 @@ function normalizeStats(stats, previous = makeDefaultStats()) {
     ...stats,
     frames_submitted: Number(stats.frames_submitted ?? previous.frames_submitted ?? 0),
     frames_presented: Number(stats.frames_presented ?? previous.frames_presented ?? 0),
+    frames_presented_explicit: Number(stats.frames_presented_explicit ?? previous.frames_presented_explicit ?? 0),
+    frames_presented_auto: Number(stats.frames_presented_auto ?? previous.frames_presented_auto ?? 0),
     commands_applied: Number(stats.commands_applied ?? previous.commands_applied ?? 0),
+    commands_dropped: Number(stats.commands_dropped ?? previous.commands_dropped ?? 0),
+    batch_commands_coalesced: Number(stats.batch_commands_coalesced ?? previous.batch_commands_coalesced ?? 0),
+    command_queue_peak: Number(stats.command_queue_peak ?? previous.command_queue_peak ?? 0),
+    command_drain_limit_hits: Number(
+      stats.command_drain_limit_hits ?? previous.command_drain_limit_hits ?? 0,
+    ),
+    queued_commands_after_drain: Number(
+      stats.queued_commands_after_drain ?? previous.queued_commands_after_drain ?? 0,
+    ),
     native_instrument_frame_renders: Number(stats.native_instrument_frame_renders ?? previous.native_instrument_frame_renders ?? 0),
     compute_graph_runs: Number(stats.compute_graph_runs ?? previous.compute_graph_runs ?? 0),
     compute_graph_passes: Number(stats.compute_graph_passes ?? previous.compute_graph_passes ?? 0),
@@ -803,6 +827,8 @@ function makeDefaultCapabilities(overrides = {}) {
       compute_graph_render: false,
       compute_graph_source_frame_target: false,
       persistent_compute_buffers: false,
+      command_drain_policy: false,
+      auto_present_policy: false,
       multi_pass_instruments: false,
       storage_buffer_instruments: false,
       shared_texture_upload: false,
@@ -821,6 +847,8 @@ function makeDefaultCapabilities(overrides = {}) {
       source_frame_slots: 0,
       source_frame_size: 0,
       source_frame_mip_levels: 1,
+      command_queue_capacity: 0,
+      command_drain_limit: 0,
     },
     audio_uniform_layout: {
       schema_version: 1,

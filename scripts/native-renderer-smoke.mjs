@@ -479,10 +479,19 @@ async function main() {
     if (!capabilities.implemented_methods?.includes('capabilities')) {
       throw new Error(`native capabilities did not list the capabilities RPC: ${JSON.stringify(capabilities)}`);
     }
-    for (const method of ['set_present_policy', 'attach_output_window', 'detach_output_window']) {
+    for (const method of [
+      'set_present_policy',
+      'set_command_drain_policy',
+      'set_auto_present_policy',
+      'attach_output_window',
+      'detach_output_window',
+    ]) {
       if (!capabilities.implemented_methods?.includes(method)) {
         throw new Error(`native capabilities did not list ${method}: ${JSON.stringify(capabilities.implemented_methods)}`);
       }
+    }
+    if (!capabilities.features?.command_drain_policy || !capabilities.features?.auto_present_policy) {
+      throw new Error(`native command presentation policy features missing: ${JSON.stringify(capabilities.features)}`);
     }
     const presentStatus = await rpc.send('set_present_policy', {
       config: {
@@ -499,6 +508,18 @@ async function main() {
       !presentStatus?.output_swapchain_ready
     ) {
       throw new Error(`native present policy/status did not apply: ${JSON.stringify(presentStatus)}`);
+    }
+    const drainStatus = await rpc.send('set_command_drain_policy', {
+      config: { max_commands_per_tick: 4 },
+    }, 5000);
+    if (Number(drainStatus?.command_drain_limit ?? 0) !== 4) {
+      throw new Error(`native command drain policy did not apply: ${JSON.stringify(drainStatus)}`);
+    }
+    const autoPresentStatus = await rpc.send('set_auto_present_policy', {
+      config: { auto_present_on_state_change: true },
+    }, 5000);
+    if (!autoPresentStatus?.auto_present_on_state_change) {
+      throw new Error(`native auto-present policy did not apply: ${JSON.stringify(autoPresentStatus)}`);
     }
     await rpc.send('attach_output_window', { label: 'native-smoke-output' }, 5000);
     try {
@@ -974,11 +995,19 @@ async function main() {
     if (
       status.present_mode !== 'vsync' ||
       Number(status.max_frame_latency ?? 0) !== 1 ||
+      Number(status.command_drain_limit ?? 0) !== 4 ||
+      !status.auto_present_on_state_change ||
       !status.output_window_attached ||
       !status.output_swapchain_ready ||
       !status.output_present_healthy
     ) {
       throw new Error(`native managed output/present status regressed: ${JSON.stringify(status)}`);
+    }
+    if (Number(status.command_drain_limit_hits ?? 0) < 1 || Number(stats.command_drain_limit_hits ?? 0) < 1) {
+      throw new Error(`native command drain threshold was not reported: status=${JSON.stringify(status)} stats=${JSON.stringify(stats)}`);
+    }
+    if (Number(status.queued_commands_after_drain ?? 0) !== 0 || Number(stats.queued_commands_after_drain ?? 0) !== 0) {
+      throw new Error(`native command queue reported stale deferred commands: status=${JSON.stringify(status)} stats=${JSON.stringify(stats)}`);
     }
     if (status.native_caps?.requested_timestamp_query && !status.gpu_timing_supported) {
       throw new Error(`native GPU timing should be enabled when timestamp queries are requested: ${JSON.stringify(status)}`);
