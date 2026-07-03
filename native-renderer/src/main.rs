@@ -508,6 +508,11 @@ struct NativeComputePipeline {
     bind_group_layout: wgpu::BindGroupLayout,
 }
 
+struct NativeGraphRenderPipeline {
+    pipeline: wgpu::RenderPipeline,
+    bind_group_layout: wgpu::BindGroupLayout,
+}
+
 #[derive(Clone, Copy, Debug)]
 enum NativeComputeBufferBindingKind {
     Uniform,
@@ -596,6 +601,18 @@ struct NativeComputeGraphPassPlan {
     source: String,
     entry: String,
     dispatch: [u32; 3],
+    bindings: Vec<NativeComputeGraphBindingSpec>,
+}
+
+#[derive(Clone, Debug)]
+struct NativeComputeGraphRenderPlan {
+    name: String,
+    cache_key: String,
+    source: String,
+    vertex_entry: String,
+    fragment_entry: String,
+    clear: bool,
+    include_snapshot: bool,
     bindings: Vec<NativeComputeGraphBindingSpec>,
 }
 
@@ -975,6 +992,7 @@ struct RenderState {
     native_shader_bind_group: wgpu::BindGroup,
     native_shader_pipelines: HashMap<String, NativeShaderPipeline>,
     native_compute_pipelines: HashMap<String, NativeComputePipeline>,
+    native_graph_render_pipelines: HashMap<String, NativeGraphRenderPipeline>,
     native_compute_graph_buffers: HashMap<String, NativeComputeGraphGpuBuffer>,
     snapshot_texture: wgpu::Texture,
     snapshot_view: wgpu::TextureView,
@@ -1124,6 +1142,7 @@ impl App {
                 "source_frame_hdr": self.renderer.as_ref().is_some_and(|renderer| renderer.source_frame_format == SOURCE_FRAME_FORMAT_HDR),
                 "compute_shader_host": true,
                 "compute_graph_host": true,
+                "compute_graph_render": true,
                 "persistent_compute_buffers": true,
                 "multi_pass_instruments": false,
                 "storage_buffer_instruments": true,
@@ -1884,11 +1903,17 @@ impl App {
         for (index, pass) in passes_value.iter().enumerate() {
             pass_plans.push(self.compute_graph_pass_plan(pass, index, &buffer_kinds)?);
         }
+        let render_plan = params
+            .get("render")
+            .or_else(|| params.get("render_pass"))
+            .map(|render| self.compute_graph_render_plan(render, &buffer_kinds))
+            .transpose()?;
         let readbacks = compute_graph_readbacks(params, &buffer_specs);
         let Some(renderer) = self.renderer.as_mut() else {
             return Err("native renderer has not created a wgpu device".to_string());
         };
-        let result = renderer.run_native_compute_graph(buffer_specs, pass_plans, readbacks)?;
+        let result =
+            renderer.run_native_compute_graph(buffer_specs, pass_plans, readbacks, render_plan)?;
         self.stats.pipeline_cache_entries = renderer.native_pipeline_cache_count() as u64;
         Ok(result)
     }
@@ -1974,6 +1999,101 @@ impl App {
             source: source.clone(),
             entry,
             dispatch,
+            bindings,
+        })
+    }
+
+    fn compute_graph_render_plan(
+        &self,
+        render: &Value,
+        buffer_kinds: &HashMap<String, NativeComputeBufferBindingKind>,
+    ) -> Result<NativeComputeGraphRenderPlan, String> {
+        let Some(shader_id) = string_at(render, &["shader_id"]) else {
+            return Err("compute_graph render pass missing shader_id".to_string());
+        };
+        let record = self.shader_registry.get(&shader_id).ok_or_else(|| {
+            format!("compute graph render shader `{shader_id}` has not been precompiled")
+        })?;
+        let source = self.shader_sources.get(&shader_id).ok_or_else(|| {
+            format!("compute graph render shader source missing for `{shader_id}`")
+        })?;
+        let vertex_entry =
+            string_at(render, &["vertex_entry"]).unwrap_or_else(|| "vs_main".to_string());
+        let fragment_entry = string_at(render, &["fragment_entry"])
+            .or_else(|| string_at(render, &["entry"]))
+            .unwrap_or_else(|| record.entry.clone());
+        if !record
+            .entry_points
+            .iter()
+            .any(|entry| entry == &vertex_entry)
+        {
+            return Err(format!(
+                "shader `{shader_id}` has no graph render vertex entry `{vertex_entry}`"
+            ));
+        }
+        if !record
+            .entry_points
+            .iter()
+            .any(|entry| entry == &fragment_entry)
+        {
+            return Err(format!(
+                "shader `{shader_id}` has no graph render fragment entry `{fragment_entry}`"
+            ));
+        }
+        let Some(bindings_value) = render.get("bindings").and_then(Value::as_array) else {
+            return Err(format!(
+                "compute_graph render pass `{shader_id}` requires bindings[]"
+            ));
+        };
+        let mut bindings = Vec::with_capacity(bindings_value.len());
+        for binding in bindings_value {
+            let binding_number = number_at(binding, &["binding"])
+                .ok_or_else(|| {
+                    format!("compute_graph render `{shader_id}` binding missing number")
+                })?
+                .round()
+                .clamp(0.0, u32::MAX as f64) as u32;
+            let Some(resource_id) = string_at(binding, &["resource"])
+                .or_else(|| string_at(binding, &["resource_id"]))
+                .or_else(|| string_at(binding, &["buffer"]))
+            else {
+                return Err(format!(
+                    "compute_graph render `{shader_id}` binding {binding_number} missing resource"
+                ));
+            };
+            let default_kind = buffer_kinds
+                .get(&resource_id)
+                .copied()
+                .unwrap_or(NativeComputeBufferBindingKind::StorageReadWrite);
+            let kind = compute_binding_kind_from_value(binding).unwrap_or(default_kind);
+            bindings.push(NativeComputeGraphBindingSpec {
+                binding: binding_number,
+                resource_id,
+                kind,
+            });
+        }
+        bindings.sort_by_key(|binding| binding.binding);
+        let layout_sig = bindings
+            .iter()
+            .map(|binding| format!("{}:{}", binding.binding, binding.kind.signature()))
+            .collect::<Vec<_>>()
+            .join(",");
+        let name = string_at(render, &["name"]).unwrap_or_else(|| format!("{shader_id}:render"));
+        let clear = bool_at(render, &["clear"]).unwrap_or(true);
+        let include_snapshot = bool_at(render, &["include_snapshot"])
+            .or_else(|| bool_at(render, &["snapshot"]))
+            .unwrap_or(true);
+        Ok(NativeComputeGraphRenderPlan {
+            name,
+            cache_key: format!(
+                "graph-render:{shader_id}:{}:{vertex_entry}:{fragment_entry}:{layout_sig}",
+                record.source_hash
+            ),
+            source: source.clone(),
+            vertex_entry,
+            fragment_entry,
+            clear,
+            include_snapshot,
             bindings,
         })
     }
@@ -3124,6 +3244,7 @@ impl RenderState {
             native_shader_bind_group,
             native_shader_pipelines: HashMap::new(),
             native_compute_pipelines: HashMap::new(),
+            native_graph_render_pipelines: HashMap::new(),
             native_compute_graph_buffers: HashMap::new(),
             snapshot_texture,
             snapshot_view,
@@ -3207,6 +3328,7 @@ impl RenderState {
         self.native_shader_pipelines
             .len()
             .saturating_add(self.native_compute_pipelines.len())
+            .saturating_add(self.native_graph_render_pipelines.len())
             .min(u32::MAX as usize) as u32
     }
 
@@ -3558,6 +3680,7 @@ impl RenderState {
         buffers: Vec<NativeComputeGraphBufferSpec>,
         passes: Vec<NativeComputeGraphPassPlan>,
         readbacks: Vec<String>,
+        render_plan: Option<NativeComputeGraphRenderPlan>,
     ) -> Result<Value, String> {
         if buffers.is_empty() {
             return Err("native compute graph requires at least one buffer".to_string());
@@ -3654,6 +3777,16 @@ impl RenderState {
             }));
         }
 
+        let render_include_snapshot = render_plan
+            .as_ref()
+            .is_some_and(|render| render.include_snapshot);
+        let render_result = render_plan
+            .as_ref()
+            .map(|render| {
+                self.render_native_compute_graph(&mut encoder, &transient_buffers, render)
+            })
+            .transpose()?;
+
         let mut readback_buffers = Vec::new();
         for id in &readbacks {
             let Some(buffer) = self.compute_graph_buffer(&transient_buffers, id) else {
@@ -3692,9 +3825,14 @@ impl RenderState {
                 }),
             );
         }
+        let render_snapshot = if render_include_snapshot {
+            Some(self.frame_snapshot(false)?)
+        } else {
+            None
+        };
 
         self.last_frame_error = None;
-        Ok(json!({
+        let mut result = json!({
             "pass_count": executed_passes.len(),
             "passes": executed_passes,
             "readbacks": readback_json,
@@ -3702,7 +3840,190 @@ impl RenderState {
             "transient_buffers": transient_buffer_count,
             "persistent_buffer_count": self.native_compute_graph_buffers.len(),
             "pipeline_cache_entries": self.native_pipeline_cache_count(),
+        });
+        if let Some(render_result) = render_result {
+            if let Some(object) = result.as_object_mut() {
+                object.insert("render".to_string(), render_result);
+            }
+        }
+        if let Some(snapshot) = render_snapshot {
+            if let Some(object) = result.as_object_mut() {
+                object.insert("render_snapshot".to_string(), snapshot);
+            }
+        }
+        Ok(result)
+    }
+
+    fn render_native_compute_graph(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        transient_buffers: &HashMap<String, NativeComputeGraphGpuBuffer>,
+        render_plan: &NativeComputeGraphRenderPlan,
+    ) -> Result<Value, String> {
+        let layout_specs = render_plan
+            .bindings
+            .iter()
+            .map(|binding| NativeComputeBindingLayoutSpec {
+                binding: binding.binding,
+                kind: binding.kind,
+            })
+            .collect::<Vec<_>>();
+        self.ensure_native_graph_render_pipeline(render_plan, &layout_specs)?;
+        let Some(cached) = self
+            .native_graph_render_pipelines
+            .get(&render_plan.cache_key)
+        else {
+            return Err(format!(
+                "native compute graph render pipeline missing after compile: {}",
+                render_plan.cache_key
+            ));
+        };
+        let mut entries = Vec::with_capacity(render_plan.bindings.len());
+        for binding in &render_plan.bindings {
+            let Some(buffer) = self.compute_graph_buffer(transient_buffers, &binding.resource_id)
+            else {
+                return Err(format!(
+                    "native compute graph render `{}` references missing buffer `{}`",
+                    render_plan.name, binding.resource_id
+                ));
+            };
+            entries.push(wgpu::BindGroupEntry {
+                binding: binding.binding,
+                resource: buffer.buffer.as_entire_binding(),
+            });
+        }
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&format!(
+                "Ghost Native Compute Graph Render Bind Group {}",
+                render_plan.name
+            )),
+            layout: &cached.bind_group_layout,
+            entries: &entries,
+        });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some(&format!(
+                    "Ghost Native Compute Graph Render Pass {}",
+                    render_plan.name
+                )),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.snapshot_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: if render_plan.clear {
+                            wgpu::LoadOp::Clear(wgpu::Color::BLACK)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&cached.pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        Ok(json!({
+            "name": render_plan.name,
+            "vertex_entry": render_plan.vertex_entry,
+            "fragment_entry": render_plan.fragment_entry,
+            "bindings": render_plan.bindings.len(),
+            "target": "snapshot",
+            "include_snapshot": render_plan.include_snapshot,
         }))
+    }
+
+    fn ensure_native_graph_render_pipeline(
+        &mut self,
+        render_plan: &NativeComputeGraphRenderPlan,
+        layout_specs: &[NativeComputeBindingLayoutSpec],
+    ) -> Result<(), String> {
+        if self
+            .native_graph_render_pipelines
+            .contains_key(&render_plan.cache_key)
+        {
+            return Ok(());
+        }
+        if layout_specs.is_empty() {
+            return Err(format!(
+                "native graph render pipeline `{}` has no bindings",
+                render_plan.cache_key
+            ));
+        }
+        let error_scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let shader = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Ghost Render Core Native Graph Render Shader"),
+                source: wgpu::ShaderSource::Wgsl(render_plan.source.clone().into()),
+            });
+        let layout_entries = layout_specs
+            .iter()
+            .map(|spec| wgpu::BindGroupLayoutEntry {
+                binding: spec.binding,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: spec.kind.binding_type(),
+                count: None,
+            })
+            .collect::<Vec<_>>();
+        let bind_group_layout =
+            self.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Ghost Render Core Native Graph Render Layout"),
+                    entries: &layout_entries,
+                });
+        let pipeline_layout = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Ghost Render Core Native Graph Render Pipeline Layout"),
+                bind_group_layouts: &[Some(&bind_group_layout)],
+                immediate_size: 0,
+            });
+        let pipeline = self
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Ghost Render Core Native Graph Render Pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some(&render_plan.vertex_entry),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(&render_plan.fragment_entry),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: self.config.format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            });
+        let error_future = error_scope.pop();
+        let _ = self.device.poll(wgpu::PollType::Poll);
+        if let Some(err) = pollster::block_on(error_future) {
+            return Err(err.to_string());
+        }
+        self.native_graph_render_pipelines.insert(
+            render_plan.cache_key.clone(),
+            NativeGraphRenderPipeline {
+                pipeline,
+                bind_group_layout,
+            },
+        );
+        Ok(())
     }
 
     fn create_native_compute_graph_buffer(

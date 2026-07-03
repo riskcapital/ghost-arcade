@@ -145,6 +145,41 @@ fn cs_transform(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 `;
 
+const NATIVE_COMPUTE_GRAPH_RENDER_SOURCE = `
+struct VSOut {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) uv: vec2<f32>,
+}
+
+@group(0) @binding(0)
+var<storage, read> output_words: array<u32>;
+
+@vertex
+fn vs_main(@builtin(vertex_index) vid: u32) -> VSOut {
+  var positions = array<vec2<f32>, 3>(
+    vec2<f32>(-1.0, -3.0),
+    vec2<f32>(-1.0,  1.0),
+    vec2<f32>( 3.0,  1.0),
+  );
+  let p = positions[vid];
+  var out: VSOut;
+  out.pos = vec4<f32>(p, 0.0, 1.0);
+  out.uv = p * 0.5 + vec2<f32>(0.5);
+  return out;
+}
+
+@fragment
+fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
+  let xy = vec2<u32>(clamp(floor(in.uv * vec2<f32>(16.0, 16.0)), vec2<f32>(0.0), vec2<f32>(15.0)));
+  let idx = xy.x + xy.y * 16u;
+  let word = output_words[idx];
+  let r = f32(word & 255u) / 255.0;
+  let g = f32((word >> 8u) & 255u) / 255.0;
+  let b = f32((word >> 16u) & 255u) / 255.0;
+  return vec4<f32>(0.1 + r * 0.9, 0.08 + g * 0.85, 0.16 + b * 0.8, 1.0);
+}
+`;
+
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -384,6 +419,7 @@ async function main() {
     if (
       !capabilities.features.compute_shader_host ||
       !capabilities.features.compute_graph_host ||
+      !capabilities.features.compute_graph_render ||
       !capabilities.features.persistent_compute_buffers ||
       capabilities.features.multi_pass_instruments
     ) {
@@ -427,6 +463,13 @@ async function main() {
           entry: 'cs_transform',
           source: NATIVE_COMPUTE_GRAPH_TRANSFORM_SOURCE,
         },
+        {
+          type: 'precompile_shader',
+          shader_id: 'native-compute-graph-render',
+          stage: 'render',
+          entry: 'fs_main',
+          source: NATIVE_COMPUTE_GRAPH_RENDER_SOURCE,
+        },
       ],
     });
     const computeProbe = await rpc.send('compute_probe', {
@@ -468,9 +511,21 @@ async function main() {
         },
       ],
       readbacks: ['graph-scratch', 'graph-output'],
+      render: {
+        name: 'render-output-buffer',
+        shader_id: 'native-compute-graph-render',
+        vertex_entry: 'vs_main',
+        fragment_entry: 'fs_main',
+        clear: true,
+        include_snapshot: true,
+        bindings: [
+          { binding: 0, resource: 'graph-output', kind: 'read-only-storage' },
+        ],
+      },
     }, 5000);
     const scratchReadback = computeGraph?.readbacks?.['graph-scratch'];
     const outputReadback = computeGraph?.readbacks?.['graph-output'];
+    const graphRenderSnapshot = computeGraph?.render_snapshot;
     if (Number(computeGraph?.pass_count ?? 0) !== 2) {
       throw new Error(`native compute graph did not execute both passes: ${JSON.stringify(computeGraph)}`);
     }
@@ -479,6 +534,9 @@ async function main() {
     }
     if (!outputReadback?.checksum || outputReadback.checksum === scratchReadback?.checksum) {
       throw new Error(`native compute graph transform pass did not alter output: ${JSON.stringify(computeGraph)}`);
+    }
+    if (!graphRenderSnapshot?.checksum || graphRenderSnapshot.dark_frame || Number(graphRenderSnapshot.nonzero_pixels ?? 0) <= 0) {
+      throw new Error(`native compute graph render snapshot failed: ${JSON.stringify(computeGraph)}`);
     }
     const persistentFill = await rpc.send('compute_graph', {
       buffers: [
@@ -803,6 +861,7 @@ async function main() {
       `shape=${previewCircle.checksum}/${previewTriangle.checksum}`,
       `compute=${computeProbe.checksum}/${computeProbe.nonzero_words}`,
       `graph=${outputReadback.checksum}/${computeGraph.pass_count}`,
+      `graphRender=${graphRenderSnapshot.checksum}`,
       `persist=${persistentOutput.checksum}/${persistentSeedWord}`,
       `gpu=${gpuA.checksum}->${gpuB.checksum}/detail=${gpuHighDetail.checksum}`,
       `particle=${particleA.checksum}->${particleB.checksum}`,
