@@ -407,6 +407,7 @@ struct CoreStats {
     compute_graph_source_frame_renders: u64,
     compute_graph_readbacks: u64,
     compute_graph_readback_bytes: u64,
+    compute_graph_persistent_buffers: u64,
     render_clock_updates: u64,
     frame_snapshot_reads: u64,
     frame_snapshot_bytes_read: u64,
@@ -1403,6 +1404,8 @@ impl App {
                     self.stats.max_render_gpu_ms = max_render_gpu_ms;
                     self.stats.gpu_timing_samples = gpu_timing_samples;
                     self.stats.gpu_timing_resolve_misses = gpu_timing_resolve_misses;
+                    self.stats.compute_graph_persistent_buffers =
+                        renderer.native_compute_graph_buffer_count() as u64;
                 }
                 Ok(json!(self.stats.clone()))
             }
@@ -1973,6 +1976,8 @@ impl App {
                 render_plan,
             )?;
             self.stats.pipeline_cache_entries = renderer.native_pipeline_cache_count() as u64;
+            self.stats.compute_graph_persistent_buffers =
+                renderer.native_compute_graph_buffer_count() as u64;
             result
         };
         self.stats.compute_graph_runs = self.stats.compute_graph_runs.saturating_add(1);
