@@ -165,6 +165,14 @@ struct CoreStatus {
     source_frame_uploads: u64,
     source_frame_bytes_uploaded: u64,
     native_instrument_frame_renders: u64,
+    compute_graph_runs: u64,
+    compute_graph_passes: u64,
+    compute_graph_render_passes: u64,
+    compute_graph_snapshot_renders: u64,
+    compute_graph_source_frame_renders: u64,
+    compute_graph_readbacks: u64,
+    compute_graph_readback_bytes: u64,
+    compute_graph_persistent_buffers: u32,
     render_clock_mode: String,
     render_clock_time: f32,
     render_clock_frame_index: u64,
@@ -392,6 +400,13 @@ struct CoreStats {
     source_frame_bytes_uploaded: u64,
     native_shader_renders: u64,
     native_instrument_frame_renders: u64,
+    compute_graph_runs: u64,
+    compute_graph_passes: u64,
+    compute_graph_render_passes: u64,
+    compute_graph_snapshot_renders: u64,
+    compute_graph_source_frame_renders: u64,
+    compute_graph_readbacks: u64,
+    compute_graph_readback_bytes: u64,
     render_clock_updates: u64,
     frame_snapshot_reads: u64,
     frame_snapshot_bytes_read: u64,
@@ -1286,6 +1301,18 @@ impl App {
             source_frame_uploads: self.stats.source_frame_uploads,
             source_frame_bytes_uploaded: self.stats.source_frame_bytes_uploaded,
             native_instrument_frame_renders: self.stats.native_instrument_frame_renders,
+            compute_graph_runs: self.stats.compute_graph_runs,
+            compute_graph_passes: self.stats.compute_graph_passes,
+            compute_graph_render_passes: self.stats.compute_graph_render_passes,
+            compute_graph_snapshot_renders: self.stats.compute_graph_snapshot_renders,
+            compute_graph_source_frame_renders: self.stats.compute_graph_source_frame_renders,
+            compute_graph_readbacks: self.stats.compute_graph_readbacks,
+            compute_graph_readback_bytes: self.stats.compute_graph_readback_bytes,
+            compute_graph_persistent_buffers: self
+                .renderer
+                .as_ref()
+                .map(RenderState::native_compute_graph_buffer_count)
+                .unwrap_or(0),
             render_clock_mode: self.render_clock_mode.clone(),
             render_clock_time: self.render_clock_time.unwrap_or(0.0),
             render_clock_frame_index: self
@@ -1922,6 +1949,19 @@ impl App {
             .transpose()?;
         let render_target = render_plan.as_ref().map(|render| render.target.clone());
         let readbacks = compute_graph_readbacks(params, &buffer_specs);
+        let readback_bytes = readbacks
+            .iter()
+            .filter_map(|id| {
+                buffer_specs
+                    .iter()
+                    .find(|buffer| buffer.id == *id)
+                    .map(|buffer| buffer.byte_length)
+            })
+            .fold(0u64, u64::saturating_add);
+        let readback_count = readbacks.len() as u64;
+        let pass_count = pass_plans.len() as u64;
+        let has_render_pass = render_plan.is_some();
+        let render_target_for_stats = render_target.clone();
         let result = {
             let Some(renderer) = self.renderer.as_mut() else {
                 return Err("native renderer has not created a wgpu device".to_string());
@@ -1935,6 +1975,34 @@ impl App {
             self.stats.pipeline_cache_entries = renderer.native_pipeline_cache_count() as u64;
             result
         };
+        self.stats.compute_graph_runs = self.stats.compute_graph_runs.saturating_add(1);
+        self.stats.compute_graph_passes =
+            self.stats.compute_graph_passes.saturating_add(pass_count);
+        self.stats.compute_graph_readbacks = self
+            .stats
+            .compute_graph_readbacks
+            .saturating_add(readback_count);
+        self.stats.compute_graph_readback_bytes = self
+            .stats
+            .compute_graph_readback_bytes
+            .saturating_add(readback_bytes);
+        if has_render_pass {
+            self.stats.compute_graph_render_passes =
+                self.stats.compute_graph_render_passes.saturating_add(1);
+            match render_target_for_stats {
+                Some(NativeComputeGraphRenderTarget::SourceFrame { .. }) => {
+                    self.stats.compute_graph_source_frame_renders = self
+                        .stats
+                        .compute_graph_source_frame_renders
+                        .saturating_add(1);
+                }
+                Some(NativeComputeGraphRenderTarget::Snapshot) => {
+                    self.stats.compute_graph_snapshot_renders =
+                        self.stats.compute_graph_snapshot_renders.saturating_add(1);
+                }
+                None => {}
+            }
+        }
         if let Some(NativeComputeGraphRenderTarget::SourceFrame {
             source_id,
             slot,
@@ -4219,6 +4287,12 @@ impl RenderState {
         transient_buffers
             .get(id)
             .or_else(|| self.native_compute_graph_buffers.get(id))
+    }
+
+    fn native_compute_graph_buffer_count(&self) -> u32 {
+        self.native_compute_graph_buffers
+            .len()
+            .min(u32::MAX as usize) as u32
     }
 
     fn readback_u32_buffer(
