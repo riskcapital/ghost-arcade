@@ -430,6 +430,15 @@ async function main() {
     if (capabilities.features.shared_texture_upload) {
       throw new Error(`native capabilities overstated unimplemented features: ${JSON.stringify(capabilities.features)}`);
     }
+    if (
+      !capabilities.features.audio_uniform_layout ||
+      capabilities.audio_uniform_layout?.schema_version !== 1 ||
+      capabilities.audio_uniform_layout?.audio0?.join(',') !== 'level,bass,mid,treble' ||
+      capabilities.audio_uniform_layout?.audio1?.join(',') !== 'high,beat,beat_phase,bpm' ||
+      capabilities.audio_uniform_layout?.audio2?.join(',') !== 'centroid,kick,snare,active'
+    ) {
+      throw new Error(`native audio uniform layout contract missing or stale: ${JSON.stringify(capabilities)}`);
+    }
     if (!capabilities.implemented_methods?.includes('capabilities')) {
       throw new Error(`native capabilities did not list the capabilities RPC: ${JSON.stringify(capabilities)}`);
     }

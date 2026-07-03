@@ -33,6 +33,19 @@ const SOURCE_FRAME_SIZE_INSANE: usize = 3072;
 const SOURCE_FRAME_MIP_LEVELS_MAX: u32 = 5;
 const SOURCE_FRAME_FORMAT_FALLBACK: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const SOURCE_FRAME_FORMAT_HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+const GHOST_AUDIO_LAYOUT_SCHEMA_VERSION: u32 = 1;
+const GHOST_AUDIO0_FIELDS: [&str; 4] = ["level", "bass", "mid", "treble"];
+const GHOST_AUDIO1_FIELDS: [&str; 4] = ["high", "beat", "beat_phase", "bpm"];
+const GHOST_AUDIO2_FIELDS: [&str; 4] = ["centroid", "kick", "snare", "active"];
+
+fn ghost_audio_uniform_layout() -> Value {
+    json!({
+        "schema_version": GHOST_AUDIO_LAYOUT_SCHEMA_VERSION,
+        "audio0": GHOST_AUDIO0_FIELDS,
+        "audio1": GHOST_AUDIO1_FIELDS,
+        "audio2": GHOST_AUDIO2_FIELDS,
+    })
+}
 const SOURCE_FRAME_SLOT_OFFSET: f32 = 100.0;
 const NATIVE_SHADER_SOURCE_KIND: f32 = 17.0;
 const GPU_TIMESTAMP_READ_BYTES: u64 = 16;
@@ -492,6 +505,43 @@ struct NativeShaderUniforms {
     audio1: [f32; 4],
     params0: [f32; 4],
     params1: [f32; 4],
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct GhostAudioUniforms {
+    audio0: [f32; 4],
+    audio1: [f32; 4],
+    audio2: [f32; 4],
+}
+
+impl GhostAudioUniforms {
+    fn from_command(command: &Value) -> Self {
+        let active = bool_at(command, &["active"]).unwrap_or(false);
+        Self {
+            audio0: [
+                audio_value_at(command, GHOST_AUDIO0_FIELDS[0]),
+                audio_value_at(command, GHOST_AUDIO0_FIELDS[1]),
+                audio_value_at(command, GHOST_AUDIO0_FIELDS[2]),
+                audio_value_at(command, GHOST_AUDIO0_FIELDS[3]),
+            ],
+            audio1: [
+                audio_value_at(command, GHOST_AUDIO1_FIELDS[0]),
+                audio_value_at(command, GHOST_AUDIO1_FIELDS[1]),
+                number_at(command, &[GHOST_AUDIO1_FIELDS[2]])
+                    .unwrap_or(0.0)
+                    .clamp(0.0, 1.0) as f32,
+                number_at(command, &[GHOST_AUDIO1_FIELDS[3]])
+                    .unwrap_or(0.0)
+                    .clamp(0.0, 300.0) as f32,
+            ],
+            audio2: [
+                audio_value_at(command, GHOST_AUDIO2_FIELDS[0]),
+                audio_value_at(command, GHOST_AUDIO2_FIELDS[1]),
+                audio_value_at(command, GHOST_AUDIO2_FIELDS[2]),
+                if active { 1.0 } else { 0.0 },
+            ],
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1140,56 +1190,60 @@ impl App {
     }
 
     fn capabilities(&self) -> Value {
+        let features = json!({
+            "separate_process_render_core": true,
+            "managed_native_window": true,
+            "audio_uniform_layout": true,
+            "layer_compositor": true,
+            "layer_corner_warp": true,
+            "layer_uv_controls": true,
+            "layer_shape_masks": true,
+            "blend_modes": true,
+            "effect_descriptors": true,
+            "render_clock": true,
+            "frame_snapshot": true,
+            "frame_health": true,
+            "gpu_timing": self.renderer.as_ref().is_some_and(|renderer| renderer.gpu_timing.is_some()),
+            "shader_precompile": true,
+            "fragment_wgsl_host": true,
+            "native_instrument_proxies": true,
+            "source_preview_upload": true,
+            "source_frame_upload": true,
+            "source_frame_file_handoff": true,
+            "source_frame_mips": self.renderer.as_ref().is_some_and(|renderer| renderer.source_frame_mip_levels > 1),
+            "source_frame_hdr": self.renderer.as_ref().is_some_and(|renderer| renderer.source_frame_format == SOURCE_FRAME_FORMAT_HDR),
+            "compute_shader_host": true,
+            "compute_graph_host": true,
+            "compute_graph_render": true,
+            "compute_graph_source_frame_target": true,
+            "persistent_compute_buffers": true,
+            "multi_pass_instruments": false,
+            "storage_buffer_instruments": true,
+            "shared_texture_upload": false,
+            "native_media_decode": false,
+            "media_prefetch": false,
+            "managed_output_attach": false,
+            "native_recording": false,
+            "native_stage3d": false,
+            "native_projection_sim": false
+        });
+        let limits = json!({
+            "max_scene_layers": MAX_SCENE_LAYERS,
+            "source_preview_size": SOURCE_PREVIEW_SIZE,
+            "source_preview_slots": MAX_SOURCE_PREVIEWS,
+            "source_frame_slots": MAX_SOURCE_FRAME_SLOTS,
+            "source_frame_size": self.renderer.as_ref().map(|renderer| renderer.source_frame_size).unwrap_or(SOURCE_FRAME_SIZE_DEFAULT),
+            "source_frame_mip_levels": self.renderer.as_ref().map(|renderer| renderer.source_frame_mip_levels).unwrap_or(1)
+        });
         json!({
             "schema_version": 1,
             "core_version": env!("CARGO_PKG_VERSION"),
             "backend": native_backend_name(),
             "implemented_methods": CORE_RPC_METHODS,
             "implemented_command_types": CORE_COMMAND_TYPES,
-            "features": {
-                "separate_process_render_core": true,
-                "managed_native_window": true,
-                "layer_compositor": true,
-                "layer_corner_warp": true,
-                "layer_uv_controls": true,
-                "layer_shape_masks": true,
-                "blend_modes": true,
-                "effect_descriptors": true,
-                "render_clock": true,
-                "frame_snapshot": true,
-                "frame_health": true,
-                "gpu_timing": self.renderer.as_ref().is_some_and(|renderer| renderer.gpu_timing.is_some()),
-                "shader_precompile": true,
-                "fragment_wgsl_host": true,
-                "native_instrument_proxies": true,
-                "source_preview_upload": true,
-                "source_frame_upload": true,
-                "source_frame_file_handoff": true,
-                "source_frame_mips": self.renderer.as_ref().is_some_and(|renderer| renderer.source_frame_mip_levels > 1),
-                "source_frame_hdr": self.renderer.as_ref().is_some_and(|renderer| renderer.source_frame_format == SOURCE_FRAME_FORMAT_HDR),
-                "compute_shader_host": true,
-                "compute_graph_host": true,
-                "compute_graph_render": true,
-                "compute_graph_source_frame_target": true,
-                "persistent_compute_buffers": true,
-                "multi_pass_instruments": false,
-                "storage_buffer_instruments": true,
-                "shared_texture_upload": false,
-                "native_media_decode": false,
-                "media_prefetch": false,
-                "managed_output_attach": false,
-                "native_recording": false,
-                "native_stage3d": false,
-                "native_projection_sim": false
-            },
-            "limits": {
-                "max_scene_layers": MAX_SCENE_LAYERS,
-                "source_preview_size": SOURCE_PREVIEW_SIZE,
-                "source_preview_slots": MAX_SOURCE_PREVIEWS,
-                "source_frame_slots": MAX_SOURCE_FRAME_SLOTS,
-                "source_frame_size": self.renderer.as_ref().map(|renderer| renderer.source_frame_size).unwrap_or(SOURCE_FRAME_SIZE_DEFAULT),
-                "source_frame_mip_levels": self.renderer.as_ref().map(|renderer| renderer.source_frame_mip_levels).unwrap_or(1)
-            },
+            "audio_uniform_layout": ghost_audio_uniform_layout(),
+            "features": features,
+            "limits": limits,
             "notes": [
                 "Native instruments are currently visual proxies, not parity ports of the browser/WebGPU instruments.",
                 "Canvas/base64 source-frame upload is a development fallback; shared texture transport is not implemented yet."
@@ -2666,23 +2720,10 @@ impl App {
     }
 
     fn apply_audio_state(&mut self, command: &Value) {
-        let active = bool_at(command, &["active"]).unwrap_or(false);
-        let level = audio_value_at(command, "level");
-        let bass = audio_value_at(command, "bass");
-        let mid = audio_value_at(command, "mid");
-        let treble = audio_value_at(command, "treble");
-        let high = audio_value_at(command, "high");
-        let beat = audio_value_at(command, "beat");
-        let beat_phase = audio_value_at(command, "beat_phase");
-        let bpm = number_at(command, &["bpm"])
-            .unwrap_or(0.0)
-            .clamp(0.0, 300.0) as f32;
-        let centroid = audio_value_at(command, "centroid");
-        let kick = audio_value_at(command, "kick");
-        let snare = audio_value_at(command, "snare");
-        self.audio0 = [level, bass, mid, treble];
-        self.audio1 = [high, beat, beat_phase, bpm];
-        self.audio2 = [centroid, kick, snare, if active { 1.0 } else { 0.0 }];
+        let audio = GhostAudioUniforms::from_command(command);
+        self.audio0 = audio.audio0;
+        self.audio1 = audio.audio1;
+        self.audio2 = audio.audio2;
     }
 
     fn apply_media_source(&mut self, command: &Value) {
@@ -5954,5 +5995,47 @@ fn tier_quality_scale(tier: &str) -> f32 {
         "ultra" => 0.90,
         "insane" => 1.0,
         _ => 0.72,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ghost_audio_uniform_layout_documents_the_native_slots() {
+        let layout = ghost_audio_uniform_layout();
+        assert_eq!(layout["schema_version"], json!(1));
+        assert_eq!(layout["audio0"], json!(["level", "bass", "mid", "treble"]));
+        assert_eq!(
+            layout["audio1"],
+            json!(["high", "beat", "beat_phase", "bpm"])
+        );
+        assert_eq!(
+            layout["audio2"],
+            json!(["centroid", "kick", "snare", "active"])
+        );
+    }
+
+    #[test]
+    fn ghost_audio_uniforms_pack_and_clamp_command_fields() {
+        let audio = GhostAudioUniforms::from_command(&json!({
+            "active": true,
+            "level": 1.2,
+            "bass": 0.54,
+            "mid": 0.35,
+            "treble": 0.45,
+            "high": 0.55,
+            "beat": 0.65,
+            "beat_phase": -1.0,
+            "bpm": 900.0,
+            "centroid": 0.42,
+            "kick": 0.8,
+            "snare": 0.15,
+        }));
+
+        assert_eq!(audio.audio0, [1.0, 0.54, 0.35, 0.45]);
+        assert_eq!(audio.audio1, [0.55, 0.65, 0.0, 300.0]);
+        assert_eq!(audio.audio2, [0.42, 0.8, 0.15, 1.0]);
     }
 }

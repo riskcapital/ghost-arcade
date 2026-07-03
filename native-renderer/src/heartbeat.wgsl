@@ -13,6 +13,33 @@ struct Uniforms {
 @group(0) @binding(0)
 var<uniform> u: Uniforms;
 
+struct GhostAudioUniforms {
+  audio0: vec4<f32>,
+  audio1: vec4<f32>,
+  audio2: vec4<f32>,
+}
+
+fn ghost_audio_from_vecs(audio0: vec4<f32>, audio1: vec4<f32>, audio2: vec4<f32>) -> GhostAudioUniforms {
+  return GhostAudioUniforms(audio0, audio1, audio2);
+}
+
+fn ghost_audio_scene() -> GhostAudioUniforms {
+  return ghost_audio_from_vecs(u.audio0, u.audio1, u.audio2);
+}
+
+fn ghost_audio_active(audio: GhostAudioUniforms) -> f32 { return clamp(audio.audio2.w, 0.0, 1.0); }
+fn ghost_audio_level(audio: GhostAudioUniforms) -> f32 { return audio.audio0.x * ghost_audio_active(audio); }
+fn ghost_audio_bass(audio: GhostAudioUniforms) -> f32 { return audio.audio0.y * ghost_audio_active(audio); }
+fn ghost_audio_mid(audio: GhostAudioUniforms) -> f32 { return audio.audio0.z * ghost_audio_active(audio); }
+fn ghost_audio_treble(audio: GhostAudioUniforms) -> f32 { return audio.audio0.w * ghost_audio_active(audio); }
+fn ghost_audio_high(audio: GhostAudioUniforms) -> f32 { return audio.audio1.x * ghost_audio_active(audio); }
+fn ghost_audio_beat(audio: GhostAudioUniforms) -> f32 { return audio.audio1.y * ghost_audio_active(audio); }
+fn ghost_audio_beat_phase(audio: GhostAudioUniforms) -> f32 { return audio.audio1.z; }
+fn ghost_audio_bpm(audio: GhostAudioUniforms) -> f32 { return audio.audio1.w; }
+fn ghost_audio_centroid(audio: GhostAudioUniforms) -> f32 { return audio.audio2.x * ghost_audio_active(audio); }
+fn ghost_audio_kick(audio: GhostAudioUniforms) -> f32 { return audio.audio2.y * ghost_audio_active(audio); }
+fn ghost_audio_snare(audio: GhostAudioUniforms) -> f32 { return audio.audio2.z * ghost_audio_active(audio); }
+
 struct LayerData {
   p0: vec4<f32>,
   p1: vec4<f32>,
@@ -155,11 +182,11 @@ fn native_isf_proxy(source_uv: vec2<f32>, t: f32, seed: f32, params0: vec4<f32>,
   let variation = clamp(params1.y, 0.0, 1.0);
   let detail = clamp(params1.z, 0.0, 1.0);
   let bg_alpha = clamp(params1.w, 0.0, 1.0);
-  let audio_on = u.audio2.w;
-  let audio_level = u.audio0.x * audio_on;
-  let audio_bass = u.audio0.y * audio_on;
-  let audio_high = u.audio1.x * audio_on;
-  let audio_beat = u.audio1.y * audio_on;
+  let audio = ghost_audio_scene();
+  let audio_level = ghost_audio_level(audio);
+  let audio_bass = ghost_audio_bass(audio);
+  let audio_high = ghost_audio_high(audio);
+  let audio_beat = ghost_audio_beat(audio);
   let local_t = t * (0.20 + speed * 1.85) + seed * 0.017 + audio_beat * 0.22;
   let uv = source_uv * 2.0 - vec2<f32>(1.0);
   let aspect_uv = uv * vec2<f32>(max(0.2, u.resolution.x / max(1.0, u.resolution.y)), 1.0);
@@ -192,13 +219,13 @@ fn gpu_proxy(kind: f32, source_uv: vec2<f32>, t: f32, seed: f32, params0: vec4<f
   let variation = clamp(params1.y, 0.0, 1.0);
   let detail = clamp(params1.z, 0.0, 1.0);
   let bg_alpha = clamp(params1.w, 0.0, 1.0);
-  let audio_on = u.audio2.w;
-  let audio_level = u.audio0.x * audio_on;
-  let audio_bass = u.audio0.y * audio_on;
-  let audio_treble = u.audio0.w * audio_on;
-  let audio_beat = u.audio1.y * audio_on;
-  let audio_kick = u.audio2.y * audio_on;
-  let audio_snare = u.audio2.z * audio_on;
+  let audio = ghost_audio_scene();
+  let audio_level = ghost_audio_level(audio);
+  let audio_bass = ghost_audio_bass(audio);
+  let audio_treble = ghost_audio_treble(audio);
+  let audio_beat = ghost_audio_beat(audio);
+  let audio_kick = ghost_audio_kick(audio);
+  let audio_snare = ghost_audio_snare(audio);
   let audio_drive = clamp(audio_level * 0.42 + audio_bass * 0.30 + audio_beat * 0.38 + audio_kick * 0.22 + audio_snare * 0.12, 0.0, 1.75);
   let local_t = t * (0.18 + speed * 1.65) * (1.0 + audio_level * 0.45 + audio_beat * 0.28);
   let uv = source_uv * 2.0 - vec2<f32>(1.0);
@@ -738,13 +765,13 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   let aspect = max(0.01, u.resolution.x / max(1.0, u.resolution.y));
   var p = (in.uv * 2.0 - vec2<f32>(1.0)) * vec2<f32>(aspect, 1.0);
   let t = u.time;
-  let audio_on = u.audio2.w;
-  let audio_level = u.audio0.x * audio_on;
-  let audio_bass = u.audio0.y * audio_on;
-  let audio_treble = u.audio0.w * audio_on;
-  let audio_beat = u.audio1.y * audio_on;
-  let audio_kick = u.audio2.y * audio_on;
-  let audio_snare = u.audio2.z * audio_on;
+  let audio = ghost_audio_scene();
+  let audio_level = ghost_audio_level(audio);
+  let audio_bass = ghost_audio_bass(audio);
+  let audio_treble = ghost_audio_treble(audio);
+  let audio_beat = ghost_audio_beat(audio);
+  let audio_kick = ghost_audio_kick(audio);
+  let audio_snare = ghost_audio_snare(audio);
   let audio_drive = clamp(audio_level * 0.36 + audio_bass * 0.30 + audio_beat * 0.42 + audio_kick * 0.26 + audio_snare * 0.18, 0.0, 1.8);
   let core = vec2<f32>(0.0, 0.02 * sin(t * 0.9));
 
