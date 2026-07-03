@@ -1330,6 +1330,7 @@ export class NativeRendererSync {
           }
         }
 
+        const audioFields = ghostAudioCommandFieldsFromVisualAudio(visual);
         commands.push({
           type: 'update_isf_uniforms',
           shader_id: shaderId,
@@ -1339,14 +1340,18 @@ export class NativeRendererSync {
           render_width: this.desiredWidth || 1920,
           render_height: this.desiredHeight || 1080,
           date: [nowDate.getFullYear(), nowDate.getMonth() + 1, nowDate.getDate(), secsSinceMidnight],
-          audio_level: visual.isActive ? visual.level : 0,
-          audio_bass: visual.isActive ? Math.max(visual.bass, visual.bassFast * 0.9) : 0,
-          audio_mid: visual.isActive ? visual.mid : 0,
-          audio_high: visual.isActive ? visual.high : 0,
-          audio_beat: visual.isActive ? visual.beat : 0,
-          audio_beat_phase: visual.beatPhase,
-          audio_bpm: visual.bpm,
-          audio_spectral_centroid: visual.isActive ? visual.centroid : 0,
+          ...audioFields,
+          audio_level: audioFields.active ? audioFields.level : 0,
+          audio_bass: audioFields.active ? audioFields.bass : 0,
+          audio_mid: audioFields.active ? audioFields.mid : 0,
+          audio_treble: audioFields.active ? audioFields.treble : 0,
+          audio_high: audioFields.active ? audioFields.high : 0,
+          audio_beat: audioFields.active ? audioFields.beat : 0,
+          audio_beat_phase: audioFields.beat_phase,
+          audio_bpm: audioFields.bpm,
+          audio_spectral_centroid: audioFields.active ? audioFields.centroid : 0,
+          audio_kick: audioFields.active ? audioFields.kick : 0,
+          audio_snare: audioFields.active ? audioFields.snare : 0,
           float_inputs: floatInputs,
           point_inputs: pointInputs,
           color_inputs: colorInputs,
