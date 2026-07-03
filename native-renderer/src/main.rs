@@ -505,6 +505,8 @@ struct NativeShaderUniforms {
     audio1: [f32; 4],
     params0: [f32; 4],
     params1: [f32; 4],
+    // Append-only extension so older hosted shaders keep the params0/params1 offsets.
+    audio2: [f32; 4],
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -538,6 +540,50 @@ impl GhostAudioUniforms {
                 audio_value_at(command, GHOST_AUDIO2_FIELDS[0]),
                 audio_value_at(command, GHOST_AUDIO2_FIELDS[1]),
                 audio_value_at(command, GHOST_AUDIO2_FIELDS[2]),
+                if active { 1.0 } else { 0.0 },
+            ],
+        }
+    }
+
+    fn from_isf_command(command: &Value) -> Self {
+        let audio0 = [
+            audio_value_at_any(command, GHOST_AUDIO0_FIELDS[0], "audio_level"),
+            audio_value_at_any(command, GHOST_AUDIO0_FIELDS[1], "audio_bass"),
+            audio_value_at_any(command, GHOST_AUDIO0_FIELDS[2], "audio_mid"),
+            if command_has_key(command, GHOST_AUDIO0_FIELDS[3])
+                || command_has_key(command, "audio_treble")
+            {
+                audio_value_at_any(command, GHOST_AUDIO0_FIELDS[3], "audio_treble")
+            } else if command_has_key(command, GHOST_AUDIO1_FIELDS[0]) {
+                audio_value_at(command, GHOST_AUDIO1_FIELDS[0])
+            } else {
+                audio_value_at(command, "audio_high")
+            },
+        ];
+        let audio1 = [
+            audio_value_at_any(command, GHOST_AUDIO1_FIELDS[0], "audio_high"),
+            audio_value_at_any(command, GHOST_AUDIO1_FIELDS[1], "audio_beat"),
+            number_at_any(command, GHOST_AUDIO1_FIELDS[2], "audio_beat_phase")
+                .unwrap_or(0.0)
+                .clamp(0.0, 1.0) as f32,
+            number_at_any(command, GHOST_AUDIO1_FIELDS[3], "audio_bpm")
+                .unwrap_or(0.0)
+                .clamp(0.0, 300.0) as f32,
+        ];
+        let active = bool_at(command, &["active"]).unwrap_or_else(|| {
+            audio0.iter().chain(audio1.iter()).any(|value| *value > 0.0)
+                || audio_value_at_any(command, GHOST_AUDIO2_FIELDS[0], "audio_spectral_centroid")
+                    > 0.0
+                || audio_value_at_any(command, GHOST_AUDIO2_FIELDS[1], "audio_kick") > 0.0
+                || audio_value_at_any(command, GHOST_AUDIO2_FIELDS[2], "audio_snare") > 0.0
+        });
+        Self {
+            audio0,
+            audio1,
+            audio2: [
+                audio_value_at_any(command, GHOST_AUDIO2_FIELDS[0], "audio_spectral_centroid"),
+                audio_value_at_any(command, GHOST_AUDIO2_FIELDS[1], "audio_kick"),
+                audio_value_at_any(command, GHOST_AUDIO2_FIELDS[2], "audio_snare"),
                 if active { 1.0 } else { 0.0 },
             ],
         }
@@ -718,7 +764,9 @@ struct IsfUniformState {
     render_width: f32,
     render_height: f32,
     date: [f32; 4],
-    audio: [f32; 8],
+    audio0: [f32; 4],
+    audio1: [f32; 4],
+    audio2: [f32; 4],
     float_hash: u64,
     point_hash: u64,
     color_hash: u64,
@@ -732,11 +780,11 @@ impl IsfUniformState {
         let float_seed = unit_from_hash(self.float_hash);
         let point_seed = unit_from_hash(self.point_hash);
         let color_seed = unit_from_hash(self.color_hash);
-        let level = self.audio[0].clamp(0.0, 1.0);
-        let bass = self.audio[1].clamp(0.0, 1.0);
-        let high = self.audio[3].clamp(0.0, 1.0);
-        let beat = self.audio[4].clamp(0.0, 1.0);
-        let bpm = self.audio[6].clamp(0.0, 300.0);
+        let level = self.audio0[0].clamp(0.0, 1.0);
+        let bass = self.audio0[1].clamp(0.0, 1.0);
+        let high = self.audio1[0].clamp(0.0, 1.0);
+        let beat = self.audio1[1].clamp(0.0, 1.0);
+        let bpm = self.audio1[3].clamp(0.0, 300.0);
         [
             (0.82 + level * 1.2 + beat * 0.35).clamp(0.0, 4.0),
             (0.52 + seed * 2.2 + float_seed * 0.8).clamp(0.18, 4.0),
@@ -773,7 +821,9 @@ impl NativeShaderUniforms {
         let frame_index = state.map(|state| state.frame_index as f32).unwrap_or(0.0);
         let input_count = state.map(|state| state.input_count as f32).unwrap_or(0.0);
         let date = state.map(|state| state.date).unwrap_or([0.0; 4]);
-        let audio = state.map(|state| state.audio).unwrap_or([0.0; 8]);
+        let audio0 = state.map(|state| state.audio0).unwrap_or([0.0; 4]);
+        let audio1 = state.map(|state| state.audio1).unwrap_or([0.0; 4]);
+        let audio2 = state.map(|state| state.audio2).unwrap_or([0.0; 4]);
         Self {
             resolution_time: [render_width, render_height, time, time_delta],
             frame_seed_inputs: [
@@ -783,10 +833,11 @@ impl NativeShaderUniforms {
                 input_source_slot.min(MAX_SOURCE_FRAME_SLOTS - 1) as f32,
             ],
             date,
-            audio0: [audio[0], audio[1], audio[2], audio[3]],
-            audio1: [audio[4], audio[5], audio[6], audio[7]],
+            audio0,
+            audio1,
             params0: [params[0], params[1], params[2], params[3]],
             params1: [params[4], params[5], params[6], params[7]],
+            audio2,
         }
     }
 }
@@ -2556,6 +2607,7 @@ impl App {
             .saturating_add(json_object_len(points))
             .saturating_add(json_object_len(colors))
             .min(u32::MAX as usize) as u32;
+        let audio = GhostAudioUniforms::from_isf_command(command);
         let state = IsfUniformState {
             shader_id: shader_id.clone(),
             time: number_at(command, &["time"])
@@ -2575,22 +2627,9 @@ impl App {
                 .unwrap_or(self.pending_height as f64)
                 .clamp(1.0, 65536.0) as f32,
             date: vec4_at(command, "date"),
-            audio: [
-                audio_value_at(command, "audio_level"),
-                audio_value_at(command, "audio_bass"),
-                audio_value_at(command, "audio_mid"),
-                audio_value_at(command, "audio_high"),
-                audio_value_at(command, "audio_beat"),
-                number_at(command, &["audio_beat_phase"])
-                    .unwrap_or(0.0)
-                    .clamp(0.0, 1.0) as f32,
-                number_at(command, &["audio_bpm"])
-                    .unwrap_or(0.0)
-                    .clamp(0.0, 300.0) as f32,
-                number_at(command, &["audio_spectral_centroid"])
-                    .unwrap_or(0.0)
-                    .clamp(0.0, 1.0) as f32,
-            ],
+            audio0: audio.audio0,
+            audio1: audio.audio1,
+            audio2: audio.audio2,
             float_hash: stable_hash64(&floats.to_string()),
             point_hash: stable_hash64(&points.to_string()),
             color_hash: stable_hash64(&colors.to_string()),
@@ -4975,6 +5014,28 @@ fn audio_value_at(value: &Value, key: &str) -> f32 {
         .clamp(0.0, 1.0) as f32
 }
 
+fn command_has_key(value: &Value, key: &str) -> bool {
+    value
+        .as_object()
+        .is_some_and(|object| object.contains_key(key))
+}
+
+fn audio_value_at_any(value: &Value, canonical_key: &str, legacy_key: &str) -> f32 {
+    if command_has_key(value, canonical_key) {
+        audio_value_at(value, canonical_key)
+    } else {
+        audio_value_at(value, legacy_key)
+    }
+}
+
+fn number_at_any(value: &Value, canonical_key: &str, legacy_key: &str) -> Option<f64> {
+    if command_has_key(value, canonical_key) {
+        number_at(value, &[canonical_key])
+    } else {
+        number_at(value, &[legacy_key])
+    }
+}
+
 fn unit_from_hash(hash: u64) -> f32 {
     ((hash & 0x00ff_ffff) as f32 / 0x00ff_ffff as f32).clamp(0.0, 1.0)
 }
@@ -6037,5 +6098,75 @@ mod tests {
         assert_eq!(audio.audio0, [1.0, 0.54, 0.35, 0.45]);
         assert_eq!(audio.audio1, [0.55, 0.65, 0.0, 300.0]);
         assert_eq!(audio.audio2, [0.42, 0.8, 0.15, 1.0]);
+    }
+
+    #[test]
+    fn isf_audio_uniforms_accept_canonical_and_legacy_fields() {
+        let canonical = GhostAudioUniforms::from_isf_command(&json!({
+            "active": true,
+            "level": 0.1,
+            "bass": 0.2,
+            "mid": 0.3,
+            "treble": 0.4,
+            "high": 0.5,
+            "beat": 0.6,
+            "beat_phase": 0.7,
+            "bpm": 128,
+            "centroid": 0.8,
+            "kick": 0.9,
+            "snare": 1.2,
+        }));
+        assert_eq!(canonical.audio0, [0.1, 0.2, 0.3, 0.4]);
+        assert_eq!(canonical.audio1, [0.5, 0.6, 0.7, 128.0]);
+        assert_eq!(canonical.audio2, [0.8, 0.9, 1.0, 1.0]);
+
+        let legacy = GhostAudioUniforms::from_isf_command(&json!({
+            "audio_level": 0.11,
+            "audio_bass": 0.22,
+            "audio_mid": 0.33,
+            "audio_high": 0.44,
+            "audio_beat": 0.55,
+            "audio_beat_phase": 0.66,
+            "audio_bpm": 92,
+            "audio_spectral_centroid": 0.77,
+            "audio_kick": 0.88,
+            "audio_snare": 0.99,
+        }));
+        assert_eq!(legacy.audio0, [0.11, 0.22, 0.33, 0.44]);
+        assert_eq!(legacy.audio1, [0.44, 0.55, 0.66, 92.0]);
+        assert_eq!(legacy.audio2, [0.77, 0.88, 0.99, 1.0]);
+    }
+
+    #[test]
+    fn native_shader_uniforms_append_audio2_without_moving_params() {
+        assert!(
+            std::mem::offset_of!(NativeShaderUniforms, audio2)
+                > std::mem::offset_of!(NativeShaderUniforms, params1)
+        );
+
+        let state = IsfUniformState {
+            shader_id: "shader".to_string(),
+            time: 1.25,
+            time_delta: 1.0 / 30.0,
+            frame_index: 7,
+            render_width: 320.0,
+            render_height: 180.0,
+            date: [2026.0, 7.0, 3.0, 123.0],
+            audio0: [0.1, 0.2, 0.3, 0.4],
+            audio1: [0.5, 0.6, 0.7, 128.0],
+            audio2: [0.8, 0.9, 1.0, 1.0],
+            float_hash: 0,
+            point_hash: 0,
+            color_hash: 0,
+            input_count: 0,
+            seq: 1,
+        };
+        let uniforms =
+            NativeShaderUniforms::from_isf("shader", Some(&state), 640, 360, [0.0; 8], 0);
+        assert_eq!(uniforms.audio0, state.audio0);
+        assert_eq!(uniforms.audio1, state.audio1);
+        assert_eq!(uniforms.audio2, state.audio2);
+        assert_eq!(uniforms.params0, [0.0; 4]);
+        assert_eq!(uniforms.params1, [0.0; 4]);
     }
 }

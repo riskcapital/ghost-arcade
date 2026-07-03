@@ -41,6 +41,7 @@ struct NativeShaderUniforms {
   audio1: vec4<f32>,
   params0: vec4<f32>,
   params1: vec4<f32>,
+  audio2: vec4<f32>,
 }
 
 @group(0) @binding(0)
@@ -55,7 +56,9 @@ var source_sampler: sampler;
 @fragment
 fn fs_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
   let t = u.resolution_time.z;
-  let beat = u.audio1.x;
+  let beat = u.audio1.y;
+  let centroid = u.audio2.x;
+  let kick = u.audio2.y;
   let seed = u.frame_seed_inputs.y;
   let source_slot = i32(round(u.frame_seed_inputs.w));
   let media = textureSample(source_frames, source_sampler, uv, source_slot);
@@ -68,7 +71,8 @@ fn fs_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
   let rings = 0.5 + 0.5 * sin(r * 74.0 - t * 3.0 + seed * 6.28318);
   let procedural = mix(vec3<f32>(0.02, 0.08, 0.18), vec3<f32>(0.92, 0.20, 0.78), fine_grid);
   let glow = vec3<f32>(0.1, 0.38, 0.92) * rings * (1.0 - smoothstep(0.1, 0.72, r));
-  let color = mix(procedural + glow, media.rgb, 0.42);
+  let audio_tint = vec3<f32>(centroid * 0.18, kick * 0.10, u.audio2.w * 0.08);
+  let color = mix(procedural + glow + audio_tint, media.rgb, 0.42);
   return vec4<f32>(color, 1.0);
 }
 `;
@@ -362,8 +366,23 @@ async function renderRegisteredWgslProbe(rpc, frameIndex, baseline) {
         frame_index: frameIndex,
         render_width: 320,
         render_height: 180,
+        active: true,
+        level: 0.36,
+        bass: 0.42,
+        mid: 0.31,
+        treble: 0.27,
+        high: 0.44,
+        beat: 0.72,
+        beat_phase: 0.18,
+        bpm: 128,
+        centroid: 0.63,
+        kick: 0.52,
+        snare: 0.24,
         audio_bass: 0.42,
         audio_beat: 0.72,
+        audio_spectral_centroid: 0.63,
+        audio_kick: 0.52,
+        audio_snare: 0.24,
         float_inputs: { intensity: 1.2, scale: 0.8 },
       },
       { type: 'render_isf_to_layer', layer_id: layerId },
@@ -383,8 +402,23 @@ async function renderRegisteredWgslProbe(rpc, frameIndex, baseline) {
         frame_index: frameIndex + 1,
         render_width: 320,
         render_height: 180,
+        active: true,
+        level: 0.2,
+        bass: 0.18,
+        mid: 0.22,
+        treble: 0.68,
+        high: 0.7,
+        beat: 0.05,
+        beat_phase: 0.62,
+        bpm: 92,
+        centroid: 0.22,
+        kick: 0.08,
+        snare: 0.66,
         audio_bass: 0.18,
         audio_beat: 0.05,
+        audio_spectral_centroid: 0.22,
+        audio_kick: 0.08,
+        audio_snare: 0.66,
         float_inputs: { intensity: 1.2, scale: 0.8 },
       },
       { type: 'render_isf_to_layer', layer_id: layerId },
