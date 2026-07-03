@@ -94,6 +94,21 @@ type NativeRenderClockCommand = {
 
 export type PresentPolicyProfile = 'vsync-live' | 'low-latency-safe' | 'low-latency-aggressive';
 
+type NativeGraphRouteKind = 'smoke-3d';
+
+type NativeGraphLayerRoute = {
+  kind: NativeGraphRouteKind;
+  key: string;
+  source: NativeLayerSource;
+};
+
+type NativeGraphRouteState = {
+  inFlight: boolean;
+  seq: number;
+  warnings: number;
+  state: Smoke3DNativeGraphState | null;
+};
+
 const SOURCE_PREVIEW_SIZE = 256;
 const SOURCE_FRAME_SIZE_FALLBACK = 2048;
 const SOURCE_FRAME_SIZE_OVERLOAD = 1536;
@@ -685,10 +700,7 @@ export class NativeRendererSync {
   private previewCanvas: HTMLCanvasElement | null = null;
   private previewContext: CanvasRenderingContext2D | null = null;
   private nativeComputeGraphSourceFrames = false;
-  private smoke3DNativeGraphStates = new Map<string, Smoke3DNativeGraphState>();
-  private smoke3DNativeGraphInFlight = new Set<string>();
-  private smoke3DNativeGraphWarnings = new Map<string, number>();
-  private smoke3DNativeGraphSeq = new Map<string, number>();
+  private nativeGraphRoutes = new Map<string, NativeGraphRouteState>();
   private nativeSourceFrameSize = SOURCE_FRAME_SIZE_FALLBACK;
   private dynamicSourceFrameCaptureSize = SOURCE_FRAME_SIZE_FALLBACK;
   private presentProfile: PresentPolicyProfile = 'low-latency-safe';
@@ -784,16 +796,24 @@ export class NativeRendererSync {
     };
   }
 
-  private shouldUseNativeSmoke3DGraph(layer: Layer): boolean {
-    if (!this.nativeComputeGraphSourceFrames || !this.nativeWgslStdlibWarmed || !layer.visible) return false;
-    if (layer.type !== 'gpu' || !layer.gpuLayerContent) return false;
-    const shaderId = String(layer.gpuLayerContent.shaderId || '').trim();
-    if (shaderId.toLowerCase() !== 'smoke-3d') return false;
-    const sourceId = `gpu:${layer.id}:${shaderId}`;
-    return (this.smoke3DNativeGraphWarnings.get(sourceId) ?? 0) < 3;
+  private nativeGraphRouteKey(kind: NativeGraphRouteKind, sourceId: string): string {
+    return `${kind}:${sourceId}`;
   }
 
-  private async renderNativeSmoke3DGraphs(
+  private nativeGraphRouteForLayer(layer: Layer, includeWarningDisabled = false): NativeGraphLayerRoute | null {
+    if (!this.nativeComputeGraphSourceFrames || !this.nativeWgslStdlibWarmed || !layer.visible) return null;
+    if (layer.type !== 'gpu' || !layer.gpuLayerContent) return null;
+    const shaderId = String(layer.gpuLayerContent.shaderId || '').trim();
+    if (shaderId.toLowerCase() !== 'smoke-3d') return null;
+    const source = nativeLayerSource(layer, true);
+    const key = this.nativeGraphRouteKey('smoke-3d', source.id);
+    if (!includeWarningDisabled && (this.nativeGraphRoutes.get(key)?.warnings ?? 0) >= 3) {
+      return null;
+    }
+    return { kind: 'smoke-3d', key, source };
+  }
+
+  private async renderNativeGraphSources(
     layers: Layer[],
     width: number,
     height: number,
@@ -801,23 +821,32 @@ export class NativeRendererSync {
     visual: VisualAudioState,
   ) {
     if (!this.nativeComputeGraphSourceFrames) {
-      this.smoke3DNativeGraphStates.clear();
-      this.smoke3DNativeGraphSeq.clear();
+      this.nativeGraphRoutes.clear();
       return;
     }
-    const activeSourceIds = new Set<string>();
+    const activeRouteKeys = new Set<string>();
     for (const layer of layers) {
-      if (!this.shouldUseNativeSmoke3DGraph(layer)) continue;
-      const nativeSource = nativeLayerSource(layer, true);
-      activeSourceIds.add(nativeSource.id);
-      if (this.smoke3DNativeGraphInFlight.has(nativeSource.id)) continue;
-      this.smoke3DNativeGraphInFlight.add(nativeSource.id);
+      const possibleRoute = this.nativeGraphRouteForLayer(layer, true);
+      if (!possibleRoute) continue;
+      activeRouteKeys.add(possibleRoute.key);
+
+      const route = this.nativeGraphRouteForLayer(layer);
+      if (!route) continue;
+
+      const routeState = this.nativeGraphRoutes.get(route.key) ?? {
+        inFlight: false,
+        seq: 0,
+        warnings: 0,
+        state: null,
+      };
+      this.nativeGraphRoutes.set(route.key, routeState);
+      if (routeState.inFlight) continue;
+      routeState.inFlight = true;
       try {
-        const previous = this.smoke3DNativeGraphStates.get(nativeSource.id) ?? null;
-        const graphSeq = (this.smoke3DNativeGraphSeq.get(nativeSource.id) ?? 0) + 1;
-        this.smoke3DNativeGraphSeq.set(nativeSource.id, graphSeq);
+        const graphSeq = routeState.seq + 1;
+        routeState.seq = graphSeq;
         const graph = buildSmoke3DNativeComputeGraph({
-          sourceId: nativeSource.id,
+          sourceId: route.source.id,
           params: layer.gpuLayerContent?.params ?? {},
           width,
           height,
@@ -826,29 +855,27 @@ export class NativeRendererSync {
           frameIndex: graphSeq,
           audioBass: visual.isActive ? Math.max(visual.bass, visual.bassFast * 0.9) : 0,
           audioTreble: visual.isActive ? visual.treble : 0,
-          state: previous,
-          reset: !previous,
+          state: routeState.state,
+          reset: !routeState.state,
         });
         const result = await runNativeRendererComputeGraph(graph.config as unknown as Record<string, unknown>);
         if (!result?.render || (result.render as any).target !== 'source_frame') {
           throw new Error(`native 3D Smoke graph returned no source-frame render`);
         }
-        this.smoke3DNativeGraphStates.set(nativeSource.id, graph.state);
-        this.smoke3DNativeGraphWarnings.delete(nativeSource.id);
+        routeState.state = graph.state;
+        routeState.warnings = 0;
       } catch (err) {
-        const seen = this.smoke3DNativeGraphWarnings.get(nativeSource.id) ?? 0;
-        if (seen < 3) {
+        if (routeState.warnings < 3) {
           console.warn('[NativeRendererSync] native 3D Smoke graph failed', layer.id, err);
-          this.smoke3DNativeGraphWarnings.set(nativeSource.id, seen + 1);
         }
+        routeState.warnings += 1;
       } finally {
-        this.smoke3DNativeGraphInFlight.delete(nativeSource.id);
+        routeState.inFlight = false;
       }
     }
-    for (const sourceId of Array.from(this.smoke3DNativeGraphStates.keys())) {
-      if (!activeSourceIds.has(sourceId) && !this.smoke3DNativeGraphInFlight.has(sourceId)) {
-        this.smoke3DNativeGraphStates.delete(sourceId);
-        this.smoke3DNativeGraphSeq.delete(sourceId);
+    for (const [key, routeState] of Array.from(this.nativeGraphRoutes.entries())) {
+      if (!activeRouteKeys.has(key) && !routeState.inFlight) {
+        this.nativeGraphRoutes.delete(key);
       }
     }
   }
@@ -1005,10 +1032,7 @@ export class NativeRendererSync {
     this.previewImageElements.clear();
     this.previewImageLoads.clear();
     this.nativeComputeGraphSourceFrames = false;
-    this.smoke3DNativeGraphStates.clear();
-    this.smoke3DNativeGraphInFlight.clear();
-    this.smoke3DNativeGraphWarnings.clear();
-    this.smoke3DNativeGraphSeq.clear();
+    this.nativeGraphRoutes.clear();
     this.nativeWgslStdlibWarmed = false;
     this.latestRenderClockSeconds = null;
     this.lastRenderClockSentSeconds = null;
@@ -1180,8 +1204,8 @@ export class NativeRendererSync {
       dynamicRemaining: overloadActive ? 1 : 2,
     };
     layers.forEach((layer, index) => {
-      const useNativeSmokeGraph = this.shouldUseNativeSmoke3DGraph(layer);
-      const nativeSource = nativeLayerSource(layer, useNativeSmokeGraph);
+      const nativeGraphRoute = this.nativeGraphRouteForLayer(layer);
+      const nativeSource = nativeGraphRoute?.source ?? nativeLayerSource(layer, false);
       const sourceType = nativeSource.sourceType;
       const nativeParams = nativeGpuParams(layer);
       const nativeUv = this.nativeLayerUvState(layer, nativeSource, width, height);
@@ -1403,7 +1427,7 @@ export class NativeRendererSync {
       if (!activeVideoKeys.has(key)) this.videoRefreshAt.delete(key);
     });
 
-    await this.renderNativeSmoke3DGraphs(layers, width, height, renderClock, visual);
+    await this.renderNativeGraphSources(layers, width, height, renderClock, visual);
 
     if (!commands.length) return;
 
