@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { getSmoke3DNativeShaderSources, SMOKE_3D_NATIVE_SHADER_IDS } from './webgpu3DSmoke';
+import {
+  buildSmoke3DNativePrecompileCommands,
+  getSmoke3DNativeShaderSources,
+  SMOKE_3D_NATIVE_SHADER_IDS,
+} from './webgpu3DSmoke';
 
 describe('3D Smoke native shader bundle', () => {
   it('exposes the real 3D Smoke WGSL passes with resolved includes', () => {
@@ -22,6 +26,22 @@ describe('3D Smoke native shader bundle', () => {
         expect(source.source).toContain('fn vs_main');
         expect(source.source).toContain('fn fs_main');
       }
+    }
+  });
+
+  it('builds native precompile commands from the same shader bundle', () => {
+    const sources = getSmoke3DNativeShaderSources();
+    const commands = buildSmoke3DNativePrecompileCommands();
+
+    expect(commands).toHaveLength(sources.length);
+    for (const [index, command] of commands.entries()) {
+      expect(command).toEqual({
+        type: 'precompile_shader',
+        shader_id: sources[index].shaderId,
+        stage: sources[index].stage,
+        entry: sources[index].entry,
+        source: sources[index].source,
+      });
     }
   });
 });

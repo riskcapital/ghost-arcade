@@ -736,6 +736,14 @@ export interface Smoke3DNativeShaderSource {
   source: string;
 }
 
+export interface Smoke3DNativePrecompileCommand {
+  type: 'precompile_shader';
+  shader_id: string;
+  stage: Smoke3DNativeShaderStage;
+  entry: string;
+  source: string;
+}
+
 export function getSmoke3DNativeShaderSources(): Smoke3DNativeShaderSource[] {
   return [
     {
@@ -788,6 +796,16 @@ export function getSmoke3DNativeShaderSources(): Smoke3DNativeShaderSource[] {
       source: resolveGhostWgsl(RENDER_WGSL, '3d-smoke/render'),
     },
   ];
+}
+
+export function buildSmoke3DNativePrecompileCommands(): Smoke3DNativePrecompileCommand[] {
+  return getSmoke3DNativeShaderSources().map((shader) => ({
+    type: 'precompile_shader',
+    shader_id: shader.shaderId,
+    stage: shader.stage,
+    entry: shader.entry,
+    source: shader.source,
+  }));
 }
 
 /* ============================================================== */
