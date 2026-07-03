@@ -848,6 +848,7 @@ async function main() {
     assertDifferent('volumetric-balls detail branch', gpuB, gpuHighDetail);
 
     const status = await rpc.send('status', {}, 5000);
+    const stats = await rpc.send('stats', {}, 5000);
     if (Number(status.native_instrument_layers ?? 0) < 1) {
       throw new Error(`native instrument layer was not counted in status: ${JSON.stringify(status)}`);
     }
@@ -874,6 +875,9 @@ async function main() {
     }
     if (Number(status.compute_graph_persistent_buffers ?? 0) < 2) {
       throw new Error(`native persistent compute graph buffers were not reported: ${JSON.stringify(status)}`);
+    }
+    if (Number(stats.compute_graph_runs ?? 0) < 4 || Number(stats.compute_graph_persistent_buffers ?? 0) < 2) {
+      throw new Error(`native compute graph stats were not reported: ${JSON.stringify(stats)}`);
     }
     if (Number(status.source_frame_size ?? 0) < 1536) {
       throw new Error(`native source frame size regressed below 1536px: ${JSON.stringify(status)}`);
