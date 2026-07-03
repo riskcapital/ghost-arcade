@@ -61,6 +61,8 @@ const CORE_RPC_METHODS: &[&str] = &[
     "set_metadata_cache_caps",
     "capabilities",
     "get_capabilities",
+    "compute_probe",
+    "run_compute_probe",
     "shutdown",
 ];
 const CORE_COMMAND_TYPES: &[&str] = &[
@@ -499,6 +501,27 @@ struct NativeShaderPipeline {
     pipeline: wgpu::RenderPipeline,
 }
 
+struct NativeComputePipeline {
+    pipeline: wgpu::ComputePipeline,
+    bind_group_layout: wgpu::BindGroupLayout,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ComputeProbeUniforms {
+    element_count: u32,
+    frame_index: u32,
+    seed: u32,
+    _pad0: u32,
+}
+
+struct ComputeProbeResult {
+    byte_length: u64,
+    checksum: u64,
+    nonzero_words: u32,
+    first_words: Vec<u32>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 struct IsfUniformState {
     shader_id: String,
@@ -858,6 +881,7 @@ struct RenderState {
     native_shader_bind_group_layout: wgpu::BindGroupLayout,
     native_shader_bind_group: wgpu::BindGroup,
     native_shader_pipelines: HashMap<String, NativeShaderPipeline>,
+    native_compute_pipelines: HashMap<String, NativeComputePipeline>,
     snapshot_texture: wgpu::Texture,
     snapshot_view: wgpu::TextureView,
     last_frame_metrics: Option<SnapshotMetrics>,
@@ -1004,9 +1028,9 @@ impl App {
                 "source_frame_file_handoff": true,
                 "source_frame_mips": self.renderer.as_ref().is_some_and(|renderer| renderer.source_frame_mip_levels > 1),
                 "source_frame_hdr": self.renderer.as_ref().is_some_and(|renderer| renderer.source_frame_format == SOURCE_FRAME_FORMAT_HDR),
-                "compute_shader_host": false,
+                "compute_shader_host": true,
                 "multi_pass_instruments": false,
-                "storage_buffer_instruments": false,
+                "storage_buffer_instruments": true,
                 "shared_texture_upload": false,
                 "native_media_decode": false,
                 "media_prefetch": false,
@@ -1124,7 +1148,7 @@ impl App {
             pipeline_cache_entries: self
                 .renderer
                 .as_ref()
-                .map(RenderState::native_shader_pipeline_count)
+                .map(RenderState::native_pipeline_cache_count)
                 .unwrap_or(0),
             precompiled_vertex_shaders: self.precompiled_shader_count("vertex"),
             precompiled_pixel_shaders: self.precompiled_shader_count("pixel"),
@@ -1236,6 +1260,7 @@ impl App {
             })),
             "frame_snapshot" | "get_frame_snapshot" => self.frame_snapshot(&req.params),
             "capabilities" | "get_capabilities" => Ok(self.capabilities()),
+            "compute_probe" | "run_compute_probe" => self.compute_probe(&req.params),
             "readiness" | "get_readiness_report" => Ok(json!({
                 "timestamp_ms": epoch_ms(),
                 "overall_ready": self.renderer.is_some(),
@@ -1683,6 +1708,64 @@ impl App {
             .frame_snapshot_bytes_read
             .saturating_add(number_at(&snapshot, &["byte_length"]).unwrap_or(0.0) as u64);
         Ok(snapshot)
+    }
+
+    fn compute_probe(&mut self, params: &Value) -> Result<Value, String> {
+        let Some(shader_id) = string_at(params, &["shader_id"]) else {
+            return Err("compute_probe requires shader_id".to_string());
+        };
+        let record = self
+            .shader_registry
+            .get(&shader_id)
+            .cloned()
+            .ok_or_else(|| format!("compute shader `{shader_id}` has not been precompiled"))?;
+        let source = self
+            .shader_sources
+            .get(&shader_id)
+            .ok_or_else(|| format!("compute shader source missing for `{shader_id}`"))?;
+        let entry = native_compute_entry(&record, source).ok_or_else(|| {
+            format!("shader `{shader_id}` is not a supported native compute shader")
+        })?;
+        let element_count = number_at(params, &["element_count"])
+            .or_else(|| number_at(params, &["count"]))
+            .unwrap_or(256.0)
+            .round()
+            .clamp(1.0, 1_048_576.0) as u32;
+        let frame_index = number_at(params, &["frame_index"])
+            .or_else(|| number_at(params, &["frame"]))
+            .map(|value| value.round().clamp(0.0, u32::MAX as f64) as u32)
+            .unwrap_or(self.stats.frames_presented.min(u32::MAX as u64) as u32);
+        let seed = number_at(params, &["seed"])
+            .map(|value| value.round().clamp(0.0, u32::MAX as f64) as u32)
+            .unwrap_or_else(|| stable_hash64(&shader_id) as u32);
+        let cache_key = format!("{}:{}:{:016x}", shader_id, entry, record.source_hash);
+        let Some(renderer) = self.renderer.as_mut() else {
+            return Err("native renderer has not created a wgpu device".to_string());
+        };
+        let probe = renderer.run_native_compute_probe(
+            &cache_key,
+            source,
+            &entry,
+            ComputeProbeUniforms {
+                element_count,
+                frame_index,
+                seed,
+                _pad0: 0,
+            },
+        )?;
+        self.stats.pipeline_cache_entries = renderer.native_pipeline_cache_count() as u64;
+        Ok(json!({
+            "shader_id": shader_id,
+            "entry": entry,
+            "element_count": element_count,
+            "frame_index": frame_index,
+            "seed": seed,
+            "byte_length": probe.byte_length,
+            "checksum": format!("{:016x}", probe.checksum),
+            "nonzero_words": probe.nonzero_words,
+            "first_words": probe.first_words,
+            "pipeline_cache_entries": renderer.native_pipeline_cache_count(),
+        }))
     }
 
     fn frame_duration(&self) -> Duration {
@@ -2830,6 +2913,7 @@ impl RenderState {
             native_shader_bind_group_layout,
             native_shader_bind_group,
             native_shader_pipelines: HashMap::new(),
+            native_compute_pipelines: HashMap::new(),
             snapshot_texture,
             snapshot_view,
             last_frame_metrics: None,
@@ -2906,6 +2990,13 @@ impl RenderState {
 
     fn native_shader_pipeline_count(&self) -> u32 {
         self.native_shader_pipelines.len().min(u32::MAX as usize) as u32
+    }
+
+    fn native_pipeline_cache_count(&self) -> u32 {
+        self.native_shader_pipelines
+            .len()
+            .saturating_add(self.native_compute_pipelines.len())
+            .min(u32::MAX as usize) as u32
     }
 
     fn resize(&mut self, size: PhysicalSize<u32>) {
@@ -3062,6 +3153,185 @@ impl RenderState {
         self.native_shader_pipelines
             .insert(cache_key.to_string(), NativeShaderPipeline { pipeline });
         Ok(())
+    }
+
+    fn ensure_native_compute_pipeline(
+        &mut self,
+        cache_key: &str,
+        source: &str,
+        compute_entry: &str,
+    ) -> Result<(), String> {
+        if self.native_compute_pipelines.contains_key(cache_key) {
+            return Ok(());
+        }
+        let error_scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let shader = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Ghost Render Core Native Compute Shader"),
+                source: wgpu::ShaderSource::Wgsl(source.into()),
+            });
+        let bind_group_layout =
+            self.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Ghost Render Core Native Compute Probe Layout"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                    ],
+                });
+        let pipeline_layout = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Ghost Render Core Native Compute Probe Pipeline Layout"),
+                bind_group_layouts: &[Some(&bind_group_layout)],
+                immediate_size: 0,
+            });
+        let pipeline = self
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Ghost Render Core Native Compute Probe Pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: Some(compute_entry),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            });
+        let error_future = error_scope.pop();
+        let _ = self.device.poll(wgpu::PollType::Poll);
+        if let Some(err) = pollster::block_on(error_future) {
+            return Err(err.to_string());
+        }
+        self.native_compute_pipelines.insert(
+            cache_key.to_string(),
+            NativeComputePipeline {
+                pipeline,
+                bind_group_layout,
+            },
+        );
+        Ok(())
+    }
+
+    fn run_native_compute_probe(
+        &mut self,
+        cache_key: &str,
+        source: &str,
+        compute_entry: &str,
+        uniforms: ComputeProbeUniforms,
+    ) -> Result<ComputeProbeResult, String> {
+        self.ensure_native_compute_pipeline(cache_key, source, compute_entry)?;
+        let element_count = uniforms.element_count.max(1);
+        let byte_length = element_count as u64 * std::mem::size_of::<u32>() as u64;
+        let storage_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Ghost Render Core Native Compute Probe Storage"),
+            size: byte_length,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let uniform_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Ghost Render Core Native Compute Probe Uniforms"),
+                contents: bytemuck::bytes_of(&uniforms),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let readback_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Ghost Render Core Native Compute Probe Readback"),
+            size: byte_length,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let Some(cached) = self.native_compute_pipelines.get(cache_key) else {
+            return Err(format!(
+                "native compute pipeline missing after compile: {cache_key}"
+            ));
+        };
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Ghost Render Core Native Compute Probe Bind Group"),
+            layout: &cached.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: storage_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+            ],
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Ghost Render Core Native Compute Probe Encoder"),
+            });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Ghost Render Core Native Compute Probe Pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&cached.pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(element_count.div_ceil(64), 1, 1);
+        }
+        encoder.copy_buffer_to_buffer(&storage_buffer, 0, &readback_buffer, 0, byte_length);
+        self.queue.submit(Some(encoder.finish()));
+
+        let slice = readback_buffer.slice(..);
+        let (tx, rx) = mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result.map_err(|err| err.to_string()));
+        });
+        self.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .map_err(|err| err.to_string())?;
+        rx.recv()
+            .map_err(|err| err.to_string())?
+            .map_err(|err| err.to_string())?;
+        let mapped = slice.get_mapped_range().map_err(|err| err.to_string())?;
+        let mut checksum = 0xcbf29ce484222325u64;
+        let mut nonzero_words = 0u32;
+        let mut first_words = Vec::new();
+        for chunk in mapped.chunks_exact(4) {
+            let value = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+            if value != 0 {
+                nonzero_words = nonzero_words.saturating_add(1);
+            }
+            if first_words.len() < 8 {
+                first_words.push(value);
+            }
+            checksum ^= value as u64;
+            checksum = checksum.wrapping_mul(0x100000001b3);
+        }
+        drop(mapped);
+        readback_buffer.unmap();
+        self.last_frame_error = None;
+        Ok(ComputeProbeResult {
+            byte_length,
+            checksum,
+            nonzero_words,
+            first_words,
+        })
     }
 
     fn render_native_wgsl_shader_frame(
@@ -4088,6 +4358,23 @@ fn native_fragment_entry(record: &ShaderRecord, source: &str) -> Option<String> 
         return Some(preferred.to_string());
     }
     ["fs_main", "main"].iter().find_map(|candidate| {
+        record
+            .entry_points
+            .iter()
+            .any(|entry| entry == candidate)
+            .then(|| candidate.to_string())
+    })
+}
+
+fn native_compute_entry(record: &ShaderRecord, source: &str) -> Option<String> {
+    if !source.trim().contains("@compute") {
+        return None;
+    }
+    let preferred = record.entry.trim();
+    if !preferred.is_empty() && record.entry_points.iter().any(|entry| entry == preferred) {
+        return Some(preferred.to_string());
+    }
+    ["cs_main", "main"].iter().find_map(|candidate| {
         record
             .entry_points
             .iter()

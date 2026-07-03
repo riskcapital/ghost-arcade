@@ -73,6 +73,30 @@ fn fs_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
 }
 `;
 
+const NATIVE_COMPUTE_PROBE_SOURCE = `
+struct ComputeProbeUniforms {
+  element_count: u32,
+  frame_index: u32,
+  seed: u32,
+  _pad0: u32,
+}
+
+@group(0) @binding(0)
+var<storage, read_write> output_words: array<u32>;
+
+@group(0) @binding(1)
+var<uniform> probe: ComputeProbeUniforms;
+
+@compute @workgroup_size(64)
+fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= probe.element_count) { return; }
+  var x = i * 747796405u + probe.seed + probe.frame_index * 2891336453u;
+  x = ((x >> ((x >> 28u) + 4u)) ^ x) * 277803737u;
+  output_words[i] = (x >> 22u) ^ x ^ (probe.element_count * 2246822519u);
+}
+`;
+
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -309,7 +333,10 @@ async function main() {
     if (!capabilities?.features?.layer_compositor || !capabilities?.features?.fragment_wgsl_host) {
       throw new Error(`native capabilities missing implemented core features: ${JSON.stringify(capabilities)}`);
     }
-    if (capabilities.features.shared_texture_upload || capabilities.features.compute_shader_host) {
+    if (!capabilities.features.compute_shader_host || capabilities.features.multi_pass_instruments) {
+      throw new Error(`native compute capability flags are not honest yet: ${JSON.stringify(capabilities.features)}`);
+    }
+    if (capabilities.features.shared_texture_upload) {
       throw new Error(`native capabilities overstated unimplemented features: ${JSON.stringify(capabilities.features)}`);
     }
     if (!capabilities.implemented_methods?.includes('capabilities')) {
@@ -322,6 +349,27 @@ async function main() {
       if (!String(err?.message || err).includes('unsupported native render-core RPC method')) {
         throw err;
       }
+    }
+
+    await rpc.send('submit_commands', {
+      commands: [
+        {
+          type: 'precompile_shader',
+          shader_id: 'native-compute-probe',
+          stage: 'compute',
+          entry: 'cs_main',
+          source: NATIVE_COMPUTE_PROBE_SOURCE,
+        },
+      ],
+    });
+    const computeProbe = await rpc.send('compute_probe', {
+      shader_id: 'native-compute-probe',
+      element_count: 256,
+      frame_index: 7,
+      seed: 12345,
+    }, 5000);
+    if (Number(computeProbe.nonzero_words ?? 0) < 240 || !computeProbe.checksum) {
+      throw new Error(`native compute probe did not write expected data: ${JSON.stringify(computeProbe)}`);
     }
 
     const baseline = await snapshot(rpc, 'baseline', 0, 0);
@@ -591,6 +639,7 @@ async function main() {
       `wgsl=${registeredWgsl.first.checksum}->${registeredWgsl.second.checksum}`,
       `uv=${previewCrop.checksum}/${previewFlip.checksum}`,
       `shape=${previewCircle.checksum}/${previewTriangle.checksum}`,
+      `compute=${computeProbe.checksum}/${computeProbe.nonzero_words}`,
       `gpu=${gpuA.checksum}->${gpuB.checksum}/detail=${gpuHighDetail.checksum}`,
       `particle=${particleA.checksum}->${particleB.checksum}`,
       `catalog=${catalogResults.length}/${NATIVE_SHADER_CATALOG_PROBES.length}`,
