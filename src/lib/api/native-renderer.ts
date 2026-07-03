@@ -249,6 +249,17 @@ export interface NativeQualityState {
   step_ups: number;
 }
 
+export interface NativeRendererCapabilities {
+  schema_version: number;
+  core_version: string | null;
+  backend: BackendKind | string | null;
+  implemented_methods: string[];
+  implemented_command_types: string[];
+  features: Record<string, boolean>;
+  limits: Record<string, number>;
+  notes: string[];
+}
+
 export interface RendererStatus {
   running: boolean;
   backend: BackendKind | null;
@@ -572,6 +583,7 @@ export interface RendererSnapshot {
   timestamp_ms: number;
   status: RendererStatus;
   stats: RendererStats;
+  capabilities?: NativeRendererCapabilities;
 }
 
 export interface RendererFrameSnapshot {
@@ -646,6 +658,7 @@ export interface RendererReadinessReport {
   timestamp_ms: number;
   overall_ready: boolean;
   blockers: string[];
+  capabilities?: NativeRendererCapabilities;
   checks: RendererReadinessCheck[];
 }
 
@@ -851,6 +864,10 @@ export async function getNativeRendererFrameSnapshot(
     include_pixels: includePixels,
     ...options,
   });
+}
+
+export async function getNativeRendererCapabilities() {
+  return invoke<NativeRendererCapabilities>('native_renderer_get_capabilities');
 }
 
 export async function getNativeRendererReadinessReport() {

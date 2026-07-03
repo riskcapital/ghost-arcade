@@ -36,6 +36,55 @@ const SOURCE_FRAME_FORMAT_HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16
 const SOURCE_FRAME_SLOT_OFFSET: f32 = 100.0;
 const NATIVE_SHADER_SOURCE_KIND: f32 = 17.0;
 const GPU_TIMESTAMP_READ_BYTES: u64 = 16;
+const CORE_RPC_METHODS: &[&str] = &[
+    "start",
+    "stop",
+    "status",
+    "get_status",
+    "stats",
+    "get_stats",
+    "snapshot",
+    "get_snapshot",
+    "frame_snapshot",
+    "get_frame_snapshot",
+    "readiness",
+    "get_readiness_report",
+    "reset_stats",
+    "submit_batch",
+    "submit_commands",
+    "set_output",
+    "set_target_fps",
+    "set_native_quality_policy",
+    "set_render_clock",
+    "set_shader_precompile_policy",
+    "set_texture_pool_cap",
+    "set_metadata_cache_caps",
+    "capabilities",
+    "get_capabilities",
+    "shutdown",
+];
+const CORE_COMMAND_TYPES: &[&str] = &[
+    "set_output",
+    "upsert_layer",
+    "set_layer_visibility",
+    "set_layer_color",
+    "set_layer_native_params",
+    "set_effect_chain",
+    "set_texture_pool_cap",
+    "set_shader_precompile_policy",
+    "set_metadata_cache_caps",
+    "set_native_quality_policy",
+    "set_audio_state",
+    "set_render_clock",
+    "bind_media_source",
+    "upload_source_preview",
+    "upload_source_frame",
+    "precompile_shader",
+    "bind_isf_shader",
+    "update_isf_uniforms",
+    "render_isf_to_layer",
+    "remove_layer",
+];
 const NATIVE_SHADER_FULLSCREEN_VERTEX_WGSL: &str = r#"
 struct VertexOut {
   @builtin(position) position: vec4<f32>,
@@ -129,6 +178,7 @@ struct CoreStatus {
     last_shader_error: Option<String>,
     frames_presented: u64,
     commands_applied: u64,
+    commands_dropped: u64,
     layers_seen: u32,
     gpu_timing_supported: bool,
     avg_render_cpu_ms: f64,
@@ -327,6 +377,7 @@ struct CoreStats {
     frames_submitted: u64,
     frames_presented: u64,
     commands_applied: u64,
+    commands_dropped: u64,
     command_queue_peak: u64,
     draw_calls: u64,
     shader_precompile_queued: u64,
@@ -925,6 +976,60 @@ impl App {
         Ok(())
     }
 
+    fn capabilities(&self) -> Value {
+        json!({
+            "schema_version": 1,
+            "core_version": env!("CARGO_PKG_VERSION"),
+            "backend": native_backend_name(),
+            "implemented_methods": CORE_RPC_METHODS,
+            "implemented_command_types": CORE_COMMAND_TYPES,
+            "features": {
+                "separate_process_render_core": true,
+                "managed_native_window": true,
+                "layer_compositor": true,
+                "layer_corner_warp": true,
+                "layer_uv_controls": true,
+                "layer_shape_masks": true,
+                "blend_modes": true,
+                "effect_descriptors": true,
+                "render_clock": true,
+                "frame_snapshot": true,
+                "frame_health": true,
+                "gpu_timing": self.renderer.as_ref().is_some_and(|renderer| renderer.gpu_timing.is_some()),
+                "shader_precompile": true,
+                "fragment_wgsl_host": true,
+                "native_instrument_proxies": true,
+                "source_preview_upload": true,
+                "source_frame_upload": true,
+                "source_frame_file_handoff": true,
+                "source_frame_mips": self.renderer.as_ref().is_some_and(|renderer| renderer.source_frame_mip_levels > 1),
+                "source_frame_hdr": self.renderer.as_ref().is_some_and(|renderer| renderer.source_frame_format == SOURCE_FRAME_FORMAT_HDR),
+                "compute_shader_host": false,
+                "multi_pass_instruments": false,
+                "storage_buffer_instruments": false,
+                "shared_texture_upload": false,
+                "native_media_decode": false,
+                "media_prefetch": false,
+                "managed_output_attach": false,
+                "native_recording": false,
+                "native_stage3d": false,
+                "native_projection_sim": false
+            },
+            "limits": {
+                "max_scene_layers": MAX_SCENE_LAYERS,
+                "source_preview_size": SOURCE_PREVIEW_SIZE,
+                "source_preview_slots": MAX_SOURCE_PREVIEWS,
+                "source_frame_slots": MAX_SOURCE_FRAME_SLOTS,
+                "source_frame_size": self.renderer.as_ref().map(|renderer| renderer.source_frame_size).unwrap_or(SOURCE_FRAME_SIZE_DEFAULT),
+                "source_frame_mip_levels": self.renderer.as_ref().map(|renderer| renderer.source_frame_mip_levels).unwrap_or(1)
+            },
+            "notes": [
+                "Native instruments are currently visual proxies, not parity ports of the browser/WebGPU instruments.",
+                "Canvas/base64 source-frame upload is a development fallback; shared texture transport is not implemented yet."
+            ]
+        })
+    }
+
     fn status(&self) -> CoreStatus {
         let last_frame_error = self
             .renderer
@@ -1059,6 +1164,7 @@ impl App {
             last_shader_error: self.last_shader_error.clone(),
             frames_presented: self.stats.frames_presented,
             commands_applied: self.stats.commands_applied,
+            commands_dropped: self.stats.commands_dropped,
             layers_seen: self.layers_seen,
             gpu_timing_supported,
             avg_render_cpu_ms: self.render_cpu_ema_ms,
@@ -1129,16 +1235,36 @@ impl App {
                 "shader_registry": self.shader_registry_snapshot(),
             })),
             "frame_snapshot" | "get_frame_snapshot" => self.frame_snapshot(&req.params),
+            "capabilities" | "get_capabilities" => Ok(self.capabilities()),
             "readiness" | "get_readiness_report" => Ok(json!({
                 "timestamp_ms": epoch_ms(),
                 "overall_ready": self.renderer.is_some(),
                 "blockers": if self.renderer.is_some() { Vec::<String>::new() } else { vec!["native renderer has not created a wgpu device".to_string()] },
+                "capabilities": self.capabilities(),
                 "checks": [
                     {
                         "id": "wgpu-device",
                         "label": "Native wgpu device",
                         "ok": self.renderer.is_some(),
                         "detail": self.adapter_name.clone().unwrap_or_else(|| "not initialized".to_string())
+                    },
+                    {
+                        "id": "shared-texture-upload",
+                        "label": "Shared texture media transport",
+                        "ok": false,
+                        "detail": "not implemented; source-frame upload uses CPU/file handoff fallback"
+                    },
+                    {
+                        "id": "compute-instrument-host",
+                        "label": "Native compute/multi-pass instrument host",
+                        "ok": false,
+                        "detail": "not implemented; native instruments are currently fragment proxy scaffolds"
+                    },
+                    {
+                        "id": "managed-output",
+                        "label": "Managed output window / recording",
+                        "ok": false,
+                        "detail": "not implemented; native window is a development preview surface"
                     }
                 ]
             })),
@@ -1197,7 +1323,10 @@ impl App {
                 event_loop.exit();
                 Ok(json!(true))
             }
-            _ => Ok(json!(true)),
+            _ => Err(format!(
+                "unsupported native render-core RPC method `{}`",
+                req.method
+            )),
         };
 
         match result {
@@ -1284,9 +1413,9 @@ impl App {
             return;
         };
         let count = commands.len() as u64;
-        self.stats.commands_applied = self.stats.commands_applied.saturating_add(count);
+        let mut applied = 0u64;
+        let mut dropped = 0u64;
         self.stats.command_queue_peak = self.stats.command_queue_peak.max(count);
-        self.command_phase = (self.command_phase + count as f32 * 0.031).fract();
 
         for command in commands {
             match command
@@ -1314,9 +1443,16 @@ impl App {
                 "update_isf_uniforms" => self.apply_isf_uniforms(command),
                 "render_isf_to_layer" => self.apply_render_isf_to_layer(command),
                 "remove_layer" => self.apply_remove_layer(command),
-                _ => {}
+                _ => {
+                    dropped = dropped.saturating_add(1);
+                    continue;
+                }
             }
+            applied = applied.saturating_add(1);
         }
+        self.stats.commands_applied = self.stats.commands_applied.saturating_add(applied);
+        self.stats.commands_dropped = self.stats.commands_dropped.saturating_add(dropped);
+        self.command_phase = (self.command_phase + applied as f32 * 0.031).fract();
         self.layers_seen = self.scene_layers.len().min(1024) as u32;
     }
 
