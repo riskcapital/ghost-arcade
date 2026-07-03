@@ -363,6 +363,7 @@ export interface RendererStatus {
   layers_seen: number;
   target_fps: number;
   present_mode: PresentMode;
+  surface_present_mode: string;
   allow_tearing: boolean;
   max_frame_latency: number;
   use_waitable_object: boolean;
