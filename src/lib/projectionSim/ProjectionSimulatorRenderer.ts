@@ -102,6 +102,7 @@ function objectStructureHash(scene: ProjectionSimScene): string {
     env: {
       ambient: scene.environment.ambient,
       floorColor: scene.environment.floorColor,
+      showFloorProjection: scene.environment.showFloorProjection,
       showGrid: scene.environment.showGrid,
       surfaceStyle: scene.environment.surfaceStyle,
     },
@@ -716,7 +717,7 @@ export class ProjectionSimulatorRenderer {
       visible: true,
       locked: true,
       castShadow: false,
-      receiveProjection: true,
+      receiveProjection: sceneState.environment.showFloorProjection !== false,
     };
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(80, 80),
@@ -843,6 +844,31 @@ export class ProjectionSimulatorRenderer {
     return group;
   }
 
+  private makeImportedProjectionMaterial(
+    object: ProjectionSimObject,
+    sourceMaterial?: THREE.Material | null,
+  ): ProjectionMaterial {
+    const surfaceStyle = this.currentScene?.environment.surfaceStyle;
+    const material = makeProjectionMaterial({ ...object, receiveProjection: true }, surfaceStyle, sourceMaterial);
+    material.side = THREE.DoubleSide;
+
+    // Imported models are mapping receivers first. In neutral receiver modes,
+    // source transparency/alpha maps can make otherwise valid GLBs look blank.
+    if (surfaceStyle !== 'original') {
+      material.map = null;
+      material.alphaMap = null;
+      material.transparent = false;
+      material.opacity = 1;
+      material.alphaTest = 0;
+    } else if (material.opacity <= 0.02) {
+      material.transparent = false;
+      material.opacity = 1;
+    }
+
+    material.needsUpdate = true;
+    return material;
+  }
+
   private async loadModel(object: ProjectionSimObject, holder: THREE.Group): Promise<void> {
     if (!object.assetUrl) return;
     const key = `${object.assetFormat ?? 'gltf'}:${object.assetUrl}`;
@@ -865,7 +891,7 @@ export class ProjectionSimulatorRenderer {
         mesh.receiveShadow = true;
         const sourceMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
         const projectionMaterials = sourceMaterials.map((sourceMaterial) =>
-          makeProjectionMaterial(object, this.currentScene?.environment.surfaceStyle, sourceMaterial),
+          this.makeImportedProjectionMaterial(object, sourceMaterial),
         );
         mesh.material = Array.isArray(mesh.material) ? projectionMaterials : projectionMaterials[0];
         this.projectionMaterials.push(...projectionMaterials);
@@ -906,6 +932,9 @@ export class ProjectionSimulatorRenderer {
       const geometry = new THREE.BufferGeometry();
       const positions = new Float32Array(ply.vertices.length * 3);
       const colors = new Float32Array(ply.vertices.length * 3);
+      const normals = ply.vertices.every((v) => v.nx !== undefined && v.ny !== undefined && v.nz !== undefined)
+        ? new Float32Array(ply.vertices.length * 3)
+        : null;
       const sx = ply.boundingBox.max.x - ply.boundingBox.min.x || 1;
       const sy = ply.boundingBox.max.y - ply.boundingBox.min.y || 1;
       const sz = ply.boundingBox.max.z - ply.boundingBox.min.z || 1;
@@ -918,14 +947,53 @@ export class ProjectionSimulatorRenderer {
         colors[i * 3] = (v.r ?? 255) / 255;
         colors[i * 3 + 1] = (v.g ?? 255) / 255;
         colors[i * 3 + 2] = (v.b ?? 255) / 255;
+        if (normals) {
+          normals[i * 3] = v.nx ?? 0;
+          normals[i * 3 + 1] = v.ny ?? 1;
+          normals[i * 3 + 2] = v.nz ?? 0;
+        }
       }
       geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
       geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      if (normals) geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+
+      const indices: number[] = [];
+      for (const face of ply.faces ?? []) {
+        const valid = face.filter((idx) => Number.isInteger(idx) && idx >= 0 && idx < ply.vertices.length);
+        if (valid.length < 3) continue;
+        for (let j = 1; j < valid.length - 1; j++) {
+          indices.push(valid[0], valid[j], valid[j + 1]);
+        }
+      }
+
+      if (indices.length) {
+        geometry.setIndex(indices);
+        if (!normals) geometry.computeVertexNormals();
+        geometry.computeBoundingSphere();
+        const receiver = { ...object, receiveProjection: true, castShadow: object.castShadow };
+        const material = this.makeImportedProjectionMaterial(receiver, null);
+        if ((this.currentScene?.environment.surfaceStyle ?? 'light-gray') === 'original') {
+          material.vertexColors = true;
+        }
+        material.needsUpdate = true;
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.name = object.assetName || object.name || 'PLY mesh';
+        mesh.castShadow = object.castShadow;
+        mesh.receiveShadow = true;
+        this.clearGroup(holder);
+        holder.add(mesh);
+        this.prepareProjectedObject(mesh, receiver);
+        this.lastDepthHash = '';
+        this.lastShadowHash = '';
+        return;
+      }
+
       geometry.computeBoundingSphere();
+      const pointSize = object.pointSize ?? (ply.dataType === 'gaussian' ? 0.08 : 0.035);
       const points = new THREE.Points(
         geometry,
         new THREE.PointsMaterial({
-          size: object.pointSize ?? 0.035,
+          size: pointSize,
           vertexColors: true,
           transparent: true,
           opacity: 0.92,

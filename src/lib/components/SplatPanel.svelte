@@ -189,6 +189,10 @@
           updates.textureProjection = 'native';
         }
 
+        if (plyData.dataType === 'gaussian') {
+          updates.renderMode = 'gaussians';
+        }
+
         doUpdate(updates);
       }
     } catch (err) {

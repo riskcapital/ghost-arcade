@@ -70,6 +70,10 @@
  * incremented by the edge-gen compute pass.
  */
 
+import { createAndWarmWgslShaderModule } from './wgsl';
+import { GhostGpuFrameGraph, type GhostGpuFrameGraphRunStats } from './gpuFrameGraph';
+import { getGhostGpuRuntime } from './webgpuShared';
+
 const PARTICLE_BYTES = 64;
 const EDGE_BYTES = 16;
 const DEFAULT_PARTICLES = 80_000;
@@ -135,6 +139,9 @@ function translate(x: number, y: number, z: number): Float32Array {
 /* BEHAVIOR COMPUTE — updates particle pos/vel per mode           */
 /* ============================================================== */
 const BEHAVIOR_WGSL = /* wgsl */ `
+#include <noise>
+#include <color>
+
 struct Particle {
   pos:   vec3<f32>, alpha: f32,
   vel:   vec3<f32>, size:  f32,
@@ -187,58 +194,19 @@ struct U {
 
 // ── Helpers ─────────────────────────────────────────────────────
 fn hash3(p: vec3<f32>) -> f32 {
-  let q = vec3<f32>(
-    dot(p, vec3<f32>(127.1, 311.7,  74.7)),
-    dot(p, vec3<f32>(269.5, 183.3, 246.1)),
-    dot(p, vec3<f32>(113.5, 271.9, 124.6)),
-  );
-  return fract(sin(q.x + q.y + q.z) * 43758.5453);
+  return ghost_hash13(p);
 }
 fn noise3(p: vec3<f32>) -> f32 {
-  let i = floor(p);
-  let f = fract(p);
-  let s = f * f * (3.0 - 2.0 * f);
-  let n000 = hash3(i + vec3<f32>(0.0, 0.0, 0.0));
-  let n100 = hash3(i + vec3<f32>(1.0, 0.0, 0.0));
-  let n010 = hash3(i + vec3<f32>(0.0, 1.0, 0.0));
-  let n110 = hash3(i + vec3<f32>(1.0, 1.0, 0.0));
-  let n001 = hash3(i + vec3<f32>(0.0, 0.0, 1.0));
-  let n101 = hash3(i + vec3<f32>(1.0, 0.0, 1.0));
-  let n011 = hash3(i + vec3<f32>(0.0, 1.0, 1.0));
-  let n111 = hash3(i + vec3<f32>(1.0, 1.0, 1.0));
-  let nx00 = mix(n000, n100, s.x);
-  let nx10 = mix(n010, n110, s.x);
-  let nx01 = mix(n001, n101, s.x);
-  let nx11 = mix(n011, n111, s.x);
-  let nxy0 = mix(nx00, nx10, s.y);
-  let nxy1 = mix(nx01, nx11, s.y);
-  return mix(nxy0, nxy1, s.z) * 2.0 - 1.0;
+  return ghost_value_noise3(p);
 }
 fn curl3(p: vec3<f32>) -> vec3<f32> {
-  let e = 0.05;
-  let ax1 = noise3(p + vec3<f32>(0.0,  e, 0.0));
-  let ax2 = noise3(p + vec3<f32>(0.0, -e, 0.0));
-  let ay1 = noise3(p + vec3<f32>(0.0, 0.0,  e) + vec3<f32>(31.0, 0.0, 0.0));
-  let ay2 = noise3(p + vec3<f32>(0.0, 0.0, -e) + vec3<f32>(31.0, 0.0, 0.0));
-  let az1 = noise3(p + vec3<f32>( e, 0.0, 0.0) + vec3<f32>(0.0, 47.0, 0.0));
-  let az2 = noise3(p + vec3<f32>(-e, 0.0, 0.0) + vec3<f32>(0.0, 47.0, 0.0));
-  return vec3<f32>(ay1 - ay2, az1 - az2, ax1 - ax2) / (2.0 * e);
+  return ghost_curl_noise3(p);
 }
 fn rgb2hsv(c: vec3<f32>) -> vec3<f32> {
-  let K = vec4<f32>(0.0, -1.0/3.0, 2.0/3.0, -1.0);
-  var p: vec4<f32>;
-  if (c.g < c.b) { p = vec4<f32>(c.b, c.g, K.w, K.z); }
-  else { p = vec4<f32>(c.g, c.b, K.x, K.y); }
-  var q: vec4<f32>;
-  if (c.r < p.x) { q = vec4<f32>(p.x, p.y, p.w, c.r); }
-  else { q = vec4<f32>(c.r, p.y, p.z, p.x); }
-  let d = q.x - min(q.w, q.y);
-  return vec3<f32>(abs(q.z + (q.w - q.y) / (6.0 * d + 1e-10)), d / (q.x + 1e-10), q.x);
+  return ghost_rgb2hsv(c);
 }
 fn hsv2rgb(c: vec3<f32>) -> vec3<f32> {
-  let K = vec4<f32>(1.0, 2.0/3.0, 1.0/3.0, 3.0);
-  let p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
-  return c.z * mix(K.xxx, clamp(p - K.xxx, vec3<f32>(0.0), vec3<f32>(1.0)), c.y);
+  return ghost_hsv2rgb(c);
 }
 
 // ── Behavior targets ───────────────────────────────────────────
@@ -847,27 +815,22 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 // particles vanish smoothly into the colored haze, lines fade into
 // the same haze, light beams (if added later) tint that haze.
 const FOG_WGSL = /* wgsl */ `
+#include <camera>
+#include <color>
+
 struct UFog { color: vec3<f32>, opacity: f32, };
 @group(0) @binding(0) var<uniform> u: UFog;
 
 @vertex
 fn vs_main(@builtin(vertex_index) vid: u32) -> @builtin(position) vec4<f32> {
-  // Fullscreen triangle (two triangles into one bigger one for
-  // discard efficiency).
-  var positions = array<vec2<f32>, 3>(
-    vec2<f32>(-1.0, -3.0),
-    vec2<f32>(-1.0,  1.0),
-    vec2<f32>( 3.0,  1.0),
-  );
-  return vec4<f32>(positions[vid], 0.0, 1.0);
+  return ghost_fullscreen_triangle_pos(vid);
 }
 
 @fragment
 fn fs_main() -> @location(0) vec4<f32> {
   // Premultiplied-alpha output so this blends cleanly with the
   // existing premult pipeline used by particles + lines.
-  let a = u.opacity;
-  return vec4<f32>(u.color * a, a);
+  return ghost_premul(u.color, u.opacity);
 }
 `;
 
@@ -1197,6 +1160,7 @@ export class WebGPUParticleField {
   private autoRotYPhase = 0;
   private autoRotZPhase = 0;
   private currentMode: BehaviorMode = 'galaxy';
+  private lastGraphStats: GhostGpuFrameGraphRunStats | null = null;
 
   constructor(device: any, presentFormat: any) {
     this.device = device;
@@ -1386,11 +1350,12 @@ export class WebGPUParticleField {
   }
 
   private buildPipelines(): void {
+    const shaderRuntime = getGhostGpuRuntime() ?? this.device;
     // ── Fog fullscreen pipeline ─────────────────────────────────
     // Runs first each frame, paints the canvas with fog color so
     // the rest of the scene composites against an atmospheric
     // background rather than transparent black.
-    const fogMod = this.device.createShaderModule({ code: FOG_WGSL });
+    const fogMod = createAndWarmWgslShaderModule(shaderRuntime, FOG_WGSL, 'particle-field/fog');
     this.fogLayout = this.device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
@@ -1414,7 +1379,7 @@ export class WebGPUParticleField {
     });
 
     // ── Behavior compute pipeline ───────────────────────────────
-    const behaviorMod = this.device.createShaderModule({ code: BEHAVIOR_WGSL });
+    const behaviorMod = createAndWarmWgslShaderModule(shaderRuntime, BEHAVIOR_WGSL, 'particle-field/behavior');
     this.behaviorLayout = this.device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
@@ -1429,7 +1394,7 @@ export class WebGPUParticleField {
     });
 
     // ── Edge-gen compute pipeline ───────────────────────────────
-    const edgeMod = this.device.createShaderModule({ code: EDGE_GEN_WGSL });
+    const edgeMod = createAndWarmWgslShaderModule(shaderRuntime, EDGE_GEN_WGSL, 'particle-field/edges');
     this.edgeLayout = this.device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
@@ -1444,7 +1409,7 @@ export class WebGPUParticleField {
     });
 
     // ── Particle render pipeline ───────────────────────────────
-    const renderMod = this.device.createShaderModule({ code: RENDER_WGSL });
+    const renderMod = createAndWarmWgslShaderModule(shaderRuntime, RENDER_WGSL, 'particle-field/render');
     this.renderLayout = this.device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
@@ -1478,7 +1443,7 @@ export class WebGPUParticleField {
     });
 
     // ── Line render pipeline ───────────────────────────────────
-    const lineMod = this.device.createShaderModule({ code: LINE_WGSL });
+    const lineMod = createAndWarmWgslShaderModule(shaderRuntime, LINE_WGSL, 'particle-field/lines');
     this.lineLayout = this.device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
@@ -1720,24 +1685,6 @@ export class WebGPUParticleField {
       this.device.queue.writeBuffer(this.edgeUniform, 0, eBuf);
     }
 
-    // ── Behavior pass ──────────────────────────────────────────
-    {
-      const pass = encoder.beginComputePass();
-      pass.setPipeline(this.behaviorPipeline);
-      pass.setBindGroup(0, this.behaviorBindGroup);
-      pass.dispatchWorkgroups(Math.ceil(this.particleCount / 64));
-      pass.end();
-    }
-
-    // ── Edge-gen pass ──────────────────────────────────────────
-    if (this.params.connectEnabled) {
-      const pass = encoder.beginComputePass();
-      pass.setPipeline(this.edgePipeline);
-      pass.setBindGroup(0, this.edgeBindGroup);
-      pass.dispatchWorkgroups(Math.ceil(this.particleCount / 64));
-      pass.end();
-    }
-
     // ── Camera + object rotation matrices ──────────────────────
     const aspect = this.viewportW / Math.max(1, this.viewportH);
     const proj = perspective(this.params.fovDeg, aspect, 0.05, 100);
@@ -1824,63 +1771,142 @@ export class WebGPUParticleField {
     const useSphereDepth = this.params.topology === 'sphere' || this.params.topology === 'softSphere';
     if (useSphereDepth) this.ensureDepthTexture(this.viewportW, this.viewportH);
 
-    // (1) Fog fill — only if opacity > epsilon (skip the no-op).
-    if (this.params.fogOpacity > 0.001) {
-      const pass = encoder.beginRenderPass({
-        colorAttachments: [{
-          view: targetView,
-          loadOp: 'load',
-          storeOp: 'store',
-        }],
-      });
-      pass.setPipeline(this.fogPipeline);
-      pass.setBindGroup(0, this.fogBindGroup);
-      pass.draw(3, 1, 0, 0);  // 3-vertex fullscreen triangle
-      pass.end();
-    }
+    this.lastGraphStats = this.buildFrameGraph(encoder, targetView, useSphereDepth).execute();
+  }
 
-    // (2) Particles. Sphere impostors use a depth attachment so they
-    // occlude like objects; point/glow/streak modes stay additive.
-    {
-      const renderPassDesc: any = {
-        colorAttachments: [{
-          view: targetView,
-          loadOp: 'load',
-          storeOp: 'store',
-        }],
-      };
-      if (useSphereDepth && this.depthTextureView) {
-        renderPassDesc.depthStencilAttachment = {
-          view: this.depthTextureView,
-          depthClearValue: 1.0,
-          depthLoadOp: 'clear',
-          depthStoreOp: 'discard',
-        };
-      }
-      const pass = encoder.beginRenderPass(renderPassDesc);
-      pass.setPipeline(useSphereDepth ? this.renderAlphaPipeline : this.renderPipeline);
-      pass.setBindGroup(0, this.renderBindGroup);
-      pass.draw(6, this.particleCount, 0, 0);
-      pass.end();
-    }
+  private buildFrameGraph(encoder: any, targetView: any, useSphereDepth: boolean): { execute: () => GhostGpuFrameGraphRunStats } {
+    const graph = new GhostGpuFrameGraph(getGhostGpuRuntime() ?? { device: this.device });
+    this.importParticleGraphResources(graph);
+    const workgroups = Math.ceil(this.particleCount / 64);
 
-    // (3) Lines
+    graph.addPass({
+      name: 'particle-behavior',
+      kind: 'compute',
+      reads: ['particles', 'behavior-uniform'],
+      writes: ['particles'],
+      execute: (ctx) => {
+        const pass = ctx.encoder.beginComputePass();
+        pass.setPipeline(this.behaviorPipeline);
+        pass.setBindGroup(0, this.behaviorBindGroup);
+        pass.dispatchWorkgroups(workgroups);
+        pass.end();
+      },
+    });
+
     if (this.params.connectEnabled) {
-      const pass = encoder.beginRenderPass({
-        colorAttachments: [{
-          view: targetView,
-          loadOp: 'load',
-          storeOp: 'store',
-        }],
+      graph.addPass({
+        name: 'particle-edges',
+        kind: 'compute',
+        reads: ['particles', 'edge-uniform'],
+        writes: ['edge-buffer', 'indirect-args'],
+        execute: (ctx) => {
+          const pass = ctx.encoder.beginComputePass();
+          pass.setPipeline(this.edgePipeline);
+          pass.setBindGroup(0, this.edgeBindGroup);
+          pass.dispatchWorkgroups(workgroups);
+          pass.end();
+        },
       });
-      pass.setPipeline(this.linePipeline);
-      pass.setBindGroup(0, this.lineBindGroup);
-      // drawIndirect reads (vertex_count, instance_count, first_vertex,
-      // first_instance) from the indirect buffer at offset 0. Edge-gen
-      // has atomically populated instance_count this frame.
-      pass.drawIndirect(this.indirectBuffer, 0);
-      pass.end();
     }
+
+    if (this.params.fogOpacity > 0.001) {
+      graph.addPass({
+        name: 'particle-fog',
+        kind: 'render',
+        reads: ['fog-uniform'],
+        execute: (ctx) => {
+          const pass = ctx.encoder.beginRenderPass({
+            colorAttachments: [{
+              view: targetView,
+              loadOp: 'load',
+              storeOp: 'store',
+            }],
+          });
+          pass.setPipeline(this.fogPipeline);
+          pass.setBindGroup(0, this.fogBindGroup);
+          pass.draw(3, 1, 0, 0);
+          pass.end();
+        },
+      });
+    }
+
+    graph.addPass({
+      name: 'particle-render',
+      kind: 'render',
+      reads: ['particles', 'render-uniform'],
+      execute: (ctx) => {
+        const renderPassDesc: any = {
+          colorAttachments: [{
+            view: targetView,
+            loadOp: 'load',
+            storeOp: 'store',
+          }],
+        };
+        if (useSphereDepth && this.depthTextureView) {
+          renderPassDesc.depthStencilAttachment = {
+            view: this.depthTextureView,
+            depthClearValue: 1.0,
+            depthLoadOp: 'clear',
+            depthStoreOp: 'discard',
+          };
+        }
+        const pass = ctx.encoder.beginRenderPass(renderPassDesc);
+        pass.setPipeline(useSphereDepth ? this.renderAlphaPipeline : this.renderPipeline);
+        pass.setBindGroup(0, this.renderBindGroup);
+        pass.draw(6, this.particleCount, 0, 0);
+        pass.end();
+      },
+    });
+
+    if (this.params.connectEnabled) {
+      graph.addPass({
+        name: 'particle-lines',
+        kind: 'render',
+        reads: ['particles', 'edge-buffer', 'indirect-args', 'line-uniform'],
+        execute: (ctx) => {
+          const pass = ctx.encoder.beginRenderPass({
+            colorAttachments: [{
+              view: targetView,
+              loadOp: 'load',
+              storeOp: 'store',
+            }],
+          });
+          pass.setPipeline(this.linePipeline);
+          pass.setBindGroup(0, this.lineBindGroup);
+          pass.drawIndirect(this.indirectBuffer, 0);
+          pass.end();
+        },
+      });
+    }
+
+    return {
+      execute: () => graph.execute(encoder),
+    };
+  }
+
+  getDebugStats(): Record<string, any> {
+    return {
+      instrument: 'particle-field',
+      mode: this.params.mode,
+      topology: this.params.topology,
+      particleCount: this.particleCount,
+      connectEnabled: this.params.connectEnabled,
+      partnerCount: this.params.partnerCount,
+      passes: this.lastGraphStats?.passes ?? [],
+      graphCpuMs: this.lastGraphStats?.totalCpuMs ?? 0,
+    };
+  }
+
+  private importParticleGraphResources(graph: GhostGpuFrameGraph): void {
+    graph
+      .importBuffer('particles', this.particleBuffer)
+      .importBuffer('indirect-args', this.indirectBuffer)
+      .importBuffer('edge-buffer', this.edgeBuffer)
+      .importBuffer('behavior-uniform', this.behaviorUniform)
+      .importBuffer('edge-uniform', this.edgeUniform)
+      .importBuffer('render-uniform', this.renderUniform)
+      .importBuffer('line-uniform', this.lineUniform)
+      .importBuffer('fog-uniform', this.fogUniform);
   }
 
   dispose(): void {

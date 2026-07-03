@@ -19,6 +19,9 @@
 
 import type { GpuShaderImpl, ParamControl } from '../gpuShaderTypes';
 import { deriveDefaults } from '../gpuShaderTypes';
+import { createAndWarmWgslShaderModule } from '../wgsl';
+import { getGhostGpuRuntime } from '../webgpuShared';
+import type { GhostGpuRuntime } from '../gpuRuntime';
 
 const PLANET_IDS: Record<string, number> = {
   'earth':   0,
@@ -1148,6 +1151,70 @@ struct V { @builtin(position) clip: vec4<f32>, @location(0) uv: vec2<f32> };
 // JS implementation
 // ─────────────────────────────────────────────────────────────
 
+const planetBindGroupLayouts = new WeakMap<object, any>();
+const planetPipelineLayouts = new WeakMap<object, any>();
+
+function getPlanetBindGroupLayout(device: any): any {
+  const key = device as object;
+  let layout = planetBindGroupLayouts.get(key);
+  if (!layout) {
+    layout = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+      ],
+    });
+    planetBindGroupLayouts.set(key, layout);
+  }
+  return layout;
+}
+
+function getPlanetPipelineLayout(device: any): any {
+  const key = device as object;
+  let layout = planetPipelineLayouts.get(key);
+  if (!layout) {
+    layout = device.createPipelineLayout({ bindGroupLayouts: [getPlanetBindGroupLayout(device)] });
+    planetPipelineLayouts.set(key, layout);
+  }
+  return layout;
+}
+
+function planetPipelineKey(format: any): string {
+  return `planet:${String(format)}`;
+}
+
+function createPlanetPipelineDescriptor(device: any, format: any, module: any): Record<string, any> {
+  return {
+    label: planetPipelineKey(format),
+    layout: getPlanetPipelineLayout(device),
+    vertex: { module, entryPoint: 'vs_full' },
+    fragment: {
+      module,
+      entryPoint: 'fs_planet',
+      targets: [{
+        format,
+        // The planet renders fully opaque (background covers stars
+        // + atmosphere), so simple "over" blend is fine. Premultiplied
+        // alpha means the engine compositor can blend it normally.
+        blend: {
+          color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+          alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+        },
+      }],
+    },
+    primitive: { topology: 'triangle-list' },
+  };
+}
+
+export function prewarmWebGPUPlanet(device: any, presentFormat: any, runtime?: GhostGpuRuntime | null): Promise<any> | void {
+  const shaderRuntime = runtime ?? getGhostGpuRuntime();
+  const module = createAndWarmWgslShaderModule(shaderRuntime ?? device, PLANET_WGSL, `planet/${String(presentFormat)}`);
+  const descriptor = createPlanetPipelineDescriptor(device, presentFormat, module);
+  if (shaderRuntime) {
+    return shaderRuntime.warmRenderPipeline(descriptor, planetPipelineKey(presentFormat));
+  }
+  device.createRenderPipeline(descriptor);
+}
+
 export class WebGPUPlanet implements GpuShaderImpl {
   readonly device: any;
   readonly presentFormat: any;
@@ -1188,11 +1255,7 @@ export class WebGPUPlanet implements GpuShaderImpl {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    this.bindGroupLayout = device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
-      ],
-    });
+    this.bindGroupLayout = getPlanetBindGroupLayout(device);
     this.bindGroup = device.createBindGroup({
       layout: this.bindGroupLayout,
       entries: [{ binding: 0, resource: { buffer: this.uniformBuffer } }],
@@ -1208,27 +1271,11 @@ export class WebGPUPlanet implements GpuShaderImpl {
     const key = String(format);
     const cached = this.pipelineByFormat.get(key);
     if (cached) return cached;
-    const mod = this.device.createShaderModule({ code: PLANET_WGSL });
-    const layout = this.device.createPipelineLayout({ bindGroupLayouts: [this.bindGroupLayout] });
-    const pipeline = this.device.createRenderPipeline({
-      layout,
-      vertex: { module: mod, entryPoint: 'vs_full' },
-      fragment: {
-        module: mod,
-        entryPoint: 'fs_planet',
-        targets: [{
-          format,
-          // The planet renders fully opaque (background covers stars
-          // + atmosphere), so simple "over" blend is fine. Premultiplied
-          // alpha means the engine compositor can blend it normally.
-          blend: {
-            color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-            alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-          },
-        }],
-      },
-      primitive: { topology: 'triangle-list' },
-    });
+    const shaderRuntime = getGhostGpuRuntime();
+    const mod = createAndWarmWgslShaderModule(shaderRuntime ?? this.device, PLANET_WGSL, `planet/${key}`);
+    const descriptor = createPlanetPipelineDescriptor(this.device, format, mod);
+    const pipeline = shaderRuntime?.createRenderPipeline(descriptor, planetPipelineKey(format))
+      ?? this.device.createRenderPipeline(descriptor);
     this.pipelineByFormat.set(key, pipeline);
     return pipeline;
   }

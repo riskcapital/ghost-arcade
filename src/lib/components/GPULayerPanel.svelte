@@ -205,6 +205,12 @@
     } as any);
   }
 
+  function prewarmShader(id: string) {
+    if (!layerId || !content || content.shaderId === id) return;
+    const fn = (window as any).__ghostPrewarmGpuShader;
+    if (typeof fn === 'function') fn(layerId, id);
+  }
+
   // Layer-level (not per-shader) — fades the dark background of the
   // shader output so the layer below shows through. Lives on
   // gpuLayerContent itself, separate from the shader's paramSchema,
@@ -239,7 +245,14 @@
     <!-- Shader picker — every entry in the catalog, grouped by category. -->
     <div class="shader-grid">
       {#each GPU_SHADER_CATALOG as s}
-        <button class="shader-btn" class:active={content.shaderId === s.id} onclick={() => setShader(s.id)}>
+        <button
+          class="shader-btn"
+          class:active={content.shaderId === s.id}
+          onmouseenter={() => prewarmShader(s.id)}
+          onfocus={() => prewarmShader(s.id)}
+          ontouchstart={() => prewarmShader(s.id)}
+          onclick={() => setShader(s.id)}
+        >
           <div class="shader-btn-label">{s.label}</div>
           <div class="shader-btn-cat">{s.category}</div>
         </button>

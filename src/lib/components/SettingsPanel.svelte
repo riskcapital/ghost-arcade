@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { settings, getSupportedFormats, COLOR_SCHEMES, CLAUDE_MODELS, GEMINI_MODELS, VEO_MODELS, LUMA_MODELS, DEFAULT_LAYER_SHADERS, type RecordingSettings, type OutputSettings, type ColorSchemeId, type FluidQualityMode, type ShaderQualityMode, type ShaderAIProvider, type VideoAIProvider } from '../stores/settings';
+  import { settings, getSupportedFormats, COLOR_SCHEMES, CLAUDE_MODELS, GEMINI_MODELS, VEO_MODELS, LUMA_MODELS, DEFAULT_LAYER_SHADERS, type RecordingSettings, type OutputSettings, type ColorSchemeId, type FluidQualityMode, type ShaderQualityMode, type GpuInstrumentQualityMode, type ShaderAIProvider, type VideoAIProvider } from '../stores/settings';
   // Theme template registry — full visual style swap (fonts + surfaces
   // + corners + accents). See src/lib/theming/themes/.
   import { activeThemeId, themes } from '../theming/store';
@@ -514,6 +514,14 @@
     { value: 'low', label: 'Low (25%)' },
   ];
 
+  const gpuInstrumentQualityModes: { value: GpuInstrumentQualityMode; label: string }[] = [
+    { value: 'auto', label: 'Auto' },
+    { value: 'low', label: 'Performance' },
+    { value: 'balanced', label: 'Balanced' },
+    { value: 'high', label: 'High' },
+    { value: 'ultra', label: 'Ultra' },
+  ];
+
   function handleFormatChange(e: Event) {
     const value = (e.target as HTMLSelectElement).value as RecordingSettings['format'];
     settings.setRecordingFormat(value);
@@ -561,6 +569,11 @@
   function handleShaderQualityChange(e: Event) {
     const value = (e.target as HTMLSelectElement).value as ShaderQualityMode;
     settings.setShaderQuality(value);
+  }
+
+  function handleGpuInstrumentQualityChange(e: Event) {
+    const value = (e.target as HTMLSelectElement).value as GpuInstrumentQualityMode;
+    settings.setGpuInstrumentQuality(value);
   }
 </script>
 
@@ -1443,6 +1456,17 @@
               <option value="high">High (0.75x)</option>
               <option value="medium">Medium (0.5x)</option>
               <option value="low">Low (0.25x)</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">GPU Instrument Budget</span>
+              <span class="label-hint">Caps expensive WebGPU shader internals like particles, volume grids, emitters, and ray steps. Auto adapts live; fixed modes stay stable.</span>
+            </div>
+            <select value={$settings.performance.gpuInstrumentQuality ?? 'auto'} onchange={handleGpuInstrumentQualityChange}>
+              {#each gpuInstrumentQualityModes as mode}
+                <option value={mode.value}>{mode.label}</option>
+              {/each}
             </select>
           </div>
         </section>

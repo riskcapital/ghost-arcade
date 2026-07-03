@@ -456,5 +456,8 @@ export class WebGPUParticleFieldShader implements GpuShaderImpl {
   }
 
   resize(_w: number, _h: number): void { /* no-op */ }
+  getDebugStats(): Record<string, any> {
+    return this.inner.getDebugStats();
+  }
   dispose(): void { try { this.inner.dispose(); } catch { /* */ } }
 }

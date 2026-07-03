@@ -21,12 +21,20 @@ import { createRequire } from 'module';
 import fs from 'fs';
 import net from 'net';
 import dgram from 'dgram';
+import { createNativeRendererBroker, nativeRendererCommandNames } from './native-renderer-broker.js';
 // License system removed in OSS build — see src/lib/stores/license.ts.
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 const { parseOSCPacket } = require('./osc-parser.cjs');
+const nativeRendererBroker = createNativeRendererBroker({
+  appRoot: path.join(__dirname, '..'),
+  resourcesPath: process.resourcesPath,
+  isPackaged: app.isPackaged,
+  platform: process.platform,
+  env: process.env,
+});
 
 // Force Chromium to use the discrete GPU (NVIDIA/AMD) on Optimus laptops.
 // Must be set before app.whenReady() — affects the GPU process.
@@ -564,16 +572,47 @@ function makeConcatList(frames, fps) {
 
 const LOOP_TRANSITIONS = new Set([
   'fade', 'dissolve', 'pixelize',
+  'rectcrop', 'distance',
+  'fadeblack', 'fadewhite', 'fadegrays', 'fadefast', 'fadeslow',
   'wipeleft', 'wiperight', 'wipeup', 'wipedown',
+  'wipetl', 'wipetr', 'wipebl', 'wipebr',
   'slideleft', 'slideright', 'slideup', 'slidedown',
   'smoothleft', 'smoothright', 'smoothup', 'smoothdown',
   'circlecrop', 'circleclose', 'circleopen',
   'radial', 'horzclose', 'horzopen', 'vertclose', 'vertopen',
+  'diagtl', 'diagtr', 'diagbl', 'diagbr',
+  'hlslice', 'hrslice', 'vuslice', 'vdslice',
+  'hblur', 'squeezeh', 'squeezev', 'zoomin',
+  'hlwind', 'hrwind', 'vuwind', 'vdwind',
+  'coverleft', 'coverright', 'coverup', 'coverdown',
+  'revealleft', 'revealright', 'revealup', 'revealdown',
+  'ghost-scanline-glitch',
+  'ghost-block-glitch',
+  'ghost-chroma-stagger',
+  'ghost-tape-tear',
+  'ghost-signal-pulse',
+]);
+
+const LOOP_CUSTOM_TRANSITION_EXPRESSIONS = new Map([
+  ['ghost-scanline-glitch', 'if(gt(P+0.08*PLANE,0.18+0.64*mod(floor(Y/6),7)/6),B,A)'],
+  ['ghost-block-glitch', 'if(gt(P,0.12+0.76*mod(floor(X/64)*13+floor(Y/48)*7,19)/18),B,A)'],
+  ['ghost-chroma-stagger', 'if(gt(P+0.13*(PLANE-1),0.15+0.7*mod(floor(Y/20)+floor(X/80),5)/4),B,A)'],
+  ['ghost-tape-tear', 'if(gt(P+0.25*sin(Y*0.12+P*12),0.48),B,A)'],
+  ['ghost-signal-pulse', 'if(gt(P+0.18*sin((floor(Y/18)+floor(X/90))*2+P*18),0.58),B,A)'],
 ]);
 
 function safeLoopTransition(value) {
   const name = String(value || 'fade').trim();
   return LOOP_TRANSITIONS.has(name) ? name : 'fade';
+}
+
+function loopXfadeOptions(value, fadeDuration, xfadeOffset) {
+  const transition = safeLoopTransition(value);
+  const expr = LOOP_CUSTOM_TRANSITION_EXPRESSIONS.get(transition);
+  if (expr) {
+    return `transition=custom:duration=${fadeDuration.toFixed(3)}:offset=${xfadeOffset.toFixed(3)}:expr='${expr}'`;
+  }
+  return `transition=${transition}:duration=${fadeDuration.toFixed(3)}:offset=${xfadeOffset.toFixed(3)}`;
 }
 
 function evenDimension(value, fallback) {
@@ -4028,12 +4067,11 @@ function registerIpcHandlers() {
         0.5,
       );
       const xfadeOffset = Math.max(0, secondHalfDuration - fadeDuration);
-      const transition = safeLoopTransition(args.transitionType);
       const normalize = 'fps=30,scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1,format=yuv420p';
       const xfadeFilter =
         `[0:v]trim=start=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,${normalize}[v0];` +
         `[1:v]trim=end=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,${normalize}[v1];` +
-        `[v0][v1]xfade=transition=${transition}:duration=${fadeDuration.toFixed(3)}:offset=${xfadeOffset.toFixed(3)}[outv]`;
+        `[v0][v1]xfade=${loopXfadeOptions(args.transitionType, fadeDuration, xfadeOffset)}[outv]`;
 
       const makeXfadeArgs = (preferHardware) => [
         '-hide_banner',
@@ -4499,18 +4537,11 @@ function registerIpcHandlers() {
     return { content, dir: path.dirname(filePath) };
   });
 
-  // Native renderer commands — stub as not available in Electron mode
-  // (these are only used by the Tauri D3D11 native renderer)
-  const nativeRendererStubs = [
-    'native_renderer_start', 'native_renderer_stop', 'native_renderer_submit_batch',
-    'native_renderer_submit_commands', 'native_renderer_upload_source_gpu_shared_texture',
-    'native_renderer_prefetch_media', 'native_renderer_set_decode_policy',
-    'native_renderer_set_present_policy', 'native_renderer_set_prefetch_policy',
-    'native_renderer_get_stats', 'native_renderer_reset_stats',
-    'native_renderer_get_decode_capabilities', 'native_renderer_set_output_window',
-  ];
-  for (const cmd of nativeRendererStubs) {
-    ipcMain.handle(cmd, () => { throw new Error('Native renderer not available in Electron mode'); });
+  // Native renderer bridge. Electron is the long-term UI shell for 2.0;
+  // the render core runs as a separate Rust/wgpu process so a renderer
+  // crash does not take the control surface down.
+  for (const cmd of nativeRendererCommandNames()) {
+    ipcMain.handle(cmd, async (_event, args = {}) => nativeRendererBroker.invoke(cmd, args));
   }
 
   // License IPC removed in OSS build — every install is unlocked, no
@@ -4965,6 +4996,7 @@ function createMainWindow() {
       message.includes('AutoMap') ||
       message.includes('[KF') ||
       message.includes('[GPU]') ||       // surface WebGL renderer info from Canvas.svelte
+      message.includes('[NativeRendererSync]') || // native render-core bridge diagnostics
       message.includes('[animate-') ||   // animate-tick / animate-dbg diagnostics
       message.includes('[syphon-') ||    // syphon-gate / syphon-path send-flow diagnostics
       message.includes('[Syphon')        // any Syphon-tagged renderer log
@@ -5493,6 +5525,7 @@ function cleanupAndQuit() {
   runCleanupStep('stopSpoutReceiver', stopSpoutReceiver);
   runCleanupStep('destroyNdiSenders', destroyNdiSenders);
   runCleanupStep('destroyNdiReceivers', destroyNdiReceivers);
+  runCleanupStep('stopNativeRenderer', () => nativeRendererBroker.shutdownSync());
   runCleanupStep('shutdownLink', shutdownLink);
   runCleanupStep('stopOSC', stopOSC);
   runCleanupStep('stopServer', stopServer);

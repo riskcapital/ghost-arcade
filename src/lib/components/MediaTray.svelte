@@ -13,7 +13,7 @@
   import { parseISF, getInputDefault } from '../isf/parser';
   import { generateCachedThumbnail as generateShaderThumbnail } from '../isf/thumbnail';
   import { estimateShaderLoadRating, type ShaderLoadRating } from '../isf/loadRating';
-  import { appendNativeVideoSegment, createLoopWithResult, runtimeVideoUrlToPath, type LoopProgress, type LoopTransitionType, LOOP_TRANSITIONS } from '../utils/videoLoop';
+  import { appendNativeVideoSegment, createLoopWithResult, runtimeVideoUrlToPath, type LoopProgress, type LoopTransitionType, LOOP_TRANSITIONS, LOOP_TRANSITION_GROUPS } from '../utils/videoLoop';
   import { downloadRecording } from '../recording/recorder';
   import {
     downloadVeoVideo,
@@ -4635,8 +4635,12 @@
         <div class="loop-opt-row">
           <label for="loop-transition-type">Transition</label>
           <select id="loop-transition-type" bind:value={loopTransitionType}>
-            {#each LOOP_TRANSITIONS as t}
-              <option value={t.value}>{t.label}</option>
+            {#each LOOP_TRANSITION_GROUPS as group}
+              <optgroup label={group}>
+                {#each LOOP_TRANSITIONS.filter((t) => t.group === group) as t}
+                  <option value={t.value}>{t.label}</option>
+                {/each}
+              </optgroup>
             {/each}
           </select>
         </div>

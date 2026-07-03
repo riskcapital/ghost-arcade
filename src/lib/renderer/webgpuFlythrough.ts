@@ -1,3 +1,6 @@
+import { getGhostGpuRuntime } from './webgpuShared';
+import { createAndWarmWgslShaderModule } from './wgsl';
+
 /**
  * WebGPUFlythrough — endless point-cloud tunnel through any 2D source.
  *
@@ -607,7 +610,8 @@ export class WebGPUFlythrough {
     });
 
     // ── Compute pipeline ─────────────────────────────────────────
-    const computeModule = this.device.createShaderModule({ code: COMPUTE_WGSL });
+    const shaderRuntime = getGhostGpuRuntime() ?? this.device;
+    const computeModule = createAndWarmWgslShaderModule(shaderRuntime, COMPUTE_WGSL, 'flythrough/compute');
     const computeBindGroupLayout = this.device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
@@ -627,7 +631,7 @@ export class WebGPUFlythrough {
     });
 
     // ── Render pipelines (one per topology) ──────────────────────
-    const renderModule = this.device.createShaderModule({ code: RENDER_WGSL });
+    const renderModule = createAndWarmWgslShaderModule(shaderRuntime, RENDER_WGSL, 'flythrough/render');
     const renderBindGroupLayout = this.device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX,   buffer: { type: 'read-only-storage' } },

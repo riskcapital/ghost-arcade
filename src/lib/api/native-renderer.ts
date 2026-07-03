@@ -1,8 +1,9 @@
 import { invoke } from '$lib/bridge';
 
-export type BackendKind = 'd3d11' | 'vulkan' | 'metal';
+export type BackendKind = 'd3d11' | 'd3d12' | 'vulkan' | 'metal';
 export type DecodeBackendKind = 'synthetic' | 'ffmpeg_d3d11va';
 export type PresentMode = 'vsync' | 'immediate';
+export type NativeQualityPolicy = 'auto' | 'performance' | 'balanced' | 'ultra' | 'insane';
 
 export interface RendererStartConfig {
   backend: BackendKind;
@@ -39,6 +40,7 @@ export interface RendererStartConfig {
   shader_metadata_cache_cap?: number;
   pipeline_metadata_cache_cap?: number;
   texture_pool_cap_mb?: number;
+  native_quality_policy?: NativeQualityPolicy;
   ffmpeg_path?: string;
   decode_gpu_bridge_path?: string;
 }
@@ -52,6 +54,13 @@ export interface PresentPolicyConfig {
 
 export interface TargetFpsConfig {
   target_fps: number;
+}
+
+export interface RenderClockConfig {
+  mode: 'live' | 'manual' | 'reset';
+  time?: number;
+  time_delta?: number;
+  frame_index?: number;
 }
 
 export interface CommandDrainPolicyConfig {
@@ -72,6 +81,10 @@ export interface DecodeSyntheticFallbackPolicyConfig {
 
 export interface TexturePoolCapConfig {
   texture_pool_cap_mb: number;
+}
+
+export interface NativeQualityPolicyConfig {
+  native_quality_policy: NativeQualityPolicy;
 }
 
 export interface ShaderPrecompilePolicyConfig {
@@ -130,6 +143,7 @@ export interface MetadataCacheCapsConfig {
 export type RendererCommand =
   | { type: 'set_output'; width: number; height: number; refresh_hz: number }
   | { type: 'set_target_fps'; target_fps: number }
+  | { type: 'set_render_clock'; mode: 'live' | 'manual' | 'reset'; time?: number; time_delta?: number; frame_index?: number }
   | { type: 'set_command_drain_limit'; max_commands_per_tick: number }
   | { type: 'set_auto_present_policy'; auto_present_on_state_change: boolean }
   | { type: 'set_decode_cpu_backup_policy'; decode_store_cpu_backup_frames: boolean }
@@ -138,14 +152,57 @@ export type RendererCommand =
   | { type: 'set_shader_precompile_policy'; queue_cap: number; per_frame: number }
   | { type: 'set_present_policy'; present_mode: PresentMode; allow_tearing: boolean; max_frame_latency: number; use_waitable_object: boolean }
   | { type: 'set_metadata_cache_caps'; shader_cap: number; pipeline_cap: number }
-  | { type: 'upsert_layer'; layer_id: string; z_index: number; blend_mode: string; opacity: number }
+  | {
+      type: 'upsert_layer';
+      layer_id: string;
+      z_index: number;
+      blend_mode: string;
+      opacity: number;
+      corners?: {
+        topLeft: { x: number; y: number };
+        topRight: { x: number; y: number };
+        bottomLeft: { x: number; y: number };
+        bottomRight: { x: number; y: number };
+      };
+      uv_transform?: [number, number, number, number];
+      uv_flags?: [number, number, number, number];
+      shape?: [number, number, number, number];
+    }
   | { type: 'set_layer_visibility'; layer_id: string; visible: boolean }
   | { type: 'set_layer_color'; layer_id: string; rgba: [number, number, number, number] }
   | { type: 'set_layer_source_color'; layer_id: string; rgb: [number, number, number] }
+  | { type: 'set_layer_native_params'; layer_id: string; params: [number, number, number, number, number, number, number, number] }
+  | {
+      type: 'set_audio_state';
+      active: boolean;
+      level: number;
+      bass: number;
+      mid: number;
+      treble: number;
+      high: number;
+      beat: number;
+      beat_phase: number;
+      bpm: number;
+      centroid: number;
+      kick: number;
+      snare: number;
+    }
   | { type: 'upload_source_preview'; source_id: string; width: number; height: number; rgba: number[]; seq: number }
+  | {
+      type: 'upload_source_frame';
+      source_id: string;
+      width: number;
+      height: number;
+      rgba_b64?: string;
+      rgba_file?: string;
+      rgba_byte_length?: number;
+      rgba_file_delete?: boolean;
+      seq: number;
+    }
   | { type: 'upload_source_gpu_shared_texture'; source_id: string; width: number; height: number; shared_handle: string; seq: number }
   | { type: 'remove_layer'; layer_id: string }
   | { type: 'bind_media_source'; layer_id: string; source_id: string; uri: string; source_type: string }
+  | { type: 'set_native_quality_policy'; native_quality_policy: NativeQualityPolicy }
   | { type: 'precompile_shader'; shader_id: string; stage: string; source: string; entry: string }
   | { type: 'set_effect_chain'; layer_id: string; effect_ids: string[] }
   | { type: 'bind_isf_shader'; layer_id: string; shader_id: string }
@@ -178,11 +235,59 @@ export interface CommandBatch {
   commands: RendererCommand[];
 }
 
+export interface NativeQualityState {
+  policy: NativeQualityPolicy | string;
+  caps_tier: NativeQualityPolicy | string;
+  active_tier: NativeQualityPolicy | string;
+  quality_scale: number;
+  target_frame_ms: number;
+  cpu_ema_ms: number;
+  gpu_ema_ms: number;
+  overload_frames: number;
+  recovery_frames: number;
+  step_downs: number;
+  step_ups: number;
+}
+
 export interface RendererStatus {
   running: boolean;
   backend: BackendKind | null;
   backend_ready: boolean;
   adapter_name: string | null;
+  native_caps: NativeGpuCaps;
+  native_quality: NativeQualityState;
+  source_preview_size: number;
+  source_previews_active: number;
+  source_preview_slots: number;
+  source_preview_dirty: boolean;
+  source_frame_size: number;
+  source_frame_format: string;
+  source_frame_hdr: boolean;
+  source_frame_mip_levels: number;
+  source_frames_active: number;
+  source_frame_slots: number;
+  isf_shader_bindings: number;
+  isf_uniform_sets: number;
+  native_shader_layers: number;
+  native_procedural_layers: number;
+  native_instrument_layers: number;
+  source_frame_uploads: number;
+  source_frame_bytes_uploaded: number;
+  native_instrument_frame_renders: number;
+  render_clock_mode: 'live' | 'manual';
+  render_clock_time: number;
+  render_clock_frame_index: number;
+  render_clock_updates: number;
+  frame_snapshot_reads: number;
+  frame_snapshot_bytes_read: number;
+  frame_health_checks: number;
+  dark_frame_warnings: number;
+  last_frame_checksum: string | null;
+  last_frame_nonzero_pixels: number;
+  last_frame_bright_pixels: number;
+  last_frame_average_luma: number;
+  last_frame_max_luma: number;
+  last_frame_dark: boolean;
   decode_backend: DecodeBackendKind;
   decode_preview_size: number;
   decode_preview_cache_mb: number;
@@ -210,6 +315,12 @@ export interface RendererStatus {
   pipeline_cache_entries: number;
   precompiled_vertex_shaders: number;
   precompiled_pixel_shaders: number;
+  shader_precompile_queued: number;
+  shader_precompile_compiled: number;
+  shader_precompile_failed: number;
+  shader_precompile_dropped: number;
+  last_shader_error: string | null;
+  layers_seen: number;
   target_fps: number;
   present_mode: PresentMode;
   allow_tearing: boolean;
@@ -253,6 +364,8 @@ export interface RendererStatus {
   supports_tearing: boolean;
   supports_waitable_object: boolean;
   gpu_timing_supported: boolean;
+  gpu_timing_samples: number;
+  gpu_timing_resolve_misses: number;
   avg_render_cpu_ms: number;
   max_render_cpu_ms: number;
   render_cpu_p95_ms: number;
@@ -339,6 +452,15 @@ export interface RendererStats {
   shader_precompile_compiled: number;
   shader_precompile_failed: number;
   shader_precompile_dropped: number;
+  source_frame_uploads: number;
+  source_frame_bytes_uploaded: number;
+  native_shader_renders: number;
+  native_instrument_frame_renders: number;
+  render_clock_updates: number;
+  frame_snapshot_reads: number;
+  frame_snapshot_bytes_read: number;
+  frame_health_checks: number;
+  dark_frame_warnings: number;
   shader_cache_entries: number;
   pipeline_cache_entries: number;
   shader_cache_evictions: number;
@@ -452,6 +574,67 @@ export interface RendererSnapshot {
   stats: RendererStats;
 }
 
+export interface RendererFrameSnapshot {
+  timestamp_ms: number;
+  width: number;
+  height: number;
+  format: string;
+  byte_length: number;
+  bytes_per_row: number;
+  padded_bytes_per_row: number;
+  checksum: string;
+  nonzero_pixels: number;
+  bright_pixels: number;
+  transparent_pixels: number;
+  average_luma: number;
+  max_luma: number;
+  mean_rgba: [number, number, number, number];
+  dark_frame: boolean;
+  includes_pixels: boolean;
+  rgba_b64?: string;
+}
+
+export interface NativeGpuCaps {
+  adapter_name: string;
+  adapter_vendor: number;
+  adapter_device: number;
+  adapter_device_type: string;
+  adapter_driver: string;
+  adapter_driver_info: string;
+  max_texture_dimension_2d: number;
+  max_texture_dimension_3d: number;
+  max_texture_array_layers: number;
+  max_bind_groups: number;
+  max_bindings_per_bind_group: number;
+  max_sampled_textures_per_shader_stage: number;
+  max_storage_buffers_per_shader_stage: number;
+  max_storage_textures_per_shader_stage: number;
+  max_uniform_buffer_binding_size: number;
+  max_storage_buffer_binding_size: number;
+  max_buffer_size: number;
+  max_compute_workgroup_storage_size: number;
+  max_compute_invocations_per_workgroup: number;
+  max_compute_workgroup_size_x: number;
+  max_compute_workgroup_size_y: number;
+  max_compute_workgroup_size_z: number;
+  max_compute_workgroups_per_dimension: number;
+  supports_shader_f16: boolean;
+  supports_float32_filterable: boolean;
+  supports_timestamp_query: boolean;
+  supports_timestamp_query_inside_encoders: boolean;
+  supports_timestamp_query_inside_passes: boolean;
+  supports_texture_binding_array: boolean;
+  supports_buffer_binding_array: boolean;
+  supports_storage_resource_binding_array: boolean;
+  supports_texture_adapter_specific_format_features: boolean;
+  requested_shader_f16: boolean;
+  requested_float32_filterable: boolean;
+  requested_timestamp_query: boolean;
+  requested_timestamp_query_inside_encoders: boolean;
+  requested_timestamp_query_inside_passes: boolean;
+  recommended_quality_tier: 'performance' | 'balanced' | 'ultra' | 'insane' | string;
+}
+
 export interface RendererReadinessCheck {
   id: string;
   label: string;
@@ -503,6 +686,7 @@ export async function startNativeRenderer(config?: Partial<RendererStartConfig>)
       shader_metadata_cache_cap: config?.shader_metadata_cache_cap ?? 16384,
       pipeline_metadata_cache_cap: config?.pipeline_metadata_cache_cap ?? 16384,
       texture_pool_cap_mb: config?.texture_pool_cap_mb ?? 512,
+      native_quality_policy: config?.native_quality_policy ?? 'auto',
       ffmpeg_path: config?.ffmpeg_path ?? null,
       decode_gpu_bridge_path: config?.decode_gpu_bridge_path ?? null,
     },
@@ -565,6 +749,10 @@ export async function setNativeRendererTargetFps(config: TargetFpsConfig) {
   return invoke<void>('native_renderer_set_target_fps', { config });
 }
 
+export async function setNativeRendererRenderClock(config: RenderClockConfig) {
+  return invoke<void>('native_renderer_set_render_clock', config);
+}
+
 export async function setNativeRendererCommandDrainPolicy(config: CommandDrainPolicyConfig) {
   return invoke<void>('native_renderer_set_command_drain_policy', { config });
 }
@@ -587,6 +775,10 @@ export async function setNativeRendererDecodeSyntheticFallbackPolicy(
 
 export async function setNativeRendererTexturePoolCap(config: TexturePoolCapConfig) {
   return invoke<void>('native_renderer_set_texture_pool_cap', { config });
+}
+
+export async function setNativeRendererQualityPolicy(config: NativeQualityPolicyConfig) {
+  return invoke<void>('native_renderer_set_native_quality_policy', { config });
 }
 
 export async function setNativeRendererShaderPrecompilePolicy(config: ShaderPrecompilePolicyConfig) {
@@ -649,6 +841,16 @@ export async function getNativeRendererStats() {
 
 export async function getNativeRendererSnapshot() {
   return invoke<RendererSnapshot>('native_renderer_get_snapshot');
+}
+
+export async function getNativeRendererFrameSnapshot(
+  includePixels = false,
+  options: { time?: number; frame_index?: number } = {},
+) {
+  return invoke<RendererFrameSnapshot>('native_renderer_get_frame_snapshot', {
+    include_pixels: includePixels,
+    ...options,
+  });
 }
 
 export async function getNativeRendererReadinessReport() {

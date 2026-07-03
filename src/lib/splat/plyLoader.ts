@@ -34,6 +34,7 @@ export interface PLYVertex {
 
 export interface PLYData {
   vertices: PLYVertex[];
+  faces?: number[][];
   dataType: SplatDataType;
   hasUVs: boolean;
   boundingBox: {
@@ -54,6 +55,165 @@ interface PLYElement {
   name: string;
   count: number;
   properties: PLYProperty[];
+}
+
+interface ParsedPropertyValue {
+  name: string;
+  value: number;
+  type: string;
+}
+
+const SH_C0 = 0.28209479177387814;
+const END_HEADER_BYTES = new Uint8Array([101, 110, 100, 95, 104, 101, 97, 100, 101, 114]);
+const PLY_HEADER_DECODER = new TextDecoder('ascii');
+
+const RED_PROPERTY_NAMES = [
+  'red', 'r', 'diffuse_red', 'diffuse_r', 'base_color_red', 'base_color_r', 'color_red', 'scalar_red', 'scalar_Red'
+];
+const GREEN_PROPERTY_NAMES = [
+  'green', 'g', 'diffuse_green', 'diffuse_g', 'base_color_green', 'base_color_g', 'color_green', 'scalar_green', 'scalar_Green'
+];
+const BLUE_PROPERTY_NAMES = [
+  'blue', 'b', 'diffuse_blue', 'diffuse_b', 'base_color_blue', 'base_color_b', 'color_blue', 'scalar_blue', 'scalar_Blue'
+];
+const ALPHA_PROPERTY_NAMES = [
+  'alpha', 'a', 'opacity', 'diffuse_alpha', 'base_color_alpha', 'color_alpha'
+];
+
+function normalizePLYType(type: string): string {
+  switch (type.toLowerCase()) {
+    case 'int8_t': return 'int8';
+    case 'uint8_t': return 'uint8';
+    case 'int16_t': return 'int16';
+    case 'uint16_t': return 'uint16';
+    case 'int32_t': return 'int32';
+    case 'uint32_t': return 'uint32';
+    case 'float32_t': return 'float32';
+    case 'float64_t': return 'float64';
+    default: return type.toLowerCase();
+  }
+}
+
+function isFloatType(type: string): boolean {
+  const normalized = normalizePLYType(type);
+  return normalized === 'float' || normalized === 'float32' || normalized === 'double' || normalized === 'float64';
+}
+
+function clampByte(value: number): number {
+  if (!Number.isFinite(value)) return 255;
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+function sigmoid(value: number): number {
+  if (value >= 0) {
+    const z = Math.exp(-value);
+    return 1 / (1 + z);
+  }
+  const z = Math.exp(value);
+  return z / (1 + z);
+}
+
+function gaussianDcToByte(value: number): number {
+  return clampByte((0.5 + SH_C0 * value) * 255);
+}
+
+function normalizeColorValue(value: number, type: string): number {
+  if (isFloatType(type) && value >= 0 && value <= 1) return clampByte(value * 255);
+  return clampByte(value);
+}
+
+function normalizeAlphaValue(value: number, type: string, propertyName: string, gaussian: boolean): number {
+  if (propertyName === 'opacity' && gaussian) {
+    return clampByte(sigmoid(value) * 255);
+  }
+  if (isFloatType(type) && value >= 0 && value <= 1) return clampByte(value * 255);
+  return clampByte(value);
+}
+
+function getIndexedProperty(
+  values: number[],
+  propIndices: Record<string, number>,
+  properties: PLYProperty[],
+  names: string[]
+): ParsedPropertyValue | undefined {
+  for (const name of names) {
+    const index = propIndices[name];
+    if (index === undefined) continue;
+    const value = values[index];
+    if (!Number.isFinite(value)) continue;
+    return { name, value, type: properties[index]?.type ?? 'float' };
+  }
+  return undefined;
+}
+
+function getBinaryProperty(
+  propOffsets: Record<string, { offset: number; type: string }>,
+  getValue: (name: string) => number | undefined,
+  names: string[]
+): ParsedPropertyValue | undefined {
+  for (const name of names) {
+    const info = propOffsets[name];
+    if (!info) continue;
+    const value = getValue(name);
+    if (value === undefined || !Number.isFinite(value)) continue;
+    return { name, value, type: info.type };
+  }
+  return undefined;
+}
+
+function makeColorChannels(
+  red: ParsedPropertyValue | undefined,
+  green: ParsedPropertyValue | undefined,
+  blue: ParsedPropertyValue | undefined,
+  fDc0: ParsedPropertyValue | undefined,
+  fDc1: ParsedPropertyValue | undefined,
+  fDc2: ParsedPropertyValue | undefined
+): { r: number; g: number; b: number } {
+  return {
+    r: red ? normalizeColorValue(red.value, red.type) : (fDc0 ? gaussianDcToByte(fDc0.value) : 255),
+    g: green ? normalizeColorValue(green.value, green.type) : (fDc1 ? gaussianDcToByte(fDc1.value) : 255),
+    b: blue ? normalizeColorValue(blue.value, blue.type) : (fDc2 ? gaussianDcToByte(fDc2.value) : 255),
+  };
+}
+
+function extractPLYHeader(buffer: ArrayBuffer): { text: string; headerLength: number } {
+  const bytes = new Uint8Array(buffer);
+  let markerIndex = -1;
+
+  for (let i = 0; i <= bytes.length - END_HEADER_BYTES.length; i++) {
+    let matches = true;
+    for (let j = 0; j < END_HEADER_BYTES.length; j++) {
+      if (bytes[i + j] !== END_HEADER_BYTES[j]) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) {
+      const before = i > 0 ? bytes[i - 1] : 10;
+      const after = bytes[i + END_HEADER_BYTES.length] ?? 10;
+      const lineStart = before === 10 || before === 13;
+      const lineEnd = after === 10 || after === 13;
+      if (!lineStart || !lineEnd) continue;
+      markerIndex = i;
+      break;
+    }
+  }
+
+  if (markerIndex < 0) {
+    throw new Error('PLY file is missing end_header');
+  }
+
+  let headerLength = markerIndex + END_HEADER_BYTES.length;
+  if (bytes[headerLength] === 13 && bytes[headerLength + 1] === 10) {
+    headerLength += 2;
+  } else if (bytes[headerLength] === 10 || bytes[headerLength] === 13) {
+    headerLength += 1;
+  }
+
+  return {
+    text: PLY_HEADER_DECODER.decode(buffer.slice(0, headerLength)),
+    headerLength,
+  };
 }
 
 // Parse PLY header to extract element and property info
@@ -117,7 +277,7 @@ function parseHeader(text: string): {
 
 // Get byte size for a PLY type
 function getTypeSize(type: string): number {
-  switch (type) {
+  switch (normalizePLYType(type)) {
     case 'char':
     case 'uchar':
     case 'int8':
@@ -145,7 +305,7 @@ function getTypeSize(type: string): number {
 
 // Read a value from a DataView based on type
 function readValue(view: DataView, offset: number, type: string, littleEndian: boolean): number {
-  switch (type) {
+  switch (normalizePLYType(type)) {
     case 'char':
     case 'int8':
       return view.getInt8(offset);
@@ -200,18 +360,31 @@ function parseASCII(
   vertexElement.properties.forEach((p, i) => {
     propIndices[p.name] = i;
   });
+  const gaussian = isGaussianSplat(vertexElement.properties);
 
   for (let i = 0; i < vertexElement.count && i < dataLines.length; i++) {
     const values = dataLines[i].trim().split(/\s+/).map(Number);
+    const fDc0 = getIndexedProperty(values, propIndices, vertexElement.properties, ['f_dc_0']);
+    const fDc1 = getIndexedProperty(values, propIndices, vertexElement.properties, ['f_dc_1']);
+    const fDc2 = getIndexedProperty(values, propIndices, vertexElement.properties, ['f_dc_2']);
+    const color = makeColorChannels(
+      getIndexedProperty(values, propIndices, vertexElement.properties, RED_PROPERTY_NAMES),
+      getIndexedProperty(values, propIndices, vertexElement.properties, GREEN_PROPERTY_NAMES),
+      getIndexedProperty(values, propIndices, vertexElement.properties, BLUE_PROPERTY_NAMES),
+      fDc0,
+      fDc1,
+      fDc2
+    );
+    const alpha = getIndexedProperty(values, propIndices, vertexElement.properties, ALPHA_PROPERTY_NAMES);
 
     const vertex: PLYVertex = {
       x: values[propIndices.x] ?? 0,
       y: values[propIndices.y] ?? 0,
       z: values[propIndices.z] ?? 0,
-      r: propIndices.red !== undefined ? values[propIndices.red] : 255,
-      g: propIndices.green !== undefined ? values[propIndices.green] : 255,
-      b: propIndices.blue !== undefined ? values[propIndices.blue] : 255,
-      a: propIndices.alpha !== undefined ? values[propIndices.alpha] : 255,
+      r: color.r,
+      g: color.g,
+      b: color.b,
+      a: alpha ? normalizeAlphaValue(alpha.value, alpha.type, alpha.name, gaussian) : 255,
     };
 
     // Normal
@@ -229,9 +402,9 @@ function parseASCII(
     if (propIndices.rot_3 !== undefined) vertex.rot_3 = values[propIndices.rot_3];
 
     // Spherical harmonics
-    if (propIndices.f_dc_0 !== undefined) vertex.f_dc_0 = values[propIndices.f_dc_0];
-    if (propIndices.f_dc_1 !== undefined) vertex.f_dc_1 = values[propIndices.f_dc_1];
-    if (propIndices.f_dc_2 !== undefined) vertex.f_dc_2 = values[propIndices.f_dc_2];
+    if (fDc0) vertex.f_dc_0 = fDc0.value;
+    if (fDc1) vertex.f_dc_1 = fDc1.value;
+    if (fDc2) vertex.f_dc_2 = fDc2.value;
 
     // UV coordinates (various naming conventions)
     const uIdx = propIndices.u ?? propIndices.s ?? propIndices.texture_u;
@@ -243,6 +416,46 @@ function parseASCII(
   }
 
   return vertices;
+}
+
+function parseASCIIFaces(
+  text: string,
+  headerLength: number,
+  elements: PLYElement[]
+): number[][] {
+  const faceElement = elements.find(e => e.name === 'face');
+  if (!faceElement) return [];
+
+  const dataLines = text.substring(headerLength).trim().split('\n');
+  let lineIndex = 0;
+  for (const element of elements) {
+    if (element.name === 'face') break;
+    lineIndex += element.count;
+  }
+
+  const faces: number[][] = [];
+  for (let i = 0; i < faceElement.count && lineIndex + i < dataLines.length; i++) {
+    const values = dataLines[lineIndex + i].trim().split(/\s+/).map(Number);
+    let cursor = 0;
+    let face: number[] = [];
+
+    for (const prop of faceElement.properties) {
+      if (prop.isList) {
+        const count = values[cursor++] ?? 0;
+        const indices = values.slice(cursor, cursor + count).map((value) => Math.trunc(value));
+        cursor += count;
+        if (prop.name === 'vertex_indices' || prop.name === 'vertex_index' || face.length === 0) {
+          face = indices;
+        }
+      } else {
+        cursor += 1;
+      }
+    }
+
+    if (face.length >= 3) faces.push(face);
+  }
+
+  return faces;
 }
 
 // Parse binary PLY data
@@ -265,6 +478,7 @@ function parseBinary(
     propOffsets[prop.name] = { offset: stride, type: prop.type };
     stride += getTypeSize(prop.type);
   }
+  const gaussian = isGaussianSplat(vertexElement.properties);
 
   for (let i = 0; i < vertexElement.count; i++) {
     const baseOffset = i * stride;
@@ -275,24 +489,28 @@ function parseBinary(
       return readValue(view, baseOffset + info.offset, info.type, littleEndian);
     };
 
+    const fDc0 = getBinaryProperty(propOffsets, getValue, ['f_dc_0']);
+    const fDc1 = getBinaryProperty(propOffsets, getValue, ['f_dc_1']);
+    const fDc2 = getBinaryProperty(propOffsets, getValue, ['f_dc_2']);
+    const color = makeColorChannels(
+      getBinaryProperty(propOffsets, getValue, RED_PROPERTY_NAMES),
+      getBinaryProperty(propOffsets, getValue, GREEN_PROPERTY_NAMES),
+      getBinaryProperty(propOffsets, getValue, BLUE_PROPERTY_NAMES),
+      fDc0,
+      fDc1,
+      fDc2
+    );
+    const alpha = getBinaryProperty(propOffsets, getValue, ALPHA_PROPERTY_NAMES);
+
     const vertex: PLYVertex = {
       x: getValue('x') ?? 0,
       y: getValue('y') ?? 0,
       z: getValue('z') ?? 0,
-      r: getValue('red') ?? 255,
-      g: getValue('green') ?? 255,
-      b: getValue('blue') ?? 255,
-      a: getValue('alpha') ?? 255,
+      r: color.r,
+      g: color.g,
+      b: color.b,
+      a: alpha ? normalizeAlphaValue(alpha.value, alpha.type, alpha.name, gaussian) : 255,
     };
-
-    // Normalize color if stored as float
-    const redInfo = propOffsets.red;
-    if (redInfo && (redInfo.type === 'float' || redInfo.type === 'float32')) {
-      vertex.r = Math.floor(vertex.r * 255);
-      vertex.g = Math.floor(vertex.g * 255);
-      vertex.b = Math.floor(vertex.b * 255);
-      vertex.a = Math.floor(vertex.a * 255);
-    }
 
     // Normal
     const nx = getValue('nx');
@@ -319,12 +537,9 @@ function parseBinary(
     if (rot_3 !== undefined) vertex.rot_3 = rot_3;
 
     // Spherical harmonics
-    const f_dc_0 = getValue('f_dc_0');
-    const f_dc_1 = getValue('f_dc_1');
-    const f_dc_2 = getValue('f_dc_2');
-    if (f_dc_0 !== undefined) vertex.f_dc_0 = f_dc_0;
-    if (f_dc_1 !== undefined) vertex.f_dc_1 = f_dc_1;
-    if (f_dc_2 !== undefined) vertex.f_dc_2 = f_dc_2;
+    if (fDc0) vertex.f_dc_0 = fDc0.value;
+    if (fDc1) vertex.f_dc_1 = fDc1.value;
+    if (fDc2) vertex.f_dc_2 = fDc2.value;
 
     // UV coordinates (various naming conventions)
     const tex_u = getValue('u') ?? getValue('s') ?? getValue('texture_u');
@@ -541,11 +756,10 @@ function readBinaryMultiTextureFaces(
 
 // Parse PLY from ArrayBuffer (useful when file is already loaded)
 export function parsePLYBuffer(buffer: ArrayBuffer): PLYData {
-  // First, extract header as text
+  const { text: headerText, headerLength } = extractPLYHeader(buffer);
   const decoder = new TextDecoder('ascii');
-  const headerText = decoder.decode(buffer.slice(0, Math.min(buffer.byteLength, 10000)));
 
-  const { elements, format, headerLength } = parseHeader(headerText);
+  const { elements, format } = parseHeader(headerText);
 
   const vertexElement = elements.find(e => e.name === 'vertex');
   if (!vertexElement) {
@@ -558,12 +772,32 @@ export function parsePLYBuffer(buffer: ArrayBuffer): PLYData {
     : 'pointcloud';
 
   let vertices: PLYVertex[];
+  let faces: number[][] = [];
 
   if (format === 'ascii') {
-    vertices = parseASCII(headerText, headerLength, elements);
+    const fullText = decoder.decode(buffer);
+    vertices = parseASCII(fullText, headerLength, elements);
+    faces = parseASCIIFaces(fullText, headerLength, elements);
   } else {
     const littleEndian = format === 'binary_little_endian';
     vertices = parseBinary(buffer, headerLength, elements, littleEndian);
+
+    const faceElement = elements.find(e => e.name === 'face');
+    if (faceElement) {
+      const view = new DataView(buffer, headerLength);
+      let offset = 0;
+      let faceOffset = -1;
+      for (const el of elements) {
+        if (el.name === 'face') {
+          faceOffset = offset;
+          break;
+        }
+        offset = skipBinaryElement(view, offset, el, littleEndian);
+      }
+      if (faceOffset >= 0) {
+        faces = readBinaryFaces(view, faceOffset, faceElement, littleEndian).faces.filter(face => face.length >= 3);
+      }
+    }
   }
 
   // Check if vertices already have UVs (from vertex element properties)
@@ -641,6 +875,7 @@ export function parsePLYBuffer(buffer: ArrayBuffer): PLYData {
 
   return {
     vertices,
+    faces,
     dataType,
     hasUVs,
     boundingBox,

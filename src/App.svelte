@@ -237,7 +237,7 @@
     }
   }
   async function checkGPU() {
-    // First try native D3D11 renderer status (this is the real GPU for shader rendering)
+    // First try native render-core status (this is the real GPU for native shader rendering)
     try {
       const status = await getNativeRendererStatus();
       if (status && status.adapter_name) {
@@ -250,7 +250,7 @@
           vendor: nameLower.includes('nvidia') ? 'NVIDIA' : nameLower.includes('amd') || nameLower.includes('radeon') ? 'AMD' : nameLower.includes('intel') ? 'Intel' : 'Unknown',
           isIntegrated: !isDiscrete,
         };
-        console.log(`[GPU] Native D3D11 renderer on: ${name} (${isDiscrete ? 'discrete' : 'integrated'})`);
+        console.log(`[GPU] Native ${status.backend ?? 'render-core'} renderer on: ${name} (${isDiscrete ? 'discrete' : 'integrated'})`);
         return;
       }
     } catch (_) { /* native renderer not running yet, fall through to WebGL */ }
@@ -1590,6 +1590,7 @@
     '.custom-shape-handles',
     '.layer-shape-warp-overlay',
     '.shape-interaction-overlay',
+    '.mask-overlay',
     '.mask-anchor',
     '.mask-handle',
     '.mask-pen-toolbar',
@@ -4887,6 +4888,8 @@
   function handleMaskMouseDown(e: MouseEvent) {
     if (e.button !== 0) return;
     if (!$selectedLayer?.mask?.enabled) return;
+    e.stopPropagation();
+    e.preventDefault();
     // Ignore clicks that originate on anchor / handle dots
     const target = e.target as Element | null;
     if (target && target.closest('.mask-anchor, .mask-handle, .mask-pen-toolbar')) return;

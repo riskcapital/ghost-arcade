@@ -18,8 +18,10 @@
  * layers.
  */
 
-import type { GpuShaderImpl } from './gpuShaderTypes';
-import { getShaderDef } from './gpuShaderCatalog';
+import type { GpuShaderImpl, GpuShaderQualityApplyResult, GpuShaderQualityContext } from './gpuShaderTypes';
+import { applyGpuShaderQualityBudget, getShaderDef } from './gpuShaderCatalog';
+import { getGhostGpuRuntime } from './webgpuShared';
+import { createAndWarmWgslShaderModule } from './wgsl';
 import { SpoutCanvasReceiver } from './spoutCanvasReceiver';
 import type { PhoneVisionNativeFrame } from '../stores/phoneVision';
 
@@ -49,6 +51,64 @@ export interface GpuLayerFrameTiming {
   time?: number | null;
 }
 
+export interface GpuLayerQualityState extends Partial<GpuShaderQualityContext> {}
+
+interface ShaderFadeState {
+  impl: GpuShaderImpl;
+  params: Record<string, any>;
+  startMs: number;
+  durationMs: number;
+}
+
+interface PreparedShaderState {
+  impl: GpuShaderImpl;
+  shaderId: string;
+  createdAt: number;
+}
+
+const SHADER_SWITCH_FADE_MS = 360;
+const PREPARED_SHADER_MAX_AGE_MS = 45_000;
+
+const SHADER_SWITCH_BLEND_WGSL = /* wgsl */`
+struct FadeUniform {
+  amount: f32,
+  _pad0: vec3<f32>,
+};
+
+@group(0) @binding(0) var fadeSampler: sampler;
+@group(0) @binding(1) var oldFrame: texture_2d<f32>;
+@group(0) @binding(2) var newFrame: texture_2d<f32>;
+@group(0) @binding(3) var<uniform> fade: FadeUniform;
+
+struct VertexOut {
+  @builtin(position) position: vec4<f32>,
+  @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs(@builtin(vertex_index) vertexIndex: u32) -> VertexOut {
+  var positions = array<vec2<f32>, 3>(
+    vec2<f32>(-1.0, -1.0),
+    vec2<f32>( 3.0, -1.0),
+    vec2<f32>(-1.0,  3.0),
+  );
+  let p = positions[vertexIndex];
+  var out: VertexOut;
+  out.position = vec4<f32>(p, 0.0, 1.0);
+  out.uv = p * 0.5 + vec2<f32>(0.5);
+  out.uv.y = 1.0 - out.uv.y;
+  return out;
+}
+
+@fragment
+fn fs(in: VertexOut) -> @location(0) vec4<f32> {
+  let amount = smoothstep(0.0, 1.0, clamp(fade.amount, 0.0, 1.0));
+  let a = textureSampleLevel(oldFrame, fadeSampler, in.uv, 0.0);
+  let b = textureSampleLevel(newFrame, fadeSampler, in.uv, 0.0);
+  return mix(a, b, amount);
+}
+`;
+
 export class GpuLayerRenderer {
   readonly device: any;
   readonly presentFormat: any;
@@ -67,11 +127,16 @@ export class GpuLayerRenderer {
   private latestBitmap: ImageBitmap | null = null;
   private impl: GpuShaderImpl | null = null;
   private currentShaderId: string | null = null;
+  private shaderFade: ShaderFadeState | null = null;
+  private preparedShader: PreparedShaderState | null = null;
+  private preparingShaderId: string | null = null;
   private lastFrameTime = performance.now();
   private lastManualTime: number | null = null;
   private configuredW = 0;
   private configuredH = 0;
   private handoffMode: GpuLayerHandoffMode;
+  private lastActiveParams: Record<string, any> = {};
+  private lastQualityApply: GpuShaderQualityApplyResult | null = null;
 
   // Source-resolution state for shaders that consume external pixels
   // (pixel-particles etc). Cached per-renderer so videos don't have
@@ -97,6 +162,19 @@ export class GpuLayerRenderer {
   private spoutReceiver: SpoutCanvasReceiver | null = null;
   private lastSpoutFrameId = 0;
 
+  // Shader-switch crossfade resources. These are persistent per renderer
+  // because recreating them on every picker change is exactly the hitch the
+  // transition is meant to hide.
+  private fadeOldTexture: any = null;
+  private fadeNewTexture: any = null;
+  private fadeTextureW = 0;
+  private fadeTextureH = 0;
+  private fadeSampler: any = null;
+  private fadePipeline: any = null;
+  private fadeUniform: any = null;
+  private fadeBindGroup: any = null;
+  private fadeBindKey = '';
+
   constructor(
     device: any,
     presentFormat: any,
@@ -118,6 +196,7 @@ export class GpuLayerRenderer {
     });
     this.configuredW = initialW;
     this.configuredH = initialH;
+    this.prewarmFadePipeline();
   }
 
   /** Called per frame from Canvas.svelte. Resolves the active shader,
@@ -137,6 +216,7 @@ export class GpuLayerRenderer {
     sourceCtx?: SourceContext,
     bands?: AudioBandsSnapshot,
     timing?: GpuLayerFrameTiming,
+    quality?: GpuLayerQualityState,
   ): void {
     if (!this.impl || this.currentShaderId !== shaderId) {
       this.swapShader(shaderId);
@@ -145,8 +225,22 @@ export class GpuLayerRenderer {
 
     if (w !== this.configuredW || h !== this.configuredH) this.resize(w, h);
 
-    // Apply latest params (cheap setter).
-    this.impl.setParams(params);
+    const def = getShaderDef(shaderId);
+    const runtime = getGhostGpuRuntime();
+    const qualityApply = applyGpuShaderQualityBudget(def, params, {
+      capsTier: quality?.capsTier ?? runtime?.caps.qualityTier ?? 'balanced',
+      suggestedTier: quality?.suggestedTier ?? quality?.capsTier ?? runtime?.caps.qualityTier ?? 'balanced',
+      qualityScale: quality?.qualityScale ?? 1,
+      adaptive: !!quality?.adaptive,
+      governor: quality?.governor ?? null,
+    });
+    const renderParams = qualityApply.params;
+    this.lastQualityApply = qualityApply;
+
+    // Apply latest params (cheap setter). The quality pass only caps
+    // internals; it never mutates the saved layer params.
+    this.impl.setParams(renderParams);
+    this.lastActiveParams = { ...renderParams };
     // Pump audio bands into the impl if it supports them. setBands
     // is intentionally NOT part of the GpuShaderImpl interface so
     // shaders can opt in without bloating the interface; the runner
@@ -156,11 +250,10 @@ export class GpuLayerRenderer {
     }
 
     // Resolve + feed source if the shader consumes external pixels.
-    const def = getShaderDef(shaderId);
     if (def?.needsSource && this.impl.setSource && sourceCtx) {
-      this.feedSource(params, sourceCtx);
+      this.feedSource(renderParams, sourceCtx);
     }
-    this.feedNativeVisionSample(params, sourceCtx);
+    this.feedNativeVisionSample(renderParams, sourceCtx);
 
     const manualTime = typeof timing?.time === 'number' && Number.isFinite(timing.time)
       ? Math.max(0, timing.time)
@@ -182,10 +275,18 @@ export class GpuLayerRenderer {
       this.lastFrameTime = now;
     }
 
+    if (this.shaderFade && now - this.shaderFade.startMs >= this.shaderFade.durationMs) {
+      this.disposeShaderFade();
+    }
+
     const encoder = this.device.createCommandEncoder();
     try {
       const view = this.context.getCurrentTexture().createView();
-      this.impl.encodeFrame(encoder, view, this.presentFormat, this.canvas.width, this.canvas.height, dt, frameTime);
+      if (this.shaderFade) {
+        this.encodeShaderFade(encoder, view, this.canvas.width, this.canvas.height, dt, frameTime, now, bands);
+      } else {
+        this.impl.encodeFrame(encoder, view, this.presentFormat, this.canvas.width, this.canvas.height, dt, frameTime);
+      }
     } catch (err: any) {
       console.warn('[gpuLayerRenderer] encode failed:', err?.message || err);
       return;
@@ -225,6 +326,71 @@ export class GpuLayerRenderer {
     const b = this.latestBitmap;
     this.latestBitmap = null;
     return b;
+  }
+
+  debugStats(): Record<string, any> {
+    return {
+      shaderId: this.currentShaderId,
+      canvas: { width: this.canvas.width, height: this.canvas.height },
+      configured: { width: this.configuredW, height: this.configuredH },
+      handoffMode: this.handoffMode,
+      fadeActive: !!this.shaderFade,
+      preparedShaderId: this.preparedShader?.shaderId ?? null,
+      preparingShaderId: this.preparingShaderId,
+      sourceKey: this.lastResolvedSourceKey,
+      quality: this.lastQualityApply
+        ? {
+            capsTier: this.lastQualityApply.context.capsTier,
+            suggestedTier: this.lastQualityApply.context.suggestedTier,
+            qualityScale: this.lastQualityApply.context.qualityScale,
+            adaptive: this.lastQualityApply.context.adaptive,
+            applied: this.lastQualityApply.applied,
+          }
+        : null,
+      shader: typeof this.impl?.getDebugStats === 'function'
+        ? this.impl.getDebugStats()
+        : null,
+    };
+  }
+
+  /** Warm the likely next shader outside the click/switch path. The
+   *  prepared instance is intentionally a one-entry cache: enough to
+   *  make picker hover/focus smooth without quietly hoarding multiple
+   *  heavy particle/smoke buffers. */
+  prewarmShader(shaderId: string, params?: Record<string, any>): void {
+    if (!shaderId || shaderId === this.currentShaderId) return;
+    if (this.preparedShader?.shaderId === shaderId) {
+      if (params) {
+        try { this.preparedShader.impl.setParams(params); } catch { /* warm-up should never affect live render */ }
+      }
+      this.preparedShader.createdAt = performance.now();
+      return;
+    }
+    if (this.preparingShaderId === shaderId) return;
+    const def = getShaderDef(shaderId);
+    if (!def) return;
+
+    this.disposePreparedShader();
+    this.preparingShaderId = shaderId;
+    const run = () => {
+      if (this.preparingShaderId !== shaderId) return;
+      try {
+        const impl = def.create(this.device, this.presentFormat, getGhostGpuRuntime() ?? undefined);
+        if (params) impl.setParams(params);
+        this.preparedShader = { impl, shaderId, createdAt: performance.now() };
+      } catch (err: any) {
+        console.warn('[gpuLayerRenderer] shader prewarm failed', shaderId, err?.message || err);
+      } finally {
+        if (this.preparingShaderId === shaderId) this.preparingShaderId = null;
+      }
+    };
+
+    const ric = (globalThis as any).requestIdleCallback;
+    if (typeof ric === 'function') {
+      ric(run, { timeout: 250 });
+    } else {
+      setTimeout(run, 0);
+    }
   }
 
   /** Resolve the source param into an actual element + hand it to
@@ -483,10 +649,9 @@ export class GpuLayerRenderer {
     this.pendingImage = img;
   }
 
-  /** Hot-swap to a different shader. Disposes the previous instance
-   *  and creates the new one. Caller passes the user's params on the
-   *  next frame; the new shader will fall back to its defaults until
-   *  then via its own setParams handling. */
+  /** Hot-swap to a different shader. The outgoing shader is retained
+   *  briefly so we can crossfade old/new frames on the GPU instead of
+   *  hard-cutting and immediately destroying every pipeline/resource. */
   private swapShader(shaderId: string): void {
     const def = getShaderDef(shaderId);
     if (!def) {
@@ -494,9 +659,10 @@ export class GpuLayerRenderer {
       this.disposeImpl();
       return;
     }
-    this.disposeImpl();
+    this.startShaderFade();
     try {
-      this.impl = def.create(this.device, this.presentFormat);
+      const prepared = this.takePreparedShader(shaderId);
+      this.impl = prepared ?? def.create(this.device, this.presentFormat, getGhostGpuRuntime() ?? undefined);
       this.currentShaderId = shaderId;
       console.log('[gpuLayerRenderer] active shader:', shaderId);
     } catch (err: any) {
@@ -504,6 +670,177 @@ export class GpuLayerRenderer {
       this.impl = null;
       this.currentShaderId = null;
     }
+  }
+
+  private startShaderFade(): void {
+    if (!this.impl) {
+      this.disposeShaderFade();
+      return;
+    }
+    this.disposeShaderFade();
+    this.shaderFade = {
+      impl: this.impl,
+      params: { ...this.lastActiveParams },
+      startMs: performance.now(),
+      durationMs: SHADER_SWITCH_FADE_MS,
+    };
+    this.impl = null;
+    this.currentShaderId = null;
+  }
+
+  private encodeShaderFade(
+    encoder: any,
+    targetView: any,
+    width: number,
+    height: number,
+    dt: number,
+    frameTime: number | undefined,
+    now: number,
+    bands?: AudioBandsSnapshot,
+  ): void {
+    if (!this.impl || !this.shaderFade) return;
+    this.ensureFadeResources(width, height);
+    if (!this.fadeOldTexture || !this.fadeNewTexture) {
+      this.impl.encodeFrame(encoder, targetView, this.presentFormat, width, height, dt, frameTime);
+      return;
+    }
+
+    this.shaderFade.impl.setParams(this.shaderFade.params);
+    if (bands && typeof (this.shaderFade.impl as any).setBands === 'function') {
+      (this.shaderFade.impl as any).setBands(bands.bass, bands.mid, bands.treble);
+    }
+
+    const oldView = this.fadeOldTexture.createView();
+    const newView = this.fadeNewTexture.createView();
+    this.shaderFade.impl.encodeFrame(encoder, oldView, this.presentFormat, width, height, dt, frameTime);
+    this.impl.encodeFrame(encoder, newView, this.presentFormat, width, height, dt, frameTime);
+
+    const amount = Math.max(0, Math.min(1, (now - this.shaderFade.startMs) / this.shaderFade.durationMs));
+    this.writeFadeUniform(amount);
+    const bindGroup = this.getFadeBindGroup(oldView, newView);
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [{
+        view: targetView,
+        clearValue: { r: 0, g: 0, b: 0, a: 0 },
+        loadOp: 'clear',
+        storeOp: 'store',
+      }],
+    });
+    pass.setPipeline(this.requireFadePipeline());
+    pass.setBindGroup(0, bindGroup);
+    pass.draw(3, 1, 0, 0);
+    pass.end();
+  }
+
+  private ensureFadeResources(width: number, height: number): void {
+    if (
+      this.fadeOldTexture &&
+      this.fadeNewTexture &&
+      this.fadeTextureW === width &&
+      this.fadeTextureH === height
+    ) return;
+
+    this.destroyFadeTextures();
+    const descriptor = {
+      size: { width: Math.max(1, width), height: Math.max(1, height) },
+      format: this.presentFormat,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    };
+    this.fadeOldTexture = this.device.createTexture({ ...descriptor, label: 'gpu-layer-fade-old' });
+    this.fadeNewTexture = this.device.createTexture({ ...descriptor, label: 'gpu-layer-fade-new' });
+    this.fadeTextureW = width;
+    this.fadeTextureH = height;
+    this.fadeBindGroup = null;
+    this.fadeBindKey = '';
+  }
+
+  private requireFadePipeline(): any {
+    if (this.fadePipeline) return this.fadePipeline;
+    const runtime = getGhostGpuRuntime();
+    const module = createAndWarmWgslShaderModule(
+      runtime ?? this.device,
+      SHADER_SWITCH_BLEND_WGSL,
+      'gpu-layer-shader-switch-fade',
+    );
+    const descriptor = this.createFadePipelineDescriptor(module);
+    this.fadePipeline = runtime?.createRenderPipeline(descriptor, this.fadePipelineKey())
+      ?? this.device.createRenderPipeline(descriptor);
+    return this.fadePipeline;
+  }
+
+  private prewarmFadePipeline(): void {
+    const runtime = getGhostGpuRuntime();
+    if (!runtime) return;
+    const module = runtime.warmShaderModule(SHADER_SWITCH_BLEND_WGSL, 'gpu-layer-shader-switch-fade');
+    void runtime.warmRenderPipeline(this.createFadePipelineDescriptor(module), this.fadePipelineKey())
+      .then((pipeline) => {
+        if (!this.fadePipeline) this.fadePipeline = pipeline;
+      })
+      .catch((err: any) => console.warn('[gpuLayerRenderer] fade pipeline prewarm failed:', err?.message || err));
+  }
+
+  private createFadePipelineDescriptor(module: any): Record<string, any> {
+    return {
+      label: 'gpu-layer-shader-switch-fade',
+      layout: 'auto',
+      vertex: { module, entryPoint: 'vs' },
+      fragment: {
+        module,
+        entryPoint: 'fs',
+        targets: [{ format: this.presentFormat }],
+      },
+      primitive: { topology: 'triangle-list' },
+    };
+  }
+
+  private fadePipelineKey(): string {
+    return `gpu-layer-shader-switch-fade:${this.presentFormat}`;
+  }
+
+  private requireFadeSampler(): any {
+    if (!this.fadeSampler) {
+      this.fadeSampler = this.device.createSampler({
+        label: 'gpu-layer-shader-switch-fade',
+        magFilter: 'linear',
+        minFilter: 'linear',
+        addressModeU: 'clamp-to-edge',
+        addressModeV: 'clamp-to-edge',
+      });
+    }
+    return this.fadeSampler;
+  }
+
+  private requireFadeUniform(): any {
+    if (!this.fadeUniform) {
+      this.fadeUniform = this.device.createBuffer({
+        label: 'gpu-layer-shader-switch-fade',
+        size: 32,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+    }
+    return this.fadeUniform;
+  }
+
+  private writeFadeUniform(amount: number): void {
+    const data = new Float32Array([amount, 0, 0, 0, 0, 0, 0, 0]);
+    this.device.queue.writeBuffer(this.requireFadeUniform(), 0, data);
+  }
+
+  private getFadeBindGroup(oldView: any, newView: any): any {
+    const key = `${this.fadeTextureW}x${this.fadeTextureH}`;
+    if (this.fadeBindGroup && this.fadeBindKey === key) return this.fadeBindGroup;
+    this.fadeBindGroup = this.device.createBindGroup({
+      label: 'gpu-layer-shader-switch-fade',
+      layout: this.requireFadePipeline().getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: this.requireFadeSampler() },
+        { binding: 1, resource: oldView },
+        { binding: 2, resource: newView },
+        { binding: 3, resource: { buffer: this.requireFadeUniform() } },
+      ],
+    });
+    this.fadeBindKey = key;
+    return this.fadeBindGroup;
   }
 
   private resize(w: number, h: number): void {
@@ -526,10 +863,42 @@ export class GpuLayerRenderer {
       this.impl = null;
       this.currentShaderId = null;
     }
+    this.disposeShaderFade();
+  }
+
+  private disposeShaderFade(): void {
+    if (this.shaderFade) {
+      try { this.shaderFade.impl.dispose(); } catch { /* */ }
+      this.shaderFade = null;
+    }
+  }
+
+  private takePreparedShader(shaderId: string): GpuShaderImpl | null {
+    const prepared = this.preparedShader;
+    if (!prepared || prepared.shaderId !== shaderId) {
+      this.disposePreparedShader();
+      return null;
+    }
+    if (performance.now() - prepared.createdAt > PREPARED_SHADER_MAX_AGE_MS) {
+      this.disposePreparedShader();
+      return null;
+    }
+    this.preparedShader = null;
+    this.preparingShaderId = null;
+    return prepared.impl;
+  }
+
+  private disposePreparedShader(): void {
+    if (this.preparedShader) {
+      try { this.preparedShader.impl.dispose(); } catch { /* */ }
+      this.preparedShader = null;
+    }
+    this.preparingShaderId = null;
   }
 
   dispose(): void {
     this.disposeImpl();
+    this.disposePreparedShader();
     this.releaseCamera();
     if (this.spoutReceiver) {
       this.spoutReceiver.dispose();
@@ -543,5 +912,25 @@ export class GpuLayerRenderer {
       try { this.latestBitmap.close(); } catch { /* */ }
       this.latestBitmap = null;
     }
+    this.destroyFadeResources();
+  }
+
+  private destroyFadeResources(): void {
+    this.destroyFadeTextures();
+    try { this.fadeUniform?.destroy?.(); } catch { /* */ }
+    this.fadeUniform = null;
+    this.fadePipeline = null;
+    this.fadeSampler = null;
+  }
+
+  private destroyFadeTextures(): void {
+    try { this.fadeOldTexture?.destroy?.(); } catch { /* */ }
+    try { this.fadeNewTexture?.destroy?.(); } catch { /* */ }
+    this.fadeOldTexture = null;
+    this.fadeNewTexture = null;
+    this.fadeTextureW = 0;
+    this.fadeTextureH = 0;
+    this.fadeBindGroup = null;
+    this.fadeBindKey = '';
   }
 }

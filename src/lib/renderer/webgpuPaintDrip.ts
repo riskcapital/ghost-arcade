@@ -1,3 +1,6 @@
+import { getGhostGpuRuntime } from './webgpuShared';
+import { createAndWarmWgslShaderModule } from './wgsl';
+
 /**
  * WebGPUPaintDrip — Phase 3.1 showcase: glowing drips of paint
  * driven by a 50K-particle compute shader, composited additively
@@ -368,7 +371,8 @@ export class WebGPUPaintDrip {
     });
 
     // ── Compute pipeline ──
-    const computeModule = d.createShaderModule({ code: COMPUTE_WGSL });
+    const shaderRuntime = getGhostGpuRuntime() ?? d;
+    const computeModule = createAndWarmWgslShaderModule(shaderRuntime, COMPUTE_WGSL, 'paint-drip/compute');
     this.computeBindGroupLayout = d.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
@@ -391,7 +395,7 @@ export class WebGPUPaintDrip {
     });
 
     // ── Render pipeline (additive blend) ──
-    const renderModule = d.createShaderModule({ code: RENDER_WGSL });
+    const renderModule = createAndWarmWgslShaderModule(shaderRuntime, RENDER_WGSL, 'paint-drip/render');
     this.renderBindGroupLayout = d.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },

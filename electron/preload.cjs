@@ -93,10 +93,29 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'http_fetch_stream',
   // License machine ID
   'license_get_machine_id',
-  // Native renderer stubs
+  // Native renderer process bridge
   'native_renderer_start', 'native_renderer_stop', 'native_renderer_submit_batch',
   'native_renderer_submit_commands', 'native_renderer_upload_source_gpu_shared_texture',
-  'native_renderer_prefetch_media', 'native_renderer_set_decode_policy',
+  'native_renderer_prefetch_media', 'native_renderer_clear_prefetch_cache',
+  'native_renderer_clear_decode_preview_cache', 'native_renderer_clear_runtime_caches',
+  'native_renderer_set_vram_budget', 'native_renderer_set_target_fps',
+  'native_renderer_set_render_clock',
+  'native_renderer_set_command_drain_policy', 'native_renderer_set_auto_present_policy',
+  'native_renderer_set_decode_cpu_backup_policy',
+  'native_renderer_set_decode_synthetic_fallback_policy',
+  'native_renderer_set_texture_pool_cap', 'native_renderer_set_shader_precompile_policy',
+  'native_renderer_set_media_prefetch_policy', 'native_renderer_set_media_drop_policy',
+  'native_renderer_set_decode_preview_policy', 'native_renderer_set_decode_target_policy',
+  'native_renderer_set_decode_upload_policy', 'native_renderer_set_decode_handoff_policy',
+  'native_renderer_set_decode_estimate_cache_policy', 'native_renderer_set_present_policy',
+  'native_renderer_set_metadata_cache_caps', 'native_renderer_attach_output_window',
+  'native_renderer_detach_output_window', 'native_renderer_get_status',
+  'native_renderer_get_stats', 'native_renderer_get_snapshot',
+  'native_renderer_get_frame_snapshot',
+  'native_renderer_get_readiness_report', 'native_renderer_export_snapshot_json',
+  'native_renderer_reset_stats', 'native_renderer_set_decode_policy',
+  'native_renderer_set_prefetch_policy', 'native_renderer_get_decode_capabilities',
+  'native_renderer_set_output_window',
   // WLED — UDP DRGB packets to LED controllers on the LAN
   'wled_send_frame', 'wled_close_socket',
   // Ableton Link — LAN tempo/beat sync (session lives in main; the

@@ -1,3 +1,7 @@
+import type { GhostGpuBufferHandle } from './gpuRuntime';
+import { getGhostGpuRuntime } from './webgpuShared';
+import { createAndWarmWgslShaderModule } from './wgsl';
+
 /**
  * WebGPUPointCloudFX — turn a static point cloud into a living
  * TouchDesigner-style instrument.
@@ -806,6 +810,8 @@ export class WebGPUPointCloudFX {
   private liveBuffer: any = null;
   private computeUniformBuffer: any;
   private renderUniformBuffer: any;
+  private computeUniformBufferHandle: GhostGpuBufferHandle | null = null;
+  private renderUniformBufferHandle: GhostGpuBufferHandle | null = null;
   private computePipeline: any;
   private renderPipeline: any;
   private computeBindGroupLayout: any;
@@ -844,19 +850,34 @@ export class WebGPUPointCloudFX {
   }
 
   private init(): void {
-    this.computeUniformBuffer = this.device.createBuffer({
+    const runtime = getGhostGpuRuntime();
+    const uniformBufferUsage = GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST;
+    this.computeUniformBufferHandle = runtime?.resources.acquireBuffer(
+      288,
+      uniformBufferUsage,
+      'point-cloud-fx/compute-uniforms',
+    ) ?? null;
+    this.computeUniformBuffer = this.computeUniformBufferHandle?.buffer ?? this.device.createBuffer({
+      label: 'point-cloud-fx/compute-uniforms',
       // 9 16-byte blocks for core params + 4 palette blocks +
       // 3 gesture/filter blocks = 16 × 16 = 256 bytes. Round to 288
       // for headroom and backwards safety while iterating.
       size: 288,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      usage: uniformBufferUsage,
     });
-    this.renderUniformBuffer = this.device.createBuffer({
+    this.renderUniformBufferHandle = runtime?.resources.acquireBuffer(
+      192,
+      uniformBufferUsage,
+      'point-cloud-fx/render-uniforms',
+    ) ?? null;
+    this.renderUniformBuffer = this.renderUniformBufferHandle?.buffer ?? this.device.createBuffer({
+      label: 'point-cloud-fx/render-uniforms',
       size: 192,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      usage: uniformBufferUsage,
     });
 
-    const computeModule = this.device.createShaderModule({ code: COMPUTE_WGSL });
+    const shaderRuntime = runtime ?? this.device;
+    const computeModule = createAndWarmWgslShaderModule(shaderRuntime, COMPUTE_WGSL, 'point-cloud-fx/compute');
     this.computeBindGroupLayout = this.device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
@@ -869,7 +890,7 @@ export class WebGPUPointCloudFX {
       compute: { module: computeModule, entryPoint: 'cs_main' },
     });
 
-    const renderModule = this.device.createShaderModule({ code: RENDER_WGSL });
+    const renderModule = createAndWarmWgslShaderModule(shaderRuntime, RENDER_WGSL, 'point-cloud-fx/render');
     this.renderBindGroupLayout = this.device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX,   buffer: { type: 'read-only-storage' } },
@@ -1192,10 +1213,16 @@ export class WebGPUPointCloudFX {
   dispose(): void {
     try { this.homeBuffer?.destroy?.(); } catch { /* */ }
     try { this.liveBuffer?.destroy?.(); } catch { /* */ }
-    try { this.computeUniformBuffer?.destroy?.(); } catch { /* */ }
-    try { this.renderUniformBuffer?.destroy?.(); } catch { /* */ }
+    if (this.computeUniformBufferHandle) this.computeUniformBufferHandle.release();
+    else try { this.computeUniformBuffer?.destroy?.(); } catch { /* */ }
+    if (this.renderUniformBufferHandle) this.renderUniformBufferHandle.release();
+    else try { this.renderUniformBuffer?.destroy?.(); } catch { /* */ }
     this.homeBuffer = null;
     this.liveBuffer = null;
+    this.computeUniformBuffer = null;
+    this.renderUniformBuffer = null;
+    this.computeUniformBufferHandle = null;
+    this.renderUniformBufferHandle = null;
     this.pointCount = 0;
   }
 }

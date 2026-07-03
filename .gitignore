@@ -10,6 +10,7 @@ Thumbs.db
 
 # Tauri build artifacts
 src-tauri/target/
+native-renderer/target/
 
 # Electron native addon build artifacts
 electron/native/build/

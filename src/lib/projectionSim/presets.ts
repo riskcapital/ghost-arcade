@@ -84,6 +84,7 @@ const DEFAULT_CUBE_PYRAMID_SCENE: ProjectionSimScene = {
     roomExposure: 1,
     surfaceStyle: 'light-gray',
     floorColor: '#111318',
+    showFloorProjection: true,
     showGrid: true,
     shadows: true,
     shadowStrength: 1,

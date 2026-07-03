@@ -20,18 +20,20 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { get } from 'svelte/store';
 import { stage3dScene, selectedStage3DNodeId, selectedStage3DTargets, stage3DGizmoMode, parseSelection, stage3DRendererControls, stage3DSceneryList, sceneryLabel, stage3DCameraFov } from './store';
 import { buildVenue, type VenueBuild } from './venues';
 import { AtmosphereRig, type UserStripAnim } from './atmosphere';
 import { DEFAULT_ATMOSPHERE } from './types';
 import { getVisualAudioSnapshot, type VisualAudioState } from '../audio/visualAudio';
-import { buildUserElement, type UserLightAnim } from './elementTypes';
+import { buildUserElement, buildVjSurfaceMaterial, updateVjSurfaceMaterial, type UserLightAnim } from './elementTypes';
 import { resolveStageEffectForLayer, stageEffectsRuntime } from '../stores/stageEffects';
 import type { Stage3DScene, Stage3DScreenOverride, Stage3DVenue, UserStageElement } from './types';
 import { DEFAULT_LIGHTING } from './types';
 import type { OutputSlice } from '../stores/settings';
-import type { BezierPoint, Layer } from '../types';
+import { VJ_MIX_SOURCE_INDEX, type BezierPoint, type Layer } from '../types';
 
 interface LedEntry {
   layer: Layer;
@@ -594,11 +596,30 @@ const EDGE_INDEX: Record<NonNullable<Stage3DScreenOverride['edgeEffect']>, numbe
 /** Signature of an element's identity for rebuild detection. When this
  *  changes, the element's THREE.Group is rebuilt from scratch. */
 function elementSignature(el: UserStageElement): string {
+  if (el.type === 'importedmodel') {
+    const data = String(el.params.modelData ?? '');
+    return `${el.type}|${el.params.modelFormat ?? ''}|${el.params.modelScale ?? ''}|${data.length}:${data.slice(0, 48)}:${data.slice(-24)}`;
+  }
   const structuralKeys: Record<string, string[]> = {
     movinghead: [],
     lightbar: ['count', 'len'],
     parbar: ['count', 'len'],
     blinder: ['cols', 'rows'],
+    visualbox: ['w', 'h', 'd'],
+    visualpanel: ['w', 'h', 'd'],
+    visualcube: ['size'],
+    visualsphere: ['r'],
+    visualhemi: ['r'],
+    visualpyramid: ['r', 'h'],
+    visualcone: ['r', 'h'],
+    visualcylinder: ['r', 'h'],
+    visualtorus: ['r', 'tube'],
+    visualarch: ['w', 'h', 'd', 'thickness'],
+    visualcurvedwall: ['r', 'h', 'arc'],
+    visualorbarray: ['count', 'r', 'spacing'],
+    visualmonolith: ['w', 'h', 'd'],
+    visualrunway: ['w', 'd', 'h'],
+    visualglobe: ['r', 'platform'],
   };
   const keys = structuralKeys[el.type];
   if (keys) {
@@ -615,6 +636,15 @@ function paramNumber(params: Record<string, number | string>, key: string, fallb
 function paramString(params: Record<string, number | string>, key: string, fallback: string): string {
   const value = params[key];
   return typeof value === 'string' && value.length > 0 ? value : fallback;
+}
+
+function importedModelKey(el: UserStageElement): string {
+  const data = String(el.params.modelData ?? '');
+  return `${el.params.modelFormat ?? ''}|${el.params.modelScale ?? ''}|${data.length}:${data.slice(0, 48)}:${data.slice(-24)}`;
+}
+
+function directLayerTexture(layer: Layer | undefined): THREE.Texture | null {
+  return textureForLayer(layer, null);
 }
 
 // ── Renderer ───────────────────────────────────────────────────────────
@@ -701,6 +731,10 @@ export class Stage3DRenderer {
   private userFixturesDirty = true;
   private userLightAnimsDirty = true;
   private userLightAnims: UserLightAnim[] = [];
+  private gltfLoader = new GLTFLoader();
+  private objLoader = new OBJLoader();
+  private importedModelKeys = new Map<string, string>();
+  private importedModelLoading = new Set<string>();
   /** Demo Reel camera drive — when set, render() applies this state and
    *  bypasses OrbitControls so shot interpolation lands exactly. */
   private drivenCamera: { position: [number, number, number]; target: [number, number, number]; fov: number } | null = null;
@@ -884,6 +918,7 @@ export class Stage3DRenderer {
 
     // Sync user-placed library elements with the store.
     this.syncUserElements(stage.userElements ?? []);
+    this.syncImportedModels();
 
     // Apply venue scenery overrides — per-frame so dragging the gizmo
     // immediately reflects in the next render. Skip the write when a
@@ -1093,6 +1128,7 @@ export class Stage3DRenderer {
 
     // Per-frame LED uniforms + transforms.
     const time = renderClockTime;
+    this.updateUserVisualMaterials(sourceLayers, masterTexture, time);
     const overrides = stage.screenOverrides ?? {};
     for (const entry of this.ledEntries) {
       // CRITICAL: pull the FRESH layer clone from layerById each
@@ -2238,6 +2274,122 @@ export class Stage3DRenderer {
         }
         existing.element = el;
       }
+    }
+  }
+
+  private syncImportedModels(): void {
+    const liveImported = new Set<string>();
+    for (const [id, entry] of this.elementEntries) {
+      if (entry.element.type !== 'importedmodel') continue;
+      liveImported.add(id);
+      const data = String(entry.element.params.modelData ?? '');
+      if (!data) continue;
+      const key = importedModelKey(entry.element);
+      const loadingKey = `${id}|${key}`;
+      if (this.importedModelKeys.get(id) === key || this.importedModelLoading.has(loadingKey)) continue;
+      this.importedModelKeys.set(id, key);
+      this.importedModelLoading.add(loadingKey);
+      this.loadImportedModel(entry.element)
+        .then((loaded) => {
+          const current = this.elementEntries.get(id);
+          if (!current || current.element.type !== 'importedmodel' || importedModelKey(current.element) !== key) {
+            disposeObject(loaded);
+            return;
+          }
+          for (let i = current.group.children.length - 1; i >= 0; i--) {
+            const child = current.group.children[i];
+            current.group.remove(child);
+            disposeObject(child);
+          }
+          current.group.add(loaded);
+        })
+        .catch((err) => {
+          console.warn('[Stage3D] imported model load failed:', err);
+        })
+        .finally(() => {
+          this.importedModelLoading.delete(loadingKey);
+        });
+    }
+    for (const id of [...this.importedModelKeys.keys()]) {
+      if (!liveImported.has(id)) this.importedModelKeys.delete(id);
+    }
+  }
+
+  private async loadImportedModel(el: UserStageElement): Promise<THREE.Object3D> {
+    const data = String(el.params.modelData ?? '');
+    const format = paramString(el.params, 'modelFormat', 'glb').toLowerCase();
+    let root: THREE.Object3D;
+    if (format === 'obj') {
+      root = await this.objLoader.loadAsync(data);
+    } else {
+      const gltf = await this.gltfLoader.loadAsync(data);
+      root = gltf.scene;
+    }
+
+    root.name = paramString(el.params, 'modelName', 'Imported model');
+    const box = new THREE.Box3().setFromObject(root);
+    const size = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z, 0.0001);
+    const targetSize = Math.max(0.1, paramNumber(el.params, 'modelScale', 8));
+    root.scale.multiplyScalar(targetSize / maxDim);
+    root.updateMatrixWorld(true);
+
+    const fitBox = new THREE.Box3().setFromObject(root);
+    const center = fitBox.getCenter(new THREE.Vector3());
+    root.position.x -= center.x;
+    root.position.z -= center.z;
+    root.position.y -= fitBox.min.y;
+
+    root.traverse((child: any) => {
+      if (!child.isMesh) return;
+      child.castShadow = true;
+      child.receiveShadow = true;
+      const old = Array.isArray(child.material) ? child.material : (child.material ? [child.material] : []);
+      const replacementCount = Math.max(1, old.length);
+      for (const mat of old) mat?.dispose?.();
+      const materials = Array.from({ length: replacementCount }, () => buildVjSurfaceMaterial(el.params));
+      child.material = replacementCount > 1 ? materials : materials[0];
+    });
+    return root;
+  }
+
+  private resolveVjObjectTexture(
+    el: UserStageElement,
+    sourceLayers: Layer[],
+    masterTexture: THREE.Texture | null,
+  ): THREE.Texture | null {
+    const source = el.params.vjSource ?? 'solid';
+    if (source === 'solid') return null;
+    if (source === 'master') return masterTexture;
+    const index = Number(source);
+    if (!Number.isFinite(index)) return null;
+    if (index === VJ_MIX_SOURCE_INDEX) return masterTexture;
+
+    for (const layer of sourceLayers) {
+      if ((layer as any).vjLayerIndex === index) {
+        const tex = directLayerTexture(layer);
+        if (tex) return tex;
+      }
+      const m = /^vj-layer-(\d+)(?:-[AB])?$/.exec(layer.id);
+      if (m && Number(m[1]) === index) {
+        const tex = directLayerTexture(layer);
+        if (tex) return tex;
+      }
+    }
+    return null;
+  }
+
+  private updateUserVisualMaterials(sourceLayers: Layer[], masterTexture: THREE.Texture | null, time: number): void {
+    for (const entry of this.elementEntries.values()) {
+      const texture = this.resolveVjObjectTexture(entry.element, sourceLayers, masterTexture);
+      entry.group.traverse((obj: any) => {
+        const mats = Array.isArray(obj.material) ? obj.material : (obj.material ? [obj.material] : []);
+        for (const mat of mats) {
+          if (mat?.userData?.stageVjMaterial) {
+            updateVjSurfaceMaterial(mat, entry.element.params, texture, this.fallbackTexture, time);
+          }
+        }
+      });
     }
   }
 

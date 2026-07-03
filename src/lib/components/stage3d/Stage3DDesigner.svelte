@@ -29,7 +29,7 @@
   import { project } from '../../stores/layers';
   import { ELEMENT_TYPES, makeUserElement } from '../../stage3d/elementTypes';
   import { buildVenue, paPresetElements, type PAPreset } from '../../stage3d/venues';
-  import type { Stage3DVenue, UserStageElement } from '../../stage3d/types';
+  import { DEFAULT_ATMOSPHERE, DEFAULT_LIGHTING, type Stage3DVenue, type UserStageElement } from '../../stage3d/types';
   import { startRecording as startCanvasRecording, formatRecordingDuration, type RecorderHandle } from '../../recording/recorder';
   import { invoke, isDesktopApp } from '../../bridge';
   import StageNodeProperties from './StageNodeProperties.svelte';
@@ -223,6 +223,7 @@
   }
 
   let fileInput: HTMLInputElement;
+  let modelImportInput: HTMLInputElement;
   function loadDesign() { fileInput?.click(); }
   function onFileChosen(e: Event) {
     const file = (e.target as HTMLInputElement).files?.[0];
@@ -266,6 +267,57 @@
     } catch {
       return false;
     }
+  }
+
+  function blankSlate() {
+    const current = get(stage3dScene);
+    const ok = !hasStageAdditions(current) || confirm('Start with a blank room? This clears placed elements and 3D venue edits.');
+    if (!ok) return;
+    stage3dScene.loadScene({
+      ...current,
+      venue: 'empty',
+      basePreset: 'empty',
+      userElements: [],
+      sceneryOverrides: {},
+      screenOverrides: {},
+      lighting: { ...DEFAULT_LIGHTING },
+      atmosphere: { ...DEFAULT_ATMOSPHERE },
+    });
+    setStage3DSelection(null);
+    toast('Blank room ready');
+  }
+
+  function triggerModelImport() {
+    modelImportInput?.click();
+  }
+
+  function onModelImportChosen(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+    if (!['glb', 'gltf', 'obj'].includes(ext)) {
+      toast('Use GLB, GLTF, or OBJ');
+      input.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const el = makeUserElement('importedmodel', {
+        modelData: String(reader.result ?? ''),
+        modelName: file.name,
+        modelFormat: ext,
+        modelScale: 8,
+        vjSource: 'master',
+      });
+      el.position = [0, 0, 0];
+      stage3dScene.addUserElement(el);
+      setStage3DSelection(`element:${el.id}`);
+      toast(`Imported ${file.name}`);
+    };
+    reader.onerror = () => toast('Import failed');
+    reader.readAsDataURL(file);
+    input.value = '';
   }
 
   function toast(msg: string) {
@@ -327,7 +379,7 @@
     for (const [type, def] of Object.entries(ELEMENT_TYPES)) {
       (groups[def.group] = groups[def.group] || []).push([type, def]);
     }
-    return ['Stage', 'Lighting', 'Audio'].map(g => ({ name: g, items: groups[g] ?? [] }));
+    return ['Stage', 'Visual', 'FX', 'Lighting', 'Audio'].map(g => ({ name: g, items: groups[g] ?? [] }));
   })();
 
   function undo() { stage3dScene.undo(); }
@@ -542,6 +594,7 @@
       value={venue}
       onchange={(e) => setVenue((e.target as HTMLSelectElement).value as Stage3DVenue)}
     >
+      <option value="empty">Blank Room</option>
       <option value="festival">Festival Mainstage</option>
       <option value="arena">Arena</option>
       <option value="club">Club</option>
@@ -592,6 +645,7 @@
     <button class="tbtn" onclick={loadDesign}>↑ Load</button>
     <button class="tbtn danger" onclick={clearElements}>✕ Clear</button>
     <input bind:this={fileInput} type="file" accept="application/json" style="display:none" onchange={onFileChosen} />
+    <input bind:this={modelImportInput} type="file" accept=".glb,.gltf,.obj" style="display:none" onchange={onModelImportChosen} />
   </header>
 
   <!-- Camera HUD — its own strip under the toolbar so it
@@ -625,6 +679,10 @@
   {#if !panelsHidden}
   <aside class="lib">
     <h3>Element Library</h3>
+    <div class="lib-actions">
+      <button class="mini-action" onclick={blankSlate}>Blank Room</button>
+      <button class="mini-action" onclick={triggerModelImport}>Import Model</button>
+    </div>
     {#each libraryGroups as group}
       <div class="grp">
         <div class="ghd">{group.name}</div>
@@ -1079,6 +1137,27 @@
     font-size: 11px; letter-spacing: 0.22em;
     color: #8a93a3; text-transform: uppercase;
     margin: 0 0 9px;
+  }
+  .lib-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin-bottom: 14px;
+  }
+  .mini-action {
+    font: inherit;
+    font-size: 11.5px;
+    color: #e9edf4;
+    background: rgba(74, 242, 255, 0.07);
+    border: 1px solid rgba(74, 242, 255, 0.22);
+    border-radius: 7px;
+    padding: 7px 6px;
+    cursor: pointer;
+  }
+  .mini-action:hover {
+    color: #04161a;
+    background: #4af2ff;
+    border-color: #4af2ff;
   }
   .grp { margin-bottom: 16px; }
   .ghd {

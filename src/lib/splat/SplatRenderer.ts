@@ -2,8 +2,38 @@
 // Implements all animations, effects, and interactions for splat layers
 
 import * as THREE from 'three';
-import type { PLYData } from './plyLoader';
+import type { PLYData, PLYVertex } from './plyLoader';
 import type { SplatContent, SplatAnimationType, SplatDisplacementType, SplatColorEffectType, SplatOpacityEffectType, SplatCreativeEffectType } from '../types';
+
+const SPLAT_AUTO_FIT_SIZE = 20;
+const MIN_AUTO_FIT_SCALE = 0.00001;
+const MAX_AUTO_FIT_SCALE = 10000;
+const MIN_GAUSSIAN_POINT_SCALE = 0.45;
+const MAX_GAUSSIAN_POINT_SCALE = 10;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function getBoundsSize(data: PLYData): number {
+  const bb = data.boundingBox;
+  return Math.max(
+    bb.max.x - bb.min.x,
+    bb.max.y - bb.min.y,
+    bb.max.z - bb.min.z
+  );
+}
+
+function getGaussianPointScale(vertex: PLYVertex, fitScale: number): number {
+  if (vertex.scale_0 === undefined || vertex.scale_1 === undefined || vertex.scale_2 === undefined) {
+    return 1;
+  }
+
+  const averageLogScale = (vertex.scale_0 + vertex.scale_1 + vertex.scale_2) / 3;
+  const rawRadius = Math.exp(clamp(averageLogScale, -12, 8));
+  const normalizedRadius = rawRadius * fitScale;
+  return clamp(0.65 + normalizedRadius * 160, MIN_GAUSSIAN_POINT_SCALE, MAX_GAUSSIAN_POINT_SCALE);
+}
 
 // Vertex shader for point cloud rendering with all effects
 const vertexShader = `
@@ -60,6 +90,7 @@ const vertexShader = `
   attribute vec3 originalPosition;
   attribute vec3 color;
   attribute float alpha;
+  attribute float pointScale;
   attribute float vertexIndex;
   attribute vec3 velocity;
   attribute vec2 texUV;
@@ -412,7 +443,7 @@ const vertexShader = `
     gl_Position = projectionMatrix * mvPosition;
 
     // Point size with optional attenuation + beat pulse
-    float size = pointSize;
+    float size = pointSize * pointScale;
     if (audioEnabled) {
       size *= 1.0 + audioLevel * audioScale * 0.5;
       // Beat pulse on point size
@@ -946,6 +977,7 @@ export class SplatRenderer {
   private _mousePlane = new THREE.Plane();
   private _mouseIntersection = new THREE.Vector3();
   private pointCloudScale = 1; // Track current scale for mouse radius adjustment
+  private positionFitScale = 1;
   private pointCloudBounds = { min: new THREE.Vector3(), max: new THREE.Vector3(), size: 1 };
   private boundMouseMove = (event: MouseEvent) => this.onMouseMove(event);
   private boundMouseLeave = () => {
@@ -1037,15 +1069,24 @@ export class SplatRenderer {
   loadData(data: PLYData) {
     this.plyData = data;
 
-    // Calculate bounds for mouse interaction scaling
+    const rawSize = getBoundsSize(data);
+    this.positionFitScale = rawSize > 0
+      ? clamp(SPLAT_AUTO_FIT_SIZE / rawSize, MIN_AUTO_FIT_SCALE, MAX_AUTO_FIT_SCALE)
+      : 1;
+
+    // Calculate fitted bounds for mouse interaction scaling and texture projection.
     const bb = data.boundingBox;
-    this.pointCloudBounds.min.set(bb.min.x, bb.min.y, bb.min.z);
-    this.pointCloudBounds.max.set(bb.max.x, bb.max.y, bb.max.z);
-    this.pointCloudBounds.size = Math.max(
-      bb.max.x - bb.min.x,
-      bb.max.y - bb.min.y,
-      bb.max.z - bb.min.z
+    this.pointCloudBounds.min.set(
+      (bb.min.x - data.center.x) * this.positionFitScale,
+      (bb.min.y - data.center.y) * this.positionFitScale,
+      (bb.min.z - data.center.z) * this.positionFitScale
     );
+    this.pointCloudBounds.max.set(
+      (bb.max.x - data.center.x) * this.positionFitScale,
+      (bb.max.y - data.center.y) * this.positionFitScale,
+      (bb.max.z - data.center.z) * this.positionFitScale
+    );
+    this.pointCloudBounds.size = Math.max(rawSize * this.positionFitScale, 1);
     // Ensure we have a reasonable minimum size
     if (this.pointCloudBounds.size < 0.1) {
       this.pointCloudBounds.size = 1;
@@ -1082,6 +1123,7 @@ export class SplatRenderer {
     this.originalPositions = new Float32Array(count * 3);
     const colors = new Float32Array(count * 3);
     const alphas = new Float32Array(count);
+    const pointScales = new Float32Array(count);
     const indices = new Float32Array(count);
     this.velocities = new Float32Array(count * 3);
     const uvs = new Float32Array(count * 2);
@@ -1094,9 +1136,9 @@ export class SplatRenderer {
       const i3 = i * 3;
 
       // Center positions
-      positions[i3] = v.x - center.x;
-      positions[i3 + 1] = v.y - center.y;
-      positions[i3 + 2] = v.z - center.z;
+      positions[i3] = (v.x - center.x) * this.positionFitScale;
+      positions[i3 + 1] = (v.y - center.y) * this.positionFitScale;
+      positions[i3 + 2] = (v.z - center.z) * this.positionFitScale;
 
       // Store original positions
       this.originalPositions[i3] = positions[i3];
@@ -1110,6 +1152,10 @@ export class SplatRenderer {
 
       // Alpha
       alphas[i] = v.a / 255;
+
+      pointScales[i] = data.dataType === 'gaussian'
+        ? getGaussianPointScale(v, this.positionFitScale)
+        : 1;
 
       // Vertex index for effects
       indices[i] = i;
@@ -1129,6 +1175,7 @@ export class SplatRenderer {
     this.geometry.setAttribute('originalPosition', new THREE.BufferAttribute(this.originalPositions, 3));
     this.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     this.geometry.setAttribute('alpha', new THREE.BufferAttribute(alphas, 1));
+    this.geometry.setAttribute('pointScale', new THREE.BufferAttribute(pointScales, 1));
     this.geometry.setAttribute('vertexIndex', new THREE.BufferAttribute(indices, 1));
     this.geometry.setAttribute('velocity', new THREE.BufferAttribute(this.velocities, 3));
     this.geometry.setAttribute('texUV', new THREE.BufferAttribute(uvs, 2));
@@ -1167,9 +1214,8 @@ export class SplatRenderer {
     const count = data.vertices.length;
     if (count < 2) return;
 
-    // Calculate adaptive distance threshold based on point cloud size
-    const bb = data.boundingBox;
-    const size = Math.max(bb.max.x - bb.min.x, bb.max.y - bb.min.y, bb.max.z - bb.min.z);
+    // Calculate adaptive distance threshold based on the fitted point cloud size.
+    const size = this.pointCloudBounds.size;
     // Connect points within ~2% of the total size, with a max of ~10 connections per point
     const distThreshold = size * 0.025;
     const distThresholdSq = distThreshold * distThreshold;

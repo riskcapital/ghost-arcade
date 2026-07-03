@@ -6,12 +6,21 @@
    */
   import { stage3dScene, setStage3DSelection } from '../../stage3d/store';
   import { ELEMENT_TYPES } from '../../stage3d/elementTypes';
+  import { vjClipLauncher } from '../../stores/vjClipLauncher';
+  import { VJ_MIX_SOURCE_INDEX } from '../../types';
   import type { UserStageElement } from '../../stage3d/types';
 
   export let elementId: string;
 
   $: element = ($stage3dScene.userElements ?? []).find(e => e.id === elementId) ?? null;
   $: def = element ? ELEMENT_TYPES[element.type] : null;
+  $: vjLayerCount = Math.max(0, $vjClipLauncher?.numLayers ?? 0);
+  $: vjSourceOptions = [
+    { value: 'solid', label: 'Solid color' },
+    { value: 'master', label: 'Stage master' },
+    { value: VJ_MIX_SOURCE_INDEX, label: 'VJ mix' },
+    ...Array.from({ length: vjLayerCount }, (_, i) => ({ value: i, label: `VJ Layer ${i + 1}` })),
+  ];
 
   function setPos(axis: 0 | 1 | 2, value: number) {
     if (!element) return;
@@ -40,6 +49,15 @@
   function setSelectParam(key: string, raw: string, options: { value: number | string; label: string }[] = []) {
     const option = options.find(o => String(o.value) === raw);
     setParam(key, option?.value ?? raw);
+  }
+
+  function setVjSourceParam(key: string, raw: string) {
+    if (raw === 'solid' || raw === 'master') {
+      setParam(key, raw);
+      return;
+    }
+    const numeric = Number(raw);
+    setParam(key, Number.isFinite(numeric) ? numeric : raw);
   }
 
   function duplicate() {
@@ -103,6 +121,18 @@
         <label>{f.l}</label>
         <input type="color" value={fieldValue(f.k) as string}
           oninput={(e) => setParam(f.k, (e.target as HTMLInputElement).value)} />
+      </div>
+    {:else if f.type === 'vj-source'}
+      <div class="field">
+        <label>{f.l}</label>
+        <select
+          value={String(fieldValue(f.k) || 'solid')}
+          onchange={(e) => setVjSourceParam(f.k, (e.target as HTMLSelectElement).value)}
+        >
+          {#each vjSourceOptions as opt}
+            <option value={String(opt.value)}>{opt.label}</option>
+          {/each}
+        </select>
       </div>
     {:else if f.type === 'select'}
       <div class="field">

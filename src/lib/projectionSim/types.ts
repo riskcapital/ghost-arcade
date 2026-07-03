@@ -59,6 +59,7 @@ export interface ProjectionSimEnvironment {
   roomExposure: number;
   surfaceStyle: 'original' | 'white' | 'light-gray' | 'dark-gray';
   floorColor: string;
+  showFloorProjection: boolean;
   showGrid: boolean;
   shadows: boolean;
   shadowStrength: number;
@@ -98,6 +99,7 @@ export function createProjectionSimScene(name = 'Projection Simulator'): Project
       roomExposure: 1.15,
       surfaceStyle: 'light-gray',
       floorColor: '#16181d',
+      showFloorProjection: true,
       showGrid: true,
       shadows: true,
       shadowStrength: 1,
