@@ -155,6 +155,8 @@ class NativeRendererBroker {
         return this.sendNativeCommandPayloadIfRunning('submit_batch', args, { fallback: null, timeoutMs: 2500 });
       case 'native_renderer_submit_commands':
         return this.sendNativeCommandPayloadIfRunning('submit_commands', args, { fallback: null, timeoutMs: 2500 });
+      case 'native_renderer_run_compute_graph':
+        return this.sendIfRunning('compute_graph', args, { fallback: null, timeoutMs: 10000 });
       case 'native_renderer_set_target_fps':
         return this.sendIfRunning('set_target_fps', args, { fallback: null });
       default:

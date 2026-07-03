@@ -626,6 +626,7 @@ async function main() {
           ],
         },
       ],
+      readbacks: [],
       render: {
         name: 'render-output-source-frame',
         shader_id: 'native-compute-graph-render',
