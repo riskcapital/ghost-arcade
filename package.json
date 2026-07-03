@@ -36,6 +36,7 @@
     "native:build": "cargo build --manifest-path native-renderer/Cargo.toml --release",
     "native:doctor": "node scripts/native-renderer-doctor.mjs",
     "native:smoke": "npm run native:build && node scripts/native-renderer-smoke.mjs",
+    "native:smoke3d": "npm run native:build && node scripts/native-smoke3d-vitest.mjs",
     "native:wgsl-check": "npm run native:build && node scripts/native-wgsl-check.mjs",
     "desktop:native": "npm run native:build && npm run desktop",
     "native-mobile:sync": "npm run build:native-mobile && cd native-mobile && npm run cap:sync",
