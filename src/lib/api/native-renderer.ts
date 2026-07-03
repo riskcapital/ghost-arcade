@@ -644,6 +644,12 @@ export interface RendererFrameSnapshot {
   rgba_b64?: string;
 }
 
+export interface NativeRendererSnapshotExportResult {
+  path: string;
+  bytes: number;
+  timestamp_ms: number;
+}
+
 export interface NativeGpuCaps {
   adapter_name: string;
   adapter_vendor: number;
@@ -931,7 +937,7 @@ export async function getNativeRendererReadinessReport() {
 }
 
 export async function exportNativeRendererSnapshotJson(path: string) {
-  return invoke<void>('native_renderer_export_snapshot_json', { path });
+  return invoke<NativeRendererSnapshotExportResult>('native_renderer_export_snapshot_json', { path });
 }
 
 export async function resetNativeRendererStats() {
