@@ -4,15 +4,21 @@ import { project } from '$lib/stores/layers';
 import { isMac, isWindows } from '$lib/bridge';
 import { getVisualAudioSnapshot, visualAudio, type VisualAudioState } from '$lib/audio/visualAudio';
 import { WGSL_STDLIB, resolveGhostWgsl } from '$lib/renderer/wgsl';
-import { buildSmoke3DNativePrecompileCommands } from '$lib/renderer/webgpu3DSmoke';
+import {
+  buildSmoke3DNativeComputeGraph,
+  buildSmoke3DNativePrecompileCommands,
+  type Smoke3DNativeGraphState,
+} from '$lib/renderer/webgpu3DSmoke';
 import {
   attachNativeRendererOutputWindow,
   clearNativeRendererDecodePreviewCache,
   clearNativeRendererRuntimeCaches,
   detachNativeRendererOutputWindow,
+  getNativeRendererCapabilities,
   getNativeRendererStatus,
   prefetchNativeRendererMedia,
   resetNativeRendererStats,
+  runNativeRendererComputeGraph,
   setNativeRendererDecodeCpuBackupPolicy,
   setNativeRendererDecodeSyntheticFallbackPolicy,
   setNativeRendererDecodePreviewPolicy,
@@ -75,6 +81,14 @@ type NativeLayerUvState = {
 type NativeLayerShapeState = {
   shape: NativeVec4;
   signature: string;
+};
+
+type NativeRenderClockCommand = {
+  type: 'set_render_clock';
+  mode: 'live' | 'manual' | 'reset';
+  time?: number;
+  time_delta?: number;
+  frame_index?: number;
 };
 
 export type PresentPolicyProfile = 'vsync-live' | 'low-latency-safe' | 'low-latency-aggressive';
@@ -542,7 +556,7 @@ function gpuNativeSourceType(shaderId: string | undefined | null): string {
   return `gpu:${id || 'gpu'}`;
 }
 
-function nativeLayerSource(layer: Layer): NativeLayerSource {
+function nativeLayerSource(layer: Layer, useNativeSmokeGraph = false): NativeLayerSource {
   const src = layer.source;
   if (src) {
     const sourceType = isSharedTextureUri(src.src) ? 'video' : (src.type || 'none');
@@ -558,7 +572,19 @@ function nativeLayerSource(layer: Layer): NativeLayerSource {
 
   if (layer.type === 'gpu' && layer.gpuLayerContent) {
     const shaderId = layer.gpuLayerContent.shaderId || 'gpu';
+    const normalizedShaderId = String(shaderId).trim().toLowerCase();
     const previewElement = ((layer as any)._gpuLayerPreviewCanvas ?? null) as CanvasImageSource | null;
+    if (useNativeSmokeGraph && normalizedShaderId === 'smoke-3d') {
+      return {
+        id: `gpu:${layer.id}:${shaderId}`,
+        uri: `native-graph://smoke-3d/${layer.id}`,
+        sourceType: 'image',
+        source: null,
+        shouldPrefetch: false,
+        shouldPreview: false,
+        previewElement,
+      };
+    }
     return {
       id: `gpu:${layer.id}:${shaderId}`,
       uri: `gpu://${shaderId}`,
@@ -655,6 +681,10 @@ export class NativeRendererSync {
   private previewImageLoads = new Set<string>();
   private previewCanvas: HTMLCanvasElement | null = null;
   private previewContext: CanvasRenderingContext2D | null = null;
+  private nativeComputeGraphSourceFrames = false;
+  private smoke3DNativeGraphStates = new Map<string, Smoke3DNativeGraphState>();
+  private smoke3DNativeGraphInFlight = new Set<string>();
+  private smoke3DNativeGraphWarnings = new Map<string, number>();
   private nativeSourceFrameSize = SOURCE_FRAME_SIZE_FALLBACK;
   private dynamicSourceFrameCaptureSize = SOURCE_FRAME_SIZE_FALLBACK;
   private presentProfile: PresentPolicyProfile = 'low-latency-safe';
@@ -753,6 +783,71 @@ export class NativeRendererSync {
     };
   }
 
+  private shouldUseNativeSmoke3DGraph(layer: Layer): boolean {
+    if (!this.nativeComputeGraphSourceFrames || !this.nativeWgslStdlibWarmed || !layer.visible) return false;
+    if (layer.type !== 'gpu' || !layer.gpuLayerContent) return false;
+    const shaderId = String(layer.gpuLayerContent.shaderId || '').trim();
+    if (shaderId.toLowerCase() !== 'smoke-3d') return false;
+    const sourceId = `gpu:${layer.id}:${shaderId}`;
+    return (this.smoke3DNativeGraphWarnings.get(sourceId) ?? 0) < 3;
+  }
+
+  private async renderNativeSmoke3DGraphs(
+    layers: Layer[],
+    width: number,
+    height: number,
+    clock: NativeRenderClockCommand,
+    visual: VisualAudioState,
+  ) {
+    if (!this.nativeComputeGraphSourceFrames) {
+      this.smoke3DNativeGraphStates.clear();
+      return;
+    }
+    const activeSourceIds = new Set<string>();
+    for (const layer of layers) {
+      if (!this.shouldUseNativeSmoke3DGraph(layer)) continue;
+      const nativeSource = nativeLayerSource(layer, true);
+      activeSourceIds.add(nativeSource.id);
+      if (this.smoke3DNativeGraphInFlight.has(nativeSource.id)) continue;
+      this.smoke3DNativeGraphInFlight.add(nativeSource.id);
+      try {
+        const previous = this.smoke3DNativeGraphStates.get(nativeSource.id) ?? null;
+        const graph = buildSmoke3DNativeComputeGraph({
+          sourceId: nativeSource.id,
+          params: layer.gpuLayerContent?.params ?? {},
+          width,
+          height,
+          time: typeof clock.time === 'number' ? clock.time : Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000),
+          frameDelta: typeof clock.time_delta === 'number' ? clock.time_delta : 1 / this.targetFps,
+          frameIndex: typeof clock.frame_index === 'number' ? clock.frame_index : this.frameId + 1,
+          audioBass: visual.isActive ? Math.max(visual.bass, visual.bassFast * 0.9) : 0,
+          audioTreble: visual.isActive ? visual.treble : 0,
+          state: previous,
+          reset: !previous,
+        });
+        const result = await runNativeRendererComputeGraph(graph.config as unknown as Record<string, unknown>);
+        if (!result?.render || (result.render as any).target !== 'source_frame') {
+          throw new Error(`native 3D Smoke graph returned no source-frame render`);
+        }
+        this.smoke3DNativeGraphStates.set(nativeSource.id, graph.state);
+        this.smoke3DNativeGraphWarnings.delete(nativeSource.id);
+      } catch (err) {
+        const seen = this.smoke3DNativeGraphWarnings.get(nativeSource.id) ?? 0;
+        if (seen < 3) {
+          console.warn('[NativeRendererSync] native 3D Smoke graph failed', layer.id, err);
+          this.smoke3DNativeGraphWarnings.set(nativeSource.id, seen + 1);
+        }
+      } finally {
+        this.smoke3DNativeGraphInFlight.delete(nativeSource.id);
+      }
+    }
+    for (const sourceId of Array.from(this.smoke3DNativeGraphStates.keys())) {
+      if (!activeSourceIds.has(sourceId) && !this.smoke3DNativeGraphInFlight.has(sourceId)) {
+        this.smoke3DNativeGraphStates.delete(sourceId);
+      }
+    }
+  }
+
   private scheduleAudioSync() {
     if (!this.running || this.audioSyncRaf !== null) return;
     const audio = getVisualAudioSnapshot();
@@ -797,6 +892,12 @@ export class NativeRendererSync {
     const startupStatus = await getNativeRendererStatus().catch(() => null);
     this.assertNativeReady(startupStatus);
     this.syncNativeSourceFrameSize(startupStatus);
+    const startupCapabilities = await getNativeRendererCapabilities().catch(() => null);
+    this.nativeComputeGraphSourceFrames = !!(
+      startupCapabilities?.features?.compute_graph_host &&
+      startupCapabilities?.features?.compute_graph_render &&
+      startupCapabilities?.features?.compute_graph_source_frame_target
+    );
     const startupQuality = startupStatus?.native_quality;
     console.log(
       `[NativeRendererSync] GPU pipeline active: backend=${startupStatus?.backend}, adapter=${startupStatus?.adapter_name ?? 'unknown'} quality=${startupQuality?.active_tier ?? 'unknown'}@${(startupQuality?.quality_scale ?? 0).toFixed(2)} policy=${startupQuality?.policy ?? 'unknown'}`
@@ -817,7 +918,7 @@ export class NativeRendererSync {
     });
     const nativeCaps = startupStatus?.native_caps;
     console.log(
-      `[NativeRendererSync] start complete preview=${SOURCE_PREVIEW_SIZE}px sourceFrame=${this.nativeSourceFrameSize}px mips=${startupStatus?.source_frame_mip_levels ?? 1} tier=${nativeCaps?.recommended_quality_tier ?? 'unknown'} f16=${nativeCaps?.requested_shader_f16 ? 'on' : 'off'} floatFilter=${nativeCaps?.requested_float32_filterable ? 'on' : 'off'}`,
+      `[NativeRendererSync] start complete preview=${SOURCE_PREVIEW_SIZE}px sourceFrame=${this.nativeSourceFrameSize}px mips=${startupStatus?.source_frame_mip_levels ?? 1} nativeGraphSmoke=${this.nativeComputeGraphSourceFrames ? 'on' : 'off'} tier=${nativeCaps?.recommended_quality_tier ?? 'unknown'} f16=${nativeCaps?.requested_shader_f16 ? 'on' : 'off'} floatFilter=${nativeCaps?.requested_float32_filterable ? 'on' : 'off'}`,
     );
   }
 
@@ -893,6 +994,10 @@ export class NativeRendererSync {
     this.sourcePreviewFailures.clear();
     this.previewImageElements.clear();
     this.previewImageLoads.clear();
+    this.nativeComputeGraphSourceFrames = false;
+    this.smoke3DNativeGraphStates.clear();
+    this.smoke3DNativeGraphInFlight.clear();
+    this.smoke3DNativeGraphWarnings.clear();
     this.nativeWgslStdlibWarmed = false;
     this.latestRenderClockSeconds = null;
     this.lastRenderClockSentSeconds = null;
@@ -969,7 +1074,8 @@ export class NativeRendererSync {
       this.sentHeight = height;
     }
 
-    commands.push(this.renderClockCommand());
+    const renderClock = this.renderClockCommand();
+    commands.push(renderClock);
 
     const audioCommand = this.audioCommand(visual);
     if (audioCommand) commands.push(audioCommand);
@@ -1057,7 +1163,8 @@ export class NativeRendererSync {
       dynamicRemaining: overloadActive ? 1 : 2,
     };
     layers.forEach((layer, index) => {
-      const nativeSource = nativeLayerSource(layer);
+      const useNativeSmokeGraph = this.shouldUseNativeSmoke3DGraph(layer);
+      const nativeSource = nativeLayerSource(layer, useNativeSmokeGraph);
       const sourceType = nativeSource.sourceType;
       const nativeParams = nativeGpuParams(layer);
       const nativeUv = this.nativeLayerUvState(layer, nativeSource, width, height);
@@ -1073,7 +1180,7 @@ export class NativeRendererSync {
         geometrySig: geometrySignature(layer),
         uvSig: nativeUv.signature,
         shapeSig: nativeShape.signature,
-        sourceSig: sourceSignature(layer),
+        sourceSig: `${sourceSignature(layer)}:${sourceType}:${nativeSource.uri}`,
         nativeParamsSig: nativeParamsSignature(layer),
         effectsSig,
         colorSig: colorSignature(layer),
@@ -1274,6 +1381,8 @@ export class NativeRendererSync {
       if (!activeVideoKeys.has(key)) this.videoRefreshAt.delete(key);
     });
 
+    await this.renderNativeSmoke3DGraphs(layers, width, height, renderClock, visual);
+
     if (!commands.length) return;
 
     commands.push({ type: 'present' });
@@ -1287,7 +1396,7 @@ export class NativeRendererSync {
     this.lastLayers = current;
   }
 
-  private renderClockCommand(): RendererCommand {
+  private renderClockCommand(): NativeRenderClockCommand {
     const manualTime = this.latestRenderClockSeconds;
     const time =
       manualTime !== null

@@ -5050,9 +5050,7 @@ fn compute_graph_readbacks(
                 out.push(id);
             }
         }
-        if !out.is_empty() {
-            return out;
-        }
+        return out;
     }
     buffers
         .iter()

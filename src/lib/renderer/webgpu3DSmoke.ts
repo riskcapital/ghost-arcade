@@ -942,6 +942,457 @@ const DEFAULT_PARAMS: Smoke3DParams = {
   shadowStepLen: 0.06,
 };
 
+type Smoke3DNativeBufferKind = 'uniform' | 'storage';
+type Smoke3DNativeBindingKind = 'uniform' | 'storage' | 'read-only-storage';
+
+export interface Smoke3DNativeGraphState {
+  grid: number;
+  velFlip: boolean;
+  denFlip: boolean;
+  prsFlip: boolean;
+  splatTimer: number;
+  prevBass: number;
+  burstHoldTimer: number;
+  autoRotXPhase: number;
+  autoRotYPhase: number;
+  autoRotZPhase: number;
+  prevFrameTime: number;
+}
+
+export interface Smoke3DNativeGraphOptions {
+  sourceId: string;
+  params?: Partial<Smoke3DParams> | Record<string, any> | null;
+  width: number;
+  height: number;
+  time: number;
+  frameDelta?: number;
+  frameIndex?: number;
+  audioBass?: number;
+  audioTreble?: number;
+  state?: Smoke3DNativeGraphState | null;
+  reset?: boolean;
+  includeSnapshot?: boolean;
+}
+
+export interface Smoke3DNativeGraphBuffer {
+  id: string;
+  kind: Smoke3DNativeBufferKind;
+  byte_length?: number;
+  persistent?: boolean;
+  clear?: boolean;
+  initial_b64?: string;
+}
+
+export interface Smoke3DNativeGraphBinding {
+  binding: number;
+  resource: string;
+  kind: Smoke3DNativeBindingKind;
+}
+
+export interface Smoke3DNativeGraphPass {
+  name: string;
+  shader_id: string;
+  entry: string;
+  dispatch: [number, number, number];
+  bindings: Smoke3DNativeGraphBinding[];
+}
+
+export interface Smoke3DNativeGraphConfig {
+  buffers: Smoke3DNativeGraphBuffer[];
+  passes: Smoke3DNativeGraphPass[];
+  readbacks: string[];
+  render: {
+    name: string;
+    shader_id: string;
+    vertex_entry: string;
+    fragment_entry: string;
+    target: 'source_frame';
+    source_id: string;
+    seq: number;
+    clear: boolean;
+    include_snapshot: boolean;
+    bindings: Smoke3DNativeGraphBinding[];
+  };
+}
+
+export interface Smoke3DNativeGraphBuildResult {
+  config: Smoke3DNativeGraphConfig;
+  state: Smoke3DNativeGraphState;
+  sourceId: string;
+  grid: number;
+  renderDensityBuffer: string;
+  passCount: number;
+}
+
+function clampFinite(value: unknown, min: number, max: number, fallback: number): number {
+  const n = typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+function color3(value: unknown, fallback: [number, number, number]): [number, number, number] {
+  if (!Array.isArray(value) || value.length < 3) return fallback;
+  return [
+    clampFinite(value[0], 0, 8, fallback[0]),
+    clampFinite(value[1], 0, 8, fallback[1]),
+    clampFinite(value[2], 0, 8, fallback[2]),
+  ];
+}
+
+function normalizeEmitterColors(value: unknown): [number, number, number][] {
+  if (!Array.isArray(value)) return DEFAULT_PARAMS.emitterColors;
+  const colors = value
+    .map((entry) => color3(entry, [1, 1, 1]))
+    .filter((entry) => entry.some((channel) => channel > 0));
+  return colors.length ? colors.slice(0, MAX_EMITTERS) : DEFAULT_PARAMS.emitterColors;
+}
+
+function normalizeSmoke3DParams(input?: Partial<Smoke3DParams> | Record<string, any> | null): Smoke3DParams {
+  const raw = { ...DEFAULT_PARAMS, ...(input ?? {}) } as Record<string, any>;
+  const gridCandidate = Math.round(Number(raw.gridSize ?? DEFAULT_PARAMS.gridSize));
+  const gridSize = ([32, 48, 64] as const).includes(gridCandidate as 32 | 48 | 64)
+    ? gridCandidate as 32 | 48 | 64
+    : DEFAULT_PARAMS.gridSize;
+  return {
+    ...DEFAULT_PARAMS,
+    gridSize,
+    emission: clampFinite(raw.emission, 0, 16, DEFAULT_PARAMS.emission),
+    density: clampFinite(raw.density, 0, 16, DEFAULT_PARAMS.density),
+    velocityDecay: clampFinite(raw.velocityDecay, 0, 1, DEFAULT_PARAMS.velocityDecay),
+    densityDecay: clampFinite(raw.densityDecay, 0, 1, DEFAULT_PARAMS.densityDecay),
+    emitterCount: Math.round(clampFinite(raw.emitterCount, 1, MAX_EMITTERS, DEFAULT_PARAMS.emitterCount)),
+    spread: clampFinite(raw.spread, 0, 1, DEFAULT_PARAMS.spread),
+    spawnY: clampFinite(raw.spawnY, -1, 1, DEFAULT_PARAMS.spawnY),
+    splatRadius: clampFinite(raw.splatRadius, 0.001, 0.5, DEFAULT_PARAMS.splatRadius),
+    splatStrength: clampFinite(raw.splatStrength, 0, 32, DEFAULT_PARAMS.splatStrength),
+    splatVelocityMag: clampFinite(raw.splatVelocityMag, -16, 16, DEFAULT_PARAMS.splatVelocityMag),
+    splatRate: clampFinite(raw.splatRate, 0.1, 240, DEFAULT_PARAMS.splatRate),
+    bass: clampFinite(raw.bass, 0, 1, DEFAULT_PARAMS.bass),
+    treble: clampFinite(raw.treble, 0, 1, DEFAULT_PARAMS.treble),
+    audioBurst: clampFinite(raw.audioBurst, 0, 8, DEFAULT_PARAMS.audioBurst),
+    emitterColors: normalizeEmitterColors(raw.emitterColors),
+    volumeScaleX: clampFinite(raw.volumeScaleX, 0.05, 8, DEFAULT_PARAMS.volumeScaleX),
+    volumeScaleZ: clampFinite(raw.volumeScaleZ, 0.05, 8, DEFAULT_PARAMS.volumeScaleZ),
+    windX: clampFinite(raw.windX, -8, 8, DEFAULT_PARAMS.windX),
+    windY: clampFinite(raw.windY, -8, 8, DEFAULT_PARAMS.windY),
+    windZ: clampFinite(raw.windZ, -8, 8, DEFAULT_PARAMS.windZ),
+    turbStrength: clampFinite(raw.turbStrength, 0, 16, DEFAULT_PARAMS.turbStrength),
+    turbScale: clampFinite(raw.turbScale, 0.01, 64, DEFAULT_PARAMS.turbScale),
+    fovDeg: clampFinite(raw.fovDeg, 10, 140, DEFAULT_PARAMS.fovDeg),
+    cameraZ: clampFinite(raw.cameraZ, 0.1, 40, DEFAULT_PARAMS.cameraZ),
+    rotateX: clampFinite(raw.rotateX, -3600, 3600, DEFAULT_PARAMS.rotateX),
+    rotateY: clampFinite(raw.rotateY, -3600, 3600, DEFAULT_PARAMS.rotateY),
+    rotateZ: clampFinite(raw.rotateZ, -3600, 3600, DEFAULT_PARAMS.rotateZ),
+    autoRotateX: clampFinite(raw.autoRotateX, -720, 720, DEFAULT_PARAMS.autoRotateX),
+    autoRotateY: clampFinite(raw.autoRotateY, -720, 720, DEFAULT_PARAMS.autoRotateY),
+    autoRotateZ: clampFinite(raw.autoRotateZ, -720, 720, DEFAULT_PARAMS.autoRotateZ),
+    fogColor: color3(raw.fogColor, DEFAULT_PARAMS.fogColor),
+    fogOpacity: clampFinite(raw.fogOpacity, 0, 1, DEFAULT_PARAMS.fogOpacity),
+    lightDirX: clampFinite(raw.lightDirX, -8, 8, DEFAULT_PARAMS.lightDirX),
+    lightDirY: clampFinite(raw.lightDirY, -8, 8, DEFAULT_PARAMS.lightDirY),
+    lightDirZ: clampFinite(raw.lightDirZ, -8, 8, DEFAULT_PARAMS.lightDirZ),
+    lightStrength: clampFinite(raw.lightStrength, 0, 16, DEFAULT_PARAMS.lightStrength),
+    lightColor: color3(raw.lightColor, DEFAULT_PARAMS.lightColor),
+    ambient: clampFinite(raw.ambient, 0, 8, DEFAULT_PARAMS.ambient),
+    shadowSteps: Math.round(clampFinite(raw.shadowSteps, 0, 16, DEFAULT_PARAMS.shadowSteps)),
+    shadowStepLen: clampFinite(raw.shadowStepLen, 0, 2, DEFAULT_PARAMS.shadowStepLen),
+  };
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function bufferToBase64(buffer: ArrayBuffer): string {
+  return bytesToBase64(new Uint8Array(buffer));
+}
+
+function writeF32(view: DataView, index: number, value: number): void {
+  view.setFloat32(index * 4, Number.isFinite(value) ? value : 0, true);
+}
+
+function writeU32(view: DataView, index: number, value: number): void {
+  view.setUint32(index * 4, Math.max(0, Math.round(value)) >>> 0, true);
+}
+
+function buildSmoke3DSimUniform(params: Smoke3DParams, dt: number, time: number, fire: boolean, burstMul: number): string {
+  const buffer = new ArrayBuffer(96);
+  const view = new DataView(buffer);
+  writeU32(view, 0, params.gridSize);
+  writeU32(view, 1, params.gridSize);
+  writeU32(view, 2, params.gridSize);
+  writeU32(view, 3, params.emitterCount);
+  writeF32(view, 4, dt);
+  writeF32(view, 5, time);
+  writeF32(view, 6, fire ? burstMul : 0);
+  writeF32(view, 8, params.densityDecay);
+  writeF32(view, 9, params.velocityDecay);
+  writeF32(view, 10, params.splatRadius);
+  writeF32(view, 12, params.windX);
+  writeF32(view, 13, params.windY);
+  writeF32(view, 14, params.windZ);
+  writeF32(view, 15, params.turbStrength);
+  writeF32(view, 16, params.turbScale);
+  return bufferToBase64(buffer);
+}
+
+function buildSmoke3DEmitters(params: Smoke3DParams): string {
+  const buffer = new ArrayBuffer(MAX_EMITTERS * 48);
+  const values = new Float32Array(buffer);
+  const emCount = Math.max(1, Math.min(MAX_EMITTERS, params.emitterCount | 0));
+  for (let i = 0; i < MAX_EMITTERS; i++) {
+    const off = i * 12;
+    if (i >= emCount) continue;
+    const angle = emCount > 1 ? (i / emCount) * Math.PI * 2 : 0;
+    const cx = Math.cos(angle) * params.spread;
+    const cz = Math.sin(angle) * params.spread;
+    const color = params.emitterColors[i % params.emitterColors.length] ?? [1, 1, 1];
+    values[off + 0] = cx * 0.5 + 0.5;
+    values[off + 1] = params.spawnY * 0.5 + 0.5;
+    values[off + 2] = cz * 0.5 + 0.5;
+    values[off + 3] = params.splatRadius;
+    values[off + 4] = color[0];
+    values[off + 5] = color[1];
+    values[off + 6] = color[2];
+    values[off + 7] = params.splatStrength;
+    values[off + 8] = Math.cos(angle) * params.splatVelocityMag * 0.3;
+    values[off + 9] = params.splatVelocityMag;
+    values[off + 10] = Math.sin(angle) * params.splatVelocityMag * 0.3;
+  }
+  return bufferToBase64(buffer);
+}
+
+function buildSmoke3DRenderUniform(
+  params: Smoke3DParams,
+  width: number,
+  height: number,
+  state: Smoke3DNativeGraphState,
+): string {
+  const aspect = Math.max(1, width) / Math.max(1, height);
+  const proj = perspective(params.fovDeg, aspect, 0.01, 100);
+  const view = translate(0, 0, -params.cameraZ);
+  const d2r = Math.PI / 180;
+  const rxRad = (params.rotateX + state.autoRotXPhase) * d2r;
+  const ryRad = (params.rotateY + state.autoRotYPhase) * d2r;
+  const rzRad = (params.rotateZ + state.autoRotZPhase) * d2r;
+  const cx = Math.cos(rxRad), sx = Math.sin(rxRad);
+  const cy = Math.cos(ryRad), sy = Math.sin(ryRad);
+  const cz = Math.cos(rzRad), sz = Math.sin(rzRad);
+  const rxM = new Float32Array([1, 0, 0, 0, 0, cx, sx, 0, 0, -sx, cx, 0, 0, 0, 0, 1]);
+  const ryM = new Float32Array([cy, 0, -sy, 0, 0, 1, 0, 0, sy, 0, cy, 0, 0, 0, 0, 1]);
+  const rzM = new Float32Array([cz, sz, 0, 0, -sz, cz, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  const viewProj = mat4Mul(proj, mat4Mul(view, mat4Mul(rzM, mat4Mul(ryM, rxM))));
+  const invViewProj = invertMat4(viewProj);
+  const buffer = new ArrayBuffer(192);
+  const viewData = new DataView(buffer);
+  const floats = new Float32Array(buffer);
+  floats.set(invViewProj, 0);
+  writeF32(viewData, 16, 0);
+  writeF32(viewData, 17, 0);
+  writeF32(viewData, 18, params.cameraZ);
+  writeF32(viewData, 19, params.emission);
+  writeF32(viewData, 20, params.volumeScaleX);
+  writeF32(viewData, 21, 1);
+  writeF32(viewData, 22, params.volumeScaleZ);
+  writeF32(viewData, 23, params.density);
+  writeF32(viewData, 24, params.fogColor[0]);
+  writeF32(viewData, 25, params.fogColor[1]);
+  writeF32(viewData, 26, params.fogColor[2]);
+  writeF32(viewData, 27, params.fogOpacity);
+  writeU32(viewData, 28, params.gridSize);
+  writeU32(viewData, 29, params.gridSize);
+  writeU32(viewData, 30, params.gridSize);
+  const lx = params.lightDirX;
+  const ly = params.lightDirY;
+  const lz = params.lightDirZ;
+  const len = Math.sqrt(lx * lx + ly * ly + lz * lz) || 1;
+  writeF32(viewData, 32, lx / len);
+  writeF32(viewData, 33, ly / len);
+  writeF32(viewData, 34, lz / len);
+  writeF32(viewData, 35, params.lightStrength);
+  writeF32(viewData, 36, params.lightColor[0]);
+  writeF32(viewData, 37, params.lightColor[1]);
+  writeF32(viewData, 38, params.lightColor[2]);
+  writeF32(viewData, 39, params.ambient);
+  writeU32(viewData, 40, params.shadowSteps);
+  writeF32(viewData, 41, params.shadowStepLen);
+  return bufferToBase64(buffer);
+}
+
+function smokeGraphInitialState(grid: number, time: number): Smoke3DNativeGraphState {
+  return {
+    grid,
+    velFlip: false,
+    denFlip: false,
+    prsFlip: false,
+    splatTimer: 0,
+    prevBass: 0,
+    burstHoldTimer: 0,
+    autoRotXPhase: 0,
+    autoRotYPhase: 0,
+    autoRotZPhase: 0,
+    prevFrameTime: time,
+  };
+}
+
+function sanitizeSmokeGraphId(value: string): string {
+  return String(value || 'source').replace(/[^a-zA-Z0-9:_-]+/g, '_').slice(0, 160);
+}
+
+export function buildSmoke3DNativeComputeGraph(options: Smoke3DNativeGraphOptions): Smoke3DNativeGraphBuildResult {
+  const params = normalizeSmoke3DParams(options.params);
+  if (typeof options.audioBass === 'number') params.bass = clampFinite(options.audioBass, 0, 1, params.bass);
+  if (typeof options.audioTreble === 'number') params.treble = clampFinite(options.audioTreble, 0, 1, params.treble);
+  const time = Math.max(0, Number.isFinite(options.time) ? options.time : 0);
+  let state = options.state && options.state.grid === params.gridSize && !options.reset
+    ? { ...options.state }
+    : smokeGraphInitialState(params.gridSize, time);
+  let dt = typeof options.frameDelta === 'number' && Number.isFinite(options.frameDelta)
+    ? options.frameDelta
+    : (state.prevFrameTime === 0 ? 1 / 60 : time - state.prevFrameTime);
+  dt = Math.min(Math.max(dt, 0), 1 / 15);
+  state.prevFrameTime = time;
+  state.autoRotXPhase += params.autoRotateX * dt;
+  state.autoRotYPhase += params.autoRotateY * dt;
+  state.autoRotZPhase += params.autoRotateZ * dt;
+  const bassDelta = Math.max(0, params.bass - state.prevBass);
+  if (bassDelta > 0.05) state.burstHoldTimer = Math.max(state.burstHoldTimer, 0.15);
+  state.burstHoldTimer = Math.max(0, state.burstHoldTimer - dt);
+  state.prevBass = params.bass;
+  const burstActive = state.burstHoldTimer > 0;
+  state.splatTimer += dt;
+  const splatPeriod = 1 / Math.max(0.1, params.splatRate);
+  const shouldFireScheduled = state.splatTimer >= splatPeriod;
+  if (shouldFireScheduled) state.splatTimer = 0;
+  const fire = shouldFireScheduled || burstActive || options.reset || !options.state;
+  const burstMul = burstActive ? 2.5 + params.audioBurst : 1;
+
+  const sourceId = String(options.sourceId || '3d-smoke-native-source');
+  const prefix = `3d-smoke:${sanitizeSmokeGraphId(sourceId)}:${params.gridSize}`;
+  const id = (name: string) => `${prefix}:${name}`;
+  const cellCount = params.gridSize * params.gridSize * params.gridSize;
+  const vec4Bytes = cellCount * 16;
+  const f32Bytes = cellCount * 4;
+  const resetBuffers = !!options.reset || !options.state || options.state.grid !== params.gridSize;
+  const buffers: Smoke3DNativeGraphBuffer[] = [
+    { id: id('sim-uniform'), kind: 'uniform', byte_length: 96, initial_b64: buildSmoke3DSimUniform(params, dt, time, fire, burstMul) },
+    { id: id('render-uniform'), kind: 'uniform', byte_length: 192, initial_b64: buildSmoke3DRenderUniform(params, Math.round(options.width || 1920), Math.round(options.height || 1080), state) },
+    { id: id('emitters'), kind: 'storage', byte_length: MAX_EMITTERS * 48, initial_b64: buildSmoke3DEmitters(params) },
+    { id: id('velocity-a'), kind: 'storage', byte_length: vec4Bytes, persistent: true, clear: resetBuffers },
+    { id: id('velocity-b'), kind: 'storage', byte_length: vec4Bytes, persistent: true, clear: resetBuffers },
+    { id: id('density-a'), kind: 'storage', byte_length: vec4Bytes, persistent: true, clear: resetBuffers },
+    { id: id('density-b'), kind: 'storage', byte_length: vec4Bytes, persistent: true, clear: resetBuffers },
+    { id: id('divergence'), kind: 'storage', byte_length: f32Bytes, persistent: true, clear: resetBuffers },
+    { id: id('pressure-a'), kind: 'storage', byte_length: f32Bytes, persistent: true, clear: resetBuffers },
+    { id: id('pressure-b'), kind: 'storage', byte_length: f32Bytes, persistent: true, clear: resetBuffers },
+  ];
+  const wg = Math.ceil(params.gridSize / 4);
+  const dispatch: [number, number, number] = [wg, wg, wg];
+  const passes: Smoke3DNativeGraphPass[] = [];
+  const addPass = (
+    name: string,
+    shaderId: string,
+    entry: string,
+    bindings: Smoke3DNativeGraphBinding[],
+  ) => {
+    passes.push({ name, shader_id: shaderId, entry, dispatch, bindings });
+  };
+  let velFlip = state.velFlip;
+  let denFlip = state.denFlip;
+  let prsFlip = state.prsFlip;
+  const velCur = () => id(velFlip ? 'velocity-b' : 'velocity-a');
+  const velNext = () => id(velFlip ? 'velocity-a' : 'velocity-b');
+  const denCur = () => id(denFlip ? 'density-b' : 'density-a');
+  const denNext = () => id(denFlip ? 'density-a' : 'density-b');
+  const prsCur = () => id(prsFlip ? 'pressure-b' : 'pressure-a');
+  const prsNext = () => id(prsFlip ? 'pressure-a' : 'pressure-b');
+
+  if (fire) {
+    addPass('splat', SMOKE_3D_NATIVE_SHADER_IDS.splat, 'cs_splat', [
+      { binding: 0, resource: id('sim-uniform'), kind: 'uniform' },
+      { binding: 1, resource: velCur(), kind: 'storage' },
+      { binding: 2, resource: denCur(), kind: 'storage' },
+      { binding: 3, resource: id('emitters'), kind: 'read-only-storage' },
+    ]);
+  }
+  const advectVelIn = velCur();
+  const advectVelOut = velNext();
+  addPass('advect-velocity', SMOKE_3D_NATIVE_SHADER_IDS.advectVelocity, 'cs_advect_vel', [
+    { binding: 0, resource: id('sim-uniform'), kind: 'uniform' },
+    { binding: 1, resource: advectVelIn, kind: 'read-only-storage' },
+    { binding: 2, resource: denCur(), kind: 'storage' },
+    { binding: 3, resource: advectVelOut, kind: 'storage' },
+  ]);
+  velFlip = !velFlip;
+  addPass('divergence', SMOKE_3D_NATIVE_SHADER_IDS.divergence, 'cs_divergence', [
+    { binding: 0, resource: id('sim-uniform'), kind: 'uniform' },
+    { binding: 1, resource: velCur(), kind: 'read-only-storage' },
+    { binding: 2, resource: denCur(), kind: 'storage' },
+    { binding: 3, resource: id('divergence'), kind: 'storage' },
+  ]);
+  for (let it = 0; it < PRESSURE_ITERATIONS; it++) {
+    addPass(`jacobi-${it + 1}`, SMOKE_3D_NATIVE_SHADER_IDS.jacobi, 'cs_jacobi', [
+      { binding: 0, resource: id('sim-uniform'), kind: 'uniform' },
+      { binding: 1, resource: velCur(), kind: 'read-only-storage' },
+      { binding: 2, resource: denCur(), kind: 'storage' },
+      { binding: 3, resource: id('divergence'), kind: 'read-only-storage' },
+      { binding: 4, resource: prsCur(), kind: 'read-only-storage' },
+      { binding: 5, resource: prsNext(), kind: 'storage' },
+    ]);
+    prsFlip = !prsFlip;
+  }
+  addPass('subtract-gradient', SMOKE_3D_NATIVE_SHADER_IDS.subtractGradient, 'cs_subtract_grad', [
+    { binding: 0, resource: id('sim-uniform'), kind: 'uniform' },
+    { binding: 1, resource: velCur(), kind: 'read-only-storage' },
+    { binding: 2, resource: denCur(), kind: 'storage' },
+    { binding: 3, resource: prsCur(), kind: 'read-only-storage' },
+    { binding: 4, resource: velNext(), kind: 'storage' },
+  ]);
+  velFlip = !velFlip;
+  const densityIn = denCur();
+  const densityOut = denNext();
+  addPass('advect-density', SMOKE_3D_NATIVE_SHADER_IDS.advectDensity, 'cs_advect_den', [
+    { binding: 0, resource: id('sim-uniform'), kind: 'uniform' },
+    { binding: 1, resource: velCur(), kind: 'read-only-storage' },
+    { binding: 2, resource: densityIn, kind: 'read-only-storage' },
+    { binding: 3, resource: densityOut, kind: 'storage' },
+  ]);
+  denFlip = !denFlip;
+  const renderDensityBuffer = denCur();
+  state = { ...state, grid: params.gridSize, velFlip, denFlip, prsFlip };
+  return {
+    config: {
+      buffers,
+      passes,
+      readbacks: [],
+      render: {
+        name: '3d-smoke-raymarch',
+        shader_id: SMOKE_3D_NATIVE_SHADER_IDS.render,
+        vertex_entry: 'vs_main',
+        fragment_entry: 'fs_main',
+        target: 'source_frame',
+        source_id: sourceId,
+        seq: Math.max(0, Math.round(options.frameIndex ?? 0)),
+        clear: true,
+        include_snapshot: !!options.includeSnapshot,
+        bindings: [
+          { binding: 0, resource: id('render-uniform'), kind: 'uniform' },
+          { binding: 1, resource: renderDensityBuffer, kind: 'read-only-storage' },
+        ],
+      },
+    },
+    state,
+    sourceId,
+    grid: params.gridSize,
+    renderDensityBuffer,
+    passCount: passes.length,
+  };
+}
+
 const BLEND_PREMULT_OVER: any = {
   color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
   alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
