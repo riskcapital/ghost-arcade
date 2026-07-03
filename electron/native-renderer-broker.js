@@ -11,6 +11,7 @@ const RENDERER_COMMANDS = [
   'native_renderer_stop',
   'native_renderer_submit_batch',
   'native_renderer_submit_commands',
+  'native_renderer_run_compute_graph',
   'native_renderer_upload_source_gpu_shared_texture',
   'native_renderer_prefetch_media',
   'native_renderer_clear_prefetch_cache',
@@ -246,6 +247,7 @@ class NativeRendererBroker {
     const unsupported = [
       ['shared-texture-upload', 'Shared texture media transport', !!features.shared_texture_upload],
       ['native-media-decode', 'Native media decode/prefetch', !!features.native_media_decode && !!features.media_prefetch],
+      ['compute-graph-host', 'Native buffer compute graph host', !!features.compute_graph_host],
       ['compute-instrument-host', 'Native compute/multi-pass instrument host', !!features.compute_shader_host && !!features.multi_pass_instruments],
       ['managed-output', 'Managed native output / recording', !!features.managed_output_attach && !!features.native_recording],
     ];
@@ -665,6 +667,7 @@ function makeDefaultCapabilities(overrides = {}) {
       source_frame_mips: false,
       source_frame_hdr: false,
       compute_shader_host: false,
+      compute_graph_host: false,
       multi_pass_instruments: false,
       storage_buffer_instruments: false,
       shared_texture_upload: false,

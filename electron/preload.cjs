@@ -95,7 +95,8 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'license_get_machine_id',
   // Native renderer process bridge
   'native_renderer_start', 'native_renderer_stop', 'native_renderer_submit_batch',
-  'native_renderer_submit_commands', 'native_renderer_upload_source_gpu_shared_texture',
+  'native_renderer_submit_commands', 'native_renderer_run_compute_graph',
+  'native_renderer_upload_source_gpu_shared_texture',
   'native_renderer_prefetch_media', 'native_renderer_clear_prefetch_cache',
   'native_renderer_clear_decode_preview_cache', 'native_renderer_clear_runtime_caches',
   'native_renderer_set_vram_budget', 'native_renderer_set_target_fps',

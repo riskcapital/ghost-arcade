@@ -63,6 +63,8 @@ const CORE_RPC_METHODS: &[&str] = &[
     "get_capabilities",
     "compute_probe",
     "run_compute_probe",
+    "compute_graph",
+    "run_compute_graph",
     "shutdown",
 ];
 const CORE_COMMAND_TYPES: &[&str] = &[
@@ -504,6 +506,89 @@ struct NativeShaderPipeline {
 struct NativeComputePipeline {
     pipeline: wgpu::ComputePipeline,
     bind_group_layout: wgpu::BindGroupLayout,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum NativeComputeBufferBindingKind {
+    Uniform,
+    StorageRead,
+    StorageReadWrite,
+}
+
+impl NativeComputeBufferBindingKind {
+    fn signature(self) -> &'static str {
+        match self {
+            Self::Uniform => "uniform",
+            Self::StorageRead => "storage-read",
+            Self::StorageReadWrite => "storage-rw",
+        }
+    }
+
+    fn buffer_usage(self) -> wgpu::BufferUsages {
+        match self {
+            Self::Uniform => {
+                wgpu::BufferUsages::UNIFORM
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST
+            }
+            Self::StorageRead | Self::StorageReadWrite => {
+                wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST
+            }
+        }
+    }
+
+    fn binding_type(self) -> wgpu::BindingType {
+        match self {
+            Self::Uniform => wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            Self::StorageRead => wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            Self::StorageReadWrite => wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct NativeComputeBindingLayoutSpec {
+    binding: u32,
+    kind: NativeComputeBufferBindingKind,
+}
+
+#[derive(Clone, Debug)]
+struct NativeComputeGraphBufferSpec {
+    id: String,
+    byte_length: u64,
+    kind: NativeComputeBufferBindingKind,
+    initial_bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+struct NativeComputeGraphBindingSpec {
+    binding: u32,
+    resource_id: String,
+    kind: NativeComputeBufferBindingKind,
+}
+
+#[derive(Clone, Debug)]
+struct NativeComputeGraphPassPlan {
+    name: String,
+    cache_key: String,
+    source: String,
+    entry: String,
+    dispatch: [u32; 3],
+    bindings: Vec<NativeComputeGraphBindingSpec>,
 }
 
 #[repr(C)]
@@ -1029,6 +1114,7 @@ impl App {
                 "source_frame_mips": self.renderer.as_ref().is_some_and(|renderer| renderer.source_frame_mip_levels > 1),
                 "source_frame_hdr": self.renderer.as_ref().is_some_and(|renderer| renderer.source_frame_format == SOURCE_FRAME_FORMAT_HDR),
                 "compute_shader_host": true,
+                "compute_graph_host": true,
                 "multi_pass_instruments": false,
                 "storage_buffer_instruments": true,
                 "shared_texture_upload": false,
@@ -1261,6 +1347,7 @@ impl App {
             "frame_snapshot" | "get_frame_snapshot" => self.frame_snapshot(&req.params),
             "capabilities" | "get_capabilities" => Ok(self.capabilities()),
             "compute_probe" | "run_compute_probe" => self.compute_probe(&req.params),
+            "compute_graph" | "run_compute_graph" => self.compute_graph(&req.params),
             "readiness" | "get_readiness_report" => Ok(json!({
                 "timestamp_ms": epoch_ms(),
                 "overall_ready": self.renderer.is_some(),
@@ -1766,6 +1853,119 @@ impl App {
             "first_words": probe.first_words,
             "pipeline_cache_entries": renderer.native_pipeline_cache_count(),
         }))
+    }
+
+    fn compute_graph(&mut self, params: &Value) -> Result<Value, String> {
+        let Some(buffers_value) = params.get("buffers").and_then(Value::as_array) else {
+            return Err("compute_graph requires buffers[]".to_string());
+        };
+        let Some(passes_value) = params.get("passes").and_then(Value::as_array) else {
+            return Err("compute_graph requires passes[]".to_string());
+        };
+        let mut buffer_specs = Vec::with_capacity(buffers_value.len());
+        for buffer in buffers_value {
+            buffer_specs.push(parse_compute_graph_buffer(buffer)?);
+        }
+        let buffer_kinds = buffer_specs
+            .iter()
+            .map(|buffer| (buffer.id.clone(), buffer.kind))
+            .collect::<HashMap<_, _>>();
+        let mut pass_plans = Vec::with_capacity(passes_value.len());
+        for (index, pass) in passes_value.iter().enumerate() {
+            pass_plans.push(self.compute_graph_pass_plan(pass, index, &buffer_kinds)?);
+        }
+        let readbacks = compute_graph_readbacks(params, &buffer_specs);
+        let Some(renderer) = self.renderer.as_mut() else {
+            return Err("native renderer has not created a wgpu device".to_string());
+        };
+        let result = renderer.run_native_compute_graph(buffer_specs, pass_plans, readbacks)?;
+        self.stats.pipeline_cache_entries = renderer.native_pipeline_cache_count() as u64;
+        Ok(result)
+    }
+
+    fn compute_graph_pass_plan(
+        &self,
+        pass: &Value,
+        index: usize,
+        buffer_kinds: &HashMap<String, NativeComputeBufferBindingKind>,
+    ) -> Result<NativeComputeGraphPassPlan, String> {
+        let Some(shader_id) = string_at(pass, &["shader_id"]) else {
+            return Err(format!("compute_graph pass {index} missing shader_id"));
+        };
+        let record = self.shader_registry.get(&shader_id).ok_or_else(|| {
+            format!("compute graph shader `{shader_id}` has not been precompiled")
+        })?;
+        let source = self
+            .shader_sources
+            .get(&shader_id)
+            .ok_or_else(|| format!("compute graph shader source missing for `{shader_id}`"))?;
+        let explicit_entry = string_at(pass, &["entry"]);
+        let entry = if let Some(entry) = explicit_entry {
+            if record
+                .entry_points
+                .iter()
+                .any(|candidate| candidate == &entry)
+            {
+                entry
+            } else {
+                return Err(format!(
+                    "shader `{shader_id}` has no compute entry `{entry}`"
+                ));
+            }
+        } else {
+            native_compute_entry(record, source)
+                .ok_or_else(|| format!("shader `{shader_id}` is not a supported compute shader"))?
+        };
+        let Some(bindings_value) = pass.get("bindings").and_then(Value::as_array) else {
+            return Err(format!(
+                "compute_graph pass `{shader_id}` requires bindings[]"
+            ));
+        };
+        let mut bindings = Vec::with_capacity(bindings_value.len());
+        for binding in bindings_value {
+            let binding_number = number_at(binding, &["binding"])
+                .ok_or_else(|| format!("compute_graph pass `{shader_id}` binding missing number"))?
+                .round()
+                .clamp(0.0, u32::MAX as f64) as u32;
+            let Some(resource_id) = string_at(binding, &["resource"])
+                .or_else(|| string_at(binding, &["resource_id"]))
+                .or_else(|| string_at(binding, &["buffer"]))
+            else {
+                return Err(format!(
+                    "compute_graph pass `{shader_id}` binding {binding_number} missing resource"
+                ));
+            };
+            let default_kind = buffer_kinds
+                .get(&resource_id)
+                .copied()
+                .unwrap_or(NativeComputeBufferBindingKind::StorageReadWrite);
+            let kind = compute_binding_kind_from_value(binding).unwrap_or(default_kind);
+            bindings.push(NativeComputeGraphBindingSpec {
+                binding: binding_number,
+                resource_id,
+                kind,
+            });
+        }
+        bindings.sort_by_key(|binding| binding.binding);
+        let dispatch = dispatch_from_value(pass);
+        let layout_sig = bindings
+            .iter()
+            .map(|binding| format!("{}:{}", binding.binding, binding.kind.signature()))
+            .collect::<Vec<_>>()
+            .join(",");
+        let name =
+            string_at(pass, &["name"]).unwrap_or_else(|| format!("{shader_id}:{entry}:{index}"));
+        Ok(NativeComputeGraphPassPlan {
+            name,
+            cache_key: format!(
+                "graph:{shader_id}:{}:{entry}:{layout_sig}",
+                record.source_hash
+            ),
+            source: source.clone(),
+            entry,
+            dispatch,
+            bindings,
+        })
     }
 
     fn frame_duration(&self) -> Duration {
@@ -3160,9 +3360,15 @@ impl RenderState {
         cache_key: &str,
         source: &str,
         compute_entry: &str,
+        layout_specs: &[NativeComputeBindingLayoutSpec],
     ) -> Result<(), String> {
         if self.native_compute_pipelines.contains_key(cache_key) {
             return Ok(());
+        }
+        if layout_specs.is_empty() {
+            return Err(format!(
+                "native compute pipeline `{cache_key}` has no bindings"
+            ));
         }
         let error_scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let shader = self
@@ -3171,32 +3377,20 @@ impl RenderState {
                 label: Some("Ghost Render Core Native Compute Shader"),
                 source: wgpu::ShaderSource::Wgsl(source.into()),
             });
+        let layout_entries = layout_specs
+            .iter()
+            .map(|spec| wgpu::BindGroupLayoutEntry {
+                binding: spec.binding,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: spec.kind.binding_type(),
+                count: None,
+            })
+            .collect::<Vec<_>>();
         let bind_group_layout =
             self.device
                 .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("Ghost Render Core Native Compute Probe Layout"),
-                    entries: &[
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::COMPUTE,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: false },
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: wgpu::ShaderStages::COMPUTE,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Uniform,
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
-                        },
-                    ],
+                    label: Some("Ghost Render Core Native Compute Layout"),
+                    entries: &layout_entries,
                 });
         let pipeline_layout = self
             .device
@@ -3237,7 +3431,21 @@ impl RenderState {
         compute_entry: &str,
         uniforms: ComputeProbeUniforms,
     ) -> Result<ComputeProbeResult, String> {
-        self.ensure_native_compute_pipeline(cache_key, source, compute_entry)?;
+        self.ensure_native_compute_pipeline(
+            cache_key,
+            source,
+            compute_entry,
+            &[
+                NativeComputeBindingLayoutSpec {
+                    binding: 0,
+                    kind: NativeComputeBufferBindingKind::StorageReadWrite,
+                },
+                NativeComputeBindingLayoutSpec {
+                    binding: 1,
+                    kind: NativeComputeBufferBindingKind::Uniform,
+                },
+            ],
+        )?;
         let element_count = uniforms.element_count.max(1);
         let byte_length = element_count as u64 * std::mem::size_of::<u32>() as u64;
         let storage_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -3326,6 +3534,193 @@ impl RenderState {
         drop(mapped);
         readback_buffer.unmap();
         self.last_frame_error = None;
+        Ok(ComputeProbeResult {
+            byte_length,
+            checksum,
+            nonzero_words,
+            first_words,
+        })
+    }
+
+    fn run_native_compute_graph(
+        &mut self,
+        buffers: Vec<NativeComputeGraphBufferSpec>,
+        passes: Vec<NativeComputeGraphPassPlan>,
+        readbacks: Vec<String>,
+    ) -> Result<Value, String> {
+        if buffers.is_empty() {
+            return Err("native compute graph requires at least one buffer".to_string());
+        }
+        if passes.is_empty() {
+            return Err("native compute graph requires at least one pass".to_string());
+        }
+        let mut gpu_buffers = HashMap::<String, (wgpu::Buffer, u64)>::new();
+        for spec in buffers {
+            let usage = spec.kind.buffer_usage();
+            let buffer = if spec.initial_bytes.is_empty() {
+                self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(&format!("Ghost Native Compute Graph Buffer {}", spec.id)),
+                    size: spec.byte_length,
+                    usage,
+                    mapped_at_creation: false,
+                })
+            } else {
+                self.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some(&format!("Ghost Native Compute Graph Buffer {}", spec.id)),
+                        contents: &spec.initial_bytes,
+                        usage,
+                    })
+            };
+            gpu_buffers.insert(spec.id, (buffer, spec.byte_length));
+        }
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Ghost Native Compute Graph Encoder"),
+            });
+        let mut executed_passes = Vec::with_capacity(passes.len());
+        for pass_plan in passes {
+            let layout_specs = pass_plan
+                .bindings
+                .iter()
+                .map(|binding| NativeComputeBindingLayoutSpec {
+                    binding: binding.binding,
+                    kind: binding.kind,
+                })
+                .collect::<Vec<_>>();
+            self.ensure_native_compute_pipeline(
+                &pass_plan.cache_key,
+                &pass_plan.source,
+                &pass_plan.entry,
+                &layout_specs,
+            )?;
+            let Some(cached) = self.native_compute_pipelines.get(&pass_plan.cache_key) else {
+                return Err(format!(
+                    "native compute graph pipeline missing after compile: {}",
+                    pass_plan.cache_key
+                ));
+            };
+            let mut entries = Vec::with_capacity(pass_plan.bindings.len());
+            for binding in &pass_plan.bindings {
+                let Some((buffer, _)) = gpu_buffers.get(&binding.resource_id) else {
+                    return Err(format!(
+                        "native compute graph pass `{}` references missing buffer `{}`",
+                        pass_plan.name, binding.resource_id
+                    ));
+                };
+                entries.push(wgpu::BindGroupEntry {
+                    binding: binding.binding,
+                    resource: buffer.as_entire_binding(),
+                });
+            }
+            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&format!(
+                    "Ghost Native Compute Graph Bind Group {}",
+                    pass_plan.name
+                )),
+                layout: &cached.bind_group_layout,
+                entries: &entries,
+            });
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some(&format!(
+                        "Ghost Native Compute Graph Pass {}",
+                        pass_plan.name
+                    )),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&cached.pipeline);
+                pass.set_bind_group(0, &bind_group, &[]);
+                pass.dispatch_workgroups(
+                    pass_plan.dispatch[0].max(1),
+                    pass_plan.dispatch[1].max(1),
+                    pass_plan.dispatch[2].max(1),
+                );
+            }
+            executed_passes.push(json!({
+                "name": pass_plan.name,
+                "entry": pass_plan.entry,
+                "dispatch": pass_plan.dispatch,
+            }));
+        }
+
+        let mut readback_buffers = Vec::new();
+        for id in &readbacks {
+            let Some((buffer, byte_length)) = gpu_buffers.get(id) else {
+                return Err(format!(
+                    "native compute graph readback missing buffer `{id}`"
+                ));
+            };
+            let readback_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(&format!("Ghost Native Compute Graph Readback {id}")),
+                size: *byte_length,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            encoder.copy_buffer_to_buffer(buffer, 0, &readback_buffer, 0, *byte_length);
+            readback_buffers.push((id.clone(), readback_buffer, *byte_length));
+        }
+
+        self.queue.submit(Some(encoder.finish()));
+
+        let mut readback_json = serde_json::Map::new();
+        for (id, readback_buffer, byte_length) in readback_buffers {
+            let probe = self.readback_u32_buffer(&readback_buffer, byte_length)?;
+            readback_json.insert(
+                id,
+                json!({
+                    "byte_length": probe.byte_length,
+                    "checksum": format!("{:016x}", probe.checksum),
+                    "nonzero_words": probe.nonzero_words,
+                    "first_words": probe.first_words,
+                }),
+            );
+        }
+
+        self.last_frame_error = None;
+        Ok(json!({
+            "pass_count": executed_passes.len(),
+            "passes": executed_passes,
+            "readbacks": readback_json,
+            "pipeline_cache_entries": self.native_pipeline_cache_count(),
+        }))
+    }
+
+    fn readback_u32_buffer(
+        &self,
+        readback_buffer: &wgpu::Buffer,
+        byte_length: u64,
+    ) -> Result<ComputeProbeResult, String> {
+        let slice = readback_buffer.slice(..);
+        let (tx, rx) = mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result.map_err(|err| err.to_string()));
+        });
+        self.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .map_err(|err| err.to_string())?;
+        rx.recv()
+            .map_err(|err| err.to_string())?
+            .map_err(|err| err.to_string())?;
+        let mapped = slice.get_mapped_range().map_err(|err| err.to_string())?;
+        let mut checksum = 0xcbf29ce484222325u64;
+        let mut nonzero_words = 0u32;
+        let mut first_words = Vec::new();
+        for chunk in mapped.chunks_exact(4) {
+            let value = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+            if value != 0 {
+                nonzero_words = nonzero_words.saturating_add(1);
+            }
+            if first_words.len() < 8 {
+                first_words.push(value);
+            }
+            checksum ^= value as u64;
+            checksum = checksum.wrapping_mul(0x100000001b3);
+        }
+        drop(mapped);
+        readback_buffer.unmap();
         Ok(ComputeProbeResult {
             byte_length,
             checksum,
@@ -3939,6 +4334,192 @@ fn string_at(value: &Value, path: &[&str]) -> Option<String> {
     current.as_str().map(ToString::to_string)
 }
 
+fn compute_binding_kind_from_value(value: &Value) -> Option<NativeComputeBufferBindingKind> {
+    string_at(value, &["kind"])
+        .or_else(|| string_at(value, &["type"]))
+        .or_else(|| string_at(value, &["buffer_type"]))
+        .and_then(|kind| compute_binding_kind_from_str(&kind))
+}
+
+fn compute_binding_kind_from_str(kind: &str) -> Option<NativeComputeBufferBindingKind> {
+    let kind = kind.trim().to_ascii_lowercase();
+    match kind.as_str() {
+        "uniform" | "uniform-buffer" | "uniform_buffer" => {
+            Some(NativeComputeBufferBindingKind::Uniform)
+        }
+        "read" | "readonly" | "read-only" | "read_only" | "read-only-storage"
+        | "read_only_storage" | "storage-read" | "storage_read" => {
+            Some(NativeComputeBufferBindingKind::StorageRead)
+        }
+        "storage" | "readwrite" | "read-write" | "read_write" | "read_write_storage"
+        | "read-write-storage" | "storage-rw" | "storage_rw" => {
+            Some(NativeComputeBufferBindingKind::StorageReadWrite)
+        }
+        _ => None,
+    }
+}
+
+fn parse_compute_graph_buffer(value: &Value) -> Result<NativeComputeGraphBufferSpec, String> {
+    let Some(id) = string_at(value, &["id"])
+        .or_else(|| string_at(value, &["name"]))
+        .or_else(|| string_at(value, &["resource"]))
+    else {
+        return Err("compute_graph buffer missing id".to_string());
+    };
+    let kind = compute_binding_kind_from_value(value)
+        .unwrap_or(NativeComputeBufferBindingKind::StorageReadWrite);
+    let mut initial_bytes = compute_initial_bytes(value)?;
+    let declared_size = number_at(value, &["byte_length"])
+        .or_else(|| number_at(value, &["size"]))
+        .or_else(|| number_at(value, &["bytes"]))
+        .unwrap_or(initial_bytes.len().max(4) as f64)
+        .round()
+        .clamp(4.0, 512.0 * 1024.0 * 1024.0) as u64;
+    let alignment = if matches!(kind, NativeComputeBufferBindingKind::Uniform) {
+        16
+    } else {
+        4
+    };
+    let byte_length = align_u64(
+        declared_size.max(initial_bytes.len() as u64).max(4),
+        alignment,
+    );
+    if !initial_bytes.is_empty() {
+        initial_bytes.resize(byte_length as usize, 0);
+    }
+    Ok(NativeComputeGraphBufferSpec {
+        id,
+        byte_length,
+        kind,
+        initial_bytes,
+    })
+}
+
+fn compute_initial_bytes(value: &Value) -> Result<Vec<u8>, String> {
+    if let Some(encoded) = string_at(value, &["initial_b64"])
+        .or_else(|| string_at(value, &["data_b64"]))
+        .or_else(|| string_at(value, &["bytes_b64"]))
+    {
+        return base64::engine::general_purpose::STANDARD
+            .decode(encoded.as_bytes())
+            .map_err(|err| err.to_string());
+    }
+    if let Some(values) = value
+        .get("initial_u32")
+        .or_else(|| value.get("u32"))
+        .and_then(Value::as_array)
+    {
+        let mut bytes = Vec::with_capacity(values.len() * 4);
+        for value in values {
+            let n = value
+                .as_f64()
+                .unwrap_or(0.0)
+                .round()
+                .clamp(0.0, u32::MAX as f64) as u32;
+            bytes.extend_from_slice(&n.to_le_bytes());
+        }
+        return Ok(bytes);
+    }
+    if let Some(values) = value
+        .get("initial_i32")
+        .or_else(|| value.get("i32"))
+        .and_then(Value::as_array)
+    {
+        let mut bytes = Vec::with_capacity(values.len() * 4);
+        for value in values {
+            let n = value
+                .as_f64()
+                .unwrap_or(0.0)
+                .round()
+                .clamp(i32::MIN as f64, i32::MAX as f64) as i32;
+            bytes.extend_from_slice(&n.to_le_bytes());
+        }
+        return Ok(bytes);
+    }
+    if let Some(values) = value
+        .get("initial_f32")
+        .or_else(|| value.get("f32"))
+        .and_then(Value::as_array)
+    {
+        let mut bytes = Vec::with_capacity(values.len() * 4);
+        for value in values {
+            let n = value.as_f64().unwrap_or(0.0).clamp(-1.0e20, 1.0e20) as f32;
+            bytes.extend_from_slice(&n.to_le_bytes());
+        }
+        return Ok(bytes);
+    }
+    Ok(Vec::new())
+}
+
+fn dispatch_from_value(value: &Value) -> [u32; 3] {
+    if let Some(values) = value.get("dispatch").and_then(Value::as_array) {
+        return [
+            values
+                .first()
+                .and_then(Value::as_f64)
+                .unwrap_or(1.0)
+                .round()
+                .clamp(1.0, u32::MAX as f64) as u32,
+            values
+                .get(1)
+                .and_then(Value::as_f64)
+                .unwrap_or(1.0)
+                .round()
+                .clamp(1.0, u32::MAX as f64) as u32,
+            values
+                .get(2)
+                .and_then(Value::as_f64)
+                .unwrap_or(1.0)
+                .round()
+                .clamp(1.0, u32::MAX as f64) as u32,
+        ];
+    }
+    [
+        number_at(value, &["dispatch_x"])
+            .or_else(|| number_at(value, &["x"]))
+            .unwrap_or(1.0)
+            .round()
+            .clamp(1.0, u32::MAX as f64) as u32,
+        number_at(value, &["dispatch_y"])
+            .or_else(|| number_at(value, &["y"]))
+            .unwrap_or(1.0)
+            .round()
+            .clamp(1.0, u32::MAX as f64) as u32,
+        number_at(value, &["dispatch_z"])
+            .or_else(|| number_at(value, &["z"]))
+            .unwrap_or(1.0)
+            .round()
+            .clamp(1.0, u32::MAX as f64) as u32,
+    ]
+}
+
+fn compute_graph_readbacks(
+    params: &Value,
+    buffers: &[NativeComputeGraphBufferSpec],
+) -> Vec<String> {
+    if let Some(values) = params.get("readbacks").and_then(Value::as_array) {
+        let mut out = Vec::new();
+        for value in values {
+            if let Some(id) = value.as_str() {
+                out.push(id.to_string());
+            } else if let Some(id) =
+                string_at(value, &["id"]).or_else(|| string_at(value, &["buffer"]))
+            {
+                out.push(id);
+            }
+        }
+        if !out.is_empty() {
+            return out;
+        }
+    }
+    buffers
+        .iter()
+        .filter(|buffer| !matches!(buffer.kind, NativeComputeBufferBindingKind::Uniform))
+        .last()
+        .map(|buffer| vec![buffer.id.clone()])
+        .unwrap_or_default()
+}
+
 fn rgba_at(value: &Value, path: &[&str]) -> Option<[f32; 4]> {
     let mut current = value;
     for key in path {
@@ -4263,6 +4844,13 @@ struct SnapshotMetrics {
 }
 
 fn align_u32(value: u32, alignment: u32) -> u32 {
+    if alignment == 0 {
+        return value;
+    }
+    value.div_ceil(alignment).saturating_mul(alignment)
+}
+
+fn align_u64(value: u64, alignment: u64) -> u64 {
     if alignment == 0 {
         return value;
     }
