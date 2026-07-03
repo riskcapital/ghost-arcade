@@ -457,6 +457,7 @@ async function main() {
       !capabilities.features.compute_graph_render ||
       !capabilities.features.compute_graph_source_frame_target ||
       !capabilities.features.persistent_compute_buffers ||
+      !capabilities.features.native_3d_smoke_graph ||
       capabilities.features.multi_pass_instruments
     ) {
       throw new Error(`native compute capability flags are not honest yet: ${JSON.stringify(capabilities.features)}`);
