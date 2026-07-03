@@ -71,7 +71,6 @@ const BROKER_UNSUPPORTED_COMMANDS = new Map([
   ['native_renderer_set_decode_upload_policy', 'native decode upload policy is not implemented yet'],
   ['native_renderer_set_decode_handoff_policy', 'native decode handoff policy is not implemented yet'],
   ['native_renderer_set_decode_estimate_cache_policy', 'native decode estimate cache is not implemented yet'],
-  ['native_renderer_export_snapshot_json', 'native snapshot export is not implemented yet'],
   ['native_renderer_set_decode_policy', 'legacy decode policy API is not implemented by this core'],
   ['native_renderer_set_prefetch_policy', 'legacy prefetch policy API is not implemented by this core'],
   ['native_renderer_get_decode_capabilities', 'native decode capabilities are not implemented yet'],
@@ -141,6 +140,7 @@ class NativeRendererBroker {
       if (command === 'native_renderer_get_frame_snapshot') return null;
       if (command === 'native_renderer_get_capabilities') return this.capabilities;
       if (command === 'native_renderer_get_readiness_report') return this.readinessReport();
+      if (command === 'native_renderer_export_snapshot_json') return this.exportSnapshotJson(args);
       return null;
     }
 
@@ -161,6 +161,8 @@ class NativeRendererBroker {
         return this.getCapabilities();
       case 'native_renderer_get_readiness_report':
         return this.readinessReport();
+      case 'native_renderer_export_snapshot_json':
+        return this.exportSnapshotJson(args);
       case 'native_renderer_reset_stats':
         this.stats = makeDefaultStats();
         return this.sendIfRunning('reset_stats', args, { fallback: null });
@@ -256,6 +258,29 @@ class NativeRendererBroker {
       status: this.lastStatus,
       stats: this.stats,
       capabilities: this.capabilities,
+    };
+  }
+
+  async exportSnapshotJson(args = {}) {
+    const outPath = typeof args === 'string'
+      ? args
+      : args?.path || args?.file_path || args?.output_path;
+    if (!outPath || typeof outPath !== 'string') {
+      throw new Error('native snapshot export requires a target path');
+    }
+    if (this.child && !this.child.killed) {
+      await this.getStatus();
+      await this.getStats();
+      await this.refreshCapabilities();
+    }
+    const payload = this.snapshot();
+    const body = `${JSON.stringify(payload, null, 2)}\n`;
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    fs.writeFileSync(outPath, body, 'utf8');
+    return {
+      path: outPath,
+      bytes: Buffer.byteLength(body),
+      timestamp_ms: payload.timestamp_ms,
     };
   }
 
