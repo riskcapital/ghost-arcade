@@ -668,6 +668,7 @@ function makeDefaultCapabilities(overrides = {}) {
       source_frame_hdr: false,
       compute_shader_host: false,
       compute_graph_host: false,
+      compute_graph_render: false,
       persistent_compute_buffers: false,
       multi_pass_instruments: false,
       storage_buffer_instruments: false,
