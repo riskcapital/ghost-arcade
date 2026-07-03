@@ -140,8 +140,17 @@ describe('3D Smoke native renderer integration', () => {
     }, 10000);
 
     const sourceId = 'gpu:integration-smoke:smoke-3d';
+    await rpc.send('submit_commands', {
+      commands: [
+        { type: 'upsert_layer', layer_id: 'native-smoke-3d', z_index: 0, blend_mode: 'normal', opacity: 1, corners: FULLSCREEN_CORNERS },
+        { type: 'set_layer_visibility', layer_id: 'native-smoke-3d', visible: true },
+        { type: 'bind_media_source', layer_id: 'native-smoke-3d', source_id: sourceId, uri: 'native-graph://smoke-3d/integration', source_type: 'image' },
+      ],
+    });
+
     let state: Smoke3DNativeGraphState | null = null;
     let graphResult: any = null;
+    const frameChecksums = new Set<string>();
     for (let frame = 0; frame < 3; frame++) {
       const graph = buildSmoke3DNativeComputeGraph({
         sourceId,
@@ -169,23 +178,16 @@ describe('3D Smoke native renderer integration', () => {
         target: 'source_frame',
         source_id: sourceId,
       });
+      const snapshot = await rpc.send('frame_snapshot', {
+        include_pixels: false,
+        time: 0.1 + frame / 30,
+        frame_index: frame + 4,
+      }, 10000);
+      assertVisibleFrame(`native 3D Smoke source-frame layer ${frame}`, snapshot, 0.015);
+      expect(snapshot.checksum).toBeTruthy();
+      frameChecksums.add(String(snapshot.checksum));
     }
-
-    await rpc.send('submit_commands', {
-      commands: [
-        { type: 'upsert_layer', layer_id: 'native-smoke-3d', z_index: 0, blend_mode: 'normal', opacity: 1, corners: FULLSCREEN_CORNERS },
-        { type: 'set_layer_visibility', layer_id: 'native-smoke-3d', visible: true },
-        { type: 'bind_media_source', layer_id: 'native-smoke-3d', source_id: sourceId, uri: 'native-graph://smoke-3d/integration', source_type: 'image' },
-      ],
-    });
-
-    const snapshot = await rpc.send('frame_snapshot', {
-      include_pixels: false,
-      time: 0.1,
-      frame_index: 4,
-    }, 10000);
-    assertVisibleFrame('native 3D Smoke source-frame layer', snapshot, 0.015);
-    expect(snapshot.checksum).toBeTruthy();
+    expect(frameChecksums.size).toBeGreaterThan(1);
 
     const status = await rpc.send('status', {}, 5000);
     expect(Number(status.source_frames_active ?? 0)).toBeGreaterThanOrEqual(1);
