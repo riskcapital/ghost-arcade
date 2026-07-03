@@ -464,6 +464,9 @@ async function main() {
     if (capabilities.features.shared_texture_upload) {
       throw new Error(`native capabilities overstated unimplemented features: ${JSON.stringify(capabilities.features)}`);
     }
+    if (!capabilities.features.present_policy || !capabilities.features.managed_output_attach) {
+      throw new Error(`native managed output/present capabilities missing: ${JSON.stringify(capabilities.features)}`);
+    }
     if (
       !capabilities.features.audio_uniform_layout ||
       capabilities.audio_uniform_layout?.schema_version !== 1 ||
@@ -476,6 +479,28 @@ async function main() {
     if (!capabilities.implemented_methods?.includes('capabilities')) {
       throw new Error(`native capabilities did not list the capabilities RPC: ${JSON.stringify(capabilities)}`);
     }
+    for (const method of ['set_present_policy', 'attach_output_window', 'detach_output_window']) {
+      if (!capabilities.implemented_methods?.includes(method)) {
+        throw new Error(`native capabilities did not list ${method}: ${JSON.stringify(capabilities.implemented_methods)}`);
+      }
+    }
+    const presentStatus = await rpc.send('set_present_policy', {
+      config: {
+        present_mode: 'vsync',
+        allow_tearing: false,
+        max_frame_latency: 1,
+        use_waitable_object: false,
+      },
+    }, 5000);
+    if (
+      presentStatus?.present_mode !== 'vsync' ||
+      Number(presentStatus?.max_frame_latency ?? 0) !== 1 ||
+      !presentStatus?.output_window_attached ||
+      !presentStatus?.output_swapchain_ready
+    ) {
+      throw new Error(`native present policy/status did not apply: ${JSON.stringify(presentStatus)}`);
+    }
+    await rpc.send('attach_output_window', { label: 'native-smoke-output' }, 5000);
     try {
       await rpc.send('definitely_not_a_real_method', {}, 1000);
       throw new Error('unknown RPC method unexpectedly succeeded');
@@ -945,6 +970,15 @@ async function main() {
     }
     if (status.native_quality.policy !== 'auto') {
       throw new Error(`native quality policy should default to auto: ${JSON.stringify(status.native_quality)}`);
+    }
+    if (
+      status.present_mode !== 'vsync' ||
+      Number(status.max_frame_latency ?? 0) !== 1 ||
+      !status.output_window_attached ||
+      !status.output_swapchain_ready ||
+      !status.output_present_healthy
+    ) {
+      throw new Error(`native managed output/present status regressed: ${JSON.stringify(status)}`);
     }
     if (status.native_caps?.requested_timestamp_query && !status.gpu_timing_supported) {
       throw new Error(`native GPU timing should be enabled when timestamp queries are requested: ${JSON.stringify(status)}`);

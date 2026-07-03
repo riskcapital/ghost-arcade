@@ -71,9 +71,6 @@ const BROKER_UNSUPPORTED_COMMANDS = new Map([
   ['native_renderer_set_decode_upload_policy', 'native decode upload policy is not implemented yet'],
   ['native_renderer_set_decode_handoff_policy', 'native decode handoff policy is not implemented yet'],
   ['native_renderer_set_decode_estimate_cache_policy', 'native decode estimate cache is not implemented yet'],
-  ['native_renderer_set_present_policy', 'native present policy is not implemented yet'],
-  ['native_renderer_attach_output_window', 'managed native output attach is not implemented yet'],
-  ['native_renderer_detach_output_window', 'managed native output detach is not implemented yet'],
   ['native_renderer_export_snapshot_json', 'native snapshot export is not implemented yet'],
   ['native_renderer_set_decode_policy', 'legacy decode policy API is not implemented by this core'],
   ['native_renderer_set_prefetch_policy', 'legacy prefetch policy API is not implemented by this core'],
@@ -175,6 +172,12 @@ class NativeRendererBroker {
         return this.sendIfRunning('compute_graph', args, { fallback: null, timeoutMs: 10000 });
       case 'native_renderer_set_target_fps':
         return this.sendIfRunning('set_target_fps', args, { fallback: null });
+      case 'native_renderer_set_present_policy':
+        return this.sendIfRunning('set_present_policy', args, { fallback: null });
+      case 'native_renderer_attach_output_window':
+        return this.sendIfRunning('attach_output_window', args, { fallback: null });
+      case 'native_renderer_detach_output_window':
+        return this.sendIfRunning('detach_output_window', args, { fallback: null });
       default:
         if (BROKER_UNSUPPORTED_COMMANDS.has(command)) {
           return Promise.reject(this.unsupportedError(command));
@@ -276,7 +279,8 @@ class NativeRendererBroker {
       ['native-media-decode', 'Native media decode/prefetch', !!features.native_media_decode && !!features.media_prefetch],
       ['compute-graph-host', 'Native buffer compute graph host', !!features.compute_graph_host],
       ['compute-instrument-host', 'Native compute/multi-pass instrument host', !!features.compute_shader_host && !!features.multi_pass_instruments],
-      ['managed-output', 'Managed native output / recording', !!features.managed_output_attach && !!features.native_recording],
+      ['managed-output', 'Managed native output window', !!features.managed_output_attach],
+      ['native-recording', 'Native recording', !!features.native_recording],
     ];
     return {
       timestamp_ms: Date.now(),
@@ -652,6 +656,24 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     output_width: Number(status.output_width ?? status.width ?? previous.output_width ?? 1920),
     output_height: Number(status.output_height ?? status.height ?? previous.output_height ?? 1080),
     target_fps: Number(status.target_fps ?? previous.target_fps ?? 60),
+    present_mode: status.present_mode || previous.present_mode || 'vsync',
+    surface_present_mode: status.surface_present_mode || previous.surface_present_mode || 'unconfigured',
+    allow_tearing: !!(status.allow_tearing ?? previous.allow_tearing ?? false),
+    max_frame_latency: Number(status.max_frame_latency ?? previous.max_frame_latency ?? 2),
+    use_waitable_object: !!(status.use_waitable_object ?? previous.use_waitable_object ?? false),
+    output_refresh_hz: Number(status.output_refresh_hz ?? previous.output_refresh_hz ?? status.target_fps ?? 60),
+    output_window_attached: !!(status.output_window_attached ?? previous.output_window_attached ?? false),
+    output_swapchain_ready: !!(status.output_swapchain_ready ?? previous.output_swapchain_ready ?? false),
+    output_tearing_active: !!(status.output_tearing_active ?? previous.output_tearing_active ?? false),
+    output_waitable_object_active: !!(
+      status.output_waitable_object_active ?? previous.output_waitable_object_active ?? false
+    ),
+    output_present_healthy: !!(status.output_present_healthy ?? previous.output_present_healthy ?? false),
+    output_present_consecutive_failures: Number(
+      status.output_present_consecutive_failures ?? previous.output_present_consecutive_failures ?? 0,
+    ),
+    supports_tearing: !!(status.supports_tearing ?? previous.supports_tearing ?? false),
+    supports_waitable_object: !!(status.supports_waitable_object ?? previous.supports_waitable_object ?? false),
     shader_precompile_queue_cap: Number(status.shader_precompile_queue_cap ?? previous.shader_precompile_queue_cap ?? 4096),
     shader_precompile_per_frame: Number(status.shader_precompile_per_frame ?? previous.shader_precompile_per_frame ?? 4),
     shader_metadata_cache_cap: Number(status.shader_metadata_cache_cap ?? previous.shader_metadata_cache_cap ?? 16384),
@@ -761,6 +783,7 @@ function makeDefaultCapabilities(overrides = {}) {
       shared_texture_upload: false,
       native_media_decode: false,
       media_prefetch: false,
+      present_policy: false,
       managed_output_attach: false,
       native_recording: false,
       native_stage3d: false,
@@ -876,6 +899,7 @@ function makeDefaultStatus(overrides = {}) {
     layers_seen: 0,
     target_fps: 60,
     present_mode: 'vsync',
+    surface_present_mode: 'unconfigured',
     allow_tearing: false,
     max_frame_latency: 2,
     use_waitable_object: false,

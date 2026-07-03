@@ -66,6 +66,9 @@ const CORE_RPC_METHODS: &[&str] = &[
     "submit_batch",
     "submit_commands",
     "set_output",
+    "set_present_policy",
+    "attach_output_window",
+    "detach_output_window",
     "set_target_fps",
     "set_native_quality_policy",
     "set_render_clock",
@@ -82,6 +85,7 @@ const CORE_RPC_METHODS: &[&str] = &[
 ];
 const CORE_COMMAND_TYPES: &[&str] = &[
     "set_output",
+    "set_present_policy",
     "upsert_layer",
     "set_layer_visibility",
     "set_layer_color",
@@ -147,6 +151,11 @@ struct CoreStatus {
     width: u32,
     height: u32,
     target_fps: u32,
+    present_mode: String,
+    surface_present_mode: String,
+    allow_tearing: bool,
+    max_frame_latency: u32,
+    use_waitable_object: bool,
     source_preview_size: u32,
     source_previews_active: u32,
     source_preview_slots: u32,
@@ -205,6 +214,17 @@ struct CoreStatus {
     commands_applied: u64,
     commands_dropped: u64,
     layers_seen: u32,
+    output_width: u32,
+    output_height: u32,
+    output_refresh_hz: u32,
+    output_window_attached: bool,
+    output_swapchain_ready: bool,
+    output_tearing_active: bool,
+    output_waitable_object_active: bool,
+    output_present_healthy: bool,
+    output_present_consecutive_failures: u32,
+    supports_tearing: bool,
+    supports_waitable_object: bool,
     gpu_timing_supported: bool,
     avg_render_cpu_ms: f64,
     last_render_gpu_ms: f64,
@@ -1102,6 +1122,7 @@ struct RenderState {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    supported_present_modes: Vec<wgpu::PresentMode>,
     pipeline: wgpu::RenderPipeline,
     native_instrument_pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
@@ -1141,6 +1162,11 @@ struct App {
     running: bool,
     pending_width: u32,
     pending_height: u32,
+    present_mode: String,
+    allow_tearing: bool,
+    max_frame_latency: u32,
+    use_waitable_object: bool,
+    output_window_attached: bool,
     layers_seen: u32,
     command_phase: f32,
     scene_layers: HashMap<String, SceneLayer>,
@@ -1182,6 +1208,11 @@ impl App {
             running: false,
             pending_width: 1280,
             pending_height: 720,
+            present_mode: "vsync".to_string(),
+            allow_tearing: false,
+            max_frame_latency: 2,
+            use_waitable_object: false,
+            output_window_attached: true,
             layers_seen: 0,
             command_phase: 0.0,
             scene_layers: HashMap::new(),
@@ -1232,6 +1263,9 @@ impl App {
             window,
             self.pending_width.max(1),
             self.pending_height.max(1),
+            &self.present_mode,
+            self.allow_tearing,
+            self.max_frame_latency,
         ))?;
         self.native_quality
             .rebase_to_caps(&renderer.native_caps.recommended_quality_tier);
@@ -1273,7 +1307,8 @@ impl App {
             "shared_texture_upload": false,
             "native_media_decode": false,
             "media_prefetch": false,
-            "managed_output_attach": false,
+            "present_policy": true,
+            "managed_output_attach": true,
             "native_recording": false,
             "native_stage3d": false,
             "native_projection_sim": false
@@ -1337,6 +1372,15 @@ impl App {
             width: self.pending_width,
             height: self.pending_height,
             target_fps: self.target_fps,
+            present_mode: self.present_mode.clone(),
+            surface_present_mode: self
+                .renderer
+                .as_ref()
+                .map(RenderState::present_mode_label)
+                .unwrap_or_else(|| "unconfigured".to_string()),
+            allow_tearing: self.allow_tearing,
+            max_frame_latency: self.max_frame_latency,
+            use_waitable_object: false,
             source_preview_size: SOURCE_PREVIEW_SIZE as u32,
             source_previews_active: self.source_previews.len().min(1024) as u32,
             source_preview_slots: MAX_SOURCE_PREVIEWS as u32,
@@ -1450,6 +1494,31 @@ impl App {
             commands_applied: self.stats.commands_applied,
             commands_dropped: self.stats.commands_dropped,
             layers_seen: self.layers_seen,
+            output_width: self
+                .renderer
+                .as_ref()
+                .map(|renderer| renderer.config.width)
+                .unwrap_or(self.pending_width),
+            output_height: self
+                .renderer
+                .as_ref()
+                .map(|renderer| renderer.config.height)
+                .unwrap_or(self.pending_height),
+            output_refresh_hz: self.target_fps,
+            output_window_attached: self.output_window_attached && self.renderer.is_some(),
+            output_swapchain_ready: self.renderer.is_some() && last_frame_error.is_none(),
+            output_tearing_active: self
+                .renderer
+                .as_ref()
+                .is_some_and(RenderState::tearing_active),
+            output_waitable_object_active: false,
+            output_present_healthy: self.renderer.is_some() && last_frame_error.is_none(),
+            output_present_consecutive_failures: if last_frame_error.is_some() { 1 } else { 0 },
+            supports_tearing: self
+                .renderer
+                .as_ref()
+                .is_some_and(RenderState::supports_tearing),
+            supports_waitable_object: false,
             gpu_timing_supported,
             avg_render_cpu_ms: self.render_cpu_ema_ms,
             last_render_gpu_ms,
@@ -1550,9 +1619,15 @@ impl App {
                     },
                     {
                         "id": "managed-output",
-                        "label": "Managed output window / recording",
+                        "label": "Managed output window",
+                        "ok": self.renderer.is_some() && self.output_window_attached,
+                        "detail": if self.output_window_attached { "native output window is attached" } else { "native output window is detached/hidden" }
+                    },
+                    {
+                        "id": "native-recording",
+                        "label": "Native recording",
                         "ok": false,
-                        "detail": "not implemented; native window is a development preview surface"
+                        "detail": "not implemented yet"
                     }
                 ]
             })),
@@ -1577,6 +1652,18 @@ impl App {
             "set_output" => {
                 self.apply_output_config(&req.params);
                 Ok(json!(true))
+            }
+            "set_present_policy" => {
+                self.apply_present_policy(&req.params);
+                Ok(json!(self.status()))
+            }
+            "attach_output_window" => {
+                self.apply_output_window_attached(true);
+                Ok(json!(self.status()))
+            }
+            "detach_output_window" => {
+                self.apply_output_window_attached(false);
+                Ok(json!(self.status()))
             }
             "set_target_fps" => {
                 self.target_fps = number_at(&req.params, &["config", "target_fps"])
@@ -1637,6 +1724,7 @@ impl App {
             .unwrap_or(self.target_fps as f64)
             .round()
             .clamp(1.0, 240.0) as u32;
+        self.apply_present_policy(config);
         self.apply_native_quality_policy(config);
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.resize(PhysicalSize::new(self.pending_width, self.pending_height));
@@ -1650,6 +1738,43 @@ impl App {
         self.pending_height = height.round().clamp(64.0, 16384.0) as u32;
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.resize(PhysicalSize::new(self.pending_width, self.pending_height));
+        }
+    }
+
+    fn apply_present_policy(&mut self, params: &Value) {
+        let config = params.get("config").unwrap_or(params);
+        if let Some(mode) = string_at(config, &["present_mode"]) {
+            let normalized = mode.trim().to_ascii_lowercase();
+            self.present_mode =
+                if normalized == "immediate" || normalized == "no-vsync" || normalized == "novsync"
+                {
+                    "immediate".to_string()
+                } else {
+                    "vsync".to_string()
+                };
+        }
+        self.allow_tearing = bool_at(config, &["allow_tearing"]).unwrap_or(self.allow_tearing);
+        self.max_frame_latency = number_at(config, &["max_frame_latency"])
+            .unwrap_or(self.max_frame_latency as f64)
+            .round()
+            .clamp(1.0, 8.0) as u32;
+        self.use_waitable_object = false;
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.set_present_policy(
+                &self.present_mode,
+                self.allow_tearing,
+                self.max_frame_latency,
+            );
+        }
+    }
+
+    fn apply_output_window_attached(&mut self, attached: bool) {
+        self.output_window_attached = attached;
+        if let Some(renderer) = self.renderer.as_ref() {
+            renderer.window.set_visible(attached);
+            if attached {
+                renderer.window.request_redraw();
+            }
         }
     }
 
@@ -1717,6 +1842,7 @@ impl App {
                 "set_layer_color" => self.apply_layer_color(command),
                 "set_layer_native_params" => self.apply_layer_native_params(command),
                 "set_effect_chain" => self.apply_effect_chain(command),
+                "set_present_policy" => self.apply_present_policy(command),
                 "set_texture_pool_cap" => self.apply_texture_pool_cap(command),
                 "set_shader_precompile_policy" => self.apply_shader_precompile_policy(command),
                 "set_metadata_cache_caps" => self.apply_metadata_cache_caps(command),
@@ -3053,7 +3179,14 @@ impl ApplicationHandler<UserEvent> for App {
 }
 
 impl RenderState {
-    async fn new(window: &'static Window, width: u32, height: u32) -> Result<Self, String> {
+    async fn new(
+        window: &'static Window,
+        width: u32,
+        height: u32,
+        present_mode: &str,
+        allow_tearing: bool,
+        max_frame_latency: u32,
+    ) -> Result<Self, String> {
         let instance = wgpu::Instance::default();
         let surface = instance
             .create_surface(window)
@@ -3100,11 +3233,9 @@ impl RenderState {
             .copied()
             .find(|format| format.is_srgb())
             .unwrap_or(caps.formats[0]);
-        let present_mode = if caps.present_modes.contains(&wgpu::PresentMode::AutoNoVsync) {
-            wgpu::PresentMode::AutoNoVsync
-        } else {
-            wgpu::PresentMode::AutoVsync
-        };
+        let supported_present_modes = caps.present_modes.clone();
+        let present_mode =
+            choose_present_mode(&supported_present_modes, present_mode, allow_tearing);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
@@ -3112,7 +3243,7 @@ impl RenderState {
             width: width.max(1),
             height: height.max(1),
             present_mode,
-            desired_maximum_frame_latency: 2,
+            desired_maximum_frame_latency: max_frame_latency.clamp(1, 8),
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
         };
@@ -3454,6 +3585,7 @@ impl RenderState {
             device,
             queue,
             config,
+            supported_present_modes,
             pipeline,
             native_instrument_pipeline,
             uniform_buffer,
@@ -3558,6 +3690,38 @@ impl RenderState {
             .saturating_add(self.native_compute_pipelines.len())
             .saturating_add(self.native_graph_render_pipelines.len())
             .min(u32::MAX as usize) as u32
+    }
+
+    fn present_mode_label(&self) -> String {
+        present_mode_label(self.config.present_mode).to_string()
+    }
+
+    fn supports_tearing(&self) -> bool {
+        self.supported_present_modes.iter().any(|mode| {
+            matches!(
+                mode,
+                wgpu::PresentMode::Immediate | wgpu::PresentMode::FifoRelaxed
+            )
+        })
+    }
+
+    fn tearing_active(&self) -> bool {
+        matches!(
+            self.config.present_mode,
+            wgpu::PresentMode::Immediate | wgpu::PresentMode::FifoRelaxed
+        )
+    }
+
+    fn set_present_policy(
+        &mut self,
+        present_mode: &str,
+        allow_tearing: bool,
+        max_frame_latency: u32,
+    ) {
+        self.config.present_mode =
+            choose_present_mode(&self.supported_present_modes, present_mode, allow_tearing);
+        self.config.desired_maximum_frame_latency = max_frame_latency.clamp(1, 8);
+        self.surface.configure(&self.device, &self.config);
     }
 
     fn resize(&mut self, size: PhysicalSize<u32>) {
@@ -5923,6 +6087,52 @@ fn native_backend_name() -> &'static str {
         "d3d12"
     } else {
         "vulkan"
+    }
+}
+
+fn choose_present_mode(
+    supported: &[wgpu::PresentMode],
+    requested: &str,
+    allow_tearing: bool,
+) -> wgpu::PresentMode {
+    let wants_immediate = matches!(
+        requested.trim().to_ascii_lowercase().as_str(),
+        "immediate" | "no-vsync" | "novsync"
+    );
+    if wants_immediate {
+        if allow_tearing && supported.contains(&wgpu::PresentMode::Immediate) {
+            return wgpu::PresentMode::Immediate;
+        }
+        if supported.contains(&wgpu::PresentMode::Mailbox) {
+            return wgpu::PresentMode::Mailbox;
+        }
+        if supported.contains(&wgpu::PresentMode::Immediate) {
+            return wgpu::PresentMode::Immediate;
+        }
+        if supported.contains(&wgpu::PresentMode::AutoNoVsync) {
+            return wgpu::PresentMode::AutoNoVsync;
+        }
+    }
+    if supported.contains(&wgpu::PresentMode::Fifo) {
+        return wgpu::PresentMode::Fifo;
+    }
+    if supported.contains(&wgpu::PresentMode::AutoVsync) {
+        return wgpu::PresentMode::AutoVsync;
+    }
+    supported
+        .first()
+        .copied()
+        .unwrap_or(wgpu::PresentMode::AutoVsync)
+}
+
+fn present_mode_label(mode: wgpu::PresentMode) -> &'static str {
+    match mode {
+        wgpu::PresentMode::AutoVsync => "auto-vsync",
+        wgpu::PresentMode::AutoNoVsync => "auto-no-vsync",
+        wgpu::PresentMode::Fifo => "fifo",
+        wgpu::PresentMode::FifoRelaxed => "fifo-relaxed",
+        wgpu::PresentMode::Immediate => "immediate",
+        wgpu::PresentMode::Mailbox => "mailbox",
     }
 }
 
