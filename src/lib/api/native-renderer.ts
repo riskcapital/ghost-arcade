@@ -255,6 +255,12 @@ export interface NativeRendererCapabilities {
   backend: BackendKind | string | null;
   implemented_methods: string[];
   implemented_command_types: string[];
+  audio_uniform_layout?: {
+    schema_version: number;
+    audio0: readonly string[];
+    audio1: readonly string[];
+    audio2: readonly string[];
+  };
   features: Record<string, boolean>;
   limits: Record<string, number>;
   notes: string[];

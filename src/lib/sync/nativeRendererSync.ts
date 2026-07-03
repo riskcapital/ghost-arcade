@@ -3,6 +3,7 @@ import type { Layer } from '$lib/types';
 import { project } from '$lib/stores/layers';
 import { isMac, isWindows } from '$lib/bridge';
 import { getVisualAudioSnapshot, visualAudio, type VisualAudioState } from '$lib/audio/visualAudio';
+import { ghostAudioCommandFieldsFromVisualAudio } from '$lib/audio/ghostAudioUniform';
 import { WGSL_STDLIB, resolveGhostWgsl } from '$lib/renderer/wgsl';
 import {
   buildSmoke3DNativeComputeGraph,
@@ -768,18 +769,7 @@ export class NativeRendererSync {
     this.lastAudioSig = sig;
     return {
       type: 'set_audio_state',
-      active: audio.isActive,
-      level: clampNumber(audio.level, 0, 1),
-      bass: clampNumber(Math.max(audio.bass, audio.bassFast * 0.9), 0, 1),
-      mid: clampNumber(audio.mid, 0, 1),
-      treble: clampNumber(audio.treble, 0, 1),
-      high: clampNumber(audio.high, 0, 1),
-      beat: clampNumber(audio.beat, 0, 1),
-      beat_phase: clampNumber(audio.beatPhase, 0, 1),
-      bpm: clampNumber(audio.bpm, 0, 300),
-      centroid: clampNumber(audio.centroid, 0, 1),
-      kick: clampNumber(audio.kick, 0, 1),
-      snare: clampNumber(audio.snare, 0, 1),
+      ...ghostAudioCommandFieldsFromVisualAudio(audio),
     };
   }
 

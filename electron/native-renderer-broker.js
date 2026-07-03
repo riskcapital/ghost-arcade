@@ -732,6 +732,7 @@ function makeDefaultCapabilities(overrides = {}) {
     features: {
       separate_process_render_core: false,
       managed_native_window: false,
+      audio_uniform_layout: false,
       layer_compositor: false,
       layer_corner_warp: false,
       layer_uv_controls: false,
@@ -772,6 +773,12 @@ function makeDefaultCapabilities(overrides = {}) {
       source_frame_slots: 0,
       source_frame_size: 0,
       source_frame_mip_levels: 1,
+    },
+    audio_uniform_layout: {
+      schema_version: 1,
+      audio0: ['level', 'bass', 'mid', 'treble'],
+      audio1: ['high', 'beat', 'beat_phase', 'bpm'],
+      audio2: ['centroid', 'kick', 'snare', 'active'],
     },
     notes: overrides.running === false
       ? ['Native render core is not running; capabilities are the broker fallback shape.']
