@@ -718,6 +718,10 @@ export async function submitNativeRendererCommands(commands: RendererCommand[]) 
   return invoke<void>('native_renderer_submit_commands', { commands });
 }
 
+export async function runNativeRendererComputeGraph(config: Record<string, unknown>) {
+  return invoke<Record<string, unknown>>('native_renderer_run_compute_graph', config);
+}
+
 export async function uploadNativeRendererSourceGpuSharedTexture(
   sourceId: string,
   width: number,

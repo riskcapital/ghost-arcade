@@ -97,6 +97,54 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 `;
 
+const NATIVE_COMPUTE_GRAPH_FILL_SOURCE = `
+struct GraphUniforms {
+  element_count: u32,
+  seed: u32,
+  frame_index: u32,
+  scale: u32,
+}
+
+@group(0) @binding(0)
+var<storage, read_write> scratch_words: array<u32>;
+
+@group(0) @binding(1)
+var<uniform> graph: GraphUniforms;
+
+@compute @workgroup_size(64)
+fn cs_fill(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= graph.element_count) { return; }
+  scratch_words[i] = (i + 1u) * graph.scale + graph.seed + graph.frame_index * 17u;
+}
+`;
+
+const NATIVE_COMPUTE_GRAPH_TRANSFORM_SOURCE = `
+struct GraphUniforms {
+  element_count: u32,
+  seed: u32,
+  frame_index: u32,
+  scale: u32,
+}
+
+@group(0) @binding(0)
+var<storage, read> scratch_words: array<u32>;
+
+@group(0) @binding(1)
+var<storage, read_write> output_words: array<u32>;
+
+@group(0) @binding(2)
+var<uniform> graph: GraphUniforms;
+
+@compute @workgroup_size(64)
+fn cs_transform(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= graph.element_count) { return; }
+  let x = scratch_words[i];
+  output_words[i] = (x ^ (x << 7u) ^ (x >> 3u)) + graph.seed * 3u + i;
+}
+`;
+
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -333,7 +381,7 @@ async function main() {
     if (!capabilities?.features?.layer_compositor || !capabilities?.features?.fragment_wgsl_host) {
       throw new Error(`native capabilities missing implemented core features: ${JSON.stringify(capabilities)}`);
     }
-    if (!capabilities.features.compute_shader_host || capabilities.features.multi_pass_instruments) {
+    if (!capabilities.features.compute_shader_host || !capabilities.features.compute_graph_host || capabilities.features.multi_pass_instruments) {
       throw new Error(`native compute capability flags are not honest yet: ${JSON.stringify(capabilities.features)}`);
     }
     if (capabilities.features.shared_texture_upload) {
@@ -360,6 +408,20 @@ async function main() {
           entry: 'cs_main',
           source: NATIVE_COMPUTE_PROBE_SOURCE,
         },
+        {
+          type: 'precompile_shader',
+          shader_id: 'native-compute-graph-fill',
+          stage: 'compute',
+          entry: 'cs_fill',
+          source: NATIVE_COMPUTE_GRAPH_FILL_SOURCE,
+        },
+        {
+          type: 'precompile_shader',
+          shader_id: 'native-compute-graph-transform',
+          stage: 'compute',
+          entry: 'cs_transform',
+          source: NATIVE_COMPUTE_GRAPH_TRANSFORM_SOURCE,
+        },
       ],
     });
     const computeProbe = await rpc.send('compute_probe', {
@@ -370,6 +432,48 @@ async function main() {
     }, 5000);
     if (Number(computeProbe.nonzero_words ?? 0) < 240 || !computeProbe.checksum) {
       throw new Error(`native compute probe did not write expected data: ${JSON.stringify(computeProbe)}`);
+    }
+    const computeGraph = await rpc.send('compute_graph', {
+      buffers: [
+        { id: 'graph-uniform', kind: 'uniform', initial_u32: [256, 98765, 3, 11] },
+        { id: 'graph-scratch', kind: 'storage', byte_length: 1024 },
+        { id: 'graph-output', kind: 'storage', byte_length: 1024 },
+      ],
+      passes: [
+        {
+          name: 'fill',
+          shader_id: 'native-compute-graph-fill',
+          entry: 'cs_fill',
+          dispatch: [4, 1, 1],
+          bindings: [
+            { binding: 0, resource: 'graph-scratch', kind: 'storage' },
+            { binding: 1, resource: 'graph-uniform', kind: 'uniform' },
+          ],
+        },
+        {
+          name: 'transform',
+          shader_id: 'native-compute-graph-transform',
+          entry: 'cs_transform',
+          dispatch: [4, 1, 1],
+          bindings: [
+            { binding: 0, resource: 'graph-scratch', kind: 'read-only-storage' },
+            { binding: 1, resource: 'graph-output', kind: 'storage' },
+            { binding: 2, resource: 'graph-uniform', kind: 'uniform' },
+          ],
+        },
+      ],
+      readbacks: ['graph-scratch', 'graph-output'],
+    }, 5000);
+    const scratchReadback = computeGraph?.readbacks?.['graph-scratch'];
+    const outputReadback = computeGraph?.readbacks?.['graph-output'];
+    if (Number(computeGraph?.pass_count ?? 0) !== 2) {
+      throw new Error(`native compute graph did not execute both passes: ${JSON.stringify(computeGraph)}`);
+    }
+    if (Number(scratchReadback?.nonzero_words ?? 0) < 240 || Number(outputReadback?.nonzero_words ?? 0) < 240) {
+      throw new Error(`native compute graph readbacks were sparse: ${JSON.stringify(computeGraph)}`);
+    }
+    if (!outputReadback?.checksum || outputReadback.checksum === scratchReadback?.checksum) {
+      throw new Error(`native compute graph transform pass did not alter output: ${JSON.stringify(computeGraph)}`);
     }
 
     const baseline = await snapshot(rpc, 'baseline', 0, 0);
@@ -640,6 +744,7 @@ async function main() {
       `uv=${previewCrop.checksum}/${previewFlip.checksum}`,
       `shape=${previewCircle.checksum}/${previewTriangle.checksum}`,
       `compute=${computeProbe.checksum}/${computeProbe.nonzero_words}`,
+      `graph=${outputReadback.checksum}/${computeGraph.pass_count}`,
       `gpu=${gpuA.checksum}->${gpuB.checksum}/detail=${gpuHighDetail.checksum}`,
       `particle=${particleA.checksum}->${particleB.checksum}`,
       `catalog=${catalogResults.length}/${NATIVE_SHADER_CATALOG_PROBES.length}`,
