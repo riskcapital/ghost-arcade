@@ -4,6 +4,7 @@ import { project } from '$lib/stores/layers';
 import { isMac, isWindows } from '$lib/bridge';
 import { getVisualAudioSnapshot, visualAudio, type VisualAudioState } from '$lib/audio/visualAudio';
 import { WGSL_STDLIB, resolveGhostWgsl } from '$lib/renderer/wgsl';
+import { buildSmoke3DNativePrecompileCommands } from '$lib/renderer/webgpu3DSmoke';
 import {
   attachNativeRendererOutputWindow,
   clearNativeRendererDecodePreviewCache,
@@ -1475,6 +1476,7 @@ fn fs_main() -> @location(0) vec4<f32> {
       source: probeSource,
       entry: 'fs_main',
     });
+    commands.push(...buildSmoke3DNativePrecompileCommands());
     await submitNativeRendererBatch({
       frame_id: ++this.frameId,
       commands,
