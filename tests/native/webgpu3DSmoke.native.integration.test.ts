@@ -133,6 +133,7 @@ describe('3D Smoke native renderer integration', () => {
     expect(capabilities.features.compute_graph_host).toBe(true);
     expect(capabilities.features.compute_graph_render).toBe(true);
     expect(capabilities.features.compute_graph_source_frame_target).toBe(true);
+    expect(capabilities.features.native_3d_smoke_graph).toBe(true);
 
     await rpc.send('submit_commands', {
       commands: buildSmoke3DNativePrecompileCommands(),

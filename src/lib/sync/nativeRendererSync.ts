@@ -891,7 +891,8 @@ export class NativeRendererSync {
     this.nativeComputeGraphSourceFrames = !!(
       startupCapabilities?.features?.compute_graph_host &&
       startupCapabilities?.features?.compute_graph_render &&
-      startupCapabilities?.features?.compute_graph_source_frame_target
+      startupCapabilities?.features?.compute_graph_source_frame_target &&
+      startupCapabilities?.features?.native_3d_smoke_graph
     );
     const startupQuality = startupStatus?.native_quality;
     console.log(
