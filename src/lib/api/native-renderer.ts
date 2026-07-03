@@ -670,11 +670,25 @@ export interface RendererReadinessCheck {
   detail: string;
 }
 
+export interface NativeRendererTextureShareStatus {
+  platform: 'spout' | 'syphon' | string;
+  label: string;
+  available: boolean;
+  addonPath?: string | null;
+  candidates?: string[];
+  error?: string | null;
+  cpuFallbackAllowed?: boolean;
+  senderMode?: string;
+  osrActive?: boolean;
+  osrFailureReason?: string | null;
+}
+
 export interface RendererReadinessReport {
   timestamp_ms: number;
   overall_ready: boolean;
   blockers: string[];
   capabilities?: NativeRendererCapabilities;
+  texture_share?: NativeRendererTextureShareStatus | null;
   checks: RendererReadinessCheck[];
 }
 

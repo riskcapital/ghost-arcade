@@ -85,17 +85,33 @@ export function nativeRendererCommandNames() {
   return RENDERER_COMMANDS.slice();
 }
 
-export function createNativeRendererBroker({ appRoot, resourcesPath, isPackaged, platform, env = process.env }) {
-  return new NativeRendererBroker({ appRoot, resourcesPath, isPackaged, platform, env });
+export function createNativeRendererBroker({
+  appRoot,
+  resourcesPath,
+  isPackaged,
+  platform,
+  env = process.env,
+  textureShareStatusProvider = null,
+}) {
+  return new NativeRendererBroker({
+    appRoot,
+    resourcesPath,
+    isPackaged,
+    platform,
+    env,
+    textureShareStatusProvider,
+  });
 }
 
 class NativeRendererBroker {
-  constructor({ appRoot, resourcesPath, isPackaged, platform, env }) {
+  constructor({ appRoot, resourcesPath, isPackaged, platform, env, textureShareStatusProvider }) {
     this.appRoot = appRoot;
     this.resourcesPath = resourcesPath;
     this.isPackaged = isPackaged;
     this.platform = platform;
     this.env = env;
+    this.textureShareStatusProvider =
+      typeof textureShareStatusProvider === 'function' ? textureShareStatusProvider : null;
     this.child = null;
     this.nextId = 1;
     this.pending = new Map();
@@ -246,6 +262,15 @@ class NativeRendererBroker {
     if (!binary) blockers.push('native render-core binary is missing');
     if (!this.lastStatus.backend_ready) blockers.push(this.lastStatus.last_frame_error || 'native render-core is not ready');
     const features = this.capabilities?.features || {};
+    const textureShare = this.textureShareStatus();
+    const textureShareName = textureShare?.label || textureShare?.platform || 'Texture share';
+    const textureShareDetail = textureShare
+      ? [
+          `${textureShareName} ${textureShare.available ? 'available' : 'unavailable'}`,
+          textureShare.senderMode ? `mode=${textureShare.senderMode}` : null,
+          textureShare.error ? `error=${textureShare.error}` : null,
+        ].filter(Boolean).join(' ')
+      : 'not connected to Electron texture-share status';
     const unsupported = [
       ['shared-texture-upload', 'Shared texture media transport', !!features.shared_texture_upload],
       ['native-media-decode', 'Native media decode/prefetch', !!features.native_media_decode && !!features.media_prefetch],
@@ -258,6 +283,7 @@ class NativeRendererBroker {
       overall_ready: blockers.length === 0,
       blockers,
       capabilities: this.capabilities,
+      texture_share: textureShare,
       checks: [
         {
           id: 'binary',
@@ -277,6 +303,12 @@ class NativeRendererBroker {
           ok: !!this.lastStatus.backend_ready,
           detail: this.lastStatus.adapter_name || this.lastStatus.last_frame_error || 'not initialized',
         },
+        {
+          id: 'texture-share-bridge',
+          label: 'Electron shared-texture bridge',
+          ok: !!textureShare?.available,
+          detail: textureShareDetail,
+        },
         ...unsupported.map(([id, label, ok]) => ({
           id,
           label,
@@ -285,6 +317,20 @@ class NativeRendererBroker {
         })),
       ],
     };
+  }
+
+  textureShareStatus() {
+    if (!this.textureShareStatusProvider) return null;
+    try {
+      return this.textureShareStatusProvider() || null;
+    } catch (err) {
+      return {
+        platform: this.platform === 'darwin' ? 'syphon' : 'spout',
+        label: this.platform === 'darwin' ? 'Syphon' : 'Spout',
+        available: false,
+        error: err?.message || String(err),
+      };
+    }
   }
 
   unsupportedError(command) {
