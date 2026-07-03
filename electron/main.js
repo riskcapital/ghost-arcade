@@ -34,6 +34,15 @@ const nativeRendererBroker = createNativeRendererBroker({
   isPackaged: app.isPackaged,
   platform: process.platform,
   env: process.env,
+  textureShareStatusProvider: () => {
+    loadSpoutAddon();
+    return {
+      ...getTextureShareLoadStatus(),
+      senderMode: getTextureShareSenderMode(),
+      osrActive,
+      osrFailureReason,
+    };
+  },
 });
 
 // Force Chromium to use the discrete GPU (NVIDIA/AMD) on Optimus laptops.
