@@ -686,6 +686,7 @@ export class NativeRendererSync {
   private smoke3DNativeGraphStates = new Map<string, Smoke3DNativeGraphState>();
   private smoke3DNativeGraphInFlight = new Set<string>();
   private smoke3DNativeGraphWarnings = new Map<string, number>();
+  private smoke3DNativeGraphSeq = new Map<string, number>();
   private nativeSourceFrameSize = SOURCE_FRAME_SIZE_FALLBACK;
   private dynamicSourceFrameCaptureSize = SOURCE_FRAME_SIZE_FALLBACK;
   private presentProfile: PresentPolicyProfile = 'low-latency-safe';
@@ -791,6 +792,7 @@ export class NativeRendererSync {
   ) {
     if (!this.nativeComputeGraphSourceFrames) {
       this.smoke3DNativeGraphStates.clear();
+      this.smoke3DNativeGraphSeq.clear();
       return;
     }
     const activeSourceIds = new Set<string>();
@@ -802,6 +804,8 @@ export class NativeRendererSync {
       this.smoke3DNativeGraphInFlight.add(nativeSource.id);
       try {
         const previous = this.smoke3DNativeGraphStates.get(nativeSource.id) ?? null;
+        const graphSeq = (this.smoke3DNativeGraphSeq.get(nativeSource.id) ?? 0) + 1;
+        this.smoke3DNativeGraphSeq.set(nativeSource.id, graphSeq);
         const graph = buildSmoke3DNativeComputeGraph({
           sourceId: nativeSource.id,
           params: layer.gpuLayerContent?.params ?? {},
@@ -809,7 +813,7 @@ export class NativeRendererSync {
           height,
           time: typeof clock.time === 'number' ? clock.time : Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000),
           frameDelta: typeof clock.time_delta === 'number' ? clock.time_delta : 1 / this.targetFps,
-          frameIndex: typeof clock.frame_index === 'number' ? clock.frame_index : this.frameId + 1,
+          frameIndex: graphSeq,
           audioBass: visual.isActive ? Math.max(visual.bass, visual.bassFast * 0.9) : 0,
           audioTreble: visual.isActive ? visual.treble : 0,
           state: previous,
@@ -834,6 +838,7 @@ export class NativeRendererSync {
     for (const sourceId of Array.from(this.smoke3DNativeGraphStates.keys())) {
       if (!activeSourceIds.has(sourceId) && !this.smoke3DNativeGraphInFlight.has(sourceId)) {
         this.smoke3DNativeGraphStates.delete(sourceId);
+        this.smoke3DNativeGraphSeq.delete(sourceId);
       }
     }
   }
@@ -988,6 +993,7 @@ export class NativeRendererSync {
     this.smoke3DNativeGraphStates.clear();
     this.smoke3DNativeGraphInFlight.clear();
     this.smoke3DNativeGraphWarnings.clear();
+    this.smoke3DNativeGraphSeq.clear();
     this.nativeWgslStdlibWarmed = false;
     this.latestRenderClockSeconds = null;
     this.lastRenderClockSentSeconds = null;
