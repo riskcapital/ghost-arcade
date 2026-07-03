@@ -1,3 +1,6 @@
+import { getGhostGpuRuntime } from './webgpuShared';
+import { createAndWarmWgslShaderModule } from './wgsl';
+
 /**
  * WebGPUAdvLightPaint — 3D physics-driven particle paint engine.
  *
@@ -459,12 +462,13 @@ export class WebGPUAdvLightPaint {
       ],
     });
 
-    const computeModule = device.createShaderModule({ code: COMPUTE_WGSL });
+    const shaderRuntime = getGhostGpuRuntime() ?? device;
+    const computeModule = createAndWarmWgslShaderModule(shaderRuntime, COMPUTE_WGSL, 'adv-light-paint/compute');
     this.computePipeline = device.createComputePipeline({
       layout: device.createPipelineLayout({ bindGroupLayouts: [this.computeBindGroupLayout] }),
       compute: { module: computeModule, entryPoint: 'cs_main' },
     });
-    const renderModule = device.createShaderModule({ code: RENDER_WGSL });
+    const renderModule = createAndWarmWgslShaderModule(shaderRuntime, RENDER_WGSL, 'adv-light-paint/render');
     this.renderPipeline = device.createRenderPipeline({
       layout: device.createPipelineLayout({ bindGroupLayouts: [this.renderBindGroupLayout] }),
       vertex: { module: renderModule, entryPoint: 'vs_main' },

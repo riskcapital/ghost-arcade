@@ -1380,7 +1380,69 @@ function buildSphere(): VenueBuild {
   };
 }
 
+function buildEmpty(): VenueBuild {
+  const group = new THREE.Group();
+  group.name = 'Blank Room';
+
+  const floor = mesh(
+    new THREE.PlaneGeometry(90, 90, 1, 1),
+    new THREE.MeshStandardMaterial({
+      color: 0x15181f,
+      roughness: 0.72,
+      metalness: 0.08,
+      envMapIntensity: 0.35,
+    }),
+  );
+  floor.rotation.x = -Math.PI / 2;
+  floor.receiveShadow = true;
+  group.add(floor);
+
+  const horizon = mesh(
+    new THREE.BoxGeometry(90, 0.08, 90),
+    new THREE.MeshStandardMaterial({ color: 0x07090d, roughness: 0.9, metalness: 0.0 }),
+  );
+  horizon.position.y = -0.05;
+  group.add(horizon);
+
+  const hemi = new THREE.HemisphereLight(0x9fb7ff, 0x05060a, 0.6);
+  const ambient = new THREE.AmbientLight(0xffffff, 0.16);
+  const key = new THREE.DirectionalLight(0xffffff, 1.0);
+  key.position.set(18, 24, 18);
+  key.castShadow = true;
+  key.shadow.mapSize.set(1024, 1024);
+  key.shadow.camera.near = 1;
+  key.shadow.camera.far = 120;
+  key.shadow.camera.left = -40;
+  key.shadow.camera.right = 40;
+  key.shadow.camera.top = 40;
+  key.shadow.camera.bottom = -40;
+
+  const lights: THREE.Light[] = [hemi, ambient, key];
+  return {
+    group,
+    floor,
+    lights,
+    baselineIntensities: lights.map(l => l.intensity),
+    keyLight: key,
+    keyPositionBaseline: [18, 24, 18],
+    keyColorBaseline: 0xffffff,
+    backgroundColor: '#05060a',
+    fogDensity: 0.006,
+    fogColor: '#05060a',
+    showGrid: true,
+    cameraPosition: [18, 11, 24],
+    cameraTarget: [0, 4, 0],
+    cameraFov: 58,
+    ledWall: { centerX: 0, centerY: 7, centerZ: -18, width: 28, height: 12 },
+    stageW: 20,
+    frontZ: 4,
+    bloomStrength: 0.08,
+    exposure: 1.0,
+  };
+}
+
 const BUILDERS: Record<Stage3DVenue, () => VenueBuild> = {
+  empty: buildEmpty,
   festival: buildFestival,
   arena: buildArena,
   club: buildClub,

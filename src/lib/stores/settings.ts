@@ -256,6 +256,7 @@ export interface UISettings {
 }
 
 export type FluidQualityMode = 'live' | 'balanced' | 'quality';
+export type GpuInstrumentQualityMode = 'auto' | 'low' | 'balanced' | 'high' | 'ultra';
 
 export interface RecordingSettings {
   // Video format: 'webm-vp9', 'webm-vp8', 'mp4-h264'
@@ -798,6 +799,10 @@ export interface ExperimentalSettings {
 export interface PerformanceSettings {
   previewMaxDim: number;
   previewFrameRate: 60 | 30 | 15;
+  /** Internal budget tier for WebGPU instrument layers. `auto` follows
+   *  the device caps plus the adaptive live governor; fixed tiers keep
+   *  counts/grid sizes stable for predictable show operation. */
+  gpuInstrumentQuality: GpuInstrumentQualityMode;
   outputFrameRate: 60 | 30 | 24;
   outputMaxBitrate: number;
   outputDegradationPreference: 'maintain-resolution' | 'maintain-framerate' | 'balanced';
@@ -998,6 +1003,7 @@ function createDefaultSettings(): AppSettings {
       // weak hardware step these down via Settings → Performance.
       previewMaxDim: 0,               // 0 = no cap (match main canvas)
       previewFrameRate: 60,
+      gpuInstrumentQuality: 'auto',
       outputFrameRate: 60,
       outputMaxBitrate: 80_000_000,   // 80 Mbps
       outputDegradationPreference: 'maintain-resolution',
@@ -1484,6 +1490,17 @@ function createSettingsStore() {
         const newSettings = {
           ...s,
           ui: { ...s.ui, shaderQuality: mode }
+        };
+        saveSettings(newSettings);
+        return newSettings;
+      });
+    },
+
+    setGpuInstrumentQuality(mode: GpuInstrumentQualityMode) {
+      update(s => {
+        const newSettings = {
+          ...s,
+          performance: { ...s.performance, gpuInstrumentQuality: mode }
         };
         saveSettings(newSettings);
         return newSettings;

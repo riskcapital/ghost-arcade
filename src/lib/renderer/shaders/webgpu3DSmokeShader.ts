@@ -268,5 +268,8 @@ export class WebGPU3DSmokeShader implements GpuShaderImpl {
   }
 
   resize(_w: number, _h: number): void { /* no-op — raymarcher reads viewport via setViewport */ }
+  getDebugStats(): Record<string, any> {
+    return this.inner.getDebugStats();
+  }
   dispose(): void { try { this.inner.dispose(); } catch { /* */ } }
 }

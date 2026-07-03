@@ -1,3 +1,6 @@
+import { getGhostGpuRuntime } from './webgpuShared';
+import { createAndWarmWgslShaderModule } from './wgsl';
+
 /**
  * WebGPUStrokeParticles — GPU compute particles bound to Light
  * Painting strokes. Reads each stroke's points + brush type +
@@ -1097,7 +1100,8 @@ export class WebGPUStrokeParticles {
     const zeroParticles = new Float32Array((MAX_PARTICLES_TOTAL * PARTICLE_BYTES) / 4);
     device.queue.writeBuffer(this.particleBuffer, 0, zeroParticles.buffer);
 
-    const computeModule = device.createShaderModule({ code: COMPUTE_WGSL });
+    const shaderRuntime = getGhostGpuRuntime() ?? device;
+    const computeModule = createAndWarmWgslShaderModule(shaderRuntime, COMPUTE_WGSL, 'stroke-particles/compute');
     const computeBGL = device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
@@ -1120,7 +1124,7 @@ export class WebGPUStrokeParticles {
       ],
     });
 
-    const renderModule = device.createShaderModule({ code: RENDER_WGSL });
+    const renderModule = createAndWarmWgslShaderModule(shaderRuntime, RENDER_WGSL, 'stroke-particles/render');
     const renderBGL = device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
@@ -1171,7 +1175,7 @@ export class WebGPUStrokeParticles {
       size: 32,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-    const tubeModule = device.createShaderModule({ code: TUBE_WGSL });
+    const tubeModule = createAndWarmWgslShaderModule(shaderRuntime, TUBE_WGSL, 'stroke-particles/tube');
     const tubeBGL = device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
@@ -1245,7 +1249,7 @@ export class WebGPUStrokeParticles {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    const decayModule = device.createShaderModule({ code: DECAY_WGSL });
+    const decayModule = createAndWarmWgslShaderModule(shaderRuntime, DECAY_WGSL, 'stroke-particles/decay');
     this.decayBGL = device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
@@ -1272,7 +1276,7 @@ export class WebGPUStrokeParticles {
       primitive: { topology: 'triangle-list' },
     });
 
-    const compositeModule = device.createShaderModule({ code: COMPOSITE_WGSL });
+    const compositeModule = createAndWarmWgslShaderModule(shaderRuntime, COMPOSITE_WGSL, 'stroke-particles/composite');
     this.compositeBGL = device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },

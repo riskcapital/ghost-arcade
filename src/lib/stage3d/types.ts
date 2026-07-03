@@ -350,7 +350,7 @@ export type Stage3DBasePreset = 'festival' | 'arena' | 'club' | 'conference' | '
  *  (room/ground/walls), lighting baseline, fog, and grid visibility.
  *  Picked separately from `basePreset` (which is the legacy field).
  *  Each venue exposes a `stageW` / `frontZ` so PA presets place sensibly. */
-export type Stage3DVenue = 'festival' | 'arena' | 'club' | 'nightclub' | 'sphere';
+export type Stage3DVenue = 'empty' | 'festival' | 'arena' | 'club' | 'nightclub' | 'sphere';
 
 /** Atmosphere FX toggles — the "full rock show" layer. Each element is
  *  independently toggleable; everything animates to the shared

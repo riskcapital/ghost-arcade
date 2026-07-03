@@ -18,7 +18,7 @@ import { buildPixelStrip } from './atmosphere';
 export interface ElementField {
   k: string;
   l: string;
-  type?: 'range' | 'color' | 'select';
+  type?: 'range' | 'color' | 'select' | 'vj-source';
   min?: number;
   max?: number;
   step?: number;
@@ -27,7 +27,7 @@ export interface ElementField {
 }
 
 export interface ElementTypeDef {
-  group: 'Stage' | 'Lighting' | 'Audio';
+  group: 'Stage' | 'Visual' | 'Lighting' | 'Audio' | 'FX';
   label: string;
   icon: string;
   defaults: Record<string, number | string>;
@@ -183,6 +183,212 @@ function mesh(geo: THREE.BufferGeometry, mat: THREE.Material): THREE.Mesh {
   m.castShadow = true;
   m.receiveShadow = true;
   return m;
+}
+
+const VJ_SURFACE_VERTEX = `
+  varying vec2 vUv;
+  varying vec3 vNormalView;
+  void main() {
+    vUv = uv;
+    vNormalView = normalize(normalMatrix * normal);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const VJ_SURFACE_FRAGMENT = `
+  precision highp float;
+  varying vec2 vUv;
+  varying vec3 vNormalView;
+  uniform sampler2D uTexture;
+  uniform float uHasTexture;
+  uniform vec3 uColor;
+  uniform float uBrightness;
+  uniform float uOpacity;
+  uniform vec2 uUvOffset;
+  uniform float uUvZoom;
+  uniform float uUvRotation;
+  uniform int uUvMode;
+  uniform float uTime;
+
+  vec2 rotateUv(vec2 p, float a) {
+    float s = sin(a);
+    float c = cos(a);
+    return mat2(c, -s, s, c) * p;
+  }
+
+  vec2 mirrorRepeat(vec2 p) {
+    vec2 q = fract(p);
+    vec2 tile = floor(p);
+    q.x = mix(q.x, 1.0 - q.x, mod(tile.x, 2.0));
+    q.y = mix(q.y, 1.0 - q.y, mod(tile.y, 2.0));
+    return q;
+  }
+
+  vec2 mapUv(vec2 uv) {
+    vec2 mapped = uv;
+    if (uUvMode == 2) {
+      vec2 c = uv - 0.5;
+      float a = atan(c.y, c.x) / 6.28318530718 + 0.5;
+      float r = length(c) * 2.0;
+      mapped = vec2(a, r);
+    } else if (uUvMode == 3) {
+      vec2 c = uv - 0.5;
+      float r = length(c) * 1.45;
+      float a = atan(c.x, c.y) / 6.28318530718 + 0.5;
+      mapped = vec2(a, r);
+    }
+    mapped = rotateUv(mapped - 0.5, uUvRotation) / max(0.001, uUvZoom) + 0.5 + uUvOffset;
+    if (uUvMode == 1) return mirrorRepeat(mapped);
+    if (uUvMode == 4) return vec2(fract(mapped.x), clamp(mapped.y, 0.001, 0.999));
+    return fract(mapped);
+  }
+
+  void main() {
+    vec2 uv = mapUv(vUv);
+    vec4 tex = texture2D(uTexture, uv);
+    vec3 base = mix(uColor, tex.rgb, clamp(uHasTexture, 0.0, 1.0));
+    float alpha = mix(1.0, tex.a, clamp(uHasTexture, 0.0, 1.0)) * uOpacity;
+    float rim = pow(1.0 - abs(vNormalView.z), 2.0) * 0.18;
+    vec3 col = base * uBrightness + base * rim;
+    gl_FragColor = vec4(col, alpha);
+  }
+`;
+
+export const VJ_UV_MODE_OPTIONS = [
+  { value: 'standard', label: 'Standard UV' },
+  { value: 'wrap', label: 'Seamless wrap' },
+  { value: 'mirror', label: 'Mirror repeat' },
+  { value: 'radial', label: 'Radial/polar' },
+  { value: 'dome', label: 'Dome/fisheye' },
+] as const;
+
+const VJ_UV_MODE_INDEX: Record<string, number> = {
+  standard: 0,
+  wrap: 4,
+  mirror: 1,
+  radial: 2,
+  dome: 3,
+};
+
+const VJ_SURFACE_DEFAULTS = {
+  color: '#4af2ff',
+  vjSource: 'master',
+  brightness: 1.25,
+  opacity: 1,
+  uvMode: 'standard',
+  uvZoom: 1,
+  uvOffsetX: 0,
+  uvOffsetY: 0,
+  uvRotation: 0,
+};
+
+const VJ_SURFACE_FIELDS: ElementField[] = [
+  { k: 'vjSource', l: 'VJ Material', type: 'vj-source' },
+  { k: 'color', l: 'Base Color', type: 'color' },
+  { k: 'brightness', l: 'Brightness', min: 0, max: 5, step: 0.05 },
+  { k: 'opacity', l: 'Opacity', min: 0.05, max: 1, step: 0.01 },
+  { k: 'uvMode', l: 'UV Mode', type: 'select', options: [...VJ_UV_MODE_OPTIONS] },
+  { k: 'uvZoom', l: 'UV Zoom', min: 0.1, max: 6, step: 0.05 },
+  { k: 'uvOffsetX', l: 'UV Pan X', min: -2, max: 2, step: 0.01 },
+  { k: 'uvOffsetY', l: 'UV Pan Y', min: -2, max: 2, step: 0.01 },
+  { k: 'uvRotation', l: 'UV Rotate', min: -180, max: 180, step: 1 },
+];
+
+function vjSurfaceDefaults(extra: Record<string, number | string> = {}): Record<string, number | string> {
+  return { ...VJ_SURFACE_DEFAULTS, ...extra };
+}
+
+function vjSurfaceFields(extra: ElementField[] = []): ElementField[] {
+  return [...extra, ...VJ_SURFACE_FIELDS];
+}
+
+export function buildVjSurfaceMaterial(p: Record<string, any>): THREE.ShaderMaterial {
+  const color = new THREE.Color(str(p, 'color', '#4af2ff'));
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTexture: { value: null },
+      uHasTexture: { value: 0 },
+      uColor: { value: color },
+      uBrightness: { value: num(p, 'brightness', 1.25) },
+      uOpacity: { value: num(p, 'opacity', 1) },
+      uUvOffset: { value: new THREE.Vector2(num(p, 'uvOffsetX', 0), num(p, 'uvOffsetY', 0)) },
+      uUvZoom: { value: num(p, 'uvZoom', 1) },
+      uUvRotation: { value: THREE.MathUtils.degToRad(num(p, 'uvRotation', 0)) },
+      uUvMode: { value: VJ_UV_MODE_INDEX[str(p, 'uvMode', 'standard')] ?? 0 },
+      uTime: { value: 0 },
+    },
+    vertexShader: VJ_SURFACE_VERTEX,
+    fragmentShader: VJ_SURFACE_FRAGMENT,
+    transparent: num(p, 'opacity', 1) < 0.999,
+    depthWrite: num(p, 'opacity', 1) > 0.65,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  });
+  mat.userData.stageVjMaterial = true;
+  return mat;
+}
+
+export function updateVjSurfaceMaterial(
+  material: THREE.Material,
+  params: Record<string, any>,
+  texture: THREE.Texture | null,
+  fallbackTexture: THREE.Texture,
+  time: number,
+): void {
+  if (!(material instanceof THREE.ShaderMaterial) || !material.userData.stageVjMaterial) return;
+  const u = material.uniforms;
+  u.uTexture.value = texture ?? fallbackTexture;
+  u.uHasTexture.value = texture ? 1 : 0;
+  (u.uColor.value as THREE.Color).set(str(params, 'color', '#4af2ff'));
+  u.uBrightness.value = num(params, 'brightness', 1.25);
+  const opacity = Math.max(0.02, Math.min(1, num(params, 'opacity', 1)));
+  u.uOpacity.value = opacity;
+  material.transparent = opacity < 0.999;
+  material.depthWrite = opacity > 0.65;
+  (u.uUvOffset.value as THREE.Vector2).set(num(params, 'uvOffsetX', 0), num(params, 'uvOffsetY', 0));
+  u.uUvZoom.value = num(params, 'uvZoom', 1);
+  u.uUvRotation.value = THREE.MathUtils.degToRad(num(params, 'uvRotation', 0));
+  u.uUvMode.value = VJ_UV_MODE_INDEX[str(params, 'uvMode', 'standard')] ?? 0;
+  u.uTime.value = time;
+}
+
+function vjMesh(geo: THREE.BufferGeometry, p: Record<string, any>, y = 0): THREE.Mesh {
+  const m = mesh(geo, buildVjSurfaceMaterial(p));
+  m.position.y = y;
+  m.userData.stageVjSurface = true;
+  return m;
+}
+
+function solidBlackMesh(geo: THREE.BufferGeometry, y = 0): THREE.Mesh {
+  const m = mesh(geo, new THREE.MeshStandardMaterial({ color: 0x050608, roughness: 0.82, metalness: 0.12 }));
+  m.position.y = y;
+  return m;
+}
+
+let smokeTextureCache: THREE.Texture | null = null;
+function smokeTexture(): THREE.Texture {
+  if (smokeTextureCache) return smokeTextureCache;
+  const size = 128;
+  const canvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
+  if (!canvas) {
+    const data = new Uint8Array([255, 255, 255, 255]);
+    smokeTextureCache = new THREE.DataTexture(data, 1, 1, THREE.RGBAFormat);
+    smokeTextureCache.needsUpdate = true;
+    return smokeTextureCache;
+  }
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  g.addColorStop(0.0, 'rgba(255,255,255,0.72)');
+  g.addColorStop(0.28, 'rgba(255,255,255,0.38)');
+  g.addColorStop(0.62, 'rgba(255,255,255,0.12)');
+  g.addColorStop(1.0, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  smokeTextureCache = new THREE.CanvasTexture(canvas);
+  smokeTextureCache.colorSpace = THREE.SRGBColorSpace;
+  return smokeTextureCache;
 }
 
 /** Box-truss segment along the X axis (length × 0.5m square section).
@@ -398,6 +604,296 @@ export const ELEMENT_TYPES: Record<string, ElementTypeDef> = {
         const foot = mesh(new THREE.BoxGeometry(0.5, 0.05, 1.2), m);
         foot.position.set(x, 0.03, 0);
         out.push(foot);
+      }
+      return out;
+    },
+  },
+
+  visualbox: {
+    group: 'Visual', label: 'Rectangle / Box', icon: '▰',
+    defaults: vjSurfaceDefaults({ w: 8, h: 4, d: 1 }),
+    fields: vjSurfaceFields([
+      { k: 'w', l: 'Width', min: 0.5, max: 60, step: 0.25 },
+      { k: 'h', l: 'Height', min: 0.5, max: 40, step: 0.25 },
+      { k: 'd', l: 'Depth', min: 0.05, max: 20, step: 0.05 },
+    ]),
+    build(p) {
+      return [vjMesh(new THREE.BoxGeometry(num(p, 'w', 8), num(p, 'h', 4), num(p, 'd', 1), 8, 8, 2), p, num(p, 'h', 4) / 2)];
+    },
+  },
+
+  visualpanel: {
+    group: 'Visual', label: 'LED Panel', icon: '▭',
+    defaults: vjSurfaceDefaults({ w: 10, h: 5, d: 0.12, brightness: 1.5 }),
+    fields: vjSurfaceFields([
+      { k: 'w', l: 'Width', min: 1, max: 80, step: 0.25 },
+      { k: 'h', l: 'Height', min: 1, max: 50, step: 0.25 },
+      { k: 'd', l: 'Depth', min: 0.04, max: 2, step: 0.02 },
+    ]),
+    build(p) {
+      const w = num(p, 'w', 10), h = num(p, 'h', 5), d = num(p, 'd', 0.12);
+      const panel = vjMesh(new THREE.BoxGeometry(w, h, d, 12, 12, 1), p, h / 2);
+      const frame = solidBlackMesh(new THREE.BoxGeometry(w + 0.18, h + 0.18, d * 0.8), h / 2);
+      frame.position.z = -d * 0.65;
+      return [frame, panel];
+    },
+  },
+
+  visualcube: {
+    group: 'Visual', label: 'Cube', icon: '◧',
+    defaults: vjSurfaceDefaults({ size: 5 }),
+    fields: vjSurfaceFields([
+      { k: 'size', l: 'Size', min: 0.5, max: 30, step: 0.25 },
+    ]),
+    build(p) {
+      const s = num(p, 'size', 5);
+      return [vjMesh(new THREE.BoxGeometry(s, s, s, 10, 10, 10), p, s / 2)];
+    },
+  },
+
+  visualsphere: {
+    group: 'Visual', label: 'Sphere', icon: '●',
+    defaults: vjSurfaceDefaults({ r: 4, uvMode: 'radial' }),
+    fields: vjSurfaceFields([
+      { k: 'r', l: 'Radius', min: 0.5, max: 30, step: 0.25 },
+    ]),
+    build(p) {
+      const r = num(p, 'r', 4);
+      return [vjMesh(new THREE.SphereGeometry(r, 72, 36), p, r)];
+    },
+  },
+
+  visualhemi: {
+    group: 'Visual', label: 'Half Sphere / Dome', icon: '◒',
+    defaults: vjSurfaceDefaults({ r: 8, uvMode: 'wrap', brightness: 1.4 }),
+    fields: vjSurfaceFields([
+      { k: 'r', l: 'Radius', min: 1, max: 60, step: 0.5 },
+    ]),
+    build(p) {
+      const r = num(p, 'r', 8);
+      const dome = vjMesh(new THREE.SphereGeometry(r, 96, 36, 0, Math.PI * 2, 0, Math.PI / 2), p, 0);
+      const ring = solidBlackMesh(new THREE.TorusGeometry(r, 0.12, 10, 96), 0.03);
+      ring.rotation.x = Math.PI / 2;
+      return [dome, ring];
+    },
+  },
+
+  visualpyramid: {
+    group: 'Visual', label: 'Pyramid', icon: '△',
+    defaults: vjSurfaceDefaults({ r: 4, h: 6 }),
+    fields: vjSurfaceFields([
+      { k: 'r', l: 'Base Radius', min: 0.5, max: 30, step: 0.25 },
+      { k: 'h', l: 'Height', min: 0.5, max: 40, step: 0.25 },
+    ]),
+    build(p) {
+      const r = num(p, 'r', 4), h = num(p, 'h', 6);
+      const pyr = vjMesh(new THREE.ConeGeometry(r, h, 4, 1), p, h / 2);
+      pyr.rotation.y = Math.PI / 4;
+      return [pyr];
+    },
+  },
+
+  visualcone: {
+    group: 'Visual', label: 'Cone', icon: '▲',
+    defaults: vjSurfaceDefaults({ r: 3, h: 7, uvMode: 'radial' }),
+    fields: vjSurfaceFields([
+      { k: 'r', l: 'Radius', min: 0.5, max: 30, step: 0.25 },
+      { k: 'h', l: 'Height', min: 0.5, max: 40, step: 0.25 },
+    ]),
+    build(p) {
+      const r = num(p, 'r', 3), h = num(p, 'h', 7);
+      return [vjMesh(new THREE.ConeGeometry(r, h, 64, 1), p, h / 2)];
+    },
+  },
+
+  visualcylinder: {
+    group: 'Visual', label: 'Cylinder', icon: '◯',
+    defaults: vjSurfaceDefaults({ r: 3, h: 8, uvMode: 'mirror' }),
+    fields: vjSurfaceFields([
+      { k: 'r', l: 'Radius', min: 0.5, max: 30, step: 0.25 },
+      { k: 'h', l: 'Height', min: 0.5, max: 50, step: 0.25 },
+    ]),
+    build(p) {
+      const r = num(p, 'r', 3), h = num(p, 'h', 8);
+      return [vjMesh(new THREE.CylinderGeometry(r, r, h, 72, 12, false), p, h / 2)];
+    },
+  },
+
+  visualtorus: {
+    group: 'Visual', label: 'Ring / Donut', icon: '◎',
+    defaults: vjSurfaceDefaults({ r: 5, tube: 0.8, uvMode: 'mirror' }),
+    fields: vjSurfaceFields([
+      { k: 'r', l: 'Ring Radius', min: 0.5, max: 35, step: 0.25 },
+      { k: 'tube', l: 'Tube Radius', min: 0.05, max: 8, step: 0.05 },
+    ]),
+    build(p) {
+      const r = num(p, 'r', 5), tube = num(p, 'tube', 0.8);
+      const t = vjMesh(new THREE.TorusGeometry(r, tube, 24, 96), p, r + tube);
+      t.rotation.x = Math.PI / 2;
+      return [t];
+    },
+  },
+
+  visualarch: {
+    group: 'Visual', label: 'Portal Arch', icon: '∩',
+    defaults: vjSurfaceDefaults({ w: 12, h: 10, d: 1.2, thickness: 1.2 }),
+    fields: vjSurfaceFields([
+      { k: 'w', l: 'Width', min: 2, max: 60, step: 0.25 },
+      { k: 'h', l: 'Height', min: 2, max: 50, step: 0.25 },
+      { k: 'd', l: 'Depth', min: 0.1, max: 12, step: 0.1 },
+      { k: 'thickness', l: 'Thickness', min: 0.2, max: 8, step: 0.1 },
+    ]),
+    build(p) {
+      const w = num(p, 'w', 12), h = num(p, 'h', 10), d = num(p, 'd', 1.2), t = num(p, 'thickness', 1.2);
+      const out: THREE.Object3D[] = [];
+      const colH = Math.max(0.5, h - w * 0.45);
+      const left = vjMesh(new THREE.BoxGeometry(t, colH, d, 4, 8, 2), p, colH / 2);
+      left.position.x = -w / 2 + t / 2;
+      const right = vjMesh(new THREE.BoxGeometry(t, colH, d, 4, 8, 2), p, colH / 2);
+      right.position.x = w / 2 - t / 2;
+      const top = vjMesh(new THREE.TorusGeometry(w / 2 - t / 2, t / 2, 14, 72, Math.PI), p, colH);
+      top.rotation.z = Math.PI;
+      out.push(left, right, top);
+      return out;
+    },
+  },
+
+  visualcurvedwall: {
+    group: 'Visual', label: 'Curved Wall', icon: '◜',
+    defaults: vjSurfaceDefaults({ r: 12, h: 7, arc: 120, uvMode: 'standard' }),
+    fields: vjSurfaceFields([
+      { k: 'r', l: 'Radius', min: 2, max: 80, step: 0.5 },
+      { k: 'h', l: 'Height', min: 1, max: 50, step: 0.25 },
+      { k: 'arc', l: 'Arc Degrees', min: 10, max: 300, step: 1 },
+    ]),
+    build(p) {
+      const r = num(p, 'r', 12), h = num(p, 'h', 7);
+      const arc = THREE.MathUtils.degToRad(num(p, 'arc', 120));
+      const wall = vjMesh(new THREE.CylinderGeometry(r, r, h, 96, 12, true, -arc / 2, arc), p, h / 2);
+      wall.rotation.y = Math.PI;
+      return [wall];
+    },
+  },
+
+  visualorbarray: {
+    group: 'Visual', label: 'Orb Array', icon: '⁙',
+    defaults: vjSurfaceDefaults({ count: 7, r: 1.2, spacing: 3.2, uvMode: 'radial' }),
+    fields: vjSurfaceFields([
+      { k: 'count', l: 'Orbs', min: 1, max: 32, step: 1, int: true },
+      { k: 'r', l: 'Orb Radius', min: 0.2, max: 8, step: 0.1 },
+      { k: 'spacing', l: 'Spacing', min: 0.4, max: 10, step: 0.1 },
+    ]),
+    build(p) {
+      const out: THREE.Object3D[] = [];
+      const count = Math.max(1, Math.round(num(p, 'count', 7)));
+      const r = num(p, 'r', 1.2), spacing = num(p, 'spacing', 3.2);
+      for (let i = 0; i < count; i++) {
+        const orb = vjMesh(new THREE.SphereGeometry(r, 36, 18), p, r);
+        orb.position.x = (i - (count - 1) / 2) * spacing;
+        orb.position.y += Math.sin(i * 0.9) * r * 0.7;
+        out.push(orb);
+      }
+      return out;
+    },
+  },
+
+  visualmonolith: {
+    group: 'Visual', label: 'Monolith', icon: '▮',
+    defaults: vjSurfaceDefaults({ w: 2.4, h: 12, d: 1.2, brightness: 1.35 }),
+    fields: vjSurfaceFields([
+      { k: 'w', l: 'Width', min: 0.4, max: 16, step: 0.1 },
+      { k: 'h', l: 'Height', min: 1, max: 50, step: 0.25 },
+      { k: 'd', l: 'Depth', min: 0.1, max: 16, step: 0.1 },
+    ]),
+    build(p) {
+      const w = num(p, 'w', 2.4), h = num(p, 'h', 12), d = num(p, 'd', 1.2);
+      return [vjMesh(new THREE.BoxGeometry(w, h, d, 8, 24, 4), p, h / 2)];
+    },
+  },
+
+  visualrunway: {
+    group: 'Visual', label: 'Runway Slab', icon: '▔',
+    defaults: vjSurfaceDefaults({ w: 5, d: 22, h: 0.3, uvMode: 'mirror' }),
+    fields: vjSurfaceFields([
+      { k: 'w', l: 'Width', min: 0.5, max: 30, step: 0.25 },
+      { k: 'd', l: 'Length', min: 1, max: 80, step: 0.5 },
+      { k: 'h', l: 'Height', min: 0.05, max: 3, step: 0.05 },
+    ]),
+    build(p) {
+      const w = num(p, 'w', 5), d = num(p, 'd', 22), h = num(p, 'h', 0.3);
+      return [vjMesh(new THREE.BoxGeometry(w, h, d, 8, 1, 32), p, h / 2)];
+    },
+  },
+
+  visualglobe: {
+    group: 'Visual', label: 'Globe Stage Starter', icon: '◉',
+    defaults: vjSurfaceDefaults({ r: 7, platform: 12, uvMode: 'radial', brightness: 1.4 }),
+    fields: vjSurfaceFields([
+      { k: 'r', l: 'Globe Radius', min: 1, max: 40, step: 0.25 },
+      { k: 'platform', l: 'Platform', min: 2, max: 60, step: 0.5 },
+    ]),
+    build(p) {
+      const r = num(p, 'r', 7), platform = num(p, 'platform', 12);
+      const globe = vjMesh(new THREE.SphereGeometry(r, 80, 40), p, r + 0.4);
+      const base = solidBlackMesh(new THREE.CylinderGeometry(platform / 2, platform / 2, 0.8, 72), 0.4);
+      const ring = solidBlackMesh(new THREE.TorusGeometry(platform / 2, 0.16, 10, 96), 0.84);
+      ring.rotation.x = Math.PI / 2;
+      return [base, ring, globe];
+    },
+  },
+
+  importedmodel: {
+    group: 'Visual', label: 'Imported Model', icon: '⬡',
+    defaults: vjSurfaceDefaults({ modelData: '', modelName: 'Imported model', modelFormat: 'glb', modelScale: 8, brightness: 1.2 }),
+    fields: vjSurfaceFields([
+      { k: 'modelScale', l: 'Normalize Size', min: 0.5, max: 40, step: 0.25 },
+    ]),
+    build(p) {
+      const box = solidBlackMesh(new THREE.BoxGeometry(2.5, 2.5, 2.5), 1.25);
+      box.name = 'Loading model placeholder';
+      box.userData.importedModelPlaceholder = true;
+      return [box];
+    },
+  },
+
+  smokejet: {
+    group: 'FX', label: 'Smoke Jet', icon: '☁',
+    defaults: { height: 8, spread: 2.2, density: 12, opacity: 0.42, color: '#dbe5ff' },
+    fields: [
+      { k: 'height', l: 'Height', min: 1, max: 30, step: 0.25 },
+      { k: 'spread', l: 'Spread', min: 0.2, max: 10, step: 0.1 },
+      { k: 'density', l: 'Puffs', min: 3, max: 36, step: 1, int: true },
+      { k: 'opacity', l: 'Opacity', min: 0.02, max: 0.8, step: 0.01 },
+      { k: 'color', l: 'Smoke Color', type: 'color' },
+    ],
+    build(p) {
+      const out: THREE.Object3D[] = [];
+      const base = mesh(new THREE.CylinderGeometry(0.32, 0.42, 0.55, 16), MAT.darkMetal());
+      base.position.y = 0.28;
+      out.push(base);
+      const tex = smokeTexture();
+      const color = new THREE.Color(str(p, 'color', '#dbe5ff'));
+      const count = Math.max(3, Math.round(num(p, 'density', 12)));
+      const height = num(p, 'height', 8);
+      const spread = num(p, 'spread', 2.2);
+      const opacity = num(p, 'opacity', 0.42);
+      for (let i = 0; i < count; i++) {
+        const t = count <= 1 ? 0 : i / (count - 1);
+        const mat = new THREE.SpriteMaterial({
+          map: tex,
+          color,
+          transparent: true,
+          opacity: opacity * (1 - t * 0.62),
+          depthWrite: false,
+          blending: THREE.NormalBlending,
+        });
+        const s = new THREE.Sprite(mat);
+        const phase = i * 2.399;
+        s.position.set(Math.cos(phase) * spread * t * 0.32, 0.8 + t * height, Math.sin(phase) * spread * t * 0.32);
+        const size = 0.9 + t * spread;
+        s.scale.set(size, size, 1);
+        s.userData.stageSmokeSprite = true;
+        out.push(s);
       }
       return out;
     },

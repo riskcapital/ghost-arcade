@@ -1,4 +1,5 @@
 import { get, writable } from 'svelte/store';
+import { resolveAssetRefForRuntime } from '../storage/assetRegistry';
 import type {
   ProjectionSimGizmoMode,
   ProjectionSimObject,
@@ -41,11 +42,14 @@ function normalizeScene(scene: ProjectionSimScene): ProjectionSimScene {
       ...(scene.environment ?? {}),
       roomExposure: scene.environment?.roomExposure ?? DEFAULT_ENVIRONMENT.roomExposure,
       surfaceStyle: scene.environment?.surfaceStyle ?? DEFAULT_ENVIRONMENT.surfaceStyle,
+      showFloorProjection: scene.environment?.showFloorProjection ?? DEFAULT_ENVIRONMENT.showFloorProjection,
       shadowStrength: scene.environment?.shadowStrength ?? DEFAULT_ENVIRONMENT.shadowStrength,
     },
     objects: (scene.objects ?? []).map((object) => ({
       ...object,
       locked: object.locked ?? false,
+      receiveProjection: object.receiveProjection ?? true,
+      assetUrl: resolveAssetRefForRuntime(object.assetRef, undefined, object.assetUrl) ?? object.assetUrl,
     })),
     projectors: (scene.projectors ?? []).map((projector) => ({
       ...projector,

@@ -4,7 +4,7 @@
   import { settings, type OutputSlice } from '../stores/settings';
   import { workspace } from '../stores/workspace';
   import { invoke, isDesktopApp } from '../bridge';
-  import { createAssetRefFromFile } from '../storage/assetRegistry';
+  import { createAssetRefFromFile, resolveAssetRefForRuntime } from '../storage/assetRegistry';
   import { startRecording as startCanvasRecording, formatRecordingDuration, type RecorderHandle } from '../recording/recorder';
   import { ProjectionSimulatorRenderer } from '../projectionSim/ProjectionSimulatorRenderer';
   import {
@@ -393,6 +393,7 @@
       return;
     }
     const { assetRef, runtimeUrl } = createAssetRefFromFile(file);
+    const resolvedRuntimeUrl = resolveAssetRefForRuntime(assetRef, undefined, runtimeUrl) ?? runtimeUrl;
     const object: ProjectionSimObject = {
       id: `psobj-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
       name: file.name,
@@ -405,8 +406,8 @@
       visible: true,
       locked: false,
       castShadow: ext !== 'ply',
-      receiveProjection: ext !== 'ply',
-      assetUrl: runtimeUrl,
+      receiveProjection: true,
+      assetUrl: resolvedRuntimeUrl,
       assetRef,
       assetName: file.name,
       assetFormat: ext as ProjectionSimObject['assetFormat'],
@@ -801,6 +802,10 @@
         <label class="check-row">
           <input type="checkbox" checked={$projectionSimScene.environment.shadows} onchange={(e) => projectionSimScene.setEnvironment({ shadows: (e.target as HTMLInputElement).checked })} />
           <span>Projector shadows</span>
+        </label>
+        <label class="check-row">
+          <input type="checkbox" checked={$projectionSimScene.environment.showFloorProjection ?? true} onchange={(e) => projectionSimScene.setEnvironment({ showFloorProjection: (e.target as HTMLInputElement).checked })} />
+          <span>Projection on floor</span>
         </label>
         <label class="field">
           <span>Shadow strength {Math.round(($projectionSimScene.environment.shadowStrength ?? 1) * 100)}%</span>

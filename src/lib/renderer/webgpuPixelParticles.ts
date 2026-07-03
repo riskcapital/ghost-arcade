@@ -1,3 +1,7 @@
+import type { GhostGpuBufferHandle } from './gpuRuntime';
+import { getGhostGpuRuntime } from './webgpuShared';
+import { createAndWarmWgslShaderModule } from './wgsl';
+
 /**
  * WebGPUPixelParticles — turn any 2D source (image / video / canvas
  * / GPUTexture) into a cloud of 3D animated particles. Each pixel
@@ -759,6 +763,9 @@ export class WebGPUPixelParticles {
   private particleBuffer: any;
   private globalsBuffer: any;
   private renderUniformBuffer: any;
+  private particleBufferHandle: GhostGpuBufferHandle | null = null;
+  private globalsBufferHandle: GhostGpuBufferHandle | null = null;
+  private renderUniformBufferHandle: GhostGpuBufferHandle | null = null;
   private sourceTexture: any = null;
   private nativeDepthTexture: any = null;
   private sourceSampler: any;
@@ -849,9 +856,18 @@ export class WebGPUPixelParticles {
     this.startTime = performance.now();
     this.lastFrameTime = this.startTime;
 
-    this.particleBuffer = device.createBuffer({
-      size: MAX_PARTICLES * PARTICLE_BYTES,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    const runtime = getGhostGpuRuntime();
+    const particleBufferSize = MAX_PARTICLES * PARTICLE_BYTES;
+    const particleBufferUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
+    this.particleBufferHandle = runtime?.resources.acquireBuffer(
+      particleBufferSize,
+      particleBufferUsage,
+      'pixel-particles/particles',
+    ) ?? null;
+    this.particleBuffer = this.particleBufferHandle?.buffer ?? device.createBuffer({
+      label: 'pixel-particles/particles',
+      size: particleBufferSize,
+      usage: particleBufferUsage,
     });
     // Globals struct is 176 bytes:
     //   time, dt, total(u32), mode(u32)            → 16
@@ -865,14 +881,27 @@ export class WebGPUPixelParticles {
     //   depth_motion vec4                           → 16
     //   depth_motion2 vec4                          → 16
     //   native_depth_params vec4                    → 16
-    this.globalsBuffer = device.createBuffer({
+    const globalsBufferUsage = GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST;
+    this.globalsBufferHandle = runtime?.resources.acquireBuffer(
+      176,
+      globalsBufferUsage,
+      'pixel-particles/globals',
+    ) ?? null;
+    this.globalsBuffer = this.globalsBufferHandle?.buffer ?? device.createBuffer({
+      label: 'pixel-particles/globals',
       size: 176,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      usage: globalsBufferUsage,
     });
     // Render uniform: mat4x4 (64) + vec4 meta (16) + vec4 flags (16) = 96
-    this.renderUniformBuffer = device.createBuffer({
+    this.renderUniformBufferHandle = runtime?.resources.acquireBuffer(
+      96,
+      globalsBufferUsage,
+      'pixel-particles/render-uniforms',
+    ) ?? null;
+    this.renderUniformBuffer = this.renderUniformBufferHandle?.buffer ?? device.createBuffer({
+      label: 'pixel-particles/render-uniforms',
       size: 96,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      usage: globalsBufferUsage,
     });
 
     this.sourceSampler = device.createSampler({
@@ -884,7 +913,8 @@ export class WebGPUPixelParticles {
 
     // Build pipelines. Bind groups are deferred until a source
     // texture has been provided (because they need to bind it).
-    const computeModule = device.createShaderModule({ code: COMPUTE_WGSL });
+    const shaderRuntime = runtime ?? device;
+    const computeModule = createAndWarmWgslShaderModule(shaderRuntime, COMPUTE_WGSL, 'pixel-particles/compute');
     this.computeBindGroupLayout = device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
@@ -899,7 +929,7 @@ export class WebGPUPixelParticles {
       compute: { module: computeModule, entryPoint: 'cs_main' },
     });
 
-    this.renderModule = device.createShaderModule({ code: RENDER_WGSL });
+    this.renderModule = createAndWarmWgslShaderModule(shaderRuntime, RENDER_WGSL, 'pixel-particles/render');
     this.renderBindGroupLayout = device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
@@ -1526,11 +1556,22 @@ export class WebGPUPixelParticles {
   }
 
   dispose(): void {
-    try { this.particleBuffer?.destroy?.(); } catch { /* */ }
-    try { this.globalsBuffer?.destroy?.(); } catch { /* */ }
-    try { this.renderUniformBuffer?.destroy?.(); } catch { /* */ }
+    if (this.particleBufferHandle) this.particleBufferHandle.release();
+    else try { this.particleBuffer?.destroy?.(); } catch { /* */ }
+    if (this.globalsBufferHandle) this.globalsBufferHandle.release();
+    else try { this.globalsBuffer?.destroy?.(); } catch { /* */ }
+    if (this.renderUniformBufferHandle) this.renderUniformBufferHandle.release();
+    else try { this.renderUniformBuffer?.destroy?.(); } catch { /* */ }
     try { this.sourceTexture?.destroy?.(); } catch { /* */ }
     try { this.nativeDepthTexture?.destroy?.(); } catch { /* */ }
+    this.particleBufferHandle = null;
+    this.globalsBufferHandle = null;
+    this.renderUniformBufferHandle = null;
+    this.particleBuffer = null;
+    this.globalsBuffer = null;
+    this.renderUniformBuffer = null;
+    this.sourceTexture = null;
+    this.nativeDepthTexture = null;
   }
 }
 

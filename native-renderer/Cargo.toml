@@ -1,0 +1,19 @@
+[package]
+name = "ghost-render-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+
+[dependencies]
+base64 = "0.22.1"
+bytemuck = { version = "1.24.0", features = ["derive"] }
+naga = { version = "30.0.0", features = ["wgsl-in"] }
+pollster = "0.4.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+wgpu = "30.0.0"
+winit = "0.30.12"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"

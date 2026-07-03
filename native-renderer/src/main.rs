@@ -1,0 +1,4321 @@
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    fs,
+    io::{self, BufRead, Write},
+    sync::mpsc::{self, Receiver, Sender},
+    thread,
+    time::{Duration, Instant},
+};
+
+use base64::Engine;
+use bytemuck::{Pod, Zeroable};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use wgpu::util::{DeviceExt, TextureBlitter, TextureBlitterBuilder};
+use winit::{
+    application::ApplicationHandler,
+    dpi::{LogicalSize, PhysicalSize},
+    event::WindowEvent,
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    window::{Window, WindowAttributes, WindowId},
+};
+
+const MAX_SCENE_LAYERS: usize = 64;
+const MAX_SOURCE_PREVIEWS: usize = 16;
+const SOURCE_PREVIEW_SIZE: usize = 256;
+const SOURCE_PREVIEW_PIXELS: usize = SOURCE_PREVIEW_SIZE * SOURCE_PREVIEW_SIZE;
+const MAX_SOURCE_FRAME_SLOTS: usize = 8;
+const SOURCE_FRAME_SIZE_PERFORMANCE: usize = 1024;
+const SOURCE_FRAME_SIZE_BALANCED: usize = 1536;
+const SOURCE_FRAME_SIZE_DEFAULT: usize = 2048;
+const SOURCE_FRAME_SIZE_INSANE: usize = 3072;
+const SOURCE_FRAME_MIP_LEVELS_MAX: u32 = 5;
+const SOURCE_FRAME_FORMAT_FALLBACK: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+const SOURCE_FRAME_FORMAT_HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+const SOURCE_FRAME_SLOT_OFFSET: f32 = 100.0;
+const NATIVE_SHADER_SOURCE_KIND: f32 = 17.0;
+const GPU_TIMESTAMP_READ_BYTES: u64 = 16;
+const NATIVE_SHADER_FULLSCREEN_VERTEX_WGSL: &str = r#"
+struct VertexOut {
+  @builtin(position) position: vec4<f32>,
+  @location(0) uv: vec2<f32>,
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
+  let pos = array<vec2<f32>, 3>(
+    vec2<f32>(-1.0, -3.0),
+    vec2<f32>(-1.0,  1.0),
+    vec2<f32>( 3.0,  1.0),
+  );
+  let p = pos[vertex_index];
+  var out: VertexOut;
+  out.position = vec4<f32>(p, 0.0, 1.0);
+  out.uv = p * 0.5 + vec2<f32>(0.5);
+  return out;
+}
+"#;
+
+#[derive(Debug)]
+enum UserEvent {
+    Rpc(RpcRequest),
+}
+
+#[derive(Debug, Deserialize)]
+struct RpcRequest {
+    id: u64,
+    method: String,
+    #[serde(default)]
+    params: Value,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct CoreStatus {
+    running: bool,
+    backend: String,
+    backend_ready: bool,
+    adapter_name: Option<String>,
+    native_caps: NativeGpuCaps,
+    native_quality: NativeQualityState,
+    width: u32,
+    height: u32,
+    target_fps: u32,
+    source_preview_size: u32,
+    source_previews_active: u32,
+    source_preview_slots: u32,
+    source_preview_dirty: bool,
+    source_frame_size: u32,
+    source_frame_format: String,
+    source_frame_hdr: bool,
+    source_frame_mip_levels: u32,
+    source_frames_active: u32,
+    source_frame_slots: u32,
+    isf_shader_bindings: u32,
+    isf_uniform_sets: u32,
+    native_shader_layers: u32,
+    native_procedural_layers: u32,
+    native_instrument_layers: u32,
+    shader_precompile_queue_cap: u32,
+    shader_precompile_per_frame: u32,
+    shader_metadata_cache_cap: u32,
+    pipeline_metadata_cache_cap: u32,
+    texture_pool_cap_mb: u32,
+    shader_cache_entries: u32,
+    pipeline_cache_entries: u32,
+    precompiled_vertex_shaders: u32,
+    precompiled_pixel_shaders: u32,
+    shader_precompile_queued: u64,
+    shader_precompile_compiled: u64,
+    shader_precompile_failed: u64,
+    shader_precompile_dropped: u64,
+    source_frame_uploads: u64,
+    source_frame_bytes_uploaded: u64,
+    native_instrument_frame_renders: u64,
+    render_clock_mode: String,
+    render_clock_time: f32,
+    render_clock_frame_index: u64,
+    render_clock_updates: u64,
+    frame_snapshot_reads: u64,
+    frame_snapshot_bytes_read: u64,
+    frame_health_checks: u64,
+    dark_frame_warnings: u64,
+    last_frame_checksum: Option<String>,
+    last_frame_nonzero_pixels: u64,
+    last_frame_bright_pixels: u64,
+    last_frame_average_luma: f64,
+    last_frame_max_luma: f64,
+    last_frame_dark: bool,
+    last_shader_error: Option<String>,
+    frames_presented: u64,
+    commands_applied: u64,
+    layers_seen: u32,
+    gpu_timing_supported: bool,
+    avg_render_cpu_ms: f64,
+    last_render_gpu_ms: f64,
+    avg_render_gpu_ms: f64,
+    max_render_gpu_ms: f64,
+    gpu_timing_samples: u64,
+    gpu_timing_resolve_misses: u64,
+    last_frame_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+struct NativeGpuCaps {
+    adapter_name: String,
+    adapter_vendor: u32,
+    adapter_device: u32,
+    adapter_device_type: String,
+    adapter_driver: String,
+    adapter_driver_info: String,
+    max_texture_dimension_2d: u32,
+    max_texture_dimension_3d: u32,
+    max_texture_array_layers: u32,
+    max_bind_groups: u32,
+    max_bindings_per_bind_group: u32,
+    max_sampled_textures_per_shader_stage: u32,
+    max_storage_buffers_per_shader_stage: u32,
+    max_storage_textures_per_shader_stage: u32,
+    max_uniform_buffer_binding_size: u64,
+    max_storage_buffer_binding_size: u64,
+    max_buffer_size: u64,
+    max_compute_workgroup_storage_size: u32,
+    max_compute_invocations_per_workgroup: u32,
+    max_compute_workgroup_size_x: u32,
+    max_compute_workgroup_size_y: u32,
+    max_compute_workgroup_size_z: u32,
+    max_compute_workgroups_per_dimension: u32,
+    supports_shader_f16: bool,
+    supports_float32_filterable: bool,
+    supports_timestamp_query: bool,
+    supports_timestamp_query_inside_encoders: bool,
+    supports_timestamp_query_inside_passes: bool,
+    supports_texture_binding_array: bool,
+    supports_buffer_binding_array: bool,
+    supports_storage_resource_binding_array: bool,
+    supports_texture_adapter_specific_format_features: bool,
+    requested_shader_f16: bool,
+    requested_float32_filterable: bool,
+    requested_timestamp_query: bool,
+    requested_timestamp_query_inside_encoders: bool,
+    requested_timestamp_query_inside_passes: bool,
+    recommended_quality_tier: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct NativeQualityState {
+    policy: String,
+    caps_tier: String,
+    active_tier: String,
+    quality_scale: f32,
+    target_frame_ms: f64,
+    cpu_ema_ms: f64,
+    gpu_ema_ms: f64,
+    overload_frames: u32,
+    recovery_frames: u32,
+    step_downs: u64,
+    step_ups: u64,
+}
+
+impl Default for NativeQualityState {
+    fn default() -> Self {
+        Self {
+            policy: "auto".to_string(),
+            caps_tier: "balanced".to_string(),
+            active_tier: "balanced".to_string(),
+            quality_scale: tier_quality_scale("balanced"),
+            target_frame_ms: 16.67,
+            cpu_ema_ms: 0.0,
+            gpu_ema_ms: 0.0,
+            overload_frames: 0,
+            recovery_frames: 0,
+            step_downs: 0,
+            step_ups: 0,
+        }
+    }
+}
+
+impl NativeQualityState {
+    fn rebase_to_caps(&mut self, caps_tier: &str) {
+        let tier = normalize_native_tier(caps_tier);
+        self.caps_tier = tier.to_string();
+        if self.policy == "auto" {
+            self.active_tier = tier.to_string();
+            self.quality_scale = tier_quality_scale(tier);
+            self.overload_frames = 0;
+            self.recovery_frames = 0;
+        }
+    }
+
+    fn set_policy(&mut self, policy: &str) {
+        let normalized = policy.trim().to_ascii_lowercase();
+        if normalized == "auto" || normalized.is_empty() {
+            self.policy = "auto".to_string();
+            let tier = normalize_native_tier(&self.caps_tier);
+            self.active_tier = tier.to_string();
+            self.quality_scale = tier_quality_scale(tier);
+        } else {
+            let tier = normalize_native_tier(&normalized);
+            self.policy = tier.to_string();
+            self.active_tier = tier.to_string();
+            self.quality_scale = tier_quality_scale(tier);
+        }
+        self.overload_frames = 0;
+        self.recovery_frames = 0;
+    }
+
+    fn observe_frame(
+        &mut self,
+        render_ms: f64,
+        render_gpu_ms: Option<f64>,
+        target_fps: u32,
+        native_task_count: usize,
+    ) {
+        let target_ms = 1000.0 / target_fps.max(1) as f64;
+        self.target_frame_ms = target_ms;
+        self.cpu_ema_ms = if self.cpu_ema_ms <= 0.0 {
+            render_ms
+        } else {
+            self.cpu_ema_ms * 0.94 + render_ms * 0.06
+        };
+        if let Some(render_gpu_ms) = render_gpu_ms.filter(|value| value.is_finite() && *value > 0.0)
+        {
+            self.gpu_ema_ms = if self.gpu_ema_ms <= 0.0 {
+                render_gpu_ms
+            } else {
+                self.gpu_ema_ms * 0.94 + render_gpu_ms * 0.06
+            };
+        }
+
+        if self.policy != "auto" || native_task_count == 0 {
+            self.overload_frames = 0;
+            self.recovery_frames = 0;
+            return;
+        }
+
+        let overload_ms = target_ms * 0.88;
+        let recovery_ms = target_ms * 0.42;
+        let budget_ms = if self.gpu_ema_ms > 0.0 {
+            self.gpu_ema_ms
+        } else {
+            self.cpu_ema_ms
+        };
+        if budget_ms > overload_ms {
+            self.overload_frames = self.overload_frames.saturating_add(1);
+            self.recovery_frames = 0;
+        } else if budget_ms < recovery_ms {
+            self.recovery_frames = self.recovery_frames.saturating_add(1);
+            self.overload_frames = 0;
+        } else {
+            self.overload_frames = 0;
+            self.recovery_frames = 0;
+        }
+
+        if self.overload_frames >= 90 {
+            if self.step_active_tier(-1) {
+                self.step_downs = self.step_downs.saturating_add(1);
+            }
+            self.overload_frames = 0;
+        } else if self.recovery_frames >= 240 {
+            if self.step_active_tier(1) {
+                self.step_ups = self.step_ups.saturating_add(1);
+            }
+            self.recovery_frames = 0;
+        }
+    }
+
+    fn step_active_tier(&mut self, direction: i32) -> bool {
+        let current = native_tier_index(&self.active_tier);
+        let max_tier = native_tier_index(&self.caps_tier);
+        let next = (current + direction).clamp(0, max_tier);
+        if next == current {
+            return false;
+        }
+        let tier = native_tier_for_index(next);
+        self.active_tier = tier.to_string();
+        self.quality_scale = tier_quality_scale(tier);
+        true
+    }
+
+    fn instrument_scale(&self) -> f32 {
+        self.quality_scale.clamp(0.45, 1.0)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Default)]
+struct CoreStats {
+    frames_submitted: u64,
+    frames_presented: u64,
+    commands_applied: u64,
+    command_queue_peak: u64,
+    draw_calls: u64,
+    shader_precompile_queued: u64,
+    shader_precompile_compiled: u64,
+    shader_precompile_failed: u64,
+    shader_precompile_dropped: u64,
+    source_frame_uploads: u64,
+    source_frame_bytes_uploaded: u64,
+    native_shader_renders: u64,
+    native_instrument_frame_renders: u64,
+    render_clock_updates: u64,
+    frame_snapshot_reads: u64,
+    frame_snapshot_bytes_read: u64,
+    frame_health_checks: u64,
+    dark_frame_warnings: u64,
+    shader_cache_entries: u64,
+    pipeline_cache_entries: u64,
+    precompiled_vertex_shaders: u64,
+    precompiled_pixel_shaders: u64,
+    last_render_cpu_ms: f64,
+    avg_render_cpu_ms: f64,
+    last_render_gpu_ms: f64,
+    avg_render_gpu_ms: f64,
+    max_render_gpu_ms: f64,
+    gpu_timing_supported: bool,
+    gpu_timing_samples: u64,
+    gpu_timing_disjoint: u64,
+    gpu_timing_resolve_misses: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct Uniforms {
+    resolution: [f32; 2],
+    time: f32,
+    command_phase: f32,
+    layer_count: f32,
+    frame_count: f32,
+    _pad0: [f32; 2],
+    audio0: [f32; 4],
+    audio1: [f32; 4],
+    audio2: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct LayerGpu {
+    p0: [f32; 4],
+    p1: [f32; 4],
+    color: [f32; 4],
+    meta: [f32; 4],
+    params0: [f32; 4],
+    params1: [f32; 4],
+    style: [f32; 4],
+    uv0: [f32; 4],
+    uv1: [f32; 4],
+    shape: [f32; 4],
+    effect0: [f32; 4],
+    effect1: [f32; 4],
+    effect2: [f32; 4],
+    effect3: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct PreviewPixel {
+    rgba: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct NativeInstrumentUniforms {
+    resolution: [f32; 2],
+    time: f32,
+    source_kind: f32,
+    params0: [f32; 4],
+    params1: [f32; 4],
+    audio0: [f32; 4],
+    audio1: [f32; 4],
+    audio2: [f32; 4],
+    seed: f32,
+    _pad0: [f32; 7],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct NativeShaderUniforms {
+    resolution_time: [f32; 4],
+    frame_seed_inputs: [f32; 4],
+    date: [f32; 4],
+    audio0: [f32; 4],
+    audio1: [f32; 4],
+    params0: [f32; 4],
+    params1: [f32; 4],
+}
+
+#[derive(Clone, Debug)]
+struct SourcePreview {
+    slot: usize,
+    seq: u64,
+    pixels: Vec<PreviewPixel>,
+}
+
+#[derive(Clone, Debug)]
+struct SourceFrame {
+    seq: u64,
+}
+
+#[derive(Clone, Debug)]
+struct NativeInstrumentTask {
+    slot: usize,
+    source_kind: f32,
+    params0: [f32; 4],
+    params1: [f32; 4],
+    seed: f32,
+}
+
+struct NativeShaderPipeline {
+    pipeline: wgpu::RenderPipeline,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct IsfUniformState {
+    shader_id: String,
+    time: f32,
+    time_delta: f32,
+    frame_index: u64,
+    render_width: f32,
+    render_height: f32,
+    date: [f32; 4],
+    audio: [f32; 8],
+    float_hash: u64,
+    point_hash: u64,
+    color_hash: u64,
+    input_count: u32,
+    seq: u64,
+}
+
+impl IsfUniformState {
+    fn native_params(&self, shader_id: &str) -> [f32; 8] {
+        let seed = unit_from_hash(stable_hash64(shader_id));
+        let float_seed = unit_from_hash(self.float_hash);
+        let point_seed = unit_from_hash(self.point_hash);
+        let color_seed = unit_from_hash(self.color_hash);
+        let level = self.audio[0].clamp(0.0, 1.0);
+        let bass = self.audio[1].clamp(0.0, 1.0);
+        let high = self.audio[3].clamp(0.0, 1.0);
+        let beat = self.audio[4].clamp(0.0, 1.0);
+        let bpm = self.audio[6].clamp(0.0, 300.0);
+        [
+            (0.82 + level * 1.2 + beat * 0.35).clamp(0.0, 4.0),
+            (0.52 + seed * 2.2 + float_seed * 0.8).clamp(0.18, 4.0),
+            (0.24 + bass * 0.46 + point_seed * 0.30).clamp(0.0, 1.0),
+            (0.16 + bpm / 180.0 + high * 0.45).clamp(0.0, 2.0),
+            seed,
+            (0.18 + color_seed * 0.72).clamp(0.0, 1.0),
+            (0.20 + (self.input_count as f32 / 48.0) + float_seed * 0.24).clamp(0.0, 1.0),
+            1.0,
+        ]
+    }
+}
+
+impl NativeShaderUniforms {
+    fn from_isf(
+        shader_id: &str,
+        state: Option<&IsfUniformState>,
+        fallback_width: u32,
+        fallback_height: u32,
+        params: [f32; 8],
+        input_source_slot: usize,
+    ) -> Self {
+        let seed = unit_from_hash(stable_hash64(shader_id));
+        let render_width = state
+            .map(|state| state.render_width)
+            .unwrap_or(fallback_width as f32)
+            .max(1.0);
+        let render_height = state
+            .map(|state| state.render_height)
+            .unwrap_or(fallback_height as f32)
+            .max(1.0);
+        let time = state.map(|state| state.time).unwrap_or(0.0);
+        let time_delta = state.map(|state| state.time_delta).unwrap_or(1.0 / 60.0);
+        let frame_index = state.map(|state| state.frame_index as f32).unwrap_or(0.0);
+        let input_count = state.map(|state| state.input_count as f32).unwrap_or(0.0);
+        let date = state.map(|state| state.date).unwrap_or([0.0; 4]);
+        let audio = state.map(|state| state.audio).unwrap_or([0.0; 8]);
+        Self {
+            resolution_time: [render_width, render_height, time, time_delta],
+            frame_seed_inputs: [
+                frame_index,
+                seed,
+                input_count,
+                input_source_slot.min(MAX_SOURCE_FRAME_SLOTS - 1) as f32,
+            ],
+            date,
+            audio0: [audio[0], audio[1], audio[2], audio[3]],
+            audio1: [audio[4], audio[5], audio[6], audio[7]],
+            params0: [params[0], params[1], params[2], params[3]],
+            params1: [params[4], params[5], params[6], params[7]],
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ShaderRecord {
+    shader_id: String,
+    stage: String,
+    entry: String,
+    source_hash: u64,
+    source_bytes: usize,
+    entry_points: Vec<String>,
+    compiled_at_ms: u64,
+}
+
+#[derive(Clone, Debug)]
+struct SceneLayer {
+    id: String,
+    z_index: i32,
+    visible: bool,
+    opacity: f32,
+    source_kind: f32,
+    source_id: Option<String>,
+    shader_id: Option<String>,
+    shader_rendered: bool,
+    preview_slot: Option<usize>,
+    frame_slot: Option<usize>,
+    color: [f32; 4],
+    corners: [[f32; 2]; 4],
+    native_params: [f32; 8],
+    blend_code: f32,
+    uv0: [f32; 4],
+    uv1: [f32; 4],
+    shape: [f32; 4],
+    effects: [[f32; 4]; 4],
+    effect_count: f32,
+}
+
+impl SceneLayer {
+    fn new(id: String, z_index: i32) -> Self {
+        Self {
+            color: stable_layer_color(&id, 1.0),
+            id,
+            z_index,
+            visible: true,
+            opacity: 1.0,
+            source_kind: 0.0,
+            source_id: None,
+            shader_id: None,
+            shader_rendered: false,
+            preview_slot: None,
+            frame_slot: None,
+            corners: [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
+            native_params: default_native_params(),
+            blend_code: 0.0,
+            uv0: [0.0, 0.0, 1.0, 1.0],
+            uv1: [0.0, 1.0, 0.0, 0.0],
+            shape: [0.0, 0.0, 0.0, 1.0],
+            effects: [[0.0; 4]; 4],
+            effect_count: 0.0,
+        }
+    }
+
+    fn gpu(&self) -> LayerGpu {
+        LayerGpu {
+            p0: [
+                self.corners[0][0],
+                self.corners[0][1],
+                self.corners[1][0],
+                self.corners[1][1],
+            ],
+            p1: [
+                self.corners[2][0],
+                self.corners[2][1],
+                self.corners[3][0],
+                self.corners[3][1],
+            ],
+            color: [
+                self.color[0],
+                self.color[1],
+                self.color[2],
+                self.opacity.clamp(0.0, 1.0) * self.color[3].clamp(0.0, 1.0),
+            ],
+            meta: [
+                if self.visible { 1.0 } else { 0.0 },
+                self.z_index as f32,
+                if self.shader_rendered {
+                    NATIVE_SHADER_SOURCE_KIND
+                } else {
+                    self.source_kind
+                },
+                self.frame_slot
+                    .map(|slot| SOURCE_FRAME_SLOT_OFFSET + slot as f32 + 1.0)
+                    .or_else(|| self.preview_slot.map(|slot| slot as f32 + 1.0))
+                    .unwrap_or(0.0),
+            ],
+            params0: [
+                self.native_params[0],
+                self.native_params[1],
+                self.native_params[2],
+                self.native_params[3],
+            ],
+            params1: [
+                self.native_params[4],
+                self.native_params[5],
+                self.native_params[6],
+                self.native_params[7],
+            ],
+            style: [self.blend_code, self.effect_count, 0.0, 0.0],
+            uv0: self.uv0,
+            uv1: self.uv1,
+            shape: self.shape,
+            effect0: self.effects[0],
+            effect1: self.effects[1],
+            effect2: self.effects[2],
+            effect3: self.effects[3],
+        }
+    }
+}
+
+struct GpuTimingState {
+    query_set: wgpu::QuerySet,
+    resolve_buffer: wgpu::Buffer,
+    readback_buffer: wgpu::Buffer,
+    timestamp_period_ns: f64,
+    map_done_tx: Sender<Result<(), String>>,
+    map_done_rx: Receiver<Result<(), String>>,
+    map_pending: bool,
+    last_render_gpu_ms: f64,
+    avg_render_gpu_ms: f64,
+    max_render_gpu_ms: f64,
+    samples: u64,
+    resolve_misses: u64,
+}
+
+impl GpuTimingState {
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+        let query_set = device.create_query_set(&wgpu::QuerySetDescriptor {
+            label: Some("Ghost Render Core Frame Timestamp Queries"),
+            ty: wgpu::QueryType::Timestamp,
+            count: 2,
+        });
+        let resolve_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Ghost Render Core Frame Timestamp Resolve"),
+            size: wgpu::QUERY_RESOLVE_BUFFER_ALIGNMENT.max(GPU_TIMESTAMP_READ_BYTES),
+            usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Ghost Render Core Frame Timestamp Readback"),
+            size: GPU_TIMESTAMP_READ_BYTES,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let (map_done_tx, map_done_rx) = mpsc::channel();
+        Self {
+            query_set,
+            resolve_buffer,
+            readback_buffer,
+            timestamp_period_ns: queue.get_timestamp_period() as f64,
+            map_done_tx,
+            map_done_rx,
+            map_pending: false,
+            last_render_gpu_ms: 0.0,
+            avg_render_gpu_ms: 0.0,
+            max_render_gpu_ms: 0.0,
+            samples: 0,
+            resolve_misses: 0,
+        }
+    }
+
+    fn timestamp_writes(&self) -> wgpu::RenderPassTimestampWrites<'_> {
+        wgpu::RenderPassTimestampWrites {
+            query_set: &self.query_set,
+            beginning_of_pass_write_index: Some(0),
+            end_of_pass_write_index: Some(1),
+        }
+    }
+
+    fn can_record(&self) -> bool {
+        !self.map_pending
+    }
+
+    fn resolve_to_readback(&self, encoder: &mut wgpu::CommandEncoder) {
+        encoder.resolve_query_set(&self.query_set, 0..2, &self.resolve_buffer, 0);
+        encoder.copy_buffer_to_buffer(
+            &self.resolve_buffer,
+            0,
+            &self.readback_buffer,
+            0,
+            GPU_TIMESTAMP_READ_BYTES,
+        );
+    }
+
+    fn begin_readback(&mut self) {
+        if self.map_pending {
+            self.resolve_misses = self.resolve_misses.saturating_add(1);
+            return;
+        }
+        self.map_pending = true;
+        let tx = self.map_done_tx.clone();
+        self.readback_buffer
+            .slice(0..GPU_TIMESTAMP_READ_BYTES)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let _ = tx.send(result.map_err(|err| err.to_string()));
+            });
+    }
+
+    fn poll_readback(&mut self) {
+        if !self.map_pending {
+            return;
+        }
+        let Ok(result) = self.map_done_rx.try_recv() else {
+            return;
+        };
+        self.map_pending = false;
+        if result.is_err() {
+            self.resolve_misses = self.resolve_misses.saturating_add(1);
+            return;
+        }
+
+        let slice = self.readback_buffer.slice(0..GPU_TIMESTAMP_READ_BYTES);
+        let Ok(mapped) = slice.get_mapped_range() else {
+            self.resolve_misses = self.resolve_misses.saturating_add(1);
+            self.readback_buffer.unmap();
+            return;
+        };
+        let mut start_bytes = [0_u8; 8];
+        let mut end_bytes = [0_u8; 8];
+        start_bytes.copy_from_slice(&mapped[0..8]);
+        end_bytes.copy_from_slice(&mapped[8..16]);
+        drop(mapped);
+        self.readback_buffer.unmap();
+
+        let start = u64::from_le_bytes(start_bytes);
+        let end = u64::from_le_bytes(end_bytes);
+        if end <= start {
+            self.resolve_misses = self.resolve_misses.saturating_add(1);
+            return;
+        }
+        let gpu_ms = ((end - start) as f64 * self.timestamp_period_ns) / 1_000_000.0;
+        if !gpu_ms.is_finite() || gpu_ms <= 0.0 {
+            self.resolve_misses = self.resolve_misses.saturating_add(1);
+            return;
+        }
+        self.last_render_gpu_ms = gpu_ms;
+        self.avg_render_gpu_ms = if self.avg_render_gpu_ms <= 0.0 {
+            gpu_ms
+        } else {
+            self.avg_render_gpu_ms * 0.94 + gpu_ms * 0.06
+        };
+        self.max_render_gpu_ms = self.max_render_gpu_ms.max(gpu_ms);
+        self.samples = self.samples.saturating_add(1);
+    }
+}
+
+struct RenderState {
+    window: &'static Window,
+    adapter_name: String,
+    native_caps: NativeGpuCaps,
+    surface: wgpu::Surface<'static>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    config: wgpu::SurfaceConfiguration,
+    pipeline: wgpu::RenderPipeline,
+    native_instrument_pipeline: wgpu::RenderPipeline,
+    uniform_buffer: wgpu::Buffer,
+    native_instrument_uniform_buffer: wgpu::Buffer,
+    native_shader_uniform_buffer: wgpu::Buffer,
+    layer_buffer: wgpu::Buffer,
+    source_preview_buffer: wgpu::Buffer,
+    source_frame_texture: wgpu::Texture,
+    native_shader_input_texture: wgpu::Texture,
+    source_frame_size: usize,
+    source_frame_format: wgpu::TextureFormat,
+    source_frame_mip_levels: u32,
+    source_frame_blitter: TextureBlitter,
+    native_shader_vertex_module: wgpu::ShaderModule,
+    native_shader_bind_group_layout: wgpu::BindGroupLayout,
+    native_shader_bind_group: wgpu::BindGroup,
+    native_shader_pipelines: HashMap<String, NativeShaderPipeline>,
+    snapshot_texture: wgpu::Texture,
+    snapshot_view: wgpu::TextureView,
+    last_frame_metrics: Option<SnapshotMetrics>,
+    bind_group: wgpu::BindGroup,
+    native_instrument_bind_group: wgpu::BindGroup,
+    start_time: Instant,
+    gpu_timing: Option<GpuTimingState>,
+    last_frame_error: Option<String>,
+}
+
+struct App {
+    response_tx: Sender<String>,
+    renderer: Option<RenderState>,
+    adapter_name: Option<String>,
+    target_fps: u32,
+    last_redraw: Instant,
+    running: bool,
+    pending_width: u32,
+    pending_height: u32,
+    layers_seen: u32,
+    command_phase: f32,
+    scene_layers: HashMap<String, SceneLayer>,
+    source_previews: HashMap<String, SourcePreview>,
+    source_preview_slots: HashMap<String, usize>,
+    source_preview_dirty: bool,
+    source_frames: HashMap<String, SourceFrame>,
+    source_frame_slots: HashMap<String, usize>,
+    render_clock_mode: String,
+    render_clock_time: Option<f32>,
+    render_clock_delta: f32,
+    render_clock_frame_index: Option<u64>,
+    isf_layer_bindings: HashMap<String, String>,
+    isf_uniforms: HashMap<String, IsfUniformState>,
+    shader_registry: HashMap<String, ShaderRecord>,
+    shader_sources: HashMap<String, String>,
+    shader_precompile_queue_cap: u32,
+    shader_precompile_per_frame: u32,
+    shader_metadata_cache_cap: u32,
+    pipeline_metadata_cache_cap: u32,
+    texture_pool_cap_mb: u32,
+    last_shader_error: Option<String>,
+    audio0: [f32; 4],
+    audio1: [f32; 4],
+    audio2: [f32; 4],
+    stats: CoreStats,
+    render_cpu_ema_ms: f64,
+    native_quality: NativeQualityState,
+}
+
+impl App {
+    fn new(response_tx: Sender<String>) -> Self {
+        Self {
+            response_tx,
+            renderer: None,
+            adapter_name: None,
+            target_fps: 60,
+            last_redraw: Instant::now(),
+            running: false,
+            pending_width: 1280,
+            pending_height: 720,
+            layers_seen: 0,
+            command_phase: 0.0,
+            scene_layers: HashMap::new(),
+            source_previews: HashMap::new(),
+            source_preview_slots: HashMap::new(),
+            source_preview_dirty: true,
+            source_frames: HashMap::new(),
+            source_frame_slots: HashMap::new(),
+            render_clock_mode: "live".to_string(),
+            render_clock_time: None,
+            render_clock_delta: 1.0 / 60.0,
+            render_clock_frame_index: None,
+            isf_layer_bindings: HashMap::new(),
+            isf_uniforms: HashMap::new(),
+            shader_registry: HashMap::new(),
+            shader_sources: HashMap::new(),
+            shader_precompile_queue_cap: 4096,
+            shader_precompile_per_frame: 4,
+            shader_metadata_cache_cap: 16384,
+            pipeline_metadata_cache_cap: 16384,
+            texture_pool_cap_mb: 512,
+            last_shader_error: None,
+            audio0: [0.0; 4],
+            audio1: [0.0; 4],
+            audio2: [0.0; 4],
+            stats: CoreStats::default(),
+            render_cpu_ema_ms: 0.0,
+            native_quality: NativeQualityState::default(),
+        }
+    }
+
+    fn ensure_renderer(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
+        if self.renderer.is_some() {
+            return Ok(());
+        }
+        let attrs = WindowAttributes::default()
+            .with_title("Ghost Render Core N0")
+            .with_inner_size(LogicalSize::new(
+                self.pending_width as f64,
+                self.pending_height as f64,
+            ))
+            .with_resizable(true);
+        let window = event_loop
+            .create_window(attrs)
+            .map_err(|err| err.to_string())?;
+        let window: &'static Window = Box::leak(Box::new(window));
+        let renderer = pollster::block_on(RenderState::new(
+            window,
+            self.pending_width.max(1),
+            self.pending_height.max(1),
+        ))?;
+        self.native_quality
+            .rebase_to_caps(&renderer.native_caps.recommended_quality_tier);
+        self.adapter_name = renderer.adapter_name();
+        self.renderer = Some(renderer);
+        Ok(())
+    }
+
+    fn status(&self) -> CoreStatus {
+        let last_frame_error = self
+            .renderer
+            .as_ref()
+            .and_then(|r| r.last_frame_error.clone());
+        let last_frame_metrics = self
+            .renderer
+            .as_ref()
+            .and_then(|renderer| renderer.last_frame_metrics.as_ref());
+        let (
+            gpu_timing_supported,
+            last_render_gpu_ms,
+            avg_render_gpu_ms,
+            max_render_gpu_ms,
+            gpu_timing_samples,
+            gpu_timing_resolve_misses,
+        ) = self
+            .renderer
+            .as_ref()
+            .map(|renderer| renderer.gpu_timing_stats())
+            .unwrap_or((false, 0.0, 0.0, 0.0, 0, 0));
+        CoreStatus {
+            running: self.running,
+            backend: native_backend_name().to_string(),
+            backend_ready: self.renderer.is_some() && last_frame_error.is_none(),
+            adapter_name: self.adapter_name.clone(),
+            native_caps: self
+                .renderer
+                .as_ref()
+                .map(|renderer| renderer.native_caps.clone())
+                .unwrap_or_default(),
+            native_quality: self.native_quality.clone(),
+            width: self.pending_width,
+            height: self.pending_height,
+            target_fps: self.target_fps,
+            source_preview_size: SOURCE_PREVIEW_SIZE as u32,
+            source_previews_active: self.source_previews.len().min(1024) as u32,
+            source_preview_slots: MAX_SOURCE_PREVIEWS as u32,
+            source_preview_dirty: self.source_preview_dirty,
+            source_frame_size: self
+                .renderer
+                .as_ref()
+                .map(|renderer| renderer.source_frame_size as u32)
+                .unwrap_or(SOURCE_FRAME_SIZE_DEFAULT as u32),
+            source_frame_format: self
+                .renderer
+                .as_ref()
+                .map(|renderer| texture_format_label(renderer.source_frame_format).to_string())
+                .unwrap_or_else(|| texture_format_label(SOURCE_FRAME_FORMAT_FALLBACK).to_string()),
+            source_frame_hdr: self
+                .renderer
+                .as_ref()
+                .map(|renderer| renderer.source_frame_format == SOURCE_FRAME_FORMAT_HDR)
+                .unwrap_or(false),
+            source_frame_mip_levels: self
+                .renderer
+                .as_ref()
+                .map(|renderer| renderer.source_frame_mip_levels)
+                .unwrap_or(1),
+            source_frames_active: self.source_frames.len().min(1024) as u32,
+            source_frame_slots: MAX_SOURCE_FRAME_SLOTS as u32,
+            isf_shader_bindings: self.isf_layer_bindings.len().min(1024) as u32,
+            isf_uniform_sets: self.isf_uniforms.len().min(1024) as u32,
+            native_shader_layers: self
+                .scene_layers
+                .values()
+                .filter(|layer| layer.shader_rendered)
+                .count()
+                .min(1024) as u32,
+            native_procedural_layers: self
+                .scene_layers
+                .values()
+                .filter(|layer| {
+                    layer.visible
+                        && layer.frame_slot.is_none()
+                        && (layer.shader_rendered || layer.source_kind >= 9.0)
+                })
+                .count()
+                .min(1024) as u32,
+            native_instrument_layers: self
+                .scene_layers
+                .values()
+                .filter(|layer| layer.visible && is_native_instrument_kind(layer.source_kind))
+                .count()
+                .min(1024) as u32,
+            shader_precompile_queue_cap: self.shader_precompile_queue_cap,
+            shader_precompile_per_frame: self.shader_precompile_per_frame,
+            shader_metadata_cache_cap: self.shader_metadata_cache_cap,
+            pipeline_metadata_cache_cap: self.pipeline_metadata_cache_cap,
+            texture_pool_cap_mb: self.texture_pool_cap_mb,
+            shader_cache_entries: self.shader_registry.len().min(u32::MAX as usize) as u32,
+            pipeline_cache_entries: self
+                .renderer
+                .as_ref()
+                .map(RenderState::native_shader_pipeline_count)
+                .unwrap_or(0),
+            precompiled_vertex_shaders: self.precompiled_shader_count("vertex"),
+            precompiled_pixel_shaders: self.precompiled_shader_count("pixel"),
+            shader_precompile_queued: self.stats.shader_precompile_queued,
+            shader_precompile_compiled: self.stats.shader_precompile_compiled,
+            shader_precompile_failed: self.stats.shader_precompile_failed,
+            shader_precompile_dropped: self.stats.shader_precompile_dropped,
+            source_frame_uploads: self.stats.source_frame_uploads,
+            source_frame_bytes_uploaded: self.stats.source_frame_bytes_uploaded,
+            native_instrument_frame_renders: self.stats.native_instrument_frame_renders,
+            render_clock_mode: self.render_clock_mode.clone(),
+            render_clock_time: self.render_clock_time.unwrap_or(0.0),
+            render_clock_frame_index: self
+                .render_clock_frame_index
+                .unwrap_or(self.stats.frames_presented),
+            render_clock_updates: self.stats.render_clock_updates,
+            frame_snapshot_reads: self.stats.frame_snapshot_reads,
+            frame_snapshot_bytes_read: self.stats.frame_snapshot_bytes_read,
+            frame_health_checks: self.stats.frame_health_checks,
+            dark_frame_warnings: self.stats.dark_frame_warnings,
+            last_frame_checksum: last_frame_metrics.map(|metrics| metrics.checksum.clone()),
+            last_frame_nonzero_pixels: last_frame_metrics
+                .map(|metrics| metrics.nonzero_pixels)
+                .unwrap_or(0),
+            last_frame_bright_pixels: last_frame_metrics
+                .map(|metrics| metrics.bright_pixels)
+                .unwrap_or(0),
+            last_frame_average_luma: last_frame_metrics
+                .map(|metrics| metrics.average_luma)
+                .unwrap_or(0.0),
+            last_frame_max_luma: last_frame_metrics
+                .map(|metrics| metrics.max_luma)
+                .unwrap_or(0.0),
+            last_frame_dark: last_frame_metrics
+                .map(|metrics| metrics.dark_frame)
+                .unwrap_or(false),
+            last_shader_error: self.last_shader_error.clone(),
+            frames_presented: self.stats.frames_presented,
+            commands_applied: self.stats.commands_applied,
+            layers_seen: self.layers_seen,
+            gpu_timing_supported,
+            avg_render_cpu_ms: self.render_cpu_ema_ms,
+            last_render_gpu_ms,
+            avg_render_gpu_ms,
+            max_render_gpu_ms,
+            gpu_timing_samples,
+            gpu_timing_resolve_misses,
+            last_frame_error,
+        }
+    }
+
+    fn send_ok(&self, id: u64, result: Value) {
+        let _ = self
+            .response_tx
+            .send(json!({ "id": id, "ok": true, "result": result }).to_string());
+    }
+
+    fn send_error(&self, id: u64, err: impl ToString) {
+        let _ = self
+            .response_tx
+            .send(json!({ "id": id, "ok": false, "error": err.to_string() }).to_string());
+    }
+
+    fn handle_rpc(&mut self, event_loop: &ActiveEventLoop, req: RpcRequest) {
+        let result = match req.method.as_str() {
+            "start" => {
+                self.apply_start_config(&req.params);
+                self.running = true;
+                let now = Instant::now();
+                self.last_redraw = now.checked_sub(self.frame_duration()).unwrap_or(now);
+                self.ensure_renderer(event_loop).map(|_| {
+                    if let Some(renderer) = self.renderer.as_ref() {
+                        renderer.window.request_redraw();
+                    }
+                    json!(self.status())
+                })
+            }
+            "stop" => {
+                self.running = false;
+                Ok(json!(true))
+            }
+            "status" | "get_status" => Ok(json!(self.status())),
+            "stats" | "get_stats" => {
+                self.stats.avg_render_cpu_ms = self.render_cpu_ema_ms;
+                if let Some(renderer) = self.renderer.as_ref() {
+                    let (
+                        gpu_timing_supported,
+                        last_render_gpu_ms,
+                        avg_render_gpu_ms,
+                        max_render_gpu_ms,
+                        gpu_timing_samples,
+                        gpu_timing_resolve_misses,
+                    ) = renderer.gpu_timing_stats();
+                    self.stats.gpu_timing_supported = gpu_timing_supported;
+                    self.stats.last_render_gpu_ms = last_render_gpu_ms;
+                    self.stats.avg_render_gpu_ms = avg_render_gpu_ms;
+                    self.stats.max_render_gpu_ms = max_render_gpu_ms;
+                    self.stats.gpu_timing_samples = gpu_timing_samples;
+                    self.stats.gpu_timing_resolve_misses = gpu_timing_resolve_misses;
+                }
+                Ok(json!(self.stats.clone()))
+            }
+            "snapshot" | "get_snapshot" => Ok(json!({
+                "timestamp_ms": epoch_ms(),
+                "status": self.status(),
+                "stats": self.stats,
+                "shader_registry": self.shader_registry_snapshot(),
+            })),
+            "frame_snapshot" | "get_frame_snapshot" => self.frame_snapshot(&req.params),
+            "readiness" | "get_readiness_report" => Ok(json!({
+                "timestamp_ms": epoch_ms(),
+                "overall_ready": self.renderer.is_some(),
+                "blockers": if self.renderer.is_some() { Vec::<String>::new() } else { vec!["native renderer has not created a wgpu device".to_string()] },
+                "checks": [
+                    {
+                        "id": "wgpu-device",
+                        "label": "Native wgpu device",
+                        "ok": self.renderer.is_some(),
+                        "detail": self.adapter_name.clone().unwrap_or_else(|| "not initialized".to_string())
+                    }
+                ]
+            })),
+            "reset_stats" => {
+                self.stats = CoreStats::default();
+                self.render_cpu_ema_ms = 0.0;
+                self.native_quality.cpu_ema_ms = 0.0;
+                self.native_quality.overload_frames = 0;
+                self.native_quality.recovery_frames = 0;
+                self.native_quality.step_downs = 0;
+                self.native_quality.step_ups = 0;
+                Ok(json!(true))
+            }
+            "submit_batch" => {
+                self.apply_batch(&req.params);
+                Ok(json!(true))
+            }
+            "submit_commands" => {
+                self.apply_commands(req.params.get("commands").unwrap_or(&req.params));
+                Ok(json!(true))
+            }
+            "set_output" => {
+                self.apply_output_config(&req.params);
+                Ok(json!(true))
+            }
+            "set_target_fps" => {
+                self.target_fps = number_at(&req.params, &["config", "target_fps"])
+                    .or_else(|| number_at(&req.params, &["target_fps"]))
+                    .unwrap_or(self.target_fps as f64)
+                    .round()
+                    .clamp(1.0, 240.0) as u32;
+                Ok(json!(true))
+            }
+            "set_native_quality_policy" => {
+                self.apply_native_quality_policy(&req.params);
+                Ok(json!(true))
+            }
+            "set_render_clock" => {
+                self.apply_render_clock(&req.params);
+                Ok(json!(true))
+            }
+            "set_shader_precompile_policy" => {
+                self.apply_shader_precompile_policy(&req.params);
+                Ok(json!(self.status()))
+            }
+            "set_texture_pool_cap" => {
+                self.apply_texture_pool_cap(&req.params);
+                Ok(json!(self.status()))
+            }
+            "set_metadata_cache_caps" => {
+                self.apply_metadata_cache_caps(&req.params);
+                Ok(json!(self.status()))
+            }
+            "shutdown" => {
+                self.running = false;
+                event_loop.exit();
+                Ok(json!(true))
+            }
+            _ => Ok(json!(true)),
+        };
+
+        match result {
+            Ok(value) => self.send_ok(req.id, value),
+            Err(err) => self.send_error(req.id, err),
+        }
+    }
+
+    fn apply_start_config(&mut self, params: &Value) {
+        let config = params.get("config").unwrap_or(params);
+        self.pending_width = number_at(config, &["width"])
+            .unwrap_or(self.pending_width as f64)
+            .round()
+            .clamp(64.0, 16384.0) as u32;
+        self.pending_height = number_at(config, &["height"])
+            .unwrap_or(self.pending_height as f64)
+            .round()
+            .clamp(64.0, 16384.0) as u32;
+        self.target_fps = number_at(config, &["target_fps"])
+            .unwrap_or(self.target_fps as f64)
+            .round()
+            .clamp(1.0, 240.0) as u32;
+        self.apply_native_quality_policy(config);
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.resize(PhysicalSize::new(self.pending_width, self.pending_height));
+        }
+    }
+
+    fn apply_output_config(&mut self, params: &Value) {
+        let width = number_at(params, &["width"]).unwrap_or(self.pending_width as f64);
+        let height = number_at(params, &["height"]).unwrap_or(self.pending_height as f64);
+        self.pending_width = width.round().clamp(64.0, 16384.0) as u32;
+        self.pending_height = height.round().clamp(64.0, 16384.0) as u32;
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.resize(PhysicalSize::new(self.pending_width, self.pending_height));
+        }
+    }
+
+    fn apply_render_clock(&mut self, params: &Value) {
+        let params = params.get("config").unwrap_or(params);
+        let mode = string_at(params, &["mode"])
+            .unwrap_or_else(|| "live".to_string())
+            .trim()
+            .to_ascii_lowercase();
+        if mode == "reset" {
+            self.render_clock_mode = "live".to_string();
+            self.render_clock_time = None;
+            self.render_clock_frame_index = None;
+            self.render_clock_delta = 1.0 / self.target_fps.max(1) as f32;
+            self.stats.render_clock_updates = self.stats.render_clock_updates.saturating_add(1);
+            return;
+        }
+        self.render_clock_mode = if mode == "manual" {
+            "manual".to_string()
+        } else {
+            "live".to_string()
+        };
+        self.render_clock_time = number_at(params, &["time"])
+            .or_else(|| number_at(params, &["time_seconds"]))
+            .or_else(|| number_at(params, &["clock_time"]))
+            .map(|value| value.clamp(0.0, 1.0e9) as f32);
+        self.render_clock_delta = number_at(params, &["time_delta"])
+            .or_else(|| number_at(params, &["delta"]))
+            .unwrap_or(1.0 / self.target_fps.max(1) as f64)
+            .clamp(0.0, 10.0) as f32;
+        self.render_clock_frame_index = number_at(params, &["frame_index"])
+            .or_else(|| number_at(params, &["frame"]))
+            .map(|value| value.round().clamp(0.0, u64::MAX as f64) as u64);
+        self.stats.render_clock_updates = self.stats.render_clock_updates.saturating_add(1);
+    }
+
+    fn apply_batch(&mut self, params: &Value) {
+        if let Some(commands) = params
+            .pointer("/batch/commands")
+            .or_else(|| params.get("commands"))
+        {
+            self.apply_commands(commands);
+        }
+        self.stats.frames_submitted = self.stats.frames_submitted.saturating_add(1);
+    }
+
+    fn apply_commands(&mut self, commands: &Value) {
+        let Some(commands) = commands.as_array() else {
+            return;
+        };
+        let count = commands.len() as u64;
+        self.stats.commands_applied = self.stats.commands_applied.saturating_add(count);
+        self.stats.command_queue_peak = self.stats.command_queue_peak.max(count);
+        self.command_phase = (self.command_phase + count as f32 * 0.031).fract();
+
+        for command in commands {
+            match command
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+            {
+                "set_output" => self.apply_output_config(command),
+                "upsert_layer" => self.apply_upsert_layer(command),
+                "set_layer_visibility" => self.apply_layer_visibility(command),
+                "set_layer_color" => self.apply_layer_color(command),
+                "set_layer_native_params" => self.apply_layer_native_params(command),
+                "set_effect_chain" => self.apply_effect_chain(command),
+                "set_texture_pool_cap" => self.apply_texture_pool_cap(command),
+                "set_shader_precompile_policy" => self.apply_shader_precompile_policy(command),
+                "set_metadata_cache_caps" => self.apply_metadata_cache_caps(command),
+                "set_native_quality_policy" => self.apply_native_quality_policy(command),
+                "set_audio_state" => self.apply_audio_state(command),
+                "set_render_clock" => self.apply_render_clock(command),
+                "bind_media_source" => self.apply_media_source(command),
+                "upload_source_preview" => self.apply_source_preview(command),
+                "upload_source_frame" => self.apply_source_frame(command),
+                "precompile_shader" => self.apply_precompile_shader(command),
+                "bind_isf_shader" => self.apply_bind_isf_shader(command),
+                "update_isf_uniforms" => self.apply_isf_uniforms(command),
+                "render_isf_to_layer" => self.apply_render_isf_to_layer(command),
+                "remove_layer" => self.apply_remove_layer(command),
+                _ => {}
+            }
+        }
+        self.layers_seen = self.scene_layers.len().min(1024) as u32;
+    }
+
+    fn prepare_native_instrument_tasks(&mut self, seq: u64) -> Vec<NativeInstrumentTask> {
+        let mut candidates = self
+            .scene_layers
+            .values()
+            .filter(|layer| layer.visible && is_native_instrument_kind(layer.source_kind))
+            .map(|layer| {
+                (
+                    layer.id.clone(),
+                    layer
+                        .source_id
+                        .clone()
+                        .unwrap_or_else(|| format!("native-instrument:{}", layer.id)),
+                    layer.source_kind,
+                    layer.native_params,
+                    layer.z_index,
+                )
+            })
+            .collect::<Vec<_>>();
+        candidates.sort_by(|a, b| b.4.cmp(&a.4).then_with(|| a.0.cmp(&b.0)));
+
+        let mut tasks = Vec::new();
+        let quality_scale = self.native_quality.instrument_scale();
+        for (layer_id, source_id, source_kind, native_params, _) in candidates {
+            let slot = self.assign_source_frame_slot(&source_id);
+            self.source_frames
+                .insert(source_id.clone(), SourceFrame { seq });
+            if let Some(layer) = self.scene_layers.get_mut(&layer_id) {
+                layer.frame_slot = Some(slot);
+                layer.preview_slot = None;
+            }
+            let mut params0 = [
+                native_params[0],
+                native_params[1],
+                native_params[2],
+                native_params[3],
+            ];
+            let mut params1 = [
+                native_params[4],
+                native_params[5],
+                native_params[6],
+                native_params[7],
+            ];
+            let density_scale = 0.62 + quality_scale * 0.38;
+            params0[2] = (params0[2] * density_scale).clamp(0.0, 1.0);
+            params1[2] = (params1[2] * quality_scale).clamp(0.0, 1.0);
+            tasks.push(NativeInstrumentTask {
+                slot,
+                source_kind,
+                params0,
+                params1,
+                seed: unit_from_hash(stable_hash64(&source_id)),
+            });
+        }
+        tasks
+    }
+
+    fn render(&mut self) {
+        if !self.running {
+            return;
+        }
+        let frame_index = self
+            .render_clock_frame_index
+            .unwrap_or(self.stats.frames_presented);
+        let native_tasks = self.prepare_native_instrument_tasks(frame_index);
+        let gpu_layers = self.gpu_layer_data();
+        let source_preview_pixels = if self.source_preview_dirty {
+            Some(self.source_preview_pixel_data())
+        } else {
+            None
+        };
+        let Some(renderer) = self.renderer.as_mut() else {
+            return;
+        };
+        renderer.poll_gpu_timing();
+        let started = Instant::now();
+        match renderer.render_native_instrument_frames(
+            &native_tasks,
+            self.render_clock_time,
+            frame_index,
+            self.audio0,
+            self.audio1,
+            self.audio2,
+        ) {
+            Ok(rendered) => {
+                self.stats.native_instrument_frame_renders = self
+                    .stats
+                    .native_instrument_frame_renders
+                    .saturating_add(rendered as u64);
+            }
+            Err(err) => {
+                renderer.last_frame_error = Some(err);
+                return;
+            }
+        }
+        match renderer.render(
+            self.command_phase,
+            gpu_layers.len() as u32,
+            self.render_clock_time,
+            frame_index,
+            &gpu_layers,
+            source_preview_pixels.as_deref(),
+            self.audio0,
+            self.audio1,
+            self.audio2,
+        ) {
+            Ok(()) => {
+                self.stats.frames_presented = self.stats.frames_presented.saturating_add(1);
+                self.stats.draw_calls = self.stats.draw_calls.saturating_add(1);
+                let ms = started.elapsed().as_secs_f64() * 1000.0;
+                self.stats.last_render_cpu_ms = ms;
+                self.render_cpu_ema_ms = if self.render_cpu_ema_ms <= 0.0 {
+                    ms
+                } else {
+                    self.render_cpu_ema_ms * 0.94 + ms * 0.06
+                };
+                let gpu_ms = renderer.last_render_gpu_ms();
+                let (
+                    gpu_timing_supported,
+                    last_render_gpu_ms,
+                    avg_render_gpu_ms,
+                    max_render_gpu_ms,
+                    gpu_timing_samples,
+                    gpu_timing_resolve_misses,
+                ) = renderer.gpu_timing_stats();
+                self.stats.gpu_timing_supported = gpu_timing_supported;
+                self.stats.last_render_gpu_ms = last_render_gpu_ms;
+                self.stats.avg_render_gpu_ms = avg_render_gpu_ms;
+                self.stats.max_render_gpu_ms = max_render_gpu_ms;
+                self.stats.gpu_timing_samples = gpu_timing_samples;
+                self.stats.gpu_timing_resolve_misses = gpu_timing_resolve_misses;
+                self.native_quality
+                    .observe_frame(ms, gpu_ms, self.target_fps, native_tasks.len());
+                if source_preview_pixels.is_some() {
+                    self.source_preview_dirty = false;
+                }
+            }
+            Err(err) => {
+                renderer.last_frame_error = Some(err);
+            }
+        }
+    }
+
+    fn frame_snapshot(&mut self, params: &Value) -> Result<Value, String> {
+        let include_pixels = bool_at(params, &["include_pixels"]).unwrap_or(false);
+        let snapshot_time = number_at(params, &["time"])
+            .or_else(|| number_at(params, &["time_seconds"]))
+            .or_else(|| number_at(params, &["clock_time"]))
+            .map(|value| value.clamp(0.0, 1.0e9) as f32)
+            .or(self.render_clock_time);
+        let snapshot_frame_index = number_at(params, &["frame_index"])
+            .or_else(|| number_at(params, &["frame"]))
+            .map(|value| value.round().clamp(0.0, u64::MAX as f64) as u64)
+            .or(self.render_clock_frame_index)
+            .unwrap_or(self.stats.frames_presented);
+        let native_tasks = self.prepare_native_instrument_tasks(snapshot_frame_index);
+        let gpu_layers = self.gpu_layer_data();
+        let source_preview_pixels = if self.source_preview_dirty {
+            Some(self.source_preview_pixel_data())
+        } else {
+            None
+        };
+        let Some(renderer) = self.renderer.as_mut() else {
+            return Err("native renderer has not created a wgpu device".to_string());
+        };
+        renderer.poll_gpu_timing();
+        match renderer.render_native_instrument_frames(
+            &native_tasks,
+            snapshot_time,
+            snapshot_frame_index,
+            self.audio0,
+            self.audio1,
+            self.audio2,
+        ) {
+            Ok(rendered) => {
+                self.stats.native_instrument_frame_renders = self
+                    .stats
+                    .native_instrument_frame_renders
+                    .saturating_add(rendered as u64);
+            }
+            Err(err) => {
+                renderer.last_frame_error = Some(err.clone());
+                return Err(err);
+            }
+        }
+        if let Err(err) = renderer.render_snapshot(
+            self.command_phase,
+            gpu_layers.len() as u32,
+            snapshot_time,
+            snapshot_frame_index,
+            &gpu_layers,
+            source_preview_pixels.as_deref(),
+            self.audio0,
+            self.audio1,
+            self.audio2,
+        ) {
+            renderer.last_frame_error = Some(err.clone());
+            return Err(err);
+        }
+        if source_preview_pixels.is_some() {
+            self.source_preview_dirty = false;
+        }
+        let snapshot = renderer.frame_snapshot(include_pixels)?;
+        renderer.poll_gpu_timing();
+        let (
+            gpu_timing_supported,
+            last_render_gpu_ms,
+            avg_render_gpu_ms,
+            max_render_gpu_ms,
+            gpu_timing_samples,
+            gpu_timing_resolve_misses,
+        ) = renderer.gpu_timing_stats();
+        self.stats.gpu_timing_supported = gpu_timing_supported;
+        self.stats.last_render_gpu_ms = last_render_gpu_ms;
+        self.stats.avg_render_gpu_ms = avg_render_gpu_ms;
+        self.stats.max_render_gpu_ms = max_render_gpu_ms;
+        self.stats.gpu_timing_samples = gpu_timing_samples;
+        self.stats.gpu_timing_resolve_misses = gpu_timing_resolve_misses;
+        self.stats.frame_snapshot_reads = self.stats.frame_snapshot_reads.saturating_add(1);
+        self.stats.frame_health_checks = self.stats.frame_health_checks.saturating_add(1);
+        if bool_at(&snapshot, &["dark_frame"]).unwrap_or(false) {
+            self.stats.dark_frame_warnings = self.stats.dark_frame_warnings.saturating_add(1);
+        }
+        self.stats.frame_snapshot_bytes_read = self
+            .stats
+            .frame_snapshot_bytes_read
+            .saturating_add(number_at(&snapshot, &["byte_length"]).unwrap_or(0.0) as u64);
+        Ok(snapshot)
+    }
+
+    fn frame_duration(&self) -> Duration {
+        Duration::from_secs_f64(1.0 / self.target_fps.max(1) as f64)
+    }
+
+    fn apply_native_quality_policy(&mut self, params: &Value) {
+        let config = params.get("config").unwrap_or(params);
+        if let Some(policy) = string_at(config, &["native_quality_policy"])
+            .or_else(|| string_at(config, &["quality_policy"]))
+            .or_else(|| string_at(config, &["policy"]))
+        {
+            self.native_quality.set_policy(&policy);
+        }
+    }
+
+    fn apply_shader_precompile_policy(&mut self, params: &Value) {
+        self.shader_precompile_queue_cap =
+            number_at(params, &["config", "shader_precompile_queue_cap"])
+                .or_else(|| number_at(params, &["config", "queue_cap"]))
+                .or_else(|| number_at(params, &["shader_precompile_queue_cap"]))
+                .or_else(|| number_at(params, &["queue_cap"]))
+                .unwrap_or(self.shader_precompile_queue_cap as f64)
+                .round()
+                .clamp(1.0, 65536.0) as u32;
+        self.shader_precompile_per_frame =
+            number_at(params, &["config", "shader_precompile_per_frame"])
+                .or_else(|| number_at(params, &["config", "per_frame"]))
+                .or_else(|| number_at(params, &["shader_precompile_per_frame"]))
+                .or_else(|| number_at(params, &["per_frame"]))
+                .unwrap_or(self.shader_precompile_per_frame as f64)
+                .round()
+                .clamp(1.0, 256.0) as u32;
+    }
+
+    fn apply_texture_pool_cap(&mut self, params: &Value) {
+        self.texture_pool_cap_mb = number_at(params, &["config", "texture_pool_cap_mb"])
+            .or_else(|| number_at(params, &["texture_pool_cap_mb"]))
+            .unwrap_or(self.texture_pool_cap_mb as f64)
+            .round()
+            .clamp(16.0, 16384.0) as u32;
+    }
+
+    fn apply_metadata_cache_caps(&mut self, params: &Value) {
+        self.shader_metadata_cache_cap = number_at(params, &["config", "shader_metadata_cache_cap"])
+            .or_else(|| number_at(params, &["config", "shader_cap"]))
+            .or_else(|| number_at(params, &["shader_metadata_cache_cap"]))
+            .or_else(|| number_at(params, &["shader_cap"]))
+            .unwrap_or(self.shader_metadata_cache_cap as f64)
+            .round()
+            .clamp(1.0, 262_144.0) as u32;
+        self.pipeline_metadata_cache_cap =
+            number_at(params, &["config", "pipeline_metadata_cache_cap"])
+                .or_else(|| number_at(params, &["config", "pipeline_cap"]))
+                .or_else(|| number_at(params, &["pipeline_metadata_cache_cap"]))
+                .or_else(|| number_at(params, &["pipeline_cap"]))
+                .unwrap_or(self.pipeline_metadata_cache_cap as f64)
+                .round()
+                .clamp(1.0, 262_144.0) as u32;
+    }
+
+    fn apply_precompile_shader(&mut self, command: &Value) {
+        self.stats.shader_precompile_queued = self.stats.shader_precompile_queued.saturating_add(1);
+        let Some(shader_id) = string_at(command, &["shader_id"]) else {
+            self.stats.shader_precompile_dropped =
+                self.stats.shader_precompile_dropped.saturating_add(1);
+            return;
+        };
+        let Some(source) = string_at(command, &["source"]) else {
+            self.stats.shader_precompile_dropped =
+                self.stats.shader_precompile_dropped.saturating_add(1);
+            return;
+        };
+        let stage = string_at(command, &["stage"]).unwrap_or_else(|| "module".to_string());
+        let entry = string_at(command, &["entry"]).unwrap_or_else(|| "main".to_string());
+
+        if self.shader_registry.len() >= self.shader_precompile_queue_cap as usize
+            && !self.shader_registry.contains_key(&shader_id)
+        {
+            self.stats.shader_precompile_dropped =
+                self.stats.shader_precompile_dropped.saturating_add(1);
+            self.last_shader_error =
+                Some(format!("shader registry cap reached; dropped {shader_id}"));
+            return;
+        }
+
+        if !looks_like_wgsl(&source) {
+            self.stats.shader_precompile_dropped =
+                self.stats.shader_precompile_dropped.saturating_add(1);
+            return;
+        }
+
+        match naga::front::wgsl::parse_str(&source) {
+            Ok(module) => {
+                let entry_points = module
+                    .entry_points
+                    .iter()
+                    .map(|entry| entry.name.clone())
+                    .collect::<Vec<_>>();
+                let record = ShaderRecord {
+                    shader_id: shader_id.clone(),
+                    stage,
+                    entry,
+                    source_hash: stable_hash64(&source),
+                    source_bytes: source.len(),
+                    entry_points,
+                    compiled_at_ms: epoch_ms().min(u64::MAX as u128) as u64,
+                };
+                self.shader_registry.insert(shader_id.clone(), record);
+                self.shader_sources.insert(shader_id, source);
+                self.stats.shader_precompile_compiled =
+                    self.stats.shader_precompile_compiled.saturating_add(1);
+                self.stats.shader_cache_entries = self.shader_registry.len() as u64;
+                self.stats.precompiled_vertex_shaders =
+                    self.precompiled_shader_count("vertex") as u64;
+                self.stats.precompiled_pixel_shaders =
+                    self.precompiled_shader_count("pixel") as u64;
+                self.last_shader_error = None;
+            }
+            Err(err) => {
+                self.stats.shader_precompile_failed =
+                    self.stats.shader_precompile_failed.saturating_add(1);
+                self.last_shader_error = Some(format!("{shader_id}: {err}"));
+            }
+        }
+    }
+
+    fn precompiled_shader_count(&self, stage: &str) -> u32 {
+        self.shader_registry
+            .values()
+            .filter(|record| record.stage.eq_ignore_ascii_case(stage))
+            .count()
+            .min(u32::MAX as usize) as u32
+    }
+
+    fn shader_registry_snapshot(&self) -> Vec<ShaderRecord> {
+        let mut shaders = self.shader_registry.values().cloned().collect::<Vec<_>>();
+        shaders.sort_by(|a, b| a.shader_id.cmp(&b.shader_id));
+        shaders
+    }
+
+    fn apply_upsert_layer(&mut self, command: &Value) {
+        let Some(layer_id) = string_at(command, &["layer_id"]) else {
+            return;
+        };
+        let z_index = number_at(command, &["z_index"])
+            .unwrap_or(0.0)
+            .round()
+            .clamp(i32::MIN as f64, i32::MAX as f64) as i32;
+        let entry = self
+            .scene_layers
+            .entry(layer_id.clone())
+            .or_insert_with(|| SceneLayer::new(layer_id, z_index));
+        entry.z_index = z_index;
+        entry.opacity = number_at(command, &["opacity"])
+            .unwrap_or(entry.opacity as f64)
+            .clamp(0.0, 1.0) as f32;
+        if let Some(blend_mode) = string_at(command, &["blend_mode"]) {
+            entry.blend_code = blend_mode_code(&blend_mode);
+        }
+        if let Some(corners) = corners_at(command, &["corners"]) {
+            entry.corners = corners;
+        }
+        if let Some(uv_transform) = vec4_path_at(command, &["uv_transform"]) {
+            entry.uv0 = [
+                uv_transform[0].clamp(-8.0, 8.0),
+                uv_transform[1].clamp(-8.0, 8.0),
+                uv_transform[2].clamp(-8.0, 8.0),
+                uv_transform[3].clamp(-8.0, 8.0),
+            ];
+        }
+        if let Some(uv_flags) = vec4_path_at(command, &["uv_flags"]) {
+            entry.uv1 = [
+                uv_flags[0].clamp(0.0, 2.0),
+                uv_flags[1].clamp(0.001, 128.0),
+                uv_flags[2].clamp(0.0, 1.0),
+                uv_flags[3].clamp(0.0, 1.0),
+            ];
+        }
+        if let Some(shape) = vec4_path_at(command, &["shape"]) {
+            entry.shape = [
+                shape[0].clamp(0.0, 2.0),
+                shape[1].clamp(0.0, 1.0),
+                shape[2].clamp(-std::f32::consts::TAU, std::f32::consts::TAU),
+                shape[3].clamp(0.0001, 8.0),
+            ];
+        }
+    }
+
+    fn apply_layer_visibility(&mut self, command: &Value) {
+        let Some(layer_id) = string_at(command, &["layer_id"]) else {
+            return;
+        };
+        let visible = bool_at(command, &["visible"]).unwrap_or(true);
+        let entry = self
+            .scene_layers
+            .entry(layer_id.clone())
+            .or_insert_with(|| SceneLayer::new(layer_id, 0));
+        entry.visible = visible;
+    }
+
+    fn apply_layer_color(&mut self, command: &Value) {
+        let Some(layer_id) = string_at(command, &["layer_id"]) else {
+            return;
+        };
+        let Some(rgba) = rgba_at(command, &["rgba"]) else {
+            return;
+        };
+        let entry = self
+            .scene_layers
+            .entry(layer_id.clone())
+            .or_insert_with(|| SceneLayer::new(layer_id, 0));
+        entry.color = rgba;
+        entry.source_kind = 1.0;
+    }
+
+    fn apply_layer_native_params(&mut self, command: &Value) {
+        let Some(layer_id) = string_at(command, &["layer_id"]) else {
+            return;
+        };
+        let Some(params) = params8_at(command, &["params"]) else {
+            return;
+        };
+        let entry = self
+            .scene_layers
+            .entry(layer_id.clone())
+            .or_insert_with(|| SceneLayer::new(layer_id, 0));
+        entry.native_params = params;
+    }
+
+    fn apply_bind_isf_shader(&mut self, command: &Value) {
+        let Some(layer_id) = string_at(command, &["layer_id"]) else {
+            return;
+        };
+        let Some(shader_id) = string_at(command, &["shader_id"]) else {
+            return;
+        };
+        self.isf_layer_bindings
+            .insert(layer_id.clone(), shader_id.clone());
+        let entry = self
+            .scene_layers
+            .entry(layer_id.clone())
+            .or_insert_with(|| SceneLayer::new(layer_id, 0));
+        entry.shader_id = Some(shader_id);
+        entry.shader_rendered = false;
+    }
+
+    fn apply_isf_uniforms(&mut self, command: &Value) {
+        let Some(shader_id) = string_at(command, &["shader_id"]) else {
+            return;
+        };
+        let floats = command.get("float_inputs").unwrap_or(&Value::Null);
+        let points = command.get("point_inputs").unwrap_or(&Value::Null);
+        let colors = command.get("color_inputs").unwrap_or(&Value::Null);
+        let input_count = json_object_len(floats)
+            .saturating_add(json_object_len(points))
+            .saturating_add(json_object_len(colors))
+            .min(u32::MAX as usize) as u32;
+        let state = IsfUniformState {
+            shader_id: shader_id.clone(),
+            time: number_at(command, &["time"])
+                .unwrap_or(0.0)
+                .clamp(0.0, 1.0e9) as f32,
+            time_delta: number_at(command, &["time_delta"])
+                .unwrap_or(1.0 / self.target_fps.max(1) as f64)
+                .clamp(0.0, 10.0) as f32,
+            frame_index: number_at(command, &["frame_index"])
+                .unwrap_or(0.0)
+                .round()
+                .clamp(0.0, u64::MAX as f64) as u64,
+            render_width: number_at(command, &["render_width"])
+                .unwrap_or(self.pending_width as f64)
+                .clamp(1.0, 65536.0) as f32,
+            render_height: number_at(command, &["render_height"])
+                .unwrap_or(self.pending_height as f64)
+                .clamp(1.0, 65536.0) as f32,
+            date: vec4_at(command, "date"),
+            audio: [
+                audio_value_at(command, "audio_level"),
+                audio_value_at(command, "audio_bass"),
+                audio_value_at(command, "audio_mid"),
+                audio_value_at(command, "audio_high"),
+                audio_value_at(command, "audio_beat"),
+                number_at(command, &["audio_beat_phase"])
+                    .unwrap_or(0.0)
+                    .clamp(0.0, 1.0) as f32,
+                number_at(command, &["audio_bpm"])
+                    .unwrap_or(0.0)
+                    .clamp(0.0, 300.0) as f32,
+                number_at(command, &["audio_spectral_centroid"])
+                    .unwrap_or(0.0)
+                    .clamp(0.0, 1.0) as f32,
+            ],
+            float_hash: stable_hash64(&floats.to_string()),
+            point_hash: stable_hash64(&points.to_string()),
+            color_hash: stable_hash64(&colors.to_string()),
+            input_count,
+            seq: self.stats.commands_applied,
+        };
+        self.isf_uniforms.insert(shader_id, state);
+    }
+
+    fn apply_render_isf_to_layer(&mut self, command: &Value) {
+        let Some(layer_id) = string_at(command, &["layer_id"]) else {
+            return;
+        };
+        let shader_id = self.isf_layer_bindings.get(&layer_id).cloned().or_else(|| {
+            self.scene_layers
+                .get(&layer_id)
+                .and_then(|layer| layer.shader_id.clone())
+        });
+        let Some(shader_id) = shader_id else {
+            return;
+        };
+        let uniform_state = self.isf_uniforms.get(&shader_id).cloned();
+        let params = uniform_state
+            .as_ref()
+            .map(|uniforms| uniforms.native_params(&shader_id))
+            .unwrap_or_else(default_native_params);
+        let input_source_slot = self
+            .scene_layers
+            .get(&layer_id)
+            .and_then(|layer| {
+                layer
+                    .source_id
+                    .as_deref()
+                    .and_then(|source_id| self.source_frame_slots.get(source_id).copied())
+                    .or(layer.frame_slot)
+            })
+            .unwrap_or(0);
+        let shader_uniforms = NativeShaderUniforms::from_isf(
+            &shader_id,
+            uniform_state.as_ref(),
+            self.pending_width,
+            self.pending_height,
+            params,
+            input_source_slot,
+        );
+        let seq = uniform_state
+            .as_ref()
+            .map(|uniforms| uniforms.seq)
+            .unwrap_or(self.stats.commands_applied);
+        let native_shader = self.shader_registry.get(&shader_id).and_then(|record| {
+            let source = self.shader_sources.get(&shader_id)?;
+            native_fragment_entry(record, source).map(|entry| {
+                let pipeline_key = native_shader_pipeline_key(record, &shader_id, &entry);
+                (source.clone(), entry, record.source_hash, pipeline_key)
+            })
+        });
+        let mut rendered_frame_slot = None;
+        if let Some((source, fragment_entry, source_hash, pipeline_key)) = native_shader {
+            let source_id = format!("native-shader:{layer_id}:{shader_id}:{source_hash:016x}");
+            let slot = self.assign_source_frame_slot(&source_id);
+            match self.renderer.as_mut() {
+                Some(renderer) => {
+                    match renderer.render_native_wgsl_shader_frame(
+                        slot,
+                        &pipeline_key,
+                        &source,
+                        &fragment_entry,
+                        &shader_uniforms,
+                    ) {
+                        Ok(()) => {
+                            self.source_frames.insert(source_id, SourceFrame { seq });
+                            self.stats.pipeline_cache_entries =
+                                renderer.native_shader_pipeline_count() as u64;
+                            rendered_frame_slot = Some(slot);
+                            self.last_shader_error = None;
+                        }
+                        Err(err) => {
+                            self.last_shader_error = Some(format!("{shader_id}: {err}"));
+                        }
+                    }
+                }
+                None => {
+                    self.last_shader_error = Some("native renderer is not ready".to_string());
+                }
+            }
+        }
+        let entry = self
+            .scene_layers
+            .entry(layer_id.clone())
+            .or_insert_with(|| SceneLayer::new(layer_id, 0));
+        entry.shader_id = Some(shader_id);
+        entry.shader_rendered = true;
+        entry.source_kind = NATIVE_SHADER_SOURCE_KIND;
+        entry.frame_slot = rendered_frame_slot;
+        entry.preview_slot = None;
+        entry.native_params = params;
+        if entry.color[3] <= 0.0 {
+            entry.color = [0.45, 0.92, 1.0, 0.88];
+        }
+        self.stats.native_shader_renders = self.stats.native_shader_renders.saturating_add(1);
+    }
+
+    fn apply_effect_chain(&mut self, command: &Value) {
+        let Some(layer_id) = string_at(command, &["layer_id"]) else {
+            return;
+        };
+        let entry = self
+            .scene_layers
+            .entry(layer_id.clone())
+            .or_insert_with(|| SceneLayer::new(layer_id, 0));
+        entry.effects = [[0.0; 4]; 4];
+        entry.effect_count = 0.0;
+        let Some(ids) = command.get("effect_ids").and_then(Value::as_array) else {
+            return;
+        };
+        let mut write_index = 0usize;
+        for value in ids.iter().filter_map(Value::as_str) {
+            if write_index >= entry.effects.len() {
+                break;
+            }
+            if let Some(effect) = effect_descriptor_code(value) {
+                entry.effects[write_index] = effect;
+                write_index += 1;
+                entry.effect_count += 1.0;
+            }
+        }
+    }
+
+    fn apply_audio_state(&mut self, command: &Value) {
+        let active = bool_at(command, &["active"]).unwrap_or(false);
+        let level = audio_value_at(command, "level");
+        let bass = audio_value_at(command, "bass");
+        let mid = audio_value_at(command, "mid");
+        let treble = audio_value_at(command, "treble");
+        let high = audio_value_at(command, "high");
+        let beat = audio_value_at(command, "beat");
+        let beat_phase = audio_value_at(command, "beat_phase");
+        let bpm = number_at(command, &["bpm"])
+            .unwrap_or(0.0)
+            .clamp(0.0, 300.0) as f32;
+        let centroid = audio_value_at(command, "centroid");
+        let kick = audio_value_at(command, "kick");
+        let snare = audio_value_at(command, "snare");
+        self.audio0 = [level, bass, mid, treble];
+        self.audio1 = [high, beat, beat_phase, bpm];
+        self.audio2 = [centroid, kick, snare, if active { 1.0 } else { 0.0 }];
+    }
+
+    fn apply_media_source(&mut self, command: &Value) {
+        let Some(layer_id) = string_at(command, &["layer_id"]) else {
+            return;
+        };
+        let source_id = string_at(command, &["source_id"]);
+        let source_type =
+            string_at(command, &["source_type"]).unwrap_or_else(|| "none".to_string());
+        let preview_slot = source_id
+            .as_ref()
+            .and_then(|id| self.source_preview_slots.get(id))
+            .copied();
+        let frame_slot = source_id
+            .as_ref()
+            .and_then(|id| self.source_frame_slots.get(id))
+            .copied();
+        let entry = self
+            .scene_layers
+            .entry(layer_id.clone())
+            .or_insert_with(|| SceneLayer::new(layer_id.clone(), 0));
+        entry.source_kind = source_kind(&source_type);
+        entry.source_id = source_id;
+        entry.preview_slot = preview_slot;
+        entry.frame_slot = frame_slot;
+        entry.shader_rendered = false;
+        if source_type != "none" && entry.color[3] <= 0.0 {
+            entry.color = stable_layer_color(&layer_id, 1.0);
+        }
+        if source_type != "color" {
+            entry.color = source_type_color(&source_type, &layer_id);
+        }
+    }
+
+    fn apply_source_preview(&mut self, command: &Value) {
+        let Some(source_id) = string_at(command, &["source_id"]) else {
+            return;
+        };
+        let seq = number_at(command, &["seq"]).unwrap_or(0.0).round().max(0.0) as u64;
+        if let Some(existing) = self.source_previews.get(&source_id) {
+            if seq < existing.seq {
+                return;
+            }
+        }
+        let width = number_at(command, &["width"])
+            .unwrap_or(SOURCE_PREVIEW_SIZE as f64)
+            .round()
+            .clamp(1.0, 4096.0) as usize;
+        let height = number_at(command, &["height"])
+            .unwrap_or(SOURCE_PREVIEW_SIZE as f64)
+            .round()
+            .clamp(1.0, 4096.0) as usize;
+        let Some(rgba) = command.get("rgba").and_then(Value::as_array) else {
+            return;
+        };
+        if rgba.len() < width.saturating_mul(height).saturating_mul(4) {
+            return;
+        }
+
+        let slot = self.assign_source_preview_slot(&source_id);
+        let mut pixels = vec![PreviewPixel::zeroed(); SOURCE_PREVIEW_PIXELS];
+        let scale_x = width as f32 / SOURCE_PREVIEW_SIZE as f32;
+        let scale_y = height as f32 / SOURCE_PREVIEW_SIZE as f32;
+        for y in 0..SOURCE_PREVIEW_SIZE {
+            let sy = ((y as f32 + 0.5) * scale_y - 0.5).clamp(0.0, (height - 1) as f32);
+            for x in 0..SOURCE_PREVIEW_SIZE {
+                let dst_index = y * SOURCE_PREVIEW_SIZE + x;
+                let sx = ((x as f32 + 0.5) * scale_x - 0.5).clamp(0.0, (width - 1) as f32);
+                pixels[dst_index] = resample_preview_pixel(rgba, width, height, sx, sy);
+            }
+        }
+
+        self.source_previews
+            .insert(source_id.clone(), SourcePreview { slot, seq, pixels });
+        self.source_preview_dirty = true;
+        for layer in self.scene_layers.values_mut() {
+            if layer.source_id.as_deref() == Some(source_id.as_str()) {
+                layer.preview_slot = Some(slot);
+            }
+        }
+    }
+
+    fn apply_source_frame(&mut self, command: &Value) {
+        let Some(source_id) = string_at(command, &["source_id"]) else {
+            return;
+        };
+        let seq = number_at(command, &["seq"]).unwrap_or(0.0).round().max(0.0) as u64;
+        if let Some(existing) = self.source_frames.get(&source_id) {
+            if seq < existing.seq {
+                return;
+            }
+        }
+        let width = number_at(command, &["width"])
+            .unwrap_or(SOURCE_FRAME_SIZE_DEFAULT as f64)
+            .round()
+            .clamp(1.0, SOURCE_FRAME_SIZE_INSANE as f64) as usize;
+        let height = number_at(command, &["height"])
+            .unwrap_or(SOURCE_FRAME_SIZE_DEFAULT as f64)
+            .round()
+            .clamp(1.0, SOURCE_FRAME_SIZE_INSANE as f64) as usize;
+        let Some(rgba) = rgba_bytes_from_command(command, width, height) else {
+            return;
+        };
+
+        let slot = self.assign_source_frame_slot(&source_id);
+        let dst_size = self
+            .renderer
+            .as_ref()
+            .map(|renderer| renderer.source_frame_size)
+            .unwrap_or(SOURCE_FRAME_SIZE_DEFAULT);
+        let pixels = resample_frame_bytes(&rgba, width, height, dst_size, dst_size);
+        if let Some(renderer) = self.renderer.as_ref() {
+            renderer.write_source_frame(slot, &pixels);
+        }
+        self.stats.source_frame_uploads = self.stats.source_frame_uploads.saturating_add(1);
+        self.stats.source_frame_bytes_uploaded = self
+            .stats
+            .source_frame_bytes_uploaded
+            .saturating_add(pixels.len() as u64);
+        self.source_frames
+            .insert(source_id.clone(), SourceFrame { seq });
+        for layer in self.scene_layers.values_mut() {
+            if layer.source_id.as_deref() == Some(source_id.as_str()) {
+                layer.frame_slot = Some(slot);
+            }
+        }
+    }
+
+    fn assign_source_preview_slot(&mut self, source_id: &str) -> usize {
+        if let Some(slot) = self.source_preview_slots.get(source_id).copied() {
+            return slot;
+        }
+        let used: std::collections::HashSet<usize> =
+            self.source_preview_slots.values().copied().collect();
+        let slot = (0..MAX_SOURCE_PREVIEWS)
+            .find(|candidate| !used.contains(candidate))
+            .unwrap_or_else(|| stable_slot(source_id, MAX_SOURCE_PREVIEWS));
+        if let Some(old_source_id) =
+            self.source_preview_slots
+                .iter()
+                .find_map(|(id, existing_slot)| {
+                    if *existing_slot == slot && id != source_id {
+                        Some(id.clone())
+                    } else {
+                        None
+                    }
+                })
+        {
+            self.source_preview_slots.remove(&old_source_id);
+            self.source_previews.remove(&old_source_id);
+            for layer in self.scene_layers.values_mut() {
+                if layer.source_id.as_deref() == Some(old_source_id.as_str()) {
+                    layer.preview_slot = None;
+                }
+            }
+        }
+        self.source_preview_slots
+            .insert(source_id.to_string(), slot);
+        slot
+    }
+
+    fn assign_source_frame_slot(&mut self, source_id: &str) -> usize {
+        if let Some(slot) = self.source_frame_slots.get(source_id).copied() {
+            return slot;
+        }
+        let used: std::collections::HashSet<usize> =
+            self.source_frame_slots.values().copied().collect();
+        if let Some(slot) = (0..MAX_SOURCE_FRAME_SLOTS).find(|slot| !used.contains(slot)) {
+            self.source_frame_slots.insert(source_id.to_string(), slot);
+            return slot;
+        }
+
+        let slot = stable_slot(source_id, MAX_SOURCE_FRAME_SLOTS);
+        if let Some(old_source_id) =
+            self.source_frame_slots
+                .iter()
+                .find_map(|(id, existing_slot)| {
+                    if *existing_slot == slot {
+                        Some(id.clone())
+                    } else {
+                        None
+                    }
+                })
+        {
+            self.source_frame_slots.remove(&old_source_id);
+            self.source_frames.remove(&old_source_id);
+            for layer in self.scene_layers.values_mut() {
+                if layer.source_id.as_deref() == Some(old_source_id.as_str()) {
+                    layer.frame_slot = None;
+                }
+            }
+        }
+        self.source_frame_slots.insert(source_id.to_string(), slot);
+        slot
+    }
+
+    fn apply_remove_layer(&mut self, command: &Value) {
+        if let Some(layer_id) = string_at(command, &["layer_id"]) {
+            self.scene_layers.remove(&layer_id);
+            self.isf_layer_bindings.remove(&layer_id);
+        }
+    }
+
+    fn gpu_layer_data(&self) -> Vec<LayerGpu> {
+        let mut layers: Vec<&SceneLayer> = self.scene_layers.values().collect();
+        // Editor layer index 0 is visually top-most, so send larger z first
+        // and let z=0 blend last.
+        layers.sort_by(|a, b| b.z_index.cmp(&a.z_index).then_with(|| a.id.cmp(&b.id)));
+        layers
+            .into_iter()
+            .take(MAX_SCENE_LAYERS)
+            .map(SceneLayer::gpu)
+            .collect()
+    }
+
+    fn source_preview_pixel_data(&self) -> Vec<PreviewPixel> {
+        let mut pixels = vec![PreviewPixel::zeroed(); MAX_SOURCE_PREVIEWS * SOURCE_PREVIEW_PIXELS];
+        for preview in self.source_previews.values() {
+            let slot = preview.slot.min(MAX_SOURCE_PREVIEWS - 1);
+            let offset = slot * SOURCE_PREVIEW_PIXELS;
+            let end = offset + SOURCE_PREVIEW_PIXELS;
+            pixels[offset..end].copy_from_slice(&preview.pixels[..SOURCE_PREVIEW_PIXELS]);
+        }
+        pixels
+    }
+}
+
+impl ApplicationHandler<UserEvent> for App {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        event_loop.set_control_flow(ControlFlow::Wait);
+        if let Err(err) = self.ensure_renderer(event_loop) {
+            eprintln!("[GhostRenderCore] failed to initialize renderer: {err}");
+        }
+    }
+
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
+        match event {
+            UserEvent::Rpc(req) => self.handle_rpc(event_loop, req),
+        }
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        let Some(renderer) = self.renderer.as_mut() else {
+            return;
+        };
+        if renderer.window.id() != window_id {
+            return;
+        }
+        match event {
+            WindowEvent::CloseRequested => {
+                self.running = false;
+                event_loop.exit();
+            }
+            WindowEvent::Resized(size) => {
+                renderer.resize(size);
+                self.pending_width = size.width.max(1);
+                self.pending_height = size.height.max(1);
+            }
+            WindowEvent::RedrawRequested => self.render(),
+            _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if !self.running {
+            event_loop.set_control_flow(ControlFlow::Wait);
+            return;
+        }
+
+        let frame_duration = self.frame_duration();
+        let next_frame_at = self.last_redraw + frame_duration;
+        let now = Instant::now();
+        if now >= next_frame_at {
+            if let Some(renderer) = self.renderer.as_ref() {
+                renderer.window.request_redraw();
+            }
+            self.last_redraw = now;
+            event_loop.set_control_flow(ControlFlow::WaitUntil(now + frame_duration));
+        } else {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(next_frame_at));
+        }
+    }
+}
+
+impl RenderState {
+    async fn new(window: &'static Window, width: u32, height: u32) -> Result<Self, String> {
+        let instance = wgpu::Instance::default();
+        let surface = instance
+            .create_surface(window)
+            .map_err(|err| err.to_string())?;
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                force_fallback_adapter: false,
+                compatible_surface: Some(&surface),
+                apply_limit_buckets: false,
+            })
+            .await
+            .map_err(|err| err.to_string())?;
+        let adapter_info = adapter.get_info();
+        let adapter_limits = adapter.limits();
+        let adapter_features = adapter.features();
+        let source_frame_format = choose_source_frame_format(&adapter);
+        let source_frame_size =
+            choose_source_frame_size(&adapter_limits, adapter_features, source_frame_format);
+        let source_frame_mip_levels = source_frame_mip_levels(source_frame_size);
+        let requested_features = adapter_features.intersection(native_optional_features());
+        let native_caps = native_gpu_caps(
+            &adapter_info,
+            &adapter_limits,
+            adapter_features,
+            requested_features,
+        );
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("Ghost Render Core Device"),
+                required_features: requested_features,
+                required_limits: wgpu::Limits::default(),
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                memory_hints: wgpu::MemoryHints::Performance,
+                trace: wgpu::Trace::Off,
+            })
+            .await
+            .map_err(|err| err.to_string())?;
+
+        let caps = surface.get_capabilities(&adapter);
+        let format = caps
+            .formats
+            .iter()
+            .copied()
+            .find(|format| format.is_srgb())
+            .unwrap_or(caps.formats[0]);
+        let present_mode = if caps.present_modes.contains(&wgpu::PresentMode::AutoNoVsync) {
+            wgpu::PresentMode::AutoNoVsync
+        } else {
+            wgpu::PresentMode::AutoVsync
+        };
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            color_space: wgpu::SurfaceColorSpace::Auto,
+            width: width.max(1),
+            height: height.max(1),
+            present_mode,
+            desired_maximum_frame_latency: 2,
+            alpha_mode: caps.alpha_modes[0],
+            view_formats: vec![],
+        };
+        surface.configure(&device, &config);
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Ghost Render Core Heartbeat"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("heartbeat.wgsl").into()),
+        });
+        let native_instrument_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Ghost Render Core Native Instruments"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("native_instruments.wgsl").into()),
+        });
+        let native_shader_vertex_module =
+            device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Ghost Render Core Native Shader Fullscreen Vertex"),
+                source: wgpu::ShaderSource::Wgsl(NATIVE_SHADER_FULLSCREEN_VERTEX_WGSL.into()),
+            });
+        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Ghost Render Core Uniforms"),
+            contents: bytemuck::bytes_of(&Uniforms {
+                resolution: [config.width as f32, config.height as f32],
+                time: 0.0,
+                command_phase: 0.0,
+                layer_count: 0.0,
+                frame_count: 0.0,
+                _pad0: [0.0, 0.0],
+                audio0: [0.0; 4],
+                audio1: [0.0; 4],
+                audio2: [0.0; 4],
+            }),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let native_instrument_uniform_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Ghost Render Core Native Instrument Uniforms"),
+                contents: bytemuck::bytes_of(&NativeInstrumentUniforms::zeroed()),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+        let native_shader_uniform_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Ghost Render Core Native Shader Uniforms"),
+                contents: bytemuck::bytes_of(&NativeShaderUniforms::zeroed()),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+        let empty_layers = vec![LayerGpu::zeroed(); MAX_SCENE_LAYERS];
+        let layer_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Ghost Render Core Scene Layers"),
+            contents: bytemuck::cast_slice(&empty_layers),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+        let empty_previews =
+            vec![PreviewPixel::zeroed(); MAX_SOURCE_PREVIEWS * SOURCE_PREVIEW_PIXELS];
+        let source_preview_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Ghost Render Core Source Previews"),
+            contents: bytemuck::cast_slice(&empty_previews),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+        let source_frame_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Ghost Render Core Source Frames"),
+            size: wgpu::Extent3d {
+                width: source_frame_size as u32,
+                height: source_frame_size as u32,
+                depth_or_array_layers: MAX_SOURCE_FRAME_SLOTS as u32,
+            },
+            mip_level_count: source_frame_mip_levels,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: source_frame_format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let source_frame_view = source_frame_texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("Ghost Render Core Source Frame View"),
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        let source_frame_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Ghost Render Core Source Frame Sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            ..Default::default()
+        });
+        let source_frame_blitter = TextureBlitterBuilder::new(&device, source_frame_format)
+            .sample_type(wgpu::FilterMode::Linear)
+            .build();
+        let (snapshot_texture, snapshot_view) =
+            Self::create_snapshot_target(&device, config.width, config.height, format);
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Ghost Render Core Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Ghost Render Core Bind Group"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: layer_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: source_preview_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&source_frame_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(&source_frame_sampler),
+                },
+            ],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Ghost Render Core Pipeline Layout"),
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Ghost Render Core Pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        let native_instrument_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Ghost Render Core Native Instrument Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+        let native_instrument_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Ghost Render Core Native Instrument Bind Group"),
+            layout: &native_instrument_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: native_instrument_uniform_buffer.as_entire_binding(),
+            }],
+        });
+        let native_shader_input_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Ghost Render Core Native Shader Input Frames"),
+            size: wgpu::Extent3d {
+                width: source_frame_size as u32,
+                height: source_frame_size as u32,
+                depth_or_array_layers: MAX_SOURCE_FRAME_SLOTS as u32,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: source_frame_format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let native_shader_input_view =
+            native_shader_input_texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("Ghost Render Core Native Shader Input Frame View"),
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            });
+        let native_shader_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Ghost Render Core Native Shader Bind Group Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2Array,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+        let native_shader_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Ghost Render Core Native Shader Bind Group"),
+            layout: &native_shader_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: native_shader_uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&native_shader_input_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&source_frame_sampler),
+                },
+            ],
+        });
+        let native_instrument_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Ghost Render Core Native Instrument Pipeline Layout"),
+                bind_group_layouts: &[Some(&native_instrument_bind_group_layout)],
+                immediate_size: 0,
+            });
+        let native_instrument_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Ghost Render Core Native Instrument Pipeline"),
+                layout: Some(&native_instrument_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &native_instrument_shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &native_instrument_shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: source_frame_format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            });
+
+        window.set_title(&format!("Ghost Render Core N0 - {}", adapter_info.name));
+        let gpu_timing = requested_features
+            .contains(wgpu::Features::TIMESTAMP_QUERY)
+            .then(|| GpuTimingState::new(&device, &queue));
+
+        Ok(Self {
+            window,
+            adapter_name: adapter_info.name,
+            native_caps,
+            surface,
+            device,
+            queue,
+            config,
+            pipeline,
+            native_instrument_pipeline,
+            uniform_buffer,
+            native_instrument_uniform_buffer,
+            native_shader_uniform_buffer,
+            layer_buffer,
+            source_preview_buffer,
+            source_frame_texture,
+            native_shader_input_texture,
+            source_frame_size,
+            source_frame_format,
+            source_frame_mip_levels,
+            source_frame_blitter,
+            native_shader_vertex_module,
+            native_shader_bind_group_layout,
+            native_shader_bind_group,
+            native_shader_pipelines: HashMap::new(),
+            snapshot_texture,
+            snapshot_view,
+            last_frame_metrics: None,
+            bind_group,
+            native_instrument_bind_group,
+            start_time: Instant::now(),
+            gpu_timing,
+            last_frame_error: None,
+        })
+    }
+
+    fn adapter_name(&self) -> Option<String> {
+        Some(self.adapter_name.clone())
+    }
+
+    fn create_snapshot_target(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+    ) -> (wgpu::Texture, wgpu::TextureView) {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Ghost Render Core Snapshot Mirror"),
+            size: wgpu::Extent3d {
+                width: width.max(1),
+                height: height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("Ghost Render Core Snapshot Mirror View"),
+            ..Default::default()
+        });
+        (texture, view)
+    }
+
+    fn poll_gpu_timing(&mut self) {
+        if self.gpu_timing.is_none() {
+            return;
+        }
+        let _ = self.device.poll(wgpu::PollType::Poll);
+        if let Some(gpu_timing) = self.gpu_timing.as_mut() {
+            gpu_timing.poll_readback();
+        }
+    }
+
+    fn last_render_gpu_ms(&self) -> Option<f64> {
+        self.gpu_timing.as_ref().and_then(|timing| {
+            (timing.last_render_gpu_ms > 0.0).then_some(timing.last_render_gpu_ms)
+        })
+    }
+
+    fn gpu_timing_stats(&self) -> (bool, f64, f64, f64, u64, u64) {
+        self.gpu_timing
+            .as_ref()
+            .map(|timing| {
+                (
+                    true,
+                    timing.last_render_gpu_ms,
+                    timing.avg_render_gpu_ms,
+                    timing.max_render_gpu_ms,
+                    timing.samples,
+                    timing.resolve_misses,
+                )
+            })
+            .unwrap_or((false, 0.0, 0.0, 0.0, 0, 0))
+    }
+
+    fn native_shader_pipeline_count(&self) -> u32 {
+        self.native_shader_pipelines.len().min(u32::MAX as usize) as u32
+    }
+
+    fn resize(&mut self, size: PhysicalSize<u32>) {
+        if size.width == 0 || size.height == 0 {
+            return;
+        }
+        self.config.width = size.width;
+        self.config.height = size.height;
+        self.surface.configure(&self.device, &self.config);
+        let (snapshot_texture, snapshot_view) = Self::create_snapshot_target(
+            &self.device,
+            self.config.width,
+            self.config.height,
+            self.config.format,
+        );
+        self.snapshot_texture = snapshot_texture;
+        self.snapshot_view = snapshot_view;
+    }
+
+    fn render_native_instrument_frames(
+        &mut self,
+        tasks: &[NativeInstrumentTask],
+        time_seconds: Option<f32>,
+        _frame_count: u64,
+        audio0: [f32; 4],
+        audio1: [f32; 4],
+        audio2: [f32; 4],
+    ) -> Result<usize, String> {
+        if tasks.is_empty() {
+            return Ok(0);
+        }
+        let time = time_seconds.unwrap_or_else(|| self.start_time.elapsed().as_secs_f32());
+        let mut rendered = 0usize;
+        for task in tasks.iter().take(MAX_SOURCE_FRAME_SLOTS) {
+            let safe_slot = task.slot.min(MAX_SOURCE_FRAME_SLOTS - 1);
+            let uniforms = NativeInstrumentUniforms {
+                resolution: [self.source_frame_size as f32, self.source_frame_size as f32],
+                time,
+                source_kind: task.source_kind,
+                params0: task.params0,
+                params1: task.params1,
+                audio0,
+                audio1,
+                audio2,
+                seed: task.seed,
+                _pad0: [0.0; 7],
+            };
+            self.queue.write_buffer(
+                &self.native_instrument_uniform_buffer,
+                0,
+                bytemuck::bytes_of(&uniforms),
+            );
+            let view = self
+                .source_frame_texture
+                .create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("Ghost Render Core Native Instrument Source Frame View"),
+                    format: Some(self.source_frame_format),
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    base_mip_level: 0,
+                    mip_level_count: Some(1),
+                    base_array_layer: safe_slot as u32,
+                    array_layer_count: Some(1),
+                    ..Default::default()
+                });
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Ghost Render Core Native Instrument Encoder"),
+                });
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Ghost Render Core Native Instrument Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(&self.native_instrument_pipeline);
+                pass.set_bind_group(0, &self.native_instrument_bind_group, &[]);
+                pass.draw(0..3, 0..1);
+            }
+            self.generate_source_frame_mips(&mut encoder, safe_slot);
+            self.queue.submit(Some(encoder.finish()));
+            rendered += 1;
+        }
+        self.last_frame_error = None;
+        Ok(rendered)
+    }
+
+    fn ensure_native_shader_pipeline(
+        &mut self,
+        cache_key: &str,
+        source: &str,
+        fragment_entry: &str,
+    ) -> Result<(), String> {
+        if self.native_shader_pipelines.contains_key(cache_key) {
+            return Ok(());
+        }
+        let error_scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let shader = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Ghost Render Core Native Shader Fragment"),
+                source: wgpu::ShaderSource::Wgsl(source.into()),
+            });
+        let pipeline_layout = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Ghost Render Core Native Shader Pipeline Layout"),
+                bind_group_layouts: &[Some(&self.native_shader_bind_group_layout)],
+                immediate_size: 0,
+            });
+        let pipeline = self
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Ghost Render Core Native Shader Pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &self.native_shader_vertex_module,
+                    entry_point: Some("vs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(fragment_entry),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: self.source_frame_format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            });
+        let error_future = error_scope.pop();
+        let _ = self.device.poll(wgpu::PollType::Poll);
+        if let Some(err) = pollster::block_on(error_future) {
+            return Err(err.to_string());
+        }
+        self.native_shader_pipelines
+            .insert(cache_key.to_string(), NativeShaderPipeline { pipeline });
+        Ok(())
+    }
+
+    fn render_native_wgsl_shader_frame(
+        &mut self,
+        slot: usize,
+        cache_key: &str,
+        source: &str,
+        fragment_entry: &str,
+        uniforms: &NativeShaderUniforms,
+    ) -> Result<(), String> {
+        self.ensure_native_shader_pipeline(cache_key, source, fragment_entry)?;
+        self.queue.write_buffer(
+            &self.native_shader_uniform_buffer,
+            0,
+            bytemuck::bytes_of(uniforms),
+        );
+        let safe_slot = slot.min(MAX_SOURCE_FRAME_SLOTS - 1);
+        let view = self
+            .source_frame_texture
+            .create_view(&wgpu::TextureViewDescriptor {
+                label: Some("Ghost Render Core Native Shader Source Frame View"),
+                format: Some(self.source_frame_format),
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                base_mip_level: 0,
+                mip_level_count: Some(1),
+                base_array_layer: safe_slot as u32,
+                array_layer_count: Some(1),
+                ..Default::default()
+            });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Ghost Render Core Native Shader Encoder"),
+            });
+        let input_slot = uniforms.frame_seed_inputs[3]
+            .round()
+            .clamp(0.0, (MAX_SOURCE_FRAME_SLOTS - 1) as f32) as u32;
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.source_frame_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: 0,
+                    y: 0,
+                    z: input_slot,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.native_shader_input_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: 0,
+                    y: 0,
+                    z: input_slot,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width: self.source_frame_size as u32,
+                height: self.source_frame_size as u32,
+                depth_or_array_layers: 1,
+            },
+        );
+        {
+            let Some(pipeline) = self.native_shader_pipelines.get(cache_key) else {
+                return Err("native shader pipeline was not cached".to_string());
+            };
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Ghost Render Core Native Shader Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&pipeline.pipeline);
+            pass.set_bind_group(0, &self.native_shader_bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        self.generate_source_frame_mips(&mut encoder, safe_slot);
+        self.queue.submit(Some(encoder.finish()));
+        self.last_frame_error = None;
+        Ok(())
+    }
+
+    fn write_source_frame(&self, slot: usize, rgba: &[u8]) {
+        if rgba.len() < self.source_frame_size * self.source_frame_size * 4 {
+            return;
+        }
+        let safe_slot = slot.min(MAX_SOURCE_FRAME_SLOTS - 1);
+        let (payload, bytes_per_row) =
+            source_frame_upload_payload(rgba, self.source_frame_size, self.source_frame_format);
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.source_frame_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: 0,
+                    y: 0,
+                    z: safe_slot as u32,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            &payload,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: Some(self.source_frame_size as u32),
+            },
+            wgpu::Extent3d {
+                width: self.source_frame_size as u32,
+                height: self.source_frame_size as u32,
+                depth_or_array_layers: 1,
+            },
+        );
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Ghost Render Core Source Frame Mip Encoder"),
+            });
+        self.generate_source_frame_mips(&mut encoder, safe_slot);
+        self.queue.submit(Some(encoder.finish()));
+    }
+
+    fn generate_source_frame_mips(&self, encoder: &mut wgpu::CommandEncoder, slot: usize) {
+        if self.source_frame_mip_levels <= 1 {
+            return;
+        }
+        let safe_slot = slot.min(MAX_SOURCE_FRAME_SLOTS - 1);
+        for mip_level in 1..self.source_frame_mip_levels {
+            let source_view = self
+                .source_frame_texture
+                .create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("Ghost Render Core Source Frame Mip Source"),
+                    format: Some(self.source_frame_format),
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    base_mip_level: mip_level - 1,
+                    mip_level_count: Some(1),
+                    base_array_layer: safe_slot as u32,
+                    array_layer_count: Some(1),
+                    ..Default::default()
+                });
+            let target_view = self
+                .source_frame_texture
+                .create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("Ghost Render Core Source Frame Mip Target"),
+                    format: Some(self.source_frame_format),
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    base_mip_level: mip_level,
+                    mip_level_count: Some(1),
+                    base_array_layer: safe_slot as u32,
+                    array_layer_count: Some(1),
+                    ..Default::default()
+                });
+            self.source_frame_blitter
+                .copy(&self.device, encoder, &source_view, &target_view);
+        }
+    }
+
+    fn frame_snapshot(&mut self, include_pixels: bool) -> Result<Value, String> {
+        let width = self.config.width.max(1);
+        let height = self.config.height.max(1);
+        let bytes_per_pixel = 4_u32;
+        let unpadded_bytes_per_row = width.saturating_mul(bytes_per_pixel);
+        let padded_bytes_per_row =
+            align_u32(unpadded_bytes_per_row, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        let padded_size = padded_bytes_per_row as u64 * height as u64;
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Ghost Render Core Snapshot Readback"),
+            size: padded_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Ghost Render Core Snapshot Readback Encoder"),
+            });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.snapshot_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.queue.submit(Some(encoder.finish()));
+
+        let slice = buffer.slice(..);
+        let (tx, rx) = mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result.map_err(|err| err.to_string()));
+        });
+        self.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .map_err(|err| err.to_string())?;
+        rx.recv()
+            .map_err(|err| err.to_string())?
+            .map_err(|err| err.to_string())?;
+
+        let mapped = slice.get_mapped_range().map_err(|err| err.to_string())?;
+        let mut compact = vec![0_u8; unpadded_bytes_per_row as usize * height as usize];
+        for y in 0..height as usize {
+            let src_start = y * padded_bytes_per_row as usize;
+            let dst_start = y * unpadded_bytes_per_row as usize;
+            compact[dst_start..dst_start + unpadded_bytes_per_row as usize]
+                .copy_from_slice(&mapped[src_start..src_start + unpadded_bytes_per_row as usize]);
+        }
+        drop(mapped);
+        buffer.unmap();
+
+        let metrics = snapshot_metrics(&compact, self.config.format);
+        self.last_frame_metrics = Some(metrics.clone());
+        let mut value = json!({
+            "timestamp_ms": epoch_ms(),
+            "width": width,
+            "height": height,
+            "format": format!("{:?}", self.config.format),
+            "byte_length": compact.len(),
+            "bytes_per_row": unpadded_bytes_per_row,
+            "padded_bytes_per_row": padded_bytes_per_row,
+            "checksum": metrics.checksum,
+            "nonzero_pixels": metrics.nonzero_pixels,
+            "bright_pixels": metrics.bright_pixels,
+            "transparent_pixels": metrics.transparent_pixels,
+            "average_luma": metrics.average_luma,
+            "max_luma": metrics.max_luma,
+            "mean_rgba": metrics.mean_rgba,
+            "dark_frame": metrics.dark_frame,
+            "includes_pixels": include_pixels,
+        });
+        if include_pixels {
+            if let Some(object) = value.as_object_mut() {
+                object.insert(
+                    "rgba_b64".to_string(),
+                    Value::String(base64::engine::general_purpose::STANDARD.encode(&compact)),
+                );
+            }
+        }
+        Ok(value)
+    }
+
+    fn write_frame_inputs(
+        &self,
+        command_phase: f32,
+        layers_seen: u32,
+        time_seconds: Option<f32>,
+        frame_count: u64,
+        scene_layers: &[LayerGpu],
+        source_previews: Option<&[PreviewPixel]>,
+        audio0: [f32; 4],
+        audio1: [f32; 4],
+        audio2: [f32; 4],
+    ) {
+        let uniforms = Uniforms {
+            resolution: [self.config.width as f32, self.config.height as f32],
+            time: time_seconds.unwrap_or_else(|| self.start_time.elapsed().as_secs_f32()),
+            command_phase,
+            layer_count: layers_seen as f32,
+            frame_count: frame_count as f32,
+            _pad0: [0.0, 0.0],
+            audio0,
+            audio1,
+            audio2,
+        };
+        self.queue
+            .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+
+        let mut gpu_layers = vec![LayerGpu::zeroed(); MAX_SCENE_LAYERS];
+        for (index, layer) in scene_layers.iter().take(MAX_SCENE_LAYERS).enumerate() {
+            gpu_layers[index] = *layer;
+        }
+        self.queue
+            .write_buffer(&self.layer_buffer, 0, bytemuck::cast_slice(&gpu_layers));
+
+        if let Some(source_previews) = source_previews {
+            let mut gpu_previews =
+                vec![PreviewPixel::zeroed(); MAX_SOURCE_PREVIEWS * SOURCE_PREVIEW_PIXELS];
+            for (index, pixel) in source_previews
+                .iter()
+                .take(MAX_SOURCE_PREVIEWS * SOURCE_PREVIEW_PIXELS)
+                .enumerate()
+            {
+                gpu_previews[index] = *pixel;
+            }
+            self.queue.write_buffer(
+                &self.source_preview_buffer,
+                0,
+                bytemuck::cast_slice(&gpu_previews),
+            );
+        }
+    }
+
+    fn draw_fullscreen_to_view(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        label: &'static str,
+        timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
+    ) {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(label),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
+    fn render_snapshot(
+        &mut self,
+        command_phase: f32,
+        layers_seen: u32,
+        time_seconds: Option<f32>,
+        frame_count: u64,
+        scene_layers: &[LayerGpu],
+        source_previews: Option<&[PreviewPixel]>,
+        audio0: [f32; 4],
+        audio1: [f32; 4],
+        audio2: [f32; 4],
+    ) -> Result<(), String> {
+        self.write_frame_inputs(
+            command_phase,
+            layers_seen,
+            time_seconds,
+            frame_count,
+            scene_layers,
+            source_previews,
+            audio0,
+            audio1,
+            audio2,
+        );
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Ghost Render Core Snapshot Encoder"),
+            });
+        let should_record_timing = self
+            .gpu_timing
+            .as_ref()
+            .is_some_and(GpuTimingState::can_record);
+        let timestamp_writes = if should_record_timing {
+            self.gpu_timing
+                .as_ref()
+                .map(GpuTimingState::timestamp_writes)
+        } else {
+            None
+        };
+        self.draw_fullscreen_to_view(
+            &mut encoder,
+            &self.snapshot_view,
+            "Ghost Render Core Snapshot Pass",
+            timestamp_writes,
+        );
+        if should_record_timing {
+            if let Some(gpu_timing) = self.gpu_timing.as_ref() {
+                gpu_timing.resolve_to_readback(&mut encoder);
+            }
+        }
+        self.queue.submit(Some(encoder.finish()));
+        if should_record_timing {
+            if let Some(gpu_timing) = self.gpu_timing.as_mut() {
+                gpu_timing.begin_readback();
+            }
+        }
+        self.last_frame_error = None;
+        Ok(())
+    }
+
+    fn render(
+        &mut self,
+        command_phase: f32,
+        layers_seen: u32,
+        time_seconds: Option<f32>,
+        frame_count: u64,
+        scene_layers: &[LayerGpu],
+        source_previews: Option<&[PreviewPixel]>,
+        audio0: [f32; 4],
+        audio1: [f32; 4],
+        audio2: [f32; 4],
+    ) -> Result<(), String> {
+        let frame = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                self.surface.configure(&self.device, &self.config);
+                frame
+            }
+            wgpu::CurrentSurfaceTexture::Outdated => {
+                self.surface.configure(&self.device, &self.config);
+                return Ok(());
+            }
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return Ok(());
+            }
+            wgpu::CurrentSurfaceTexture::Lost => {
+                self.surface.configure(&self.device, &self.config);
+                return Err("surface lost".to_string());
+            }
+            wgpu::CurrentSurfaceTexture::Validation => {
+                return Err("surface validation error".to_string());
+            }
+        };
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        self.write_frame_inputs(
+            command_phase,
+            layers_seen,
+            time_seconds,
+            frame_count,
+            scene_layers,
+            source_previews,
+            audio0,
+            audio1,
+            audio2,
+        );
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Ghost Render Core Encoder"),
+            });
+        let should_record_timing = self
+            .gpu_timing
+            .as_ref()
+            .is_some_and(GpuTimingState::can_record);
+        let timestamp_writes = if should_record_timing {
+            self.gpu_timing
+                .as_ref()
+                .map(GpuTimingState::timestamp_writes)
+        } else {
+            None
+        };
+        self.draw_fullscreen_to_view(
+            &mut encoder,
+            &view,
+            "Ghost Render Core Pass",
+            timestamp_writes,
+        );
+        if should_record_timing {
+            if let Some(gpu_timing) = self.gpu_timing.as_ref() {
+                gpu_timing.resolve_to_readback(&mut encoder);
+            }
+        }
+        self.queue.submit(Some(encoder.finish()));
+        if should_record_timing {
+            if let Some(gpu_timing) = self.gpu_timing.as_mut() {
+                gpu_timing.begin_readback();
+            }
+        }
+        self.queue.present(frame);
+        self.last_frame_error = None;
+        Ok(())
+    }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
+    let proxy = event_loop.create_proxy();
+    let (response_tx, response_rx) = mpsc::channel::<String>();
+    spawn_stdout_writer(response_rx);
+    spawn_stdin_reader(proxy);
+
+    let mut app = App::new(response_tx);
+    event_loop.run_app(&mut app)?;
+    Ok(())
+}
+
+fn spawn_stdout_writer(response_rx: Receiver<String>) {
+    thread::spawn(move || {
+        let stdout = io::stdout();
+        let mut lock = stdout.lock();
+        while let Ok(line) = response_rx.recv() {
+            let _ = writeln!(lock, "{line}");
+            let _ = lock.flush();
+        }
+    });
+}
+
+fn spawn_stdin_reader(proxy: winit::event_loop::EventLoopProxy<UserEvent>) {
+    thread::spawn(move || {
+        for line in io::stdin().lock().lines() {
+            let Ok(line) = line else {
+                break;
+            };
+            if line.trim().is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<RpcRequest>(&line) {
+                Ok(req) => {
+                    let _ = proxy.send_event(UserEvent::Rpc(req));
+                }
+                Err(err) => {
+                    eprintln!("[GhostRenderCore] bad rpc: {err}; line={line}");
+                }
+            }
+        }
+    });
+}
+
+fn number_at(value: &Value, path: &[&str]) -> Option<f64> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    current.as_f64()
+}
+
+fn bool_at(value: &Value, path: &[&str]) -> Option<bool> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    current.as_bool()
+}
+
+fn vec4_at(value: &Value, key: &str) -> [f32; 4] {
+    let Some(values) = value.get(key).and_then(Value::as_array) else {
+        return [0.0; 4];
+    };
+    let mut out = [0.0; 4];
+    for (index, slot) in out.iter_mut().enumerate() {
+        *slot = values
+            .get(index)
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0)
+            .clamp(-1.0e9, 1.0e9) as f32;
+    }
+    out
+}
+
+fn vec4_path_at(value: &Value, path: &[&str]) -> Option<[f32; 4]> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    let values = current.as_array()?;
+    if values.len() < 4 {
+        return None;
+    }
+    let mut out = [0.0_f32; 4];
+    for (index, slot) in out.iter_mut().enumerate() {
+        *slot = values
+            .get(index)
+            .and_then(Value::as_f64)?
+            .clamp(-1.0e9, 1.0e9) as f32;
+    }
+    Some(out)
+}
+
+fn json_object_len(value: &Value) -> usize {
+    value.as_object().map(|object| object.len()).unwrap_or(0)
+}
+
+fn audio_value_at(value: &Value, key: &str) -> f32 {
+    value
+        .get(key)
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0)
+        .clamp(0.0, 1.0) as f32
+}
+
+fn unit_from_hash(hash: u64) -> f32 {
+    ((hash & 0x00ff_ffff) as f32 / 0x00ff_ffff as f32).clamp(0.0, 1.0)
+}
+
+fn string_at(value: &Value, path: &[&str]) -> Option<String> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    current.as_str().map(ToString::to_string)
+}
+
+fn rgba_at(value: &Value, path: &[&str]) -> Option<[f32; 4]> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    let values = current.as_array()?;
+    if values.len() < 4 {
+        return None;
+    }
+    Some([
+        values[0].as_f64()?.clamp(0.0, 1.0) as f32,
+        values[1].as_f64()?.clamp(0.0, 1.0) as f32,
+        values[2].as_f64()?.clamp(0.0, 1.0) as f32,
+        values[3].as_f64()?.clamp(0.0, 1.0) as f32,
+    ])
+}
+
+fn params8_at(value: &Value, path: &[&str]) -> Option<[f32; 8]> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    let values = current.as_array()?;
+    if values.len() < 8 {
+        return None;
+    }
+    let mut out = [0.0_f32; 8];
+    for index in 0..8 {
+        out[index] = values[index].as_f64()?.clamp(-16.0, 16.0) as f32;
+    }
+    Some(out)
+}
+
+fn corners_at(value: &Value, path: &[&str]) -> Option<[[f32; 2]; 4]> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    Some([
+        point_at(current, "topLeft")?,
+        point_at(current, "topRight")?,
+        point_at(current, "bottomRight")?,
+        point_at(current, "bottomLeft")?,
+    ])
+}
+
+fn point_at(value: &Value, key: &str) -> Option<[f32; 2]> {
+    let point = value.get(key)?;
+    Some([
+        point.get("x")?.as_f64()?.clamp(-8.0, 8.0) as f32,
+        point.get("y")?.as_f64()?.clamp(-8.0, 8.0) as f32,
+    ])
+}
+
+fn default_native_params() -> [f32; 8] {
+    [1.0, 1.0, 0.5, 0.125, 0.0, 0.5, 0.25, 1.0]
+}
+
+fn blend_mode_code(mode: &str) -> f32 {
+    match mode.trim().to_ascii_lowercase().as_str() {
+        "add" | "plus" | "linear-dodge" | "linear_dodge" => 1.0,
+        "multiply" => 2.0,
+        "screen" => 3.0,
+        "overlay" => 4.0,
+        "subtract" | "minus" => 5.0,
+        "difference" => 6.0,
+        "lighten" => 7.0,
+        "darken" => 8.0,
+        "average" | "avg" => 9.0,
+        "hardlight" | "hard-light" | "hard_light" => 10.0,
+        "softlight" | "soft-light" | "soft_light" => 11.0,
+        "exclusion" => 12.0,
+        "color-dodge" | "color_dodge" | "colordodge" | "dodge" => 13.0,
+        "color-burn" | "color_burn" | "colorburn" | "burn" => 14.0,
+        "hue" => 15.0,
+        "saturation" => 16.0,
+        "color" => 17.0,
+        "luminosity" | "luma" => 18.0,
+        "divide" => 19.0,
+        "negation" => 20.0,
+        "phoenix" => 21.0,
+        "linear-light" | "linear_light" | "linearlight" => 22.0,
+        "hard-mix" | "hard_mix" | "hardmix" => 23.0,
+        "vivid-light" | "vivid_light" | "vividlight" => 24.0,
+        "pin-light" | "pin_light" | "pinlight" => 25.0,
+        _ => 0.0,
+    }
+}
+
+fn effect_descriptor_code(descriptor: &str) -> Option<[f32; 4]> {
+    let descriptor = descriptor.trim().to_ascii_lowercase();
+    if descriptor.is_empty() {
+        return None;
+    }
+    let mut parts = descriptor.split(':');
+    let name = parts.next().unwrap_or_default();
+    let amount = parts
+        .next()
+        .and_then(|value| value.parse::<f32>().ok())
+        .unwrap_or(1.0);
+    match name {
+        "invert" => Some([1.0, amount.clamp(0.0, 1.0), 0.0, 0.0]),
+        "grayscale" | "greyscale" => Some([2.0, amount.clamp(0.0, 1.0), 0.0, 0.0]),
+        "brightness" => Some([3.0, amount.clamp(0.0, 8.0), 0.0, 0.0]),
+        "contrast" => Some([4.0, amount.clamp(0.0, 8.0), 0.0, 0.0]),
+        "gamma" => Some([5.0, amount.clamp(0.05, 8.0), 0.0, 0.0]),
+        "saturation" => Some([6.0, amount.clamp(0.0, 8.0), 0.0, 0.0]),
+        "hue" => Some([7.0, amount.clamp(-4.0, 4.0), 0.0, 0.0]),
+        "posterize" => Some([8.0, amount.clamp(2.0, 64.0), 0.0, 0.0]),
+        "noise" => Some([9.0, amount.clamp(0.0, 1.0), 0.0, 0.0]),
+        _ => None,
+    }
+}
+
+fn stable_layer_color(id: &str, alpha: f32) -> [f32; 4] {
+    let mut hash = 2166136261_u32;
+    for byte in id.as_bytes() {
+        hash ^= *byte as u32;
+        hash = hash.wrapping_mul(16777619);
+    }
+    let hue = (hash % 360) as f32 / 360.0;
+    let r = 0.5 + 0.5 * ((hue + 0.00) * std::f32::consts::TAU).cos();
+    let g = 0.5 + 0.5 * ((hue + 0.33) * std::f32::consts::TAU).cos();
+    let b = 0.5 + 0.5 * ((hue + 0.67) * std::f32::consts::TAU).cos();
+    [r.max(0.18), g.max(0.18), b.max(0.18), alpha.clamp(0.0, 1.0)]
+}
+
+fn choose_source_frame_format(adapter: &wgpu::Adapter) -> wgpu::TextureFormat {
+    let features = adapter.get_texture_format_features(SOURCE_FRAME_FORMAT_HDR);
+    let required_usages = wgpu::TextureUsages::TEXTURE_BINDING
+        | wgpu::TextureUsages::COPY_DST
+        | wgpu::TextureUsages::RENDER_ATTACHMENT;
+    if features.allowed_usages.contains(required_usages)
+        && features
+            .flags
+            .contains(wgpu::TextureFormatFeatureFlags::FILTERABLE)
+    {
+        SOURCE_FRAME_FORMAT_HDR
+    } else {
+        SOURCE_FRAME_FORMAT_FALLBACK
+    }
+}
+
+fn choose_source_frame_size(
+    limits: &wgpu::Limits,
+    features: wgpu::Features,
+    format: wgpu::TextureFormat,
+) -> usize {
+    let tier = native_quality_tier(limits, features);
+    let target = match normalize_native_tier(tier) {
+        "insane" => SOURCE_FRAME_SIZE_INSANE,
+        "ultra" => SOURCE_FRAME_SIZE_DEFAULT,
+        "balanced" => SOURCE_FRAME_SIZE_BALANCED,
+        "performance" => SOURCE_FRAME_SIZE_PERFORMANCE,
+        _ => SOURCE_FRAME_SIZE_DEFAULT,
+    };
+    let max_dimension = limits.max_texture_dimension_2d as usize;
+    let budget_bytes = source_frame_size_budget_bytes(tier);
+    let bytes_per_texel = if format == SOURCE_FRAME_FORMAT_HDR {
+        8usize
+    } else {
+        4usize
+    };
+    [
+        SOURCE_FRAME_SIZE_INSANE,
+        SOURCE_FRAME_SIZE_DEFAULT,
+        SOURCE_FRAME_SIZE_BALANCED,
+        SOURCE_FRAME_SIZE_PERFORMANCE,
+    ]
+    .into_iter()
+    .filter(|size| *size <= target)
+    .filter(|size| *size <= max_dimension)
+    .find(|size| estimate_source_frame_texture_bytes(*size, bytes_per_texel) <= budget_bytes)
+    .unwrap_or(SOURCE_FRAME_SIZE_PERFORMANCE.min(max_dimension.max(1)))
+}
+
+fn source_frame_mip_levels(size: usize) -> u32 {
+    let mut levels = 1u32;
+    let mut dimension = size.max(1) as u32;
+    while dimension > 1 && levels < SOURCE_FRAME_MIP_LEVELS_MAX {
+        dimension = (dimension / 2).max(1);
+        levels += 1;
+    }
+    levels
+}
+
+fn source_frame_size_budget_bytes(tier: &str) -> usize {
+    let mb = match normalize_native_tier(tier) {
+        "insane" => 896usize,
+        "ultra" => 384usize,
+        "balanced" => 256usize,
+        "performance" => 128usize,
+        _ => 256usize,
+    };
+    mb * 1024 * 1024
+}
+
+fn estimate_source_frame_texture_bytes(size: usize, bytes_per_texel: usize) -> usize {
+    size.saturating_mul(size)
+        .saturating_mul(bytes_per_texel)
+        .saturating_mul(MAX_SOURCE_FRAME_SLOTS)
+}
+
+fn texture_format_label(format: wgpu::TextureFormat) -> &'static str {
+    match format {
+        wgpu::TextureFormat::Rgba16Float => "rgba16float",
+        wgpu::TextureFormat::Rgba8Unorm => "rgba8unorm",
+        _ => "unknown",
+    }
+}
+
+fn source_frame_upload_payload<'a>(
+    rgba: &'a [u8],
+    frame_size: usize,
+    format: wgpu::TextureFormat,
+) -> (Cow<'a, [u8]>, u32) {
+    if format != SOURCE_FRAME_FORMAT_HDR {
+        return (Cow::Borrowed(rgba), (frame_size * 4) as u32);
+    }
+
+    let channel_count = frame_size * frame_size * 4;
+    let mut payload = Vec::with_capacity(channel_count * 2);
+    for channel in rgba.iter().take(channel_count) {
+        payload.extend_from_slice(&unorm8_to_f16_bits(*channel).to_le_bytes());
+    }
+    (Cow::Owned(payload), (frame_size * 8) as u32)
+}
+
+fn unorm8_to_f16_bits(channel: u8) -> u16 {
+    if channel == 0 {
+        return 0;
+    }
+    f32_to_f16_bits(channel as f32 / 255.0)
+}
+
+fn f32_to_f16_bits(value: f32) -> u16 {
+    let bits = value.to_bits();
+    let sign = ((bits >> 16) & 0x8000) as u16;
+    let exponent = ((bits >> 23) & 0xff) as i32 - 127 + 15;
+    let mantissa = bits & 0x7f_ffff;
+
+    if exponent <= 0 {
+        if exponent < -10 {
+            return sign;
+        }
+        let normalized = mantissa | 0x80_0000;
+        let shift = (14 - exponent) as u32;
+        let mut half = (normalized >> shift) as u16;
+        if ((normalized >> (shift - 1)) & 1) != 0 {
+            half = half.saturating_add(1);
+        }
+        sign | half
+    } else if exponent >= 31 {
+        sign | 0x7c00
+    } else {
+        let mut half = sign | ((exponent as u16) << 10) | ((mantissa >> 13) as u16);
+        if (mantissa & 0x1000) != 0 {
+            half = half.saturating_add(1);
+        }
+        half
+    }
+}
+
+fn source_kind(source_type: &str) -> f32 {
+    if source_type.starts_with("gpu:") {
+        return match source_type {
+            "gpu:planet" => 10.0,
+            "gpu:pixel-particles" => 11.0,
+            "gpu:flythrough" => 12.0,
+            "gpu:point-cloud-fx" => 13.0,
+            "gpu:particle-field" | "gpu:gravity-wells" => 14.0,
+            "gpu:volumetric-balls" => 15.0,
+            "gpu:smoke-riders" | "gpu:ink-cloud" | "gpu:smoke-3d" => 16.0,
+            _ => 9.0,
+        };
+    }
+    match source_type {
+        "color" => 1.0,
+        "shader" => 2.0,
+        "video" => 3.0,
+        "image" => 4.0,
+        _ => 0.0,
+    }
+}
+
+fn is_native_instrument_kind(source_kind: f32) -> bool {
+    matches!(source_kind.round() as i32, 10 | 11 | 12 | 13 | 14 | 15 | 16)
+}
+
+fn source_type_color(source_type: &str, id: &str) -> [f32; 4] {
+    if source_type.starts_with("gpu:") {
+        return match source_type {
+            "gpu:planet" => [0.22, 0.62, 1.0, 0.86],
+            "gpu:pixel-particles" | "gpu:flythrough" | "gpu:point-cloud-fx" => {
+                [1.0, 0.35, 0.82, 0.82]
+            }
+            "gpu:particle-field" | "gpu:gravity-wells" => [0.25, 1.0, 0.78, 0.84],
+            "gpu:volumetric-balls" => [0.78, 0.58, 1.0, 0.86],
+            "gpu:smoke-riders" | "gpu:ink-cloud" | "gpu:smoke-3d" => [0.62, 0.82, 1.0, 0.80],
+            _ => stable_layer_color(id, 0.76),
+        };
+    }
+    match source_type {
+        "shader" => [0.45, 0.92, 1.0, 0.74],
+        "video" => [0.28, 1.0, 0.55, 0.70],
+        "image" => [1.0, 0.62, 0.26, 0.70],
+        "none" => [0.3, 0.34, 0.42, 0.35],
+        _ => stable_layer_color(id, 0.66),
+    }
+}
+
+#[derive(Clone, Debug)]
+struct SnapshotMetrics {
+    checksum: String,
+    nonzero_pixels: u64,
+    bright_pixels: u64,
+    transparent_pixels: u64,
+    average_luma: f64,
+    max_luma: f64,
+    mean_rgba: [f64; 4],
+    dark_frame: bool,
+}
+
+fn align_u32(value: u32, alignment: u32) -> u32 {
+    if alignment == 0 {
+        return value;
+    }
+    value.div_ceil(alignment).saturating_mul(alignment)
+}
+
+fn snapshot_metrics(bytes: &[u8], format: wgpu::TextureFormat) -> SnapshotMetrics {
+    let bgra = matches!(
+        format,
+        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+    );
+    let mut checksum = 0xcbf29ce484222325_u64;
+    let mut nonzero_pixels = 0_u64;
+    let mut bright_pixels = 0_u64;
+    let mut transparent_pixels = 0_u64;
+    let mut luma_sum = 0.0_f64;
+    let mut max_luma = 0.0_f64;
+    let mut rgba_sum = [0.0_f64; 4];
+    let mut pixel_count = 0_u64;
+    for pixel in bytes.chunks_exact(4) {
+        for byte in pixel {
+            checksum ^= *byte as u64;
+            checksum = checksum.wrapping_mul(0x100000001b3);
+        }
+        let (r, g, b, a) = if bgra {
+            (pixel[2], pixel[1], pixel[0], pixel[3])
+        } else {
+            (pixel[0], pixel[1], pixel[2], pixel[3])
+        };
+        let luma = 0.2126 * r as f64 + 0.7152 * g as f64 + 0.0722 * b as f64;
+        if a > 0 && luma > 2.0 {
+            nonzero_pixels = nonzero_pixels.saturating_add(1);
+        }
+        if a > 0 && luma > 96.0 {
+            bright_pixels = bright_pixels.saturating_add(1);
+        }
+        if a == 0 {
+            transparent_pixels = transparent_pixels.saturating_add(1);
+        }
+        rgba_sum[0] += r as f64;
+        rgba_sum[1] += g as f64;
+        rgba_sum[2] += b as f64;
+        rgba_sum[3] += a as f64;
+        luma_sum += luma;
+        max_luma = max_luma.max(luma);
+        pixel_count = pixel_count.saturating_add(1);
+    }
+    let average_luma = if pixel_count == 0 {
+        0.0
+    } else {
+        luma_sum / pixel_count as f64 / 255.0
+    };
+    let mean_rgba = if pixel_count == 0 {
+        [0.0; 4]
+    } else {
+        [
+            rgba_sum[0] / pixel_count as f64 / 255.0,
+            rgba_sum[1] / pixel_count as f64 / 255.0,
+            rgba_sum[2] / pixel_count as f64 / 255.0,
+            rgba_sum[3] / pixel_count as f64 / 255.0,
+        ]
+    };
+    SnapshotMetrics {
+        checksum: format!("{checksum:016x}"),
+        nonzero_pixels,
+        bright_pixels,
+        transparent_pixels,
+        average_luma,
+        max_luma: max_luma / 255.0,
+        mean_rgba,
+        dark_frame: nonzero_pixels < (pixel_count / 200).max(1) || average_luma < 0.006,
+    }
+}
+
+fn looks_like_wgsl(source: &str) -> bool {
+    let s = source.trim();
+    s.contains("@vertex")
+        || s.contains("@fragment")
+        || s.contains("@compute")
+        || s.contains("var<")
+        || s.contains("vec2<")
+        || s.contains("vec3<")
+        || s.contains("vec4<")
+        || (s.contains("fn ") && s.contains("->"))
+}
+
+fn native_fragment_entry(record: &ShaderRecord, source: &str) -> Option<String> {
+    if !native_wgsl_fragment_supported(source) {
+        return None;
+    }
+    let preferred = record.entry.trim();
+    if !preferred.is_empty() && record.entry_points.iter().any(|entry| entry == preferred) {
+        return Some(preferred.to_string());
+    }
+    ["fs_main", "main"].iter().find_map(|candidate| {
+        record
+            .entry_points
+            .iter()
+            .any(|entry| entry == candidate)
+            .then(|| candidate.to_string())
+    })
+}
+
+fn native_wgsl_fragment_supported(source: &str) -> bool {
+    let source = source.trim();
+    source.contains("@fragment") && native_wgsl_bindings_supported(source)
+}
+
+fn native_wgsl_bindings_supported(source: &str) -> bool {
+    if !source.contains("@group") && !source.contains("@binding") {
+        return true;
+    }
+    all_wgsl_attribute_indices_at_most(source, "@group", 0)
+        && all_wgsl_attribute_indices_at_most(source, "@binding", 2)
+}
+
+fn all_wgsl_attribute_indices_at_most(source: &str, attribute: &str, max_supported: u32) -> bool {
+    let mut rest = source;
+    while let Some(index) = rest.find(attribute) {
+        rest = &rest[index + attribute.len()..];
+        let Some(open_index) = rest.find('(') else {
+            return false;
+        };
+        rest = &rest[open_index + 1..];
+        let trimmed = rest.trim_start();
+        let digits = trimmed
+            .chars()
+            .take_while(|ch| ch.is_ascii_digit())
+            .collect::<String>();
+        let Ok(value) = digits.parse::<u32>() else {
+            return false;
+        };
+        if value > max_supported {
+            return false;
+        }
+    }
+    true
+}
+
+fn native_shader_pipeline_key(record: &ShaderRecord, shader_id: &str, entry: &str) -> String {
+    format!("{shader_id}:{}:{entry}", record.source_hash)
+}
+
+fn stable_hash64(input: &str) -> u64 {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in input.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn json_channel_to_unit(value: &Value) -> f32 {
+    let n = value.as_f64().unwrap_or(0.0);
+    if n > 1.0 {
+        (n / 255.0).clamp(0.0, 1.0) as f32
+    } else {
+        n.clamp(0.0, 1.0) as f32
+    }
+}
+
+fn preview_rgba_at(rgba: &[Value], width: usize, height: usize, x: usize, y: usize) -> [f32; 4] {
+    let sx = x.min(width.saturating_sub(1));
+    let sy = y.min(height.saturating_sub(1));
+    let index = (sy * width + sx) * 4;
+    [
+        json_channel_to_unit(&rgba[index]),
+        json_channel_to_unit(&rgba[index + 1]),
+        json_channel_to_unit(&rgba[index + 2]),
+        json_channel_to_unit(&rgba[index + 3]),
+    ]
+}
+
+fn rgba_bytes_from_command(command: &Value, width: usize, height: usize) -> Option<Vec<u8>> {
+    let expected = width.saturating_mul(height).saturating_mul(4);
+    if let Some(file_path) = command.get("rgba_file").and_then(Value::as_str) {
+        let bytes = fs::read(file_path).ok()?;
+        if command
+            .get("rgba_file_delete")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            let _ = fs::remove_file(file_path);
+        }
+        let declared_len = command
+            .get("rgba_byte_length")
+            .and_then(Value::as_u64)
+            .unwrap_or(bytes.len() as u64) as usize;
+        if bytes.len() < declared_len || bytes.len() < expected {
+            return None;
+        }
+        return Some(bytes);
+    }
+    if let Some(encoded) = command.get("rgba_b64").and_then(Value::as_str) {
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(encoded.as_bytes())
+            .ok()?;
+        return (decoded.len() >= expected).then_some(decoded);
+    }
+    let rgba = command.get("rgba").and_then(Value::as_array)?;
+    if rgba.len() < expected {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(expected);
+    for value in rgba.iter().take(expected) {
+        let n = value.as_f64().unwrap_or(0.0);
+        bytes.push(n.round().clamp(0.0, 255.0) as u8);
+    }
+    Some(bytes)
+}
+
+fn frame_rgba_at(rgba: &[u8], width: usize, height: usize, x: usize, y: usize) -> [f32; 4] {
+    let sx = x.min(width.saturating_sub(1));
+    let sy = y.min(height.saturating_sub(1));
+    let index = (sy * width + sx) * 4;
+    [
+        rgba[index] as f32,
+        rgba[index + 1] as f32,
+        rgba[index + 2] as f32,
+        rgba[index + 3] as f32,
+    ]
+}
+
+fn resample_frame_bytes(
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    dst_width: usize,
+    dst_height: usize,
+) -> Vec<u8> {
+    let mut out = vec![0u8; dst_width.saturating_mul(dst_height).saturating_mul(4)];
+    let scale_x = width as f32 / dst_width.max(1) as f32;
+    let scale_y = height as f32 / dst_height.max(1) as f32;
+    for y in 0..dst_height {
+        let source_y = ((y as f32 + 0.5) * scale_y - 0.5).clamp(0.0, (height - 1) as f32);
+        let y0 = source_y.floor().max(0.0) as usize;
+        let y1 = (y0 + 1).min(height.saturating_sub(1));
+        let ty = (source_y - y0 as f32).clamp(0.0, 1.0);
+        for x in 0..dst_width {
+            let source_x = ((x as f32 + 0.5) * scale_x - 0.5).clamp(0.0, (width - 1) as f32);
+            let x0 = source_x.floor().max(0.0) as usize;
+            let x1 = (x0 + 1).min(width.saturating_sub(1));
+            let tx = (source_x - x0 as f32).clamp(0.0, 1.0);
+            let top = mix_rgba(
+                frame_rgba_at(rgba, width, height, x0, y0),
+                frame_rgba_at(rgba, width, height, x1, y0),
+                tx,
+            );
+            let bottom = mix_rgba(
+                frame_rgba_at(rgba, width, height, x0, y1),
+                frame_rgba_at(rgba, width, height, x1, y1),
+                tx,
+            );
+            let mixed = mix_rgba(top, bottom, ty);
+            let dst = (y * dst_width + x) * 4;
+            out[dst] = mixed[0].round().clamp(0.0, 255.0) as u8;
+            out[dst + 1] = mixed[1].round().clamp(0.0, 255.0) as u8;
+            out[dst + 2] = mixed[2].round().clamp(0.0, 255.0) as u8;
+            out[dst + 3] = mixed[3].round().clamp(0.0, 255.0) as u8;
+        }
+    }
+    out
+}
+
+fn mix_rgba(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+    let mix = |x: f32, y: f32| x + (y - x) * t;
+    [
+        mix(a[0], b[0]),
+        mix(a[1], b[1]),
+        mix(a[2], b[2]),
+        mix(a[3], b[3]),
+    ]
+}
+
+fn resample_preview_pixel(
+    rgba: &[Value],
+    width: usize,
+    height: usize,
+    source_x: f32,
+    source_y: f32,
+) -> PreviewPixel {
+    let x0 = source_x.floor().max(0.0) as usize;
+    let y0 = source_y.floor().max(0.0) as usize;
+    let x1 = (x0 + 1).min(width.saturating_sub(1));
+    let y1 = (y0 + 1).min(height.saturating_sub(1));
+    let tx = (source_x - x0 as f32).clamp(0.0, 1.0);
+    let ty = (source_y - y0 as f32).clamp(0.0, 1.0);
+
+    let top = mix_rgba(
+        preview_rgba_at(rgba, width, height, x0, y0),
+        preview_rgba_at(rgba, width, height, x1, y0),
+        tx,
+    );
+    let bottom = mix_rgba(
+        preview_rgba_at(rgba, width, height, x0, y1),
+        preview_rgba_at(rgba, width, height, x1, y1),
+        tx,
+    );
+
+    PreviewPixel {
+        rgba: mix_rgba(top, bottom, ty),
+    }
+}
+
+fn stable_slot(id: &str, slot_count: usize) -> usize {
+    let mut hash = 2166136261_u32;
+    for byte in id.as_bytes() {
+        hash ^= *byte as u32;
+        hash = hash.wrapping_mul(16777619);
+    }
+    (hash as usize) % slot_count.max(1)
+}
+
+fn epoch_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
+}
+
+fn native_backend_name() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "metal"
+    } else if cfg!(target_os = "windows") {
+        "d3d12"
+    } else {
+        "vulkan"
+    }
+}
+
+fn native_optional_features() -> wgpu::Features {
+    wgpu::Features::SHADER_F16
+        | wgpu::Features::FLOAT32_FILTERABLE
+        | wgpu::Features::TIMESTAMP_QUERY
+        | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS
+        | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES
+}
+
+fn native_gpu_caps(
+    adapter_info: &wgpu::AdapterInfo,
+    limits: &wgpu::Limits,
+    supported: wgpu::Features,
+    requested: wgpu::Features,
+) -> NativeGpuCaps {
+    NativeGpuCaps {
+        adapter_name: adapter_info.name.clone(),
+        adapter_vendor: adapter_info.vendor,
+        adapter_device: adapter_info.device,
+        adapter_device_type: format!("{:?}", adapter_info.device_type),
+        adapter_driver: adapter_info.driver.clone(),
+        adapter_driver_info: adapter_info.driver_info.clone(),
+        max_texture_dimension_2d: limits.max_texture_dimension_2d,
+        max_texture_dimension_3d: limits.max_texture_dimension_3d,
+        max_texture_array_layers: limits.max_texture_array_layers,
+        max_bind_groups: limits.max_bind_groups,
+        max_bindings_per_bind_group: limits.max_bindings_per_bind_group,
+        max_sampled_textures_per_shader_stage: limits.max_sampled_textures_per_shader_stage,
+        max_storage_buffers_per_shader_stage: limits.max_storage_buffers_per_shader_stage,
+        max_storage_textures_per_shader_stage: limits.max_storage_textures_per_shader_stage,
+        max_uniform_buffer_binding_size: limits.max_uniform_buffer_binding_size,
+        max_storage_buffer_binding_size: limits.max_storage_buffer_binding_size,
+        max_buffer_size: limits.max_buffer_size,
+        max_compute_workgroup_storage_size: limits.max_compute_workgroup_storage_size,
+        max_compute_invocations_per_workgroup: limits.max_compute_invocations_per_workgroup,
+        max_compute_workgroup_size_x: limits.max_compute_workgroup_size_x,
+        max_compute_workgroup_size_y: limits.max_compute_workgroup_size_y,
+        max_compute_workgroup_size_z: limits.max_compute_workgroup_size_z,
+        max_compute_workgroups_per_dimension: limits.max_compute_workgroups_per_dimension,
+        supports_shader_f16: supported.contains(wgpu::Features::SHADER_F16),
+        supports_float32_filterable: supported.contains(wgpu::Features::FLOAT32_FILTERABLE),
+        supports_timestamp_query: supported.contains(wgpu::Features::TIMESTAMP_QUERY),
+        supports_timestamp_query_inside_encoders: supported
+            .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS),
+        supports_timestamp_query_inside_passes: supported
+            .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES),
+        supports_texture_binding_array: supported.contains(wgpu::Features::TEXTURE_BINDING_ARRAY),
+        supports_buffer_binding_array: supported.contains(wgpu::Features::BUFFER_BINDING_ARRAY),
+        supports_storage_resource_binding_array: supported
+            .contains(wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY),
+        supports_texture_adapter_specific_format_features: supported
+            .contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES),
+        requested_shader_f16: requested.contains(wgpu::Features::SHADER_F16),
+        requested_float32_filterable: requested.contains(wgpu::Features::FLOAT32_FILTERABLE),
+        requested_timestamp_query: requested.contains(wgpu::Features::TIMESTAMP_QUERY),
+        requested_timestamp_query_inside_encoders: requested
+            .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS),
+        requested_timestamp_query_inside_passes: requested
+            .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES),
+        recommended_quality_tier: native_quality_tier(limits, supported).to_string(),
+    }
+}
+
+fn native_quality_tier(limits: &wgpu::Limits, features: wgpu::Features) -> &'static str {
+    let storage_mb = limits.max_storage_buffer_binding_size / (1024 * 1024);
+    let buffer_mb = limits.max_buffer_size / (1024 * 1024);
+    let has_f16 = features.contains(wgpu::Features::SHADER_F16);
+    let has_float_filter = features.contains(wgpu::Features::FLOAT32_FILTERABLE);
+    let compute = limits.max_compute_invocations_per_workgroup;
+
+    if has_f16
+        && has_float_filter
+        && limits.max_texture_dimension_3d >= 2048
+        && storage_mb >= 512
+        && buffer_mb >= 1024
+        && compute >= 512
+    {
+        return "insane";
+    }
+    if has_f16
+        && limits.max_texture_dimension_3d >= 1024
+        && storage_mb >= 256
+        && buffer_mb >= 512
+        && compute >= 256
+    {
+        return "ultra";
+    }
+    if limits.max_texture_dimension_3d >= 512 && storage_mb >= 128 && buffer_mb >= 256 {
+        return "balanced";
+    }
+    "performance"
+}
+
+fn normalize_native_tier(tier: &str) -> &'static str {
+    match tier.trim().to_ascii_lowercase().as_str() {
+        "insane" => "insane",
+        "ultra" => "ultra",
+        "balanced" | "balance" => "balanced",
+        "performance" | "perf" | "low" => "performance",
+        _ => "balanced",
+    }
+}
+
+fn native_tier_index(tier: &str) -> i32 {
+    match normalize_native_tier(tier) {
+        "performance" => 0,
+        "balanced" => 1,
+        "ultra" => 2,
+        "insane" => 3,
+        _ => 1,
+    }
+}
+
+fn native_tier_for_index(index: i32) -> &'static str {
+    match index {
+        0 => "performance",
+        1 => "balanced",
+        2 => "ultra",
+        3 => "insane",
+        _ if index < 0 => "performance",
+        _ => "insane",
+    }
+}
+
+fn tier_quality_scale(tier: &str) -> f32 {
+    match normalize_native_tier(tier) {
+        "performance" => 0.56,
+        "balanced" => 0.72,
+        "ultra" => 0.90,
+        "insane" => 1.0,
+        _ => 0.72,
+    }
+}

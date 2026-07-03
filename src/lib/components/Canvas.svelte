@@ -27,8 +27,9 @@
   import { loadPLY, loadSplatFromUrl } from '../splat';
   import type { Model3DRenderer } from '../model3d/Model3DRenderer';
   import { GpuLayerRenderer } from '$lib/renderer/gpuLayerRenderer';
-  import { ensureWebGPUDevice, isWebGPUReady, getWebGPUDevice, getPreferredCanvasFormat } from '$lib/renderer/webgpuShared';
+  import { ensureWebGPUDevice, isWebGPUReady, getWebGPUDevice, getPreferredCanvasFormat, getGhostGpuRuntime } from '$lib/renderer/webgpuShared';
   import { getShaderDef } from '$lib/renderer/gpuShaderCatalog';
+  import { GhostGpuAdaptiveGovernor, type GhostGpuGovernorSnapshot, type GhostGpuQualityTier } from '$lib/renderer/gpuCaps';
   import { settings, outputFrozen, SHADER_QUALITY_MULTIPLIERS, masterWarpIsActive } from '../stores/settings';
   import { showToast } from '../stores/errorToast';
   import { getTextureShareLabel, invoke, isDesktopApp, isOsrMode, isOutputMode } from '$lib/bridge';
@@ -889,6 +890,12 @@
   // texture path; keep bitmap handoff available as an explicit dev opt-in.
   const gpuLayerUseBitmapHandoff = typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('gpu-layer-bitmap') === '1';
+  const gpuDebugEnabled = typeof window !== 'undefined'
+    && new URLSearchParams(window.location.search).get('gpu-debug') === '1';
+  let gpuDebugHudForced = false;
+  let gpuQualityGovernor: GhostGpuAdaptiveGovernor | null = null;
+  let gpuGovernorSnapshot: GhostGpuGovernorSnapshot | null = null;
+  let gpuDebugHudSnapshot: Record<string, any> | null = null;
   // Texture wrapper for each gpu layer. Default path is CanvasTexture;
   // `?gpu-layer-bitmap=1` uses a bare THREE.Texture fed by ImageBitmap.
   const gpuLayerTextures = new Map<string, THREE.Texture>();
@@ -899,6 +906,167 @@
     if (_gpuLayerWebGpuTried) return;
     _gpuLayerWebGpuTried = true;
     void ensureWebGPUDevice().catch((e: any) => console.warn('[Canvas] gpu-layer: WebGPU init failed', e?.message || e));
+  }
+
+  async function prewarmGpuShaderForLayer(layerId: string, shaderId: string): Promise<void> {
+    const projectData = get(project);
+    const layer = projectData?.layers?.find((l: Layer) => l.id === layerId);
+    if (!layer || layer.type !== 'gpu' || !layer.gpuLayerContent || layer.gpuLayerContent.shaderId === shaderId) return;
+    const def = getShaderDef(shaderId);
+    if (!def) return;
+
+    let device = getWebGPUDevice();
+    let presentFormat = getPreferredCanvasFormat();
+    if (!isWebGPUReady() || !device) {
+      try {
+        const ready = await ensureWebGPUDevice();
+        device = ready.device;
+        presentFormat = ready.presentFormat;
+      } catch (err: any) {
+        console.warn('[Canvas] gpu-layer: shader prewarm skipped', err?.message || err);
+        return;
+      }
+    }
+    if (!device) return;
+
+    if (def.prewarm) {
+      try {
+        await def.prewarm(device, presentFormat, getGhostGpuRuntime() ?? undefined);
+      } catch (err: any) {
+        console.warn('[Canvas] gpu-layer: shader prewarm failed', shaderId, err?.message || err);
+      }
+      return;
+    }
+
+    const width = projectData?.width || 1920;
+    const height = projectData?.height || 1080;
+    let renderer = gpuLayerRenderers.get(layerId);
+    if (!renderer) {
+      try {
+        renderer = new GpuLayerRenderer(device, presentFormat, width, height, {
+          handoffMode: gpuLayerUseBitmapHandoff ? 'bitmap' : 'canvas',
+        });
+        gpuLayerRenderers.set(layerId, renderer);
+      } catch (err: any) {
+        console.warn('[Canvas] gpu-layer: failed to create prewarm renderer for', layerId, err?.message || err);
+        return;
+      }
+    }
+
+    const restored = layer.gpuLayerContent.paramsByShader?.[shaderId];
+    const params = restored
+      ? { ...def.defaultParams, ...restored }
+      : { ...def.defaultParams };
+    renderer.prewarmShader(shaderId, params);
+  }
+
+  function getGpuDebugSnapshot(): Record<string, any> {
+    const runtime = getGhostGpuRuntime();
+    return {
+      ready: isWebGPUReady(),
+      handoffMode: gpuLayerUseBitmapHandoff ? 'bitmap' : 'canvas',
+      activeGpuLayerRenderers: gpuLayerRenderers.size,
+      activeGpuLayerTextures: gpuLayerTextures.size,
+      runtime: runtime
+        ? {
+            backend: runtime.backend,
+            adapter: runtime.caps.description,
+            quality: runtime.caps.quality.label,
+            qualityMode: get(settings).performance.gpuInstrumentQuality ?? 'auto',
+            features: {
+              shaderF16: runtime.caps.shaderF16,
+              timestampQuery: runtime.caps.timestampQuery,
+              float32Filterable: runtime.caps.float32Filterable,
+            },
+            governor: gpuGovernorSnapshot,
+            stats: runtime.stats(),
+          }
+        : null,
+      layers: [...gpuLayerRenderers.entries()].map(([id, renderer]) => ({
+        id,
+        ...renderer.debugStats(),
+      })),
+    };
+  }
+
+  function logGpuDebugSnapshot(): void {
+    if (!isGpuDebugActive() || isOutputMode || isOsrMode) return;
+    const snapshot = getGpuDebugSnapshot();
+    const runtimeStats = snapshot.runtime?.stats ?? {};
+    console.log('[GPU DEBUG]', {
+      ready: snapshot.ready,
+      quality: snapshot.runtime?.quality ?? 'n/a',
+      gpuLayers: snapshot.activeGpuLayerRenderers,
+      shaderModules: runtimeStats.shaderModulesCreated,
+      renderPipelines: runtimeStats.renderPipelinesCreated,
+      computePipelines: runtimeStats.computePipelinesCreated,
+      warmupsPending: runtimeStats.pendingPipelineWarmups,
+      pooledBytes: runtimeStats.pooledBytes,
+      governor: snapshot.runtime?.governor ?? null,
+      layers: snapshot.layers.map((layer: any) => ({
+        id: layer.id,
+        shaderId: layer.shaderId,
+        quality: layer.quality,
+        graphCpuMs: layer.shader?.graphCpuMs ?? layer.shader?.smoke?.graphCpuMs,
+        passes: layer.shader?.passes?.length ?? layer.shader?.smoke?.passes?.length ?? 0,
+      })),
+    });
+  }
+
+  function isGpuDebugActive(): boolean {
+    return gpuDebugEnabled || gpuDebugHudForced;
+  }
+
+  function updateGpuDebugHudSnapshot(): void {
+    if (!isGpuDebugActive() || isOutputMode || isOsrMode) return;
+    gpuDebugHudSnapshot = getGpuDebugSnapshot();
+  }
+
+  function formatGpuMs(value: any): string {
+    const n = Number(value);
+    return Number.isFinite(n) ? `${n.toFixed(2)}ms` : 'n/a';
+  }
+
+  function formatGpuBytes(value: any): string {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return '0 MB';
+    return `${(n / (1024 * 1024)).toFixed(n >= 10 * 1024 * 1024 ? 1 : 2)} MB`;
+  }
+
+  function gpuLayerGraphStats(layer: any): { cpuMs: string; passCount: number } {
+    const shader = layer?.shader ?? {};
+    const stats = shader?.smoke ?? shader;
+    const passes = Array.isArray(stats?.passes) ? stats.passes : [];
+    return {
+      cpuMs: formatGpuMs(stats?.graphCpuMs),
+      passCount: passes.length,
+    };
+  }
+
+  function gpuQualityAppliedSummary(layer: any): string {
+    const applied = layer?.quality?.applied;
+    if (!applied || typeof applied !== 'object') return 'no caps';
+    const keys = Object.keys(applied);
+    if (!keys.length) return 'no caps';
+    return keys.slice(0, 3).map((key) => `${key}:${applied[key]?.to}`).join('  ');
+  }
+
+  function updateGpuQualityGovernor(avgFrameMs: number): void {
+    const runtime = getGhostGpuRuntime();
+    if (!runtime || gpuLayerRenderers.size === 0 || isOutputMode || isOsrMode) return;
+    if ((get(settings).performance.gpuInstrumentQuality ?? 'auto') !== 'auto') {
+      gpuGovernorSnapshot = null;
+      return;
+    }
+    if (!gpuQualityGovernor) {
+      gpuQualityGovernor = new GhostGpuAdaptiveGovernor(runtime.caps.qualityTier);
+    }
+    gpuGovernorSnapshot = gpuQualityGovernor.recordFrame(avgFrameMs);
+  }
+
+  function fixedGpuInstrumentTier(): GhostGpuQualityTier | null {
+    const mode = get(settings).performance.gpuInstrumentQuality ?? 'auto';
+    return mode === 'auto' ? null : mode as GhostGpuQualityTier;
   }
 
   // Model3D renderers (per layer) - 3D Model rendering
@@ -1114,6 +1282,18 @@
   }
 
   onMount(() => {
+    if (!isOutputMode && !isOsrMode && typeof window !== 'undefined') {
+      (window as any).__ghostPrewarmGpuShader = (layerId: string, shaderId: string) => {
+        void prewarmGpuShaderForLayer(layerId, shaderId);
+      };
+      (window as any).__ghostGpuDebug = () => getGpuDebugSnapshot();
+      (window as any).__ghostGpuDebugHud = (enabled = true) => {
+        gpuDebugHudForced = !!enabled;
+        updateGpuDebugHudSnapshot();
+        return gpuDebugHudSnapshot;
+      };
+    }
+
     const { w: wrapW, h: wrapH } = getWrapperLayoutSize();
     const projW = $project.width || 1920;
     const projH = $project.height || 1080;
@@ -1307,12 +1487,17 @@
       }
     });
 
-    // Start native renderer command-stream synchronization on Tauri runtime.
-    // Electron path continues using existing WebGL/OSR flow until migrated.
-    if (isTauriRuntime && !isOsrMode && !isOutputMode) {
+    // Start native renderer command-stream synchronization. The 2.0 path uses
+    // Electron as the UI shell and a separate Rust/wgpu render-core process as
+    // the main renderer. If the native process is missing or fails, the catch
+    // below leaves the existing WebGL renderer running as a compatibility
+    // fallback.
+    if ((isTauriRuntime || isElectron) && !isOsrMode && !isOutputMode) {
       nativeRendererSync = new NativeRendererSync();
       const size = getProjectOutputSize();
       void nativeRendererSync.start(size.width, size.height).then(() => {
+        console.log('[NativeRendererSync] sync loop armed');
+        void nativeRendererSync?.logStatus();
         nativeRendererStatusTimer = setInterval(() => {
           void nativeRendererSync?.logStatus();
         }, 10000);
@@ -1490,6 +1675,7 @@
         );
 
         let layersToRender: Layer[];
+        let stage3DSourceLayers: Layer[] | null = null;
         let compEffects: import('../types').Effect[] | undefined;
         let didStageTexturePrepass = false;
 
@@ -1676,6 +1862,7 @@
             }
             return layer;
           });
+          stage3DSourceLayers = [...layersToRender, ...(vjLayers ?? [])];
           compEffects = vjState.compositionEffects;
         } else if (vjLayers) {
           // ── PURE VJ MODE: VJ layers replace mapping layers ──
@@ -1725,8 +1912,10 @@
               if (!resolved) return layer;
               return injectVjIntoLayer(layer, resolved);
             });
+            stage3DSourceLayers = [...layersToRender, ...mappedVjLayers];
           }
         }
+        stage3DSourceLayers ??= layersToRender;
 
         // ── Keyframe timeline overrides (applied only during playback so sliders work freely when paused) ──
         const kfState = get(keyframeTimeline);
@@ -1859,6 +2048,7 @@
         const renderClockSeconds = typeof engine.manualTime === 'number' && Number.isFinite(engine.manualTime)
           ? engine.manualTime
           : null;
+        nativeRendererSync?.setRenderClock(renderClockSeconds);
         const stageEffectNowMs = renderClockSeconds !== null ? renderClockSeconds * 1000 : performance.now();
         applyMappingCompositionStageEffects($project.mappingComposition, layersToRender, stageEffectNowMs);
 
@@ -1931,7 +2121,7 @@
               get(stage3dScene),
               engine.getCompositeTexture(),
               $settings?.output?.slices ?? [],
-              layersToRender,
+              stage3DSourceLayers,
               renderClockSeconds,
             );
           }
@@ -2283,7 +2473,11 @@
       const fpsNow = performance.now();
       const fpsElapsed = fpsNow - fpsLastTime;
       if (fpsElapsed >= 500) {
-        const fpsValue = Math.round((fpsFrameCount * 1000) / fpsElapsed);
+        const measuredFrames = Math.max(1, fpsFrameCount);
+        const avgFrameMs = fpsElapsed / measuredFrames;
+        const fpsValue = Math.round((measuredFrames * 1000) / fpsElapsed);
+        updateGpuQualityGovernor(avgFrameMs);
+        updateGpuDebugHudSnapshot();
         fpsStore.set(fpsValue);
         fpsFrameCount = 0;
         fpsLastTime = fpsNow;
@@ -2297,6 +2491,7 @@
           const displayW = canvas.clientWidth;
           const displayH = canvas.clientHeight;
           console.log(`[GPU] mode=${isOutputMode ? 'output' : 'main'} FPS=${fpsValue}  layers=${layerCount}  drawingBuffer=${canvas.width}x${canvas.height}  display=${displayW}x${displayH}  dpr=${dpr}`);
+          logGpuDebugSnapshot();
           if (isOutputMode && (Math.abs(canvas.width - Math.round(displayW * dpr)) > 1 || Math.abs(canvas.height - Math.round(displayH * dpr)) > 1)) {
             console.warn(`[Output] Canvas backing store ${canvas.width}x${canvas.height} does not match display ${displayW}x${displayH} @ DPR ${dpr}. Use fullscreen output or Match Output Display to avoid compositor scaling.`);
           }
@@ -2626,6 +2821,16 @@
   }
 
   onDestroy(() => {
+    if (!isOutputMode && !isOsrMode && typeof window !== 'undefined' && (window as any).__ghostPrewarmGpuShader) {
+      delete (window as any).__ghostPrewarmGpuShader;
+    }
+    if (!isOutputMode && !isOsrMode && typeof window !== 'undefined' && (window as any).__ghostGpuDebug) {
+      delete (window as any).__ghostGpuDebug;
+    }
+    if (!isOutputMode && !isOsrMode && typeof window !== 'undefined' && (window as any).__ghostGpuDebugHud) {
+      delete (window as any).__ghostGpuDebugHud;
+    }
+
     cancelAnimationFrame(animationId);
     stopWLEDSenders();
     engine?.dispose();
@@ -2753,6 +2958,21 @@
       disposeModel3DContext(model3dCtx);
     }
     model3dRenderers.clear();
+
+    // Dispose GPU shader layer renderers and any ImageBitmap-backed
+    // texture handoffs they left for the Three compositor.
+    for (const renderer of gpuLayerRenderers.values()) {
+      try { renderer.dispose(); } catch { /* */ }
+    }
+    gpuLayerRenderers.clear();
+    for (const texture of gpuLayerTextures.values()) {
+      const img = texture.image as ImageBitmap | undefined;
+      if (img && typeof (img as any).close === 'function') {
+        try { (img as any).close(); } catch { /* */ }
+      }
+      try { texture.dispose(); } catch { /* */ }
+    }
+    gpuLayerTextures.clear();
 
     // Dispose Spout receivers
     for (const key of Array.from(spoutReceivers.keys())) {
@@ -4447,7 +4667,12 @@
     const liveIds = new Set<string>();
 
     for (const layer of layerList) {
-      if (layer.type !== 'gpu' || !layer.gpuLayerContent || !layer.visible) continue;
+      if (layer.type !== 'gpu' || !layer.gpuLayerContent || !layer.visible) {
+        if (layer.type === 'gpu') {
+          delete (layer as any)._gpuLayerPreviewCanvas;
+        }
+        continue;
+      }
       liveIds.add(layer.id);
       const c = layer.gpuLayerContent;
 
@@ -4494,13 +4719,29 @@
         const gpuQuality = layer.renderQuality ?? SHADER_QUALITY_MULTIPLIERS[get(settings).ui.shaderQuality] ?? 1.0;
         const gpuW = Math.max(64, Math.round(width * gpuQuality));
         const gpuH = Math.max(64, Math.round(height * gpuQuality));
+        const runtime = getGhostGpuRuntime();
+        const manualRenderTime = typeof engine.manualTime === 'number' && Number.isFinite(engine.manualTime)
+          ? engine.manualTime
+          : null;
+        const fixedGpuTier = fixedGpuInstrumentTier();
+        const gpuQualityState = runtime
+          ? {
+              capsTier: runtime.caps.qualityTier,
+              suggestedTier: manualRenderTime !== null
+                ? fixedGpuTier ?? runtime.caps.qualityTier
+                : fixedGpuTier ?? gpuGovernorSnapshot?.suggestedTier ?? runtime.caps.qualityTier,
+              qualityScale: fixedGpuTier || manualRenderTime !== null ? 1 : gpuGovernorSnapshot?.qualityScale ?? 1,
+              adaptive: !fixedGpuTier && manualRenderTime === null,
+              governor: !fixedGpuTier && manualRenderTime === null ? gpuGovernorSnapshot : null,
+            }
+          : undefined;
         renderer.renderFrame(c.shaderId, mergedParams, gpuW, gpuH, sourceCtx, {
           bass: bandsSnap.bassFast ?? 0,
           mid: bandsSnap.mid ?? 0,
           treble: bandsSnap.high ?? 0,
         }, {
-          time: engine.manualTime,
-        });
+          time: manualRenderTime,
+        }, gpuQualityState);
       } catch (err: any) {
         console.warn('[Canvas] gpu-layer: render failed', err?.message || err);
         continue;
@@ -4510,6 +4751,7 @@
       // canvas-backed path; `?gpu-layer-bitmap=1` re-enables the
       // ImageBitmap path for profiling on runtimes where it is stable.
       let tex = gpuLayerTextures.get(layer.id);
+      let previewElement: CanvasImageSource | null = renderer.canvas;
       if (!tex) {
         tex = gpuLayerUseBitmapHandoff
           ? new THREE.Texture()
@@ -4533,11 +4775,14 @@
           tex.image = bitmap;
           tex.needsUpdate = true;
         }
+        previewElement = (tex.image as CanvasImageSource | undefined) ?? renderer.canvas;
       } else {
         tex.image = renderer.canvas as any;
         tex.needsUpdate = true;
+        previewElement = renderer.canvas;
       }
       (layer as any)._gpuLayerTexture = tex;
+      (layer as any)._gpuLayerPreviewCanvas = previewElement;
     }
 
     // Reap renderers for removed/hidden layers.
@@ -5835,6 +6080,42 @@
     {#if $settings.output.blackout}
       <div class="blackout-overlay"></div>
     {/if}
+    {#if isGpuDebugActive() && gpuDebugHudSnapshot && !isOutputMode && !isOsrMode}
+      <div class="gpu-debug-hud" aria-hidden="true">
+        <div class="gpu-debug-hud__top">
+          <strong>GPU</strong>
+          <span>{gpuDebugHudSnapshot.runtime?.quality ?? 'n/a'}</span>
+          <span>{gpuDebugHudSnapshot.runtime?.qualityMode ?? 'auto'}</span>
+        </div>
+        <div class="gpu-debug-hud__grid">
+          <span>avg</span>
+          <b>{formatGpuMs(gpuDebugHudSnapshot.runtime?.governor?.averageMs)}</b>
+          <span>scale</span>
+          <b>{(gpuDebugHudSnapshot.runtime?.governor?.qualityScale ?? 1).toFixed(2)}</b>
+          <span>pool</span>
+          <b>{formatGpuBytes(gpuDebugHudSnapshot.runtime?.stats?.pooledBytes)}</b>
+          <span>pipes</span>
+          <b>{(gpuDebugHudSnapshot.runtime?.stats?.renderPipelinesCreated ?? 0) + (gpuDebugHudSnapshot.runtime?.stats?.computePipelinesCreated ?? 0)}</b>
+        </div>
+        {#if gpuDebugHudSnapshot.layers?.length}
+          <div class="gpu-debug-hud__layers">
+            {#each gpuDebugHudSnapshot.layers as layer (layer.id)}
+              {@const graph = gpuLayerGraphStats(layer)}
+              <div class="gpu-debug-hud__layer">
+                <div class="gpu-debug-hud__layer-head">
+                  <span>{layer.shaderId ?? 'shader'}</span>
+                  <b>{graph.cpuMs}</b>
+                </div>
+                <div class="gpu-debug-hud__layer-body">
+                  <span>{graph.passCount} passes</span>
+                  <span>{gpuQualityAppliedSummary(layer)}</span>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {/if}
   </div>
 </div>
 
@@ -5911,5 +6192,84 @@
     height: 100%;
     background: #000;
     z-index: 2;
+  }
+
+  .gpu-debug-hud {
+    position: absolute;
+    left: 10px;
+    top: 10px;
+    z-index: 6;
+    min-width: 220px;
+    max-width: min(340px, calc(100% - 20px));
+    padding: 10px;
+    border: 1px solid rgba(74, 242, 255, 0.32);
+    background: rgba(2, 6, 12, 0.86);
+    color: #d9fbff;
+    font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    pointer-events: none;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(10px);
+  }
+
+  .gpu-debug-hud__top,
+  .gpu-debug-hud__layer-head,
+  .gpu-debug-hud__layer-body {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .gpu-debug-hud__top {
+    padding-bottom: 7px;
+    border-bottom: 1px solid rgba(74, 242, 255, 0.18);
+    color: #63f2ff;
+    text-transform: uppercase;
+    letter-spacing: 0;
+  }
+
+  .gpu-debug-hud__top strong,
+  .gpu-debug-hud b {
+    color: #ffffff;
+    font-weight: 700;
+  }
+
+  .gpu-debug-hud__grid {
+    display: grid;
+    grid-template-columns: auto 1fr auto 1fr;
+    gap: 4px 10px;
+    padding-top: 8px;
+  }
+
+  .gpu-debug-hud__grid span,
+  .gpu-debug-hud__layer-body {
+    color: rgba(217, 251, 255, 0.62);
+  }
+
+  .gpu-debug-hud__layers {
+    display: grid;
+    gap: 6px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(74, 242, 255, 0.18);
+  }
+
+  .gpu-debug-hud__layer {
+    padding: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .gpu-debug-hud__layer-head span,
+  .gpu-debug-hud__layer-body span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .gpu-debug-hud__layer-body {
+    margin-top: 3px;
+    font-size: 10px;
   }
 </style>

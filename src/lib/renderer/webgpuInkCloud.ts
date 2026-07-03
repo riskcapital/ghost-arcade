@@ -1,3 +1,6 @@
+import { getGhostGpuRuntime } from './webgpuShared';
+import { createAndWarmWgslShaderModule } from './wgsl';
+
 /**
  * WebGPUInkCloud — ink-in-water / volumetric smoke simulation.
  *
@@ -616,8 +619,10 @@ export class WebGPUInkCloud {
   }
 
   private buildPipelines(): void {
+    const shaderRuntime = getGhostGpuRuntime() ?? this.device;
+
     // Background
-    const bgMod = this.device.createShaderModule({ code: BG_WGSL });
+    const bgMod = createAndWarmWgslShaderModule(shaderRuntime, BG_WGSL, 'ink-cloud/background');
     this.bgLayout = this.device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
@@ -635,7 +640,7 @@ export class WebGPUInkCloud {
     });
 
     // Sim compute
-    const simMod = this.device.createShaderModule({ code: SIM_WGSL });
+    const simMod = createAndWarmWgslShaderModule(shaderRuntime, SIM_WGSL, 'ink-cloud/sim');
     this.simLayout = this.device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
@@ -649,7 +654,7 @@ export class WebGPUInkCloud {
     });
 
     // Render
-    const renderMod = this.device.createShaderModule({ code: RENDER_WGSL });
+    const renderMod = createAndWarmWgslShaderModule(shaderRuntime, RENDER_WGSL, 'ink-cloud/render');
     this.renderLayout = this.device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },

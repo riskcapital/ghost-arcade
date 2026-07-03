@@ -1,3 +1,6 @@
+import { getGhostGpuRuntime } from './webgpuShared';
+import { createAndWarmWgslShaderModule } from './wgsl';
+
 /**
  * WebGPUFluidSim — real-time 2D incompressible-fluid simulation
  * (Stable Fluids, Jos Stam 1999) running entirely on GPU compute.
@@ -428,7 +431,8 @@ export class WebGPUFluidSim {
       entries: [ ub, tex(3, 'float'), tex(5, 'float'), stor(6, DYE_FORMAT) ],
     });
 
-    const computeModule = device.createShaderModule({ code: FLUID_WGSL });
+    const shaderRuntime = getGhostGpuRuntime() ?? device;
+    const computeModule = createAndWarmWgslShaderModule(shaderRuntime, FLUID_WGSL, 'fluid-sim/compute');
     const mkPipeline = (entry: string, bgl: any) => device.createComputePipeline({
       layout: device.createPipelineLayout({ bindGroupLayouts: [bgl] }),
       compute: { module: computeModule, entryPoint: entry },
@@ -441,7 +445,7 @@ export class WebGPUFluidSim {
     this.pipelineAdvectDye = mkPipeline('cs_advect_dye', this.bglAdvectDye);
 
     // Output render pipeline (used by encodeOutputToView + caller)
-    const outputModule = device.createShaderModule({ code: OUTPUT_WGSL });
+    createAndWarmWgslShaderModule(shaderRuntime, OUTPUT_WGSL, 'fluid-sim/output');
     this.outputBGL = device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
@@ -458,7 +462,8 @@ export class WebGPUFluidSim {
    *  format they're rendering to. */
   ensureOutputPipeline(format: any): void {
     if (this.outputPipeline && this._outputFormat === format) return;
-    const outputModule = this.device.createShaderModule({ code: OUTPUT_WGSL });
+    const shaderRuntime = getGhostGpuRuntime() ?? this.device;
+    const outputModule = createAndWarmWgslShaderModule(shaderRuntime, OUTPUT_WGSL, 'fluid-sim/output');
     this.outputPipeline = this.device.createRenderPipeline({
       layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.outputBGL] }),
       vertex: { module: outputModule, entryPoint: 'vs_full' },

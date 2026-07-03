@@ -80,10 +80,26 @@
  *   For 64³ (262K voxels): ~18MB. Also fine.
  */
 
+import { createAndWarmWgslShaderModule } from './wgsl';
+import { getGhostGpuRuntime } from './webgpuShared';
+import { GhostGpuFrameGraph, type GhostGpuFrameGraphContext, type GhostGpuFrameGraphRunStats } from './gpuFrameGraph';
+
 const DEFAULT_GRID = 48;
 const PRESSURE_ITERATIONS = 20;
 const RAYMARCH_STEPS = 64;
 const MAX_EMITTERS = 8;
+
+type SmokeGraphBindEntry = [binding: number, resourceName: string];
+
+interface SmokeComputePassSpec {
+  name: string;
+  pipeline: any;
+  layout: any;
+  reads: string[];
+  writes: string[];
+  entries: SmokeGraphBindEntry[];
+  dispatch: [number, number, number];
+}
 
 function mat4Mul(a: Float32Array, b: Float32Array): Float32Array {
   const out = new Float32Array(16);
@@ -509,6 +525,8 @@ fn cs_advect_den(@builtin(global_invocation_id) gid: vec3<u32>) {
 // this, low step counts produce visible concentric bands; with
 // it, the bands become noise that the eye filters out.
 const RENDER_WGSL = /* wgsl */ `
+#include <noise>
+
 struct RenderUniforms {
   invViewProj:    mat4x4<f32>,
   cameraPos:      vec3<f32>,
@@ -628,7 +646,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   // 3. Blue-noise-like dither offset on ray start. hash12 gives a
   //    decorrelated value per pixel that breaks the regular sample
   //    pattern that causes step banding.
-  let dither = hash12(in.pos.xy);
+  let dither = ghost_hash12(in.pos.xy);
 
   let nSteps = ${RAYMARCH_STEPS};
   let stepLen = (tEnd - tStart) / f32(nSteps);
@@ -893,6 +911,7 @@ export class WebGPU3DSmoke {
   private splatTimer = 0;       // accumulator in seconds for periodic splat fire
   private prevBass = 0;
   private burstHoldTimer = 0;
+  private lastGraphStats: GhostGpuFrameGraphRunStats | null = null;
   // One-shot logs so we can verify the pipeline is actually running
   // when debugging "shader shows nothing." Reset to false in
   // dispose() so HMR-recreated instances log again.
@@ -951,6 +970,7 @@ export class WebGPU3DSmoke {
   }
 
   private buildPipelines(): void {
+    const shaderRuntime = getGhostGpuRuntime() ?? this.device;
     // Splat: uniform + velocity_rw + density_rw + emitters (read)
     this.splatLayout = this.device.createBindGroupLayout({
       entries: [
@@ -962,7 +982,7 @@ export class WebGPU3DSmoke {
     });
     this.splatPipeline = this.device.createComputePipeline({
       layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.splatLayout] }),
-      compute: { module: this.device.createShaderModule({ code: SPLAT_WGSL }), entryPoint: 'cs_splat' },
+      compute: { module: createAndWarmWgslShaderModule(shaderRuntime, SPLAT_WGSL, '3d-smoke/splat'), entryPoint: 'cs_splat' },
     });
 
     // Advect velocity: uniform + velIn (read) + densityIn (rw) + velOut (rw)
@@ -976,7 +996,7 @@ export class WebGPU3DSmoke {
     });
     this.advectVelPipeline = this.device.createComputePipeline({
       layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.advectVelLayout] }),
-      compute: { module: this.device.createShaderModule({ code: ADVECT_VEL_WGSL }), entryPoint: 'cs_advect_vel' },
+      compute: { module: createAndWarmWgslShaderModule(shaderRuntime, ADVECT_VEL_WGSL, '3d-smoke/advect-velocity'), entryPoint: 'cs_advect_vel' },
     });
 
     // Divergence: uniform + velIn (read) + densityIn (rw) + divOut (rw)
@@ -990,7 +1010,7 @@ export class WebGPU3DSmoke {
     });
     this.divPipeline = this.device.createComputePipeline({
       layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.divLayout] }),
-      compute: { module: this.device.createShaderModule({ code: DIVERGENCE_WGSL }), entryPoint: 'cs_divergence' },
+      compute: { module: createAndWarmWgslShaderModule(shaderRuntime, DIVERGENCE_WGSL, '3d-smoke/divergence'), entryPoint: 'cs_divergence' },
     });
 
     // Jacobi: uniform + velIn (read, unused in body) + densityIn (rw, unused) + divIn (read) + pIn (read) + pOut (rw)
@@ -1006,7 +1026,7 @@ export class WebGPU3DSmoke {
     });
     this.jacobiPipeline = this.device.createComputePipeline({
       layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.jacobiLayout] }),
-      compute: { module: this.device.createShaderModule({ code: JACOBI_WGSL }), entryPoint: 'cs_jacobi' },
+      compute: { module: createAndWarmWgslShaderModule(shaderRuntime, JACOBI_WGSL, '3d-smoke/jacobi'), entryPoint: 'cs_jacobi' },
     });
 
     // SubtractGrad: uniform + velIn (read) + densityIn (rw, unused) + pIn (read) + velOut (rw)
@@ -1021,7 +1041,7 @@ export class WebGPU3DSmoke {
     });
     this.subtractGradPipeline = this.device.createComputePipeline({
       layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.subtractGradLayout] }),
-      compute: { module: this.device.createShaderModule({ code: SUBTRACT_GRAD_WGSL }), entryPoint: 'cs_subtract_grad' },
+      compute: { module: createAndWarmWgslShaderModule(shaderRuntime, SUBTRACT_GRAD_WGSL, '3d-smoke/subtract-gradient'), entryPoint: 'cs_subtract_grad' },
     });
 
     // Advect density: uniform + velIn (read) + denIn (read) + denOut (rw)
@@ -1035,7 +1055,7 @@ export class WebGPU3DSmoke {
     });
     this.advectDenPipeline = this.device.createComputePipeline({
       layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.advectDenLayout] }),
-      compute: { module: this.device.createShaderModule({ code: ADVECT_DEN_WGSL }), entryPoint: 'cs_advect_den' },
+      compute: { module: createAndWarmWgslShaderModule(shaderRuntime, ADVECT_DEN_WGSL, '3d-smoke/advect-density'), entryPoint: 'cs_advect_den' },
     });
 
     // Render: uniform + density buffer
@@ -1045,7 +1065,7 @@ export class WebGPU3DSmoke {
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
       ],
     });
-    const renderMod = this.device.createShaderModule({ code: RENDER_WGSL });
+    const renderMod = createAndWarmWgslShaderModule(shaderRuntime, RENDER_WGSL, '3d-smoke/render');
     this.renderPipeline = this.device.createRenderPipeline({
       layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.renderLayout] }),
       vertex:   { module: renderMod, entryPoint: 'vs_main' },
@@ -1170,144 +1190,9 @@ export class WebGPU3DSmoke {
     sF[16] = this.params.turbScale;
     this.device.queue.writeBuffer(this.simUniform, 0, sBuf);
 
-    const wg = Math.ceil(this.grid / 4);
+    const graph = this.buildFrameGraph(encoder, targetView, fire);
 
-    // Splat pass — single dispatch handles all emitters.
-    if (fire) {
-      const splatBG = this.device.createBindGroup({
-        layout: this.splatLayout,
-        entries: [
-          { binding: 0, resource: { buffer: this.simUniform } },
-          { binding: 1, resource: { buffer: this.velFlip ? this.velB : this.velA } },
-          { binding: 2, resource: { buffer: this.denFlip ? this.denB : this.denA } },
-          { binding: 3, resource: { buffer: this.emitterBuffer } },
-        ],
-      });
-      const sp = encoder.beginComputePass();
-      sp.setPipeline(this.splatPipeline);
-      sp.setBindGroup(0, splatBG);
-      sp.dispatchWorkgroups(wg, wg, wg);
-      sp.end();
-    }
-
-    // ── 1. Advect velocity ──
-    {
-      const velIn  = this.velFlip ? this.velB : this.velA;
-      const velOut = this.velFlip ? this.velA : this.velB;
-      const denCur = this.denFlip ? this.denB : this.denA;
-      const bg = this.device.createBindGroup({
-        layout: this.advectVelLayout,
-        entries: [
-          { binding: 0, resource: { buffer: this.simUniform } },
-          { binding: 1, resource: { buffer: velIn } },
-          { binding: 2, resource: { buffer: denCur } },
-          { binding: 3, resource: { buffer: velOut } },
-        ],
-      });
-      const pass = encoder.beginComputePass();
-      pass.setPipeline(this.advectVelPipeline);
-      pass.setBindGroup(0, bg);
-      pass.dispatchWorkgroups(wg, wg, wg);
-      pass.end();
-      this.velFlip = !this.velFlip;
-    }
-
-    // ── 2. Divergence ──
-    {
-      const velIn = this.velFlip ? this.velB : this.velA;
-      const denCur = this.denFlip ? this.denB : this.denA;
-      const bg = this.device.createBindGroup({
-        layout: this.divLayout,
-        entries: [
-          { binding: 0, resource: { buffer: this.simUniform } },
-          { binding: 1, resource: { buffer: velIn } },
-          { binding: 2, resource: { buffer: denCur } },
-          { binding: 3, resource: { buffer: this.divBuf } },
-        ],
-      });
-      const pass = encoder.beginComputePass();
-      pass.setPipeline(this.divPipeline);
-      pass.setBindGroup(0, bg);
-      pass.dispatchWorkgroups(wg, wg, wg);
-      pass.end();
-    }
-
-    // Reset pressure to 0 before Jacobi (cheap — copy over the
-    // buffer with zeros isn't worth doing per frame; the Jacobi
-    // converges fine from leftover state).
-
-    // ── 3. Jacobi pressure × N ──
-    for (let it = 0; it < PRESSURE_ITERATIONS; it++) {
-      const velIn = this.velFlip ? this.velB : this.velA;
-      const denCur = this.denFlip ? this.denB : this.denA;
-      const pIn  = this.prsFlip ? this.prsB : this.prsA;
-      const pOut = this.prsFlip ? this.prsA : this.prsB;
-      const bg = this.device.createBindGroup({
-        layout: this.jacobiLayout,
-        entries: [
-          { binding: 0, resource: { buffer: this.simUniform } },
-          { binding: 1, resource: { buffer: velIn } },
-          { binding: 2, resource: { buffer: denCur } },
-          { binding: 3, resource: { buffer: this.divBuf } },
-          { binding: 4, resource: { buffer: pIn } },
-          { binding: 5, resource: { buffer: pOut } },
-        ],
-      });
-      const pass = encoder.beginComputePass();
-      pass.setPipeline(this.jacobiPipeline);
-      pass.setBindGroup(0, bg);
-      pass.dispatchWorkgroups(wg, wg, wg);
-      pass.end();
-      this.prsFlip = !this.prsFlip;
-    }
-
-    // ── 4. Subtract gradient ──
-    {
-      const velIn  = this.velFlip ? this.velB : this.velA;
-      const velOut = this.velFlip ? this.velA : this.velB;
-      const denCur = this.denFlip ? this.denB : this.denA;
-      const pIn    = this.prsFlip ? this.prsB : this.prsA;
-      const bg = this.device.createBindGroup({
-        layout: this.subtractGradLayout,
-        entries: [
-          { binding: 0, resource: { buffer: this.simUniform } },
-          { binding: 1, resource: { buffer: velIn } },
-          { binding: 2, resource: { buffer: denCur } },
-          { binding: 3, resource: { buffer: pIn } },
-          { binding: 4, resource: { buffer: velOut } },
-        ],
-      });
-      const pass = encoder.beginComputePass();
-      pass.setPipeline(this.subtractGradPipeline);
-      pass.setBindGroup(0, bg);
-      pass.dispatchWorkgroups(wg, wg, wg);
-      pass.end();
-      this.velFlip = !this.velFlip;
-    }
-
-    // ── 5. Advect density ──
-    {
-      const velIn  = this.velFlip ? this.velB : this.velA;
-      const denIn  = this.denFlip ? this.denB : this.denA;
-      const denOut = this.denFlip ? this.denA : this.denB;
-      const bg = this.device.createBindGroup({
-        layout: this.advectDenLayout,
-        entries: [
-          { binding: 0, resource: { buffer: this.simUniform } },
-          { binding: 1, resource: { buffer: velIn } },
-          { binding: 2, resource: { buffer: denIn } },
-          { binding: 3, resource: { buffer: denOut } },
-        ],
-      });
-      const pass = encoder.beginComputePass();
-      pass.setPipeline(this.advectDenPipeline);
-      pass.setBindGroup(0, bg);
-      pass.dispatchWorkgroups(wg, wg, wg);
-      pass.end();
-      this.denFlip = !this.denFlip;
-    }
-
-    // ── 6. Raymarch render to layer canvas ──
+    // ── Raymarch render to layer canvas ──
     // Build viewProj + inverse for the raymarcher.
     const aspect = this.viewportW / Math.max(1, this.viewportH);
     const proj = perspective(this.params.fovDeg, aspect, 0.01, 100);
@@ -1367,25 +1252,235 @@ export class WebGPU3DSmoke {
     rF[41] = this.params.shadowStepLen;
     this.device.queue.writeBuffer(this.renderUniform, 0, rBuf);
 
-    const denCur = this.denFlip ? this.denB : this.denA;
-    const renderBG = this.device.createBindGroup({
-      layout: this.renderLayout,
+    this.lastGraphStats = graph.execute();
+    this.velFlip = graph.velFlip;
+    this.denFlip = graph.denFlip;
+    this.prsFlip = graph.prsFlip;
+  }
+
+  private buildFrameGraph(encoder: any, targetView: any, fire: boolean): {
+    velFlip: boolean;
+    denFlip: boolean;
+    prsFlip: boolean;
+    execute: () => GhostGpuFrameGraphRunStats;
+  } {
+    const graph = new GhostGpuFrameGraph(getGhostGpuRuntime() ?? { device: this.device });
+    this.importSmokeGraphResources(graph);
+    const wg = Math.ceil(this.grid / 4);
+    let velFlip = this.velFlip;
+    let denFlip = this.denFlip;
+    let prsFlip = this.prsFlip;
+    const velCur = () => velFlip ? 'velocity-b' : 'velocity-a';
+    const velNext = () => velFlip ? 'velocity-a' : 'velocity-b';
+    const denCur = () => denFlip ? 'density-b' : 'density-a';
+    const denNext = () => denFlip ? 'density-a' : 'density-b';
+    const prsCur = () => prsFlip ? 'pressure-b' : 'pressure-a';
+    const prsNext = () => prsFlip ? 'pressure-a' : 'pressure-b';
+
+    if (fire) {
+      const velName = velCur();
+      const denName = denCur();
+      this.addComputePass(graph, {
+        name: 'splat',
+        pipeline: this.splatPipeline,
+        layout: this.splatLayout,
+        reads: ['sim-uniform', 'emitters'],
+        writes: [velName, denName],
+        entries: [
+          [0, 'sim-uniform'],
+          [1, velName],
+          [2, denName],
+          [3, 'emitters'],
+        ],
+        dispatch: [wg, wg, wg],
+      });
+    }
+
+    const advectVelIn = velCur();
+    const advectVelOut = velNext();
+    const advectVelDen = denCur();
+    this.addComputePass(graph, {
+      name: 'advect-velocity',
+      pipeline: this.advectVelPipeline,
+      layout: this.advectVelLayout,
+      reads: ['sim-uniform', advectVelIn, advectVelDen],
+      writes: [advectVelOut],
       entries: [
-        { binding: 0, resource: { buffer: this.renderUniform } },
-        { binding: 1, resource: { buffer: denCur } },
+        [0, 'sim-uniform'],
+        [1, advectVelIn],
+        [2, advectVelDen],
+        [3, advectVelOut],
       ],
+      dispatch: [wg, wg, wg],
     });
-    const rp = encoder.beginRenderPass({
-      colorAttachments: [{
-        view: targetView,
-        loadOp: 'load',
-        storeOp: 'store',
-      }],
+    velFlip = !velFlip;
+
+    const divVel = velCur();
+    const divDen = denCur();
+    this.addComputePass(graph, {
+      name: 'divergence',
+      pipeline: this.divPipeline,
+      layout: this.divLayout,
+      reads: ['sim-uniform', divVel, divDen],
+      writes: ['divergence'],
+      entries: [
+        [0, 'sim-uniform'],
+        [1, divVel],
+        [2, divDen],
+        [3, 'divergence'],
+      ],
+      dispatch: [wg, wg, wg],
     });
-    rp.setPipeline(this.renderPipeline);
-    rp.setBindGroup(0, renderBG);
-    rp.draw(3);
-    rp.end();
+
+    // Reset pressure to 0 before Jacobi (cheap — copy over the
+    // buffer with zeros isn't worth doing per frame; the Jacobi
+    // converges fine from leftover state).
+    for (let it = 0; it < PRESSURE_ITERATIONS; it++) {
+      const jacobiVel = velCur();
+      const jacobiDen = denCur();
+      const pIn = prsCur();
+      const pOut = prsNext();
+      this.addComputePass(graph, {
+        name: `jacobi-${it + 1}`,
+        pipeline: this.jacobiPipeline,
+        layout: this.jacobiLayout,
+        reads: ['sim-uniform', jacobiVel, jacobiDen, 'divergence', pIn],
+        writes: [pOut],
+        entries: [
+          [0, 'sim-uniform'],
+          [1, jacobiVel],
+          [2, jacobiDen],
+          [3, 'divergence'],
+          [4, pIn],
+          [5, pOut],
+        ],
+        dispatch: [wg, wg, wg],
+      });
+      prsFlip = !prsFlip;
+    }
+
+    const subtractVelIn = velCur();
+    const subtractVelOut = velNext();
+    const subtractDen = denCur();
+    const subtractPressure = prsCur();
+    this.addComputePass(graph, {
+      name: 'subtract-gradient',
+      pipeline: this.subtractGradPipeline,
+      layout: this.subtractGradLayout,
+      reads: ['sim-uniform', subtractVelIn, subtractDen, subtractPressure],
+      writes: [subtractVelOut],
+      entries: [
+        [0, 'sim-uniform'],
+        [1, subtractVelIn],
+        [2, subtractDen],
+        [3, subtractPressure],
+        [4, subtractVelOut],
+      ],
+      dispatch: [wg, wg, wg],
+    });
+    velFlip = !velFlip;
+
+    const densityVel = velCur();
+    const densityIn = denCur();
+    const densityOut = denNext();
+    this.addComputePass(graph, {
+      name: 'advect-density',
+      pipeline: this.advectDenPipeline,
+      layout: this.advectDenLayout,
+      reads: ['sim-uniform', densityVel, densityIn],
+      writes: [densityOut],
+      entries: [
+        [0, 'sim-uniform'],
+        [1, densityVel],
+        [2, densityIn],
+        [3, densityOut],
+      ],
+      dispatch: [wg, wg, wg],
+    });
+    denFlip = !denFlip;
+
+    const renderDensity = denCur();
+    graph.addPass({
+      name: 'raymarch',
+      kind: 'render',
+      reads: ['render-uniform', renderDensity],
+      execute: (ctx) => {
+        const renderBG = this.device.createBindGroup({
+          layout: this.renderLayout,
+          entries: [
+            { binding: 0, resource: { buffer: ctx.getBuffer('render-uniform') } },
+            { binding: 1, resource: { buffer: ctx.getBuffer(renderDensity) } },
+          ],
+        });
+        const rp = ctx.encoder.beginRenderPass({
+          colorAttachments: [{
+            view: targetView,
+            loadOp: 'load',
+            storeOp: 'store',
+          }],
+        });
+        rp.setPipeline(this.renderPipeline);
+        rp.setBindGroup(0, renderBG);
+        rp.draw(3);
+        rp.end();
+      },
+    });
+
+    return {
+      velFlip,
+      denFlip,
+      prsFlip,
+      execute: () => graph.execute(encoder),
+    };
+  }
+
+  getDebugStats(): Record<string, any> {
+    return {
+      instrument: '3d-smoke',
+      grid: this.grid,
+      cells: this.cellCount,
+      passes: this.lastGraphStats?.passes ?? [],
+      graphCpuMs: this.lastGraphStats?.totalCpuMs ?? 0,
+    };
+  }
+
+  private importSmokeGraphResources(graph: GhostGpuFrameGraph): void {
+    graph
+      .importBuffer('sim-uniform', this.simUniform)
+      .importBuffer('render-uniform', this.renderUniform)
+      .importBuffer('emitters', this.emitterBuffer)
+      .importBuffer('velocity-a', this.velA)
+      .importBuffer('velocity-b', this.velB)
+      .importBuffer('density-a', this.denA)
+      .importBuffer('density-b', this.denB)
+      .importBuffer('divergence', this.divBuf)
+      .importBuffer('pressure-a', this.prsA)
+      .importBuffer('pressure-b', this.prsB);
+  }
+
+  private addComputePass(graph: GhostGpuFrameGraph, spec: SmokeComputePassSpec): void {
+    graph.addPass({
+      name: spec.name,
+      kind: 'compute',
+      reads: spec.reads,
+      writes: spec.writes,
+      execute: (ctx) => this.executeComputePass(ctx, spec),
+    });
+  }
+
+  private executeComputePass(ctx: GhostGpuFrameGraphContext, spec: SmokeComputePassSpec): void {
+    const bindGroup = this.device.createBindGroup({
+      layout: spec.layout,
+      entries: spec.entries.map(([binding, resourceName]) => ({
+        binding,
+        resource: { buffer: ctx.getBuffer(resourceName) },
+      })),
+    });
+    const pass = ctx.encoder.beginComputePass();
+    pass.setPipeline(spec.pipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.dispatchWorkgroups(spec.dispatch[0], spec.dispatch[1], spec.dispatch[2]);
+    pass.end();
   }
 
   dispose(): void {

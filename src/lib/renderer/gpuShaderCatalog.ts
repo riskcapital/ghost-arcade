@@ -10,17 +10,20 @@
  *   3. Done — UI + lifecycle are handled by the runner.
  */
 
-import type { GpuShaderDef } from './gpuShaderTypes';
-import { WebGPUPlanet, planetParamSchema, planetParamDefaults } from './shaders/webgpuPlanet';
+import type { GpuShaderDef, GpuShaderQualityApplyResult, GpuShaderQualityContext, GpuShaderQualityTierBudget } from './gpuShaderTypes';
+import { GHOST_GPU_QUALITY_PROFILES, type GhostGpuQualityTier } from './gpuCaps';
+import { WebGPUPlanet, planetParamSchema, planetParamDefaults, prewarmWebGPUPlanet } from './shaders/webgpuPlanet';
 import { WebGPUPixelParticlesShader, pixelParticlesParamSchema, pixelParticlesParamDefaults } from './shaders/webgpuPixelParticlesShader';
 import { WebGPUFlythroughShader, flythroughParamSchema, flythroughParamDefaults } from './shaders/webgpuFlythroughShader';
 import { WebGPUPointCloudFXShader, pointCloudFXParamSchema, pointCloudFXParamDefaults } from './shaders/webgpuPointCloudFXShader';
 import { WebGPUParticleFieldShader, particleFieldParamSchema, particleFieldParamDefaults } from './shaders/webgpuParticleFieldShader';
+import { WebGPUVolumetricSpheresShader, volumetricSpheresParamSchema, volumetricSpheresParamDefaults } from './shaders/webgpuVolumetricSpheresShader';
 import { WebGPUInkCloudShader, inkCloudParamSchema, inkCloudParamDefaults } from './shaders/webgpuInkCloudShader';
 // Fluid Smoke removed from catalog — overlapped with Ink Cloud.
 // The shader file remains on disk for now as dead code; can clean up
 // later if we're sure we won't bring it back.
 import { WebGPU3DSmokeShader, smoke3DParamSchema, smoke3DParamDefaults } from './shaders/webgpu3DSmokeShader';
+import { WebGPUSmokeRidersShader, smokeRidersParamSchema, smokeRidersParamDefaults } from './shaders/webgpuSmokeRidersShader';
 
 const PLANET_DEF: GpuShaderDef = {
   id: 'planet',
@@ -31,6 +34,7 @@ const PLANET_DEF: GpuShaderDef = {
   defaultParams: planetParamDefaults,
   needsSource: false,
   create: (device, presentFormat) => new WebGPUPlanet(device, presentFormat),
+  prewarm: prewarmWebGPUPlanet,
 };
 
 const PIXEL_PARTICLES_DEF: GpuShaderDef = {
@@ -96,70 +100,40 @@ const PARTICLE_FIELD_DEF: GpuShaderDef = {
   // visible picker option.
   needsSource: true,
   create: (device, presentFormat) => new WebGPUParticleFieldShader(device, presentFormat),
-};
-
-const volumetricBallsDefaultParams: Record<string, any> = {
-  ...particleFieldParamDefaults,
-  mode: 'gravity',
-  particleCount: 6500,
-  baseSize: 0.034,
-  opacity: 0.98,
-  topology: 'softSphere',
-  connectEnabled: false,
-  fogDensity: 0.055,
-  fogOpacity: 1.0,
-  fogColor: [238, 238, 236],
-  colorMode: 'random',
-  colorMap: 'group',
-  colorMix: 1,
-  colorCycleSpeed: 0.004,
-  hueShiftSpeed: 0.0,
-  randomSat: 0.72,
-  randomVal: 1.18,
-  saturation: 0.95,
-  brightness: 1.08,
-  colorA: [255, 96, 150],
-  colorB: [255, 162, 82],
-  colorC: [255, 222, 180],
-  colorD: [132, 215, 232],
-  lightX: -0.62,
-  lightY: 0.82,
-  lightZ: 1.22,
-  lightStrength: 0.95,
-  materialAmbient: 0.42,
-  materialDiffuse: 0.96,
-  materialSpecular: 0.72,
-  materialShininess: 52,
-  materialReflection: 0.26,
-  fovDeg: 45,
-  cameraZ: 2.55,
-  autoRotateX: -0.4,
-  autoRotateY: 3.2,
-  autoRotateZ: 0.15,
-  damping: 1.65,
-  burstGain: 0.82,
-  burstDecay: 3.4,
-  shimmerStrength: 0.012,
-  audioSmoothing: 0.9,
-  gravityWells: 5,
-  gravityStrength: 0.075,
-  gravityOrbit: 0.22,
-  gravityCoreSize: 0.14,
-  gravityVortex: 0.16,
-  gravityMaxVelocity: 1.7,
-  gravityAudioDrive: 1.35,
-  gravityChaos: 0.08,
+  qualityBudgets: {
+    low: { maxParams: { particleCount: 100000, partnerCount: 8 }, scaleMaxParams: ['particleCount', 'partnerCount'] },
+    balanced: { maxParams: { particleCount: 250000, partnerCount: 12 }, scaleMaxParams: ['particleCount', 'partnerCount'] },
+    high: { maxParams: { particleCount: 500000, partnerCount: 16 }, scaleMaxParams: ['particleCount', 'partnerCount'] },
+    ultra: { maxParams: { particleCount: 500000, partnerCount: 24 }, scaleMaxParams: ['particleCount', 'partnerCount'] },
+  },
 };
 
 const VOLUMETRIC_BALLS_DEF: GpuShaderDef = {
   id: 'volumetric-balls',
   label: 'Volumetric Balls',
-  description: 'Soft shaded sphere impostors in a pastel 3D mass: varied radii, depth-tested occlusion, gentle gravity-well motion, and smoothed audio breathing. Built for the pillowy ball-cluster look rather than a classic particle field.',
+  description: 'A dedicated analytic sphere field: real per-fragment ray/sphere hits, depth output, glossy material lighting, depth fog, and GPU motion. Built for large solid spheres instead of particle impostors.',
   category: 'Generative',
-  paramSchema: particleFieldParamSchema,
-  defaultParams: volumetricBallsDefaultParams,
+  paramSchema: volumetricSpheresParamSchema,
+  defaultParams: volumetricSpheresParamDefaults,
   needsSource: false,
-  create: (device, presentFormat) => new WebGPUParticleFieldShader(device, presentFormat),
+  create: (device, presentFormat) => new WebGPUVolumetricSpheresShader(device, presentFormat),
+};
+
+const SMOKE_RIDERS_DEF: GpuShaderDef = {
+  id: 'smoke-riders',
+  label: 'Smoke Riders',
+  description: '3D volumetric smoke with real analytic spheres moving through the atmosphere. This is the first combined smoke + sphere instrument on the native-renderer path.',
+  category: 'Generative',
+  paramSchema: smokeRidersParamSchema,
+  defaultParams: smokeRidersParamDefaults,
+  needsSource: false,
+  create: (device, presentFormat) => new WebGPUSmokeRidersShader(device, presentFormat),
+  qualityBudgets: {
+    low: { maxParams: { gridSize: 32, shadowSteps: 2, emitterCount: 4, particleCount: 70000 }, scaleMaxParams: ['shadowSteps', 'emitterCount', 'particleCount'] },
+    balanced: { maxParams: { gridSize: 48, shadowSteps: 4, emitterCount: 6, particleCount: 140000 }, scaleMaxParams: ['shadowSteps', 'emitterCount', 'particleCount'] },
+    high: { maxParams: { gridSize: 64, shadowSteps: 6, emitterCount: 8, particleCount: 220000 }, scaleMaxParams: ['shadowSteps', 'particleCount'] },
+    ultra: { maxParams: { gridSize: 64, shadowSteps: 8, emitterCount: 8, particleCount: 300000 }, scaleMaxParams: ['shadowSteps', 'particleCount'] },
+  },
 };
 
 const gravityWellsDefaultParams: Record<string, any> = {
@@ -231,6 +205,12 @@ const GRAVITY_WELLS_DEF: GpuShaderDef = {
   defaultParams: gravityWellsDefaultParams,
   needsSource: false,
   create: (device, presentFormat) => new WebGPUParticleFieldShader(device, presentFormat),
+  qualityBudgets: {
+    low: { maxParams: { particleCount: 90000, partnerCount: 8 }, scaleMaxParams: ['particleCount', 'partnerCount'] },
+    balanced: { maxParams: { particleCount: 180000, partnerCount: 12 }, scaleMaxParams: ['particleCount', 'partnerCount'] },
+    high: { maxParams: { particleCount: 320000, partnerCount: 16 }, scaleMaxParams: ['particleCount', 'partnerCount'] },
+    ultra: { maxParams: { particleCount: 500000, partnerCount: 24 }, scaleMaxParams: ['particleCount', 'partnerCount'] },
+  },
 };
 
 // Ink Cloud — volumetric smoke / ink-in-water particle simulator.
@@ -266,6 +246,12 @@ const SMOKE_3D_DEF: GpuShaderDef = {
   defaultParams: smoke3DParamDefaults,
   needsSource: false,
   create: (device, presentFormat) => new WebGPU3DSmokeShader(device, presentFormat),
+  qualityBudgets: {
+    low: { maxParams: { gridSize: 32, shadowSteps: 2, emitterCount: 4 }, scaleMaxParams: ['shadowSteps', 'emitterCount'] },
+    balanced: { maxParams: { gridSize: 48, shadowSteps: 4, emitterCount: 6 }, scaleMaxParams: ['shadowSteps', 'emitterCount'] },
+    high: { maxParams: { gridSize: 64, shadowSteps: 6, emitterCount: 8 }, scaleMaxParams: ['shadowSteps'] },
+    ultra: { maxParams: { gridSize: 64, shadowSteps: 8, emitterCount: 8 }, scaleMaxParams: ['shadowSteps'] },
+  },
 };
 
 export const GPU_SHADER_CATALOG: GpuShaderDef[] = [
@@ -275,6 +261,7 @@ export const GPU_SHADER_CATALOG: GpuShaderDef[] = [
   POINTCLOUD_FX_DEF,
   PARTICLE_FIELD_DEF,
   VOLUMETRIC_BALLS_DEF,
+  SMOKE_RIDERS_DEF,
   GRAVITY_WELLS_DEF,
   INK_CLOUD_DEF,
   SMOKE_3D_DEF,
@@ -296,4 +283,92 @@ export function listShaderCategories(): string[] {
     }
   }
   return out;
+}
+
+const QUALITY_TIER_ORDER: GhostGpuQualityTier[] = ['low', 'balanced', 'high', 'ultra'];
+
+function clampTier(tier: GhostGpuQualityTier | null | undefined): GhostGpuQualityTier {
+  return tier && QUALITY_TIER_ORDER.includes(tier) ? tier : 'balanced';
+}
+
+function coerceNumericParamValue(original: any, value: number): any {
+  if (typeof original === 'string') return String(Math.round(value));
+  return value;
+}
+
+function clampParamValue(original: any, cap: number): { value: any; changed: boolean } {
+  const numeric = Number(original);
+  if (!Number.isFinite(numeric)) return { value: original, changed: false };
+  const capped = Math.min(numeric, cap);
+  return {
+    value: coerceNumericParamValue(original, capped),
+    changed: capped !== numeric,
+  };
+}
+
+function budgetForTier(def: GpuShaderDef, tier: GhostGpuQualityTier): GpuShaderQualityTierBudget | null {
+  if (!def.qualityBudgets) return null;
+  const start = QUALITY_TIER_ORDER.indexOf(tier);
+  for (let i = start; i >= 0; i--) {
+    const budget = def.qualityBudgets[QUALITY_TIER_ORDER[i]];
+    if (budget) return budget;
+  }
+  return null;
+}
+
+export function applyGpuShaderQualityBudget(
+  def: GpuShaderDef | undefined,
+  params: Record<string, any>,
+  context?: Partial<GpuShaderQualityContext> | null,
+): GpuShaderQualityApplyResult {
+  const capsTier = clampTier(context?.capsTier);
+  const suggestedTier = clampTier(context?.suggestedTier ?? capsTier);
+  const qualityScale = Math.max(0.25, Math.min(1, Number(context?.qualityScale ?? 1)));
+  const fullContext: GpuShaderQualityContext = {
+    capsTier,
+    suggestedTier,
+    qualityScale,
+    adaptive: !!context?.adaptive,
+    governor: context?.governor ?? null,
+  };
+
+  if (!def?.qualityBudgets) {
+    return { params, applied: {}, context: fullContext };
+  }
+
+  const budget = budgetForTier(def, suggestedTier);
+  if (!budget) {
+    return { params, applied: {}, context: fullContext };
+  }
+
+  const out: Record<string, any> = { ...params };
+  const applied: GpuShaderQualityApplyResult['applied'] = {};
+  const scaleKeys = new Set(budget.scaleMaxParams ?? []);
+
+  for (const [key, rawCap] of Object.entries(budget.maxParams ?? {})) {
+    const tierProfileCap = key === 'particleCount'
+      ? GHOST_GPU_QUALITY_PROFILES[suggestedTier].particleBudget
+      : key === 'gridSize'
+        ? GHOST_GPU_QUALITY_PROFILES[suggestedTier].volumeGrid
+        : rawCap;
+    const scaledCap = scaleKeys.has(key)
+      ? Math.max(1, Math.floor(tierProfileCap * qualityScale))
+      : tierProfileCap;
+    const cap = Math.max(0, Math.min(rawCap, scaledCap));
+    const previous = out[key];
+    const next = clampParamValue(previous, cap);
+    if (next.changed) {
+      out[key] = next.value;
+      applied[key] = { from: previous, to: next.value, cap };
+    }
+  }
+
+  for (const [key, value] of Object.entries(budget.forceParams ?? {})) {
+    if (out[key] !== value) {
+      applied[key] = { from: out[key], to: value };
+      out[key] = value;
+    }
+  }
+
+  return { params: out, applied, context: fullContext };
 }
