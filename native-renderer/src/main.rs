@@ -1626,7 +1626,13 @@ impl App {
             "frame_snapshot" | "get_frame_snapshot" => self.frame_snapshot(&req.params),
             "capabilities" | "get_capabilities" => Ok(self.capabilities()),
             "compute_probe" | "run_compute_probe" => self.compute_probe(&req.params),
-            "compute_graph" | "run_compute_graph" => self.compute_graph(&req.params),
+            "compute_graph" | "run_compute_graph" => {
+                let result = self.compute_graph(&req.params);
+                if result.is_ok() {
+                    self.request_auto_present();
+                }
+                result
+            }
             "readiness" | "get_readiness_report" => Ok(json!({
                 "timestamp_ms": epoch_ms(),
                 "overall_ready": self.renderer.is_some(),
