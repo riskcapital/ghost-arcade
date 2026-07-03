@@ -80,7 +80,7 @@
  *   For 64³ (262K voxels): ~18MB. Also fine.
  */
 
-import { createAndWarmWgslShaderModule } from './wgsl';
+import { createAndWarmWgslShaderModule, resolveGhostWgsl } from './wgsl';
 import { getGhostGpuRuntime } from './webgpuShared';
 import { GhostGpuFrameGraph, type GhostGpuFrameGraphContext, type GhostGpuFrameGraphRunStats } from './gpuFrameGraph';
 
@@ -715,6 +715,80 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   return vec4<f32>(outRGB, outA);
 }
 `;
+
+export const SMOKE_3D_NATIVE_SHADER_IDS = Object.freeze({
+  splat: '3d-smoke/splat',
+  advectVelocity: '3d-smoke/advect-velocity',
+  divergence: '3d-smoke/divergence',
+  jacobi: '3d-smoke/jacobi',
+  subtractGradient: '3d-smoke/subtract-gradient',
+  advectDensity: '3d-smoke/advect-density',
+  render: '3d-smoke/render',
+});
+
+export type Smoke3DNativeShaderStage = 'compute' | 'render';
+
+export interface Smoke3DNativeShaderSource {
+  shaderId: string;
+  label: string;
+  stage: Smoke3DNativeShaderStage;
+  entry: string;
+  source: string;
+}
+
+export function getSmoke3DNativeShaderSources(): Smoke3DNativeShaderSource[] {
+  return [
+    {
+      shaderId: SMOKE_3D_NATIVE_SHADER_IDS.splat,
+      label: '3d-smoke/splat',
+      stage: 'compute',
+      entry: 'cs_splat',
+      source: resolveGhostWgsl(SPLAT_WGSL, '3d-smoke/splat'),
+    },
+    {
+      shaderId: SMOKE_3D_NATIVE_SHADER_IDS.advectVelocity,
+      label: '3d-smoke/advect-velocity',
+      stage: 'compute',
+      entry: 'cs_advect_vel',
+      source: resolveGhostWgsl(ADVECT_VEL_WGSL, '3d-smoke/advect-velocity'),
+    },
+    {
+      shaderId: SMOKE_3D_NATIVE_SHADER_IDS.divergence,
+      label: '3d-smoke/divergence',
+      stage: 'compute',
+      entry: 'cs_divergence',
+      source: resolveGhostWgsl(DIVERGENCE_WGSL, '3d-smoke/divergence'),
+    },
+    {
+      shaderId: SMOKE_3D_NATIVE_SHADER_IDS.jacobi,
+      label: '3d-smoke/jacobi',
+      stage: 'compute',
+      entry: 'cs_jacobi',
+      source: resolveGhostWgsl(JACOBI_WGSL, '3d-smoke/jacobi'),
+    },
+    {
+      shaderId: SMOKE_3D_NATIVE_SHADER_IDS.subtractGradient,
+      label: '3d-smoke/subtract-gradient',
+      stage: 'compute',
+      entry: 'cs_subtract_grad',
+      source: resolveGhostWgsl(SUBTRACT_GRAD_WGSL, '3d-smoke/subtract-gradient'),
+    },
+    {
+      shaderId: SMOKE_3D_NATIVE_SHADER_IDS.advectDensity,
+      label: '3d-smoke/advect-density',
+      stage: 'compute',
+      entry: 'cs_advect_den',
+      source: resolveGhostWgsl(ADVECT_DEN_WGSL, '3d-smoke/advect-density'),
+    },
+    {
+      shaderId: SMOKE_3D_NATIVE_SHADER_IDS.render,
+      label: '3d-smoke/render',
+      stage: 'render',
+      entry: 'fs_main',
+      source: resolveGhostWgsl(RENDER_WGSL, '3d-smoke/render'),
+    },
+  ];
+}
 
 /* ============================================================== */
 /* TYPESCRIPT WRAPPER                                              */
