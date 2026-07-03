@@ -672,6 +672,8 @@ export class NativeRendererSync {
   private lastLayers = new Map<string, LayerSnapshot>();
   private precompiledShaders = new Set<string>();
   private nativeWgslStdlibWarmed = false;
+  private nativeCoreMethods = new Set<string>();
+  private nativeFeatureFlags: Record<string, boolean> = {};
   private prefetchedSources = new Set<string>();
   private videoRefreshAt = new Map<string, number>();
   private sourcePreviewSeq = new Map<string, number>();
@@ -743,6 +745,14 @@ export class NativeRendererSync {
     const size = Number(status?.source_frame_size ?? SOURCE_FRAME_SIZE_FALLBACK);
     this.nativeSourceFrameSize = clampNumber(Math.round(size), 512, 4096);
     this.dynamicSourceFrameCaptureSize = this.nativeSourceFrameSize;
+  }
+
+  private supportsNativeMethod(method: string): boolean {
+    return this.nativeCoreMethods.has(method);
+  }
+
+  private supportsNativeFeature(feature: string): boolean {
+    return !!this.nativeFeatureFlags[feature];
   }
 
   private audioSignature(audio: VisualAudioState): string {
@@ -888,11 +898,13 @@ export class NativeRendererSync {
     this.assertNativeReady(startupStatus);
     this.syncNativeSourceFrameSize(startupStatus);
     const startupCapabilities = await getNativeRendererCapabilities().catch(() => null);
+    this.nativeCoreMethods = new Set((startupCapabilities?.implemented_methods ?? []).map(String));
+    this.nativeFeatureFlags = startupCapabilities?.features ?? {};
     this.nativeComputeGraphSourceFrames = !!(
-      startupCapabilities?.features?.compute_graph_host &&
-      startupCapabilities?.features?.compute_graph_render &&
-      startupCapabilities?.features?.compute_graph_source_frame_target &&
-      startupCapabilities?.features?.native_3d_smoke_graph
+      this.supportsNativeFeature('compute_graph_host') &&
+      this.supportsNativeFeature('compute_graph_render') &&
+      this.supportsNativeFeature('compute_graph_source_frame_target') &&
+      this.supportsNativeFeature('native_3d_smoke_graph')
     );
     const startupQuality = startupStatus?.native_quality;
     console.log(
@@ -921,9 +933,11 @@ export class NativeRendererSync {
   private async applyStartupPolicies() {
     await resetNativeRendererStats().catch(() => {});
     // Prefer dedicated output window if present; fallback to main window.
-    await attachNativeRendererOutputWindow('output')
-      .catch(() => attachNativeRendererOutputWindow('main'))
-      .catch(() => {});
+    if (this.supportsNativeMethod('attach_output_window')) {
+      await attachNativeRendererOutputWindow('output')
+        .catch(() => attachNativeRendererOutputWindow('main'))
+        .catch(() => {});
+    }
     const tasks: Promise<unknown>[] = [
       this.applyPresentPolicyProfile(this.presentProfile),
       this.setTargetFps(this.targetFps),
@@ -998,15 +1012,21 @@ export class NativeRendererSync {
     this.nativeWgslStdlibWarmed = false;
     this.latestRenderClockSeconds = null;
     this.lastRenderClockSentSeconds = null;
-    await clearNativeRendererDecodePreviewCache().catch(() => {});
+    if (this.supportsNativeMethod('clear_decode_preview_cache')) {
+      await clearNativeRendererDecodePreviewCache().catch(() => {});
+    }
     await this.clearRuntimeCaches({
       clear_precompiled_shaders: false,
       clear_texture_pool: false,
       clear_metadata_caches: false,
       clear_prefetch_cache: true,
     }).catch(() => {});
-    await detachNativeRendererOutputWindow().catch(() => {});
+    if (this.supportsNativeMethod('detach_output_window')) {
+      await detachNativeRendererOutputWindow().catch(() => {});
+    }
     await stopNativeRenderer().catch(() => {});
+    this.nativeCoreMethods.clear();
+    this.nativeFeatureFlags = {};
   }
 
   scheduleSync(width: number, height: number, layers: Layer[]) {
@@ -1731,6 +1751,7 @@ fn fs_main() -> @location(0) vec4<f32> {
   async applyPresentPolicyProfile(profile: PresentPolicyProfile = this.presentProfile) {
     if (!this.running) return;
     this.presentProfile = profile;
+    if (!this.supportsNativeMethod('set_present_policy')) return;
     const status = await getNativeRendererStatus().catch(() => null);
     if (!status) return;
 
@@ -1768,6 +1789,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     const clamped = Math.max(1, Math.min(480, Math.round(targetFps)));
     this.targetFps = clamped;
     if (!this.running) return;
+    if (!this.supportsNativeMethod('set_target_fps')) return;
     await setNativeRendererTargetFps({ target_fps: clamped }).catch(() => {});
   }
 
@@ -1775,6 +1797,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     const clamped = Math.max(64, Math.min(16384, Math.round(maxCommandsPerTick)));
     this.commandDrainLimit = clamped;
     if (!this.running) return;
+    if (!this.supportsNativeMethod('set_command_drain_policy')) return;
     await setNativeRendererCommandDrainPolicy({
       max_commands_per_tick: clamped,
     }).catch(() => {});
@@ -1783,6 +1806,7 @@ fn fs_main() -> @location(0) vec4<f32> {
   async setAutoPresentPolicy(autoPresentOnStateChange: boolean) {
     this.autoPresentOnStateChange = !!autoPresentOnStateChange;
     if (!this.running) return;
+    if (!this.supportsNativeMethod('set_auto_present_policy')) return;
     await setNativeRendererAutoPresentPolicy({
       auto_present_on_state_change: this.autoPresentOnStateChange,
     }).catch(() => {});
@@ -1791,6 +1815,7 @@ fn fs_main() -> @location(0) vec4<f32> {
   async setDecodeCpuBackupPolicy(decodeStoreCpuBackupFrames: boolean) {
     this.decodeStoreCpuBackupFrames = !!decodeStoreCpuBackupFrames;
     if (!this.running) return;
+    if (!this.supportsNativeMethod('set_decode_cpu_backup_policy')) return;
     await setNativeRendererDecodeCpuBackupPolicy({
       decode_store_cpu_backup_frames: this.decodeStoreCpuBackupFrames,
     }).catch(() => {});
@@ -1799,6 +1824,7 @@ fn fs_main() -> @location(0) vec4<f32> {
   async setDecodeSyntheticFallbackPolicy(decodeAllowSyntheticFallback: boolean) {
     this.decodeAllowSyntheticFallback = !!decodeAllowSyntheticFallback;
     if (!this.running) return;
+    if (!this.supportsNativeMethod('set_decode_synthetic_fallback_policy')) return;
     await setNativeRendererDecodeSyntheticFallbackPolicy({
       decode_allow_synthetic_fallback: this.decodeAllowSyntheticFallback,
     }).catch(() => {});
@@ -1808,6 +1834,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     const clamped = Math.max(64, Math.min(16384, Math.round(texturePoolCapMb)));
     this.texturePoolCapMb = clamped;
     if (!this.running) return;
+    if (!this.supportsNativeMethod('set_texture_pool_cap')) return;
     await setNativeRendererTexturePoolCap({ texture_pool_cap_mb: clamped }).catch(() => {});
   }
 
@@ -1817,6 +1844,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     this.shaderPrecompileQueueCap = clampedQueueCap;
     this.shaderPrecompilePerFrame = clampedPerFrame;
     if (!this.running) return;
+    if (!this.supportsNativeMethod('set_shader_precompile_policy')) return;
     await setNativeRendererShaderPrecompilePolicy({
       shader_precompile_queue_cap: clampedQueueCap,
       shader_precompile_per_frame: clampedPerFrame,
@@ -1836,6 +1864,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     this.prefetchCachePruneCount = clampedPrune;
     this.adaptiveOverloadPrefetchState = null;
     if (!this.running) return;
+    if (!this.supportsNativeMethod('set_media_prefetch_policy')) return;
     await setNativeRendererMediaPrefetchPolicy({
       media_high_burst_limit: clampedBurst,
       prefetch_cache_max_entries: clampedMax,
@@ -1849,6 +1878,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     this.decodePreviewSize = clampedSize;
     this.decodePreviewCacheMb = clampedCacheMb;
     if (!this.running) return;
+    if (!this.supportsNativeMethod('set_decode_preview_policy')) return;
     await setNativeRendererDecodePreviewPolicy({
       decode_preview_size: clampedSize,
       decode_preview_cache_mb: clampedCacheMb,
@@ -1858,6 +1888,7 @@ fn fs_main() -> @location(0) vec4<f32> {
   async setDecodeTargetPolicy(useOutputResolution: boolean) {
     this.decodeUseOutputResolution = !!useOutputResolution;
     if (!this.running) return;
+    if (!this.supportsNativeMethod('set_decode_target_policy')) return;
     await setNativeRendererDecodeTargetPolicy({
       decode_use_output_resolution: this.decodeUseOutputResolution,
     }).catch(() => {});
@@ -1867,6 +1898,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     const clampedCapMb = Math.max(16, Math.min(1024, Math.round(decodeUploadQueueCapMb)));
     this.decodeUploadQueueCapMb = clampedCapMb;
     if (!this.running) return;
+    if (!this.supportsNativeMethod('set_decode_upload_policy')) return;
     await setNativeRendererDecodeUploadPolicy({
       decode_upload_queue_cap_mb: clampedCapMb,
     }).catch(() => {});
@@ -1881,6 +1913,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     this.decodeHandoffByteCapMb = clampedCapMb;
     this.decodeHandoffPredecodeShedPct = clampedShedPct;
     if (!this.running) return;
+    if (!this.supportsNativeMethod('set_decode_handoff_policy')) return;
     await setNativeRendererDecodeHandoffPolicy({
       decode_handoff_byte_cap_mb: clampedCapMb,
       decode_handoff_predecode_shed_pct: clampedShedPct,
@@ -1894,6 +1927,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     );
     this.decodePredecodeEstimateCacheCapEntries = clampedCap;
     if (!this.running) return;
+    if (!this.supportsNativeMethod('set_decode_estimate_cache_policy')) return;
     await setNativeRendererDecodeEstimateCachePolicy({
       decode_predecode_estimate_cache_cap_entries: clampedCap,
     }).catch(() => {});
@@ -1910,6 +1944,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     clear_metadata_caches: boolean;
     clear_prefetch_cache: boolean;
   }) {
+    if (!this.supportsNativeMethod('clear_runtime_caches')) return;
     await clearNativeRendererRuntimeCaches(config).catch(() => {});
   }
 
@@ -1931,6 +1966,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     this.mediaDropDecodePriorityCutoff = decodeCutoff;
     this.mediaDropIoPriorityCutoff = ioCutoff;
     if (!this.running) return;
+    if (!this.supportsNativeMethod('set_media_drop_policy')) return;
     await setNativeRendererMediaDropPolicy({
       command_pressure_pct: commandPct,
       decode_queue_pressure_pct: decodePct,
