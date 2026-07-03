@@ -305,6 +305,25 @@ async function main() {
     }, 12000);
     await delay(80);
 
+    const capabilities = await rpc.send('capabilities', {}, 5000);
+    if (!capabilities?.features?.layer_compositor || !capabilities?.features?.fragment_wgsl_host) {
+      throw new Error(`native capabilities missing implemented core features: ${JSON.stringify(capabilities)}`);
+    }
+    if (capabilities.features.shared_texture_upload || capabilities.features.compute_shader_host) {
+      throw new Error(`native capabilities overstated unimplemented features: ${JSON.stringify(capabilities.features)}`);
+    }
+    if (!capabilities.implemented_methods?.includes('capabilities')) {
+      throw new Error(`native capabilities did not list the capabilities RPC: ${JSON.stringify(capabilities)}`);
+    }
+    try {
+      await rpc.send('definitely_not_a_real_method', {}, 1000);
+      throw new Error('unknown RPC method unexpectedly succeeded');
+    } catch (err) {
+      if (!String(err?.message || err).includes('unsupported native render-core RPC method')) {
+        throw err;
+      }
+    }
+
     const baseline = await snapshot(rpc, 'baseline', 0, 0);
 
     await rpc.send('submit_commands', {

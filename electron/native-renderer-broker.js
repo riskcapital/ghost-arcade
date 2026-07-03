@@ -41,6 +41,7 @@ const RENDERER_COMMANDS = [
   'native_renderer_get_stats',
   'native_renderer_get_snapshot',
   'native_renderer_get_frame_snapshot',
+  'native_renderer_get_capabilities',
   'native_renderer_get_readiness_report',
   'native_renderer_export_snapshot_json',
   'native_renderer_reset_stats',
@@ -51,19 +52,32 @@ const RENDERER_COMMANDS = [
   'native_renderer_set_output_window',
 ];
 
-const NOOP_WHEN_RUNNING_NOT_REQUIRED = new Set([
-  'native_renderer_upload_source_gpu_shared_texture',
-  'native_renderer_prefetch_media',
-  'native_renderer_clear_prefetch_cache',
-  'native_renderer_clear_decode_preview_cache',
-  'native_renderer_clear_runtime_caches',
-  'native_renderer_attach_output_window',
-  'native_renderer_detach_output_window',
-  'native_renderer_export_snapshot_json',
-  'native_renderer_set_decode_policy',
-  'native_renderer_set_prefetch_policy',
-  'native_renderer_get_decode_capabilities',
-  'native_renderer_set_output_window',
+const BROKER_UNSUPPORTED_COMMANDS = new Map([
+  ['native_renderer_upload_source_gpu_shared_texture', 'shared texture media transport is not implemented yet'],
+  ['native_renderer_prefetch_media', 'native media prefetch/decode is not implemented yet'],
+  ['native_renderer_clear_prefetch_cache', 'native media prefetch cache is not implemented yet'],
+  ['native_renderer_clear_decode_preview_cache', 'native decode preview cache is not implemented yet'],
+  ['native_renderer_clear_runtime_caches', 'native runtime cache clearing is not implemented yet'],
+  ['native_renderer_set_vram_budget', 'native VRAM budget enforcement is not implemented yet'],
+  ['native_renderer_set_command_drain_policy', 'native command-drain policy is not implemented yet'],
+  ['native_renderer_set_auto_present_policy', 'native auto-present policy is not implemented yet'],
+  ['native_renderer_set_decode_cpu_backup_policy', 'native decode CPU backup is not implemented yet'],
+  ['native_renderer_set_decode_synthetic_fallback_policy', 'native decode fallback policy is not implemented yet'],
+  ['native_renderer_set_media_prefetch_policy', 'native media prefetch policy is not implemented yet'],
+  ['native_renderer_set_media_drop_policy', 'native media drop policy is not implemented yet'],
+  ['native_renderer_set_decode_preview_policy', 'native decode preview policy is not implemented yet'],
+  ['native_renderer_set_decode_target_policy', 'native decode target policy is not implemented yet'],
+  ['native_renderer_set_decode_upload_policy', 'native decode upload policy is not implemented yet'],
+  ['native_renderer_set_decode_handoff_policy', 'native decode handoff policy is not implemented yet'],
+  ['native_renderer_set_decode_estimate_cache_policy', 'native decode estimate cache is not implemented yet'],
+  ['native_renderer_set_present_policy', 'native present policy is not implemented yet'],
+  ['native_renderer_attach_output_window', 'managed native output attach is not implemented yet'],
+  ['native_renderer_detach_output_window', 'managed native output detach is not implemented yet'],
+  ['native_renderer_export_snapshot_json', 'native snapshot export is not implemented yet'],
+  ['native_renderer_set_decode_policy', 'legacy decode policy API is not implemented by this core'],
+  ['native_renderer_set_prefetch_policy', 'legacy prefetch policy API is not implemented by this core'],
+  ['native_renderer_get_decode_capabilities', 'native decode capabilities are not implemented yet'],
+  ['native_renderer_set_output_window', 'legacy output window API is not implemented by this core'],
 ]);
 
 export function nativeRendererCommandNames() {
@@ -92,6 +106,10 @@ class NativeRendererBroker {
       last_frame_error: 'Native render core has not started',
     });
     this.stats = makeDefaultStats();
+    this.capabilities = makeDefaultCapabilities({
+      backend: this.lastStatus.backend,
+      running: false,
+    });
   }
 
   async invoke(command, args = {}) {
@@ -107,6 +125,7 @@ class NativeRendererBroker {
       if (command === 'native_renderer_get_stats') return this.stats;
       if (command === 'native_renderer_get_snapshot') return this.snapshot();
       if (command === 'native_renderer_get_frame_snapshot') return null;
+      if (command === 'native_renderer_get_capabilities') return this.capabilities;
       if (command === 'native_renderer_get_readiness_report') return this.readinessReport();
       return null;
     }
@@ -124,6 +143,8 @@ class NativeRendererBroker {
         return this.snapshot();
       case 'native_renderer_get_frame_snapshot':
         return this.sendIfRunning('frame_snapshot', args, { fallback: null, timeoutMs: 5000 });
+      case 'native_renderer_get_capabilities':
+        return this.getCapabilities();
       case 'native_renderer_get_readiness_report':
         return this.readinessReport();
       case 'native_renderer_reset_stats':
@@ -136,7 +157,9 @@ class NativeRendererBroker {
       case 'native_renderer_set_target_fps':
         return this.sendIfRunning('set_target_fps', args, { fallback: null });
       default:
-        if (NOOP_WHEN_RUNNING_NOT_REQUIRED.has(command)) return null;
+        if (BROKER_UNSUPPORTED_COMMANDS.has(command)) {
+          return Promise.reject(this.unsupportedError(command));
+        }
         return this.sendIfRunning(commandToMethod(command), args, { fallback: null });
     }
   }
@@ -154,6 +177,7 @@ class NativeRendererBroker {
     this.ensureProcess(executable);
     const result = await this.send('start', args, { timeoutMs: 8000 });
     this.lastStatus = normalizeStatus(result, this.lastStatus);
+    await this.refreshCapabilities();
     return this.lastStatus;
   }
 
@@ -165,6 +189,10 @@ class NativeRendererBroker {
       this.lastStatus = makeDefaultStatus({
         backend: this.platform === 'darwin' ? 'metal' : this.platform === 'win32' ? 'd3d12' : 'vulkan',
         last_frame_error: 'Native render core stopped',
+      });
+      this.capabilities = makeDefaultCapabilities({
+        backend: this.lastStatus.backend,
+        running: false,
       });
     }
     return null;
@@ -187,11 +215,25 @@ class NativeRendererBroker {
     return this.stats;
   }
 
+  async getCapabilities() {
+    if (!this.child || this.child.killed) return this.capabilities;
+    await this.refreshCapabilities();
+    return this.capabilities;
+  }
+
+  async refreshCapabilities() {
+    const fallback = this.capabilities;
+    const result = await this.sendIfRunning('capabilities', {}, { fallback, timeoutMs: 1000 });
+    this.capabilities = normalizeCapabilities(result, fallback);
+    return this.capabilities;
+  }
+
   snapshot() {
     return {
       timestamp_ms: Date.now(),
       status: this.lastStatus,
       stats: this.stats,
+      capabilities: this.capabilities,
     };
   }
 
@@ -200,10 +242,18 @@ class NativeRendererBroker {
     const blockers = [];
     if (!binary) blockers.push('native render-core binary is missing');
     if (!this.lastStatus.backend_ready) blockers.push(this.lastStatus.last_frame_error || 'native render-core is not ready');
+    const features = this.capabilities?.features || {};
+    const unsupported = [
+      ['shared-texture-upload', 'Shared texture media transport', !!features.shared_texture_upload],
+      ['native-media-decode', 'Native media decode/prefetch', !!features.native_media_decode && !!features.media_prefetch],
+      ['compute-instrument-host', 'Native compute/multi-pass instrument host', !!features.compute_shader_host && !!features.multi_pass_instruments],
+      ['managed-output', 'Managed native output / recording', !!features.managed_output_attach && !!features.native_recording],
+    ];
     return {
       timestamp_ms: Date.now(),
       overall_ready: blockers.length === 0,
       blockers,
+      capabilities: this.capabilities,
       checks: [
         {
           id: 'binary',
@@ -223,8 +273,19 @@ class NativeRendererBroker {
           ok: !!this.lastStatus.backend_ready,
           detail: this.lastStatus.adapter_name || this.lastStatus.last_frame_error || 'not initialized',
         },
+        ...unsupported.map(([id, label, ok]) => ({
+          id,
+          label,
+          ok,
+          detail: ok ? 'implemented' : 'not implemented in the current native render core',
+        })),
       ],
     };
+  }
+
+  unsupportedError(command) {
+    const reason = BROKER_UNSUPPORTED_COMMANDS.get(command) || 'not implemented by this native render core';
+    return new Error(`Unsupported native renderer command ${command}: ${reason}`);
   }
 
   async sendIfRunning(method, params, { fallback = null, timeoutMs = 2500 } = {}) {
@@ -443,6 +504,38 @@ function commandToMethod(command) {
     : command;
 }
 
+function normalizeCapabilities(capabilities, previous = makeDefaultCapabilities()) {
+  const source = capabilities && typeof capabilities === 'object' ? capabilities : {};
+  const prevFeatures = previous.features && typeof previous.features === 'object' ? previous.features : {};
+  const nextFeatures = source.features && typeof source.features === 'object' ? source.features : {};
+  const prevLimits = previous.limits && typeof previous.limits === 'object' ? previous.limits : {};
+  const nextLimits = source.limits && typeof source.limits === 'object' ? source.limits : {};
+  return {
+    ...makeDefaultCapabilities({ backend: source.backend ?? previous.backend }),
+    ...previous,
+    ...source,
+    schema_version: Number(source.schema_version ?? previous.schema_version ?? 1),
+    backend: source.backend ?? previous.backend ?? null,
+    implemented_methods: Array.isArray(source.implemented_methods)
+      ? source.implemented_methods.map(String)
+      : previous.implemented_methods ?? [],
+    implemented_command_types: Array.isArray(source.implemented_command_types)
+      ? source.implemented_command_types.map(String)
+      : previous.implemented_command_types ?? [],
+    features: {
+      ...prevFeatures,
+      ...nextFeatures,
+    },
+    limits: {
+      ...prevLimits,
+      ...nextLimits,
+    },
+    notes: Array.isArray(source.notes)
+      ? source.notes.map(String)
+      : previous.notes ?? [],
+  };
+}
+
 function normalizeStatus(status, previous = makeDefaultStatus()) {
   if (!status || typeof status !== 'object') return previous;
   const backend = status.backend || previous.backend || null;
@@ -540,6 +633,60 @@ function normalizeStats(stats, previous = makeDefaultStats()) {
     gpu_timing_resolve_misses: Number(
       stats.gpu_timing_resolve_misses ?? previous.gpu_timing_resolve_misses ?? 0,
     ),
+  };
+}
+
+function makeDefaultCapabilities(overrides = {}) {
+  return {
+    schema_version: 1,
+    core_version: null,
+    backend: overrides.backend ?? null,
+    implemented_methods: [],
+    implemented_command_types: [],
+    features: {
+      separate_process_render_core: false,
+      managed_native_window: false,
+      layer_compositor: false,
+      layer_corner_warp: false,
+      layer_uv_controls: false,
+      layer_shape_masks: false,
+      blend_modes: false,
+      effect_descriptors: false,
+      render_clock: false,
+      frame_snapshot: false,
+      frame_health: false,
+      gpu_timing: false,
+      shader_precompile: false,
+      fragment_wgsl_host: false,
+      native_instrument_proxies: false,
+      source_preview_upload: false,
+      source_frame_upload: false,
+      source_frame_file_handoff: false,
+      source_frame_mips: false,
+      source_frame_hdr: false,
+      compute_shader_host: false,
+      multi_pass_instruments: false,
+      storage_buffer_instruments: false,
+      shared_texture_upload: false,
+      native_media_decode: false,
+      media_prefetch: false,
+      managed_output_attach: false,
+      native_recording: false,
+      native_stage3d: false,
+      native_projection_sim: false,
+    },
+    limits: {
+      max_scene_layers: 0,
+      source_preview_size: 0,
+      source_preview_slots: 0,
+      source_frame_slots: 0,
+      source_frame_size: 0,
+      source_frame_mip_levels: 1,
+    },
+    notes: overrides.running === false
+      ? ['Native render core is not running; capabilities are the broker fallback shape.']
+      : [],
+    ...overrides,
   };
 }
 
