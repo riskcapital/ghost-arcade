@@ -1327,6 +1327,7 @@ impl App {
             "compute_graph_render": true,
             "compute_graph_source_frame_target": true,
             "persistent_compute_buffers": true,
+            "native_3d_smoke_graph": true,
             "command_drain_policy": true,
             "auto_present_policy": true,
             "multi_pass_instruments": false,
@@ -1655,7 +1656,13 @@ impl App {
                         "id": "compute-instrument-host",
                         "label": "Native compute/multi-pass instrument host",
                         "ok": false,
-                        "detail": "not implemented; native instruments are currently fragment proxy scaffolds"
+                        "detail": "partial: the 3D Smoke source-frame compute graph is supported; broad native catalog parity is still pending"
+                    },
+                    {
+                        "id": "native-3d-smoke-graph",
+                        "label": "Native 3D Smoke graph",
+                        "ok": self.renderer.is_some(),
+                        "detail": if self.renderer.is_some() { "compute_graph can render 3D Smoke into native source frames" } else { "native renderer has not created a wgpu device" }
                     },
                     {
                         "id": "managed-output",

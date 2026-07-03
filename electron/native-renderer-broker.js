@@ -305,7 +305,15 @@ class NativeRendererBroker {
       ['shared-texture-upload', 'Shared texture media transport', !!features.shared_texture_upload],
       ['native-media-decode', 'Native media decode/prefetch', !!features.native_media_decode && !!features.media_prefetch],
       ['compute-graph-host', 'Native buffer compute graph host', !!features.compute_graph_host],
-      ['compute-instrument-host', 'Native compute/multi-pass instrument host', !!features.compute_shader_host && !!features.multi_pass_instruments],
+      ['native-3d-smoke-graph', 'Native 3D Smoke graph', !!features.native_3d_smoke_graph],
+      [
+        'compute-instrument-host',
+        'Native compute/multi-pass instrument host',
+        !!features.compute_shader_host && !!features.multi_pass_instruments,
+        features.native_3d_smoke_graph
+          ? 'partial: 3D Smoke graph source frames are implemented; broad catalog parity is still pending'
+          : 'not implemented in the current native render core',
+      ],
       ['managed-output', 'Managed native output window', !!features.managed_output_attach],
       ['native-recording', 'Native recording', !!features.native_recording],
     ];
@@ -340,11 +348,11 @@ class NativeRendererBroker {
           ok: !!textureShare?.available,
           detail: textureShareDetail,
         },
-        ...unsupported.map(([id, label, ok]) => ({
+        ...unsupported.map(([id, label, ok, detail]) => ({
           id,
           label,
           ok,
-          detail: ok ? 'implemented' : 'not implemented in the current native render core',
+          detail: ok ? 'implemented' : detail || 'not implemented in the current native render core',
         })),
       ],
     };
@@ -827,6 +835,7 @@ function makeDefaultCapabilities(overrides = {}) {
       compute_graph_render: false,
       compute_graph_source_frame_target: false,
       persistent_compute_buffers: false,
+      native_3d_smoke_graph: false,
       command_drain_policy: false,
       auto_present_policy: false,
       multi_pass_instruments: false,
