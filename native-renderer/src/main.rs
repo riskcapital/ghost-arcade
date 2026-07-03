@@ -605,6 +605,16 @@ struct NativeComputeGraphPassPlan {
 }
 
 #[derive(Clone, Debug)]
+enum NativeComputeGraphRenderTarget {
+    Snapshot,
+    SourceFrame {
+        source_id: String,
+        slot: usize,
+        seq: u64,
+    },
+}
+
+#[derive(Clone, Debug)]
 struct NativeComputeGraphRenderPlan {
     name: String,
     cache_key: String,
@@ -613,6 +623,7 @@ struct NativeComputeGraphRenderPlan {
     fragment_entry: String,
     clear: bool,
     include_snapshot: bool,
+    target: NativeComputeGraphRenderTarget,
     bindings: Vec<NativeComputeGraphBindingSpec>,
 }
 
@@ -1143,6 +1154,7 @@ impl App {
                 "compute_shader_host": true,
                 "compute_graph_host": true,
                 "compute_graph_render": true,
+                "compute_graph_source_frame_target": true,
                 "persistent_compute_buffers": true,
                 "multi_pass_instruments": false,
                 "storage_buffer_instruments": true,
@@ -1908,13 +1920,35 @@ impl App {
             .or_else(|| params.get("render_pass"))
             .map(|render| self.compute_graph_render_plan(render, &buffer_kinds))
             .transpose()?;
+        let render_target = render_plan.as_ref().map(|render| render.target.clone());
         let readbacks = compute_graph_readbacks(params, &buffer_specs);
-        let Some(renderer) = self.renderer.as_mut() else {
-            return Err("native renderer has not created a wgpu device".to_string());
+        let result = {
+            let Some(renderer) = self.renderer.as_mut() else {
+                return Err("native renderer has not created a wgpu device".to_string());
+            };
+            let result = renderer.run_native_compute_graph(
+                buffer_specs,
+                pass_plans,
+                readbacks,
+                render_plan,
+            )?;
+            self.stats.pipeline_cache_entries = renderer.native_pipeline_cache_count() as u64;
+            result
         };
-        let result =
-            renderer.run_native_compute_graph(buffer_specs, pass_plans, readbacks, render_plan)?;
-        self.stats.pipeline_cache_entries = renderer.native_pipeline_cache_count() as u64;
+        if let Some(NativeComputeGraphRenderTarget::SourceFrame {
+            source_id,
+            slot,
+            seq,
+        }) = render_target
+        {
+            self.source_frames
+                .insert(source_id.clone(), SourceFrame { seq });
+            for layer in self.scene_layers.values_mut() {
+                if layer.source_id.as_deref() == Some(source_id.as_str()) {
+                    layer.frame_slot = Some(slot);
+                }
+            }
+        }
         Ok(result)
     }
 
@@ -2004,7 +2038,7 @@ impl App {
     }
 
     fn compute_graph_render_plan(
-        &self,
+        &mut self,
         render: &Value,
         buffer_kinds: &HashMap<String, NativeComputeBufferBindingKind>,
     ) -> Result<NativeComputeGraphRenderPlan, String> {
@@ -2014,28 +2048,27 @@ impl App {
         let record = self.shader_registry.get(&shader_id).ok_or_else(|| {
             format!("compute graph render shader `{shader_id}` has not been precompiled")
         })?;
-        let source = self.shader_sources.get(&shader_id).ok_or_else(|| {
-            format!("compute graph render shader source missing for `{shader_id}`")
-        })?;
+        let source_hash = record.source_hash;
+        let default_fragment_entry = record.entry.clone();
+        let entry_points = record.entry_points.clone();
+        let source = self
+            .shader_sources
+            .get(&shader_id)
+            .cloned()
+            .ok_or_else(|| {
+                format!("compute graph render shader source missing for `{shader_id}`")
+            })?;
         let vertex_entry =
             string_at(render, &["vertex_entry"]).unwrap_or_else(|| "vs_main".to_string());
         let fragment_entry = string_at(render, &["fragment_entry"])
             .or_else(|| string_at(render, &["entry"]))
-            .unwrap_or_else(|| record.entry.clone());
-        if !record
-            .entry_points
-            .iter()
-            .any(|entry| entry == &vertex_entry)
-        {
+            .unwrap_or(default_fragment_entry);
+        if !entry_points.iter().any(|entry| entry == &vertex_entry) {
             return Err(format!(
                 "shader `{shader_id}` has no graph render vertex entry `{vertex_entry}`"
             ));
         }
-        if !record
-            .entry_points
-            .iter()
-            .any(|entry| entry == &fragment_entry)
-        {
+        if !entry_points.iter().any(|entry| entry == &fragment_entry) {
             return Err(format!(
                 "shader `{shader_id}` has no graph render fragment entry `{fragment_entry}`"
             ));
@@ -2083,17 +2116,59 @@ impl App {
         let include_snapshot = bool_at(render, &["include_snapshot"])
             .or_else(|| bool_at(render, &["snapshot"]))
             .unwrap_or(true);
+        let target_label = string_at(render, &["target"])
+            .or_else(|| string_at(render, &["target_type"]))
+            .or_else(|| string_at(render, &["render_target"]))
+            .unwrap_or_else(|| "snapshot".to_string());
+        let target_key = target_label
+            .trim()
+            .to_ascii_lowercase()
+            .replace('_', "-")
+            .replace(' ', "-");
+        let target = match target_key.as_str() {
+            "snapshot" | "frame-snapshot" | "snapshot-texture" => {
+                NativeComputeGraphRenderTarget::Snapshot
+            }
+            "source" | "source-frame" | "source-texture" | "layer-source" => {
+                let Some(source_id) = string_at(render, &["source_id"])
+                    .or_else(|| string_at(render, &["sourceId"]))
+                    .or_else(|| string_at(render, &["target_source_id"]))
+                    .or_else(|| string_at(render, &["targetSourceId"]))
+                else {
+                    return Err(
+                        "compute_graph render target `source_frame` requires source_id".to_string(),
+                    );
+                };
+                let slot = self.assign_source_frame_slot(&source_id);
+                let seq = number_at(render, &["seq"])
+                    .or_else(|| number_at(render, &["frame_index"]))
+                    .unwrap_or_else(|| self.stats.commands_applied.saturating_add(1) as f64)
+                    .round()
+                    .max(0.0) as u64;
+                NativeComputeGraphRenderTarget::SourceFrame {
+                    source_id,
+                    slot,
+                    seq,
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "compute_graph render target `{target_label}` is unsupported"
+                ));
+            }
+        };
         Ok(NativeComputeGraphRenderPlan {
             name,
             cache_key: format!(
                 "graph-render:{shader_id}:{}:{vertex_entry}:{fragment_entry}:{layout_sig}",
-                record.source_hash
+                source_hash
             ),
-            source: source.clone(),
+            source,
             vertex_entry,
             fragment_entry,
             clear,
             include_snapshot,
+            target,
             bindings,
         })
     }
@@ -3777,9 +3852,10 @@ impl RenderState {
             }));
         }
 
-        let render_include_snapshot = render_plan
-            .as_ref()
-            .is_some_and(|render| render.include_snapshot);
+        let render_include_snapshot = render_plan.as_ref().is_some_and(|render| {
+            render.include_snapshot
+                && matches!(render.target, NativeComputeGraphRenderTarget::Snapshot)
+        });
         let render_result = render_plan
             .as_ref()
             .map(|render| {
@@ -3860,6 +3936,23 @@ impl RenderState {
         transient_buffers: &HashMap<String, NativeComputeGraphGpuBuffer>,
         render_plan: &NativeComputeGraphRenderPlan,
     ) -> Result<Value, String> {
+        let (output_format, target_name, source_id, source_slot) = match &render_plan.target {
+            NativeComputeGraphRenderTarget::Snapshot => (
+                self.config.format,
+                "snapshot",
+                None::<String>,
+                None::<usize>,
+            ),
+            NativeComputeGraphRenderTarget::SourceFrame {
+                source_id, slot, ..
+            } => (
+                self.source_frame_format,
+                "source_frame",
+                Some(source_id.clone()),
+                Some((*slot).min(MAX_SOURCE_FRAME_SLOTS - 1)),
+            ),
+        };
+        let pipeline_key = native_graph_render_pipeline_key(&render_plan.cache_key, output_format);
         let layout_specs = render_plan
             .bindings
             .iter()
@@ -3868,14 +3961,16 @@ impl RenderState {
                 kind: binding.kind,
             })
             .collect::<Vec<_>>();
-        self.ensure_native_graph_render_pipeline(render_plan, &layout_specs)?;
-        let Some(cached) = self
-            .native_graph_render_pipelines
-            .get(&render_plan.cache_key)
-        else {
+        self.ensure_native_graph_render_pipeline(
+            &pipeline_key,
+            render_plan,
+            &layout_specs,
+            output_format,
+        )?;
+        let Some(cached) = self.native_graph_render_pipelines.get(&pipeline_key) else {
             return Err(format!(
                 "native compute graph render pipeline missing after compile: {}",
-                render_plan.cache_key
+                pipeline_key
             ));
         };
         let mut entries = Vec::with_capacity(render_plan.bindings.len());
@@ -3900,6 +3995,24 @@ impl RenderState {
             layout: &cached.bind_group_layout,
             entries: &entries,
         });
+        let source_frame_target_view;
+        let target_view = if let Some(slot) = source_slot {
+            source_frame_target_view =
+                self.source_frame_texture
+                    .create_view(&wgpu::TextureViewDescriptor {
+                        label: Some("Ghost Native Compute Graph Source Frame View"),
+                        format: Some(self.source_frame_format),
+                        dimension: Some(wgpu::TextureViewDimension::D2),
+                        base_mip_level: 0,
+                        mip_level_count: Some(1),
+                        base_array_layer: slot as u32,
+                        array_layer_count: Some(1),
+                        ..Default::default()
+                    });
+            &source_frame_target_view
+        } else {
+            &self.snapshot_view
+        };
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(&format!(
@@ -3907,7 +4020,7 @@ impl RenderState {
                     render_plan.name
                 )),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.snapshot_view,
+                    view: target_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: if render_plan.clear {
@@ -3928,31 +4041,44 @@ impl RenderState {
             pass.set_bind_group(0, &bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
-        Ok(json!({
+        if let Some(slot) = source_slot {
+            self.generate_source_frame_mips(encoder, slot);
+        }
+        let mut result = json!({
             "name": render_plan.name,
             "vertex_entry": render_plan.vertex_entry,
             "fragment_entry": render_plan.fragment_entry,
             "bindings": render_plan.bindings.len(),
-            "target": "snapshot",
+            "target": target_name,
+            "format": texture_format_label(output_format),
             "include_snapshot": render_plan.include_snapshot,
-        }))
+        });
+        if let Some(source_id) = source_id {
+            if let Some(object) = result.as_object_mut() {
+                object.insert("source_id".to_string(), json!(source_id));
+                object.insert("source_slot".to_string(), json!(source_slot.unwrap_or(0)));
+            }
+        }
+        Ok(result)
     }
 
     fn ensure_native_graph_render_pipeline(
         &mut self,
+        pipeline_key: &str,
         render_plan: &NativeComputeGraphRenderPlan,
         layout_specs: &[NativeComputeBindingLayoutSpec],
+        output_format: wgpu::TextureFormat,
     ) -> Result<(), String> {
         if self
             .native_graph_render_pipelines
-            .contains_key(&render_plan.cache_key)
+            .contains_key(pipeline_key)
         {
             return Ok(());
         }
         if layout_specs.is_empty() {
             return Err(format!(
                 "native graph render pipeline `{}` has no bindings",
-                render_plan.cache_key
+                pipeline_key
             ));
         }
         let error_scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
@@ -4003,7 +4129,7 @@ impl RenderState {
                     entry_point: Some(&render_plan.fragment_entry),
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format: self.config.format,
+                        format: output_format,
                         blend: Some(wgpu::BlendState::REPLACE),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
@@ -4017,7 +4143,7 @@ impl RenderState {
             return Err(err.to_string());
         }
         self.native_graph_render_pipelines.insert(
-            render_plan.cache_key.clone(),
+            pipeline_key.to_string(),
             NativeGraphRenderPipeline {
                 pipeline,
                 bind_group_layout,
@@ -5425,6 +5551,13 @@ fn all_wgsl_attribute_indices_at_most(source: &str, attribute: &str, max_support
 
 fn native_shader_pipeline_key(record: &ShaderRecord, shader_id: &str, entry: &str) -> String {
     format!("{shader_id}:{}:{entry}", record.source_hash)
+}
+
+fn native_graph_render_pipeline_key(base_key: &str, output_format: wgpu::TextureFormat) -> String {
+    format!(
+        "{base_key}:target-format:{}",
+        texture_format_label(output_format)
+    )
 }
 
 fn stable_hash64(input: &str) -> u64 {

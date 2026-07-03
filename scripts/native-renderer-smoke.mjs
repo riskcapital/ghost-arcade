@@ -401,6 +401,7 @@ async function main() {
   let smokeTempDir = null;
   let sourceFrameFile = null;
   let sourceFrameFileSnapshot = null;
+  let graphSourceFrameSnapshot = null;
   try {
     await rpc.send('start', {
       config: {
@@ -420,6 +421,7 @@ async function main() {
       !capabilities.features.compute_shader_host ||
       !capabilities.features.compute_graph_host ||
       !capabilities.features.compute_graph_render ||
+      !capabilities.features.compute_graph_source_frame_target ||
       !capabilities.features.persistent_compute_buffers ||
       capabilities.features.multi_pass_instruments
     ) {
@@ -593,6 +595,77 @@ async function main() {
     }
 
     const baseline = await snapshot(rpc, 'baseline', 0, 0);
+
+    const graphSourceId = 'native-graph-render-source';
+    const computeGraphSourceFrame = await rpc.send('compute_graph', {
+      buffers: [
+        { id: 'graph-source-uniform', kind: 'uniform', initial_u32: [256, 22222, 4, 9] },
+        { id: 'graph-source-scratch', kind: 'storage', byte_length: 1024 },
+        { id: 'graph-source-output', kind: 'storage', byte_length: 1024 },
+      ],
+      passes: [
+        {
+          name: 'source-fill',
+          shader_id: 'native-compute-graph-fill',
+          entry: 'cs_fill',
+          dispatch: [4, 1, 1],
+          bindings: [
+            { binding: 0, resource: 'graph-source-scratch', kind: 'storage' },
+            { binding: 1, resource: 'graph-source-uniform', kind: 'uniform' },
+          ],
+        },
+        {
+          name: 'source-transform',
+          shader_id: 'native-compute-graph-transform',
+          entry: 'cs_transform',
+          dispatch: [4, 1, 1],
+          bindings: [
+            { binding: 0, resource: 'graph-source-scratch', kind: 'read-only-storage' },
+            { binding: 1, resource: 'graph-source-output', kind: 'storage' },
+            { binding: 2, resource: 'graph-source-uniform', kind: 'uniform' },
+          ],
+        },
+      ],
+      render: {
+        name: 'render-output-source-frame',
+        shader_id: 'native-compute-graph-render',
+        vertex_entry: 'vs_main',
+        fragment_entry: 'fs_main',
+        target: 'source_frame',
+        source_id: graphSourceId,
+        seq: 1,
+        clear: true,
+        include_snapshot: false,
+        bindings: [
+          { binding: 0, resource: 'graph-source-output', kind: 'read-only-storage' },
+        ],
+      },
+    }, 5000);
+    if (
+      computeGraphSourceFrame?.render?.target !== 'source_frame' ||
+      computeGraphSourceFrame?.render?.source_id !== graphSourceId ||
+      Number(computeGraphSourceFrame?.render?.source_slot ?? -1) < 0
+    ) {
+      throw new Error(`native compute graph did not render into a source frame: ${JSON.stringify(computeGraphSourceFrame)}`);
+    }
+    if (computeGraphSourceFrame.render_snapshot) {
+      throw new Error(`source-frame graph render should not emit a snapshot unless explicitly copied: ${JSON.stringify(computeGraphSourceFrame)}`);
+    }
+    await rpc.send('submit_commands', {
+      commands: [
+        { type: 'upsert_layer', layer_id: 'graph-source-frame', z_index: 0, blend_mode: 'normal', opacity: 1, corners: FULLSCREEN_CORNERS },
+        { type: 'set_layer_visibility', layer_id: 'graph-source-frame', visible: true },
+        { type: 'bind_media_source', layer_id: 'graph-source-frame', source_id: graphSourceId, uri: 'native-graph://render-source', source_type: 'image' },
+      ],
+    });
+    graphSourceFrameSnapshot = await snapshot(rpc, 'graph-source-frame', 0.12, 1);
+    assertFrame('native graph source-frame layer', graphSourceFrameSnapshot, 0.012);
+    assertDifferent('native graph source-frame vs baseline', baseline, graphSourceFrameSnapshot);
+    await rpc.send('submit_commands', {
+      commands: [
+        { type: 'remove_layer', layer_id: 'graph-source-frame' },
+      ],
+    });
 
     await rpc.send('submit_commands', {
       commands: [
@@ -862,6 +935,7 @@ async function main() {
       `compute=${computeProbe.checksum}/${computeProbe.nonzero_words}`,
       `graph=${outputReadback.checksum}/${computeGraph.pass_count}`,
       `graphRender=${graphRenderSnapshot.checksum}`,
+      `graphSource=${graphSourceFrameSnapshot?.checksum ?? 'none'}`,
       `persist=${persistentOutput.checksum}/${persistentSeedWord}`,
       `gpu=${gpuA.checksum}->${gpuB.checksum}/detail=${gpuHighDetail.checksum}`,
       `particle=${particleA.checksum}->${particleB.checksum}`,
