@@ -381,7 +381,12 @@ async function main() {
     if (!capabilities?.features?.layer_compositor || !capabilities?.features?.fragment_wgsl_host) {
       throw new Error(`native capabilities missing implemented core features: ${JSON.stringify(capabilities)}`);
     }
-    if (!capabilities.features.compute_shader_host || !capabilities.features.compute_graph_host || capabilities.features.multi_pass_instruments) {
+    if (
+      !capabilities.features.compute_shader_host ||
+      !capabilities.features.compute_graph_host ||
+      !capabilities.features.persistent_compute_buffers ||
+      capabilities.features.multi_pass_instruments
+    ) {
       throw new Error(`native compute capability flags are not honest yet: ${JSON.stringify(capabilities.features)}`);
     }
     if (capabilities.features.shared_texture_upload) {
@@ -474,6 +479,59 @@ async function main() {
     }
     if (!outputReadback?.checksum || outputReadback.checksum === scratchReadback?.checksum) {
       throw new Error(`native compute graph transform pass did not alter output: ${JSON.stringify(computeGraph)}`);
+    }
+    const persistentFill = await rpc.send('compute_graph', {
+      buffers: [
+        { id: 'graph-persistent-uniform', kind: 'uniform', initial_u32: [256, 24680, 2, 13] },
+        { id: 'graph-persistent-scratch', kind: 'storage', byte_length: 1024, persistent: true, clear: true },
+        { id: 'graph-persistent-output', kind: 'storage', byte_length: 1024, persistent: true, clear: true },
+      ],
+      passes: [
+        {
+          name: 'persistent-fill',
+          shader_id: 'native-compute-graph-fill',
+          entry: 'cs_fill',
+          dispatch: [4, 1, 1],
+          bindings: [
+            { binding: 0, resource: 'graph-persistent-scratch', kind: 'storage' },
+            { binding: 1, resource: 'graph-persistent-uniform', kind: 'uniform' },
+          ],
+        },
+      ],
+      readbacks: ['graph-persistent-scratch'],
+    }, 5000);
+    const persistentSeedWord = Number(persistentFill?.readbacks?.['graph-persistent-scratch']?.first_words?.[0] ?? 0);
+    if (persistentSeedWord <= 0 || Number(persistentFill?.persistent_buffer_count ?? 0) < 2) {
+      throw new Error(`native persistent compute graph seed failed: ${JSON.stringify(persistentFill)}`);
+    }
+    const persistentReuse = await rpc.send('compute_graph', {
+      buffers: [
+        { id: 'graph-persistent-uniform', kind: 'uniform', initial_u32: [256, 13579, 5, 1] },
+        { id: 'graph-persistent-scratch', kind: 'storage', byte_length: 1024, persistent: true },
+        { id: 'graph-persistent-output', kind: 'storage', byte_length: 1024, persistent: true, clear: true },
+      ],
+      passes: [
+        {
+          name: 'persistent-transform',
+          shader_id: 'native-compute-graph-transform',
+          entry: 'cs_transform',
+          dispatch: [4, 1, 1],
+          bindings: [
+            { binding: 0, resource: 'graph-persistent-scratch', kind: 'read-only-storage' },
+            { binding: 1, resource: 'graph-persistent-output', kind: 'storage' },
+            { binding: 2, resource: 'graph-persistent-uniform', kind: 'uniform' },
+          ],
+        },
+      ],
+      readbacks: ['graph-persistent-scratch', 'graph-persistent-output'],
+    }, 5000);
+    const reusedScratch = persistentReuse?.readbacks?.['graph-persistent-scratch'];
+    const persistentOutput = persistentReuse?.readbacks?.['graph-persistent-output'];
+    if (Number(reusedScratch?.first_words?.[0] ?? 0) !== persistentSeedWord) {
+      throw new Error(`native persistent compute graph did not preserve scratch data: ${JSON.stringify(persistentReuse)}`);
+    }
+    if (Number(persistentOutput?.nonzero_words ?? 0) < 240 || !persistentOutput?.checksum) {
+      throw new Error(`native persistent compute graph transform output failed: ${JSON.stringify(persistentReuse)}`);
     }
 
     const baseline = await snapshot(rpc, 'baseline', 0, 0);
@@ -745,6 +803,7 @@ async function main() {
       `shape=${previewCircle.checksum}/${previewTriangle.checksum}`,
       `compute=${computeProbe.checksum}/${computeProbe.nonzero_words}`,
       `graph=${outputReadback.checksum}/${computeGraph.pass_count}`,
+      `persist=${persistentOutput.checksum}/${persistentSeedWord}`,
       `gpu=${gpuA.checksum}->${gpuB.checksum}/detail=${gpuHighDetail.checksum}`,
       `particle=${particleA.checksum}->${particleB.checksum}`,
       `catalog=${catalogResults.length}/${NATIVE_SHADER_CATALOG_PROBES.length}`,

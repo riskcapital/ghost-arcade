@@ -572,6 +572,14 @@ struct NativeComputeGraphBufferSpec {
     byte_length: u64,
     kind: NativeComputeBufferBindingKind,
     initial_bytes: Vec<u8>,
+    persistent: bool,
+    clear: bool,
+}
+
+struct NativeComputeGraphGpuBuffer {
+    buffer: wgpu::Buffer,
+    byte_length: u64,
+    kind: NativeComputeBufferBindingKind,
 }
 
 #[derive(Clone, Debug)]
@@ -967,6 +975,7 @@ struct RenderState {
     native_shader_bind_group: wgpu::BindGroup,
     native_shader_pipelines: HashMap<String, NativeShaderPipeline>,
     native_compute_pipelines: HashMap<String, NativeComputePipeline>,
+    native_compute_graph_buffers: HashMap<String, NativeComputeGraphGpuBuffer>,
     snapshot_texture: wgpu::Texture,
     snapshot_view: wgpu::TextureView,
     last_frame_metrics: Option<SnapshotMetrics>,
@@ -1115,6 +1124,7 @@ impl App {
                 "source_frame_hdr": self.renderer.as_ref().is_some_and(|renderer| renderer.source_frame_format == SOURCE_FRAME_FORMAT_HDR),
                 "compute_shader_host": true,
                 "compute_graph_host": true,
+                "persistent_compute_buffers": true,
                 "multi_pass_instruments": false,
                 "storage_buffer_instruments": true,
                 "shared_texture_upload": false,
@@ -3114,6 +3124,7 @@ impl RenderState {
             native_shader_bind_group,
             native_shader_pipelines: HashMap::new(),
             native_compute_pipelines: HashMap::new(),
+            native_compute_graph_buffers: HashMap::new(),
             snapshot_texture,
             snapshot_view,
             last_frame_metrics: None,
@@ -3554,25 +3565,20 @@ impl RenderState {
         if passes.is_empty() {
             return Err("native compute graph requires at least one pass".to_string());
         }
-        let mut gpu_buffers = HashMap::<String, (wgpu::Buffer, u64)>::new();
+        let mut transient_buffers = HashMap::<String, NativeComputeGraphGpuBuffer>::new();
+        let mut persistent_buffer_count = 0usize;
+        let mut transient_buffer_count = 0usize;
         for spec in buffers {
-            let usage = spec.kind.buffer_usage();
-            let buffer = if spec.initial_bytes.is_empty() {
-                self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some(&format!("Ghost Native Compute Graph Buffer {}", spec.id)),
-                    size: spec.byte_length,
-                    usage,
-                    mapped_at_creation: false,
-                })
+            if spec.persistent {
+                self.upsert_native_compute_graph_buffer(&spec)?;
+                persistent_buffer_count = persistent_buffer_count.saturating_add(1);
             } else {
-                self.device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some(&format!("Ghost Native Compute Graph Buffer {}", spec.id)),
-                        contents: &spec.initial_bytes,
-                        usage,
-                    })
-            };
-            gpu_buffers.insert(spec.id, (buffer, spec.byte_length));
+                transient_buffer_count = transient_buffer_count.saturating_add(1);
+                transient_buffers.insert(
+                    spec.id.clone(),
+                    self.create_native_compute_graph_buffer(&spec),
+                );
+            }
         }
 
         let mut encoder = self
@@ -3604,7 +3610,9 @@ impl RenderState {
             };
             let mut entries = Vec::with_capacity(pass_plan.bindings.len());
             for binding in &pass_plan.bindings {
-                let Some((buffer, _)) = gpu_buffers.get(&binding.resource_id) else {
+                let Some(buffer) =
+                    self.compute_graph_buffer(&transient_buffers, &binding.resource_id)
+                else {
                     return Err(format!(
                         "native compute graph pass `{}` references missing buffer `{}`",
                         pass_plan.name, binding.resource_id
@@ -3612,7 +3620,7 @@ impl RenderState {
                 };
                 entries.push(wgpu::BindGroupEntry {
                     binding: binding.binding,
-                    resource: buffer.as_entire_binding(),
+                    resource: buffer.buffer.as_entire_binding(),
                 });
             }
             let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -3648,19 +3656,25 @@ impl RenderState {
 
         let mut readback_buffers = Vec::new();
         for id in &readbacks {
-            let Some((buffer, byte_length)) = gpu_buffers.get(id) else {
+            let Some(buffer) = self.compute_graph_buffer(&transient_buffers, id) else {
                 return Err(format!(
                     "native compute graph readback missing buffer `{id}`"
                 ));
             };
             let readback_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(&format!("Ghost Native Compute Graph Readback {id}")),
-                size: *byte_length,
+                size: buffer.byte_length,
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            encoder.copy_buffer_to_buffer(buffer, 0, &readback_buffer, 0, *byte_length);
-            readback_buffers.push((id.clone(), readback_buffer, *byte_length));
+            encoder.copy_buffer_to_buffer(
+                &buffer.buffer,
+                0,
+                &readback_buffer,
+                0,
+                buffer.byte_length,
+            );
+            readback_buffers.push((id.clone(), readback_buffer, buffer.byte_length));
         }
 
         self.queue.submit(Some(encoder.finish()));
@@ -3684,8 +3698,80 @@ impl RenderState {
             "pass_count": executed_passes.len(),
             "passes": executed_passes,
             "readbacks": readback_json,
+            "persistent_buffers": persistent_buffer_count,
+            "transient_buffers": transient_buffer_count,
+            "persistent_buffer_count": self.native_compute_graph_buffers.len(),
             "pipeline_cache_entries": self.native_pipeline_cache_count(),
         }))
+    }
+
+    fn create_native_compute_graph_buffer(
+        &self,
+        spec: &NativeComputeGraphBufferSpec,
+    ) -> NativeComputeGraphGpuBuffer {
+        let usage = spec.kind.buffer_usage();
+        let buffer = if spec.initial_bytes.is_empty() {
+            self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(&format!("Ghost Native Compute Graph Buffer {}", spec.id)),
+                size: spec.byte_length,
+                usage,
+                mapped_at_creation: false,
+            })
+        } else {
+            self.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some(&format!("Ghost Native Compute Graph Buffer {}", spec.id)),
+                    contents: &spec.initial_bytes,
+                    usage,
+                })
+        };
+        NativeComputeGraphGpuBuffer {
+            buffer,
+            byte_length: spec.byte_length,
+            kind: spec.kind,
+        }
+    }
+
+    fn upsert_native_compute_graph_buffer(
+        &mut self,
+        spec: &NativeComputeGraphBufferSpec,
+    ) -> Result<(), String> {
+        let recreate = spec.clear
+            || self
+                .native_compute_graph_buffers
+                .get(&spec.id)
+                .map(|existing| {
+                    existing.byte_length != spec.byte_length
+                        || existing.kind.signature() != spec.kind.signature()
+                })
+                .unwrap_or(true);
+        if recreate {
+            let buffer = self.create_native_compute_graph_buffer(spec);
+            self.native_compute_graph_buffers
+                .insert(spec.id.clone(), buffer);
+            return Ok(());
+        }
+        if !spec.initial_bytes.is_empty() {
+            let Some(existing) = self.native_compute_graph_buffers.get(&spec.id) else {
+                return Err(format!(
+                    "persistent native compute graph buffer `{}` missing after lookup",
+                    spec.id
+                ));
+            };
+            self.queue
+                .write_buffer(&existing.buffer, 0, &spec.initial_bytes);
+        }
+        Ok(())
+    }
+
+    fn compute_graph_buffer<'a>(
+        &'a self,
+        transient_buffers: &'a HashMap<String, NativeComputeGraphGpuBuffer>,
+        id: &str,
+    ) -> Option<&'a NativeComputeGraphGpuBuffer> {
+        transient_buffers
+            .get(id)
+            .or_else(|| self.native_compute_graph_buffers.get(id))
     }
 
     fn readback_u32_buffer(
@@ -4387,11 +4473,20 @@ fn parse_compute_graph_buffer(value: &Value) -> Result<NativeComputeGraphBufferS
     if !initial_bytes.is_empty() {
         initial_bytes.resize(byte_length as usize, 0);
     }
+    let persistent = bool_at(value, &["persistent"])
+        .or_else(|| bool_at(value, &["persist"]))
+        .or_else(|| bool_at(value, &["reuse"]))
+        .unwrap_or(false);
+    let clear = bool_at(value, &["clear"])
+        .or_else(|| bool_at(value, &["reset"]))
+        .unwrap_or(false);
     Ok(NativeComputeGraphBufferSpec {
         id,
         byte_length,
         kind,
         initial_bytes,
+        persistent,
+        clear,
     })
 }
 
