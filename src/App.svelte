@@ -1590,10 +1590,11 @@
     '.custom-shape-handles',
     '.layer-shape-warp-overlay',
     '.shape-interaction-overlay',
+    '.mask-overlay',
     '.mask-anchor',
     '.mask-handle',
     '.mask-pen-toolbar',
-    '.light-painting-overlay',
+    '.lp-draw-overlay',
   ].join(', ');
 
   function viewportClientToCanvasCoords(clientX: number, clientY: number): Point2D {
@@ -1666,6 +1667,13 @@
       e.preventDefault();
       return true;
     }
+    // Never start a marquee drag-select while a modal canvas editing tool owns
+    // the pointer. Mask pen editing and light-painting draw/path-edit each have
+    // their own click-to-add-point / click-to-stroke handlers on full-viewport
+    // overlays; because the marquee begins on pointerdown (which those overlays
+    // don't stop), without this guard it hijacks those clicks.
+    if ($selectedLayer?.mask?.enabled) return false;
+    if ($selectedLightPaintingLayer && (lpDrawingEnabled || lpIsPathEditMode)) return false;
     const target = e.target instanceof Element ? e.target : null;
     if (
       target?.closest(VIEWPORT_SELECTION_INTERACTIVE_SELECTOR)

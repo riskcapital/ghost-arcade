@@ -8,6 +8,18 @@ export interface AppReleaseNotes {
 }
 
 const RELEASE_NOTES: Record<string, AppReleaseNotes> = {
+  '1.9.95': {
+    title: 'Marquee select no longer blocks mask and light-painting clicks',
+    summary: [
+      'Editing a layer mask and drawing light-painting strokes work again.',
+      'The marquee multi-select tool no longer hijacks those canvas clicks.',
+    ],
+    highlights: [
+      'Fixed the 1.9.9 marquee multi-select tool intercepting clicks meant for the mapping-mode layer mask pen, so click-to-add mask points works again.',
+      'Fixed marquee multi-select intercepting light-painting clicks, so click-and-drag to create strokes works again while the layer is being painted.',
+      'Marquee drag-select now stands down automatically while mask editing or light-painting draw / path-edit is active, and still works everywhere else.',
+    ],
+  },
   '1.9.9': {
     title: 'Stage 3D venues, recording reliability, mapping polish, and cleanup',
     summary: [
