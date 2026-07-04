@@ -1821,6 +1821,7 @@ let nativeOutputTextureShareFrameCount = 0;
 let nativeOutputTextureShareLastLogTime = 0;
 let nativeOutputTextureShareFailCount = 0;
 let nativeOutputTextureShareInFlight = false;
+let nativeOutputTextureShareWaitingForFrameLogged = false;
 
 // Multi-slice zero-copy atlas state. The slice-atlas OSR window renders
 // every Spout/Syphon sender slice into one atlas texture and publishes
@@ -2582,7 +2583,7 @@ function stopOsrPaintPump() {
   } catch {}
 }
 
-function isPublishableNativeOutputTexture(texture) {
+function isNativeOutputTextureHandleReady(texture) {
   if (!isMac || !texture || typeof texture !== 'object') return false;
   const surfaceId = Number(texture.handle);
   const width = Number(texture.width ?? 0);
@@ -2597,6 +2598,10 @@ function isPublishableNativeOutputTexture(texture) {
     Number.isFinite(height) &&
     height > 0
   );
+}
+
+function isPublishableNativeOutputTexture(texture) {
+  return isNativeOutputTextureHandleReady(texture) && Number(texture.frame ?? 0) > 0;
 }
 
 async function getNativeOutputSharedTextureMetadata() {
@@ -2620,7 +2625,7 @@ async function canPublishNativeOutputTextureShare() {
   }
   const texture = await getNativeOutputSharedTextureMetadata();
   return {
-    ok: isPublishableNativeOutputTexture(texture),
+    ok: isNativeOutputTextureHandleReady(texture),
     texture,
     reason: texture?.reason || 'native renderer output IOSurface is unavailable',
   };
@@ -2650,6 +2655,7 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
   nativeOutputTextureShareActive = true;
   nativeOutputTextureShareFrameCount = 0;
   nativeOutputTextureShareFailCount = 0;
+  nativeOutputTextureShareWaitingForFrameLogged = false;
   nativeOutputTextureShareLastLogTime = Date.now();
   notifyMainWindowOsrStatus(true, 'native-iosurface');
 
@@ -2659,7 +2665,7 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
     try {
       const texture = knownTexture || await getNativeOutputSharedTextureMetadata();
       if (!nativeOutputTextureShareActive) return;
-      if (!isPublishableNativeOutputTexture(texture)) {
+      if (!isNativeOutputTextureHandleReady(texture)) {
         nativeOutputTextureShareFailCount++;
         if (nativeOutputTextureShareFailCount <= 5) {
           console.warn(`[${textureShareLabel} Native] output IOSurface unavailable:`, JSON.stringify(texture));
@@ -2670,6 +2676,13 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
           if (spoutSendActive && spoutOutput && !spoutOsrWindow) {
             createSpoutOsrWindow(spoutSendW, spoutSendH);
           }
+        }
+        return;
+      }
+      if (!isPublishableNativeOutputTexture(texture)) {
+        if (!nativeOutputTextureShareWaitingForFrameLogged) {
+          console.log(`[${textureShareLabel} Native] waiting for first native output frame before publishing IOSurface`);
+          nativeOutputTextureShareWaitingForFrameLogged = true;
         }
         return;
       }
@@ -2687,6 +2700,7 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
       }
 
       nativeOutputTextureShareFailCount = 0;
+      nativeOutputTextureShareWaitingForFrameLogged = false;
       nativeOutputTextureShareFrameCount++;
       const now = Date.now();
       if (now - nativeOutputTextureShareLastLogTime > 5000) {
