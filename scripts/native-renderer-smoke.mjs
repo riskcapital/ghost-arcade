@@ -1255,10 +1255,23 @@ async function main() {
       'set_auto_present_policy',
       'attach_output_window',
       'detach_output_window',
+      'prefetch_media',
+      'clear_prefetch_cache',
+      'get_decode_capabilities',
     ]) {
       if (!capabilities.implemented_methods?.includes(method)) {
         throw new Error(`native capabilities did not list ${method}: ${JSON.stringify(capabilities.implemented_methods)}`);
       }
+    }
+    const decodeCapabilities = await rpc.send('get_decode_capabilities', {}, 5000);
+    if (
+      !decodeCapabilities?.native_static_image_decode ||
+      !decodeCapabilities?.native_static_image_prefetch ||
+      decodeCapabilities?.native_media_decode !== false ||
+      decodeCapabilities?.video_decode !== false ||
+      !decodeCapabilities?.supported_source_types?.includes('image')
+    ) {
+      throw new Error(`native decode capabilities should report static-image-only decode: ${JSON.stringify(decodeCapabilities)}`);
     }
     if (!capabilities.features?.command_drain_policy || !capabilities.features?.auto_present_policy) {
       throw new Error(`native command presentation policy features missing: ${JSON.stringify(capabilities.features)}`);

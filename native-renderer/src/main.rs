@@ -72,6 +72,10 @@ const CORE_RPC_METHODS: &[&str] = &[
     "frame_snapshot",
     "get_frame_snapshot",
     "export_frame_snapshot",
+    "prefetch_media",
+    "clear_prefetch_cache",
+    "decode_capabilities",
+    "get_decode_capabilities",
     "upload_source_gpu_shared_texture",
     "output_shared_texture",
     "get_output_shared_texture",
@@ -2277,6 +2281,9 @@ impl App {
             })),
             "frame_snapshot" | "get_frame_snapshot" => self.frame_snapshot(&req.params),
             "export_frame_snapshot" => self.export_frame_snapshot(&req.params),
+            "prefetch_media" => self.prefetch_media(&req.params),
+            "clear_prefetch_cache" => Ok(self.clear_prefetch_cache()),
+            "decode_capabilities" | "get_decode_capabilities" => Ok(self.decode_capabilities()),
             "upload_source_gpu_shared_texture" => {
                 self.upload_source_gpu_shared_texture(&req.params)
             }
@@ -4346,6 +4353,63 @@ impl App {
             return;
         };
         self.decode_native_image_source(&source_id, &uri);
+    }
+
+    fn prefetch_media(&mut self, params: &Value) -> Result<Value, String> {
+        let source_type = string_at(params, &["source_type"]).unwrap_or_else(|| "none".to_string());
+        if source_type != "image" {
+            return Err(
+                "native media prefetch currently supports local static images only".to_string(),
+            );
+        }
+        let source_id = string_at(params, &["source_id"])
+            .or_else(|| string_at(params, &["sourceId"]))
+            .ok_or_else(|| "native media prefetch requires source_id".to_string())?;
+        let uri = string_at(params, &["uri"])
+            .or_else(|| string_at(params, &["src"]))
+            .ok_or_else(|| "native media prefetch requires uri".to_string())?;
+        self.decode_native_image_source(&source_id, &uri);
+        Ok(json!(self.status()))
+    }
+
+    fn clear_prefetch_cache(&mut self) -> Value {
+        let cleared_source_frame_signatures = self.source_frame_signatures.len();
+        self.source_frame_signatures.clear();
+        json!({
+            "cleared_source_frame_signatures": cleared_source_frame_signatures,
+            "note": "native still-image prefetch signatures cleared; resident bound source frames are preserved"
+        })
+    }
+
+    fn decode_capabilities(&self) -> Value {
+        json!({
+            "schema_version": 1,
+            "native_static_image_decode": true,
+            "native_static_image_prefetch": true,
+            "native_media_decode": false,
+            "media_prefetch": false,
+            "video_decode": false,
+            "source_frame_fallback": true,
+            "shared_texture_source_frame_upload": cfg!(target_os = "macos"),
+            "shared_texture_upload": false,
+            "supported_source_types": ["image"],
+            "supported_static_image_extensions": [
+                "avif",
+                "bmp",
+                "gif",
+                "jpg",
+                "jpeg",
+                "png",
+                "tga",
+                "tif",
+                "tiff",
+                "webp"
+            ],
+            "notes": [
+                "Local still images can decode directly into native source-frame textures.",
+                "Video and full media prefetch still use source-frame/shared-texture fallback paths."
+            ]
+        })
     }
 
     fn apply_source_preview(&mut self, command: &Value) {

@@ -189,6 +189,21 @@ try {
     capabilities?.implemented_methods?.includes('clear_runtime_caches'),
     `broker implemented methods lost clear_runtime_caches: ${JSON.stringify(capabilities?.implemented_methods)}`,
   );
+  for (const method of ['prefetch_media', 'clear_prefetch_cache', 'get_decode_capabilities']) {
+    assert(
+      capabilities?.implemented_methods?.includes(method),
+      `broker implemented methods lost ${method}: ${JSON.stringify(capabilities?.implemented_methods)}`,
+    );
+  }
+  const decodeCapabilities = await broker.invoke('native_renderer_get_decode_capabilities');
+  assert(
+    decodeCapabilities?.native_static_image_decode &&
+      decodeCapabilities?.native_static_image_prefetch &&
+      decodeCapabilities?.native_media_decode === false &&
+      decodeCapabilities?.video_decode === false &&
+      decodeCapabilities?.supported_source_types?.includes('image'),
+    `broker decode capabilities should report static-image-only native decode: ${JSON.stringify(decodeCapabilities)}`,
+  );
   assert(capabilities?.features?.native_output_mirror_texture, 'broker capabilities lost native output mirror support');
   assert(
     !!capabilities?.features?.shared_texture_source_frame_upload === (process.platform === 'darwin'),
@@ -264,6 +279,18 @@ try {
       Number(prefetchStatus.native_image_decodes ?? 0),
     `native static-image prefetch should reuse resident source frame: ${JSON.stringify(secondPrefetchStatus)}`,
   );
+  await broker.invoke('native_renderer_clear_prefetch_cache');
+  const thirdPrefetchStatus = await broker.invoke('native_renderer_prefetch_media', {
+    source_id: 'broker-prefetch-image',
+    uri: prefetchImagePath,
+    source_type: 'image',
+    priority: 2,
+  });
+  assert(
+    Number(thirdPrefetchStatus.native_image_decodes ?? 0) >
+      Number(secondPrefetchStatus.native_image_decodes ?? 0),
+    `native static-image prefetch cache clear should force the next decode: ${JSON.stringify(thirdPrefetchStatus)}`,
+  );
 
   const readiness = await broker.invoke('native_renderer_get_readiness_report');
   const checks = new Map((readiness?.checks ?? []).map((check) => [check.id, check]));
@@ -271,6 +298,7 @@ try {
     assert(checks.get(id)?.ok, `broker readiness has stale/missing ${id}: ${JSON.stringify(readiness)}`);
   }
   assert(checks.get('native-output-mirror')?.ok, `broker readiness omitted native output mirror: ${JSON.stringify(readiness)}`);
+  assert(checks.get('native-static-image-prefetch')?.ok, `broker readiness omitted native static-image prefetch: ${JSON.stringify(readiness)}`);
   assert(checks.get('native-mp4-frame-encoder')?.ok, `broker readiness omitted native MP4 frame encoder: ${JSON.stringify(readiness)}`);
   assert(checks.get('native-recording')?.ok, `broker readiness omitted native recording: ${JSON.stringify(readiness)}`);
   assert(checks.has('managed-output'), `broker readiness omitted managed output check: ${JSON.stringify(readiness)}`);

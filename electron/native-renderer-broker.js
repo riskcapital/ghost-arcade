@@ -89,7 +89,6 @@ const RENDERER_COMMANDS = [
 ];
 
 const BROKER_UNSUPPORTED_COMMANDS = new Map([
-  ['native_renderer_clear_prefetch_cache', 'native media prefetch cache is not implemented yet'],
   ['native_renderer_clear_decode_preview_cache', 'native decode preview cache is not implemented yet'],
   ['native_renderer_set_vram_budget', 'native VRAM budget enforcement is not implemented yet'],
   ['native_renderer_set_decode_cpu_backup_policy', 'native decode CPU backup is not implemented yet'],
@@ -103,7 +102,6 @@ const BROKER_UNSUPPORTED_COMMANDS = new Map([
   ['native_renderer_set_decode_estimate_cache_policy', 'native decode estimate cache is not implemented yet'],
   ['native_renderer_set_decode_policy', 'legacy decode policy API is not implemented by this core'],
   ['native_renderer_set_prefetch_policy', 'legacy prefetch policy API is not implemented by this core'],
-  ['native_renderer_get_decode_capabilities', 'native decode capabilities are not implemented yet'],
 ]);
 
 function normalizeSourceFrameBuffer(value) {
@@ -188,6 +186,7 @@ class NativeRendererBroker {
         return makeDefaultOutputSharedTexture(this.platform);
       }
       if (command === 'native_renderer_get_capabilities') return this.capabilities;
+      if (command === 'native_renderer_get_decode_capabilities') return this.decodeCapabilities();
       if (command === 'native_renderer_get_readiness_report') return this.readinessReport();
       if (command === 'native_renderer_export_snapshot_json') return this.exportSnapshotJson(args);
       return null;
@@ -215,6 +214,8 @@ class NativeRendererBroker {
         });
       case 'native_renderer_get_capabilities':
         return this.getCapabilities();
+      case 'native_renderer_get_decode_capabilities':
+        return this.getDecodeCapabilities();
       case 'native_renderer_get_readiness_report':
         return this.readinessReport();
       case 'native_renderer_export_snapshot_json':
@@ -232,6 +233,8 @@ class NativeRendererBroker {
         return this.uploadSourceGpuSharedTexture(args);
       case 'native_renderer_prefetch_media':
         return this.prefetchMedia(args);
+      case 'native_renderer_clear_prefetch_cache':
+        return this.clearPrefetchCache();
       case 'native_renderer_set_target_fps':
         return this.sendIfRunning('set_target_fps', args, { fallback: null });
       case 'native_renderer_set_present_policy':
@@ -330,14 +333,27 @@ class NativeRendererBroker {
         'Unsupported native renderer command native_renderer_prefetch_media: native prefetch currently supports local static images only',
       );
     }
+    const payload = {
+      source_id: sourceId,
+      uri,
+      source_type: 'image',
+      priority: Number(args.priority ?? 1),
+    };
+    if ((this.capabilities?.implemented_methods ?? []).includes('prefetch_media')) {
+      const result = await this.sendIfRunning('prefetch_media', payload, { fallback: null, timeoutMs: 5000 });
+      if (result) {
+        this.lastStatus = normalizeStatus(result, this.lastStatus);
+        return this.lastStatus;
+      }
+    }
     await this.sendNativeCommandPayloadIfRunning(
       'submit_commands',
       {
         commands: [
           {
             type: 'decode_media_source',
-            source_id: sourceId,
-            uri,
+            source_id: payload.source_id,
+            uri: payload.uri,
             source_type: 'image',
           },
         ],
@@ -345,6 +361,58 @@ class NativeRendererBroker {
       { fallback: null, timeoutMs: 5000 },
     );
     return this.getStatus();
+  }
+
+  async clearPrefetchCache() {
+    if ((this.capabilities?.implemented_methods ?? []).includes('clear_prefetch_cache')) {
+      const result = await this.sendIfRunning('clear_prefetch_cache', {}, { fallback: null, timeoutMs: 1000 });
+      if (result) return result;
+    }
+    return this.sendIfRunning(
+      'clear_runtime_caches',
+      {
+        config: {
+          clear_precompiled_shaders: false,
+          clear_texture_pool: false,
+          clear_metadata_caches: false,
+          clear_prefetch_cache: true,
+        },
+      },
+      { fallback: { cleared_source_frame_signatures: 0 }, timeoutMs: 1000 },
+    );
+  }
+
+  async getDecodeCapabilities() {
+    if ((this.capabilities?.implemented_methods ?? []).includes('get_decode_capabilities')) {
+      const result = await this.sendIfRunning('get_decode_capabilities', {}, { fallback: null, timeoutMs: 1000 });
+      if (result) return result;
+    }
+    return this.decodeCapabilities();
+  }
+
+  decodeCapabilities() {
+    const features = this.capabilities?.features && typeof this.capabilities.features === 'object'
+      ? this.capabilities.features
+      : {};
+    return {
+      schema_version: 1,
+      native_static_image_decode: !!features.native_static_image_decode,
+      native_static_image_prefetch: !!features.native_static_image_prefetch,
+      native_media_decode: !!features.native_media_decode,
+      media_prefetch: !!features.media_prefetch,
+      video_decode: !!features.native_media_decode,
+      source_frame_fallback: !!features.source_frame_upload,
+      shared_texture_source_frame_upload: !!features.shared_texture_source_frame_upload,
+      shared_texture_upload: !!features.shared_texture_upload,
+      supported_source_types: features.native_static_image_decode ? ['image'] : [],
+      supported_static_image_extensions: Array.from(STATIC_IMAGE_EXTENSIONS).map((ext) => ext.slice(1)),
+      notes: features.native_static_image_decode
+        ? [
+            'Local still images can decode directly into native source-frame textures.',
+            'Video and full media prefetch still use source-frame/shared-texture fallback paths.',
+          ]
+        : ['Native render core is not running or does not advertise static image decode.'],
+    };
   }
 
   async stop() {
@@ -533,6 +601,12 @@ class NativeRendererBroker {
         'Native still-image decode',
         !!features.native_static_image_decode,
         'local PNG/JPEG/WebP stills should decode into native source-frame textures',
+      ],
+      [
+        'native-static-image-prefetch',
+        'Native still-image prefetch',
+        !!features.native_static_image_prefetch,
+        'local still-image prefetch should warm native source-frame textures before bind',
       ],
       [
         'native-mp4-frame-encoder',
