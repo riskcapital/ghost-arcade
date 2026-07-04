@@ -85,6 +85,18 @@ const BROKER_UNSUPPORTED_COMMANDS = new Map([
   ['native_renderer_get_decode_capabilities', 'native decode capabilities are not implemented yet'],
 ]);
 
+function normalizeSourceFrameBuffer(value) {
+  if (!value) return null;
+  if (Buffer.isBuffer(value)) return value;
+  if (ArrayBuffer.isView(value)) {
+    return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+  }
+  if (value instanceof ArrayBuffer) {
+    return Buffer.from(value);
+  }
+  return null;
+}
+
 export function nativeRendererCommandNames() {
   return RENDERER_COMMANDS.slice();
 }
@@ -576,6 +588,21 @@ class NativeRendererBroker {
 
   prepareNativeCommand(command) {
     if (!command || command.type !== 'upload_source_frame') return command;
+    const rawBuffer = normalizeSourceFrameBuffer(command.rgba_buffer ?? command.rgba_bytes);
+    if (rawBuffer) {
+      const width = Number(command.width ?? 0);
+      const height = Number(command.height ?? 0);
+      const expected = Math.max(0, Math.floor(width)) * Math.max(0, Math.floor(height)) * 4;
+      const { rgba_buffer: _discardedBuffer, rgba_bytes: _discardedBytes, rgba_b64: _discardedB64, ...rest } = command;
+      if (expected <= 0 || rawBuffer.length < expected) return rest;
+      const rgbaFile = this.writeSourceFrameTempFile(rawBuffer);
+      return {
+        ...rest,
+        rgba_file: rgbaFile,
+        rgba_byte_length: rawBuffer.length,
+        rgba_file_delete: true,
+      };
+    }
     const encoded = command.rgba_b64;
     if (typeof encoded !== 'string' || encoded.length < SOURCE_FRAME_FILE_HANDOFF_B64_THRESHOLD) {
       return command;

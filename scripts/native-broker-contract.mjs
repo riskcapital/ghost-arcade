@@ -196,6 +196,48 @@ try {
     );
   }
 
+  const byteFrame = new Uint8Array(16 * 16 * 4);
+  for (let i = 0; i < byteFrame.length; i += 4) {
+    const pixel = i / 4;
+    byteFrame[i] = (pixel * 11) % 255;
+    byteFrame[i + 1] = 80;
+    byteFrame[i + 2] = 220;
+    byteFrame[i + 3] = 255;
+  }
+  const beforeByteFrameStatus = await broker.invoke('native_renderer_get_status');
+  await broker.invoke('native_renderer_submit_commands', {
+    commands: [
+      {
+        type: 'upload_source_frame',
+        source_id: 'byte-buffer-frame-contract',
+        width: 16,
+        height: 16,
+        rgba_buffer: byteFrame,
+        seq: 1,
+      },
+    ],
+  });
+  const byteFrameStatus = await broker.invoke('native_renderer_get_status');
+  assert(
+    Number(byteFrameStatus.source_frame_uploads ?? 0) >
+      Number(beforeByteFrameStatus.source_frame_uploads ?? 0),
+    `binary source-frame buffer did not count as an upload: ${JSON.stringify(byteFrameStatus)}`,
+  );
+  assert(
+    Number(byteFrameStatus.source_frame_file_uploads ?? 0) >
+      Number(beforeByteFrameStatus.source_frame_file_uploads ?? 0),
+    `binary source-frame buffer was not handed off through a temp file: ${JSON.stringify(byteFrameStatus)}`,
+  );
+  assert(
+    Number(byteFrameStatus.source_frame_base64_uploads ?? 0) ===
+      Number(beforeByteFrameStatus.source_frame_base64_uploads ?? 0),
+    `binary source-frame buffer unexpectedly used base64 transport: ${JSON.stringify(byteFrameStatus)}`,
+  );
+  assert(
+    byteFrameStatus.source_frame_last_upload_transport === 'file',
+    `binary source-frame buffer did not preserve file transport detail: ${JSON.stringify(byteFrameStatus)}`,
+  );
+
   const beforeDirectSharedStatus = await broker.invoke('native_renderer_get_status');
   const directSharedStatus = await broker.invoke('native_renderer_upload_source_gpu_shared_texture', {
     source_id: 'direct-shared-frame-contract',
