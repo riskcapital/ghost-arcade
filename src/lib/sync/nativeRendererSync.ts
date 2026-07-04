@@ -1330,12 +1330,17 @@ export class NativeRendererSync {
     );
   }
 
-  private markNativeStaticImageFrameReady(src: NonNullable<Layer['source']>) {
+  private markNativeStaticImageFrameReady(src: NonNullable<Layer['source']>): boolean {
     const sourceKey = this.sourceCacheKey(src.id, src.src);
+    const signature = `native-image:${src.src}`;
+    if (this.sourcePreviewSeq.has(sourceKey) && this.sourcePreviewSig.get(sourceKey) === signature) {
+      return false;
+    }
     const seq = (this.sourcePreviewSeq.get(sourceKey) ?? 0) + 1;
     this.sourcePreviewSeq.set(sourceKey, seq);
-    this.sourcePreviewSig.set(sourceKey, `native-image:${src.src}`);
+    this.sourcePreviewSig.set(sourceKey, signature);
     this.sourcePreviewNextAt.delete(sourceKey);
+    return true;
   }
 
   private async renderNativeGraphSources(
@@ -1973,15 +1978,26 @@ export class NativeRendererSync {
       const graphInputSrc = graphInput?.source ?? null;
       if (graphInput && graphInputSrc && graphInput.shouldPreview) {
         const sourceKey = this.sourceCacheKey(graphInputSrc.id, graphInputSrc.src);
-        this.appendSourcePreviewCommand(
-          graphInputCommands,
-          graphInputSrc,
-          graphInput.sourceType,
-          now,
-          !this.sourcePreviewSeq.has(sourceKey),
-          graphInput.previewElement ?? null,
-          previewBudget,
-        );
+        if (this.canUseNativeStaticImageDecode(graphInputSrc, graphInput.sourceType)) {
+          if (this.markNativeStaticImageFrameReady(graphInputSrc)) {
+            graphInputCommands.push({
+              type: 'decode_media_source',
+              source_id: graphInput.id,
+              uri: graphInput.uri,
+              source_type: graphInput.sourceType,
+            });
+          }
+        } else {
+          this.appendSourcePreviewCommand(
+            graphInputCommands,
+            graphInputSrc,
+            graphInput.sourceType,
+            now,
+            !this.sourcePreviewSeq.has(sourceKey),
+            graphInput.previewElement ?? null,
+            previewBudget,
+          );
+        }
       }
 
       if (!prev || prev.z !== snap.z || prev.visible !== snap.visible || prev.blend !== snap.blend || prev.opacity !== snap.opacity || prev.geometrySig !== snap.geometrySig || prev.uvSig !== snap.uvSig || prev.shapeSig !== snap.shapeSig) {

@@ -147,6 +147,10 @@ try {
   assert(capabilities?.features?.native_graph_buffer_prune, 'broker capabilities lost native graph buffer prune support');
   assert(capabilities?.features?.native_static_image_decode, 'broker capabilities lost native still-image decode support');
   assert(
+    capabilities?.implemented_command_types?.includes('decode_media_source'),
+    `broker capabilities missing decode_media_source command: ${JSON.stringify(capabilities?.implemented_command_types)}`,
+  );
+  assert(
     capabilities?.implemented_methods?.includes('clear_runtime_caches'),
     `broker implemented methods lost clear_runtime_caches: ${JSON.stringify(capabilities?.implemented_methods)}`,
   );

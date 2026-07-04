@@ -1056,6 +1056,9 @@ async function main() {
     ) {
       throw new Error(`native output/capture RPC missing from capabilities: ${JSON.stringify(capabilities.implemented_methods)}`);
     }
+    if (!capabilities.implemented_command_types?.includes('decode_media_source')) {
+      throw new Error(`native still-image decode command missing from capabilities: ${JSON.stringify(capabilities.implemented_command_types)}`);
+    }
     const outputTexture = await rpc.send('output_shared_texture', {}, 5000);
     if (outputExportExpected) {
       if (
@@ -1853,6 +1856,27 @@ async function main() {
     const nativeImageFile = join(smokeTempDir, 'native-image-source.bmp');
     writeFileSync(nativeImageFile, makePreviewBmpBytes(48, 32));
     const beforeNativeImageStatus = await rpc.send('status', {}, 5000);
+    const nativeImageDecodeSummary = await rpc.send('submit_commands', {
+      commands: [
+        { type: 'decode_media_source', source_id: 'smoke-native-image-source', uri: nativeImageFile, source_type: 'image' },
+      ],
+    }, 5000);
+    if (
+      Number(nativeImageDecodeSummary?.applied ?? 0) !== 1 ||
+      Number(nativeImageDecodeSummary?.dropped ?? 0) !== 0
+    ) {
+      throw new Error(`native still-image decode command was not applied cleanly: ${JSON.stringify(nativeImageDecodeSummary)}`);
+    }
+    const afterNativeImageDecodeStatus = await rpc.send('status', {}, 5000);
+    if (
+      Number(afterNativeImageDecodeStatus.native_image_decodes ?? 0) <=
+      Number(beforeNativeImageStatus.native_image_decodes ?? 0)
+    ) {
+      throw new Error(`native still-image decode command did not advance decode counter: ${JSON.stringify(afterNativeImageDecodeStatus)}`);
+    }
+    if (afterNativeImageDecodeStatus.source_frame_last_upload_transport !== 'native-image') {
+      throw new Error(`native still-image decode command transport was not tracked: ${JSON.stringify(afterNativeImageDecodeStatus)}`);
+    }
     await rpc.send('submit_commands', {
       commands: [
         { type: 'remove_layer', layer_id: 'smoke-file-frame' },
@@ -1866,9 +1890,9 @@ async function main() {
     const afterNativeImageStatus = await rpc.send('status', {}, 5000);
     if (
       Number(afterNativeImageStatus.native_image_decodes ?? 0) <=
-      Number(beforeNativeImageStatus.native_image_decodes ?? 0)
+      Number(afterNativeImageDecodeStatus.native_image_decodes ?? 0)
     ) {
-      throw new Error(`native still-image decode counter did not advance: ${JSON.stringify(afterNativeImageStatus)}`);
+      throw new Error(`native still-image bind decode counter did not advance: ${JSON.stringify(afterNativeImageStatus)}`);
     }
     if (Number(afterNativeImageStatus.native_image_decode_failures ?? 0) !== 0) {
       throw new Error(`native still-image decode unexpectedly failed: ${JSON.stringify(afterNativeImageStatus)}`);
