@@ -838,6 +838,7 @@ type PointCloudFXNativeGraphBuffer = {
   persistent?: boolean;
   clear?: boolean;
   initial_b64?: string;
+  initial_buffer?: ArrayBuffer | Uint8Array;
 };
 
 type PointCloudFXNativeGraphPass = {
@@ -870,8 +871,8 @@ export interface PointCloudFXNativePointData {
   pointCount: number;
   homeByteLength: number;
   liveByteLength: number;
-  homeInitialB64: string;
-  liveInitialB64: string;
+  homeInitialBuffer: ArrayBuffer;
+  liveInitialBuffer: ArrayBuffer;
   sampledFromCount: number;
 }
 
@@ -1171,8 +1172,8 @@ export function buildPointCloudFXNativePointData(
     pointCount: n,
     homeByteLength: homeBytes.byteLength,
     liveByteLength: liveBytes.byteLength,
-    homeInitialB64: bufferToBase64(homeBytes),
-    liveInitialB64: bufferToBase64(liveBytes),
+    homeInitialBuffer: homeBytes,
+    liveInitialBuffer: liveBytes,
     sampledFromCount: sourceCount,
   };
 }
@@ -1323,7 +1324,7 @@ export function buildPointCloudFXNativeComputeGraph(options: PointCloudFXNativeG
       byte_length: options.pointData.homeByteLength,
       persistent: true,
       clear: mustReset,
-      ...(mustReset ? { initial_b64: options.pointData.homeInitialB64 } : {}),
+      ...(mustReset ? { initial_buffer: options.pointData.homeInitialBuffer } : {}),
     },
     {
       id: id('live'),
@@ -1331,7 +1332,7 @@ export function buildPointCloudFXNativeComputeGraph(options: PointCloudFXNativeG
       byte_length: options.pointData.liveByteLength,
       persistent: true,
       clear: mustReset,
-      ...(mustReset ? { initial_b64: options.pointData.liveInitialB64 } : {}),
+      ...(mustReset ? { initial_buffer: options.pointData.liveInitialBuffer } : {}),
     },
     {
       id: id('compute-uniform'),
