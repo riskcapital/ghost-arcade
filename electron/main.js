@@ -1410,6 +1410,7 @@ function getTextureShareLoadStatus() {
     error: spoutAddonLoadError,
     cpuFallbackAllowed: ALLOW_CPU_TEXTURE_SHARE_FALLBACK,
     receiverTextureInfoSupported: getReceiverTextureInfoSupport(spoutAddon),
+    nativeOutputCapable: getNativeOutputTextureShareSupport(spoutAddon),
     nativeOutputActive: nativeOutputTextureShareActive,
     nativeOutputFailures: nativeOutputTextureShareFailCount,
   };
@@ -1422,6 +1423,16 @@ function getReceiverTextureInfoSupport(addon = spoutAddon) {
     ReceiverClass &&
     ReceiverClass.prototype &&
     typeof ReceiverClass.prototype.receiveTextureInfo === 'function'
+  );
+}
+
+function getNativeOutputTextureShareSupport(addon = spoutAddon) {
+  if (!isMac || !addon) return false;
+  const OutputClass = getOutputClass(addon);
+  return !!(
+    OutputClass &&
+    OutputClass.prototype &&
+    typeof OutputClass.prototype.publishIOSurface === 'function'
   );
 }
 

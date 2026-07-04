@@ -18,6 +18,7 @@ export interface TextureShareInfo {
   error?: string | null;
   cpuFallbackAllowed?: boolean;
   senderMode?: string;
+  nativeOutputCapable?: boolean;
   nativeOutputActive?: boolean;
   nativeOutputFailures?: number;
 }

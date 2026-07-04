@@ -387,6 +387,22 @@ class NativeRendererBroker {
           : this.lastStatus.output_present_consecutive_failures > 0
             ? `native output present has ${this.lastStatus.output_present_consecutive_failures} consecutive failure(s); last=${this.lastStatus.swapchain_last_present_result || 'none'}`
             : `presented ${this.lastStatus.frames_presented} native frame(s)`;
+    const nativeTextureShareSenderOk = !!(
+      features.shared_texture_output_export &&
+      textureShare?.available &&
+      (textureShare.nativeOutputCapable || textureShare.nativeOutputActive)
+    );
+    const nativeTextureShareSenderDetail = !features.shared_texture_output_export
+      ? 'native output shared-texture export is unavailable'
+      : !textureShare
+        ? 'not connected to Electron texture-share status'
+        : !textureShare.available
+          ? `${textureShareName} native addon unavailable${textureShare.error ? `: ${textureShare.error}` : ''}`
+          : textureShare.nativeOutputActive
+            ? 'native output IOSurface is actively publishing through Syphon'
+            : textureShare.nativeOutputCapable
+              ? 'native output IOSurface can publish through Syphon when the sender is started'
+              : `${textureShareName} addon does not expose native output IOSurface publish`;
     const unsupported = [
       [
         'shared-texture-source-frame-upload',
@@ -409,8 +425,8 @@ class NativeRendererBroker {
       [
         'native-texture-share-sender',
         this.platform === 'darwin' ? 'Native Syphon sender' : 'Native Spout sender',
-        !!features.native_texture_share_sender,
-        'pending zero-copy texture-share sender from the native composite',
+        nativeTextureShareSenderOk,
+        nativeTextureShareSenderDetail,
       ],
       ['native-media-decode', 'Native media decode/prefetch', !!features.native_media_decode && !!features.media_prefetch],
       ['compute-graph-host', 'Native buffer compute graph host', !!features.compute_graph_host],
@@ -461,7 +477,7 @@ class NativeRendererBroker {
           id,
           label,
           ok,
-          detail: ok ? 'implemented' : detail || 'not implemented in the current native render core',
+          detail: ok ? detail || 'implemented' : detail || 'not implemented in the current native render core',
         })),
       ],
     };
