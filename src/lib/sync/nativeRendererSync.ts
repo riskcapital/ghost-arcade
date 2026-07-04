@@ -830,13 +830,16 @@ function nativeLayerSource(layer: Layer): NativeLayerSource {
   if (layer.type === 'gpu' && layer.gpuLayerContent) {
     const shaderId = layer.gpuLayerContent.shaderId || 'gpu';
     const previewElement = ((layer as any)._gpuLayerPreviewCanvas ?? null) as CanvasImageSource | null;
+    // Supported GPU layers are routed through nativeGraphOutputSource before
+    // this fallback. Unsupported GPU layers use the actual WebGPU preview
+    // canvas instead of legacy native lookalike proxies.
     return {
       id: `gpu:${layer.id}:${shaderId}`,
-      uri: `gpu://${shaderId}`,
-      sourceType: gpuNativeSourceType(shaderId),
+      uri: `gpu-preview://${shaderId}`,
+      sourceType: 'image',
       source: null,
       shouldPrefetch: false,
-      shouldPreview: false,
+      shouldPreview: !!previewElement,
       previewElement,
     };
   }
@@ -929,6 +932,7 @@ function isDynamicSourceFrameSource(
 
 export class NativeRendererSync {
   private running = false;
+  private startupReady = false;
   private frameId = 0;
   private pendingSync = false;
   private desiredWidth = 0;
@@ -1553,6 +1557,7 @@ export class NativeRendererSync {
 
   async start(width: number, height: number) {
     if (this.running) return;
+    this.startupReady = false;
     const backend: BackendKind = isMac ? 'metal' : isWindows ? 'd3d12' : 'vulkan';
     const decodeBackend: DecodeBackendKind = isWindows ? 'ffmpeg_d3d11va' : 'synthetic';
     await startNativeRenderer({
@@ -1625,6 +1630,10 @@ export class NativeRendererSync {
     await this.applyStartupPolicies().catch((err) => {
       console.warn('[NativeRendererSync] native startup policy task failed', err);
     });
+    this.startupReady = true;
+    if (this.latestLayers.length) {
+      this.scheduleSync(this.desiredWidth || width, this.desiredHeight || height, this.latestLayers);
+    }
     const nativeCaps = startupStatus?.native_caps;
     console.log(
       [
@@ -1695,6 +1704,7 @@ export class NativeRendererSync {
   async stop() {
     if (!this.running) return;
     this.running = false;
+    this.startupReady = false;
     this.stopShaderAnimation();
     if (this.audioSyncRaf !== null) {
       cancelAnimationFrame(this.audioSyncRaf);
@@ -1745,6 +1755,7 @@ export class NativeRendererSync {
     this.desiredWidth = width;
     this.desiredHeight = height;
     this.latestLayers = layers;
+    if (!this.startupReady) return;
 
     const hasContinuousNativeLayers = layers.some((layer) => nativeLayerNeedsContinuousSync(layer));
     if (hasContinuousNativeLayers && this.shaderAnimationRaf === null) {
@@ -1784,7 +1795,7 @@ export class NativeRendererSync {
   }
 
   async flush(width: number, height: number, layers: Layer[]) {
-    if (!this.running) return;
+    if (!this.running || !this.startupReady) return;
 
     this.latestLayers = layers;
     const commands: RendererCommand[] = [];
