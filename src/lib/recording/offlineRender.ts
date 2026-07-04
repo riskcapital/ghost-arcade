@@ -56,7 +56,12 @@ import { generateUUID } from '../utils/uuid';
 import { createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
 import type { RenderEngine } from '../renderer/engine';
 import { invoke, isElectron } from '../bridge';
-import { exportNativeRendererFrameSnapshot, type NativeRendererFrameSnapshotExportResult } from '../api/native-renderer';
+import {
+  exportNativeRendererFrameSnapshot,
+  getNativeRendererCapabilities,
+  submitNativeRendererCommands,
+  type NativeRendererFrameSnapshotExportResult,
+} from '../api/native-renderer';
 
 // ─── Settings + state ───────────────────────────────────────
 
@@ -74,6 +79,9 @@ export interface OfflineRenderSettings {
    *  lossless), 'web' = crf 23 (smaller file), 'archive' = crf 14
    *  (close to lossless, big file). */
   quality: 'high' | 'web' | 'archive';
+  /** Internal native-renderer capture path. Kept off the public modal until
+   *  visual parity is strong enough to make native the default. */
+  captureBackend?: 'webgl' | 'native';
 }
 
 export const DEFAULT_OFFLINE_SETTINGS: OfflineRenderSettings = {
@@ -561,6 +569,8 @@ function createOfflineRenderStore() {
     let frameTarget: FrameSequenceTarget | null = null;
     let nativeJpegSequence: NativeJpegSequenceSession | null = null;
     let nativeJpegSequenceFinished = false;
+    let nativeFrameCaptureActive = false;
+    let nativeOutputNeedsRestore = false;
     const frameBaseName = frameSequenceBaseName(settings.filename, 'render');
     if (outputMode === 'frames') {
       try {
@@ -598,6 +608,17 @@ function createOfflineRenderStore() {
       canvas.height = settings.height;
       if (outputMode === 'frames' && frameTarget) {
         nativeJpegSequence = await startNativeJpegSequence(frameTarget, settings, frameBaseName, totalFrames);
+        if (settings.captureBackend === 'native') {
+          const caps = await getNativeRendererCapabilities();
+          if (!caps?.features?.frame_snapshot_export || !caps.implemented_methods?.includes('export_frame_snapshot')) {
+            throw new Error('Native frame capture is not available in this renderer build.');
+          }
+          await submitNativeRendererCommands([
+            { type: 'set_output', width: settings.width, height: settings.height, refresh_hz: settings.fps },
+          ]);
+          nativeOutputNeedsRestore = true;
+          nativeFrameCaptureActive = true;
+        }
       }
       // Let the resize settle before the first capture.
       await nextFrame();
@@ -633,8 +654,12 @@ function createOfflineRenderStore() {
         if (outputMode === 'frames') {
           if (!frameTarget) throw new Error('Frame export folder not ready');
           if (nativeJpegSequence) {
-            const pixels = (engine as any).readCompositePixels() as { width: number; height: number; data: Uint8Array };
-            await writeNativeJpegSequenceFrame(nativeJpegSequence, globalFrame, pixels);
+            if (nativeFrameCaptureActive) {
+              await writeNativeRendererJpegSequenceFrame(nativeJpegSequence, globalFrame, virtualTime);
+            } else {
+              const pixels = (engine as any).readCompositePixels() as { width: number; height: number; data: Uint8Array };
+              await writeNativeJpegSequenceFrame(nativeJpegSequence, globalFrame, pixels);
+            }
           } else {
             const jpegBytes = await captureFrameJPEG(engine, 0.92);
             const frameName = `${frameBaseName}_${String(globalFrame).padStart(6, '0')}.jpg`;
@@ -780,6 +805,11 @@ function createOfflineRenderStore() {
       // normal regardless of how the render ended.
       if (nativeJpegSequence && !nativeJpegSequenceFinished) {
         await cancelNativeJpegSequence(nativeJpegSequence);
+      }
+      if (nativeOutputNeedsRestore) {
+        await submitNativeRendererCommands([
+          { type: 'set_output', width: restoreWidth, height: restoreHeight, refresh_hz: settings.fps },
+        ]).catch(() => {});
       }
       engine.manualTime = restoreManual;
       canvas.style.visibility = restoreCanvasVisibility;
