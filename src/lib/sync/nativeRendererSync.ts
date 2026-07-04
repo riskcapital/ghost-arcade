@@ -143,6 +143,15 @@ type SharedTextureInfoCacheEntry = {
   updatedAt: number;
 };
 
+type SharedTextureUploadState = {
+  sourceId: string;
+  signature: string;
+  seq: number;
+  previousSignature: string | undefined;
+  previousSeq: number | undefined;
+  submittedAt: number;
+};
+
 type NativeLayerShapeState = {
   shape: NativeVec4;
   signature: string;
@@ -1509,6 +1518,10 @@ export class NativeRendererSync {
   private sourcePreviewNextAt = new Map<string, number>();
   private sourcePreviewSig = new Map<string, string>();
   private sourcePreviewFailures = new Map<string, number>();
+  private sharedTextureUploadPending = new Map<string, SharedTextureUploadState>();
+  private sharedTextureLastRejectedUploads = 0;
+  private sharedTextureLastSuccessfulUploads = 0;
+  private sharedTextureRejectWarnings = 0;
   private previewImageElements = new Map<string, HTMLImageElement>();
   private previewImageLoads = new Set<string>();
   private previewCanvas: HTMLCanvasElement | null = null;
@@ -1589,6 +1602,58 @@ export class NativeRendererSync {
       });
     }
     this.nativeCommandDropWarnings += 1;
+  }
+
+  private resetSharedTextureUploadTracking() {
+    this.sharedTextureUploadPending.clear();
+    this.sharedTextureLastRejectedUploads = 0;
+    this.sharedTextureLastSuccessfulUploads = 0;
+    this.sharedTextureRejectWarnings = 0;
+  }
+
+  private reconcileSharedTextureUploads(status: RendererStatus) {
+    const rejected = Number(status.source_frame_shared_texture_rejected_uploads ?? 0);
+    const successful = Number(status.source_frame_shared_texture_uploads ?? 0);
+    if (!Number.isFinite(rejected) || !Number.isFinite(successful)) return;
+
+    if (
+      rejected < this.sharedTextureLastRejectedUploads ||
+      successful < this.sharedTextureLastSuccessfulUploads
+    ) {
+      this.sharedTextureLastRejectedUploads = Math.max(0, rejected);
+      this.sharedTextureLastSuccessfulUploads = Math.max(0, successful);
+      this.sharedTextureUploadPending.clear();
+      return;
+    }
+
+    if (rejected > this.sharedTextureLastRejectedUploads) {
+      const pending = Array.from(this.sharedTextureUploadPending.entries());
+      for (const [sourceKey, upload] of pending) {
+        if (this.sourcePreviewSig.get(sourceKey) === upload.signature) {
+          if (upload.previousSignature) this.sourcePreviewSig.set(sourceKey, upload.previousSignature);
+          else this.sourcePreviewSig.delete(sourceKey);
+        }
+        if (this.sourcePreviewSeq.get(sourceKey) === upload.seq) {
+          if (typeof upload.previousSeq === 'number') this.sourcePreviewSeq.set(sourceKey, upload.previousSeq);
+          else this.sourcePreviewSeq.delete(sourceKey);
+        }
+        this.sourcePreviewNextAt.delete(sourceKey);
+      }
+      if (pending.length && this.sharedTextureRejectWarnings < 5) {
+        console.warn('[NativeRendererSync] native shared texture import rejected; retrying metadata/upload', {
+          rejectedDelta: rejected - this.sharedTextureLastRejectedUploads,
+          pendingSources: pending.map(([, upload]) => upload.sourceId),
+          reason: status.source_frame_last_reject_reason,
+        });
+        this.sharedTextureRejectWarnings += 1;
+      }
+      this.sharedTextureUploadPending.clear();
+    } else if (successful > this.sharedTextureLastSuccessfulUploads) {
+      this.sharedTextureUploadPending.clear();
+    }
+
+    this.sharedTextureLastRejectedUploads = rejected;
+    this.sharedTextureLastSuccessfulUploads = successful;
   }
 
   private syncNativeSourceFrameSize(status: RendererStatus | null) {
@@ -2304,6 +2369,7 @@ export class NativeRendererSync {
     await this.applyStartupPolicies().catch((err) => {
       console.warn('[NativeRendererSync] native startup policy task failed', err);
     });
+    this.resetSharedTextureUploadTracking();
     this.startupReady = true;
     if (this.latestLayers.length) {
       this.scheduleSync(this.desiredWidth || width, this.desiredHeight || height, this.latestLayers);
@@ -2396,6 +2462,7 @@ export class NativeRendererSync {
     this.sourcePreviewNextAt.clear();
     this.sourcePreviewSig.clear();
     this.sourcePreviewFailures.clear();
+    this.resetSharedTextureUploadTracking();
     this.previewImageElements.clear();
     this.previewImageLoads.clear();
     this.nativeComputeGraphSourceFrames = false;
@@ -2501,6 +2568,7 @@ export class NativeRendererSync {
       const status = await getNativeRendererStatus().catch(() => null);
       if (status) {
         this.syncNativeSourceFrameSize(status);
+        this.reconcileSharedTextureUploads(status);
         this.degradedModeActive = !!status.degraded_mode_active;
         this.decodeBackpressureActive = !!status.decode_backpressure_active;
         this.decodeHandoffBackpressureActive = !!status.decode_handoff_backpressure_active;
@@ -2975,10 +3043,20 @@ export class NativeRendererSync {
     }
     if (budget && budget.dynamicRemaining <= 0) return true;
 
+    const previousSignature = this.sourcePreviewSig.get(sourceKey);
+    const previousSeq = this.sourcePreviewSeq.get(sourceKey);
     const seq = (this.sourcePreviewSeq.get(sourceKey) ?? 0) + 1;
     this.sourcePreviewSeq.set(sourceKey, seq);
     this.sourcePreviewSig.set(sourceKey, signature);
     this.sourcePreviewNextAt.set(sourceKey, now + VIDEO_PREVIEW_REFRESH_MS);
+    this.sharedTextureUploadPending.set(sourceKey, {
+      sourceId: src.id,
+      signature,
+      seq,
+      previousSignature,
+      previousSeq,
+      submittedAt: now,
+    });
     if (budget) budget.dynamicRemaining -= 1;
 
     commands.push({
@@ -3324,6 +3402,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     if (!this.running) return;
     const status = await getNativeRendererStatus().catch(() => null);
     if (status) {
+      this.reconcileSharedTextureUploads(status);
       const sourceUploadBreakdown =
         `${status.source_frame_cpu_fallback_uploads}cpu/` +
         `${status.source_frame_file_uploads}file/` +
