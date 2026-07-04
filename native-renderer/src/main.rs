@@ -2391,14 +2391,14 @@ impl App {
                 Ok(json!(true))
             }
             "submit_batch" => {
-                self.apply_batch(&req.params);
+                let summary = self.apply_batch(&req.params);
                 self.request_auto_present();
-                Ok(json!(true))
+                Ok(summary)
             }
             "submit_commands" => {
-                self.apply_commands(req.params.get("commands").unwrap_or(&req.params));
+                let summary = self.apply_commands(req.params.get("commands").unwrap_or(&req.params));
                 self.request_auto_present();
-                Ok(json!(true))
+                Ok(summary)
             }
             "set_output" => {
                 self.apply_output_config(&req.params);
@@ -2674,23 +2674,47 @@ impl App {
         self.stats.render_clock_updates = self.stats.render_clock_updates.saturating_add(1);
     }
 
-    fn apply_batch(&mut self, params: &Value) {
-        if let Some(commands) = params
+    fn apply_batch(&mut self, params: &Value) -> Value {
+        let mut summary = if let Some(commands) = params
             .pointer("/batch/commands")
             .or_else(|| params.get("commands"))
         {
-            self.apply_commands(commands);
-        }
+            self.apply_commands(commands)
+        } else {
+            json!({
+                "total": 0,
+                "applied": 0,
+                "dropped": 0,
+                "unknown_types": [],
+                "invalid_payload": true,
+                "command_drain_limit": self.command_drain_limit,
+            })
+        };
         self.stats.frames_submitted = self.stats.frames_submitted.saturating_add(1);
+        if let Some(object) = summary.as_object_mut() {
+            object.insert(
+                "frames_submitted".to_string(),
+                json!(self.stats.frames_submitted),
+            );
+        }
+        summary
     }
 
-    fn apply_commands(&mut self, commands: &Value) {
+    fn apply_commands(&mut self, commands: &Value) -> Value {
         let Some(commands) = commands.as_array() else {
-            return;
+            return json!({
+                "total": 0,
+                "applied": 0,
+                "dropped": 0,
+                "unknown_types": [],
+                "invalid_payload": true,
+                "command_drain_limit": self.command_drain_limit,
+            });
         };
         let count = commands.len() as u64;
         let mut applied = 0u64;
         let mut dropped = 0u64;
+        let mut unknown_types = Vec::<String>::new();
         self.stats.command_queue_peak = self.stats.command_queue_peak.max(count);
         if count > self.command_drain_limit as u64 {
             self.stats.command_drain_limit_hits =
@@ -2699,11 +2723,11 @@ impl App {
         }
 
         for command in commands {
-            match command
+            let command_type = command
                 .get("type")
                 .and_then(Value::as_str)
-                .unwrap_or_default()
-            {
+                .unwrap_or_default();
+            match command_type {
                 "set_output" => self.apply_output_config(command),
                 "upsert_layer" => self.apply_upsert_layer(command),
                 "set_layer_visibility" => self.apply_layer_visibility(command),
@@ -2732,6 +2756,13 @@ impl App {
                 "remove_layer" => self.apply_remove_layer(command),
                 _ => {
                     dropped = dropped.saturating_add(1);
+                    if unknown_types.len() < 16 {
+                        unknown_types.push(if command_type.is_empty() {
+                            "<missing>".to_string()
+                        } else {
+                            command_type.to_string()
+                        });
+                    }
                     continue;
                 }
             }
@@ -2741,6 +2772,15 @@ impl App {
         self.stats.commands_dropped = self.stats.commands_dropped.saturating_add(dropped);
         self.command_phase = (self.command_phase + applied as f32 * 0.031).fract();
         self.layers_seen = self.scene_layers.len().min(1024) as u32;
+        json!({
+            "total": count,
+            "applied": applied,
+            "dropped": dropped,
+            "unknown_types": unknown_types,
+            "invalid_payload": false,
+            "command_drain_limit": self.command_drain_limit,
+            "command_queue_peak": self.stats.command_queue_peak,
+        })
     }
 
     fn prepare_native_instrument_tasks(&mut self, seq: u64) -> Vec<NativeInstrumentTask> {
