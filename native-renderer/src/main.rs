@@ -7212,6 +7212,33 @@ fn parse_compute_graph_buffer(value: &Value) -> Result<NativeComputeGraphBufferS
 }
 
 fn compute_initial_bytes(value: &Value) -> Result<Vec<u8>, String> {
+    if let Some(file_path) = string_at(value, &["initial_file"])
+        .or_else(|| string_at(value, &["data_file"]))
+        .or_else(|| string_at(value, &["bytes_file"]))
+    {
+        let bytes = fs::read(&file_path).map_err(|err| err.to_string())?;
+        if bool_at(value, &["initial_file_delete"])
+            .or_else(|| bool_at(value, &["data_file_delete"]))
+            .or_else(|| bool_at(value, &["bytes_file_delete"]))
+            .unwrap_or(false)
+        {
+            let _ = fs::remove_file(file_path);
+        }
+        let declared_len = number_at(value, &["initial_byte_length"])
+            .or_else(|| number_at(value, &["data_byte_length"]))
+            .or_else(|| number_at(value, &["bytes_byte_length"]))
+            .unwrap_or(bytes.len() as f64)
+            .round()
+            .max(0.0) as usize;
+        if bytes.len() < declared_len {
+            return Err(format!(
+                "compute_graph initial file payload is shorter than declared length: {} < {}",
+                bytes.len(),
+                declared_len
+            ));
+        }
+        return Ok(bytes);
+    }
     if let Some(encoded) = string_at(value, &["initial_b64"])
         .or_else(|| string_at(value, &["data_b64"]))
         .or_else(|| string_at(value, &["bytes_b64"]))

@@ -511,6 +511,7 @@ type FlythroughNativeGraphBuffer = {
   persistent?: boolean;
   clear?: boolean;
   initial_b64?: string;
+  initial_buffer?: ArrayBuffer | Uint8Array;
 };
 
 type FlythroughNativeGraphPass = {
@@ -798,7 +799,7 @@ export function buildFlythroughNativeComputeGraph(options: FlythroughNativeGraph
       byte_length: params.particleCount * PARTICLE_BYTES,
       persistent: true,
       clear: mustReset,
-      initial_b64: mustReset ? bufferToBase64(flythroughParticleInitialBuffer(params.particleCount)) : undefined,
+      initial_buffer: mustReset ? flythroughParticleInitialBuffer(params.particleCount) : undefined,
     },
   ];
 

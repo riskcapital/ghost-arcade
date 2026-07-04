@@ -25,6 +25,36 @@ const REQUIRED_GRAPH_MANIFEST = [
   { id: 'point-cloud-fx', feature: 'native_point_cloud_fx_graph' },
 ];
 
+const BYTE_BUFFER_COMPUTE_SOURCE = `
+struct Seeds {
+  a: u32,
+  b: u32,
+  c: u32,
+  d: u32,
+}
+
+@group(0) @binding(0)
+var<uniform> seeds: Seeds;
+
+@group(0) @binding(1)
+var<storage, read_write> output_words: array<u32>;
+
+@compute @workgroup_size(4)
+fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= 4u) { return; }
+  var v = seeds.a;
+  if (i == 1u) {
+    v = seeds.b;
+  } else if (i == 2u) {
+    v = seeds.c;
+  } else if (i == 3u) {
+    v = seeds.d;
+  }
+  output_words[i] = v + 100u + i;
+}
+`;
+
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
@@ -144,6 +174,53 @@ try {
     checks.get('shared-texture-source-frame-upload')?.ok === (process.platform === 'darwin'),
     `broker shared source-frame readiness should match macOS IOSurface support: ${JSON.stringify(readiness)}`,
   );
+
+  await broker.invoke('native_renderer_submit_commands', {
+    commands: [
+      {
+        type: 'precompile_shader',
+        shader_id: 'broker-byte-buffer-compute',
+        stage: 'compute',
+        entry: 'cs_main',
+        source: BYTE_BUFFER_COMPUTE_SOURCE,
+      },
+    ],
+  });
+  const seedBytes = new Uint8Array(new Uint32Array([7, 11, 13, 17]).buffer);
+  const byteGraph = await broker.invoke('native_renderer_run_compute_graph', {
+    buffers: [
+      {
+        id: 'byte-graph-seeds',
+        kind: 'uniform',
+        byte_length: 16,
+        initial_buffer: seedBytes,
+      },
+      {
+        id: 'byte-graph-output',
+        kind: 'storage',
+        byte_length: 16,
+      },
+    ],
+    passes: [
+      {
+        name: 'byte-buffer-compute',
+        shader_id: 'broker-byte-buffer-compute',
+        entry: 'cs_main',
+        dispatch: [1, 1, 1],
+        bindings: [
+          { binding: 0, resource: 'byte-graph-seeds', kind: 'uniform' },
+          { binding: 1, resource: 'byte-graph-output', kind: 'storage' },
+        ],
+      },
+    ],
+    readbacks: ['byte-graph-output'],
+  });
+  assert(
+    JSON.stringify(byteGraph?.readbacks?.['byte-graph-output']?.first_words?.slice(0, 4)) ===
+      JSON.stringify([107, 112, 115, 120]),
+    `compute graph binary initial buffer was not read correctly: ${JSON.stringify(byteGraph)}`,
+  );
+
   const outputTexture = await broker.invoke('native_renderer_get_output_shared_texture');
   if (outputExportExpected) {
     assert(

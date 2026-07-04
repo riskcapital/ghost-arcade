@@ -90,7 +90,7 @@ describe('Ink Cloud native shader bundle', () => {
       persistent: true,
       clear: true,
     });
-    expect(first.config.buffers.find((buffer) => buffer.id.endsWith(':particles'))?.initial_b64).toBeTruthy();
+    expect(first.config.buffers.find((buffer) => buffer.id.endsWith(':particles'))?.initial_buffer).toBeInstanceOf(ArrayBuffer);
     expect(first.config.buffers.find((buffer) => buffer.id.endsWith(':emitters'))).toMatchObject({
       kind: 'storage',
       byte_length: 8 * 32,
@@ -138,6 +138,7 @@ describe('Ink Cloud native shader bundle', () => {
     expect(second.state.autoRotYPhase).toBeGreaterThan(first.state.autoRotYPhase);
     expect(particleBuffer?.clear).toBe(false);
     expect(particleBuffer?.initial_b64).toBeUndefined();
+    expect(particleBuffer?.initial_buffer).toBeUndefined();
     expect(second.config.render_passes[1].source_id).toBe(first.config.render_passes[1].source_id);
   });
 });

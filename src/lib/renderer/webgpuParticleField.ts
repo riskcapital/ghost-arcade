@@ -1126,6 +1126,7 @@ type ParticleFieldNativeGraphBuffer = {
   persistent?: boolean;
   clear?: boolean;
   initial_b64?: string;
+  initial_buffer?: ArrayBuffer | Uint8Array;
   initial_u32?: number[];
   indirect?: boolean;
 };
@@ -1388,7 +1389,7 @@ function particleRand(seed: number): number {
   return ((x >>> 0) / 4294967296);
 }
 
-function particleInitialBuffer(params: ParticleFieldParams, count: number): string {
+function particleInitialBuffer(params: ParticleFieldParams, count: number): ArrayBuffer {
   const n = Math.max(1024, Math.min(MAX_PARTICLES, Math.floor(count)));
   const buffer = new ArrayBuffer(n * PARTICLE_BYTES);
   const f = new Float32Array(buffer);
@@ -1470,7 +1471,7 @@ function particleInitialBuffer(params: ParticleFieldParams, count: number): stri
     f[off + 14] = 0;
     f[off + 15] = 0;
   }
-  return bufferToBase64(buffer);
+  return buffer;
 }
 
 function particleNativeInitialState(params: ParticleFieldParams, time: number): ParticleFieldNativeGraphState {
@@ -1627,7 +1628,7 @@ export function buildParticleFieldNativeComputeGraph(options: ParticleFieldNativ
       byte_length: params.particleCount * PARTICLE_BYTES,
       persistent: true,
       clear: mustReset,
-      initial_b64: mustReset ? particleInitialBuffer(params, params.particleCount) : undefined,
+      initial_buffer: mustReset ? particleInitialBuffer(params, params.particleCount) : undefined,
     },
   ];
   if (params.connectEnabled) {

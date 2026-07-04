@@ -84,6 +84,7 @@ type InkCloudNativeGraphBuffer = {
   persistent?: boolean;
   clear?: boolean;
   initial_b64?: string;
+  initial_buffer?: ArrayBuffer | Uint8Array;
 };
 
 type InkCloudNativeGraphPass = {
@@ -752,7 +753,7 @@ function inkCloudSeedKey(params: InkCloudParams, particleCount: number): string 
   ].join('|');
 }
 
-function buildInkCloudInitialParticleBuffer(params: InkCloudParams, particleCount: number): string {
+function buildInkCloudInitialParticleBuffer(params: InkCloudParams, particleCount: number): ArrayBuffer {
   const count = Math.max(1024, Math.min(MAX_PARTICLES, Math.round(particleCount)));
   const buf = new ArrayBuffer(count * PARTICLE_BYTES);
   const f = new Float32Array(buf);
@@ -779,7 +780,7 @@ function buildInkCloudInitialParticleBuffer(params: InkCloudParams, particleCoun
     f[off + 14] = 0;
     u[off + 15] = (i % emCount) >>> 0;
   }
-  return bufferToBase64(buf);
+  return buf;
 }
 
 function buildInkCloudEmitterBuffer(params: InkCloudParams): string {
@@ -979,7 +980,7 @@ export function buildInkCloudNativeComputeGraph(options: InkCloudNativeGraphOpti
       byte_length: particleCount * PARTICLE_BYTES,
       persistent: true,
       clear: mustReset,
-      initial_b64: mustReset ? buildInkCloudInitialParticleBuffer(params, particleCount) : undefined,
+      initial_buffer: mustReset ? buildInkCloudInitialParticleBuffer(params, particleCount) : undefined,
     },
   ];
   const passes: InkCloudNativeGraphPass[] = [{
