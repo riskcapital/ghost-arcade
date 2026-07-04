@@ -22,8 +22,9 @@
  * frame via `getLatestFrame()` and feed the bytes straight to the GPU.
  *
  * Windows builds can also expose a DXGI shared-texture handle via
- * `receiveSpoutTextureInfo()`. That path is metadata-only and is the bridge
- * the native renderer will use once its wgpu-hal import lands.
+ * `receiveSpoutTextureInfo()`. macOS exposes an IOSurfaceID when the
+ * Syphon receiver can materialize one. That path is metadata-only and is the
+ * bridge the native renderer uses for zero-copy-ish source-frame imports.
  */
 
 import { invoke, isElectron } from '$lib/bridge';
@@ -39,7 +40,7 @@ export interface SpoutFrame {
   frameId: number;
 }
 
-export type SpoutSharedTextureHandleEncoding = 'base64';
+export type SpoutSharedTextureHandleEncoding = 'base64' | 'integer';
 
 export interface SpoutSharedTextureInfo {
   available: boolean;
