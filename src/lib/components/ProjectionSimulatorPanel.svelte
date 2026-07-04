@@ -6,6 +6,7 @@
   import { invoke, isDesktopApp } from '../bridge';
   import { createAssetRefFromFile, resolveAssetRefForRuntime } from '../storage/assetRegistry';
   import { startRecording as startCanvasRecording, formatRecordingDuration, type RecorderHandle } from '../recording/recorder';
+  import { startNativeLiveFrameRecording } from '../recording/nativeLiveFrameRecorder';
   import { ProjectionSimulatorRenderer } from '../projectionSim/ProjectionSimulatorRenderer';
   import {
     isProjectionSimTargetLocked,
@@ -48,6 +49,7 @@
   let recorderHandle: RecorderHandle | null = null;
   let recordingDuration = 0;
   let isRecording = false;
+  let recordingUsesNative = false;
   let panelsHidden = false;
   let nativeFullScreen = false;
   let removeNativeFullscreenListener: (() => void) | null = null;
@@ -517,10 +519,45 @@
     panelsHidden = !panelsHidden;
   }
 
-  function startRecording() {
+  async function startRecording() {
     if (recorderHandle || !canvas) return;
+    if (isDesktopApp && renderer) {
+      const nativeRenderer = renderer;
+      recordingDuration = 0;
+      try {
+        recorderHandle = await startNativeLiveFrameRecording({
+          captureFrame: (width, height) => nativeRenderer.captureFrameAt(width, height),
+          width: 1920,
+          height: 1080,
+          fps: 30,
+          quality: 'high',
+          namePrefix: 'Projection Simulator',
+          onDurationUpdate: (seconds) => { recordingDuration = seconds; },
+          onComplete: () => {
+            isRecording = false;
+            recorderHandle = null;
+            recordingUsesNative = false;
+          },
+          onError: (err) => {
+            isRecording = false;
+            recorderHandle = null;
+            recordingUsesNative = false;
+            alert(err.message || 'Projection simulator recording failed');
+          },
+        });
+        if (recorderHandle) {
+          recordingUsesNative = true;
+          isRecording = true;
+          return;
+        }
+      } catch (err) {
+        console.warn('[ProjectionSim] Native recording unavailable, falling back to MediaRecorder:', err);
+      }
+    }
+
     const recordCanvas = renderer?.beginRecording(1920, 1080) ?? canvas;
     recordingDuration = 0;
+    recordingUsesNative = false;
     recorderHandle = startCanvasRecording({
       namePrefix: 'Projection Simulator',
       canvas: recordCanvas,
@@ -528,11 +565,13 @@
       onComplete: () => {
         isRecording = false;
         recorderHandle = null;
+        recordingUsesNative = false;
         renderer?.endRecording();
       },
       onError: (err) => {
         isRecording = false;
         recorderHandle = null;
+        recordingUsesNative = false;
         renderer?.endRecording();
         alert(err.message || 'Projection simulator recording failed');
       },
@@ -542,10 +581,12 @@
   }
 
   function stopRecording() {
+    const wasNative = recordingUsesNative;
     recorderHandle?.stop();
     recorderHandle = null;
     isRecording = false;
-    renderer?.endRecording();
+    recordingUsesNative = false;
+    if (!wasNative) renderer?.endRecording();
   }
 
   function tick() {
@@ -583,9 +624,11 @@
     snapGuideTimer = null;
     removeNativeFullscreenListener?.();
     removeNativeFullscreenListener = null;
+    const wasNative = recordingUsesNative;
     recorderHandle?.stop();
     recorderHandle = null;
-    renderer?.endRecording();
+    recordingUsesNative = false;
+    if (!wasNative) renderer?.endRecording();
     renderer?.dispose();
     renderer = null;
   });

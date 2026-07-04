@@ -2,7 +2,6 @@ import { mediaLibrary } from '../stores/media';
 import { pathToFileUrl, type AssetRef } from '../storage/assetRegistry';
 import { generateUUID } from '../utils/uuid';
 import { isElectron } from '../bridge';
-import type { Stage3DRendererControls } from '../stage3d/store';
 import type { OfflineRenderSettings } from './offlineRender';
 import type { RecorderHandle } from './recorder';
 import {
@@ -15,15 +14,16 @@ import {
   type NativeMp4FrameEncoderSession,
 } from './offlineRender';
 
-type Stage3DCaptureControls = Pick<Stage3DRendererControls, 'captureFrameAt'>;
+export type NativeLiveFrame = { data: Uint8Array; width: number; height: number };
 
-export interface Stage3DLiveRecorderOptions {
-  controls: Stage3DCaptureControls;
+export interface NativeLiveFrameRecorderOptions {
+  captureFrame: (width: number, height: number) => Promise<NativeLiveFrame>;
   width: number;
   height: number;
   fps?: number;
   quality?: OfflineRenderSettings['quality'];
   namePrefix?: string;
+  unavailableMessage?: string;
   onDurationUpdate?: (seconds: number) => void;
   onComplete?: () => void;
   onError?: (error: Error) => void;
@@ -72,24 +72,24 @@ async function saveMp4ToLibrary(
 }
 
 /**
- * Live Stage 3D recorder for the desktop app.
+ * Desktop live recorder backed by native FFmpeg.
  *
- * Unlike the generic MediaRecorder path, this samples the Stage 3D
- * renderer through captureFrameAt() and streams raw RGBA frames into
- * the native FFmpeg MP4 pipe. It avoids captureStream/DOM-compositor
- * black frames and keeps the saved video matched to the rendered stage.
+ * Callers provide a synchronous-with-render capture hook returning
+ * top-down RGBA frames. The recorder throttles to the requested FPS and
+ * streams raw frames into the native MP4 pipe, avoiding MediaRecorder
+ * and browser compositor capture.
  */
-export async function startStage3DLiveRecording(
-  options: Stage3DLiveRecorderOptions,
+export async function startNativeLiveFrameRecording(
+  options: NativeLiveFrameRecorderOptions,
 ): Promise<RecorderHandle | null> {
   if (!isElectron) {
-    throw new Error('Native Stage 3D recording requires the desktop app.');
+    throw new Error(options.unavailableMessage || 'Native live recording requires the desktop app.');
   }
 
   const width = Math.max(2, Math.round(options.width));
   const height = Math.max(2, Math.round(options.height));
   const fps = Math.max(1, Math.min(60, Math.round(options.fps ?? 30)));
-  const namePrefix = options.namePrefix || 'Stage Recording';
+  const namePrefix = options.namePrefix || 'Recording';
   const session = await startNativeMp4FrameEncoder({
     width,
     height,
@@ -131,7 +131,7 @@ export async function startStage3DLiveRecording(
 
   const captureAndWrite = async () => {
     try {
-      const frame = await options.controls.captureFrameAt(width, height);
+      const frame = await options.captureFrame(width, height);
       if (!active || finishing) return;
       await writeNativeMp4Frame(session, frameIndex, frame);
       frameIndex++;
@@ -169,7 +169,7 @@ export async function startStage3DLiveRecording(
     try {
       if (frameIndex <= 0) {
         await cancelNativeMp4FrameEncoder(session);
-        throw new Error('Stage recording stopped before any frames were captured.');
+        throw new Error('Recording stopped before any frames were captured.');
       }
       await saveMp4ToLibrary(session, frameIndex, namePrefix);
       options.onComplete?.();

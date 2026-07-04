@@ -31,7 +31,7 @@
   import { buildVenue, paPresetElements, type PAPreset } from '../../stage3d/venues';
   import { DEFAULT_ATMOSPHERE, DEFAULT_LIGHTING, type Stage3DVenue, type UserStageElement } from '../../stage3d/types';
   import { startRecording as startCanvasRecording, formatRecordingDuration, type RecorderHandle } from '../../recording/recorder';
-  import { startStage3DLiveRecording } from '../../recording/stage3DLiveRecorder';
+  import { startNativeLiveFrameRecording } from '../../recording/nativeLiveFrameRecorder';
   import { invoke, isDesktopApp } from '../../bridge';
   import StageNodeProperties from './StageNodeProperties.svelte';
   import StageElementProperties from './StageElementProperties.svelte';
@@ -336,8 +336,8 @@
     if (isDesktopApp) {
       recordingDuration = 0;
       try {
-        recorderHandle = await startStage3DLiveRecording({
-          controls,
+        recorderHandle = await startNativeLiveFrameRecording({
+          captureFrame: (width, height) => controls.captureFrameAt(width, height),
           width: res.w,
           height: res.h,
           fps: 30,
