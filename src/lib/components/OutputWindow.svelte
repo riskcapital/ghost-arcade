@@ -1,9 +1,15 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { invoke } from '$lib/bridge';
-  import { getNativeRendererStatus, setNativeRendererOutputWindow } from '$lib/api/native-renderer';
+  import { get } from 'svelte/store';
+  import { invoke, isMac, isWindows } from '$lib/bridge';
+  import {
+    getNativeRendererStatus,
+    setNativeRendererOutputWindow,
+    startNativeRenderer,
+  } from '$lib/api/native-renderer';
   import type { RenderEngine } from '../renderer/engine';
   import { settings } from '../stores/settings';
+  import { project } from '../stores/layers';
 
   export let isOpen = false;
   export let onClose: () => void = () => {};
@@ -73,16 +79,12 @@
     experimentalZeroCopy: boolean;
     outputNativeCore: boolean;
   } {
-    let webrtc = false;
-    let zeroCopy = false;
-    let nativeCore = false;
-    const unsub = settings.subscribe((s) => {
-      webrtc = !!s.experimental?.outputWebRTC;
-      zeroCopy = !!s.experimental?.outputZeroCopy;
-      nativeCore = !!s.experimental?.outputNativeCore;
-    });
-    unsub();
-    return { experimentalWebRTC: webrtc, experimentalZeroCopy: zeroCopy, outputNativeCore: nativeCore };
+    const s = get(settings);
+    return {
+      experimentalWebRTC: !!s.experimental?.outputWebRTC,
+      experimentalZeroCopy: !!s.experimental?.outputZeroCopy,
+      outputNativeCore: !!s.experimental?.outputNativeCore,
+    };
   }
 
   // Open output window — opens a draggable window (double-click to fullscreen)
@@ -217,15 +219,6 @@
 
   async function openNativeCoreOutput(preferExternal: boolean, fullscreen: boolean): Promise<boolean> {
     try {
-      const status = await getNativeRendererStatus().catch(() => null);
-      if (!status?.backend_ready) {
-        console.warn(
-          '[Output] Native render-core output requested but the core is not ready; falling back.',
-          status?.last_frame_error ?? status,
-        );
-        return false;
-      }
-
       const displays: any[] = await invoke('get_displays');
       let target = displays[0];
       if (preferExternal) {
@@ -242,6 +235,14 @@
       const winH = fullscreen ? displayH : Math.min(720, displayH);
       const x = fullscreen ? displayX : displayX + Math.round((displayW - winW) / 2);
       const y = fullscreen ? displayY : displayY + Math.round((displayH - winH) / 2);
+
+      const status = await ensureNativeCoreReady(winW, winH);
+      if (!status) {
+        console.warn(
+          '[Output] Native render-core output requested but the core is not ready; falling back.',
+        );
+        return false;
+      }
 
       await setNativeRendererOutputWindow({
         title: 'Ghost Arcade Native Output',
@@ -265,6 +266,41 @@
       console.warn('[Output] Native render-core output failed; falling back:', err);
       return false;
     }
+  }
+
+  async function ensureNativeCoreReady(fallbackWidth: number, fallbackHeight: number): Promise<boolean> {
+    const existing = await getNativeRendererStatus().catch(() => null);
+    if (existing?.backend_ready) return true;
+    if (existing?.running) {
+      console.warn('[Output] Native render-core is running but not ready:', existing.last_frame_error ?? existing);
+      return false;
+    }
+
+    const p = get(project);
+    const width = Math.max(1, Math.round(p.width || fallbackWidth || 1920));
+    const height = Math.max(1, Math.round(p.height || fallbackHeight || 1080));
+    const backend = isMac ? 'metal' : isWindows ? 'd3d12' : 'vulkan';
+    const decodeBackend = isWindows ? 'ffmpeg_d3d11va' : 'synthetic';
+
+    await startNativeRenderer({
+      backend,
+      decode_backend: decodeBackend,
+      width,
+      height,
+      target_fps: 60,
+      present_mode: 'immediate',
+      allow_tearing: false,
+      max_frame_latency: 2,
+      use_waitable_object: true,
+      native_quality_policy: 'auto',
+    });
+
+    const started = await getNativeRendererStatus().catch(() => null);
+    if (!started?.backend_ready) {
+      console.warn('[Output] Native render-core did not become ready after start:', started?.last_frame_error ?? started);
+      return false;
+    }
+    return true;
   }
 
   // Open fullscreen on external monitor (or primary if no external)
