@@ -538,6 +538,9 @@ async function main() {
     if (!capabilities.native_graph_instruments?.includes('pixel-particles')) {
       throw new Error(`native graph instrument manifest missing pixel-particles: ${JSON.stringify(capabilities)}`);
     }
+    if (!capabilities.native_graph_instruments?.includes('point-cloud-fx')) {
+      throw new Error(`native graph instrument manifest missing point-cloud-fx: ${JSON.stringify(capabilities)}`);
+    }
     const smokeManifest = capabilities.native_graph_instrument_manifest?.find((entry) => entry?.id === 'smoke-3d');
     const planetManifest = capabilities.native_graph_instrument_manifest?.find((entry) => entry?.id === 'planet');
     if (
@@ -636,6 +639,20 @@ async function main() {
       !pixelParticlesManifest.features?.includes('native_pixel_particles_graph')
     ) {
       throw new Error(`native pixel-particles manifest entry is incomplete: ${JSON.stringify(capabilities.native_graph_instrument_manifest)}`);
+    }
+    const pointCloudManifest = capabilities.native_graph_instrument_manifest?.find((entry) => entry?.id === 'point-cloud-fx');
+    if (
+      !pointCloudManifest ||
+      pointCloudManifest.source_uri_prefix !== 'native-graph://point-cloud-fx/' ||
+      pointCloudManifest.render_target !== 'source_frame' ||
+      !pointCloudManifest.shader_ids?.includes('point-cloud-fx/compute') ||
+      !pointCloudManifest.shader_ids?.includes('point-cloud-fx/render') ||
+      !pointCloudManifest.features?.includes('compute_graph_instanced_render') ||
+      !pointCloudManifest.features?.includes('compute_graph_clear_color') ||
+      !pointCloudManifest.features?.includes('persistent_compute_buffers') ||
+      !pointCloudManifest.features?.includes('native_point_cloud_fx_graph')
+    ) {
+      throw new Error(`native point-cloud-fx manifest entry is incomplete: ${JSON.stringify(capabilities.native_graph_instrument_manifest)}`);
     }
     if (!capabilities.features.present_policy || !capabilities.features.managed_output_attach) {
       throw new Error(`native managed output/present capabilities missing: ${JSON.stringify(capabilities.features)}`);

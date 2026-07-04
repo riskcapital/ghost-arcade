@@ -33,6 +33,13 @@ import {
   type PixelParticlesNativeGraphState,
 } from '$lib/renderer/webgpuPixelParticles';
 import {
+  buildPointCloudFXNativeComputeGraph,
+  buildPointCloudFXNativePointData,
+  buildPointCloudFXNativePrecompileCommands,
+  type PointCloudFXNativeGraphState,
+  type PointCloudFXNativePointData,
+} from '$lib/renderer/webgpuPointCloudFX';
+import {
   buildFlythroughNativeComputeGraph,
   buildFlythroughNativePrecompileCommands,
   type FlythroughNativeGraphState,
@@ -46,6 +53,8 @@ import {
   buildVolumetricSpheresNativePrecompileCommands,
   type VolumetricSpheresNativeGraphState,
 } from '$lib/renderer/shaders/webgpuVolumetricSpheresShader';
+import { parsePLYBuffer } from '$lib/splat/plyLoader';
+import { parseSplatBuffer } from '$lib/splat/splatLoader';
 import {
   attachNativeRendererOutputWindow,
   clearNativeRendererDecodePreviewCache,
@@ -132,7 +141,7 @@ type NativeRenderClockCommand = {
 
 export type PresentPolicyProfile = 'vsync-live' | 'low-latency-safe' | 'low-latency-aggressive';
 
-type NativeGraphRouteKind = 'planet' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud' | 'flythrough' | 'pixel-particles';
+type NativeGraphRouteKind = 'planet' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud' | 'flythrough' | 'pixel-particles' | 'point-cloud-fx';
 type NativeGraphRouteSimulationState =
   | PlanetNativeGraphState
   | Smoke3DNativeGraphState
@@ -141,7 +150,8 @@ type NativeGraphRouteSimulationState =
   | VolumetricSpheresNativeGraphState
   | SmokeRidersNativeGraphState
   | FlythroughNativeGraphState
-  | PixelParticlesNativeGraphState;
+  | PixelParticlesNativeGraphState
+  | PointCloudFXNativeGraphState;
 
 type NativeGraphLayerRoute = {
   kind: NativeGraphRouteKind;
@@ -177,6 +187,7 @@ const SOURCE_FRAME_DYNAMIC_CAPTURE_MAX = 2048;
 const STATIC_PREVIEW_RETRY_MS = 1000;
 const VIDEO_PREVIEW_REFRESH_MS = 360;
 const GPU_PREVIEW_REFRESH_MS = 700;
+const NATIVE_POINT_CLOUD_MAX_POINTS = 500_000;
 
 type PreviewFlushBudget = {
   staticRemaining: number;
@@ -704,13 +715,24 @@ function fileSourceParamToNativeLayerSource(layer: Layer, src: Record<string, an
   const mime = String(src.mime ?? '');
   const filename = String(src.name ?? url);
   const isVideo = mime.startsWith('video/') || /\.(mp4|webm|mov|m4v)(\?|$)/i.test(filename);
-  const sourceType = isVideo ? 'video' : 'image';
+  const isPointCloud = /\.(ply|splat)(\?|$)/i.test(filename);
+  const sourceType = isPointCloud ? 'point-cloud' : (isVideo ? 'video' : 'image');
   const source = {
     id: `gpu-file:${layer.id}:${hashString(String(src.assetRef?.id ?? src.assetRef?.path ?? url))}`,
     src: url,
     name: filename || 'GPU media source',
     type: sourceType,
   } as NonNullable<Layer['source']>;
+  if (isPointCloud) {
+    return {
+      id: source.id,
+      uri: source.src,
+      sourceType,
+      source,
+      shouldPrefetch: false,
+      shouldPreview: false,
+    };
+  }
   return nativeLayerSourceFromMediaSource(source);
 }
 
@@ -824,6 +846,7 @@ export class NativeRendererSync {
   private previewContext: CanvasRenderingContext2D | null = null;
   private nativeComputeGraphSourceFrames = false;
   private nativeGraphRoutes = new Map<string, NativeGraphRouteState>();
+  private nativePointCloudDataCache = new Map<string, Promise<PointCloudFXNativePointData>>();
   private nativeSourceFrameSize = SOURCE_FRAME_SIZE_FALLBACK;
   private dynamicSourceFrameCaptureSize = SOURCE_FRAME_SIZE_FALLBACK;
   private presentProfile: PresentPolicyProfile = 'low-latency-safe';
@@ -953,11 +976,88 @@ export class NativeRendererSync {
   private nativeGraphInputSourceForLayer(layer: Layer, kind: NativeGraphRouteKind): NativeLayerSource | null {
     if (kind === 'flythrough') return this.nativeGraphSourceParamForLayer(layer);
     if (kind === 'pixel-particles') return this.nativeGraphSourceParamForLayer(layer);
+    if (kind === 'point-cloud-fx') return this.nativeGraphSourceParamForLayer(layer);
     if (kind !== 'particle-field') return null;
     const params = layer.gpuLayerContent?.params ?? {};
     const mode = String(params.mode ?? '').trim().toLowerCase();
     if (mode !== 'media') return null;
     return this.nativeGraphSourceParamForLayer(layer);
+  }
+
+  private nativeGraphUsesSourceFrameInput(layer: Layer, route: NativeGraphLayerRoute): boolean {
+    if (!route.inputSource) return false;
+    if (route.kind === 'flythrough' || route.kind === 'pixel-particles') return true;
+    if (route.kind !== 'particle-field') return false;
+    const mode = String(layer.gpuLayerContent?.params?.mode ?? '').trim().toLowerCase();
+    return mode === 'media';
+  }
+
+  private nativePointCloudCacheKey(source: NativeLayerSource): string {
+    const src = source.source;
+    return src
+      ? `${source.id}:${src.src}:${src.name}`
+      : `${source.id}:${source.uri}`;
+  }
+
+  private async nativePointCloudDataForRoute(
+    layer: Layer,
+    route: NativeGraphLayerRoute,
+  ): Promise<PointCloudFXNativePointData | null> {
+    const input = route.inputSource;
+    const src = input?.source;
+    if (!input || !src?.src) return null;
+    const filename = String(src.name || src.src);
+    const isSplat = /\.splat(\?|$)/i.test(filename);
+    const isPly = /\.ply(\?|$)/i.test(filename);
+    if (!isPly && !isSplat) return null;
+
+    const cacheKey = this.nativePointCloudCacheKey(input);
+    let promise = this.nativePointCloudDataCache.get(cacheKey);
+    if (!promise) {
+      promise = fetch(src.src)
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`point cloud fetch failed: ${response.status} ${response.statusText}`);
+          }
+          const buffer = await response.arrayBuffer();
+          const parsed = isSplat ? parseSplatBuffer(buffer) : parsePLYBuffer(buffer);
+          const vertices = parsed.vertices ?? [];
+          if (!vertices.length) {
+            throw new Error('point cloud source contained no vertices');
+          }
+          const positions = new Float32Array(vertices.length * 3);
+          const colors = new Float32Array(vertices.length * 3);
+          for (let i = 0; i < vertices.length; i++) {
+            const v = vertices[i];
+            positions[i * 3 + 0] = v.x;
+            positions[i * 3 + 1] = v.y;
+            positions[i * 3 + 2] = v.z;
+            colors[i * 3 + 0] = clampNumber((v.r ?? 255) / 255, 0, 1);
+            colors[i * 3 + 1] = clampNumber((v.g ?? 255) / 255, 0, 1);
+            colors[i * 3 + 2] = clampNumber((v.b ?? 255) / 255, 0, 1);
+          }
+          return buildPointCloudFXNativePointData(positions, colors, {
+            maxPoints: NATIVE_POINT_CLOUD_MAX_POINTS,
+            signature: [
+              cacheKey,
+              buffer.byteLength,
+              vertices.length,
+              Math.min(vertices.length, NATIVE_POINT_CLOUD_MAX_POINTS),
+            ].join(':'),
+          });
+        })
+        .catch((err) => {
+          this.nativePointCloudDataCache.delete(cacheKey);
+          throw err;
+        });
+      this.nativePointCloudDataCache.set(cacheKey, promise);
+    }
+    try {
+      return await promise;
+    } catch (err) {
+      console.warn('[NativeRendererSync] native point-cloud data load failed', layer.id, err);
+      return null;
+    }
   }
 
   private nativeGraphRouteForLayer(layer: Layer, includeWarningDisabled = false): NativeGraphLayerRoute | null {
@@ -1014,6 +1114,12 @@ export class NativeRendererSync {
       this.supportsNativeGraphInstrument('pixel-particles')
     ) {
       kind = 'pixel-particles';
+    } else if (
+      normalizedShaderId === 'point-cloud-fx' &&
+      this.supportsNativeFeature('native_point_cloud_fx_graph') &&
+      this.supportsNativeGraphInstrument('point-cloud-fx')
+    ) {
+      kind = 'point-cloud-fx';
     }
     if (!kind) return null;
     const inputSource = this.nativeGraphInputSourceForLayer(layer, kind);
@@ -1028,6 +1134,9 @@ export class NativeRendererSync {
       return null;
     }
     if (kind === 'pixel-particles' && !inputSource) {
+      return null;
+    }
+    if (kind === 'point-cloud-fx' && !inputSource) {
       return null;
     }
     const source = nativeGraphOutputSource(layer, kind);
@@ -1063,7 +1172,7 @@ export class NativeRendererSync {
 
       const route = this.nativeGraphRouteForLayer(layer);
       if (!route) continue;
-      if (route.inputSource && !this.nativeSourceFrameUploaded(route.inputSource)) continue;
+      if (this.nativeGraphUsesSourceFrameInput(layer, route) && route.inputSource && !this.nativeSourceFrameUploaded(route.inputSource)) continue;
 
       const routeState = this.nativeGraphRoutes.get(route.key) ?? {
         inFlight: false,
@@ -1081,7 +1190,7 @@ export class NativeRendererSync {
           ? clock.time
           : Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000);
         const graphDelta = typeof clock.time_delta === 'number' ? clock.time_delta : 1 / this.targetFps;
-        const graph = (() => {
+        const graph = await (async () => {
           const audioBass = visual.isActive ? Math.max(visual.bass, visual.bassFast * 0.9) : 0;
           const audioTreble = visual.isActive ? visual.treble : 0;
           const nativeGraphParams = nativeGraphParamsForLayer(layer, route.kind);
@@ -1187,6 +1296,26 @@ export class NativeRendererSync {
               frameDelta: graphDelta,
               frameIndex: graphSeq,
               state: routeState.state as PixelParticlesNativeGraphState | null,
+              reset: !routeState.state,
+            });
+          }
+          if (route.kind === 'point-cloud-fx') {
+            const pointData = await this.nativePointCloudDataForRoute(layer, route);
+            if (!pointData) {
+              throw new Error('native point-cloud data is not available yet');
+            }
+            return buildPointCloudFXNativeComputeGraph({
+              sourceId: route.source.id,
+              pointData,
+              params: nativeGraphParams,
+              width,
+              height,
+              time: graphTime,
+              frameDelta: graphDelta,
+              frameIndex: graphSeq,
+              audioBass,
+              audioTreble,
+              state: routeState.state as PointCloudFXNativeGraphState | null,
               reset: !routeState.state,
             });
           }
@@ -1313,6 +1442,10 @@ export class NativeRendererSync {
       (
         this.supportsNativeFeature('native_pixel_particles_graph') &&
         this.supportsNativeGraphInstrument('pixel-particles')
+      ) ||
+      (
+        this.supportsNativeFeature('native_point_cloud_fx_graph') &&
+        this.supportsNativeGraphInstrument('point-cloud-fx')
       )
     );
     const startupQuality = startupStatus?.native_quality;
@@ -1415,6 +1548,7 @@ export class NativeRendererSync {
     this.previewImageLoads.clear();
     this.nativeComputeGraphSourceFrames = false;
     this.nativeGraphRoutes.clear();
+    this.nativePointCloudDataCache.clear();
     this.nativeGraphInstruments.clear();
     this.nativeWgslStdlibWarmed = false;
     this.latestRenderClockSeconds = null;
@@ -2043,6 +2177,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     commands.push(...buildVolumetricSpheresNativePrecompileCommands());
     commands.push(...buildFlythroughNativePrecompileCommands());
     commands.push(...buildPixelParticlesNativePrecompileCommands());
+    commands.push(...buildPointCloudFXNativePrecompileCommands());
     await submitNativeRendererBatch({
       frame_id: ++this.frameId,
       commands,

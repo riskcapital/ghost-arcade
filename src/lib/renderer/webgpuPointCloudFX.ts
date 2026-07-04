@@ -1,6 +1,6 @@
 import type { GhostGpuBufferHandle } from './gpuRuntime';
 import { getGhostGpuRuntime } from './webgpuShared';
-import { createAndWarmWgslShaderModule } from './wgsl';
+import { createAndWarmWgslShaderModule, resolveGhostWgsl } from './wgsl';
 
 /**
  * WebGPUPointCloudFX — turn a static point cloud into a living
@@ -801,6 +801,592 @@ const BLEND_PREMULT_OVER: any = {
   color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
   alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
 };
+
+export const POINT_CLOUD_FX_NATIVE_SHADER_IDS = Object.freeze({
+  compute: 'point-cloud-fx/compute',
+  render: 'point-cloud-fx/render',
+});
+
+export type PointCloudFXNativeShaderStage = 'compute' | 'render';
+
+export interface PointCloudFXNativeShaderSource {
+  shaderId: string;
+  label: string;
+  stage: PointCloudFXNativeShaderStage;
+  entry: string;
+  source: string;
+}
+
+export interface PointCloudFXNativePrecompileCommand {
+  type: 'precompile_shader';
+  shader_id: string;
+  stage: PointCloudFXNativeShaderStage;
+  entry: string;
+  source: string;
+}
+
+type PointCloudFXNativeGraphBinding = {
+  binding: number;
+  resource: string;
+  kind: string;
+};
+
+type PointCloudFXNativeGraphBuffer = {
+  id: string;
+  kind: 'uniform' | 'storage' | 'read-only-storage';
+  byte_length: number;
+  persistent?: boolean;
+  clear?: boolean;
+  initial_b64?: string;
+};
+
+type PointCloudFXNativeGraphPass = {
+  name: string;
+  shader_id: string;
+  entry: string;
+  dispatch: [number, number, number];
+  bindings: PointCloudFXNativeGraphBinding[];
+};
+
+type PointCloudFXNativeGraphRenderPass = {
+  name: string;
+  shader_id: string;
+  vertex_entry: string;
+  fragment_entry: string;
+  target: 'source_frame';
+  source_id: string;
+  seq: number;
+  clear: boolean;
+  clear_color?: [number, number, number, number];
+  include_snapshot?: boolean;
+  blend: 'replace' | 'alpha' | 'add';
+  vertex_count: number;
+  instance_count: number;
+  bindings: PointCloudFXNativeGraphBinding[];
+};
+
+export interface PointCloudFXNativePointData {
+  signature: string;
+  pointCount: number;
+  homeByteLength: number;
+  liveByteLength: number;
+  homeInitialB64: string;
+  liveInitialB64: string;
+  sampledFromCount: number;
+}
+
+export interface PointCloudFXNativeGraphState {
+  pointDataSignature: string;
+  pointCount: number;
+  lastTime: number;
+  hueShiftPhase: number;
+  colorCyclePhase: number;
+  burstImpulse: number;
+  prevBass: number;
+  waveTime: number;
+  autoRotXPhase: number;
+  autoRotYPhase: number;
+  autoRotZPhase: number;
+}
+
+export interface PointCloudFXNativeGraphOptions {
+  sourceId: string;
+  pointData: PointCloudFXNativePointData;
+  params?: Record<string, any> | null;
+  width: number;
+  height: number;
+  time: number;
+  frameDelta: number;
+  frameIndex: number;
+  audioBass?: number;
+  audioTreble?: number;
+  state?: PointCloudFXNativeGraphState | null;
+  reset?: boolean;
+}
+
+export interface PointCloudFXNativeGraphBuildResult {
+  config: {
+    buffers: PointCloudFXNativeGraphBuffer[];
+    passes: PointCloudFXNativeGraphPass[];
+    render_passes: PointCloudFXNativeGraphRenderPass[];
+  };
+  state: PointCloudFXNativeGraphState;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, Number.isFinite(value) ? value : min));
+}
+
+function finiteNumber(value: unknown, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function bufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+function rgbParam01(value: unknown, fallback: [number, number, number]): [number, number, number] {
+  if (!Array.isArray(value) || value.length < 3) return fallback;
+  const raw = [Number(value[0]), Number(value[1]), Number(value[2])];
+  if (!raw.every(Number.isFinite)) return fallback;
+  const scale = raw.some((v) => Math.abs(v) > 1.5) ? 255 : 1;
+  return [
+    clampNumber(raw[0] / scale, 0, 1),
+    clampNumber(raw[1] / scale, 0, 1),
+    clampNumber(raw[2] / scale, 0, 1),
+  ];
+}
+
+function wrapUnit(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return value - Math.floor(value);
+}
+
+function matrixRotateX(rad: number): Float32Array {
+  const c = Math.cos(rad);
+  const s = Math.sin(rad);
+  return new Float32Array([1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, 0, 0, 0, 1]);
+}
+
+function matrixRotateY(rad: number): Float32Array {
+  const c = Math.cos(rad);
+  const s = Math.sin(rad);
+  return new Float32Array([c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1]);
+}
+
+function matrixRotateZ(rad: number): Float32Array {
+  const c = Math.cos(rad);
+  const s = Math.sin(rad);
+  return new Float32Array([c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+}
+
+function pointCloudFXParamsFromRaw(
+  raw: Record<string, any> | null | undefined,
+  audioBass: number,
+  audioTreble: number,
+): PointCloudFXParams {
+  const p = raw ?? {};
+  const topology = p.topology === 'strokes' || p.topology === 'billboards' ? p.topology : 'points';
+  const colorMode = COLOR_MODE_ID[p.colorMode as ColorMode] !== undefined ? p.colorMode as ColorMode : DEFAULT_PARAMS.colorMode;
+  const colorMap = COLOR_MAP_ID[p.colorMap as ColorMap] !== undefined ? p.colorMap as ColorMap : DEFAULT_PARAMS.colorMap;
+  const filterMode = FILTER_MODE_ID[p.filterMode as PointCloudFilterMode] !== undefined ? p.filterMode as PointCloudFilterMode : DEFAULT_PARAMS.filterMode;
+  const filterAxis = FILTER_AXIS_ID[p.filterAxis as PointCloudFilterAxis] !== undefined ? p.filterAxis as PointCloudFilterAxis : DEFAULT_PARAMS.filterAxis;
+  const reactive = p.audioReactive !== false;
+  return {
+    ...DEFAULT_PARAMS,
+    topology,
+    pointSize: clampNumber(finiteNumber(p.pointSize, DEFAULT_PARAMS.pointSize), 0.0001, 0.2),
+    opacity: clampNumber(finiteNumber(p.opacity, DEFAULT_PARAMS.opacity), 0, 1),
+    windStrength: clampNumber(finiteNumber(p.windStrength, DEFAULT_PARAMS.windStrength), 0, 8),
+    windScale: clampNumber(finiteNumber(p.windScale, DEFAULT_PARAMS.windScale), 0.01, 24),
+    anchorPull: clampNumber(finiteNumber(p.anchorPull, DEFAULT_PARAMS.anchorPull), 0, 16),
+    damping: clampNumber(finiteNumber(p.damping, DEFAULT_PARAMS.damping), 0, 8),
+    twistAmount: clampNumber(finiteNumber(p.twistAmount, DEFAULT_PARAMS.twistAmount), -32, 32),
+    voxelMix: clampNumber(finiteNumber(p.voxelMix, DEFAULT_PARAMS.voxelMix), 0, 1),
+    voxelSize: clampNumber(finiteNumber(p.voxelSize, DEFAULT_PARAMS.voxelSize), 0.001, 4),
+    bass: reactive ? clampNumber(audioBass, 0, 4) : 0,
+    treble: reactive ? clampNumber(audioTreble, 0, 4) : 0,
+    shimmerStrength: clampNumber(finiteNumber(p.shimmerStrength, DEFAULT_PARAMS.shimmerStrength), 0, 2),
+    burstGain: clampNumber(finiteNumber(p.burstGain, DEFAULT_PARAMS.burstGain), 0, 8),
+    burstDecay: clampNumber(finiteNumber(p.burstDecay, DEFAULT_PARAMS.burstDecay), 0.01, 24),
+    waveEnabled: p.waveEnabled !== false,
+    waveSpeed: finiteNumber(p.waveSpeed, DEFAULT_PARAMS.waveSpeed),
+    waveOrbitRadius: clampNumber(finiteNumber(p.waveOrbitRadius, DEFAULT_PARAMS.waveOrbitRadius), 0, 8),
+    waveRadius: clampNumber(finiteNumber(p.waveRadius, DEFAULT_PARAMS.waveRadius), 0.001, 8),
+    waveFalloff: clampNumber(finiteNumber(p.waveFalloff, DEFAULT_PARAMS.waveFalloff), 0.001, 8),
+    waveStrength: clampNumber(finiteNumber(p.waveStrength, DEFAULT_PARAMS.waveStrength), 0, 16),
+    hueShiftSpeed: finiteNumber(p.hueShiftSpeed, DEFAULT_PARAMS.hueShiftSpeed),
+    saturation: clampNumber(finiteNumber(p.saturation, DEFAULT_PARAMS.saturation), 0, 8),
+    brightness: clampNumber(finiteNumber(p.brightness, DEFAULT_PARAMS.brightness), 0, 8),
+    colorMode,
+    colorMap,
+    colorMix: clampNumber(finiteNumber(p.colorMix, DEFAULT_PARAMS.colorMix), 0, 1),
+    colorMapScale: clampNumber(finiteNumber(p.colorMapScale, DEFAULT_PARAMS.colorMapScale), 0.001, 24),
+    colorMapOffset: finiteNumber(p.colorMapOffset, DEFAULT_PARAMS.colorMapOffset),
+    colorCycleSpeed: finiteNumber(p.colorCycleSpeed, DEFAULT_PARAMS.colorCycleSpeed),
+    randomSat: clampNumber(finiteNumber(p.randomSat, DEFAULT_PARAMS.randomSat), 0, 1),
+    randomVal: clampNumber(finiteNumber(p.randomVal, DEFAULT_PARAMS.randomVal), 0, 8),
+    filterMode,
+    filterAxis,
+    filterAmount: clampNumber(finiteNumber(p.filterAmount, DEFAULT_PARAMS.filterAmount), 0, 8),
+    filterSpeed: finiteNumber(p.filterSpeed, DEFAULT_PARAMS.filterSpeed),
+    filterPhase: finiteNumber(p.filterPhase, DEFAULT_PARAMS.filterPhase),
+    filterWidth: clampNumber(finiteNumber(p.filterWidth, DEFAULT_PARAMS.filterWidth), 0.001, 8),
+    filterSoftness: clampNumber(finiteNumber(p.filterSoftness, DEFAULT_PARAMS.filterSoftness), 0.001, 8),
+    contourBands: clampNumber(finiteNumber(p.contourBands, DEFAULT_PARAMS.contourBands), 1, 128),
+    fogDensity: clampNumber(finiteNumber(p.fogDensity, DEFAULT_PARAMS.fogDensity), 0, 16),
+    fogOpacity: clampNumber(finiteNumber(p.fogOpacity, DEFAULT_PARAMS.fogOpacity), 0, 1),
+    fogColor: rgbParam01(p.fogColor, DEFAULT_PARAMS.fogColor),
+    colorA: rgbParam01(p.colorA, DEFAULT_PARAMS.colorA),
+    colorB: rgbParam01(p.colorB, DEFAULT_PARAMS.colorB),
+    colorC: rgbParam01(p.colorC, DEFAULT_PARAMS.colorC),
+    colorD: rgbParam01(p.colorD, DEFAULT_PARAMS.colorD),
+    dissolveRadius: clampNumber(finiteNumber(p.dissolveRadius, DEFAULT_PARAMS.dissolveRadius), 0, 64),
+    dissolveSoftness: clampNumber(finiteNumber(p.dissolveSoftness, DEFAULT_PARAMS.dissolveSoftness), 0.001, 8),
+    strokeLength: clampNumber(finiteNumber(p.strokeLength, DEFAULT_PARAMS.strokeLength), 0.001, 4),
+    strokeWidth: clampNumber(finiteNumber(p.strokeWidth, DEFAULT_PARAMS.strokeWidth), 0.0001, 2),
+    fovDeg: clampNumber(finiteNumber(p.fovDeg, DEFAULT_PARAMS.fovDeg), 1, 160),
+    cameraZ: clampNumber(finiteNumber(p.cameraZ, DEFAULT_PARAMS.cameraZ), 0.05, 128),
+    rotateX: finiteNumber(p.rotateX, DEFAULT_PARAMS.rotateX),
+    rotateY: finiteNumber(p.rotateY, DEFAULT_PARAMS.rotateY),
+    rotateZ: finiteNumber(p.rotateZ, DEFAULT_PARAMS.rotateZ),
+    autoRotateX: finiteNumber(p.autoRotateX, DEFAULT_PARAMS.autoRotateX),
+    autoRotateY: finiteNumber(p.autoRotateY, DEFAULT_PARAMS.autoRotateY),
+    autoRotateZ: finiteNumber(p.autoRotateZ, DEFAULT_PARAMS.autoRotateZ),
+  };
+}
+
+export function getPointCloudFXNativeShaderSources(): PointCloudFXNativeShaderSource[] {
+  return [
+    {
+      shaderId: POINT_CLOUD_FX_NATIVE_SHADER_IDS.compute,
+      label: POINT_CLOUD_FX_NATIVE_SHADER_IDS.compute,
+      stage: 'compute',
+      entry: 'cs_main',
+      source: resolveGhostWgsl(COMPUTE_WGSL, POINT_CLOUD_FX_NATIVE_SHADER_IDS.compute),
+    },
+    {
+      shaderId: POINT_CLOUD_FX_NATIVE_SHADER_IDS.render,
+      label: POINT_CLOUD_FX_NATIVE_SHADER_IDS.render,
+      stage: 'render',
+      entry: 'vs_main',
+      source: resolveGhostWgsl(RENDER_WGSL, POINT_CLOUD_FX_NATIVE_SHADER_IDS.render),
+    },
+  ];
+}
+
+export function buildPointCloudFXNativePrecompileCommands(): PointCloudFXNativePrecompileCommand[] {
+  return getPointCloudFXNativeShaderSources().map((source) => ({
+    type: 'precompile_shader',
+    shader_id: source.shaderId,
+    stage: source.stage,
+    entry: source.entry,
+    source: source.source,
+  }));
+}
+
+export function buildPointCloudFXNativePointData(
+  positions: Float32Array,
+  colors: Float32Array,
+  options: { maxPoints?: number; pointSize?: number; signature?: string } = {},
+): PointCloudFXNativePointData {
+  const sourceCount = Math.floor(Math.min(positions.length / 3, colors.length / 3));
+  const maxPoints = Math.floor(clampNumber(options.maxPoints ?? MAX_POINTS, 1, MAX_POINTS));
+  const n = Math.min(sourceCount, maxPoints);
+  if (n <= 0) {
+    throw new Error('point-cloud-fx native point data requires at least one point');
+  }
+  const indexFor = (i: number) => {
+    if (sourceCount <= n || n <= 1) return i;
+    return Math.min(sourceCount - 1, Math.floor(i * (sourceCount - 1) / (n - 1)));
+  };
+
+  let cx = 0;
+  let cy = 0;
+  let cz = 0;
+  for (let i = 0; i < n; i++) {
+    const src = indexFor(i) * 3;
+    cx += positions[src + 0];
+    cy += positions[src + 1];
+    cz += positions[src + 2];
+  }
+  cx /= n;
+  cy /= n;
+  cz /= n;
+
+  let maxR = 0;
+  for (let i = 0; i < n; i++) {
+    const src = indexFor(i) * 3;
+    const dx = positions[src + 0] - cx;
+    const dy = positions[src + 1] - cy;
+    const dz = positions[src + 2] - cz;
+    const r = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (r > maxR) maxR = r;
+  }
+  const scale = maxR > 0 ? 0.9 / maxR : 1.0;
+  const pointSize = clampNumber(options.pointSize ?? DEFAULT_POINT_SIZE, 0.0001, 0.2);
+  const homeBytes = new ArrayBuffer(n * HOME_BYTES);
+  const homeF = new Float32Array(homeBytes);
+  const liveBytes = new ArrayBuffer(n * LIVE_BYTES);
+  const liveF = new Float32Array(liveBytes);
+
+  for (let i = 0; i < n; i++) {
+    const src = indexFor(i) * 3;
+    const homeOff = i * 8;
+    const liveOff = i * 12;
+    const x = (positions[src + 0] - cx) * scale;
+    const y = (positions[src + 1] - cy) * scale;
+    const z = (positions[src + 2] - cz) * scale;
+    const r = clampNumber(colors[src + 0], 0, 1);
+    const g = clampNumber(colors[src + 1], 0, 1);
+    const b = clampNumber(colors[src + 2], 0, 1);
+
+    homeF[homeOff + 0] = x;
+    homeF[homeOff + 1] = y;
+    homeF[homeOff + 2] = z;
+    homeF[homeOff + 3] = 0;
+    homeF[homeOff + 4] = r;
+    homeF[homeOff + 5] = g;
+    homeF[homeOff + 6] = b;
+    homeF[homeOff + 7] = 0;
+
+    liveF[liveOff + 0] = x;
+    liveF[liveOff + 1] = y;
+    liveF[liveOff + 2] = z;
+    liveF[liveOff + 3] = 1;
+    liveF[liveOff + 4] = 0;
+    liveF[liveOff + 5] = 0;
+    liveF[liveOff + 6] = 0;
+    liveF[liveOff + 7] = pointSize;
+    liveF[liveOff + 8] = r;
+    liveF[liveOff + 9] = g;
+    liveF[liveOff + 10] = b;
+    liveF[liveOff + 11] = 0;
+  }
+
+  const first = indexFor(0) * 3;
+  const mid = indexFor(Math.floor((n - 1) / 2)) * 3;
+  const last = indexFor(n - 1) * 3;
+  const fallbackSignature = [
+    sourceCount,
+    n,
+    positions[first + 0]?.toFixed(4),
+    positions[mid + 1]?.toFixed(4),
+    positions[last + 2]?.toFixed(4),
+    colors[first + 0]?.toFixed(4),
+    colors[mid + 1]?.toFixed(4),
+    colors[last + 2]?.toFixed(4),
+  ].join(':');
+
+  return {
+    signature: options.signature || fallbackSignature,
+    pointCount: n,
+    homeByteLength: homeBytes.byteLength,
+    liveByteLength: liveBytes.byteLength,
+    homeInitialB64: bufferToBase64(homeBytes),
+    liveInitialB64: bufferToBase64(liveBytes),
+    sampledFromCount: sourceCount,
+  };
+}
+
+function buildPointCloudFXComputeUniform(
+  params: PointCloudFXParams,
+  state: PointCloudFXNativeGraphState,
+  dt: number,
+  time: number,
+): string {
+  const cuBuf = new ArrayBuffer(288);
+  const cuF = new Float32Array(cuBuf);
+  const cuU = new Uint32Array(cuBuf);
+  cuF[0] = dt;
+  cuF[1] = time;
+  cuU[2] = state.pointCount >>> 0;
+  cuF[3] = params.pointSize;
+  cuF[4] = params.windStrength;
+  cuF[5] = params.windScale;
+  cuF[6] = params.anchorPull;
+  cuF[7] = params.damping;
+  cuF[8] = params.bass;
+  cuF[9] = params.treble;
+  cuF[10] = state.burstImpulse;
+  cuF[11] = params.shimmerStrength;
+  const wEnabled = params.waveEnabled ? 1 : 0;
+  const wAng = state.waveTime;
+  cuF[12] = wEnabled * Math.cos(wAng) * params.waveOrbitRadius;
+  cuF[13] = wEnabled * Math.sin(wAng) * params.waveOrbitRadius * 0.6;
+  cuF[14] = wEnabled * Math.sin(wAng * 0.7) * params.waveOrbitRadius * 0.4;
+  cuF[15] = params.waveRadius;
+  cuF[16] = params.waveStrength * wEnabled;
+  cuF[17] = params.waveFalloff;
+  cuF[18] = params.twistAmount;
+  cuF[19] = params.voxelSize;
+  cuF[20] = params.voxelMix;
+  cuF[21] = params.dissolveRadius;
+  cuF[22] = params.dissolveSoftness;
+  cuF[23] = state.hueShiftPhase;
+  cuF[24] = params.saturation;
+  cuF[25] = params.brightness;
+  cuU[26] = COLOR_MODE_ID[params.colorMode] >>> 0;
+  cuU[27] = COLOR_MAP_ID[params.colorMap] >>> 0;
+  cuF[28] = params.colorMix;
+  cuF[29] = params.colorMapScale;
+  cuF[30] = params.colorMapOffset;
+  cuF[31] = state.colorCyclePhase;
+  cuF[32] = params.randomSat;
+  cuF[33] = params.randomVal;
+  cuU[34] = FILTER_MODE_ID[params.filterMode] >>> 0;
+  cuU[35] = FILTER_AXIS_ID[params.filterAxis] >>> 0;
+  cuF[36] = params.colorA[0]; cuF[37] = params.colorA[1]; cuF[38] = params.colorA[2];
+  cuF[40] = params.colorB[0]; cuF[41] = params.colorB[1]; cuF[42] = params.colorB[2];
+  cuF[44] = params.colorC[0]; cuF[45] = params.colorC[1]; cuF[46] = params.colorC[2];
+  cuF[48] = params.colorD[0]; cuF[49] = params.colorD[1]; cuF[50] = params.colorD[2];
+  cuF[52] = params.filterAmount;
+  cuF[53] = params.filterSpeed;
+  cuF[54] = params.filterPhase;
+  cuF[55] = params.filterWidth;
+  cuF[56] = params.filterSoftness;
+  cuF[57] = params.contourBands;
+  cuF[58] = params.fogDensity;
+  cuF[59] = params.fogOpacity;
+  cuF[60] = params.fogColor[0];
+  cuF[61] = params.fogColor[1];
+  cuF[62] = params.fogColor[2];
+  return bufferToBase64(cuBuf);
+}
+
+function buildPointCloudFXRenderUniform(
+  params: PointCloudFXParams,
+  state: PointCloudFXNativeGraphState,
+  width: number,
+  height: number,
+): string {
+  const aspect = Math.max(1, width) / Math.max(1, height);
+  const proj = perspective(params.fovDeg, aspect, 0.05, 100);
+  const view = translate(0, 0, -params.cameraZ);
+  const d2r = Math.PI / 180;
+  const objRot = mat4Mul(
+    matrixRotateZ((params.rotateZ + state.autoRotZPhase) * d2r),
+    mat4Mul(
+      matrixRotateY((params.rotateY + state.autoRotYPhase) * d2r),
+      matrixRotateX((params.rotateX + state.autoRotXPhase) * d2r),
+    ),
+  );
+  const viewProj = mat4Mul(proj, mat4Mul(view, objRot));
+  const ruBuf = new ArrayBuffer(192);
+  const ruF = new Float32Array(ruBuf);
+  const ruU = new Uint32Array(ruBuf);
+  ruF.set(viewProj, 0);
+  ruF[16] = 1; ruF[17] = 0; ruF[18] = 0; ruF[19] = 0;
+  ruF[20] = 0; ruF[21] = 1; ruF[22] = 0; ruF[23] = 0;
+  ruU[24] = params.topology === 'strokes' ? 2 : (params.topology === 'billboards' ? 1 : 0);
+  ruF[25] = params.strokeLength;
+  ruF[26] = params.strokeWidth;
+  ruF[27] = params.opacity;
+  ruU[28] = state.pointCount >>> 0;
+  const fogModeBoost = params.filterMode === 'fog' ? 1 : 0;
+  ruF[32] = params.fogColor[0];
+  ruF[33] = params.fogColor[1];
+  ruF[34] = params.fogColor[2];
+  ruF[35] = Math.max(params.fogOpacity, fogModeBoost * params.filterAmount * 0.65);
+  ruF[36] = Math.max(params.fogDensity, fogModeBoost * (0.45 + params.filterAmount * 1.4));
+  return bufferToBase64(ruBuf);
+}
+
+export function buildPointCloudFXNativeComputeGraph(options: PointCloudFXNativeGraphOptions): PointCloudFXNativeGraphBuildResult {
+  const width = Math.max(1, Math.round(options.width));
+  const height = Math.max(1, Math.round(options.height));
+  const time = Math.max(0, Number.isFinite(options.time) ? options.time : 0);
+  const dt = clampNumber(options.frameDelta, 0, 1 / 15);
+  const params = pointCloudFXParamsFromRaw(options.params, options.audioBass ?? 0, options.audioTreble ?? 0);
+  const previous = options.state;
+  const mustReset = !!options.reset ||
+    !previous ||
+    previous.pointDataSignature !== options.pointData.signature ||
+    previous.pointCount !== options.pointData.pointCount;
+  const prevBass = mustReset ? 0 : previous.prevBass;
+  const bassDelta = Math.max(0, params.bass - prevBass);
+  const state: PointCloudFXNativeGraphState = {
+    pointDataSignature: options.pointData.signature,
+    pointCount: options.pointData.pointCount,
+    lastTime: time,
+    hueShiftPhase: wrapUnit((mustReset ? 0 : previous.hueShiftPhase) + params.hueShiftSpeed * dt),
+    colorCyclePhase: wrapUnit((mustReset ? 0 : previous.colorCyclePhase) + params.colorCycleSpeed * dt),
+    burstImpulse: Math.max(
+      0,
+      (mustReset ? 0 : previous.burstImpulse) +
+        (bassDelta > 0.04 ? bassDelta * params.burstGain * 8 : 0),
+    ),
+    prevBass: params.bass,
+    waveTime: (mustReset ? 0 : previous.waveTime) + params.waveSpeed * dt,
+    autoRotXPhase: (mustReset ? 0 : previous.autoRotXPhase) + params.autoRotateX * dt,
+    autoRotYPhase: (mustReset ? 0 : previous.autoRotYPhase) + params.autoRotateY * dt,
+    autoRotZPhase: (mustReset ? 0 : previous.autoRotZPhase) + params.autoRotateZ * dt,
+  };
+  state.burstImpulse = Math.max(0, state.burstImpulse - state.burstImpulse * params.burstDecay * dt);
+
+  const id = (name: string) => `${options.sourceId}:point-cloud-fx:${name}`;
+  const source = getPointCloudFXNativeShaderSources();
+  const computeSource = source.find((item) => item.stage === 'compute')!;
+  const renderSource = source.find((item) => item.stage === 'render')!;
+  const buffers: PointCloudFXNativeGraphBuffer[] = [
+    {
+      id: id('home'),
+      kind: 'read-only-storage',
+      byte_length: options.pointData.homeByteLength,
+      persistent: true,
+      clear: mustReset,
+      ...(mustReset ? { initial_b64: options.pointData.homeInitialB64 } : {}),
+    },
+    {
+      id: id('live'),
+      kind: 'storage',
+      byte_length: options.pointData.liveByteLength,
+      persistent: true,
+      clear: mustReset,
+      ...(mustReset ? { initial_b64: options.pointData.liveInitialB64 } : {}),
+    },
+    {
+      id: id('compute-uniform'),
+      kind: 'uniform',
+      byte_length: 288,
+      initial_b64: buildPointCloudFXComputeUniform(params, state, dt, time),
+    },
+    {
+      id: id('render-uniform'),
+      kind: 'uniform',
+      byte_length: 192,
+      initial_b64: buildPointCloudFXRenderUniform(params, state, width, height),
+    },
+  ];
+  return {
+    config: {
+      buffers,
+      passes: [
+        {
+          name: 'point-cloud-fx/sim',
+          shader_id: computeSource.shaderId,
+          entry: computeSource.entry,
+          dispatch: [Math.max(1, Math.ceil(options.pointData.pointCount / 64)), 1, 1],
+          bindings: [
+            { binding: 0, resource: id('home'), kind: 'read-only-storage' },
+            { binding: 1, resource: id('live'), kind: 'storage' },
+            { binding: 2, resource: id('compute-uniform'), kind: 'uniform' },
+          ],
+        },
+      ],
+      render_passes: [
+        {
+          name: 'point-cloud-fx/render',
+          shader_id: renderSource.shaderId,
+          vertex_entry: 'vs_main',
+          fragment_entry: 'fs_main',
+          target: 'source_frame',
+          source_id: options.sourceId,
+          seq: Math.max(0, Math.round(options.frameIndex)),
+          clear: true,
+          clear_color: [0, 0, 0, 0],
+          include_snapshot: false,
+          blend: 'alpha',
+          vertex_count: 6,
+          instance_count: options.pointData.pointCount,
+          bindings: [
+            { binding: 0, resource: id('live'), kind: 'read-only-storage' },
+            { binding: 1, resource: id('render-uniform'), kind: 'uniform' },
+          ],
+        },
+      ],
+    },
+    state,
+  };
+}
 
 export class WebGPUPointCloudFX {
   private device: any;
