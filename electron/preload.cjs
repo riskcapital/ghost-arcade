@@ -16,7 +16,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // Spout
   'spout_is_available', 'spout_list_senders', 'spout_start_sender', 'spout_stop_sender',
   'spout_send_frame', 'spout_send_image', 'spout_get_status',
-  'spout_start_receiver', 'spout_stop_receiver', 'spout_receive_frame',
+  'spout_start_receiver', 'spout_stop_receiver', 'spout_receive_frame', 'spout_receive_texture_info',
   'spout_start_osr', 'spout_stop_osr', 'spout_send_shared_texture',
   // Multi-slice zero-copy senders (atlas OSR + native fan-out).
   // slice-atlas window publishes its packed layout here; main (re)builds
