@@ -2039,12 +2039,11 @@ export class NativeRendererSync {
           if (
             nativeSource.shouldPrefetch &&
             !sharedTextureSource &&
-            !nativeStaticImageDecode &&
             !this.prefetchedSources.has(sourceKey)
           ) {
             this.prefetchedSources.add(sourceKey);
             const priority = sourceType === 'video' ? videoPrefetchPriority : mediaPrefetchPriority;
-            void prefetchNativeRendererMedia(src.id, src.src, priority).catch(() => {});
+            void prefetchNativeRendererMedia(src.id, src.src, priority, sourceType).catch(() => {});
           }
           if (dynamicSourceFrameSource) {
             this.videoRefreshAt.set(sourceKey, now + videoRefreshMs);
@@ -2092,7 +2091,7 @@ export class NativeRendererSync {
         const sharedTextureSource = isNativeSharedTextureSource(src, sourceType);
         if (!sharedTextureSource && sourceType === 'video' && now >= dueAt) {
           this.videoRefreshAt.set(sourceKey, now + videoRefreshMs);
-          void prefetchNativeRendererMedia(src.id, src.src, videoPrefetchPriority).catch(() => {});
+          void prefetchNativeRendererMedia(src.id, src.src, videoPrefetchPriority, sourceType).catch(() => {});
         }
         if (nativeSource.shouldPreview) {
           this.appendSourcePreviewCommand(commands, src, sourceType, now, false, null, previewBudget);
