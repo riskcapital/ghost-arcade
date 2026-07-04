@@ -1019,7 +1019,8 @@ async function main() {
     }
     if (
       !capabilities.implemented_methods?.includes('output_shared_texture') ||
-      !capabilities.implemented_methods?.includes('get_output_shared_texture')
+      !capabilities.implemented_methods?.includes('get_output_shared_texture') ||
+      !capabilities.implemented_methods?.includes('upload_source_gpu_shared_texture')
     ) {
       throw new Error(`native output shared-texture RPC missing from capabilities: ${JSON.stringify(capabilities.implemented_methods)}`);
     }
@@ -1038,6 +1039,27 @@ async function main() {
       }
     } else if (outputTexture?.available) {
       throw new Error(`native output shared-texture unexpectedly available on this platform: ${JSON.stringify(outputTexture)}`);
+    }
+    if (outputExportExpected) {
+      const beforeDirectSharedStatus = await rpc.send('status', {}, 5000);
+      const directSharedStatus = await rpc.send('upload_source_gpu_shared_texture', {
+        source_id: 'direct-core-iosurface-loopback',
+        width: Number(outputTexture.width),
+        height: Number(outputTexture.height),
+        shared_handle: String(outputTexture.handle),
+        platform: outputTexture.platform,
+        format: outputTexture.format,
+        handle_encoding: outputTexture.handle_encoding,
+        handle_byte_length: outputTexture.handle_byte_length,
+        seq: 1,
+      }, 5000);
+      if (
+        Number(directSharedStatus?.source_frame_shared_texture_uploads ?? 0) <=
+          Number(beforeDirectSharedStatus?.source_frame_shared_texture_uploads ?? 0) ||
+        directSharedStatus?.source_frame_last_upload_transport !== 'shared-texture'
+      ) {
+        throw new Error(`direct native shared texture RPC did not import output IOSurface: ${JSON.stringify(directSharedStatus)}`);
+      }
     }
     if (!capabilities.native_graph_instruments?.includes('smoke-3d')) {
       throw new Error(`native graph instrument manifest missing smoke-3d: ${JSON.stringify(capabilities)}`);

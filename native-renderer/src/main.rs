@@ -68,6 +68,7 @@ const CORE_RPC_METHODS: &[&str] = &[
     "get_snapshot",
     "frame_snapshot",
     "get_frame_snapshot",
+    "upload_source_gpu_shared_texture",
     "output_shared_texture",
     "get_output_shared_texture",
     "readiness",
@@ -2238,6 +2239,7 @@ impl App {
                 "shader_registry": self.shader_registry_snapshot(),
             })),
             "frame_snapshot" | "get_frame_snapshot" => self.frame_snapshot(&req.params),
+            "upload_source_gpu_shared_texture" => self.upload_source_gpu_shared_texture(&req.params),
             "output_shared_texture" | "get_output_shared_texture" => {
                 Ok(self.output_shared_texture())
             }
@@ -2781,6 +2783,16 @@ impl App {
             "command_drain_limit": self.command_drain_limit,
             "command_queue_peak": self.stats.command_queue_peak,
         })
+    }
+
+    fn upload_source_gpu_shared_texture(&mut self, params: &Value) -> Result<Value, String> {
+        if string_at(params, &["source_id"]).is_none() {
+            return Err(
+                "native shared texture source-frame upload requires source_id".to_string(),
+            );
+        }
+        self.apply_source_frame(params);
+        Ok(json!(self.status()))
     }
 
     fn prepare_native_instrument_tasks(&mut self, seq: u64) -> Vec<NativeInstrumentTask> {
@@ -8016,7 +8028,10 @@ impl SourceFrameTransport {
 }
 
 fn source_frame_transport_from_command(command: &Value) -> SourceFrameTransport {
-    if command.get("shared_handle").is_some() || command.get("shared_texture").is_some() {
+    if command.get("shared_handle").is_some()
+        || command.get("handle").is_some()
+        || command.get("shared_texture").is_some()
+    {
         return SourceFrameTransport::SharedTexture;
     }
     if command.get("rgba_file").is_some() {
