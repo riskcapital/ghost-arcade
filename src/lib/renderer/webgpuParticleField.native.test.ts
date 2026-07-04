@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { gravityWellsDefaultParams } from './gpuShaderCatalog';
 import {
   buildParticleFieldNativeComputeGraph,
   buildParticleFieldNativePrecompileCommands,
@@ -175,5 +176,36 @@ describe('Particle Field native shader bundle', () => {
       blend: 'alpha',
     });
     expect(graph.config.render_passes[2].draw_indirect_buffer).toMatch(/:indirect$/);
+  });
+
+  it('builds the curated Gravity Wells preset on the Particle Field native graph', () => {
+    const graph = buildParticleFieldNativeComputeGraph({
+      sourceId: 'gpu:layer-gravity:gravity-wells',
+      params: gravityWellsDefaultParams,
+      width: 640,
+      height: 360,
+      time: 3,
+      frameDelta: 1 / 60,
+      frameIndex: 30,
+      reset: true,
+    });
+
+    expect(graph.state.mode).toBe('gravity');
+    expect(graph.topology).toBe(gravityWellsDefaultParams.topology);
+    expect(graph.particleCount).toBe(gravityWellsDefaultParams.particleCount);
+    expect(graph.config.passes.map((pass) => pass.shader_id)).toEqual([
+      PARTICLE_FIELD_NATIVE_SHADER_IDS.behavior,
+      PARTICLE_FIELD_NATIVE_SHADER_IDS.edges,
+    ]);
+    expect(graph.config.render_passes.map((pass) => pass.shader_id)).toEqual([
+      PARTICLE_FIELD_NATIVE_SHADER_IDS.fog,
+      PARTICLE_FIELD_NATIVE_SHADER_IDS.render,
+      PARTICLE_FIELD_NATIVE_SHADER_IDS.lines,
+    ]);
+    expect(graph.config.render_passes[0]).toMatchObject({
+      target: 'source_frame',
+      source_id: 'gpu:layer-gravity:gravity-wells',
+      clear: true,
+    });
   });
 });
