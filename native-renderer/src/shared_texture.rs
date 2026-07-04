@@ -16,34 +16,44 @@ pub struct SharedTextureSourceFrameDescriptor {
 impl SharedTextureSourceFrameDescriptor {
     pub fn from_command(command: &Value, width: usize, height: usize) -> Option<Self> {
         let shared_texture = command.get("shared_texture");
-        let handle = string_at(command, "shared_handle")
-            .or_else(|| string_at(command, "handle"))
-            .or_else(|| nested_string_at(shared_texture, "handle"))
-            .or_else(|| shared_texture.and_then(Value::as_str))?;
+        let handle = string_or_number_at(command, "shared_handle")
+            .or_else(|| string_or_number_at(command, "sharedHandle"))
+            .or_else(|| string_or_number_at(command, "handle"))
+            .or_else(|| nested_string_or_number_at(shared_texture, "handle"))
+            .or_else(|| shared_texture.and_then(string_or_number))?;
+        let handle_chars = handle.len();
 
         Some(Self {
-            handle: handle.to_string(),
+            handle,
             platform: normalize_platform(
                 string_at(command, "shared_texture_platform")
+                    .or_else(|| string_at(command, "sharedTexturePlatform"))
                     .or_else(|| string_at(command, "platform"))
                     .or_else(|| nested_string_at(shared_texture, "platform"))
                     .unwrap_or("unknown"),
             ),
             format: string_or_number_at(command, "shared_texture_format")
+                .or_else(|| string_or_number_at(command, "sharedTextureFormat"))
                 .or_else(|| string_or_number_at(command, "format"))
                 .or_else(|| nested_string_or_number_at(shared_texture, "format"))
                 .unwrap_or_else(|| "unknown".to_string()),
             handle_encoding: normalize_handle_encoding(
                 string_at(command, "shared_texture_handle_encoding")
+                    .or_else(|| string_at(command, "sharedTextureHandleEncoding"))
                     .or_else(|| string_at(command, "handle_encoding"))
+                    .or_else(|| string_at(command, "handleEncoding"))
                     .or_else(|| nested_string_at(shared_texture, "handle_encoding"))
+                    .or_else(|| nested_string_at(shared_texture, "handleEncoding"))
                     .or_else(|| nested_string_at(shared_texture, "encoding"))
                     .unwrap_or("opaque"),
             ),
-            handle_chars: handle.len(),
+            handle_chars,
             handle_byte_length: number_at(command, "shared_texture_handle_byte_length")
+                .or_else(|| number_at(command, "sharedTextureHandleByteLength"))
                 .or_else(|| number_at(command, "handle_byte_length"))
-                .or_else(|| nested_number_at(shared_texture, "handle_byte_length")),
+                .or_else(|| number_at(command, "handleByteLength"))
+                .or_else(|| nested_number_at(shared_texture, "handle_byte_length"))
+                .or_else(|| nested_number_at(shared_texture, "handleByteLength")),
             width: width.min(u32::MAX as usize) as u32,
             height: height.min(u32::MAX as usize) as u32,
         })
@@ -237,6 +247,51 @@ mod tests {
                 .unsupported_reason("metal")
                 .contains("platform=iosurface")
         );
+    }
+
+    #[test]
+    fn parses_camel_case_numeric_iosurface_handle_metadata() {
+        let command = json!({
+            "sharedHandle": 77,
+            "sharedTexturePlatform": "iosurface",
+            "sharedTextureFormat": "bgra8unorm",
+            "handleEncoding": "integer",
+            "handleByteLength": 4
+        });
+
+        let descriptor =
+            SharedTextureSourceFrameDescriptor::from_command(&command, 1280, 720).unwrap();
+
+        assert_eq!(descriptor.platform, "iosurface");
+        assert_eq!(descriptor.handle, "77");
+        assert_eq!(descriptor.format, "bgra8unorm");
+        assert_eq!(descriptor.handle_encoding, "integer");
+        assert_eq!(descriptor.handle_chars, 2);
+        assert_eq!(descriptor.handle_byte_length, Some(4));
+        assert_eq!(descriptor.iosurface_id().unwrap(), 77);
+    }
+
+    #[test]
+    fn parses_nested_numeric_iosurface_handle_metadata() {
+        let command = json!({
+            "shared_texture": {
+                "handle": 91,
+                "platform": "Syphon",
+                "format": "rgba8unorm",
+                "handleEncoding": "integer",
+                "handleByteLength": 4
+            }
+        });
+
+        let descriptor =
+            SharedTextureSourceFrameDescriptor::from_command(&command, 640, 360).unwrap();
+
+        assert_eq!(descriptor.platform, "iosurface");
+        assert_eq!(descriptor.handle, "91");
+        assert_eq!(descriptor.format, "rgba8unorm");
+        assert_eq!(descriptor.handle_encoding, "integer");
+        assert_eq!(descriptor.handle_byte_length, Some(4));
+        assert_eq!(descriptor.iosurface_id().unwrap(), 91);
     }
 
     #[test]
