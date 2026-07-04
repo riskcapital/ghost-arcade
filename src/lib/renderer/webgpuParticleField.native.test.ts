@@ -126,4 +126,54 @@ describe('Particle Field native shader bundle', () => {
     expect(particleBuffer?.initial_b64).toBeUndefined();
     expect(second.config.render_passes[1].source_id).toBe(first.config.render_passes[1].source_id);
   });
+
+  it('adds native edge compute and line-list render passes when connections are enabled', () => {
+    const graph = buildParticleFieldNativeComputeGraph({
+      sourceId: 'gpu:layer-b:particle-field',
+      params: {
+        mode: 'galaxy',
+        topology: 'glow',
+        particleCount: 2048,
+        connectEnabled: true,
+        partnerCount: 4,
+        fogOpacity: 0.4,
+      },
+      width: 640,
+      height: 360,
+      time: 2,
+      frameDelta: 1 / 60,
+      frameIndex: 22,
+      reset: true,
+    });
+
+    expect(graph.config.passes.map((pass) => pass.shader_id)).toEqual([
+      PARTICLE_FIELD_NATIVE_SHADER_IDS.behavior,
+      PARTICLE_FIELD_NATIVE_SHADER_IDS.edges,
+    ]);
+    expect(graph.config.buffers.find((buffer) => buffer.id.endsWith(':indirect'))).toMatchObject({
+      kind: 'storage',
+      byte_length: 16,
+      persistent: true,
+      initial_u32: [2, 0, 0, 0],
+      indirect: true,
+    });
+    expect(graph.config.buffers.find((buffer) => buffer.id.endsWith(':edges'))).toMatchObject({
+      kind: 'storage',
+      byte_length: 600000 * 16,
+      persistent: true,
+      clear: true,
+    });
+    expect(graph.config.render_passes.map((pass) => pass.shader_id)).toEqual([
+      PARTICLE_FIELD_NATIVE_SHADER_IDS.fog,
+      PARTICLE_FIELD_NATIVE_SHADER_IDS.render,
+      PARTICLE_FIELD_NATIVE_SHADER_IDS.lines,
+    ]);
+    expect(graph.config.render_passes[2]).toMatchObject({
+      primitive: 'line-list',
+      vertex_count: 2,
+      instance_count: 0,
+      blend: 'alpha',
+    });
+    expect(graph.config.render_passes[2].draw_indirect_buffer).toMatch(/:indirect$/);
+  });
 });

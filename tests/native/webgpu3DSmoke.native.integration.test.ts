@@ -142,6 +142,7 @@ describe('3D Smoke native renderer integration', () => {
     expect(capabilities.features.compute_graph_indirect_render).toBe(true);
     expect(capabilities.features.compute_graph_texture_sampling).toBe(true);
     expect(capabilities.features.compute_graph_depth_render).toBe(true);
+    expect(capabilities.features.compute_graph_line_render).toBe(true);
     expect(capabilities.features.compute_graph_source_frame_target).toBe(true);
     expect(capabilities.features.native_3d_smoke_graph).toBe(true);
     expect(capabilities.features.native_particle_field_graph).toBe(true);
@@ -251,7 +252,8 @@ describe('3D Smoke native renderer integration', () => {
           mode: 'gravity',
           topology: 'softSphere',
           particleCount: 2048,
-          connectEnabled: false,
+          connectEnabled: true,
+          partnerCount: 4,
           fogOpacity: 0.75,
           bass: frame === 1 ? 0.65 : 0.35,
           treble: 0.25,
@@ -267,12 +269,18 @@ describe('3D Smoke native renderer integration', () => {
       });
       particleState = graph.state;
       const particleResult: any = await rpc.send('compute_graph', graph.config as unknown as Record<string, unknown>, 20000);
-      expect(particleResult.pass_count).toBe(1);
-      expect(particleResult.renders).toHaveLength(2);
+      expect(particleResult.pass_count).toBe(2);
+      expect(particleResult.renders).toHaveLength(3);
       expect(particleResult.renders[1]).toMatchObject({
         target: 'source_frame',
         source_id: particleSourceId,
         depth: true,
+      });
+      expect(particleResult.renders[2]).toMatchObject({
+        target: 'source_frame',
+        source_id: particleSourceId,
+        draw: 'indirect',
+        primitive: 'line-list',
       });
       const snapshot = await rpc.send('frame_snapshot', {
         include_pixels: false,
