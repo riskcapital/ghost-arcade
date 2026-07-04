@@ -842,6 +842,8 @@ export class NativeRendererSync {
       this.supportsNativeFeature('native_particle_field_graph') &&
       this.supportsNativeGraphInstrument('particle-field')
     ) {
+      const mode = String(layer.gpuLayerContent.params?.mode ?? '').trim().toLowerCase();
+      if (mode === 'media') return null;
       kind = 'particle-field';
     }
     if (!kind) return null;
