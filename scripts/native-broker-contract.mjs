@@ -61,8 +61,11 @@ const broker = createNativeRendererBroker({
   textureShareStatusProvider: () => ({
     platform: process.platform === 'darwin' ? 'syphon' : 'spout',
     label: process.platform === 'darwin' ? 'Syphon' : 'Spout',
-    available: false,
-    error: 'contract test uses source-frame fallback',
+    available: process.platform === 'darwin',
+    error: process.platform === 'darwin' ? null : 'contract test uses source-frame fallback',
+    nativeOutputCapable: process.platform === 'darwin',
+    nativeOutputActive: false,
+    senderMode: process.platform === 'darwin' ? 'native-iosurface-capable' : 'source-frame-fallback',
   }),
 });
 
@@ -134,8 +137,8 @@ try {
     `broker output shared-texture export readiness should match platform support: ${JSON.stringify(readiness)}`,
   );
   assert(
-    checks.get('native-texture-share-sender')?.ok === false,
-    'broker should report native Syphon/Spout sender as unavailable until implemented',
+    checks.get('native-texture-share-sender')?.ok === outputExportExpected,
+    `broker native texture-share sender readiness should match app bridge support: ${JSON.stringify(readiness)}`,
   );
   assert(
     checks.get('shared-texture-source-frame-upload')?.ok === (process.platform === 'darwin'),
