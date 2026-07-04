@@ -1358,6 +1358,22 @@ impl App {
             "implemented_methods": CORE_RPC_METHODS,
             "implemented_command_types": CORE_COMMAND_TYPES,
             "native_graph_instruments": ["smoke-3d"],
+            "native_graph_instrument_manifest": [
+                {
+                    "id": "smoke-3d",
+                    "label": "3D Smoke",
+                    "source_uri_prefix": "native-graph://smoke-3d/",
+                    "shader_ids": ["smoke-3d"],
+                    "features": [
+                        "compute_graph_host",
+                        "compute_graph_render",
+                        "compute_graph_source_frame_target",
+                        "persistent_compute_buffers",
+                        "native_3d_smoke_graph"
+                    ],
+                    "render_target": "source_frame"
+                }
+            ],
             "audio_uniform_layout": ghost_audio_uniform_layout(),
             "features": features,
             "limits": limits,

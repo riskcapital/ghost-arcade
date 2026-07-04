@@ -39,6 +39,7 @@ import {
   stopNativeRenderer,
   submitNativeRendererBatch,
   type RendererStatus,
+  type NativeRendererCapabilities,
   type CommandBatch,
   type RendererCommand,
   type PresentPolicyConfig,
@@ -108,6 +109,19 @@ type NativeGraphRouteState = {
   warnings: number;
   state: Smoke3DNativeGraphState | null;
 };
+
+function nativeGraphInstrumentIds(capabilities: NativeRendererCapabilities | null | undefined): string[] {
+  const ids = new Set<string>();
+  for (const id of capabilities?.native_graph_instruments ?? []) {
+    const normalized = String(id).trim().toLowerCase();
+    if (normalized) ids.add(normalized);
+  }
+  for (const entry of capabilities?.native_graph_instrument_manifest ?? []) {
+    const normalized = String(entry?.id ?? '').trim().toLowerCase();
+    if (normalized) ids.add(normalized);
+  }
+  return Array.from(ids);
+}
 
 const SOURCE_PREVIEW_SIZE = 256;
 const SOURCE_FRAME_SIZE_FALLBACK = 2048;
@@ -932,11 +946,7 @@ export class NativeRendererSync {
     const startupCapabilities = await getNativeRendererCapabilities().catch(() => null);
     this.nativeCoreMethods = new Set((startupCapabilities?.implemented_methods ?? []).map(String));
     this.nativeFeatureFlags = startupCapabilities?.features ?? {};
-    this.nativeGraphInstruments = new Set(
-      (startupCapabilities?.native_graph_instruments ?? [])
-        .map((id) => String(id).trim().toLowerCase())
-        .filter(Boolean),
-    );
+    this.nativeGraphInstruments = new Set(nativeGraphInstrumentIds(startupCapabilities));
     this.nativeComputeGraphSourceFrames = !!(
       this.supportsNativeFeature('compute_graph_host') &&
       this.supportsNativeFeature('compute_graph_render') &&

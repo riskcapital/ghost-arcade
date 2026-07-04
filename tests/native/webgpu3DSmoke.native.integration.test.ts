@@ -135,6 +135,13 @@ describe('3D Smoke native renderer integration', () => {
     expect(capabilities.features.compute_graph_source_frame_target).toBe(true);
     expect(capabilities.features.native_3d_smoke_graph).toBe(true);
     expect(capabilities.native_graph_instruments).toContain('smoke-3d');
+    expect(capabilities.native_graph_instrument_manifest).toContainEqual(
+      expect.objectContaining({
+        id: 'smoke-3d',
+        source_uri_prefix: 'native-graph://smoke-3d/',
+        render_target: 'source_frame',
+      }),
+    );
 
     await rpc.send('submit_commands', {
       commands: buildSmoke3DNativePrecompileCommands(),

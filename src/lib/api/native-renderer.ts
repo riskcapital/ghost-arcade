@@ -264,6 +264,15 @@ export interface NativeQualityState {
   step_ups: number;
 }
 
+export interface NativeGraphInstrumentManifestEntry {
+  id: string;
+  label?: string;
+  source_uri_prefix?: string;
+  shader_ids?: string[];
+  features?: string[];
+  render_target?: string;
+}
+
 export interface NativeRendererCapabilities {
   schema_version: number;
   core_version: string | null;
@@ -271,6 +280,7 @@ export interface NativeRendererCapabilities {
   implemented_methods: string[];
   implemented_command_types: string[];
   native_graph_instruments?: string[];
+  native_graph_instrument_manifest?: NativeGraphInstrumentManifestEntry[];
   audio_uniform_layout?: {
     schema_version: number;
     audio0: readonly string[];
