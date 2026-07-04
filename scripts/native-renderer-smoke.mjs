@@ -499,6 +499,7 @@ async function main() {
       !capabilities.features.compute_graph_clear_color ||
       !capabilities.features.compute_graph_source_frame_target ||
       !capabilities.features.persistent_compute_buffers ||
+      !capabilities.features.native_planet_graph ||
       !capabilities.features.native_3d_smoke_graph ||
       !capabilities.features.native_volumetric_spheres_graph ||
       !capabilities.features.native_smoke_riders_graph ||
@@ -519,6 +520,9 @@ async function main() {
     if (!capabilities.native_graph_instruments?.includes('smoke-3d')) {
       throw new Error(`native graph instrument manifest missing smoke-3d: ${JSON.stringify(capabilities)}`);
     }
+    if (!capabilities.native_graph_instruments?.includes('planet')) {
+      throw new Error(`native graph instrument manifest missing planet: ${JSON.stringify(capabilities)}`);
+    }
     if (!capabilities.native_graph_instruments?.includes('volumetric-spheres')) {
       throw new Error(`native graph instrument manifest missing volumetric-spheres: ${JSON.stringify(capabilities)}`);
     }
@@ -529,6 +533,18 @@ async function main() {
       throw new Error(`native graph instrument manifest missing ink-cloud: ${JSON.stringify(capabilities)}`);
     }
     const smokeManifest = capabilities.native_graph_instrument_manifest?.find((entry) => entry?.id === 'smoke-3d');
+    const planetManifest = capabilities.native_graph_instrument_manifest?.find((entry) => entry?.id === 'planet');
+    if (
+      !planetManifest ||
+      planetManifest.source_uri_prefix !== 'native-graph://planet/' ||
+      planetManifest.render_target !== 'source_frame' ||
+      !planetManifest.shader_ids?.includes('planet/render') ||
+      !planetManifest.features?.includes('compute_graph_instanced_render') ||
+      !planetManifest.features?.includes('compute_graph_clear_color') ||
+      !planetManifest.features?.includes('native_planet_graph')
+    ) {
+      throw new Error(`native planet manifest entry is incomplete: ${JSON.stringify(capabilities.native_graph_instrument_manifest)}`);
+    }
     if (
       !smokeManifest ||
       smokeManifest.source_uri_prefix !== 'native-graph://smoke-3d/' ||

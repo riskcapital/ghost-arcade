@@ -8,6 +8,11 @@ import { ghostAudioCommandFieldsFromVisualAudio } from '$lib/audio/ghostAudioUni
 import { WGSL_STDLIB, resolveGhostWgsl } from '$lib/renderer/wgsl';
 import { gravityWellsDefaultParams } from '$lib/renderer/gpuShaderCatalog';
 import {
+  buildPlanetNativeComputeGraph,
+  buildPlanetNativePrecompileCommands,
+  type PlanetNativeGraphState,
+} from '$lib/renderer/shaders/webgpuPlanet';
+import {
   buildSmoke3DNativeComputeGraph,
   buildSmoke3DNativePrecompileCommands,
   type Smoke3DNativeGraphState,
@@ -117,8 +122,9 @@ type NativeRenderClockCommand = {
 
 export type PresentPolicyProfile = 'vsync-live' | 'low-latency-safe' | 'low-latency-aggressive';
 
-type NativeGraphRouteKind = 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud';
+type NativeGraphRouteKind = 'planet' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud';
 type NativeGraphRouteSimulationState =
+  | PlanetNativeGraphState
   | Smoke3DNativeGraphState
   | InkCloudNativeGraphState
   | ParticleFieldNativeGraphState
@@ -942,6 +948,12 @@ export class NativeRendererSync {
     const normalizedShaderId = shaderId.toLowerCase();
     let kind: NativeGraphRouteKind | null = null;
     if (
+      normalizedShaderId === 'planet' &&
+      this.supportsNativeFeature('native_planet_graph') &&
+      this.supportsNativeGraphInstrument('planet')
+    ) {
+      kind = 'planet';
+    } else if (
       normalizedShaderId === 'smoke-3d' &&
       this.supportsNativeFeature('native_3d_smoke_graph') &&
       this.supportsNativeGraphInstrument('smoke-3d')
@@ -1036,6 +1048,19 @@ export class NativeRendererSync {
           const audioBass = visual.isActive ? Math.max(visual.bass, visual.bassFast * 0.9) : 0;
           const audioTreble = visual.isActive ? visual.treble : 0;
           const nativeGraphParams = nativeGraphParamsForLayer(layer, route.kind);
+          if (route.kind === 'planet') {
+            return buildPlanetNativeComputeGraph({
+              sourceId: route.source.id,
+              params: nativeGraphParams,
+              width,
+              height,
+              time: graphTime,
+              frameDelta: graphDelta,
+              frameIndex: graphSeq,
+              state: routeState.state as PlanetNativeGraphState | null,
+              reset: !routeState.state,
+            });
+          }
           if (route.kind === 'smoke-3d') {
             return buildSmoke3DNativeComputeGraph({
               sourceId: route.source.id,
@@ -1193,6 +1218,10 @@ export class NativeRendererSync {
       this.supportsNativeFeature('compute_graph_source_frame_target')
     );
     this.nativeComputeGraphSourceFrames = computeGraphSourceFrameHost && !!(
+      (
+        this.supportsNativeFeature('native_planet_graph') &&
+        this.supportsNativeGraphInstrument('planet')
+      ) ||
       (
         this.supportsNativeFeature('native_3d_smoke_graph') &&
         this.supportsNativeGraphInstrument('smoke-3d')
@@ -1931,6 +1960,7 @@ fn fs_main() -> @location(0) vec4<f32> {
       source: probeSource,
       entry: 'fs_main',
     });
+    commands.push(...buildPlanetNativePrecompileCommands());
     commands.push(...buildSmoke3DNativePrecompileCommands());
     commands.push(...buildInkCloudNativePrecompileCommands());
     commands.push(...buildParticleFieldNativePrecompileCommands());

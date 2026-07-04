@@ -17,6 +17,11 @@ import {
   buildInkCloudNativePrecompileCommands,
   type InkCloudNativeGraphState,
 } from '../../src/lib/renderer/webgpuInkCloud';
+import {
+  buildPlanetNativeComputeGraph,
+  buildPlanetNativePrecompileCommands,
+  type PlanetNativeGraphState,
+} from '../../src/lib/renderer/shaders/webgpuPlanet';
 
 const RUN_NATIVE_INTEGRATION = process.env.GA_NATIVE_SMOKE3D_INTEGRATION === '1';
 const root = process.cwd();
@@ -149,12 +154,21 @@ describe('3D Smoke native renderer integration', () => {
     expect(capabilities.features.compute_graph_depth_render).toBe(true);
     expect(capabilities.features.compute_graph_line_render).toBe(true);
     expect(capabilities.features.compute_graph_source_frame_target).toBe(true);
+    expect(capabilities.features.native_planet_graph).toBe(true);
     expect(capabilities.features.native_3d_smoke_graph).toBe(true);
     expect(capabilities.features.native_particle_field_graph).toBe(true);
     expect(capabilities.features.native_ink_cloud_graph).toBe(true);
+    expect(capabilities.native_graph_instruments).toContain('planet');
     expect(capabilities.native_graph_instruments).toContain('smoke-3d');
     expect(capabilities.native_graph_instruments).toContain('particle-field');
     expect(capabilities.native_graph_instruments).toContain('ink-cloud');
+    expect(capabilities.native_graph_instrument_manifest).toContainEqual(
+      expect.objectContaining({
+        id: 'planet',
+        source_uri_prefix: 'native-graph://planet/',
+        render_target: 'source_frame',
+      }),
+    );
     expect(capabilities.native_graph_instrument_manifest).toContainEqual(
       expect.objectContaining({
         id: 'smoke-3d',
@@ -179,6 +193,7 @@ describe('3D Smoke native renderer integration', () => {
 
     await rpc.send('submit_commands', {
       commands: [
+        ...buildPlanetNativePrecompileCommands(),
         ...buildSmoke3DNativePrecompileCommands(),
         ...buildParticleFieldNativePrecompileCommands(),
         ...buildInkCloudNativePrecompileCommands(),
@@ -369,5 +384,59 @@ describe('3D Smoke native renderer integration', () => {
       inkChecksums.add(String(snapshot.checksum));
     }
     expect(inkChecksums.size).toBeGreaterThan(1);
+
+    await rpc.send('submit_commands', {
+      commands: [
+        { type: 'remove_layer', layer_id: 'native-ink-cloud' },
+      ],
+    });
+
+    const planetSourceId = 'gpu:integration-planet:planet';
+    await rpc.send('submit_commands', {
+      commands: [
+        { type: 'upsert_layer', layer_id: 'native-planet', z_index: 0, blend_mode: 'normal', opacity: 1, corners: FULLSCREEN_CORNERS },
+        { type: 'set_layer_visibility', layer_id: 'native-planet', visible: true },
+        { type: 'bind_media_source', layer_id: 'native-planet', source_id: planetSourceId, uri: 'native-graph://planet/integration', source_type: 'image' },
+      ],
+    });
+
+    let planetState: PlanetNativeGraphState | null = null;
+    const planetChecksums = new Set<string>();
+    for (let frame = 0; frame < 2; frame++) {
+      const graph = buildPlanetNativeComputeGraph({
+        sourceId: planetSourceId,
+        params: {
+          planet: frame === 0 ? 'earth' : 'saturn',
+          cameraDistance: 3.6,
+          rotationSpeed: 10,
+          cloudSpeed: 0.8,
+          starDensity: 1.2,
+        },
+        width: 320,
+        height: 180,
+        time: frame / 30,
+        frameDelta: 1 / 30,
+        frameIndex: frame + 1,
+        state: planetState,
+        reset: frame === 0,
+      });
+      planetState = graph.state;
+      const planetResult: any = await rpc.send('compute_graph', graph.config as unknown as Record<string, unknown>, 20000);
+      expect(planetResult.pass_count).toBe(0);
+      expect(planetResult.renders).toHaveLength(1);
+      expect(planetResult.renders[0]).toMatchObject({
+        target: 'source_frame',
+        source_id: planetSourceId,
+        blend: 'alpha',
+      });
+      const snapshot = await rpc.send('frame_snapshot', {
+        include_pixels: false,
+        time: 0.7 + frame / 30,
+        frame_index: frame + 18,
+      }, 10000);
+      assertVisibleFrame(`native Planet source-frame layer ${frame}`, snapshot, 0.01);
+      planetChecksums.add(String(snapshot.checksum));
+    }
+    expect(planetChecksums.size).toBeGreaterThan(1);
   }, 60000);
 });
