@@ -1,6 +1,7 @@
 import { get } from 'svelte/store';
 import type { Layer } from '$lib/types';
 import { project } from '$lib/stores/layers';
+import { mediaLibrary, type MediaItem } from '$lib/stores/media';
 import { isMac, isWindows } from '$lib/bridge';
 import { getVisualAudioSnapshot, visualAudio, type VisualAudioState } from '$lib/audio/visualAudio';
 import { ghostAudioCommandFieldsFromVisualAudio } from '$lib/audio/ghostAudioUniform';
@@ -43,6 +44,7 @@ import {
   startNativeRenderer,
   stopNativeRenderer,
   submitNativeRendererBatch,
+  submitNativeRendererCommands,
   type RendererStatus,
   type NativeRendererCapabilities,
   type CommandBatch,
@@ -107,6 +109,7 @@ type NativeGraphLayerRoute = {
   kind: NativeGraphRouteKind;
   key: string;
   source: NativeLayerSource;
+  inputSource: NativeLayerSource | null;
 };
 
 type NativeGraphRouteState = {
@@ -592,35 +595,83 @@ function gpuNativeSourceType(shaderId: string | undefined | null): string {
   return `gpu:${id || 'gpu'}`;
 }
 
-function nativeLayerSource(layer: Layer, nativeGraphKind: NativeGraphRouteKind | false = false): NativeLayerSource {
+function nativeLayerSourceFromMediaSource(
+  src: NonNullable<Layer['source']>,
+  previewElement: CanvasImageSource | null = null,
+): NativeLayerSource {
+  const sourceType = isSharedTextureUri(src.src) ? 'video' : (src.type || 'none');
+  return {
+    id: src.id,
+    uri: src.src,
+    sourceType,
+    source: src,
+    shouldPrefetch: true,
+    shouldPreview: true,
+    previewElement,
+  };
+}
+
+function nativeGraphOutputSource(layer: Layer, kind: NativeGraphRouteKind): NativeLayerSource {
+  const shaderId = layer.gpuLayerContent?.shaderId || 'gpu';
+  const previewElement = ((layer as any)._gpuLayerPreviewCanvas ?? null) as CanvasImageSource | null;
+  return {
+    id: `gpu:${layer.id}:${shaderId}`,
+    uri: `native-graph://${kind}/${layer.id}`,
+    sourceType: 'image',
+    source: null,
+    shouldPrefetch: false,
+    shouldPreview: false,
+    previewElement,
+  };
+}
+
+function nativeSourceIdentity(source: NativeLayerSource | null | undefined): string {
+  if (!source) return 'none';
+  const src = source.source;
+  if (src) return `${source.sourceType}:${src.id}:${src.src}:${src.name}`;
+  return `${source.sourceType}:${source.id}:${source.uri}`;
+}
+
+function mediaItemToNativeLayerSource(item: MediaItem): NativeLayerSource {
+  const previewElement =
+    item.videoElement ??
+    ((item.texture?.image ?? null) as CanvasImageSource | null);
+  const source = {
+    id: item.id,
+    src: item.src,
+    name: item.name,
+    type: item.type,
+    videoElement: item.videoElement,
+    texture: item.texture,
+  } as NonNullable<Layer['source']>;
+  return nativeLayerSourceFromMediaSource(source, previewElement);
+}
+
+function fileSourceParamToNativeLayerSource(layer: Layer, src: Record<string, any>): NativeLayerSource | null {
+  const url = typeof src.url === 'string' ? src.url : '';
+  if (!url) return null;
+  const mime = String(src.mime ?? '');
+  const filename = String(src.name ?? url);
+  const isVideo = mime.startsWith('video/') || /\.(mp4|webm|mov|m4v)(\?|$)/i.test(filename);
+  const sourceType = isVideo ? 'video' : 'image';
+  const source = {
+    id: `gpu-file:${layer.id}:${hashString(String(src.assetRef?.id ?? src.assetRef?.path ?? url))}`,
+    src: url,
+    name: filename || 'GPU media source',
+    type: sourceType,
+  } as NonNullable<Layer['source']>;
+  return nativeLayerSourceFromMediaSource(source);
+}
+
+function nativeLayerSource(layer: Layer): NativeLayerSource {
   const src = layer.source;
   if (src) {
-    const sourceType = isSharedTextureUri(src.src) ? 'video' : (src.type || 'none');
-    return {
-      id: src.id,
-      uri: src.src,
-      sourceType,
-      source: src,
-      shouldPrefetch: true,
-      shouldPreview: true,
-    };
+    return nativeLayerSourceFromMediaSource(src);
   }
 
   if (layer.type === 'gpu' && layer.gpuLayerContent) {
     const shaderId = layer.gpuLayerContent.shaderId || 'gpu';
-    const normalizedShaderId = String(shaderId).trim().toLowerCase();
     const previewElement = ((layer as any)._gpuLayerPreviewCanvas ?? null) as CanvasImageSource | null;
-    if (nativeGraphKind && normalizedShaderId === nativeGraphKind) {
-      return {
-        id: `gpu:${layer.id}:${shaderId}`,
-        uri: `native-graph://${nativeGraphKind}/${layer.id}`,
-        sourceType: 'image',
-        source: null,
-        shouldPrefetch: false,
-        shouldPreview: false,
-        previewElement,
-      };
-    }
     return {
       id: `gpu:${layer.id}:${shaderId}`,
       uri: `gpu://${shaderId}`,
@@ -825,6 +876,32 @@ export class NativeRendererSync {
     return `${kind}:${sourceId}`;
   }
 
+  private nativeGraphInputSourceForLayer(layer: Layer, kind: NativeGraphRouteKind): NativeLayerSource | null {
+    if (kind !== 'particle-field') return null;
+    const params = layer.gpuLayerContent?.params ?? {};
+    const mode = String(params.mode ?? '').trim().toLowerCase();
+    if (mode !== 'media') return null;
+    const sourceParam = params.source;
+    if (!sourceParam || typeof sourceParam !== 'object') return null;
+
+    if (sourceParam.type === 'media' && sourceParam.mediaId) {
+      const item = get(mediaLibrary).find((media: MediaItem) => media.id === sourceParam.mediaId);
+      return item ? mediaItemToNativeLayerSource(item) : null;
+    }
+
+    if (sourceParam.type === 'layer' && sourceParam.layerId) {
+      const layers = this.latestLayers.length ? this.latestLayers : get(project).layers;
+      const sourceLayer = layers.find((candidate) => candidate.id === sourceParam.layerId);
+      return sourceLayer?.source ? nativeLayerSourceFromMediaSource(sourceLayer.source) : null;
+    }
+
+    if (sourceParam.type === 'file') {
+      return fileSourceParamToNativeLayerSource(layer, sourceParam);
+    }
+
+    return null;
+  }
+
   private nativeGraphRouteForLayer(layer: Layer, includeWarningDisabled = false): NativeGraphLayerRoute | null {
     if (!this.nativeComputeGraphSourceFrames || !this.nativeWgslStdlibWarmed || !layer.visible) return null;
     if (layer.type !== 'gpu' || !layer.gpuLayerContent) return null;
@@ -842,17 +919,29 @@ export class NativeRendererSync {
       this.supportsNativeFeature('native_particle_field_graph') &&
       this.supportsNativeGraphInstrument('particle-field')
     ) {
-      const mode = String(layer.gpuLayerContent.params?.mode ?? '').trim().toLowerCase();
-      if (mode === 'media') return null;
       kind = 'particle-field';
     }
     if (!kind) return null;
-    const source = nativeLayerSource(layer, kind);
+    const inputSource = this.nativeGraphInputSourceForLayer(layer, kind);
+    if (
+      kind === 'particle-field' &&
+      String(layer.gpuLayerContent.params?.mode ?? '').trim().toLowerCase() === 'media' &&
+      !inputSource
+    ) {
+      return null;
+    }
+    const source = nativeGraphOutputSource(layer, kind);
     const key = this.nativeGraphRouteKey(kind, source.id);
     if (!includeWarningDisabled && (this.nativeGraphRoutes.get(key)?.warnings ?? 0) >= 3) {
       return null;
     }
-    return { kind, key, source };
+    return { kind, key, source, inputSource };
+  }
+
+  private nativeSourceFrameUploaded(source: NativeLayerSource | null): boolean {
+    const src = source?.source;
+    if (!src) return false;
+    return this.sourcePreviewSeq.has(this.sourceCacheKey(src.id, src.src));
   }
 
   private async renderNativeGraphSources(
@@ -874,6 +963,7 @@ export class NativeRendererSync {
 
       const route = this.nativeGraphRouteForLayer(layer);
       if (!route) continue;
+      if (route.inputSource && !this.nativeSourceFrameUploaded(route.inputSource)) continue;
 
       const routeState = this.nativeGraphRoutes.get(route.key) ?? {
         inFlight: false,
@@ -915,6 +1005,7 @@ export class NativeRendererSync {
               frameIndex: graphSeq,
               audioBass: visual.isActive ? Math.max(visual.bass, visual.bassFast * 0.9) : 0,
               audioTreble: visual.isActive ? visual.treble : 0,
+              mediaSourceId: route.inputSource?.id ?? null,
               state: routeState.state as ParticleFieldNativeGraphState | null,
               reset: !routeState.state,
             });
@@ -1176,7 +1267,9 @@ export class NativeRendererSync {
   async flush(width: number, height: number, layers: Layer[]) {
     if (!this.running) return;
 
+    this.latestLayers = layers;
     const commands: RendererCommand[] = [];
+    const graphInputCommands: RendererCommand[] = [];
     const current = new Map<string, LayerSnapshot>();
     const activeVideoKeys = new Set<string>();
     const visual = getVisualAudioSnapshot();
@@ -1282,13 +1375,14 @@ export class NativeRendererSync {
     };
     layers.forEach((layer, index) => {
       const nativeGraphRoute = this.nativeGraphRouteForLayer(layer);
-      const nativeSource = nativeGraphRoute?.source ?? nativeLayerSource(layer, false);
+      const nativeSource = nativeGraphRoute?.source ?? nativeLayerSource(layer);
       const sourceType = nativeSource.sourceType;
       const nativeParams = nativeGpuParams(layer);
       const nativeUv = this.nativeLayerUvState(layer, nativeSource, width, height);
       const nativeShape = nativeLayerShapeState(layer);
       const effectIds = nativeEffectDescriptors(layer);
       const effectsSig = effectIds.length ? effectIds.join('|') : 'none';
+      const graphInputSig = nativeSourceIdentity(nativeGraphRoute?.inputSource);
       const snap: LayerSnapshot = {
         id: layer.id,
         z: index,
@@ -1298,13 +1392,28 @@ export class NativeRendererSync {
         geometrySig: geometrySignature(layer),
         uvSig: nativeUv.signature,
         shapeSig: nativeShape.signature,
-        sourceSig: `${sourceSignature(layer)}:${sourceType}:${nativeSource.uri}`,
+        sourceSig: `${sourceSignature(layer)}:${sourceType}:${nativeSource.uri}:input=${graphInputSig}`,
         nativeParamsSig: nativeParamsSignature(layer),
         effectsSig,
         colorSig: colorSignature(layer),
       };
       current.set(layer.id, snap);
       const prev = this.lastLayers.get(layer.id);
+
+      const graphInput = nativeGraphRoute?.inputSource;
+      const graphInputSrc = graphInput?.source ?? null;
+      if (graphInput && graphInputSrc && graphInput.shouldPreview) {
+        const sourceKey = this.sourceCacheKey(graphInputSrc.id, graphInputSrc.src);
+        this.appendSourcePreviewCommand(
+          graphInputCommands,
+          graphInputSrc,
+          graphInput.sourceType,
+          now,
+          !this.sourcePreviewSeq.has(sourceKey),
+          graphInput.previewElement ?? null,
+          previewBudget,
+        );
+      }
 
       if (!prev || prev.z !== snap.z || prev.visible !== snap.visible || prev.blend !== snap.blend || prev.opacity !== snap.opacity || prev.geometrySig !== snap.geometrySig || prev.uvSig !== snap.uvSig || prev.shapeSig !== snap.shapeSig) {
         commands.push({
@@ -1503,6 +1612,10 @@ export class NativeRendererSync {
     this.videoRefreshAt.forEach((_due, key) => {
       if (!activeVideoKeys.has(key)) this.videoRefreshAt.delete(key);
     });
+
+    if (graphInputCommands.length) {
+      await submitNativeRendererCommands(graphInputCommands);
+    }
 
     await this.renderNativeGraphSources(layers, width, height, renderClock, visual);
 
