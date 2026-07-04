@@ -235,6 +235,7 @@ type NativeGraphRouteSimulationState =
 type NativeGraphLayerRoute = {
   kind: NativeGraphRouteKind;
   key: string;
+  baseSource?: NativeLayerSource;
   source: NativeLayerSource;
   inputSource: NativeLayerSource | null;
   effectPasses?: NativeEffectPassRuntime[];
@@ -1214,33 +1215,53 @@ function nativeGraphBufferSafeId(value: string): string {
   return String(value || 'source').replace(/[^a-zA-Z0-9:_-]+/g, '_').slice(0, 160);
 }
 
+function nativeGraphRenderSource(route: NativeGraphLayerRoute): NativeLayerSource {
+  return route.baseSource ?? route.source;
+}
+
 function nativeGraphBufferPrefixesForRoute(route: NativeGraphLayerRoute): string[] {
-  const sourceId = String(route.source.id || '');
+  const sourceId = String(nativeGraphRenderSource(route).id || '');
   const safeSourceId = nativeGraphBufferSafeId(sourceId);
+  let prefixes: string[];
   switch (route.kind) {
     case 'planet':
-      return [`planet:${safeSourceId}`];
+      prefixes = [`planet:${safeSourceId}`];
+      break;
     case 'smoke-3d':
-      return [`3d-smoke:${safeSourceId}`];
+      prefixes = [`3d-smoke:${safeSourceId}`];
+      break;
     case 'particle-field':
-      return [`particle-field:${safeSourceId}`];
+      prefixes = [`particle-field:${safeSourceId}`];
+      break;
     case 'volumetric-spheres':
-      return [`volumetric-spheres:${safeSourceId}`];
+      prefixes = [`volumetric-spheres:${safeSourceId}`];
+      break;
     case 'smoke-riders':
-      return [`3d-smoke:${safeSourceId}`, `volumetric-spheres:${safeSourceId}`];
+      prefixes = [`3d-smoke:${safeSourceId}`, `volumetric-spheres:${safeSourceId}`];
+      break;
     case 'ink-cloud':
-      return [`ink-cloud:${safeSourceId}`];
+      prefixes = [`ink-cloud:${safeSourceId}`];
+      break;
     case 'flythrough':
-      return [`flythrough:${safeSourceId}`];
+      prefixes = [`flythrough:${safeSourceId}`];
+      break;
     case 'pixel-particles':
-      return [`pixel-particles:${safeSourceId}`];
+      prefixes = [`pixel-particles:${safeSourceId}`];
+      break;
     case 'point-cloud-fx':
-      return [`${sourceId}:point-cloud-fx:`];
+      prefixes = [`${sourceId}:point-cloud-fx:`];
+      break;
     case 'effect-pass':
-      return [`effect-pass:${safeSourceId}`];
+      prefixes = [`effect-pass:${safeSourceId}`];
+      break;
     default:
-      return [];
+      prefixes = [];
+      break;
   }
+  if (route.effectPasses?.length) {
+    prefixes.push(`effect-pass:${nativeGraphBufferSafeId(route.source.id)}`);
+  }
+  return prefixes;
 }
 
 function nativeSourceIdentity(source: NativeLayerSource | null | undefined): string {
@@ -1813,12 +1834,25 @@ export class NativeRendererSync {
     if (kind === 'point-cloud-fx' && !inputSource) {
       return null;
     }
-    const source = nativeGraphOutputSource(layer, kind);
-    const key = this.nativeGraphRouteKey(kind, source.id);
+    const baseSource = nativeGraphOutputSource(layer, kind);
+    const effectPasses = this.supportsNativeFeature('compute_graph_texture_sampling')
+      ? nativeEffectPassesForLayer(layer)
+      : null;
+    const source = effectPasses?.length
+      ? nativeEffectPassOutputSource(layer, baseSource)
+      : baseSource;
+    const key = this.nativeGraphRouteKey(kind, baseSource.id);
     if (!includeWarningDisabled && (this.nativeGraphRoutes.get(key)?.warnings ?? 0) >= 3) {
       return null;
     }
-    return { kind, key, source, inputSource };
+    return {
+      kind,
+      key,
+      baseSource: effectPasses?.length ? baseSource : undefined,
+      source,
+      inputSource,
+      effectPasses: effectPasses ?? undefined,
+    };
   }
 
   private nativeSourceFrameUploaded(source: NativeLayerSource | null): boolean {
@@ -1890,6 +1924,8 @@ export class NativeRendererSync {
       const audioBass = visual.isActive ? Math.max(visual.bass, visual.bassFast * 0.9) : 0;
       const audioTreble = visual.isActive ? visual.treble : 0;
       const nativeGraphParams = nativeGraphParamsForLayer(layer, route.kind);
+      const graphSource = nativeGraphRenderSource(route);
+      const effectPassSig = route.effectPasses?.map((effectPass) => effectPass.descriptor).join('>') ?? 'none';
       const inputSourceFrameSeq = route.inputSource?.source
         ? this.sourcePreviewSeq.get(this.sourceCacheKey(route.inputSource.source.id, route.inputSource.source.src)) ?? 0
         : 0;
@@ -1903,6 +1939,7 @@ export class NativeRendererSync {
             audioBass.toFixed(4),
             audioTreble.toFixed(4),
             graphInputSig,
+            effectPassSig,
             stableNativeGraphKey(nativeGraphParams),
           ].join('|')
         : '';
@@ -1956,7 +1993,7 @@ export class NativeRendererSync {
         const graph = await (async () => {
           if (route.kind === 'planet') {
             return buildPlanetNativeComputeGraph({
-              sourceId: route.source.id,
+              sourceId: graphSource.id,
               params: nativeGraphParams,
               width,
               height,
@@ -1969,7 +2006,7 @@ export class NativeRendererSync {
           }
           if (route.kind === 'smoke-3d') {
             return buildSmoke3DNativeComputeGraph({
-              sourceId: route.source.id,
+              sourceId: graphSource.id,
               params: nativeGraphParams,
               width,
               height,
@@ -1984,7 +2021,7 @@ export class NativeRendererSync {
           }
           if (route.kind === 'particle-field') {
             return buildParticleFieldNativeComputeGraph({
-              sourceId: route.source.id,
+              sourceId: graphSource.id,
               params: nativeGraphParams,
               width,
               height,
@@ -2000,7 +2037,7 @@ export class NativeRendererSync {
           }
           if (route.kind === 'smoke-riders') {
             return buildSmokeRidersNativeComputeGraph({
-              sourceId: route.source.id,
+              sourceId: graphSource.id,
               params: nativeGraphParams,
               width,
               height,
@@ -2015,7 +2052,7 @@ export class NativeRendererSync {
           }
           if (route.kind === 'ink-cloud') {
             return buildInkCloudNativeComputeGraph({
-              sourceId: route.source.id,
+              sourceId: graphSource.id,
               params: nativeGraphParams,
               width,
               height,
@@ -2030,7 +2067,7 @@ export class NativeRendererSync {
           }
           if (route.kind === 'flythrough') {
             return buildFlythroughNativeComputeGraph({
-              sourceId: route.source.id,
+              sourceId: graphSource.id,
               mediaSourceId: route.inputSource?.id ?? null,
               params: nativeGraphParams,
               width,
@@ -2046,7 +2083,7 @@ export class NativeRendererSync {
           }
           if (route.kind === 'pixel-particles') {
             return buildPixelParticlesNativeComputeGraph({
-              sourceId: route.source.id,
+              sourceId: graphSource.id,
               mediaSourceId: route.inputSource?.id ?? null,
               params: nativeGraphParams,
               width,
@@ -2065,7 +2102,7 @@ export class NativeRendererSync {
               throw new Error('native point-cloud data is not available yet');
             }
             return buildPointCloudFXNativeComputeGraph({
-              sourceId: route.source.id,
+              sourceId: graphSource.id,
               pointData,
               params: nativeGraphParams,
               width,
@@ -2080,7 +2117,7 @@ export class NativeRendererSync {
             });
           }
           return buildVolumetricSpheresNativeComputeGraph({
-            sourceId: route.source.id,
+            sourceId: graphSource.id,
             params: nativeGraphParams,
             width,
             height,
@@ -2098,10 +2135,39 @@ export class NativeRendererSync {
           ? (result as any).renders
           : [(result as any)?.render].filter(Boolean);
         const renderedSourceFrame = renders.some((render: any) =>
-          render?.target === 'source_frame' && render?.source_id === route.source.id,
+          render?.target === 'source_frame' && render?.source_id === graphSource.id,
         );
         if (!renderedSourceFrame) {
           throw new Error(`native ${route.kind} graph returned no source-frame render`);
+        }
+        if (route.effectPasses?.length && route.source.id !== graphSource.id) {
+          const effectGraph = buildNativeEffectPassChainGraph({
+            sourceId: graphSource.id,
+            targetSourceId: route.source.id,
+            intermediatePrefix: `${route.source.id}:chain`,
+            effects: route.effectPasses.map((effectPass) => ({
+              effect: effectPass.effect,
+              amount: effectPass.amount,
+              mix: 1,
+              params: effectPass.params,
+            })),
+            width,
+            height,
+            time: graphTime,
+            frameDelta: graphDelta,
+            frameIndex: graphFrameIndex,
+            seq: graphSeq * 16 + 8,
+          });
+          const effectResult = await runNativeRendererComputeGraph(effectGraph.config as unknown as Record<string, unknown>);
+          const effectRenders = Array.isArray((effectResult as any)?.renders)
+            ? (effectResult as any).renders
+            : [(effectResult as any)?.render].filter(Boolean);
+          const renderedEffectFrame = effectRenders.some((render: any) =>
+            render?.target === 'source_frame' && render?.source_id === route.source.id,
+          );
+          if (!renderedEffectFrame) {
+            throw new Error(`native ${route.kind} effect-pass graph returned no source-frame render`);
+          }
         }
         routeState.state = graph.state ?? null;
         routeState.lastGraphFrameIndex = graphFrameIndex;
@@ -2498,7 +2564,9 @@ export class NativeRendererSync {
       const nativeParams = nativeGpuParams(layer);
       const nativeUv = this.nativeLayerUvState(layer, nativeSource, width, height);
       const nativeShape = nativeLayerShapeState(layer);
-      const effectIds = nativeGraphRoute?.kind === 'effect-pass' ? [] : nativeEffectDescriptors(layer);
+      const effectIds = nativeGraphRoute?.kind === 'effect-pass' || nativeGraphRoute?.effectPasses?.length
+        ? []
+        : nativeEffectDescriptors(layer);
       const effectsSig = effectIds.length ? effectIds.join('|') : 'none';
       const graphInputSig = nativeSourceIdentity(nativeGraphRoute?.inputSource);
       const snap: LayerSnapshot = {
