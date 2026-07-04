@@ -871,6 +871,45 @@ impl NativeComputeGraphRenderBlend {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+enum NativeComputeGraphDepthCompare {
+    Less,
+    LessEqual,
+    Always,
+}
+
+impl NativeComputeGraphDepthCompare {
+    fn signature(self) -> &'static str {
+        match self {
+            Self::Less => "less",
+            Self::LessEqual => "less-equal",
+            Self::Always => "always",
+        }
+    }
+
+    fn compare_function(self) -> wgpu::CompareFunction {
+        match self {
+            Self::Less => wgpu::CompareFunction::Less,
+            Self::LessEqual => wgpu::CompareFunction::LessEqual,
+            Self::Always => wgpu::CompareFunction::Always,
+        }
+    }
+
+    fn from_label(label: &str) -> Self {
+        match label
+            .trim()
+            .to_ascii_lowercase()
+            .replace('_', "-")
+            .replace(' ', "-")
+            .as_str()
+        {
+            "less-equal" | "less-or-equal" | "lequal" => Self::LessEqual,
+            "always" | "off" | "none" => Self::Always,
+            _ => Self::Less,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct NativeComputeGraphRenderPlan {
     name: String,
@@ -886,6 +925,9 @@ struct NativeComputeGraphRenderPlan {
     instance_count: u32,
     indirect_buffer_id: Option<String>,
     indirect_offset: u64,
+    depth_enabled: bool,
+    depth_write: bool,
+    depth_compare: NativeComputeGraphDepthCompare,
     bindings: Vec<NativeComputeGraphBindingSpec>,
 }
 
@@ -1443,6 +1485,7 @@ impl App {
             "compute_graph_instanced_render": true,
             "compute_graph_indirect_render": true,
             "compute_graph_texture_sampling": true,
+            "compute_graph_depth_render": true,
             "compute_graph_source_frame_target": true,
             "persistent_compute_buffers": true,
             "native_3d_smoke_graph": true,
@@ -1489,6 +1532,7 @@ impl App {
                         "compute_graph_instanced_render",
                         "compute_graph_indirect_render",
                         "compute_graph_texture_sampling",
+                        "compute_graph_depth_render",
                         "compute_graph_source_frame_target",
                         "persistent_compute_buffers",
                         "native_3d_smoke_graph"
@@ -2802,6 +2846,19 @@ impl App {
             .unwrap_or(0.0)
             .round()
             .max(0.0) as u64;
+        let depth_enabled = bool_at(render, &["depth"])
+            .or_else(|| bool_at(render, &["depth_test"]))
+            .or_else(|| bool_at(render, &["depthTest"]))
+            .or_else(|| bool_at(render, &["depth_write"]))
+            .or_else(|| bool_at(render, &["depthWrite"]))
+            .unwrap_or(false);
+        let depth_write = bool_at(render, &["depth_write"])
+            .or_else(|| bool_at(render, &["depthWrite"]))
+            .unwrap_or(depth_enabled);
+        let depth_compare = string_at(render, &["depth_compare"])
+            .or_else(|| string_at(render, &["depthCompare"]))
+            .map(|label| NativeComputeGraphDepthCompare::from_label(&label))
+            .unwrap_or(NativeComputeGraphDepthCompare::Less);
         let target_label = string_at(render, &["target"])
             .or_else(|| string_at(render, &["target_type"]))
             .or_else(|| string_at(render, &["render_target"]))
@@ -2846,9 +2903,12 @@ impl App {
         Ok(NativeComputeGraphRenderPlan {
             name,
             cache_key: format!(
-                "graph-render:{shader_id}:{}:{vertex_entry}:{fragment_entry}:{}:{layout_sig}",
+                "graph-render:{shader_id}:{}:{vertex_entry}:{fragment_entry}:{}:{}:{}:{}:{layout_sig}",
                 source_hash,
-                blend.signature()
+                blend.signature(),
+                if depth_enabled { "depth" } else { "nodepth" },
+                if depth_write { "write" } else { "read" },
+                depth_compare.signature()
             ),
             source,
             vertex_entry,
@@ -2861,6 +2921,9 @@ impl App {
             instance_count,
             indirect_buffer_id,
             indirect_offset,
+            depth_enabled,
+            depth_write,
+            depth_compare,
             bindings,
         })
     }
@@ -4645,22 +4708,27 @@ impl RenderState {
         transient_buffers: &HashMap<String, NativeComputeGraphGpuBuffer>,
         render_plan: &NativeComputeGraphRenderPlan,
     ) -> Result<Value, String> {
-        let (output_format, target_name, source_id, source_slot) = match &render_plan.target {
-            NativeComputeGraphRenderTarget::Snapshot => (
-                self.config.format,
-                "snapshot",
-                None::<String>,
-                None::<usize>,
-            ),
-            NativeComputeGraphRenderTarget::SourceFrame {
-                source_id, slot, ..
-            } => (
-                self.source_frame_format,
-                "source_frame",
-                Some(source_id.clone()),
-                Some((*slot).min(MAX_SOURCE_FRAME_SLOTS - 1)),
-            ),
-        };
+        let (output_format, target_name, target_width, target_height, source_id, source_slot) =
+            match &render_plan.target {
+                NativeComputeGraphRenderTarget::Snapshot => (
+                    self.config.format,
+                    "snapshot",
+                    self.config.width.max(1),
+                    self.config.height.max(1),
+                    None::<String>,
+                    None::<usize>,
+                ),
+                NativeComputeGraphRenderTarget::SourceFrame {
+                    source_id, slot, ..
+                } => (
+                    self.source_frame_format,
+                    "source_frame",
+                    self.source_frame_size.max(1) as u32,
+                    self.source_frame_size.max(1) as u32,
+                    Some(source_id.clone()),
+                    Some((*slot).min(MAX_SOURCE_FRAME_SLOTS - 1)),
+                ),
+            };
         let pipeline_key = native_graph_render_pipeline_key(&render_plan.cache_key, output_format);
         let layout_specs = render_plan
             .bindings
@@ -4715,6 +4783,38 @@ impl RenderState {
         } else {
             &self.snapshot_view
         };
+        let depth_texture;
+        let depth_view;
+        let depth_stencil_attachment = if render_plan.depth_enabled {
+            depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Ghost Native Compute Graph Depth Texture"),
+                size: wgpu::Extent3d {
+                    width: target_width,
+                    height: target_height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Depth24Plus,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            });
+            depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("Ghost Native Compute Graph Depth View"),
+                ..Default::default()
+            });
+            Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Discard,
+                }),
+                stencil_ops: None,
+            })
+        } else {
+            None
+        };
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(&format!(
@@ -4734,7 +4834,7 @@ impl RenderState {
                     },
                     depth_slice: None,
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment,
                 timestamp_writes: None,
                 occlusion_query_set: None,
                 multiview_mask: None,
@@ -4773,6 +4873,9 @@ impl RenderState {
             "draw": if render_plan.indirect_buffer_id.is_some() { "indirect" } else { "direct" },
             "vertex_count": render_plan.vertex_count,
             "instance_count": render_plan.instance_count,
+            "depth": render_plan.depth_enabled,
+            "depth_write": render_plan.depth_write,
+            "depth_compare": render_plan.depth_compare.signature(),
             "format": texture_format_label(output_format),
             "include_snapshot": render_plan.include_snapshot,
         });
@@ -4949,7 +5052,17 @@ impl RenderState {
                     buffers: &[],
                 },
                 primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
+                depth_stencil: if render_plan.depth_enabled {
+                    Some(wgpu::DepthStencilState {
+                        format: wgpu::TextureFormat::Depth24Plus,
+                        depth_write_enabled: Some(render_plan.depth_write),
+                        depth_compare: Some(render_plan.depth_compare.compare_function()),
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                    })
+                } else {
+                    None
+                },
                 multisample: wgpu::MultisampleState::default(),
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,

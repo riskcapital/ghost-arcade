@@ -856,6 +856,7 @@ function makeDefaultCapabilities(overrides = {}) {
       compute_graph_instanced_render: false,
       compute_graph_indirect_render: false,
       compute_graph_texture_sampling: false,
+      compute_graph_depth_render: false,
       compute_graph_source_frame_target: false,
       persistent_compute_buffers: false,
       native_3d_smoke_graph: false,
