@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use std::{
     borrow::Cow,
     collections::HashMap,
@@ -728,12 +730,14 @@ struct NativeComputeGraphBufferSpec {
     initial_bytes: Vec<u8>,
     persistent: bool,
     clear: bool,
+    indirect: bool,
 }
 
 struct NativeComputeGraphGpuBuffer {
     buffer: wgpu::Buffer,
     byte_length: u64,
     kind: NativeComputeBufferBindingKind,
+    indirect: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -826,6 +830,8 @@ struct NativeComputeGraphRenderPlan {
     blend: NativeComputeGraphRenderBlend,
     vertex_count: u32,
     instance_count: u32,
+    indirect_buffer_id: Option<String>,
+    indirect_offset: u64,
     bindings: Vec<NativeComputeGraphBindingSpec>,
 }
 
@@ -1380,6 +1386,7 @@ impl App {
             "compute_graph_render": true,
             "compute_graph_multi_render": true,
             "compute_graph_instanced_render": true,
+            "compute_graph_indirect_render": true,
             "compute_graph_source_frame_target": true,
             "persistent_compute_buffers": true,
             "native_3d_smoke_graph": true,
@@ -1424,6 +1431,7 @@ impl App {
                         "compute_graph_render",
                         "compute_graph_multi_render",
                         "compute_graph_instanced_render",
+                        "compute_graph_indirect_render",
                         "compute_graph_source_frame_target",
                         "persistent_compute_buffers",
                         "native_3d_smoke_graph"
@@ -2654,6 +2662,24 @@ impl App {
             .unwrap_or(1.0)
             .round()
             .clamp(1.0, u32::MAX as f64) as u32;
+        let indirect_buffer_id = string_at(render, &["draw_indirect_buffer"])
+            .or_else(|| string_at(render, &["indirect_buffer"]))
+            .or_else(|| string_at(render, &["indirect_buffer_id"]))
+            .or_else(|| string_at(render, &["drawIndirectBuffer"]))
+            .or_else(|| string_at(render, &["indirectBuffer"]));
+        if let Some(indirect_buffer_id) = indirect_buffer_id.as_ref() {
+            if !buffer_kinds.contains_key(indirect_buffer_id) {
+                return Err(format!(
+                    "compute_graph render `{shader_id}` indirect draw references missing buffer `{indirect_buffer_id}`"
+                ));
+            }
+        }
+        let indirect_offset = number_at(render, &["draw_indirect_offset"])
+            .or_else(|| number_at(render, &["indirect_offset"]))
+            .or_else(|| number_at(render, &["indirectOffset"]))
+            .unwrap_or(0.0)
+            .round()
+            .max(0.0) as u64;
         let target_label = string_at(render, &["target"])
             .or_else(|| string_at(render, &["target_type"]))
             .or_else(|| string_at(render, &["render_target"]))
@@ -2711,6 +2737,8 @@ impl App {
             blend,
             vertex_count,
             instance_count,
+            indirect_buffer_id,
+            indirect_offset,
             bindings,
         })
     }
@@ -4601,7 +4629,24 @@ impl RenderState {
             });
             pass.set_pipeline(&cached.pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
-            pass.draw(0..render_plan.vertex_count, 0..render_plan.instance_count);
+            if let Some(indirect_buffer_id) = render_plan.indirect_buffer_id.as_ref() {
+                let Some(buffer) = self.compute_graph_buffer(transient_buffers, indirect_buffer_id)
+                else {
+                    return Err(format!(
+                        "native compute graph render `{}` references missing indirect buffer `{}`",
+                        render_plan.name, indirect_buffer_id
+                    ));
+                };
+                if !buffer.indirect {
+                    return Err(format!(
+                        "native compute graph render `{}` indirect buffer `{}` was not created with indirect usage",
+                        render_plan.name, indirect_buffer_id
+                    ));
+                }
+                pass.draw_indirect(&buffer.buffer, render_plan.indirect_offset);
+            } else {
+                pass.draw(0..render_plan.vertex_count, 0..render_plan.instance_count);
+            }
         }
         if let Some(slot) = source_slot {
             self.generate_source_frame_mips(encoder, slot);
@@ -4613,11 +4658,24 @@ impl RenderState {
             "bindings": render_plan.bindings.len(),
             "target": target_name,
             "blend": render_plan.blend.signature(),
+            "draw": if render_plan.indirect_buffer_id.is_some() { "indirect" } else { "direct" },
             "vertex_count": render_plan.vertex_count,
             "instance_count": render_plan.instance_count,
             "format": texture_format_label(output_format),
             "include_snapshot": render_plan.include_snapshot,
         });
+        if let Some(indirect_buffer_id) = render_plan.indirect_buffer_id.as_ref() {
+            if let Some(object) = result.as_object_mut() {
+                object.insert(
+                    "indirect_buffer".to_string(),
+                    Value::String(indirect_buffer_id.clone()),
+                );
+                object.insert(
+                    "indirect_offset".to_string(),
+                    Value::from(render_plan.indirect_offset),
+                );
+            }
+        }
         if let Some(source_id) = source_id {
             if let Some(object) = result.as_object_mut() {
                 object.insert("source_id".to_string(), json!(source_id));
@@ -4721,7 +4779,10 @@ impl RenderState {
         &self,
         spec: &NativeComputeGraphBufferSpec,
     ) -> NativeComputeGraphGpuBuffer {
-        let usage = spec.kind.buffer_usage();
+        let mut usage = spec.kind.buffer_usage();
+        if spec.indirect {
+            usage |= wgpu::BufferUsages::INDIRECT;
+        }
         let buffer = if spec.initial_bytes.is_empty() {
             self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(&format!("Ghost Native Compute Graph Buffer {}", spec.id)),
@@ -4741,6 +4802,7 @@ impl RenderState {
             buffer,
             byte_length: spec.byte_length,
             kind: spec.kind,
+            indirect: spec.indirect,
         }
     }
 
@@ -4755,6 +4817,7 @@ impl RenderState {
                 .map(|existing| {
                     existing.byte_length != spec.byte_length
                         || existing.kind.signature() != spec.kind.signature()
+                        || existing.indirect != spec.indirect
                 })
                 .unwrap_or(true);
         if recreate {
@@ -5520,6 +5583,10 @@ fn parse_compute_graph_buffer(value: &Value) -> Result<NativeComputeGraphBufferS
     let clear = bool_at(value, &["clear"])
         .or_else(|| bool_at(value, &["reset"]))
         .unwrap_or(false);
+    let indirect = bool_at(value, &["indirect"])
+        .or_else(|| bool_at(value, &["draw_indirect"]))
+        .or_else(|| bool_at(value, &["drawIndirect"]))
+        .unwrap_or(false);
     Ok(NativeComputeGraphBufferSpec {
         id,
         byte_length,
@@ -5527,6 +5594,7 @@ fn parse_compute_graph_buffer(value: &Value) -> Result<NativeComputeGraphBufferS
         initial_bytes,
         persistent,
         clear,
+        indirect,
     })
 }
 
