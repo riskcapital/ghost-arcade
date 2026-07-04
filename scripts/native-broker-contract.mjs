@@ -127,6 +127,53 @@ try {
   }
   assert(unsupportedErrored, 'broker shared-texture upload unexpectedly succeeded or returned the wrong error');
 
+  const beforeSharedFrameStatus = await broker.invoke('native_renderer_get_status');
+  await broker.invoke('native_renderer_submit_commands', {
+    commands: [
+      {
+        type: 'upload_source_frame',
+        source_id: 'shared-frame-contract',
+        width: 16,
+        height: 16,
+        shared_handle: 'fake',
+        shared_texture_platform: process.platform === 'darwin' ? 'iosurface' : 'dxgi',
+        shared_texture_handle_encoding: 'base64',
+        seq: 1,
+      },
+    ],
+  });
+  const sharedFrameStatus = await broker.invoke('native_renderer_get_status');
+  assert(
+    Number(sharedFrameStatus.source_frame_uploads ?? 0) ===
+      Number(beforeSharedFrameStatus.source_frame_uploads ?? 0),
+    `shared texture source-frame fallback must not count as an upload: ${JSON.stringify(sharedFrameStatus)}`,
+  );
+  assert(
+    Number(sharedFrameStatus.source_frame_shared_texture_uploads ?? 0) ===
+      Number(beforeSharedFrameStatus.source_frame_shared_texture_uploads ?? 0),
+    `unsupported shared texture source-frame should not report a completed shared upload: ${JSON.stringify(sharedFrameStatus)}`,
+  );
+  assert(
+    Number(sharedFrameStatus.source_frame_rejected_uploads ?? 0) >
+      Number(beforeSharedFrameStatus.source_frame_rejected_uploads ?? 0),
+    `shared texture source-frame rejection was not counted: ${JSON.stringify(sharedFrameStatus)}`,
+  );
+  assert(
+    Number(sharedFrameStatus.source_frame_shared_texture_rejected_uploads ?? 0) >
+      Number(beforeSharedFrameStatus.source_frame_shared_texture_rejected_uploads ?? 0),
+    `shared texture source-frame rejection was not labelled: ${JSON.stringify(sharedFrameStatus)}`,
+  );
+  assert(
+    sharedFrameStatus.source_frame_last_upload_transport === 'shared-texture-unsupported',
+    `shared texture rejection did not preserve transport detail: ${JSON.stringify(sharedFrameStatus)}`,
+  );
+  assert(
+    /shared texture source-frame upload is not implemented yet/.test(
+      String(sharedFrameStatus.source_frame_last_reject_reason ?? ''),
+    ),
+    `shared texture rejection did not expose a clear reason: ${JSON.stringify(sharedFrameStatus)}`,
+  );
+
   console.log(
     `Native broker contract passed: backend=${status.backend} adapter=${status.adapter_name ?? 'unknown'} graphs=${graphInstruments.size}`,
   );

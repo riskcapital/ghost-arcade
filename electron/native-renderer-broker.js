@@ -750,6 +750,11 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     source_frame_shared_texture_uploads: Number(
       status.source_frame_shared_texture_uploads ?? previous.source_frame_shared_texture_uploads ?? 0,
     ),
+    source_frame_shared_texture_rejected_uploads: Number(
+      status.source_frame_shared_texture_rejected_uploads ??
+        previous.source_frame_shared_texture_rejected_uploads ??
+        0,
+    ),
     source_frame_rejected_uploads: Number(
       status.source_frame_rejected_uploads ?? previous.source_frame_rejected_uploads ?? 0,
     ),
@@ -773,6 +778,9 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     ),
     source_frame_last_upload_transport: String(
       status.source_frame_last_upload_transport ?? previous.source_frame_last_upload_transport ?? 'none',
+    ),
+    source_frame_last_reject_reason: String(
+      status.source_frame_last_reject_reason ?? previous.source_frame_last_reject_reason ?? 'none',
     ),
     native_instrument_frame_renders: Number(status.native_instrument_frame_renders ?? previous.native_instrument_frame_renders ?? 0),
     compute_graph_runs: Number(status.compute_graph_runs ?? previous.compute_graph_runs ?? 0),
@@ -946,6 +954,11 @@ function normalizeStats(stats, previous = makeDefaultStats()) {
     source_frame_shared_texture_uploads: Number(
       stats.source_frame_shared_texture_uploads ?? previous.source_frame_shared_texture_uploads ?? 0,
     ),
+    source_frame_shared_texture_rejected_uploads: Number(
+      stats.source_frame_shared_texture_rejected_uploads ??
+        previous.source_frame_shared_texture_rejected_uploads ??
+        0,
+    ),
     source_frame_rejected_uploads: Number(
       stats.source_frame_rejected_uploads ?? previous.source_frame_rejected_uploads ?? 0,
     ),
@@ -969,6 +982,9 @@ function normalizeStats(stats, previous = makeDefaultStats()) {
     ),
     source_frame_last_upload_transport: String(
       stats.source_frame_last_upload_transport ?? previous.source_frame_last_upload_transport ?? 'none',
+    ),
+    source_frame_last_reject_reason: String(
+      stats.source_frame_last_reject_reason ?? previous.source_frame_last_reject_reason ?? 'none',
     ),
     avg_render_cpu_ms: Number(stats.avg_render_cpu_ms ?? previous.avg_render_cpu_ms ?? 0),
     gpu_timing_supported: !!(stats.gpu_timing_supported ?? previous.gpu_timing_supported ?? false),
@@ -1104,6 +1120,7 @@ function makeDefaultStatus(overrides = {}) {
     source_frame_base64_uploads: 0,
     source_frame_json_uploads: 0,
     source_frame_shared_texture_uploads: 0,
+    source_frame_shared_texture_rejected_uploads: 0,
     source_frame_rejected_uploads: 0,
     source_frame_input_bytes_uploaded: 0,
     source_frame_resampled_bytes_uploaded: 0,
@@ -1112,6 +1129,7 @@ function makeDefaultStatus(overrides = {}) {
     source_frame_last_upload_width: 0,
     source_frame_last_upload_height: 0,
     source_frame_last_upload_transport: 'none',
+    source_frame_last_reject_reason: 'none',
     native_instrument_frame_renders: 0,
     compute_graph_runs: 0,
     compute_graph_passes: 0,
@@ -1159,6 +1177,7 @@ function makeDefaultStatus(overrides = {}) {
     source_frame_base64_uploads: 0,
     source_frame_json_uploads: 0,
     source_frame_shared_texture_uploads: 0,
+    source_frame_shared_texture_rejected_uploads: 0,
     source_frame_rejected_uploads: 0,
     source_frame_input_bytes_uploaded: 0,
     source_frame_resampled_bytes_uploaded: 0,
@@ -1167,6 +1186,7 @@ function makeDefaultStatus(overrides = {}) {
     source_frame_last_upload_width: 0,
     source_frame_last_upload_height: 0,
     source_frame_last_upload_transport: 'none',
+    source_frame_last_reject_reason: 'none',
     native_shader_renders: 0,
     native_instrument_frame_renders: 0,
     render_clock_mode: 'live',
@@ -1411,6 +1431,7 @@ function makeDefaultStats() {
     source_frame_base64_uploads: 0,
     source_frame_json_uploads: 0,
     source_frame_shared_texture_uploads: 0,
+    source_frame_shared_texture_rejected_uploads: 0,
     source_frame_rejected_uploads: 0,
     source_frame_input_bytes_uploaded: 0,
     source_frame_resampled_bytes_uploaded: 0,
@@ -1419,6 +1440,7 @@ function makeDefaultStats() {
     source_frame_last_upload_width: 0,
     source_frame_last_upload_height: 0,
     source_frame_last_upload_transport: 'none',
+    source_frame_last_reject_reason: 'none',
     native_shader_renders: 0,
     native_instrument_frame_renders: 0,
     render_clock_updates: 0,
