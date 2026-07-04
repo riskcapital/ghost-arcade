@@ -190,12 +190,18 @@ async function inspectAppBridge() {
     const features = capabilities?.features ?? {};
     const checks = new Map((readiness?.checks ?? []).map((check) => [check?.id, check]));
     const directSharedRpc = capabilities?.implemented_methods?.includes('upload_source_gpu_shared_texture');
+    const nativeOutputDriverReady = !!(
+      checks.get('native-output-driver')?.ok &&
+      readiness?.modes?.output_driver?.ok
+    );
+    const fullV2Blockers = readiness?.modes?.full_v2?.blockers ?? [];
     const ok =
       !!status?.backend_ready &&
       !!features.shared_texture_output_export === outputExportExpected &&
       !!features.native_texture_share_sender === outputExportExpected &&
       !!features.native_mp4_frame_encoder &&
       !!features.native_recording &&
+      nativeOutputDriverReady &&
       !!checks.get('native-texture-share-sender')?.ok === outputExportExpected &&
       !!checks.get('native-mp4-frame-encoder')?.ok &&
       !!directSharedRpc;
@@ -207,6 +213,10 @@ async function inspectAppBridge() {
         `outputSharedTexture=${features.shared_texture_output_export ? 'on' : 'pending'}`,
         `nativeShareSender=${features.native_texture_share_sender ? 'on' : 'pending'}`,
         `nativeMp4Encoder=${features.native_mp4_frame_encoder ? 'on' : 'missing'}`,
+        `shadowMode=${readiness?.modes?.shadow?.ok ? 'on' : 'pending'}`,
+        `outputDriver=${nativeOutputDriverReady ? 'on' : 'pending'}`,
+        `outputActive=${readiness?.modes?.output_active?.ok ? 'on' : 'idle'}`,
+        `fullV2=${readiness?.modes?.full_v2?.ok ? 'ready' : `pending(${fullV2Blockers.length})`}`,
         `staticImageDecode=${features.native_static_image_decode ? 'native' : 'fallback'}`,
         `staticImagePrefetch=${features.native_static_image_prefetch ? 'native' : 'fallback'}`,
         `normalMediaDecode=${features.native_media_decode ? 'native' : features.native_static_image_decode ? 'static-native/video-source-frame' : 'source-frame-fallback'}`,
