@@ -455,6 +455,7 @@ async function main() {
       !capabilities.features.compute_shader_host ||
       !capabilities.features.compute_graph_host ||
       !capabilities.features.compute_graph_render ||
+      !capabilities.features.compute_graph_multi_render ||
       !capabilities.features.compute_graph_source_frame_target ||
       !capabilities.features.persistent_compute_buffers ||
       !capabilities.features.native_3d_smoke_graph ||
@@ -473,6 +474,7 @@ async function main() {
       !smokeManifest ||
       smokeManifest.source_uri_prefix !== 'native-graph://smoke-3d/' ||
       smokeManifest.render_target !== 'source_frame' ||
+      !smokeManifest.features?.includes('compute_graph_multi_render') ||
       !smokeManifest.features?.includes('compute_graph_source_frame_target')
     ) {
       throw new Error(`native graph instrument manifest entry is incomplete: ${JSON.stringify(capabilities.native_graph_instrument_manifest)}`);
@@ -641,6 +643,75 @@ async function main() {
     }
     if (!graphRenderSnapshot?.checksum || graphRenderSnapshot.dark_frame || Number(graphRenderSnapshot.nonzero_pixels ?? 0) <= 0) {
       throw new Error(`native compute graph render snapshot failed: ${JSON.stringify(computeGraph)}`);
+    }
+    const computeGraphMultiRender = await rpc.send('compute_graph', {
+      buffers: [
+        { id: 'graph-multi-uniform', kind: 'uniform', initial_u32: [256, 13531, 8, 5] },
+        { id: 'graph-multi-scratch', kind: 'storage', byte_length: 1024 },
+        { id: 'graph-multi-output', kind: 'storage', byte_length: 1024 },
+      ],
+      passes: [
+        {
+          name: 'multi-fill',
+          shader_id: 'native-compute-graph-fill',
+          entry: 'cs_fill',
+          dispatch: [4, 1, 1],
+          bindings: [
+            { binding: 0, resource: 'graph-multi-scratch', kind: 'storage' },
+            { binding: 1, resource: 'graph-multi-uniform', kind: 'uniform' },
+          ],
+        },
+        {
+          name: 'multi-transform',
+          shader_id: 'native-compute-graph-transform',
+          entry: 'cs_transform',
+          dispatch: [4, 1, 1],
+          bindings: [
+            { binding: 0, resource: 'graph-multi-scratch', kind: 'read-only-storage' },
+            { binding: 1, resource: 'graph-multi-output', kind: 'storage' },
+            { binding: 2, resource: 'graph-multi-uniform', kind: 'uniform' },
+          ],
+        },
+      ],
+      render_passes: [
+        {
+          name: 'multi-render-base',
+          shader_id: 'native-compute-graph-render',
+          vertex_entry: 'vs_main',
+          fragment_entry: 'fs_main',
+          target: 'snapshot',
+          clear: true,
+          include_snapshot: false,
+          blend: 'replace',
+          bindings: [
+            { binding: 0, resource: 'graph-multi-output', kind: 'read-only-storage' },
+          ],
+        },
+        {
+          name: 'multi-render-add',
+          shader_id: 'native-compute-graph-render',
+          vertex_entry: 'vs_main',
+          fragment_entry: 'fs_main',
+          target: 'snapshot',
+          clear: false,
+          include_snapshot: true,
+          blend: 'add',
+          bindings: [
+            { binding: 0, resource: 'graph-multi-output', kind: 'read-only-storage' },
+          ],
+        },
+      ],
+    }, 5000);
+    if (computeGraphMultiRender?.render || computeGraphMultiRender?.renders?.length !== 2) {
+      throw new Error(`native compute graph multi-render response shape is wrong: ${JSON.stringify(computeGraphMultiRender)}`);
+    }
+    if (
+      computeGraphMultiRender.renders[0]?.blend !== 'replace' ||
+      computeGraphMultiRender.renders[1]?.blend !== 'add' ||
+      !computeGraphMultiRender?.render_snapshot?.checksum ||
+      computeGraphMultiRender.render_snapshot.dark_frame
+    ) {
+      throw new Error(`native compute graph multi-render failed: ${JSON.stringify(computeGraphMultiRender)}`);
     }
     const persistentFill = await rpc.send('compute_graph', {
       buffers: [
@@ -957,16 +1028,16 @@ async function main() {
     if (Number(status.native_instrument_frame_renders ?? 0) < 4) {
       throw new Error(`native instrument frames were not rendered: ${JSON.stringify(status)}`);
     }
-    if (Number(status.compute_graph_runs ?? 0) < 4) {
+    if (Number(status.compute_graph_runs ?? 0) < 5) {
       throw new Error(`native compute graph runs were not counted: ${JSON.stringify(status)}`);
     }
-    if (Number(status.compute_graph_passes ?? 0) < 6) {
+    if (Number(status.compute_graph_passes ?? 0) < 8) {
       throw new Error(`native compute graph passes were not counted: ${JSON.stringify(status)}`);
     }
-    if (Number(status.compute_graph_render_passes ?? 0) < 2) {
+    if (Number(status.compute_graph_render_passes ?? 0) < 4) {
       throw new Error(`native compute graph render passes were not counted: ${JSON.stringify(status)}`);
     }
-    if (Number(status.compute_graph_snapshot_renders ?? 0) < 1) {
+    if (Number(status.compute_graph_snapshot_renders ?? 0) < 3) {
       throw new Error(`native compute graph snapshot renders were not counted: ${JSON.stringify(status)}`);
     }
     if (Number(status.compute_graph_source_frame_renders ?? 0) < 1) {
@@ -978,7 +1049,7 @@ async function main() {
     if (Number(status.compute_graph_persistent_buffers ?? 0) < 2) {
       throw new Error(`native persistent compute graph buffers were not reported: ${JSON.stringify(status)}`);
     }
-    if (Number(stats.compute_graph_runs ?? 0) < 4 || Number(stats.compute_graph_persistent_buffers ?? 0) < 2) {
+    if (Number(stats.compute_graph_runs ?? 0) < 5 || Number(stats.compute_graph_persistent_buffers ?? 0) < 2) {
       throw new Error(`native compute graph stats were not reported: ${JSON.stringify(stats)}`);
     }
     if (Number(status.source_frame_size ?? 0) < 1536) {
