@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -1020,9 +1020,11 @@ async function main() {
     if (
       !capabilities.implemented_methods?.includes('output_shared_texture') ||
       !capabilities.implemented_methods?.includes('get_output_shared_texture') ||
-      !capabilities.implemented_methods?.includes('upload_source_gpu_shared_texture')
+      !capabilities.implemented_methods?.includes('upload_source_gpu_shared_texture') ||
+      !capabilities.implemented_methods?.includes('export_frame_snapshot') ||
+      !capabilities.features.frame_snapshot_export
     ) {
-      throw new Error(`native output shared-texture RPC missing from capabilities: ${JSON.stringify(capabilities.implemented_methods)}`);
+      throw new Error(`native output/capture RPC missing from capabilities: ${JSON.stringify(capabilities.implemented_methods)}`);
     }
     const outputTexture = await rpc.send('output_shared_texture', {}, 5000);
     if (outputExportExpected) {
@@ -1817,6 +1819,24 @@ async function main() {
     if (existsSync(sourceFrameFile)) {
       throw new Error(`source frame rgba_file was not deleted after native read: ${sourceFrameFile}`);
     }
+    const exportedFramePath = join(smokeTempDir, 'native-frame-snapshot.rgba');
+    const exportedFrame = await rpc.send('export_frame_snapshot', {
+      path: exportedFramePath,
+      time: 0.49,
+      frame_index: 8,
+    }, 10000);
+    assertFrame('native exported frame snapshot', exportedFrame, 0.03);
+    const exportedFrameBytes = statSync(exportedFramePath).size;
+    if (
+      exportedFrameBytes !== Number(exportedFrame.byte_length ?? 0) ||
+      exportedFrameBytes !== Number(exportedFrame.bytes_written ?? 0) ||
+      exportedFrameBytes !== Number(exportedFrame.width ?? 0) * Number(exportedFrame.height ?? 0) * 4
+    ) {
+      throw new Error(`native exported frame byte count mismatch: ${JSON.stringify({ exportedFrameBytes, exportedFrame })}`);
+    }
+    if (exportedFrame.includes_pixels || exportedFrame.rgba_b64) {
+      throw new Error(`native frame export leaked pixels through JSON: ${JSON.stringify(exportedFrame)}`);
+    }
 
     if (outputExportExpected) {
       const beforeSharedFrameStatus = await rpc.send('status', {}, 5000);
@@ -2082,6 +2102,7 @@ async function main() {
       `color=${color.checksum}`,
       `preview=${preview.checksum}`,
       `frameFile=${sourceFrameFileSnapshot?.checksum ?? 'none'}`,
+      `frameExport=${exportedFrame.checksum}`,
       `frameShared=${sourceFrameSharedTextureSnapshot?.checksum ?? 'none'}`,
       `wgsl=${registeredWgsl.first.checksum}->${registeredWgsl.second.checksum}`,
       `uv=${previewCrop.checksum}/${previewFlip.checksum}`,

@@ -758,6 +758,14 @@ export interface RendererFrameSnapshot {
   rgba_b64?: string;
 }
 
+export interface NativeRendererFrameSnapshotExportResult extends RendererFrameSnapshot {
+  path: string;
+  bytes_written: number;
+  storage_format: 'raw-texture' | string;
+  frame_index: number;
+  time_seconds: number | null;
+}
+
 export interface NativeRendererOutputSharedTexture {
   available: boolean;
   platform: 'iosurface' | 'dxgi' | 'unsupported' | string;
@@ -1073,6 +1081,16 @@ export async function getNativeRendererFrameSnapshot(
 ) {
   return invoke<RendererFrameSnapshot>('native_renderer_get_frame_snapshot', {
     include_pixels: includePixels,
+    ...options,
+  });
+}
+
+export async function exportNativeRendererFrameSnapshot(
+  path: string,
+  options: { time?: number; frame_index?: number; format?: string } = {},
+) {
+  return invoke<NativeRendererFrameSnapshotExportResult>('native_renderer_export_frame_snapshot', {
+    path,
     ...options,
   });
 }
