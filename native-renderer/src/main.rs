@@ -7,7 +7,7 @@ use std::{
     collections::HashMap,
     fs,
     io::{self, BufRead, Write},
-    path::Path,
+    path::{Path, PathBuf},
     sync::mpsc::{self, Receiver, Sender},
     thread,
     time::{Duration, Instant},
@@ -37,6 +37,8 @@ const SOURCE_FRAME_SIZE_BALANCED: usize = 1536;
 const SOURCE_FRAME_SIZE_DEFAULT: usize = 2048;
 const SOURCE_FRAME_SIZE_INSANE: usize = 3072;
 const SOURCE_FRAME_MIP_LEVELS_MAX: u32 = 5;
+const MAX_NATIVE_IMAGE_DECODE_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_NATIVE_IMAGE_DECODE_PIXELS: u64 = 8192 * 8192;
 const SOURCE_FRAME_FORMAT_FALLBACK: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const SOURCE_FRAME_FORMAT_HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const DEFAULT_COMMAND_QUEUE_CAPACITY: u32 = 8192;
@@ -230,6 +232,10 @@ struct CoreStatus {
     source_frame_last_upload_height: u32,
     source_frame_last_upload_transport: String,
     source_frame_last_reject_reason: String,
+    native_image_decodes: u64,
+    native_image_decode_failures: u64,
+    native_image_decode_bytes_uploaded: u64,
+    native_image_decode_last_error: String,
     native_instrument_frame_renders: u64,
     compute_graph_runs: u64,
     compute_graph_passes: u64,
@@ -511,6 +517,10 @@ struct CoreStats {
     source_frame_last_upload_height: u32,
     source_frame_last_upload_transport: String,
     source_frame_last_reject_reason: String,
+    native_image_decodes: u64,
+    native_image_decode_failures: u64,
+    native_image_decode_bytes_uploaded: u64,
+    native_image_decode_last_error: String,
     native_shader_renders: u64,
     native_instrument_frame_renders: u64,
     compute_graph_runs: u64,
@@ -1635,6 +1645,7 @@ impl App {
             "source_frame_file_handoff": true,
             "source_frame_mips": self.renderer.as_ref().is_some_and(|renderer| renderer.source_frame_mip_levels > 1),
             "source_frame_hdr": self.renderer.as_ref().is_some_and(|renderer| renderer.source_frame_format == SOURCE_FRAME_FORMAT_HDR),
+            "native_static_image_decode": true,
             "runtime_cache_clear": true,
             "native_graph_buffer_prune": true,
             "compute_shader_host": true,
@@ -2081,6 +2092,15 @@ impl App {
                 "none".to_string()
             } else {
                 self.stats.source_frame_last_reject_reason.clone()
+            },
+            native_image_decodes: self.stats.native_image_decodes,
+            native_image_decode_failures: self.stats.native_image_decode_failures,
+            native_image_decode_bytes_uploaded: self.stats.native_image_decode_bytes_uploaded,
+            native_image_decode_last_error: if self.stats.native_image_decode_last_error.is_empty()
+            {
+                "none".to_string()
+            } else {
+                self.stats.native_image_decode_last_error.clone()
             },
             native_instrument_frame_renders: self.stats.native_instrument_frame_renders,
             compute_graph_runs: self.stats.compute_graph_runs,
@@ -4270,6 +4290,8 @@ impl App {
             return;
         };
         let source_id = string_at(command, &["source_id"]);
+        let source_id_for_decode = source_id.clone();
+        let uri_for_decode = string_at(command, &["uri"]);
         let source_type =
             string_at(command, &["source_type"]).unwrap_or_else(|| "none".to_string());
         let preview_slot = source_id
@@ -4294,6 +4316,12 @@ impl App {
         }
         if source_type != "color" {
             entry.color = source_type_color(&source_type, &layer_id);
+        }
+        if source_type == "image" {
+            if let (Some(source_id), Some(uri)) = (source_id_for_decode, uri_for_decode.as_deref())
+            {
+                self.decode_native_image_source(&source_id, uri);
+            }
         }
     }
 
@@ -4345,6 +4373,97 @@ impl App {
         }
     }
 
+    fn decode_native_image_source(&mut self, source_id: &str, uri: &str) {
+        let Some(path) = local_media_path_from_uri(uri) else {
+            return;
+        };
+        let existing_seq = self
+            .source_frames
+            .get(source_id)
+            .map(|frame| frame.seq)
+            .unwrap_or(0);
+        match decode_native_image_rgba(&path) {
+            Ok((width, height, rgba)) => {
+                let uploaded = self.upload_source_frame_pixels(
+                    source_id.to_string(),
+                    existing_seq.saturating_add(1),
+                    width,
+                    height,
+                    &rgba,
+                    "native-image",
+                    false,
+                );
+                self.stats.native_image_decodes = self.stats.native_image_decodes.saturating_add(1);
+                self.stats.native_image_decode_bytes_uploaded = self
+                    .stats
+                    .native_image_decode_bytes_uploaded
+                    .saturating_add(uploaded as u64);
+                self.stats.native_image_decode_last_error.clear();
+            }
+            Err(err) => {
+                self.stats.native_image_decode_failures =
+                    self.stats.native_image_decode_failures.saturating_add(1);
+                self.stats.native_image_decode_last_error = err;
+            }
+        }
+    }
+
+    fn upload_source_frame_pixels(
+        &mut self,
+        source_id: String,
+        seq: u64,
+        width: usize,
+        height: usize,
+        rgba: &[u8],
+        transport: &str,
+        count_cpu_fallback: bool,
+    ) -> usize {
+        let input_byte_len = rgba.len() as u64;
+        let slot = self.assign_source_frame_slot(&source_id);
+        let dst_size = self
+            .renderer
+            .as_ref()
+            .map(|renderer| renderer.source_frame_size)
+            .unwrap_or(SOURCE_FRAME_SIZE_DEFAULT);
+        let pixels = resample_frame_bytes(rgba, width, height, dst_size, dst_size);
+        if let Some(renderer) = self.renderer.as_ref() {
+            renderer.write_source_frame(slot, &pixels);
+        }
+        self.stats.source_frame_uploads = self.stats.source_frame_uploads.saturating_add(1);
+        self.stats.source_frame_bytes_uploaded = self
+            .stats
+            .source_frame_bytes_uploaded
+            .saturating_add(pixels.len() as u64);
+        self.stats.source_frame_input_bytes_uploaded = self
+            .stats
+            .source_frame_input_bytes_uploaded
+            .saturating_add(input_byte_len);
+        self.stats.source_frame_resampled_bytes_uploaded = self
+            .stats
+            .source_frame_resampled_bytes_uploaded
+            .saturating_add(pixels.len() as u64);
+        if count_cpu_fallback {
+            self.stats.source_frame_cpu_fallback_uploads = self
+                .stats
+                .source_frame_cpu_fallback_uploads
+                .saturating_add(1);
+        }
+        self.stats.source_frame_last_input_bytes = input_byte_len;
+        self.stats.source_frame_last_upload_bytes = pixels.len() as u64;
+        self.stats.source_frame_last_upload_width = width.min(u32::MAX as usize) as u32;
+        self.stats.source_frame_last_upload_height = height.min(u32::MAX as usize) as u32;
+        self.stats.source_frame_last_upload_transport = transport.to_string();
+        self.stats.source_frame_last_reject_reason.clear();
+        self.source_frames
+            .insert(source_id.clone(), SourceFrame { seq });
+        for layer in self.scene_layers.values_mut() {
+            if layer.source_id.as_deref() == Some(source_id.as_str()) {
+                layer.frame_slot = Some(slot);
+            }
+        }
+        pixels.len()
+    }
+
     fn apply_source_frame(&mut self, command: &Value) {
         let Some(source_id) = string_at(command, &["source_id"]) else {
             return;
@@ -4377,37 +4496,15 @@ impl App {
             );
             return;
         };
-        let input_byte_len = rgba.len() as u64;
-
-        let slot = self.assign_source_frame_slot(&source_id);
-        let dst_size = self
-            .renderer
-            .as_ref()
-            .map(|renderer| renderer.source_frame_size)
-            .unwrap_or(SOURCE_FRAME_SIZE_DEFAULT);
-        let pixels = resample_frame_bytes(&rgba, width, height, dst_size, dst_size);
-        if let Some(renderer) = self.renderer.as_ref() {
-            renderer.write_source_frame(slot, &pixels);
-        }
-        self.stats.source_frame_uploads = self.stats.source_frame_uploads.saturating_add(1);
-        self.stats.source_frame_bytes_uploaded = self
-            .stats
-            .source_frame_bytes_uploaded
-            .saturating_add(pixels.len() as u64);
-        self.stats.source_frame_input_bytes_uploaded = self
-            .stats
-            .source_frame_input_bytes_uploaded
-            .saturating_add(input_byte_len);
-        self.stats.source_frame_resampled_bytes_uploaded = self
-            .stats
-            .source_frame_resampled_bytes_uploaded
-            .saturating_add(pixels.len() as u64);
-        if transport.is_cpu_fallback() {
-            self.stats.source_frame_cpu_fallback_uploads = self
-                .stats
-                .source_frame_cpu_fallback_uploads
-                .saturating_add(1);
-        }
+        self.upload_source_frame_pixels(
+            source_id,
+            seq,
+            width,
+            height,
+            &rgba,
+            transport.as_str(),
+            transport.is_cpu_fallback(),
+        );
         match transport {
             SourceFrameTransport::File => {
                 self.stats.source_frame_file_uploads =
@@ -4428,19 +4525,6 @@ impl App {
                     .saturating_add(1);
             }
             SourceFrameTransport::Unknown => {}
-        }
-        self.stats.source_frame_last_input_bytes = input_byte_len;
-        self.stats.source_frame_last_upload_bytes = pixels.len() as u64;
-        self.stats.source_frame_last_upload_width = width.min(u32::MAX as usize) as u32;
-        self.stats.source_frame_last_upload_height = height.min(u32::MAX as usize) as u32;
-        self.stats.source_frame_last_upload_transport = transport.as_str().to_string();
-        self.stats.source_frame_last_reject_reason.clear();
-        self.source_frames
-            .insert(source_id.clone(), SourceFrame { seq });
-        for layer in self.scene_layers.values_mut() {
-            if layer.source_id.as_deref() == Some(source_id.as_str()) {
-                layer.frame_slot = Some(slot);
-            }
         }
     }
 
@@ -7938,6 +8022,150 @@ fn f32_to_f16_bits(value: f32) -> u16 {
         }
         half
     }
+}
+
+fn decode_native_image_rgba(path: &Path) -> Result<(usize, usize, Vec<u8>), String> {
+    let metadata = fs::metadata(path).map_err(|err| {
+        format!(
+            "native image decode failed to stat `{}`: {err}",
+            path.display()
+        )
+    })?;
+    if !metadata.is_file() {
+        return Err(format!(
+            "native image decode rejected non-file path `{}`",
+            path.display()
+        ));
+    }
+    if metadata.len() > MAX_NATIVE_IMAGE_DECODE_BYTES {
+        return Err(format!(
+            "native image decode rejected `{}`: file is {} MB, cap is {} MB",
+            path.display(),
+            metadata.len() / (1024 * 1024),
+            MAX_NATIVE_IMAGE_DECODE_BYTES / (1024 * 1024)
+        ));
+    }
+    let (width, height) = image::image_dimensions(path).map_err(|err| {
+        format!(
+            "native image decode could not read dimensions for `{}`: {err}",
+            path.display()
+        )
+    })?;
+    let pixels = u64::from(width).saturating_mul(u64::from(height));
+    if width == 0 || height == 0 || pixels > MAX_NATIVE_IMAGE_DECODE_PIXELS {
+        return Err(format!(
+            "native image decode rejected `{}`: dimensions {}x{} exceed {} pixels",
+            path.display(),
+            width,
+            height,
+            MAX_NATIVE_IMAGE_DECODE_PIXELS
+        ));
+    }
+    let image = image::ImageReader::open(path)
+        .map_err(|err| {
+            format!(
+                "native image decode failed to open `{}`: {err}",
+                path.display()
+            )
+        })?
+        .with_guessed_format()
+        .map_err(|err| {
+            format!(
+                "native image decode failed to sniff `{}`: {err}",
+                path.display()
+            )
+        })?
+        .decode()
+        .map_err(|err| format!("native image decode failed for `{}`: {err}", path.display()))?
+        .to_rgba8();
+    Ok((
+        image.width() as usize,
+        image.height() as usize,
+        image.into_raw(),
+    ))
+}
+
+fn local_media_path_from_uri(uri: &str) -> Option<PathBuf> {
+    let trimmed = uri.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
+        || trimmed.starts_with("blob:")
+        || trimmed.starts_with("data:")
+    {
+        return None;
+    }
+    if let Some(rest) = trimmed.strip_prefix("ghost-asset://") {
+        return local_path_from_hierarchical_uri_rest(rest);
+    }
+    if let Some(rest) = trimmed.strip_prefix("file://") {
+        return local_path_from_hierarchical_uri_rest(rest);
+    }
+    absolute_path_from_uri_path(trimmed)
+}
+
+fn local_path_from_hierarchical_uri_rest(rest: &str) -> Option<PathBuf> {
+    let path_part = if rest.starts_with('/') {
+        rest
+    } else {
+        let slash = rest.find('/')?;
+        &rest[slash..]
+    };
+    absolute_path_from_uri_path(path_part)
+}
+
+fn absolute_path_from_uri_path(path: &str) -> Option<PathBuf> {
+    let decoded = percent_decode_uri_path(path)?;
+    let normalized = if decoded.starts_with('/') && windows_drive_path(&decoded[1..]) {
+        decoded[1..].to_string()
+    } else {
+        decoded
+    };
+    let path = PathBuf::from(&normalized);
+    if path.is_absolute() || windows_drive_path(&normalized) {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn percent_decode_uri_path(input: &str) -> Option<String> {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let hi = *bytes.get(index + 1)?;
+            let lo = *bytes.get(index + 2)?;
+            out.push(
+                hex_value(hi)?
+                    .saturating_mul(16)
+                    .saturating_add(hex_value(lo)?),
+            );
+            index += 3;
+        } else {
+            out.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn windows_drive_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 3
+        && bytes[1] == b':'
+        && (bytes[2] == b'/' || bytes[2] == b'\\')
+        && bytes[0].is_ascii_alphabetic()
 }
 
 fn source_kind(source_type: &str) -> f32 {

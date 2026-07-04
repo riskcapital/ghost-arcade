@@ -288,6 +288,34 @@ function makePreviewPixelBytes(width, height) {
   return Buffer.from(Uint8Array.from(makePreviewPixels(width, height)));
 }
 
+function makePreviewBmpBytes(width, height) {
+  const rowStride = Math.ceil((width * 3) / 4) * 4;
+  const pixelBytes = rowStride * height;
+  const bytes = Buffer.alloc(54 + pixelBytes);
+  bytes.write('BM', 0, 'ascii');
+  bytes.writeUInt32LE(bytes.length, 2);
+  bytes.writeUInt32LE(54, 10);
+  bytes.writeUInt32LE(40, 14);
+  bytes.writeInt32LE(width, 18);
+  bytes.writeInt32LE(height, 22);
+  bytes.writeUInt16LE(1, 26);
+  bytes.writeUInt16LE(24, 28);
+  bytes.writeUInt32LE(pixelBytes, 34);
+
+  const rgba = makePreviewPixels(width, height);
+  for (let y = 0; y < height; y += 1) {
+    const dstY = height - 1 - y;
+    for (let x = 0; x < width; x += 1) {
+      const src = (y * width + x) * 4;
+      const dst = 54 + dstY * rowStride + x * 3;
+      bytes[dst] = rgba[src + 2];
+      bytes[dst + 1] = rgba[src + 1];
+      bytes[dst + 2] = rgba[src];
+    }
+  }
+  return bytes;
+}
+
 function createRpcProcess() {
   if (!existsSync(bin)) {
     throw new Error(`native render-core binary is missing: ${bin}\nRun npm run native:build first.`);
@@ -942,6 +970,7 @@ async function main() {
   let smokeTempDir = null;
   let sourceFrameFile = null;
   let sourceFrameFileSnapshot = null;
+  let nativeImageSnapshot = null;
   let sourceFrameSharedTextureSnapshot = null;
   let graphSourceFrameSnapshot = null;
   try {
@@ -982,6 +1011,7 @@ async function main() {
       !capabilities.features.native_flythrough_graph ||
       !capabilities.features.native_pixel_particles_graph ||
       !capabilities.features.native_point_cloud_fx_graph ||
+      !capabilities.features.native_static_image_decode ||
       capabilities.features.multi_pass_instruments
     ) {
       throw new Error(`native compute capability flags are not honest yet: ${JSON.stringify(capabilities.features)}`);
@@ -1819,11 +1849,39 @@ async function main() {
     if (existsSync(sourceFrameFile)) {
       throw new Error(`source frame rgba_file was not deleted after native read: ${sourceFrameFile}`);
     }
+
+    const nativeImageFile = join(smokeTempDir, 'native-image-source.bmp');
+    writeFileSync(nativeImageFile, makePreviewBmpBytes(48, 32));
+    const beforeNativeImageStatus = await rpc.send('status', {}, 5000);
+    await rpc.send('submit_commands', {
+      commands: [
+        { type: 'remove_layer', layer_id: 'smoke-file-frame' },
+        { type: 'upsert_layer', layer_id: 'smoke-native-image', z_index: 0, blend_mode: 'normal', opacity: 1, corners: FULLSCREEN_CORNERS },
+        { type: 'set_layer_visibility', layer_id: 'smoke-native-image', visible: true },
+        { type: 'bind_media_source', layer_id: 'smoke-native-image', source_id: 'smoke-native-image-source', uri: nativeImageFile, source_type: 'image' },
+      ],
+    }, 5000);
+    nativeImageSnapshot = await snapshot(rpc, 'native-image-decode', 0.48, 8);
+    assertFrame('native decoded image layer', nativeImageSnapshot, 0.03);
+    const afterNativeImageStatus = await rpc.send('status', {}, 5000);
+    if (
+      Number(afterNativeImageStatus.native_image_decodes ?? 0) <=
+      Number(beforeNativeImageStatus.native_image_decodes ?? 0)
+    ) {
+      throw new Error(`native still-image decode counter did not advance: ${JSON.stringify(afterNativeImageStatus)}`);
+    }
+    if (Number(afterNativeImageStatus.native_image_decode_failures ?? 0) !== 0) {
+      throw new Error(`native still-image decode unexpectedly failed: ${JSON.stringify(afterNativeImageStatus)}`);
+    }
+    if (afterNativeImageStatus.source_frame_last_upload_transport !== 'native-image') {
+      throw new Error(`native still-image decode transport was not tracked: ${JSON.stringify(afterNativeImageStatus)}`);
+    }
+
     const exportedFramePath = join(smokeTempDir, 'native-frame-snapshot.rgba');
     const exportedFrame = await rpc.send('export_frame_snapshot', {
       path: exportedFramePath,
       time: 0.49,
-      frame_index: 8,
+      frame_index: 9,
     }, 10000);
     assertFrame('native exported frame snapshot', exportedFrame, 0.03);
     const exportedFrameBytes = statSync(exportedFramePath).size;
@@ -1854,6 +1912,7 @@ async function main() {
       await rpc.send('submit_commands', {
         commands: [
           { type: 'remove_layer', layer_id: 'smoke-file-frame' },
+          { type: 'remove_layer', layer_id: 'smoke-native-image' },
           {
             type: 'upload_source_frame',
             source_id: 'smoke-iosurface-loopback-source',
@@ -1891,6 +1950,7 @@ async function main() {
     await rpc.send('submit_commands', {
       commands: [
         { type: 'remove_layer', layer_id: 'smoke-file-frame' },
+        { type: 'remove_layer', layer_id: 'smoke-native-image' },
         { type: 'remove_layer', layer_id: 'smoke-iosurface-loopback-frame' },
       ],
     });
@@ -1980,6 +2040,15 @@ async function main() {
     if (Number(status.source_frame_file_uploads ?? 0) < 1) {
       throw new Error(`native source-frame file uploads were not counted: ${JSON.stringify(status)}`);
     }
+    if (Number(status.native_image_decodes ?? 0) < 1) {
+      throw new Error(`native still-image decodes were not counted: ${JSON.stringify(status)}`);
+    }
+    if (Number(status.native_image_decode_bytes_uploaded ?? 0) <= 0) {
+      throw new Error(`native still-image decoded bytes were not counted: ${JSON.stringify(status)}`);
+    }
+    if (Number(status.native_image_decode_failures ?? 0) !== 0) {
+      throw new Error(`native still-image decode failures were reported unexpectedly: ${JSON.stringify(status)}`);
+    }
     if (Number(status.source_frame_input_bytes_uploaded ?? 0) < sourceFrameBytes.length) {
       throw new Error(`native source-frame input bytes were not counted: ${JSON.stringify(status)}`);
     }
@@ -2006,6 +2075,9 @@ async function main() {
       Number(stats.source_frame_file_uploads ?? 0) < 1
     ) {
       throw new Error(`native source-frame transport stats were not reported: ${JSON.stringify(stats)}`);
+    }
+    if (Number(stats.native_image_decodes ?? 0) < 1) {
+      throw new Error(`native still-image decode stats were not reported: ${JSON.stringify(stats)}`);
     }
     if (!status.native_caps?.adapter_name || Number(status.native_caps.max_texture_dimension_2d ?? 0) <= 0) {
       throw new Error(`native GPU caps missing adapter/texture limits: ${JSON.stringify(status.native_caps ?? null)}`);
@@ -2102,6 +2174,7 @@ async function main() {
       `color=${color.checksum}`,
       `preview=${preview.checksum}`,
       `frameFile=${sourceFrameFileSnapshot?.checksum ?? 'none'}`,
+      `nativeImage=${nativeImageSnapshot?.checksum ?? 'none'}/${status.native_image_decodes ?? 0}`,
       `frameExport=${exportedFrame.checksum}`,
       `frameShared=${sourceFrameSharedTextureSnapshot?.checksum ?? 'none'}`,
       `wgsl=${registeredWgsl.first.checksum}->${registeredWgsl.second.checksum}`,

@@ -145,6 +145,7 @@ try {
   assert(capabilities?.features?.compute_graph_source_frame_target, 'broker capabilities lost compute graph source-frame support');
   assert(capabilities?.features?.runtime_cache_clear, 'broker capabilities lost runtime cache clearing support');
   assert(capabilities?.features?.native_graph_buffer_prune, 'broker capabilities lost native graph buffer prune support');
+  assert(capabilities?.features?.native_static_image_decode, 'broker capabilities lost native still-image decode support');
   assert(
     capabilities?.implemented_methods?.includes('clear_runtime_caches'),
     `broker implemented methods lost clear_runtime_caches: ${JSON.stringify(capabilities?.implemented_methods)}`,

@@ -930,6 +930,26 @@ function isDynamicSourceFrameSource(
   return sourceType === 'video' || isNativeSharedTextureSource(src, sourceType);
 }
 
+function isNativeStaticImageDecodeUri(uri: string | undefined | null): boolean {
+  const value = String(uri ?? '').trim();
+  if (!value) return false;
+  const lower = value.toLowerCase();
+  if (
+    lower.startsWith('http://') ||
+    lower.startsWith('https://') ||
+    lower.startsWith('blob:') ||
+    lower.startsWith('data:')
+  ) {
+    return false;
+  }
+  return (
+    lower.startsWith('ghost-asset://') ||
+    lower.startsWith('file://') ||
+    value.startsWith('/') ||
+    /^[A-Za-z]:[\\/]/.test(value)
+  );
+}
+
 export class NativeRendererSync {
   private running = false;
   private startupReady = false;
@@ -1297,6 +1317,25 @@ export class NativeRendererSync {
     const src = source?.source;
     if (!src) return false;
     return this.sourcePreviewSeq.has(this.sourceCacheKey(src.id, src.src));
+  }
+
+  private canUseNativeStaticImageDecode(
+    src: NonNullable<Layer['source']>,
+    sourceType: string,
+  ): boolean {
+    return (
+      sourceType === 'image' &&
+      this.supportsNativeFeature('native_static_image_decode') &&
+      isNativeStaticImageDecodeUri(src.src)
+    );
+  }
+
+  private markNativeStaticImageFrameReady(src: NonNullable<Layer['source']>) {
+    const sourceKey = this.sourceCacheKey(src.id, src.src);
+    const seq = (this.sourcePreviewSeq.get(sourceKey) ?? 0) + 1;
+    this.sourcePreviewSeq.set(sourceKey, seq);
+    this.sourcePreviewSig.set(sourceKey, `native-image:${src.src}`);
+    this.sourcePreviewNextAt.delete(sourceKey);
   }
 
   private async renderNativeGraphSources(
@@ -1976,8 +2015,17 @@ export class NativeRendererSync {
         if (src) {
           const sourceKey = this.sourceCacheKey(src.id, src.src);
           const sharedTextureSource = isNativeSharedTextureSource(src, sourceType);
+          const nativeStaticImageDecode = this.canUseNativeStaticImageDecode(src, sourceType);
+          if (nativeStaticImageDecode) {
+            this.markNativeStaticImageFrameReady(src);
+          }
           const dynamicSourceFrameSource = isDynamicSourceFrameSource(src, sourceType);
-          if (nativeSource.shouldPrefetch && !sharedTextureSource && !this.prefetchedSources.has(sourceKey)) {
+          if (
+            nativeSource.shouldPrefetch &&
+            !sharedTextureSource &&
+            !nativeStaticImageDecode &&
+            !this.prefetchedSources.has(sourceKey)
+          ) {
             this.prefetchedSources.add(sourceKey);
             const priority = sourceType === 'video' ? videoPrefetchPriority : mediaPrefetchPriority;
             void prefetchNativeRendererMedia(src.id, src.src, priority).catch(() => {});
@@ -1987,7 +2035,7 @@ export class NativeRendererSync {
           } else {
             this.videoRefreshAt.delete(sourceKey);
           }
-          if (nativeSource.shouldPreview) {
+          if (nativeSource.shouldPreview && !nativeStaticImageDecode) {
             this.appendSourcePreviewCommand(commands, src, sourceType, now, true, null, previewBudget);
           }
           if (src.shaderCode) {
