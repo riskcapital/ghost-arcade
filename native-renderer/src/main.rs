@@ -3996,24 +3996,7 @@ impl App {
             .clamp(1.0, SOURCE_FRAME_SIZE_INSANE as f64) as usize;
         let transport = source_frame_transport_from_command(command);
         if transport == SourceFrameTransport::SharedTexture {
-            let reject_reason =
-                SharedTextureSourceFrameDescriptor::from_command(command, width, height)
-                    .map(|descriptor| descriptor.unsupported_reason(native_backend_name()))
-                    .unwrap_or_else(|| {
-                        "shared texture source-frame upload is not implemented yet \
-                         (missing shared texture handle)"
-                            .to_string()
-                    });
-            self.stats.source_frame_shared_texture_rejected_uploads = self
-                .stats
-                .source_frame_shared_texture_rejected_uploads
-                .saturating_add(1);
-            self.reject_source_frame_upload(
-                width,
-                height,
-                "shared-texture-unsupported",
-                &reject_reason,
-            );
+            self.apply_shared_texture_source_frame(source_id, seq, command, width, height);
             return;
         }
         let Some(rgba) = rgba_bytes_from_command(command, width, height) else {
@@ -4090,6 +4073,84 @@ impl App {
                 layer.frame_slot = Some(slot);
             }
         }
+    }
+
+    fn apply_shared_texture_source_frame(
+        &mut self,
+        source_id: String,
+        seq: u64,
+        command: &Value,
+        width: usize,
+        height: usize,
+    ) {
+        let Some(descriptor) =
+            SharedTextureSourceFrameDescriptor::from_command(command, width, height)
+        else {
+            self.reject_shared_texture_source_frame(
+                width,
+                height,
+                "shared texture source-frame upload is not implemented yet (missing shared texture handle)",
+            );
+            return;
+        };
+
+        if self.renderer.is_none() {
+            let reason = format!(
+                "{}; native renderer is not running",
+                descriptor.unsupported_reason(native_backend_name())
+            );
+            self.reject_shared_texture_source_frame(width, height, &reason);
+            return;
+        }
+
+        let slot = self.assign_source_frame_slot(&source_id);
+        let renderer = self
+            .renderer
+            .as_ref()
+            .expect("renderer checked before shared texture import");
+        let uploaded_bytes = match renderer.import_shared_texture_source_frame(slot, &descriptor) {
+            Ok(uploaded_bytes) => uploaded_bytes,
+            Err(err) => {
+                self.source_frame_slots.remove(&source_id);
+                self.reject_shared_texture_source_frame(width, height, &err);
+                return;
+            }
+        };
+
+        self.stats.source_frame_uploads = self.stats.source_frame_uploads.saturating_add(1);
+        self.stats.source_frame_shared_texture_uploads = self
+            .stats
+            .source_frame_shared_texture_uploads
+            .saturating_add(1);
+        self.stats.source_frame_bytes_uploaded = self
+            .stats
+            .source_frame_bytes_uploaded
+            .saturating_add(uploaded_bytes);
+        self.stats.source_frame_resampled_bytes_uploaded = self
+            .stats
+            .source_frame_resampled_bytes_uploaded
+            .saturating_add(uploaded_bytes);
+        self.stats.source_frame_last_input_bytes = descriptor.handle_byte_length.unwrap_or(0);
+        self.stats.source_frame_last_upload_bytes = uploaded_bytes;
+        self.stats.source_frame_last_upload_width = descriptor.width;
+        self.stats.source_frame_last_upload_height = descriptor.height;
+        self.stats.source_frame_last_upload_transport = "shared-texture".to_string();
+        self.stats.source_frame_last_reject_reason.clear();
+        self.source_frames
+            .insert(source_id.clone(), SourceFrame { seq });
+        for layer in self.scene_layers.values_mut() {
+            if layer.source_id.as_deref() == Some(source_id.as_str()) {
+                layer.frame_slot = Some(slot);
+            }
+        }
+    }
+
+    fn reject_shared_texture_source_frame(&mut self, width: usize, height: usize, reason: &str) {
+        self.stats.source_frame_shared_texture_rejected_uploads = self
+            .stats
+            .source_frame_shared_texture_rejected_uploads
+            .saturating_add(1);
+        self.reject_source_frame_upload(width, height, "shared-texture-unsupported", reason);
     }
 
     fn reject_source_frame_upload(
@@ -5997,6 +6058,144 @@ impl RenderState {
         self.queue.submit(Some(encoder.finish()));
     }
 
+    fn import_shared_texture_source_frame(
+        &self,
+        slot: usize,
+        descriptor: &SharedTextureSourceFrameDescriptor,
+    ) -> Result<u64, String> {
+        #[cfg(target_os = "macos")]
+        {
+            self.import_iosurface_source_frame(slot, descriptor)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = slot;
+            let _ = descriptor;
+            Err(format!(
+                "shared texture source-frame upload is not implemented yet for backend={}",
+                native_backend_name()
+            ))
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn import_iosurface_source_frame(
+        &self,
+        slot: usize,
+        descriptor: &SharedTextureSourceFrameDescriptor,
+    ) -> Result<u64, String> {
+        use objc2_io_surface::IOSurfaceRef;
+        use objc2_metal::{
+            MTLDevice, MTLStorageMode, MTLTextureDescriptor, MTLTextureType, MTLTextureUsage,
+        };
+        use wgpu::hal::{self, api::Metal};
+
+        if descriptor.platform != "iosurface" {
+            return Err(format!(
+                "shared texture platform `{}` is not supported by the Metal importer",
+                descriptor.platform
+            ));
+        }
+
+        let surface_id = descriptor.iosurface_id()?;
+        let surface = IOSurfaceRef::lookup(surface_id)
+            .ok_or_else(|| format!("IOSurfaceLookup({surface_id}) returned null"))?;
+        let metal_format = metal_texture_format_for_shared_texture(descriptor);
+        let wgpu_format = wgpu_texture_format_for_shared_texture(descriptor);
+        let width = descriptor.width.max(1);
+        let height = descriptor.height.max(1);
+        let raw_device = unsafe { self.device.as_hal::<Metal>() }
+            .ok_or_else(|| "native renderer is not running on the Metal backend".to_string())?;
+        let texture_descriptor = unsafe {
+            MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
+                metal_format,
+                width as usize,
+                height as usize,
+                false,
+            )
+        };
+        texture_descriptor.setTextureType(MTLTextureType::Type2D);
+        texture_descriptor.setStorageMode(MTLStorageMode::Shared);
+        texture_descriptor.setUsage(MTLTextureUsage::ShaderRead);
+        let raw_texture = raw_device
+            .raw_device()
+            .newTextureWithDescriptor_iosurface_plane(&texture_descriptor, &surface, 0)
+            .ok_or_else(|| {
+                format!(
+                    "Metal failed to create texture from IOSurfaceID={surface_id} format={} size={}x{}",
+                    descriptor.format, width, height
+                )
+            })?;
+        let hal_texture = unsafe {
+            hal::metal::Device::texture_from_raw(
+                raw_texture,
+                wgpu_format,
+                MTLTextureType::Type2D,
+                1,
+                1,
+                hal::CopyExtent {
+                    width,
+                    height,
+                    depth: 1,
+                },
+                None,
+            )
+        };
+        let imported_texture = unsafe {
+            self.device.create_texture_from_hal::<Metal>(
+                hal_texture,
+                &wgpu::TextureDescriptor {
+                    label: Some("Ghost Render Core Imported IOSurface Source Frame"),
+                    size: wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu_format,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                },
+                wgpu::TextureUses::RESOURCE,
+            )
+        };
+        let source_view = imported_texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("Ghost Render Core Imported IOSurface Source View"),
+            format: Some(wgpu_format),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            ..Default::default()
+        });
+        let safe_slot = slot.min(MAX_SOURCE_FRAME_SLOTS - 1);
+        let target_view = self
+            .source_frame_texture
+            .create_view(&wgpu::TextureViewDescriptor {
+                label: Some("Ghost Render Core Shared Texture Source Frame Target"),
+                format: Some(self.source_frame_format),
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                base_mip_level: 0,
+                mip_level_count: Some(1),
+                base_array_layer: safe_slot as u32,
+                array_layer_count: Some(1),
+                ..Default::default()
+            });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Ghost Render Core Shared Texture Source Frame Encoder"),
+            });
+        self.source_frame_blitter
+            .copy(&self.device, &mut encoder, &source_view, &target_view);
+        self.generate_source_frame_mips(&mut encoder, safe_slot);
+        self.queue.submit(Some(encoder.finish()));
+        Ok(self
+            .source_frame_size
+            .saturating_mul(self.source_frame_size)
+            .saturating_mul(texture_format_bytes_per_texel(self.source_frame_format))
+            .min(u64::MAX as usize) as u64)
+    }
+
     fn generate_source_frame_mips(&self, encoder: &mut wgpu::CommandEncoder, slot: usize) {
         if self.source_frame_mip_levels <= 1 {
             return;
@@ -6951,8 +7150,46 @@ fn texture_format_label(format: wgpu::TextureFormat) -> &'static str {
     match format {
         wgpu::TextureFormat::Rgba16Float => "rgba16float",
         wgpu::TextureFormat::Rgba8Unorm => "rgba8unorm",
+        wgpu::TextureFormat::Bgra8Unorm => "bgra8unorm",
         _ => "unknown",
     }
+}
+
+fn texture_format_bytes_per_texel(format: wgpu::TextureFormat) -> usize {
+    match format {
+        wgpu::TextureFormat::Rgba16Float => 8,
+        wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Bgra8Unorm => 4,
+        _ => 4,
+    }
+}
+
+fn wgpu_texture_format_for_shared_texture(
+    descriptor: &SharedTextureSourceFrameDescriptor,
+) -> wgpu::TextureFormat {
+    match normalized_shared_texture_format(descriptor).as_str() {
+        "rgba8unorm" | "70" => wgpu::TextureFormat::Rgba8Unorm,
+        "bgra8unorm" | "80" | "87" => wgpu::TextureFormat::Bgra8Unorm,
+        _ => wgpu::TextureFormat::Bgra8Unorm,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn metal_texture_format_for_shared_texture(
+    descriptor: &SharedTextureSourceFrameDescriptor,
+) -> objc2_metal::MTLPixelFormat {
+    match normalized_shared_texture_format(descriptor).as_str() {
+        "rgba8unorm" | "70" => objc2_metal::MTLPixelFormat::RGBA8Unorm,
+        "bgra8unorm" | "80" | "87" => objc2_metal::MTLPixelFormat::BGRA8Unorm,
+        _ => objc2_metal::MTLPixelFormat::BGRA8Unorm,
+    }
+}
+
+fn normalized_shared_texture_format(descriptor: &SharedTextureSourceFrameDescriptor) -> String {
+    descriptor
+        .format
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['-', '_'], "")
 }
 
 fn source_frame_upload_payload<'a>(

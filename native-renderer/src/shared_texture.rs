@@ -1,7 +1,9 @@
+use base64::Engine;
 use serde_json::Value;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SharedTextureSourceFrameDescriptor {
+    pub handle: String,
     pub platform: String,
     pub format: String,
     pub handle_encoding: String,
@@ -20,6 +22,7 @@ impl SharedTextureSourceFrameDescriptor {
             .or_else(|| shared_texture.and_then(Value::as_str))?;
 
         Some(Self {
+            handle: handle.to_string(),
             platform: normalize_platform(
                 string_at(command, "shared_texture_platform")
                     .or_else(|| string_at(command, "platform"))
@@ -61,6 +64,71 @@ impl SharedTextureSourceFrameDescriptor {
                 .unwrap_or_else(|| "unknown".to_string())
         )
     }
+
+    pub fn iosurface_id(&self) -> Result<u32, String> {
+        if self.platform != "iosurface" {
+            return Err(format!(
+                "shared texture platform `{}` is not IOSurface",
+                self.platform
+            ));
+        }
+        match self.handle_encoding.as_str() {
+            "integer" | "opaque" => parse_u32_handle(&self.handle),
+            "base64" => {
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(self.handle.as_bytes())
+                    .map_err(|err| format!("invalid base64 IOSurface handle: {err}"))?;
+                iosurface_id_from_bytes(&bytes)
+            }
+            "hex" => {
+                let bytes = hex_bytes(&self.handle)?;
+                iosurface_id_from_bytes(&bytes)
+            }
+            encoding => Err(format!(
+                "unsupported IOSurface handle encoding `{encoding}`"
+            )),
+        }
+    }
+}
+
+fn parse_u32_handle(handle: &str) -> Result<u32, String> {
+    let trimmed = handle.trim();
+    let parsed = trimmed
+        .parse::<u64>()
+        .map_err(|_| format!("IOSurface handle `{trimmed}` is not an integer ID"))?;
+    u32::try_from(parsed).map_err(|_| format!("IOSurface ID `{trimmed}` exceeds u32 range"))
+}
+
+fn iosurface_id_from_bytes(bytes: &[u8]) -> Result<u32, String> {
+    match bytes.len() {
+        4 => Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
+        8 => Err(
+            "received an 8-byte IOSurfaceRef pointer; native core runs in a separate process and requires a 4-byte IOSurfaceID"
+                .to_string(),
+        ),
+        len => Err(format!(
+            "IOSurface handle must be a 4-byte IOSurfaceID, received {len} bytes"
+        )),
+    }
+}
+
+fn hex_bytes(handle: &str) -> Result<Vec<u8>, String> {
+    let compact: String = handle
+        .chars()
+        .filter(|ch| !ch.is_ascii_whitespace() && *ch != ':')
+        .collect();
+    if compact.len() % 2 != 0 {
+        return Err("hex IOSurface handle has an odd character count".to_string());
+    }
+    let mut bytes = Vec::with_capacity(compact.len() / 2);
+    for pair in compact.as_bytes().chunks(2) {
+        let text = std::str::from_utf8(pair)
+            .map_err(|_| "hex IOSurface handle contains invalid UTF-8".to_string())?;
+        let value = u8::from_str_radix(text, 16)
+            .map_err(|_| format!("hex IOSurface handle contains invalid byte `{text}`"))?;
+        bytes.push(value);
+    }
+    Ok(bytes)
 }
 
 fn normalize_platform(platform: &str) -> String {
@@ -134,6 +202,7 @@ mod tests {
             SharedTextureSourceFrameDescriptor::from_command(&command, 1920, 1080).unwrap();
 
         assert_eq!(descriptor.platform, "dxgi");
+        assert_eq!(descriptor.handle, "ZmFrZQ==");
         assert_eq!(descriptor.format, "87");
         assert_eq!(descriptor.handle_encoding, "base64");
         assert_eq!(descriptor.handle_chars, 8);
@@ -158,6 +227,7 @@ mod tests {
             SharedTextureSourceFrameDescriptor::from_command(&command, 4096, 2160).unwrap();
 
         assert_eq!(descriptor.platform, "iosurface");
+        assert_eq!(descriptor.handle, "42");
         assert_eq!(descriptor.format, "bgra8unorm");
         assert_eq!(descriptor.handle_encoding, "integer");
         assert_eq!(descriptor.handle_chars, 2);
@@ -166,6 +236,53 @@ mod tests {
             descriptor
                 .unsupported_reason("metal")
                 .contains("platform=iosurface")
+        );
+    }
+
+    #[test]
+    fn parses_iosurface_id_from_integer_handle() {
+        let command = json!({
+            "shared_handle": "42",
+            "shared_texture_platform": "iosurface",
+            "shared_texture_handle_encoding": "integer"
+        });
+
+        let descriptor =
+            SharedTextureSourceFrameDescriptor::from_command(&command, 1280, 720).unwrap();
+
+        assert_eq!(descriptor.iosurface_id().unwrap(), 42);
+    }
+
+    #[test]
+    fn parses_iosurface_id_from_base64_handle() {
+        let command = json!({
+            "shared_handle": base64::engine::general_purpose::STANDARD.encode(42_u32.to_le_bytes()),
+            "shared_texture_platform": "iosurface",
+            "shared_texture_handle_encoding": "base64"
+        });
+
+        let descriptor =
+            SharedTextureSourceFrameDescriptor::from_command(&command, 1280, 720).unwrap();
+
+        assert_eq!(descriptor.iosurface_id().unwrap(), 42);
+    }
+
+    #[test]
+    fn rejects_cross_process_iosurface_ref_pointer() {
+        let command = json!({
+            "shared_handle": base64::engine::general_purpose::STANDARD.encode(0x1234_u64.to_le_bytes()),
+            "shared_texture_platform": "iosurface",
+            "shared_texture_handle_encoding": "base64"
+        });
+
+        let descriptor =
+            SharedTextureSourceFrameDescriptor::from_command(&command, 1280, 720).unwrap();
+
+        assert!(
+            descriptor
+                .iosurface_id()
+                .unwrap_err()
+                .contains("separate process")
         );
     }
 }
