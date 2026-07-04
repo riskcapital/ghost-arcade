@@ -4,7 +4,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     globals: true,
-    include: ['tests/native/**/*.test.ts'],
+    include: ['src/lib/renderer/**/*.native.test.ts', 'tests/native/**/*.test.ts'],
     testTimeout: 60000,
     hookTimeout: 10000,
   },

@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 const command = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 const result = spawnSync(
   command,
-  ['vitest', 'run', '--config', 'vitest.native.config.ts', 'tests/native/webgpu3DSmoke.native.integration.test.ts'],
+  ['vitest', 'run', '--config', 'vitest.native.config.ts'],
   {
     stdio: 'inherit',
     env: {
