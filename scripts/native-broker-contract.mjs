@@ -84,11 +84,16 @@ try {
   );
 
   const capabilities = await broker.invoke('native_renderer_get_capabilities');
+  const outputExportExpected = process.platform === 'darwin';
   assert(capabilities?.features?.compute_graph_source_frame_target, 'broker capabilities lost compute graph source-frame support');
   assert(capabilities?.features?.native_output_mirror_texture, 'broker capabilities lost native output mirror support');
   assert(
     !!capabilities?.features?.shared_texture_source_frame_upload === (process.platform === 'darwin'),
     `broker shared source-frame capability should match macOS IOSurface support: ${JSON.stringify(capabilities?.features)}`,
+  );
+  assert(
+    !!capabilities?.features?.shared_texture_output_export === outputExportExpected,
+    `broker output shared-texture export capability should match macOS IOSurface support: ${JSON.stringify(capabilities?.features)}`,
   );
   const graphInstruments = new Set(capabilities?.native_graph_instruments ?? []);
   const graphManifest = new Map(
@@ -125,8 +130,8 @@ try {
   }
   assert(checks.get('shared-texture-upload')?.ok === false, 'broker should report shared texture upload as unavailable until implemented');
   assert(
-    checks.get('shared-texture-output-export')?.ok === false,
-    'broker should report native output shared-texture export as unavailable until implemented',
+    checks.get('shared-texture-output-export')?.ok === outputExportExpected,
+    `broker output shared-texture export readiness should match platform support: ${JSON.stringify(readiness)}`,
   );
   assert(
     checks.get('native-texture-share-sender')?.ok === false,
@@ -136,6 +141,23 @@ try {
     checks.get('shared-texture-source-frame-upload')?.ok === (process.platform === 'darwin'),
     `broker shared source-frame readiness should match macOS IOSurface support: ${JSON.stringify(readiness)}`,
   );
+  const outputTexture = await broker.invoke('native_renderer_get_output_shared_texture');
+  if (outputExportExpected) {
+    assert(
+      outputTexture?.available &&
+        outputTexture.platform === 'iosurface' &&
+        String(outputTexture.handle ?? '').length > 0 &&
+        outputTexture.handle_encoding === 'integer' &&
+        Number(outputTexture.width ?? 0) > 0 &&
+        Number(outputTexture.height ?? 0) > 0,
+      `broker output shared-texture metadata is incomplete: ${JSON.stringify(outputTexture)}`,
+    );
+  } else {
+    assert(
+      !outputTexture?.available,
+      `broker output shared-texture should be unavailable on this platform: ${JSON.stringify(outputTexture)}`,
+    );
+  }
 
   const beforeDirectSharedStatus = await broker.invoke('native_renderer_get_status');
   const directSharedStatus = await broker.invoke('native_renderer_upload_source_gpu_shared_texture', {

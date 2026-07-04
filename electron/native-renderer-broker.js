@@ -53,6 +53,7 @@ const RENDERER_COMMANDS = [
   'native_renderer_get_stats',
   'native_renderer_get_snapshot',
   'native_renderer_get_frame_snapshot',
+  'native_renderer_get_output_shared_texture',
   'native_renderer_get_capabilities',
   'native_renderer_get_readiness_report',
   'native_renderer_export_snapshot_json',
@@ -145,6 +146,9 @@ class NativeRendererBroker {
       if (command === 'native_renderer_get_stats') return this.stats;
       if (command === 'native_renderer_get_snapshot') return this.snapshot();
       if (command === 'native_renderer_get_frame_snapshot') return null;
+      if (command === 'native_renderer_get_output_shared_texture') {
+        return makeDefaultOutputSharedTexture(this.platform);
+      }
       if (command === 'native_renderer_get_capabilities') return this.capabilities;
       if (command === 'native_renderer_get_readiness_report') return this.readinessReport();
       if (command === 'native_renderer_export_snapshot_json') return this.exportSnapshotJson(args);
@@ -164,6 +168,11 @@ class NativeRendererBroker {
         return this.snapshot();
       case 'native_renderer_get_frame_snapshot':
         return this.sendIfRunning('frame_snapshot', args, { fallback: null, timeoutMs: 5000 });
+      case 'native_renderer_get_output_shared_texture':
+        return this.sendIfRunning('output_shared_texture', args, {
+          fallback: makeDefaultOutputSharedTexture(this.platform),
+          timeoutMs: 2500,
+        });
       case 'native_renderer_get_capabilities':
         return this.getCapabilities();
       case 'native_renderer_get_readiness_report':
@@ -1213,6 +1222,14 @@ function makeDefaultCapabilities(overrides = {}) {
       ? ['Native render core is not running; capabilities are the broker fallback shape.']
       : [],
     ...overrides,
+  };
+}
+
+function makeDefaultOutputSharedTexture(platform = process.platform) {
+  return {
+    available: false,
+    platform: platform === 'darwin' ? 'iosurface' : platform === 'win32' ? 'dxgi' : 'unsupported',
+    reason: 'native output shared texture export is unavailable',
   };
 }
 

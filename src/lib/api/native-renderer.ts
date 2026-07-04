@@ -746,6 +746,20 @@ export interface RendererFrameSnapshot {
   rgba_b64?: string;
 }
 
+export interface NativeRendererOutputSharedTexture {
+  available: boolean;
+  platform: 'iosurface' | 'dxgi' | 'unsupported' | string;
+  handle?: string;
+  handle_encoding?: string;
+  handle_byte_length?: number;
+  width?: number;
+  height?: number;
+  format?: string;
+  frame?: number;
+  flipped?: boolean;
+  reason?: string;
+}
+
 export interface NativeRendererSnapshotExportResult {
   path: string;
   bytes: number;
@@ -1046,6 +1060,10 @@ export async function getNativeRendererFrameSnapshot(
     include_pixels: includePixels,
     ...options,
   });
+}
+
+export async function getNativeRendererOutputSharedTexture() {
+  return invoke<NativeRendererOutputSharedTexture>('native_renderer_get_output_shared_texture');
 }
 
 export async function getNativeRendererCapabilities() {

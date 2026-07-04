@@ -503,6 +503,7 @@ async function main() {
     await delay(80);
 
     const capabilities = await rpc.send('capabilities', {}, 5000);
+    const outputExportExpected = process.platform === 'darwin';
     if (!capabilities?.features?.layer_compositor || !capabilities?.features?.fragment_wgsl_host) {
       throw new Error(`native capabilities missing implemented core features: ${JSON.stringify(capabilities)}`);
     }
@@ -545,6 +546,9 @@ async function main() {
         throw new Error(`native readiness report has stale or missing ${id}: ${JSON.stringify(readiness)}`);
       }
     }
+    if (!!readinessChecks.get('shared-texture-output-export')?.ok !== outputExportExpected) {
+      throw new Error(`native output shared-texture readiness mismatch: ${JSON.stringify(readiness)}`);
+    }
     if (
       !capabilities.implemented_methods?.includes('set_output_window') ||
       !capabilities.features.managed_output_window_control
@@ -553,10 +557,34 @@ async function main() {
     }
     if (
       capabilities.features.shared_texture_upload ||
-      capabilities.features.shared_texture_output_export ||
       capabilities.features.native_texture_share_sender
     ) {
       throw new Error(`native capabilities overstated unimplemented features: ${JSON.stringify(capabilities.features)}`);
+    }
+    if (!!capabilities.features.shared_texture_output_export !== outputExportExpected) {
+      throw new Error(`native output shared-texture export capability mismatch: ${JSON.stringify(capabilities.features)}`);
+    }
+    if (
+      !capabilities.implemented_methods?.includes('output_shared_texture') ||
+      !capabilities.implemented_methods?.includes('get_output_shared_texture')
+    ) {
+      throw new Error(`native output shared-texture RPC missing from capabilities: ${JSON.stringify(capabilities.implemented_methods)}`);
+    }
+    const outputTexture = await rpc.send('output_shared_texture', {}, 5000);
+    if (outputExportExpected) {
+      if (
+        !outputTexture?.available ||
+        outputTexture.platform !== 'iosurface' ||
+        !String(outputTexture.handle ?? '').length ||
+        outputTexture.handle_encoding !== 'integer' ||
+        Number(outputTexture.width ?? 0) <= 0 ||
+        Number(outputTexture.height ?? 0) <= 0 ||
+        !String(outputTexture.format ?? '').includes('bgra')
+      ) {
+        throw new Error(`native output shared-texture metadata is incomplete: ${JSON.stringify(outputTexture)}`);
+      }
+    } else if (outputTexture?.available) {
+      throw new Error(`native output shared-texture unexpectedly available on this platform: ${JSON.stringify(outputTexture)}`);
     }
     if (!capabilities.native_graph_instruments?.includes('smoke-3d')) {
       throw new Error(`native graph instrument manifest missing smoke-3d: ${JSON.stringify(capabilities)}`);

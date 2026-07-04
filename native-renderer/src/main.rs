@@ -67,6 +67,8 @@ const CORE_RPC_METHODS: &[&str] = &[
     "get_snapshot",
     "frame_snapshot",
     "get_frame_snapshot",
+    "output_shared_texture",
+    "get_output_shared_texture",
     "readiness",
     "get_readiness_report",
     "reset_stats",
@@ -731,6 +733,18 @@ struct NativeComputePipeline {
 struct NativeGraphRenderPipeline {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
+}
+
+#[cfg(target_os = "macos")]
+struct NativeOutputExport {
+    surface: objc2_core_foundation::CFRetained<objc2_io_surface::IOSurfaceRef>,
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    blitter: TextureBlitter,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+    frame: u64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1424,6 +1438,8 @@ struct RenderState {
     native_compute_graph_buffers: HashMap<String, NativeComputeGraphGpuBuffer>,
     output_mirror_texture: wgpu::Texture,
     output_mirror_view: wgpu::TextureView,
+    #[cfg(target_os = "macos")]
+    output_export: Option<NativeOutputExport>,
     snapshot_texture: wgpu::Texture,
     snapshot_view: wgpu::TextureView,
     last_frame_metrics: Option<SnapshotMetrics>,
@@ -1639,7 +1655,7 @@ impl App {
             "shared_texture_source_frame_upload": cfg!(target_os = "macos"),
             "native_output_mirror_texture": true,
             "shared_texture_upload": false,
-            "shared_texture_output_export": false,
+            "shared_texture_output_export": self.renderer.as_ref().is_some_and(RenderState::output_export_ready),
             "native_texture_share_sender": false,
             "native_media_decode": false,
             "media_prefetch": false,
@@ -2221,6 +2237,9 @@ impl App {
                 "shader_registry": self.shader_registry_snapshot(),
             })),
             "frame_snapshot" | "get_frame_snapshot" => self.frame_snapshot(&req.params),
+            "output_shared_texture" | "get_output_shared_texture" => {
+                Ok(self.output_shared_texture())
+            }
             "capabilities" | "get_capabilities" => Ok(self.capabilities()),
             "compute_probe" | "run_compute_probe" => self.compute_probe(&req.params),
             "compute_graph" | "run_compute_graph" => {
@@ -2263,8 +2282,14 @@ impl App {
                     {
                         "id": "shared-texture-output-export",
                         "label": "Native output shared-texture export",
-                        "ok": false,
-                        "detail": "pending core-to-Electron IOSurface/DXGI output texture export"
+                        "ok": self.renderer.as_ref().is_some_and(RenderState::output_export_ready),
+                        "detail": if self.renderer.as_ref().is_some_and(RenderState::output_export_ready) {
+                            "native output mirror is exported as an IOSurface handle".to_string()
+                        } else if cfg!(target_os = "macos") {
+                            "native output IOSurface export target is unavailable".to_string()
+                        } else {
+                            "pending core-to-Electron DXGI output texture export".to_string()
+                        }
                     },
                     {
                         "id": "native-texture-share-sender",
@@ -3020,6 +3045,17 @@ impl App {
             .frame_snapshot_bytes_read
             .saturating_add(number_at(&snapshot, &["byte_length"]).unwrap_or(0.0) as u64);
         Ok(snapshot)
+    }
+
+    fn output_shared_texture(&self) -> Value {
+        if let Some(renderer) = self.renderer.as_ref() {
+            return renderer.output_export_metadata();
+        }
+        json!({
+            "available": false,
+            "platform": if cfg!(target_os = "macos") { "iosurface" } else if cfg!(target_os = "windows") { "dxgi" } else { "unsupported" },
+            "reason": "native renderer has not created a wgpu device",
+        })
     }
 
     fn compute_probe(&mut self, params: &Value) -> Result<Value, String> {
@@ -4615,6 +4651,14 @@ impl RenderState {
             format,
             "Ghost Render Core Output Mirror",
         );
+        #[cfg(target_os = "macos")]
+        let output_export = Self::create_output_export_target(
+            &device,
+            config.width,
+            config.height,
+            native_output_export_format(format),
+        )
+        .ok();
         let (snapshot_texture, snapshot_view) = Self::create_offscreen_target(
             &device,
             config.width,
@@ -4892,6 +4936,8 @@ impl RenderState {
             native_compute_graph_buffers: HashMap::new(),
             output_mirror_texture,
             output_mirror_view,
+            #[cfg(target_os = "macos")]
+            output_export,
             snapshot_texture,
             snapshot_view,
             last_frame_metrics: None,
@@ -4925,7 +4971,9 @@ impl RenderState {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor {
@@ -4933,6 +4981,142 @@ impl RenderState {
             ..Default::default()
         });
         (texture, view)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn create_output_export_target(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+    ) -> Result<NativeOutputExport, String> {
+        use objc2_core_foundation::{CFDictionary, CFNumber, CFType};
+        use objc2_io_surface::{
+            IOSurfaceRef, kIOSurfaceBytesPerElement, kIOSurfaceHeight, kIOSurfacePixelFormat,
+            kIOSurfaceWidth,
+        };
+        use objc2_metal::{
+            MTLDevice, MTLStorageMode, MTLTextureDescriptor, MTLTextureType, MTLTextureUsage,
+        };
+        use wgpu::hal::{self, api::Metal};
+
+        let width = width.max(1);
+        let height = height.max(1);
+        let width_value = CFNumber::new_i32(width.min(i32::MAX as u32) as i32);
+        let height_value = CFNumber::new_i32(height.min(i32::MAX as u32) as i32);
+        let bytes_per_element_value = CFNumber::new_i32(4);
+        let bgra_fourcc =
+            (b'B' as i32) << 24 | (b'G' as i32) << 16 | (b'R' as i32) << 8 | b'A' as i32;
+        let pixel_format_value = CFNumber::new_i32(bgra_fourcc);
+        let keys: [&CFType; 4] = unsafe {
+            [
+                kIOSurfaceWidth.as_ref(),
+                kIOSurfaceHeight.as_ref(),
+                kIOSurfaceBytesPerElement.as_ref(),
+                kIOSurfacePixelFormat.as_ref(),
+            ]
+        };
+        let values: [&CFType; 4] = [
+            width_value.as_ref(),
+            height_value.as_ref(),
+            bytes_per_element_value.as_ref(),
+            pixel_format_value.as_ref(),
+        ];
+        let properties = CFDictionary::<CFType, CFType>::from_slices(&keys, &values);
+        let surface = unsafe { IOSurfaceRef::new(properties.as_opaque()) }.ok_or_else(|| {
+            format!("IOSurfaceCreate failed for native output export {width}x{height}")
+        })?;
+
+        let raw_device = unsafe { device.as_hal::<Metal>() }
+            .ok_or_else(|| "native renderer is not running on the Metal backend".to_string())?;
+        let metal_format = metal_texture_format_for_wgpu_output(format);
+        let texture_descriptor = unsafe {
+            MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
+                metal_format,
+                width as usize,
+                height as usize,
+                false,
+            )
+        };
+        texture_descriptor.setTextureType(MTLTextureType::Type2D);
+        texture_descriptor.setStorageMode(MTLStorageMode::Shared);
+        texture_descriptor.setUsage(MTLTextureUsage::ShaderRead | MTLTextureUsage::RenderTarget);
+        let raw_texture = raw_device
+            .raw_device()
+            .newTextureWithDescriptor_iosurface_plane(&texture_descriptor, &surface, 0)
+            .ok_or_else(|| {
+                format!("Metal failed to create native output export texture {width}x{height}")
+            })?;
+        let hal_texture = unsafe {
+            hal::metal::Device::texture_from_raw(
+                raw_texture,
+                format,
+                MTLTextureType::Type2D,
+                1,
+                1,
+                hal::CopyExtent {
+                    width,
+                    height,
+                    depth: 1,
+                },
+                None,
+            )
+        };
+        let texture = unsafe {
+            device.create_texture_from_hal::<Metal>(
+                hal_texture,
+                &wgpu::TextureDescriptor {
+                    label: Some("Ghost Render Core Output IOSurface Export"),
+                    size: wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::COPY_SRC,
+                    view_formats: &[],
+                },
+                wgpu::TextureUses::COLOR_TARGET,
+            )
+        };
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("Ghost Render Core Output IOSurface Export View"),
+            format: Some(format),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            ..Default::default()
+        });
+        let blitter = TextureBlitterBuilder::new(device, format)
+            .sample_type(wgpu::FilterMode::Linear)
+            .build();
+        Ok(NativeOutputExport {
+            surface,
+            texture,
+            view,
+            blitter,
+            width,
+            height,
+            format,
+            frame: 0,
+        })
+    }
+
+    #[cfg(target_os = "macos")]
+    fn refresh_output_export(&mut self, encoder: &mut wgpu::CommandEncoder) {
+        if let Some(export) = self.output_export.as_mut() {
+            let _keep_texture_alive = &export.texture;
+            export.blitter.copy(
+                &self.device,
+                encoder,
+                &self.output_mirror_view,
+                &export.view,
+            );
+            export.frame = export.frame.saturating_add(1);
+        }
     }
 
     fn poll_gpu_timing(&mut self) {
@@ -4999,6 +5183,42 @@ impl RenderState {
         )
     }
 
+    fn output_export_ready(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            self.output_export.is_some()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            false
+        }
+    }
+
+    fn output_export_metadata(&self) -> Value {
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(export) = self.output_export.as_ref() {
+                return json!({
+                    "available": true,
+                    "platform": "iosurface",
+                    "handle": export.surface.id().to_string(),
+                    "handle_encoding": "integer",
+                    "handle_byte_length": 4,
+                    "width": export.width,
+                    "height": export.height,
+                    "format": texture_format_label(export.format),
+                    "frame": export.frame,
+                    "flipped": false,
+                });
+            }
+        }
+        json!({
+            "available": false,
+            "platform": if cfg!(target_os = "macos") { "iosurface" } else if cfg!(target_os = "windows") { "dxgi" } else { "unsupported" },
+            "reason": if cfg!(target_os = "macos") { "native output IOSurface export target is unavailable" } else { "native output shared texture export is pending for this backend" },
+        })
+    }
+
     fn set_present_policy(
         &mut self,
         present_mode: &str,
@@ -5027,6 +5247,16 @@ impl RenderState {
         );
         self.output_mirror_texture = output_mirror_texture;
         self.output_mirror_view = output_mirror_view;
+        #[cfg(target_os = "macos")]
+        {
+            self.output_export = Self::create_output_export_target(
+                &self.device,
+                self.config.width,
+                self.config.height,
+                native_output_export_format(self.config.format),
+            )
+            .ok();
+        }
         let (snapshot_texture, snapshot_view) = Self::create_offscreen_target(
             &self.device,
             self.config.width,
@@ -6659,6 +6889,8 @@ impl RenderState {
                 gpu_timing.resolve_to_readback(&mut mirror_encoder);
             }
         }
+        #[cfg(target_os = "macos")]
+        self.refresh_output_export(&mut mirror_encoder);
         self.queue.submit(Some(mirror_encoder.finish()));
         if should_record_timing {
             if let Some(gpu_timing) = self.gpu_timing.as_mut() {
@@ -7309,7 +7541,9 @@ fn texture_format_label(format: wgpu::TextureFormat) -> &'static str {
     match format {
         wgpu::TextureFormat::Rgba16Float => "rgba16float",
         wgpu::TextureFormat::Rgba8Unorm => "rgba8unorm",
+        wgpu::TextureFormat::Rgba8UnormSrgb => "rgba8unorm-srgb",
         wgpu::TextureFormat::Bgra8Unorm => "bgra8unorm",
+        wgpu::TextureFormat::Bgra8UnormSrgb => "bgra8unorm-srgb",
         _ => "unknown",
     }
 }
@@ -7322,6 +7556,14 @@ fn texture_format_bytes_per_texel(format: wgpu::TextureFormat) -> usize {
     }
 }
 
+fn native_output_export_format(output_format: wgpu::TextureFormat) -> wgpu::TextureFormat {
+    if output_format.is_srgb() {
+        wgpu::TextureFormat::Bgra8UnormSrgb
+    } else {
+        wgpu::TextureFormat::Bgra8Unorm
+    }
+}
+
 fn wgpu_texture_format_for_shared_texture(
     descriptor: &SharedTextureSourceFrameDescriptor,
 ) -> wgpu::TextureFormat {
@@ -7329,6 +7571,18 @@ fn wgpu_texture_format_for_shared_texture(
         "rgba8unorm" | "70" => wgpu::TextureFormat::Rgba8Unorm,
         "bgra8unorm" | "80" | "87" => wgpu::TextureFormat::Bgra8Unorm,
         _ => wgpu::TextureFormat::Bgra8Unorm,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn metal_texture_format_for_wgpu_output(
+    format: wgpu::TextureFormat,
+) -> objc2_metal::MTLPixelFormat {
+    match format {
+        wgpu::TextureFormat::Bgra8UnormSrgb | wgpu::TextureFormat::Rgba8UnormSrgb => {
+            objc2_metal::MTLPixelFormat::BGRA8Unorm_sRGB
+        }
+        _ => objc2_metal::MTLPixelFormat::BGRA8Unorm,
     }
 }
 

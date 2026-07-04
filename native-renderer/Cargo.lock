@@ -485,6 +485,7 @@ dependencies = [
  "base64",
  "bytemuck",
  "naga",
+ "objc2-core-foundation",
  "objc2-io-surface",
  "objc2-metal 0.3.2",
  "pollster",
