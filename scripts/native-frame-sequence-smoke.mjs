@@ -208,9 +208,10 @@ function encodeRawFramesToJpegPipe(rawFramePaths, pixFmt) {
   return extractJpegBuffersFromPipe(Buffer.from(result.stdout || []));
 }
 
-function encodeRawFramesToMp4(rawFramePaths, pixFmt, outputPath) {
+function encodeRawFramesToMp4(rawFramePaths, pixFmt, outputPath, options = {}) {
   const ffmpegBin = resolveFfmpegBin();
   const input = Buffer.concat(rawFramePaths.map((path) => readFileSync(path)));
+  const frameLimitArgs = options.frameLimit === false ? [] : ['-frames:v', String(rawFramePaths.length)];
   const result = spawnSync(ffmpegBin, [
     '-hide_banner',
     '-loglevel', 'warning',
@@ -220,7 +221,7 @@ function encodeRawFramesToMp4(rawFramePaths, pixFmt, outputPath) {
     '-s:v', `${WIDTH}x${HEIGHT}`,
     '-framerate', String(FPS),
     '-i', 'pipe:0',
-    '-frames:v', String(rawFramePaths.length),
+    ...frameLimitArgs,
     '-an',
     '-c:v', 'libx264',
     '-pix_fmt', 'yuv420p',
@@ -326,6 +327,9 @@ async function main() {
     const mp4Path = join(tempDir, 'native-raw-render.mp4');
     encodeRawFramesToMp4(rawFramePaths, pixFmt, mp4Path);
     assertMp4(mp4Path);
+    const liveMp4Path = join(tempDir, 'native-raw-render-open-ended.mp4');
+    encodeRawFramesToMp4(rawFramePaths, pixFmt, liveMp4Path, { frameLimit: false });
+    assertMp4(liveMp4Path);
 
     const status = await rpc.send('status', {}, 5000);
     assert(Number(status?.render_clock_updates ?? 0) >= FRAME_COUNT, `render clock was not stepped for every frame: ${JSON.stringify(status)}`);
