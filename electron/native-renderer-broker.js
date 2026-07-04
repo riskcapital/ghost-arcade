@@ -611,6 +611,9 @@ function normalizeCapabilities(capabilities, previous = makeDefaultCapabilities(
     implemented_command_types: Array.isArray(source.implemented_command_types)
       ? source.implemented_command_types.map(String)
       : previous.implemented_command_types ?? [],
+    native_graph_instruments: Array.isArray(source.native_graph_instruments)
+      ? source.native_graph_instruments.map(String)
+      : previous.native_graph_instruments ?? [],
     features: {
       ...prevFeatures,
       ...nextFeatures,
@@ -808,6 +811,7 @@ function makeDefaultCapabilities(overrides = {}) {
     backend: overrides.backend ?? null,
     implemented_methods: [],
     implemented_command_types: [],
+    native_graph_instruments: [],
     features: {
       separate_process_render_core: false,
       managed_native_window: false,

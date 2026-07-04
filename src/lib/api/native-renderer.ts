@@ -270,6 +270,7 @@ export interface NativeRendererCapabilities {
   backend: BackendKind | string | null;
   implemented_methods: string[];
   implemented_command_types: string[];
+  native_graph_instruments?: string[];
   audio_uniform_layout?: {
     schema_version: number;
     audio0: readonly string[];

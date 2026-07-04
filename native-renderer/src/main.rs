@@ -1357,6 +1357,7 @@ impl App {
             "backend": native_backend_name(),
             "implemented_methods": CORE_RPC_METHODS,
             "implemented_command_types": CORE_COMMAND_TYPES,
+            "native_graph_instruments": ["smoke-3d"],
             "audio_uniform_layout": ghost_audio_uniform_layout(),
             "features": features,
             "limits": limits,
