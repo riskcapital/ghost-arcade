@@ -1636,6 +1636,8 @@ impl App {
             "storage_buffer_instruments": true,
             "shared_texture_source_frame_upload": cfg!(target_os = "macos"),
             "shared_texture_upload": false,
+            "shared_texture_output_export": false,
+            "native_texture_share_sender": false,
             "native_media_decode": false,
             "media_prefetch": false,
             "present_policy": true,
@@ -2248,6 +2250,18 @@ impl App {
                         "label": "Shared texture media transport",
                         "ok": false,
                         "detail": "full media shared texture transport is pending; source-frame shared handle upload is tracked separately"
+                    },
+                    {
+                        "id": "shared-texture-output-export",
+                        "label": "Native output shared-texture export",
+                        "ok": false,
+                        "detail": "pending core-to-Electron IOSurface/DXGI output texture export"
+                    },
+                    {
+                        "id": "native-texture-share-sender",
+                        "label": if cfg!(target_os = "macos") { "Native Syphon sender" } else { "Native Spout sender" },
+                        "ok": false,
+                        "detail": "pending zero-copy texture-share sender from the native composite"
                     },
                     {
                         "id": "compute-instrument-host",
