@@ -10,7 +10,11 @@ import {
   buildSmoke3DNativePrecompileCommands,
   type Smoke3DNativeGraphState,
 } from '$lib/renderer/webgpu3DSmoke';
-import { buildParticleFieldNativePrecompileCommands } from '$lib/renderer/webgpuParticleField';
+import {
+  buildParticleFieldNativeComputeGraph,
+  buildParticleFieldNativePrecompileCommands,
+  type ParticleFieldNativeGraphState,
+} from '$lib/renderer/webgpuParticleField';
 import {
   attachNativeRendererOutputWindow,
   clearNativeRendererDecodePreviewCache,
@@ -96,7 +100,8 @@ type NativeRenderClockCommand = {
 
 export type PresentPolicyProfile = 'vsync-live' | 'low-latency-safe' | 'low-latency-aggressive';
 
-type NativeGraphRouteKind = 'smoke-3d';
+type NativeGraphRouteKind = 'smoke-3d' | 'particle-field';
+type NativeGraphRouteSimulationState = Smoke3DNativeGraphState | ParticleFieldNativeGraphState;
 
 type NativeGraphLayerRoute = {
   kind: NativeGraphRouteKind;
@@ -108,7 +113,7 @@ type NativeGraphRouteState = {
   inFlight: boolean;
   seq: number;
   warnings: number;
-  state: Smoke3DNativeGraphState | null;
+  state: NativeGraphRouteSimulationState | null;
 };
 
 function nativeGraphInstrumentIds(capabilities: NativeRendererCapabilities | null | undefined): string[] {
@@ -587,7 +592,7 @@ function gpuNativeSourceType(shaderId: string | undefined | null): string {
   return `gpu:${id || 'gpu'}`;
 }
 
-function nativeLayerSource(layer: Layer, useNativeSmokeGraph = false): NativeLayerSource {
+function nativeLayerSource(layer: Layer, nativeGraphKind: NativeGraphRouteKind | false = false): NativeLayerSource {
   const src = layer.source;
   if (src) {
     const sourceType = isSharedTextureUri(src.src) ? 'video' : (src.type || 'none');
@@ -605,10 +610,10 @@ function nativeLayerSource(layer: Layer, useNativeSmokeGraph = false): NativeLay
     const shaderId = layer.gpuLayerContent.shaderId || 'gpu';
     const normalizedShaderId = String(shaderId).trim().toLowerCase();
     const previewElement = ((layer as any)._gpuLayerPreviewCanvas ?? null) as CanvasImageSource | null;
-    if (useNativeSmokeGraph && normalizedShaderId === 'smoke-3d') {
+    if (nativeGraphKind && normalizedShaderId === nativeGraphKind) {
       return {
         id: `gpu:${layer.id}:${shaderId}`,
-        uri: `native-graph://smoke-3d/${layer.id}`,
+        uri: `native-graph://${nativeGraphKind}/${layer.id}`,
         sourceType: 'image',
         source: null,
         shouldPrefetch: false,
@@ -824,13 +829,28 @@ export class NativeRendererSync {
     if (!this.nativeComputeGraphSourceFrames || !this.nativeWgslStdlibWarmed || !layer.visible) return null;
     if (layer.type !== 'gpu' || !layer.gpuLayerContent) return null;
     const shaderId = String(layer.gpuLayerContent.shaderId || '').trim();
-    if (shaderId.toLowerCase() !== 'smoke-3d') return null;
-    const source = nativeLayerSource(layer, true);
-    const key = this.nativeGraphRouteKey('smoke-3d', source.id);
+    const normalizedShaderId = shaderId.toLowerCase();
+    let kind: NativeGraphRouteKind | null = null;
+    if (
+      normalizedShaderId === 'smoke-3d' &&
+      this.supportsNativeFeature('native_3d_smoke_graph') &&
+      this.supportsNativeGraphInstrument('smoke-3d')
+    ) {
+      kind = 'smoke-3d';
+    } else if (
+      normalizedShaderId === 'particle-field' &&
+      this.supportsNativeFeature('native_particle_field_graph') &&
+      this.supportsNativeGraphInstrument('particle-field')
+    ) {
+      kind = 'particle-field';
+    }
+    if (!kind) return null;
+    const source = nativeLayerSource(layer, kind);
+    const key = this.nativeGraphRouteKey(kind, source.id);
     if (!includeWarningDisabled && (this.nativeGraphRoutes.get(key)?.warnings ?? 0) >= 3) {
       return null;
     }
-    return { kind: 'smoke-3d', key, source };
+    return { kind, key, source };
   }
 
   private async renderNativeGraphSources(
@@ -865,28 +885,52 @@ export class NativeRendererSync {
       try {
         const graphSeq = routeState.seq + 1;
         routeState.seq = graphSeq;
-        const graph = buildSmoke3DNativeComputeGraph({
-          sourceId: route.source.id,
-          params: layer.gpuLayerContent?.params ?? {},
-          width,
-          height,
-          time: typeof clock.time === 'number' ? clock.time : Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000),
-          frameDelta: typeof clock.time_delta === 'number' ? clock.time_delta : 1 / this.targetFps,
-          frameIndex: graphSeq,
-          audioBass: visual.isActive ? Math.max(visual.bass, visual.bassFast * 0.9) : 0,
-          audioTreble: visual.isActive ? visual.treble : 0,
-          state: routeState.state,
-          reset: !routeState.state,
-        });
+        const graphTime = typeof clock.time === 'number'
+          ? clock.time
+          : Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000);
+        const graphDelta = typeof clock.time_delta === 'number' ? clock.time_delta : 1 / this.targetFps;
+        const graph = route.kind === 'smoke-3d'
+          ? buildSmoke3DNativeComputeGraph({
+              sourceId: route.source.id,
+              params: layer.gpuLayerContent?.params ?? {},
+              width,
+              height,
+              time: graphTime,
+              frameDelta: graphDelta,
+              frameIndex: graphSeq,
+              audioBass: visual.isActive ? Math.max(visual.bass, visual.bassFast * 0.9) : 0,
+              audioTreble: visual.isActive ? visual.treble : 0,
+              state: routeState.state as Smoke3DNativeGraphState | null,
+              reset: !routeState.state,
+            })
+          : buildParticleFieldNativeComputeGraph({
+              sourceId: route.source.id,
+              params: layer.gpuLayerContent?.params ?? {},
+              width,
+              height,
+              time: graphTime,
+              frameDelta: graphDelta,
+              frameIndex: graphSeq,
+              audioBass: visual.isActive ? Math.max(visual.bass, visual.bassFast * 0.9) : 0,
+              audioTreble: visual.isActive ? visual.treble : 0,
+              state: routeState.state as ParticleFieldNativeGraphState | null,
+              reset: !routeState.state,
+            });
         const result = await runNativeRendererComputeGraph(graph.config as unknown as Record<string, unknown>);
-        if (!result?.render || (result.render as any).target !== 'source_frame') {
-          throw new Error(`native 3D Smoke graph returned no source-frame render`);
+        const renders = Array.isArray((result as any)?.renders)
+          ? (result as any).renders
+          : [(result as any)?.render].filter(Boolean);
+        const renderedSourceFrame = renders.some((render: any) =>
+          render?.target === 'source_frame' && render?.source_id === route.source.id,
+        );
+        if (!renderedSourceFrame) {
+          throw new Error(`native ${route.kind} graph returned no source-frame render`);
         }
         routeState.state = graph.state;
         routeState.warnings = 0;
       } catch (err) {
         if (routeState.warnings < 3) {
-          console.warn('[NativeRendererSync] native 3D Smoke graph failed', layer.id, err);
+          console.warn(`[NativeRendererSync] native ${route.kind} graph failed`, layer.id, err);
         }
         routeState.warnings += 1;
       } finally {
@@ -948,12 +992,20 @@ export class NativeRendererSync {
     this.nativeCoreMethods = new Set((startupCapabilities?.implemented_methods ?? []).map(String));
     this.nativeFeatureFlags = startupCapabilities?.features ?? {};
     this.nativeGraphInstruments = new Set(nativeGraphInstrumentIds(startupCapabilities));
-    this.nativeComputeGraphSourceFrames = !!(
+    const computeGraphSourceFrameHost = !!(
       this.supportsNativeFeature('compute_graph_host') &&
       this.supportsNativeFeature('compute_graph_render') &&
-      this.supportsNativeFeature('compute_graph_source_frame_target') &&
-      this.supportsNativeFeature('native_3d_smoke_graph') &&
-      this.supportsNativeGraphInstrument('smoke-3d')
+      this.supportsNativeFeature('compute_graph_source_frame_target')
+    );
+    this.nativeComputeGraphSourceFrames = computeGraphSourceFrameHost && !!(
+      (
+        this.supportsNativeFeature('native_3d_smoke_graph') &&
+        this.supportsNativeGraphInstrument('smoke-3d')
+      ) ||
+      (
+        this.supportsNativeFeature('native_particle_field_graph') &&
+        this.supportsNativeGraphInstrument('particle-field')
+      )
     );
     const startupQuality = startupStatus?.native_quality;
     console.log(
@@ -975,7 +1027,7 @@ export class NativeRendererSync {
     });
     const nativeCaps = startupStatus?.native_caps;
     console.log(
-      `[NativeRendererSync] start complete preview=${SOURCE_PREVIEW_SIZE}px sourceFrame=${this.nativeSourceFrameSize}px mips=${startupStatus?.source_frame_mip_levels ?? 1} nativeGraphSmoke=${this.nativeComputeGraphSourceFrames ? 'on' : 'off'} tier=${nativeCaps?.recommended_quality_tier ?? 'unknown'} f16=${nativeCaps?.requested_shader_f16 ? 'on' : 'off'} floatFilter=${nativeCaps?.requested_float32_filterable ? 'on' : 'off'}`,
+      `[NativeRendererSync] start complete preview=${SOURCE_PREVIEW_SIZE}px sourceFrame=${this.nativeSourceFrameSize}px mips=${startupStatus?.source_frame_mip_levels ?? 1} nativeGraphs=${this.nativeComputeGraphSourceFrames ? 'on' : 'off'} tier=${nativeCaps?.recommended_quality_tier ?? 'unknown'} f16=${nativeCaps?.requested_shader_f16 ? 'on' : 'off'} floatFilter=${nativeCaps?.requested_float32_filterable ? 'on' : 'off'}`,
     );
   }
 
