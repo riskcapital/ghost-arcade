@@ -1052,6 +1052,29 @@ function normalizeCapabilities(capabilities, previous = makeDefaultCapabilities(
     native_graph_instruments: Array.isArray(source.native_graph_instruments)
       ? source.native_graph_instruments.map(String)
       : previous.native_graph_instruments ?? [],
+    native_compositor_blend_modes: Array.isArray(source.native_compositor_blend_modes)
+      ? source.native_compositor_blend_modes
+          .filter((entry) => entry && typeof entry === 'object')
+          .map((entry) => ({
+            ...entry,
+            id: String(entry.id ?? ''),
+            code: Number(entry.code ?? 0),
+          }))
+          .filter((entry) => entry.id)
+      : previous.native_compositor_blend_modes ?? [],
+    native_compositor_effect_descriptors: Array.isArray(source.native_compositor_effect_descriptors)
+      ? source.native_compositor_effect_descriptors
+          .filter((entry) => entry && typeof entry === 'object')
+          .map((entry) => ({
+            ...entry,
+            id: String(entry.id ?? ''),
+            code: Number(entry.code ?? 0),
+            aliases: Array.isArray(entry.aliases) ? entry.aliases.map(String) : [],
+            amount_min: Number(entry.amount_min ?? 0),
+            amount_max: Number(entry.amount_max ?? 0),
+          }))
+          .filter((entry) => entry.id)
+      : previous.native_compositor_effect_descriptors ?? [],
     native_graph_instrument_manifest: Array.isArray(source.native_graph_instrument_manifest)
       ? source.native_graph_instrument_manifest
           .filter((entry) => entry && typeof entry === 'object')
@@ -1522,6 +1545,8 @@ function makeDefaultCapabilities(overrides = {}) {
     implemented_command_types: [],
     native_graph_instruments: [],
     native_graph_instrument_manifest: [],
+    native_compositor_blend_modes: [],
+    native_compositor_effect_descriptors: [],
     features: {
       separate_process_render_core: false,
       managed_native_window: false,
@@ -1532,6 +1557,7 @@ function makeDefaultCapabilities(overrides = {}) {
       layer_shape_masks: false,
       blend_modes: false,
       effect_descriptors: false,
+      native_compositor_manifest: false,
       render_clock: false,
       frame_snapshot: false,
       frame_snapshot_export: false,

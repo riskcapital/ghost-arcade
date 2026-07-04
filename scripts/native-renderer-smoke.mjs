@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const root = process.cwd();
 const bin = join(
@@ -25,7 +26,7 @@ const COMPOSITOR_BLEND_DST = [0.18, 0.42, 0.88];
 const COMPOSITOR_BLEND_SRC = [0.95, 0.22, 0.15];
 const COMPOSITOR_EFFECT_QUANT = 10000;
 const COMPOSITOR_EFFECT_COLOR = [0.22, 0.58, 0.84];
-const COMPOSITOR_EFFECTS = [
+export const COMPOSITOR_EFFECTS = [
   { name: 'invert', code: 1, amount: 0.65 },
   { name: 'grayscale', code: 2, amount: 0.45 },
   { name: 'brightness', code: 3, amount: 1.32 },
@@ -34,8 +35,9 @@ const COMPOSITOR_EFFECTS = [
   { name: 'saturation', code: 6, amount: 1.72 },
   { name: 'hue', code: 7, amount: 0.18 },
   { name: 'posterize', code: 8, amount: 7.0 },
+  { name: 'noise', code: 9, amount: 0.38 },
 ];
-const COMPOSITOR_BLEND_MODES = [
+export const COMPOSITOR_BLEND_MODES = [
   { name: 'normal', code: 0 },
   { name: 'add', code: 1 },
   { name: 'multiply', code: 2 },
@@ -76,6 +78,28 @@ const NATIVE_SHADER_CATALOG_PROBES = [
   { id: 'ink-cloud', params: [1.36, 1.22, 0.84, 0.46, 0.76, 0.74, 0.72, 1] },
   { id: 'smoke-3d', params: [1.34, 1.16, 0.82, 0.48, 0.86, 0.76, 0.76, 1] },
 ];
+
+export function assertNativeCompositorManifest(capabilities) {
+  if (!capabilities?.features?.native_compositor_manifest) {
+    throw new Error(`native compositor manifest feature missing: ${JSON.stringify(capabilities?.features)}`);
+  }
+  const nativeBlendModes = new Map(
+    (capabilities.native_compositor_blend_modes ?? []).map((entry) => [entry.id, Number(entry.code)]),
+  );
+  for (const mode of COMPOSITOR_BLEND_MODES) {
+    if (nativeBlendModes.get(mode.name) !== mode.code) {
+      throw new Error(`native compositor blend manifest missing ${mode.name}:${mode.code}: ${JSON.stringify(capabilities.native_compositor_blend_modes)}`);
+    }
+  }
+  const nativeEffects = new Map(
+    (capabilities.native_compositor_effect_descriptors ?? []).map((entry) => [entry.id, Number(entry.code)]),
+  );
+  for (const effect of COMPOSITOR_EFFECTS) {
+    if (nativeEffects.get(effect.name) !== effect.code) {
+      throw new Error(`native compositor effect manifest missing ${effect.name}:${effect.code}: ${JSON.stringify(capabilities.native_compositor_effect_descriptors)}`);
+    }
+  }
+}
 
 const NATIVE_WGSL_PROBE_SOURCE = `
 struct NativeShaderUniforms {
@@ -316,7 +340,7 @@ function makePreviewBmpBytes(width, height) {
   return bytes;
 }
 
-function createRpcProcess() {
+export function createRpcProcess() {
   if (!existsSync(bin)) {
     throw new Error(`native render-core binary is missing: ${bin}\nRun npm run native:build first.`);
   }
@@ -567,9 +591,45 @@ function nativeEffectReference(effect) {
       const levels = Math.max(2, Math.floor(amount + 0.5));
       return color.map((value) => Math.floor(clampNumber(value) * levels + 0.5) / levels);
     }
+    case 'noise': {
+      const uv = [0.37, 0.62];
+      const t = 1.25;
+      const frameCount = 9;
+      const n = valueNoise2d([
+        uv[0] * 320 * 0.42 + t * 19.0,
+        uv[1] * 180 * 0.42 + frameCount * 0.37,
+      ]) - 0.5;
+      return color.map((value) => value + n * clampNumber(amount) * 0.72);
+    }
     default:
       return color;
   }
+}
+
+function fract(value) {
+  return value - Math.floor(value);
+}
+
+function hash21Js(p) {
+  const q = [
+    fract(p[0] * 127.1 + p[1] * 311.7),
+    fract(p[0] * 269.5 + p[1] * 183.3),
+  ];
+  return fract(Math.sin(q[0] + q[1]) * 43758.5453123);
+}
+
+function valueNoise2d(p) {
+  const i = [Math.floor(p[0]), Math.floor(p[1])];
+  const f = [fract(p[0]), fract(p[1])];
+  const u = [
+    f[0] * f[0] * (3.0 - 2.0 * f[0]),
+    f[1] * f[1] * (3.0 - 2.0 * f[1]),
+  ];
+  const a = hash21Js(i);
+  const b = hash21Js([i[0] + 1, i[1]]);
+  const c = hash21Js([i[0], i[1] + 1]);
+  const d = hash21Js([i[0] + 1, i[1] + 1]);
+  return mixNumber(mixNumber(a, b, u[0]), mixNumber(c, d, u[0]), u[1]);
 }
 
 function quantizedEffectReference(effect) {
@@ -691,7 +751,7 @@ fn cs_effect_probe(@builtin(global_invocation_id) gid: vec3<u32>) {
 `;
 }
 
-async function assertNativeCompositorBlendParity(rpc) {
+export async function assertNativeCompositorBlendParity(rpc) {
   const byteLength = COMPOSITOR_BLEND_MODES.length * 4 * 4;
   const result = await rpc.send('compute_graph', {
     buffers: [
@@ -730,7 +790,32 @@ async function assertNativeCompositorBlendParity(rpc) {
   return result;
 }
 
-async function assertNativeCompositorEffectParity(rpc) {
+export async function precompileNativeCompositorParityShaders(rpc) {
+  const summary = await rpc.send('submit_commands', {
+    commands: [
+      {
+        type: 'precompile_shader',
+        shader_id: 'native-compositor-blend-probe',
+        stage: 'compute',
+        entry: 'cs_blend_probe',
+        source: nativeCompositorBlendProbeSource(),
+      },
+      {
+        type: 'precompile_shader',
+        shader_id: 'native-compositor-effect-probe',
+        stage: 'compute',
+        entry: 'cs_effect_probe',
+        source: nativeCompositorEffectProbeSource(),
+      },
+    ],
+  }, 5000);
+  if (Number(summary?.dropped ?? 0) !== 0) {
+    throw new Error(`native compositor parity shader precompile failed: ${JSON.stringify(summary)}`);
+  }
+  return summary;
+}
+
+export async function assertNativeCompositorEffectParity(rpc) {
   const byteLength = COMPOSITOR_EFFECTS.length * 4 * 4;
   const result = await rpc.send('compute_graph', {
     buffers: [
@@ -765,8 +850,10 @@ async function assertNativeCompositorEffectParity(rpc) {
   if (words.length < COMPOSITOR_EFFECTS.length * 4) {
     throw new Error(`native compositor effect probe readback was truncated: ${JSON.stringify(result)}`);
   }
-  const tolerance = 18;
   for (const effect of COMPOSITOR_EFFECTS) {
+    // Hash/noise parity crosses WGSL f32 trig and JS double trig; keep the semantic
+    // gate, but do not require bit-tight agreement for that one stochastic op.
+    const tolerance = effect.name === 'noise' ? 420 : 18;
     const index = effect.code - 1;
     const actual = words.slice(index * 4, index * 4 + 3).map(Number);
     const expected = quantizedEffectReference(effect);
@@ -1249,6 +1336,7 @@ async function main() {
     if (!capabilities.implemented_methods?.includes('capabilities')) {
       throw new Error(`native capabilities did not list the capabilities RPC: ${JSON.stringify(capabilities)}`);
     }
+    assertNativeCompositorManifest(capabilities);
     for (const method of [
       'set_present_policy',
       'set_command_drain_policy',
@@ -1368,20 +1456,6 @@ async function main() {
         },
         {
           type: 'precompile_shader',
-          shader_id: 'native-compositor-blend-probe',
-          stage: 'compute',
-          entry: 'cs_blend_probe',
-          source: nativeCompositorBlendProbeSource(),
-        },
-        {
-          type: 'precompile_shader',
-          shader_id: 'native-compositor-effect-probe',
-          stage: 'compute',
-          entry: 'cs_effect_probe',
-          source: nativeCompositorEffectProbeSource(),
-        },
-        {
-          type: 'precompile_shader',
           shader_id: 'native-compute-graph-render',
           stage: 'render',
           entry: 'fs_main',
@@ -1466,6 +1540,7 @@ async function main() {
     if (!graphRenderSnapshot?.checksum || graphRenderSnapshot.dark_frame || Number(graphRenderSnapshot.nonzero_pixels ?? 0) <= 0) {
       throw new Error(`native compute graph render snapshot failed: ${JSON.stringify(computeGraph)}`);
     }
+    await precompileNativeCompositorParityShaders(rpc);
     const compositorBlendParity = await assertNativeCompositorBlendParity(rpc);
     const compositorEffectParity = await assertNativeCompositorEffectParity(rpc);
     if (!compositorBlendParity?.readbacks?.['native-compositor-blend-output']?.checksum) {
@@ -2248,7 +2323,9 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err?.stack || err?.message || err);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error(err?.stack || err?.message || err);
+    process.exit(1);
+  });
+}

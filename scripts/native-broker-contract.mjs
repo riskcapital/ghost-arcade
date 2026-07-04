@@ -181,6 +181,25 @@ try {
   assert(capabilities?.features?.native_graph_buffer_prune, 'broker capabilities lost native graph buffer prune support');
   assert(capabilities?.features?.native_static_image_decode, 'broker capabilities lost native still-image decode support');
   assert(capabilities?.features?.native_static_image_prefetch, 'broker capabilities lost native still-image prefetch support');
+  assert(capabilities?.features?.native_compositor_manifest, 'broker capabilities lost native compositor manifest support');
+  const compositorBlendModes = new Map(
+    (capabilities?.native_compositor_blend_modes ?? []).map((entry) => [entry.id, Number(entry.code)]),
+  );
+  const compositorEffects = new Map(
+    (capabilities?.native_compositor_effect_descriptors ?? []).map((entry) => [entry.id, Number(entry.code)]),
+  );
+  assert(
+    compositorBlendModes.get('normal') === 0 &&
+      compositorBlendModes.get('screen') === 3 &&
+      compositorBlendModes.get('pin-light') === 25,
+    `broker compositor blend manifest drifted: ${JSON.stringify(capabilities?.native_compositor_blend_modes)}`,
+  );
+  assert(
+    compositorEffects.get('invert') === 1 &&
+      compositorEffects.get('posterize') === 8 &&
+      compositorEffects.get('noise') === 9,
+    `broker compositor effect manifest drifted: ${JSON.stringify(capabilities?.native_compositor_effect_descriptors)}`,
+  );
   assert(
     capabilities?.implemented_command_types?.includes('decode_media_source'),
     `broker capabilities missing decode_media_source command: ${JSON.stringify(capabilities?.implemented_command_types)}`,
