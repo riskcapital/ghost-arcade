@@ -1595,6 +1595,7 @@ impl App {
             "auto_present_policy": true,
             "multi_pass_instruments": false,
             "storage_buffer_instruments": true,
+            "shared_texture_source_frame_upload": cfg!(target_os = "macos"),
             "shared_texture_upload": false,
             "native_media_decode": false,
             "media_prefetch": false,
