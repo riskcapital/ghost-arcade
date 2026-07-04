@@ -332,6 +332,22 @@ class NativeRendererBroker {
           textureShare.error ? `error=${textureShare.error}` : null,
         ].filter(Boolean).join(' ')
       : 'not connected to Electron texture-share status';
+    const managedOutputOk = !!(
+      features.managed_output_attach &&
+      this.lastStatus.output_window_attached &&
+      this.lastStatus.output_swapchain_ready &&
+      this.lastStatus.output_present_healthy &&
+      Number(this.lastStatus.frames_presented ?? 0) > 0
+    );
+    const managedOutputDetail = !features.managed_output_attach
+      ? 'managed output attach is not implemented'
+      : !this.lastStatus.output_window_attached
+        ? 'native output window is detached/hidden'
+        : Number(this.lastStatus.frames_presented ?? 0) <= 0
+          ? 'waiting for first native swapchain present'
+          : this.lastStatus.output_present_consecutive_failures > 0
+            ? `native output present has ${this.lastStatus.output_present_consecutive_failures} consecutive failure(s)`
+            : `presented ${this.lastStatus.frames_presented} native frame(s)`;
     const unsupported = [
       ['shared-texture-upload', 'Shared texture media transport', !!features.shared_texture_upload],
       ['native-media-decode', 'Native media decode/prefetch', !!features.native_media_decode && !!features.media_prefetch],
@@ -345,7 +361,7 @@ class NativeRendererBroker {
           : 'compute graph host/source-frame target is not ready',
       ],
       ...graphChecks,
-      ['managed-output', 'Managed native output window', !!features.managed_output_attach],
+      ['managed-output', 'Managed native output window', managedOutputOk, managedOutputDetail],
       ['native-recording', 'Native recording', !!features.native_recording],
     ];
     return {
@@ -779,6 +795,30 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     output_present_consecutive_failures: Number(
       status.output_present_consecutive_failures ?? previous.output_present_consecutive_failures ?? 0,
     ),
+    swapchain_present_attempts: Number(
+      status.swapchain_present_attempts ?? previous.swapchain_present_attempts ?? 0,
+    ),
+    swapchain_presented: Number(status.swapchain_presented ?? previous.swapchain_presented ?? 0),
+    swapchain_present_failures: Number(
+      status.swapchain_present_failures ?? previous.swapchain_present_failures ?? 0,
+    ),
+    swapchain_present_max_consecutive_failures: Number(
+      status.swapchain_present_max_consecutive_failures ??
+        previous.swapchain_present_max_consecutive_failures ??
+        0,
+    ),
+    swapchain_present_tearing_attempts: Number(
+      status.swapchain_present_tearing_attempts ?? previous.swapchain_present_tearing_attempts ?? 0,
+    ),
+    swapchain_waitable_waits: Number(
+      status.swapchain_waitable_waits ?? previous.swapchain_waitable_waits ?? 0,
+    ),
+    swapchain_waitable_timeouts: Number(
+      status.swapchain_waitable_timeouts ?? previous.swapchain_waitable_timeouts ?? 0,
+    ),
+    frames_without_swapchain_present: Number(
+      status.frames_without_swapchain_present ?? previous.frames_without_swapchain_present ?? 0,
+    ),
     supports_tearing: !!(status.supports_tearing ?? previous.supports_tearing ?? false),
     supports_waitable_object: !!(status.supports_waitable_object ?? previous.supports_waitable_object ?? false),
     shader_precompile_queue_cap: Number(status.shader_precompile_queue_cap ?? previous.shader_precompile_queue_cap ?? 4096),
@@ -1063,12 +1103,19 @@ function makeDefaultStatus(overrides = {}) {
     output_width: outputWidth,
     output_height: outputHeight,
     output_refresh_hz: 60,
-    output_window_attached: true,
-    output_swapchain_ready: !!overrides.backend_ready,
+    output_window_attached: !!overrides.output_window_attached,
+    output_swapchain_ready: !!overrides.output_swapchain_ready,
     output_tearing_active: false,
     output_waitable_object_active: false,
-    output_present_healthy: true,
+    output_present_healthy: !!overrides.output_present_healthy,
     output_present_consecutive_failures: 0,
+    swapchain_present_attempts: 0,
+    swapchain_presented: 0,
+    swapchain_present_failures: 0,
+    swapchain_present_max_consecutive_failures: 0,
+    swapchain_present_tearing_attempts: 0,
+    swapchain_waitable_waits: 0,
+    swapchain_waitable_timeouts: 0,
     frame_graph_violations: 0,
     frames_without_swapchain_present: 0,
     last_frame_pass_mask: 0,

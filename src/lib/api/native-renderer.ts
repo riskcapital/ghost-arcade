@@ -422,6 +422,13 @@ export interface RendererStatus {
   output_waitable_object_active: boolean;
   output_present_healthy: boolean;
   output_present_consecutive_failures: number;
+  swapchain_present_attempts: number;
+  swapchain_presented: number;
+  swapchain_present_failures: number;
+  swapchain_present_max_consecutive_failures: number;
+  swapchain_present_tearing_attempts: number;
+  swapchain_waitable_waits: number;
+  swapchain_waitable_timeouts: number;
   frame_graph_violations: number;
   frames_without_swapchain_present: number;
   last_frame_pass_mask: number;

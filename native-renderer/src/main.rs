@@ -82,6 +82,7 @@ const CORE_RPC_METHODS: &[&str] = &[
     "set_shader_precompile_policy",
     "set_texture_pool_cap",
     "set_metadata_cache_caps",
+    "present",
     "capabilities",
     "get_capabilities",
     "compute_probe",
@@ -104,6 +105,7 @@ const CORE_COMMAND_TYPES: &[&str] = &[
     "set_texture_pool_cap",
     "set_shader_precompile_policy",
     "set_metadata_cache_caps",
+    "present",
     "set_native_quality_policy",
     "set_audio_state",
     "set_render_clock",
@@ -238,6 +240,14 @@ struct CoreStatus {
     output_waitable_object_active: bool,
     output_present_healthy: bool,
     output_present_consecutive_failures: u32,
+    swapchain_present_attempts: u64,
+    swapchain_presented: u64,
+    swapchain_present_failures: u64,
+    swapchain_present_max_consecutive_failures: u32,
+    swapchain_present_tearing_attempts: u64,
+    swapchain_waitable_waits: u64,
+    swapchain_waitable_timeouts: u64,
+    frames_without_swapchain_present: u64,
     supports_tearing: bool,
     supports_waitable_object: bool,
     gpu_timing_supported: bool,
@@ -479,6 +489,15 @@ struct CoreStats {
     gpu_timing_samples: u64,
     gpu_timing_disjoint: u64,
     gpu_timing_resolve_misses: u64,
+    swapchain_present_attempts: u64,
+    swapchain_presented: u64,
+    swapchain_present_failures: u64,
+    swapchain_present_consecutive_failures: u32,
+    swapchain_present_max_consecutive_failures: u32,
+    swapchain_present_tearing_attempts: u64,
+    swapchain_waitable_waits: u64,
+    swapchain_waitable_timeouts: u64,
+    frames_without_swapchain_present: u64,
 }
 
 #[repr(C)]
@@ -1801,10 +1820,17 @@ impl App {
             .as_ref()
             .map(|renderer| renderer.gpu_timing_stats())
             .unwrap_or((false, 0.0, 0.0, 0.0, 0, 0));
+        let renderer_ready = self.renderer.is_some();
+        let last_frame_ok = last_frame_error.is_none();
+        let output_window_attached = self.output_window_attached && renderer_ready;
+        let output_has_presented = self.stats.swapchain_presented > 0;
+        let output_swapchain_ready = output_window_attached && last_frame_ok && output_has_presented;
+        let output_present_healthy =
+            output_swapchain_ready && self.stats.swapchain_present_consecutive_failures == 0;
         CoreStatus {
             running: self.running,
             backend: native_backend_name().to_string(),
-            backend_ready: self.renderer.is_some() && last_frame_error.is_none(),
+            backend_ready: renderer_ready && last_frame_ok,
             adapter_name: self.adapter_name.clone(),
             native_caps: self
                 .renderer
@@ -1953,15 +1979,25 @@ impl App {
                 .map(|renderer| renderer.config.height)
                 .unwrap_or(self.pending_height),
             output_refresh_hz: self.target_fps,
-            output_window_attached: self.output_window_attached && self.renderer.is_some(),
-            output_swapchain_ready: self.renderer.is_some() && last_frame_error.is_none(),
+            output_window_attached,
+            output_swapchain_ready,
             output_tearing_active: self
                 .renderer
                 .as_ref()
                 .is_some_and(RenderState::tearing_active),
             output_waitable_object_active: false,
-            output_present_healthy: self.renderer.is_some() && last_frame_error.is_none(),
-            output_present_consecutive_failures: if last_frame_error.is_some() { 1 } else { 0 },
+            output_present_healthy,
+            output_present_consecutive_failures: self.stats.swapchain_present_consecutive_failures,
+            swapchain_present_attempts: self.stats.swapchain_present_attempts,
+            swapchain_presented: self.stats.swapchain_presented,
+            swapchain_present_failures: self.stats.swapchain_present_failures,
+            swapchain_present_max_consecutive_failures: self
+                .stats
+                .swapchain_present_max_consecutive_failures,
+            swapchain_present_tearing_attempts: self.stats.swapchain_present_tearing_attempts,
+            swapchain_waitable_waits: self.stats.swapchain_waitable_waits,
+            swapchain_waitable_timeouts: self.stats.swapchain_waitable_timeouts,
+            frames_without_swapchain_present: self.stats.frames_without_swapchain_present,
             supports_tearing: self
                 .renderer
                 .as_ref()
@@ -2128,8 +2164,16 @@ impl App {
                     {
                         "id": "managed-output",
                         "label": "Managed output window",
-                        "ok": self.renderer.is_some() && self.output_window_attached,
-                        "detail": if self.output_window_attached { "native output window is attached" } else { "native output window is detached/hidden" }
+                        "ok": self.status().output_present_healthy,
+                        "detail": if !self.output_window_attached {
+                            "native output window is detached/hidden".to_string()
+                        } else if self.stats.swapchain_presented == 0 {
+                            "waiting for first native swapchain present".to_string()
+                        } else if self.stats.swapchain_present_consecutive_failures > 0 {
+                            format!("native output present has {} consecutive failure(s)", self.stats.swapchain_present_consecutive_failures)
+                        } else {
+                            format!("native output presented {} frame(s)", self.stats.swapchain_presented)
+                        }
                     },
                     {
                         "id": "native-recording",
@@ -2389,8 +2433,12 @@ impl App {
         if !self.auto_present_on_state_change {
             return;
         }
+        self.auto_present_requested = true;
+        self.request_present();
+    }
+
+    fn request_present(&mut self) {
         if let Some(renderer) = self.renderer.as_ref() {
-            self.auto_present_requested = true;
             self.last_redraw = Instant::now();
             renderer.window.request_redraw();
         }
@@ -2474,6 +2522,7 @@ impl App {
                 "set_shader_precompile_policy" => self.apply_shader_precompile_policy(command),
                 "set_metadata_cache_caps" => self.apply_metadata_cache_caps(command),
                 "set_native_quality_policy" => self.apply_native_quality_policy(command),
+                "present" => self.request_present(),
                 "set_audio_state" => self.apply_audio_state(command),
                 "set_render_clock" => self.apply_render_clock(command),
                 "bind_media_source" => self.apply_media_source(command),
@@ -2591,6 +2640,8 @@ impl App {
                 return;
             }
         }
+        self.stats.swapchain_present_attempts =
+            self.stats.swapchain_present_attempts.saturating_add(1);
         match renderer.render(
             self.command_phase,
             gpu_layers.len() as u32,
@@ -2602,8 +2653,10 @@ impl App {
             self.audio1,
             self.audio2,
         ) {
-            Ok(()) => {
+            Ok(true) => {
                 self.stats.frames_presented = self.stats.frames_presented.saturating_add(1);
+                self.stats.swapchain_presented = self.stats.swapchain_presented.saturating_add(1);
+                self.stats.swapchain_present_consecutive_failures = 0;
                 if self.auto_present_requested {
                     self.stats.frames_presented_auto =
                         self.stats.frames_presented_auto.saturating_add(1);
@@ -2641,7 +2694,33 @@ impl App {
                     self.source_preview_dirty = false;
                 }
             }
+            Ok(false) => {
+                self.stats.swapchain_present_failures =
+                    self.stats.swapchain_present_failures.saturating_add(1);
+                self.stats.swapchain_present_consecutive_failures = self
+                    .stats
+                    .swapchain_present_consecutive_failures
+                    .saturating_add(1);
+                self.stats.swapchain_present_max_consecutive_failures = self
+                    .stats
+                    .swapchain_present_max_consecutive_failures
+                    .max(self.stats.swapchain_present_consecutive_failures);
+                self.stats.frames_without_swapchain_present =
+                    self.stats.frames_without_swapchain_present.saturating_add(1);
+            }
             Err(err) => {
+                self.stats.swapchain_present_failures =
+                    self.stats.swapchain_present_failures.saturating_add(1);
+                self.stats.swapchain_present_consecutive_failures = self
+                    .stats
+                    .swapchain_present_consecutive_failures
+                    .saturating_add(1);
+                self.stats.swapchain_present_max_consecutive_failures = self
+                    .stats
+                    .swapchain_present_max_consecutive_failures
+                    .max(self.stats.swapchain_present_consecutive_failures);
+                self.stats.frames_without_swapchain_present =
+                    self.stats.frames_without_swapchain_present.saturating_add(1);
                 renderer.last_frame_error = Some(err);
             }
         }
@@ -6019,7 +6098,7 @@ impl RenderState {
         audio0: [f32; 4],
         audio1: [f32; 4],
         audio2: [f32; 4],
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
@@ -6028,10 +6107,10 @@ impl RenderState {
             }
             wgpu::CurrentSurfaceTexture::Outdated => {
                 self.surface.configure(&self.device, &self.config);
-                return Ok(());
+                return Ok(false);
             }
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                return Ok(());
+                return Ok(false);
             }
             wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.configure(&self.device, &self.config);
@@ -6090,7 +6169,7 @@ impl RenderState {
         }
         self.queue.present(frame);
         self.last_frame_error = None;
-        Ok(())
+        Ok(true)
     }
 }
 
