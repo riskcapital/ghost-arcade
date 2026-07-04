@@ -10,7 +10,7 @@ use std::{
     path::{Path, PathBuf},
     sync::mpsc::{self, Receiver, Sender},
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, UNIX_EPOCH},
 };
 
 use base64::Engine;
@@ -1493,6 +1493,7 @@ struct App {
     source_preview_dirty: bool,
     source_frames: HashMap<String, SourceFrame>,
     source_frame_slots: HashMap<String, usize>,
+    source_frame_signatures: HashMap<String, String>,
     render_clock_mode: String,
     render_clock_time: Option<f32>,
     render_clock_delta: f32,
@@ -1568,6 +1569,7 @@ impl App {
             source_preview_dirty: true,
             source_frames: HashMap::new(),
             source_frame_slots: HashMap::new(),
+            source_frame_signatures: HashMap::new(),
             render_clock_mode: "live".to_string(),
             render_clock_time: None,
             render_clock_delta: 1.0 / 60.0,
@@ -1647,6 +1649,7 @@ impl App {
             "source_frame_mips": self.renderer.as_ref().is_some_and(|renderer| renderer.source_frame_mip_levels > 1),
             "source_frame_hdr": self.renderer.as_ref().is_some_and(|renderer| renderer.source_frame_format == SOURCE_FRAME_FORMAT_HDR),
             "native_static_image_decode": true,
+            "native_static_image_prefetch": true,
             "runtime_cache_clear": true,
             "native_graph_buffer_prune": true,
             "compute_shader_host": true,
@@ -3341,11 +3344,14 @@ impl App {
         self.stats.shader_cache_entries = self.shader_registry.len() as u64;
         self.stats.precompiled_vertex_shaders = self.precompiled_shader_count("vertex") as u64;
         self.stats.precompiled_pixel_shaders = self.precompiled_shader_count("pixel") as u64;
+        let cleared_source_frame_signatures = self.source_frame_signatures.len();
+        self.source_frame_signatures.clear();
 
         json!({
             "cleared_shader_records": cleared_shader_records,
             "cleared_pipeline_entries": cleared_pipeline_entries,
             "cleared_native_graph_buffers": cleared_native_graph_buffers,
+            "cleared_source_frame_signatures": cleared_source_frame_signatures,
             "remaining_shader_records": self.shader_registry.len(),
             "remaining_pipeline_entries": self.renderer.as_ref().map(RenderState::native_pipeline_cache_count).unwrap_or(0),
             "remaining_native_graph_buffers": self.renderer.as_ref().map(RenderState::native_compute_graph_buffer_count).unwrap_or(0),
@@ -4394,6 +4400,24 @@ impl App {
         let Some(path) = local_media_path_from_uri(uri) else {
             return;
         };
+        let signature = match native_image_file_signature(&path) {
+            Ok(signature) => signature,
+            Err(err) => {
+                self.stats.native_image_decode_failures =
+                    self.stats.native_image_decode_failures.saturating_add(1);
+                self.stats.native_image_decode_last_error = err;
+                self.source_frame_signatures.remove(source_id);
+                return;
+            }
+        };
+        if self
+            .source_frame_signatures
+            .get(source_id)
+            .is_some_and(|existing| existing == &signature)
+            && self.source_frames.contains_key(source_id)
+        {
+            return;
+        }
         let existing_seq = self
             .source_frames
             .get(source_id)
@@ -4416,11 +4440,14 @@ impl App {
                     .native_image_decode_bytes_uploaded
                     .saturating_add(uploaded as u64);
                 self.stats.native_image_decode_last_error.clear();
+                self.source_frame_signatures
+                    .insert(source_id.to_string(), signature);
             }
             Err(err) => {
                 self.stats.native_image_decode_failures =
                     self.stats.native_image_decode_failures.saturating_add(1);
                 self.stats.native_image_decode_last_error = err;
+                self.source_frame_signatures.remove(source_id);
             }
         }
     }
@@ -4471,6 +4498,9 @@ impl App {
         self.stats.source_frame_last_upload_height = height.min(u32::MAX as usize) as u32;
         self.stats.source_frame_last_upload_transport = transport.to_string();
         self.stats.source_frame_last_reject_reason.clear();
+        if transport != "native-image" {
+            self.source_frame_signatures.remove(&source_id);
+        }
         self.source_frames
             .insert(source_id.clone(), SourceFrame { seq });
         for layer in self.scene_layers.values_mut() {
@@ -4698,6 +4728,7 @@ impl App {
         {
             self.source_frame_slots.remove(&old_source_id);
             self.source_frames.remove(&old_source_id);
+            self.source_frame_signatures.remove(&old_source_id);
             for layer in self.scene_layers.values_mut() {
                 if layer.source_id.as_deref() == Some(old_source_id.as_str()) {
                     layer.frame_slot = None;
@@ -8099,6 +8130,34 @@ fn decode_native_image_rgba(path: &Path) -> Result<(usize, usize, Vec<u8>), Stri
         image.width() as usize,
         image.height() as usize,
         image.into_raw(),
+    ))
+}
+
+fn native_image_file_signature(path: &Path) -> Result<String, String> {
+    let metadata = fs::metadata(path).map_err(|err| {
+        format!(
+            "native image decode failed to stat `{}`: {err}",
+            path.display()
+        )
+    })?;
+    if !metadata.is_file() {
+        return Err(format!(
+            "native image decode rejected non-file path `{}`",
+            path.display()
+        ));
+    }
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| format!("{}:{}", duration.as_secs(), duration.subsec_nanos()))
+        .unwrap_or_else(|| "unknown".to_string());
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    Ok(format!(
+        "{}:{}:{}",
+        canonical.display(),
+        metadata.len(),
+        modified
     ))
 }
 

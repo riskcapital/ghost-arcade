@@ -5,6 +5,18 @@ import path from 'path';
 
 const COMMAND_PREFIX = 'native_renderer_';
 const SOURCE_FRAME_FILE_HANDOFF_B64_THRESHOLD = 512 * 1024;
+const STATIC_IMAGE_EXTENSIONS = new Set([
+  '.avif',
+  '.bmp',
+  '.gif',
+  '.jpg',
+  '.jpeg',
+  '.png',
+  '.tga',
+  '.tif',
+  '.tiff',
+  '.webp',
+]);
 const REQUIRED_NATIVE_GRAPH_INSTRUMENTS = [
   ['planet', 'Native Planet graph', 'native_planet_graph'],
   ['smoke-3d', 'Native 3D Smoke graph', 'native_3d_smoke_graph'],
@@ -19,6 +31,12 @@ const REQUIRED_NATIVE_GRAPH_INSTRUMENTS = [
 
 function nativeGraphReadinessId(id) {
   return id === 'smoke-3d' ? 'native-3d-smoke-graph' : `native-${id}-graph`;
+}
+
+function looksLikeStaticImageUri(uri) {
+  const clean = String(uri || '').split('#')[0].split('?')[0].toLowerCase();
+  if (!clean) return false;
+  return STATIC_IMAGE_EXTENSIONS.has(path.extname(clean));
 }
 
 const RENDERER_COMMANDS = [
@@ -71,7 +89,6 @@ const RENDERER_COMMANDS = [
 ];
 
 const BROKER_UNSUPPORTED_COMMANDS = new Map([
-  ['native_renderer_prefetch_media', 'native media prefetch/decode is not implemented yet'],
   ['native_renderer_clear_prefetch_cache', 'native media prefetch cache is not implemented yet'],
   ['native_renderer_clear_decode_preview_cache', 'native decode preview cache is not implemented yet'],
   ['native_renderer_set_vram_budget', 'native VRAM budget enforcement is not implemented yet'],
@@ -213,6 +230,8 @@ class NativeRendererBroker {
         return this.sendNativeComputeGraphPayloadIfRunning('compute_graph', args, { fallback: null, timeoutMs: 10000 });
       case 'native_renderer_upload_source_gpu_shared_texture':
         return this.uploadSourceGpuSharedTexture(args);
+      case 'native_renderer_prefetch_media':
+        return this.prefetchMedia(args);
       case 'native_renderer_set_target_fps':
         return this.sendIfRunning('set_target_fps', args, { fallback: null });
       case 'native_renderer_set_present_policy':
@@ -292,6 +311,39 @@ class NativeRendererBroker {
       fallback: null,
       timeoutMs: 2500,
     });
+    return this.getStatus();
+  }
+
+  async prefetchMedia(args = {}) {
+    const sourceId = String(args.source_id ?? args.sourceId ?? '').trim();
+    const uri = String(args.uri ?? args.src ?? '').trim();
+    if (!sourceId) {
+      throw new Error('native media prefetch requires source_id');
+    }
+    if (!uri) {
+      throw new Error('native media prefetch requires uri');
+    }
+    const sourceType = String(args.source_type ?? args.sourceType ?? '').trim().toLowerCase();
+    const imageSource = sourceType === 'image' || (!sourceType && looksLikeStaticImageUri(uri));
+    if (!imageSource) {
+      throw new Error(
+        'Unsupported native renderer command native_renderer_prefetch_media: native prefetch currently supports local static images only',
+      );
+    }
+    await this.sendNativeCommandPayloadIfRunning(
+      'submit_commands',
+      {
+        commands: [
+          {
+            type: 'decode_media_source',
+            source_id: sourceId,
+            uri,
+            source_type: 'image',
+          },
+        ],
+      },
+      { fallback: null, timeoutMs: 5000 },
+    );
     return this.getStatus();
   }
 
@@ -1421,6 +1473,7 @@ function makeDefaultCapabilities(overrides = {}) {
       source_frame_mips: false,
       source_frame_hdr: false,
       native_static_image_decode: false,
+      native_static_image_prefetch: false,
       runtime_cache_clear: false,
       native_graph_buffer_prune: false,
       compute_shader_host: false,

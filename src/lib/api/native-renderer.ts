@@ -961,11 +961,17 @@ export async function uploadNativeRendererSourceGpuSharedTexture(
   });
 }
 
-export async function prefetchNativeRendererMedia(sourceId: string, uri: string, priority = 1) {
-  return invoke<void>('native_renderer_prefetch_media', {
+export async function prefetchNativeRendererMedia(
+  sourceId: string,
+  uri: string,
+  priority = 1,
+  sourceType?: string,
+) {
+  return invoke<RendererStatus>('native_renderer_prefetch_media', {
     source_id: sourceId,
     uri,
     priority,
+    source_type: sourceType,
   });
 }
 

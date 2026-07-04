@@ -1012,6 +1012,7 @@ async function main() {
       !capabilities.features.native_pixel_particles_graph ||
       !capabilities.features.native_point_cloud_fx_graph ||
       !capabilities.features.native_static_image_decode ||
+      !capabilities.features.native_static_image_prefetch ||
       capabilities.features.multi_pass_instruments
     ) {
       throw new Error(`native compute capability flags are not honest yet: ${JSON.stringify(capabilities.features)}`);
@@ -1889,10 +1890,10 @@ async function main() {
     assertFrame('native decoded image layer', nativeImageSnapshot, 0.03);
     const afterNativeImageStatus = await rpc.send('status', {}, 5000);
     if (
-      Number(afterNativeImageStatus.native_image_decodes ?? 0) <=
+      Number(afterNativeImageStatus.native_image_decodes ?? 0) !==
       Number(afterNativeImageDecodeStatus.native_image_decodes ?? 0)
     ) {
-      throw new Error(`native still-image bind decode counter did not advance: ${JSON.stringify(afterNativeImageStatus)}`);
+      throw new Error(`native still-image bind should reuse prefetched source frame: ${JSON.stringify(afterNativeImageStatus)}`);
     }
     if (Number(afterNativeImageStatus.native_image_decode_failures ?? 0) !== 0) {
       throw new Error(`native still-image decode unexpectedly failed: ${JSON.stringify(afterNativeImageStatus)}`);

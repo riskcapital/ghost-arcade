@@ -1,5 +1,5 @@
 import { createNativeRendererBroker } from '../electron/native-renderer-broker.js';
-import { mkdtempSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -35,6 +35,40 @@ const FULLSCREEN_CORNERS = {
   bottomRight: { x: 1, y: 0 },
   bottomLeft: { x: 0, y: 0 },
 };
+
+function makeTinyBmpBytes() {
+  const width = 2;
+  const height = 2;
+  const rowStride = Math.ceil((width * 3) / 4) * 4;
+  const pixelBytes = rowStride * height;
+  const bytes = Buffer.alloc(54 + pixelBytes);
+  bytes.write('BM', 0, 'ascii');
+  bytes.writeUInt32LE(bytes.length, 2);
+  bytes.writeUInt32LE(54, 10);
+  bytes.writeUInt32LE(40, 14);
+  bytes.writeInt32LE(width, 18);
+  bytes.writeInt32LE(height, 22);
+  bytes.writeUInt16LE(1, 26);
+  bytes.writeUInt16LE(24, 28);
+  bytes.writeUInt32LE(pixelBytes, 34);
+  const pixels = [
+    [255, 48, 24],
+    [32, 210, 255],
+    [140, 255, 48],
+    [255, 220, 32],
+  ];
+  for (let y = 0; y < height; y += 1) {
+    const dstY = height - 1 - y;
+    for (let x = 0; x < width; x += 1) {
+      const [r, g, b] = pixels[y * width + x];
+      const dst = 54 + dstY * rowStride + x * 3;
+      bytes[dst] = b;
+      bytes[dst + 1] = g;
+      bytes[dst + 2] = r;
+    }
+  }
+  return bytes;
+}
 
 const BYTE_BUFFER_COMPUTE_SOURCE = `
 struct Seeds {
@@ -146,6 +180,7 @@ try {
   assert(capabilities?.features?.runtime_cache_clear, 'broker capabilities lost runtime cache clearing support');
   assert(capabilities?.features?.native_graph_buffer_prune, 'broker capabilities lost native graph buffer prune support');
   assert(capabilities?.features?.native_static_image_decode, 'broker capabilities lost native still-image decode support');
+  assert(capabilities?.features?.native_static_image_prefetch, 'broker capabilities lost native still-image prefetch support');
   assert(
     capabilities?.implemented_command_types?.includes('decode_media_source'),
     `broker capabilities missing decode_media_source command: ${JSON.stringify(capabilities?.implemented_command_types)}`,
@@ -198,6 +233,37 @@ try {
     assert(Array.isArray(entry.features) && entry.features.includes(required.feature), `broker graph ${required.id} manifest missing ${required.feature}: ${JSON.stringify(entry)}`);
     assert(String(entry.parity ?? '').length > 0, `broker graph ${required.id} missing parity metadata: ${JSON.stringify(entry)}`);
   }
+
+  tempDir = tempDir || mkdtempSync(join(tmpdir(), 'ghost-native-broker-frame-'));
+  const prefetchImagePath = join(tempDir, 'broker-prefetch.bmp');
+  writeFileSync(prefetchImagePath, makeTinyBmpBytes());
+  const beforePrefetchStatus = await broker.invoke('native_renderer_get_status');
+  const prefetchStatus = await broker.invoke('native_renderer_prefetch_media', {
+    source_id: 'broker-prefetch-image',
+    uri: prefetchImagePath,
+    source_type: 'image',
+    priority: 2,
+  });
+  assert(
+    Number(prefetchStatus.native_image_decodes ?? 0) >
+      Number(beforePrefetchStatus.native_image_decodes ?? 0),
+    `native static-image prefetch did not decode source: ${JSON.stringify(prefetchStatus)}`,
+  );
+  assert(
+    prefetchStatus.source_frame_last_upload_transport === 'native-image',
+    `native static-image prefetch did not report native-image transport: ${JSON.stringify(prefetchStatus)}`,
+  );
+  const secondPrefetchStatus = await broker.invoke('native_renderer_prefetch_media', {
+    source_id: 'broker-prefetch-image',
+    uri: prefetchImagePath,
+    source_type: 'image',
+    priority: 2,
+  });
+  assert(
+    Number(secondPrefetchStatus.native_image_decodes ?? 0) ===
+      Number(prefetchStatus.native_image_decodes ?? 0),
+    `native static-image prefetch should reuse resident source frame: ${JSON.stringify(secondPrefetchStatus)}`,
+  );
 
   const readiness = await broker.invoke('native_renderer_get_readiness_report');
   const checks = new Map((readiness?.checks ?? []).map((check) => [check.id, check]));
@@ -434,7 +500,7 @@ try {
       },
     ],
   });
-  tempDir = mkdtempSync(join(tmpdir(), 'ghost-native-broker-frame-'));
+  tempDir = tempDir || mkdtempSync(join(tmpdir(), 'ghost-native-broker-frame-'));
   const exportedFramePath = join(tempDir, 'broker-frame.rgba');
   const exportedFrame = await broker.invoke('native_renderer_export_frame_snapshot', {
     path: exportedFramePath,
