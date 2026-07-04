@@ -10,6 +10,7 @@ import {
   buildSmoke3DNativePrecompileCommands,
   type Smoke3DNativeGraphState,
 } from '$lib/renderer/webgpu3DSmoke';
+import { buildParticleFieldNativePrecompileCommands } from '$lib/renderer/webgpuParticleField';
 import {
   attachNativeRendererOutputWindow,
   clearNativeRendererDecodePreviewCache,
@@ -1654,6 +1655,7 @@ fn fs_main() -> @location(0) vec4<f32> {
       entry: 'fs_main',
     });
     commands.push(...buildSmoke3DNativePrecompileCommands());
+    commands.push(...buildParticleFieldNativePrecompileCommands());
     await submitNativeRendererBatch({
       frame_id: ++this.frameId,
       commands,

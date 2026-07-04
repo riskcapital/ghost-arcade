@@ -7,6 +7,11 @@ import {
   buildSmoke3DNativePrecompileCommands,
   type Smoke3DNativeGraphState,
 } from '../../src/lib/renderer/webgpu3DSmoke';
+import {
+  buildParticleFieldNativeComputeGraph,
+  buildParticleFieldNativePrecompileCommands,
+  type ParticleFieldNativeGraphState,
+} from '../../src/lib/renderer/webgpuParticleField';
 
 const RUN_NATIVE_INTEGRATION = process.env.GA_NATIVE_SMOKE3D_INTEGRATION === '1';
 const root = process.cwd();
@@ -139,7 +144,9 @@ describe('3D Smoke native renderer integration', () => {
     expect(capabilities.features.compute_graph_depth_render).toBe(true);
     expect(capabilities.features.compute_graph_source_frame_target).toBe(true);
     expect(capabilities.features.native_3d_smoke_graph).toBe(true);
+    expect(capabilities.features.native_particle_field_graph).toBe(true);
     expect(capabilities.native_graph_instruments).toContain('smoke-3d');
+    expect(capabilities.native_graph_instruments).toContain('particle-field');
     expect(capabilities.native_graph_instrument_manifest).toContainEqual(
       expect.objectContaining({
         id: 'smoke-3d',
@@ -147,9 +154,19 @@ describe('3D Smoke native renderer integration', () => {
         render_target: 'source_frame',
       }),
     );
+    expect(capabilities.native_graph_instrument_manifest).toContainEqual(
+      expect.objectContaining({
+        id: 'particle-field',
+        source_uri_prefix: 'native-graph://particle-field/',
+        render_target: 'source_frame',
+      }),
+    );
 
     await rpc.send('submit_commands', {
-      commands: buildSmoke3DNativePrecompileCommands(),
+      commands: [
+        ...buildSmoke3DNativePrecompileCommands(),
+        ...buildParticleFieldNativePrecompileCommands(),
+      ],
     }, 10000);
 
     const sourceId = 'gpu:integration-smoke:smoke-3d';
@@ -209,5 +226,62 @@ describe('3D Smoke native renderer integration', () => {
     expect(Number(status.compute_graph_render_passes ?? 0)).toBeGreaterThanOrEqual(3);
     expect(Number(status.compute_graph_source_frame_renders ?? 0)).toBeGreaterThanOrEqual(3);
     expect(Number(status.compute_graph_persistent_buffers ?? graphResult.persistent_buffer_count ?? 0)).toBeGreaterThanOrEqual(7);
+
+    await rpc.send('submit_commands', {
+      commands: [
+        { type: 'remove_layer', layer_id: 'native-smoke-3d' },
+      ],
+    });
+
+    const particleSourceId = 'gpu:integration-particles:particle-field';
+    await rpc.send('submit_commands', {
+      commands: [
+        { type: 'upsert_layer', layer_id: 'native-particle-field', z_index: 0, blend_mode: 'normal', opacity: 1, corners: FULLSCREEN_CORNERS },
+        { type: 'set_layer_visibility', layer_id: 'native-particle-field', visible: true },
+        { type: 'bind_media_source', layer_id: 'native-particle-field', source_id: particleSourceId, uri: 'native-graph://particle-field/integration', source_type: 'image' },
+      ],
+    });
+
+    let particleState: ParticleFieldNativeGraphState | null = null;
+    const particleChecksums = new Set<string>();
+    for (let frame = 0; frame < 3; frame++) {
+      const graph = buildParticleFieldNativeComputeGraph({
+        sourceId: particleSourceId,
+        params: {
+          mode: 'gravity',
+          topology: 'softSphere',
+          particleCount: 2048,
+          connectEnabled: false,
+          fogOpacity: 0.75,
+          bass: frame === 1 ? 0.65 : 0.35,
+          treble: 0.25,
+          baseSize: 0.018,
+        },
+        width: 320,
+        height: 180,
+        time: frame / 30,
+        frameDelta: 1 / 30,
+        frameIndex: frame + 1,
+        state: particleState,
+        reset: frame === 0,
+      });
+      particleState = graph.state;
+      const particleResult: any = await rpc.send('compute_graph', graph.config as unknown as Record<string, unknown>, 20000);
+      expect(particleResult.pass_count).toBe(1);
+      expect(particleResult.renders).toHaveLength(2);
+      expect(particleResult.renders[1]).toMatchObject({
+        target: 'source_frame',
+        source_id: particleSourceId,
+        depth: true,
+      });
+      const snapshot = await rpc.send('frame_snapshot', {
+        include_pixels: false,
+        time: 0.3 + frame / 30,
+        frame_index: frame + 8,
+      }, 10000);
+      assertVisibleFrame(`native Particle Field source-frame layer ${frame}`, snapshot, 0.01);
+      particleChecksums.add(String(snapshot.checksum));
+    }
+    expect(particleChecksums.size).toBeGreaterThan(1);
   }, 60000);
 });
