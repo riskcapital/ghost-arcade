@@ -23,6 +23,18 @@ const COMPOSITOR_BLEND_QUANT = 10000;
 const COMPOSITOR_BLEND_ALPHA = 0.73;
 const COMPOSITOR_BLEND_DST = [0.18, 0.42, 0.88];
 const COMPOSITOR_BLEND_SRC = [0.95, 0.22, 0.15];
+const COMPOSITOR_EFFECT_QUANT = 10000;
+const COMPOSITOR_EFFECT_COLOR = [0.22, 0.58, 0.84];
+const COMPOSITOR_EFFECTS = [
+  { name: 'invert', code: 1, amount: 0.65 },
+  { name: 'grayscale', code: 2, amount: 0.45 },
+  { name: 'brightness', code: 3, amount: 1.32 },
+  { name: 'contrast', code: 4, amount: 1.55 },
+  { name: 'gamma', code: 5, amount: 0.82 },
+  { name: 'saturation', code: 6, amount: 1.72 },
+  { name: 'hue', code: 7, amount: 0.18 },
+  { name: 'posterize', code: 8, amount: 7.0 },
+];
 const COMPOSITOR_BLEND_MODES = [
   { name: 'normal', code: 0 },
   { name: 'add', code: 1 },
@@ -487,6 +499,57 @@ function quantizedBlendReference(mode) {
   return webglBlendReference(mode).map((value) => Math.round(clampNumber(value, 0, 1.5) * COMPOSITOR_BLEND_QUANT));
 }
 
+function hueRotateReference(c, turns) {
+  const angle = turns * Math.PI * 2;
+  const co = Math.cos(angle);
+  const si = Math.sin(angle);
+  return [
+    c[0] * (0.299 + 0.701 * co + 0.168 * si) +
+      c[1] * (0.587 - 0.587 * co + 0.330 * si) +
+      c[2] * (0.114 - 0.114 * co - 0.497 * si),
+    c[0] * (0.299 - 0.299 * co - 0.328 * si) +
+      c[1] * (0.587 + 0.413 * co + 0.035 * si) +
+      c[2] * (0.114 - 0.114 * co + 0.292 * si),
+    c[0] * (0.299 - 0.300 * co + 1.250 * si) +
+      c[1] * (0.587 - 0.588 * co - 1.050 * si) +
+      c[2] * (0.114 + 0.886 * co - 0.203 * si),
+  ];
+}
+
+function nativeEffectReference(effect) {
+  const color = COMPOSITOR_EFFECT_COLOR.map((value) => Math.max(0, value));
+  const amount = effect.amount;
+  const luma = color[0] * 0.299 + color[1] * 0.587 + color[2] * 0.114;
+  switch (effect.name) {
+    case 'invert':
+      return mixVec(color, color.map((value) => 1 - value), clampNumber(amount));
+    case 'grayscale':
+      return mixVec(color, [luma, luma, luma], clampNumber(amount));
+    case 'brightness':
+      return color.map((value) => value * Math.max(0, amount));
+    case 'contrast':
+      return color.map((value) => (value - 0.5) * Math.max(0, amount) + 0.5);
+    case 'gamma':
+      return color.map((value) => Math.pow(Math.max(value, 0), 1 / Math.max(0.05, amount)));
+    case 'saturation':
+      return mixVec([luma, luma, luma], color, Math.max(0, amount));
+    case 'hue':
+      return hueRotateReference(color, amount);
+    case 'posterize': {
+      const levels = Math.max(2, Math.floor(amount + 0.5));
+      return color.map((value) => Math.floor(clampNumber(value) * levels + 0.5) / levels);
+    }
+    default:
+      return color;
+  }
+}
+
+function quantizedEffectReference(effect) {
+  return nativeEffectReference(effect).map((value) =>
+    Math.round(clampNumber(value, 0, 1.5) * COMPOSITOR_EFFECT_QUANT),
+  );
+}
+
 function extractWgslFunction(source, name) {
   const start = source.indexOf(`fn ${name}`);
   if (start < 0) {
@@ -544,6 +607,62 @@ fn cs_blend_probe(@builtin(global_invocation_id) gid: vec3<u32>) {
 `;
 }
 
+function nativeCompositorEffectProbeSource() {
+  const heartbeat = readFileSync(join(root, 'native-renderer', 'src', 'heartbeat.wgsl'), 'utf8');
+  const support = [
+    extractWgslFunction(heartbeat, 'hash21'),
+    extractWgslFunction(heartbeat, 'value_noise'),
+    extractWgslFunction(heartbeat, 'hue_rotate'),
+    extractWgslFunction(heartbeat, 'apply_native_effect'),
+  ].join('\n\n');
+  return `
+struct Uniforms {
+  resolution: vec2<f32>,
+  time: f32,
+  command_phase: f32,
+  layer_count: f32,
+  frame_count: f32,
+  _pad0: vec2<f32>,
+  audio0: vec4<f32>,
+  audio1: vec4<f32>,
+  audio2: vec4<f32>,
+}
+
+@group(0) @binding(0)
+var<uniform> u: Uniforms;
+
+${support}
+
+const COMPOSITOR_EFFECT_COUNT: u32 = ${COMPOSITOR_EFFECTS.length}u;
+const COMPOSITOR_EFFECT_QUANT: f32 = ${COMPOSITOR_EFFECT_QUANT}.0;
+const COMPOSITOR_EFFECT_AMOUNTS = array<f32, ${COMPOSITOR_EFFECTS.length}>(
+  ${COMPOSITOR_EFFECTS.map((effect) => effect.amount.toFixed(6)).join(', ')}
+);
+
+@group(0) @binding(1)
+var<storage, read_write> output_words: array<u32>;
+
+fn quantize_effect_channel(value: f32) -> u32 {
+  return u32(round(clamp(value, 0.0, 1.5) * COMPOSITOR_EFFECT_QUANT));
+}
+
+@compute @workgroup_size(64)
+fn cs_effect_probe(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= COMPOSITOR_EFFECT_COUNT) { return; }
+  let color = vec3<f32>(${COMPOSITOR_EFFECT_COLOR.map((value) => value.toFixed(6)).join(', ')});
+  let uv = vec2<f32>(0.37, 0.62);
+  let effect = vec4<f32>(f32(i + 1u), COMPOSITOR_EFFECT_AMOUNTS[i], 0.0, 0.0);
+  let out = apply_native_effect(color, effect, uv, 1.25);
+  let offset = i * 4u;
+  output_words[offset + 0u] = quantize_effect_channel(out.x);
+  output_words[offset + 1u] = quantize_effect_channel(out.y);
+  output_words[offset + 2u] = quantize_effect_channel(out.z);
+  output_words[offset + 3u] = 0u;
+}
+`;
+}
+
 async function assertNativeCompositorBlendParity(rpc) {
   const byteLength = COMPOSITOR_BLEND_MODES.length * 4 * 4;
   const result = await rpc.send('compute_graph', {
@@ -576,6 +695,58 @@ async function assertNativeCompositorBlendParity(rpc) {
       if (delta > tolerance) {
         throw new Error(
           `native compositor ${name} blend drifted on channel ${channel}: actual=${actual.join(',')} expected=${expected.join(',')} delta=${delta}`,
+        );
+      }
+    }
+  }
+  return result;
+}
+
+async function assertNativeCompositorEffectParity(rpc) {
+  const byteLength = COMPOSITOR_EFFECTS.length * 4 * 4;
+  const result = await rpc.send('compute_graph', {
+    buffers: [
+      {
+        id: 'native-compositor-effect-uniforms',
+        kind: 'uniform',
+        initial_f32: [
+          320, 180, 1.25, 0,
+          0, 9, 0, 0,
+          0, 0, 0, 0,
+          0, 0, 0, 0,
+          0, 0, 0, 0,
+        ],
+      },
+      { id: 'native-compositor-effect-output', kind: 'storage', byte_length: byteLength },
+    ],
+    passes: [
+      {
+        name: 'native-compositor-effect-parity',
+        shader_id: 'native-compositor-effect-probe',
+        entry: 'cs_effect_probe',
+        dispatch: [1, 1, 1],
+        bindings: [
+          { binding: 0, resource: 'native-compositor-effect-uniforms', kind: 'uniform' },
+          { binding: 1, resource: 'native-compositor-effect-output', kind: 'storage' },
+        ],
+      },
+    ],
+    readbacks: ['native-compositor-effect-output'],
+  }, 5000);
+  const words = result?.readbacks?.['native-compositor-effect-output']?.first_words ?? [];
+  if (words.length < COMPOSITOR_EFFECTS.length * 4) {
+    throw new Error(`native compositor effect probe readback was truncated: ${JSON.stringify(result)}`);
+  }
+  const tolerance = 18;
+  for (const effect of COMPOSITOR_EFFECTS) {
+    const index = effect.code - 1;
+    const actual = words.slice(index * 4, index * 4 + 3).map(Number);
+    const expected = quantizedEffectReference(effect);
+    for (let channel = 0; channel < 3; channel += 1) {
+      const delta = Math.abs(actual[channel] - expected[channel]);
+      if (delta > tolerance) {
+        throw new Error(
+          `native compositor ${effect.name} effect drifted on channel ${channel}: actual=${actual.join(',')} expected=${expected.join(',')} delta=${delta}`,
         );
       }
     }
@@ -1133,6 +1304,13 @@ async function main() {
         },
         {
           type: 'precompile_shader',
+          shader_id: 'native-compositor-effect-probe',
+          stage: 'compute',
+          entry: 'cs_effect_probe',
+          source: nativeCompositorEffectProbeSource(),
+        },
+        {
+          type: 'precompile_shader',
           shader_id: 'native-compute-graph-render',
           stage: 'render',
           entry: 'fs_main',
@@ -1218,8 +1396,12 @@ async function main() {
       throw new Error(`native compute graph render snapshot failed: ${JSON.stringify(computeGraph)}`);
     }
     const compositorBlendParity = await assertNativeCompositorBlendParity(rpc);
+    const compositorEffectParity = await assertNativeCompositorEffectParity(rpc);
     if (!compositorBlendParity?.readbacks?.['native-compositor-blend-output']?.checksum) {
       throw new Error(`native compositor blend parity probe did not return a checksum: ${JSON.stringify(compositorBlendParity)}`);
+    }
+    if (!compositorEffectParity?.readbacks?.['native-compositor-effect-output']?.checksum) {
+      throw new Error(`native compositor effect parity probe did not return a checksum: ${JSON.stringify(compositorEffectParity)}`);
     }
     const computeGraphMultiRender = await rpc.send('compute_graph', {
       buffers: [
@@ -1885,6 +2067,7 @@ async function main() {
       `compute=${computeProbe.checksum}/${computeProbe.nonzero_words}`,
       `graph=${outputReadback.checksum}/${computeGraph.pass_count}`,
       `blendParity=${compositorBlendParity.readbacks['native-compositor-blend-output'].checksum}`,
+      `effectParity=${compositorEffectParity.readbacks['native-compositor-effect-output'].checksum}`,
       `graphRender=${graphRenderSnapshot.checksum}`,
       `graphSource=${graphSourceFrameSnapshot?.checksum ?? 'none'}`,
       `graphRuns=${status.compute_graph_runs}/${status.compute_graph_passes}`,
