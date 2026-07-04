@@ -468,6 +468,15 @@ async function main() {
     if (!capabilities.native_graph_instruments?.includes('smoke-3d')) {
       throw new Error(`native graph instrument manifest missing smoke-3d: ${JSON.stringify(capabilities)}`);
     }
+    const smokeManifest = capabilities.native_graph_instrument_manifest?.find((entry) => entry?.id === 'smoke-3d');
+    if (
+      !smokeManifest ||
+      smokeManifest.source_uri_prefix !== 'native-graph://smoke-3d/' ||
+      smokeManifest.render_target !== 'source_frame' ||
+      !smokeManifest.features?.includes('compute_graph_source_frame_target')
+    ) {
+      throw new Error(`native graph instrument manifest entry is incomplete: ${JSON.stringify(capabilities.native_graph_instrument_manifest)}`);
+    }
     if (!capabilities.features.present_policy || !capabilities.features.managed_output_attach) {
       throw new Error(`native managed output/present capabilities missing: ${JSON.stringify(capabilities.features)}`);
     }

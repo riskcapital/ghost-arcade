@@ -614,6 +614,20 @@ function normalizeCapabilities(capabilities, previous = makeDefaultCapabilities(
     native_graph_instruments: Array.isArray(source.native_graph_instruments)
       ? source.native_graph_instruments.map(String)
       : previous.native_graph_instruments ?? [],
+    native_graph_instrument_manifest: Array.isArray(source.native_graph_instrument_manifest)
+      ? source.native_graph_instrument_manifest
+          .filter((entry) => entry && typeof entry === 'object')
+          .map((entry) => ({
+            ...entry,
+            id: String(entry.id ?? ''),
+            label: String(entry.label ?? entry.id ?? ''),
+            source_uri_prefix: String(entry.source_uri_prefix ?? ''),
+            shader_ids: Array.isArray(entry.shader_ids) ? entry.shader_ids.map(String) : [],
+            features: Array.isArray(entry.features) ? entry.features.map(String) : [],
+            render_target: String(entry.render_target ?? ''),
+          }))
+          .filter((entry) => entry.id)
+      : previous.native_graph_instrument_manifest ?? [],
     features: {
       ...prevFeatures,
       ...nextFeatures,
@@ -812,6 +826,7 @@ function makeDefaultCapabilities(overrides = {}) {
     implemented_methods: [],
     implemented_command_types: [],
     native_graph_instruments: [],
+    native_graph_instrument_manifest: [],
     features: {
       separate_process_render_core: false,
       managed_native_window: false,
