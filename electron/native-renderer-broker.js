@@ -5,6 +5,17 @@ import path from 'path';
 
 const COMMAND_PREFIX = 'native_renderer_';
 const SOURCE_FRAME_FILE_HANDOFF_B64_THRESHOLD = 512 * 1024;
+const REQUIRED_NATIVE_GRAPH_INSTRUMENTS = [
+  ['planet', 'Native Planet graph', 'native_planet_graph'],
+  ['smoke-3d', 'Native 3D Smoke graph', 'native_3d_smoke_graph'],
+  ['particle-field', 'Native Particle Field graph', 'native_particle_field_graph'],
+  ['volumetric-spheres', 'Native Volumetric Spheres graph', 'native_volumetric_spheres_graph'],
+  ['smoke-riders', 'Native Smoke Riders graph', 'native_smoke_riders_graph'],
+  ['ink-cloud', 'Native Ink Cloud graph', 'native_ink_cloud_graph'],
+  ['flythrough', 'Native Flythrough graph', 'native_flythrough_graph'],
+  ['pixel-particles', 'Native Pixel Particles graph', 'native_pixel_particles_graph'],
+  ['point-cloud-fx', 'Native Point Cloud FX graph', 'native_point_cloud_fx_graph'],
+];
 
 const RENDERER_COMMANDS = [
   'native_renderer_start',
@@ -294,6 +305,25 @@ class NativeRendererBroker {
     if (!this.lastStatus.backend_ready) blockers.push(this.lastStatus.last_frame_error || 'native render-core is not ready');
     const features = this.capabilities?.features || {};
     const textureShare = this.textureShareStatus();
+    const graphInstruments = nativeGraphInstrumentSet(this.capabilities);
+    const computeGraphHostReady = !!(
+      features.compute_shader_host &&
+      features.compute_graph_host &&
+      features.compute_graph_render &&
+      features.compute_graph_source_frame_target &&
+      features.persistent_compute_buffers
+    );
+    const graphChecks = REQUIRED_NATIVE_GRAPH_INSTRUMENTS.map(([id, label, feature]) => {
+      const ok = computeGraphHostReady && !!features[feature] && graphInstruments.has(id);
+      return [
+        `native-${id}-graph`,
+        label,
+        ok,
+        ok
+          ? 'implemented via compute_graph source-frame route'
+          : `missing ${feature} or ${id} manifest entry`,
+      ];
+    });
     const textureShareName = textureShare?.label || textureShare?.platform || 'Texture share';
     const textureShareDetail = textureShare
       ? [
@@ -306,16 +336,15 @@ class NativeRendererBroker {
       ['shared-texture-upload', 'Shared texture media transport', !!features.shared_texture_upload],
       ['native-media-decode', 'Native media decode/prefetch', !!features.native_media_decode && !!features.media_prefetch],
       ['compute-graph-host', 'Native buffer compute graph host', !!features.compute_graph_host],
-      ['native-3d-smoke-graph', 'Native 3D Smoke graph', !!features.native_3d_smoke_graph],
-      ['native-particle-field-graph', 'Native Particle Field graph', !!features.native_particle_field_graph],
       [
         'compute-instrument-host',
         'Native compute/multi-pass instrument host',
-        !!features.compute_shader_host && !!features.multi_pass_instruments,
-        features.native_3d_smoke_graph || features.native_particle_field_graph
-          ? 'partial: 3D Smoke and Particle Field graph source frames are implemented; broad catalog parity is still pending'
-          : 'not implemented in the current native render core',
+        computeGraphHostReady && graphChecks.every(([, , ok]) => ok),
+        computeGraphHostReady
+          ? `implemented graph routes=${graphChecks.filter(([, , ok]) => ok).length}/${REQUIRED_NATIVE_GRAPH_INSTRUMENTS.length}`
+          : 'compute graph host/source-frame target is not ready',
       ],
+      ...graphChecks,
       ['managed-output', 'Managed native output window', !!features.managed_output_attach],
       ['native-recording', 'Native recording', !!features.native_recording],
     ];
@@ -595,6 +624,19 @@ function commandToMethod(command) {
     : command;
 }
 
+function nativeGraphInstrumentSet(capabilities) {
+  const ids = new Set();
+  for (const id of capabilities?.native_graph_instruments ?? []) {
+    const normalized = String(id || '').trim().toLowerCase();
+    if (normalized) ids.add(normalized);
+  }
+  for (const entry of capabilities?.native_graph_instrument_manifest ?? []) {
+    const normalized = String(entry?.id || '').trim().toLowerCase();
+    if (normalized) ids.add(normalized);
+  }
+  return ids;
+}
+
 function normalizeCapabilities(capabilities, previous = makeDefaultCapabilities()) {
   const source = capabilities && typeof capabilities === 'object' ? capabilities : {};
   const prevFeatures = previous.features && typeof previous.features === 'object' ? previous.features : {};
@@ -862,8 +904,15 @@ function makeDefaultCapabilities(overrides = {}) {
       compute_graph_line_render: false,
       compute_graph_source_frame_target: false,
       persistent_compute_buffers: false,
+      native_planet_graph: false,
       native_3d_smoke_graph: false,
       native_particle_field_graph: false,
+      native_volumetric_spheres_graph: false,
+      native_smoke_riders_graph: false,
+      native_ink_cloud_graph: false,
+      native_flythrough_graph: false,
+      native_pixel_particles_graph: false,
+      native_point_cloud_fx_graph: false,
       command_drain_policy: false,
       auto_present_policy: false,
       multi_pass_instruments: false,

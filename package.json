@@ -37,6 +37,7 @@
     "native:doctor": "node scripts/native-renderer-doctor.mjs",
     "native:smoke": "npm run native:build && node scripts/native-renderer-smoke.mjs",
     "native:graph-parity": "npm run native:build && node scripts/native-graph-parity-vitest.mjs",
+    "native:broker-contract": "npm run native:build && node scripts/native-broker-contract.mjs",
     "native:smoke3d": "npm run native:build && node scripts/native-smoke3d-vitest.mjs",
     "native:wgsl-check": "npm run native:build && node scripts/native-wgsl-check.mjs",
     "desktop:native": "npm run native:build && npm run desktop",
