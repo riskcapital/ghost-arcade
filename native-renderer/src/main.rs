@@ -1741,7 +1741,7 @@ impl App {
             "native_point_cloud_fx_graph": true,
             "command_drain_policy": true,
             "auto_present_policy": true,
-            "multi_pass_instruments": false,
+            "multi_pass_instruments": true,
             "storage_buffer_instruments": true,
             "shared_texture_source_frame_upload": cfg!(target_os = "macos"),
             "native_output_mirror_texture": true,

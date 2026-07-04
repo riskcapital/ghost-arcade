@@ -399,6 +399,11 @@ try {
     graphInstruments.size === REQUIRED_GRAPH_MANIFEST.length,
     `broker graph instrument list has drifted: ${JSON.stringify(capabilities?.native_graph_instruments)}`,
   );
+  assert(
+    capabilities?.features?.multi_pass_instruments === true &&
+      capabilities?.features?.native_instrument_proxies === false,
+    `broker graph capability flags should report real native graph instruments, not legacy proxies: ${JSON.stringify(capabilities?.features)}`,
+  );
   for (const required of REQUIRED_GRAPH_MANIFEST) {
     assert(graphInstruments.has(required.id), `broker graph instruments missing ${required.id}: ${JSON.stringify(capabilities)}`);
     assert(capabilities?.features?.[required.feature], `broker capabilities missing ${required.feature}: ${JSON.stringify(capabilities?.features)}`);

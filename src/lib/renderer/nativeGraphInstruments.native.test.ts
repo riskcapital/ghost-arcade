@@ -182,6 +182,8 @@ describe('Native graph instrument runtime fixtures', () => {
       const capabilities = await rpc.send('capabilities', {}, 5000);
       expect(capabilities?.features?.compute_graph_render).toBe(true);
       expect(capabilities?.features?.compute_graph_source_frame_target).toBe(true);
+      expect(capabilities?.features?.multi_pass_instruments).toBe(true);
+      expect(capabilities?.features?.native_instrument_proxies).toBe(false);
       expect(capabilities?.native_graph_instruments).toEqual(expect.arrayContaining([
         'planet',
         'particle-field',
