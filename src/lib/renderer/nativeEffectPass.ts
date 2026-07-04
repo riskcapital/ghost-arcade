@@ -50,6 +50,14 @@ export interface NativeEffectPassGraph {
   };
 }
 
+export type NativeEffectPassPrecompileCommand = {
+  type: 'precompile_shader';
+  shader_id: string;
+  stage: string;
+  entry: string;
+  source: string;
+};
+
 export const NATIVE_EFFECT_PASS_SHADER_ID = 'effect-pass/render';
 
 export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
@@ -194,7 +202,7 @@ export function getNativeEffectPassShaderSource() {
   };
 }
 
-export function buildNativeEffectPassPrecompileCommands() {
+export function buildNativeEffectPassPrecompileCommands(): NativeEffectPassPrecompileCommand[] {
   const source = getNativeEffectPassShaderSource();
   return [{
     type: 'precompile_shader',
