@@ -165,6 +165,8 @@ type NativeGraphRouteState = {
   seq: number;
   warnings: number;
   state: NativeGraphRouteSimulationState | null;
+  lastGraphFrameIndex?: number;
+  lastManualClockKey?: string;
 };
 
 function nativeGraphInstrumentIds(capabilities: NativeRendererCapabilities | null | undefined): string[] {
@@ -1181,15 +1183,27 @@ export class NativeRendererSync {
         state: null,
       };
       this.nativeGraphRoutes.set(route.key, routeState);
+      const graphTime = typeof clock.time === 'number'
+        ? clock.time
+        : Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000);
+      const graphDelta = typeof clock.time_delta === 'number' ? clock.time_delta : 1 / this.targetFps;
+      const graphFrameIndex = typeof clock.frame_index === 'number' && Number.isFinite(clock.frame_index)
+        ? Math.max(0, Math.round(clock.frame_index))
+        : routeState.seq + 1;
+      const manualClockKey = clock.mode === 'manual'
+        ? `${graphFrameIndex}:${graphTime.toFixed(6)}:${graphDelta.toFixed(6)}`
+        : '';
+      if (manualClockKey && routeState.lastManualClockKey === manualClockKey && routeState.state) continue;
       if (routeState.inFlight) continue;
       routeState.inFlight = true;
       try {
         const graphSeq = routeState.seq + 1;
         routeState.seq = graphSeq;
-        const graphTime = typeof clock.time === 'number'
-          ? clock.time
-          : Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000);
-        const graphDelta = typeof clock.time_delta === 'number' ? clock.time_delta : 1 / this.targetFps;
+        const resetGraphState =
+          !routeState.state ||
+          (clock.mode === 'manual' &&
+            typeof routeState.lastGraphFrameIndex === 'number' &&
+            graphFrameIndex < routeState.lastGraphFrameIndex);
         const graph = await (async () => {
           const audioBass = visual.isActive ? Math.max(visual.bass, visual.bassFast * 0.9) : 0;
           const audioTreble = visual.isActive ? visual.treble : 0;
@@ -1202,9 +1216,9 @@ export class NativeRendererSync {
               height,
               time: graphTime,
               frameDelta: graphDelta,
-              frameIndex: graphSeq,
+              frameIndex: graphFrameIndex,
               state: routeState.state as PlanetNativeGraphState | null,
-              reset: !routeState.state,
+              reset: resetGraphState,
             });
           }
           if (route.kind === 'smoke-3d') {
@@ -1215,11 +1229,11 @@ export class NativeRendererSync {
               height,
               time: graphTime,
               frameDelta: graphDelta,
-              frameIndex: graphSeq,
+              frameIndex: graphFrameIndex,
               audioBass,
               audioTreble,
               state: routeState.state as Smoke3DNativeGraphState | null,
-              reset: !routeState.state,
+              reset: resetGraphState,
             });
           }
           if (route.kind === 'particle-field') {
@@ -1230,12 +1244,12 @@ export class NativeRendererSync {
               height,
               time: graphTime,
               frameDelta: graphDelta,
-              frameIndex: graphSeq,
+              frameIndex: graphFrameIndex,
               audioBass,
               audioTreble,
               mediaSourceId: route.inputSource?.id ?? null,
               state: routeState.state as ParticleFieldNativeGraphState | null,
-              reset: !routeState.state,
+              reset: resetGraphState,
             });
           }
           if (route.kind === 'smoke-riders') {
@@ -1246,11 +1260,11 @@ export class NativeRendererSync {
               height,
               time: graphTime,
               frameDelta: graphDelta,
-              frameIndex: graphSeq,
+              frameIndex: graphFrameIndex,
               audioBass,
               audioTreble,
               state: routeState.state as SmokeRidersNativeGraphState | null,
-              reset: !routeState.state,
+              reset: resetGraphState,
             });
           }
           if (route.kind === 'ink-cloud') {
@@ -1261,11 +1275,11 @@ export class NativeRendererSync {
               height,
               time: graphTime,
               frameDelta: graphDelta,
-              frameIndex: graphSeq,
+              frameIndex: graphFrameIndex,
               audioBass,
               audioTreble,
               state: routeState.state as InkCloudNativeGraphState | null,
-              reset: !routeState.state,
+              reset: resetGraphState,
             });
           }
           if (route.kind === 'flythrough') {
@@ -1277,11 +1291,11 @@ export class NativeRendererSync {
               height,
               time: graphTime,
               frameDelta: graphDelta,
-              frameIndex: graphSeq,
+              frameIndex: graphFrameIndex,
               audioBass,
               audioTreble,
               state: routeState.state as FlythroughNativeGraphState | null,
-              reset: !routeState.state,
+              reset: resetGraphState,
             });
           }
           if (route.kind === 'pixel-particles') {
@@ -1294,9 +1308,9 @@ export class NativeRendererSync {
               sourceFrameSize: this.nativeSourceFrameSize,
               time: graphTime,
               frameDelta: graphDelta,
-              frameIndex: graphSeq,
+              frameIndex: graphFrameIndex,
               state: routeState.state as PixelParticlesNativeGraphState | null,
-              reset: !routeState.state,
+              reset: resetGraphState,
             });
           }
           if (route.kind === 'point-cloud-fx') {
@@ -1312,11 +1326,11 @@ export class NativeRendererSync {
               height,
               time: graphTime,
               frameDelta: graphDelta,
-              frameIndex: graphSeq,
+              frameIndex: graphFrameIndex,
               audioBass,
               audioTreble,
               state: routeState.state as PointCloudFXNativeGraphState | null,
-              reset: !routeState.state,
+              reset: resetGraphState,
             });
           }
           return buildVolumetricSpheresNativeComputeGraph({
@@ -1326,11 +1340,11 @@ export class NativeRendererSync {
             height,
             time: graphTime,
             frameDelta: graphDelta,
-            frameIndex: graphSeq,
+            frameIndex: graphFrameIndex,
             audioBass,
             audioTreble,
             state: routeState.state as VolumetricSpheresNativeGraphState | null,
-            reset: !routeState.state,
+            reset: resetGraphState,
           });
         })();
         const result = await runNativeRendererComputeGraph(graph.config as unknown as Record<string, unknown>);
@@ -1344,6 +1358,8 @@ export class NativeRendererSync {
           throw new Error(`native ${route.kind} graph returned no source-frame render`);
         }
         routeState.state = graph.state;
+        routeState.lastGraphFrameIndex = graphFrameIndex;
+        routeState.lastManualClockKey = manualClockKey || undefined;
         routeState.warnings = 0;
       } catch (err) {
         if (routeState.warnings < 3) {
