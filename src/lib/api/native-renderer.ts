@@ -225,6 +225,8 @@ export type RendererCommand =
       shared_texture_format?: number | string;
       shared_texture_handle_encoding?: string;
       shared_texture_handle_byte_length?: number;
+      shared_texture_frame?: number;
+      shared_texture_sender_name?: string;
       seq: number;
     }
   | {
