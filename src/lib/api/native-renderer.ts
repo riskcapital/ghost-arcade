@@ -883,7 +883,7 @@ export async function uploadNativeRendererSourceGpuSharedTexture(
     senderName?: string;
   } = {},
 ) {
-  return invoke<void>('native_renderer_upload_source_gpu_shared_texture', {
+  return invoke<RendererStatus>('native_renderer_upload_source_gpu_shared_texture', {
     source_id: sourceId,
     width,
     height,
