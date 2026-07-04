@@ -86,6 +86,10 @@ try {
 
   const capabilities = await broker.invoke('native_renderer_get_capabilities');
   assert(capabilities?.features?.compute_graph_source_frame_target, 'broker capabilities lost compute graph source-frame support');
+  assert(
+    !!capabilities?.features?.shared_texture_source_frame_upload === (process.platform === 'darwin'),
+    `broker shared source-frame capability should match macOS IOSurface support: ${JSON.stringify(capabilities?.features)}`,
+  );
   const graphInstruments = new Set(capabilities?.native_graph_instruments ?? []);
   const graphManifest = new Map(
     (capabilities?.native_graph_instrument_manifest ?? []).map((entry) => [entry.id, entry]),
@@ -112,6 +116,10 @@ try {
     assert(checks.get(id)?.ok, `broker readiness has stale/missing ${id}: ${JSON.stringify(readiness)}`);
   }
   assert(checks.get('shared-texture-upload')?.ok === false, 'broker should report shared texture upload as unavailable until implemented');
+  assert(
+    checks.get('shared-texture-source-frame-upload')?.ok === (process.platform === 'darwin'),
+    `broker shared source-frame readiness should match macOS IOSurface support: ${JSON.stringify(readiness)}`,
+  );
 
   let unsupportedErrored = false;
   try {

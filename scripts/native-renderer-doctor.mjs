@@ -125,6 +125,7 @@ async function inspectCore() {
         `adapter=${status?.adapter_name ?? 'unknown'}`,
         `graphs=${instruments.size}/${REQUIRED_GRAPH_INSTRUMENTS.length}`,
         `sharedTexture=${features.shared_texture_upload ? 'on' : 'fallback'}`,
+        `sharedFrame=${features.shared_texture_source_frame_upload ? 'on' : 'fallback'}`,
         missingFeatures.length ? `missingFeatures=${missingFeatures.join(',')}` : '',
         missingInstruments.length ? `missingGraphs=${missingInstruments.join(',')}` : '',
         blockers.length ? `blockers=${blockers.join('|')}` : '',

@@ -349,6 +349,11 @@ class NativeRendererBroker {
             ? `native output present has ${this.lastStatus.output_present_consecutive_failures} consecutive failure(s)`
             : `presented ${this.lastStatus.frames_presented} native frame(s)`;
     const unsupported = [
+      [
+        'shared-texture-source-frame-upload',
+        'Shared texture source-frame transport',
+        !!features.shared_texture_source_frame_upload,
+      ],
       ['shared-texture-upload', 'Shared texture media transport', !!features.shared_texture_upload],
       ['native-media-decode', 'Native media decode/prefetch', !!features.native_media_decode && !!features.media_prefetch],
       ['compute-graph-host', 'Native buffer compute graph host', !!features.compute_graph_host],
@@ -1053,6 +1058,7 @@ function makeDefaultCapabilities(overrides = {}) {
       auto_present_policy: false,
       multi_pass_instruments: false,
       storage_buffer_instruments: false,
+      shared_texture_source_frame_upload: false,
       shared_texture_upload: false,
       native_media_decode: false,
       media_prefetch: false,
