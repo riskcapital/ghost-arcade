@@ -910,6 +910,7 @@ export class NativeRendererSync {
   private previewCanvas: HTMLCanvasElement | null = null;
   private previewContext: CanvasRenderingContext2D | null = null;
   private nativeComputeGraphSourceFrames = false;
+  private nativeGraphCatalogComplete = false;
   private nativeGraphRoutes = new Map<string, NativeGraphRouteState>();
   private nativePointCloudDataCache = new Map<string, Promise<PointCloudFXNativePointData>>();
   private nativeSourceFrameSize = SOURCE_FRAME_SIZE_FALLBACK;
@@ -1501,16 +1502,22 @@ export class NativeRendererSync {
       this.nativeFeatureFlags,
       this.nativeGraphInstruments,
     );
-    this.nativeComputeGraphSourceFrames = computeGraphSourceFrameHost && missingGraphRequirements.length === 0;
+    this.nativeComputeGraphSourceFrames = computeGraphSourceFrameHost;
+    this.nativeGraphCatalogComplete = computeGraphSourceFrameHost && missingGraphRequirements.length === 0;
     if (computeGraphSourceFrameHost && missingGraphRequirements.length > 0) {
       console.warn(
-        '[NativeRendererSync] native graph source-frame routing disabled; graph catalog is incomplete',
+        '[NativeRendererSync] native graph catalog is incomplete; unsupported routes will fall back to WebGL',
         missingGraphRequirements,
       );
     }
     const startupQuality = startupStatus?.native_quality;
+    const graphCatalogStatus = !this.nativeComputeGraphSourceFrames
+      ? 'off'
+      : this.nativeGraphCatalogComplete
+        ? 'complete'
+        : 'partial';
     console.log(
-      `[NativeRendererSync] GPU pipeline active: backend=${startupStatus?.backend}, adapter=${startupStatus?.adapter_name ?? 'unknown'} quality=${startupQuality?.active_tier ?? 'unknown'}@${(startupQuality?.quality_scale ?? 0).toFixed(2)} policy=${startupQuality?.policy ?? 'unknown'} graphCatalog=${this.nativeComputeGraphSourceFrames ? 'complete' : 'incomplete'}`
+      `[NativeRendererSync] GPU pipeline active: backend=${startupStatus?.backend}, adapter=${startupStatus?.adapter_name ?? 'unknown'} quality=${startupQuality?.active_tier ?? 'unknown'}@${(startupQuality?.quality_scale ?? 0).toFixed(2)} policy=${startupQuality?.policy ?? 'unknown'} graphHost=${this.nativeComputeGraphSourceFrames ? 'on' : 'off'} graphCatalog=${graphCatalogStatus}`
     );
     this.running = true;
     this.liveClockOriginMs = performance.now();
@@ -1533,7 +1540,7 @@ export class NativeRendererSync {
         `sourceFrame=${this.nativeSourceFrameSize}px`,
         `mips=${startupStatus?.source_frame_mip_levels ?? 1}`,
         `sharedTexSrc=${this.supportsNativeFeature('shared_texture_source_frame_upload') ? 'on' : 'off'}`,
-        `nativeGraphs=${this.nativeComputeGraphSourceFrames ? 'on' : 'off'}`,
+        `nativeGraphs=${graphCatalogStatus === 'complete' ? 'on' : graphCatalogStatus}`,
         `tier=${nativeCaps?.recommended_quality_tier ?? 'unknown'}`,
         `f16=${nativeCaps?.requested_shader_f16 ? 'on' : 'off'}`,
         `floatFilter=${nativeCaps?.requested_float32_filterable ? 'on' : 'off'}`,
@@ -1616,6 +1623,7 @@ export class NativeRendererSync {
     this.previewImageElements.clear();
     this.previewImageLoads.clear();
     this.nativeComputeGraphSourceFrames = false;
+    this.nativeGraphCatalogComplete = false;
     this.nativeGraphRoutes.clear();
     this.nativePointCloudDataCache.clear();
     this.nativeGraphInstruments.clear();
