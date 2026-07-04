@@ -466,6 +466,15 @@ try {
     assert(checks.get(id)?.ok, `broker readiness has stale/missing ${id}: ${JSON.stringify(readiness)}`);
   }
   assert(checks.get('native-output-mirror')?.ok, `broker readiness omitted native output mirror: ${JSON.stringify(readiness)}`);
+  assert(checks.get('native-output-driver')?.ok, `broker readiness omitted native output driver: ${JSON.stringify(readiness)}`);
+  assert(readiness?.modes?.shadow?.ok, `broker readiness shadow mode should be ready: ${JSON.stringify(readiness?.modes)}`);
+  assert(readiness?.modes?.output_driver?.ok, `broker readiness output-driver mode should be ready: ${JSON.stringify(readiness?.modes)}`);
+  assert(
+    readiness?.modes?.full_v2?.ok === false &&
+      Array.isArray(readiness?.modes?.full_v2?.blockers) &&
+      readiness.modes.full_v2.blockers.some((blocker) => String(blocker).includes('shared-texture media transport')),
+    `broker readiness should keep full_v2 blocked on real unfinished native work: ${JSON.stringify(readiness?.modes)}`,
+  );
   assert(checks.get('native-static-image-prefetch')?.ok, `broker readiness omitted native static-image prefetch: ${JSON.stringify(readiness)}`);
   assert(checks.get('native-mp4-frame-encoder')?.ok, `broker readiness omitted native MP4 frame encoder: ${JSON.stringify(readiness)}`);
   assert(checks.get('native-recording')?.ok, `broker readiness omitted native recording: ${JSON.stringify(readiness)}`);

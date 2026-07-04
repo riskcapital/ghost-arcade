@@ -561,6 +561,7 @@ class NativeRendererBroker {
           : `missing ${feature} or ${id} manifest entry`,
       ];
     });
+    const allGraphInstrumentsReady = graphChecks.every(([, , ok]) => ok);
     const textureShareName = textureShare?.label || textureShare?.platform || 'Texture share';
     const textureShareDetail = textureShare
       ? [
@@ -614,6 +615,45 @@ class NativeRendererBroker {
         : !nativeMp4FrameEncoderOk
           ? (nativeFrameEncoder.reason || 'desktop FFmpeg raw-frame pipe is unavailable')
           : 'native recording paths are unavailable';
+    const shadowModeOk = !!(
+      this.lastStatus.backend_ready &&
+      features.layer_compositor &&
+      features.render_clock &&
+      computeGraphHostReady
+    );
+    const nativeOutputDriverOk = !!(
+      this.lastStatus.backend_ready &&
+      features.native_output_mirror_texture &&
+      features.managed_output_attach &&
+      features.managed_output_window_control &&
+      computeGraphHostReady &&
+      allGraphInstrumentsReady &&
+      features.native_static_image_decode &&
+      features.native_static_image_prefetch
+    );
+    const nativeOutputDriverDetail = nativeOutputDriverOk
+      ? 'native core can drive the managed output path; open an Output Window to make it active'
+      : !this.lastStatus.backend_ready
+        ? (this.lastStatus.last_frame_error || 'native render-core backend is not ready')
+        : !features.native_output_mirror_texture
+          ? 'native offscreen output mirror is unavailable'
+          : !features.managed_output_attach || !features.managed_output_window_control
+            ? 'managed native output window control is unavailable'
+            : !computeGraphHostReady || !allGraphInstrumentsReady
+              ? 'native compute graph instrument routes are incomplete'
+              : !features.native_static_image_decode || !features.native_static_image_prefetch
+                ? 'native still-image decode/prefetch is incomplete'
+                : 'native output driver prerequisites are incomplete';
+    const fullNativeV2Blockers = [
+      nativeOutputDriverOk ? null : 'native output driver is not ready',
+      features.shared_texture_upload ? null : 'full shared-texture media transport is pending',
+      features.native_media_decode && features.media_prefetch ? null : 'native video/media decode and prefetch are pending',
+      nativeTextureShareSenderOk ? null : `${this.platform === 'darwin' ? 'Syphon' : 'Spout'} native texture-share sender is not active-ready`,
+      nativeRecordingOk ? null : 'native recording/MP4 frame path is not fully ready',
+      features.native_stage3d ? null : 'native Stage3D renderer is pending',
+      features.native_projection_sim ? null : 'native projection simulator is pending',
+    ].filter(Boolean);
+    const fullNativeV2Ok = fullNativeV2Blockers.length === 0;
     const unsupported = [
       [
         'shared-texture-source-frame-upload',
@@ -670,12 +710,13 @@ class NativeRendererBroker {
       [
         'compute-instrument-host',
         'Native compute/multi-pass instrument host',
-        computeGraphHostReady && graphChecks.every(([, , ok]) => ok),
+        computeGraphHostReady && allGraphInstrumentsReady,
         computeGraphHostReady
           ? `implemented graph routes=${graphChecks.filter(([, , ok]) => ok).length}/${REQUIRED_NATIVE_GRAPH_INSTRUMENTS.length}`
           : 'compute graph host/source-frame target is not ready',
       ],
       ...graphChecks,
+      ['native-output-driver', 'Native output driver', nativeOutputDriverOk, nativeOutputDriverDetail],
       ['managed-output', 'Managed native output window', managedOutputOk, managedOutputDetail],
       [
         'native-recording',
@@ -688,6 +729,29 @@ class NativeRendererBroker {
       timestamp_ms: Date.now(),
       overall_ready: blockers.length === 0,
       blockers,
+      modes: {
+        shadow: {
+          ok: shadowModeOk,
+          detail: shadowModeOk
+            ? 'native core is receiving the app scene/clock and can mirror it for validation'
+            : 'native shadow sync requires a ready backend, compositor, render clock, and compute graph host',
+        },
+        output_driver: {
+          ok: nativeOutputDriverOk,
+          detail: nativeOutputDriverDetail,
+        },
+        output_active: {
+          ok: managedOutputOk,
+          detail: managedOutputDetail,
+        },
+        full_v2: {
+          ok: fullNativeV2Ok,
+          detail: fullNativeV2Ok
+            ? 'all tracked native-renderer v2 gates are ready'
+            : `${fullNativeV2Blockers.length} tracked native-renderer v2 gate(s) remain`,
+          blockers: fullNativeV2Blockers,
+        },
+      },
       capabilities: this.capabilities,
       texture_share: textureShare,
       native_frame_encoder: nativeFrameEncoder,

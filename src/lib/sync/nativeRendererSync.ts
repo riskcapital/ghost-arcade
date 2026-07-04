@@ -71,6 +71,7 @@ import {
   clearNativeRendererRuntimeCaches,
   detachNativeRendererOutputWindow,
   getNativeRendererCapabilities,
+  getNativeRendererReadinessReport,
   getNativeRendererStatus,
   prefetchNativeRendererMedia,
   resetNativeRendererStats,
@@ -2404,6 +2405,7 @@ export class NativeRendererSync {
     this.assertNativeReady(startupStatus);
     this.syncNativeSourceFrameSize(startupStatus);
     const startupCapabilities = await getNativeRendererCapabilities().catch(() => null);
+    const startupReadiness = await getNativeRendererReadinessReport().catch(() => null);
     this.nativeCoreMethods = new Set((startupCapabilities?.implemented_methods ?? []).map(String));
     this.nativeFeatureFlags = startupCapabilities?.features ?? {};
     this.nativeGraphInstruments = new Set(nativeGraphInstrumentIds(startupCapabilities));
@@ -2462,6 +2464,8 @@ export class NativeRendererSync {
         `mips=${startupStatus?.source_frame_mip_levels ?? 1}`,
         `sharedTexSrc=${this.supportsNativeFeature('shared_texture_source_frame_upload') ? 'on' : 'off'}`,
         `nativeGraphs=${graphCatalogStatus === 'complete' ? 'on' : graphCatalogStatus}`,
+        `driver=${startupReadiness?.modes?.output_driver?.ok ? 'on' : 'pending'}`,
+        `fullV2=${startupReadiness?.modes?.full_v2?.ok ? 'ready' : 'pending'}`,
         `tier=${nativeCaps?.recommended_quality_tier ?? 'unknown'}`,
         `f16=${nativeCaps?.requested_shader_f16 ? 'on' : 'off'}`,
         `floatFilter=${nativeCaps?.requested_float32_filterable ? 'on' : 'off'}`,

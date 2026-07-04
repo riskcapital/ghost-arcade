@@ -894,6 +894,12 @@ export interface RendererReadinessCheck {
   detail: string;
 }
 
+export interface RendererReadinessMode {
+  ok: boolean;
+  detail: string;
+  blockers?: string[];
+}
+
 export interface NativeRendererTextureShareStatus {
   platform: 'spout' | 'syphon' | string;
   label: string;
@@ -915,6 +921,7 @@ export interface RendererReadinessReport {
   timestamp_ms: number;
   overall_ready: boolean;
   blockers: string[];
+  modes?: Record<string, RendererReadinessMode>;
   capabilities?: NativeRendererCapabilities;
   texture_share?: NativeRendererTextureShareStatus | null;
   checks: RendererReadinessCheck[];
