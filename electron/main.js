@@ -1400,7 +1400,18 @@ function getTextureShareLoadStatus() {
     candidates: spoutAddonLoadCandidates,
     error: spoutAddonLoadError,
     cpuFallbackAllowed: ALLOW_CPU_TEXTURE_SHARE_FALLBACK,
+    receiverTextureInfoSupported: getReceiverTextureInfoSupport(spoutAddon),
   };
+}
+
+function getReceiverTextureInfoSupport(addon = spoutAddon) {
+  if (!addon) return false;
+  const ReceiverClass = getReceiverClass(addon);
+  return !!(
+    ReceiverClass &&
+    ReceiverClass.prototype &&
+    typeof ReceiverClass.prototype.receiveTextureInfo === 'function'
+  );
 }
 
 function loadSpoutAddon() {
@@ -2339,6 +2350,60 @@ function stopSpoutReceiver() {
   console.log(`[${textureShareLabel}] Receiver stopped`);
 }
 
+function normalizeSharedTextureHandle(handle) {
+  if (!handle) return null;
+  if (Buffer.isBuffer(handle)) return handle;
+  if (ArrayBuffer.isView(handle)) {
+    return Buffer.from(handle.buffer, handle.byteOffset, handle.byteLength);
+  }
+  if (handle instanceof ArrayBuffer) return Buffer.from(handle);
+  return null;
+}
+
+function receiveSpoutTextureInfo() {
+  if (!spoutReceiver) {
+    return {
+      available: false,
+      platform: textureSharePlatform,
+      label: textureShareLabel,
+      reason: 'receiver-not-started',
+    };
+  }
+
+  if (typeof spoutReceiver.receiveTextureInfo !== 'function') {
+    return {
+      available: false,
+      platform: textureSharePlatform,
+      label: textureShareLabel,
+      reason: 'receiver-texture-info-unavailable',
+      senderName: spoutReceiverName,
+    };
+  }
+
+  const info = spoutReceiver.receiveTextureInfo();
+  if (!info) return null;
+
+  const handle = normalizeSharedTextureHandle(info.handle);
+  if (!handle || handle.byteLength === 0) return null;
+
+  return {
+    available: true,
+    platform: textureSharePlatform,
+    label: textureShareLabel,
+    senderName: String(info.senderName || spoutReceiverName || ''),
+    width: Number(info.width || 0),
+    height: Number(info.height || 0),
+    format: Number(info.format || 0),
+    updated: !!info.updated,
+    isNewFrame: !!info.isNewFrame,
+    frame: Number(info.frame || 0),
+    fps: Number(info.fps || 0),
+    handle: handle.toString('base64'),
+    handleEncoding: 'base64',
+    handleByteLength: handle.byteLength,
+  };
+}
+
 function listSpoutSenders() {
   const addon = loadSpoutAddon();
   if (!addon) return [];
@@ -2883,6 +2948,21 @@ function registerIpcHandlers() {
     }
   });
 
+  ipcMain.handle('spout_receive_texture_info', () => {
+    try {
+      return receiveSpoutTextureInfo();
+    } catch (err) {
+      console.error('[IPC] spout_receive_texture_info error:', err.message);
+      return {
+        available: false,
+        platform: textureSharePlatform,
+        label: textureShareLabel,
+        reason: err.message || 'texture-info-error',
+        senderName: spoutReceiverName,
+      };
+    }
+  });
+
   ipcMain.handle('spout_get_status', () => {
     return {
       sender_active: spoutSendActive,
@@ -2892,6 +2972,9 @@ function registerIpcHandlers() {
       osr_failure_reason: osrFailureReason,
       cpu_fallback_allowed: ALLOW_CPU_TEXTURE_SHARE_FALLBACK,
       receiver_active: spoutReceiver !== null,
+      receiver_texture_info_available:
+        spoutReceiver !== null && typeof spoutReceiver.receiveTextureInfo === 'function',
+      receiver_texture_info_supported: getReceiverTextureInfoSupport(spoutAddon),
       receivers: [],
       atlas_active: atlasState.active,
       atlas_sender_count: atlasState.layout?.tiles?.length ?? 0,
