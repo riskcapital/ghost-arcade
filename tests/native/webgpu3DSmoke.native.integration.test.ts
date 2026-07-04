@@ -13,6 +13,11 @@ import {
   type ParticleFieldNativeGraphState,
 } from '../../src/lib/renderer/webgpuParticleField';
 import {
+  buildPixelParticlesNativeComputeGraph,
+  buildPixelParticlesNativePrecompileCommands,
+  type PixelParticlesNativeGraphState,
+} from '../../src/lib/renderer/webgpuPixelParticles';
+import {
   buildFlythroughNativeComputeGraph,
   buildFlythroughNativePrecompileCommands,
   type FlythroughNativeGraphState,
@@ -181,11 +186,13 @@ describe('3D Smoke native renderer integration', () => {
     expect(capabilities.features.native_particle_field_graph).toBe(true);
     expect(capabilities.features.native_ink_cloud_graph).toBe(true);
     expect(capabilities.features.native_flythrough_graph).toBe(true);
+    expect(capabilities.features.native_pixel_particles_graph).toBe(true);
     expect(capabilities.native_graph_instruments).toContain('planet');
     expect(capabilities.native_graph_instruments).toContain('smoke-3d');
     expect(capabilities.native_graph_instruments).toContain('particle-field');
     expect(capabilities.native_graph_instruments).toContain('ink-cloud');
     expect(capabilities.native_graph_instruments).toContain('flythrough');
+    expect(capabilities.native_graph_instruments).toContain('pixel-particles');
     expect(capabilities.native_graph_instrument_manifest).toContainEqual(
       expect.objectContaining({
         id: 'planet',
@@ -221,6 +228,13 @@ describe('3D Smoke native renderer integration', () => {
         render_target: 'source_frame',
       }),
     );
+    expect(capabilities.native_graph_instrument_manifest).toContainEqual(
+      expect.objectContaining({
+        id: 'pixel-particles',
+        source_uri_prefix: 'native-graph://pixel-particles/',
+        render_target: 'source_frame',
+      }),
+    );
 
     await rpc.send('submit_commands', {
       commands: [
@@ -229,6 +243,7 @@ describe('3D Smoke native renderer integration', () => {
         ...buildParticleFieldNativePrecompileCommands(),
         ...buildInkCloudNativePrecompileCommands(),
         ...buildFlythroughNativePrecompileCommands(),
+        ...buildPixelParticlesNativePrecompileCommands(),
       ],
     }, 10000);
 
@@ -486,6 +501,73 @@ describe('3D Smoke native renderer integration', () => {
     await rpc.send('submit_commands', {
       commands: [
         { type: 'remove_layer', layer_id: 'native-flythrough' },
+      ],
+    });
+
+    const pixelSourceId = 'gpu:integration-pixels:pixel-particles';
+    const pixelInputSourceId = 'media:integration-pixel-source';
+    await rpc.send('submit_commands', {
+      commands: [
+        {
+          type: 'upload_source_frame',
+          source_id: pixelInputSourceId,
+          width: 64,
+          height: 64,
+          rgba_b64: makeSourceFrameB64(64, 64),
+          seq: 1,
+        },
+        { type: 'upsert_layer', layer_id: 'native-pixel-particles', z_index: 0, blend_mode: 'normal', opacity: 1, corners: FULLSCREEN_CORNERS },
+        { type: 'set_layer_visibility', layer_id: 'native-pixel-particles', visible: true },
+        { type: 'bind_media_source', layer_id: 'native-pixel-particles', source_id: pixelSourceId, uri: 'native-graph://pixel-particles/integration', source_type: 'image' },
+      ],
+    });
+
+    let pixelState: PixelParticlesNativeGraphState | null = null;
+    const pixelChecksums = new Set<string>();
+    for (let frame = 0; frame < 2; frame++) {
+      const graph = buildPixelParticlesNativeComputeGraph({
+        sourceId: pixelSourceId,
+        mediaSourceId: pixelInputSourceId,
+        params: {
+          mode: 'depth-shift',
+          particleCount: 4096,
+          depthAmount: 0.8,
+          depthMotion: frame === 0 ? 'locked' : 'drift',
+          depthMotionAmount: 0.15,
+          baseSize: 0.012,
+          opacity: 1,
+        },
+        width: 320,
+        height: 180,
+        sourceFrameSize: 256,
+        time: frame / 30,
+        frameDelta: 1 / 30,
+        frameIndex: frame + 1,
+        state: pixelState,
+        reset: frame === 0,
+      });
+      pixelState = graph.state;
+      const pixelResult: any = await rpc.send('compute_graph', graph.config as unknown as Record<string, unknown>, 20000);
+      expect(pixelResult.pass_count).toBe(1);
+      expect(pixelResult.renders).toHaveLength(1);
+      expect(pixelResult.renders[0]).toMatchObject({
+        target: 'source_frame',
+        source_id: pixelSourceId,
+        blend: 'alpha',
+      });
+      const snapshot = await rpc.send('frame_snapshot', {
+        include_pixels: false,
+        time: 0.72 + frame / 30,
+        frame_index: frame + 17,
+      }, 10000);
+      assertVisibleFrame(`native Pixel Particles source-frame layer ${frame}`, snapshot, 0.003);
+      pixelChecksums.add(String(snapshot.checksum));
+    }
+    expect(pixelChecksums.size).toBeGreaterThan(1);
+
+    await rpc.send('submit_commands', {
+      commands: [
+        { type: 'remove_layer', layer_id: 'native-pixel-particles' },
       ],
     });
 
