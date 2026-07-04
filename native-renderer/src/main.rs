@@ -1653,7 +1653,8 @@ impl App {
                         "persistent_compute_buffers",
                         "native_3d_smoke_graph"
                     ],
-                    "render_target": "source_frame"
+                    "render_target": "source_frame",
+                    "parity": "fluid-sim-multipass-shared-wgsl"
                 },
                 {
                     "id": "particle-field",
