@@ -1448,6 +1448,10 @@ export class NativeRendererSync {
         this.supportsNativeGraphInstrument('volumetric-spheres')
       ) ||
       (
+        this.supportsNativeFeature('native_smoke_riders_graph') &&
+        this.supportsNativeGraphInstrument('smoke-riders')
+      ) ||
+      (
         this.supportsNativeFeature('native_ink_cloud_graph') &&
         this.supportsNativeGraphInstrument('ink-cloud')
       ) ||
