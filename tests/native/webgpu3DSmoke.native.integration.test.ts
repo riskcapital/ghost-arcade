@@ -344,6 +344,8 @@ describe('Native graph parity and health integration', () => {
     expect(Number(status.compute_graph_render_passes ?? 0)).toBeGreaterThanOrEqual(3);
     expect(Number(status.compute_graph_source_frame_renders ?? 0)).toBeGreaterThanOrEqual(3);
     expect(Number(status.compute_graph_persistent_buffers ?? graphResult.persistent_buffer_count ?? 0)).toBeGreaterThanOrEqual(7);
+    expect(Number(status.native_graph_source_frame_layers ?? 0)).toBeGreaterThanOrEqual(1);
+    expect(Number(status.native_instrument_proxy_layers ?? 0)).toBe(0);
 
     await rpc.send('submit_commands', {
       commands: [
