@@ -306,12 +306,13 @@ class NativeRendererBroker {
       ['native-media-decode', 'Native media decode/prefetch', !!features.native_media_decode && !!features.media_prefetch],
       ['compute-graph-host', 'Native buffer compute graph host', !!features.compute_graph_host],
       ['native-3d-smoke-graph', 'Native 3D Smoke graph', !!features.native_3d_smoke_graph],
+      ['native-particle-field-graph', 'Native Particle Field graph', !!features.native_particle_field_graph],
       [
         'compute-instrument-host',
         'Native compute/multi-pass instrument host',
         !!features.compute_shader_host && !!features.multi_pass_instruments,
-        features.native_3d_smoke_graph
-          ? 'partial: 3D Smoke graph source frames are implemented; broad catalog parity is still pending'
+        features.native_3d_smoke_graph || features.native_particle_field_graph
+          ? 'partial: 3D Smoke and Particle Field graph source frames are implemented; broad catalog parity is still pending'
           : 'not implemented in the current native render core',
       ],
       ['managed-output', 'Managed native output window', !!features.managed_output_attach],
@@ -860,6 +861,7 @@ function makeDefaultCapabilities(overrides = {}) {
       compute_graph_source_frame_target: false,
       persistent_compute_buffers: false,
       native_3d_smoke_graph: false,
+      native_particle_field_graph: false,
       command_drain_policy: false,
       auto_present_policy: false,
       multi_pass_instruments: false,

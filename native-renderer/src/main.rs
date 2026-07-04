@@ -1489,6 +1489,7 @@ impl App {
             "compute_graph_source_frame_target": true,
             "persistent_compute_buffers": true,
             "native_3d_smoke_graph": true,
+            "native_particle_field_graph": true,
             "command_drain_policy": true,
             "auto_present_policy": true,
             "multi_pass_instruments": false,
@@ -1518,7 +1519,7 @@ impl App {
             "backend": native_backend_name(),
             "implemented_methods": CORE_RPC_METHODS,
             "implemented_command_types": CORE_COMMAND_TYPES,
-            "native_graph_instruments": ["smoke-3d"],
+            "native_graph_instruments": ["smoke-3d", "particle-field"],
             "native_graph_instrument_manifest": [
                 {
                     "id": "smoke-3d",
@@ -1538,6 +1539,29 @@ impl App {
                         "native_3d_smoke_graph"
                     ],
                     "render_target": "source_frame"
+                },
+                {
+                    "id": "particle-field",
+                    "label": "Particle Field",
+                    "source_uri_prefix": "native-graph://particle-field/",
+                    "shader_ids": [
+                        "particle-field/behavior",
+                        "particle-field/fog",
+                        "particle-field/render"
+                    ],
+                    "features": [
+                        "compute_graph_host",
+                        "compute_graph_render",
+                        "compute_graph_multi_render",
+                        "compute_graph_instanced_render",
+                        "compute_graph_texture_sampling",
+                        "compute_graph_depth_render",
+                        "compute_graph_source_frame_target",
+                        "persistent_compute_buffers",
+                        "native_particle_field_graph"
+                    ],
+                    "render_target": "source_frame",
+                    "parity": "behavior-and-render-source-frame; edges/media-mode routing pending"
                 }
             ],
             "audio_uniform_layout": ghost_audio_uniform_layout(),
@@ -1839,13 +1863,19 @@ impl App {
                         "id": "compute-instrument-host",
                         "label": "Native compute/multi-pass instrument host",
                         "ok": false,
-                        "detail": "partial: the 3D Smoke source-frame compute graph is supported; broad native catalog parity is still pending"
+                        "detail": "partial: 3D Smoke and Particle Field source-frame compute graphs are supported; broad native catalog parity is still pending"
                     },
                     {
                         "id": "native-3d-smoke-graph",
                         "label": "Native 3D Smoke graph",
                         "ok": self.renderer.is_some(),
                         "detail": if self.renderer.is_some() { "compute_graph can render 3D Smoke into native source frames" } else { "native renderer has not created a wgpu device" }
+                    },
+                    {
+                        "id": "native-particle-field-graph",
+                        "label": "Native Particle Field graph",
+                        "ok": self.renderer.is_some(),
+                        "detail": if self.renderer.is_some() { "compute_graph can render Particle Field behavior/render passes into native source frames" } else { "native renderer has not created a wgpu device" }
                     },
                     {
                         "id": "managed-output",
@@ -2608,19 +2638,32 @@ impl App {
             }
             Some(NativeComputeGraphBindingKind::SourceFrameTexture(dimension)) => {
                 let is_array = matches!(dimension, NativeComputeGraphTextureDimension::D2Array);
+                let allow_missing = bool_at(binding, &["allow_missing"])
+                    .or_else(|| bool_at(binding, &["allowMissing"]))
+                    .or_else(|| bool_at(binding, &["fallback"]))
+                    .or_else(|| bool_at(binding, &["optional"]))
+                    .unwrap_or(false);
                 let resource_id = if is_array {
                     string_at(binding, &["resource"])
                         .or_else(|| string_at(binding, &["resource_id"]))
                         .or_else(|| string_at(binding, &["source_id"]))
                         .unwrap_or_else(|| "source-frames".to_string())
                 } else {
-                    let Some(source_id) = string_at(binding, &["source_id"])
+                    let source_id = string_at(binding, &["source_id"])
                         .or_else(|| string_at(binding, &["sourceId"]))
                         .or_else(|| string_at(binding, &["source_frame_id"]))
                         .or_else(|| string_at(binding, &["sourceFrameId"]))
                         .or_else(|| string_at(binding, &["resource"]))
-                        .or_else(|| string_at(binding, &["resource_id"]))
-                    else {
+                        .or_else(|| string_at(binding, &["resource_id"]));
+                    let Some(source_id) = source_id else {
+                        if allow_missing {
+                            return Ok(NativeComputeGraphBindingSpec {
+                                binding: binding_number,
+                                resource_id: "__source_frame_fallback__".to_string(),
+                                kind: NativeComputeGraphBindingKind::SourceFrameTexture(dimension),
+                                source_slot: Some(0),
+                            });
+                        }
                         return Err(format!(
                             "compute_graph {context} `{shader_id}` binding {binding_number} source-frame texture requires source_id"
                         ));
@@ -2631,11 +2674,15 @@ impl App {
                     None
                 } else {
                     Some(
-                        *self.source_frame_slots.get(&resource_id).ok_or_else(|| {
-                            format!(
-                                "compute_graph {context} `{shader_id}` binding {binding_number} source-frame `{resource_id}` has no uploaded/generated frame"
-                            )
-                        })?,
+                        self.source_frame_slots
+                            .get(&resource_id)
+                            .copied()
+                            .or_else(|| allow_missing.then_some(0))
+                            .ok_or_else(|| {
+                                format!(
+                                    "compute_graph {context} `{shader_id}` binding {binding_number} source-frame `{resource_id}` has no uploaded/generated frame"
+                                )
+                            })?,
                     )
                 };
                 Ok(NativeComputeGraphBindingSpec {
