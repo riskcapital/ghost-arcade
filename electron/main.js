@@ -1821,6 +1821,7 @@ let nativeOutputTextureShareFrameCount = 0;
 let nativeOutputTextureShareLastLogTime = 0;
 let nativeOutputTextureShareFailCount = 0;
 let nativeOutputTextureShareInFlight = false;
+let nativeOutputTextureShareWaitingForFrame = false;
 let nativeOutputTextureShareWaitingForFrameLogged = false;
 
 // Multi-slice zero-copy atlas state. The slice-atlas OSR window renders
@@ -2011,6 +2012,7 @@ function getTextureShareLoadStatus() {
     receiverTextureInfoSupported: getReceiverTextureInfoSupport(spoutAddon),
     nativeOutputCapable: getNativeOutputTextureShareSupport(spoutAddon),
     nativeOutputActive: nativeOutputTextureShareActive,
+    nativeOutputWaitingForFrame: nativeOutputTextureShareWaitingForFrame,
     nativeOutputFailures: nativeOutputTextureShareFailCount,
   };
 }
@@ -2639,6 +2641,7 @@ function stopNativeOutputTextureSharePump(reason = 'stopped') {
   }
   nativeOutputTextureShareActive = false;
   nativeOutputTextureShareInFlight = false;
+  nativeOutputTextureShareWaitingForFrame = false;
   if (wasActive) {
     notifyMainWindowOsrStatus(false, reason);
   }
@@ -2655,6 +2658,7 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
   nativeOutputTextureShareActive = true;
   nativeOutputTextureShareFrameCount = 0;
   nativeOutputTextureShareFailCount = 0;
+  nativeOutputTextureShareWaitingForFrame = false;
   nativeOutputTextureShareWaitingForFrameLogged = false;
   nativeOutputTextureShareLastLogTime = Date.now();
   notifyMainWindowOsrStatus(true, 'native-iosurface');
@@ -2680,6 +2684,7 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
         return;
       }
       if (!isPublishableNativeOutputTexture(texture)) {
+        nativeOutputTextureShareWaitingForFrame = true;
         if (!nativeOutputTextureShareWaitingForFrameLogged) {
           console.log(`[${textureShareLabel} Native] waiting for first native output frame before publishing IOSurface`);
           nativeOutputTextureShareWaitingForFrameLogged = true;
@@ -2700,6 +2705,7 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
       }
 
       nativeOutputTextureShareFailCount = 0;
+      nativeOutputTextureShareWaitingForFrame = false;
       nativeOutputTextureShareWaitingForFrameLogged = false;
       nativeOutputTextureShareFrameCount++;
       const now = Date.now();
