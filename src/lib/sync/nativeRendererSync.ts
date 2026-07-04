@@ -1970,6 +1970,18 @@ export class NativeRendererSync {
       const src2 = layer.source;
       if (src2?.shaderCode && layer.visible) {
         const shaderId = `${src2.id}:${hashString(src2.shaderCode)}`;
+        const shaderTime =
+          typeof renderClock.time === 'number' && Number.isFinite(renderClock.time)
+            ? renderClock.time
+            : now / 1000;
+        const shaderDelta =
+          typeof renderClock.time_delta === 'number' && Number.isFinite(renderClock.time_delta)
+            ? renderClock.time_delta
+            : 1.0 / this.targetFps;
+        const shaderFrameIndex =
+          typeof renderClock.frame_index === 'number' && Number.isFinite(renderClock.frame_index)
+            ? Math.max(0, Math.round(renderClock.frame_index))
+            : this.frameId;
         const nowDate = new Date();
         const secsSinceMidnight =
           nowDate.getHours() * 3600 + nowDate.getMinutes() * 60 + nowDate.getSeconds() + nowDate.getMilliseconds() / 1000;
@@ -1998,9 +2010,9 @@ export class NativeRendererSync {
         commands.push({
           type: 'update_isf_uniforms',
           shader_id: shaderId,
-          time: now / 1000, // performance.now() → seconds
-          time_delta: 1.0 / this.targetFps,
-          frame_index: this.frameId,
+          time: shaderTime,
+          time_delta: shaderDelta,
+          frame_index: shaderFrameIndex,
           render_width: this.desiredWidth || 1920,
           render_height: this.desiredHeight || 1080,
           date: [nowDate.getFullYear(), nowDate.getMonth() + 1, nowDate.getDate(), secsSinceMidnight],
