@@ -490,6 +490,7 @@ async function main() {
   let smokeTempDir = null;
   let sourceFrameFile = null;
   let sourceFrameFileSnapshot = null;
+  let sourceFrameSharedTextureSnapshot = null;
   let graphSourceFrameSnapshot = null;
   try {
     await rpc.send('start', {
@@ -1310,17 +1311,68 @@ async function main() {
       throw new Error(`source frame rgba_file was not deleted after native read: ${sourceFrameFile}`);
     }
 
+    if (outputExportExpected) {
+      const beforeSharedFrameStatus = await rpc.send('status', {}, 5000);
+      const loopbackTexture = await rpc.send('output_shared_texture', {}, 5000);
+      if (
+        !loopbackTexture?.available ||
+        loopbackTexture.platform !== 'iosurface' ||
+        !String(loopbackTexture.handle ?? '').length ||
+        loopbackTexture.handle_encoding !== 'integer' ||
+        Number(loopbackTexture.width ?? 0) <= 0 ||
+        Number(loopbackTexture.height ?? 0) <= 0
+      ) {
+        throw new Error(`native output IOSurface loopback metadata is incomplete: ${JSON.stringify(loopbackTexture)}`);
+      }
+      await rpc.send('submit_commands', {
+        commands: [
+          { type: 'remove_layer', layer_id: 'smoke-file-frame' },
+          {
+            type: 'upload_source_frame',
+            source_id: 'smoke-iosurface-loopback-source',
+            width: Number(loopbackTexture.width),
+            height: Number(loopbackTexture.height),
+            shared_handle: String(loopbackTexture.handle),
+            shared_texture_platform: loopbackTexture.platform,
+            shared_texture_format: loopbackTexture.format,
+            shared_texture_handle_encoding: loopbackTexture.handle_encoding,
+            shared_texture_handle_byte_length: loopbackTexture.handle_byte_length,
+            seq: 1,
+          },
+          { type: 'upsert_layer', layer_id: 'smoke-iosurface-loopback-frame', z_index: 0, blend_mode: 'normal', opacity: 1, corners: FULLSCREEN_CORNERS },
+          { type: 'set_layer_visibility', layer_id: 'smoke-iosurface-loopback-frame', visible: true },
+          { type: 'bind_media_source', layer_id: 'smoke-iosurface-loopback-frame', source_id: 'smoke-iosurface-loopback-source', uri: 'iosurface-loopback://native-output', source_type: 'image' },
+        ],
+      }, 5000);
+      sourceFrameSharedTextureSnapshot = await snapshot(rpc, 'source-frame-iosurface-loopback', 0.52, 8);
+      assertFrame('source frame IOSurface loopback layer', sourceFrameSharedTextureSnapshot, 0.02);
+      const afterSharedFrameStatus = await rpc.send('status', {}, 5000);
+      if (
+        Number(afterSharedFrameStatus.source_frame_shared_texture_uploads ?? 0) <=
+        Number(beforeSharedFrameStatus.source_frame_shared_texture_uploads ?? 0)
+      ) {
+        throw new Error(`native shared source-frame upload counter did not advance: ${JSON.stringify(afterSharedFrameStatus)}`);
+      }
+      if (afterSharedFrameStatus.source_frame_last_upload_transport !== 'shared-texture') {
+        throw new Error(`native shared source-frame transport was not tracked: ${JSON.stringify(afterSharedFrameStatus)}`);
+      }
+      if (Number(afterSharedFrameStatus.source_frame_shared_texture_rejected_uploads ?? 0) !== 0) {
+        throw new Error(`native shared source-frame loopback was rejected: ${JSON.stringify(afterSharedFrameStatus)}`);
+      }
+    }
+
     await rpc.send('submit_commands', {
       commands: [
         { type: 'remove_layer', layer_id: 'smoke-file-frame' },
+        { type: 'remove_layer', layer_id: 'smoke-iosurface-loopback-frame' },
       ],
     });
-    const noLayers = await snapshot(rpc, 'no-layers', 0.75, 8);
+    const noLayers = await snapshot(rpc, 'no-layers', 0.75, 9);
 
-    const registeredWgsl = await renderRegisteredWgslProbe(rpc, 9, noLayers);
+    const registeredWgsl = await renderRegisteredWgslProbe(rpc, 10, noLayers);
 
     const catalogResults = [];
-    let catalogFrameIndex = 10;
+    let catalogFrameIndex = 11;
     for (const probe of NATIVE_SHADER_CATALOG_PROBES) {
       catalogResults.push(await renderNativeShaderProbe(rpc, probe, catalogFrameIndex, noLayers));
       catalogFrameIndex += 2;
@@ -1410,8 +1462,17 @@ async function main() {
     if (Number(status.source_frame_rejected_uploads ?? 0) !== 0) {
       throw new Error(`native source-frame uploads were unexpectedly rejected: ${JSON.stringify(status)}`);
     }
-    if (status.source_frame_last_upload_transport !== 'file') {
+    if (
+      status.source_frame_last_upload_transport !==
+      (outputExportExpected ? 'shared-texture' : 'file')
+    ) {
       throw new Error(`native source-frame last transport was not tracked: ${JSON.stringify(status)}`);
+    }
+    if (
+      outputExportExpected &&
+      Number(status.source_frame_shared_texture_uploads ?? 0) < 1
+    ) {
+      throw new Error(`native shared source-frame uploads were not counted: ${JSON.stringify(status)}`);
     }
     if (
       Number(stats.source_frame_cpu_fallback_uploads ?? 0) < 1 ||
@@ -1495,7 +1556,7 @@ async function main() {
     const blendChecksums = new Set();
     let normalBlendChecksum = '';
     for (let i = 0; i < blendModes.length; i++) {
-      const blendSnap = await renderBlendProbe(rpc, blendModes[i], 13 + i);
+      const blendSnap = await renderBlendProbe(rpc, blendModes[i], 14 + i);
       assertFrame(`native ${blendModes[i]} blend`, blendSnap, 0.01);
       if (blendModes[i] === 'normal') {
         normalBlendChecksum = blendSnap.checksum;
@@ -1514,6 +1575,7 @@ async function main() {
       `color=${color.checksum}`,
       `preview=${preview.checksum}`,
       `frameFile=${sourceFrameFileSnapshot?.checksum ?? 'none'}`,
+      `frameShared=${sourceFrameSharedTextureSnapshot?.checksum ?? 'none'}`,
       `wgsl=${registeredWgsl.first.checksum}->${registeredWgsl.second.checksum}`,
       `uv=${previewCrop.checksum}/${previewFlip.checksum}`,
       `shape=${previewCircle.checksum}/${previewTriangle.checksum}`,
