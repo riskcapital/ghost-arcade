@@ -154,6 +154,11 @@ try {
     `unsupported shared texture source-frame should not report a completed shared upload: ${JSON.stringify(sharedFrameStatus)}`,
   );
   assert(
+    Number(sharedFrameStatus.source_frames_active ?? 0) ===
+      Number(beforeSharedFrameStatus.source_frames_active ?? 0),
+    `failed shared texture import should not activate a source frame: ${JSON.stringify(sharedFrameStatus)}`,
+  );
+  assert(
     Number(sharedFrameStatus.source_frame_rejected_uploads ?? 0) >
       Number(beforeSharedFrameStatus.source_frame_rejected_uploads ?? 0),
     `shared texture source-frame rejection was not counted: ${JSON.stringify(sharedFrameStatus)}`,
@@ -168,7 +173,7 @@ try {
     `shared texture rejection did not preserve transport detail: ${JSON.stringify(sharedFrameStatus)}`,
   );
   assert(
-    /shared texture source-frame upload is not implemented yet/.test(
+    /(IOSurface|shared texture source-frame upload)/.test(
       String(sharedFrameStatus.source_frame_last_reject_reason ?? ''),
     ),
     `shared texture rejection did not expose a clear reason: ${JSON.stringify(sharedFrameStatus)}`,
