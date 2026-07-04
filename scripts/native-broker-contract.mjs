@@ -176,6 +176,34 @@ try {
 
   const capabilities = await broker.invoke('native_renderer_get_capabilities');
   const outputExportExpected = process.platform === 'darwin';
+  assert(
+    capabilities?.core_capabilities_confirmed === true,
+    `broker capabilities should be core-confirmed, not fallback: ${JSON.stringify(capabilities)}`,
+  );
+  assert(
+    capabilities?.implemented_methods?.includes('get_capabilities'),
+    `broker capabilities missing get_capabilities RPC: ${JSON.stringify(capabilities?.implemented_methods)}`,
+  );
+  let unknownRpcError = null;
+  try {
+    await broker.send('ghost_arcade_contract_missing_rpc', {}, { timeoutMs: 1000 });
+  } catch (err) {
+    unknownRpcError = err;
+  }
+  assert(
+    /unsupported native render-core RPC method/.test(String(unknownRpcError?.message || unknownRpcError || '')),
+    `native core unknown RPC should error loudly, not return success: ${unknownRpcError}`,
+  );
+  let unknownBrokerError = null;
+  try {
+    await broker.invoke('native_renderer_contract_missing_command');
+  } catch (err) {
+    unknownBrokerError = err;
+  }
+  assert(
+    /does not advertise RPC method/.test(String(unknownBrokerError?.message || unknownBrokerError || '')),
+    `broker unknown command should reject before silent fallback: ${unknownBrokerError}`,
+  );
   assert(capabilities?.features?.compute_graph_source_frame_target, 'broker capabilities lost compute graph source-frame support');
   assert(capabilities?.features?.runtime_cache_clear, 'broker capabilities lost runtime cache clearing support');
   assert(capabilities?.features?.native_graph_buffer_prune, 'broker capabilities lost native graph buffer prune support');
@@ -313,6 +341,7 @@ try {
 
   const readiness = await broker.invoke('native_renderer_get_readiness_report');
   const checks = new Map((readiness?.checks ?? []).map((check) => [check.id, check]));
+  assert(checks.get('core-capabilities')?.ok, `broker readiness did not confirm core capabilities: ${JSON.stringify(readiness)}`);
   for (const id of REQUIRED_CHECKS) {
     assert(checks.get(id)?.ok, `broker readiness has stale/missing ${id}: ${JSON.stringify(readiness)}`);
   }

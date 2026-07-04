@@ -166,6 +166,8 @@ class NativeRendererBroker {
       backend: this.lastStatus.backend,
       running: false,
     });
+    this.coreCapabilitiesConfirmed = false;
+    this.coreCapabilitiesError = 'Native render core has not started';
   }
 
   async invoke(command, args = {}) {
@@ -253,7 +255,7 @@ class NativeRendererBroker {
         if (BROKER_UNSUPPORTED_COMMANDS.has(command)) {
           return Promise.reject(this.unsupportedError(command));
         }
-        return this.sendIfRunning(commandToMethod(command), args, { fallback: null });
+        return this.sendAdvertisedCoreMethod(command, args);
     }
   }
 
@@ -270,7 +272,15 @@ class NativeRendererBroker {
     this.ensureProcess(executable);
     const result = await this.send('start', args, { timeoutMs: 8000 });
     this.lastStatus = normalizeStatus(result, this.lastStatus);
-    await this.refreshCapabilities();
+    try {
+      await this.refreshCapabilities({ requireCore: true });
+    } catch (err) {
+      this.lastStatus = {
+        ...this.lastStatus,
+        backend_ready: false,
+        last_frame_error: `Native render core capabilities handshake failed: ${err?.message || String(err)}`,
+      };
+    }
     return this.lastStatus;
   }
 
@@ -428,6 +438,8 @@ class NativeRendererBroker {
         backend: this.lastStatus.backend,
         running: false,
       });
+      this.coreCapabilitiesConfirmed = false;
+      this.coreCapabilitiesError = 'Native render core stopped';
     }
     return null;
   }
@@ -455,11 +467,43 @@ class NativeRendererBroker {
     return this.capabilities;
   }
 
-  async refreshCapabilities() {
+  async refreshCapabilities({ requireCore = false } = {}) {
     const fallback = this.capabilities;
-    const result = await this.sendIfRunning('capabilities', {}, { fallback, timeoutMs: 1000 });
+    if (!this.child || this.child.killed) {
+      if (requireCore) {
+        throw new Error('Native render core process is not running');
+      }
+      return fallback;
+    }
+    let result;
+    try {
+      result = await this.send('get_capabilities', {}, { timeoutMs: 1000 });
+      this.coreCapabilitiesConfirmed = true;
+      this.coreCapabilitiesError = null;
+    } catch (err) {
+      this.coreCapabilitiesConfirmed = false;
+      this.coreCapabilitiesError = err?.message || String(err);
+      this.capabilities = makeDefaultCapabilities({
+        backend: fallback?.backend ?? this.lastStatus?.backend ?? null,
+        running: !!(this.child && !this.child.killed),
+        core_capabilities_confirmed: false,
+        core_capabilities_error: this.coreCapabilitiesError,
+        notes: [`Native render core capabilities handshake failed: ${this.coreCapabilitiesError}`],
+      });
+      this.lastStatus = {
+        ...this.lastStatus,
+        backend_ready: false,
+        last_frame_error: this.capabilities.notes[0],
+      };
+      if (requireCore) throw err;
+      return this.capabilities;
+    }
     this.capabilities = applyBrokerCapabilityOverlay(
-      normalizeCapabilities(result, fallback),
+      {
+        ...normalizeCapabilities(result, fallback),
+        core_capabilities_confirmed: true,
+        core_capabilities_error: null,
+      },
       this.textureShareStatus(),
       this.nativeFrameEncoderStatus(),
     );
@@ -503,6 +547,9 @@ class NativeRendererBroker {
     const blockers = [];
     if (!binary) blockers.push('native render-core binary is missing');
     if (!this.lastStatus.backend_ready) blockers.push(this.lastStatus.last_frame_error || 'native render-core is not ready');
+    if (this.child && !this.child.killed && !this.capabilities?.core_capabilities_confirmed) {
+      blockers.push(this.capabilities?.core_capabilities_error || 'native render-core capabilities have not been confirmed');
+    }
     const features = this.capabilities?.features || {};
     const textureShare = this.textureShareStatus();
     const nativeFrameEncoder = this.nativeFrameEncoderStatus();
@@ -646,6 +693,14 @@ class NativeRendererBroker {
       native_frame_encoder: nativeFrameEncoder,
       checks: [
         {
+          id: 'core-capabilities',
+          label: 'Core capabilities handshake',
+          ok: !!this.capabilities?.core_capabilities_confirmed,
+          detail: this.capabilities?.core_capabilities_confirmed
+            ? `native core ${this.capabilities.core_version || 'unknown'} confirmed ${this.capabilities.implemented_methods?.length ?? 0} RPC method(s)`
+            : (this.capabilities?.core_capabilities_error || 'native render-core capabilities have not been confirmed'),
+        },
+        {
           id: 'binary',
           label: 'ghost-render-core binary',
           ok: !!binary,
@@ -729,6 +784,20 @@ class NativeRendererBroker {
   unsupportedError(command) {
     const reason = BROKER_UNSUPPORTED_COMMANDS.get(command) || 'not implemented by this native render core';
     return new Error(`Unsupported native renderer command ${command}: ${reason}`);
+  }
+
+  supportsAdvertisedCoreMethod(method) {
+    return (this.capabilities?.implemented_methods ?? []).includes(method);
+  }
+
+  async sendAdvertisedCoreMethod(command, args = {}) {
+    const method = commandToMethod(command);
+    if (this.child && !this.child.killed && !this.supportsAdvertisedCoreMethod(method)) {
+      return Promise.reject(new Error(
+        `Unsupported native renderer command ${command}: native render core does not advertise RPC method \`${method}\``,
+      ));
+    }
+    return this.sendIfRunning(method, args, { fallback: null });
   }
 
   async sendIfRunning(method, params, { fallback = null, timeoutMs = 2500 } = {}) {
@@ -1043,6 +1112,8 @@ function normalizeCapabilities(capabilities, previous = makeDefaultCapabilities(
     ...source,
     schema_version: Number(source.schema_version ?? previous.schema_version ?? 1),
     backend: source.backend ?? previous.backend ?? null,
+    core_capabilities_confirmed: !!(source.core_capabilities_confirmed ?? previous.core_capabilities_confirmed ?? false),
+    core_capabilities_error: source.core_capabilities_error ?? previous.core_capabilities_error ?? null,
     implemented_methods: Array.isArray(source.implemented_methods)
       ? source.implemented_methods.map(String)
       : previous.implemented_methods ?? [],
@@ -1541,6 +1612,8 @@ function makeDefaultCapabilities(overrides = {}) {
     schema_version: 1,
     core_version: null,
     backend: overrides.backend ?? null,
+    core_capabilities_confirmed: !!overrides.core_capabilities_confirmed,
+    core_capabilities_error: overrides.core_capabilities_error ?? null,
     implemented_methods: [],
     implemented_command_types: [],
     native_graph_instruments: [],
