@@ -133,12 +133,22 @@ function extractFileRecords(path) {
     }
   };
 
-  return [...moduleSourceNames].filter((name) => wgsl.has(name)).map((name) => ({
-    id: `${relativeFile}:${name}`,
-    stage: 'module',
-    entry: 'main',
-    source: resolveTemplate(name),
-  }));
+  const records = [...wgsl.keys()]
+    .filter((name) => looksLikeStandaloneTaggedWgsl(name, wgsl.get(name) ?? '', moduleSourceNames))
+    .map((name) => ({
+      id: `${relativeFile}:${name}`,
+      stage: 'module',
+      entry: 'main',
+      source: resolveTemplate(name),
+    }));
+
+  for (const name of moduleSourceNames) {
+    if (!wgsl.has(name)) {
+      throw new Error(`Shader module call references unknown WGSL symbol ${name}`);
+    }
+  }
+
+  return records;
 }
 
 function looksLikeWgsl(source) {
@@ -153,12 +163,23 @@ function looksLikeWgsl(source) {
     || (s.includes('fn ') && s.includes('->'));
 }
 
+function looksLikeStandaloneTaggedWgsl(name, source, moduleSourceNames) {
+  if (moduleSourceNames.has(name)) return true;
+  return source.includes('@vertex')
+    || source.includes('@fragment')
+    || source.includes('@compute')
+    || source.includes('var<')
+    || /\bstruct\s+[A-Za-z0-9_]+/.test(source);
+}
+
 function collectRecords() {
   const stdlib = loadStdlib();
   const records = [];
   const failures = [];
 
   for (const path of walkFiles(rendererRoot)) {
+    const relativePath = relative(root, path);
+    if (relativePath.endsWith('src/lib/renderer/wgsl/shaderModule.ts')) continue;
     try {
       for (const record of extractFileRecords(path)) {
         try {
@@ -171,7 +192,7 @@ function collectRecords() {
         }
       }
     } catch (err) {
-      failures.push(`${relative(root, path)}: ${err?.message ?? err}`);
+      failures.push(`${relativePath}: ${err?.message ?? err}`);
     }
   }
 
