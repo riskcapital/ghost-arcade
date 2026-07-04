@@ -7,6 +7,7 @@ use std::{
     collections::HashMap,
     fs,
     io::{self, BufRead, Write},
+    path::Path,
     sync::mpsc::{self, Receiver, Sender},
     thread,
     time::{Duration, Instant},
@@ -68,6 +69,7 @@ const CORE_RPC_METHODS: &[&str] = &[
     "get_snapshot",
     "frame_snapshot",
     "get_frame_snapshot",
+    "export_frame_snapshot",
     "upload_source_gpu_shared_texture",
     "output_shared_texture",
     "get_output_shared_texture",
@@ -1619,6 +1621,7 @@ impl App {
             "effect_descriptors": true,
             "render_clock": true,
             "frame_snapshot": true,
+            "frame_snapshot_export": true,
             "frame_health": true,
             "gpu_timing": self.renderer.as_ref().is_some_and(|renderer| renderer.gpu_timing.is_some()),
             "shader_precompile": true,
@@ -2239,7 +2242,10 @@ impl App {
                 "shader_registry": self.shader_registry_snapshot(),
             })),
             "frame_snapshot" | "get_frame_snapshot" => self.frame_snapshot(&req.params),
-            "upload_source_gpu_shared_texture" => self.upload_source_gpu_shared_texture(&req.params),
+            "export_frame_snapshot" => self.export_frame_snapshot(&req.params),
+            "upload_source_gpu_shared_texture" => {
+                self.upload_source_gpu_shared_texture(&req.params)
+            }
             "output_shared_texture" | "get_output_shared_texture" => {
                 Ok(self.output_shared_texture())
             }
@@ -2398,7 +2404,8 @@ impl App {
                 Ok(summary)
             }
             "submit_commands" => {
-                let summary = self.apply_commands(req.params.get("commands").unwrap_or(&req.params));
+                let summary =
+                    self.apply_commands(req.params.get("commands").unwrap_or(&req.params));
                 self.request_auto_present();
                 Ok(summary)
             }
@@ -2787,9 +2794,7 @@ impl App {
 
     fn upload_source_gpu_shared_texture(&mut self, params: &Value) -> Result<Value, String> {
         if string_at(params, &["source_id"]).is_none() {
-            return Err(
-                "native shared texture source-frame upload requires source_id".to_string(),
-            );
+            return Err("native shared texture source-frame upload requires source_id".to_string());
         }
         self.apply_source_frame(params);
         Ok(json!(self.status()))
@@ -3013,8 +3018,7 @@ impl App {
         }
     }
 
-    fn frame_snapshot(&mut self, params: &Value) -> Result<Value, String> {
-        let include_pixels = bool_at(params, &["include_pixels"]).unwrap_or(false);
+    fn snapshot_clock_from_params(&self, params: &Value) -> (Option<f32>, u64) {
         let snapshot_time = number_at(params, &["time"])
             .or_else(|| number_at(params, &["time_seconds"]))
             .or_else(|| number_at(params, &["clock_time"]))
@@ -3025,6 +3029,14 @@ impl App {
             .map(|value| value.round().clamp(0.0, u64::MAX as f64) as u64)
             .or(self.render_clock_frame_index)
             .unwrap_or(self.stats.frames_presented);
+        (snapshot_time, snapshot_frame_index)
+    }
+
+    fn render_frame_snapshot_texture(
+        &mut self,
+        params: &Value,
+    ) -> Result<(Option<f32>, u64), String> {
+        let (snapshot_time, snapshot_frame_index) = self.snapshot_clock_from_params(params);
         let native_tasks = self.prepare_native_instrument_tasks(snapshot_frame_index);
         let gpu_layers = self.gpu_layer_data();
         let source_preview_pixels = if self.source_preview_dirty {
@@ -3072,8 +3084,13 @@ impl App {
         if source_preview_pixels.is_some() {
             self.source_preview_dirty = false;
         }
-        let snapshot = renderer.frame_snapshot(include_pixels)?;
-        renderer.poll_gpu_timing();
+        Ok((snapshot_time, snapshot_frame_index))
+    }
+
+    fn refresh_renderer_timing_stats(&mut self) {
+        let Some(renderer) = self.renderer.as_ref() else {
+            return;
+        };
         let (
             gpu_timing_supported,
             last_render_gpu_ms,
@@ -3088,15 +3105,87 @@ impl App {
         self.stats.max_render_gpu_ms = max_render_gpu_ms;
         self.stats.gpu_timing_samples = gpu_timing_samples;
         self.stats.gpu_timing_resolve_misses = gpu_timing_resolve_misses;
+    }
+
+    fn note_frame_snapshot(&mut self, snapshot: &Value) {
         self.stats.frame_snapshot_reads = self.stats.frame_snapshot_reads.saturating_add(1);
         self.stats.frame_health_checks = self.stats.frame_health_checks.saturating_add(1);
-        if bool_at(&snapshot, &["dark_frame"]).unwrap_or(false) {
+        if bool_at(snapshot, &["dark_frame"]).unwrap_or(false) {
             self.stats.dark_frame_warnings = self.stats.dark_frame_warnings.saturating_add(1);
         }
         self.stats.frame_snapshot_bytes_read = self
             .stats
             .frame_snapshot_bytes_read
-            .saturating_add(number_at(&snapshot, &["byte_length"]).unwrap_or(0.0) as u64);
+            .saturating_add(number_at(snapshot, &["byte_length"]).unwrap_or(0.0) as u64);
+    }
+
+    fn frame_snapshot(&mut self, params: &Value) -> Result<Value, String> {
+        let include_pixels = bool_at(params, &["include_pixels"]).unwrap_or(false);
+        self.render_frame_snapshot_texture(params)?;
+        let snapshot = {
+            let Some(renderer) = self.renderer.as_mut() else {
+                return Err("native renderer has not created a wgpu device".to_string());
+            };
+            let snapshot = renderer.frame_snapshot(include_pixels)?;
+            renderer.poll_gpu_timing();
+            snapshot
+        };
+        self.refresh_renderer_timing_stats();
+        self.note_frame_snapshot(&snapshot);
+        Ok(snapshot)
+    }
+
+    fn export_frame_snapshot(&mut self, params: &Value) -> Result<Value, String> {
+        let output_path = string_at(params, &["path"])
+            .or_else(|| string_at(params, &["file_path"]))
+            .or_else(|| string_at(params, &["output_path"]))
+            .ok_or_else(|| "export_frame_snapshot requires path".to_string())?;
+        let storage_format = string_at(params, &["format"])
+            .or_else(|| string_at(params, &["storage_format"]))
+            .unwrap_or_else(|| "raw-texture".to_string())
+            .to_ascii_lowercase();
+        if !matches!(
+            storage_format.as_str(),
+            "raw" | "raw-texture" | "raw-rgba" | "raw-rgba8" | "rgba" | "rgba8"
+        ) {
+            return Err(format!(
+                "unsupported frame snapshot export format '{storage_format}'; expected raw-texture"
+            ));
+        }
+        let (snapshot_time, snapshot_frame_index) = self.render_frame_snapshot_texture(params)?;
+        let (mut snapshot, pixels) = {
+            let Some(renderer) = self.renderer.as_mut() else {
+                return Err("native renderer has not created a wgpu device".to_string());
+            };
+            let readback = renderer.read_frame_snapshot()?;
+            let snapshot = readback.to_json(false);
+            renderer.poll_gpu_timing();
+            (snapshot, readback.pixels)
+        };
+        self.refresh_renderer_timing_stats();
+        self.note_frame_snapshot(&snapshot);
+
+        let path = Path::new(&output_path);
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+        }
+        fs::write(path, &pixels).map_err(|err| err.to_string())?;
+
+        if let Some(object) = snapshot.as_object_mut() {
+            object.insert("path".to_string(), Value::String(output_path));
+            object.insert("bytes_written".to_string(), json!(pixels.len()));
+            object.insert(
+                "storage_format".to_string(),
+                Value::String("raw-texture".to_string()),
+            );
+            object.insert("frame_index".to_string(), json!(snapshot_frame_index));
+            object.insert(
+                "time_seconds".to_string(),
+                snapshot_time.map_or(Value::Null, |time| json!(time)),
+            );
+        }
         Ok(snapshot)
     }
 
@@ -6657,7 +6746,7 @@ impl RenderState {
         }
     }
 
-    fn frame_snapshot(&mut self, include_pixels: bool) -> Result<Value, String> {
+    fn read_frame_snapshot(&mut self) -> Result<FrameSnapshotReadback, String> {
         let width = self.config.width.max(1);
         let height = self.config.height.max(1);
         let bytes_per_pixel = 4_u32;
@@ -6724,33 +6813,21 @@ impl RenderState {
 
         let metrics = snapshot_metrics(&compact, self.config.format);
         self.last_frame_metrics = Some(metrics.clone());
-        let mut value = json!({
-            "timestamp_ms": epoch_ms(),
-            "width": width,
-            "height": height,
-            "format": format!("{:?}", self.config.format),
-            "byte_length": compact.len(),
-            "bytes_per_row": unpadded_bytes_per_row,
-            "padded_bytes_per_row": padded_bytes_per_row,
-            "checksum": metrics.checksum,
-            "nonzero_pixels": metrics.nonzero_pixels,
-            "bright_pixels": metrics.bright_pixels,
-            "transparent_pixels": metrics.transparent_pixels,
-            "average_luma": metrics.average_luma,
-            "max_luma": metrics.max_luma,
-            "mean_rgba": metrics.mean_rgba,
-            "dark_frame": metrics.dark_frame,
-            "includes_pixels": include_pixels,
-        });
-        if include_pixels {
-            if let Some(object) = value.as_object_mut() {
-                object.insert(
-                    "rgba_b64".to_string(),
-                    Value::String(base64::engine::general_purpose::STANDARD.encode(&compact)),
-                );
-            }
-        }
-        Ok(value)
+        Ok(FrameSnapshotReadback {
+            timestamp_ms: epoch_ms(),
+            width,
+            height,
+            format: self.config.format,
+            bytes_per_row: unpadded_bytes_per_row,
+            padded_bytes_per_row,
+            pixels: compact,
+            metrics,
+        })
+    }
+
+    fn frame_snapshot(&mut self, include_pixels: bool) -> Result<Value, String> {
+        let readback = self.read_frame_snapshot()?;
+        Ok(readback.to_json(include_pixels))
     }
 
     fn write_frame_inputs(
@@ -7795,6 +7872,49 @@ struct SnapshotMetrics {
     max_luma: f64,
     mean_rgba: [f64; 4],
     dark_frame: bool,
+}
+
+struct FrameSnapshotReadback {
+    timestamp_ms: u128,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+    bytes_per_row: u32,
+    padded_bytes_per_row: u32,
+    pixels: Vec<u8>,
+    metrics: SnapshotMetrics,
+}
+
+impl FrameSnapshotReadback {
+    fn to_json(&self, include_pixels: bool) -> Value {
+        let mut value = json!({
+            "timestamp_ms": self.timestamp_ms,
+            "width": self.width,
+            "height": self.height,
+            "format": format!("{:?}", self.format),
+            "byte_length": self.pixels.len(),
+            "bytes_per_row": self.bytes_per_row,
+            "padded_bytes_per_row": self.padded_bytes_per_row,
+            "checksum": self.metrics.checksum.clone(),
+            "nonzero_pixels": self.metrics.nonzero_pixels,
+            "bright_pixels": self.metrics.bright_pixels,
+            "transparent_pixels": self.metrics.transparent_pixels,
+            "average_luma": self.metrics.average_luma,
+            "max_luma": self.metrics.max_luma,
+            "mean_rgba": self.metrics.mean_rgba,
+            "dark_frame": self.metrics.dark_frame,
+            "includes_pixels": include_pixels,
+        });
+        if include_pixels {
+            if let Some(object) = value.as_object_mut() {
+                object.insert(
+                    "rgba_b64".to_string(),
+                    Value::String(base64::engine::general_purpose::STANDARD.encode(&self.pixels)),
+                );
+            }
+        }
+        value
+    }
 }
 
 fn align_u32(value: u32, alignment: u32) -> u32 {

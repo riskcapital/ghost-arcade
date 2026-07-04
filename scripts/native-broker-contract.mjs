@@ -136,6 +136,11 @@ try {
     capabilities?.implemented_methods?.includes('upload_source_gpu_shared_texture'),
     `broker capabilities missing direct shared texture source-frame RPC: ${JSON.stringify(capabilities?.implemented_methods)}`,
   );
+  assert(
+    capabilities?.features?.frame_snapshot_export &&
+      capabilities?.implemented_methods?.includes('export_frame_snapshot'),
+    `broker capabilities missing native frame export RPC: ${JSON.stringify(capabilities?.implemented_methods)}`,
+  );
   const graphInstruments = new Set(capabilities?.native_graph_instruments ?? []);
   const graphManifest = new Map(
     (capabilities?.native_graph_instrument_manifest ?? []).map((entry) => [entry.id, entry]),
