@@ -53,16 +53,88 @@ import { createAndWarmWgslShaderModule, resolveGhostWgsl } from './wgsl';
  * Loading: the host calls `setPointCloudData(positions, colors)` with
  * Float32Array (XYZ × N) + Float32Array (RGB × N, in 0..1). The
  * renderer (re)allocates buffers, normalizes positions into a unit
- * cube around the cloud's centroid, and writeBuffer's the data. After
- * that the first frame renders immediately.
+ * cube around a robust median center, and writeBuffer's the data.
+ * After that the first frame renders immediately.
  */
 
 const HOME_BYTES = 32;
 const LIVE_BYTES = 48;
 const MAX_POINTS = 4_000_000;
 const DEFAULT_POINT_SIZE = 0.006;
+const NORMALIZATION_SAMPLE_LIMIT = 65_536;
+const NORMALIZATION_RADIUS_PERCENTILE = 0.985;
 
 type Topology = 'points' | 'billboards' | 'strokes';
+
+type PointCloudNormalization = {
+  cx: number;
+  cy: number;
+  cz: number;
+  scale: number;
+  radius: number;
+};
+
+function medianSorted(values: number[]): number {
+  if (values.length === 0) return 0;
+  const mid = Math.floor(values.length / 2);
+  if (values.length % 2 === 1) return values[mid];
+  return (values[mid - 1] + values[mid]) * 0.5;
+}
+
+function computePointCloudNormalization(
+  pointCount: number,
+  coordinateAt: (pointIndex: number, axis: 0 | 1 | 2) => number,
+): PointCloudNormalization {
+  if (pointCount <= 0) {
+    return { cx: 0, cy: 0, cz: 0, scale: 1, radius: 1 };
+  }
+  const sampleCount = Math.min(pointCount, NORMALIZATION_SAMPLE_LIMIT);
+  const indexForSample = (sampleIndex: number) => {
+    if (sampleCount <= 1 || pointCount <= 1) return 0;
+    return Math.min(pointCount - 1, Math.floor(sampleIndex * (pointCount - 1) / (sampleCount - 1)));
+  };
+  const xs: number[] = [];
+  const ys: number[] = [];
+  const zs: number[] = [];
+  for (let i = 0; i < sampleCount; i++) {
+    const pointIndex = indexForSample(i);
+    const x = coordinateAt(pointIndex, 0);
+    const y = coordinateAt(pointIndex, 1);
+    const z = coordinateAt(pointIndex, 2);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+    xs.push(x);
+    ys.push(y);
+    zs.push(z);
+  }
+  if (xs.length === 0) {
+    return { cx: 0, cy: 0, cz: 0, scale: 1, radius: 1 };
+  }
+  xs.sort((a, b) => a - b);
+  ys.sort((a, b) => a - b);
+  zs.sort((a, b) => a - b);
+  const cx = medianSorted(xs);
+  const cy = medianSorted(ys);
+  const cz = medianSorted(zs);
+  const radii: number[] = [];
+  for (let i = 0; i < sampleCount; i++) {
+    const pointIndex = indexForSample(i);
+    const x = coordinateAt(pointIndex, 0);
+    const y = coordinateAt(pointIndex, 1);
+    const z = coordinateAt(pointIndex, 2);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+    const dx = x - cx;
+    const dy = y - cy;
+    const dz = z - cz;
+    radii.push(Math.sqrt(dx * dx + dy * dy + dz * dz));
+  }
+  radii.sort((a, b) => a - b);
+  const radiusIndex = Math.min(
+    radii.length - 1,
+    Math.max(0, Math.floor((radii.length - 1) * NORMALIZATION_RADIUS_PERCENTILE)),
+  );
+  const radius = Math.max(radii[radiusIndex] || radii[radii.length - 1] || 0, 1e-6);
+  return { cx, cy, cz, scale: 0.9 / radius, radius };
+}
 
 function mat4Mul(a: Float32Array, b: Float32Array): Float32Array {
   const out = new Float32Array(16);
@@ -1090,29 +1162,11 @@ export function buildPointCloudFXNativePointData(
     return Math.min(sourceCount - 1, Math.floor(i * (sourceCount - 1) / (n - 1)));
   };
 
-  let cx = 0;
-  let cy = 0;
-  let cz = 0;
-  for (let i = 0; i < n; i++) {
-    const src = indexFor(i) * 3;
-    cx += positions[src + 0];
-    cy += positions[src + 1];
-    cz += positions[src + 2];
-  }
-  cx /= n;
-  cy /= n;
-  cz /= n;
-
-  let maxR = 0;
-  for (let i = 0; i < n; i++) {
-    const src = indexFor(i) * 3;
-    const dx = positions[src + 0] - cx;
-    const dy = positions[src + 1] - cy;
-    const dz = positions[src + 2] - cz;
-    const r = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    if (r > maxR) maxR = r;
-  }
-  const scale = maxR > 0 ? 0.9 / maxR : 1.0;
+  const normalization = computePointCloudNormalization(n, (pointIndex, axis) => {
+    const src = indexFor(pointIndex) * 3;
+    return positions[src + axis];
+  });
+  const { cx, cy, cz, scale } = normalization;
   const pointSize = clampNumber(options.pointSize ?? DEFAULT_POINT_SIZE, 0.0001, 0.2);
   const homeBytes = new ArrayBuffer(n * HOME_BYTES);
   const homeF = new Float32Array(homeBytes);
@@ -1500,30 +1554,16 @@ export class WebGPUPointCloudFX {
    *  3N XYZ values in any coordinate frame; `colors` is a Float32Array
    *  of 3N RGB values in 0..1. Both arrays must have the same point
    *  count. The renderer normalizes positions into a unit-ish cube
-   *  centered at the origin so the camera framing works regardless
-   *  of the source's scale (Gaussian splats arrive in millimeters,
-   *  PLY scans in meters, etc.). */
+   *  centered at the origin with outlier-resistant framing so the
+   *  camera works regardless of source scale (Gaussian splats arrive
+   *  in millimeters, PLY scans in meters, etc.). */
   setPointCloudData(positions: Float32Array, colors: Float32Array): void {
     const n = Math.min(MAX_POINTS, Math.floor(Math.min(positions.length / 3, colors.length / 3)));
     if (n === 0) return;
 
-    // ── Compute centroid + bounding extent for normalization ───
-    let cx = 0, cy = 0, cz = 0;
-    for (let i = 0; i < n; i++) {
-      cx += positions[i * 3 + 0];
-      cy += positions[i * 3 + 1];
-      cz += positions[i * 3 + 2];
-    }
-    cx /= n; cy /= n; cz /= n;
-    let maxR = 0;
-    for (let i = 0; i < n; i++) {
-      const dx = positions[i * 3 + 0] - cx;
-      const dy = positions[i * 3 + 1] - cy;
-      const dz = positions[i * 3 + 2] - cz;
-      const r = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      if (r > maxR) maxR = r;
-    }
-    const scale = maxR > 0 ? 0.9 / maxR : 1.0;
+    const { cx, cy, cz, scale } = computePointCloudNormalization(n, (pointIndex, axis) =>
+      positions[pointIndex * 3 + axis],
+    );
 
     // ── Build the home buffer (32 bytes/point) ─────────────────
     const homeBytes = new ArrayBuffer(n * HOME_BYTES);

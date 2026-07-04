@@ -65,6 +65,35 @@ describe('Point Cloud FX native graph', () => {
     expect(data.liveInitialBuffer.byteLength).toBe(data.liveByteLength);
   });
 
+  it('normalizes architectural scans without letting a distant outlier shrink the cloud', () => {
+    const positions = new Float32Array([
+      -1.0, 0.0, -0.2,
+      -0.6, 0.1, -0.1,
+      -0.3, -0.1, 0.0,
+      0.0, 0.0, 0.1,
+      0.3, 0.1, 0.0,
+      0.6, -0.1, 0.1,
+      1.0, 0.0, 0.2,
+      1200.0, 0.0, 0.0,
+    ]);
+    const colors = new Float32Array((positions.length / 3) * 3).fill(0.8);
+    const data = buildPointCloudFXNativePointData(positions, colors, {
+      maxPoints: 8,
+      signature: 'scan-with-outlier',
+    });
+    const home = new Float32Array(data.homeInitialBuffer);
+    const inlierRadii = Array.from({ length: 7 }, (_, i) => {
+      const off = i * 8;
+      return Math.hypot(home[off + 0], home[off + 1], home[off + 2]);
+    });
+    const inlierMax = Math.max(...inlierRadii);
+    const outlierRadius = Math.hypot(home[7 * 8 + 0], home[7 * 8 + 1], home[7 * 8 + 2]);
+
+    expect(inlierMax).toBeGreaterThan(0.5);
+    expect(inlierMax).toBeLessThanOrEqual(0.95);
+    expect(outlierRadius).toBeGreaterThan(100);
+  });
+
   it('builds a native compute/render graph and reuses cloud buffers after reset', () => {
     const { positions, colors } = makePoints(96);
     const pointData = buildPointCloudFXNativePointData(positions, colors, {
