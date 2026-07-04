@@ -3114,6 +3114,22 @@ function normalizeSharedTextureHandle(handle) {
   return null;
 }
 
+function sharedTextureHandlePayload(handle) {
+  if (!handle || handle.byteLength === 0) return null;
+  if (isMac && handle.byteLength === 4) {
+    return {
+      handle: String(handle.readUInt32LE(0)),
+      handleEncoding: 'integer',
+      handleByteLength: handle.byteLength,
+    };
+  }
+  return {
+    handle: handle.toString('base64'),
+    handleEncoding: 'base64',
+    handleByteLength: handle.byteLength,
+  };
+}
+
 function receiveSpoutTextureInfo() {
   if (!spoutReceiver) {
     return {
@@ -3138,7 +3154,8 @@ function receiveSpoutTextureInfo() {
   if (!info) return null;
 
   const handle = normalizeSharedTextureHandle(info.handle);
-  if (!handle || handle.byteLength === 0) return null;
+  const handlePayload = sharedTextureHandlePayload(handle);
+  if (!handlePayload) return null;
   const format = typeof info.format === 'string'
     ? info.format
     : Number(info.format || 0);
@@ -3155,9 +3172,9 @@ function receiveSpoutTextureInfo() {
     isNewFrame: !!info.isNewFrame,
     frame: Number(info.frame || 0),
     fps: Number(info.fps || 0),
-    handle: handle.toString('base64'),
-    handleEncoding: 'base64',
-    handleByteLength: handle.byteLength,
+    handle: handlePayload.handle,
+    handleEncoding: handlePayload.handleEncoding,
+    handleByteLength: handlePayload.handleByteLength,
   };
 }
 
