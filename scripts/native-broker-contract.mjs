@@ -229,6 +229,10 @@ try {
     `broker compositor effect manifest drifted: ${JSON.stringify(capabilities?.native_compositor_effect_descriptors)}`,
   );
   assert(
+    capabilities?.features?.native_instrument_proxies === false,
+    `legacy native instrument proxy feature should stay disabled: ${JSON.stringify(capabilities?.features)}`,
+  );
+  assert(
     capabilities?.implemented_command_types?.includes('decode_media_source'),
     `broker capabilities missing decode_media_source command: ${JSON.stringify(capabilities?.implemented_command_types)}`,
   );

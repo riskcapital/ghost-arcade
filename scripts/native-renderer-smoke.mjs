@@ -1100,6 +1100,7 @@ async function main() {
       !capabilities.features.native_point_cloud_fx_graph ||
       !capabilities.features.native_static_image_decode ||
       !capabilities.features.native_static_image_prefetch ||
+      capabilities.features.native_instrument_proxies ||
       capabilities.features.multi_pass_instruments
     ) {
       throw new Error(`native compute capability flags are not honest yet: ${JSON.stringify(capabilities.features)}`);
@@ -2088,6 +2089,7 @@ async function main() {
       throw new Error(`native catalog probe results missing expected shader IDs: ${catalogResults.map((result) => result.id).join(', ')}`);
     }
 
+    const beforeLegacyGpuStatus = await rpc.send('status', {}, 5000);
     await rpc.send('submit_commands', {
       commands: [
         { type: 'upsert_layer', layer_id: 'smoke-gpu', z_index: 0, blend_mode: 'screen', opacity: 1, corners: FULLSCREEN_CORNERS },
@@ -2097,19 +2099,32 @@ async function main() {
         { type: 'remove_layer', layer_id: 'catalog-gpu' },
       ],
     });
-    const gpuHighDetail = await snapshot(rpc, 'gpu-high-detail', 2.15, catalogFrameIndex);
-    assertFrame('native volumetric-balls high detail branch', gpuHighDetail, 0.015);
-    assertDifferent('volumetric-balls detail branch', gpuB, gpuHighDetail);
+    const legacyGpuStatus = await rpc.send('status', {}, 5000);
+    if (
+      Number(legacyGpuStatus.native_instrument_layers ?? 0) >
+        Number(beforeLegacyGpuStatus.native_instrument_layers ?? 0) ||
+      Number(legacyGpuStatus.native_instrument_proxy_layers ?? 0) >
+        Number(beforeLegacyGpuStatus.native_instrument_proxy_layers ?? 0) ||
+      Number(legacyGpuStatus.native_instrument_frame_renders ?? 0) >
+        Number(beforeLegacyGpuStatus.native_instrument_frame_renders ?? 0)
+    ) {
+      throw new Error(`legacy gpu:* binding reactivated native lookalike proxy path: ${JSON.stringify(legacyGpuStatus)}`);
+    }
+    await rpc.send('submit_commands', {
+      commands: [
+        { type: 'remove_layer', layer_id: 'smoke-gpu' },
+      ],
+    });
 
     const status = requireManagedOutput
       ? await waitForManagedOutputHealthy(rpc) ?? await rpc.send('status', {}, 5000)
       : await rpc.send('status', {}, 5000);
     const stats = await rpc.send('stats', {}, 5000);
-    if (Number(status.native_instrument_layers ?? 0) < 1) {
-      throw new Error(`native instrument layer was not counted in status: ${JSON.stringify(status)}`);
+    if (Number(status.native_instrument_layers ?? 0) !== 0) {
+      throw new Error(`legacy native instrument layers should stay disabled: ${JSON.stringify(status)}`);
     }
-    if (Number(status.native_instrument_frame_renders ?? 0) < 4) {
-      throw new Error(`native instrument frames were not rendered: ${JSON.stringify(status)}`);
+    if (Number(status.native_instrument_frame_renders ?? 0) !== 0) {
+      throw new Error(`legacy native instrument renderer should stay idle: ${JSON.stringify(status)}`);
     }
     if (Number(status.compute_graph_runs ?? 0) < 6) {
       throw new Error(`native compute graph runs were not counted: ${JSON.stringify(status)}`);
@@ -2302,7 +2317,7 @@ async function main() {
       `graphRuns=${status.compute_graph_runs}/${status.compute_graph_passes}`,
       `graphSrcFrames=${status.compute_graph_source_frame_renders}`,
       `persist=${persistentOutput.checksum}/${persistentSeedWord}`,
-      `gpu=${gpuA.checksum}->${gpuB.checksum}/detail=${gpuHighDetail.checksum}`,
+      `gpu=${gpuA.checksum}->${gpuB.checksum}/legacyProxy=off`,
       `particle=${particleA.checksum}->${particleB.checksum}`,
       `catalog=${catalogResults.length}/${NATIVE_SHADER_CATALOG_PROBES.length}`,
       `blends=${blendChecksums.size}`,
