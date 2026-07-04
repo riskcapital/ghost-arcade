@@ -597,6 +597,28 @@ export class ProjectionSimulatorRenderer {
     this.resize(undefined, undefined, true);
   }
 
+  async captureFrameAt(width = 1920, height = 1080): Promise<{ data: Uint8Array; width: number; height: number }> {
+    const w = Math.max(2, Math.round(width));
+    const h = Math.max(2, Math.round(height));
+    const previousRecordingMode = this.recordingMode;
+    const previousTarget = this.renderer.getRenderTarget();
+    const previousAutoClear = this.renderer.autoClear;
+    try {
+      this.recordingMode = true;
+      this.resize(w, h, true);
+      this.renderMainScene();
+      const pixels = new Uint8Array(w * h * 4);
+      const gl = this.renderer.getContext();
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+      return { data: this.copyFlippedOpaqueFrame(pixels, w, h), width: w, height: h };
+    } finally {
+      this.renderer.setRenderTarget(previousTarget);
+      this.renderer.autoClear = previousAutoClear;
+      this.recordingMode = previousRecordingMode;
+      this.resize(undefined, undefined, true);
+    }
+  }
+
   render(sceneState: ProjectionSimScene, sourceCanvas: HTMLCanvasElement | null, outputSlices: OutputSlice[]): void {
     this.currentScene = sceneState;
     this.resize();
@@ -645,6 +667,18 @@ export class ProjectionSimulatorRenderer {
     this.renderer.render(this.scene, this.camera);
 
     for (const object of hidden) object.visible = true;
+  }
+
+  private copyFlippedOpaqueFrame(src: Uint8Array, width: number, height: number): Uint8Array {
+    const data = new Uint8Array(src.length);
+    const rowBytes = width * 4;
+    for (let y = 0; y < height; y++) {
+      const srcRow = (height - 1 - y) * rowBytes;
+      const dstRow = y * rowBytes;
+      data.set(src.subarray(srcRow, srcRow + rowBytes), dstRow);
+      for (let x = 0; x < width; x++) data[dstRow + x * 4 + 3] = 255;
+    }
+    return data;
   }
 
   private resize(width?: number, height?: number, force = false): void {
