@@ -52,6 +52,24 @@ export interface PresentPolicyConfig {
   use_waitable_object: boolean;
 }
 
+export interface OutputWindowConfig {
+  title?: string;
+  label?: string;
+  width?: number;
+  height?: number;
+  x?: number;
+  y?: number;
+  attached?: boolean;
+  visible?: boolean;
+  enabled?: boolean;
+  fullscreen?: boolean;
+  full_screen?: boolean;
+  borderless?: boolean;
+  resizable?: boolean;
+  decorations?: boolean;
+  decorated?: boolean;
+}
+
 export interface TargetFpsConfig {
   target_fps: number;
 }
@@ -911,6 +929,10 @@ export async function setNativeRendererMetadataCacheCaps(config: MetadataCacheCa
 
 export async function attachNativeRendererOutputWindow(label?: string) {
   return invoke<void>('native_renderer_attach_output_window', { label: label ?? null });
+}
+
+export async function setNativeRendererOutputWindow(config: OutputWindowConfig) {
+  return invoke<RendererStatus>('native_renderer_set_output_window', { config });
 }
 
 export async function detachNativeRendererOutputWindow() {

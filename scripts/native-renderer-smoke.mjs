@@ -503,6 +503,12 @@ async function main() {
     ) {
       throw new Error(`native compute capability flags are not honest yet: ${JSON.stringify(capabilities.features)}`);
     }
+    if (
+      !capabilities.implemented_methods?.includes('set_output_window') ||
+      !capabilities.features.managed_output_window_control
+    ) {
+      throw new Error(`native output-window control capability missing: ${JSON.stringify(capabilities)}`);
+    }
     if (capabilities.features.shared_texture_upload) {
       throw new Error(`native capabilities overstated unimplemented features: ${JSON.stringify(capabilities.features)}`);
     }
@@ -582,6 +588,18 @@ async function main() {
       throw new Error(`native auto-present policy did not apply: ${JSON.stringify(autoPresentStatus)}`);
     }
     await rpc.send('attach_output_window', { label: 'native-smoke-output' }, 5000);
+    const outputWindowStatus = await rpc.send('set_output_window', {
+      config: {
+        title: 'Ghost Native Smoke Test',
+        attached: true,
+        fullscreen: false,
+        resizable: true,
+        decorations: true,
+      },
+    }, 5000);
+    if (!outputWindowStatus?.output_window_attached) {
+      throw new Error(`native output-window config did not apply: ${JSON.stringify(outputWindowStatus)}`);
+    }
     try {
       await rpc.send('definitely_not_a_real_method', {}, 1000);
       throw new Error('unknown RPC method unexpectedly succeeded');
