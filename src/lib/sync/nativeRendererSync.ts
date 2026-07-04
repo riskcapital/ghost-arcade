@@ -90,6 +90,7 @@ import {
   submitNativeRendererCommands,
   type RendererStatus,
   type NativeRendererCapabilities,
+  type NativeCommandApplySummary,
   type CommandBatch,
   type RendererCommand,
   type PresentPolicyConfig,
@@ -957,6 +958,7 @@ export class NativeRendererSync {
   private decodeFramePoolUtilizationPct = 0;
   private decodeEstimateCacheBackpressureActive = false;
   private commandBackpressureActive = false;
+  private nativeCommandDropWarnings = 0;
   private decodeGpuBridgePath: string | undefined =
     (import.meta as any)?.env?.VITE_DECODE_GPU_BRIDGE_PATH || undefined;
 
@@ -967,6 +969,23 @@ export class NativeRendererSync {
     if (!status.backend_ready) {
       throw new Error(`Native renderer backend reported not ready: ${status.last_frame_error ?? 'unknown error'}`);
     }
+  }
+
+  private warnNativeCommandDrops(
+    summary: NativeCommandApplySummary | null | undefined,
+    context: string,
+  ) {
+    const dropped = Number(summary?.dropped ?? 0);
+    if (!Number.isFinite(dropped) || dropped <= 0) return;
+    if (this.nativeCommandDropWarnings < 5) {
+      console.warn('[NativeRendererSync] native command(s) dropped', {
+        context,
+        dropped,
+        total: summary?.total,
+        unknownTypes: summary?.unknown_types,
+      });
+    }
+    this.nativeCommandDropWarnings += 1;
   }
 
   private syncNativeSourceFrameSize(status: RendererStatus | null) {
@@ -1524,6 +1543,7 @@ export class NativeRendererSync {
     this.latestRenderClockSeconds = null;
     this.lastRenderClockSentSeconds = null;
     this.lastAudioSig = '';
+    this.nativeCommandDropWarnings = 0;
     this.audioUnsub?.();
     this.audioUnsub = visualAudio.subscribe(() => this.scheduleAudioSync());
     this.desiredWidth = width;
@@ -2053,7 +2073,8 @@ export class NativeRendererSync {
     });
 
     if (graphInputCommands.length) {
-      await submitNativeRendererCommands(graphInputCommands);
+      const graphInputSummary = await submitNativeRendererCommands(graphInputCommands);
+      this.warnNativeCommandDrops(graphInputSummary, 'graph-input-source-frames');
     }
 
     await this.renderNativeGraphSources(layers, width, height, renderClock, visual);
@@ -2067,7 +2088,8 @@ export class NativeRendererSync {
       commands,
     };
 
-    await submitNativeRendererBatch(batch);
+    const batchSummary = await submitNativeRendererBatch(batch);
+    this.warnNativeCommandDrops(batchSummary, 'frame-batch');
     this.lastLayers = current;
   }
 

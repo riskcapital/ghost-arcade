@@ -1083,6 +1083,17 @@ async function main() {
       }
     }
 
+    const unsupportedCommandSummary = await rpc.send('submit_commands', {
+      commands: [{ type: 'definitely_not_a_real_command' }],
+    }, 5000);
+    if (
+      Number(unsupportedCommandSummary?.applied ?? -1) !== 0 ||
+      Number(unsupportedCommandSummary?.dropped ?? -1) !== 1 ||
+      !unsupportedCommandSummary?.unknown_types?.includes('definitely_not_a_real_command')
+    ) {
+      throw new Error(`unsupported native command type was not reported honestly: ${JSON.stringify(unsupportedCommandSummary)}`);
+    }
+
     await rpc.send('submit_commands', {
       commands: [
         {

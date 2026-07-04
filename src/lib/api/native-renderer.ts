@@ -720,6 +720,17 @@ export interface RendererStats {
   device_recovery_rehydrate_jobs_dropped: number;
 }
 
+export interface NativeCommandApplySummary {
+  total: number;
+  applied: number;
+  dropped: number;
+  unknown_types: string[];
+  invalid_payload: boolean;
+  command_drain_limit: number;
+  command_queue_peak?: number;
+  frames_submitted?: number;
+}
+
 export interface RendererSnapshot {
   timestamp_ms: number;
   status: RendererStatus;
@@ -889,11 +900,11 @@ export async function stopNativeRenderer() {
 }
 
 export async function submitNativeRendererBatch(batch: CommandBatch) {
-  return invoke<void>('native_renderer_submit_batch', { batch });
+  return invoke<NativeCommandApplySummary>('native_renderer_submit_batch', { batch });
 }
 
 export async function submitNativeRendererCommands(commands: RendererCommand[]) {
-  return invoke<void>('native_renderer_submit_commands', { commands });
+  return invoke<NativeCommandApplySummary>('native_renderer_submit_commands', { commands });
 }
 
 export async function runNativeRendererComputeGraph(config: Record<string, unknown>) {
