@@ -532,6 +532,9 @@ async function main() {
     if (!capabilities.native_graph_instruments?.includes('ink-cloud')) {
       throw new Error(`native graph instrument manifest missing ink-cloud: ${JSON.stringify(capabilities)}`);
     }
+    if (!capabilities.native_graph_instruments?.includes('flythrough')) {
+      throw new Error(`native graph instrument manifest missing flythrough: ${JSON.stringify(capabilities)}`);
+    }
     const smokeManifest = capabilities.native_graph_instrument_manifest?.find((entry) => entry?.id === 'smoke-3d');
     const planetManifest = capabilities.native_graph_instrument_manifest?.find((entry) => entry?.id === 'planet');
     if (
@@ -602,6 +605,20 @@ async function main() {
       !inkCloudManifest.features?.includes('native_ink_cloud_graph')
     ) {
       throw new Error(`native ink-cloud manifest entry is incomplete: ${JSON.stringify(capabilities.native_graph_instrument_manifest)}`);
+    }
+    const flythroughManifest = capabilities.native_graph_instrument_manifest?.find((entry) => entry?.id === 'flythrough');
+    if (
+      !flythroughManifest ||
+      flythroughManifest.source_uri_prefix !== 'native-graph://flythrough/' ||
+      flythroughManifest.render_target !== 'source_frame' ||
+      !flythroughManifest.shader_ids?.includes('flythrough/compute') ||
+      !flythroughManifest.shader_ids?.includes('flythrough/render') ||
+      !flythroughManifest.features?.includes('compute_graph_instanced_render') ||
+      !flythroughManifest.features?.includes('compute_graph_texture_sampling') ||
+      !flythroughManifest.features?.includes('compute_graph_clear_color') ||
+      !flythroughManifest.features?.includes('native_flythrough_graph')
+    ) {
+      throw new Error(`native flythrough manifest entry is incomplete: ${JSON.stringify(capabilities.native_graph_instrument_manifest)}`);
     }
     if (!capabilities.features.present_policy || !capabilities.features.managed_output_attach) {
       throw new Error(`native managed output/present capabilities missing: ${JSON.stringify(capabilities.features)}`);

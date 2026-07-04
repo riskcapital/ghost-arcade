@@ -13,6 +13,11 @@ import {
   type ParticleFieldNativeGraphState,
 } from '../../src/lib/renderer/webgpuParticleField';
 import {
+  buildFlythroughNativeComputeGraph,
+  buildFlythroughNativePrecompileCommands,
+  type FlythroughNativeGraphState,
+} from '../../src/lib/renderer/webgpuFlythrough';
+import {
   buildInkCloudNativeComputeGraph,
   buildInkCloudNativePrecompileCommands,
   type InkCloudNativeGraphState,
@@ -118,6 +123,23 @@ function assertVisibleFrame(label: string, snapshot: any, minLuma = 0.01) {
   }
 }
 
+function makeSourceFrameB64(width: number, height: number): string {
+  const pixels = Buffer.alloc(width * height * 4);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      const u = width > 1 ? x / (width - 1) : 0;
+      const v = height > 1 ? y / (height - 1) : 0;
+      const stripe = ((Math.floor(x / 8) + Math.floor(y / 8)) & 1) === 0;
+      pixels[i + 0] = Math.round(255 * (stripe ? 1 : u));
+      pixels[i + 1] = Math.round(255 * (0.2 + v * 0.8));
+      pixels[i + 2] = Math.round(255 * (stripe ? 0.35 : 1 - u * 0.5));
+      pixels[i + 3] = 255;
+    }
+  }
+  return pixels.toString('base64');
+}
+
 const maybeIt = RUN_NATIVE_INTEGRATION ? it : it.skip;
 
 describe('3D Smoke native renderer integration', () => {
@@ -158,10 +180,12 @@ describe('3D Smoke native renderer integration', () => {
     expect(capabilities.features.native_3d_smoke_graph).toBe(true);
     expect(capabilities.features.native_particle_field_graph).toBe(true);
     expect(capabilities.features.native_ink_cloud_graph).toBe(true);
+    expect(capabilities.features.native_flythrough_graph).toBe(true);
     expect(capabilities.native_graph_instruments).toContain('planet');
     expect(capabilities.native_graph_instruments).toContain('smoke-3d');
     expect(capabilities.native_graph_instruments).toContain('particle-field');
     expect(capabilities.native_graph_instruments).toContain('ink-cloud');
+    expect(capabilities.native_graph_instruments).toContain('flythrough');
     expect(capabilities.native_graph_instrument_manifest).toContainEqual(
       expect.objectContaining({
         id: 'planet',
@@ -190,6 +214,13 @@ describe('3D Smoke native renderer integration', () => {
         render_target: 'source_frame',
       }),
     );
+    expect(capabilities.native_graph_instrument_manifest).toContainEqual(
+      expect.objectContaining({
+        id: 'flythrough',
+        source_uri_prefix: 'native-graph://flythrough/',
+        render_target: 'source_frame',
+      }),
+    );
 
     await rpc.send('submit_commands', {
       commands: [
@@ -197,6 +228,7 @@ describe('3D Smoke native renderer integration', () => {
         ...buildSmoke3DNativePrecompileCommands(),
         ...buildParticleFieldNativePrecompileCommands(),
         ...buildInkCloudNativePrecompileCommands(),
+        ...buildFlythroughNativePrecompileCommands(),
       ],
     }, 10000);
 
@@ -388,6 +420,72 @@ describe('3D Smoke native renderer integration', () => {
     await rpc.send('submit_commands', {
       commands: [
         { type: 'remove_layer', layer_id: 'native-ink-cloud' },
+      ],
+    });
+
+    const flySourceId = 'gpu:integration-fly:flythrough';
+    const flyInputSourceId = 'media:integration-fly-source';
+    await rpc.send('submit_commands', {
+      commands: [
+        {
+          type: 'upload_source_frame',
+          source_id: flyInputSourceId,
+          width: 64,
+          height: 64,
+          rgba_b64: makeSourceFrameB64(64, 64),
+          seq: 1,
+        },
+        { type: 'upsert_layer', layer_id: 'native-flythrough', z_index: 0, blend_mode: 'normal', opacity: 1, corners: FULLSCREEN_CORNERS },
+        { type: 'set_layer_visibility', layer_id: 'native-flythrough', visible: true },
+        { type: 'bind_media_source', layer_id: 'native-flythrough', source_id: flySourceId, uri: 'native-graph://flythrough/integration', source_type: 'image' },
+      ],
+    });
+
+    let flyState: FlythroughNativeGraphState | null = null;
+    const flyChecksums = new Set<string>();
+    for (let frame = 0; frame < 2; frame++) {
+      const graph = buildFlythroughNativeComputeGraph({
+        sourceId: flySourceId,
+        mediaSourceId: flyInputSourceId,
+        params: {
+          topology: 'strokes',
+          particleCount: 4096,
+          slabCount: 2,
+          flySpeed: 1.1,
+          strokeLength: 0.12,
+          strokeWidth: 0.012,
+          opacity: 1,
+        },
+        width: 320,
+        height: 180,
+        time: frame / 30,
+        frameDelta: 1 / 30,
+        frameIndex: frame + 1,
+        state: flyState,
+        reset: frame === 0,
+      });
+      flyState = graph.state;
+      const flyResult: any = await rpc.send('compute_graph', graph.config as unknown as Record<string, unknown>, 20000);
+      expect(flyResult.pass_count).toBe(1);
+      expect(flyResult.renders).toHaveLength(1);
+      expect(flyResult.renders[0]).toMatchObject({
+        target: 'source_frame',
+        source_id: flySourceId,
+        blend: 'alpha',
+      });
+      const snapshot = await rpc.send('frame_snapshot', {
+        include_pixels: false,
+        time: 0.65 + frame / 30,
+        frame_index: frame + 15,
+      }, 10000);
+      assertVisibleFrame(`native Flythrough source-frame layer ${frame}`, snapshot, 0.003);
+      flyChecksums.add(String(snapshot.checksum));
+    }
+    expect(flyChecksums.size).toBeGreaterThan(1);
+
+    await rpc.send('submit_commands', {
+      commands: [
+        { type: 'remove_layer', layer_id: 'native-flythrough' },
       ],
     });
 
