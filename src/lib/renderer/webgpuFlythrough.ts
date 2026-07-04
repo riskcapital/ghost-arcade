@@ -1,5 +1,5 @@
 import { getGhostGpuRuntime } from './webgpuShared';
-import { createAndWarmWgslShaderModule } from './wgsl';
+import { createAndWarmWgslShaderModule, resolveGhostWgsl } from './wgsl';
 
 /**
  * WebGPUFlythrough — endless point-cloud tunnel through any 2D source.
@@ -473,6 +473,108 @@ const DEFAULT_PARAMS: FlythroughParams = {
   particleCount: DEFAULT_PARTICLES,
 };
 
+export const FLYTHROUGH_NATIVE_SHADER_IDS = Object.freeze({
+  compute: 'flythrough/compute',
+  render: 'flythrough/render',
+});
+
+export type FlythroughNativeShaderStage = 'compute' | 'render';
+
+export interface FlythroughNativeShaderSource {
+  shaderId: string;
+  label: string;
+  stage: FlythroughNativeShaderStage;
+  entry: string;
+  source: string;
+}
+
+export interface FlythroughNativePrecompileCommand {
+  type: 'precompile_shader';
+  shader_id: string;
+  stage: FlythroughNativeShaderStage;
+  entry: string;
+  source: string;
+}
+
+type FlythroughNativeGraphBinding = {
+  binding: number;
+  resource?: string;
+  kind?: string;
+  source_id?: string;
+  allow_missing?: boolean;
+};
+
+type FlythroughNativeGraphBuffer = {
+  id: string;
+  kind: 'uniform' | 'storage' | 'read-only-storage';
+  byte_length: number;
+  persistent?: boolean;
+  clear?: boolean;
+  initial_b64?: string;
+};
+
+type FlythroughNativeGraphPass = {
+  name: string;
+  shader_id: string;
+  entry: string;
+  dispatch: [number, number, number];
+  bindings: FlythroughNativeGraphBinding[];
+};
+
+type FlythroughNativeGraphRenderPass = {
+  name: string;
+  shader_id: string;
+  vertex_entry: string;
+  fragment_entry: string;
+  target: 'source_frame';
+  source_id: string;
+  seq: number;
+  clear: boolean;
+  clear_color?: [number, number, number, number];
+  include_snapshot?: boolean;
+  blend: 'replace' | 'alpha' | 'add';
+  vertex_count: number;
+  instance_count: number;
+  bindings: FlythroughNativeGraphBinding[];
+};
+
+export interface FlythroughNativeGraphState {
+  particleCount: number;
+  prevFrameTime: number;
+  flyDistance: number;
+}
+
+export interface FlythroughNativeGraphOptions {
+  sourceId: string;
+  mediaSourceId?: string | null;
+  params?: Partial<FlythroughParams> & Record<string, any>;
+  width?: number;
+  height?: number;
+  time?: number;
+  frameDelta?: number;
+  frameIndex?: number;
+  state?: FlythroughNativeGraphState | null;
+  reset?: boolean;
+  includeSnapshot?: boolean;
+  audioBass?: number;
+  audioTreble?: number;
+}
+
+export interface FlythroughNativeGraphBuildResult {
+  config: {
+    buffers: FlythroughNativeGraphBuffer[];
+    passes: FlythroughNativeGraphPass[];
+    render_passes: FlythroughNativeGraphRenderPass[];
+    readbacks: string[];
+  };
+  sourceId: string;
+  mediaSourceId: string | null;
+  state: FlythroughNativeGraphState;
+  particleCount: number;
+  topology: Topology;
+  passCount: number;
+}
+
 // GPUBlendState — typed `any` to match the codebase convention (the
 // ambient declarations file deliberately keeps WebGPU types narrow
 // to avoid pulling in the full @webgpu/types package).
@@ -480,6 +582,282 @@ const BLEND_PREMULT_OVER: any = {
   color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
   alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
 };
+
+export function getFlythroughNativeShaderSources(): FlythroughNativeShaderSource[] {
+  return [
+    {
+      shaderId: FLYTHROUGH_NATIVE_SHADER_IDS.compute,
+      label: 'flythrough/compute',
+      stage: 'compute',
+      entry: 'cs_main',
+      source: resolveGhostWgsl(COMPUTE_WGSL, 'flythrough/compute'),
+    },
+    {
+      shaderId: FLYTHROUGH_NATIVE_SHADER_IDS.render,
+      label: 'flythrough/render',
+      stage: 'render',
+      entry: 'fs_main',
+      source: resolveGhostWgsl(RENDER_WGSL, 'flythrough/render'),
+    },
+  ];
+}
+
+export function buildFlythroughNativePrecompileCommands(): FlythroughNativePrecompileCommand[] {
+  return getFlythroughNativeShaderSources().map((shader) => ({
+    type: 'precompile_shader',
+    shader_id: shader.shaderId,
+    stage: shader.stage,
+    entry: shader.entry,
+    source: shader.source,
+  }));
+}
+
+function clampFinite(value: unknown, min: number, max: number, fallback: number): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+function enumParam<T extends string>(value: unknown, allowed: Record<T, number>, fallback: T): T {
+  const key = String(value ?? '').trim() as T;
+  return Object.prototype.hasOwnProperty.call(allowed, key) ? key : fallback;
+}
+
+function normalizeFlythroughParams(raw: Partial<FlythroughParams> & Record<string, any> | undefined): FlythroughParams {
+  const src = raw ?? {};
+  return {
+    topology: enumParam(src.topology, { points: 0, strokes: 1 }, DEFAULT_PARAMS.topology),
+    depthSource: enumParam(src.depthSource, DEPTH_SRC_IDS, DEFAULT_PARAMS.depthSource),
+    flySpeed: clampFinite(src.flySpeed, -16, 16, DEFAULT_PARAMS.flySpeed),
+    tunnelDepth: clampFinite(src.tunnelDepth, 0.05, 64, DEFAULT_PARAMS.tunnelDepth),
+    slabCount: Math.round(clampFinite(src.slabCount, 1, 8, DEFAULT_PARAMS.slabCount)),
+    flowStrength: clampFinite(src.flowStrength, 0, 16, DEFAULT_PARAMS.flowStrength),
+    flowScale: clampFinite(src.flowScale, 0.001, 64, DEFAULT_PARAMS.flowScale),
+    anchorPull: clampFinite(src.anchorPull, 0, 16, DEFAULT_PARAMS.anchorPull),
+    strokeLength: clampFinite(src.strokeLength, 0, 8, DEFAULT_PARAMS.strokeLength),
+    strokeWidth: clampFinite(src.strokeWidth, 0.0001, 4, DEFAULT_PARAMS.strokeWidth),
+    depthStrength: clampFinite(src.depthStrength, -8, 8, DEFAULT_PARAMS.depthStrength),
+    baseSize: clampFinite(src.baseSize, 0.0001, 2, DEFAULT_PARAMS.baseSize),
+    opacity: clampFinite(src.opacity, 0, 4, DEFAULT_PARAMS.opacity),
+    fovDeg: clampFinite(src.fovDeg, 1, 160, DEFAULT_PARAMS.fovDeg),
+    cameraYaw: clampFinite(src.cameraYaw, -3600, 3600, DEFAULT_PARAMS.cameraYaw),
+    cameraPitch: clampFinite(src.cameraPitch, -3600, 3600, DEFAULT_PARAMS.cameraPitch),
+    particleCount: Math.round(clampFinite(src.particleCount, 1024, MAX_PARTICLES, DEFAULT_PARAMS.particleCount)),
+  };
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function bufferToBase64(buffer: ArrayBuffer): string {
+  return bytesToBase64(new Uint8Array(buffer));
+}
+
+function flythroughParticleInitialBuffer(count: number): ArrayBuffer {
+  const particleCount = Math.max(1024, Math.min(MAX_PARTICLES, Math.floor(count)));
+  const seed = new Float32Array(particleCount * (PARTICLE_BYTES / 4));
+  for (let i = 0; i < particleCount; i++) {
+    const u1 = (i + 0.5) / particleCount;
+    let bits = i;
+    bits = ((bits >> 1) & 0x55555555) | ((bits & 0x55555555) << 1);
+    bits = ((bits >> 2) & 0x33333333) | ((bits & 0x33333333) << 2);
+    bits = ((bits >> 4) & 0x0f0f0f0f) | ((bits & 0x0f0f0f0f) << 4);
+    bits = ((bits >> 8) & 0x00ff00ff) | ((bits & 0x00ff00ff) << 8);
+    bits = ((bits >> 16) >>> 0) | ((bits << 16) >>> 0);
+    const u2 = (bits >>> 0) / 0x100000000;
+
+    const ax = u1 * 2 - 1;
+    const ay = u2 * 2 - 1;
+    const off = i * (PARTICLE_BYTES / 4);
+    seed[off + 0] = ax;
+    seed[off + 1] = ay;
+    seed[off + 2] = 0;
+    seed[off + 3] = 1;
+    seed[off + 4] = 0;
+    seed[off + 5] = 0;
+    seed[off + 6] = 0;
+    seed[off + 7] = (Math.sin(ax * 7.3 + ay * 11.1) * 0.5 + 0.5);
+    seed[off + 8] = ax;
+    seed[off + 9] = ay;
+    seed[off + 10] = 0;
+    seed[off + 11] = 0;
+  }
+  return seed.buffer;
+}
+
+function flythroughNativeInitialState(params: FlythroughParams, time: number): FlythroughNativeGraphState {
+  return {
+    particleCount: params.particleCount,
+    prevFrameTime: time,
+    flyDistance: 0,
+  };
+}
+
+function flythroughSourcePrefix(sourceId: string, params: FlythroughParams): string {
+  return `flythrough:${String(sourceId || 'source').replace(/[^a-zA-Z0-9:_-]+/g, '_').slice(0, 160)}:${params.particleCount}`;
+}
+
+function buildFlythroughComputeUniform(params: FlythroughParams, state: FlythroughNativeGraphState, dt: number, time: number): string {
+  const buffer = new ArrayBuffer(64);
+  const f = new Float32Array(buffer);
+  const u = new Uint32Array(buffer);
+  f[0] = dt;
+  f[1] = time;
+  f[2] = params.flowStrength;
+  f[3] = params.flowScale;
+  f[4] = params.anchorPull;
+  f[5] = params.tunnelDepth;
+  f[6] = params.depthStrength;
+  u[7] = params.particleCount >>> 0;
+  f[8] = state.flyDistance;
+  return bufferToBase64(buffer);
+}
+
+function buildFlythroughRenderUniform(params: FlythroughParams, state: FlythroughNativeGraphState, width: number, height: number): string {
+  const aspect = Math.max(1, width) / Math.max(1, height);
+  const proj = perspective(params.fovDeg, aspect, 0.05, 100);
+  const yawRad = (params.cameraYaw ?? 0) * Math.PI / 180;
+  const pitchRad = (params.cameraPitch ?? 0) * Math.PI / 180;
+  const cy = Math.cos(yawRad), sy = Math.sin(yawRad);
+  const cp = Math.cos(pitchRad), sp = Math.sin(pitchRad);
+  const ry = new Float32Array([cy, 0, sy, 0, 0, 1, 0, 0, -sy, 0, cy, 0, 0, 0, 0, 1]);
+  const rx = new Float32Array([1, 0, 0, 0, 0, cp, -sp, 0, 0, sp, cp, 0, 0, 0, 0, 1]);
+  const rot = mat4Mul(ry, rx);
+  const view = mat4Mul(rot, translate(0, 0, -0.1));
+  const viewProj = mat4Mul(proj, view);
+  const buffer = new ArrayBuffer(256);
+  const f = new Float32Array(buffer);
+  const u = new Uint32Array(buffer);
+  f.set(viewProj, 0);
+  f[16] = rot[0]; f[17] = rot[1]; f[18] = rot[2]; f[19] = 0;
+  f[20] = rot[4]; f[21] = rot[5]; f[22] = rot[6]; f[23] = 0;
+  f[24] = params.baseSize;
+  f[25] = params.strokeLength;
+  f[26] = params.strokeWidth;
+  u[27] = params.topology === 'strokes' ? 1 : 0;
+  u[28] = Math.max(1, Math.min(8, params.slabCount | 0));
+  f[29] = params.tunnelDepth;
+  f[30] = state.flyDistance;
+  u[31] = params.particleCount >>> 0;
+  f[32] = params.opacity;
+  f[33] = 1;
+  f[34] = 1;
+  f[35] = 0;
+  return bufferToBase64(buffer);
+}
+
+export function buildFlythroughNativeComputeGraph(options: FlythroughNativeGraphOptions): FlythroughNativeGraphBuildResult {
+  const rawParams = options.params ?? {};
+  const params = normalizeFlythroughParams(rawParams);
+  if (rawParams.audioReactive) {
+    const bass = clampFinite(options.audioBass, 0, 4, 0);
+    const treble = clampFinite(options.audioTreble, 0, 4, 0);
+    params.flySpeed *= 1 + bass * 1.8;
+    params.flowStrength *= 1 + treble * 1.5;
+  }
+  const sourceId = String(options.sourceId || 'flythrough-native-source');
+  const mediaSourceId = options.mediaSourceId ? String(options.mediaSourceId) : '';
+  const time = Math.max(0, Number.isFinite(options.time) ? Number(options.time) : 0);
+  const mustReset = !!options.reset
+    || !options.state
+    || options.state.particleCount !== params.particleCount;
+  const state = mustReset ? flythroughNativeInitialState(params, time) : { ...options.state! };
+  let dt = typeof options.frameDelta === 'number' && Number.isFinite(options.frameDelta)
+    ? options.frameDelta
+    : (state.prevFrameTime === 0 ? 1 / 60 : time - state.prevFrameTime);
+  dt = Math.min(Math.max(dt, 0), 1 / 15);
+  state.prevFrameTime = time;
+  state.flyDistance += params.flySpeed * dt;
+
+  const prefix = flythroughSourcePrefix(sourceId, params);
+  const id = (name: string) => `${prefix}:${name}`;
+  const width = Math.round(options.width || 1920);
+  const height = Math.round(options.height || 1080);
+  const buffers: FlythroughNativeGraphBuffer[] = [
+    {
+      id: id('compute-uniform'),
+      kind: 'uniform',
+      byte_length: 64,
+      initial_b64: buildFlythroughComputeUniform(params, state, dt, time),
+    },
+    {
+      id: id('render-uniform'),
+      kind: 'uniform',
+      byte_length: 256,
+      initial_b64: buildFlythroughRenderUniform(params, state, width, height),
+    },
+    {
+      id: id('particles'),
+      kind: 'storage',
+      byte_length: params.particleCount * PARTICLE_BYTES,
+      persistent: true,
+      clear: mustReset,
+      initial_b64: mustReset ? bufferToBase64(flythroughParticleInitialBuffer(params.particleCount)) : undefined,
+    },
+  ];
+
+  const sourceTextureBinding: FlythroughNativeGraphBinding = mediaSourceId
+    ? { binding: 2, kind: 'source-frame-texture', source_id: mediaSourceId }
+    : { binding: 2, kind: 'source-frame-texture', allow_missing: true };
+  const passes: FlythroughNativeGraphPass[] = [
+    {
+      name: 'flythrough-compute',
+      shader_id: FLYTHROUGH_NATIVE_SHADER_IDS.compute,
+      entry: 'cs_main',
+      dispatch: [Math.ceil(params.particleCount / 64), 1, 1],
+      bindings: [
+        { binding: 0, resource: id('particles'), kind: 'storage' },
+        { binding: 1, resource: id('compute-uniform'), kind: 'uniform' },
+      ],
+    },
+  ];
+
+  const slabs = Math.max(1, Math.min(8, params.slabCount | 0));
+  const renderPasses: FlythroughNativeGraphRenderPass[] = [
+    {
+      name: 'flythrough-render',
+      shader_id: FLYTHROUGH_NATIVE_SHADER_IDS.render,
+      vertex_entry: 'vs_main',
+      fragment_entry: 'fs_main',
+      target: 'source_frame',
+      source_id: sourceId,
+      seq: Math.max(0, Math.round(options.frameIndex ?? 0)),
+      clear: true,
+      clear_color: [0, 0, 0, 0],
+      include_snapshot: !!options.includeSnapshot,
+      blend: 'alpha',
+      vertex_count: 6,
+      instance_count: slabs * params.particleCount,
+      bindings: [
+        { binding: 0, resource: id('particles'), kind: 'read-only-storage' },
+        { binding: 1, resource: id('render-uniform'), kind: 'uniform' },
+        sourceTextureBinding,
+        { binding: 3, kind: 'source-frame-sampler' },
+      ],
+    },
+  ];
+
+  return {
+    config: {
+      buffers,
+      passes,
+      render_passes: renderPasses,
+      readbacks: [],
+    },
+    sourceId,
+    mediaSourceId: mediaSourceId || null,
+    state,
+    particleCount: params.particleCount,
+    topology: params.topology,
+    passCount: passes.length + renderPasses.length,
+  };
+}
 
 export class WebGPUFlythrough {
   private device: any;
@@ -538,46 +916,11 @@ export class WebGPUFlythrough {
     // Seed particle anchors from a Hammersley sequence in UV space
     // so the cloud has uniform-looking coverage without the obvious
     // banding of a regular grid.
-    const seed = new Float32Array(this.particleCount * (PARTICLE_BYTES / 4));
-    for (let i = 0; i < this.particleCount; i++) {
-      // Hammersley (low-discrepancy 2D sample). i = index 0..N-1.
-      const u1 = (i + 0.5) / this.particleCount;
-      // bit-reverse base-2
-      let bits = i;
-      bits = ((bits >> 1) & 0x55555555) | ((bits & 0x55555555) << 1);
-      bits = ((bits >> 2) & 0x33333333) | ((bits & 0x33333333) << 2);
-      bits = ((bits >> 4) & 0x0f0f0f0f) | ((bits & 0x0f0f0f0f) << 4);
-      bits = ((bits >> 8) & 0x00ff00ff) | ((bits & 0x00ff00ff) << 8);
-      bits = ((bits >> 16) >>> 0) | ((bits << 16) >>> 0);
-      const u2 = (bits >>> 0) / 0x100000000;
-
-      // Map UV [0,1] → world XY [-1,1]
-      const ax = u1 * 2 - 1;
-      const ay = u2 * 2 - 1;
-
-      const off = i * (PARTICLE_BYTES / 4);
-      // pos = anchor (initial position == home)
-      seed[off + 0] = ax;
-      seed[off + 1] = ay;
-      seed[off + 2] = 0;
-      // alpha
-      seed[off + 3] = 1;
-      // vel
-      seed[off + 4] = 0;
-      seed[off + 5] = 0;
-      seed[off + 6] = 0;
-      // depthAnchor — will be re-computed from source sample if we
-      // add that pass; for v1 we just use a random pseudo-depth so
-      // particles don't all sit on Z=0 (a flat plane is visually dead).
-      seed[off + 7] = (Math.sin(ax * 7.3 + ay * 11.1) * 0.5 + 0.5);
-      // anchor.xy
-      seed[off + 8] = ax;
-      seed[off + 9] = ay;
-      // _pad
-      seed[off + 10] = 0;
-      seed[off + 11] = 0;
-    }
-    this.device.queue.writeBuffer(this.particleBuffer, 0, seed);
+    this.device.queue.writeBuffer(
+      this.particleBuffer,
+      0,
+      new Float32Array(flythroughParticleInitialBuffer(this.particleCount)),
+    );
 
     // Compute uniform buffer — 48 bytes (12 floats), but rounded up
     // to the WebGPU 16-byte alignment.

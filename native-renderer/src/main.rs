@@ -1534,6 +1534,7 @@ impl App {
             "native_volumetric_spheres_graph": true,
             "native_smoke_riders_graph": true,
             "native_ink_cloud_graph": true,
+            "native_flythrough_graph": true,
             "command_drain_policy": true,
             "auto_present_policy": true,
             "multi_pass_instruments": false,
@@ -1564,7 +1565,7 @@ impl App {
             "backend": native_backend_name(),
             "implemented_methods": CORE_RPC_METHODS,
             "implemented_command_types": CORE_COMMAND_TYPES,
-            "native_graph_instruments": ["planet", "smoke-3d", "particle-field", "volumetric-spheres", "smoke-riders", "ink-cloud"],
+            "native_graph_instruments": ["planet", "smoke-3d", "particle-field", "volumetric-spheres", "smoke-riders", "ink-cloud", "flythrough"],
             "native_graph_instrument_manifest": [
                 {
                     "id": "planet",
@@ -1703,13 +1704,34 @@ impl App {
                     ],
                     "render_target": "source_frame",
                     "parity": "sim-background-render-shared-wgsl"
+                },
+                {
+                    "id": "flythrough",
+                    "label": "Flythrough",
+                    "source_uri_prefix": "native-graph://flythrough/",
+                    "shader_ids": [
+                        "flythrough/compute",
+                        "flythrough/render"
+                    ],
+                    "features": [
+                        "compute_graph_host",
+                        "compute_graph_render",
+                        "compute_graph_instanced_render",
+                        "compute_graph_texture_sampling",
+                        "compute_graph_clear_color",
+                        "compute_graph_source_frame_target",
+                        "persistent_compute_buffers",
+                        "native_flythrough_graph"
+                    ],
+                    "render_target": "source_frame",
+                    "parity": "compute-render-source-frame-shared-wgsl"
                 }
             ],
             "audio_uniform_layout": ghost_audio_uniform_layout(),
             "features": features,
             "limits": limits,
             "notes": [
-                "Native graph instruments use shared WGSL for 3D Smoke, Particle Field, and Volumetric Spheres; legacy native instrument layers are still visual proxies.",
+                "Native graph instruments use shared WGSL for 3D Smoke, Particle Field, Volumetric Spheres, Ink Cloud, and Flythrough; legacy native instrument layers are still visual proxies.",
                 "Canvas/base64 source-frame upload is a development fallback; shared texture transport is not implemented yet."
             ]
         })

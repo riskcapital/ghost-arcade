@@ -28,6 +28,11 @@ import {
   type ParticleFieldNativeGraphState,
 } from '$lib/renderer/webgpuParticleField';
 import {
+  buildFlythroughNativeComputeGraph,
+  buildFlythroughNativePrecompileCommands,
+  type FlythroughNativeGraphState,
+} from '$lib/renderer/webgpuFlythrough';
+import {
   buildSmokeRidersNativeComputeGraph,
   type SmokeRidersNativeGraphState,
 } from '$lib/renderer/shaders/webgpuSmokeRidersShader';
@@ -122,14 +127,15 @@ type NativeRenderClockCommand = {
 
 export type PresentPolicyProfile = 'vsync-live' | 'low-latency-safe' | 'low-latency-aggressive';
 
-type NativeGraphRouteKind = 'planet' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud';
+type NativeGraphRouteKind = 'planet' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud' | 'flythrough';
 type NativeGraphRouteSimulationState =
   | PlanetNativeGraphState
   | Smoke3DNativeGraphState
   | InkCloudNativeGraphState
   | ParticleFieldNativeGraphState
   | VolumetricSpheresNativeGraphState
-  | SmokeRidersNativeGraphState;
+  | SmokeRidersNativeGraphState
+  | FlythroughNativeGraphState;
 
 type NativeGraphLayerRoute = {
   kind: NativeGraphRouteKind;
@@ -915,11 +921,8 @@ export class NativeRendererSync {
     return `${kind}:${sourceId}`;
   }
 
-  private nativeGraphInputSourceForLayer(layer: Layer, kind: NativeGraphRouteKind): NativeLayerSource | null {
-    if (kind !== 'particle-field') return null;
+  private nativeGraphSourceParamForLayer(layer: Layer): NativeLayerSource | null {
     const params = layer.gpuLayerContent?.params ?? {};
-    const mode = String(params.mode ?? '').trim().toLowerCase();
-    if (mode !== 'media') return null;
     const sourceParam = params.source;
     if (!sourceParam || typeof sourceParam !== 'object') return null;
 
@@ -939,6 +942,15 @@ export class NativeRendererSync {
     }
 
     return null;
+  }
+
+  private nativeGraphInputSourceForLayer(layer: Layer, kind: NativeGraphRouteKind): NativeLayerSource | null {
+    if (kind === 'flythrough') return this.nativeGraphSourceParamForLayer(layer);
+    if (kind !== 'particle-field') return null;
+    const params = layer.gpuLayerContent?.params ?? {};
+    const mode = String(params.mode ?? '').trim().toLowerCase();
+    if (mode !== 'media') return null;
+    return this.nativeGraphSourceParamForLayer(layer);
   }
 
   private nativeGraphRouteForLayer(layer: Layer, includeWarningDisabled = false): NativeGraphLayerRoute | null {
@@ -983,6 +995,12 @@ export class NativeRendererSync {
       this.supportsNativeGraphInstrument('ink-cloud')
     ) {
       kind = 'ink-cloud';
+    } else if (
+      normalizedShaderId === 'flythrough' &&
+      this.supportsNativeFeature('native_flythrough_graph') &&
+      this.supportsNativeGraphInstrument('flythrough')
+    ) {
+      kind = 'flythrough';
     }
     if (!kind) return null;
     const inputSource = this.nativeGraphInputSourceForLayer(layer, kind);
@@ -991,6 +1009,9 @@ export class NativeRendererSync {
       String(layer.gpuLayerContent.params?.mode ?? '').trim().toLowerCase() === 'media' &&
       !inputSource
     ) {
+      return null;
+    }
+    if (kind === 'flythrough' && !inputSource) {
       return null;
     }
     const source = nativeGraphOutputSource(layer, kind);
@@ -1122,6 +1143,22 @@ export class NativeRendererSync {
               reset: !routeState.state,
             });
           }
+          if (route.kind === 'flythrough') {
+            return buildFlythroughNativeComputeGraph({
+              sourceId: route.source.id,
+              mediaSourceId: route.inputSource?.id ?? null,
+              params: nativeGraphParams,
+              width,
+              height,
+              time: graphTime,
+              frameDelta: graphDelta,
+              frameIndex: graphSeq,
+              audioBass,
+              audioTreble,
+              state: routeState.state as FlythroughNativeGraphState | null,
+              reset: !routeState.state,
+            });
+          }
           return buildVolumetricSpheresNativeComputeGraph({
             sourceId: route.source.id,
             params: nativeGraphParams,
@@ -1237,6 +1274,10 @@ export class NativeRendererSync {
       (
         this.supportsNativeFeature('native_ink_cloud_graph') &&
         this.supportsNativeGraphInstrument('ink-cloud')
+      ) ||
+      (
+        this.supportsNativeFeature('native_flythrough_graph') &&
+        this.supportsNativeGraphInstrument('flythrough')
       )
     );
     const startupQuality = startupStatus?.native_quality;
@@ -1965,6 +2006,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     commands.push(...buildInkCloudNativePrecompileCommands());
     commands.push(...buildParticleFieldNativePrecompileCommands());
     commands.push(...buildVolumetricSpheresNativePrecompileCommands());
+    commands.push(...buildFlythroughNativePrecompileCommands());
     await submitNativeRendererBatch({
       frame_id: ++this.frameId,
       commands,
