@@ -233,6 +233,10 @@ try {
     `broker capabilities missing decode_media_source command: ${JSON.stringify(capabilities?.implemented_command_types)}`,
   );
   assert(
+    capabilities?.implemented_command_types?.includes('upload_source_gpu_shared_texture'),
+    `broker capabilities missing explicit shared-texture upload command: ${JSON.stringify(capabilities?.implemented_command_types)}`,
+  );
+  assert(
     capabilities?.implemented_methods?.includes('clear_runtime_caches'),
     `broker implemented methods lost clear_runtime_caches: ${JSON.stringify(capabilities?.implemented_methods)}`,
   );
@@ -672,6 +676,32 @@ try {
       String(sharedFrameStatus.source_frame_last_reject_reason ?? ''),
     ),
     `shared texture rejection did not expose a clear reason: ${JSON.stringify(sharedFrameStatus)}`,
+  );
+
+  const beforeExplicitSharedFrameStatus = await broker.invoke('native_renderer_get_status');
+  const explicitSharedSummary = await broker.invoke('native_renderer_submit_commands', {
+    commands: [
+      {
+        type: 'upload_source_gpu_shared_texture',
+        source_id: 'explicit-shared-frame-contract',
+        width: 16,
+        height: 16,
+        shared_handle: 'fake',
+        shared_texture_platform: process.platform === 'darwin' ? 'iosurface' : 'dxgi',
+        shared_texture_handle_encoding: 'base64',
+        seq: 1,
+      },
+    ],
+  });
+  assert(
+    Number(explicitSharedSummary?.dropped ?? 0) === 0,
+    `explicit shared texture command was dropped: ${JSON.stringify(explicitSharedSummary)}`,
+  );
+  const explicitSharedFrameStatus = await broker.invoke('native_renderer_get_status');
+  assert(
+    Number(explicitSharedFrameStatus.source_frame_shared_texture_rejected_uploads ?? 0) >
+      Number(beforeExplicitSharedFrameStatus.source_frame_shared_texture_rejected_uploads ?? 0),
+    `explicit shared texture command did not reach native importer: ${JSON.stringify(explicitSharedFrameStatus)}`,
   );
 
   console.log(

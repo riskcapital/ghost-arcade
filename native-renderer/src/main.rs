@@ -129,6 +129,7 @@ const CORE_COMMAND_TYPES: &[&str] = &[
     "decode_media_source",
     "upload_source_preview",
     "upload_source_frame",
+    "upload_source_gpu_shared_texture",
     "precompile_shader",
     "bind_isf_shader",
     "update_isf_uniforms",
@@ -2809,7 +2810,9 @@ impl App {
                 "bind_media_source" => self.apply_media_source(command),
                 "decode_media_source" => self.apply_decode_media_source(command),
                 "upload_source_preview" => self.apply_source_preview(command),
-                "upload_source_frame" => self.apply_source_frame(command),
+                "upload_source_frame" | "upload_source_gpu_shared_texture" => {
+                    self.apply_source_frame(command)
+                }
                 "precompile_shader" => self.apply_precompile_shader(command),
                 "bind_isf_shader" => self.apply_bind_isf_shader(command),
                 "update_isf_uniforms" => self.apply_isf_uniforms(command),
