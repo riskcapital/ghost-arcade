@@ -1424,7 +1424,7 @@
             <div class="setting-label">
               <span class="label-text">Native render core output</span>
               <span class="label-hint">
-                Open the Rust/wgpu managed output window from the Output Window controls. Falls back to zero-copy WebGPU output if the native core is not ready. Apply on next output-window open.
+                Use the Rust/wgpu managed output window from the Output Window controls. This is the v2 driver path; turn it off only to force the zero-copy WebGPU fallback. Apply on next output-window open.
               </span>
             </div>
             <label class="toggle">
