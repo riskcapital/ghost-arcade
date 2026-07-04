@@ -7,7 +7,8 @@ export type NativeEffectPassId =
   | 'saturation'
   | 'hue'
   | 'posterize'
-  | 'noise';
+  | 'noise'
+  | 'pixelate';
 
 export interface NativeEffectPassManifestEntry {
   id: NativeEffectPassId;
@@ -35,6 +36,10 @@ export interface NativeEffectPassOptions {
     param1: number;
     param2: number;
     param3: number;
+    mode: number;
+    gridLines: number;
+    animSpeed: number;
+    animAmount: number;
   }>;
   clear?: boolean;
   seq?: number;
@@ -83,6 +88,7 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'hue', code: 7, defaultAmount: 0, amountMin: -1, amountMax: 1 },
   { id: 'posterize', code: 8, defaultAmount: 6, amountMin: 2, amountMax: 32 },
   { id: 'noise', code: 9, defaultAmount: 0.25, amountMin: 0, amountMax: 1 },
+  { id: 'pixelate', code: 10, defaultAmount: 8, amountMin: 1, amountMax: 128 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -179,6 +185,41 @@ fn apply_effect(color: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     let n = value_noise2d(uv * u.resolution_time.xy * scale + vec2<f32>(u.resolution_time.z * 19.0 + seed, u.effect.w * 0.37)) - 0.5;
     return color + n * clamp(amount, 0.0, 1.0) * 0.72;
   }
+  if (code == 10u) {
+    let mode = u32(round(u.params0.x));
+    let grid_lines = clamp(u.params0.y, 0.0, 1.0);
+    let anim_speed = max(0.0, u.params0.z);
+    let anim_amount = clamp(u.params0.w, 0.0, 1.0);
+    var size = max(1.0, amount);
+    if (anim_speed > 0.001) {
+      let w = sin(u.resolution_time.z * anim_speed * 3.14159) * 0.5 + 0.5;
+      size = size * mix(1.0 - anim_amount * 0.5, 1.0 + anim_amount, w);
+    }
+    let pixel_size = max(vec2<f32>(1.0) / u.resolution_time.xy, vec2<f32>(size) / u.resolution_time.xy);
+    let cell_id = floor(uv / pixel_size);
+    let cell_uv = clamp((cell_id + vec2<f32>(0.5)) * pixel_size, vec2<f32>(0.0), vec2<f32>(1.0));
+    let cell_local = clamp((uv - cell_id * pixel_size) / pixel_size, vec2<f32>(0.0), vec2<f32>(1.0));
+    let sample0 = textureSampleLevel(source_tex, source_sampler, cell_uv, 0.0);
+    var rgb = sample0.rgb;
+    if (mode == 1u) {
+      rgb = floor(sample0.rgb * vec3<f32>(4.0)) / vec3<f32>(3.0);
+    } else if (mode == 2u) {
+      let d = cell_local - vec2<f32>(0.5);
+      let hex = max(abs(d.x), max(abs(d.y), abs(d.x) * 0.5 + abs(d.y) * 0.866));
+      if (hex > 0.5) {
+        rgb = vec3<f32>(0.0);
+      }
+    } else if (mode == 3u) {
+      let disc = smoothstep(0.5, 0.45, length(cell_local - vec2<f32>(0.5)));
+      rgb = sample0.rgb * disc;
+    }
+    if (grid_lines > 0.001) {
+      let edge = abs(cell_local - vec2<f32>(0.5));
+      let on_edge = step(0.46, max(edge.x, edge.y));
+      rgb = rgb * mix(1.0, 0.0, on_edge * grid_lines);
+    }
+    return rgb;
+  }
   return color;
 }
 
@@ -257,10 +298,10 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
   const mix = clampNumber(options.mix ?? 1, 0, 1, 1);
   const frameIndex = Math.max(0, Math.round(options.frameIndex ?? 0));
   const params = options.params ?? {};
-  const scale = clampNumber(params.scale ?? params.param0 ?? 0.42, 0.001, 64, 0.42);
-  const seed = clampNumber(params.seed ?? params.param1 ?? 0, -100000, 100000, 0);
-  const param2 = clampNumber(params.param2 ?? 0, -100000, 100000, 0);
-  const param3 = clampNumber(params.param3 ?? 0, -100000, 100000, 0);
+  const scale = clampNumber(params.scale ?? params.param0 ?? params.mode ?? 0.42, 0, 64, 0.42);
+  const seed = clampNumber(params.seed ?? params.param1 ?? params.gridLines ?? 0, -100000, 100000, 0);
+  const param2 = clampNumber(params.param2 ?? params.animSpeed ?? 0, -100000, 100000, 0);
+  const param3 = clampNumber(params.param3 ?? params.animAmount ?? 0, -100000, 100000, 0);
   return [
     width,
     height,
