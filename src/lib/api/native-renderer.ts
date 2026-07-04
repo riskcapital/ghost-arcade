@@ -243,6 +243,7 @@ export type RendererCommand =
     }
   | { type: 'remove_layer'; layer_id: string }
   | { type: 'bind_media_source'; layer_id: string; source_id: string; uri: string; source_type: string }
+  | { type: 'decode_media_source'; source_id: string; uri: string; source_type: string }
   | { type: 'set_native_quality_policy'; native_quality_policy: NativeQualityPolicy }
   | { type: 'precompile_shader'; shader_id: string; stage: string; source: string; entry: string }
   | { type: 'set_effect_chain'; layer_id: string; effect_ids: string[] }

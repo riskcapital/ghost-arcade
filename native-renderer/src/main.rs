@@ -122,6 +122,7 @@ const CORE_COMMAND_TYPES: &[&str] = &[
     "set_audio_state",
     "set_render_clock",
     "bind_media_source",
+    "decode_media_source",
     "upload_source_preview",
     "upload_source_frame",
     "precompile_shader",
@@ -2793,6 +2794,7 @@ impl App {
                 "set_audio_state" => self.apply_audio_state(command),
                 "set_render_clock" => self.apply_render_clock(command),
                 "bind_media_source" => self.apply_media_source(command),
+                "decode_media_source" => self.apply_decode_media_source(command),
                 "upload_source_preview" => self.apply_source_preview(command),
                 "upload_source_frame" => self.apply_source_frame(command),
                 "precompile_shader" => self.apply_precompile_shader(command),
@@ -4323,6 +4325,21 @@ impl App {
                 self.decode_native_image_source(&source_id, uri);
             }
         }
+    }
+
+    fn apply_decode_media_source(&mut self, command: &Value) {
+        let source_type =
+            string_at(command, &["source_type"]).unwrap_or_else(|| "none".to_string());
+        if source_type != "image" {
+            return;
+        }
+        let (Some(source_id), Some(uri)) = (
+            string_at(command, &["source_id"]),
+            string_at(command, &["uri"]),
+        ) else {
+            return;
+        };
+        self.decode_native_image_source(&source_id, &uri);
     }
 
     fn apply_source_preview(&mut self, command: &Value) {
