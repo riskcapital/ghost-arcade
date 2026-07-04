@@ -825,6 +825,8 @@ export interface NativeRendererTextureShareStatus {
   senderMode?: string;
   osrActive?: boolean;
   osrFailureReason?: string | null;
+  nativeOutputActive?: boolean;
+  nativeOutputFailures?: number;
 }
 
 export interface RendererReadinessReport {
