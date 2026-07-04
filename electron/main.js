@@ -252,6 +252,7 @@ const wledSockets = new Map();  // controllerId -> dgram.Socket
 let activeVideoConverterJob = null;
 const activeJpegSequenceJobs = new Map();
 const activeJpegFrameEncoderJobs = new Map();
+const activeMp4FrameEncoderJobs = new Map();
 const activeVideoLoopJobs = new Map();
 
 // Platform flags (used elsewhere in this file)
@@ -393,7 +394,47 @@ function normalizeRawVideoPixelFormat(value, fallback = 'rgba') {
   const format = String(value || fallback).trim().toLowerCase();
   if (format.includes('bgra')) return 'bgra';
   if (format.includes('rgba')) return 'rgba';
-  throw new Error(`Unsupported JPEG sequence raw pixel format: ${value}`);
+  throw new Error(`Unsupported raw video pixel format: ${value}`);
+}
+
+function crfForVideoQuality(quality) {
+  const q = String(quality || 'high').trim().toLowerCase();
+  if (q === 'archive') return '14';
+  if (q === 'web') return '23';
+  return '18';
+}
+
+function presetForVideoQuality(quality) {
+  const q = String(quality || 'high').trim().toLowerCase();
+  if (q === 'archive') return 'medium';
+  if (q === 'web') return 'veryfast';
+  return 'fast';
+}
+
+function createMp4FrameEncoderTempDir() {
+  return fs.mkdtempSync(path.join(app.getPath('temp'), 'ghost-native-mp4-'));
+}
+
+function writeEncoderStdin(job, buffer, frameIndex, label) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      job.process.stdin?.off?.('error', onError);
+      job.process.off?.('close', onClose);
+    };
+    const finish = (err) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (err) reject(err);
+      else resolve();
+    };
+    const onError = (err) => finish(err);
+    const onClose = () => finish(new Error(`${label} encoder closed while writing frame ${frameIndex}.`));
+    job.process.stdin?.once?.('error', onError);
+    job.process.once?.('close', onClose);
+    job.process.stdin.write(buffer, (err) => finish(err));
+  });
 }
 
 function startJpegSequenceJob(args = {}) {
@@ -877,6 +918,212 @@ async function cancelJpegFrameEncoderJob(jobIdInput) {
   } catch { /* ignore */ }
   try { fs.rmSync(job.tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
   activeJpegFrameEncoderJobs.delete(jobId);
+  setTimeout(() => {
+    try { job.process.kill('SIGKILL'); } catch { /* ignore */ }
+  }, 1500).unref?.();
+  return { success: true };
+}
+
+function startMp4FrameEncoderJob(args = {}) {
+  const jobId = String(args.jobId || '').trim();
+  if (!jobId) throw new Error('Missing MP4 frame encoder job id.');
+  if (activeMp4FrameEncoderJobs.has(jobId)) throw new Error('MP4 frame encoder job already exists.');
+
+  const width = Math.round(clampNumber(args.width, 1, 16384, 0));
+  const height = Math.round(clampNumber(args.height, 1, 16384, 0));
+  const fps = clampNumber(args.fps, 1, 240, 30);
+  const totalFrames = Math.round(clampNumber(args.totalFrames, 1, 10_000_000, 1));
+  if (!width || !height) throw new Error('Invalid MP4 frame encoder dimensions.');
+  const pixelFormat = normalizeRawVideoPixelFormat(
+    args.pixelFormat || args.pixel_format || args.rawPixelFormat || args.raw_pixel_format,
+  );
+  const quality = String(args.quality || 'high').trim().toLowerCase();
+  const tempDir = createMp4FrameEncoderTempDir();
+  const outputPath = safeGeneratedVideoPath(args.outputName || args.filename || 'Offline Render.mp4');
+  const ffmpegPath = resolveFfmpegPath();
+  const ffmpegArgs = [
+    '-hide_banner',
+    '-loglevel', 'warning',
+    '-y',
+    '-f', 'rawvideo',
+    '-pix_fmt', pixelFormat,
+    '-s:v', `${width}x${height}`,
+    '-framerate', String(fps),
+    '-i', 'pipe:0',
+    '-frames:v', String(totalFrames),
+    '-an',
+    '-c:v', 'libx264',
+    '-pix_fmt', 'yuv420p',
+    '-crf', crfForVideoQuality(quality),
+    '-preset', presetForVideoQuality(quality),
+    '-movflags', '+faststart',
+    outputPath,
+  ];
+
+  const child = spawn(ffmpegPath, ffmpegArgs, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] });
+  const job = {
+    id: jobId,
+    process: child,
+    tempDir,
+    outputPath,
+    width,
+    height,
+    fps,
+    totalFrames,
+    frameBytes: width * height * 4,
+    pixelFormat,
+    quality,
+    writtenFrames: 0,
+    stderr: '',
+    settled: false,
+    cancelled: false,
+    exitCode: null,
+    exitSignal: null,
+    exitPromise: null,
+  };
+
+  job.exitPromise = new Promise((resolve) => {
+    child.stderr?.setEncoding?.('utf8');
+    child.stderr?.on('data', (chunk) => {
+      job.stderr += String(chunk);
+      if (job.stderr.length > 12_000) job.stderr = job.stderr.slice(-12_000);
+    });
+    child.on('error', (err) => {
+      job.stderr += `\n${err?.message || err}`;
+    });
+    child.on('close', (code, signal) => {
+      job.settled = true;
+      job.exitCode = code;
+      job.exitSignal = signal;
+      resolve({ code, signal });
+    });
+  });
+
+  activeMp4FrameEncoderJobs.set(jobId, job);
+  return {
+    jobId,
+    outputPath,
+    tempDir,
+    ffmpegPath,
+    pixelFormat,
+  };
+}
+
+async function writeMp4FrameEncoderFrame(args = {}) {
+  const jobId = String(args.jobId || '').trim();
+  const job = activeMp4FrameEncoderJobs.get(jobId);
+  if (!job) throw new Error('MP4 frame encoder job is not active.');
+  if (job.settled) {
+    throw new Error(`MP4 frame encoder exited early.${job.stderr ? ` ${job.stderr.trim()}` : ''}`);
+  }
+  const buffer = bytesToBuffer(args.bytes);
+  if (buffer.byteLength !== job.frameBytes) {
+    throw new Error(`MP4 frame has ${buffer.byteLength} bytes; expected ${job.frameBytes}.`);
+  }
+  const framePixelFormat = args.pixelFormat || args.pixel_format || args.rawPixelFormat || args.raw_pixel_format;
+  if (framePixelFormat && normalizeRawVideoPixelFormat(framePixelFormat) !== job.pixelFormat) {
+    throw new Error(`MP4 frame pixel format mismatch: got ${framePixelFormat}, expected ${job.pixelFormat}.`);
+  }
+
+  const frameIndex = Math.round(clampNumber(args.frameIndex, 0, Number.MAX_SAFE_INTEGER, job.writtenFrames));
+  if (frameIndex !== job.writtenFrames) {
+    throw new Error(`MP4 frame order mismatch: got ${frameIndex}, expected ${job.writtenFrames}.`);
+  }
+
+  await writeEncoderStdin(job, buffer, frameIndex, 'MP4 frame');
+  job.writtenFrames++;
+  return { success: true, writtenFrames: job.writtenFrames };
+}
+
+async function writeMp4FrameEncoderFrameFile(args = {}) {
+  const jobId = String(args.jobId || '').trim();
+  const job = activeMp4FrameEncoderJobs.get(jobId);
+  if (!job) throw new Error('MP4 frame encoder job is not active.');
+  if (job.settled) {
+    throw new Error(`MP4 frame encoder exited early.${job.stderr ? ` ${job.stderr.trim()}` : ''}`);
+  }
+  const framePath = assertAbsolutePath(
+    args.path || args.filePath || args.rawPath || args.rgbaPath,
+    'MP4 raw frame file',
+  );
+  const resolvedFramePath = path.resolve(framePath);
+  const resolvedTempDir = path.resolve(job.tempDir);
+  if (!resolvedFramePath.startsWith(`${resolvedTempDir}${path.sep}`)) {
+    throw new Error('MP4 raw frame must live in its temp folder.');
+  }
+  const stat = fs.statSync(resolvedFramePath);
+  if (!stat.isFile()) throw new Error('MP4 raw frame path is not a file.');
+  if (stat.size !== job.frameBytes) {
+    throw new Error(`MP4 raw frame file has ${stat.size} bytes; expected ${job.frameBytes}.`);
+  }
+  const framePixelFormat = args.pixelFormat || args.pixel_format || args.rawPixelFormat || args.raw_pixel_format;
+  if (framePixelFormat && normalizeRawVideoPixelFormat(framePixelFormat) !== job.pixelFormat) {
+    throw new Error(`MP4 raw frame file pixel format mismatch: got ${framePixelFormat}, expected ${job.pixelFormat}.`);
+  }
+
+  const frameIndex = Math.round(clampNumber(args.frameIndex, 0, Number.MAX_SAFE_INTEGER, job.writtenFrames));
+  if (frameIndex !== job.writtenFrames) {
+    throw new Error(`MP4 frame order mismatch: got ${frameIndex}, expected ${job.writtenFrames}.`);
+  }
+
+  const buffer = fs.readFileSync(resolvedFramePath);
+  await writeEncoderStdin(job, buffer, frameIndex, 'MP4 frame');
+  job.writtenFrames++;
+  if (args.deleteAfterWrite || args.delete_after_write || args.delete) {
+    try { fs.unlinkSync(resolvedFramePath); } catch { /* best-effort temp cleanup */ }
+  }
+  return { success: true, writtenFrames: job.writtenFrames };
+}
+
+async function finishMp4FrameEncoderJob(jobIdInput) {
+  const jobId = String(jobIdInput || '').trim();
+  const job = activeMp4FrameEncoderJobs.get(jobId);
+  if (!job) return { success: true, alreadyFinished: true };
+
+  try {
+    if (!job.process.stdin.destroyed && !job.process.stdin.writableEnded) {
+      job.process.stdin.end();
+    }
+  } catch { /* ignore */ }
+
+  const { code, signal } = await job.exitPromise;
+  activeMp4FrameEncoderJobs.delete(jobId);
+  try { fs.rmSync(job.tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+
+  if (job.cancelled) return { success: false, cancelled: true };
+  if (code !== 0) {
+    try { fs.rmSync(job.outputPath, { force: true }); } catch { /* ignore */ }
+    const detail = job.stderr.trim() || `exit code ${code}${signal ? ` (${signal})` : ''}`;
+    throw new Error(`MP4 frame encoder failed: ${detail}`);
+  }
+  if (job.writtenFrames !== job.totalFrames) {
+    try { fs.rmSync(job.outputPath, { force: true }); } catch { /* ignore */ }
+    throw new Error(`MP4 frame encoder ended after ${job.writtenFrames} frames; expected ${job.totalFrames}.`);
+  }
+  const stat = fs.statSync(job.outputPath);
+  if (!stat.size) throw new Error('MP4 frame encoder produced an empty file.');
+  return {
+    success: true,
+    outputPath: job.outputPath,
+    size: stat.size,
+    frames: job.writtenFrames,
+  };
+}
+
+async function cancelMp4FrameEncoderJob(jobIdInput) {
+  const jobId = String(jobIdInput || '').trim();
+  const job = activeMp4FrameEncoderJobs.get(jobId);
+  if (!job) return { success: true };
+  job.cancelled = true;
+  try {
+    job.process.stdin?.destroy?.();
+  } catch { /* ignore */ }
+  try {
+    job.process.kill('SIGTERM');
+  } catch { /* ignore */ }
+  try { fs.rmSync(job.tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  try { fs.rmSync(job.outputPath, { force: true }); } catch { /* ignore */ }
+  activeMp4FrameEncoderJobs.delete(jobId);
   setTimeout(() => {
     try { job.process.kill('SIGKILL'); } catch { /* ignore */ }
   }, 1500).unref?.();
@@ -4649,6 +4896,52 @@ function registerIpcHandlers() {
       return await cancelJpegFrameEncoderJob(args.jobId);
     } catch (err) {
       console.error('[Main] jpeg_frame_encoder_cancel error:', err?.message || err);
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('mp4_frame_encoder_start', async (_, args = {}) => {
+    try {
+      const job = startMp4FrameEncoderJob(args);
+      return { success: true, ...job };
+    } catch (err) {
+      console.error('[Main] mp4_frame_encoder_start error:', err?.message || err);
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('mp4_frame_encoder_write_frame', async (_, args = {}) => {
+    try {
+      return await writeMp4FrameEncoderFrame(args);
+    } catch (err) {
+      console.error('[Main] mp4_frame_encoder_write_frame error:', err?.message || err);
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('mp4_frame_encoder_write_frame_file', async (_, args = {}) => {
+    try {
+      return await writeMp4FrameEncoderFrameFile(args);
+    } catch (err) {
+      console.error('[Main] mp4_frame_encoder_write_frame_file error:', err?.message || err);
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('mp4_frame_encoder_finish', async (_, args = {}) => {
+    try {
+      return await finishMp4FrameEncoderJob(args.jobId);
+    } catch (err) {
+      console.error('[Main] mp4_frame_encoder_finish error:', err?.message || err);
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('mp4_frame_encoder_cancel', async (_, args = {}) => {
+    try {
+      return await cancelMp4FrameEncoderJob(args.jobId);
+    } catch (err) {
+      console.error('[Main] mp4_frame_encoder_cancel error:', err?.message || err);
       return { success: false, error: err?.message || String(err) };
     }
   });

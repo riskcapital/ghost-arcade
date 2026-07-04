@@ -208,6 +208,43 @@ function encodeRawFramesToJpegPipe(rawFramePaths, pixFmt) {
   return extractJpegBuffersFromPipe(Buffer.from(result.stdout || []));
 }
 
+function encodeRawFramesToMp4(rawFramePaths, pixFmt, outputPath) {
+  const ffmpegBin = resolveFfmpegBin();
+  const input = Buffer.concat(rawFramePaths.map((path) => readFileSync(path)));
+  const result = spawnSync(ffmpegBin, [
+    '-hide_banner',
+    '-loglevel', 'warning',
+    '-y',
+    '-f', 'rawvideo',
+    '-pix_fmt', pixFmt,
+    '-s:v', `${WIDTH}x${HEIGHT}`,
+    '-framerate', String(FPS),
+    '-i', 'pipe:0',
+    '-frames:v', String(rawFramePaths.length),
+    '-an',
+    '-c:v', 'libx264',
+    '-pix_fmt', 'yuv420p',
+    '-crf', '18',
+    '-preset', 'fast',
+    '-movflags', '+faststart',
+    outputPath,
+  ], {
+    input,
+    encoding: 'utf8',
+    maxBuffer: 1024 * 1024,
+    windowsHide: true,
+  });
+  if (result.status !== 0) {
+    throw new Error(`ffmpeg raw MP4 encode failed (${result.status}): ${result.stderr || result.error?.message || 'no stderr'}`);
+  }
+}
+
+function assertMp4(path) {
+  assert(existsSync(path), `missing MP4 render: ${path}`);
+  const stat = statSync(path);
+  assert(stat.size > 1000, `MP4 render is suspiciously small: ${path} (${stat.size} bytes)`);
+}
+
 async function main() {
   const tempDir = mkdtempSync(join(tmpdir(), 'ghost-native-frame-sequence-'));
   const rpc = createRpcProcess();
@@ -286,6 +323,9 @@ async function main() {
     for (let frame = 0; frame < FRAME_COUNT; frame += 1) {
       assertJpegBytes(`pipe jpeg ${frame}`, pipeFrames[frame]);
     }
+    const mp4Path = join(tempDir, 'native-raw-render.mp4');
+    encodeRawFramesToMp4(rawFramePaths, pixFmt, mp4Path);
+    assertMp4(mp4Path);
 
     const status = await rpc.send('status', {}, 5000);
     assert(Number(status?.render_clock_updates ?? 0) >= FRAME_COUNT, `render clock was not stepped for every frame: ${JSON.stringify(status)}`);
