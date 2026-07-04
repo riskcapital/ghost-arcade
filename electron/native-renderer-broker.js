@@ -385,6 +385,18 @@ class NativeRendererBroker {
         !!features.shared_texture_source_frame_upload,
       ],
       ['shared-texture-upload', 'Shared texture media transport', !!features.shared_texture_upload],
+      [
+        'shared-texture-output-export',
+        'Native output shared-texture export',
+        !!features.shared_texture_output_export,
+        'pending core-to-Electron IOSurface/DXGI output texture export',
+      ],
+      [
+        'native-texture-share-sender',
+        this.platform === 'darwin' ? 'Native Syphon sender' : 'Native Spout sender',
+        !!features.native_texture_share_sender,
+        'pending zero-copy texture-share sender from the native composite',
+      ],
       ['native-media-decode', 'Native media decode/prefetch', !!features.native_media_decode && !!features.media_prefetch],
       ['compute-graph-host', 'Native buffer compute graph host', !!features.compute_graph_host],
       [
@@ -1163,6 +1175,8 @@ function makeDefaultCapabilities(overrides = {}) {
       storage_buffer_instruments: false,
       shared_texture_source_frame_upload: false,
       shared_texture_upload: false,
+      shared_texture_output_export: false,
+      native_texture_share_sender: false,
       native_media_decode: false,
       media_prefetch: false,
       present_policy: false,

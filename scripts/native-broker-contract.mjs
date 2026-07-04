@@ -123,6 +123,14 @@ try {
   }
   assert(checks.get('shared-texture-upload')?.ok === false, 'broker should report shared texture upload as unavailable until implemented');
   assert(
+    checks.get('shared-texture-output-export')?.ok === false,
+    'broker should report native output shared-texture export as unavailable until implemented',
+  );
+  assert(
+    checks.get('native-texture-share-sender')?.ok === false,
+    'broker should report native Syphon/Spout sender as unavailable until implemented',
+  );
+  assert(
     checks.get('shared-texture-source-frame-upload')?.ok === (process.platform === 'darwin'),
     `broker shared source-frame readiness should match macOS IOSurface support: ${JSON.stringify(readiness)}`,
   );

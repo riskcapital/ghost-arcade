@@ -549,7 +549,11 @@ async function main() {
     ) {
       throw new Error(`native output-window control capability missing: ${JSON.stringify(capabilities)}`);
     }
-    if (capabilities.features.shared_texture_upload) {
+    if (
+      capabilities.features.shared_texture_upload ||
+      capabilities.features.shared_texture_output_export ||
+      capabilities.features.native_texture_share_sender
+    ) {
       throw new Error(`native capabilities overstated unimplemented features: ${JSON.stringify(capabilities.features)}`);
     }
     if (!capabilities.native_graph_instruments?.includes('smoke-3d')) {
