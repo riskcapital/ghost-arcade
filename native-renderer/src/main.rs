@@ -1,5 +1,7 @@
 #![recursion_limit = "256"]
 
+mod shared_texture;
+
 use std::{
     borrow::Cow,
     collections::HashMap,
@@ -14,6 +16,7 @@ use base64::Engine;
 use bytemuck::{Pod, Zeroable};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use shared_texture::SharedTextureSourceFrameDescriptor;
 use wgpu::util::{DeviceExt, TextureBlitter, TextureBlitterBuilder};
 use winit::{
     application::ApplicationHandler,
@@ -3993,6 +3996,14 @@ impl App {
             .clamp(1.0, SOURCE_FRAME_SIZE_INSANE as f64) as usize;
         let transport = source_frame_transport_from_command(command);
         if transport == SourceFrameTransport::SharedTexture {
+            let reject_reason =
+                SharedTextureSourceFrameDescriptor::from_command(command, width, height)
+                    .map(|descriptor| descriptor.unsupported_reason(native_backend_name()))
+                    .unwrap_or_else(|| {
+                        "shared texture source-frame upload is not implemented yet \
+                         (missing shared texture handle)"
+                            .to_string()
+                    });
             self.stats.source_frame_shared_texture_rejected_uploads = self
                 .stats
                 .source_frame_shared_texture_rejected_uploads
@@ -4001,7 +4012,7 @@ impl App {
                 width,
                 height,
                 "shared-texture-unsupported",
-                "shared texture source-frame upload is not implemented yet",
+                &reject_reason,
             );
             return;
         }
