@@ -184,6 +184,25 @@ type NativeEffectPassRuntime = {
     centerY?: number;
     tintAmount?: number;
     breathing?: number;
+    angle?: number;
+    count?: number;
+    speed?: number;
+    phosphor?: number;
+    rollingBar?: number;
+    curvature?: number;
+    interlace?: number;
+    radius?: number;
+    edgeProtect?: number;
+    edgeFalloff?: number;
+    outputMix?: number;
+    prismSpread?: number;
+    rgbSplit?: number;
+    jitter?: number;
+    blockSize?: number;
+    blockHold?: number;
+    verticalSlice?: number;
+    tearChance?: number;
+    triggerMode?: number;
   };
 };
 const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<{
@@ -479,6 +498,205 @@ function effectToNativeDescriptor(effect: any): string | null {
     const amount = Math.max(0, Math.min(1, amountRaw));
     return `noise:${amount.toFixed(4)}`;
   }
+  if (type === 'rgbshift') {
+    const amountRaw =
+      (typeof params.rgbShiftAmount === 'number' && Number.isFinite(params.rgbShiftAmount) ? params.rgbShiftAmount : null)
+      ?? (typeof params.amount === 'number' && Number.isFinite(params.amount) ? params.amount : null)
+      ?? 5;
+    const angleRaw =
+      (typeof params.rgbShiftAngle === 'number' && Number.isFinite(params.rgbShiftAngle) ? params.rgbShiftAngle : null)
+      ?? (typeof params.angle === 'number' && Number.isFinite(params.angle) ? params.angle : null)
+      ?? 0;
+    const modeRaw =
+      (typeof params.rgbShiftMode === 'number' && Number.isFinite(params.rgbShiftMode) ? params.rgbShiftMode : null)
+      ?? (typeof params.mode === 'number' && Number.isFinite(params.mode) ? params.mode : null)
+      ?? 0;
+    const centerXRaw =
+      (typeof params.rgbShiftCenterX === 'number' && Number.isFinite(params.rgbShiftCenterX) ? params.rgbShiftCenterX : null)
+      ?? (typeof params.centerX === 'number' && Number.isFinite(params.centerX) ? params.centerX : null)
+      ?? 0.5;
+    const centerYRaw =
+      (typeof params.rgbShiftCenterY === 'number' && Number.isFinite(params.rgbShiftCenterY) ? params.rgbShiftCenterY : null)
+      ?? (typeof params.centerY === 'number' && Number.isFinite(params.centerY) ? params.centerY : null)
+      ?? 0.5;
+    const prismRaw =
+      (typeof params.rgbShiftPrismSpread === 'number' && Number.isFinite(params.rgbShiftPrismSpread) ? params.rgbShiftPrismSpread : null)
+      ?? (typeof params.prismSpread === 'number' && Number.isFinite(params.prismSpread) ? params.prismSpread : null)
+      ?? 1;
+    const amount = Math.max(0, Math.min(80, amountRaw));
+    const angle = ((angleRaw % 360) + 360) % 360;
+    const mode = Math.max(0, Math.min(4, Math.round(modeRaw)));
+    const centerX = Math.max(0, Math.min(1, centerXRaw));
+    const centerY = Math.max(0, Math.min(1, centerYRaw));
+    const prism = Math.max(0, Math.min(3, prismRaw));
+    return `rgb-shift:${amount.toFixed(4)}:${angle.toFixed(4)}:${mode}:${centerX.toFixed(4)}:${centerY.toFixed(4)}:${prism.toFixed(4)}`;
+  }
+  if (type === 'scanlines') {
+    const intensityRaw =
+      (typeof params.scanlinesIntensity === 'number' && Number.isFinite(params.scanlinesIntensity) ? params.scanlinesIntensity : null)
+      ?? (typeof params.intensity === 'number' && Number.isFinite(params.intensity) ? params.intensity : null)
+      ?? 0.5;
+    const countRaw =
+      (typeof params.scanlinesCount === 'number' && Number.isFinite(params.scanlinesCount) ? params.scanlinesCount : null)
+      ?? (typeof params.count === 'number' && Number.isFinite(params.count) ? params.count : null)
+      ?? 200;
+    const speedRaw =
+      (typeof params.scanlinesSpeed === 'number' && Number.isFinite(params.scanlinesSpeed) ? params.scanlinesSpeed : null)
+      ?? (typeof params.speed === 'number' && Number.isFinite(params.speed) ? params.speed : null)
+      ?? 0;
+    const phosphorRaw =
+      (typeof params.scanlinesPhosphor === 'number' && Number.isFinite(params.scanlinesPhosphor) ? params.scanlinesPhosphor : null)
+      ?? (typeof params.phosphor === 'number' && Number.isFinite(params.phosphor) ? params.phosphor : null)
+      ?? 0;
+    const rollingRaw =
+      (typeof params.scanlinesRollingBar === 'number' && Number.isFinite(params.scanlinesRollingBar) ? params.scanlinesRollingBar : null)
+      ?? (typeof params.rollingBar === 'number' && Number.isFinite(params.rollingBar) ? params.rollingBar : null)
+      ?? 0;
+    const curvatureRaw =
+      (typeof params.scanlinesCurvature === 'number' && Number.isFinite(params.scanlinesCurvature) ? params.scanlinesCurvature : null)
+      ?? (typeof params.curvature === 'number' && Number.isFinite(params.curvature) ? params.curvature : null)
+      ?? 0;
+    const interlaceRaw =
+      (typeof params.scanlinesInterlace === 'number' && Number.isFinite(params.scanlinesInterlace) ? params.scanlinesInterlace : null)
+      ?? (typeof params.interlace === 'number' && Number.isFinite(params.interlace) ? params.interlace : null)
+      ?? 0;
+    return [
+      'scanlines',
+      Math.max(0, Math.min(1, intensityRaw)).toFixed(4),
+      Math.max(1, Math.min(1200, countRaw)).toFixed(4),
+      Math.max(-4, Math.min(4, speedRaw)).toFixed(4),
+      Math.max(0, Math.min(1, phosphorRaw)).toFixed(4),
+      Math.max(0, Math.min(1, rollingRaw)).toFixed(4),
+      Math.max(0, Math.min(1, curvatureRaw)).toFixed(4),
+      Math.max(0, Math.min(1, interlaceRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'blur') {
+    const radiusRaw =
+      (typeof params.blurRadius === 'number' && Number.isFinite(params.blurRadius) ? params.blurRadius : null)
+      ?? (typeof params.radius === 'number' && Number.isFinite(params.radius) ? params.radius : null)
+      ?? (typeof params.amount === 'number' && Number.isFinite(params.amount) ? params.amount : null)
+      ?? 5;
+    const modeRaw =
+      (typeof params.blurMode === 'number' && Number.isFinite(params.blurMode) ? params.blurMode : null)
+      ?? (typeof params.mode === 'number' && Number.isFinite(params.mode) ? params.mode : null)
+      ?? 1;
+    const angleRaw =
+      (typeof params.blurAngle === 'number' && Number.isFinite(params.blurAngle) ? params.blurAngle : null)
+      ?? (typeof params.angle === 'number' && Number.isFinite(params.angle) ? params.angle : null)
+      ?? 0;
+    const qualityRaw =
+      (typeof params.blurQuality === 'number' && Number.isFinite(params.blurQuality) ? params.blurQuality : null)
+      ?? (typeof params.quality === 'number' && Number.isFinite(params.quality) ? params.quality : null)
+      ?? 1;
+    const edgeRaw =
+      (typeof params.blurEdgeProtect === 'number' && Number.isFinite(params.blurEdgeProtect) ? params.blurEdgeProtect : null)
+      ?? (typeof params.edgeProtect === 'number' && Number.isFinite(params.edgeProtect) ? params.edgeProtect : null)
+      ?? 0.3;
+    const mixRaw =
+      (typeof params.blurMix === 'number' && Number.isFinite(params.blurMix) ? params.blurMix : null)
+      ?? (typeof params.mix === 'number' && Number.isFinite(params.mix) ? params.mix : null)
+      ?? 1;
+    return [
+      'blur',
+      Math.max(0, Math.min(48, radiusRaw)).toFixed(4),
+      Math.max(0, Math.min(3, Math.round(modeRaw))).toFixed(0),
+      (((angleRaw % 360) + 360) % 360).toFixed(4),
+      Math.max(0, Math.min(2, Math.round(qualityRaw))).toFixed(0),
+      Math.max(0, Math.min(1, edgeRaw)).toFixed(4),
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'chromaticaberration') {
+    const amountRaw =
+      (typeof params.caAmount === 'number' && Number.isFinite(params.caAmount) ? params.caAmount : null)
+      ?? (typeof params.amount === 'number' && Number.isFinite(params.amount) ? params.amount : null)
+      ?? 0.4;
+    const modeRaw =
+      (typeof params.caMode === 'number' && Number.isFinite(params.caMode) ? params.caMode : null)
+      ?? (typeof params.mode === 'number' && Number.isFinite(params.mode) ? params.mode : null)
+      ?? 1;
+    const angleRaw =
+      (typeof params.caAngle === 'number' && Number.isFinite(params.caAngle) ? params.caAngle : null)
+      ?? (typeof params.angle === 'number' && Number.isFinite(params.angle) ? params.angle : null)
+      ?? 0;
+    const centerXRaw =
+      (typeof params.caCenterX === 'number' && Number.isFinite(params.caCenterX) ? params.caCenterX : null)
+      ?? (typeof params.centerX === 'number' && Number.isFinite(params.centerX) ? params.centerX : null)
+      ?? 0.5;
+    const centerYRaw =
+      (typeof params.caCenterY === 'number' && Number.isFinite(params.caCenterY) ? params.caCenterY : null)
+      ?? (typeof params.centerY === 'number' && Number.isFinite(params.centerY) ? params.centerY : null)
+      ?? 0.5;
+    const falloffRaw =
+      (typeof params.caEdgeFalloff === 'number' && Number.isFinite(params.caEdgeFalloff) ? params.caEdgeFalloff : null)
+      ?? (typeof params.edgeFalloff === 'number' && Number.isFinite(params.edgeFalloff) ? params.edgeFalloff : null)
+      ?? 0.5;
+    const mixRaw =
+      (typeof params.caMix === 'number' && Number.isFinite(params.caMix) ? params.caMix : null)
+      ?? (typeof params.mix === 'number' && Number.isFinite(params.mix) ? params.mix : null)
+      ?? 1;
+    return [
+      'chromatic-aberration',
+      Math.max(0, Math.min(3, amountRaw)).toFixed(4),
+      Math.max(0, Math.min(3, Math.round(modeRaw))).toFixed(0),
+      (((angleRaw % 360) + 360) % 360).toFixed(4),
+      Math.max(0, Math.min(1, centerXRaw)).toFixed(4),
+      Math.max(0, Math.min(1, centerYRaw)).toFixed(4),
+      Math.max(0, Math.min(1, falloffRaw)).toFixed(4),
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'glitch') {
+    const intensityRaw =
+      (typeof params.glitchIntensity === 'number' && Number.isFinite(params.glitchIntensity) ? params.glitchIntensity : null)
+      ?? (typeof params.intensity === 'number' && Number.isFinite(params.intensity) ? params.intensity : null)
+      ?? 0.5;
+    const speedRaw =
+      (typeof params.glitchSpeed === 'number' && Number.isFinite(params.glitchSpeed) ? params.glitchSpeed : null)
+      ?? (typeof params.speed === 'number' && Number.isFinite(params.speed) ? params.speed : null)
+      ?? 1;
+    const blockRaw =
+      (typeof params.glitchBlockSize === 'number' && Number.isFinite(params.glitchBlockSize) ? params.glitchBlockSize : null)
+      ?? (typeof params.blockSize === 'number' && Number.isFinite(params.blockSize) ? params.blockSize : null)
+      ?? 0.3;
+    const splitRaw =
+      (typeof params.glitchRGBSplit === 'number' && Number.isFinite(params.glitchRGBSplit) ? params.glitchRGBSplit : null)
+      ?? (typeof params.rgbSplit === 'number' && Number.isFinite(params.rgbSplit) ? params.rgbSplit : null)
+      ?? 0.5;
+    const jitterRaw =
+      (typeof params.glitchJitter === 'number' && Number.isFinite(params.glitchJitter) ? params.glitchJitter : null)
+      ?? (typeof params.jitter === 'number' && Number.isFinite(params.jitter) ? params.jitter : null)
+      ?? 0.3;
+    const verticalRaw =
+      (typeof params.glitchVerticalSlice === 'number' && Number.isFinite(params.glitchVerticalSlice) ? params.glitchVerticalSlice : null)
+      ?? (typeof params.verticalSlice === 'number' && Number.isFinite(params.verticalSlice) ? params.verticalSlice : null)
+      ?? 0;
+    const holdRaw =
+      (typeof params.glitchBlockHold === 'number' && Number.isFinite(params.glitchBlockHold) ? params.glitchBlockHold : null)
+      ?? (typeof params.blockHold === 'number' && Number.isFinite(params.blockHold) ? params.blockHold : null)
+      ?? 0.3;
+    const tearRaw =
+      (typeof params.glitchTearChance === 'number' && Number.isFinite(params.glitchTearChance) ? params.glitchTearChance : null)
+      ?? (typeof params.tearChance === 'number' && Number.isFinite(params.tearChance) ? params.tearChance : null)
+      ?? 0;
+    const triggerRaw =
+      (typeof params.glitchTriggerMode === 'number' && Number.isFinite(params.glitchTriggerMode) ? params.glitchTriggerMode : null)
+      ?? (typeof params.triggerMode === 'number' && Number.isFinite(params.triggerMode) ? params.triggerMode : null)
+      ?? 0;
+    return [
+      'glitch',
+      Math.max(0, Math.min(1, intensityRaw)).toFixed(4),
+      Math.max(0, Math.min(4, speedRaw)).toFixed(4),
+      Math.max(0, Math.min(1, blockRaw)).toFixed(4),
+      Math.max(0, Math.min(1, splitRaw)).toFixed(4),
+      Math.max(0, Math.min(1, jitterRaw)).toFixed(4),
+      Math.max(0, Math.min(1, verticalRaw)).toFixed(4),
+      Math.max(0, Math.min(1, holdRaw)).toFixed(4),
+      Math.max(0, Math.min(1, tearRaw)).toFixed(4),
+      Math.max(0, Math.min(3, Math.round(triggerRaw))).toFixed(0),
+    ].join(':');
+  }
   if (type === 'pixelate') {
     const sizeRaw =
       (typeof params.pixelateSize === 'number' && Number.isFinite(params.pixelateSize) ? params.pixelateSize : null)
@@ -594,25 +812,71 @@ function nativeEffectPassFromDescriptor(descriptor: string | null): NativeEffect
     ? Number(rawAmount)
     : undefined;
   if (amount !== undefined && !Number.isFinite(amount)) return null;
-  const params = effect === 'pixelate'
-    ? {
-        mode: Number(rawParam0 ?? 0),
-        gridLines: Number(rawParam1 ?? 0),
-        animSpeed: Number(rawParam2 ?? 0),
-        animAmount: Number(rawParam3 ?? 0),
-      }
-    : effect === 'vignette'
-      ? {
-          softness: Number(rawParam0 ?? 0.4),
-          roundness: Number(rawParam1 ?? 0.5),
-          shape: Number(rawParam2 ?? 0),
-          aspect: Number(rawParam3 ?? 1),
-          centerX: Number(rawParam4 ?? 0.5),
-          centerY: Number(rawParam5 ?? 0.5),
-          tintAmount: Number(rawParam6 ?? 0),
-          breathing: Number(rawParam7 ?? 0),
-        }
-    : undefined;
+  let params: NativeEffectPassRuntime['params'];
+  if (effect === 'pixelate') {
+    params = {
+      mode: Number(rawParam0 ?? 0),
+      gridLines: Number(rawParam1 ?? 0),
+      animSpeed: Number(rawParam2 ?? 0),
+      animAmount: Number(rawParam3 ?? 0),
+    };
+  } else if (effect === 'vignette') {
+    params = {
+      softness: Number(rawParam0 ?? 0.4),
+      roundness: Number(rawParam1 ?? 0.5),
+      shape: Number(rawParam2 ?? 0),
+      aspect: Number(rawParam3 ?? 1),
+      centerX: Number(rawParam4 ?? 0.5),
+      centerY: Number(rawParam5 ?? 0.5),
+      tintAmount: Number(rawParam6 ?? 0),
+      breathing: Number(rawParam7 ?? 0),
+    };
+  } else if (effect === 'rgb-shift') {
+    params = {
+      angle: Number(rawParam0 ?? 0),
+      mode: Number(rawParam1 ?? 0),
+      centerX: Number(rawParam2 ?? 0.5),
+      centerY: Number(rawParam3 ?? 0.5),
+      prismSpread: Number(rawParam4 ?? 1),
+    };
+  } else if (effect === 'scanlines') {
+    params = {
+      count: Number(rawParam0 ?? 200),
+      speed: Number(rawParam1 ?? 0),
+      phosphor: Number(rawParam2 ?? 0),
+      rollingBar: Number(rawParam3 ?? 0),
+      curvature: Number(rawParam4 ?? 0),
+      interlace: Number(rawParam5 ?? 0),
+    };
+  } else if (effect === 'blur') {
+    params = {
+      mode: Number(rawParam0 ?? 1),
+      angle: Number(rawParam1 ?? 0),
+      param2: Number(rawParam2 ?? 1),
+      edgeProtect: Number(rawParam3 ?? 0.3),
+      outputMix: Number(rawParam4 ?? 1),
+    };
+  } else if (effect === 'chromatic-aberration') {
+    params = {
+      mode: Number(rawParam0 ?? 1),
+      angle: Number(rawParam1 ?? 0),
+      centerX: Number(rawParam2 ?? 0.5),
+      centerY: Number(rawParam3 ?? 0.5),
+      edgeFalloff: Number(rawParam4 ?? 0.5),
+      outputMix: Number(rawParam5 ?? 1),
+    };
+  } else if (effect === 'glitch') {
+    params = {
+      speed: Number(rawParam0 ?? 1),
+      blockSize: Number(rawParam1 ?? 0.3),
+      rgbSplit: Number(rawParam2 ?? 0.5),
+      jitter: Number(rawParam3 ?? 0.3),
+      verticalSlice: Number(rawParam4 ?? 0),
+      blockHold: Number(rawParam5 ?? 0.3),
+      tearChance: Number(rawParam6 ?? 0),
+      triggerMode: Number(rawParam7 ?? 0),
+    };
+  }
   if (params && Object.values(params).some((value) => !Number.isFinite(value))) return null;
   return {
     effect,

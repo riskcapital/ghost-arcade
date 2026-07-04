@@ -9,7 +9,12 @@ export type NativeEffectPassId =
   | 'posterize'
   | 'noise'
   | 'pixelate'
-  | 'vignette';
+  | 'vignette'
+  | 'rgb-shift'
+  | 'scanlines'
+  | 'blur'
+  | 'chromatic-aberration'
+  | 'glitch';
 
 export interface NativeEffectPassManifestEntry {
   id: NativeEffectPassId;
@@ -53,6 +58,26 @@ export interface NativeEffectPassOptions {
     centerY: number;
     tintAmount: number;
     breathing: number;
+    angle: number;
+    count: number;
+    intensity: number;
+    speed: number;
+    radius: number;
+    edgeProtect: number;
+    edgeFalloff: number;
+    rollingBar: number;
+    phosphor: number;
+    curvature: number;
+    interlace: number;
+    rgbSplit: number;
+    jitter: number;
+    blockSize: number;
+    triggerMode: number;
+    blockHold: number;
+    verticalSlice: number;
+    tearChance: number;
+    prismSpread: number;
+    outputMix: number;
   }>;
   clear?: boolean;
   seq?: number;
@@ -103,6 +128,11 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'noise', code: 9, defaultAmount: 0.25, amountMin: 0, amountMax: 1 },
   { id: 'pixelate', code: 10, defaultAmount: 8, amountMin: 1, amountMax: 128 },
   { id: 'vignette', code: 11, defaultAmount: 0.8, amountMin: 0, amountMax: 2 },
+  { id: 'rgb-shift', code: 12, defaultAmount: 5, amountMin: 0, amountMax: 80 },
+  { id: 'scanlines', code: 13, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'blur', code: 14, defaultAmount: 5, amountMin: 0, amountMax: 48 },
+  { id: 'chromatic-aberration', code: 15, defaultAmount: 0.4, amountMin: 0, amountMax: 3 },
+  { id: 'glitch', code: 16, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -161,6 +191,18 @@ fn value_noise2d(p: vec2<f32>) -> f32 {
   let d = hash21(i + vec2<f32>(1.0, 1.0));
   let v = f * f * (3.0 - 2.0 * f);
   return mix(mix(a, b, v.x), mix(c, d, v.x), v.y);
+}
+
+fn sample_clamped(uv: vec2<f32>) -> vec4<f32> {
+  return textureSampleLevel(source_tex, source_sampler, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0);
+}
+
+fn sample_rgb(uv: vec2<f32>) -> vec3<f32> {
+  return sample_clamped(uv).rgb;
+}
+
+fn effect_texel() -> vec2<f32> {
+  return vec2<f32>(1.0) / max(u.resolution_time.xy, vec2<f32>(1.0));
 }
 
 fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
@@ -265,6 +307,155 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let final_alpha = src.a * mix(vignette, 1.0, tint_amount);
     return vec4<f32>(final_rgb, final_alpha);
   }
+  if (code == 12u) {
+    let angle = u.params0.x * 0.01745329252;
+    let mode = u32(round(clamp(u.params0.y, 0.0, 4.0)));
+    let center = clamp(u.params0.zw, vec2<f32>(0.0), vec2<f32>(1.0));
+    let prism = clamp(u.params1.x, 0.0, 3.0);
+    let px = max(vec2<f32>(1.0), u.resolution_time.xy);
+    var dir = vec2<f32>(cos(angle), sin(angle));
+    if (mode == 1u || mode == 2u) {
+      let radial = uv - center;
+      dir = normalize(radial + vec2<f32>(0.0001));
+    } else if (mode == 3u) {
+      let lum = luma(color);
+      dir = normalize((uv - center) * (lum * 2.0 - 1.0) + vec2<f32>(0.0001));
+    } else if (mode == 4u) {
+      let tx = effect_texel();
+      let gx = luma(sample_rgb(uv + vec2<f32>(tx.x, 0.0))) - luma(sample_rgb(uv - vec2<f32>(tx.x, 0.0)));
+      let gy = luma(sample_rgb(uv + vec2<f32>(0.0, tx.y))) - luma(sample_rgb(uv - vec2<f32>(0.0, tx.y)));
+      dir = normalize(vec2<f32>(gx, gy) + vec2<f32>(0.0001));
+    }
+    let spread = (amount * (1.0 + prism * 0.35)) / px;
+    let off = dir * spread;
+    let r = sample_rgb(uv + off).r;
+    let g = sample_rgb(uv + off * 0.15).g;
+    let b = sample_rgb(uv - off).b;
+    return vec4<f32>(vec3<f32>(r, g, b), src.a);
+  }
+  if (code == 13u) {
+    let count = max(1.0, u.params0.x);
+    let speed = u.params0.y;
+    let phosphor = clamp(u.params0.z, 0.0, 1.0);
+    let rolling = clamp(u.params0.w, 0.0, 1.0);
+    let curvature = clamp(u.params1.x, 0.0, 1.0);
+    let interlace = clamp(u.params1.y, 0.0, 1.0);
+    let p = uv * 2.0 - vec2<f32>(1.0);
+    let curve_uv = clamp(uv + p * dot(p, p) * curvature * 0.08, vec2<f32>(0.0), vec2<f32>(1.0));
+    var rgb = mix(color, sample_rgb(curve_uv), step(0.001, curvature));
+    let scanline = sin((curve_uv.y * count + u.resolution_time.z * speed * 50.0) * 3.14159265) * 0.5 + 0.5;
+    rgb *= 1.0 - clamp(amount, 0.0, 1.0) * scanline * 0.52;
+    if (phosphor > 0.001) {
+      let stripe = fract(curve_uv.x * u.resolution_time.x / 3.0);
+      let mask = vec3<f32>(
+        smoothstep(0.00, 0.18, stripe) * (1.0 - smoothstep(0.31, 0.39, stripe)),
+        smoothstep(0.31, 0.40, stripe) * (1.0 - smoothstep(0.63, 0.72, stripe)),
+        smoothstep(0.64, 0.73, stripe),
+      );
+      rgb *= mix(vec3<f32>(1.0), mask * 1.45, phosphor);
+    }
+    if (rolling > 0.001) {
+      let bar = 1.0 - smoothstep(0.0, 0.28, abs(fract(curve_uv.y - u.resolution_time.z * 0.18) - 0.5));
+      rgb *= 1.0 + bar * rolling * 0.35;
+    }
+    if (interlace > 0.001) {
+      let field = fract((floor(curve_uv.y * u.resolution_time.y) + u.effect.w) * 0.5) * 2.0;
+      rgb *= mix(1.0, mix(0.82, 1.08, field), interlace);
+    }
+    return vec4<f32>(rgb, src.a);
+  }
+  if (code == 14u) {
+    let radius = max(0.0, amount);
+    if (radius < 0.001) {
+      return src;
+    }
+    let mode = u32(round(clamp(u.params0.x, 0.0, 3.0)));
+    let angle = u.params0.y * 0.01745329252;
+    let edge_protect = clamp(u.params0.w, 0.0, 1.0);
+    let wet = clamp(u.params1.x, 0.0, 1.0);
+    let tx = effect_texel();
+    var acc = color * 0.22;
+    var wsum = 0.22;
+    var dir_x = vec2<f32>(tx.x, 0.0);
+    var dir_y = vec2<f32>(0.0, tx.y);
+    if (mode == 2u) {
+      let dir = vec2<f32>(cos(angle), sin(angle));
+      dir_x = dir * tx * radius;
+      dir_y = -dir_x;
+    } else {
+      dir_x *= radius;
+      dir_y *= radius;
+    }
+    let diag_a = dir_x + dir_y;
+    let diag_b = dir_x - dir_y;
+    let samples = array<vec2<f32>, 8>(
+      dir_x, -dir_x, dir_y, -dir_y,
+      diag_a, -diag_a, diag_b, -diag_b,
+    );
+    for (var i = 0u; i < 8u; i = i + 1u) {
+      let s = sample_rgb(uv + samples[i]);
+      let dl = abs(luma(s) - luma(color));
+      let edge_w = mix(1.0, 1.0 - smoothstep(0.05, 0.28, dl), edge_protect);
+      let diag_w = select(0.095, 0.14, i < 4u);
+      acc += s * diag_w * edge_w;
+      wsum += diag_w * edge_w;
+    }
+    let blurred = acc / max(0.0001, wsum);
+    return vec4<f32>(mix(color, blurred, wet), src.a);
+  }
+  if (code == 15u) {
+    let mode = u32(round(clamp(u.params0.x, 0.0, 3.0)));
+    let angle = u.params0.y * 0.01745329252;
+    let center = clamp(u.params0.zw, vec2<f32>(0.0), vec2<f32>(1.0));
+    let edge_falloff = clamp(u.params1.x, 0.0, 1.0);
+    let wet = clamp(u.params1.y, 0.0, 1.0);
+    var dir = vec2<f32>(cos(angle), sin(angle));
+    let radial = uv - center;
+    if (mode == 1u || mode == 2u) {
+      dir = normalize(radial + vec2<f32>(0.0001));
+    } else if (mode == 3u) {
+      dir = normalize(vec2<f32>(radial.x * 0.35 + radial.y, radial.y * 0.35 - radial.x) + vec2<f32>(0.0001));
+    }
+    let dist = clamp(length(radial) * 1.4142, 0.0, 1.0);
+    let edge_gain = mix(1.0, smoothstep(0.05, 1.0, dist), edge_falloff);
+    let px_amount = amount * mix(18.0, 40.0, step(2.0, f32(mode))) * edge_gain;
+    let off = dir * (px_amount / max(vec2<f32>(1.0), u.resolution_time.xy));
+    let shifted = vec3<f32>(
+      sample_rgb(uv + off).r,
+      sample_rgb(uv).g,
+      sample_rgb(uv - off).b,
+    );
+    return vec4<f32>(mix(color, shifted, wet), src.a);
+  }
+  if (code == 16u) {
+    let intensity = clamp(amount, 0.0, 1.0);
+    let speed = max(0.0, u.params0.x);
+    let block_size = clamp(u.params0.y, 0.0, 1.0);
+    let rgb_split = clamp(u.params0.z, 0.0, 1.0);
+    let jitter = clamp(u.params0.w, 0.0, 1.0);
+    let vertical_slice = clamp(u.params1.x, 0.0, 1.0);
+    let block_hold = clamp(u.params1.y, 0.0, 1.0);
+    let tear_chance = clamp(u.params1.z, 0.0, 1.0);
+    let t = floor(u.resolution_time.z * mix(8.0, 28.0, speed) / max(0.08, block_hold + 0.08));
+    let row_count = mix(12.0, 96.0, 1.0 - block_size);
+    let row = floor(uv.y * row_count);
+    let block = vec2<f32>(row, t);
+    let row_hit = step(1.0 - intensity * 0.45, hash21(block));
+    let tear_hit = step(1.0 - tear_chance * intensity, hash21(block + vec2<f32>(19.1, 4.7)));
+    let slice_gate = mix(1.0, step(0.5, hash21(vec2<f32>(floor(uv.x * 10.0), t + 3.0))), vertical_slice);
+    let shift = (hash21(block + vec2<f32>(2.7, 8.3)) - 0.5) * 0.18 * intensity * row_hit * slice_gate;
+    let fine = (value_noise2d(vec2<f32>(uv.y * 160.0, t)) - 0.5) * 0.025 * jitter * intensity;
+    let tear = tear_hit * intensity * 0.08 * sign(hash21(block + vec2<f32>(7.0, 11.0)) - 0.5);
+    let warped_uv = uv + vec2<f32>(shift + fine + tear, 0.0);
+    let split = rgb_split * intensity * (0.004 + row_hit * 0.018 + tear_hit * 0.04);
+    let r = sample_rgb(warped_uv + vec2<f32>(split, 0.0)).r;
+    let g = sample_rgb(warped_uv).g;
+    let b = sample_rgb(warped_uv - vec2<f32>(split, 0.0)).b;
+    var rgb = vec3<f32>(r, g, b);
+    let block_noise = (hash21(floor(warped_uv * vec2<f32>(24.0, row_count)) + vec2<f32>(t)) - 0.5) * intensity * row_hit;
+    rgb += block_noise * vec3<f32>(0.22, -0.04, 0.18);
+    return vec4<f32>(mix(color, rgb, intensity), src.a);
+  }
   return src;
 }
 
@@ -343,15 +534,70 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
   const mix = clampNumber(options.mix ?? 1, 0, 1, 1);
   const frameIndex = Math.max(0, Math.round(options.frameIndex ?? 0));
   const params = options.params ?? {};
-  const vignetteDefaults = options.effect === 'vignette';
-  const scale = clampNumber(params.scale ?? params.param0 ?? params.mode ?? params.softness ?? (vignetteDefaults ? 0.4 : 0.42), 0, 64, vignetteDefaults ? 0.4 : 0.42);
-  const seed = clampNumber(params.seed ?? params.param1 ?? params.gridLines ?? params.roundness ?? (vignetteDefaults ? 0.5 : 0), -100000, 100000, vignetteDefaults ? 0.5 : 0);
-  const param2 = clampNumber(params.param2 ?? params.animSpeed ?? params.shape ?? 0, -100000, 100000, 0);
-  const param3 = clampNumber(params.param3 ?? params.animAmount ?? params.aspect ?? (vignetteDefaults ? 1 : 0), -100000, 100000, vignetteDefaults ? 1 : 0);
-  const param4 = clampNumber(params.param4 ?? params.centerX ?? (vignetteDefaults ? 0.5 : 0), -100000, 100000, vignetteDefaults ? 0.5 : 0);
-  const param5 = clampNumber(params.param5 ?? params.centerY ?? (vignetteDefaults ? 0.5 : 0), -100000, 100000, vignetteDefaults ? 0.5 : 0);
-  const param6 = clampNumber(params.param6 ?? params.tintAmount ?? 0, -100000, 100000, 0);
-  const param7 = clampNumber(params.param7 ?? params.breathing ?? 0, -100000, 100000, 0);
+  let param0 = clampNumber(params.scale ?? params.param0 ?? params.mode ?? 0.42, 0, 64, 0.42);
+  let param1 = clampNumber(params.seed ?? params.param1 ?? params.gridLines ?? 0, -100000, 100000, 0);
+  let param2 = clampNumber(params.param2 ?? params.animSpeed ?? 0, -100000, 100000, 0);
+  let param3 = clampNumber(params.param3 ?? params.animAmount ?? 0, -100000, 100000, 0);
+  let param4 = clampNumber(params.param4 ?? params.centerX ?? 0, -100000, 100000, 0);
+  let param5 = clampNumber(params.param5 ?? params.centerY ?? 0, -100000, 100000, 0);
+  let param6 = clampNumber(params.param6 ?? params.tintAmount ?? 0, -100000, 100000, 0);
+  let param7 = clampNumber(params.param7 ?? params.breathing ?? 0, -100000, 100000, 0);
+
+  if (options.effect === 'vignette') {
+    param0 = clampNumber(params.softness ?? params.param0, 0, 2, 0.4);
+    param1 = clampNumber(params.roundness ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.shape ?? params.param2, 0, 3, 0);
+    param3 = clampNumber(params.aspect ?? params.param3, 0.1, 4, 1);
+    param4 = clampNumber(params.centerX ?? params.param4, -2, 3, 0.5);
+    param5 = clampNumber(params.centerY ?? params.param5, -2, 3, 0.5);
+    param6 = clampNumber(params.tintAmount ?? params.param6, 0, 1, 0);
+    param7 = clampNumber(params.breathing ?? params.param7, 0, 1, 0);
+  } else if (options.effect === 'rgb-shift') {
+    param0 = clampNumber(params.angle ?? params.param0, 0, 360, 0);
+    param1 = clampNumber(params.mode ?? params.param1, 0, 4, 0);
+    param2 = clampNumber(params.centerX ?? params.param2, 0, 1, 0.5);
+    param3 = clampNumber(params.centerY ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.prismSpread ?? params.param4, 0, 3, 1);
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'scanlines') {
+    param0 = clampNumber(params.count ?? params.param0, 1, 1200, 200);
+    param1 = clampNumber(params.speed ?? params.param1, -4, 4, 0);
+    param2 = clampNumber(params.phosphor ?? params.param2, 0, 1, 0);
+    param3 = clampNumber(params.rollingBar ?? params.param3, 0, 1, 0);
+    param4 = clampNumber(params.curvature ?? params.param4, 0, 1, 0);
+    param5 = clampNumber(params.interlace ?? params.param5, 0, 1, 0);
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'blur') {
+    param0 = clampNumber(params.mode ?? params.param0, 0, 3, 1);
+    param1 = clampNumber(params.angle ?? params.param1, 0, 360, 0);
+    param2 = clampNumber(params.param2, 0, 2, 1);
+    param3 = clampNumber(params.edgeProtect ?? params.param3, 0, 1, 0.3);
+    param4 = clampNumber(params.outputMix ?? params.param4, 0, 1, 1);
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'chromatic-aberration') {
+    param0 = clampNumber(params.mode ?? params.param0, 0, 3, 1);
+    param1 = clampNumber(params.angle ?? params.param1, 0, 360, 0);
+    param2 = clampNumber(params.centerX ?? params.param2, 0, 1, 0.5);
+    param3 = clampNumber(params.centerY ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.edgeFalloff ?? params.param4, 0, 1, 0.5);
+    param5 = clampNumber(params.outputMix ?? params.param5, 0, 1, 1);
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'glitch') {
+    param0 = clampNumber(params.speed ?? params.param0, 0, 4, 1);
+    param1 = clampNumber(params.blockSize ?? params.param1, 0, 1, 0.3);
+    param2 = clampNumber(params.rgbSplit ?? params.param2, 0, 1, 0.5);
+    param3 = clampNumber(params.jitter ?? params.param3, 0, 1, 0.3);
+    param4 = clampNumber(params.verticalSlice ?? params.param4, 0, 1, 0);
+    param5 = clampNumber(params.blockHold ?? params.param5, 0, 1, 0.3);
+    param6 = clampNumber(params.tearChance ?? params.param6, 0, 1, 0);
+    param7 = clampNumber(params.triggerMode ?? params.param7, 0, 3, 0);
+  }
   return [
     width,
     height,
@@ -361,8 +607,8 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     amount,
     mix,
     frameIndex,
-    scale,
-    seed,
+    param0,
+    param1,
     param2,
     param3,
     param4,
