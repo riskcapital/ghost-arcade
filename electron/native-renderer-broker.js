@@ -72,7 +72,6 @@ const BROKER_UNSUPPORTED_COMMANDS = new Map([
   ['native_renderer_set_decode_policy', 'legacy decode policy API is not implemented by this core'],
   ['native_renderer_set_prefetch_policy', 'legacy prefetch policy API is not implemented by this core'],
   ['native_renderer_get_decode_capabilities', 'native decode capabilities are not implemented yet'],
-  ['native_renderer_set_output_window', 'legacy output window API is not implemented by this core'],
 ]);
 
 export function nativeRendererCommandNames() {
@@ -182,6 +181,8 @@ class NativeRendererBroker {
         return this.sendIfRunning('attach_output_window', args, { fallback: null });
       case 'native_renderer_detach_output_window':
         return this.sendIfRunning('detach_output_window', args, { fallback: null });
+      case 'native_renderer_set_output_window':
+        return this.sendIfRunning('set_output_window', args, { fallback: null });
       default:
         if (BROKER_UNSUPPORTED_COMMANDS.has(command)) {
           return Promise.reject(this.unsupportedError(command));
@@ -872,6 +873,7 @@ function makeDefaultCapabilities(overrides = {}) {
       media_prefetch: false,
       present_policy: false,
       managed_output_attach: false,
+      managed_output_window_control: false,
       native_recording: false,
       native_stage3d: false,
       native_projection_sim: false,

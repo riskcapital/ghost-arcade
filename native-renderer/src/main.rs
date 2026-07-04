@@ -17,10 +17,10 @@ use serde_json::{Value, json};
 use wgpu::util::{DeviceExt, TextureBlitter, TextureBlitterBuilder};
 use winit::{
     application::ApplicationHandler,
-    dpi::{LogicalSize, PhysicalSize},
+    dpi::{LogicalPosition, LogicalSize, PhysicalSize},
     event::WindowEvent,
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    window::{Window, WindowAttributes, WindowId},
+    window::{Fullscreen, Window, WindowAttributes, WindowId},
 };
 
 const MAX_SCENE_LAYERS: usize = 64;
@@ -70,6 +70,7 @@ const CORE_RPC_METHODS: &[&str] = &[
     "submit_batch",
     "submit_commands",
     "set_output",
+    "set_output_window",
     "set_present_policy",
     "set_command_drain_policy",
     "set_auto_present_policy",
@@ -1536,6 +1537,7 @@ impl App {
             "media_prefetch": false,
             "present_policy": true,
             "managed_output_attach": true,
+            "managed_output_window_control": true,
             "native_recording": false,
             "native_stage3d": false,
             "native_projection_sim": false
@@ -1600,7 +1602,7 @@ impl App {
                         "native_particle_field_graph"
                     ],
                     "render_target": "source_frame",
-                    "parity": "behavior-and-render-source-frame; edges/media-mode routing pending"
+                    "parity": "behavior-render-edges-and-media-source-frame-routing"
                 }
             ],
             "audio_uniform_layout": ghost_audio_uniform_layout(),
@@ -1954,6 +1956,10 @@ impl App {
                 self.apply_output_config(&req.params);
                 Ok(json!(true))
             }
+            "set_output_window" => {
+                self.apply_output_window_config(&req.params);
+                Ok(json!(self.status()))
+            }
             "set_present_policy" => {
                 self.apply_present_policy(&req.params);
                 Ok(json!(self.status()))
@@ -2106,6 +2112,69 @@ impl App {
             if attached {
                 renderer.window.request_redraw();
             }
+        }
+    }
+
+    fn apply_output_window_config(&mut self, params: &Value) {
+        let config = params.get("config").unwrap_or(params);
+        let attached = bool_at(config, &["attached"])
+            .or_else(|| bool_at(config, &["visible"]))
+            .or_else(|| bool_at(config, &["enabled"]));
+        if let Some(attached) = attached {
+            self.output_window_attached = attached;
+        }
+
+        let width = number_at(config, &["width"])
+            .or_else(|| number_at(config, &["w"]))
+            .map(|value| value.round().clamp(1.0, 32768.0) as u32);
+        let height = number_at(config, &["height"])
+            .or_else(|| number_at(config, &["h"]))
+            .map(|value| value.round().clamp(1.0, 32768.0) as u32);
+        if let (Some(width), Some(height)) = (width, height) {
+            self.pending_width = width;
+            self.pending_height = height;
+        }
+
+        let Some(renderer) = self.renderer.as_ref() else {
+            return;
+        };
+        if let Some(title) = string_at(config, &["title"]).or_else(|| string_at(config, &["label"]))
+        {
+            renderer.window.set_title(&title);
+        }
+        if let Some(resizable) = bool_at(config, &["resizable"]) {
+            renderer.window.set_resizable(resizable);
+        }
+        if let Some(decorations) =
+            bool_at(config, &["decorations"]).or_else(|| bool_at(config, &["decorated"]))
+        {
+            renderer.window.set_decorations(decorations);
+        }
+        if let (Some(width), Some(height)) = (width, height) {
+            let _ = renderer
+                .window
+                .request_inner_size(LogicalSize::new(width as f64, height as f64));
+        }
+        let x = number_at(config, &["x"]).or_else(|| number_at(config, &["left"]));
+        let y = number_at(config, &["y"]).or_else(|| number_at(config, &["top"]));
+        if let (Some(x), Some(y)) = (x, y) {
+            renderer
+                .window
+                .set_outer_position(LogicalPosition::new(x, y));
+        }
+        if let Some(fullscreen) = bool_at(config, &["fullscreen"])
+            .or_else(|| bool_at(config, &["full_screen"]))
+            .or_else(|| bool_at(config, &["borderless"]))
+        {
+            renderer.window.set_fullscreen(if fullscreen {
+                Some(Fullscreen::Borderless(None))
+            } else {
+                None
+            });
+        }
+        renderer.window.set_visible(self.output_window_attached);
+        if self.output_window_attached {
+            renderer.window.request_redraw();
         }
     }
 
