@@ -162,6 +162,40 @@ try {
     );
   }
 
+  if (outputExportExpected) {
+    const beforeLoopbackStatus = await broker.invoke('native_renderer_get_status');
+    const loopbackStatus = await broker.invoke('native_renderer_upload_source_gpu_shared_texture', {
+      source_id: 'direct-iosurface-loopback-contract',
+      width: Number(outputTexture.width),
+      height: Number(outputTexture.height),
+      shared_handle: String(outputTexture.handle),
+      platform: outputTexture.platform,
+      format: outputTexture.format,
+      handle_encoding: outputTexture.handle_encoding,
+      handle_byte_length: outputTexture.handle_byte_length,
+      seq: 1,
+    });
+    assert(
+      Number(loopbackStatus.source_frame_uploads ?? 0) >
+        Number(beforeLoopbackStatus.source_frame_uploads ?? 0),
+      `valid output IOSurface loopback did not count as a source-frame upload: ${JSON.stringify(loopbackStatus)}`,
+    );
+    assert(
+      Number(loopbackStatus.source_frame_shared_texture_uploads ?? 0) >
+        Number(beforeLoopbackStatus.source_frame_shared_texture_uploads ?? 0),
+      `valid output IOSurface loopback did not count as a shared upload: ${JSON.stringify(loopbackStatus)}`,
+    );
+    assert(
+      Number(loopbackStatus.source_frame_rejected_uploads ?? 0) ===
+        Number(beforeLoopbackStatus.source_frame_rejected_uploads ?? 0),
+      `valid output IOSurface loopback was unexpectedly rejected: ${JSON.stringify(loopbackStatus)}`,
+    );
+    assert(
+      loopbackStatus.source_frame_last_upload_transport === 'shared-texture',
+      `valid output IOSurface loopback did not preserve shared transport detail: ${JSON.stringify(loopbackStatus)}`,
+    );
+  }
+
   const beforeDirectSharedStatus = await broker.invoke('native_renderer_get_status');
   const directSharedStatus = await broker.invoke('native_renderer_upload_source_gpu_shared_texture', {
     source_id: 'direct-shared-frame-contract',
