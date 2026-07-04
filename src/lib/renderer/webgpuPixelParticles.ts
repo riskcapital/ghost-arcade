@@ -1,6 +1,6 @@
 import type { GhostGpuBufferHandle } from './gpuRuntime';
 import { getGhostGpuRuntime } from './webgpuShared';
-import { createAndWarmWgslShaderModule } from './wgsl';
+import { createAndWarmWgslShaderModule, resolveGhostWgsl } from './wgsl';
 
 /**
  * WebGPUPixelParticles — turn any 2D source (image / video / canvas
@@ -126,6 +126,11 @@ const DEPTH_MOTION_IDS: Record<PixelDepthMotion, number> = {
   'swarm': 4,
   'breathe': 5,
 };
+
+export const PIXEL_PARTICLES_NATIVE_SHADER_IDS = Object.freeze({
+  compute: 'pixel-particles/compute',
+  render: 'pixel-particles/render',
+});
 
 const COMPUTE_WGSL = /* wgsl */ `
 struct Particle {
@@ -750,6 +755,501 @@ export interface PixelParticlesStats {
   framesEncoded: number;
   particleCount: number;
   hasSource: boolean;
+}
+
+export type PixelParticlesNativeShaderStage = 'compute' | 'render';
+
+export interface PixelParticlesNativeShaderSource {
+  shaderId: string;
+  label: string;
+  stage: PixelParticlesNativeShaderStage;
+  entry: string;
+  source: string;
+}
+
+export interface PixelParticlesNativePrecompileCommand {
+  type: 'precompile_shader';
+  shader_id: string;
+  stage: PixelParticlesNativeShaderStage;
+  entry: string;
+  source: string;
+}
+
+type PixelParticlesNativeGraphBinding = {
+  binding: number;
+  resource?: string;
+  kind?: string;
+  source_id?: string;
+  allow_missing?: boolean;
+};
+
+type PixelParticlesNativeGraphBuffer = {
+  id: string;
+  kind: 'uniform' | 'storage' | 'read-only-storage';
+  byte_length: number;
+  persistent?: boolean;
+  clear?: boolean;
+  initial_b64?: string;
+};
+
+type PixelParticlesNativeGraphPass = {
+  name: string;
+  shader_id: string;
+  entry: string;
+  dispatch: [number, number, number];
+  bindings: PixelParticlesNativeGraphBinding[];
+};
+
+type PixelParticlesNativeGraphRenderPass = {
+  name: string;
+  shader_id: string;
+  vertex_entry: string;
+  fragment_entry: string;
+  target: 'source_frame';
+  source_id: string;
+  seq: number;
+  clear: boolean;
+  clear_color?: [number, number, number, number];
+  include_snapshot?: boolean;
+  blend: 'replace' | 'alpha' | 'add';
+  vertex_count: number;
+  instance_count: number;
+  bindings: PixelParticlesNativeGraphBinding[];
+};
+
+export interface PixelParticlesNativeGraphState {
+  particleCount: number;
+  mode: PixelEffectMode;
+  mediaSourceId: string;
+  prevFrameTime: number;
+}
+
+export interface PixelParticlesNativeGraphOptions {
+  sourceId: string;
+  mediaSourceId?: string | null;
+  params?: Record<string, any>;
+  width?: number;
+  height?: number;
+  sourceFrameSize?: number;
+  time?: number;
+  frameDelta?: number;
+  frameIndex?: number;
+  state?: PixelParticlesNativeGraphState | null;
+  reset?: boolean;
+  includeSnapshot?: boolean;
+}
+
+export interface PixelParticlesNativeGraphBuildResult {
+  config: {
+    buffers: PixelParticlesNativeGraphBuffer[];
+    passes: PixelParticlesNativeGraphPass[];
+    render_passes: PixelParticlesNativeGraphRenderPass[];
+    readbacks: string[];
+  };
+  sourceId: string;
+  mediaSourceId: string | null;
+  state: PixelParticlesNativeGraphState;
+  particleCount: number;
+  mode: PixelEffectMode;
+  passCount: number;
+}
+
+type PixelParticlesNativeParams = {
+  particleCount: number;
+  mode: PixelEffectMode;
+  knobs: [number, number, number, number];
+  baseSize: number;
+  opacity: number;
+  anchorJitter: number;
+  fovDeg: number;
+  cameraZ: number;
+  cameraYaw: number;
+  cameraPitch: number;
+  panX: number;
+  panY: number;
+  lightEnabled: boolean;
+  lightX: number;
+  lightY: number;
+  lightZ: number;
+  lightIntensity: number;
+  lightAmbient: number;
+  lightHeightStrength: number;
+  noiseAmpXY: number;
+  noiseAmpZ: number;
+  noiseFreq: number;
+  noiseSpeed: number;
+  depthSource: PixelDepthSource;
+  depthCurve: number;
+  depthContrast: number;
+  depthSmoothing: number;
+  depthCenter: number;
+  depthMotion: PixelDepthMotion;
+  depthMotionAmount: number;
+  depthMotionSpeed: number;
+  depthMotionScale: number;
+  depthMotionCoupling: number;
+  depthMotionPhase: number;
+  mirrorX: boolean;
+};
+
+export function getPixelParticlesNativeShaderSources(): PixelParticlesNativeShaderSource[] {
+  return [
+    {
+      shaderId: PIXEL_PARTICLES_NATIVE_SHADER_IDS.compute,
+      label: 'pixel-particles/compute',
+      stage: 'compute',
+      entry: 'cs_main',
+      source: resolveGhostWgsl(COMPUTE_WGSL, 'pixel-particles/compute'),
+    },
+    {
+      shaderId: PIXEL_PARTICLES_NATIVE_SHADER_IDS.render,
+      label: 'pixel-particles/render',
+      stage: 'render',
+      entry: 'fs_main',
+      source: resolveGhostWgsl(RENDER_WGSL, 'pixel-particles/render'),
+    },
+  ];
+}
+
+export function buildPixelParticlesNativePrecompileCommands(): PixelParticlesNativePrecompileCommand[] {
+  return getPixelParticlesNativeShaderSources().map((shader) => ({
+    type: 'precompile_shader',
+    shader_id: shader.shaderId,
+    stage: shader.stage,
+    entry: shader.entry,
+    source: shader.source,
+  }));
+}
+
+function clampFinite(value: unknown, min: number, max: number, fallback: number): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+function enumParam<T extends string>(value: unknown, allowed: Record<T, number>, fallback: T): T {
+  const key = String(value ?? '').trim() as T;
+  return Object.prototype.hasOwnProperty.call(allowed, key) ? key : fallback;
+}
+
+function pixelKnobsForMode(mode: PixelEffectMode, p: Record<string, any>): [number, number, number, number] {
+  switch (mode) {
+    case 'depth-shift':
+      return [
+        clampFinite(p.depthAmount, 0, 8, 0.6),
+        0,
+        clampFinite(p.depthSpinSpeed, -16, 16, 0),
+        clampFinite(p.depthSpinAxis, 0, 1, 0),
+      ];
+    case 'sand-fall':
+      return [
+        clampFinite(p.sandFallSpeed, 0.001, 16, 0.4),
+        clampFinite(p.sandFloorY, -16, 16, -1),
+        clampFinite(p.sandDrift, 0, 8, 0.02),
+        clampFinite(p.sandDensity, 0, 1, 1),
+      ];
+    case 'scatter':
+      return [
+        clampFinite(p.scatterAmp, 0, 8, 0.04),
+        clampFinite(p.scatterRecovery, 0, 16, 1.5),
+        clampFinite(p.scatterFreq, 0.001, 128, 4),
+        0,
+      ];
+    case 'halftone':
+      return [clampFinite(p.halftoneCellSize, 0.0001, 1, 0.012), 1, 0, 0];
+    case 'stipple-noise':
+      return [
+        clampFinite(p.stippleAmp, 0, 8, 0.008),
+        clampFinite(p.stippleFreq, 0.001, 256, 35),
+        0,
+        0,
+      ];
+    case 'dissolve':
+      return [
+        clampFinite(p.dissolveSpread, 0, 16, 1.6),
+        clampFinite(p.dissolveSpeed, 0.001, 16, 0.6),
+        clampFinite(p.dissolveSwirl, -16, 16, 0.5),
+        0,
+      ];
+    case 'identity':
+    default:
+      return [0, 0, 0, 0];
+  }
+}
+
+function normalizePixelParticlesNativeParams(raw: Record<string, any> | undefined): PixelParticlesNativeParams {
+  const src = raw ?? {};
+  const mode = enumParam(src.mode, MODE_IDS, 'depth-shift');
+  return {
+    particleCount: Math.round(clampFinite(src.particleCount, 1024, MAX_PARTICLES, DEFAULT_PARTICLES)),
+    mode,
+    knobs: pixelKnobsForMode(mode, src),
+    baseSize: clampFinite(src.baseSize, 0.0005, 0.05, 0.005),
+    opacity: clampFinite(src.opacity, 0, 1, 1),
+    anchorJitter: clampFinite(src.anchorJitter, 0, 1, 0.6),
+    fovDeg: clampFinite(src.fovDeg, 10, 120, 50),
+    cameraZ: clampFinite(src.cameraZ, 0.5, 10, 2.2),
+    cameraYaw: clampFinite(src.cameraYaw, -3600, 3600, 0),
+    cameraPitch: clampFinite(src.cameraPitch, -3600, 3600, 0),
+    panX: clampFinite(src.panX, -16, 16, 0),
+    panY: clampFinite(src.panY, -16, 16, 0),
+    lightEnabled: !!src.lightEnabled,
+    lightX: clampFinite(src.lightX, -16, 16, 1),
+    lightY: clampFinite(src.lightY, -16, 16, 1),
+    lightZ: clampFinite(src.lightZ, -16, 16, 1.5),
+    lightIntensity: clampFinite(src.lightIntensity, 0, 16, 1.5),
+    lightAmbient: clampFinite(src.lightAmbient, 0, 4, 0.25),
+    lightHeightStrength: clampFinite(src.lightHeightStrength, 0, 16, 1.5),
+    noiseAmpXY: clampFinite(src.noiseAmpXY, 0, 8, 0),
+    noiseAmpZ: clampFinite(src.noiseAmpZ, 0, 16, 0),
+    noiseFreq: clampFinite(src.noiseFreq, 0.001, 128, 4),
+    noiseSpeed: clampFinite(src.noiseSpeed, 0, 16, 0.5),
+    depthSource: enumParam(src.depthSource, DEPTH_SOURCE_IDS, 'luminance'),
+    depthCurve: clampFinite(src.depthCurve, 0.05, 4, 1),
+    depthContrast: clampFinite(src.depthContrast, 0.01, 4, 1),
+    depthSmoothing: clampFinite(src.depthSmoothing, 0, 1, 0.2),
+    depthCenter: clampFinite(src.depthCenter, 0, 1, 0.5),
+    depthMotion: enumParam(src.depthMotion, DEPTH_MOTION_IDS, 'locked'),
+    depthMotionAmount: clampFinite(src.depthMotionAmount, 0, 2, 0.08),
+    depthMotionSpeed: clampFinite(src.depthMotionSpeed, 0, 4, 0.45),
+    depthMotionScale: clampFinite(src.depthMotionScale, 0.1, 24, 3.5),
+    depthMotionCoupling: clampFinite(src.depthMotionCoupling, 0, 3, 0.7),
+    depthMotionPhase: clampFinite(src.depthMotionPhase, -100000, 100000, 0),
+    mirrorX: !!src.mirrorX,
+  };
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function bufferToBase64(buffer: ArrayBuffer): string {
+  return bytesToBase64(new Uint8Array(buffer));
+}
+
+function pixelParticlesInitialBuffer(count: number): ArrayBuffer {
+  const particleCount = Math.max(1024, Math.min(MAX_PARTICLES, Math.floor(count)));
+  const data = new Float32Array(particleCount * (PARTICLE_BYTES / 4));
+  for (let i = 0; i < particleCount; i++) {
+    data[i * 8 + 7] = 1;
+  }
+  return data.buffer;
+}
+
+function identityMat4(): Float32Array {
+  const m = new Float32Array(16);
+  m[0] = m[5] = m[10] = m[15] = 1;
+  return m;
+}
+
+function computePixelParticlesViewProjection(params: PixelParticlesNativeParams, width: number, height: number): Float32Array {
+  const aspect = Math.max(1, width) / Math.max(1, height);
+  const fov = (params.fovDeg * Math.PI) / 180;
+  const near = 0.1;
+  const far = 100;
+  const f = 1 / Math.tan(fov / 2);
+  const proj = new Float32Array(16);
+  proj[0] = f / aspect;
+  proj[5] = f;
+  proj[10] = (far + near) / (near - far);
+  proj[11] = -1;
+  proj[14] = (2 * far * near) / (near - far);
+
+  const yaw = (params.cameraYaw * Math.PI) / 180;
+  const pitch = (params.cameraPitch * Math.PI) / 180;
+  const cy = Math.cos(yaw), sy = Math.sin(yaw);
+  const cp = Math.cos(pitch), sp = Math.sin(pitch);
+  const rotY = identityMat4();
+  rotY[0] = cy; rotY[2] = sy; rotY[8] = -sy; rotY[10] = cy;
+  const rotX = identityMat4();
+  rotX[5] = cp; rotX[6] = sp; rotX[9] = -sp; rotX[10] = cp;
+  const trans = identityMat4();
+  trans[12] = params.panX;
+  trans[13] = params.panY;
+  trans[14] = -params.cameraZ;
+  return mat4Mul(proj, mat4Mul(trans, mat4Mul(rotX, rotY)));
+}
+
+function buildPixelParticlesGlobalsUniform(
+  params: PixelParticlesNativeParams,
+  time: number,
+  dt: number,
+  width: number,
+  height: number,
+  sourceFrameSize: number,
+): string {
+  const buffer = new ArrayBuffer(176);
+  const f = new Float32Array(buffer);
+  const u = new Uint32Array(buffer);
+  f[0] = time;
+  f[1] = dt;
+  u[2] = params.particleCount >>> 0;
+  u[3] = MODE_IDS[params.mode] >>> 0;
+  f[4] = params.knobs[0];
+  f[5] = params.knobs[1];
+  f[6] = params.knobs[2];
+  f[7] = params.knobs[3];
+  f[8] = sourceFrameSize;
+  f[9] = sourceFrameSize;
+  f[10] = params.anchorJitter;
+  f[11] = params.lightEnabled ? 1 : 0;
+  f[12] = params.lightX;
+  f[13] = params.lightY;
+  f[14] = params.lightZ;
+  f[15] = params.lightIntensity;
+  f[16] = params.lightAmbient;
+  f[17] = params.lightHeightStrength;
+  f[20] = params.noiseAmpXY;
+  f[21] = params.noiseAmpZ;
+  f[22] = params.noiseFreq;
+  f[23] = params.noiseSpeed;
+  const fovRad = params.fovDeg * Math.PI / 180;
+  const canvasAspect = Math.max(1, width) / Math.max(1, height);
+  const viewY = Math.tan(fovRad * 0.5) * params.cameraZ;
+  const viewX = viewY * canvasAspect;
+  f[24] = params.mirrorX ? 1 : 0;
+  f[25] = canvasAspect;
+  f[26] = viewX;
+  f[27] = viewY;
+  f[28] = params.depthSource === 'native-depth' ? DEPTH_SOURCE_IDS.luminance : DEPTH_SOURCE_IDS[params.depthSource];
+  f[29] = params.depthCurve;
+  f[30] = params.depthContrast;
+  f[31] = params.depthSmoothing;
+  f[32] = DEPTH_MOTION_IDS[params.depthMotion];
+  f[33] = params.depthMotionAmount;
+  f[34] = params.depthMotionSpeed;
+  f[35] = params.depthMotionScale;
+  f[36] = params.depthCenter;
+  f[37] = params.depthMotionCoupling;
+  f[38] = params.depthMotionPhase;
+  f[40] = 0;
+  f[41] = 0;
+  f[42] = 1;
+  return bufferToBase64(buffer);
+}
+
+function buildPixelParticlesRenderUniform(params: PixelParticlesNativeParams, width: number, height: number): string {
+  const buffer = new ArrayBuffer(96);
+  const f = new Float32Array(buffer);
+  f.set(computePixelParticlesViewProjection(params, width, height), 0);
+  f[16] = Math.max(1, width) / Math.max(1, height);
+  f[17] = params.baseSize;
+  f[18] = MODE_IDS[params.mode];
+  f[19] = params.opacity;
+  f[20] = params.mirrorX ? 1 : 0;
+  f[21] = params.particleCount;
+  f[22] = params.anchorJitter;
+  return bufferToBase64(buffer);
+}
+
+export function buildPixelParticlesNativeComputeGraph(options: PixelParticlesNativeGraphOptions): PixelParticlesNativeGraphBuildResult {
+  const params = normalizePixelParticlesNativeParams(options.params);
+  const sourceId = String(options.sourceId || 'pixel-particles-native-source');
+  const mediaSourceId = options.mediaSourceId ? String(options.mediaSourceId) : '';
+  const time = Math.max(0, Number.isFinite(options.time) ? Number(options.time) : 0);
+  const mustReset = !!options.reset
+    || !options.state
+    || options.state.particleCount !== params.particleCount
+    || options.state.mode !== params.mode
+    || options.state.mediaSourceId !== mediaSourceId;
+  const state: PixelParticlesNativeGraphState = mustReset
+    ? { particleCount: params.particleCount, mode: params.mode, mediaSourceId, prevFrameTime: time }
+    : { ...options.state!, mode: params.mode, mediaSourceId };
+  let dt = typeof options.frameDelta === 'number' && Number.isFinite(options.frameDelta)
+    ? options.frameDelta
+    : (state.prevFrameTime === 0 ? 1 / 60 : time - state.prevFrameTime);
+  dt = Math.min(Math.max(dt, 0), 0.05);
+  state.prevFrameTime = time;
+
+  const prefix = `pixel-particles:${sourceId.replace(/[^a-zA-Z0-9:_-]+/g, '_').slice(0, 160)}:${params.mode}:${params.particleCount}`;
+  const id = (name: string) => `${prefix}:${name}`;
+  const width = Math.round(options.width || 1920);
+  const height = Math.round(options.height || 1080);
+  const sourceFrameSize = Math.max(1, Math.round(options.sourceFrameSize || Math.max(width, height)));
+  const sourceTextureBinding: PixelParticlesNativeGraphBinding = mediaSourceId
+    ? { binding: 2, kind: 'source-frame-texture', source_id: mediaSourceId }
+    : { binding: 2, kind: 'source-frame-texture', allow_missing: true };
+
+  const buffers: PixelParticlesNativeGraphBuffer[] = [
+    {
+      id: id('globals'),
+      kind: 'uniform',
+      byte_length: 176,
+      initial_b64: buildPixelParticlesGlobalsUniform(params, time, dt, width, height, sourceFrameSize),
+    },
+    {
+      id: id('render-uniform'),
+      kind: 'uniform',
+      byte_length: 96,
+      initial_b64: buildPixelParticlesRenderUniform(params, width, height),
+    },
+    {
+      id: id('particles'),
+      kind: 'storage',
+      byte_length: params.particleCount * PARTICLE_BYTES,
+      persistent: true,
+      clear: mustReset,
+      initial_b64: mustReset ? bufferToBase64(pixelParticlesInitialBuffer(params.particleCount)) : undefined,
+    },
+  ];
+  const passes: PixelParticlesNativeGraphPass[] = [
+    {
+      name: 'pixel-particles-compute',
+      shader_id: PIXEL_PARTICLES_NATIVE_SHADER_IDS.compute,
+      entry: 'cs_main',
+      dispatch: [Math.ceil(params.particleCount / 64), 1, 1],
+      bindings: [
+        { binding: 0, resource: id('particles'), kind: 'storage' },
+        { binding: 1, resource: id('globals'), kind: 'uniform' },
+        sourceTextureBinding,
+        { binding: 3, kind: 'source-frame-sampler' },
+        { binding: 4, kind: 'source-frame-texture', allow_missing: true },
+      ],
+    },
+  ];
+  const renderPasses: PixelParticlesNativeGraphRenderPass[] = [
+    {
+      name: 'pixel-particles-render',
+      shader_id: PIXEL_PARTICLES_NATIVE_SHADER_IDS.render,
+      vertex_entry: 'vs_main',
+      fragment_entry: 'fs_main',
+      target: 'source_frame',
+      source_id: sourceId,
+      seq: Math.max(0, Math.round(options.frameIndex ?? 0)),
+      clear: true,
+      clear_color: [0, 0, 0, 0],
+      include_snapshot: !!options.includeSnapshot,
+      blend: 'alpha',
+      vertex_count: 6,
+      instance_count: params.particleCount,
+      bindings: [
+        { binding: 0, resource: id('particles'), kind: 'read-only-storage' },
+        { binding: 1, resource: id('render-uniform'), kind: 'uniform' },
+        sourceTextureBinding,
+        { binding: 3, kind: 'source-frame-sampler' },
+      ],
+    },
+  ];
+
+  return {
+    config: {
+      buffers,
+      passes,
+      render_passes: renderPasses,
+      readbacks: [],
+    },
+    sourceId,
+    mediaSourceId: mediaSourceId || null,
+    state,
+    particleCount: params.particleCount,
+    mode: params.mode,
+    passCount: passes.length + renderPasses.length,
+  };
 }
 
 export class WebGPUPixelParticles {

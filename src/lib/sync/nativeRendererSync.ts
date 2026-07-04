@@ -28,6 +28,11 @@ import {
   type ParticleFieldNativeGraphState,
 } from '$lib/renderer/webgpuParticleField';
 import {
+  buildPixelParticlesNativeComputeGraph,
+  buildPixelParticlesNativePrecompileCommands,
+  type PixelParticlesNativeGraphState,
+} from '$lib/renderer/webgpuPixelParticles';
+import {
   buildFlythroughNativeComputeGraph,
   buildFlythroughNativePrecompileCommands,
   type FlythroughNativeGraphState,
@@ -127,7 +132,7 @@ type NativeRenderClockCommand = {
 
 export type PresentPolicyProfile = 'vsync-live' | 'low-latency-safe' | 'low-latency-aggressive';
 
-type NativeGraphRouteKind = 'planet' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud' | 'flythrough';
+type NativeGraphRouteKind = 'planet' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud' | 'flythrough' | 'pixel-particles';
 type NativeGraphRouteSimulationState =
   | PlanetNativeGraphState
   | Smoke3DNativeGraphState
@@ -135,7 +140,8 @@ type NativeGraphRouteSimulationState =
   | ParticleFieldNativeGraphState
   | VolumetricSpheresNativeGraphState
   | SmokeRidersNativeGraphState
-  | FlythroughNativeGraphState;
+  | FlythroughNativeGraphState
+  | PixelParticlesNativeGraphState;
 
 type NativeGraphLayerRoute = {
   kind: NativeGraphRouteKind;
@@ -946,6 +952,7 @@ export class NativeRendererSync {
 
   private nativeGraphInputSourceForLayer(layer: Layer, kind: NativeGraphRouteKind): NativeLayerSource | null {
     if (kind === 'flythrough') return this.nativeGraphSourceParamForLayer(layer);
+    if (kind === 'pixel-particles') return this.nativeGraphSourceParamForLayer(layer);
     if (kind !== 'particle-field') return null;
     const params = layer.gpuLayerContent?.params ?? {};
     const mode = String(params.mode ?? '').trim().toLowerCase();
@@ -1001,6 +1008,12 @@ export class NativeRendererSync {
       this.supportsNativeGraphInstrument('flythrough')
     ) {
       kind = 'flythrough';
+    } else if (
+      normalizedShaderId === 'pixel-particles' &&
+      this.supportsNativeFeature('native_pixel_particles_graph') &&
+      this.supportsNativeGraphInstrument('pixel-particles')
+    ) {
+      kind = 'pixel-particles';
     }
     if (!kind) return null;
     const inputSource = this.nativeGraphInputSourceForLayer(layer, kind);
@@ -1012,6 +1025,9 @@ export class NativeRendererSync {
       return null;
     }
     if (kind === 'flythrough' && !inputSource) {
+      return null;
+    }
+    if (kind === 'pixel-particles' && !inputSource) {
       return null;
     }
     const source = nativeGraphOutputSource(layer, kind);
@@ -1159,6 +1175,21 @@ export class NativeRendererSync {
               reset: !routeState.state,
             });
           }
+          if (route.kind === 'pixel-particles') {
+            return buildPixelParticlesNativeComputeGraph({
+              sourceId: route.source.id,
+              mediaSourceId: route.inputSource?.id ?? null,
+              params: nativeGraphParams,
+              width,
+              height,
+              sourceFrameSize: this.nativeSourceFrameSize,
+              time: graphTime,
+              frameDelta: graphDelta,
+              frameIndex: graphSeq,
+              state: routeState.state as PixelParticlesNativeGraphState | null,
+              reset: !routeState.state,
+            });
+          }
           return buildVolumetricSpheresNativeComputeGraph({
             sourceId: route.source.id,
             params: nativeGraphParams,
@@ -1278,6 +1309,10 @@ export class NativeRendererSync {
       (
         this.supportsNativeFeature('native_flythrough_graph') &&
         this.supportsNativeGraphInstrument('flythrough')
+      ) ||
+      (
+        this.supportsNativeFeature('native_pixel_particles_graph') &&
+        this.supportsNativeGraphInstrument('pixel-particles')
       )
     );
     const startupQuality = startupStatus?.native_quality;
@@ -2007,6 +2042,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     commands.push(...buildParticleFieldNativePrecompileCommands());
     commands.push(...buildVolumetricSpheresNativePrecompileCommands());
     commands.push(...buildFlythroughNativePrecompileCommands());
+    commands.push(...buildPixelParticlesNativePrecompileCommands());
     await submitNativeRendererBatch({
       frame_id: ++this.frameId,
       commands,

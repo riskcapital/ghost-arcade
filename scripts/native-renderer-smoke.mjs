@@ -535,6 +535,9 @@ async function main() {
     if (!capabilities.native_graph_instruments?.includes('flythrough')) {
       throw new Error(`native graph instrument manifest missing flythrough: ${JSON.stringify(capabilities)}`);
     }
+    if (!capabilities.native_graph_instruments?.includes('pixel-particles')) {
+      throw new Error(`native graph instrument manifest missing pixel-particles: ${JSON.stringify(capabilities)}`);
+    }
     const smokeManifest = capabilities.native_graph_instrument_manifest?.find((entry) => entry?.id === 'smoke-3d');
     const planetManifest = capabilities.native_graph_instrument_manifest?.find((entry) => entry?.id === 'planet');
     if (
@@ -619,6 +622,20 @@ async function main() {
       !flythroughManifest.features?.includes('native_flythrough_graph')
     ) {
       throw new Error(`native flythrough manifest entry is incomplete: ${JSON.stringify(capabilities.native_graph_instrument_manifest)}`);
+    }
+    const pixelParticlesManifest = capabilities.native_graph_instrument_manifest?.find((entry) => entry?.id === 'pixel-particles');
+    if (
+      !pixelParticlesManifest ||
+      pixelParticlesManifest.source_uri_prefix !== 'native-graph://pixel-particles/' ||
+      pixelParticlesManifest.render_target !== 'source_frame' ||
+      !pixelParticlesManifest.shader_ids?.includes('pixel-particles/compute') ||
+      !pixelParticlesManifest.shader_ids?.includes('pixel-particles/render') ||
+      !pixelParticlesManifest.features?.includes('compute_graph_instanced_render') ||
+      !pixelParticlesManifest.features?.includes('compute_graph_texture_sampling') ||
+      !pixelParticlesManifest.features?.includes('compute_graph_clear_color') ||
+      !pixelParticlesManifest.features?.includes('native_pixel_particles_graph')
+    ) {
+      throw new Error(`native pixel-particles manifest entry is incomplete: ${JSON.stringify(capabilities.native_graph_instrument_manifest)}`);
     }
     if (!capabilities.features.present_policy || !capabilities.features.managed_output_attach) {
       throw new Error(`native managed output/present capabilities missing: ${JSON.stringify(capabilities.features)}`);
