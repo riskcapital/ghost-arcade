@@ -6,6 +6,7 @@ import { isMac, isWindows } from '$lib/bridge';
 import { getVisualAudioSnapshot, visualAudio, type VisualAudioState } from '$lib/audio/visualAudio';
 import { ghostAudioCommandFieldsFromVisualAudio } from '$lib/audio/ghostAudioUniform';
 import { WGSL_STDLIB, resolveGhostWgsl } from '$lib/renderer/wgsl';
+import { gravityWellsDefaultParams } from '$lib/renderer/gpuShaderCatalog';
 import {
   buildSmoke3DNativeComputeGraph,
   buildSmoke3DNativePrecompileCommands,
@@ -645,6 +646,19 @@ function nativeSourceIdentity(source: NativeLayerSource | null | undefined): str
   return `${source.sourceType}:${source.id}:${source.uri}`;
 }
 
+function nativeGraphParamsForLayer(layer: Layer, kind: NativeGraphRouteKind): Record<string, any> {
+  const params = layer.gpuLayerContent?.params ?? {};
+  const shaderId = String(layer.gpuLayerContent?.shaderId || '').trim().toLowerCase();
+  if (kind === 'particle-field' && shaderId === 'gravity-wells') {
+    return {
+      ...gravityWellsDefaultParams,
+      ...params,
+      mode: params.mode ?? gravityWellsDefaultParams.mode ?? 'gravity',
+    };
+  }
+  return params;
+}
+
 function mediaItemToNativeLayerSource(item: MediaItem): NativeLayerSource {
   const previewElement =
     item.videoElement ??
@@ -934,7 +948,7 @@ export class NativeRendererSync {
     ) {
       kind = 'smoke-riders';
     } else if (
-      normalizedShaderId === 'particle-field' &&
+      (normalizedShaderId === 'particle-field' || normalizedShaderId === 'gravity-wells') &&
       this.supportsNativeFeature('native_particle_field_graph') &&
       this.supportsNativeGraphInstrument('particle-field')
     ) {
@@ -1009,10 +1023,11 @@ export class NativeRendererSync {
         const graph = (() => {
           const audioBass = visual.isActive ? Math.max(visual.bass, visual.bassFast * 0.9) : 0;
           const audioTreble = visual.isActive ? visual.treble : 0;
+          const nativeGraphParams = nativeGraphParamsForLayer(layer, route.kind);
           if (route.kind === 'smoke-3d') {
             return buildSmoke3DNativeComputeGraph({
               sourceId: route.source.id,
-              params: layer.gpuLayerContent?.params ?? {},
+              params: nativeGraphParams,
               width,
               height,
               time: graphTime,
@@ -1027,7 +1042,7 @@ export class NativeRendererSync {
           if (route.kind === 'particle-field') {
             return buildParticleFieldNativeComputeGraph({
               sourceId: route.source.id,
-              params: layer.gpuLayerContent?.params ?? {},
+              params: nativeGraphParams,
               width,
               height,
               time: graphTime,
@@ -1043,7 +1058,7 @@ export class NativeRendererSync {
           if (route.kind === 'smoke-riders') {
             return buildSmokeRidersNativeComputeGraph({
               sourceId: route.source.id,
-              params: layer.gpuLayerContent?.params ?? {},
+              params: nativeGraphParams,
               width,
               height,
               time: graphTime,
@@ -1057,7 +1072,7 @@ export class NativeRendererSync {
           }
           return buildVolumetricSpheresNativeComputeGraph({
             sourceId: route.source.id,
-            params: layer.gpuLayerContent?.params ?? {},
+            params: nativeGraphParams,
             width,
             height,
             time: graphTime,

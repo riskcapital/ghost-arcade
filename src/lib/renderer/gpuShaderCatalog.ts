@@ -136,7 +136,7 @@ const SMOKE_RIDERS_DEF: GpuShaderDef = {
   },
 };
 
-const gravityWellsDefaultParams: Record<string, any> = {
+export const gravityWellsDefaultParams: Record<string, any> = {
   ...particleFieldParamDefaults,
   mode: 'gravity',
   particleCount: 140000,
