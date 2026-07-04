@@ -374,6 +374,10 @@ export interface RendererStatus {
   source_frame_last_upload_height: number;
   source_frame_last_upload_transport: string;
   source_frame_last_reject_reason: string;
+  native_image_decodes: number;
+  native_image_decode_failures: number;
+  native_image_decode_bytes_uploaded: number;
+  native_image_decode_last_error: string;
   native_instrument_frame_renders: number;
   compute_graph_runs: number;
   compute_graph_passes: number;
@@ -594,6 +598,10 @@ export interface RendererStats {
   source_frame_last_upload_height: number;
   source_frame_last_upload_transport: string;
   source_frame_last_reject_reason: string;
+  native_image_decodes: number;
+  native_image_decode_failures: number;
+  native_image_decode_bytes_uploaded: number;
+  native_image_decode_last_error: string;
   native_shader_renders: number;
   native_instrument_frame_renders: number;
   render_clock_updates: number;

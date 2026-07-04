@@ -477,6 +477,12 @@ class NativeRendererBroker {
         'native frame snapshots can feed the desktop JPEG sequence encoder',
       ],
       [
+        'native-static-image-decode',
+        'Native still-image decode',
+        !!features.native_static_image_decode,
+        'local PNG/JPEG/WebP stills should decode into native source-frame textures',
+      ],
+      [
         'native-mp4-frame-encoder',
         'Native MP4 frame encoder',
         !!features.native_mp4_frame_encoder && !!nativeFrameEncoder.available,
@@ -1071,6 +1077,16 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     source_frame_last_reject_reason: String(
       status.source_frame_last_reject_reason ?? previous.source_frame_last_reject_reason ?? 'none',
     ),
+    native_image_decodes: Number(status.native_image_decodes ?? previous.native_image_decodes ?? 0),
+    native_image_decode_failures: Number(
+      status.native_image_decode_failures ?? previous.native_image_decode_failures ?? 0,
+    ),
+    native_image_decode_bytes_uploaded: Number(
+      status.native_image_decode_bytes_uploaded ?? previous.native_image_decode_bytes_uploaded ?? 0,
+    ),
+    native_image_decode_last_error: String(
+      status.native_image_decode_last_error ?? previous.native_image_decode_last_error ?? 'none',
+    ),
     native_instrument_frame_renders: Number(status.native_instrument_frame_renders ?? previous.native_instrument_frame_renders ?? 0),
     compute_graph_runs: Number(status.compute_graph_runs ?? previous.compute_graph_runs ?? 0),
     compute_graph_passes: Number(status.compute_graph_passes ?? previous.compute_graph_passes ?? 0),
@@ -1297,6 +1313,16 @@ function normalizeStats(stats, previous = makeDefaultStats()) {
     source_frame_last_reject_reason: String(
       stats.source_frame_last_reject_reason ?? previous.source_frame_last_reject_reason ?? 'none',
     ),
+    native_image_decodes: Number(stats.native_image_decodes ?? previous.native_image_decodes ?? 0),
+    native_image_decode_failures: Number(
+      stats.native_image_decode_failures ?? previous.native_image_decode_failures ?? 0,
+    ),
+    native_image_decode_bytes_uploaded: Number(
+      stats.native_image_decode_bytes_uploaded ?? previous.native_image_decode_bytes_uploaded ?? 0,
+    ),
+    native_image_decode_last_error: String(
+      stats.native_image_decode_last_error ?? previous.native_image_decode_last_error ?? 'none',
+    ),
     avg_render_cpu_ms: Number(stats.avg_render_cpu_ms ?? previous.avg_render_cpu_ms ?? 0),
     gpu_timing_supported: !!(stats.gpu_timing_supported ?? previous.gpu_timing_supported ?? false),
     last_render_gpu_ms: Number(stats.last_render_gpu_ms ?? previous.last_render_gpu_ms ?? 0),
@@ -1394,6 +1420,7 @@ function makeDefaultCapabilities(overrides = {}) {
       source_frame_file_handoff: false,
       source_frame_mips: false,
       source_frame_hdr: false,
+      native_static_image_decode: false,
       runtime_cache_clear: false,
       native_graph_buffer_prune: false,
       compute_shader_host: false,
@@ -1510,6 +1537,10 @@ function makeDefaultStatus(overrides = {}) {
     source_frame_last_upload_height: 0,
     source_frame_last_upload_transport: 'none',
     source_frame_last_reject_reason: 'none',
+    native_image_decodes: 0,
+    native_image_decode_failures: 0,
+    native_image_decode_bytes_uploaded: 0,
+    native_image_decode_last_error: 'none',
     native_instrument_frame_renders: 0,
     compute_graph_runs: 0,
     compute_graph_passes: 0,
@@ -1567,6 +1598,10 @@ function makeDefaultStatus(overrides = {}) {
     source_frame_last_upload_height: 0,
     source_frame_last_upload_transport: 'none',
     source_frame_last_reject_reason: 'none',
+    native_image_decodes: 0,
+    native_image_decode_failures: 0,
+    native_image_decode_bytes_uploaded: 0,
+    native_image_decode_last_error: 'none',
     native_shader_renders: 0,
     native_instrument_frame_renders: 0,
     render_clock_mode: 'live',
@@ -1829,6 +1864,10 @@ function makeDefaultStats() {
     source_frame_last_upload_height: 0,
     source_frame_last_upload_transport: 'none',
     source_frame_last_reject_reason: 'none',
+    native_image_decodes: 0,
+    native_image_decode_failures: 0,
+    native_image_decode_bytes_uploaded: 0,
+    native_image_decode_last_error: 'none',
     native_shader_renders: 0,
     native_instrument_frame_renders: 0,
     render_clock_updates: 0,
