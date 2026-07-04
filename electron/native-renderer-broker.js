@@ -246,8 +246,7 @@ class NativeRendererBroker {
     if (!sourceId) {
       return Promise.reject(new Error('native shared texture source-frame upload requires source_id'));
     }
-    const command = {
-      type: 'upload_source_frame',
+    const payload = {
       source_id: sourceId,
       width: Number(args.width ?? 0),
       height: Number(args.height ?? 0),
@@ -262,6 +261,21 @@ class NativeRendererBroker {
       shared_texture_sender_name:
         args.shared_texture_sender_name ?? args.sender_name ?? args.senderName,
       seq: Number(args.seq ?? args.frame ?? 0),
+    };
+    if ((this.capabilities?.implemented_methods ?? []).includes('upload_source_gpu_shared_texture')) {
+      try {
+        const result = await this.send('upload_source_gpu_shared_texture', payload, { timeoutMs: 2500 });
+        this.lastStatus = normalizeStatus(result, this.lastStatus);
+        return this.lastStatus;
+      } catch (err) {
+        if (!String(err?.message || err).includes('unsupported native render-core RPC method')) {
+          throw err;
+        }
+      }
+    }
+    const command = {
+      type: 'upload_source_frame',
+      ...payload,
     };
     await this.sendNativeCommandPayloadIfRunning('submit_commands', { commands: [command] }, {
       fallback: null,
