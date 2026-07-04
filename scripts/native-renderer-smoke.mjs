@@ -457,6 +457,7 @@ async function main() {
       !capabilities.features.compute_graph_render ||
       !capabilities.features.compute_graph_multi_render ||
       !capabilities.features.compute_graph_instanced_render ||
+      !capabilities.features.compute_graph_indirect_render ||
       !capabilities.features.compute_graph_source_frame_target ||
       !capabilities.features.persistent_compute_buffers ||
       !capabilities.features.native_3d_smoke_graph ||
@@ -477,6 +478,7 @@ async function main() {
       smokeManifest.render_target !== 'source_frame' ||
       !smokeManifest.features?.includes('compute_graph_multi_render') ||
       !smokeManifest.features?.includes('compute_graph_instanced_render') ||
+      !smokeManifest.features?.includes('compute_graph_indirect_render') ||
       !smokeManifest.features?.includes('compute_graph_source_frame_target')
     ) {
       throw new Error(`native graph instrument manifest entry is incomplete: ${JSON.stringify(capabilities.native_graph_instrument_manifest)}`);
@@ -651,6 +653,7 @@ async function main() {
         { id: 'graph-multi-uniform', kind: 'uniform', initial_u32: [256, 13531, 8, 5] },
         { id: 'graph-multi-scratch', kind: 'storage', byte_length: 1024 },
         { id: 'graph-multi-output', kind: 'storage', byte_length: 1024 },
+        { id: 'graph-multi-indirect', kind: 'storage', indirect: true, initial_u32: [3, 2, 0, 0] },
       ],
       passes: [
         {
@@ -690,6 +693,20 @@ async function main() {
           ],
         },
         {
+          name: 'multi-render-indirect',
+          shader_id: 'native-compute-graph-render',
+          vertex_entry: 'vs_main',
+          fragment_entry: 'fs_main',
+          target: 'snapshot',
+          clear: false,
+          include_snapshot: true,
+          blend: 'add',
+          draw_indirect_buffer: 'graph-multi-indirect',
+          bindings: [
+            { binding: 0, resource: 'graph-multi-output', kind: 'read-only-storage' },
+          ],
+        },
+        {
           name: 'multi-render-add',
           shader_id: 'native-compute-graph-render',
           vertex_entry: 'vs_main',
@@ -706,13 +723,15 @@ async function main() {
         },
       ],
     }, 5000);
-    if (computeGraphMultiRender?.render || computeGraphMultiRender?.renders?.length !== 2) {
+    if (computeGraphMultiRender?.render || computeGraphMultiRender?.renders?.length !== 3) {
       throw new Error(`native compute graph multi-render response shape is wrong: ${JSON.stringify(computeGraphMultiRender)}`);
     }
     if (
       computeGraphMultiRender.renders[0]?.blend !== 'replace' ||
-      computeGraphMultiRender.renders[1]?.blend !== 'add' ||
-      Number(computeGraphMultiRender.renders[1]?.instance_count ?? 0) !== 2 ||
+      computeGraphMultiRender.renders[1]?.draw !== 'indirect' ||
+      computeGraphMultiRender.renders[1]?.indirect_buffer !== 'graph-multi-indirect' ||
+      computeGraphMultiRender.renders[2]?.blend !== 'add' ||
+      Number(computeGraphMultiRender.renders[2]?.instance_count ?? 0) !== 2 ||
       !computeGraphMultiRender?.render_snapshot?.checksum ||
       computeGraphMultiRender.render_snapshot.dark_frame
     ) {
@@ -1039,10 +1058,10 @@ async function main() {
     if (Number(status.compute_graph_passes ?? 0) < 8) {
       throw new Error(`native compute graph passes were not counted: ${JSON.stringify(status)}`);
     }
-    if (Number(status.compute_graph_render_passes ?? 0) < 4) {
+    if (Number(status.compute_graph_render_passes ?? 0) < 5) {
       throw new Error(`native compute graph render passes were not counted: ${JSON.stringify(status)}`);
     }
-    if (Number(status.compute_graph_snapshot_renders ?? 0) < 3) {
+    if (Number(status.compute_graph_snapshot_renders ?? 0) < 4) {
       throw new Error(`native compute graph snapshot renders were not counted: ${JSON.stringify(status)}`);
     }
     if (Number(status.compute_graph_source_frame_renders ?? 0) < 1) {
