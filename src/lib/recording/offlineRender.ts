@@ -80,8 +80,8 @@ export interface OfflineRenderSettings {
    *  lossless), 'web' = crf 23 (smaller file), 'archive' = crf 14
    *  (close to lossless, big file). */
   quality: 'high' | 'web' | 'archive';
-  /** JPEG frame source. The desktop-only native option captures the native
-   *  renderer output directly; MP4 export still uses the WebGL compositor. */
+  /** Frame source. The desktop-only native option captures the native
+   *  renderer output directly; MP4 still uses ffmpeg.wasm for final packaging. */
   captureBackend?: 'webgl' | 'native';
 }
 
@@ -170,11 +170,39 @@ export interface NativeJpegSequenceSession {
   pixelFormat: 'rgba' | 'bgra';
 }
 
+export interface NativeJpegFrameEncoderSession {
+  jobId: string;
+  tempDir: string;
+  width: number;
+  height: number;
+  fps: number;
+  totalFrames: number;
+  pixelFormat: 'rgba' | 'bgra';
+}
+
 function rawPixelFormatForNativeTextureFormat(format: string): 'rgba' | 'bgra' {
   const normalized = String(format || '').trim().toLowerCase();
   if (normalized.includes('bgra')) return 'bgra';
   if (normalized.includes('rgba')) return 'rgba';
-  throw new Error(`Native renderer output format is not supported for JPEG sequence capture: ${format || 'unknown'}`);
+  throw new Error(`Native renderer output format is not supported for native frame capture: ${format || 'unknown'}`);
+}
+
+function coerceUint8Array(bytes: unknown): Uint8Array {
+  if (bytes instanceof Uint8Array) return bytes;
+  if (bytes instanceof ArrayBuffer) return new Uint8Array(bytes);
+  if (ArrayBuffer.isView(bytes)) {
+    return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  }
+  if (Array.isArray(bytes)) return new Uint8Array(bytes);
+  if (bytes && typeof bytes === 'object' && Array.isArray((bytes as { data?: unknown }).data)) {
+    return new Uint8Array((bytes as { data: number[] }).data);
+  }
+  throw new Error('Native JPEG encoder returned an invalid byte payload');
+}
+
+function joinNativeTempPath(dir: string, filename: string): string {
+  const separator = dir.includes('\\') ? '\\' : '/';
+  return `${dir.replace(/[\\/]+$/, '')}${separator}${filename}`;
 }
 
 function sanitizeFilenamePart(input: string, fallback = 'render'): string {
@@ -340,6 +368,103 @@ export async function writeNativeRendererJpegSequenceFrame(
   }
   await writeNativeJpegSequenceFrameFile(session, frameIndex, rawPath, true);
   return snapshot;
+}
+
+export async function startNativeJpegFrameEncoder(
+  settings: Pick<OfflineRenderSettings, 'width' | 'height' | 'fps'>,
+  totalFrames: number,
+  pixelFormat: 'rgba' | 'bgra' = 'rgba',
+): Promise<NativeJpegFrameEncoderSession> {
+  if (!isElectron) {
+    throw new Error('Native frame capture requires the desktop app.');
+  }
+  const jobId = `jpeg-frame-${generateUUID()}`;
+  const result = await invoke<{
+    success?: boolean;
+    error?: string;
+    tempDir?: string;
+    pixelFormat?: string;
+  }>('jpeg_frame_encoder_start', {
+    jobId,
+    width: settings.width,
+    height: settings.height,
+    fps: settings.fps,
+    totalFrames,
+    pixelFormat,
+  });
+  if (!result?.success || !result.tempDir) {
+    throw new Error(result?.error || 'Could not start native JPEG frame encoder');
+  }
+  return {
+    jobId,
+    tempDir: result.tempDir,
+    width: settings.width,
+    height: settings.height,
+    fps: settings.fps,
+    totalFrames,
+    pixelFormat: rawPixelFormatForNativeTextureFormat(result.pixelFormat || pixelFormat),
+  };
+}
+
+export async function encodeNativeRendererJpegFrame(
+  session: NativeJpegFrameEncoderSession,
+  frameIndex: number,
+  timeSeconds: number,
+): Promise<Uint8Array> {
+  const rawName = `native_frame_${session.jobId}_${String(frameIndex).padStart(6, '0')}.${session.pixelFormat}`;
+  const rawPath = joinNativeTempPath(session.tempDir, rawName);
+  const snapshot = await exportNativeRendererFrameSnapshot(rawPath, {
+    time: timeSeconds,
+    frame_index: frameIndex,
+  });
+  if (snapshot.width !== session.width || snapshot.height !== session.height) {
+    throw new Error(
+      `Native renderer frame ${frameIndex} size mismatch: got ${snapshot.width}x${snapshot.height}, expected ${session.width}x${session.height}`,
+    );
+  }
+  if (snapshot.dark_frame || snapshot.nonzero_pixels <= 0) {
+    throw new Error(`Native renderer exported a blank frame at ${frameIndex}`);
+  }
+  const snapshotPixelFormat = rawPixelFormatForNativeTextureFormat(snapshot.format);
+  if (snapshotPixelFormat !== session.pixelFormat) {
+    throw new Error(
+      `Native renderer frame ${frameIndex} format changed from ${session.pixelFormat} to ${snapshotPixelFormat} (${snapshot.format})`,
+    );
+  }
+
+  const result = await invoke<{
+    success?: boolean;
+    error?: string;
+    bytes?: unknown;
+    byteLength?: number;
+  }>('jpeg_frame_encoder_encode_file', {
+    jobId: session.jobId,
+    frameIndex,
+    path: rawPath,
+    pixelFormat: session.pixelFormat,
+    deleteAfterWrite: true,
+  });
+  if (!result?.success || !result.bytes) {
+    throw new Error(result?.error || `Could not encode native JPEG frame ${frameIndex}`);
+  }
+  const jpegBytes = coerceUint8Array(result.bytes);
+  if (jpegBytes.byteLength <= 0) {
+    throw new Error(`Native JPEG encoder returned an empty frame at ${frameIndex}`);
+  }
+  return jpegBytes;
+}
+
+export async function finishNativeJpegFrameEncoder(session: NativeJpegFrameEncoderSession): Promise<void> {
+  const result = await invoke<{ success?: boolean; error?: string }>('jpeg_frame_encoder_finish', {
+    jobId: session.jobId,
+  });
+  if (!result?.success) {
+    throw new Error(result?.error || 'Could not finalize native JPEG frame encoder');
+  }
+}
+
+export async function cancelNativeJpegFrameEncoder(session: NativeJpegFrameEncoderSession): Promise<void> {
+  await invoke('jpeg_frame_encoder_cancel', { jobId: session.jobId }).catch(() => {});
 }
 
 export async function finishNativeJpegSequence(session: NativeJpegSequenceSession): Promise<void> {
@@ -589,9 +714,12 @@ function createOfflineRenderStore() {
     let ffmpeg: FFmpeg | null = null;
     let frameTarget: FrameSequenceTarget | null = null;
     let nativeJpegSequence: NativeJpegSequenceSession | null = null;
+    let nativeJpegFrameEncoder: NativeJpegFrameEncoderSession | null = null;
     let nativeJpegSequenceFinished = false;
+    let nativeJpegFrameEncoderFinished = false;
     let nativeFrameCaptureActive = false;
     let nativeOutputNeedsRestore = false;
+    let nativeCapturePixelFormat: 'rgba' | 'bgra' = 'rgba';
     const frameBaseName = frameSequenceBaseName(settings.filename, 'render');
     if (outputMode === 'frames') {
       try {
@@ -627,26 +755,37 @@ function createOfflineRenderStore() {
       engine.resize(settings.width, settings.height);
       canvas.width = settings.width;
       canvas.height = settings.height;
-      if (outputMode === 'frames' && frameTarget) {
-        let jpegSequencePixelFormat: 'rgba' | 'bgra' = 'rgba';
-        if (settings.captureBackend === 'native') {
-          const caps = await getNativeRendererCapabilities();
-          if (
-            !caps?.features?.frame_snapshot_export ||
-            !caps?.features?.native_frame_sequence_export ||
-            !caps.implemented_methods?.includes('export_frame_snapshot')
-          ) {
-            throw new Error('Native frame capture is not available in this renderer build.');
-          }
-          await submitNativeRendererCommands([
-            { type: 'set_output', width: settings.width, height: settings.height, refresh_hz: settings.fps },
-          ]);
-          nativeOutputNeedsRestore = true;
-          const nativeStatus = await getNativeRendererStatus();
-          jpegSequencePixelFormat = rawPixelFormatForNativeTextureFormat(nativeStatus.output_format);
-          nativeFrameCaptureActive = true;
+      if (settings.captureBackend === 'native') {
+        const caps = await getNativeRendererCapabilities();
+        if (
+          !caps?.features?.frame_snapshot_export ||
+          !caps?.features?.native_frame_sequence_export ||
+          !caps.implemented_methods?.includes('export_frame_snapshot')
+        ) {
+          throw new Error('Native frame capture is not available in this renderer build.');
         }
-        nativeJpegSequence = await startNativeJpegSequence(frameTarget, settings, frameBaseName, totalFrames, jpegSequencePixelFormat);
+        await submitNativeRendererCommands([
+          { type: 'set_output', width: settings.width, height: settings.height, refresh_hz: settings.fps },
+        ]);
+        nativeOutputNeedsRestore = true;
+        const nativeStatus = await getNativeRendererStatus();
+        nativeCapturePixelFormat = rawPixelFormatForNativeTextureFormat(nativeStatus.output_format);
+        nativeFrameCaptureActive = true;
+      }
+      if (outputMode === 'frames' && frameTarget) {
+        nativeJpegSequence = await startNativeJpegSequence(
+          frameTarget,
+          settings,
+          frameBaseName,
+          totalFrames,
+          nativeCapturePixelFormat,
+        );
+      } else if (outputMode === 'mp4' && nativeFrameCaptureActive) {
+        nativeJpegFrameEncoder = await startNativeJpegFrameEncoder(
+          settings,
+          totalFrames,
+          nativeCapturePixelFormat,
+        );
       }
       // Let the resize settle before the first capture.
       await nextFrame();
@@ -697,7 +836,9 @@ function createOfflineRenderStore() {
           if (!ffmpeg) throw new Error('FFmpeg encoder not ready');
           // MP4 export still feeds compressed JPEG intermediates into
           // ffmpeg.wasm so the wasm heap stays below its ~2GB limit.
-          const jpegBytes = await captureFrameJPEG(engine, 0.92);
+          const jpegBytes = nativeJpegFrameEncoder && nativeFrameCaptureActive
+            ? await encodeNativeRendererJpegFrame(nativeJpegFrameEncoder, globalFrame, virtualTime)
+            : await captureFrameJPEG(engine, 0.92);
           const frameName = `frame_${String(localFrame).padStart(6, '0')}.jpg`;
           await ffmpeg.writeFile(frameName, jpegBytes);
         }
@@ -734,6 +875,10 @@ function createOfflineRenderStore() {
       }
 
       if (cancelRequested) { _finish('cancelled'); return false; }
+      if (nativeJpegFrameEncoder && !nativeJpegFrameEncoderFinished) {
+        await finishNativeJpegFrameEncoder(nativeJpegFrameEncoder);
+        nativeJpegFrameEncoderFinished = true;
+      }
 
       if (outputMode === 'frames') {
         if (!frameTarget) throw new Error('Frame export folder not ready');
@@ -833,6 +978,9 @@ function createOfflineRenderStore() {
       // normal regardless of how the render ended.
       if (nativeJpegSequence && !nativeJpegSequenceFinished) {
         await cancelNativeJpegSequence(nativeJpegSequence);
+      }
+      if (nativeJpegFrameEncoder && !nativeJpegFrameEncoderFinished) {
+        await cancelNativeJpegFrameEncoder(nativeJpegFrameEncoder);
       }
       if (nativeOutputNeedsRestore) {
         await submitNativeRendererCommands([
