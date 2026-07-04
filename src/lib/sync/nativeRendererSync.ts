@@ -163,6 +163,16 @@ type NativeEffectPassRuntime = {
   effect: NativeEffectPassId;
   descriptor: string;
   amount?: number;
+  params?: {
+    mode?: number;
+    gridLines?: number;
+    animSpeed?: number;
+    animAmount?: number;
+    scale?: number;
+    seed?: number;
+    param2?: number;
+    param3?: number;
+  };
 };
 const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<{
   kind: NativeGraphRouteKind;
@@ -457,6 +467,35 @@ function effectToNativeDescriptor(effect: any): string | null {
     const amount = Math.max(0, Math.min(1, amountRaw));
     return `noise:${amount.toFixed(4)}`;
   }
+  if (type === 'pixelate') {
+    const sizeRaw =
+      (typeof params.pixelateSize === 'number' && Number.isFinite(params.pixelateSize) ? params.pixelateSize : null)
+      ?? (typeof params.size === 'number' && Number.isFinite(params.size) ? params.size : null)
+      ?? (typeof params.amount === 'number' && Number.isFinite(params.amount) ? params.amount : null)
+      ?? 8;
+    const modeRaw =
+      (typeof params.pixelateMode === 'number' && Number.isFinite(params.pixelateMode) ? params.pixelateMode : null)
+      ?? (typeof params.mode === 'number' && Number.isFinite(params.mode) ? params.mode : null)
+      ?? 0;
+    const gridRaw =
+      (typeof params.pixelateGrid === 'number' && Number.isFinite(params.pixelateGrid) ? params.pixelateGrid : null)
+      ?? (typeof params.gridLines === 'number' && Number.isFinite(params.gridLines) ? params.gridLines : null)
+      ?? 0;
+    const animSpeedRaw =
+      (typeof params.pixelateAnimSpeed === 'number' && Number.isFinite(params.pixelateAnimSpeed) ? params.pixelateAnimSpeed : null)
+      ?? (typeof params.animSpeed === 'number' && Number.isFinite(params.animSpeed) ? params.animSpeed : null)
+      ?? 0;
+    const animAmountRaw =
+      (typeof params.pixelateAnimAmount === 'number' && Number.isFinite(params.pixelateAnimAmount) ? params.pixelateAnimAmount : null)
+      ?? (typeof params.animAmount === 'number' && Number.isFinite(params.animAmount) ? params.animAmount : null)
+      ?? 0;
+    const size = Math.max(1, Math.min(128, sizeRaw));
+    const mode = Math.max(0, Math.min(3, Math.round(modeRaw)));
+    const grid = Math.max(0, Math.min(1, gridRaw));
+    const animSpeed = Math.max(0, Math.min(4, animSpeedRaw));
+    const animAmount = Math.max(0, Math.min(1, animAmountRaw));
+    return `pixelate:${size.toFixed(4)}:${mode}:${grid.toFixed(4)}:${animSpeed.toFixed(4)}:${animAmount.toFixed(4)}`;
+  }
 
   // Keep explicit descriptor IDs compatible with native descriptor parser.
   const effectId = typeof effect.id === 'string' ? effect.id.trim() : '';
@@ -466,17 +505,27 @@ function effectToNativeDescriptor(effect: any): string | null {
 
 function nativeEffectPassFromDescriptor(descriptor: string | null): NativeEffectPassRuntime | null {
   if (!descriptor) return null;
-  const [rawId, rawAmount] = descriptor.split(':', 2);
+  const [rawId, rawAmount, rawParam0, rawParam1, rawParam2, rawParam3] = descriptor.split(':');
   const effect = rawId.trim().toLowerCase() as NativeEffectPassId;
   if (!NATIVE_EFFECT_PASS_IDS.has(effect)) return null;
   const amount = rawAmount !== undefined && rawAmount.trim().length > 0
     ? Number(rawAmount)
     : undefined;
   if (amount !== undefined && !Number.isFinite(amount)) return null;
+  const params = effect === 'pixelate'
+    ? {
+        mode: Number(rawParam0 ?? 0),
+        gridLines: Number(rawParam1 ?? 0),
+        animSpeed: Number(rawParam2 ?? 0),
+        animAmount: Number(rawParam3 ?? 0),
+      }
+    : undefined;
+  if (params && Object.values(params).some((value) => !Number.isFinite(value))) return null;
   return {
     effect,
     descriptor,
     amount,
+    params,
   };
 }
 
@@ -1522,6 +1571,7 @@ export class NativeRendererSync {
               effect: effectPass.effect,
               amount: effectPass.amount,
               mix: 1,
+              params: effectPass.params,
             })),
             width,
             height,

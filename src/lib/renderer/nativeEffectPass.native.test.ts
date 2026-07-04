@@ -141,6 +141,7 @@ describe('Native effect-pass template', () => {
       ['hue', 7],
       ['posterize', 8],
       ['noise', 9],
+      ['pixelate', 10],
     ]);
     expect(nativeEffectPassManifestEntry('posterize')).toMatchObject({
       code: 8,
@@ -204,6 +205,43 @@ describe('Native effect-pass template', () => {
     ]);
   });
 
+  it('packs native pixelate effect params into the generic param slots', () => {
+    expect(packNativeEffectPassUniforms({
+      sourceId: 'src',
+      targetSourceId: 'dst',
+      effect: 'pixelate',
+      width: 320,
+      height: 180,
+      time: 0.5,
+      frameDelta: 1 / 24,
+      frameIndex: 3,
+      amount: 12,
+      params: {
+        mode: 3,
+        gridLines: 0.25,
+        animSpeed: 0.5,
+        animAmount: 0.75,
+      },
+    })).toEqual([
+      320,
+      180,
+      0.5,
+      1 / 24,
+      10,
+      12,
+      1,
+      3,
+      3,
+      0.25,
+      0.5,
+      0.75,
+      0,
+      0,
+      0,
+      0,
+    ]);
+  });
+
   it('builds a source-frame to source-frame render graph', () => {
     const graph = buildNativeEffectPassGraph({
       sourceId: 'gpu:layer-a:source',
@@ -255,7 +293,16 @@ describe('Native effect-pass template', () => {
       intermediatePrefix: 'gpu:layer-a:chain',
       effects: [
         { effect: 'invert', amount: 1 },
-        { effect: 'grayscale', amount: 0.5 },
+        {
+          effect: 'pixelate',
+          amount: 12,
+          params: {
+            mode: 1,
+            gridLines: 0.25,
+            animSpeed: 0.5,
+            animAmount: 0.75,
+          },
+        },
       ],
       width: 1280,
       height: 720,
@@ -265,7 +312,7 @@ describe('Native effect-pass template', () => {
       seq: 900,
     });
 
-    expect(graph.effects).toEqual(['invert', 'grayscale']);
+    expect(graph.effects).toEqual(['invert', 'pixelate']);
     expect(graph.config.passes).toEqual([]);
     expect(graph.config.readbacks).toEqual([]);
     expect(graph.config.buffers).toHaveLength(2);
@@ -276,10 +323,13 @@ describe('Native effect-pass template', () => {
       seq: 900,
     });
     expect(graph.config.render_passes[1]).toMatchObject({
-      name: 'effect-pass-grayscale-2',
+      name: 'effect-pass-pixelate-2',
       source_id: 'gpu:layer-a:effect:final',
       seq: 901,
     });
+    expect(graph.config.buffers[1]).toEqual(expect.objectContaining({
+      initial_f32: expect.arrayContaining([1280, 720, 3, 1 / 60, 10, 12, 1, 180, 1, 0.25, 0.5, 0.75]),
+    }));
     expect(graph.config.render_passes[0].bindings).toEqual(expect.arrayContaining([
       { binding: 0, kind: 'source-frame-texture', source_id: 'gpu:layer-a:source' },
     ]));
@@ -463,7 +513,16 @@ describe('Native effect-pass template', () => {
         intermediatePrefix: 'native-effect-pass-chain-step',
         effects: [
           { effect: 'invert', amount: 1 },
-          { effect: 'grayscale', amount: 1 },
+          {
+            effect: 'pixelate',
+            amount: 8,
+            params: {
+              mode: 1,
+              gridLines: 0.2,
+              animSpeed: 0,
+              animAmount: 0,
+            },
+          },
         ],
         width: 160,
         height: 90,
