@@ -465,6 +465,9 @@ async function main() {
     if (capabilities.features.shared_texture_upload) {
       throw new Error(`native capabilities overstated unimplemented features: ${JSON.stringify(capabilities.features)}`);
     }
+    if (!capabilities.native_graph_instruments?.includes('smoke-3d')) {
+      throw new Error(`native graph instrument manifest missing smoke-3d: ${JSON.stringify(capabilities)}`);
+    }
     if (!capabilities.features.present_policy || !capabilities.features.managed_output_attach) {
       throw new Error(`native managed output/present capabilities missing: ${JSON.stringify(capabilities.features)}`);
     }

@@ -689,6 +689,7 @@ export class NativeRendererSync {
   private nativeWgslStdlibWarmed = false;
   private nativeCoreMethods = new Set<string>();
   private nativeFeatureFlags: Record<string, boolean> = {};
+  private nativeGraphInstruments = new Set<string>();
   private prefetchedSources = new Set<string>();
   private videoRefreshAt = new Map<string, number>();
   private sourcePreviewSeq = new Map<string, number>();
@@ -765,6 +766,10 @@ export class NativeRendererSync {
 
   private supportsNativeFeature(feature: string): boolean {
     return !!this.nativeFeatureFlags[feature];
+  }
+
+  private supportsNativeGraphInstrument(id: string): boolean {
+    return this.nativeGraphInstruments.has(String(id).trim().toLowerCase());
   }
 
   private audioSignature(audio: VisualAudioState): string {
@@ -927,11 +932,17 @@ export class NativeRendererSync {
     const startupCapabilities = await getNativeRendererCapabilities().catch(() => null);
     this.nativeCoreMethods = new Set((startupCapabilities?.implemented_methods ?? []).map(String));
     this.nativeFeatureFlags = startupCapabilities?.features ?? {};
+    this.nativeGraphInstruments = new Set(
+      (startupCapabilities?.native_graph_instruments ?? [])
+        .map((id) => String(id).trim().toLowerCase())
+        .filter(Boolean),
+    );
     this.nativeComputeGraphSourceFrames = !!(
       this.supportsNativeFeature('compute_graph_host') &&
       this.supportsNativeFeature('compute_graph_render') &&
       this.supportsNativeFeature('compute_graph_source_frame_target') &&
-      this.supportsNativeFeature('native_3d_smoke_graph')
+      this.supportsNativeFeature('native_3d_smoke_graph') &&
+      this.supportsNativeGraphInstrument('smoke-3d')
     );
     const startupQuality = startupStatus?.native_quality;
     console.log(
@@ -1033,6 +1044,7 @@ export class NativeRendererSync {
     this.previewImageLoads.clear();
     this.nativeComputeGraphSourceFrames = false;
     this.nativeGraphRoutes.clear();
+    this.nativeGraphInstruments.clear();
     this.nativeWgslStdlibWarmed = false;
     this.latestRenderClockSeconds = null;
     this.lastRenderClockSentSeconds = null;
