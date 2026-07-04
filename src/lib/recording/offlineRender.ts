@@ -189,6 +189,8 @@ export interface NativeMp4FrameEncoderSession {
   width: number;
   height: number;
   fps: number;
+  /** 0 means open-ended/live recording; positive values are validated
+   *  exactly by the native FFmpeg job on finish. */
   totalFrames: number;
   pixelFormat: 'rgba' | 'bgra';
   quality: OfflineRenderSettings['quality'];
@@ -491,6 +493,7 @@ export async function startNativeMp4FrameEncoder(
   }
   const jobId = `mp4-frame-${generateUUID()}`;
   const outputName = `${sanitizeFilenamePart(settings.filename || 'Offline Render', 'Offline_Render')}.mp4`;
+  const expectedFrames = Number.isFinite(totalFrames) && totalFrames > 0 ? Math.round(totalFrames) : 0;
   const result = await invoke<{
     success?: boolean;
     error?: string;
@@ -503,7 +506,7 @@ export async function startNativeMp4FrameEncoder(
     height: settings.height,
     fps: settings.fps,
     quality: settings.quality,
-    totalFrames,
+    totalFrames: expectedFrames,
     outputName,
     pixelFormat,
   });
@@ -517,7 +520,7 @@ export async function startNativeMp4FrameEncoder(
     width: settings.width,
     height: settings.height,
     fps: settings.fps,
-    totalFrames,
+    totalFrames: expectedFrames,
     pixelFormat: rawPixelFormatForNativeTextureFormat(result.pixelFormat || pixelFormat),
     quality: settings.quality,
   };

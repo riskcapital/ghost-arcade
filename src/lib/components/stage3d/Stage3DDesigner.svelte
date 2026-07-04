@@ -31,6 +31,7 @@
   import { buildVenue, paPresetElements, type PAPreset } from '../../stage3d/venues';
   import { DEFAULT_ATMOSPHERE, DEFAULT_LIGHTING, type Stage3DVenue, type UserStageElement } from '../../stage3d/types';
   import { startRecording as startCanvasRecording, formatRecordingDuration, type RecorderHandle } from '../../recording/recorder';
+  import { startStage3DLiveRecording } from '../../recording/stage3DLiveRecorder';
   import { invoke, isDesktopApp } from '../../bridge';
   import StageNodeProperties from './StageNodeProperties.svelte';
   import StageElementProperties from './StageElementProperties.svelte';
@@ -326,14 +327,48 @@
     toastTimer = setTimeout(() => (toastMessage = ''), 1600);
   }
 
-  function startStageRecording() {
+  async function startStageRecording() {
     if (recorderHandle) return;
     const controls = $stage3DRendererControls;
     const res = REC_RES[recRes];
+    if (!controls) { toast('Stage renderer not ready'); return; }
+
+    if (isDesktopApp) {
+      recordingDuration = 0;
+      try {
+        recorderHandle = await startStage3DLiveRecording({
+          controls,
+          width: res.w,
+          height: res.h,
+          fps: 30,
+          quality: 'high',
+          namePrefix: 'Stage Recording',
+          onDurationUpdate: (s) => { recordingDuration = s; },
+          onComplete: () => {
+            isRecording = false;
+            recorderHandle = null;
+            toast('Stage recording saved');
+          },
+          onError: (err) => {
+            isRecording = false;
+            recorderHandle = null;
+            toast(err.message || 'Recording failed');
+          },
+        });
+        if (recorderHandle) {
+          isRecording = true;
+          toast(`Stage recording started · ${res.label} native`);
+          return;
+        }
+      } catch (err) {
+        console.warn('[Stage3D] Native recording unavailable, falling back to MediaRecorder:', err);
+      }
+    }
+
     // Render into a fixed 16:9 offscreen canvas (decoupled from the
     // project's output resolution) and record THAT — so a wide comp
     // still produces a clean 1080p / 4K file.
-    const recordCanvas = controls?.beginRecording(res.w, res.h) ?? null;
+    const recordCanvas = controls.beginRecording(res.w, res.h) ?? null;
     if (!recordCanvas) { toast('Stage renderer not ready'); return; }
     recordingDuration = 0;
     recorderHandle = startCanvasRecording({
@@ -370,7 +405,7 @@
 
   function toggleStageRecording() {
     if (isRecording) stopStageRecording();
-    else startStageRecording();
+    else void startStageRecording();
   }
 
   // Library grouped by category.

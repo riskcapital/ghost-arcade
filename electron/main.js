@@ -932,7 +932,10 @@ function startMp4FrameEncoderJob(args = {}) {
   const width = Math.round(clampNumber(args.width, 1, 16384, 0));
   const height = Math.round(clampNumber(args.height, 1, 16384, 0));
   const fps = clampNumber(args.fps, 1, 240, 30);
-  const totalFrames = Math.round(clampNumber(args.totalFrames, 1, 10_000_000, 1));
+  const requestedTotalFrames = Number(args.totalFrames);
+  const totalFrames = Number.isFinite(requestedTotalFrames) && requestedTotalFrames > 0
+    ? Math.round(clampNumber(requestedTotalFrames, 1, 10_000_000, 1))
+    : 0;
   if (!width || !height) throw new Error('Invalid MP4 frame encoder dimensions.');
   const pixelFormat = normalizeRawVideoPixelFormat(
     args.pixelFormat || args.pixel_format || args.rawPixelFormat || args.raw_pixel_format,
@@ -950,7 +953,7 @@ function startMp4FrameEncoderJob(args = {}) {
     '-s:v', `${width}x${height}`,
     '-framerate', String(fps),
     '-i', 'pipe:0',
-    '-frames:v', String(totalFrames),
+    ...(totalFrames > 0 ? ['-frames:v', String(totalFrames)] : []),
     '-an',
     '-c:v', 'libx264',
     '-pix_fmt', 'yuv420p',
@@ -1096,9 +1099,13 @@ async function finishMp4FrameEncoderJob(jobIdInput) {
     const detail = job.stderr.trim() || `exit code ${code}${signal ? ` (${signal})` : ''}`;
     throw new Error(`MP4 frame encoder failed: ${detail}`);
   }
-  if (job.writtenFrames !== job.totalFrames) {
+  if (job.totalFrames > 0 && job.writtenFrames !== job.totalFrames) {
     try { fs.rmSync(job.outputPath, { force: true }); } catch { /* ignore */ }
     throw new Error(`MP4 frame encoder ended after ${job.writtenFrames} frames; expected ${job.totalFrames}.`);
+  }
+  if (job.totalFrames <= 0 && job.writtenFrames <= 0) {
+    try { fs.rmSync(job.outputPath, { force: true }); } catch { /* ignore */ }
+    throw new Error('MP4 frame encoder ended without any frames.');
   }
   const stat = fs.statSync(job.outputPath);
   if (!stat.size) throw new Error('MP4 frame encoder produced an empty file.');
