@@ -1,4 +1,7 @@
 import { createNativeRendererBroker } from '../electron/native-renderer-broker.js';
+import { mkdtempSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const REQUIRED_CHECKS = [
   'compute-instrument-host',
@@ -24,6 +27,13 @@ const REQUIRED_GRAPH_MANIFEST = [
   { id: 'pixel-particles', feature: 'native_pixel_particles_graph' },
   { id: 'point-cloud-fx', feature: 'native_point_cloud_fx_graph' },
 ];
+
+const FULLSCREEN_CORNERS = {
+  topLeft: { x: 0, y: 1 },
+  topRight: { x: 1, y: 1 },
+  bottomRight: { x: 1, y: 0 },
+  bottomLeft: { x: 0, y: 0 },
+};
 
 const BYTE_BUFFER_COMPUTE_SOURCE = `
 struct Seeds {
@@ -98,6 +108,8 @@ const broker = createNativeRendererBroker({
     senderMode: process.platform === 'darwin' ? 'native-iosurface-capable' : 'source-frame-fallback',
   }),
 });
+
+let tempDir = null;
 
 try {
   const status = await broker.invoke('native_renderer_start', {
@@ -327,6 +339,49 @@ try {
     byteFrameStatus.source_frame_last_upload_transport === 'file',
     `binary source-frame buffer did not preserve file transport detail: ${JSON.stringify(byteFrameStatus)}`,
   );
+  await broker.invoke('native_renderer_submit_commands', {
+    commands: [
+      {
+        type: 'upsert_layer',
+        layer_id: 'byte-buffer-frame-layer-contract',
+        z_index: 0,
+        blend_mode: 'normal',
+        opacity: 1,
+        corners: FULLSCREEN_CORNERS,
+      },
+      {
+        type: 'bind_media_source',
+        layer_id: 'byte-buffer-frame-layer-contract',
+        source_id: 'byte-buffer-frame-contract',
+        uri: 'contract://byte-buffer-frame',
+        source_type: 'image',
+      },
+    ],
+  });
+  tempDir = mkdtempSync(join(tmpdir(), 'ghost-native-broker-frame-'));
+  const exportedFramePath = join(tempDir, 'broker-frame.rgba');
+  const exportedFrame = await broker.invoke('native_renderer_export_frame_snapshot', {
+    path: exportedFramePath,
+    time: 0.25,
+    frame_index: 3,
+  });
+  const exportedFrameBytes = statSync(exportedFramePath).size;
+  assert(
+    !exportedFrame?.dark_frame &&
+      Number(exportedFrame?.nonzero_pixels ?? 0) > 0 &&
+      Number(exportedFrame?.average_luma ?? 0) > 0.01,
+    `broker frame export rendered blank/dark: ${JSON.stringify(exportedFrame)}`,
+  );
+  assert(
+    exportedFrameBytes === Number(exportedFrame?.byte_length ?? 0) &&
+      exportedFrameBytes === Number(exportedFrame?.bytes_written ?? 0) &&
+      exportedFrameBytes === Number(exportedFrame?.width ?? 0) * Number(exportedFrame?.height ?? 0) * 4,
+    `broker frame export byte count mismatch: ${JSON.stringify({ exportedFrameBytes, exportedFrame })}`,
+  );
+  assert(
+    exportedFrame?.includes_pixels === false && !exportedFrame?.rgba_b64,
+    `broker frame export should not return base64 pixels over IPC: ${JSON.stringify(exportedFrame)}`,
+  );
 
   const beforeDirectSharedStatus = await broker.invoke('native_renderer_get_status');
   const directSharedStatus = await broker.invoke('native_renderer_upload_source_gpu_shared_texture', {
@@ -407,4 +462,7 @@ try {
 } finally {
   await broker.invoke('native_renderer_stop').catch(() => {});
   broker.shutdownSync();
+  if (tempDir) {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 }
