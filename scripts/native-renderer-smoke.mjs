@@ -504,9 +504,24 @@ async function main() {
       !capabilities.features.native_volumetric_spheres_graph ||
       !capabilities.features.native_smoke_riders_graph ||
       !capabilities.features.native_ink_cloud_graph ||
+      !capabilities.features.native_flythrough_graph ||
+      !capabilities.features.native_pixel_particles_graph ||
+      !capabilities.features.native_point_cloud_fx_graph ||
       capabilities.features.multi_pass_instruments
     ) {
       throw new Error(`native compute capability flags are not honest yet: ${JSON.stringify(capabilities.features)}`);
+    }
+    const readiness = await rpc.send('readiness', {}, 5000);
+    const readinessChecks = new Map((readiness?.checks ?? []).map((check) => [check?.id, check]));
+    for (const id of [
+      'compute-instrument-host',
+      'native-flythrough-graph',
+      'native-pixel-particles-graph',
+      'native-point-cloud-fx-graph',
+    ]) {
+      if (!readinessChecks.get(id)?.ok) {
+        throw new Error(`native readiness report has stale or missing ${id}: ${JSON.stringify(readiness)}`);
+      }
     }
     if (
       !capabilities.implemented_methods?.includes('set_output_window') ||
