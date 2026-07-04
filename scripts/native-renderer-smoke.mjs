@@ -456,6 +456,7 @@ async function main() {
       !capabilities.features.compute_graph_host ||
       !capabilities.features.compute_graph_render ||
       !capabilities.features.compute_graph_multi_render ||
+      !capabilities.features.compute_graph_instanced_render ||
       !capabilities.features.compute_graph_source_frame_target ||
       !capabilities.features.persistent_compute_buffers ||
       !capabilities.features.native_3d_smoke_graph ||
@@ -475,6 +476,7 @@ async function main() {
       smokeManifest.source_uri_prefix !== 'native-graph://smoke-3d/' ||
       smokeManifest.render_target !== 'source_frame' ||
       !smokeManifest.features?.includes('compute_graph_multi_render') ||
+      !smokeManifest.features?.includes('compute_graph_instanced_render') ||
       !smokeManifest.features?.includes('compute_graph_source_frame_target')
     ) {
       throw new Error(`native graph instrument manifest entry is incomplete: ${JSON.stringify(capabilities.native_graph_instrument_manifest)}`);
@@ -696,6 +698,8 @@ async function main() {
           clear: false,
           include_snapshot: true,
           blend: 'add',
+          vertex_count: 3,
+          instance_count: 2,
           bindings: [
             { binding: 0, resource: 'graph-multi-output', kind: 'read-only-storage' },
           ],
@@ -708,6 +712,7 @@ async function main() {
     if (
       computeGraphMultiRender.renders[0]?.blend !== 'replace' ||
       computeGraphMultiRender.renders[1]?.blend !== 'add' ||
+      Number(computeGraphMultiRender.renders[1]?.instance_count ?? 0) !== 2 ||
       !computeGraphMultiRender?.render_snapshot?.checksum ||
       computeGraphMultiRender.render_snapshot.dark_frame
     ) {
