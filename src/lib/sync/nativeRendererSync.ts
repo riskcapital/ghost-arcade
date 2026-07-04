@@ -1538,7 +1538,16 @@ export class NativeRendererSync {
     });
     const nativeCaps = startupStatus?.native_caps;
     console.log(
-      `[NativeRendererSync] start complete preview=${SOURCE_PREVIEW_SIZE}px sourceFrame=${this.nativeSourceFrameSize}px mips=${startupStatus?.source_frame_mip_levels ?? 1} nativeGraphs=${this.nativeComputeGraphSourceFrames ? 'on' : 'off'} tier=${nativeCaps?.recommended_quality_tier ?? 'unknown'} f16=${nativeCaps?.requested_shader_f16 ? 'on' : 'off'} floatFilter=${nativeCaps?.requested_float32_filterable ? 'on' : 'off'}`,
+      [
+        `[NativeRendererSync] start complete preview=${SOURCE_PREVIEW_SIZE}px`,
+        `sourceFrame=${this.nativeSourceFrameSize}px`,
+        `mips=${startupStatus?.source_frame_mip_levels ?? 1}`,
+        `sharedTexSrc=${this.supportsNativeFeature('shared_texture_source_frame_upload') ? 'on' : 'off'}`,
+        `nativeGraphs=${this.nativeComputeGraphSourceFrames ? 'on' : 'off'}`,
+        `tier=${nativeCaps?.recommended_quality_tier ?? 'unknown'}`,
+        `f16=${nativeCaps?.requested_shader_f16 ? 'on' : 'off'}`,
+        `floatFilter=${nativeCaps?.requested_float32_filterable ? 'on' : 'off'}`,
+      ].join(' '),
     );
   }
 
@@ -2126,6 +2135,7 @@ export class NativeRendererSync {
     budget: PreviewFlushBudget | null,
   ): boolean {
     if (!isNativeSharedTextureSource(src, sourceType)) return false;
+    if (!this.supportsNativeFeature('shared_texture_source_frame_upload')) return false;
 
     this.queueSharedTextureInfoRefresh(src, sourceType, now);
     const cacheKey = this.sharedTextureInfoKey(src, sourceType);
