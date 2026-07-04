@@ -374,9 +374,9 @@ class NativeRendererBroker {
       : !this.lastStatus.output_window_attached
         ? 'native output window is detached/hidden'
         : Number(this.lastStatus.frames_presented ?? 0) <= 0
-          ? 'waiting for first native swapchain present'
+          ? `waiting for first native swapchain present; last=${this.lastStatus.swapchain_last_present_result || 'none'}`
           : this.lastStatus.output_present_consecutive_failures > 0
-            ? `native output present has ${this.lastStatus.output_present_consecutive_failures} consecutive failure(s)`
+            ? `native output present has ${this.lastStatus.output_present_consecutive_failures} consecutive failure(s); last=${this.lastStatus.swapchain_last_present_result || 'none'}`
             : `presented ${this.lastStatus.frames_presented} native frame(s)`;
     const unsupported = [
       [
@@ -888,6 +888,27 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     swapchain_present_failures: Number(
       status.swapchain_present_failures ?? previous.swapchain_present_failures ?? 0,
     ),
+    swapchain_last_present_result: String(
+      status.swapchain_last_present_result ?? previous.swapchain_last_present_result ?? 'none',
+    ),
+    swapchain_last_present_error: String(
+      status.swapchain_last_present_error ?? previous.swapchain_last_present_error ?? 'none',
+    ),
+    swapchain_present_timeouts: Number(
+      status.swapchain_present_timeouts ?? previous.swapchain_present_timeouts ?? 0,
+    ),
+    swapchain_present_occluded: Number(
+      status.swapchain_present_occluded ?? previous.swapchain_present_occluded ?? 0,
+    ),
+    swapchain_present_outdated: Number(
+      status.swapchain_present_outdated ?? previous.swapchain_present_outdated ?? 0,
+    ),
+    swapchain_present_lost: Number(
+      status.swapchain_present_lost ?? previous.swapchain_present_lost ?? 0,
+    ),
+    swapchain_present_validation_errors: Number(
+      status.swapchain_present_validation_errors ?? previous.swapchain_present_validation_errors ?? 0,
+    ),
     swapchain_present_max_consecutive_failures: Number(
       status.swapchain_present_max_consecutive_failures ??
         previous.swapchain_present_max_consecutive_failures ??
@@ -1029,6 +1050,58 @@ function normalizeStats(stats, previous = makeDefaultStats()) {
     gpu_timing_samples: Number(stats.gpu_timing_samples ?? previous.gpu_timing_samples ?? 0),
     gpu_timing_resolve_misses: Number(
       stats.gpu_timing_resolve_misses ?? previous.gpu_timing_resolve_misses ?? 0,
+    ),
+    swapchain_present_attempts: Number(
+      stats.swapchain_present_attempts ?? previous.swapchain_present_attempts ?? 0,
+    ),
+    swapchain_presented: Number(stats.swapchain_presented ?? previous.swapchain_presented ?? 0),
+    swapchain_present_failures: Number(
+      stats.swapchain_present_failures ?? previous.swapchain_present_failures ?? 0,
+    ),
+    swapchain_last_present_result: String(
+      stats.swapchain_last_present_result ?? previous.swapchain_last_present_result ?? 'none',
+    ),
+    swapchain_last_present_error: String(
+      stats.swapchain_last_present_error ?? previous.swapchain_last_present_error ?? 'none',
+    ),
+    swapchain_present_timeouts: Number(
+      stats.swapchain_present_timeouts ?? previous.swapchain_present_timeouts ?? 0,
+    ),
+    swapchain_present_occluded: Number(
+      stats.swapchain_present_occluded ?? previous.swapchain_present_occluded ?? 0,
+    ),
+    swapchain_present_outdated: Number(
+      stats.swapchain_present_outdated ?? previous.swapchain_present_outdated ?? 0,
+    ),
+    swapchain_present_lost: Number(
+      stats.swapchain_present_lost ?? previous.swapchain_present_lost ?? 0,
+    ),
+    swapchain_present_validation_errors: Number(
+      stats.swapchain_present_validation_errors ?? previous.swapchain_present_validation_errors ?? 0,
+    ),
+    swapchain_present_consecutive_failures: Number(
+      stats.swapchain_present_consecutive_failures ??
+        previous.swapchain_present_consecutive_failures ??
+        0,
+    ),
+    swapchain_present_max_consecutive_failures: Number(
+      stats.swapchain_present_max_consecutive_failures ??
+        previous.swapchain_present_max_consecutive_failures ??
+        0,
+    ),
+    swapchain_present_tearing_attempts: Number(
+      stats.swapchain_present_tearing_attempts ??
+        previous.swapchain_present_tearing_attempts ??
+        0,
+    ),
+    swapchain_waitable_waits: Number(
+      stats.swapchain_waitable_waits ?? previous.swapchain_waitable_waits ?? 0,
+    ),
+    swapchain_waitable_timeouts: Number(
+      stats.swapchain_waitable_timeouts ?? previous.swapchain_waitable_timeouts ?? 0,
+    ),
+    frames_without_swapchain_present: Number(
+      stats.frames_without_swapchain_present ?? previous.frames_without_swapchain_present ?? 0,
     ),
   };
 }
@@ -1276,6 +1349,13 @@ function makeDefaultStatus(overrides = {}) {
     swapchain_present_attempts: 0,
     swapchain_presented: 0,
     swapchain_present_failures: 0,
+    swapchain_last_present_result: 'none',
+    swapchain_last_present_error: 'none',
+    swapchain_present_timeouts: 0,
+    swapchain_present_occluded: 0,
+    swapchain_present_outdated: 0,
+    swapchain_present_lost: 0,
+    swapchain_present_validation_errors: 0,
     swapchain_present_max_consecutive_failures: 0,
     swapchain_present_tearing_attempts: 0,
     swapchain_waitable_waits: 0,
@@ -1583,6 +1663,13 @@ function makeDefaultStats() {
     swapchain_present_attempts: 0,
     swapchain_presented: 0,
     swapchain_present_failures: 0,
+    swapchain_last_present_result: 'none',
+    swapchain_last_present_error: 'none',
+    swapchain_present_timeouts: 0,
+    swapchain_present_occluded: 0,
+    swapchain_present_outdated: 0,
+    swapchain_present_lost: 0,
+    swapchain_present_validation_errors: 0,
     swapchain_present_consecutive_failures: 0,
     swapchain_present_max_consecutive_failures: 0,
     swapchain_present_tearing_attempts: 0,
