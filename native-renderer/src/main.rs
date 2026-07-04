@@ -1831,7 +1831,7 @@ impl App {
             "limits": limits,
             "notes": [
                 "Native graph instruments use shared WGSL for 3D Smoke, Particle Field, Volumetric Spheres, Ink Cloud, Flythrough, Pixel Particles, and Point Cloud FX; legacy native instrument layers are still visual proxies.",
-                "Canvas/base64 source-frame upload is a development fallback; shared texture transport is not implemented yet."
+                "Canvas/base64 source-frame upload is a development fallback; macOS source-frame shared texture upload accepts IOSurfaceID handles, while full shared media transport remains pending."
             ]
         })
     }
@@ -2184,10 +2184,16 @@ impl App {
                         "detail": self.adapter_name.clone().unwrap_or_else(|| "not initialized".to_string())
                     },
                     {
+                        "id": "shared-texture-source-frame-upload",
+                        "label": "Shared texture source-frame transport",
+                        "ok": cfg!(target_os = "macos"),
+                        "detail": if cfg!(target_os = "macos") { "implemented for IOSurfaceID source-frame handles" } else { "pending backend-specific shared texture import" }
+                    },
+                    {
                         "id": "shared-texture-upload",
                         "label": "Shared texture media transport",
                         "ok": false,
-                        "detail": "not implemented; source-frame upload uses CPU/file handoff fallback"
+                        "detail": "full media shared texture transport is pending; source-frame shared handle upload is tracked separately"
                     },
                     {
                         "id": "compute-instrument-host",
