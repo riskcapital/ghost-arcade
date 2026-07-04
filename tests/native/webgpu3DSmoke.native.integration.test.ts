@@ -132,6 +132,7 @@ describe('3D Smoke native renderer integration', () => {
     const capabilities = await rpc.send('capabilities', {}, 5000);
     expect(capabilities.features.compute_graph_host).toBe(true);
     expect(capabilities.features.compute_graph_render).toBe(true);
+    expect(capabilities.features.compute_graph_multi_render).toBe(true);
     expect(capabilities.features.compute_graph_source_frame_target).toBe(true);
     expect(capabilities.features.native_3d_smoke_graph).toBe(true);
     expect(capabilities.native_graph_instruments).toContain('smoke-3d');

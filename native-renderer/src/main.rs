@@ -763,6 +763,56 @@ enum NativeComputeGraphRenderTarget {
     },
 }
 
+#[derive(Clone, Copy, Debug)]
+enum NativeComputeGraphRenderBlend {
+    Replace,
+    Alpha,
+    Add,
+}
+
+impl NativeComputeGraphRenderBlend {
+    fn signature(self) -> &'static str {
+        match self {
+            Self::Replace => "replace",
+            Self::Alpha => "alpha",
+            Self::Add => "add",
+        }
+    }
+
+    fn from_label(label: &str) -> Self {
+        match label
+            .trim()
+            .to_ascii_lowercase()
+            .replace('_', "-")
+            .replace(' ', "-")
+            .as_str()
+        {
+            "alpha" | "alpha-blend" | "premul" | "premultiplied-alpha" => Self::Alpha,
+            "add" | "additive" | "plus" => Self::Add,
+            _ => Self::Replace,
+        }
+    }
+
+    fn blend_state(self) -> wgpu::BlendState {
+        match self {
+            Self::Replace => wgpu::BlendState::REPLACE,
+            Self::Alpha => wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+            Self::Add => wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+            },
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct NativeComputeGraphRenderPlan {
     name: String,
@@ -773,6 +823,7 @@ struct NativeComputeGraphRenderPlan {
     clear: bool,
     include_snapshot: bool,
     target: NativeComputeGraphRenderTarget,
+    blend: NativeComputeGraphRenderBlend,
     bindings: Vec<NativeComputeGraphBindingSpec>,
 }
 
@@ -1325,6 +1376,7 @@ impl App {
             "compute_shader_host": true,
             "compute_graph_host": true,
             "compute_graph_render": true,
+            "compute_graph_multi_render": true,
             "compute_graph_source_frame_target": true,
             "persistent_compute_buffers": true,
             "native_3d_smoke_graph": true,
@@ -1367,6 +1419,7 @@ impl App {
                     "features": [
                         "compute_graph_host",
                         "compute_graph_render",
+                        "compute_graph_multi_render",
                         "compute_graph_source_frame_target",
                         "persistent_compute_buffers",
                         "native_3d_smoke_graph"
@@ -2300,12 +2353,11 @@ impl App {
         for (index, pass) in passes_value.iter().enumerate() {
             pass_plans.push(self.compute_graph_pass_plan(pass, index, &buffer_kinds)?);
         }
-        let render_plan = params
-            .get("render")
-            .or_else(|| params.get("render_pass"))
-            .map(|render| self.compute_graph_render_plan(render, &buffer_kinds))
-            .transpose()?;
-        let render_target = render_plan.as_ref().map(|render| render.target.clone());
+        let render_plans = self.compute_graph_render_plans(params, &buffer_kinds)?;
+        let render_targets = render_plans
+            .iter()
+            .map(|render| render.target.clone())
+            .collect::<Vec<_>>();
         let readbacks = compute_graph_readbacks(params, &buffer_specs);
         let readback_bytes = readbacks
             .iter()
@@ -2318,8 +2370,9 @@ impl App {
             .fold(0u64, u64::saturating_add);
         let readback_count = readbacks.len() as u64;
         let pass_count = pass_plans.len() as u64;
-        let has_render_pass = render_plan.is_some();
-        let render_target_for_stats = render_target.clone();
+        let render_pass_count = render_plans.len() as u64;
+        let render_targets_for_stats = render_targets.clone();
+        let render_targets_for_source_frames = render_targets;
         let result = {
             let Some(renderer) = self.renderer.as_mut() else {
                 return Err("native renderer has not created a wgpu device".to_string());
@@ -2328,7 +2381,7 @@ impl App {
                 buffer_specs,
                 pass_plans,
                 readbacks,
-                render_plan,
+                render_plans,
             )?;
             self.stats.pipeline_cache_entries = renderer.native_pipeline_cache_count() as u64;
             self.stats.compute_graph_persistent_buffers =
@@ -2346,38 +2399,74 @@ impl App {
             .stats
             .compute_graph_readback_bytes
             .saturating_add(readback_bytes);
-        if has_render_pass {
-            self.stats.compute_graph_render_passes =
-                self.stats.compute_graph_render_passes.saturating_add(1);
-            match render_target_for_stats {
-                Some(NativeComputeGraphRenderTarget::SourceFrame { .. }) => {
-                    self.stats.compute_graph_source_frame_renders = self
-                        .stats
-                        .compute_graph_source_frame_renders
-                        .saturating_add(1);
+        if render_pass_count > 0 {
+            self.stats.compute_graph_render_passes = self
+                .stats
+                .compute_graph_render_passes
+                .saturating_add(render_pass_count);
+            for render_target in render_targets_for_stats {
+                match render_target {
+                    NativeComputeGraphRenderTarget::SourceFrame { .. } => {
+                        self.stats.compute_graph_source_frame_renders = self
+                            .stats
+                            .compute_graph_source_frame_renders
+                            .saturating_add(1);
+                    }
+                    NativeComputeGraphRenderTarget::Snapshot => {
+                        self.stats.compute_graph_snapshot_renders =
+                            self.stats.compute_graph_snapshot_renders.saturating_add(1);
+                    }
                 }
-                Some(NativeComputeGraphRenderTarget::Snapshot) => {
-                    self.stats.compute_graph_snapshot_renders =
-                        self.stats.compute_graph_snapshot_renders.saturating_add(1);
-                }
-                None => {}
             }
         }
-        if let Some(NativeComputeGraphRenderTarget::SourceFrame {
-            source_id,
-            slot,
-            seq,
-        }) = render_target
-        {
-            self.source_frames
-                .insert(source_id.clone(), SourceFrame { seq });
-            for layer in self.scene_layers.values_mut() {
-                if layer.source_id.as_deref() == Some(source_id.as_str()) {
-                    layer.frame_slot = Some(slot);
+        for render_target in render_targets_for_source_frames {
+            if let NativeComputeGraphRenderTarget::SourceFrame {
+                source_id,
+                slot,
+                seq,
+            } = render_target
+            {
+                self.source_frames
+                    .insert(source_id.clone(), SourceFrame { seq });
+                for layer in self.scene_layers.values_mut() {
+                    if layer.source_id.as_deref() == Some(source_id.as_str()) {
+                        layer.frame_slot = Some(slot);
+                    }
                 }
             }
         }
         Ok(result)
+    }
+
+    fn compute_graph_render_plans(
+        &mut self,
+        params: &Value,
+        buffer_kinds: &HashMap<String, NativeComputeBufferBindingKind>,
+    ) -> Result<Vec<NativeComputeGraphRenderPlan>, String> {
+        if let Some(renders_value) = params
+            .get("render_passes")
+            .or_else(|| params.get("renders"))
+            .or_else(|| params.get("renderPlans"))
+        {
+            let Some(renders) = renders_value.as_array() else {
+                return Err("compute_graph render_passes must be an array".to_string());
+            };
+            let mut plans = Vec::with_capacity(renders.len());
+            for render in renders {
+                plans.push(self.compute_graph_render_plan(render, buffer_kinds)?);
+            }
+            return Ok(plans);
+        }
+
+        params
+            .get("render")
+            .or_else(|| params.get("render_pass"))
+            .map(|render| {
+                self.compute_graph_render_plan(render, buffer_kinds)
+                    .map(|plan| vec![plan])
+            })
+            .transpose()
+            .map(|plans| plans.unwrap_or_default())
     }
 
     fn compute_graph_pass_plan(
@@ -2544,6 +2633,11 @@ impl App {
         let include_snapshot = bool_at(render, &["include_snapshot"])
             .or_else(|| bool_at(render, &["snapshot"]))
             .unwrap_or(true);
+        let blend = string_at(render, &["blend"])
+            .or_else(|| string_at(render, &["blend_mode"]))
+            .or_else(|| string_at(render, &["blendMode"]))
+            .map(|label| NativeComputeGraphRenderBlend::from_label(&label))
+            .unwrap_or(NativeComputeGraphRenderBlend::Replace);
         let target_label = string_at(render, &["target"])
             .or_else(|| string_at(render, &["target_type"]))
             .or_else(|| string_at(render, &["render_target"]))
@@ -2588,8 +2682,9 @@ impl App {
         Ok(NativeComputeGraphRenderPlan {
             name,
             cache_key: format!(
-                "graph-render:{shader_id}:{}:{vertex_entry}:{fragment_entry}:{layout_sig}",
-                source_hash
+                "graph-render:{shader_id}:{}:{vertex_entry}:{fragment_entry}:{}:{layout_sig}",
+                source_hash,
+                blend.signature()
             ),
             source,
             vertex_entry,
@@ -2597,6 +2692,7 @@ impl App {
             clear,
             include_snapshot,
             target,
+            blend,
             bindings,
         })
     }
@@ -4196,7 +4292,7 @@ impl RenderState {
         buffers: Vec<NativeComputeGraphBufferSpec>,
         passes: Vec<NativeComputeGraphPassPlan>,
         readbacks: Vec<String>,
-        render_plan: Option<NativeComputeGraphRenderPlan>,
+        render_plans: Vec<NativeComputeGraphRenderPlan>,
     ) -> Result<Value, String> {
         if buffers.is_empty() {
             return Err("native compute graph requires at least one buffer".to_string());
@@ -4293,16 +4389,18 @@ impl RenderState {
             }));
         }
 
-        let render_include_snapshot = render_plan.as_ref().is_some_and(|render| {
+        let render_include_snapshot = render_plans.iter().any(|render| {
             render.include_snapshot
                 && matches!(render.target, NativeComputeGraphRenderTarget::Snapshot)
         });
-        let render_result = render_plan
-            .as_ref()
-            .map(|render| {
-                self.render_native_compute_graph(&mut encoder, &transient_buffers, render)
-            })
-            .transpose()?;
+        let mut render_results = Vec::with_capacity(render_plans.len());
+        for render in &render_plans {
+            render_results.push(self.render_native_compute_graph(
+                &mut encoder,
+                &transient_buffers,
+                render,
+            )?);
+        }
 
         let mut readback_buffers = Vec::new();
         for id in &readbacks {
@@ -4358,9 +4456,14 @@ impl RenderState {
             "persistent_buffer_count": self.native_compute_graph_buffers.len(),
             "pipeline_cache_entries": self.native_pipeline_cache_count(),
         });
-        if let Some(render_result) = render_result {
+        if render_results.len() == 1 {
             if let Some(object) = result.as_object_mut() {
-                object.insert("render".to_string(), render_result);
+                object.insert("render".to_string(), render_results[0].clone());
+            }
+        }
+        if !render_results.is_empty() {
+            if let Some(object) = result.as_object_mut() {
+                object.insert("renders".to_string(), Value::Array(render_results));
             }
         }
         if let Some(snapshot) = render_snapshot {
@@ -4491,6 +4594,7 @@ impl RenderState {
             "fragment_entry": render_plan.fragment_entry,
             "bindings": render_plan.bindings.len(),
             "target": target_name,
+            "blend": render_plan.blend.signature(),
             "format": texture_format_label(output_format),
             "include_snapshot": render_plan.include_snapshot,
         });
@@ -4571,7 +4675,7 @@ impl RenderState {
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: output_format,
-                        blend: Some(wgpu::BlendState::REPLACE),
+                        blend: Some(render_plan.blend.blend_state()),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                 }),
