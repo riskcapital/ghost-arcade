@@ -10,7 +10,7 @@
 
 import type { GpuShaderImpl, ParamControl } from '../gpuShaderTypes';
 import { deriveDefaults } from '../gpuShaderTypes';
-import { createAndWarmWgslShaderModule } from '../wgsl';
+import { createAndWarmWgslShaderModule, resolveGhostWgsl } from '../wgsl';
 import { getGhostGpuRuntime } from '../webgpuShared';
 
 type LayoutMode = 'cluster' | 'orbital' | 'column' | 'cavern';
@@ -176,6 +176,110 @@ const SPHERE_STRIDE_FLOATS = 12;
 const MIN_SPHERES = 1;
 const MAX_SPHERES = 1200;
 const RENDER_SAMPLE_COUNT = 4;
+
+export const VOLUMETRIC_SPHERES_NATIVE_SHADER_IDS = Object.freeze({
+  sim: 'volumetric-spheres/sim',
+  render: 'volumetric-spheres/render',
+});
+
+export type VolumetricSpheresNativeShaderStage = 'compute' | 'render';
+
+export interface VolumetricSpheresNativeShaderSource {
+  shaderId: string;
+  label: string;
+  stage: VolumetricSpheresNativeShaderStage;
+  entry: string;
+  source: string;
+}
+
+export interface VolumetricSpheresNativePrecompileCommand {
+  type: 'precompile_shader';
+  shader_id: string;
+  stage: VolumetricSpheresNativeShaderStage;
+  entry: string;
+  source: string;
+}
+
+type VolumetricSpheresNativeGraphBinding = {
+  binding: number;
+  resource: string;
+  kind: 'uniform' | 'storage' | 'read-only-storage';
+};
+
+type VolumetricSpheresNativeGraphBuffer = {
+  id: string;
+  kind: 'uniform' | 'storage' | 'read-only-storage';
+  byte_length: number;
+  persistent?: boolean;
+  clear?: boolean;
+  initial_b64?: string;
+};
+
+type VolumetricSpheresNativeGraphPass = {
+  name: string;
+  shader_id: string;
+  entry: string;
+  dispatch: [number, number, number];
+  bindings: VolumetricSpheresNativeGraphBinding[];
+};
+
+type VolumetricSpheresNativeGraphRenderPass = {
+  name: string;
+  shader_id: string;
+  vertex_entry: string;
+  fragment_entry: string;
+  target: 'source_frame';
+  source_id: string;
+  seq: number;
+  clear: boolean;
+  include_snapshot?: boolean;
+  blend: 'replace' | 'alpha' | 'add';
+  primitive?: 'triangle-list';
+  vertex_count: number;
+  instance_count: number;
+  depth?: boolean;
+  depth_write?: boolean;
+  depth_compare?: 'less' | 'less-equal' | 'always';
+  bindings: VolumetricSpheresNativeGraphBinding[];
+};
+
+export interface VolumetricSpheresNativeGraphState {
+  layout: LayoutMode;
+  sphereCount: number;
+  seedKey: string;
+  prevFrameTime: number;
+  autoRotXPhase: number;
+  autoRotYPhase: number;
+  autoRotZPhase: number;
+}
+
+export interface VolumetricSpheresNativeGraphOptions {
+  sourceId: string;
+  params?: Partial<VolumetricSpheresParams> | Record<string, any> | null;
+  width?: number;
+  height?: number;
+  time?: number;
+  frameDelta?: number;
+  frameIndex?: number;
+  audioBass?: number;
+  audioTreble?: number;
+  state?: VolumetricSpheresNativeGraphState | null;
+  reset?: boolean;
+  includeSnapshot?: boolean;
+}
+
+export interface VolumetricSpheresNativeGraphBuildResult {
+  config: {
+    buffers: VolumetricSpheresNativeGraphBuffer[];
+    passes: VolumetricSpheresNativeGraphPass[];
+    render_passes: VolumetricSpheresNativeGraphRenderPass[];
+    readbacks: string[];
+  };
+  sourceId: string;
+  state: VolumetricSpheresNativeGraphState;
+  sphereCount: number;
+  passCount: number;
+}
 
 const BLEND_PREMULT_OVER: any = {
   color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
@@ -523,6 +627,440 @@ fn fs_main(in: VSOut) -> FSOut {
   return out;
 }
 `;
+
+export function getVolumetricSpheresNativeShaderSources(): VolumetricSpheresNativeShaderSource[] {
+  return [
+    {
+      shaderId: VOLUMETRIC_SPHERES_NATIVE_SHADER_IDS.sim,
+      label: 'volumetric-spheres/sim',
+      stage: 'compute',
+      entry: 'cs_main',
+      source: resolveGhostWgsl(SIM_WGSL, 'volumetric-spheres/sim'),
+    },
+    {
+      shaderId: VOLUMETRIC_SPHERES_NATIVE_SHADER_IDS.render,
+      label: 'volumetric-spheres/render',
+      stage: 'render',
+      entry: 'fs_main',
+      source: resolveGhostWgsl(RENDER_WGSL, 'volumetric-spheres/render'),
+    },
+  ];
+}
+
+export function buildVolumetricSpheresNativePrecompileCommands(): VolumetricSpheresNativePrecompileCommand[] {
+  return getVolumetricSpheresNativeShaderSources().map((shader) => ({
+    type: 'precompile_shader',
+    shader_id: shader.shaderId,
+    stage: shader.stage,
+    entry: shader.entry,
+    source: shader.source,
+  }));
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function bufferToBase64(buffer: ArrayBuffer): string {
+  return bytesToBase64(new Uint8Array(buffer));
+}
+
+function clampFinite(value: unknown, min: number, max: number, fallback: number): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+function colorParam(value: unknown, fallback: [number, number, number]): [number, number, number] {
+  if (!Array.isArray(value) || value.length < 3) return [...fallback];
+  return [
+    clampFinite(value[0], 0, 255, fallback[0]),
+    clampFinite(value[1], 0, 255, fallback[1]),
+    clampFinite(value[2], 0, 255, fallback[2]),
+  ];
+}
+
+function rgb01(c: unknown, fallback: [number, number, number]): [number, number, number] {
+  if (!Array.isArray(c) || c.length < 3) return fallback;
+  const looksByte = Math.max(c[0] ?? 0, c[1] ?? 0, c[2] ?? 0) > 1.01;
+  const div = looksByte ? 255 : 1;
+  return [
+    Math.max(0, Math.min(1, (Number(c[0]) || 0) / div)),
+    Math.max(0, Math.min(1, (Number(c[1]) || 0) / div)),
+    Math.max(0, Math.min(1, (Number(c[2]) || 0) / div)),
+  ];
+}
+
+function normalizeVolumetricSpheresParams(input?: Partial<VolumetricSpheresParams> | Record<string, any> | null): VolumetricSpheresParams {
+  const raw = {
+    ...(volumetricSpheresParamDefaults as VolumetricSpheresParams),
+    ...(input ?? {}),
+  } as Record<string, any>;
+  const layout = Object.prototype.hasOwnProperty.call(LAYOUT_ID, String(raw.layout ?? ''))
+    ? String(raw.layout) as LayoutMode
+    : 'cluster';
+  return {
+    sphereCount: Math.round(clampFinite(raw.sphereCount, MIN_SPHERES, MAX_SPHERES, 192)),
+    layout,
+    radiusScale: clampFinite(raw.radiusScale, 0.001, 2, 0.085),
+    radiusVariance: clampFinite(raw.radiusVariance, 0, 4, 0.72),
+    spread: clampFinite(raw.spread, 0.01, 16, 1.08),
+    depth: clampFinite(raw.depth, 0.01, 16, 1.35),
+    motion: clampFinite(raw.motion, 0, 16, 0.72),
+    swirl: clampFinite(raw.swirl, -16, 16, 0.58),
+    pull: clampFinite(raw.pull, -16, 16, 0.28),
+    chaos: clampFinite(raw.chaos, 0, 16, 0.34),
+    damping: clampFinite(raw.damping, 0, 32, 1.7),
+    opacity: clampFinite(raw.opacity, 0, 4, 0.96),
+    fogDensity: clampFinite(raw.fogDensity, 0, 16, 0.38),
+    backgroundOpacity: clampFinite(raw.backgroundOpacity, 0, 1, 0.88),
+    fogColor: colorParam(raw.fogColor, [8, 10, 20]),
+    colorA: colorParam(raw.colorA, [70, 170, 255]),
+    colorB: colorParam(raw.colorB, [255, 78, 166]),
+    colorC: colorParam(raw.colorC, [255, 218, 94]),
+    colorD: colorParam(raw.colorD, [84, 255, 214]),
+    colorCycle: clampFinite(raw.colorCycle, -16, 16, 0.018),
+    saturation: clampFinite(raw.saturation, 0, 8, 1.08),
+    brightness: clampFinite(raw.brightness, 0, 16, 1.12),
+    ambient: clampFinite(raw.ambient, 0, 8, 0.24),
+    diffuse: clampFinite(raw.diffuse, 0, 8, 1.08),
+    specular: clampFinite(raw.specular, 0, 16, 0.9),
+    shininess: clampFinite(raw.shininess, 1, 512, 78),
+    reflection: clampFinite(raw.reflection, 0, 8, 0.22),
+    rim: clampFinite(raw.rim, 0, 8, 0.46),
+    lightX: clampFinite(raw.lightX, -16, 16, -0.55),
+    lightY: clampFinite(raw.lightY, -16, 16, 0.8),
+    lightZ: clampFinite(raw.lightZ, -16, 16, 1),
+    lightStrength: clampFinite(raw.lightStrength, 0, 16, 1.1),
+    audioReactive: typeof raw.audioReactive === 'boolean' ? raw.audioReactive : true,
+    bassPulse: clampFinite(raw.bassPulse, 0, 16, 1.15),
+    trebleSparkle: clampFinite(raw.trebleSparkle, 0, 16, 0.32),
+    fovDeg: clampFinite(raw.fovDeg, 1, 160, 48),
+    cameraZ: clampFinite(raw.cameraZ, 0.05, 100, 2.75),
+    rotateX: clampFinite(raw.rotateX, -3600, 3600, -4),
+    rotateY: clampFinite(raw.rotateY, -3600, 3600, 0),
+    rotateZ: clampFinite(raw.rotateZ, -3600, 3600, 0),
+    autoRotateX: clampFinite(raw.autoRotateX, -3600, 3600, -0.3),
+    autoRotateY: clampFinite(raw.autoRotateY, -3600, 3600, 4.4),
+    autoRotateZ: clampFinite(raw.autoRotateZ, -3600, 3600, 0.15),
+    clearBackground: raw.clearBackground !== false,
+  };
+}
+
+function sphereHash(n: number): number {
+  const x = Math.sin(n * 12.9898) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+function randomUnit(a: number, b: number, c: number): [number, number, number] {
+  const theta = a * Math.PI * 2;
+  const z = b * 2 - 1;
+  const r = Math.sqrt(Math.max(0, 1 - z * z));
+  const squash = 0.72 + c * 0.36;
+  return [Math.cos(theta) * r, z * squash, Math.sin(theta) * r];
+}
+
+function volumetricSpheresSeedKey(params: VolumetricSpheresParams, count: number): string {
+  return [
+    count,
+    params.layout,
+    params.radiusVariance,
+    params.spread,
+    params.depth,
+    params.colorA?.join(','),
+    params.colorB?.join(','),
+    params.colorC?.join(','),
+    params.colorD?.join(','),
+  ].join('|');
+}
+
+function buildVolumetricSpheresInitialBuffer(params: VolumetricSpheresParams, count: number): string {
+  const sphereCount = Math.max(MIN_SPHERES, Math.min(MAX_SPHERES, Math.round(count)));
+  const floats = new Float32Array(sphereCount * SPHERE_STRIDE_FLOATS);
+  const layout = params.layout ?? 'cluster';
+  const colors = [
+    rgb01(params.colorA, [0.28, 0.66, 1]),
+    rgb01(params.colorB, [1, 0.31, 0.65]),
+    rgb01(params.colorC, [1, 0.86, 0.37]),
+    rgb01(params.colorD, [0.33, 1, 0.84]),
+  ];
+  for (let i = 0; i < sphereCount; i++) {
+    const seed = sphereHash(i * 17.13 + 9.7);
+    const seed2 = sphereHash(i * 43.91 + 2.3);
+    const seed3 = sphereHash(i * 71.17 + 5.9);
+    let x = 0;
+    let y = 0;
+    let z = 0;
+    if (layout === 'orbital') {
+      const ring = i % 5;
+      const a = (i / Math.max(1, sphereCount) * Math.PI * 2 * (2.5 + ring * 0.23)) + seed * Math.PI * 2;
+      const r = 0.24 + ring * 0.17 + seed2 * 0.18;
+      x = Math.cos(a) * r;
+      z = Math.sin(a) * r * (0.74 + seed3 * 0.32);
+      y = (ring - 2) * 0.12 + (seed2 - 0.5) * 0.18;
+    } else if (layout === 'column') {
+      const a = seed * Math.PI * 2;
+      const r = Math.pow(seed2, 0.65) * 0.52;
+      x = Math.cos(a) * r;
+      z = Math.sin(a) * r * 0.7;
+      y = (i / Math.max(1, sphereCount - 1) - 0.5) * 1.8 + (seed3 - 0.5) * 0.18;
+    } else if (layout === 'cavern') {
+      const dir = randomUnit(seed, seed2, seed3);
+      const shell = 0.62 + Math.pow(seed, 2.0) * 0.3;
+      x = dir[0] * shell;
+      y = dir[1] * shell * 0.72;
+      z = dir[2] * shell;
+    } else {
+      const dir = randomUnit(seed, seed2, seed3);
+      const r = Math.pow(sphereHash(i * 11.31 + 4.2), 0.42);
+      x = dir[0] * r;
+      y = dir[1] * r * 0.76;
+      z = dir[2] * r;
+    }
+
+    const radiusJitter = 0.55 + Math.pow(sphereHash(i * 29.71 + 1.1), 1.8) * (0.65 + params.radiusVariance * 1.75);
+    const c = colors[i % colors.length];
+    const off = i * SPHERE_STRIDE_FLOATS;
+    floats[off + 0] = x * params.spread;
+    floats[off + 1] = y * params.spread;
+    floats[off + 2] = z * params.depth;
+    floats[off + 3] = radiusJitter;
+    floats[off + 4] = (seed2 - 0.5) * 0.04;
+    floats[off + 5] = (seed3 - 0.5) * 0.04;
+    floats[off + 6] = (seed - 0.5) * 0.04;
+    floats[off + 7] = seed;
+    floats[off + 8] = c[0];
+    floats[off + 9] = c[1];
+    floats[off + 10] = c[2];
+    floats[off + 11] = i % 16;
+  }
+  return bufferToBase64(floats.buffer);
+}
+
+function buildVolumetricSpheresSimUniform(params: VolumetricSpheresParams, count: number, dt: number, time: number, bass: number, treble: number): string {
+  const buf = new ArrayBuffer(80);
+  const f = new Float32Array(buf);
+  const u = new Uint32Array(buf);
+  f[0] = dt;
+  f[1] = time;
+  u[2] = count >>> 0;
+  u[3] = LAYOUT_ID[params.layout ?? 'cluster'] >>> 0;
+  f[4] = Math.max(0.2, params.spread * 1.24);
+  f[5] = Math.max(0.2, params.spread * 0.92);
+  f[6] = Math.max(0.2, params.depth * 1.16);
+  f[7] = params.motion;
+  f[8] = params.swirl;
+  f[9] = params.pull;
+  f[10] = 0.65 + params.chaos * 0.75;
+  f[11] = params.damping;
+  f[12] = bass;
+  f[13] = treble;
+  f[14] = params.bassPulse;
+  f[15] = params.chaos;
+  return bufferToBase64(buf);
+}
+
+function buildVolumetricSpheresRenderUniform(
+  params: VolumetricSpheresParams,
+  state: VolumetricSpheresNativeGraphState,
+  width: number,
+  height: number,
+  time: number,
+  bass: number,
+  treble: number,
+): string {
+  const aspect = Math.max(1, width) / Math.max(1, height);
+  const d2r = Math.PI / 180;
+  const proj = perspective(params.fovDeg, aspect, 0.05, 100);
+  const view = translate(0, 0, -params.cameraZ);
+  const model = mat4Mul(
+    rotateZMat((params.rotateZ + state.autoRotZPhase) * d2r),
+    mat4Mul(
+      rotateYMat((params.rotateY + state.autoRotYPhase) * d2r),
+      rotateXMat((params.rotateX + state.autoRotXPhase) * d2r),
+    ),
+  );
+  const viewProj = mat4Mul(proj, view);
+  const fog = rgb01(params.fogColor, [0.03, 0.04, 0.08]);
+  const colorA = rgb01(params.colorA, [0.28, 0.66, 1]);
+  const colorB = rgb01(params.colorB, [1, 0.31, 0.65]);
+  const colorC = rgb01(params.colorC, [1, 0.86, 0.37]);
+  const colorD = rgb01(params.colorD, [0.33, 1, 0.84]);
+  const lx = params.lightX;
+  const ly = params.lightY;
+  const lz = params.lightZ;
+  const llen = Math.sqrt(lx * lx + ly * ly + lz * lz) || 1;
+
+  const buf = new ArrayBuffer(320);
+  const f = new Float32Array(buf);
+  f.set(viewProj, 0);
+  f.set(model, 16);
+  f[32] = 0;
+  f[33] = 0;
+  f[34] = params.cameraZ;
+  f[35] = params.radiusScale;
+  f[36] = 1;
+  f[37] = 0;
+  f[38] = 0;
+  f[39] = params.opacity;
+  f[40] = 0;
+  f[41] = 1;
+  f[42] = 0;
+  f[43] = time;
+  f[44] = lx / llen;
+  f[45] = ly / llen;
+  f[46] = lz / llen;
+  f[47] = params.lightStrength;
+  f[48] = fog[0];
+  f[49] = fog[1];
+  f[50] = fog[2];
+  f[51] = params.fogDensity;
+  f[52] = params.ambient;
+  f[53] = params.diffuse;
+  f[54] = params.specular;
+  f[55] = params.shininess;
+  f[56] = params.reflection;
+  f[57] = params.rim;
+  f[58] = 1.0 + Math.max(0, bass) * 0.08;
+  f[59] = treble;
+  f[60] = colorA[0];
+  f[61] = colorA[1];
+  f[62] = colorA[2];
+  f[63] = params.colorCycle;
+  f[64] = colorB[0];
+  f[65] = colorB[1];
+  f[66] = colorB[2];
+  f[67] = params.saturation;
+  f[68] = colorC[0];
+  f[69] = colorC[1];
+  f[70] = colorC[2];
+  f[71] = params.brightness;
+  f[72] = colorD[0];
+  f[73] = colorD[1];
+  f[74] = colorD[2];
+  f[75] = bass;
+  return bufferToBase64(buf);
+}
+
+function volumetricSpheresInitialState(params: VolumetricSpheresParams, count: number, time: number, seedKey: string): VolumetricSpheresNativeGraphState {
+  return {
+    layout: params.layout,
+    sphereCount: count,
+    seedKey,
+    prevFrameTime: time,
+    autoRotXPhase: 0,
+    autoRotYPhase: 0,
+    autoRotZPhase: 0,
+  };
+}
+
+function sanitizeVolumetricSpheresGraphId(value: string): string {
+  return String(value || 'source').replace(/[^a-zA-Z0-9:_-]+/g, '_').slice(0, 160);
+}
+
+export function buildVolumetricSpheresNativeComputeGraph(options: VolumetricSpheresNativeGraphOptions): VolumetricSpheresNativeGraphBuildResult {
+  const params = normalizeVolumetricSpheresParams(options.params);
+  const sphereCount = Math.max(MIN_SPHERES, Math.min(MAX_SPHERES, Math.round(params.sphereCount)));
+  const time = Math.max(0, Number.isFinite(options.time) ? Number(options.time) : 0);
+  const seedKey = volumetricSpheresSeedKey(params, sphereCount);
+  const mustReset = !!options.reset
+    || !options.state
+    || options.state.sphereCount !== sphereCount
+    || options.state.layout !== params.layout
+    || options.state.seedKey !== seedKey;
+  const state = mustReset
+    ? volumetricSpheresInitialState(params, sphereCount, time, seedKey)
+    : { ...options.state! };
+  let dt = typeof options.frameDelta === 'number' && Number.isFinite(options.frameDelta)
+    ? options.frameDelta
+    : (state.prevFrameTime === 0 ? 1 / 60 : time - state.prevFrameTime);
+  dt = Math.min(Math.max(dt, 0), 1 / 15);
+  state.prevFrameTime = time;
+  state.autoRotXPhase += params.autoRotateX * dt;
+  state.autoRotYPhase += params.autoRotateY * dt;
+  state.autoRotZPhase += params.autoRotateZ * dt;
+
+  const reactive = !!params.audioReactive;
+  const bass = reactive ? Math.min(2, clampFinite(options.audioBass, 0, 2, 0) * params.bassPulse) : 0;
+  const treble = reactive ? Math.min(2, clampFinite(options.audioTreble, 0, 2, 0) * params.trebleSparkle) : 0;
+  const sourceId = String(options.sourceId || 'volumetric-spheres-native-source');
+  const prefix = `volumetric-spheres:${sanitizeVolumetricSpheresGraphId(sourceId)}:${sphereCount}`;
+  const id = (name: string) => `${prefix}:${name}`;
+  const width = Math.round(options.width || 1920);
+  const height = Math.round(options.height || 1080);
+  const buffers: VolumetricSpheresNativeGraphBuffer[] = [
+    {
+      id: id('sim-uniform'),
+      kind: 'uniform',
+      byte_length: 80,
+      initial_b64: buildVolumetricSpheresSimUniform(params, sphereCount, dt, time, bass, treble),
+    },
+    {
+      id: id('render-uniform'),
+      kind: 'uniform',
+      byte_length: 320,
+      initial_b64: buildVolumetricSpheresRenderUniform(params, state, width, height, time, bass, treble),
+    },
+    {
+      id: id('spheres'),
+      kind: 'storage',
+      byte_length: sphereCount * SPHERE_STRIDE_FLOATS * 4,
+      persistent: true,
+      clear: mustReset,
+      initial_b64: mustReset ? buildVolumetricSpheresInitialBuffer(params, sphereCount) : undefined,
+    },
+  ];
+  const passes: VolumetricSpheresNativeGraphPass[] = [{
+    name: 'volumetric-spheres-sim',
+    shader_id: VOLUMETRIC_SPHERES_NATIVE_SHADER_IDS.sim,
+    entry: 'cs_main',
+    dispatch: [Math.ceil(sphereCount / 64), 1, 1],
+    bindings: [
+      { binding: 0, resource: id('spheres'), kind: 'storage' },
+      { binding: 1, resource: id('sim-uniform'), kind: 'uniform' },
+    ],
+  }];
+  const renderPasses: VolumetricSpheresNativeGraphRenderPass[] = [{
+    name: 'volumetric-spheres-render',
+    shader_id: VOLUMETRIC_SPHERES_NATIVE_SHADER_IDS.render,
+    vertex_entry: 'vs_main',
+    fragment_entry: 'fs_main',
+    target: 'source_frame',
+    source_id: sourceId,
+    seq: Math.max(0, Math.round(options.frameIndex ?? 0)),
+    clear: true,
+    include_snapshot: !!options.includeSnapshot,
+    blend: 'alpha',
+    primitive: 'triangle-list',
+    vertex_count: 6,
+    instance_count: sphereCount,
+    depth: true,
+    depth_write: true,
+    depth_compare: 'less',
+    bindings: [
+      { binding: 0, resource: id('spheres'), kind: 'read-only-storage' },
+      { binding: 1, resource: id('render-uniform'), kind: 'uniform' },
+    ],
+  }];
+
+  return {
+    config: {
+      buffers,
+      passes,
+      render_passes: renderPasses,
+      readbacks: [],
+    },
+    sourceId,
+    state,
+    sphereCount,
+    passCount: passes.length + renderPasses.length,
+  };
+}
 
 export class WebGPUVolumetricSpheresShader implements GpuShaderImpl {
   private device: any;

@@ -17,6 +17,11 @@ import {
   type ParticleFieldNativeGraphState,
 } from '$lib/renderer/webgpuParticleField';
 import {
+  buildVolumetricSpheresNativeComputeGraph,
+  buildVolumetricSpheresNativePrecompileCommands,
+  type VolumetricSpheresNativeGraphState,
+} from '$lib/renderer/shaders/webgpuVolumetricSpheresShader';
+import {
   attachNativeRendererOutputWindow,
   clearNativeRendererDecodePreviewCache,
   clearNativeRendererRuntimeCaches,
@@ -102,8 +107,11 @@ type NativeRenderClockCommand = {
 
 export type PresentPolicyProfile = 'vsync-live' | 'low-latency-safe' | 'low-latency-aggressive';
 
-type NativeGraphRouteKind = 'smoke-3d' | 'particle-field';
-type NativeGraphRouteSimulationState = Smoke3DNativeGraphState | ParticleFieldNativeGraphState;
+type NativeGraphRouteKind = 'smoke-3d' | 'particle-field' | 'volumetric-spheres';
+type NativeGraphRouteSimulationState =
+  | Smoke3DNativeGraphState
+  | ParticleFieldNativeGraphState
+  | VolumetricSpheresNativeGraphState;
 
 type NativeGraphLayerRoute = {
   kind: NativeGraphRouteKind;
@@ -920,6 +928,12 @@ export class NativeRendererSync {
       this.supportsNativeGraphInstrument('particle-field')
     ) {
       kind = 'particle-field';
+    } else if (
+      (normalizedShaderId === 'volumetric-balls' || normalizedShaderId === 'volumetric-spheres') &&
+      this.supportsNativeFeature('native_volumetric_spheres_graph') &&
+      this.supportsNativeGraphInstrument('volumetric-spheres')
+    ) {
+      kind = 'volumetric-spheres';
     }
     if (!kind) return null;
     const inputSource = this.nativeGraphInputSourceForLayer(layer, kind);
@@ -981,8 +995,11 @@ export class NativeRendererSync {
           ? clock.time
           : Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000);
         const graphDelta = typeof clock.time_delta === 'number' ? clock.time_delta : 1 / this.targetFps;
-        const graph = route.kind === 'smoke-3d'
-          ? buildSmoke3DNativeComputeGraph({
+        const graph = (() => {
+          const audioBass = visual.isActive ? Math.max(visual.bass, visual.bassFast * 0.9) : 0;
+          const audioTreble = visual.isActive ? visual.treble : 0;
+          if (route.kind === 'smoke-3d') {
+            return buildSmoke3DNativeComputeGraph({
               sourceId: route.source.id,
               params: layer.gpuLayerContent?.params ?? {},
               width,
@@ -990,12 +1007,14 @@ export class NativeRendererSync {
               time: graphTime,
               frameDelta: graphDelta,
               frameIndex: graphSeq,
-              audioBass: visual.isActive ? Math.max(visual.bass, visual.bassFast * 0.9) : 0,
-              audioTreble: visual.isActive ? visual.treble : 0,
+              audioBass,
+              audioTreble,
               state: routeState.state as Smoke3DNativeGraphState | null,
               reset: !routeState.state,
-            })
-          : buildParticleFieldNativeComputeGraph({
+            });
+          }
+          if (route.kind === 'particle-field') {
+            return buildParticleFieldNativeComputeGraph({
               sourceId: route.source.id,
               params: layer.gpuLayerContent?.params ?? {},
               width,
@@ -1003,12 +1022,27 @@ export class NativeRendererSync {
               time: graphTime,
               frameDelta: graphDelta,
               frameIndex: graphSeq,
-              audioBass: visual.isActive ? Math.max(visual.bass, visual.bassFast * 0.9) : 0,
-              audioTreble: visual.isActive ? visual.treble : 0,
+              audioBass,
+              audioTreble,
               mediaSourceId: route.inputSource?.id ?? null,
               state: routeState.state as ParticleFieldNativeGraphState | null,
               reset: !routeState.state,
             });
+          }
+          return buildVolumetricSpheresNativeComputeGraph({
+            sourceId: route.source.id,
+            params: layer.gpuLayerContent?.params ?? {},
+            width,
+            height,
+            time: graphTime,
+            frameDelta: graphDelta,
+            frameIndex: graphSeq,
+            audioBass,
+            audioTreble,
+            state: routeState.state as VolumetricSpheresNativeGraphState | null,
+            reset: !routeState.state,
+          });
+        })();
         const result = await runNativeRendererComputeGraph(graph.config as unknown as Record<string, unknown>);
         const renders = Array.isArray((result as any)?.renders)
           ? (result as any).renders
@@ -1823,6 +1857,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     });
     commands.push(...buildSmoke3DNativePrecompileCommands());
     commands.push(...buildParticleFieldNativePrecompileCommands());
+    commands.push(...buildVolumetricSpheresNativePrecompileCommands());
     await submitNativeRendererBatch({
       frame_id: ++this.frameId,
       commands,
