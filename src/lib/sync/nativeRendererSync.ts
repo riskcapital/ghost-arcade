@@ -1483,7 +1483,7 @@ export class NativeRendererSync {
     this.desiredHeight = height;
     this.sentWidth = 0;
     this.sentHeight = 0;
-    void this.applyStartupPolicies().catch((err) => {
+    await this.applyStartupPolicies().catch((err) => {
       console.warn('[NativeRendererSync] native startup policy task failed', err);
     });
     const nativeCaps = startupStatus?.native_caps;
@@ -1538,7 +1538,7 @@ export class NativeRendererSync {
       this.shaderPrecompileQueueCap,
       this.shaderPrecompilePerFrame,
     ).catch(() => {});
-    void this.warmNativeWgslStdlib().catch((err) => {
+    await this.warmNativeWgslStdlib().catch((err) => {
       console.warn('[NativeRendererSync] native WGSL stdlib warm-up failed', err);
     });
     await Promise.allSettled(tasks);
