@@ -1333,6 +1333,30 @@ async function main() {
     if (!status.source_frame_format) {
       throw new Error(`native source frame format missing from status: ${JSON.stringify(status)}`);
     }
+    if (Number(status.source_frame_cpu_fallback_uploads ?? 0) < 1) {
+      throw new Error(`native source-frame CPU fallback uploads were not counted: ${JSON.stringify(status)}`);
+    }
+    if (Number(status.source_frame_file_uploads ?? 0) < 1) {
+      throw new Error(`native source-frame file uploads were not counted: ${JSON.stringify(status)}`);
+    }
+    if (Number(status.source_frame_input_bytes_uploaded ?? 0) < sourceFrameBytes.length) {
+      throw new Error(`native source-frame input bytes were not counted: ${JSON.stringify(status)}`);
+    }
+    if (Number(status.source_frame_resampled_bytes_uploaded ?? 0) < Number(status.source_frame_bytes_uploaded ?? 0)) {
+      throw new Error(`native source-frame resampled byte count regressed: ${JSON.stringify(status)}`);
+    }
+    if (Number(status.source_frame_rejected_uploads ?? 0) !== 0) {
+      throw new Error(`native source-frame uploads were unexpectedly rejected: ${JSON.stringify(status)}`);
+    }
+    if (status.source_frame_last_upload_transport !== 'file') {
+      throw new Error(`native source-frame last transport was not tracked: ${JSON.stringify(status)}`);
+    }
+    if (
+      Number(stats.source_frame_cpu_fallback_uploads ?? 0) < 1 ||
+      Number(stats.source_frame_file_uploads ?? 0) < 1
+    ) {
+      throw new Error(`native source-frame transport stats were not reported: ${JSON.stringify(stats)}`);
+    }
     if (!status.native_caps?.adapter_name || Number(status.native_caps.max_texture_dimension_2d ?? 0) <= 0) {
       throw new Error(`native GPU caps missing adapter/texture limits: ${JSON.stringify(status.native_caps ?? null)}`);
     }
