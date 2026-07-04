@@ -43,6 +43,7 @@ const nativeRendererBroker = createNativeRendererBroker({
       osrFailureReason,
     };
   },
+  nativeFrameEncoderStatusProvider: () => getNativeFrameEncoderStatus(),
 });
 
 // Force Chromium to use the discrete GPU (NVIDIA/AMD) on Optimus laptops.
@@ -296,6 +297,25 @@ function resolveFfmpegPath() {
   }
 
   return isWin ? 'ffmpeg.exe' : 'ffmpeg';
+}
+
+function getNativeFrameEncoderStatus() {
+  let ffmpegPath = null;
+  let reason = null;
+  try {
+    ffmpegPath = resolveFfmpegPath();
+  } catch (err) {
+    reason = err?.message || String(err);
+  }
+  return {
+    available: !!ffmpegPath,
+    encoder: 'ffmpeg',
+    ffmpegPath,
+    activeSessions: activeJpegFrameEncoderJobs.size + activeMp4FrameEncoderJobs.size,
+    jpegActiveSessions: activeJpegFrameEncoderJobs.size,
+    mp4ActiveSessions: activeMp4FrameEncoderJobs.size,
+    reason,
+  };
 }
 
 function assertAbsolutePath(filePath, label = 'file path') {

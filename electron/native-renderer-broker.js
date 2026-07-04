@@ -112,6 +112,7 @@ export function createNativeRendererBroker({
   platform,
   env = process.env,
   textureShareStatusProvider = null,
+  nativeFrameEncoderStatusProvider = null,
 }) {
   return new NativeRendererBroker({
     appRoot,
@@ -120,11 +121,12 @@ export function createNativeRendererBroker({
     platform,
     env,
     textureShareStatusProvider,
+    nativeFrameEncoderStatusProvider,
   });
 }
 
 class NativeRendererBroker {
-  constructor({ appRoot, resourcesPath, isPackaged, platform, env, textureShareStatusProvider }) {
+  constructor({ appRoot, resourcesPath, isPackaged, platform, env, textureShareStatusProvider, nativeFrameEncoderStatusProvider }) {
     this.appRoot = appRoot;
     this.resourcesPath = resourcesPath;
     this.isPackaged = isPackaged;
@@ -132,6 +134,8 @@ class NativeRendererBroker {
     this.env = env;
     this.textureShareStatusProvider =
       typeof textureShareStatusProvider === 'function' ? textureShareStatusProvider : null;
+    this.nativeFrameEncoderStatusProvider =
+      typeof nativeFrameEncoderStatusProvider === 'function' ? nativeFrameEncoderStatusProvider : null;
     this.child = null;
     this.nextId = 1;
     this.pending = new Map();
@@ -337,6 +341,7 @@ class NativeRendererBroker {
     this.capabilities = applyBrokerCapabilityOverlay(
       normalizeCapabilities(result, fallback),
       this.textureShareStatus(),
+      this.nativeFrameEncoderStatus(),
     );
     return this.capabilities;
   }
@@ -380,6 +385,7 @@ class NativeRendererBroker {
     if (!this.lastStatus.backend_ready) blockers.push(this.lastStatus.last_frame_error || 'native render-core is not ready');
     const features = this.capabilities?.features || {};
     const textureShare = this.textureShareStatus();
+    const nativeFrameEncoder = this.nativeFrameEncoderStatus();
     const graphInstruments = nativeGraphInstrumentSet(this.capabilities);
     const computeGraphHostReady = !!(
       features.compute_shader_host &&
@@ -470,6 +476,14 @@ class NativeRendererBroker {
         !!features.native_frame_sequence_export && !!features.frame_snapshot_export,
         'native frame snapshots can feed the desktop JPEG sequence encoder',
       ],
+      [
+        'native-mp4-frame-encoder',
+        'Native MP4 frame encoder',
+        !!features.native_mp4_frame_encoder && !!nativeFrameEncoder.available,
+        nativeFrameEncoder.available
+          ? `desktop FFmpeg raw-frame pipe available; active sessions=${nativeFrameEncoder.activeSessions}`
+          : (nativeFrameEncoder.reason || 'desktop FFmpeg raw-frame pipe is unavailable'),
+      ],
       ['native-media-decode', 'Native media decode/prefetch', !!features.native_media_decode && !!features.media_prefetch],
       ['compute-graph-host', 'Native buffer compute graph host', !!features.compute_graph_host],
       [
@@ -482,7 +496,14 @@ class NativeRendererBroker {
       ],
       ...graphChecks,
       ['managed-output', 'Managed native output window', managedOutputOk, managedOutputDetail],
-      ['native-recording', 'Native recording', !!features.native_recording],
+      [
+        'native-recording',
+        'Native recording',
+        !!features.native_recording,
+        features.native_recording
+          ? 'recording paths can stream raw frames into native MP4/JPEG encoders'
+          : 'native recording paths are unavailable',
+      ],
     ];
     return {
       timestamp_ms: Date.now(),
@@ -490,6 +511,7 @@ class NativeRendererBroker {
       blockers,
       capabilities: this.capabilities,
       texture_share: textureShare,
+      native_frame_encoder: nativeFrameEncoder,
       checks: [
         {
           id: 'binary',
@@ -535,6 +557,39 @@ class NativeRendererBroker {
         label: this.platform === 'darwin' ? 'Syphon' : 'Spout',
         available: false,
         error: err?.message || String(err),
+      };
+    }
+  }
+
+  nativeFrameEncoderStatus() {
+    if (!this.nativeFrameEncoderStatusProvider) {
+      return {
+        available: false,
+        activeSessions: 0,
+        mp4ActiveSessions: 0,
+        jpegActiveSessions: 0,
+        encoder: 'ffmpeg',
+        reason: 'not connected to Electron native frame encoder status',
+      };
+    }
+    try {
+      const status = this.nativeFrameEncoderStatusProvider() || {};
+      return {
+        available: !!status.available,
+        activeSessions: Number(status.activeSessions ?? 0),
+        mp4ActiveSessions: Number(status.mp4ActiveSessions ?? status.activeSessions ?? 0),
+        jpegActiveSessions: Number(status.jpegActiveSessions ?? 0),
+        encoder: status.encoder || 'ffmpeg',
+        reason: status.reason ? String(status.reason) : null,
+      };
+    } catch (err) {
+      return {
+        available: false,
+        activeSessions: 0,
+        mp4ActiveSessions: 0,
+        jpegActiveSessions: 0,
+        encoder: 'ffmpeg',
+        reason: err?.message || String(err),
       };
     }
   }
@@ -893,7 +948,7 @@ function normalizeCapabilities(capabilities, previous = makeDefaultCapabilities(
   };
 }
 
-function applyBrokerCapabilityOverlay(capabilities, textureShare) {
+function applyBrokerCapabilityOverlay(capabilities, textureShare, nativeFrameEncoder = null) {
   const features = capabilities?.features && typeof capabilities.features === 'object'
     ? { ...capabilities.features }
     : {};
@@ -906,6 +961,14 @@ function applyBrokerCapabilityOverlay(capabilities, textureShare) {
     features.native_texture_share_sender ||
     nativeTextureShareSenderReady
   );
+  features.native_mp4_frame_encoder = !!(
+    features.native_mp4_frame_encoder ||
+    nativeFrameEncoder?.available
+  );
+  features.native_recording = !!(
+    features.native_recording ||
+    features.native_mp4_frame_encoder
+  );
 
   const notes = Array.isArray(capabilities?.notes) ? [...capabilities.notes] : [];
   if (
@@ -913,6 +976,12 @@ function applyBrokerCapabilityOverlay(capabilities, textureShare) {
     !notes.some((note) => String(note).includes('Electron texture-share bridge can publish native output IOSurfaces'))
   ) {
     notes.push('Electron texture-share bridge can publish native output IOSurfaces through Syphon when the sender is started.');
+  }
+  if (
+    nativeFrameEncoder?.available &&
+    !notes.some((note) => String(note).includes('Electron native MP4 frame encoder'))
+  ) {
+    notes.push('Electron native MP4 frame encoder can stream raw RGBA/BGRA frames into FFmpeg for offline, reel, and live recordings.');
   }
 
   return {
@@ -1356,6 +1425,7 @@ function makeDefaultCapabilities(overrides = {}) {
       shared_texture_upload: false,
       shared_texture_output_export: false,
       native_texture_share_sender: false,
+      native_mp4_frame_encoder: false,
       native_media_decode: false,
       media_prefetch: false,
       present_policy: false,

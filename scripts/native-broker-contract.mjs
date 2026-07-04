@@ -108,6 +108,13 @@ const broker = createNativeRendererBroker({
     nativeOutputActive: false,
     senderMode: process.platform === 'darwin' ? 'native-iosurface-capable' : 'source-frame-fallback',
   }),
+  nativeFrameEncoderStatusProvider: () => ({
+    available: true,
+    activeSessions: 0,
+    jpegActiveSessions: 0,
+    mp4ActiveSessions: 0,
+    encoder: 'ffmpeg',
+  }),
 });
 
 let tempDir = null;
@@ -162,6 +169,8 @@ try {
   assert(
     capabilities?.features?.frame_snapshot_export &&
       capabilities?.features?.native_frame_sequence_export &&
+      capabilities?.features?.native_mp4_frame_encoder &&
+      capabilities?.features?.native_recording &&
       capabilities?.implemented_methods?.includes('export_frame_snapshot'),
     `broker capabilities missing native frame export RPC: ${JSON.stringify(capabilities?.implemented_methods)}`,
   );
@@ -191,6 +200,8 @@ try {
     assert(checks.get(id)?.ok, `broker readiness has stale/missing ${id}: ${JSON.stringify(readiness)}`);
   }
   assert(checks.get('native-output-mirror')?.ok, `broker readiness omitted native output mirror: ${JSON.stringify(readiness)}`);
+  assert(checks.get('native-mp4-frame-encoder')?.ok, `broker readiness omitted native MP4 frame encoder: ${JSON.stringify(readiness)}`);
+  assert(checks.get('native-recording')?.ok, `broker readiness omitted native recording: ${JSON.stringify(readiness)}`);
   assert(checks.has('managed-output'), `broker readiness omitted managed output check: ${JSON.stringify(readiness)}`);
   if (!checks.get('managed-output')?.ok) {
     console.warn(

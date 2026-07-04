@@ -164,6 +164,13 @@ async function inspectAppBridge() {
       nativeOutputActive: false,
       senderMode: process.platform === 'darwin' ? 'native-iosurface-capable' : 'source-frame-fallback',
     }),
+    nativeFrameEncoderStatusProvider: () => ({
+      available: true,
+      activeSessions: 0,
+      jpegActiveSessions: 0,
+      mp4ActiveSessions: 0,
+      encoder: 'ffmpeg',
+    }),
   });
 
   try {
@@ -184,7 +191,10 @@ async function inspectAppBridge() {
       !!status?.backend_ready &&
       !!features.shared_texture_output_export === outputExportExpected &&
       !!features.native_texture_share_sender === outputExportExpected &&
+      !!features.native_mp4_frame_encoder &&
+      !!features.native_recording &&
       !!checks.get('native-texture-share-sender')?.ok === outputExportExpected &&
+      !!checks.get('native-mp4-frame-encoder')?.ok &&
       !!directSharedRpc;
     return {
       ok,
@@ -193,8 +203,10 @@ async function inspectAppBridge() {
         `outputFormat=${status?.output_format ?? 'unknown'}`,
         `outputSharedTexture=${features.shared_texture_output_export ? 'on' : 'pending'}`,
         `nativeShareSender=${features.native_texture_share_sender ? 'on' : 'pending'}`,
+        `nativeMp4Encoder=${features.native_mp4_frame_encoder ? 'on' : 'missing'}`,
         `directSharedTextureRpc=${directSharedRpc ? 'on' : 'missing'}`,
         `textureShareCheck=${checks.get('native-texture-share-sender')?.ok ? 'on' : 'pending'}`,
+        `recordingCheck=${checks.get('native-mp4-frame-encoder')?.ok ? 'on' : 'pending'}`,
       ].join(' '),
     };
   } finally {
