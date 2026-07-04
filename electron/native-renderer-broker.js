@@ -313,7 +313,10 @@ class NativeRendererBroker {
   async refreshCapabilities() {
     const fallback = this.capabilities;
     const result = await this.sendIfRunning('capabilities', {}, { fallback, timeoutMs: 1000 });
-    this.capabilities = normalizeCapabilities(result, fallback);
+    this.capabilities = applyBrokerCapabilityOverlay(
+      normalizeCapabilities(result, fallback),
+      this.textureShareStatus(),
+    );
     return this.capabilities;
   }
 
@@ -860,6 +863,35 @@ function normalizeCapabilities(capabilities, previous = makeDefaultCapabilities(
     notes: Array.isArray(source.notes)
       ? source.notes.map(String)
       : previous.notes ?? [],
+  };
+}
+
+function applyBrokerCapabilityOverlay(capabilities, textureShare) {
+  const features = capabilities?.features && typeof capabilities.features === 'object'
+    ? { ...capabilities.features }
+    : {};
+  const nativeTextureShareSenderReady = !!(
+    features.shared_texture_output_export &&
+    textureShare?.available &&
+    (textureShare.nativeOutputCapable || textureShare.nativeOutputActive)
+  );
+  features.native_texture_share_sender = !!(
+    features.native_texture_share_sender ||
+    nativeTextureShareSenderReady
+  );
+
+  const notes = Array.isArray(capabilities?.notes) ? [...capabilities.notes] : [];
+  if (
+    nativeTextureShareSenderReady &&
+    !notes.some((note) => String(note).includes('Electron texture-share bridge can publish native output IOSurfaces'))
+  ) {
+    notes.push('Electron texture-share bridge can publish native output IOSurfaces through Syphon when the sender is started.');
+  }
+
+  return {
+    ...capabilities,
+    features,
+    notes,
   };
 }
 

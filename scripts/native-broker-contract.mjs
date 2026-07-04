@@ -128,6 +128,10 @@ try {
     !!capabilities?.features?.shared_texture_output_export === outputExportExpected,
     `broker output shared-texture export capability should match macOS IOSurface support: ${JSON.stringify(capabilities?.features)}`,
   );
+  assert(
+    !!capabilities?.features?.native_texture_share_sender === outputExportExpected,
+    `broker native texture-share sender capability should match app bridge support: ${JSON.stringify(capabilities?.features)}`,
+  );
   const graphInstruments = new Set(capabilities?.native_graph_instruments ?? []);
   const graphManifest = new Map(
     (capabilities?.native_graph_instrument_manifest ?? []).map((entry) => [entry.id, entry]),
