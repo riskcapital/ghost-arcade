@@ -230,6 +230,51 @@ function sanitizeFilenamePart(input: string, fallback = 'render'): string {
     .slice(0, 80) || fallback;
 }
 
+function describeNativeFrameHealth(snapshot: NativeRendererFrameSnapshotExportResult): string {
+  const luma = Number(snapshot.average_luma ?? 0);
+  const maxLuma = Number(snapshot.max_luma ?? 0);
+  const nonzero = Number(snapshot.nonzero_pixels ?? 0);
+  const bright = Number(snapshot.bright_pixels ?? 0);
+  const byteLength = Number(snapshot.byte_length ?? 0);
+  const bytesWritten = Number(snapshot.bytes_written ?? 0);
+  return [
+    `checksum=${snapshot.checksum || 'missing'}`,
+    `luma=${luma.toFixed(4)}`,
+    `max=${maxLuma.toFixed(4)}`,
+    `nonzero=${nonzero}`,
+    `bright=${bright}`,
+    `bytes=${bytesWritten}/${byteLength}`,
+    `format=${snapshot.format || 'unknown'}`,
+  ].join(' ');
+}
+
+function assertNativeRendererFrameExport(
+  snapshot: NativeRendererFrameSnapshotExportResult,
+  frameIndex: number,
+  expected: { width: number; height: number; pixelFormat: 'rgba' | 'bgra' },
+): void {
+  if (snapshot.width !== expected.width || snapshot.height !== expected.height) {
+    throw new Error(
+      `Native renderer frame ${frameIndex} size mismatch: got ${snapshot.width}x${snapshot.height}, expected ${expected.width}x${expected.height} (${describeNativeFrameHealth(snapshot)})`,
+    );
+  }
+  const expectedBytes = expected.width * expected.height * 4;
+  if (Number(snapshot.byte_length ?? 0) !== expectedBytes || Number(snapshot.bytes_written ?? 0) !== expectedBytes) {
+    throw new Error(
+      `Native renderer frame ${frameIndex} byte count mismatch: expected ${expectedBytes} raw bytes (${describeNativeFrameHealth(snapshot)})`,
+    );
+  }
+  if (snapshot.dark_frame || snapshot.nonzero_pixels <= 0) {
+    throw new Error(`Native renderer exported a blank frame at ${frameIndex} (${describeNativeFrameHealth(snapshot)})`);
+  }
+  const snapshotPixelFormat = rawPixelFormatForNativeTextureFormat(snapshot.format);
+  if (snapshotPixelFormat !== expected.pixelFormat) {
+    throw new Error(
+      `Native renderer frame ${frameIndex} format changed from ${expected.pixelFormat} to ${snapshotPixelFormat} (${describeNativeFrameHealth(snapshot)})`,
+    );
+  }
+}
+
 export function describeFrameTarget(target: FrameSequenceTarget): string {
   return target.path || target.name;
 }
@@ -368,20 +413,7 @@ export async function writeNativeRendererJpegSequenceFrame(
     time: timeSeconds,
     frame_index: frameIndex,
   });
-  if (snapshot.width !== session.width || snapshot.height !== session.height) {
-    throw new Error(
-      `Native renderer frame ${frameIndex} size mismatch: got ${snapshot.width}x${snapshot.height}, expected ${session.width}x${session.height}`,
-    );
-  }
-  if (snapshot.dark_frame || snapshot.nonzero_pixels <= 0) {
-    throw new Error(`Native renderer exported a blank frame at ${frameIndex}`);
-  }
-  const snapshotPixelFormat = rawPixelFormatForNativeTextureFormat(snapshot.format);
-  if (snapshotPixelFormat !== session.pixelFormat) {
-    throw new Error(
-      `Native renderer frame ${frameIndex} format changed from ${session.pixelFormat} to ${snapshotPixelFormat} (${snapshot.format})`,
-    );
-  }
+  assertNativeRendererFrameExport(snapshot, frameIndex, session);
   await writeNativeJpegSequenceFrameFile(session, frameIndex, rawPath, true);
   return snapshot;
 }
@@ -433,20 +465,7 @@ export async function encodeNativeRendererJpegFrame(
     time: timeSeconds,
     frame_index: frameIndex,
   });
-  if (snapshot.width !== session.width || snapshot.height !== session.height) {
-    throw new Error(
-      `Native renderer frame ${frameIndex} size mismatch: got ${snapshot.width}x${snapshot.height}, expected ${session.width}x${session.height}`,
-    );
-  }
-  if (snapshot.dark_frame || snapshot.nonzero_pixels <= 0) {
-    throw new Error(`Native renderer exported a blank frame at ${frameIndex}`);
-  }
-  const snapshotPixelFormat = rawPixelFormatForNativeTextureFormat(snapshot.format);
-  if (snapshotPixelFormat !== session.pixelFormat) {
-    throw new Error(
-      `Native renderer frame ${frameIndex} format changed from ${session.pixelFormat} to ${snapshotPixelFormat} (${snapshot.format})`,
-    );
-  }
+  assertNativeRendererFrameExport(snapshot, frameIndex, session);
 
   const result = await invoke<{
     success?: boolean;
@@ -576,20 +595,7 @@ export async function writeNativeRendererMp4Frame(
     time: timeSeconds,
     frame_index: frameIndex,
   });
-  if (snapshot.width !== session.width || snapshot.height !== session.height) {
-    throw new Error(
-      `Native renderer frame ${frameIndex} size mismatch: got ${snapshot.width}x${snapshot.height}, expected ${session.width}x${session.height}`,
-    );
-  }
-  if (snapshot.dark_frame || snapshot.nonzero_pixels <= 0) {
-    throw new Error(`Native renderer exported a blank frame at ${frameIndex}`);
-  }
-  const snapshotPixelFormat = rawPixelFormatForNativeTextureFormat(snapshot.format);
-  if (snapshotPixelFormat !== session.pixelFormat) {
-    throw new Error(
-      `Native renderer frame ${frameIndex} format changed from ${session.pixelFormat} to ${snapshotPixelFormat} (${snapshot.format})`,
-    );
-  }
+  assertNativeRendererFrameExport(snapshot, frameIndex, session);
   await writeNativeMp4FrameFile(session, frameIndex, rawPath, true);
   return snapshot;
 }
