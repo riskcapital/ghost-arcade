@@ -196,7 +196,7 @@ type NativeGraphLayerRoute = {
   key: string;
   source: NativeLayerSource;
   inputSource: NativeLayerSource | null;
-  effectPass?: NativeEffectPassRuntime;
+  effectPasses?: NativeEffectPassRuntime[];
 };
 
 type NativeGraphRouteState = {
@@ -480,10 +480,14 @@ function nativeEffectPassFromDescriptor(descriptor: string | null): NativeEffect
   };
 }
 
-function nativeEffectPassForLayer(layer: Layer): NativeEffectPassRuntime | null {
+function nativeEffectPassesForLayer(layer: Layer): NativeEffectPassRuntime[] | null {
   const enabled = (layer.effects || []).filter((effect: any) => effect && effect.enabled !== false);
-  if (enabled.length !== 1) return null;
-  return nativeEffectPassFromDescriptor(effectToNativeDescriptor(enabled[0]));
+  if (!enabled.length || enabled.length > 4) return null;
+  const passes = enabled.map((effect: any) =>
+    nativeEffectPassFromDescriptor(effectToNativeDescriptor(effect)),
+  );
+  if (passes.some((effect) => !effect)) return null;
+  return passes as NativeEffectPassRuntime[];
 }
 
 function hslToRgb(h: number, s: number, l: number): [number, number, number] {
@@ -943,7 +947,7 @@ function nativeLayerSource(layer: Layer): NativeLayerSource {
 
 function nativeLayerNeedsContinuousSync(layer: Layer): boolean {
   if (!layer.visible) return false;
-  if (nativeEffectPassForLayer(layer)?.effect === 'noise') return true;
+  if (nativeEffectPassesForLayer(layer)?.some((effect) => effect.effect === 'noise')) return true;
   if (
     (layer.source?.type === 'shader' && layer.source?.shaderCode) ||
     (layer.type === 'gpu' && !!layer.gpuLayerContent)
@@ -1305,8 +1309,8 @@ export class NativeRendererSync {
   private nativeEffectPassRouteForLayer(layer: Layer, includeWarningDisabled = false): NativeGraphLayerRoute | null {
     if (layer.type === 'gpu') return null;
     if (!this.supportsNativeFeature('compute_graph_texture_sampling')) return null;
-    const effectPass = nativeEffectPassForLayer(layer);
-    if (!effectPass) return null;
+    const effectPasses = nativeEffectPassesForLayer(layer);
+    if (!effectPasses?.length) return null;
     const inputSource = nativeLayerSource(layer);
     if (!inputSource.source || !inputSource.shouldPreview || inputSource.sourceType === 'none') return null;
     const inputReady =
@@ -1319,7 +1323,7 @@ export class NativeRendererSync {
     if (!includeWarningDisabled && (this.nativeGraphRoutes.get(key)?.warnings ?? 0) >= 3) {
       return null;
     }
-    return { kind: 'effect-pass', key, source, inputSource, effectPass };
+    return { kind: 'effect-pass', key, source, inputSource, effectPasses };
   }
 
   private nativeGraphRouteForLayer(layer: Layer, includeWarningDisabled = false): NativeGraphLayerRoute | null {
@@ -1507,26 +1511,48 @@ export class NativeRendererSync {
           (clock.mode === 'manual' &&
             typeof routeState.lastGraphFrameIndex === 'number' &&
             graphFrameIndex < routeState.lastGraphFrameIndex);
-        const graph = await (async () => {
-          if (route.kind === 'effect-pass') {
-            if (!route.inputSource || !route.effectPass) {
-              throw new Error('native effect-pass route is missing input source or effect metadata');
-            }
+        if (route.kind === 'effect-pass') {
+          if (!route.inputSource || !route.effectPasses?.length) {
+            throw new Error('native effect-pass route is missing input source or effect metadata');
+          }
+          let currentSourceId = route.inputSource.id;
+          for (let effectIndex = 0; effectIndex < route.effectPasses.length; effectIndex += 1) {
+            const effectPass = route.effectPasses[effectIndex];
+            const targetSourceId = effectIndex === route.effectPasses.length - 1
+              ? route.source.id
+              : `${route.source.id}:step:${effectIndex}`;
             const effectGraph = buildNativeEffectPassGraph({
-              sourceId: route.inputSource.id,
-              targetSourceId: route.source.id,
-              effect: route.effectPass.effect,
+              sourceId: currentSourceId,
+              targetSourceId,
+              effect: effectPass.effect,
               width,
               height,
               time: graphTime,
               frameDelta: graphDelta,
               frameIndex: graphFrameIndex,
-              amount: route.effectPass.amount,
+              amount: effectPass.amount,
               mix: 1,
-              seq: graphSeq,
+              seq: graphSeq * 16 + effectIndex,
             });
-            return { ...effectGraph, state: null };
+            const result = await runNativeRendererComputeGraph(effectGraph.config as unknown as Record<string, unknown>);
+            const renders = Array.isArray((result as any)?.renders)
+              ? (result as any).renders
+              : [(result as any)?.render].filter(Boolean);
+            const renderedSourceFrame = renders.some((render: any) =>
+              render?.target === 'source_frame' && render?.source_id === targetSourceId,
+            );
+            if (!renderedSourceFrame) {
+              throw new Error(`native effect-pass graph returned no source-frame render for ${targetSourceId}`);
+            }
+            currentSourceId = targetSourceId;
           }
+          routeState.state = null;
+          routeState.lastGraphFrameIndex = graphFrameIndex;
+          routeState.lastManualClockKey = manualClockKey || undefined;
+          routeState.warnings = 0;
+          continue;
+        }
+        const graph = await (async () => {
           if (route.kind === 'planet') {
             return buildPlanetNativeComputeGraph({
               sourceId: route.source.id,
