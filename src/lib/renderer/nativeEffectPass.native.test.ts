@@ -182,6 +182,11 @@ describe('Native effect-pass template', () => {
       ['noise', 9],
       ['pixelate', 10],
       ['vignette', 11],
+      ['rgb-shift', 12],
+      ['scanlines', 13],
+      ['blur', 14],
+      ['chromatic-aberration', 15],
+      ['glitch', 16],
     ]);
     expect(nativeEffectPassManifestEntry('posterize')).toMatchObject({
       code: 8,
@@ -320,6 +325,83 @@ describe('Native effect-pass template', () => {
       0.58,
       0.2,
       0.1,
+    ]);
+  });
+
+  it('packs native stylize pilot params across the shared effect slots', () => {
+    expect(packNativeEffectPassUniforms({
+      sourceId: 'src',
+      targetSourceId: 'dst',
+      effect: 'glitch',
+      width: 320,
+      height: 180,
+      time: 0.5,
+      frameDelta: 1 / 24,
+      frameIndex: 3,
+      amount: 0.9,
+      params: {
+        speed: 1.4,
+        blockSize: 0.2,
+        rgbSplit: 0.8,
+        jitter: 0.55,
+        verticalSlice: 0.3,
+        blockHold: 0.1,
+        tearChance: 0.7,
+        triggerMode: 2,
+      },
+    })).toEqual([
+      320,
+      180,
+      0.5,
+      1 / 24,
+      16,
+      0.9,
+      1,
+      3,
+      1.4,
+      0.2,
+      0.8,
+      0.55,
+      0.3,
+      0.1,
+      0.7,
+      2,
+    ]);
+    expect(packNativeEffectPassUniforms({
+      sourceId: 'src',
+      targetSourceId: 'dst',
+      effect: 'chromatic-aberration',
+      width: 320,
+      height: 180,
+      time: 0.5,
+      frameDelta: 1 / 24,
+      frameIndex: 3,
+      amount: 0.6,
+      params: {
+        mode: 2,
+        angle: 35,
+        centerX: 0.45,
+        centerY: 0.55,
+        edgeFalloff: 0.8,
+        outputMix: 0.7,
+      },
+    })).toEqual([
+      320,
+      180,
+      0.5,
+      1 / 24,
+      15,
+      0.6,
+      1,
+      3,
+      2,
+      35,
+      0.45,
+      0.55,
+      0.8,
+      0.7,
+      0,
+      0,
     ]);
   });
 
@@ -675,6 +757,141 @@ describe('Native effect-pass template', () => {
             const centerLuma = snapshotPixelLuma(snapshot, pixels, 0.5, 0.5);
             const cornerLuma = snapshotPixelLuma(snapshot, pixels, 0.04, 0.04);
             expect(centerLuma).toBeGreaterThan(cornerLuma + 0.08);
+          },
+        },
+        {
+          id: 'rgb-shift',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-rgb-shift',
+            effect: 'rgb-shift',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 5,
+            amount: 22,
+            params: {
+              angle: 0,
+              mode: 0,
+              centerX: 0.5,
+              centerY: 0.5,
+              prismSpread: 1.5,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.5, 0.5);
+            const shiftedRgb = snapshotPixelRgb(snapshot, pixels, 0.5, 0.5);
+            expect(rgbDistance(sourceRgb, shiftedRgb)).toBeGreaterThan(0.02);
+          },
+        },
+        {
+          id: 'scanlines',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-scanlines',
+            effect: 'scanlines',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 6,
+            amount: 0.8,
+            params: {
+              count: 36,
+              speed: 0,
+              phosphor: 0.35,
+              rollingBar: 0,
+              curvature: 0,
+              interlace: 0.6,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const lineA = snapshotPixelLuma(snapshot, pixels, 0.5, 0.48);
+            const lineB = snapshotPixelLuma(snapshot, pixels, 0.5, 0.52);
+            expect(Math.abs(lineA - lineB)).toBeGreaterThan(0.01);
+          },
+        },
+        {
+          id: 'blur',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-blur',
+            effect: 'blur',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 7,
+            amount: 18,
+            params: {
+              mode: 1,
+              angle: 0,
+              param2: 1,
+              edgeProtect: 0,
+              outputMix: 1,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.76, 0.42);
+            const blurredRgb = snapshotPixelRgb(snapshot, pixels, 0.76, 0.42);
+            expect(rgbDistance(sourceRgb, blurredRgb)).toBeGreaterThan(0.01);
+          },
+        },
+        {
+          id: 'chromatic-aberration',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-chromatic-aberration',
+            effect: 'chromatic-aberration',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 8,
+            amount: 1.2,
+            params: {
+              mode: 1,
+              angle: 0,
+              centerX: 0.5,
+              centerY: 0.5,
+              edgeFalloff: 0.4,
+              outputMix: 1,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.78, 0.5);
+            const shiftedRgb = snapshotPixelRgb(snapshot, pixels, 0.78, 0.5);
+            expect(rgbDistance(sourceRgb, shiftedRgb)).toBeGreaterThan(0.015);
+          },
+        },
+        {
+          id: 'glitch',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-glitch',
+            effect: 'glitch',
+            width: 160,
+            height: 90,
+            time: 1.1,
+            frameDelta: 1 / 30,
+            frameIndex: 9,
+            amount: 1,
+            params: {
+              speed: 1.5,
+              blockSize: 0.1,
+              rgbSplit: 1,
+              jitter: 1,
+              verticalSlice: 1,
+              blockHold: 0,
+              tearChance: 1,
+              triggerMode: 0,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.35, 0.62);
+            const glitchedRgb = snapshotPixelRgb(snapshot, pixels, 0.35, 0.62);
+            expect(rgbDistance(sourceRgb, glitchedRgb)).toBeGreaterThan(0.01);
           },
         },
       ];
