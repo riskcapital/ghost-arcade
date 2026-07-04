@@ -1860,13 +1860,12 @@ impl App {
             .values()
             .filter(|layer| {
                 layer.visible
-                    && layer.frame_slot.is_some()
                     && !layer.shader_rendered
                     && !is_native_instrument_kind(layer.source_kind)
-                    && layer
-                        .source_id
-                        .as_deref()
-                        .is_some_and(|source_id| source_id.starts_with("gpu:"))
+                    && layer.source_id.as_deref().is_some_and(|source_id| {
+                        self.source_frame_slots.contains_key(source_id)
+                            && self.source_frames.contains_key(source_id)
+                    })
             })
             .count()
             .min(1024) as u32;

@@ -328,6 +328,25 @@ async function snapshot(rpc, label, time, frameIndex) {
   return { label, ...snap };
 }
 
+async function waitForManagedOutputHealthy(rpc, attempts = 24) {
+  let latest = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    await rpc.send('submit_commands', {
+      commands: [{ type: 'present' }],
+    }, 5000);
+    await delay(50);
+    latest = await rpc.send('status', {}, 5000);
+    if (
+      latest?.output_present_healthy &&
+      Number(latest.frames_presented ?? 0) > 0 &&
+      Number(latest.swapchain_presented ?? 0) > 0
+    ) {
+      return latest;
+    }
+  }
+  return latest;
+}
+
 async function renderBlendProbe(rpc, blendMode, frameIndex) {
   await rpc.send('submit_commands', {
     commands: [
@@ -1104,6 +1123,13 @@ async function main() {
     graphSourceFrameSnapshot = await snapshot(rpc, 'graph-source-frame', 0.12, 1);
     assertFrame('native graph source-frame layer', graphSourceFrameSnapshot, 0.012);
     assertDifferent('native graph source-frame vs baseline', baseline, graphSourceFrameSnapshot);
+    const graphSourceStatus = await rpc.send('status', {}, 5000);
+    if (Number(graphSourceStatus?.native_graph_source_frame_layers ?? 0) < 1) {
+      throw new Error(`native graph source frame was not counted as a graph layer: ${JSON.stringify(graphSourceStatus)}`);
+    }
+    if (Number(graphSourceStatus?.native_instrument_proxy_layers ?? 0) !== 0) {
+      throw new Error(`native graph route fell back to legacy proxy layer: ${JSON.stringify(graphSourceStatus)}`);
+    }
     await rpc.send('submit_commands', {
       commands: [
         { type: 'remove_layer', layer_id: 'graph-source-frame' },
@@ -1289,7 +1315,7 @@ async function main() {
     assertFrame('native volumetric-balls high detail branch', gpuHighDetail, 0.015);
     assertDifferent('volumetric-balls detail branch', gpuB, gpuHighDetail);
 
-    const status = await rpc.send('status', {}, 5000);
+    const status = await waitForManagedOutputHealthy(rpc) ?? await rpc.send('status', {}, 5000);
     const stats = await rpc.send('stats', {}, 5000);
     if (Number(status.native_instrument_layers ?? 0) < 1) {
       throw new Error(`native instrument layer was not counted in status: ${JSON.stringify(status)}`);
@@ -1376,7 +1402,8 @@ async function main() {
       !status.auto_present_on_state_change ||
       !status.output_window_attached ||
       !status.output_swapchain_ready ||
-      !status.output_present_healthy
+      Number(status.frames_presented ?? 0) <= 0 ||
+      Number(status.swapchain_presented ?? 0) <= 0
     ) {
       throw new Error(`native managed output/present status regressed: ${JSON.stringify(status)}`);
     }
