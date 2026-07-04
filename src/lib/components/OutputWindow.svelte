@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { invoke } from '$lib/bridge';
+  import { getNativeRendererStatus, setNativeRendererOutputWindow } from '$lib/api/native-renderer';
   import type { RenderEngine } from '../renderer/engine';
   import { settings } from '../stores/settings';
 
@@ -57,30 +58,39 @@
   }
 
   // Read the experimental output-transport flags once at the call
-  // site (synchronous get from the settings store). main.js applies
-  // the precedence ordering (zeroCopy > webrtc > legacy) — we just
-  // forward both bits.
+  // site (synchronous get from the settings store). The open helpers apply
+  // the precedence ordering (nativeCore > zeroCopy > webrtc > legacy).
+  //   outputNativeCore    → opens the Rust/wgpu managed output window.
   //   experimentalZeroCopy → mounts OutputSharedTextureDisplayApp
   //                          (`?mode=webgpu-display`). On by default.
   //   experimentalWebRTC   → mounts OutputDisplayApp
   //                          (`?mode=webrtc-display`). Escape hatch.
   // Both off → SpoutOutputApp (`?mode=output`), legacy default.
-  // See settings.ts experimental.outputZeroCopy / outputWebRTC for
-  // the architectural rationale.
-  function readExperimentalTransports(): { experimentalWebRTC: boolean; experimentalZeroCopy: boolean } {
+  // See settings.ts experimental.outputNativeCore / outputZeroCopy /
+  // outputWebRTC for the architectural rationale.
+  function readExperimentalTransports(): {
+    experimentalWebRTC: boolean;
+    experimentalZeroCopy: boolean;
+    outputNativeCore: boolean;
+  } {
     let webrtc = false;
     let zeroCopy = false;
+    let nativeCore = false;
     const unsub = settings.subscribe((s) => {
       webrtc = !!s.experimental?.outputWebRTC;
       zeroCopy = !!s.experimental?.outputZeroCopy;
+      nativeCore = !!s.experimental?.outputNativeCore;
     });
     unsub();
-    return { experimentalWebRTC: webrtc, experimentalZeroCopy: zeroCopy };
+    return { experimentalWebRTC: webrtc, experimentalZeroCopy: zeroCopy, outputNativeCore: nativeCore };
   }
 
   // Open output window — opens a draggable window (double-click to fullscreen)
   export async function openPopup(preferExternal: boolean = true) {
-    const { experimentalWebRTC, experimentalZeroCopy } = readExperimentalTransports();
+    const { experimentalWebRTC, experimentalZeroCopy, outputNativeCore } = readExperimentalTransports();
+    if (outputNativeCore && await openNativeCoreOutput(preferExternal, false)) {
+      return;
+    }
     if (experimentalZeroCopy) {
       return openPopupZeroCopy(preferExternal);
     }
@@ -205,9 +215,64 @@
     }
   }
 
+  async function openNativeCoreOutput(preferExternal: boolean, fullscreen: boolean): Promise<boolean> {
+    try {
+      const status = await getNativeRendererStatus().catch(() => null);
+      if (!status?.backend_ready) {
+        console.warn(
+          '[Output] Native render-core output requested but the core is not ready; falling back.',
+          status?.last_frame_error ?? status,
+        );
+        return false;
+      }
+
+      const displays: any[] = await invoke('get_displays');
+      let target = displays[0];
+      if (preferExternal) {
+        const external = displays.find((d: any) => !(d.isPrimary ?? d.primary));
+        if (external) target = external;
+      }
+
+      const bounds = target?.bounds || target || { x: 100, y: 100, width: 1280, height: 720 };
+      const displayX = bounds.x ?? 100;
+      const displayY = bounds.y ?? 100;
+      const displayW = bounds.width ?? 1280;
+      const displayH = bounds.height ?? 720;
+      const winW = fullscreen ? displayW : Math.min(1280, displayW);
+      const winH = fullscreen ? displayH : Math.min(720, displayH);
+      const x = fullscreen ? displayX : displayX + Math.round((displayW - winW) / 2);
+      const y = fullscreen ? displayY : displayY + Math.round((displayH - winH) / 2);
+
+      await setNativeRendererOutputWindow({
+        title: 'Ghost Arcade Native Output',
+        label: 'Ghost Arcade Native Output',
+        width: winW,
+        height: winH,
+        x,
+        y,
+        fullscreen,
+        attached: true,
+        visible: true,
+        decorations: !fullscreen,
+        resizable: !fullscreen,
+      });
+      isOpen = true;
+      console.log(
+        `[Output] Native render-core output opened on display "${target?.label || target?.id || 'default'}" (${winW}x${winH})`,
+      );
+      return true;
+    } catch (err) {
+      console.warn('[Output] Native render-core output failed; falling back:', err);
+      return false;
+    }
+  }
+
   // Open fullscreen on external monitor (or primary if no external)
   export async function openFullscreenExternal() {
-    const { experimentalWebRTC, experimentalZeroCopy } = readExperimentalTransports();
+    const { experimentalWebRTC, experimentalZeroCopy, outputNativeCore } = readExperimentalTransports();
+    if (outputNativeCore && await openNativeCoreOutput(true, true)) {
+      return;
+    }
     if (experimentalZeroCopy) {
       // Reuse the openPopup zero-copy path with a fullscreen flag.
       // Need to also pre-stage the fullscreen bit in the placement
@@ -266,6 +331,7 @@
 
   export function close() {
     invoke('close_output_window').catch(() => {});
+    setNativeRendererOutputWindow({ attached: false, visible: false }).catch(() => {});
     isOpen = false;
     onClose();
   }

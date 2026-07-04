@@ -1422,6 +1422,23 @@
 
           <div class="setting-row">
             <div class="setting-label">
+              <span class="label-text">Native render core output</span>
+              <span class="label-hint">
+                Open the Rust/wgpu managed output window from the Output Window controls. Falls back to zero-copy WebGPU output if the native core is not ready. Apply on next output-window open.
+              </span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={$settings.experimental.outputNativeCore}
+                onchange={(e) => settings.update(s => ({ ...s, experimental: { ...s.experimental, outputNativeCore: (e.target as HTMLInputElement).checked } }))}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
               <span class="label-text">Mid-chain GPU effects</span>
               <span class="label-hint">
                 Allow WebGPU effects (e.g. <em>Fluid Sim</em>) in the middle of a layer's effect chain. Adds a ~3 ms GPU↔CPU round-trip per affected effect; turn off if you're not using GPU effects and want the steady-state path purely WebGL.

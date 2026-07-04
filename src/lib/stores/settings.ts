@@ -704,6 +704,7 @@ export interface ExperimentalSettings {
    *  hatch in case the WebGPU presenter falls back to CPU on a
    *  specific driver/GPU combo and we need to diff transports
    *  in the field. The selection precedence is:
+   *      outputNativeCore                     →  Rust/wgpu managed output
    *      outputZeroCopy && WebGPU available  →  webgpu-display
    *      outputWebRTC                         →  webrtc-display
    *      else                                 →  output (legacy)
@@ -762,6 +763,11 @@ export interface ExperimentalSettings {
    *  The output's health badge surfaces this so the operator can spot
    *  a degraded link mid-show. */
   outputZeroCopy: boolean;
+  /** Route the visible output command to the Rust/wgpu render core's
+   *  managed window. This is the v2.0 target transport. It is opt-in
+   *  while parity is still being hardened; if the core is not ready, the
+   *  app falls back to the current WebGPU zero-copy output path. */
+  outputNativeCore: boolean;
   /**
    * Allow the legacy `gpuEffectRunner` CPU-readback bridge to run when
    * the user has a WebGPU effect (e.g. `gpuFluidSim`) in their layer's
@@ -981,6 +987,10 @@ function createDefaultSettings(): AppSettings {
       // when the WebGPU capability probe says no or when the
       // MessagePort handshake fails.
       outputZeroCopy: true,
+      // Native render-core managed output. Off until the remaining
+      // parity/output-source work is complete; the Output Window command
+      // can still use it as an explicit test path.
+      outputNativeCore: false,
       // Phase 2 of the WebGPU migration. Default ON in the GPU edition
       // as of the bridge-as-default shift — the VideoFrame +
       // importExternalTexture bridge in WebGPUCanvas.svelte is the
