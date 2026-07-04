@@ -6,7 +6,7 @@ import { join } from 'node:path';
 const REQUIRED_CHECKS = [
   'compute-instrument-host',
   'native-planet-graph',
-  'native-smoke-3d-graph',
+  'native-3d-smoke-graph',
   'native-particle-field-graph',
   'native-volumetric-spheres-graph',
   'native-smoke-riders-graph',

@@ -17,6 +17,10 @@ const REQUIRED_NATIVE_GRAPH_INSTRUMENTS = [
   ['point-cloud-fx', 'Native Point Cloud FX graph', 'native_point_cloud_fx_graph'],
 ];
 
+function nativeGraphReadinessId(id) {
+  return id === 'smoke-3d' ? 'native-3d-smoke-graph' : `native-${id}-graph`;
+}
+
 const RENDERER_COMMANDS = [
   'native_renderer_start',
   'native_renderer_stop',
@@ -388,7 +392,7 @@ class NativeRendererBroker {
     const graphChecks = REQUIRED_NATIVE_GRAPH_INSTRUMENTS.map(([id, label, feature]) => {
       const ok = computeGraphHostReady && !!features[feature] && graphInstruments.has(id);
       return [
-        `native-${id}-graph`,
+        nativeGraphReadinessId(id),
         label,
         ok,
         ok
