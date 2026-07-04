@@ -151,6 +151,23 @@ function snapshotPixelLuma(snapshot: Record<string, unknown>, pixels: Uint8Array
   ) / 255;
 }
 
+function snapshotPixelRgb(snapshot: Record<string, unknown>, pixels: Uint8Array, xRatio: number, yRatio: number): [number, number, number] {
+  const width = Math.max(1, Number(snapshot.width ?? 1));
+  const height = Math.max(1, Number(snapshot.height ?? 1));
+  const x = Math.max(0, Math.min(width - 1, Math.round((width - 1) * xRatio)));
+  const y = Math.max(0, Math.min(height - 1, Math.round((height - 1) * yRatio)));
+  const offset = (y * width + x) * 4;
+  return [pixels[offset] / 255, pixels[offset + 1] / 255, pixels[offset + 2] / 255];
+}
+
+function rgbDistance(a: [number, number, number], b: [number, number, number]): number {
+  return Math.max(
+    Math.abs(a[0] - b[0]),
+    Math.abs(a[1] - b[1]),
+    Math.abs(a[2] - b[2]),
+  );
+}
+
 describe('Native effect-pass template', () => {
   it('exposes a small parity-ready pilot manifest', () => {
     expect(NATIVE_EFFECT_PASS_MANIFEST.map((entry) => [entry.id, entry.code])).toEqual([
@@ -518,6 +535,176 @@ describe('Native effect-pass template', () => {
 
       const status = await rpc.send('status', {}, 5000);
       expect(Number(status?.compute_graph_source_frame_renders ?? 0)).toBeGreaterThan(0);
+    } finally {
+      await rpc.close();
+    }
+  }, 30000);
+
+  itIfNativeCore('runs deterministic native effect-pass pixel fixture probes', async () => {
+    const rpc = createNativeRpc();
+    try {
+      await rpc.send('start', {
+        config: {
+          backend: process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'd3d12' : 'vulkan',
+          width: 160,
+          height: 90,
+          target_fps: 30,
+        },
+      }, 12000);
+      await delay(80);
+
+      const capabilities = await rpc.send('capabilities', {}, 5000);
+      expect(capabilities?.features?.compute_graph_render).toBe(true);
+      expect(capabilities?.features?.compute_graph_source_frame_target).toBe(true);
+      const precompileSummary = await rpc.send('submit_commands', {
+        commands: buildNativeEffectPassPrecompileCommands(),
+      }, 5000);
+      expect(Number(precompileSummary?.dropped ?? 0)).toBe(0);
+
+      const sourceId = 'native-effect-pass-fixture-source';
+      const layerId = 'native-effect-pass-fixture-layer';
+      const sourceBytes = makeSourceBytes(32, 32);
+      await rpc.send('submit_commands', {
+        commands: [
+          {
+            type: 'upload_source_frame',
+            source_id: sourceId,
+            width: 32,
+            height: 32,
+            rgba_b64: Buffer.from(sourceBytes).toString('base64'),
+            seq: 1,
+          },
+          {
+            type: 'upsert_layer',
+            layer_id: layerId,
+            z_index: 0,
+            blend_mode: 'normal',
+            opacity: 1,
+            corners: FULLSCREEN_CORNERS,
+          },
+          { type: 'set_layer_visibility', layer_id: layerId, visible: true },
+          {
+            type: 'bind_media_source',
+            layer_id: layerId,
+            source_id: sourceId,
+            uri: 'native-effect-pass-fixture://source',
+            source_type: 'image',
+          },
+        ],
+      }, 5000);
+
+      const sourceSnapshot = await rpc.send('frame_snapshot', {
+        include_pixels: true,
+        time: 0,
+        frame_index: 1,
+      }, 8000);
+      assertVisibleSnapshot('effect fixture source layer', sourceSnapshot);
+      const sourcePixels = snapshotPixels(sourceSnapshot);
+
+      const fixtures = [
+        {
+          id: 'invert',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-invert',
+            effect: 'invert',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 2,
+            amount: 1,
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceLuma = snapshotPixelLuma(sourceSnapshot, sourcePixels, 0.08, 0.08);
+            const effectLuma = snapshotPixelLuma(snapshot, pixels, 0.08, 0.08);
+            expect(effectLuma).toBeGreaterThan(sourceLuma + 0.12);
+          },
+        },
+        {
+          id: 'pixelate',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-pixelate',
+            effect: 'pixelate',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 3,
+            amount: 28,
+            params: {
+              mode: 0,
+              gridLines: 0,
+              animSpeed: 0,
+              animAmount: 0,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const a = snapshotPixelRgb(snapshot, pixels, 0.505, 0.50);
+            const b = snapshotPixelRgb(snapshot, pixels, 0.515, 0.50);
+            const c = snapshotPixelRgb(snapshot, pixels, 0.80, 0.50);
+            expect(rgbDistance(a, b)).toBeLessThan(0.05);
+            expect(rgbDistance(a, c)).toBeGreaterThan(0.04);
+          },
+        },
+        {
+          id: 'vignette',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-vignette',
+            effect: 'vignette',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 4,
+            amount: 0.42,
+            params: {
+              softness: 0.12,
+              roundness: 1,
+              shape: 0,
+              aspect: 1,
+              centerX: 0.5,
+              centerY: 0.5,
+              tintAmount: 1,
+              breathing: 0,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const centerLuma = snapshotPixelLuma(snapshot, pixels, 0.5, 0.5);
+            const cornerLuma = snapshotPixelLuma(snapshot, pixels, 0.04, 0.04);
+            expect(centerLuma).toBeGreaterThan(cornerLuma + 0.08);
+          },
+        },
+      ];
+
+      for (const fixture of fixtures) {
+        const graphResult = await rpc.send('compute_graph', fixture.graph.config, 8000);
+        expect(graphResult?.render).toMatchObject({
+          target: 'source_frame',
+          source_id: `native-effect-pass-fixture-${fixture.id}`,
+        });
+        await rpc.send('submit_commands', {
+          commands: [
+            {
+              type: 'bind_media_source',
+              layer_id: layerId,
+              source_id: `native-effect-pass-fixture-${fixture.id}`,
+              uri: `native-effect-pass-fixture://${fixture.id}`,
+              source_type: 'image',
+            },
+          ],
+        }, 5000);
+        const snapshot = await rpc.send('frame_snapshot', {
+          include_pixels: true,
+          time: 0.2,
+          frame_index: 10,
+        }, 8000);
+        assertVisibleSnapshot(`effect fixture ${fixture.id}`, snapshot);
+        expect(snapshot.checksum).not.toBe(sourceSnapshot.checksum);
+        fixture.assert(snapshot, snapshotPixels(snapshot));
+      }
     } finally {
       await rpc.close();
     }
