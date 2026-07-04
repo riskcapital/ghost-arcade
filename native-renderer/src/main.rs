@@ -910,6 +910,41 @@ impl NativeComputeGraphDepthCompare {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+enum NativeComputeGraphPrimitiveTopology {
+    TriangleList,
+    LineList,
+}
+
+impl NativeComputeGraphPrimitiveTopology {
+    fn signature(self) -> &'static str {
+        match self {
+            Self::TriangleList => "triangle-list",
+            Self::LineList => "line-list",
+        }
+    }
+
+    fn topology(self) -> wgpu::PrimitiveTopology {
+        match self {
+            Self::TriangleList => wgpu::PrimitiveTopology::TriangleList,
+            Self::LineList => wgpu::PrimitiveTopology::LineList,
+        }
+    }
+
+    fn from_label(label: &str) -> Self {
+        match label
+            .trim()
+            .to_ascii_lowercase()
+            .replace('_', "-")
+            .replace(' ', "-")
+            .as_str()
+        {
+            "line" | "lines" | "line-list" => Self::LineList,
+            _ => Self::TriangleList,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct NativeComputeGraphRenderPlan {
     name: String,
@@ -925,6 +960,7 @@ struct NativeComputeGraphRenderPlan {
     instance_count: u32,
     indirect_buffer_id: Option<String>,
     indirect_offset: u64,
+    primitive_topology: NativeComputeGraphPrimitiveTopology,
     depth_enabled: bool,
     depth_write: bool,
     depth_compare: NativeComputeGraphDepthCompare,
@@ -1486,6 +1522,7 @@ impl App {
             "compute_graph_indirect_render": true,
             "compute_graph_texture_sampling": true,
             "compute_graph_depth_render": true,
+            "compute_graph_line_render": true,
             "compute_graph_source_frame_target": true,
             "persistent_compute_buffers": true,
             "native_3d_smoke_graph": true,
@@ -1534,6 +1571,7 @@ impl App {
                         "compute_graph_indirect_render",
                         "compute_graph_texture_sampling",
                         "compute_graph_depth_render",
+                        "compute_graph_line_render",
                         "compute_graph_source_frame_target",
                         "persistent_compute_buffers",
                         "native_3d_smoke_graph"
@@ -1556,6 +1594,7 @@ impl App {
                         "compute_graph_instanced_render",
                         "compute_graph_texture_sampling",
                         "compute_graph_depth_render",
+                        "compute_graph_line_render",
                         "compute_graph_source_frame_target",
                         "persistent_compute_buffers",
                         "native_particle_field_graph"
@@ -2906,6 +2945,12 @@ impl App {
             .or_else(|| string_at(render, &["depthCompare"]))
             .map(|label| NativeComputeGraphDepthCompare::from_label(&label))
             .unwrap_or(NativeComputeGraphDepthCompare::Less);
+        let primitive_topology = string_at(render, &["primitive"])
+            .or_else(|| string_at(render, &["topology"]))
+            .or_else(|| string_at(render, &["primitive_topology"]))
+            .or_else(|| string_at(render, &["primitiveTopology"]))
+            .map(|label| NativeComputeGraphPrimitiveTopology::from_label(&label))
+            .unwrap_or(NativeComputeGraphPrimitiveTopology::TriangleList);
         let target_label = string_at(render, &["target"])
             .or_else(|| string_at(render, &["target_type"]))
             .or_else(|| string_at(render, &["render_target"]))
@@ -2950,9 +2995,10 @@ impl App {
         Ok(NativeComputeGraphRenderPlan {
             name,
             cache_key: format!(
-                "graph-render:{shader_id}:{}:{vertex_entry}:{fragment_entry}:{}:{}:{}:{}:{layout_sig}",
+                "graph-render:{shader_id}:{}:{vertex_entry}:{fragment_entry}:{}:{}:{}:{}:{}:{layout_sig}",
                 source_hash,
                 blend.signature(),
+                primitive_topology.signature(),
                 if depth_enabled { "depth" } else { "nodepth" },
                 if depth_write { "write" } else { "read" },
                 depth_compare.signature()
@@ -2968,6 +3014,7 @@ impl App {
             instance_count,
             indirect_buffer_id,
             indirect_offset,
+            primitive_topology,
             depth_enabled,
             depth_write,
             depth_compare,
@@ -4918,6 +4965,7 @@ impl RenderState {
             "target": target_name,
             "blend": render_plan.blend.signature(),
             "draw": if render_plan.indirect_buffer_id.is_some() { "indirect" } else { "direct" },
+            "primitive": render_plan.primitive_topology.signature(),
             "vertex_count": render_plan.vertex_count,
             "instance_count": render_plan.instance_count,
             "depth": render_plan.depth_enabled,
@@ -5098,7 +5146,10 @@ impl RenderState {
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     buffers: &[],
                 },
-                primitive: wgpu::PrimitiveState::default(),
+                primitive: wgpu::PrimitiveState {
+                    topology: render_plan.primitive_topology.topology(),
+                    ..Default::default()
+                },
                 depth_stencil: if render_plan.depth_enabled {
                     Some(wgpu::DepthStencilState {
                         format: wgpu::TextureFormat::Depth24Plus,

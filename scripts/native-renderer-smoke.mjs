@@ -495,6 +495,7 @@ async function main() {
       !capabilities.features.compute_graph_indirect_render ||
       !capabilities.features.compute_graph_texture_sampling ||
       !capabilities.features.compute_graph_depth_render ||
+      !capabilities.features.compute_graph_line_render ||
       !capabilities.features.compute_graph_source_frame_target ||
       !capabilities.features.persistent_compute_buffers ||
       !capabilities.features.native_3d_smoke_graph ||
@@ -518,6 +519,7 @@ async function main() {
       !smokeManifest.features?.includes('compute_graph_indirect_render') ||
       !smokeManifest.features?.includes('compute_graph_texture_sampling') ||
       !smokeManifest.features?.includes('compute_graph_depth_render') ||
+      !smokeManifest.features?.includes('compute_graph_line_render') ||
       !smokeManifest.features?.includes('compute_graph_source_frame_target')
     ) {
       throw new Error(`native graph instrument manifest entry is incomplete: ${JSON.stringify(capabilities.native_graph_instrument_manifest)}`);

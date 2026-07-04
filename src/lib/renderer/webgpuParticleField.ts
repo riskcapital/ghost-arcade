@@ -1126,6 +1126,8 @@ type ParticleFieldNativeGraphBuffer = {
   persistent?: boolean;
   clear?: boolean;
   initial_b64?: string;
+  initial_u32?: number[];
+  indirect?: boolean;
 };
 
 type ParticleFieldNativeGraphPass = {
@@ -1147,8 +1149,11 @@ type ParticleFieldNativeGraphRenderPass = {
   clear: boolean;
   include_snapshot?: boolean;
   blend: 'replace' | 'alpha' | 'add';
+  primitive?: 'triangle-list' | 'line-list';
   vertex_count: number;
   instance_count: number;
+  draw_indirect_buffer?: string;
+  draw_indirect_offset?: number;
   depth?: boolean;
   depth_write?: boolean;
   depth_compare?: 'less' | 'less-equal' | 'always';
@@ -1557,6 +1562,31 @@ function buildParticleFogUniform(params: ParticleFieldParams): string {
   return bufferToBase64(buffer);
 }
 
+function buildParticleLineUniform(params: ParticleFieldParams, state: ParticleFieldNativeGraphState, width: number, height: number): string {
+  const aspect = Math.max(1, width) / Math.max(1, height);
+  const proj = perspective(params.fovDeg, aspect, 0.05, 100);
+  const view = translate(0, 0, -params.cameraZ);
+  const d2r = Math.PI / 180;
+  const rxRad = (params.rotateX + state.autoRotXPhase) * d2r;
+  const ryRad = (params.rotateY + state.autoRotYPhase) * d2r;
+  const rzRad = (params.rotateZ + state.autoRotZPhase) * d2r;
+  const cx = Math.cos(rxRad), sx = Math.sin(rxRad);
+  const cy = Math.cos(ryRad), sy = Math.sin(ryRad);
+  const cz = Math.cos(rzRad), sz = Math.sin(rzRad);
+  const rxM = new Float32Array([1, 0, 0, 0, 0, cx, sx, 0, 0, -sx, cx, 0, 0, 0, 0, 1]);
+  const ryM = new Float32Array([cy, 0, -sy, 0, 0, 1, 0, 0, sy, 0, cy, 0, 0, 0, 0, 1]);
+  const rzM = new Float32Array([cz, sz, 0, 0, -sz, cz, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  const viewProj = mat4Mul(proj, mat4Mul(view, mat4Mul(rzM, mat4Mul(ryM, rxM))));
+  const buffer = new ArrayBuffer(160);
+  const f = new Float32Array(buffer);
+  f.set(viewProj, 0);
+  f[16] = 0; f[17] = 0; f[18] = params.cameraZ;
+  f[20] = params.colorLocal[0]; f[21] = params.colorLocal[1]; f[22] = params.colorLocal[2]; f[23] = params.alphaLocal;
+  f[24] = params.colorBridge[0]; f[25] = params.colorBridge[1]; f[26] = params.colorBridge[2]; f[27] = params.alphaBridge;
+  f[28] = params.fogColor[0]; f[29] = params.fogColor[1]; f[30] = params.fogColor[2]; f[31] = params.fogDensity;
+  return bufferToBase64(buffer);
+}
+
 export function buildParticleFieldNativeComputeGraph(options: ParticleFieldNativeGraphOptions): ParticleFieldNativeGraphBuildResult {
   const params = normalizeParticleFieldParams(options.params);
   if (typeof options.audioBass === 'number') params.bass = clampFinite(options.audioBass, 0, 4, params.bass);
@@ -1585,9 +1615,11 @@ export function buildParticleFieldNativeComputeGraph(options: ParticleFieldNativ
 
   const prefix = particleSourcePrefix(sourceId, params);
   const id = (name: string) => `${prefix}:${name}`;
+  const width = Math.round(options.width || 1920);
+  const height = Math.round(options.height || 1080);
   const buffers: ParticleFieldNativeGraphBuffer[] = [
     { id: id('behavior-uniform'), kind: 'uniform', byte_length: 384, initial_b64: buildParticleBehaviorUniform(params, state, dt, time) },
-    { id: id('render-uniform'), kind: 'uniform', byte_length: 192, initial_b64: buildParticleRenderUniform(params, state, Math.round(options.width || 1920), Math.round(options.height || 1080)) },
+    { id: id('render-uniform'), kind: 'uniform', byte_length: 192, initial_b64: buildParticleRenderUniform(params, state, width, height) },
     { id: id('fog-uniform'), kind: 'uniform', byte_length: 16, initial_b64: buildParticleFogUniform(params) },
     {
       id: id('particles'),
@@ -1598,6 +1630,42 @@ export function buildParticleFieldNativeComputeGraph(options: ParticleFieldNativ
       initial_b64: mustReset ? particleInitialBuffer(params, params.particleCount) : undefined,
     },
   ];
+  if (params.connectEnabled) {
+    buffers.push(
+      {
+        id: id('edge-uniform'),
+        kind: 'uniform',
+        byte_length: 64,
+        initial_b64: (() => {
+          const buffer = new ArrayBuffer(64);
+          const f = new Float32Array(buffer);
+          const u = new Uint32Array(buffer);
+          u[0] = params.particleCount >>> 0;
+          u[1] = Math.max(1, Math.min(32, params.partnerCount | 0)) >>> 0;
+          u[2] = MAX_EDGES >>> 0;
+          f[4] = params.localRadius;
+          f[5] = params.bridgeRadius;
+          return bufferToBase64(buffer);
+        })(),
+      },
+      { id: id('line-uniform'), kind: 'uniform', byte_length: 160, initial_b64: buildParticleLineUniform(params, state, width, height) },
+      {
+        id: id('indirect'),
+        kind: 'storage',
+        byte_length: 16,
+        persistent: true,
+        initial_u32: [2, 0, 0, 0],
+        indirect: true,
+      },
+      {
+        id: id('edges'),
+        kind: 'storage',
+        byte_length: MAX_EDGES * EDGE_BYTES,
+        persistent: true,
+        clear: mustReset,
+      },
+    );
+  }
 
   const workgroups = Math.ceil(params.particleCount / 64);
   const mediaSourceId = String(options.mediaSourceId || '');
@@ -1617,6 +1685,20 @@ export function buildParticleFieldNativeComputeGraph(options: ParticleFieldNativ
       ],
     },
   ];
+  if (params.connectEnabled) {
+    passes.push({
+      name: 'particle-edges',
+      shader_id: PARTICLE_FIELD_NATIVE_SHADER_IDS.edges,
+      entry: 'cs_edges',
+      dispatch: [workgroups, 1, 1],
+      bindings: [
+        { binding: 0, resource: id('particles'), kind: 'read-only-storage' },
+        { binding: 1, resource: id('edge-uniform'), kind: 'uniform' },
+        { binding: 2, resource: id('indirect'), kind: 'storage' },
+        { binding: 3, resource: id('edges'), kind: 'storage' },
+      ],
+    });
+  }
 
   const renderPasses: ParticleFieldNativeGraphRenderPass[] = [];
   if (params.fogOpacity > 0.001) {
@@ -1661,6 +1743,30 @@ export function buildParticleFieldNativeComputeGraph(options: ParticleFieldNativ
       { binding: 1, resource: id('render-uniform'), kind: 'uniform' },
     ],
   });
+  if (params.connectEnabled) {
+    renderPasses.push({
+      name: 'particle-lines',
+      shader_id: PARTICLE_FIELD_NATIVE_SHADER_IDS.lines,
+      vertex_entry: 'vs_main',
+      fragment_entry: 'fs_main',
+      target: 'source_frame',
+      source_id: sourceId,
+      seq: Math.max(0, Math.round(options.frameIndex ?? 0)),
+      clear: false,
+      include_snapshot: false,
+      blend: 'alpha',
+      primitive: 'line-list',
+      vertex_count: 2,
+      instance_count: 0,
+      draw_indirect_buffer: id('indirect'),
+      draw_indirect_offset: 0,
+      bindings: [
+        { binding: 0, resource: id('particles'), kind: 'read-only-storage' },
+        { binding: 1, resource: id('edges'), kind: 'read-only-storage' },
+        { binding: 2, resource: id('line-uniform'), kind: 'uniform' },
+      ],
+    });
+  }
 
   return {
     config: {
