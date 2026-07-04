@@ -175,6 +175,7 @@ async function main() {
     assert(
       capabilities?.features?.render_clock &&
         capabilities?.features?.frame_snapshot_export &&
+        capabilities?.features?.native_frame_sequence_export &&
         capabilities?.implemented_methods?.includes('export_frame_snapshot'),
       `native core does not advertise frame sequence prerequisites: ${JSON.stringify(capabilities)}`,
     );

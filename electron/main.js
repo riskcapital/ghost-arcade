@@ -388,6 +388,13 @@ function safeJpegSequenceBaseName(name) {
     .slice(0, 80) || 'render';
 }
 
+function normalizeRawVideoPixelFormat(value, fallback = 'rgba') {
+  const format = String(value || fallback).trim().toLowerCase();
+  if (format.includes('bgra')) return 'bgra';
+  if (format.includes('rgba')) return 'rgba';
+  throw new Error(`Unsupported JPEG sequence raw pixel format: ${value}`);
+}
+
 function startJpegSequenceJob(args = {}) {
   const jobId = String(args.jobId || '').trim();
   if (!jobId) throw new Error('Missing JPEG sequence job id.');
@@ -404,6 +411,9 @@ function startJpegSequenceJob(args = {}) {
   if (!width || !height) throw new Error('Invalid JPEG sequence dimensions.');
 
   const baseName = safeJpegSequenceBaseName(args.baseName);
+  const pixelFormat = normalizeRawVideoPixelFormat(
+    args.pixelFormat || args.pixel_format || args.rawPixelFormat || args.raw_pixel_format,
+  );
   const outputPattern = path.join(folderPath, `${baseName}_%06d.jpg`);
   const ffmpegPath = resolveFfmpegPath();
   const ffmpegArgs = [
@@ -411,7 +421,7 @@ function startJpegSequenceJob(args = {}) {
     '-loglevel', 'warning',
     '-y',
     '-f', 'rawvideo',
-    '-pix_fmt', 'rgba',
+    '-pix_fmt', pixelFormat,
     '-s:v', `${width}x${height}`,
     '-framerate', String(fps),
     '-i', 'pipe:0',
@@ -434,6 +444,7 @@ function startJpegSequenceJob(args = {}) {
     height,
     totalFrames,
     frameBytes: width * height * 4,
+    pixelFormat,
     writtenFrames: 0,
     stderr: '',
     settled: false,
@@ -465,6 +476,7 @@ function startJpegSequenceJob(args = {}) {
     jobId,
     outputPattern,
     ffmpegPath,
+    pixelFormat,
   };
 }
 
@@ -478,6 +490,10 @@ async function writeJpegSequenceFrame(args = {}) {
   const buffer = bytesToBuffer(args.bytes);
   if (buffer.byteLength !== job.frameBytes) {
     throw new Error(`JPEG sequence frame has ${buffer.byteLength} bytes; expected ${job.frameBytes}.`);
+  }
+  const framePixelFormat = args.pixelFormat || args.pixel_format || args.rawPixelFormat || args.raw_pixel_format;
+  if (framePixelFormat && normalizeRawVideoPixelFormat(framePixelFormat) !== job.pixelFormat) {
+    throw new Error(`JPEG sequence pixel format mismatch: got ${framePixelFormat}, expected ${job.pixelFormat}.`);
   }
 
   const frameIndex = Math.round(clampNumber(args.frameIndex, 0, Number.MAX_SAFE_INTEGER, job.writtenFrames));
@@ -524,6 +540,10 @@ async function writeJpegSequenceFrameFile(args = {}) {
   if (!stat.isFile()) throw new Error('JPEG sequence frame path is not a file.');
   if (stat.size !== job.frameBytes) {
     throw new Error(`JPEG sequence frame file has ${stat.size} bytes; expected ${job.frameBytes}.`);
+  }
+  const framePixelFormat = args.pixelFormat || args.pixel_format || args.rawPixelFormat || args.raw_pixel_format;
+  if (framePixelFormat && normalizeRawVideoPixelFormat(framePixelFormat) !== job.pixelFormat) {
+    throw new Error(`JPEG sequence frame file pixel format mismatch: got ${framePixelFormat}, expected ${job.pixelFormat}.`);
   }
 
   const frameIndex = Math.round(clampNumber(args.frameIndex, 0, Number.MAX_SAFE_INTEGER, job.writtenFrames));

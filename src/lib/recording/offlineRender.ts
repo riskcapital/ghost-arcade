@@ -59,6 +59,7 @@ import { invoke, isElectron } from '../bridge';
 import {
   exportNativeRendererFrameSnapshot,
   getNativeRendererCapabilities,
+  getNativeRendererStatus,
   submitNativeRendererCommands,
   type NativeRendererFrameSnapshotExportResult,
 } from '../api/native-renderer';
@@ -165,6 +166,14 @@ export interface NativeJpegSequenceSession {
   height: number;
   fps: number;
   totalFrames: number;
+  pixelFormat: 'rgba' | 'bgra';
+}
+
+function rawPixelFormatForNativeTextureFormat(format: string): 'rgba' | 'bgra' {
+  const normalized = String(format || '').trim().toLowerCase();
+  if (normalized.includes('bgra')) return 'bgra';
+  if (normalized.includes('rgba')) return 'rgba';
+  throw new Error(`Native renderer output format is not supported for JPEG sequence capture: ${format || 'unknown'}`);
 }
 
 function sanitizeFilenamePart(input: string, fallback = 'render'): string {
@@ -237,6 +246,7 @@ export async function startNativeJpegSequence(
   settings: Pick<OfflineRenderSettings, 'width' | 'height' | 'fps'>,
   baseName: string,
   totalFrames: number,
+  pixelFormat: 'rgba' | 'bgra' = 'rgba',
 ): Promise<NativeJpegSequenceSession | null> {
   if (target.kind !== 'electron' || !target.path || !isElectron) return null;
   const jobId = `jpeg-seq-${generateUUID()}`;
@@ -248,6 +258,7 @@ export async function startNativeJpegSequence(
     height: settings.height,
     fps: settings.fps,
     totalFrames,
+    pixelFormat,
   });
   if (!result?.success) {
     throw new Error(result?.error || 'Could not start native JPEG sequence encoder');
@@ -260,6 +271,7 @@ export async function startNativeJpegSequence(
     height: settings.height,
     fps: settings.fps,
     totalFrames,
+    pixelFormat,
   };
 }
 
@@ -272,6 +284,7 @@ export async function writeNativeJpegSequenceFrame(
     jobId: session.jobId,
     frameIndex,
     bytes: pixels.data,
+    pixelFormat: session.pixelFormat,
   });
   if (!result?.success) {
     throw new Error(result?.error || `Could not write JPEG frame ${frameIndex}`);
@@ -288,6 +301,7 @@ export async function writeNativeJpegSequenceFrameFile(
     jobId: session.jobId,
     frameIndex,
     path,
+    pixelFormat: session.pixelFormat,
     deleteAfterWrite,
   });
   if (!result?.success) {
@@ -303,7 +317,7 @@ export async function writeNativeRendererJpegSequenceFrame(
   if (session.target.kind !== 'electron' || !session.target.path) {
     throw new Error('Native renderer frame capture requires the desktop app frame-sequence encoder');
   }
-  const rawName = `.${session.baseName}_${session.jobId}_${String(frameIndex).padStart(6, '0')}.rgba`;
+  const rawName = `.${session.baseName}_${session.jobId}_${String(frameIndex).padStart(6, '0')}.${session.pixelFormat}`;
   const rawPath = `${session.target.path}/${rawName}`;
   const snapshot = await exportNativeRendererFrameSnapshot(rawPath, {
     time: timeSeconds,
@@ -316,6 +330,12 @@ export async function writeNativeRendererJpegSequenceFrame(
   }
   if (snapshot.dark_frame || snapshot.nonzero_pixels <= 0) {
     throw new Error(`Native renderer exported a blank frame at ${frameIndex}`);
+  }
+  const snapshotPixelFormat = rawPixelFormatForNativeTextureFormat(snapshot.format);
+  if (snapshotPixelFormat !== session.pixelFormat) {
+    throw new Error(
+      `Native renderer frame ${frameIndex} format changed from ${session.pixelFormat} to ${snapshotPixelFormat} (${snapshot.format})`,
+    );
   }
   await writeNativeJpegSequenceFrameFile(session, frameIndex, rawPath, true);
   return snapshot;
@@ -607,18 +627,25 @@ function createOfflineRenderStore() {
       canvas.width = settings.width;
       canvas.height = settings.height;
       if (outputMode === 'frames' && frameTarget) {
-        nativeJpegSequence = await startNativeJpegSequence(frameTarget, settings, frameBaseName, totalFrames);
+        let jpegSequencePixelFormat: 'rgba' | 'bgra' = 'rgba';
         if (settings.captureBackend === 'native') {
           const caps = await getNativeRendererCapabilities();
-          if (!caps?.features?.frame_snapshot_export || !caps.implemented_methods?.includes('export_frame_snapshot')) {
+          if (
+            !caps?.features?.frame_snapshot_export ||
+            !caps?.features?.native_frame_sequence_export ||
+            !caps.implemented_methods?.includes('export_frame_snapshot')
+          ) {
             throw new Error('Native frame capture is not available in this renderer build.');
           }
           await submitNativeRendererCommands([
             { type: 'set_output', width: settings.width, height: settings.height, refresh_hz: settings.fps },
           ]);
           nativeOutputNeedsRestore = true;
+          const nativeStatus = await getNativeRendererStatus();
+          jpegSequencePixelFormat = rawPixelFormatForNativeTextureFormat(nativeStatus.output_format);
           nativeFrameCaptureActive = true;
         }
+        nativeJpegSequence = await startNativeJpegSequence(frameTarget, settings, frameBaseName, totalFrames, jpegSequencePixelFormat);
       }
       // Let the resize settle before the first capture.
       await nextFrame();

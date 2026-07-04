@@ -259,6 +259,7 @@ struct CoreStatus {
     layers_seen: u32,
     output_width: u32,
     output_height: u32,
+    output_format: String,
     output_refresh_hz: u32,
     output_window_attached: bool,
     output_swapchain_ready: bool,
@@ -1622,6 +1623,7 @@ impl App {
             "render_clock": true,
             "frame_snapshot": true,
             "frame_snapshot_export": true,
+            "native_frame_sequence_export": true,
             "frame_health": true,
             "gpu_timing": self.renderer.as_ref().is_some_and(|renderer| renderer.gpu_timing.is_some()),
             "shader_precompile": true,
@@ -2131,6 +2133,11 @@ impl App {
                 .as_ref()
                 .map(|renderer| renderer.config.height)
                 .unwrap_or(self.pending_height),
+            output_format: self
+                .renderer
+                .as_ref()
+                .map(|renderer| texture_format_label(renderer.config.format).to_string())
+                .unwrap_or_else(|| "unknown".to_string()),
             output_refresh_hz: self.target_fps,
             output_window_attached,
             output_swapchain_ready,
@@ -2323,6 +2330,12 @@ impl App {
                         "label": "Native 3D Smoke graph",
                         "ok": self.renderer.is_some(),
                         "detail": if self.renderer.is_some() { "compute_graph can render 3D Smoke into native source frames" } else { "native renderer has not created a wgpu device" }
+                    },
+                    {
+                        "id": "native-frame-sequence-export",
+                        "label": "Native frame sequence export",
+                        "ok": self.renderer.is_some(),
+                        "detail": if self.renderer.is_some() { "native output snapshots can be stepped by render clock and exported as raw frame files" } else { "native renderer has not created a wgpu device" }
                     },
                     {
                         "id": "native-particle-field-graph",
