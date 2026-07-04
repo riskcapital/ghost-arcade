@@ -251,6 +251,7 @@ let embeddedServerModule = null;
 const wledSockets = new Map();  // controllerId -> dgram.Socket
 let activeVideoConverterJob = null;
 const activeJpegSequenceJobs = new Map();
+const activeJpegFrameEncoderJobs = new Map();
 const activeVideoLoopJobs = new Map();
 
 // Platform flags (used elsewhere in this file)
@@ -625,6 +626,259 @@ async function cancelJpegSequenceJob(jobIdInput) {
       try { job.process.kill('SIGKILL'); } catch { /* ignore */ }
       activeJpegSequenceJobs.delete(jobId);
     }
+  }, 1500).unref?.();
+  return { success: true };
+}
+
+function createJpegFrameEncoderTempDir() {
+  return fs.mkdtempSync(path.join(app.getPath('temp'), 'ghost-native-jpeg-'));
+}
+
+function extractNextJpegFrame(job) {
+  const soi = Buffer.from([0xff, 0xd8]);
+  const eoi = Buffer.from([0xff, 0xd9]);
+  let start = job.stdoutBuffer.indexOf(soi);
+  if (start < 0) {
+    if (job.stdoutBuffer.length > 1024 * 1024) {
+      job.stdoutBuffer = Buffer.alloc(0);
+    }
+    return null;
+  }
+  if (start > 0) {
+    job.stdoutBuffer = job.stdoutBuffer.subarray(start);
+    start = 0;
+  }
+  const end = job.stdoutBuffer.indexOf(eoi, start + 2);
+  if (end < 0) return null;
+  const jpeg = Buffer.from(job.stdoutBuffer.subarray(start, end + 2));
+  job.stdoutBuffer = job.stdoutBuffer.subarray(end + 2);
+  return jpeg;
+}
+
+function rejectPendingJpegFrameEncodes(job, error) {
+  while (job.pending.length > 0) {
+    const pending = job.pending.shift();
+    pending.reject(error);
+  }
+}
+
+function flushJpegFrameEncoderOutput(job) {
+  while (job.pending.length > 0) {
+    const jpeg = extractNextJpegFrame(job);
+    if (!jpeg) break;
+    const pending = job.pending.shift();
+    job.encodedFrames++;
+    pending.resolve(jpeg);
+  }
+}
+
+function startJpegFrameEncoderJob(args = {}) {
+  const jobId = String(args.jobId || '').trim();
+  if (!jobId) throw new Error('Missing JPEG frame encoder job id.');
+  if (activeJpegFrameEncoderJobs.has(jobId)) throw new Error('JPEG frame encoder job already exists.');
+
+  const width = Math.round(clampNumber(args.width, 1, 16384, 0));
+  const height = Math.round(clampNumber(args.height, 1, 16384, 0));
+  const fps = clampNumber(args.fps, 1, 240, 30);
+  const totalFrames = Math.round(clampNumber(args.totalFrames, 1, 10_000_000, 1));
+  if (!width || !height) throw new Error('Invalid JPEG frame encoder dimensions.');
+  const pixelFormat = normalizeRawVideoPixelFormat(
+    args.pixelFormat || args.pixel_format || args.rawPixelFormat || args.raw_pixel_format,
+  );
+  const tempDir = createJpegFrameEncoderTempDir();
+  const ffmpegPath = resolveFfmpegPath();
+  const ffmpegArgs = [
+    '-hide_banner',
+    '-loglevel', 'warning',
+    '-f', 'rawvideo',
+    '-pix_fmt', pixelFormat,
+    '-s:v', `${width}x${height}`,
+    '-framerate', String(fps),
+    '-i', 'pipe:0',
+    '-frames:v', String(totalFrames),
+    '-c:v', 'mjpeg',
+    '-q:v', '2',
+    '-pix_fmt', 'yuvj444p',
+    '-f', 'image2pipe',
+    'pipe:1',
+  ];
+
+  const child = spawn(ffmpegPath, ffmpegArgs, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  const job = {
+    id: jobId,
+    process: child,
+    tempDir,
+    width,
+    height,
+    totalFrames,
+    frameBytes: width * height * 4,
+    pixelFormat,
+    writtenFrames: 0,
+    encodedFrames: 0,
+    pending: [],
+    stdoutBuffer: Buffer.alloc(0),
+    stderr: '',
+    settled: false,
+    cancelled: false,
+    exitCode: null,
+    exitSignal: null,
+    exitPromise: null,
+  };
+
+  job.exitPromise = new Promise((resolve) => {
+    child.stdout?.on('data', (chunk) => {
+      job.stdoutBuffer = Buffer.concat([job.stdoutBuffer, Buffer.from(chunk)]);
+      flushJpegFrameEncoderOutput(job);
+    });
+    child.stderr?.setEncoding?.('utf8');
+    child.stderr?.on('data', (chunk) => {
+      job.stderr += String(chunk);
+      if (job.stderr.length > 12_000) job.stderr = job.stderr.slice(-12_000);
+    });
+    child.on('error', (err) => {
+      job.stderr += `\n${err?.message || err}`;
+      rejectPendingJpegFrameEncodes(job, err);
+    });
+    child.on('close', (code, signal) => {
+      job.settled = true;
+      job.exitCode = code;
+      job.exitSignal = signal;
+      if (job.pending.length > 0) {
+        const detail = job.stderr.trim() || `exit code ${code}${signal ? ` (${signal})` : ''}`;
+        rejectPendingJpegFrameEncodes(job, new Error(`JPEG frame encoder closed early: ${detail}`));
+      }
+      resolve({ code, signal });
+    });
+  });
+
+  activeJpegFrameEncoderJobs.set(jobId, job);
+  return {
+    jobId,
+    tempDir,
+    ffmpegPath,
+    pixelFormat,
+  };
+}
+
+async function encodeJpegFrameFromFile(args = {}) {
+  const jobId = String(args.jobId || '').trim();
+  const job = activeJpegFrameEncoderJobs.get(jobId);
+  if (!job) throw new Error('JPEG frame encoder job is not active.');
+  if (job.settled) {
+    throw new Error(`JPEG frame encoder exited early.${job.stderr ? ` ${job.stderr.trim()}` : ''}`);
+  }
+  const framePath = assertAbsolutePath(
+    args.path || args.filePath || args.rawPath || args.rgbaPath,
+    'JPEG frame encoder raw frame file',
+  );
+  const resolvedFramePath = path.resolve(framePath);
+  const resolvedTempDir = path.resolve(job.tempDir);
+  if (!resolvedFramePath.startsWith(`${resolvedTempDir}${path.sep}`)) {
+    throw new Error('JPEG frame encoder raw frame must live in its temp folder.');
+  }
+  const stat = fs.statSync(resolvedFramePath);
+  if (!stat.isFile()) throw new Error('JPEG frame encoder raw frame path is not a file.');
+  if (stat.size !== job.frameBytes) {
+    throw new Error(`JPEG frame encoder raw frame has ${stat.size} bytes; expected ${job.frameBytes}.`);
+  }
+  const framePixelFormat = args.pixelFormat || args.pixel_format || args.rawPixelFormat || args.raw_pixel_format;
+  if (framePixelFormat && normalizeRawVideoPixelFormat(framePixelFormat) !== job.pixelFormat) {
+    throw new Error(`JPEG frame encoder pixel format mismatch: got ${framePixelFormat}, expected ${job.pixelFormat}.`);
+  }
+  const frameIndex = Math.round(clampNumber(args.frameIndex, 0, Number.MAX_SAFE_INTEGER, job.writtenFrames));
+  if (frameIndex !== job.writtenFrames) {
+    throw new Error(`JPEG frame encoder frame order mismatch: got ${frameIndex}, expected ${job.writtenFrames}.`);
+  }
+
+  const buffer = fs.readFileSync(resolvedFramePath);
+  let pendingRef = null;
+  const jpegPromise = new Promise((resolve, reject) => {
+    pendingRef = { resolve, reject };
+    job.pending.push(pendingRef);
+  });
+
+  try {
+    await new Promise((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => {
+        job.process.stdin?.off?.('error', onError);
+        job.process.off?.('close', onClose);
+      };
+      const finish = (err) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (err) reject(err);
+        else resolve();
+      };
+      const onError = (err) => finish(err);
+      const onClose = () => finish(new Error(`JPEG frame encoder closed while writing frame ${frameIndex}.`));
+      job.process.stdin?.once?.('error', onError);
+      job.process.once?.('close', onClose);
+      job.process.stdin.write(buffer, (err) => finish(err));
+    });
+  } catch (err) {
+    const index = job.pending.indexOf(pendingRef);
+    if (index >= 0) job.pending.splice(index, 1);
+    pendingRef?.reject?.(err);
+    await jpegPromise.catch(() => {});
+    throw err;
+  } finally {
+    if (args.deleteAfterWrite || args.delete_after_write || args.delete) {
+      try { fs.unlinkSync(resolvedFramePath); } catch { /* best-effort temp cleanup */ }
+    }
+  }
+
+  job.writtenFrames++;
+  const jpeg = await jpegPromise;
+  return { success: true, frameIndex, bytes: jpeg, byteLength: jpeg.byteLength };
+}
+
+async function finishJpegFrameEncoderJob(jobIdInput) {
+  const jobId = String(jobIdInput || '').trim();
+  const job = activeJpegFrameEncoderJobs.get(jobId);
+  if (!job) return { success: true, alreadyFinished: true };
+
+  try {
+    if (!job.process.stdin.destroyed && !job.process.stdin.writableEnded) {
+      job.process.stdin.end();
+    }
+  } catch { /* ignore */ }
+
+  const { code, signal } = await job.exitPromise;
+  activeJpegFrameEncoderJobs.delete(jobId);
+  try { fs.rmSync(job.tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+
+  if (job.cancelled) return { success: false, cancelled: true };
+  if (code !== 0) {
+    const detail = job.stderr.trim() || `exit code ${code}${signal ? ` (${signal})` : ''}`;
+    throw new Error(`JPEG frame encoder failed: ${detail}`);
+  }
+  if (job.writtenFrames !== job.totalFrames || job.encodedFrames !== job.totalFrames) {
+    throw new Error(`JPEG frame encoder ended after ${job.encodedFrames}/${job.writtenFrames} frames; expected ${job.totalFrames}.`);
+  }
+  return {
+    success: true,
+    frames: job.encodedFrames,
+  };
+}
+
+async function cancelJpegFrameEncoderJob(jobIdInput) {
+  const jobId = String(jobIdInput || '').trim();
+  const job = activeJpegFrameEncoderJobs.get(jobId);
+  if (!job) return { success: true };
+  job.cancelled = true;
+  rejectPendingJpegFrameEncodes(job, new Error('JPEG frame encoder was cancelled.'));
+  try {
+    job.process.stdin?.destroy?.();
+  } catch { /* ignore */ }
+  try {
+    job.process.kill('SIGTERM');
+  } catch { /* ignore */ }
+  try { fs.rmSync(job.tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  activeJpegFrameEncoderJobs.delete(jobId);
+  setTimeout(() => {
+    try { job.process.kill('SIGKILL'); } catch { /* ignore */ }
   }, 1500).unref?.();
   return { success: true };
 }
@@ -4358,6 +4612,43 @@ function registerIpcHandlers() {
       return await cancelJpegSequenceJob(args.jobId);
     } catch (err) {
       console.error('[Main] jpeg_sequence_cancel error:', err?.message || err);
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('jpeg_frame_encoder_start', async (_, args = {}) => {
+    try {
+      const job = startJpegFrameEncoderJob(args);
+      return { success: true, ...job };
+    } catch (err) {
+      console.error('[Main] jpeg_frame_encoder_start error:', err?.message || err);
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('jpeg_frame_encoder_encode_file', async (_, args = {}) => {
+    try {
+      return await encodeJpegFrameFromFile(args);
+    } catch (err) {
+      console.error('[Main] jpeg_frame_encoder_encode_file error:', err?.message || err);
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('jpeg_frame_encoder_finish', async (_, args = {}) => {
+    try {
+      return await finishJpegFrameEncoderJob(args.jobId);
+    } catch (err) {
+      console.error('[Main] jpeg_frame_encoder_finish error:', err?.message || err);
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('jpeg_frame_encoder_cancel', async (_, args = {}) => {
+    try {
+      return await cancelJpegFrameEncoderJob(args.jobId);
+    } catch (err) {
+      console.error('[Main] jpeg_frame_encoder_cancel error:', err?.message || err);
       return { success: false, error: err?.message || String(err) };
     }
   });

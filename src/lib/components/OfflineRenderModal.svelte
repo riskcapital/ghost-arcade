@@ -22,8 +22,8 @@
   let seededForOpen = false;
   let captureBackendTouched = false;
   let nativeProbeStartedForOpen = false;
-  let nativeFrameSequenceAvailable = false;
-  let nativeFrameSequenceMessage = 'Desktop only';
+  let nativeFrameCaptureAvailable = false;
+  let nativeFrameCaptureMessage = 'Desktop only';
   let nativeProbeGeneration = 0;
 
   function seedSettingsFromProject() {
@@ -41,13 +41,13 @@
   $: if (!isOpen && seededForOpen) {
     seededForOpen = false;
     nativeProbeStartedForOpen = false;
-    nativeFrameSequenceAvailable = false;
-    nativeFrameSequenceMessage = 'Desktop only';
+    nativeFrameCaptureAvailable = false;
+    nativeFrameCaptureMessage = 'Desktop only';
     nativeProbeGeneration += 1;
   }
   $: if (isOpen && !nativeProbeStartedForOpen) {
     nativeProbeStartedForOpen = true;
-    refreshNativeFrameSequenceAvailability();
+    refreshNativeFrameCaptureAvailability();
   }
 
   const RESOLUTION_PRESETS = [
@@ -88,7 +88,7 @@
   function start() {
     offlineRender.start({
       ...settings,
-      captureBackend: settings.outputMode === 'frames' && settings.captureBackend === 'native' && nativeFrameSequenceAvailable
+      captureBackend: settings.captureBackend === 'native' && nativeFrameCaptureAvailable
         ? 'native'
         : 'webgl',
     });
@@ -113,23 +113,23 @@
     captureBackendTouched = false;
     settings = {
       ...settings,
-      captureBackend: settings.outputMode === 'frames' && nativeFrameSequenceAvailable ? 'native' : 'webgl',
+      captureBackend: nativeFrameCaptureAvailable ? 'native' : 'webgl',
     };
   }
 
   function selectCaptureBackend(captureBackend: 'webgl' | 'native') {
-    if (captureBackend === 'native' && !nativeFrameSequenceAvailable) return;
+    if (captureBackend === 'native' && !nativeFrameCaptureAvailable) return;
     captureBackendTouched = true;
     settings = { ...settings, captureBackend };
   }
 
-  async function refreshNativeFrameSequenceAvailability() {
+  async function refreshNativeFrameCaptureAvailability() {
     const generation = ++nativeProbeGeneration;
-    nativeFrameSequenceAvailable = false;
-    nativeFrameSequenceMessage = 'Checking...';
+    nativeFrameCaptureAvailable = false;
+    nativeFrameCaptureMessage = 'Checking...';
     const hasDesktopBridge = isDesktopApp || (typeof window !== 'undefined' && !!window.__ELECTRON__);
     if (!hasDesktopBridge) {
-      nativeFrameSequenceMessage = 'Desktop only';
+      nativeFrameCaptureMessage = 'Desktop only';
       return;
     }
     try {
@@ -138,17 +138,17 @@
       const available = !!caps?.features?.frame_snapshot_export
         && !!caps?.features?.native_frame_sequence_export
         && !!caps?.implemented_methods?.includes('export_frame_snapshot');
-      nativeFrameSequenceAvailable = available;
-      nativeFrameSequenceMessage = available ? 'Ready' : 'Not available';
-      if (settings.outputMode === 'frames' && !captureBackendTouched) {
+      nativeFrameCaptureAvailable = available;
+      nativeFrameCaptureMessage = available ? 'Ready' : 'Not available';
+      if (!captureBackendTouched) {
         settings = { ...settings, captureBackend: available ? 'native' : 'webgl' };
       } else if (!available && settings.captureBackend === 'native') {
         settings = { ...settings, captureBackend: 'webgl' };
       }
     } catch (err) {
       if (generation !== nativeProbeGeneration) return;
-      nativeFrameSequenceAvailable = false;
-      nativeFrameSequenceMessage = err instanceof Error && err.message ? err.message : 'Not available';
+      nativeFrameCaptureAvailable = false;
+      nativeFrameCaptureMessage = err instanceof Error && err.message ? err.message : 'Not available';
       if (settings.captureBackend === 'native') {
         settings = { ...settings, captureBackend: 'webgl' };
       }
@@ -320,33 +320,31 @@
         </select>
       </div>
 
-      {#if isFrameOutput}
-        <div class="field">
-          <label>Renderer</label>
-          <div class="engine-grid">
-            <button
-              type="button"
-              class="engine-btn"
-              class:active={settings.captureBackend !== 'native'}
-              onclick={() => selectCaptureBackend('webgl')}
-            >
-              <span class="engine-title">WebGL</span>
-              <span class="engine-meta">Current compositor</span>
-            </button>
-            <button
-              type="button"
-              class="engine-btn"
-              class:active={settings.captureBackend === 'native'}
-              disabled={!nativeFrameSequenceAvailable}
-              onclick={() => selectCaptureBackend('native')}
-              title={nativeFrameSequenceAvailable ? 'Native Renderer' : nativeFrameSequenceMessage}
-            >
-              <span class="engine-title">Native Renderer</span>
-              <span class="engine-meta">{nativeFrameSequenceMessage}</span>
-            </button>
-          </div>
+      <div class="field">
+        <label>Renderer</label>
+        <div class="engine-grid">
+          <button
+            type="button"
+            class="engine-btn"
+            class:active={settings.captureBackend !== 'native'}
+            onclick={() => selectCaptureBackend('webgl')}
+          >
+            <span class="engine-title">WebGL</span>
+            <span class="engine-meta">Current compositor</span>
+          </button>
+          <button
+            type="button"
+            class="engine-btn"
+            class:active={settings.captureBackend === 'native'}
+            disabled={!nativeFrameCaptureAvailable}
+            onclick={() => selectCaptureBackend('native')}
+            title={nativeFrameCaptureAvailable ? 'Native Renderer' : nativeFrameCaptureMessage}
+          >
+            <span class="engine-title">Native Renderer</span>
+            <span class="engine-meta">{nativeFrameCaptureMessage}</span>
+          </button>
         </div>
-      {/if}
+      </div>
 
       <div class="field">
         <label>{isFrameOutput ? 'Compile quality preset' : 'Quality'}</label>
@@ -364,7 +362,8 @@
           <strong>{settings.captureBackend === 'native' ? 'Native Renderer' : 'WebGL'}</strong>.
         {:else}
           Will produce <strong>{Math.round(settings.durationSeconds * settings.fps)}</strong> frames at
-          <strong>{settings.width}×{settings.height}</strong>.
+          <strong>{settings.width}×{settings.height}</strong> with
+          <strong>{settings.captureBackend === 'native' ? 'Native Renderer' : 'WebGL'}</strong>.
         {/if}
       </div>
 
