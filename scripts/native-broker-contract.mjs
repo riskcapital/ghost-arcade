@@ -14,6 +14,7 @@ const REQUIRED_CHECKS = [
   'native-flythrough-graph',
   'native-pixel-particles-graph',
   'native-point-cloud-fx-graph',
+  'native-frame-sequence-export',
 ];
 
 const REQUIRED_GRAPH_MANIFEST = [
@@ -127,6 +128,10 @@ try {
     Number(outputStatus.commands_dropped ?? 0) === 0,
     `explicit present command should not be dropped by native core: ${JSON.stringify(outputStatus)}`,
   );
+  assert(
+    /(?:bgra|rgba)/i.test(String(outputStatus.output_format ?? '')),
+    `broker status missing native output raw pixel format: ${JSON.stringify(outputStatus)}`,
+  );
 
   const capabilities = await broker.invoke('native_renderer_get_capabilities');
   const outputExportExpected = process.platform === 'darwin';
@@ -150,6 +155,7 @@ try {
   );
   assert(
     capabilities?.features?.frame_snapshot_export &&
+      capabilities?.features?.native_frame_sequence_export &&
       capabilities?.implemented_methods?.includes('export_frame_snapshot'),
     `broker capabilities missing native frame export RPC: ${JSON.stringify(capabilities?.implemented_methods)}`,
   );

@@ -453,6 +453,7 @@ export interface RendererStatus {
   media_drop_io_priority_cutoff: number;
   output_width: number;
   output_height: number;
+  output_format: string;
   output_refresh_hz: number;
   output_window_attached: boolean;
   output_swapchain_ready: boolean;
