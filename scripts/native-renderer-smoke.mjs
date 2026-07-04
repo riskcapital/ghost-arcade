@@ -149,6 +149,41 @@ fn cs_transform(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 `;
 
+const NATIVE_COMPUTE_GRAPH_SAMPLE_SOURCE = `
+struct GraphUniforms {
+  element_count: u32,
+  seed: u32,
+  frame_index: u32,
+  scale: u32,
+}
+
+@group(0) @binding(0)
+var<storage, read_write> output_words: array<u32>;
+
+@group(0) @binding(1)
+var<uniform> graph: GraphUniforms;
+
+@group(0) @binding(2)
+var source_frame: texture_2d<f32>;
+
+@group(0) @binding(3)
+var source_sampler: sampler;
+
+@compute @workgroup_size(64)
+fn cs_sample(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= graph.element_count) { return; }
+  let x = f32(i % 16u);
+  let y = f32((i / 16u) % 16u);
+  let uv = (vec2<f32>(x, y) + vec2<f32>(0.5)) / vec2<f32>(16.0, 16.0);
+  let rgba = textureSampleLevel(source_frame, source_sampler, uv, 0.0);
+  let r = u32(clamp(rgba.r, 0.0, 1.0) * 255.0);
+  let g = u32(clamp(rgba.g, 0.0, 1.0) * 255.0);
+  let b = u32(clamp(rgba.b, 0.0, 1.0) * 255.0);
+  output_words[i] = r | (g << 8u) | (b << 16u) | ((graph.seed + i) << 24u);
+}
+`;
+
 const NATIVE_COMPUTE_GRAPH_RENDER_SOURCE = `
 struct VSOut {
   @builtin(position) pos: vec4<f32>,
@@ -458,6 +493,7 @@ async function main() {
       !capabilities.features.compute_graph_multi_render ||
       !capabilities.features.compute_graph_instanced_render ||
       !capabilities.features.compute_graph_indirect_render ||
+      !capabilities.features.compute_graph_texture_sampling ||
       !capabilities.features.compute_graph_source_frame_target ||
       !capabilities.features.persistent_compute_buffers ||
       !capabilities.features.native_3d_smoke_graph ||
@@ -479,6 +515,7 @@ async function main() {
       !smokeManifest.features?.includes('compute_graph_multi_render') ||
       !smokeManifest.features?.includes('compute_graph_instanced_render') ||
       !smokeManifest.features?.includes('compute_graph_indirect_render') ||
+      !smokeManifest.features?.includes('compute_graph_texture_sampling') ||
       !smokeManifest.features?.includes('compute_graph_source_frame_target')
     ) {
       throw new Error(`native graph instrument manifest entry is incomplete: ${JSON.stringify(capabilities.native_graph_instrument_manifest)}`);
@@ -572,6 +609,13 @@ async function main() {
           stage: 'compute',
           entry: 'cs_transform',
           source: NATIVE_COMPUTE_GRAPH_TRANSFORM_SOURCE,
+        },
+        {
+          type: 'precompile_shader',
+          shader_id: 'native-compute-graph-sample',
+          stage: 'compute',
+          entry: 'cs_sample',
+          source: NATIVE_COMPUTE_GRAPH_SAMPLE_SOURCE,
         },
         {
           type: 'precompile_shader',
@@ -849,6 +893,31 @@ async function main() {
     if (computeGraphSourceFrame.render_snapshot) {
       throw new Error(`source-frame graph render should not emit a snapshot unless explicitly copied: ${JSON.stringify(computeGraphSourceFrame)}`);
     }
+    const computeGraphSampleSourceFrame = await rpc.send('compute_graph', {
+      buffers: [
+        { id: 'graph-sample-uniform', kind: 'uniform', initial_u32: [256, 77, 2, 1] },
+        { id: 'graph-sample-output', kind: 'storage', byte_length: 1024 },
+      ],
+      passes: [
+        {
+          name: 'sample-source-frame',
+          shader_id: 'native-compute-graph-sample',
+          entry: 'cs_sample',
+          dispatch: [4, 1, 1],
+          bindings: [
+            { binding: 0, resource: 'graph-sample-output', kind: 'storage' },
+            { binding: 1, resource: 'graph-sample-uniform', kind: 'uniform' },
+            { binding: 2, kind: 'source-frame-texture', source_id: graphSourceId },
+            { binding: 3, kind: 'source-frame-sampler' },
+          ],
+        },
+      ],
+      readbacks: ['graph-sample-output'],
+    }, 5000);
+    const sampledSource = computeGraphSampleSourceFrame?.readbacks?.['graph-sample-output'];
+    if (Number(sampledSource?.nonzero_words ?? 0) < 240 || !sampledSource?.checksum) {
+      throw new Error(`native compute graph failed to sample source-frame texture: ${JSON.stringify(computeGraphSampleSourceFrame)}`);
+    }
     await rpc.send('submit_commands', {
       commands: [
         { type: 'upsert_layer', layer_id: 'graph-source-frame', z_index: 0, blend_mode: 'normal', opacity: 1, corners: FULLSCREEN_CORNERS },
@@ -1052,10 +1121,10 @@ async function main() {
     if (Number(status.native_instrument_frame_renders ?? 0) < 4) {
       throw new Error(`native instrument frames were not rendered: ${JSON.stringify(status)}`);
     }
-    if (Number(status.compute_graph_runs ?? 0) < 5) {
+    if (Number(status.compute_graph_runs ?? 0) < 6) {
       throw new Error(`native compute graph runs were not counted: ${JSON.stringify(status)}`);
     }
-    if (Number(status.compute_graph_passes ?? 0) < 8) {
+    if (Number(status.compute_graph_passes ?? 0) < 9) {
       throw new Error(`native compute graph passes were not counted: ${JSON.stringify(status)}`);
     }
     if (Number(status.compute_graph_render_passes ?? 0) < 5) {
@@ -1067,13 +1136,13 @@ async function main() {
     if (Number(status.compute_graph_source_frame_renders ?? 0) < 1) {
       throw new Error(`native compute graph source-frame renders were not counted: ${JSON.stringify(status)}`);
     }
-    if (Number(status.compute_graph_readbacks ?? 0) < 5 || Number(status.compute_graph_readback_bytes ?? 0) < 5120) {
+    if (Number(status.compute_graph_readbacks ?? 0) < 6 || Number(status.compute_graph_readback_bytes ?? 0) < 6144) {
       throw new Error(`native compute graph readbacks were not counted: ${JSON.stringify(status)}`);
     }
     if (Number(status.compute_graph_persistent_buffers ?? 0) < 2) {
       throw new Error(`native persistent compute graph buffers were not reported: ${JSON.stringify(status)}`);
     }
-    if (Number(stats.compute_graph_runs ?? 0) < 5 || Number(stats.compute_graph_persistent_buffers ?? 0) < 2) {
+    if (Number(stats.compute_graph_runs ?? 0) < 6 || Number(stats.compute_graph_persistent_buffers ?? 0) < 2) {
       throw new Error(`native compute graph stats were not reported: ${JSON.stringify(stats)}`);
     }
     if (Number(status.source_frame_size ?? 0) < 1536) {
