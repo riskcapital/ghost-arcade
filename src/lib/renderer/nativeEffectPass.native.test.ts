@@ -142,6 +142,7 @@ describe('Native effect-pass template', () => {
       ['posterize', 8],
       ['noise', 9],
       ['pixelate', 10],
+      ['vignette', 11],
     ]);
     expect(nativeEffectPassManifestEntry('posterize')).toMatchObject({
       code: 8,
@@ -242,6 +243,47 @@ describe('Native effect-pass template', () => {
     ]);
   });
 
+  it('packs native vignette params across both generic param vec4 slots', () => {
+    expect(packNativeEffectPassUniforms({
+      sourceId: 'src',
+      targetSourceId: 'dst',
+      effect: 'vignette',
+      width: 320,
+      height: 180,
+      time: 0.5,
+      frameDelta: 1 / 24,
+      frameIndex: 3,
+      amount: 0.72,
+      params: {
+        softness: 0.22,
+        roundness: 0.9,
+        shape: 3,
+        aspect: 1.25,
+        centerX: 0.45,
+        centerY: 0.58,
+        tintAmount: 0.2,
+        breathing: 0.1,
+      },
+    })).toEqual([
+      320,
+      180,
+      0.5,
+      1 / 24,
+      11,
+      0.72,
+      1,
+      3,
+      0.22,
+      0.9,
+      3,
+      1.25,
+      0.45,
+      0.58,
+      0.2,
+      0.1,
+    ]);
+  });
+
   it('builds a source-frame to source-frame render graph', () => {
     const graph = buildNativeEffectPassGraph({
       sourceId: 'gpu:layer-a:source',
@@ -292,7 +334,20 @@ describe('Native effect-pass template', () => {
       targetSourceId: 'gpu:layer-a:effect:final',
       intermediatePrefix: 'gpu:layer-a:chain',
       effects: [
-        { effect: 'invert', amount: 1 },
+        {
+          effect: 'vignette',
+          amount: 0.72,
+          params: {
+            softness: 0.22,
+            roundness: 0.9,
+            shape: 3,
+            aspect: 1.25,
+            centerX: 0.45,
+            centerY: 0.58,
+            tintAmount: 0.2,
+            breathing: 0.1,
+          },
+        },
         {
           effect: 'pixelate',
           amount: 12,
@@ -312,13 +367,13 @@ describe('Native effect-pass template', () => {
       seq: 900,
     });
 
-    expect(graph.effects).toEqual(['invert', 'pixelate']);
+    expect(graph.effects).toEqual(['vignette', 'pixelate']);
     expect(graph.config.passes).toEqual([]);
     expect(graph.config.readbacks).toEqual([]);
     expect(graph.config.buffers).toHaveLength(2);
     expect(graph.config.render_passes).toHaveLength(2);
     expect(graph.config.render_passes[0]).toMatchObject({
-      name: 'effect-pass-invert-1',
+      name: 'effect-pass-vignette-1',
       source_id: 'gpu:layer-a:chain:step:0',
       seq: 900,
     });
@@ -512,7 +567,20 @@ describe('Native effect-pass template', () => {
         targetSourceId,
         intermediatePrefix: 'native-effect-pass-chain-step',
         effects: [
-          { effect: 'invert', amount: 1 },
+          {
+            effect: 'vignette',
+            amount: 0.72,
+            params: {
+              softness: 0.22,
+              roundness: 0.9,
+              shape: 3,
+              aspect: 1.25,
+              centerX: 0.45,
+              centerY: 0.58,
+              tintAmount: 0.2,
+              breathing: 0,
+            },
+          },
           {
             effect: 'pixelate',
             amount: 8,

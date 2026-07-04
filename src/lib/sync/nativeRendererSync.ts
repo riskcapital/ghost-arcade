@@ -172,6 +172,18 @@ type NativeEffectPassRuntime = {
     seed?: number;
     param2?: number;
     param3?: number;
+    param4?: number;
+    param5?: number;
+    param6?: number;
+    param7?: number;
+    softness?: number;
+    roundness?: number;
+    shape?: number;
+    aspect?: number;
+    centerX?: number;
+    centerY?: number;
+    tintAmount?: number;
+    breathing?: number;
   };
 };
 const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<{
@@ -496,6 +508,65 @@ function effectToNativeDescriptor(effect: any): string | null {
     const animAmount = Math.max(0, Math.min(1, animAmountRaw));
     return `pixelate:${size.toFixed(4)}:${mode}:${grid.toFixed(4)}:${animSpeed.toFixed(4)}:${animAmount.toFixed(4)}`;
   }
+  if (type === 'vignette') {
+    const sizeRaw =
+      (typeof params.vignetteSize === 'number' && Number.isFinite(params.vignetteSize) ? params.vignetteSize : null)
+      ?? (typeof params.size === 'number' && Number.isFinite(params.size) ? params.size : null)
+      ?? 0.8;
+    const softnessRaw =
+      (typeof params.vignetteSoftness === 'number' && Number.isFinite(params.vignetteSoftness) ? params.vignetteSoftness : null)
+      ?? (typeof params.softness === 'number' && Number.isFinite(params.softness) ? params.softness : null)
+      ?? 0.4;
+    const roundnessRaw =
+      (typeof params.vignetteRoundness === 'number' && Number.isFinite(params.vignetteRoundness) ? params.vignetteRoundness : null)
+      ?? (typeof params.roundness === 'number' && Number.isFinite(params.roundness) ? params.roundness : null)
+      ?? 0.5;
+    const shapeRaw =
+      (typeof params.vignetteShape === 'number' && Number.isFinite(params.vignetteShape) ? params.vignetteShape : null)
+      ?? (typeof params.shape === 'number' && Number.isFinite(params.shape) ? params.shape : null)
+      ?? 0;
+    const aspectRaw =
+      (typeof params.vignetteAspect === 'number' && Number.isFinite(params.vignetteAspect) ? params.vignetteAspect : null)
+      ?? (typeof params.aspect === 'number' && Number.isFinite(params.aspect) ? params.aspect : null)
+      ?? 1;
+    const centerXRaw =
+      (typeof params.vignetteCenterX === 'number' && Number.isFinite(params.vignetteCenterX) ? params.vignetteCenterX : null)
+      ?? (typeof params.centerX === 'number' && Number.isFinite(params.centerX) ? params.centerX : null)
+      ?? 0.5;
+    const centerYRaw =
+      (typeof params.vignetteCenterY === 'number' && Number.isFinite(params.vignetteCenterY) ? params.vignetteCenterY : null)
+      ?? (typeof params.centerY === 'number' && Number.isFinite(params.centerY) ? params.centerY : null)
+      ?? 0.5;
+    const tintRaw =
+      (typeof params.vignetteTintAmount === 'number' && Number.isFinite(params.vignetteTintAmount) ? params.vignetteTintAmount : null)
+      ?? (typeof params.tintAmount === 'number' && Number.isFinite(params.tintAmount) ? params.tintAmount : null)
+      ?? 0;
+    const breathingRaw =
+      (typeof params.vignetteBreathing === 'number' && Number.isFinite(params.vignetteBreathing) ? params.vignetteBreathing : null)
+      ?? (typeof params.breathing === 'number' && Number.isFinite(params.breathing) ? params.breathing : null)
+      ?? 0;
+    const size = Math.max(0, Math.min(2, sizeRaw));
+    const softness = Math.max(0, Math.min(2, softnessRaw));
+    const roundness = Math.max(0, Math.min(1, roundnessRaw));
+    const shape = Math.max(0, Math.min(3, Math.round(shapeRaw)));
+    const aspect = Math.max(0.1, Math.min(4, aspectRaw));
+    const centerX = Math.max(-2, Math.min(3, centerXRaw));
+    const centerY = Math.max(-2, Math.min(3, centerYRaw));
+    const tintAmount = Math.max(0, Math.min(1, tintRaw));
+    const breathing = Math.max(0, Math.min(1, breathingRaw));
+    return [
+      'vignette',
+      size.toFixed(4),
+      softness.toFixed(4),
+      roundness.toFixed(4),
+      shape.toFixed(0),
+      aspect.toFixed(4),
+      centerX.toFixed(4),
+      centerY.toFixed(4),
+      tintAmount.toFixed(4),
+      breathing.toFixed(4),
+    ].join(':');
+  }
 
   // Keep explicit descriptor IDs compatible with native descriptor parser.
   const effectId = typeof effect.id === 'string' ? effect.id.trim() : '';
@@ -505,7 +576,18 @@ function effectToNativeDescriptor(effect: any): string | null {
 
 function nativeEffectPassFromDescriptor(descriptor: string | null): NativeEffectPassRuntime | null {
   if (!descriptor) return null;
-  const [rawId, rawAmount, rawParam0, rawParam1, rawParam2, rawParam3] = descriptor.split(':');
+  const [
+    rawId,
+    rawAmount,
+    rawParam0,
+    rawParam1,
+    rawParam2,
+    rawParam3,
+    rawParam4,
+    rawParam5,
+    rawParam6,
+    rawParam7,
+  ] = descriptor.split(':');
   const effect = rawId.trim().toLowerCase() as NativeEffectPassId;
   if (!NATIVE_EFFECT_PASS_IDS.has(effect)) return null;
   const amount = rawAmount !== undefined && rawAmount.trim().length > 0
@@ -519,6 +601,17 @@ function nativeEffectPassFromDescriptor(descriptor: string | null): NativeEffect
         animSpeed: Number(rawParam2 ?? 0),
         animAmount: Number(rawParam3 ?? 0),
       }
+    : effect === 'vignette'
+      ? {
+          softness: Number(rawParam0 ?? 0.4),
+          roundness: Number(rawParam1 ?? 0.5),
+          shape: Number(rawParam2 ?? 0),
+          aspect: Number(rawParam3 ?? 1),
+          centerX: Number(rawParam4 ?? 0.5),
+          centerY: Number(rawParam5 ?? 0.5),
+          tintAmount: Number(rawParam6 ?? 0),
+          breathing: Number(rawParam7 ?? 0),
+        }
     : undefined;
   if (params && Object.values(params).some((value) => !Number.isFinite(value))) return null;
   return {

@@ -8,7 +8,8 @@ export type NativeEffectPassId =
   | 'hue'
   | 'posterize'
   | 'noise'
-  | 'pixelate';
+  | 'pixelate'
+  | 'vignette';
 
 export interface NativeEffectPassManifestEntry {
   id: NativeEffectPassId;
@@ -40,6 +41,18 @@ export interface NativeEffectPassOptions {
     gridLines: number;
     animSpeed: number;
     animAmount: number;
+    param4: number;
+    param5: number;
+    param6: number;
+    param7: number;
+    softness: number;
+    roundness: number;
+    shape: number;
+    aspect: number;
+    centerX: number;
+    centerY: number;
+    tintAmount: number;
+    breathing: number;
   }>;
   clear?: boolean;
   seq?: number;
@@ -89,6 +102,7 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'posterize', code: 8, defaultAmount: 6, amountMin: 2, amountMax: 32 },
   { id: 'noise', code: 9, defaultAmount: 0.25, amountMin: 0, amountMax: 1 },
   { id: 'pixelate', code: 10, defaultAmount: 8, amountMin: 1, amountMax: 128 },
+  { id: 'vignette', code: 11, defaultAmount: 0.8, amountMin: 0, amountMax: 2 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -149,41 +163,42 @@ fn value_noise2d(p: vec2<f32>) -> f32 {
   return mix(mix(a, b, v.x), mix(c, d, v.x), v.y);
 }
 
-fn apply_effect(color: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
+fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
+  let color = src.rgb;
   let code = u32(round(u.effect.x));
   let amount = u.effect.y;
   if (code == 1u) {
-    return mix(color, vec3<f32>(1.0) - color, clamp(amount, 0.0, 1.0));
+    return vec4<f32>(mix(color, vec3<f32>(1.0) - color, clamp(amount, 0.0, 1.0)), src.a);
   }
   if (code == 2u) {
     let gray = vec3<f32>(luma(color));
-    return mix(color, gray, clamp(amount, 0.0, 1.0));
+    return vec4<f32>(mix(color, gray, clamp(amount, 0.0, 1.0)), src.a);
   }
   if (code == 3u) {
-    return color * max(0.0, amount);
+    return vec4<f32>(color * max(0.0, amount), src.a);
   }
   if (code == 4u) {
-    return (color - vec3<f32>(0.5)) * amount + vec3<f32>(0.5);
+    return vec4<f32>((color - vec3<f32>(0.5)) * amount + vec3<f32>(0.5), src.a);
   }
   if (code == 5u) {
-    return pow(max(color, vec3<f32>(0.0)), vec3<f32>(1.0 / max(0.001, amount)));
+    return vec4<f32>(pow(max(color, vec3<f32>(0.0)), vec3<f32>(1.0 / max(0.001, amount))), src.a);
   }
   if (code == 6u) {
     let gray = vec3<f32>(luma(color));
-    return mix(gray, color, amount);
+    return vec4<f32>(mix(gray, color, amount), src.a);
   }
   if (code == 7u) {
-    return hue_rotate(color, amount);
+    return vec4<f32>(hue_rotate(color, amount), src.a);
   }
   if (code == 8u) {
     let levels = max(2.0, floor(amount + 0.5));
-    return floor(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)) * levels + vec3<f32>(0.5)) / levels;
+    return vec4<f32>(floor(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)) * levels + vec3<f32>(0.5)) / levels, src.a);
   }
   if (code == 9u) {
     let scale = max(0.001, u.params0.x);
     let seed = u.params0.y;
     let n = value_noise2d(uv * u.resolution_time.xy * scale + vec2<f32>(u.resolution_time.z * 19.0 + seed, u.effect.w * 0.37)) - 0.5;
-    return color + n * clamp(amount, 0.0, 1.0) * 0.72;
+    return vec4<f32>(color + n * clamp(amount, 0.0, 1.0) * 0.72, src.a);
   }
   if (code == 10u) {
     let mode = u32(round(u.params0.x));
@@ -218,9 +233,39 @@ fn apply_effect(color: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
       let on_edge = step(0.46, max(edge.x, edge.y));
       rgb = rgb * mix(1.0, 0.0, on_edge * grid_lines);
     }
-    return rgb;
+    return vec4<f32>(rgb, src.a);
   }
-  return color;
+  if (code == 11u) {
+    let softness = clamp(u.params0.x, 0.0, 2.0);
+    let roundness = clamp(u.params0.y, 0.0, 1.0);
+    let shape = u32(round(clamp(u.params0.z, 0.0, 3.0)));
+    let aspect = max(0.0001, u.params0.w);
+    let center = clamp(u.params1.xy, vec2<f32>(-2.0), vec2<f32>(3.0));
+    let tint_amount = clamp(u.params1.z, 0.0, 1.0);
+    let breathing = clamp(u.params1.w, 0.0, 1.0);
+    let breath = sin(u.resolution_time.z * 0.5 * 6.28318) * 0.5 + 0.5;
+    let effective_size = amount - breathing * 0.15 * (breath - 0.5);
+    let pos = uv - center;
+    var dist = 1.0;
+    if (shape == 0u) {
+      let rect_dist = max(abs(pos.x), abs(pos.y)) * 2.0;
+      let circ_dist = length(pos) * 2.0;
+      dist = mix(rect_dist, circ_dist, roundness);
+    } else if (shape == 1u) {
+      dist = length(vec2<f32>(pos.x / aspect, pos.y)) * 2.0;
+    } else if (shape == 2u) {
+      dist = max(abs(pos.x), abs(pos.y)) * 2.0;
+    } else {
+      let q = vec2<f32>(pos.x / aspect, pos.y) * 2.0;
+      dist = pow(pow(abs(q.x), 4.0) + pow(abs(q.y), 4.0), 0.25);
+    }
+    let vignette = 1.0 - smoothstep(effective_size - softness * 0.5, effective_size + softness * 0.5, dist);
+    let tint = vec3<f32>(0.0);
+    let final_rgb = mix(src.rgb, tint, (1.0 - vignette) * tint_amount);
+    let final_alpha = src.a * mix(vignette, 1.0, tint_amount);
+    return vec4<f32>(final_rgb, final_alpha);
+  }
+  return src;
 }
 
 @vertex
@@ -241,9 +286,9 @@ fn vs_full(@builtin(vertex_index) vertex_index: u32) -> VsOut {
 fn fs_effect(in: VsOut) -> @location(0) vec4<f32> {
   let uv = clamp(in.uv, vec2<f32>(0.0), vec2<f32>(1.0));
   let src = textureSampleLevel(source_tex, source_sampler, uv, 0.0);
-  let effected = apply_effect(src.rgb, uv);
-  let mixed = mix(src.rgb, effected, clamp(u.effect.z, 0.0, 1.0));
-  return vec4<f32>(saturate3(mixed), src.a);
+  let effected = apply_effect(src, uv);
+  let mixed = mix(src, effected, clamp(u.effect.z, 0.0, 1.0));
+  return vec4<f32>(saturate3(mixed.rgb), clamp(mixed.a, 0.0, 1.0));
 }
 `;
 
@@ -298,10 +343,15 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
   const mix = clampNumber(options.mix ?? 1, 0, 1, 1);
   const frameIndex = Math.max(0, Math.round(options.frameIndex ?? 0));
   const params = options.params ?? {};
-  const scale = clampNumber(params.scale ?? params.param0 ?? params.mode ?? 0.42, 0, 64, 0.42);
-  const seed = clampNumber(params.seed ?? params.param1 ?? params.gridLines ?? 0, -100000, 100000, 0);
-  const param2 = clampNumber(params.param2 ?? params.animSpeed ?? 0, -100000, 100000, 0);
-  const param3 = clampNumber(params.param3 ?? params.animAmount ?? 0, -100000, 100000, 0);
+  const vignetteDefaults = options.effect === 'vignette';
+  const scale = clampNumber(params.scale ?? params.param0 ?? params.mode ?? params.softness ?? (vignetteDefaults ? 0.4 : 0.42), 0, 64, vignetteDefaults ? 0.4 : 0.42);
+  const seed = clampNumber(params.seed ?? params.param1 ?? params.gridLines ?? params.roundness ?? (vignetteDefaults ? 0.5 : 0), -100000, 100000, vignetteDefaults ? 0.5 : 0);
+  const param2 = clampNumber(params.param2 ?? params.animSpeed ?? params.shape ?? 0, -100000, 100000, 0);
+  const param3 = clampNumber(params.param3 ?? params.animAmount ?? params.aspect ?? (vignetteDefaults ? 1 : 0), -100000, 100000, vignetteDefaults ? 1 : 0);
+  const param4 = clampNumber(params.param4 ?? params.centerX ?? (vignetteDefaults ? 0.5 : 0), -100000, 100000, vignetteDefaults ? 0.5 : 0);
+  const param5 = clampNumber(params.param5 ?? params.centerY ?? (vignetteDefaults ? 0.5 : 0), -100000, 100000, vignetteDefaults ? 0.5 : 0);
+  const param6 = clampNumber(params.param6 ?? params.tintAmount ?? 0, -100000, 100000, 0);
+  const param7 = clampNumber(params.param7 ?? params.breathing ?? 0, -100000, 100000, 0);
   return [
     width,
     height,
@@ -315,10 +365,10 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     seed,
     param2,
     param3,
-    0,
-    0,
-    0,
-    0,
+    param4,
+    param5,
+    param6,
+    param7,
   ];
 }
 
