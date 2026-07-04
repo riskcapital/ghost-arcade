@@ -280,16 +280,6 @@ function hashString(input: string): string {
   return (h >>> 0).toString(16);
 }
 
-function bytesToBase64(bytes: Uint8ClampedArray): string {
-  let binary = '';
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, i + chunkSize);
-    binary += String.fromCharCode(...chunk);
-  }
-  return btoa(binary);
-}
-
 function drawableDimensions(element: CanvasImageSource): { width: number; height: number } | null {
   if (typeof HTMLVideoElement !== 'undefined' && element instanceof HTMLVideoElement) {
     const width = element.videoWidth || element.clientWidth;
@@ -2265,7 +2255,7 @@ export class NativeRendererSync {
       source_id: src.id,
       width: captureSize,
       height: captureSize,
-      rgba_b64: captured.rgbaB64,
+      rgba_buffer: captured.rgbaBuffer,
       seq,
     });
   }
@@ -2393,7 +2383,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     sourceType: string,
     previewElement: CanvasImageSource | null = null,
     captureSize = SOURCE_PREVIEW_SIZE,
-  ): { rgbaB64: string; signature: string } | null {
+  ): { rgbaBuffer: Uint8Array; signature: string } | null {
     const element = this.resolvePreviewElement(src, sourceType, previewElement);
     if (!element) return null;
     const dimensions = this.previewElementDimensions(element);
@@ -2422,7 +2412,7 @@ fn fs_main() -> @location(0) vec4<f32> {
           ? Math.floor((element.currentTime || 0) * 8)
           : 0;
       return {
-        rgbaB64: bytesToBase64(imageData.data),
+        rgbaBuffer: new Uint8Array(imageData.data),
         signature: `${src.id}:${sourceType}:${captureSize}:${dimensions.width}x${dimensions.height}:${videoTime}:${hashString(src.src || '')}`,
       };
     } catch (err) {

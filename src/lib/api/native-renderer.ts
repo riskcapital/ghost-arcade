@@ -212,6 +212,7 @@ export type RendererCommand =
       width: number;
       height: number;
       rgba?: number[];
+      rgba_buffer?: ArrayBuffer | Uint8Array | Uint8ClampedArray;
       rgba_b64?: string;
       rgba_file?: string;
       rgba_byte_length?: number;
