@@ -191,6 +191,7 @@ type NativeGraphRouteState = {
   seq: number;
   warnings: number;
   state: NativeGraphRouteSimulationState | null;
+  bufferPrefixes: string[];
   lastGraphFrameIndex?: number;
   lastManualClockKey?: string;
 };
@@ -704,6 +705,37 @@ function nativeGraphOutputSource(layer: Layer, kind: NativeGraphRouteKind): Nati
     shouldPreview: false,
     previewElement,
   };
+}
+
+function nativeGraphBufferSafeId(value: string): string {
+  return String(value || 'source').replace(/[^a-zA-Z0-9:_-]+/g, '_').slice(0, 160);
+}
+
+function nativeGraphBufferPrefixesForRoute(route: NativeGraphLayerRoute): string[] {
+  const sourceId = String(route.source.id || '');
+  const safeSourceId = nativeGraphBufferSafeId(sourceId);
+  switch (route.kind) {
+    case 'planet':
+      return [`planet:${safeSourceId}`];
+    case 'smoke-3d':
+      return [`3d-smoke:${safeSourceId}`];
+    case 'particle-field':
+      return [`particle-field:${safeSourceId}`];
+    case 'volumetric-spheres':
+      return [`volumetric-spheres:${safeSourceId}`];
+    case 'smoke-riders':
+      return [`3d-smoke:${safeSourceId}`, `volumetric-spheres:${safeSourceId}`];
+    case 'ink-cloud':
+      return [`ink-cloud:${safeSourceId}`];
+    case 'flythrough':
+      return [`flythrough:${safeSourceId}`];
+    case 'pixel-particles':
+      return [`pixel-particles:${safeSourceId}`];
+    case 'point-cloud-fx':
+      return [`${sourceId}:point-cloud-fx:`];
+    default:
+      return [];
+  }
 }
 
 function nativeSourceIdentity(source: NativeLayerSource | null | undefined): string {
@@ -1268,6 +1300,7 @@ export class NativeRendererSync {
         seq: 0,
         warnings: 0,
         state: null,
+        bufferPrefixes: nativeGraphBufferPrefixesForRoute(route),
       };
       this.nativeGraphRoutes.set(route.key, routeState);
       const graphTime = typeof clock.time === 'number'
@@ -1457,10 +1490,15 @@ export class NativeRendererSync {
         routeState.inFlight = false;
       }
     }
+    const inactiveGraphBufferPrefixes: string[] = [];
     for (const [key, routeState] of Array.from(this.nativeGraphRoutes.entries())) {
       if (!activeRouteKeys.has(key) && !routeState.inFlight) {
+        inactiveGraphBufferPrefixes.push(...routeState.bufferPrefixes);
         this.nativeGraphRoutes.delete(key);
       }
+    }
+    if (inactiveGraphBufferPrefixes.length > 0) {
+      await this.clearNativeGraphBuffers(inactiveGraphBufferPrefixes);
     }
   }
 
@@ -1658,6 +1696,7 @@ export class NativeRendererSync {
       clear_texture_pool: false,
       clear_metadata_caches: false,
       clear_prefetch_cache: true,
+      clear_native_graph_buffers: true,
     }).catch(() => {});
     if (this.supportsNativeMethod('detach_output_window')) {
       await detachNativeRendererOutputWindow().catch(() => {});
@@ -2750,9 +2789,32 @@ fn fs_main() -> @location(0) vec4<f32> {
     clear_texture_pool: boolean;
     clear_metadata_caches: boolean;
     clear_prefetch_cache: boolean;
+    clear_native_graph_buffers?: boolean;
+    native_graph_buffer_prefixes?: string[];
   }) {
     if (!this.supportsNativeMethod('clear_runtime_caches')) return;
     await clearNativeRendererRuntimeCaches(config).catch(() => {});
+  }
+
+  private async clearNativeGraphBuffers(prefixes: string[]) {
+    if (!this.running) return;
+    if (!this.supportsNativeMethod('clear_runtime_caches')) return;
+    if (!this.supportsNativeFeature('native_graph_buffer_prune')) return;
+    const uniquePrefixes = Array.from(new Set(
+      prefixes
+        .map((prefix) => String(prefix || '').trim())
+        .filter(Boolean),
+    ));
+    if (uniquePrefixes.length === 0) return;
+    await clearNativeRendererRuntimeCaches({
+      clear_precompiled_shaders: false,
+      clear_texture_pool: false,
+      clear_metadata_caches: false,
+      clear_prefetch_cache: false,
+      native_graph_buffer_prefixes: uniquePrefixes,
+    }).catch((err) => {
+      console.warn('[NativeRendererSync] native graph buffer prune failed', err);
+    });
   }
 
   async setMediaDropPolicy(

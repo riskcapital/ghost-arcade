@@ -136,6 +136,12 @@ try {
   const capabilities = await broker.invoke('native_renderer_get_capabilities');
   const outputExportExpected = process.platform === 'darwin';
   assert(capabilities?.features?.compute_graph_source_frame_target, 'broker capabilities lost compute graph source-frame support');
+  assert(capabilities?.features?.runtime_cache_clear, 'broker capabilities lost runtime cache clearing support');
+  assert(capabilities?.features?.native_graph_buffer_prune, 'broker capabilities lost native graph buffer prune support');
+  assert(
+    capabilities?.implemented_methods?.includes('clear_runtime_caches'),
+    `broker implemented methods lost clear_runtime_caches: ${JSON.stringify(capabilities?.implemented_methods)}`,
+  );
   assert(capabilities?.features?.native_output_mirror_texture, 'broker capabilities lost native output mirror support');
   assert(
     !!capabilities?.features?.shared_texture_source_frame_upload === (process.platform === 'darwin'),
@@ -250,6 +256,54 @@ try {
     JSON.stringify(byteGraph?.readbacks?.['byte-graph-output']?.first_words?.slice(0, 4)) ===
       JSON.stringify([107, 112, 115, 120]),
     `compute graph binary initial buffer was not read correctly: ${JSON.stringify(byteGraph)}`,
+  );
+  const pruneGraph = await broker.invoke('native_renderer_run_compute_graph', {
+    buffers: [
+      {
+        id: 'contract-prune:seeds',
+        kind: 'uniform',
+        byte_length: 16,
+        initial_buffer: seedBytes,
+      },
+      {
+        id: 'contract-prune:output',
+        kind: 'storage',
+        byte_length: 16,
+        persistent: true,
+        clear: true,
+      },
+    ],
+    passes: [
+      {
+        name: 'contract-prune-compute',
+        shader_id: 'broker-byte-buffer-compute',
+        entry: 'cs_main',
+        dispatch: [1, 1, 1],
+        bindings: [
+          { binding: 0, resource: 'contract-prune:seeds', kind: 'uniform' },
+          { binding: 1, resource: 'contract-prune:output', kind: 'storage' },
+        ],
+      },
+    ],
+    readbacks: [],
+  });
+  assert(
+    Number(pruneGraph?.persistent_buffer_count ?? 0) > 0,
+    `persistent graph did not allocate a native buffer: ${JSON.stringify(pruneGraph)}`,
+  );
+  const pruneResult = await broker.invoke('native_renderer_clear_runtime_caches', {
+    config: {
+      clear_precompiled_shaders: false,
+      clear_texture_pool: false,
+      clear_metadata_caches: false,
+      clear_prefetch_cache: false,
+      native_graph_buffer_prefixes: ['contract-prune:'],
+    },
+  });
+  assert(
+    Number(pruneResult?.cleared_native_graph_buffers ?? 0) >= 1 &&
+      Number(pruneResult?.remaining_native_graph_buffers ?? 0) === 0,
+    `runtime cache prune did not release native graph buffers: ${JSON.stringify(pruneResult)}`,
   );
 
   const outputTexture = await broker.invoke('native_renderer_get_output_shared_texture');
