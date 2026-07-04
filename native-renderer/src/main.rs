@@ -824,6 +824,8 @@ struct NativeComputeGraphRenderPlan {
     include_snapshot: bool,
     target: NativeComputeGraphRenderTarget,
     blend: NativeComputeGraphRenderBlend,
+    vertex_count: u32,
+    instance_count: u32,
     bindings: Vec<NativeComputeGraphBindingSpec>,
 }
 
@@ -1377,6 +1379,7 @@ impl App {
             "compute_graph_host": true,
             "compute_graph_render": true,
             "compute_graph_multi_render": true,
+            "compute_graph_instanced_render": true,
             "compute_graph_source_frame_target": true,
             "persistent_compute_buffers": true,
             "native_3d_smoke_graph": true,
@@ -1420,6 +1423,7 @@ impl App {
                         "compute_graph_host",
                         "compute_graph_render",
                         "compute_graph_multi_render",
+                        "compute_graph_instanced_render",
                         "compute_graph_source_frame_target",
                         "persistent_compute_buffers",
                         "native_3d_smoke_graph"
@@ -2638,6 +2642,18 @@ impl App {
             .or_else(|| string_at(render, &["blendMode"]))
             .map(|label| NativeComputeGraphRenderBlend::from_label(&label))
             .unwrap_or(NativeComputeGraphRenderBlend::Replace);
+        let vertex_count = number_at(render, &["vertex_count"])
+            .or_else(|| number_at(render, &["vertices"]))
+            .or_else(|| number_at(render, &["draw_vertices"]))
+            .unwrap_or(3.0)
+            .round()
+            .clamp(1.0, u32::MAX as f64) as u32;
+        let instance_count = number_at(render, &["instance_count"])
+            .or_else(|| number_at(render, &["instances"]))
+            .or_else(|| number_at(render, &["draw_instances"]))
+            .unwrap_or(1.0)
+            .round()
+            .clamp(1.0, u32::MAX as f64) as u32;
         let target_label = string_at(render, &["target"])
             .or_else(|| string_at(render, &["target_type"]))
             .or_else(|| string_at(render, &["render_target"]))
@@ -2693,6 +2709,8 @@ impl App {
             include_snapshot,
             target,
             blend,
+            vertex_count,
+            instance_count,
             bindings,
         })
     }
@@ -4583,7 +4601,7 @@ impl RenderState {
             });
             pass.set_pipeline(&cached.pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
-            pass.draw(0..3, 0..1);
+            pass.draw(0..render_plan.vertex_count, 0..render_plan.instance_count);
         }
         if let Some(slot) = source_slot {
             self.generate_source_frame_mips(encoder, slot);
@@ -4595,6 +4613,8 @@ impl RenderState {
             "bindings": render_plan.bindings.len(),
             "target": target_name,
             "blend": render_plan.blend.signature(),
+            "vertex_count": render_plan.vertex_count,
+            "instance_count": render_plan.instance_count,
             "format": texture_format_label(output_format),
             "include_snapshot": render_plan.include_snapshot,
         });
