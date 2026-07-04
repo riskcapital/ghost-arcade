@@ -1526,7 +1526,8 @@
         spoutCpuFallbackAllowed = !isElectron || !!status.cpuFallbackAllowed;
         if (status.active) {
           spoutZeroCopyFailed = false;
-          console.log('[Canvas] OSR zero-copy active — disabling readPixels send');
+          const route = status.reason === 'native-iosurface' ? 'Native IOSurface' : 'OSR zero-copy';
+          console.log(`[Canvas] ${route} active — disabling readPixels send`);
         } else if (spoutCpuFallbackAllowed) {
           console.log('[Canvas] OSR inactive (reason:', status.reason, ') — CPU compatibility path is enabled');
         } else if (status.reason && status.reason !== 'stopped') {

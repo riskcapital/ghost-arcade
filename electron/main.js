@@ -2028,13 +2028,17 @@ async function canPublishNativeOutputTextureShare() {
   };
 }
 
-function stopNativeOutputTextureSharePump() {
+function stopNativeOutputTextureSharePump(reason = 'stopped') {
+  const wasActive = nativeOutputTextureShareActive;
   if (nativeOutputTextureSharePump) {
     clearInterval(nativeOutputTextureSharePump);
     nativeOutputTextureSharePump = null;
   }
   nativeOutputTextureShareActive = false;
   nativeOutputTextureShareInFlight = false;
+  if (wasActive) {
+    notifyMainWindowOsrStatus(false, reason);
+  }
 }
 
 function startNativeOutputTextureSharePump(initialTexture = null) {
@@ -2049,6 +2053,7 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
   nativeOutputTextureShareFrameCount = 0;
   nativeOutputTextureShareFailCount = 0;
   nativeOutputTextureShareLastLogTime = Date.now();
+  notifyMainWindowOsrStatus(true, 'native-iosurface');
 
   const publish = async (knownTexture = null) => {
     if (!nativeOutputTextureShareActive || nativeOutputTextureShareInFlight) return;
@@ -2063,7 +2068,7 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
         }
         if (nativeOutputTextureShareFailCount >= 10) {
           console.warn(`[${textureShareLabel} Native] falling back to OSR texture share after repeated native output failures`);
-          stopNativeOutputTextureSharePump();
+          stopNativeOutputTextureSharePump('native-iosurface-failed');
           if (spoutSendActive && spoutOutput && !spoutOsrWindow) {
             createSpoutOsrWindow(spoutSendW, spoutSendH);
           }
