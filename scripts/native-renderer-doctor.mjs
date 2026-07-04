@@ -1,9 +1,36 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 
 const root = process.cwd();
 const bin = join(root, 'native-renderer', 'target', 'release', process.platform === 'win32' ? 'ghost-render-core.exe' : 'ghost-render-core');
+const REQUIRED_GRAPH_INSTRUMENTS = [
+  'planet',
+  'smoke-3d',
+  'particle-field',
+  'volumetric-spheres',
+  'smoke-riders',
+  'ink-cloud',
+  'flythrough',
+  'pixel-particles',
+  'point-cloud-fx',
+];
+const REQUIRED_FEATURES = [
+  'compute_graph_host',
+  'compute_graph_render',
+  'compute_graph_source_frame_target',
+  'persistent_compute_buffers',
+  'native_planet_graph',
+  'native_3d_smoke_graph',
+  'native_particle_field_graph',
+  'native_volumetric_spheres_graph',
+  'native_smoke_riders_graph',
+  'native_ink_cloud_graph',
+  'native_flythrough_graph',
+  'native_pixel_particles_graph',
+  'native_point_cloud_fx_graph',
+];
 
 function check(cmd, args) {
   const result = spawnSync(cmd, args, { encoding: 'utf8' });
@@ -12,6 +39,100 @@ function check(cmd, args) {
     ok: result.status === 0,
     detail: (result.stdout || result.stderr || '').trim().split('\n')[0] || `exit ${result.status}`,
   };
+}
+
+function createRpcProcess() {
+  const child = spawn(bin, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+  let nextId = 1;
+  let stdout = '';
+  let stderr = '';
+  const pending = new Map();
+
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => {
+    stdout += chunk;
+    let index = stdout.indexOf('\n');
+    while (index >= 0) {
+      const line = stdout.slice(0, index).trim();
+      stdout = stdout.slice(index + 1);
+      if (line) {
+        const message = JSON.parse(line);
+        const wait = pending.get(message.id);
+        if (wait) {
+          clearTimeout(wait.timer);
+          pending.delete(message.id);
+          if (message.ok) wait.resolve(message.result);
+          else wait.reject(new Error(message.error || `${wait.method} failed`));
+        }
+      }
+      index = stdout.indexOf('\n');
+    }
+  });
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk;
+  });
+
+  const send = (method, params = {}, timeoutMs = 8000) => new Promise((resolve, reject) => {
+    const id = nextId++;
+    const timer = setTimeout(() => {
+      pending.delete(id);
+      reject(new Error(`native render-core timed out handling ${method}`));
+    }, timeoutMs);
+    pending.set(id, { resolve, reject, timer, method });
+    child.stdin.write(`${JSON.stringify({ id, method, params })}\n`);
+  });
+
+  const close = async () => {
+    try {
+      await send('shutdown', {}, 1000);
+    } catch {
+      // Process may already be gone after a startup failure.
+    }
+    child.kill();
+    return stderr.trim();
+  };
+
+  return { send, close };
+}
+
+async function inspectCore() {
+  if (!existsSync(bin)) {
+    return { ok: false, detail: 'render-core binary missing' };
+  }
+  const rpc = createRpcProcess();
+  try {
+    const status = await rpc.send('start', {
+      config: {
+        backend: process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'd3d12' : 'vulkan',
+        width: 320,
+        height: 180,
+        target_fps: 30,
+      },
+    }, 12000);
+    const capabilities = await rpc.send('capabilities', {}, 5000);
+    const readiness = await rpc.send('readiness', {}, 5000);
+    const features = capabilities?.features ?? {};
+    const instruments = new Set(capabilities?.native_graph_instruments ?? []);
+    const missingFeatures = REQUIRED_FEATURES.filter((feature) => !features[feature]);
+    const missingInstruments = REQUIRED_GRAPH_INSTRUMENTS.filter((instrument) => !instruments.has(instrument));
+    const blockers = Array.isArray(readiness?.blockers) ? readiness.blockers : [];
+    const ok = !!status?.backend_ready && missingFeatures.length === 0 && missingInstruments.length === 0 && blockers.length === 0;
+    return {
+      ok,
+      detail: [
+        `backend=${status?.backend ?? 'unknown'}`,
+        `adapter=${status?.adapter_name ?? 'unknown'}`,
+        `graphs=${instruments.size}/${REQUIRED_GRAPH_INSTRUMENTS.length}`,
+        `sharedTexture=${features.shared_texture_upload ? 'on' : 'fallback'}`,
+        missingFeatures.length ? `missingFeatures=${missingFeatures.join(',')}` : '',
+        missingInstruments.length ? `missingGraphs=${missingInstruments.join(',')}` : '',
+        blockers.length ? `blockers=${blockers.join('|')}` : '',
+      ].filter(Boolean).join(' '),
+    };
+  } finally {
+    await rpc.close();
+  }
 }
 
 const cargo = check('cargo', ['--version']);
@@ -23,4 +144,14 @@ console.log(`cargo: ${cargo.ok ? 'ok' : 'missing'} ${cargo.detail}`);
 console.log(`rustc: ${rustc.ok ? 'ok' : 'missing'} ${rustc.detail}`);
 console.log(`render-core binary: ${binary ? 'ok' : 'missing'} ${bin}`);
 
-if (!cargo.ok || !rustc.ok || !binary) process.exitCode = 1;
+let core = { ok: false, detail: 'skipped' };
+if (binary) {
+  try {
+    core = await inspectCore();
+  } catch (err) {
+    core = { ok: false, detail: err?.message || String(err) };
+  }
+  console.log(`render-core capability/readiness: ${core.ok ? 'ok' : 'failed'} ${core.detail}`);
+}
+
+if (!cargo.ok || !rustc.ok || !binary || !core.ok) process.exitCode = 1;
