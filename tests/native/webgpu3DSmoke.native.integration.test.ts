@@ -38,6 +38,15 @@ import {
   buildPlanetNativePrecompileCommands,
   type PlanetNativeGraphState,
 } from '../../src/lib/renderer/shaders/webgpuPlanet';
+import {
+  buildSmokeRidersNativeComputeGraph,
+  type SmokeRidersNativeGraphState,
+} from '../../src/lib/renderer/shaders/webgpuSmokeRidersShader';
+import {
+  buildVolumetricSpheresNativeComputeGraph,
+  buildVolumetricSpheresNativePrecompileCommands,
+  type VolumetricSpheresNativeGraphState,
+} from '../../src/lib/renderer/shaders/webgpuVolumetricSpheresShader';
 
 const RUN_NATIVE_INTEGRATION =
   process.env.GA_NATIVE_GRAPH_PARITY === '1' ||
@@ -214,6 +223,8 @@ describe('Native graph parity and health integration', () => {
     expect(capabilities.features.native_planet_graph).toBe(true);
     expect(capabilities.features.native_3d_smoke_graph).toBe(true);
     expect(capabilities.features.native_particle_field_graph).toBe(true);
+    expect(capabilities.features.native_volumetric_spheres_graph).toBe(true);
+    expect(capabilities.features.native_smoke_riders_graph).toBe(true);
     expect(capabilities.features.native_ink_cloud_graph).toBe(true);
     expect(capabilities.features.native_flythrough_graph).toBe(true);
     expect(capabilities.features.native_pixel_particles_graph).toBe(true);
@@ -221,6 +232,8 @@ describe('Native graph parity and health integration', () => {
     expect(capabilities.native_graph_instruments).toContain('planet');
     expect(capabilities.native_graph_instruments).toContain('smoke-3d');
     expect(capabilities.native_graph_instruments).toContain('particle-field');
+    expect(capabilities.native_graph_instruments).toContain('volumetric-spheres');
+    expect(capabilities.native_graph_instruments).toContain('smoke-riders');
     expect(capabilities.native_graph_instruments).toContain('ink-cloud');
     expect(capabilities.native_graph_instruments).toContain('flythrough');
     expect(capabilities.native_graph_instruments).toContain('pixel-particles');
@@ -243,6 +256,20 @@ describe('Native graph parity and health integration', () => {
       expect.objectContaining({
         id: 'particle-field',
         source_uri_prefix: 'native-graph://particle-field/',
+        render_target: 'source_frame',
+      }),
+    );
+    expect(capabilities.native_graph_instrument_manifest).toContainEqual(
+      expect.objectContaining({
+        id: 'volumetric-spheres',
+        source_uri_prefix: 'native-graph://volumetric-spheres/',
+        render_target: 'source_frame',
+      }),
+    );
+    expect(capabilities.native_graph_instrument_manifest).toContainEqual(
+      expect.objectContaining({
+        id: 'smoke-riders',
+        source_uri_prefix: 'native-graph://smoke-riders/',
         render_target: 'source_frame',
       }),
     );
@@ -280,6 +307,7 @@ describe('Native graph parity and health integration', () => {
         ...buildPlanetNativePrecompileCommands(),
         ...buildSmoke3DNativePrecompileCommands(),
         ...buildParticleFieldNativePrecompileCommands(),
+        ...buildVolumetricSpheresNativePrecompileCommands(),
         ...buildInkCloudNativePrecompileCommands(),
         ...buildFlythroughNativePrecompileCommands(),
         ...buildPixelParticlesNativePrecompileCommands(),
@@ -414,6 +442,129 @@ describe('Native graph parity and health integration', () => {
     await rpc.send('submit_commands', {
       commands: [
         { type: 'remove_layer', layer_id: 'native-particle-field' },
+      ],
+    });
+
+    const volumetricSourceId = 'gpu:integration-spheres:volumetric-spheres';
+    await rpc.send('submit_commands', {
+      commands: [
+        { type: 'upsert_layer', layer_id: 'native-volumetric-spheres', z_index: 0, blend_mode: 'normal', opacity: 1, corners: FULLSCREEN_CORNERS },
+        { type: 'set_layer_visibility', layer_id: 'native-volumetric-spheres', visible: true },
+        { type: 'bind_media_source', layer_id: 'native-volumetric-spheres', source_id: volumetricSourceId, uri: 'native-graph://volumetric-spheres/integration', source_type: 'image' },
+      ],
+    });
+
+    let volumetricState: VolumetricSpheresNativeGraphState | null = null;
+    const volumetricChecksums = new Set<string>();
+    for (let frame = 0; frame < 2; frame++) {
+      const graph = buildVolumetricSpheresNativeComputeGraph({
+        sourceId: volumetricSourceId,
+        params: {
+          layout: 'orbital',
+          sphereCount: 96,
+          autoRotateY: 5,
+          audioReactive: true,
+          bass: frame === 0 ? 0.25 : 0.65,
+          backgroundOpacity: 1,
+          colorA: [70, 170, 255],
+          colorB: [255, 78, 166],
+        },
+        width: 320,
+        height: 180,
+        time: frame / 30,
+        frameDelta: 1 / 30,
+        frameIndex: frame + 1,
+        audioBass: frame === 0 ? 0.25 : 0.65,
+        audioTreble: 0.35,
+        state: volumetricState,
+        reset: frame === 0,
+      });
+      volumetricState = graph.state;
+      const volumetricResult: any = await rpc.send('compute_graph', graph.config as unknown as Record<string, unknown>, 20000);
+      expect(volumetricResult.pass_count).toBe(1);
+      expect(volumetricResult.renders).toHaveLength(1);
+      expect(volumetricResult.renders[0]).toMatchObject({
+        target: 'source_frame',
+        source_id: volumetricSourceId,
+        depth: true,
+        blend: 'alpha',
+      });
+      const snapshot = await rpc.send('frame_snapshot', {
+        include_pixels: false,
+        time: 0.42 + frame / 30,
+        frame_index: frame + 10,
+      }, 10000);
+      assertVisibleFrame(`native Volumetric Spheres source-frame layer ${frame}`, snapshot, 0.006);
+      volumetricChecksums.add(String(snapshot.checksum));
+    }
+    expect(volumetricChecksums.size).toBeGreaterThan(1);
+
+    await rpc.send('submit_commands', {
+      commands: [
+        { type: 'remove_layer', layer_id: 'native-volumetric-spheres' },
+      ],
+    });
+
+    const ridersSourceId = 'gpu:integration-riders:smoke-riders';
+    await rpc.send('submit_commands', {
+      commands: [
+        { type: 'upsert_layer', layer_id: 'native-smoke-riders', z_index: 0, blend_mode: 'normal', opacity: 1, corners: FULLSCREEN_CORNERS },
+        { type: 'set_layer_visibility', layer_id: 'native-smoke-riders', visible: true },
+        { type: 'bind_media_source', layer_id: 'native-smoke-riders', source_id: ridersSourceId, uri: 'native-graph://smoke-riders/integration', source_type: 'image' },
+      ],
+    });
+
+    let ridersState: SmokeRidersNativeGraphState | null = null;
+    const ridersChecksums = new Set<string>();
+    for (let frame = 0; frame < 2; frame++) {
+      const graph = buildSmokeRidersNativeComputeGraph({
+        sourceId: ridersSourceId,
+        params: {
+          quality: 'performance',
+          style: 'orbital',
+          sphereCount: 96,
+          smokeDensity: 2.4,
+          bassDrive: 1.5,
+          audioReactive: true,
+        },
+        width: 320,
+        height: 180,
+        time: frame / 30,
+        frameDelta: 1 / 30,
+        frameIndex: frame + 1,
+        audioBass: frame === 0 ? 0.35 : 0.7,
+        audioTreble: 0.25,
+        state: ridersState,
+        reset: frame === 0,
+      });
+      ridersState = graph.state;
+      const ridersResult: any = await rpc.send('compute_graph', graph.config as unknown as Record<string, unknown>, 30000);
+      expect(ridersResult.pass_count).toBeGreaterThanOrEqual(26);
+      expect(ridersResult.renders).toHaveLength(2);
+      expect(ridersResult.renders[0]).toMatchObject({
+        target: 'source_frame',
+        source_id: ridersSourceId,
+        blend: 'replace',
+      });
+      expect(ridersResult.renders[1]).toMatchObject({
+        target: 'source_frame',
+        source_id: ridersSourceId,
+        depth: true,
+        blend: 'alpha',
+      });
+      const snapshot = await rpc.send('frame_snapshot', {
+        include_pixels: false,
+        time: 0.46 + frame / 30,
+        frame_index: frame + 12,
+      }, 10000);
+      assertVisibleFrame(`native Smoke Riders source-frame layer ${frame}`, snapshot, 0.006);
+      ridersChecksums.add(String(snapshot.checksum));
+    }
+    expect(ridersChecksums.size).toBeGreaterThan(1);
+
+    await rpc.send('submit_commands', {
+      commands: [
+        { type: 'remove_layer', layer_id: 'native-smoke-riders' },
       ],
     });
 
@@ -727,7 +878,7 @@ describe('Native graph parity and health integration', () => {
       planetChecksums.add(String(snapshot.checksum));
     }
     expect(planetChecksums.size).toBeGreaterThan(1);
-  }, 60000);
+  }, 90000);
 
   maybeIt('replays native graph frames deterministically under the manual render clock', async () => {
     if (typeof (globalThis as any).btoa !== 'function') {
