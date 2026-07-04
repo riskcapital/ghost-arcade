@@ -2068,8 +2068,8 @@ impl App {
                     {
                         "id": "compute-instrument-host",
                         "label": "Native compute/multi-pass instrument host",
-                        "ok": false,
-                        "detail": "partial: 3D Smoke and Particle Field source-frame compute graphs are supported; broad native catalog parity is still pending"
+                        "ok": self.renderer.is_some(),
+                        "detail": if self.renderer.is_some() { "compute_graph can run real WGSL graph instruments with persistent buffers and source-frame render targets" } else { "native renderer has not created a wgpu device" }
                     },
                     {
                         "id": "native-planet-graph",
@@ -2090,10 +2090,40 @@ impl App {
                         "detail": if self.renderer.is_some() { "compute_graph can render Particle Field behavior/render passes into native source frames" } else { "native renderer has not created a wgpu device" }
                     },
                     {
+                        "id": "native-volumetric-spheres-graph",
+                        "label": "Native Volumetric Spheres graph",
+                        "ok": self.renderer.is_some(),
+                        "detail": if self.renderer.is_some() { "compute_graph can render Volumetric Spheres sim/render passes into native source frames" } else { "native renderer has not created a wgpu device" }
+                    },
+                    {
+                        "id": "native-smoke-riders-graph",
+                        "label": "Native Smoke Riders graph",
+                        "ok": self.renderer.is_some(),
+                        "detail": if self.renderer.is_some() { "compute_graph can compose 3D Smoke and Volumetric Spheres into native source frames" } else { "native renderer has not created a wgpu device" }
+                    },
+                    {
                         "id": "native-ink-cloud-graph",
                         "label": "Native Ink Cloud graph",
                         "ok": self.renderer.is_some(),
                         "detail": if self.renderer.is_some() { "compute_graph can render Ink Cloud sim/background/render passes into native source frames" } else { "native renderer has not created a wgpu device" }
+                    },
+                    {
+                        "id": "native-flythrough-graph",
+                        "label": "Native Flythrough graph",
+                        "ok": self.renderer.is_some(),
+                        "detail": if self.renderer.is_some() { "compute_graph can render Flythrough source-sampled particles into native source frames" } else { "native renderer has not created a wgpu device" }
+                    },
+                    {
+                        "id": "native-pixel-particles-graph",
+                        "label": "Native Pixel Particles graph",
+                        "ok": self.renderer.is_some(),
+                        "detail": if self.renderer.is_some() { "compute_graph can render source-driven Pixel Particles into native source frames" } else { "native renderer has not created a wgpu device" }
+                    },
+                    {
+                        "id": "native-point-cloud-fx-graph",
+                        "label": "Native Point Cloud FX graph",
+                        "ok": self.renderer.is_some(),
+                        "detail": if self.renderer.is_some() { "compute_graph can render PLY/splat point-buffer effects into native source frames" } else { "native renderer has not created a wgpu device" }
                     },
                     {
                         "id": "managed-output",
