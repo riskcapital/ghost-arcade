@@ -199,7 +199,7 @@ class NativeRendererBroker {
       case 'native_renderer_submit_commands':
         return this.sendNativeCommandPayloadIfRunning('submit_commands', args, { fallback: null, timeoutMs: 2500 });
       case 'native_renderer_run_compute_graph':
-        return this.sendIfRunning('compute_graph', args, { fallback: null, timeoutMs: 10000 });
+        return this.sendNativeComputeGraphPayloadIfRunning('compute_graph', args, { fallback: null, timeoutMs: 10000 });
       case 'native_renderer_upload_source_gpu_shared_texture':
         return this.uploadSourceGpuSharedTexture(args);
       case 'native_renderer_set_target_fps':
@@ -532,7 +532,25 @@ class NativeRendererBroker {
     try {
       prepared = this.prepareNativeCommandPayload(params);
     } catch (err) {
-      console.warn('[NativeRenderer] source-frame file handoff failed; falling back to JSON payload', err);
+      console.warn('[NativeRenderer] native command file handoff failed; falling back to JSON payload', err);
+    }
+    return this.send(method, prepared, { timeoutMs }).catch((err) => {
+      this.lastStatus = {
+        ...this.lastStatus,
+        backend_ready: false,
+        last_frame_error: err?.message || String(err),
+      };
+      return fallback;
+    });
+  }
+
+  async sendNativeComputeGraphPayloadIfRunning(method, params, { fallback = null, timeoutMs = 10000 } = {}) {
+    if (!this.child || this.child.killed) return fallback;
+    let prepared = params;
+    try {
+      prepared = this.prepareNativeComputeGraphPayload(params);
+    } catch (err) {
+      console.warn('[NativeRenderer] native compute graph file handoff failed; falling back to JSON payload', err);
     }
     return this.send(method, prepared, { timeoutMs }).catch((err) => {
       this.lastStatus = {
@@ -586,6 +604,39 @@ class NativeRendererBroker {
     return params;
   }
 
+  prepareNativeComputeGraphPayload(params) {
+    if (!params || typeof params !== 'object' || !Array.isArray(params.buffers)) return params;
+    return {
+      ...params,
+      buffers: params.buffers.map((buffer) => this.prepareNativeComputeGraphBuffer(buffer)),
+    };
+  }
+
+  prepareNativeComputeGraphBuffer(buffer) {
+    if (!buffer || typeof buffer !== 'object') return buffer;
+    const rawBuffer = normalizeSourceFrameBuffer(
+      buffer.initial_buffer ?? buffer.initial_bytes ?? buffer.initial_data,
+    );
+    if (!rawBuffer) return buffer;
+    const {
+      initial_buffer: _discardedBuffer,
+      initial_bytes: _discardedBytes,
+      initial_data: _discardedData,
+      initial_b64: _discardedInitialB64,
+      data_b64: _discardedDataB64,
+      bytes_b64: _discardedBytesB64,
+      ...rest
+    } = buffer;
+    if (rawBuffer.length <= 0) return rest;
+    const initialFile = this.writeNativePayloadTempFile(rawBuffer, 'graph-buffer');
+    return {
+      ...rest,
+      initial_file: initialFile,
+      initial_byte_length: rawBuffer.length,
+      initial_file_delete: true,
+    };
+  }
+
   prepareNativeCommand(command) {
     if (!command || command.type !== 'upload_source_frame') return command;
     const rawBuffer = normalizeSourceFrameBuffer(command.rgba_buffer ?? command.rgba_bytes);
@@ -623,10 +674,15 @@ class NativeRendererBroker {
   }
 
   writeSourceFrameTempFile(bytes) {
+    return this.writeNativePayloadTempFile(bytes, 'frame');
+  }
+
+  writeNativePayloadTempFile(bytes, prefix) {
     if (!this.tempFrameDir) {
       this.tempFrameDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ghost-render-core-frames-'));
     }
-    const name = `frame-${process.pid}-${Date.now()}-${this.tempFrameSerial++}.rgba`;
+    const safePrefix = String(prefix || 'payload').replace(/[^a-z0-9_-]/gi, '-').slice(0, 32) || 'payload';
+    const name = `${safePrefix}-${process.pid}-${Date.now()}-${this.tempFrameSerial++}.rgba`;
     const filePath = path.join(this.tempFrameDir, name);
     fs.writeFileSync(filePath, bytes);
     return filePath;

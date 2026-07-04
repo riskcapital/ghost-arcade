@@ -790,6 +790,7 @@ type PixelParticlesNativeGraphBuffer = {
   persistent?: boolean;
   clear?: boolean;
   initial_b64?: string;
+  initial_buffer?: ArrayBuffer | Uint8Array;
 };
 
 type PixelParticlesNativeGraphPass = {
@@ -1194,7 +1195,7 @@ export function buildPixelParticlesNativeComputeGraph(options: PixelParticlesNat
       byte_length: params.particleCount * PARTICLE_BYTES,
       persistent: true,
       clear: mustReset,
-      initial_b64: mustReset ? bufferToBase64(pixelParticlesInitialBuffer(params.particleCount)) : undefined,
+      initial_buffer: mustReset ? pixelParticlesInitialBuffer(params.particleCount) : undefined,
     },
   ];
   const passes: PixelParticlesNativeGraphPass[] = [

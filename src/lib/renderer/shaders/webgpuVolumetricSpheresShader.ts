@@ -213,6 +213,7 @@ type VolumetricSpheresNativeGraphBuffer = {
   persistent?: boolean;
   clear?: boolean;
   initial_b64?: string;
+  initial_buffer?: ArrayBuffer | Uint8Array;
 };
 
 type VolumetricSpheresNativeGraphPass = {
@@ -780,7 +781,7 @@ function volumetricSpheresSeedKey(params: VolumetricSpheresParams, count: number
   ].join('|');
 }
 
-function buildVolumetricSpheresInitialBuffer(params: VolumetricSpheresParams, count: number): string {
+function buildVolumetricSpheresInitialBuffer(params: VolumetricSpheresParams, count: number): ArrayBuffer {
   const sphereCount = Math.max(MIN_SPHERES, Math.min(MAX_SPHERES, Math.round(count)));
   const floats = new Float32Array(sphereCount * SPHERE_STRIDE_FLOATS);
   const layout = params.layout ?? 'cluster';
@@ -840,7 +841,7 @@ function buildVolumetricSpheresInitialBuffer(params: VolumetricSpheresParams, co
     floats[off + 10] = c[2];
     floats[off + 11] = i % 16;
   }
-  return bufferToBase64(floats.buffer);
+  return floats.buffer;
 }
 
 function buildVolumetricSpheresSimUniform(params: VolumetricSpheresParams, count: number, dt: number, time: number, bass: number, treble: number): string {
@@ -1019,7 +1020,7 @@ export function buildVolumetricSpheresNativeComputeGraph(options: VolumetricSphe
       byte_length: sphereCount * SPHERE_STRIDE_FLOATS * 4,
       persistent: true,
       clear: mustReset,
-      initial_b64: mustReset ? buildVolumetricSpheresInitialBuffer(params, sphereCount) : undefined,
+      initial_buffer: mustReset ? buildVolumetricSpheresInitialBuffer(params, sphereCount) : undefined,
     },
   ];
   const passes: VolumetricSpheresNativeGraphPass[] = [{

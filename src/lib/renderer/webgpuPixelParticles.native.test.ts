@@ -86,7 +86,7 @@ describe('Pixel Particles native shader bundle', () => {
       persistent: true,
       clear: true,
     });
-    expect(first.config.buffers.find((buffer) => buffer.id.endsWith(':particles'))?.initial_b64).toBeTruthy();
+    expect(first.config.buffers.find((buffer) => buffer.id.endsWith(':particles'))?.initial_buffer).toBeInstanceOf(ArrayBuffer);
     expect(first.config.render_passes).toHaveLength(1);
     expect(first.config.render_passes[0]).toMatchObject({
       target: 'source_frame',
@@ -121,6 +121,7 @@ describe('Pixel Particles native shader bundle', () => {
     const particleBuffer = second.config.buffers.find((buffer) => buffer.id.endsWith(':particles'));
     expect(particleBuffer?.clear).toBe(false);
     expect(particleBuffer?.initial_b64).toBeUndefined();
+    expect(particleBuffer?.initial_buffer).toBeUndefined();
     expect(second.config.render_passes[0].source_id).toBe(first.config.render_passes[0].source_id);
   });
 
