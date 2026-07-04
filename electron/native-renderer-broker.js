@@ -615,6 +615,16 @@ class NativeRendererBroker {
             : textureShare.nativeOutputCapable
               ? 'native output IOSurface can publish through Syphon when the sender is started'
               : `${textureShareName} addon does not expose native output IOSurface publish`;
+    const nativeFrameExportOk = hasNativeFrameExport(this.capabilities);
+    const nativeMp4FrameEncoderOk = !!features.native_mp4_frame_encoder && !!nativeFrameEncoder.available;
+    const nativeRecordingOk = !!features.native_recording && nativeFrameExportOk && nativeMp4FrameEncoderOk;
+    const nativeRecordingDetail = nativeRecordingOk
+      ? 'native frame snapshots can stream into the desktop MP4/JPEG encoders'
+      : !nativeFrameExportOk
+        ? 'native frame snapshot export is unavailable'
+        : !nativeMp4FrameEncoderOk
+          ? (nativeFrameEncoder.reason || 'desktop FFmpeg raw-frame pipe is unavailable')
+          : 'native recording paths are unavailable';
     const unsupported = [
       [
         'shared-texture-source-frame-upload',
@@ -681,10 +691,8 @@ class NativeRendererBroker {
       [
         'native-recording',
         'Native recording',
-        !!features.native_recording,
-        features.native_recording
-          ? 'recording paths can stream raw frames into native MP4/JPEG encoders'
-          : 'native recording paths are unavailable',
+        nativeRecordingOk,
+        nativeRecordingDetail,
       ],
     ];
     return {
@@ -1181,6 +1189,7 @@ function applyBrokerCapabilityOverlay(capabilities, textureShare, nativeFrameEnc
   const features = capabilities?.features && typeof capabilities.features === 'object'
     ? { ...capabilities.features }
     : {};
+  const nativeFrameExportReady = hasNativeFrameExport(capabilities);
   const nativeTextureShareSenderReady = !!(
     features.shared_texture_output_export &&
     textureShare?.available &&
@@ -1195,8 +1204,8 @@ function applyBrokerCapabilityOverlay(capabilities, textureShare, nativeFrameEnc
     nativeFrameEncoder?.available
   );
   features.native_recording = !!(
-    features.native_recording ||
-    features.native_mp4_frame_encoder
+    nativeFrameExportReady &&
+    (features.native_recording || features.native_mp4_frame_encoder)
   );
 
   const notes = Array.isArray(capabilities?.notes) ? [...capabilities.notes] : [];
@@ -1218,6 +1227,20 @@ function applyBrokerCapabilityOverlay(capabilities, textureShare, nativeFrameEnc
     features,
     notes,
   };
+}
+
+function hasNativeFrameExport(capabilities) {
+  const features = capabilities?.features && typeof capabilities.features === 'object'
+    ? capabilities.features
+    : {};
+  const methods = Array.isArray(capabilities?.implemented_methods)
+    ? capabilities.implemented_methods
+    : [];
+  return !!(
+    features.frame_snapshot_export &&
+    features.native_frame_sequence_export &&
+    methods.includes('export_frame_snapshot')
+  );
 }
 
 function normalizeStatus(status, previous = makeDefaultStatus()) {

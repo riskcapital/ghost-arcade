@@ -284,6 +284,15 @@ try {
       capabilities?.implemented_methods?.includes('export_frame_snapshot'),
     `broker capabilities missing native frame export RPC: ${JSON.stringify(capabilities?.implemented_methods)}`,
   );
+  assert(
+    !capabilities?.features?.native_recording ||
+      (
+        capabilities?.features?.frame_snapshot_export &&
+        capabilities?.features?.native_frame_sequence_export &&
+        capabilities?.implemented_methods?.includes('export_frame_snapshot')
+      ),
+    `broker must not advertise native recording without native frame export: ${JSON.stringify(capabilities?.features)}`,
+  );
   const graphInstruments = new Set(capabilities?.native_graph_instruments ?? []);
   const graphManifest = new Map(
     (capabilities?.native_graph_instrument_manifest ?? []).map((entry) => [entry.id, entry]),
