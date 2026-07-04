@@ -205,6 +205,19 @@ struct CoreStatus {
     shader_precompile_dropped: u64,
     source_frame_uploads: u64,
     source_frame_bytes_uploaded: u64,
+    source_frame_cpu_fallback_uploads: u64,
+    source_frame_file_uploads: u64,
+    source_frame_base64_uploads: u64,
+    source_frame_json_uploads: u64,
+    source_frame_shared_texture_uploads: u64,
+    source_frame_rejected_uploads: u64,
+    source_frame_input_bytes_uploaded: u64,
+    source_frame_resampled_bytes_uploaded: u64,
+    source_frame_last_input_bytes: u64,
+    source_frame_last_upload_bytes: u64,
+    source_frame_last_upload_width: u32,
+    source_frame_last_upload_height: u32,
+    source_frame_last_upload_transport: String,
     native_instrument_frame_renders: u64,
     compute_graph_runs: u64,
     compute_graph_passes: u64,
@@ -463,6 +476,19 @@ struct CoreStats {
     shader_precompile_dropped: u64,
     source_frame_uploads: u64,
     source_frame_bytes_uploaded: u64,
+    source_frame_cpu_fallback_uploads: u64,
+    source_frame_file_uploads: u64,
+    source_frame_base64_uploads: u64,
+    source_frame_json_uploads: u64,
+    source_frame_shared_texture_uploads: u64,
+    source_frame_rejected_uploads: u64,
+    source_frame_input_bytes_uploaded: u64,
+    source_frame_resampled_bytes_uploaded: u64,
+    source_frame_last_input_bytes: u64,
+    source_frame_last_upload_bytes: u64,
+    source_frame_last_upload_width: u32,
+    source_frame_last_upload_height: u32,
+    source_frame_last_upload_transport: String,
     native_shader_renders: u64,
     native_instrument_frame_renders: u64,
     compute_graph_runs: u64,
@@ -1847,7 +1873,8 @@ impl App {
         let last_frame_ok = last_frame_error.is_none();
         let output_window_attached = self.output_window_attached && renderer_ready;
         let output_has_presented = self.stats.swapchain_presented > 0;
-        let output_swapchain_ready = output_window_attached && last_frame_ok && output_has_presented;
+        let output_swapchain_ready =
+            output_window_attached && last_frame_ok && output_has_presented;
         let output_present_healthy =
             output_swapchain_ready && self.stats.swapchain_present_consecutive_failures == 0;
         CoreStatus {
@@ -1944,6 +1971,27 @@ impl App {
             shader_precompile_dropped: self.stats.shader_precompile_dropped,
             source_frame_uploads: self.stats.source_frame_uploads,
             source_frame_bytes_uploaded: self.stats.source_frame_bytes_uploaded,
+            source_frame_cpu_fallback_uploads: self.stats.source_frame_cpu_fallback_uploads,
+            source_frame_file_uploads: self.stats.source_frame_file_uploads,
+            source_frame_base64_uploads: self.stats.source_frame_base64_uploads,
+            source_frame_json_uploads: self.stats.source_frame_json_uploads,
+            source_frame_shared_texture_uploads: self.stats.source_frame_shared_texture_uploads,
+            source_frame_rejected_uploads: self.stats.source_frame_rejected_uploads,
+            source_frame_input_bytes_uploaded: self.stats.source_frame_input_bytes_uploaded,
+            source_frame_resampled_bytes_uploaded: self.stats.source_frame_resampled_bytes_uploaded,
+            source_frame_last_input_bytes: self.stats.source_frame_last_input_bytes,
+            source_frame_last_upload_bytes: self.stats.source_frame_last_upload_bytes,
+            source_frame_last_upload_width: self.stats.source_frame_last_upload_width,
+            source_frame_last_upload_height: self.stats.source_frame_last_upload_height,
+            source_frame_last_upload_transport: if self
+                .stats
+                .source_frame_last_upload_transport
+                .is_empty()
+            {
+                "none".to_string()
+            } else {
+                self.stats.source_frame_last_upload_transport.clone()
+            },
             native_instrument_frame_renders: self.stats.native_instrument_frame_renders,
             compute_graph_runs: self.stats.compute_graph_runs,
             compute_graph_passes: self.stats.compute_graph_passes,
@@ -2725,8 +2773,10 @@ impl App {
                     .stats
                     .swapchain_present_max_consecutive_failures
                     .max(self.stats.swapchain_present_consecutive_failures);
-                self.stats.frames_without_swapchain_present =
-                    self.stats.frames_without_swapchain_present.saturating_add(1);
+                self.stats.frames_without_swapchain_present = self
+                    .stats
+                    .frames_without_swapchain_present
+                    .saturating_add(1);
             }
             Err(err) => {
                 self.stats.swapchain_present_failures =
@@ -2739,8 +2789,10 @@ impl App {
                     .stats
                     .swapchain_present_max_consecutive_failures
                     .max(self.stats.swapchain_present_consecutive_failures);
-                self.stats.frames_without_swapchain_present =
-                    self.stats.frames_without_swapchain_present.saturating_add(1);
+                self.stats.frames_without_swapchain_present = self
+                    .stats
+                    .frames_without_swapchain_present
+                    .saturating_add(1);
                 renderer.last_frame_error = Some(err);
             }
         }
@@ -3923,9 +3975,13 @@ impl App {
             .unwrap_or(SOURCE_FRAME_SIZE_DEFAULT as f64)
             .round()
             .clamp(1.0, SOURCE_FRAME_SIZE_INSANE as f64) as usize;
+        let transport = source_frame_transport_from_command(command);
         let Some(rgba) = rgba_bytes_from_command(command, width, height) else {
+            self.stats.source_frame_rejected_uploads =
+                self.stats.source_frame_rejected_uploads.saturating_add(1);
             return;
         };
+        let input_byte_len = rgba.len() as u64;
 
         let slot = self.assign_source_frame_slot(&source_id);
         let dst_size = self
@@ -3942,6 +3998,46 @@ impl App {
             .stats
             .source_frame_bytes_uploaded
             .saturating_add(pixels.len() as u64);
+        self.stats.source_frame_input_bytes_uploaded = self
+            .stats
+            .source_frame_input_bytes_uploaded
+            .saturating_add(input_byte_len);
+        self.stats.source_frame_resampled_bytes_uploaded = self
+            .stats
+            .source_frame_resampled_bytes_uploaded
+            .saturating_add(pixels.len() as u64);
+        if transport.is_cpu_fallback() {
+            self.stats.source_frame_cpu_fallback_uploads = self
+                .stats
+                .source_frame_cpu_fallback_uploads
+                .saturating_add(1);
+        }
+        match transport {
+            SourceFrameTransport::File => {
+                self.stats.source_frame_file_uploads =
+                    self.stats.source_frame_file_uploads.saturating_add(1);
+            }
+            SourceFrameTransport::Base64 => {
+                self.stats.source_frame_base64_uploads =
+                    self.stats.source_frame_base64_uploads.saturating_add(1);
+            }
+            SourceFrameTransport::Json => {
+                self.stats.source_frame_json_uploads =
+                    self.stats.source_frame_json_uploads.saturating_add(1);
+            }
+            SourceFrameTransport::SharedTexture => {
+                self.stats.source_frame_shared_texture_uploads = self
+                    .stats
+                    .source_frame_shared_texture_uploads
+                    .saturating_add(1);
+            }
+            SourceFrameTransport::Unknown => {}
+        }
+        self.stats.source_frame_last_input_bytes = input_byte_len;
+        self.stats.source_frame_last_upload_bytes = pixels.len() as u64;
+        self.stats.source_frame_last_upload_width = width.min(u32::MAX as usize) as u32;
+        self.stats.source_frame_last_upload_height = height.min(u32::MAX as usize) as u32;
+        self.stats.source_frame_last_upload_transport = transport.as_str().to_string();
         self.source_frames
             .insert(source_id.clone(), SourceFrame { seq });
         for layer in self.scene_layers.values_mut() {
@@ -5017,7 +5113,9 @@ impl RenderState {
             return Err("native compute graph requires at least one buffer".to_string());
         }
         if passes.is_empty() && render_plans.is_empty() {
-            return Err("native compute graph requires at least one pass or render pass".to_string());
+            return Err(
+                "native compute graph requires at least one pass or render pass".to_string(),
+            );
         }
         let mut transient_buffers = HashMap::<String, NativeComputeGraphGpuBuffer>::new();
         let mut persistent_buffer_count = 0usize;
@@ -7110,6 +7208,47 @@ fn preview_rgba_at(rgba: &[Value], width: usize, height: usize, x: usize, y: usi
         json_channel_to_unit(&rgba[index + 2]),
         json_channel_to_unit(&rgba[index + 3]),
     ]
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SourceFrameTransport {
+    File,
+    Base64,
+    Json,
+    SharedTexture,
+    Unknown,
+}
+
+impl SourceFrameTransport {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::File => "file",
+            Self::Base64 => "base64",
+            Self::Json => "json",
+            Self::SharedTexture => "shared-texture",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    fn is_cpu_fallback(self) -> bool {
+        matches!(self, Self::File | Self::Base64 | Self::Json)
+    }
+}
+
+fn source_frame_transport_from_command(command: &Value) -> SourceFrameTransport {
+    if command.get("shared_handle").is_some() || command.get("shared_texture").is_some() {
+        return SourceFrameTransport::SharedTexture;
+    }
+    if command.get("rgba_file").is_some() {
+        return SourceFrameTransport::File;
+    }
+    if command.get("rgba_b64").is_some() {
+        return SourceFrameTransport::Base64;
+    }
+    if command.get("rgba").is_some() {
+        return SourceFrameTransport::Json;
+    }
+    SourceFrameTransport::Unknown
 }
 
 fn rgba_bytes_from_command(command: &Value, width: usize, height: usize) -> Option<Vec<u8>> {
