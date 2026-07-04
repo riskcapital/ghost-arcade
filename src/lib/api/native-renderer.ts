@@ -216,9 +216,28 @@ export type RendererCommand =
       rgba_file?: string;
       rgba_byte_length?: number;
       rgba_file_delete?: boolean;
+      shared_handle?: string;
+      shared_texture?: string | Record<string, unknown>;
+      shared_texture_platform?: 'spout' | 'syphon' | 'dxgi' | 'iosurface' | string;
+      shared_texture_format?: number | string;
+      shared_texture_handle_encoding?: string;
+      shared_texture_handle_byte_length?: number;
       seq: number;
     }
-  | { type: 'upload_source_gpu_shared_texture'; source_id: string; width: number; height: number; shared_handle: string; seq: number }
+  | {
+      type: 'upload_source_gpu_shared_texture';
+      source_id: string;
+      width: number;
+      height: number;
+      shared_handle: string;
+      seq: number;
+      platform?: 'spout' | 'syphon' | 'dxgi' | 'iosurface' | string;
+      format?: number | string;
+      handle_encoding?: string;
+      handle_byte_length?: number;
+      frame?: number;
+      sender_name?: string;
+    }
   | { type: 'remove_layer'; layer_id: string }
   | { type: 'bind_media_source'; layer_id: string; source_id: string; uri: string; source_type: string }
   | { type: 'set_native_quality_policy'; native_quality_policy: NativeQualityPolicy }
@@ -342,6 +361,7 @@ export interface RendererStatus {
   source_frame_base64_uploads: number;
   source_frame_json_uploads: number;
   source_frame_shared_texture_uploads: number;
+  source_frame_shared_texture_rejected_uploads: number;
   source_frame_rejected_uploads: number;
   source_frame_input_bytes_uploaded: number;
   source_frame_resampled_bytes_uploaded: number;
@@ -350,6 +370,7 @@ export interface RendererStatus {
   source_frame_last_upload_width: number;
   source_frame_last_upload_height: number;
   source_frame_last_upload_transport: string;
+  source_frame_last_reject_reason: string;
   native_instrument_frame_renders: number;
   compute_graph_runs: number;
   compute_graph_passes: number;
@@ -552,6 +573,7 @@ export interface RendererStats {
   source_frame_base64_uploads: number;
   source_frame_json_uploads: number;
   source_frame_shared_texture_uploads: number;
+  source_frame_shared_texture_rejected_uploads: number;
   source_frame_rejected_uploads: number;
   source_frame_input_bytes_uploaded: number;
   source_frame_resampled_bytes_uploaded: number;
@@ -560,6 +582,7 @@ export interface RendererStats {
   source_frame_last_upload_width: number;
   source_frame_last_upload_height: number;
   source_frame_last_upload_transport: string;
+  source_frame_last_reject_reason: string;
   native_shader_renders: number;
   native_instrument_frame_renders: number;
   render_clock_updates: number;
@@ -851,6 +874,14 @@ export async function uploadNativeRendererSourceGpuSharedTexture(
   height: number,
   sharedHandle: string,
   seq: number,
+  metadata: {
+    platform?: string;
+    format?: number | string;
+    handleEncoding?: string;
+    handleByteLength?: number;
+    frame?: number;
+    senderName?: string;
+  } = {},
 ) {
   return invoke<void>('native_renderer_upload_source_gpu_shared_texture', {
     source_id: sourceId,
@@ -858,6 +889,12 @@ export async function uploadNativeRendererSourceGpuSharedTexture(
     height,
     shared_handle: sharedHandle,
     seq,
+    platform: metadata.platform,
+    format: metadata.format,
+    handle_encoding: metadata.handleEncoding,
+    handle_byte_length: metadata.handleByteLength,
+    frame: metadata.frame,
+    sender_name: metadata.senderName,
   });
 }
 

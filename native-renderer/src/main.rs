@@ -210,6 +210,7 @@ struct CoreStatus {
     source_frame_base64_uploads: u64,
     source_frame_json_uploads: u64,
     source_frame_shared_texture_uploads: u64,
+    source_frame_shared_texture_rejected_uploads: u64,
     source_frame_rejected_uploads: u64,
     source_frame_input_bytes_uploaded: u64,
     source_frame_resampled_bytes_uploaded: u64,
@@ -218,6 +219,7 @@ struct CoreStatus {
     source_frame_last_upload_width: u32,
     source_frame_last_upload_height: u32,
     source_frame_last_upload_transport: String,
+    source_frame_last_reject_reason: String,
     native_instrument_frame_renders: u64,
     compute_graph_runs: u64,
     compute_graph_passes: u64,
@@ -481,6 +483,7 @@ struct CoreStats {
     source_frame_base64_uploads: u64,
     source_frame_json_uploads: u64,
     source_frame_shared_texture_uploads: u64,
+    source_frame_shared_texture_rejected_uploads: u64,
     source_frame_rejected_uploads: u64,
     source_frame_input_bytes_uploaded: u64,
     source_frame_resampled_bytes_uploaded: u64,
@@ -489,6 +492,7 @@ struct CoreStats {
     source_frame_last_upload_width: u32,
     source_frame_last_upload_height: u32,
     source_frame_last_upload_transport: String,
+    source_frame_last_reject_reason: String,
     native_shader_renders: u64,
     native_instrument_frame_renders: u64,
     compute_graph_runs: u64,
@@ -1976,6 +1980,9 @@ impl App {
             source_frame_base64_uploads: self.stats.source_frame_base64_uploads,
             source_frame_json_uploads: self.stats.source_frame_json_uploads,
             source_frame_shared_texture_uploads: self.stats.source_frame_shared_texture_uploads,
+            source_frame_shared_texture_rejected_uploads: self
+                .stats
+                .source_frame_shared_texture_rejected_uploads,
             source_frame_rejected_uploads: self.stats.source_frame_rejected_uploads,
             source_frame_input_bytes_uploaded: self.stats.source_frame_input_bytes_uploaded,
             source_frame_resampled_bytes_uploaded: self.stats.source_frame_resampled_bytes_uploaded,
@@ -1991,6 +1998,15 @@ impl App {
                 "none".to_string()
             } else {
                 self.stats.source_frame_last_upload_transport.clone()
+            },
+            source_frame_last_reject_reason: if self
+                .stats
+                .source_frame_last_reject_reason
+                .is_empty()
+            {
+                "none".to_string()
+            } else {
+                self.stats.source_frame_last_reject_reason.clone()
             },
             native_instrument_frame_renders: self.stats.native_instrument_frame_renders,
             compute_graph_runs: self.stats.compute_graph_runs,
@@ -3976,9 +3992,26 @@ impl App {
             .round()
             .clamp(1.0, SOURCE_FRAME_SIZE_INSANE as f64) as usize;
         let transport = source_frame_transport_from_command(command);
+        if transport == SourceFrameTransport::SharedTexture {
+            self.stats.source_frame_shared_texture_rejected_uploads = self
+                .stats
+                .source_frame_shared_texture_rejected_uploads
+                .saturating_add(1);
+            self.reject_source_frame_upload(
+                width,
+                height,
+                "shared-texture-unsupported",
+                "shared texture source-frame upload is not implemented yet",
+            );
+            return;
+        }
         let Some(rgba) = rgba_bytes_from_command(command, width, height) else {
-            self.stats.source_frame_rejected_uploads =
-                self.stats.source_frame_rejected_uploads.saturating_add(1);
+            self.reject_source_frame_upload(
+                width,
+                height,
+                transport.as_str(),
+                "missing or invalid source-frame pixel payload",
+            );
             return;
         };
         let input_byte_len = rgba.len() as u64;
@@ -4038,6 +4071,7 @@ impl App {
         self.stats.source_frame_last_upload_width = width.min(u32::MAX as usize) as u32;
         self.stats.source_frame_last_upload_height = height.min(u32::MAX as usize) as u32;
         self.stats.source_frame_last_upload_transport = transport.as_str().to_string();
+        self.stats.source_frame_last_reject_reason.clear();
         self.source_frames
             .insert(source_id.clone(), SourceFrame { seq });
         for layer in self.scene_layers.values_mut() {
@@ -4045,6 +4079,23 @@ impl App {
                 layer.frame_slot = Some(slot);
             }
         }
+    }
+
+    fn reject_source_frame_upload(
+        &mut self,
+        width: usize,
+        height: usize,
+        transport: &str,
+        reason: &str,
+    ) {
+        self.stats.source_frame_rejected_uploads =
+            self.stats.source_frame_rejected_uploads.saturating_add(1);
+        self.stats.source_frame_last_input_bytes = 0;
+        self.stats.source_frame_last_upload_bytes = 0;
+        self.stats.source_frame_last_upload_width = width.min(u32::MAX as usize) as u32;
+        self.stats.source_frame_last_upload_height = height.min(u32::MAX as usize) as u32;
+        self.stats.source_frame_last_upload_transport = transport.to_string();
+        self.stats.source_frame_last_reject_reason = reason.to_string();
     }
 
     fn assign_source_preview_slot(&mut self, source_id: &str) -> usize {
