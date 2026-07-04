@@ -2385,6 +2385,9 @@ function receiveSpoutTextureInfo() {
 
   const handle = normalizeSharedTextureHandle(info.handle);
   if (!handle || handle.byteLength === 0) return null;
+  const format = typeof info.format === 'string'
+    ? info.format
+    : Number(info.format || 0);
 
   return {
     available: true,
@@ -2393,7 +2396,7 @@ function receiveSpoutTextureInfo() {
     senderName: String(info.senderName || spoutReceiverName || ''),
     width: Number(info.width || 0),
     height: Number(info.height || 0),
-    format: Number(info.format || 0),
+    format,
     updated: !!info.updated,
     isNewFrame: !!info.isNewFrame,
     frame: Number(info.frame || 0),
