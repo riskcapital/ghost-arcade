@@ -152,6 +152,15 @@ type SharedTextureUploadState = {
   submittedAt: number;
 };
 
+type NativeImageDecodeState = {
+  sourceId: string;
+  signature: string;
+  seq: number;
+  previousSignature: string | undefined;
+  previousSeq: number | undefined;
+  submittedAt: number;
+};
+
 type NativeLayerShapeState = {
   shape: NativeVec4;
   signature: string;
@@ -1522,6 +1531,11 @@ export class NativeRendererSync {
   private sharedTextureLastRejectedUploads = 0;
   private sharedTextureLastSuccessfulUploads = 0;
   private sharedTextureRejectWarnings = 0;
+  private nativeImageDecodePending = new Map<string, NativeImageDecodeState>();
+  private nativeImageDecodeBypass = new Set<string>();
+  private nativeImageLastDecodeFailures = 0;
+  private nativeImageLastDecodes = 0;
+  private nativeImageDecodeWarnings = 0;
   private previewImageElements = new Map<string, HTMLImageElement>();
   private previewImageLoads = new Set<string>();
   private previewCanvas: HTMLCanvasElement | null = null;
@@ -1611,6 +1625,14 @@ export class NativeRendererSync {
     this.sharedTextureRejectWarnings = 0;
   }
 
+  private resetNativeImageDecodeTracking() {
+    this.nativeImageDecodePending.clear();
+    this.nativeImageDecodeBypass.clear();
+    this.nativeImageLastDecodeFailures = 0;
+    this.nativeImageLastDecodes = 0;
+    this.nativeImageDecodeWarnings = 0;
+  }
+
   private reconcileSharedTextureUploads(status: RendererStatus) {
     const rejected = Number(status.source_frame_shared_texture_rejected_uploads ?? 0);
     const successful = Number(status.source_frame_shared_texture_uploads ?? 0);
@@ -1654,6 +1676,52 @@ export class NativeRendererSync {
 
     this.sharedTextureLastRejectedUploads = rejected;
     this.sharedTextureLastSuccessfulUploads = successful;
+  }
+
+  private reconcileNativeImageDecodes(status: RendererStatus) {
+    const failures = Number(status.native_image_decode_failures ?? 0);
+    const decodes = Number(status.native_image_decodes ?? 0);
+    if (!Number.isFinite(failures) || !Number.isFinite(decodes)) return;
+
+    if (
+      failures < this.nativeImageLastDecodeFailures ||
+      decodes < this.nativeImageLastDecodes
+    ) {
+      this.nativeImageLastDecodeFailures = Math.max(0, failures);
+      this.nativeImageLastDecodes = Math.max(0, decodes);
+      this.nativeImageDecodePending.clear();
+      return;
+    }
+
+    if (failures > this.nativeImageLastDecodeFailures) {
+      const pending = Array.from(this.nativeImageDecodePending.entries());
+      for (const [sourceKey, decode] of pending) {
+        if (this.sourcePreviewSig.get(sourceKey) === decode.signature) {
+          if (decode.previousSignature) this.sourcePreviewSig.set(sourceKey, decode.previousSignature);
+          else this.sourcePreviewSig.delete(sourceKey);
+        }
+        if (this.sourcePreviewSeq.get(sourceKey) === decode.seq) {
+          if (typeof decode.previousSeq === 'number') this.sourcePreviewSeq.set(sourceKey, decode.previousSeq);
+          else this.sourcePreviewSeq.delete(sourceKey);
+        }
+        this.sourcePreviewNextAt.delete(sourceKey);
+        this.nativeImageDecodeBypass.add(sourceKey);
+      }
+      if (pending.length && this.nativeImageDecodeWarnings < 5) {
+        console.warn('[NativeRendererSync] native image decode failed; source frame will use preview fallback', {
+          failureDelta: failures - this.nativeImageLastDecodeFailures,
+          pendingSources: pending.map(([, decode]) => decode.sourceId),
+          error: status.native_image_decode_last_error,
+        });
+        this.nativeImageDecodeWarnings += 1;
+      }
+      this.nativeImageDecodePending.clear();
+    } else if (decodes > this.nativeImageLastDecodes) {
+      this.nativeImageDecodePending.clear();
+    }
+
+    this.nativeImageLastDecodeFailures = failures;
+    this.nativeImageLastDecodes = decodes;
   }
 
   private syncNativeSourceFrameSize(status: RendererStatus | null) {
@@ -1953,7 +2021,8 @@ export class NativeRendererSync {
     return (
       sourceType === 'image' &&
       this.supportsNativeFeature('native_static_image_decode') &&
-      isNativeStaticImageDecodeUri(src.src)
+      isNativeStaticImageDecodeUri(src.src) &&
+      !this.nativeImageDecodeBypass.has(this.sourceCacheKey(src.id, src.src))
     );
   }
 
@@ -1963,10 +2032,20 @@ export class NativeRendererSync {
     if (this.sourcePreviewSeq.has(sourceKey) && this.sourcePreviewSig.get(sourceKey) === signature) {
       return false;
     }
+    const previousSignature = this.sourcePreviewSig.get(sourceKey);
+    const previousSeq = this.sourcePreviewSeq.get(sourceKey);
     const seq = (this.sourcePreviewSeq.get(sourceKey) ?? 0) + 1;
     this.sourcePreviewSeq.set(sourceKey, seq);
     this.sourcePreviewSig.set(sourceKey, signature);
     this.sourcePreviewNextAt.delete(sourceKey);
+    this.nativeImageDecodePending.set(sourceKey, {
+      sourceId: src.id,
+      signature,
+      seq,
+      previousSignature,
+      previousSeq,
+      submittedAt: Date.now(),
+    });
     return true;
   }
 
@@ -2370,6 +2449,7 @@ export class NativeRendererSync {
       console.warn('[NativeRendererSync] native startup policy task failed', err);
     });
     this.resetSharedTextureUploadTracking();
+    this.resetNativeImageDecodeTracking();
     this.startupReady = true;
     if (this.latestLayers.length) {
       this.scheduleSync(this.desiredWidth || width, this.desiredHeight || height, this.latestLayers);
@@ -2463,6 +2543,7 @@ export class NativeRendererSync {
     this.sourcePreviewSig.clear();
     this.sourcePreviewFailures.clear();
     this.resetSharedTextureUploadTracking();
+    this.resetNativeImageDecodeTracking();
     this.previewImageElements.clear();
     this.previewImageLoads.clear();
     this.nativeComputeGraphSourceFrames = false;
@@ -2569,6 +2650,7 @@ export class NativeRendererSync {
       if (status) {
         this.syncNativeSourceFrameSize(status);
         this.reconcileSharedTextureUploads(status);
+        this.reconcileNativeImageDecodes(status);
         this.degradedModeActive = !!status.degraded_mode_active;
         this.decodeBackpressureActive = !!status.decode_backpressure_active;
         this.decodeHandoffBackpressureActive = !!status.decode_handoff_backpressure_active;
@@ -3403,6 +3485,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     const status = await getNativeRendererStatus().catch(() => null);
     if (status) {
       this.reconcileSharedTextureUploads(status);
+      this.reconcileNativeImageDecodes(status);
       const sourceUploadBreakdown =
         `${status.source_frame_cpu_fallback_uploads}cpu/` +
         `${status.source_frame_file_uploads}file/` +
