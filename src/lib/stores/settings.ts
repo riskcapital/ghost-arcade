@@ -764,9 +764,9 @@ export interface ExperimentalSettings {
    *  a degraded link mid-show. */
   outputZeroCopy: boolean;
   /** Route the visible output command to the Rust/wgpu render core's
-   *  managed window. This is the v2.0 target transport. It is opt-in
-   *  while parity is still being hardened; if the core is not ready, the
-   *  app falls back to the current WebGPU zero-copy output path. */
+   *  managed window. This is the v2.0 target transport. It is the default
+   *  desktop output route now; if the core is not ready, the app falls
+   *  back to the current WebGPU zero-copy output path. */
   outputNativeCore: boolean;
   /**
    * Allow the legacy `gpuEffectRunner` CPU-readback bridge to run when
@@ -987,10 +987,10 @@ function createDefaultSettings(): AppSettings {
       // when the WebGPU capability probe says no or when the
       // MessagePort handshake fails.
       outputZeroCopy: true,
-      // Native render-core managed output. Off until the remaining
-      // parity/output-source work is complete; the Output Window command
-      // can still use it as an explicit test path.
-      outputNativeCore: false,
+      // Native render-core managed output. This is the v2.0 output-driver
+      // path now; the Output Window command falls back to zero-copy WebGPU
+      // if the core is missing or not ready.
+      outputNativeCore: true,
       // Phase 2 of the WebGPU migration. Default ON in the GPU edition
       // as of the bridge-as-default shift — the VideoFrame +
       // importExternalTexture bridge in WebGPUCanvas.svelte is the
