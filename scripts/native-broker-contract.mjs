@@ -132,6 +132,10 @@ try {
     !!capabilities?.features?.native_texture_share_sender === outputExportExpected,
     `broker native texture-share sender capability should match app bridge support: ${JSON.stringify(capabilities?.features)}`,
   );
+  assert(
+    capabilities?.implemented_methods?.includes('upload_source_gpu_shared_texture'),
+    `broker capabilities missing direct shared texture source-frame RPC: ${JSON.stringify(capabilities?.implemented_methods)}`,
+  );
   const graphInstruments = new Set(capabilities?.native_graph_instruments ?? []);
   const graphManifest = new Map(
     (capabilities?.native_graph_instrument_manifest ?? []).map((entry) => [entry.id, entry]),
