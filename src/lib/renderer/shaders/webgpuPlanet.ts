@@ -19,7 +19,7 @@
 
 import type { GpuShaderImpl, ParamControl } from '../gpuShaderTypes';
 import { deriveDefaults } from '../gpuShaderTypes';
-import { createAndWarmWgslShaderModule } from '../wgsl';
+import { createAndWarmWgslShaderModule, resolveGhostWgsl } from '../wgsl';
 import { getGhostGpuRuntime } from '../webgpuShared';
 import type { GhostGpuRuntime } from '../gpuRuntime';
 
@@ -29,6 +29,80 @@ const PLANET_IDS: Record<string, number> = {
   'jupiter': 2,
   'saturn':  3,
 };
+
+export const PLANET_NATIVE_SHADER_IDS = Object.freeze({
+  render: 'planet/render',
+});
+
+export interface PlanetNativePrecompileCommand {
+  type: 'precompile_shader';
+  shader_id: string;
+  stage: 'render';
+  entry: string;
+  source: string;
+}
+
+type PlanetNativeGraphBinding = {
+  binding: number;
+  resource: string;
+  kind: 'uniform';
+};
+
+type PlanetNativeGraphBuffer = {
+  id: string;
+  kind: 'uniform';
+  byte_length: number;
+  initial_b64?: string;
+};
+
+type PlanetNativeGraphRenderPass = {
+  name: string;
+  shader_id: string;
+  vertex_entry: string;
+  fragment_entry: string;
+  target: 'source_frame';
+  source_id: string;
+  seq: number;
+  clear: boolean;
+  clear_color?: [number, number, number, number];
+  include_snapshot?: boolean;
+  blend: 'replace' | 'alpha' | 'add';
+  primitive?: 'triangle-list';
+  vertex_count: number;
+  instance_count: number;
+  bindings: PlanetNativeGraphBinding[];
+};
+
+export interface PlanetNativeGraphState {
+  prevFrameTime: number;
+  accumRotation: number;
+  cloudPhase: number;
+}
+
+export interface PlanetNativeGraphOptions {
+  sourceId: string;
+  params?: Record<string, any> | null;
+  width?: number;
+  height?: number;
+  time?: number;
+  frameDelta?: number;
+  frameIndex?: number;
+  state?: PlanetNativeGraphState | null;
+  reset?: boolean;
+  includeSnapshot?: boolean;
+}
+
+export interface PlanetNativeGraphBuildResult {
+  config: {
+    buffers: PlanetNativeGraphBuffer[];
+    passes: [];
+    render_passes: PlanetNativeGraphRenderPass[];
+    readbacks: string[];
+  };
+  sourceId: string;
+  state: PlanetNativeGraphState;
+  passCount: number;
+}
 
 // Param schema — mirrored by the panel + by deriveDefaults below.
 export const planetParamSchema: ParamControl[] = [
@@ -1146,6 +1220,184 @@ struct V { @builtin(position) clip: vec4<f32>, @location(0) uv: vec2<f32> };
   return vec4(col, 1.0);
 }
 `;
+
+export function getPlanetNativeShaderSource(): { shaderId: string; stage: 'render'; entry: string; source: string } {
+  return {
+    shaderId: PLANET_NATIVE_SHADER_IDS.render,
+    stage: 'render',
+    entry: 'fs_planet',
+    source: resolveGhostWgsl(PLANET_WGSL, 'planet/render'),
+  };
+}
+
+export function buildPlanetNativePrecompileCommands(): PlanetNativePrecompileCommand[] {
+  const shader = getPlanetNativeShaderSource();
+  return [{
+    type: 'precompile_shader',
+    shader_id: shader.shaderId,
+    stage: shader.stage,
+    entry: shader.entry,
+    source: shader.source,
+  }];
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function bufferToBase64(buffer: ArrayBuffer): string {
+  return bytesToBase64(new Uint8Array(buffer));
+}
+
+function clampFinite(value: unknown, min: number, max: number, fallback: number): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+function rgb255(c: unknown, fallback: [number, number, number]): [number, number, number] {
+  if (!Array.isArray(c) || c.length < 3) return [...fallback];
+  return [
+    clampFinite(c[0], 0, 255, fallback[0]),
+    clampFinite(c[1], 0, 255, fallback[1]),
+    clampFinite(c[2], 0, 255, fallback[2]),
+  ];
+}
+
+function sanitizePlanetGraphId(value: string): string {
+  return String(value || 'source').replace(/[^a-zA-Z0-9:_-]+/g, '_').slice(0, 160);
+}
+
+function planetInitialState(time: number): PlanetNativeGraphState {
+  return {
+    prevFrameTime: time,
+    accumRotation: 0,
+    cloudPhase: 0,
+  };
+}
+
+function normalizePlanetParams(input?: Record<string, any> | null): Record<string, any> {
+  return {
+    ...planetParamDefaults,
+    ...(input ?? {}),
+  };
+}
+
+function buildPlanetNativeUniform(
+  params: Record<string, any>,
+  state: PlanetNativeGraphState,
+  width: number,
+  height: number,
+  time: number,
+): string {
+  const planetId = PLANET_IDS[String(params.planet ?? 'earth')] ?? 0;
+  const buf = new ArrayBuffer(176);
+  const f = new Float32Array(buf);
+  const u = new Uint32Array(buf);
+  f[0] = Math.max(1, width);
+  f[1] = Math.max(1, height);
+  f[2] = time;
+  u[3] = planetId;
+  f[4] = clampFinite(params.cameraDistance, 0.01, 128, 4.0);
+  f[5] = clampFinite(params.fovDeg, 1, 160, 50);
+  f[6] = clampFinite(params.cameraYaw, -3600, 3600, 0);
+  f[7] = clampFinite(params.cameraPitch, -3600, 3600, 0);
+  f[8] = clampFinite(params.rotationOffset, -3600, 3600, 0);
+  f[9] = state.accumRotation;
+  f[10] = clampFinite(params.sunYaw, -3600, 3600, -45);
+  f[11] = clampFinite(params.sunPitch, -3600, 3600, 15);
+  f[12] = clampFinite(params.cloudCoverage, 0, 4, 0.65);
+  f[13] = state.cloudPhase;
+  f[14] = clampFinite(params.atmosphereHeight, 0, 4, 0.06);
+  f[15] = clampFinite(params.auroraStrength, 0, 8, 0.8);
+  f[16] = clampFinite(params.starDensity, 0, 8, 1.0);
+  f[17] = clampFinite(params.ringInner, 0.001, 16, 1.25);
+  f[18] = clampFinite(params.ringOuter, 0.001, 32, 2.3);
+  f[19] = clampFinite(params.ringOpacity, 0, 4, 0.95);
+  const cloud = rgb255(params.cloudColor, [255, 255, 255]);
+  f[20] = cloud[0] / 255;
+  f[21] = cloud[1] / 255;
+  f[22] = cloud[2] / 255;
+  f[23] = clampFinite(params.sunBrightness, 0, 16, 1.0);
+  f[24] = clampFinite(params.planetX, -32, 32, 0);
+  f[25] = clampFinite(params.planetY, -32, 32, 0);
+  f[26] = clampFinite(params.ringDetail, 0, 16, 1.0);
+  f[28] = clampFinite(params.emission, 0, 16, 0.35);
+  f[29] = clampFinite(params.outerGlow, 0, 16, 0);
+  const land = rgb255(params.landColor, [110, 175, 70]);
+  f[32] = land[0] / 255;
+  f[33] = land[1] / 255;
+  f[34] = land[2] / 255;
+  f[35] = clampFinite(params.shorelineIntensity, 0, 32, 1.6);
+  const shore = rgb255(params.shorelineColor, [60, 230, 220]);
+  f[36] = shore[0] / 255;
+  f[37] = shore[1] / 255;
+  f[38] = shore[2] / 255;
+  f[39] = clampFinite(params.shorelineWidth, 0, 4, 0.04);
+  f[40] = clampFinite(params.cloudThickness, 0, 16, 1.8);
+  return bufferToBase64(buf);
+}
+
+export function buildPlanetNativeComputeGraph(options: PlanetNativeGraphOptions): PlanetNativeGraphBuildResult {
+  const params = normalizePlanetParams(options.params);
+  const time = Math.max(0, Number.isFinite(options.time) ? Number(options.time) : 0);
+  const state = (options.reset || !options.state)
+    ? planetInitialState(time)
+    : { ...options.state };
+  let dt = typeof options.frameDelta === 'number' && Number.isFinite(options.frameDelta)
+    ? options.frameDelta
+    : (state.prevFrameTime === 0 ? 1 / 60 : time - state.prevFrameTime);
+  dt = Math.min(Math.max(dt, 0), 0.1);
+  state.prevFrameTime = time;
+  state.accumRotation = (state.accumRotation + clampFinite(params.rotationSpeed, -3600, 3600, 4) * dt) % 360;
+  state.cloudPhase += clampFinite(params.cloudSpeed, 0, 32, 0.7) * dt;
+
+  const sourceId = String(options.sourceId || 'planet-native-source');
+  const prefix = `planet:${sanitizePlanetGraphId(sourceId)}`;
+  const uniformId = `${prefix}:uniform`;
+  const width = Math.round(options.width || 1920);
+  const height = Math.round(options.height || 1080);
+
+  return {
+    config: {
+      buffers: [{
+        id: uniformId,
+        kind: 'uniform',
+        byte_length: 176,
+        initial_b64: buildPlanetNativeUniform(params, state, width, height, time),
+      }],
+      passes: [],
+      render_passes: [{
+        name: 'planet-render',
+        shader_id: PLANET_NATIVE_SHADER_IDS.render,
+        vertex_entry: 'vs_full',
+        fragment_entry: 'fs_planet',
+        target: 'source_frame',
+        source_id: sourceId,
+        seq: Math.max(0, Math.round(options.frameIndex ?? 0)),
+        clear: true,
+        clear_color: [0, 0, 0, 1],
+        include_snapshot: !!options.includeSnapshot,
+        blend: 'alpha',
+        primitive: 'triangle-list',
+        vertex_count: 3,
+        instance_count: 1,
+        bindings: [
+          { binding: 0, resource: uniformId, kind: 'uniform' },
+        ],
+      }],
+      readbacks: [],
+    },
+    sourceId,
+    state,
+    passCount: 1,
+  };
+}
 
 // ─────────────────────────────────────────────────────────────
 // JS implementation

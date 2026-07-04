@@ -1528,6 +1528,7 @@ impl App {
             "compute_graph_clear_color": true,
             "compute_graph_source_frame_target": true,
             "persistent_compute_buffers": true,
+            "native_planet_graph": true,
             "native_3d_smoke_graph": true,
             "native_particle_field_graph": true,
             "native_volumetric_spheres_graph": true,
@@ -1563,8 +1564,26 @@ impl App {
             "backend": native_backend_name(),
             "implemented_methods": CORE_RPC_METHODS,
             "implemented_command_types": CORE_COMMAND_TYPES,
-            "native_graph_instruments": ["smoke-3d", "particle-field", "volumetric-spheres", "smoke-riders", "ink-cloud"],
+            "native_graph_instruments": ["planet", "smoke-3d", "particle-field", "volumetric-spheres", "smoke-riders", "ink-cloud"],
             "native_graph_instrument_manifest": [
+                {
+                    "id": "planet",
+                    "label": "Planet",
+                    "source_uri_prefix": "native-graph://planet/",
+                    "shader_ids": [
+                        "planet/render"
+                    ],
+                    "features": [
+                        "compute_graph_host",
+                        "compute_graph_render",
+                        "compute_graph_instanced_render",
+                        "compute_graph_clear_color",
+                        "compute_graph_source_frame_target",
+                        "native_planet_graph"
+                    ],
+                    "render_target": "source_frame",
+                    "parity": "single-pass-shared-wgsl"
+                },
                 {
                     "id": "smoke-3d",
                     "label": "3D Smoke",
@@ -1986,6 +2005,12 @@ impl App {
                         "label": "Native compute/multi-pass instrument host",
                         "ok": false,
                         "detail": "partial: 3D Smoke and Particle Field source-frame compute graphs are supported; broad native catalog parity is still pending"
+                    },
+                    {
+                        "id": "native-planet-graph",
+                        "label": "Native Planet graph",
+                        "ok": self.renderer.is_some(),
+                        "detail": if self.renderer.is_some() { "compute_graph can render Planet into native source frames" } else { "native renderer has not created a wgpu device" }
                     },
                     {
                         "id": "native-3d-smoke-graph",
@@ -4797,8 +4822,8 @@ impl RenderState {
         if buffers.is_empty() {
             return Err("native compute graph requires at least one buffer".to_string());
         }
-        if passes.is_empty() {
-            return Err("native compute graph requires at least one pass".to_string());
+        if passes.is_empty() && render_plans.is_empty() {
+            return Err("native compute graph requires at least one pass or render pass".to_string());
         }
         let mut transient_buffers = HashMap::<String, NativeComputeGraphGpuBuffer>::new();
         let mut persistent_buffer_count = 0usize;
