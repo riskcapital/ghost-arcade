@@ -56,6 +56,7 @@ fn ghost_audio_uniform_layout() -> Value {
 const SOURCE_FRAME_SLOT_OFFSET: f32 = 100.0;
 const NATIVE_SHADER_SOURCE_KIND: f32 = 17.0;
 const GPU_TIMESTAMP_READ_BYTES: u64 = 16;
+const COMPUTE_READBACK_PREVIEW_WORDS: usize = 128;
 const CORE_RPC_METHODS: &[&str] = &[
     "start",
     "stop",
@@ -5581,7 +5582,7 @@ impl RenderState {
             if value != 0 {
                 nonzero_words = nonzero_words.saturating_add(1);
             }
-            if first_words.len() < 8 {
+            if first_words.len() < COMPUTE_READBACK_PREVIEW_WORDS {
                 first_words.push(value);
             }
             checksum ^= value as u64;
@@ -6284,7 +6285,7 @@ impl RenderState {
             if value != 0 {
                 nonzero_words = nonzero_words.saturating_add(1);
             }
-            if first_words.len() < 8 {
+            if first_words.len() < COMPUTE_READBACK_PREVIEW_WORDS {
                 first_words.push(value);
             }
             checksum ^= value as u64;

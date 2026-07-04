@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -18,6 +18,39 @@ const FULLSCREEN_CORNERS = {
   bottomRight: { x: 1, y: 0 },
   bottomLeft: { x: 0, y: 0 },
 };
+
+const COMPOSITOR_BLEND_QUANT = 10000;
+const COMPOSITOR_BLEND_ALPHA = 0.73;
+const COMPOSITOR_BLEND_DST = [0.18, 0.42, 0.88];
+const COMPOSITOR_BLEND_SRC = [0.95, 0.22, 0.15];
+const COMPOSITOR_BLEND_MODES = [
+  { name: 'normal', code: 0 },
+  { name: 'add', code: 1 },
+  { name: 'multiply', code: 2 },
+  { name: 'screen', code: 3 },
+  { name: 'overlay', code: 4 },
+  { name: 'subtract', code: 5 },
+  { name: 'difference', code: 6 },
+  { name: 'lighten', code: 7 },
+  { name: 'darken', code: 8 },
+  { name: 'average', code: 9 },
+  { name: 'hardlight', code: 10 },
+  { name: 'softlight', code: 11 },
+  { name: 'exclusion', code: 12 },
+  { name: 'color-dodge', code: 13 },
+  { name: 'color-burn', code: 14 },
+  { name: 'hue', code: 15 },
+  { name: 'saturation', code: 16 },
+  { name: 'color', code: 17 },
+  { name: 'luminosity', code: 18 },
+  { name: 'divide', code: 19 },
+  { name: 'negation', code: 20 },
+  { name: 'phoenix', code: 21 },
+  { name: 'linear-light', code: 22 },
+  { name: 'hard-mix', code: 23 },
+  { name: 'vivid-light', code: 24 },
+  { name: 'pin-light', code: 25 },
+];
 
 const NATIVE_SHADER_CATALOG_PROBES = [
   { id: 'planet', params: [1.35, 1.12, 0.66, 0.42, 0.08, 0.52, 0.72, 1] },
@@ -300,6 +333,254 @@ function createRpcProcess() {
   };
 
   return { send, close };
+}
+
+function clampNumber(value, min = 0, max = 1) {
+  return Math.min(max, Math.max(min, Number(value) || 0));
+}
+
+function mixNumber(a, b, t) {
+  return a * (1 - t) + b * t;
+}
+
+function mixVec(a, b, t) {
+  return a.map((value, index) => mixNumber(value, b[index], t));
+}
+
+function vecOp(a, b, fn) {
+  return a.map((value, index) => fn(value, b[index]));
+}
+
+function rgbToHsv([r, g, b]) {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const d = max - min;
+  let h = 0;
+  if (d > 1e-10) {
+    if (max === r) {
+      h = ((g - b) / d) % 6;
+    } else if (max === g) {
+      h = (b - r) / d + 2;
+    } else {
+      h = (r - g) / d + 4;
+    }
+    h /= 6;
+    if (h < 0) h += 1;
+  }
+  const s = max <= 1e-10 ? 0 : d / max;
+  return [h, s, max];
+}
+
+function hsvToRgb([h, s, v]) {
+  const k = [1, 2 / 3, 1 / 3];
+  return k.map((offset) => {
+    const p = Math.abs((((h + offset) % 1 + 1) % 1) * 6 - 3);
+    return v * mixNumber(1, clampNumber(p - 1, 0, 1), s);
+  });
+}
+
+function webglBlendReference(mode) {
+  const dst = COMPOSITOR_BLEND_DST;
+  const src = COMPOSITOR_BLEND_SRC;
+  let blended = src.slice();
+  switch (mode) {
+    case 'add':
+      blended = vecOp(dst, src, (a, b) => clampNumber(a + b));
+      break;
+    case 'multiply':
+      blended = vecOp(dst, src, (a, b) => a * b);
+      break;
+    case 'screen':
+      blended = vecOp(dst, src, (a, b) => 1 - (1 - a) * (1 - b));
+      break;
+    case 'overlay':
+      blended = vecOp(dst, src, (a, b) => (a < 0.5 ? 2 * a * b : 1 - 2 * (1 - a) * (1 - b)));
+      break;
+    case 'subtract':
+      blended = vecOp(dst, src, (a, b) => Math.max(a - b, 0));
+      break;
+    case 'difference':
+      blended = vecOp(dst, src, (a, b) => Math.abs(a - b));
+      break;
+    case 'lighten':
+      blended = vecOp(dst, src, Math.max);
+      break;
+    case 'darken':
+      blended = vecOp(dst, src, Math.min);
+      break;
+    case 'average':
+      blended = vecOp(dst, src, (a, b) => (a + b) * 0.5);
+      break;
+    case 'hardlight':
+      blended = vecOp(dst, src, (a, b) => (b < 0.5 ? 2 * a * b : 1 - 2 * (1 - a) * (1 - b)));
+      break;
+    case 'softlight':
+      blended = vecOp(dst, src, (a, b) => clampNumber((1 - 2 * b) * a * a + 2 * b * a));
+      break;
+    case 'exclusion':
+      blended = vecOp(dst, src, (a, b) => a + b - 2 * a * b);
+      break;
+    case 'color-dodge':
+      blended = vecOp(dst, src, (a, b) => clampNumber(a / Math.max(1 - b, 0.001)));
+      break;
+    case 'color-burn':
+      blended = vecOp(dst, src, (a, b) => clampNumber(1 - ((1 - a) / Math.max(b, 0.001))));
+      break;
+    case 'hue': {
+      const dh = rgbToHsv(dst);
+      const sh = rgbToHsv(src);
+      blended = hsvToRgb([sh[0], dh[1], dh[2]]);
+      break;
+    }
+    case 'saturation': {
+      const dh = rgbToHsv(dst);
+      const sh = rgbToHsv(src);
+      blended = hsvToRgb([dh[0], sh[1], dh[2]]);
+      break;
+    }
+    case 'color': {
+      const dh = rgbToHsv(dst);
+      const sh = rgbToHsv(src);
+      blended = hsvToRgb([sh[0], sh[1], dh[2]]);
+      break;
+    }
+    case 'luminosity': {
+      const dh = rgbToHsv(dst);
+      const sh = rgbToHsv(src);
+      blended = hsvToRgb([dh[0], dh[1], sh[2]]);
+      break;
+    }
+    case 'divide':
+      blended = vecOp(dst, src, (a, b) => clampNumber(a / Math.max(b, 0.001)));
+      break;
+    case 'negation':
+      blended = vecOp(dst, src, (a, b) => clampNumber(1 - Math.abs(1 - a - b)));
+      break;
+    case 'phoenix':
+      blended = vecOp(dst, src, (a, b) => clampNumber(Math.min(a, b) - Math.max(a, b) + 1));
+      break;
+    case 'linear-light':
+      blended = vecOp(dst, src, (a, b) => clampNumber(a + 2 * b - 1));
+      break;
+    case 'hard-mix':
+      blended = vecOp(dst, src, (a, b) => (clampNumber(a + 2 * b - 1) < 0.5 ? 0 : 1));
+      break;
+    case 'vivid-light':
+      blended = vecOp(dst, src, (a, b) => {
+        const burn = 1 - ((1 - a) / Math.max(2 * b, 0.001));
+        const dodge = a / Math.max(2 * (1 - b), 0.001);
+        return clampNumber(b < 0.5 ? burn : dodge);
+      });
+      break;
+    case 'pin-light':
+      blended = vecOp(dst, src, (a, b) => clampNumber(b < 0.5 ? Math.min(a, 2 * b) : Math.max(a, 2 * b - 1)));
+      break;
+    case 'normal':
+    default:
+      blended = src.slice();
+      break;
+  }
+  return mixVec(dst, blended, COMPOSITOR_BLEND_ALPHA);
+}
+
+function quantizedBlendReference(mode) {
+  return webglBlendReference(mode).map((value) => Math.round(clampNumber(value, 0, 1.5) * COMPOSITOR_BLEND_QUANT));
+}
+
+function extractWgslFunction(source, name) {
+  const start = source.indexOf(`fn ${name}`);
+  if (start < 0) {
+    throw new Error(`heartbeat.wgsl is missing ${name}`);
+  }
+  const bodyStart = source.indexOf('{', start);
+  if (bodyStart < 0) {
+    throw new Error(`heartbeat.wgsl function ${name} has no body`);
+  }
+  let depth = 0;
+  for (let index = bodyStart; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '{') depth += 1;
+    if (char === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, index + 1);
+    }
+  }
+  throw new Error(`heartbeat.wgsl function ${name} body did not close`);
+}
+
+function nativeCompositorBlendProbeSource() {
+  const heartbeat = readFileSync(join(root, 'native-renderer', 'src', 'heartbeat.wgsl'), 'utf8');
+  const support = [
+    extractWgslFunction(heartbeat, 'rgb_to_hsv'),
+    extractWgslFunction(heartbeat, 'hsv_to_rgb'),
+    extractWgslFunction(heartbeat, 'native_blend'),
+  ].join('\n\n');
+  return `
+${support}
+
+const COMPOSITOR_BLEND_MODE_COUNT: u32 = ${COMPOSITOR_BLEND_MODES.length}u;
+const COMPOSITOR_BLEND_QUANT: f32 = ${COMPOSITOR_BLEND_QUANT}.0;
+
+@group(0) @binding(0)
+var<storage, read_write> output_words: array<u32>;
+
+fn quantize_compositor_channel(value: f32) -> u32 {
+  return u32(round(clamp(value, 0.0, 1.5) * COMPOSITOR_BLEND_QUANT));
+}
+
+@compute @workgroup_size(64)
+fn cs_blend_probe(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= COMPOSITOR_BLEND_MODE_COUNT) { return; }
+  let dst = vec3<f32>(${COMPOSITOR_BLEND_DST.map((value) => value.toFixed(6)).join(', ')});
+  let src = vec3<f32>(${COMPOSITOR_BLEND_SRC.map((value) => value.toFixed(6)).join(', ')});
+  let out = native_blend(dst, src, ${COMPOSITOR_BLEND_ALPHA.toFixed(6)}, f32(i));
+  let offset = i * 4u;
+  output_words[offset + 0u] = quantize_compositor_channel(out.x);
+  output_words[offset + 1u] = quantize_compositor_channel(out.y);
+  output_words[offset + 2u] = quantize_compositor_channel(out.z);
+  output_words[offset + 3u] = 0u;
+}
+`;
+}
+
+async function assertNativeCompositorBlendParity(rpc) {
+  const byteLength = COMPOSITOR_BLEND_MODES.length * 4 * 4;
+  const result = await rpc.send('compute_graph', {
+    buffers: [
+      { id: 'native-compositor-blend-output', kind: 'storage', byte_length: byteLength },
+    ],
+    passes: [
+      {
+        name: 'native-compositor-blend-parity',
+        shader_id: 'native-compositor-blend-probe',
+        entry: 'cs_blend_probe',
+        dispatch: [1, 1, 1],
+        bindings: [
+          { binding: 0, resource: 'native-compositor-blend-output', kind: 'storage' },
+        ],
+      },
+    ],
+    readbacks: ['native-compositor-blend-output'],
+  }, 5000);
+  const words = result?.readbacks?.['native-compositor-blend-output']?.first_words ?? [];
+  if (words.length < COMPOSITOR_BLEND_MODES.length * 4) {
+    throw new Error(`native compositor blend probe readback was truncated: ${JSON.stringify(result)}`);
+  }
+  const tolerance = 18;
+  for (const { name, code } of COMPOSITOR_BLEND_MODES) {
+    const actual = words.slice(code * 4, code * 4 + 3).map(Number);
+    const expected = quantizedBlendReference(name);
+    for (let channel = 0; channel < 3; channel += 1) {
+      const delta = Math.abs(actual[channel] - expected[channel]);
+      if (delta > tolerance) {
+        throw new Error(
+          `native compositor ${name} blend drifted on channel ${channel}: actual=${actual.join(',')} expected=${expected.join(',')} delta=${delta}`,
+        );
+      }
+    }
+  }
+  return result;
 }
 
 function assertFrame(name, snapshot, minLuma = 0.01) {
@@ -834,6 +1115,13 @@ async function main() {
         },
         {
           type: 'precompile_shader',
+          shader_id: 'native-compositor-blend-probe',
+          stage: 'compute',
+          entry: 'cs_blend_probe',
+          source: nativeCompositorBlendProbeSource(),
+        },
+        {
+          type: 'precompile_shader',
           shader_id: 'native-compute-graph-render',
           stage: 'render',
           entry: 'fs_main',
@@ -917,6 +1205,10 @@ async function main() {
     }
     if (!graphRenderSnapshot?.checksum || graphRenderSnapshot.dark_frame || Number(graphRenderSnapshot.nonzero_pixels ?? 0) <= 0) {
       throw new Error(`native compute graph render snapshot failed: ${JSON.stringify(computeGraph)}`);
+    }
+    const compositorBlendParity = await assertNativeCompositorBlendParity(rpc);
+    if (!compositorBlendParity?.readbacks?.['native-compositor-blend-output']?.checksum) {
+      throw new Error(`native compositor blend parity probe did not return a checksum: ${JSON.stringify(compositorBlendParity)}`);
     }
     const computeGraphMultiRender = await rpc.send('compute_graph', {
       buffers: [
@@ -1581,6 +1873,7 @@ async function main() {
       `shape=${previewCircle.checksum}/${previewTriangle.checksum}`,
       `compute=${computeProbe.checksum}/${computeProbe.nonzero_words}`,
       `graph=${outputReadback.checksum}/${computeGraph.pass_count}`,
+      `blendParity=${compositorBlendParity.readbacks['native-compositor-blend-output'].checksum}`,
       `graphRender=${graphRenderSnapshot.checksum}`,
       `graphSource=${graphSourceFrameSnapshot?.checksum ?? 'none'}`,
       `graphRuns=${status.compute_graph_runs}/${status.compute_graph_passes}`,
