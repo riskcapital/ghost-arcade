@@ -142,6 +142,22 @@ type NativeRenderClockCommand = {
 export type PresentPolicyProfile = 'vsync-live' | 'low-latency-safe' | 'low-latency-aggressive';
 
 type NativeGraphRouteKind = 'planet' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud' | 'flythrough' | 'pixel-particles' | 'point-cloud-fx';
+const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<{
+  kind: NativeGraphRouteKind;
+  feature: string;
+  instrument: string;
+}> = [
+  { kind: 'planet', feature: 'native_planet_graph', instrument: 'planet' },
+  { kind: 'smoke-3d', feature: 'native_3d_smoke_graph', instrument: 'smoke-3d' },
+  { kind: 'particle-field', feature: 'native_particle_field_graph', instrument: 'particle-field' },
+  { kind: 'volumetric-spheres', feature: 'native_volumetric_spheres_graph', instrument: 'volumetric-spheres' },
+  { kind: 'smoke-riders', feature: 'native_smoke_riders_graph', instrument: 'smoke-riders' },
+  { kind: 'ink-cloud', feature: 'native_ink_cloud_graph', instrument: 'ink-cloud' },
+  { kind: 'flythrough', feature: 'native_flythrough_graph', instrument: 'flythrough' },
+  { kind: 'pixel-particles', feature: 'native_pixel_particles_graph', instrument: 'pixel-particles' },
+  { kind: 'point-cloud-fx', feature: 'native_point_cloud_fx_graph', instrument: 'point-cloud-fx' },
+] as const;
+
 type NativeGraphRouteSimulationState =
   | PlanetNativeGraphState
   | Smoke3DNativeGraphState
@@ -180,6 +196,20 @@ function nativeGraphInstrumentIds(capabilities: NativeRendererCapabilities | nul
     if (normalized) ids.add(normalized);
   }
   return Array.from(ids);
+}
+
+function missingNativeGraphRouteRequirements(
+  features: Record<string, boolean>,
+  instruments: ReadonlySet<string>,
+): string[] {
+  const missing: string[] = [];
+  for (const requirement of NATIVE_GRAPH_ROUTE_REQUIREMENTS) {
+    if (!features[requirement.feature]) missing.push(`${requirement.kind}:feature:${requirement.feature}`);
+    if (!instruments.has(requirement.instrument)) {
+      missing.push(`${requirement.kind}:instrument:${requirement.instrument}`);
+    }
+  }
+  return missing;
 }
 
 const SOURCE_PREVIEW_SIZE = 256;
@@ -1430,47 +1460,20 @@ export class NativeRendererSync {
       this.supportsNativeFeature('compute_graph_render') &&
       this.supportsNativeFeature('compute_graph_source_frame_target')
     );
-    this.nativeComputeGraphSourceFrames = computeGraphSourceFrameHost && !!(
-      (
-        this.supportsNativeFeature('native_planet_graph') &&
-        this.supportsNativeGraphInstrument('planet')
-      ) ||
-      (
-        this.supportsNativeFeature('native_3d_smoke_graph') &&
-        this.supportsNativeGraphInstrument('smoke-3d')
-      ) ||
-      (
-        this.supportsNativeFeature('native_particle_field_graph') &&
-        this.supportsNativeGraphInstrument('particle-field')
-      ) ||
-      (
-        this.supportsNativeFeature('native_volumetric_spheres_graph') &&
-        this.supportsNativeGraphInstrument('volumetric-spheres')
-      ) ||
-      (
-        this.supportsNativeFeature('native_smoke_riders_graph') &&
-        this.supportsNativeGraphInstrument('smoke-riders')
-      ) ||
-      (
-        this.supportsNativeFeature('native_ink_cloud_graph') &&
-        this.supportsNativeGraphInstrument('ink-cloud')
-      ) ||
-      (
-        this.supportsNativeFeature('native_flythrough_graph') &&
-        this.supportsNativeGraphInstrument('flythrough')
-      ) ||
-      (
-        this.supportsNativeFeature('native_pixel_particles_graph') &&
-        this.supportsNativeGraphInstrument('pixel-particles')
-      ) ||
-      (
-        this.supportsNativeFeature('native_point_cloud_fx_graph') &&
-        this.supportsNativeGraphInstrument('point-cloud-fx')
-      )
+    const missingGraphRequirements = missingNativeGraphRouteRequirements(
+      this.nativeFeatureFlags,
+      this.nativeGraphInstruments,
     );
+    this.nativeComputeGraphSourceFrames = computeGraphSourceFrameHost && missingGraphRequirements.length === 0;
+    if (computeGraphSourceFrameHost && missingGraphRequirements.length > 0) {
+      console.warn(
+        '[NativeRendererSync] native graph source-frame routing disabled; graph catalog is incomplete',
+        missingGraphRequirements,
+      );
+    }
     const startupQuality = startupStatus?.native_quality;
     console.log(
-      `[NativeRendererSync] GPU pipeline active: backend=${startupStatus?.backend}, adapter=${startupStatus?.adapter_name ?? 'unknown'} quality=${startupQuality?.active_tier ?? 'unknown'}@${(startupQuality?.quality_scale ?? 0).toFixed(2)} policy=${startupQuality?.policy ?? 'unknown'}`
+      `[NativeRendererSync] GPU pipeline active: backend=${startupStatus?.backend}, adapter=${startupStatus?.adapter_name ?? 'unknown'} quality=${startupQuality?.active_tier ?? 'unknown'}@${(startupQuality?.quality_scale ?? 0).toFixed(2)} policy=${startupQuality?.policy ?? 'unknown'} graphCatalog=${this.nativeComputeGraphSourceFrames ? 'complete' : 'incomplete'}`
     );
     this.running = true;
     this.liveClockOriginMs = performance.now();
