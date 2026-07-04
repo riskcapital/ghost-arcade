@@ -1030,9 +1030,9 @@ const STORAGE_KEY = 'ghost-arcade_settings';
 const APP_VERSION_KEY = 'ill_app_version';
 // Bump this whenever stale localStorage may break the new build.
 // Any mismatch clears problematic caches on startup.
-// 0.3.8 bump: forces the `allowMidChainGpuEffects` migration to run for
-// existing users so `gpuFluidSim` actually fires when dropped on a layer.
-const CURRENT_APP_VERSION = '0.3.8';
+// 0.3.9 bump: routes existing installs to the Rust/wgpu native output
+// driver by default, with the WebGPU zero-copy path still acting as fallback.
+const CURRENT_APP_VERSION = '0.3.9';
 
 /**
  * Clear known-problematic localStorage on version change so a fresh install
@@ -1088,6 +1088,15 @@ function runVersionMigration(): { versionChanged: boolean } {
         if (parsed.experimental && parsed.experimental.allowMidChainGpuEffects === false) {
           parsed.experimental.allowMidChainGpuEffects = true;
         }
+        // v2 native renderer cutover: fresh defaults now use the Rust/wgpu
+        // managed output path, but existing localStorage would otherwise keep
+        // whatever value was saved while this was an opt-in switch. Force it
+        // on once for all upgraded installs; users can still turn it off
+        // afterwards to force the zero-copy WebGPU fallback.
+        parsed.experimental = {
+          ...(parsed.experimental || {}),
+          outputNativeCore: true,
+        };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
       }
     } catch {}
