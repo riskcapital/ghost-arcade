@@ -9,6 +9,8 @@ pub struct SharedTextureSourceFrameDescriptor {
     pub handle_encoding: String,
     pub handle_chars: usize,
     pub handle_byte_length: Option<u64>,
+    pub frame: Option<u64>,
+    pub sender_name: Option<String>,
     pub width: u32,
     pub height: u32,
 }
@@ -54,6 +56,17 @@ impl SharedTextureSourceFrameDescriptor {
                 .or_else(|| number_at(command, "handleByteLength"))
                 .or_else(|| nested_number_at(shared_texture, "handle_byte_length"))
                 .or_else(|| nested_number_at(shared_texture, "handleByteLength")),
+            frame: number_at(command, "shared_texture_frame")
+                .or_else(|| number_at(command, "sharedTextureFrame"))
+                .or_else(|| number_at(command, "frame"))
+                .or_else(|| nested_number_at(shared_texture, "frame")),
+            sender_name: string_at(command, "shared_texture_sender_name")
+                .or_else(|| string_at(command, "sharedTextureSenderName"))
+                .or_else(|| string_at(command, "sender_name"))
+                .or_else(|| string_at(command, "senderName"))
+                .or_else(|| nested_string_at(shared_texture, "sender_name"))
+                .or_else(|| nested_string_at(shared_texture, "senderName"))
+                .map(str::to_string),
             width: width.min(u32::MAX as usize) as u32,
             height: height.min(u32::MAX as usize) as u32,
         })
@@ -62,7 +75,7 @@ impl SharedTextureSourceFrameDescriptor {
     pub fn unsupported_reason(&self, backend: &str) -> String {
         format!(
             "shared texture source-frame upload is not implemented yet \
-             (backend={backend}, platform={}, format={}, size={}x{}, handle_encoding={}, handle_chars={}, declared_bytes={})",
+             (backend={backend}, platform={}, format={}, size={}x{}, handle_encoding={}, handle_chars={}, declared_bytes={}, frame={}, sender={})",
             self.platform,
             self.format,
             self.width,
@@ -71,7 +84,11 @@ impl SharedTextureSourceFrameDescriptor {
             self.handle_chars,
             self.handle_byte_length
                 .map(|value| value.to_string())
-                .unwrap_or_else(|| "unknown".to_string())
+                .unwrap_or_else(|| "unknown".to_string()),
+            self.frame
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "unknown".to_string()),
+            self.sender_name.as_deref().unwrap_or("unknown")
         )
     }
 
@@ -205,7 +222,9 @@ mod tests {
             "shared_texture_platform": "spout",
             "shared_texture_format": 87,
             "shared_texture_handle_encoding": "b64",
-            "shared_texture_handle_byte_length": 8
+            "shared_texture_handle_byte_length": 8,
+            "shared_texture_frame": 12,
+            "shared_texture_sender_name": "Resolume"
         });
 
         let descriptor =
@@ -217,6 +236,8 @@ mod tests {
         assert_eq!(descriptor.handle_encoding, "base64");
         assert_eq!(descriptor.handle_chars, 8);
         assert_eq!(descriptor.handle_byte_length, Some(8));
+        assert_eq!(descriptor.frame, Some(12));
+        assert_eq!(descriptor.sender_name.as_deref(), Some("Resolume"));
         assert_eq!(descriptor.width, 1920);
         assert_eq!(descriptor.height, 1080);
     }
@@ -229,7 +250,9 @@ mod tests {
                 "platform": "Syphon",
                 "format": "bgra8unorm",
                 "encoding": "integer",
-                "handle_byte_length": 4
+                "handle_byte_length": 4,
+                "frame": 44,
+                "senderName": "Syphon Camera"
             }
         });
 
@@ -242,10 +265,17 @@ mod tests {
         assert_eq!(descriptor.handle_encoding, "integer");
         assert_eq!(descriptor.handle_chars, 2);
         assert_eq!(descriptor.handle_byte_length, Some(4));
+        assert_eq!(descriptor.frame, Some(44));
+        assert_eq!(descriptor.sender_name.as_deref(), Some("Syphon Camera"));
         assert!(
             descriptor
                 .unsupported_reason("metal")
                 .contains("platform=iosurface")
+        );
+        assert!(
+            descriptor
+                .unsupported_reason("metal")
+                .contains("sender=Syphon Camera")
         );
     }
 

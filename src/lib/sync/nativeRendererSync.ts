@@ -3151,6 +3151,8 @@ export class NativeRendererSync {
       shared_texture_format: info.format ?? undefined,
       shared_texture_handle_encoding: info.handleEncoding ?? 'base64',
       shared_texture_handle_byte_length: info.handleByteLength,
+      shared_texture_frame: info.frame ?? undefined,
+      shared_texture_sender_name: (info.senderName ?? sharedTextureSenderName(src)) || undefined,
       seq,
     });
     return true;
