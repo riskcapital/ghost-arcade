@@ -483,10 +483,6 @@ impl NativeQualityState {
         self.quality_scale = tier_quality_scale(tier);
         true
     }
-
-    fn instrument_scale(&self) -> f32 {
-        self.quality_scale.clamp(0.45, 1.0)
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Default)]
@@ -614,21 +610,6 @@ struct PreviewPixel {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
-struct NativeInstrumentUniforms {
-    resolution: [f32; 2],
-    time: f32,
-    source_kind: f32,
-    params0: [f32; 4],
-    params1: [f32; 4],
-    audio0: [f32; 4],
-    audio1: [f32; 4],
-    audio2: [f32; 4],
-    seed: f32,
-    _pad0: [f32; 7],
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 struct NativeShaderUniforms {
     resolution_time: [f32; 4],
     frame_seed_inputs: [f32; 4],
@@ -732,15 +713,6 @@ struct SourcePreview {
 #[derive(Clone, Debug)]
 struct SourceFrame {
     seq: u64,
-}
-
-#[derive(Clone, Debug)]
-struct NativeInstrumentTask {
-    slot: usize,
-    source_kind: f32,
-    params0: [f32; 4],
-    params1: [f32; 4],
-    seed: f32,
 }
 
 struct NativeShaderPipeline {
@@ -1438,9 +1410,7 @@ struct RenderState {
     config: wgpu::SurfaceConfiguration,
     supported_present_modes: Vec<wgpu::PresentMode>,
     pipeline: wgpu::RenderPipeline,
-    native_instrument_pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
-    native_instrument_uniform_buffer: wgpu::Buffer,
     native_shader_uniform_buffer: wgpu::Buffer,
     layer_buffer: wgpu::Buffer,
     source_preview_buffer: wgpu::Buffer,
@@ -1466,7 +1436,6 @@ struct RenderState {
     snapshot_view: wgpu::TextureView,
     last_frame_metrics: Option<SnapshotMetrics>,
     bind_group: wgpu::BindGroup,
-    native_instrument_bind_group: wgpu::BindGroup,
     start_time: Instant,
     gpu_timing: Option<GpuTimingState>,
     last_frame_error: Option<String>,
@@ -1950,19 +1919,13 @@ impl App {
             .as_ref()
             .map(|renderer| renderer.gpu_timing_stats())
             .unwrap_or((false, 0.0, 0.0, 0.0, 0, 0));
-        let native_instrument_proxy_layers = self
-            .scene_layers
-            .values()
-            .filter(|layer| layer.visible && is_native_instrument_kind(layer.source_kind))
-            .count()
-            .min(1024) as u32;
+        let native_instrument_proxy_layers = 0;
         let native_graph_source_frame_layers = self
             .scene_layers
             .values()
             .filter(|layer| {
                 layer.visible
                     && !layer.shader_rendered
-                    && !is_native_instrument_kind(layer.source_kind)
                     && layer.source_id.as_deref().is_some_and(|source_id| {
                         self.source_frame_slots.contains_key(source_id)
                             && self.source_frames.contains_key(source_id)
@@ -2855,62 +2818,6 @@ impl App {
         Ok(json!(self.status()))
     }
 
-    fn prepare_native_instrument_tasks(&mut self, seq: u64) -> Vec<NativeInstrumentTask> {
-        let mut candidates = self
-            .scene_layers
-            .values()
-            .filter(|layer| layer.visible && is_native_instrument_kind(layer.source_kind))
-            .map(|layer| {
-                (
-                    layer.id.clone(),
-                    layer
-                        .source_id
-                        .clone()
-                        .unwrap_or_else(|| format!("native-instrument:{}", layer.id)),
-                    layer.source_kind,
-                    layer.native_params,
-                    layer.z_index,
-                )
-            })
-            .collect::<Vec<_>>();
-        candidates.sort_by(|a, b| b.4.cmp(&a.4).then_with(|| a.0.cmp(&b.0)));
-
-        let mut tasks = Vec::new();
-        let quality_scale = self.native_quality.instrument_scale();
-        for (layer_id, source_id, source_kind, native_params, _) in candidates {
-            let slot = self.assign_source_frame_slot(&source_id);
-            self.source_frames
-                .insert(source_id.clone(), SourceFrame { seq });
-            if let Some(layer) = self.scene_layers.get_mut(&layer_id) {
-                layer.frame_slot = Some(slot);
-                layer.preview_slot = None;
-            }
-            let mut params0 = [
-                native_params[0],
-                native_params[1],
-                native_params[2],
-                native_params[3],
-            ];
-            let mut params1 = [
-                native_params[4],
-                native_params[5],
-                native_params[6],
-                native_params[7],
-            ];
-            let density_scale = 0.62 + quality_scale * 0.38;
-            params0[2] = (params0[2] * density_scale).clamp(0.0, 1.0);
-            params1[2] = (params1[2] * quality_scale).clamp(0.0, 1.0);
-            tasks.push(NativeInstrumentTask {
-                slot,
-                source_kind,
-                params0,
-                params1,
-                seed: unit_from_hash(stable_hash64(&source_id)),
-            });
-        }
-        tasks
-    }
-
     fn render(&mut self) {
         if !self.running {
             return;
@@ -2918,7 +2825,6 @@ impl App {
         let frame_index = self
             .render_clock_frame_index
             .unwrap_or(self.stats.frames_presented);
-        let native_tasks = self.prepare_native_instrument_tasks(frame_index);
         let gpu_layers = self.gpu_layer_data();
         let source_preview_pixels = if self.source_preview_dirty {
             Some(self.source_preview_pixel_data())
@@ -2930,25 +2836,6 @@ impl App {
         };
         renderer.poll_gpu_timing();
         let started = Instant::now();
-        match renderer.render_native_instrument_frames(
-            &native_tasks,
-            self.render_clock_time,
-            frame_index,
-            self.audio0,
-            self.audio1,
-            self.audio2,
-        ) {
-            Ok(rendered) => {
-                self.stats.native_instrument_frame_renders = self
-                    .stats
-                    .native_instrument_frame_renders
-                    .saturating_add(rendered as u64);
-            }
-            Err(err) => {
-                renderer.last_frame_error = Some(err);
-                return;
-            }
-        }
         self.stats.swapchain_present_attempts =
             self.stats.swapchain_present_attempts.saturating_add(1);
         match renderer.render(
@@ -3000,7 +2887,7 @@ impl App {
                 self.stats.gpu_timing_samples = gpu_timing_samples;
                 self.stats.gpu_timing_resolve_misses = gpu_timing_resolve_misses;
                 self.native_quality
-                    .observe_frame(ms, gpu_ms, self.target_fps, native_tasks.len());
+                    .observe_frame(ms, gpu_ms, self.target_fps, 0);
                 if source_preview_pixels.is_some() {
                     self.source_preview_dirty = false;
                 }
@@ -3092,7 +2979,6 @@ impl App {
         params: &Value,
     ) -> Result<(Option<f32>, u64), String> {
         let (snapshot_time, snapshot_frame_index) = self.snapshot_clock_from_params(params);
-        let native_tasks = self.prepare_native_instrument_tasks(snapshot_frame_index);
         let gpu_layers = self.gpu_layer_data();
         let source_preview_pixels = if self.source_preview_dirty {
             Some(self.source_preview_pixel_data())
@@ -3103,25 +2989,6 @@ impl App {
             return Err("native renderer has not created a wgpu device".to_string());
         };
         renderer.poll_gpu_timing();
-        match renderer.render_native_instrument_frames(
-            &native_tasks,
-            snapshot_time,
-            snapshot_frame_index,
-            self.audio0,
-            self.audio1,
-            self.audio2,
-        ) {
-            Ok(rendered) => {
-                self.stats.native_instrument_frame_renders = self
-                    .stats
-                    .native_instrument_frame_renders
-                    .saturating_add(rendered as u64);
-            }
-            Err(err) => {
-                renderer.last_frame_error = Some(err.clone());
-                return Err(err);
-            }
-        }
         if let Err(err) = renderer.render_snapshot(
             self.command_phase,
             gpu_layers.len() as u32,
@@ -4977,10 +4844,6 @@ impl RenderState {
             label: Some("Ghost Render Core Heartbeat"),
             source: wgpu::ShaderSource::Wgsl(include_str!("heartbeat.wgsl").into()),
         });
-        let native_instrument_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Ghost Render Core Native Instruments"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("native_instruments.wgsl").into()),
-        });
         let native_shader_vertex_module =
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("Ghost Render Core Native Shader Fullscreen Vertex"),
@@ -5001,12 +4864,6 @@ impl RenderState {
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
-        let native_instrument_uniform_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Ghost Render Core Native Instrument Uniforms"),
-                contents: bytemuck::bytes_of(&NativeInstrumentUniforms::zeroed()),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            });
         let native_shader_uniform_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Ghost Render Core Native Shader Uniforms"),
@@ -5191,28 +5048,6 @@ impl RenderState {
             cache: None,
         });
 
-        let native_instrument_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Ghost Render Core Native Instrument Bind Group Layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-        let native_instrument_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Ghost Render Core Native Instrument Bind Group"),
-            layout: &native_instrument_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: native_instrument_uniform_buffer.as_entire_binding(),
-            }],
-        });
         let native_shader_input_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Ghost Render Core Native Shader Input Frames"),
             size: wgpu::Extent3d {
@@ -5283,38 +5118,6 @@ impl RenderState {
                 },
             ],
         });
-        let native_instrument_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Ghost Render Core Native Instrument Pipeline Layout"),
-                bind_group_layouts: &[Some(&native_instrument_bind_group_layout)],
-                immediate_size: 0,
-            });
-        let native_instrument_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Ghost Render Core Native Instrument Pipeline"),
-                layout: Some(&native_instrument_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &native_instrument_shader,
-                    entry_point: Some("vs_main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    buffers: &[],
-                },
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &native_instrument_shader,
-                    entry_point: Some("fs_main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: source_frame_format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
-            });
 
         window.set_title(&format!("Ghost Render Core N0 - {}", adapter_info.name));
         let gpu_timing = requested_features
@@ -5331,9 +5134,7 @@ impl RenderState {
             config,
             supported_present_modes,
             pipeline,
-            native_instrument_pipeline,
             uniform_buffer,
-            native_instrument_uniform_buffer,
             native_shader_uniform_buffer,
             layer_buffer,
             source_preview_buffer,
@@ -5359,7 +5160,6 @@ impl RenderState {
             snapshot_view,
             last_frame_metrics: None,
             bind_group,
-            native_instrument_bind_group,
             start_time: Instant::now(),
             gpu_timing,
             last_frame_error: None,
@@ -5695,85 +5495,6 @@ impl RenderState {
         );
         self.snapshot_texture = snapshot_texture;
         self.snapshot_view = snapshot_view;
-    }
-
-    fn render_native_instrument_frames(
-        &mut self,
-        tasks: &[NativeInstrumentTask],
-        time_seconds: Option<f32>,
-        _frame_count: u64,
-        audio0: [f32; 4],
-        audio1: [f32; 4],
-        audio2: [f32; 4],
-    ) -> Result<usize, String> {
-        if tasks.is_empty() {
-            return Ok(0);
-        }
-        let time = time_seconds.unwrap_or_else(|| self.start_time.elapsed().as_secs_f32());
-        let mut rendered = 0usize;
-        for task in tasks.iter().take(MAX_SOURCE_FRAME_SLOTS) {
-            let safe_slot = task.slot.min(MAX_SOURCE_FRAME_SLOTS - 1);
-            let uniforms = NativeInstrumentUniforms {
-                resolution: [self.source_frame_size as f32, self.source_frame_size as f32],
-                time,
-                source_kind: task.source_kind,
-                params0: task.params0,
-                params1: task.params1,
-                audio0,
-                audio1,
-                audio2,
-                seed: task.seed,
-                _pad0: [0.0; 7],
-            };
-            self.queue.write_buffer(
-                &self.native_instrument_uniform_buffer,
-                0,
-                bytemuck::bytes_of(&uniforms),
-            );
-            let view = self
-                .source_frame_texture
-                .create_view(&wgpu::TextureViewDescriptor {
-                    label: Some("Ghost Render Core Native Instrument Source Frame View"),
-                    format: Some(self.source_frame_format),
-                    dimension: Some(wgpu::TextureViewDimension::D2),
-                    base_mip_level: 0,
-                    mip_level_count: Some(1),
-                    base_array_layer: safe_slot as u32,
-                    array_layer_count: Some(1),
-                    ..Default::default()
-                });
-            let mut encoder = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Ghost Render Core Native Instrument Encoder"),
-                });
-            {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Ghost Render Core Native Instrument Pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                pass.set_pipeline(&self.native_instrument_pipeline);
-                pass.set_bind_group(0, &self.native_instrument_bind_group, &[]);
-                pass.draw(0..3, 0..1);
-            }
-            self.generate_source_frame_mips(&mut encoder, safe_slot);
-            self.queue.submit(Some(encoder.finish()));
-            rendered += 1;
-        }
-        self.last_frame_error = None;
-        Ok(rendered)
     }
 
     fn ensure_native_shader_pipeline(
@@ -8370,10 +8091,6 @@ fn source_kind(source_type: &str) -> f32 {
         "image" => 4.0,
         _ => 0.0,
     }
-}
-
-fn is_native_instrument_kind(source_kind: f32) -> bool {
-    matches!(source_kind.round() as i32, 10 | 11 | 12 | 13 | 14 | 15 | 16)
 }
 
 fn source_type_color(source_type: &str, id: &str) -> [f32; 4] {
