@@ -1532,6 +1532,7 @@ impl App {
             "native_particle_field_graph": true,
             "native_volumetric_spheres_graph": true,
             "native_smoke_riders_graph": true,
+            "native_ink_cloud_graph": true,
             "command_drain_policy": true,
             "auto_present_policy": true,
             "multi_pass_instruments": false,
@@ -1562,7 +1563,7 @@ impl App {
             "backend": native_backend_name(),
             "implemented_methods": CORE_RPC_METHODS,
             "implemented_command_types": CORE_COMMAND_TYPES,
-            "native_graph_instruments": ["smoke-3d", "particle-field", "volumetric-spheres", "smoke-riders"],
+            "native_graph_instruments": ["smoke-3d", "particle-field", "volumetric-spheres", "smoke-riders", "ink-cloud"],
             "native_graph_instrument_manifest": [
                 {
                     "id": "smoke-3d",
@@ -1661,6 +1662,28 @@ impl App {
                     ],
                     "render_target": "source_frame",
                     "parity": "composed-smoke-and-volumetric-spheres-shared-wgsl"
+                },
+                {
+                    "id": "ink-cloud",
+                    "label": "Ink Cloud",
+                    "source_uri_prefix": "native-graph://ink-cloud/",
+                    "shader_ids": [
+                        "ink-cloud/sim",
+                        "ink-cloud/render",
+                        "ink-cloud/background"
+                    ],
+                    "features": [
+                        "compute_graph_host",
+                        "compute_graph_render",
+                        "compute_graph_multi_render",
+                        "compute_graph_instanced_render",
+                        "compute_graph_clear_color",
+                        "compute_graph_source_frame_target",
+                        "persistent_compute_buffers",
+                        "native_ink_cloud_graph"
+                    ],
+                    "render_target": "source_frame",
+                    "parity": "sim-background-render-shared-wgsl"
                 }
             ],
             "audio_uniform_layout": ghost_audio_uniform_layout(),
@@ -1975,6 +1998,12 @@ impl App {
                         "label": "Native Particle Field graph",
                         "ok": self.renderer.is_some(),
                         "detail": if self.renderer.is_some() { "compute_graph can render Particle Field behavior/render passes into native source frames" } else { "native renderer has not created a wgpu device" }
+                    },
+                    {
+                        "id": "native-ink-cloud-graph",
+                        "label": "Native Ink Cloud graph",
+                        "ok": self.renderer.is_some(),
+                        "detail": if self.renderer.is_some() { "compute_graph can render Ink Cloud sim/background/render passes into native source frames" } else { "native renderer has not created a wgpu device" }
                     },
                     {
                         "id": "managed-output",

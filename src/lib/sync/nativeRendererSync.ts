@@ -13,6 +13,11 @@ import {
   type Smoke3DNativeGraphState,
 } from '$lib/renderer/webgpu3DSmoke';
 import {
+  buildInkCloudNativeComputeGraph,
+  buildInkCloudNativePrecompileCommands,
+  type InkCloudNativeGraphState,
+} from '$lib/renderer/webgpuInkCloud';
+import {
   buildParticleFieldNativeComputeGraph,
   buildParticleFieldNativePrecompileCommands,
   type ParticleFieldNativeGraphState,
@@ -112,9 +117,10 @@ type NativeRenderClockCommand = {
 
 export type PresentPolicyProfile = 'vsync-live' | 'low-latency-safe' | 'low-latency-aggressive';
 
-type NativeGraphRouteKind = 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders';
+type NativeGraphRouteKind = 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud';
 type NativeGraphRouteSimulationState =
   | Smoke3DNativeGraphState
+  | InkCloudNativeGraphState
   | ParticleFieldNativeGraphState
   | VolumetricSpheresNativeGraphState
   | SmokeRidersNativeGraphState;
@@ -959,6 +965,12 @@ export class NativeRendererSync {
       this.supportsNativeGraphInstrument('volumetric-spheres')
     ) {
       kind = 'volumetric-spheres';
+    } else if (
+      normalizedShaderId === 'ink-cloud' &&
+      this.supportsNativeFeature('native_ink_cloud_graph') &&
+      this.supportsNativeGraphInstrument('ink-cloud')
+    ) {
+      kind = 'ink-cloud';
     }
     if (!kind) return null;
     const inputSource = this.nativeGraphInputSourceForLayer(layer, kind);
@@ -1070,6 +1082,21 @@ export class NativeRendererSync {
               reset: !routeState.state,
             });
           }
+          if (route.kind === 'ink-cloud') {
+            return buildInkCloudNativeComputeGraph({
+              sourceId: route.source.id,
+              params: nativeGraphParams,
+              width,
+              height,
+              time: graphTime,
+              frameDelta: graphDelta,
+              frameIndex: graphSeq,
+              audioBass,
+              audioTreble,
+              state: routeState.state as InkCloudNativeGraphState | null,
+              reset: !routeState.state,
+            });
+          }
           return buildVolumetricSpheresNativeComputeGraph({
             sourceId: route.source.id,
             params: nativeGraphParams,
@@ -1173,6 +1200,14 @@ export class NativeRendererSync {
       (
         this.supportsNativeFeature('native_particle_field_graph') &&
         this.supportsNativeGraphInstrument('particle-field')
+      ) ||
+      (
+        this.supportsNativeFeature('native_volumetric_spheres_graph') &&
+        this.supportsNativeGraphInstrument('volumetric-spheres')
+      ) ||
+      (
+        this.supportsNativeFeature('native_ink_cloud_graph') &&
+        this.supportsNativeGraphInstrument('ink-cloud')
       )
     );
     const startupQuality = startupStatus?.native_quality;
@@ -1897,6 +1932,7 @@ fn fs_main() -> @location(0) vec4<f32> {
       entry: 'fs_main',
     });
     commands.push(...buildSmoke3DNativePrecompileCommands());
+    commands.push(...buildInkCloudNativePrecompileCommands());
     commands.push(...buildParticleFieldNativePrecompileCommands());
     commands.push(...buildVolumetricSpheresNativePrecompileCommands());
     await submitNativeRendererBatch({

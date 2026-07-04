@@ -502,6 +502,7 @@ async function main() {
       !capabilities.features.native_3d_smoke_graph ||
       !capabilities.features.native_volumetric_spheres_graph ||
       !capabilities.features.native_smoke_riders_graph ||
+      !capabilities.features.native_ink_cloud_graph ||
       capabilities.features.multi_pass_instruments
     ) {
       throw new Error(`native compute capability flags are not honest yet: ${JSON.stringify(capabilities.features)}`);
@@ -523,6 +524,9 @@ async function main() {
     }
     if (!capabilities.native_graph_instruments?.includes('smoke-riders')) {
       throw new Error(`native graph instrument manifest missing smoke-riders: ${JSON.stringify(capabilities)}`);
+    }
+    if (!capabilities.native_graph_instruments?.includes('ink-cloud')) {
+      throw new Error(`native graph instrument manifest missing ink-cloud: ${JSON.stringify(capabilities)}`);
     }
     const smokeManifest = capabilities.native_graph_instrument_manifest?.find((entry) => entry?.id === 'smoke-3d');
     if (
@@ -567,6 +571,21 @@ async function main() {
       !smokeRidersManifest.features?.includes('native_smoke_riders_graph')
     ) {
       throw new Error(`native smoke-riders manifest entry is incomplete: ${JSON.stringify(capabilities.native_graph_instrument_manifest)}`);
+    }
+    const inkCloudManifest = capabilities.native_graph_instrument_manifest?.find((entry) => entry?.id === 'ink-cloud');
+    if (
+      !inkCloudManifest ||
+      inkCloudManifest.source_uri_prefix !== 'native-graph://ink-cloud/' ||
+      inkCloudManifest.render_target !== 'source_frame' ||
+      !inkCloudManifest.shader_ids?.includes('ink-cloud/sim') ||
+      !inkCloudManifest.shader_ids?.includes('ink-cloud/render') ||
+      !inkCloudManifest.shader_ids?.includes('ink-cloud/background') ||
+      !inkCloudManifest.features?.includes('compute_graph_multi_render') ||
+      !inkCloudManifest.features?.includes('compute_graph_instanced_render') ||
+      !inkCloudManifest.features?.includes('compute_graph_clear_color') ||
+      !inkCloudManifest.features?.includes('native_ink_cloud_graph')
+    ) {
+      throw new Error(`native ink-cloud manifest entry is incomplete: ${JSON.stringify(capabilities.native_graph_instrument_manifest)}`);
     }
     if (!capabilities.features.present_policy || !capabilities.features.managed_output_attach) {
       throw new Error(`native managed output/present capabilities missing: ${JSON.stringify(capabilities.features)}`);

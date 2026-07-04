@@ -1,5 +1,5 @@
 import { getGhostGpuRuntime } from './webgpuShared';
-import { createAndWarmWgslShaderModule } from './wgsl';
+import { createAndWarmWgslShaderModule, resolveGhostWgsl } from './wgsl';
 
 /**
  * WebGPUInkCloud — ink-in-water / volumetric smoke simulation.
@@ -46,6 +46,110 @@ const PARTICLE_BYTES = 64;
 const DEFAULT_PARTICLES = 150_000;
 const MAX_PARTICLES = 600_000;
 const MAX_EMITTERS = 8;
+
+export const INK_CLOUD_NATIVE_SHADER_IDS = Object.freeze({
+  sim: 'ink-cloud/sim',
+  render: 'ink-cloud/render',
+  background: 'ink-cloud/background',
+});
+
+export type InkCloudNativeShaderStage = 'compute' | 'render';
+
+export interface InkCloudNativeShaderSource {
+  shaderId: string;
+  label: string;
+  stage: InkCloudNativeShaderStage;
+  entry: string;
+  source: string;
+}
+
+export interface InkCloudNativePrecompileCommand {
+  type: 'precompile_shader';
+  shader_id: string;
+  stage: InkCloudNativeShaderStage;
+  entry: string;
+  source: string;
+}
+
+type InkCloudNativeGraphBinding = {
+  binding: number;
+  resource: string;
+  kind: 'uniform' | 'storage' | 'read-only-storage';
+};
+
+type InkCloudNativeGraphBuffer = {
+  id: string;
+  kind: 'uniform' | 'storage' | 'read-only-storage';
+  byte_length: number;
+  persistent?: boolean;
+  clear?: boolean;
+  initial_b64?: string;
+};
+
+type InkCloudNativeGraphPass = {
+  name: string;
+  shader_id: string;
+  entry: string;
+  dispatch: [number, number, number];
+  bindings: InkCloudNativeGraphBinding[];
+};
+
+type InkCloudNativeGraphRenderPass = {
+  name: string;
+  shader_id: string;
+  vertex_entry: string;
+  fragment_entry: string;
+  target: 'source_frame';
+  source_id: string;
+  seq: number;
+  clear: boolean;
+  clear_color?: [number, number, number, number];
+  include_snapshot?: boolean;
+  blend: 'replace' | 'alpha' | 'add';
+  primitive?: 'triangle-list';
+  vertex_count: number;
+  instance_count: number;
+  bindings: InkCloudNativeGraphBinding[];
+};
+
+export interface InkCloudNativeGraphState {
+  particleCount: number;
+  seedKey: string;
+  prevFrameTime: number;
+  autoRotXPhase: number;
+  autoRotYPhase: number;
+  autoRotZPhase: number;
+  burstHoldTimer: number;
+  prevBass: number;
+}
+
+export interface InkCloudNativeGraphOptions {
+  sourceId: string;
+  params?: Partial<InkCloudParams> | Record<string, any> | null;
+  width?: number;
+  height?: number;
+  time?: number;
+  frameDelta?: number;
+  frameIndex?: number;
+  audioBass?: number;
+  audioTreble?: number;
+  state?: InkCloudNativeGraphState | null;
+  reset?: boolean;
+  includeSnapshot?: boolean;
+}
+
+export interface InkCloudNativeGraphBuildResult {
+  config: {
+    buffers: InkCloudNativeGraphBuffer[];
+    passes: InkCloudNativeGraphPass[];
+    render_passes: InkCloudNativeGraphRenderPass[];
+    readbacks: string[];
+  };
+  sourceId: string;
+  state: InkCloudNativeGraphState;
+  particleCount: number;
+  passCount: number;
+}
 
 function mat4Mul(a: Float32Array, b: Float32Array): Float32Array {
   const out = new Float32Array(16);
@@ -478,6 +582,472 @@ const BLEND_PREMULT_OVER: any = {
   color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
   alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
 };
+
+export function getInkCloudNativeShaderSources(): InkCloudNativeShaderSource[] {
+  return [
+    {
+      shaderId: INK_CLOUD_NATIVE_SHADER_IDS.sim,
+      label: 'ink-cloud/sim',
+      stage: 'compute',
+      entry: 'cs_main',
+      source: resolveGhostWgsl(SIM_WGSL, 'ink-cloud/sim'),
+    },
+    {
+      shaderId: INK_CLOUD_NATIVE_SHADER_IDS.render,
+      label: 'ink-cloud/render',
+      stage: 'render',
+      entry: 'fs_main',
+      source: resolveGhostWgsl(RENDER_WGSL, 'ink-cloud/render'),
+    },
+    {
+      shaderId: INK_CLOUD_NATIVE_SHADER_IDS.background,
+      label: 'ink-cloud/background',
+      stage: 'render',
+      entry: 'fs_main',
+      source: resolveGhostWgsl(BG_WGSL, 'ink-cloud/background'),
+    },
+  ];
+}
+
+export function buildInkCloudNativePrecompileCommands(): InkCloudNativePrecompileCommand[] {
+  return getInkCloudNativeShaderSources().map((shader) => ({
+    type: 'precompile_shader',
+    shader_id: shader.shaderId,
+    stage: shader.stage,
+    entry: shader.entry,
+    source: shader.source,
+  }));
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function bufferToBase64(buffer: ArrayBuffer): string {
+  return bytesToBase64(new Uint8Array(buffer));
+}
+
+function clampFinite(value: unknown, min: number, max: number, fallback: number): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+function boolParam(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function rgb01(c: unknown, fallback: [number, number, number]): [number, number, number] {
+  if (!Array.isArray(c) || c.length < 3) return [...fallback];
+  const looksByte = Math.max(Number(c[0]) || 0, Number(c[1]) || 0, Number(c[2]) || 0) > 1.01;
+  const div = looksByte ? 255 : 1;
+  return [
+    Math.max(0, Math.min(1, (Number(c[0]) || 0) / div)),
+    Math.max(0, Math.min(1, (Number(c[1]) || 0) / div)),
+    Math.max(0, Math.min(1, (Number(c[2]) || 0) / div)),
+  ];
+}
+
+function rotateXMat(rad: number): Float32Array {
+  const c = Math.cos(rad);
+  const s = Math.sin(rad);
+  return new Float32Array([1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, 0, 0, 0, 1]);
+}
+
+function rotateYMat(rad: number): Float32Array {
+  const c = Math.cos(rad);
+  const s = Math.sin(rad);
+  return new Float32Array([c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1]);
+}
+
+function rotateZMat(rad: number): Float32Array {
+  const c = Math.cos(rad);
+  const s = Math.sin(rad);
+  return new Float32Array([c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+}
+
+function inkHash(n: number): number {
+  const x = Math.sin(n * 12.9898) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+function sanitizeInkCloudGraphId(value: string): string {
+  return String(value || 'source').replace(/[^a-zA-Z0-9:_-]+/g, '_').slice(0, 160);
+}
+
+function normalizeInkCloudParams(input?: Partial<InkCloudParams> | Record<string, any> | null): InkCloudParams & { audioReactive: boolean } {
+  const raw = {
+    ...DEFAULT_PARAMS,
+    ...(input ?? {}),
+  } as Record<string, any>;
+  const emitterColors = Array.from({ length: MAX_EMITTERS }, (_, index) => {
+    const fallback = DEFAULT_PARAMS.emitterColors[index] ?? [1, 1, 1];
+    return rgb01(raw[`emitterColor${index + 1}`] ?? raw.emitterColors?.[index], fallback);
+  }) as [number, number, number][];
+
+  return {
+    particleCount: Math.round(clampFinite(raw.particleCount, 1024, MAX_PARTICLES, DEFAULT_PARTICLES)),
+    emitterCount: Math.round(clampFinite(raw.emitterCount, 1, MAX_EMITTERS, DEFAULT_PARAMS.emitterCount)),
+    spread: clampFinite(raw.spread, 0, 16, DEFAULT_PARAMS.spread),
+    spawnY: clampFinite(raw.spawnY, -16, 16, DEFAULT_PARAMS.spawnY),
+    spawnJitter: clampFinite(raw.spawnJitter, 0, 4, DEFAULT_PARAMS.spawnJitter),
+    avgLifetime: clampFinite(raw.avgLifetime, 0.05, 60, DEFAULT_PARAMS.avgLifetime),
+    lifetimeVar: clampFinite(raw.lifetimeVar, 0, 4, DEFAULT_PARAMS.lifetimeVar),
+    sizeStart: clampFinite(raw.sizeStart, 0.0001, 2, DEFAULT_PARAMS.sizeStart),
+    sizeEnd: clampFinite(raw.sizeEnd, 0.0001, 4, DEFAULT_PARAMS.sizeEnd),
+    fadeColor: rgb01(raw.fadeColor, DEFAULT_PARAMS.fadeColor),
+    colorFadeAmount: clampFinite(raw.colorFadeAmount, 0, 4, DEFAULT_PARAMS.colorFadeAmount),
+    buoyancy: clampFinite(raw.buoyancy, -16, 16, DEFAULT_PARAMS.buoyancy),
+    damping: clampFinite(raw.damping, 0, 32, DEFAULT_PARAMS.damping),
+    windX: clampFinite(raw.windX, -16, 16, DEFAULT_PARAMS.windX),
+    windY: clampFinite(raw.windY, -16, 16, DEFAULT_PARAMS.windY),
+    windZ: clampFinite(raw.windZ, -16, 16, DEFAULT_PARAMS.windZ),
+    curl1Strength: clampFinite(raw.curl1Strength, 0, 16, DEFAULT_PARAMS.curl1Strength),
+    curl1Scale: clampFinite(raw.curl1Scale, 0.01, 64, DEFAULT_PARAMS.curl1Scale),
+    curl1TimeFlow: clampFinite(raw.curl1TimeFlow, 0, 16, DEFAULT_PARAMS.curl1TimeFlow),
+    curl2Strength: clampFinite(raw.curl2Strength, 0, 16, DEFAULT_PARAMS.curl2Strength),
+    curl2Scale: clampFinite(raw.curl2Scale, 0.01, 128, DEFAULT_PARAMS.curl2Scale),
+    curl2TimeFlow: clampFinite(raw.curl2TimeFlow, 0, 16, DEFAULT_PARAMS.curl2TimeFlow),
+    vortexEnabled: boolParam(raw.vortexEnabled, DEFAULT_PARAMS.vortexEnabled),
+    vortexStrength: clampFinite(raw.vortexStrength, 0, 32, DEFAULT_PARAMS.vortexStrength),
+    vortexRadius: clampFinite(raw.vortexRadius, 0.001, 32, DEFAULT_PARAMS.vortexRadius),
+    vortexAxisX: clampFinite(raw.vortexAxisX, -16, 16, DEFAULT_PARAMS.vortexAxisX),
+    vortexAxisY: clampFinite(raw.vortexAxisY, -16, 16, DEFAULT_PARAMS.vortexAxisY),
+    vortexAxisZ: clampFinite(raw.vortexAxisZ, -16, 16, DEFAULT_PARAMS.vortexAxisZ),
+    bass: clampFinite(raw.bass, 0, 4, DEFAULT_PARAMS.bass),
+    treble: clampFinite(raw.treble, 0, 4, DEFAULT_PARAMS.treble),
+    audioBurstStrength: clampFinite(raw.audioBurstStrength, 0, 4, DEFAULT_PARAMS.audioBurstStrength),
+    shimmerStrength: clampFinite(raw.shimmerStrength, 0, 4, DEFAULT_PARAMS.shimmerStrength),
+    brightness: clampFinite(raw.brightness, 0, 16, DEFAULT_PARAMS.brightness),
+    alphaScale: clampFinite(raw.alphaScale, 0, 8, DEFAULT_PARAMS.alphaScale),
+    density: clampFinite(raw.density, 0.01, 64, DEFAULT_PARAMS.density),
+    bgColor: rgb01(raw.bgColor, DEFAULT_PARAMS.bgColor),
+    bgOpacity: clampFinite(raw.bgOpacity, 0, 1, DEFAULT_PARAMS.bgOpacity),
+    emitterColors,
+    fovDeg: clampFinite(raw.fovDeg, 1, 160, DEFAULT_PARAMS.fovDeg),
+    cameraZ: clampFinite(raw.cameraZ, 0.05, 100, DEFAULT_PARAMS.cameraZ),
+    rotateX: clampFinite(raw.rotateX, -3600, 3600, DEFAULT_PARAMS.rotateX),
+    rotateY: clampFinite(raw.rotateY, -3600, 3600, DEFAULT_PARAMS.rotateY),
+    rotateZ: clampFinite(raw.rotateZ, -3600, 3600, DEFAULT_PARAMS.rotateZ),
+    autoRotateX: clampFinite(raw.autoRotateX, -3600, 3600, DEFAULT_PARAMS.autoRotateX),
+    autoRotateY: clampFinite(raw.autoRotateY, -3600, 3600, DEFAULT_PARAMS.autoRotateY),
+    autoRotateZ: clampFinite(raw.autoRotateZ, -3600, 3600, DEFAULT_PARAMS.autoRotateZ),
+    audioReactive: boolParam(raw.audioReactive, true),
+  };
+}
+
+function inkCloudSeedKey(params: InkCloudParams, particleCount: number): string {
+  return [
+    particleCount,
+    params.emitterCount,
+    params.avgLifetime,
+    params.sizeStart,
+    params.spread,
+    params.spawnY,
+  ].join('|');
+}
+
+function buildInkCloudInitialParticleBuffer(params: InkCloudParams, particleCount: number): string {
+  const count = Math.max(1024, Math.min(MAX_PARTICLES, Math.round(particleCount)));
+  const buf = new ArrayBuffer(count * PARTICLE_BYTES);
+  const f = new Float32Array(buf);
+  const u = new Uint32Array(buf);
+  const emCount = Math.max(1, Math.min(MAX_EMITTERS, params.emitterCount | 0));
+
+  for (let i = 0; i < count; i++) {
+    const off = i * 16;
+    const initAge = inkHash(i * 17.13 + 4.7) * params.avgLifetime;
+    f[off + 0] = 0;
+    f[off + 1] = 0;
+    f[off + 2] = 0;
+    f[off + 3] = initAge;
+    f[off + 4] = 0;
+    f[off + 5] = 0;
+    f[off + 6] = 0;
+    f[off + 7] = params.avgLifetime;
+    f[off + 8] = 0;
+    f[off + 9] = 0;
+    f[off + 10] = 0;
+    f[off + 11] = params.sizeStart;
+    f[off + 12] = 0;
+    f[off + 13] = 0;
+    f[off + 14] = 0;
+    u[off + 15] = (i % emCount) >>> 0;
+  }
+  return bufferToBase64(buf);
+}
+
+function buildInkCloudEmitterBuffer(params: InkCloudParams): string {
+  const buf = new ArrayBuffer(MAX_EMITTERS * 32);
+  const f = new Float32Array(buf);
+  const emCount = Math.max(1, Math.min(MAX_EMITTERS, params.emitterCount | 0));
+  for (let i = 0; i < MAX_EMITTERS; i++) {
+    const off = i * 8;
+    const angle = emCount > 1 ? (i / emCount) * Math.PI * 2 : 0;
+    const col = params.emitterColors[i % params.emitterColors.length] ?? [1, 1, 1];
+    f[off + 0] = Math.cos(angle) * params.spread;
+    f[off + 1] = params.spawnY;
+    f[off + 2] = Math.sin(angle) * params.spread;
+    f[off + 4] = col[0];
+    f[off + 5] = col[1];
+    f[off + 6] = col[2];
+  }
+  return bufferToBase64(buf);
+}
+
+function buildInkCloudSimUniform(
+  params: InkCloudParams,
+  particleCount: number,
+  dt: number,
+  time: number,
+  bass: number,
+  treble: number,
+  audioBurst: number,
+): string {
+  const buf = new ArrayBuffer(192);
+  const f = new Float32Array(buf);
+  const u = new Uint32Array(buf);
+  f[0] = dt;
+  f[1] = time;
+  u[2] = particleCount >>> 0;
+  u[3] = Math.max(1, Math.min(MAX_EMITTERS, params.emitterCount | 0)) >>> 0;
+  f[4] = params.avgLifetime;
+  f[5] = params.lifetimeVar;
+  f[6] = params.sizeStart;
+  f[7] = params.sizeEnd;
+  f[8] = params.fadeColor[0];
+  f[9] = params.fadeColor[1];
+  f[10] = params.fadeColor[2];
+  f[11] = params.colorFadeAmount;
+  f[12] = params.buoyancy;
+  f[13] = params.damping;
+  f[14] = params.spawnJitter;
+  f[15] = audioBurst;
+  f[16] = params.windX;
+  f[17] = params.windY;
+  f[18] = params.windZ;
+  f[20] = params.curl1Strength;
+  f[21] = params.curl1Scale;
+  f[22] = params.curl1TimeFlow;
+  f[24] = params.curl2Strength;
+  f[25] = params.curl2Scale;
+  f[26] = params.curl2TimeFlow;
+  const vEnabled = params.vortexEnabled ? 1 : 0;
+  f[28] = 0;
+  f[29] = 0;
+  f[30] = 0;
+  f[31] = params.vortexStrength * vEnabled;
+  f[32] = params.vortexAxisX;
+  f[33] = params.vortexAxisY;
+  f[34] = params.vortexAxisZ;
+  f[35] = params.vortexRadius;
+  f[36] = bass;
+  f[37] = treble;
+  f[38] = params.shimmerStrength;
+  return bufferToBase64(buf);
+}
+
+function buildInkCloudRenderUniform(
+  params: InkCloudParams,
+  state: InkCloudNativeGraphState,
+  width: number,
+  height: number,
+  time: number,
+): string {
+  const aspect = Math.max(1, width) / Math.max(1, height);
+  const d2r = Math.PI / 180;
+  const proj = perspective(params.fovDeg, aspect, 0.05, 100);
+  const view = translate(0, 0, -params.cameraZ);
+  const model = mat4Mul(
+    rotateZMat((params.rotateZ + state.autoRotZPhase) * d2r),
+    mat4Mul(
+      rotateYMat((params.rotateY + state.autoRotYPhase) * d2r),
+      rotateXMat((params.rotateX + state.autoRotXPhase) * d2r),
+    ),
+  );
+  const viewProj = mat4Mul(proj, mat4Mul(view, model));
+
+  const buf = new ArrayBuffer(128);
+  const f = new Float32Array(buf);
+  f.set(viewProj, 0);
+  f[16] = 1;
+  f[17] = 0;
+  f[18] = 0;
+  f[20] = 0;
+  f[21] = 1;
+  f[22] = 0;
+  f[24] = params.brightness;
+  f[25] = params.alphaScale;
+  f[26] = params.density;
+  f[27] = time;
+  return bufferToBase64(buf);
+}
+
+function buildInkCloudBackgroundUniform(params: InkCloudParams): string {
+  const buf = new ArrayBuffer(16);
+  const f = new Float32Array(buf);
+  f[0] = params.bgColor[0];
+  f[1] = params.bgColor[1];
+  f[2] = params.bgColor[2];
+  f[3] = params.bgOpacity;
+  return bufferToBase64(buf);
+}
+
+function inkCloudInitialState(particleCount: number, time: number, seedKey: string): InkCloudNativeGraphState {
+  return {
+    particleCount,
+    seedKey,
+    prevFrameTime: time,
+    autoRotXPhase: 0,
+    autoRotYPhase: 0,
+    autoRotZPhase: 0,
+    burstHoldTimer: 0,
+    prevBass: 0,
+  };
+}
+
+export function buildInkCloudNativeComputeGraph(options: InkCloudNativeGraphOptions): InkCloudNativeGraphBuildResult {
+  const params = normalizeInkCloudParams(options.params);
+  const particleCount = Math.max(1024, Math.min(MAX_PARTICLES, Math.round(params.particleCount)));
+  const time = Math.max(0, Number.isFinite(options.time) ? Number(options.time) : 0);
+  const seedKey = inkCloudSeedKey(params, particleCount);
+  const mustReset = !!options.reset
+    || !options.state
+    || options.state.particleCount !== particleCount
+    || options.state.seedKey !== seedKey;
+  const state = mustReset
+    ? inkCloudInitialState(particleCount, time, seedKey)
+    : { ...options.state! };
+  let dt = typeof options.frameDelta === 'number' && Number.isFinite(options.frameDelta)
+    ? options.frameDelta
+    : (state.prevFrameTime === 0 ? 1 / 60 : time - state.prevFrameTime);
+  dt = Math.min(Math.max(dt, 0), 1 / 15);
+  state.prevFrameTime = time;
+
+  const reactive = params.audioReactive !== false;
+  const bass = reactive ? Math.min(2, clampFinite(options.audioBass, 0, 2, 0)) : 0;
+  const treble = reactive ? Math.min(2, clampFinite(options.audioTreble, 0, 2, 0)) : 0;
+  const bassDelta = Math.max(0, bass - state.prevBass);
+  if (bassDelta > 0.05) state.burstHoldTimer = Math.max(state.burstHoldTimer, 0.15);
+  state.burstHoldTimer = Math.max(0, state.burstHoldTimer - dt);
+  state.prevBass = bass;
+  const audioBurst = state.burstHoldTimer > 0 ? params.audioBurstStrength : 0;
+
+  state.autoRotXPhase += params.autoRotateX * dt;
+  state.autoRotYPhase += params.autoRotateY * dt;
+  state.autoRotZPhase += params.autoRotateZ * dt;
+
+  const sourceId = String(options.sourceId || 'ink-cloud-native-source');
+  const prefix = `ink-cloud:${sanitizeInkCloudGraphId(sourceId)}:${particleCount}`;
+  const id = (name: string) => `${prefix}:${name}`;
+  const width = Math.round(options.width || 1920);
+  const height = Math.round(options.height || 1080);
+
+  const buffers: InkCloudNativeGraphBuffer[] = [
+    {
+      id: id('sim-uniform'),
+      kind: 'uniform',
+      byte_length: 192,
+      initial_b64: buildInkCloudSimUniform(params, particleCount, dt, time, bass, treble, audioBurst),
+    },
+    {
+      id: id('render-uniform'),
+      kind: 'uniform',
+      byte_length: 128,
+      initial_b64: buildInkCloudRenderUniform(params, state, width, height, time),
+    },
+    {
+      id: id('bg-uniform'),
+      kind: 'uniform',
+      byte_length: 16,
+      initial_b64: buildInkCloudBackgroundUniform(params),
+    },
+    {
+      id: id('emitters'),
+      kind: 'storage',
+      byte_length: MAX_EMITTERS * 32,
+      initial_b64: buildInkCloudEmitterBuffer(params),
+    },
+    {
+      id: id('particles'),
+      kind: 'storage',
+      byte_length: particleCount * PARTICLE_BYTES,
+      persistent: true,
+      clear: mustReset,
+      initial_b64: mustReset ? buildInkCloudInitialParticleBuffer(params, particleCount) : undefined,
+    },
+  ];
+  const passes: InkCloudNativeGraphPass[] = [{
+    name: 'ink-cloud-sim',
+    shader_id: INK_CLOUD_NATIVE_SHADER_IDS.sim,
+    entry: 'cs_main',
+    dispatch: [Math.ceil(particleCount / 64), 1, 1],
+    bindings: [
+      { binding: 0, resource: id('particles'), kind: 'storage' },
+      { binding: 1, resource: id('sim-uniform'), kind: 'uniform' },
+      { binding: 2, resource: id('emitters'), kind: 'read-only-storage' },
+    ],
+  }];
+  const seq = Math.max(0, Math.round(options.frameIndex ?? 0));
+  const renderPasses: InkCloudNativeGraphRenderPass[] = [
+    {
+      name: 'ink-cloud-background',
+      shader_id: INK_CLOUD_NATIVE_SHADER_IDS.background,
+      vertex_entry: 'vs_main',
+      fragment_entry: 'fs_main',
+      target: 'source_frame',
+      source_id: sourceId,
+      seq,
+      clear: true,
+      clear_color: [0, 0, 0, 0],
+      include_snapshot: false,
+      blend: 'alpha',
+      primitive: 'triangle-list',
+      vertex_count: 3,
+      instance_count: 1,
+      bindings: [
+        { binding: 0, resource: id('bg-uniform'), kind: 'uniform' },
+      ],
+    },
+    {
+      name: 'ink-cloud-render',
+      shader_id: INK_CLOUD_NATIVE_SHADER_IDS.render,
+      vertex_entry: 'vs_main',
+      fragment_entry: 'fs_main',
+      target: 'source_frame',
+      source_id: sourceId,
+      seq,
+      clear: false,
+      include_snapshot: !!options.includeSnapshot,
+      blend: 'alpha',
+      primitive: 'triangle-list',
+      vertex_count: 6,
+      instance_count: particleCount,
+      bindings: [
+        { binding: 0, resource: id('particles'), kind: 'read-only-storage' },
+        { binding: 1, resource: id('render-uniform'), kind: 'uniform' },
+      ],
+    },
+  ];
+
+  return {
+    config: {
+      buffers,
+      passes,
+      render_passes: renderPasses,
+      readbacks: [],
+    },
+    sourceId,
+    state,
+    particleCount,
+    passCount: passes.length + renderPasses.length,
+  };
+}
 
 export class WebGPUInkCloud {
   private device: any;

@@ -12,6 +12,11 @@ import {
   buildParticleFieldNativePrecompileCommands,
   type ParticleFieldNativeGraphState,
 } from '../../src/lib/renderer/webgpuParticleField';
+import {
+  buildInkCloudNativeComputeGraph,
+  buildInkCloudNativePrecompileCommands,
+  type InkCloudNativeGraphState,
+} from '../../src/lib/renderer/webgpuInkCloud';
 
 const RUN_NATIVE_INTEGRATION = process.env.GA_NATIVE_SMOKE3D_INTEGRATION === '1';
 const root = process.cwd();
@@ -146,8 +151,10 @@ describe('3D Smoke native renderer integration', () => {
     expect(capabilities.features.compute_graph_source_frame_target).toBe(true);
     expect(capabilities.features.native_3d_smoke_graph).toBe(true);
     expect(capabilities.features.native_particle_field_graph).toBe(true);
+    expect(capabilities.features.native_ink_cloud_graph).toBe(true);
     expect(capabilities.native_graph_instruments).toContain('smoke-3d');
     expect(capabilities.native_graph_instruments).toContain('particle-field');
+    expect(capabilities.native_graph_instruments).toContain('ink-cloud');
     expect(capabilities.native_graph_instrument_manifest).toContainEqual(
       expect.objectContaining({
         id: 'smoke-3d',
@@ -162,11 +169,19 @@ describe('3D Smoke native renderer integration', () => {
         render_target: 'source_frame',
       }),
     );
+    expect(capabilities.native_graph_instrument_manifest).toContainEqual(
+      expect.objectContaining({
+        id: 'ink-cloud',
+        source_uri_prefix: 'native-graph://ink-cloud/',
+        render_target: 'source_frame',
+      }),
+    );
 
     await rpc.send('submit_commands', {
       commands: [
         ...buildSmoke3DNativePrecompileCommands(),
         ...buildParticleFieldNativePrecompileCommands(),
+        ...buildInkCloudNativePrecompileCommands(),
       ],
     }, 10000);
 
@@ -291,5 +306,68 @@ describe('3D Smoke native renderer integration', () => {
       particleChecksums.add(String(snapshot.checksum));
     }
     expect(particleChecksums.size).toBeGreaterThan(1);
+
+    await rpc.send('submit_commands', {
+      commands: [
+        { type: 'remove_layer', layer_id: 'native-particle-field' },
+      ],
+    });
+
+    const inkSourceId = 'gpu:integration-ink:ink-cloud';
+    await rpc.send('submit_commands', {
+      commands: [
+        { type: 'upsert_layer', layer_id: 'native-ink-cloud', z_index: 0, blend_mode: 'normal', opacity: 1, corners: FULLSCREEN_CORNERS },
+        { type: 'set_layer_visibility', layer_id: 'native-ink-cloud', visible: true },
+        { type: 'bind_media_source', layer_id: 'native-ink-cloud', source_id: inkSourceId, uri: 'native-graph://ink-cloud/integration', source_type: 'image' },
+      ],
+    });
+
+    let inkState: InkCloudNativeGraphState | null = null;
+    const inkChecksums = new Set<string>();
+    for (let frame = 0; frame < 3; frame++) {
+      const graph = buildInkCloudNativeComputeGraph({
+        sourceId: inkSourceId,
+        params: {
+          particleCount: 8192,
+          emitterCount: 4,
+          spread: 0.46,
+          bgOpacity: 1,
+          alphaScale: 0.85,
+          brightness: 1.45,
+          autoRotateY: 6,
+        },
+        width: 320,
+        height: 180,
+        time: frame / 30,
+        frameDelta: 1 / 30,
+        frameIndex: frame + 1,
+        audioBass: frame === 1 ? 0.8 : 0.35,
+        audioTreble: 0.42,
+        state: inkState,
+        reset: frame === 0,
+      });
+      inkState = graph.state;
+      const inkResult: any = await rpc.send('compute_graph', graph.config as unknown as Record<string, unknown>, 20000);
+      expect(inkResult.pass_count).toBe(1);
+      expect(inkResult.renders).toHaveLength(2);
+      expect(inkResult.renders[0]).toMatchObject({
+        target: 'source_frame',
+        source_id: inkSourceId,
+        blend: 'alpha',
+      });
+      expect(inkResult.renders[1]).toMatchObject({
+        target: 'source_frame',
+        source_id: inkSourceId,
+        blend: 'alpha',
+      });
+      const snapshot = await rpc.send('frame_snapshot', {
+        include_pixels: false,
+        time: 0.5 + frame / 30,
+        frame_index: frame + 12,
+      }, 10000);
+      assertVisibleFrame(`native Ink Cloud source-frame layer ${frame}`, snapshot, 0.01);
+      inkChecksums.add(String(snapshot.checksum));
+    }
+    expect(inkChecksums.size).toBeGreaterThan(1);
   }, 60000);
 });
