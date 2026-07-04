@@ -151,6 +151,8 @@ export interface ClearRuntimeCachesConfig {
   clear_texture_pool: boolean;
   clear_metadata_caches: boolean;
   clear_prefetch_cache: boolean;
+  clear_native_graph_buffers?: boolean;
+  native_graph_buffer_prefixes?: string[];
 }
 
 export interface MetadataCacheCapsConfig {

@@ -91,6 +91,7 @@ const CORE_RPC_METHODS: &[&str] = &[
     "set_shader_precompile_policy",
     "set_texture_pool_cap",
     "set_metadata_cache_caps",
+    "clear_runtime_caches",
     "present",
     "capabilities",
     "get_capabilities",
@@ -1634,6 +1635,8 @@ impl App {
             "source_frame_file_handoff": true,
             "source_frame_mips": self.renderer.as_ref().is_some_and(|renderer| renderer.source_frame_mip_levels > 1),
             "source_frame_hdr": self.renderer.as_ref().is_some_and(|renderer| renderer.source_frame_format == SOURCE_FRAME_FORMAT_HDR),
+            "runtime_cache_clear": true,
+            "native_graph_buffer_prune": true,
             "compute_shader_host": true,
             "compute_graph_host": true,
             "compute_graph_render": true,
@@ -2478,6 +2481,7 @@ impl App {
                 self.apply_metadata_cache_caps(&req.params);
                 Ok(json!(self.status()))
             }
+            "clear_runtime_caches" => Ok(self.clear_runtime_caches(&req.params)),
             "shutdown" => {
                 self.running = false;
                 event_loop.exit();
@@ -3269,6 +3273,62 @@ impl App {
             "first_words": probe.first_words,
             "pipeline_cache_entries": renderer.native_pipeline_cache_count(),
         }))
+    }
+
+    fn clear_runtime_caches(&mut self, params: &Value) -> Value {
+        let config = params.get("config").unwrap_or(params);
+        let clear_precompiled_shaders = bool_at(config, &["clear_precompiled_shaders"])
+            .or_else(|| bool_at(config, &["clearPrecompiledShaders"]))
+            .unwrap_or(false);
+        let clear_native_graph_buffers = bool_at(config, &["clear_native_graph_buffers"])
+            .or_else(|| bool_at(config, &["clearNativeGraphBuffers"]))
+            .or_else(|| bool_at(config, &["clear_graph_buffers"]))
+            .or_else(|| bool_at(config, &["clearGraphBuffers"]))
+            .unwrap_or(false);
+        let graph_buffer_prefixes = string_array_at(config, &["native_graph_buffer_prefixes"])
+            .or_else(|| string_array_at(config, &["nativeGraphBufferPrefixes"]))
+            .or_else(|| string_array_at(config, &["graph_buffer_prefixes"]))
+            .or_else(|| string_array_at(config, &["graphBufferPrefixes"]))
+            .unwrap_or_default();
+
+        let cleared_shader_records = if clear_precompiled_shaders {
+            let count = self.shader_registry.len();
+            self.shader_registry.clear();
+            self.shader_sources.clear();
+            count
+        } else {
+            0
+        };
+
+        let mut cleared_pipeline_entries = 0usize;
+        let mut cleared_native_graph_buffers = 0usize;
+        if let Some(renderer) = self.renderer.as_mut() {
+            if clear_precompiled_shaders {
+                cleared_pipeline_entries = renderer.clear_native_pipeline_caches();
+            }
+            if clear_native_graph_buffers || !graph_buffer_prefixes.is_empty() {
+                cleared_native_graph_buffers = renderer.clear_native_compute_graph_buffers(
+                    clear_native_graph_buffers,
+                    &graph_buffer_prefixes,
+                );
+            }
+            self.stats.pipeline_cache_entries = renderer.native_pipeline_cache_count() as u64;
+            self.stats.compute_graph_persistent_buffers =
+                renderer.native_compute_graph_buffer_count() as u64;
+        }
+        self.stats.shader_cache_entries = self.shader_registry.len() as u64;
+        self.stats.precompiled_vertex_shaders = self.precompiled_shader_count("vertex") as u64;
+        self.stats.precompiled_pixel_shaders = self.precompiled_shader_count("pixel") as u64;
+
+        json!({
+            "cleared_shader_records": cleared_shader_records,
+            "cleared_pipeline_entries": cleared_pipeline_entries,
+            "cleared_native_graph_buffers": cleared_native_graph_buffers,
+            "remaining_shader_records": self.shader_registry.len(),
+            "remaining_pipeline_entries": self.renderer.as_ref().map(RenderState::native_pipeline_cache_count).unwrap_or(0),
+            "remaining_native_graph_buffers": self.renderer.as_ref().map(RenderState::native_compute_graph_buffer_count).unwrap_or(0),
+            "graph_buffer_prefixes": graph_buffer_prefixes,
+        })
     }
 
     fn compute_graph(&mut self, params: &Value) -> Result<Value, String> {
@@ -5318,6 +5378,18 @@ impl RenderState {
             .min(u32::MAX as usize) as u32
     }
 
+    fn clear_native_pipeline_caches(&mut self) -> usize {
+        let count = self
+            .native_shader_pipelines
+            .len()
+            .saturating_add(self.native_compute_pipelines.len())
+            .saturating_add(self.native_graph_render_pipelines.len());
+        self.native_shader_pipelines.clear();
+        self.native_compute_pipelines.clear();
+        self.native_graph_render_pipelines.clear();
+        count
+    }
+
     fn present_mode_label(&self) -> String {
         present_mode_label(self.config.present_mode).to_string()
     }
@@ -6414,6 +6486,30 @@ impl RenderState {
             .min(u32::MAX as usize) as u32
     }
 
+    fn clear_native_compute_graph_buffers(
+        &mut self,
+        clear_all: bool,
+        prefixes: &[String],
+    ) -> usize {
+        if clear_all {
+            let count = self.native_compute_graph_buffers.len();
+            self.native_compute_graph_buffers.clear();
+            return count;
+        }
+        let prefixes = prefixes
+            .iter()
+            .map(|prefix| prefix.trim())
+            .filter(|prefix| !prefix.is_empty())
+            .collect::<Vec<_>>();
+        if prefixes.is_empty() {
+            return 0;
+        }
+        let before = self.native_compute_graph_buffers.len();
+        self.native_compute_graph_buffers
+            .retain(|id, _| !prefixes.iter().any(|prefix| id.starts_with(prefix)));
+        before.saturating_sub(self.native_compute_graph_buffers.len())
+    }
+
     fn readback_u32_buffer(
         &self,
         readback_buffer: &wgpu::Buffer,
@@ -7224,6 +7320,23 @@ fn string_at(value: &Value, path: &[&str]) -> Option<String> {
         current = current.get(*key)?;
     }
     current.as_str().map(ToString::to_string)
+}
+
+fn string_array_at(value: &Value, path: &[&str]) -> Option<Vec<String>> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    Some(
+        current
+            .as_array()?
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(ToString::to_string)
+            .collect(),
+    )
 }
 
 fn compute_binding_kind_from_value(value: &Value) -> Option<NativeComputeBufferBindingKind> {
