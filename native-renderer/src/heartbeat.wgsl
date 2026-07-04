@@ -644,7 +644,7 @@ fn native_blend(dst_in: vec3<f32>, src_in: vec3<f32>, alpha: f32, mode: f32) -> 
   let m = i32(floor(mode + 0.5));
   var blended = src;
   if (m == 1) {
-    blended = dst + src;
+    blended = clamp(dst + src, vec3<f32>(0.0), vec3<f32>(1.0));
   } else if (m == 2) {
     blended = dst * src;
   } else if (m == 3) {
