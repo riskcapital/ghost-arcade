@@ -11,10 +11,34 @@ const REQUIRED_CHECKS = [
   'native-flythrough-graph',
   'native-pixel-particles-graph',
   'native-point-cloud-fx-graph',
+  'managed-output',
 ];
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForManagedOutputPresent(broker) {
+  let latest = null;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    await broker.invoke('native_renderer_submit_commands', {
+      commands: [{ type: 'present' }],
+    });
+    await sleep(50);
+    latest = await broker.invoke('native_renderer_get_status');
+    if (
+      latest?.output_present_healthy &&
+      Number(latest.frames_presented ?? 0) > 0 &&
+      Number(latest.swapchain_presented ?? 0) > 0
+    ) {
+      return latest;
+    }
+  }
+  throw new Error(`managed native output never presented a frame: ${JSON.stringify(latest)}`);
 }
 
 const broker = createNativeRendererBroker({
@@ -41,6 +65,12 @@ try {
     },
   });
   assert(status?.backend_ready, `broker failed to start native core: ${JSON.stringify(status)}`);
+
+  const outputStatus = await waitForManagedOutputPresent(broker);
+  assert(
+    Number(outputStatus.commands_dropped ?? 0) === 0,
+    `explicit present command should not be dropped by native core: ${JSON.stringify(outputStatus)}`,
+  );
 
   const capabilities = await broker.invoke('native_renderer_get_capabilities');
   assert(capabilities?.features?.compute_graph_source_frame_target, 'broker capabilities lost compute graph source-frame support');
