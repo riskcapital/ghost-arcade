@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   NATIVE_EFFECT_PASS_MANIFEST,
   NATIVE_EFFECT_PASS_SHADER_ID,
+  buildNativeEffectPassChainGraph,
   buildNativeEffectPassGraph,
   buildNativeEffectPassPrecompileCommands,
   getNativeEffectPassShaderSource,
@@ -247,6 +248,46 @@ describe('Native effect-pass template', () => {
     ]);
   });
 
+  it('builds an ordered source-frame render graph for effect chains', () => {
+    const graph = buildNativeEffectPassChainGraph({
+      sourceId: 'gpu:layer-a:source',
+      targetSourceId: 'gpu:layer-a:effect:final',
+      intermediatePrefix: 'gpu:layer-a:chain',
+      effects: [
+        { effect: 'invert', amount: 1 },
+        { effect: 'grayscale', amount: 0.5 },
+      ],
+      width: 1280,
+      height: 720,
+      time: 3,
+      frameDelta: 1 / 60,
+      frameIndex: 180,
+      seq: 900,
+    });
+
+    expect(graph.effects).toEqual(['invert', 'grayscale']);
+    expect(graph.config.passes).toEqual([]);
+    expect(graph.config.readbacks).toEqual([]);
+    expect(graph.config.buffers).toHaveLength(2);
+    expect(graph.config.render_passes).toHaveLength(2);
+    expect(graph.config.render_passes[0]).toMatchObject({
+      name: 'effect-pass-invert-1',
+      source_id: 'gpu:layer-a:chain:step:0',
+      seq: 900,
+    });
+    expect(graph.config.render_passes[1]).toMatchObject({
+      name: 'effect-pass-grayscale-2',
+      source_id: 'gpu:layer-a:effect:final',
+      seq: 901,
+    });
+    expect(graph.config.render_passes[0].bindings).toEqual(expect.arrayContaining([
+      { binding: 0, kind: 'source-frame-texture', source_id: 'gpu:layer-a:source' },
+    ]));
+    expect(graph.config.render_passes[1].bindings).toEqual(expect.arrayContaining([
+      { binding: 0, kind: 'source-frame-texture', source_id: 'gpu:layer-a:chain:step:0' },
+    ]));
+  });
+
   const itIfNativeCore = existsSync(nativeCoreBin) ? it : it.skip;
 
   itIfNativeCore('renders an uploaded source frame through the native effect-pass graph', async () => {
@@ -350,6 +391,116 @@ describe('Native effect-pass template', () => {
 
       const status = await rpc.send('status', {}, 5000);
       expect(Number(status?.compute_graph_source_frame_renders ?? 0)).toBeGreaterThan(0);
+    } finally {
+      await rpc.close();
+    }
+  }, 30000);
+
+  itIfNativeCore('renders an ordered native effect-pass chain in one compute graph', async () => {
+    const rpc = createNativeRpc();
+    try {
+      await rpc.send('start', {
+        config: {
+          backend: process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'd3d12' : 'vulkan',
+          width: 160,
+          height: 90,
+          target_fps: 30,
+        },
+      }, 12000);
+      await delay(80);
+
+      const capabilities = await rpc.send('capabilities', {}, 5000);
+      expect(capabilities?.features?.compute_graph_render).toBe(true);
+      expect(capabilities?.features?.compute_graph_source_frame_target).toBe(true);
+      const precompileSummary = await rpc.send('submit_commands', {
+        commands: buildNativeEffectPassPrecompileCommands(),
+      }, 5000);
+      expect(Number(precompileSummary?.dropped ?? 0)).toBe(0);
+
+      const sourceId = 'native-effect-pass-chain-source';
+      const targetSourceId = 'native-effect-pass-chain-output';
+      const layerId = 'native-effect-pass-chain-layer';
+      const sourceBytes = makeSourceBytes(32, 32);
+      await rpc.send('submit_commands', {
+        commands: [
+          {
+            type: 'upload_source_frame',
+            source_id: sourceId,
+            width: 32,
+            height: 32,
+            rgba_b64: Buffer.from(sourceBytes).toString('base64'),
+            seq: 1,
+          },
+          {
+            type: 'upsert_layer',
+            layer_id: layerId,
+            z_index: 0,
+            blend_mode: 'normal',
+            opacity: 1,
+            corners: FULLSCREEN_CORNERS,
+          },
+          { type: 'set_layer_visibility', layer_id: layerId, visible: true },
+          {
+            type: 'bind_media_source',
+            layer_id: layerId,
+            source_id: sourceId,
+            uri: 'native-effect-pass-chain-test://source',
+            source_type: 'image',
+          },
+        ],
+      }, 5000);
+
+      const sourceSnapshot = await rpc.send('frame_snapshot', {
+        include_pixels: false,
+        time: 0,
+        frame_index: 1,
+      }, 8000);
+      assertVisibleSnapshot('effect pass chain source layer', sourceSnapshot);
+
+      const graph = buildNativeEffectPassChainGraph({
+        sourceId,
+        targetSourceId,
+        intermediatePrefix: 'native-effect-pass-chain-step',
+        effects: [
+          { effect: 'invert', amount: 1 },
+          { effect: 'grayscale', amount: 1 },
+        ],
+        width: 160,
+        height: 90,
+        time: 0.4,
+        frameDelta: 1 / 30,
+        frameIndex: 4,
+        seq: 40,
+      });
+      const graphResult = await rpc.send('compute_graph', graph.config, 8000);
+      expect(graphResult?.renders).toHaveLength(2);
+      expect(graphResult?.renders?.[0]).toMatchObject({
+        target: 'source_frame',
+        source_id: 'native-effect-pass-chain-step:step:0',
+      });
+      expect(graphResult?.renders?.[1]).toMatchObject({
+        target: 'source_frame',
+        source_id: targetSourceId,
+      });
+
+      await rpc.send('submit_commands', {
+        commands: [
+          {
+            type: 'bind_media_source',
+            layer_id: layerId,
+            source_id: targetSourceId,
+            uri: 'native-effect-pass-chain-test://output',
+            source_type: 'image',
+          },
+        ],
+      }, 5000);
+      const effectSnapshot = await rpc.send('frame_snapshot', {
+        include_pixels: false,
+        time: 0.4,
+        frame_index: 4,
+      }, 8000);
+      assertVisibleSnapshot('effect pass chain output layer', effectSnapshot);
+      expect(effectSnapshot.checksum).not.toBe(sourceSnapshot.checksum);
     } finally {
       await rpc.close();
     }

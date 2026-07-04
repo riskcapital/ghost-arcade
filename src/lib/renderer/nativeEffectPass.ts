@@ -40,8 +40,21 @@ export interface NativeEffectPassOptions {
   seq?: number;
 }
 
+export interface NativeEffectPassChainPass {
+  effect: NativeEffectPassId;
+  amount?: number;
+  mix?: number;
+  params?: NativeEffectPassOptions['params'];
+}
+
+export interface NativeEffectPassChainOptions extends Omit<NativeEffectPassOptions, 'effect' | 'amount' | 'mix' | 'params'> {
+  effects: NativeEffectPassChainPass[];
+  intermediatePrefix?: string;
+}
+
 export interface NativeEffectPassGraph {
   effect: NativeEffectPassId;
+  effects?: NativeEffectPassId[];
   config: {
     buffers: Array<Record<string, unknown>>;
     passes: unknown[];
@@ -268,11 +281,39 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
   ];
 }
 
+function buildNativeEffectPassRenderPass(
+  options: NativeEffectPassOptions,
+  manifest: NativeEffectPassManifestEntry,
+  uniformId: string,
+  nameSuffix = '',
+): Record<string, unknown> {
+  return {
+    name: `effect-pass-${manifest.id}${nameSuffix}`,
+    shader_id: NATIVE_EFFECT_PASS_SHADER_ID,
+    target: 'source_frame',
+    source_id: options.targetSourceId,
+    seq: Math.max(0, Math.round(options.seq ?? options.frameIndex ?? 0)),
+    vertex_entry: 'vs_full',
+    fragment_entry: 'fs_effect',
+    vertex_count: 3,
+    instance_count: 1,
+    clear: options.clear ?? true,
+    clear_color: [0, 0, 0, 0],
+    blend: 'replace',
+    bindings: [
+      { binding: 0, kind: 'source-frame-texture', source_id: options.sourceId },
+      { binding: 1, kind: 'source-frame-sampler' },
+      { binding: 2, resource: uniformId, kind: 'uniform' },
+    ],
+  };
+}
+
 export function buildNativeEffectPassGraph(options: NativeEffectPassOptions): NativeEffectPassGraph {
   const manifest = nativeEffectPassManifestEntry(options.effect);
   const targetSourceId = options.targetSourceId || `${options.sourceId}:effect:${options.effect}`;
   const safeTarget = safeGraphId(targetSourceId);
   const uniformId = `effect-pass:${safeTarget}:uniform`;
+  const renderOptions = { ...options, targetSourceId };
   return {
     effect: manifest.id,
     config: {
@@ -284,25 +325,67 @@ export function buildNativeEffectPassGraph(options: NativeEffectPassOptions): Na
       }],
       passes: [],
       readbacks: [],
-      render_passes: [{
-        name: `effect-pass-${manifest.id}`,
-        shader_id: NATIVE_EFFECT_PASS_SHADER_ID,
-        target: 'source_frame',
-        source_id: targetSourceId,
-        seq: Math.max(0, Math.round(options.seq ?? options.frameIndex ?? 0)),
-        vertex_entry: 'vs_full',
-        fragment_entry: 'fs_effect',
-        vertex_count: 3,
-        instance_count: 1,
-        clear: options.clear ?? true,
-        clear_color: [0, 0, 0, 0],
-        blend: 'replace',
-        bindings: [
-          { binding: 0, kind: 'source-frame-texture', source_id: options.sourceId },
-          { binding: 1, kind: 'source-frame-sampler' },
-          { binding: 2, resource: uniformId, kind: 'uniform' },
-        ],
-      }],
+      render_passes: [buildNativeEffectPassRenderPass(renderOptions, manifest, uniformId)],
+    },
+  };
+}
+
+export function buildNativeEffectPassChainGraph(options: NativeEffectPassChainOptions): NativeEffectPassGraph {
+  const effects = options.effects.filter((effect) => effect && NATIVE_EFFECT_PASS_BY_ID.has(effect.effect));
+  if (!effects.length) {
+    throw new Error('Native effect-pass chain requires at least one supported effect');
+  }
+  if (effects.length === 1) {
+    return buildNativeEffectPassGraph({
+      ...options,
+      effect: effects[0].effect,
+      amount: effects[0].amount,
+      mix: effects[0].mix,
+      params: effects[0].params,
+    });
+  }
+
+  const buffers: Array<Record<string, unknown>> = [];
+  const renderPasses: Array<Record<string, unknown>> = [];
+  const finalTargetSourceId = options.targetSourceId || `${options.sourceId}:effect:${effects[effects.length - 1].effect}`;
+  const safeFinalTarget = safeGraphId(finalTargetSourceId);
+  const intermediatePrefix = safeGraphId(options.intermediatePrefix || `${finalTargetSourceId}:chain`);
+  let currentSourceId = options.sourceId;
+
+  effects.forEach((effect, index) => {
+    const manifest = nativeEffectPassManifestEntry(effect.effect);
+    const targetSourceId = index === effects.length - 1
+      ? finalTargetSourceId
+      : `${intermediatePrefix}:step:${index}`;
+    const uniformId = `effect-pass:${safeFinalTarget}:pass:${index}:uniform`;
+    const passOptions: NativeEffectPassOptions = {
+      ...options,
+      sourceId: currentSourceId,
+      targetSourceId,
+      effect: effect.effect,
+      amount: effect.amount,
+      mix: effect.mix,
+      params: effect.params,
+      seq: Math.max(0, Math.round(options.seq ?? options.frameIndex ?? 0)) + index,
+    };
+    buffers.push({
+      id: uniformId,
+      kind: 'uniform',
+      byte_length: 64,
+      initial_f32: packNativeEffectPassUniforms(passOptions),
+    });
+    renderPasses.push(buildNativeEffectPassRenderPass(passOptions, manifest, uniformId, `-${index + 1}`));
+    currentSourceId = targetSourceId;
+  });
+
+  return {
+    effect: effects[0].effect,
+    effects: effects.map((effect) => effect.effect),
+    config: {
+      buffers,
+      passes: [],
+      readbacks: [],
+      render_passes: renderPasses,
     },
   };
 }

@@ -59,7 +59,7 @@ import {
 } from '$lib/renderer/shaders/webgpuVolumetricSpheresShader';
 import {
   NATIVE_EFFECT_PASS_MANIFEST,
-  buildNativeEffectPassGraph,
+  buildNativeEffectPassChainGraph,
   buildNativeEffectPassPrecompileCommands,
   type NativeEffectPassId,
 } from '$lib/renderer/nativeEffectPass';
@@ -1515,36 +1515,30 @@ export class NativeRendererSync {
           if (!route.inputSource || !route.effectPasses?.length) {
             throw new Error('native effect-pass route is missing input source or effect metadata');
           }
-          let currentSourceId = route.inputSource.id;
-          for (let effectIndex = 0; effectIndex < route.effectPasses.length; effectIndex += 1) {
-            const effectPass = route.effectPasses[effectIndex];
-            const targetSourceId = effectIndex === route.effectPasses.length - 1
-              ? route.source.id
-              : `${route.source.id}:step:${effectIndex}`;
-            const effectGraph = buildNativeEffectPassGraph({
-              sourceId: currentSourceId,
-              targetSourceId,
+          const effectGraph = buildNativeEffectPassChainGraph({
+            sourceId: route.inputSource.id,
+            targetSourceId: route.source.id,
+            effects: route.effectPasses.map((effectPass) => ({
               effect: effectPass.effect,
-              width,
-              height,
-              time: graphTime,
-              frameDelta: graphDelta,
-              frameIndex: graphFrameIndex,
               amount: effectPass.amount,
               mix: 1,
-              seq: graphSeq * 16 + effectIndex,
-            });
-            const result = await runNativeRendererComputeGraph(effectGraph.config as unknown as Record<string, unknown>);
-            const renders = Array.isArray((result as any)?.renders)
-              ? (result as any).renders
-              : [(result as any)?.render].filter(Boolean);
-            const renderedSourceFrame = renders.some((render: any) =>
-              render?.target === 'source_frame' && render?.source_id === targetSourceId,
-            );
-            if (!renderedSourceFrame) {
-              throw new Error(`native effect-pass graph returned no source-frame render for ${targetSourceId}`);
-            }
-            currentSourceId = targetSourceId;
+            })),
+            width,
+            height,
+            time: graphTime,
+            frameDelta: graphDelta,
+            frameIndex: graphFrameIndex,
+            seq: graphSeq * 16,
+          });
+          const result = await runNativeRendererComputeGraph(effectGraph.config as unknown as Record<string, unknown>);
+          const renders = Array.isArray((result as any)?.renders)
+            ? (result as any).renders
+            : [(result as any)?.render].filter(Boolean);
+          const renderedSourceFrame = renders.some((render: any) =>
+            render?.target === 'source_frame' && render?.source_id === route.source.id,
+          );
+          if (!renderedSourceFrame) {
+            throw new Error(`native effect-pass graph returned no source-frame render for ${route.source.id}`);
           }
           routeState.state = null;
           routeState.lastGraphFrameIndex = graphFrameIndex;
