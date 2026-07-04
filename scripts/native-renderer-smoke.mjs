@@ -519,6 +519,7 @@ async function main() {
       !capabilities.features.compute_graph_clear_color ||
       !capabilities.features.compute_graph_source_frame_target ||
       !capabilities.features.persistent_compute_buffers ||
+      !capabilities.features.native_output_mirror_texture ||
       !capabilities.features.native_planet_graph ||
       !capabilities.features.native_3d_smoke_graph ||
       !capabilities.features.native_volumetric_spheres_graph ||
@@ -538,6 +539,7 @@ async function main() {
       'native-flythrough-graph',
       'native-pixel-particles-graph',
       'native-point-cloud-fx-graph',
+      'native-output-mirror',
     ]) {
       if (!readinessChecks.get(id)?.ok) {
         throw new Error(`native readiness report has stale or missing ${id}: ${JSON.stringify(readiness)}`);

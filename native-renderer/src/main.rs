@@ -1422,6 +1422,8 @@ struct RenderState {
     native_compute_pipelines: HashMap<String, NativeComputePipeline>,
     native_graph_render_pipelines: HashMap<String, NativeGraphRenderPipeline>,
     native_compute_graph_buffers: HashMap<String, NativeComputeGraphGpuBuffer>,
+    output_mirror_texture: wgpu::Texture,
+    output_mirror_view: wgpu::TextureView,
     snapshot_texture: wgpu::Texture,
     snapshot_view: wgpu::TextureView,
     last_frame_metrics: Option<SnapshotMetrics>,
@@ -1635,6 +1637,7 @@ impl App {
             "multi_pass_instruments": false,
             "storage_buffer_instruments": true,
             "shared_texture_source_frame_upload": cfg!(target_os = "macos"),
+            "native_output_mirror_texture": true,
             "shared_texture_upload": false,
             "shared_texture_output_export": false,
             "native_texture_share_sender": false,
@@ -2250,6 +2253,12 @@ impl App {
                         "label": "Shared texture media transport",
                         "ok": false,
                         "detail": "full media shared texture transport is pending; source-frame shared handle upload is tracked separately"
+                    },
+                    {
+                        "id": "native-output-mirror",
+                        "label": "Native offscreen output mirror",
+                        "ok": self.renderer.is_some(),
+                        "detail": if self.renderer.is_some() { "composite renders into a native offscreen output texture before swapchain present" } else { "native renderer has not created a wgpu device" }
                     },
                     {
                         "id": "shared-texture-output-export",
@@ -4599,8 +4608,20 @@ impl RenderState {
         let source_frame_blitter = TextureBlitterBuilder::new(&device, source_frame_format)
             .sample_type(wgpu::FilterMode::Linear)
             .build();
-        let (snapshot_texture, snapshot_view) =
-            Self::create_snapshot_target(&device, config.width, config.height, format);
+        let (output_mirror_texture, output_mirror_view) = Self::create_offscreen_target(
+            &device,
+            config.width,
+            config.height,
+            format,
+            "Ghost Render Core Output Mirror",
+        );
+        let (snapshot_texture, snapshot_view) = Self::create_offscreen_target(
+            &device,
+            config.width,
+            config.height,
+            format,
+            "Ghost Render Core Snapshot Mirror",
+        );
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Ghost Render Core Bind Group Layout"),
             entries: &[
@@ -4869,6 +4890,8 @@ impl RenderState {
             native_compute_pipelines: HashMap::new(),
             native_graph_render_pipelines: HashMap::new(),
             native_compute_graph_buffers: HashMap::new(),
+            output_mirror_texture,
+            output_mirror_view,
             snapshot_texture,
             snapshot_view,
             last_frame_metrics: None,
@@ -4884,14 +4907,15 @@ impl RenderState {
         Some(self.adapter_name.clone())
     }
 
-    fn create_snapshot_target(
+    fn create_offscreen_target(
         device: &wgpu::Device,
         width: u32,
         height: u32,
         format: wgpu::TextureFormat,
+        label: &'static str,
     ) -> (wgpu::Texture, wgpu::TextureView) {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Ghost Render Core Snapshot Mirror"),
+            label: Some(label),
             size: wgpu::Extent3d {
                 width: width.max(1),
                 height: height.max(1),
@@ -4905,7 +4929,7 @@ impl RenderState {
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("Ghost Render Core Snapshot Mirror View"),
+            label: Some(label),
             ..Default::default()
         });
         (texture, view)
@@ -4994,11 +5018,21 @@ impl RenderState {
         self.config.width = size.width;
         self.config.height = size.height;
         self.surface.configure(&self.device, &self.config);
-        let (snapshot_texture, snapshot_view) = Self::create_snapshot_target(
+        let (output_mirror_texture, output_mirror_view) = Self::create_offscreen_target(
             &self.device,
             self.config.width,
             self.config.height,
             self.config.format,
+            "Ghost Render Core Output Mirror",
+        );
+        self.output_mirror_texture = output_mirror_texture;
+        self.output_mirror_view = output_mirror_view;
+        let (snapshot_texture, snapshot_view) = Self::create_offscreen_target(
+            &self.device,
+            self.config.width,
+            self.config.height,
+            self.config.format,
+            "Ghost Render Core Snapshot Mirror",
         );
         self.snapshot_texture = snapshot_texture;
         self.snapshot_view = snapshot_view;
@@ -6587,6 +6621,51 @@ impl RenderState {
         audio1: [f32; 4],
         audio2: [f32; 4],
     ) -> Result<SurfacePresentOutcome, String> {
+        self.write_frame_inputs(
+            command_phase,
+            layers_seen,
+            time_seconds,
+            frame_count,
+            scene_layers,
+            source_previews,
+            audio0,
+            audio1,
+            audio2,
+        );
+        let mut mirror_encoder =
+            self.device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Ghost Render Core Output Mirror Encoder"),
+                });
+        let should_record_timing = self
+            .gpu_timing
+            .as_ref()
+            .is_some_and(GpuTimingState::can_record);
+        let mirror_timestamp_writes = if should_record_timing {
+            self.gpu_timing
+                .as_ref()
+                .map(GpuTimingState::timestamp_writes)
+        } else {
+            None
+        };
+        self.draw_fullscreen_to_view(
+            &mut mirror_encoder,
+            &self.output_mirror_view,
+            "Ghost Render Core Output Mirror Pass",
+            mirror_timestamp_writes,
+        );
+        if should_record_timing {
+            if let Some(gpu_timing) = self.gpu_timing.as_ref() {
+                gpu_timing.resolve_to_readback(&mut mirror_encoder);
+            }
+        }
+        self.queue.submit(Some(mirror_encoder.finish()));
+        if should_record_timing {
+            if let Some(gpu_timing) = self.gpu_timing.as_mut() {
+                gpu_timing.begin_readback();
+            }
+        }
+
         let mut present_outcome = SurfacePresentOutcome::Presented;
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
@@ -6597,12 +6676,15 @@ impl RenderState {
             }
             wgpu::CurrentSurfaceTexture::Outdated => {
                 self.surface.configure(&self.device, &self.config);
+                self.last_frame_error = None;
                 return Ok(SurfacePresentOutcome::Outdated);
             }
             wgpu::CurrentSurfaceTexture::Timeout => {
+                self.last_frame_error = None;
                 return Ok(SurfacePresentOutcome::Timeout);
             }
             wgpu::CurrentSurfaceTexture::Occluded => {
+                self.last_frame_error = None;
                 return Ok(SurfacePresentOutcome::Occluded);
             }
             wgpu::CurrentSurfaceTexture::Lost => {
@@ -6616,50 +6698,13 @@ impl RenderState {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        self.write_frame_inputs(
-            command_phase,
-            layers_seen,
-            time_seconds,
-            frame_count,
-            scene_layers,
-            source_previews,
-            audio0,
-            audio1,
-            audio2,
-        );
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Ghost Render Core Encoder"),
             });
-        let should_record_timing = self
-            .gpu_timing
-            .as_ref()
-            .is_some_and(GpuTimingState::can_record);
-        let timestamp_writes = if should_record_timing {
-            self.gpu_timing
-                .as_ref()
-                .map(GpuTimingState::timestamp_writes)
-        } else {
-            None
-        };
-        self.draw_fullscreen_to_view(
-            &mut encoder,
-            &view,
-            "Ghost Render Core Pass",
-            timestamp_writes,
-        );
-        if should_record_timing {
-            if let Some(gpu_timing) = self.gpu_timing.as_ref() {
-                gpu_timing.resolve_to_readback(&mut encoder);
-            }
-        }
+        self.draw_fullscreen_to_view(&mut encoder, &view, "Ghost Render Core Pass", None);
         self.queue.submit(Some(encoder.finish()));
-        if should_record_timing {
-            if let Some(gpu_timing) = self.gpu_timing.as_mut() {
-                gpu_timing.begin_readback();
-            }
-        }
         self.queue.present(frame);
         self.last_frame_error = None;
         Ok(present_outcome)

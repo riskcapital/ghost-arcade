@@ -85,6 +85,7 @@ try {
 
   const capabilities = await broker.invoke('native_renderer_get_capabilities');
   assert(capabilities?.features?.compute_graph_source_frame_target, 'broker capabilities lost compute graph source-frame support');
+  assert(capabilities?.features?.native_output_mirror_texture, 'broker capabilities lost native output mirror support');
   assert(
     !!capabilities?.features?.shared_texture_source_frame_upload === (process.platform === 'darwin'),
     `broker shared source-frame capability should match macOS IOSurface support: ${JSON.stringify(capabilities?.features)}`,
@@ -114,6 +115,7 @@ try {
   for (const id of REQUIRED_CHECKS) {
     assert(checks.get(id)?.ok, `broker readiness has stale/missing ${id}: ${JSON.stringify(readiness)}`);
   }
+  assert(checks.get('native-output-mirror')?.ok, `broker readiness omitted native output mirror: ${JSON.stringify(readiness)}`);
   assert(checks.has('managed-output'), `broker readiness omitted managed output check: ${JSON.stringify(readiness)}`);
   if (!checks.get('managed-output')?.ok) {
     console.warn(

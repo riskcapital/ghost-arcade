@@ -386,6 +386,12 @@ class NativeRendererBroker {
       ],
       ['shared-texture-upload', 'Shared texture media transport', !!features.shared_texture_upload],
       [
+        'native-output-mirror',
+        'Native offscreen output mirror',
+        !!features.native_output_mirror_texture,
+        'native output mirror texture is not available',
+      ],
+      [
         'shared-texture-output-export',
         'Native output shared-texture export',
         !!features.shared_texture_output_export,
@@ -1174,6 +1180,7 @@ function makeDefaultCapabilities(overrides = {}) {
       multi_pass_instruments: false,
       storage_buffer_instruments: false,
       shared_texture_source_frame_upload: false,
+      native_output_mirror_texture: false,
       shared_texture_upload: false,
       shared_texture_output_export: false,
       native_texture_share_sender: false,
