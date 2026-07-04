@@ -127,19 +127,26 @@ try {
     `broker shared source-frame readiness should match macOS IOSurface support: ${JSON.stringify(readiness)}`,
   );
 
-  let unsupportedErrored = false;
-  try {
-    await broker.invoke('native_renderer_upload_source_gpu_shared_texture', {
-      source_id: 'contract',
-      width: 16,
-      height: 16,
-      shared_handle: 'fake',
-      seq: 1,
-    });
-  } catch (err) {
-    unsupportedErrored = /shared texture media transport is not implemented yet/.test(String(err?.message || err));
-  }
-  assert(unsupportedErrored, 'broker shared-texture upload unexpectedly succeeded or returned the wrong error');
+  const beforeDirectSharedStatus = await broker.invoke('native_renderer_get_status');
+  const directSharedStatus = await broker.invoke('native_renderer_upload_source_gpu_shared_texture', {
+    source_id: 'direct-shared-frame-contract',
+    width: 16,
+    height: 16,
+    shared_handle: 'fake',
+    platform: process.platform === 'darwin' ? 'iosurface' : 'dxgi',
+    handle_encoding: 'base64',
+    seq: 1,
+  });
+  assert(
+    Number(directSharedStatus.source_frame_uploads ?? 0) ===
+      Number(beforeDirectSharedStatus.source_frame_uploads ?? 0),
+    `invalid direct shared texture source-frame must not count as an upload: ${JSON.stringify(directSharedStatus)}`,
+  );
+  assert(
+    Number(directSharedStatus.source_frame_rejected_uploads ?? 0) >
+      Number(beforeDirectSharedStatus.source_frame_rejected_uploads ?? 0),
+    `invalid direct shared texture source-frame rejection was not counted: ${JSON.stringify(directSharedStatus)}`,
+  );
 
   const beforeSharedFrameStatus = await broker.invoke('native_renderer_get_status');
   await broker.invoke('native_renderer_submit_commands', {

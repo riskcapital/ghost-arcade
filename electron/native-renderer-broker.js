@@ -65,7 +65,6 @@ const RENDERER_COMMANDS = [
 ];
 
 const BROKER_UNSUPPORTED_COMMANDS = new Map([
-  ['native_renderer_upload_source_gpu_shared_texture', 'shared texture media transport is not implemented yet'],
   ['native_renderer_prefetch_media', 'native media prefetch/decode is not implemented yet'],
   ['native_renderer_clear_prefetch_cache', 'native media prefetch cache is not implemented yet'],
   ['native_renderer_clear_decode_preview_cache', 'native decode preview cache is not implemented yet'],
@@ -180,6 +179,8 @@ class NativeRendererBroker {
         return this.sendNativeCommandPayloadIfRunning('submit_commands', args, { fallback: null, timeoutMs: 2500 });
       case 'native_renderer_run_compute_graph':
         return this.sendIfRunning('compute_graph', args, { fallback: null, timeoutMs: 10000 });
+      case 'native_renderer_upload_source_gpu_shared_texture':
+        return this.uploadSourceGpuSharedTexture(args);
       case 'native_renderer_set_target_fps':
         return this.sendIfRunning('set_target_fps', args, { fallback: null });
       case 'native_renderer_set_present_policy':
@@ -217,6 +218,35 @@ class NativeRendererBroker {
     this.lastStatus = normalizeStatus(result, this.lastStatus);
     await this.refreshCapabilities();
     return this.lastStatus;
+  }
+
+  async uploadSourceGpuSharedTexture(args = {}) {
+    const sourceId = String(args.source_id ?? args.sourceId ?? '').trim();
+    if (!sourceId) {
+      return Promise.reject(new Error('native shared texture source-frame upload requires source_id'));
+    }
+    const command = {
+      type: 'upload_source_frame',
+      source_id: sourceId,
+      width: Number(args.width ?? 0),
+      height: Number(args.height ?? 0),
+      shared_handle: args.shared_handle ?? args.handle ?? '',
+      shared_texture_platform: args.shared_texture_platform ?? args.platform,
+      shared_texture_format: args.shared_texture_format ?? args.format,
+      shared_texture_handle_encoding:
+        args.shared_texture_handle_encoding ?? args.handle_encoding ?? args.handleEncoding,
+      shared_texture_handle_byte_length:
+        args.shared_texture_handle_byte_length ?? args.handle_byte_length ?? args.handleByteLength,
+      shared_texture_frame: args.shared_texture_frame ?? args.frame,
+      shared_texture_sender_name:
+        args.shared_texture_sender_name ?? args.sender_name ?? args.senderName,
+      seq: Number(args.seq ?? args.frame ?? 0),
+    };
+    await this.sendNativeCommandPayloadIfRunning('submit_commands', { commands: [command] }, {
+      fallback: null,
+      timeoutMs: 2500,
+    });
+    return this.getStatus();
   }
 
   async stop() {
