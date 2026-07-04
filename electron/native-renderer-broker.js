@@ -729,6 +729,16 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     native_shader_layers: Number(status.native_shader_layers ?? previous.native_shader_layers ?? 0),
     native_procedural_layers: Number(status.native_procedural_layers ?? previous.native_procedural_layers ?? 0),
     native_instrument_layers: Number(status.native_instrument_layers ?? previous.native_instrument_layers ?? 0),
+    native_instrument_proxy_layers: Number(
+      status.native_instrument_proxy_layers ??
+        previous.native_instrument_proxy_layers ??
+        status.native_instrument_layers ??
+        previous.native_instrument_layers ??
+        0,
+    ),
+    native_graph_source_frame_layers: Number(
+      status.native_graph_source_frame_layers ?? previous.native_graph_source_frame_layers ?? 0,
+    ),
     source_frame_uploads: Number(status.source_frame_uploads ?? previous.source_frame_uploads ?? 0),
     source_frame_bytes_uploaded: Number(status.source_frame_bytes_uploaded ?? previous.source_frame_bytes_uploaded ?? 0),
     native_instrument_frame_renders: Number(status.native_instrument_frame_renders ?? previous.native_instrument_frame_renders ?? 0),
@@ -1015,6 +1025,8 @@ function makeDefaultStatus(overrides = {}) {
     native_shader_layers: 0,
     native_procedural_layers: 0,
     native_instrument_layers: 0,
+    native_instrument_proxy_layers: 0,
+    native_graph_source_frame_layers: 0,
     source_frame_uploads: 0,
     source_frame_bytes_uploaded: 0,
     native_instrument_frame_renders: 0,

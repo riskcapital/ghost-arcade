@@ -332,6 +332,8 @@ export interface RendererStatus {
   native_shader_layers: number;
   native_procedural_layers: number;
   native_instrument_layers: number;
+  native_instrument_proxy_layers: number;
+  native_graph_source_frame_layers: number;
   source_frame_uploads: number;
   source_frame_bytes_uploaded: number;
   native_instrument_frame_renders: number;

@@ -188,6 +188,8 @@ struct CoreStatus {
     native_shader_layers: u32,
     native_procedural_layers: u32,
     native_instrument_layers: u32,
+    native_instrument_proxy_layers: u32,
+    native_graph_source_frame_layers: u32,
     shader_precompile_queue_cap: u32,
     shader_precompile_per_frame: u32,
     shader_metadata_cache_cap: u32,
@@ -1820,6 +1822,27 @@ impl App {
             .as_ref()
             .map(|renderer| renderer.gpu_timing_stats())
             .unwrap_or((false, 0.0, 0.0, 0.0, 0, 0));
+        let native_instrument_proxy_layers = self
+            .scene_layers
+            .values()
+            .filter(|layer| layer.visible && is_native_instrument_kind(layer.source_kind))
+            .count()
+            .min(1024) as u32;
+        let native_graph_source_frame_layers = self
+            .scene_layers
+            .values()
+            .filter(|layer| {
+                layer.visible
+                    && layer.frame_slot.is_some()
+                    && !layer.shader_rendered
+                    && !is_native_instrument_kind(layer.source_kind)
+                    && layer
+                        .source_id
+                        .as_deref()
+                        .is_some_and(|source_id| source_id.starts_with("gpu:"))
+            })
+            .count()
+            .min(1024) as u32;
         let renderer_ready = self.renderer.is_some();
         let last_frame_ok = last_frame_error.is_none();
         let output_window_attached = self.output_window_attached && renderer_ready;
@@ -1899,12 +1922,9 @@ impl App {
                 })
                 .count()
                 .min(1024) as u32,
-            native_instrument_layers: self
-                .scene_layers
-                .values()
-                .filter(|layer| layer.visible && is_native_instrument_kind(layer.source_kind))
-                .count()
-                .min(1024) as u32,
+            native_instrument_layers: native_instrument_proxy_layers,
+            native_instrument_proxy_layers,
+            native_graph_source_frame_layers,
             shader_precompile_queue_cap: self.shader_precompile_queue_cap,
             shader_precompile_per_frame: self.shader_precompile_per_frame,
             shader_metadata_cache_cap: self.shader_metadata_cache_cap,
