@@ -123,9 +123,29 @@ function assertFrame(label, snapshot) {
 function assertJpeg(path) {
   assert(existsSync(path), `missing JPEG frame: ${path}`);
   const bytes = readFileSync(path);
-  assert(bytes.length > 200, `JPEG frame is suspiciously small: ${path} (${bytes.length} bytes)`);
-  assert(bytes[0] === 0xff && bytes[1] === 0xd8, `JPEG frame missing SOI marker: ${path}`);
-  assert(bytes[bytes.length - 2] === 0xff && bytes[bytes.length - 1] === 0xd9, `JPEG frame missing EOI marker: ${path}`);
+  assertJpegBytes(path, bytes);
+}
+
+function assertJpegBytes(label, bytes) {
+  assert(bytes.length > 200, `JPEG frame is suspiciously small: ${label} (${bytes.length} bytes)`);
+  assert(bytes[0] === 0xff && bytes[1] === 0xd8, `JPEG frame missing SOI marker: ${label}`);
+  assert(bytes[bytes.length - 2] === 0xff && bytes[bytes.length - 1] === 0xd9, `JPEG frame missing EOI marker: ${label}`);
+}
+
+function extractJpegBuffersFromPipe(bytes) {
+  const frames = [];
+  const soi = Buffer.from([0xff, 0xd8]);
+  const eoi = Buffer.from([0xff, 0xd9]);
+  let cursor = 0;
+  while (cursor < bytes.length) {
+    const start = bytes.indexOf(soi, cursor);
+    if (start < 0) break;
+    const end = bytes.indexOf(eoi, start + 2);
+    if (end < 0) break;
+    frames.push(Buffer.from(bytes.subarray(start, end + 2)));
+    cursor = end + 2;
+  }
+  return frames;
 }
 
 function encodeRawFramesToJpegs(rawFramePaths, pixFmt, outputPattern) {
@@ -156,6 +176,36 @@ function encodeRawFramesToJpegs(rawFramePaths, pixFmt, outputPattern) {
   if (result.status !== 0) {
     throw new Error(`ffmpeg JPEG sequence encode failed (${result.status}): ${result.stderr || result.error?.message || 'no stderr'}`);
   }
+}
+
+function encodeRawFramesToJpegPipe(rawFramePaths, pixFmt) {
+  const ffmpegBin = resolveFfmpegBin();
+  const input = Buffer.concat(rawFramePaths.map((path) => readFileSync(path)));
+  const result = spawnSync(ffmpegBin, [
+    '-hide_banner',
+    '-loglevel', 'warning',
+    '-f', 'rawvideo',
+    '-pix_fmt', pixFmt,
+    '-s:v', `${WIDTH}x${HEIGHT}`,
+    '-framerate', String(FPS),
+    '-i', 'pipe:0',
+    '-frames:v', String(rawFramePaths.length),
+    '-c:v', 'mjpeg',
+    '-q:v', '2',
+    '-pix_fmt', 'yuvj444p',
+    '-f', 'image2pipe',
+    'pipe:1',
+  ], {
+    input,
+    encoding: null,
+    maxBuffer: 64 * 1024 * 1024,
+    windowsHide: true,
+  });
+  if (result.status !== 0) {
+    const stderr = result.stderr ? String(result.stderr) : '';
+    throw new Error(`ffmpeg JPEG pipe encode failed (${result.status}): ${stderr || result.error?.message || 'no stderr'}`);
+  }
+  return extractJpegBuffersFromPipe(Buffer.from(result.stdout || []));
 }
 
 async function main() {
@@ -230,6 +280,11 @@ async function main() {
     encodeRawFramesToJpegs(rawFramePaths, pixFmt, outputPattern);
     for (let frame = 0; frame < FRAME_COUNT; frame += 1) {
       assertJpeg(join(tempDir, `jpeg-${String(frame).padStart(6, '0')}.jpg`));
+    }
+    const pipeFrames = encodeRawFramesToJpegPipe(rawFramePaths, pixFmt);
+    assert(pipeFrames.length === FRAME_COUNT, `JPEG pipe emitted ${pipeFrames.length} frames; expected ${FRAME_COUNT}`);
+    for (let frame = 0; frame < FRAME_COUNT; frame += 1) {
+      assertJpegBytes(`pipe jpeg ${frame}`, pipeFrames[frame]);
     }
 
     const status = await rpc.send('status', {}, 5000);
