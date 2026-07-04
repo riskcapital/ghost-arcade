@@ -59,8 +59,10 @@ describe('Point Cloud FX native graph', () => {
     expect(data.sampledFromCount).toBe(32);
     expect(data.homeByteLength).toBe(8 * 32);
     expect(data.liveByteLength).toBe(8 * 48);
-    expect(data.homeInitialB64.length).toBeGreaterThan(16);
-    expect(data.liveInitialB64.length).toBeGreaterThan(16);
+    expect(data.homeInitialBuffer).toBeInstanceOf(ArrayBuffer);
+    expect(data.liveInitialBuffer).toBeInstanceOf(ArrayBuffer);
+    expect(data.homeInitialBuffer.byteLength).toBe(data.homeByteLength);
+    expect(data.liveInitialBuffer.byteLength).toBe(data.liveByteLength);
   });
 
   it('builds a native compute/render graph and reuses cloud buffers after reset', () => {
@@ -106,8 +108,8 @@ describe('Point Cloud FX native graph', () => {
     const live = first.config.buffers.find((buffer) => buffer.id.endsWith(':live'));
     expect(home).toMatchObject({ kind: 'read-only-storage', persistent: true, clear: true });
     expect(live).toMatchObject({ kind: 'storage', persistent: true, clear: true });
-    expect(home?.initial_b64).toBe(pointData.homeInitialB64);
-    expect(live?.initial_b64).toBe(pointData.liveInitialB64);
+    expect(home?.initial_buffer).toBe(pointData.homeInitialBuffer);
+    expect(live?.initial_buffer).toBe(pointData.liveInitialBuffer);
 
     const second = buildPointCloudFXNativeComputeGraph({
       sourceId: 'gpu:layer-cloud:point-cloud-fx',
@@ -125,6 +127,8 @@ describe('Point Cloud FX native graph', () => {
 
     expect(second.config.buffers.find((buffer) => buffer.id.endsWith(':home'))?.initial_b64).toBeUndefined();
     expect(second.config.buffers.find((buffer) => buffer.id.endsWith(':live'))?.initial_b64).toBeUndefined();
+    expect(second.config.buffers.find((buffer) => buffer.id.endsWith(':home'))?.initial_buffer).toBeUndefined();
+    expect(second.config.buffers.find((buffer) => buffer.id.endsWith(':live'))?.initial_buffer).toBeUndefined();
     expect(second.state.pointDataSignature).toBe('cloud-a');
     expect(second.state.waveTime).toBeGreaterThan(first.state.waveTime);
   });

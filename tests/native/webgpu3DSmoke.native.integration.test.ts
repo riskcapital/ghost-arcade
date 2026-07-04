@@ -162,6 +162,33 @@ function makeSourceFrameB64(width: number, height: number): string {
   return pixels.toString('base64');
 }
 
+function nativeGraphConfigForDirectRpc(config: any): Record<string, unknown> {
+  if (!config || !Array.isArray(config.buffers)) return config as Record<string, unknown>;
+  return {
+    ...config,
+    buffers: config.buffers.map((buffer: any) => {
+      const raw = buffer?.initial_buffer ?? buffer?.initial_bytes ?? buffer?.initial_data;
+      if (!raw) return buffer;
+      const bytes = ArrayBuffer.isView(raw)
+        ? Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength)
+        : raw instanceof ArrayBuffer
+          ? Buffer.from(raw)
+          : null;
+      if (!bytes) return buffer;
+      const {
+        initial_buffer: _discardedBuffer,
+        initial_bytes: _discardedBytes,
+        initial_data: _discardedData,
+        ...rest
+      } = buffer;
+      return {
+        ...rest,
+        initial_b64: bytes.toString('base64'),
+      };
+    }),
+  };
+}
+
 function makePointCloudData(count = 8192) {
   const positions = new Float32Array(count * 3);
   const colors = new Float32Array(count * 3);
@@ -348,7 +375,7 @@ describe('Native graph parity and health integration', () => {
         reset: frame === 0,
       });
       state = graph.state;
-      graphResult = await rpc.send('compute_graph', graph.config as unknown as Record<string, unknown>, 20000);
+      graphResult = await rpc.send('compute_graph', nativeGraphConfigForDirectRpc(graph.config), 20000);
       expect(graphResult.pass_count).toBe(25);
       expect(graphResult.render).toMatchObject({
         target: 'source_frame',
@@ -415,7 +442,7 @@ describe('Native graph parity and health integration', () => {
         reset: frame === 0,
       });
       particleState = graph.state;
-      const particleResult: any = await rpc.send('compute_graph', graph.config as unknown as Record<string, unknown>, 20000);
+      const particleResult: any = await rpc.send('compute_graph', nativeGraphConfigForDirectRpc(graph.config), 20000);
       expect(particleResult.pass_count).toBe(2);
       expect(particleResult.renders).toHaveLength(3);
       expect(particleResult.renders[1]).toMatchObject({
@@ -480,7 +507,7 @@ describe('Native graph parity and health integration', () => {
         reset: frame === 0,
       });
       volumetricState = graph.state;
-      const volumetricResult: any = await rpc.send('compute_graph', graph.config as unknown as Record<string, unknown>, 20000);
+      const volumetricResult: any = await rpc.send('compute_graph', nativeGraphConfigForDirectRpc(graph.config), 20000);
       expect(volumetricResult.pass_count).toBe(1);
       expect(volumetricResult.renders).toHaveLength(1);
       expect(volumetricResult.renders[0]).toMatchObject({
@@ -538,7 +565,7 @@ describe('Native graph parity and health integration', () => {
         reset: frame === 0,
       });
       ridersState = graph.state;
-      const ridersResult: any = await rpc.send('compute_graph', graph.config as unknown as Record<string, unknown>, 30000);
+      const ridersResult: any = await rpc.send('compute_graph', nativeGraphConfigForDirectRpc(graph.config), 30000);
       expect(ridersResult.pass_count).toBeGreaterThanOrEqual(26);
       expect(ridersResult.renders).toHaveLength(2);
       expect(ridersResult.renders[0]).toMatchObject({
@@ -602,7 +629,7 @@ describe('Native graph parity and health integration', () => {
         reset: frame === 0,
       });
       inkState = graph.state;
-      const inkResult: any = await rpc.send('compute_graph', graph.config as unknown as Record<string, unknown>, 20000);
+      const inkResult: any = await rpc.send('compute_graph', nativeGraphConfigForDirectRpc(graph.config), 20000);
       expect(inkResult.pass_count).toBe(1);
       expect(inkResult.renders).toHaveLength(2);
       expect(inkResult.renders[0]).toMatchObject({
@@ -673,7 +700,7 @@ describe('Native graph parity and health integration', () => {
         reset: frame === 0,
       });
       flyState = graph.state;
-      const flyResult: any = await rpc.send('compute_graph', graph.config as unknown as Record<string, unknown>, 20000);
+      const flyResult: any = await rpc.send('compute_graph', nativeGraphConfigForDirectRpc(graph.config), 20000);
       expect(flyResult.pass_count).toBe(1);
       expect(flyResult.renders).toHaveLength(1);
       expect(flyResult.renders[0]).toMatchObject({
@@ -740,7 +767,7 @@ describe('Native graph parity and health integration', () => {
         reset: frame === 0,
       });
       pixelState = graph.state;
-      const pixelResult: any = await rpc.send('compute_graph', graph.config as unknown as Record<string, unknown>, 20000);
+      const pixelResult: any = await rpc.send('compute_graph', nativeGraphConfigForDirectRpc(graph.config), 20000);
       expect(pixelResult.pass_count).toBe(1);
       expect(pixelResult.renders).toHaveLength(1);
       expect(pixelResult.renders[0]).toMatchObject({
@@ -807,7 +834,7 @@ describe('Native graph parity and health integration', () => {
         reset: frame === 0,
       });
       pointCloudState = graph.state;
-      const pointResult: any = await rpc.send('compute_graph', graph.config as unknown as Record<string, unknown>, 20000);
+      const pointResult: any = await rpc.send('compute_graph', nativeGraphConfigForDirectRpc(graph.config), 20000);
       expect(pointResult.pass_count).toBe(1);
       expect(pointResult.renders).toHaveLength(1);
       expect(pointResult.renders[0]).toMatchObject({
@@ -861,7 +888,7 @@ describe('Native graph parity and health integration', () => {
         reset: frame === 0,
       });
       planetState = graph.state;
-      const planetResult: any = await rpc.send('compute_graph', graph.config as unknown as Record<string, unknown>, 20000);
+      const planetResult: any = await rpc.send('compute_graph', nativeGraphConfigForDirectRpc(graph.config), 20000);
       expect(planetResult.pass_count).toBe(0);
       expect(planetResult.renders).toHaveLength(1);
       expect(planetResult.renders[0]).toMatchObject({
@@ -930,7 +957,7 @@ describe('Native graph parity and health integration', () => {
         state: null,
         reset: true,
       });
-      await rpc!.send('compute_graph', graph.config as unknown as Record<string, unknown>, 20000);
+      await rpc!.send('compute_graph', nativeGraphConfigForDirectRpc(graph.config), 20000);
       const snapshot = await rpc!.send('frame_snapshot', {
         include_pixels: false,
         time,
