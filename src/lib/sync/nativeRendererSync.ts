@@ -17,6 +17,10 @@ import {
   type ParticleFieldNativeGraphState,
 } from '$lib/renderer/webgpuParticleField';
 import {
+  buildSmokeRidersNativeComputeGraph,
+  type SmokeRidersNativeGraphState,
+} from '$lib/renderer/shaders/webgpuSmokeRidersShader';
+import {
   buildVolumetricSpheresNativeComputeGraph,
   buildVolumetricSpheresNativePrecompileCommands,
   type VolumetricSpheresNativeGraphState,
@@ -107,11 +111,12 @@ type NativeRenderClockCommand = {
 
 export type PresentPolicyProfile = 'vsync-live' | 'low-latency-safe' | 'low-latency-aggressive';
 
-type NativeGraphRouteKind = 'smoke-3d' | 'particle-field' | 'volumetric-spheres';
+type NativeGraphRouteKind = 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders';
 type NativeGraphRouteSimulationState =
   | Smoke3DNativeGraphState
   | ParticleFieldNativeGraphState
-  | VolumetricSpheresNativeGraphState;
+  | VolumetricSpheresNativeGraphState
+  | SmokeRidersNativeGraphState;
 
 type NativeGraphLayerRoute = {
   kind: NativeGraphRouteKind;
@@ -923,6 +928,12 @@ export class NativeRendererSync {
     ) {
       kind = 'smoke-3d';
     } else if (
+      normalizedShaderId === 'smoke-riders' &&
+      this.supportsNativeFeature('native_smoke_riders_graph') &&
+      this.supportsNativeGraphInstrument('smoke-riders')
+    ) {
+      kind = 'smoke-riders';
+    } else if (
       normalizedShaderId === 'particle-field' &&
       this.supportsNativeFeature('native_particle_field_graph') &&
       this.supportsNativeGraphInstrument('particle-field')
@@ -1026,6 +1037,21 @@ export class NativeRendererSync {
               audioTreble,
               mediaSourceId: route.inputSource?.id ?? null,
               state: routeState.state as ParticleFieldNativeGraphState | null,
+              reset: !routeState.state,
+            });
+          }
+          if (route.kind === 'smoke-riders') {
+            return buildSmokeRidersNativeComputeGraph({
+              sourceId: route.source.id,
+              params: layer.gpuLayerContent?.params ?? {},
+              width,
+              height,
+              time: graphTime,
+              frameDelta: graphDelta,
+              frameIndex: graphSeq,
+              audioBass,
+              audioTreble,
+              state: routeState.state as SmokeRidersNativeGraphState | null,
               reset: !routeState.state,
             });
           }

@@ -1531,6 +1531,7 @@ impl App {
             "native_3d_smoke_graph": true,
             "native_particle_field_graph": true,
             "native_volumetric_spheres_graph": true,
+            "native_smoke_riders_graph": true,
             "command_drain_policy": true,
             "auto_present_policy": true,
             "multi_pass_instruments": false,
@@ -1561,7 +1562,7 @@ impl App {
             "backend": native_backend_name(),
             "implemented_methods": CORE_RPC_METHODS,
             "implemented_command_types": CORE_COMMAND_TYPES,
-            "native_graph_instruments": ["smoke-3d", "particle-field", "volumetric-spheres"],
+            "native_graph_instruments": ["smoke-3d", "particle-field", "volumetric-spheres", "smoke-riders"],
             "native_graph_instrument_manifest": [
                 {
                     "id": "smoke-3d",
@@ -1629,6 +1630,37 @@ impl App {
                     ],
                     "render_target": "source_frame",
                     "parity": "sim-render-shared-wgsl"
+                },
+                {
+                    "id": "smoke-riders",
+                    "label": "Smoke Riders",
+                    "source_uri_prefix": "native-graph://smoke-riders/",
+                    "shader_ids": [
+                        "3d-smoke/splat",
+                        "3d-smoke/advect-velocity",
+                        "3d-smoke/divergence",
+                        "3d-smoke/jacobi",
+                        "3d-smoke/subtract-gradient",
+                        "3d-smoke/advect-density",
+                        "3d-smoke/render",
+                        "volumetric-spheres/sim",
+                        "volumetric-spheres/render"
+                    ],
+                    "features": [
+                        "compute_graph_host",
+                        "compute_graph_render",
+                        "compute_graph_multi_render",
+                        "compute_graph_instanced_render",
+                        "compute_graph_depth_render",
+                        "compute_graph_clear_color",
+                        "compute_graph_source_frame_target",
+                        "persistent_compute_buffers",
+                        "native_3d_smoke_graph",
+                        "native_volumetric_spheres_graph",
+                        "native_smoke_riders_graph"
+                    ],
+                    "render_target": "source_frame",
+                    "parity": "composed-smoke-and-volumetric-spheres-shared-wgsl"
                 }
             ],
             "audio_uniform_layout": ghost_audio_uniform_layout(),

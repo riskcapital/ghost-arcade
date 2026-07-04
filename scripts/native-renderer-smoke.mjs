@@ -501,6 +501,7 @@ async function main() {
       !capabilities.features.persistent_compute_buffers ||
       !capabilities.features.native_3d_smoke_graph ||
       !capabilities.features.native_volumetric_spheres_graph ||
+      !capabilities.features.native_smoke_riders_graph ||
       capabilities.features.multi_pass_instruments
     ) {
       throw new Error(`native compute capability flags are not honest yet: ${JSON.stringify(capabilities.features)}`);
@@ -519,6 +520,9 @@ async function main() {
     }
     if (!capabilities.native_graph_instruments?.includes('volumetric-spheres')) {
       throw new Error(`native graph instrument manifest missing volumetric-spheres: ${JSON.stringify(capabilities)}`);
+    }
+    if (!capabilities.native_graph_instruments?.includes('smoke-riders')) {
+      throw new Error(`native graph instrument manifest missing smoke-riders: ${JSON.stringify(capabilities)}`);
     }
     const smokeManifest = capabilities.native_graph_instrument_manifest?.find((entry) => entry?.id === 'smoke-3d');
     if (
@@ -549,6 +553,20 @@ async function main() {
       !volumetricManifest.features?.includes('native_volumetric_spheres_graph')
     ) {
       throw new Error(`native volumetric-spheres manifest entry is incomplete: ${JSON.stringify(capabilities.native_graph_instrument_manifest)}`);
+    }
+    const smokeRidersManifest = capabilities.native_graph_instrument_manifest?.find((entry) => entry?.id === 'smoke-riders');
+    if (
+      !smokeRidersManifest ||
+      smokeRidersManifest.source_uri_prefix !== 'native-graph://smoke-riders/' ||
+      smokeRidersManifest.render_target !== 'source_frame' ||
+      !smokeRidersManifest.shader_ids?.includes('3d-smoke/render') ||
+      !smokeRidersManifest.shader_ids?.includes('volumetric-spheres/render') ||
+      !smokeRidersManifest.features?.includes('compute_graph_multi_render') ||
+      !smokeRidersManifest.features?.includes('native_3d_smoke_graph') ||
+      !smokeRidersManifest.features?.includes('native_volumetric_spheres_graph') ||
+      !smokeRidersManifest.features?.includes('native_smoke_riders_graph')
+    ) {
+      throw new Error(`native smoke-riders manifest entry is incomplete: ${JSON.stringify(capabilities.native_graph_instrument_manifest)}`);
     }
     if (!capabilities.features.present_policy || !capabilities.features.managed_output_attach) {
       throw new Error(`native managed output/present capabilities missing: ${JSON.stringify(capabilities.features)}`);
