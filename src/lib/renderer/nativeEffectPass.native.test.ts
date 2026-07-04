@@ -129,6 +129,28 @@ function assertVisibleSnapshot(label: string, snapshot: Record<string, unknown>,
   expect(String(snapshot.checksum ?? ''), label).toHaveLength(16);
 }
 
+function snapshotPixels(snapshot: Record<string, unknown>): Uint8Array {
+  expect(snapshot.includes_pixels).toBe(true);
+  const data = typeof snapshot.rgba_b64 === 'string'
+    ? Buffer.from(snapshot.rgba_b64, 'base64')
+    : null;
+  expect(data?.byteLength ?? 0).toBe(Number(snapshot.width) * Number(snapshot.height) * 4);
+  return new Uint8Array(data ?? []);
+}
+
+function snapshotPixelLuma(snapshot: Record<string, unknown>, pixels: Uint8Array, xRatio: number, yRatio: number): number {
+  const width = Math.max(1, Number(snapshot.width ?? 1));
+  const height = Math.max(1, Number(snapshot.height ?? 1));
+  const x = Math.max(0, Math.min(width - 1, Math.round((width - 1) * xRatio)));
+  const y = Math.max(0, Math.min(height - 1, Math.round((height - 1) * yRatio)));
+  const offset = (y * width + x) * 4;
+  return (
+    pixels[offset] * 0.299 +
+    pixels[offset + 1] * 0.587 +
+    pixels[offset + 2] * 0.114
+  ) / 255;
+}
+
 describe('Native effect-pass template', () => {
   it('exposes a small parity-ready pilot manifest', () => {
     expect(NATIVE_EFFECT_PASS_MANIFEST.map((entry) => [entry.id, entry.code])).toEqual([
@@ -622,12 +644,16 @@ describe('Native effect-pass template', () => {
         ],
       }, 5000);
       const effectSnapshot = await rpc.send('frame_snapshot', {
-        include_pixels: false,
+        include_pixels: true,
         time: 0.4,
         frame_index: 4,
       }, 8000);
       assertVisibleSnapshot('effect pass chain output layer', effectSnapshot);
       expect(effectSnapshot.checksum).not.toBe(sourceSnapshot.checksum);
+      const pixels = snapshotPixels(effectSnapshot);
+      const centerLuma = snapshotPixelLuma(effectSnapshot, pixels, 0.5, 0.5);
+      const cornerLuma = snapshotPixelLuma(effectSnapshot, pixels, 0.04, 0.04);
+      expect(centerLuma).toBeGreaterThan(cornerLuma + 0.04);
     } finally {
       await rpc.close();
     }
