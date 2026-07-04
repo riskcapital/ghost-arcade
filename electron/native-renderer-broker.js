@@ -599,7 +599,8 @@ class NativeRendererBroker {
     const nativeTextureShareSenderOk = !!(
       features.shared_texture_output_export &&
       textureShare?.available &&
-      (textureShare.nativeOutputCapable || textureShare.nativeOutputActive)
+      (textureShare.nativeOutputCapable || textureShare.nativeOutputActive) &&
+      !textureShare.nativeOutputWaitingForFrame
     );
     const nativeTextureShareSenderDetail = !features.shared_texture_output_export
       ? 'native output shared-texture export is unavailable'
@@ -607,6 +608,8 @@ class NativeRendererBroker {
         ? 'not connected to Electron texture-share status'
         : !textureShare.available
           ? `${textureShareName} native addon unavailable${textureShare.error ? `: ${textureShare.error}` : ''}`
+          : textureShare.nativeOutputWaitingForFrame
+            ? 'native output IOSurface pump is waiting for the first rendered frame'
           : textureShare.nativeOutputActive
             ? 'native output IOSurface is actively publishing through Syphon'
             : textureShare.nativeOutputCapable

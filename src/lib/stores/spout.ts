@@ -20,6 +20,7 @@ export interface TextureShareInfo {
   senderMode?: string;
   nativeOutputCapable?: boolean;
   nativeOutputActive?: boolean;
+  nativeOutputWaitingForFrame?: boolean;
   nativeOutputFailures?: number;
 }
 
