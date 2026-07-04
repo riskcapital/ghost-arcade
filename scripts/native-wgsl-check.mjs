@@ -5,6 +5,7 @@ import { join, relative } from 'node:path';
 const root = process.cwd();
 const rendererRoot = join(root, 'src', 'lib', 'renderer');
 const stdlibRoot = join(rendererRoot, 'wgsl');
+const nativeRendererRoot = join(root, 'native-renderer', 'src');
 const bin = join(
   root,
   'native-renderer',
@@ -178,6 +179,18 @@ function collectRecords() {
     if (!looksLikeWgsl(source)) continue;
     records.push({
       id: `src/lib/renderer/wgsl/${name}.wgsl`,
+      stage: 'module',
+      entry: 'main',
+      source,
+    });
+  }
+
+  for (const entry of readdirSync(nativeRendererRoot, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.wgsl')) continue;
+    const source = readFileSync(join(nativeRendererRoot, entry.name), 'utf8');
+    if (!looksLikeWgsl(source)) continue;
+    records.push({
+      id: `native-renderer/src/${entry.name}`,
       stage: 'module',
       entry: 'main',
       source,
