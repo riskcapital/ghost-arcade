@@ -2,6 +2,31 @@
 
 const GHOST_LIGHT_PI: f32 = 3.141592653589793;
 
+fn ghost_phase_henyey_greenstein(cosTheta: f32, anisotropy: f32) -> f32 {
+  let g = clamp(anisotropy, -0.95, 0.95);
+  let c = clamp(cosTheta, -1.0, 1.0);
+  let g2 = g * g;
+  let denom = max(pow(1.0 + g2 - 2.0 * g * c, 1.5), 1e-5);
+  return (1.0 - g2) / (4.0 * GHOST_LIGHT_PI * denom);
+}
+
+fn ghost_phase_dual_henyey_greenstein(cosTheta: f32, forwardG: f32, backG: f32, forwardMix: f32) -> f32 {
+  let f = ghost_phase_henyey_greenstein(cosTheta, abs(forwardG));
+  let b = ghost_phase_henyey_greenstein(cosTheta, -abs(backG));
+  return mix(b, f, clamp(forwardMix, 0.0, 1.0));
+}
+
+fn ghost_beer_lambert_transmittance(density: f32, absorption: f32) -> f32 {
+  return exp(-max(density, 0.0) * max(absorption, 0.0));
+}
+
+fn ghost_beer_powder_response(density: f32, absorption: f32, powder: f32) -> f32 {
+  let d = max(density, 0.0);
+  let transmittance = ghost_beer_lambert_transmittance(d, absorption);
+  let powderTerm = 1.0 - exp(-d * max(powder, 0.0));
+  return transmittance * powderTerm;
+}
+
 fn ghost_light_saturate(v: f32) -> f32 {
   return clamp(v, 0.0, 1.0);
 }
