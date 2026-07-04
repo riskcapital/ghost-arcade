@@ -332,6 +332,8 @@ export interface NativeRendererCapabilities {
   schema_version: number;
   core_version: string | null;
   backend: BackendKind | string | null;
+  core_capabilities_confirmed?: boolean;
+  core_capabilities_error?: string | null;
   implemented_methods: string[];
   implemented_command_types: string[];
   native_graph_instruments?: string[];
