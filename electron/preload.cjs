@@ -113,6 +113,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'native_renderer_detach_output_window', 'native_renderer_get_status',
   'native_renderer_get_stats', 'native_renderer_get_snapshot',
   'native_renderer_get_frame_snapshot',
+  'native_renderer_get_output_shared_texture',
   'native_renderer_get_capabilities',
   'native_renderer_get_readiness_report', 'native_renderer_export_snapshot_json',
   'native_renderer_reset_stats', 'native_renderer_set_decode_policy',

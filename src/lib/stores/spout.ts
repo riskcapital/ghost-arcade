@@ -17,6 +17,9 @@ export interface TextureShareInfo {
   candidates?: string[];
   error?: string | null;
   cpuFallbackAllowed?: boolean;
+  senderMode?: string;
+  nativeOutputActive?: boolean;
+  nativeOutputFailures?: number;
 }
 
 /** List of currently available Spout senders */

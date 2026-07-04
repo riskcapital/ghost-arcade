@@ -1215,6 +1215,15 @@ let spoutSendW = 1920;      // Output resolution for OSR window
 let spoutSendH = 1080;
 let spoutCpuFallbackWarned = false;
 
+// Native render-core output sharing. On macOS the Rust core exports its
+// offscreen composite as an IOSurfaceID; SyphonOutput can publish that directly.
+let nativeOutputTextureSharePump = null;
+let nativeOutputTextureShareActive = false;
+let nativeOutputTextureShareFrameCount = 0;
+let nativeOutputTextureShareLastLogTime = 0;
+let nativeOutputTextureShareFailCount = 0;
+let nativeOutputTextureShareInFlight = false;
+
 // Multi-slice zero-copy atlas state. The slice-atlas OSR window renders
 // every Spout/Syphon sender slice into one atlas texture and publishes
 // its packed layout; SpoutAtlasOutput sub-copies each tile into a
@@ -1401,6 +1410,8 @@ function getTextureShareLoadStatus() {
     error: spoutAddonLoadError,
     cpuFallbackAllowed: ALLOW_CPU_TEXTURE_SHARE_FALLBACK,
     receiverTextureInfoSupported: getReceiverTextureInfoSupport(spoutAddon),
+    nativeOutputActive: nativeOutputTextureShareActive,
+    nativeOutputFailures: nativeOutputTextureShareFailCount,
   };
 }
 
@@ -1561,7 +1572,7 @@ function shutdownLink() {
  * publishFrameTexture) is now compatibility fallback only, triggered if OSR
  * fails to start or the watchdog drops it after 3s of no frames.
  */
-function createSpoutSender(name, width, height) {
+function createSpoutSender(name, width, height, { startOsr = true } = {}) {
   const addon = loadSpoutAddon();
   if (!addon) {
     console.error(`[${textureShareLabel}] Cannot create sender — addon not loaded`);
@@ -1605,16 +1616,18 @@ function createSpoutSender(name, width, height) {
     spoutCpuFallbackWarned = false;
     console.log(`[${textureShareLabel}] Sender "${name}" created`);
 
-    // Zero-copy OSR path — works on both Windows (DXGI shared handle) and
-    // macOS (IOSurface). The OSR BrowserWindow code below is platform-agnostic;
-    // the addons diverge in what they do with the handle: SpoutOutput opens a
-    // shared D3D11 resource, SyphonOutput looks up an IOSurface. If OSR fails
-    // to start (e.g. Chromium didn't grant a shared texture), the watchdog
-    // falls back to the CPU send pump transparently.
-    try {
-      createSpoutOsrWindow(width, height);
-    } catch (err) {
-      console.error(`[${textureShareLabel}] OSR window creation failed, using CPU path:`, err.message);
+    if (startOsr) {
+      // Zero-copy OSR path — works on both Windows (DXGI shared handle) and
+      // macOS (IOSurface). The OSR BrowserWindow code below is platform-agnostic;
+      // the addons diverge in what they do with the handle: SpoutOutput opens a
+      // shared D3D11 resource, SyphonOutput looks up an IOSurface. If OSR fails
+      // to start (e.g. Chromium didn't grant a shared texture), the watchdog
+      // falls back to the CPU send pump transparently.
+      try {
+        createSpoutOsrWindow(width, height);
+      } catch (err) {
+        console.error(`[${textureShareLabel}] OSR window creation failed, using CPU path:`, err.message);
+      }
     }
 
     return true;
@@ -1626,6 +1639,7 @@ function createSpoutSender(name, width, height) {
 
 function stopSpoutSender() {
   spoutSendActive = false;
+  stopNativeOutputTextureSharePump();
 
   // Tear down OSR window first
   destroySpoutOsrWindow();
@@ -1959,7 +1973,133 @@ function stopOsrPaintPump() {
   } catch {}
 }
 
+function isPublishableNativeOutputTexture(texture) {
+  if (!isMac || !texture || typeof texture !== 'object') return false;
+  const surfaceId = Number(texture.handle);
+  const width = Number(texture.width ?? 0);
+  const height = Number(texture.height ?? 0);
+  return !!(
+    texture.available &&
+    texture.platform === 'iosurface' &&
+    Number.isFinite(surfaceId) &&
+    surfaceId > 0 &&
+    Number.isFinite(width) &&
+    width > 0 &&
+    Number.isFinite(height) &&
+    height > 0
+  );
+}
+
+async function getNativeOutputSharedTextureMetadata() {
+  try {
+    return await nativeRendererBroker.invoke('native_renderer_get_output_shared_texture', {});
+  } catch (err) {
+    if (nativeOutputTextureShareFailCount < 5) {
+      console.warn('[NativeRenderer] output shared-texture query failed:', err?.message || err);
+      nativeOutputTextureShareFailCount++;
+    }
+    return null;
+  }
+}
+
+async function canPublishNativeOutputTextureShare() {
+  if (!isMac) return { ok: false, texture: null, reason: 'native output Syphon path is macOS-only' };
+  const addon = loadSpoutAddon();
+  const OutputClass = addon ? getOutputClass(addon) : null;
+  if (!OutputClass || typeof OutputClass.prototype?.publishIOSurface !== 'function') {
+    return { ok: false, texture: null, reason: 'SyphonOutput.publishIOSurface is unavailable' };
+  }
+  const texture = await getNativeOutputSharedTextureMetadata();
+  return {
+    ok: isPublishableNativeOutputTexture(texture),
+    texture,
+    reason: texture?.reason || 'native renderer output IOSurface is unavailable',
+  };
+}
+
+function stopNativeOutputTextureSharePump() {
+  if (nativeOutputTextureSharePump) {
+    clearInterval(nativeOutputTextureSharePump);
+    nativeOutputTextureSharePump = null;
+  }
+  nativeOutputTextureShareActive = false;
+  nativeOutputTextureShareInFlight = false;
+}
+
+function startNativeOutputTextureSharePump(initialTexture = null) {
+  stopNativeOutputTextureSharePump();
+
+  if (!isMac || !spoutOutput || typeof spoutOutput.publishIOSurface !== 'function') {
+    return false;
+  }
+
+  const intervalMs = Math.max(4, Math.round(1000 / OSR_PAINT_FPS));
+  nativeOutputTextureShareActive = true;
+  nativeOutputTextureShareFrameCount = 0;
+  nativeOutputTextureShareFailCount = 0;
+  nativeOutputTextureShareLastLogTime = Date.now();
+
+  const publish = async (knownTexture = null) => {
+    if (!nativeOutputTextureShareActive || nativeOutputTextureShareInFlight) return;
+    nativeOutputTextureShareInFlight = true;
+    try {
+      const texture = knownTexture || await getNativeOutputSharedTextureMetadata();
+      if (!nativeOutputTextureShareActive) return;
+      if (!isPublishableNativeOutputTexture(texture)) {
+        nativeOutputTextureShareFailCount++;
+        if (nativeOutputTextureShareFailCount <= 5) {
+          console.warn(`[${textureShareLabel} Native] output IOSurface unavailable:`, JSON.stringify(texture));
+        }
+        if (nativeOutputTextureShareFailCount >= 10) {
+          console.warn(`[${textureShareLabel} Native] falling back to OSR texture share after repeated native output failures`);
+          stopNativeOutputTextureSharePump();
+          if (spoutSendActive && spoutOutput && !spoutOsrWindow) {
+            createSpoutOsrWindow(spoutSendW, spoutSendH);
+          }
+        }
+        return;
+      }
+
+      const surfaceId = Number(texture.handle);
+      const width = Number(texture.width);
+      const height = Number(texture.height);
+      const ok = spoutOutput.publishIOSurface(surfaceId, width, height, !!texture.flipped);
+      if (!ok) {
+        nativeOutputTextureShareFailCount++;
+        if (nativeOutputTextureShareFailCount <= 5) {
+          console.warn(`[${textureShareLabel} Native] publishIOSurface returned false for ${width}x${height}`);
+        }
+        return;
+      }
+
+      nativeOutputTextureShareFailCount = 0;
+      nativeOutputTextureShareFrameCount++;
+      const now = Date.now();
+      if (now - nativeOutputTextureShareLastLogTime > 5000) {
+        const elapsed = (now - nativeOutputTextureShareLastLogTime) / 1000;
+        const fps = nativeOutputTextureShareFrameCount / elapsed;
+        console.log(`[${textureShareLabel} Native] publishIOSurface ${width}x${height} @ ${fps.toFixed(1)} fps`);
+        nativeOutputTextureShareFrameCount = 0;
+        nativeOutputTextureShareLastLogTime = now;
+      }
+    } catch (err) {
+      nativeOutputTextureShareFailCount++;
+      if (nativeOutputTextureShareFailCount <= 5) {
+        console.error(`[${textureShareLabel} Native] publish error:`, err?.message || err);
+      }
+    } finally {
+      nativeOutputTextureShareInFlight = false;
+    }
+  };
+
+  publish(initialTexture);
+  nativeOutputTextureSharePump = setInterval(() => publish(), intervalMs);
+  console.log(`[${textureShareLabel} Native] Output IOSurface pump started @ ${OSR_PAINT_FPS} fps`);
+  return true;
+}
+
 function getTextureShareSenderMode() {
+  if (nativeOutputTextureShareActive) return 'native-iosurface';
   if (osrActive) return 'zero-copy';
   if (ALLOW_CPU_TEXTURE_SHARE_FALLBACK) return 'cpu-sendimage';
   return osrFailureReason ? 'zero-copy-unavailable' : 'zero-copy-pending';
@@ -2767,7 +2907,7 @@ function registerIpcHandlers() {
     return listSpoutSenders();
   });
 
-  ipcMain.handle('spout_start_sender', (_, { name, width, height }) => {
+  ipcMain.handle('spout_start_sender', async (_, { name, width, height }) => {
     const requestedName = name || 'ghostArcade';
 
     // If sender is already active or being created, return existing state
@@ -2785,13 +2925,27 @@ function registerIpcHandlers() {
 
     console.log('[IPC] spout_start_sender:', { name: requestedName, width, height });
     spoutSendCreating = true;
-    const ok = createSpoutSender(requestedName, width || 1920, height || 1080);
+    const targetWidth = width || 1920;
+    const targetHeight = height || 1080;
+    const nativeOutputShare = await canPublishNativeOutputTextureShare();
+    const ok = createSpoutSender(requestedName, targetWidth, targetHeight, {
+      startOsr: !nativeOutputShare.ok,
+    });
+    if (ok && nativeOutputShare.ok) {
+      const nativePumpStarted = startNativeOutputTextureSharePump(nativeOutputShare.texture);
+      if (!nativePumpStarted) {
+        console.warn(`[${textureShareLabel} Native] native output pump could not start; falling back to OSR texture share`);
+        createSpoutOsrWindow(targetWidth, targetHeight);
+      }
+    } else if (nativeOutputShare.reason && isMac) {
+      console.log(`[${textureShareLabel} Native] using OSR texture share: ${nativeOutputShare.reason}`);
+    }
     spoutSendCreating = false;
     const result = {
       success: ok,
       name: spoutSendName,
-      width: width || 1920,
-      height: height || 1080,
+      width: targetWidth,
+      height: targetHeight,
       mode: getTextureShareSenderMode(),
       cpuFallbackAllowed: ALLOW_CPU_TEXTURE_SHARE_FALLBACK,
     };
@@ -2814,7 +2968,7 @@ function registerIpcHandlers() {
     // sender is supposedly active, the renderer's send-gate isn't firing
     // the invoke() call (store/flag issue, not a native issue).
     if (spoutSendCallCount < 3) {
-      console.log(`[IPC] spout_send_image call #${spoutSendCallCount} — spoutSendActive=${spoutSendActive} spoutOutput=${!!spoutOutput} osrActive=${osrActive}`);
+      console.log(`[IPC] spout_send_image call #${spoutSendCallCount} — spoutSendActive=${spoutSendActive} spoutOutput=${!!spoutOutput} osrActive=${osrActive} nativeOutput=${nativeOutputTextureShareActive}`);
       spoutSendCallCount++;
     }
 
@@ -2822,7 +2976,7 @@ function registerIpcHandlers() {
 
     // When OSR zero-copy is active, reject CPU readPixels frames —
     // they would stomp on the Spout sender with different resolution/timing
-    if (osrActive) return true;
+    if (osrActive || nativeOutputTextureShareActive) return true;
 
     if (!ALLOW_CPU_TEXTURE_SHARE_FALLBACK) {
       if (!spoutCpuFallbackWarned) {
