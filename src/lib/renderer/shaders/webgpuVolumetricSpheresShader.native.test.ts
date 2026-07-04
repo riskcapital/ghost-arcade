@@ -96,8 +96,10 @@ describe('Volumetric Spheres native shader bundle', () => {
         instance_count: 128,
         depth: true,
         blend: 'alpha',
+        clear_color: expect.arrayContaining([expect.any(Number)]),
       }),
     ]);
+    expect(first.config.render_passes[0].clear_color?.[3]).toBeGreaterThan(0);
 
     const second = buildVolumetricSpheresNativeComputeGraph({
       sourceId: 'gpu:layer-a:volumetric-balls',

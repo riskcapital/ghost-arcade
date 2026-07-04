@@ -232,6 +232,7 @@ type VolumetricSpheresNativeGraphRenderPass = {
   source_id: string;
   seq: number;
   clear: boolean;
+  clear_color?: [number, number, number, number];
   include_snapshot?: boolean;
   blend: 'replace' | 'alpha' | 'add';
   primitive?: 'triangle-list';
@@ -947,6 +948,12 @@ function buildVolumetricSpheresRenderUniform(
   return bufferToBase64(buf);
 }
 
+function volumetricSpheresClearColor(params: VolumetricSpheresParams): [number, number, number, number] {
+  const fog = rgb01(params.fogColor, [0.03, 0.04, 0.08]);
+  const bgOpacity = Math.max(0, Math.min(1, params.backgroundOpacity));
+  return [fog[0] * bgOpacity, fog[1] * bgOpacity, fog[2] * bgOpacity, bgOpacity];
+}
+
 function volumetricSpheresInitialState(params: VolumetricSpheresParams, count: number, time: number, seedKey: string): VolumetricSpheresNativeGraphState {
   return {
     layout: params.layout,
@@ -1034,6 +1041,7 @@ export function buildVolumetricSpheresNativeComputeGraph(options: VolumetricSphe
     source_id: sourceId,
     seq: Math.max(0, Math.round(options.frameIndex ?? 0)),
     clear: true,
+    clear_color: volumetricSpheresClearColor(params),
     include_snapshot: !!options.includeSnapshot,
     blend: 'alpha',
     primitive: 'triangle-list',

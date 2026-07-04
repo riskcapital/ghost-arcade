@@ -496,6 +496,7 @@ async function main() {
       !capabilities.features.compute_graph_texture_sampling ||
       !capabilities.features.compute_graph_depth_render ||
       !capabilities.features.compute_graph_line_render ||
+      !capabilities.features.compute_graph_clear_color ||
       !capabilities.features.compute_graph_source_frame_target ||
       !capabilities.features.persistent_compute_buffers ||
       !capabilities.features.native_3d_smoke_graph ||
@@ -530,6 +531,7 @@ async function main() {
       !smokeManifest.features?.includes('compute_graph_texture_sampling') ||
       !smokeManifest.features?.includes('compute_graph_depth_render') ||
       !smokeManifest.features?.includes('compute_graph_line_render') ||
+      !smokeManifest.features?.includes('compute_graph_clear_color') ||
       !smokeManifest.features?.includes('compute_graph_source_frame_target')
     ) {
       throw new Error(`native graph instrument manifest entry is incomplete: ${JSON.stringify(capabilities.native_graph_instrument_manifest)}`);
@@ -543,6 +545,7 @@ async function main() {
       !volumetricManifest.shader_ids?.includes('volumetric-spheres/render') ||
       !volumetricManifest.features?.includes('compute_graph_instanced_render') ||
       !volumetricManifest.features?.includes('compute_graph_depth_render') ||
+      !volumetricManifest.features?.includes('compute_graph_clear_color') ||
       !volumetricManifest.features?.includes('native_volumetric_spheres_graph')
     ) {
       throw new Error(`native volumetric-spheres manifest entry is incomplete: ${JSON.stringify(capabilities.native_graph_instrument_manifest)}`);
@@ -710,6 +713,7 @@ async function main() {
         vertex_entry: 'vs_main',
         fragment_entry: 'fs_main',
         clear: true,
+        clear_color: [0.02, 0.04, 0.08, 1],
         include_snapshot: true,
         bindings: [
           { binding: 0, resource: 'graph-output', kind: 'read-only-storage' },
@@ -727,6 +731,16 @@ async function main() {
     }
     if (!outputReadback?.checksum || outputReadback.checksum === scratchReadback?.checksum) {
       throw new Error(`native compute graph transform pass did not alter output: ${JSON.stringify(computeGraph)}`);
+    }
+    const graphClearColor = computeGraph?.render?.clear_color;
+    if (
+      !Array.isArray(graphClearColor) ||
+      Math.abs(Number(graphClearColor[0]) - 0.02) > 0.005 ||
+      Math.abs(Number(graphClearColor[1]) - 0.04) > 0.005 ||
+      Math.abs(Number(graphClearColor[2]) - 0.08) > 0.005 ||
+      Math.abs(Number(graphClearColor[3]) - 1) > 0.005
+    ) {
+      throw new Error(`native compute graph clear_color was not reported: ${JSON.stringify(computeGraph?.render)}`);
     }
     if (!graphRenderSnapshot?.checksum || graphRenderSnapshot.dark_frame || Number(graphRenderSnapshot.nonzero_pixels ?? 0) <= 0) {
       throw new Error(`native compute graph render snapshot failed: ${JSON.stringify(computeGraph)}`);
