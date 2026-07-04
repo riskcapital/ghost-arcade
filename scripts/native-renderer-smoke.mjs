@@ -1100,8 +1100,8 @@ async function main() {
       !capabilities.features.native_point_cloud_fx_graph ||
       !capabilities.features.native_static_image_decode ||
       !capabilities.features.native_static_image_prefetch ||
-      capabilities.features.native_instrument_proxies ||
-      capabilities.features.multi_pass_instruments
+      !capabilities.features.multi_pass_instruments ||
+      capabilities.features.native_instrument_proxies
     ) {
       throw new Error(`native compute capability flags are not honest yet: ${JSON.stringify(capabilities.features)}`);
     }
