@@ -1648,7 +1648,7 @@ impl App {
             "gpu_timing": self.renderer.as_ref().is_some_and(|renderer| renderer.gpu_timing.is_some()),
             "shader_precompile": true,
             "fragment_wgsl_host": true,
-            "native_instrument_proxies": true,
+            "native_instrument_proxies": false,
             "source_preview_upload": true,
             "source_frame_upload": true,
             "source_frame_file_handoff": true,
@@ -8361,16 +8361,7 @@ fn windows_drive_path(path: &str) -> bool {
 
 fn source_kind(source_type: &str) -> f32 {
     if source_type.starts_with("gpu:") {
-        return match source_type {
-            "gpu:planet" => 10.0,
-            "gpu:pixel-particles" => 11.0,
-            "gpu:flythrough" => 12.0,
-            "gpu:point-cloud-fx" => 13.0,
-            "gpu:particle-field" | "gpu:gravity-wells" => 14.0,
-            "gpu:volumetric-balls" => 15.0,
-            "gpu:smoke-riders" | "gpu:ink-cloud" | "gpu:smoke-3d" => 16.0,
-            _ => 9.0,
-        };
+        return 9.0;
     }
     match source_type {
         "color" => 1.0,
