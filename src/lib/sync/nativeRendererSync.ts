@@ -57,6 +57,12 @@ import {
   buildVolumetricSpheresNativePrecompileCommands,
   type VolumetricSpheresNativeGraphState,
 } from '$lib/renderer/shaders/webgpuVolumetricSpheresShader';
+import {
+  NATIVE_EFFECT_PASS_MANIFEST,
+  buildNativeEffectPassGraph,
+  buildNativeEffectPassPrecompileCommands,
+  type NativeEffectPassId,
+} from '$lib/renderer/nativeEffectPass';
 import { parsePLYBuffer } from '$lib/splat/plyLoader';
 import { parseSplatBuffer } from '$lib/splat/splatLoader';
 import {
@@ -121,6 +127,7 @@ type NativeLayerSource = {
   shouldPrefetch: boolean;
   shouldPreview: boolean;
   previewElement?: CanvasImageSource | null;
+  aspect?: number;
 };
 
 type NativeVec4 = [number, number, number, number];
@@ -151,7 +158,12 @@ type NativeRenderClockCommand = {
 
 export type PresentPolicyProfile = 'vsync-live' | 'low-latency-safe' | 'low-latency-aggressive';
 
-type NativeGraphRouteKind = 'planet' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud' | 'flythrough' | 'pixel-particles' | 'point-cloud-fx';
+type NativeGraphRouteKind = 'planet' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud' | 'flythrough' | 'pixel-particles' | 'point-cloud-fx' | 'effect-pass';
+type NativeEffectPassRuntime = {
+  effect: NativeEffectPassId;
+  descriptor: string;
+  amount?: number;
+};
 const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<{
   kind: NativeGraphRouteKind;
   feature: string;
@@ -184,6 +196,7 @@ type NativeGraphLayerRoute = {
   key: string;
   source: NativeLayerSource;
   inputSource: NativeLayerSource | null;
+  effectPass?: NativeEffectPassRuntime;
 };
 
 type NativeGraphRouteState = {
@@ -370,6 +383,10 @@ function nativeEffectDescriptors(layer: Layer): string[] {
     .filter((d: string | null): d is string => !!d);
 }
 
+const NATIVE_EFFECT_PASS_IDS = new Set<NativeEffectPassId>(
+  NATIVE_EFFECT_PASS_MANIFEST.map((entry) => entry.id),
+);
+
 function normalizeSignedUnitToMultiplier(value: unknown): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
   if (value >= -1 && value <= 1) return Math.max(0.001, 1 + value);
@@ -445,6 +462,28 @@ function effectToNativeDescriptor(effect: any): string | null {
   const effectId = typeof effect.id === 'string' ? effect.id.trim() : '';
   if (effectId.includes(':')) return effectId.toLowerCase();
   return null;
+}
+
+function nativeEffectPassFromDescriptor(descriptor: string | null): NativeEffectPassRuntime | null {
+  if (!descriptor) return null;
+  const [rawId, rawAmount] = descriptor.split(':', 2);
+  const effect = rawId.trim().toLowerCase() as NativeEffectPassId;
+  if (!NATIVE_EFFECT_PASS_IDS.has(effect)) return null;
+  const amount = rawAmount !== undefined && rawAmount.trim().length > 0
+    ? Number(rawAmount)
+    : undefined;
+  if (amount !== undefined && !Number.isFinite(amount)) return null;
+  return {
+    effect,
+    descriptor,
+    amount,
+  };
+}
+
+function nativeEffectPassForLayer(layer: Layer): NativeEffectPassRuntime | null {
+  const enabled = (layer.effects || []).filter((effect: any) => effect && effect.enabled !== false);
+  if (enabled.length !== 1) return null;
+  return nativeEffectPassFromDescriptor(effectToNativeDescriptor(enabled[0]));
 }
 
 function hslToRgb(h: number, s: number, l: number): [number, number, number] {
@@ -728,6 +767,39 @@ function nativeGraphOutputSource(layer: Layer, kind: NativeGraphRouteKind): Nati
   };
 }
 
+function nativeLayerSourceAspectHint(source: NativeLayerSource): number | undefined {
+  const previewDims = source.previewElement ? drawableDimensions(source.previewElement) : null;
+  if (previewDims) return clampNumber(previewDims.width / previewDims.height, 0.001, 128);
+  const src = source.source as any;
+  const candidates: Array<CanvasImageSource | null | undefined> = [
+    src?.videoElement,
+    src?.synthVisionCanvas,
+    src?.threejsCanvas,
+    src?.texture?.image as CanvasImageSource | undefined,
+  ];
+  for (const candidate of candidates) {
+    const dims = candidate ? drawableDimensions(candidate) : null;
+    if (dims) return clampNumber(dims.width / dims.height, 0.001, 128);
+  }
+  const width = Number(src?.width ?? src?.videoWidth ?? src?.naturalWidth ?? 0);
+  const height = Number(src?.height ?? src?.videoHeight ?? src?.naturalHeight ?? 0);
+  if (width > 0 && height > 0) return clampNumber(width / height, 0.001, 128);
+  return undefined;
+}
+
+function nativeEffectPassOutputSource(layer: Layer, inputSource: NativeLayerSource): NativeLayerSource {
+  return {
+    id: `effect-pass:${layer.id}`,
+    uri: `native-effect-pass://${layer.id}`,
+    sourceType: 'image',
+    source: null,
+    shouldPrefetch: false,
+    shouldPreview: false,
+    previewElement: inputSource.previewElement ?? null,
+    aspect: nativeLayerSourceAspectHint(inputSource),
+  };
+}
+
 function nativeGraphBufferSafeId(value: string): string {
   return String(value || 'source').replace(/[^a-zA-Z0-9:_-]+/g, '_').slice(0, 160);
 }
@@ -754,6 +826,8 @@ function nativeGraphBufferPrefixesForRoute(route: NativeGraphLayerRoute): string
       return [`pixel-particles:${safeSourceId}`];
     case 'point-cloud-fx':
       return [`${sourceId}:point-cloud-fx:`];
+    case 'effect-pass':
+      return [`effect-pass:${safeSourceId}`];
     default:
       return [];
   }
@@ -869,6 +943,7 @@ function nativeLayerSource(layer: Layer): NativeLayerSource {
 
 function nativeLayerNeedsContinuousSync(layer: Layer): boolean {
   if (!layer.visible) return false;
+  if (nativeEffectPassForLayer(layer)?.effect === 'noise') return true;
   if (
     (layer.source?.type === 'shader' && layer.source?.shaderCode) ||
     (layer.type === 'gpu' && !!layer.gpuLayerContent)
@@ -1152,6 +1227,7 @@ export class NativeRendererSync {
 
   private nativeGraphUsesSourceFrameInput(layer: Layer, route: NativeGraphLayerRoute): boolean {
     if (!route.inputSource) return false;
+    if (route.kind === 'effect-pass') return true;
     if (route.kind === 'flythrough' || route.kind === 'pixel-particles') return true;
     if (route.kind !== 'particle-field') return false;
     const mode = String(layer.gpuLayerContent?.params?.mode ?? '').trim().toLowerCase();
@@ -1226,8 +1302,30 @@ export class NativeRendererSync {
     }
   }
 
+  private nativeEffectPassRouteForLayer(layer: Layer, includeWarningDisabled = false): NativeGraphLayerRoute | null {
+    if (layer.type === 'gpu') return null;
+    if (!this.supportsNativeFeature('compute_graph_texture_sampling')) return null;
+    const effectPass = nativeEffectPassForLayer(layer);
+    if (!effectPass) return null;
+    const inputSource = nativeLayerSource(layer);
+    if (!inputSource.source || !inputSource.shouldPreview || inputSource.sourceType === 'none') return null;
+    const inputReady =
+      this.nativeSourceFrameUploaded(inputSource) ||
+      this.canUseNativeStaticImageDecode(inputSource.source, inputSource.sourceType) ||
+      !!this.resolvePreviewElement(inputSource.source, inputSource.sourceType, inputSource.previewElement ?? null);
+    if (!inputReady) return null;
+    const source = nativeEffectPassOutputSource(layer, inputSource);
+    const key = this.nativeGraphRouteKey('effect-pass', source.id);
+    if (!includeWarningDisabled && (this.nativeGraphRoutes.get(key)?.warnings ?? 0) >= 3) {
+      return null;
+    }
+    return { kind: 'effect-pass', key, source, inputSource, effectPass };
+  }
+
   private nativeGraphRouteForLayer(layer: Layer, includeWarningDisabled = false): NativeGraphLayerRoute | null {
     if (!this.nativeComputeGraphSourceFrames || !this.nativeWgslStdlibWarmed || !layer.visible) return null;
+    const effectPassRoute = this.nativeEffectPassRouteForLayer(layer, includeWarningDisabled);
+    if (effectPassRoute) return effectPassRoute;
     if (layer.type !== 'gpu' || !layer.gpuLayerContent) return null;
     const shaderId = String(layer.gpuLayerContent.shaderId || '').trim();
     const normalizedShaderId = shaderId.toLowerCase();
@@ -1410,6 +1508,25 @@ export class NativeRendererSync {
             typeof routeState.lastGraphFrameIndex === 'number' &&
             graphFrameIndex < routeState.lastGraphFrameIndex);
         const graph = await (async () => {
+          if (route.kind === 'effect-pass') {
+            if (!route.inputSource || !route.effectPass) {
+              throw new Error('native effect-pass route is missing input source or effect metadata');
+            }
+            const effectGraph = buildNativeEffectPassGraph({
+              sourceId: route.inputSource.id,
+              targetSourceId: route.source.id,
+              effect: route.effectPass.effect,
+              width,
+              height,
+              time: graphTime,
+              frameDelta: graphDelta,
+              frameIndex: graphFrameIndex,
+              amount: route.effectPass.amount,
+              mix: 1,
+              seq: graphSeq,
+            });
+            return { ...effectGraph, state: null };
+          }
           if (route.kind === 'planet') {
             return buildPlanetNativeComputeGraph({
               sourceId: route.source.id,
@@ -1559,7 +1676,7 @@ export class NativeRendererSync {
         if (!renderedSourceFrame) {
           throw new Error(`native ${route.kind} graph returned no source-frame render`);
         }
-        routeState.state = graph.state;
+        routeState.state = graph.state ?? null;
         routeState.lastGraphFrameIndex = graphFrameIndex;
         routeState.lastManualClockKey = manualClockKey || undefined;
         routeState.warnings = 0;
@@ -1954,7 +2071,7 @@ export class NativeRendererSync {
       const nativeParams = nativeGpuParams(layer);
       const nativeUv = this.nativeLayerUvState(layer, nativeSource, width, height);
       const nativeShape = nativeLayerShapeState(layer);
-      const effectIds = nativeEffectDescriptors(layer);
+      const effectIds = nativeGraphRoute?.kind === 'effect-pass' ? [] : nativeEffectDescriptors(layer);
       const effectsSig = effectIds.length ? effectIds.join('|') : 'none';
       const graphInputSig = nativeSourceIdentity(nativeGraphRoute?.inputSource);
       const snap: LayerSnapshot = {
@@ -2498,6 +2615,9 @@ export class NativeRendererSync {
     outputHeight: number,
   ): number {
     const fallback = clampNumber(outputWidth / Math.max(1, outputHeight), 0.001, 128);
+    if (typeof nativeSource.aspect === 'number' && Number.isFinite(nativeSource.aspect)) {
+      return clampNumber(nativeSource.aspect, 0.001, 128);
+    }
     const source = nativeSource.source;
     const candidates: Array<CanvasImageSource | null | undefined> = [
       nativeSource.previewElement,
@@ -2554,6 +2674,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     commands.push(...buildFlythroughNativePrecompileCommands());
     commands.push(...buildPixelParticlesNativePrecompileCommands());
     commands.push(...buildPointCloudFXNativePrecompileCommands());
+    commands.push(...buildNativeEffectPassPrecompileCommands());
     await submitNativeRendererBatch({
       frame_id: ++this.frameId,
       commands,
