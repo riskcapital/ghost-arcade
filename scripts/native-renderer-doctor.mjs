@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { spawn } from 'node:child_process';
+import { createNativeRendererBroker } from '../electron/native-renderer-broker.js';
 
 const root = process.cwd();
 const bin = join(root, 'native-renderer', 'target', 'release', process.platform === 'win32' ? 'ghost-render-core.exe' : 'ghost-render-core');
@@ -140,6 +141,64 @@ async function inspectCore() {
   }
 }
 
+async function inspectAppBridge() {
+  if (!existsSync(bin)) {
+    return { ok: false, detail: 'render-core binary missing' };
+  }
+  const outputExportExpected = process.platform === 'darwin';
+  const broker = createNativeRendererBroker({
+    appRoot: root,
+    resourcesPath: null,
+    isPackaged: false,
+    platform: process.platform,
+    env: process.env,
+    textureShareStatusProvider: () => ({
+      platform: process.platform === 'darwin' ? 'syphon' : 'spout',
+      label: process.platform === 'darwin' ? 'Syphon' : 'Spout',
+      available: process.platform === 'darwin',
+      error: process.platform === 'darwin' ? null : 'native texture-share sender bridge is pending on this platform',
+      nativeOutputCapable: process.platform === 'darwin',
+      nativeOutputActive: false,
+      senderMode: process.platform === 'darwin' ? 'native-iosurface-capable' : 'source-frame-fallback',
+    }),
+  });
+
+  try {
+    const status = await broker.invoke('native_renderer_start', {
+      config: {
+        backend: process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'd3d12' : 'vulkan',
+        width: 320,
+        height: 180,
+        target_fps: 30,
+      },
+    });
+    const capabilities = await broker.invoke('native_renderer_get_capabilities');
+    const readiness = await broker.invoke('native_renderer_get_readiness_report');
+    const features = capabilities?.features ?? {};
+    const checks = new Map((readiness?.checks ?? []).map((check) => [check?.id, check]));
+    const directSharedRpc = capabilities?.implemented_methods?.includes('upload_source_gpu_shared_texture');
+    const ok =
+      !!status?.backend_ready &&
+      !!features.shared_texture_output_export === outputExportExpected &&
+      !!features.native_texture_share_sender === outputExportExpected &&
+      !!checks.get('native-texture-share-sender')?.ok === outputExportExpected &&
+      !!directSharedRpc;
+    return {
+      ok,
+      detail: [
+        `bridge=${process.platform === 'darwin' ? 'Syphon' : process.platform === 'win32' ? 'Spout' : 'unsupported'}`,
+        `outputSharedTexture=${features.shared_texture_output_export ? 'on' : 'pending'}`,
+        `nativeShareSender=${features.native_texture_share_sender ? 'on' : 'pending'}`,
+        `directSharedTextureRpc=${directSharedRpc ? 'on' : 'missing'}`,
+        `textureShareCheck=${checks.get('native-texture-share-sender')?.ok ? 'on' : 'pending'}`,
+      ].join(' '),
+    };
+  } finally {
+    await broker.invoke('native_renderer_stop').catch(() => {});
+    broker.shutdownSync();
+  }
+}
+
 const cargo = check('cargo', ['--version']);
 const rustc = check('rustc', ['--version']);
 const binary = existsSync(bin);
@@ -150,6 +209,7 @@ console.log(`rustc: ${rustc.ok ? 'ok' : 'missing'} ${rustc.detail}`);
 console.log(`render-core binary: ${binary ? 'ok' : 'missing'} ${bin}`);
 
 let core = { ok: false, detail: 'skipped' };
+let appBridge = { ok: false, detail: 'skipped' };
 if (binary) {
   try {
     core = await inspectCore();
@@ -157,6 +217,13 @@ if (binary) {
     core = { ok: false, detail: err?.message || String(err) };
   }
   console.log(`render-core capability/readiness: ${core.ok ? 'ok' : 'failed'} ${core.detail}`);
+
+  try {
+    appBridge = await inspectAppBridge();
+  } catch (err) {
+    appBridge = { ok: false, detail: err?.message || String(err) };
+  }
+  console.log(`electron bridge capability/readiness: ${appBridge.ok ? 'ok' : 'failed'} ${appBridge.detail}`);
 }
 
-if (!cargo.ok || !rustc.ok || !binary || !core.ok) process.exitCode = 1;
+if (!cargo.ok || !rustc.ok || !binary || !core.ok || !appBridge.ok) process.exitCode = 1;
