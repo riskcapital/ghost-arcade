@@ -3,9 +3,13 @@ import { spawnSync } from 'node:child_process';
 const command = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 const result = spawnSync(
   command,
-  ['node', 'scripts/native-graph-parity-vitest.mjs'],
+  ['vitest', 'run', '--config', 'vitest.native.config.ts', 'tests/native/webgpu3DSmoke.native.integration.test.ts'],
   {
     stdio: 'inherit',
+    env: {
+      ...process.env,
+      GA_NATIVE_GRAPH_PARITY: '1',
+    },
   },
 );
 

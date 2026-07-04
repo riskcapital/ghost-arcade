@@ -39,7 +39,9 @@ import {
   type PlanetNativeGraphState,
 } from '../../src/lib/renderer/shaders/webgpuPlanet';
 
-const RUN_NATIVE_INTEGRATION = process.env.GA_NATIVE_SMOKE3D_INTEGRATION === '1';
+const RUN_NATIVE_INTEGRATION =
+  process.env.GA_NATIVE_GRAPH_PARITY === '1' ||
+  process.env.GA_NATIVE_SMOKE3D_INTEGRATION === '1';
 const root = process.cwd();
 const bin = join(
   root,
@@ -175,7 +177,7 @@ function makePointCloudData(count = 8192) {
 
 const maybeIt = RUN_NATIVE_INTEGRATION ? it : it.skip;
 
-describe('3D Smoke native renderer integration', () => {
+describe('Native graph parity and health integration', () => {
   let rpc: RpcProcess | null = null;
 
   afterEach(async () => {
@@ -723,5 +725,77 @@ describe('3D Smoke native renderer integration', () => {
       planetChecksums.add(String(snapshot.checksum));
     }
     expect(planetChecksums.size).toBeGreaterThan(1);
+  }, 60000);
+
+  maybeIt('replays native graph frames deterministically under the manual render clock', async () => {
+    if (typeof (globalThis as any).btoa !== 'function') {
+      (globalThis as any).btoa = (value: string) => Buffer.from(value, 'binary').toString('base64');
+    }
+    rpc = createRpcProcess();
+    await rpc.send('start', {
+      config: {
+        backend: process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'd3d12' : 'vulkan',
+        width: 320,
+        height: 180,
+        target_fps: 30,
+      },
+    }, 12000);
+    await rpc.send('submit_commands', {
+      commands: buildPlanetNativePrecompileCommands(),
+    }, 10000);
+
+    const sourceId = 'gpu:manual-clock-planet:planet';
+    await rpc.send('submit_commands', {
+      commands: [
+        { type: 'upsert_layer', layer_id: 'manual-clock-planet', z_index: 0, blend_mode: 'normal', opacity: 1, corners: FULLSCREEN_CORNERS },
+        { type: 'set_layer_visibility', layer_id: 'manual-clock-planet', visible: true },
+        { type: 'bind_media_source', layer_id: 'manual-clock-planet', source_id: sourceId, uri: 'native-graph://planet/manual-clock', source_type: 'image' },
+      ],
+    });
+
+    const renderPlanet = async (time: number, frameIndex: number) => {
+      await rpc!.send('set_render_clock', {
+        mode: 'manual',
+        time,
+        time_delta: 1 / 30,
+        frame_index: frameIndex,
+      });
+      const graph = buildPlanetNativeComputeGraph({
+        sourceId,
+        params: {
+          planet: 'jupiter',
+          cameraDistance: 3.4,
+          rotationSpeed: 8,
+          cloudSpeed: 0.6,
+          starDensity: 1.1,
+        },
+        width: 320,
+        height: 180,
+        time,
+        frameDelta: 1 / 30,
+        frameIndex,
+        state: null,
+        reset: true,
+      });
+      await rpc!.send('compute_graph', graph.config as unknown as Record<string, unknown>, 20000);
+      const snapshot = await rpc!.send('frame_snapshot', {
+        include_pixels: false,
+        time,
+        frame_index: frameIndex,
+      }, 10000);
+      assertVisibleFrame(`manual-clock planet t=${time}`, snapshot, 0.01);
+      return snapshot;
+    };
+
+    const first = await renderPlanet(1.25, 42);
+    const replay = await renderPlanet(1.25, 42);
+    const advanced = await renderPlanet(1.75, 57);
+    expect(replay.checksum).toBe(first.checksum);
+    expect(advanced.checksum).not.toBe(first.checksum);
+
+    const status = await rpc.send('status', {}, 5000);
+    expect(status.render_clock_mode).toBe('manual');
+    expect(Number(status.render_clock_frame_index ?? 0)).toBe(57);
+    expect(Number(status.render_clock_updates ?? 0)).toBeGreaterThanOrEqual(3);
   }, 60000);
 });
