@@ -961,6 +961,7 @@ struct NativeComputeGraphRenderPlan {
     instance_count: u32,
     indirect_buffer_id: Option<String>,
     indirect_offset: u64,
+    clear_color: [f64; 4],
     primitive_topology: NativeComputeGraphPrimitiveTopology,
     depth_enabled: bool,
     depth_write: bool,
@@ -1524,6 +1525,7 @@ impl App {
             "compute_graph_texture_sampling": true,
             "compute_graph_depth_render": true,
             "compute_graph_line_render": true,
+            "compute_graph_clear_color": true,
             "compute_graph_source_frame_target": true,
             "persistent_compute_buffers": true,
             "native_3d_smoke_graph": true,
@@ -1575,6 +1577,7 @@ impl App {
                         "compute_graph_texture_sampling",
                         "compute_graph_depth_render",
                         "compute_graph_line_render",
+                        "compute_graph_clear_color",
                         "compute_graph_source_frame_target",
                         "persistent_compute_buffers",
                         "native_3d_smoke_graph"
@@ -1598,6 +1601,7 @@ impl App {
                         "compute_graph_texture_sampling",
                         "compute_graph_depth_render",
                         "compute_graph_line_render",
+                        "compute_graph_clear_color",
                         "compute_graph_source_frame_target",
                         "persistent_compute_buffers",
                         "native_particle_field_graph"
@@ -1618,6 +1622,7 @@ impl App {
                         "compute_graph_render",
                         "compute_graph_instanced_render",
                         "compute_graph_depth_render",
+                        "compute_graph_clear_color",
                         "compute_graph_source_frame_target",
                         "persistent_compute_buffers",
                         "native_volumetric_spheres_graph"
@@ -3022,6 +3027,19 @@ impl App {
             .unwrap_or(0.0)
             .round()
             .max(0.0) as u64;
+        let clear_color = vec4_path_at(render, &["clear_color"])
+            .or_else(|| vec4_path_at(render, &["clearColor"]))
+            .or_else(|| vec4_path_at(render, &["clear_value"]))
+            .or_else(|| vec4_path_at(render, &["clearValue"]))
+            .map(|rgba| {
+                [
+                    rgba[0].clamp(-64.0, 64.0) as f64,
+                    rgba[1].clamp(-64.0, 64.0) as f64,
+                    rgba[2].clamp(-64.0, 64.0) as f64,
+                    rgba[3].clamp(0.0, 1.0) as f64,
+                ]
+            })
+            .unwrap_or([0.0, 0.0, 0.0, 1.0]);
         let depth_enabled = bool_at(render, &["depth"])
             .or_else(|| bool_at(render, &["depth_test"]))
             .or_else(|| bool_at(render, &["depthTest"]))
@@ -3104,6 +3122,7 @@ impl App {
             instance_count,
             indirect_buffer_id,
             indirect_offset,
+            clear_color,
             primitive_topology,
             depth_enabled,
             depth_write,
@@ -5010,7 +5029,12 @@ impl RenderState {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: if render_plan.clear {
-                            wgpu::LoadOp::Clear(wgpu::Color::BLACK)
+                            wgpu::LoadOp::Clear(wgpu::Color {
+                                r: render_plan.clear_color[0],
+                                g: render_plan.clear_color[1],
+                                b: render_plan.clear_color[2],
+                                a: render_plan.clear_color[3],
+                            })
                         } else {
                             wgpu::LoadOp::Load
                         },
@@ -5063,6 +5087,7 @@ impl RenderState {
             "depth_compare": render_plan.depth_compare.signature(),
             "format": texture_format_label(output_format),
             "include_snapshot": render_plan.include_snapshot,
+            "clear_color": render_plan.clear_color,
         });
         if let Some(indirect_buffer_id) = render_plan.indirect_buffer_id.as_ref() {
             if let Some(object) = result.as_object_mut() {
