@@ -9,6 +9,8 @@
    */
 
   import { offlineRender, DEFAULT_OFFLINE_SETTINGS, type OfflineRenderSettings } from '../recording/offlineRender';
+  import { isDesktopApp } from '../bridge';
+  import { getNativeRendererCapabilities } from '../api/native-renderer';
   import { project } from '../stores/layers';
 
   export let isOpen = false;
@@ -18,12 +20,19 @@
   // project so users land on a sensible matching resolution.
   let settings: OfflineRenderSettings = { ...DEFAULT_OFFLINE_SETTINGS };
   let seededForOpen = false;
+  let captureBackendTouched = false;
+  let nativeProbeStartedForOpen = false;
+  let nativeFrameSequenceAvailable = false;
+  let nativeFrameSequenceMessage = 'Desktop only';
+  let nativeProbeGeneration = 0;
+
   function seedSettingsFromProject() {
     settings = {
       ...DEFAULT_OFFLINE_SETTINGS,
       width: $project.width || 1920,
       height: $project.height || 1080,
     };
+    captureBackendTouched = false;
   }
   $: if (isOpen && !seededForOpen) {
     seedSettingsFromProject();
@@ -31,6 +40,14 @@
   }
   $: if (!isOpen && seededForOpen) {
     seededForOpen = false;
+    nativeProbeStartedForOpen = false;
+    nativeFrameSequenceAvailable = false;
+    nativeFrameSequenceMessage = 'Desktop only';
+    nativeProbeGeneration += 1;
+  }
+  $: if (isOpen && !nativeProbeStartedForOpen) {
+    nativeProbeStartedForOpen = true;
+    refreshNativeFrameSequenceAvailability();
   }
 
   const RESOLUTION_PRESETS = [
@@ -69,7 +86,12 @@
   }
 
   function start() {
-    offlineRender.start({ ...settings });
+    offlineRender.start({
+      ...settings,
+      captureBackend: settings.outputMode === 'frames' && settings.captureBackend === 'native' && nativeFrameSequenceAvailable
+        ? 'native'
+        : 'webgl',
+    });
   }
   function cancel() {
     offlineRender.cancel();
@@ -85,6 +107,52 @@
   function closeAndReset() {
     offlineRender.reset();
     onClose();
+  }
+
+  function onOutputModeChange() {
+    captureBackendTouched = false;
+    settings = {
+      ...settings,
+      captureBackend: settings.outputMode === 'frames' && nativeFrameSequenceAvailable ? 'native' : 'webgl',
+    };
+  }
+
+  function selectCaptureBackend(captureBackend: 'webgl' | 'native') {
+    if (captureBackend === 'native' && !nativeFrameSequenceAvailable) return;
+    captureBackendTouched = true;
+    settings = { ...settings, captureBackend };
+  }
+
+  async function refreshNativeFrameSequenceAvailability() {
+    const generation = ++nativeProbeGeneration;
+    nativeFrameSequenceAvailable = false;
+    nativeFrameSequenceMessage = 'Checking...';
+    const hasDesktopBridge = isDesktopApp || (typeof window !== 'undefined' && !!window.__ELECTRON__);
+    if (!hasDesktopBridge) {
+      nativeFrameSequenceMessage = 'Desktop only';
+      return;
+    }
+    try {
+      const caps = await getNativeRendererCapabilities();
+      if (generation !== nativeProbeGeneration) return;
+      const available = !!caps?.features?.frame_snapshot_export
+        && !!caps?.features?.native_frame_sequence_export
+        && !!caps?.implemented_methods?.includes('export_frame_snapshot');
+      nativeFrameSequenceAvailable = available;
+      nativeFrameSequenceMessage = available ? 'Ready' : 'Not available';
+      if (settings.outputMode === 'frames' && !captureBackendTouched) {
+        settings = { ...settings, captureBackend: available ? 'native' : 'webgl' };
+      } else if (!available && settings.captureBackend === 'native') {
+        settings = { ...settings, captureBackend: 'webgl' };
+      }
+    } catch (err) {
+      if (generation !== nativeProbeGeneration) return;
+      nativeFrameSequenceAvailable = false;
+      nativeFrameSequenceMessage = err instanceof Error && err.message ? err.message : 'Not available';
+      if (settings.captureBackend === 'native') {
+        settings = { ...settings, captureBackend: 'webgl' };
+      }
+    }
   }
 
   // Re-render the elapsed/remaining estimate periodically while
@@ -246,11 +314,39 @@
 
       <div class="field">
         <label>Output</label>
-        <select bind:value={settings.outputMode}>
+        <select bind:value={settings.outputMode} onchange={onOutputModeChange}>
           <option value="mp4">MP4 video</option>
           <option value="frames">JPEG frame sequence</option>
         </select>
       </div>
+
+      {#if isFrameOutput}
+        <div class="field">
+          <label>Renderer</label>
+          <div class="engine-grid">
+            <button
+              type="button"
+              class="engine-btn"
+              class:active={settings.captureBackend !== 'native'}
+              onclick={() => selectCaptureBackend('webgl')}
+            >
+              <span class="engine-title">WebGL</span>
+              <span class="engine-meta">Current compositor</span>
+            </button>
+            <button
+              type="button"
+              class="engine-btn"
+              class:active={settings.captureBackend === 'native'}
+              disabled={!nativeFrameSequenceAvailable}
+              onclick={() => selectCaptureBackend('native')}
+              title={nativeFrameSequenceAvailable ? 'Native Renderer' : nativeFrameSequenceMessage}
+            >
+              <span class="engine-title">Native Renderer</span>
+              <span class="engine-meta">{nativeFrameSequenceMessage}</span>
+            </button>
+          </div>
+        </div>
+      {/if}
 
       <div class="field">
         <label>{isFrameOutput ? 'Compile quality preset' : 'Quality'}</label>
@@ -264,7 +360,8 @@
       <div class="summary">
         {#if isFrameOutput}
           Will write <strong>{Math.round(settings.durationSeconds * settings.fps)}</strong> JPEG frames at
-          <strong>{settings.width}×{settings.height}</strong> to a folder.
+          <strong>{settings.width}×{settings.height}</strong> with
+          <strong>{settings.captureBackend === 'native' ? 'Native Renderer' : 'WebGL'}</strong>.
         {:else}
           Will produce <strong>{Math.round(settings.durationSeconds * settings.fps)}</strong> frames at
           <strong>{settings.width}×{settings.height}</strong>.
@@ -402,6 +499,54 @@
   .preset-label { font-size: 12px; font-weight: 500; }
   .preset-dims { font-size: 11px; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); color: #666; }
   .preset-btn.active .preset-dims { color: #4cd1ff; }
+
+  .engine-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  .engine-btn {
+    min-height: 54px;
+    padding: 9px 10px;
+    background: var(--bg-tertiary, #14141a);
+    border: 1px solid #2a2a30;
+    border-radius: 5px;
+    color: var(--text-secondary, #aaa);
+    cursor: pointer;
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+  }
+  .engine-btn:hover:not(:disabled) {
+    background: #1c1c22;
+    border-color: #4cd1ff;
+    color: #fff;
+  }
+  .engine-btn.active {
+    background: rgba(76, 209, 255, 0.12);
+    border-color: #4cd1ff;
+    color: #4cd1ff;
+  }
+  .engine-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.52;
+  }
+  .engine-title {
+    font-size: 12px;
+    font-weight: 650;
+  }
+  .engine-meta {
+    font-size: 11px;
+    color: #777;
+    line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+  .engine-btn.active .engine-meta { color: rgba(76, 209, 255, 0.82); }
 
   .summary {
     background: rgba(76, 209, 255, 0.05);

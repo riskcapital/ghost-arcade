@@ -80,8 +80,8 @@ export interface OfflineRenderSettings {
    *  lossless), 'web' = crf 23 (smaller file), 'archive' = crf 14
    *  (close to lossless, big file). */
   quality: 'high' | 'web' | 'archive';
-  /** Internal native-renderer capture path. Kept off the public modal until
-   *  visual parity is strong enough to make native the default. */
+  /** JPEG frame source. The desktop-only native option captures the native
+   *  renderer output directly; MP4 export still uses the WebGL compositor. */
   captureBackend?: 'webgl' | 'native';
 }
 
@@ -93,6 +93,7 @@ export const DEFAULT_OFFLINE_SETTINGS: OfflineRenderSettings = {
   filename: 'render',
   outputMode: 'mp4',
   quality: 'high',
+  captureBackend: 'webgl',
 };
 
 const MAX_SEGMENT_FRAMES = 180;
