@@ -429,6 +429,26 @@ const NATIVE_EFFECT_PASS_IDS = new Set<NativeEffectPassId>(
   NATIVE_EFFECT_PASS_MANIFEST.map((entry) => entry.id),
 );
 
+const HEARTBEAT_NATIVE_EFFECT_IDS = new Set([
+  'invert',
+  'grayscale',
+  'greyscale',
+  'brightness',
+  'contrast',
+  'gamma',
+  'saturation',
+  'hue',
+  'posterize',
+  'noise',
+]);
+
+function nativeHeartbeatEffectDescriptors(layer: Layer): string[] {
+  return nativeEffectDescriptors(layer).filter((descriptor) => {
+    const effectId = descriptor.split(':', 1)[0]?.trim().toLowerCase() ?? '';
+    return HEARTBEAT_NATIVE_EFFECT_IDS.has(effectId);
+  });
+}
+
 function normalizeSignedUnitToMultiplier(value: unknown): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
   if (value >= -1 && value <= 1) return Math.max(0.001, 1 + value);
@@ -2566,7 +2586,7 @@ export class NativeRendererSync {
       const nativeShape = nativeLayerShapeState(layer);
       const effectIds = nativeGraphRoute?.kind === 'effect-pass' || nativeGraphRoute?.effectPasses?.length
         ? []
-        : nativeEffectDescriptors(layer);
+        : nativeHeartbeatEffectDescriptors(layer);
       const effectsSig = effectIds.length ? effectIds.join('|') : 'none';
       const graphInputSig = nativeSourceIdentity(nativeGraphRoute?.inputSource);
       const snap: LayerSnapshot = {
