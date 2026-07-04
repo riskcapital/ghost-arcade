@@ -89,17 +89,6 @@ const RENDERER_COMMANDS = [
 ];
 
 const BROKER_UNSUPPORTED_COMMANDS = new Map([
-  ['native_renderer_clear_decode_preview_cache', 'native decode preview cache is not implemented yet'],
-  ['native_renderer_set_vram_budget', 'native VRAM budget enforcement is not implemented yet'],
-  ['native_renderer_set_decode_cpu_backup_policy', 'native decode CPU backup is not implemented yet'],
-  ['native_renderer_set_decode_synthetic_fallback_policy', 'native decode fallback policy is not implemented yet'],
-  ['native_renderer_set_media_prefetch_policy', 'native media prefetch policy is not implemented yet'],
-  ['native_renderer_set_media_drop_policy', 'native media drop policy is not implemented yet'],
-  ['native_renderer_set_decode_preview_policy', 'native decode preview policy is not implemented yet'],
-  ['native_renderer_set_decode_target_policy', 'native decode target policy is not implemented yet'],
-  ['native_renderer_set_decode_upload_policy', 'native decode upload policy is not implemented yet'],
-  ['native_renderer_set_decode_handoff_policy', 'native decode handoff policy is not implemented yet'],
-  ['native_renderer_set_decode_estimate_cache_policy', 'native decode estimate cache is not implemented yet'],
   ['native_renderer_set_decode_policy', 'legacy decode policy API is not implemented by this core'],
   ['native_renderer_set_prefetch_policy', 'legacy prefetch policy API is not implemented by this core'],
 ]);
@@ -1381,6 +1370,75 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     auto_present_on_state_change: !!(
       status.auto_present_on_state_change ?? previous.auto_present_on_state_change ?? true
     ),
+    decode_store_cpu_backup_frames: !!(
+      status.decode_store_cpu_backup_frames ?? previous.decode_store_cpu_backup_frames ?? false
+    ),
+    decode_allow_synthetic_fallback: !!(
+      status.decode_allow_synthetic_fallback ?? previous.decode_allow_synthetic_fallback ?? false
+    ),
+    media_queue_capacity: Number(status.media_queue_capacity ?? previous.media_queue_capacity ?? 2048),
+    decode_handoff_queue_capacity: Number(
+      status.decode_handoff_queue_capacity ?? previous.decode_handoff_queue_capacity ?? 4096,
+    ),
+    media_high_burst_limit: Number(status.media_high_burst_limit ?? previous.media_high_burst_limit ?? 7),
+    prefetch_cache_max_entries: Number(
+      status.prefetch_cache_max_entries ?? previous.prefetch_cache_max_entries ?? 4096,
+    ),
+    prefetch_cache_prune_count: Number(
+      status.prefetch_cache_prune_count ?? previous.prefetch_cache_prune_count ?? 256,
+    ),
+    media_drop_command_pressure_pct: Number(
+      status.media_drop_command_pressure_pct ?? previous.media_drop_command_pressure_pct ?? 90,
+    ),
+    media_drop_decode_pressure_pct: Number(
+      status.media_drop_decode_pressure_pct ?? previous.media_drop_decode_pressure_pct ?? 90,
+    ),
+    media_drop_io_pressure_pct: Number(
+      status.media_drop_io_pressure_pct ?? previous.media_drop_io_pressure_pct ?? 90,
+    ),
+    media_drop_decode_priority_cutoff: Number(
+      status.media_drop_decode_priority_cutoff ?? previous.media_drop_decode_priority_cutoff ?? 180,
+    ),
+    media_drop_io_priority_cutoff: Number(
+      status.media_drop_io_priority_cutoff ?? previous.media_drop_io_priority_cutoff ?? 128,
+    ),
+    decode_preview_size: Number(status.decode_preview_size ?? previous.decode_preview_size ?? 96),
+    decode_preview_cache_mb: Number(
+      status.decode_preview_cache_mb ?? previous.decode_preview_cache_mb ?? 128,
+    ),
+    decode_use_output_resolution: !!(
+      status.decode_use_output_resolution ?? previous.decode_use_output_resolution ?? true
+    ),
+    decode_target_width: Number(status.decode_target_width ?? previous.decode_target_width ?? status.width ?? 1920),
+    decode_target_height: Number(status.decode_target_height ?? previous.decode_target_height ?? status.height ?? 1080),
+    decode_preview_cache_bypassed: !!(
+      status.decode_preview_cache_bypassed ?? previous.decode_preview_cache_bypassed ?? false
+    ),
+    decode_upload_queue_cap_mb: Number(
+      status.decode_upload_queue_cap_mb ?? previous.decode_upload_queue_cap_mb ?? 256,
+    ),
+    decode_handoff_byte_cap_mb: Number(
+      status.decode_handoff_byte_cap_mb ?? previous.decode_handoff_byte_cap_mb ?? 128,
+    ),
+    decode_handoff_predecode_shed_pct: Number(
+      status.decode_handoff_predecode_shed_pct ?? previous.decode_handoff_predecode_shed_pct ?? 90,
+    ),
+    decode_predecode_estimate_cache_entries: Number(
+      status.decode_predecode_estimate_cache_entries ??
+        previous.decode_predecode_estimate_cache_entries ??
+        0,
+    ),
+    decode_predecode_estimate_cache_cap_entries: Number(
+      status.decode_predecode_estimate_cache_cap_entries ??
+        previous.decode_predecode_estimate_cache_cap_entries ??
+        8192,
+    ),
+    decode_predecode_estimate_cache_backpressure_active: !!(
+      status.decode_predecode_estimate_cache_backpressure_active ??
+        previous.decode_predecode_estimate_cache_backpressure_active ??
+        false
+    ),
+    vram_budget_mb: Number(status.vram_budget_mb ?? previous.vram_budget_mb ?? 4096),
     command_drain_limit_hits: Number(
       status.command_drain_limit_hits ?? previous.command_drain_limit_hits ?? 0,
     ),

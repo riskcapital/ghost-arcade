@@ -244,20 +244,118 @@ try {
     capabilities?.implemented_methods?.includes('clear_runtime_caches'),
     `broker implemented methods lost clear_runtime_caches: ${JSON.stringify(capabilities?.implemented_methods)}`,
   );
-  for (const method of ['prefetch_media', 'clear_prefetch_cache', 'get_decode_capabilities']) {
+  const policyMethods = [
+    'clear_decode_preview_cache',
+    'set_vram_budget',
+    'set_decode_cpu_backup_policy',
+    'set_decode_synthetic_fallback_policy',
+    'set_media_prefetch_policy',
+    'set_media_drop_policy',
+    'set_decode_preview_policy',
+    'set_decode_target_policy',
+    'set_decode_upload_policy',
+    'set_decode_handoff_policy',
+    'set_decode_estimate_cache_policy',
+  ];
+  for (const method of [
+    'prefetch_media',
+    'clear_prefetch_cache',
+    'get_decode_capabilities',
+    ...policyMethods,
+  ]) {
     assert(
       capabilities?.implemented_methods?.includes(method),
       `broker implemented methods lost ${method}: ${JSON.stringify(capabilities?.implemented_methods)}`,
+    );
+  }
+  for (const commandType of policyMethods.filter((method) => method !== 'clear_decode_preview_cache')) {
+    assert(
+      capabilities?.implemented_command_types?.includes(commandType),
+      `broker command types lost ${commandType}: ${JSON.stringify(capabilities?.implemented_command_types)}`,
     );
   }
   const decodeCapabilities = await broker.invoke('native_renderer_get_decode_capabilities');
   assert(
     decodeCapabilities?.native_static_image_decode &&
       decodeCapabilities?.native_static_image_prefetch &&
+      decodeCapabilities?.decode_policy_controls &&
+      decodeCapabilities?.decode_preview_cache_clear &&
+      decodeCapabilities?.media_policy_controls &&
+      decodeCapabilities?.vram_budget_policy &&
+      decodeCapabilities?.vram_budget_enforcement === false &&
       decodeCapabilities?.native_media_decode === false &&
       decodeCapabilities?.video_decode === false &&
       decodeCapabilities?.supported_source_types?.includes('image'),
     `broker decode capabilities should report static-image-only native decode: ${JSON.stringify(decodeCapabilities)}`,
+  );
+  await broker.invoke('native_renderer_set_decode_cpu_backup_policy', {
+    config: { decode_store_cpu_backup_frames: true },
+  });
+  await broker.invoke('native_renderer_set_decode_synthetic_fallback_policy', {
+    config: { decode_allow_synthetic_fallback: true },
+  });
+  await broker.invoke('native_renderer_set_media_prefetch_policy', {
+    config: {
+      media_queue_capacity: 3333,
+      decode_handoff_queue_capacity: 4444,
+      media_high_burst_limit: 11,
+      prefetch_cache_max_entries: 5555,
+      prefetch_cache_prune_count: 333,
+    },
+  });
+  await broker.invoke('native_renderer_set_media_drop_policy', {
+    config: {
+      command_pressure_pct: 88,
+      decode_queue_pressure_pct: 77,
+      io_queue_pressure_pct: 66,
+      decode_priority_cutoff: 111,
+      io_priority_cutoff: 99,
+    },
+  });
+  await broker.invoke('native_renderer_set_decode_preview_policy', {
+    config: { decode_preview_size: 144, decode_preview_cache_mb: 192 },
+  });
+  await broker.invoke('native_renderer_set_decode_target_policy', {
+    config: { decode_use_output_resolution: false },
+  });
+  await broker.invoke('native_renderer_set_decode_upload_policy', {
+    config: { decode_upload_queue_cap_mb: 384 },
+  });
+  await broker.invoke('native_renderer_set_decode_handoff_policy', {
+    config: { decode_handoff_byte_cap_mb: 320, decode_handoff_predecode_shed_pct: 82 },
+  });
+  await broker.invoke('native_renderer_set_decode_estimate_cache_policy', {
+    config: { decode_predecode_estimate_cache_cap_entries: 12345 },
+  });
+  await broker.invoke('native_renderer_set_vram_budget', { vram_budget_mb: 6144 });
+  const clearDecodePreview = await broker.invoke('native_renderer_clear_decode_preview_cache');
+  assert(
+    Number(clearDecodePreview?.cleared_decode_preview_entries ?? -1) === 0,
+    `decode preview clear should acknowledge empty native cache: ${JSON.stringify(clearDecodePreview)}`,
+  );
+  const policyStatus = await broker.invoke('native_renderer_get_status');
+  assert(
+    policyStatus.decode_store_cpu_backup_frames === true &&
+      policyStatus.decode_allow_synthetic_fallback === true &&
+      Number(policyStatus.media_queue_capacity) === 3333 &&
+      Number(policyStatus.decode_handoff_queue_capacity) === 4444 &&
+      Number(policyStatus.media_high_burst_limit) === 11 &&
+      Number(policyStatus.prefetch_cache_max_entries) === 5555 &&
+      Number(policyStatus.prefetch_cache_prune_count) === 333 &&
+      Number(policyStatus.media_drop_command_pressure_pct) === 88 &&
+      Number(policyStatus.media_drop_decode_pressure_pct) === 77 &&
+      Number(policyStatus.media_drop_io_pressure_pct) === 66 &&
+      Number(policyStatus.media_drop_decode_priority_cutoff) === 111 &&
+      Number(policyStatus.media_drop_io_priority_cutoff) === 99 &&
+      Number(policyStatus.decode_preview_size) === 144 &&
+      Number(policyStatus.decode_preview_cache_mb) === 192 &&
+      policyStatus.decode_use_output_resolution === false &&
+      Number(policyStatus.decode_upload_queue_cap_mb) === 384 &&
+      Number(policyStatus.decode_handoff_byte_cap_mb) === 320 &&
+      Number(policyStatus.decode_handoff_predecode_shed_pct) === 82 &&
+      Number(policyStatus.decode_predecode_estimate_cache_cap_entries) === 12345 &&
+      Number(policyStatus.vram_budget_mb) === 6144,
+    `native policy setters did not round-trip through status: ${JSON.stringify(policyStatus)}`,
   );
   assert(capabilities?.features?.native_output_mirror_texture, 'broker capabilities lost native output mirror support');
   assert(

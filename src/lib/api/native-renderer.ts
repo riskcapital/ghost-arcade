@@ -166,8 +166,37 @@ export type RendererCommand =
   | { type: 'set_render_clock'; mode: 'live' | 'manual' | 'reset'; time?: number; time_delta?: number; frame_index?: number }
   | { type: 'set_command_drain_limit'; max_commands_per_tick: number }
   | { type: 'set_auto_present_policy'; auto_present_on_state_change: boolean }
+  | { type: 'set_vram_budget'; vram_budget_mb: number }
   | { type: 'set_decode_cpu_backup_policy'; decode_store_cpu_backup_frames: boolean }
   | { type: 'set_decode_synthetic_fallback_policy'; decode_allow_synthetic_fallback: boolean }
+  | {
+      type: 'set_media_prefetch_policy';
+      media_queue_capacity?: number;
+      decode_handoff_queue_capacity?: number;
+      media_high_burst_limit: number;
+      prefetch_cache_max_entries: number;
+      prefetch_cache_prune_count: number;
+    }
+  | {
+      type: 'set_media_drop_policy';
+      command_pressure_pct: number;
+      decode_queue_pressure_pct: number;
+      io_queue_pressure_pct: number;
+      decode_priority_cutoff: number;
+      io_priority_cutoff: number;
+    }
+  | { type: 'set_decode_preview_policy'; decode_preview_size: number; decode_preview_cache_mb: number }
+  | { type: 'set_decode_target_policy'; decode_use_output_resolution: boolean }
+  | { type: 'set_decode_upload_policy'; decode_upload_queue_cap_mb: number }
+  | {
+      type: 'set_decode_handoff_policy';
+      decode_handoff_byte_cap_mb: number;
+      decode_handoff_predecode_shed_pct: number;
+    }
+  | {
+      type: 'set_decode_estimate_cache_policy';
+      decode_predecode_estimate_cache_cap_entries: number;
+    }
   | { type: 'set_texture_pool_cap'; texture_pool_cap_mb: number }
   | { type: 'set_shader_precompile_policy'; queue_cap: number; per_frame: number }
   | { type: 'set_present_policy'; present_mode: PresentMode; allow_tearing: boolean; max_frame_latency: number; use_waitable_object: boolean }
