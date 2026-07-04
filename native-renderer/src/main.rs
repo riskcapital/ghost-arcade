@@ -263,6 +263,13 @@ struct CoreStatus {
     swapchain_present_attempts: u64,
     swapchain_presented: u64,
     swapchain_present_failures: u64,
+    swapchain_last_present_result: String,
+    swapchain_last_present_error: String,
+    swapchain_present_timeouts: u64,
+    swapchain_present_occluded: u64,
+    swapchain_present_outdated: u64,
+    swapchain_present_lost: u64,
+    swapchain_present_validation_errors: u64,
     swapchain_present_max_consecutive_failures: u32,
     swapchain_present_tearing_attempts: u64,
     swapchain_waitable_waits: u64,
@@ -527,6 +534,13 @@ struct CoreStats {
     swapchain_present_attempts: u64,
     swapchain_presented: u64,
     swapchain_present_failures: u64,
+    swapchain_last_present_result: String,
+    swapchain_last_present_error: String,
+    swapchain_present_timeouts: u64,
+    swapchain_present_occluded: u64,
+    swapchain_present_outdated: u64,
+    swapchain_present_lost: u64,
+    swapchain_present_validation_errors: u64,
     swapchain_present_consecutive_failures: u32,
     swapchain_present_max_consecutive_failures: u32,
     swapchain_present_tearing_attempts: u64,
@@ -1466,6 +1480,31 @@ struct App {
     native_quality: NativeQualityState,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum SurfacePresentOutcome {
+    Presented,
+    SuboptimalPresented,
+    Outdated,
+    Timeout,
+    Occluded,
+}
+
+impl SurfacePresentOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Presented => "presented",
+            Self::SuboptimalPresented => "suboptimal-presented",
+            Self::Outdated => "outdated",
+            Self::Timeout => "timeout",
+            Self::Occluded => "occluded",
+        }
+    }
+
+    fn presented(self) -> bool {
+        matches!(self, Self::Presented | Self::SuboptimalPresented)
+    }
+}
+
 impl App {
     fn new(response_tx: Sender<String>) -> Self {
         Self {
@@ -2079,6 +2118,21 @@ impl App {
             swapchain_present_attempts: self.stats.swapchain_present_attempts,
             swapchain_presented: self.stats.swapchain_presented,
             swapchain_present_failures: self.stats.swapchain_present_failures,
+            swapchain_last_present_result: if self.stats.swapchain_last_present_result.is_empty() {
+                "none".to_string()
+            } else {
+                self.stats.swapchain_last_present_result.clone()
+            },
+            swapchain_last_present_error: if self.stats.swapchain_last_present_error.is_empty() {
+                "none".to_string()
+            } else {
+                self.stats.swapchain_last_present_error.clone()
+            },
+            swapchain_present_timeouts: self.stats.swapchain_present_timeouts,
+            swapchain_present_occluded: self.stats.swapchain_present_occluded,
+            swapchain_present_outdated: self.stats.swapchain_present_outdated,
+            swapchain_present_lost: self.stats.swapchain_present_lost,
+            swapchain_present_validation_errors: self.stats.swapchain_present_validation_errors,
             swapchain_present_max_consecutive_failures: self
                 .stats
                 .swapchain_present_max_consecutive_failures,
@@ -2262,9 +2316,9 @@ impl App {
                         "detail": if !self.output_window_attached {
                             "native output window is detached/hidden".to_string()
                         } else if self.stats.swapchain_presented == 0 {
-                            "waiting for first native swapchain present".to_string()
+                            format!("waiting for first native swapchain present; last={}", if self.stats.swapchain_last_present_result.is_empty() { "none" } else { self.stats.swapchain_last_present_result.as_str() })
                         } else if self.stats.swapchain_present_consecutive_failures > 0 {
-                            format!("native output present has {} consecutive failure(s)", self.stats.swapchain_present_consecutive_failures)
+                            format!("native output present has {} consecutive failure(s); last={}", self.stats.swapchain_present_consecutive_failures, if self.stats.swapchain_last_present_result.is_empty() { "none" } else { self.stats.swapchain_last_present_result.as_str() })
                         } else {
                             format!("native output presented {} frame(s)", self.stats.swapchain_presented)
                         }
@@ -2747,7 +2801,9 @@ impl App {
             self.audio1,
             self.audio2,
         ) {
-            Ok(true) => {
+            Ok(outcome) if outcome.presented() => {
+                self.stats.swapchain_last_present_result = outcome.as_str().to_string();
+                self.stats.swapchain_last_present_error.clear();
                 self.stats.frames_presented = self.stats.frames_presented.saturating_add(1);
                 self.stats.swapchain_presented = self.stats.swapchain_presented.saturating_add(1);
                 self.stats.swapchain_present_consecutive_failures = 0;
@@ -2788,9 +2844,27 @@ impl App {
                     self.source_preview_dirty = false;
                 }
             }
-            Ok(false) => {
+            Ok(outcome) => {
+                self.stats.swapchain_last_present_result = outcome.as_str().to_string();
+                self.stats.swapchain_last_present_error.clear();
                 self.stats.swapchain_present_failures =
                     self.stats.swapchain_present_failures.saturating_add(1);
+                match outcome {
+                    SurfacePresentOutcome::Outdated => {
+                        self.stats.swapchain_present_outdated =
+                            self.stats.swapchain_present_outdated.saturating_add(1);
+                    }
+                    SurfacePresentOutcome::Timeout => {
+                        self.stats.swapchain_present_timeouts =
+                            self.stats.swapchain_present_timeouts.saturating_add(1);
+                    }
+                    SurfacePresentOutcome::Occluded => {
+                        self.stats.swapchain_present_occluded =
+                            self.stats.swapchain_present_occluded.saturating_add(1);
+                    }
+                    SurfacePresentOutcome::Presented
+                    | SurfacePresentOutcome::SuboptimalPresented => {}
+                }
                 self.stats.swapchain_present_consecutive_failures = self
                     .stats
                     .swapchain_present_consecutive_failures
@@ -2805,6 +2879,20 @@ impl App {
                     .saturating_add(1);
             }
             Err(err) => {
+                self.stats.swapchain_last_present_result = if err.contains("surface lost") {
+                    self.stats.swapchain_present_lost =
+                        self.stats.swapchain_present_lost.saturating_add(1);
+                    "lost".to_string()
+                } else if err.contains("validation") {
+                    self.stats.swapchain_present_validation_errors = self
+                        .stats
+                        .swapchain_present_validation_errors
+                        .saturating_add(1);
+                    "validation-error".to_string()
+                } else {
+                    "error".to_string()
+                };
+                self.stats.swapchain_last_present_error = err.clone();
                 self.stats.swapchain_present_failures =
                     self.stats.swapchain_present_failures.saturating_add(1);
                 self.stats.swapchain_present_consecutive_failures = self
@@ -6484,19 +6572,24 @@ impl RenderState {
         audio0: [f32; 4],
         audio1: [f32; 4],
         audio2: [f32; 4],
-    ) -> Result<bool, String> {
+    ) -> Result<SurfacePresentOutcome, String> {
+        let mut present_outcome = SurfacePresentOutcome::Presented;
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
                 self.surface.configure(&self.device, &self.config);
+                present_outcome = SurfacePresentOutcome::SuboptimalPresented;
                 frame
             }
             wgpu::CurrentSurfaceTexture::Outdated => {
                 self.surface.configure(&self.device, &self.config);
-                return Ok(false);
+                return Ok(SurfacePresentOutcome::Outdated);
             }
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                return Ok(false);
+            wgpu::CurrentSurfaceTexture::Timeout => {
+                return Ok(SurfacePresentOutcome::Timeout);
+            }
+            wgpu::CurrentSurfaceTexture::Occluded => {
+                return Ok(SurfacePresentOutcome::Occluded);
             }
             wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.configure(&self.device, &self.config);
@@ -6555,7 +6648,7 @@ impl RenderState {
         }
         self.queue.present(frame);
         self.last_frame_error = None;
-        Ok(true)
+        Ok(present_outcome)
     }
 }
 

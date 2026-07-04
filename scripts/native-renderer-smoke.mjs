@@ -1417,6 +1417,7 @@ async function main() {
           output_swapchain_ready: status.output_swapchain_ready,
           frames_presented: status.frames_presented,
           swapchain_presented: status.swapchain_presented,
+          swapchain_last_present_result: status.swapchain_last_present_result,
           output_present_consecutive_failures: status.output_present_consecutive_failures,
         }),
       );

@@ -462,6 +462,13 @@ export interface RendererStatus {
   swapchain_present_attempts: number;
   swapchain_presented: number;
   swapchain_present_failures: number;
+  swapchain_last_present_result: string;
+  swapchain_last_present_error: string;
+  swapchain_present_timeouts: number;
+  swapchain_present_occluded: number;
+  swapchain_present_outdated: number;
+  swapchain_present_lost: number;
+  swapchain_present_validation_errors: number;
   swapchain_present_max_consecutive_failures: number;
   swapchain_present_tearing_attempts: number;
   swapchain_waitable_waits: number;
@@ -689,6 +696,13 @@ export interface RendererStats {
   swapchain_present_attempts: number;
   swapchain_presented: number;
   swapchain_present_failures: number;
+  swapchain_last_present_result: string;
+  swapchain_last_present_error: string;
+  swapchain_present_timeouts: number;
+  swapchain_present_occluded: number;
+  swapchain_present_outdated: number;
+  swapchain_present_lost: number;
+  swapchain_present_validation_errors: number;
   swapchain_present_consecutive_failures: number;
   swapchain_present_max_consecutive_failures: number;
   swapchain_present_tearing_attempts: number;
