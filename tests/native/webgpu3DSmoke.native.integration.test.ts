@@ -18,6 +18,12 @@ import {
   type PixelParticlesNativeGraphState,
 } from '../../src/lib/renderer/webgpuPixelParticles';
 import {
+  buildPointCloudFXNativeComputeGraph,
+  buildPointCloudFXNativePointData,
+  buildPointCloudFXNativePrecompileCommands,
+  type PointCloudFXNativeGraphState,
+} from '../../src/lib/renderer/webgpuPointCloudFX';
+import {
   buildFlythroughNativeComputeGraph,
   buildFlythroughNativePrecompileCommands,
   type FlythroughNativeGraphState,
@@ -145,6 +151,28 @@ function makeSourceFrameB64(width: number, height: number): string {
   return pixels.toString('base64');
 }
 
+function makePointCloudData(count = 8192) {
+  const positions = new Float32Array(count * 3);
+  const colors = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    const t = i / Math.max(1, count - 1);
+    const ring = Math.floor(t * 12);
+    const local = (t * 12) % 1;
+    const angle = local * Math.PI * 2 + ring * 0.31;
+    const radius = 0.28 + ring * 0.055;
+    positions[i * 3 + 0] = Math.cos(angle) * radius;
+    positions[i * 3 + 1] = Math.sin(angle) * radius * 0.72 + Math.sin(t * Math.PI * 14) * 0.08;
+    positions[i * 3 + 2] = (t - 0.5) * 1.6 + Math.cos(angle * 3) * 0.08;
+    colors[i * 3 + 0] = 0.2 + 0.8 * local;
+    colors[i * 3 + 1] = 0.15 + 0.85 * (1 - t);
+    colors[i * 3 + 2] = 0.45 + 0.55 * Math.sin(angle * 0.5) ** 2;
+  }
+  return buildPointCloudFXNativePointData(positions, colors, {
+    maxPoints: count,
+    signature: `integration-cloud:${count}`,
+  });
+}
+
 const maybeIt = RUN_NATIVE_INTEGRATION ? it : it.skip;
 
 describe('3D Smoke native renderer integration', () => {
@@ -187,12 +215,14 @@ describe('3D Smoke native renderer integration', () => {
     expect(capabilities.features.native_ink_cloud_graph).toBe(true);
     expect(capabilities.features.native_flythrough_graph).toBe(true);
     expect(capabilities.features.native_pixel_particles_graph).toBe(true);
+    expect(capabilities.features.native_point_cloud_fx_graph).toBe(true);
     expect(capabilities.native_graph_instruments).toContain('planet');
     expect(capabilities.native_graph_instruments).toContain('smoke-3d');
     expect(capabilities.native_graph_instruments).toContain('particle-field');
     expect(capabilities.native_graph_instruments).toContain('ink-cloud');
     expect(capabilities.native_graph_instruments).toContain('flythrough');
     expect(capabilities.native_graph_instruments).toContain('pixel-particles');
+    expect(capabilities.native_graph_instruments).toContain('point-cloud-fx');
     expect(capabilities.native_graph_instrument_manifest).toContainEqual(
       expect.objectContaining({
         id: 'planet',
@@ -235,6 +265,13 @@ describe('3D Smoke native renderer integration', () => {
         render_target: 'source_frame',
       }),
     );
+    expect(capabilities.native_graph_instrument_manifest).toContainEqual(
+      expect.objectContaining({
+        id: 'point-cloud-fx',
+        source_uri_prefix: 'native-graph://point-cloud-fx/',
+        render_target: 'source_frame',
+      }),
+    );
 
     await rpc.send('submit_commands', {
       commands: [
@@ -244,6 +281,7 @@ describe('3D Smoke native renderer integration', () => {
         ...buildInkCloudNativePrecompileCommands(),
         ...buildFlythroughNativePrecompileCommands(),
         ...buildPixelParticlesNativePrecompileCommands(),
+        ...buildPointCloudFXNativePrecompileCommands(),
       ],
     }, 10000);
 
@@ -568,6 +606,73 @@ describe('3D Smoke native renderer integration', () => {
     await rpc.send('submit_commands', {
       commands: [
         { type: 'remove_layer', layer_id: 'native-pixel-particles' },
+      ],
+    });
+
+    const pointCloudSourceId = 'gpu:integration-point-cloud:point-cloud-fx';
+    const pointCloudData = makePointCloudData(8192);
+    await rpc.send('submit_commands', {
+      commands: [
+        { type: 'upsert_layer', layer_id: 'native-point-cloud-fx', z_index: 0, blend_mode: 'normal', opacity: 1, corners: FULLSCREEN_CORNERS },
+        { type: 'set_layer_visibility', layer_id: 'native-point-cloud-fx', visible: true },
+        { type: 'bind_media_source', layer_id: 'native-point-cloud-fx', source_id: pointCloudSourceId, uri: 'native-graph://point-cloud-fx/integration', source_type: 'image' },
+      ],
+    });
+
+    let pointCloudState: PointCloudFXNativeGraphState | null = null;
+    const pointCloudChecksums = new Set<string>();
+    for (let frame = 0; frame < 2; frame++) {
+      const graph = buildPointCloudFXNativeComputeGraph({
+        sourceId: pointCloudSourceId,
+        pointData: pointCloudData,
+        params: {
+          topology: frame === 0 ? 'billboards' : 'strokes',
+          pointSize: 0.01,
+          strokeLength: 0.08,
+          strokeWidth: 0.009,
+          colorMode: 'palette4',
+          colorMap: 'radial',
+          colorMix: 0.8,
+          colorA: [60, 100, 240],
+          colorB: [240, 60, 180],
+          colorC: [255, 200, 30],
+          colorD: [40, 220, 220],
+          windStrength: 0.08,
+          waveStrength: 1.1,
+          opacity: 1,
+        },
+        width: 320,
+        height: 180,
+        time: frame / 30,
+        frameDelta: 1 / 30,
+        frameIndex: frame + 1,
+        audioBass: frame === 0 ? 0.5 : 0.2,
+        audioTreble: 0.25,
+        state: pointCloudState,
+        reset: frame === 0,
+      });
+      pointCloudState = graph.state;
+      const pointResult: any = await rpc.send('compute_graph', graph.config as unknown as Record<string, unknown>, 20000);
+      expect(pointResult.pass_count).toBe(1);
+      expect(pointResult.renders).toHaveLength(1);
+      expect(pointResult.renders[0]).toMatchObject({
+        target: 'source_frame',
+        source_id: pointCloudSourceId,
+        blend: 'alpha',
+      });
+      const snapshot = await rpc.send('frame_snapshot', {
+        include_pixels: false,
+        time: 0.76 + frame / 30,
+        frame_index: frame + 19,
+      }, 10000);
+      assertVisibleFrame(`native Point Cloud FX source-frame layer ${frame}`, snapshot, 0.003);
+      pointCloudChecksums.add(String(snapshot.checksum));
+    }
+    expect(pointCloudChecksums.size).toBeGreaterThan(1);
+
+    await rpc.send('submit_commands', {
+      commands: [
+        { type: 'remove_layer', layer_id: 'native-point-cloud-fx' },
       ],
     });
 
