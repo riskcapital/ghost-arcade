@@ -74,6 +74,7 @@ const CORE_RPC_METHODS: &[&str] = &[
     "export_frame_snapshot",
     "prefetch_media",
     "clear_prefetch_cache",
+    "clear_decode_preview_cache",
     "decode_capabilities",
     "get_decode_capabilities",
     "upload_source_gpu_shared_texture",
@@ -96,6 +97,16 @@ const CORE_RPC_METHODS: &[&str] = &[
     "set_render_clock",
     "set_shader_precompile_policy",
     "set_texture_pool_cap",
+    "set_vram_budget",
+    "set_decode_cpu_backup_policy",
+    "set_decode_synthetic_fallback_policy",
+    "set_media_prefetch_policy",
+    "set_media_drop_policy",
+    "set_decode_preview_policy",
+    "set_decode_target_policy",
+    "set_decode_upload_policy",
+    "set_decode_handoff_policy",
+    "set_decode_estimate_cache_policy",
     "set_metadata_cache_caps",
     "clear_runtime_caches",
     "present",
@@ -113,6 +124,16 @@ const CORE_COMMAND_TYPES: &[&str] = &[
     "set_command_drain_policy",
     "set_command_drain_limit",
     "set_auto_present_policy",
+    "set_vram_budget",
+    "set_decode_cpu_backup_policy",
+    "set_decode_synthetic_fallback_policy",
+    "set_media_prefetch_policy",
+    "set_media_drop_policy",
+    "set_decode_preview_policy",
+    "set_decode_target_policy",
+    "set_decode_upload_policy",
+    "set_decode_handoff_policy",
+    "set_decode_estimate_cache_policy",
     "upsert_layer",
     "set_layer_visibility",
     "set_layer_color",
@@ -189,6 +210,31 @@ struct CoreStatus {
     command_queue_capacity: u32,
     command_drain_limit: u32,
     auto_present_on_state_change: bool,
+    decode_store_cpu_backup_frames: bool,
+    decode_allow_synthetic_fallback: bool,
+    media_queue_capacity: u32,
+    decode_handoff_queue_capacity: u32,
+    media_high_burst_limit: u32,
+    prefetch_cache_max_entries: u32,
+    prefetch_cache_prune_count: u32,
+    media_drop_command_pressure_pct: u32,
+    media_drop_decode_pressure_pct: u32,
+    media_drop_io_pressure_pct: u32,
+    media_drop_decode_priority_cutoff: u32,
+    media_drop_io_priority_cutoff: u32,
+    decode_preview_size: u32,
+    decode_preview_cache_mb: u32,
+    decode_use_output_resolution: bool,
+    decode_target_width: u32,
+    decode_target_height: u32,
+    decode_preview_cache_bypassed: bool,
+    decode_upload_queue_cap_mb: u32,
+    decode_handoff_byte_cap_mb: u32,
+    decode_handoff_predecode_shed_pct: u32,
+    decode_predecode_estimate_cache_entries: u32,
+    decode_predecode_estimate_cache_cap_entries: u32,
+    decode_predecode_estimate_cache_backpressure_active: bool,
+    vram_budget_mb: u32,
     command_drain_limit_hits: u64,
     queued_commands_after_drain: u64,
     source_preview_size: u32,
@@ -1457,6 +1503,26 @@ struct App {
     command_queue_capacity: u32,
     command_drain_limit: u32,
     auto_present_on_state_change: bool,
+    decode_store_cpu_backup_frames: bool,
+    decode_allow_synthetic_fallback: bool,
+    media_queue_capacity: u32,
+    decode_handoff_queue_capacity: u32,
+    media_high_burst_limit: u32,
+    prefetch_cache_max_entries: u32,
+    prefetch_cache_prune_count: u32,
+    media_drop_command_pressure_pct: u32,
+    media_drop_decode_pressure_pct: u32,
+    media_drop_io_pressure_pct: u32,
+    media_drop_decode_priority_cutoff: u32,
+    media_drop_io_priority_cutoff: u32,
+    decode_preview_size: u32,
+    decode_preview_cache_mb: u32,
+    decode_use_output_resolution: bool,
+    decode_upload_queue_cap_mb: u32,
+    decode_handoff_byte_cap_mb: u32,
+    decode_handoff_predecode_shed_pct: u32,
+    decode_predecode_estimate_cache_cap_entries: u32,
+    vram_budget_mb: u32,
     auto_present_requested: bool,
     output_window_attached: bool,
     layers_seen: u32,
@@ -1533,6 +1599,26 @@ impl App {
             command_queue_capacity: DEFAULT_COMMAND_QUEUE_CAPACITY,
             command_drain_limit: DEFAULT_COMMAND_DRAIN_LIMIT,
             auto_present_on_state_change: true,
+            decode_store_cpu_backup_frames: false,
+            decode_allow_synthetic_fallback: false,
+            media_queue_capacity: 2048,
+            decode_handoff_queue_capacity: 4096,
+            media_high_burst_limit: 7,
+            prefetch_cache_max_entries: 4096,
+            prefetch_cache_prune_count: 256,
+            media_drop_command_pressure_pct: 90,
+            media_drop_decode_pressure_pct: 90,
+            media_drop_io_pressure_pct: 90,
+            media_drop_decode_priority_cutoff: 180,
+            media_drop_io_priority_cutoff: 128,
+            decode_preview_size: 96,
+            decode_preview_cache_mb: 128,
+            decode_use_output_resolution: true,
+            decode_upload_queue_cap_mb: 256,
+            decode_handoff_byte_cap_mb: 128,
+            decode_handoff_predecode_shed_pct: 90,
+            decode_predecode_estimate_cache_cap_entries: 8192,
+            vram_budget_mb: 4096,
             auto_present_requested: false,
             output_window_attached: true,
             layers_seen: 0,
@@ -1625,6 +1711,11 @@ impl App {
             "source_frame_hdr": self.renderer.as_ref().is_some_and(|renderer| renderer.source_frame_format == SOURCE_FRAME_FORMAT_HDR),
             "native_static_image_decode": true,
             "native_static_image_prefetch": true,
+            "decode_policy_controls": true,
+            "decode_preview_cache_clear": true,
+            "media_policy_controls": true,
+            "vram_budget_policy": true,
+            "vram_budget_enforcement": false,
             "runtime_cache_clear": true,
             "native_graph_buffer_prune": true,
             "compute_shader_host": true,
@@ -1674,7 +1765,10 @@ impl App {
             "source_frame_size": self.renderer.as_ref().map(|renderer| renderer.source_frame_size).unwrap_or(SOURCE_FRAME_SIZE_DEFAULT),
             "source_frame_mip_levels": self.renderer.as_ref().map(|renderer| renderer.source_frame_mip_levels).unwrap_or(1),
             "command_queue_capacity": self.command_queue_capacity,
-            "command_drain_limit": self.command_drain_limit
+            "command_drain_limit": self.command_drain_limit,
+            "media_queue_capacity": self.media_queue_capacity,
+            "decode_handoff_queue_capacity": self.decode_handoff_queue_capacity,
+            "vram_budget_mb": self.vram_budget_mb
         });
         json!({
             "schema_version": 1,
@@ -1967,6 +2061,40 @@ impl App {
             command_queue_capacity: self.command_queue_capacity,
             command_drain_limit: self.command_drain_limit,
             auto_present_on_state_change: self.auto_present_on_state_change,
+            decode_store_cpu_backup_frames: self.decode_store_cpu_backup_frames,
+            decode_allow_synthetic_fallback: self.decode_allow_synthetic_fallback,
+            media_queue_capacity: self.media_queue_capacity,
+            decode_handoff_queue_capacity: self.decode_handoff_queue_capacity,
+            media_high_burst_limit: self.media_high_burst_limit,
+            prefetch_cache_max_entries: self.prefetch_cache_max_entries,
+            prefetch_cache_prune_count: self.prefetch_cache_prune_count,
+            media_drop_command_pressure_pct: self.media_drop_command_pressure_pct,
+            media_drop_decode_pressure_pct: self.media_drop_decode_pressure_pct,
+            media_drop_io_pressure_pct: self.media_drop_io_pressure_pct,
+            media_drop_decode_priority_cutoff: self.media_drop_decode_priority_cutoff,
+            media_drop_io_priority_cutoff: self.media_drop_io_priority_cutoff,
+            decode_preview_size: self.decode_preview_size,
+            decode_preview_cache_mb: self.decode_preview_cache_mb,
+            decode_use_output_resolution: self.decode_use_output_resolution,
+            decode_target_width: if self.decode_use_output_resolution {
+                self.pending_width
+            } else {
+                self.decode_preview_size
+            },
+            decode_target_height: if self.decode_use_output_resolution {
+                self.pending_height
+            } else {
+                self.decode_preview_size
+            },
+            decode_preview_cache_bypassed: false,
+            decode_upload_queue_cap_mb: self.decode_upload_queue_cap_mb,
+            decode_handoff_byte_cap_mb: self.decode_handoff_byte_cap_mb,
+            decode_handoff_predecode_shed_pct: self.decode_handoff_predecode_shed_pct,
+            decode_predecode_estimate_cache_entries: 0,
+            decode_predecode_estimate_cache_cap_entries: self
+                .decode_predecode_estimate_cache_cap_entries,
+            decode_predecode_estimate_cache_backpressure_active: false,
+            vram_budget_mb: self.vram_budget_mb,
             command_drain_limit_hits: self.stats.command_drain_limit_hits,
             queued_commands_after_drain: self.stats.queued_commands_after_drain,
             source_preview_size: SOURCE_PREVIEW_SIZE as u32,
@@ -2250,6 +2378,7 @@ impl App {
             "export_frame_snapshot" => self.export_frame_snapshot(&req.params),
             "prefetch_media" => self.prefetch_media(&req.params),
             "clear_prefetch_cache" => Ok(self.clear_prefetch_cache()),
+            "clear_decode_preview_cache" => Ok(self.clear_decode_preview_cache()),
             "decode_capabilities" | "get_decode_capabilities" => Ok(self.decode_capabilities()),
             "upload_source_gpu_shared_texture" => {
                 self.upload_source_gpu_shared_texture(&req.params)
@@ -2475,6 +2604,46 @@ impl App {
                 self.apply_texture_pool_cap(&req.params);
                 Ok(json!(self.status()))
             }
+            "set_vram_budget" => {
+                self.apply_vram_budget(&req.params);
+                Ok(json!(self.status()))
+            }
+            "set_decode_cpu_backup_policy" => {
+                self.apply_decode_cpu_backup_policy(&req.params);
+                Ok(json!(self.status()))
+            }
+            "set_decode_synthetic_fallback_policy" => {
+                self.apply_decode_synthetic_fallback_policy(&req.params);
+                Ok(json!(self.status()))
+            }
+            "set_media_prefetch_policy" => {
+                self.apply_media_prefetch_policy(&req.params);
+                Ok(json!(self.status()))
+            }
+            "set_media_drop_policy" => {
+                self.apply_media_drop_policy(&req.params);
+                Ok(json!(self.status()))
+            }
+            "set_decode_preview_policy" => {
+                self.apply_decode_preview_policy(&req.params);
+                Ok(json!(self.status()))
+            }
+            "set_decode_target_policy" => {
+                self.apply_decode_target_policy(&req.params);
+                Ok(json!(self.status()))
+            }
+            "set_decode_upload_policy" => {
+                self.apply_decode_upload_policy(&req.params);
+                Ok(json!(self.status()))
+            }
+            "set_decode_handoff_policy" => {
+                self.apply_decode_handoff_policy(&req.params);
+                Ok(json!(self.status()))
+            }
+            "set_decode_estimate_cache_policy" => {
+                self.apply_decode_estimate_cache_policy(&req.params);
+                Ok(json!(self.status()))
+            }
             "set_metadata_cache_caps" => {
                 self.apply_metadata_cache_caps(&req.params);
                 Ok(json!(self.status()))
@@ -2515,6 +2684,16 @@ impl App {
         self.apply_command_drain_policy(config);
         self.apply_auto_present_policy(config);
         self.apply_native_quality_policy(config);
+        self.apply_vram_budget(config);
+        self.apply_decode_cpu_backup_policy(config);
+        self.apply_decode_synthetic_fallback_policy(config);
+        self.apply_media_prefetch_policy(config);
+        self.apply_media_drop_policy(config);
+        self.apply_decode_preview_policy(config);
+        self.apply_decode_target_policy(config);
+        self.apply_decode_upload_policy(config);
+        self.apply_decode_handoff_policy(config);
+        self.apply_decode_estimate_cache_policy(config);
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.resize(PhysicalSize::new(self.pending_width, self.pending_height));
         }
@@ -2763,6 +2942,20 @@ impl App {
                     self.apply_command_drain_policy(command)
                 }
                 "set_auto_present_policy" => self.apply_auto_present_policy(command),
+                "set_vram_budget" => self.apply_vram_budget(command),
+                "set_decode_cpu_backup_policy" => self.apply_decode_cpu_backup_policy(command),
+                "set_decode_synthetic_fallback_policy" => {
+                    self.apply_decode_synthetic_fallback_policy(command)
+                }
+                "set_media_prefetch_policy" => self.apply_media_prefetch_policy(command),
+                "set_media_drop_policy" => self.apply_media_drop_policy(command),
+                "set_decode_preview_policy" => self.apply_decode_preview_policy(command),
+                "set_decode_target_policy" => self.apply_decode_target_policy(command),
+                "set_decode_upload_policy" => self.apply_decode_upload_policy(command),
+                "set_decode_handoff_policy" => self.apply_decode_handoff_policy(command),
+                "set_decode_estimate_cache_policy" => {
+                    self.apply_decode_estimate_cache_policy(command)
+                }
                 "set_texture_pool_cap" => self.apply_texture_pool_cap(command),
                 "set_shader_precompile_policy" => self.apply_shader_precompile_policy(command),
                 "set_metadata_cache_caps" => self.apply_metadata_cache_caps(command),
@@ -3800,6 +3993,129 @@ impl App {
             .clamp(16.0, 16384.0) as u32;
     }
 
+    fn apply_vram_budget(&mut self, params: &Value) {
+        self.vram_budget_mb = number_at(params, &["config", "vram_budget_mb"])
+            .or_else(|| number_at(params, &["vram_budget_mb"]))
+            .unwrap_or(self.vram_budget_mb as f64)
+            .round()
+            .clamp(64.0, 131_072.0) as u32;
+    }
+
+    fn apply_decode_cpu_backup_policy(&mut self, params: &Value) {
+        let config = params.get("config").unwrap_or(params);
+        self.decode_store_cpu_backup_frames = bool_at(config, &["decode_store_cpu_backup_frames"])
+            .unwrap_or(self.decode_store_cpu_backup_frames);
+    }
+
+    fn apply_decode_synthetic_fallback_policy(&mut self, params: &Value) {
+        let config = params.get("config").unwrap_or(params);
+        self.decode_allow_synthetic_fallback =
+            bool_at(config, &["decode_allow_synthetic_fallback"])
+                .unwrap_or(self.decode_allow_synthetic_fallback);
+    }
+
+    fn apply_media_prefetch_policy(&mut self, params: &Value) {
+        let config = params.get("config").unwrap_or(params);
+        self.media_queue_capacity = number_at(config, &["media_queue_capacity"])
+            .unwrap_or(self.media_queue_capacity as f64)
+            .round()
+            .clamp(1.0, 1_000_000.0) as u32;
+        self.decode_handoff_queue_capacity = number_at(config, &["decode_handoff_queue_capacity"])
+            .unwrap_or(self.decode_handoff_queue_capacity as f64)
+            .round()
+            .clamp(1.0, 1_000_000.0) as u32;
+        self.media_high_burst_limit = number_at(config, &["media_high_burst_limit"])
+            .unwrap_or(self.media_high_burst_limit as f64)
+            .round()
+            .clamp(1.0, 255.0) as u32;
+        self.prefetch_cache_max_entries = number_at(config, &["prefetch_cache_max_entries"])
+            .unwrap_or(self.prefetch_cache_max_entries as f64)
+            .round()
+            .clamp(1.0, 1_000_000.0) as u32;
+        self.prefetch_cache_prune_count = number_at(config, &["prefetch_cache_prune_count"])
+            .unwrap_or(self.prefetch_cache_prune_count as f64)
+            .round()
+            .clamp(1.0, self.prefetch_cache_max_entries.max(1) as f64)
+            as u32;
+    }
+
+    fn apply_media_drop_policy(&mut self, params: &Value) {
+        let config = params.get("config").unwrap_or(params);
+        self.media_drop_command_pressure_pct = number_at(config, &["command_pressure_pct"])
+            .or_else(|| number_at(config, &["media_drop_command_pressure_pct"]))
+            .unwrap_or(self.media_drop_command_pressure_pct as f64)
+            .round()
+            .clamp(1.0, 100.0) as u32;
+        self.media_drop_decode_pressure_pct = number_at(config, &["decode_queue_pressure_pct"])
+            .or_else(|| number_at(config, &["media_drop_decode_pressure_pct"]))
+            .unwrap_or(self.media_drop_decode_pressure_pct as f64)
+            .round()
+            .clamp(1.0, 100.0) as u32;
+        self.media_drop_io_pressure_pct = number_at(config, &["io_queue_pressure_pct"])
+            .or_else(|| number_at(config, &["media_drop_io_pressure_pct"]))
+            .unwrap_or(self.media_drop_io_pressure_pct as f64)
+            .round()
+            .clamp(1.0, 100.0) as u32;
+        self.media_drop_decode_priority_cutoff = number_at(config, &["decode_priority_cutoff"])
+            .or_else(|| number_at(config, &["media_drop_decode_priority_cutoff"]))
+            .unwrap_or(self.media_drop_decode_priority_cutoff as f64)
+            .round()
+            .clamp(0.0, 255.0) as u32;
+        self.media_drop_io_priority_cutoff = number_at(config, &["io_priority_cutoff"])
+            .or_else(|| number_at(config, &["media_drop_io_priority_cutoff"]))
+            .unwrap_or(self.media_drop_io_priority_cutoff as f64)
+            .round()
+            .clamp(0.0, 255.0) as u32;
+    }
+
+    fn apply_decode_preview_policy(&mut self, params: &Value) {
+        let config = params.get("config").unwrap_or(params);
+        self.decode_preview_size = number_at(config, &["decode_preview_size"])
+            .unwrap_or(self.decode_preview_size as f64)
+            .round()
+            .clamp(16.0, 4096.0) as u32;
+        self.decode_preview_cache_mb = number_at(config, &["decode_preview_cache_mb"])
+            .unwrap_or(self.decode_preview_cache_mb as f64)
+            .round()
+            .clamp(1.0, 65_536.0) as u32;
+    }
+
+    fn apply_decode_target_policy(&mut self, params: &Value) {
+        let config = params.get("config").unwrap_or(params);
+        self.decode_use_output_resolution = bool_at(config, &["decode_use_output_resolution"])
+            .unwrap_or(self.decode_use_output_resolution);
+    }
+
+    fn apply_decode_upload_policy(&mut self, params: &Value) {
+        let config = params.get("config").unwrap_or(params);
+        self.decode_upload_queue_cap_mb = number_at(config, &["decode_upload_queue_cap_mb"])
+            .unwrap_or(self.decode_upload_queue_cap_mb as f64)
+            .round()
+            .clamp(1.0, 65_536.0) as u32;
+    }
+
+    fn apply_decode_handoff_policy(&mut self, params: &Value) {
+        let config = params.get("config").unwrap_or(params);
+        self.decode_handoff_byte_cap_mb = number_at(config, &["decode_handoff_byte_cap_mb"])
+            .unwrap_or(self.decode_handoff_byte_cap_mb as f64)
+            .round()
+            .clamp(1.0, 65_536.0) as u32;
+        self.decode_handoff_predecode_shed_pct =
+            number_at(config, &["decode_handoff_predecode_shed_pct"])
+                .unwrap_or(self.decode_handoff_predecode_shed_pct as f64)
+                .round()
+                .clamp(1.0, 100.0) as u32;
+    }
+
+    fn apply_decode_estimate_cache_policy(&mut self, params: &Value) {
+        let config = params.get("config").unwrap_or(params);
+        self.decode_predecode_estimate_cache_cap_entries =
+            number_at(config, &["decode_predecode_estimate_cache_cap_entries"])
+                .unwrap_or(self.decode_predecode_estimate_cache_cap_entries as f64)
+                .round()
+                .clamp(1.0, 1_000_000.0) as u32;
+    }
+
     fn apply_metadata_cache_caps(&mut self, params: &Value) {
         self.shader_metadata_cache_cap = number_at(params, &["config", "shader_metadata_cache_cap"])
             .or_else(|| number_at(params, &["config", "shader_cap"]))
@@ -4254,11 +4570,24 @@ impl App {
         })
     }
 
+    fn clear_decode_preview_cache(&mut self) -> Value {
+        json!({
+            "cleared_decode_preview_entries": 0,
+            "cleared_decode_preview_bytes": 0,
+            "note": "native video decode preview cache is not allocated yet; clear acknowledged for policy symmetry"
+        })
+    }
+
     fn decode_capabilities(&self) -> Value {
         json!({
             "schema_version": 1,
             "native_static_image_decode": true,
             "native_static_image_prefetch": true,
+            "decode_policy_controls": true,
+            "decode_preview_cache_clear": true,
+            "media_policy_controls": true,
+            "vram_budget_policy": true,
+            "vram_budget_enforcement": false,
             "native_media_decode": false,
             "media_prefetch": false,
             "video_decode": false,
