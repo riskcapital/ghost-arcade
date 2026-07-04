@@ -719,7 +719,60 @@ impl NativeComputeBufferBindingKind {
 #[derive(Clone, Copy, Debug)]
 struct NativeComputeBindingLayoutSpec {
     binding: u32,
-    kind: NativeComputeBufferBindingKind,
+    kind: NativeComputeGraphBindingKind,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum NativeComputeGraphTextureDimension {
+    D2,
+    D2Array,
+}
+
+impl NativeComputeGraphTextureDimension {
+    fn signature(self) -> &'static str {
+        match self {
+            Self::D2 => "texture-2d",
+            Self::D2Array => "texture-2d-array",
+        }
+    }
+
+    fn view_dimension(self) -> wgpu::TextureViewDimension {
+        match self {
+            Self::D2 => wgpu::TextureViewDimension::D2,
+            Self::D2Array => wgpu::TextureViewDimension::D2Array,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum NativeComputeGraphBindingKind {
+    Buffer(NativeComputeBufferBindingKind),
+    SourceFrameTexture(NativeComputeGraphTextureDimension),
+    SourceFrameSampler,
+}
+
+impl NativeComputeGraphBindingKind {
+    fn signature(self) -> &'static str {
+        match self {
+            Self::Buffer(kind) => kind.signature(),
+            Self::SourceFrameTexture(dimension) => dimension.signature(),
+            Self::SourceFrameSampler => "source-frame-sampler",
+        }
+    }
+
+    fn binding_type(self) -> wgpu::BindingType {
+        match self {
+            Self::Buffer(kind) => kind.binding_type(),
+            Self::SourceFrameTexture(dimension) => wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: dimension.view_dimension(),
+                multisampled: false,
+            },
+            Self::SourceFrameSampler => {
+                wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -744,7 +797,8 @@ struct NativeComputeGraphGpuBuffer {
 struct NativeComputeGraphBindingSpec {
     binding: u32,
     resource_id: String,
-    kind: NativeComputeBufferBindingKind,
+    kind: NativeComputeGraphBindingKind,
+    source_slot: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -1207,6 +1261,7 @@ struct RenderState {
     layer_buffer: wgpu::Buffer,
     source_preview_buffer: wgpu::Buffer,
     source_frame_texture: wgpu::Texture,
+    source_frame_sampler: wgpu::Sampler,
     native_shader_input_texture: wgpu::Texture,
     source_frame_size: usize,
     source_frame_format: wgpu::TextureFormat,
@@ -1387,6 +1442,7 @@ impl App {
             "compute_graph_multi_render": true,
             "compute_graph_instanced_render": true,
             "compute_graph_indirect_render": true,
+            "compute_graph_texture_sampling": true,
             "compute_graph_source_frame_target": true,
             "persistent_compute_buffers": true,
             "native_3d_smoke_graph": true,
@@ -1432,6 +1488,7 @@ impl App {
                         "compute_graph_multi_render",
                         "compute_graph_instanced_render",
                         "compute_graph_indirect_render",
+                        "compute_graph_texture_sampling",
                         "compute_graph_source_frame_target",
                         "persistent_compute_buffers",
                         "native_3d_smoke_graph"
@@ -2481,6 +2538,105 @@ impl App {
             .map(|plans| plans.unwrap_or_default())
     }
 
+    fn compute_graph_binding_spec(
+        &self,
+        binding: &Value,
+        shader_id: &str,
+        context: &str,
+        buffer_kinds: &HashMap<String, NativeComputeBufferBindingKind>,
+    ) -> Result<NativeComputeGraphBindingSpec, String> {
+        let binding_number = number_at(binding, &["binding"])
+            .ok_or_else(|| format!("compute_graph {context} `{shader_id}` binding missing number"))?
+            .round()
+            .clamp(0.0, u32::MAX as f64) as u32;
+        let explicit_graph_kind = compute_graph_binding_kind_from_value(binding);
+        match explicit_graph_kind {
+            Some(NativeComputeGraphBindingKind::SourceFrameSampler) => {
+                let resource_id = string_at(binding, &["resource"])
+                    .or_else(|| string_at(binding, &["resource_id"]))
+                    .unwrap_or_else(|| "source-frame-sampler".to_string());
+                Ok(NativeComputeGraphBindingSpec {
+                    binding: binding_number,
+                    resource_id,
+                    kind: NativeComputeGraphBindingKind::SourceFrameSampler,
+                    source_slot: None,
+                })
+            }
+            Some(NativeComputeGraphBindingKind::SourceFrameTexture(dimension)) => {
+                let is_array = matches!(dimension, NativeComputeGraphTextureDimension::D2Array);
+                let resource_id = if is_array {
+                    string_at(binding, &["resource"])
+                        .or_else(|| string_at(binding, &["resource_id"]))
+                        .or_else(|| string_at(binding, &["source_id"]))
+                        .unwrap_or_else(|| "source-frames".to_string())
+                } else {
+                    let Some(source_id) = string_at(binding, &["source_id"])
+                        .or_else(|| string_at(binding, &["sourceId"]))
+                        .or_else(|| string_at(binding, &["source_frame_id"]))
+                        .or_else(|| string_at(binding, &["sourceFrameId"]))
+                        .or_else(|| string_at(binding, &["resource"]))
+                        .or_else(|| string_at(binding, &["resource_id"]))
+                    else {
+                        return Err(format!(
+                            "compute_graph {context} `{shader_id}` binding {binding_number} source-frame texture requires source_id"
+                        ));
+                    };
+                    source_id
+                };
+                let source_slot = if is_array {
+                    None
+                } else {
+                    Some(
+                        *self.source_frame_slots.get(&resource_id).ok_or_else(|| {
+                            format!(
+                                "compute_graph {context} `{shader_id}` binding {binding_number} source-frame `{resource_id}` has no uploaded/generated frame"
+                            )
+                        })?,
+                    )
+                };
+                Ok(NativeComputeGraphBindingSpec {
+                    binding: binding_number,
+                    resource_id,
+                    kind: NativeComputeGraphBindingKind::SourceFrameTexture(dimension),
+                    source_slot,
+                })
+            }
+            Some(NativeComputeGraphBindingKind::Buffer(kind)) => {
+                let resource_id =
+                    compute_graph_binding_resource_id(binding).ok_or_else(|| {
+                        format!(
+                            "compute_graph {context} `{shader_id}` binding {binding_number} missing resource"
+                        )
+                    })?;
+                Ok(NativeComputeGraphBindingSpec {
+                    binding: binding_number,
+                    resource_id,
+                    kind: NativeComputeGraphBindingKind::Buffer(kind),
+                    source_slot: None,
+                })
+            }
+            None => {
+                let resource_id =
+                    compute_graph_binding_resource_id(binding).ok_or_else(|| {
+                        format!(
+                            "compute_graph {context} `{shader_id}` binding {binding_number} missing resource"
+                        )
+                    })?;
+                let default_kind = buffer_kinds
+                    .get(&resource_id)
+                    .copied()
+                    .unwrap_or(NativeComputeBufferBindingKind::StorageReadWrite);
+                let kind = compute_binding_kind_from_value(binding).unwrap_or(default_kind);
+                Ok(NativeComputeGraphBindingSpec {
+                    binding: binding_number,
+                    resource_id,
+                    kind: NativeComputeGraphBindingKind::Buffer(kind),
+                    source_slot: None,
+                })
+            }
+        }
+    }
+
     fn compute_graph_pass_plan(
         &self,
         pass: &Value,
@@ -2521,28 +2677,12 @@ impl App {
         };
         let mut bindings = Vec::with_capacity(bindings_value.len());
         for binding in bindings_value {
-            let binding_number = number_at(binding, &["binding"])
-                .ok_or_else(|| format!("compute_graph pass `{shader_id}` binding missing number"))?
-                .round()
-                .clamp(0.0, u32::MAX as f64) as u32;
-            let Some(resource_id) = string_at(binding, &["resource"])
-                .or_else(|| string_at(binding, &["resource_id"]))
-                .or_else(|| string_at(binding, &["buffer"]))
-            else {
-                return Err(format!(
-                    "compute_graph pass `{shader_id}` binding {binding_number} missing resource"
-                ));
-            };
-            let default_kind = buffer_kinds
-                .get(&resource_id)
-                .copied()
-                .unwrap_or(NativeComputeBufferBindingKind::StorageReadWrite);
-            let kind = compute_binding_kind_from_value(binding).unwrap_or(default_kind);
-            bindings.push(NativeComputeGraphBindingSpec {
-                binding: binding_number,
-                resource_id,
-                kind,
-            });
+            bindings.push(self.compute_graph_binding_spec(
+                binding,
+                shader_id.as_str(),
+                "pass",
+                buffer_kinds,
+            )?);
         }
         bindings.sort_by_key(|binding| binding.binding);
         let dispatch = dispatch_from_value(pass);
@@ -2609,30 +2749,12 @@ impl App {
         };
         let mut bindings = Vec::with_capacity(bindings_value.len());
         for binding in bindings_value {
-            let binding_number = number_at(binding, &["binding"])
-                .ok_or_else(|| {
-                    format!("compute_graph render `{shader_id}` binding missing number")
-                })?
-                .round()
-                .clamp(0.0, u32::MAX as f64) as u32;
-            let Some(resource_id) = string_at(binding, &["resource"])
-                .or_else(|| string_at(binding, &["resource_id"]))
-                .or_else(|| string_at(binding, &["buffer"]))
-            else {
-                return Err(format!(
-                    "compute_graph render `{shader_id}` binding {binding_number} missing resource"
-                ));
-            };
-            let default_kind = buffer_kinds
-                .get(&resource_id)
-                .copied()
-                .unwrap_or(NativeComputeBufferBindingKind::StorageReadWrite);
-            let kind = compute_binding_kind_from_value(binding).unwrap_or(default_kind);
-            bindings.push(NativeComputeGraphBindingSpec {
-                binding: binding_number,
-                resource_id,
-                kind,
-            });
+            bindings.push(self.compute_graph_binding_spec(
+                binding,
+                shader_id.as_str(),
+                "render",
+                buffer_kinds,
+            )?);
         }
         bindings.sort_by_key(|binding| binding.binding);
         let layout_sig = bindings
@@ -3860,6 +3982,7 @@ impl RenderState {
             layer_buffer,
             source_preview_buffer,
             source_frame_texture,
+            source_frame_sampler,
             native_shader_input_texture,
             source_frame_size,
             source_frame_format,
@@ -4229,11 +4352,15 @@ impl RenderState {
             &[
                 NativeComputeBindingLayoutSpec {
                     binding: 0,
-                    kind: NativeComputeBufferBindingKind::StorageReadWrite,
+                    kind: NativeComputeGraphBindingKind::Buffer(
+                        NativeComputeBufferBindingKind::StorageReadWrite,
+                    ),
                 },
                 NativeComputeBindingLayoutSpec {
                     binding: 1,
-                    kind: NativeComputeBufferBindingKind::Uniform,
+                    kind: NativeComputeGraphBindingKind::Buffer(
+                        NativeComputeBufferBindingKind::Uniform,
+                    ),
                 },
             ],
         )?;
@@ -4389,21 +4516,13 @@ impl RenderState {
                     pass_plan.cache_key
                 ));
             };
-            let mut entries = Vec::with_capacity(pass_plan.bindings.len());
-            for binding in &pass_plan.bindings {
-                let Some(buffer) =
-                    self.compute_graph_buffer(&transient_buffers, &binding.resource_id)
-                else {
-                    return Err(format!(
-                        "native compute graph pass `{}` references missing buffer `{}`",
-                        pass_plan.name, binding.resource_id
-                    ));
-                };
-                entries.push(wgpu::BindGroupEntry {
-                    binding: binding.binding,
-                    resource: buffer.buffer.as_entire_binding(),
-                });
-            }
+            let mut texture_views = Vec::new();
+            let entries = self.compute_graph_bind_group_entries(
+                &transient_buffers,
+                &pass_plan.bindings,
+                &format!("pass `{}`", pass_plan.name),
+                &mut texture_views,
+            )?;
             let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(&format!(
                     "Ghost Native Compute Graph Bind Group {}",
@@ -4563,20 +4682,13 @@ impl RenderState {
                 pipeline_key
             ));
         };
-        let mut entries = Vec::with_capacity(render_plan.bindings.len());
-        for binding in &render_plan.bindings {
-            let Some(buffer) = self.compute_graph_buffer(transient_buffers, &binding.resource_id)
-            else {
-                return Err(format!(
-                    "native compute graph render `{}` references missing buffer `{}`",
-                    render_plan.name, binding.resource_id
-                ));
-            };
-            entries.push(wgpu::BindGroupEntry {
-                binding: binding.binding,
-                resource: buffer.buffer.as_entire_binding(),
-            });
-        }
+        let mut texture_views = Vec::new();
+        let entries = self.compute_graph_bind_group_entries(
+            transient_buffers,
+            &render_plan.bindings,
+            &format!("render `{}`", render_plan.name),
+            &mut texture_views,
+        )?;
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(&format!(
                 "Ghost Native Compute Graph Render Bind Group {}",
@@ -4683,6 +4795,98 @@ impl RenderState {
             }
         }
         Ok(result)
+    }
+
+    fn compute_graph_bind_group_entries<'a>(
+        &'a self,
+        transient_buffers: &'a HashMap<String, NativeComputeGraphGpuBuffer>,
+        bindings: &'a [NativeComputeGraphBindingSpec],
+        context: &str,
+        texture_views: &'a mut Vec<wgpu::TextureView>,
+    ) -> Result<Vec<wgpu::BindGroupEntry<'a>>, String> {
+        enum PreparedBinding<'a> {
+            Buffer(&'a wgpu::Buffer),
+            TextureView(usize),
+            Sampler,
+        }
+
+        let mut prepared = Vec::with_capacity(bindings.len());
+        for binding in bindings {
+            match binding.kind {
+                NativeComputeGraphBindingKind::Buffer(_) => {
+                    let Some(buffer) =
+                        self.compute_graph_buffer(transient_buffers, &binding.resource_id)
+                    else {
+                        return Err(format!(
+                            "native compute graph {context} references missing buffer `{}`",
+                            binding.resource_id
+                        ));
+                    };
+                    prepared.push(PreparedBinding::Buffer(&buffer.buffer));
+                }
+                NativeComputeGraphBindingKind::SourceFrameTexture(dimension) => {
+                    let label = match dimension {
+                        NativeComputeGraphTextureDimension::D2 => {
+                            "Ghost Native Compute Graph Source Frame Texture View"
+                        }
+                        NativeComputeGraphTextureDimension::D2Array => {
+                            "Ghost Native Compute Graph Source Frame Array View"
+                        }
+                    };
+                    let slot = binding
+                        .source_slot
+                        .unwrap_or(0)
+                        .min(MAX_SOURCE_FRAME_SLOTS - 1);
+                    texture_views.push(self.source_frame_texture.create_view(
+                        &wgpu::TextureViewDescriptor {
+                            label: Some(label),
+                            format: Some(self.source_frame_format),
+                            dimension: Some(dimension.view_dimension()),
+                            base_mip_level: 0,
+                            mip_level_count: Some(self.source_frame_mip_levels),
+                            base_array_layer: if matches!(
+                                dimension,
+                                NativeComputeGraphTextureDimension::D2
+                            ) {
+                                slot as u32
+                            } else {
+                                0
+                            },
+                            array_layer_count: if matches!(
+                                dimension,
+                                NativeComputeGraphTextureDimension::D2
+                            ) {
+                                Some(1)
+                            } else {
+                                Some(MAX_SOURCE_FRAME_SLOTS as u32)
+                            },
+                            ..Default::default()
+                        },
+                    ));
+                    prepared.push(PreparedBinding::TextureView(texture_views.len() - 1));
+                }
+                NativeComputeGraphBindingKind::SourceFrameSampler => {
+                    prepared.push(PreparedBinding::Sampler);
+                }
+            }
+        }
+
+        Ok(bindings
+            .iter()
+            .zip(prepared.iter())
+            .map(|(binding, prepared)| wgpu::BindGroupEntry {
+                binding: binding.binding,
+                resource: match prepared {
+                    PreparedBinding::Buffer(buffer) => buffer.as_entire_binding(),
+                    PreparedBinding::TextureView(index) => {
+                        wgpu::BindingResource::TextureView(&texture_views[*index])
+                    }
+                    PreparedBinding::Sampler => {
+                        wgpu::BindingResource::Sampler(&self.source_frame_sampler)
+                    }
+                },
+            })
+            .collect())
     }
 
     fn ensure_native_graph_render_pipeline(
@@ -5528,6 +5732,59 @@ fn compute_binding_kind_from_value(value: &Value) -> Option<NativeComputeBufferB
         .or_else(|| string_at(value, &["type"]))
         .or_else(|| string_at(value, &["buffer_type"]))
         .and_then(|kind| compute_binding_kind_from_str(&kind))
+}
+
+fn compute_graph_binding_resource_id(value: &Value) -> Option<String> {
+    string_at(value, &["resource"])
+        .or_else(|| string_at(value, &["resource_id"]))
+        .or_else(|| string_at(value, &["buffer"]))
+}
+
+fn compute_graph_binding_kind_from_value(value: &Value) -> Option<NativeComputeGraphBindingKind> {
+    for label in [
+        string_at(value, &["resource_kind"]),
+        string_at(value, &["resource_type"]),
+        string_at(value, &["binding_kind"]),
+        string_at(value, &["kind"]),
+        string_at(value, &["type"]),
+        compute_graph_binding_resource_id(value),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if let Some(kind) = compute_graph_binding_kind_from_str(&label) {
+            return Some(kind);
+        }
+    }
+    None
+}
+
+fn compute_graph_binding_kind_from_str(kind: &str) -> Option<NativeComputeGraphBindingKind> {
+    let kind = kind
+        .trim()
+        .to_ascii_lowercase()
+        .replace('_', "-")
+        .replace(' ', "-");
+    match kind.as_str() {
+        "source-frame-texture"
+        | "source-frame-texture-2d"
+        | "source-texture"
+        | "source-texture-2d"
+        | "texture-2d" => Some(NativeComputeGraphBindingKind::SourceFrameTexture(
+            NativeComputeGraphTextureDimension::D2,
+        )),
+        "source-frame-texture-array"
+        | "source-frame-texture-2d-array"
+        | "source-texture-array"
+        | "source-texture-2d-array"
+        | "texture-2d-array" => Some(NativeComputeGraphBindingKind::SourceFrameTexture(
+            NativeComputeGraphTextureDimension::D2Array,
+        )),
+        "source-frame-sampler" | "source-sampler" => {
+            Some(NativeComputeGraphBindingKind::SourceFrameSampler)
+        }
+        _ => compute_binding_kind_from_str(&kind).map(NativeComputeGraphBindingKind::Buffer),
+    }
 }
 
 fn compute_binding_kind_from_str(kind: &str) -> Option<NativeComputeBufferBindingKind> {
