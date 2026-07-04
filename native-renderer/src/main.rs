@@ -1528,6 +1528,7 @@ impl App {
             "persistent_compute_buffers": true,
             "native_3d_smoke_graph": true,
             "native_particle_field_graph": true,
+            "native_volumetric_spheres_graph": true,
             "command_drain_policy": true,
             "auto_present_policy": true,
             "multi_pass_instruments": false,
@@ -1558,7 +1559,7 @@ impl App {
             "backend": native_backend_name(),
             "implemented_methods": CORE_RPC_METHODS,
             "implemented_command_types": CORE_COMMAND_TYPES,
-            "native_graph_instruments": ["smoke-3d", "particle-field"],
+            "native_graph_instruments": ["smoke-3d", "particle-field", "volumetric-spheres"],
             "native_graph_instrument_manifest": [
                 {
                     "id": "smoke-3d",
@@ -1603,13 +1604,33 @@ impl App {
                     ],
                     "render_target": "source_frame",
                     "parity": "behavior-render-edges-and-media-source-frame-routing"
+                },
+                {
+                    "id": "volumetric-spheres",
+                    "label": "Volumetric Spheres",
+                    "source_uri_prefix": "native-graph://volumetric-spheres/",
+                    "shader_ids": [
+                        "volumetric-spheres/sim",
+                        "volumetric-spheres/render"
+                    ],
+                    "features": [
+                        "compute_graph_host",
+                        "compute_graph_render",
+                        "compute_graph_instanced_render",
+                        "compute_graph_depth_render",
+                        "compute_graph_source_frame_target",
+                        "persistent_compute_buffers",
+                        "native_volumetric_spheres_graph"
+                    ],
+                    "render_target": "source_frame",
+                    "parity": "sim-render-shared-wgsl"
                 }
             ],
             "audio_uniform_layout": ghost_audio_uniform_layout(),
             "features": features,
             "limits": limits,
             "notes": [
-                "Native instruments are currently visual proxies, not parity ports of the browser/WebGPU instruments.",
+                "Native graph instruments use shared WGSL for 3D Smoke, Particle Field, and Volumetric Spheres; legacy native instrument layers are still visual proxies.",
                 "Canvas/base64 source-frame upload is a development fallback; shared texture transport is not implemented yet."
             ]
         })

@@ -499,6 +499,7 @@ async function main() {
       !capabilities.features.compute_graph_source_frame_target ||
       !capabilities.features.persistent_compute_buffers ||
       !capabilities.features.native_3d_smoke_graph ||
+      !capabilities.features.native_volumetric_spheres_graph ||
       capabilities.features.multi_pass_instruments
     ) {
       throw new Error(`native compute capability flags are not honest yet: ${JSON.stringify(capabilities.features)}`);
@@ -515,6 +516,9 @@ async function main() {
     if (!capabilities.native_graph_instruments?.includes('smoke-3d')) {
       throw new Error(`native graph instrument manifest missing smoke-3d: ${JSON.stringify(capabilities)}`);
     }
+    if (!capabilities.native_graph_instruments?.includes('volumetric-spheres')) {
+      throw new Error(`native graph instrument manifest missing volumetric-spheres: ${JSON.stringify(capabilities)}`);
+    }
     const smokeManifest = capabilities.native_graph_instrument_manifest?.find((entry) => entry?.id === 'smoke-3d');
     if (
       !smokeManifest ||
@@ -529,6 +533,19 @@ async function main() {
       !smokeManifest.features?.includes('compute_graph_source_frame_target')
     ) {
       throw new Error(`native graph instrument manifest entry is incomplete: ${JSON.stringify(capabilities.native_graph_instrument_manifest)}`);
+    }
+    const volumetricManifest = capabilities.native_graph_instrument_manifest?.find((entry) => entry?.id === 'volumetric-spheres');
+    if (
+      !volumetricManifest ||
+      volumetricManifest.source_uri_prefix !== 'native-graph://volumetric-spheres/' ||
+      volumetricManifest.render_target !== 'source_frame' ||
+      !volumetricManifest.shader_ids?.includes('volumetric-spheres/sim') ||
+      !volumetricManifest.shader_ids?.includes('volumetric-spheres/render') ||
+      !volumetricManifest.features?.includes('compute_graph_instanced_render') ||
+      !volumetricManifest.features?.includes('compute_graph_depth_render') ||
+      !volumetricManifest.features?.includes('native_volumetric_spheres_graph')
+    ) {
+      throw new Error(`native volumetric-spheres manifest entry is incomplete: ${JSON.stringify(capabilities.native_graph_instrument_manifest)}`);
     }
     if (!capabilities.features.present_policy || !capabilities.features.managed_output_attach) {
       throw new Error(`native managed output/present capabilities missing: ${JSON.stringify(capabilities.features)}`);
