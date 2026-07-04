@@ -2,11 +2,15 @@ import { get } from 'svelte/store';
 import type { Layer } from '$lib/types';
 import { project } from '$lib/stores/layers';
 import { mediaLibrary, type MediaItem } from '$lib/stores/media';
-import { isMac, isWindows } from '$lib/bridge';
+import { invoke, isElectron, isMac, isWindows } from '$lib/bridge';
 import { getVisualAudioSnapshot, visualAudio, type VisualAudioState } from '$lib/audio/visualAudio';
 import { ghostAudioCommandFieldsFromVisualAudio } from '$lib/audio/ghostAudioUniform';
 import { WGSL_STDLIB, resolveGhostWgsl } from '$lib/renderer/wgsl';
 import { gravityWellsDefaultParams } from '$lib/renderer/gpuShaderCatalog';
+import {
+  receiveSpoutTextureInfo,
+  type SpoutSharedTextureInfo,
+} from '$lib/renderer/spoutCanvasReceiver';
 import {
   buildPlanetNativeComputeGraph,
   buildPlanetNativePrecompileCommands,
@@ -124,6 +128,11 @@ type NativeLayerUvState = {
   uvTransform: NativeVec4;
   uvFlags: NativeVec4;
   signature: string;
+};
+
+type SharedTextureInfoCacheEntry = {
+  info: SpoutSharedTextureInfo;
+  updatedAt: number;
 };
 
 type NativeLayerShapeState = {
@@ -823,6 +832,8 @@ function nativeLayerNeedsContinuousSync(layer: Layer): boolean {
   const src = layer.source;
   if (
     src?.type === 'video' ||
+    src?.type === 'spout' ||
+    isSharedTextureUri(src?.src) ||
     !!src?.videoElement ||
     !!src?.threejsCanvas ||
     !!src?.synthVisionCanvas
@@ -838,6 +849,38 @@ function isSharedTextureUri(uri: string | undefined | null): boolean {
   if (!uri) return false;
   const u = String(uri).trim().toLowerCase();
   return u.startsWith('sharedtex:') || u.startsWith('sharedtex://');
+}
+
+function sharedTextureSenderName(src: NonNullable<Layer['source']>): string {
+  const spoutSource = (src as any).spoutSource;
+  if (typeof spoutSource === 'string') return spoutSource.trim();
+  if (spoutSource && typeof spoutSource === 'object') {
+    return String(spoutSource.senderName ?? spoutSource.name ?? '').trim();
+  }
+  if (src.type === 'spout') {
+    const raw = String(src.src ?? '').trim();
+    if (raw && !raw.toLowerCase().startsWith('live://')) return raw;
+  }
+  return '';
+}
+
+function isNativeSharedTextureSource(
+  src: NonNullable<Layer['source']>,
+  sourceType: string,
+): boolean {
+  return (
+    src.type === 'spout' ||
+    sourceType === 'spout' ||
+    sourceType === 'syphon' ||
+    isSharedTextureUri(src.src)
+  );
+}
+
+function isDynamicSourceFrameSource(
+  src: NonNullable<Layer['source']>,
+  sourceType: string,
+): boolean {
+  return sourceType === 'video' || isNativeSharedTextureSource(src, sourceType);
 }
 
 export class NativeRendererSync {
@@ -908,6 +951,10 @@ export class NativeRendererSync {
   private adaptiveOverloadPrefetchState: boolean | null = null;
   private adaptiveOverloadHandoffState: boolean | null = null;
   private adaptiveOverloadEstimateCacheState: boolean | null = null;
+  private sharedTextureInfoCache = new Map<string, SharedTextureInfoCacheEntry>();
+  private sharedTextureInfoInFlight = new Set<string>();
+  private sharedTextureInfoNextPollAt = new Map<string, number>();
+  private sharedTextureReceiverSender: string | null = null;
   private nextStatusPollAt = 0;
   private degradedModeActive = false;
   private decodeBackpressureActive = false;
@@ -1817,13 +1864,14 @@ export class NativeRendererSync {
         const src = nativeSource.source;
         if (src) {
           const sourceKey = this.sourceCacheKey(src.id, src.src);
-          const sharedTextureSource = isSharedTextureUri(src.src);
+          const sharedTextureSource = isNativeSharedTextureSource(src, sourceType);
+          const dynamicSourceFrameSource = isDynamicSourceFrameSource(src, sourceType);
           if (nativeSource.shouldPrefetch && !sharedTextureSource && !this.prefetchedSources.has(sourceKey)) {
             this.prefetchedSources.add(sourceKey);
             const priority = sourceType === 'video' ? videoPrefetchPriority : mediaPrefetchPriority;
             void prefetchNativeRendererMedia(src.id, src.src, priority).catch(() => {});
           }
-          if (sourceType === 'video') {
+          if (dynamicSourceFrameSource) {
             this.videoRefreshAt.set(sourceKey, now + videoRefreshMs);
           } else {
             this.videoRefreshAt.delete(sourceKey);
@@ -1862,12 +1910,12 @@ export class NativeRendererSync {
       }
 
       const src = nativeSource.source;
-      if (src && sourceType === 'video') {
+      if (src && isDynamicSourceFrameSource(src, sourceType)) {
         const sourceKey = this.sourceCacheKey(src.id, src.src);
         activeVideoKeys.add(sourceKey);
         const dueAt = this.videoRefreshAt.get(sourceKey) ?? 0;
-        const sharedTextureSource = isSharedTextureUri(src.src);
-        if (!sharedTextureSource && now >= dueAt) {
+        const sharedTextureSource = isNativeSharedTextureSource(src, sourceType);
+        if (!sharedTextureSource && sourceType === 'video' && now >= dueAt) {
           this.videoRefreshAt.set(sourceKey, now + videoRefreshMs);
           void prefetchNativeRendererMedia(src.id, src.src, videoPrefetchPriority).catch(() => {});
         }
@@ -2025,6 +2073,108 @@ export class NativeRendererSync {
     };
   }
 
+  private sharedTextureInfoKey(src: NonNullable<Layer['source']>, sourceType: string): string {
+    const senderName = sharedTextureSenderName(src);
+    if (senderName) return `${sourceType || src.type || 'shared'}:${senderName}`;
+    return this.sourceCacheKey(src.id, src.src);
+  }
+
+  private queueSharedTextureInfoRefresh(
+    src: NonNullable<Layer['source']>,
+    sourceType: string,
+    now: number,
+  ) {
+    if (!isElectron || !isNativeSharedTextureSource(src, sourceType)) return;
+
+    const key = this.sharedTextureInfoKey(src, sourceType);
+    const nextPollAt = this.sharedTextureInfoNextPollAt.get(key) ?? 0;
+    if (now < nextPollAt || this.sharedTextureInfoInFlight.has(key)) return;
+
+    this.sharedTextureInfoNextPollAt.set(key, now + 80);
+    this.sharedTextureInfoInFlight.add(key);
+    void (async () => {
+      try {
+        const senderName = sharedTextureSenderName(src);
+        if (senderName && this.sharedTextureReceiverSender !== senderName) {
+          const result = await invoke<{ connected?: boolean }>('spout_start_receiver', { senderName });
+          if (result?.connected === false) return;
+          this.sharedTextureReceiverSender = senderName;
+        }
+
+        const info = await receiveSpoutTextureInfo();
+        if (!info?.available || !info.handle || !info.width || !info.height) return;
+        if (senderName && info.senderName && info.senderName !== senderName) return;
+        this.sharedTextureInfoCache.set(key, { info, updatedAt: performance.now() });
+      } catch (err) {
+        const failures = this.sharedTextureInfoNextPollAt.get(`${key}:failures`) ?? 0;
+        if (failures < 3) {
+          console.warn('[NativeRendererSync] shared texture metadata unavailable:', err);
+        }
+        this.sharedTextureInfoNextPollAt.set(`${key}:failures`, failures + 1);
+      } finally {
+        this.sharedTextureInfoInFlight.delete(key);
+      }
+    })();
+  }
+
+  private appendSharedTextureSourceFrameCommand(
+    commands: RendererCommand[],
+    src: NonNullable<Layer['source']>,
+    sourceType: string,
+    now: number,
+    force: boolean,
+    budget: PreviewFlushBudget | null,
+  ): boolean {
+    if (!isNativeSharedTextureSource(src, sourceType)) return false;
+
+    this.queueSharedTextureInfoRefresh(src, sourceType, now);
+    const cacheKey = this.sharedTextureInfoKey(src, sourceType);
+    const cached = this.sharedTextureInfoCache.get(cacheKey);
+    const info = cached?.info;
+    if (!info?.handle) return false;
+
+    const width = Math.floor(Number(info.width ?? 0));
+    const height = Math.floor(Number(info.height ?? 0));
+    if (width <= 0 || height <= 0) return false;
+
+    const sourceKey = this.sourceCacheKey(src.id, src.src);
+    const signature = [
+      'shared',
+      info.platform,
+      info.senderName ?? sharedTextureSenderName(src),
+      info.frame ?? 0,
+      width,
+      height,
+      info.format ?? 'unknown',
+      info.handleByteLength ?? 0,
+      info.handle,
+    ].join(':');
+    if (!force && this.sourcePreviewSig.get(sourceKey) === signature) {
+      return true;
+    }
+    if (budget && budget.dynamicRemaining <= 0) return true;
+
+    const seq = (this.sourcePreviewSeq.get(sourceKey) ?? 0) + 1;
+    this.sourcePreviewSeq.set(sourceKey, seq);
+    this.sourcePreviewSig.set(sourceKey, signature);
+    this.sourcePreviewNextAt.set(sourceKey, now + VIDEO_PREVIEW_REFRESH_MS);
+    if (budget) budget.dynamicRemaining -= 1;
+
+    commands.push({
+      type: 'upload_source_frame',
+      source_id: src.id,
+      width,
+      height,
+      shared_handle: info.handle,
+      shared_texture_platform: info.platform,
+      shared_texture_format: info.format ?? undefined,
+      shared_texture_handle_encoding: info.handleEncoding ?? 'base64',
+      shared_texture_handle_byte_length: info.handleByteLength,
+      seq,
+    });
+    return true;
+  }
+
   private appendSourcePreviewCommand(
     commands: RendererCommand[],
     src: NonNullable<Layer['source']>,
@@ -2042,13 +2192,15 @@ export class NativeRendererSync {
       sourceType === 'javascript' ||
       sourceType === 'synthvision' ||
       sourceType.startsWith('generated:') ||
-      sourceType.startsWith('gpu:');
+      sourceType.startsWith('gpu:') ||
+      isNativeSharedTextureSource(src, sourceType);
     if (!previewable) return;
 
     const sourceKey = this.sourceCacheKey(src.id, src.src);
     const dueAt = this.sourcePreviewNextAt.get(sourceKey) ?? 0;
     const isVideoLike =
       sourceType === 'video' ||
+      isNativeSharedTextureSource(src, sourceType) ||
       sourceType.startsWith('gpu:') ||
       !!previewElement ||
       !!src.videoElement ||
@@ -2058,6 +2210,18 @@ export class NativeRendererSync {
       ? GPU_PREVIEW_REFRESH_MS
       : VIDEO_PREVIEW_REFRESH_MS;
     if (!force && now < dueAt) return;
+    if (
+      this.appendSharedTextureSourceFrameCommand(
+        commands,
+        src,
+        sourceType,
+        now,
+        force,
+        budget,
+      )
+    ) {
+      return;
+    }
     if (budget) {
       const remaining = isVideoLike ? budget.dynamicRemaining : budget.staticRemaining;
       if (remaining <= 0) return;

@@ -782,6 +782,7 @@ public:
   static Napi::Object Init(Napi::Env env, Napi::Object exports) {
     Napi::Function func = DefineClass(env, "SyphonReceiver", {
       InstanceMethod("connect", &SyphonReceiver::Connect),
+      InstanceMethod("receiveTextureInfo", &SyphonReceiver::ReceiveTextureInfo),
       InstanceMethod("receiveImage", &SyphonReceiver::ReceiveImage),
       InstanceMethod("isConnected", &SyphonReceiver::IsConnected),
       InstanceMethod("isUpdated", &SyphonReceiver::IsUpdated),
@@ -805,9 +806,15 @@ private:
   GLuint landingFbo_ = 0;      // FBO with landingTex_ as color attachment
   int landingW_ = 0;
   int landingH_ = 0;
+  GLuint sharedSurfaceTex_ = 0; // GL_TEXTURE_RECTANGLE wrapping sharedSurface_
+  GLuint sharedSurfaceFbo_ = 0; // FBO rendering into sharedSurfaceTex_
+  IOSurfaceRef sharedSurface_ = nullptr;
+  int sharedSurfaceW_ = 0;
+  int sharedSurfaceH_ = 0;
 
   int lastW_ = 0;
   int lastH_ = 0;
+  uint64_t sharedFrame_ = 0;
   bool updatedSinceLastQuery_ = false;
   std::mutex mutex_;
 
@@ -817,13 +824,19 @@ private:
       [context_ makeCurrentContext];
       if (landingFbo_) { glDeleteFramebuffers(1, &landingFbo_); landingFbo_ = 0; }
       if (landingTex_) { glDeleteTextures(1, &landingTex_); landingTex_ = 0; }
+      if (sharedSurfaceFbo_) { glDeleteFramebuffers(1, &sharedSurfaceFbo_); sharedSurfaceFbo_ = 0; }
+      if (sharedSurfaceTex_) { glDeleteTextures(1, &sharedSurfaceTex_); sharedSurfaceTex_ = 0; }
     }
+    if (sharedSurface_) { CFRelease(sharedSurface_); sharedSurface_ = nullptr; }
     if (client_) { [client_ stop]; client_ = nil; }
     context_ = nil;
     landingW_ = 0;
     landingH_ = 0;
+    sharedSurfaceW_ = 0;
+    sharedSurfaceH_ = 0;
     lastW_ = 0;
     lastH_ = 0;
+    sharedFrame_ = 0;
     updatedSinceLastQuery_ = false;
   }
 
@@ -848,13 +861,69 @@ private:
     landingH_ = h;
   }
 
+  bool ensureSharedSurface(int w, int h) {
+    if (sharedSurfaceW_ == w && sharedSurfaceH_ == h && sharedSurface_ && sharedSurfaceTex_ && sharedSurfaceFbo_) {
+      return true;
+    }
+
+    if (sharedSurfaceFbo_) { glDeleteFramebuffers(1, &sharedSurfaceFbo_); sharedSurfaceFbo_ = 0; }
+    if (sharedSurfaceTex_) { glDeleteTextures(1, &sharedSurfaceTex_); sharedSurfaceTex_ = 0; }
+    if (sharedSurface_) { CFRelease(sharedSurface_); sharedSurface_ = nullptr; }
+
+    const uint32_t bgra = ('B' << 24) | ('G' << 16) | ('R' << 8) | 'A';
+    NSDictionary* props = @{
+      (__bridge NSString*)kIOSurfaceWidth: @(w),
+      (__bridge NSString*)kIOSurfaceHeight: @(h),
+      (__bridge NSString*)kIOSurfaceBytesPerElement: @4,
+      (__bridge NSString*)kIOSurfacePixelFormat: @(bgra),
+    };
+    sharedSurface_ = IOSurfaceCreate((__bridge CFDictionaryRef)props);
+    if (!sharedSurface_) return false;
+
+    if (!sharedSurfaceTex_) glGenTextures(1, &sharedSurfaceTex_);
+    glBindTexture(GL_TEXTURE_RECTANGLE_ARB, sharedSurfaceTex_);
+    CGLError cglErr = CGLTexImageIOSurface2D(
+        CGLGetCurrentContext(),
+        GL_TEXTURE_RECTANGLE_ARB,
+        GL_RGBA,
+        w, h,
+        GL_BGRA,
+        GL_UNSIGNED_INT_8_8_8_8_REV,
+        sharedSurface_,
+        0);
+    if (cglErr != kCGLNoError) {
+      NSLog(@"[SyphonReceiver] shared IOSurface CGLTexImageIOSurface2D failed: %d", cglErr);
+      if (sharedSurface_) { CFRelease(sharedSurface_); sharedSurface_ = nullptr; }
+      if (sharedSurfaceTex_) { glDeleteTextures(1, &sharedSurfaceTex_); sharedSurfaceTex_ = 0; }
+      return false;
+    }
+    glBindTexture(GL_TEXTURE_RECTANGLE_ARB, 0);
+
+    if (!sharedSurfaceFbo_) glGenFramebuffers(1, &sharedSurfaceFbo_);
+    glBindFramebuffer(GL_FRAMEBUFFER, sharedSurfaceFbo_);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_RECTANGLE_ARB, sharedSurfaceTex_, 0);
+    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+      NSLog(@"[SyphonReceiver] shared IOSurface framebuffer incomplete: 0x%x", status);
+      if (sharedSurfaceFbo_) { glDeleteFramebuffers(1, &sharedSurfaceFbo_); sharedSurfaceFbo_ = 0; }
+      if (sharedSurfaceTex_) { glDeleteTextures(1, &sharedSurfaceTex_); sharedSurfaceTex_ = 0; }
+      if (sharedSurface_) { CFRelease(sharedSurface_); sharedSurface_ = nullptr; }
+      return false;
+    }
+
+    sharedSurfaceW_ = w;
+    sharedSurfaceH_ = h;
+    return true;
+  }
+
   // Render the IOSurface-backed rectangle texture into our owned 2D texture
   // using fixed-function (immediate-mode, legacy profile) — no shader. This
   // is the only reliable way to materialize IOSurface pixels into a form
   // glReadPixels can fetch on Intel Iris drivers. Apple's Syphon SimpleClient
   // uses the same pattern (shader-based in its case).
-  void blitRectToLanding(GLuint rectTex, int w, int h) {
-    glBindFramebuffer(GL_FRAMEBUFFER, landingFbo_);
+  void blitRectToFramebuffer(GLuint framebuffer, GLuint rectTex, int w, int h) {
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
     glViewport(0, 0, w, h);
 
     glMatrixMode(GL_PROJECTION);
@@ -887,6 +956,14 @@ private:
     glPopMatrix();
 
     glFlush();
+  }
+
+  void blitRectToLanding(GLuint rectTex, int w, int h) {
+    blitRectToFramebuffer(landingFbo_, rectTex, w, h);
+  }
+
+  void blitRectToSharedSurface(GLuint rectTex, int w, int h) {
+    blitRectToFramebuffer(sharedSurfaceFbo_, rectTex, w, h);
   }
 
   Napi::Value Connect(const Napi::CallbackInfo& info) {
@@ -928,6 +1005,47 @@ private:
                                                       options:nil
                                                newFrameHandler:nil];
     return Napi::Boolean::New(env, client_ != nil);
+  }
+
+  Napi::Value ReceiveTextureInfo(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!client_ || !context_) return env.Null();
+
+    [context_ makeCurrentContext];
+
+    SyphonImage* frame = [client_ newFrameImage];
+    if (!frame) return env.Null();
+
+    NSSize size = [frame textureSize];
+    int w = (int)size.width;
+    int h = (int)size.height;
+    GLuint rectTex = [frame textureName];
+    if (w <= 0 || h <= 0 || rectTex == 0) return env.Null();
+    if (!ensureSharedSurface(w, h)) return env.Null();
+
+    blitRectToSharedSurface(rectTex, w, h);
+
+    IOSurfaceID surfaceID = IOSurfaceGetID(sharedSurface_);
+    lastW_ = w;
+    lastH_ = h;
+    updatedSinceLastQuery_ = true;
+    sharedFrame_++;
+
+    Napi::Object result = Napi::Object::New(env);
+    result.Set("handle", Napi::Buffer<uint8_t>::Copy(
+      env,
+      reinterpret_cast<uint8_t*>(&surfaceID),
+      sizeof(IOSurfaceID)));
+    result.Set("width", Napi::Number::New(env, w));
+    result.Set("height", Napi::Number::New(env, h));
+    result.Set("format", Napi::Number::New(env, 80));
+    result.Set("updated", Napi::Boolean::New(env, true));
+    result.Set("isNewFrame", Napi::Boolean::New(env, true));
+    result.Set("frame", Napi::Number::New(env, static_cast<double>(sharedFrame_)));
+    result.Set("fps", Napi::Number::New(env, 0));
+    return result;
   }
 
   Napi::Value ReceiveImage(const Napi::CallbackInfo& info) {

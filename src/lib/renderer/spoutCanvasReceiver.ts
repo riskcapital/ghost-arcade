@@ -49,7 +49,7 @@ export interface SpoutSharedTextureInfo {
   senderName?: string;
   width?: number;
   height?: number;
-  format?: number;
+  format?: number | string;
   updated?: boolean;
   isNewFrame?: boolean;
   frame?: number;
