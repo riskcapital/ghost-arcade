@@ -14,6 +14,18 @@ const REQUIRED_CHECKS = [
   'managed-output',
 ];
 
+const REQUIRED_GRAPH_MANIFEST = [
+  { id: 'planet', feature: 'native_planet_graph' },
+  { id: 'smoke-3d', feature: 'native_3d_smoke_graph' },
+  { id: 'particle-field', feature: 'native_particle_field_graph' },
+  { id: 'volumetric-spheres', feature: 'native_volumetric_spheres_graph' },
+  { id: 'smoke-riders', feature: 'native_smoke_riders_graph' },
+  { id: 'ink-cloud', feature: 'native_ink_cloud_graph' },
+  { id: 'flythrough', feature: 'native_flythrough_graph' },
+  { id: 'pixel-particles', feature: 'native_pixel_particles_graph' },
+  { id: 'point-cloud-fx', feature: 'native_point_cloud_fx_graph' },
+];
+
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
@@ -74,7 +86,25 @@ try {
 
   const capabilities = await broker.invoke('native_renderer_get_capabilities');
   assert(capabilities?.features?.compute_graph_source_frame_target, 'broker capabilities lost compute graph source-frame support');
-  assert(capabilities?.native_graph_instruments?.length >= 9, `broker graph manifest is incomplete: ${JSON.stringify(capabilities)}`);
+  const graphInstruments = new Set(capabilities?.native_graph_instruments ?? []);
+  const graphManifest = new Map(
+    (capabilities?.native_graph_instrument_manifest ?? []).map((entry) => [entry.id, entry]),
+  );
+  assert(
+    graphInstruments.size === REQUIRED_GRAPH_MANIFEST.length,
+    `broker graph instrument list has drifted: ${JSON.stringify(capabilities?.native_graph_instruments)}`,
+  );
+  for (const required of REQUIRED_GRAPH_MANIFEST) {
+    assert(graphInstruments.has(required.id), `broker graph instruments missing ${required.id}: ${JSON.stringify(capabilities)}`);
+    assert(capabilities?.features?.[required.feature], `broker capabilities missing ${required.feature}: ${JSON.stringify(capabilities?.features)}`);
+    const entry = graphManifest.get(required.id);
+    assert(entry, `broker graph manifest missing ${required.id}: ${JSON.stringify(capabilities?.native_graph_instrument_manifest)}`);
+    assert(entry.render_target === 'source_frame', `broker graph ${required.id} lost source-frame target: ${JSON.stringify(entry)}`);
+    assert(entry.source_uri_prefix === `native-graph://${required.id}/`, `broker graph ${required.id} URI prefix drifted: ${JSON.stringify(entry)}`);
+    assert(Array.isArray(entry.shader_ids) && entry.shader_ids.length > 0, `broker graph ${required.id} has no shader IDs: ${JSON.stringify(entry)}`);
+    assert(Array.isArray(entry.features) && entry.features.includes(required.feature), `broker graph ${required.id} manifest missing ${required.feature}: ${JSON.stringify(entry)}`);
+    assert(String(entry.parity ?? '').length > 0, `broker graph ${required.id} missing parity metadata: ${JSON.stringify(entry)}`);
+  }
 
   const readiness = await broker.invoke('native_renderer_get_readiness_report');
   const checks = new Map((readiness?.checks ?? []).map((check) => [check.id, check]));
@@ -98,7 +128,7 @@ try {
   assert(unsupportedErrored, 'broker shared-texture upload unexpectedly succeeded or returned the wrong error');
 
   console.log(
-    `Native broker contract passed: backend=${status.backend} adapter=${status.adapter_name ?? 'unknown'} graphs=${capabilities.native_graph_instruments.length}`,
+    `Native broker contract passed: backend=${status.backend} adapter=${status.adapter_name ?? 'unknown'} graphs=${graphInstruments.size}`,
   );
 } finally {
   await broker.invoke('native_renderer_stop').catch(() => {});
