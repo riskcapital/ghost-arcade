@@ -315,6 +315,19 @@ export interface NativeGraphInstrumentManifestEntry {
   render_target?: string;
 }
 
+export interface NativeCompositorBlendManifestEntry {
+  id: string;
+  code: number;
+}
+
+export interface NativeCompositorEffectManifestEntry {
+  id: string;
+  code: number;
+  aliases?: string[];
+  amount_min?: number;
+  amount_max?: number;
+}
+
 export interface NativeRendererCapabilities {
   schema_version: number;
   core_version: string | null;
@@ -323,6 +336,8 @@ export interface NativeRendererCapabilities {
   implemented_command_types: string[];
   native_graph_instruments?: string[];
   native_graph_instrument_manifest?: NativeGraphInstrumentManifestEntry[];
+  native_compositor_blend_modes?: NativeCompositorBlendManifestEntry[];
+  native_compositor_effect_descriptors?: NativeCompositorEffectManifestEntry[];
   audio_uniform_layout?: {
     schema_version: number;
     audio0: readonly string[];

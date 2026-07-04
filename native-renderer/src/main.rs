@@ -1638,6 +1638,7 @@ impl App {
             "layer_shape_masks": true,
             "blend_modes": true,
             "effect_descriptors": true,
+            "native_compositor_manifest": true,
             "render_clock": true,
             "frame_snapshot": true,
             "frame_snapshot_export": true,
@@ -1711,6 +1712,8 @@ impl App {
             "backend": native_backend_name(),
             "implemented_methods": CORE_RPC_METHODS,
             "implemented_command_types": CORE_COMMAND_TYPES,
+            "native_compositor_blend_modes": native_compositor_blend_manifest(),
+            "native_compositor_effect_descriptors": native_compositor_effect_manifest(),
             "native_graph_instruments": ["planet", "smoke-3d", "particle-field", "volumetric-spheres", "smoke-riders", "ink-cloud", "flythrough", "pixel-particles", "point-cloud-fx"],
             "native_graph_instrument_manifest": [
                 {
@@ -7925,6 +7928,51 @@ fn effect_descriptor_code(descriptor: &str) -> Option<[f32; 4]> {
         "noise" => Some([9.0, amount.clamp(0.0, 1.0), 0.0, 0.0]),
         _ => None,
     }
+}
+
+fn native_compositor_blend_manifest() -> Value {
+    json!([
+        {"id": "normal", "code": 0},
+        {"id": "add", "code": 1},
+        {"id": "multiply", "code": 2},
+        {"id": "screen", "code": 3},
+        {"id": "overlay", "code": 4},
+        {"id": "subtract", "code": 5},
+        {"id": "difference", "code": 6},
+        {"id": "lighten", "code": 7},
+        {"id": "darken", "code": 8},
+        {"id": "average", "code": 9},
+        {"id": "hardlight", "code": 10},
+        {"id": "softlight", "code": 11},
+        {"id": "exclusion", "code": 12},
+        {"id": "color-dodge", "code": 13},
+        {"id": "color-burn", "code": 14},
+        {"id": "hue", "code": 15},
+        {"id": "saturation", "code": 16},
+        {"id": "color", "code": 17},
+        {"id": "luminosity", "code": 18},
+        {"id": "divide", "code": 19},
+        {"id": "negation", "code": 20},
+        {"id": "phoenix", "code": 21},
+        {"id": "linear-light", "code": 22},
+        {"id": "hard-mix", "code": 23},
+        {"id": "vivid-light", "code": 24},
+        {"id": "pin-light", "code": 25}
+    ])
+}
+
+fn native_compositor_effect_manifest() -> Value {
+    json!([
+        {"id": "invert", "code": 1, "amount_min": 0.0, "amount_max": 1.0},
+        {"id": "grayscale", "aliases": ["greyscale"], "code": 2, "amount_min": 0.0, "amount_max": 1.0},
+        {"id": "brightness", "code": 3, "amount_min": 0.0, "amount_max": 8.0},
+        {"id": "contrast", "code": 4, "amount_min": 0.0, "amount_max": 8.0},
+        {"id": "gamma", "code": 5, "amount_min": 0.05, "amount_max": 8.0},
+        {"id": "saturation", "code": 6, "amount_min": 0.0, "amount_max": 8.0},
+        {"id": "hue", "code": 7, "amount_min": -4.0, "amount_max": 4.0},
+        {"id": "posterize", "code": 8, "amount_min": 2.0, "amount_max": 64.0},
+        {"id": "noise", "code": 9, "amount_min": 0.0, "amount_max": 1.0}
+    ])
 }
 
 fn stable_layer_color(id: &str, alpha: f32) -> [f32; 4] {
