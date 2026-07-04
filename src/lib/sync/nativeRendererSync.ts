@@ -668,6 +668,27 @@ function nativeParamsSignature(layer: Layer): string {
   return params ? params.map((value) => value.toFixed(4)).join(':') : 'none';
 }
 
+function stableNativeGraphKey(value: unknown): string {
+  if (value === null || value === undefined) return 'null';
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? Number(value.toFixed(5)).toString() : '0';
+  }
+  if (typeof value === 'string' || typeof value === 'boolean') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableNativeGraphKey).join(',')}]`;
+  }
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableNativeGraphKey(record[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(String(value));
+}
+
 function toSourceType(layer: Layer): string {
   return nativeLayerSource(layer).sourceType;
 }
@@ -1310,8 +1331,24 @@ export class NativeRendererSync {
       const graphFrameIndex = typeof clock.frame_index === 'number' && Number.isFinite(clock.frame_index)
         ? Math.max(0, Math.round(clock.frame_index))
         : routeState.seq + 1;
+      const audioBass = visual.isActive ? Math.max(visual.bass, visual.bassFast * 0.9) : 0;
+      const audioTreble = visual.isActive ? visual.treble : 0;
+      const nativeGraphParams = nativeGraphParamsForLayer(layer, route.kind);
+      const inputSourceFrameSeq = route.inputSource?.source
+        ? this.sourcePreviewSeq.get(this.sourceCacheKey(route.inputSource.source.id, route.inputSource.source.src)) ?? 0
+        : 0;
+      const graphInputSig = `${nativeSourceIdentity(route.inputSource)}:${inputSourceFrameSeq}`;
       const manualClockKey = clock.mode === 'manual'
-        ? `${graphFrameIndex}:${graphTime.toFixed(6)}:${graphDelta.toFixed(6)}`
+        ? [
+            route.kind,
+            graphFrameIndex,
+            graphTime.toFixed(6),
+            graphDelta.toFixed(6),
+            audioBass.toFixed(4),
+            audioTreble.toFixed(4),
+            graphInputSig,
+            stableNativeGraphKey(nativeGraphParams),
+          ].join('|')
         : '';
       if (manualClockKey && routeState.lastManualClockKey === manualClockKey && routeState.state) continue;
       if (routeState.inFlight) continue;
@@ -1325,9 +1362,6 @@ export class NativeRendererSync {
             typeof routeState.lastGraphFrameIndex === 'number' &&
             graphFrameIndex < routeState.lastGraphFrameIndex);
         const graph = await (async () => {
-          const audioBass = visual.isActive ? Math.max(visual.bass, visual.bassFast * 0.9) : 0;
-          const audioTreble = visual.isActive ? visual.treble : 0;
-          const nativeGraphParams = nativeGraphParamsForLayer(layer, route.kind);
           if (route.kind === 'planet') {
             return buildPlanetNativeComputeGraph({
               sourceId: route.source.id,

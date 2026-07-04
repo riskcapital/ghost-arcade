@@ -921,7 +921,10 @@ describe('Native graph parity and health integration', () => {
       },
     }, 12000);
     await rpc.send('submit_commands', {
-      commands: buildPlanetNativePrecompileCommands(),
+      commands: [
+        ...buildPlanetNativePrecompileCommands(),
+        ...buildSmoke3DNativePrecompileCommands(),
+      ],
     }, 10000);
 
     const sourceId = 'gpu:manual-clock-planet:planet';
@@ -973,9 +976,72 @@ describe('Native graph parity and health integration', () => {
     expect(replay.checksum).toBe(first.checksum);
     expect(advanced.checksum).not.toBe(first.checksum);
 
+    await rpc.send('submit_commands', {
+      commands: [
+        { type: 'remove_layer', layer_id: 'manual-clock-planet' },
+      ],
+    });
+
+    const smokeSourceId = 'gpu:manual-clock-smoke:smoke-3d';
+    await rpc.send('submit_commands', {
+      commands: [
+        { type: 'upsert_layer', layer_id: 'manual-clock-smoke', z_index: 0, blend_mode: 'normal', opacity: 1, corners: FULLSCREEN_CORNERS },
+        { type: 'set_layer_visibility', layer_id: 'manual-clock-smoke', visible: true },
+        { type: 'bind_media_source', layer_id: 'manual-clock-smoke', source_id: smokeSourceId, uri: 'native-graph://smoke-3d/manual-clock', source_type: 'image' },
+      ],
+    });
+
+    const renderSmoke = async (
+      time: number,
+      frameIndex: number,
+      state: Smoke3DNativeGraphState | null,
+      reset: boolean,
+    ) => {
+      await rpc!.send('set_render_clock', {
+        mode: 'manual',
+        time,
+        time_delta: 1 / 30,
+        frame_index: frameIndex,
+      });
+      const graph = buildSmoke3DNativeComputeGraph({
+        sourceId: smokeSourceId,
+        params: {
+          gridSize: 32,
+          emitterCount: 5,
+          splatRate: 72,
+          emission: 3,
+          density: 3.2,
+          fogOpacity: 1,
+          shadowSteps: 2,
+          autoRotateY: 10,
+        },
+        width: 320,
+        height: 180,
+        time,
+        frameDelta: 1 / 30,
+        frameIndex,
+        state,
+        reset,
+      });
+      await rpc!.send('compute_graph', nativeGraphConfigForDirectRpc(graph.config), 20000);
+      const snapshot = await rpc!.send('frame_snapshot', {
+        include_pixels: false,
+        time,
+        frame_index: frameIndex,
+      }, 10000);
+      assertVisibleFrame(`manual-clock 3D Smoke t=${time}`, snapshot, 0.012);
+      return { snapshot, state: graph.state };
+    };
+
+    const smokeFirst = await renderSmoke(2.25, 72, null, true);
+    const smokeReplay = await renderSmoke(2.25, 72, null, true);
+    const smokeAdvanced = await renderSmoke(2.65, 84, smokeFirst.state, false);
+    expect(smokeReplay.snapshot.checksum).toBe(smokeFirst.snapshot.checksum);
+    expect(smokeAdvanced.snapshot.checksum).not.toBe(smokeFirst.snapshot.checksum);
+
     const status = await rpc.send('status', {}, 5000);
     expect(status.render_clock_mode).toBe('manual');
-    expect(Number(status.render_clock_frame_index ?? 0)).toBe(57);
-    expect(Number(status.render_clock_updates ?? 0)).toBeGreaterThanOrEqual(3);
+    expect(Number(status.render_clock_frame_index ?? 0)).toBe(84);
+    expect(Number(status.render_clock_updates ?? 0)).toBeGreaterThanOrEqual(6);
   }, 60000);
 });
