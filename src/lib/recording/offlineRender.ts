@@ -56,6 +56,7 @@ import { generateUUID } from '../utils/uuid';
 import { createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
 import type { RenderEngine } from '../renderer/engine';
 import { invoke, isElectron } from '../bridge';
+import { exportNativeRendererFrameSnapshot, type NativeRendererFrameSnapshotExportResult } from '../api/native-renderer';
 
 // ─── Settings + state ───────────────────────────────────────
 
@@ -152,6 +153,10 @@ export interface NativeJpegSequenceSession {
   jobId: string;
   baseName: string;
   target: FrameSequenceTarget;
+  width: number;
+  height: number;
+  fps: number;
+  totalFrames: number;
 }
 
 function sanitizeFilenamePart(input: string, fallback = 'render'): string {
@@ -239,7 +244,15 @@ export async function startNativeJpegSequence(
   if (!result?.success) {
     throw new Error(result?.error || 'Could not start native JPEG sequence encoder');
   }
-  return { jobId, baseName, target };
+  return {
+    jobId,
+    baseName,
+    target,
+    width: settings.width,
+    height: settings.height,
+    fps: settings.fps,
+    totalFrames,
+  };
 }
 
 export async function writeNativeJpegSequenceFrame(
@@ -255,6 +268,49 @@ export async function writeNativeJpegSequenceFrame(
   if (!result?.success) {
     throw new Error(result?.error || `Could not write JPEG frame ${frameIndex}`);
   }
+}
+
+export async function writeNativeJpegSequenceFrameFile(
+  session: NativeJpegSequenceSession,
+  frameIndex: number,
+  path: string,
+  deleteAfterWrite = false,
+): Promise<void> {
+  const result = await invoke<{ success?: boolean; error?: string }>('jpeg_sequence_write_frame_file', {
+    jobId: session.jobId,
+    frameIndex,
+    path,
+    deleteAfterWrite,
+  });
+  if (!result?.success) {
+    throw new Error(result?.error || `Could not write JPEG frame file ${frameIndex}`);
+  }
+}
+
+export async function writeNativeRendererJpegSequenceFrame(
+  session: NativeJpegSequenceSession,
+  frameIndex: number,
+  timeSeconds: number,
+): Promise<NativeRendererFrameSnapshotExportResult> {
+  if (session.target.kind !== 'electron' || !session.target.path) {
+    throw new Error('Native renderer frame capture requires the desktop app frame-sequence encoder');
+  }
+  const rawName = `.${session.baseName}_${session.jobId}_${String(frameIndex).padStart(6, '0')}.rgba`;
+  const rawPath = `${session.target.path}/${rawName}`;
+  const snapshot = await exportNativeRendererFrameSnapshot(rawPath, {
+    time: timeSeconds,
+    frame_index: frameIndex,
+  });
+  if (snapshot.width !== session.width || snapshot.height !== session.height) {
+    throw new Error(
+      `Native renderer frame ${frameIndex} size mismatch: got ${snapshot.width}x${snapshot.height}, expected ${session.width}x${session.height}`,
+    );
+  }
+  if (snapshot.dark_frame || snapshot.nonzero_pixels <= 0) {
+    throw new Error(`Native renderer exported a blank frame at ${frameIndex}`);
+  }
+  await writeNativeJpegSequenceFrameFile(session, frameIndex, rawPath, true);
+  return snapshot;
 }
 
 export async function finishNativeJpegSequence(session: NativeJpegSequenceSession): Promise<void> {

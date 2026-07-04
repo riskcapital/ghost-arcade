@@ -509,6 +509,56 @@ async function writeJpegSequenceFrame(args = {}) {
   return { success: true, writtenFrames: job.writtenFrames };
 }
 
+async function writeJpegSequenceFrameFile(args = {}) {
+  const jobId = String(args.jobId || '').trim();
+  const job = activeJpegSequenceJobs.get(jobId);
+  if (!job) throw new Error('JPEG sequence job is not active.');
+  if (job.settled) {
+    throw new Error(`JPEG sequence encoder exited early.${job.stderr ? ` ${job.stderr.trim()}` : ''}`);
+  }
+  const framePath = assertAbsolutePath(
+    args.path || args.filePath || args.rawPath || args.rgbaPath,
+    'JPEG sequence frame file',
+  );
+  const stat = fs.statSync(framePath);
+  if (!stat.isFile()) throw new Error('JPEG sequence frame path is not a file.');
+  if (stat.size !== job.frameBytes) {
+    throw new Error(`JPEG sequence frame file has ${stat.size} bytes; expected ${job.frameBytes}.`);
+  }
+
+  const frameIndex = Math.round(clampNumber(args.frameIndex, 0, Number.MAX_SAFE_INTEGER, job.writtenFrames));
+  if (frameIndex !== job.writtenFrames) {
+    throw new Error(`JPEG sequence frame order mismatch: got ${frameIndex}, expected ${job.writtenFrames}.`);
+  }
+
+  const buffer = fs.readFileSync(framePath);
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      job.process.stdin?.off?.('error', onError);
+      job.process.off?.('close', onClose);
+    };
+    const finish = (err) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (err) reject(err);
+      else resolve();
+    };
+    const onError = (err) => finish(err);
+    const onClose = () => finish(new Error(`JPEG sequence encoder closed while writing frame ${frameIndex}.`));
+    job.process.stdin?.once?.('error', onError);
+    job.process.once?.('close', onClose);
+    job.process.stdin.write(buffer, (err) => finish(err));
+  });
+
+  job.writtenFrames++;
+  if (args.deleteAfterWrite || args.delete_after_write || args.delete) {
+    try { fs.unlinkSync(framePath); } catch { /* best-effort temp cleanup */ }
+  }
+  return { success: true, writtenFrames: job.writtenFrames };
+}
+
 async function finishJpegSequenceJob(jobIdInput) {
   const jobId = String(jobIdInput || '').trim();
   const job = activeJpegSequenceJobs.get(jobId);
@@ -4261,6 +4311,15 @@ function registerIpcHandlers() {
       return await writeJpegSequenceFrame(args);
     } catch (err) {
       console.error('[Main] jpeg_sequence_write_frame error:', err?.message || err);
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('jpeg_sequence_write_frame_file', async (_, args = {}) => {
+    try {
+      return await writeJpegSequenceFrameFile(args);
+    } catch (err) {
+      console.error('[Main] jpeg_sequence_write_frame_file error:', err?.message || err);
       return { success: false, error: err?.message || String(err) };
     }
   });
