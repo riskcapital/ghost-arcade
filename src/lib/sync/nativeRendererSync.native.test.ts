@@ -12,6 +12,11 @@ let missingNativeGraphRouteRequirements: (
 ) => string[];
 let nativeGraphInstrumentIds: (capabilities: any) => string[];
 let nativeGraphManifestById: (capabilities: any) => Map<string, any>;
+let nativeGraphReadyRouteKinds: (
+  features: Record<string, boolean>,
+  instruments: ReadonlySet<string>,
+  manifest: ReadonlyMap<string, any>,
+) => Set<string>;
 
 beforeAll(async () => {
   const storage = new Map<string, string>();
@@ -51,6 +56,7 @@ beforeAll(async () => {
     missingNativeGraphRouteRequirements,
     nativeGraphInstrumentIds,
     nativeGraphManifestById,
+    nativeGraphReadyRouteKinds,
     nativeEffectPassFromDescriptor,
   } = await import('./nativeRendererSync'));
 });
@@ -150,6 +156,13 @@ describe('native renderer sync graph manifest contract', () => {
         nativeGraphManifestById(missingParticleLines),
       ),
     ).toContain('particle-field:shader:particle-field/lines');
+    const particleMissingRoutes = nativeGraphReadyRouteKinds(
+      missingParticleLines.features,
+      new Set(nativeGraphInstrumentIds(missingParticleLines)),
+      nativeGraphManifestById(missingParticleLines),
+    );
+    expect(particleMissingRoutes.has('planet')).toBe(true);
+    expect(particleMissingRoutes.has('particle-field')).toBe(false);
 
     const missingPointSort = graphCapabilities();
     missingPointSort.native_graph_instrument_manifest = missingPointSort.native_graph_instrument_manifest.map((entry) =>
@@ -164,6 +177,13 @@ describe('native renderer sync graph manifest contract', () => {
         nativeGraphManifestById(missingPointSort),
       ),
     ).toContain('point-cloud-fx:shader:point-cloud-fx/sort-step');
+    const pointMissingRoutes = nativeGraphReadyRouteKinds(
+      missingPointSort.features,
+      new Set(nativeGraphInstrumentIds(missingPointSort)),
+      nativeGraphManifestById(missingPointSort),
+    );
+    expect(pointMissingRoutes.has('smoke-3d')).toBe(true);
+    expect(pointMissingRoutes.has('point-cloud-fx')).toBe(false);
   });
 });
 
