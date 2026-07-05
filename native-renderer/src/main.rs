@@ -1927,6 +1927,7 @@ impl App {
             "native_stage3d_scene_ingest": true,
             "native_stage3d_overlay_preview": true,
             "native_projection_sim_scene_ingest": true,
+            "native_projection_sim_overlay_preview": true,
             "native_recording": false,
             "native_stage3d": false,
             "native_projection_sim": false
@@ -3220,7 +3221,7 @@ impl App {
         } else {
             None
         };
-        let stage3d_overlay_items = self.stage3d_overlay_items();
+        let scene_overlay_items = self.scene_overlay_items();
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
@@ -3235,7 +3236,7 @@ impl App {
             frame_index,
             &gpu_layers,
             source_preview_pixels.as_deref(),
-            &stage3d_overlay_items,
+            &scene_overlay_items,
             self.audio0,
             self.audio1,
             self.audio2,
@@ -3376,7 +3377,7 @@ impl App {
         } else {
             None
         };
-        let stage3d_overlay_items = self.stage3d_overlay_items();
+        let scene_overlay_items = self.scene_overlay_items();
         let Some(renderer) = self.renderer.as_mut() else {
             return Err("native renderer has not created a wgpu device".to_string());
         };
@@ -3388,7 +3389,7 @@ impl App {
             snapshot_frame_index,
             &gpu_layers,
             source_preview_pixels.as_deref(),
-            &stage3d_overlay_items,
+            &scene_overlay_items,
             self.audio0,
             self.audio1,
             self.audio2,
@@ -4752,13 +4753,15 @@ impl App {
         Ok(json!(summary))
     }
 
-    fn stage3d_overlay_items(&self) -> Vec<Stage3DOverlayItemGpu> {
+    fn scene_overlay_items(&self) -> Vec<Stage3DOverlayItemGpu> {
         let mut items = Vec::new();
-        let Some(scene) = self.stage3d_scene.as_ref() else {
-            return items;
-        };
-        collect_stage3d_overlay_nodes(scene.get("nodes"), &mut items);
-        collect_stage3d_user_overlay_items(scene.get("userElements"), &mut items);
+        if let Some(scene) = self.stage3d_scene.as_ref() {
+            collect_stage3d_overlay_nodes(scene.get("nodes"), &mut items);
+            collect_stage3d_user_overlay_items(scene.get("userElements"), &mut items);
+        }
+        if let Some(scene) = self.projection_sim_scene.as_ref() {
+            collect_projection_sim_overlay_items(scene, &mut items);
+        }
         items
     }
 
@@ -8150,6 +8153,96 @@ fn stage3d_project_position(position: [f32; 3]) -> [f32; 2] {
         (position[0] / 18.0).clamp(-1.35, 1.35),
         ((position[1] - 1.8) / 8.0 - position[2] * 0.018).clamp(-1.35, 1.35),
     ]
+}
+
+fn collect_projection_sim_overlay_items(scene: &Value, items: &mut Vec<Stage3DOverlayItemGpu>) {
+    if let Some(objects) = scene.get("objects").and_then(Value::as_array) {
+        for object in objects {
+            if items.len() >= MAX_STAGE3D_OVERLAY_ITEMS {
+                return;
+            }
+            if !bool_at(object, &["visible"]).unwrap_or(true) {
+                continue;
+            }
+            let position = vec3_path_or(object, &["position"], [0.0, 1.0, 0.0]);
+            let rotation = vec3_path_or(object, &["rotation"], [0.0, 0.0, 0.0]);
+            let scale = vec3_path_or(object, &["scale"], [1.0, 1.0, 1.0]);
+            let object_type = string_at(object, &["type"]).unwrap_or_default();
+            let primitive = string_at(object, &["primitive"]).unwrap_or_default();
+            let color = color_path_or(object, &["color"]).unwrap_or(match object_type.as_str() {
+                "model" => [0.72, 0.82, 1.0],
+                "pointcloud" => [1.0, 0.62, 0.94],
+                _ => [0.86, 0.82, 0.72],
+            });
+            let round = matches!(
+                primitive.as_str(),
+                "sphere" | "cylinder" | "cone" | "pyramid" | "column"
+            ) || object_type == "pointcloud";
+            let alpha = if bool_at(object, &["receiveProjection"]).unwrap_or(true) {
+                0.38
+            } else {
+                0.22
+            };
+            items.push(stage3d_overlay_item(
+                position,
+                scale[0].abs().max(0.2),
+                scale[1].abs().max(scale[2].abs()).max(0.2),
+                [color[0], color[1], color[2], alpha],
+                if round { 1.0 } else { 0.0 },
+                rotation[2],
+                1.0,
+            ));
+        }
+    }
+
+    if let Some(projectors) = scene.get("projectors").and_then(Value::as_array) {
+        for projector in projectors {
+            if items.len() >= MAX_STAGE3D_OVERLAY_ITEMS {
+                return;
+            }
+            if !bool_at(projector, &["enabled"]).unwrap_or(true) {
+                continue;
+            }
+            let position = vec3_path_or(projector, &["position"], [-4.0, 4.0, 6.0]);
+            let target = vec3_path_or(projector, &["target"], [0.0, 2.0, 0.0]);
+            let color = color_path_or(projector, &["color"]).unwrap_or([1.0, 1.0, 1.0]);
+            let intensity = number_at(projector, &["intensity"])
+                .unwrap_or(1.0)
+                .clamp(0.1, 4.0) as f32;
+            let opacity = number_at(projector, &["opacity"])
+                .unwrap_or(1.0)
+                .clamp(0.0, 1.0) as f32;
+            items.push(stage3d_overlay_item(
+                position,
+                0.72,
+                0.72,
+                [color[0], color[1], color[2], 0.44 * opacity],
+                1.0,
+                0.0,
+                intensity,
+            ));
+            if items.len() >= MAX_STAGE3D_OVERLAY_ITEMS {
+                return;
+            }
+            let beam_center = [
+                (position[0] + target[0]) * 0.5,
+                (position[1] + target[1]) * 0.5,
+                (position[2] + target[2]) * 0.5,
+            ];
+            let dx = target[0] - position[0];
+            let dy = target[1] - position[1];
+            let beam_len = (dx * dx + dy * dy).sqrt().max(1.0);
+            items.push(stage3d_overlay_item(
+                beam_center,
+                beam_len,
+                0.18,
+                [color[0], color[1], color[2], 0.18 * opacity],
+                0.0,
+                dy.atan2(dx),
+                intensity,
+            ));
+        }
+    }
 }
 
 fn summarize_projection_sim_scene(scene: &Value) -> NativeSceneBridgeSummary {
