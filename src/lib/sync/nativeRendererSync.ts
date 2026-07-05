@@ -2,6 +2,11 @@ import { get } from 'svelte/store';
 import type { Layer } from '$lib/types';
 import { project } from '$lib/stores/layers';
 import { mediaLibrary, type MediaItem } from '$lib/stores/media';
+import {
+  resetNativeRendererRuntime,
+  updateNativeRendererRuntimeFromStartup,
+  updateNativeRendererRuntimeFromStatus,
+} from '$lib/stores/nativeRenderer';
 import { invoke, isElectron, isMac, isWindows } from '$lib/bridge';
 import { getVisualAudioSnapshot, visualAudio, type VisualAudioState } from '$lib/audio/visualAudio';
 import { ghostAudioCommandFieldsFromVisualAudio } from '$lib/audio/ghostAudioUniform';
@@ -3099,6 +3104,13 @@ export class NativeRendererSync {
     );
     this.nativeComputeGraphSourceFrames = computeGraphSourceFrameHost;
     this.nativeGraphCatalogComplete = computeGraphSourceFrameHost && missingGraphRequirements.length === 0;
+    updateNativeRendererRuntimeFromStartup(
+      startupStatus,
+      startupReadiness,
+      startupCapabilities,
+      this.nativeGraphCatalogComplete,
+      this.nativeComputeGraphSourceFrames,
+    );
     if (computeGraphSourceFrameHost && missingGraphRequirements.length > 0) {
       console.warn(
         '[NativeRendererSync] native graph catalog is incomplete; unsupported routes will fall back to WebGL',
@@ -3255,6 +3267,7 @@ export class NativeRendererSync {
     await stopNativeRenderer().catch(() => {});
     this.nativeCoreMethods.clear();
     this.nativeFeatureFlags = {};
+    resetNativeRendererRuntime('native renderer stopped');
   }
 
   scheduleSync(width: number, height: number, layers: Layer[]) {
@@ -3359,6 +3372,10 @@ export class NativeRendererSync {
         this.decodeEstimateCacheBackpressureActive =
           !!status.decode_predecode_estimate_cache_backpressure_active;
         this.commandBackpressureActive = !!status.command_backpressure_active;
+        updateNativeRendererRuntimeFromStatus(status, {
+          graphCatalogComplete: this.nativeGraphCatalogComplete,
+          nativeGraphSourceFrames: this.nativeComputeGraphSourceFrames,
+        });
       }
     }
     const overloadActive =

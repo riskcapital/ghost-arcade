@@ -109,6 +109,11 @@
   import { loadShadersFromServer, loadCloudShadersFromDisk, shaderLibrary } from './lib/stores/shaderLibrary';
   import { mediaTrayShaders } from './lib/stores/mediaTrayShaders';
   import { getNativeRendererStatus } from './lib/api/native-renderer';
+  import {
+    nativeRendererModeLabel,
+    nativeRendererRuntime,
+    type NativeRendererDriverMode,
+  } from './lib/stores/nativeRenderer';
   import { startSpoutScanner, stopSpoutScanner } from './lib/stores/spout';
   import { preloadShaderLibrary, populateShaderListForSync } from './lib/preload';
   import { invoke, isMac, isDesktopApp, openExternalUrl } from './lib/bridge';
@@ -235,6 +240,13 @@
     if (persist && typeof window !== 'undefined') {
       try { window.localStorage?.setItem(INTEGRATED_GPU_BANNER_DISMISSED_KEY, '1'); } catch { /* */ }
     }
+  }
+  function nativeRendererToolbarLabel(mode: NativeRendererDriverMode) {
+    if (mode === 'full-v2') return 'FULL V2';
+    if (mode === 'output-driver') return 'NATIVE';
+    if (mode === 'shadow') return 'SHADOW';
+    if (mode === 'degraded') return 'DEG';
+    return 'GPU';
   }
   async function checkGPU() {
     // First try native render-core status (this is the real GPU for native shader rendering)
@@ -5330,10 +5342,14 @@
           <span
             class="gpu-indicator"
             class:integrated={gpuInfo.isIntegrated}
-            title="{gpuInfo.renderer} ({gpuInfo.vendor}){gpuInfo.isIntegrated ? ' — WARNING: Integrated GPU. Set this app to High Performance in Windows Graphics Settings.' : ''}"
+            class:native={$nativeRendererRuntime.driverMode !== 'offline'}
+            class:native-ready={$nativeRendererRuntime.driverMode === 'output-driver' || $nativeRendererRuntime.driverMode === 'full-v2'}
+            class:native-shadow={$nativeRendererRuntime.driverMode === 'shadow'}
+            class:native-degraded={$nativeRendererRuntime.driverMode === 'degraded'}
+            title="{gpuInfo.renderer} ({gpuInfo.vendor}) • Native renderer: {nativeRendererModeLabel($nativeRendererRuntime.driverMode)}. {$nativeRendererRuntime.readinessDetail}{gpuInfo.isIntegrated ? ' — WARNING: Integrated GPU. Set this app to High Performance in Windows Graphics Settings.' : ''}"
           >
             <span class="gpu-dot"></span>
-            GPU
+            {nativeRendererToolbarLabel($nativeRendererRuntime.driverMode)}
           </span>
         {/if}
         <!-- Windows-style File Menu -->
@@ -7344,6 +7360,26 @@
     background: rgba(245, 158, 11, 0.10);
     border-color: rgba(245, 158, 11, 0.35);
   }
+  .gpu-indicator.native {
+    color: var(--ga-neon-cyan, #5ce1e6);
+    background: rgba(92, 225, 230, 0.08);
+    border-color: rgba(92, 225, 230, 0.32);
+  }
+  .gpu-indicator.native-ready {
+    color: var(--ga-green, #46d18a);
+    background: rgba(70, 209, 138, 0.09);
+    border-color: rgba(70, 209, 138, 0.36);
+  }
+  .gpu-indicator.native-shadow {
+    color: #b48cff;
+    background: rgba(180, 140, 255, 0.09);
+    border-color: rgba(180, 140, 255, 0.34);
+  }
+  .gpu-indicator.native-degraded {
+    color: #ffb86b;
+    background: rgba(255, 184, 107, 0.10);
+    border-color: rgba(255, 184, 107, 0.38);
+  }
   .gpu-dot {
     width: 7px;
     height: 7px;
@@ -7355,6 +7391,10 @@
   .gpu-indicator.integrated .gpu-dot {
     background: #ff9800;
     animation: gpu-pulse 1.5s ease-in-out infinite;
+  }
+  .gpu-indicator.native .gpu-dot {
+    background: currentColor;
+    box-shadow: 0 0 8px currentColor;
   }
   @keyframes gpu-pulse {
     0%, 100% { opacity: 1; }
