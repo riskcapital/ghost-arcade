@@ -2548,7 +2548,7 @@ export class NativeRendererSync {
     if (this.running) return;
     this.startupReady = false;
     const backend: BackendKind = isMac ? 'metal' : isWindows ? 'd3d12' : 'vulkan';
-    const decodeBackend: DecodeBackendKind = isWindows ? 'ffmpeg_d3d11va' : 'synthetic';
+    const decodeBackend: DecodeBackendKind = isWindows ? 'ffmpeg_d3d11va' : 'ffmpeg_software';
     await startNativeRenderer({
       backend,
       decode_backend: decodeBackend,

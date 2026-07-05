@@ -279,7 +279,7 @@
     const width = Math.max(1, Math.round(p.width || fallbackWidth || 1920));
     const height = Math.max(1, Math.round(p.height || fallbackHeight || 1080));
     const backend = isMac ? 'metal' : isWindows ? 'd3d12' : 'vulkan';
-    const decodeBackend = isWindows ? 'ffmpeg_d3d11va' : 'synthetic';
+    const decodeBackend = isWindows ? 'ffmpeg_d3d11va' : 'ffmpeg_software';
 
     await startNativeRenderer({
       backend,
