@@ -141,6 +141,28 @@ describe('native renderer runtime state', () => {
     ]);
   });
 
+  it('does not promote to the main driver when local graph routes are incomplete', () => {
+    const state = deriveNativeRendererRuntimeState(
+      status(),
+      readiness({
+        shadow: { ok: true, detail: 'shadow ready' },
+        output_driver: { ok: true, detail: 'output ready' },
+        full_v2: { ok: true, detail: 'full ready', blockers: [] },
+      }),
+      {
+        capabilities: capabilities(),
+        graphCatalogComplete: false,
+        nativeGraphSourceFrames: true,
+        updatedAtMs: 126,
+      },
+    );
+
+    expect(state.driverMode).toBe('output-driver');
+    expect(state.fullV2Ready).toBe(false);
+    expect(state.blockers).toContain('native graph instrument catalog is incomplete');
+    expect(state.readinessDetail).toContain('main driver waiting on native graph instrument catalog');
+  });
+
   it('uses compact, user-readable labels for the toolbar', () => {
     expect(nativeRendererModeLabel('offline')).toBe('WebGL Fallback');
     expect(nativeRendererModeLabel('shadow')).toBe('Native Scene Sync');

@@ -76,10 +76,24 @@ function deriveDriverMode(
   readiness: RendererReadinessReport | null | undefined,
 ): NativeRendererDriverMode {
   if (readinessModeOk(readiness, 'full_v2')) return 'full-v2';
+  return deriveFallbackDriverMode(status, readiness);
+}
+
+function deriveFallbackDriverMode(
+  status: RendererStatus | null | undefined,
+  readiness: RendererReadinessReport | null | undefined,
+): NativeRendererDriverMode {
   if (readinessModeOk(readiness, 'output_driver')) return 'output-driver';
   if (readinessModeOk(readiness, 'shadow')) return 'shadow';
   if (status?.running || status?.backend_ready) return 'degraded';
   return 'offline';
+}
+
+function localMainDriverBlockers(graphCatalogComplete: boolean, nativeGraphSourceFrames: boolean): string[] {
+  const blockers: string[] = [];
+  if (!nativeGraphSourceFrames) blockers.push('native graph source-frame rendering is unavailable');
+  if (!graphCatalogComplete) blockers.push('native graph instrument catalog is incomplete');
+  return blockers;
 }
 
 function readinessDetailForMode(
@@ -97,11 +111,12 @@ function readinessDetailForMode(
 function blockersForMode(
   mode: NativeRendererDriverMode,
   readiness: RendererReadinessReport | null | undefined,
+  extraBlockers: string[] = [],
 ): string[] {
   if (mode === 'full-v2') return [];
   const modeBlockers = readiness?.modes?.full_v2?.blockers ?? [];
   const blockers = readiness?.blockers ?? [];
-  return Array.from(new Set([...blockers, ...modeBlockers].map(String).filter(Boolean)));
+  return Array.from(new Set([...blockers, ...modeBlockers, ...extraBlockers].map(String).filter(Boolean)));
 }
 
 export function deriveNativeRendererRuntimeState(
@@ -116,7 +131,6 @@ export function deriveNativeRendererRuntimeState(
 ): NativeRendererRuntimeState {
   const capabilities = options.capabilities ?? readiness?.capabilities ?? null;
   const features = capabilities?.features ?? {};
-  const mode = deriveDriverMode(status, readiness);
   const graphCatalogComplete = !!(
     options.graphCatalogComplete ??
     (
@@ -134,6 +148,14 @@ export function deriveNativeRendererRuntimeState(
       features.compute_graph_source_frame_target
     )
   );
+  const advertisedMode = deriveDriverMode(status, readiness);
+  const localBlockers = localMainDriverBlockers(graphCatalogComplete, nativeGraphSourceFrames);
+  const mode = advertisedMode === 'full-v2' && localBlockers.length > 0
+    ? deriveFallbackDriverMode(status, readiness)
+    : advertisedMode;
+  const readinessDetail = advertisedMode === 'full-v2' && localBlockers.length > 0
+    ? `native output driver is ready; main driver waiting on ${localBlockers[0]}`
+    : readinessDetailForMode(mode, status, readiness);
 
   return {
     running: !!status?.running,
@@ -143,7 +165,7 @@ export function deriveNativeRendererRuntimeState(
     driverMode: mode,
     outputDriverReady: readinessModeOk(readiness, 'output_driver'),
     outputActive: readinessModeOk(readiness, 'output_active'),
-    fullV2Ready: readinessModeOk(readiness, 'full_v2'),
+    fullV2Ready: readinessModeOk(readiness, 'full_v2') && localBlockers.length === 0,
     shadowReady: readinessModeOk(readiness, 'shadow'),
     graphCatalogComplete,
     nativeGraphSourceFrames,
@@ -154,8 +176,8 @@ export function deriveNativeRendererRuntimeState(
     sourceFrameFormat: String(status?.source_frame_format ?? 'unknown'),
     sourceFrameMipLevels: Number(status?.source_frame_mip_levels ?? capabilities?.limits?.source_frame_mip_levels ?? 1),
     averageGpuMs: Number.isFinite(status?.avg_render_gpu_ms) ? Number(status?.avg_render_gpu_ms) : null,
-    readinessDetail: readinessDetailForMode(mode, status, readiness),
-    blockers: blockersForMode(mode, readiness),
+    readinessDetail,
+    blockers: blockersForMode(mode, readiness, localBlockers),
     updatedAtMs: options.updatedAtMs ?? Date.now(),
   };
 }
