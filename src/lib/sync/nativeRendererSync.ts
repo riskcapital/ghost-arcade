@@ -608,6 +608,58 @@ function normalizeHueCycle(value: unknown): number | null {
   return value / 360;
 }
 
+function blobFlagsFromParams(
+  params: Record<string, any>,
+  defaults: { showCoords: number; showBBox: number; showCenter: number },
+): number {
+  const explicit = finiteParam(params.blobFlags);
+  if (explicit !== null) return Math.max(0, Math.min(7, Math.round(explicit)));
+  const showCoords = firstFiniteParam(params, ['blobShowCoords', 'showCoords'], defaults.showCoords) >= 0.5 ? 1 : 0;
+  const showBBox = firstFiniteParam(params, ['blobShowBBox', 'showBBox'], defaults.showBBox) >= 0.5 ? 1 : 0;
+  const showCenter = firstFiniteParam(params, ['blobShowCenter', 'showCenter'], defaults.showCenter) >= 0.5 ? 1 : 0;
+  return showCoords + showBBox * 2 + showCenter * 4;
+}
+
+function blobEffectDescriptor(
+  id: 'blob-track' | 'blob-contour' | 'blob-heatmap',
+  params: Record<string, any>,
+  defaults: {
+    mix: number;
+    threshold: number;
+    shape: number;
+    color: number;
+    thickness: number;
+    gridSize: number;
+    trailLength: number;
+    minSize: number;
+    showCoords: number;
+    showBBox: number;
+    showCenter: number;
+  },
+): string {
+  const mix = clampNumber(firstFiniteParam(params, ['blobMix', 'mix', 'amount'], defaults.mix), 0, 1);
+  const threshold = clampNumber(firstFiniteParam(params, ['blobThreshold', 'threshold'], defaults.threshold), 0, 1);
+  const shape = clampNumber(Math.round(firstFiniteParam(params, ['blobShape', 'shape'], defaults.shape)), 0, id === 'blob-track' ? 4 : 2);
+  const color = clampNumber(Math.round(firstFiniteParam(params, ['blobColor', 'palette'], defaults.color)), 0, id === 'blob-heatmap' ? 3 : 7);
+  const thickness = clampNumber(firstFiniteParam(params, ['blobThickness', 'thickness'], defaults.thickness), 0.25, 8);
+  const gridSize = clampNumber(firstFiniteParam(params, ['blobGridSize', 'gridSize'], defaults.gridSize), 4, 128);
+  const flags = blobFlagsFromParams(params, defaults);
+  const trailLength = clampNumber(firstFiniteParam(params, ['blobTrailLength', 'trailLength'], defaults.trailLength), 0, 1);
+  const minSize = clampNumber(firstFiniteParam(params, ['blobMinSize', 'minSize'], defaults.minSize), 0, 1);
+  return [
+    id,
+    mix.toFixed(4),
+    threshold.toFixed(4),
+    shape.toFixed(0),
+    color.toFixed(0),
+    thickness.toFixed(4),
+    gridSize.toFixed(4),
+    flags.toFixed(0),
+    trailLength.toFixed(4),
+    minSize.toFixed(4),
+  ].join(':');
+}
+
 export function effectToNativeDescriptor(effect: any): string | null {
   if (!effect || effect.enabled === false) return null;
   const type = String(effect.type || '').toLowerCase();
@@ -1724,6 +1776,51 @@ export function effectToNativeDescriptor(effect: any): string | null {
       Math.max(0, Math.min(1, rollingRaw)).toFixed(4),
     ].join(':');
   }
+  if (type === 'blobtrack' || type === 'blob-track') {
+    return blobEffectDescriptor('blob-track', params, {
+      mix: 0.8,
+      threshold: 0.3,
+      shape: 0,
+      color: 0,
+      thickness: 2,
+      gridSize: 16,
+      trailLength: 0.3,
+      minSize: 0.02,
+      showCoords: 1,
+      showBBox: 1,
+      showCenter: 1,
+    });
+  }
+  if (type === 'blobcontour' || type === 'blob-contour') {
+    return blobEffectDescriptor('blob-contour', params, {
+      mix: 0.7,
+      threshold: 0.4,
+      shape: 0,
+      color: 1,
+      thickness: 1.5,
+      gridSize: 16,
+      trailLength: 0.4,
+      minSize: 0.5,
+      showCoords: 0,
+      showBBox: 0,
+      showCenter: 0,
+    });
+  }
+  if (type === 'blobheatmap' || type === 'blob-heatmap') {
+    return blobEffectDescriptor('blob-heatmap', params, {
+      mix: 0.85,
+      threshold: 0.2,
+      shape: 0,
+      color: 0,
+      thickness: 1,
+      gridSize: 16,
+      trailLength: 0,
+      minSize: 0,
+      showCoords: 1,
+      showBBox: 1,
+      showCenter: 1,
+    });
+  }
 
   // Keep explicit descriptor IDs compatible with native descriptor parser.
   const effectId = typeof effect.id === 'string' ? effect.id.trim() : '';
@@ -2084,6 +2181,22 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       nightVisionBloom: Number(rawParam3 ?? 0.6),
       nightVisionScopeMask: Number(rawParam4 ?? 1),
       nightVisionRollingNoise: Number(rawParam5 ?? 0),
+    };
+  } else if (effect === 'blob-track' || effect === 'blob-contour' || effect === 'blob-heatmap') {
+    const defaultFlags = effect === 'blob-contour' ? 0 : 7;
+    const flags = Number(rawParam5 ?? defaultFlags);
+    params = {
+      blobThreshold: Number(rawParam0 ?? (effect === 'blob-heatmap' ? 0.2 : effect === 'blob-contour' ? 0.4 : 0.3)),
+      blobShape: Number(rawParam1 ?? 0),
+      blobColor: Number(rawParam2 ?? (effect === 'blob-contour' ? 1 : 0)),
+      blobThickness: Number(rawParam3 ?? (effect === 'blob-track' ? 2 : effect === 'blob-contour' ? 1.5 : 1)),
+      blobGridSize: Number(rawParam4 ?? 16),
+      blobFlags: flags,
+      blobShowCoords: (Math.round(flags) & 1) ? 1 : 0,
+      blobShowBBox: (Math.round(flags) & 2) ? 1 : 0,
+      blobShowCenter: (Math.round(flags) & 4) ? 1 : 0,
+      blobTrailLength: Number(rawParam6 ?? (effect === 'blob-heatmap' ? 0 : effect === 'blob-contour' ? 0.4 : 0.3)),
+      blobMinSize: Number(rawParam7 ?? (effect === 'blob-track' ? 0.02 : effect === 'blob-contour' ? 0.5 : 0)),
     };
   }
   if (params && Object.values(params).some((value) => !Number.isFinite(value))) return null;

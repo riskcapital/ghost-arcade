@@ -218,6 +218,9 @@ describe('Native effect-pass template', () => {
       ['crt', 45],
       ['thermal', 46],
       ['night-vision', 47],
+      ['blob-track', 48],
+      ['blob-contour', 49],
+      ['blob-heatmap', 50],
     ]);
     expect(nativeEffectPassManifestEntry('posterize')).toMatchObject({
       code: 8,
@@ -234,6 +237,9 @@ describe('Native effect-pass template', () => {
     expect(source.source).toContain('var source_sampler: sampler');
     expect(source.source).toContain('fn vs_full');
     expect(source.source).toContain('fn fs_effect');
+    expect(source.source).toContain('fn blob_cell_bright');
+    expect(source.source).toContain('code == 48u');
+    expect(source.source).toContain('code == 50u');
     expect(source.source).not.toMatch(/^\s*#include\b/m);
   });
 
@@ -313,6 +319,84 @@ describe('Native effect-pass template', () => {
       0.75,
       0,
       0,
+      0,
+      0,
+    ]);
+
+    expect(packNativeEffectPassUniforms({
+      sourceId: 'src',
+      targetSourceId: 'dst',
+      effect: 'blob-track',
+      width: 320,
+      height: 180,
+      time: 0.5,
+      frameDelta: 1 / 24,
+      frameIndex: 3,
+      params: {
+        blobMix: 0.72,
+        blobThreshold: 0.22,
+        blobShape: 4,
+        blobColor: 2,
+        blobThickness: 2.5,
+        blobGridSize: 24,
+        blobShowCoords: 0,
+        blobShowBBox: 1,
+        blobShowCenter: 1,
+        blobTrailLength: 0.45,
+        blobMinSize: 0.08,
+      },
+    })).toEqual([
+      320,
+      180,
+      0.5,
+      1 / 24,
+      48,
+      0.72,
+      1,
+      3,
+      0.22,
+      4,
+      2,
+      2.5,
+      24,
+      6,
+      0.45,
+      0.08,
+    ]);
+
+    expect(packNativeEffectPassUniforms({
+      sourceId: 'src',
+      targetSourceId: 'dst',
+      effect: 'blob-heatmap',
+      width: 320,
+      height: 180,
+      time: 0.5,
+      frameDelta: 1 / 24,
+      frameIndex: 3,
+      params: {
+        blobMix: 0.9,
+        blobThreshold: 0.18,
+        blobShape: 2,
+        blobColor: 3,
+        blobThickness: 1.2,
+        blobGridSize: 20,
+        blobFlags: 2,
+      },
+    })).toEqual([
+      320,
+      180,
+      0.5,
+      1 / 24,
+      50,
+      0.9,
+      1,
+      3,
+      0.18,
+      2,
+      3,
+      1.2,
+      20,
+      2,
       0,
       0,
     ]);
@@ -2055,6 +2139,100 @@ describe('Native effect-pass template', () => {
             const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.42, 0.58);
             const coloramaRgb = snapshotPixelRgb(snapshot, pixels, 0.42, 0.58);
             expect(rgbDistance(sourceRgb, coloramaRgb)).toBeGreaterThan(0.05);
+          },
+        },
+        {
+          id: 'blob-track',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-blob-track',
+            effect: 'blob-track',
+            width: 160,
+            height: 90,
+            time: 0.35,
+            frameDelta: 1 / 30,
+            frameIndex: 34,
+            params: {
+              blobMix: 0.9,
+              blobThreshold: 0.12,
+              blobShape: 4,
+              blobColor: 0,
+              blobThickness: 3,
+              blobGridSize: 12,
+              blobFlags: 6,
+              blobTrailLength: 0,
+              blobMinSize: 0,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const maxDelta = [
+              [0.50, 0.50],
+              [0.35, 0.35],
+              [0.65, 0.35],
+              [0.42, 0.58],
+              [0.72, 0.62],
+            ].reduce((best, [x, y]) => {
+              const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, x, y);
+              const trackRgb = snapshotPixelRgb(snapshot, pixels, x, y);
+              return Math.max(best, rgbDistance(sourceRgb, trackRgb));
+            }, 0);
+            expect(maxDelta).toBeGreaterThan(0.006);
+          },
+        },
+        {
+          id: 'blob-contour',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-blob-contour',
+            effect: 'blob-contour',
+            width: 160,
+            height: 90,
+            time: 0.35,
+            frameDelta: 1 / 30,
+            frameIndex: 35,
+            params: {
+              blobMix: 0.8,
+              blobThreshold: 0.14,
+              blobShape: 0,
+              blobColor: 1,
+              blobThickness: 2,
+              blobGridSize: 16,
+              blobFlags: 1,
+              blobTrailLength: 0.35,
+              blobMinSize: 0.5,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.52, 0.55);
+            const contourRgb = snapshotPixelRgb(snapshot, pixels, 0.52, 0.55);
+            expect(rgbDistance(sourceRgb, contourRgb)).toBeGreaterThan(0.008);
+          },
+        },
+        {
+          id: 'blob-heatmap',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-blob-heatmap',
+            effect: 'blob-heatmap',
+            width: 160,
+            height: 90,
+            time: 0.35,
+            frameDelta: 1 / 30,
+            frameIndex: 36,
+            params: {
+              blobMix: 0.9,
+              blobThreshold: 0.1,
+              blobShape: 0,
+              blobColor: 0,
+              blobThickness: 1,
+              blobGridSize: 16,
+              blobFlags: 6,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.42, 0.58);
+            const heatRgb = snapshotPixelRgb(snapshot, pixels, 0.42, 0.58);
+            expect(rgbDistance(sourceRgb, heatRgb)).toBeGreaterThan(0.02);
           },
         },
       ];

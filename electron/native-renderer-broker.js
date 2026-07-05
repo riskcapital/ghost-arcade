@@ -169,6 +169,9 @@ const NATIVE_EFFECT_PASS_DESCRIPTORS = [
   { id: 'crt', code: 45 },
   { id: 'thermal', code: 46 },
   { id: 'night-vision', code: 47 },
+  { id: 'blob-track', code: 48 },
+  { id: 'blob-contour', code: 49 },
+  { id: 'blob-heatmap', code: 50 },
 ];
 
 function nativeGraphReadinessId(id) {
