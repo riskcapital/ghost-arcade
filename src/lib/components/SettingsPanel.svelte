@@ -1311,12 +1311,12 @@
         </section>
 
         <!-- ─────────────────────────────────────────────────────────────
-             GPU Acceleration — capability + 2 production toggles.
-             Status is read from the cached WebGPU probe; the toggles
-             write directly to $settings.experimental. When WebGPU is
-             unavailable the toggles are disabled and the section
-             explains why so users don't waste time hunting for the
-             effect / layer that disappeared from their picker.
+             Renderer & Output — native renderer first, WebGPU fallback
+             second, and legacy paths kept for diagnostics. The fields
+             still live in $settings.experimental for migration stability.
+             When WebGPU is unavailable, WebGPU-specific controls are
+             disabled and the section explains why so users do not waste
+             time hunting for an unavailable effect or output path.
              ───────────────────────────────────────────────────────── -->
         <section class="settings-section">
           <h3>Renderer &amp; Output</h3>
@@ -1362,7 +1362,7 @@
                     <br/><span style="color: #fbbf24;">⚠ Software fallback adapter — performance will be limited.</span>
                   {/if}
                   <br/>
-                  Hardware-accelerated rendering paths are available. The toggles below let you turn the GPU bridge and the zero-copy output transport on or off independently.
+                  Hardware-accelerated rendering paths are available. Native core output is the primary path; WebGPU zero-copy remains the fast fallback.
                 {:else}
                   {webgpuInfo.failReason ? `Reason: ${webgpuInfo.failReason}.` : 'Your browser/device did not return a WebGPU adapter.'}
                   <br/>
@@ -1398,9 +1398,26 @@
 
           <div class="setting-row">
             <div class="setting-label">
+              <span class="label-text">Native render core output</span>
+              <span class="label-hint">
+                Use the Rust/wgpu managed output window from the Output Window controls. This is the v2 driver path; turn it off only to force the zero-copy WebGPU fallback. Apply on next output-window open.
+              </span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={$settings.experimental.outputNativeCore}
+                onchange={(e) => settings.update(s => ({ ...s, experimental: { ...s.experimental, outputNativeCore: (e.target as HTMLInputElement).checked } }))}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
               <span class="label-text">Zero-copy GPU output</span>
               <span class="label-hint">
-                Send frames to the output window via WebGPU's <code>importExternalTexture</code> — no encode/decode round trip, true 4K60. Falls back to the legacy WebRTC/Spout transport when off or when WebGPU is unavailable. Apply on next output-window open.
+                Send frames to the fallback output window via WebGPU's <code>importExternalTexture</code> — no encode/decode round trip, true 4K60. Used when native core output is off or unavailable. Apply on next output-window open.
                 {#if !webgpuSupported}
                   <br/><em style="color: #999;">Disabled — requires WebGPU.</em>
                 {/if}
@@ -1412,23 +1429,6 @@
                 checked={$settings.experimental.outputZeroCopy}
                 disabled={!webgpuSupported}
                 onchange={(e) => settings.update(s => ({ ...s, experimental: { ...s.experimental, outputZeroCopy: (e.target as HTMLInputElement).checked } }))}
-              />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-
-          <div class="setting-row">
-            <div class="setting-label">
-              <span class="label-text">Native render core output</span>
-              <span class="label-hint">
-                Use the Rust/wgpu managed output window from the Output Window controls. This is the v2 driver path; turn it off only to force the zero-copy WebGPU fallback. Apply on next output-window open.
-              </span>
-            </div>
-            <label class="toggle">
-              <input
-                type="checkbox"
-                checked={$settings.experimental.outputNativeCore}
-                onchange={(e) => settings.update(s => ({ ...s, experimental: { ...s.experimental, outputNativeCore: (e.target as HTMLInputElement).checked } }))}
               />
               <span class="toggle-slider"></span>
             </label>

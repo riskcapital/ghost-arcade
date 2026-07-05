@@ -82,8 +82,8 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'output_list_slice_windows',
   // Ping
   'ping',
-  // Restart the app — used when experimental flags (renderer / GPU
-  // settings) need a fresh process to take effect.
+  // Restart the app — used when renderer / GPU settings need a fresh
+  // process to take effect.
   'app_relaunch',
   // Error reporting
   'report_error',
