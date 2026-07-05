@@ -2634,6 +2634,7 @@ export class NativeRendererSync {
         `mips=${startupStatus?.source_frame_mip_levels ?? 1}`,
         `sharedTexSrc=${this.supportsNativeFeature('shared_texture_source_frame_upload') ? 'on' : 'off'}`,
         `videoDecodePump=${this.supportsNativeFeature('native_video_decode_pump') ? 'on' : 'off'}`,
+        `pumpWindow=${this.supportsNativeFeature('native_video_decode_pump_window') ? 'on' : 'off'}`,
         `nativeGraphs=${graphCatalogStatus === 'complete' ? 'on' : graphCatalogStatus}`,
         `driver=${startupReadiness?.modes?.output_driver?.ok ? 'on' : 'pending'}`,
         `fullV2=${startupReadiness?.modes?.full_v2?.ok ? 'ready' : 'pending'}`,
