@@ -329,6 +329,39 @@ const broker = createNativeRendererBroker({
   }),
 });
 
+const activeTextureShareReadinessProbe = createNativeRendererBroker({
+  appRoot: process.cwd(),
+  resourcesPath: null,
+  isPackaged: false,
+  platform: process.platform,
+  env: process.env,
+  textureShareStatusProvider: () => ({
+    platform: process.platform === 'darwin' ? 'syphon' : 'spout',
+    label: process.platform === 'darwin' ? 'Syphon' : 'Spout',
+    available: true,
+    nativeOutputCapable: true,
+    nativeOutputActive: true,
+    nativeOutputWaitingForFrame: false,
+    senderMode: 'native-output-active-contract',
+  }),
+});
+activeTextureShareReadinessProbe.capabilities = {
+  ...activeTextureShareReadinessProbe.capabilities,
+  features: {
+    ...(activeTextureShareReadinessProbe.capabilities?.features ?? {}),
+    shared_texture_output_export: true,
+  },
+};
+const activeTextureShareReadiness = activeTextureShareReadinessProbe.readinessReport();
+assert(
+  activeTextureShareReadiness?.modes?.output_active?.ok === true,
+  `active native texture-share sender should mark output_active ready: ${JSON.stringify(activeTextureShareReadiness?.modes)}`,
+);
+assert(
+  /actively publishing/.test(String(activeTextureShareReadiness?.modes?.output_active?.detail ?? '')),
+  `active native texture-share sender should explain output_active source: ${JSON.stringify(activeTextureShareReadiness?.modes)}`,
+);
+
 let tempDir = null;
 
 try {
