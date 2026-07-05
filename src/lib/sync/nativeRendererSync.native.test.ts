@@ -519,4 +519,38 @@ describe('native renderer sync effect-pass descriptors', () => {
       },
     });
   });
+
+  it('maps bloom UI params to native effect-pass descriptors', () => {
+    expect(effectToNativeDescriptor({
+      type: 'bloom',
+      params: {
+        amount: 0.7,
+        bloomIntensity: 1.3,
+        threshold: 0.55,
+        bloomKnee: 0.45,
+        bloomRadius: 0.8,
+        bloomAnamorphic: 0.25,
+        red: 1,
+        green: 0.7,
+        blue: 0.4,
+      },
+    })).toBe('bloom:0.7000:1.3000:0.5500:0.4500:0.8000:0.2500:1.0000:0.7000:0.4000');
+  });
+
+  it('rebuilds native effect-pass runtime params from bloom descriptors', () => {
+    expect(nativeEffectPassFromDescriptor('bloom:0.7000:1.3000:0.5500:0.4500:0.8000:0.2500:1.0000:0.7000:0.4000')).toMatchObject({
+      effect: 'bloom',
+      amount: 0.7,
+      params: {
+        bloomIntensity: 1.3,
+        threshold: 0.55,
+        bloomKnee: 0.45,
+        bloomRadius: 0.8,
+        bloomAnamorphic: 0.25,
+        red: 1,
+        green: 0.7,
+        blue: 0.4,
+      },
+    });
+  });
 });

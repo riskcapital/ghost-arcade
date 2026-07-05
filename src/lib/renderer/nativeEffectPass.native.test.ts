@@ -209,6 +209,7 @@ describe('Native effect-pass template', () => {
       ['edge-detect', 36],
       ['film-grain', 37],
       ['filmic-tonemap', 38],
+      ['bloom', 39],
     ]);
     expect(nativeEffectPassManifestEntry('posterize')).toMatchObject({
       code: 8,
@@ -1757,6 +1758,35 @@ describe('Native effect-pass template', () => {
             const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.68, 0.38);
             const toneRgb = snapshotPixelRgb(snapshot, pixels, 0.68, 0.38);
             expect(rgbDistance(sourceRgb, toneRgb)).toBeGreaterThan(0.01);
+          },
+        },
+        {
+          id: 'bloom',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-bloom',
+            effect: 'bloom',
+            width: 160,
+            height: 90,
+            time: 0.1,
+            frameDelta: 1 / 30,
+            frameIndex: 32,
+            amount: 0.9,
+            params: {
+              bloomIntensity: 1.7,
+              threshold: 0.24,
+              bloomKnee: 0.65,
+              bloomRadius: 0.85,
+              bloomAnamorphic: 0.35,
+              red: 1,
+              green: 0.9,
+              blue: 0.75,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.58, 0.42);
+            const bloomRgb = snapshotPixelRgb(snapshot, pixels, 0.58, 0.42);
+            expect(rgbDistance(sourceRgb, bloomRgb)).toBeGreaterThan(0.01);
           },
         },
       ];
