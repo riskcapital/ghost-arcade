@@ -4,7 +4,7 @@ mod shared_texture;
 
 use std::{
     borrow::Cow,
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fs,
     io::{self, BufRead, Write},
     path::{Path, PathBuf},
@@ -24,7 +24,7 @@ use winit::{
     application::ApplicationHandler,
     dpi::{LogicalPosition, LogicalSize, PhysicalSize},
     event::WindowEvent,
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
     window::{Fullscreen, Window, WindowAttributes, WindowId},
 };
 
@@ -47,6 +47,8 @@ const NATIVE_VIDEO_PREFETCH_WINDOW_MAX_FRAMES: u32 = 4;
 const NATIVE_VIDEO_PREFETCH_WINDOW_DEFAULT_FPS: f64 = 30.0;
 const NATIVE_VIDEO_PREFETCH_WINDOW_MIN_FPS: f64 = 1.0;
 const NATIVE_VIDEO_PREFETCH_WINDOW_MAX_FPS: f64 = 120.0;
+const NATIVE_VIDEO_DECODE_MAX_IN_FLIGHT: usize = 2;
+const NATIVE_VIDEO_DECODE_PUMP_PER_TICK: usize = 1;
 const SOURCE_FRAME_FORMAT_FALLBACK: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const SOURCE_FRAME_FORMAT_HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const MAX_STAGE3D_OVERLAY_ITEMS: usize = 128;
@@ -578,6 +580,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 #[derive(Debug)]
 enum UserEvent {
     Rpc(RpcRequest),
+    NativeVideoFrameDecoded(NativeVideoFrameDecodeResult),
 }
 
 #[derive(Debug, Deserialize)]
@@ -586,6 +589,29 @@ struct RpcRequest {
     method: String,
     #[serde(default)]
     params: Value,
+}
+
+#[derive(Clone, Debug)]
+struct NativeVideoFrameDecodeJob {
+    source_id: String,
+    uri: String,
+    path: PathBuf,
+    width: usize,
+    height: usize,
+    time_seconds: f64,
+    frame_bucket: u64,
+    signature: String,
+    seq: u64,
+}
+
+#[derive(Debug)]
+struct NativeVideoFrameDecodeResult {
+    source_id: String,
+    uri: String,
+    frame_bucket: u64,
+    signature: String,
+    seq: u64,
+    result: Result<(usize, usize, Vec<u8>), String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -631,6 +657,11 @@ struct CoreStatus {
     decode_predecode_estimate_cache_entries: u32,
     decode_predecode_estimate_cache_cap_entries: u32,
     decode_predecode_estimate_cache_backpressure_active: bool,
+    decode_backpressure_active: bool,
+    decode_jobs_submitted: u64,
+    decode_jobs_completed: u64,
+    decode_jobs_dropped: u64,
+    decode_queue_peak: u64,
     vram_budget_mb: u32,
     command_drain_limit_hits: u64,
     queued_commands_after_drain: u64,
@@ -979,6 +1010,10 @@ struct CoreStats {
     native_video_frame_decode_failures: u64,
     native_video_frame_decode_bytes_uploaded: u64,
     native_video_frame_decode_last_error: String,
+    decode_jobs_submitted: u64,
+    decode_jobs_completed: u64,
+    decode_jobs_dropped: u64,
+    decode_queue_peak: u64,
     native_video_frame_cache_hits: u64,
     native_video_frame_cache_misses: u64,
     native_video_frame_cache_evictions: u64,
@@ -2061,6 +2096,7 @@ struct NativeVideoFrameCacheEntry {
 
 struct App {
     response_tx: Sender<String>,
+    event_proxy: EventLoopProxy<UserEvent>,
     renderer: Option<RenderState>,
     adapter_name: Option<String>,
     target_fps: u32,
@@ -2111,6 +2147,8 @@ struct App {
     native_video_frame_cache_order: VecDeque<String>,
     native_video_frame_cache_bytes: usize,
     media_sources: HashMap<String, NativeMediaSourceState>,
+    native_video_decode_pending: HashSet<String>,
+    native_video_decode_failed: HashSet<String>,
     stage3d_scene: Option<Value>,
     stage3d_scene_summary: NativeSceneBridgeSummary,
     projection_sim_scene: Option<Value>,
@@ -2163,9 +2201,10 @@ impl SurfacePresentOutcome {
 }
 
 impl App {
-    fn new(response_tx: Sender<String>) -> Self {
+    fn new(response_tx: Sender<String>, event_proxy: EventLoopProxy<UserEvent>) -> Self {
         Self {
             response_tx,
+            event_proxy,
             renderer: None,
             adapter_name: None,
             target_fps: 60,
@@ -2216,6 +2255,8 @@ impl App {
             native_video_frame_cache_order: VecDeque::new(),
             native_video_frame_cache_bytes: 0,
             media_sources: HashMap::new(),
+            native_video_decode_pending: HashSet::new(),
+            native_video_decode_failed: HashSet::new(),
             stage3d_scene: None,
             stage3d_scene_summary: NativeSceneBridgeSummary::empty("stage3d"),
             projection_sim_scene: None,
@@ -2306,6 +2347,7 @@ impl App {
             "native_video_frame_prefetch_window": true,
             "video_frame_prefetch": true,
             "native_media_source_playback_state": true,
+            "native_video_decode_pump": true,
             "decode_policy_controls": true,
             "decode_preview_cache_clear": true,
             "media_policy_controls": true,
@@ -2707,6 +2749,12 @@ impl App {
             decode_predecode_estimate_cache_cap_entries: self
                 .decode_predecode_estimate_cache_cap_entries,
             decode_predecode_estimate_cache_backpressure_active: false,
+            decode_backpressure_active: self.native_video_decode_pending.len()
+                >= NATIVE_VIDEO_DECODE_MAX_IN_FLIGHT,
+            decode_jobs_submitted: self.stats.decode_jobs_submitted,
+            decode_jobs_completed: self.stats.decode_jobs_completed,
+            decode_jobs_dropped: self.stats.decode_jobs_dropped,
+            decode_queue_peak: self.stats.decode_queue_peak,
             vram_budget_mb: self.vram_budget_mb,
             command_drain_limit_hits: self.stats.command_drain_limit_hits,
             queued_commands_after_drain: self.stats.queued_commands_after_drain,
@@ -4083,6 +4131,8 @@ impl App {
         self.source_frame_signatures.clear();
         let cleared_native_video_frame_signatures = self.native_video_frame_signatures.len();
         self.native_video_frame_signatures.clear();
+        let cleared_native_video_decode_failures = self.native_video_decode_failed.len();
+        self.native_video_decode_failed.clear();
         let (cleared_native_video_frame_cache_entries, cleared_native_video_frame_cache_bytes) =
             self.clear_native_video_frame_cache();
 
@@ -4092,6 +4142,7 @@ impl App {
             "cleared_native_graph_buffers": cleared_native_graph_buffers,
             "cleared_source_frame_signatures": cleared_source_frame_signatures,
             "cleared_native_video_frame_signatures": cleared_native_video_frame_signatures,
+            "cleared_native_video_decode_failures": cleared_native_video_decode_failures,
             "cleared_native_video_frame_cache_entries": cleared_native_video_frame_cache_entries,
             "cleared_native_video_frame_cache_bytes": cleared_native_video_frame_cache_bytes,
             "remaining_shader_records": self.shader_registry.len(),
@@ -5554,11 +5605,14 @@ impl App {
         self.source_frame_signatures.clear();
         let cleared_native_video_frame_signatures = self.native_video_frame_signatures.len();
         self.native_video_frame_signatures.clear();
+        let cleared_native_video_decode_failures = self.native_video_decode_failed.len();
+        self.native_video_decode_failed.clear();
         let (cleared_native_video_frame_cache_entries, cleared_native_video_frame_cache_bytes) =
             self.clear_native_video_frame_cache();
         json!({
             "cleared_source_frame_signatures": cleared_source_frame_signatures,
             "cleared_native_video_frame_signatures": cleared_native_video_frame_signatures,
+            "cleared_native_video_decode_failures": cleared_native_video_decode_failures,
             "cleared_native_video_frame_cache_entries": cleared_native_video_frame_cache_entries,
             "cleared_native_video_frame_cache_bytes": cleared_native_video_frame_cache_bytes,
             "note": "native image/video-frame prefetch signatures and decoded video-frame cache cleared; resident bound source frames are preserved"
@@ -5583,6 +5637,7 @@ impl App {
             "native_video_frame_prefetch_window": true,
             "video_frame_prefetch": true,
             "native_media_source_playback_state": true,
+            "native_video_decode_pump": true,
             "decode_policy_controls": true,
             "decode_preview_cache_clear": true,
             "media_policy_controls": true,
@@ -5790,6 +5845,225 @@ impl App {
         self.native_video_frame_cache_order.clear();
         self.native_video_frame_cache_bytes = 0;
         (entries, bytes)
+    }
+
+    fn native_video_decode_dimensions(&self) -> (usize, usize) {
+        let renderer_limit = self
+            .renderer
+            .as_ref()
+            .map(|renderer| renderer.source_frame_size)
+            .unwrap_or(SOURCE_FRAME_SIZE_DEFAULT);
+        let target = if self.decode_use_output_resolution {
+            self.pending_width.max(self.pending_height) as usize
+        } else {
+            self.decode_preview_size as usize
+        };
+        let size = target
+            .max(64)
+            .min(renderer_limit)
+            .min(MAX_NATIVE_VIDEO_FRAME_DECODE_DIMENSION);
+        (size, size)
+    }
+
+    fn pump_native_video_decodes(&mut self) {
+        if self.renderer.is_none()
+            || self.native_video_decode_pending.len() >= NATIVE_VIDEO_DECODE_MAX_IN_FLIGHT
+        {
+            return;
+        }
+        let (width, height) = self.native_video_decode_dimensions();
+        let mut active_sources = Vec::new();
+        for layer in self.scene_layers.values() {
+            if !layer.visible {
+                continue;
+            }
+            let Some(source_id) = layer.source_id.as_deref() else {
+                continue;
+            };
+            if active_sources
+                .iter()
+                .any(|existing: &String| existing == source_id)
+            {
+                continue;
+            }
+            active_sources.push(source_id.to_string());
+        }
+
+        let mut queued = 0usize;
+        for source_id in active_sources {
+            if queued >= NATIVE_VIDEO_DECODE_PUMP_PER_TICK
+                || self.native_video_decode_pending.len() >= NATIVE_VIDEO_DECODE_MAX_IN_FLIGHT
+            {
+                break;
+            }
+            let Some(state) = self.media_sources.get(&source_id).cloned() else {
+                continue;
+            };
+            if state.source_type != "video" {
+                continue;
+            }
+            if state.seq == 0 {
+                continue;
+            }
+            if self.queue_native_video_decode_for_state(&source_id, &state, width, height) {
+                queued += 1;
+            }
+        }
+    }
+
+    fn queue_native_video_decode_for_state(
+        &mut self,
+        source_id: &str,
+        state: &NativeMediaSourceState,
+        width: usize,
+        height: usize,
+    ) -> bool {
+        let Some(path) = local_media_path_from_uri(&state.uri) else {
+            return false;
+        };
+        let time_seconds = state.current_time_seconds(self.render_clock_time);
+        let frame_bucket = native_video_frame_bucket(time_seconds);
+        let signature = match native_video_frame_file_signature(&path, width, height, frame_bucket)
+        {
+            Ok(signature) => signature,
+            Err(err) => {
+                self.stats.native_video_frame_decode_failures = self
+                    .stats
+                    .native_video_frame_decode_failures
+                    .saturating_add(1);
+                self.stats.native_video_frame_decode_last_error = err;
+                return false;
+            }
+        };
+        if self
+            .native_video_frame_signatures
+            .get(source_id)
+            .is_some_and(|existing| existing == &signature)
+            && self.source_frames.contains_key(source_id)
+        {
+            return false;
+        }
+        if self.native_video_decode_failed.contains(&signature) {
+            return false;
+        }
+        let seq = self
+            .render_clock_frame_index
+            .unwrap_or(self.stats.frames_presented)
+            .max(
+                self.source_frames
+                    .get(source_id)
+                    .map(|frame| frame.seq.saturating_add(1))
+                    .unwrap_or(1),
+            );
+        if let Some((decoded_width, decoded_height, rgba)) =
+            self.cached_native_video_frame(&signature)
+        {
+            let uploaded = self.upload_source_frame_pixels(
+                source_id.to_string(),
+                seq,
+                decoded_width,
+                decoded_height,
+                &rgba,
+                "native-video-decode-pump-cache",
+                false,
+            );
+            self.stats.native_video_frame_decode_bytes_uploaded = self
+                .stats
+                .native_video_frame_decode_bytes_uploaded
+                .saturating_add(uploaded as u64);
+            self.stats.native_video_frame_decode_last_error.clear();
+            self.native_video_frame_signatures
+                .insert(source_id.to_string(), signature);
+            return false;
+        }
+        if self.native_video_decode_pending.contains(&signature) {
+            return false;
+        }
+        if self.native_video_decode_pending.len() >= NATIVE_VIDEO_DECODE_MAX_IN_FLIGHT {
+            self.stats.decode_jobs_dropped = self.stats.decode_jobs_dropped.saturating_add(1);
+            return false;
+        }
+        self.stats.native_video_frame_cache_misses =
+            self.stats.native_video_frame_cache_misses.saturating_add(1);
+        self.native_video_decode_pending.insert(signature.clone());
+        self.stats.decode_jobs_submitted = self.stats.decode_jobs_submitted.saturating_add(1);
+        self.stats.decode_queue_peak = self
+            .stats
+            .decode_queue_peak
+            .max(self.native_video_decode_pending.len() as u64);
+        spawn_native_video_frame_decode(
+            self.event_proxy.clone(),
+            NativeVideoFrameDecodeJob {
+                source_id: source_id.to_string(),
+                uri: state.uri.clone(),
+                path,
+                width,
+                height,
+                time_seconds,
+                frame_bucket,
+                signature,
+                seq,
+            },
+        );
+        true
+    }
+
+    fn apply_native_video_decode_result(&mut self, result: NativeVideoFrameDecodeResult) {
+        self.native_video_decode_pending.remove(&result.signature);
+        self.stats.decode_jobs_completed = self.stats.decode_jobs_completed.saturating_add(1);
+        match result.result {
+            Ok((decoded_width, decoded_height, rgba)) => {
+                self.native_video_decode_failed.remove(&result.signature);
+                self.stats.native_video_frame_decodes =
+                    self.stats.native_video_frame_decodes.saturating_add(1);
+                self.stats.native_video_frame_decode_last_error.clear();
+                self.store_native_video_frame_cache(
+                    result.signature.clone(),
+                    decoded_width,
+                    decoded_height,
+                    &rgba,
+                );
+                let source_still_bound = self
+                    .media_sources
+                    .get(&result.source_id)
+                    .is_some_and(|state| state.uri == result.uri && state.source_type == "video");
+                let source_needs_result =
+                    self.media_sources
+                        .get(&result.source_id)
+                        .is_some_and(|state| {
+                            native_video_frame_bucket(
+                                state.current_time_seconds(self.render_clock_time),
+                            ) == result.frame_bucket
+                        });
+                let source_has_no_frame = !self.source_frames.contains_key(&result.source_id);
+                if source_still_bound && (source_needs_result || source_has_no_frame) {
+                    let uploaded = self.upload_source_frame_pixels(
+                        result.source_id.clone(),
+                        result.seq,
+                        decoded_width,
+                        decoded_height,
+                        &rgba,
+                        "native-video-decode-pump",
+                        false,
+                    );
+                    self.stats.native_video_frame_decode_bytes_uploaded = self
+                        .stats
+                        .native_video_frame_decode_bytes_uploaded
+                        .saturating_add(uploaded as u64);
+                    self.native_video_frame_signatures
+                        .insert(result.source_id, result.signature);
+                    self.request_auto_present();
+                }
+            }
+            Err(err) => {
+                self.native_video_decode_failed.insert(result.signature);
+                self.stats.native_video_frame_decode_failures = self
+                    .stats
+                    .native_video_frame_decode_failures
+                    .saturating_add(1);
+                self.stats.native_video_frame_decode_last_error = err;
+            }
+        }
     }
 
     fn prefetch_native_video_frame_window(
@@ -6303,6 +6577,9 @@ impl ApplicationHandler<UserEvent> for App {
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
             UserEvent::Rpc(req) => self.handle_rpc(event_loop, req),
+            UserEvent::NativeVideoFrameDecoded(result) => {
+                self.apply_native_video_decode_result(result)
+            }
         }
     }
 
@@ -6340,6 +6617,7 @@ impl ApplicationHandler<UserEvent> for App {
         }
 
         let frame_duration = self.frame_duration();
+        self.pump_native_video_decodes();
         let next_frame_at = self.last_redraw + frame_duration;
         let now = Instant::now();
         if now >= next_frame_at {
@@ -9199,9 +9477,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let proxy = event_loop.create_proxy();
     let (response_tx, response_rx) = mpsc::channel::<String>();
     spawn_stdout_writer(response_rx);
-    spawn_stdin_reader(proxy);
+    spawn_stdin_reader(proxy.clone());
 
-    let mut app = App::new(response_tx);
+    let mut app = App::new(response_tx, proxy);
     event_loop.run_app(&mut app)?;
     Ok(())
 }
@@ -9235,6 +9513,26 @@ fn spawn_stdin_reader(proxy: winit::event_loop::EventLoopProxy<UserEvent>) {
                 }
             }
         }
+    });
+}
+
+fn spawn_native_video_frame_decode(
+    proxy: EventLoopProxy<UserEvent>,
+    job: NativeVideoFrameDecodeJob,
+) {
+    thread::spawn(move || {
+        let result =
+            decode_native_video_frame_rgba(&job.path, job.width, job.height, job.time_seconds);
+        let _ = proxy.send_event(UserEvent::NativeVideoFrameDecoded(
+            NativeVideoFrameDecodeResult {
+                source_id: job.source_id,
+                uri: job.uri,
+                frame_bucket: job.frame_bucket,
+                signature: job.signature,
+                seq: job.seq,
+                result,
+            },
+        ));
     });
 }
 

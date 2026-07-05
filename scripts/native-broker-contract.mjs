@@ -29,6 +29,7 @@ const REQUIRED_CHECKS = [
   'native-projection-sim-xyz-mesh-transforms',
   'native-frame-sequence-export',
   'native-video-frame-prefetch',
+  'native-video-decode-pump',
 ];
 
 const REQUIRED_GRAPH_MANIFEST = [
@@ -401,6 +402,7 @@ try {
       decodeCapabilities?.native_video_frame_decode === true &&
       decodeCapabilities?.native_video_frame_prefetch === true &&
       decodeCapabilities?.native_video_frame_prefetch_window === true &&
+      decodeCapabilities?.native_video_decode_pump === true &&
       decodeCapabilities?.native_media_source_playback_state === true &&
       decodeCapabilities?.video_frame_prefetch === true &&
       decodeCapabilities?.supported_source_types?.includes('image') &&
@@ -1390,6 +1392,62 @@ try {
           Number(clockedBasePrefetchStatus.native_video_frame_cache_hits ?? 0) &&
         clockedNextPrefetchStatus.source_frame_last_upload_transport === 'native-video-frame-cache',
       `native media source playback state should let timestamp-less prefetch follow the render clock: ${JSON.stringify({ base: clockedBasePrefetchStatus, next: clockedNextPrefetchStatus })}`,
+    );
+    const pumpVideoPath = join(tempDir, 'broker-pump-video-two-color.mp4');
+    writeTwoColorTestVideo(pumpVideoPath);
+    const beforePumpStatus = await broker.invoke('native_renderer_get_status');
+    await broker.invoke('native_renderer_submit_commands', {
+      commands: [
+        {
+          type: 'upsert_layer',
+          layer_id: 'native-video-pump-layer',
+          z_index: 1,
+          blend_mode: 'normal',
+          opacity: 1,
+          corners: FULLSCREEN_CORNERS,
+        },
+        {
+          type: 'bind_media_source',
+          layer_id: 'native-video-pump-layer',
+          source_id: 'broker-video-decode-pump',
+          uri: pumpVideoPath,
+          source_type: 'video',
+        },
+        { type: 'set_render_clock', mode: 'manual', time: 22, time_delta: 0, frame_index: 22000 },
+        {
+          type: 'set_media_source_playback',
+          source_id: 'broker-video-decode-pump',
+          uri: pumpVideoPath,
+          source_type: 'video',
+          time_seconds: 0.95,
+          clock_time_seconds: 22,
+          playback_rate: 1,
+          paused: true,
+          loop_enabled: false,
+          duration_seconds: 1.2,
+          seq: 1,
+        },
+      ],
+    });
+    let pumpStatus = null;
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      await sleep(50);
+      pumpStatus = await broker.invoke('native_renderer_get_status');
+      if (
+        Number(pumpStatus.decode_jobs_completed ?? 0) > Number(beforePumpStatus.decode_jobs_completed ?? 0) &&
+        Number(pumpStatus.source_frame_uploads ?? 0) > Number(beforePumpStatus.source_frame_uploads ?? 0) &&
+        pumpStatus.source_frame_last_upload_transport === 'native-video-decode-pump'
+      ) {
+        break;
+      }
+    }
+    assert(
+      Number(pumpStatus?.decode_jobs_submitted ?? 0) > Number(beforePumpStatus.decode_jobs_submitted ?? 0) &&
+        Number(pumpStatus?.decode_jobs_completed ?? 0) > Number(beforePumpStatus.decode_jobs_completed ?? 0) &&
+        Number(pumpStatus?.native_video_frame_decodes ?? 0) > Number(beforePumpStatus.native_video_frame_decodes ?? 0) &&
+        Number(pumpStatus?.source_frame_uploads ?? 0) > Number(beforePumpStatus.source_frame_uploads ?? 0) &&
+        pumpStatus?.source_frame_last_upload_transport === 'native-video-decode-pump',
+      `native video decode pump should upload a visible layer frame from render/media clocks without explicit prefetch: ${JSON.stringify({ before: beforePumpStatus, after: pumpStatus })}`,
     );
     const clearedVideoFramePrefetchStatus = await broker.invoke('native_renderer_clear_prefetch_cache');
     assert(
