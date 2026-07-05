@@ -19,6 +19,7 @@ const REQUIRED_CHECKS = [
   'native-stage3d-textured-mesh-preview',
   'native-stage3d-primitive-meshes',
   'native-projection-sim-overlay-preview',
+  'native-projection-sim-mesh-preview',
   'native-frame-sequence-export',
 ];
 
@@ -234,6 +235,7 @@ try {
       capabilities?.features?.native_stage3d_primitive_meshes &&
       capabilities?.features?.native_projection_sim_scene_ingest &&
       capabilities?.features?.native_projection_sim_overlay_preview &&
+      capabilities?.features?.native_projection_sim_mesh_preview &&
       capabilities?.features?.native_stage3d === false &&
       capabilities?.features?.native_projection_sim === false,
     `broker scene bridge should advertise ingest/preview without claiming full native 3D rendering: ${JSON.stringify(capabilities?.features)}`,
