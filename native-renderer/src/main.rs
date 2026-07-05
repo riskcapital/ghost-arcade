@@ -281,7 +281,8 @@ struct Stage3DMeshUniforms {
 
 struct Stage3DMeshItem {
   position: vec4<f32>, // xyz, shape
-  scale: vec4<f32>,    // xyz, yaw
+  scale: vec4<f32>,    // xyz, reserved
+  rotation: vec4<f32>, // xyz radians, reserved
   color: vec4<f32>,
   material: vec4<f32>, // source_slot+1, brightness, uv_mode, opacity
   uv: vec4<f32>,       // offset x/y, zoom, rotation radians
@@ -439,6 +440,38 @@ fn rotate_y(p: vec3<f32>, yaw: f32) -> vec3<f32> {
   return vec3<f32>(c * p.x + s * p.z, p.y, -s * p.x + c * p.z);
 }
 
+fn rotate_x(p: vec3<f32>, angle: f32) -> vec3<f32> {
+  let c = cos(angle);
+  let s = sin(angle);
+  return vec3<f32>(p.x, c * p.y - s * p.z, s * p.y + c * p.z);
+}
+
+fn rotate_z(p: vec3<f32>, angle: f32) -> vec3<f32> {
+  let c = cos(angle);
+  let s = sin(angle);
+  return vec3<f32>(c * p.x - s * p.y, s * p.x + c * p.y, p.z);
+}
+
+fn rotate_xyz(p: vec3<f32>, rotation: vec3<f32>) -> vec3<f32> {
+  return rotate_z(rotate_y(rotate_x(p, rotation.x), rotation.y), rotation.z);
+}
+
+fn cube_normal(local: vec3<f32>) -> vec3<f32> {
+  let a = abs(local);
+  if (a.x >= a.y && a.x >= a.z) { return vec3<f32>(sign(local.x), 0.0, 0.0); }
+  if (a.y >= a.x && a.y >= a.z) { return vec3<f32>(0.0, sign(local.y), 0.0); }
+  return vec3<f32>(0.0, 0.0, sign(local.z));
+}
+
+fn mesh_normal(local: vec3<f32>, shape: f32) -> vec3<f32> {
+  if (shape < 0.5) { return vec3<f32>(0.0, 0.0, 1.0); }
+  if (shape < 1.5) { return cube_normal(local); }
+  if (shape < 3.5) { return normalize(local + vec3<f32>(0.0, 0.001, 0.0)); }
+  if (shape < 4.5) { return normalize(vec3<f32>(local.x, 0.35, local.z)); }
+  if (shape < 5.5) { return normalize(vec3<f32>(local.x, 0.0, local.z)); }
+  return normalize(vec3<f32>(local.x, 0.25, local.z));
+}
+
 fn rotate_uv(p: vec2<f32>, angle: f32) -> vec2<f32> {
   let c = cos(angle);
   let s = sin(angle);
@@ -469,7 +502,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) in
   let shape = item.position.w;
   let local = mesh_vertex(vertex_index, shape);
   let scaled = local * max(item.scale.xyz, vec3<f32>(0.001));
-  let world = item.position.xyz + rotate_y(scaled, item.scale.w);
+  let world = item.position.xyz + rotate_xyz(scaled, item.rotation.xyz);
 
   let eye = u.camera_pos.xyz;
   let look_at = u.camera_target.xyz;
@@ -498,7 +531,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) in
     out.position = vec4<f32>(ndc, depth, 1.0);
   }
   out.color = item.color;
-  out.normal = normalize(rotate_y(select(local, normalize(local), shape > 1.5), item.scale.w));
+  out.normal = normalize(rotate_xyz(mesh_normal(local, shape), item.rotation.xyz));
   out.view_z = view.z;
   out.uv = stage_uv(mesh_base_uv(local, shape), item.material, item.uv);
   out.material = item.material;
@@ -1153,6 +1186,7 @@ struct Stage3DMeshUniforms {
 struct Stage3DMeshItemGpu {
     position: [f32; 4],
     scale: [f32; 4],
+    rotation: [f32; 4],
     color: [f32; 4],
     material: [f32; 4],
     uv: [f32; 4],
@@ -8906,7 +8940,7 @@ fn collect_stage3d_mesh_nodes(
                 items.push(stage3d_mesh_item(
                     position,
                     [width.max(0.05), height.max(0.05), 0.04],
-                    rotation[1],
+                    rotation,
                     [0.18, 0.8, 1.0, (0.48 + brightness * 0.1).clamp(0.45, 0.82)],
                     0.0,
                     stage3d_material(source_slot, brightness, 0.0, 1.0),
@@ -8938,7 +8972,7 @@ fn collect_stage3d_mesh_nodes(
                         (dimensions[1] * scale[1]).abs().max(0.08),
                         (dimensions[2] * scale[2]).abs().max(0.08),
                     ],
-                    rotation[1],
+                    rotation,
                     [color[0], color[1], color[2], alpha],
                     stage3d_geometry_shape_code(&geometry),
                     stage3d_material(None, 1.0, 0.0, 1.0),
@@ -8956,7 +8990,7 @@ fn collect_stage3d_mesh_nodes(
                 items.push(stage3d_mesh_item(
                     position,
                     [width.max(0.1), thickness.max(0.08), thickness.max(0.08)],
-                    rotation[1],
+                    rotation,
                     [color[0], color[1], color[2], 0.38],
                     1.0,
                     stage3d_material(None, 1.0, 0.0, 1.0),
@@ -8973,7 +9007,7 @@ fn collect_stage3d_mesh_nodes(
                 items.push(stage3d_mesh_item(
                     position,
                     [size, size, size],
-                    0.0,
+                    [0.0, 0.0, 0.0],
                     [color[0], color[1], color[2], 0.62],
                     1.0,
                     stage3d_material(None, 1.0, 0.0, 1.0),
@@ -8994,7 +9028,7 @@ fn collect_stage3d_mesh_nodes(
                         dimensions[1].abs().max(0.1),
                         dimensions[2].abs().max(0.1),
                     ],
-                    0.0,
+                    [0.0, 0.0, 0.0],
                     [
                         color[0],
                         color[1],
@@ -9055,10 +9089,15 @@ fn collect_stage3d_user_mesh_items(
         let uv_rotation = number_at(element, &["params", "uvRotation"]).unwrap_or(0.0) as f32
             * std::f32::consts::PI
             / 180.0;
+        let rotation = [
+            number_at(element, &["rotationX"]).unwrap_or(0.0) as f32,
+            number_at(element, &["rotationY"]).unwrap_or(0.0) as f32,
+            number_at(element, &["rotationZ"]).unwrap_or(0.0) as f32,
+        ];
         items.push(stage3d_mesh_item(
             position,
             mesh_scale,
-            number_at(element, &["rotationY"]).unwrap_or(0.0) as f32,
+            rotation,
             [
                 color[0],
                 color[1],
@@ -9148,7 +9187,7 @@ fn stage3d_user_mesh_spec(element: &Value, scalar: f32) -> ([f32; 3], f32, f32) 
 fn stage3d_mesh_item(
     position: [f32; 3],
     scale: [f32; 3],
-    yaw: f32,
+    rotation: [f32; 3],
     color: [f32; 4],
     shape: f32,
     material: [f32; 4],
@@ -9156,7 +9195,8 @@ fn stage3d_mesh_item(
 ) -> Stage3DMeshItemGpu {
     Stage3DMeshItemGpu {
         position: [position[0], position[1], position[2], shape],
-        scale: [scale[0], scale[1], scale[2], yaw],
+        scale: [scale[0], scale[1], scale[2], 0.0],
+        rotation: [rotation[0], rotation[1], rotation[2], 0.0],
         color,
         material,
         uv,
@@ -9239,7 +9279,7 @@ fn collect_projection_sim_mesh_items(
             items.push(stage3d_mesh_item(
                 position,
                 projection_sim_mesh_scale(&primitive, scale),
-                rotation[1],
+                rotation,
                 [color[0], color[1], color[2], projection_alpha],
                 projection_sim_shape_code(&object_type, &primitive),
                 material,
@@ -9265,7 +9305,7 @@ fn collect_projection_sim_mesh_items(
             items.push(stage3d_mesh_item(
                 position,
                 [size, size, size],
-                0.0,
+                [0.0, 0.0, 0.0],
                 [color[0], color[1], color[2], 0.58],
                 2.0,
                 stage3d_material(None, 1.0, 0.0, 1.0),
