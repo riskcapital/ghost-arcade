@@ -201,6 +201,11 @@ describe('Native effect-pass template', () => {
       ['difference-key', 28],
       ['erode', 29],
       ['dilate', 30],
+      ['wave', 31],
+      ['fisheye', 32],
+      ['lens-distortion', 33],
+      ['twirl', 34],
+      ['pinch-bulge', 35],
     ]);
     expect(nativeEffectPassManifestEntry('posterize')).toMatchObject({
       code: 8,
@@ -668,6 +673,84 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0,
+    ]);
+  });
+
+  it('packs native distortion params across the shared effect slots', () => {
+    expect(packNativeEffectPassUniforms({
+      sourceId: 'src',
+      targetSourceId: 'dst',
+      effect: 'wave',
+      width: 320,
+      height: 180,
+      time: 0.5,
+      frameDelta: 1 / 24,
+      frameIndex: 3,
+      amount: 18,
+      params: {
+        mode: 2,
+        waveform: 1,
+        frequency: 12,
+        speed: 1.4,
+        phase: 90,
+        secondary: 0.4,
+        chromaSplit: 0.7,
+      },
+    })).toEqual([
+      320,
+      180,
+      0.5,
+      1 / 24,
+      31,
+      18,
+      1,
+      3,
+      2,
+      1,
+      12,
+      1.4,
+      90,
+      0.4,
+      0.7,
+      0,
+    ]);
+
+    expect(packNativeEffectPassUniforms({
+      sourceId: 'src',
+      targetSourceId: 'dst',
+      effect: 'lens-distortion',
+      width: 320,
+      height: 180,
+      time: 0.5,
+      frameDelta: 1 / 24,
+      frameIndex: 3,
+      amount: 0.7,
+      params: {
+        mode: 3,
+        centerX: 0.45,
+        centerY: 0.55,
+        cubic: -0.2,
+        anamorphicX: 1.7,
+        edgeFade: 0.8,
+        chromatic: 0.3,
+      },
+    })).toEqual([
+      320,
+      180,
+      0.5,
+      1 / 24,
+      33,
+      0.7,
+      1,
+      3,
+      3,
+      0.45,
+      0.55,
+      -0.2,
+      1.7,
+      0.8,
+      0.3,
       0,
     ]);
   });
@@ -1451,6 +1534,143 @@ describe('Native effect-pass template', () => {
             const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.22, 0.5);
             const dilatedRgb = snapshotPixelRgb(snapshot, pixels, 0.22, 0.5);
             expect(rgbDistance(sourceRgb, dilatedRgb)).toBeGreaterThan(0.006);
+          },
+        },
+        {
+          id: 'wave',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-wave',
+            effect: 'wave',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 21,
+            amount: 36,
+            params: {
+              mode: 0,
+              waveform: 0,
+              frequency: 4,
+              speed: 0,
+              phase: 45,
+              secondary: 0.4,
+              chromaSplit: 0.4,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.62, 0.55);
+            const wavedRgb = snapshotPixelRgb(snapshot, pixels, 0.62, 0.55);
+            expect(rgbDistance(sourceRgb, wavedRgb)).toBeGreaterThan(0.012);
+          },
+        },
+        {
+          id: 'fisheye',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-fisheye',
+            effect: 'fisheye',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 22,
+            amount: 0.9,
+            params: {
+              radius: 1,
+              centerX: 0.5,
+              centerY: 0.5,
+              zoom: 1,
+              mode: 1,
+              edgeFalloff: 0.6,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.78, 0.55);
+            const fishRgb = snapshotPixelRgb(snapshot, pixels, 0.78, 0.55);
+            expect(rgbDistance(sourceRgb, fishRgb)).toBeGreaterThan(0.012);
+          },
+        },
+        {
+          id: 'lens-distortion',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-lens-distortion',
+            effect: 'lens-distortion',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 23,
+            amount: 0.85,
+            params: {
+              mode: 3,
+              centerX: 0.5,
+              centerY: 0.5,
+              cubic: 0.25,
+              anamorphicX: 1.5,
+              edgeFade: 1,
+              chromatic: 0.4,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.76, 0.58);
+            const lensRgb = snapshotPixelRgb(snapshot, pixels, 0.76, 0.58);
+            expect(rgbDistance(sourceRgb, lensRgb)).toBeGreaterThan(0.012);
+          },
+        },
+        {
+          id: 'twirl',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-twirl',
+            effect: 'twirl',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 24,
+            amount: 3.5,
+            params: {
+              radius: 0.95,
+              centerX: 0.5,
+              centerY: 0.5,
+              falloff: 1.1,
+              animSpeed: 0,
+              outputMix: 1,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.68, 0.58);
+            const twirlRgb = snapshotPixelRgb(snapshot, pixels, 0.68, 0.58);
+            expect(rgbDistance(sourceRgb, twirlRgb)).toBeGreaterThan(0.012);
+          },
+        },
+        {
+          id: 'pinch-bulge',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-pinch-bulge',
+            effect: 'pinch-bulge',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 25,
+            amount: 0.9,
+            params: {
+              radius: 0.85,
+              centerX: 0.5,
+              centerY: 0.5,
+              falloff: 1.2,
+              chromatic: 0.4,
+              outputMix: 1,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.72, 0.52);
+            const pinchRgb = snapshotPixelRgb(snapshot, pixels, 0.72, 0.52);
+            expect(rgbDistance(sourceRgb, pinchRgb)).toBeGreaterThan(0.012);
           },
         },
       ];

@@ -198,6 +198,144 @@ describe('native renderer sync effect-pass descriptors', () => {
     });
   });
 
+  it('maps distortion UI params to native effect-pass descriptors', () => {
+    expect(effectToNativeDescriptor({
+      type: 'wave',
+      params: {
+        waveType: 2,
+        waveWaveform: 1,
+        waveAmplitude: 18,
+        waveFrequency: 12,
+        waveSpeed: 1.4,
+        wavePhase: 90,
+        waveSecondary: 0.4,
+        waveChromaSplit: 0.7,
+      },
+    })).toBe('wave:18.0000:2:1:12.0000:1.4000:90.0000:0.4000:0.7000');
+
+    expect(effectToNativeDescriptor({
+      type: 'fisheye',
+      params: {
+        fisheyeMode: 1,
+        fisheyeStrength: 0.65,
+        fisheyeRadius: 0.85,
+        fisheyeCenterX: 0.62,
+        fisheyeCenterY: 0.38,
+        fisheyeZoom: 1.1,
+        fisheyeChromaEdge: 0.45,
+      },
+    })).toBe('fisheye:0.6500:0.8500:0.6200:0.3800:1.1000:1:0.4500');
+
+    expect(effectToNativeDescriptor({
+      type: 'lensDistortion',
+      params: {
+        lensDistMode: 3,
+        lensDistAmount: 0.7,
+        lensDistCenterX: 0.45,
+        lensDistCenterY: 0.55,
+        lensDistCubic: -0.2,
+        lensDistAnamorphicX: 1.7,
+        lensDistEdgeFade: 0.8,
+        lensDistChromaFringe: 0.3,
+      },
+    })).toBe('lens-distortion:0.7000:3:0.4500:0.5500:-0.2000:1.7000:0.8000:0.3000');
+
+    expect(effectToNativeDescriptor({
+      type: 'twirl',
+      params: {
+        twirlAngle: 2.5,
+        twirlRadius: 0.75,
+        twirlCenterX: 0.48,
+        twirlCenterY: 0.52,
+        twirlFalloff: 1.2,
+        twirlAnimSpeed: 0.3,
+        twirlMix: 0.9,
+      },
+    })).toBe('twirl:2.5000:0.7500:0.4800:0.5200:1.2000:0.3000:0.9000');
+
+    expect(effectToNativeDescriptor({
+      type: 'pinchBulge',
+      params: {
+        pinchAmount: -0.55,
+        pinchRadius: 0.5,
+        pinchCenterX: 0.6,
+        pinchCenterY: 0.4,
+        pinchFalloff: 1.5,
+        pinchChromatic: 0.25,
+        pinchMix: 0.8,
+      },
+    })).toBe('pinch-bulge:-0.5500:0.5000:0.6000:0.4000:1.5000:0.2500:0.8000');
+  });
+
+  it('rebuilds native effect-pass runtime params from distortion descriptors', () => {
+    expect(nativeEffectPassFromDescriptor('wave:18.0000:2:1:12.0000:1.4000:90.0000:0.4000:0.7000')).toMatchObject({
+      effect: 'wave',
+      amount: 18,
+      params: {
+        mode: 2,
+        waveform: 1,
+        frequency: 12,
+        speed: 1.4,
+        phase: 90,
+        secondary: 0.4,
+        chromaSplit: 0.7,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('fisheye:0.6500:0.8500:0.6200:0.3800:1.1000:1:0.4500')).toMatchObject({
+      effect: 'fisheye',
+      amount: 0.65,
+      params: {
+        radius: 0.85,
+        centerX: 0.62,
+        centerY: 0.38,
+        zoom: 1.1,
+        mode: 1,
+        edgeFalloff: 0.45,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('lens-distortion:0.7000:3:0.4500:0.5500:-0.2000:1.7000:0.8000:0.3000')).toMatchObject({
+      effect: 'lens-distortion',
+      amount: 0.7,
+      params: {
+        mode: 3,
+        centerX: 0.45,
+        centerY: 0.55,
+        cubic: -0.2,
+        anamorphicX: 1.7,
+        edgeFade: 0.8,
+        chromatic: 0.3,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('twirl:2.5000:0.7500:0.4800:0.5200:1.2000:0.3000:0.9000')).toMatchObject({
+      effect: 'twirl',
+      amount: 2.5,
+      params: {
+        radius: 0.75,
+        centerX: 0.48,
+        centerY: 0.52,
+        falloff: 1.2,
+        animSpeed: 0.3,
+        outputMix: 0.9,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('pinch-bulge:-0.5500:0.5000:0.6000:0.4000:1.5000:0.2500:0.8000')).toMatchObject({
+      effect: 'pinch-bulge',
+      amount: -0.55,
+      params: {
+        radius: 0.5,
+        centerX: 0.6,
+        centerY: 0.4,
+        falloff: 1.5,
+        chromatic: 0.25,
+        outputMix: 0.8,
+      },
+    });
+  });
+
   it('maps keying UI params to native effect-pass descriptors', () => {
     expect(effectToNativeDescriptor({
       type: 'chromaKey',

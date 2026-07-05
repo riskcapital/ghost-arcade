@@ -28,7 +28,12 @@ export type NativeEffectPassId =
   | 'luma-key'
   | 'difference-key'
   | 'erode'
-  | 'dilate';
+  | 'dilate'
+  | 'wave'
+  | 'fisheye'
+  | 'lens-distortion'
+  | 'twirl'
+  | 'pinch-bulge';
 
 export interface NativeEffectPassManifestEntry {
   id: NativeEffectPassId;
@@ -131,6 +136,15 @@ export interface NativeEffectPassOptions {
     refB: number;
     spill: number;
     channel: number;
+    frequency: number;
+    waveform: number;
+    phase: number;
+    secondary: number;
+    chromaSplit: number;
+    strength: number;
+    edgeFade: number;
+    cubic: number;
+    anamorphicX: number;
   }>;
   clear?: boolean;
   seq?: number;
@@ -200,6 +214,11 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'difference-key', code: 28, defaultAmount: 0.3, amountMin: 0, amountMax: 1 },
   { id: 'erode', code: 29, defaultAmount: 2, amountMin: 1, amountMax: 8 },
   { id: 'dilate', code: 30, defaultAmount: 2, amountMin: 1, amountMax: 8 },
+  { id: 'wave', code: 31, defaultAmount: 10, amountMin: 0, amountMax: 50 },
+  { id: 'fisheye', code: 32, defaultAmount: 0.5, amountMin: -1, amountMax: 1 },
+  { id: 'lens-distortion', code: 33, defaultAmount: 0.4, amountMin: -1, amountMax: 1 },
+  { id: 'twirl', code: 34, defaultAmount: 1.5, amountMin: -6.28319, amountMax: 6.28319 },
+  { id: 'pinch-bulge', code: 35, defaultAmount: 0.4, amountMin: -1, amountMax: 1 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -319,6 +338,22 @@ fn channel_value(c: vec4<f32>, channel: u32) -> f32 {
     return c.a;
   }
   return luma(c.rgb);
+}
+
+fn wave_signal(value: f32, waveform: u32) -> f32 {
+  if (waveform == 1u) {
+    return abs(fract(value / 6.28318530718 + 0.25) * 4.0 - 2.0) - 1.0;
+  }
+  if (waveform == 2u) {
+    return fract(value / 6.28318530718) * 2.0 - 1.0;
+  }
+  if (waveform == 3u) {
+    if (sin(value) >= 0.0) {
+      return 1.0;
+    }
+    return -1.0;
+  }
+  return sin(value);
 }
 
 fn effect_texel() -> vec2<f32> {
@@ -892,6 +927,143 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     }
     return vec4<f32>(mix(color, chosen.rgb, wet), mix(src.a, chosen.a, wet));
   }
+  if (code == 31u) {
+    let mode = u32(round(clamp(u.params0.x, 0.0, 3.0)));
+    let waveform = u32(round(clamp(u.params0.y, 0.0, 3.0)));
+    let frequency = max(0.01, u.params0.z);
+    let speed = clamp(u.params0.w, 0.0, 3.0);
+    let phase = u.params1.x * 0.01745329252 + u.resolution_time.z * speed * 6.28318530718;
+    let secondary = clamp(u.params1.y, 0.0, 1.0);
+    let chroma_split = clamp(u.params1.z, 0.0, 1.0);
+    let amp = amount / max(u.resolution_time.xy, vec2<f32>(1.0));
+    let centered = uv - vec2<f32>(0.5);
+    var offset = vec2<f32>(0.0);
+    if (mode == 1u) {
+      let signal = wave_signal((uv.x * frequency + phase) * 6.28318530718, waveform);
+      let harmonic = wave_signal((uv.x * frequency * 2.0 + phase * 1.37) * 6.28318530718, waveform);
+      offset.y = (signal + harmonic * secondary * 0.5) * amp.y;
+    } else if (mode == 2u) {
+      let r = length(centered);
+      let signal = wave_signal((r * frequency + phase) * 6.28318530718, waveform);
+      let dir = normalize(centered + vec2<f32>(0.0001, 0.0));
+      offset = dir * signal * length(amp) * 0.7;
+    } else if (mode == 3u) {
+      let r = length(centered);
+      let signal = wave_signal((r * frequency + phase) * 6.28318530718, waveform);
+      offset = rotate2d(centered, signal * amount * 0.004) - centered;
+    } else {
+      let signal = wave_signal((uv.y * frequency + phase) * 6.28318530718, waveform);
+      let harmonic = wave_signal((uv.y * frequency * 2.0 + phase * 1.37) * 6.28318530718, waveform);
+      offset.x = (signal + harmonic * secondary * 0.5) * amp.x;
+    }
+    let sample_uv = uv + offset;
+    var waved = sample_rgb(sample_uv);
+    if (chroma_split > 0.001) {
+      let chroma_offset = offset * chroma_split * 1.5;
+      waved = vec3<f32>(
+        sample_rgb(sample_uv + chroma_offset).r,
+        waved.g,
+        sample_rgb(sample_uv - chroma_offset).b,
+      );
+    }
+    return vec4<f32>(waved, src.a);
+  }
+  if (code == 32u) {
+    let radius = max(0.05, u.params0.x);
+    let center = clamp(u.params0.yz, vec2<f32>(0.0), vec2<f32>(1.0));
+    let zoom = max(0.05, u.params0.w);
+    let mode = u32(round(clamp(u.params1.x, 0.0, 2.0)));
+    let chroma_edge = clamp(u.params1.y, 0.0, 1.0);
+    let p = (uv - center) / radius;
+    let dist = length(p);
+    var strength = amount;
+    if (mode == 2u) {
+      strength = -abs(amount);
+    } else if (mode == 1u) {
+      strength = abs(amount);
+    }
+    let mask = 1.0 - smoothstep(0.92, 1.0, dist);
+    let factor = max(0.05, 1.0 + strength * dist * dist);
+    let sample_uv = center + p * radius * factor / zoom;
+    var fish = sample_rgb(mix(uv, sample_uv, mask));
+    if (chroma_edge > 0.001) {
+      let edge = smoothstep(0.35, 1.0, dist) * chroma_edge;
+      let chroma_dir = normalize(p + vec2<f32>(0.0001, 0.0)) * edge * 0.018;
+      fish = vec3<f32>(
+        sample_rgb(sample_uv + chroma_dir).r,
+        fish.g,
+        sample_rgb(sample_uv - chroma_dir).b,
+      );
+    }
+    return vec4<f32>(mix(color, fish, mask), src.a);
+  }
+  if (code == 33u) {
+    let mode = u32(round(clamp(u.params0.x, 0.0, 3.0)));
+    let center = clamp(u.params0.yz, vec2<f32>(0.0), vec2<f32>(1.0));
+    let cubic = clamp(u.params0.w, -0.5, 0.5);
+    let anamorphic_x = max(0.1, u.params1.x);
+    let edge_fade = clamp(u.params1.y, 0.0, 1.0);
+    let chroma = clamp(u.params1.z, 0.0, 1.0);
+    var p = uv - center;
+    p.x *= anamorphic_x;
+    let r2 = dot(p, p);
+    var k = amount;
+    if (mode == 1u) {
+      k = -abs(amount);
+    } else if (mode == 3u) {
+      k = amount * 1.35;
+    }
+    let factor = max(0.05, 1.0 + k * r2 + cubic * r2 * r2);
+    var warped = p * factor;
+    warped.x /= anamorphic_x;
+    let sample_uv = center + warped;
+    let mask = mix(1.0, 1.0 - smoothstep(0.78, 1.15, length(p)), edge_fade);
+    var lens = sample_rgb(sample_uv);
+    if (chroma > 0.001) {
+      let dir = normalize(warped + vec2<f32>(0.0001, 0.0)) * chroma * r2 * 0.035;
+      lens = vec3<f32>(
+        sample_rgb(sample_uv + dir).r,
+        lens.g,
+        sample_rgb(sample_uv - dir).b,
+      );
+    }
+    return vec4<f32>(mix(color, lens, clamp(mask, 0.0, 1.0)), src.a);
+  }
+  if (code == 34u) {
+    let radius = max(0.01, u.params0.x);
+    let center = clamp(u.params0.yz, vec2<f32>(0.0), vec2<f32>(1.0));
+    let falloff = max(0.1, u.params0.w);
+    let speed = clamp(u.params1.x, 0.0, 2.0);
+    let wet = clamp(u.params1.y, 0.0, 1.0);
+    let p = uv - center;
+    let dist = length(p);
+    let influence = pow(1.0 - smoothstep(0.0, radius, dist), falloff);
+    let angle = (amount + u.resolution_time.z * speed * 6.28318530718) * influence;
+    let twirled = sample_rgb(center + rotate2d(p, angle));
+    return vec4<f32>(mix(color, twirled, wet * influence), src.a);
+  }
+  if (code == 35u) {
+    let radius = max(0.01, u.params0.x);
+    let center = clamp(u.params0.yz, vec2<f32>(0.0), vec2<f32>(1.0));
+    let falloff = max(0.1, u.params0.w);
+    let chroma = clamp(u.params1.x, 0.0, 1.0);
+    let wet = clamp(u.params1.y, 0.0, 1.0);
+    let p = uv - center;
+    let dist = length(p);
+    let influence = pow(1.0 - smoothstep(0.0, radius, dist), falloff);
+    let factor = max(0.05, 1.0 - amount * influence * 0.75);
+    let sample_uv = center + p * factor;
+    var pinched = sample_rgb(sample_uv);
+    if (chroma > 0.001) {
+      let dir = normalize(p + vec2<f32>(0.0001, 0.0)) * chroma * influence * 0.02;
+      pinched = vec3<f32>(
+        sample_rgb(sample_uv + dir).r,
+        pinched.g,
+        sample_rgb(sample_uv - dir).b,
+      );
+    }
+    return vec4<f32>(mix(color, pinched, wet * influence), src.a);
+  }
   return src;
 }
 
@@ -1148,6 +1320,51 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param3 = 0;
     param4 = 0;
     param5 = 0;
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'wave') {
+    param0 = clampNumber(params.mode ?? params.param0, 0, 3, 0);
+    param1 = clampNumber(params.waveform ?? params.param1, 0, 3, 0);
+    param2 = clampNumber(params.frequency ?? params.param2, 0.5, 30, 5);
+    param3 = clampNumber(params.speed ?? params.param3, 0, 3, 1);
+    param4 = clampNumber(params.phase ?? params.param4, 0, 360, 0);
+    param5 = clampNumber(params.secondary ?? params.param5, 0, 1, 0);
+    param6 = clampNumber(params.chromaSplit ?? params.param6, 0, 1, 0);
+    param7 = 0;
+  } else if (options.effect === 'fisheye') {
+    param0 = clampNumber(params.radius ?? params.param0, 0.1, 1, 1);
+    param1 = clampNumber(params.centerX ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.centerY ?? params.param2, 0, 1, 0.5);
+    param3 = clampNumber(params.zoom ?? params.param3, 0.5, 2, 1);
+    param4 = clampNumber(params.mode ?? params.param4, 0, 2, 0);
+    param5 = clampNumber(params.edgeFalloff ?? params.chromatic ?? params.chromaSplit ?? params.param5, 0, 1, 0);
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'lens-distortion') {
+    param0 = clampNumber(params.mode ?? params.param0, 0, 3, 0);
+    param1 = clampNumber(params.centerX ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.centerY ?? params.param2, 0, 1, 0.5);
+    param3 = clampNumber(params.cubic ?? params.param3, -0.5, 0.5, 0);
+    param4 = clampNumber(params.anamorphicX ?? params.param4, 0.5, 2, 1.3);
+    param5 = clampNumber(params.edgeFade ?? params.param5, 0, 1, 1);
+    param6 = clampNumber(params.chromatic ?? params.chromaSplit ?? params.param6, 0, 1, 0);
+    param7 = 0;
+  } else if (options.effect === 'twirl') {
+    param0 = clampNumber(params.radius ?? params.param0, 0.05, 1, 0.5);
+    param1 = clampNumber(params.centerX ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.centerY ?? params.param2, 0, 1, 0.5);
+    param3 = clampNumber(params.falloff ?? params.param3, 0.5, 4, 1.5);
+    param4 = clampNumber(params.animSpeed ?? params.speed ?? params.param4, 0, 2, 0);
+    param5 = clampNumber(params.outputMix ?? params.param5, 0, 1, 1);
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'pinch-bulge') {
+    param0 = clampNumber(params.radius ?? params.param0, 0.1, 1, 0.5);
+    param1 = clampNumber(params.centerX ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.centerY ?? params.param2, 0, 1, 0.5);
+    param3 = clampNumber(params.falloff ?? params.param3, 0.5, 4, 1.5);
+    param4 = clampNumber(params.chromatic ?? params.chromaSplit ?? params.param4, 0, 1, 0);
+    param5 = clampNumber(params.outputMix ?? params.param5, 0, 1, 1);
     param6 = 0;
     param7 = 0;
   }
