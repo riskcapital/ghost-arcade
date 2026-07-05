@@ -1823,6 +1823,10 @@ let nativeOutputTextureShareFailCount = 0;
 let nativeOutputTextureShareInFlight = false;
 let nativeOutputTextureShareWaitingForFrame = false;
 let nativeOutputTextureShareWaitingForFrameLogged = false;
+let nativeOutputTextureSharePromoteTimer = null;
+let nativeOutputTextureSharePromoteInFlight = false;
+let nativeOutputTextureSharePromoteAttempts = 0;
+let nativeOutputTextureSharePromotionReason = null;
 
 // Multi-slice zero-copy atlas state. The slice-atlas OSR window renders
 // every Spout/Syphon sender slice into one atlas texture and publishes
@@ -2014,6 +2018,9 @@ function getTextureShareLoadStatus() {
     nativeOutputActive: nativeOutputTextureShareActive,
     nativeOutputWaitingForFrame: nativeOutputTextureShareWaitingForFrame,
     nativeOutputFailures: nativeOutputTextureShareFailCount,
+    nativeOutputPendingPromotion: nativeOutputTextureSharePromoteTimer !== null,
+    nativeOutputPromotionAttempts: nativeOutputTextureSharePromoteAttempts,
+    nativeOutputPromotionReason: nativeOutputTextureSharePromotionReason,
   };
 }
 
@@ -2251,6 +2258,7 @@ function createSpoutSender(name, width, height, { startOsr = true } = {}) {
 
 function stopSpoutSender() {
   spoutSendActive = false;
+  stopNativeOutputTextureSharePromotion();
   stopNativeOutputTextureSharePump();
 
   // Tear down OSR window first
@@ -2647,7 +2655,72 @@ function stopNativeOutputTextureSharePump(reason = 'stopped') {
   }
 }
 
+function stopNativeOutputTextureSharePromotion() {
+  if (nativeOutputTextureSharePromoteTimer) {
+    clearInterval(nativeOutputTextureSharePromoteTimer);
+    nativeOutputTextureSharePromoteTimer = null;
+  }
+  nativeOutputTextureSharePromoteInFlight = false;
+  nativeOutputTextureSharePromotionReason = null;
+}
+
+function startNativeOutputTextureSharePromotion(reason = 'waiting-for-native-output') {
+  if (!isMac || nativeOutputTextureShareActive || nativeOutputTextureSharePromoteTimer) {
+    return false;
+  }
+  if (!spoutSendActive || !spoutOutput || typeof spoutOutput.publishIOSurface !== 'function') {
+    return false;
+  }
+
+  nativeOutputTextureSharePromoteAttempts = 0;
+  nativeOutputTextureSharePromotionReason = reason;
+
+  const tryPromote = async () => {
+    if (!spoutSendActive || !spoutOutput || nativeOutputTextureShareActive) {
+      stopNativeOutputTextureSharePromotion();
+      return;
+    }
+    if (nativeOutputTextureSharePromoteInFlight) return;
+    nativeOutputTextureSharePromoteInFlight = true;
+    nativeOutputTextureSharePromoteAttempts++;
+
+    try {
+      const texture = await getNativeOutputSharedTextureMetadata();
+      if (!isNativeOutputTextureHandleReady(texture)) {
+        if (nativeOutputTextureSharePromoteAttempts === 1 || nativeOutputTextureSharePromoteAttempts % 10 === 0) {
+          console.log(`[${textureShareLabel} Native] waiting to promote Syphon sender to native IOSurface: ${texture?.reason || reason}`);
+        }
+        return;
+      }
+      if (!isPublishableNativeOutputTexture(texture)) {
+        if (nativeOutputTextureSharePromoteAttempts === 1 || nativeOutputTextureSharePromoteAttempts % 10 === 0) {
+          console.log(`[${textureShareLabel} Native] waiting to promote Syphon sender until the native output has a rendered frame`);
+        }
+        return;
+      }
+
+      const started = startNativeOutputTextureSharePump(texture);
+      if (!started) return;
+
+      destroySpoutOsrWindow();
+      console.log(`[${textureShareLabel} Native] promoted sender to native output IOSurface after ${nativeOutputTextureSharePromoteAttempts} check(s)`);
+      stopNativeOutputTextureSharePromotion();
+    } catch (err) {
+      if (nativeOutputTextureSharePromoteAttempts <= 5) {
+        console.warn(`[${textureShareLabel} Native] promotion check failed:`, err?.message || err);
+      }
+    } finally {
+      nativeOutputTextureSharePromoteInFlight = false;
+    }
+  };
+
+  nativeOutputTextureSharePromoteTimer = setInterval(tryPromote, 1000);
+  void tryPromote();
+  return true;
+}
+
 function startNativeOutputTextureSharePump(initialTexture = null) {
+  stopNativeOutputTextureSharePromotion();
   stopNativeOutputTextureSharePump();
 
   if (!isMac || !spoutOutput || typeof spoutOutput.publishIOSurface !== 'function') {
@@ -2679,6 +2752,7 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
           stopNativeOutputTextureSharePump('native-iosurface-failed');
           if (spoutSendActive && spoutOutput && !spoutOsrWindow) {
             createSpoutOsrWindow(spoutSendW, spoutSendH);
+            startNativeOutputTextureSharePromotion('native-iosurface-failed');
           }
         }
         return;
@@ -3587,9 +3661,13 @@ function registerIpcHandlers() {
       if (!nativePumpStarted) {
         console.warn(`[${textureShareLabel} Native] native output pump could not start; falling back to OSR texture share`);
         createSpoutOsrWindow(targetWidth, targetHeight);
+        startNativeOutputTextureSharePromotion('native-pump-start-failed');
       }
     } else if (nativeOutputShare.reason && isMac) {
       console.log(`[${textureShareLabel} Native] using OSR texture share: ${nativeOutputShare.reason}`);
+      if (ok) {
+        startNativeOutputTextureSharePromotion(nativeOutputShare.reason);
+      }
     }
     spoutSendCreating = false;
     const result = {
@@ -3778,6 +3856,12 @@ function registerIpcHandlers() {
       sender_mode: getTextureShareSenderMode(),
       osr_active: osrActive,
       osr_failure_reason: osrFailureReason,
+      native_output_active: nativeOutputTextureShareActive,
+      native_output_waiting_for_frame: nativeOutputTextureShareWaitingForFrame,
+      native_output_pending_promotion: nativeOutputTextureSharePromoteTimer !== null,
+      native_output_promotion_attempts: nativeOutputTextureSharePromoteAttempts,
+      native_output_promotion_reason: nativeOutputTextureSharePromotionReason,
+      native_output_failures: nativeOutputTextureShareFailCount,
       cpu_fallback_allowed: ALLOW_CPU_TEXTURE_SHARE_FALLBACK,
       receiver_active: spoutReceiver !== null,
       receiver_texture_info_available:
