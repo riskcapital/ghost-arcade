@@ -714,10 +714,54 @@ fn rotateByQuatWxyz(qIn: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
   return v + q.x * t + cross(qv, t);
 }
 
-fn projectAxisToBillboard(axis: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
-  let projected = u.camRight * dot(axis, u.camRight) + u.camUp * dot(axis, u.camUp);
-  let lenSq = dot(projected, projected);
-  return select(fallback, projected * inverseSqrt(max(lenSq, 1e-8)), lenSq > 1e-6);
+fn cameraPlaneAxis(axis: vec3<f32>, radius: f32) -> vec2<f32> {
+  return vec2<f32>(dot(axis, u.camRight), dot(axis, u.camUp)) * radius;
+}
+
+struct GaussianScreenAxes {
+  majorAxis: vec3<f32>,
+  minorAxis: vec3<f32>,
+  stretch: vec2<f32>,
+};
+
+fn gaussianScreenAxes(h: Home) -> GaussianScreenAxes {
+  let sx = max(h.splatScale.x, 1e-6);
+  let sy = max(h.splatScale.y, 1e-6);
+  let sz = max(h.splatScale.z, 1e-6);
+  let meanScale = max((sx + sy + sz) / 3.0, 1e-6);
+
+  let ax = cameraPlaneAxis(rotateByQuatWxyz(h.splatRotation, vec3<f32>(1.0, 0.0, 0.0)), sx / meanScale);
+  let ay = cameraPlaneAxis(rotateByQuatWxyz(h.splatRotation, vec3<f32>(0.0, 1.0, 0.0)), sy / meanScale);
+  let az = cameraPlaneAxis(rotateByQuatWxyz(h.splatRotation, vec3<f32>(0.0, 0.0, 1.0)), sz / meanScale);
+
+  // Project the 3D gaussian covariance into the camera plane. This
+  // is the light-weight version of 3DGS projection: enough to preserve
+  // anisotropy and view-dependent orientation without adding a separate
+  // projected-covariance compute pass yet.
+  let cxx = ax.x * ax.x + ay.x * ay.x + az.x * az.x;
+  let cxy = ax.x * ax.y + ay.x * ay.y + az.x * az.y;
+  let cyy = ax.y * ax.y + ay.y * ay.y + az.y * az.y;
+  let halfDiff = (cxx - cyy) * 0.5;
+  let root = sqrt(max(halfDiff * halfDiff + cxy * cxy, 0.0));
+  let lambdaMajor = max((cxx + cyy) * 0.5 + root, 1e-6);
+  let lambdaMinor = max((cxx + cyy) * 0.5 - root, 1e-6);
+
+  var major2 = vec2<f32>(cxy, lambdaMajor - cxx);
+  if (dot(major2, major2) < 1e-6) {
+    if (cxx >= cyy) {
+      major2 = vec2<f32>(1.0, 0.0);
+    } else {
+      major2 = vec2<f32>(0.0, 1.0);
+    }
+  } else {
+    major2 = normalize(major2);
+  }
+  let minor2 = vec2<f32>(-major2.y, major2.x);
+  return GaussianScreenAxes(
+    normalize(u.camRight * major2.x + u.camUp * major2.y),
+    normalize(u.camRight * minor2.x + u.camUp * minor2.y),
+    clamp(vec2<f32>(sqrt(lambdaMajor), sqrt(lambdaMinor)), vec2<f32>(0.28), vec2<f32>(4.0)),
+  );
 }
 
 struct VSOut {
@@ -769,13 +813,15 @@ fn vs_main(
     cornerUV = vec2<f32>(q.x * 0.5 + 0.5, q.y * 0.5 + 0.5);
     // billboards are 2× bigger than points
     let sizeMul = select(1.0, 2.0, u.topology == 1u);
-    let meanScale = max((h.splatScale.x + h.splatScale.y + h.splatScale.z) / 3.0, 1e-6);
-    let gaussianStretch = clamp(h.splatScale.xy / meanScale, vec2<f32>(0.35), vec2<f32>(3.5));
-    let axisStretch = select(vec2<f32>(1.0), gaussianStretch, h.gaussian > 0.5);
-    let localX = rotateByQuatWxyz(h.splatRotation, vec3<f32>(1.0, 0.0, 0.0));
-    let localY = rotateByQuatWxyz(h.splatRotation, vec3<f32>(0.0, 1.0, 0.0));
-    let billboardX = select(u.camRight, projectAxisToBillboard(localX, u.camRight), h.gaussian > 0.5);
-    let billboardY = select(u.camUp, projectAxisToBillboard(localY, u.camUp), h.gaussian > 0.5);
+    var axisStretch = vec2<f32>(1.0);
+    var billboardX = u.camRight;
+    var billboardY = u.camUp;
+    if (h.gaussian > 0.5) {
+      let axes = gaussianScreenAxes(h);
+      axisStretch = axes.stretch;
+      billboardX = axes.majorAxis;
+      billboardY = axes.minorAxis;
+    }
     offset =
       billboardX * (q.x * p.size * sizeMul * axisStretch.x) +
       billboardY * (q.y * p.size * sizeMul * axisStretch.y);
