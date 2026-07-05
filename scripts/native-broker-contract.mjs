@@ -640,6 +640,59 @@ try {
       Number(stageMeshAngleSnapshot?.bright_pixels ?? 0) > Number(stageEmptySnapshot?.bright_pixels ?? 0),
     `native Stage3D mesh preview did not respond to camera/depth rendering: ${JSON.stringify({ stageMeshFrontSnapshot, stageMeshAngleSnapshot })}`,
   );
+  const meshRotationSceneBase = {
+    id: 'contract-stage-mesh-rotation',
+    name: 'Contract Stage Mesh Rotation',
+    schemaVersion: 1,
+    camera: { position: [0, 3.1, 12], target: [0, 2.2, 0], fov: 42 },
+    nodes: [
+      {
+        id: 'native-mesh-xyz-rotation',
+        type: 'primitive',
+        visible: true,
+        position: [0, 2.4, 0],
+        scale: [1, 1, 1],
+        dimensions: [6.4, 1.8, 1.1],
+        material: {
+          color: '#f4d37e',
+          emissive: '#ff7aa8',
+          emissiveIntensity: 1.2,
+        },
+        children: [],
+      },
+    ],
+    userElements: [],
+  };
+  await broker.invoke('native_renderer_set_stage3d_scene', {
+    scene: {
+      ...meshRotationSceneBase,
+      nodes: [{ ...meshRotationSceneBase.nodes[0], rotation: [0, 0, 0] }],
+    },
+  });
+  const stageMeshUnrotatedPath = join(tempDir, 'broker-stage3d-mesh-unrotated.rgba');
+  const stageMeshUnrotatedSnapshot = await broker.invoke('native_renderer_export_frame_snapshot', {
+    path: stageMeshUnrotatedPath,
+    time: 0.21,
+    frame_index: 11,
+  });
+  await broker.invoke('native_renderer_set_stage3d_scene', {
+    scene: {
+      ...meshRotationSceneBase,
+      nodes: [{ ...meshRotationSceneBase.nodes[0], rotation: [0.72, 0, 0.58] }],
+    },
+  });
+  const stageMeshRotatedPath = join(tempDir, 'broker-stage3d-mesh-xyz-rotated.rgba');
+  const stageMeshRotatedSnapshot = await broker.invoke('native_renderer_export_frame_snapshot', {
+    path: stageMeshRotatedPath,
+    time: 0.21,
+    frame_index: 11,
+  });
+  assert(
+    stageMeshUnrotatedSnapshot?.checksum !== stageMeshRotatedSnapshot?.checksum &&
+      Number(stageMeshUnrotatedSnapshot?.bright_pixels ?? 0) > Number(stageEmptySnapshot?.bright_pixels ?? 0) &&
+      Number(stageMeshRotatedSnapshot?.bright_pixels ?? 0) > Number(stageEmptySnapshot?.bright_pixels ?? 0),
+    `native Stage3D mesh preview did not honor XYZ scene rotation: ${JSON.stringify({ stageMeshUnrotatedSnapshot, stageMeshRotatedSnapshot })}`,
+  );
   await broker.invoke('native_renderer_submit_commands', {
     commands: [
       {
@@ -834,6 +887,56 @@ try {
     projectionEmptySnapshot?.checksum !== projectionOverlaySnapshot?.checksum &&
       Number(projectionOverlaySnapshot?.average_luma ?? 0) > Number(projectionEmptySnapshot?.average_luma ?? 0),
     `native Projection Sim mesh/overlay preview did not affect exported frame pixels: ${JSON.stringify({ projectionEmptySnapshot, projectionOverlaySnapshot })}`,
+  );
+  const projectionRotationSceneBase = {
+    id: 'contract-projection-mesh-rotation',
+    name: 'Contract Projection Mesh Rotation',
+    schemaVersion: 1,
+    camera: { position: [0, 2.8, 10], target: [0, 2.3, 0], fov: 34 },
+    objects: [
+      {
+        id: 'native-projection-xyz-rotation',
+        name: 'Native Projection XYZ Rotation',
+        type: 'primitive',
+        primitive: 'box',
+        position: [0, 2.3, 0],
+        scale: [4.8, 1.7, 1.0],
+        color: '#b7f3ff',
+        visible: true,
+        receiveProjection: false,
+      },
+    ],
+    projectors: [],
+  };
+  await broker.invoke('native_renderer_set_projection_sim_scene', {
+    scene: {
+      ...projectionRotationSceneBase,
+      objects: [{ ...projectionRotationSceneBase.objects[0], rotation: [0, 0, 0] }],
+    },
+  });
+  const projectionMeshUnrotatedPath = join(tempDir, 'broker-projection-mesh-unrotated.rgba');
+  const projectionMeshUnrotatedSnapshot = await broker.invoke('native_renderer_export_frame_snapshot', {
+    path: projectionMeshUnrotatedPath,
+    time: 0.26,
+    frame_index: 12,
+  });
+  await broker.invoke('native_renderer_set_projection_sim_scene', {
+    scene: {
+      ...projectionRotationSceneBase,
+      objects: [{ ...projectionRotationSceneBase.objects[0], rotation: [0.65, 0, 0.48] }],
+    },
+  });
+  const projectionMeshRotatedPath = join(tempDir, 'broker-projection-mesh-xyz-rotated.rgba');
+  const projectionMeshRotatedSnapshot = await broker.invoke('native_renderer_export_frame_snapshot', {
+    path: projectionMeshRotatedPath,
+    time: 0.26,
+    frame_index: 12,
+  });
+  assert(
+    projectionMeshUnrotatedSnapshot?.checksum !== projectionMeshRotatedSnapshot?.checksum &&
+      Number(projectionMeshUnrotatedSnapshot?.bright_pixels ?? 0) > Number(projectionEmptySnapshot?.bright_pixels ?? 0) &&
+      Number(projectionMeshRotatedSnapshot?.bright_pixels ?? 0) > Number(projectionEmptySnapshot?.bright_pixels ?? 0),
+    `native Projection Sim mesh preview did not honor XYZ scene rotation: ${JSON.stringify({ projectionMeshUnrotatedSnapshot, projectionMeshRotatedSnapshot })}`,
   );
   await broker.invoke('native_renderer_set_projection_sim_scene', {
     scene: {
