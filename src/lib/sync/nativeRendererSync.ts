@@ -2530,11 +2530,12 @@ export class NativeRendererSync {
     src: NonNullable<Layer['source']>,
     now: number,
     prefetchWindowFrames = 0,
+    useNativePlaybackClock = false,
   ) {
     const timeSeconds = this.nativeVideoPlaybackTimeSeconds(src, now);
     const decodeSize = Math.max(64, Math.min(2048, Math.round(this.dynamicSourceFrameCaptureSize || this.nativeSourceFrameSize)));
     return {
-      timeSeconds,
+      timeSeconds: useNativePlaybackClock ? undefined : timeSeconds,
       decodeWidth: decodeSize,
       decodeHeight: decodeSize,
       prefetchWindowFrames,
@@ -3083,6 +3084,7 @@ export class NativeRendererSync {
                 src,
                 now,
                 overloadActive ? 0 : NATIVE_VIDEO_PREFETCH_WINDOW_FRAMES,
+                !!prev && this.supportsNativeFeature('native_media_source_playback_state'),
               ),
             ).catch(() => {});
           }
