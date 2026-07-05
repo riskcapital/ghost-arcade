@@ -17,7 +17,13 @@ export type NativeEffectPassId =
   | 'glitch'
   | 'exposure'
   | 'vibrance'
-  | 'temperature-tint';
+  | 'temperature-tint'
+  | 'sharpen'
+  | 'directional-blur'
+  | 'zoom-blur'
+  | 'radial-blur'
+  | 'kaleidoscope'
+  | 'mirror';
 
 export interface NativeEffectPassManifestEntry {
   id: NativeEffectPassId;
@@ -93,6 +99,18 @@ export interface NativeEffectPassOptions {
     autoCycle: number;
     prismSpread: number;
     outputMix: number;
+    samples: number;
+    falloff: number;
+    centerBias: number;
+    chromatic: number;
+    radiusInner: number;
+    radiusOuter: number;
+    segments: number;
+    zoom: number;
+    spiral: number;
+    position: number;
+    offset: number;
+    flipSide: number;
   }>;
   clear?: boolean;
   seq?: number;
@@ -151,6 +169,12 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'exposure', code: 17, defaultAmount: 0, amountMin: -4, amountMax: 4 },
   { id: 'vibrance', code: 18, defaultAmount: 0.3, amountMin: -1, amountMax: 2 },
   { id: 'temperature-tint', code: 19, defaultAmount: 0, amountMin: -1, amountMax: 1 },
+  { id: 'sharpen', code: 20, defaultAmount: 0.5, amountMin: 0, amountMax: 3 },
+  { id: 'directional-blur', code: 21, defaultAmount: 0.25, amountMin: 0, amountMax: 1 },
+  { id: 'zoom-blur', code: 22, defaultAmount: 0.25, amountMin: 0, amountMax: 1 },
+  { id: 'radial-blur', code: 23, defaultAmount: 0.25, amountMin: 0, amountMax: 1 },
+  { id: 'kaleidoscope', code: 24, defaultAmount: 1, amountMin: 0, amountMax: 1 },
+  { id: 'mirror', code: 25, defaultAmount: 1, amountMin: 0, amountMax: 1 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -217,6 +241,12 @@ fn sample_clamped(uv: vec2<f32>) -> vec4<f32> {
 
 fn sample_rgb(uv: vec2<f32>) -> vec3<f32> {
   return sample_clamped(uv).rgb;
+}
+
+fn rotate2d(value: vec2<f32>, angle: f32) -> vec2<f32> {
+  let c = cos(angle);
+  let s = sin(angle);
+  return vec2<f32>(value.x * c - value.y * s, value.x * s + value.y * c);
 }
 
 fn effect_texel() -> vec2<f32> {
@@ -516,6 +546,157 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let corrected = color + warmth * temp + magenta_green * tint + split;
     return vec4<f32>(max(corrected, vec3<f32>(0.0)), src.a);
   }
+  if (code == 20u) {
+    let mode = u32(round(clamp(u.params0.x, 0.0, 1.0)));
+    let radius = max(1.0, u.params0.y);
+    let edge_protect = clamp(u.params0.z, 0.0, 1.0);
+    let clarity = clamp(u.params0.w, 0.0, 1.0);
+    let tx = effect_texel() * radius;
+    let north = sample_rgb(uv + vec2<f32>(0.0, tx.y));
+    let south = sample_rgb(uv - vec2<f32>(0.0, tx.y));
+    let east = sample_rgb(uv + vec2<f32>(tx.x, 0.0));
+    let west = sample_rgb(uv - vec2<f32>(tx.x, 0.0));
+    let avg = (north + south + east + west) * 0.25;
+    let detail = color - avg;
+    let edge_weight = mix(1.0, smoothstep(0.015, 0.22, length(detail)), edge_protect);
+    var mode_gain = 1.0;
+    if (mode == 1u) {
+      mode_gain = 0.68;
+    }
+    let sharpened = color + detail * amount * 2.4 * mode_gain * edge_weight;
+    let clarity_rgb = (sharpened - vec3<f32>(0.5)) * (1.0 + clarity * 0.55) + vec3<f32>(0.5);
+    return vec4<f32>(clarity_rgb, src.a);
+  }
+  if (code == 21u) {
+    let angle = u.params0.x * 0.01745329252;
+    let samples = clamp(u.params0.y, 4.0, 32.0);
+    let falloff = clamp(u.params0.z, 0.0, 1.0);
+    let center_bias = clamp(u.params0.w, 0.0, 1.0);
+    let wet = clamp(u.params1.x, 0.0, 1.0);
+    let dir = vec2<f32>(cos(angle), sin(angle));
+    let reach = amount * 72.0 / max(u.resolution_time.xy, vec2<f32>(1.0));
+    var acc = color * (1.0 + center_bias * 2.0);
+    var wsum = 1.0 + center_bias * 2.0;
+    for (var i = 0u; i < 12u; i = i + 1u) {
+      let fi = f32(i) - 5.5;
+      let norm = abs(fi) / 6.0;
+      let sample_enabled = step(norm * 12.0, samples);
+      let weight = sample_enabled * mix(1.0, 1.0 - norm, falloff);
+      let sample_uv = uv + dir * reach * fi / 6.0;
+      acc += sample_rgb(sample_uv) * weight;
+      wsum += weight;
+    }
+    let blurred = acc / max(0.0001, wsum);
+    return vec4<f32>(mix(color, blurred, wet), src.a);
+  }
+  if (code == 22u) {
+    let center = clamp(u.params0.xy, vec2<f32>(0.0), vec2<f32>(1.0));
+    let samples = clamp(u.params0.z, 4.0, 32.0);
+    let falloff = clamp(u.params0.w, 0.0, 1.0);
+    let chromatic = clamp(u.params1.x, 0.0, 1.0);
+    let wet = clamp(u.params1.y, 0.0, 1.0);
+    let dir = uv - center;
+    var acc = color;
+    var wsum = 1.0;
+    for (var i = 1u; i <= 12u; i = i + 1u) {
+      let fi = f32(i);
+      let norm = fi / 12.0;
+      let sample_enabled = step(norm * 24.0, samples);
+      let weight = sample_enabled * mix(1.0, 1.0 - norm, falloff);
+      let offset = dir * amount * norm * 0.62;
+      let sample_uv = uv - offset;
+      var sample_col = sample_rgb(sample_uv);
+      if (chromatic > 0.001) {
+        let c_off = offset * chromatic * 0.18;
+        sample_col = vec3<f32>(
+          sample_rgb(sample_uv + c_off).r,
+          sample_col.g,
+          sample_rgb(sample_uv - c_off).b,
+        );
+      }
+      acc += sample_col * weight;
+      wsum += weight;
+    }
+    let blurred = acc / max(0.0001, wsum);
+    return vec4<f32>(mix(color, blurred, wet), src.a);
+  }
+  if (code == 23u) {
+    let center = clamp(u.params0.xy, vec2<f32>(0.0), vec2<f32>(1.0));
+    let samples = clamp(u.params0.z, 4.0, 32.0);
+    let falloff = clamp(u.params0.w, 0.0, 1.0);
+    let radius_inner = clamp(u.params1.x, 0.0, 1.0);
+    let radius_outer = max(radius_inner + 0.001, clamp(u.params1.y, 0.001, 1.5));
+    let wet = clamp(u.params1.z, 0.0, 1.0);
+    let radial = uv - center;
+    let dist = length(radial) * 1.4142;
+    let mask = smoothstep(radius_inner, radius_outer, dist);
+    var acc = color;
+    var wsum = 1.0;
+    for (var i = 0u; i < 12u; i = i + 1u) {
+      let fi = f32(i) - 5.5;
+      let norm = abs(fi) / 6.0;
+      let sample_enabled = step(norm * 12.0, samples);
+      let weight = sample_enabled * mix(1.0, 1.0 - norm, falloff);
+      let angle = amount * mask * fi * 0.14;
+      acc += sample_rgb(center + rotate2d(radial, angle)) * weight;
+      wsum += weight;
+    }
+    let blurred = acc / max(0.0001, wsum);
+    return vec4<f32>(mix(color, blurred, wet * mask), src.a);
+  }
+  if (code == 24u) {
+    let segments = max(2.0, floor(u.params0.x + 0.5));
+    let base_angle = (u.params0.y + u.resolution_time.z * u.params1.w * 45.0) * 0.01745329252;
+    let center = clamp(u.params0.zw, vec2<f32>(0.0), vec2<f32>(1.0));
+    let zoom = max(0.01, u.params1.x);
+    let mode = u32(round(clamp(u.params1.y, 0.0, 2.0)));
+    let spiral = clamp(u.params1.z, 0.0, 2.0);
+    let p = (uv - center) / zoom;
+    let r = length(p);
+    var a = atan2(p.y, p.x) + base_angle + r * spiral;
+    let seg_angle = 6.28318530718 / segments;
+    a = abs((a - floor(a / seg_angle) * seg_angle) - seg_angle * 0.5);
+    var sample_uv = center + vec2<f32>(cos(a), sin(a)) * r * zoom;
+    if (mode == 1u) {
+      sample_uv = fract(sample_uv);
+    } else if (mode == 2u) {
+      sample_uv = center + rotate2d(sample_uv - center, r * spiral * 2.4);
+    }
+    let kaleido = sample_rgb(sample_uv);
+    return vec4<f32>(mix(color, kaleido, clamp(amount, 0.0, 1.0)), src.a);
+  }
+  if (code == 25u) {
+    let mode = u32(round(clamp(u.params0.x, 0.0, 3.0)));
+    let position = clamp(u.params0.y, 0.0, 1.0);
+    let offset = (clamp(u.params0.z, 0.0, 1.0) - 0.5) * 0.5;
+    let flip_side = u.params0.w > 0.5;
+    var sample_uv = uv;
+    if (mode == 0u) {
+      let on_side = uv.x > position;
+      if (on_side != flip_side) {
+        sample_uv.x = position - (uv.x - position);
+      }
+      sample_uv.x += offset;
+    } else if (mode == 1u) {
+      let on_side = uv.y > position;
+      if (on_side != flip_side) {
+        sample_uv.y = position - (uv.y - position);
+      }
+      sample_uv.y += offset;
+    } else if (mode == 2u) {
+      sample_uv = vec2<f32>(
+        position - abs(uv.x - position),
+        position - abs(uv.y - position),
+      ) + vec2<f32>(offset);
+    } else {
+      if (uv.x + uv.y > 1.0) {
+        sample_uv = vec2<f32>(1.0 - uv.y, 1.0 - uv.x);
+      }
+      sample_uv += vec2<f32>(offset, -offset);
+    }
+    let mirrored = sample_rgb(sample_uv);
+    return vec4<f32>(mix(color, mirrored, clamp(amount, 0.0, 1.0)), src.a);
+  }
   return src;
 }
 
@@ -681,6 +862,60 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param2 = clampNumber(params.highlightTemp ?? params.param2, -1, 1, 0);
     param3 = clampNumber(params.splitTone ?? params.param3, 0, 1, 0);
     param4 = clampNumber(params.autoCycle ?? params.param4, 0, 1, 0);
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'sharpen') {
+    param0 = clampNumber(params.mode ?? params.param0, 0, 1, 0);
+    param1 = clampNumber(params.radius ?? params.param1, 1, 8, 2);
+    param2 = clampNumber(params.edgeProtect ?? params.param2, 0, 1, 0.2);
+    param3 = clampNumber(params.param3 ?? params.intensity ?? 0, 0, 1, 0);
+    param4 = 0;
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'directional-blur') {
+    param0 = clampNumber(params.angle ?? params.param0, 0, 360, 0);
+    param1 = clampNumber(params.samples ?? params.count ?? params.param1, 4, 32, 16);
+    param2 = clampNumber(params.falloff ?? params.param2, 0, 1, 0.3);
+    param3 = clampNumber(params.centerBias ?? params.param3, 0, 1, 0);
+    param4 = clampNumber(params.outputMix ?? params.param4, 0, 1, 1);
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'zoom-blur') {
+    param0 = clampNumber(params.centerX ?? params.param0, 0, 1, 0.5);
+    param1 = clampNumber(params.centerY ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.samples ?? params.count ?? params.param2, 4, 32, 16);
+    param3 = clampNumber(params.falloff ?? params.param3, 0, 1, 0.3);
+    param4 = clampNumber(params.chromatic ?? params.param4, 0, 1, 0);
+    param5 = clampNumber(params.outputMix ?? params.param5, 0, 1, 1);
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'radial-blur') {
+    param0 = clampNumber(params.centerX ?? params.param0, 0, 1, 0.5);
+    param1 = clampNumber(params.centerY ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.samples ?? params.count ?? params.param2, 4, 32, 16);
+    param3 = clampNumber(params.falloff ?? params.param3, 0, 1, 0.3);
+    param4 = clampNumber(params.radiusInner ?? params.param4, 0, 1, 0);
+    param5 = clampNumber(params.radiusOuter ?? params.param5, 0, 1.5, 0.7);
+    param6 = clampNumber(params.outputMix ?? params.param6, 0, 1, 1);
+    param7 = 0;
+  } else if (options.effect === 'kaleidoscope') {
+    param0 = clampNumber(params.segments ?? params.count ?? params.param0, 2, 32, 6);
+    param1 = clampNumber(params.angle ?? params.param1, 0, 360, 0);
+    param2 = clampNumber(params.centerX ?? params.param2, 0, 1, 0.5);
+    param3 = clampNumber(params.centerY ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.zoom ?? params.param4, 0.25, 4, 1);
+    param5 = clampNumber(params.mode ?? params.param5, 0, 2, 0);
+    param6 = clampNumber(params.spiral ?? params.param6, 0, 2, 0);
+    param7 = clampNumber(params.animSpeed ?? params.speed ?? params.param7, 0, 2, 0);
+  } else if (options.effect === 'mirror') {
+    param0 = clampNumber(params.mode ?? params.param0, 0, 3, 0);
+    param1 = clampNumber(params.position ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.offset ?? params.param2, 0, 1, 0.5);
+    param3 = clampNumber(params.flipSide ?? params.param3, 0, 1, 0);
+    param4 = 0;
     param5 = 0;
     param6 = 0;
     param7 = 0;

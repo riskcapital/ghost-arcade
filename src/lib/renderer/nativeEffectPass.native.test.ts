@@ -190,6 +190,12 @@ describe('Native effect-pass template', () => {
       ['exposure', 17],
       ['vibrance', 18],
       ['temperature-tint', 19],
+      ['sharpen', 20],
+      ['directional-blur', 21],
+      ['zoom-blur', 22],
+      ['radial-blur', 23],
+      ['kaleidoscope', 24],
+      ['mirror', 25],
     ]);
     expect(nativeEffectPassManifestEntry('posterize')).toMatchObject({
       code: 8,
@@ -508,6 +514,82 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+    ]);
+  });
+
+  it('packs native blur and symmetry params across the shared effect slots', () => {
+    expect(packNativeEffectPassUniforms({
+      sourceId: 'src',
+      targetSourceId: 'dst',
+      effect: 'directional-blur',
+      width: 320,
+      height: 180,
+      time: 0.5,
+      frameDelta: 1 / 24,
+      frameIndex: 3,
+      amount: 0.75,
+      params: {
+        angle: 35,
+        samples: 20,
+        falloff: 0.4,
+        centerBias: 0.2,
+        outputMix: 0.9,
+      },
+    })).toEqual([
+      320,
+      180,
+      0.5,
+      1 / 24,
+      21,
+      0.75,
+      1,
+      3,
+      35,
+      20,
+      0.4,
+      0.2,
+      0.9,
+      0,
+      0,
+      0,
+    ]);
+    expect(packNativeEffectPassUniforms({
+      sourceId: 'src',
+      targetSourceId: 'dst',
+      effect: 'kaleidoscope',
+      width: 320,
+      height: 180,
+      time: 0.5,
+      frameDelta: 1 / 24,
+      frameIndex: 3,
+      amount: 0.8,
+      params: {
+        segments: 9,
+        angle: 45,
+        centerX: 0.4,
+        centerY: 0.6,
+        zoom: 1.25,
+        mode: 2,
+        spiral: 0.7,
+        animSpeed: 0.2,
+      },
+    })).toEqual([
+      320,
+      180,
+      0.5,
+      1 / 24,
+      24,
+      0.8,
+      1,
+      3,
+      9,
+      45,
+      0.4,
+      0.6,
+      1.25,
+      2,
+      0.7,
+      0.2,
     ]);
   });
 
@@ -1000,9 +1082,181 @@ describe('Native effect-pass template', () => {
             expect(rgbDistance(sourceRgb, glitchedRgb)).toBeGreaterThan(0.01);
           },
         },
+        {
+          id: 'sharpen',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-sharpen',
+            effect: 'sharpen',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 10,
+            amount: 1.4,
+            params: {
+              mode: 0,
+              radius: 2,
+              edgeProtect: 0,
+              intensity: 0.6,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.52, 0.55);
+            const sharpenedRgb = snapshotPixelRgb(snapshot, pixels, 0.52, 0.55);
+            expect(rgbDistance(sourceRgb, sharpenedRgb)).toBeGreaterThan(0.008);
+          },
+        },
+        {
+          id: 'directional-blur',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-directional-blur',
+            effect: 'directional-blur',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 11,
+            amount: 0.85,
+            params: {
+              angle: 0,
+              samples: 24,
+              falloff: 0,
+              centerBias: 0,
+              outputMix: 1,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.70, 0.48);
+            const blurredRgb = snapshotPixelRgb(snapshot, pixels, 0.70, 0.48);
+            expect(rgbDistance(sourceRgb, blurredRgb)).toBeGreaterThan(0.01);
+          },
+        },
+        {
+          id: 'zoom-blur',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-zoom-blur',
+            effect: 'zoom-blur',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 12,
+            amount: 0.75,
+            params: {
+              centerX: 0.5,
+              centerY: 0.5,
+              samples: 24,
+              falloff: 0.1,
+              chromatic: 0.4,
+              outputMix: 1,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.78, 0.5);
+            const blurredRgb = snapshotPixelRgb(snapshot, pixels, 0.78, 0.5);
+            expect(rgbDistance(sourceRgb, blurredRgb)).toBeGreaterThan(0.012);
+          },
+        },
+        {
+          id: 'radial-blur',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-radial-blur',
+            effect: 'radial-blur',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 13,
+            amount: 0.9,
+            params: {
+              centerX: 0.5,
+              centerY: 0.5,
+              samples: 24,
+              falloff: 0.1,
+              radiusInner: 0,
+              radiusOuter: 1,
+              outputMix: 1,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.78, 0.5);
+            const blurredRgb = snapshotPixelRgb(snapshot, pixels, 0.78, 0.5);
+            expect(rgbDistance(sourceRgb, blurredRgb)).toBeGreaterThan(0.01);
+          },
+        },
+        {
+          id: 'kaleidoscope',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-kaleidoscope',
+            effect: 'kaleidoscope',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 14,
+            amount: 1,
+            params: {
+              segments: 8,
+              angle: 30,
+              centerX: 0.5,
+              centerY: 0.5,
+              zoom: 1,
+              mode: 0,
+              spiral: 0.4,
+              animSpeed: 0,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const left = snapshotPixelRgb(snapshot, pixels, 0.22, 0.45);
+            const right = snapshotPixelRgb(snapshot, pixels, 0.78, 0.45);
+            expect(rgbDistance(left, right)).toBeLessThan(0.42);
+          },
+        },
+        {
+          id: 'mirror',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-mirror',
+            effect: 'mirror',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 15,
+            amount: 1,
+            params: {
+              mode: 0,
+              position: 0.5,
+              offset: 0.5,
+              flipSide: 0,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const left = snapshotPixelRgb(snapshot, pixels, 0.25, 0.52);
+            const right = snapshotPixelRgb(snapshot, pixels, 0.75, 0.52);
+            expect(rgbDistance(left, right)).toBeLessThan(0.08);
+          },
+        },
       ];
 
-      for (const fixture of fixtures) {
+      for (const [fixtureIndex, fixture] of fixtures.entries()) {
+        await rpc.send('submit_commands', {
+          commands: [
+            {
+              type: 'upload_source_frame',
+              source_id: sourceId,
+              width: 32,
+              height: 32,
+              rgba_b64: Buffer.from(sourceBytes).toString('base64'),
+              seq: 100 + fixtureIndex,
+            },
+          ],
+        }, 5000);
         const graphResult = await rpc.send('compute_graph', fixture.graph.config, 8000);
         expect(graphResult?.render).toMatchObject({
           target: 'source_frame',
