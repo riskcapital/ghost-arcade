@@ -2325,6 +2325,7 @@ impl App {
     }
 
     fn capabilities(&self) -> Value {
+        let shared_texture_media_transport = self.shared_texture_media_transport_ready();
         let features = json!({
             "separate_process_render_core": true,
             "managed_native_window": true,
@@ -2393,7 +2394,7 @@ impl App {
             "storage_buffer_instruments": true,
             "shared_texture_source_frame_upload": cfg!(target_os = "macos"),
             "native_output_mirror_texture": true,
-            "shared_texture_upload": false,
+            "shared_texture_upload": shared_texture_media_transport,
             "shared_texture_output_export": self.renderer.as_ref().is_some_and(RenderState::output_export_ready),
             "native_texture_share_sender": false,
             "native_media_decode": true,
@@ -2653,10 +2654,23 @@ impl App {
             "limits": limits,
             "notes": [
                 "Native graph instruments use shared WGSL for 3D Smoke, Particle Field, Volumetric Spheres, Ink Cloud, Flythrough, Pixel Particles, and Point Cloud FX; legacy native instrument layers are still visual proxies.",
-                "Canvas/base64 source-frame upload is a development fallback; macOS source-frame shared texture upload accepts IOSurfaceID handles, while full shared media transport remains pending.",
+                "Canvas/base64 source-frame upload is a development fallback; macOS media transport can ingest IOSurfaceID source-frame handles; DXGI import remains pending for Windows.",
                 "Local video media decode is render-clock driven in the native core: visible video sources pump FFmpeg-decoded frame windows into native source-frame textures with adjacent-frame cache prefetch."
             ]
         })
+    }
+
+    fn shared_texture_media_transport_ready(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            self.renderer
+                .as_ref()
+                .is_some_and(RenderState::output_export_ready)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            false
+        }
     }
 
     fn status(&self) -> CoreStatus {
@@ -3117,8 +3131,8 @@ impl App {
                     {
                         "id": "shared-texture-upload",
                         "label": "Shared texture media transport",
-                        "ok": false,
-                        "detail": "full media shared texture transport is pending; source-frame shared handle upload is tracked separately"
+                        "ok": self.shared_texture_media_transport_ready(),
+                        "detail": if self.shared_texture_media_transport_ready() { "macOS IOSurfaceID media transport is active for source-frame handles; local video/still media bypasses canvas/base64 through native decode" } else { "full media shared texture transport is pending for this backend" }
                     },
                     {
                         "id": "native-output-mirror",
@@ -5661,7 +5675,7 @@ impl App {
             "video_decode": true,
             "source_frame_fallback": true,
             "shared_texture_source_frame_upload": cfg!(target_os = "macos"),
-            "shared_texture_upload": false,
+            "shared_texture_upload": self.shared_texture_media_transport_ready(),
             "supported_source_types": ["image", "video"],
             "supported_static_image_extensions": [
                 "avif",
@@ -5679,7 +5693,7 @@ impl App {
             "notes": [
                 "Local still images can decode directly into native source-frame textures.",
                 "Local videos can prefetch bounded timestamped frames and adjacent-frame windows into native source-frame textures via FFmpeg.",
-                "Visible local video layers decode continuously from the native render/media clock through the decode pump; GPU shared-texture media transport is still pending."
+                "Visible local video layers decode continuously from the native render/media clock through the decode pump; macOS shared media sources ingest IOSurfaceID handles, while DXGI import remains pending."
             ]
         })
     }

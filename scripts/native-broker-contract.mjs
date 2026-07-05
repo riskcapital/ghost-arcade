@@ -490,6 +490,10 @@ try {
     `broker output shared-texture export capability should match macOS IOSurface support: ${JSON.stringify(capabilities?.features)}`,
   );
   assert(
+    !!capabilities?.features?.shared_texture_upload === outputExportExpected,
+    `broker shared-texture media transport capability should match macOS IOSurface support: ${JSON.stringify(capabilities?.features)}`,
+  );
+  assert(
     !!capabilities?.features?.native_texture_share_sender === outputExportExpected,
     `broker native texture-share sender capability should match app bridge support: ${JSON.stringify(capabilities?.features)}`,
   );
@@ -1523,13 +1527,22 @@ try {
   assert(checks.get('native-output-driver')?.ok, `broker readiness omitted native output driver: ${JSON.stringify(readiness)}`);
   assert(readiness?.modes?.shadow?.ok, `broker readiness shadow mode should be ready: ${JSON.stringify(readiness?.modes)}`);
   assert(readiness?.modes?.output_driver?.ok, `broker readiness output-driver mode should be ready: ${JSON.stringify(readiness?.modes)}`);
-  assert(
-    readiness?.modes?.full_v2?.ok === false &&
-      Array.isArray(readiness?.modes?.full_v2?.blockers) &&
-      readiness.modes.full_v2.blockers.some((blocker) => String(blocker).includes('shared-texture media transport')) &&
-      !readiness.modes.full_v2.blockers.some((blocker) => String(blocker).includes('continuous native video decode')),
-    `broker readiness should keep full_v2 blocked on real unfinished native work: ${JSON.stringify(readiness?.modes)}`,
-  );
+  if (outputExportExpected) {
+    assert(
+      readiness?.modes?.full_v2?.ok === true &&
+        Array.isArray(readiness?.modes?.full_v2?.blockers) &&
+        readiness.modes.full_v2.blockers.length === 0,
+      `broker readiness should mark full_v2 ready on macOS once native decode and IOSurface transport are active: ${JSON.stringify(readiness?.modes)}`,
+    );
+  } else {
+    assert(
+      readiness?.modes?.full_v2?.ok === false &&
+        Array.isArray(readiness?.modes?.full_v2?.blockers) &&
+        readiness.modes.full_v2.blockers.some((blocker) => String(blocker).includes('shared-texture media transport')) &&
+        !readiness.modes.full_v2.blockers.some((blocker) => String(blocker).includes('continuous native video decode')),
+      `broker readiness should keep full_v2 blocked on real unfinished native work: ${JSON.stringify(readiness?.modes)}`,
+    );
+  }
   assert(checks.get('native-static-image-prefetch')?.ok, `broker readiness omitted native static-image prefetch: ${JSON.stringify(readiness)}`);
   assert(checks.get('native-mp4-frame-encoder')?.ok, `broker readiness omitted native MP4 frame encoder: ${JSON.stringify(readiness)}`);
   assert(checks.get('native-recording')?.ok, `broker readiness omitted native recording: ${JSON.stringify(readiness)}`);
@@ -1540,7 +1553,10 @@ try {
       JSON.stringify(checks.get('managed-output')),
     );
   }
-  assert(checks.get('shared-texture-upload')?.ok === false, 'broker should report shared texture upload as unavailable until implemented');
+  assert(
+    checks.get('shared-texture-upload')?.ok === outputExportExpected,
+    `broker shared texture media transport readiness should match platform support: ${JSON.stringify(readiness)}`,
+  );
   assert(
     checks.get('shared-texture-output-export')?.ok === outputExportExpected,
     `broker output shared-texture export readiness should match platform support: ${JSON.stringify(readiness)}`,

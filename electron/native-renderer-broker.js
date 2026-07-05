@@ -794,7 +794,7 @@ class NativeRendererBroker {
         ? [
             'Local still images can decode directly into native source-frame textures.',
             features.native_media_decode && features.media_prefetch
-              ? 'Local videos decode through the native render-clock pump into source-frame textures; full GPU shared-texture media transport is tracked separately.'
+              ? 'Local videos decode through the native render-clock pump into source-frame textures; supported shared media sources use OS texture handles.'
               : 'Video and full media prefetch still use source-frame/shared-texture fallback paths.',
           ]
         : ['Native render core is not running or does not advertise static image decode.'],
