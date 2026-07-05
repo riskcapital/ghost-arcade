@@ -24,6 +24,7 @@ let nativeGraphRouteRequirements: () => ReadonlyArray<{
   shaderIds: readonly string[];
 }>;
 let nativeEffectPassDescriptorIds: (capabilities: any) => string[];
+let buildNativeSharedTextureSourceFrameCommand: typeof import('./nativeRendererSync').buildNativeSharedTextureSourceFrameCommand;
 let NativeRendererSyncCtor: typeof import('./nativeRendererSync').NativeRendererSync;
 
 beforeAll(async () => {
@@ -68,6 +69,7 @@ beforeAll(async () => {
     nativeGraphRouteRequirements,
     nativeEffectPassDescriptorIds,
     nativeEffectPassFromDescriptor,
+    buildNativeSharedTextureSourceFrameCommand,
     NativeRendererSync: NativeRendererSyncCtor,
   } = await import('./nativeRendererSync'));
 });
@@ -157,6 +159,44 @@ describe('native renderer sync render clock routing', () => {
     sync.setRenderClock(null);
     sync.liveClockOriginMs = 1000;
     expect(sync.nativeVideoPlaybackTimeSeconds({ videoElement: { currentTime: Number.NaN } }, 2500)).toBe(1.5);
+  });
+});
+
+describe('native renderer sync shared-texture source frames', () => {
+  it('uses the dedicated GPU shared-texture command shape', () => {
+    const command = buildNativeSharedTextureSourceFrameCommand({
+      sourceId: 'source-a',
+      width: 1920,
+      height: 1080,
+      info: {
+        available: true,
+        platform: 'syphon',
+        label: 'Syphon',
+        senderName: 'Main Sender',
+        format: 'bgra8unorm',
+        frame: 42,
+        handle: '1234',
+        handleEncoding: 'integer',
+        handleByteLength: 4,
+      },
+      seq: 7,
+    });
+
+    expect(command).toMatchObject({
+      type: 'upload_source_gpu_shared_texture',
+      source_id: 'source-a',
+      width: 1920,
+      height: 1080,
+      shared_handle: '1234',
+      platform: 'syphon',
+      format: 'bgra8unorm',
+      handle_encoding: 'integer',
+      handle_byte_length: 4,
+      frame: 42,
+      sender_name: 'Main Sender',
+      seq: 7,
+    });
+    expect((command as any).shared_texture_platform).toBeUndefined();
   });
 });
 
