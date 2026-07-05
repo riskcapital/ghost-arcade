@@ -2304,7 +2304,7 @@ export function buildNativeEffectPassChainGraph(options: NativeEffectPassChainOp
     const manifest = nativeEffectPassManifestEntry(effect.effect);
     const targetSourceId = index === effects.length - 1
       ? finalTargetSourceId
-      : `${intermediatePrefix}:step:${index}`;
+      : `${intermediatePrefix}:step:${index % 2}`;
     const uniformId = `effect-pass:${safeFinalTarget}:pass:${index}:uniform`;
     const passOptions: NativeEffectPassOptions = {
       ...options,

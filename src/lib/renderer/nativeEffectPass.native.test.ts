@@ -1029,6 +1029,68 @@ describe('Native effect-pass template', () => {
     ]));
   });
 
+  it('ping-pongs effect-chain intermediates to stay within native source-frame slots', () => {
+    const graph = buildNativeEffectPassChainGraph({
+      sourceId: 'gpu:layer-long:source',
+      targetSourceId: 'gpu:layer-long:effect:final',
+      intermediatePrefix: 'gpu:layer-long:chain',
+      effects: [
+        'invert',
+        'grayscale',
+        'brightness',
+        'contrast',
+        'gamma',
+        'saturation',
+        'hue',
+        'posterize',
+        'noise',
+        'pixelate',
+      ].map((effect) => ({ effect: effect as any, amount: 1 })),
+      width: 640,
+      height: 360,
+      time: 1,
+      frameDelta: 1 / 60,
+      frameIndex: 60,
+      seq: 120,
+    });
+
+    const targets = graph.config.render_passes.map((pass) => String(pass.source_id));
+    expect(targets).toEqual([
+      'gpu:layer-long:chain:step:0',
+      'gpu:layer-long:chain:step:1',
+      'gpu:layer-long:chain:step:0',
+      'gpu:layer-long:chain:step:1',
+      'gpu:layer-long:chain:step:0',
+      'gpu:layer-long:chain:step:1',
+      'gpu:layer-long:chain:step:0',
+      'gpu:layer-long:chain:step:1',
+      'gpu:layer-long:chain:step:0',
+      'gpu:layer-long:effect:final',
+    ]);
+
+    const bindingSources = graph.config.render_passes.map((pass) => {
+      const binding = (pass.bindings as Array<Record<string, unknown>>).find((entry) => entry.binding === 0);
+      return String(binding?.source_id);
+    });
+    expect(bindingSources).toEqual([
+      'gpu:layer-long:source',
+      'gpu:layer-long:chain:step:0',
+      'gpu:layer-long:chain:step:1',
+      'gpu:layer-long:chain:step:0',
+      'gpu:layer-long:chain:step:1',
+      'gpu:layer-long:chain:step:0',
+      'gpu:layer-long:chain:step:1',
+      'gpu:layer-long:chain:step:0',
+      'gpu:layer-long:chain:step:1',
+      'gpu:layer-long:chain:step:0',
+    ]);
+
+    expect(new Set(targets.slice(0, -1))).toEqual(new Set([
+      'gpu:layer-long:chain:step:0',
+      'gpu:layer-long:chain:step:1',
+    ]));
+  });
+
   const itIfNativeCore = existsSync(nativeCoreBin) ? it : it.skip;
 
   itIfNativeCore('renders an uploaded source frame through the native effect-pass graph', async () => {
