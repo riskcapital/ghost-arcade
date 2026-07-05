@@ -80,6 +80,10 @@ const CORE_RPC_METHODS: &[&str] = &[
     "upload_source_gpu_shared_texture",
     "output_shared_texture",
     "get_output_shared_texture",
+    "set_stage3d_scene",
+    "get_stage3d_scene_summary",
+    "set_projection_sim_scene",
+    "get_projection_sim_scene_summary",
     "readiness",
     "get_readiness_report",
     "reset_stats",
@@ -151,6 +155,8 @@ const CORE_COMMAND_TYPES: &[&str] = &[
     "upload_source_preview",
     "upload_source_frame",
     "upload_source_gpu_shared_texture",
+    "set_stage3d_scene",
+    "set_projection_sim_scene",
     "precompile_shader",
     "bind_isf_shader",
     "update_isf_uniforms",
@@ -1487,6 +1493,57 @@ struct RenderState {
     last_frame_error: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+struct NativeSceneBridgeSummary {
+    schema_version: u32,
+    scene_kind: String,
+    scene_id: String,
+    scene_name: String,
+    source_schema_version: u32,
+    payload_bytes: u64,
+    updated_at_ms: u64,
+    node_count: u32,
+    screen_count: u32,
+    primitive_count: u32,
+    truss_count: u32,
+    light_count: u32,
+    laser_count: u32,
+    fog_volume_count: u32,
+    user_element_count: u32,
+    scenery_override_count: u32,
+    projector_count: u32,
+    object_count: u32,
+    model_count: u32,
+    point_cloud_count: u32,
+}
+
+impl NativeSceneBridgeSummary {
+    fn empty(scene_kind: &str) -> Self {
+        Self {
+            schema_version: 1,
+            scene_kind: scene_kind.to_string(),
+            scene_id: String::new(),
+            scene_name: String::new(),
+            source_schema_version: 0,
+            payload_bytes: 0,
+            updated_at_ms: 0,
+            node_count: 0,
+            screen_count: 0,
+            primitive_count: 0,
+            truss_count: 0,
+            light_count: 0,
+            laser_count: 0,
+            fog_volume_count: 0,
+            user_element_count: 0,
+            scenery_override_count: 0,
+            projector_count: 0,
+            object_count: 0,
+            model_count: 0,
+            point_cloud_count: 0,
+        }
+    }
+}
+
 struct App {
     response_tx: Sender<String>,
     renderer: Option<RenderState>,
@@ -1534,6 +1591,10 @@ struct App {
     source_frames: HashMap<String, SourceFrame>,
     source_frame_slots: HashMap<String, usize>,
     source_frame_signatures: HashMap<String, String>,
+    stage3d_scene: Option<Value>,
+    stage3d_scene_summary: NativeSceneBridgeSummary,
+    projection_sim_scene: Option<Value>,
+    projection_sim_scene_summary: NativeSceneBridgeSummary,
     render_clock_mode: String,
     render_clock_time: Option<f32>,
     render_clock_delta: f32,
@@ -1630,6 +1691,10 @@ impl App {
             source_frames: HashMap::new(),
             source_frame_slots: HashMap::new(),
             source_frame_signatures: HashMap::new(),
+            stage3d_scene: None,
+            stage3d_scene_summary: NativeSceneBridgeSummary::empty("stage3d"),
+            projection_sim_scene: None,
+            projection_sim_scene_summary: NativeSceneBridgeSummary::empty("projection-sim"),
             render_clock_mode: "live".to_string(),
             render_clock_time: None,
             render_clock_delta: 1.0 / 60.0,
@@ -1753,6 +1818,8 @@ impl App {
             "present_policy": true,
             "managed_output_attach": true,
             "managed_output_window_control": true,
+            "native_stage3d_scene_ingest": true,
+            "native_projection_sim_scene_ingest": true,
             "native_recording": false,
             "native_stage3d": false,
             "native_projection_sim": false
@@ -1983,6 +2050,10 @@ impl App {
                 }
             ],
             "audio_uniform_layout": ghost_audio_uniform_layout(),
+            "native_scene_bridge": {
+                "stage3d": self.stage3d_scene_summary,
+                "projection_sim": self.projection_sim_scene_summary,
+            },
             "features": features,
             "limits": limits,
             "notes": [
@@ -2385,6 +2456,12 @@ impl App {
             }
             "output_shared_texture" | "get_output_shared_texture" => {
                 Ok(self.output_shared_texture())
+            }
+            "set_stage3d_scene" => self.set_stage3d_scene(&req.params),
+            "get_stage3d_scene_summary" => Ok(json!(self.stage3d_scene_summary.clone())),
+            "set_projection_sim_scene" => self.set_projection_sim_scene(&req.params),
+            "get_projection_sim_scene_summary" => {
+                Ok(json!(self.projection_sim_scene_summary.clone()))
             }
             "capabilities" | "get_capabilities" => Ok(self.capabilities()),
             "compute_probe" | "run_compute_probe" => self.compute_probe(&req.params),
@@ -2965,6 +3042,18 @@ impl App {
                 "set_render_clock" => self.apply_render_clock(command),
                 "bind_media_source" => self.apply_media_source(command),
                 "decode_media_source" => self.apply_decode_media_source(command),
+                "set_stage3d_scene" => {
+                    if self.set_stage3d_scene(command).is_err() {
+                        dropped = dropped.saturating_add(1);
+                        continue;
+                    }
+                }
+                "set_projection_sim_scene" => {
+                    if self.set_projection_sim_scene(command).is_err() {
+                        dropped = dropped.saturating_add(1);
+                        continue;
+                    }
+                }
                 "upload_source_preview" => self.apply_source_preview(command),
                 "upload_source_frame" | "upload_source_gpu_shared_texture" => {
                     self.apply_source_frame(command)
@@ -4542,6 +4631,22 @@ impl App {
             return;
         };
         self.decode_native_image_source(&source_id, &uri);
+    }
+
+    fn set_stage3d_scene(&mut self, params: &Value) -> Result<Value, String> {
+        let scene = scene_payload(params, "stage3d")?;
+        let summary = summarize_stage3d_scene(scene);
+        self.stage3d_scene = Some(scene.clone());
+        self.stage3d_scene_summary = summary.clone();
+        Ok(json!(summary))
+    }
+
+    fn set_projection_sim_scene(&mut self, params: &Value) -> Result<Value, String> {
+        let scene = scene_payload(params, "projection_sim")?;
+        let summary = summarize_projection_sim_scene(scene);
+        self.projection_sim_scene = Some(scene.clone());
+        self.projection_sim_scene_summary = summary.clone();
+        Ok(json!(summary))
     }
 
     fn prefetch_media(&mut self, params: &Value) -> Result<Value, String> {
@@ -7476,6 +7581,110 @@ fn spawn_stdin_reader(proxy: winit::event_loop::EventLoopProxy<UserEvent>) {
             }
         }
     });
+}
+
+fn scene_payload<'a>(params: &'a Value, scene_key: &str) -> Result<&'a Value, String> {
+    let scene = params
+        .get("scene")
+        .or_else(|| params.get(scene_key))
+        .unwrap_or(params);
+    if !scene.is_object() {
+        return Err(format!(
+            "native {scene_key} scene ingest requires a JSON object scene"
+        ));
+    }
+    Ok(scene)
+}
+
+fn scene_payload_bytes(scene: &Value) -> u64 {
+    serde_json::to_vec(scene)
+        .map(|bytes| bytes.len() as u64)
+        .unwrap_or(0)
+}
+
+fn scene_bridge_epoch_ms() -> u64 {
+    epoch_ms().min(u64::MAX as u128) as u64
+}
+
+fn summarize_stage3d_scene(scene: &Value) -> NativeSceneBridgeSummary {
+    let mut summary = NativeSceneBridgeSummary::empty("stage3d");
+    summary.scene_id = string_at(scene, &["id"]).unwrap_or_default();
+    summary.scene_name = string_at(scene, &["name"]).unwrap_or_default();
+    summary.source_schema_version = number_at(scene, &["schemaVersion"])
+        .unwrap_or(0.0)
+        .round()
+        .clamp(0.0, u32::MAX as f64) as u32;
+    summary.payload_bytes = scene_payload_bytes(scene);
+    summary.updated_at_ms = scene_bridge_epoch_ms();
+    count_stage3d_nodes(scene.get("nodes"), &mut summary);
+
+    if let Some(user_elements) = scene.get("userElements").and_then(Value::as_array) {
+        summary.user_element_count = user_elements.len().min(u32::MAX as usize) as u32;
+    }
+    summary.scenery_override_count = scene
+        .get("sceneryOverrides")
+        .and_then(Value::as_object)
+        .map(|object| object.len().min(u32::MAX as usize) as u32)
+        .unwrap_or(0);
+    summary
+}
+
+fn count_stage3d_nodes(value: Option<&Value>, summary: &mut NativeSceneBridgeSummary) {
+    let Some(nodes) = value.and_then(Value::as_array) else {
+        return;
+    };
+    for node in nodes {
+        summary.node_count = summary.node_count.saturating_add(1);
+        match node.get("type").and_then(Value::as_str).unwrap_or_default() {
+            "led-screen" => summary.screen_count = summary.screen_count.saturating_add(1),
+            "primitive" | "svg-extrude" => {
+                summary.primitive_count = summary.primitive_count.saturating_add(1)
+            }
+            "truss" => summary.truss_count = summary.truss_count.saturating_add(1),
+            "spot-light" | "point-light" | "rect-area-light" => {
+                summary.light_count = summary.light_count.saturating_add(1)
+            }
+            "laser" => summary.laser_count = summary.laser_count.saturating_add(1),
+            "fog-volume" => summary.fog_volume_count = summary.fog_volume_count.saturating_add(1),
+            "imported-glb" => summary.model_count = summary.model_count.saturating_add(1),
+            _ => {}
+        }
+        count_stage3d_nodes(node.get("children"), summary);
+    }
+}
+
+fn summarize_projection_sim_scene(scene: &Value) -> NativeSceneBridgeSummary {
+    let mut summary = NativeSceneBridgeSummary::empty("projection-sim");
+    summary.scene_id = string_at(scene, &["id"]).unwrap_or_default();
+    summary.scene_name = string_at(scene, &["name"]).unwrap_or_default();
+    summary.source_schema_version = number_at(scene, &["schemaVersion"])
+        .unwrap_or(0.0)
+        .round()
+        .clamp(0.0, u32::MAX as f64) as u32;
+    summary.payload_bytes = scene_payload_bytes(scene);
+    summary.updated_at_ms = scene_bridge_epoch_ms();
+
+    if let Some(projectors) = scene.get("projectors").and_then(Value::as_array) {
+        summary.projector_count = projectors.len().min(u32::MAX as usize) as u32;
+    }
+    if let Some(objects) = scene.get("objects").and_then(Value::as_array) {
+        summary.object_count = objects.len().min(u32::MAX as usize) as u32;
+        for object in objects {
+            match object
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+            {
+                "primitive" => summary.primitive_count = summary.primitive_count.saturating_add(1),
+                "model" => summary.model_count = summary.model_count.saturating_add(1),
+                "pointcloud" => {
+                    summary.point_cloud_count = summary.point_cloud_count.saturating_add(1)
+                }
+                _ => {}
+            }
+        }
+    }
+    summary
 }
 
 fn number_at(value: &Value, path: &[&str]) -> Option<f64> {

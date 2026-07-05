@@ -210,6 +210,13 @@ try {
   assert(capabilities?.features?.native_static_image_decode, 'broker capabilities lost native still-image decode support');
   assert(capabilities?.features?.native_static_image_prefetch, 'broker capabilities lost native still-image prefetch support');
   assert(capabilities?.features?.native_compositor_manifest, 'broker capabilities lost native compositor manifest support');
+  assert(
+    capabilities?.features?.native_stage3d_scene_ingest &&
+      capabilities?.features?.native_projection_sim_scene_ingest &&
+      capabilities?.features?.native_stage3d === false &&
+      capabilities?.features?.native_projection_sim === false,
+    `broker scene bridge should advertise ingest without claiming native 3D rendering: ${JSON.stringify(capabilities?.features)}`,
+  );
   const compositorBlendModes = new Map(
     (capabilities?.native_compositor_blend_modes ?? []).map((entry) => [entry.id, Number(entry.code)]),
   );
@@ -239,6 +246,15 @@ try {
   assert(
     capabilities?.implemented_command_types?.includes('upload_source_gpu_shared_texture'),
     `broker capabilities missing explicit shared-texture upload command: ${JSON.stringify(capabilities?.implemented_command_types)}`,
+  );
+  assert(
+    capabilities?.implemented_methods?.includes('set_stage3d_scene') &&
+      capabilities?.implemented_methods?.includes('get_stage3d_scene_summary') &&
+      capabilities?.implemented_methods?.includes('set_projection_sim_scene') &&
+      capabilities?.implemented_methods?.includes('get_projection_sim_scene_summary') &&
+      capabilities?.implemented_command_types?.includes('set_stage3d_scene') &&
+      capabilities?.implemented_command_types?.includes('set_projection_sim_scene'),
+    `broker capabilities missing native scene-ingest bridge: ${JSON.stringify(capabilities)}`,
   );
   assert(
     capabilities?.implemented_methods?.includes('clear_runtime_caches'),
@@ -415,6 +431,72 @@ try {
     assert(Array.isArray(entry.features) && entry.features.includes(required.feature), `broker graph ${required.id} manifest missing ${required.feature}: ${JSON.stringify(entry)}`);
     assert(String(entry.parity ?? '').length > 0, `broker graph ${required.id} missing parity metadata: ${JSON.stringify(entry)}`);
   }
+
+  const stage3dSummary = await broker.invoke('native_renderer_set_stage3d_scene', {
+    scene: {
+      id: 'contract-stage',
+      name: 'Contract Stage',
+      schemaVersion: 1,
+      nodes: [
+        { id: 'screen-1', type: 'led-screen', children: [] },
+        {
+          id: 'group-1',
+          type: 'group',
+          children: [
+            { id: 'spot-1', type: 'spot-light' },
+            { id: 'fog-1', type: 'fog-volume' },
+          ],
+        },
+        { id: 'truss-1', type: 'truss' },
+        { id: 'model-1', type: 'imported-glb' },
+      ],
+      userElements: [{ id: 'user-box', type: 'box' }],
+      sceneryOverrides: { deck: { position: [0, 0, 0] } },
+    },
+  });
+  assert(
+    stage3dSummary?.scene_kind === 'stage3d' &&
+      stage3dSummary?.screen_count === 1 &&
+      stage3dSummary?.light_count === 1 &&
+      stage3dSummary?.fog_volume_count === 1 &&
+      stage3dSummary?.truss_count === 1 &&
+      stage3dSummary?.model_count === 1 &&
+      stage3dSummary?.user_element_count === 1 &&
+      stage3dSummary?.scenery_override_count === 1,
+    `native Stage3D scene summary did not round-trip: ${JSON.stringify(stage3dSummary)}`,
+  );
+  const storedStage3dSummary = await broker.invoke('native_renderer_get_stage3d_scene_summary');
+  assert(
+    storedStage3dSummary?.scene_id === 'contract-stage' &&
+      storedStage3dSummary?.payload_bytes === stage3dSummary.payload_bytes,
+    `native Stage3D stored summary drifted: ${JSON.stringify(storedStage3dSummary)}`,
+  );
+
+  const projectionSummary = await broker.invoke('native_renderer_set_projection_sim_scene', {
+    scene: {
+      id: 'contract-projection',
+      name: 'Contract Projection',
+      schemaVersion: 1,
+      objects: [
+        { id: 'cube', type: 'primitive', primitive: 'box' },
+        { id: 'venue', type: 'model', assetFormat: 'glb' },
+        { id: 'scan', type: 'pointcloud', assetFormat: 'ply' },
+      ],
+      projectors: [
+        { id: 'proj-a', enabled: true },
+        { id: 'proj-b', enabled: false },
+      ],
+    },
+  });
+  assert(
+    projectionSummary?.scene_kind === 'projection-sim' &&
+      projectionSummary?.object_count === 3 &&
+      projectionSummary?.primitive_count === 1 &&
+      projectionSummary?.model_count === 1 &&
+      projectionSummary?.point_cloud_count === 1 &&
+      projectionSummary?.projector_count === 2,
+    `native Projection Sim scene summary did not round-trip: ${JSON.stringify(projectionSummary)}`,
+  );
 
   tempDir = tempDir || mkdtempSync(join(tmpdir(), 'ghost-native-broker-frame-'));
   const prefetchImagePath = join(tempDir, 'broker-prefetch.bmp');

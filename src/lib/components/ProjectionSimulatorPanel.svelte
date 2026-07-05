@@ -7,6 +7,7 @@
   import { createAssetRefFromFile, resolveAssetRefForRuntime } from '../storage/assetRegistry';
   import { startRecording as startCanvasRecording, formatRecordingDuration, type RecorderHandle } from '../recording/recorder';
   import { startNativeLiveFrameRecording } from '../recording/nativeLiveFrameRecorder';
+  import { setNativeRendererProjectionSimScene } from '../api/native-renderer';
   import { ProjectionSimulatorRenderer } from '../projectionSim/ProjectionSimulatorRenderer';
   import {
     isProjectionSimTargetLocked,
@@ -65,6 +66,8 @@
   let sceneClipboard: { kind: 'object'; object: ProjectionSimObject } | { kind: 'projector'; projector: ProjectionSimProjector } | null = null;
   let canUndoScene = false;
   let canRedoScene = false;
+  let nativeScenePublishTimer: ReturnType<typeof setTimeout> | null = null;
+  let nativeScenePublishWarnings = 0;
 
   const primitiveKinds: ProjectionSimPrimitiveKind[] = ['box', 'sphere', 'cylinder', 'cone', 'pyramid', 'column', 'plane'];
   const BLANK_PRESET_ID = '__blank__';
@@ -86,6 +89,21 @@
     const historyCounts = projectionSimScene.getHistoryCounts();
     canUndoScene = historyCounts.past > 0;
     canRedoScene = historyCounts.future > 0;
+  }
+  $: queueNativeProjectionSimScene($projectionSimScene);
+
+  function queueNativeProjectionSimScene(scene: ProjectionSimScene) {
+    if (!isDesktopApp) return;
+    if (nativeScenePublishTimer) clearTimeout(nativeScenePublishTimer);
+    nativeScenePublishTimer = setTimeout(() => {
+      nativeScenePublishTimer = null;
+      void setNativeRendererProjectionSimScene(scene).catch((err) => {
+        if (nativeScenePublishWarnings < 3) {
+          console.warn('[ProjectionSim] native scene bridge unavailable:', err);
+          nativeScenePublishWarnings++;
+        }
+      });
+    }, 220);
   }
 
   function cloneSceneValue<T>(value: T): T {
@@ -622,6 +640,10 @@
     window.removeEventListener('keydown', handleKeydown);
     if (snapGuideTimer !== null) window.clearTimeout(snapGuideTimer);
     snapGuideTimer = null;
+    if (nativeScenePublishTimer) {
+      clearTimeout(nativeScenePublishTimer);
+      nativeScenePublishTimer = null;
+    }
     removeNativeFullscreenListener?.();
     removeNativeFullscreenListener = null;
     const wasNative = recordingUsesNative;
