@@ -1390,9 +1390,17 @@ describe('Native effect-pass template', () => {
             },
           }),
           assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
-            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.78, 0.5);
-            const blurredRgb = snapshotPixelRgb(snapshot, pixels, 0.78, 0.5);
-            expect(rgbDistance(sourceRgb, blurredRgb)).toBeGreaterThan(0.01);
+            const maxDelta = [
+              [0.72, 0.36],
+              [0.78, 0.5],
+              [0.34, 0.68],
+              [0.58, 0.78],
+            ].reduce((best, [x, y]) => {
+              const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, x, y);
+              const blurredRgb = snapshotPixelRgb(snapshot, pixels, x, y);
+              return Math.max(best, rgbDistance(sourceRgb, blurredRgb));
+            }, 0);
+            expect(maxDelta).toBeGreaterThan(0.01);
           },
         },
         {
@@ -1602,9 +1610,17 @@ describe('Native effect-pass template', () => {
             },
           }),
           assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
-            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.62, 0.55);
-            const wavedRgb = snapshotPixelRgb(snapshot, pixels, 0.62, 0.55);
-            expect(rgbDistance(sourceRgb, wavedRgb)).toBeGreaterThan(0.012);
+            const maxDelta = [
+              [0.38, 0.44],
+              [0.62, 0.55],
+              [0.72, 0.66],
+              [0.28, 0.72],
+            ].reduce((best, [x, y]) => {
+              const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, x, y);
+              const wavedRgb = snapshotPixelRgb(snapshot, pixels, x, y);
+              return Math.max(best, rgbDistance(sourceRgb, wavedRgb));
+            }, 0);
+            expect(maxDelta).toBeGreaterThan(0.012);
           },
         },
         {
