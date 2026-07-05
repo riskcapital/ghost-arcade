@@ -148,6 +148,7 @@ const CORE_COMMAND_TYPES: &[&str] = &[
     "set_decode_upload_policy",
     "set_decode_handoff_policy",
     "set_decode_estimate_cache_policy",
+    "set_media_source_playback",
     "upsert_layer",
     "set_layer_visibility",
     "set_layer_color",
@@ -1173,6 +1174,43 @@ struct SourceFrame {
     seq: u64,
 }
 
+#[derive(Clone, Debug)]
+struct NativeMediaSourceState {
+    uri: String,
+    source_type: String,
+    playback_time_seconds: f64,
+    playback_rate: f64,
+    paused: bool,
+    loop_enabled: bool,
+    duration_seconds: Option<f64>,
+    clock_time_seconds: f64,
+    seq: u64,
+}
+
+impl NativeMediaSourceState {
+    fn current_time_seconds(&self, render_clock_time: Option<f32>) -> f64 {
+        let clock_delta = render_clock_time
+            .map(|clock| clock as f64 - self.clock_time_seconds)
+            .unwrap_or(0.0);
+        let mut time = if self.paused {
+            self.playback_time_seconds
+        } else {
+            self.playback_time_seconds + clock_delta * self.playback_rate
+        };
+        if let Some(duration) = self.duration_seconds.filter(|duration| *duration > 0.0) {
+            if self.loop_enabled {
+                time %= duration;
+                if time < 0.0 {
+                    time += duration;
+                }
+            } else {
+                time = time.clamp(0.0, duration);
+            }
+        }
+        time.clamp(0.0, 3600.0)
+    }
+}
+
 struct NativeShaderPipeline {
     pipeline: wgpu::RenderPipeline,
 }
@@ -2072,6 +2110,7 @@ struct App {
     native_video_frame_cache: HashMap<String, NativeVideoFrameCacheEntry>,
     native_video_frame_cache_order: VecDeque<String>,
     native_video_frame_cache_bytes: usize,
+    media_sources: HashMap<String, NativeMediaSourceState>,
     stage3d_scene: Option<Value>,
     stage3d_scene_summary: NativeSceneBridgeSummary,
     projection_sim_scene: Option<Value>,
@@ -2176,6 +2215,7 @@ impl App {
             native_video_frame_cache: HashMap::new(),
             native_video_frame_cache_order: VecDeque::new(),
             native_video_frame_cache_bytes: 0,
+            media_sources: HashMap::new(),
             stage3d_scene: None,
             stage3d_scene_summary: NativeSceneBridgeSummary::empty("stage3d"),
             projection_sim_scene: None,
@@ -2265,6 +2305,7 @@ impl App {
             "native_video_frame_prefetch": true,
             "native_video_frame_prefetch_window": true,
             "video_frame_prefetch": true,
+            "native_media_source_playback_state": true,
             "decode_policy_controls": true,
             "decode_preview_cache_clear": true,
             "media_policy_controls": true,
@@ -3563,6 +3604,7 @@ impl App {
                 "present" => self.request_present(),
                 "set_audio_state" => self.apply_audio_state(command),
                 "set_render_clock" => self.apply_render_clock(command),
+                "set_media_source_playback" => self.apply_media_source_playback(command),
                 "bind_media_source" => self.apply_media_source(command),
                 "decode_media_source" => self.apply_decode_media_source(command),
                 "set_stage3d_scene" => {
@@ -5129,6 +5171,9 @@ impl App {
         let uri_for_decode = string_at(command, &["uri"]);
         let source_type =
             string_at(command, &["source_type"]).unwrap_or_else(|| "none".to_string());
+        if let (Some(source_id), Some(uri)) = (source_id.as_deref(), uri_for_decode.as_deref()) {
+            self.upsert_media_source_binding(source_id, uri, &source_type);
+        }
         let preview_slot = source_id
             .as_ref()
             .and_then(|id| self.source_preview_slots.get(id))
@@ -5160,6 +5205,92 @@ impl App {
         }
     }
 
+    fn upsert_media_source_binding(&mut self, source_id: &str, uri: &str, source_type: &str) {
+        if source_id.trim().is_empty() || uri.trim().is_empty() || source_type == "none" {
+            return;
+        }
+        let render_clock_time = self.render_clock_time.unwrap_or(0.0) as f64;
+        self.media_sources
+            .entry(source_id.to_string())
+            .and_modify(|state| {
+                state.uri = uri.to_string();
+                state.source_type = source_type.to_string();
+            })
+            .or_insert_with(|| NativeMediaSourceState {
+                uri: uri.to_string(),
+                source_type: source_type.to_string(),
+                playback_time_seconds: 0.0,
+                playback_rate: 1.0,
+                paused: true,
+                loop_enabled: false,
+                duration_seconds: None,
+                clock_time_seconds: render_clock_time,
+                seq: 0,
+            });
+    }
+
+    fn apply_media_source_playback(&mut self, command: &Value) {
+        let Some(source_id) = string_at(command, &["source_id"]) else {
+            return;
+        };
+        let existing = self.media_sources.get(&source_id).cloned();
+        let uri = string_at(command, &["uri"])
+            .or_else(|| existing.as_ref().map(|state| state.uri.clone()))
+            .unwrap_or_default();
+        let source_type = string_at(command, &["source_type"])
+            .or_else(|| existing.as_ref().map(|state| state.source_type.clone()))
+            .unwrap_or_else(|| "video".to_string());
+        if uri.trim().is_empty() || source_type == "none" {
+            return;
+        }
+        let render_clock_time = self.render_clock_time.unwrap_or(0.0) as f64;
+        let playback_time_seconds = number_at(command, &["time_seconds"])
+            .or_else(|| number_at(command, &["time"]))
+            .or_else(|| existing.as_ref().map(|state| state.playback_time_seconds))
+            .unwrap_or(0.0)
+            .clamp(0.0, 3600.0);
+        let playback_rate = number_at(command, &["playback_rate"])
+            .or_else(|| number_at(command, &["rate"]))
+            .or_else(|| existing.as_ref().map(|state| state.playback_rate))
+            .unwrap_or(1.0)
+            .clamp(-16.0, 16.0);
+        let duration_seconds = number_at(command, &["duration_seconds"])
+            .or_else(|| number_at(command, &["duration"]))
+            .filter(|duration| duration.is_finite() && *duration > 0.0)
+            .or_else(|| existing.as_ref().and_then(|state| state.duration_seconds));
+        let seq = number_at(command, &["seq"])
+            .or_else(|| existing.as_ref().map(|state| state.seq as f64 + 1.0))
+            .unwrap_or(1.0)
+            .round()
+            .max(0.0) as u64;
+        self.media_sources.insert(
+            source_id,
+            NativeMediaSourceState {
+                uri,
+                source_type,
+                playback_time_seconds,
+                playback_rate,
+                paused: bool_at(command, &["paused"]).unwrap_or_else(|| {
+                    existing.as_ref().map(|state| state.paused).unwrap_or(false)
+                }),
+                loop_enabled: bool_at(command, &["loop_enabled"])
+                    .or_else(|| bool_at(command, &["loop"]))
+                    .unwrap_or_else(|| {
+                        existing
+                            .as_ref()
+                            .map(|state| state.loop_enabled)
+                            .unwrap_or(false)
+                    }),
+                duration_seconds,
+                clock_time_seconds: number_at(command, &["clock_time_seconds"])
+                    .or_else(|| number_at(command, &["clock_time"]))
+                    .unwrap_or(render_clock_time)
+                    .clamp(0.0, 1.0e9),
+                seq,
+            },
+        );
+    }
+
     fn apply_decode_media_source(&mut self, command: &Value) {
         let source_type =
             string_at(command, &["source_type"]).unwrap_or_else(|| "none".to_string());
@@ -5186,9 +5317,15 @@ impl App {
                 .round()
                 .clamp(16.0, MAX_NATIVE_VIDEO_FRAME_DECODE_DIMENSION as f64)
                 as usize;
-            let time_seconds = number_at(command, &["time_seconds"])
+            let explicit_time_seconds = number_at(command, &["time_seconds"])
                 .or_else(|| number_at(command, &["timeSeconds"]))
-                .or_else(|| number_at(command, &["time"]))
+                .or_else(|| number_at(command, &["time"]));
+            let time_seconds = explicit_time_seconds
+                .or_else(|| {
+                    self.media_sources
+                        .get(&source_id)
+                        .map(|state| state.current_time_seconds(self.render_clock_time))
+                })
                 .unwrap_or(0.0)
                 .clamp(0.0, 3600.0);
             let seq = number_at(command, &["seq"])
@@ -5366,9 +5503,15 @@ impl App {
                 .round()
                 .clamp(16.0, MAX_NATIVE_VIDEO_FRAME_DECODE_DIMENSION as f64)
                 as usize;
-            let time_seconds = number_at(params, &["time_seconds"])
+            let explicit_time_seconds = number_at(params, &["time_seconds"])
                 .or_else(|| number_at(params, &["timeSeconds"]))
-                .or_else(|| number_at(params, &["time"]))
+                .or_else(|| number_at(params, &["time"]));
+            let time_seconds = explicit_time_seconds
+                .or_else(|| {
+                    self.media_sources
+                        .get(&source_id)
+                        .map(|state| state.current_time_seconds(self.render_clock_time))
+                })
                 .unwrap_or(0.0)
                 .clamp(0.0, 3600.0);
             let seq = number_at(params, &["seq"])
@@ -5439,6 +5582,7 @@ impl App {
             "native_video_frame_prefetch": true,
             "native_video_frame_prefetch_window": true,
             "video_frame_prefetch": true,
+            "native_media_source_playback_state": true,
             "decode_policy_controls": true,
             "decode_preview_cache_clear": true,
             "media_policy_controls": true,

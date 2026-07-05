@@ -2557,6 +2557,7 @@ function makeDefaultCapabilities(overrides = {}) {
       native_video_frame_decode: false,
       native_video_frame_prefetch: false,
       native_video_frame_prefetch_window: false,
+      native_media_source_playback_state: false,
       video_frame_prefetch: false,
       present_policy: false,
       managed_output_attach: false,

@@ -164,6 +164,19 @@ export type RendererCommand =
   | { type: 'set_output'; width: number; height: number; refresh_hz: number }
   | { type: 'set_target_fps'; target_fps: number }
   | { type: 'set_render_clock'; mode: 'live' | 'manual' | 'reset'; time?: number; time_delta?: number; frame_index?: number }
+  | {
+      type: 'set_media_source_playback';
+      source_id: string;
+      uri: string;
+      source_type: string;
+      time_seconds: number;
+      clock_time_seconds: number;
+      playback_rate: number;
+      paused: boolean;
+      loop_enabled: boolean;
+      duration_seconds?: number;
+      seq?: number;
+    }
   | { type: 'set_command_drain_limit'; max_commands_per_tick: number }
   | { type: 'set_auto_present_policy'; auto_present_on_state_change: boolean }
   | { type: 'set_vram_budget'; vram_budget_mb: number }

@@ -2496,15 +2496,42 @@ export class NativeRendererSync {
     return `${sourceId}::${uri}`;
   }
 
+  private nativeVideoPlaybackTimeSeconds(src: NonNullable<Layer['source']>, now: number) {
+    const videoTime = Number(src.videoElement?.currentTime);
+    return Number.isFinite(videoTime)
+      ? Math.max(0, videoTime)
+      : Math.max(0, this.latestRenderClockSeconds ?? ((now - this.liveClockOriginMs) / 1000));
+  }
+
+  private nativeVideoPlaybackCommand(
+    src: NonNullable<Layer['source']>,
+    sourceType: string,
+    now: number,
+    renderClock: NativeRenderClockCommand,
+  ): RendererCommand {
+    const element = src.videoElement ?? null;
+    const duration = Number(element?.duration);
+    return {
+      type: 'set_media_source_playback',
+      source_id: src.id,
+      uri: src.src,
+      source_type: sourceType,
+      time_seconds: Number(this.nativeVideoPlaybackTimeSeconds(src, now).toFixed(6)),
+      clock_time_seconds: Number((renderClock.time ?? 0).toFixed(6)),
+      playback_rate: Number((Number(element?.playbackRate) || 1).toFixed(6)),
+      paused: !!element?.paused,
+      loop_enabled: !!element?.loop,
+      duration_seconds: Number.isFinite(duration) && duration > 0 ? Number(duration.toFixed(6)) : undefined,
+      seq: Math.max(1, Math.round((renderClock.time ?? 0) * 1000)),
+    };
+  }
+
   private nativeVideoPrefetchOptions(
     src: NonNullable<Layer['source']>,
     now: number,
     prefetchWindowFrames = 0,
   ) {
-    const videoTime = Number(src.videoElement?.currentTime);
-    const timeSeconds = Number.isFinite(videoTime)
-      ? Math.max(0, videoTime)
-      : Math.max(0, this.latestRenderClockSeconds ?? ((now - this.liveClockOriginMs) / 1000));
+    const timeSeconds = this.nativeVideoPlaybackTimeSeconds(src, now);
     const decodeSize = Math.max(64, Math.min(2048, Math.round(this.dynamicSourceFrameCaptureSize || this.nativeSourceFrameSize)));
     return {
       timeSeconds,
@@ -2770,6 +2797,7 @@ export class NativeRendererSync {
     const graphInputCommands: RendererCommand[] = [];
     const current = new Map<string, LayerSnapshot>();
     const activeVideoKeys = new Set<string>();
+    const playbackSourcesSent = new Set<string>();
     const visual = getVisualAudioSnapshot();
 
     if (width !== this.sentWidth || height !== this.sentHeight) {
@@ -3022,6 +3050,10 @@ export class NativeRendererSync {
       if (src && isDynamicSourceFrameSource(src, sourceType)) {
         const sourceKey = this.sourceCacheKey(src.id, src.src);
         activeVideoKeys.add(sourceKey);
+        if (sourceType === 'video' && !playbackSourcesSent.has(sourceKey)) {
+          commands.push(this.nativeVideoPlaybackCommand(src, sourceType, now, renderClock));
+          playbackSourcesSent.add(sourceKey);
+        }
         const dueAt = this.videoRefreshAt.get(sourceKey) ?? 0;
         const sharedTextureSource = isNativeSharedTextureSource(src, sourceType);
         const continuousNativeVideoPrefetch =
