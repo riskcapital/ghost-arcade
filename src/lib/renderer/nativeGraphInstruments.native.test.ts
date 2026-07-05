@@ -155,6 +155,22 @@ function makeSourceBytes(width: number, height: number): Uint8Array {
   return bytes;
 }
 
+function makeTintedSourceBytes(width: number, height: number, rgb: [number, number, number]): Uint8Array {
+  const bytes = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      const stripe = ((x + y) % 7) / 6;
+      const vignette = 0.75 + 0.25 * (1 - Math.abs((x / Math.max(1, width - 1)) * 2 - 1));
+      bytes[offset] = Math.round(Math.min(255, rgb[0] * vignette + stripe * 18));
+      bytes[offset + 1] = Math.round(Math.min(255, rgb[1] * vignette + (1 - stripe) * 14));
+      bytes[offset + 2] = Math.round(Math.min(255, rgb[2] * vignette + stripe * 10));
+      bytes[offset + 3] = 255;
+    }
+  }
+  return bytes;
+}
+
 function makePointCloudFixture(count: number) {
   const positions = new Float32Array(count * 3);
   const colors = new Float32Array(count * 3);
@@ -367,6 +383,104 @@ async function readSourceFrameProbe(
   return readback;
 }
 
+async function uploadTintedSourceFrame(
+  rpc: NativeRpc,
+  sourceId: string,
+  rgb: [number, number, number],
+  seq: number,
+  width = 32,
+  height = 32,
+) {
+  await rpc.send('submit_commands', {
+    commands: [{
+      type: 'upload_source_frame',
+      source_id: sourceId,
+      width,
+      height,
+      rgba_b64: Buffer.from(makeTintedSourceBytes(width, height, rgb)).toString('base64'),
+      seq,
+    }],
+  }, 5000);
+}
+
+function meanRgbFromProbe(readback: Record<string, unknown>): [number, number, number] {
+  const bytes = typeof readback.bytes_b64 === 'string'
+    ? Buffer.from(readback.bytes_b64, 'base64')
+    : typeof readback.rgba_b64 === 'string'
+      ? Buffer.from(readback.rgba_b64, 'base64')
+    : Buffer.alloc(0);
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let count = 0;
+  for (let i = 0; i + 3 < bytes.length; i += 4) {
+    const alpha = bytes[i + 3];
+    if (alpha <= 0) continue;
+    r += Math.min(1, bytes[i] / alpha);
+    g += Math.min(1, bytes[i + 1] / alpha);
+    b += Math.min(1, bytes[i + 2] / alpha);
+    count += 1;
+  }
+  if (!count) {
+    for (let i = 0; i + 3 < bytes.length; i += 4) {
+      r += bytes[i] / 255;
+      g += bytes[i + 1] / 255;
+      b += bytes[i + 2] / 255;
+      count += 1;
+    }
+  }
+  const denom = Math.max(1, count);
+  return [r / denom, g / denom, b / denom];
+}
+
+function rgbDistance(a: [number, number, number], b: [number, number, number]): number {
+  return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+}
+
+async function snapshotSourceFrameLayer(
+  rpc: NativeRpc,
+  sourceId: string,
+  layerId: string,
+  label: string,
+  frameIndex: number,
+  minLuma: number | null = 0.001,
+) {
+  await rpc.send('submit_commands', {
+    commands: [
+      {
+        type: 'upsert_layer',
+        layer_id: layerId,
+        z_index: 0,
+        blend_mode: 'normal',
+        opacity: 1,
+        corners: FULLSCREEN_CORNERS,
+      },
+      { type: 'set_layer_visibility', layer_id: layerId, visible: true },
+      {
+        type: 'bind_media_source',
+        layer_id: layerId,
+        source_id: sourceId,
+        uri: `native-graph-reactivity://${label}`,
+        source_type: 'image',
+      },
+    ],
+  }, 5000);
+  const snapshot = await rpc.send('frame_snapshot', {
+    include_pixels: true,
+    time: 1.5,
+    frame_index: frameIndex,
+  }, 8000);
+  await rpc.send('submit_commands', {
+    commands: [{ type: 'remove_layer', layer_id: layerId }],
+  }, 5000);
+  if (minLuma === null) {
+    expect(String(snapshot.checksum ?? ''), label).toHaveLength(16);
+  } else {
+    assertVisibleSnapshot(label, snapshot, minLuma);
+  }
+  return snapshot;
+}
+
 describe('Native graph instrument runtime fixtures', () => {
   const itIfNativeCore = existsSync(nativeCoreBin) ? it : it.skip;
 
@@ -449,6 +563,123 @@ describe('Native graph instrument runtime fixtures', () => {
       await rpc.close();
     }
   }, 45000);
+
+  itIfNativeCore('updates source-driven native graph outputs when uploaded media frames change', async () => {
+    const rpc = createNativeRpc();
+    const mediaSourceId = 'native-graph-reactivity-media-source';
+    const outputSize = { width: 160, height: 90 };
+    try {
+      await rpc.send('start', {
+        config: {
+          backend: process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'd3d12' : 'vulkan',
+          width: outputSize.width,
+          height: outputSize.height,
+          target_fps: 30,
+          native_quality_policy: 'performance',
+        },
+      }, 12000);
+      await delay(80);
+
+      const precompileSummary = await rpc.send('submit_commands', {
+        commands: [
+          ...buildPixelParticlesNativePrecompileCommands(),
+          ...buildFlythroughNativePrecompileCommands(),
+          {
+            type: 'precompile_shader',
+            shader_id: SOURCE_FRAME_PROBE_SHADER_ID,
+            stage: 'compute',
+            entry: 'cs_probe',
+            source: sourceFrameProbeWgsl(),
+          },
+        ],
+      }, 8000);
+      expect(Number(precompileSummary?.dropped ?? 0)).toBe(0);
+
+      const renderPixelParticles = async (label: string, rgb: [number, number, number], seq: number) => {
+        await uploadTintedSourceFrame(rpc, mediaSourceId, rgb, seq);
+        const graph = buildPixelParticlesNativeComputeGraph({
+          sourceId: 'native-graph-reactivity-pixel-particles',
+          mediaSourceId,
+          params: {
+            mode: 'identity',
+            particleCount: 1024,
+            baseSize: 0.038,
+            opacity: 1,
+            mirrorX: false,
+          },
+          width: outputSize.width,
+          height: outputSize.height,
+          sourceFrameSize: 32,
+          time: 1.5,
+          frameDelta: 1 / 30,
+          frameIndex: 31,
+          reset: true,
+        });
+        await rpc.send('compute_graph', encodeNativeGraphConfigForRpc(graph.config), 12000);
+        return readSourceFrameProbe(
+          rpc,
+          'native-graph-reactivity-pixel-particles',
+          `pixel-particles-${label}`,
+          outputSize.width,
+          outputSize.height,
+        );
+      };
+
+      const renderFlythrough = async (label: string, rgb: [number, number, number], seq: number) => {
+        await uploadTintedSourceFrame(rpc, mediaSourceId, rgb, seq);
+        const graph = buildFlythroughNativeComputeGraph({
+          sourceId: 'native-graph-reactivity-flythrough',
+          mediaSourceId,
+          params: {
+            topology: 'strokes',
+            particleCount: 2048,
+            slabCount: 3,
+            opacity: 1,
+            flySpeed: 1.3,
+            depthSource: 'luminance',
+            audioReactive: true,
+          },
+          width: outputSize.width,
+          height: outputSize.height,
+          time: 1.5,
+          frameDelta: 1 / 30,
+          frameIndex: 41,
+          audioBass: 0.55,
+          audioTreble: 0.25,
+          reset: true,
+        });
+        const graphResult = await rpc.send('compute_graph', encodeNativeGraphConfigForRpc(graph.config), 12000);
+        const renders = Array.isArray(graphResult?.renders)
+          ? graphResult.renders
+          : graphResult?.render
+            ? [graphResult.render]
+            : [];
+        expect(renders.some((render: Record<string, unknown>) => (
+          render.target === 'source_frame' &&
+          render.source_id === 'native-graph-reactivity-flythrough'
+        )), `flythrough-${label}`).toBe(true);
+        return snapshotSourceFrameLayer(
+          rpc,
+          'native-graph-reactivity-flythrough',
+          `native-graph-reactivity-layer-flythrough-${label}`,
+          `flythrough-${label}`,
+          41,
+          label === 'dark' ? null : 0.001,
+        );
+      };
+
+      const pixelRed = await renderPixelParticles('red', [230, 32, 28], 11);
+      const pixelBlue = await renderPixelParticles('blue', [24, 80, 245], 12);
+      expect(String(pixelBlue.checksum)).not.toBe(String(pixelRed.checksum));
+      expect(rgbDistance(meanRgbFromProbe(pixelRed), meanRgbFromProbe(pixelBlue))).toBeGreaterThan(0.05);
+
+      const flyBright = await renderFlythrough('bright', [245, 245, 245], 21);
+      const flyDark = await renderFlythrough('dark', [2, 2, 2], 22);
+      expect(String(flyDark.checksum)).not.toBe(String(flyBright.checksum));
+    } finally {
+      await rpc.close();
+    }
+  }, 60000);
 
   itIfNativeCore('renders representative native graph instruments into source frames', async () => {
     const rpc = createNativeRpc();
