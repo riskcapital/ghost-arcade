@@ -1369,6 +1369,38 @@ export function effectToNativeDescriptor(effect: any): string | null {
       Math.max(0, Math.min(1, contrastRaw)).toFixed(4),
     ].join(':');
   }
+  if (type === 'bloom') {
+    const amountRaw =
+      firstFiniteParam(params, ['amount', 'bloomAmount', 'mix'], 0.6);
+    const intensityRaw =
+      firstFiniteParam(params, ['bloomIntensity', 'intensity'], 1);
+    const thresholdRaw =
+      firstFiniteParam(params, ['threshold', 'bloomThreshold'], 0.6);
+    const kneeRaw =
+      firstFiniteParam(params, ['bloomKnee', 'knee', 'softness'], 0.4);
+    const radiusRaw =
+      firstFiniteParam(params, ['bloomRadius', 'radius'], 0.5);
+    const anamorphicRaw =
+      firstFiniteParam(params, ['bloomAnamorphic', 'anamorphic'], 0);
+    const redRaw =
+      firstFiniteParam(params, ['red', 'bloomTintR', 'tintR'], 1);
+    const greenRaw =
+      firstFiniteParam(params, ['green', 'bloomTintG', 'tintG'], 1);
+    const blueRaw =
+      firstFiniteParam(params, ['blue', 'bloomTintB', 'tintB'], 1);
+    return [
+      'bloom',
+      Math.max(0, Math.min(1, amountRaw)).toFixed(4),
+      Math.max(0, Math.min(2, intensityRaw)).toFixed(4),
+      Math.max(0, Math.min(1, thresholdRaw)).toFixed(4),
+      Math.max(0, Math.min(1, kneeRaw)).toFixed(4),
+      Math.max(0, Math.min(1, radiusRaw)).toFixed(4),
+      Math.max(0, Math.min(1, anamorphicRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, redRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, greenRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, blueRaw)).toFixed(4),
+    ].join(':');
+  }
 
   // Keep explicit descriptor IDs compatible with native descriptor parser.
   const effectId = typeof effect.id === 'string' ? effect.id.trim() : '';
@@ -1641,6 +1673,17 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       tonemapCurve: Number(rawParam0 ?? 0),
       tonemapExposure: Number(rawParam1 ?? 1),
       tonemapContrast: Number(rawParam2 ?? 0),
+    };
+  } else if (effect === 'bloom') {
+    params = {
+      bloomIntensity: Number(rawParam0 ?? 1),
+      threshold: Number(rawParam1 ?? 0.6),
+      bloomKnee: Number(rawParam2 ?? 0.4),
+      bloomRadius: Number(rawParam3 ?? 0.5),
+      bloomAnamorphic: Number(rawParam4 ?? 0),
+      red: Number(rawParam5 ?? 1),
+      green: Number(rawParam6 ?? 1),
+      blue: Number(rawParam7 ?? 1),
     };
   }
   if (params && Object.values(params).some((value) => !Number.isFinite(value))) return null;

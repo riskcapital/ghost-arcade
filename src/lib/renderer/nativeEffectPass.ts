@@ -36,7 +36,8 @@ export type NativeEffectPassId =
   | 'pinch-bulge'
   | 'edge-detect'
   | 'film-grain'
-  | 'filmic-tonemap';
+  | 'filmic-tonemap'
+  | 'bloom';
 
 export interface NativeEffectPassManifestEntry {
   id: NativeEffectPassId;
@@ -60,6 +61,7 @@ export interface NativeEffectPassOptions {
   params?: Partial<{
     scale: number;
     seed: number;
+    amount: number;
     param0: number;
     param1: number;
     param2: number;
@@ -157,6 +159,13 @@ export interface NativeEffectPassOptions {
     tintEdges: number;
     edgeGlow: number;
     edgeOnlyAlpha: number;
+    bloomIntensity: number;
+    bloomKnee: number;
+    bloomRadius: number;
+    bloomAnamorphic: number;
+    red: number;
+    green: number;
+    blue: number;
     grainSize: number;
     grainShadow: number;
     grainMid: number;
@@ -246,6 +255,7 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'edge-detect', code: 36, defaultAmount: 0.1, amountMin: 0, amountMax: 1 },
   { id: 'film-grain', code: 37, defaultAmount: 0.3, amountMin: 0, amountMax: 1 },
   { id: 'filmic-tonemap', code: 38, defaultAmount: 1, amountMin: 0, amountMax: 1 },
+  { id: 'bloom', code: 39, defaultAmount: 0.6, amountMin: 0, amountMax: 1 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -407,6 +417,35 @@ fn tonemap_hable(x: vec3<f32>) -> vec3<f32> {
 fn tonemap_scurve(x: vec3<f32>) -> vec3<f32> {
   let t = smoothstep(vec3<f32>(0.0), vec3<f32>(1.0), x);
   return t * t * (vec3<f32>(3.0) - vec3<f32>(2.0) * t);
+}
+
+fn bloom_threshold_knee(col: vec3<f32>, threshold: f32, knee: f32) -> vec3<f32> {
+  let br = max(col.r, max(col.g, col.b));
+  let knee_amt = max(knee, 0.0001);
+  var soft = clamp(br - threshold + knee_amt, 0.0, 2.0 * knee_amt);
+  soft = soft * soft / (4.0 * knee_amt + 0.00001);
+  let contribution = max(soft, br - threshold) / max(br, 0.00001);
+  return col * contribution;
+}
+
+fn bloom_ring_sample(uv: vec2<f32>, px: vec2<f32>, radius: f32, anamorphic: f32) -> vec3<f32> {
+  let aniso = clamp(anamorphic, 0.0, 1.0);
+  let r = px * radius * vec2<f32>(1.0, 1.0 - aniso * 0.92);
+  var acc = vec3<f32>(0.0);
+  acc += sample_rgb(uv + r * vec2<f32>( 1.0,  0.0));
+  acc += sample_rgb(uv + r * vec2<f32>(-1.0,  0.0));
+  acc += sample_rgb(uv + r * vec2<f32>( 0.7,  0.7));
+  acc += sample_rgb(uv + r * vec2<f32>(-0.7,  0.7));
+  acc += sample_rgb(uv + r * vec2<f32>( 0.7, -0.7));
+  acc += sample_rgb(uv + r * vec2<f32>(-0.7, -0.7));
+  acc += sample_rgb(uv + r * vec2<f32>( 0.0,  1.0));
+  acc += sample_rgb(uv + r * vec2<f32>( 0.0, -1.0));
+  acc += sample_rgb(uv + r * vec2<f32>( 1.7,  0.0));
+  acc += sample_rgb(uv + r * vec2<f32>(-1.7,  0.0));
+  acc += sample_rgb(uv + r * vec2<f32>( 0.0,  1.7));
+  acc += sample_rgb(uv + r * vec2<f32>( 0.0, -1.7));
+  acc += sample_rgb(uv);
+  return acc / 13.0;
 }
 
 fn effect_texel() -> vec2<f32> {
@@ -1230,6 +1269,24 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     }
     return vec4<f32>(mix(color, mapped, tonemap_mix), src.a);
   }
+  if (code == 39u) {
+    let bloom_mix = clamp(amount, 0.0, 1.0);
+    let intensity = clamp(u.params0.x, 0.0, 2.0);
+    let threshold = clamp(u.params0.y, 0.0, 1.0);
+    let knee = clamp(u.params0.z, 0.0, 1.0);
+    let radius = clamp(u.params0.w, 0.0, 1.0);
+    let anamorphic = clamp(u.params1.x, 0.0, 1.0);
+    let tint = clamp(u.params1.yzw, vec3<f32>(0.0), vec3<f32>(1.5));
+    let px = effect_texel();
+    let base_radius = radius * 9.0 + 1.5;
+    let ring1 = bloom_ring_sample(uv, px, base_radius, anamorphic);
+    let ring2 = bloom_ring_sample(uv, px, base_radius * 2.2, anamorphic);
+    let ring3 = bloom_ring_sample(uv, px, base_radius * 4.5, anamorphic);
+    let blurred = ring1 * 0.55 + ring2 * 0.30 + ring3 * 0.15;
+    let bloom = bloom_threshold_knee(blurred, threshold, knee) * intensity * tint;
+    let composited = vec3<f32>(1.0) - (vec3<f32>(1.0) - color) * (vec3<f32>(1.0) - bloom);
+    return vec4<f32>(mix(color, composited, bloom_mix), src.a);
+  }
   return src;
 }
 
@@ -1563,6 +1620,16 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param5 = 0;
     param6 = 0;
     param7 = 0;
+  } else if (options.effect === 'bloom') {
+    amount = clampNumber(options.amount ?? params.amount ?? params.outputMix ?? params.param7, 0, 1, 0.6);
+    param0 = clampNumber(params.bloomIntensity ?? params.intensity ?? params.param0, 0, 2, 1);
+    param1 = clampNumber(params.threshold ?? params.param1, 0, 1, 0.6);
+    param2 = clampNumber(params.bloomKnee ?? params.softness ?? params.param2, 0, 1, 0.4);
+    param3 = clampNumber(params.bloomRadius ?? params.radius ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.bloomAnamorphic ?? params.anamorphicX ?? params.param4, 0, 1, 0);
+    param5 = clampNumber(params.red ?? params.param5, 0, 1.5, 1);
+    param6 = clampNumber(params.green ?? params.param6, 0, 1.5, 1);
+    param7 = clampNumber(params.blue ?? params.param7, 0, 1.5, 1);
   }
   return [
     width,
