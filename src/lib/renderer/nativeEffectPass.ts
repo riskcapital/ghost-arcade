@@ -35,7 +35,8 @@ export type NativeEffectPassId =
   | 'twirl'
   | 'pinch-bulge'
   | 'edge-detect'
-  | 'film-grain';
+  | 'film-grain'
+  | 'filmic-tonemap';
 
 export interface NativeEffectPassManifestEntry {
   id: NativeEffectPassId;
@@ -144,6 +145,7 @@ export interface NativeEffectPassOptions {
     secondary: number;
     chromaSplit: number;
     strength: number;
+    contrast: number;
     edgeFade: number;
     cubic: number;
     anamorphicX: number;
@@ -163,6 +165,10 @@ export interface NativeEffectPassOptions {
     grainStock: number;
     grainColorJitter: number;
     grainAnimSpeed: number;
+    tonemapCurve: number;
+    tonemapExposure: number;
+    tonemapContrast: number;
+    tonemapMix: number;
   }>;
   clear?: boolean;
   seq?: number;
@@ -239,6 +245,7 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'pinch-bulge', code: 35, defaultAmount: 0.4, amountMin: -1, amountMax: 1 },
   { id: 'edge-detect', code: 36, defaultAmount: 0.1, amountMin: 0, amountMax: 1 },
   { id: 'film-grain', code: 37, defaultAmount: 0.3, amountMin: 0, amountMax: 1 },
+  { id: 'filmic-tonemap', code: 38, defaultAmount: 1, amountMin: 0, amountMax: 1 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -374,6 +381,32 @@ fn wave_signal(value: f32, waveform: u32) -> f32 {
     return -1.0;
   }
   return sin(value);
+}
+
+fn tonemap_aces(x: vec3<f32>) -> vec3<f32> {
+  return clamp((x * (2.51 * x + vec3<f32>(0.03))) / (x * (2.43 * x + vec3<f32>(0.59)) + vec3<f32>(0.14)), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+fn tonemap_reinhard(x: vec3<f32>) -> vec3<f32> {
+  return x / (vec3<f32>(1.0) + x);
+}
+
+fn tonemap_hable(x: vec3<f32>) -> vec3<f32> {
+  let A = 0.15;
+  let B = 0.50;
+  let C = 0.10;
+  let D = 0.20;
+  let E = 0.02;
+  let F = 0.30;
+  let W = 11.2;
+  let n = ((x * (A * x + vec3<f32>(C * B)) + vec3<f32>(D * E)) / (x * (A * x + vec3<f32>(B)) + vec3<f32>(D * F))) - vec3<f32>(E / F);
+  let wn = ((W * (A * W + C * B) + D * E) / (W * (A * W + B) + D * F)) - E / F;
+  return clamp(n / vec3<f32>(wn), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+fn tonemap_scurve(x: vec3<f32>) -> vec3<f32> {
+  let t = smoothstep(vec3<f32>(0.0), vec3<f32>(1.0), x);
+  return t * t * (vec3<f32>(3.0) - vec3<f32>(2.0) * t);
 }
 
 fn effect_texel() -> vec2<f32> {
@@ -1173,6 +1206,30 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let grained = color + grain_rgb * strength;
     return vec4<f32>(max(grained, vec3<f32>(0.0)), src.a);
   }
+  if (code == 38u) {
+    let tonemap_mix = clamp(amount, 0.0, 1.0);
+    let curve = u32(round(clamp(u.params0.x, 0.0, 5.0)));
+    let exposure = clamp(u.params0.y, 0.25, 4.0);
+    let contrast = clamp(u.params0.z, 0.0, 1.0);
+    let gained = max(color * exposure, vec3<f32>(0.0));
+    var mapped = tonemap_aces(gained);
+    if (curve == 1u) {
+      mapped = tonemap_reinhard(gained);
+    } else if (curve == 2u) {
+      mapped = tonemap_hable(gained);
+    } else if (curve == 3u) {
+      let gray = vec3<f32>(luma(gained));
+      mapped = tonemap_aces(clamp(mix(gained, gray * 1.4, 0.5), vec3<f32>(0.0), vec3<f32>(1.0)));
+    } else if (curve == 4u) {
+      mapped = pow(tonemap_aces(gained * vec3<f32>(0.95, 0.97, 1.05)), vec3<f32>(1.0 / 1.1));
+    } else if (curve == 5u) {
+      mapped = gained / (vec3<f32>(1.0) + gained * 0.5);
+    }
+    if (contrast > 0.001) {
+      mapped = mix(mapped, tonemap_scurve(mapped), contrast);
+    }
+    return vec4<f32>(mix(color, mapped, tonemap_mix), src.a);
+  }
   return src;
 }
 
@@ -1242,7 +1299,7 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
   const height = Math.max(1, Math.round(options.height ?? 1080));
   const time = Number.isFinite(options.time) ? Number(options.time) : 0;
   const frameDelta = Number.isFinite(options.frameDelta) ? Number(options.frameDelta) : 1 / 60;
-  const amount = clampNumber(
+  let amount = clampNumber(
     options.amount ?? manifest.defaultAmount,
     manifest.amountMin,
     manifest.amountMax,
@@ -1496,6 +1553,16 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param5 = clampNumber(params.grainStock ?? params.param5, 0, 3, 1);
     param6 = clampNumber(params.grainColorJitter ?? params.param6, 0, 1, 0);
     param7 = clampNumber(params.grainAnimSpeed ?? params.param7, 0, 4, 1);
+  } else if (options.effect === 'filmic-tonemap') {
+    amount = clampNumber(options.amount ?? params.tonemapMix ?? params.outputMix ?? params.param3, 0, 1, 1);
+    param0 = clampNumber(params.tonemapCurve ?? params.param0, 0, 5, 0);
+    param1 = clampNumber(params.tonemapExposure ?? params.exposure ?? params.param1, 0.25, 4, 1);
+    param2 = clampNumber(params.tonemapContrast ?? params.contrast ?? params.param2, 0, 1, 0);
+    param3 = 0;
+    param4 = 0;
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
   }
   return [
     width,

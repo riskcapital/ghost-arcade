@@ -495,4 +495,28 @@ describe('native renderer sync effect-pass descriptors', () => {
       },
     });
   });
+
+  it('maps filmic tonemap UI params to native effect-pass descriptors', () => {
+    expect(effectToNativeDescriptor({
+      type: 'filmicTonemap',
+      params: {
+        tonemapMix: 0.8,
+        tonemapCurve: 4,
+        tonemapExposure: 1.35,
+        tonemapContrast: 0.45,
+      },
+    })).toBe('filmic-tonemap:0.8000:4:1.3500:0.4500');
+  });
+
+  it('rebuilds native effect-pass runtime params from filmic tonemap descriptors', () => {
+    expect(nativeEffectPassFromDescriptor('filmic-tonemap:0.8000:4:1.3500:0.4500')).toMatchObject({
+      effect: 'filmic-tonemap',
+      amount: 0.8,
+      params: {
+        tonemapCurve: 4,
+        tonemapExposure: 1.35,
+        tonemapContrast: 0.45,
+      },
+    });
+  });
 });

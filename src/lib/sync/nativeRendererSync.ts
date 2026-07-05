@@ -1352,6 +1352,23 @@ export function effectToNativeDescriptor(effect: any): string | null {
       Math.max(0, Math.min(4, speedRaw)).toFixed(4),
     ].join(':');
   }
+  if (type === 'filmictonemap' || type === 'filmic-tonemap') {
+    const mixRaw =
+      firstFiniteParam(params, ['tonemapMix', 'mix', 'amount'], 1);
+    const curveRaw =
+      firstFiniteParam(params, ['tonemapCurve', 'curve'], 0);
+    const exposureRaw =
+      firstFiniteParam(params, ['tonemapExposure', 'exposure'], 1);
+    const contrastRaw =
+      firstFiniteParam(params, ['tonemapContrast', 'contrast'], 0);
+    return [
+      'filmic-tonemap',
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+      Math.max(0, Math.min(5, Math.round(curveRaw))).toFixed(0),
+      Math.max(0.25, Math.min(4, exposureRaw)).toFixed(4),
+      Math.max(0, Math.min(1, contrastRaw)).toFixed(4),
+    ].join(':');
+  }
 
   // Keep explicit descriptor IDs compatible with native descriptor parser.
   const effectId = typeof effect.id === 'string' ? effect.id.trim() : '';
@@ -1618,6 +1635,12 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       grainStock: Number(rawParam5 ?? 1),
       grainColorJitter: Number(rawParam6 ?? 0),
       grainAnimSpeed: Number(rawParam7 ?? 1),
+    };
+  } else if (effect === 'filmic-tonemap') {
+    params = {
+      tonemapCurve: Number(rawParam0 ?? 0),
+      tonemapExposure: Number(rawParam1 ?? 1),
+      tonemapContrast: Number(rawParam2 ?? 0),
     };
   }
   if (params && Object.values(params).some((value) => !Number.isFinite(value))) return null;
