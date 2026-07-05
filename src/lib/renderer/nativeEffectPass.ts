@@ -14,7 +14,10 @@ export type NativeEffectPassId =
   | 'scanlines'
   | 'blur'
   | 'chromatic-aberration'
-  | 'glitch';
+  | 'glitch'
+  | 'exposure'
+  | 'vibrance'
+  | 'temperature-tint';
 
 export interface NativeEffectPassManifestEntry {
   id: NativeEffectPassId;
@@ -76,6 +79,18 @@ export interface NativeEffectPassOptions {
     blockHold: number;
     verticalSlice: number;
     tearChance: number;
+    exposure: number;
+    rollOff: number;
+    highlightProtect: number;
+    vibrance: number;
+    skinProtect: number;
+    ceiling: number;
+    temperature: number;
+    tint: number;
+    shadowTemp: number;
+    highlightTemp: number;
+    splitTone: number;
+    autoCycle: number;
     prismSpread: number;
     outputMix: number;
   }>;
@@ -133,6 +148,9 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'blur', code: 14, defaultAmount: 5, amountMin: 0, amountMax: 48 },
   { id: 'chromatic-aberration', code: 15, defaultAmount: 0.4, amountMin: 0, amountMax: 3 },
   { id: 'glitch', code: 16, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'exposure', code: 17, defaultAmount: 0, amountMin: -4, amountMax: 4 },
+  { id: 'vibrance', code: 18, defaultAmount: 0.3, amountMin: -1, amountMax: 2 },
+  { id: 'temperature-tint', code: 19, defaultAmount: 0, amountMin: -1, amountMax: 1 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -456,6 +474,48 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     rgb += block_noise * vec3<f32>(0.22, -0.04, 0.18);
     return vec4<f32>(mix(color, rgb, intensity), src.a);
   }
+  if (code == 17u) {
+    let rolloff = clamp(u.params0.x, 0.0, 1.0);
+    let protect = clamp(u.params0.y, 0.0, 1.0);
+    let gain = pow(2.0, amount);
+    let exposed = color * gain;
+    let compressed = exposed / (vec3<f32>(1.0) + exposed * rolloff);
+    let highlight = smoothstep(0.55, 1.05, luma(color));
+    let protected_color = mix(exposed, compressed, rolloff);
+    return vec4<f32>(mix(protected_color, color, protect * highlight), src.a);
+  }
+  if (code == 18u) {
+    let skin_protect = clamp(u.params0.x, 0.0, 1.0);
+    let highlight_protect = clamp(u.params0.y, 0.0, 1.0);
+    let ceiling = max(0.05, u.params0.z);
+    let gray = vec3<f32>(luma(color));
+    let maxc = max(color.r, max(color.g, color.b));
+    let minc = min(color.r, min(color.g, color.b));
+    let sat = clamp((maxc - minc) / max(0.001, maxc), 0.0, 1.0);
+    let warm_skin = smoothstep(0.25, 0.75, color.r - color.b) * smoothstep(0.08, 0.45, color.g);
+    let high = smoothstep(0.62, 1.05, luma(color));
+    let protect = (1.0 - skin_protect * warm_skin) * (1.0 - highlight_protect * high);
+    let boost = amount * (1.0 - sat) * protect;
+    let vibrant = gray + (color - gray) * (1.0 + boost);
+    return vec4<f32>(min(max(vibrant, vec3<f32>(0.0)), vec3<f32>(ceiling)), src.a);
+  }
+  if (code == 19u) {
+    let tint = clamp(u.params0.x, -1.0, 1.0);
+    let shadow_temp = clamp(u.params0.y, -1.0, 1.0);
+    let highlight_temp = clamp(u.params0.z, -1.0, 1.0);
+    let split_tone = clamp(u.params0.w, 0.0, 1.0);
+    let auto_cycle = clamp(u.params1.x, 0.0, 1.0);
+    let cycle = sin(u.resolution_time.z * 0.18 * 6.28318) * auto_cycle;
+    let temp = clamp(amount + cycle, -1.0, 1.0);
+    let warmth = vec3<f32>(0.16, 0.055, -0.14);
+    let magenta_green = vec3<f32>(0.08, -0.12, 0.08);
+    let lum = luma(color);
+    let shadow_mask = 1.0 - smoothstep(0.18, 0.58, lum);
+    let high_mask = smoothstep(0.45, 0.92, lum);
+    let split = warmth * (shadow_temp * shadow_mask + highlight_temp * high_mask) * split_tone;
+    let corrected = color + warmth * temp + magenta_green * tint + split;
+    return vec4<f32>(max(corrected, vec3<f32>(0.0)), src.a);
+  }
   return src;
 }
 
@@ -597,6 +657,33 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param5 = clampNumber(params.blockHold ?? params.param5, 0, 1, 0.3);
     param6 = clampNumber(params.tearChance ?? params.param6, 0, 1, 0);
     param7 = clampNumber(params.triggerMode ?? params.param7, 0, 3, 0);
+  } else if (options.effect === 'exposure') {
+    param0 = clampNumber(params.rollOff ?? params.param0, 0, 1, 0);
+    param1 = clampNumber(params.highlightProtect ?? params.param1, 0, 1, 0);
+    param2 = 0;
+    param3 = 0;
+    param4 = 0;
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'vibrance') {
+    param0 = clampNumber(params.skinProtect ?? params.param0, 0, 1, 0.5);
+    param1 = clampNumber(params.highlightProtect ?? params.param1, 0, 1, 0.3);
+    param2 = clampNumber(params.ceiling ?? params.param2, 0.1, 2, 1);
+    param3 = 0;
+    param4 = 0;
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'temperature-tint') {
+    param0 = clampNumber(params.tint ?? params.param0, -1, 1, 0);
+    param1 = clampNumber(params.shadowTemp ?? params.param1, -1, 1, 0);
+    param2 = clampNumber(params.highlightTemp ?? params.param2, -1, 1, 0);
+    param3 = clampNumber(params.splitTone ?? params.param3, 0, 1, 0);
+    param4 = clampNumber(params.autoCycle ?? params.param4, 0, 1, 0);
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
   }
   return [
     width,
