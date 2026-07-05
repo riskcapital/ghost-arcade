@@ -2633,6 +2633,7 @@ export class NativeRendererSync {
         `sourceFrame=${this.nativeSourceFrameSize}px`,
         `mips=${startupStatus?.source_frame_mip_levels ?? 1}`,
         `sharedTexSrc=${this.supportsNativeFeature('shared_texture_source_frame_upload') ? 'on' : 'off'}`,
+        `videoDecodePump=${this.supportsNativeFeature('native_video_decode_pump') ? 'on' : 'off'}`,
         `nativeGraphs=${graphCatalogStatus === 'complete' ? 'on' : graphCatalogStatus}`,
         `driver=${startupReadiness?.modes?.output_driver?.ok ? 'on' : 'pending'}`,
         `fullV2=${startupReadiness?.modes?.full_v2?.ok ? 'ready' : 'pending'}`,
@@ -3060,11 +3061,16 @@ export class NativeRendererSync {
         const continuousNativeVideoPrefetch =
           this.supportsNativeFeature('native_media_decode') &&
           this.supportsNativeFeature('media_prefetch');
+        const nativeVideoDecodePump =
+          this.supportsNativeFeature('native_video_decode_pump') &&
+          this.supportsNativeFeature('native_video_frame_decode') &&
+          this.supportsNativeFeature('native_media_source_playback_state');
         const brokerVideoFramePrefetch =
           this.supportsNativeFeature('native_video_frame_prefetch') ||
           this.supportsNativeFeature('video_frame_prefetch');
         if (
           !sharedTextureSource &&
+          !nativeVideoDecodePump &&
           sourceType === 'video' &&
           nativeSource.shouldPrefetch &&
           (continuousNativeVideoPrefetch || brokerVideoFramePrefetch)
