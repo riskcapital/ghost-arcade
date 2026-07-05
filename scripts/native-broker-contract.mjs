@@ -303,14 +303,16 @@ try {
       capabilities?.features?.native_stage3d_primitive_meshes &&
       capabilities?.features?.native_stage3d_xyz_mesh_transforms &&
       capabilities?.features?.native_stage3d_lighting_preview &&
+      capabilities?.features?.native_stage3d_output_renderer &&
       capabilities?.features?.native_projection_sim_scene_ingest &&
       capabilities?.features?.native_projection_sim_overlay_preview &&
       capabilities?.features?.native_projection_sim_mesh_preview &&
       capabilities?.features?.native_projection_sim_textured_mesh_preview &&
       capabilities?.features?.native_projection_sim_xyz_mesh_transforms &&
-      capabilities?.features?.native_stage3d === false &&
-      capabilities?.features?.native_projection_sim === false,
-    `broker scene bridge should advertise ingest/preview without claiming full native 3D rendering: ${JSON.stringify(capabilities?.features)}`,
+      capabilities?.features?.native_projection_sim_output_renderer &&
+      capabilities?.features?.native_stage3d &&
+      capabilities?.features?.native_projection_sim,
+    `broker scene bridge should advertise native Stage3D/Projection output rendering: ${JSON.stringify(capabilities?.features)}`,
   );
   const compositorBlendModes = new Map(
     (capabilities?.native_compositor_blend_modes ?? []).map((entry) => [entry.id, Number(entry.code)]),

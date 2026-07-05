@@ -1042,6 +1042,14 @@ class NativeRendererBroker {
           ? 'Stage3D native preview applies room darkness, screen boost, exposure, and haze uniforms'
           : 'Stage3D native preview ignores scene lighting controls',
       ],
+      [
+        'native-stage3d-output-renderer',
+        'Native Stage3D output renderer',
+        !!features.native_stage3d,
+        features.native_stage3d
+          ? 'Stage3D scenes render through the native output/frame-snapshot path'
+          : 'Stage3D scenes are not yet promoted to native output rendering',
+      ],
       ['native-projection-sim-scene-ingest', 'Native Projection Sim scene ingest', !!features.native_projection_sim_scene_ingest],
       [
         'native-projection-sim-overlay-preview',
@@ -1074,6 +1082,14 @@ class NativeRendererBroker {
         features.native_projection_sim_xyz_mesh_transforms
           ? 'Projection Sim native objects honor scene X/Y/Z rotation vectors'
           : 'Projection Sim native objects only partially honor scene transforms',
+      ],
+      [
+        'native-projection-sim-output-renderer',
+        'Native Projection Sim output renderer',
+        !!features.native_projection_sim,
+        features.native_projection_sim
+          ? 'Projection Sim scenes render through the native output/frame-snapshot path'
+          : 'Projection Sim scenes are not yet promoted to native output rendering',
       ],
       ['compute-graph-host', 'Native buffer compute graph host', !!features.compute_graph_host],
       [
@@ -2229,11 +2245,13 @@ function makeDefaultCapabilities(overrides = {}) {
       native_stage3d_primitive_meshes: false,
       native_stage3d_xyz_mesh_transforms: false,
       native_stage3d_lighting_preview: false,
+      native_stage3d_output_renderer: false,
       native_projection_sim_scene_ingest: false,
       native_projection_sim_overlay_preview: false,
       native_projection_sim_mesh_preview: false,
       native_projection_sim_textured_mesh_preview: false,
       native_projection_sim_xyz_mesh_transforms: false,
+      native_projection_sim_output_renderer: false,
       native_recording: false,
       native_stage3d: false,
       native_projection_sim: false,
