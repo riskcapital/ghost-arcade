@@ -41,6 +41,10 @@ describe('Point Cloud FX native graph', () => {
     expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.render)?.source).toContain('@vertex');
     expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.render)?.source).toContain('@fragment');
     expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.render)?.source).toContain('sortPairs');
+    expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.render)?.source).toContain('GHOST_GAUSSIAN_SIGMA_EXTENT');
+    expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.render)?.source).toContain('gaussianScreenAxes');
+    expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.render)?.source).toContain('gaussianSigma');
+    expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.render)?.source).toContain('exp(-0.5 * r2)');
     for (const source of sources) {
       expect(source.source).not.toMatch(/^\s*#include\b/m);
     }
