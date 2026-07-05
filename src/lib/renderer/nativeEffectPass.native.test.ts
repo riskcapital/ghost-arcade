@@ -206,6 +206,7 @@ describe('Native effect-pass template', () => {
       ['lens-distortion', 33],
       ['twirl', 34],
       ['pinch-bulge', 35],
+      ['edge-detect', 36],
     ]);
     expect(nativeEffectPassManifestEntry('posterize')).toMatchObject({
       code: 8,
@@ -1671,6 +1672,36 @@ describe('Native effect-pass template', () => {
             const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.72, 0.52);
             const pinchRgb = snapshotPixelRgb(snapshot, pixels, 0.72, 0.52);
             expect(rgbDistance(sourceRgb, pinchRgb)).toBeGreaterThan(0.012);
+          },
+        },
+        {
+          id: 'edge-detect',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-edge-detect',
+            effect: 'edge-detect',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 26,
+            amount: 0.03,
+            params: {
+              thickness: 2,
+              mode: 1,
+              invert: 0,
+              edgeTintR: 0,
+              edgeTintG: 1,
+              edgeTintB: 1,
+              tintEdges: 1,
+              edgeGlow: 0.75,
+              edgeOnlyAlpha: 0,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.52, 0.55);
+            const edgeRgb = snapshotPixelRgb(snapshot, pixels, 0.52, 0.55);
+            expect(rgbDistance(sourceRgb, edgeRgb)).toBeGreaterThan(0.01);
           },
         },
       ];

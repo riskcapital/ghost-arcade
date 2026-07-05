@@ -425,4 +425,40 @@ describe('native renderer sync effect-pass descriptors', () => {
       },
     });
   });
+
+  it('maps edge detection UI params to native effect-pass descriptors', () => {
+    expect(effectToNativeDescriptor({
+      type: 'edgeDetect',
+      params: {
+        edgeThreshold: 0.18,
+        edgeThickness: 2.5,
+        edgeMode: 1,
+        edgeInvert: 1,
+        edgeTintR: 0.1,
+        edgeTintG: 0.8,
+        edgeTintB: 1,
+        edgeTintEdges: 1,
+        edgeGlow: 0.6,
+        edgeOnlyAlpha: 1,
+      },
+    })).toBe('edge-detect:0.1800:2.5000:1:3:0.1000:0.8000:1.0000:1.0000:0.6000');
+  });
+
+  it('rebuilds native effect-pass runtime params from edge detection descriptors', () => {
+    expect(nativeEffectPassFromDescriptor('edge-detect:0.1800:2.5000:1:3:0.1000:0.8000:1.0000:1.0000:0.6000')).toMatchObject({
+      effect: 'edge-detect',
+      amount: 0.18,
+      params: {
+        thickness: 2.5,
+        mode: 1,
+        invert: 1,
+        edgeOnlyAlpha: 1,
+        edgeTintR: 0.1,
+        edgeTintG: 0.8,
+        edgeTintB: 1,
+        tintEdges: 1,
+        edgeGlow: 0.6,
+      },
+    });
+  });
 });
