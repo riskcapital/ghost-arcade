@@ -52,6 +52,8 @@ const nativeCoreBin = join(
   process.platform === 'win32' ? 'ghost-render-core.exe' : 'ghost-render-core',
 );
 
+const SOURCE_FRAME_PROBE_SHADER_ID = 'native-graph/source-frame-probe';
+
 const FULLSCREEN_CORNERS = {
   topLeft: { x: 0, y: 1 },
   topRight: { x: 1, y: 1 },
@@ -263,8 +265,190 @@ function snapshotPixelLuma(snapshot: Record<string, unknown>, pixels: Uint8Array
   ) / 255;
 }
 
+function sourceFrameProbeWgsl() {
+  return String.raw`
+struct ProbeUniforms {
+  width: u32,
+  height: u32,
+  pixel_count: u32,
+  _pad0: u32,
+}
+
+@group(0) @binding(0)
+var<storage, read_write> output_words: array<u32>;
+
+@group(0) @binding(1)
+var<uniform> probe: ProbeUniforms;
+
+@group(0) @binding(2)
+var source_tex: texture_2d<f32>;
+
+@group(0) @binding(3)
+var source_sampler: sampler;
+
+fn pixel_coord(i: u32) -> vec2<f32> {
+  let safe_width = max(probe.width, 1u);
+  let safe_height = max(probe.height, 1u);
+  let x = f32(i % safe_width);
+  let y = f32(i / safe_width);
+  return (vec2<f32>(x, y) + vec2<f32>(0.5)) / vec2<f32>(f32(safe_width), f32(safe_height));
+}
+
+fn pack_channel(value: f32) -> u32 {
+  return u32(round(clamp(value, 0.0, 1.0) * 255.0));
+}
+
+fn pack_rgba(color: vec4<f32>) -> u32 {
+  let r = pack_channel(color.r);
+  let g = pack_channel(color.g);
+  let b = pack_channel(color.b);
+  let a = pack_channel(color.a);
+  return r | (g << 8u) | (b << 16u) | (a << 24u);
+}
+
+@compute @workgroup_size(64)
+fn cs_probe(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= probe.pixel_count) { return; }
+  let color = textureSampleLevel(source_tex, source_sampler, pixel_coord(i), 0.0);
+  output_words[i] = pack_rgba(color);
+}
+`;
+}
+
+async function readSourceFrameProbe(
+  rpc: NativeRpc,
+  sourceId: string,
+  label: string,
+  width: number,
+  height: number,
+) {
+  const pixelCount = Math.max(1, Math.round(width)) * Math.max(1, Math.round(height));
+  const outputId = `native-graph-probe:${label}:output`;
+  const uniformId = `native-graph-probe:${label}:uniform`;
+  const result = await rpc.send('compute_graph', {
+    buffers: [
+      {
+        id: outputId,
+        kind: 'storage',
+        byte_length: pixelCount * 4,
+      },
+      {
+        id: uniformId,
+        kind: 'uniform',
+        byte_length: 16,
+        initial_u32: [Math.round(width), Math.round(height), pixelCount, 0],
+      },
+    ],
+    passes: [{
+      name: `native-graph-probe-${label}`,
+      shader_id: SOURCE_FRAME_PROBE_SHADER_ID,
+      entry: 'cs_probe',
+      dispatch: [Math.ceil(pixelCount / 64), 1, 1],
+      bindings: [
+        { binding: 0, resource: outputId, kind: 'storage' },
+        { binding: 1, resource: uniformId, kind: 'uniform' },
+        { binding: 2, kind: 'source-frame-texture', source_id: sourceId },
+        { binding: 3, kind: 'source-frame-sampler' },
+      ],
+    }],
+    readbacks: [{ id: outputId, include_bytes: true }],
+  }, 10000);
+  const readback = result?.readbacks?.[outputId] as Record<string, unknown> | undefined;
+  if (!readback) {
+    throw new Error(`native graph source-frame probe ${label} omitted readback ${outputId}`);
+  }
+  expect(String(readback?.checksum ?? ''), label).toHaveLength(16);
+  expect(Number(readback?.nonzero_words ?? 0), label).toBeGreaterThan(0);
+  const bytes = typeof readback?.bytes_b64 === 'string'
+    ? Buffer.from(readback.bytes_b64, 'base64')
+    : null;
+  expect(bytes?.byteLength ?? 0, label).toBe(pixelCount * 4);
+  return readback;
+}
+
 describe('Native graph instrument runtime fixtures', () => {
   const itIfNativeCore = existsSync(nativeCoreBin) ? it : it.skip;
+
+  itIfNativeCore('uses explicit graph clock for native source-frame renders', async () => {
+    const rpc = createNativeRpc();
+    const sourceId = 'native-graph-clock-source';
+    const renderClockPlanet = async (time: number, frameIndex: number) => {
+      const graph = buildPlanetNativeComputeGraph({
+        sourceId,
+        params: {
+          planet: 'earth',
+          rotationSpeed: 23,
+          cloudSpeed: 4.5,
+          cloudCoverage: 0.95,
+          auroraStrength: 2.5,
+          cameraDistance: 3.1,
+        },
+        width: 128,
+        height: 72,
+        time,
+        frameDelta: 1 / 30,
+        frameIndex,
+        reset: true,
+      });
+      const graphResult = await rpc.send(
+        'compute_graph',
+        encodeNativeGraphConfigForRpc(graph.config),
+        12000,
+      );
+      const renders = Array.isArray(graphResult?.renders)
+        ? graphResult.renders
+        : graphResult?.render
+          ? [graphResult.render]
+          : [];
+      expect(renders.some((render: Record<string, unknown>) => (
+        render.target === 'source_frame' &&
+        render.source_id === sourceId
+      )), sourceId).toBe(true);
+      return readSourceFrameProbe(rpc, sourceId, `planet-${frameIndex}`, 128, 72);
+    };
+
+    try {
+      await rpc.send('start', {
+        config: {
+          backend: process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'd3d12' : 'vulkan',
+          width: 128,
+          height: 72,
+          target_fps: 30,
+          native_quality_policy: 'performance',
+        },
+      }, 12000);
+      await delay(80);
+
+      const capabilities = await rpc.send('capabilities', {}, 5000);
+      expect(capabilities?.features?.compute_graph_render).toBe(true);
+      expect(capabilities?.features?.compute_graph_source_frame_target).toBe(true);
+
+      const precompileSummary = await rpc.send('submit_commands', {
+        commands: [
+          ...buildPlanetNativePrecompileCommands(),
+          {
+            type: 'precompile_shader',
+            shader_id: SOURCE_FRAME_PROBE_SHADER_ID,
+            stage: 'compute',
+            entry: 'cs_probe',
+            source: sourceFrameProbeWgsl(),
+          },
+        ],
+      }, 8000);
+      expect(Number(precompileSummary?.dropped ?? 0)).toBe(0);
+
+      const first = await renderClockPlanet(2.25, 68);
+      await delay(180);
+      const repeated = await renderClockPlanet(2.25, 69);
+      const advanced = await renderClockPlanet(20.25, 608);
+
+      expect(String(repeated.checksum)).toBe(String(first.checksum));
+      expect(String(advanced.checksum)).not.toBe(String(first.checksum));
+    } finally {
+      await rpc.close();
+    }
+  }, 45000);
 
   itIfNativeCore('renders representative native graph instruments into source frames', async () => {
     const rpc = createNativeRpc();
