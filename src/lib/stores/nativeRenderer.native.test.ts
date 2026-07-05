@@ -53,7 +53,10 @@ function capabilities(features: Record<string, boolean> = {}): NativeRendererCap
   };
 }
 
-function readiness(modes: RendererReadinessReport['modes']): RendererReadinessReport {
+function readiness(
+  modes: RendererReadinessReport['modes'],
+  overrides: Partial<RendererReadinessReport> = {},
+): RendererReadinessReport {
   return {
     timestamp_ms: 100,
     overall_ready: true,
@@ -61,6 +64,7 @@ function readiness(modes: RendererReadinessReport['modes']): RendererReadinessRe
     modes,
     capabilities: capabilities(),
     checks: [],
+    ...overrides,
   };
 }
 
@@ -139,6 +143,65 @@ describe('native renderer runtime state', () => {
       'shared-texture media transport is pending',
       'native Stage3D renderer is pending',
     ]);
+  });
+
+  it('surfaces native output texture-share readiness for the toolbar', () => {
+    const state = deriveNativeRendererRuntimeState(
+      status(),
+      readiness(
+        {
+          shadow: { ok: true, detail: 'shadow ready' },
+          output_driver: { ok: true, detail: 'output ready' },
+          full_v2: { ok: false, detail: 'sender pending', blockers: ['Syphon native texture-share sender is not active-ready'] },
+        },
+        {
+          texture_share: {
+            platform: 'syphon',
+            label: 'Syphon',
+            available: true,
+            nativeOutputCapable: true,
+            nativeOutputActive: false,
+            nativeOutputWaitingForFrame: true,
+            nativeOutputPendingPromotion: true,
+            nativeOutputPromotionAttempts: 3,
+            nativeOutputPromotionReason: 'waiting-for-native-output',
+          },
+          checks: [
+            {
+              id: 'shared-texture-output-export',
+              label: 'Native output shared-texture export',
+              ok: true,
+              detail: 'native output mirror is exported as an IOSurface handle',
+            },
+            {
+              id: 'native-texture-share-sender',
+              label: 'Native Syphon sender',
+              ok: false,
+              detail: 'native output IOSurface pump is waiting for the first rendered frame',
+            },
+          ],
+        },
+      ),
+      {
+        capabilities: capabilities({ shared_texture_output_export: true }),
+        graphCatalogComplete: true,
+        nativeGraphSourceFrames: true,
+        updatedAtMs: 127,
+      },
+    );
+
+    expect(state.textureShareLabel).toBe('Syphon');
+    expect(state.textureSharePlatform).toBe('syphon');
+    expect(state.textureShareAvailable).toBe(true);
+    expect(state.sharedTextureOutputExportReady).toBe(true);
+    expect(state.nativeTextureShareSenderReady).toBe(false);
+    expect(state.nativeTextureShareSenderDetail).toContain('waiting for the first rendered frame');
+    expect(state.nativeOutputShareCapable).toBe(true);
+    expect(state.nativeOutputShareActive).toBe(false);
+    expect(state.nativeOutputShareWaitingForFrame).toBe(true);
+    expect(state.nativeOutputSharePendingPromotion).toBe(true);
+    expect(state.nativeOutputSharePromotionAttempts).toBe(3);
+    expect(state.nativeOutputSharePromotionReason).toBe('waiting-for-native-output');
   });
 
   it('does not promote to the main driver when local graph routes are incomplete', () => {
