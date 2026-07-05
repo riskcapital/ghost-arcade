@@ -708,4 +708,99 @@ describe('native renderer sync effect-pass descriptors', () => {
       },
     });
   });
+
+  it('maps hero UI effects to native effect-pass descriptors', () => {
+    expect(effectToNativeDescriptor({
+      type: 'edgeFeather',
+      params: {
+        featherTop: 0.1,
+        featherBottom: 0.2,
+        featherLeft: 0.3,
+        featherRight: 0.4,
+        featherSoftness: 0.6,
+        featherGamma: 1.2,
+        featherMattePreview: 1,
+      },
+    })).toBe('edge-feather:1.0000:0.1000:0.2000:0.3000:0.4000:0.6000:1.2000:1');
+
+    expect(effectToNativeDescriptor({
+      type: 'outline',
+      params: {
+        outlineThickness: 4,
+        outlineColor: [0.1, 0.8, 1],
+        outlineOnly: 1,
+        outlineGlow: 0.7,
+        outlinePosition: 2,
+        outlineCrawl: 0.5,
+        outlineAlphaAware: 1,
+      },
+    })).toBe('outline:4.0000:0.1000:0.8000:1.0000:1:0.7000:2:0.5000:1');
+
+    expect(effectToNativeDescriptor({
+      type: 'nightVision',
+      params: {
+        nightVisionIntensity: 1.7,
+        nightVisionNoise: 0.25,
+        nightVisionVignette: 0.6,
+        nightVisionPhosphor: 2,
+        nightVisionBloom: 1.1,
+        nightVisionScopeMask: 2,
+        nightVisionRollingNoise: 0.4,
+      },
+    })).toBe('night-vision:1.7000:0.2500:0.6000:2:1.1000:2:0.4000');
+  });
+
+  it('rebuilds native effect-pass runtime params from hero effect descriptors', () => {
+    expect(nativeEffectPassFromDescriptor('dither:0.7500:3:2.0000:4.0000:2:1')).toMatchObject({
+      effect: 'dither',
+      amount: 0.75,
+      params: {
+        ditherType: 3,
+        ditherScale: 2,
+        ditherColorDepth: 4,
+        ditherPalette: 2,
+        ditherPixelLock: 1,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('emboss:1.2000:135.0000:0.8000:1.0000:0.9000:0.7000:0.1000:0.2000:0.3000')).toMatchObject({
+      effect: 'emboss',
+      amount: 1.2,
+      params: {
+        embossAngle: 135,
+        embossHeight: 0.8,
+        embossHighlightR: 1,
+        embossHighlightG: 0.9,
+        embossHighlightB: 0.7,
+        embossShadowR: 0.1,
+        embossShadowG: 0.2,
+        embossShadowB: 0.3,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('crt:0.6000:720.0000:0.8000:2:0.4000:0.5000:0.7000:0.2000:0.3500')).toMatchObject({
+      effect: 'crt',
+      amount: 0.6,
+      params: {
+        crtScanCount: 720,
+        crtMask: 0.8,
+        crtMaskType: 2,
+        crtCurvature: 0.4,
+        crtVignette: 0.5,
+        crtGlow: 0.7,
+        crtRollingBar: 0.2,
+        crtChromatic: 0.35,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('thermal:1.4000:3:0.5000:0.2500')).toMatchObject({
+      effect: 'thermal',
+      amount: 1.4,
+      params: {
+        thermalPalette: 3,
+        thermalShimmer: 0.5,
+        thermalSensorNoise: 0.25,
+      },
+    });
+  });
 });

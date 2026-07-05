@@ -1575,6 +1575,146 @@ export function effectToNativeDescriptor(effect: any): string | null {
       Math.max(0, Math.min(1.5, blueRaw)).toFixed(4),
     ].join(':');
   }
+  if (type === 'edgefeather' || type === 'edge-feather') {
+    const mixRaw = firstFiniteParam(params, ['edgeFeatherMix', 'mix', 'amount'], 1);
+    const topRaw = firstFiniteParam(params, ['featherTop', 'edgeFeatherTop'], 0);
+    const bottomRaw = firstFiniteParam(params, ['featherBottom', 'edgeFeatherBottom'], 0);
+    const leftRaw = firstFiniteParam(params, ['featherLeft', 'edgeFeatherLeft'], 0);
+    const rightRaw = firstFiniteParam(params, ['featherRight', 'edgeFeatherRight'], 0);
+    const softnessRaw = firstFiniteParam(params, ['featherSoftness', 'edgeFeatherSoftness', 'softness'], 0.5);
+    const gammaRaw = firstFiniteParam(params, ['featherGamma', 'edgeFeatherGamma', 'gamma'], 1);
+    const matteRaw = firstFiniteParam(params, ['featherMattePreview', 'edgeFeatherMattePreview', 'matte'], 0);
+    return [
+      'edge-feather',
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+      Math.max(0, Math.min(1, topRaw)).toFixed(4),
+      Math.max(0, Math.min(1, bottomRaw)).toFixed(4),
+      Math.max(0, Math.min(1, leftRaw)).toFixed(4),
+      Math.max(0, Math.min(1, rightRaw)).toFixed(4),
+      Math.max(0, Math.min(2, softnessRaw)).toFixed(4),
+      Math.max(0.1, Math.min(4, gammaRaw)).toFixed(4),
+      Math.max(0, Math.min(1, Math.round(matteRaw))).toFixed(0),
+    ].join(':');
+  }
+  if (type === 'dither') {
+    const intensityRaw = firstFiniteParam(params, ['ditherIntensity', 'intensity', 'amount'], 1);
+    const typeRaw = firstFiniteParam(params, ['ditherType', 'mode'], 0);
+    const scaleRaw = firstFiniteParam(params, ['ditherScale', 'scale'], 1);
+    const depthRaw = firstFiniteParam(params, ['ditherColorDepth', 'colorDepth'], 2);
+    const paletteRaw = firstFiniteParam(params, ['ditherPalette', 'palette'], 0);
+    const pixelLockRaw = firstFiniteParam(params, ['ditherPixelLock', 'pixelLock'], 0);
+    return [
+      'dither',
+      Math.max(0, Math.min(1, intensityRaw)).toFixed(4),
+      Math.max(0, Math.min(4, Math.round(typeRaw))).toFixed(0),
+      Math.max(0.5, Math.min(64, scaleRaw)).toFixed(4),
+      Math.max(1, Math.min(8, depthRaw)).toFixed(4),
+      Math.max(0, Math.min(5, Math.round(paletteRaw))).toFixed(0),
+      Math.max(0, Math.min(1, Math.round(pixelLockRaw))).toFixed(0),
+    ].join(':');
+  }
+  if (type === 'outline') {
+    const outlineColor = Array.isArray(params.outlineColor) ? params.outlineColor : [];
+    const thicknessRaw = firstFiniteParam(params, ['outlineThickness', 'thickness', 'amount'], 2);
+    const redRaw = firstFiniteParam(params, ['outlineR', 'red'], Number(outlineColor[0] ?? 1));
+    const greenRaw = firstFiniteParam(params, ['outlineG', 'green'], Number(outlineColor[1] ?? 1));
+    const blueRaw = firstFiniteParam(params, ['outlineB', 'blue'], Number(outlineColor[2] ?? 1));
+    const onlyRaw = firstFiniteParam(params, ['outlineOnly', 'only'], 0);
+    const glowRaw = firstFiniteParam(params, ['outlineGlow', 'glow'], 0);
+    const positionRaw = firstFiniteParam(params, ['outlinePosition', 'position'], 1);
+    const crawlRaw = firstFiniteParam(params, ['outlineCrawl', 'crawl', 'speed'], 0);
+    const alphaRaw = firstFiniteParam(params, ['outlineAlphaAware', 'alphaAware'], 0);
+    return [
+      'outline',
+      Math.max(0, Math.min(12, thicknessRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, redRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, greenRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, blueRaw)).toFixed(4),
+      Math.max(0, Math.min(1, Math.round(onlyRaw))).toFixed(0),
+      Math.max(0, Math.min(1, glowRaw)).toFixed(4),
+      Math.max(0, Math.min(2, Math.round(positionRaw))).toFixed(0),
+      Math.max(0, Math.min(1, crawlRaw)).toFixed(4),
+      Math.max(0, Math.min(1, Math.round(alphaRaw))).toFixed(0),
+    ].join(':');
+  }
+  if (type === 'emboss') {
+    const strengthRaw = firstFiniteParam(params, ['embossStrength', 'strength', 'amount'], 1);
+    const angleRaw = firstFiniteParam(params, ['embossAngle', 'angle'], 135);
+    const heightRaw = firstFiniteParam(params, ['embossHeight', 'height'], 1);
+    const highlightRRaw = firstFiniteParam(params, ['embossHighlightR', 'red'], 1);
+    const highlightGRaw = firstFiniteParam(params, ['embossHighlightG', 'green'], 1);
+    const highlightBRaw = firstFiniteParam(params, ['embossHighlightB', 'blue'], 1);
+    const shadowRRaw = firstFiniteParam(params, ['embossShadowR'], 0);
+    const shadowGRaw = firstFiniteParam(params, ['embossShadowG'], 0);
+    const shadowBRaw = firstFiniteParam(params, ['embossShadowB'], 0);
+    return [
+      'emboss',
+      Math.max(0, Math.min(2, strengthRaw)).toFixed(4),
+      (((angleRaw % 360) + 360) % 360).toFixed(4),
+      Math.max(0, Math.min(1, heightRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, highlightRRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, highlightGRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, highlightBRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, shadowRRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, shadowGRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, shadowBRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'crt') {
+    const scanlinesRaw = firstFiniteParam(params, ['crtScanlines', 'scanlines', 'intensity', 'amount'], 0.5);
+    const countRaw = firstFiniteParam(params, ['crtScanCount', 'scanCount', 'count'], 480);
+    const maskRaw = firstFiniteParam(params, ['crtMask', 'mask'], 0.5);
+    const maskTypeRaw = firstFiniteParam(params, ['crtMaskType', 'maskType', 'mode'], 0);
+    const curvatureRaw = firstFiniteParam(params, ['crtCurvature', 'curvature'], 0.3);
+    const vignetteRaw = firstFiniteParam(params, ['crtVignette', 'vignette'], 0.4);
+    const glowRaw = firstFiniteParam(params, ['crtGlow', 'glow'], 0.5);
+    const rollingRaw = firstFiniteParam(params, ['crtRollingBar', 'rollingBar'], 0);
+    const chromaticRaw = firstFiniteParam(params, ['crtChromatic', 'chromatic'], 0.3);
+    return [
+      'crt',
+      Math.max(0, Math.min(1, scanlinesRaw)).toFixed(4),
+      Math.max(32, Math.min(1200, countRaw)).toFixed(4),
+      Math.max(0, Math.min(1, maskRaw)).toFixed(4),
+      Math.max(0, Math.min(2, Math.round(maskTypeRaw))).toFixed(0),
+      Math.max(0, Math.min(1, curvatureRaw)).toFixed(4),
+      Math.max(0, Math.min(1, vignetteRaw)).toFixed(4),
+      Math.max(0, Math.min(1, glowRaw)).toFixed(4),
+      Math.max(0, Math.min(1, rollingRaw)).toFixed(4),
+      Math.max(0, Math.min(1, chromaticRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'thermal') {
+    const intensityRaw = firstFiniteParam(params, ['thermalIntensity', 'intensity', 'amount'], 1);
+    const paletteRaw = firstFiniteParam(params, ['thermalPalette', 'palette'], 0);
+    const shimmerRaw = firstFiniteParam(params, ['thermalShimmer', 'shimmer'], 0);
+    const noiseRaw = firstFiniteParam(params, ['thermalSensorNoise', 'sensorNoise', 'noise'], 0);
+    return [
+      'thermal',
+      Math.max(0.05, Math.min(2, intensityRaw)).toFixed(4),
+      Math.max(0, Math.min(4, Math.round(paletteRaw))).toFixed(0),
+      Math.max(0, Math.min(1, shimmerRaw)).toFixed(4),
+      Math.max(0, Math.min(1, noiseRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'nightvision' || type === 'night-vision') {
+    const intensityRaw = firstFiniteParam(params, ['nightVisionIntensity', 'intensity', 'amount'], 1.5);
+    const noiseRaw = firstFiniteParam(params, ['nightVisionNoise', 'noise'], 0.3);
+    const vignetteRaw = firstFiniteParam(params, ['nightVisionVignette', 'vignette'], 0.5);
+    const phosphorRaw = firstFiniteParam(params, ['nightVisionPhosphor', 'phosphor'], 0);
+    const bloomRaw = firstFiniteParam(params, ['nightVisionBloom', 'bloom'], 0.6);
+    const scopeRaw = firstFiniteParam(params, ['nightVisionScopeMask', 'scopeMask'], 1);
+    const rollingRaw = firstFiniteParam(params, ['nightVisionRollingNoise', 'rollingNoise', 'rollingBar'], 0);
+    return [
+      'night-vision',
+      Math.max(0, Math.min(2, intensityRaw)).toFixed(4),
+      Math.max(0, Math.min(1, noiseRaw)).toFixed(4),
+      Math.max(0, Math.min(1, vignetteRaw)).toFixed(4),
+      Math.max(0, Math.min(2, Math.round(phosphorRaw))).toFixed(0),
+      Math.max(0, Math.min(2, bloomRaw)).toFixed(4),
+      Math.max(0, Math.min(2, Math.round(scopeRaw))).toFixed(0),
+      Math.max(0, Math.min(1, rollingRaw)).toFixed(4),
+    ].join(':');
+  }
 
   // Keep explicit descriptor IDs compatible with native descriptor parser.
   const effectId = typeof effect.id === 'string' ? effect.id.trim() : '';
@@ -1869,6 +2009,72 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       coloramaAudioReact: Number(rawParam5 ?? 0),
       coloramaHueShift: Number(rawParam6 ?? 0),
       audio: Number(rawParam7 ?? 0),
+    };
+  } else if (effect === 'edge-feather') {
+    params = {
+      featherTop: Number(rawParam0 ?? 0),
+      featherBottom: Number(rawParam1 ?? 0),
+      featherLeft: Number(rawParam2 ?? 0),
+      featherRight: Number(rawParam3 ?? 0),
+      featherSoftness: Number(rawParam4 ?? 0.5),
+      featherGamma: Number(rawParam5 ?? 1),
+      featherMattePreview: Number(rawParam6 ?? 0),
+    };
+  } else if (effect === 'dither') {
+    params = {
+      ditherType: Number(rawParam0 ?? 0),
+      ditherScale: Number(rawParam1 ?? 1),
+      ditherColorDepth: Number(rawParam2 ?? 2),
+      ditherPalette: Number(rawParam3 ?? 0),
+      ditherPixelLock: Number(rawParam4 ?? 0),
+    };
+  } else if (effect === 'outline') {
+    params = {
+      outlineR: Number(rawParam0 ?? 1),
+      outlineG: Number(rawParam1 ?? 1),
+      outlineB: Number(rawParam2 ?? 1),
+      outlineOnly: Number(rawParam3 ?? 0),
+      outlineGlow: Number(rawParam4 ?? 0),
+      outlinePosition: Number(rawParam5 ?? 1),
+      outlineCrawl: Number(rawParam6 ?? 0),
+      outlineAlphaAware: Number(rawParam7 ?? 0),
+    };
+  } else if (effect === 'emboss') {
+    params = {
+      embossAngle: Number(rawParam0 ?? 135),
+      embossHeight: Number(rawParam1 ?? 1),
+      embossHighlightR: Number(rawParam2 ?? 1),
+      embossHighlightG: Number(rawParam3 ?? 1),
+      embossHighlightB: Number(rawParam4 ?? 1),
+      embossShadowR: Number(rawParam5 ?? 0),
+      embossShadowG: Number(rawParam6 ?? 0),
+      embossShadowB: Number(rawParam7 ?? 0),
+    };
+  } else if (effect === 'crt') {
+    params = {
+      crtScanCount: Number(rawParam0 ?? 480),
+      crtMask: Number(rawParam1 ?? 0.5),
+      crtMaskType: Number(rawParam2 ?? 0),
+      crtCurvature: Number(rawParam3 ?? 0.3),
+      crtVignette: Number(rawParam4 ?? 0.4),
+      crtGlow: Number(rawParam5 ?? 0.5),
+      crtRollingBar: Number(rawParam6 ?? 0),
+      crtChromatic: Number(rawParam7 ?? 0.3),
+    };
+  } else if (effect === 'thermal') {
+    params = {
+      thermalPalette: Number(rawParam0 ?? 0),
+      thermalShimmer: Number(rawParam1 ?? 0),
+      thermalSensorNoise: Number(rawParam2 ?? 0),
+    };
+  } else if (effect === 'night-vision') {
+    params = {
+      nightVisionNoise: Number(rawParam0 ?? 0.3),
+      nightVisionVignette: Number(rawParam1 ?? 0.5),
+      nightVisionPhosphor: Number(rawParam2 ?? 0),
+      nightVisionBloom: Number(rawParam3 ?? 0.6),
+      nightVisionScopeMask: Number(rawParam4 ?? 1),
+      nightVisionRollingNoise: Number(rawParam5 ?? 0),
     };
   }
   if (params && Object.values(params).some((value) => !Number.isFinite(value))) return null;

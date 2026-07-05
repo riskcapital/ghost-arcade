@@ -162,6 +162,13 @@ const NATIVE_EFFECT_PASS_DESCRIPTORS = [
   { id: 'filmic-tonemap', code: 38 },
   { id: 'bloom', code: 39 },
   { id: 'colorama', code: 40 },
+  { id: 'edge-feather', code: 41 },
+  { id: 'dither', code: 42 },
+  { id: 'outline', code: 43 },
+  { id: 'emboss', code: 44 },
+  { id: 'crt', code: 45 },
+  { id: 'thermal', code: 46 },
+  { id: 'night-vision', code: 47 },
 ];
 
 function nativeGraphReadinessId(id) {
