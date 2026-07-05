@@ -41,6 +41,7 @@ const MAX_NATIVE_IMAGE_DECODE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_NATIVE_IMAGE_DECODE_PIXELS: u64 = 8192 * 8192;
 const SOURCE_FRAME_FORMAT_FALLBACK: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const SOURCE_FRAME_FORMAT_HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+const MAX_STAGE3D_OVERLAY_ITEMS: usize = 128;
 const DEFAULT_COMMAND_QUEUE_CAPACITY: u32 = 8192;
 const DEFAULT_COMMAND_DRAIN_LIMIT: u32 = 1024;
 const GHOST_AUDIO_LAYOUT_SCHEMA_VERSION: u32 = 1;
@@ -181,6 +182,90 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
   out.position = vec4<f32>(p, 0.0, 1.0);
   out.uv = p * 0.5 + vec2<f32>(0.5);
   return out;
+}
+"#;
+const STAGE3D_OVERLAY_WGSL: &str = r#"
+struct Stage3DOverlayUniforms {
+  resolution: vec2<f32>,
+  item_count: f32,
+  time: f32,
+}
+
+struct Stage3DOverlayItem {
+  center: vec2<f32>,
+  half_size: vec2<f32>,
+  color: vec4<f32>,
+  params: vec4<f32>, // shape, rotation, brightness, reserved
+}
+
+@group(0) @binding(0)
+var<uniform> u: Stage3DOverlayUniforms;
+
+@group(0) @binding(1)
+var<storage, read> items: array<Stage3DOverlayItem>;
+
+struct VertexOut {
+  @builtin(position) position: vec4<f32>,
+  @location(0) uv: vec2<f32>,
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
+  let pos = array<vec2<f32>, 3>(
+    vec2<f32>(-1.0, -3.0),
+    vec2<f32>(-1.0,  1.0),
+    vec2<f32>( 3.0,  1.0),
+  );
+  let p = pos[vertex_index];
+  var out: VertexOut;
+  out.position = vec4<f32>(p, 0.0, 1.0);
+  out.uv = p * 0.5 + vec2<f32>(0.5);
+  return out;
+}
+
+fn sd_box(p: vec2<f32>, b: vec2<f32>) -> f32 {
+  let q = abs(p) - b;
+  return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0);
+}
+
+fn rotate2(p: vec2<f32>, angle: f32) -> vec2<f32> {
+  let c = cos(angle);
+  let s = sin(angle);
+  return vec2<f32>(c * p.x - s * p.y, s * p.x + c * p.y);
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+  let ndc = in.uv * 2.0 - vec2<f32>(1.0);
+  let px = 2.0 / max(1.0, min(u.resolution.x, u.resolution.y));
+  var color = vec3<f32>(0.0);
+  var alpha = 0.0;
+  let count = min(u32(u.item_count), u32(128));
+  for (var i: u32 = 0u; i < count; i = i + 1u) {
+    let item = items[i];
+    let shape = item.params.x;
+    let brightness = max(0.05, item.params.z);
+    let p = rotate2(ndc - item.center, -item.params.y);
+    var mask = 0.0;
+    var glow = 0.0;
+    if (shape < 0.5) {
+      let dist = sd_box(p, max(item.half_size, vec2<f32>(px * 2.0)));
+      mask = 1.0 - smoothstep(0.0, px * 2.2, dist);
+      let inner = 1.0 - smoothstep(px * 2.0, px * 7.0, abs(dist));
+      glow = exp(-max(dist, 0.0) * 18.0) * 0.22 + inner * 0.18;
+    } else {
+      let q = p / max(item.half_size, vec2<f32>(px * 4.0));
+      let dist = length(q) - 1.0;
+      mask = 1.0 - smoothstep(0.0, px * 4.0, dist);
+      glow = exp(-max(dist, 0.0) * 6.0) * 0.24;
+    }
+    let edge = clamp(mask + glow, 0.0, 1.0);
+    let a = clamp(edge * item.color.a * brightness, 0.0, 0.86);
+    let premul = item.color.rgb * a;
+    color = color + premul * (1.0 - alpha);
+    alpha = alpha + a * (1.0 - alpha);
+  }
+  return vec4<f32>(color, alpha);
 }
 "#;
 
@@ -779,6 +864,23 @@ struct NativeComputePipeline {
 struct NativeGraphRenderPipeline {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct Stage3DOverlayUniforms {
+    resolution: [f32; 2],
+    item_count: f32,
+    time: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct Stage3DOverlayItemGpu {
+    center: [f32; 2],
+    half_size: [f32; 2],
+    color: [f32; 4],
+    meta: [f32; 4],
 }
 
 #[cfg(target_os = "macos")]
@@ -1476,6 +1578,10 @@ struct RenderState {
     native_shader_vertex_module: wgpu::ShaderModule,
     native_shader_bind_group_layout: wgpu::BindGroupLayout,
     native_shader_bind_group: wgpu::BindGroup,
+    stage3d_overlay_pipeline: wgpu::RenderPipeline,
+    stage3d_overlay_uniform_buffer: wgpu::Buffer,
+    stage3d_overlay_item_buffer: wgpu::Buffer,
+    stage3d_overlay_bind_group: wgpu::BindGroup,
     native_shader_pipelines: HashMap<String, NativeShaderPipeline>,
     native_compute_pipelines: HashMap<String, NativeComputePipeline>,
     native_graph_render_pipelines: HashMap<String, NativeGraphRenderPipeline>,
@@ -1819,6 +1925,7 @@ impl App {
             "managed_output_attach": true,
             "managed_output_window_control": true,
             "native_stage3d_scene_ingest": true,
+            "native_stage3d_overlay_preview": true,
             "native_projection_sim_scene_ingest": true,
             "native_recording": false,
             "native_stage3d": false,
@@ -3113,6 +3220,7 @@ impl App {
         } else {
             None
         };
+        let stage3d_overlay_items = self.stage3d_overlay_items();
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
@@ -3127,6 +3235,7 @@ impl App {
             frame_index,
             &gpu_layers,
             source_preview_pixels.as_deref(),
+            &stage3d_overlay_items,
             self.audio0,
             self.audio1,
             self.audio2,
@@ -3267,6 +3376,7 @@ impl App {
         } else {
             None
         };
+        let stage3d_overlay_items = self.stage3d_overlay_items();
         let Some(renderer) = self.renderer.as_mut() else {
             return Err("native renderer has not created a wgpu device".to_string());
         };
@@ -3278,6 +3388,7 @@ impl App {
             snapshot_frame_index,
             &gpu_layers,
             source_preview_pixels.as_deref(),
+            &stage3d_overlay_items,
             self.audio0,
             self.audio1,
             self.audio2,
@@ -4641,6 +4752,16 @@ impl App {
         Ok(json!(summary))
     }
 
+    fn stage3d_overlay_items(&self) -> Vec<Stage3DOverlayItemGpu> {
+        let mut items = Vec::new();
+        let Some(scene) = self.stage3d_scene.as_ref() else {
+            return items;
+        };
+        collect_stage3d_overlay_nodes(scene.get("nodes"), &mut items);
+        collect_stage3d_user_overlay_items(scene.get("userElements"), &mut items);
+        items
+    }
+
     fn set_projection_sim_scene(&mut self, params: &Value) -> Result<Value, String> {
         let scene = scene_payload(params, "projection_sim")?;
         let summary = summarize_projection_sim_scene(scene);
@@ -5482,6 +5603,100 @@ impl RenderState {
             cache: None,
         });
 
+        let stage3d_overlay_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Ghost Render Core Stage3D Overlay"),
+            source: wgpu::ShaderSource::Wgsl(STAGE3D_OVERLAY_WGSL.into()),
+        });
+        let stage3d_overlay_uniform_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Ghost Render Core Stage3D Overlay Uniforms"),
+                contents: bytemuck::bytes_of(&Stage3DOverlayUniforms {
+                    resolution: [config.width as f32, config.height as f32],
+                    item_count: 0.0,
+                    time: 0.0,
+                }),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+        let empty_stage3d_items = vec![Stage3DOverlayItemGpu::zeroed(); MAX_STAGE3D_OVERLAY_ITEMS];
+        let stage3d_overlay_item_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Ghost Render Core Stage3D Overlay Items"),
+                contents: bytemuck::cast_slice(&empty_stage3d_items),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            });
+        let stage3d_overlay_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Ghost Render Core Stage3D Overlay Bind Group Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+        let stage3d_overlay_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Ghost Render Core Stage3D Overlay Bind Group"),
+            layout: &stage3d_overlay_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: stage3d_overlay_uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: stage3d_overlay_item_buffer.as_entire_binding(),
+                },
+            ],
+        });
+        let stage3d_overlay_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Ghost Render Core Stage3D Overlay Pipeline Layout"),
+                bind_group_layouts: &[Some(&stage3d_overlay_bind_group_layout)],
+                immediate_size: 0,
+            });
+        let stage3d_overlay_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Ghost Render Core Stage3D Overlay Pipeline"),
+                layout: Some(&stage3d_overlay_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &stage3d_overlay_shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &stage3d_overlay_shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            });
+
         let native_shader_input_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Ghost Render Core Native Shader Input Frames"),
             size: wgpu::Extent3d {
@@ -5582,6 +5797,10 @@ impl RenderState {
             native_shader_vertex_module,
             native_shader_bind_group_layout,
             native_shader_bind_group,
+            stage3d_overlay_pipeline,
+            stage3d_overlay_uniform_buffer,
+            stage3d_overlay_item_buffer,
+            stage3d_overlay_bind_group,
             native_shader_pipelines: HashMap::new(),
             native_compute_pipelines: HashMap::new(),
             native_graph_render_pipelines: HashMap::new(),
@@ -7375,6 +7594,54 @@ impl RenderState {
         pass.draw(0..3, 0..1);
     }
 
+    fn draw_stage3d_overlay_to_view(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        label: &'static str,
+        time_seconds: Option<f32>,
+        overlay_items: &[Stage3DOverlayItemGpu],
+    ) {
+        let item_count = overlay_items.len().min(MAX_STAGE3D_OVERLAY_ITEMS);
+        if item_count == 0 {
+            return;
+        }
+        self.queue.write_buffer(
+            &self.stage3d_overlay_uniform_buffer,
+            0,
+            bytemuck::bytes_of(&Stage3DOverlayUniforms {
+                resolution: [self.config.width as f32, self.config.height as f32],
+                item_count: item_count as f32,
+                time: time_seconds.unwrap_or_else(|| self.start_time.elapsed().as_secs_f32()),
+            }),
+        );
+        self.queue.write_buffer(
+            &self.stage3d_overlay_item_buffer,
+            0,
+            bytemuck::cast_slice(&overlay_items[..item_count]),
+        );
+
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(label),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&self.stage3d_overlay_pipeline);
+        pass.set_bind_group(0, &self.stage3d_overlay_bind_group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
     fn render_snapshot(
         &mut self,
         command_phase: f32,
@@ -7383,6 +7650,7 @@ impl RenderState {
         frame_count: u64,
         scene_layers: &[LayerGpu],
         source_previews: Option<&[PreviewPixel]>,
+        stage3d_overlay_items: &[Stage3DOverlayItemGpu],
         audio0: [f32; 4],
         audio1: [f32; 4],
         audio2: [f32; 4],
@@ -7420,6 +7688,13 @@ impl RenderState {
             "Ghost Render Core Snapshot Pass",
             timestamp_writes,
         );
+        self.draw_stage3d_overlay_to_view(
+            &mut encoder,
+            &self.snapshot_view,
+            "Ghost Render Core Stage3D Snapshot Overlay Pass",
+            time_seconds,
+            stage3d_overlay_items,
+        );
         if should_record_timing {
             if let Some(gpu_timing) = self.gpu_timing.as_ref() {
                 gpu_timing.resolve_to_readback(&mut encoder);
@@ -7443,6 +7718,7 @@ impl RenderState {
         frame_count: u64,
         scene_layers: &[LayerGpu],
         source_previews: Option<&[PreviewPixel]>,
+        stage3d_overlay_items: &[Stage3DOverlayItemGpu],
         audio0: [f32; 4],
         audio1: [f32; 4],
         audio2: [f32; 4],
@@ -7479,6 +7755,13 @@ impl RenderState {
             &self.output_mirror_view,
             "Ghost Render Core Output Mirror Pass",
             mirror_timestamp_writes,
+        );
+        self.draw_stage3d_overlay_to_view(
+            &mut mirror_encoder,
+            &self.output_mirror_view,
+            "Ghost Render Core Stage3D Output Mirror Overlay Pass",
+            time_seconds,
+            stage3d_overlay_items,
         );
         if should_record_timing {
             if let Some(gpu_timing) = self.gpu_timing.as_ref() {
@@ -7532,6 +7815,13 @@ impl RenderState {
                 label: Some("Ghost Render Core Encoder"),
             });
         self.draw_fullscreen_to_view(&mut encoder, &view, "Ghost Render Core Pass", None);
+        self.draw_stage3d_overlay_to_view(
+            &mut encoder,
+            &view,
+            "Ghost Render Core Stage3D Swapchain Overlay Pass",
+            time_seconds,
+            stage3d_overlay_items,
+        );
         self.queue.submit(Some(encoder.finish()));
         self.queue.present(frame);
         self.last_frame_error = None;
@@ -7653,6 +7943,215 @@ fn count_stage3d_nodes(value: Option<&Value>, summary: &mut NativeSceneBridgeSum
     }
 }
 
+fn collect_stage3d_overlay_nodes(value: Option<&Value>, items: &mut Vec<Stage3DOverlayItemGpu>) {
+    let Some(nodes) = value.and_then(Value::as_array) else {
+        return;
+    };
+    for node in nodes {
+        if items.len() >= MAX_STAGE3D_OVERLAY_ITEMS {
+            return;
+        }
+        if !bool_at(node, &["visible"]).unwrap_or(true) {
+            continue;
+        }
+        let node_type = node.get("type").and_then(Value::as_str).unwrap_or_default();
+        match node_type {
+            "led-screen" => {
+                let position = vec3_path_or(node, &["position"], [0.0, 2.4, 0.0]);
+                let rotation = vec3_path_or(node, &["rotation"], [0.0, 0.0, 0.0]);
+                let scale = vec3_path_or(node, &["scale"], [1.0, 1.0, 1.0]);
+                let width = number_at(node, &["width"]).unwrap_or(4.0) as f32 * scale[0].abs();
+                let height = number_at(node, &["height"]).unwrap_or(2.25) as f32 * scale[1].abs();
+                let brightness = number_at(node, &["brightness"]).unwrap_or(1.0) as f32;
+                items.push(stage3d_overlay_item(
+                    position,
+                    width,
+                    height,
+                    [0.25, 0.92, 1.0, 0.62],
+                    0.0,
+                    rotation[2],
+                    brightness.clamp(0.1, 4.0),
+                ));
+            }
+            "primitive" | "svg-extrude" => {
+                let position = vec3_path_or(node, &["position"], [0.0, 1.0, 0.0]);
+                let rotation = vec3_path_or(node, &["rotation"], [0.0, 0.0, 0.0]);
+                let scale = vec3_path_or(node, &["scale"], [1.0, 1.0, 1.0]);
+                let dimensions = vec3_path_or(node, &["dimensions"], [2.0, 2.0, 2.0]);
+                let color = color_path_or(node, &["material", "emissive"])
+                    .or_else(|| color_path_or(node, &["material", "color"]))
+                    .unwrap_or([0.86, 0.78, 1.0]);
+                let geometry = string_at(node, &["geometry"]).unwrap_or_default();
+                let shape = if matches!(geometry.as_str(), "sphere" | "cylinder" | "cone") {
+                    1.0
+                } else {
+                    0.0
+                };
+                let brightness = number_at(node, &["material", "emissiveIntensity"])
+                    .unwrap_or(0.85)
+                    .clamp(0.1, 4.0) as f32;
+                items.push(stage3d_overlay_item(
+                    position,
+                    dimensions[0].abs() * scale[0].abs(),
+                    dimensions[1].abs().max(dimensions[2].abs()) * scale[1].abs(),
+                    [color[0], color[1], color[2], 0.42],
+                    shape,
+                    rotation[2],
+                    brightness,
+                ));
+            }
+            "truss" | "imported-glb" => {
+                let position = vec3_path_or(node, &["position"], [0.0, 1.0, 0.0]);
+                let rotation = vec3_path_or(node, &["rotation"], [0.0, 0.0, 0.0]);
+                let scale = vec3_path_or(node, &["scale"], [1.0, 1.0, 1.0]);
+                let width = number_at(node, &["length"]).unwrap_or(3.0) as f32 * scale[0].abs();
+                let height =
+                    number_at(node, &["thickness"]).unwrap_or(0.28) as f32 * scale[1].abs();
+                let color = color_path_or(node, &["color"]).unwrap_or([0.62, 0.66, 0.72]);
+                items.push(stage3d_overlay_item(
+                    position,
+                    width,
+                    height.max(0.2),
+                    [color[0], color[1], color[2], 0.28],
+                    0.0,
+                    rotation[2],
+                    0.85,
+                ));
+            }
+            "spot-light" | "point-light" | "rect-area-light" => {
+                let position = vec3_path_or(node, &["position"], [0.0, 3.0, 0.0]);
+                let color = color_path_or(node, &["color"]).unwrap_or([1.0, 0.9, 0.65]);
+                let intensity = number_at(node, &["intensity"])
+                    .unwrap_or(1.0)
+                    .clamp(0.1, 5.0) as f32;
+                let radius = 0.55 + intensity * 0.18;
+                items.push(stage3d_overlay_item(
+                    position,
+                    radius,
+                    radius,
+                    [color[0], color[1], color[2], 0.34],
+                    1.0,
+                    0.0,
+                    intensity,
+                ));
+            }
+            "laser" => {
+                let position = vec3_path_or(node, &["position"], [0.0, 2.0, 0.0]);
+                let rotation = vec3_path_or(node, &["rotation"], [0.0, 0.0, 0.0]);
+                let color = color_path_or(node, &["color"]).unwrap_or([1.0, 0.1, 0.9]);
+                let length = number_at(node, &["length"]).unwrap_or(5.0) as f32;
+                let thickness = number_at(node, &["thickness"]).unwrap_or(0.05) as f32;
+                let intensity = number_at(node, &["intensity"])
+                    .unwrap_or(1.0)
+                    .clamp(0.1, 5.0) as f32;
+                items.push(stage3d_overlay_item(
+                    position,
+                    length,
+                    thickness.max(0.12),
+                    [color[0], color[1], color[2], 0.44],
+                    0.0,
+                    rotation[2],
+                    intensity,
+                ));
+            }
+            "fog-volume" => {
+                let position = vec3_path_or(node, &["position"], [0.0, 1.2, 0.0]);
+                let dimensions = vec3_path_or(node, &["dimensions"], [4.0, 2.0, 4.0]);
+                let color = color_path_or(node, &["color"]).unwrap_or([0.55, 0.72, 1.0]);
+                let density = number_at(node, &["density"])
+                    .unwrap_or(0.5)
+                    .clamp(0.05, 2.0) as f32;
+                items.push(stage3d_overlay_item(
+                    position,
+                    dimensions[0],
+                    dimensions[1],
+                    [color[0], color[1], color[2], 0.16],
+                    1.0,
+                    0.0,
+                    density,
+                ));
+            }
+            _ => {}
+        }
+        collect_stage3d_overlay_nodes(node.get("children"), items);
+    }
+}
+
+fn collect_stage3d_user_overlay_items(
+    value: Option<&Value>,
+    items: &mut Vec<Stage3DOverlayItemGpu>,
+) {
+    let Some(elements) = value.and_then(Value::as_array) else {
+        return;
+    };
+    for element in elements {
+        if items.len() >= MAX_STAGE3D_OVERLAY_ITEMS {
+            return;
+        }
+        let position = vec3_path_or(element, &["position"], [0.0, 1.0, 0.0]);
+        let scale = number_at(element, &["scale"])
+            .unwrap_or(1.0)
+            .clamp(0.05, 100.0) as f32;
+        let element_type = string_at(element, &["type"]).unwrap_or_default();
+        let width = number_at(element, &["params", "width"])
+            .or_else(|| number_at(element, &["params", "w"]))
+            .unwrap_or(1.6) as f32
+            * scale;
+        let height = number_at(element, &["params", "height"])
+            .or_else(|| number_at(element, &["params", "h"]))
+            .unwrap_or(1.0) as f32
+            * scale;
+        let is_round = element_type.contains("sphere")
+            || element_type.contains("ball")
+            || element_type.contains("head")
+            || element_type.contains("light");
+        let color = color_path_or(element, &["params", "color"])
+            .or_else(|| color_path_or(element, &["params", "lightColor"]))
+            .unwrap_or(if is_round {
+                [1.0, 0.74, 0.36]
+            } else {
+                [0.72, 0.76, 0.82]
+            });
+        items.push(stage3d_overlay_item(
+            position,
+            width,
+            height,
+            [color[0], color[1], color[2], 0.32],
+            if is_round { 1.0 } else { 0.0 },
+            number_at(element, &["rotationY"]).unwrap_or(0.0) as f32,
+            1.0,
+        ));
+    }
+}
+
+fn stage3d_overlay_item(
+    position: [f32; 3],
+    width: f32,
+    height: f32,
+    color: [f32; 4],
+    shape: f32,
+    rotation: f32,
+    brightness: f32,
+) -> Stage3DOverlayItemGpu {
+    let center = stage3d_project_position(position);
+    let depth_scale = (1.0 - position[2] * 0.012).clamp(0.45, 1.45);
+    let half_width = (width.abs() * 0.055 * depth_scale).clamp(0.012, 1.15);
+    let half_height = (height.abs() * 0.075 * depth_scale).clamp(0.012, 1.15);
+    Stage3DOverlayItemGpu {
+        center,
+        half_size: [half_width, half_height],
+        color,
+        meta: [shape, rotation, brightness, 0.0],
+    }
+}
+
+fn stage3d_project_position(position: [f32; 3]) -> [f32; 2] {
+    [
+        (position[0] / 18.0).clamp(-1.35, 1.35),
+        ((position[1] - 1.8) / 8.0 - position[2] * 0.018).clamp(-1.35, 1.35),
+    ]
+}
+
 fn summarize_projection_sim_scene(scene: &Value) -> NativeSceneBridgeSummary {
     let mut summary = NativeSceneBridgeSummary::empty("projection-sim");
     summary.scene_id = string_at(scene, &["id"]).unwrap_or_default();
@@ -7701,6 +8200,61 @@ fn bool_at(value: &Value, path: &[&str]) -> Option<bool> {
         current = current.get(*key)?;
     }
     current.as_bool()
+}
+
+fn vec3_path_or(value: &Value, path: &[&str], fallback: [f32; 3]) -> [f32; 3] {
+    let mut current = value;
+    for key in path {
+        let Some(next) = current.get(*key) else {
+            return fallback;
+        };
+        current = next;
+    }
+    let Some(values) = current.as_array() else {
+        return fallback;
+    };
+    let mut out = fallback;
+    for (index, slot) in out.iter_mut().enumerate() {
+        if let Some(value) = values.get(index).and_then(Value::as_f64) {
+            *slot = value.clamp(-1.0e6, 1.0e6) as f32;
+        }
+    }
+    out
+}
+
+fn color_path_or(value: &Value, path: &[&str]) -> Option<[f32; 3]> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    if let Some(text) = current.as_str() {
+        return parse_hex_color(text);
+    }
+    let values = current.as_array()?;
+    Some([
+        json_channel_to_unit(values.first()?),
+        json_channel_to_unit(values.get(1)?),
+        json_channel_to_unit(values.get(2)?),
+    ])
+}
+
+fn parse_hex_color(text: &str) -> Option<[f32; 3]> {
+    let hex = text.trim().trim_start_matches('#');
+    if hex.len() == 3 {
+        let mut out = [0.0_f32; 3];
+        for (index, ch) in hex.chars().enumerate() {
+            let value = ch.to_digit(16)? as f32 / 15.0;
+            out[index] = value;
+        }
+        return Some(out);
+    }
+    if hex.len() == 6 {
+        let r = u8::from_str_radix(&hex[0..2], 16).ok()? as f32 / 255.0;
+        let g = u8::from_str_radix(&hex[2..4], 16).ok()? as f32 / 255.0;
+        let b = u8::from_str_radix(&hex[4..6], 16).ok()? as f32 / 255.0;
+        return Some([r, g, b]);
+    }
+    None
 }
 
 fn vec4_at(value: &Value, key: &str) -> [f32; 4] {

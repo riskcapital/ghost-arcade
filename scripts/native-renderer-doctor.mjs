@@ -218,6 +218,7 @@ async function inspectAppBridge() {
         `outputActive=${readiness?.modes?.output_active?.ok ? 'on' : 'idle'}`,
         `fullV2=${readiness?.modes?.full_v2?.ok ? 'ready' : `pending(${fullV2Blockers.length})`}`,
         `stage3dSceneIngest=${features.native_stage3d_scene_ingest ? 'on' : 'pending'}`,
+        `stage3dOverlayPreview=${features.native_stage3d_overlay_preview ? 'on' : 'pending'}`,
         `projectionSceneIngest=${features.native_projection_sim_scene_ingest ? 'on' : 'pending'}`,
         `staticImageDecode=${features.native_static_image_decode ? 'native' : 'fallback'}`,
         `staticImagePrefetch=${features.native_static_image_prefetch ? 'native' : 'fallback'}`,
