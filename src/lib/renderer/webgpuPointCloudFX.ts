@@ -640,6 +640,16 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 /* RENDER — instanced quads, three topologies                     */
 /* ============================================================== */
 const RENDER_WGSL = /* wgsl */ `
+struct Home {
+  homePos:       vec3<f32>,
+  alpha:         f32,
+  homeColor:     vec3<f32>,
+  sizeMultiplier: f32,
+  splatScale:    vec3<f32>,
+  gaussian:      f32,
+  splatRotation: vec4<f32>,
+};
+
 struct Live {
   pos:   vec3<f32>,
   alpha: f32,
@@ -671,8 +681,9 @@ struct U {
   _pad7:        f32,
 };
 
-@group(0) @binding(0) var<storage, read> live: array<Live>;
-@group(0) @binding(1) var<uniform>       u:    U;
+@group(0) @binding(0) var<storage, read> home: array<Home>;
+@group(0) @binding(1) var<storage, read> live: array<Live>;
+@group(0) @binding(2) var<uniform>       u:    U;
 
 struct VSOut {
   @builtin(position) pos: vec4<f32>,
@@ -680,6 +691,7 @@ struct VSOut {
   @location(1) color:     vec3<f32>,
   @location(2) alpha:     f32,
   @location(3) depth01:   f32,
+  @location(4) gaussian:  f32,
 };
 
 @vertex
@@ -687,6 +699,7 @@ fn vs_main(
   @builtin(vertex_index)   vid: u32,
   @builtin(instance_index) iid: u32,
 ) -> VSOut {
+  let h = home[iid];
   let p = live[iid];
 
   var cornerUV: vec2<f32> = vec2<f32>(0.0, 0.0);
@@ -719,7 +732,12 @@ fn vs_main(
     cornerUV = vec2<f32>(q.x * 0.5 + 0.5, q.y * 0.5 + 0.5);
     // billboards are 2× bigger than points
     let sizeMul = select(1.0, 2.0, u.topology == 1u);
-    offset = u.camRight * (q.x * p.size * sizeMul) + u.camUp * (q.y * p.size * sizeMul);
+    let meanScale = max((h.splatScale.x + h.splatScale.y + h.splatScale.z) / 3.0, 1e-6);
+    let gaussianStretch = clamp(h.splatScale.xy / meanScale, vec2<f32>(0.35), vec2<f32>(3.5));
+    let axisStretch = select(vec2<f32>(1.0), gaussianStretch, h.gaussian > 0.5);
+    offset =
+      u.camRight * (q.x * p.size * sizeMul * axisStretch.x) +
+      u.camUp    * (q.y * p.size * sizeMul * axisStretch.y);
   }
 
   var out: VSOut;
@@ -728,6 +746,7 @@ fn vs_main(
   out.color  = p.color;
   out.alpha  = p.alpha * u.opacity;
   out.depth01 = clamp(out.pos.z / max(out.pos.w, 1e-5) * 0.5 + 0.5, 0.0, 1.0);
+  out.gaussian = h.gaussian;
   return out;
 }
 
@@ -740,7 +759,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     let headTail = 1.0 - in.uv.x;
     let perp     = 1.0 - abs(in.uv.y - 0.5) * 2.0;
     mask = headTail * smoothstep(0.0, 0.4, perp);
-  } else if (u.topology == 1u) {
+  } else if (u.topology == 1u || in.gaussian > 0.5) {
     // Billboard — soft gaussian-ish disc
     let d = distance(in.uv, vec2<f32>(0.5, 0.5)) * 2.0;
     mask = exp(-d * d * 3.0);
@@ -1526,8 +1545,9 @@ export function buildPointCloudFXNativeComputeGraph(options: PointCloudFXNativeG
           vertex_count: 6,
           instance_count: options.pointData.pointCount,
           bindings: [
-            { binding: 0, resource: id('live'), kind: 'read-only-storage' },
-            { binding: 1, resource: id('render-uniform'), kind: 'uniform' },
+            { binding: 0, resource: id('home'), kind: 'read-only-storage' },
+            { binding: 1, resource: id('live'), kind: 'read-only-storage' },
+            { binding: 2, resource: id('render-uniform'), kind: 'uniform' },
           ],
         },
       ],
@@ -1628,7 +1648,8 @@ export class WebGPUPointCloudFX {
     this.renderBindGroupLayout = this.device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX,   buffer: { type: 'read-only-storage' } },
-        { binding: 1, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: GPUShaderStage.VERTEX,   buffer: { type: 'read-only-storage' } },
+        { binding: 2, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
       ],
     });
     this.renderPipeline = this.device.createRenderPipeline({
@@ -1752,8 +1773,9 @@ export class WebGPUPointCloudFX {
     this.renderBindGroup = this.device.createBindGroup({
       layout: this.renderBindGroupLayout,
       entries: [
-        { binding: 0, resource: { buffer: this.liveBuffer } },
-        { binding: 1, resource: { buffer: this.renderUniformBuffer } },
+        { binding: 0, resource: { buffer: this.homeBuffer } },
+        { binding: 1, resource: { buffer: this.liveBuffer } },
+        { binding: 2, resource: { buffer: this.renderUniformBuffer } },
       ],
     });
 

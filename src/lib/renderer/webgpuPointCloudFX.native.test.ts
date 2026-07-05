@@ -178,6 +178,11 @@ describe('Point Cloud FX native graph', () => {
       vertex_count: 6,
       instance_count: 48,
       blend: 'alpha',
+      bindings: [
+        { binding: 0, resource: 'gpu:layer-cloud:point-cloud-fx:point-cloud-fx:home', kind: 'read-only-storage' },
+        { binding: 1, resource: 'gpu:layer-cloud:point-cloud-fx:point-cloud-fx:live', kind: 'read-only-storage' },
+        { binding: 2, resource: 'gpu:layer-cloud:point-cloud-fx:point-cloud-fx:render-uniform', kind: 'uniform' },
+      ],
     });
     const home = first.config.buffers.find((buffer) => buffer.id.endsWith(':home'));
     const live = first.config.buffers.find((buffer) => buffer.id.endsWith(':live'));
