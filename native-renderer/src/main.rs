@@ -2222,6 +2222,7 @@ impl App {
             "native_stage3d_primitive_meshes": true,
             "native_projection_sim_scene_ingest": true,
             "native_projection_sim_overlay_preview": true,
+            "native_projection_sim_mesh_preview": true,
             "native_recording": false,
             "native_stage3d": false,
             "native_projection_sim": false
@@ -5068,14 +5069,22 @@ impl App {
     }
 
     fn stage3d_mesh_frame(&self) -> Option<Stage3DMeshFrame> {
-        let scene = self.stage3d_scene.as_ref()?;
         let mut items = Vec::new();
-        collect_stage3d_mesh_nodes(scene.get("nodes"), &mut items, self);
-        collect_stage3d_user_mesh_items(scene.get("userElements"), &mut items, self);
+        let mut camera = None;
+        if let Some(scene) = self.stage3d_scene.as_ref() {
+            collect_stage3d_mesh_nodes(scene.get("nodes"), &mut items, self);
+            collect_stage3d_user_mesh_items(scene.get("userElements"), &mut items, self);
+            camera = scene.get("camera");
+        }
+        if let Some(scene) = self.projection_sim_scene.as_ref() {
+            collect_projection_sim_mesh_items(scene, &mut items);
+            if camera.is_none() {
+                camera = scene.get("camera");
+            }
+        }
         if items.is_empty() {
             return None;
         }
-        let camera = scene.get("camera");
         Some(Stage3DMeshFrame {
             camera_pos: camera
                 .map(|value| vec3_path_or(value, &["position"], [12.0, 6.0, 14.0]))
@@ -9125,6 +9134,96 @@ fn stage3d_geometry_shape_code(geometry: &str) -> f32 {
         "cylinder" | "column" => 5.0,
         "cone" => 6.0,
         _ => 1.0,
+    }
+}
+
+fn collect_projection_sim_mesh_items(scene: &Value, items: &mut Vec<Stage3DMeshItemGpu>) {
+    if let Some(objects) = scene.get("objects").and_then(Value::as_array) {
+        for object in objects {
+            if items.len() >= MAX_STAGE3D_MESH_ITEMS {
+                return;
+            }
+            if !bool_at(object, &["visible"]).unwrap_or(true) {
+                continue;
+            }
+            let position = vec3_path_or(object, &["position"], [0.0, 1.0, 0.0]);
+            let rotation = vec3_path_or(object, &["rotation"], [0.0, 0.0, 0.0]);
+            let scale = vec3_path_or(object, &["scale"], [1.0, 1.0, 1.0]);
+            let object_type = string_at(object, &["type"]).unwrap_or_default();
+            let primitive = string_at(object, &["primitive"]).unwrap_or_default();
+            let color = color_path_or(object, &["color"]).unwrap_or(match object_type.as_str() {
+                "model" => [0.72, 0.82, 1.0],
+                "pointcloud" => [1.0, 0.62, 0.94],
+                _ => [0.86, 0.82, 0.72],
+            });
+            let projection_alpha = if bool_at(object, &["receiveProjection"]).unwrap_or(true) {
+                0.66
+            } else {
+                0.34
+            };
+            items.push(stage3d_mesh_item(
+                position,
+                projection_sim_mesh_scale(&primitive, scale),
+                rotation[1],
+                [color[0], color[1], color[2], projection_alpha],
+                projection_sim_shape_code(&object_type, &primitive),
+                stage3d_material(None, 1.0, 0.0, 1.0),
+                [0.0, 0.0, 1.0, 0.0],
+            ));
+        }
+    }
+
+    if let Some(projectors) = scene.get("projectors").and_then(Value::as_array) {
+        for projector in projectors {
+            if items.len() >= MAX_STAGE3D_MESH_ITEMS {
+                return;
+            }
+            if !bool_at(projector, &["enabled"]).unwrap_or(true) {
+                continue;
+            }
+            let position = vec3_path_or(projector, &["position"], [-4.0, 4.0, 6.0]);
+            let color = color_path_or(projector, &["color"]).unwrap_or([1.0, 1.0, 1.0]);
+            let intensity = number_at(projector, &["intensity"])
+                .unwrap_or(1.0)
+                .clamp(0.1, 4.0) as f32;
+            let size = (0.24 + intensity * 0.07).clamp(0.26, 0.62);
+            items.push(stage3d_mesh_item(
+                position,
+                [size, size, size],
+                0.0,
+                [color[0], color[1], color[2], 0.58],
+                2.0,
+                stage3d_material(None, 1.0, 0.0, 1.0),
+                [0.0, 0.0, 1.0, 0.0],
+            ));
+        }
+    }
+}
+
+fn projection_sim_shape_code(object_type: &str, primitive: &str) -> f32 {
+    if object_type == "pointcloud" {
+        return 2.0;
+    }
+    if object_type == "model" {
+        return 1.0;
+    }
+    stage3d_geometry_shape_code(primitive)
+}
+
+fn projection_sim_mesh_scale(primitive: &str, scale: [f32; 3]) -> [f32; 3] {
+    let safe = [
+        scale[0].abs().max(0.08),
+        scale[1].abs().max(0.08),
+        scale[2].abs().max(0.08),
+    ];
+    match primitive.trim().to_ascii_lowercase().as_str() {
+        "plane" | "panel" | "quad" => [safe[0], safe[1], 0.04],
+        "sphere" | "ball" => {
+            let diameter = safe[0].max(safe[1]).max(safe[2]);
+            [diameter, diameter, diameter]
+        }
+        "cylinder" | "column" | "cone" | "pyramid" => [safe[0], safe[1], safe[0].max(safe[2])],
+        _ => safe,
     }
 }
 

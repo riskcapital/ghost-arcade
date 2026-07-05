@@ -760,6 +760,14 @@ class NativeRendererBroker {
           ? 'ingested projection-sim scenes can affect native-rendered frame pixels'
           : 'Projection Sim scene data is not yet rendered by the native core',
       ],
+      [
+        'native-projection-sim-mesh-preview',
+        'Native Projection Sim mesh preview',
+        !!features.native_projection_sim_mesh_preview,
+        features.native_projection_sim_mesh_preview
+          ? 'Projection Sim objects/projectors render through the native camera/depth mesh pass'
+          : 'Projection Sim scene data is not yet rendered as native meshes',
+      ],
       ['compute-graph-host', 'Native buffer compute graph host', !!features.compute_graph_host],
       [
         'compute-instrument-host',
@@ -1893,6 +1901,7 @@ function makeDefaultCapabilities(overrides = {}) {
       native_stage3d_primitive_meshes: false,
       native_projection_sim_scene_ingest: false,
       native_projection_sim_overlay_preview: false,
+      native_projection_sim_mesh_preview: false,
       native_recording: false,
       native_stage3d: false,
       native_projection_sim: false,
