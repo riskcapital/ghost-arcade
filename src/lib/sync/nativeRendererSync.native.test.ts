@@ -5,6 +5,13 @@ import type {
 
 let effectToNativeDescriptor: (effect: any) => string | null;
 let nativeEffectPassFromDescriptor: (descriptor: string | null) => NativeEffectPassRuntime | null;
+let missingNativeGraphRouteRequirements: (
+  features: Record<string, boolean>,
+  instruments: ReadonlySet<string>,
+  manifest: ReadonlyMap<string, any>,
+) => string[];
+let nativeGraphInstrumentIds: (capabilities: any) => string[];
+let nativeGraphManifestById: (capabilities: any) => Map<string, any>;
 
 beforeAll(async () => {
   const storage = new Map<string, string>();
@@ -41,8 +48,123 @@ beforeAll(async () => {
   });
   ({
     effectToNativeDescriptor,
+    missingNativeGraphRouteRequirements,
+    nativeGraphInstrumentIds,
+    nativeGraphManifestById,
     nativeEffectPassFromDescriptor,
   } = await import('./nativeRendererSync'));
+});
+
+const graphContract = [
+  { id: 'planet', feature: 'native_planet_graph', shaders: ['planet/render'] },
+  {
+    id: 'smoke-3d',
+    feature: 'native_3d_smoke_graph',
+    shaders: [
+      '3d-smoke/splat',
+      '3d-smoke/advect-velocity',
+      '3d-smoke/divergence',
+      '3d-smoke/jacobi',
+      '3d-smoke/subtract-gradient',
+      '3d-smoke/advect-density',
+      '3d-smoke/render',
+    ],
+  },
+  {
+    id: 'particle-field',
+    feature: 'native_particle_field_graph',
+    shaders: [
+      'particle-field/behavior',
+      'particle-field/edges',
+      'particle-field/fog',
+      'particle-field/render',
+      'particle-field/lines',
+    ],
+  },
+  { id: 'volumetric-spheres', feature: 'native_volumetric_spheres_graph', shaders: ['volumetric-spheres/sim', 'volumetric-spheres/render'] },
+  {
+    id: 'smoke-riders',
+    feature: 'native_smoke_riders_graph',
+    shaders: [
+      '3d-smoke/splat',
+      '3d-smoke/advect-velocity',
+      '3d-smoke/divergence',
+      '3d-smoke/jacobi',
+      '3d-smoke/subtract-gradient',
+      '3d-smoke/advect-density',
+      '3d-smoke/render',
+      'volumetric-spheres/sim',
+      'volumetric-spheres/render',
+    ],
+  },
+  { id: 'ink-cloud', feature: 'native_ink_cloud_graph', shaders: ['ink-cloud/sim', 'ink-cloud/render', 'ink-cloud/background'] },
+  { id: 'flythrough', feature: 'native_flythrough_graph', shaders: ['flythrough/compute', 'flythrough/render'] },
+  { id: 'pixel-particles', feature: 'native_pixel_particles_graph', shaders: ['pixel-particles/compute', 'pixel-particles/render'] },
+  {
+    id: 'point-cloud-fx',
+    feature: 'native_point_cloud_fx_graph',
+    shaders: [
+      'point-cloud-fx/compute',
+      'point-cloud-fx/sort-fill',
+      'point-cloud-fx/sort-step',
+      'point-cloud-fx/render',
+    ],
+  },
+];
+
+function graphCapabilities() {
+  return {
+    native_graph_instruments: graphContract.map((entry) => entry.id),
+    native_graph_instrument_manifest: graphContract.map((entry) => ({
+      id: entry.id,
+      source_uri_prefix: `native-graph://${entry.id}/`,
+      shader_ids: [...entry.shaders],
+      features: ['compute_graph_host', 'compute_graph_render', 'compute_graph_source_frame_target', entry.feature],
+      render_target: 'source_frame',
+    })),
+    features: Object.fromEntries(graphContract.map((entry) => [entry.feature, true])),
+  };
+}
+
+describe('native renderer sync graph manifest contract', () => {
+  it('requires complete shader IDs for each native graph route', () => {
+    const complete = graphCapabilities();
+    expect(
+      missingNativeGraphRouteRequirements(
+        complete.features,
+        new Set(nativeGraphInstrumentIds(complete)),
+        nativeGraphManifestById(complete),
+      ),
+    ).toEqual([]);
+
+    const missingParticleLines = graphCapabilities();
+    missingParticleLines.native_graph_instrument_manifest = missingParticleLines.native_graph_instrument_manifest.map((entry) =>
+      entry.id === 'particle-field'
+        ? { ...entry, shader_ids: entry.shader_ids.filter((shaderId) => shaderId !== 'particle-field/lines') }
+        : entry,
+    );
+    expect(
+      missingNativeGraphRouteRequirements(
+        missingParticleLines.features,
+        new Set(nativeGraphInstrumentIds(missingParticleLines)),
+        nativeGraphManifestById(missingParticleLines),
+      ),
+    ).toContain('particle-field:shader:particle-field/lines');
+
+    const missingPointSort = graphCapabilities();
+    missingPointSort.native_graph_instrument_manifest = missingPointSort.native_graph_instrument_manifest.map((entry) =>
+      entry.id === 'point-cloud-fx'
+        ? { ...entry, shader_ids: entry.shader_ids.filter((shaderId) => shaderId !== 'point-cloud-fx/sort-step') }
+        : entry,
+    );
+    expect(
+      missingNativeGraphRouteRequirements(
+        missingPointSort.features,
+        new Set(nativeGraphInstrumentIds(missingPointSort)),
+        nativeGraphManifestById(missingPointSort),
+      ),
+    ).toContain('point-cloud-fx:shader:point-cloud-fx/sort-step');
+  });
 });
 
 describe('native renderer sync effect-pass descriptors', () => {

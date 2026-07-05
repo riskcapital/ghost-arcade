@@ -2467,7 +2467,15 @@ impl App {
                     "id": "smoke-3d",
                     "label": "3D Smoke",
                     "source_uri_prefix": "native-graph://smoke-3d/",
-                    "shader_ids": ["smoke-3d"],
+                    "shader_ids": [
+                        "3d-smoke/splat",
+                        "3d-smoke/advect-velocity",
+                        "3d-smoke/divergence",
+                        "3d-smoke/jacobi",
+                        "3d-smoke/subtract-gradient",
+                        "3d-smoke/advect-density",
+                        "3d-smoke/render"
+                    ],
                     "features": [
                         "compute_graph_host",
                         "compute_graph_render",
@@ -2491,8 +2499,10 @@ impl App {
                     "source_uri_prefix": "native-graph://particle-field/",
                     "shader_ids": [
                         "particle-field/behavior",
+                        "particle-field/edges",
                         "particle-field/fog",
-                        "particle-field/render"
+                        "particle-field/render",
+                        "particle-field/lines"
                     ],
                     "features": [
                         "compute_graph_host",
@@ -2632,6 +2642,8 @@ impl App {
                     "source_uri_prefix": "native-graph://point-cloud-fx/",
                     "shader_ids": [
                         "point-cloud-fx/compute",
+                        "point-cloud-fx/sort-fill",
+                        "point-cloud-fx/sort-step",
                         "point-cloud-fx/render"
                     ],
                     "features": [
