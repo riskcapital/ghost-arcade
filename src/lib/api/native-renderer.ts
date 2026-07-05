@@ -386,6 +386,11 @@ export interface NativeCompositorEffectManifestEntry {
   amount_max?: number;
 }
 
+export interface NativeEffectPassManifestEntry {
+  id: string;
+  code: number;
+}
+
 export interface NativeRendererCapabilities {
   schema_version: number;
   core_version: string | null;
@@ -398,6 +403,7 @@ export interface NativeRendererCapabilities {
   native_graph_instrument_manifest?: NativeGraphInstrumentManifestEntry[];
   native_compositor_blend_modes?: NativeCompositorBlendManifestEntry[];
   native_compositor_effect_descriptors?: NativeCompositorEffectManifestEntry[];
+  native_effect_pass_descriptors?: NativeEffectPassManifestEntry[];
   audio_uniform_layout?: {
     schema_version: number;
     audio0: readonly string[];

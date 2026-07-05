@@ -1,6 +1,6 @@
 import { createNativeRendererBroker } from '../electron/native-renderer-broker.js';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -122,6 +122,19 @@ const BROKER_DIRECT_CORE_METHODS = [
   'detach_output_window',
   'set_output_window',
 ];
+
+function readNativeEffectPassManifest() {
+  const source = readFileSync(join(process.cwd(), 'src/lib/renderer/nativeEffectPass.ts'), 'utf8');
+  const entries = [];
+  const pattern = /\{\s*id:\s*'([^']+)'\s*,\s*code:\s*(\d+)/g;
+  let match = pattern.exec(source);
+  while (match) {
+    entries.push({ id: match[1], code: Number(match[2]) });
+    match = pattern.exec(source);
+  }
+  assert(entries.length > 0, 'could not parse NATIVE_EFFECT_PASS_MANIFEST from nativeEffectPass.ts');
+  return entries;
+}
 
 const FULLSCREEN_CORNERS = {
   topLeft: { x: 0, y: 1 },
@@ -381,6 +394,7 @@ try {
   assert(capabilities?.features?.native_static_image_decode, 'broker capabilities lost native still-image decode support');
   assert(capabilities?.features?.native_static_image_prefetch, 'broker capabilities lost native still-image prefetch support');
   assert(capabilities?.features?.native_compositor_manifest, 'broker capabilities lost native compositor manifest support');
+  assert(capabilities?.features?.native_effect_pass_manifest, 'broker capabilities lost native effect-pass manifest support');
   assert(
       capabilities?.features?.native_stage3d_scene_ingest &&
       capabilities?.features?.native_stage3d_overlay_preview &&
@@ -403,6 +417,20 @@ try {
   const compositorBlendModes = new Map(
     (capabilities?.native_compositor_blend_modes ?? []).map((entry) => [entry.id, Number(entry.code)]),
   );
+  const requiredEffectPassManifest = readNativeEffectPassManifest();
+  const effectPassManifest = new Map(
+    (capabilities?.native_effect_pass_descriptors ?? []).map((entry) => [entry.id, Number(entry.code)]),
+  );
+  assert(
+    effectPassManifest.size === requiredEffectPassManifest.length,
+    `broker native effect-pass manifest has drifted: ${JSON.stringify(capabilities?.native_effect_pass_descriptors)}`,
+  );
+  for (const entry of requiredEffectPassManifest) {
+    assert(
+      effectPassManifest.get(entry.id) === entry.code,
+      `broker native effect-pass descriptor mismatch for ${entry.id}: ${JSON.stringify(capabilities?.native_effect_pass_descriptors)}`,
+    );
+  }
   const compositorEffects = new Map(
     (capabilities?.native_compositor_effect_descriptors ?? []).map((entry) => [entry.id, Number(entry.code)]),
   );

@@ -232,6 +232,9 @@ async function inspectAppBridge() {
     const decodeCapabilities = await broker.invoke('native_renderer_get_decode_capabilities');
     const readiness = await broker.invoke('native_renderer_get_readiness_report');
     const features = capabilities?.features ?? {};
+    const effectPassDescriptors = Array.isArray(capabilities?.native_effect_pass_descriptors)
+      ? capabilities.native_effect_pass_descriptors
+      : [];
     const checks = new Map((readiness?.checks ?? []).map((check) => [check?.id, check]));
     const directSharedRpc = capabilities?.implemented_methods?.includes('upload_source_gpu_shared_texture');
     const nativeOutputDriverReady = !!(
@@ -259,6 +262,7 @@ async function inspectAppBridge() {
         `outputSharedTexture=${features.shared_texture_output_export ? 'on' : 'pending'}`,
         `nativeShareSender=${features.native_texture_share_sender ? 'on' : 'pending'}`,
         `nativeMp4Encoder=${features.native_mp4_frame_encoder ? 'on' : 'missing'}`,
+        `effectPass=${features.native_effect_pass_manifest ? `${effectPassDescriptors.length}fx` : 'pending'}`,
         `frameExport=${features.native_frame_export ? 'on' : 'missing'}`,
         `shadowMode=${readiness?.modes?.shadow?.ok ? 'on' : 'pending'}`,
         `outputDriver=${nativeOutputDriverReady ? 'on' : 'pending'}`,
