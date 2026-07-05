@@ -200,6 +200,46 @@ describe('native renderer sync shared-texture source frames', () => {
   });
 });
 
+describe('native renderer sync native video pump routing', () => {
+  it('marks native-pump video frames ready and rolls back to preview fallback on decode failure', () => {
+    const sync = new NativeRendererSyncCtor() as any;
+    sync.nativeFeatureFlags = {
+      native_video_decode_pump: true,
+      native_video_frame_decode: true,
+      native_media_source_playback_state: true,
+    };
+    const source = {
+      id: 'video-a',
+      src: '/tmp/video-a.mp4',
+      type: 'video',
+    };
+    const nativeSource = {
+      id: 'video-a',
+      uri: '/tmp/video-a.mp4',
+      sourceType: 'video',
+      source,
+      shouldPrefetch: true,
+      shouldPreview: true,
+    };
+
+    expect(sync.canUseNativeVideoDecodePump(nativeSource, 'video')).toBe(true);
+    expect(sync.markNativeVideoDecodePumpFrameReady(source)).toBe(true);
+    const sourceKey = sync.sourceCacheKey(source.id, source.src);
+    expect(sync.sourcePreviewSig.get(sourceKey)).toBe('native-video-pump:/tmp/video-a.mp4');
+    expect(sync.sourcePreviewSeq.get(sourceKey)).toBe(1);
+
+    sync.reconcileNativeVideoDecodes({
+      native_video_frame_decode_failures: 1,
+      native_video_frame_decodes: 0,
+      native_video_frame_decode_last_error: 'decode failed',
+    });
+
+    expect(sync.sourcePreviewSig.has(sourceKey)).toBe(false);
+    expect(sync.sourcePreviewSeq.has(sourceKey)).toBe(false);
+    expect(sync.canUseNativeVideoDecodePump(nativeSource, 'video')).toBe(false);
+  });
+});
+
 describe('native renderer sync effect-pass descriptors', () => {
   it('reads advertised native effect-pass descriptors from capabilities', () => {
     expect(nativeEffectPassDescriptorIds({
