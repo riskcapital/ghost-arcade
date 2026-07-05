@@ -3764,7 +3764,19 @@ impl App {
         if string_at(params, &["source_id"]).is_none() {
             return Err("native shared texture source-frame upload requires source_id".to_string());
         }
+        let rejected_before = self.stats.source_frame_rejected_uploads;
+        let uploaded_before = self.stats.source_frame_uploads;
         self.apply_source_frame(params);
+        let rejected_after = self.stats.source_frame_rejected_uploads;
+        let uploaded_after = self.stats.source_frame_uploads;
+        if rejected_after > rejected_before && uploaded_after == uploaded_before {
+            let reason = if self.stats.source_frame_last_reject_reason.is_empty() {
+                "native shared texture source-frame upload was rejected".to_string()
+            } else {
+                self.stats.source_frame_last_reject_reason.clone()
+            };
+            return Err(reason);
+        }
         Ok(json!(self.status()))
     }
 
