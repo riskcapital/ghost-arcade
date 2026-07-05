@@ -1119,8 +1119,16 @@ class NativeRendererBroker {
       [
         'native-frame-sequence-export',
         'Native frame sequence export',
-        !!features.native_frame_sequence_export && !!features.frame_snapshot_export,
+        !!features.native_frame_sequence_export && !!features.native_frame_export && !!features.frame_snapshot_export,
         'native frame snapshots can feed the desktop JPEG sequence encoder',
+      ],
+      [
+        'native-frame-export',
+        'Native raw frame export',
+        nativeFrameExportOk,
+        nativeFrameExportOk
+          ? 'native core can export deterministic raw frames for desktop encoders'
+          : 'native core raw frame export is unavailable',
       ],
       [
         'native-static-image-decode',
@@ -1959,6 +1967,7 @@ function hasNativeFrameExport(capabilities) {
     ? capabilities.implemented_methods
     : [];
   return !!(
+    features.native_frame_export &&
     features.frame_snapshot_export &&
     features.native_frame_sequence_export &&
     methods.includes('export_frame_snapshot')
@@ -2540,6 +2549,7 @@ function makeDefaultCapabilities(overrides = {}) {
       render_clock: false,
       frame_snapshot: false,
       frame_snapshot_export: false,
+      native_frame_export: false,
       native_frame_sequence_export: false,
       frame_health: false,
       gpu_timing: false,

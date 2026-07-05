@@ -27,6 +27,7 @@ const REQUIRED_CHECKS = [
   'native-projection-sim-mesh-preview',
   'native-projection-sim-textured-mesh-preview',
   'native-projection-sim-xyz-mesh-transforms',
+  'native-frame-export',
   'native-frame-sequence-export',
   'native-video-frame-prefetch',
   'native-video-decode-pump',
@@ -503,6 +504,7 @@ try {
   );
   assert(
     capabilities?.features?.frame_snapshot_export &&
+      capabilities?.features?.native_frame_export &&
       capabilities?.features?.native_frame_sequence_export &&
       capabilities?.features?.native_mp4_frame_encoder &&
       capabilities?.features?.native_recording &&
@@ -513,6 +515,7 @@ try {
     !capabilities?.features?.native_recording ||
       (
         capabilities?.features?.frame_snapshot_export &&
+        capabilities?.features?.native_frame_export &&
         capabilities?.features?.native_frame_sequence_export &&
         capabilities?.implemented_methods?.includes('export_frame_snapshot')
       ),
