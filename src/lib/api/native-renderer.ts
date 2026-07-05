@@ -624,6 +624,10 @@ export interface RendererStatus {
   decode_frame_pool_backpressure_active: boolean;
   command_backpressure_active: boolean;
   decode_backpressure_active: boolean;
+  decode_jobs_submitted: number;
+  decode_jobs_completed: number;
+  decode_jobs_dropped: number;
+  decode_queue_peak: number;
   io_backpressure_active: boolean;
   decode_handoff_backpressure_active: boolean;
   degraded_mode_active: boolean;
