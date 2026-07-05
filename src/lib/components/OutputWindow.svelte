@@ -3,6 +3,8 @@
   import { get } from 'svelte/store';
   import { invoke, isMac, isWindows } from '$lib/bridge';
   import {
+    getNativeRendererCapabilities,
+    getNativeRendererReadinessReport,
     getNativeRendererStatus,
     setNativeRendererOutputWindow,
     startNativeRenderer,
@@ -10,11 +12,18 @@
   import type { RenderEngine } from '../renderer/engine';
   import { settings } from '../stores/settings';
   import { project } from '../stores/layers';
+  import {
+    inferNativeGraphRuntimeFlags,
+    updateNativeRendererRuntimeFromStartup,
+  } from '../stores/nativeRenderer';
 
   export let isOpen = false;
   export let onClose: () => void = () => {};
   // Reference to the main canvas engine (kept for API compatibility)
   export let mainEngine: RenderEngine | null = null;
+
+  const NATIVE_OUTPUT_READY_WAIT_MS = 1500;
+  const NATIVE_OUTPUT_READY_POLL_MS = 100;
 
   // NOTE: rotation / cropRegion / showCursor used to be props bound from
   // App.svelte. They now live in $settings.output and reach the output
@@ -267,9 +276,37 @@
     }
   }
 
+  async function publishNativeRuntimeHandshake(status: Awaited<ReturnType<typeof getNativeRendererStatus>>) {
+    const [capabilities, readiness] = await Promise.all([
+      getNativeRendererCapabilities().catch(() => null),
+      getNativeRendererReadinessReport().catch(() => null),
+    ]);
+    const graphFlags = inferNativeGraphRuntimeFlags(capabilities, readiness);
+    updateNativeRendererRuntimeFromStartup(
+      status,
+      readiness,
+      capabilities,
+      graphFlags.graphCatalogComplete,
+      graphFlags.nativeGraphSourceFrames,
+    );
+  }
+
+  async function waitForNativeCoreReady(deadlineMs = NATIVE_OUTPUT_READY_WAIT_MS) {
+    const startedAt = Date.now();
+    let last = await getNativeRendererStatus().catch(() => null);
+    while (last?.running && !last.backend_ready && Date.now() - startedAt < deadlineMs) {
+      await new Promise((resolve) => setTimeout(resolve, NATIVE_OUTPUT_READY_POLL_MS));
+      last = await getNativeRendererStatus().catch(() => null);
+    }
+    return last;
+  }
+
   async function ensureNativeCoreReady(fallbackWidth: number, fallbackHeight: number): Promise<boolean> {
-    const existing = await getNativeRendererStatus().catch(() => null);
-    if (existing?.backend_ready) return true;
+    const existing = await waitForNativeCoreReady();
+    if (existing?.backend_ready) {
+      await publishNativeRuntimeHandshake(existing).catch(() => {});
+      return true;
+    }
     if (existing?.running) {
       console.warn('[Output] Native render-core is running but not ready:', existing.last_frame_error ?? existing);
       return false;
@@ -299,6 +336,7 @@
       console.warn('[Output] Native render-core did not become ready after start:', started?.last_frame_error ?? started);
       return false;
     }
+    await publishNativeRuntimeHandshake(started).catch(() => {});
     return true;
   }
 

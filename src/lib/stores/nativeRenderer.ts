@@ -94,6 +94,29 @@ export const initialNativeRendererRuntimeState: NativeRendererRuntimeState = {
   updatedAtMs: 0,
 };
 
+export function inferNativeGraphRuntimeFlags(
+  capabilities: NativeRendererCapabilities | null | undefined,
+  readiness?: RendererReadinessReport | null,
+): { graphCatalogComplete: boolean; nativeGraphSourceFrames: boolean } {
+  const features = capabilities?.features ?? readiness?.capabilities?.features ?? {};
+  const nativeGraphSourceFrames = !!(
+    features.compute_graph_host &&
+    features.compute_graph_render &&
+    features.compute_graph_source_frame_target
+  );
+  const graphChecks = (readiness?.checks ?? []).filter((check) =>
+    String(check?.id ?? '').startsWith('native-graph-'),
+  );
+  const graphCatalogComplete = graphChecks.length > 0
+    ? graphChecks.every((check) => !!check?.ok)
+    : !!(
+      nativeGraphSourceFrames &&
+      ((capabilities ?? readiness?.capabilities)?.native_graph_instruments?.length ?? 0) > 0
+    );
+
+  return { graphCatalogComplete, nativeGraphSourceFrames };
+}
+
 function readinessModeOk(readiness: RendererReadinessReport | null | undefined, mode: string) {
   return !!readiness?.modes?.[mode]?.ok;
 }
@@ -172,23 +195,9 @@ export function deriveNativeRendererRuntimeState(
 ): NativeRendererRuntimeState {
   const capabilities = options.capabilities ?? readiness?.capabilities ?? null;
   const features = capabilities?.features ?? {};
-  const graphCatalogComplete = !!(
-    options.graphCatalogComplete ??
-    (
-      features.compute_graph_host &&
-      features.compute_graph_render &&
-      features.compute_graph_source_frame_target &&
-      (capabilities?.native_graph_instruments?.length ?? 0) > 0
-    )
-  );
-  const nativeGraphSourceFrames = !!(
-    options.nativeGraphSourceFrames ??
-    (
-      features.compute_graph_host &&
-      features.compute_graph_render &&
-      features.compute_graph_source_frame_target
-    )
-  );
+  const inferredGraphFlags = inferNativeGraphRuntimeFlags(capabilities, readiness);
+  const graphCatalogComplete = !!(options.graphCatalogComplete ?? inferredGraphFlags.graphCatalogComplete);
+  const nativeGraphSourceFrames = !!(options.nativeGraphSourceFrames ?? inferredGraphFlags.nativeGraphSourceFrames);
   const advertisedMode = deriveDriverMode(status, readiness);
   const localBlockers = localMainDriverBlockers(graphCatalogComplete, nativeGraphSourceFrames);
   const mode = advertisedMode === 'full-v2' && localBlockers.length > 0
