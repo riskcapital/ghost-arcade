@@ -1118,6 +1118,7 @@ class NativeRendererBroker {
         entry?.render_target === 'source_frame' ? null : 'source_frame target',
         entry?.source_uri_prefix === `native-graph://${id}/` ? null : 'native-graph URI prefix',
         entryFeatures.has(feature) ? null : `manifest feature ${feature}`,
+        String(entry?.parity ?? '').length > 0 ? null : 'parity metadata',
         missingShaders.length ? `shader_ids ${missingShaders.join(',')}` : null,
       ].filter(Boolean);
       const ok = missing.length === 0;
