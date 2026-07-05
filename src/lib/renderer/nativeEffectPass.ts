@@ -34,7 +34,8 @@ export type NativeEffectPassId =
   | 'lens-distortion'
   | 'twirl'
   | 'pinch-bulge'
-  | 'edge-detect';
+  | 'edge-detect'
+  | 'film-grain';
 
 export interface NativeEffectPassManifestEntry {
   id: NativeEffectPassId;
@@ -154,6 +155,14 @@ export interface NativeEffectPassOptions {
     tintEdges: number;
     edgeGlow: number;
     edgeOnlyAlpha: number;
+    grainSize: number;
+    grainShadow: number;
+    grainMid: number;
+    grainHigh: number;
+    grainMono: number;
+    grainStock: number;
+    grainColorJitter: number;
+    grainAnimSpeed: number;
   }>;
   clear?: boolean;
   seq?: number;
@@ -229,6 +238,7 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'twirl', code: 34, defaultAmount: 1.5, amountMin: -6.28319, amountMax: 6.28319 },
   { id: 'pinch-bulge', code: 35, defaultAmount: 0.4, amountMin: -1, amountMax: 1 },
   { id: 'edge-detect', code: 36, defaultAmount: 0.1, amountMin: 0, amountMax: 1 },
+  { id: 'film-grain', code: 37, defaultAmount: 0.3, amountMin: 0, amountMax: 1 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -1124,6 +1134,45 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let composited = mix(color, edge_color + glow_color, edge_mask);
     return vec4<f32>(composited, src.a);
   }
+  if (code == 37u) {
+    let grain_amount = clamp(amount, 0.0, 1.0);
+    let grain_size = max(0.25, u.params0.x);
+    let shadow_weight = clamp(u.params0.y, 0.0, 2.0);
+    let mid_weight = clamp(u.params0.z, 0.0, 2.0);
+    let high_weight = clamp(u.params0.w, 0.0, 2.0);
+    let mono = u.params1.x >= 0.5;
+    let stock = u32(round(clamp(u.params1.y, 0.0, 3.0)));
+    let color_jitter = clamp(u.params1.z, 0.0, 1.0);
+    let anim_speed = max(0.0, u.params1.w);
+    let lum = luma(color);
+    let shadow_mask = 1.0 - smoothstep(0.12, 0.55, lum);
+    let mid_mask = 1.0 - smoothstep(0.0, 0.55, abs(lum - 0.5));
+    let high_mask = smoothstep(0.48, 0.95, lum);
+    let tonal_weight = max(0.0, shadow_mask * shadow_weight + mid_mask * mid_weight + high_mask * high_weight);
+    let frame_seed = floor(u.effect.w + u.resolution_time.z * anim_speed * 24.0);
+    let cell = floor(uv * u.resolution_time.xy / grain_size);
+    let n0 = hash21(cell + vec2<f32>(frame_seed * 1.71, frame_seed * 0.37));
+    var grain = n0 - 0.5;
+    if (stock == 1u) {
+      let fine = hash21(cell * 1.73 + vec2<f32>(frame_seed * 2.11, 19.0)) - 0.5;
+      grain = grain * 0.62 + fine * 0.38;
+    } else if (stock == 2u) {
+      grain = sign(grain) * pow(abs(grain) * 2.0, 1.35) * 0.5;
+    } else if (stock == 3u) {
+      let coarse = hash21(floor(cell * 0.42) + vec2<f32>(frame_seed, 31.0)) - 0.5;
+      grain = grain * 0.48 + coarse * 0.52;
+    }
+    let strength = grain_amount * tonal_weight * 0.42;
+    var grain_rgb = vec3<f32>(grain);
+    if (!mono) {
+      let nr = hash21(cell + vec2<f32>(frame_seed * 3.1, 7.0)) - 0.5;
+      let ng = hash21(cell + vec2<f32>(frame_seed * 4.7, 13.0)) - 0.5;
+      let nb = hash21(cell + vec2<f32>(frame_seed * 5.3, 23.0)) - 0.5;
+      grain_rgb = mix(vec3<f32>(grain), vec3<f32>(nr, ng, nb), color_jitter);
+    }
+    let grained = color + grain_rgb * strength;
+    return vec4<f32>(max(grained, vec3<f32>(0.0)), src.a);
+  }
   return src;
 }
 
@@ -1438,6 +1487,15 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param5 = clampNumber(params.edgeTintB ?? params.param5, 0, 1.5, 1);
     param6 = clampNumber(params.tintEdges ?? params.param6, 0, 1, 0);
     param7 = clampNumber(params.edgeGlow ?? params.param7, 0, 2, 0);
+  } else if (options.effect === 'film-grain') {
+    param0 = clampNumber(params.grainSize ?? params.param0, 0.25, 8, 1);
+    param1 = clampNumber(params.grainShadow ?? params.param1, 0, 2, 0.7);
+    param2 = clampNumber(params.grainMid ?? params.param2, 0, 2, 1);
+    param3 = clampNumber(params.grainHigh ?? params.param3, 0, 2, 0.5);
+    param4 = clampNumber(params.grainMono ?? params.param4, 0, 1, 0);
+    param5 = clampNumber(params.grainStock ?? params.param5, 0, 3, 1);
+    param6 = clampNumber(params.grainColorJitter ?? params.param6, 0, 1, 0);
+    param7 = clampNumber(params.grainAnimSpeed ?? params.param7, 0, 4, 1);
   }
   return [
     width,

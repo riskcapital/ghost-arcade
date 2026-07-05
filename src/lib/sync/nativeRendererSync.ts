@@ -1320,6 +1320,38 @@ export function effectToNativeDescriptor(effect: any): string | null {
       Math.max(0, Math.min(2, glowRaw)).toFixed(4),
     ].join(':');
   }
+  if (type === 'filmgrain' || type === 'film-grain') {
+    const amountRaw =
+      firstFiniteParam(params, ['grainAmount', 'amount'], 0.3);
+    const sizeRaw =
+      firstFiniteParam(params, ['grainSize', 'size'], 1);
+    const shadowRaw =
+      firstFiniteParam(params, ['grainShadow', 'shadow'], 0.7);
+    const midRaw =
+      firstFiniteParam(params, ['grainMid', 'mid'], 1);
+    const highRaw =
+      firstFiniteParam(params, ['grainHigh', 'high'], 0.5);
+    const monoRaw =
+      firstFiniteParam(params, ['grainMono', 'mono'], 0);
+    const stockRaw =
+      firstFiniteParam(params, ['grainStock', 'stock'], 1);
+    const jitterRaw =
+      firstFiniteParam(params, ['grainColorJitter', 'colorJitter'], 0);
+    const speedRaw =
+      firstFiniteParam(params, ['grainAnimSpeed', 'animSpeed', 'speed'], 1);
+    return [
+      'film-grain',
+      Math.max(0, Math.min(1, amountRaw)).toFixed(4),
+      Math.max(0.25, Math.min(8, sizeRaw)).toFixed(4),
+      Math.max(0, Math.min(2, shadowRaw)).toFixed(4),
+      Math.max(0, Math.min(2, midRaw)).toFixed(4),
+      Math.max(0, Math.min(2, highRaw)).toFixed(4),
+      Math.max(0, Math.min(1, Math.round(monoRaw))).toFixed(0),
+      Math.max(0, Math.min(3, Math.round(stockRaw))).toFixed(0),
+      Math.max(0, Math.min(1, jitterRaw)).toFixed(4),
+      Math.max(0, Math.min(4, speedRaw)).toFixed(4),
+    ].join(':');
+  }
 
   // Keep explicit descriptor IDs compatible with native descriptor parser.
   const effectId = typeof effect.id === 'string' ? effect.id.trim() : '';
@@ -1575,6 +1607,17 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       edgeTintB: Number(rawParam5 ?? 1),
       tintEdges: Number(rawParam6 ?? 0),
       edgeGlow: Number(rawParam7 ?? 0),
+    };
+  } else if (effect === 'film-grain') {
+    params = {
+      grainSize: Number(rawParam0 ?? 1),
+      grainShadow: Number(rawParam1 ?? 0.7),
+      grainMid: Number(rawParam2 ?? 1),
+      grainHigh: Number(rawParam3 ?? 0.5),
+      grainMono: Number(rawParam4 ?? 0),
+      grainStock: Number(rawParam5 ?? 1),
+      grainColorJitter: Number(rawParam6 ?? 0),
+      grainAnimSpeed: Number(rawParam7 ?? 1),
     };
   }
   if (params && Object.values(params).some((value) => !Number.isFinite(value))) return null;
