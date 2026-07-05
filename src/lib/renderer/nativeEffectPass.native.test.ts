@@ -208,6 +208,7 @@ describe('Native effect-pass template', () => {
       ['pinch-bulge', 35],
       ['edge-detect', 36],
       ['film-grain', 37],
+      ['filmic-tonemap', 38],
     ]);
     expect(nativeEffectPassManifestEntry('posterize')).toMatchObject({
       code: 8,
@@ -1732,6 +1733,30 @@ describe('Native effect-pass template', () => {
             const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.43, 0.47);
             const grainRgb = snapshotPixelRgb(snapshot, pixels, 0.43, 0.47);
             expect(rgbDistance(sourceRgb, grainRgb)).toBeGreaterThan(0.008);
+          },
+        },
+        {
+          id: 'filmic-tonemap',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-filmic-tonemap',
+            effect: 'filmic-tonemap',
+            width: 160,
+            height: 90,
+            time: 0.1,
+            frameDelta: 1 / 30,
+            frameIndex: 31,
+            amount: 1,
+            params: {
+              tonemapCurve: 2,
+              tonemapExposure: 1.8,
+              tonemapContrast: 0.55,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.68, 0.38);
+            const toneRgb = snapshotPixelRgb(snapshot, pixels, 0.68, 0.38);
+            expect(rgbDistance(sourceRgb, toneRgb)).toBeGreaterThan(0.01);
           },
         },
       ];
