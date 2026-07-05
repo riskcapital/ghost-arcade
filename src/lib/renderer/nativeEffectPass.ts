@@ -45,7 +45,10 @@ export type NativeEffectPassId =
   | 'emboss'
   | 'crt'
   | 'thermal'
-  | 'night-vision';
+  | 'night-vision'
+  | 'blob-track'
+  | 'blob-contour'
+  | 'blob-heatmap';
 
 export interface NativeEffectPassManifestEntry {
   id: NativeEffectPassId;
@@ -253,6 +256,20 @@ export interface NativeEffectPassOptions {
     nightVisionBloom: number;
     nightVisionScopeMask: number;
     nightVisionRollingNoise: number;
+    blobThreshold: number;
+    blobShape: number;
+    blobColor: number;
+    blobThickness: number;
+    blobMinSize: number;
+    blobMaxBlobs: number;
+    blobShowCoords: number;
+    blobShowBBox: number;
+    blobShowCenter: number;
+    blobTrailLength: number;
+    trailLength: number;
+    blobGridSize: number;
+    blobMix: number;
+    blobFlags: number;
   }>;
   clear?: boolean;
   seq?: number;
@@ -339,6 +356,9 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'crt', code: 45, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
   { id: 'thermal', code: 46, defaultAmount: 1, amountMin: 0.05, amountMax: 2 },
   { id: 'night-vision', code: 47, defaultAmount: 1.5, amountMin: 0, amountMax: 2 },
+  { id: 'blob-track', code: 48, defaultAmount: 0.8, amountMin: 0, amountMax: 1 },
+  { id: 'blob-contour', code: 49, defaultAmount: 0.7, amountMin: 0, amountMax: 1 },
+  { id: 'blob-heatmap', code: 50, defaultAmount: 0.85, amountMin: 0, amountMax: 1 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -671,6 +691,66 @@ fn night_vision_tint(lum: f32, phosphor: u32) -> vec3<f32> {
     return vec3<f32>(lum);
   }
   return vec3<f32>(lum * 0.2, lum, lum * 0.2);
+}
+
+fn blob_track_color(idx: u32, src_color: vec3<f32>) -> vec3<f32> {
+  if (idx == 1u) { return vec3<f32>(0.0, 0.9, 1.0); }
+  if (idx == 2u) { return vec3<f32>(1.0, 0.0, 0.8); }
+  if (idx == 3u) { return vec3<f32>(1.0, 0.75, 0.0); }
+  if (idx == 4u) { return vec3<f32>(1.0, 0.15, 0.15); }
+  if (idx == 5u) { return vec3<f32>(0.2, 0.4, 1.0); }
+  if (idx == 6u) { return vec3<f32>(1.0); }
+  if (idx >= 7u) { return src_color; }
+  return vec3<f32>(0.0, 1.0, 0.4);
+}
+
+fn blob_heat_color(t: f32, palette: u32) -> vec3<f32> {
+  let x = clamp(t, 0.0, 1.0);
+  if (palette == 1u) {
+    if (x < 0.33) { return mix(vec3<f32>(0.27, 0.0, 0.33), vec3<f32>(0.28, 0.47, 0.64), x * 3.0); }
+    if (x < 0.66) { return mix(vec3<f32>(0.28, 0.47, 0.64), vec3<f32>(0.13, 0.72, 0.55), (x - 0.33) * 3.0); }
+    return mix(vec3<f32>(0.13, 0.72, 0.55), vec3<f32>(0.99, 0.91, 0.14), (x - 0.66) * 3.0);
+  }
+  if (palette == 2u) {
+    let a = mix(vec3<f32>(0.05, 0.0, 0.53), vec3<f32>(0.8, 0.12, 0.56), x);
+    let b = mix(vec3<f32>(0.8, 0.12, 0.56), vec3<f32>(0.94, 0.98, 0.13), x);
+    return mix(a, b, x);
+  }
+  if (palette >= 3u) {
+    let a = mix(vec3<f32>(0.0, 0.0, 0.02), vec3<f32>(0.7, 0.1, 0.45), x);
+    let b = mix(vec3<f32>(0.7, 0.1, 0.45), vec3<f32>(1.0, 1.0, 0.75), x);
+    return mix(a, b, x);
+  }
+  if (x < 0.25) { return mix(vec3<f32>(0.0, 0.0, 0.04), vec3<f32>(0.35, 0.0, 0.5), x * 4.0); }
+  if (x < 0.5) { return mix(vec3<f32>(0.35, 0.0, 0.5), vec3<f32>(0.85, 0.2, 0.15), (x - 0.25) * 4.0); }
+  if (x < 0.75) { return mix(vec3<f32>(0.85, 0.2, 0.15), vec3<f32>(1.0, 0.85, 0.1), (x - 0.5) * 4.0); }
+  return mix(vec3<f32>(1.0, 0.85, 0.1), vec3<f32>(1.0, 1.0, 0.85), (x - 0.75) * 4.0);
+}
+
+fn blob_cell_bright(cell_idx: vec2<f32>, grid_res: f32) -> f32 {
+  let center = (cell_idx + vec2<f32>(0.5)) / grid_res;
+  if (center.x < 0.0 || center.x > 1.0 || center.y < 0.0 || center.y > 1.0) {
+    return 0.0;
+  }
+  let half_cell = 0.5 / grid_res;
+  var peak = luma(sample_rgb(center));
+  peak = max(peak, luma(sample_rgb(center + vec2<f32>( half_cell, 0.0))));
+  peak = max(peak, luma(sample_rgb(center + vec2<f32>(-half_cell, 0.0))));
+  peak = max(peak, luma(sample_rgb(center + vec2<f32>(0.0,  half_cell))));
+  peak = max(peak, luma(sample_rgb(center + vec2<f32>(0.0, -half_cell))));
+  return peak;
+}
+
+fn blob_is_peak(cell_idx: vec2<f32>, grid_res: f32, threshold: f32) -> bool {
+  let b = blob_cell_bright(cell_idx, grid_res);
+  if (b < threshold) {
+    return false;
+  }
+  let n1 = blob_cell_bright(cell_idx + vec2<f32>(1.0, 0.0), grid_res);
+  let n2 = blob_cell_bright(cell_idx + vec2<f32>(-1.0, 0.0), grid_res);
+  let n3 = blob_cell_bright(cell_idx + vec2<f32>(0.0, 1.0), grid_res);
+  let n4 = blob_cell_bright(cell_idx + vec2<f32>(0.0, -1.0), grid_res);
+  return b >= n1 && b >= n2 && b >= n3 && b >= n4;
 }
 
 fn effect_texel() -> vec2<f32> {
@@ -1785,6 +1865,219 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     }
     return vec4<f32>(clamp(nv, vec3<f32>(0.0), vec3<f32>(1.5)), src.a);
   }
+  if (code == 48u) {
+    let threshold = clamp(u.params0.x, 0.0, 1.0);
+    let shape_idx = u32(round(clamp(u.params0.y, 0.0, 4.0)));
+    let color_idx = u32(round(clamp(u.params0.z, 0.0, 7.0)));
+    let thickness = clamp(u.params0.w, 0.25, 8.0);
+    let grid_res = max(4.0, floor(u.params1.x + 0.5));
+    let flags = u32(round(clamp(u.params1.y, 0.0, 7.0)));
+    let trail = clamp(u.params1.z, 0.0, 1.0);
+    let min_size = clamp(u.params1.w, 0.0, 1.0);
+    let aspect = u.resolution_time.x / max(1.0, u.resolution_time.y);
+    let pix_w = thickness / max(1.0, u.resolution_time.x);
+    let cell_size = 1.0 / grid_res;
+    let my_cell = floor(uv * grid_res);
+    let show_bbox = (flags & 2u) == 2u;
+    let show_center = (flags & 4u) == 4u;
+    var overlay = vec3<f32>(0.0);
+
+    for (var dy: i32 = -3; dy <= 3; dy = dy + 1) {
+      for (var dx: i32 = -3; dx <= 3; dx = dx + 1) {
+        let c_idx = my_cell + vec2<f32>(f32(dx), f32(dy));
+        if (c_idx.x < 0.0 || c_idx.y < 0.0 || c_idx.x >= grid_res || c_idx.y >= grid_res) {
+          continue;
+        }
+        let brightness = blob_cell_bright(c_idx, grid_res);
+        if (brightness < threshold || !blob_is_peak(c_idx, grid_res, threshold)) {
+          continue;
+        }
+        let center = (c_idx + vec2<f32>(0.5)) / grid_res;
+        let blob_r = cell_size * mix(0.25, 0.7, brightness) * (0.6 + thickness * 0.2);
+        if (blob_r < min_size * cell_size) {
+          continue;
+        }
+        let pulse = 1.0 + 0.1 * sin(u.resolution_time.z * 3.0 + c_idx.x * 3.7 + c_idx.y * 5.3);
+        let r = blob_r * pulse;
+        let source_color = sample_rgb(center);
+        var track_color = blob_track_color(color_idx, source_color);
+        track_color *= mix(1.8, 0.9, brightness);
+
+        var diff = uv - center;
+        diff.x *= aspect;
+        let dist = length(diff);
+        var marker_alpha = 0.0;
+        if (shape_idx == 0u) {
+          marker_alpha = smoothstep(pix_w, 0.0, abs(dist - r));
+        } else if (shape_idx == 1u) {
+          let ad = abs(diff);
+          let box_dist = max(ad.x - r, ad.y - r);
+          marker_alpha = smoothstep(pix_w, 0.0, abs(box_dist));
+        } else if (shape_idx == 2u) {
+          let k = 1.7320508;
+          let e1 = diff.y + r * 0.5;
+          let e2 = -0.5 * diff.y + k * 0.5 * diff.x - r * 0.5;
+          let e3 = -0.5 * diff.y - k * 0.5 * diff.x - r * 0.5;
+          let min_e = min(min(abs(e1), abs(e2)), abs(e3));
+          marker_alpha = smoothstep(pix_w * 1.5, 0.0, min_e) * step(dist, r * 2.0);
+        } else if (shape_idx == 3u) {
+          let diamond_dist = abs(diff.x) + abs(diff.y) - r;
+          marker_alpha = smoothstep(pix_w, 0.0, abs(diamond_dist));
+        } else {
+          let arm_h = smoothstep(pix_w * 1.2, 0.0, abs(diff.y)) * step(dist, r * 1.3);
+          let arm_v = smoothstep(pix_w * 1.2, 0.0, abs(diff.x)) * step(dist, r * 1.3);
+          let ring = smoothstep(pix_w, 0.0, abs(dist - r * 0.7));
+          marker_alpha = max(max(arm_h, arm_v), ring);
+        }
+        overlay += track_color * marker_alpha;
+
+        if (show_center) {
+          let center_dot = smoothstep(pix_w * 3.0, 0.0, dist);
+          overlay += track_color * center_dot * 0.9;
+        }
+        if (show_bbox) {
+          let bbox_r = r * 1.6;
+          let b_min = center - vec2<f32>(bbox_r / aspect, bbox_r);
+          let b_max = center + vec2<f32>(bbox_r / aspect, bbox_r);
+          let in_x = step(b_min.x, uv.x) * step(uv.x, b_max.x);
+          let in_y = step(b_min.y, uv.y) * step(uv.y, b_max.y);
+          let b_l = smoothstep(pix_w * 0.6, 0.0, abs(uv.x - b_min.x)) * in_y;
+          let b_r = smoothstep(pix_w * 0.6, 0.0, abs(uv.x - b_max.x)) * in_y;
+          let b_t = smoothstep(pix_w * 0.6, 0.0, abs(uv.y - b_max.y)) * in_x;
+          let b_b = smoothstep(pix_w * 0.6, 0.0, abs(uv.y - b_min.y)) * in_x;
+          overlay += track_color * min(max(max(b_l, b_r), max(b_t, b_b)), 1.0) * 0.5;
+        }
+        if (trail > 0.01) {
+          let line_w = pix_w * mix(2.0, 8.0, clamp((thickness - 0.5) / 4.5, 0.0, 1.0));
+          let max_dist = trail * 0.5;
+          for (var cy: i32 = -2; cy <= 2; cy = cy + 1) {
+            for (var cx: i32 = -2; cx <= 2; cx = cx + 1) {
+              if ((cx == 0 && cy == 0) || cy < 0 || (cy == 0 && cx < 0)) {
+                continue;
+              }
+              let other_cell = c_idx + vec2<f32>(f32(cx), f32(cy));
+              if (other_cell.x < 0.0 || other_cell.y < 0.0 || other_cell.x >= grid_res || other_cell.y >= grid_res) {
+                continue;
+              }
+              let other_b = blob_cell_bright(other_cell, grid_res);
+              if (other_b < threshold || !blob_is_peak(other_cell, grid_res, threshold)) {
+                continue;
+              }
+              let other_center = (other_cell + vec2<f32>(0.5)) / grid_res;
+              let ab = other_center - center;
+              let ab_len = length(ab * vec2<f32>(aspect, 1.0));
+              if (ab_len > max_dist || ab_len < 0.001) {
+                continue;
+              }
+              let pa = uv - center;
+              let t = clamp(dot(pa, ab) / max(0.00001, dot(ab, ab)), 0.0, 1.0);
+              let closest = center + ab * t;
+              let ld = length((uv - closest) * vec2<f32>(aspect, 1.0));
+              let fade = 1.0 - ab_len / max_dist;
+              let dash = step(0.4, fract(t * 8.0 + u.resolution_time.z * 2.0));
+              overlay += track_color * smoothstep(line_w, 0.0, ld) * fade * dash * 0.7;
+            }
+          }
+        }
+      }
+    }
+    let blended = color + overlay;
+    let final_rgb = mix(color, blended, clamp(amount, 0.0, 1.0));
+    let overlay_presence = step(0.001, length(overlay));
+    return vec4<f32>(final_rgb, max(src.a, overlay_presence * clamp(amount, 0.0, 1.0)));
+  }
+  if (code == 49u) {
+    let threshold = clamp(u.params0.x, 0.0, 1.0);
+    let style = u32(round(clamp(u.params0.y, 0.0, 2.0)));
+    let color_idx = u32(round(clamp(u.params0.z, 0.0, 7.0)));
+    let thickness = clamp(u.params0.w, 0.25, 8.0);
+    let flags = u32(round(clamp(u.params1.y, 0.0, 7.0)));
+    let glow = clamp(u.params1.z, 0.0, 1.0);
+    let levels = max(1.0, floor(clamp(u.params1.w, 0.0, 1.0) * 20.0 + 0.5));
+    let tx = effect_texel();
+    let tl = luma(sample_rgb(uv + vec2<f32>(-tx.x, tx.y)));
+    let t = luma(sample_rgb(uv + vec2<f32>(0.0, tx.y)));
+    let tr = luma(sample_rgb(uv + vec2<f32>(tx.x, tx.y)));
+    let l = luma(sample_rgb(uv + vec2<f32>(-tx.x, 0.0)));
+    let c = luma(color);
+    let r = luma(sample_rgb(uv + vec2<f32>(tx.x, 0.0)));
+    let bl = luma(sample_rgb(uv + vec2<f32>(-tx.x, -tx.y)));
+    let b = luma(sample_rgb(uv + vec2<f32>(0.0, -tx.y)));
+    let br = luma(sample_rgb(uv + vec2<f32>(tx.x, -tx.y)));
+    let gx = -tl - 2.0 * l - bl + tr + 2.0 * r + br;
+    let gy = -tl - 2.0 * t - tr + bl + 2.0 * b + br;
+    let edge = sqrt(gx * gx + gy * gy);
+    let line_w = thickness * 0.3 * tx.x * 0.5;
+    var contour = 0.0;
+    for (var i = 1u; i <= 20u; i = i + 1u) {
+      let fi = f32(i);
+      let enabled = step(fi, levels);
+      let level_value = fi / (levels + 1.0);
+      let dist = abs(c - level_value);
+      var line = 0.0;
+      if (style == 0u) {
+        line = smoothstep(line_w, 0.0, dist);
+      } else if (style == 1u) {
+        line = step(dist, line_w);
+      } else {
+        let dash_phase = fract(uv.x * u.resolution_time.x * 0.05 + u.resolution_time.z * 2.0);
+        line = smoothstep(line_w, 0.0, dist) * step(0.4, dash_phase);
+      }
+      contour = max(contour, line * enabled);
+    }
+    let edge_line = smoothstep(threshold * 0.5, threshold, edge);
+    contour = max(contour * 0.8, edge_line * 0.6);
+    let track_color = blob_track_color(color_idx, color);
+    var overlay = track_color * contour * (1.0 + glow * 2.0 * contour);
+    if ((flags & 1u) == 1u) {
+      let cell_uv = fract(uv * 20.0);
+      let grid_line = 1.0 - smoothstep(0.0, 0.04, min(min(cell_uv.x, cell_uv.y), min(1.0 - cell_uv.x, 1.0 - cell_uv.y)));
+      overlay += track_color * grid_line * 0.12;
+    }
+    let final_rgb = mix(color, color + overlay, clamp(amount, 0.0, 1.0));
+    let overlay_presence = step(0.001, contour + length(overlay));
+    return vec4<f32>(final_rgb, max(src.a, overlay_presence * clamp(amount, 0.0, 1.0)));
+  }
+  if (code == 50u) {
+    let threshold = clamp(u.params0.x, 0.0, 1.0);
+    let style = u32(round(clamp(u.params0.y, 0.0, 2.0)));
+    let palette = u32(round(clamp(u.params0.z, 0.0, 3.0)));
+    let thickness = clamp(u.params0.w, 0.25, 8.0);
+    let grid_res = max(4.0, floor(u.params1.x + 0.5));
+    let flags = u32(round(clamp(u.params1.y, 0.0, 7.0)));
+    let cell_idx = floor(uv * grid_res);
+    let cell_center = (cell_idx + vec2<f32>(0.5)) / grid_res;
+    let cell_b = luma(sample_rgb(cell_center));
+    var intensity = smoothstep(threshold * 0.5, threshold + 0.3, cell_b);
+    if (style == 1u) {
+      intensity = floor(intensity * 8.0) / 8.0;
+    }
+    var heat = blob_heat_color(intensity, palette);
+    if (style >= 2u) {
+      heat += vec3<f32>(hash21(uv * u.resolution_time.xy + vec2<f32>(u.resolution_time.z)) * 0.05);
+    }
+    heat *= intensity;
+    let cell_uv = fract(uv * grid_res);
+    var overlay = heat;
+    if ((flags & 2u) == 2u) {
+      let lw = thickness * 0.002;
+      let grid_overlay = min(
+        step(cell_uv.x, lw) + step(1.0 - lw, cell_uv.x) + step(cell_uv.y, lw) + step(1.0 - lw, cell_uv.y),
+        1.0,
+      ) * 0.3;
+      overlay += blob_heat_color(1.0, palette) * grid_overlay;
+    }
+    if ((flags & 4u) == 4u && intensity > 0.8) {
+      let cu = cell_uv - vec2<f32>(0.5);
+      var peak = smoothstep(0.003, 0.0, abs(length(cu) - 0.15));
+      peak += smoothstep(0.003, 0.0, abs(cu.x)) * step(abs(cu.y), 0.2);
+      peak += smoothstep(0.003, 0.0, abs(cu.y)) * step(abs(cu.x), 0.2);
+      overlay += blob_heat_color(1.0, palette) * peak * 0.8;
+    }
+    let final_rgb = mix(color, overlay, clamp(amount, 0.0, 1.0));
+    let overlay_presence = step(0.001, length(overlay));
+    return vec4<f32>(final_rgb, max(src.a, overlay_presence * clamp(amount, 0.0, 1.0)));
+  }
   return src;
 }
 
@@ -1840,6 +2133,20 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
 
 function safeGraphId(value: string): string {
   return String(value || 'effect').replace(/[^a-zA-Z0-9:_-]+/g, '_').slice(0, 180);
+}
+
+function blobFlagBits(params: NativeEffectPassOptions['params'], defaults: {
+  showCoords: number;
+  showBBox: number;
+  showCenter: number;
+}): number {
+  if (!params) return defaults.showCoords + defaults.showBBox * 2 + defaults.showCenter * 4;
+  const explicit = Number(params.blobFlags);
+  if (Number.isFinite(explicit)) return Math.max(0, Math.min(7, Math.round(explicit)));
+  const showCoords = clampNumber(params.blobShowCoords, 0, 1, defaults.showCoords) >= 0.5 ? 1 : 0;
+  const showBBox = clampNumber(params.blobShowBBox, 0, 1, defaults.showBBox) >= 0.5 ? 1 : 0;
+  const showCenter = clampNumber(params.blobShowCenter, 0, 1, defaults.showCenter) >= 0.5 ? 1 : 0;
+  return showCoords + showBBox * 2 + showCenter * 4;
 }
 
 export function nativeEffectPassManifestEntry(effect: NativeEffectPassId): NativeEffectPassManifestEntry {
@@ -2206,6 +2513,36 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param3 = clampNumber(params.nightVisionBloom ?? params.bloom ?? params.param3, 0, 2, 0.6);
     param4 = clampNumber(params.nightVisionScopeMask ?? params.scopeMask ?? params.param4, 0, 2, 1);
     param5 = clampNumber(params.nightVisionRollingNoise ?? params.rollingBar ?? params.param5, 0, 1, 0);
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'blob-track') {
+    amount = clampNumber(options.amount ?? params.blobMix ?? params.outputMix ?? params.amount, 0, 1, 0.8);
+    param0 = clampNumber(params.blobThreshold ?? params.threshold ?? params.param0, 0, 1, 0.3);
+    param1 = clampNumber(params.blobShape ?? params.shape ?? params.param1, 0, 4, 0);
+    param2 = clampNumber(params.blobColor ?? params.palette ?? params.param2, 0, 7, 0);
+    param3 = clampNumber(params.blobThickness ?? params.thickness ?? params.param3, 0.25, 8, 2);
+    param4 = clampNumber(params.blobGridSize ?? params.gridLines ?? params.param4, 4, 128, 16);
+    param5 = blobFlagBits(params, { showCoords: 1, showBBox: 1, showCenter: 1 });
+    param6 = clampNumber(params.blobTrailLength ?? params.trailLength ?? params.param6, 0, 1, 0.3);
+    param7 = clampNumber(params.blobMinSize ?? params.param7, 0, 1, 0.02);
+  } else if (options.effect === 'blob-contour') {
+    amount = clampNumber(options.amount ?? params.blobMix ?? params.outputMix ?? params.amount, 0, 1, 0.7);
+    param0 = clampNumber(params.blobThreshold ?? params.threshold ?? params.param0, 0, 1, 0.4);
+    param1 = clampNumber(params.blobShape ?? params.shape ?? params.param1, 0, 2, 0);
+    param2 = clampNumber(params.blobColor ?? params.palette ?? params.param2, 0, 7, 1);
+    param3 = clampNumber(params.blobThickness ?? params.thickness ?? params.param3, 0.25, 8, 1.5);
+    param4 = clampNumber(params.blobGridSize ?? params.gridLines ?? params.param4, 4, 128, 16);
+    param5 = blobFlagBits(params, { showCoords: 0, showBBox: 0, showCenter: 0 });
+    param6 = clampNumber(params.blobTrailLength ?? params.trailLength ?? params.param6, 0, 1, 0.4);
+    param7 = clampNumber(params.blobMinSize ?? params.param7, 0, 1, 0.5);
+  } else if (options.effect === 'blob-heatmap') {
+    amount = clampNumber(options.amount ?? params.blobMix ?? params.outputMix ?? params.amount, 0, 1, 0.85);
+    param0 = clampNumber(params.blobThreshold ?? params.threshold ?? params.param0, 0, 1, 0.2);
+    param1 = clampNumber(params.blobShape ?? params.shape ?? params.param1, 0, 2, 0);
+    param2 = clampNumber(params.blobColor ?? params.palette ?? params.param2, 0, 3, 0);
+    param3 = clampNumber(params.blobThickness ?? params.thickness ?? params.param3, 0.25, 8, 1);
+    param4 = clampNumber(params.blobGridSize ?? params.gridLines ?? params.param4, 4, 128, 16);
+    param5 = blobFlagBits(params, { showCoords: 1, showBBox: 1, showCenter: 1 });
     param6 = 0;
     param7 = 0;
   }
