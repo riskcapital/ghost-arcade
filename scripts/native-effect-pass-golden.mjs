@@ -54,6 +54,17 @@ const FIXTURES = [
     tolerance: { mean: 2, p95: 4, p99: 8, max: 18 },
   },
   {
+    id: 'edge-feather-alpha',
+    code: 41,
+    time: 0.35,
+    frameDelta: 1 / 30,
+    frameIndex: 13,
+    amount: 1,
+    mix: 1,
+    params: [0.24, 0.12, 0.18, 0.28, 0.5, 1.15, 0, 0],
+    tolerance: { mean: 2, p95: 4, p99: 8, max: 18 },
+  },
+  {
     id: 'thermal',
     code: 46,
     time: 0.35,
@@ -149,7 +160,7 @@ fn cs_probe(@builtin(global_invocation_id) gid: vec3<u32>) {
 `;
 }
 
-function makeSourceBytes(width, height) {
+function makeSourceBytes(width, height, mode = 'gradient') {
   const bytes = new Uint8Array(width * height * 4);
   for (let y = 0; y < height; y += 1) {
     const ny = y / Math.max(1, height - 1);
@@ -157,11 +168,27 @@ function makeSourceBytes(width, height) {
       const nx = x / Math.max(1, width - 1);
       const wave = 0.5 + 0.5 * Math.sin((nx * 5.2 + ny * 3.1) * Math.PI);
       const radial = Math.hypot(nx - 0.5, ny - 0.5);
+      const diagonal = Math.sin((nx * 23.0 + ny * 17.0) * Math.PI) > 0 ? 1 : 0;
+      const ring = Math.sin(radial * 92.0) > 0 ? 1 : 0;
       const i = (y * width + x) * 4;
-      bytes[i] = Math.round(26 + nx * 182);
-      bytes[i + 1] = Math.round(18 + ny * 178);
-      bytes[i + 2] = Math.round(48 + wave * 128 + Math.max(0, 0.42 - radial) * 68);
-      bytes[i + 3] = 255;
+      if (mode === 'frequency') {
+        bytes[i] = Math.round(24 + diagonal * 185 + nx * 32);
+        bytes[i + 1] = Math.round(24 + ring * 170 + ny * 42);
+        bytes[i + 2] = Math.round(48 + (1 - diagonal) * 104 + wave * 72);
+        bytes[i + 3] = 255;
+      } else if (mode === 'alpha-mask') {
+        const mask = Math.max(0, Math.min(1, 1.2 - radial * 2.1));
+        const cutout = (x > width * 0.58 && y < height * 0.36) ? 0.24 : 1;
+        bytes[i] = Math.round(38 + nx * 154 + wave * 32);
+        bytes[i + 1] = Math.round(26 + ny * 160);
+        bytes[i + 2] = Math.round(82 + Math.max(0, 0.46 - radial) * 180);
+        bytes[i + 3] = Math.round(255 * Math.max(0.12, mask * cutout));
+      } else {
+        bytes[i] = Math.round(26 + nx * 182);
+        bytes[i + 1] = Math.round(18 + ny * 178);
+        bytes[i + 2] = Math.round(48 + wave * 128 + Math.max(0, 0.42 - radial) * 68);
+        bytes[i + 3] = 255;
+      }
     }
   }
   return bytes;
@@ -268,9 +295,9 @@ async function readNativeProbe(rpc, sourceId, label) {
   };
 }
 
-async function renderNativeFixtures(sourceBytes) {
+async function renderNativeFixtures(sourceCase) {
   const rpc = createRpcProcess();
-  const sourceId = 'effect-pass-golden-source';
+  const sourceId = `effect-pass-golden-source-${sourceCase.id}`;
   const snapshots = new Map();
   try {
     const status = await rpc.send('start', {
@@ -323,18 +350,24 @@ async function renderNativeFixtures(sourceBytes) {
           source_id: sourceId,
           width: WIDTH,
           height: HEIGHT,
-          rgba_b64: Buffer.from(sourceBytes).toString('base64'),
+          rgba_b64: Buffer.from(sourceCase.bytes).toString('base64'),
           seq: 1,
         },
       ],
     }, 5000);
 
-    snapshots.set(SOURCE_FIXTURE.id, await readNativeProbe(rpc, sourceId, SOURCE_FIXTURE.id));
+    snapshots.set(
+      `${sourceCase.id}:${SOURCE_FIXTURE.id}`,
+      await readNativeProbe(rpc, sourceId, `${sourceCase.id}-${SOURCE_FIXTURE.id}`),
+    );
 
     for (const fixture of FIXTURES) {
-      const targetSourceId = `effect-pass-golden-output-${fixture.id}`;
+      const targetSourceId = `effect-pass-golden-output-${sourceCase.id}-${fixture.id}`;
       await rpc.send('compute_graph', effectGraph(fixture, sourceId, targetSourceId), 10000);
-      snapshots.set(fixture.id, await readNativeProbe(rpc, targetSourceId, fixture.id));
+      snapshots.set(
+        `${sourceCase.id}:${fixture.id}`,
+        await readNativeProbe(rpc, targetSourceId, `${sourceCase.id}-${fixture.id}`),
+      );
     }
 
     return snapshots;
@@ -692,7 +725,7 @@ function renderWebGlGolden(request) {
 `;
 }
 
-async function renderWebGlFixtures(sourceBytes) {
+async function renderWebGlFixtures(sourceCase) {
   const electronBin = require('electron');
   if (!electronBin || !existsSync(electronBin)) {
     throw new Error(`Electron binary is unavailable: ${electronBin}`);
@@ -706,7 +739,7 @@ async function renderWebGlFixtures(sourceBytes) {
     writeFileSync(inputPath, JSON.stringify({
       width: WIDTH,
       height: HEIGHT,
-      sourceB64: Buffer.from(sourceBytes).toString('base64'),
+      sourceB64: Buffer.from(sourceCase.bytes).toString('base64'),
       fixtures: WEBGL_FIXTURES,
     }));
 
@@ -746,7 +779,7 @@ async function renderWebGlFixtures(sourceBytes) {
       if (typeof encoded !== 'string') {
         throw new Error(`Electron WebGL golden omitted ${fixture.id}: ${JSON.stringify(payload)}`);
       }
-      pixels.set(fixture.id, new Uint8Array(Buffer.from(encoded, 'base64')));
+      pixels.set(`${sourceCase.id}:${fixture.id}`, new Uint8Array(Buffer.from(encoded, 'base64')));
     }
     return pixels;
   } finally {
@@ -762,7 +795,7 @@ function diffPixels(a, b) {
   let total = 0;
   let max = 0;
   for (let i = 0; i < a.length; i += 4) {
-    for (let c = 0; c < 3; c += 1) {
+    for (let c = 0; c < 4; c += 1) {
       const delta = Math.abs(Number(a[i + c]) - Number(b[i + c]));
       deltas.push(delta);
       total += delta;
@@ -840,28 +873,39 @@ function meanRgb(bytes) {
 }
 
 async function main() {
-  const sourceBytes = makeSourceBytes(WIDTH, HEIGHT);
-  const [nativePixels, webglPixels] = await Promise.all([
-    renderNativeFixtures(sourceBytes),
-    renderWebGlFixtures(sourceBytes),
+  const sourceCases = ['gradient', 'frequency', 'alpha-mask'].map((id) => ({
+    id,
+    bytes: makeSourceBytes(WIDTH, HEIGHT, id),
+  }));
+  const [nativeResults, webglResults] = await Promise.all([
+    Promise.all(sourceCases.map((sourceCase) => renderNativeFixtures(sourceCase))),
+    Promise.all(sourceCases.map((sourceCase) => renderWebGlFixtures(sourceCase))),
   ]);
+  const nativePixels = new Map(nativeResults.flatMap((result) => [...result.entries()]));
+  const webglPixels = new Map(webglResults.flatMap((result) => [...result.entries()]));
 
   const summaries = [];
-  for (const fixture of WEBGL_FIXTURES) {
-    const native = nativePixels.get(fixture.id);
-    const webgl = webglPixels.get(fixture.id);
-    const stats = bestOrientationDiff(native.pixels, webgl);
-    if (process.env.NATIVE_EFFECT_GOLDEN_DEBUG === '1') {
-      console.log(
-        `debug ${fixture.id}: nativeMean=${meanRgb(native.pixels).join(',')} ` +
-        `webglMean=${meanRgb(webgl).join(',')} best=${stats.orientation} ` +
-        `mean=${stats.mean.toFixed(3)} p95=${stats.p95} p99=${stats.p99} max=${stats.max}`,
+  for (const sourceCase of sourceCases) {
+    for (const fixture of WEBGL_FIXTURES) {
+      const key = `${sourceCase.id}:${fixture.id}`;
+      const native = nativePixels.get(key);
+      const webgl = webglPixels.get(key);
+      if (!native || !webgl) {
+        throw new Error(`native/WebGL ${key} effect golden omitted one side`);
+      }
+      const stats = bestOrientationDiff(native.pixels, webgl);
+      if (process.env.NATIVE_EFFECT_GOLDEN_DEBUG === '1') {
+        console.log(
+          `debug ${key}: nativeMean=${meanRgb(native.pixels).join(',')} ` +
+          `webglMean=${meanRgb(webgl).join(',')} best=${stats.orientation} ` +
+          `mean=${stats.mean.toFixed(3)} p95=${stats.p95} p99=${stats.p99} max=${stats.max}`,
+        );
+      }
+      assertDiffWithinTolerance({ ...fixture, id: key }, stats);
+      summaries.push(
+        `${key}:${native.checksum} ${stats.orientation} mean=${stats.mean.toFixed(2)} p95=${stats.p95} p99=${stats.p99} max=${stats.max}`,
       );
     }
-    assertDiffWithinTolerance(fixture, stats);
-    summaries.push(
-      `${fixture.id}:${native.checksum} ${stats.orientation} mean=${stats.mean.toFixed(2)} p95=${stats.p95} p99=${stats.p99} max=${stats.max}`,
-    );
   }
 
   console.log(`Native/WebGL effect-pass golden passed: ${summaries.join(' ')}`);
