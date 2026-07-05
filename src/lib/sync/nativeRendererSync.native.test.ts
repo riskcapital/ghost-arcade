@@ -461,4 +461,38 @@ describe('native renderer sync effect-pass descriptors', () => {
       },
     });
   });
+
+  it('maps film grain UI params to native effect-pass descriptors', () => {
+    expect(effectToNativeDescriptor({
+      type: 'filmGrain',
+      params: {
+        grainAmount: 0.45,
+        grainSize: 1.25,
+        grainShadow: 0.8,
+        grainMid: 1.1,
+        grainHigh: 0.6,
+        grainMono: 0,
+        grainStock: 2,
+        grainColorJitter: 0.35,
+        grainAnimSpeed: 1.5,
+      },
+    })).toBe('film-grain:0.4500:1.2500:0.8000:1.1000:0.6000:0:2:0.3500:1.5000');
+  });
+
+  it('rebuilds native effect-pass runtime params from film grain descriptors', () => {
+    expect(nativeEffectPassFromDescriptor('film-grain:0.4500:1.2500:0.8000:1.1000:0.6000:0:2:0.3500:1.5000')).toMatchObject({
+      effect: 'film-grain',
+      amount: 0.45,
+      params: {
+        grainSize: 1.25,
+        grainShadow: 0.8,
+        grainMid: 1.1,
+        grainHigh: 0.6,
+        grainMono: 0,
+        grainStock: 2,
+        grainColorJitter: 0.35,
+        grainAnimSpeed: 1.5,
+      },
+    });
+  });
 });
