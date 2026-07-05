@@ -15,6 +15,7 @@ const REQUIRED_CHECKS = [
   'native-pixel-particles-graph',
   'native-point-cloud-fx-graph',
   'native-stage3d-overlay-preview',
+  'native-stage3d-mesh-preview',
   'native-projection-sim-overlay-preview',
   'native-frame-sequence-export',
 ];
@@ -215,6 +216,7 @@ try {
   assert(
     capabilities?.features?.native_stage3d_scene_ingest &&
       capabilities?.features?.native_stage3d_overlay_preview &&
+      capabilities?.features?.native_stage3d_mesh_preview &&
       capabilities?.features?.native_projection_sim_scene_ingest &&
       capabilities?.features?.native_projection_sim_overlay_preview &&
       capabilities?.features?.native_stage3d === false &&
@@ -525,6 +527,59 @@ try {
       Number(stageOverlaySnapshot?.bright_pixels ?? 0) > Number(stageEmptySnapshot?.bright_pixels ?? 0) &&
       Number(stageOverlaySnapshot?.average_luma ?? 0) > Number(stageEmptySnapshot?.average_luma ?? 0),
     `native Stage3D overlay preview did not affect exported frame pixels: ${JSON.stringify({ stageEmptySnapshot, stageOverlaySnapshot })}`,
+  );
+  const meshSceneBase = {
+    id: 'contract-stage-mesh',
+    name: 'Contract Stage Mesh',
+    schemaVersion: 1,
+    nodes: [
+      {
+        id: 'native-mesh-box',
+        type: 'primitive',
+        visible: true,
+        position: [0, 2.4, 0],
+        rotation: [0, 0.35, 0],
+        scale: [1, 1, 1],
+        dimensions: [5, 3.2, 2.4],
+        material: {
+          color: '#c8a9ff',
+          emissive: '#7bdcff',
+          emissiveIntensity: 1.4,
+        },
+        children: [],
+      },
+    ],
+    userElements: [],
+  };
+  await broker.invoke('native_renderer_set_stage3d_scene', {
+    scene: {
+      ...meshSceneBase,
+      camera: { position: [0, 3.1, 12], target: [0, 2.2, 0], fov: 42 },
+    },
+  });
+  const stageMeshFrontPath = join(tempDir, 'broker-stage3d-mesh-front.rgba');
+  const stageMeshFrontSnapshot = await broker.invoke('native_renderer_export_frame_snapshot', {
+    path: stageMeshFrontPath,
+    time: 0.2,
+    frame_index: 10,
+  });
+  await broker.invoke('native_renderer_set_stage3d_scene', {
+    scene: {
+      ...meshSceneBase,
+      camera: { position: [8, 3.1, 8], target: [0, 2.2, 0], fov: 42 },
+    },
+  });
+  const stageMeshAnglePath = join(tempDir, 'broker-stage3d-mesh-angle.rgba');
+  const stageMeshAngleSnapshot = await broker.invoke('native_renderer_export_frame_snapshot', {
+    path: stageMeshAnglePath,
+    time: 0.2,
+    frame_index: 10,
+  });
+  assert(
+    stageMeshFrontSnapshot?.checksum !== stageMeshAngleSnapshot?.checksum &&
+      Number(stageMeshFrontSnapshot?.bright_pixels ?? 0) > Number(stageEmptySnapshot?.bright_pixels ?? 0) &&
+      Number(stageMeshAngleSnapshot?.bright_pixels ?? 0) > Number(stageEmptySnapshot?.bright_pixels ?? 0),
+    `native Stage3D mesh preview did not respond to camera/depth rendering: ${JSON.stringify({ stageMeshFrontSnapshot, stageMeshAngleSnapshot })}`,
   );
 
   const projectionSummary = await broker.invoke('native_renderer_set_projection_sim_scene', {

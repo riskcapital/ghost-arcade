@@ -42,6 +42,7 @@ const MAX_NATIVE_IMAGE_DECODE_PIXELS: u64 = 8192 * 8192;
 const SOURCE_FRAME_FORMAT_FALLBACK: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const SOURCE_FRAME_FORMAT_HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const MAX_STAGE3D_OVERLAY_ITEMS: usize = 128;
+const MAX_STAGE3D_MESH_ITEMS: usize = 128;
 const DEFAULT_COMMAND_QUEUE_CAPACITY: u32 = 8192;
 const DEFAULT_COMMAND_DRAIN_LIMIT: u32 = 1024;
 const GHOST_AUDIO_LAYOUT_SCHEMA_VERSION: u32 = 1;
@@ -266,6 +267,119 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     alpha = alpha + a * (1.0 - alpha);
   }
   return vec4<f32>(color, alpha);
+}
+"#;
+const STAGE3D_MESH_WGSL: &str = r#"
+struct Stage3DMeshUniforms {
+  resolution: vec2<f32>,
+  item_count: f32,
+  time: f32,
+  camera_pos: vec4<f32>,
+  camera_target: vec4<f32>,
+  params: vec4<f32>, // fov radians, aspect, near, far
+}
+
+struct Stage3DMeshItem {
+  position: vec4<f32>, // xyz, shape
+  scale: vec4<f32>,    // xyz, yaw
+  color: vec4<f32>,
+}
+
+@group(0) @binding(0)
+var<uniform> u: Stage3DMeshUniforms;
+
+@group(0) @binding(1)
+var<storage, read> items: array<Stage3DMeshItem>;
+
+struct VertexOut {
+  @builtin(position) position: vec4<f32>,
+  @location(0) color: vec4<f32>,
+  @location(1) normal: vec3<f32>,
+  @location(2) view_z: f32,
+}
+
+fn cube_vertex(index: u32) -> vec3<f32> {
+  let verts = array<vec3<f32>, 36>(
+    vec3<f32>(-0.5, -0.5,  0.5), vec3<f32>( 0.5, -0.5,  0.5), vec3<f32>( 0.5,  0.5,  0.5),
+    vec3<f32>(-0.5, -0.5,  0.5), vec3<f32>( 0.5,  0.5,  0.5), vec3<f32>(-0.5,  0.5,  0.5),
+    vec3<f32>( 0.5, -0.5, -0.5), vec3<f32>(-0.5, -0.5, -0.5), vec3<f32>(-0.5,  0.5, -0.5),
+    vec3<f32>( 0.5, -0.5, -0.5), vec3<f32>(-0.5,  0.5, -0.5), vec3<f32>( 0.5,  0.5, -0.5),
+    vec3<f32>(-0.5,  0.5,  0.5), vec3<f32>( 0.5,  0.5,  0.5), vec3<f32>( 0.5,  0.5, -0.5),
+    vec3<f32>(-0.5,  0.5,  0.5), vec3<f32>( 0.5,  0.5, -0.5), vec3<f32>(-0.5,  0.5, -0.5),
+    vec3<f32>(-0.5, -0.5, -0.5), vec3<f32>( 0.5, -0.5, -0.5), vec3<f32>( 0.5, -0.5,  0.5),
+    vec3<f32>(-0.5, -0.5, -0.5), vec3<f32>( 0.5, -0.5,  0.5), vec3<f32>(-0.5, -0.5,  0.5),
+    vec3<f32>( 0.5, -0.5,  0.5), vec3<f32>( 0.5, -0.5, -0.5), vec3<f32>( 0.5,  0.5, -0.5),
+    vec3<f32>( 0.5, -0.5,  0.5), vec3<f32>( 0.5,  0.5, -0.5), vec3<f32>( 0.5,  0.5,  0.5),
+    vec3<f32>(-0.5, -0.5, -0.5), vec3<f32>(-0.5, -0.5,  0.5), vec3<f32>(-0.5,  0.5,  0.5),
+    vec3<f32>(-0.5, -0.5, -0.5), vec3<f32>(-0.5,  0.5,  0.5), vec3<f32>(-0.5,  0.5, -0.5),
+  );
+  return verts[index % 36u];
+}
+
+fn plane_vertex(index: u32) -> vec3<f32> {
+  let verts = array<vec3<f32>, 6>(
+    vec3<f32>(-0.5, -0.5, 0.0), vec3<f32>( 0.5, -0.5, 0.0), vec3<f32>( 0.5,  0.5, 0.0),
+    vec3<f32>(-0.5, -0.5, 0.0), vec3<f32>( 0.5,  0.5, 0.0), vec3<f32>(-0.5,  0.5, 0.0),
+  );
+  return verts[index % 6u];
+}
+
+fn rotate_y(p: vec3<f32>, yaw: f32) -> vec3<f32> {
+  let c = cos(yaw);
+  let s = sin(yaw);
+  return vec3<f32>(c * p.x + s * p.z, p.y, -s * p.x + c * p.z);
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) instance_index: u32) -> VertexOut {
+  let item = items[min(instance_index, u32(127))];
+  let shape = item.position.w;
+  var local = cube_vertex(vertex_index);
+  if (shape < 0.5) {
+    local = plane_vertex(vertex_index);
+  }
+  let scaled = local * max(item.scale.xyz, vec3<f32>(0.001));
+  let world = item.position.xyz + rotate_y(scaled, item.scale.w);
+
+  let eye = u.camera_pos.xyz;
+  let look_at = u.camera_target.xyz;
+  let forward = normalize(look_at - eye);
+  var right = normalize(cross(forward, vec3<f32>(0.0, 1.0, 0.0)));
+  if (length(right) < 0.001) {
+    right = vec3<f32>(1.0, 0.0, 0.0);
+  }
+  let up = normalize(cross(right, forward));
+  let rel = world - eye;
+  let view = vec3<f32>(dot(rel, right), dot(rel, up), dot(rel, forward));
+  let near = max(0.01, u.params.z);
+  let far = max(near + 1.0, u.params.w);
+  let tan_half = tan(max(0.1, u.params.x) * 0.5);
+  let aspect = max(0.1, u.params.y);
+
+  var out: VertexOut;
+  if (view.z <= near) {
+    out.position = vec4<f32>(-4.0, -4.0, 1.0, 1.0);
+  } else {
+    let ndc = vec2<f32>(
+      view.x / (view.z * tan_half * aspect),
+      view.y / (view.z * tan_half)
+    );
+    let depth = clamp((view.z - near) / (far - near), 0.0, 1.0);
+    out.position = vec4<f32>(ndc, depth, 1.0);
+  }
+  out.color = item.color;
+  out.normal = normalize(rotate_y(local, item.scale.w));
+  out.view_z = view.z;
+  return out;
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+  let light = normalize(vec3<f32>(-0.3, 0.75, 0.55));
+  let shade = 0.48 + 0.52 * clamp(dot(normalize(in.normal + vec3<f32>(0.0, 0.15, 0.0)), light), 0.0, 1.0);
+  let haze = clamp(1.0 - in.view_z * 0.012, 0.58, 1.0);
+  let alpha = clamp(in.color.a, 0.0, 0.92);
+  return vec4<f32>(in.color.rgb * shade * haze * alpha, alpha);
 }
 "#;
 
@@ -881,6 +995,33 @@ struct Stage3DOverlayItemGpu {
     half_size: [f32; 2],
     color: [f32; 4],
     meta: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct Stage3DMeshUniforms {
+    resolution: [f32; 2],
+    item_count: f32,
+    time: f32,
+    camera_pos: [f32; 4],
+    camera_target: [f32; 4],
+    params: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct Stage3DMeshItemGpu {
+    position: [f32; 4],
+    scale: [f32; 4],
+    color: [f32; 4],
+}
+
+#[derive(Clone, Debug)]
+struct Stage3DMeshFrame {
+    camera_pos: [f32; 3],
+    camera_target: [f32; 3],
+    fov_degrees: f32,
+    items: Vec<Stage3DMeshItemGpu>,
 }
 
 #[cfg(target_os = "macos")]
@@ -1582,6 +1723,12 @@ struct RenderState {
     stage3d_overlay_uniform_buffer: wgpu::Buffer,
     stage3d_overlay_item_buffer: wgpu::Buffer,
     stage3d_overlay_bind_group: wgpu::BindGroup,
+    stage3d_mesh_pipeline: wgpu::RenderPipeline,
+    stage3d_mesh_uniform_buffer: wgpu::Buffer,
+    stage3d_mesh_item_buffer: wgpu::Buffer,
+    stage3d_mesh_bind_group: wgpu::BindGroup,
+    stage3d_mesh_depth_texture: wgpu::Texture,
+    stage3d_mesh_depth_view: wgpu::TextureView,
     native_shader_pipelines: HashMap<String, NativeShaderPipeline>,
     native_compute_pipelines: HashMap<String, NativeComputePipeline>,
     native_graph_render_pipelines: HashMap<String, NativeGraphRenderPipeline>,
@@ -1926,6 +2073,7 @@ impl App {
             "managed_output_window_control": true,
             "native_stage3d_scene_ingest": true,
             "native_stage3d_overlay_preview": true,
+            "native_stage3d_mesh_preview": true,
             "native_projection_sim_scene_ingest": true,
             "native_projection_sim_overlay_preview": true,
             "native_recording": false,
@@ -3221,6 +3369,7 @@ impl App {
         } else {
             None
         };
+        let stage3d_mesh_frame = self.stage3d_mesh_frame();
         let scene_overlay_items = self.scene_overlay_items();
         let Some(renderer) = self.renderer.as_mut() else {
             return;
@@ -3236,6 +3385,7 @@ impl App {
             frame_index,
             &gpu_layers,
             source_preview_pixels.as_deref(),
+            stage3d_mesh_frame.as_ref(),
             &scene_overlay_items,
             self.audio0,
             self.audio1,
@@ -3377,6 +3527,7 @@ impl App {
         } else {
             None
         };
+        let stage3d_mesh_frame = self.stage3d_mesh_frame();
         let scene_overlay_items = self.scene_overlay_items();
         let Some(renderer) = self.renderer.as_mut() else {
             return Err("native renderer has not created a wgpu device".to_string());
@@ -3389,6 +3540,7 @@ impl App {
             snapshot_frame_index,
             &gpu_layers,
             source_preview_pixels.as_deref(),
+            stage3d_mesh_frame.as_ref(),
             &scene_overlay_items,
             self.audio0,
             self.audio1,
@@ -4765,6 +4917,30 @@ impl App {
         items
     }
 
+    fn stage3d_mesh_frame(&self) -> Option<Stage3DMeshFrame> {
+        let scene = self.stage3d_scene.as_ref()?;
+        let mut items = Vec::new();
+        collect_stage3d_mesh_nodes(scene.get("nodes"), &mut items);
+        collect_stage3d_user_mesh_items(scene.get("userElements"), &mut items);
+        if items.is_empty() {
+            return None;
+        }
+        let camera = scene.get("camera");
+        Some(Stage3DMeshFrame {
+            camera_pos: camera
+                .map(|value| vec3_path_or(value, &["position"], [12.0, 6.0, 14.0]))
+                .unwrap_or([12.0, 6.0, 14.0]),
+            camera_target: camera
+                .map(|value| vec3_path_or(value, &["target"], [0.0, 2.0, 0.0]))
+                .unwrap_or([0.0, 2.0, 0.0]),
+            fov_degrees: camera
+                .and_then(|value| number_at(value, &["fov"]))
+                .unwrap_or(50.0)
+                .clamp(12.0, 120.0) as f32,
+            items,
+        })
+    }
+
     fn set_projection_sim_scene(&mut self, params: &Value) -> Result<Value, String> {
         let scene = scene_payload(params, "projection_sim")?;
         let summary = summarize_projection_sim_scene(scene);
@@ -5700,6 +5876,111 @@ impl RenderState {
                 cache: None,
             });
 
+        let stage3d_mesh_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Ghost Render Core Stage3D Mesh"),
+            source: wgpu::ShaderSource::Wgsl(STAGE3D_MESH_WGSL.into()),
+        });
+        let stage3d_mesh_uniform_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Ghost Render Core Stage3D Mesh Uniforms"),
+                contents: bytemuck::bytes_of(&Stage3DMeshUniforms::zeroed()),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+        let empty_stage3d_mesh_items = vec![Stage3DMeshItemGpu::zeroed(); MAX_STAGE3D_MESH_ITEMS];
+        let stage3d_mesh_item_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Ghost Render Core Stage3D Mesh Items"),
+                contents: bytemuck::cast_slice(&empty_stage3d_mesh_items),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            });
+        let stage3d_mesh_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Ghost Render Core Stage3D Mesh Bind Group Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+        let stage3d_mesh_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Ghost Render Core Stage3D Mesh Bind Group"),
+            layout: &stage3d_mesh_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: stage3d_mesh_uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: stage3d_mesh_item_buffer.as_entire_binding(),
+                },
+            ],
+        });
+        let stage3d_mesh_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Ghost Render Core Stage3D Mesh Pipeline Layout"),
+                bind_group_layouts: &[Some(&stage3d_mesh_bind_group_layout)],
+                immediate_size: 0,
+            });
+        let stage3d_mesh_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Ghost Render Core Stage3D Mesh Pipeline"),
+                layout: Some(&stage3d_mesh_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &stage3d_mesh_shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState {
+                    cull_mode: Some(wgpu::Face::Back),
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &stage3d_mesh_shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            });
+        let (stage3d_mesh_depth_texture, stage3d_mesh_depth_view) = Self::create_depth_target(
+            &device,
+            config.width,
+            config.height,
+            "Ghost Render Core Stage3D Mesh Depth",
+        );
+
         let native_shader_input_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Ghost Render Core Native Shader Input Frames"),
             size: wgpu::Extent3d {
@@ -5804,6 +6085,12 @@ impl RenderState {
             stage3d_overlay_uniform_buffer,
             stage3d_overlay_item_buffer,
             stage3d_overlay_bind_group,
+            stage3d_mesh_pipeline,
+            stage3d_mesh_uniform_buffer,
+            stage3d_mesh_item_buffer,
+            stage3d_mesh_bind_group,
+            stage3d_mesh_depth_texture,
+            stage3d_mesh_depth_view,
             native_shader_pipelines: HashMap::new(),
             native_compute_pipelines: HashMap::new(),
             native_graph_render_pipelines: HashMap::new(),
@@ -5847,6 +6134,33 @@ impl RenderState {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some(label),
+            ..Default::default()
+        });
+        (texture, view)
+    }
+
+    fn create_depth_target(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        label: &'static str,
+    ) -> (wgpu::Texture, wgpu::TextureView) {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: width.max(1),
+                height: height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor {
@@ -6151,6 +6465,14 @@ impl RenderState {
         );
         self.snapshot_texture = snapshot_texture;
         self.snapshot_view = snapshot_view;
+        let (stage3d_mesh_depth_texture, stage3d_mesh_depth_view) = Self::create_depth_target(
+            &self.device,
+            self.config.width,
+            self.config.height,
+            "Ghost Render Core Stage3D Mesh Depth",
+        );
+        self.stage3d_mesh_depth_texture = stage3d_mesh_depth_texture;
+        self.stage3d_mesh_depth_view = stage3d_mesh_depth_view;
     }
 
     fn ensure_native_shader_pipeline(
@@ -7645,6 +7967,83 @@ impl RenderState {
         pass.draw(0..3, 0..1);
     }
 
+    fn draw_stage3d_mesh_to_view(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        label: &'static str,
+        time_seconds: Option<f32>,
+        frame: Option<&Stage3DMeshFrame>,
+    ) {
+        let Some(frame) = frame else {
+            return;
+        };
+        let item_count = frame.items.len().min(MAX_STAGE3D_MESH_ITEMS);
+        if item_count == 0 {
+            return;
+        }
+        let aspect = self.config.width.max(1) as f32 / self.config.height.max(1) as f32;
+        self.queue.write_buffer(
+            &self.stage3d_mesh_uniform_buffer,
+            0,
+            bytemuck::bytes_of(&Stage3DMeshUniforms {
+                resolution: [self.config.width as f32, self.config.height as f32],
+                item_count: item_count as f32,
+                time: time_seconds.unwrap_or_else(|| self.start_time.elapsed().as_secs_f32()),
+                camera_pos: [
+                    frame.camera_pos[0],
+                    frame.camera_pos[1],
+                    frame.camera_pos[2],
+                    0.0,
+                ],
+                camera_target: [
+                    frame.camera_target[0],
+                    frame.camera_target[1],
+                    frame.camera_target[2],
+                    0.0,
+                ],
+                params: [
+                    frame.fov_degrees.to_radians().clamp(0.2, 2.6),
+                    aspect,
+                    0.05,
+                    180.0,
+                ],
+            }),
+        );
+        self.queue.write_buffer(
+            &self.stage3d_mesh_item_buffer,
+            0,
+            bytemuck::cast_slice(&frame.items[..item_count]),
+        );
+
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(label),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.stage3d_mesh_depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Discard,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&self.stage3d_mesh_pipeline);
+        pass.set_bind_group(0, &self.stage3d_mesh_bind_group, &[]);
+        pass.draw(0..36, 0..item_count as u32);
+    }
+
     fn render_snapshot(
         &mut self,
         command_phase: f32,
@@ -7653,6 +8052,7 @@ impl RenderState {
         frame_count: u64,
         scene_layers: &[LayerGpu],
         source_previews: Option<&[PreviewPixel]>,
+        stage3d_mesh_frame: Option<&Stage3DMeshFrame>,
         stage3d_overlay_items: &[Stage3DOverlayItemGpu],
         audio0: [f32; 4],
         audio1: [f32; 4],
@@ -7691,6 +8091,13 @@ impl RenderState {
             "Ghost Render Core Snapshot Pass",
             timestamp_writes,
         );
+        self.draw_stage3d_mesh_to_view(
+            &mut encoder,
+            &self.snapshot_view,
+            "Ghost Render Core Stage3D Mesh Snapshot Pass",
+            time_seconds,
+            stage3d_mesh_frame,
+        );
         self.draw_stage3d_overlay_to_view(
             &mut encoder,
             &self.snapshot_view,
@@ -7721,6 +8128,7 @@ impl RenderState {
         frame_count: u64,
         scene_layers: &[LayerGpu],
         source_previews: Option<&[PreviewPixel]>,
+        stage3d_mesh_frame: Option<&Stage3DMeshFrame>,
         stage3d_overlay_items: &[Stage3DOverlayItemGpu],
         audio0: [f32; 4],
         audio1: [f32; 4],
@@ -7758,6 +8166,13 @@ impl RenderState {
             &self.output_mirror_view,
             "Ghost Render Core Output Mirror Pass",
             mirror_timestamp_writes,
+        );
+        self.draw_stage3d_mesh_to_view(
+            &mut mirror_encoder,
+            &self.output_mirror_view,
+            "Ghost Render Core Stage3D Mesh Output Mirror Pass",
+            time_seconds,
+            stage3d_mesh_frame,
         );
         self.draw_stage3d_overlay_to_view(
             &mut mirror_encoder,
@@ -7818,6 +8233,13 @@ impl RenderState {
                 label: Some("Ghost Render Core Encoder"),
             });
         self.draw_fullscreen_to_view(&mut encoder, &view, "Ghost Render Core Pass", None);
+        self.draw_stage3d_mesh_to_view(
+            &mut encoder,
+            &view,
+            "Ghost Render Core Stage3D Mesh Swapchain Pass",
+            time_seconds,
+            stage3d_mesh_frame,
+        );
         self.draw_stage3d_overlay_to_view(
             &mut encoder,
             &view,
@@ -8153,6 +8575,184 @@ fn stage3d_project_position(position: [f32; 3]) -> [f32; 2] {
         (position[0] / 18.0).clamp(-1.35, 1.35),
         ((position[1] - 1.8) / 8.0 - position[2] * 0.018).clamp(-1.35, 1.35),
     ]
+}
+
+fn collect_stage3d_mesh_nodes(value: Option<&Value>, items: &mut Vec<Stage3DMeshItemGpu>) {
+    let Some(nodes) = value.and_then(Value::as_array) else {
+        return;
+    };
+    for node in nodes {
+        if items.len() >= MAX_STAGE3D_MESH_ITEMS {
+            return;
+        }
+        if !bool_at(node, &["visible"]).unwrap_or(true) {
+            continue;
+        }
+        match node.get("type").and_then(Value::as_str).unwrap_or_default() {
+            "led-screen" => {
+                let position = vec3_path_or(node, &["position"], [0.0, 2.4, 0.0]);
+                let rotation = vec3_path_or(node, &["rotation"], [0.0, 0.0, 0.0]);
+                let scale = vec3_path_or(node, &["scale"], [1.0, 1.0, 1.0]);
+                let width = number_at(node, &["width"]).unwrap_or(4.0) as f32 * scale[0].abs();
+                let height = number_at(node, &["height"]).unwrap_or(2.25) as f32 * scale[1].abs();
+                let brightness = number_at(node, &["brightness"])
+                    .unwrap_or(1.0)
+                    .clamp(0.1, 4.0) as f32;
+                items.push(stage3d_mesh_item(
+                    position,
+                    [width.max(0.05), height.max(0.05), 0.04],
+                    rotation[1],
+                    [0.18, 0.8, 1.0, (0.48 + brightness * 0.1).clamp(0.45, 0.82)],
+                    0.0,
+                ));
+            }
+            "primitive" | "svg-extrude" => {
+                let position = vec3_path_or(node, &["position"], [0.0, 1.0, 0.0]);
+                let rotation = vec3_path_or(node, &["rotation"], [0.0, 0.0, 0.0]);
+                let scale = vec3_path_or(node, &["scale"], [1.0, 1.0, 1.0]);
+                let dimensions = vec3_path_or(node, &["dimensions"], [1.5, 1.5, 1.5]);
+                let color = color_path_or(node, &["material", "emissive"])
+                    .or_else(|| color_path_or(node, &["material", "color"]))
+                    .unwrap_or([0.78, 0.68, 1.0]);
+                let alpha = if node
+                    .get("material")
+                    .and_then(|m| m.get("emissive"))
+                    .is_some()
+                {
+                    0.72
+                } else {
+                    0.5
+                };
+                items.push(stage3d_mesh_item(
+                    position,
+                    [
+                        (dimensions[0] * scale[0]).abs().max(0.08),
+                        (dimensions[1] * scale[1]).abs().max(0.08),
+                        (dimensions[2] * scale[2]).abs().max(0.08),
+                    ],
+                    rotation[1],
+                    [color[0], color[1], color[2], alpha],
+                    if string_at(node, &["geometry"]).as_deref() == Some("plane") {
+                        0.0
+                    } else {
+                        1.0
+                    },
+                ));
+            }
+            "truss" | "imported-glb" => {
+                let position = vec3_path_or(node, &["position"], [0.0, 1.0, 0.0]);
+                let rotation = vec3_path_or(node, &["rotation"], [0.0, 0.0, 0.0]);
+                let scale = vec3_path_or(node, &["scale"], [1.0, 1.0, 1.0]);
+                let width = number_at(node, &["length"]).unwrap_or(2.5) as f32 * scale[0].abs();
+                let thickness =
+                    number_at(node, &["thickness"]).unwrap_or(0.24) as f32 * scale[1].abs();
+                let color = color_path_or(node, &["color"]).unwrap_or([0.45, 0.48, 0.54]);
+                items.push(stage3d_mesh_item(
+                    position,
+                    [width.max(0.1), thickness.max(0.08), thickness.max(0.08)],
+                    rotation[1],
+                    [color[0], color[1], color[2], 0.38],
+                    1.0,
+                ));
+            }
+            "spot-light" | "point-light" | "rect-area-light" => {
+                let position = vec3_path_or(node, &["position"], [0.0, 3.0, 0.0]);
+                let color = color_path_or(node, &["color"]).unwrap_or([1.0, 0.86, 0.55]);
+                let intensity = number_at(node, &["intensity"])
+                    .unwrap_or(1.0)
+                    .clamp(0.1, 5.0) as f32;
+                let size = 0.32 + intensity * 0.08;
+                items.push(stage3d_mesh_item(
+                    position,
+                    [size, size, size],
+                    0.0,
+                    [color[0], color[1], color[2], 0.62],
+                    1.0,
+                ));
+            }
+            "fog-volume" => {
+                let position = vec3_path_or(node, &["position"], [0.0, 1.2, 0.0]);
+                let dimensions = vec3_path_or(node, &["dimensions"], [4.0, 2.0, 4.0]);
+                let color = color_path_or(node, &["color"]).unwrap_or([0.42, 0.62, 1.0]);
+                let density = number_at(node, &["density"])
+                    .unwrap_or(0.5)
+                    .clamp(0.05, 2.0) as f32;
+                items.push(stage3d_mesh_item(
+                    position,
+                    [
+                        dimensions[0].abs().max(0.1),
+                        dimensions[1].abs().max(0.1),
+                        dimensions[2].abs().max(0.1),
+                    ],
+                    0.0,
+                    [
+                        color[0],
+                        color[1],
+                        color[2],
+                        (0.10 + density * 0.08).min(0.26),
+                    ],
+                    1.0,
+                ));
+            }
+            _ => {}
+        }
+        collect_stage3d_mesh_nodes(node.get("children"), items);
+    }
+}
+
+fn collect_stage3d_user_mesh_items(value: Option<&Value>, items: &mut Vec<Stage3DMeshItemGpu>) {
+    let Some(elements) = value.and_then(Value::as_array) else {
+        return;
+    };
+    for element in elements {
+        if items.len() >= MAX_STAGE3D_MESH_ITEMS {
+            return;
+        }
+        let position = vec3_path_or(element, &["position"], [0.0, 1.0, 0.0]);
+        let scalar = number_at(element, &["scale"])
+            .unwrap_or(1.0)
+            .clamp(0.05, 100.0) as f32;
+        let width = number_at(element, &["params", "width"])
+            .or_else(|| number_at(element, &["params", "w"]))
+            .unwrap_or(1.4) as f32
+            * scalar;
+        let height = number_at(element, &["params", "height"])
+            .or_else(|| number_at(element, &["params", "h"]))
+            .unwrap_or(1.0) as f32
+            * scalar;
+        let depth = number_at(element, &["params", "depth"])
+            .or_else(|| number_at(element, &["params", "d"]))
+            .unwrap_or(1.0) as f32
+            * scalar;
+        let color = color_path_or(element, &["params", "color"])
+            .or_else(|| color_path_or(element, &["params", "lightColor"]))
+            .unwrap_or([0.78, 0.8, 0.86]);
+        items.push(stage3d_mesh_item(
+            position,
+            [
+                width.abs().max(0.08),
+                height.abs().max(0.08),
+                depth.abs().max(0.08),
+            ],
+            number_at(element, &["rotationY"]).unwrap_or(0.0) as f32,
+            [color[0], color[1], color[2], 0.46],
+            1.0,
+        ));
+    }
+}
+
+fn stage3d_mesh_item(
+    position: [f32; 3],
+    scale: [f32; 3],
+    yaw: f32,
+    color: [f32; 4],
+    shape: f32,
+) -> Stage3DMeshItemGpu {
+    Stage3DMeshItemGpu {
+        position: [position[0], position[1], position[2], shape],
+        scale: [scale[0], scale[1], scale[2], yaw],
+        color,
+    }
 }
 
 fn collect_projection_sim_overlay_items(scene: &Value, items: &mut Vec<Stage3DOverlayItemGpu>) {
