@@ -1663,8 +1663,17 @@ try {
     );
   }
   assert(checks.get('native-static-image-prefetch')?.ok, `broker readiness omitted native static-image prefetch: ${JSON.stringify(readiness)}`);
-  assert(checks.get('native-mp4-frame-encoder')?.ok, `broker readiness omitted native MP4 frame encoder: ${JSON.stringify(readiness)}`);
-  assert(checks.get('native-recording')?.ok, `broker readiness omitted native recording: ${JSON.stringify(readiness)}`);
+  const mp4FrameEncoderCheck = checks.get('native-mp4-frame-encoder');
+  const nativeRecordingCheck = checks.get('native-recording');
+  assert(mp4FrameEncoderCheck?.ok, `broker readiness omitted native MP4 frame encoder: ${JSON.stringify(readiness)}`);
+  assert(nativeRecordingCheck?.ok, `broker readiness omitted native recording: ${JSON.stringify(readiness)}`);
+  assert(
+    capabilities?.features?.native_recording === true &&
+      capabilities?.features?.native_mp4_frame_encoder === true &&
+      capabilities?.features?.native_frame_export === true &&
+      String(nativeRecordingCheck?.detail ?? '').includes('MP4/JPEG encoders'),
+    `broker recording readiness must require raw native frame export plus the desktop encoder bridge: ${JSON.stringify({ features: capabilities?.features, nativeRecordingCheck })}`,
+  );
   assert(checks.has('managed-output'), `broker readiness omitted managed output check: ${JSON.stringify(readiness)}`);
   if (!checks.get('managed-output')?.ok) {
     console.warn(

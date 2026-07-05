@@ -88,6 +88,8 @@ function createNativeRpc(): NativeRpc {
 
 describe('Native render-core RPC contract', () => {
   const itIfNativeCore = existsSync(nativeCoreBin) ? it : it.skip;
+  const nativeBackend =
+    process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'd3d12' : 'vulkan';
 
   itIfNativeCore('advertises implemented methods and rejects unknown RPC methods', async () => {
     const rpc = createNativeRpc();
@@ -109,4 +111,34 @@ describe('Native render-core RPC contract', () => {
       await rpc.close();
     }
   }, 10000);
+
+  itIfNativeCore('keeps raw frame export distinct from Electron recording readiness', async () => {
+    const rpc = createNativeRpc();
+    try {
+      const started = await rpc.send('start', {
+        config: {
+          backend: nativeBackend,
+          width: 96,
+          height: 54,
+          target_fps: 30,
+        },
+      }, 15000);
+      expect(started?.backend_ready).toBe(true);
+
+      const capabilities = await rpc.send('get_capabilities');
+      expect(capabilities?.features?.frame_snapshot_export).toBe(true);
+      expect(capabilities?.features?.native_frame_export).toBe(true);
+      expect(capabilities?.features?.native_frame_sequence_export).toBe(true);
+      expect(capabilities?.features?.native_recording).toBe(false);
+
+      const readiness = await rpc.send('get_readiness_report');
+      const checks = new Map<string, any>((readiness?.checks ?? []).map((check: any) => [check?.id, check]));
+      expect(checks.get('native-frame-export')?.ok).toBe(true);
+      expect(checks.get('native-frame-sequence-export')?.ok).toBe(true);
+      expect(checks.get('native-recording')?.ok).toBe(false);
+      expect(String(checks.get('native-recording')?.detail ?? '')).toContain('Electron broker');
+    } finally {
+      await rpc.close();
+    }
+  }, 20000);
 });

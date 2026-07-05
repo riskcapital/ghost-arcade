@@ -3270,8 +3270,8 @@ impl App {
                     {
                         "id": "native-recording",
                         "label": "Native recording",
-                        "ok": self.renderer.is_some(),
-                        "detail": if self.renderer.is_some() { "render core provides raw frame export; desktop bridge owns MP4/JPEG encoder sessions" } else { "native renderer has not created a wgpu device" }
+                        "ok": false,
+                        "detail": if self.renderer.is_some() { "render core provides raw frame export only; query the Electron broker readiness for MP4/JPEG encoder sessions" } else { "native renderer has not created a wgpu device" }
                     }
                 ]
             })),
