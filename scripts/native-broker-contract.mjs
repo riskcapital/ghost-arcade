@@ -401,6 +401,7 @@ try {
       decodeCapabilities?.native_video_frame_decode === true &&
       decodeCapabilities?.native_video_frame_prefetch === true &&
       decodeCapabilities?.native_video_frame_prefetch_window === true &&
+      decodeCapabilities?.native_media_source_playback_state === true &&
       decodeCapabilities?.video_frame_prefetch === true &&
       decodeCapabilities?.supported_source_types?.includes('image') &&
       decodeCapabilities?.supported_source_types?.includes('video'),
@@ -1338,6 +1339,57 @@ try {
           Number(windowBasePrefetchStatus.source_frame_uploads ?? 0) &&
         windowNextPrefetchStatus.source_frame_last_upload_transport === 'native-video-frame-cache',
       `native video frame prefetch window should warm the next timestamp in the core cache: ${JSON.stringify({ base: windowBasePrefetchStatus, next: windowNextPrefetchStatus })}`,
+    );
+    await broker.invoke('native_renderer_submit_commands', {
+      commands: [
+        { type: 'set_render_clock', mode: 'manual', time: 12, time_delta: 0, frame_index: 12000 },
+        {
+          type: 'set_media_source_playback',
+          source_id: 'broker-prefetch-video-clocked',
+          uri: timedVideoPath,
+          source_type: 'video',
+          time_seconds: windowBaseTime,
+          clock_time_seconds: 12,
+          playback_rate: 1,
+          paused: false,
+          loop_enabled: false,
+          duration_seconds: 2,
+          seq: 1,
+        },
+      ],
+    });
+    const clockedBasePrefetchStatus = await broker.invoke('native_renderer_prefetch_media', {
+      source_id: 'broker-prefetch-video-clocked',
+      uri: timedVideoPath,
+      source_type: 'video',
+      decode_width: 64,
+      decode_height: 64,
+      priority: 2,
+      prefetch_window_frames: 1,
+      prefetch_fps: 30,
+      seq: 900,
+    });
+    await broker.invoke('native_renderer_submit_commands', {
+      commands: [
+        { type: 'set_render_clock', mode: 'manual', time: 12 + 1 / 30, time_delta: 1 / 30, frame_index: 12001 },
+      ],
+    });
+    const clockedNextPrefetchStatus = await broker.invoke('native_renderer_prefetch_media', {
+      source_id: 'broker-prefetch-video-clocked',
+      uri: timedVideoPath,
+      source_type: 'video',
+      decode_width: 64,
+      decode_height: 64,
+      priority: 2,
+      seq: 901,
+    });
+    assert(
+      Number(clockedNextPrefetchStatus.native_video_frame_decodes ?? 0) ===
+        Number(clockedBasePrefetchStatus.native_video_frame_decodes ?? 0) &&
+        Number(clockedNextPrefetchStatus.native_video_frame_cache_hits ?? 0) >
+          Number(clockedBasePrefetchStatus.native_video_frame_cache_hits ?? 0) &&
+        clockedNextPrefetchStatus.source_frame_last_upload_transport === 'native-video-frame-cache',
+      `native media source playback state should let timestamp-less prefetch follow the render clock: ${JSON.stringify({ base: clockedBasePrefetchStatus, next: clockedNextPrefetchStatus })}`,
     );
     const clearedVideoFramePrefetchStatus = await broker.invoke('native_renderer_clear_prefetch_cache');
     assert(
