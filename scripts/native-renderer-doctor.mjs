@@ -31,6 +31,7 @@ const REQUIRED_FEATURES = [
   'compute_graph_source_frame_target',
   'persistent_compute_buffers',
   'native_output_mirror_texture',
+  'native_frame_export',
   'native_frame_sequence_export',
   'native_planet_graph',
   'native_3d_smoke_graph',
