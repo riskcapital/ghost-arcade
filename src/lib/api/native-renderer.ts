@@ -275,7 +275,16 @@ export type RendererCommand =
     }
   | { type: 'remove_layer'; layer_id: string }
   | { type: 'bind_media_source'; layer_id: string; source_id: string; uri: string; source_type: string }
-  | { type: 'decode_media_source'; source_id: string; uri: string; source_type: string }
+  | {
+      type: 'decode_media_source';
+      source_id: string;
+      uri: string;
+      source_type: string;
+      decode_width?: number;
+      decode_height?: number;
+      time_seconds?: number;
+      seq?: number;
+    }
   | { type: 'set_stage3d_scene'; scene: unknown }
   | { type: 'set_projection_sim_scene'; scene: unknown }
   | { type: 'set_native_quality_policy'; native_quality_policy: NativeQualityPolicy }
@@ -434,6 +443,10 @@ export interface RendererStatus {
   native_image_decode_failures: number;
   native_image_decode_bytes_uploaded: number;
   native_image_decode_last_error: string;
+  native_video_frame_decodes: number;
+  native_video_frame_decode_failures: number;
+  native_video_frame_decode_bytes_uploaded: number;
+  native_video_frame_decode_last_error: string;
   native_instrument_frame_renders: number;
   compute_graph_runs: number;
   compute_graph_passes: number;
@@ -664,6 +677,10 @@ export interface RendererStats {
   native_image_decode_failures: number;
   native_image_decode_bytes_uploaded: number;
   native_image_decode_last_error: string;
+  native_video_frame_decodes: number;
+  native_video_frame_decode_failures: number;
+  native_video_frame_decode_bytes_uploaded: number;
+  native_video_frame_decode_last_error: string;
   native_shader_renders: number;
   native_instrument_frame_renders: number;
   render_clock_updates: number;

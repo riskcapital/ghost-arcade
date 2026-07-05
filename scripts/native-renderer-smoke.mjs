@@ -1358,9 +1358,12 @@ async function main() {
       !decodeCapabilities?.native_static_image_prefetch ||
       decodeCapabilities?.native_media_decode !== false ||
       decodeCapabilities?.video_decode !== false ||
-      !decodeCapabilities?.supported_source_types?.includes('image')
+      decodeCapabilities?.native_video_frame_decode !== true ||
+      decodeCapabilities?.native_video_frame_prefetch !== true ||
+      !decodeCapabilities?.supported_source_types?.includes('image') ||
+      !decodeCapabilities?.supported_source_types?.includes('video')
     ) {
-      throw new Error(`native decode capabilities should report static-image-only decode: ${JSON.stringify(decodeCapabilities)}`);
+      throw new Error(`native decode capabilities should report still-image decode and timestamped video-frame prefetch without full video decode: ${JSON.stringify(decodeCapabilities)}`);
     }
     if (!capabilities.features?.command_drain_policy || !capabilities.features?.auto_present_policy) {
       throw new Error(`native command presentation policy features missing: ${JSON.stringify(capabilities.features)}`);

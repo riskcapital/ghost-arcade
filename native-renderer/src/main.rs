@@ -8,6 +8,7 @@ use std::{
     fs,
     io::{self, BufRead, Write},
     path::{Path, PathBuf},
+    process::Command,
     sync::mpsc::{self, Receiver, Sender},
     thread,
     time::{Duration, Instant, UNIX_EPOCH},
@@ -39,6 +40,7 @@ const SOURCE_FRAME_SIZE_INSANE: usize = 3072;
 const SOURCE_FRAME_MIP_LEVELS_MAX: u32 = 5;
 const MAX_NATIVE_IMAGE_DECODE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_NATIVE_IMAGE_DECODE_PIXELS: u64 = 8192 * 8192;
+const MAX_NATIVE_VIDEO_FRAME_DECODE_DIMENSION: usize = 4096;
 const SOURCE_FRAME_FORMAT_FALLBACK: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const SOURCE_FRAME_FORMAT_HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const MAX_STAGE3D_OVERLAY_ITEMS: usize = 128;
@@ -676,6 +678,10 @@ struct CoreStatus {
     native_image_decode_failures: u64,
     native_image_decode_bytes_uploaded: u64,
     native_image_decode_last_error: String,
+    native_video_frame_decodes: u64,
+    native_video_frame_decode_failures: u64,
+    native_video_frame_decode_bytes_uploaded: u64,
+    native_video_frame_decode_last_error: String,
     native_instrument_frame_renders: u64,
     compute_graph_runs: u64,
     compute_graph_passes: u64,
@@ -957,6 +963,10 @@ struct CoreStats {
     native_image_decode_failures: u64,
     native_image_decode_bytes_uploaded: u64,
     native_image_decode_last_error: String,
+    native_video_frame_decodes: u64,
+    native_video_frame_decode_failures: u64,
+    native_video_frame_decode_bytes_uploaded: u64,
+    native_video_frame_decode_last_error: String,
     native_shader_renders: u64,
     native_instrument_frame_renders: u64,
     compute_graph_runs: u64,
@@ -2221,6 +2231,9 @@ impl App {
             "source_frame_hdr": self.renderer.as_ref().is_some_and(|renderer| renderer.source_frame_format == SOURCE_FRAME_FORMAT_HDR),
             "native_static_image_decode": true,
             "native_static_image_prefetch": true,
+            "native_video_frame_decode": true,
+            "native_video_frame_prefetch": true,
+            "video_frame_prefetch": true,
             "decode_policy_controls": true,
             "decode_preview_cache_clear": true,
             "media_policy_controls": true,
@@ -2732,6 +2745,20 @@ impl App {
                 "none".to_string()
             } else {
                 self.stats.native_image_decode_last_error.clone()
+            },
+            native_video_frame_decodes: self.stats.native_video_frame_decodes,
+            native_video_frame_decode_failures: self.stats.native_video_frame_decode_failures,
+            native_video_frame_decode_bytes_uploaded: self
+                .stats
+                .native_video_frame_decode_bytes_uploaded,
+            native_video_frame_decode_last_error: if self
+                .stats
+                .native_video_frame_decode_last_error
+                .is_empty()
+            {
+                "none".to_string()
+            } else {
+                self.stats.native_video_frame_decode_last_error.clone()
             },
             native_instrument_frame_renders: self.stats.native_instrument_frame_renders,
             compute_graph_runs: self.stats.compute_graph_runs,
@@ -5090,16 +5117,47 @@ impl App {
     fn apply_decode_media_source(&mut self, command: &Value) {
         let source_type =
             string_at(command, &["source_type"]).unwrap_or_else(|| "none".to_string());
-        if source_type != "image" {
-            return;
-        }
         let (Some(source_id), Some(uri)) = (
             string_at(command, &["source_id"]),
             string_at(command, &["uri"]),
         ) else {
             return;
         };
-        self.decode_native_image_source(&source_id, &uri);
+        if source_type == "image" {
+            self.decode_native_image_source(&source_id, &uri);
+        } else if source_type == "video" {
+            let width = number_at(command, &["decode_width"])
+                .or_else(|| number_at(command, &["decodeWidth"]))
+                .or_else(|| number_at(command, &["width"]))
+                .unwrap_or(SOURCE_PREVIEW_SIZE as f64)
+                .round()
+                .clamp(16.0, MAX_NATIVE_VIDEO_FRAME_DECODE_DIMENSION as f64)
+                as usize;
+            let height = number_at(command, &["decode_height"])
+                .or_else(|| number_at(command, &["decodeHeight"]))
+                .or_else(|| number_at(command, &["height"]))
+                .unwrap_or(width as f64)
+                .round()
+                .clamp(16.0, MAX_NATIVE_VIDEO_FRAME_DECODE_DIMENSION as f64)
+                as usize;
+            let time_seconds = number_at(command, &["time_seconds"])
+                .or_else(|| number_at(command, &["timeSeconds"]))
+                .or_else(|| number_at(command, &["time"]))
+                .unwrap_or(0.0)
+                .clamp(0.0, 3600.0);
+            let seq = number_at(command, &["seq"])
+                .unwrap_or((time_seconds * 1000.0).round())
+                .round()
+                .max(0.0) as u64;
+            self.decode_native_video_frame_source(
+                &source_id,
+                &uri,
+                width,
+                height,
+                time_seconds,
+                seq,
+            );
+        }
     }
 
     fn set_stage3d_scene(&mut self, params: &Value) -> Result<Value, String> {
@@ -5224,18 +5282,51 @@ impl App {
 
     fn prefetch_media(&mut self, params: &Value) -> Result<Value, String> {
         let source_type = string_at(params, &["source_type"]).unwrap_or_else(|| "none".to_string());
-        if source_type != "image" {
-            return Err(
-                "native media prefetch currently supports local static images only".to_string(),
-            );
-        }
         let source_id = string_at(params, &["source_id"])
             .or_else(|| string_at(params, &["sourceId"]))
             .ok_or_else(|| "native media prefetch requires source_id".to_string())?;
         let uri = string_at(params, &["uri"])
             .or_else(|| string_at(params, &["src"]))
             .ok_or_else(|| "native media prefetch requires uri".to_string())?;
-        self.decode_native_image_source(&source_id, &uri);
+        if source_type == "image" {
+            self.decode_native_image_source(&source_id, &uri);
+        } else if source_type == "video" {
+            let width = number_at(params, &["decode_width"])
+                .or_else(|| number_at(params, &["decodeWidth"]))
+                .or_else(|| number_at(params, &["width"]))
+                .unwrap_or(SOURCE_PREVIEW_SIZE as f64)
+                .round()
+                .clamp(16.0, MAX_NATIVE_VIDEO_FRAME_DECODE_DIMENSION as f64)
+                as usize;
+            let height = number_at(params, &["decode_height"])
+                .or_else(|| number_at(params, &["decodeHeight"]))
+                .or_else(|| number_at(params, &["height"]))
+                .unwrap_or(width as f64)
+                .round()
+                .clamp(16.0, MAX_NATIVE_VIDEO_FRAME_DECODE_DIMENSION as f64)
+                as usize;
+            let time_seconds = number_at(params, &["time_seconds"])
+                .or_else(|| number_at(params, &["timeSeconds"]))
+                .or_else(|| number_at(params, &["time"]))
+                .unwrap_or(0.0)
+                .clamp(0.0, 3600.0);
+            let seq = number_at(params, &["seq"])
+                .unwrap_or((time_seconds * 1000.0).round())
+                .round()
+                .max(0.0) as u64;
+            self.decode_native_video_frame_source(
+                &source_id,
+                &uri,
+                width,
+                height,
+                time_seconds,
+                seq,
+            );
+        } else {
+            return Err(
+                "native media prefetch currently supports local static images and timestamped local video frames".to_string(),
+            );
+        }
         Ok(json!(self.status()))
     }
 
@@ -5261,6 +5352,9 @@ impl App {
             "schema_version": 1,
             "native_static_image_decode": true,
             "native_static_image_prefetch": true,
+            "native_video_frame_decode": true,
+            "native_video_frame_prefetch": true,
+            "video_frame_prefetch": true,
             "decode_policy_controls": true,
             "decode_preview_cache_clear": true,
             "media_policy_controls": true,
@@ -5272,7 +5366,7 @@ impl App {
             "source_frame_fallback": true,
             "shared_texture_source_frame_upload": cfg!(target_os = "macos"),
             "shared_texture_upload": false,
-            "supported_source_types": ["image"],
+            "supported_source_types": ["image", "video"],
             "supported_static_image_extensions": [
                 "avif",
                 "bmp",
@@ -5285,9 +5379,11 @@ impl App {
                 "tiff",
                 "webp"
             ],
+            "supported_video_extensions": ["avi", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "ogv", "webm"],
             "notes": [
                 "Local still images can decode directly into native source-frame textures.",
-                "Video and full media prefetch still use source-frame/shared-texture fallback paths."
+                "Local videos can prefetch bounded timestamped frames into native source-frame textures via FFmpeg.",
+                "Continuous in-core video decode and full media prefetch are still pending."
             ]
         })
     }
@@ -5391,6 +5487,78 @@ impl App {
                 self.stats.native_image_decode_failures =
                     self.stats.native_image_decode_failures.saturating_add(1);
                 self.stats.native_image_decode_last_error = err;
+                self.source_frame_signatures.remove(source_id);
+            }
+        }
+    }
+
+    fn decode_native_video_frame_source(
+        &mut self,
+        source_id: &str,
+        uri: &str,
+        width: usize,
+        height: usize,
+        time_seconds: f64,
+        seq: u64,
+    ) {
+        let Some(path) = local_media_path_from_uri(uri) else {
+            return;
+        };
+        let frame_bucket = (time_seconds * 30.0).round().max(0.0) as u64;
+        let signature = match native_video_frame_file_signature(&path, width, height, frame_bucket)
+        {
+            Ok(signature) => signature,
+            Err(err) => {
+                self.stats.native_video_frame_decode_failures = self
+                    .stats
+                    .native_video_frame_decode_failures
+                    .saturating_add(1);
+                self.stats.native_video_frame_decode_last_error = err;
+                self.source_frame_signatures.remove(source_id);
+                return;
+            }
+        };
+        if self
+            .source_frame_signatures
+            .get(source_id)
+            .is_some_and(|existing| existing == &signature)
+            && self.source_frames.contains_key(source_id)
+        {
+            return;
+        }
+        let existing_seq = self
+            .source_frames
+            .get(source_id)
+            .map(|frame| frame.seq)
+            .unwrap_or(0);
+        let upload_seq = seq.max(existing_seq.saturating_add(1));
+        match decode_native_video_frame_rgba(&path, width, height, time_seconds) {
+            Ok((decoded_width, decoded_height, rgba)) => {
+                let uploaded = self.upload_source_frame_pixels(
+                    source_id.to_string(),
+                    upload_seq,
+                    decoded_width,
+                    decoded_height,
+                    &rgba,
+                    "native-video-frame",
+                    false,
+                );
+                self.stats.native_video_frame_decodes =
+                    self.stats.native_video_frame_decodes.saturating_add(1);
+                self.stats.native_video_frame_decode_bytes_uploaded = self
+                    .stats
+                    .native_video_frame_decode_bytes_uploaded
+                    .saturating_add(uploaded as u64);
+                self.stats.native_video_frame_decode_last_error.clear();
+                self.source_frame_signatures
+                    .insert(source_id.to_string(), signature);
+            }
+            Err(err) => {
+                self.stats.native_video_frame_decode_failures = self
+                    .stats
+                    .native_video_frame_decode_failures
+                    .saturating_add(1);
+                self.stats.native_video_frame_decode_last_error = err;
                 self.source_frame_signatures.remove(source_id);
             }
         }
@@ -10437,6 +10605,96 @@ fn decode_native_image_rgba(path: &Path) -> Result<(usize, usize, Vec<u8>), Stri
     ))
 }
 
+fn decode_native_video_frame_rgba(
+    path: &Path,
+    width: usize,
+    height: usize,
+    time_seconds: f64,
+) -> Result<(usize, usize, Vec<u8>), String> {
+    let metadata = fs::metadata(path).map_err(|err| {
+        format!(
+            "native video frame decode failed to stat `{}`: {err}",
+            path.display()
+        )
+    })?;
+    if !metadata.is_file() {
+        return Err(format!(
+            "native video frame decode rejected non-file path `{}`",
+            path.display()
+        ));
+    }
+    let target_width = width.clamp(16, MAX_NATIVE_VIDEO_FRAME_DECODE_DIMENSION);
+    let target_height = height.clamp(16, MAX_NATIVE_VIDEO_FRAME_DECODE_DIMENSION);
+    let expected_bytes = target_width.saturating_mul(target_height).saturating_mul(4);
+    let ffmpeg = std::env::var("GA_FFMPEG_PATH")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| {
+            if cfg!(target_os = "windows") {
+                "ffmpeg.exe".to_string()
+            } else {
+                "ffmpeg".to_string()
+            }
+        });
+    let scale =
+        format!("scale={target_width}:{target_height}:force_original_aspect_ratio=decrease");
+    let pad = format!("pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:color=black");
+    let output = Command::new(&ffmpeg)
+        .arg("-hide_banner")
+        .arg("-loglevel")
+        .arg("error")
+        .arg("-nostdin")
+        .arg("-ss")
+        .arg(format!("{:.3}", time_seconds.clamp(0.0, 3600.0)))
+        .arg("-i")
+        .arg(path)
+        .arg("-frames:v")
+        .arg("1")
+        .arg("-vf")
+        .arg(format!("{scale},{pad},format=rgba"))
+        .arg("-f")
+        .arg("rawvideo")
+        .arg("-pix_fmt")
+        .arg("rgba")
+        .arg("pipe:1")
+        .output()
+        .map_err(|err| {
+            format!(
+                "native video frame decode failed to launch `{ffmpeg}` for `{}`: {err}",
+                path.display()
+            )
+        })?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(format!(
+            "native video frame decode ffmpeg failed for `{}`: {}",
+            path.display(),
+            if detail.is_empty() {
+                output.status.to_string()
+            } else {
+                detail
+            }
+        ));
+    }
+    if output.stdout.len() < expected_bytes {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(format!(
+            "native video frame decode produced {}/{} bytes for `{}`{}",
+            output.stdout.len(),
+            expected_bytes,
+            path.display(),
+            if detail.is_empty() {
+                String::new()
+            } else {
+                format!(": {detail}")
+            }
+        ));
+    }
+    let mut rgba = output.stdout;
+    rgba.truncate(expected_bytes);
+    Ok((target_width, target_height, rgba))
+}
+
 fn native_image_file_signature(path: &Path) -> Result<String, String> {
     let metadata = fs::metadata(path).map_err(|err| {
         format!(
@@ -10462,6 +10720,42 @@ fn native_image_file_signature(path: &Path) -> Result<String, String> {
         canonical.display(),
         metadata.len(),
         modified
+    ))
+}
+
+fn native_video_frame_file_signature(
+    path: &Path,
+    width: usize,
+    height: usize,
+    frame_bucket: u64,
+) -> Result<String, String> {
+    let metadata = fs::metadata(path).map_err(|err| {
+        format!(
+            "native video frame decode failed to stat `{}`: {err}",
+            path.display()
+        )
+    })?;
+    if !metadata.is_file() {
+        return Err(format!(
+            "native video frame decode rejected non-file path `{}`",
+            path.display()
+        ));
+    }
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| format!("{}:{}", duration.as_secs(), duration.subsec_nanos()))
+        .unwrap_or_else(|| "unknown".to_string());
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    Ok(format!(
+        "{}:{}:{}:{}:{}:{}",
+        canonical.display(),
+        metadata.len(),
+        modified,
+        width,
+        height,
+        frame_bucket
     ))
 }
 
