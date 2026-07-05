@@ -36,7 +36,11 @@ export interface NativeRendererRuntimeState {
   textureShareLabel: string | null;
   textureSharePlatform: string | null;
   textureShareAvailable: boolean;
+  sharedTextureSourceFrameUploadReady: boolean;
+  sharedTextureMediaTransportReady: boolean;
   sharedTextureOutputExportReady: boolean;
+  nativeEffectPassReady: boolean;
+  nativeEffectPassDetail: string;
   nativeTextureShareSenderReady: boolean;
   nativeTextureShareSenderDetail: string;
   nativeOutputShareCapable: boolean;
@@ -73,7 +77,11 @@ export const initialNativeRendererRuntimeState: NativeRendererRuntimeState = {
   textureShareLabel: null,
   textureSharePlatform: null,
   textureShareAvailable: false,
+  sharedTextureSourceFrameUploadReady: false,
+  sharedTextureMediaTransportReady: false,
   sharedTextureOutputExportReady: false,
+  nativeEffectPassReady: false,
+  nativeEffectPassDetail: '',
   nativeTextureShareSenderReady: false,
   nativeTextureShareSenderDetail: '',
   nativeOutputShareCapable: false,
@@ -190,7 +198,10 @@ export function deriveNativeRendererRuntimeState(
     ? `native output driver is ready; main driver waiting on ${localBlockers[0]}`
     : readinessDetailForMode(mode, status, readiness);
   const textureShare = readiness?.texture_share ?? null;
+  const sourceFrameUploadCheck = readinessCheck(readiness, 'shared-texture-source-frame-upload');
+  const sharedTextureUploadCheck = readinessCheck(readiness, 'shared-texture-upload');
   const outputExportCheck = readinessCheck(readiness, 'shared-texture-output-export');
+  const nativeEffectPassCheck = readinessCheck(readiness, 'native-effect-pass-manifest');
   const nativeTextureShareCheck = readinessCheck(readiness, 'native-texture-share-sender');
 
   return {
@@ -217,7 +228,11 @@ export function deriveNativeRendererRuntimeState(
     textureShareLabel: textureShare?.label ?? null,
     textureSharePlatform: textureShare?.platform ?? null,
     textureShareAvailable: !!textureShare?.available,
+    sharedTextureSourceFrameUploadReady: !!(sourceFrameUploadCheck?.ok ?? features.shared_texture_source_frame_upload),
+    sharedTextureMediaTransportReady: !!(sharedTextureUploadCheck?.ok ?? features.shared_texture_upload),
     sharedTextureOutputExportReady: !!(outputExportCheck?.ok ?? features.shared_texture_output_export),
+    nativeEffectPassReady: !!(nativeEffectPassCheck?.ok ?? features.native_effect_pass_manifest),
+    nativeEffectPassDetail: String(nativeEffectPassCheck?.detail ?? ''),
     nativeTextureShareSenderReady: !!nativeTextureShareCheck?.ok,
     nativeTextureShareSenderDetail: String(nativeTextureShareCheck?.detail ?? ''),
     nativeOutputShareCapable: !!textureShare?.nativeOutputCapable,
@@ -281,7 +296,11 @@ export function updateNativeRendererRuntimeFromStatus(
       textureShareLabel: current.textureShareLabel,
       textureSharePlatform: current.textureSharePlatform,
       textureShareAvailable: current.textureShareAvailable,
+      sharedTextureSourceFrameUploadReady: current.sharedTextureSourceFrameUploadReady,
+      sharedTextureMediaTransportReady: current.sharedTextureMediaTransportReady,
       sharedTextureOutputExportReady: current.sharedTextureOutputExportReady,
+      nativeEffectPassReady: current.nativeEffectPassReady,
+      nativeEffectPassDetail: current.nativeEffectPassDetail,
       nativeTextureShareSenderReady: current.nativeTextureShareSenderReady,
       nativeTextureShareSenderDetail: current.nativeTextureShareSenderDetail,
       nativeOutputShareCapable: current.nativeOutputShareCapable,

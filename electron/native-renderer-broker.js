@@ -1226,6 +1226,7 @@ class NativeRendererBroker {
       features.managed_output_window_control &&
       computeGraphHostReady &&
       allGraphInstrumentsReady &&
+      effectPassManifestOk &&
       features.native_static_image_decode &&
       features.native_static_image_prefetch
     );
@@ -1235,13 +1236,15 @@ class NativeRendererBroker {
         ? (this.lastStatus.last_frame_error || 'native render-core backend is not ready')
         : !features.native_output_mirror_texture
           ? 'native offscreen output mirror is unavailable'
-          : !features.managed_output_attach || !features.managed_output_window_control
-            ? 'managed native output window control is unavailable'
-            : !computeGraphHostReady || !allGraphInstrumentsReady
-              ? 'native compute graph instrument routes are incomplete'
-              : !features.native_static_image_decode || !features.native_static_image_prefetch
-                ? 'native still-image decode/prefetch is incomplete'
-                : 'native output driver prerequisites are incomplete';
+        : !features.managed_output_attach || !features.managed_output_window_control
+          ? 'managed native output window control is unavailable'
+        : !computeGraphHostReady || !allGraphInstrumentsReady
+          ? 'native compute graph instrument routes are incomplete'
+        : !effectPassManifestOk
+          ? 'native source-frame effect-pass route is incomplete'
+          : !features.native_static_image_decode || !features.native_static_image_prefetch
+            ? 'native still-image decode/prefetch is incomplete'
+            : 'native output driver prerequisites are incomplete';
     const nativeMediaDecodeOk = !!(
       features.native_media_decode &&
       features.media_prefetch &&
@@ -1253,6 +1256,7 @@ class NativeRendererBroker {
     );
     const fullNativeV2Blockers = [
       nativeOutputDriverOk ? null : 'native output driver is not ready',
+      effectPassManifestOk ? null : 'native source-frame effect-pass route is not ready',
       features.shared_texture_upload ? null : 'full shared-texture media transport is pending',
       nativeMediaDecodeOk ? null : 'native render-clock video decode pump is not fully ready',
       nativeTextureShareSenderOk ? null : `${this.platform === 'darwin' ? 'Syphon' : 'Spout'} native texture-share sender is not active-ready`,
