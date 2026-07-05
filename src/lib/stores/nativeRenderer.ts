@@ -42,6 +42,7 @@ export interface NativeRendererRuntimeState {
   nativeOutputShareCapable: boolean;
   nativeOutputShareActive: boolean;
   nativeOutputShareWaitingForFrame: boolean;
+  nativeOutputShareLastPublishedFrame: number;
   nativeOutputSharePendingPromotion: boolean;
   nativeOutputSharePromotionAttempts: number;
   nativeOutputSharePromotionReason: string | null;
@@ -78,6 +79,7 @@ export const initialNativeRendererRuntimeState: NativeRendererRuntimeState = {
   nativeOutputShareCapable: false,
   nativeOutputShareActive: false,
   nativeOutputShareWaitingForFrame: false,
+  nativeOutputShareLastPublishedFrame: 0,
   nativeOutputSharePendingPromotion: false,
   nativeOutputSharePromotionAttempts: 0,
   nativeOutputSharePromotionReason: null,
@@ -221,6 +223,7 @@ export function deriveNativeRendererRuntimeState(
     nativeOutputShareCapable: !!textureShare?.nativeOutputCapable,
     nativeOutputShareActive: !!textureShare?.nativeOutputActive,
     nativeOutputShareWaitingForFrame: !!textureShare?.nativeOutputWaitingForFrame,
+    nativeOutputShareLastPublishedFrame: Number(textureShare?.nativeOutputLastPublishedFrame ?? 0),
     nativeOutputSharePendingPromotion: !!textureShare?.nativeOutputPendingPromotion,
     nativeOutputSharePromotionAttempts: Number(textureShare?.nativeOutputPromotionAttempts ?? 0),
     nativeOutputSharePromotionReason: textureShare?.nativeOutputPromotionReason ?? null,
@@ -284,6 +287,7 @@ export function updateNativeRendererRuntimeFromStatus(
       nativeOutputShareCapable: current.nativeOutputShareCapable,
       nativeOutputShareActive: current.nativeOutputShareActive,
       nativeOutputShareWaitingForFrame: current.nativeOutputShareWaitingForFrame,
+      nativeOutputShareLastPublishedFrame: current.nativeOutputShareLastPublishedFrame,
       nativeOutputSharePendingPromotion: current.nativeOutputSharePendingPromotion,
       nativeOutputSharePromotionAttempts: current.nativeOutputSharePromotionAttempts,
       nativeOutputSharePromotionReason: current.nativeOutputSharePromotionReason,

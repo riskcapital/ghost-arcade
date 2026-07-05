@@ -21,6 +21,7 @@ export interface TextureShareInfo {
   nativeOutputCapable?: boolean;
   nativeOutputActive?: boolean;
   nativeOutputWaitingForFrame?: boolean;
+  nativeOutputLastPublishedFrame?: number;
   nativeOutputFailures?: number;
   nativeOutputPendingPromotion?: boolean;
   nativeOutputPromotionAttempts?: number;

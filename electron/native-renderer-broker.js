@@ -1147,10 +1147,12 @@ class NativeRendererBroker {
       ? `${effectPassDescriptors.length} source-frame layer effect(s) can route through the native effect-pass graph`
       : 'native effect-pass graph manifest is incomplete or source-frame graph sampling is unavailable';
     const textureShareName = textureShare?.label || textureShare?.platform || 'Texture share';
+    const nativeOutputLastFrame = Math.max(0, Math.floor(Number(textureShare?.nativeOutputLastPublishedFrame ?? 0)));
     const textureShareDetail = textureShare
       ? [
           `${textureShareName} ${textureShare.available ? 'available' : 'unavailable'}`,
           textureShare.senderMode ? `mode=${textureShare.senderMode}` : null,
+          nativeOutputLastFrame > 0 ? `lastNativeFrame=${nativeOutputLastFrame}` : null,
           textureShare.error ? `error=${textureShare.error}` : null,
         ].filter(Boolean).join(' ')
       : 'not connected to Electron texture-share status';
@@ -1187,7 +1189,7 @@ class NativeRendererBroker {
           : textureShare.nativeOutputWaitingForFrame
             ? 'native output IOSurface pump is waiting for the first rendered frame'
           : textureShare.nativeOutputActive
-            ? `native output shared texture is actively publishing through ${textureShareName}`
+            ? `native output shared texture is actively publishing through ${textureShareName}${nativeOutputLastFrame > 0 ? `; last native frame ${nativeOutputLastFrame}` : ''}`
             : textureShare.nativeOutputCapable
               ? `native output shared texture can publish through ${textureShareName} when the sender is started`
               : `${textureShareName} addon does not expose native output IOSurface publish`;

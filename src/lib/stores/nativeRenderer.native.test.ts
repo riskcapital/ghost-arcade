@@ -162,6 +162,7 @@ describe('native renderer runtime state', () => {
             nativeOutputCapable: true,
             nativeOutputActive: false,
             nativeOutputWaitingForFrame: true,
+            nativeOutputLastPublishedFrame: 42,
             nativeOutputPendingPromotion: true,
             nativeOutputPromotionAttempts: 3,
             nativeOutputPromotionReason: 'waiting-for-native-output',
@@ -199,6 +200,7 @@ describe('native renderer runtime state', () => {
     expect(state.nativeOutputShareCapable).toBe(true);
     expect(state.nativeOutputShareActive).toBe(false);
     expect(state.nativeOutputShareWaitingForFrame).toBe(true);
+    expect(state.nativeOutputShareLastPublishedFrame).toBe(42);
     expect(state.nativeOutputSharePendingPromotion).toBe(true);
     expect(state.nativeOutputSharePromotionAttempts).toBe(3);
     expect(state.nativeOutputSharePromotionReason).toBe('waiting-for-native-output');
