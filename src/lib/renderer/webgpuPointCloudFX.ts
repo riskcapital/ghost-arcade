@@ -685,6 +685,19 @@ struct U {
 @group(0) @binding(1) var<storage, read> live: array<Live>;
 @group(0) @binding(2) var<uniform>       u:    U;
 
+fn rotateByQuatWxyz(qIn: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
+  let q = normalize(qIn + vec4<f32>(1e-8, 0.0, 0.0, 0.0));
+  let qv = q.yzw;
+  let t = 2.0 * cross(qv, v);
+  return v + q.x * t + cross(qv, t);
+}
+
+fn projectAxisToBillboard(axis: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
+  let projected = u.camRight * dot(axis, u.camRight) + u.camUp * dot(axis, u.camUp);
+  let lenSq = dot(projected, projected);
+  return select(fallback, projected * inverseSqrt(max(lenSq, 1e-8)), lenSq > 1e-6);
+}
+
 struct VSOut {
   @builtin(position) pos: vec4<f32>,
   @location(0) uv:        vec2<f32>,
@@ -735,9 +748,13 @@ fn vs_main(
     let meanScale = max((h.splatScale.x + h.splatScale.y + h.splatScale.z) / 3.0, 1e-6);
     let gaussianStretch = clamp(h.splatScale.xy / meanScale, vec2<f32>(0.35), vec2<f32>(3.5));
     let axisStretch = select(vec2<f32>(1.0), gaussianStretch, h.gaussian > 0.5);
+    let localX = rotateByQuatWxyz(h.splatRotation, vec3<f32>(1.0, 0.0, 0.0));
+    let localY = rotateByQuatWxyz(h.splatRotation, vec3<f32>(0.0, 1.0, 0.0));
+    let billboardX = select(u.camRight, projectAxisToBillboard(localX, u.camRight), h.gaussian > 0.5);
+    let billboardY = select(u.camUp, projectAxisToBillboard(localY, u.camUp), h.gaussian > 0.5);
     offset =
-      u.camRight * (q.x * p.size * sizeMul * axisStretch.x) +
-      u.camUp    * (q.y * p.size * sizeMul * axisStretch.y);
+      billboardX * (q.x * p.size * sizeMul * axisStretch.x) +
+      billboardY * (q.y * p.size * sizeMul * axisStretch.y);
   }
 
   var out: VSOut;
