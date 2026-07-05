@@ -34,15 +34,72 @@ const REQUIRED_CHECKS = [
 ];
 
 const REQUIRED_GRAPH_MANIFEST = [
-  { id: 'planet', feature: 'native_planet_graph' },
-  { id: 'smoke-3d', feature: 'native_3d_smoke_graph' },
-  { id: 'particle-field', feature: 'native_particle_field_graph' },
-  { id: 'volumetric-spheres', feature: 'native_volumetric_spheres_graph' },
-  { id: 'smoke-riders', feature: 'native_smoke_riders_graph' },
-  { id: 'ink-cloud', feature: 'native_ink_cloud_graph' },
-  { id: 'flythrough', feature: 'native_flythrough_graph' },
-  { id: 'pixel-particles', feature: 'native_pixel_particles_graph' },
-  { id: 'point-cloud-fx', feature: 'native_point_cloud_fx_graph' },
+  { id: 'planet', feature: 'native_planet_graph', shaderIds: ['planet/render'] },
+  {
+    id: 'smoke-3d',
+    feature: 'native_3d_smoke_graph',
+    shaderIds: [
+      '3d-smoke/splat',
+      '3d-smoke/advect-velocity',
+      '3d-smoke/divergence',
+      '3d-smoke/jacobi',
+      '3d-smoke/subtract-gradient',
+      '3d-smoke/advect-density',
+      '3d-smoke/render',
+    ],
+  },
+  {
+    id: 'particle-field',
+    feature: 'native_particle_field_graph',
+    shaderIds: [
+      'particle-field/behavior',
+      'particle-field/edges',
+      'particle-field/fog',
+      'particle-field/render',
+      'particle-field/lines',
+    ],
+  },
+  {
+    id: 'volumetric-spheres',
+    feature: 'native_volumetric_spheres_graph',
+    shaderIds: ['volumetric-spheres/sim', 'volumetric-spheres/render'],
+  },
+  {
+    id: 'smoke-riders',
+    feature: 'native_smoke_riders_graph',
+    shaderIds: [
+      '3d-smoke/splat',
+      '3d-smoke/advect-velocity',
+      '3d-smoke/divergence',
+      '3d-smoke/jacobi',
+      '3d-smoke/subtract-gradient',
+      '3d-smoke/advect-density',
+      '3d-smoke/render',
+      'volumetric-spheres/sim',
+      'volumetric-spheres/render',
+    ],
+  },
+  {
+    id: 'ink-cloud',
+    feature: 'native_ink_cloud_graph',
+    shaderIds: ['ink-cloud/sim', 'ink-cloud/render', 'ink-cloud/background'],
+  },
+  { id: 'flythrough', feature: 'native_flythrough_graph', shaderIds: ['flythrough/compute', 'flythrough/render'] },
+  {
+    id: 'pixel-particles',
+    feature: 'native_pixel_particles_graph',
+    shaderIds: ['pixel-particles/compute', 'pixel-particles/render'],
+  },
+  {
+    id: 'point-cloud-fx',
+    feature: 'native_point_cloud_fx_graph',
+    shaderIds: [
+      'point-cloud-fx/compute',
+      'point-cloud-fx/sort-fill',
+      'point-cloud-fx/sort-step',
+      'point-cloud-fx/render',
+    ],
+  },
 ];
 
 const BROKER_DIRECT_CORE_METHODS = [
@@ -570,7 +627,9 @@ try {
     assert(entry, `broker graph manifest missing ${required.id}: ${JSON.stringify(capabilities?.native_graph_instrument_manifest)}`);
     assert(entry.render_target === 'source_frame', `broker graph ${required.id} lost source-frame target: ${JSON.stringify(entry)}`);
     assert(entry.source_uri_prefix === `native-graph://${required.id}/`, `broker graph ${required.id} URI prefix drifted: ${JSON.stringify(entry)}`);
-    assert(Array.isArray(entry.shader_ids) && entry.shader_ids.length > 0, `broker graph ${required.id} has no shader IDs: ${JSON.stringify(entry)}`);
+    for (const shaderId of required.shaderIds) {
+      assert(entry.shader_ids?.includes(shaderId), `broker graph ${required.id} missing shader ${shaderId}: ${JSON.stringify(entry)}`);
+    }
     assert(Array.isArray(entry.features) && entry.features.includes(required.feature), `broker graph ${required.id} manifest missing ${required.feature}: ${JSON.stringify(entry)}`);
     assert(String(entry.parity ?? '').length > 0, `broker graph ${required.id} missing parity metadata: ${JSON.stringify(entry)}`);
   }

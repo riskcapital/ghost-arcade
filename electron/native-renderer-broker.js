@@ -36,15 +36,89 @@ const VIDEO_EXTENSIONS = new Set([
   '.webm',
 ]);
 const REQUIRED_NATIVE_GRAPH_INSTRUMENTS = [
-  ['planet', 'Native Planet graph', 'native_planet_graph'],
-  ['smoke-3d', 'Native 3D Smoke graph', 'native_3d_smoke_graph'],
-  ['particle-field', 'Native Particle Field graph', 'native_particle_field_graph'],
-  ['volumetric-spheres', 'Native Volumetric Spheres graph', 'native_volumetric_spheres_graph'],
-  ['smoke-riders', 'Native Smoke Riders graph', 'native_smoke_riders_graph'],
-  ['ink-cloud', 'Native Ink Cloud graph', 'native_ink_cloud_graph'],
-  ['flythrough', 'Native Flythrough graph', 'native_flythrough_graph'],
-  ['pixel-particles', 'Native Pixel Particles graph', 'native_pixel_particles_graph'],
-  ['point-cloud-fx', 'Native Point Cloud FX graph', 'native_point_cloud_fx_graph'],
+  {
+    id: 'planet',
+    label: 'Native Planet graph',
+    feature: 'native_planet_graph',
+    shaderIds: ['planet/render'],
+  },
+  {
+    id: 'smoke-3d',
+    label: 'Native 3D Smoke graph',
+    feature: 'native_3d_smoke_graph',
+    shaderIds: [
+      '3d-smoke/splat',
+      '3d-smoke/advect-velocity',
+      '3d-smoke/divergence',
+      '3d-smoke/jacobi',
+      '3d-smoke/subtract-gradient',
+      '3d-smoke/advect-density',
+      '3d-smoke/render',
+    ],
+  },
+  {
+    id: 'particle-field',
+    label: 'Native Particle Field graph',
+    feature: 'native_particle_field_graph',
+    shaderIds: [
+      'particle-field/behavior',
+      'particle-field/edges',
+      'particle-field/fog',
+      'particle-field/render',
+      'particle-field/lines',
+    ],
+  },
+  {
+    id: 'volumetric-spheres',
+    label: 'Native Volumetric Spheres graph',
+    feature: 'native_volumetric_spheres_graph',
+    shaderIds: ['volumetric-spheres/sim', 'volumetric-spheres/render'],
+  },
+  {
+    id: 'smoke-riders',
+    label: 'Native Smoke Riders graph',
+    feature: 'native_smoke_riders_graph',
+    shaderIds: [
+      '3d-smoke/splat',
+      '3d-smoke/advect-velocity',
+      '3d-smoke/divergence',
+      '3d-smoke/jacobi',
+      '3d-smoke/subtract-gradient',
+      '3d-smoke/advect-density',
+      '3d-smoke/render',
+      'volumetric-spheres/sim',
+      'volumetric-spheres/render',
+    ],
+  },
+  {
+    id: 'ink-cloud',
+    label: 'Native Ink Cloud graph',
+    feature: 'native_ink_cloud_graph',
+    shaderIds: ['ink-cloud/sim', 'ink-cloud/render', 'ink-cloud/background'],
+  },
+  {
+    id: 'flythrough',
+    label: 'Native Flythrough graph',
+    feature: 'native_flythrough_graph',
+    shaderIds: ['flythrough/compute', 'flythrough/render'],
+  },
+  {
+    id: 'pixel-particles',
+    label: 'Native Pixel Particles graph',
+    feature: 'native_pixel_particles_graph',
+    shaderIds: ['pixel-particles/compute', 'pixel-particles/render'],
+  },
+  {
+    id: 'point-cloud-fx',
+    label: 'Native Point Cloud FX graph',
+    feature: 'native_point_cloud_fx_graph',
+    shaderIds: [
+      'point-cloud-fx/compute',
+      'point-cloud-fx/sort-fill',
+      'point-cloud-fx/sort-step',
+      'point-cloud-fx/render',
+    ],
+  },
 ];
 
 function nativeGraphReadinessId(id) {
@@ -981,15 +1055,29 @@ class NativeRendererBroker {
       features.compute_graph_source_frame_target &&
       features.persistent_compute_buffers
     );
-    const graphChecks = REQUIRED_NATIVE_GRAPH_INSTRUMENTS.map(([id, label, feature]) => {
-      const ok = computeGraphHostReady && !!features[feature] && graphInstruments.has(id);
+    const graphManifest = nativeGraphManifestById(this.capabilities);
+    const graphChecks = REQUIRED_NATIVE_GRAPH_INSTRUMENTS.map(({ id, label, feature, shaderIds }) => {
+      const entry = graphManifest.get(id);
+      const entryShaderIds = new Set((entry?.shader_ids ?? []).map(String));
+      const entryFeatures = new Set((entry?.features ?? []).map(String));
+      const missingShaders = shaderIds.filter((shaderId) => !entryShaderIds.has(shaderId));
+      const missing = [
+        computeGraphHostReady ? null : 'compute_graph_host/source_frame',
+        features[feature] ? null : feature,
+        graphInstruments.has(id) ? null : `${id} manifest entry`,
+        entry?.render_target === 'source_frame' ? null : 'source_frame target',
+        entry?.source_uri_prefix === `native-graph://${id}/` ? null : 'native-graph URI prefix',
+        entryFeatures.has(feature) ? null : `manifest feature ${feature}`,
+        missingShaders.length ? `shader_ids ${missingShaders.join(',')}` : null,
+      ].filter(Boolean);
+      const ok = missing.length === 0;
       return [
         nativeGraphReadinessId(id),
         label,
         ok,
         ok
-          ? 'implemented via compute_graph source-frame route'
-          : `missing ${feature} or ${id} manifest entry`,
+          ? `implemented via compute_graph source-frame route (${shaderIds.length} shared WGSL shader(s))`
+          : `missing ${missing.join('; ')}`,
       ];
     });
     const allGraphInstrumentsReady = graphChecks.every(([, , ok]) => ok);
@@ -1830,6 +1918,15 @@ function nativeGraphInstrumentSet(capabilities) {
     if (normalized) ids.add(normalized);
   }
   return ids;
+}
+
+function nativeGraphManifestById(capabilities) {
+  const entries = new Map();
+  for (const entry of capabilities?.native_graph_instrument_manifest ?? []) {
+    const id = String(entry?.id || '').trim().toLowerCase();
+    if (id) entries.set(id, entry);
+  }
+  return entries;
 }
 
 function normalizeCapabilities(capabilities, previous = makeDefaultCapabilities()) {

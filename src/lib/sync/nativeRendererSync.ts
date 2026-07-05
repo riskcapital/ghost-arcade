@@ -196,16 +196,86 @@ const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<{
   kind: NativeGraphRouteKind;
   feature: string;
   instrument: string;
+  shaderIds: readonly string[];
 }> = [
-  { kind: 'planet', feature: 'native_planet_graph', instrument: 'planet' },
-  { kind: 'smoke-3d', feature: 'native_3d_smoke_graph', instrument: 'smoke-3d' },
-  { kind: 'particle-field', feature: 'native_particle_field_graph', instrument: 'particle-field' },
-  { kind: 'volumetric-spheres', feature: 'native_volumetric_spheres_graph', instrument: 'volumetric-spheres' },
-  { kind: 'smoke-riders', feature: 'native_smoke_riders_graph', instrument: 'smoke-riders' },
-  { kind: 'ink-cloud', feature: 'native_ink_cloud_graph', instrument: 'ink-cloud' },
-  { kind: 'flythrough', feature: 'native_flythrough_graph', instrument: 'flythrough' },
-  { kind: 'pixel-particles', feature: 'native_pixel_particles_graph', instrument: 'pixel-particles' },
-  { kind: 'point-cloud-fx', feature: 'native_point_cloud_fx_graph', instrument: 'point-cloud-fx' },
+  { kind: 'planet', feature: 'native_planet_graph', instrument: 'planet', shaderIds: ['planet/render'] },
+  {
+    kind: 'smoke-3d',
+    feature: 'native_3d_smoke_graph',
+    instrument: 'smoke-3d',
+    shaderIds: [
+      '3d-smoke/splat',
+      '3d-smoke/advect-velocity',
+      '3d-smoke/divergence',
+      '3d-smoke/jacobi',
+      '3d-smoke/subtract-gradient',
+      '3d-smoke/advect-density',
+      '3d-smoke/render',
+    ],
+  },
+  {
+    kind: 'particle-field',
+    feature: 'native_particle_field_graph',
+    instrument: 'particle-field',
+    shaderIds: [
+      'particle-field/behavior',
+      'particle-field/edges',
+      'particle-field/fog',
+      'particle-field/render',
+      'particle-field/lines',
+    ],
+  },
+  {
+    kind: 'volumetric-spheres',
+    feature: 'native_volumetric_spheres_graph',
+    instrument: 'volumetric-spheres',
+    shaderIds: ['volumetric-spheres/sim', 'volumetric-spheres/render'],
+  },
+  {
+    kind: 'smoke-riders',
+    feature: 'native_smoke_riders_graph',
+    instrument: 'smoke-riders',
+    shaderIds: [
+      '3d-smoke/splat',
+      '3d-smoke/advect-velocity',
+      '3d-smoke/divergence',
+      '3d-smoke/jacobi',
+      '3d-smoke/subtract-gradient',
+      '3d-smoke/advect-density',
+      '3d-smoke/render',
+      'volumetric-spheres/sim',
+      'volumetric-spheres/render',
+    ],
+  },
+  {
+    kind: 'ink-cloud',
+    feature: 'native_ink_cloud_graph',
+    instrument: 'ink-cloud',
+    shaderIds: ['ink-cloud/sim', 'ink-cloud/render', 'ink-cloud/background'],
+  },
+  {
+    kind: 'flythrough',
+    feature: 'native_flythrough_graph',
+    instrument: 'flythrough',
+    shaderIds: ['flythrough/compute', 'flythrough/render'],
+  },
+  {
+    kind: 'pixel-particles',
+    feature: 'native_pixel_particles_graph',
+    instrument: 'pixel-particles',
+    shaderIds: ['pixel-particles/compute', 'pixel-particles/render'],
+  },
+  {
+    kind: 'point-cloud-fx',
+    feature: 'native_point_cloud_fx_graph',
+    instrument: 'point-cloud-fx',
+    shaderIds: [
+      'point-cloud-fx/compute',
+      'point-cloud-fx/sort-fill',
+      'point-cloud-fx/sort-step',
+      'point-cloud-fx/render',
+    ],
+  },
 ] as const;
 
 type NativeGraphRouteSimulationState =
@@ -238,7 +308,9 @@ type NativeGraphRouteState = {
   lastManualClockKey?: string;
 };
 
-function nativeGraphInstrumentIds(capabilities: NativeRendererCapabilities | null | undefined): string[] {
+type NativeGraphManifestEntry = NonNullable<NativeRendererCapabilities['native_graph_instrument_manifest']>[number];
+
+export function nativeGraphInstrumentIds(capabilities: NativeRendererCapabilities | null | undefined): string[] {
   const ids = new Set<string>();
   for (const id of capabilities?.native_graph_instruments ?? []) {
     const normalized = String(id).trim().toLowerCase();
@@ -251,15 +323,46 @@ function nativeGraphInstrumentIds(capabilities: NativeRendererCapabilities | nul
   return Array.from(ids);
 }
 
-function missingNativeGraphRouteRequirements(
+export function nativeGraphManifestById(
+  capabilities: NativeRendererCapabilities | null | undefined,
+): Map<string, NativeGraphManifestEntry> {
+  const entries = new Map<string, NativeGraphManifestEntry>();
+  for (const entry of capabilities?.native_graph_instrument_manifest ?? []) {
+    const normalized = String(entry?.id ?? '').trim().toLowerCase();
+    if (normalized) entries.set(normalized, entry);
+  }
+  return entries;
+}
+
+export function missingNativeGraphRouteRequirements(
   features: Record<string, boolean>,
   instruments: ReadonlySet<string>,
+  manifest: ReadonlyMap<string, NativeGraphManifestEntry>,
 ): string[] {
   const missing: string[] = [];
   for (const requirement of NATIVE_GRAPH_ROUTE_REQUIREMENTS) {
     if (!features[requirement.feature]) missing.push(`${requirement.kind}:feature:${requirement.feature}`);
     if (!instruments.has(requirement.instrument)) {
       missing.push(`${requirement.kind}:instrument:${requirement.instrument}`);
+    }
+    const entry = manifest.get(requirement.instrument);
+    if (!entry) {
+      missing.push(`${requirement.kind}:manifest:${requirement.instrument}`);
+      continue;
+    }
+    if (entry.render_target !== 'source_frame') {
+      missing.push(`${requirement.kind}:render_target:source_frame`);
+    }
+    if (entry.source_uri_prefix !== `native-graph://${requirement.instrument}/`) {
+      missing.push(`${requirement.kind}:source_uri_prefix:${requirement.instrument}`);
+    }
+    const manifestFeatures = new Set((entry.features ?? []).map(String));
+    if (!manifestFeatures.has(requirement.feature)) {
+      missing.push(`${requirement.kind}:manifest_feature:${requirement.feature}`);
+    }
+    const manifestShaderIds = new Set((entry.shader_ids ?? []).map(String));
+    for (const shaderId of requirement.shaderIds) {
+      if (!manifestShaderIds.has(shaderId)) missing.push(`${requirement.kind}:shader:${shaderId}`);
     }
   }
   return missing;
@@ -3254,6 +3357,7 @@ export class NativeRendererSync {
     this.nativeCoreMethods = new Set((startupCapabilities?.implemented_methods ?? []).map(String));
     this.nativeFeatureFlags = startupCapabilities?.features ?? {};
     this.nativeGraphInstruments = new Set(nativeGraphInstrumentIds(startupCapabilities));
+    const nativeGraphManifest = nativeGraphManifestById(startupCapabilities);
     const computeGraphSourceFrameHost = !!(
       this.supportsNativeFeature('compute_graph_host') &&
       this.supportsNativeFeature('compute_graph_render') &&
@@ -3262,6 +3366,7 @@ export class NativeRendererSync {
     const missingGraphRequirements = missingNativeGraphRouteRequirements(
       this.nativeFeatureFlags,
       this.nativeGraphInstruments,
+      nativeGraphManifest,
     );
     this.nativeComputeGraphSourceFrames = computeGraphSourceFrameHost;
     this.nativeGraphCatalogComplete = computeGraphSourceFrameHost && missingGraphRequirements.length === 0;
