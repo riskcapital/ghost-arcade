@@ -6,8 +6,11 @@
   import { invoke, isDesktopApp } from '../bridge';
   import { createAssetRefFromFile, resolveAssetRefForRuntime } from '../storage/assetRegistry';
   import { startRecording as startCanvasRecording, formatRecordingDuration, type RecorderHandle } from '../recording/recorder';
-  import { startNativeLiveFrameRecording } from '../recording/nativeLiveFrameRecorder';
-  import { setNativeRendererProjectionSimScene } from '../api/native-renderer';
+  import {
+    startNativeLiveFrameRecording,
+    startNativeRendererLiveFrameRecording,
+  } from '../recording/nativeLiveFrameRecorder';
+  import { getNativeRendererCapabilities, setNativeRendererProjectionSimScene } from '../api/native-renderer';
   import { ProjectionSimulatorRenderer } from '../projectionSim/ProjectionSimulatorRenderer';
   import {
     isProjectionSimTargetLocked,
@@ -542,6 +545,55 @@
     if (isDesktopApp && renderer) {
       const nativeRenderer = renderer;
       recordingDuration = 0;
+      try {
+        const caps = await getNativeRendererCapabilities();
+        const nativeProjectionReady = !!(
+          caps?.core_capabilities_confirmed &&
+          caps?.features?.native_projection_sim &&
+          caps?.features?.native_recording &&
+          caps?.features?.frame_snapshot_export &&
+          caps?.implemented_methods?.includes('set_projection_sim_scene') &&
+          caps?.implemented_methods?.includes('export_frame_snapshot')
+        );
+        if (nativeProjectionReady) {
+          recorderHandle = await startNativeRendererLiveFrameRecording({
+            width: 1920,
+            height: 1080,
+            fps: 30,
+            quality: 'high',
+            namePrefix: 'Projection Simulator',
+            prepareFrame: async () => {
+              await setNativeRendererProjectionSimScene({
+                ...cloneSceneValue(get(projectionSimScene)),
+                camera: nativeRenderer.getCameraState(),
+              });
+            },
+            restore: async () => {
+              await setNativeRendererProjectionSimScene(cloneSceneValue(get(projectionSimScene)));
+            },
+            onDurationUpdate: (seconds) => { recordingDuration = seconds; },
+            onComplete: () => {
+              isRecording = false;
+              recorderHandle = null;
+              recordingUsesNative = false;
+            },
+            onError: (err) => {
+              isRecording = false;
+              recorderHandle = null;
+              recordingUsesNative = false;
+              alert(err.message || 'Projection simulator recording failed');
+            },
+          });
+          if (recorderHandle) {
+            recordingUsesNative = true;
+            isRecording = true;
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('[ProjectionSim] Native renderer recording unavailable, falling back to live canvas capture:', err);
+      }
+
       try {
         recorderHandle = await startNativeLiveFrameRecording({
           captureFrame: (width, height) => nativeRenderer.captureFrameAt(width, height),

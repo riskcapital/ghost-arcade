@@ -586,6 +586,14 @@ export class ProjectionSimulatorRenderer {
     this.controls.update();
   }
 
+  getCameraState(): ProjectionSimScene['camera'] {
+    return {
+      position: arr3(this.camera.position),
+      target: arr3(this.controls.target),
+      fov: this.camera.fov,
+    };
+  }
+
   beginRecording(width = 1920, height = 1080): HTMLCanvasElement {
     this.recordingMode = true;
     this.resize(width, height, true);
