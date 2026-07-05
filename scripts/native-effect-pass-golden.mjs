@@ -15,7 +15,7 @@ const root = process.cwd();
 const require = createRequire(import.meta.url);
 const WIDTH = 64;
 const HEIGHT = 64;
-const PROBE_COUNT = 32;
+const PIXEL_COUNT = WIDTH * HEIGHT;
 
 const EFFECT_SHADER_ID = 'effect-pass/render';
 const PROBE_SHADER_ID = 'effect-pass/source-frame-probe';
@@ -29,7 +29,7 @@ const FIXTURES = [
     amount: 1,
     mix: 1,
     params: [0.42, 0, 0, 0, 0, 0, 0, 0],
-    tolerance: { mean: 1.5, p95: 5, max: 24 },
+    tolerance: { mean: 1.5, p95: 5, p99: 12, max: 24 },
   },
   {
     id: 'colorama',
@@ -40,7 +40,7 @@ const FIXTURES = [
     amount: 0.85,
     mix: 1,
     params: [8, 0.15, 0.05, 1.2, 4, 0.35, 0.2, 0.4],
-    tolerance: { mean: 6, p95: 18, max: 58 },
+    tolerance: { mean: 6, p95: 18, p99: 2, max: 160 },
   },
 ];
 const SOURCE_FIXTURE = {
@@ -52,7 +52,7 @@ const SOURCE_FIXTURE = {
   amount: 1,
   mix: 1,
   params: [0, 0, 0, 0, 0, 0, 0, 0],
-  tolerance: { mean: 4, p95: 10, max: 36 },
+  tolerance: { mean: 4, p95: 10, p99: 24, max: 36 },
 };
 const WEBGL_FIXTURES = [SOURCE_FIXTURE, ...FIXTURES];
 
@@ -65,12 +65,12 @@ function readEffectPassWgsl() {
   return match[1];
 }
 
-function sourceFrameProbeWgsl() {
+function sourceFrameReadbackWgsl() {
   return String.raw`
 struct ProbeUniforms {
   width: u32,
   height: u32,
-  count: u32,
+  pixel_count: u32,
   _pad0: u32,
 }
 
@@ -86,11 +86,11 @@ var source_tex: texture_2d<f32>;
 @group(0) @binding(3)
 var source_sampler: sampler;
 
-fn probe_coord(i: u32) -> vec2<f32> {
+fn pixel_coord(i: u32) -> vec2<f32> {
   let safe_width = max(probe.width, 1u);
   let safe_height = max(probe.height, 1u);
-  let x = f32((i * 37u + 11u) % safe_width);
-  let y = f32((i * 19u + 7u) % safe_height);
+  let x = f32(i % safe_width);
+  let y = f32(i / safe_width);
   return (vec2<f32>(x, y) + vec2<f32>(0.5)) / vec2<f32>(f32(safe_width), f32(safe_height));
 }
 
@@ -98,16 +98,20 @@ fn pack_channel(value: f32) -> u32 {
   return u32(round(clamp(value, 0.0, 1.0) * 255.0));
 }
 
-@compute @workgroup_size(32)
+fn pack_rgba(color: vec4<f32>) -> u32 {
+  let r = pack_channel(color.r);
+  let g = pack_channel(color.g);
+  let b = pack_channel(color.b);
+  let a = pack_channel(color.a);
+  return r | (g << 8u) | (b << 16u) | (a << 24u);
+}
+
+@compute @workgroup_size(64)
 fn cs_probe(@builtin(global_invocation_id) gid: vec3<u32>) {
   let i = gid.x;
-  if (i >= probe.count) { return; }
-  let color = textureSampleLevel(source_tex, source_sampler, probe_coord(i), 0.0);
-  let offset = i * 4u;
-  output_words[offset + 0u] = pack_channel(color.r);
-  output_words[offset + 1u] = pack_channel(color.g);
-  output_words[offset + 2u] = pack_channel(color.b);
-  output_words[offset + 3u] = pack_channel(color.a);
+  if (i >= probe.pixel_count) { return; }
+  let color = textureSampleLevel(source_tex, source_sampler, pixel_coord(i), 0.0);
+  output_words[i] = pack_rgba(color);
 }
 `;
 }
@@ -180,6 +184,7 @@ function effectGraph(fixture, sourceId, targetSourceId) {
 function probeGraph(sourceId, label) {
   const outputId = `effect-pass-golden-probe:${label}:output`;
   const uniformId = `effect-pass-golden-probe:${label}:uniform`;
+  const workgroups = Math.ceil(PIXEL_COUNT / 64);
   return {
     outputId,
     config: {
@@ -187,20 +192,20 @@ function probeGraph(sourceId, label) {
         {
           id: outputId,
           kind: 'storage',
-          byte_length: PROBE_COUNT * 4 * 4,
+          byte_length: PIXEL_COUNT * 4,
         },
         {
           id: uniformId,
           kind: 'uniform',
           byte_length: 16,
-          initial_u32: [WIDTH, HEIGHT, PROBE_COUNT, 0],
+          initial_u32: [WIDTH, HEIGHT, PIXEL_COUNT, 0],
         },
       ],
       passes: [{
         name: `effect-pass-golden-probe-${label}`,
         shader_id: PROBE_SHADER_ID,
         entry: 'cs_probe',
-        dispatch: [1, 1, 1],
+        dispatch: [workgroups, 1, 1],
         bindings: [
           { binding: 0, resource: outputId, kind: 'storage' },
           { binding: 1, resource: uniformId, kind: 'uniform' },
@@ -208,7 +213,7 @@ function probeGraph(sourceId, label) {
           { binding: 3, kind: 'source-frame-sampler' },
         ],
       }],
-      readbacks: [outputId],
+      readbacks: [{ id: outputId, include_bytes: true }],
     },
   };
 }
@@ -216,13 +221,13 @@ function probeGraph(sourceId, label) {
 async function readNativeProbe(rpc, sourceId, label) {
   const graph = probeGraph(sourceId, label);
   const result = await rpc.send('compute_graph', graph.config, 10000);
-  const words = result?.readbacks?.[graph.outputId]?.first_words ?? [];
-  if (words.length < PROBE_COUNT * 4) {
-    throw new Error(`native source probe ${label} was truncated: ${JSON.stringify(result)}`);
+  const encoded = result?.readbacks?.[graph.outputId]?.bytes_b64;
+  if (typeof encoded !== 'string') {
+    throw new Error(`native source probe ${label} omitted bytes_b64: ${JSON.stringify(result)}`);
   }
-  const pixels = new Uint8Array(PROBE_COUNT * 4);
-  for (let i = 0; i < pixels.length; i += 1) {
-    pixels[i] = Math.max(0, Math.min(255, Number(words[i]) || 0));
+  const pixels = new Uint8Array(Buffer.from(encoded, 'base64'));
+  if (pixels.length !== PIXEL_COUNT * 4) {
+    throw new Error(`native source probe ${label} returned ${pixels.length} bytes, expected ${PIXEL_COUNT * 4}`);
   }
   return {
     checksum: result.readbacks[graph.outputId].checksum,
@@ -270,7 +275,7 @@ async function renderNativeFixtures(sourceBytes) {
           shader_id: PROBE_SHADER_ID,
           stage: 'compute',
           entry: 'cs_probe',
-          source: sourceFrameProbeWgsl(),
+          source: sourceFrameReadbackWgsl(),
         },
       ],
     }, 5000);
@@ -623,39 +628,34 @@ function diffPixels(a, b) {
   return {
     mean: total / Math.max(1, deltas.length),
     p95: deltas[Math.floor(deltas.length * 0.95)] ?? 0,
+    p99: deltas[Math.floor(deltas.length * 0.99)] ?? 0,
     max,
   };
 }
 
-function probeCoord(index) {
-  return {
-    x: (index * 37 + 11) % WIDTH,
-    y: (index * 19 + 7) % HEIGHT,
-  };
-}
-
-function probeFullFrame(bytes, orientation = 'none') {
-  const out = new Uint8Array(PROBE_COUNT * 4);
-  for (let i = 0; i < PROBE_COUNT; i += 1) {
-    const coord = probeCoord(i);
-    const x = orientation.includes('x') ? WIDTH - 1 - coord.x : coord.x;
-    const y = orientation.includes('y') ? HEIGHT - 1 - coord.y : coord.y;
-    const src = (y * WIDTH + x) * 4;
-    const dst = i * 4;
-    out[dst] = bytes[src];
-    out[dst + 1] = bytes[src + 1];
-    out[dst + 2] = bytes[src + 2];
-    out[dst + 3] = bytes[src + 3];
+function orientFrame(bytes, orientation = 'none') {
+  const out = new Uint8Array(bytes.length);
+  for (let y = 0; y < HEIGHT; y += 1) {
+    for (let x = 0; x < WIDTH; x += 1) {
+      const sx = orientation.includes('x') ? WIDTH - 1 - x : x;
+      const sy = orientation.includes('y') ? HEIGHT - 1 - y : y;
+      const src = (sy * WIDTH + sx) * 4;
+      const dst = (y * WIDTH + x) * 4;
+      out[dst] = bytes[src];
+      out[dst + 1] = bytes[src + 1];
+      out[dst + 2] = bytes[src + 2];
+      out[dst + 3] = bytes[src + 3];
+    }
   }
   return out;
 }
 
 function bestOrientationDiff(nativePixels, webglFramePixels) {
   const candidates = [
-    { orientation: 'none', pixels: probeFullFrame(webglFramePixels, 'none') },
-    { orientation: 'flip-y', pixels: probeFullFrame(webglFramePixels, 'y') },
-    { orientation: 'flip-x', pixels: probeFullFrame(webglFramePixels, 'x') },
-    { orientation: 'flip-xy', pixels: probeFullFrame(webglFramePixels, 'xy') },
+    { orientation: 'none', pixels: orientFrame(webglFramePixels, 'none') },
+    { orientation: 'flip-y', pixels: orientFrame(webglFramePixels, 'y') },
+    { orientation: 'flip-x', pixels: orientFrame(webglFramePixels, 'x') },
+    { orientation: 'flip-xy', pixels: orientFrame(webglFramePixels, 'xy') },
   ];
   return candidates
     .map((candidate) => ({
@@ -666,12 +666,19 @@ function bestOrientationDiff(nativePixels, webglFramePixels) {
 }
 
 function assertDiffWithinTolerance(fixture, stats) {
-  const { mean, p95, max } = stats;
+  const { mean, p95, p99, max } = stats;
   const tolerance = fixture.tolerance;
-  if (stats.orientation !== 'none' || mean > tolerance.mean || p95 > tolerance.p95 || max > tolerance.max) {
+  const p99Tolerance = tolerance.p99 ?? tolerance.max;
+  if (
+    stats.orientation !== 'none' ||
+    mean > tolerance.mean ||
+    p95 > tolerance.p95 ||
+    p99 > p99Tolerance ||
+    max > tolerance.max
+  ) {
     throw new Error(
       `native/WebGL ${fixture.id} effect golden drifted: orientation=${stats.orientation} mean=${mean.toFixed(3)}/${tolerance.mean} ` +
-      `p95=${p95}/${tolerance.p95} max=${max}/${tolerance.max}`,
+      `p95=${p95}/${tolerance.p95} p99=${p99}/${p99Tolerance} max=${max}/${tolerance.max}`,
     );
   }
 }
@@ -703,12 +710,12 @@ async function main() {
       console.log(
         `debug ${fixture.id}: nativeMean=${meanRgb(native.pixels).join(',')} ` +
         `webglMean=${meanRgb(webgl).join(',')} best=${stats.orientation} ` +
-        `mean=${stats.mean.toFixed(3)} p95=${stats.p95} max=${stats.max}`,
+        `mean=${stats.mean.toFixed(3)} p95=${stats.p95} p99=${stats.p99} max=${stats.max}`,
       );
     }
     assertDiffWithinTolerance(fixture, stats);
     summaries.push(
-      `${fixture.id}:${native.checksum} ${stats.orientation} mean=${stats.mean.toFixed(2)} p95=${stats.p95} max=${stats.max}`,
+      `${fixture.id}:${native.checksum} ${stats.orientation} mean=${stats.mean.toFixed(2)} p95=${stats.p95} p99=${stats.p99} max=${stats.max}`,
     );
   }
 

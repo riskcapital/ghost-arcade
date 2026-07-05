@@ -73,6 +73,7 @@ const SOURCE_FRAME_SLOT_OFFSET: f32 = 100.0;
 const NATIVE_SHADER_SOURCE_KIND: f32 = 17.0;
 const GPU_TIMESTAMP_READ_BYTES: u64 = 16;
 const COMPUTE_READBACK_PREVIEW_WORDS: usize = 128;
+const COMPUTE_READBACK_BYTES_MAX: u64 = 4 * 1024 * 1024;
 const CORE_RPC_METHODS: &[&str] = &[
     "start",
     "stop",
@@ -1652,6 +1653,13 @@ struct ComputeProbeResult {
     checksum: u64,
     nonzero_words: u32,
     first_words: Vec<u32>,
+    bytes_b64: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct NativeComputeGraphReadbackSpec {
+    id: String,
+    include_bytes: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -4226,10 +4234,10 @@ impl App {
         let readbacks = compute_graph_readbacks(params, &buffer_specs);
         let readback_bytes = readbacks
             .iter()
-            .filter_map(|id| {
+            .filter_map(|readback| {
                 buffer_specs
                     .iter()
-                    .find(|buffer| buffer.id == *id)
+                    .find(|buffer| buffer.id == readback.id)
                     .map(|buffer| buffer.byte_length)
             })
             .fold(0u64, u64::saturating_add);
@@ -7938,6 +7946,7 @@ impl RenderState {
             checksum,
             nonzero_words,
             first_words,
+            bytes_b64: None,
         })
     }
 
@@ -7945,7 +7954,7 @@ impl RenderState {
         &mut self,
         buffers: Vec<NativeComputeGraphBufferSpec>,
         passes: Vec<NativeComputeGraphPassPlan>,
-        readbacks: Vec<String>,
+        readbacks: Vec<NativeComputeGraphReadbackSpec>,
         render_plans: Vec<NativeComputeGraphRenderPlan>,
     ) -> Result<Value, String> {
         if buffers.is_empty() {
@@ -8052,14 +8061,18 @@ impl RenderState {
         }
 
         let mut readback_buffers = Vec::new();
-        for id in &readbacks {
-            let Some(buffer) = self.compute_graph_buffer(&transient_buffers, id) else {
+        for readback in &readbacks {
+            let Some(buffer) = self.compute_graph_buffer(&transient_buffers, &readback.id) else {
                 return Err(format!(
-                    "native compute graph readback missing buffer `{id}`"
+                    "native compute graph readback missing buffer `{}`",
+                    readback.id
                 ));
             };
             let readback_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(&format!("Ghost Native Compute Graph Readback {id}")),
+                label: Some(&format!(
+                    "Ghost Native Compute Graph Readback {}",
+                    readback.id
+                )),
                 size: buffer.byte_length,
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
@@ -8071,23 +8084,27 @@ impl RenderState {
                 0,
                 buffer.byte_length,
             );
-            readback_buffers.push((id.clone(), readback_buffer, buffer.byte_length));
+            readback_buffers.push((readback.clone(), readback_buffer, buffer.byte_length));
         }
 
         self.queue.submit(Some(encoder.finish()));
 
         let mut readback_json = serde_json::Map::new();
-        for (id, readback_buffer, byte_length) in readback_buffers {
-            let probe = self.readback_u32_buffer(&readback_buffer, byte_length)?;
-            readback_json.insert(
-                id,
-                json!({
-                    "byte_length": probe.byte_length,
-                    "checksum": format!("{:016x}", probe.checksum),
-                    "nonzero_words": probe.nonzero_words,
-                    "first_words": probe.first_words,
-                }),
-            );
+        for (readback, readback_buffer, byte_length) in readback_buffers {
+            let probe =
+                self.readback_u32_buffer(&readback_buffer, byte_length, readback.include_bytes)?;
+            let mut value = json!({
+                "byte_length": probe.byte_length,
+                "checksum": format!("{:016x}", probe.checksum),
+                "nonzero_words": probe.nonzero_words,
+                "first_words": probe.first_words,
+            });
+            if let Some(bytes_b64) = probe.bytes_b64 {
+                if let Some(object) = value.as_object_mut() {
+                    object.insert("bytes_b64".to_string(), Value::String(bytes_b64));
+                }
+            }
+            readback_json.insert(readback.id, value);
         }
         let render_snapshot = if render_include_snapshot {
             Some(self.frame_snapshot(false)?)
@@ -8693,7 +8710,13 @@ impl RenderState {
         &self,
         readback_buffer: &wgpu::Buffer,
         byte_length: u64,
+        include_bytes: bool,
     ) -> Result<ComputeProbeResult, String> {
+        if include_bytes && byte_length > COMPUTE_READBACK_BYTES_MAX {
+            return Err(format!(
+                "compute graph readback bytes request is too large: {byte_length} > {COMPUTE_READBACK_BYTES_MAX}"
+            ));
+        }
         let slice = readback_buffer.slice(..);
         let (tx, rx) = mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
@@ -8720,6 +8743,11 @@ impl RenderState {
             checksum ^= value as u64;
             checksum = checksum.wrapping_mul(0x100000001b3);
         }
+        let bytes_b64 = if include_bytes {
+            Some(base64::engine::general_purpose::STANDARD.encode(mapped.as_ref()))
+        } else {
+            None
+        };
         drop(mapped);
         readback_buffer.unmap();
         Ok(ComputeProbeResult {
@@ -8727,6 +8755,7 @@ impl RenderState {
             checksum,
             nonzero_words,
             first_words,
+            bytes_b64,
         })
     }
 
@@ -10930,16 +10959,27 @@ fn dispatch_from_value(value: &Value) -> [u32; 3] {
 fn compute_graph_readbacks(
     params: &Value,
     buffers: &[NativeComputeGraphBufferSpec],
-) -> Vec<String> {
+) -> Vec<NativeComputeGraphReadbackSpec> {
     if let Some(values) = params.get("readbacks").and_then(Value::as_array) {
         let mut out = Vec::new();
         for value in values {
             if let Some(id) = value.as_str() {
-                out.push(id.to_string());
+                out.push(NativeComputeGraphReadbackSpec {
+                    id: id.to_string(),
+                    include_bytes: false,
+                });
             } else if let Some(id) =
                 string_at(value, &["id"]).or_else(|| string_at(value, &["buffer"]))
             {
-                out.push(id);
+                out.push(NativeComputeGraphReadbackSpec {
+                    id,
+                    include_bytes: bool_at(value, &["include_bytes"])
+                        .or_else(|| bool_at(value, &["includeBytes"]))
+                        .or_else(|| bool_at(value, &["include_b64"]))
+                        .or_else(|| bool_at(value, &["includeB64"]))
+                        .or_else(|| bool_at(value, &["bytes"]))
+                        .unwrap_or(false),
+                });
             }
         }
         return out;
@@ -10948,7 +10988,12 @@ fn compute_graph_readbacks(
         .iter()
         .filter(|buffer| !matches!(buffer.kind, NativeComputeBufferBindingKind::Uniform))
         .last()
-        .map(|buffer| vec![buffer.id.clone()])
+        .map(|buffer| {
+            vec![NativeComputeGraphReadbackSpec {
+                id: buffer.id.clone(),
+                include_bytes: false,
+            }]
+        })
         .unwrap_or_default()
 }
 
