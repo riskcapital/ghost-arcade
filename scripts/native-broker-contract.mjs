@@ -1,8 +1,11 @@
 import { createNativeRendererBroker } from '../electron/native-renderer-broker.js';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+const require = createRequire(import.meta.url);
 const REQUIRED_CHECKS = [
   'compute-instrument-host',
   'native-planet-graph',
@@ -22,6 +25,7 @@ const REQUIRED_CHECKS = [
   'native-projection-sim-mesh-preview',
   'native-projection-sim-textured-mesh-preview',
   'native-frame-sequence-export',
+  'native-video-frame-prefetch',
 ];
 
 const REQUIRED_GRAPH_MANIFEST = [
@@ -86,6 +90,39 @@ function makeSolidRgbaFrame(width, height, rgba) {
     bytes[i + 3] = rgba[3];
   }
   return bytes;
+}
+
+function resolveFfmpegBin() {
+  try {
+    const ffmpegStatic = require('ffmpeg-static');
+    if (typeof ffmpegStatic === 'string' && ffmpegStatic.length > 0) return ffmpegStatic;
+  } catch {
+    // Fall through to PATH lookup.
+  }
+  return process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+}
+
+function writeTinyTestVideo(filePath) {
+  const ffmpegBin = resolveFfmpegBin();
+  const result = spawnSync(ffmpegBin, [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-y',
+    '-f',
+    'lavfi',
+    '-i',
+    'color=c=red:s=48x32:d=0.2',
+    '-frames:v',
+    '1',
+    '-pix_fmt',
+    'yuv420p',
+    filePath,
+  ], { encoding: 'utf8' });
+  assert(
+    !result.error && result.status === 0,
+    `could not create tiny video fixture with ffmpeg: ${result.error?.message || result.stderr || result.status}`,
+  );
 }
 
 const BYTE_BUFFER_COMPUTE_SOURCE = `
@@ -326,8 +363,11 @@ try {
       decodeCapabilities?.vram_budget_enforcement === false &&
       decodeCapabilities?.native_media_decode === false &&
       decodeCapabilities?.video_decode === false &&
-      decodeCapabilities?.supported_source_types?.includes('image'),
-    `broker decode capabilities should report static-image-only native decode: ${JSON.stringify(decodeCapabilities)}`,
+      decodeCapabilities?.native_video_frame_prefetch === true &&
+      decodeCapabilities?.video_frame_prefetch === true &&
+      decodeCapabilities?.supported_source_types?.includes('image') &&
+      decodeCapabilities?.supported_source_types?.includes('video'),
+    `broker decode capabilities should report native still-image decode plus broker video-frame prefetch without claiming full video decode: ${JSON.stringify(decodeCapabilities)}`,
   );
   await broker.invoke('native_renderer_set_decode_cpu_backup_policy', {
     config: { decode_store_cpu_backup_frames: true },
@@ -918,6 +958,32 @@ try {
     Number(thirdPrefetchStatus.native_image_decodes ?? 0) >
       Number(secondPrefetchStatus.native_image_decodes ?? 0),
     `native static-image prefetch cache clear should force the next decode: ${JSON.stringify(thirdPrefetchStatus)}`,
+  );
+
+  const prefetchVideoPath = join(tempDir, 'broker-prefetch-video.mp4');
+  writeTinyTestVideo(prefetchVideoPath);
+  const beforeVideoPrefetchStatus = await broker.invoke('native_renderer_get_status');
+  const videoPrefetchStatus = await broker.invoke('native_renderer_prefetch_media', {
+    source_id: 'broker-prefetch-video',
+    uri: prefetchVideoPath,
+    source_type: 'video',
+    decode_width: 64,
+    decode_height: 64,
+    priority: 2,
+    seq: 501,
+  });
+  assert(
+    Number(videoPrefetchStatus.source_frame_uploads ?? 0) >
+      Number(beforeVideoPrefetchStatus.source_frame_uploads ?? 0),
+    `native video frame prefetch did not upload a decoded source frame: ${JSON.stringify(videoPrefetchStatus)}`,
+  );
+  assert(
+    videoPrefetchStatus.source_frame_last_upload_transport === 'file' &&
+      Number(videoPrefetchStatus.source_frame_last_upload_width ?? 0) === 64 &&
+      Number(videoPrefetchStatus.source_frame_last_upload_height ?? 0) === 64 &&
+      Number(videoPrefetchStatus.source_frame_last_input_bytes ?? 0) === 64 * 64 * 4 &&
+      Number(videoPrefetchStatus.source_frame_last_upload_bytes ?? 0) > 0,
+    `native video frame prefetch did not hand off the expected bounded RGBA frame: ${JSON.stringify(videoPrefetchStatus)}`,
   );
 
   const readiness = await broker.invoke('native_renderer_get_readiness_report');

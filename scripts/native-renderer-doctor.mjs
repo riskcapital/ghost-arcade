@@ -198,6 +198,7 @@ async function inspectAppBridge() {
       },
     });
     const capabilities = await broker.invoke('native_renderer_get_capabilities');
+    const decodeCapabilities = await broker.invoke('native_renderer_get_decode_capabilities');
     const readiness = await broker.invoke('native_renderer_get_readiness_report');
     const features = capabilities?.features ?? {};
     const checks = new Map((readiness?.checks ?? []).map((check) => [check?.id, check]));
@@ -243,6 +244,7 @@ async function inspectAppBridge() {
         `staticImageDecode=${features.native_static_image_decode ? 'native' : 'fallback'}`,
         `staticImagePrefetch=${features.native_static_image_prefetch ? 'native' : 'fallback'}`,
         `normalMediaDecode=${features.native_media_decode ? 'native' : features.native_static_image_decode ? 'static-native/video-source-frame' : 'source-frame-fallback'}`,
+        `videoFramePrefetch=${decodeCapabilities?.native_video_frame_prefetch ? 'on' : 'pending'}`,
         `liveSharedFrameImport=${features.shared_texture_source_frame_upload ? 'on' : 'fallback'}`,
         `directSharedTextureRpc=${directSharedRpc ? 'on' : 'missing'}`,
         `textureShareCheck=${checks.get('native-texture-share-sender')?.ok ? 'on' : 'pending'}`,
