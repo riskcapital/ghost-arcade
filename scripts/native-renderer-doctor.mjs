@@ -3,6 +3,14 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import { createNativeRendererBroker } from '../electron/native-renderer-broker.js';
+import {
+  COMPOSITOR_BLEND_MODES,
+  COMPOSITOR_EFFECTS,
+  assertNativeCompositorBlendParity,
+  assertNativeCompositorEffectParity,
+  assertNativeCompositorManifest,
+  precompileNativeCompositorParityShaders,
+} from './native-renderer-smoke.mjs';
 
 const root = process.cwd();
 const bin = join(root, 'native-renderer', 'target', 'release', process.platform === 'win32' ? 'ghost-render-core.exe' : 'ghost-render-core');
@@ -135,6 +143,15 @@ async function inspectCore() {
     const missingFeatures = REQUIRED_FEATURES.filter((feature) => !features[feature]);
     const missingInstruments = REQUIRED_GRAPH_INSTRUMENTS.filter((instrument) => !instruments.has(instrument));
     const blockers = Array.isArray(readiness?.blockers) ? readiness.blockers : [];
+    assertNativeCompositorManifest(capabilities);
+    await precompileNativeCompositorParityShaders(rpc);
+    const blendParity = await assertNativeCompositorBlendParity(rpc);
+    const effectParity = await assertNativeCompositorEffectParity(rpc);
+    const blendParityChecksum = blendParity?.readbacks?.['native-compositor-blend-output']?.checksum;
+    const effectParityChecksum = effectParity?.readbacks?.['native-compositor-effect-output']?.checksum;
+    if (!blendParityChecksum || !effectParityChecksum) {
+      throw new Error(`native compositor parity probes returned no checksums: ${JSON.stringify({ blendParity, effectParity })}`);
+    }
     const ok = !!status?.backend_ready && missingFeatures.length === 0 && missingInstruments.length === 0 && blockers.length === 0;
     return {
       ok,
@@ -150,6 +167,9 @@ async function inspectCore() {
         `normalMediaDecode=${features.native_media_decode ? 'native' : features.native_static_image_decode ? 'static-native/video-source-frame' : 'source-frame-fallback'}`,
         `liveSharedFrameImport=${features.shared_texture_source_frame_upload ? 'on' : 'fallback'}`,
         `fullMediaSharedTexture=${features.shared_texture_upload ? 'on' : 'pending'}`,
+        `compositorParity=${COMPOSITOR_BLEND_MODES.length}b/${COMPOSITOR_EFFECTS.length}fx`,
+        `blendParity=${blendParityChecksum}`,
+        `effectParity=${effectParityChecksum}`,
         `outputSharedTexture=${features.shared_texture_output_export ? 'on' : 'pending'}`,
         `nativeShareSender=${features.native_texture_share_sender ? 'on' : 'pending'}`,
         missingFeatures.length ? `missingFeatures=${missingFeatures.join(',')}` : '',
