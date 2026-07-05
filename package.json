@@ -42,6 +42,7 @@
     "native:broker-contract": "npm run native:build && node scripts/native-broker-contract.mjs",
     "native:compositor-parity": "npm run native:build && node scripts/native-compositor-parity.mjs",
     "native:effect-golden": "npm run native:build && node scripts/native-effect-pass-golden.mjs",
+    "native:effect-usage": "node scripts/native-effect-usage-rank.mjs",
     "native:smoke3d": "npm run native:build && node scripts/native-smoke3d-vitest.mjs",
     "native:wgsl-check": "npm run native:build && node scripts/native-wgsl-check.mjs",
     "native:unit": "npm run native:build && vitest run src/lib/renderer/nativeRendererCore.native.test.ts src/lib/renderer/nativeGraphInstruments.native.test.ts src/lib/renderer/nativeEffectPass.native.test.ts src/lib/sync/nativeRendererSync.native.test.ts src/lib/stores/nativeRenderer.native.test.ts src/lib/renderer/webgpu3DSmoke.native.test.ts src/lib/renderer/webgpuFlythrough.native.test.ts src/lib/renderer/webgpuInkCloud.native.test.ts src/lib/renderer/webgpuParticleField.native.test.ts src/lib/renderer/webgpuPixelParticles.native.test.ts src/lib/renderer/webgpuPointCloudFX.native.test.ts src/lib/renderer/shaders/webgpuPlanet.native.test.ts src/lib/renderer/shaders/webgpuVolumetricSpheresShader.native.test.ts src/lib/renderer/shaders/webgpuSmokeRidersShader.native.test.ts",
