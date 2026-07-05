@@ -34,8 +34,13 @@ describe('Point Cloud FX native graph', () => {
 
     expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.compute)?.source).toContain('@compute');
     expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.compute)?.source).toContain('fn cs_main');
+    expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortFill)?.source).toContain('@compute');
+    expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortFill)?.source).toContain('ghost_sort_key_from_depth_far_to_near');
+    expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortStep)?.source).toContain('@compute');
+    expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortStep)?.source).toContain('ghost_sort_pair_before');
     expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.render)?.source).toContain('@vertex');
     expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.render)?.source).toContain('@fragment');
+    expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.render)?.source).toContain('sortPairs');
     for (const source of sources) {
       expect(source.source).not.toMatch(/^\s*#include\b/m);
     }
@@ -43,6 +48,8 @@ describe('Point Cloud FX native graph', () => {
     const commands = buildPointCloudFXNativePrecompileCommands();
     expect(commands.map((command) => command.shader_id)).toEqual([
       POINT_CLOUD_FX_NATIVE_SHADER_IDS.compute,
+      POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortFill,
+      POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortStep,
       POINT_CLOUD_FX_NATIVE_SHADER_IDS.render,
     ]);
   });
@@ -59,10 +66,16 @@ describe('Point Cloud FX native graph', () => {
     expect(data.sampledFromCount).toBe(32);
     expect(data.homeByteLength).toBe(8 * 64);
     expect(data.liveByteLength).toBe(8 * 48);
+    expect(data.sortCount).toBe(8);
+    expect(data.sortByteLength).toBe(8 * 8);
+    expect(data.hasGaussianPayload).toBe(false);
+    expect(data.depthSortEnabled).toBe(false);
     expect(data.homeInitialBuffer).toBeInstanceOf(ArrayBuffer);
     expect(data.liveInitialBuffer).toBeInstanceOf(ArrayBuffer);
+    expect(data.sortInitialBuffer).toBeInstanceOf(ArrayBuffer);
     expect(data.homeInitialBuffer.byteLength).toBe(data.homeByteLength);
     expect(data.liveInitialBuffer.byteLength).toBe(data.liveByteLength);
+    expect(data.sortInitialBuffer.byteLength).toBe(data.sortByteLength);
   });
 
   it('normalizes architectural scans without letting a distant outlier shrink the cloud', () => {
@@ -125,6 +138,10 @@ describe('Point Cloud FX native graph', () => {
     const live = new Float32Array(data.liveInitialBuffer);
 
     expect(data.homeByteLength).toBe(2 * 64);
+    expect(data.sortCount).toBe(2);
+    expect(data.sortByteLength).toBe(2 * 8);
+    expect(data.hasGaussianPayload).toBe(true);
+    expect(data.depthSortEnabled).toBe(true);
     expect(home[3]).toBeCloseTo(0.25);
     expect(home[7]).toBeGreaterThan(0);
     expect(home[8]).toBeGreaterThan(0);
@@ -182,14 +199,18 @@ describe('Point Cloud FX native graph', () => {
         { binding: 0, resource: 'gpu:layer-cloud:point-cloud-fx:point-cloud-fx:home', kind: 'read-only-storage' },
         { binding: 1, resource: 'gpu:layer-cloud:point-cloud-fx:point-cloud-fx:live', kind: 'read-only-storage' },
         { binding: 2, resource: 'gpu:layer-cloud:point-cloud-fx:point-cloud-fx:render-uniform', kind: 'uniform' },
+        { binding: 3, resource: 'gpu:layer-cloud:point-cloud-fx:point-cloud-fx:sort-pairs', kind: 'read-only-storage' },
       ],
     });
     const home = first.config.buffers.find((buffer) => buffer.id.endsWith(':home'));
     const live = first.config.buffers.find((buffer) => buffer.id.endsWith(':live'));
+    const sortPairs = first.config.buffers.find((buffer) => buffer.id.endsWith(':sort-pairs'));
     expect(home).toMatchObject({ kind: 'read-only-storage', persistent: true, clear: true });
     expect(live).toMatchObject({ kind: 'storage', persistent: true, clear: true });
+    expect(sortPairs).toMatchObject({ kind: 'storage', persistent: true, clear: true });
     expect(home?.initial_buffer).toBe(pointData.homeInitialBuffer);
     expect(live?.initial_buffer).toBe(pointData.liveInitialBuffer);
+    expect(sortPairs?.initial_buffer).toBe(pointData.sortInitialBuffer);
 
     const second = buildPointCloudFXNativeComputeGraph({
       sourceId: 'gpu:layer-cloud:point-cloud-fx',
@@ -207,9 +228,55 @@ describe('Point Cloud FX native graph', () => {
 
     expect(second.config.buffers.find((buffer) => buffer.id.endsWith(':home'))?.initial_b64).toBeUndefined();
     expect(second.config.buffers.find((buffer) => buffer.id.endsWith(':live'))?.initial_b64).toBeUndefined();
+    expect(second.config.buffers.find((buffer) => buffer.id.endsWith(':sort-pairs'))?.initial_b64).toBeUndefined();
     expect(second.config.buffers.find((buffer) => buffer.id.endsWith(':home'))?.initial_buffer).toBeUndefined();
     expect(second.config.buffers.find((buffer) => buffer.id.endsWith(':live'))?.initial_buffer).toBeUndefined();
+    expect(second.config.buffers.find((buffer) => buffer.id.endsWith(':sort-pairs'))?.initial_buffer).toBeUndefined();
     expect(second.state.pointDataSignature).toBe('cloud-a');
     expect(second.state.waveTime).toBeGreaterThan(first.state.waveTime);
+  });
+
+  it('adds native depth-sort passes for gaussian splat payloads', () => {
+    const { positions, colors } = makePoints(12);
+    const splatScale = new Float32Array(12 * 3).fill(-4.5);
+    const splatRotation = new Float32Array(12 * 4);
+    for (let i = 0; i < 12; i++) {
+      splatRotation[i * 4] = 1;
+    }
+    const pointData = buildPointCloudFXNativePointData(positions, colors, {
+      maxPoints: 12,
+      splatScale,
+      splatRotation,
+      gaussian: true,
+      signature: 'gaussian-sort-cloud',
+    });
+    const graph = buildPointCloudFXNativeComputeGraph({
+      sourceId: 'gpu:layer-gaussian:point-cloud-fx',
+      pointData,
+      params: { topology: 'billboards', autoRotateY: 0 },
+      width: 1280,
+      height: 720,
+      time: 0,
+      frameDelta: 1 / 60,
+      frameIndex: 5,
+      reset: true,
+    });
+
+    expect(pointData.sortCount).toBe(16);
+    expect(graph.config.passes[0].shader_id).toBe(POINT_CLOUD_FX_NATIVE_SHADER_IDS.compute);
+    expect(graph.config.passes[1]).toMatchObject({
+      shader_id: POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortFill,
+      dispatch: [1, 1, 1],
+    });
+    expect(graph.config.passes.slice(2).every((pass) =>
+      pass.shader_id === POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortStep,
+    )).toBe(true);
+    expect(graph.config.passes).toHaveLength(1 + 1 + 10);
+    expect(graph.config.buffers.some((buffer) => buffer.id.endsWith(':sort-step-uniform-9'))).toBe(true);
+    expect(graph.config.render_passes[0].bindings).toContainEqual({
+      binding: 3,
+      resource: 'gpu:layer-gaussian:point-cloud-fx:point-cloud-fx:sort-pairs',
+      kind: 'read-only-storage',
+    });
   });
 });
