@@ -397,8 +397,9 @@ try {
       decodeCapabilities?.media_policy_controls &&
       decodeCapabilities?.vram_budget_policy &&
       decodeCapabilities?.vram_budget_enforcement === false &&
-      decodeCapabilities?.native_media_decode === false &&
-      decodeCapabilities?.video_decode === false &&
+      decodeCapabilities?.native_media_decode === true &&
+      decodeCapabilities?.media_prefetch === true &&
+      decodeCapabilities?.video_decode === true &&
       decodeCapabilities?.native_video_frame_decode === true &&
       decodeCapabilities?.native_video_frame_prefetch === true &&
       decodeCapabilities?.native_video_frame_prefetch_window === true &&
@@ -408,7 +409,7 @@ try {
       decodeCapabilities?.video_frame_prefetch === true &&
       decodeCapabilities?.supported_source_types?.includes('image') &&
       decodeCapabilities?.supported_source_types?.includes('video'),
-    `broker decode capabilities should report native still-image decode plus broker video-frame prefetch without claiming full video decode: ${JSON.stringify(decodeCapabilities)}`,
+    `broker decode capabilities should report native still-image decode plus render-clock video decode/prefetch: ${JSON.stringify(decodeCapabilities)}`,
   );
   await broker.invoke('native_renderer_set_decode_cpu_backup_policy', {
     config: { decode_store_cpu_backup_frames: true },
@@ -1525,7 +1526,8 @@ try {
   assert(
     readiness?.modes?.full_v2?.ok === false &&
       Array.isArray(readiness?.modes?.full_v2?.blockers) &&
-      readiness.modes.full_v2.blockers.some((blocker) => String(blocker).includes('shared-texture media transport')),
+      readiness.modes.full_v2.blockers.some((blocker) => String(blocker).includes('shared-texture media transport')) &&
+      !readiness.modes.full_v2.blockers.some((blocker) => String(blocker).includes('continuous native video decode')),
     `broker readiness should keep full_v2 blocked on real unfinished native work: ${JSON.stringify(readiness?.modes)}`,
   );
   assert(checks.get('native-static-image-prefetch')?.ok, `broker readiness omitted native static-image prefetch: ${JSON.stringify(readiness)}`);

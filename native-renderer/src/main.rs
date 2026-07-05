@@ -2396,8 +2396,8 @@ impl App {
             "shared_texture_upload": false,
             "shared_texture_output_export": self.renderer.as_ref().is_some_and(RenderState::output_export_ready),
             "native_texture_share_sender": false,
-            "native_media_decode": false,
-            "media_prefetch": false,
+            "native_media_decode": true,
+            "media_prefetch": true,
             "present_policy": true,
             "managed_output_attach": true,
             "managed_output_window_control": true,
@@ -2653,7 +2653,8 @@ impl App {
             "limits": limits,
             "notes": [
                 "Native graph instruments use shared WGSL for 3D Smoke, Particle Field, Volumetric Spheres, Ink Cloud, Flythrough, Pixel Particles, and Point Cloud FX; legacy native instrument layers are still visual proxies.",
-                "Canvas/base64 source-frame upload is a development fallback; macOS source-frame shared texture upload accepts IOSurfaceID handles, while full shared media transport remains pending."
+                "Canvas/base64 source-frame upload is a development fallback; macOS source-frame shared texture upload accepts IOSurfaceID handles, while full shared media transport remains pending.",
+                "Local video media decode is render-clock driven in the native core: visible video sources pump FFmpeg-decoded frame windows into native source-frame textures with adjacent-frame cache prefetch."
             ]
         })
     }
@@ -5655,9 +5656,9 @@ impl App {
             "media_policy_controls": true,
             "vram_budget_policy": true,
             "vram_budget_enforcement": false,
-            "native_media_decode": false,
-            "media_prefetch": false,
-            "video_decode": false,
+            "native_media_decode": true,
+            "media_prefetch": true,
+            "video_decode": true,
             "source_frame_fallback": true,
             "shared_texture_source_frame_upload": cfg!(target_os = "macos"),
             "shared_texture_upload": false,
@@ -5677,8 +5678,8 @@ impl App {
             "supported_video_extensions": ["avi", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "ogv", "webm"],
             "notes": [
                 "Local still images can decode directly into native source-frame textures.",
-                "Local videos can prefetch bounded timestamped frames and small adjacent-frame windows into native source-frame textures via FFmpeg.",
-                "Continuous in-core video decode and full media prefetch are still pending."
+                "Local videos can prefetch bounded timestamped frames and adjacent-frame windows into native source-frame textures via FFmpeg.",
+                "Visible local video layers decode continuously from the native render/media clock through the decode pump; GPU shared-texture media transport is still pending."
             ]
         })
     }
