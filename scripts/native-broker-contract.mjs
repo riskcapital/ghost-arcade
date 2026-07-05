@@ -403,6 +403,7 @@ try {
       decodeCapabilities?.native_video_frame_prefetch === true &&
       decodeCapabilities?.native_video_frame_prefetch_window === true &&
       decodeCapabilities?.native_video_decode_pump === true &&
+      decodeCapabilities?.native_video_decode_pump_window === true &&
       decodeCapabilities?.native_media_source_playback_state === true &&
       decodeCapabilities?.video_frame_prefetch === true &&
       decodeCapabilities?.supported_source_types?.includes('image') &&
@@ -1445,6 +1446,8 @@ try {
       Number(pumpStatus?.decode_jobs_submitted ?? 0) > Number(beforePumpStatus.decode_jobs_submitted ?? 0) &&
         Number(pumpStatus?.decode_jobs_completed ?? 0) > Number(beforePumpStatus.decode_jobs_completed ?? 0) &&
         Number(pumpStatus?.native_video_frame_decodes ?? 0) > Number(beforePumpStatus.native_video_frame_decodes ?? 0) &&
+        Number(pumpStatus?.native_video_frame_cache_entries ?? 0) >
+          Number(beforePumpStatus.native_video_frame_cache_entries ?? 0) + 1 &&
         Number(pumpStatus?.source_frame_uploads ?? 0) > Number(beforePumpStatus.source_frame_uploads ?? 0) &&
         pumpStatus?.source_frame_last_upload_transport === 'native-video-decode-pump',
       `native video decode pump should upload a visible layer frame from render/media clocks without explicit prefetch: ${JSON.stringify({ before: beforePumpStatus, after: pumpStatus })}`,

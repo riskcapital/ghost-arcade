@@ -49,6 +49,7 @@ const NATIVE_VIDEO_PREFETCH_WINDOW_MIN_FPS: f64 = 1.0;
 const NATIVE_VIDEO_PREFETCH_WINDOW_MAX_FPS: f64 = 120.0;
 const NATIVE_VIDEO_DECODE_MAX_IN_FLIGHT: usize = 2;
 const NATIVE_VIDEO_DECODE_PUMP_PER_TICK: usize = 1;
+const NATIVE_VIDEO_DECODE_PUMP_WINDOW_FRAMES: u32 = 2;
 const SOURCE_FRAME_FORMAT_FALLBACK: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const SOURCE_FRAME_FORMAT_HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const MAX_STAGE3D_OVERLAY_ITEMS: usize = 128;
@@ -611,7 +612,16 @@ struct NativeVideoFrameDecodeResult {
     frame_bucket: u64,
     signature: String,
     seq: u64,
-    result: Result<(usize, usize, Vec<u8>), String>,
+    result: Result<Vec<NativeVideoFrameDecodeOutput>, String>,
+}
+
+#[derive(Debug)]
+struct NativeVideoFrameDecodeOutput {
+    width: usize,
+    height: usize,
+    frame_bucket: u64,
+    signature: String,
+    rgba: Vec<u8>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -2348,6 +2358,7 @@ impl App {
             "video_frame_prefetch": true,
             "native_media_source_playback_state": true,
             "native_video_decode_pump": true,
+            "native_video_decode_pump_window": true,
             "decode_policy_controls": true,
             "decode_preview_cache_clear": true,
             "media_policy_controls": true,
@@ -5638,6 +5649,7 @@ impl App {
             "video_frame_prefetch": true,
             "native_media_source_playback_state": true,
             "native_video_decode_pump": true,
+            "native_video_decode_pump_window": true,
             "decode_policy_controls": true,
             "decode_preview_cache_clear": true,
             "media_policy_controls": true,
@@ -6012,17 +6024,28 @@ impl App {
         self.native_video_decode_pending.remove(&result.signature);
         self.stats.decode_jobs_completed = self.stats.decode_jobs_completed.saturating_add(1);
         match result.result {
-            Ok((decoded_width, decoded_height, rgba)) => {
+            Ok(frames) => {
                 self.native_video_decode_failed.remove(&result.signature);
-                self.stats.native_video_frame_decodes =
-                    self.stats.native_video_frame_decodes.saturating_add(1);
+                self.stats.native_video_frame_decodes = self
+                    .stats
+                    .native_video_frame_decodes
+                    .saturating_add(frames.len() as u64);
                 self.stats.native_video_frame_decode_last_error.clear();
-                self.store_native_video_frame_cache(
-                    result.signature.clone(),
-                    decoded_width,
-                    decoded_height,
-                    &rgba,
-                );
+                let mut upload_frame = None;
+                for frame in frames {
+                    let should_upload = upload_frame.is_none()
+                        && (frame.signature == result.signature
+                            || frame.frame_bucket == result.frame_bucket);
+                    self.store_native_video_frame_cache(
+                        frame.signature.clone(),
+                        frame.width,
+                        frame.height,
+                        &frame.rgba,
+                    );
+                    if should_upload {
+                        upload_frame = Some(frame);
+                    }
+                }
                 let source_still_bound = self
                     .media_sources
                     .get(&result.source_id)
@@ -6037,12 +6060,15 @@ impl App {
                         });
                 let source_has_no_frame = !self.source_frames.contains_key(&result.source_id);
                 if source_still_bound && (source_needs_result || source_has_no_frame) {
+                    let Some(frame) = upload_frame else {
+                        return;
+                    };
                     let uploaded = self.upload_source_frame_pixels(
                         result.source_id.clone(),
                         result.seq,
-                        decoded_width,
-                        decoded_height,
-                        &rgba,
+                        frame.width,
+                        frame.height,
+                        &frame.rgba,
                         "native-video-decode-pump",
                         false,
                     );
@@ -6051,7 +6077,7 @@ impl App {
                         .native_video_frame_decode_bytes_uploaded
                         .saturating_add(uploaded as u64);
                     self.native_video_frame_signatures
-                        .insert(result.source_id, result.signature);
+                        .insert(result.source_id, frame.signature);
                     self.request_auto_present();
                 }
             }
@@ -9521,8 +9547,14 @@ fn spawn_native_video_frame_decode(
     job: NativeVideoFrameDecodeJob,
 ) {
     thread::spawn(move || {
-        let result =
-            decode_native_video_frame_rgba(&job.path, job.width, job.height, job.time_seconds);
+        let result = decode_native_video_frame_window_rgba(
+            &job.path,
+            job.width,
+            job.height,
+            job.time_seconds,
+            NATIVE_VIDEO_PREFETCH_WINDOW_DEFAULT_FPS,
+            NATIVE_VIDEO_DECODE_PUMP_WINDOW_FRAMES.saturating_add(1),
+        );
         let _ = proxy.send_event(UserEvent::NativeVideoFrameDecoded(
             NativeVideoFrameDecodeResult {
                 source_id: job.source_id,
@@ -11401,6 +11433,127 @@ fn decode_native_video_frame_rgba(
     let mut rgba = output.stdout;
     rgba.truncate(expected_bytes);
     Ok((target_width, target_height, rgba))
+}
+
+fn decode_native_video_frame_window_rgba(
+    path: &Path,
+    width: usize,
+    height: usize,
+    time_seconds: f64,
+    fps: f64,
+    frame_count: u32,
+) -> Result<Vec<NativeVideoFrameDecodeOutput>, String> {
+    let metadata = fs::metadata(path).map_err(|err| {
+        format!(
+            "native video frame window decode failed to stat `{}`: {err}",
+            path.display()
+        )
+    })?;
+    if !metadata.is_file() {
+        return Err(format!(
+            "native video frame window decode rejected non-file path `{}`",
+            path.display()
+        ));
+    }
+    let target_width = width.clamp(16, MAX_NATIVE_VIDEO_FRAME_DECODE_DIMENSION);
+    let target_height = height.clamp(16, MAX_NATIVE_VIDEO_FRAME_DECODE_DIMENSION);
+    let expected_bytes = target_width.saturating_mul(target_height).saturating_mul(4);
+    let count = frame_count
+        .max(1)
+        .min(NATIVE_VIDEO_PREFETCH_WINDOW_MAX_FRAMES.saturating_add(1));
+    let sample_fps = fps.clamp(
+        NATIVE_VIDEO_PREFETCH_WINDOW_MIN_FPS,
+        NATIVE_VIDEO_PREFETCH_WINDOW_MAX_FPS,
+    );
+    let ffmpeg = std::env::var("GA_FFMPEG_PATH")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| {
+            if cfg!(target_os = "windows") {
+                "ffmpeg.exe".to_string()
+            } else {
+                "ffmpeg".to_string()
+            }
+        });
+    let scale =
+        format!("scale={target_width}:{target_height}:force_original_aspect_ratio=decrease");
+    let pad = format!("pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:color=black");
+    let output = Command::new(&ffmpeg)
+        .arg("-hide_banner")
+        .arg("-loglevel")
+        .arg("error")
+        .arg("-nostdin")
+        .arg("-ss")
+        .arg(format!("{:.3}", time_seconds.clamp(0.0, 3600.0)))
+        .arg("-i")
+        .arg(path)
+        .arg("-frames:v")
+        .arg(count.to_string())
+        .arg("-vf")
+        .arg(format!("{scale},{pad},fps={sample_fps:.3},format=rgba"))
+        .arg("-f")
+        .arg("rawvideo")
+        .arg("-pix_fmt")
+        .arg("rgba")
+        .arg("pipe:1")
+        .output()
+        .map_err(|err| {
+            format!(
+                "native video frame window decode failed to launch `{ffmpeg}` for `{}`: {err}",
+                path.display()
+            )
+        })?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(format!(
+            "native video frame window decode ffmpeg failed for `{}`: {}",
+            path.display(),
+            if detail.is_empty() {
+                output.status.to_string()
+            } else {
+                detail
+            }
+        ));
+    }
+    let decoded_count = output.stdout.len() / expected_bytes;
+    if decoded_count == 0 {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(format!(
+            "native video frame window decode produced {}/{} bytes for `{}`{}",
+            output.stdout.len(),
+            expected_bytes,
+            path.display(),
+            if detail.is_empty() {
+                String::new()
+            } else {
+                format!(": {detail}")
+            }
+        ));
+    }
+    let frame_step = 1.0 / sample_fps;
+    let mut frames = Vec::with_capacity(decoded_count.min(count as usize));
+    for frame_index in 0..decoded_count.min(count as usize) {
+        let start = frame_index.saturating_mul(expected_bytes);
+        let end = start.saturating_add(expected_bytes);
+        let frame_time = (time_seconds + frame_step * frame_index as f64).clamp(0.0, 3600.0);
+        let frame_bucket = native_video_frame_bucket(frame_time);
+        let signature =
+            native_video_frame_file_signature(path, target_width, target_height, frame_bucket)?;
+        frames.push(NativeVideoFrameDecodeOutput {
+            width: target_width,
+            height: target_height,
+            frame_bucket,
+            signature,
+            rgba: output.stdout[start..end].to_vec(),
+        });
+    }
+    if frames.is_empty() {
+        return Err(format!(
+            "native video frame window decode produced no usable frames for `{}`",
+            path.display()
+        ));
+    }
+    Ok(frames)
 }
 
 fn native_video_frame_bucket(time_seconds: f64) -> u64 {
