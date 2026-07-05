@@ -332,6 +332,7 @@ function createReelRenderStore() {
             caps?.features?.frame_snapshot_export &&
             caps?.features?.native_frame_export &&
             caps?.features?.native_stage3d &&
+            caps?.features?.native_stage3d_recording_parity &&
             caps?.implemented_methods?.includes('export_frame_snapshot') &&
             caps?.implemented_methods?.includes('set_stage3d_scene')
           );

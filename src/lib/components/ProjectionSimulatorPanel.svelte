@@ -550,6 +550,7 @@
         const nativeProjectionReady = !!(
           caps?.core_capabilities_confirmed &&
           caps?.features?.native_projection_sim &&
+          caps?.features?.native_projection_sim_recording_parity &&
           caps?.features?.native_recording &&
           caps?.features?.frame_snapshot_export &&
           caps?.implemented_methods?.includes('set_projection_sim_scene') &&
