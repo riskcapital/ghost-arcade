@@ -3352,10 +3352,13 @@ export class NativeRendererSync {
   }
 
   private nativeVideoPlaybackTimeSeconds(src: NonNullable<Layer['source']>, now: number) {
+    if (this.latestRenderClockSeconds !== null) {
+      return this.latestRenderClockSeconds;
+    }
     const videoTime = Number(src.videoElement?.currentTime);
     return Number.isFinite(videoTime)
       ? Math.max(0, videoTime)
-      : Math.max(0, this.latestRenderClockSeconds ?? ((now - this.liveClockOriginMs) / 1000));
+      : Math.max(0, (now - this.liveClockOriginMs) / 1000);
   }
 
   private nativeVideoPlaybackCommand(
