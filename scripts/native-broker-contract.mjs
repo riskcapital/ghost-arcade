@@ -1224,7 +1224,7 @@ try {
     time: 0.05,
     frame_index: 50,
   });
-  await broker.invoke('native_renderer_prefetch_media', {
+  const secondBlueVideoPrefetchStatus = await broker.invoke('native_renderer_prefetch_media', {
     source_id: 'broker-prefetch-video-timed',
     uri: timedVideoPath,
     source_type: 'video',
@@ -1273,20 +1273,21 @@ try {
   });
   if (coreVideoFrameDecode) {
     assert(
-      Number(blueVideoPrefetchStatus.native_video_frame_decodes ?? 0) > 0 &&
-        blueVideoPrefetchStatus.source_frame_last_upload_transport === 'native-video-frame',
-      `native video frame prefetch should use the core decode path: ${JSON.stringify(blueVideoPrefetchStatus)}`,
+      Number(secondBlueVideoPrefetchStatus.native_video_frame_decodes ?? 0) > 0 &&
+        secondBlueVideoPrefetchStatus.source_frame_last_upload_transport === 'native-video-frame',
+      `native video frame prefetch should use the core decode path: ${JSON.stringify(secondBlueVideoPrefetchStatus)}`,
     );
     assert(
-      Number(repeatedBlueVideoPrefetchStatus.native_video_frame_decodes ?? 0) >
-        Number(blueVideoPrefetchStatus.native_video_frame_decodes ?? 0) &&
-        repeatedBlueVideoPrefetchStatus.source_frame_last_upload_transport === 'native-video-frame',
-      `native video frame prefetch repeat should continue using the core decode path: ${JSON.stringify({ before: blueVideoPrefetchStatus, after: repeatedBlueVideoPrefetchStatus })}`,
+      Number(repeatedBlueVideoPrefetchStatus.native_video_frame_decodes ?? 0) ===
+        Number(secondBlueVideoPrefetchStatus.native_video_frame_decodes ?? 0) &&
+        Number(repeatedBlueVideoPrefetchStatus.source_frame_uploads ?? 0) ===
+          Number(secondBlueVideoPrefetchStatus.source_frame_uploads ?? 0),
+      `native video frame prefetch repeat should reuse the core video-frame signature for the same timestamp: ${JSON.stringify({ before: secondBlueVideoPrefetchStatus, after: repeatedBlueVideoPrefetchStatus })}`,
     );
     const clearedVideoFramePrefetchStatus = await broker.invoke('native_renderer_clear_prefetch_cache');
     assert(
-      Number(clearedVideoFramePrefetchStatus.cleared_source_frame_signatures ?? 0) > 0,
-      `native prefetch clear should clear core source-frame signatures: ${JSON.stringify(clearedVideoFramePrefetchStatus)}`,
+      Number(clearedVideoFramePrefetchStatus.cleared_native_video_frame_signatures ?? 0) > 0,
+      `native prefetch clear should clear core video-frame signatures: ${JSON.stringify(clearedVideoFramePrefetchStatus)}`,
     );
   } else {
     assert(
