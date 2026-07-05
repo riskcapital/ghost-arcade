@@ -87,10 +87,10 @@ function readinessDetailForMode(
   status: RendererStatus | null | undefined,
   readiness: RendererReadinessReport | null | undefined,
 ): string {
-  if (mode === 'full-v2') return readinessModeDetail(readiness, 'full_v2') || 'native renderer v2 gates are ready';
+  if (mode === 'full-v2') return readinessModeDetail(readiness, 'full_v2') || 'native main driver gates are ready';
   if (mode === 'output-driver') return readinessModeDetail(readiness, 'output_driver') || 'native output driver is ready';
-  if (mode === 'shadow') return readinessModeDetail(readiness, 'shadow') || 'native shadow sync is active';
-  if (mode === 'degraded') return status?.last_frame_error || readiness?.blockers?.[0] || 'native renderer is running with incomplete readiness gates';
+  if (mode === 'shadow') return readinessModeDetail(readiness, 'shadow') || 'native scene sync is active';
+  if (mode === 'degraded') return status?.last_frame_error || readiness?.blockers?.[0] || 'native renderer is starting with incomplete readiness gates';
   return 'native renderer is offline';
 }
 
@@ -220,9 +220,9 @@ export function resetNativeRendererRuntime(reason = 'native renderer is offline'
 }
 
 export function nativeRendererModeLabel(mode: NativeRendererDriverMode): string {
-  if (mode === 'full-v2') return 'Full V2';
-  if (mode === 'output-driver') return 'Output Driver';
-  if (mode === 'shadow') return 'Shadow';
-  if (mode === 'degraded') return 'Degraded';
-  return 'Offline';
+  if (mode === 'full-v2') return 'Native Main Driver';
+  if (mode === 'output-driver') return 'Native Output Driver';
+  if (mode === 'shadow') return 'Native Scene Sync';
+  if (mode === 'degraded') return 'Native Starting';
+  return 'WebGL Fallback';
 }
