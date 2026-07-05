@@ -1283,6 +1283,43 @@ export function effectToNativeDescriptor(effect: any): string | null {
       Math.max(0, Math.min(1, mixRaw)).toFixed(4),
     ].join(':');
   }
+  if (type === 'edgedetect' || type === 'edge-detect') {
+    const thresholdRaw =
+      firstFiniteParam(params, ['edgeThreshold', 'threshold', 'amount'], 0.1);
+    const thicknessRaw =
+      firstFiniteParam(params, ['edgeThickness', 'thickness', 'radius'], 1);
+    const modeRaw =
+      firstFiniteParam(params, ['edgeMode', 'mode'], 0);
+    const invertRaw =
+      firstFiniteParam(params, ['edgeInvert', 'invert'], 0);
+    const edgeOnlyRaw =
+      firstFiniteParam(params, ['edgeOnlyAlpha', 'edgeOnly', 'matte'], 0);
+    const tintRRaw =
+      firstFiniteParam(params, ['edgeTintR', 'edgeR', 'tintR', 'red'], 1);
+    const tintGRaw =
+      firstFiniteParam(params, ['edgeTintG', 'edgeG', 'tintG', 'green'], 1);
+    const tintBRaw =
+      firstFiniteParam(params, ['edgeTintB', 'edgeB', 'tintB', 'blue'], 1);
+    const tintEdgesRaw =
+      firstFiniteParam(params, ['edgeTintEdges', 'tintEdges'], 0);
+    const glowRaw =
+      firstFiniteParam(params, ['edgeGlow', 'glow'], 0);
+    const flags =
+      (Math.max(0, Math.min(1, Math.round(invertRaw))) > 0 ? 1 : 0) +
+      (Math.max(0, Math.min(1, Math.round(edgeOnlyRaw))) > 0 ? 2 : 0);
+    return [
+      'edge-detect',
+      Math.max(0, Math.min(1, thresholdRaw)).toFixed(4),
+      Math.max(0.25, Math.min(12, thicknessRaw)).toFixed(4),
+      Math.max(0, Math.min(3, Math.round(modeRaw))).toFixed(0),
+      flags.toFixed(0),
+      Math.max(0, Math.min(1.5, tintRRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, tintGRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, tintBRaw)).toFixed(4),
+      Math.max(0, Math.min(1, tintEdgesRaw)).toFixed(4),
+      Math.max(0, Math.min(2, glowRaw)).toFixed(4),
+    ].join(':');
+  }
 
   // Keep explicit descriptor IDs compatible with native descriptor parser.
   const effectId = typeof effect.id === 'string' ? effect.id.trim() : '';
@@ -1525,6 +1562,19 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       shape: Number(rawParam0 ?? 1),
       channel: Number(rawParam1 ?? 0),
       outputMix: Number(rawParam2 ?? 1),
+    };
+  } else if (effect === 'edge-detect') {
+    const flags = Number(rawParam2 ?? 0);
+    params = {
+      thickness: Number(rawParam0 ?? 1),
+      mode: Number(rawParam1 ?? 0),
+      invert: flags & 1,
+      edgeOnlyAlpha: (flags & 2) ? 1 : 0,
+      edgeTintR: Number(rawParam3 ?? 1),
+      edgeTintG: Number(rawParam4 ?? 1),
+      edgeTintB: Number(rawParam5 ?? 1),
+      tintEdges: Number(rawParam6 ?? 0),
+      edgeGlow: Number(rawParam7 ?? 0),
     };
   }
   if (params && Object.values(params).some((value) => !Number.isFinite(value))) return null;

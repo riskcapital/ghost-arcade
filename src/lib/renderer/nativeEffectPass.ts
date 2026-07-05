@@ -33,7 +33,8 @@ export type NativeEffectPassId =
   | 'fisheye'
   | 'lens-distortion'
   | 'twirl'
-  | 'pinch-bulge';
+  | 'pinch-bulge'
+  | 'edge-detect';
 
 export interface NativeEffectPassManifestEntry {
   id: NativeEffectPassId;
@@ -145,6 +146,14 @@ export interface NativeEffectPassOptions {
     edgeFade: number;
     cubic: number;
     anamorphicX: number;
+    threshold: number;
+    thickness: number;
+    edgeTintR: number;
+    edgeTintG: number;
+    edgeTintB: number;
+    tintEdges: number;
+    edgeGlow: number;
+    edgeOnlyAlpha: number;
   }>;
   clear?: boolean;
   seq?: number;
@@ -219,6 +228,7 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'lens-distortion', code: 33, defaultAmount: 0.4, amountMin: -1, amountMax: 1 },
   { id: 'twirl', code: 34, defaultAmount: 1.5, amountMin: -6.28319, amountMax: 6.28319 },
   { id: 'pinch-bulge', code: 35, defaultAmount: 0.4, amountMin: -1, amountMax: 1 },
+  { id: 'edge-detect', code: 36, defaultAmount: 0.1, amountMin: 0, amountMax: 1 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -1064,6 +1074,56 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     }
     return vec4<f32>(mix(color, pinched, wet * influence), src.a);
   }
+  if (code == 36u) {
+    let threshold = clamp(amount, 0.0, 1.0);
+    let thickness = max(0.25, u.params0.x);
+    let mode = u32(round(clamp(u.params0.y, 0.0, 3.0)));
+    let flags = u32(round(clamp(u.params0.z, 0.0, 3.0)));
+    let invert_edges = (flags & 1u) == 1u;
+    let edge_only = (flags & 2u) == 2u;
+    let edge_tint = clamp(vec3<f32>(u.params0.w, u.params1.x, u.params1.y), vec3<f32>(0.0), vec3<f32>(1.5));
+    let tint_edges = clamp(u.params1.z, 0.0, 1.0);
+    let glow = clamp(u.params1.w, 0.0, 2.0);
+    let tx = effect_texel() * thickness;
+
+    let tl = sample_rgb(uv + vec2<f32>(-tx.x, -tx.y));
+    let tc = sample_rgb(uv + vec2<f32>(0.0, -tx.y));
+    let tr = sample_rgb(uv + vec2<f32>(tx.x, -tx.y));
+    let ml = sample_rgb(uv + vec2<f32>(-tx.x, 0.0));
+    let mr = sample_rgb(uv + vec2<f32>(tx.x, 0.0));
+    let bl = sample_rgb(uv + vec2<f32>(-tx.x, tx.y));
+    let bc = sample_rgb(uv + vec2<f32>(0.0, tx.y));
+    let br = sample_rgb(uv + vec2<f32>(tx.x, tx.y));
+
+    let gx_rgb = tr + mr * 2.0 + br - tl - ml * 2.0 - bl;
+    let gy_rgb = bl + bc * 2.0 + br - tl - tc * 2.0 - tr;
+    let gx_l = luma(gx_rgb);
+    let gy_l = luma(gy_rgb);
+    var edge_strength = length(vec2<f32>(gx_l, gy_l));
+    if (mode == 1u) {
+      edge_strength = length(gx_rgb) * 0.58 + length(gy_rgb) * 0.58;
+    } else if (mode == 2u) {
+      let lap = abs(luma(tl + tc + tr + ml + mr + bl + bc + br - color * 8.0));
+      edge_strength = max(edge_strength, lap);
+    } else if (mode == 3u) {
+      let local_max = max(max(luma(tl), luma(tc)), max(max(luma(tr), luma(ml)), max(max(luma(mr), luma(bl)), max(luma(bc), luma(br)))));
+      let local_min = min(min(luma(tl), luma(tc)), min(min(luma(tr), luma(ml)), min(min(luma(mr), luma(bl)), min(luma(bc), luma(br)))));
+      edge_strength = max(edge_strength, local_max - local_min);
+    }
+
+    let feather = max(0.01, 0.18 / max(1.0, thickness));
+    var edge_mask = smoothstep(threshold, threshold + feather, edge_strength);
+    if (invert_edges) {
+      edge_mask = 1.0 - edge_mask;
+    }
+    let edge_color = mix(vec3<f32>(edge_mask), edge_tint * edge_mask, tint_edges);
+    let glow_color = edge_tint * edge_mask * glow * 0.65;
+    if (edge_only) {
+      return vec4<f32>(edge_color + glow_color, src.a * edge_mask);
+    }
+    let composited = mix(color, edge_color + glow_color, edge_mask);
+    return vec4<f32>(composited, src.a);
+  }
   return src;
 }
 
@@ -1367,6 +1427,17 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param5 = clampNumber(params.outputMix ?? params.param5, 0, 1, 1);
     param6 = 0;
     param7 = 0;
+  } else if (options.effect === 'edge-detect') {
+    const invert = clampNumber(params.invert ?? params.param2, 0, 1, 0) >= 0.5 ? 1 : 0;
+    const edgeOnly = clampNumber(params.edgeOnlyAlpha ?? params.param7, 0, 1, 0) >= 0.5 ? 2 : 0;
+    param0 = clampNumber(params.thickness ?? params.param0, 0.25, 12, 1);
+    param1 = clampNumber(params.mode ?? params.param1, 0, 3, 0);
+    param2 = invert + edgeOnly;
+    param3 = clampNumber(params.edgeTintR ?? params.param3, 0, 1.5, 1);
+    param4 = clampNumber(params.edgeTintG ?? params.param4, 0, 1.5, 1);
+    param5 = clampNumber(params.edgeTintB ?? params.param5, 0, 1.5, 1);
+    param6 = clampNumber(params.tintEdges ?? params.param6, 0, 1, 0);
+    param7 = clampNumber(params.edgeGlow ?? params.param7, 0, 2, 0);
   }
   return [
     width,
