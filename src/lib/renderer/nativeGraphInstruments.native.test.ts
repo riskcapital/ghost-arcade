@@ -3,6 +3,18 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  buildSmoke3DNativeComputeGraph,
+  buildSmoke3DNativePrecompileCommands,
+} from './webgpu3DSmoke';
+import {
+  buildFlythroughNativeComputeGraph,
+  buildFlythroughNativePrecompileCommands,
+} from './webgpuFlythrough';
+import {
+  buildInkCloudNativeComputeGraph,
+  buildInkCloudNativePrecompileCommands,
+} from './webgpuInkCloud';
+import {
   buildParticleFieldNativeComputeGraph,
   buildParticleFieldNativePrecompileCommands,
 } from './webgpuParticleField';
@@ -11,9 +23,17 @@ import {
   buildPixelParticlesNativePrecompileCommands,
 } from './webgpuPixelParticles';
 import {
+  buildPointCloudFXNativeComputeGraph,
+  buildPointCloudFXNativePointData,
+  buildPointCloudFXNativePrecompileCommands,
+} from './webgpuPointCloudFX';
+import {
   buildPlanetNativeComputeGraph,
   buildPlanetNativePrecompileCommands,
 } from './shaders/webgpuPlanet';
+import {
+  buildSmokeRidersNativeComputeGraph,
+} from './shaders/webgpuSmokeRidersShader';
 import {
   buildVolumetricSpheresNativeComputeGraph,
   buildVolumetricSpheresNativePrecompileCommands,
@@ -133,6 +153,52 @@ function makeSourceBytes(width: number, height: number): Uint8Array {
   return bytes;
 }
 
+function makePointCloudFixture(count: number) {
+  const positions = new Float32Array(count * 3);
+  const colors = new Float32Array(count * 3);
+  for (let i = 0; i < count; i += 1) {
+    const t = i / Math.max(1, count - 1);
+    const ring = t * Math.PI * 8;
+    positions[i * 3 + 0] = Math.cos(ring) * (0.15 + t * 1.1);
+    positions[i * 3 + 1] = Math.sin(t * Math.PI * 5) * 0.8;
+    positions[i * 3 + 2] = Math.sin(ring) * (0.2 + t * 1.2);
+    colors[i * 3 + 0] = 0.2 + t * 0.8;
+    colors[i * 3 + 1] = 1 - t * 0.7;
+    colors[i * 3 + 2] = 0.35 + Math.sin(ring) * 0.25;
+  }
+  return buildPointCloudFXNativePointData(positions, colors, {
+    maxPoints: Math.min(count, 96),
+    pointSize: 0.018,
+    signature: `runtime-fixture-${count}`,
+  });
+}
+
+function initialBufferToBase64(value: unknown): string | null {
+  if (value instanceof ArrayBuffer) {
+    return Buffer.from(new Uint8Array(value)).toString('base64');
+  }
+  if (ArrayBuffer.isView(value)) {
+    return Buffer.from(
+      new Uint8Array(value.buffer, value.byteOffset, value.byteLength),
+    ).toString('base64');
+  }
+  return null;
+}
+
+function encodeNativeGraphConfigForRpc(config: Record<string, any>): Record<string, any> {
+  return {
+    ...config,
+    buffers: Array.isArray(config.buffers)
+      ? config.buffers.map((buffer: Record<string, any>) => {
+          const initial_b64 = buffer.initial_b64 ?? initialBufferToBase64(buffer.initial_buffer);
+          if (!initial_b64 && buffer.initial_buffer == null) return buffer;
+          const { initial_buffer, ...rest } = buffer;
+          return initial_b64 ? { ...rest, initial_b64 } : rest;
+        })
+      : [],
+  };
+}
+
 function assertVisibleSnapshot(label: string, snapshot: Record<string, unknown>, minLuma = 0.015) {
   expect(snapshot.dark_frame, label).toBe(false);
   expect(Number(snapshot.average_luma ?? 0), label).toBeGreaterThan(minLuma);
@@ -186,19 +252,28 @@ describe('Native graph instrument runtime fixtures', () => {
       expect(capabilities?.features?.native_instrument_proxies).toBe(false);
       expect(capabilities?.native_graph_instruments).toEqual(expect.arrayContaining([
         'planet',
+        'smoke-3d',
         'particle-field',
         'pixel-particles',
         'volumetric-spheres',
+        'smoke-riders',
+        'ink-cloud',
+        'flythrough',
+        'point-cloud-fx',
       ]));
 
       const precompileSummary = await rpc.send('submit_commands', {
         commands: [
           ...buildPlanetNativePrecompileCommands(),
+          ...buildSmoke3DNativePrecompileCommands(),
           ...buildVolumetricSpheresNativePrecompileCommands(),
           ...buildParticleFieldNativePrecompileCommands(),
           ...buildPixelParticlesNativePrecompileCommands(),
+          ...buildFlythroughNativePrecompileCommands(),
+          ...buildInkCloudNativePrecompileCommands(),
+          ...buildPointCloudFXNativePrecompileCommands(),
         ],
-      }, 8000);
+      }, 12000);
       expect(Number(precompileSummary?.dropped ?? 0)).toBe(0);
 
       const mediaSourceId = 'native-graph-fixture-media-source';
@@ -265,6 +340,30 @@ describe('Native graph instrument runtime fixtures', () => {
           },
         },
         {
+          id: 'smoke-3d',
+          graph: buildSmoke3DNativeComputeGraph({
+            sourceId: 'native-graph-fixture-smoke-3d',
+            params: {
+              gridSize: 24,
+              emitterCount: 4,
+              splatRate: 60,
+              density: 1.4,
+              brightness: 1.2,
+              bass: 0.45,
+            },
+            width: 160,
+            height: 90,
+            time: 1,
+            frameDelta: 1 / 30,
+            frameIndex: 6,
+            reset: true,
+          }),
+          minLuma: 0.004,
+          assert(snapshot: Record<string, unknown>) {
+            expect(Number(snapshot.nonzero_pixels ?? 0)).toBeGreaterThan(40);
+          },
+        },
+        {
           id: 'particle-field',
           graph: buildParticleFieldNativeComputeGraph({
             sourceId: 'native-graph-fixture-particle-field',
@@ -313,11 +412,121 @@ describe('Native graph instrument runtime fixtures', () => {
             expect(Number(snapshot.nonzero_pixels ?? 0)).toBeGreaterThan(50);
           },
         },
+        {
+          id: 'smoke-riders',
+          graph: buildSmokeRidersNativeComputeGraph({
+            sourceId: 'native-graph-fixture-smoke-riders',
+            params: {
+              quality: 'performance',
+              style: 'orbital',
+              sphereCount: 72,
+              smokeDensity: 1.7,
+            },
+            width: 160,
+            height: 90,
+            time: 1,
+            frameDelta: 1 / 30,
+            frameIndex: 7,
+            audioBass: 0.4,
+            audioTreble: 0.25,
+            reset: true,
+          }),
+          minLuma: 0.006,
+          assert(snapshot: Record<string, unknown>) {
+            expect(Number(snapshot.nonzero_pixels ?? 0)).toBeGreaterThan(80);
+          },
+        },
+        {
+          id: 'ink-cloud',
+          graph: buildInkCloudNativeComputeGraph({
+            sourceId: 'native-graph-fixture-ink-cloud',
+            params: {
+              particleCount: 4096,
+              emitterCount: 4,
+              spread: 0.7,
+              bgOpacity: 0.5,
+              density: 1.2,
+              emitterColor1: [255, 90, 35],
+              emitterColor2: [40, 210, 255],
+              autoRotateY: 10,
+            },
+            width: 160,
+            height: 90,
+            time: 1,
+            frameDelta: 1 / 30,
+            frameIndex: 8,
+            audioBass: 0.8,
+            audioTreble: 0.35,
+            reset: true,
+          }),
+          minLuma: 0.004,
+          assert(snapshot: Record<string, unknown>) {
+            expect(Number(snapshot.nonzero_pixels ?? 0)).toBeGreaterThan(60);
+          },
+        },
+        {
+          id: 'flythrough',
+          graph: buildFlythroughNativeComputeGraph({
+            sourceId: 'native-graph-fixture-flythrough',
+            mediaSourceId,
+            params: {
+              topology: 'strokes',
+              particleCount: 2048,
+              slabCount: 3,
+              flySpeed: 1.3,
+              audioReactive: true,
+            },
+            width: 160,
+            height: 90,
+            time: 1,
+            frameDelta: 1 / 30,
+            frameIndex: 9,
+            audioBass: 0.55,
+            reset: true,
+          }),
+          minLuma: 0.003,
+          assert(snapshot: Record<string, unknown>) {
+            expect(Number(snapshot.nonzero_pixels ?? 0)).toBeGreaterThan(40);
+          },
+        },
+        {
+          id: 'point-cloud-fx',
+          graph: buildPointCloudFXNativeComputeGraph({
+            sourceId: 'native-graph-fixture-point-cloud-fx',
+            pointData: makePointCloudFixture(128),
+            params: {
+              topology: 'strokes',
+              pointSize: 0.018,
+              strokeLength: 0.06,
+              colorMode: 'palette4',
+              colorA: [60, 140, 255],
+              colorB: [255, 70, 190],
+              filterMode: 'none',
+              audioReactive: true,
+            },
+            width: 160,
+            height: 90,
+            time: 1,
+            frameDelta: 1 / 30,
+            frameIndex: 10,
+            audioBass: 0.45,
+            audioTreble: 0.25,
+            reset: true,
+          }),
+          minLuma: 0.002,
+          assert(snapshot: Record<string, unknown>) {
+            expect(Number(snapshot.nonzero_pixels ?? 0)).toBeGreaterThan(20);
+          },
+        },
       ];
 
       const checksums = new Set<string>();
       for (const fixture of fixtures) {
-        const graphResult = await rpc.send('compute_graph', fixture.graph.config, 12000);
+        const graphResult = await rpc.send(
+          'compute_graph',
+          encodeNativeGraphConfigForRpc(fixture.graph.config),
+          20000,
+        );
         const renders = Array.isArray(graphResult?.renders)
           ? graphResult.renders
           : graphResult?.render
@@ -369,5 +578,5 @@ describe('Native graph instrument runtime fixtures', () => {
     } finally {
       await rpc.close();
     }
-  }, 45000);
+  }, 90000);
 });

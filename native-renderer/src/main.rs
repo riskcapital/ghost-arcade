@@ -7027,6 +7027,7 @@ impl RenderState {
                 &pass_plan.bindings,
                 &format!("pass `{}`", pass_plan.name),
                 &mut texture_views,
+                None,
             )?;
             let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(&format!(
@@ -7192,12 +7193,15 @@ impl RenderState {
                 pipeline_key
             ));
         };
+        let source_frame_sample_texture =
+            self.source_frame_sample_copy_for_render(encoder, render_plan, source_slot.is_some());
         let mut texture_views = Vec::new();
         let entries = self.compute_graph_bind_group_entries(
             transient_buffers,
             &render_plan.bindings,
             &format!("render `{}`", render_plan.name),
             &mut texture_views,
+            source_frame_sample_texture.as_ref(),
         )?;
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(&format!(
@@ -7349,12 +7353,69 @@ impl RenderState {
         Ok(result)
     }
 
+    fn source_frame_sample_copy_for_render(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        render_plan: &NativeComputeGraphRenderPlan,
+        targets_source_frame: bool,
+    ) -> Option<wgpu::Texture> {
+        if !targets_source_frame
+            || !render_plan.bindings.iter().any(|binding| {
+                matches!(
+                    binding.kind,
+                    NativeComputeGraphBindingKind::SourceFrameTexture(_)
+                )
+            })
+        {
+            return None;
+        }
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Ghost Native Compute Graph Source Frame Sample Copy"),
+            size: wgpu::Extent3d {
+                width: self.source_frame_size.max(1) as u32,
+                height: self.source_frame_size.max(1) as u32,
+                depth_or_array_layers: MAX_SOURCE_FRAME_SLOTS as u32,
+            },
+            mip_level_count: self.source_frame_mip_levels,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.source_frame_format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        for mip_level in 0..self.source_frame_mip_levels {
+            let width = ((self.source_frame_size as u32) >> mip_level).max(1);
+            let height = ((self.source_frame_size as u32) >> mip_level).max(1);
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.source_frame_texture,
+                    mip_level,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: MAX_SOURCE_FRAME_SLOTS as u32,
+                },
+            );
+        }
+        Some(texture)
+    }
+
     fn compute_graph_bind_group_entries<'a>(
         &'a self,
         transient_buffers: &'a HashMap<String, NativeComputeGraphGpuBuffer>,
         bindings: &'a [NativeComputeGraphBindingSpec],
         context: &str,
         texture_views: &'a mut Vec<wgpu::TextureView>,
+        source_frame_texture_override: Option<&'a wgpu::Texture>,
     ) -> Result<Vec<wgpu::BindGroupEntry<'a>>, String> {
         enum PreparedBinding<'a> {
             Buffer(&'a wgpu::Buffer),
@@ -7389,7 +7450,9 @@ impl RenderState {
                         .source_slot
                         .unwrap_or(0)
                         .min(MAX_SOURCE_FRAME_SLOTS - 1);
-                    texture_views.push(self.source_frame_texture.create_view(
+                    let source_frame_texture =
+                        source_frame_texture_override.unwrap_or(&self.source_frame_texture);
+                    texture_views.push(source_frame_texture.create_view(
                         &wgpu::TextureViewDescriptor {
                             label: Some(label),
                             format: Some(self.source_frame_format),
