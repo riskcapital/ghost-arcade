@@ -66,7 +66,9 @@ import { createAndWarmWgslShaderModule, resolveGhostWgsl } from './wgsl';
 
 const HOME_BYTES = 64;
 const LIVE_BYTES = 48;
+const SORT_PAIR_BYTES = 8;
 const MAX_POINTS = 4_000_000;
+const MAX_NATIVE_DEPTH_SORT_POINTS = 262_144;
 const DEFAULT_POINT_SIZE = 0.006;
 const NORMALIZATION_SAMPLE_LIMIT = 65_536;
 const NORMALIZATION_RADIUS_PERCENTILE = 0.985;
@@ -132,6 +134,23 @@ function medianSorted(values: number[]): number {
   const mid = Math.floor(values.length / 2);
   if (values.length % 2 === 1) return values[mid];
   return (values[mid - 1] + values[mid]) * 0.5;
+}
+
+function nextPowerOfTwo(value: number): number {
+  if (value <= 1) return 1;
+  return 2 ** Math.ceil(Math.log2(value));
+}
+
+function buildIdentitySortBuffer(pointCount: number, sortCount = pointCount): ArrayBuffer {
+  const safePointCount = Math.max(1, Math.floor(pointCount));
+  const safeSortCount = Math.max(safePointCount, Math.floor(sortCount));
+  const bytes = new ArrayBuffer(safeSortCount * SORT_PAIR_BYTES);
+  const u = new Uint32Array(bytes);
+  for (let i = 0; i < safeSortCount; i++) {
+    u[i * 2 + 0] = i < safePointCount ? 0 : 0xffffffff;
+    u[i * 2 + 1] = i < safePointCount ? i >>> 0 : 0;
+  }
+  return bytes;
 }
 
 function computePointCloudNormalization(
@@ -640,6 +659,8 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 /* RENDER — instanced quads, three topologies                     */
 /* ============================================================== */
 const RENDER_WGSL = /* wgsl */ `
+#include <sort>
+
 struct Home {
   homePos:       vec3<f32>,
   alpha:         f32,
@@ -684,6 +705,7 @@ struct U {
 @group(0) @binding(0) var<storage, read> home: array<Home>;
 @group(0) @binding(1) var<storage, read> live: array<Live>;
 @group(0) @binding(2) var<uniform>       u:    U;
+@group(0) @binding(3) var<storage, read> sortPairs: array<GhostSortPair>;
 
 fn rotateByQuatWxyz(qIn: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
   let q = normalize(qIn + vec4<f32>(1e-8, 0.0, 0.0, 0.0));
@@ -712,8 +734,10 @@ fn vs_main(
   @builtin(vertex_index)   vid: u32,
   @builtin(instance_index) iid: u32,
 ) -> VSOut {
-  let h = home[iid];
-  let p = live[iid];
+  let sorted = sortPairs[iid];
+  let pointIndex = min(sorted.value, max(u.pointCount, 1u) - 1u);
+  let h = home[pointIndex];
+  let p = live[pointIndex];
 
   var cornerUV: vec2<f32> = vec2<f32>(0.0, 0.0);
   var offset:   vec3<f32> = vec3<f32>(0.0, 0.0, 0.0);
@@ -789,6 +813,75 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let fogT = clamp((1.0 - exp(-in.depth01 * max(u.fogDensity, 0.0) * 4.0)) * u.fogOpacity, 0.0, 1.0);
   let color = mix(in.color, u.fogColor, fogT);
   return vec4<f32>(color * a, a);
+}
+`;
+
+/* ============================================================== */
+/* SORT — native graph depth keys + bitonic index ordering         */
+/* ============================================================== */
+const SORT_FILL_WGSL = /* wgsl */ `
+#include <sort>
+
+struct Live {
+  pos:   vec3<f32>,
+  alpha: f32,
+  vel:   vec3<f32>,
+  size:  f32,
+  color: vec3<f32>,
+  _pad:  f32,
+};
+
+struct U {
+  viewProj:   mat4x4<f32>,
+  pointCount: u32,
+  sortCount:  u32,
+  _pad0:      u32,
+  _pad1:      u32,
+};
+
+@group(0) @binding(0) var<storage, read>       live:      array<Live>;
+@group(0) @binding(1) var<storage, read_write> sortPairs: array<GhostSortPair>;
+@group(0) @binding(2) var<uniform>             u:         U;
+
+@compute @workgroup_size(64)
+fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= u.sortCount) { return; }
+  if (i >= u.pointCount) {
+    sortPairs[i] = ghost_sort_pack_pair(GHOST_SORT_KEY_MAX, 0u);
+    return;
+  }
+  let p = live[i];
+  let clip = u.viewProj * vec4<f32>(p.pos, 1.0);
+  let depth01 = clamp(clip.z / max(clip.w, 1e-5) * 0.5 + 0.5, 0.0, 1.0);
+  sortPairs[i] = ghost_sort_pack_pair(ghost_sort_key_from_depth_far_to_near(depth01), i);
+}
+`;
+
+const SORT_STEP_WGSL = /* wgsl */ `
+#include <sort>
+
+struct U {
+  pointCount:    u32,
+  sortCount:     u32,
+  sequenceSize:  u32,
+  stride:        u32,
+};
+
+@group(0) @binding(0) var<storage, read_write> sortPairs: array<GhostSortPair>;
+@group(0) @binding(1) var<uniform>             u:         U;
+
+@compute @workgroup_size(64)
+fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= u.sortCount) { return; }
+  let partner = ghost_sort_bitonic_partner(i, u.stride);
+  if (partner <= i || partner >= u.sortCount) { return; }
+  let a = sortPairs[i];
+  let b = sortPairs[partner];
+  let ascending = ghost_sort_bitonic_ascending(i, u.sequenceSize);
+  sortPairs[i] = ghost_sort_pair_before(a, b, ascending);
+  sortPairs[partner] = ghost_sort_pair_after(a, b, ascending);
 }
 `;
 
@@ -968,6 +1061,8 @@ const BLEND_PREMULT_OVER: any = {
 
 export const POINT_CLOUD_FX_NATIVE_SHADER_IDS = Object.freeze({
   compute: 'point-cloud-fx/compute',
+  sortFill: 'point-cloud-fx/sort-fill',
+  sortStep: 'point-cloud-fx/sort-step',
   render: 'point-cloud-fx/render',
 });
 
@@ -1033,11 +1128,16 @@ type PointCloudFXNativeGraphRenderPass = {
 export interface PointCloudFXNativePointData {
   signature: string;
   pointCount: number;
+  sortCount: number;
   homeByteLength: number;
   liveByteLength: number;
+  sortByteLength: number;
   homeInitialBuffer: ArrayBuffer;
   liveInitialBuffer: ArrayBuffer;
+  sortInitialBuffer: ArrayBuffer;
   sampledFromCount: number;
+  hasGaussianPayload: boolean;
+  depthSortEnabled: boolean;
 }
 
 export interface PointCloudFXNativePointDataOptions extends PointCloudFXDataOptions {
@@ -1225,6 +1325,20 @@ export function getPointCloudFXNativeShaderSources(): PointCloudFXNativeShaderSo
       source: resolveGhostWgsl(COMPUTE_WGSL, POINT_CLOUD_FX_NATIVE_SHADER_IDS.compute),
     },
     {
+      shaderId: POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortFill,
+      label: POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortFill,
+      stage: 'compute',
+      entry: 'cs_main',
+      source: resolveGhostWgsl(SORT_FILL_WGSL, POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortFill),
+    },
+    {
+      shaderId: POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortStep,
+      label: POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortStep,
+      stage: 'compute',
+      entry: 'cs_main',
+      source: resolveGhostWgsl(SORT_STEP_WGSL, POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortStep),
+    },
+    {
       shaderId: POINT_CLOUD_FX_NATIVE_SHADER_IDS.render,
       label: POINT_CLOUD_FX_NATIVE_SHADER_IDS.render,
       stage: 'render',
@@ -1267,10 +1381,13 @@ export function buildPointCloudFXNativePointData(
   const { cx, cy, cz, scale } = normalization;
   const pointSize = clampNumber(options.pointSize ?? DEFAULT_POINT_SIZE, 0.0001, 0.2);
   const hasGaussianPayload = !!options.gaussian || !!options.splatScale || !!options.splatRotation;
+  const depthSortEnabled = hasGaussianPayload && n <= MAX_NATIVE_DEPTH_SORT_POINTS;
+  const sortCount = depthSortEnabled ? nextPowerOfTwo(n) : n;
   const homeBytes = new ArrayBuffer(n * HOME_BYTES);
   const homeF = new Float32Array(homeBytes);
   const liveBytes = new ArrayBuffer(n * LIVE_BYTES);
   const liveF = new Float32Array(liveBytes);
+  const sortBytes = buildIdentitySortBuffer(n, sortCount);
 
   for (let i = 0; i < n; i++) {
     const sourceIndex = indexFor(i);
@@ -1353,11 +1470,16 @@ export function buildPointCloudFXNativePointData(
   return {
     signature: options.signature || fallbackSignature,
     pointCount: n,
+    sortCount,
     homeByteLength: homeBytes.byteLength,
     liveByteLength: liveBytes.byteLength,
+    sortByteLength: sortBytes.byteLength,
     homeInitialBuffer: homeBytes,
     liveInitialBuffer: liveBytes,
+    sortInitialBuffer: sortBytes,
     sampledFromCount: sourceCount,
+    hasGaussianPayload,
+    depthSortEnabled,
   };
 }
 
@@ -1426,12 +1548,12 @@ function buildPointCloudFXComputeUniform(
   return bufferToBase64(cuBuf);
 }
 
-function buildPointCloudFXRenderUniform(
+function buildPointCloudFXViewProj(
   params: PointCloudFXParams,
   state: PointCloudFXNativeGraphState,
   width: number,
   height: number,
-): string {
+): Float32Array {
   const aspect = Math.max(1, width) / Math.max(1, height);
   const proj = perspective(params.fovDeg, aspect, 0.05, 100);
   const view = translate(0, 0, -params.cameraZ);
@@ -1443,7 +1565,47 @@ function buildPointCloudFXRenderUniform(
       matrixRotateX((params.rotateX + state.autoRotXPhase) * d2r),
     ),
   );
-  const viewProj = mat4Mul(proj, mat4Mul(view, objRot));
+  return mat4Mul(proj, mat4Mul(view, objRot));
+}
+
+function buildPointCloudFXSortFillUniform(
+  params: PointCloudFXParams,
+  state: PointCloudFXNativeGraphState,
+  width: number,
+  height: number,
+  sortCount: number,
+): string {
+  const suBuf = new ArrayBuffer(80);
+  const suF = new Float32Array(suBuf);
+  const suU = new Uint32Array(suBuf);
+  suF.set(buildPointCloudFXViewProj(params, state, width, height), 0);
+  suU[16] = state.pointCount >>> 0;
+  suU[17] = Math.max(1, Math.floor(sortCount)) >>> 0;
+  return bufferToBase64(suBuf);
+}
+
+function buildPointCloudFXSortStepUniform(
+  pointCount: number,
+  sortCount: number,
+  sequenceSize: number,
+  stride: number,
+): string {
+  const suBuf = new ArrayBuffer(16);
+  const suU = new Uint32Array(suBuf);
+  suU[0] = Math.max(1, Math.floor(pointCount)) >>> 0;
+  suU[1] = Math.max(1, Math.floor(sortCount)) >>> 0;
+  suU[2] = Math.max(1, Math.floor(sequenceSize)) >>> 0;
+  suU[3] = Math.max(1, Math.floor(stride)) >>> 0;
+  return bufferToBase64(suBuf);
+}
+
+function buildPointCloudFXRenderUniform(
+  params: PointCloudFXParams,
+  state: PointCloudFXNativeGraphState,
+  width: number,
+  height: number,
+): string {
+  const viewProj = buildPointCloudFXViewProj(params, state, width, height);
   const ruBuf = new ArrayBuffer(192);
   const ruF = new Float32Array(ruBuf);
   const ruU = new Uint32Array(ruBuf);
@@ -1498,8 +1660,11 @@ export function buildPointCloudFXNativeComputeGraph(options: PointCloudFXNativeG
 
   const id = (name: string) => `${options.sourceId}:point-cloud-fx:${name}`;
   const source = getPointCloudFXNativeShaderSources();
-  const computeSource = source.find((item) => item.stage === 'compute')!;
+  const computeSource = source.find((item) => item.shaderId === POINT_CLOUD_FX_NATIVE_SHADER_IDS.compute)!;
+  const sortFillSource = source.find((item) => item.shaderId === POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortFill)!;
+  const sortStepSource = source.find((item) => item.shaderId === POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortStep)!;
   const renderSource = source.find((item) => item.stage === 'render')!;
+  const shouldDepthSort = options.pointData.depthSortEnabled && options.pointData.sortCount > 1;
   const buffers: PointCloudFXNativeGraphBuffer[] = [
     {
       id: id('home'),
@@ -1518,6 +1683,14 @@ export function buildPointCloudFXNativeComputeGraph(options: PointCloudFXNativeG
       ...(mustReset ? { initial_buffer: options.pointData.liveInitialBuffer } : {}),
     },
     {
+      id: id('sort-pairs'),
+      kind: 'storage',
+      byte_length: options.pointData.sortByteLength,
+      persistent: true,
+      clear: mustReset,
+      ...(mustReset ? { initial_buffer: options.pointData.sortInitialBuffer } : {}),
+    },
+    {
       id: id('compute-uniform'),
       kind: 'uniform',
       byte_length: 288,
@@ -1530,22 +1703,70 @@ export function buildPointCloudFXNativeComputeGraph(options: PointCloudFXNativeG
       initial_b64: buildPointCloudFXRenderUniform(params, state, width, height),
     },
   ];
+  const passes: PointCloudFXNativeGraphPass[] = [
+    {
+      name: 'point-cloud-fx/sim',
+      shader_id: computeSource.shaderId,
+      entry: computeSource.entry,
+      dispatch: [Math.max(1, Math.ceil(options.pointData.pointCount / 64)), 1, 1],
+      bindings: [
+        { binding: 0, resource: id('home'), kind: 'read-only-storage' },
+        { binding: 1, resource: id('live'), kind: 'storage' },
+        { binding: 2, resource: id('compute-uniform'), kind: 'uniform' },
+      ],
+    },
+  ];
+  if (shouldDepthSort) {
+    buffers.push({
+      id: id('sort-fill-uniform'),
+      kind: 'uniform',
+      byte_length: 80,
+      initial_b64: buildPointCloudFXSortFillUniform(params, state, width, height, options.pointData.sortCount),
+    });
+    passes.push({
+      name: 'point-cloud-fx/sort-fill',
+      shader_id: sortFillSource.shaderId,
+      entry: sortFillSource.entry,
+      dispatch: [Math.max(1, Math.ceil(options.pointData.sortCount / 64)), 1, 1],
+      bindings: [
+        { binding: 0, resource: id('live'), kind: 'read-only-storage' },
+        { binding: 1, resource: id('sort-pairs'), kind: 'storage' },
+        { binding: 2, resource: id('sort-fill-uniform'), kind: 'uniform' },
+      ],
+    });
+    let sortPassIndex = 0;
+    for (let sequenceSize = 2; sequenceSize <= options.pointData.sortCount; sequenceSize *= 2) {
+      for (let stride = sequenceSize / 2; stride >= 1; stride /= 2) {
+        const uniformId = id(`sort-step-uniform-${sortPassIndex}`);
+        buffers.push({
+          id: uniformId,
+          kind: 'uniform',
+          byte_length: 16,
+          initial_b64: buildPointCloudFXSortStepUniform(
+            options.pointData.pointCount,
+            options.pointData.sortCount,
+            sequenceSize,
+            stride,
+          ),
+        });
+        passes.push({
+          name: `point-cloud-fx/sort-step-${sortPassIndex}`,
+          shader_id: sortStepSource.shaderId,
+          entry: sortStepSource.entry,
+          dispatch: [Math.max(1, Math.ceil(options.pointData.sortCount / 64)), 1, 1],
+          bindings: [
+            { binding: 0, resource: id('sort-pairs'), kind: 'storage' },
+            { binding: 1, resource: uniformId, kind: 'uniform' },
+          ],
+        });
+        sortPassIndex++;
+      }
+    }
+  }
   return {
     config: {
       buffers,
-      passes: [
-        {
-          name: 'point-cloud-fx/sim',
-          shader_id: computeSource.shaderId,
-          entry: computeSource.entry,
-          dispatch: [Math.max(1, Math.ceil(options.pointData.pointCount / 64)), 1, 1],
-          bindings: [
-            { binding: 0, resource: id('home'), kind: 'read-only-storage' },
-            { binding: 1, resource: id('live'), kind: 'storage' },
-            { binding: 2, resource: id('compute-uniform'), kind: 'uniform' },
-          ],
-        },
-      ],
+      passes,
       render_passes: [
         {
           name: 'point-cloud-fx/render',
@@ -1565,6 +1786,7 @@ export function buildPointCloudFXNativeComputeGraph(options: PointCloudFXNativeG
             { binding: 0, resource: id('home'), kind: 'read-only-storage' },
             { binding: 1, resource: id('live'), kind: 'read-only-storage' },
             { binding: 2, resource: id('render-uniform'), kind: 'uniform' },
+            { binding: 3, resource: id('sort-pairs'), kind: 'read-only-storage' },
           ],
         },
       ],
@@ -1579,6 +1801,7 @@ export class WebGPUPointCloudFX {
 
   private homeBuffer: any = null;
   private liveBuffer: any = null;
+  private sortBuffer: any = null;
   private computeUniformBuffer: any;
   private renderUniformBuffer: any;
   private computeUniformBufferHandle: GhostGpuBufferHandle | null = null;
@@ -1667,6 +1890,7 @@ export class WebGPUPointCloudFX {
         { binding: 0, visibility: GPUShaderStage.VERTEX,   buffer: { type: 'read-only-storage' } },
         { binding: 1, visibility: GPUShaderStage.VERTEX,   buffer: { type: 'read-only-storage' } },
         { binding: 2, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 3, visibility: GPUShaderStage.VERTEX,   buffer: { type: 'read-only-storage' } },
       ],
     });
     this.renderPipeline = this.device.createRenderPipeline({
@@ -1763,10 +1987,12 @@ export class WebGPUPointCloudFX {
       liveF[off + 10] = homeF[homeOff + 6]; // color.b
       liveF[off + 11] = 0;
     }
+    const sortBytes = buildIdentitySortBuffer(n);
 
     // ── (Re)allocate buffers at the right size ─────────────────
     try { this.homeBuffer?.destroy?.(); } catch { /* */ }
     try { this.liveBuffer?.destroy?.(); } catch { /* */ }
+    try { this.sortBuffer?.destroy?.(); } catch { /* */ }
     this.homeBuffer = this.device.createBuffer({
       size: n * HOME_BYTES,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
@@ -1775,8 +2001,13 @@ export class WebGPUPointCloudFX {
       size: n * LIVE_BYTES,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
+    this.sortBuffer = this.device.createBuffer({
+      size: n * SORT_PAIR_BYTES,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
     this.device.queue.writeBuffer(this.homeBuffer, 0, homeBytes);
     this.device.queue.writeBuffer(this.liveBuffer, 0, liveBytes);
+    this.device.queue.writeBuffer(this.sortBuffer, 0, sortBytes);
 
     // Bind groups capture buffer handles — re-create them.
     this.computeBindGroup = this.device.createBindGroup({
@@ -1793,6 +2024,7 @@ export class WebGPUPointCloudFX {
         { binding: 0, resource: { buffer: this.homeBuffer } },
         { binding: 1, resource: { buffer: this.liveBuffer } },
         { binding: 2, resource: { buffer: this.renderUniformBuffer } },
+        { binding: 3, resource: { buffer: this.sortBuffer } },
       ],
     });
 
@@ -2005,12 +2237,14 @@ export class WebGPUPointCloudFX {
   dispose(): void {
     try { this.homeBuffer?.destroy?.(); } catch { /* */ }
     try { this.liveBuffer?.destroy?.(); } catch { /* */ }
+    try { this.sortBuffer?.destroy?.(); } catch { /* */ }
     if (this.computeUniformBufferHandle) this.computeUniformBufferHandle.release();
     else try { this.computeUniformBuffer?.destroy?.(); } catch { /* */ }
     if (this.renderUniformBufferHandle) this.renderUniformBufferHandle.release();
     else try { this.renderUniformBuffer?.destroy?.(); } catch { /* */ }
     this.homeBuffer = null;
     this.liveBuffer = null;
+    this.sortBuffer = null;
     this.computeUniformBuffer = null;
     this.renderUniformBuffer = null;
     this.computeUniformBufferHandle = null;
