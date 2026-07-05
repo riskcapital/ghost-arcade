@@ -223,6 +223,15 @@ type NativeEffectPassRuntime = {
     verticalSlice?: number;
     tearChance?: number;
     triggerMode?: number;
+    rollOff?: number;
+    highlightProtect?: number;
+    skinProtect?: number;
+    ceiling?: number;
+    tint?: number;
+    shadowTemp?: number;
+    highlightTemp?: number;
+    splitTone?: number;
+    autoCycle?: number;
   };
 };
 const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<{
@@ -524,6 +533,94 @@ function effectToNativeDescriptor(effect: any): string | null {
       ?? normalizeHueCycle(params.amount)
       ?? 0;
     return `hue:${cycle.toFixed(4)}`;
+  }
+  if (type === 'exposure') {
+    const exposure = clampNumber(
+      firstFiniteParam(params, ['exposure', 'exposureAmount', 'amount'], 0),
+      -4,
+      4,
+    );
+    const rollOff = clampNumber(
+      firstFiniteParam(params, ['exposureRollOff', 'rollOff', 'rolloff'], 0),
+      0,
+      1,
+    );
+    const highlightProtect = clampNumber(
+      firstFiniteParam(params, ['exposureHighlightProtect', 'highlightProtect', 'highlightProtection'], 0),
+      0,
+      1,
+    );
+    return `exposure:${exposure.toFixed(4)}:${rollOff.toFixed(4)}:${highlightProtect.toFixed(4)}`;
+  }
+  if (type === 'vibrance') {
+    const vibrance = clampNumber(
+      firstFiniteParam(params, ['vibranceAmount', 'vibrance', 'amount'], 0.3),
+      -1,
+      2,
+    );
+    const skinProtect = clampNumber(
+      firstFiniteParam(params, ['vibranceSkinProtect', 'skinProtect', 'skinProtection'], 0.5),
+      0,
+      1,
+    );
+    const highlightProtect = clampNumber(
+      firstFiniteParam(params, ['vibranceHighlightProtect', 'highlightProtect', 'highlightProtection'], 0.3),
+      0,
+      1,
+    );
+    const ceiling = clampNumber(
+      firstFiniteParam(params, ['vibranceCeiling', 'ceiling', 'outputCeiling'], 1),
+      0.1,
+      2,
+    );
+    return [
+      'vibrance',
+      vibrance.toFixed(4),
+      skinProtect.toFixed(4),
+      highlightProtect.toFixed(4),
+      ceiling.toFixed(4),
+    ].join(':');
+  }
+  if (type === 'temperaturetint' || type === 'temperature-tint') {
+    const temperature = clampNumber(
+      firstFiniteParam(params, ['temperature', 'temperatureAmount', 'amount'], 0),
+      -1,
+      1,
+    );
+    const tint = clampNumber(
+      firstFiniteParam(params, ['tint', 'tintAmount'], 0),
+      -1,
+      1,
+    );
+    const shadowTemp = clampNumber(
+      firstFiniteParam(params, ['shadowTemp', 'temperatureShadow', 'shadowTemperature'], 0),
+      -1,
+      1,
+    );
+    const highlightTemp = clampNumber(
+      firstFiniteParam(params, ['highlightTemp', 'temperatureHighlight', 'highlightTemperature'], 0),
+      -1,
+      1,
+    );
+    const splitTone = clampNumber(
+      firstFiniteParam(params, ['splitTone', 'temperatureSplitTone'], 0),
+      0,
+      1,
+    );
+    const autoCycle = clampNumber(
+      firstFiniteParam(params, ['autoCycle', 'temperatureAutoCycle'], 0),
+      0,
+      1,
+    );
+    return [
+      'temperature-tint',
+      temperature.toFixed(4),
+      tint.toFixed(4),
+      shadowTemp.toFixed(4),
+      highlightTemp.toFixed(4),
+      splitTone.toFixed(4),
+      autoCycle.toFixed(4),
+    ].join(':');
   }
   if (type === 'posterize') {
     const levelsRaw =
@@ -918,6 +1015,25 @@ function nativeEffectPassFromDescriptor(descriptor: string | null): NativeEffect
       blockHold: Number(rawParam5 ?? 0.3),
       tearChance: Number(rawParam6 ?? 0),
       triggerMode: Number(rawParam7 ?? 0),
+    };
+  } else if (effect === 'exposure') {
+    params = {
+      rollOff: Number(rawParam0 ?? 0),
+      highlightProtect: Number(rawParam1 ?? 0),
+    };
+  } else if (effect === 'vibrance') {
+    params = {
+      skinProtect: Number(rawParam0 ?? 0.5),
+      highlightProtect: Number(rawParam1 ?? 0.3),
+      ceiling: Number(rawParam2 ?? 1),
+    };
+  } else if (effect === 'temperature-tint') {
+    params = {
+      tint: Number(rawParam0 ?? 0),
+      shadowTemp: Number(rawParam1 ?? 0),
+      highlightTemp: Number(rawParam2 ?? 0),
+      splitTone: Number(rawParam3 ?? 0),
+      autoCycle: Number(rawParam4 ?? 0),
     };
   }
   if (params && Object.values(params).some((value) => !Number.isFinite(value))) return null;
