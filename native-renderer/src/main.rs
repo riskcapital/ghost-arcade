@@ -334,6 +334,105 @@ fn plane_vertex(index: u32) -> vec3<f32> {
   return verts[index % 6u];
 }
 
+fn polar_vertex(theta: f32, phi: f32, radius: f32) -> vec3<f32> {
+  let sp = sin(phi);
+  return vec3<f32>(cos(theta) * sp * radius, cos(phi) * radius, sin(theta) * sp * radius);
+}
+
+fn sphere_vertex(index: u32, hemisphere: bool) -> vec3<f32> {
+  let segments = 12u;
+  let stacks = 2u;
+  let quad = index / 6u;
+  let seg = quad % segments;
+  let stack = min(quad / segments, stacks - 1u);
+  let corner = index % 6u;
+  let theta0 = f32(seg) / f32(segments) * 6.28318530718;
+  let theta1 = f32(seg + 1u) / f32(segments) * 6.28318530718;
+  let phi_max = select(3.14159265359, 1.57079632679, hemisphere);
+  let phi0 = f32(stack) / f32(stacks) * phi_max;
+  let phi1 = f32(stack + 1u) / f32(stacks) * phi_max;
+  let a = polar_vertex(theta0, phi0, 0.5);
+  let b = polar_vertex(theta1, phi0, 0.5);
+  let c = polar_vertex(theta1, phi1, 0.5);
+  let d = polar_vertex(theta0, phi1, 0.5);
+  if (corner == 0u) { return a; }
+  if (corner == 1u) { return c; }
+  if (corner == 2u) { return b; }
+  if (corner == 3u) { return a; }
+  if (corner == 4u) { return d; }
+  return c;
+}
+
+fn pyramid_vertex(index: u32) -> vec3<f32> {
+  let verts = array<vec3<f32>, 18>(
+    vec3<f32>(-0.5, -0.5,  0.5), vec3<f32>( 0.5, -0.5,  0.5), vec3<f32>( 0.0,  0.5,  0.0),
+    vec3<f32>( 0.5, -0.5,  0.5), vec3<f32>( 0.5, -0.5, -0.5), vec3<f32>( 0.0,  0.5,  0.0),
+    vec3<f32>( 0.5, -0.5, -0.5), vec3<f32>(-0.5, -0.5, -0.5), vec3<f32>( 0.0,  0.5,  0.0),
+    vec3<f32>(-0.5, -0.5, -0.5), vec3<f32>(-0.5, -0.5,  0.5), vec3<f32>( 0.0,  0.5,  0.0),
+    vec3<f32>(-0.5, -0.5, -0.5), vec3<f32>( 0.5, -0.5, -0.5), vec3<f32>( 0.5, -0.5,  0.5),
+    vec3<f32>(-0.5, -0.5, -0.5), vec3<f32>( 0.5, -0.5,  0.5), vec3<f32>(-0.5, -0.5,  0.5),
+  );
+  return verts[index % 18u];
+}
+
+fn cylinder_vertex(index: u32) -> vec3<f32> {
+  let segments = 12u;
+  let quad = index / 6u;
+  let seg = quad % segments;
+  let corner = index % 6u;
+  let theta0 = f32(seg) / f32(segments) * 6.28318530718;
+  let theta1 = f32(seg + 1u) / f32(segments) * 6.28318530718;
+  let a = vec3<f32>(cos(theta0) * 0.5, -0.5, sin(theta0) * 0.5);
+  let b = vec3<f32>(cos(theta1) * 0.5, -0.5, sin(theta1) * 0.5);
+  let c = vec3<f32>(cos(theta1) * 0.5,  0.5, sin(theta1) * 0.5);
+  let d = vec3<f32>(cos(theta0) * 0.5,  0.5, sin(theta0) * 0.5);
+  if (corner == 0u) { return a; }
+  if (corner == 1u) { return b; }
+  if (corner == 2u) { return c; }
+  if (corner == 3u) { return a; }
+  if (corner == 4u) { return c; }
+  return d;
+}
+
+fn cone_vertex(index: u32) -> vec3<f32> {
+  let segments = 12u;
+  let tri = index / 3u;
+  let seg = tri % segments;
+  let corner = index % 3u;
+  let theta0 = f32(seg) / f32(segments) * 6.28318530718;
+  let theta1 = f32(seg + 1u) / f32(segments) * 6.28318530718;
+  let a = vec3<f32>(cos(theta0) * 0.5, -0.5, sin(theta0) * 0.5);
+  let b = vec3<f32>(cos(theta1) * 0.5, -0.5, sin(theta1) * 0.5);
+  let top = vec3<f32>(0.0, 0.5, 0.0);
+  if (tri < segments) {
+    if (corner == 0u) { return a; }
+    if (corner == 1u) { return b; }
+    return top;
+  }
+  if (corner == 0u) { return vec3<f32>(0.0, -0.5, 0.0); }
+  if (corner == 1u) { return b; }
+  return a;
+}
+
+fn mesh_vertex(index: u32, shape: f32) -> vec3<f32> {
+  if (shape < 0.5) { return plane_vertex(index); }
+  if (shape < 1.5) { return cube_vertex(index); }
+  if (shape < 2.5) { return sphere_vertex(index, false); }
+  if (shape < 3.5) { return sphere_vertex(index, true); }
+  if (shape < 4.5) { return pyramid_vertex(index); }
+  if (shape < 5.5) { return cylinder_vertex(index); }
+  return cone_vertex(index);
+}
+
+fn mesh_base_uv(local: vec3<f32>, shape: f32) -> vec2<f32> {
+  if (shape > 1.5) {
+    let angle = atan2(local.z, local.x) / 6.28318530718 + 0.5;
+    let v = select(0.5 - local.y, 1.0 - local.y * 2.0, shape > 2.5 && shape < 3.5);
+    return vec2<f32>(angle, clamp(v, 0.0, 1.0));
+  }
+  return vec2<f32>(local.x + 0.5, 0.5 - local.y);
+}
+
 fn rotate_y(p: vec3<f32>, yaw: f32) -> vec3<f32> {
   let c = cos(yaw);
   let s = sin(yaw);
@@ -368,10 +467,7 @@ fn stage_uv(base_uv: vec2<f32>, material: vec4<f32>, uv_params: vec4<f32>) -> ve
 fn vs_main(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) instance_index: u32) -> VertexOut {
   let item = items[min(instance_index, u32(127))];
   let shape = item.position.w;
-  var local = cube_vertex(vertex_index);
-  if (shape < 0.5) {
-    local = plane_vertex(vertex_index);
-  }
+  let local = mesh_vertex(vertex_index, shape);
   let scaled = local * max(item.scale.xyz, vec3<f32>(0.001));
   let world = item.position.xyz + rotate_y(scaled, item.scale.w);
 
@@ -402,9 +498,9 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) in
     out.position = vec4<f32>(ndc, depth, 1.0);
   }
   out.color = item.color;
-  out.normal = normalize(rotate_y(local, item.scale.w));
+  out.normal = normalize(rotate_y(select(local, normalize(local), shape > 1.5), item.scale.w));
   out.view_z = view.z;
-  out.uv = stage_uv(vec2<f32>(local.x + 0.5, 0.5 - local.y), item.material, item.uv);
+  out.uv = stage_uv(mesh_base_uv(local, shape), item.material, item.uv);
   out.material = item.material;
   return out;
 }
@@ -2123,6 +2219,7 @@ impl App {
             "native_stage3d_overlay_preview": true,
             "native_stage3d_mesh_preview": true,
             "native_stage3d_textured_mesh_preview": true,
+            "native_stage3d_primitive_meshes": true,
             "native_projection_sim_scene_ingest": true,
             "native_projection_sim_overlay_preview": true,
             "native_recording": false,
@@ -8171,7 +8268,7 @@ impl RenderState {
         });
         pass.set_pipeline(&self.stage3d_mesh_pipeline);
         pass.set_bind_group(0, &self.stage3d_mesh_bind_group, &[]);
-        pass.draw(0..36, 0..item_count as u32);
+        pass.draw(0..144, 0..item_count as u32);
     }
 
     fn render_snapshot(
@@ -8748,6 +8845,7 @@ fn collect_stage3d_mesh_nodes(
                 let rotation = vec3_path_or(node, &["rotation"], [0.0, 0.0, 0.0]);
                 let scale = vec3_path_or(node, &["scale"], [1.0, 1.0, 1.0]);
                 let dimensions = vec3_path_or(node, &["dimensions"], [1.5, 1.5, 1.5]);
+                let geometry = string_at(node, &["geometry"]).unwrap_or_default();
                 let color = color_path_or(node, &["material", "emissive"])
                     .or_else(|| color_path_or(node, &["material", "color"]))
                     .unwrap_or([0.78, 0.68, 1.0]);
@@ -8769,11 +8867,7 @@ fn collect_stage3d_mesh_nodes(
                     ],
                     rotation[1],
                     [color[0], color[1], color[2], alpha],
-                    if string_at(node, &["geometry"]).as_deref() == Some("plane") {
-                        0.0
-                    } else {
-                        1.0
-                    },
+                    stage3d_geometry_shape_code(&geometry),
                     stage3d_material(None, 1.0, 0.0, 1.0),
                     [0.0, 0.0, 1.0, 0.0],
                 ));
@@ -8857,22 +8951,12 @@ fn collect_stage3d_user_mesh_items(
         if items.len() >= MAX_STAGE3D_MESH_ITEMS {
             return;
         }
-        let position = vec3_path_or(element, &["position"], [0.0, 1.0, 0.0]);
         let scalar = number_at(element, &["scale"])
             .unwrap_or(1.0)
             .clamp(0.05, 100.0) as f32;
-        let width = number_at(element, &["params", "width"])
-            .or_else(|| number_at(element, &["params", "w"]))
-            .unwrap_or(1.4) as f32
-            * scalar;
-        let height = number_at(element, &["params", "height"])
-            .or_else(|| number_at(element, &["params", "h"]))
-            .unwrap_or(1.0) as f32
-            * scalar;
-        let depth = number_at(element, &["params", "depth"])
-            .or_else(|| number_at(element, &["params", "d"]))
-            .unwrap_or(1.0) as f32
-            * scalar;
+        let (mesh_scale, shape, y_offset) = stage3d_user_mesh_spec(element, scalar);
+        let mut position = vec3_path_or(element, &["position"], [0.0, 1.0, 0.0]);
+        position[1] += y_offset;
         let color = color_path_or(element, &["params", "color"])
             .or_else(|| color_path_or(element, &["params", "lightColor"]))
             .unwrap_or([0.78, 0.8, 0.86]);
@@ -8900,11 +8984,7 @@ fn collect_stage3d_user_mesh_items(
             / 180.0;
         items.push(stage3d_mesh_item(
             position,
-            [
-                width.abs().max(0.08),
-                height.abs().max(0.08),
-                depth.abs().max(0.08),
-            ],
+            mesh_scale,
             number_at(element, &["rotationY"]).unwrap_or(0.0) as f32,
             [
                 color[0],
@@ -8912,11 +8992,84 @@ fn collect_stage3d_user_mesh_items(
                 color[2],
                 (0.18 + opacity * 0.62).clamp(0.18, 0.86),
             ],
-            1.0,
+            shape,
             stage3d_material(source_slot, brightness, uv_mode, opacity),
             [uv_offset_x, uv_offset_y, uv_zoom, uv_rotation],
         ));
     }
+}
+
+fn stage3d_param_number(element: &Value, keys: &[&str], fallback: f32) -> f32 {
+    let Some(params) = element.get("params") else {
+        return fallback;
+    };
+    for key in keys {
+        if let Some(value) = params.get(*key).and_then(Value::as_f64) {
+            return value.clamp(-1.0e6, 1.0e6) as f32;
+        }
+    }
+    fallback
+}
+
+fn stage3d_user_mesh_spec(element: &Value, scalar: f32) -> ([f32; 3], f32, f32) {
+    let element_type = string_at(element, &["type"]).unwrap_or_default();
+    let safe_scalar = scalar.abs().max(0.05);
+    let spec = match element_type.as_str() {
+        "visualpanel" => {
+            let w = stage3d_param_number(element, &["width", "w"], 10.0);
+            let h = stage3d_param_number(element, &["height", "h"], 5.0);
+            let d = stage3d_param_number(element, &["depth", "d"], 0.12);
+            ([w, h, d], 1.0, h * 0.5)
+        }
+        "visualbox" => {
+            let w = stage3d_param_number(element, &["width", "w"], 8.0);
+            let h = stage3d_param_number(element, &["height", "h"], 4.0);
+            let d = stage3d_param_number(element, &["depth", "d"], 1.0);
+            ([w, h, d], 1.0, h * 0.5)
+        }
+        "visualcube" => {
+            let size = stage3d_param_number(element, &["size"], 5.0);
+            ([size, size, size], 1.0, size * 0.5)
+        }
+        "visualsphere" => {
+            let radius = stage3d_param_number(element, &["radius", "r"], 4.0);
+            ([radius * 2.0, radius * 2.0, radius * 2.0], 2.0, radius)
+        }
+        "visualhemi" | "visualdome" | "visualhemisphere" => {
+            let radius = stage3d_param_number(element, &["radius", "r"], 8.0);
+            ([radius * 2.0, radius * 2.0, radius * 2.0], 3.0, 0.0)
+        }
+        "visualpyramid" => {
+            let radius = stage3d_param_number(element, &["radius", "r"], 4.0);
+            let height = stage3d_param_number(element, &["height", "h"], 6.0);
+            ([radius * 2.0, height, radius * 2.0], 4.0, height * 0.5)
+        }
+        "visualcylinder" => {
+            let radius = stage3d_param_number(element, &["radius", "r"], 3.0);
+            let height = stage3d_param_number(element, &["height", "h"], 8.0);
+            ([radius * 2.0, height, radius * 2.0], 5.0, height * 0.5)
+        }
+        "visualcone" => {
+            let radius = stage3d_param_number(element, &["radius", "r"], 3.0);
+            let height = stage3d_param_number(element, &["height", "h"], 7.0);
+            ([radius * 2.0, height, radius * 2.0], 6.0, height * 0.5)
+        }
+        _ => {
+            let w = stage3d_param_number(element, &["width", "w", "len"], 1.4);
+            let h = stage3d_param_number(element, &["height", "h"], 1.0);
+            let d = stage3d_param_number(element, &["depth", "d"], 1.0);
+            ([w, h, d], 1.0, 0.0)
+        }
+    };
+    (
+        [
+            (spec.0[0] * safe_scalar).abs().max(0.08),
+            (spec.0[1] * safe_scalar).abs().max(0.08),
+            (spec.0[2] * safe_scalar).abs().max(0.08),
+        ],
+        spec.1,
+        spec.2 * safe_scalar,
+    )
 }
 
 fn stage3d_mesh_item(
@@ -8960,6 +9113,18 @@ fn stage3d_uv_mode(mode: &str) -> f32 {
         "dome" => 3.0,
         "wrap" => 4.0,
         _ => 0.0,
+    }
+}
+
+fn stage3d_geometry_shape_code(geometry: &str) -> f32 {
+    match geometry.trim().to_ascii_lowercase().as_str() {
+        "plane" | "panel" | "quad" => 0.0,
+        "sphere" | "ball" => 2.0,
+        "hemisphere" | "half-sphere" | "half_sphere" | "dome" => 3.0,
+        "pyramid" => 4.0,
+        "cylinder" | "column" => 5.0,
+        "cone" => 6.0,
+        _ => 1.0,
     }
 }
 

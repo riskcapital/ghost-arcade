@@ -743,6 +743,14 @@ class NativeRendererBroker {
           ? 'Stage3D visual elements can sample native source-frame textures'
           : 'Stage3D mesh preview cannot sample VJ/source-frame textures yet',
       ],
+      [
+        'native-stage3d-primitive-meshes',
+        'Native Stage3D primitive meshes',
+        !!features.native_stage3d_primitive_meshes,
+        features.native_stage3d_primitive_meshes
+          ? 'Stage3D visual boxes, spheres, domes, pyramids, cones, and cylinders have native mesh previews'
+          : 'Stage3D visual primitives collapse to generic native preview meshes',
+      ],
       ['native-projection-sim-scene-ingest', 'Native Projection Sim scene ingest', !!features.native_projection_sim_scene_ingest],
       [
         'native-projection-sim-overlay-preview',
@@ -1882,6 +1890,7 @@ function makeDefaultCapabilities(overrides = {}) {
       native_stage3d_overlay_preview: false,
       native_stage3d_mesh_preview: false,
       native_stage3d_textured_mesh_preview: false,
+      native_stage3d_primitive_meshes: false,
       native_projection_sim_scene_ingest: false,
       native_projection_sim_overlay_preview: false,
       native_recording: false,
