@@ -179,7 +179,7 @@ type NativeRenderClockCommand = {
 export type PresentPolicyProfile = 'vsync-live' | 'low-latency-safe' | 'low-latency-aggressive';
 
 type NativeGraphRouteKind = 'planet' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud' | 'flythrough' | 'pixel-particles' | 'point-cloud-fx' | 'effect-pass';
-type NativeEffectPassRuntime = {
+export type NativeEffectPassRuntime = {
   effect: NativeEffectPassId;
   descriptor: string;
   amount?: number;
@@ -497,7 +497,7 @@ function normalizeHueCycle(value: unknown): number | null {
   return value / 360;
 }
 
-function effectToNativeDescriptor(effect: any): string | null {
+export function effectToNativeDescriptor(effect: any): string | null {
   if (!effect || effect.enabled === false) return null;
   const type = String(effect.type || '').toLowerCase();
   const params = effect.params || {};
@@ -932,7 +932,7 @@ function effectToNativeDescriptor(effect: any): string | null {
   return null;
 }
 
-function nativeEffectPassFromDescriptor(descriptor: string | null): NativeEffectPassRuntime | null {
+export function nativeEffectPassFromDescriptor(descriptor: string | null): NativeEffectPassRuntime | null {
   if (!descriptor) return null;
   const [
     rawId,
