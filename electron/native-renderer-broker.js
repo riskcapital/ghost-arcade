@@ -795,7 +795,7 @@ class NativeRendererBroker {
             'Local still images can decode directly into native source-frame textures.',
             features.native_media_decode && features.media_prefetch
               ? 'Local videos decode through the native render-clock pump into source-frame textures; supported shared media sources use OS texture handles.'
-              : 'Video and full media prefetch still use source-frame/shared-texture fallback paths.',
+              : 'Video decode/prefetch falls back when the native media pump is unavailable in the current core capabilities.',
           ]
         : ['Native render core is not running or does not advertise static image decode.'],
     };
@@ -822,7 +822,7 @@ class NativeRendererBroker {
       !notes.some((note) => note.includes('Local video files can prefetch bounded FFmpeg-decoded frames'))
     ) {
       notes.push(
-        'Local video files can prefetch bounded FFmpeg-decoded frames and adjacent-frame windows into native source-frame textures; continuous in-core native video decode is still pending.',
+        'Local video files can prefetch bounded FFmpeg-decoded frames and adjacent-frame windows into native source-frame textures while the render-clock pump is unavailable.',
       );
     }
     return {
@@ -1072,10 +1072,19 @@ class NativeRendererBroker {
               : !features.native_static_image_decode || !features.native_static_image_prefetch
                 ? 'native still-image decode/prefetch is incomplete'
                 : 'native output driver prerequisites are incomplete';
+    const nativeMediaDecodeOk = !!(
+      features.native_media_decode &&
+      features.media_prefetch &&
+      features.native_video_frame_decode &&
+      features.native_video_frame_prefetch &&
+      features.native_video_decode_pump &&
+      features.native_video_decode_pump_window &&
+      videoFramePrefetch.available
+    );
     const fullNativeV2Blockers = [
       nativeOutputDriverOk ? null : 'native output driver is not ready',
       features.shared_texture_upload ? null : 'full shared-texture media transport is pending',
-      features.native_media_decode && features.media_prefetch ? null : 'continuous native video decode and full media prefetch are pending',
+      nativeMediaDecodeOk ? null : 'native render-clock video decode pump is not fully ready',
       nativeTextureShareSenderOk ? null : `${this.platform === 'darwin' ? 'Syphon' : 'Spout'} native texture-share sender is not active-ready`,
       nativeRecordingOk ? null : 'native recording/MP4 frame path is not fully ready',
       features.native_stage3d ? null : 'native Stage3D renderer is pending',
@@ -1147,7 +1156,7 @@ class NativeRendererBroker {
           ? `desktop FFmpeg raw-frame pipe available; active sessions=${nativeFrameEncoder.activeSessions}`
           : (nativeFrameEncoder.reason || 'desktop FFmpeg raw-frame pipe is unavailable'),
       ],
-      ['native-media-decode', 'Native continuous media decode/prefetch', !!features.native_media_decode && !!features.media_prefetch],
+      ['native-media-decode', 'Native render-clock media decode/prefetch', nativeMediaDecodeOk],
       ['native-stage3d-scene-ingest', 'Native Stage3D scene ingest', !!features.native_stage3d_scene_ingest],
       [
         'native-stage3d-overlay-preview',
