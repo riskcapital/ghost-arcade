@@ -560,7 +560,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   let haze_floor = clamp(0.58 - haze_density * 0.22, 0.18, 0.80);
   let haze = clamp(1.0 - in.view_z * (0.012 + haze_density * 0.012), haze_floor, 1.0);
   let opacity = clamp(in.material.w, 0.0, 1.0);
-  let alpha = clamp(in.color.a * opacity, 0.0, 0.96);
+  var alpha = clamp(in.color.a * opacity, 0.0, 0.96);
   let room_visibility = clamp(1.0 - u.lighting.x, 0.0, 1.0);
   let screen_boost = max(0.0, u.lighting.y);
   let exposure = max(0.02, u.lighting.z);
@@ -570,8 +570,9 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   var rgb = in.color.rgb;
   if (in.material.x >= 0.5) {
     let source_slot = i32(clamp(floor(in.material.x - 1.0 + 0.5), 0.0, 7.0));
-    let tex = textureSampleLevel(source_frames, source_sampler, in.uv, source_slot, 0.0).rgb;
-    rgb = mix(rgb, tex, clamp(opacity, 0.0, 1.0));
+    let tex = textureSampleLevel(source_frames, source_sampler, in.uv, source_slot, 0.0);
+    rgb = mix(rgb, tex.rgb, clamp(opacity, 0.0, 1.0));
+    alpha = clamp(in.color.a * opacity * tex.a, 0.0, 0.96);
   }
   rgb *= max(0.0, in.material.y) * light_mul;
   return vec4<f32>(rgb * shade * haze * alpha, alpha);
