@@ -2046,6 +2046,7 @@ struct App {
     source_frames: HashMap<String, SourceFrame>,
     source_frame_slots: HashMap<String, usize>,
     source_frame_signatures: HashMap<String, String>,
+    native_video_frame_signatures: HashMap<String, String>,
     stage3d_scene: Option<Value>,
     stage3d_scene_summary: NativeSceneBridgeSummary,
     projection_sim_scene: Option<Value>,
@@ -2146,6 +2147,7 @@ impl App {
             source_frames: HashMap::new(),
             source_frame_slots: HashMap::new(),
             source_frame_signatures: HashMap::new(),
+            native_video_frame_signatures: HashMap::new(),
             stage3d_scene: None,
             stage3d_scene_summary: NativeSceneBridgeSummary::empty("stage3d"),
             projection_sim_scene: None,
@@ -4000,12 +4002,15 @@ impl App {
         self.stats.precompiled_pixel_shaders = self.precompiled_shader_count("pixel") as u64;
         let cleared_source_frame_signatures = self.source_frame_signatures.len();
         self.source_frame_signatures.clear();
+        let cleared_native_video_frame_signatures = self.native_video_frame_signatures.len();
+        self.native_video_frame_signatures.clear();
 
         json!({
             "cleared_shader_records": cleared_shader_records,
             "cleared_pipeline_entries": cleared_pipeline_entries,
             "cleared_native_graph_buffers": cleared_native_graph_buffers,
             "cleared_source_frame_signatures": cleared_source_frame_signatures,
+            "cleared_native_video_frame_signatures": cleared_native_video_frame_signatures,
             "remaining_shader_records": self.shader_registry.len(),
             "remaining_pipeline_entries": self.renderer.as_ref().map(RenderState::native_pipeline_cache_count).unwrap_or(0),
             "remaining_native_graph_buffers": self.renderer.as_ref().map(RenderState::native_compute_graph_buffer_count).unwrap_or(0),
@@ -5333,9 +5338,12 @@ impl App {
     fn clear_prefetch_cache(&mut self) -> Value {
         let cleared_source_frame_signatures = self.source_frame_signatures.len();
         self.source_frame_signatures.clear();
+        let cleared_native_video_frame_signatures = self.native_video_frame_signatures.len();
+        self.native_video_frame_signatures.clear();
         json!({
             "cleared_source_frame_signatures": cleared_source_frame_signatures,
-            "note": "native still-image prefetch signatures cleared; resident bound source frames are preserved"
+            "cleared_native_video_frame_signatures": cleared_native_video_frame_signatures,
+            "note": "native image and video-frame prefetch signatures cleared; resident bound source frames are preserved"
         })
     }
 
@@ -5514,12 +5522,12 @@ impl App {
                     .native_video_frame_decode_failures
                     .saturating_add(1);
                 self.stats.native_video_frame_decode_last_error = err;
-                self.source_frame_signatures.remove(source_id);
+                self.native_video_frame_signatures.remove(source_id);
                 return;
             }
         };
         if self
-            .source_frame_signatures
+            .native_video_frame_signatures
             .get(source_id)
             .is_some_and(|existing| existing == &signature)
             && self.source_frames.contains_key(source_id)
@@ -5550,7 +5558,7 @@ impl App {
                     .native_video_frame_decode_bytes_uploaded
                     .saturating_add(uploaded as u64);
                 self.stats.native_video_frame_decode_last_error.clear();
-                self.source_frame_signatures
+                self.native_video_frame_signatures
                     .insert(source_id.to_string(), signature);
             }
             Err(err) => {
@@ -5559,7 +5567,7 @@ impl App {
                     .native_video_frame_decode_failures
                     .saturating_add(1);
                 self.stats.native_video_frame_decode_last_error = err;
-                self.source_frame_signatures.remove(source_id);
+                self.native_video_frame_signatures.remove(source_id);
             }
         }
     }
@@ -5612,6 +5620,9 @@ impl App {
         self.stats.source_frame_last_reject_reason.clear();
         if transport != "native-image" {
             self.source_frame_signatures.remove(&source_id);
+        }
+        if transport != "native-video-frame" {
+            self.native_video_frame_signatures.remove(&source_id);
         }
         self.source_frames
             .insert(source_id.clone(), SourceFrame { seq });
@@ -5748,6 +5759,8 @@ impl App {
         self.stats.source_frame_last_upload_height = descriptor.height;
         self.stats.source_frame_last_upload_transport = "shared-texture".to_string();
         self.stats.source_frame_last_reject_reason.clear();
+        self.source_frame_signatures.remove(&source_id);
+        self.native_video_frame_signatures.remove(&source_id);
         self.source_frames
             .insert(source_id.clone(), SourceFrame { seq });
         for layer in self.scene_layers.values_mut() {
@@ -5841,6 +5854,7 @@ impl App {
             self.source_frame_slots.remove(&old_source_id);
             self.source_frames.remove(&old_source_id);
             self.source_frame_signatures.remove(&old_source_id);
+            self.native_video_frame_signatures.remove(&old_source_id);
             for layer in self.scene_layers.values_mut() {
                 if layer.source_id.as_deref() == Some(old_source_id.as_str()) {
                     layer.frame_slot = None;
