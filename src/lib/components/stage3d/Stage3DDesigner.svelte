@@ -33,8 +33,11 @@
   import { DEFAULT_ATMOSPHERE, DEFAULT_LIGHTING, type Stage3DScene, type Stage3DVenue, type UserStageElement } from '../../stage3d/types';
   import type { Layer } from '../../types';
   import { startRecording as startCanvasRecording, formatRecordingDuration, type RecorderHandle } from '../../recording/recorder';
-  import { startNativeLiveFrameRecording } from '../../recording/nativeLiveFrameRecorder';
-  import { setNativeRendererStage3DScene } from '../../api/native-renderer';
+  import {
+    startNativeLiveFrameRecording,
+    startNativeRendererLiveFrameRecording,
+  } from '../../recording/nativeLiveFrameRecorder';
+  import { getNativeRendererCapabilities, setNativeRendererStage3DScene } from '../../api/native-renderer';
   import { invoke, isDesktopApp } from '../../bridge';
   import StageNodeProperties from './StageNodeProperties.svelte';
   import StageElementProperties from './StageElementProperties.svelte';
@@ -356,6 +359,55 @@
 
     if (isDesktopApp) {
       recordingDuration = 0;
+      try {
+        const caps = await getNativeRendererCapabilities();
+        const nativeStageReady = !!(
+          caps?.core_capabilities_confirmed &&
+          caps?.features?.native_stage3d &&
+          caps?.features?.native_recording &&
+          caps?.features?.frame_snapshot_export &&
+          caps?.implemented_methods?.includes('set_stage3d_scene') &&
+          caps?.implemented_methods?.includes('export_frame_snapshot')
+        );
+        if (nativeStageReady) {
+          recorderHandle = await startNativeRendererLiveFrameRecording({
+            width: res.w,
+            height: res.h,
+            fps: 30,
+            quality: 'high',
+            namePrefix: 'Stage Recording',
+            prepareFrame: async () => {
+              const nativeScene = buildNativeStage3DScene(get(stage3dScene), get(project).layers, {
+                camera: controls.getCameraState(),
+              });
+              await setNativeRendererStage3DScene(nativeScene);
+            },
+            restore: async () => {
+              const nativeScene = buildNativeStage3DScene(get(stage3dScene), get(project).layers);
+              await setNativeRendererStage3DScene(nativeScene);
+            },
+            onDurationUpdate: (s) => { recordingDuration = s; },
+            onComplete: () => {
+              isRecording = false;
+              recorderHandle = null;
+              toast('Stage recording saved');
+            },
+            onError: (err) => {
+              isRecording = false;
+              recorderHandle = null;
+              toast(err.message || 'Recording failed');
+            },
+          });
+          if (recorderHandle) {
+            isRecording = true;
+            toast(`Stage recording started · ${res.label} native renderer`);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('[Stage3D] Native renderer recording unavailable, falling back to live canvas capture:', err);
+      }
+
       try {
         recorderHandle = await startNativeLiveFrameRecording({
           captureFrame: (width, height) => controls.captureFrameAt(width, height),
