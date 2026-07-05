@@ -6,6 +6,7 @@ import sdf from './sdf.wgsl?raw';
 import lighting from './lighting.wgsl?raw';
 import simulation from './simulation.wgsl?raw';
 import audio from './audio.wgsl?raw';
+import sort from './sort.wgsl?raw';
 
 export type WgslStdlibName =
   | 'noise'
@@ -15,7 +16,8 @@ export type WgslStdlibName =
   | 'sdf'
   | 'lighting'
   | 'simulation'
-  | 'audio';
+  | 'audio'
+  | 'sort';
 
 export const WGSL_STDLIB: Readonly<Record<WgslStdlibName, string>> = Object.freeze({
   noise,
@@ -26,6 +28,7 @@ export const WGSL_STDLIB: Readonly<Record<WgslStdlibName, string>> = Object.free
   lighting,
   simulation,
   audio,
+  sort,
 });
 
 export function getWgslStdlibModule(name: string): string | undefined {

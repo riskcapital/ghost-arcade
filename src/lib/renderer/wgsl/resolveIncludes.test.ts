@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { WGSL_STDLIB } from './modules';
 import { resolveWgslIncludes } from './resolveIncludes';
 
 describe('resolveWgslIncludes', () => {
@@ -50,5 +51,15 @@ describe('resolveWgslIncludes', () => {
 
     expect(out.match(/BEGIN #include <color>/g)).toHaveLength(1);
     expect(out).toContain('SKIP duplicate #include <color>');
+  });
+
+  it('exposes the shared sort module for renderer and native graph shaders', () => {
+    const out = resolveWgslIncludes('#include <sort>\nfn main() {}', {
+      modules: WGSL_STDLIB,
+      sourceName: 'sort-smoke',
+    });
+
+    expect(out).toContain('struct GhostSortPair');
+    expect(out).toContain('ghost_sort_key_from_depth_far_to_near');
   });
 });
