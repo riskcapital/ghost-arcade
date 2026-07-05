@@ -1187,10 +1187,20 @@ class NativeRendererBroker {
           : textureShare.nativeOutputWaitingForFrame
             ? 'native output IOSurface pump is waiting for the first rendered frame'
           : textureShare.nativeOutputActive
-            ? 'native output IOSurface is actively publishing through Syphon'
+            ? `native output shared texture is actively publishing through ${textureShareName}`
             : textureShare.nativeOutputCapable
-              ? 'native output IOSurface can publish through Syphon when the sender is started'
+              ? `native output shared texture can publish through ${textureShareName} when the sender is started`
               : `${textureShareName} addon does not expose native output IOSurface publish`;
+    const nativeTextureShareOutputActiveOk = !!(
+      features.shared_texture_output_export &&
+      textureShare?.available &&
+      textureShare.nativeOutputActive &&
+      !textureShare.nativeOutputWaitingForFrame
+    );
+    const outputActiveOk = managedOutputOk || nativeTextureShareOutputActiveOk;
+    const outputActiveDetail = nativeTextureShareOutputActiveOk
+      ? nativeTextureShareSenderDetail
+      : managedOutputDetail;
     const nativeFrameExportOk = hasNativeFrameExport(this.capabilities);
     const nativeMp4FrameEncoderOk = !!features.native_mp4_frame_encoder && !!nativeFrameEncoder.available;
     const nativeRecordingOk = !!features.native_recording && nativeFrameExportOk && nativeMp4FrameEncoderOk;
@@ -1462,8 +1472,8 @@ class NativeRendererBroker {
           detail: nativeOutputDriverDetail,
         },
         output_active: {
-          ok: managedOutputOk,
-          detail: managedOutputDetail,
+          ok: outputActiveOk,
+          detail: outputActiveDetail,
         },
         full_v2: {
           ok: fullNativeV2Ok,
