@@ -45,6 +45,14 @@ function check(cmd, args) {
   };
 }
 
+function formatBlockers(blockers) {
+  if (!Array.isArray(blockers) || blockers.length === 0) return '';
+  return blockers
+    .map((blocker) => String(blocker || '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join(' | ');
+}
+
 function createRpcProcess() {
   const child = spawn(bin, [], { stdio: ['pipe', 'pipe', 'pipe'] });
   let nextId = 1;
@@ -196,6 +204,7 @@ async function inspectAppBridge() {
       readiness?.modes?.output_driver?.ok
     );
     const fullV2Blockers = readiness?.modes?.full_v2?.blockers ?? [];
+    const fullV2BlockerDetail = formatBlockers(fullV2Blockers);
     const ok =
       !!status?.backend_ready &&
       !!features.shared_texture_output_export === outputExportExpected &&
@@ -218,6 +227,7 @@ async function inspectAppBridge() {
         `outputDriver=${nativeOutputDriverReady ? 'on' : 'pending'}`,
         `outputActive=${readiness?.modes?.output_active?.ok ? 'on' : 'idle'}`,
         `fullV2=${readiness?.modes?.full_v2?.ok ? 'ready' : `pending(${fullV2Blockers.length})`}`,
+        fullV2BlockerDetail ? `fullV2Blockers="${fullV2BlockerDetail}"` : '',
         `stage3dSceneIngest=${features.native_stage3d_scene_ingest ? 'on' : 'pending'}`,
         `stage3dOverlayPreview=${features.native_stage3d_overlay_preview ? 'on' : 'pending'}`,
         `stage3dMeshPreview=${features.native_stage3d_mesh_preview ? 'on' : 'pending'}`,
