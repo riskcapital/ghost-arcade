@@ -2628,6 +2628,30 @@ function isNativeSharedTextureSource(
   );
 }
 
+export function buildNativeSharedTextureSourceFrameCommand(args: {
+  sourceId: string;
+  width: number;
+  height: number;
+  info: SpoutSharedTextureInfo & { handle: string };
+  senderName?: string;
+  seq: number;
+}): RendererCommand {
+  return {
+    type: 'upload_source_gpu_shared_texture',
+    source_id: args.sourceId,
+    width: args.width,
+    height: args.height,
+    shared_handle: args.info.handle,
+    platform: args.info.platform,
+    format: args.info.format ?? undefined,
+    handle_encoding: args.info.handleEncoding ?? 'base64',
+    handle_byte_length: args.info.handleByteLength,
+    frame: args.info.frame ?? undefined,
+    sender_name: (args.info.senderName ?? args.senderName) || undefined,
+    seq: args.seq,
+  };
+}
+
 function isDynamicSourceFrameSource(
   src: NonNullable<Layer['source']>,
   sourceType: string,
@@ -4465,20 +4489,14 @@ export class NativeRendererSync {
     });
     if (budget) budget.dynamicRemaining -= 1;
 
-    commands.push({
-      type: 'upload_source_frame',
-      source_id: src.id,
+    commands.push(buildNativeSharedTextureSourceFrameCommand({
+      sourceId: src.id,
       width,
       height,
-      shared_handle: info.handle,
-      shared_texture_platform: info.platform,
-      shared_texture_format: info.format ?? undefined,
-      shared_texture_handle_encoding: info.handleEncoding ?? 'base64',
-      shared_texture_handle_byte_length: info.handleByteLength,
-      shared_texture_frame: info.frame ?? undefined,
-      shared_texture_sender_name: (info.senderName ?? sharedTextureSenderName(src)) || undefined,
+      info: info as SpoutSharedTextureInfo & { handle: string },
+      senderName: sharedTextureSenderName(src),
       seq,
-    });
+    }));
     return true;
   }
 
