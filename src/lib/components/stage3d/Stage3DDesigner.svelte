@@ -28,8 +28,10 @@
   } from '../../stage3d/store';
   import { project } from '../../stores/layers';
   import { ELEMENT_TYPES, makeUserElement } from '../../stage3d/elementTypes';
+  import { buildNativeStage3DScene } from '../../stage3d/nativeSceneBridge';
   import { buildVenue, paPresetElements, type PAPreset } from '../../stage3d/venues';
   import { DEFAULT_ATMOSPHERE, DEFAULT_LIGHTING, type Stage3DScene, type Stage3DVenue, type UserStageElement } from '../../stage3d/types';
+  import type { Layer } from '../../types';
   import { startRecording as startCanvasRecording, formatRecordingDuration, type RecorderHandle } from '../../recording/recorder';
   import { startNativeLiveFrameRecording } from '../../recording/nativeLiveFrameRecorder';
   import { setNativeRendererStage3DScene } from '../../api/native-renderer';
@@ -66,13 +68,15 @@
   let recRes: keyof typeof REC_RES = '1080';
   let nativeScenePublishTimer: ReturnType<typeof setTimeout> | null = null;
   let nativeScenePublishWarnings = 0;
+  let screenLayers: Layer[] = [];
 
-  function queueNativeStageScene(scene: Stage3DScene) {
+  function queueNativeStageScene(scene: Stage3DScene, layers = screenLayers) {
     if (!isDesktopApp) return;
     if (nativeScenePublishTimer) clearTimeout(nativeScenePublishTimer);
     nativeScenePublishTimer = setTimeout(() => {
       nativeScenePublishTimer = null;
-      void setNativeRendererStage3DScene(scene).catch((err) => {
+      const nativeScene = buildNativeStage3DScene(scene, layers);
+      void setNativeRendererStage3DScene(nativeScene).catch((err) => {
         if (nativeScenePublishWarnings < 3) {
           console.warn('[Stage3D] native scene bridge unavailable:', err);
           nativeScenePublishWarnings++;
@@ -85,9 +89,8 @@
   let canUndo = false;
   let canRedo = false;
   $: { void $historyVersion; const c = stage3dScene.getHistoryCounts(); canUndo = c.past > 0; canRedo = c.future > 0; }
-  $: queueNativeStageScene($stage3dScene);
-
   $: screenLayers = $project.layers.filter(l => l.type === 'screen' && l.visible !== false);
+  $: queueNativeStageScene($stage3dScene, screenLayers);
   $: userElements = $stage3dScene.userElements ?? [];
   $: venue = ($stage3dScene.venue ?? 'festival') as Stage3DVenue;
   // Venue scenery pieces (deck, trusses, movers, PA…) the renderer

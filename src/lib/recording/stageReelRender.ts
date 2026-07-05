@@ -57,6 +57,7 @@ import { setStageEffectsManualTime } from '../stores/stageEffects';
 import { keyframeTimeline } from '../stores/keyframeTimeline';
 import { layerSequencer } from '../stores/layerSequencer';
 import { vjLayerSequencer } from '../stores/vjLayerSequencer';
+import { project } from '../stores/layers';
 import { mediaLibrary } from '../stores/media';
 import { generateUUID } from '../utils/uuid';
 import { createAssetRefFromGeneratedBlob, pathToFileUrl, type AssetRef } from '../storage/assetRegistry';
@@ -70,9 +71,9 @@ import {
 import { stage3DRendererControls, stage3dScene } from '../stage3d/store';
 import {
   evaluateShotCamera, sequenceDuration, shotAtTime,
-  type DemoShot, type DemoReelSettings, type ReelCameraState,
+  type DemoShot, type DemoReelSettings,
 } from '../stage3d/demoReel';
-import type { Stage3DScene } from '../stage3d/types';
+import { buildNativeStage3DScene } from '../stage3d/nativeSceneBridge';
 
 export type ReelRenderStatus =
   | 'idle' | 'choosing-folder' | 'loading-ffmpeg' | 'rendering' | 'encoding' | 'saving'
@@ -198,17 +199,6 @@ function blendFrames(a: CapturedFrame, b: CapturedFrame, amount: number): Captur
 
 function nativePixelFormatForOutput(format: string | null | undefined): 'rgba' | 'bgra' {
   return /bgra/i.test(String(format ?? '')) ? 'bgra' : 'rgba';
-}
-
-function cloneStageSceneWithCamera(scene: Stage3DScene, camera: ReelCameraState): Stage3DScene {
-  const cloned = JSON.parse(JSON.stringify(scene)) as Stage3DScene;
-  cloned.camera = {
-    ...(cloned.camera ?? {}),
-    position: [...camera.position],
-    target: [...camera.target],
-    fov: camera.fov,
-  };
-  return cloned;
 }
 
 interface ShotSpan {
@@ -376,6 +366,7 @@ function createReelRenderStore() {
         );
       }
       await nextFrame();
+      const nativeSceneLayers = get(project).layers;
 
       async function captureShotFrame(index: number, shot: DemoShot, progress: number): Promise<CapturedFrame> {
         if (index !== lastShotIndex) {
@@ -420,7 +411,9 @@ function createReelRenderStore() {
             if (!at) throw new Error('Could not evaluate Stage 3D reel shot for native capture');
             const camera = evaluateShotCamera(at.shot, at.progress);
             await nextFrame();
-            await setNativeRendererStage3DScene(cloneStageSceneWithCamera(at.shot.stage, camera));
+            await setNativeRendererStage3DScene(
+              buildNativeStage3DScene(at.shot.stage, nativeSceneLayers, { camera }),
+            );
 
             if (outputMode === 'frames') {
               if (!nativeJpegSequence) throw new Error('Native Stage 3D frame export folder is not ready');
@@ -642,7 +635,9 @@ function createReelRenderStore() {
       setStageEffectsManualTime(null);
       try { stage3dScene.loadScene(restoreScene); } catch { /* keep last shot's scene */ }
       if (nativeStageCaptureActive || nativeOutputNeedsRestore) {
-        await setNativeRendererStage3DScene(restoreScene).catch(() => {});
+        await setNativeRendererStage3DScene(
+          buildNativeStage3DScene(restoreScene, get(project).layers),
+        ).catch(() => {});
       }
       try { engine.resize(restoreWidth, restoreHeight); } catch { /* nothing we can do */ }
     }
