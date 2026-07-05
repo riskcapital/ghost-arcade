@@ -121,6 +121,49 @@ const REQUIRED_NATIVE_GRAPH_INSTRUMENTS = [
   },
 ];
 
+const NATIVE_EFFECT_PASS_DESCRIPTORS = [
+  { id: 'invert', code: 1 },
+  { id: 'grayscale', code: 2 },
+  { id: 'brightness', code: 3 },
+  { id: 'contrast', code: 4 },
+  { id: 'gamma', code: 5 },
+  { id: 'saturation', code: 6 },
+  { id: 'hue', code: 7 },
+  { id: 'posterize', code: 8 },
+  { id: 'noise', code: 9 },
+  { id: 'pixelate', code: 10 },
+  { id: 'vignette', code: 11 },
+  { id: 'rgb-shift', code: 12 },
+  { id: 'scanlines', code: 13 },
+  { id: 'blur', code: 14 },
+  { id: 'chromatic-aberration', code: 15 },
+  { id: 'glitch', code: 16 },
+  { id: 'exposure', code: 17 },
+  { id: 'vibrance', code: 18 },
+  { id: 'temperature-tint', code: 19 },
+  { id: 'sharpen', code: 20 },
+  { id: 'directional-blur', code: 21 },
+  { id: 'zoom-blur', code: 22 },
+  { id: 'radial-blur', code: 23 },
+  { id: 'kaleidoscope', code: 24 },
+  { id: 'mirror', code: 25 },
+  { id: 'chroma-key', code: 26 },
+  { id: 'luma-key', code: 27 },
+  { id: 'difference-key', code: 28 },
+  { id: 'erode', code: 29 },
+  { id: 'dilate', code: 30 },
+  { id: 'wave', code: 31 },
+  { id: 'fisheye', code: 32 },
+  { id: 'lens-distortion', code: 33 },
+  { id: 'twirl', code: 34 },
+  { id: 'pinch-bulge', code: 35 },
+  { id: 'edge-detect', code: 36 },
+  { id: 'film-grain', code: 37 },
+  { id: 'filmic-tonemap', code: 38 },
+  { id: 'bloom', code: 39 },
+  { id: 'colorama', code: 40 },
+];
+
 function nativeGraphReadinessId(id) {
   return id === 'smoke-3d' ? 'native-3d-smoke-graph' : `native-${id}-graph`;
 }
@@ -1081,6 +1124,21 @@ class NativeRendererBroker {
       ];
     });
     const allGraphInstrumentsReady = graphChecks.every(([, , ok]) => ok);
+    const effectPassDescriptors = Array.isArray(this.capabilities?.native_effect_pass_descriptors)
+      ? this.capabilities.native_effect_pass_descriptors
+      : [];
+    const effectPassIds = new Set(effectPassDescriptors.map((entry) => String(entry?.id || '')));
+    const effectPassManifestOk = !!(
+      features.native_effect_pass_manifest &&
+      features.compute_graph_render &&
+      features.compute_graph_texture_sampling &&
+      features.compute_graph_source_frame_target &&
+      effectPassDescriptors.length === NATIVE_EFFECT_PASS_DESCRIPTORS.length &&
+      NATIVE_EFFECT_PASS_DESCRIPTORS.every((entry) => effectPassIds.has(entry.id))
+    );
+    const effectPassManifestDetail = effectPassManifestOk
+      ? `${effectPassDescriptors.length} source-frame layer effect(s) can route through the native effect-pass graph`
+      : 'native effect-pass graph manifest is incomplete or source-frame graph sampling is unavailable';
     const textureShareName = textureShare?.label || textureShare?.platform || 'Texture share';
     const textureShareDetail = textureShare
       ? [
@@ -1364,6 +1422,12 @@ class NativeRendererBroker {
         computeGraphHostReady
           ? `implemented graph routes=${graphChecks.filter(([, , ok]) => ok).length}/${REQUIRED_NATIVE_GRAPH_INSTRUMENTS.length}`
           : 'compute graph host/source-frame target is not ready',
+      ],
+      [
+        'native-effect-pass-manifest',
+        'Native source-frame effect-pass route',
+        effectPassManifestOk,
+        effectPassManifestDetail,
       ],
       ...graphChecks,
       ['native-output-driver', 'Native output driver', nativeOutputDriverOk, nativeOutputDriverDetail],
@@ -1975,6 +2039,16 @@ function normalizeCapabilities(capabilities, previous = makeDefaultCapabilities(
           }))
           .filter((entry) => entry.id)
       : previous.native_compositor_effect_descriptors ?? [],
+    native_effect_pass_descriptors: Array.isArray(source.native_effect_pass_descriptors)
+      ? source.native_effect_pass_descriptors
+          .filter((entry) => entry && typeof entry === 'object')
+          .map((entry) => ({
+            ...entry,
+            id: String(entry.id ?? ''),
+            code: Number(entry.code ?? 0),
+          }))
+          .filter((entry) => entry.id)
+      : previous.native_effect_pass_descriptors ?? [],
     native_graph_instrument_manifest: Array.isArray(source.native_graph_instrument_manifest)
       ? source.native_graph_instrument_manifest
           .filter((entry) => entry && typeof entry === 'object')
@@ -2033,6 +2107,16 @@ function applyBrokerCapabilityOverlay(capabilities, textureShare, nativeFrameEnc
     features.video_frame_prefetch ||
     features.native_video_frame_prefetch
   );
+  const nativeEffectPassHostReady = !!(
+    features.compute_graph_host &&
+    features.compute_graph_render &&
+    features.compute_graph_texture_sampling &&
+    features.compute_graph_source_frame_target
+  );
+  features.native_effect_pass_manifest = !!(
+    features.native_effect_pass_manifest ||
+    nativeEffectPassHostReady
+  );
 
   const notes = Array.isArray(capabilities?.notes) ? [...capabilities.notes] : [];
   if (
@@ -2056,6 +2140,9 @@ function applyBrokerCapabilityOverlay(capabilities, textureShare, nativeFrameEnc
 
   return {
     ...capabilities,
+    native_effect_pass_descriptors: nativeEffectPassHostReady
+      ? NATIVE_EFFECT_PASS_DESCRIPTORS.map((entry) => ({ ...entry }))
+      : capabilities?.native_effect_pass_descriptors ?? [],
     features,
     notes,
   };
@@ -2637,6 +2724,7 @@ function makeDefaultCapabilities(overrides = {}) {
     native_graph_instrument_manifest: [],
     native_compositor_blend_modes: [],
     native_compositor_effect_descriptors: [],
+    native_effect_pass_descriptors: [],
     features: {
       separate_process_render_core: false,
       managed_native_window: false,
@@ -2648,6 +2736,7 @@ function makeDefaultCapabilities(overrides = {}) {
       blend_modes: false,
       effect_descriptors: false,
       native_compositor_manifest: false,
+      native_effect_pass_manifest: false,
       render_clock: false,
       frame_snapshot: false,
       frame_snapshot_export: false,

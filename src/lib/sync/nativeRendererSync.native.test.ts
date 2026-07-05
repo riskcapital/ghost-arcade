@@ -17,6 +17,7 @@ let nativeGraphReadyRouteKinds: (
   instruments: ReadonlySet<string>,
   manifest: ReadonlyMap<string, any>,
 ) => Set<string>;
+let nativeEffectPassDescriptorIds: (capabilities: any) => string[];
 
 beforeAll(async () => {
   const storage = new Map<string, string>();
@@ -57,6 +58,7 @@ beforeAll(async () => {
     nativeGraphInstrumentIds,
     nativeGraphManifestById,
     nativeGraphReadyRouteKinds,
+    nativeEffectPassDescriptorIds,
     nativeEffectPassFromDescriptor,
   } = await import('./nativeRendererSync'));
 });
@@ -188,6 +190,16 @@ describe('native renderer sync graph manifest contract', () => {
 });
 
 describe('native renderer sync effect-pass descriptors', () => {
+  it('reads advertised native effect-pass descriptors from capabilities', () => {
+    expect(nativeEffectPassDescriptorIds({
+      native_effect_pass_descriptors: [
+        { id: 'invert', code: 1 },
+        { id: 'colorama', code: 40 },
+        { id: 'Colorama', code: 40 },
+      ],
+    })).toEqual(['invert', 'colorama']);
+  });
+
   it('maps color correction UI params to native effect-pass descriptors', () => {
     expect(effectToNativeDescriptor({
       type: 'exposure',

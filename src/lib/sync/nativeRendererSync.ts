@@ -334,6 +334,15 @@ export function nativeGraphManifestById(
   return entries;
 }
 
+export function nativeEffectPassDescriptorIds(capabilities: NativeRendererCapabilities | null | undefined): string[] {
+  const ids = new Set<string>();
+  for (const entry of capabilities?.native_effect_pass_descriptors ?? []) {
+    const normalized = String(entry?.id ?? '').trim().toLowerCase();
+    if (normalized) ids.add(normalized);
+  }
+  return Array.from(ids);
+}
+
 export function missingNativeGraphRouteRequirements(
   features: Record<string, boolean>,
   instruments: ReadonlySet<string>,
@@ -2485,6 +2494,7 @@ export class NativeRendererSync {
   private nativeComputeGraphSourceFrames = false;
   private nativeGraphCatalogComplete = false;
   private nativeGraphReadyKinds = new Set<NativeGraphRouteKind>();
+  private nativeEffectPassDescriptorIds = new Set<string>();
   private nativeGraphRoutes = new Map<string, NativeGraphRouteState>();
   private nativePointCloudDataCache = new Map<string, Promise<PointCloudFXNativePointData>>();
   private nativeSourceFrameSize = SOURCE_FRAME_SIZE_FALLBACK;
@@ -2686,6 +2696,13 @@ export class NativeRendererSync {
     return this.nativeGraphReadyKinds.has(kind);
   }
 
+  private supportsNativeEffectPassRoute(effectPasses: NativeEffectPassRuntime[]): boolean {
+    if (!this.supportsNativeFeature('native_effect_pass_manifest')) return false;
+    if (!this.supportsNativeFeature('compute_graph_texture_sampling')) return false;
+    if (!this.supportsNativeFeature('compute_graph_source_frame_target')) return false;
+    return effectPasses.every((effectPass) => this.nativeEffectPassDescriptorIds.has(effectPass.effect));
+  }
+
   private audioSignature(audio: VisualAudioState): string {
     const q = (value: number, scale = 1000) =>
       Math.round((Number.isFinite(value) ? value : 0) * scale);
@@ -2858,9 +2875,9 @@ export class NativeRendererSync {
 
   private nativeEffectPassRouteForLayer(layer: Layer, includeWarningDisabled = false): NativeGraphLayerRoute | null {
     if (layer.type === 'gpu') return null;
-    if (!this.supportsNativeFeature('compute_graph_texture_sampling')) return null;
     const effectPasses = nativeEffectPassesForLayer(layer);
     if (!effectPasses?.length) return null;
+    if (!this.supportsNativeEffectPassRoute(effectPasses)) return null;
     const inputSource = nativeLayerSource(layer);
     if (!inputSource.source || !inputSource.shouldPreview || inputSource.sourceType === 'none') return null;
     const inputReady =
@@ -3433,6 +3450,7 @@ export class NativeRendererSync {
       this.nativeGraphInstruments,
       nativeGraphManifest,
     );
+    this.nativeEffectPassDescriptorIds = new Set(nativeEffectPassDescriptorIds(startupCapabilities));
     this.nativeComputeGraphSourceFrames = computeGraphSourceFrameHost;
     this.nativeGraphCatalogComplete = computeGraphSourceFrameHost && missingGraphRequirements.length === 0;
     updateNativeRendererRuntimeFromStartup(
@@ -3578,6 +3596,7 @@ export class NativeRendererSync {
     this.nativeComputeGraphSourceFrames = false;
     this.nativeGraphCatalogComplete = false;
     this.nativeGraphReadyKinds.clear();
+    this.nativeEffectPassDescriptorIds.clear();
     this.nativeGraphRoutes.clear();
     this.nativePointCloudDataCache.clear();
     this.nativeGraphInstruments.clear();
