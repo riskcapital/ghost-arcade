@@ -173,6 +173,41 @@ function makePointCloudFixture(count: number) {
   });
 }
 
+function makeGaussianPointCloudFixture(count: number) {
+  const positions = new Float32Array(count * 3);
+  const colors = new Float32Array(count * 3);
+  const alpha = new Float32Array(count);
+  const splatScale = new Float32Array(count * 3);
+  const splatRotation = new Float32Array(count * 4);
+  for (let i = 0; i < count; i += 1) {
+    const t = i / Math.max(1, count - 1);
+    const ring = t * Math.PI * 10;
+    positions[i * 3 + 0] = Math.cos(ring) * (0.18 + t * 0.85);
+    positions[i * 3 + 1] = Math.sin(ring * 0.45) * 0.55;
+    positions[i * 3 + 2] = Math.sin(ring) * (0.24 + t * 0.65);
+    colors[i * 3 + 0] = 0.25 + t * 0.75;
+    colors[i * 3 + 1] = 0.35 + Math.sin(ring) * 0.22;
+    colors[i * 3 + 2] = 0.9 - t * 0.35;
+    alpha[i] = 0.45 + (i % 5) * 0.1;
+    splatScale[i * 3 + 0] = -3.9 + Math.sin(ring) * 0.15;
+    splatScale[i * 3 + 1] = -4.5 + Math.cos(ring * 0.7) * 0.12;
+    splatScale[i * 3 + 2] = -5.2;
+    splatRotation[i * 4 + 0] = Math.cos(ring * 0.125);
+    splatRotation[i * 4 + 1] = 0;
+    splatRotation[i * 4 + 2] = Math.sin(ring * 0.125);
+    splatRotation[i * 4 + 3] = 0;
+  }
+  return buildPointCloudFXNativePointData(positions, colors, {
+    maxPoints: Math.min(count, 96),
+    pointSize: 0.024,
+    alpha,
+    splatScale,
+    splatRotation,
+    gaussian: true,
+    signature: `runtime-gaussian-fixture-${count}`,
+  });
+}
+
 function initialBufferToBase64(value: unknown): string | null {
   if (value instanceof ArrayBuffer) {
     return Buffer.from(new Uint8Array(value)).toString('base64');
@@ -511,6 +546,33 @@ describe('Native graph instrument runtime fixtures', () => {
             frameIndex: 10,
             audioBass: 0.45,
             audioTreble: 0.25,
+            reset: true,
+          }),
+          minLuma: 0.002,
+          assert(snapshot: Record<string, unknown>) {
+            expect(Number(snapshot.nonzero_pixels ?? 0)).toBeGreaterThan(20);
+          },
+        },
+        {
+          id: 'point-cloud-fx-gaussian',
+          graph: buildPointCloudFXNativeComputeGraph({
+            sourceId: 'native-graph-fixture-point-cloud-fx-gaussian',
+            pointData: makeGaussianPointCloudFixture(96),
+            params: {
+              topology: 'billboards',
+              pointSize: 0.024,
+              opacity: 0.9,
+              brightness: 1.35,
+              colorMode: 'source',
+              filterMode: 'none',
+              autoRotateY: 0,
+              audioReactive: false,
+            },
+            width: 160,
+            height: 90,
+            time: 1,
+            frameDelta: 1 / 30,
+            frameIndex: 11,
             reset: true,
           }),
           minLuma: 0.002,
