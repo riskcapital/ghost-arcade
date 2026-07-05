@@ -1128,10 +1128,10 @@ async function main() {
       throw new Error(`native output-window control capability missing: ${JSON.stringify(capabilities)}`);
     }
     if (
-      capabilities.features.shared_texture_upload ||
+      !!capabilities.features.shared_texture_upload !== outputExportExpected ||
       capabilities.features.native_texture_share_sender
     ) {
-      throw new Error(`native capabilities overstated unimplemented features: ${JSON.stringify(capabilities.features)}`);
+      throw new Error(`native shared-texture capability mismatch: ${JSON.stringify(capabilities.features)}`);
     }
     if (!!capabilities.features.shared_texture_output_export !== outputExportExpected) {
       throw new Error(`native output shared-texture export capability mismatch: ${JSON.stringify(capabilities.features)}`);
