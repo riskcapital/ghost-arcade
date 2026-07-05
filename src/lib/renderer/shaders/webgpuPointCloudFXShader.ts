@@ -373,16 +373,42 @@ export class WebGPUPointCloudFXShader implements GpuShaderImpl {
     const n = data.vertices.length;
     const positions = new Float32Array(n * 3);
     const colors    = new Float32Array(n * 3);
+    const alpha = new Float32Array(n);
+    const splatScale = new Float32Array(n * 3);
+    const splatRotation = new Float32Array(n * 4);
+    let gaussian = data.dataType === 'gaussian';
     for (let i = 0; i < n; i++) {
       const v = data.vertices[i];
       positions[i * 3 + 0] = v.x;
       positions[i * 3 + 1] = v.y;
       positions[i * 3 + 2] = v.z;
-      colors[i * 3 + 0] = v.r / 255;
-      colors[i * 3 + 1] = v.g / 255;
-      colors[i * 3 + 2] = v.b / 255;
+      colors[i * 3 + 0] = Math.max(0, Math.min(1, (v.r ?? 255) / 255));
+      colors[i * 3 + 1] = Math.max(0, Math.min(1, (v.g ?? 255) / 255));
+      colors[i * 3 + 2] = Math.max(0, Math.min(1, (v.b ?? 255) / 255));
+      alpha[i] = Math.max(0, Math.min(1, (v.a ?? 255) / 255));
+      const scaleOff = i * 3;
+      splatScale[scaleOff + 0] = Number.isFinite(v.scale_0) ? v.scale_0! : 0;
+      splatScale[scaleOff + 1] = Number.isFinite(v.scale_1) ? v.scale_1! : 0;
+      splatScale[scaleOff + 2] = Number.isFinite(v.scale_2) ? v.scale_2! : 0;
+      if (
+        Number.isFinite(v.scale_0) ||
+        Number.isFinite(v.scale_1) ||
+        Number.isFinite(v.scale_2)
+      ) {
+        gaussian = true;
+      }
+      const rotOff = i * 4;
+      splatRotation[rotOff + 0] = Number.isFinite(v.rot_0) ? v.rot_0! : 1;
+      splatRotation[rotOff + 1] = Number.isFinite(v.rot_1) ? v.rot_1! : 0;
+      splatRotation[rotOff + 2] = Number.isFinite(v.rot_2) ? v.rot_2! : 0;
+      splatRotation[rotOff + 3] = Number.isFinite(v.rot_3) ? v.rot_3! : 0;
     }
-    this.inner.setPointCloudData(positions, colors);
+    this.inner.setPointCloudData(positions, colors, {
+      alpha,
+      splatScale: gaussian ? splatScale : undefined,
+      splatRotation: gaussian ? splatRotation : undefined,
+      gaussian,
+    });
     this.loadedBufferKey = key;
   }
 

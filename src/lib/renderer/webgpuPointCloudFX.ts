@@ -33,11 +33,14 @@ import { createAndWarmWgslShaderModule, resolveGhostWgsl } from './wgsl';
  *
  * Storage layout (per-point), two buffers:
  *
- *   HOME (32 bytes, immutable after load):
+ *   HOME (64 bytes, immutable after load):
  *     homePos:   vec3<f32>  (12)
- *     _pad0:     f32        (4)
+ *     alpha:     f32        (4)
  *     homeColor: vec3<f32>  (12)
- *     _pad1:     f32        (4)
+ *     sizeMul:   f32        (4)
+ *     splatScale: vec3<f32> (12)
+ *     gaussian:  f32        (4)
+ *     splatRot:  vec4<f32>  (16)
  *
  *   LIVE (48 bytes, compute-shader write-target):
  *     pos:   vec3<f32>  (12)
@@ -47,22 +50,28 @@ import { createAndWarmWgslShaderModule, resolveGhostWgsl } from './wgsl';
  *     color: vec3<f32>  (12)
  *     _pad:  f32        (4)
  *
- * Total: 80 bytes per point. 250K points (default) = 20MB; 1M points
- * = 80MB. Within budget on any modern GPU.
+ * Total: 112 bytes per point. 250K points = 28MB; 1M points =
+ * 112MB. The extra packed home lane keeps scale/rotation/opacity
+ * available for the native covariance renderer instead of flattening
+ * .ply/.splat files into uniform dots.
  *
- * Loading: the host calls `setPointCloudData(positions, colors)` with
- * Float32Array (XYZ × N) + Float32Array (RGB × N, in 0..1). The
- * renderer (re)allocates buffers, normalizes positions into a unit
- * cube around a robust median center, and writeBuffer's the data.
- * After that the first frame renders immediately.
+ * Loading: the host calls `setPointCloudData(positions, colors, opts)`
+ * with Float32Array (XYZ × N) + Float32Array (RGB × N, in 0..1).
+ * `opts` can carry Gaussian alpha/scale/rotation parsed from .ply /
+ * .splat sources. The renderer (re)allocates buffers, normalizes
+ * positions into a unit cube around a robust median center, and
+ * writeBuffer's the data. After that the first frame renders
+ * immediately.
  */
 
-const HOME_BYTES = 32;
+const HOME_BYTES = 64;
 const LIVE_BYTES = 48;
 const MAX_POINTS = 4_000_000;
 const DEFAULT_POINT_SIZE = 0.006;
 const NORMALIZATION_SAMPLE_LIMIT = 65_536;
 const NORMALIZATION_RADIUS_PERCENTILE = 0.985;
+const MIN_GAUSSIAN_SIZE_MULTIPLIER = 0.45;
+const MAX_GAUSSIAN_SIZE_MULTIPLIER = 10;
 
 type Topology = 'points' | 'billboards' | 'strokes';
 
@@ -73,6 +82,50 @@ type PointCloudNormalization = {
   scale: number;
   radius: number;
 };
+
+export interface PointCloudFXDataOptions {
+  alpha?: Float32Array;
+  splatScale?: Float32Array;
+  splatRotation?: Float32Array;
+  gaussian?: boolean;
+}
+
+function gaussianSizeMultiplier(
+  scale0: number,
+  scale1: number,
+  scale2: number,
+  normalizationScale: number,
+): number {
+  if (!Number.isFinite(scale0) || !Number.isFinite(scale1) || !Number.isFinite(scale2)) return 1;
+  const averageLogScale = (scale0 + scale1 + scale2) / 3;
+  const rawRadius = Math.exp(clampNumber(averageLogScale, -12, 8));
+  const normalizedRadius = rawRadius * Math.max(normalizationScale, 1e-8);
+  return clampNumber(
+    0.65 + normalizedRadius * 160,
+    MIN_GAUSSIAN_SIZE_MULTIPLIER,
+    MAX_GAUSSIAN_SIZE_MULTIPLIER,
+  );
+}
+
+function normalizedGaussianScale(value: number, normalizationScale: number): number {
+  if (!Number.isFinite(value)) return 1;
+  return Math.exp(clampNumber(value, -12, 8)) * Math.max(normalizationScale, 1e-8);
+}
+
+function normalizedQuaternion(
+  x: number,
+  y: number,
+  z: number,
+  w: number,
+): [number, number, number, number] {
+  const qx = Number.isFinite(x) ? x : 1;
+  const qy = Number.isFinite(y) ? y : 0;
+  const qz = Number.isFinite(z) ? z : 0;
+  const qw = Number.isFinite(w) ? w : 0;
+  const len = Math.hypot(qx, qy, qz, qw);
+  if (len <= 1e-8) return [1, 0, 0, 0];
+  return [qx / len, qy / len, qz / len, qw / len];
+}
 
 function medianSorted(values: number[]): number {
   if (values.length === 0) return 0;
@@ -176,10 +229,13 @@ function translate(x: number, y: number, z: number): Float32Array {
 /* ============================================================== */
 const COMPUTE_WGSL = /* wgsl */ `
 struct Home {
-  homePos:   vec3<f32>,
-  _pad0:     f32,
-  homeColor: vec3<f32>,
-  _pad1:     f32,
+  homePos:       vec3<f32>,
+  alpha:         f32,
+  homeColor:     vec3<f32>,
+  sizeMultiplier: f32,
+  splatScale:    vec3<f32>,
+  gaussian:      f32,
+  splatRotation: vec4<f32>,
 };
 
 struct Live {
@@ -559,7 +615,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let stripe = abs(fract((axisValue(effHome, u.filterAxis) * 0.5 + 0.5) * bands + gesturePhase) - 0.5) * 2.0;
     sizeBoost = sizeBoost * mix(1.8, 0.55, smoothstep(0.0, 0.28, stripe));
   }
-  l.size = u.baseSize * sizeBoost;
+  l.size = max(0.0001, u.baseSize * h.sizeMultiplier) * sizeBoost;
 
   // ── Dissolve ───────────────────────────────────────────────────
   let distFromCenter = length(h.homePos);
@@ -574,7 +630,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let stripe = abs(fract((axisValue(effHome, u.filterAxis) * 0.5 + 0.5) * bands + gesturePhase) - 0.5) * 2.0;
     gestureAlpha = mix(0.3, 1.0, 1.0 - smoothstep(0.0, max(u.filterSoftness, 0.02), stripe));
   }
-  l.alpha = clamp(dissolveAlpha * gestureAlpha, 0.0, 1.0);
+  l.alpha = clamp(h.alpha * dissolveAlpha * gestureAlpha, 0.0, 1.0);
 
   live[i] = l;
 }
@@ -948,6 +1004,12 @@ export interface PointCloudFXNativePointData {
   sampledFromCount: number;
 }
 
+export interface PointCloudFXNativePointDataOptions extends PointCloudFXDataOptions {
+  maxPoints?: number;
+  pointSize?: number;
+  signature?: string;
+}
+
 export interface PointCloudFXNativeGraphState {
   pointDataSignature: string;
   pointCount: number;
@@ -1149,7 +1211,7 @@ export function buildPointCloudFXNativePrecompileCommands(): PointCloudFXNativeP
 export function buildPointCloudFXNativePointData(
   positions: Float32Array,
   colors: Float32Array,
-  options: { maxPoints?: number; pointSize?: number; signature?: string } = {},
+  options: PointCloudFXNativePointDataOptions = {},
 ): PointCloudFXNativePointData {
   const sourceCount = Math.floor(Math.min(positions.length / 3, colors.length / 3));
   const maxPoints = Math.floor(clampNumber(options.maxPoints ?? MAX_POINTS, 1, MAX_POINTS));
@@ -1168,39 +1230,66 @@ export function buildPointCloudFXNativePointData(
   });
   const { cx, cy, cz, scale } = normalization;
   const pointSize = clampNumber(options.pointSize ?? DEFAULT_POINT_SIZE, 0.0001, 0.2);
+  const hasGaussianPayload = !!options.gaussian || !!options.splatScale || !!options.splatRotation;
   const homeBytes = new ArrayBuffer(n * HOME_BYTES);
   const homeF = new Float32Array(homeBytes);
   const liveBytes = new ArrayBuffer(n * LIVE_BYTES);
   const liveF = new Float32Array(liveBytes);
 
   for (let i = 0; i < n; i++) {
-    const src = indexFor(i) * 3;
-    const homeOff = i * 8;
+    const sourceIndex = indexFor(i);
+    const src = sourceIndex * 3;
+    const scaleSrc = sourceIndex * 3;
+    const rotSrc = sourceIndex * 4;
+    const homeOff = i * 16;
     const liveOff = i * 12;
     const x = (positions[src + 0] - cx) * scale;
     const y = (positions[src + 1] - cy) * scale;
     const z = (positions[src + 2] - cz) * scale;
+    const alpha = clampNumber(options.alpha?.[sourceIndex] ?? 1, 0, 1);
     const r = clampNumber(colors[src + 0], 0, 1);
     const g = clampNumber(colors[src + 1], 0, 1);
     const b = clampNumber(colors[src + 2], 0, 1);
+    const hasScale = !!options.splatScale &&
+      Number.isFinite(options.splatScale[scaleSrc + 0]) &&
+      Number.isFinite(options.splatScale[scaleSrc + 1]) &&
+      Number.isFinite(options.splatScale[scaleSrc + 2]);
+    const scale0 = hasScale ? options.splatScale![scaleSrc + 0] : 0;
+    const scale1 = hasScale ? options.splatScale![scaleSrc + 1] : 0;
+    const scale2 = hasScale ? options.splatScale![scaleSrc + 2] : 0;
+    const sizeMultiplier = hasScale ? gaussianSizeMultiplier(scale0, scale1, scale2, normalization.scale) : 1;
+    const [rot0, rot1, rot2, rot3] = normalizedQuaternion(
+      options.splatRotation?.[rotSrc + 0] ?? 1,
+      options.splatRotation?.[rotSrc + 1] ?? 0,
+      options.splatRotation?.[rotSrc + 2] ?? 0,
+      options.splatRotation?.[rotSrc + 3] ?? 0,
+    );
 
     homeF[homeOff + 0] = x;
     homeF[homeOff + 1] = y;
     homeF[homeOff + 2] = z;
-    homeF[homeOff + 3] = 0;
+    homeF[homeOff + 3] = alpha;
     homeF[homeOff + 4] = r;
     homeF[homeOff + 5] = g;
     homeF[homeOff + 6] = b;
-    homeF[homeOff + 7] = 0;
+    homeF[homeOff + 7] = sizeMultiplier;
+    homeF[homeOff + 8] = hasScale ? normalizedGaussianScale(scale0, normalization.scale) : 1;
+    homeF[homeOff + 9] = hasScale ? normalizedGaussianScale(scale1, normalization.scale) : 1;
+    homeF[homeOff + 10] = hasScale ? normalizedGaussianScale(scale2, normalization.scale) : 1;
+    homeF[homeOff + 11] = hasGaussianPayload ? 1 : 0;
+    homeF[homeOff + 12] = rot0;
+    homeF[homeOff + 13] = rot1;
+    homeF[homeOff + 14] = rot2;
+    homeF[homeOff + 15] = rot3;
 
     liveF[liveOff + 0] = x;
     liveF[liveOff + 1] = y;
     liveF[liveOff + 2] = z;
-    liveF[liveOff + 3] = 1;
+    liveF[liveOff + 3] = alpha;
     liveF[liveOff + 4] = 0;
     liveF[liveOff + 5] = 0;
     liveF[liveOff + 6] = 0;
-    liveF[liveOff + 7] = pointSize;
+    liveF[liveOff + 7] = pointSize * sizeMultiplier;
     liveF[liveOff + 8] = r;
     liveF[liveOff + 9] = g;
     liveF[liveOff + 10] = b;
@@ -1219,6 +1308,10 @@ export function buildPointCloudFXNativePointData(
     colors[first + 0]?.toFixed(4),
     colors[mid + 1]?.toFixed(4),
     colors[last + 2]?.toFixed(4),
+    hasGaussianPayload ? 'gaussian' : 'points',
+    options.alpha?.[indexFor(0)]?.toFixed(4) ?? 'a1',
+    options.splatScale?.[indexFor(0) * 3 + 0]?.toFixed(4) ?? 's1',
+    options.splatRotation?.[indexFor(0) * 4 + 0]?.toFixed(4) ?? 'r1',
   ].join(':');
 
   return {
@@ -1557,46 +1650,79 @@ export class WebGPUPointCloudFX {
    *  centered at the origin with outlier-resistant framing so the
    *  camera works regardless of source scale (Gaussian splats arrive
    *  in millimeters, PLY scans in meters, etc.). */
-  setPointCloudData(positions: Float32Array, colors: Float32Array): void {
+  setPointCloudData(
+    positions: Float32Array,
+    colors: Float32Array,
+    options: PointCloudFXDataOptions = {},
+  ): void {
     const n = Math.min(MAX_POINTS, Math.floor(Math.min(positions.length / 3, colors.length / 3)));
     if (n === 0) return;
 
-    const { cx, cy, cz, scale } = computePointCloudNormalization(n, (pointIndex, axis) =>
+    const normalization = computePointCloudNormalization(n, (pointIndex, axis) =>
       positions[pointIndex * 3 + axis],
     );
+    const { cx, cy, cz, scale } = normalization;
+    const hasGaussianPayload = !!options.gaussian || !!options.splatScale || !!options.splatRotation;
 
-    // ── Build the home buffer (32 bytes/point) ─────────────────
+    // ── Build the home buffer (64 bytes/point) ─────────────────
     const homeBytes = new ArrayBuffer(n * HOME_BYTES);
     const homeF = new Float32Array(homeBytes);
     for (let i = 0; i < n; i++) {
-      const off = i * 8;  // 32 bytes / 4 = 8 floats
+      const off = i * 16;  // 64 bytes / 4 = 16 floats
+      const scaleOff = i * 3;
+      const rotOff = i * 4;
+      const hasScale = !!options.splatScale &&
+        Number.isFinite(options.splatScale[scaleOff + 0]) &&
+        Number.isFinite(options.splatScale[scaleOff + 1]) &&
+        Number.isFinite(options.splatScale[scaleOff + 2]);
+      const scale0 = hasScale ? options.splatScale![scaleOff + 0] : 0;
+      const scale1 = hasScale ? options.splatScale![scaleOff + 1] : 0;
+      const scale2 = hasScale ? options.splatScale![scaleOff + 2] : 0;
+      const sizeMultiplier = hasScale ? gaussianSizeMultiplier(scale0, scale1, scale2, normalization.scale) : 1;
+      const [rot0, rot1, rot2, rot3] = normalizedQuaternion(
+        options.splatRotation?.[rotOff + 0] ?? 1,
+        options.splatRotation?.[rotOff + 1] ?? 0,
+        options.splatRotation?.[rotOff + 2] ?? 0,
+        options.splatRotation?.[rotOff + 3] ?? 0,
+      );
+
       homeF[off + 0] = (positions[i * 3 + 0] - cx) * scale;
       homeF[off + 1] = (positions[i * 3 + 1] - cy) * scale;
       homeF[off + 2] = (positions[i * 3 + 2] - cz) * scale;
-      homeF[off + 3] = 0;
-      homeF[off + 4] = colors[i * 3 + 0];
-      homeF[off + 5] = colors[i * 3 + 1];
-      homeF[off + 6] = colors[i * 3 + 2];
-      homeF[off + 7] = 0;
+      homeF[off + 3] = clampNumber(options.alpha?.[i] ?? 1, 0, 1);
+      homeF[off + 4] = clampNumber(colors[i * 3 + 0], 0, 1);
+      homeF[off + 5] = clampNumber(colors[i * 3 + 1], 0, 1);
+      homeF[off + 6] = clampNumber(colors[i * 3 + 2], 0, 1);
+      homeF[off + 7] = sizeMultiplier;
+      homeF[off + 8] = hasScale ? normalizedGaussianScale(scale0, normalization.scale) : 1;
+      homeF[off + 9] = hasScale ? normalizedGaussianScale(scale1, normalization.scale) : 1;
+      homeF[off + 10] = hasScale ? normalizedGaussianScale(scale2, normalization.scale) : 1;
+      homeF[off + 11] = hasGaussianPayload ? 1 : 0;
+      homeF[off + 12] = rot0;
+      homeF[off + 13] = rot1;
+      homeF[off + 14] = rot2;
+      homeF[off + 15] = rot3;
     }
 
     // ── Build the live buffer seed (initial = home) ────────────
-    // alpha=1, vel=0, size=baseSize, color=homeColor
+    // alpha=file alpha, vel=0, size=pointSize × sizeMultiplier,
+    // color=homeColor.
     const liveBytes = new ArrayBuffer(n * LIVE_BYTES);
     const liveF = new Float32Array(liveBytes);
     for (let i = 0; i < n; i++) {
       const off = i * 12;  // 48 bytes / 4 = 12 floats
-      liveF[off + 0] = homeF[i * 8 + 0];  // pos.x
-      liveF[off + 1] = homeF[i * 8 + 1];  // pos.y
-      liveF[off + 2] = homeF[i * 8 + 2];  // pos.z
-      liveF[off + 3] = 1.0;               // alpha
+      const homeOff = i * 16;
+      liveF[off + 0] = homeF[homeOff + 0];  // pos.x
+      liveF[off + 1] = homeF[homeOff + 1];  // pos.y
+      liveF[off + 2] = homeF[homeOff + 2];  // pos.z
+      liveF[off + 3] = homeF[homeOff + 3];  // alpha
       liveF[off + 4] = 0;                 // vel.x
       liveF[off + 5] = 0;                 // vel.y
       liveF[off + 6] = 0;                 // vel.z
-      liveF[off + 7] = this.params.pointSize;  // size
-      liveF[off + 8] = homeF[i * 8 + 4];  // color.r
-      liveF[off + 9] = homeF[i * 8 + 5];  // color.g
-      liveF[off + 10] = homeF[i * 8 + 6]; // color.b
+      liveF[off + 7] = this.params.pointSize * homeF[homeOff + 7];  // size
+      liveF[off + 8] = homeF[homeOff + 4];  // color.r
+      liveF[off + 9] = homeF[homeOff + 5];  // color.g
+      liveF[off + 10] = homeF[homeOff + 6]; // color.b
       liveF[off + 11] = 0;
     }
 
