@@ -205,6 +205,7 @@ export type RendererCommand =
       type: 'upsert_layer';
       layer_id: string;
       z_index: number;
+      vj_layer_index?: number | null;
       blend_mode: string;
       opacity: number;
       corners?: {

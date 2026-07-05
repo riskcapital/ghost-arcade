@@ -108,6 +108,7 @@ import {
 type LayerSnapshot = {
   id: string;
   z: number;
+  vjIndex: number | null;
   visible: boolean;
   blend: string;
   opacity: number;
@@ -2732,6 +2733,8 @@ export class NativeRendererSync {
       dynamicRemaining: overloadActive ? 1 : 2,
     };
     layers.forEach((layer, index) => {
+      const rawVjIndex = Number((layer as any).vjLayerIndex);
+      const vjLayerIndex = Number.isFinite(rawVjIndex) ? Math.round(rawVjIndex) : null;
       const nativeGraphRoute = this.nativeGraphRouteForLayer(layer);
       const nativeSource = nativeGraphRoute?.source ?? nativeLayerSource(layer);
       const sourceType = nativeSource.sourceType;
@@ -2746,6 +2749,7 @@ export class NativeRendererSync {
       const snap: LayerSnapshot = {
         id: layer.id,
         z: index,
+        vjIndex: vjLayerIndex,
         visible: layer.visible,
         blend: canonicalBlendMode(layer.blendMode),
         opacity: layer.opacity,
@@ -2786,11 +2790,12 @@ export class NativeRendererSync {
         }
       }
 
-      if (!prev || prev.z !== snap.z || prev.visible !== snap.visible || prev.blend !== snap.blend || prev.opacity !== snap.opacity || prev.geometrySig !== snap.geometrySig || prev.uvSig !== snap.uvSig || prev.shapeSig !== snap.shapeSig) {
+      if (!prev || prev.z !== snap.z || prev.vjIndex !== snap.vjIndex || prev.visible !== snap.visible || prev.blend !== snap.blend || prev.opacity !== snap.opacity || prev.geometrySig !== snap.geometrySig || prev.uvSig !== snap.uvSig || prev.shapeSig !== snap.shapeSig) {
         commands.push({
           type: 'upsert_layer',
           layer_id: layer.id,
           z_index: index,
+          vj_layer_index: vjLayerIndex,
           blend_mode: canonicalBlendMode(layer.blendMode),
           opacity: layer.opacity,
           corners: layer.corners,

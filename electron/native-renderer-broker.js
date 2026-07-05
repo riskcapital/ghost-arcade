@@ -735,6 +735,14 @@ class NativeRendererBroker {
           ? 'ingested Stage3D screens/primitives render through a native camera/depth mesh pass'
           : 'Stage3D scene data is not yet rendered as native meshes',
       ],
+      [
+        'native-stage3d-textured-mesh-preview',
+        'Native Stage3D textured mesh preview',
+        !!features.native_stage3d_textured_mesh_preview,
+        features.native_stage3d_textured_mesh_preview
+          ? 'Stage3D visual elements can sample native source-frame textures'
+          : 'Stage3D mesh preview cannot sample VJ/source-frame textures yet',
+      ],
       ['native-projection-sim-scene-ingest', 'Native Projection Sim scene ingest', !!features.native_projection_sim_scene_ingest],
       [
         'native-projection-sim-overlay-preview',
@@ -1873,6 +1881,7 @@ function makeDefaultCapabilities(overrides = {}) {
       native_stage3d_scene_ingest: false,
       native_stage3d_overlay_preview: false,
       native_stage3d_mesh_preview: false,
+      native_stage3d_textured_mesh_preview: false,
       native_projection_sim_scene_ingest: false,
       native_projection_sim_overlay_preview: false,
       native_recording: false,

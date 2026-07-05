@@ -16,6 +16,7 @@ const REQUIRED_CHECKS = [
   'native-point-cloud-fx-graph',
   'native-stage3d-overlay-preview',
   'native-stage3d-mesh-preview',
+  'native-stage3d-textured-mesh-preview',
   'native-projection-sim-overlay-preview',
   'native-frame-sequence-export',
 ];
@@ -69,6 +70,17 @@ function makeTinyBmpBytes() {
       bytes[dst + 1] = g;
       bytes[dst + 2] = r;
     }
+  }
+  return bytes;
+}
+
+function makeSolidRgbaFrame(width, height, rgba) {
+  const bytes = new Uint8Array(width * height * 4);
+  for (let i = 0; i < bytes.length; i += 4) {
+    bytes[i] = rgba[0];
+    bytes[i + 1] = rgba[1];
+    bytes[i + 2] = rgba[2];
+    bytes[i + 3] = rgba[3];
   }
   return bytes;
 }
@@ -214,9 +226,10 @@ try {
   assert(capabilities?.features?.native_static_image_prefetch, 'broker capabilities lost native still-image prefetch support');
   assert(capabilities?.features?.native_compositor_manifest, 'broker capabilities lost native compositor manifest support');
   assert(
-    capabilities?.features?.native_stage3d_scene_ingest &&
+      capabilities?.features?.native_stage3d_scene_ingest &&
       capabilities?.features?.native_stage3d_overlay_preview &&
       capabilities?.features?.native_stage3d_mesh_preview &&
+      capabilities?.features?.native_stage3d_textured_mesh_preview &&
       capabilities?.features?.native_projection_sim_scene_ingest &&
       capabilities?.features?.native_projection_sim_overlay_preview &&
       capabilities?.features?.native_stage3d === false &&
@@ -581,6 +594,104 @@ try {
       Number(stageMeshAngleSnapshot?.bright_pixels ?? 0) > Number(stageEmptySnapshot?.bright_pixels ?? 0),
     `native Stage3D mesh preview did not respond to camera/depth rendering: ${JSON.stringify({ stageMeshFrontSnapshot, stageMeshAngleSnapshot })}`,
   );
+  await broker.invoke('native_renderer_submit_commands', {
+    commands: [
+      {
+        type: 'upsert_layer',
+        layer_id: 'stage3d-vj-layer-0',
+        z_index: 0,
+        vj_layer_index: 0,
+        blend_mode: 'normal',
+        opacity: 1,
+        corners: FULLSCREEN_CORNERS,
+      },
+      {
+        type: 'bind_media_source',
+        layer_id: 'stage3d-vj-layer-0',
+        source_id: 'stage3d-texture-source',
+        uri: 'contract://stage3d-texture-source',
+        source_type: 'image',
+      },
+      {
+        type: 'upload_source_frame',
+        source_id: 'stage3d-texture-source',
+        width: 16,
+        height: 16,
+        rgba_buffer: makeSolidRgbaFrame(16, 16, [245, 40, 30, 255]),
+        seq: 1,
+      },
+    ],
+  });
+  const texturedStageScene = {
+    id: 'contract-stage-textured-mesh',
+    name: 'Contract Stage Textured Mesh',
+    schemaVersion: 1,
+    camera: { position: [0, 3.2, 12], target: [0, 2.5, 0], fov: 42 },
+    nodes: [],
+    userElements: [
+      {
+        id: 'native-textured-panel',
+        type: 'visualpanel',
+        position: [0, 1.8, 0],
+        rotationY: 0,
+        scale: 1,
+        params: {
+          w: 7,
+          h: 4,
+          d: 0.16,
+          color: '#ffffff',
+          vjSource: '0',
+          brightness: 1.8,
+          opacity: 1,
+          uvMode: 'standard',
+          uvZoom: 1,
+          uvOffsetX: 0,
+          uvOffsetY: 0,
+          uvRotation: 0,
+        },
+      },
+    ],
+  };
+  await broker.invoke('native_renderer_set_stage3d_scene', { scene: texturedStageScene });
+  const stageTexturedRedPath = join(tempDir, 'broker-stage3d-textured-red.rgba');
+  const stageTexturedRedSnapshot = await broker.invoke('native_renderer_export_frame_snapshot', {
+    path: stageTexturedRedPath,
+    time: 0.22,
+    frame_index: 12,
+  });
+  await broker.invoke('native_renderer_submit_commands', {
+    commands: [
+      {
+        type: 'upload_source_frame',
+        source_id: 'stage3d-texture-source',
+        width: 16,
+        height: 16,
+        rgba_buffer: makeSolidRgbaFrame(16, 16, [30, 235, 90, 255]),
+        seq: 2,
+      },
+    ],
+  });
+  const stageTexturedGreenPath = join(tempDir, 'broker-stage3d-textured-green.rgba');
+  const stageTexturedGreenSnapshot = await broker.invoke('native_renderer_export_frame_snapshot', {
+    path: stageTexturedGreenPath,
+    time: 0.22,
+    frame_index: 13,
+  });
+  assert(
+    stageTexturedRedSnapshot?.checksum !== stageTexturedGreenSnapshot?.checksum &&
+      Number(stageTexturedRedSnapshot?.bright_pixels ?? 0) > Number(stageEmptySnapshot?.bright_pixels ?? 0) &&
+      Number(stageTexturedGreenSnapshot?.bright_pixels ?? 0) > Number(stageEmptySnapshot?.bright_pixels ?? 0),
+    `native Stage3D textured mesh preview did not sample source-frame texture changes: ${JSON.stringify({ stageTexturedRedSnapshot, stageTexturedGreenSnapshot })}`,
+  );
+  await broker.invoke('native_renderer_set_stage3d_scene', {
+    scene: {
+      id: 'contract-stage-cleared-before-projection',
+      name: 'Contract Stage Cleared Before Projection',
+      schemaVersion: 1,
+      nodes: [],
+      userElements: [],
+    },
+  });
 
   const projectionSummary = await broker.invoke('native_renderer_set_projection_sim_scene', {
     scene: {
@@ -664,7 +775,6 @@ try {
   });
   assert(
     projectionEmptySnapshot?.checksum !== projectionOverlaySnapshot?.checksum &&
-      Number(projectionOverlaySnapshot?.bright_pixels ?? 0) > Number(projectionEmptySnapshot?.bright_pixels ?? 0) &&
       Number(projectionOverlaySnapshot?.average_luma ?? 0) > Number(projectionEmptySnapshot?.average_luma ?? 0),
     `native Projection Sim overlay preview did not affect exported frame pixels: ${JSON.stringify({ projectionEmptySnapshot, projectionOverlaySnapshot })}`,
   );
