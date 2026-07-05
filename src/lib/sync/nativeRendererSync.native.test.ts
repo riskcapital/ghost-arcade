@@ -200,6 +200,60 @@ describe('native renderer sync shared-texture source frames', () => {
   });
 });
 
+describe('native renderer sync graph effect routing', () => {
+  it('only attaches native effect-pass chains to GPU graph routes when descriptors are advertised', () => {
+    const sync = new NativeRendererSyncCtor() as any;
+    sync.nativeComputeGraphSourceFrames = true;
+    sync.nativeWgslStdlibWarmed = true;
+    sync.nativeGraphReadyKinds = new Set(['planet']);
+    sync.nativeFeatureFlags = {
+      compute_graph_texture_sampling: true,
+      compute_graph_source_frame_target: true,
+      native_planet_graph: true,
+    };
+    sync.nativeEffectPassDescriptorIds = new Set(['invert']);
+
+    const layer = {
+      id: 'gpu-layer-a',
+      type: 'gpu',
+      visible: true,
+      opacity: 1,
+      blendMode: 'normal',
+      source: null,
+      gpuLayerContent: {
+        shaderId: 'planet',
+        params: {},
+      },
+      effects: [
+        {
+          id: 'fx-invert',
+          type: 'invert',
+          enabled: true,
+          params: {},
+        },
+      ],
+    };
+
+    const withoutManifest = sync.nativeGraphRouteForLayer(layer);
+    expect(withoutManifest?.kind).toBe('planet');
+    expect(withoutManifest?.source.id).toBe('gpu:gpu-layer-a:planet');
+    expect(withoutManifest?.baseSource).toBeUndefined();
+    expect(withoutManifest?.effectPasses).toBeUndefined();
+
+    sync.nativeFeatureFlags.native_effect_pass_manifest = true;
+    const withManifest = sync.nativeGraphRouteForLayer(layer);
+    expect(withManifest?.kind).toBe('planet');
+    expect(withManifest?.baseSource?.id).toBe('gpu:gpu-layer-a:planet');
+    expect(withManifest?.source.id).toBe('effect-pass:gpu-layer-a');
+    expect(withManifest?.effectPasses?.map((entry: any) => entry.effect)).toEqual(['invert']);
+
+    sync.nativeEffectPassDescriptorIds = new Set(['blur']);
+    const withoutDescriptor = sync.nativeGraphRouteForLayer(layer);
+    expect(withoutDescriptor?.source.id).toBe('gpu:gpu-layer-a:planet');
+    expect(withoutDescriptor?.effectPasses).toBeUndefined();
+  });
+});
+
 describe('native renderer sync native video pump routing', () => {
   it('marks native-pump video frames ready and rolls back to preview fallback on decode failure', () => {
     const sync = new NativeRendererSyncCtor() as any;

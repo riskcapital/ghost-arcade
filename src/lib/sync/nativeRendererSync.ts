@@ -3270,8 +3270,9 @@ export class NativeRendererSync {
       return null;
     }
     const baseSource = nativeGraphOutputSource(layer, kind);
-    const effectPasses = this.supportsNativeFeature('compute_graph_texture_sampling')
-      ? nativeEffectPassesForLayer(layer)
+    const candidateEffectPasses = nativeEffectPassesForLayer(layer);
+    const effectPasses = candidateEffectPasses?.length && this.supportsNativeEffectPassRoute(candidateEffectPasses)
+      ? candidateEffectPasses
       : null;
     const source = effectPasses?.length
       ? nativeEffectPassOutputSource(layer, baseSource)
