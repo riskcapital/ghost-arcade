@@ -2880,7 +2880,10 @@ export class NativeRendererSync {
         activeVideoKeys.add(sourceKey);
         const dueAt = this.videoRefreshAt.get(sourceKey) ?? 0;
         const sharedTextureSource = isNativeSharedTextureSource(src, sourceType);
-        if (!sharedTextureSource && sourceType === 'video' && now >= dueAt) {
+        const continuousNativeVideoPrefetch =
+          this.supportsNativeFeature('native_media_decode') &&
+          this.supportsNativeFeature('media_prefetch');
+        if (!sharedTextureSource && continuousNativeVideoPrefetch && sourceType === 'video' && now >= dueAt) {
           this.videoRefreshAt.set(sourceKey, now + videoRefreshMs);
           void prefetchNativeRendererMedia(src.id, src.src, videoPrefetchPriority, sourceType).catch(() => {});
         }

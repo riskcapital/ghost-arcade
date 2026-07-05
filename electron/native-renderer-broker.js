@@ -926,7 +926,7 @@ class NativeRendererBroker {
     const fullNativeV2Blockers = [
       nativeOutputDriverOk ? null : 'native output driver is not ready',
       features.shared_texture_upload ? null : 'full shared-texture media transport is pending',
-      features.native_media_decode && features.media_prefetch ? null : 'native video/media decode and prefetch are pending',
+      features.native_media_decode && features.media_prefetch ? null : 'continuous native video decode and full media prefetch are pending',
       nativeTextureShareSenderOk ? null : `${this.platform === 'darwin' ? 'Syphon' : 'Spout'} native texture-share sender is not active-ready`,
       nativeRecordingOk ? null : 'native recording/MP4 frame path is not fully ready',
       features.native_stage3d ? null : 'native Stage3D renderer is pending',
@@ -992,7 +992,7 @@ class NativeRendererBroker {
           ? `desktop FFmpeg raw-frame pipe available; active sessions=${nativeFrameEncoder.activeSessions}`
           : (nativeFrameEncoder.reason || 'desktop FFmpeg raw-frame pipe is unavailable'),
       ],
-      ['native-media-decode', 'Native media decode/prefetch', !!features.native_media_decode && !!features.media_prefetch],
+      ['native-media-decode', 'Native continuous media decode/prefetch', !!features.native_media_decode && !!features.media_prefetch],
       ['native-stage3d-scene-ingest', 'Native Stage3D scene ingest', !!features.native_stage3d_scene_ingest],
       [
         'native-stage3d-overlay-preview',
