@@ -9,6 +9,8 @@ const require = createRequire(import.meta.url);
 const COMMAND_PREFIX = 'native_renderer_';
 const SOURCE_FRAME_FILE_HANDOFF_B64_THRESHOLD = 512 * 1024;
 const VIDEO_FRAME_PREFETCH_TIMEOUT_MS = 8000;
+const VIDEO_FRAME_PREFETCH_CACHE_MAX_ENTRIES = 24;
+const VIDEO_FRAME_PREFETCH_CACHE_FPS = 30;
 const STATIC_IMAGE_EXTENSIONS = new Set([
   '.avif',
   '.bmp',
@@ -339,6 +341,8 @@ class NativeRendererBroker {
       last_frame_error: 'Native render core has not started',
     });
     this.stats = makeDefaultStats();
+    this.videoFramePrefetchCache = new Map();
+    this.videoFramePrefetchCacheMaxEntries = VIDEO_FRAME_PREFETCH_CACHE_MAX_ENTRIES;
     this.capabilities = makeDefaultCapabilities({
       backend: this.lastStatus.backend,
       running: false,
@@ -409,6 +413,10 @@ class NativeRendererBroker {
         return this.exportSnapshotJson(args);
       case 'native_renderer_reset_stats':
         this.stats = makeDefaultStats();
+        this.lastStatus = {
+          ...this.lastStatus,
+          ...this.videoFramePrefetchCacheStats(),
+        };
         return this.sendIfRunning('reset_stats', args, { fallback: null });
       case 'native_renderer_submit_batch':
         return this.sendNativeCommandPayloadIfRunning('submit_batch', args, { fallback: null, timeoutMs: 2500 });
@@ -582,14 +590,33 @@ class NativeRendererBroker {
     const height = Number(
       args.decode_height ?? args.decodeHeight ?? args.height ?? args.decode_size ?? args.decodeSize ?? width,
     );
-    const frame = await decodeVideoFrameToRgba({
+    const request = this.videoFramePrefetchRequest(
       uri,
       width,
       height,
-      timeSeconds: Number(args.time_seconds ?? args.timeSeconds ?? args.time ?? 0),
-      env: this.env,
-      platform: this.platform,
-    });
+      Number(args.time_seconds ?? args.timeSeconds ?? args.time ?? 0),
+    );
+    let frame = this.getCachedVideoFramePrefetch(request);
+    if (!frame) {
+      this.stats.video_frame_prefetch_cache_misses =
+        Number(this.stats.video_frame_prefetch_cache_misses ?? 0) + 1;
+      this.stats.ffmpeg_decode_spawns = Number(this.stats.ffmpeg_decode_spawns ?? 0) + 1;
+      try {
+        frame = await decodeVideoFrameToRgba({
+          uri: request.localPath,
+          width: request.width,
+          height: request.height,
+          timeSeconds: request.seconds,
+          env: this.env,
+          platform: this.platform,
+        });
+        this.stats.ffmpeg_decode_successes = Number(this.stats.ffmpeg_decode_successes ?? 0) + 1;
+        this.storeVideoFramePrefetch(request, frame);
+      } catch (err) {
+        this.stats.ffmpeg_decode_failures = Number(this.stats.ffmpeg_decode_failures ?? 0) + 1;
+        throw err;
+      }
+    }
     const submitResult = await this.sendNativeCommandPayloadIfRunning(
       'submit_commands',
       {
@@ -609,15 +636,22 @@ class NativeRendererBroker {
     if (!submitResult) {
       throw new Error('native video frame prefetch decoded a frame, but the native core did not accept the source-frame upload');
     }
-    return this.getStatus();
+    return this.withBrokerVideoFramePrefetchStats(await this.getStatus());
   }
 
   async clearPrefetchCache() {
+    const clearedVideoFramePrefetchEntries = this.clearBrokerVideoFramePrefetchCache();
     if ((this.capabilities?.implemented_methods ?? []).includes('clear_prefetch_cache')) {
       const result = await this.sendIfRunning('clear_prefetch_cache', {}, { fallback: null, timeoutMs: 1000 });
-      if (result) return result;
+      if (result) {
+        return {
+          ...result,
+          cleared_video_frame_prefetch_entries: clearedVideoFramePrefetchEntries,
+          ...this.videoFramePrefetchCacheStats(),
+        };
+      }
     }
-    return this.sendIfRunning(
+    const result = await this.sendIfRunning(
       'clear_runtime_caches',
       {
         config: {
@@ -629,6 +663,11 @@ class NativeRendererBroker {
       },
       { fallback: { cleared_source_frame_signatures: 0 }, timeoutMs: 1000 },
     );
+    return {
+      ...(result ?? {}),
+      cleared_video_frame_prefetch_entries: clearedVideoFramePrefetchEntries,
+      ...this.videoFramePrefetchCacheStats(),
+    };
   }
 
   async getDecodeCapabilities() {
@@ -1233,6 +1272,103 @@ class NativeRendererBroker {
 
   videoFramePrefetchStatus() {
     return videoFramePrefetchStatus(this.env, this.platform);
+  }
+
+  videoFramePrefetchRequest(uri, width, height, timeSeconds = 0) {
+    const localPath = resolveLocalMediaPath(uri);
+    if (!localPath) {
+      throw new Error('native video frame prefetch currently supports local video files only');
+    }
+    let stat = null;
+    try {
+      stat = fs.statSync(localPath);
+    } catch (err) {
+      throw new Error(`native video frame prefetch cannot read ${localPath}: ${err?.message || err}`);
+    }
+    if (!stat.isFile()) {
+      throw new Error(`native video frame prefetch expected a file: ${localPath}`);
+    }
+    const targetWidth = Math.max(16, Math.min(4096, Math.round(Number(width) || 256)));
+    const targetHeight = Math.max(16, Math.min(4096, Math.round(Number(height) || targetWidth)));
+    const seconds = Math.max(0, Math.min(3600, Number(timeSeconds) || 0));
+    const frameBucket = Math.max(0, Math.round(seconds * VIDEO_FRAME_PREFETCH_CACHE_FPS));
+    const key = [
+      localPath,
+      Number(stat.size) || 0,
+      Math.round(Number(stat.mtimeMs) || 0),
+      targetWidth,
+      targetHeight,
+      frameBucket,
+    ].join('|');
+    return { key, localPath, width: targetWidth, height: targetHeight, seconds, frameBucket };
+  }
+
+  videoFramePrefetchCacheStats() {
+    let bytes = 0;
+    for (const entry of this.videoFramePrefetchCache.values()) {
+      bytes += Number(entry?.byteLength ?? entry?.rgba?.length ?? 0);
+    }
+    return {
+      video_frame_prefetch_cache_entries: this.videoFramePrefetchCache.size,
+      video_frame_prefetch_cache_bytes: bytes,
+      video_frame_prefetch_cache_hits: Number(this.stats.video_frame_prefetch_cache_hits ?? 0),
+      video_frame_prefetch_cache_misses: Number(this.stats.video_frame_prefetch_cache_misses ?? 0),
+      video_frame_prefetch_cache_clears: Number(this.stats.video_frame_prefetch_cache_clears ?? 0),
+      video_frame_prefetch_cache_max_entries: this.videoFramePrefetchCacheMaxEntries,
+    };
+  }
+
+  withBrokerVideoFramePrefetchStats(status = this.lastStatus) {
+    const normalized = normalizeStatus(status, this.lastStatus);
+    this.lastStatus = {
+      ...normalized,
+      ...this.videoFramePrefetchCacheStats(),
+    };
+    return this.lastStatus;
+  }
+
+  getCachedVideoFramePrefetch(request) {
+    const entry = this.videoFramePrefetchCache.get(request.key);
+    if (!entry) return null;
+    this.videoFramePrefetchCache.delete(request.key);
+    this.videoFramePrefetchCache.set(request.key, entry);
+    this.stats.video_frame_prefetch_cache_hits =
+      Number(this.stats.video_frame_prefetch_cache_hits ?? 0) + 1;
+    return {
+      rgba: Buffer.from(entry.rgba),
+      width: entry.width,
+      height: entry.height,
+      localPath: request.localPath,
+      byteLength: entry.byteLength,
+    };
+  }
+
+  storeVideoFramePrefetch(request, frame) {
+    const byteLength = Number(frame.byteLength ?? frame.rgba?.length ?? request.width * request.height * 4);
+    this.videoFramePrefetchCache.set(request.key, {
+      rgba: Buffer.from(frame.rgba),
+      width: Number(frame.width ?? request.width),
+      height: Number(frame.height ?? request.height),
+      byteLength,
+      frameBucket: request.frameBucket,
+    });
+    while (this.videoFramePrefetchCache.size > this.videoFramePrefetchCacheMaxEntries) {
+      const oldestKey = this.videoFramePrefetchCache.keys().next().value;
+      if (!oldestKey) break;
+      this.videoFramePrefetchCache.delete(oldestKey);
+    }
+  }
+
+  clearBrokerVideoFramePrefetchCache() {
+    const cleared = this.videoFramePrefetchCache.size;
+    if (cleared > 0) this.videoFramePrefetchCache.clear();
+    this.stats.video_frame_prefetch_cache_clears =
+      Number(this.stats.video_frame_prefetch_cache_clears ?? 0) + 1;
+    this.lastStatus = {
+      ...this.lastStatus,
+      ...this.videoFramePrefetchCacheStats(),
+    };
+    return cleared;
   }
 
   unsupportedError(command) {
@@ -1855,6 +1991,26 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     prefetch_cache_prune_count: Number(
       status.prefetch_cache_prune_count ?? previous.prefetch_cache_prune_count ?? 256,
     ),
+    video_frame_prefetch_cache_entries: Number(
+      status.video_frame_prefetch_cache_entries ?? previous.video_frame_prefetch_cache_entries ?? 0,
+    ),
+    video_frame_prefetch_cache_bytes: Number(
+      status.video_frame_prefetch_cache_bytes ?? previous.video_frame_prefetch_cache_bytes ?? 0,
+    ),
+    video_frame_prefetch_cache_hits: Number(
+      status.video_frame_prefetch_cache_hits ?? previous.video_frame_prefetch_cache_hits ?? 0,
+    ),
+    video_frame_prefetch_cache_misses: Number(
+      status.video_frame_prefetch_cache_misses ?? previous.video_frame_prefetch_cache_misses ?? 0,
+    ),
+    video_frame_prefetch_cache_clears: Number(
+      status.video_frame_prefetch_cache_clears ?? previous.video_frame_prefetch_cache_clears ?? 0,
+    ),
+    video_frame_prefetch_cache_max_entries: Number(
+      status.video_frame_prefetch_cache_max_entries ??
+        previous.video_frame_prefetch_cache_max_entries ??
+        VIDEO_FRAME_PREFETCH_CACHE_MAX_ENTRIES,
+    ),
     media_drop_command_pressure_pct: Number(
       status.media_drop_command_pressure_pct ?? previous.media_drop_command_pressure_pct ?? 90,
     ),
@@ -2432,6 +2588,12 @@ function makeDefaultStatus(overrides = {}) {
     media_high_burst_limit: 7,
     prefetch_cache_max_entries: 4096,
     prefetch_cache_prune_count: 256,
+    video_frame_prefetch_cache_entries: 0,
+    video_frame_prefetch_cache_bytes: 0,
+    video_frame_prefetch_cache_hits: 0,
+    video_frame_prefetch_cache_misses: 0,
+    video_frame_prefetch_cache_clears: 0,
+    video_frame_prefetch_cache_max_entries: VIDEO_FRAME_PREFETCH_CACHE_MAX_ENTRIES,
     media_drop_command_pressure_pct: 90,
     media_drop_decode_pressure_pct: 90,
     media_drop_io_pressure_pct: 90,
@@ -2696,6 +2858,9 @@ function makeDefaultStats() {
     prefetch_cache_hits: 0,
     prefetch_cache_misses: 0,
     prefetch_cache_clears: 0,
+    video_frame_prefetch_cache_hits: 0,
+    video_frame_prefetch_cache_misses: 0,
+    video_frame_prefetch_cache_clears: 0,
     image_resources: 0,
     image_previews_uploaded: 0,
     image_preview_bytes: 0,
