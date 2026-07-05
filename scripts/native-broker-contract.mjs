@@ -1963,15 +1963,29 @@ try {
   );
 
   const beforeDirectSharedStatus = await broker.invoke('native_renderer_get_status');
-  const directSharedStatus = await broker.invoke('native_renderer_upload_source_gpu_shared_texture', {
-    source_id: 'direct-shared-frame-contract',
-    width: 16,
-    height: 16,
-    shared_handle: 'fake',
-    platform: process.platform === 'darwin' ? 'iosurface' : 'dxgi',
-    handle_encoding: 'base64',
-    seq: 1,
-  });
+  let directSharedError = null;
+  try {
+    await broker.invoke('native_renderer_upload_source_gpu_shared_texture', {
+      source_id: 'direct-shared-frame-contract',
+      width: 16,
+      height: 16,
+      shared_handle: 'fake',
+      platform: process.platform === 'darwin' ? 'iosurface' : 'dxgi',
+      handle_encoding: 'base64',
+      seq: 1,
+    });
+  } catch (err) {
+    directSharedError = err;
+  }
+  const directSharedStatus = await broker.invoke('native_renderer_get_status');
+  assert(
+    directSharedError,
+    `invalid direct shared texture source-frame RPC should reject loudly: ${JSON.stringify(directSharedStatus)}`,
+  );
+  assert(
+    /(IOSurface|shared texture source-frame upload|handle|base64)/.test(String(directSharedError?.message ?? directSharedError)),
+    `invalid direct shared texture source-frame RPC did not expose a clear error: ${String(directSharedError?.message ?? directSharedError)}`,
+  );
   assert(
     Number(directSharedStatus.source_frame_uploads ?? 0) ===
       Number(beforeDirectSharedStatus.source_frame_uploads ?? 0),
