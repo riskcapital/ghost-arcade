@@ -4,6 +4,7 @@ import {
   assertNativeCompositorBlendParity,
   assertNativeCompositorEffectParity,
   assertNativeCompositorManifest,
+  assertNativeCompositorSourceContract,
   createRpcProcess,
   precompileNativeCompositorParityShaders,
 } from './native-renderer-smoke.mjs';
@@ -11,6 +12,7 @@ import {
 const rpc = createRpcProcess();
 
 try {
+  assertNativeCompositorSourceContract();
   const status = await rpc.send('start', {
     config: {
       backend: process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'd3d12' : 'vulkan',

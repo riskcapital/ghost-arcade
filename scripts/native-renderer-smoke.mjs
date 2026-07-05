@@ -83,22 +83,64 @@ export function assertNativeCompositorManifest(capabilities) {
   if (!capabilities?.features?.native_compositor_manifest) {
     throw new Error(`native compositor manifest feature missing: ${JSON.stringify(capabilities?.features)}`);
   }
-  const nativeBlendModes = new Map(
-    (capabilities.native_compositor_blend_modes ?? []).map((entry) => [entry.id, Number(entry.code)]),
+  assertExactNativeManifest(
+    'blend',
+    capabilities.native_compositor_blend_modes ?? [],
+    COMPOSITOR_BLEND_MODES,
   );
-  for (const mode of COMPOSITOR_BLEND_MODES) {
-    if (nativeBlendModes.get(mode.name) !== mode.code) {
-      throw new Error(`native compositor blend manifest missing ${mode.name}:${mode.code}: ${JSON.stringify(capabilities.native_compositor_blend_modes)}`);
-    }
+  assertExactNativeManifest(
+    'effect',
+    capabilities.native_compositor_effect_descriptors ?? [],
+    COMPOSITOR_EFFECTS,
+  );
+}
+
+function nativeManifestSignature(entries) {
+  return entries.map((entry) => `${entry.id ?? entry.name}:${Number(entry.code)}`);
+}
+
+function assertExactNativeManifest(name, actualEntries, expectedEntries) {
+  const actual = nativeManifestSignature(actualEntries);
+  const expected = nativeManifestSignature(expectedEntries);
+  if (actual.length !== expected.length || actual.some((value, index) => value !== expected[index])) {
+    throw new Error(
+      `native compositor ${name} manifest drifted: actual=${JSON.stringify(actualEntries)} expected=${JSON.stringify(expectedEntries)}`,
+    );
   }
-  const nativeEffects = new Map(
-    (capabilities.native_compositor_effect_descriptors ?? []).map((entry) => [entry.id, Number(entry.code)]),
-  );
+}
+
+export function assertNativeCompositorSourceContract() {
+  const heartbeat = readFileSync(join(root, 'native-renderer', 'src', 'heartbeat.wgsl'), 'utf8');
+  const main = readFileSync(join(root, 'native-renderer', 'src', 'main.rs'), 'utf8');
+  const applyNativeEffect = extractWgslFunction(heartbeat, 'apply_native_effect');
+  const wgslEffectCodes = [...applyNativeEffect.matchAll(/if\s*\(\s*op\s*==\s*(\d+)\s*\)/g)]
+    .map((match) => Number(match[1]));
+  const expectedEffectCodes = COMPOSITOR_EFFECTS.map((effect) => effect.code);
+  if (
+    wgslEffectCodes.length !== expectedEffectCodes.length ||
+    wgslEffectCodes.some((code, index) => code !== expectedEffectCodes[index])
+  ) {
+    throw new Error(
+      `native compositor WGSL effect branches drifted: actual=${wgslEffectCodes.join(',')} expected=${expectedEffectCodes.join(',')}`,
+    );
+  }
+
   for (const effect of COMPOSITOR_EFFECTS) {
-    if (nativeEffects.get(effect.name) !== effect.code) {
-      throw new Error(`native compositor effect manifest missing ${effect.name}:${effect.code}: ${JSON.stringify(capabilities.native_compositor_effect_descriptors)}`);
+    const id = escapeRegExp(effect.name);
+    const code = effect.code.toFixed(1).replace(/\.0$/, '\\.0');
+    const descriptorPattern = new RegExp(
+      `"${id}"(?:\\s*\\|\\s*"[^"]+")*\\s*=>\\s*Some\\(\\[${code}`,
+    );
+    if (!descriptorPattern.test(main)) {
+      throw new Error(
+        `native compositor Rust descriptor parser is missing ${effect.name}:${effect.code}`,
+      );
     }
   }
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 const NATIVE_WGSL_PROBE_SOURCE = `
