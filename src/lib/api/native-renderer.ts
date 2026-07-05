@@ -508,6 +508,12 @@ export interface RendererStatus {
   media_high_burst_limit: number;
   prefetch_cache_max_entries: number;
   prefetch_cache_prune_count: number;
+  video_frame_prefetch_cache_entries: number;
+  video_frame_prefetch_cache_bytes: number;
+  video_frame_prefetch_cache_hits: number;
+  video_frame_prefetch_cache_misses: number;
+  video_frame_prefetch_cache_clears: number;
+  video_frame_prefetch_cache_max_entries: number;
   media_drop_command_pressure_pct: number;
   media_drop_decode_pressure_pct: number;
   media_drop_io_pressure_pct: number;
@@ -692,6 +698,9 @@ export interface RendererStats {
   prefetch_cache_hits: number;
   prefetch_cache_misses: number;
   prefetch_cache_clears: number;
+  video_frame_prefetch_cache_hits: number;
+  video_frame_prefetch_cache_misses: number;
+  video_frame_prefetch_cache_clears: number;
   image_resources: number;
   image_previews_uploaded: number;
   image_preview_bytes: number;
