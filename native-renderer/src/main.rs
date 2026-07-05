@@ -4,7 +4,7 @@ mod shared_texture;
 
 use std::{
     borrow::Cow,
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     fs,
     io::{self, BufRead, Write},
     path::{Path, PathBuf},
@@ -41,6 +41,8 @@ const SOURCE_FRAME_MIP_LEVELS_MAX: u32 = 5;
 const MAX_NATIVE_IMAGE_DECODE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_NATIVE_IMAGE_DECODE_PIXELS: u64 = 8192 * 8192;
 const MAX_NATIVE_VIDEO_FRAME_DECODE_DIMENSION: usize = 4096;
+const NATIVE_VIDEO_FRAME_CACHE_MAX_ENTRIES: usize = 8;
+const NATIVE_VIDEO_FRAME_CACHE_MAX_BYTES: usize = 192 * 1024 * 1024;
 const SOURCE_FRAME_FORMAT_FALLBACK: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const SOURCE_FRAME_FORMAT_HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const MAX_STAGE3D_OVERLAY_ITEMS: usize = 128;
@@ -682,6 +684,11 @@ struct CoreStatus {
     native_video_frame_decode_failures: u64,
     native_video_frame_decode_bytes_uploaded: u64,
     native_video_frame_decode_last_error: String,
+    native_video_frame_cache_entries: u32,
+    native_video_frame_cache_bytes: u64,
+    native_video_frame_cache_hits: u64,
+    native_video_frame_cache_misses: u64,
+    native_video_frame_cache_evictions: u64,
     native_instrument_frame_renders: u64,
     compute_graph_runs: u64,
     compute_graph_passes: u64,
@@ -967,6 +974,9 @@ struct CoreStats {
     native_video_frame_decode_failures: u64,
     native_video_frame_decode_bytes_uploaded: u64,
     native_video_frame_decode_last_error: String,
+    native_video_frame_cache_hits: u64,
+    native_video_frame_cache_misses: u64,
+    native_video_frame_cache_evictions: u64,
     native_shader_renders: u64,
     native_instrument_frame_renders: u64,
     compute_graph_runs: u64,
@@ -1999,6 +2009,14 @@ impl NativeSceneBridgeSummary {
     }
 }
 
+#[derive(Clone)]
+struct NativeVideoFrameCacheEntry {
+    width: usize,
+    height: usize,
+    rgba: Vec<u8>,
+    byte_length: usize,
+}
+
 struct App {
     response_tx: Sender<String>,
     renderer: Option<RenderState>,
@@ -2047,6 +2065,9 @@ struct App {
     source_frame_slots: HashMap<String, usize>,
     source_frame_signatures: HashMap<String, String>,
     native_video_frame_signatures: HashMap<String, String>,
+    native_video_frame_cache: HashMap<String, NativeVideoFrameCacheEntry>,
+    native_video_frame_cache_order: VecDeque<String>,
+    native_video_frame_cache_bytes: usize,
     stage3d_scene: Option<Value>,
     stage3d_scene_summary: NativeSceneBridgeSummary,
     projection_sim_scene: Option<Value>,
@@ -2148,6 +2169,9 @@ impl App {
             source_frame_slots: HashMap::new(),
             source_frame_signatures: HashMap::new(),
             native_video_frame_signatures: HashMap::new(),
+            native_video_frame_cache: HashMap::new(),
+            native_video_frame_cache_order: VecDeque::new(),
+            native_video_frame_cache_bytes: 0,
             stage3d_scene: None,
             stage3d_scene_summary: NativeSceneBridgeSummary::empty("stage3d"),
             projection_sim_scene: None,
@@ -2762,6 +2786,14 @@ impl App {
             } else {
                 self.stats.native_video_frame_decode_last_error.clone()
             },
+            native_video_frame_cache_entries: self
+                .native_video_frame_cache
+                .len()
+                .min(u32::MAX as usize) as u32,
+            native_video_frame_cache_bytes: self.native_video_frame_cache_bytes as u64,
+            native_video_frame_cache_hits: self.stats.native_video_frame_cache_hits,
+            native_video_frame_cache_misses: self.stats.native_video_frame_cache_misses,
+            native_video_frame_cache_evictions: self.stats.native_video_frame_cache_evictions,
             native_instrument_frame_renders: self.stats.native_instrument_frame_renders,
             compute_graph_runs: self.stats.compute_graph_runs,
             compute_graph_passes: self.stats.compute_graph_passes,
@@ -4004,6 +4036,8 @@ impl App {
         self.source_frame_signatures.clear();
         let cleared_native_video_frame_signatures = self.native_video_frame_signatures.len();
         self.native_video_frame_signatures.clear();
+        let (cleared_native_video_frame_cache_entries, cleared_native_video_frame_cache_bytes) =
+            self.clear_native_video_frame_cache();
 
         json!({
             "cleared_shader_records": cleared_shader_records,
@@ -4011,6 +4045,8 @@ impl App {
             "cleared_native_graph_buffers": cleared_native_graph_buffers,
             "cleared_source_frame_signatures": cleared_source_frame_signatures,
             "cleared_native_video_frame_signatures": cleared_native_video_frame_signatures,
+            "cleared_native_video_frame_cache_entries": cleared_native_video_frame_cache_entries,
+            "cleared_native_video_frame_cache_bytes": cleared_native_video_frame_cache_bytes,
             "remaining_shader_records": self.shader_registry.len(),
             "remaining_pipeline_entries": self.renderer.as_ref().map(RenderState::native_pipeline_cache_count).unwrap_or(0),
             "remaining_native_graph_buffers": self.renderer.as_ref().map(RenderState::native_compute_graph_buffer_count).unwrap_or(0),
@@ -5340,10 +5376,14 @@ impl App {
         self.source_frame_signatures.clear();
         let cleared_native_video_frame_signatures = self.native_video_frame_signatures.len();
         self.native_video_frame_signatures.clear();
+        let (cleared_native_video_frame_cache_entries, cleared_native_video_frame_cache_bytes) =
+            self.clear_native_video_frame_cache();
         json!({
             "cleared_source_frame_signatures": cleared_source_frame_signatures,
             "cleared_native_video_frame_signatures": cleared_native_video_frame_signatures,
-            "note": "native image and video-frame prefetch signatures cleared; resident bound source frames are preserved"
+            "cleared_native_video_frame_cache_entries": cleared_native_video_frame_cache_entries,
+            "cleared_native_video_frame_cache_bytes": cleared_native_video_frame_cache_bytes,
+            "note": "native image/video-frame prefetch signatures and decoded video-frame cache cleared; resident bound source frames are preserved"
         })
     }
 
@@ -5500,6 +5540,78 @@ impl App {
         }
     }
 
+    fn cached_native_video_frame(&mut self, signature: &str) -> Option<(usize, usize, Vec<u8>)> {
+        let entry = self.native_video_frame_cache.get(signature)?;
+        let width = entry.width;
+        let height = entry.height;
+        let rgba = entry.rgba.clone();
+        self.native_video_frame_cache_order
+            .retain(|key| key != signature);
+        self.native_video_frame_cache_order
+            .push_back(signature.to_string());
+        self.stats.native_video_frame_cache_hits =
+            self.stats.native_video_frame_cache_hits.saturating_add(1);
+        Some((width, height, rgba))
+    }
+
+    fn store_native_video_frame_cache(
+        &mut self,
+        signature: String,
+        width: usize,
+        height: usize,
+        rgba: &[u8],
+    ) {
+        let byte_length = rgba.len();
+        if byte_length == 0 || byte_length > NATIVE_VIDEO_FRAME_CACHE_MAX_BYTES {
+            return;
+        }
+        if let Some(existing) = self.native_video_frame_cache.remove(&signature) {
+            self.native_video_frame_cache_bytes = self
+                .native_video_frame_cache_bytes
+                .saturating_sub(existing.byte_length);
+            self.native_video_frame_cache_order
+                .retain(|key| key != &signature);
+        }
+        self.native_video_frame_cache.insert(
+            signature.clone(),
+            NativeVideoFrameCacheEntry {
+                width,
+                height,
+                rgba: rgba.to_vec(),
+                byte_length,
+            },
+        );
+        self.native_video_frame_cache_order.push_back(signature);
+        self.native_video_frame_cache_bytes = self
+            .native_video_frame_cache_bytes
+            .saturating_add(byte_length);
+        while self.native_video_frame_cache_order.len() > NATIVE_VIDEO_FRAME_CACHE_MAX_ENTRIES
+            || self.native_video_frame_cache_bytes > NATIVE_VIDEO_FRAME_CACHE_MAX_BYTES
+        {
+            let Some(oldest) = self.native_video_frame_cache_order.pop_front() else {
+                break;
+            };
+            if let Some(entry) = self.native_video_frame_cache.remove(&oldest) {
+                self.native_video_frame_cache_bytes = self
+                    .native_video_frame_cache_bytes
+                    .saturating_sub(entry.byte_length);
+                self.stats.native_video_frame_cache_evictions = self
+                    .stats
+                    .native_video_frame_cache_evictions
+                    .saturating_add(1);
+            }
+        }
+    }
+
+    fn clear_native_video_frame_cache(&mut self) -> (usize, usize) {
+        let entries = self.native_video_frame_cache.len();
+        let bytes = self.native_video_frame_cache_bytes;
+        self.native_video_frame_cache.clear();
+        self.native_video_frame_cache_order.clear();
+        self.native_video_frame_cache_bytes = 0;
+        (entries, bytes)
+    }
+
     fn decode_native_video_frame_source(
         &mut self,
         source_id: &str,
@@ -5540,6 +5652,29 @@ impl App {
             .map(|frame| frame.seq)
             .unwrap_or(0);
         let upload_seq = seq.max(existing_seq.saturating_add(1));
+        if let Some((decoded_width, decoded_height, rgba)) =
+            self.cached_native_video_frame(&signature)
+        {
+            let uploaded = self.upload_source_frame_pixels(
+                source_id.to_string(),
+                upload_seq,
+                decoded_width,
+                decoded_height,
+                &rgba,
+                "native-video-frame-cache",
+                false,
+            );
+            self.stats.native_video_frame_decode_bytes_uploaded = self
+                .stats
+                .native_video_frame_decode_bytes_uploaded
+                .saturating_add(uploaded as u64);
+            self.stats.native_video_frame_decode_last_error.clear();
+            self.native_video_frame_signatures
+                .insert(source_id.to_string(), signature);
+            return;
+        }
+        self.stats.native_video_frame_cache_misses =
+            self.stats.native_video_frame_cache_misses.saturating_add(1);
         match decode_native_video_frame_rgba(&path, width, height, time_seconds) {
             Ok((decoded_width, decoded_height, rgba)) => {
                 let uploaded = self.upload_source_frame_pixels(
@@ -5558,6 +5693,12 @@ impl App {
                     .native_video_frame_decode_bytes_uploaded
                     .saturating_add(uploaded as u64);
                 self.stats.native_video_frame_decode_last_error.clear();
+                self.store_native_video_frame_cache(
+                    signature.clone(),
+                    decoded_width,
+                    decoded_height,
+                    &rgba,
+                );
                 self.native_video_frame_signatures
                     .insert(source_id.to_string(), signature);
             }

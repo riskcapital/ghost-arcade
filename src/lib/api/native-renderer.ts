@@ -447,6 +447,11 @@ export interface RendererStatus {
   native_video_frame_decode_failures: number;
   native_video_frame_decode_bytes_uploaded: number;
   native_video_frame_decode_last_error: string;
+  native_video_frame_cache_entries: number;
+  native_video_frame_cache_bytes: number;
+  native_video_frame_cache_hits: number;
+  native_video_frame_cache_misses: number;
+  native_video_frame_cache_evictions: number;
   native_instrument_frame_renders: number;
   compute_graph_runs: number;
   compute_graph_passes: number;
@@ -681,6 +686,11 @@ export interface RendererStats {
   native_video_frame_decode_failures: number;
   native_video_frame_decode_bytes_uploaded: number;
   native_video_frame_decode_last_error: string;
+  native_video_frame_cache_entries: number;
+  native_video_frame_cache_bytes: number;
+  native_video_frame_cache_hits: number;
+  native_video_frame_cache_misses: number;
+  native_video_frame_cache_evictions: number;
   native_shader_renders: number;
   native_instrument_frame_renders: number;
   render_clock_updates: number;
