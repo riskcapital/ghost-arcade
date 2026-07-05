@@ -74,6 +74,7 @@ const NATIVE_SHADER_SOURCE_KIND: f32 = 17.0;
 const GPU_TIMESTAMP_READ_BYTES: u64 = 16;
 const COMPUTE_READBACK_PREVIEW_WORDS: usize = 128;
 const COMPUTE_READBACK_BYTES_MAX: u64 = 4 * 1024 * 1024;
+const NATIVE_GRAPH_BUFFER_BUDGET_MIN_BYTES: u64 = 16 * 1024 * 1024;
 const CORE_RPC_METHODS: &[&str] = &[
     "start",
     "stop",
@@ -675,6 +676,10 @@ struct CoreStatus {
     decode_jobs_dropped: u64,
     decode_queue_peak: u64,
     vram_budget_mb: u32,
+    native_graph_buffer_bytes: u64,
+    native_graph_buffer_budget_bytes: u64,
+    vram_evictions: u64,
+    vram_evicted_bytes: u64,
     command_drain_limit_hits: u64,
     queued_commands_after_drain: u64,
     source_preview_size: u32,
@@ -1031,6 +1036,8 @@ struct CoreStats {
     native_video_frame_cache_evictions: u64,
     native_shader_renders: u64,
     native_instrument_frame_renders: u64,
+    vram_evictions: u64,
+    vram_evicted_bytes: u64,
     compute_graph_runs: u64,
     compute_graph_passes: u64,
     compute_graph_render_passes: u64,
@@ -2374,7 +2381,7 @@ impl App {
             "decode_preview_cache_clear": true,
             "media_policy_controls": true,
             "vram_budget_policy": true,
-            "vram_budget_enforcement": false,
+            "vram_budget_enforcement": true,
             "runtime_cache_clear": true,
             "native_graph_buffer_prune": true,
             "compute_shader_host": true,
@@ -2805,6 +2812,14 @@ impl App {
             decode_jobs_dropped: self.stats.decode_jobs_dropped,
             decode_queue_peak: self.stats.decode_queue_peak,
             vram_budget_mb: self.vram_budget_mb,
+            native_graph_buffer_bytes: self
+                .renderer
+                .as_ref()
+                .map(RenderState::native_compute_graph_buffer_bytes)
+                .unwrap_or(0),
+            native_graph_buffer_budget_bytes: self.native_graph_buffer_budget_bytes(),
+            vram_evictions: self.stats.vram_evictions,
+            vram_evicted_bytes: self.stats.vram_evicted_bytes,
             command_drain_limit_hits: self.stats.command_drain_limit_hits,
             queued_commands_after_drain: self.stats.queued_commands_after_drain,
             source_preview_size: SOURCE_PREVIEW_SIZE as u32,
@@ -4258,16 +4273,41 @@ impl App {
         let render_pass_count = render_plans.len() as u64;
         let render_targets_for_stats = render_targets.clone();
         let render_targets_for_source_frames = render_targets;
+        let native_graph_buffer_budget_bytes = self.native_graph_buffer_budget_bytes();
         let result = {
             let Some(renderer) = self.renderer.as_mut() else {
                 return Err("native renderer has not created a wgpu device".to_string());
             };
-            let result = renderer.run_native_compute_graph(
+            let mut result = renderer.run_native_compute_graph(
                 buffer_specs,
                 pass_plans,
                 readbacks,
                 render_plans,
             )?;
+            let (evicted_buffers, evicted_bytes) = renderer
+                .prune_native_compute_graph_buffers_to_budget(native_graph_buffer_budget_bytes);
+            if evicted_buffers > 0 || evicted_bytes > 0 {
+                self.stats.vram_evictions = self
+                    .stats
+                    .vram_evictions
+                    .saturating_add(evicted_buffers as u64);
+                self.stats.vram_evicted_bytes =
+                    self.stats.vram_evicted_bytes.saturating_add(evicted_bytes);
+                if let Some(object) = result.as_object_mut() {
+                    object.insert("vram_evicted_buffers".to_string(), json!(evicted_buffers));
+                    object.insert("vram_evicted_bytes".to_string(), json!(evicted_bytes));
+                }
+            }
+            if let Some(object) = result.as_object_mut() {
+                object.insert(
+                    "persistent_buffer_bytes".to_string(),
+                    json!(renderer.native_compute_graph_buffer_bytes()),
+                );
+                object.insert(
+                    "persistent_buffer_budget_bytes".to_string(),
+                    json!(native_graph_buffer_budget_bytes),
+                );
+            }
             self.stats.pipeline_cache_entries = renderer.native_pipeline_cache_count() as u64;
             self.stats.compute_graph_persistent_buffers =
                 renderer.native_compute_graph_buffer_count() as u64;
@@ -4786,6 +4826,13 @@ impl App {
             .unwrap_or(self.vram_budget_mb as f64)
             .round()
             .clamp(64.0, 131_072.0) as u32;
+    }
+
+    fn native_graph_buffer_budget_bytes(&self) -> u64 {
+        let vram_budget_bytes = u64::from(self.vram_budget_mb).saturating_mul(1024 * 1024);
+        let texture_pool_bytes = u64::from(self.texture_pool_cap_mb).saturating_mul(1024 * 1024);
+        let graph_slice = (vram_budget_bytes / 4).max(NATIVE_GRAPH_BUFFER_BUDGET_MIN_BYTES);
+        graph_slice.min(texture_pool_bytes.max(NATIVE_GRAPH_BUFFER_BUDGET_MIN_BYTES))
     }
 
     fn apply_decode_cpu_backup_policy(&mut self, params: &Value) {
@@ -5710,7 +5757,7 @@ impl App {
             "decode_preview_cache_clear": true,
             "media_policy_controls": true,
             "vram_budget_policy": true,
-            "vram_budget_enforcement": false,
+            "vram_budget_enforcement": true,
             "native_media_decode": true,
             "media_prefetch": true,
             "video_decode": true,
@@ -8692,6 +8739,40 @@ impl RenderState {
         self.native_compute_graph_buffers
             .len()
             .min(u32::MAX as usize) as u32
+    }
+
+    fn native_compute_graph_buffer_bytes(&self) -> u64 {
+        self.native_compute_graph_buffers
+            .values()
+            .map(|buffer| buffer.byte_length)
+            .fold(0u64, u64::saturating_add)
+    }
+
+    fn prune_native_compute_graph_buffers_to_budget(&mut self, max_bytes: u64) -> (usize, u64) {
+        let mut current_bytes = self.native_compute_graph_buffer_bytes();
+        if current_bytes <= max_bytes {
+            return (0, 0);
+        }
+        let mut entries = self
+            .native_compute_graph_buffers
+            .iter()
+            .map(|(id, buffer)| (id.clone(), buffer.byte_length))
+            .collect::<Vec<_>>();
+        entries.sort_by(|left, right| left.0.cmp(&right.0));
+
+        let mut evicted = 0usize;
+        let mut evicted_bytes = 0u64;
+        for (id, byte_length) in entries {
+            if current_bytes <= max_bytes {
+                break;
+            }
+            if self.native_compute_graph_buffers.remove(&id).is_some() {
+                evicted = evicted.saturating_add(1);
+                evicted_bytes = evicted_bytes.saturating_add(byte_length);
+                current_bytes = current_bytes.saturating_sub(byte_length);
+            }
+        }
+        (evicted, evicted_bytes)
     }
 
     fn clear_native_compute_graph_buffers(

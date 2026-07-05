@@ -542,7 +542,7 @@ try {
       decodeCapabilities?.decode_preview_cache_clear &&
       decodeCapabilities?.media_policy_controls &&
       decodeCapabilities?.vram_budget_policy &&
-      decodeCapabilities?.vram_budget_enforcement === false &&
+      decodeCapabilities?.vram_budget_enforcement === true &&
       decodeCapabilities?.native_media_decode === true &&
       decodeCapabilities?.media_prefetch === true &&
       decodeCapabilities?.video_decode === true &&
@@ -625,7 +625,11 @@ try {
       Number(policyStatus.decode_handoff_byte_cap_mb) === 320 &&
       Number(policyStatus.decode_handoff_predecode_shed_pct) === 82 &&
       Number(policyStatus.decode_predecode_estimate_cache_cap_entries) === 12345 &&
-      Number(policyStatus.vram_budget_mb) === 6144,
+      Number(policyStatus.vram_budget_mb) === 6144 &&
+      Number(policyStatus.native_graph_buffer_budget_bytes) > 0 &&
+      Number(policyStatus.native_graph_buffer_bytes) >= 0 &&
+      Number(policyStatus.vram_evictions) >= 0 &&
+      Number(policyStatus.vram_evicted_bytes) >= 0,
     `native policy setters did not round-trip through status or preserve the platform decode backend: ${JSON.stringify(policyStatus)}`,
   );
   assert(capabilities?.features?.native_output_mirror_texture, 'broker capabilities lost native output mirror support');
