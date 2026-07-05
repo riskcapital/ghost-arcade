@@ -57,7 +57,7 @@ describe('Point Cloud FX native graph', () => {
     expect(data.signature).toBe('synthetic-cloud');
     expect(data.pointCount).toBe(8);
     expect(data.sampledFromCount).toBe(32);
-    expect(data.homeByteLength).toBe(8 * 32);
+    expect(data.homeByteLength).toBe(8 * 64);
     expect(data.liveByteLength).toBe(8 * 48);
     expect(data.homeInitialBuffer).toBeInstanceOf(ArrayBuffer);
     expect(data.liveInitialBuffer).toBeInstanceOf(ArrayBuffer);
@@ -83,15 +83,61 @@ describe('Point Cloud FX native graph', () => {
     });
     const home = new Float32Array(data.homeInitialBuffer);
     const inlierRadii = Array.from({ length: 7 }, (_, i) => {
-      const off = i * 8;
+      const off = i * 16;
       return Math.hypot(home[off + 0], home[off + 1], home[off + 2]);
     });
     const inlierMax = Math.max(...inlierRadii);
-    const outlierRadius = Math.hypot(home[7 * 8 + 0], home[7 * 8 + 1], home[7 * 8 + 2]);
+    const outlierRadius = Math.hypot(home[7 * 16 + 0], home[7 * 16 + 1], home[7 * 16 + 2]);
 
     expect(inlierMax).toBeGreaterThan(0.5);
     expect(inlierMax).toBeLessThanOrEqual(0.95);
     expect(outlierRadius).toBeGreaterThan(100);
+  });
+
+  it('preserves gaussian opacity, scale, and rotation for native buffers', () => {
+    const positions = new Float32Array([
+      -0.5, 0.0, 0.0,
+      0.5, 0.2, 0.1,
+    ]);
+    const colors = new Float32Array([
+      1, 0, 0.25,
+      0.2, 0.8, 1,
+    ]);
+    const alpha = new Float32Array([0.25, 0.75]);
+    const splatScale = new Float32Array([
+      -5.0, -5.5, -6.0,
+      -3.2, -3.6, -4.0,
+    ]);
+    const splatRotation = new Float32Array([
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+    ]);
+
+    const data = buildPointCloudFXNativePointData(positions, colors, {
+      alpha,
+      splatScale,
+      splatRotation,
+      gaussian: true,
+      pointSize: 0.01,
+      signature: 'gaussian-cloud',
+    });
+    const home = new Float32Array(data.homeInitialBuffer);
+    const live = new Float32Array(data.liveInitialBuffer);
+
+    expect(data.homeByteLength).toBe(2 * 64);
+    expect(home[3]).toBeCloseTo(0.25);
+    expect(home[7]).toBeGreaterThan(0);
+    expect(home[8]).toBeGreaterThan(0);
+    expect(home[11]).toBe(1);
+    expect(home[12]).toBeCloseTo(1);
+    expect(home[16 + 3]).toBeCloseTo(0.75);
+    expect(home[16 + 11]).toBe(1);
+    expect(home[16 + 12]).toBeCloseTo(0);
+    expect(home[16 + 13]).toBeCloseTo(1);
+    expect(live[3]).toBeCloseTo(0.25);
+    expect(live[7]).toBeCloseTo(0.01 * home[7]);
+    expect(live[12 + 3]).toBeCloseTo(0.75);
+    expect(live[12 + 7]).toBeCloseTo(0.01 * home[16 + 7]);
   });
 
   it('builds a native compute/render graph and reuses cloud buffers after reset', () => {

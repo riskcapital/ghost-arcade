@@ -1976,6 +1976,10 @@ export class NativeRendererSync {
           }
           const positions = new Float32Array(vertices.length * 3);
           const colors = new Float32Array(vertices.length * 3);
+          const alpha = new Float32Array(vertices.length);
+          const splatScale = new Float32Array(vertices.length * 3);
+          const splatRotation = new Float32Array(vertices.length * 4);
+          let gaussian = parsed.dataType === 'gaussian';
           for (let i = 0; i < vertices.length; i++) {
             const v = vertices[i];
             positions[i * 3 + 0] = v.x;
@@ -1984,14 +1988,36 @@ export class NativeRendererSync {
             colors[i * 3 + 0] = clampNumber((v.r ?? 255) / 255, 0, 1);
             colors[i * 3 + 1] = clampNumber((v.g ?? 255) / 255, 0, 1);
             colors[i * 3 + 2] = clampNumber((v.b ?? 255) / 255, 0, 1);
+            alpha[i] = clampNumber((v.a ?? 255) / 255, 0, 1);
+            const scaleOff = i * 3;
+            splatScale[scaleOff + 0] = Number.isFinite(v.scale_0) ? v.scale_0! : 0;
+            splatScale[scaleOff + 1] = Number.isFinite(v.scale_1) ? v.scale_1! : 0;
+            splatScale[scaleOff + 2] = Number.isFinite(v.scale_2) ? v.scale_2! : 0;
+            if (
+              Number.isFinite(v.scale_0) ||
+              Number.isFinite(v.scale_1) ||
+              Number.isFinite(v.scale_2)
+            ) {
+              gaussian = true;
+            }
+            const rotOff = i * 4;
+            splatRotation[rotOff + 0] = Number.isFinite(v.rot_0) ? v.rot_0! : 1;
+            splatRotation[rotOff + 1] = Number.isFinite(v.rot_1) ? v.rot_1! : 0;
+            splatRotation[rotOff + 2] = Number.isFinite(v.rot_2) ? v.rot_2! : 0;
+            splatRotation[rotOff + 3] = Number.isFinite(v.rot_3) ? v.rot_3! : 0;
           }
           return buildPointCloudFXNativePointData(positions, colors, {
             maxPoints: NATIVE_POINT_CLOUD_MAX_POINTS,
+            alpha,
+            splatScale: gaussian ? splatScale : undefined,
+            splatRotation: gaussian ? splatRotation : undefined,
+            gaussian,
             signature: [
               cacheKey,
               buffer.byteLength,
               vertices.length,
               Math.min(vertices.length, NATIVE_POINT_CLOUD_MAX_POINTS),
+              gaussian ? 'gaussian' : 'points',
             ].join(':'),
           });
         })
