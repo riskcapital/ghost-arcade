@@ -1,10 +1,14 @@
 import { spawn } from 'child_process';
 import fs from 'fs';
+import { createRequire } from 'module';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
+const require = createRequire(import.meta.url);
 const COMMAND_PREFIX = 'native_renderer_';
 const SOURCE_FRAME_FILE_HANDOFF_B64_THRESHOLD = 512 * 1024;
+const VIDEO_FRAME_PREFETCH_TIMEOUT_MS = 8000;
 const STATIC_IMAGE_EXTENSIONS = new Set([
   '.avif',
   '.bmp',
@@ -16,6 +20,17 @@ const STATIC_IMAGE_EXTENSIONS = new Set([
   '.tif',
   '.tiff',
   '.webp',
+]);
+const VIDEO_EXTENSIONS = new Set([
+  '.avi',
+  '.m4v',
+  '.mkv',
+  '.mov',
+  '.mp4',
+  '.mpeg',
+  '.mpg',
+  '.ogv',
+  '.webm',
 ]);
 const REQUIRED_NATIVE_GRAPH_INSTRUMENTS = [
   ['planet', 'Native Planet graph', 'native_planet_graph'],
@@ -37,6 +52,12 @@ function looksLikeStaticImageUri(uri) {
   const clean = String(uri || '').split('#')[0].split('?')[0].toLowerCase();
   if (!clean) return false;
   return STATIC_IMAGE_EXTENSIONS.has(path.extname(clean));
+}
+
+function looksLikeVideoUri(uri) {
+  const clean = String(uri || '').split('#')[0].split('?')[0].toLowerCase();
+  if (!clean) return false;
+  return VIDEO_EXTENSIONS.has(path.extname(clean));
 }
 
 const RENDERER_COMMANDS = [
@@ -107,6 +128,169 @@ function normalizeSourceFrameBuffer(value) {
     return Buffer.from(value);
   }
   return null;
+}
+
+function resolveLocalMediaPath(uri) {
+  const value = String(uri || '').trim();
+  if (!value) return null;
+  if (/^file:/i.test(value)) {
+    try {
+      return fileURLToPath(value);
+    } catch {
+      return null;
+    }
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return null;
+  return path.resolve(value);
+}
+
+function resolveFfmpegPath(env = process.env, platform = process.platform) {
+  const envPath = env?.GA_FFMPEG_PATH;
+  if (envPath && fs.existsSync(envPath)) return envPath;
+
+  try {
+    const staticPath = require('ffmpeg-static');
+    if (typeof staticPath === 'string' && staticPath) {
+      const unpackedPath = staticPath.replace('app.asar', 'app.asar.unpacked');
+      const candidate = fs.existsSync(unpackedPath) ? unpackedPath : staticPath;
+      if (fs.existsSync(candidate)) {
+        if (platform !== 'win32') {
+          try { fs.chmodSync(candidate, 0o755); } catch {}
+        }
+        return candidate;
+      }
+    }
+  } catch {
+    // Fall through to PATH lookup; decode will report the real spawn error.
+  }
+
+  return platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+}
+
+function videoFramePrefetchStatus(env = process.env, platform = process.platform) {
+  const ffmpegPath = resolveFfmpegPath(env, platform);
+  if (!ffmpegPath) {
+    return {
+      available: false,
+      ffmpegPath: null,
+      reason: 'ffmpeg-static/PATH ffmpeg was not resolved',
+    };
+  }
+  return {
+    available: true,
+    ffmpegPath,
+    reason: null,
+  };
+}
+
+function decodeVideoFrameToRgba({
+  uri,
+  width,
+  height,
+  timeSeconds = 0,
+  env = process.env,
+  platform = process.platform,
+}) {
+  const localPath = resolveLocalMediaPath(uri);
+  if (!localPath) {
+    return Promise.reject(new Error('native video frame prefetch currently supports local video files only'));
+  }
+  let stat = null;
+  try {
+    stat = fs.statSync(localPath);
+  } catch (err) {
+    return Promise.reject(new Error(`native video frame prefetch cannot read ${localPath}: ${err?.message || err}`));
+  }
+  if (!stat.isFile()) {
+    return Promise.reject(new Error(`native video frame prefetch expected a file: ${localPath}`));
+  }
+
+  const targetWidth = Math.max(16, Math.min(4096, Math.round(Number(width) || 256)));
+  const targetHeight = Math.max(16, Math.min(4096, Math.round(Number(height) || targetWidth)));
+  const expectedBytes = targetWidth * targetHeight * 4;
+  const ffmpegPath = resolveFfmpegPath(env, platform);
+  const seconds = Math.max(0, Math.min(3600, Number(timeSeconds) || 0));
+  const scale = `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease`;
+  const pad = `pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2:color=black`;
+  const args = [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-nostdin',
+    '-ss',
+    seconds.toFixed(3),
+    '-i',
+    localPath,
+    '-frames:v',
+    '1',
+    '-vf',
+    `${scale},${pad},format=rgba`,
+    '-f',
+    'rawvideo',
+    '-pix_fmt',
+    'rgba',
+    'pipe:1',
+  ];
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } });
+    const chunks = [];
+    const stderr = [];
+    let outputBytes = 0;
+    let settled = false;
+    let timer = null;
+
+    const finish = (err, result) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (err) reject(err);
+      else resolve(result);
+    };
+
+    timer = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch {}
+      finish(new Error(`native video frame prefetch timed out after ${VIDEO_FRAME_PREFETCH_TIMEOUT_MS}ms`));
+    }, VIDEO_FRAME_PREFETCH_TIMEOUT_MS);
+    timer.unref?.();
+
+    child.stdout.on('data', (chunk) => {
+      outputBytes += chunk.length;
+      if (outputBytes > expectedBytes + 4096) {
+        try { child.kill('SIGKILL'); } catch {}
+        finish(new Error(`native video frame prefetch produced too much data (${outputBytes} bytes)`));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr.push(Buffer.from(chunk));
+    });
+    child.on('error', (err) => {
+      finish(new Error(`native video frame prefetch failed to launch ffmpeg: ${err?.message || err}`));
+    });
+    child.on('close', (code, signal) => {
+      if (settled) return;
+      const output = Buffer.concat(chunks, outputBytes);
+      if (code !== 0) {
+        const detail = Buffer.concat(stderr).toString('utf8').trim();
+        finish(new Error(`native video frame prefetch ffmpeg failed (${code ?? signal ?? 'unknown'}): ${detail}`));
+        return;
+      }
+      if (output.length < expectedBytes) {
+        const detail = Buffer.concat(stderr).toString('utf8').trim();
+        finish(new Error(`native video frame prefetch decoded ${output.length}/${expectedBytes} bytes${detail ? `: ${detail}` : ''}`));
+        return;
+      }
+      finish(null, {
+        rgba: output.length === expectedBytes ? output : output.subarray(0, expectedBytes),
+        width: targetWidth,
+        height: targetHeight,
+        localPath,
+        byteLength: expectedBytes,
+      });
+    });
+  });
 }
 
 export function nativeRendererCommandNames() {
@@ -181,7 +365,7 @@ class NativeRendererBroker {
         return makeDefaultOutputSharedTexture(this.platform);
       }
       if (command === 'native_renderer_get_capabilities') return this.capabilities;
-      if (command === 'native_renderer_get_decode_capabilities') return this.decodeCapabilities();
+      if (command === 'native_renderer_get_decode_capabilities') return this.withBrokerDecodeCapabilities(this.decodeCapabilities());
       if (command === 'native_renderer_get_readiness_report') return this.readinessReport();
       if (command === 'native_renderer_export_snapshot_json') return this.exportSnapshotJson(args);
       return null;
@@ -339,9 +523,18 @@ class NativeRendererBroker {
     }
     const sourceType = String(args.source_type ?? args.sourceType ?? '').trim().toLowerCase();
     const imageSource = sourceType === 'image' || (!sourceType && looksLikeStaticImageUri(uri));
+    const videoSource = sourceType === 'video' || (!sourceType && looksLikeVideoUri(uri));
+    if (videoSource) {
+      return this.prefetchVideoFrame({
+        ...args,
+        source_id: sourceId,
+        sourceId,
+        uri,
+      });
+    }
     if (!imageSource) {
       throw new Error(
-        'Unsupported native renderer command native_renderer_prefetch_media: native prefetch currently supports local static images only',
+        'Unsupported native renderer command native_renderer_prefetch_media: native prefetch currently supports local static images and local video poster frames only',
       );
     }
     const payload = {
@@ -374,6 +567,51 @@ class NativeRendererBroker {
     return this.getStatus();
   }
 
+  async prefetchVideoFrame(args = {}) {
+    const sourceId = String(args.source_id ?? args.sourceId ?? '').trim();
+    const uri = String(args.uri ?? args.src ?? '').trim();
+    if (!sourceId) {
+      throw new Error('native video frame prefetch requires source_id');
+    }
+    if (!uri) {
+      throw new Error('native video frame prefetch requires uri');
+    }
+    const width = Number(
+      args.decode_width ?? args.decodeWidth ?? args.width ?? args.decode_size ?? args.decodeSize ?? 256,
+    );
+    const height = Number(
+      args.decode_height ?? args.decodeHeight ?? args.height ?? args.decode_size ?? args.decodeSize ?? width,
+    );
+    const frame = await decodeVideoFrameToRgba({
+      uri,
+      width,
+      height,
+      timeSeconds: Number(args.time_seconds ?? args.timeSeconds ?? args.time ?? 0),
+      env: this.env,
+      platform: this.platform,
+    });
+    const submitResult = await this.sendNativeCommandPayloadIfRunning(
+      'submit_commands',
+      {
+        commands: [
+          {
+            type: 'upload_source_frame',
+            source_id: sourceId,
+            width: frame.width,
+            height: frame.height,
+            rgba_buffer: frame.rgba,
+            seq: Number(args.seq ?? Date.now()),
+          },
+        ],
+      },
+      { fallback: null, timeoutMs: VIDEO_FRAME_PREFETCH_TIMEOUT_MS + 2500 },
+    );
+    if (!submitResult) {
+      throw new Error('native video frame prefetch decoded a frame, but the native core did not accept the source-frame upload');
+    }
+    return this.getStatus();
+  }
+
   async clearPrefetchCache() {
     if ((this.capabilities?.implemented_methods ?? []).includes('clear_prefetch_cache')) {
       const result = await this.sendIfRunning('clear_prefetch_cache', {}, { fallback: null, timeoutMs: 1000 });
@@ -396,9 +634,9 @@ class NativeRendererBroker {
   async getDecodeCapabilities() {
     if ((this.capabilities?.implemented_methods ?? []).includes('get_decode_capabilities')) {
       const result = await this.sendIfRunning('get_decode_capabilities', {}, { fallback: null, timeoutMs: 1000 });
-      if (result) return result;
+      if (result) return this.withBrokerDecodeCapabilities(result);
     }
-    return this.decodeCapabilities();
+    return this.withBrokerDecodeCapabilities(this.decodeCapabilities());
   }
 
   decodeCapabilities() {
@@ -423,6 +661,33 @@ class NativeRendererBroker {
             'Video and full media prefetch still use source-frame/shared-texture fallback paths.',
           ]
         : ['Native render core is not running or does not advertise static image decode.'],
+    };
+  }
+
+  withBrokerDecodeCapabilities(caps = {}) {
+    const videoFramePrefetch = this.videoFramePrefetchStatus();
+    const supportedSourceTypes = new Set(
+      Array.isArray(caps.supported_source_types) ? caps.supported_source_types.map(String) : [],
+    );
+    if (videoFramePrefetch.available) supportedSourceTypes.add('video');
+    const notes = Array.isArray(caps.notes) ? caps.notes.map(String) : [];
+    if (
+      videoFramePrefetch.available &&
+      !notes.some((note) => note.includes('Local video files can prefetch one FFmpeg-decoded poster frame'))
+    ) {
+      notes.push(
+        'Local video files can prefetch one FFmpeg-decoded poster frame into native source-frame textures; continuous native video decode is still pending.',
+      );
+    }
+    return {
+      ...caps,
+      native_video_frame_prefetch: !!videoFramePrefetch.available,
+      video_frame_prefetch: !!videoFramePrefetch.available,
+      video_frame_prefetch_encoder: videoFramePrefetch.available ? 'ffmpeg' : null,
+      video_frame_prefetch_path: videoFramePrefetch.ffmpegPath ?? null,
+      supported_source_types: Array.from(supportedSourceTypes),
+      supported_video_extensions: Array.from(VIDEO_EXTENSIONS).map((ext) => ext.slice(1)),
+      notes,
     };
   }
 
@@ -507,6 +772,7 @@ class NativeRendererBroker {
       },
       this.textureShareStatus(),
       this.nativeFrameEncoderStatus(),
+      this.videoFramePrefetchStatus(),
     );
     return this.capabilities;
   }
@@ -554,6 +820,7 @@ class NativeRendererBroker {
     const features = this.capabilities?.features || {};
     const textureShare = this.textureShareStatus();
     const nativeFrameEncoder = this.nativeFrameEncoderStatus();
+    const videoFramePrefetch = this.videoFramePrefetchStatus();
     const graphInstruments = nativeGraphInstrumentSet(this.capabilities);
     const computeGraphHostReady = !!(
       features.compute_shader_host &&
@@ -710,6 +977,14 @@ class NativeRendererBroker {
         'local still-image prefetch should warm native source-frame textures before bind',
       ],
       [
+        'native-video-frame-prefetch',
+        'Native local video frame prefetch',
+        !!features.native_video_frame_prefetch && !!videoFramePrefetch.available,
+        videoFramePrefetch.available
+          ? `local videos can prefetch a bounded FFmpeg-decoded poster frame via ${videoFramePrefetch.ffmpegPath}`
+          : (videoFramePrefetch.reason || 'desktop FFmpeg video frame prefetch is unavailable'),
+      ],
+      [
         'native-mp4-frame-encoder',
         'Native MP4 frame encoder',
         !!features.native_mp4_frame_encoder && !!nativeFrameEncoder.available,
@@ -825,6 +1100,7 @@ class NativeRendererBroker {
       capabilities: this.capabilities,
       texture_share: textureShare,
       native_frame_encoder: nativeFrameEncoder,
+      native_video_frame_prefetch: videoFramePrefetch,
       checks: [
         {
           id: 'core-capabilities',
@@ -913,6 +1189,10 @@ class NativeRendererBroker {
         reason: err?.message || String(err),
       };
     }
+  }
+
+  videoFramePrefetchStatus() {
+    return videoFramePrefetchStatus(this.env, this.platform);
   }
 
   unsupportedError(command) {
@@ -1308,7 +1588,7 @@ function normalizeCapabilities(capabilities, previous = makeDefaultCapabilities(
   };
 }
 
-function applyBrokerCapabilityOverlay(capabilities, textureShare, nativeFrameEncoder = null) {
+function applyBrokerCapabilityOverlay(capabilities, textureShare, nativeFrameEncoder = null, videoFramePrefetch = null) {
   const features = capabilities?.features && typeof capabilities.features === 'object'
     ? { ...capabilities.features }
     : {};
@@ -1330,6 +1610,14 @@ function applyBrokerCapabilityOverlay(capabilities, textureShare, nativeFrameEnc
     nativeFrameExportReady &&
     (features.native_recording || features.native_mp4_frame_encoder)
   );
+  features.native_video_frame_prefetch = !!(
+    features.native_video_frame_prefetch ||
+    videoFramePrefetch?.available
+  );
+  features.video_frame_prefetch = !!(
+    features.video_frame_prefetch ||
+    features.native_video_frame_prefetch
+  );
 
   const notes = Array.isArray(capabilities?.notes) ? [...capabilities.notes] : [];
   if (
@@ -1343,6 +1631,12 @@ function applyBrokerCapabilityOverlay(capabilities, textureShare, nativeFrameEnc
     !notes.some((note) => String(note).includes('Electron native MP4 frame encoder'))
   ) {
     notes.push('Electron native MP4 frame encoder can stream raw RGBA/BGRA frames into FFmpeg for offline, reel, and live recordings.');
+  }
+  if (
+    videoFramePrefetch?.available &&
+    !notes.some((note) => String(note).includes('Electron video frame prefetch bridge'))
+  ) {
+    notes.push('Electron video frame prefetch bridge can decode a bounded local-video poster frame into native source-frame textures.');
   }
 
   return {
@@ -1899,6 +2193,8 @@ function makeDefaultCapabilities(overrides = {}) {
       native_mp4_frame_encoder: false,
       native_media_decode: false,
       media_prefetch: false,
+      native_video_frame_prefetch: false,
+      video_frame_prefetch: false,
       present_policy: false,
       managed_output_attach: false,
       managed_output_window_control: false,
