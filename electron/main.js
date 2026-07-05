@@ -1818,6 +1818,8 @@ let spoutCpuFallbackWarned = false;
 let nativeOutputTextureSharePump = null;
 let nativeOutputTextureShareActive = false;
 let nativeOutputTextureShareFrameCount = 0;
+let nativeOutputTextureShareLastPublishedFrame = 0;
+let nativeOutputTextureShareLastPublishedHandle = null;
 let nativeOutputTextureShareLastLogTime = 0;
 let nativeOutputTextureShareFailCount = 0;
 let nativeOutputTextureShareInFlight = false;
@@ -2017,6 +2019,7 @@ function getTextureShareLoadStatus() {
     nativeOutputCapable: getNativeOutputTextureShareSupport(spoutAddon),
     nativeOutputActive: nativeOutputTextureShareActive,
     nativeOutputWaitingForFrame: nativeOutputTextureShareWaitingForFrame,
+    nativeOutputLastPublishedFrame: nativeOutputTextureShareLastPublishedFrame,
     nativeOutputFailures: nativeOutputTextureShareFailCount,
     nativeOutputPendingPromotion: nativeOutputTextureSharePromoteTimer !== null,
     nativeOutputPromotionAttempts: nativeOutputTextureSharePromoteAttempts,
@@ -2650,6 +2653,8 @@ function stopNativeOutputTextureSharePump(reason = 'stopped') {
   nativeOutputTextureShareActive = false;
   nativeOutputTextureShareInFlight = false;
   nativeOutputTextureShareWaitingForFrame = false;
+  nativeOutputTextureShareLastPublishedFrame = 0;
+  nativeOutputTextureShareLastPublishedHandle = null;
   if (wasActive) {
     notifyMainWindowOsrStatus(false, reason);
   }
@@ -2730,6 +2735,8 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
   const intervalMs = Math.max(4, Math.round(1000 / OSR_PAINT_FPS));
   nativeOutputTextureShareActive = true;
   nativeOutputTextureShareFrameCount = 0;
+  nativeOutputTextureShareLastPublishedFrame = 0;
+  nativeOutputTextureShareLastPublishedHandle = null;
   nativeOutputTextureShareFailCount = 0;
   nativeOutputTextureShareWaitingForFrame = false;
   nativeOutputTextureShareWaitingForFrameLogged = false;
@@ -2769,6 +2776,21 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
       const surfaceId = Number(texture.handle);
       const width = Number(texture.width);
       const height = Number(texture.height);
+      const frameId = Math.max(0, Math.floor(Number(texture.frame ?? 0)));
+      const handleKey = [
+        texture.platform || 'native',
+        texture.handle,
+        width,
+        height,
+        texture.format || '',
+      ].join(':');
+      if (
+        frameId > 0 &&
+        frameId === nativeOutputTextureShareLastPublishedFrame &&
+        handleKey === nativeOutputTextureShareLastPublishedHandle
+      ) {
+        return;
+      }
       const ok = spoutOutput.publishIOSurface(surfaceId, width, height, !!texture.flipped);
       if (!ok) {
         nativeOutputTextureShareFailCount++;
@@ -2781,6 +2803,8 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
       nativeOutputTextureShareFailCount = 0;
       nativeOutputTextureShareWaitingForFrame = false;
       nativeOutputTextureShareWaitingForFrameLogged = false;
+      nativeOutputTextureShareLastPublishedFrame = frameId;
+      nativeOutputTextureShareLastPublishedHandle = handleKey;
       nativeOutputTextureShareFrameCount++;
       const now = Date.now();
       if (now - nativeOutputTextureShareLastLogTime > 5000) {
@@ -3858,6 +3882,7 @@ function registerIpcHandlers() {
       osr_failure_reason: osrFailureReason,
       native_output_active: nativeOutputTextureShareActive,
       native_output_waiting_for_frame: nativeOutputTextureShareWaitingForFrame,
+      native_output_last_published_frame: nativeOutputTextureShareLastPublishedFrame,
       native_output_pending_promotion: nativeOutputTextureSharePromoteTimer !== null,
       native_output_promotion_attempts: nativeOutputTextureSharePromoteAttempts,
       native_output_promotion_reason: nativeOutputTextureSharePromotionReason,
