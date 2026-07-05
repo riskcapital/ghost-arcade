@@ -3186,6 +3186,7 @@ export class NativeRendererSync {
     const inputReady =
       this.nativeSourceFrameUploaded(inputSource) ||
       this.canUseNativeStaticImageDecode(inputSource.source, inputSource.sourceType) ||
+      this.canUseNativeVideoDecodePump(inputSource, inputSource.sourceType) ||
       !!this.resolvePreviewElement(inputSource.source, inputSource.sourceType, inputSource.previewElement ?? null);
     if (!inputReady) return null;
     const source = nativeEffectPassOutputSource(layer, inputSource);
@@ -4181,6 +4182,28 @@ export class NativeRendererSync {
               uri: graphInput.uri,
               source_type: graphInput.sourceType,
             });
+          }
+        } else if (this.canUseNativeVideoDecodePump(graphInput, graphInput.sourceType)) {
+          activeVideoKeys.add(sourceKey);
+          this.markNativeVideoDecodePumpFrameReady(graphInputSrc);
+          if (graphInput.shouldPrefetch && !this.prefetchedSources.has(sourceKey)) {
+            this.prefetchedSources.add(sourceKey);
+            void prefetchNativeRendererMedia(
+              graphInputSrc.id,
+              graphInputSrc.src,
+              videoPrefetchPriority,
+              graphInput.sourceType,
+              this.nativeVideoPrefetchOptions(graphInputSrc, now),
+            ).catch(() => {});
+          }
+          if (!playbackSourcesSent.has(sourceKey)) {
+            graphInputCommands.push(this.nativeVideoPlaybackCommand(
+              graphInputSrc,
+              graphInput.sourceType,
+              now,
+              renderClock,
+            ));
+            playbackSourcesSent.add(sourceKey);
           }
         } else {
           this.appendSourcePreviewCommand(
