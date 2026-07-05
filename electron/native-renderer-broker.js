@@ -1134,18 +1134,24 @@ class NativeRendererBroker {
     const effectPassDescriptors = Array.isArray(this.capabilities?.native_effect_pass_descriptors)
       ? this.capabilities.native_effect_pass_descriptors
       : [];
-    const effectPassIds = new Set(effectPassDescriptors.map((entry) => String(entry?.id || '')));
+    const effectPassCodes = new Map(
+      effectPassDescriptors.map((entry) => [String(entry?.id || ''), Number(entry?.code)]),
+    );
+    const missingEffectPassDescriptors = NATIVE_EFFECT_PASS_DESCRIPTORS
+      .filter((entry) => effectPassCodes.get(entry.id) !== entry.code);
     const effectPassManifestOk = !!(
       features.native_effect_pass_manifest &&
       features.compute_graph_render &&
       features.compute_graph_texture_sampling &&
       features.compute_graph_source_frame_target &&
       effectPassDescriptors.length === NATIVE_EFFECT_PASS_DESCRIPTORS.length &&
-      NATIVE_EFFECT_PASS_DESCRIPTORS.every((entry) => effectPassIds.has(entry.id))
+      missingEffectPassDescriptors.length === 0
     );
     const effectPassManifestDetail = effectPassManifestOk
       ? `${effectPassDescriptors.length} source-frame layer effect(s) can route through the native effect-pass graph`
-      : 'native effect-pass graph manifest is incomplete or source-frame graph sampling is unavailable';
+      : missingEffectPassDescriptors.length > 0
+        ? `native effect-pass graph manifest descriptor mismatch: ${missingEffectPassDescriptors.map((entry) => `${entry.id}:${entry.code}`).join(', ')}`
+        : 'native effect-pass graph manifest is incomplete or source-frame graph sampling is unavailable';
     const textureShareName = textureShare?.label || textureShare?.platform || 'Texture share';
     const nativeOutputLastFrame = Math.max(0, Math.floor(Number(textureShare?.nativeOutputLastPublishedFrame ?? 0)));
     const textureShareDetail = textureShare
