@@ -304,6 +304,8 @@ const SOURCE_FRAME_SIZE_OVERLOAD = 1536;
 const SOURCE_FRAME_DYNAMIC_CAPTURE_MAX = 2048;
 const STATIC_PREVIEW_RETRY_MS = 1000;
 const VIDEO_PREVIEW_REFRESH_MS = 360;
+const NATIVE_VIDEO_PREFETCH_REFRESH_MS = 750;
+const NATIVE_VIDEO_PREFETCH_OVERLOAD_REFRESH_MS = 1200;
 const GPU_PREVIEW_REFRESH_MS = 700;
 const NATIVE_POINT_CLOUD_MAX_POINTS = 500_000;
 
@@ -1525,6 +1527,7 @@ export class NativeRendererSync {
   private nativeGraphInstruments = new Set<string>();
   private prefetchedSources = new Set<string>();
   private videoRefreshAt = new Map<string, number>();
+  private nativeVideoPrefetchAt = new Map<string, number>();
   private sourcePreviewSeq = new Map<string, number>();
   private sourcePreviewNextAt = new Map<string, number>();
   private sourcePreviewSig = new Map<string, string>();
@@ -2375,6 +2378,20 @@ export class NativeRendererSync {
     return `${sourceId}::${uri}`;
   }
 
+  private nativeVideoPrefetchOptions(src: NonNullable<Layer['source']>, now: number) {
+    const videoTime = Number(src.videoElement?.currentTime);
+    const timeSeconds = Number.isFinite(videoTime)
+      ? Math.max(0, videoTime)
+      : Math.max(0, this.latestRenderClockSeconds ?? ((now - this.liveClockOriginMs) / 1000));
+    const decodeSize = Math.max(64, Math.min(2048, Math.round(this.dynamicSourceFrameCaptureSize || this.nativeSourceFrameSize)));
+    return {
+      timeSeconds,
+      decodeWidth: decodeSize,
+      decodeHeight: decodeSize,
+      seq: Math.max(1, Math.round(timeSeconds * 1000)),
+    };
+  }
+
   async start(width: number, height: number) {
     if (this.running) return;
     this.startupReady = false;
@@ -2834,7 +2851,10 @@ export class NativeRendererSync {
           ) {
             this.prefetchedSources.add(sourceKey);
             const priority = sourceType === 'video' ? videoPrefetchPriority : mediaPrefetchPriority;
-            void prefetchNativeRendererMedia(src.id, src.src, priority, sourceType).catch(() => {});
+            const options = sourceType === 'video'
+              ? this.nativeVideoPrefetchOptions(src, now)
+              : undefined;
+            void prefetchNativeRendererMedia(src.id, src.src, priority, sourceType, options).catch(() => {});
           }
           if (dynamicSourceFrameSource) {
             this.videoRefreshAt.set(sourceKey, now + videoRefreshMs);
@@ -2883,9 +2903,29 @@ export class NativeRendererSync {
         const continuousNativeVideoPrefetch =
           this.supportsNativeFeature('native_media_decode') &&
           this.supportsNativeFeature('media_prefetch');
-        if (!sharedTextureSource && continuousNativeVideoPrefetch && sourceType === 'video' && now >= dueAt) {
-          this.videoRefreshAt.set(sourceKey, now + videoRefreshMs);
-          void prefetchNativeRendererMedia(src.id, src.src, videoPrefetchPriority, sourceType).catch(() => {});
+        const brokerVideoFramePrefetch =
+          this.supportsNativeFeature('native_video_frame_prefetch') ||
+          this.supportsNativeFeature('video_frame_prefetch');
+        if (
+          !sharedTextureSource &&
+          sourceType === 'video' &&
+          nativeSource.shouldPrefetch &&
+          (continuousNativeVideoPrefetch || brokerVideoFramePrefetch)
+        ) {
+          const prefetchDueAt = this.nativeVideoPrefetchAt.get(sourceKey) ?? 0;
+          if (now >= prefetchDueAt) {
+            const prefetchRefreshMs = overloadActive
+              ? NATIVE_VIDEO_PREFETCH_OVERLOAD_REFRESH_MS
+              : NATIVE_VIDEO_PREFETCH_REFRESH_MS;
+            this.nativeVideoPrefetchAt.set(sourceKey, now + prefetchRefreshMs);
+            void prefetchNativeRendererMedia(
+              src.id,
+              src.src,
+              videoPrefetchPriority,
+              sourceType,
+              this.nativeVideoPrefetchOptions(src, now),
+            ).catch(() => {});
+          }
         }
         if (nativeSource.shouldPreview) {
           this.appendSourcePreviewCommand(commands, src, sourceType, now, false, null, previewBudget);
@@ -3011,6 +3051,9 @@ export class NativeRendererSync {
     });
     this.videoRefreshAt.forEach((_due, key) => {
       if (!activeVideoKeys.has(key)) this.videoRefreshAt.delete(key);
+    });
+    this.nativeVideoPrefetchAt.forEach((_due, key) => {
+      if (!activeVideoKeys.has(key)) this.nativeVideoPrefetchAt.delete(key);
     });
 
     if (graphInputCommands.length) {
