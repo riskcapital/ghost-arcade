@@ -43,6 +43,10 @@ const MAX_NATIVE_IMAGE_DECODE_PIXELS: u64 = 8192 * 8192;
 const MAX_NATIVE_VIDEO_FRAME_DECODE_DIMENSION: usize = 4096;
 const NATIVE_VIDEO_FRAME_CACHE_MAX_ENTRIES: usize = 8;
 const NATIVE_VIDEO_FRAME_CACHE_MAX_BYTES: usize = 192 * 1024 * 1024;
+const NATIVE_VIDEO_PREFETCH_WINDOW_MAX_FRAMES: u32 = 4;
+const NATIVE_VIDEO_PREFETCH_WINDOW_DEFAULT_FPS: f64 = 30.0;
+const NATIVE_VIDEO_PREFETCH_WINDOW_MIN_FPS: f64 = 1.0;
+const NATIVE_VIDEO_PREFETCH_WINDOW_MAX_FPS: f64 = 120.0;
 const SOURCE_FRAME_FORMAT_FALLBACK: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const SOURCE_FRAME_FORMAT_HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const MAX_STAGE3D_OVERLAY_ITEMS: usize = 128;
@@ -2259,6 +2263,7 @@ impl App {
             "native_static_image_prefetch": true,
             "native_video_frame_decode": true,
             "native_video_frame_prefetch": true,
+            "native_video_frame_prefetch_window": true,
             "video_frame_prefetch": true,
             "decode_policy_controls": true,
             "decode_preview_cache_clear": true,
@@ -5190,6 +5195,19 @@ impl App {
                 .unwrap_or((time_seconds * 1000.0).round())
                 .round()
                 .max(0.0) as u64;
+            let prefetch_window_frames = number_at(command, &["prefetch_window_frames"])
+                .or_else(|| number_at(command, &["prefetchWindowFrames"]))
+                .unwrap_or(0.0)
+                .round()
+                .clamp(0.0, NATIVE_VIDEO_PREFETCH_WINDOW_MAX_FRAMES as f64)
+                as u32;
+            let prefetch_fps = number_at(command, &["prefetch_fps"])
+                .or_else(|| number_at(command, &["prefetchFps"]))
+                .unwrap_or(NATIVE_VIDEO_PREFETCH_WINDOW_DEFAULT_FPS)
+                .clamp(
+                    NATIVE_VIDEO_PREFETCH_WINDOW_MIN_FPS,
+                    NATIVE_VIDEO_PREFETCH_WINDOW_MAX_FPS,
+                );
             self.decode_native_video_frame_source(
                 &source_id,
                 &uri,
@@ -5197,6 +5215,8 @@ impl App {
                 height,
                 time_seconds,
                 seq,
+                prefetch_window_frames,
+                prefetch_fps,
             );
         }
     }
@@ -5355,6 +5375,19 @@ impl App {
                 .unwrap_or((time_seconds * 1000.0).round())
                 .round()
                 .max(0.0) as u64;
+            let prefetch_window_frames = number_at(params, &["prefetch_window_frames"])
+                .or_else(|| number_at(params, &["prefetchWindowFrames"]))
+                .unwrap_or(0.0)
+                .round()
+                .clamp(0.0, NATIVE_VIDEO_PREFETCH_WINDOW_MAX_FRAMES as f64)
+                as u32;
+            let prefetch_fps = number_at(params, &["prefetch_fps"])
+                .or_else(|| number_at(params, &["prefetchFps"]))
+                .unwrap_or(NATIVE_VIDEO_PREFETCH_WINDOW_DEFAULT_FPS)
+                .clamp(
+                    NATIVE_VIDEO_PREFETCH_WINDOW_MIN_FPS,
+                    NATIVE_VIDEO_PREFETCH_WINDOW_MAX_FPS,
+                );
             self.decode_native_video_frame_source(
                 &source_id,
                 &uri,
@@ -5362,6 +5395,8 @@ impl App {
                 height,
                 time_seconds,
                 seq,
+                prefetch_window_frames,
+                prefetch_fps,
             );
         } else {
             return Err(
@@ -5402,6 +5437,7 @@ impl App {
             "native_static_image_prefetch": true,
             "native_video_frame_decode": true,
             "native_video_frame_prefetch": true,
+            "native_video_frame_prefetch_window": true,
             "video_frame_prefetch": true,
             "decode_policy_controls": true,
             "decode_preview_cache_clear": true,
@@ -5430,7 +5466,7 @@ impl App {
             "supported_video_extensions": ["avi", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "ogv", "webm"],
             "notes": [
                 "Local still images can decode directly into native source-frame textures.",
-                "Local videos can prefetch bounded timestamped frames into native source-frame textures via FFmpeg.",
+                "Local videos can prefetch bounded timestamped frames and small adjacent-frame windows into native source-frame textures via FFmpeg.",
                 "Continuous in-core video decode and full media prefetch are still pending."
             ]
         })
@@ -5612,6 +5648,52 @@ impl App {
         (entries, bytes)
     }
 
+    fn prefetch_native_video_frame_window(
+        &mut self,
+        path: &Path,
+        width: usize,
+        height: usize,
+        time_seconds: f64,
+        prefetch_window_frames: u32,
+        prefetch_fps: f64,
+        primary_signature: &str,
+    ) {
+        let frame_count = prefetch_window_frames.min(NATIVE_VIDEO_PREFETCH_WINDOW_MAX_FRAMES);
+        if frame_count == 0 {
+            return;
+        }
+        let frame_step = 1.0
+            / prefetch_fps.clamp(
+                NATIVE_VIDEO_PREFETCH_WINDOW_MIN_FPS,
+                NATIVE_VIDEO_PREFETCH_WINDOW_MAX_FPS,
+            );
+        for frame_offset in 1..=frame_count {
+            let prefetch_time =
+                (time_seconds + frame_step * frame_offset as f64).clamp(0.0, 3600.0);
+            let frame_bucket = native_video_frame_bucket(prefetch_time);
+            let signature =
+                match native_video_frame_file_signature(path, width, height, frame_bucket) {
+                    Ok(signature) => signature,
+                    Err(_) => continue,
+                };
+            if signature == primary_signature
+                || self.native_video_frame_cache.contains_key(&signature)
+            {
+                continue;
+            }
+            self.stats.native_video_frame_cache_misses =
+                self.stats.native_video_frame_cache_misses.saturating_add(1);
+            let Ok((decoded_width, decoded_height, rgba)) =
+                decode_native_video_frame_rgba(path, width, height, prefetch_time)
+            else {
+                break;
+            };
+            self.stats.native_video_frame_decodes =
+                self.stats.native_video_frame_decodes.saturating_add(1);
+            self.store_native_video_frame_cache(signature, decoded_width, decoded_height, &rgba);
+        }
+    }
+
     fn decode_native_video_frame_source(
         &mut self,
         source_id: &str,
@@ -5620,11 +5702,13 @@ impl App {
         height: usize,
         time_seconds: f64,
         seq: u64,
+        prefetch_window_frames: u32,
+        prefetch_fps: f64,
     ) {
         let Some(path) = local_media_path_from_uri(uri) else {
             return;
         };
-        let frame_bucket = (time_seconds * 30.0).round().max(0.0) as u64;
+        let frame_bucket = native_video_frame_bucket(time_seconds);
         let signature = match native_video_frame_file_signature(&path, width, height, frame_bucket)
         {
             Ok(signature) => signature,
@@ -5644,6 +5728,15 @@ impl App {
             .is_some_and(|existing| existing == &signature)
             && self.source_frames.contains_key(source_id)
         {
+            self.prefetch_native_video_frame_window(
+                &path,
+                width,
+                height,
+                time_seconds,
+                prefetch_window_frames,
+                prefetch_fps,
+                &signature,
+            );
             return;
         }
         let existing_seq = self
@@ -5670,7 +5763,16 @@ impl App {
                 .saturating_add(uploaded as u64);
             self.stats.native_video_frame_decode_last_error.clear();
             self.native_video_frame_signatures
-                .insert(source_id.to_string(), signature);
+                .insert(source_id.to_string(), signature.clone());
+            self.prefetch_native_video_frame_window(
+                &path,
+                width,
+                height,
+                time_seconds,
+                prefetch_window_frames,
+                prefetch_fps,
+                &signature,
+            );
             return;
         }
         self.stats.native_video_frame_cache_misses =
@@ -5700,7 +5802,16 @@ impl App {
                     &rgba,
                 );
                 self.native_video_frame_signatures
-                    .insert(source_id.to_string(), signature);
+                    .insert(source_id.to_string(), signature.clone());
+                self.prefetch_native_video_frame_window(
+                    &path,
+                    width,
+                    height,
+                    time_seconds,
+                    prefetch_window_frames,
+                    prefetch_fps,
+                    &signature,
+                );
             }
             Err(err) => {
                 self.stats.native_video_frame_decode_failures = self
@@ -10848,6 +10959,12 @@ fn decode_native_video_frame_rgba(
     let mut rgba = output.stdout;
     rgba.truncate(expected_bytes);
     Ok((target_width, target_height, rgba))
+}
+
+fn native_video_frame_bucket(time_seconds: f64) -> u64 {
+    (time_seconds * NATIVE_VIDEO_PREFETCH_WINDOW_DEFAULT_FPS)
+        .round()
+        .max(0.0) as u64
 }
 
 fn native_image_file_signature(path: &Path) -> Result<String, String> {

@@ -400,6 +400,7 @@ try {
       decodeCapabilities?.video_decode === false &&
       decodeCapabilities?.native_video_frame_decode === true &&
       decodeCapabilities?.native_video_frame_prefetch === true &&
+      decodeCapabilities?.native_video_frame_prefetch_window === true &&
       decodeCapabilities?.video_frame_prefetch === true &&
       decodeCapabilities?.supported_source_types?.includes('image') &&
       decodeCapabilities?.supported_source_types?.includes('video'),
@@ -1304,6 +1305,40 @@ try {
         crossSourceBlueVideoPrefetchStatus.source_frame_last_upload_transport === 'native-video-frame-cache',
       `native video frame prefetch should reuse the core decoded-frame cache across source ids: ${JSON.stringify({ before: secondBlueVideoPrefetchStatus, repeat: repeatedBlueVideoPrefetchStatus, copy: crossSourceBlueVideoPrefetchStatus })}`,
     );
+    const windowBaseTime = 0.05;
+    const windowNextTime = windowBaseTime + 1 / 30;
+    const windowBasePrefetchStatus = await broker.invoke('native_renderer_prefetch_media', {
+      source_id: 'broker-prefetch-video-window',
+      uri: timedVideoPath,
+      source_type: 'video',
+      decode_width: 64,
+      decode_height: 64,
+      priority: 2,
+      time_seconds: windowBaseTime,
+      prefetch_window_frames: 1,
+      prefetch_fps: 30,
+      seq: 805,
+    });
+    const windowNextPrefetchStatus = await broker.invoke('native_renderer_prefetch_media', {
+      source_id: 'broker-prefetch-video-window-next',
+      uri: timedVideoPath,
+      source_type: 'video',
+      decode_width: 64,
+      decode_height: 64,
+      priority: 2,
+      time_seconds: windowNextTime,
+      seq: 806,
+    });
+    assert(
+      Number(windowNextPrefetchStatus.native_video_frame_decodes ?? 0) ===
+        Number(windowBasePrefetchStatus.native_video_frame_decodes ?? 0) &&
+        Number(windowNextPrefetchStatus.native_video_frame_cache_hits ?? 0) >
+          Number(windowBasePrefetchStatus.native_video_frame_cache_hits ?? 0) &&
+        Number(windowNextPrefetchStatus.source_frame_uploads ?? 0) >
+          Number(windowBasePrefetchStatus.source_frame_uploads ?? 0) &&
+        windowNextPrefetchStatus.source_frame_last_upload_transport === 'native-video-frame-cache',
+      `native video frame prefetch window should warm the next timestamp in the core cache: ${JSON.stringify({ base: windowBasePrefetchStatus, next: windowNextPrefetchStatus })}`,
+    );
     const clearedVideoFramePrefetchStatus = await broker.invoke('native_renderer_clear_prefetch_cache');
     assert(
       Number(clearedVideoFramePrefetchStatus.cleared_native_video_frame_signatures ?? 0) > 0 &&
@@ -1322,6 +1357,39 @@ try {
         Number(videoFrameCacheStatsAfterRepeat.video_frame_prefetch_cache_misses ?? 0) ===
           videoFrameCacheMissesBeforeRepeat,
       `native video frame prefetch should reuse the broker timestamp cache: ${JSON.stringify({ before: videoFrameCacheStatsBeforeRepeat, after: videoFrameCacheStatsAfterRepeat })}`,
+    );
+    const brokerWindowStatsBefore = await broker.invoke('native_renderer_get_stats');
+    const brokerWindowBaseTime = 0.05;
+    const brokerWindowNextTime = brokerWindowBaseTime + 1 / 30;
+    const brokerWindowBaseStatus = await broker.invoke('native_renderer_prefetch_media', {
+      source_id: 'broker-prefetch-video-window',
+      uri: timedVideoPath,
+      source_type: 'video',
+      decode_width: 64,
+      decode_height: 64,
+      priority: 2,
+      time_seconds: brokerWindowBaseTime,
+      prefetch_window_frames: 1,
+      prefetch_fps: 30,
+      seq: 805,
+    });
+    const brokerWindowNextStatus = await broker.invoke('native_renderer_prefetch_media', {
+      source_id: 'broker-prefetch-video-window-next',
+      uri: timedVideoPath,
+      source_type: 'video',
+      decode_width: 64,
+      decode_height: 64,
+      priority: 2,
+      time_seconds: brokerWindowNextTime,
+      seq: 806,
+    });
+    const brokerWindowStatsAfter = await broker.invoke('native_renderer_get_stats');
+    assert(
+      Number(brokerWindowNextStatus.video_frame_prefetch_cache_hits ?? 0) >
+        Number(brokerWindowBaseStatus.video_frame_prefetch_cache_hits ?? 0) &&
+        Number(brokerWindowStatsAfter.video_frame_prefetch_cache_hits ?? 0) >
+          Number(brokerWindowStatsBefore.video_frame_prefetch_cache_hits ?? 0),
+      `native video frame prefetch window should warm the next timestamp in the broker cache: ${JSON.stringify({ base: brokerWindowBaseStatus, next: brokerWindowNextStatus, before: brokerWindowStatsBefore, after: brokerWindowStatsAfter })}`,
     );
     const clearedVideoFramePrefetchStatus = await broker.invoke('native_renderer_clear_prefetch_cache');
     assert(

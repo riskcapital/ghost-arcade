@@ -283,6 +283,8 @@ export type RendererCommand =
       decode_width?: number;
       decode_height?: number;
       time_seconds?: number;
+      prefetch_window_frames?: number;
+      prefetch_fps?: number;
       seq?: number;
     }
   | { type: 'set_stage3d_scene'; scene: unknown }
@@ -1090,6 +1092,8 @@ export type NativeMediaPrefetchOptions = {
   timeSeconds?: number;
   decodeWidth?: number;
   decodeHeight?: number;
+  prefetchWindowFrames?: number;
+  prefetchFps?: number;
   seq?: number;
 };
 
@@ -1108,6 +1112,8 @@ export async function prefetchNativeRendererMedia(
     time_seconds: options.timeSeconds,
     decode_width: options.decodeWidth,
     decode_height: options.decodeHeight,
+    prefetch_window_frames: options.prefetchWindowFrames,
+    prefetch_fps: options.prefetchFps,
     seq: options.seq,
   });
 }
