@@ -1,4 +1,4 @@
-#![recursion_limit = "256"]
+#![recursion_limit = "512"]
 
 mod shared_texture;
 
@@ -2270,14 +2270,16 @@ impl App {
             "native_stage3d_primitive_meshes": true,
             "native_stage3d_xyz_mesh_transforms": true,
             "native_stage3d_lighting_preview": true,
+            "native_stage3d_output_renderer": true,
             "native_projection_sim_scene_ingest": true,
             "native_projection_sim_overlay_preview": true,
             "native_projection_sim_mesh_preview": true,
             "native_projection_sim_textured_mesh_preview": true,
             "native_projection_sim_xyz_mesh_transforms": true,
+            "native_projection_sim_output_renderer": true,
             "native_recording": false,
-            "native_stage3d": false,
-            "native_projection_sim": false
+            "native_stage3d": true,
+            "native_projection_sim": true
         });
         let limits = json!({
             "max_scene_layers": MAX_SCENE_LAYERS,

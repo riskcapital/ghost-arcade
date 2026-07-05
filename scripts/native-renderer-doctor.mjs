@@ -45,9 +45,11 @@ const REQUIRED_FEATURES = [
   'native_stage3d_primitive_meshes',
   'native_stage3d_xyz_mesh_transforms',
   'native_stage3d_lighting_preview',
+  'native_stage3d',
   'native_projection_sim_mesh_preview',
   'native_projection_sim_textured_mesh_preview',
   'native_projection_sim_xyz_mesh_transforms',
+  'native_projection_sim',
 ];
 
 function check(cmd, args) {
@@ -262,11 +264,13 @@ async function inspectAppBridge() {
         `stage3dPrimitiveMeshes=${features.native_stage3d_primitive_meshes ? 'on' : 'pending'}`,
         `stage3dTransforms=${features.native_stage3d_xyz_mesh_transforms ? 'xyz' : 'pending'}`,
         `stage3dLighting=${features.native_stage3d_lighting_preview ? 'on' : 'pending'}`,
+        `stage3dRenderer=${features.native_stage3d ? 'on' : 'pending'}`,
         `projectionSceneIngest=${features.native_projection_sim_scene_ingest ? 'on' : 'pending'}`,
         `projectionOverlayPreview=${features.native_projection_sim_overlay_preview ? 'on' : 'pending'}`,
         `projectionMeshPreview=${features.native_projection_sim_mesh_preview ? 'on' : 'pending'}`,
         `projectionTexturedMeshPreview=${features.native_projection_sim_textured_mesh_preview ? 'on' : 'pending'}`,
         `projectionTransforms=${features.native_projection_sim_xyz_mesh_transforms ? 'xyz' : 'pending'}`,
+        `projectionRenderer=${features.native_projection_sim ? 'on' : 'pending'}`,
         `staticImageDecode=${features.native_static_image_decode ? 'native' : 'fallback'}`,
         `staticImagePrefetch=${features.native_static_image_prefetch ? 'native' : 'fallback'}`,
         `normalMediaDecode=${features.native_media_decode ? 'native' : features.native_static_image_decode ? 'static-native/video-source-frame' : 'source-frame-fallback'}`,
