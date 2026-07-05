@@ -1285,13 +1285,10 @@
              next to the rest of the projector calibration tools. Their
              underlying $settings.output.* fields stay in the store so
              any leftover bindings continue to compile cleanly. -->
-        <!-- The standalone "Experimental: WebRTC output transport" toggle
-             that used to live here was removed — WebRTC is the default
-             output transport now (and WebGPU zero-copy supersedes it
-             when GPU acceleration is enabled in Performance → GPU
-             Acceleration). The underlying $settings.experimental.outputWebRTC
-             field is still in the store for the runtime selector but
-             is no longer user-toggleable from the UI. -->
+        <!-- The standalone WebRTC output transport toggle that used to
+             live here was removed. Native core output is the default,
+             WebGPU zero-copy is the fallback, and WebRTC remains a hidden
+             escape hatch for debugging transport regressions. -->
 
         <!-- Performance Tab — opt-in knobs for users on weaker hardware.
              Defaults match the historical full-quality behaviour. Intro
@@ -1322,7 +1319,7 @@
              effect / layer that disappeared from their picker.
              ───────────────────────────────────────────────────────── -->
         <section class="settings-section">
-          <h3>GPU Acceleration <span style="font-size: 11px; padding: 2px 6px; margin-left: 6px; background: linear-gradient(135deg, #1e3a8a, #7c2d12); color: #fff; border-radius: 3px; vertical-align: middle;">EXPERIMENTAL</span></h3>
+          <h3>Renderer &amp; Output</h3>
           <!-- Restart-required banner. The renderer chooses which canvas
                and effect-chain path to mount at boot, so toggling these
                flags mid-session leaves a broken state (grid disappears,
