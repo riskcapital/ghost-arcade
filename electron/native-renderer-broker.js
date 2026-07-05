@@ -77,6 +77,10 @@ const RENDERER_COMMANDS = [
   'native_renderer_get_frame_snapshot',
   'native_renderer_export_frame_snapshot',
   'native_renderer_get_output_shared_texture',
+  'native_renderer_set_stage3d_scene',
+  'native_renderer_get_stage3d_scene_summary',
+  'native_renderer_set_projection_sim_scene',
+  'native_renderer_get_projection_sim_scene_summary',
   'native_renderer_get_capabilities',
   'native_renderer_get_readiness_report',
   'native_renderer_export_snapshot_json',
@@ -203,6 +207,14 @@ class NativeRendererBroker {
           fallback: makeDefaultOutputSharedTexture(this.platform),
           timeoutMs: 2500,
         });
+      case 'native_renderer_set_stage3d_scene':
+        return this.sendIfRunning('set_stage3d_scene', args, { fallback: null, timeoutMs: 2500 });
+      case 'native_renderer_get_stage3d_scene_summary':
+        return this.sendIfRunning('get_stage3d_scene_summary', args, { fallback: null, timeoutMs: 2500 });
+      case 'native_renderer_set_projection_sim_scene':
+        return this.sendIfRunning('set_projection_sim_scene', args, { fallback: null, timeoutMs: 2500 });
+      case 'native_renderer_get_projection_sim_scene_summary':
+        return this.sendIfRunning('get_projection_sim_scene_summary', args, { fallback: null, timeoutMs: 2500 });
       case 'native_renderer_get_capabilities':
         return this.getCapabilities();
       case 'native_renderer_get_decode_capabilities':
@@ -706,6 +718,8 @@ class NativeRendererBroker {
           : (nativeFrameEncoder.reason || 'desktop FFmpeg raw-frame pipe is unavailable'),
       ],
       ['native-media-decode', 'Native media decode/prefetch', !!features.native_media_decode && !!features.media_prefetch],
+      ['native-stage3d-scene-ingest', 'Native Stage3D scene ingest', !!features.native_stage3d_scene_ingest],
+      ['native-projection-sim-scene-ingest', 'Native Projection Sim scene ingest', !!features.native_projection_sim_scene_ingest],
       ['compute-graph-host', 'Native buffer compute graph host', !!features.compute_graph_host],
       [
         'compute-instrument-host',
@@ -1832,6 +1846,8 @@ function makeDefaultCapabilities(overrides = {}) {
       present_policy: false,
       managed_output_attach: false,
       managed_output_window_control: false,
+      native_stage3d_scene_ingest: false,
+      native_projection_sim_scene_ingest: false,
       native_recording: false,
       native_stage3d: false,
       native_projection_sim: false,

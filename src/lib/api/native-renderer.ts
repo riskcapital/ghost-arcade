@@ -275,6 +275,8 @@ export type RendererCommand =
   | { type: 'remove_layer'; layer_id: string }
   | { type: 'bind_media_source'; layer_id: string; source_id: string; uri: string; source_type: string }
   | { type: 'decode_media_source'; source_id: string; uri: string; source_type: string }
+  | { type: 'set_stage3d_scene'; scene: unknown }
+  | { type: 'set_projection_sim_scene'; scene: unknown }
   | { type: 'set_native_quality_policy'; native_quality_policy: NativeQualityPolicy }
   | { type: 'precompile_shader'; shader_id: string; stage: string; source: string; entry: string }
   | { type: 'set_effect_chain'; layer_id: string; effect_ids: string[] }
@@ -376,6 +378,10 @@ export interface NativeRendererCapabilities {
     audio0: readonly string[];
     audio1: readonly string[];
     audio2: readonly string[];
+  };
+  native_scene_bridge?: {
+    stage3d: NativeSceneBridgeSummary;
+    projection_sim: NativeSceneBridgeSummary;
   };
   features: Record<string, boolean>;
   limits: Record<string, number>;
@@ -840,6 +846,29 @@ export interface NativeRendererOutputSharedTexture {
   reason?: string;
 }
 
+export interface NativeSceneBridgeSummary {
+  schema_version: number;
+  scene_kind: 'stage3d' | 'projection-sim' | string;
+  scene_id: string;
+  scene_name: string;
+  source_schema_version: number;
+  payload_bytes: number;
+  updated_at_ms: number;
+  node_count: number;
+  screen_count: number;
+  primitive_count: number;
+  truss_count: number;
+  light_count: number;
+  laser_count: number;
+  fog_volume_count: number;
+  user_element_count: number;
+  scenery_override_count: number;
+  projector_count: number;
+  object_count: number;
+  model_count: number;
+  point_cloud_count: number;
+}
+
 export interface NativeRendererSnapshotExportResult {
   path: string;
   bytes: number;
@@ -1171,6 +1200,22 @@ export async function exportNativeRendererFrameSnapshot(
 
 export async function getNativeRendererOutputSharedTexture() {
   return invoke<NativeRendererOutputSharedTexture>('native_renderer_get_output_shared_texture');
+}
+
+export async function setNativeRendererStage3DScene(scene: unknown) {
+  return invoke<NativeSceneBridgeSummary>('native_renderer_set_stage3d_scene', { scene });
+}
+
+export async function getNativeRendererStage3DSceneSummary() {
+  return invoke<NativeSceneBridgeSummary>('native_renderer_get_stage3d_scene_summary');
+}
+
+export async function setNativeRendererProjectionSimScene(scene: unknown) {
+  return invoke<NativeSceneBridgeSummary>('native_renderer_set_projection_sim_scene', { scene });
+}
+
+export async function getNativeRendererProjectionSimSceneSummary() {
+  return invoke<NativeSceneBridgeSummary>('native_renderer_get_projection_sim_scene_summary');
 }
 
 export async function getNativeRendererCapabilities() {

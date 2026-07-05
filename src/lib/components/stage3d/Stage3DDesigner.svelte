@@ -29,9 +29,10 @@
   import { project } from '../../stores/layers';
   import { ELEMENT_TYPES, makeUserElement } from '../../stage3d/elementTypes';
   import { buildVenue, paPresetElements, type PAPreset } from '../../stage3d/venues';
-  import { DEFAULT_ATMOSPHERE, DEFAULT_LIGHTING, type Stage3DVenue, type UserStageElement } from '../../stage3d/types';
+  import { DEFAULT_ATMOSPHERE, DEFAULT_LIGHTING, type Stage3DScene, type Stage3DVenue, type UserStageElement } from '../../stage3d/types';
   import { startRecording as startCanvasRecording, formatRecordingDuration, type RecorderHandle } from '../../recording/recorder';
   import { startNativeLiveFrameRecording } from '../../recording/nativeLiveFrameRecorder';
+  import { setNativeRendererStage3DScene } from '../../api/native-renderer';
   import { invoke, isDesktopApp } from '../../bridge';
   import StageNodeProperties from './StageNodeProperties.svelte';
   import StageElementProperties from './StageElementProperties.svelte';
@@ -63,11 +64,28 @@
     '4k':   { w: 3840, h: 2160, label: '4K' },
   } as const;
   let recRes: keyof typeof REC_RES = '1080';
+  let nativeScenePublishTimer: ReturnType<typeof setTimeout> | null = null;
+  let nativeScenePublishWarnings = 0;
+
+  function queueNativeStageScene(scene: Stage3DScene) {
+    if (!isDesktopApp) return;
+    if (nativeScenePublishTimer) clearTimeout(nativeScenePublishTimer);
+    nativeScenePublishTimer = setTimeout(() => {
+      nativeScenePublishTimer = null;
+      void setNativeRendererStage3DScene(scene).catch((err) => {
+        if (nativeScenePublishWarnings < 3) {
+          console.warn('[Stage3D] native scene bridge unavailable:', err);
+          nativeScenePublishWarnings++;
+        }
+      });
+    }, 220);
+  }
 
   // Refresh undo/redo button state whenever historyVersion bumps.
   let canUndo = false;
   let canRedo = false;
   $: { void $historyVersion; const c = stage3dScene.getHistoryCounts(); canUndo = c.past > 0; canRedo = c.future > 0; }
+  $: queueNativeStageScene($stage3dScene);
 
   $: screenLayers = $project.layers.filter(l => l.type === 'screen' && l.visible !== false);
   $: userElements = $stage3dScene.userElements ?? [];
@@ -577,6 +595,10 @@
     if (toastTimer) {
       clearTimeout(toastTimer);
       toastTimer = null;
+    }
+    if (nativeScenePublishTimer) {
+      clearTimeout(nativeScenePublishTimer);
+      nativeScenePublishTimer = null;
     }
     recorderHandle?.stop();
     recorderHandle = null;
