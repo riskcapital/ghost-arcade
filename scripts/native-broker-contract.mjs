@@ -398,6 +398,7 @@ try {
       decodeCapabilities?.vram_budget_enforcement === false &&
       decodeCapabilities?.native_media_decode === false &&
       decodeCapabilities?.video_decode === false &&
+      decodeCapabilities?.native_video_frame_decode === true &&
       decodeCapabilities?.native_video_frame_prefetch === true &&
       decodeCapabilities?.video_frame_prefetch === true &&
       decodeCapabilities?.supported_source_types?.includes('image') &&
@@ -1178,7 +1179,7 @@ try {
     `native video frame prefetch did not upload a decoded source frame: ${JSON.stringify(videoPrefetchStatus)}`,
   );
   assert(
-    videoPrefetchStatus.source_frame_last_upload_transport === 'file' &&
+    ['native-video-frame', 'file'].includes(videoPrefetchStatus.source_frame_last_upload_transport) &&
       Number(videoPrefetchStatus.source_frame_last_upload_width ?? 0) === 64 &&
       Number(videoPrefetchStatus.source_frame_last_upload_height ?? 0) === 64 &&
       Number(videoPrefetchStatus.source_frame_last_input_bytes ?? 0) === 64 * 64 * 4 &&
@@ -1247,13 +1248,19 @@ try {
       Number(blueVideoMean[2] ?? 0) > Number(redVideoMean[2] ?? 0) + 0.08,
     `native video frame prefetch did not honor requested timestamp: ${JSON.stringify({ redVideoFrameSnapshot, blueVideoFrameSnapshot })}`,
   );
-  assert(
-    Number(blueVideoPrefetchStatus.video_frame_prefetch_cache_entries ?? 0) > 0,
-    `native video frame prefetch should expose broker cache entries in status: ${JSON.stringify(blueVideoPrefetchStatus)}`,
-  );
-  const videoFrameCacheStatsBeforeRepeat = await broker.invoke('native_renderer_get_stats');
-  const videoFrameCacheHitsBeforeRepeat = Number(videoFrameCacheStatsBeforeRepeat.video_frame_prefetch_cache_hits ?? 0);
-  const videoFrameCacheMissesBeforeRepeat = Number(videoFrameCacheStatsBeforeRepeat.video_frame_prefetch_cache_misses ?? 0);
+  const coreVideoFrameDecode = !!capabilities?.features?.native_video_frame_decode;
+  let videoFrameCacheStatsBeforeRepeat = null;
+  let videoFrameCacheHitsBeforeRepeat = 0;
+  let videoFrameCacheMissesBeforeRepeat = 0;
+  if (!coreVideoFrameDecode) {
+    assert(
+      Number(blueVideoPrefetchStatus.video_frame_prefetch_cache_entries ?? 0) > 0,
+      `native video frame prefetch should expose broker cache entries in status: ${JSON.stringify(blueVideoPrefetchStatus)}`,
+    );
+    videoFrameCacheStatsBeforeRepeat = await broker.invoke('native_renderer_get_stats');
+    videoFrameCacheHitsBeforeRepeat = Number(videoFrameCacheStatsBeforeRepeat.video_frame_prefetch_cache_hits ?? 0);
+    videoFrameCacheMissesBeforeRepeat = Number(videoFrameCacheStatsBeforeRepeat.video_frame_prefetch_cache_misses ?? 0);
+  }
   const repeatedBlueVideoPrefetchStatus = await broker.invoke('native_renderer_prefetch_media', {
     source_id: 'broker-prefetch-video-timed',
     uri: timedVideoPath,
@@ -1264,24 +1271,43 @@ try {
     time_seconds: 0.75,
     seq: 751,
   });
-  assert(
-    Number(repeatedBlueVideoPrefetchStatus.video_frame_prefetch_cache_entries ?? 0) > 0,
-    `native video frame prefetch status should retain broker cache entries after reuse: ${JSON.stringify(repeatedBlueVideoPrefetchStatus)}`,
-  );
-  const videoFrameCacheStatsAfterRepeat = await broker.invoke('native_renderer_get_stats');
-  assert(
-    Number(videoFrameCacheStatsAfterRepeat.video_frame_prefetch_cache_hits ?? 0) >
-      videoFrameCacheHitsBeforeRepeat &&
-      Number(videoFrameCacheStatsAfterRepeat.video_frame_prefetch_cache_misses ?? 0) ===
-        videoFrameCacheMissesBeforeRepeat,
-    `native video frame prefetch should reuse the broker timestamp cache: ${JSON.stringify({ before: videoFrameCacheStatsBeforeRepeat, after: videoFrameCacheStatsAfterRepeat })}`,
-  );
-  const clearedVideoFramePrefetchStatus = await broker.invoke('native_renderer_clear_prefetch_cache');
-  assert(
-    Number(clearedVideoFramePrefetchStatus.cleared_video_frame_prefetch_entries ?? 0) > 0 &&
-      Number(clearedVideoFramePrefetchStatus.video_frame_prefetch_cache_entries ?? -1) === 0,
-    `native prefetch clear should empty the broker video-frame cache: ${JSON.stringify(clearedVideoFramePrefetchStatus)}`,
-  );
+  if (coreVideoFrameDecode) {
+    assert(
+      Number(blueVideoPrefetchStatus.native_video_frame_decodes ?? 0) > 0 &&
+        blueVideoPrefetchStatus.source_frame_last_upload_transport === 'native-video-frame',
+      `native video frame prefetch should use the core decode path: ${JSON.stringify(blueVideoPrefetchStatus)}`,
+    );
+    assert(
+      Number(repeatedBlueVideoPrefetchStatus.native_video_frame_decodes ?? 0) >
+        Number(blueVideoPrefetchStatus.native_video_frame_decodes ?? 0) &&
+        repeatedBlueVideoPrefetchStatus.source_frame_last_upload_transport === 'native-video-frame',
+      `native video frame prefetch repeat should continue using the core decode path: ${JSON.stringify({ before: blueVideoPrefetchStatus, after: repeatedBlueVideoPrefetchStatus })}`,
+    );
+    const clearedVideoFramePrefetchStatus = await broker.invoke('native_renderer_clear_prefetch_cache');
+    assert(
+      Number(clearedVideoFramePrefetchStatus.cleared_source_frame_signatures ?? 0) > 0,
+      `native prefetch clear should clear core source-frame signatures: ${JSON.stringify(clearedVideoFramePrefetchStatus)}`,
+    );
+  } else {
+    assert(
+      Number(repeatedBlueVideoPrefetchStatus.video_frame_prefetch_cache_entries ?? 0) > 0,
+      `native video frame prefetch status should retain broker cache entries after reuse: ${JSON.stringify(repeatedBlueVideoPrefetchStatus)}`,
+    );
+    const videoFrameCacheStatsAfterRepeat = await broker.invoke('native_renderer_get_stats');
+    assert(
+      Number(videoFrameCacheStatsAfterRepeat.video_frame_prefetch_cache_hits ?? 0) >
+        videoFrameCacheHitsBeforeRepeat &&
+        Number(videoFrameCacheStatsAfterRepeat.video_frame_prefetch_cache_misses ?? 0) ===
+          videoFrameCacheMissesBeforeRepeat,
+      `native video frame prefetch should reuse the broker timestamp cache: ${JSON.stringify({ before: videoFrameCacheStatsBeforeRepeat, after: videoFrameCacheStatsAfterRepeat })}`,
+    );
+    const clearedVideoFramePrefetchStatus = await broker.invoke('native_renderer_clear_prefetch_cache');
+    assert(
+      Number(clearedVideoFramePrefetchStatus.cleared_video_frame_prefetch_entries ?? 0) > 0 &&
+        Number(clearedVideoFramePrefetchStatus.video_frame_prefetch_cache_entries ?? -1) === 0,
+      `native prefetch clear should empty the broker video-frame cache: ${JSON.stringify(clearedVideoFramePrefetchStatus)}`,
+    );
+  }
 
   const readiness = await broker.invoke('native_renderer_get_readiness_report');
   const checks = new Map((readiness?.checks ?? []).map((check) => [check.id, check]));

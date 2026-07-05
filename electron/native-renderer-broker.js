@@ -533,6 +533,39 @@ class NativeRendererBroker {
     const imageSource = sourceType === 'image' || (!sourceType && looksLikeStaticImageUri(uri));
     const videoSource = sourceType === 'video' || (!sourceType && looksLikeVideoUri(uri));
     if (videoSource) {
+      const features = this.capabilities?.features && typeof this.capabilities.features === 'object'
+        ? this.capabilities.features
+        : {};
+      if (
+        features.native_video_frame_decode &&
+        (this.capabilities?.implemented_methods ?? []).includes('prefetch_media') &&
+        this.env.GA_FORCE_BROKER_VIDEO_PREFETCH !== '1' &&
+        this.child &&
+        !this.child.killed
+      ) {
+        try {
+          const result = await this.send(
+            'prefetch_media',
+            {
+              source_id: sourceId,
+              uri,
+              source_type: 'video',
+              priority: Number(args.priority ?? 1),
+              decode_width: args.decode_width ?? args.decodeWidth ?? args.width ?? args.decode_size ?? args.decodeSize,
+              decode_height: args.decode_height ?? args.decodeHeight ?? args.height ?? args.decode_size ?? args.decodeSize,
+              time_seconds: args.time_seconds ?? args.timeSeconds ?? args.time,
+              seq: args.seq,
+            },
+            { timeoutMs: VIDEO_FRAME_PREFETCH_TIMEOUT_MS + 2500 },
+          );
+          this.lastStatus = normalizeStatus(result, this.lastStatus);
+          return this.lastStatus;
+        } catch (err) {
+          if (!String(err?.message || err).includes('unsupported native render-core RPC method')) {
+            throw err;
+          }
+        }
+      }
       return this.prefetchVideoFrame({
         ...args,
         source_id: sourceId,
@@ -1567,10 +1600,14 @@ class NativeRendererBroker {
   ensureProcess(executable) {
     if (this.child && !this.child.killed) return;
     console.log(`[NativeRenderer] launching ${executable}`);
+    const childEnv = { ...this.env, RUST_BACKTRACE: this.env.RUST_BACKTRACE || '1' };
+    if (!childEnv.GA_FFMPEG_PATH) {
+      childEnv.GA_FFMPEG_PATH = resolveFfmpegPath(this.env, this.platform);
+    }
     this.child = spawn(executable, [], {
       cwd: this.appRoot,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...this.env, RUST_BACKTRACE: this.env.RUST_BACKTRACE || '1' },
+      env: childEnv,
     });
     this.child.stdout.setEncoding('utf8');
     this.child.stdout.on('data', (chunk) => this.handleStdout(chunk));
@@ -1926,6 +1963,22 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     native_image_decode_last_error: String(
       status.native_image_decode_last_error ?? previous.native_image_decode_last_error ?? 'none',
     ),
+    native_video_frame_decodes: Number(
+      status.native_video_frame_decodes ?? previous.native_video_frame_decodes ?? 0,
+    ),
+    native_video_frame_decode_failures: Number(
+      status.native_video_frame_decode_failures ?? previous.native_video_frame_decode_failures ?? 0,
+    ),
+    native_video_frame_decode_bytes_uploaded: Number(
+      status.native_video_frame_decode_bytes_uploaded ??
+        previous.native_video_frame_decode_bytes_uploaded ??
+        0,
+    ),
+    native_video_frame_decode_last_error: String(
+      status.native_video_frame_decode_last_error ??
+        previous.native_video_frame_decode_last_error ??
+        'none',
+    ),
     native_instrument_frame_renders: Number(status.native_instrument_frame_renders ?? previous.native_instrument_frame_renders ?? 0),
     compute_graph_runs: Number(status.compute_graph_runs ?? previous.compute_graph_runs ?? 0),
     compute_graph_passes: Number(status.compute_graph_passes ?? previous.compute_graph_passes ?? 0),
@@ -2251,6 +2304,22 @@ function normalizeStats(stats, previous = makeDefaultStats()) {
     native_image_decode_last_error: String(
       stats.native_image_decode_last_error ?? previous.native_image_decode_last_error ?? 'none',
     ),
+    native_video_frame_decodes: Number(
+      stats.native_video_frame_decodes ?? previous.native_video_frame_decodes ?? 0,
+    ),
+    native_video_frame_decode_failures: Number(
+      stats.native_video_frame_decode_failures ?? previous.native_video_frame_decode_failures ?? 0,
+    ),
+    native_video_frame_decode_bytes_uploaded: Number(
+      stats.native_video_frame_decode_bytes_uploaded ??
+        previous.native_video_frame_decode_bytes_uploaded ??
+        0,
+    ),
+    native_video_frame_decode_last_error: String(
+      stats.native_video_frame_decode_last_error ??
+        previous.native_video_frame_decode_last_error ??
+        'none',
+    ),
     avg_render_cpu_ms: Number(stats.avg_render_cpu_ms ?? previous.avg_render_cpu_ms ?? 0),
     gpu_timing_supported: !!(stats.gpu_timing_supported ?? previous.gpu_timing_supported ?? false),
     last_render_gpu_ms: Number(stats.last_render_gpu_ms ?? previous.last_render_gpu_ms ?? 0),
@@ -2389,6 +2458,7 @@ function makeDefaultCapabilities(overrides = {}) {
       native_mp4_frame_encoder: false,
       native_media_decode: false,
       media_prefetch: false,
+      native_video_frame_decode: false,
       native_video_frame_prefetch: false,
       video_frame_prefetch: false,
       present_policy: false,
@@ -2491,6 +2561,10 @@ function makeDefaultStatus(overrides = {}) {
     native_image_decode_failures: 0,
     native_image_decode_bytes_uploaded: 0,
     native_image_decode_last_error: 'none',
+    native_video_frame_decodes: 0,
+    native_video_frame_decode_failures: 0,
+    native_video_frame_decode_bytes_uploaded: 0,
+    native_video_frame_decode_last_error: 'none',
     native_instrument_frame_renders: 0,
     compute_graph_runs: 0,
     compute_graph_passes: 0,
@@ -2552,6 +2626,10 @@ function makeDefaultStatus(overrides = {}) {
     native_image_decode_failures: 0,
     native_image_decode_bytes_uploaded: 0,
     native_image_decode_last_error: 'none',
+    native_video_frame_decodes: 0,
+    native_video_frame_decode_failures: 0,
+    native_video_frame_decode_bytes_uploaded: 0,
+    native_video_frame_decode_last_error: 'none',
     native_shader_renders: 0,
     native_instrument_frame_renders: 0,
     render_clock_mode: 'live',
@@ -2824,6 +2902,10 @@ function makeDefaultStats() {
     native_image_decode_failures: 0,
     native_image_decode_bytes_uploaded: 0,
     native_image_decode_last_error: 'none',
+    native_video_frame_decodes: 0,
+    native_video_frame_decode_failures: 0,
+    native_video_frame_decode_bytes_uploaded: 0,
+    native_video_frame_decode_last_error: 'none',
     native_shader_renders: 0,
     native_instrument_frame_renders: 0,
     render_clock_updates: 0,
