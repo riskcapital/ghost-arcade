@@ -2299,7 +2299,7 @@ impl App {
             return Ok(());
         }
         let attrs = WindowAttributes::default()
-            .with_title("Ghost Render Core N0")
+            .with_title("Ghost Render Core")
             .with_inner_size(LogicalSize::new(
                 self.pending_width as f64,
                 self.pending_height as f64,
@@ -2340,6 +2340,7 @@ impl App {
             "render_clock": true,
             "frame_snapshot": true,
             "frame_snapshot_export": true,
+            "native_frame_export": true,
             "native_frame_sequence_export": true,
             "frame_health": true,
             "gpu_timing": self.renderer.as_ref().is_some_and(|renderer| renderer.gpu_timing.is_some()),
@@ -2653,8 +2654,9 @@ impl App {
             "features": features,
             "limits": limits,
             "notes": [
-                "Native graph instruments use shared WGSL for 3D Smoke, Particle Field, Volumetric Spheres, Ink Cloud, Flythrough, Pixel Particles, and Point Cloud FX; legacy native instrument layers are still visual proxies.",
+                "Native graph instruments use shared WGSL for 3D Smoke, Particle Field, Volumetric Spheres, Ink Cloud, Flythrough, Pixel Particles, and Point Cloud FX; the legacy native lookalike proxy path is disabled.",
                 "Canvas/base64 source-frame upload is a development fallback; macOS media transport can ingest IOSurfaceID source-frame handles; DXGI import remains pending for Windows.",
+                "Native frame export is owned by the render core; MP4/JPEG sequence encoding is completed by the Electron bridge.",
                 "Local video media decode is render-clock driven in the native core: visible video sources pump FFmpeg-decoded frame windows into native source-frame textures with adjacent-frame cache prefetch."
             ]
         })
@@ -3183,6 +3185,12 @@ impl App {
                         "detail": if self.renderer.is_some() { "native output snapshots can be stepped by render clock and exported as raw frame files" } else { "native renderer has not created a wgpu device" }
                     },
                     {
+                        "id": "native-frame-export",
+                        "label": "Native frame export",
+                        "ok": self.renderer.is_some(),
+                        "detail": if self.renderer.is_some() { "render core can export deterministic raw frame snapshots for MP4/JPEG encoders" } else { "native renderer has not created a wgpu device" }
+                    },
+                    {
                         "id": "native-particle-field-graph",
                         "label": "Native Particle Field graph",
                         "ok": self.renderer.is_some(),
@@ -3241,8 +3249,8 @@ impl App {
                     {
                         "id": "native-recording",
                         "label": "Native recording",
-                        "ok": false,
-                        "detail": "not implemented yet"
+                        "ok": self.renderer.is_some(),
+                        "detail": if self.renderer.is_some() { "render core provides raw frame export; desktop bridge owns MP4/JPEG encoder sessions" } else { "native renderer has not created a wgpu device" }
                     }
                 ]
             })),
@@ -7246,7 +7254,7 @@ impl RenderState {
             ],
         });
 
-        window.set_title(&format!("Ghost Render Core N0 - {}", adapter_info.name));
+        window.set_title(&format!("Ghost Render Core - {}", adapter_info.name));
         let gpu_timing = requested_features
             .contains(wgpu::Features::TIMESTAMP_QUERY)
             .then(|| GpuTimingState::new(&device, &queue));

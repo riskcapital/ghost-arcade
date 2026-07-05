@@ -1113,6 +1113,7 @@ async function main() {
       'native-pixel-particles-graph',
       'native-point-cloud-fx-graph',
       'native-output-mirror',
+      'native-frame-export',
     ]) {
       if (!readinessChecks.get(id)?.ok) {
         throw new Error(`native readiness report has stale or missing ${id}: ${JSON.stringify(readiness)}`);
@@ -1141,6 +1142,7 @@ async function main() {
       !capabilities.implemented_methods?.includes('get_output_shared_texture') ||
       !capabilities.implemented_methods?.includes('upload_source_gpu_shared_texture') ||
       !capabilities.implemented_methods?.includes('export_frame_snapshot') ||
+      !capabilities.features.native_frame_export ||
       !capabilities.features.frame_snapshot_export
     ) {
       throw new Error(`native output/capture RPC missing from capabilities: ${JSON.stringify(capabilities.implemented_methods)}`);
