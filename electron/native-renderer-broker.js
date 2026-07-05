@@ -768,6 +768,14 @@ class NativeRendererBroker {
           ? 'Projection Sim objects/projectors render through the native camera/depth mesh pass'
           : 'Projection Sim scene data is not yet rendered as native meshes',
       ],
+      [
+        'native-projection-sim-textured-mesh-preview',
+        'Native Projection Sim textured mesh preview',
+        !!features.native_projection_sim_textured_mesh_preview,
+        features.native_projection_sim_textured_mesh_preview
+          ? 'Projection Sim receiving surfaces can sample native VJ/source-frame textures'
+          : 'Projection Sim native meshes cannot sample projected source textures yet',
+      ],
       ['compute-graph-host', 'Native buffer compute graph host', !!features.compute_graph_host],
       [
         'compute-instrument-host',
@@ -1902,6 +1910,7 @@ function makeDefaultCapabilities(overrides = {}) {
       native_projection_sim_scene_ingest: false,
       native_projection_sim_overlay_preview: false,
       native_projection_sim_mesh_preview: false,
+      native_projection_sim_textured_mesh_preview: false,
       native_recording: false,
       native_stage3d: false,
       native_projection_sim: false,
