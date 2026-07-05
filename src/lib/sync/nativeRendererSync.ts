@@ -170,6 +170,15 @@ type NativeImageDecodeState = {
   submittedAt: number;
 };
 
+type NativeVideoDecodeState = {
+  sourceId: string;
+  signature: string;
+  seq: number;
+  previousSignature: string | undefined;
+  previousSeq: number | undefined;
+  submittedAt: number;
+};
+
 type NativeLayerShapeState = {
   shape: NativeVec4;
   signature: string;
@@ -2722,6 +2731,11 @@ export class NativeRendererSync {
   private nativeImageLastDecodeFailures = 0;
   private nativeImageLastDecodes = 0;
   private nativeImageDecodeWarnings = 0;
+  private nativeVideoDecodePending = new Map<string, NativeVideoDecodeState>();
+  private nativeVideoDecodeBypass = new Set<string>();
+  private nativeVideoLastDecodeFailures = 0;
+  private nativeVideoLastDecodes = 0;
+  private nativeVideoDecodeWarnings = 0;
   private previewImageElements = new Map<string, HTMLImageElement>();
   private previewImageLoads = new Set<string>();
   private previewCanvas: HTMLCanvasElement | null = null;
@@ -2822,6 +2836,14 @@ export class NativeRendererSync {
     this.nativeImageDecodeWarnings = 0;
   }
 
+  private resetNativeVideoDecodeTracking() {
+    this.nativeVideoDecodePending.clear();
+    this.nativeVideoDecodeBypass.clear();
+    this.nativeVideoLastDecodeFailures = 0;
+    this.nativeVideoLastDecodes = 0;
+    this.nativeVideoDecodeWarnings = 0;
+  }
+
   private reconcileSharedTextureUploads(status: RendererStatus) {
     const rejected = Number(status.source_frame_shared_texture_rejected_uploads ?? 0);
     const successful = Number(status.source_frame_shared_texture_uploads ?? 0);
@@ -2911,6 +2933,52 @@ export class NativeRendererSync {
 
     this.nativeImageLastDecodeFailures = failures;
     this.nativeImageLastDecodes = decodes;
+  }
+
+  private reconcileNativeVideoDecodes(status: RendererStatus) {
+    const failures = Number(status.native_video_frame_decode_failures ?? 0);
+    const decodes = Number(status.native_video_frame_decodes ?? 0);
+    if (!Number.isFinite(failures) || !Number.isFinite(decodes)) return;
+
+    if (
+      failures < this.nativeVideoLastDecodeFailures ||
+      decodes < this.nativeVideoLastDecodes
+    ) {
+      this.nativeVideoLastDecodeFailures = Math.max(0, failures);
+      this.nativeVideoLastDecodes = Math.max(0, decodes);
+      this.nativeVideoDecodePending.clear();
+      return;
+    }
+
+    if (failures > this.nativeVideoLastDecodeFailures) {
+      const pending = Array.from(this.nativeVideoDecodePending.entries());
+      for (const [sourceKey, decode] of pending) {
+        if (this.sourcePreviewSig.get(sourceKey) === decode.signature) {
+          if (decode.previousSignature) this.sourcePreviewSig.set(sourceKey, decode.previousSignature);
+          else this.sourcePreviewSig.delete(sourceKey);
+        }
+        if (this.sourcePreviewSeq.get(sourceKey) === decode.seq) {
+          if (typeof decode.previousSeq === 'number') this.sourcePreviewSeq.set(sourceKey, decode.previousSeq);
+          else this.sourcePreviewSeq.delete(sourceKey);
+        }
+        this.sourcePreviewNextAt.delete(sourceKey);
+        this.nativeVideoDecodeBypass.add(sourceKey);
+      }
+      if (pending.length && this.nativeVideoDecodeWarnings < 5) {
+        console.warn('[NativeRendererSync] native video decode pump failed; source frame will use preview fallback', {
+          failureDelta: failures - this.nativeVideoLastDecodeFailures,
+          pendingSources: pending.map(([, decode]) => decode.sourceId),
+          error: status.native_video_frame_decode_last_error,
+        });
+        this.nativeVideoDecodeWarnings += 1;
+      }
+      this.nativeVideoDecodePending.clear();
+    } else if (decodes > this.nativeVideoLastDecodes) {
+      this.nativeVideoDecodePending.clear();
+    }
+
+    this.nativeVideoLastDecodeFailures = failures;
+    this.nativeVideoLastDecodes = decodes;
   }
 
   private syncNativeSourceFrameSize(status: RendererStatus | null) {
@@ -3239,6 +3307,20 @@ export class NativeRendererSync {
     );
   }
 
+  private canUseNativeVideoDecodePump(
+    nativeSource: NativeLayerSource | null | undefined,
+    sourceType: string,
+  ): boolean {
+    const src = nativeSource?.source;
+    if (!src || sourceType !== 'video' || !nativeSource.shouldPrefetch) return false;
+    return (
+      this.supportsNativeFeature('native_video_decode_pump') &&
+      this.supportsNativeFeature('native_video_frame_decode') &&
+      this.supportsNativeFeature('native_media_source_playback_state') &&
+      !this.nativeVideoDecodeBypass.has(this.sourceCacheKey(src.id, src.src))
+    );
+  }
+
   private markNativeStaticImageFrameReady(src: NonNullable<Layer['source']>): boolean {
     const sourceKey = this.sourceCacheKey(src.id, src.src);
     const signature = `native-image:${src.src}`;
@@ -3252,6 +3334,29 @@ export class NativeRendererSync {
     this.sourcePreviewSig.set(sourceKey, signature);
     this.sourcePreviewNextAt.delete(sourceKey);
     this.nativeImageDecodePending.set(sourceKey, {
+      sourceId: src.id,
+      signature,
+      seq,
+      previousSignature,
+      previousSeq,
+      submittedAt: Date.now(),
+    });
+    return true;
+  }
+
+  private markNativeVideoDecodePumpFrameReady(src: NonNullable<Layer['source']>): boolean {
+    const sourceKey = this.sourceCacheKey(src.id, src.src);
+    const signature = `native-video-pump:${src.src}`;
+    if (this.sourcePreviewSeq.has(sourceKey) && this.sourcePreviewSig.get(sourceKey) === signature) {
+      return false;
+    }
+    const previousSignature = this.sourcePreviewSig.get(sourceKey);
+    const previousSeq = this.sourcePreviewSeq.get(sourceKey);
+    const seq = (this.sourcePreviewSeq.get(sourceKey) ?? 0) + 1;
+    this.sourcePreviewSeq.set(sourceKey, seq);
+    this.sourcePreviewSig.set(sourceKey, signature);
+    this.sourcePreviewNextAt.delete(sourceKey);
+    this.nativeVideoDecodePending.set(sourceKey, {
       sourceId: src.id,
       signature,
       seq,
@@ -3731,6 +3836,7 @@ export class NativeRendererSync {
     });
     this.resetSharedTextureUploadTracking();
     this.resetNativeImageDecodeTracking();
+    this.resetNativeVideoDecodeTracking();
     this.startupReady = true;
     if (this.latestLayers.length) {
       this.scheduleSync(this.desiredWidth || width, this.desiredHeight || height, this.latestLayers);
@@ -3823,12 +3929,14 @@ export class NativeRendererSync {
     this.precompiledShaders.clear();
     this.prefetchedSources.clear();
     this.videoRefreshAt.clear();
+    this.nativeVideoPrefetchAt.clear();
     this.sourcePreviewSeq.clear();
     this.sourcePreviewNextAt.clear();
     this.sourcePreviewSig.clear();
     this.sourcePreviewFailures.clear();
     this.resetSharedTextureUploadTracking();
     this.resetNativeImageDecodeTracking();
+    this.resetNativeVideoDecodeTracking();
     this.previewImageElements.clear();
     this.previewImageLoads.clear();
     this.nativeComputeGraphSourceFrames = false;
@@ -3946,6 +4054,7 @@ export class NativeRendererSync {
         this.syncNativeSourceFrameSize(status);
         this.reconcileSharedTextureUploads(status);
         this.reconcileNativeImageDecodes(status);
+        this.reconcileNativeVideoDecodes(status);
         this.degradedModeActive = !!status.degraded_mode_active;
         this.decodeBackpressureActive = !!status.decode_backpressure_active;
         this.decodeHandoffBackpressureActive = !!status.decode_handoff_backpressure_active;
@@ -4119,8 +4228,12 @@ export class NativeRendererSync {
           const sourceKey = this.sourceCacheKey(src.id, src.src);
           const sharedTextureSource = isNativeSharedTextureSource(src, sourceType);
           const nativeStaticImageDecode = this.canUseNativeStaticImageDecode(src, sourceType);
+          const nativeVideoDecodePump = this.canUseNativeVideoDecodePump(nativeSource, sourceType);
           if (nativeStaticImageDecode) {
             this.markNativeStaticImageFrameReady(src);
+          }
+          if (nativeVideoDecodePump) {
+            this.markNativeVideoDecodePumpFrameReady(src);
           }
           const dynamicSourceFrameSource = isDynamicSourceFrameSource(src, sourceType);
           if (
@@ -4135,12 +4248,12 @@ export class NativeRendererSync {
               : undefined;
             void prefetchNativeRendererMedia(src.id, src.src, priority, sourceType, options).catch(() => {});
           }
-          if (dynamicSourceFrameSource) {
+          if (dynamicSourceFrameSource && !nativeVideoDecodePump) {
             this.videoRefreshAt.set(sourceKey, now + videoRefreshMs);
           } else {
             this.videoRefreshAt.delete(sourceKey);
           }
-          if (nativeSource.shouldPreview && !nativeStaticImageDecode) {
+          if (nativeSource.shouldPreview && !nativeStaticImageDecode && !nativeVideoDecodePump) {
             this.appendSourcePreviewCommand(commands, src, sourceType, now, true, null, previewBudget);
           }
           if (src.shaderCode) {
@@ -4177,19 +4290,18 @@ export class NativeRendererSync {
       if (src && isDynamicSourceFrameSource(src, sourceType)) {
         const sourceKey = this.sourceCacheKey(src.id, src.src);
         activeVideoKeys.add(sourceKey);
+        const nativeVideoDecodePump = this.canUseNativeVideoDecodePump(nativeSource, sourceType);
         if (sourceType === 'video' && !playbackSourcesSent.has(sourceKey)) {
           commands.push(this.nativeVideoPlaybackCommand(src, sourceType, now, renderClock));
+          if (nativeVideoDecodePump) {
+            this.markNativeVideoDecodePumpFrameReady(src);
+          }
           playbackSourcesSent.add(sourceKey);
         }
-        const dueAt = this.videoRefreshAt.get(sourceKey) ?? 0;
         const sharedTextureSource = isNativeSharedTextureSource(src, sourceType);
         const continuousNativeVideoPrefetch =
           this.supportsNativeFeature('native_media_decode') &&
           this.supportsNativeFeature('media_prefetch');
-        const nativeVideoDecodePump =
-          this.supportsNativeFeature('native_video_decode_pump') &&
-          this.supportsNativeFeature('native_video_frame_decode') &&
-          this.supportsNativeFeature('native_media_source_playback_state');
         const brokerVideoFramePrefetch =
           this.supportsNativeFeature('native_video_frame_prefetch') ||
           this.supportsNativeFeature('video_frame_prefetch');
@@ -4220,7 +4332,7 @@ export class NativeRendererSync {
             ).catch(() => {});
           }
         }
-        if (nativeSource.shouldPreview) {
+        if (nativeSource.shouldPreview && !nativeVideoDecodePump) {
           this.appendSourcePreviewCommand(commands, src, sourceType, now, false, null, previewBudget);
         }
       } else if (!src && nativeSource.shouldPreview) {
@@ -4830,6 +4942,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     if (status) {
       this.reconcileSharedTextureUploads(status);
       this.reconcileNativeImageDecodes(status);
+      this.reconcileNativeVideoDecodes(status);
       const sourceUploadBreakdown =
         `${status.source_frame_cpu_fallback_uploads}cpu/` +
         `${status.source_frame_file_uploads}file/` +
