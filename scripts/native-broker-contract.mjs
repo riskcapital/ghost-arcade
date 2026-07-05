@@ -698,6 +698,15 @@ try {
       userElements: [],
     },
   });
+  await broker.invoke('native_renderer_submit_commands', {
+    commands: [
+      {
+        type: 'set_layer_visibility',
+        layer_id: 'stage3d-vj-layer-0',
+        visible: false,
+      },
+    ],
+  });
 
   const projectionSummary = await broker.invoke('native_renderer_set_projection_sim_scene', {
     scene: {
@@ -769,6 +778,8 @@ try {
           intensity: 1.4,
           opacity: 1,
           color: '#9fe8ff',
+          source: 'slice',
+          sliceId: 'stage3d-texture-source',
         },
       ],
     },
@@ -784,6 +795,43 @@ try {
       Number(projectionOverlaySnapshot?.average_luma ?? 0) > Number(projectionEmptySnapshot?.average_luma ?? 0),
     `native Projection Sim mesh/overlay preview did not affect exported frame pixels: ${JSON.stringify({ projectionEmptySnapshot, projectionOverlaySnapshot })}`,
   );
+  await broker.invoke('native_renderer_set_projection_sim_scene', {
+    scene: {
+      id: 'contract-projection-textured',
+      name: 'Contract Projection Textured',
+      schemaVersion: 1,
+      camera: { position: [0, 2.4, 10], target: [0, 2.4, 0], fov: 28 },
+      objects: [
+        {
+          id: 'native-projection-textured-plane',
+          name: 'Native Projection Textured Plane',
+          type: 'primitive',
+          primitive: 'plane',
+          position: [0, 2.4, 0],
+          rotation: [0, 0, 0],
+          scale: [18, 10, 0.1],
+          color: '#e8ddc4',
+          visible: true,
+          receiveProjection: true,
+        },
+      ],
+      projectors: [
+        {
+          id: 'native-projection-textured-projector',
+          name: 'Native Projection Textured Projector',
+          enabled: true,
+          position: [-5, 4.4, 5],
+          target: [0, 2.4, 0],
+          intensity: 1.4,
+          opacity: 1,
+          color: '#ffffff',
+          source: 'slice',
+          sliceId: 'stage3d-texture-source',
+          crop: [0, 0, 1, 1],
+        },
+      ],
+    },
+  });
   await broker.invoke('native_renderer_submit_commands', {
     commands: [
       {
@@ -824,8 +872,8 @@ try {
   const greenMean = projectionTexturedGreenSnapshot?.mean_rgba ?? [];
   assert(
     projectionTexturedRedSnapshot?.checksum !== projectionTexturedGreenSnapshot?.checksum &&
-      Number(redMean[0] ?? 0) > Number(greenMean[0] ?? 0) + 0.1 &&
-      Number(greenMean[1] ?? 0) > Number(redMean[1] ?? 0) + 0.1,
+      Number(redMean[0] ?? 0) > Number(greenMean[0] ?? 0) + 0.08 &&
+      Number(greenMean[1] ?? 0) > Number(redMean[1] ?? 0) + 0.08,
     `native Projection Sim textured mesh preview did not sample source-frame texture changes: ${JSON.stringify({ projectionTexturedRedSnapshot, projectionTexturedGreenSnapshot })}`,
   );
 

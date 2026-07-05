@@ -515,7 +515,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   var rgb = in.color.rgb;
   if (in.material.x >= 0.5) {
     let source_slot = i32(clamp(floor(in.material.x - 1.0 + 0.5), 0.0, 7.0));
-    let tex = textureSample(source_frames, source_sampler, in.uv, source_slot).rgb;
+    let tex = textureSampleLevel(source_frames, source_sampler, in.uv, source_slot, 0.0).rgb;
     rgb = mix(rgb, tex, clamp(opacity, 0.0, 1.0));
   }
   rgb *= max(0.0, in.material.y);
