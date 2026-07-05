@@ -15,6 +15,7 @@ const REQUIRED_CHECKS = [
   'native-pixel-particles-graph',
   'native-point-cloud-fx-graph',
   'native-stage3d-overlay-preview',
+  'native-projection-sim-overlay-preview',
   'native-frame-sequence-export',
 ];
 
@@ -215,6 +216,7 @@ try {
     capabilities?.features?.native_stage3d_scene_ingest &&
       capabilities?.features?.native_stage3d_overlay_preview &&
       capabilities?.features?.native_projection_sim_scene_ingest &&
+      capabilities?.features?.native_projection_sim_overlay_preview &&
       capabilities?.features?.native_stage3d === false &&
       capabilities?.features?.native_projection_sim === false,
     `broker scene bridge should advertise ingest/preview without claiming full native 3D rendering: ${JSON.stringify(capabilities?.features)}`,
@@ -549,6 +551,67 @@ try {
       projectionSummary?.point_cloud_count === 1 &&
       projectionSummary?.projector_count === 2,
     `native Projection Sim scene summary did not round-trip: ${JSON.stringify(projectionSummary)}`,
+  );
+  await broker.invoke('native_renderer_set_projection_sim_scene', {
+    scene: {
+      id: 'contract-projection-empty',
+      name: 'Contract Projection Empty',
+      schemaVersion: 1,
+      objects: [],
+      projectors: [],
+    },
+  });
+  tempDir = tempDir || mkdtempSync(join(tmpdir(), 'ghost-native-broker-frame-'));
+  const projectionEmptyPath = join(tempDir, 'broker-projection-empty.rgba');
+  const projectionEmptySnapshot = await broker.invoke('native_renderer_export_frame_snapshot', {
+    path: projectionEmptyPath,
+    time: 0.25,
+    frame_index: 11,
+  });
+  await broker.invoke('native_renderer_set_projection_sim_scene', {
+    scene: {
+      id: 'contract-projection-overlay',
+      name: 'Contract Projection Overlay',
+      schemaVersion: 1,
+      objects: [
+        {
+          id: 'native-projection-box',
+          name: 'Native Projection Box',
+          type: 'primitive',
+          primitive: 'box',
+          position: [0, 2.4, 0],
+          rotation: [0, 0, 0],
+          scale: [7, 4, 2],
+          color: '#e8ddc4',
+          visible: true,
+          receiveProjection: true,
+        },
+      ],
+      projectors: [
+        {
+          id: 'native-projection-projector',
+          name: 'Native Projection Projector',
+          enabled: true,
+          position: [-5, 4.4, 5],
+          target: [0, 2.4, 0],
+          intensity: 1.4,
+          opacity: 1,
+          color: '#9fe8ff',
+        },
+      ],
+    },
+  });
+  const projectionOverlayPath = join(tempDir, 'broker-projection-overlay.rgba');
+  const projectionOverlaySnapshot = await broker.invoke('native_renderer_export_frame_snapshot', {
+    path: projectionOverlayPath,
+    time: 0.25,
+    frame_index: 11,
+  });
+  assert(
+    projectionEmptySnapshot?.checksum !== projectionOverlaySnapshot?.checksum &&
+      Number(projectionOverlaySnapshot?.bright_pixels ?? 0) > Number(projectionEmptySnapshot?.bright_pixels ?? 0) &&
+      Number(projectionOverlaySnapshot?.average_luma ?? 0) > Number(projectionEmptySnapshot?.average_luma ?? 0),
+    `native Projection Sim overlay preview did not affect exported frame pixels: ${JSON.stringify({ projectionEmptySnapshot, projectionOverlaySnapshot })}`,
   );
 
   tempDir = tempDir || mkdtempSync(join(tmpdir(), 'ghost-native-broker-frame-'));
