@@ -45,6 +45,27 @@ const REQUIRED_GRAPH_MANIFEST = [
   { id: 'point-cloud-fx', feature: 'native_point_cloud_fx_graph' },
 ];
 
+const BROKER_DIRECT_CORE_METHODS = [
+  'frame_snapshot',
+  'export_frame_snapshot',
+  'output_shared_texture',
+  'set_stage3d_scene',
+  'get_stage3d_scene_summary',
+  'set_projection_sim_scene',
+  'get_projection_sim_scene_summary',
+  'reset_stats',
+  'submit_batch',
+  'submit_commands',
+  'compute_graph',
+  'set_target_fps',
+  'set_present_policy',
+  'set_command_drain_policy',
+  'set_auto_present_policy',
+  'attach_output_window',
+  'detach_output_window',
+  'set_output_window',
+];
+
 const FULLSCREEN_CORNERS = {
   topLeft: { x: 0, y: 1 },
   topRight: { x: 1, y: 1 },
@@ -271,6 +292,12 @@ try {
     capabilities?.implemented_methods?.includes('get_capabilities'),
     `broker capabilities missing get_capabilities RPC: ${JSON.stringify(capabilities?.implemented_methods)}`,
   );
+  for (const method of BROKER_DIRECT_CORE_METHODS) {
+    assert(
+      capabilities?.implemented_methods?.includes(method),
+      `broker explicit core RPC path is not capability-backed: ${method} missing from ${JSON.stringify(capabilities?.implemented_methods)}`,
+    );
+  }
   let unknownRpcError = null;
   try {
     await broker.send('ghost_arcade_contract_missing_rpc', {}, { timeoutMs: 1000 });
