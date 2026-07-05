@@ -34,6 +34,7 @@ const REQUIRED_FEATURES = [
   'native_pixel_particles_graph',
   'native_point_cloud_fx_graph',
   'native_stage3d_textured_mesh_preview',
+  'native_stage3d_primitive_meshes',
 ];
 
 function check(cmd, args) {
@@ -232,6 +233,7 @@ async function inspectAppBridge() {
         `stage3dOverlayPreview=${features.native_stage3d_overlay_preview ? 'on' : 'pending'}`,
         `stage3dMeshPreview=${features.native_stage3d_mesh_preview ? 'on' : 'pending'}`,
         `stage3dTexturedMeshPreview=${features.native_stage3d_textured_mesh_preview ? 'on' : 'pending'}`,
+        `stage3dPrimitiveMeshes=${features.native_stage3d_primitive_meshes ? 'on' : 'pending'}`,
         `projectionSceneIngest=${features.native_projection_sim_scene_ingest ? 'on' : 'pending'}`,
         `projectionOverlayPreview=${features.native_projection_sim_overlay_preview ? 'on' : 'pending'}`,
         `staticImageDecode=${features.native_static_image_decode ? 'native' : 'fallback'}`,
