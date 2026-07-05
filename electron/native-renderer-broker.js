@@ -793,7 +793,9 @@ class NativeRendererBroker {
       notes: features.native_static_image_decode
         ? [
             'Local still images can decode directly into native source-frame textures.',
-            'Video and full media prefetch still use source-frame/shared-texture fallback paths.',
+            features.native_media_decode && features.media_prefetch
+              ? 'Local videos decode through the native render-clock pump into source-frame textures; full GPU shared-texture media transport is tracked separately.'
+              : 'Video and full media prefetch still use source-frame/shared-texture fallback paths.',
           ]
         : ['Native render core is not running or does not advertise static image decode.'],
     };
@@ -807,6 +809,15 @@ class NativeRendererBroker {
     if (videoFramePrefetch.available) supportedSourceTypes.add('video');
     const notes = Array.isArray(caps.notes) ? caps.notes.map(String) : [];
     if (
+      videoFramePrefetch.available &&
+      caps.native_media_decode &&
+      caps.media_prefetch &&
+      !notes.some((note) => note.includes('Local video files decode from native media clocks'))
+    ) {
+      notes.push(
+        'Local video files decode from native media clocks through the render-clock pump, with adjacent FFmpeg frame windows cached in core source-frame textures.',
+      );
+    } else if (
       videoFramePrefetch.available &&
       !notes.some((note) => note.includes('Local video files can prefetch bounded FFmpeg-decoded frames'))
     ) {
