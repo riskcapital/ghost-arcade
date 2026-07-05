@@ -719,6 +719,14 @@ class NativeRendererBroker {
       ],
       ['native-media-decode', 'Native media decode/prefetch', !!features.native_media_decode && !!features.media_prefetch],
       ['native-stage3d-scene-ingest', 'Native Stage3D scene ingest', !!features.native_stage3d_scene_ingest],
+      [
+        'native-stage3d-overlay-preview',
+        'Native Stage3D overlay preview',
+        !!features.native_stage3d_overlay_preview,
+        features.native_stage3d_overlay_preview
+          ? 'ingested Stage3D scenes can affect native-rendered frame pixels'
+          : 'Stage3D scene data is not yet rendered by the native core',
+      ],
       ['native-projection-sim-scene-ingest', 'Native Projection Sim scene ingest', !!features.native_projection_sim_scene_ingest],
       ['compute-graph-host', 'Native buffer compute graph host', !!features.compute_graph_host],
       [
@@ -1847,6 +1855,7 @@ function makeDefaultCapabilities(overrides = {}) {
       managed_output_attach: false,
       managed_output_window_control: false,
       native_stage3d_scene_ingest: false,
+      native_stage3d_overlay_preview: false,
       native_projection_sim_scene_ingest: false,
       native_recording: false,
       native_stage3d: false,

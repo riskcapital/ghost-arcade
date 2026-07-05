@@ -14,6 +14,7 @@ const REQUIRED_CHECKS = [
   'native-flythrough-graph',
   'native-pixel-particles-graph',
   'native-point-cloud-fx-graph',
+  'native-stage3d-overlay-preview',
   'native-frame-sequence-export',
 ];
 
@@ -212,10 +213,11 @@ try {
   assert(capabilities?.features?.native_compositor_manifest, 'broker capabilities lost native compositor manifest support');
   assert(
     capabilities?.features?.native_stage3d_scene_ingest &&
+      capabilities?.features?.native_stage3d_overlay_preview &&
       capabilities?.features?.native_projection_sim_scene_ingest &&
       capabilities?.features?.native_stage3d === false &&
       capabilities?.features?.native_projection_sim === false,
-    `broker scene bridge should advertise ingest without claiming native 3D rendering: ${JSON.stringify(capabilities?.features)}`,
+    `broker scene bridge should advertise ingest/preview without claiming full native 3D rendering: ${JSON.stringify(capabilities?.features)}`,
   );
   const compositorBlendModes = new Map(
     (capabilities?.native_compositor_blend_modes ?? []).map((entry) => [entry.id, Number(entry.code)]),
@@ -470,6 +472,57 @@ try {
     storedStage3dSummary?.scene_id === 'contract-stage' &&
       storedStage3dSummary?.payload_bytes === stage3dSummary.payload_bytes,
     `native Stage3D stored summary drifted: ${JSON.stringify(storedStage3dSummary)}`,
+  );
+
+  tempDir = tempDir || mkdtempSync(join(tmpdir(), 'ghost-native-broker-frame-'));
+  await broker.invoke('native_renderer_set_stage3d_scene', {
+    scene: {
+      id: 'contract-stage-empty',
+      name: 'Contract Stage Empty',
+      schemaVersion: 1,
+      nodes: [],
+      userElements: [],
+    },
+  });
+  const stageEmptyPath = join(tempDir, 'broker-stage3d-empty.rgba');
+  const stageEmptySnapshot = await broker.invoke('native_renderer_export_frame_snapshot', {
+    path: stageEmptyPath,
+    time: 0.125,
+    frame_index: 9,
+  });
+  await broker.invoke('native_renderer_set_stage3d_scene', {
+    scene: {
+      id: 'contract-stage-overlay',
+      name: 'Contract Stage Overlay',
+      schemaVersion: 1,
+      nodes: [
+        {
+          id: 'native-overlay-screen',
+          type: 'led-screen',
+          visible: true,
+          position: [0, 2.4, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          width: 12,
+          height: 5,
+          brightness: 1.25,
+          children: [],
+        },
+      ],
+      userElements: [],
+    },
+  });
+  const stageOverlayPath = join(tempDir, 'broker-stage3d-overlay.rgba');
+  const stageOverlaySnapshot = await broker.invoke('native_renderer_export_frame_snapshot', {
+    path: stageOverlayPath,
+    time: 0.125,
+    frame_index: 9,
+  });
+  assert(
+    stageEmptySnapshot?.checksum !== stageOverlaySnapshot?.checksum &&
+      Number(stageOverlaySnapshot?.bright_pixels ?? 0) > Number(stageEmptySnapshot?.bright_pixels ?? 0) &&
+      Number(stageOverlaySnapshot?.average_luma ?? 0) > Number(stageEmptySnapshot?.average_luma ?? 0),
+    `native Stage3D overlay preview did not affect exported frame pixels: ${JSON.stringify({ stageEmptySnapshot, stageOverlaySnapshot })}`,
   );
 
   const projectionSummary = await broker.invoke('native_renderer_set_projection_sim_scene', {
