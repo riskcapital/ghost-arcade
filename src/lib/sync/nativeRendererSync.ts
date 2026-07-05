@@ -622,6 +622,38 @@ export function effectToNativeDescriptor(effect: any): string | null {
       ?? 0;
     return `hue:${cycle.toFixed(4)}`;
   }
+  if (type === 'colorama') {
+    const mixRaw =
+      firstFiniteParam(params, ['coloramaMix', 'mix', 'amount'], 1);
+    const paletteRaw =
+      firstFiniteParam(params, ['coloramaPalette', 'palette'], 0);
+    const offsetRaw =
+      firstFiniteParam(params, ['coloramaOffset', 'offset'], 0);
+    const speedRaw =
+      firstFiniteParam(params, ['coloramaSpeed', 'speed'], 0.2);
+    const contrastRaw =
+      firstFiniteParam(params, ['coloramaContrast', 'contrast'], 1);
+    const bandsRaw =
+      firstFiniteParam(params, ['coloramaBands', 'bands'], 0);
+    const audioReactRaw =
+      firstFiniteParam(params, ['coloramaAudioReact', 'audioReact'], 0);
+    const hueShiftRaw =
+      firstFiniteParam(params, ['coloramaHueShift', 'hueShift'], 0);
+    const audioRaw =
+      firstFiniteParam(params, ['audio', 'audioLevel'], getVisualAudioSnapshot().level);
+    return [
+      'colorama',
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+      Math.max(0, Math.min(11, Math.round(paletteRaw))).toFixed(0),
+      Math.max(0, Math.min(1, offsetRaw)).toFixed(4),
+      Math.max(0, Math.min(2, speedRaw)).toFixed(4),
+      Math.max(0.5, Math.min(2, contrastRaw)).toFixed(4),
+      Math.max(0, Math.min(32, bandsRaw)).toFixed(4),
+      Math.max(0, Math.min(1, audioReactRaw)).toFixed(4),
+      Math.max(0, Math.min(1, hueShiftRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, audioRaw)).toFixed(4),
+    ].join(':');
+  }
   if (type === 'exposure') {
     const exposure = clampNumber(
       firstFiniteParam(params, ['exposure', 'exposureAmount', 'amount'], 0),
@@ -1812,6 +1844,17 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       red: Number(rawParam5 ?? 1),
       green: Number(rawParam6 ?? 1),
       blue: Number(rawParam7 ?? 1),
+    };
+  } else if (effect === 'colorama') {
+    params = {
+      coloramaPalette: Number(rawParam0 ?? 0),
+      coloramaOffset: Number(rawParam1 ?? 0),
+      coloramaSpeed: Number(rawParam2 ?? 0.2),
+      coloramaContrast: Number(rawParam3 ?? 1),
+      coloramaBands: Number(rawParam4 ?? 0),
+      coloramaAudioReact: Number(rawParam5 ?? 0),
+      coloramaHueShift: Number(rawParam6 ?? 0),
+      audio: Number(rawParam7 ?? 0),
     };
   }
   if (params && Object.values(params).some((value) => !Number.isFinite(value))) return null;

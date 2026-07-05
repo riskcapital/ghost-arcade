@@ -37,7 +37,8 @@ export type NativeEffectPassId =
   | 'edge-detect'
   | 'film-grain'
   | 'filmic-tonemap'
-  | 'bloom';
+  | 'bloom'
+  | 'colorama';
 
 export interface NativeEffectPassManifestEntry {
   id: NativeEffectPassId;
@@ -178,6 +179,15 @@ export interface NativeEffectPassOptions {
     tonemapExposure: number;
     tonemapContrast: number;
     tonemapMix: number;
+    coloramaPalette: number;
+    coloramaOffset: number;
+    coloramaSpeed: number;
+    coloramaContrast: number;
+    coloramaMix: number;
+    coloramaBands: number;
+    coloramaAudioReact: number;
+    coloramaHueShift: number;
+    audio: number;
   }>;
   clear?: boolean;
   seq?: number;
@@ -256,6 +266,7 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'film-grain', code: 37, defaultAmount: 0.3, amountMin: 0, amountMax: 1 },
   { id: 'filmic-tonemap', code: 38, defaultAmount: 1, amountMin: 0, amountMax: 1 },
   { id: 'bloom', code: 39, defaultAmount: 0.6, amountMin: 0, amountMax: 1 },
+  { id: 'colorama', code: 40, defaultAmount: 1, amountMin: 0, amountMax: 1 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -446,6 +457,57 @@ fn bloom_ring_sample(uv: vec2<f32>, px: vec2<f32>, radius: f32, anamorphic: f32)
   acc += sample_rgb(uv + r * vec2<f32>( 0.0, -1.7));
   acc += sample_rgb(uv);
   return acc / 13.0;
+}
+
+fn colorama_cosine_palette(t: f32, a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, d: vec3<f32>) -> vec3<f32> {
+  return a + b * cos(6.28318530718 * (c * t + d));
+}
+
+fn colorama_palette(t: f32, palette: u32, hue_shift: f32) -> vec3<f32> {
+  var a = vec3<f32>(0.5, 0.5, 0.5);
+  var b = vec3<f32>(0.5, 0.5, 0.5);
+  var c = vec3<f32>(1.0, 1.0, 1.0);
+  var d = vec3<f32>(0.0, 0.33, 0.67);
+
+  if (palette == 1u) {
+    d = vec3<f32>(0.0, 0.1, 0.2);
+  } else if (palette == 2u) {
+    d = vec3<f32>(0.3, 0.2, 0.2);
+  } else if (palette == 3u) {
+    c = vec3<f32>(1.0, 1.0, 0.5);
+    d = vec3<f32>(0.8, 0.9, 0.3);
+  } else if (palette == 4u) {
+    c = vec3<f32>(1.0, 0.7, 0.4);
+    d = vec3<f32>(0.0, 0.15, 0.2);
+  } else if (palette == 5u) {
+    d = vec3<f32>(0.0, 0.1, 0.0);
+  } else if (palette == 6u) {
+    a = vec3<f32>(0.8, 0.8, 0.9);
+    b = vec3<f32>(0.2, 0.4, 0.2);
+    d = vec3<f32>(0.0, 0.25, 0.25);
+  } else if (palette == 7u) {
+    c = vec3<f32>(2.0, 1.0, 0.0);
+    d = vec3<f32>(0.5, 0.2, 0.25);
+  } else if (palette == 8u) {
+    a = vec3<f32>(0.6, 0.4, 0.7);
+    b = vec3<f32>(0.4, 0.4, 0.4);
+    c = vec3<f32>(1.0, 1.0, 0.5);
+    d = vec3<f32>(0.0, 0.15, 0.50);
+  } else if (palette == 9u) {
+    a = vec3<f32>(0.55, 0.45, 0.55);
+    b = vec3<f32>(0.55, 0.5, 0.5);
+    c = vec3<f32>(1.5, 1.5, 1.0);
+    d = vec3<f32>(0.0, 0.5, 0.85);
+  } else if (palette == 10u) {
+    a = vec3<f32>(0.85, 0.8, 0.85);
+    b = vec3<f32>(0.15, 0.18, 0.15);
+    d = vec3<f32>(0.0, 0.33, 0.67);
+  } else if (palette == 11u) {
+    let h = fract1(hue_shift);
+    d = vec3<f32>(h, h + 0.33, h + 0.67);
+  }
+
+  return colorama_cosine_palette(t, a, b, c, d);
 }
 
 fn effect_texel() -> vec2<f32> {
@@ -1287,6 +1349,24 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let composited = vec3<f32>(1.0) - (vec3<f32>(1.0) - color) * (vec3<f32>(1.0) - bloom);
     return vec4<f32>(mix(color, composited, bloom_mix), src.a);
   }
+  if (code == 40u) {
+    let palette = u32(round(clamp(u.params0.x, 0.0, 11.0)));
+    let offset = clamp(u.params0.y, 0.0, 1.0);
+    let speed = clamp(u.params0.z, 0.0, 2.0);
+    let contrast = clamp(u.params0.w, 0.5, 2.0);
+    let bands = clamp(u.params1.x, 0.0, 32.0);
+    let audio_react = clamp(u.params1.y, 0.0, 1.0);
+    let hue_shift = clamp(u.params1.z, 0.0, 1.0);
+    let audio = clamp(u.params1.w, 0.0, 1.5);
+    var lum = clamp((luma(color) - 0.5) * contrast + 0.5, 0.0, 1.0);
+    if (bands >= 0.5) {
+      let steps = floor(bands + 0.5);
+      lum = clamp(floor(lum * steps) / max(steps - 1.0, 1.0), 0.0, 1.0);
+    }
+    let t = lum + offset + u.resolution_time.z * speed + hue_shift + audio * audio_react;
+    let palette_color = colorama_palette(t, palette, hue_shift);
+    return vec4<f32>(mix(color, palette_color, clamp(amount, 0.0, 1.0)), src.a);
+  }
   return src;
 }
 
@@ -1630,6 +1710,16 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param5 = clampNumber(params.red ?? params.param5, 0, 1.5, 1);
     param6 = clampNumber(params.green ?? params.param6, 0, 1.5, 1);
     param7 = clampNumber(params.blue ?? params.param7, 0, 1.5, 1);
+  } else if (options.effect === 'colorama') {
+    amount = clampNumber(options.amount ?? params.coloramaMix ?? params.outputMix ?? params.amount, 0, 1, 1);
+    param0 = clampNumber(params.coloramaPalette ?? params.param0, 0, 11, 0);
+    param1 = clampNumber(params.coloramaOffset ?? params.offset ?? params.param1, 0, 1, 0);
+    param2 = clampNumber(params.coloramaSpeed ?? params.speed ?? params.param2, 0, 2, 0.2);
+    param3 = clampNumber(params.coloramaContrast ?? params.contrast ?? params.param3, 0.5, 2, 1);
+    param4 = clampNumber(params.coloramaBands ?? params.param4, 0, 32, 0);
+    param5 = clampNumber(params.coloramaAudioReact ?? params.param5, 0, 1, 0);
+    param6 = clampNumber(params.coloramaHueShift ?? params.param6, 0, 1, 0);
+    param7 = clampNumber(params.audio ?? params.param7, 0, 1.5, 0);
   }
   return [
     width,
