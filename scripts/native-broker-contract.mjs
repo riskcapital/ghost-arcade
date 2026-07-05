@@ -20,6 +20,7 @@ const REQUIRED_CHECKS = [
   'native-stage3d-primitive-meshes',
   'native-projection-sim-overlay-preview',
   'native-projection-sim-mesh-preview',
+  'native-projection-sim-textured-mesh-preview',
   'native-frame-sequence-export',
 ];
 
@@ -236,6 +237,7 @@ try {
       capabilities?.features?.native_projection_sim_scene_ingest &&
       capabilities?.features?.native_projection_sim_overlay_preview &&
       capabilities?.features?.native_projection_sim_mesh_preview &&
+      capabilities?.features?.native_projection_sim_textured_mesh_preview &&
       capabilities?.features?.native_stage3d === false &&
       capabilities?.features?.native_projection_sim === false,
     `broker scene bridge should advertise ingest/preview without claiming full native 3D rendering: ${JSON.stringify(capabilities?.features)}`,
@@ -780,7 +782,51 @@ try {
   assert(
     projectionEmptySnapshot?.checksum !== projectionOverlaySnapshot?.checksum &&
       Number(projectionOverlaySnapshot?.average_luma ?? 0) > Number(projectionEmptySnapshot?.average_luma ?? 0),
-    `native Projection Sim overlay preview did not affect exported frame pixels: ${JSON.stringify({ projectionEmptySnapshot, projectionOverlaySnapshot })}`,
+    `native Projection Sim mesh/overlay preview did not affect exported frame pixels: ${JSON.stringify({ projectionEmptySnapshot, projectionOverlaySnapshot })}`,
+  );
+  await broker.invoke('native_renderer_submit_commands', {
+    commands: [
+      {
+        type: 'upload_source_frame',
+        source_id: 'stage3d-texture-source',
+        width: 16,
+        height: 16,
+        rgba_buffer: makeSolidRgbaFrame(16, 16, [250, 38, 42, 255]),
+        seq: 3,
+      },
+    ],
+  });
+  const projectionTexturedRedPath = join(tempDir, 'broker-projection-textured-red.rgba');
+  const projectionTexturedRedSnapshot = await broker.invoke('native_renderer_export_frame_snapshot', {
+    path: projectionTexturedRedPath,
+    time: 0.27,
+    frame_index: 14,
+  });
+  await broker.invoke('native_renderer_submit_commands', {
+    commands: [
+      {
+        type: 'upload_source_frame',
+        source_id: 'stage3d-texture-source',
+        width: 16,
+        height: 16,
+        rgba_buffer: makeSolidRgbaFrame(16, 16, [28, 238, 96, 255]),
+        seq: 4,
+      },
+    ],
+  });
+  const projectionTexturedGreenPath = join(tempDir, 'broker-projection-textured-green.rgba');
+  const projectionTexturedGreenSnapshot = await broker.invoke('native_renderer_export_frame_snapshot', {
+    path: projectionTexturedGreenPath,
+    time: 0.27,
+    frame_index: 15,
+  });
+  const redMean = projectionTexturedRedSnapshot?.mean_rgba ?? [];
+  const greenMean = projectionTexturedGreenSnapshot?.mean_rgba ?? [];
+  assert(
+    projectionTexturedRedSnapshot?.checksum !== projectionTexturedGreenSnapshot?.checksum &&
+      Number(redMean[0] ?? 0) > Number(greenMean[0] ?? 0) + 0.1 &&
+      Number(greenMean[1] ?? 0) > Number(redMean[1] ?? 0) + 0.1,
+    `native Projection Sim textured mesh preview did not sample source-frame texture changes: ${JSON.stringify({ projectionTexturedRedSnapshot, projectionTexturedGreenSnapshot })}`,
   );
 
   tempDir = tempDir || mkdtempSync(join(tmpdir(), 'ghost-native-broker-frame-'));

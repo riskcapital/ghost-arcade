@@ -2223,6 +2223,7 @@ impl App {
             "native_projection_sim_scene_ingest": true,
             "native_projection_sim_overlay_preview": true,
             "native_projection_sim_mesh_preview": true,
+            "native_projection_sim_textured_mesh_preview": true,
             "native_recording": false,
             "native_stage3d": false,
             "native_projection_sim": false
@@ -5077,7 +5078,7 @@ impl App {
             camera = scene.get("camera");
         }
         if let Some(scene) = self.projection_sim_scene.as_ref() {
-            collect_projection_sim_mesh_items(scene, &mut items);
+            collect_projection_sim_mesh_items(scene, &mut items, self);
             if camera.is_none() {
                 camera = scene.get("camera");
             }
@@ -9137,7 +9138,12 @@ fn stage3d_geometry_shape_code(geometry: &str) -> f32 {
     }
 }
 
-fn collect_projection_sim_mesh_items(scene: &Value, items: &mut Vec<Stage3DMeshItemGpu>) {
+fn collect_projection_sim_mesh_items(
+    scene: &Value,
+    items: &mut Vec<Stage3DMeshItemGpu>,
+    app: &App,
+) {
+    let projection_source_slot = projection_sim_source_slot(scene, app);
     if let Some(objects) = scene.get("objects").and_then(Value::as_array) {
         for object in objects {
             if items.len() >= MAX_STAGE3D_MESH_ITEMS {
@@ -9161,13 +9167,19 @@ fn collect_projection_sim_mesh_items(scene: &Value, items: &mut Vec<Stage3DMeshI
             } else {
                 0.34
             };
+            let receive_projection = bool_at(object, &["receiveProjection"]).unwrap_or(true);
+            let material = if receive_projection {
+                stage3d_material(projection_source_slot, 1.35, 4.0, projection_alpha)
+            } else {
+                stage3d_material(None, 1.0, 0.0, projection_alpha)
+            };
             items.push(stage3d_mesh_item(
                 position,
                 projection_sim_mesh_scale(&primitive, scale),
                 rotation[1],
                 [color[0], color[1], color[2], projection_alpha],
                 projection_sim_shape_code(&object_type, &primitive),
-                stage3d_material(None, 1.0, 0.0, 1.0),
+                material,
                 [0.0, 0.0, 1.0, 0.0],
             ));
         }
@@ -9198,6 +9210,27 @@ fn collect_projection_sim_mesh_items(scene: &Value, items: &mut Vec<Stage3DMeshI
             ));
         }
     }
+}
+
+fn projection_sim_source_slot(scene: &Value, app: &App) -> Option<usize> {
+    let projectors = scene.get("projectors").and_then(Value::as_array)?;
+    for projector in projectors {
+        if !bool_at(projector, &["enabled"]).unwrap_or(true) {
+            continue;
+        }
+        let source = string_at(projector, &["source"]).unwrap_or_else(|| "master".to_string());
+        if source == "slice" {
+            if let Some(slice_id) = string_at(projector, &["sliceId"]) {
+                if let Some(slot) = app.stage3d_source_slot_for_text(&slice_id) {
+                    return Some(slot);
+                }
+            }
+        }
+        if let Some(slot) = app.first_visible_source_frame_slot() {
+            return Some(slot);
+        }
+    }
+    None
 }
 
 fn projection_sim_shape_code(object_type: &str, primitive: &str) -> f32 {
