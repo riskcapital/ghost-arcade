@@ -639,6 +639,10 @@ export interface RendererStatus {
   degraded_mode_active: boolean;
   prefetched_sources: number;
   vram_budget_mb: number;
+  native_graph_buffer_bytes: number;
+  native_graph_buffer_budget_bytes: number;
+  vram_evictions: number;
+  vram_evicted_bytes: number;
   vram_used_mb: number;
   vertex_shader_cache_cap: number;
   pixel_shader_cache_cap: number;

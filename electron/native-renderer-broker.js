@@ -2458,6 +2458,14 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     decode_jobs_dropped: Number(status.decode_jobs_dropped ?? previous.decode_jobs_dropped ?? 0),
     decode_queue_peak: Number(status.decode_queue_peak ?? previous.decode_queue_peak ?? 0),
     vram_budget_mb: Number(status.vram_budget_mb ?? previous.vram_budget_mb ?? 4096),
+    native_graph_buffer_bytes: Number(
+      status.native_graph_buffer_bytes ?? previous.native_graph_buffer_bytes ?? 0,
+    ),
+    native_graph_buffer_budget_bytes: Number(
+      status.native_graph_buffer_budget_bytes ?? previous.native_graph_buffer_budget_bytes ?? 0,
+    ),
+    vram_evictions: Number(status.vram_evictions ?? previous.vram_evictions ?? 0),
+    vram_evicted_bytes: Number(status.vram_evicted_bytes ?? previous.vram_evicted_bytes ?? 0),
     command_drain_limit_hits: Number(
       status.command_drain_limit_hits ?? previous.command_drain_limit_hits ?? 0,
     ),
@@ -3130,6 +3138,10 @@ function makeDefaultStatus(overrides = {}) {
     degraded_mode_active: false,
     prefetched_sources: 0,
     vram_budget_mb: 4096,
+    native_graph_buffer_bytes: 0,
+    native_graph_buffer_budget_bytes: 0,
+    vram_evictions: 0,
+    vram_evicted_bytes: 0,
     vram_used_mb: 0,
     vertex_shader_cache_cap: 512,
     pixel_shader_cache_cap: 1024,
