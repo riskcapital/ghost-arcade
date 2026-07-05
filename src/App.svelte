@@ -251,6 +251,28 @@
     if (mode === 'degraded') return 'INIT';
     return 'GPU';
   }
+  function nativeRendererShareSummary(state: NativeRendererRuntimeState) {
+    const label = state.textureShareLabel || state.textureSharePlatform || 'Texture share';
+    if (state.nativeOutputShareActive) return `${label}: native output IOSurface active`;
+    if (state.nativeOutputShareWaitingForFrame) return `${label}: waiting for first native output frame`;
+    if (state.nativeOutputSharePendingPromotion) {
+      return `${label}: promoting native output (${state.nativeOutputSharePromotionAttempts} check${state.nativeOutputSharePromotionAttempts === 1 ? '' : 's'})`;
+    }
+    if (state.nativeTextureShareSenderReady) return `${label}: native output ready`;
+    if (state.nativeOutputShareCapable) return `${label}: native output capable when sender starts`;
+    if (state.textureShareAvailable) return `${label}: OSR texture-share bridge available`;
+    return state.textureShareLabel ? `${label}: unavailable` : '';
+  }
+  function nativeRendererToolbarTitle(
+    state: NativeRendererRuntimeState,
+    info: { renderer: string; vendor: string; isIntegrated: boolean },
+  ) {
+    const share = nativeRendererShareSummary(state);
+    const shareDetail = state.nativeTextureShareSenderDetail
+      ? ` ${state.nativeTextureShareSenderDetail}`
+      : '';
+    return `${info.renderer} (${info.vendor}) • Native renderer: ${nativeRendererModeLabel(state.driverMode)}${state.outputActive ? ' live output active' : ''}. ${state.readinessDetail}${share ? ` • ${share}.${shareDetail}` : ''}${info.isIntegrated ? ' — WARNING: Integrated GPU. Set this app to High Performance in Windows Graphics Settings.' : ''}`;
+  }
   async function checkGPU() {
     // First try native render-core status (this is the real GPU for native shader rendering)
     try {
@@ -5350,7 +5372,7 @@
             class:native-active={$nativeRendererRuntime.outputActive}
             class:native-shadow={$nativeRendererRuntime.driverMode === 'shadow'}
             class:native-degraded={$nativeRendererRuntime.driverMode === 'degraded'}
-            title="{gpuInfo.renderer} ({gpuInfo.vendor}) • Native renderer: {nativeRendererModeLabel($nativeRendererRuntime.driverMode)}{$nativeRendererRuntime.outputActive ? ' live output active' : ''}. {$nativeRendererRuntime.readinessDetail}{gpuInfo.isIntegrated ? ' — WARNING: Integrated GPU. Set this app to High Performance in Windows Graphics Settings.' : ''}"
+            title={nativeRendererToolbarTitle($nativeRendererRuntime, gpuInfo)}
           >
             <span class="gpu-dot"></span>
             {nativeRendererToolbarLabel($nativeRendererRuntime)}

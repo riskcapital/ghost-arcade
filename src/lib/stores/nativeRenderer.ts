@@ -33,6 +33,18 @@ export interface NativeRendererRuntimeState {
   averageGpuMs: number | null;
   readinessDetail: string;
   blockers: string[];
+  textureShareLabel: string | null;
+  textureSharePlatform: string | null;
+  textureShareAvailable: boolean;
+  sharedTextureOutputExportReady: boolean;
+  nativeTextureShareSenderReady: boolean;
+  nativeTextureShareSenderDetail: string;
+  nativeOutputShareCapable: boolean;
+  nativeOutputShareActive: boolean;
+  nativeOutputShareWaitingForFrame: boolean;
+  nativeOutputSharePendingPromotion: boolean;
+  nativeOutputSharePromotionAttempts: number;
+  nativeOutputSharePromotionReason: string | null;
   updatedAtMs: number;
 }
 
@@ -57,6 +69,18 @@ export const initialNativeRendererRuntimeState: NativeRendererRuntimeState = {
   averageGpuMs: null,
   readinessDetail: 'native renderer is offline',
   blockers: [],
+  textureShareLabel: null,
+  textureSharePlatform: null,
+  textureShareAvailable: false,
+  sharedTextureOutputExportReady: false,
+  nativeTextureShareSenderReady: false,
+  nativeTextureShareSenderDetail: '',
+  nativeOutputShareCapable: false,
+  nativeOutputShareActive: false,
+  nativeOutputShareWaitingForFrame: false,
+  nativeOutputSharePendingPromotion: false,
+  nativeOutputSharePromotionAttempts: 0,
+  nativeOutputSharePromotionReason: null,
   updatedAtMs: 0,
 };
 
@@ -119,6 +143,13 @@ function blockersForMode(
   return Array.from(new Set([...blockers, ...modeBlockers, ...extraBlockers].map(String).filter(Boolean)));
 }
 
+function readinessCheck(
+  readiness: RendererReadinessReport | null | undefined,
+  id: string,
+) {
+  return readiness?.checks?.find((check) => check?.id === id) ?? null;
+}
+
 export function deriveNativeRendererRuntimeState(
   status: RendererStatus | null | undefined,
   readiness: RendererReadinessReport | null | undefined,
@@ -156,6 +187,9 @@ export function deriveNativeRendererRuntimeState(
   const readinessDetail = advertisedMode === 'full-v2' && localBlockers.length > 0
     ? `native output driver is ready; main driver waiting on ${localBlockers[0]}`
     : readinessDetailForMode(mode, status, readiness);
+  const textureShare = readiness?.texture_share ?? null;
+  const outputExportCheck = readinessCheck(readiness, 'shared-texture-output-export');
+  const nativeTextureShareCheck = readinessCheck(readiness, 'native-texture-share-sender');
 
   return {
     running: !!status?.running,
@@ -178,6 +212,18 @@ export function deriveNativeRendererRuntimeState(
     averageGpuMs: Number.isFinite(status?.avg_render_gpu_ms) ? Number(status?.avg_render_gpu_ms) : null,
     readinessDetail,
     blockers: blockersForMode(mode, readiness, localBlockers),
+    textureShareLabel: textureShare?.label ?? null,
+    textureSharePlatform: textureShare?.platform ?? null,
+    textureShareAvailable: !!textureShare?.available,
+    sharedTextureOutputExportReady: !!(outputExportCheck?.ok ?? features.shared_texture_output_export),
+    nativeTextureShareSenderReady: !!nativeTextureShareCheck?.ok,
+    nativeTextureShareSenderDetail: String(nativeTextureShareCheck?.detail ?? ''),
+    nativeOutputShareCapable: !!textureShare?.nativeOutputCapable,
+    nativeOutputShareActive: !!textureShare?.nativeOutputActive,
+    nativeOutputShareWaitingForFrame: !!textureShare?.nativeOutputWaitingForFrame,
+    nativeOutputSharePendingPromotion: !!textureShare?.nativeOutputPendingPromotion,
+    nativeOutputSharePromotionAttempts: Number(textureShare?.nativeOutputPromotionAttempts ?? 0),
+    nativeOutputSharePromotionReason: textureShare?.nativeOutputPromotionReason ?? null,
     updatedAtMs: options.updatedAtMs ?? Date.now(),
   };
 }
@@ -229,6 +275,18 @@ export function updateNativeRendererRuntimeFromStatus(
       shadowReady: current.shadowReady,
       readinessDetail: current.readinessDetail,
       blockers: current.blockers,
+      textureShareLabel: current.textureShareLabel,
+      textureSharePlatform: current.textureSharePlatform,
+      textureShareAvailable: current.textureShareAvailable,
+      sharedTextureOutputExportReady: current.sharedTextureOutputExportReady,
+      nativeTextureShareSenderReady: current.nativeTextureShareSenderReady,
+      nativeTextureShareSenderDetail: current.nativeTextureShareSenderDetail,
+      nativeOutputShareCapable: current.nativeOutputShareCapable,
+      nativeOutputShareActive: current.nativeOutputShareActive,
+      nativeOutputShareWaitingForFrame: current.nativeOutputShareWaitingForFrame,
+      nativeOutputSharePendingPromotion: current.nativeOutputSharePendingPromotion,
+      nativeOutputSharePromotionAttempts: current.nativeOutputSharePromotionAttempts,
+      nativeOutputSharePromotionReason: current.nativeOutputSharePromotionReason,
     };
   });
 }
