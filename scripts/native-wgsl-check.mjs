@@ -172,8 +172,33 @@ function looksLikeStandaloneTaggedWgsl(name, source, moduleSourceNames) {
     || /\bstruct\s+[A-Za-z0-9_]+/.test(source);
 }
 
+function extractFunctionNames(source, prefix) {
+  const names = new Set();
+  const re = new RegExp(`\\bfn\\s+(${prefix}[A-Za-z0-9_]*)\\s*\\(`, 'g');
+  for (const match of source.matchAll(re)) {
+    names.add(match[1]);
+  }
+  return names;
+}
+
+function assertNativeHeartbeatAudioStdlibParity(stdlib) {
+  const audioStdlib = stdlib.get('audio');
+  if (!audioStdlib) throw new Error('WGSL stdlib is missing audio.wgsl');
+  const heartbeatPath = join(nativeRendererRoot, 'heartbeat.wgsl');
+  const heartbeat = readFileSync(heartbeatPath, 'utf8');
+  const required = extractFunctionNames(audioStdlib, 'ghost_audio_');
+  const available = extractFunctionNames(heartbeat, 'ghost_audio_');
+  const missing = [...required].filter((name) => !available.has(name));
+  if (missing.length) {
+    throw new Error(
+      `native-renderer/src/heartbeat.wgsl is missing shared audio helper(s): ${missing.join(', ')}`,
+    );
+  }
+}
+
 function collectRecords() {
   const stdlib = loadStdlib();
+  assertNativeHeartbeatAudioStdlibParity(stdlib);
   const records = [];
   const failures = [];
 
