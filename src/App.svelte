@@ -112,6 +112,7 @@
   import {
     nativeRendererModeLabel,
     nativeRendererRuntime,
+    type NativeRendererRuntimeState,
     type NativeRendererDriverMode,
   } from './lib/stores/nativeRenderer';
   import { startSpoutScanner, stopSpoutScanner } from './lib/stores/spout';
@@ -241,7 +242,9 @@
       try { window.localStorage?.setItem(INTEGRATED_GPU_BANNER_DISMISSED_KEY, '1'); } catch { /* */ }
     }
   }
-  function nativeRendererToolbarLabel(mode: NativeRendererDriverMode) {
+  function nativeRendererToolbarLabel(state: NativeRendererRuntimeState) {
+    const mode: NativeRendererDriverMode = state.driverMode;
+    if (state.outputActive) return 'LIVE';
     if (mode === 'full-v2') return 'FULL V2';
     if (mode === 'output-driver') return 'NATIVE';
     if (mode === 'shadow') return 'SHADOW';
@@ -5344,12 +5347,13 @@
             class:integrated={gpuInfo.isIntegrated}
             class:native={$nativeRendererRuntime.driverMode !== 'offline'}
             class:native-ready={$nativeRendererRuntime.driverMode === 'output-driver' || $nativeRendererRuntime.driverMode === 'full-v2'}
+            class:native-active={$nativeRendererRuntime.outputActive}
             class:native-shadow={$nativeRendererRuntime.driverMode === 'shadow'}
             class:native-degraded={$nativeRendererRuntime.driverMode === 'degraded'}
-            title="{gpuInfo.renderer} ({gpuInfo.vendor}) • Native renderer: {nativeRendererModeLabel($nativeRendererRuntime.driverMode)}. {$nativeRendererRuntime.readinessDetail}{gpuInfo.isIntegrated ? ' — WARNING: Integrated GPU. Set this app to High Performance in Windows Graphics Settings.' : ''}"
+            title="{gpuInfo.renderer} ({gpuInfo.vendor}) • Native renderer: {nativeRendererModeLabel($nativeRendererRuntime.driverMode)}{$nativeRendererRuntime.outputActive ? ' live output active' : ''}. {$nativeRendererRuntime.readinessDetail}{gpuInfo.isIntegrated ? ' — WARNING: Integrated GPU. Set this app to High Performance in Windows Graphics Settings.' : ''}"
           >
             <span class="gpu-dot"></span>
-            {nativeRendererToolbarLabel($nativeRendererRuntime.driverMode)}
+            {nativeRendererToolbarLabel($nativeRendererRuntime)}
           </span>
         {/if}
         <!-- Windows-style File Menu -->
@@ -7369,6 +7373,12 @@
     color: var(--ga-green, #46d18a);
     background: rgba(70, 209, 138, 0.09);
     border-color: rgba(70, 209, 138, 0.36);
+  }
+  .gpu-indicator.native-active {
+    color: #061014;
+    background: linear-gradient(90deg, #46d18a, #5ce1e6);
+    border-color: rgba(92, 225, 230, 0.70);
+    box-shadow: 0 0 14px rgba(92, 225, 230, 0.22);
   }
   .gpu-indicator.native-shadow {
     color: #b48cff;
