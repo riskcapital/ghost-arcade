@@ -38,7 +38,14 @@ export type NativeEffectPassId =
   | 'film-grain'
   | 'filmic-tonemap'
   | 'bloom'
-  | 'colorama';
+  | 'colorama'
+  | 'edge-feather'
+  | 'dither'
+  | 'outline'
+  | 'emboss'
+  | 'crt'
+  | 'thermal'
+  | 'night-vision';
 
 export interface NativeEffectPassManifestEntry {
   id: NativeEffectPassId;
@@ -152,6 +159,13 @@ export interface NativeEffectPassOptions {
     edgeFade: number;
     cubic: number;
     anamorphicX: number;
+    palette: number;
+    height: number;
+    glow: number;
+    noise: number;
+    vignette: number;
+    bloom: number;
+    scopeMask: number;
     threshold: number;
     thickness: number;
     edgeTintR: number;
@@ -188,6 +202,57 @@ export interface NativeEffectPassOptions {
     coloramaAudioReact: number;
     coloramaHueShift: number;
     audio: number;
+    featherTop: number;
+    featherBottom: number;
+    featherLeft: number;
+    featherRight: number;
+    featherSoftness: number;
+    featherGamma: number;
+    featherMattePreview: number;
+    ditherType: number;
+    ditherIntensity: number;
+    ditherScale: number;
+    ditherColorDepth: number;
+    ditherPalette: number;
+    ditherPixelLock: number;
+    outlineThickness: number;
+    outlineR: number;
+    outlineG: number;
+    outlineB: number;
+    outlineOnly: number;
+    outlineGlow: number;
+    outlinePosition: number;
+    outlineCrawl: number;
+    outlineAlphaAware: number;
+    embossStrength: number;
+    embossAngle: number;
+    embossHeight: number;
+    embossHighlightR: number;
+    embossHighlightG: number;
+    embossHighlightB: number;
+    embossShadowR: number;
+    embossShadowG: number;
+    embossShadowB: number;
+    crtScanlines: number;
+    crtScanCount: number;
+    crtMask: number;
+    crtMaskType: number;
+    crtCurvature: number;
+    crtVignette: number;
+    crtGlow: number;
+    crtRollingBar: number;
+    crtChromatic: number;
+    thermalIntensity: number;
+    thermalPalette: number;
+    thermalShimmer: number;
+    thermalSensorNoise: number;
+    nightVisionIntensity: number;
+    nightVisionNoise: number;
+    nightVisionVignette: number;
+    nightVisionPhosphor: number;
+    nightVisionBloom: number;
+    nightVisionScopeMask: number;
+    nightVisionRollingNoise: number;
   }>;
   clear?: boolean;
   seq?: number;
@@ -267,6 +332,13 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'filmic-tonemap', code: 38, defaultAmount: 1, amountMin: 0, amountMax: 1 },
   { id: 'bloom', code: 39, defaultAmount: 0.6, amountMin: 0, amountMax: 1 },
   { id: 'colorama', code: 40, defaultAmount: 1, amountMin: 0, amountMax: 1 },
+  { id: 'edge-feather', code: 41, defaultAmount: 1, amountMin: 0, amountMax: 1 },
+  { id: 'dither', code: 42, defaultAmount: 1, amountMin: 0, amountMax: 1 },
+  { id: 'outline', code: 43, defaultAmount: 2, amountMin: 0, amountMax: 12 },
+  { id: 'emboss', code: 44, defaultAmount: 1, amountMin: 0, amountMax: 2 },
+  { id: 'crt', code: 45, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'thermal', code: 46, defaultAmount: 1, amountMin: 0.05, amountMax: 2 },
+  { id: 'night-vision', code: 47, defaultAmount: 1.5, amountMin: 0, amountMax: 2 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -508,6 +580,97 @@ fn colorama_palette(t: f32, palette: u32, hue_shift: f32) -> vec3<f32> {
   }
 
   return colorama_cosine_palette(t, a, b, c, d);
+}
+
+fn dither_palette_snap(c: vec3<f32>, palette: u32) -> vec3<f32> {
+  let lum = luma(c);
+  if (palette == 1u) {
+    let v = select(0.0, 1.0, lum >= 0.5);
+    return vec3<f32>(v);
+  }
+  if (palette == 2u) {
+    if (lum < 0.25) { return vec3<f32>(0.0, 0.0, 0.0); }
+    if (lum < 0.5) { return vec3<f32>(0.0, 1.0, 1.0); }
+    if (lum < 0.75) { return vec3<f32>(1.0, 0.0, 1.0); }
+    return vec3<f32>(1.0, 1.0, 1.0);
+  }
+  if (palette == 3u) {
+    let levels = vec3<f32>(2.0, 2.0, 1.0);
+    return floor(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)) * levels + vec3<f32>(0.5)) / max(levels, vec3<f32>(1.0));
+  }
+  if (palette == 4u) {
+    if (lum < 0.25) { return vec3<f32>(0.05, 0.10, 0.03); }
+    if (lum < 0.5) { return vec3<f32>(0.19, 0.38, 0.19); }
+    if (lum < 0.75) { return vec3<f32>(0.55, 0.67, 0.32); }
+    return vec3<f32>(0.80, 0.86, 0.55);
+  }
+  if (palette == 5u) {
+    return vec3<f32>(lum * 1.25, lum * 0.72, lum * 0.18);
+  }
+  return c;
+}
+
+fn dither_threshold(kind: u32, cell: vec2<f32>, uv: vec2<f32>, color: vec3<f32>) -> f32 {
+  if (kind == 1u) {
+    return hash21(floor(cell * vec2<f32>(0.7, 1.3)) + vec2<f32>(19.0, 3.0));
+  }
+  if (kind == 2u) {
+    let centered = fract(cell * 0.5) - vec2<f32>(0.5);
+    return smoothstep(0.08, 0.48, length(centered));
+  }
+  if (kind == 3u) {
+    let a = hash21(cell + vec2<f32>(0.0, 0.0));
+    let b = hash21(cell + vec2<f32>(1.0, 0.0));
+    let c = hash21(cell + vec2<f32>(0.0, 1.0));
+    return (a * 0.55 + b * 0.25 + c * 0.20);
+  }
+  if (kind == 4u) {
+    let n = hash21(floor(cell * 0.5) + vec2<f32>(luma(color) * 7.0, 11.0));
+    return mix(fract(cell.x * 0.37 + cell.y * 0.63), n, 0.55);
+  }
+  let p = floor(cell);
+  let base = fract(p.x * 0.125 + p.y * 0.375 + p.x * p.y * 0.0625);
+  return mix(base, hash21(p), 0.28);
+}
+
+fn thermal_palette_native(t: f32, palette: u32) -> vec3<f32> {
+  let x = clamp(t, 0.0, 1.0);
+  if (palette == 1u) {
+    if (x < 0.18) { return mix(vec3<f32>(0.0), vec3<f32>(0.28, 0.0, 0.45), x / 0.18); }
+    if (x < 0.38) { return mix(vec3<f32>(0.28, 0.0, 0.45), vec3<f32>(0.0, 0.35, 1.0), (x - 0.18) / 0.20); }
+    if (x < 0.62) { return mix(vec3<f32>(0.0, 0.35, 1.0), vec3<f32>(0.0, 1.0, 0.55), (x - 0.38) / 0.24); }
+    if (x < 0.82) { return mix(vec3<f32>(0.0, 1.0, 0.55), vec3<f32>(1.0, 0.65, 0.0), (x - 0.62) / 0.20); }
+    return mix(vec3<f32>(1.0, 0.65, 0.0), vec3<f32>(1.0), (x - 0.82) / 0.18);
+  }
+  if (palette == 2u) {
+    if (x < 0.35) { return mix(vec3<f32>(1.0), vec3<f32>(0.35, 1.0, 1.0), x / 0.35); }
+    if (x < 0.70) { return mix(vec3<f32>(0.35, 1.0, 1.0), vec3<f32>(0.0, 0.25, 1.0), (x - 0.35) / 0.35); }
+    return mix(vec3<f32>(0.0, 0.25, 1.0), vec3<f32>(1.0, 0.0, 0.65), (x - 0.70) / 0.30);
+  }
+  if (palette == 3u) {
+    if (x < 0.30) { return mix(vec3<f32>(0.0, 0.05, 0.0), vec3<f32>(0.0, 0.62, 0.12), x / 0.30); }
+    if (x < 0.62) { return mix(vec3<f32>(0.0, 0.62, 0.12), vec3<f32>(0.95, 0.82, 0.0), (x - 0.30) / 0.32); }
+    if (x < 0.86) { return mix(vec3<f32>(0.95, 0.82, 0.0), vec3<f32>(0.95, 0.22, 0.04), (x - 0.62) / 0.24); }
+    return mix(vec3<f32>(0.95, 0.22, 0.04), vec3<f32>(1.0, 0.0, 0.65), (x - 0.86) / 0.14);
+  }
+  if (palette == 4u) {
+    return vec3<f32>(x);
+  }
+  if (x < 0.2) { return mix(vec3<f32>(0.0, 0.0, 0.5), vec3<f32>(0.0, 0.5, 1.0), x * 5.0); }
+  if (x < 0.4) { return mix(vec3<f32>(0.0, 0.5, 1.0), vec3<f32>(0.0, 1.0, 0.0), (x - 0.2) * 5.0); }
+  if (x < 0.6) { return mix(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 1.0, 0.0), (x - 0.4) * 5.0); }
+  if (x < 0.8) { return mix(vec3<f32>(1.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), (x - 0.6) * 5.0); }
+  return mix(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(1.0), (x - 0.8) * 5.0);
+}
+
+fn night_vision_tint(lum: f32, phosphor: u32) -> vec3<f32> {
+  if (phosphor == 1u) {
+    return vec3<f32>(lum, lum * 0.65, lum * 0.15);
+  }
+  if (phosphor == 2u) {
+    return vec3<f32>(lum);
+  }
+  return vec3<f32>(lum * 0.2, lum, lum * 0.2);
 }
 
 fn effect_texel() -> vec2<f32> {
@@ -1367,6 +1530,261 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let palette_color = colorama_palette(t, palette, hue_shift);
     return vec4<f32>(mix(color, palette_color, clamp(amount, 0.0, 1.0)), src.a);
   }
+  if (code == 41u) {
+    let top = clamp(u.params0.x, 0.0, 1.0);
+    let bottom = clamp(u.params0.y, 0.0, 1.0);
+    let left = clamp(u.params0.z, 0.0, 1.0);
+    let right = clamp(u.params0.w, 0.0, 1.0);
+    let softness = clamp(u.params1.x, 0.0, 2.0);
+    let feather_gamma = max(0.0001, u.params1.y);
+    let matte_preview = u.params1.z > 0.5;
+    var alpha = 1.0;
+    if (top > 0.0001) {
+      alpha *= smoothstep(1.0, 1.0 - top, uv.y);
+    }
+    if (bottom > 0.0001) {
+      alpha *= smoothstep(0.0, bottom, uv.y);
+    }
+    if (left > 0.0001) {
+      alpha *= smoothstep(0.0, left, uv.x);
+    }
+    if (right > 0.0001) {
+      alpha *= smoothstep(1.0, 1.0 - right, uv.x);
+    }
+    alpha = pow(clamp(alpha, 0.0, 1.0), 1.0 / max(softness + 0.5, 0.1));
+    alpha = pow(alpha, feather_gamma) * clamp(amount, 0.0, 1.0);
+    if (matte_preview) {
+      return vec4<f32>(mix(vec3<f32>(0.0), vec3<f32>(1.0, 0.0, 0.0), 1.0 - alpha), src.a);
+    }
+    return vec4<f32>(color, src.a * alpha);
+  }
+  if (code == 42u) {
+    let kind = u32(round(clamp(u.params0.x, 0.0, 4.0)));
+    let scale = max(0.5, u.params0.y);
+    let depth = max(1.0, floor(u.params0.z + 0.5));
+    let palette = u32(round(clamp(u.params0.w, 0.0, 5.0)));
+    let pixel_lock = u.params1.x > 0.5;
+    var cell = uv * u.resolution_time.xy / scale;
+    if (pixel_lock) {
+      cell = floor(cell);
+    }
+    let threshold = (dither_threshold(kind, floor(cell), uv, color) - 0.5) * clamp(amount, 0.0, 1.0);
+    let levels = max(2.0, pow(2.0, depth));
+    var dithered = color + vec3<f32>(threshold / levels);
+    dithered = floor(clamp(dithered, vec3<f32>(0.0), vec3<f32>(1.0)) * levels + vec3<f32>(0.5)) / levels;
+    dithered = dither_palette_snap(dithered, palette);
+    return vec4<f32>(clamp(dithered, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 43u) {
+    let thickness = max(0.25, amount);
+    let outline_color = clamp(u.params0.xyz, vec3<f32>(0.0), vec3<f32>(1.5));
+    let only = u.params0.w > 0.5;
+    let glow = clamp(u.params1.x, 0.0, 1.0);
+    let position = u32(round(clamp(u.params1.y, 0.0, 2.0)));
+    let crawl = clamp(u.params1.z, 0.0, 1.0);
+    let alpha_aware = clamp(u.params1.w, 0.0, 1.0);
+    let tx = effect_texel() * thickness;
+    let center_value = mix(luma(color), src.a, alpha_aware);
+    var edge = 0.0;
+    var inside_sum = 0.0;
+    var outside_sum = 0.0;
+    for (var yy = 0u; yy < 3u; yy = yy + 1u) {
+      let fy = f32(yy) - 1.0;
+      for (var xx = 0u; xx < 3u; xx = xx + 1u) {
+        let fx = f32(xx) - 1.0;
+        if (!(xx == 1u && yy == 1u)) {
+          let nb4 = sample_clamped(uv + vec2<f32>(fx, fy) * tx);
+          let nb = mix(luma(nb4.rgb), nb4.a, alpha_aware);
+          let diff = nb - center_value;
+          edge += abs(diff);
+          if (diff < 0.0) {
+            inside_sum += -diff;
+          } else {
+            outside_sum += diff;
+          }
+        }
+      }
+    }
+    edge = smoothstep(0.05, 0.15, edge / 8.0);
+    if (position == 0u) {
+      edge *= smoothstep(0.0, 0.1, outside_sum / 8.0);
+    } else if (position == 1u) {
+      edge *= smoothstep(0.0, 0.1, inside_sum / 8.0);
+    }
+    if (crawl > 0.001) {
+      let ants = sin((uv.x + uv.y) * 80.0 - u.resolution_time.z * crawl * 6.0) * 0.5 + 0.5;
+      edge *= ants;
+    }
+    var glow_edge = 0.0;
+    if (glow > 0.001) {
+      for (var gy = 0u; gy < 5u; gy = gy + 1u) {
+        let fy = f32(gy) - 2.0;
+        for (var gx = 0u; gx < 5u; gx = gx + 1u) {
+          let fx = f32(gx) - 2.0;
+          let nb4 = sample_clamped(uv + vec2<f32>(fx, fy) * tx * 2.0);
+          let nb = mix(luma(nb4.rgb), nb4.a, alpha_aware);
+          glow_edge += abs(nb - center_value);
+        }
+      }
+      glow_edge = smoothstep(0.02, 0.1, glow_edge / 24.0) * glow * 0.7;
+    }
+    let outline_mask = max(edge, glow_edge);
+    let outlined = outline_color * outline_mask;
+    if (only) {
+      return vec4<f32>(outlined, src.a * outline_mask);
+    }
+    return vec4<f32>(color + outlined, src.a);
+  }
+  if (code == 44u) {
+    let angle = u.params0.x * 0.01745329252;
+    let height = clamp(u.params0.y, 0.0, 1.0);
+    let highlight = clamp(vec3<f32>(u.params0.z, u.params0.w, u.params1.x), vec3<f32>(0.0), vec3<f32>(1.5));
+    let shadow = clamp(u.params1.yzw, vec3<f32>(0.0), vec3<f32>(1.5));
+    let tx = effect_texel();
+    let l_l = luma(sample_rgb(uv - vec2<f32>(tx.x, 0.0)));
+    let l_r = luma(sample_rgb(uv + vec2<f32>(tx.x, 0.0)));
+    let l_d = luma(sample_rgb(uv - vec2<f32>(0.0, tx.y)));
+    let l_u = luma(sample_rgb(uv + vec2<f32>(0.0, tx.y)));
+    let dir = vec2<f32>(cos(angle), sin(angle));
+    let dx = (l_r - l_l) * (1.0 + height * 4.0);
+    let dy = (l_u - l_d) * (1.0 + height * 4.0);
+    let normal = normalize(vec3<f32>(-dx, -dy, 1.0));
+    let light = normalize(vec3<f32>(dir.x, dir.y, 0.5));
+    let diff = max(dot(normal, light), 0.0);
+    let along = (l_r - l_l) * dir.x + (l_u - l_d) * dir.y;
+    let embossed = clamp(along * amount + 0.5, 0.0, 1.0);
+    let relit = color * 0.48 + mix(shadow, highlight, embossed) + vec3<f32>(pow(diff, 18.0) * 0.18);
+    return vec4<f32>(clamp(relit, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 45u) {
+    let scan_count = max(32.0, u.params0.x);
+    let mask_amount = clamp(u.params0.y, 0.0, 1.0);
+    let mask_type = u32(round(clamp(u.params0.z, 0.0, 2.0)));
+    let curvature = clamp(u.params0.w, 0.0, 1.0);
+    let vignette = clamp(u.params1.x, 0.0, 1.0);
+    let glow = clamp(u.params1.y, 0.0, 1.0);
+    let rolling = clamp(u.params1.z, 0.0, 1.0);
+    let chromatic = clamp(u.params1.w, 0.0, 1.0);
+    var crt_uv = uv;
+    if (curvature > 0.001) {
+      var p = uv * 2.0 - vec2<f32>(1.0);
+      let offset = abs(p.yx) / vec2<f32>(6.0, 4.0);
+      p = p + p * offset * offset * curvature;
+      crt_uv = p * 0.5 + vec2<f32>(0.5);
+      if (crt_uv.x < 0.0 || crt_uv.x > 1.0 || crt_uv.y < 0.0 || crt_uv.y > 1.0) {
+        return vec4<f32>(0.0, 0.0, 0.0, src.a);
+      }
+    }
+    var crt_col = sample_rgb(crt_uv);
+    if (chromatic > 0.001) {
+      let cd = (crt_uv - vec2<f32>(0.5)) * chromatic * 0.01;
+      crt_col = vec3<f32>(
+        sample_rgb(crt_uv + cd).r,
+        sample_rgb(crt_uv).g,
+        sample_rgb(crt_uv - cd).b,
+      );
+    }
+    if (mask_amount > 0.001) {
+      let px = crt_uv * u.resolution_time.xy;
+      let stripe = fract(px.x / 3.0) * 3.0;
+      var mask_col = vec3<f32>(0.62);
+      if (stripe < 1.0) {
+        mask_col = vec3<f32>(1.4, 0.62, 0.62);
+      } else if (stripe < 2.0) {
+        mask_col = vec3<f32>(0.62, 1.4, 0.62);
+      } else {
+        mask_col = vec3<f32>(0.62, 0.62, 1.4);
+      }
+      if (mask_type == 2u) {
+        mask_col *= mix(0.75, 1.0, step(0.5, fract(px.y * 0.5)));
+      } else if (mask_type == 1u) {
+        mask_col *= 1.0 - step(0.96, fract(px.y * 0.02)) * 0.3;
+      }
+      crt_col = mix(crt_col, crt_col * mask_col, mask_amount);
+    }
+    let scan = sin(crt_uv.y * scan_count * 3.14159) * 0.5 + 0.5;
+    crt_col *= mix(1.0, scan, clamp(amount, 0.0, 1.0));
+    if (glow > 0.001) {
+      let tx = effect_texel();
+      let g = sample_rgb(crt_uv + vec2<f32>(tx.x, 0.0)) +
+        sample_rgb(crt_uv - vec2<f32>(tx.x, 0.0)) +
+        sample_rgb(crt_uv + vec2<f32>(0.0, tx.y)) +
+        sample_rgb(crt_uv - vec2<f32>(0.0, tx.y));
+      crt_col += g * glow * 0.05;
+    }
+    if (rolling > 0.001) {
+      let bar = smoothstep(0.7, 1.0, sin(crt_uv.y * 6.0 - u.resolution_time.z * 1.5));
+      crt_col += vec3<f32>(bar * rolling * 0.18);
+    }
+    if (vignette > 0.001) {
+      let d = distance(crt_uv, vec2<f32>(0.5));
+      crt_col *= 1.0 - smoothstep(0.3, 0.78, d) * vignette;
+    }
+    return vec4<f32>(crt_col, src.a);
+  }
+  if (code == 46u) {
+    let palette = u32(round(clamp(u.params0.x, 0.0, 4.0)));
+    let shimmer = clamp(u.params0.y, 0.0, 1.0);
+    let sensor_noise = clamp(u.params0.z, 0.0, 1.0);
+    var thermal_uv = uv;
+    if (shimmer > 0.001) {
+      let lum0 = luma(color);
+      let wobble = sin(uv.y * 60.0 + u.resolution_time.z * 4.0) * 0.5 + sin(uv.x * 35.0 + u.resolution_time.z * 3.0) * 0.5;
+      thermal_uv += vec2<f32>(wobble * shimmer * lum0 * 0.006, wobble * shimmer * lum0 * 0.003);
+    }
+    let thermal_src = sample_clamped(thermal_uv);
+    var temp = pow(luma(thermal_src.rgb), 1.0 / max(amount, 0.05));
+    if (sensor_noise > 0.001) {
+      let band = hash21(vec2<f32>(floor(uv.y * u.resolution_time.y * 0.5), floor(u.resolution_time.z * 8.0)));
+      temp = clamp(temp + (band - 0.5) * sensor_noise * 0.18, 0.0, 1.0);
+    }
+    return vec4<f32>(thermal_palette_native(temp, palette), thermal_src.a);
+  }
+  if (code == 47u) {
+    let noise_amount = clamp(u.params0.x, 0.0, 1.0);
+    let vignette = clamp(u.params0.y, 0.0, 1.0);
+    let phosphor = u32(round(clamp(u.params0.z, 0.0, 2.0)));
+    let bloom = clamp(u.params0.w, 0.0, 2.0);
+    let scope_mask = u32(round(clamp(u.params1.x, 0.0, 2.0)));
+    let rolling_noise = clamp(u.params1.y, 0.0, 1.0);
+    var lum = pow(luma(color), 0.8) * amount;
+    var nv = night_vision_tint(lum, phosphor);
+    let scanline = sin(uv.y * u.resolution_time.y * 2.0) * 0.5 + 0.5;
+    nv *= 0.95 + scanline * 0.05;
+    if (rolling_noise > 0.001) {
+      let band_y = floor((uv.y + u.resolution_time.z * 0.15) * 80.0);
+      let band_rand = hash21(vec2<f32>(band_y, floor(u.resolution_time.z * 4.0)));
+      nv += vec3<f32>(band_rand - 0.5) * rolling_noise * 0.4 * vec3<f32>(0.0, 1.0, 0.0);
+    }
+    if (noise_amount > 0.001) {
+      let n = hash21(uv * u.resolution_time.xy + vec2<f32>(u.resolution_time.z * 1000.0));
+      nv += vec3<f32>(n - 0.5) * noise_amount * 0.2;
+    }
+    if (bloom > 0.001) {
+      let tx = effect_texel() * (3.0 + bloom * 2.0);
+      var glow_sum = 0.0;
+      for (var by = 0u; by < 5u; by = by + 1u) {
+        let fy = f32(by) - 2.0;
+        for (var bx = 0u; bx < 5u; bx = bx + 1u) {
+          let fx = f32(bx) - 2.0;
+          glow_sum += luma(sample_rgb(uv + vec2<f32>(fx, fy) * tx));
+        }
+      }
+      nv += night_vision_tint(glow_sum / 25.0, phosphor) * bloom * 0.45;
+    }
+    let dist = distance(uv, vec2<f32>(0.5));
+    if (vignette > 0.001) {
+      nv *= 1.0 - smoothstep(0.35, 0.78, dist) * vignette;
+    }
+    if (scope_mask == 1u) {
+      nv *= 1.0 - smoothstep(0.47, 0.50, dist);
+    } else if (scope_mask == 2u) {
+      let circle = 1.0 - smoothstep(0.47, 0.50, dist);
+      let cross = 1.0 - min(step(0.005, abs(uv.x - 0.5)), step(0.005, abs(uv.y - 0.5)));
+      nv = mix(nv * circle, vec3<f32>(0.0, 1.0, 0.0), cross * 0.35);
+    }
+    return vec4<f32>(clamp(nv, vec3<f32>(0.0), vec3<f32>(1.5)), src.a);
+  }
   return src;
 }
 
@@ -1720,6 +2138,76 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param5 = clampNumber(params.coloramaAudioReact ?? params.param5, 0, 1, 0);
     param6 = clampNumber(params.coloramaHueShift ?? params.param6, 0, 1, 0);
     param7 = clampNumber(params.audio ?? params.param7, 0, 1.5, 0);
+  } else if (options.effect === 'edge-feather') {
+    amount = clampNumber(options.amount ?? params.outputMix ?? params.amount, 0, 1, 1);
+    param0 = clampNumber(params.featherTop ?? params.param0, 0, 1, 0);
+    param1 = clampNumber(params.featherBottom ?? params.param1, 0, 1, 0);
+    param2 = clampNumber(params.featherLeft ?? params.param2, 0, 1, 0);
+    param3 = clampNumber(params.featherRight ?? params.param3, 0, 1, 0);
+    param4 = clampNumber(params.featherSoftness ?? params.softness ?? params.param4, 0, 2, 0.5);
+    param5 = clampNumber(params.featherGamma ?? params.gamma ?? params.param5, 0.1, 4, 1);
+    param6 = clampNumber(params.featherMattePreview ?? params.matte ?? params.param6, 0, 1, 0);
+    param7 = 0;
+  } else if (options.effect === 'dither') {
+    amount = clampNumber(options.amount ?? params.ditherIntensity ?? params.intensity ?? params.amount, 0, 1, 1);
+    param0 = clampNumber(params.ditherType ?? params.mode ?? params.param0, 0, 4, 0);
+    param1 = clampNumber(params.ditherScale ?? params.scale ?? params.param1, 0.5, 64, 1);
+    param2 = clampNumber(params.ditherColorDepth ?? params.param2, 1, 8, 2);
+    param3 = clampNumber(params.ditherPalette ?? params.palette ?? params.param3, 0, 5, 0);
+    param4 = clampNumber(params.ditherPixelLock ?? params.param4, 0, 1, 0);
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'outline') {
+    amount = clampNumber(options.amount ?? params.outlineThickness ?? params.thickness ?? params.amount, 0, 12, 2);
+    param0 = clampNumber(params.outlineR ?? params.red ?? params.param0, 0, 1.5, 1);
+    param1 = clampNumber(params.outlineG ?? params.green ?? params.param1, 0, 1.5, 1);
+    param2 = clampNumber(params.outlineB ?? params.blue ?? params.param2, 0, 1.5, 1);
+    param3 = clampNumber(params.outlineOnly ?? params.param3, 0, 1, 0);
+    param4 = clampNumber(params.outlineGlow ?? params.param4, 0, 1, 0);
+    param5 = clampNumber(params.outlinePosition ?? params.position ?? params.param5, 0, 2, 1);
+    param6 = clampNumber(params.outlineCrawl ?? params.speed ?? params.param6, 0, 1, 0);
+    param7 = clampNumber(params.outlineAlphaAware ?? params.param7, 0, 1, 0);
+  } else if (options.effect === 'emboss') {
+    amount = clampNumber(options.amount ?? params.embossStrength ?? params.strength ?? params.amount, 0, 2, 1);
+    param0 = clampNumber(params.embossAngle ?? params.angle ?? params.param0, 0, 360, 135);
+    param1 = clampNumber(params.embossHeight ?? params.height ?? params.param1, 0, 1, 1);
+    param2 = clampNumber(params.embossHighlightR ?? params.red ?? params.param2, 0, 1.5, 1);
+    param3 = clampNumber(params.embossHighlightG ?? params.green ?? params.param3, 0, 1.5, 1);
+    param4 = clampNumber(params.embossHighlightB ?? params.blue ?? params.param4, 0, 1.5, 1);
+    param5 = clampNumber(params.embossShadowR ?? params.param5, 0, 1.5, 0);
+    param6 = clampNumber(params.embossShadowG ?? params.param6, 0, 1.5, 0);
+    param7 = clampNumber(params.embossShadowB ?? params.param7, 0, 1.5, 0);
+  } else if (options.effect === 'crt') {
+    amount = clampNumber(options.amount ?? params.crtScanlines ?? params.intensity ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.crtScanCount ?? params.count ?? params.param0, 32, 1200, 480);
+    param1 = clampNumber(params.crtMask ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.crtMaskType ?? params.mode ?? params.param2, 0, 2, 0);
+    param3 = clampNumber(params.crtCurvature ?? params.curvature ?? params.param3, 0, 1, 0.3);
+    param4 = clampNumber(params.crtVignette ?? params.param4, 0, 1, 0.4);
+    param5 = clampNumber(params.crtGlow ?? params.glow ?? params.param5, 0, 1, 0.5);
+    param6 = clampNumber(params.crtRollingBar ?? params.rollingBar ?? params.param6, 0, 1, 0);
+    param7 = clampNumber(params.crtChromatic ?? params.chromatic ?? params.param7, 0, 1, 0.3);
+  } else if (options.effect === 'thermal') {
+    amount = clampNumber(options.amount ?? params.thermalIntensity ?? params.intensity ?? params.amount, 0.05, 2, 1);
+    param0 = clampNumber(params.thermalPalette ?? params.palette ?? params.param0, 0, 4, 0);
+    param1 = clampNumber(params.thermalShimmer ?? params.param1, 0, 1, 0);
+    param2 = clampNumber(params.thermalSensorNoise ?? params.noise ?? params.param2, 0, 1, 0);
+    param3 = 0;
+    param4 = 0;
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'night-vision') {
+    amount = clampNumber(options.amount ?? params.nightVisionIntensity ?? params.intensity ?? params.amount, 0, 2, 1.5);
+    param0 = clampNumber(params.nightVisionNoise ?? params.noise ?? params.param0, 0, 1, 0.3);
+    param1 = clampNumber(params.nightVisionVignette ?? params.vignette ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.nightVisionPhosphor ?? params.phosphor ?? params.param2, 0, 2, 0);
+    param3 = clampNumber(params.nightVisionBloom ?? params.bloom ?? params.param3, 0, 2, 0.6);
+    param4 = clampNumber(params.nightVisionScopeMask ?? params.scopeMask ?? params.param4, 0, 2, 1);
+    param5 = clampNumber(params.nightVisionRollingNoise ?? params.rollingBar ?? params.param5, 0, 1, 0);
+    param6 = 0;
+    param7 = 0;
   }
   return [
     width,
