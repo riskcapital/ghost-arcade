@@ -364,6 +364,7 @@
         const nativeStageReady = !!(
           caps?.core_capabilities_confirmed &&
           caps?.features?.native_stage3d &&
+          caps?.features?.native_stage3d_recording_parity &&
           caps?.features?.native_recording &&
           caps?.features?.frame_snapshot_export &&
           caps?.implemented_methods?.includes('set_stage3d_scene') &&
