@@ -789,6 +789,169 @@ export function effectToNativeDescriptor(effect: any): string | null {
       Math.max(0, Math.min(1, mixRaw)).toFixed(4),
     ].join(':');
   }
+  if (type === 'sharpen') {
+    const amountRaw =
+      firstFiniteParam(params, ['sharpenAmount', 'amount'], 0.5);
+    const modeRaw =
+      firstFiniteParam(params, ['sharpenMode', 'mode'], 0);
+    const radiusRaw =
+      firstFiniteParam(params, ['sharpenRadius', 'radius'], 2);
+    const edgeRaw =
+      firstFiniteParam(params, ['sharpenEdgeProtect', 'edgeProtect'], 0.2);
+    const clarityRaw =
+      firstFiniteParam(params, ['sharpenClarity', 'clarity', 'intensity'], 0);
+    return [
+      'sharpen',
+      Math.max(0, Math.min(3, amountRaw)).toFixed(4),
+      Math.max(0, Math.min(1, Math.round(modeRaw))).toFixed(0),
+      Math.max(1, Math.min(8, radiusRaw)).toFixed(4),
+      Math.max(0, Math.min(1, edgeRaw)).toFixed(4),
+      Math.max(0, Math.min(1, clarityRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'directionalblur') {
+    const amountRaw =
+      firstFiniteParam(params, ['dirBlurAmount', 'directionalBlurAmount', 'amount'], 0.25);
+    const specificAngle =
+      finiteParam(params.dirBlurAngle) ?? finiteParam(params.directionalBlurAngle);
+    const genericAngle = finiteParam(params.angle);
+    const angleRaw = specificAngle
+      ?? (genericAngle !== null && Math.abs(genericAngle) <= Math.PI * 2
+        ? genericAngle * 180 / Math.PI
+        : genericAngle)
+      ?? 0;
+    const samplesRaw =
+      firstFiniteParam(params, ['dirBlurSamples', 'directionalBlurSamples', 'samples'], 16);
+    const falloffRaw =
+      firstFiniteParam(params, ['dirBlurFalloff', 'directionalBlurFalloff', 'falloff', 'amount2'], 0.3);
+    const centerBiasRaw =
+      firstFiniteParam(params, ['dirBlurCenterBias', 'directionalBlurCenterBias', 'centerBias'], 0);
+    const mixRaw =
+      firstFiniteParam(params, ['dirBlurMix', 'directionalBlurMix', 'mix'], 1);
+    return [
+      'directional-blur',
+      Math.max(0, Math.min(1, amountRaw)).toFixed(4),
+      (((angleRaw % 360) + 360) % 360).toFixed(4),
+      Math.max(4, Math.min(32, samplesRaw)).toFixed(4),
+      Math.max(0, Math.min(1, falloffRaw)).toFixed(4),
+      Math.max(0, Math.min(1, centerBiasRaw)).toFixed(4),
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'zoomblur') {
+    const amountRaw =
+      firstFiniteParam(params, ['zoomBlurAmount', 'amount'], 0.25);
+    const centerXRaw =
+      firstFiniteParam(params, ['zoomBlurCenterX', 'centerX'], 0.5);
+    const centerYRaw =
+      firstFiniteParam(params, ['zoomBlurCenterY', 'centerY'], 0.5);
+    const samplesRaw =
+      firstFiniteParam(params, ['zoomBlurSamples', 'samples'], 16);
+    const falloffRaw =
+      firstFiniteParam(params, ['zoomBlurFalloff', 'falloff', 'amount2'], 0.3);
+    const chromaticRaw =
+      firstFiniteParam(params, ['zoomBlurChromatic', 'chromatic'], 0);
+    const mixRaw =
+      firstFiniteParam(params, ['zoomBlurMix', 'mix'], 1);
+    return [
+      'zoom-blur',
+      Math.max(0, Math.min(1, amountRaw)).toFixed(4),
+      Math.max(0, Math.min(1, centerXRaw)).toFixed(4),
+      Math.max(0, Math.min(1, centerYRaw)).toFixed(4),
+      Math.max(4, Math.min(32, samplesRaw)).toFixed(4),
+      Math.max(0, Math.min(1, falloffRaw)).toFixed(4),
+      Math.max(0, Math.min(1, chromaticRaw)).toFixed(4),
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'radialblur') {
+    const amountRaw =
+      firstFiniteParam(params, ['radialBlurAmount', 'amount'], 0.25);
+    const centerXRaw =
+      firstFiniteParam(params, ['radialBlurCenterX', 'centerX'], 0.5);
+    const centerYRaw =
+      firstFiniteParam(params, ['radialBlurCenterY', 'centerY'], 0.5);
+    const samplesRaw =
+      firstFiniteParam(params, ['radialBlurSamples', 'samples'], 16);
+    const falloffRaw =
+      firstFiniteParam(params, ['radialBlurFalloff', 'falloff', 'amount2'], 0.3);
+    const radiusInnerRaw =
+      firstFiniteParam(params, ['radialBlurRadiusInner', 'radiusInner'], 0);
+    const radiusOuterRaw =
+      firstFiniteParam(params, ['radialBlurRadiusOuter', 'radiusOuter'], 0.7);
+    const mixRaw =
+      firstFiniteParam(params, ['radialBlurMix', 'mix'], 1);
+    return [
+      'radial-blur',
+      Math.max(0, Math.min(1, amountRaw)).toFixed(4),
+      Math.max(0, Math.min(1, centerXRaw)).toFixed(4),
+      Math.max(0, Math.min(1, centerYRaw)).toFixed(4),
+      Math.max(4, Math.min(32, samplesRaw)).toFixed(4),
+      Math.max(0, Math.min(1, falloffRaw)).toFixed(4),
+      Math.max(0, Math.min(1, radiusInnerRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, radiusOuterRaw)).toFixed(4),
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'kaleidoscope') {
+    const segmentsRaw =
+      firstFiniteParam(params, ['kaleidoscopeSegments', 'segments'], 6);
+    const angleRaw =
+      firstFiniteParam(params, ['kaleidoscopeAngle', 'kaleidoscopeRotation', 'angle', 'rotation'], 0);
+    const centerXRaw =
+      firstFiniteParam(params, ['kaleidoscopeCenterX', 'centerX'], 0.5);
+    const centerYRaw =
+      firstFiniteParam(params, ['kaleidoscopeCenterY', 'centerY'], 0.5);
+    const zoomRaw =
+      firstFiniteParam(params, ['kaleidoscopeZoom', 'zoom'], 1);
+    const modeRaw =
+      firstFiniteParam(params, ['kaleidoscopeMode', 'mode'], 0);
+    const spiralRaw =
+      firstFiniteParam(params, ['kaleidoscopeSpiral', 'spiral'], 0);
+    const speedRaw =
+      firstFiniteParam(params, ['kaleidoscopeAnimSpeed', 'animSpeed', 'speed'], 0);
+    const mixRaw =
+      firstFiniteParam(params, ['kaleidoscopeMix', 'mix', 'amount'], 1);
+    return [
+      'kaleidoscope',
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+      Math.max(2, Math.min(32, Math.round(segmentsRaw))).toFixed(0),
+      (((angleRaw % 360) + 360) % 360).toFixed(4),
+      Math.max(0, Math.min(1, centerXRaw)).toFixed(4),
+      Math.max(0, Math.min(1, centerYRaw)).toFixed(4),
+      Math.max(0.25, Math.min(4, zoomRaw)).toFixed(4),
+      Math.max(0, Math.min(2, Math.round(modeRaw))).toFixed(0),
+      Math.max(0, Math.min(2, spiralRaw)).toFixed(4),
+      Math.max(0, Math.min(2, speedRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'mirror') {
+    const horizontal = firstFiniteParam(params, ['mirrorHorizontal'], Number.NaN);
+    const vertical = firstFiniteParam(params, ['mirrorVertical'], Number.NaN);
+    let modeRaw =
+      firstFiniteParam(params, ['mirrorMode', 'mirrorAxis', 'mode'], 0);
+    if (Number.isFinite(horizontal) || Number.isFinite(vertical)) {
+      const h = Number.isFinite(horizontal) ? horizontal : 0;
+      const v = Number.isFinite(vertical) ? vertical : 0;
+      modeRaw = h > 0.5 && v > 0.5 ? 2 : v > 0.5 ? 1 : 0;
+    }
+    const positionRaw =
+      firstFiniteParam(params, ['mirrorPosition', 'position'], 0.5);
+    const offsetRaw =
+      firstFiniteParam(params, ['mirrorOffset', 'offset'], 0.5);
+    const flipRaw =
+      firstFiniteParam(params, ['mirrorFlipSide', 'flipSide'], 0);
+    const mixRaw =
+      firstFiniteParam(params, ['mirrorMix', 'mix', 'amount'], 1);
+    return [
+      'mirror',
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+      Math.max(0, Math.min(3, Math.round(modeRaw))).toFixed(0),
+      Math.max(0, Math.min(1, positionRaw)).toFixed(4),
+      Math.max(0, Math.min(1, offsetRaw)).toFixed(4),
+      Math.max(0, Math.min(1, Math.round(flipRaw))).toFixed(0),
+    ].join(':');
+  }
   if (type === 'glitch') {
     const intensityRaw =
       (typeof params.glitchIntensity === 'number' && Number.isFinite(params.glitchIntensity) ? params.glitchIntensity : null)
@@ -1036,6 +1199,58 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       highlightTemp: Number(rawParam2 ?? 0),
       splitTone: Number(rawParam3 ?? 0),
       autoCycle: Number(rawParam4 ?? 0),
+    };
+  } else if (effect === 'sharpen') {
+    params = {
+      mode: Number(rawParam0 ?? 0),
+      radius: Number(rawParam1 ?? 2),
+      edgeProtect: Number(rawParam2 ?? 0.2),
+      intensity: Number(rawParam3 ?? 0),
+    };
+  } else if (effect === 'directional-blur') {
+    params = {
+      angle: Number(rawParam0 ?? 0),
+      samples: Number(rawParam1 ?? 16),
+      falloff: Number(rawParam2 ?? 0.3),
+      centerBias: Number(rawParam3 ?? 0),
+      outputMix: Number(rawParam4 ?? 1),
+    };
+  } else if (effect === 'zoom-blur') {
+    params = {
+      centerX: Number(rawParam0 ?? 0.5),
+      centerY: Number(rawParam1 ?? 0.5),
+      samples: Number(rawParam2 ?? 16),
+      falloff: Number(rawParam3 ?? 0.3),
+      chromatic: Number(rawParam4 ?? 0),
+      outputMix: Number(rawParam5 ?? 1),
+    };
+  } else if (effect === 'radial-blur') {
+    params = {
+      centerX: Number(rawParam0 ?? 0.5),
+      centerY: Number(rawParam1 ?? 0.5),
+      samples: Number(rawParam2 ?? 16),
+      falloff: Number(rawParam3 ?? 0.3),
+      radiusInner: Number(rawParam4 ?? 0),
+      radiusOuter: Number(rawParam5 ?? 0.7),
+      outputMix: Number(rawParam6 ?? 1),
+    };
+  } else if (effect === 'kaleidoscope') {
+    params = {
+      segments: Number(rawParam0 ?? 6),
+      angle: Number(rawParam1 ?? 0),
+      centerX: Number(rawParam2 ?? 0.5),
+      centerY: Number(rawParam3 ?? 0.5),
+      zoom: Number(rawParam4 ?? 1),
+      mode: Number(rawParam5 ?? 0),
+      spiral: Number(rawParam6 ?? 0),
+      animSpeed: Number(rawParam7 ?? 0),
+    };
+  } else if (effect === 'mirror') {
+    params = {
+      mode: Number(rawParam0 ?? 0),
+      position: Number(rawParam1 ?? 0.5),
+      offset: Number(rawParam2 ?? 0.5),
+      flipSide: Number(rawParam3 ?? 0),
     };
   }
   if (params && Object.values(params).some((value) => !Number.isFinite(value))) return null;
