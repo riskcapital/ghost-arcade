@@ -19,7 +19,6 @@ const PIXEL_COUNT = WIDTH * HEIGHT;
 
 const EFFECT_SHADER_ID = 'effect-pass/render';
 const PROBE_SHADER_ID = 'effect-pass/source-frame-probe';
-const MIN_RENDERED_MANIFEST_EFFECTS = 47;
 const FIXTURES = [
   {
     id: 'invert',
@@ -607,15 +606,16 @@ function assertGoldenManifestCoverage() {
     }
     covered.add(manifestId);
   }
-  if (covered.size < MIN_RENDERED_MANIFEST_EFFECTS) {
+  const missing = [...manifest.keys()].filter((id) => !covered.has(id));
+  if (missing.length > 0) {
     throw new Error(
-      `effect-pass golden coverage fell to ${covered.size}/${manifest.size}; expected at least ${MIN_RENDERED_MANIFEST_EFFECTS}`,
+      `effect-pass golden coverage incomplete: ${covered.size}/${manifest.size}; missing ${missing.join(', ')}`,
     );
   }
   return {
     coveredCount: covered.size,
     manifestCount: manifest.size,
-    missing: [...manifest.keys()].filter((id) => !covered.has(id)),
+    missing,
   };
 }
 
