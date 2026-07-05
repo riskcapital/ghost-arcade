@@ -822,10 +822,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     var layer_rgb = layer.color.rgb;
     var fill_alpha = layer.color.a * 0.56 * shape_mask;
     if (inside && layer.info.w > 0.5) {
-      let preview = sample_source_content(layer.info.w, sample_uv);
-      let source_alpha = preview.a * content_mask * shape_mask;
-      layer_rgb = mix(layer_rgb, preview.rgb, source_alpha);
-      fill_alpha = layer.color.a * 0.88 * content_mask * shape_mask;
+    let preview = sample_source_content(layer.info.w, sample_uv);
+    let source_alpha = preview.a * content_mask * shape_mask;
+    layer_rgb = mix(layer_rgb, preview.rgb, source_alpha);
+    fill_alpha = layer.color.a * 0.88 * source_alpha;
     } else if (inside && layer.info.z >= 9.0) {
       let proxy = gpu_proxy(layer.info.z, sample_uv, t, layer.info.y, layer.params0, layer.params1);
       let proxy_alpha = proxy.a * content_mask * shape_mask;
@@ -836,7 +836,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let pulse = 0.88 + 0.12 * sin(t * 2.2 + layer.info.y * 0.73 + u.command_phase * 6.2831);
     if (inside && shape_mask > 0.001) {
       color = native_blend(color, layer_rgb, fill_alpha, layer.style.x);
-      color += layer_rgb * 0.04 * pulse;
+      color += layer_rgb * 0.04 * pulse * fill_alpha;
     }
     color += layer_rgb * edge * (0.34 + 0.16 * pulse);
   }

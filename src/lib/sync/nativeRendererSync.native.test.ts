@@ -197,4 +197,94 @@ describe('native renderer sync effect-pass descriptors', () => {
       },
     });
   });
+
+  it('maps keying UI params to native effect-pass descriptors', () => {
+    expect(effectToNativeDescriptor({
+      type: 'chromaKey',
+      params: {
+        chromaKeyR: 0,
+        chromaKeyG: 0.9,
+        chromaKeyB: 0.1,
+        chromaKeyTolerance: 0.22,
+        chromaKeySoftness: 0.12,
+        chromaKeySpill: 0.7,
+        chromaKeyMatte: 1,
+        chromaKeyMode: 2,
+      },
+    })).toBe('chroma-key:0.2200:0.0000:0.9000:0.1000:0.1200:0.7000:1:2');
+
+    expect(effectToNativeDescriptor({
+      type: 'lumaKey',
+      params: {
+        lumaKeyLowCut: 0.35,
+        lumaKeyHighCut: 0.8,
+        lumaKeyInvert: 1,
+        lumaKeyGamma: 0.7,
+        lumaKeyMatte: 0,
+        lumaKeyPremultiply: 1,
+      },
+    })).toBe('luma-key:0.3500:0.8000:1:0.7000:0:1');
+
+    expect(effectToNativeDescriptor({
+      type: 'differenceKey',
+      params: {
+        diffKeyR: 0.2,
+        diffKeyG: 0.3,
+        diffKeyB: 0.4,
+        diffKeyTolerance: 0.18,
+        diffKeySoftness: 0.09,
+        diffKeyInvert: 0,
+        diffKeyMatte: 1,
+        diffKeyMode: 1,
+      },
+    })).toBe('difference-key:0.1800:0.2000:0.3000:0.4000:0.0900:0:1:1');
+
+    expect(effectToNativeDescriptor({
+      type: 'erode',
+      params: {
+        erodeRadius: 4,
+        erodeShape: 2,
+        erodeChannel: 4,
+        erodeMix: 0.65,
+      },
+    })).toBe('erode:4.0000:2:4:0.6500');
+  });
+
+  it('rebuilds native effect-pass runtime params from keying descriptors', () => {
+    expect(nativeEffectPassFromDescriptor('chroma-key:0.2200:0.0000:0.9000:0.1000:0.1200:0.7000:1:2')).toMatchObject({
+      effect: 'chroma-key',
+      amount: 0.22,
+      params: {
+        keyR: 0,
+        keyG: 0.9,
+        keyB: 0.1,
+        softness: 0.12,
+        spill: 0.7,
+        matte: 1,
+        mode: 2,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('luma-key:0.3500:0.8000:1:0.7000:0:1')).toMatchObject({
+      effect: 'luma-key',
+      amount: 0.35,
+      params: {
+        highCut: 0.8,
+        invert: 1,
+        gamma: 0.7,
+        matte: 0,
+        premultiply: 1,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('dilate:5.0000:1:0:0.7500')).toMatchObject({
+      effect: 'dilate',
+      amount: 5,
+      params: {
+        shape: 1,
+        channel: 0,
+        outputMix: 0.75,
+      },
+    });
+  });
 });

@@ -23,7 +23,12 @@ export type NativeEffectPassId =
   | 'zoom-blur'
   | 'radial-blur'
   | 'kaleidoscope'
-  | 'mirror';
+  | 'mirror'
+  | 'chroma-key'
+  | 'luma-key'
+  | 'difference-key'
+  | 'erode'
+  | 'dilate';
 
 export interface NativeEffectPassManifestEntry {
   id: NativeEffectPassId;
@@ -111,6 +116,21 @@ export interface NativeEffectPassOptions {
     position: number;
     offset: number;
     flipSide: number;
+    keyR: number;
+    keyG: number;
+    keyB: number;
+    tolerance: number;
+    lowCut: number;
+    highCut: number;
+    gamma: number;
+    invert: number;
+    matte: number;
+    premultiply: number;
+    refR: number;
+    refG: number;
+    refB: number;
+    spill: number;
+    channel: number;
   }>;
   clear?: boolean;
   seq?: number;
@@ -175,6 +195,11 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'radial-blur', code: 23, defaultAmount: 0.25, amountMin: 0, amountMax: 1 },
   { id: 'kaleidoscope', code: 24, defaultAmount: 1, amountMin: 0, amountMax: 1 },
   { id: 'mirror', code: 25, defaultAmount: 1, amountMin: 0, amountMax: 1 },
+  { id: 'chroma-key', code: 26, defaultAmount: 0.25, amountMin: 0, amountMax: 1 },
+  { id: 'luma-key', code: 27, defaultAmount: 0.4, amountMin: 0, amountMax: 1 },
+  { id: 'difference-key', code: 28, defaultAmount: 0.3, amountMin: 0, amountMax: 1 },
+  { id: 'erode', code: 29, defaultAmount: 2, amountMin: 1, amountMax: 8 },
+  { id: 'dilate', code: 30, defaultAmount: 2, amountMin: 1, amountMax: 8 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -247,6 +272,53 @@ fn rotate2d(value: vec2<f32>, angle: f32) -> vec2<f32> {
   let c = cos(angle);
   let s = sin(angle);
   return vec2<f32>(value.x * c - value.y * s, value.x * s + value.y * c);
+}
+
+fn rgb_to_ycbcr(c: vec3<f32>) -> vec3<f32> {
+  let y = dot(c, vec3<f32>(0.299, 0.587, 0.114));
+  let cb = -0.169 * c.r - 0.331 * c.g + 0.5 * c.b;
+  let cr = 0.5 * c.r - 0.419 * c.g - 0.081 * c.b;
+  return vec3<f32>(y, cb, cr);
+}
+
+fn hue_value(c: vec3<f32>) -> f32 {
+  let maxc = max(c.r, max(c.g, c.b));
+  let minc = min(c.r, min(c.g, c.b));
+  let delta = maxc - minc;
+  if (delta <= 0.00001) {
+    return 0.0;
+  }
+  var hue = 0.0;
+  if (maxc == c.r) {
+    hue = (c.g - c.b) / delta;
+  } else if (maxc == c.g) {
+    hue = 2.0 + (c.b - c.r) / delta;
+  } else {
+    hue = 4.0 + (c.r - c.g) / delta;
+  }
+  return fract(hue / 6.0);
+}
+
+fn saturation_value(c: vec3<f32>) -> f32 {
+  let maxc = max(c.r, max(c.g, c.b));
+  let minc = min(c.r, min(c.g, c.b));
+  return clamp((maxc - minc) / max(0.0001, maxc), 0.0, 1.0);
+}
+
+fn channel_value(c: vec4<f32>, channel: u32) -> f32 {
+  if (channel == 1u) {
+    return c.r;
+  }
+  if (channel == 2u) {
+    return c.g;
+  }
+  if (channel == 3u) {
+    return c.b;
+  }
+  if (channel == 4u) {
+    return c.a;
+  }
+  return luma(c.rgb);
 }
 
 fn effect_texel() -> vec2<f32> {
@@ -697,6 +769,129 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let mirrored = sample_rgb(sample_uv);
     return vec4<f32>(mix(color, mirrored, clamp(amount, 0.0, 1.0)), src.a);
   }
+  if (code == 26u) {
+    let key = clamp(u.params0.xyz, vec3<f32>(0.0), vec3<f32>(1.0));
+    let softness = clamp(u.params0.w, 0.0, 1.0);
+    let spill = clamp(u.params1.x, 0.0, 1.0);
+    let show_matte = u.params1.y > 0.5;
+    let mode = u32(round(clamp(u.params1.z, 0.0, 2.0)));
+    var dist = 0.0;
+    if (mode == 0u) {
+      let src_hue = hue_value(color);
+      let key_hue = hue_value(key);
+      var hue_dist = abs(src_hue - key_hue);
+      hue_dist = min(hue_dist, 1.0 - hue_dist);
+      dist = hue_dist * 2.0 + (1.0 - saturation_value(color)) * 0.3;
+    } else if (mode == 1u) {
+      let src_yc = rgb_to_ycbcr(color);
+      let key_yc = rgb_to_ycbcr(key);
+      dist = length(src_yc.yz - key_yc.yz) * 2.0;
+    } else {
+      dist = length(color - key);
+    }
+    let matte = smoothstep(amount, amount + softness + 0.001, dist);
+    var result = color;
+    if (spill > 0.001) {
+      let spill_amount = spill * (1.0 - matte);
+      if (key.g >= max(key.r, key.b)) {
+        result.g = min(result.g, mix(result.g, (result.r + result.b) * 0.5, spill_amount));
+      } else if (key.r >= max(key.g, key.b)) {
+        result.r = min(result.r, mix(result.r, (result.g + result.b) * 0.5, spill_amount));
+      } else {
+        result.b = min(result.b, mix(result.b, (result.r + result.g) * 0.5, spill_amount));
+      }
+    }
+    if (show_matte) {
+      return vec4<f32>(vec3<f32>(matte), src.a);
+    }
+    return vec4<f32>(result, src.a * matte);
+  }
+  if (code == 27u) {
+    let high_cut = max(amount + 0.001, clamp(u.params0.x, 0.0, 1.0));
+    let invert = u.params0.y > 0.5;
+    let gamma = max(0.001, u.params0.z);
+    let show_matte = u.params0.w > 0.5;
+    let premultiply = u.params1.x > 0.5;
+    var matte = smoothstep(amount, high_cut, luma(color));
+    if (invert) {
+      matte = 1.0 - matte;
+    }
+    matte = pow(clamp(matte, 0.0, 1.0), gamma);
+    if (show_matte) {
+      return vec4<f32>(vec3<f32>(matte), src.a);
+    }
+    var result = color;
+    if (premultiply) {
+      result = color * matte;
+    }
+    return vec4<f32>(result, src.a * matte);
+  }
+  if (code == 28u) {
+    let ref_color = clamp(u.params0.xyz, vec3<f32>(0.0), vec3<f32>(1.0));
+    let softness = clamp(u.params0.w, 0.0, 1.0);
+    let invert = u.params1.x > 0.5;
+    let show_matte = u.params1.y > 0.5;
+    let mode = u32(round(clamp(u.params1.z, 0.0, 2.0)));
+    let diff = abs(color - ref_color);
+    var dist = length(diff);
+    if (mode == 1u) {
+      dist = diff.r + diff.g + diff.b;
+    } else if (mode == 2u) {
+      dist = max(diff.r, max(diff.g, diff.b));
+    }
+    var matte = smoothstep(amount, amount + softness + 0.001, dist);
+    if (invert) {
+      matte = 1.0 - matte;
+    }
+    if (show_matte) {
+      return vec4<f32>(vec3<f32>(matte), src.a);
+    }
+    return vec4<f32>(color, src.a * matte);
+  }
+  if (code == 29u || code == 30u) {
+    let radius = clamp(amount, 1.0, 8.0);
+    let shape = u32(round(clamp(u.params0.x, 0.0, 2.0)));
+    let channel = u32(round(clamp(u.params0.y, 0.0, 4.0)));
+    let wet = clamp(u.params0.z, 0.0, 1.0);
+    let tx = effect_texel();
+    var chosen = src;
+    var chosen_value = channel_value(src, channel);
+    if (code == 29u) {
+      chosen = vec4<f32>(1.0);
+      chosen_value = 1.0;
+    } else {
+      chosen = vec4<f32>(0.0);
+      chosen_value = 0.0;
+    }
+    for (var y = 0u; y < 17u; y = y + 1u) {
+      let fy = f32(y) - 8.0;
+      let ay = abs(fy);
+      for (var x = 0u; x < 17u; x = x + 1u) {
+        let fx = f32(x) - 8.0;
+        let ax = abs(fx);
+        var inside = ax <= radius && ay <= radius;
+        if (shape == 0u) {
+          inside = ax + ay <= radius + 0.001;
+        } else if (shape == 2u) {
+          inside = ax * ax + ay * ay <= radius * radius + 0.001;
+        }
+        if (inside) {
+          let sample_col = sample_clamped(uv + vec2<f32>(fx, fy) * tx);
+          let sample_value = channel_value(sample_col, channel);
+          if (code == 29u) {
+            if (sample_value < chosen_value) {
+              chosen = sample_col;
+              chosen_value = sample_value;
+            }
+          } else if (sample_value > chosen_value) {
+            chosen = sample_col;
+            chosen_value = sample_value;
+          }
+        }
+      }
+    }
+    return vec4<f32>(mix(color, chosen.rgb, wet), mix(src.a, chosen.a, wet));
+  }
   return src;
 }
 
@@ -915,6 +1110,42 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param1 = clampNumber(params.position ?? params.param1, 0, 1, 0.5);
     param2 = clampNumber(params.offset ?? params.param2, 0, 1, 0.5);
     param3 = clampNumber(params.flipSide ?? params.param3, 0, 1, 0);
+    param4 = 0;
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'chroma-key') {
+    param0 = clampNumber(params.keyR ?? params.param0, 0, 1, 0);
+    param1 = clampNumber(params.keyG ?? params.param1, 0, 1, 1);
+    param2 = clampNumber(params.keyB ?? params.param2, 0, 1, 0);
+    param3 = clampNumber(params.softness ?? params.param3, 0, 1, 0.15);
+    param4 = clampNumber(params.spill ?? params.param4, 0, 1, 0.6);
+    param5 = clampNumber(params.matte ?? params.param5, 0, 1, 0);
+    param6 = clampNumber(params.mode ?? params.param6, 0, 2, 1);
+    param7 = 0;
+  } else if (options.effect === 'luma-key') {
+    param0 = clampNumber(params.highCut ?? params.param0, 0, 1, 0.6);
+    param1 = clampNumber(params.invert ?? params.param1, 0, 1, 0);
+    param2 = clampNumber(params.param2 ?? params.gamma ?? 1, 0.2, 3, 1);
+    param3 = clampNumber(params.matte ?? params.param3, 0, 1, 0);
+    param4 = clampNumber(params.premultiply ?? params.param4, 0, 1, 0);
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'difference-key') {
+    param0 = clampNumber(params.refR ?? params.param0, 0, 1, 0);
+    param1 = clampNumber(params.refG ?? params.param1, 0, 1, 0);
+    param2 = clampNumber(params.refB ?? params.param2, 0, 1, 0);
+    param3 = clampNumber(params.softness ?? params.param3, 0, 1, 0.15);
+    param4 = clampNumber(params.invert ?? params.param4, 0, 1, 0);
+    param5 = clampNumber(params.matte ?? params.param5, 0, 1, 0);
+    param6 = clampNumber(params.mode ?? params.param6, 0, 2, 0);
+    param7 = 0;
+  } else if (options.effect === 'erode' || options.effect === 'dilate') {
+    param0 = clampNumber(params.shape ?? params.param0, 0, 2, 1);
+    param1 = clampNumber(params.channel ?? params.param1, 0, 4, 0);
+    param2 = clampNumber(params.outputMix ?? params.param2, 0, 1, 1);
+    param3 = 0;
     param4 = 0;
     param5 = 0;
     param6 = 0;

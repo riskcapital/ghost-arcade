@@ -232,6 +232,21 @@ export type NativeEffectPassRuntime = {
     highlightTemp?: number;
     splitTone?: number;
     autoCycle?: number;
+    keyR?: number;
+    keyG?: number;
+    keyB?: number;
+    tolerance?: number;
+    lowCut?: number;
+    highCut?: number;
+    gamma?: number;
+    invert?: number;
+    matte?: number;
+    premultiply?: number;
+    refR?: number;
+    refG?: number;
+    refB?: number;
+    spill?: number;
+    channel?: number;
   };
 };
 const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<{
@@ -1090,6 +1105,105 @@ export function effectToNativeDescriptor(effect: any): string | null {
       breathing.toFixed(4),
     ].join(':');
   }
+  if (type === 'chromakey') {
+    const toleranceRaw =
+      firstFiniteParam(params, ['chromaKeyTolerance', 'threshold', 'tolerance', 'amount'], 0.25);
+    const keyRRaw =
+      firstFiniteParam(params, ['chromaKeyR', 'keyR', 'red'], 0);
+    const keyGRaw =
+      firstFiniteParam(params, ['chromaKeyG', 'keyG', 'green'], 1);
+    const keyBRaw =
+      firstFiniteParam(params, ['chromaKeyB', 'keyB', 'blue'], 0);
+    const softnessRaw =
+      firstFiniteParam(params, ['chromaKeySoftness', 'softness', 'amount2'], 0.15);
+    const spillRaw =
+      firstFiniteParam(params, ['chromaKeySpill', 'spill'], 0.6);
+    const matteRaw =
+      firstFiniteParam(params, ['chromaKeyMatte', 'matte'], 0);
+    const modeRaw =
+      firstFiniteParam(params, ['chromaKeyMode', 'mode'], 1);
+    return [
+      'chroma-key',
+      Math.max(0, Math.min(1, toleranceRaw)).toFixed(4),
+      Math.max(0, Math.min(1, keyRRaw)).toFixed(4),
+      Math.max(0, Math.min(1, keyGRaw)).toFixed(4),
+      Math.max(0, Math.min(1, keyBRaw)).toFixed(4),
+      Math.max(0, Math.min(1, softnessRaw)).toFixed(4),
+      Math.max(0, Math.min(1, spillRaw)).toFixed(4),
+      Math.max(0, Math.min(1, Math.round(matteRaw))).toFixed(0),
+      Math.max(0, Math.min(2, Math.round(modeRaw))).toFixed(0),
+    ].join(':');
+  }
+  if (type === 'lumakey') {
+    const lowRaw =
+      firstFiniteParam(params, ['lumaKeyLowCut', 'threshold', 'lowCut', 'amount'], 0.4);
+    const highRaw =
+      firstFiniteParam(params, ['lumaKeyHighCut', 'highCut'], 0.6);
+    const invertRaw =
+      firstFiniteParam(params, ['lumaKeyInvert', 'invert'], 0);
+    const gammaRaw =
+      firstFiniteParam(params, ['lumaKeyGamma', 'gamma'], 1);
+    const matteRaw =
+      firstFiniteParam(params, ['lumaKeyMatte', 'matte'], 0);
+    const premultiplyRaw =
+      firstFiniteParam(params, ['lumaKeyPremultiply', 'premultiply'], 0);
+    return [
+      'luma-key',
+      Math.max(0, Math.min(1, lowRaw)).toFixed(4),
+      Math.max(0, Math.min(1, highRaw)).toFixed(4),
+      Math.max(0, Math.min(1, Math.round(invertRaw))).toFixed(0),
+      Math.max(0.2, Math.min(3, gammaRaw)).toFixed(4),
+      Math.max(0, Math.min(1, Math.round(matteRaw))).toFixed(0),
+      Math.max(0, Math.min(1, Math.round(premultiplyRaw))).toFixed(0),
+    ].join(':');
+  }
+  if (type === 'differencekey') {
+    const toleranceRaw =
+      firstFiniteParam(params, ['diffKeyTolerance', 'threshold', 'tolerance', 'amount'], 0.3);
+    const refRRaw =
+      firstFiniteParam(params, ['diffKeyR', 'refR', 'red'], 0);
+    const refGRaw =
+      firstFiniteParam(params, ['diffKeyG', 'refG', 'green'], 0);
+    const refBRaw =
+      firstFiniteParam(params, ['diffKeyB', 'refB', 'blue'], 0);
+    const softnessRaw =
+      firstFiniteParam(params, ['diffKeySoftness', 'softness', 'amount2'], 0.15);
+    const invertRaw =
+      firstFiniteParam(params, ['diffKeyInvert', 'invert'], 0);
+    const matteRaw =
+      firstFiniteParam(params, ['diffKeyMatte', 'matte'], 0);
+    const modeRaw =
+      firstFiniteParam(params, ['diffKeyMode', 'mode'], 0);
+    return [
+      'difference-key',
+      Math.max(0, Math.min(1, toleranceRaw)).toFixed(4),
+      Math.max(0, Math.min(1, refRRaw)).toFixed(4),
+      Math.max(0, Math.min(1, refGRaw)).toFixed(4),
+      Math.max(0, Math.min(1, refBRaw)).toFixed(4),
+      Math.max(0, Math.min(1, softnessRaw)).toFixed(4),
+      Math.max(0, Math.min(1, Math.round(invertRaw))).toFixed(0),
+      Math.max(0, Math.min(1, Math.round(matteRaw))).toFixed(0),
+      Math.max(0, Math.min(2, Math.round(modeRaw))).toFixed(0),
+    ].join(':');
+  }
+  if (type === 'erode' || type === 'dilate') {
+    const prefix = type === 'erode' ? 'erode' : 'dilate';
+    const radiusRaw =
+      firstFiniteParam(params, [`${prefix}Radius`, 'radius', 'amount'], 2);
+    const shapeRaw =
+      firstFiniteParam(params, [`${prefix}Shape`, 'shape'], 1);
+    const channelRaw =
+      firstFiniteParam(params, [`${prefix}Channel`, 'channel'], 0);
+    const mixRaw =
+      firstFiniteParam(params, [`${prefix}Mix`, 'mix', 'outputMix', 'amount2'], 1);
+    return [
+      type,
+      Math.max(1, Math.min(8, radiusRaw)).toFixed(4),
+      Math.max(0, Math.min(2, Math.round(shapeRaw))).toFixed(0),
+      Math.max(0, Math.min(4, Math.round(channelRaw))).toFixed(0),
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+    ].join(':');
+  }
 
   // Keep explicit descriptor IDs compatible with native descriptor parser.
   const effectId = typeof effect.id === 'string' ? effect.id.trim() : '';
@@ -1251,6 +1365,40 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       position: Number(rawParam1 ?? 0.5),
       offset: Number(rawParam2 ?? 0.5),
       flipSide: Number(rawParam3 ?? 0),
+    };
+  } else if (effect === 'chroma-key') {
+    params = {
+      keyR: Number(rawParam0 ?? 0),
+      keyG: Number(rawParam1 ?? 1),
+      keyB: Number(rawParam2 ?? 0),
+      softness: Number(rawParam3 ?? 0.15),
+      spill: Number(rawParam4 ?? 0.6),
+      matte: Number(rawParam5 ?? 0),
+      mode: Number(rawParam6 ?? 1),
+    };
+  } else if (effect === 'luma-key') {
+    params = {
+      highCut: Number(rawParam0 ?? 0.6),
+      invert: Number(rawParam1 ?? 0),
+      gamma: Number(rawParam2 ?? 1),
+      matte: Number(rawParam3 ?? 0),
+      premultiply: Number(rawParam4 ?? 0),
+    };
+  } else if (effect === 'difference-key') {
+    params = {
+      refR: Number(rawParam0 ?? 0),
+      refG: Number(rawParam1 ?? 0),
+      refB: Number(rawParam2 ?? 0),
+      softness: Number(rawParam3 ?? 0.15),
+      invert: Number(rawParam4 ?? 0),
+      matte: Number(rawParam5 ?? 0),
+      mode: Number(rawParam6 ?? 0),
+    };
+  } else if (effect === 'erode' || effect === 'dilate') {
+    params = {
+      shape: Number(rawParam0 ?? 1),
+      channel: Number(rawParam1 ?? 0),
+      outputMix: Number(rawParam2 ?? 1),
     };
   }
   if (params && Object.values(params).some((value) => !Number.isFinite(value))) return null;

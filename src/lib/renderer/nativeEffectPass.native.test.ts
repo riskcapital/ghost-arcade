@@ -196,6 +196,11 @@ describe('Native effect-pass template', () => {
       ['radial-blur', 23],
       ['kaleidoscope', 24],
       ['mirror', 25],
+      ['chroma-key', 26],
+      ['luma-key', 27],
+      ['difference-key', 28],
+      ['erode', 29],
+      ['dilate', 30],
     ]);
     expect(nativeEffectPassManifestEntry('posterize')).toMatchObject({
       code: 8,
@@ -593,6 +598,80 @@ describe('Native effect-pass template', () => {
     ]);
   });
 
+  it('packs native keying and morphology params across the shared effect slots', () => {
+    expect(packNativeEffectPassUniforms({
+      sourceId: 'src',
+      targetSourceId: 'dst',
+      effect: 'chroma-key',
+      width: 320,
+      height: 180,
+      time: 0.5,
+      frameDelta: 1 / 24,
+      frameIndex: 3,
+      amount: 0.22,
+      params: {
+        keyR: 0.1,
+        keyG: 0.8,
+        keyB: 0.2,
+        softness: 0.12,
+        spill: 0.7,
+        matte: 1,
+        mode: 2,
+      },
+    })).toEqual([
+      320,
+      180,
+      0.5,
+      1 / 24,
+      26,
+      0.22,
+      1,
+      3,
+      0.1,
+      0.8,
+      0.2,
+      0.12,
+      0.7,
+      1,
+      2,
+      0,
+    ]);
+
+    expect(packNativeEffectPassUniforms({
+      sourceId: 'src',
+      targetSourceId: 'dst',
+      effect: 'erode',
+      width: 320,
+      height: 180,
+      time: 0.5,
+      frameDelta: 1 / 24,
+      frameIndex: 3,
+      amount: 4,
+      params: {
+        shape: 2,
+        channel: 4,
+        outputMix: 0.65,
+      },
+    })).toEqual([
+      320,
+      180,
+      0.5,
+      1 / 24,
+      29,
+      4,
+      1,
+      3,
+      2,
+      4,
+      0.65,
+      0,
+      0,
+      0,
+      0,
+      0,
+    ]);
+  });
+
   it('builds a source-frame to source-frame render graph', () => {
     const graph = buildNativeEffectPassGraph({
       sourceId: 'gpu:layer-a:source',
@@ -870,6 +949,8 @@ describe('Native effect-pass template', () => {
       }, 8000);
       assertVisibleSnapshot('effect fixture source layer', sourceSnapshot);
       const sourcePixels = snapshotPixels(sourceSnapshot);
+      const chromaKeyRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.5, 0.5);
+      const differenceKeyRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.45, 0.5);
 
       const fixtures = [
         {
@@ -1240,6 +1321,136 @@ describe('Native effect-pass template', () => {
             const left = snapshotPixelRgb(snapshot, pixels, 0.25, 0.52);
             const right = snapshotPixelRgb(snapshot, pixels, 0.75, 0.52);
             expect(rgbDistance(left, right)).toBeLessThan(0.08);
+          },
+        },
+        {
+          id: 'chroma-key',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-chroma-key',
+            effect: 'chroma-key',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 16,
+            amount: 1,
+            params: {
+              keyR: chromaKeyRgb[0],
+              keyG: chromaKeyRgb[1],
+              keyB: chromaKeyRgb[2],
+              softness: 0.08,
+              spill: 0,
+              matte: 1,
+              mode: 2,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceLuma = snapshotPixelLuma(sourceSnapshot, sourcePixels, 0.5, 0.5);
+            const keyedLuma = snapshotPixelLuma(snapshot, pixels, 0.5, 0.5);
+            expect(keyedLuma).toBeLessThan(sourceLuma - 0.08);
+          },
+        },
+        {
+          id: 'luma-key',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-luma-key',
+            effect: 'luma-key',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 17,
+            amount: 0.45,
+            params: {
+              highCut: 0.7,
+              invert: 0,
+              gamma: 1,
+              matte: 0,
+              premultiply: 0,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceLuma = snapshotPixelLuma(sourceSnapshot, sourcePixels, 0.12, 0.12);
+            const keyedLuma = snapshotPixelLuma(snapshot, pixels, 0.12, 0.12);
+            expect(keyedLuma).toBeLessThan(sourceLuma - 0.04);
+          },
+        },
+        {
+          id: 'difference-key',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-difference-key',
+            effect: 'difference-key',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 18,
+            amount: 1,
+            params: {
+              refR: differenceKeyRgb[0],
+              refG: differenceKeyRgb[1],
+              refB: differenceKeyRgb[2],
+              softness: 0.04,
+              invert: 0,
+              matte: 0,
+              mode: 0,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceLuma = snapshotPixelLuma(sourceSnapshot, sourcePixels, 0.45, 0.5);
+            const keyedLuma = snapshotPixelLuma(snapshot, pixels, 0.45, 0.5);
+            expect(keyedLuma).toBeLessThan(sourceLuma - 0.06);
+          },
+        },
+        {
+          id: 'erode',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-erode',
+            effect: 'erode',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 19,
+            amount: 5,
+            params: {
+              shape: 1,
+              channel: 0,
+              outputMix: 1,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.78, 0.5);
+            const erodedRgb = snapshotPixelRgb(snapshot, pixels, 0.78, 0.5);
+            expect(rgbDistance(sourceRgb, erodedRgb)).toBeGreaterThan(0.006);
+          },
+        },
+        {
+          id: 'dilate',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-dilate',
+            effect: 'dilate',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 20,
+            amount: 5,
+            params: {
+              shape: 1,
+              channel: 0,
+              outputMix: 1,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.22, 0.5);
+            const dilatedRgb = snapshotPixelRgb(snapshot, pixels, 0.22, 0.5);
+            expect(rgbDistance(sourceRgb, dilatedRgb)).toBeGreaterThan(0.006);
           },
         },
       ];
