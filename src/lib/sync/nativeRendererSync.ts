@@ -341,29 +341,54 @@ export function missingNativeGraphRouteRequirements(
 ): string[] {
   const missing: string[] = [];
   for (const requirement of NATIVE_GRAPH_ROUTE_REQUIREMENTS) {
-    if (!features[requirement.feature]) missing.push(`${requirement.kind}:feature:${requirement.feature}`);
-    if (!instruments.has(requirement.instrument)) {
-      missing.push(`${requirement.kind}:instrument:${requirement.instrument}`);
-    }
-    const entry = manifest.get(requirement.instrument);
-    if (!entry) {
-      missing.push(`${requirement.kind}:manifest:${requirement.instrument}`);
-      continue;
-    }
-    if (entry.render_target !== 'source_frame') {
-      missing.push(`${requirement.kind}:render_target:source_frame`);
-    }
-    if (entry.source_uri_prefix !== `native-graph://${requirement.instrument}/`) {
-      missing.push(`${requirement.kind}:source_uri_prefix:${requirement.instrument}`);
-    }
-    const manifestFeatures = new Set((entry.features ?? []).map(String));
-    if (!manifestFeatures.has(requirement.feature)) {
-      missing.push(`${requirement.kind}:manifest_feature:${requirement.feature}`);
-    }
-    const manifestShaderIds = new Set((entry.shader_ids ?? []).map(String));
-    for (const shaderId of requirement.shaderIds) {
-      if (!manifestShaderIds.has(shaderId)) missing.push(`${requirement.kind}:shader:${shaderId}`);
-    }
+    missing.push(...nativeGraphRouteRequirementErrors(requirement, features, instruments, manifest));
+  }
+  return missing;
+}
+
+export function nativeGraphReadyRouteKinds(
+  features: Record<string, boolean>,
+  instruments: ReadonlySet<string>,
+  manifest: ReadonlyMap<string, NativeGraphManifestEntry>,
+): Set<NativeGraphRouteKind> {
+  return new Set(
+    NATIVE_GRAPH_ROUTE_REQUIREMENTS
+      .filter((requirement) =>
+        nativeGraphRouteRequirementErrors(requirement, features, instruments, manifest).length === 0,
+      )
+      .map((requirement) => requirement.kind),
+  );
+}
+
+function nativeGraphRouteRequirementErrors(
+  requirement: (typeof NATIVE_GRAPH_ROUTE_REQUIREMENTS)[number],
+  features: Record<string, boolean>,
+  instruments: ReadonlySet<string>,
+  manifest: ReadonlyMap<string, NativeGraphManifestEntry>,
+): string[] {
+  const missing: string[] = [];
+  if (!features[requirement.feature]) missing.push(`${requirement.kind}:feature:${requirement.feature}`);
+  if (!instruments.has(requirement.instrument)) {
+    missing.push(`${requirement.kind}:instrument:${requirement.instrument}`);
+  }
+  const entry = manifest.get(requirement.instrument);
+  if (!entry) {
+    missing.push(`${requirement.kind}:manifest:${requirement.instrument}`);
+    return missing;
+  }
+  if (entry.render_target !== 'source_frame') {
+    missing.push(`${requirement.kind}:render_target:source_frame`);
+  }
+  if (entry.source_uri_prefix !== `native-graph://${requirement.instrument}/`) {
+    missing.push(`${requirement.kind}:source_uri_prefix:${requirement.instrument}`);
+  }
+  const manifestFeatures = new Set((entry.features ?? []).map(String));
+  if (!manifestFeatures.has(requirement.feature)) {
+    missing.push(`${requirement.kind}:manifest_feature:${requirement.feature}`);
+  }
+  const manifestShaderIds = new Set((entry.shader_ids ?? []).map(String));
+  for (const shaderId of requirement.shaderIds) {
+    if (!manifestShaderIds.has(shaderId)) missing.push(`${requirement.kind}:shader:${shaderId}`);
   }
   return missing;
 }
@@ -2416,6 +2441,7 @@ export class NativeRendererSync {
   private previewContext: CanvasRenderingContext2D | null = null;
   private nativeComputeGraphSourceFrames = false;
   private nativeGraphCatalogComplete = false;
+  private nativeGraphReadyKinds = new Set<NativeGraphRouteKind>();
   private nativeGraphRoutes = new Map<string, NativeGraphRouteState>();
   private nativePointCloudDataCache = new Map<string, Promise<PointCloudFXNativePointData>>();
   private nativeSourceFrameSize = SOURCE_FRAME_SIZE_FALLBACK;
@@ -2613,8 +2639,8 @@ export class NativeRendererSync {
     return !!this.nativeFeatureFlags[feature];
   }
 
-  private supportsNativeGraphInstrument(id: string): boolean {
-    return this.nativeGraphInstruments.has(String(id).trim().toLowerCase());
+  private supportsNativeGraphRoute(kind: NativeGraphRouteKind): boolean {
+    return this.nativeGraphReadyKinds.has(kind);
   }
 
   private audioSignature(audio: VisualAudioState): string {
@@ -2817,56 +2843,47 @@ export class NativeRendererSync {
     let kind: NativeGraphRouteKind | null = null;
     if (
       normalizedShaderId === 'planet' &&
-      this.supportsNativeFeature('native_planet_graph') &&
-      this.supportsNativeGraphInstrument('planet')
+      this.supportsNativeGraphRoute('planet')
     ) {
       kind = 'planet';
     } else if (
       normalizedShaderId === 'smoke-3d' &&
-      this.supportsNativeFeature('native_3d_smoke_graph') &&
-      this.supportsNativeGraphInstrument('smoke-3d')
+      this.supportsNativeGraphRoute('smoke-3d')
     ) {
       kind = 'smoke-3d';
     } else if (
       normalizedShaderId === 'smoke-riders' &&
-      this.supportsNativeFeature('native_smoke_riders_graph') &&
-      this.supportsNativeGraphInstrument('smoke-riders')
+      this.supportsNativeGraphRoute('smoke-riders')
     ) {
       kind = 'smoke-riders';
     } else if (
       (normalizedShaderId === 'particle-field' || normalizedShaderId === 'gravity-wells') &&
-      this.supportsNativeFeature('native_particle_field_graph') &&
-      this.supportsNativeGraphInstrument('particle-field')
+      this.supportsNativeGraphRoute('particle-field')
     ) {
       kind = 'particle-field';
     } else if (
       (normalizedShaderId === 'volumetric-balls' || normalizedShaderId === 'volumetric-spheres') &&
-      this.supportsNativeFeature('native_volumetric_spheres_graph') &&
-      this.supportsNativeGraphInstrument('volumetric-spheres')
+      this.supportsNativeGraphRoute('volumetric-spheres')
     ) {
       kind = 'volumetric-spheres';
     } else if (
       normalizedShaderId === 'ink-cloud' &&
-      this.supportsNativeFeature('native_ink_cloud_graph') &&
-      this.supportsNativeGraphInstrument('ink-cloud')
+      this.supportsNativeGraphRoute('ink-cloud')
     ) {
       kind = 'ink-cloud';
     } else if (
       normalizedShaderId === 'flythrough' &&
-      this.supportsNativeFeature('native_flythrough_graph') &&
-      this.supportsNativeGraphInstrument('flythrough')
+      this.supportsNativeGraphRoute('flythrough')
     ) {
       kind = 'flythrough';
     } else if (
       normalizedShaderId === 'pixel-particles' &&
-      this.supportsNativeFeature('native_pixel_particles_graph') &&
-      this.supportsNativeGraphInstrument('pixel-particles')
+      this.supportsNativeGraphRoute('pixel-particles')
     ) {
       kind = 'pixel-particles';
     } else if (
       normalizedShaderId === 'point-cloud-fx' &&
-      this.supportsNativeFeature('native_point_cloud_fx_graph') &&
-      this.supportsNativeGraphInstrument('point-cloud-fx')
+      this.supportsNativeGraphRoute('point-cloud-fx')
     ) {
       kind = 'point-cloud-fx';
     }
@@ -3368,6 +3385,11 @@ export class NativeRendererSync {
       this.nativeGraphInstruments,
       nativeGraphManifest,
     );
+    this.nativeGraphReadyKinds = nativeGraphReadyRouteKinds(
+      this.nativeFeatureFlags,
+      this.nativeGraphInstruments,
+      nativeGraphManifest,
+    );
     this.nativeComputeGraphSourceFrames = computeGraphSourceFrameHost;
     this.nativeGraphCatalogComplete = computeGraphSourceFrameHost && missingGraphRequirements.length === 0;
     updateNativeRendererRuntimeFromStartup(
@@ -3512,6 +3534,7 @@ export class NativeRendererSync {
     this.previewImageLoads.clear();
     this.nativeComputeGraphSourceFrames = false;
     this.nativeGraphCatalogComplete = false;
+    this.nativeGraphReadyKinds.clear();
     this.nativeGraphRoutes.clear();
     this.nativePointCloudDataCache.clear();
     this.nativeGraphInstruments.clear();
