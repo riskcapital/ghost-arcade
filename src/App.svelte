@@ -245,10 +245,10 @@
   function nativeRendererToolbarLabel(state: NativeRendererRuntimeState) {
     const mode: NativeRendererDriverMode = state.driverMode;
     if (state.outputActive) return 'LIVE';
-    if (mode === 'full-v2') return 'FULL V2';
+    if (mode === 'full-v2') return 'NATIVE';
     if (mode === 'output-driver') return 'NATIVE';
-    if (mode === 'shadow') return 'SHADOW';
-    if (mode === 'degraded') return 'DEG';
+    if (mode === 'shadow') return 'SYNC';
+    if (mode === 'degraded') return 'INIT';
     return 'GPU';
   }
   async function checkGPU() {

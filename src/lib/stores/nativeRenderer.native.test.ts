@@ -142,10 +142,10 @@ describe('native renderer runtime state', () => {
   });
 
   it('uses compact, user-readable labels for the toolbar', () => {
-    expect(nativeRendererModeLabel('offline')).toBe('Offline');
-    expect(nativeRendererModeLabel('shadow')).toBe('Shadow');
-    expect(nativeRendererModeLabel('output-driver')).toBe('Output Driver');
-    expect(nativeRendererModeLabel('full-v2')).toBe('Full V2');
+    expect(nativeRendererModeLabel('offline')).toBe('WebGL Fallback');
+    expect(nativeRendererModeLabel('shadow')).toBe('Native Scene Sync');
+    expect(nativeRendererModeLabel('output-driver')).toBe('Native Output Driver');
+    expect(nativeRendererModeLabel('full-v2')).toBe('Native Main Driver');
   });
 
   it('preserves startup readiness mode across status-only polling updates', () => {
