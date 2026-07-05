@@ -169,10 +169,28 @@ describe('native renderer runtime state', () => {
           },
           checks: [
             {
+              id: 'shared-texture-source-frame-upload',
+              label: 'Shared texture source-frame transport',
+              ok: true,
+              detail: 'source-frame IOSurface upload is available',
+            },
+            {
+              id: 'shared-texture-upload',
+              label: 'Shared texture media transport',
+              ok: false,
+              detail: 'full media transport is pending',
+            },
+            {
               id: 'shared-texture-output-export',
               label: 'Native output shared-texture export',
               ok: true,
               detail: 'native output mirror is exported as an IOSurface handle',
+            },
+            {
+              id: 'native-effect-pass-manifest',
+              label: 'Native source-frame effect-pass route',
+              ok: true,
+              detail: '46 source-frame layer effects can route through the native effect-pass graph',
             },
             {
               id: 'native-texture-share-sender',
@@ -194,7 +212,11 @@ describe('native renderer runtime state', () => {
     expect(state.textureShareLabel).toBe('Syphon');
     expect(state.textureSharePlatform).toBe('syphon');
     expect(state.textureShareAvailable).toBe(true);
+    expect(state.sharedTextureSourceFrameUploadReady).toBe(true);
+    expect(state.sharedTextureMediaTransportReady).toBe(false);
     expect(state.sharedTextureOutputExportReady).toBe(true);
+    expect(state.nativeEffectPassReady).toBe(true);
+    expect(state.nativeEffectPassDetail).toContain('source-frame layer effects');
     expect(state.nativeTextureShareSenderReady).toBe(false);
     expect(state.nativeTextureShareSenderDetail).toContain('waiting for the first rendered frame');
     expect(state.nativeOutputShareCapable).toBe(true);
