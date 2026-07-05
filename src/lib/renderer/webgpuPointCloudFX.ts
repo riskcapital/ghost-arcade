@@ -661,6 +661,8 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 const RENDER_WGSL = /* wgsl */ `
 #include <sort>
 
+const GHOST_GAUSSIAN_SIGMA_EXTENT: f32 = 3.0;
+
 struct Home {
   homePos:       vec3<f32>,
   alpha:         f32,
@@ -771,6 +773,7 @@ struct VSOut {
   @location(2) alpha:     f32,
   @location(3) depth01:   f32,
   @location(4) gaussian:  f32,
+  @location(5) gaussianSigma: vec2<f32>,
 };
 
 @vertex
@@ -784,6 +787,7 @@ fn vs_main(
   let p = live[pointIndex];
 
   var cornerUV: vec2<f32> = vec2<f32>(0.0, 0.0);
+  var gaussianSigma: vec2<f32> = vec2<f32>(0.0, 0.0);
   var offset:   vec3<f32> = vec3<f32>(0.0, 0.0, 0.0);
 
   if (u.topology == 2u) {
@@ -818,9 +822,10 @@ fn vs_main(
     var billboardY = u.camUp;
     if (h.gaussian > 0.5) {
       let axes = gaussianScreenAxes(h);
-      axisStretch = axes.stretch;
+      axisStretch = axes.stretch * GHOST_GAUSSIAN_SIGMA_EXTENT;
       billboardX = axes.majorAxis;
       billboardY = axes.minorAxis;
+      gaussianSigma = q * GHOST_GAUSSIAN_SIGMA_EXTENT;
     }
     offset =
       billboardX * (q.x * p.size * sizeMul * axisStretch.x) +
@@ -834,6 +839,7 @@ fn vs_main(
   out.alpha  = p.alpha * u.opacity;
   out.depth01 = clamp(out.pos.z / max(out.pos.w, 1e-5) * 0.5 + 0.5, 0.0, 1.0);
   out.gaussian = h.gaussian;
+  out.gaussianSigma = gaussianSigma;
   return out;
 }
 
@@ -846,7 +852,14 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     let headTail = 1.0 - in.uv.x;
     let perp     = 1.0 - abs(in.uv.y - 0.5) * 2.0;
     mask = headTail * smoothstep(0.0, 0.4, perp);
-  } else if (u.topology == 1u || in.gaussian > 0.5) {
+  } else if (in.gaussian > 0.5) {
+    // 3DGS-style elliptical density kernel. The vertex shader expands
+    // the quad to ±3σ along the projected covariance axes, and the
+    // fragment shader evaluates the gaussian in that local sigma space.
+    let r2 = dot(in.gaussianSigma, in.gaussianSigma);
+    let tailFade = 1.0 - smoothstep(7.2, 9.0, r2);
+    mask = exp(-0.5 * r2) * tailFade;
+  } else if (u.topology == 1u) {
     // Billboard — soft gaussian-ish disc
     let d = distance(in.uv, vec2<f32>(0.5, 0.5)) * 2.0;
     mask = exp(-d * d * 3.0);
