@@ -17,6 +17,12 @@ let nativeGraphReadyRouteKinds: (
   instruments: ReadonlySet<string>,
   manifest: ReadonlyMap<string, any>,
 ) => Set<string>;
+let nativeGraphRouteRequirements: () => ReadonlyArray<{
+  kind: string;
+  feature: string;
+  instrument: string;
+  shaderIds: readonly string[];
+}>;
 let nativeEffectPassDescriptorIds: (capabilities: any) => string[];
 let NativeRendererSyncCtor: typeof import('./nativeRendererSync').NativeRendererSync;
 
@@ -59,76 +65,21 @@ beforeAll(async () => {
     nativeGraphInstrumentIds,
     nativeGraphManifestById,
     nativeGraphReadyRouteKinds,
+    nativeGraphRouteRequirements,
     nativeEffectPassDescriptorIds,
     nativeEffectPassFromDescriptor,
     NativeRendererSync: NativeRendererSyncCtor,
   } = await import('./nativeRendererSync'));
 });
 
-const graphContract = [
-  { id: 'planet', feature: 'native_planet_graph', shaders: ['planet/render'] },
-  {
-    id: 'smoke-3d',
-    feature: 'native_3d_smoke_graph',
-    shaders: [
-      '3d-smoke/splat',
-      '3d-smoke/advect-velocity',
-      '3d-smoke/divergence',
-      '3d-smoke/jacobi',
-      '3d-smoke/subtract-gradient',
-      '3d-smoke/advect-density',
-      '3d-smoke/render',
-    ],
-  },
-  {
-    id: 'particle-field',
-    feature: 'native_particle_field_graph',
-    shaders: [
-      'particle-field/behavior',
-      'particle-field/edges',
-      'particle-field/fog',
-      'particle-field/render',
-      'particle-field/lines',
-    ],
-  },
-  { id: 'volumetric-spheres', feature: 'native_volumetric_spheres_graph', shaders: ['volumetric-spheres/sim', 'volumetric-spheres/render'] },
-  {
-    id: 'smoke-riders',
-    feature: 'native_smoke_riders_graph',
-    shaders: [
-      '3d-smoke/splat',
-      '3d-smoke/advect-velocity',
-      '3d-smoke/divergence',
-      '3d-smoke/jacobi',
-      '3d-smoke/subtract-gradient',
-      '3d-smoke/advect-density',
-      '3d-smoke/render',
-      'volumetric-spheres/sim',
-      'volumetric-spheres/render',
-    ],
-  },
-  { id: 'ink-cloud', feature: 'native_ink_cloud_graph', shaders: ['ink-cloud/sim', 'ink-cloud/render', 'ink-cloud/background'] },
-  { id: 'flythrough', feature: 'native_flythrough_graph', shaders: ['flythrough/compute', 'flythrough/render'] },
-  { id: 'pixel-particles', feature: 'native_pixel_particles_graph', shaders: ['pixel-particles/compute', 'pixel-particles/render'] },
-  {
-    id: 'point-cloud-fx',
-    feature: 'native_point_cloud_fx_graph',
-    shaders: [
-      'point-cloud-fx/compute',
-      'point-cloud-fx/sort-fill',
-      'point-cloud-fx/sort-step',
-      'point-cloud-fx/render',
-    ],
-  },
-];
-
 function graphCapabilities() {
+  const graphContract = nativeGraphRouteRequirements();
   return {
-    native_graph_instruments: graphContract.map((entry) => entry.id),
+    native_graph_instruments: graphContract.map((entry) => entry.instrument),
     native_graph_instrument_manifest: graphContract.map((entry) => ({
-      id: entry.id,
-      source_uri_prefix: `native-graph://${entry.id}/`,
-      shader_ids: [...entry.shaders],
+      id: entry.instrument,
+      source_uri_prefix: `native-graph://${entry.instrument}/`,
+      shader_ids: [...entry.shaderIds],
       features: ['compute_graph_host', 'compute_graph_render', 'compute_graph_source_frame_target', entry.feature],
       render_target: 'source_frame',
     })),

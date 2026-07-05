@@ -192,12 +192,13 @@ export type NativeEffectPassRuntime = {
   amount?: number;
   params?: NativeEffectPassOptions['params'];
 };
-const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<{
+export type NativeGraphRouteRequirement = {
   kind: NativeGraphRouteKind;
   feature: string;
   instrument: string;
   shaderIds: readonly string[];
-}> = [
+};
+const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<NativeGraphRouteRequirement> = [
   { kind: 'planet', feature: 'native_planet_graph', instrument: 'planet', shaderIds: ['planet/render'] },
   {
     kind: 'smoke-3d',
@@ -277,6 +278,10 @@ const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<{
     ],
   },
 ] as const;
+
+export function nativeGraphRouteRequirements(): ReadonlyArray<NativeGraphRouteRequirement> {
+  return NATIVE_GRAPH_ROUTE_REQUIREMENTS;
+}
 
 type NativeGraphRouteSimulationState =
   | PlanetNativeGraphState
