@@ -247,6 +247,16 @@ export type NativeEffectPassRuntime = {
     refB?: number;
     spill?: number;
     channel?: number;
+    frequency?: number;
+    waveform?: number;
+    phase?: number;
+    secondary?: number;
+    chromaSplit?: number;
+    strength?: number;
+    edgeFade?: number;
+    cubic?: number;
+    anamorphicX?: number;
+    falloff?: number;
   };
 };
 const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<{
@@ -967,6 +977,142 @@ export function effectToNativeDescriptor(effect: any): string | null {
       Math.max(0, Math.min(1, Math.round(flipRaw))).toFixed(0),
     ].join(':');
   }
+  if (type === 'wave') {
+    const amplitudeRaw =
+      firstFiniteParam(params, ['waveAmplitude', 'amplitude', 'amount'], 10);
+    const modeRaw =
+      firstFiniteParam(params, ['waveType', 'mode'], 0);
+    const waveformRaw =
+      firstFiniteParam(params, ['waveWaveform', 'waveform'], 0);
+    const frequencyRaw =
+      firstFiniteParam(params, ['waveFrequency', 'frequency'], 5);
+    const speedRaw =
+      firstFiniteParam(params, ['waveSpeed', 'speed'], 1);
+    const phaseRaw =
+      firstFiniteParam(params, ['wavePhase', 'phase'], 0);
+    const secondaryRaw =
+      firstFiniteParam(params, ['waveSecondary', 'secondary', 'harmonic'], 0);
+    const chromaRaw =
+      firstFiniteParam(params, ['waveChromaSplit', 'chromaSplit', 'chromatic'], 0);
+    return [
+      'wave',
+      Math.max(0, Math.min(50, amplitudeRaw)).toFixed(4),
+      Math.max(0, Math.min(3, Math.round(modeRaw))).toFixed(0),
+      Math.max(0, Math.min(3, Math.round(waveformRaw))).toFixed(0),
+      Math.max(0.5, Math.min(30, frequencyRaw)).toFixed(4),
+      Math.max(0, Math.min(3, speedRaw)).toFixed(4),
+      (((phaseRaw % 360) + 360) % 360).toFixed(4),
+      Math.max(0, Math.min(1, secondaryRaw)).toFixed(4),
+      Math.max(0, Math.min(1, chromaRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'fisheye') {
+    const strengthRaw =
+      firstFiniteParam(params, ['fisheyeStrength', 'strength', 'amount'], 0.5);
+    const radiusRaw =
+      firstFiniteParam(params, ['fisheyeRadius', 'radius'], 1);
+    const centerXRaw =
+      firstFiniteParam(params, ['fisheyeCenterX', 'centerX'], 0.5);
+    const centerYRaw =
+      firstFiniteParam(params, ['fisheyeCenterY', 'centerY'], 0.5);
+    const zoomRaw =
+      firstFiniteParam(params, ['fisheyeZoom', 'zoom'], 1);
+    const modeRaw =
+      firstFiniteParam(params, ['fisheyeMode', 'mode'], 0);
+    const chromaRaw =
+      firstFiniteParam(params, ['fisheyeChromaEdge', 'chromaEdge', 'chromatic'], 0);
+    return [
+      'fisheye',
+      Math.max(-1, Math.min(1, strengthRaw)).toFixed(4),
+      Math.max(0.1, Math.min(1, radiusRaw)).toFixed(4),
+      Math.max(0, Math.min(1, centerXRaw)).toFixed(4),
+      Math.max(0, Math.min(1, centerYRaw)).toFixed(4),
+      Math.max(0.5, Math.min(2, zoomRaw)).toFixed(4),
+      Math.max(0, Math.min(2, Math.round(modeRaw))).toFixed(0),
+      Math.max(0, Math.min(1, chromaRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'lensdistortion' || type === 'lens-distortion') {
+    const amountRaw =
+      firstFiniteParam(params, ['lensDistAmount', 'amount'], 0.4);
+    const modeRaw =
+      firstFiniteParam(params, ['lensDistMode', 'mode'], 0);
+    const centerXRaw =
+      firstFiniteParam(params, ['lensDistCenterX', 'centerX'], 0.5);
+    const centerYRaw =
+      firstFiniteParam(params, ['lensDistCenterY', 'centerY'], 0.5);
+    const cubicRaw =
+      firstFiniteParam(params, ['lensDistCubic', 'cubic'], 0);
+    const anamorphicRaw =
+      firstFiniteParam(params, ['lensDistAnamorphicX', 'anamorphicX'], 1.3);
+    const edgeFadeRaw =
+      firstFiniteParam(params, ['lensDistEdgeFade', 'edgeFade'], 1);
+    const chromaRaw =
+      firstFiniteParam(params, ['lensDistChromaFringe', 'chromaFringe', 'chromatic'], 0);
+    return [
+      'lens-distortion',
+      Math.max(-1, Math.min(1, amountRaw)).toFixed(4),
+      Math.max(0, Math.min(3, Math.round(modeRaw))).toFixed(0),
+      Math.max(0, Math.min(1, centerXRaw)).toFixed(4),
+      Math.max(0, Math.min(1, centerYRaw)).toFixed(4),
+      Math.max(-0.5, Math.min(0.5, cubicRaw)).toFixed(4),
+      Math.max(0.5, Math.min(2, anamorphicRaw)).toFixed(4),
+      Math.max(0, Math.min(1, edgeFadeRaw)).toFixed(4),
+      Math.max(0, Math.min(1, chromaRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'twirl') {
+    const angleRaw =
+      firstFiniteParam(params, ['twirlAngle', 'angle', 'amount'], 1.5);
+    const radiusRaw =
+      firstFiniteParam(params, ['twirlRadius', 'radius'], 0.5);
+    const centerXRaw =
+      firstFiniteParam(params, ['twirlCenterX', 'centerX'], 0.5);
+    const centerYRaw =
+      firstFiniteParam(params, ['twirlCenterY', 'centerY'], 0.5);
+    const falloffRaw =
+      firstFiniteParam(params, ['twirlFalloff', 'falloff'], 1.5);
+    const speedRaw =
+      firstFiniteParam(params, ['twirlAnimSpeed', 'animSpeed', 'speed'], 0);
+    const mixRaw =
+      firstFiniteParam(params, ['twirlMix', 'mix', 'outputMix'], 1);
+    return [
+      'twirl',
+      Math.max(-6.28319, Math.min(6.28319, angleRaw)).toFixed(4),
+      Math.max(0.05, Math.min(1, radiusRaw)).toFixed(4),
+      Math.max(0, Math.min(1, centerXRaw)).toFixed(4),
+      Math.max(0, Math.min(1, centerYRaw)).toFixed(4),
+      Math.max(0.5, Math.min(4, falloffRaw)).toFixed(4),
+      Math.max(0, Math.min(2, speedRaw)).toFixed(4),
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'pinchbulge' || type === 'pinch-bulge') {
+    const amountRaw =
+      firstFiniteParam(params, ['pinchAmount', 'amount'], 0.4);
+    const radiusRaw =
+      firstFiniteParam(params, ['pinchRadius', 'radius'], 0.5);
+    const centerXRaw =
+      firstFiniteParam(params, ['pinchCenterX', 'centerX'], 0.5);
+    const centerYRaw =
+      firstFiniteParam(params, ['pinchCenterY', 'centerY'], 0.5);
+    const falloffRaw =
+      firstFiniteParam(params, ['pinchFalloff', 'falloff'], 1.5);
+    const chromaRaw =
+      firstFiniteParam(params, ['pinchChromatic', 'chromatic', 'chromaSplit'], 0);
+    const mixRaw =
+      firstFiniteParam(params, ['pinchMix', 'mix', 'outputMix'], 1);
+    return [
+      'pinch-bulge',
+      Math.max(-1, Math.min(1, amountRaw)).toFixed(4),
+      Math.max(0.1, Math.min(1, radiusRaw)).toFixed(4),
+      Math.max(0, Math.min(1, centerXRaw)).toFixed(4),
+      Math.max(0, Math.min(1, centerYRaw)).toFixed(4),
+      Math.max(0.5, Math.min(4, falloffRaw)).toFixed(4),
+      Math.max(0, Math.min(1, chromaRaw)).toFixed(4),
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+    ].join(':');
+  }
   if (type === 'glitch') {
     const intensityRaw =
       (typeof params.glitchIntensity === 'number' && Number.isFinite(params.glitchIntensity) ? params.glitchIntensity : null)
@@ -1365,6 +1511,53 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       position: Number(rawParam1 ?? 0.5),
       offset: Number(rawParam2 ?? 0.5),
       flipSide: Number(rawParam3 ?? 0),
+    };
+  } else if (effect === 'wave') {
+    params = {
+      mode: Number(rawParam0 ?? 0),
+      waveform: Number(rawParam1 ?? 0),
+      frequency: Number(rawParam2 ?? 5),
+      speed: Number(rawParam3 ?? 1),
+      phase: Number(rawParam4 ?? 0),
+      secondary: Number(rawParam5 ?? 0),
+      chromaSplit: Number(rawParam6 ?? 0),
+    };
+  } else if (effect === 'fisheye') {
+    params = {
+      radius: Number(rawParam0 ?? 1),
+      centerX: Number(rawParam1 ?? 0.5),
+      centerY: Number(rawParam2 ?? 0.5),
+      zoom: Number(rawParam3 ?? 1),
+      mode: Number(rawParam4 ?? 0),
+      edgeFalloff: Number(rawParam5 ?? 0),
+    };
+  } else if (effect === 'lens-distortion') {
+    params = {
+      mode: Number(rawParam0 ?? 0),
+      centerX: Number(rawParam1 ?? 0.5),
+      centerY: Number(rawParam2 ?? 0.5),
+      cubic: Number(rawParam3 ?? 0),
+      anamorphicX: Number(rawParam4 ?? 1.3),
+      edgeFade: Number(rawParam5 ?? 1),
+      chromatic: Number(rawParam6 ?? 0),
+    };
+  } else if (effect === 'twirl') {
+    params = {
+      radius: Number(rawParam0 ?? 0.5),
+      centerX: Number(rawParam1 ?? 0.5),
+      centerY: Number(rawParam2 ?? 0.5),
+      falloff: Number(rawParam3 ?? 1.5),
+      animSpeed: Number(rawParam4 ?? 0),
+      outputMix: Number(rawParam5 ?? 1),
+    };
+  } else if (effect === 'pinch-bulge') {
+    params = {
+      radius: Number(rawParam0 ?? 0.5),
+      centerX: Number(rawParam1 ?? 0.5),
+      centerY: Number(rawParam2 ?? 0.5),
+      falloff: Number(rawParam3 ?? 1.5),
+      chromatic: Number(rawParam4 ?? 0),
+      outputMix: Number(rawParam5 ?? 1),
     };
   } else if (effect === 'chroma-key') {
     params = {
