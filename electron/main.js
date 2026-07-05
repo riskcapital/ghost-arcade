@@ -3955,17 +3955,14 @@ function registerIpcHandlers() {
   });
 
   // --- Output window ---
-  // Two experimental flags control output transport:
-  //   - `experimentalZeroCopy` → mounts OutputSharedTextureDisplayApp
-  //     (WebGPU + GPUExternalTexture, the production target). Main
-  //     process pairs the editor and output windows via a
-  //     MessageChannelMain so the editor's MediaStreamTrackProcessor
-  //     can ship VideoFrames directly into the output's WebGPU
-  //     compositor with zero copies.
-  //   - `experimentalWebRTC` → mounts OutputDisplayApp (legacy
-  //     same-process WebRTC peer). Kept as escape hatch.
-  // Selection precedence: zero-copy beats WebRTC beats legacy. The
-  // renderer reads both settings flags and passes them through.
+  // Fallback output transports. Native Rust/wgpu output is opened through
+  // the native_renderer_* bridge before the renderer calls this IPC. If
+  // native output is disabled or unavailable, the renderer passes:
+  //   - `experimentalZeroCopy` → OutputSharedTextureDisplayApp
+  //     (WebGPU + GPUExternalTexture fallback).
+  //   - `experimentalWebRTC` → OutputDisplayApp (legacy same-process
+  //     WebRTC peer, kept as a debugging escape hatch).
+  // Fallback precedence here is zero-copy > WebRTC > legacy.
   ipcMain.handle('create_output_window', (_, { width, height, x, y, fullscreen, displayId, experimentalWebRTC, experimentalZeroCopy }) => {
     createOutputWindow(width, height, x, y, fullscreen, displayId, !!experimentalWebRTC, !!experimentalZeroCopy);
   });
@@ -4285,9 +4282,8 @@ function registerIpcHandlers() {
   });
 
   // --- Output fullscreen on external monitor ---
-  // Same `experimentalZeroCopy` / `experimentalWebRTC` opt-in as
-  // create_output_window so fullscreen-direct mode also lands on the
-  // new transport when the flag is on.
+  // Same fallback flags as create_output_window. Native fullscreen output
+  // is opened before this IPC path when the render core is available.
   ipcMain.handle('output_fullscreen_external', (_, args) => {
     const allDisplays = screen.getAllDisplays();
     const primary = screen.getPrimaryDisplay();
@@ -6285,7 +6281,9 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
   // (webgpuCapability.ts) to report unsupported, which the lifecycle
   // gate also honors. Two independent failsafes, neither of which
   // requires the other to work.
-  // Output mode selection. Three transports, in precedence order:
+  // Fallback output mode selection. Native render-core output is selected
+  // by the renderer before createOutputWindow is invoked; this function
+  // covers the non-native paths, in precedence order:
   //
   //   webgpu-display → mounts OutputSharedTextureDisplayApp. Editor
   //                    side runs MediaStreamTrackProcessor on
@@ -6295,7 +6293,7 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
   //                    Output side calls
   //                    `device.importExternalTexture({source: frame})`
   //                    and renders a fullscreen quad in WebGPU. True
-  //                    zero-copy GPU pipeline — the production target.
+  //                    zero-copy GPU pipeline — the primary fallback.
   //                    NOTE: `webgpu-disable=1` is NOT appended on this
   //                    path because we *need* WebGPU here. The output
   //                    process is still safe from the S4 pilot because
@@ -6308,7 +6306,7 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
   //
   //   output         → mounts SpoutOutputApp (the original full
   //                    renderer with state-sync + per-layer rendering).
-  //                    Production default before zero-copy.
+  //                    Production default before zero-copy/native output.
   //
   // Auto-DevTools detached so the OutputDisplayApp logs (signaling
   // state, getStats() values when ?stats=1) are visible without

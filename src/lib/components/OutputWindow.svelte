@@ -73,29 +73,29 @@
   //                          (`?mode=webrtc-display`). Escape hatch.
   // Both off → SpoutOutputApp (`?mode=output`), legacy default.
   // The settings still live under `experimental` for migration stability.
-  function readExperimentalTransports(): {
-    experimentalWebRTC: boolean;
-    experimentalZeroCopy: boolean;
-    outputNativeCore: boolean;
+  function readOutputTransports(): {
+    webRTC: boolean;
+    zeroCopy: boolean;
+    nativeCore: boolean;
   } {
     const s = get(settings);
     return {
-      experimentalWebRTC: !!s.experimental?.outputWebRTC,
-      experimentalZeroCopy: !!s.experimental?.outputZeroCopy,
-      outputNativeCore: !!s.experimental?.outputNativeCore,
+      webRTC: !!s.experimental?.outputWebRTC,
+      zeroCopy: !!s.experimental?.outputZeroCopy,
+      nativeCore: !!s.experimental?.outputNativeCore,
     };
   }
 
   // Open output window — opens a draggable window (double-click to fullscreen)
   export async function openPopup(preferExternal: boolean = true) {
-    const { experimentalWebRTC, experimentalZeroCopy, outputNativeCore } = readExperimentalTransports();
-    if (outputNativeCore && await openNativeCoreOutput(preferExternal, false)) {
+    const { webRTC, zeroCopy, nativeCore } = readOutputTransports();
+    if (nativeCore && await openNativeCoreOutput(preferExternal, false)) {
       return;
     }
-    if (experimentalZeroCopy) {
+    if (zeroCopy) {
       return openPopupZeroCopy(preferExternal);
     }
-    const transportTag = experimentalWebRTC ? ' [WebRTC]' : '';
+    const transportTag = webRTC ? ' [WebRTC]' : '';
     try {
       // Get available displays from Electron
       const displays: any[] = await invoke('get_displays');
@@ -120,7 +120,7 @@
         width: winW, height: winH, x, y,
         fullscreen: false,
         displayId: target.id,
-        experimentalWebRTC,
+        experimentalWebRTC: webRTC,
         experimentalZeroCopy: false, // legacy path only
       });
       isOpen = true;
@@ -133,7 +133,7 @@
           width: 1280, height: 720,
           x: 100, y: 100,
           fullscreen: false,
-          experimentalWebRTC,
+          experimentalWebRTC: webRTC,
           experimentalZeroCopy: false,
         });
         isOpen = true;
@@ -304,11 +304,11 @@
 
   // Open fullscreen on external monitor (or primary if no external)
   export async function openFullscreenExternal() {
-    const { experimentalWebRTC, experimentalZeroCopy, outputNativeCore } = readExperimentalTransports();
-    if (outputNativeCore && await openNativeCoreOutput(true, true)) {
+    const { webRTC, zeroCopy, nativeCore } = readOutputTransports();
+    if (nativeCore && await openNativeCoreOutput(true, true)) {
       return;
     }
-    if (experimentalZeroCopy) {
+    if (zeroCopy) {
       // Reuse the openPopup zero-copy path with a fullscreen flag.
       // Need to also pre-stage the fullscreen bit in the placement
       // config so setWindowOpenHandler picks the entire display
@@ -337,9 +337,9 @@
       }
       return;
     }
-    const transportTag = experimentalWebRTC ? ' [WebRTC]' : '';
+    const transportTag = webRTC ? ' [WebRTC]' : '';
     try {
-      const result: any = await invoke('output_fullscreen_external', { experimentalWebRTC, experimentalZeroCopy: false });
+      const result: any = await invoke('output_fullscreen_external', { experimentalWebRTC: webRTC, experimentalZeroCopy: false });
       isOpen = true;
       console.log(`[Output] Fullscreen on display ${result.displayId}, external=${result.isExternal}${transportTag}`);
     } catch (error) {
