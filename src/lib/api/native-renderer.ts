@@ -971,6 +971,9 @@ export interface NativeRendererTextureShareStatus {
   nativeOutputActive?: boolean;
   nativeOutputWaitingForFrame?: boolean;
   nativeOutputFailures?: number;
+  nativeOutputPendingPromotion?: boolean;
+  nativeOutputPromotionAttempts?: number;
+  nativeOutputPromotionReason?: string | null;
 }
 
 export interface RendererReadinessReport {

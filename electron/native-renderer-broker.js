@@ -949,6 +949,8 @@ class NativeRendererBroker {
         ? 'not connected to Electron texture-share status'
         : !textureShare.available
           ? `${textureShareName} native addon unavailable${textureShare.error ? `: ${textureShare.error}` : ''}`
+          : textureShare.nativeOutputPendingPromotion
+            ? `publishing through OSR while waiting to promote to native IOSurface (${textureShare.nativeOutputPromotionAttempts ?? 0} check(s))`
           : textureShare.nativeOutputWaitingForFrame
             ? 'native output IOSurface pump is waiting for the first rendered frame'
           : textureShare.nativeOutputActive

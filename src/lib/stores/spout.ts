@@ -22,6 +22,9 @@ export interface TextureShareInfo {
   nativeOutputActive?: boolean;
   nativeOutputWaitingForFrame?: boolean;
   nativeOutputFailures?: number;
+  nativeOutputPendingPromotion?: boolean;
+  nativeOutputPromotionAttempts?: number;
+  nativeOutputPromotionReason?: string | null;
 }
 
 /** List of currently available Spout senders */
