@@ -19,6 +19,7 @@ const PIXEL_COUNT = WIDTH * HEIGHT;
 
 const EFFECT_SHADER_ID = 'effect-pass/render';
 const PROBE_SHADER_ID = 'effect-pass/source-frame-probe';
+const MIN_RENDERED_MANIFEST_EFFECTS = 23;
 const FIXTURES = [
   {
     id: 'invert',
@@ -220,6 +221,7 @@ const FIXTURES = [
   },
   {
     id: 'edge-feather-alpha',
+    manifestId: 'edge-feather',
     code: 41,
     time: 0.35,
     frameDelta: 1 / 30,
@@ -305,6 +307,52 @@ function readEffectPassWgsl() {
     throw new Error('Could not extract NATIVE_EFFECT_PASS_WGSL from nativeEffectPass.ts');
   }
   return match[1];
+}
+
+function readEffectPassManifest() {
+  const source = readFileSync(join(root, 'src', 'lib', 'renderer', 'nativeEffectPass.ts'), 'utf8');
+  const match = source.match(/export\s+const\s+NATIVE_EFFECT_PASS_MANIFEST[\s\S]*?=\s*\[([\s\S]*?)\];/);
+  if (!match) {
+    throw new Error('Could not extract NATIVE_EFFECT_PASS_MANIFEST from nativeEffectPass.ts');
+  }
+  const manifest = new Map();
+  const entryPattern = /\{\s*id:\s*'([^']+)',\s*code:\s*(\d+)/g;
+  let entry;
+  while ((entry = entryPattern.exec(match[1])) !== null) {
+    manifest.set(entry[1], Number(entry[2]));
+  }
+  if (manifest.size === 0) {
+    throw new Error('NATIVE_EFFECT_PASS_MANIFEST parsed without any entries');
+  }
+  return manifest;
+}
+
+function assertGoldenManifestCoverage() {
+  const manifest = readEffectPassManifest();
+  const covered = new Set();
+  for (const fixture of FIXTURES) {
+    const manifestId = fixture.manifestId ?? fixture.id;
+    const manifestCode = manifest.get(manifestId);
+    if (typeof manifestCode !== 'number') {
+      throw new Error(`effect-pass golden fixture ${fixture.id} does not map to a manifest effect`);
+    }
+    if (manifestCode !== fixture.code) {
+      throw new Error(
+        `effect-pass golden fixture ${fixture.id} code ${fixture.code} disagrees with manifest ${manifestId} code ${manifestCode}`,
+      );
+    }
+    covered.add(manifestId);
+  }
+  if (covered.size < MIN_RENDERED_MANIFEST_EFFECTS) {
+    throw new Error(
+      `effect-pass golden coverage fell to ${covered.size}/${manifest.size}; expected at least ${MIN_RENDERED_MANIFEST_EFFECTS}`,
+    );
+  }
+  return {
+    coveredCount: covered.size,
+    manifestCount: manifest.size,
+    missing: [...manifest.keys()].filter((id) => !covered.has(id)),
+  };
 }
 
 function sourceFrameReadbackWgsl() {
@@ -1419,6 +1467,7 @@ function meanRgb(bytes) {
 }
 
 async function main() {
+  const coverage = assertGoldenManifestCoverage();
   const sourceCases = ['gradient', 'frequency', 'alpha-mask'].map((id) => ({
     id,
     bytes: makeSourceBytes(WIDTH, HEIGHT, id),
@@ -1456,7 +1505,10 @@ async function main() {
     }
   }
 
-  console.log(`Native/WebGL effect-pass golden passed: ${summaries.join(' ')}`);
+  console.log(
+    `Native/WebGL effect-pass golden passed (${coverage.coveredCount}/${coverage.manifestCount} manifest effects covered): ` +
+    summaries.join(' '),
+  );
 }
 
 main().catch((err) => {
