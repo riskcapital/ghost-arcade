@@ -18,6 +18,7 @@ let nativeGraphReadyRouteKinds: (
   manifest: ReadonlyMap<string, any>,
 ) => Set<string>;
 let nativeEffectPassDescriptorIds: (capabilities: any) => string[];
+let NativeRendererSyncCtor: typeof import('./nativeRendererSync').NativeRendererSync;
 
 beforeAll(async () => {
   const storage = new Map<string, string>();
@@ -60,6 +61,7 @@ beforeAll(async () => {
     nativeGraphReadyRouteKinds,
     nativeEffectPassDescriptorIds,
     nativeEffectPassFromDescriptor,
+    NativeRendererSync: NativeRendererSyncCtor,
   } = await import('./nativeRendererSync'));
 });
 
@@ -186,6 +188,24 @@ describe('native renderer sync graph manifest contract', () => {
     );
     expect(pointMissingRoutes.has('smoke-3d')).toBe(true);
     expect(pointMissingRoutes.has('point-cloud-fx')).toBe(false);
+  });
+});
+
+describe('native renderer sync render clock routing', () => {
+  it('prefers manual render-clock time for native video playback commands', () => {
+    const sync = new NativeRendererSyncCtor() as any;
+    const src = {
+      videoElement: { currentTime: 12.5 },
+    };
+
+    expect(sync.nativeVideoPlaybackTimeSeconds(src, 5000)).toBe(12.5);
+
+    sync.setRenderClock(4.25);
+    expect(sync.nativeVideoPlaybackTimeSeconds(src, 5000)).toBe(4.25);
+
+    sync.setRenderClock(null);
+    sync.liveClockOriginMs = 1000;
+    expect(sync.nativeVideoPlaybackTimeSeconds({ videoElement: { currentTime: Number.NaN } }, 2500)).toBe(1.5);
   });
 });
 
