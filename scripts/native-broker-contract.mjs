@@ -693,6 +693,38 @@ try {
       Number(stageMeshRotatedSnapshot?.bright_pixels ?? 0) > Number(stageEmptySnapshot?.bright_pixels ?? 0),
     `native Stage3D mesh preview did not honor XYZ scene rotation: ${JSON.stringify({ stageMeshUnrotatedSnapshot, stageMeshRotatedSnapshot })}`,
   );
+  await broker.invoke('native_renderer_set_stage3d_scene', {
+    scene: {
+      ...meshRotationSceneBase,
+      lighting: { roomDarkness: 0, roomIntensity: 1, exposure: 1, screenBoost: 1 },
+      nodes: [{ ...meshRotationSceneBase.nodes[0], rotation: [0, 0, 0] }],
+    },
+  });
+  const stageMeshRoomLitPath = join(tempDir, 'broker-stage3d-mesh-room-lit.rgba');
+  const stageMeshRoomLitSnapshot = await broker.invoke('native_renderer_export_frame_snapshot', {
+    path: stageMeshRoomLitPath,
+    time: 0.211,
+    frame_index: 12,
+  });
+  await broker.invoke('native_renderer_set_stage3d_scene', {
+    scene: {
+      ...meshRotationSceneBase,
+      lighting: { roomDarkness: 0.82, roomIntensity: 1, exposure: 1, screenBoost: 1 },
+      nodes: [{ ...meshRotationSceneBase.nodes[0], rotation: [0, 0, 0] }],
+    },
+  });
+  const stageMeshRoomDarkPath = join(tempDir, 'broker-stage3d-mesh-room-dark.rgba');
+  const stageMeshRoomDarkSnapshot = await broker.invoke('native_renderer_export_frame_snapshot', {
+    path: stageMeshRoomDarkPath,
+    time: 0.211,
+    frame_index: 12,
+  });
+  assert(
+    stageMeshRoomLitSnapshot?.checksum !== stageMeshRoomDarkSnapshot?.checksum &&
+      Number(stageMeshRoomLitSnapshot?.max_luma ?? 0) > Number(stageMeshRoomDarkSnapshot?.max_luma ?? 0) + 0.05 &&
+      Number(stageMeshRoomLitSnapshot?.bright_pixels ?? 0) > Number(stageMeshRoomDarkSnapshot?.bright_pixels ?? 0),
+    `native Stage3D mesh preview did not apply scene room-darkness lighting: ${JSON.stringify({ stageMeshRoomLitSnapshot, stageMeshRoomDarkSnapshot })}`,
+  );
   await broker.invoke('native_renderer_submit_commands', {
     commands: [
       {
@@ -781,6 +813,36 @@ try {
       Number(stageTexturedRedSnapshot?.bright_pixels ?? 0) > Number(stageEmptySnapshot?.bright_pixels ?? 0) &&
       Number(stageTexturedGreenSnapshot?.bright_pixels ?? 0) > Number(stageEmptySnapshot?.bright_pixels ?? 0),
     `native Stage3D textured mesh preview did not sample source-frame texture changes: ${JSON.stringify({ stageTexturedRedSnapshot, stageTexturedGreenSnapshot })}`,
+  );
+  await broker.invoke('native_renderer_set_stage3d_scene', {
+    scene: {
+      ...texturedStageScene,
+      lighting: { roomDarkness: 0.6, roomIntensity: 0.4, exposure: 0.6, screenBoost: 0.35 },
+    },
+  });
+  const stageTexturedDimPath = join(tempDir, 'broker-stage3d-textured-dim.rgba');
+  const stageTexturedDimSnapshot = await broker.invoke('native_renderer_export_frame_snapshot', {
+    path: stageTexturedDimPath,
+    time: 0.23,
+    frame_index: 14,
+  });
+  await broker.invoke('native_renderer_set_stage3d_scene', {
+    scene: {
+      ...texturedStageScene,
+      lighting: { roomDarkness: 0.6, roomIntensity: 0.4, exposure: 0.6, screenBoost: 2.4 },
+    },
+  });
+  const stageTexturedBoostedPath = join(tempDir, 'broker-stage3d-textured-boosted.rgba');
+  const stageTexturedBoostedSnapshot = await broker.invoke('native_renderer_export_frame_snapshot', {
+    path: stageTexturedBoostedPath,
+    time: 0.23,
+    frame_index: 14,
+  });
+  assert(
+    stageTexturedDimSnapshot?.checksum !== stageTexturedBoostedSnapshot?.checksum &&
+      Number(stageTexturedBoostedSnapshot?.average_luma ?? 0) > Number(stageTexturedDimSnapshot?.average_luma ?? 0) + 0.035 &&
+      Number(stageTexturedBoostedSnapshot?.max_luma ?? 0) > Number(stageTexturedDimSnapshot?.max_luma ?? 0) + 0.04,
+    `native Stage3D textured mesh preview did not apply scene screen boost independently from room lighting: ${JSON.stringify({ stageTexturedDimSnapshot, stageTexturedBoostedSnapshot })}`,
   );
   await broker.invoke('native_renderer_set_stage3d_scene', {
     scene: {

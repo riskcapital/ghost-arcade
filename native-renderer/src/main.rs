@@ -277,6 +277,8 @@ struct Stage3DMeshUniforms {
   camera_pos: vec4<f32>,
   camera_target: vec4<f32>,
   params: vec4<f32>, // fov radians, aspect, near, far
+  lighting: vec4<f32>, // room darkness, screen boost, exposure, room intensity
+  atmosphere: vec4<f32>, // haze density, reserved
 }
 
 struct Stage3DMeshItem {
@@ -542,16 +544,24 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) in
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   let light = normalize(vec3<f32>(-0.3, 0.75, 0.55));
   let shade = 0.48 + 0.52 * clamp(dot(normalize(in.normal + vec3<f32>(0.0, 0.15, 0.0)), light), 0.0, 1.0);
-  let haze = clamp(1.0 - in.view_z * 0.012, 0.58, 1.0);
+  let haze_density = clamp(u.atmosphere.x, 0.0, 4.0);
+  let haze_floor = clamp(0.58 - haze_density * 0.22, 0.18, 0.80);
+  let haze = clamp(1.0 - in.view_z * (0.012 + haze_density * 0.012), haze_floor, 1.0);
   let opacity = clamp(in.material.w, 0.0, 1.0);
   let alpha = clamp(in.color.a * opacity, 0.0, 0.96);
+  let room_visibility = clamp(1.0 - u.lighting.x, 0.0, 1.0);
+  let screen_boost = max(0.0, u.lighting.y);
+  let exposure = max(0.02, u.lighting.z);
+  let room_light = room_visibility * max(0.0, u.lighting.w) * exposure;
+  let source_active = select(0.0, 1.0, in.material.x >= 0.5);
+  let light_mul = mix(room_light, screen_boost, source_active);
   var rgb = in.color.rgb;
   if (in.material.x >= 0.5) {
     let source_slot = i32(clamp(floor(in.material.x - 1.0 + 0.5), 0.0, 7.0));
     let tex = textureSampleLevel(source_frames, source_sampler, in.uv, source_slot, 0.0).rgb;
     rgb = mix(rgb, tex, clamp(opacity, 0.0, 1.0));
   }
-  rgb *= max(0.0, in.material.y);
+  rgb *= max(0.0, in.material.y) * light_mul;
   return vec4<f32>(rgb * shade * haze * alpha, alpha);
 }
 "#;
@@ -1179,6 +1189,8 @@ struct Stage3DMeshUniforms {
     camera_pos: [f32; 4],
     camera_target: [f32; 4],
     params: [f32; 4],
+    lighting: [f32; 4],
+    atmosphere: [f32; 4],
 }
 
 #[repr(C)]
@@ -1197,6 +1209,8 @@ struct Stage3DMeshFrame {
     camera_pos: [f32; 3],
     camera_target: [f32; 3],
     fov_degrees: f32,
+    lighting: [f32; 4],
+    atmosphere: [f32; 4],
     items: Vec<Stage3DMeshItemGpu>,
 }
 
@@ -5106,10 +5120,15 @@ impl App {
     fn stage3d_mesh_frame(&self) -> Option<Stage3DMeshFrame> {
         let mut items = Vec::new();
         let mut camera = None;
+        let mut lighting = stage3d_default_lighting_uniform();
+        let mut atmosphere = stage3d_default_atmosphere_uniform();
         if let Some(scene) = self.stage3d_scene.as_ref() {
             collect_stage3d_mesh_nodes(scene.get("nodes"), &mut items, self);
             collect_stage3d_user_mesh_items(scene.get("userElements"), &mut items, self);
             camera = scene.get("camera");
+            let scene_lighting = stage3d_scene_lighting_uniform(scene);
+            lighting = scene_lighting.0;
+            atmosphere = scene_lighting.1;
         }
         if let Some(scene) = self.projection_sim_scene.as_ref() {
             collect_projection_sim_mesh_items(scene, &mut items, self);
@@ -5131,6 +5150,8 @@ impl App {
                 .and_then(|value| number_at(value, &["fov"]))
                 .unwrap_or(50.0)
                 .clamp(12.0, 120.0) as f32,
+            lighting,
+            atmosphere,
             items,
         })
     }
@@ -8342,6 +8363,8 @@ impl RenderState {
                     0.05,
                     180.0,
                 ],
+                lighting: frame.lighting,
+                atmosphere: frame.atmosphere,
             }),
         );
         self.queue.write_buffer(
@@ -9217,6 +9240,53 @@ fn stage3d_material(
         uv_mode,
         opacity.clamp(0.0, 1.0),
     ]
+}
+
+fn stage3d_default_lighting_uniform() -> [f32; 4] {
+    [0.0, 1.0, 1.0, 1.0]
+}
+
+fn stage3d_default_atmosphere_uniform() -> [f32; 4] {
+    [0.0, 0.0, 0.0, 0.0]
+}
+
+fn stage3d_scene_lighting_uniform(scene: &Value) -> ([f32; 4], [f32; 4]) {
+    let lighting = scene.get("lighting");
+    let room_darkness = lighting
+        .and_then(|value| number_at(value, &["roomDarkness"]))
+        .unwrap_or(0.0)
+        .clamp(0.0, 1.0) as f32;
+    let screen_boost = lighting
+        .and_then(|value| number_at(value, &["screenBoost"]))
+        .unwrap_or(1.0)
+        .clamp(0.0, 8.0) as f32;
+    let exposure = lighting
+        .and_then(|value| number_at(value, &["exposure"]))
+        .filter(|value| *value > 0.0)
+        .unwrap_or(1.0)
+        .clamp(0.02, 8.0) as f32;
+    let room_intensity = lighting
+        .and_then(|value| number_at(value, &["roomIntensity"]))
+        .unwrap_or(1.0)
+        .clamp(0.0, 8.0) as f32;
+
+    let atmosphere = scene.get("atmosphere");
+    let haze_enabled = atmosphere
+        .and_then(|value| bool_at(value, &["haze"]))
+        .unwrap_or(false);
+    let haze_density = if haze_enabled {
+        atmosphere
+            .and_then(|value| number_at(value, &["hazeDensity"]))
+            .unwrap_or(1.0)
+            .clamp(0.0, 4.0) as f32
+    } else {
+        0.0
+    };
+
+    (
+        [room_darkness, screen_boost, exposure, room_intensity],
+        [haze_density, 0.0, 0.0, 0.0],
+    )
 }
 
 fn stage3d_uv_mode(mode: &str) -> f32 {
