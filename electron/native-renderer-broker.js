@@ -1981,6 +1981,21 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
         previous.native_video_frame_decode_last_error ??
         'none',
     ),
+    native_video_frame_cache_entries: Number(
+      status.native_video_frame_cache_entries ?? previous.native_video_frame_cache_entries ?? 0,
+    ),
+    native_video_frame_cache_bytes: Number(
+      status.native_video_frame_cache_bytes ?? previous.native_video_frame_cache_bytes ?? 0,
+    ),
+    native_video_frame_cache_hits: Number(
+      status.native_video_frame_cache_hits ?? previous.native_video_frame_cache_hits ?? 0,
+    ),
+    native_video_frame_cache_misses: Number(
+      status.native_video_frame_cache_misses ?? previous.native_video_frame_cache_misses ?? 0,
+    ),
+    native_video_frame_cache_evictions: Number(
+      status.native_video_frame_cache_evictions ?? previous.native_video_frame_cache_evictions ?? 0,
+    ),
     native_instrument_frame_renders: Number(status.native_instrument_frame_renders ?? previous.native_instrument_frame_renders ?? 0),
     compute_graph_runs: Number(status.compute_graph_runs ?? previous.compute_graph_runs ?? 0),
     compute_graph_passes: Number(status.compute_graph_passes ?? previous.compute_graph_passes ?? 0),
@@ -2322,6 +2337,21 @@ function normalizeStats(stats, previous = makeDefaultStats()) {
         previous.native_video_frame_decode_last_error ??
         'none',
     ),
+    native_video_frame_cache_entries: Number(
+      stats.native_video_frame_cache_entries ?? previous.native_video_frame_cache_entries ?? 0,
+    ),
+    native_video_frame_cache_bytes: Number(
+      stats.native_video_frame_cache_bytes ?? previous.native_video_frame_cache_bytes ?? 0,
+    ),
+    native_video_frame_cache_hits: Number(
+      stats.native_video_frame_cache_hits ?? previous.native_video_frame_cache_hits ?? 0,
+    ),
+    native_video_frame_cache_misses: Number(
+      stats.native_video_frame_cache_misses ?? previous.native_video_frame_cache_misses ?? 0,
+    ),
+    native_video_frame_cache_evictions: Number(
+      stats.native_video_frame_cache_evictions ?? previous.native_video_frame_cache_evictions ?? 0,
+    ),
     avg_render_cpu_ms: Number(stats.avg_render_cpu_ms ?? previous.avg_render_cpu_ms ?? 0),
     gpu_timing_supported: !!(stats.gpu_timing_supported ?? previous.gpu_timing_supported ?? false),
     last_render_gpu_ms: Number(stats.last_render_gpu_ms ?? previous.last_render_gpu_ms ?? 0),
@@ -2567,6 +2597,11 @@ function makeDefaultStatus(overrides = {}) {
     native_video_frame_decode_failures: 0,
     native_video_frame_decode_bytes_uploaded: 0,
     native_video_frame_decode_last_error: 'none',
+    native_video_frame_cache_entries: 0,
+    native_video_frame_cache_bytes: 0,
+    native_video_frame_cache_hits: 0,
+    native_video_frame_cache_misses: 0,
+    native_video_frame_cache_evictions: 0,
     native_instrument_frame_renders: 0,
     compute_graph_runs: 0,
     compute_graph_passes: 0,
@@ -2632,6 +2667,11 @@ function makeDefaultStatus(overrides = {}) {
     native_video_frame_decode_failures: 0,
     native_video_frame_decode_bytes_uploaded: 0,
     native_video_frame_decode_last_error: 'none',
+    native_video_frame_cache_entries: 0,
+    native_video_frame_cache_bytes: 0,
+    native_video_frame_cache_hits: 0,
+    native_video_frame_cache_misses: 0,
+    native_video_frame_cache_evictions: 0,
     native_shader_renders: 0,
     native_instrument_frame_renders: 0,
     render_clock_mode: 'live',
@@ -2908,6 +2948,11 @@ function makeDefaultStats() {
     native_video_frame_decode_failures: 0,
     native_video_frame_decode_bytes_uploaded: 0,
     native_video_frame_decode_last_error: 'none',
+    native_video_frame_cache_entries: 0,
+    native_video_frame_cache_bytes: 0,
+    native_video_frame_cache_hits: 0,
+    native_video_frame_cache_misses: 0,
+    native_video_frame_cache_evictions: 0,
     native_shader_renders: 0,
     native_instrument_frame_renders: 0,
     render_clock_updates: 0,

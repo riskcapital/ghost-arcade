@@ -1284,10 +1284,31 @@ try {
           Number(secondBlueVideoPrefetchStatus.source_frame_uploads ?? 0),
       `native video frame prefetch repeat should reuse the core video-frame signature for the same timestamp: ${JSON.stringify({ before: secondBlueVideoPrefetchStatus, after: repeatedBlueVideoPrefetchStatus })}`,
     );
+    const crossSourceBlueVideoPrefetchStatus = await broker.invoke('native_renderer_prefetch_media', {
+      source_id: 'broker-prefetch-video-timed-copy',
+      uri: timedVideoPath,
+      source_type: 'video',
+      decode_width: 64,
+      decode_height: 64,
+      priority: 2,
+      time_seconds: 0.75,
+      seq: 752,
+    });
+    assert(
+      Number(crossSourceBlueVideoPrefetchStatus.native_video_frame_decodes ?? 0) ===
+        Number(secondBlueVideoPrefetchStatus.native_video_frame_decodes ?? 0) &&
+        Number(crossSourceBlueVideoPrefetchStatus.native_video_frame_cache_hits ?? 0) >
+          Number(secondBlueVideoPrefetchStatus.native_video_frame_cache_hits ?? 0) &&
+        Number(crossSourceBlueVideoPrefetchStatus.source_frame_uploads ?? 0) >
+          Number(repeatedBlueVideoPrefetchStatus.source_frame_uploads ?? 0) &&
+        crossSourceBlueVideoPrefetchStatus.source_frame_last_upload_transport === 'native-video-frame-cache',
+      `native video frame prefetch should reuse the core decoded-frame cache across source ids: ${JSON.stringify({ before: secondBlueVideoPrefetchStatus, repeat: repeatedBlueVideoPrefetchStatus, copy: crossSourceBlueVideoPrefetchStatus })}`,
+    );
     const clearedVideoFramePrefetchStatus = await broker.invoke('native_renderer_clear_prefetch_cache');
     assert(
-      Number(clearedVideoFramePrefetchStatus.cleared_native_video_frame_signatures ?? 0) > 0,
-      `native prefetch clear should clear core video-frame signatures: ${JSON.stringify(clearedVideoFramePrefetchStatus)}`,
+      Number(clearedVideoFramePrefetchStatus.cleared_native_video_frame_signatures ?? 0) > 0 &&
+        Number(clearedVideoFramePrefetchStatus.cleared_native_video_frame_cache_entries ?? 0) > 0,
+      `native prefetch clear should clear core video-frame signatures and decoded-frame cache: ${JSON.stringify(clearedVideoFramePrefetchStatus)}`,
     );
   } else {
     assert(
