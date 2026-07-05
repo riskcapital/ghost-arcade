@@ -283,6 +283,8 @@ struct Stage3DMeshItem {
   position: vec4<f32>, // xyz, shape
   scale: vec4<f32>,    // xyz, yaw
   color: vec4<f32>,
+  material: vec4<f32>, // source_slot+1, brightness, uv_mode, opacity
+  uv: vec4<f32>,       // offset x/y, zoom, rotation radians
 }
 
 @group(0) @binding(0)
@@ -291,11 +293,19 @@ var<uniform> u: Stage3DMeshUniforms;
 @group(0) @binding(1)
 var<storage, read> items: array<Stage3DMeshItem>;
 
+@group(0) @binding(2)
+var source_frames: texture_2d_array<f32>;
+
+@group(0) @binding(3)
+var source_sampler: sampler;
+
 struct VertexOut {
   @builtin(position) position: vec4<f32>,
   @location(0) color: vec4<f32>,
   @location(1) normal: vec3<f32>,
   @location(2) view_z: f32,
+  @location(3) uv: vec2<f32>,
+  @location(4) material: vec4<f32>,
 }
 
 fn cube_vertex(index: u32) -> vec3<f32> {
@@ -328,6 +338,30 @@ fn rotate_y(p: vec3<f32>, yaw: f32) -> vec3<f32> {
   let c = cos(yaw);
   let s = sin(yaw);
   return vec3<f32>(c * p.x + s * p.z, p.y, -s * p.x + c * p.z);
+}
+
+fn rotate_uv(p: vec2<f32>, angle: f32) -> vec2<f32> {
+  let c = cos(angle);
+  let s = sin(angle);
+  return vec2<f32>(c * p.x - s * p.y, s * p.x + c * p.y);
+}
+
+fn stage_uv(base_uv: vec2<f32>, material: vec4<f32>, uv_params: vec4<f32>) -> vec2<f32> {
+  let zoom = max(0.001, uv_params.z);
+  var uv = rotate_uv((base_uv - vec2<f32>(0.5)) / zoom, uv_params.w) + vec2<f32>(0.5) + uv_params.xy;
+  let mode = material.z;
+  if (mode > 1.5 && mode < 3.5) {
+    let centered = uv - vec2<f32>(0.5);
+    let angle = atan2(centered.y, centered.x) / 6.28318530718 + 0.5;
+    let radius = length(centered) * 1.41421356237;
+    uv = vec2<f32>(angle, radius);
+  } else if (mode > 0.5 && mode < 1.5) {
+    let folded = fract(uv * 0.5) * 2.0;
+    uv = select(folded, 2.0 - folded, folded > vec2<f32>(1.0));
+  } else {
+    uv = fract(uv);
+  }
+  return uv;
 }
 
 @vertex
@@ -370,6 +404,8 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) in
   out.color = item.color;
   out.normal = normalize(rotate_y(local, item.scale.w));
   out.view_z = view.z;
+  out.uv = stage_uv(vec2<f32>(local.x + 0.5, 0.5 - local.y), item.material, item.uv);
+  out.material = item.material;
   return out;
 }
 
@@ -378,8 +414,16 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   let light = normalize(vec3<f32>(-0.3, 0.75, 0.55));
   let shade = 0.48 + 0.52 * clamp(dot(normalize(in.normal + vec3<f32>(0.0, 0.15, 0.0)), light), 0.0, 1.0);
   let haze = clamp(1.0 - in.view_z * 0.012, 0.58, 1.0);
-  let alpha = clamp(in.color.a, 0.0, 0.92);
-  return vec4<f32>(in.color.rgb * shade * haze * alpha, alpha);
+  let opacity = clamp(in.material.w, 0.0, 1.0);
+  let alpha = clamp(in.color.a * opacity, 0.0, 0.96);
+  var rgb = in.color.rgb;
+  if (in.material.x >= 0.5) {
+    let source_slot = i32(clamp(floor(in.material.x - 1.0 + 0.5), 0.0, 7.0));
+    let tex = textureSample(source_frames, source_sampler, in.uv, source_slot).rgb;
+    rgb = mix(rgb, tex, clamp(opacity, 0.0, 1.0));
+  }
+  rgb *= max(0.0, in.material.y);
+  return vec4<f32>(rgb * shade * haze * alpha, alpha);
 }
 "#;
 
@@ -1014,6 +1058,8 @@ struct Stage3DMeshItemGpu {
     position: [f32; 4],
     scale: [f32; 4],
     color: [f32; 4],
+    material: [f32; 4],
+    uv: [f32; 4],
 }
 
 #[derive(Clone, Debug)]
@@ -1458,6 +1504,7 @@ struct ShaderRecord {
 struct SceneLayer {
     id: String,
     z_index: i32,
+    vj_layer_index: Option<i32>,
     visible: bool,
     opacity: f32,
     source_kind: f32,
@@ -1483,6 +1530,7 @@ impl SceneLayer {
             color: stable_layer_color(&id, 1.0),
             id,
             z_index,
+            vj_layer_index: None,
             visible: true,
             opacity: 1.0,
             source_kind: 0.0,
@@ -2074,6 +2122,7 @@ impl App {
             "native_stage3d_scene_ingest": true,
             "native_stage3d_overlay_preview": true,
             "native_stage3d_mesh_preview": true,
+            "native_stage3d_textured_mesh_preview": true,
             "native_projection_sim_scene_ingest": true,
             "native_projection_sim_overlay_preview": true,
             "native_recording": false,
@@ -4580,6 +4629,10 @@ impl App {
             .entry(layer_id.clone())
             .or_insert_with(|| SceneLayer::new(layer_id, z_index));
         entry.z_index = z_index;
+        if command_has_key(command, "vj_layer_index") || command_has_key(command, "vjLayerIndex") {
+            entry.vj_layer_index = number_at_any(command, "vj_layer_index", "vjLayerIndex")
+                .map(|value| value.round().clamp(i32::MIN as f64, i32::MAX as f64) as i32);
+        }
         entry.opacity = number_at(command, &["opacity"])
             .unwrap_or(entry.opacity as f64)
             .clamp(0.0, 1.0) as f32;
@@ -4920,8 +4973,8 @@ impl App {
     fn stage3d_mesh_frame(&self) -> Option<Stage3DMeshFrame> {
         let scene = self.stage3d_scene.as_ref()?;
         let mut items = Vec::new();
-        collect_stage3d_mesh_nodes(scene.get("nodes"), &mut items);
-        collect_stage3d_user_mesh_items(scene.get("userElements"), &mut items);
+        collect_stage3d_mesh_nodes(scene.get("nodes"), &mut items, self);
+        collect_stage3d_user_mesh_items(scene.get("userElements"), &mut items, self);
         if items.is_empty() {
             return None;
         }
@@ -4939,6 +4992,59 @@ impl App {
                 .clamp(12.0, 120.0) as f32,
             items,
         })
+    }
+
+    fn stage3d_source_slot_for_text(&self, value: &str) -> Option<usize> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("solid") {
+            return None;
+        }
+        if trimmed.eq_ignore_ascii_case("master") {
+            return self.first_visible_source_frame_slot();
+        }
+        if let Some(slot) = self.source_frame_slots.get(trimmed).copied() {
+            return Some(slot);
+        }
+        if let Some(slot) = self.scene_layer_source_slot(trimmed) {
+            return Some(slot);
+        }
+        if let Ok(index) = trimmed.parse::<i32>() {
+            return self
+                .scene_layers
+                .values()
+                .filter(|layer| layer.visible && layer.vj_layer_index == Some(index))
+                .min_by_key(|layer| layer.z_index)
+                .and_then(|layer| self.scene_layer_source_slot(&layer.id));
+        }
+        None
+    }
+
+    fn stage3d_source_slot_for_value(&self, value: Option<&Value>) -> Option<usize> {
+        let value = value?;
+        if let Some(text) = value.as_str() {
+            return self.stage3d_source_slot_for_text(text);
+        }
+        value
+            .as_i64()
+            .and_then(|index| self.stage3d_source_slot_for_text(&index.to_string()))
+    }
+
+    fn scene_layer_source_slot(&self, layer_id: &str) -> Option<usize> {
+        let layer = self.scene_layers.get(layer_id)?;
+        layer.frame_slot.or_else(|| {
+            layer
+                .source_id
+                .as_deref()
+                .and_then(|source_id| self.source_frame_slots.get(source_id).copied())
+        })
+    }
+
+    fn first_visible_source_frame_slot(&self) -> Option<usize> {
+        self.scene_layers
+            .values()
+            .filter(|layer| layer.visible)
+            .min_by_key(|layer| layer.z_index)
+            .and_then(|layer| self.scene_layer_source_slot(&layer.id))
     }
 
     fn set_projection_sim_scene(&mut self, params: &Value) -> Result<Value, String> {
@@ -5917,6 +6023,22 @@ impl RenderState {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2Array,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
                 ],
             });
         let stage3d_mesh_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -5930,6 +6052,14 @@ impl RenderState {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: stage3d_mesh_item_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&source_frame_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(&source_frame_sampler),
                 },
             ],
         });
@@ -8577,7 +8707,11 @@ fn stage3d_project_position(position: [f32; 3]) -> [f32; 2] {
     ]
 }
 
-fn collect_stage3d_mesh_nodes(value: Option<&Value>, items: &mut Vec<Stage3DMeshItemGpu>) {
+fn collect_stage3d_mesh_nodes(
+    value: Option<&Value>,
+    items: &mut Vec<Stage3DMeshItemGpu>,
+    app: &App,
+) {
     let Some(nodes) = value.and_then(Value::as_array) else {
         return;
     };
@@ -8598,12 +8732,15 @@ fn collect_stage3d_mesh_nodes(value: Option<&Value>, items: &mut Vec<Stage3DMesh
                 let brightness = number_at(node, &["brightness"])
                     .unwrap_or(1.0)
                     .clamp(0.1, 4.0) as f32;
+                let source_slot = app.stage3d_source_slot_for_value(node.get("source"));
                 items.push(stage3d_mesh_item(
                     position,
                     [width.max(0.05), height.max(0.05), 0.04],
                     rotation[1],
                     [0.18, 0.8, 1.0, (0.48 + brightness * 0.1).clamp(0.45, 0.82)],
                     0.0,
+                    stage3d_material(source_slot, brightness, 0.0, 1.0),
+                    [0.0, 0.0, 1.0, 0.0],
                 ));
             }
             "primitive" | "svg-extrude" => {
@@ -8637,6 +8774,8 @@ fn collect_stage3d_mesh_nodes(value: Option<&Value>, items: &mut Vec<Stage3DMesh
                     } else {
                         1.0
                     },
+                    stage3d_material(None, 1.0, 0.0, 1.0),
+                    [0.0, 0.0, 1.0, 0.0],
                 ));
             }
             "truss" | "imported-glb" => {
@@ -8653,6 +8792,8 @@ fn collect_stage3d_mesh_nodes(value: Option<&Value>, items: &mut Vec<Stage3DMesh
                     rotation[1],
                     [color[0], color[1], color[2], 0.38],
                     1.0,
+                    stage3d_material(None, 1.0, 0.0, 1.0),
+                    [0.0, 0.0, 1.0, 0.0],
                 ));
             }
             "spot-light" | "point-light" | "rect-area-light" => {
@@ -8668,6 +8809,8 @@ fn collect_stage3d_mesh_nodes(value: Option<&Value>, items: &mut Vec<Stage3DMesh
                     0.0,
                     [color[0], color[1], color[2], 0.62],
                     1.0,
+                    stage3d_material(None, 1.0, 0.0, 1.0),
+                    [0.0, 0.0, 1.0, 0.0],
                 ));
             }
             "fog-volume" => {
@@ -8692,15 +8835,21 @@ fn collect_stage3d_mesh_nodes(value: Option<&Value>, items: &mut Vec<Stage3DMesh
                         (0.10 + density * 0.08).min(0.26),
                     ],
                     1.0,
+                    stage3d_material(None, 1.0, 0.0, 1.0),
+                    [0.0, 0.0, 1.0, 0.0],
                 ));
             }
             _ => {}
         }
-        collect_stage3d_mesh_nodes(node.get("children"), items);
+        collect_stage3d_mesh_nodes(node.get("children"), items, app);
     }
 }
 
-fn collect_stage3d_user_mesh_items(value: Option<&Value>, items: &mut Vec<Stage3DMeshItemGpu>) {
+fn collect_stage3d_user_mesh_items(
+    value: Option<&Value>,
+    items: &mut Vec<Stage3DMeshItemGpu>,
+    app: &App,
+) {
     let Some(elements) = value.and_then(Value::as_array) else {
         return;
     };
@@ -8727,6 +8876,28 @@ fn collect_stage3d_user_mesh_items(value: Option<&Value>, items: &mut Vec<Stage3
         let color = color_path_or(element, &["params", "color"])
             .or_else(|| color_path_or(element, &["params", "lightColor"]))
             .unwrap_or([0.78, 0.8, 0.86]);
+        let brightness = number_at(element, &["params", "brightness"])
+            .unwrap_or(1.0)
+            .clamp(0.0, 8.0) as f32;
+        let opacity = number_at(element, &["params", "opacity"])
+            .unwrap_or(1.0)
+            .clamp(0.0, 1.0) as f32;
+        let source_slot = app.stage3d_source_slot_for_value(element.pointer("/params/vjSource"));
+        let uv_mode = string_at(element, &["params", "uvMode"])
+            .map(|mode| stage3d_uv_mode(&mode))
+            .unwrap_or(0.0);
+        let uv_zoom = number_at(element, &["params", "uvZoom"])
+            .unwrap_or(1.0)
+            .clamp(0.05, 64.0) as f32;
+        let uv_offset_x = number_at(element, &["params", "uvOffsetX"])
+            .unwrap_or(0.0)
+            .clamp(-64.0, 64.0) as f32;
+        let uv_offset_y = number_at(element, &["params", "uvOffsetY"])
+            .unwrap_or(0.0)
+            .clamp(-64.0, 64.0) as f32;
+        let uv_rotation = number_at(element, &["params", "uvRotation"]).unwrap_or(0.0) as f32
+            * std::f32::consts::PI
+            / 180.0;
         items.push(stage3d_mesh_item(
             position,
             [
@@ -8735,8 +8906,15 @@ fn collect_stage3d_user_mesh_items(value: Option<&Value>, items: &mut Vec<Stage3
                 depth.abs().max(0.08),
             ],
             number_at(element, &["rotationY"]).unwrap_or(0.0) as f32,
-            [color[0], color[1], color[2], 0.46],
+            [
+                color[0],
+                color[1],
+                color[2],
+                (0.18 + opacity * 0.62).clamp(0.18, 0.86),
+            ],
             1.0,
+            stage3d_material(source_slot, brightness, uv_mode, opacity),
+            [uv_offset_x, uv_offset_y, uv_zoom, uv_rotation],
         ));
     }
 }
@@ -8747,11 +8925,41 @@ fn stage3d_mesh_item(
     yaw: f32,
     color: [f32; 4],
     shape: f32,
+    material: [f32; 4],
+    uv: [f32; 4],
 ) -> Stage3DMeshItemGpu {
     Stage3DMeshItemGpu {
         position: [position[0], position[1], position[2], shape],
         scale: [scale[0], scale[1], scale[2], yaw],
         color,
+        material,
+        uv,
+    }
+}
+
+fn stage3d_material(
+    source_slot: Option<usize>,
+    brightness: f32,
+    uv_mode: f32,
+    opacity: f32,
+) -> [f32; 4] {
+    [
+        source_slot
+            .map(|slot| (slot.min(MAX_SOURCE_FRAME_SLOTS - 1) + 1) as f32)
+            .unwrap_or(0.0),
+        brightness.clamp(0.0, 8.0),
+        uv_mode,
+        opacity.clamp(0.0, 1.0),
+    ]
+}
+
+fn stage3d_uv_mode(mode: &str) -> f32 {
+    match mode.trim().to_ascii_lowercase().as_str() {
+        "mirror" => 1.0,
+        "radial" => 2.0,
+        "dome" => 3.0,
+        "wrap" => 4.0,
+        _ => 0.0,
     }
 }
 
