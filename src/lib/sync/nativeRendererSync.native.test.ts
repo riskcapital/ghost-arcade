@@ -219,6 +219,21 @@ describe('native renderer sync effect-pass descriptors', () => {
         temperatureAutoCycle: 0.9,
       },
     })).toBe('temperature-tint:-0.3500:0.2000:-0.2500:0.4000:0.7000:0.9000');
+
+    expect(effectToNativeDescriptor({
+      type: 'colorama',
+      params: {
+        coloramaMix: 0.85,
+        coloramaPalette: 8,
+        coloramaOffset: 0.15,
+        coloramaSpeed: 0.05,
+        coloramaContrast: 1.2,
+        coloramaBands: 4,
+        coloramaAudioReact: 0.35,
+        coloramaHueShift: 0.2,
+        audio: 0.4,
+      },
+    })).toBe('colorama:0.8500:8:0.1500:0.0500:1.2000:4.0000:0.3500:0.2000:0.4000');
   });
 
   it('rebuilds native effect-pass runtime params from color correction descriptors', () => {
@@ -250,6 +265,21 @@ describe('native renderer sync effect-pass descriptors', () => {
         highlightTemp: 0.4,
         splitTone: 0.7,
         autoCycle: 0.9,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('colorama:0.8500:8:0.1500:0.0500:1.2000:4.0000:0.3500:0.2000:0.4000')).toMatchObject({
+      effect: 'colorama',
+      amount: 0.85,
+      params: {
+        coloramaPalette: 8,
+        coloramaOffset: 0.15,
+        coloramaSpeed: 0.05,
+        coloramaContrast: 1.2,
+        coloramaBands: 4,
+        coloramaAudioReact: 0.35,
+        coloramaHueShift: 0.2,
+        audio: 0.4,
       },
     });
   });

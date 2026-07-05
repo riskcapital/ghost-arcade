@@ -210,6 +210,7 @@ describe('Native effect-pass template', () => {
       ['film-grain', 37],
       ['filmic-tonemap', 38],
       ['bloom', 39],
+      ['colorama', 40],
     ]);
     expect(nativeEffectPassManifestEntry('posterize')).toMatchObject({
       code: 8,
@@ -528,6 +529,44 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+    ]);
+    expect(packNativeEffectPassUniforms({
+      sourceId: 'src',
+      targetSourceId: 'dst',
+      effect: 'colorama',
+      width: 320,
+      height: 180,
+      time: 0.5,
+      frameDelta: 1 / 24,
+      frameIndex: 3,
+      params: {
+        coloramaPalette: 8,
+        coloramaOffset: 0.15,
+        coloramaSpeed: 0.05,
+        coloramaContrast: 1.2,
+        coloramaMix: 0.85,
+        coloramaBands: 4,
+        coloramaAudioReact: 0.35,
+        coloramaHueShift: 0.2,
+        audio: 0.4,
+      },
+    })).toEqual([
+      320,
+      180,
+      0.5,
+      1 / 24,
+      40,
+      0.85,
+      1,
+      3,
+      8,
+      0.15,
+      0.05,
+      1.2,
+      4,
+      0.35,
+      0.2,
+      0.4,
     ]);
   });
 
@@ -1787,6 +1826,35 @@ describe('Native effect-pass template', () => {
             const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.58, 0.42);
             const bloomRgb = snapshotPixelRgb(snapshot, pixels, 0.58, 0.42);
             expect(rgbDistance(sourceRgb, bloomRgb)).toBeGreaterThan(0.01);
+          },
+        },
+        {
+          id: 'colorama',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-colorama',
+            effect: 'colorama',
+            width: 160,
+            height: 90,
+            time: 0.35,
+            frameDelta: 1 / 30,
+            frameIndex: 33,
+            params: {
+              coloramaPalette: 8,
+              coloramaOffset: 0.12,
+              coloramaSpeed: 0.2,
+              coloramaContrast: 1.25,
+              coloramaMix: 1,
+              coloramaBands: 5,
+              coloramaAudioReact: 0.2,
+              coloramaHueShift: 0.18,
+              audio: 0.4,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.42, 0.58);
+            const coloramaRgb = snapshotPixelRgb(snapshot, pixels, 0.42, 0.58);
+            expect(rgbDistance(sourceRgb, coloramaRgb)).toBeGreaterThan(0.05);
           },
         },
       ];
