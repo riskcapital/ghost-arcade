@@ -103,6 +103,7 @@ import {
   submitNativeRendererCommands,
   type RendererStatus,
   type NativeRendererCapabilities,
+  type RendererReadinessReport,
   type NativeCommandApplySummary,
   type CommandBatch,
   type RendererCommand,
@@ -2189,6 +2190,7 @@ export class NativeRendererSync {
   private sharedTextureInfoNextPollAt = new Map<string, number>();
   private sharedTextureReceiverSender: string | null = null;
   private nextStatusPollAt = 0;
+  private nextReadinessPollAt = 0;
   private degradedModeActive = false;
   private decodeBackpressureActive = false;
   private decodeHandoffBackpressureActive = false;
@@ -3138,6 +3140,7 @@ export class NativeRendererSync {
     this.desiredHeight = height;
     this.sentWidth = 0;
     this.sentHeight = 0;
+    this.nextReadinessPollAt = 0;
     await this.applyStartupPolicies().catch((err) => {
       console.warn('[NativeRendererSync] native startup policy task failed', err);
     });
@@ -3251,6 +3254,7 @@ export class NativeRendererSync {
     this.nativeWgslStdlibWarmed = false;
     this.latestRenderClockSeconds = null;
     this.lastRenderClockSentSeconds = null;
+    this.nextReadinessPollAt = 0;
     if (this.supportsNativeMethod('clear_decode_preview_cache')) {
       await clearNativeRendererDecodePreviewCache().catch(() => {});
     }
@@ -3347,6 +3351,11 @@ export class NativeRendererSync {
       this.nextStatusPollAt = now + 500;
       const status = await getNativeRendererStatus().catch(() => null);
       if (status) {
+        let readiness: RendererReadinessReport | null = null;
+        if (now >= this.nextReadinessPollAt) {
+          this.nextReadinessPollAt = now + 2000;
+          readiness = await getNativeRendererReadinessReport().catch(() => null);
+        }
         this.syncNativeSourceFrameSize(status);
         this.reconcileSharedTextureUploads(status);
         this.reconcileNativeImageDecodes(status);
@@ -3373,6 +3382,8 @@ export class NativeRendererSync {
           !!status.decode_predecode_estimate_cache_backpressure_active;
         this.commandBackpressureActive = !!status.command_backpressure_active;
         updateNativeRendererRuntimeFromStatus(status, {
+          readiness,
+          capabilities: readiness?.capabilities,
           graphCatalogComplete: this.nativeGraphCatalogComplete,
           nativeGraphSourceFrames: this.nativeComputeGraphSourceFrames,
         });
