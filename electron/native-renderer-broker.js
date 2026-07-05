@@ -1026,6 +1026,22 @@ class NativeRendererBroker {
           ? 'Stage3D visual boxes, spheres, domes, pyramids, cones, and cylinders have native mesh previews'
           : 'Stage3D visual primitives collapse to generic native preview meshes',
       ],
+      [
+        'native-stage3d-xyz-mesh-transforms',
+        'Native Stage3D XYZ mesh transforms',
+        !!features.native_stage3d_xyz_mesh_transforms,
+        features.native_stage3d_xyz_mesh_transforms
+          ? 'Stage3D native meshes honor scene X/Y/Z rotation vectors'
+          : 'Stage3D native meshes only partially honor scene transforms',
+      ],
+      [
+        'native-stage3d-lighting-preview',
+        'Native Stage3D lighting preview',
+        !!features.native_stage3d_lighting_preview,
+        features.native_stage3d_lighting_preview
+          ? 'Stage3D native preview applies room darkness, screen boost, exposure, and haze uniforms'
+          : 'Stage3D native preview ignores scene lighting controls',
+      ],
       ['native-projection-sim-scene-ingest', 'Native Projection Sim scene ingest', !!features.native_projection_sim_scene_ingest],
       [
         'native-projection-sim-overlay-preview',
@@ -1050,6 +1066,14 @@ class NativeRendererBroker {
         features.native_projection_sim_textured_mesh_preview
           ? 'Projection Sim receiving surfaces can sample native VJ/source-frame textures'
           : 'Projection Sim native meshes cannot sample projected source textures yet',
+      ],
+      [
+        'native-projection-sim-xyz-mesh-transforms',
+        'Native Projection Sim XYZ mesh transforms',
+        !!features.native_projection_sim_xyz_mesh_transforms,
+        features.native_projection_sim_xyz_mesh_transforms
+          ? 'Projection Sim native objects honor scene X/Y/Z rotation vectors'
+          : 'Projection Sim native objects only partially honor scene transforms',
       ],
       ['compute-graph-host', 'Native buffer compute graph host', !!features.compute_graph_host],
       [
@@ -2203,10 +2227,13 @@ function makeDefaultCapabilities(overrides = {}) {
       native_stage3d_mesh_preview: false,
       native_stage3d_textured_mesh_preview: false,
       native_stage3d_primitive_meshes: false,
+      native_stage3d_xyz_mesh_transforms: false,
+      native_stage3d_lighting_preview: false,
       native_projection_sim_scene_ingest: false,
       native_projection_sim_overlay_preview: false,
       native_projection_sim_mesh_preview: false,
       native_projection_sim_textured_mesh_preview: false,
+      native_projection_sim_xyz_mesh_transforms: false,
       native_recording: false,
       native_stage3d: false,
       native_projection_sim: false,
