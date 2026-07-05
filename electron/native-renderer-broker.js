@@ -727,6 +727,14 @@ class NativeRendererBroker {
           ? 'ingested Stage3D scenes can affect native-rendered frame pixels'
           : 'Stage3D scene data is not yet rendered by the native core',
       ],
+      [
+        'native-stage3d-mesh-preview',
+        'Native Stage3D mesh preview',
+        !!features.native_stage3d_mesh_preview,
+        features.native_stage3d_mesh_preview
+          ? 'ingested Stage3D screens/primitives render through a native camera/depth mesh pass'
+          : 'Stage3D scene data is not yet rendered as native meshes',
+      ],
       ['native-projection-sim-scene-ingest', 'Native Projection Sim scene ingest', !!features.native_projection_sim_scene_ingest],
       [
         'native-projection-sim-overlay-preview',
@@ -1864,6 +1872,7 @@ function makeDefaultCapabilities(overrides = {}) {
       managed_output_window_control: false,
       native_stage3d_scene_ingest: false,
       native_stage3d_overlay_preview: false,
+      native_stage3d_mesh_preview: false,
       native_projection_sim_scene_ingest: false,
       native_projection_sim_overlay_preview: false,
       native_recording: false,
