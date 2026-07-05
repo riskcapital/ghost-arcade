@@ -554,6 +554,9 @@ class NativeRendererBroker {
               decode_width: args.decode_width ?? args.decodeWidth ?? args.width ?? args.decode_size ?? args.decodeSize,
               decode_height: args.decode_height ?? args.decodeHeight ?? args.height ?? args.decode_size ?? args.decodeSize,
               time_seconds: args.time_seconds ?? args.timeSeconds ?? args.time,
+              prefetch_window_frames:
+                args.prefetch_window_frames ?? args.prefetchWindowFrames ?? args.window_frames ?? args.windowFrames,
+              prefetch_fps: args.prefetch_fps ?? args.prefetchFps ?? args.fps,
               seq: args.seq,
             },
             { timeoutMs: VIDEO_FRAME_PREFETCH_TIMEOUT_MS + 2500 },
@@ -629,6 +632,19 @@ class NativeRendererBroker {
       height,
       Number(args.time_seconds ?? args.timeSeconds ?? args.time ?? 0),
     );
+    const prefetchWindowFrames = Math.max(
+      0,
+      Math.min(
+        4,
+        Math.round(
+          Number(args.prefetch_window_frames ?? args.prefetchWindowFrames ?? args.window_frames ?? args.windowFrames ?? 0),
+        ),
+      ),
+    );
+    const prefetchFps = Math.max(
+      1,
+      Math.min(120, Number(args.prefetch_fps ?? args.prefetchFps ?? args.fps ?? 30)),
+    );
     let frame = this.getCachedVideoFramePrefetch(request);
     if (!frame) {
       this.stats.video_frame_prefetch_cache_misses =
@@ -650,6 +666,14 @@ class NativeRendererBroker {
         throw err;
       }
     }
+    await this.prefetchVideoFrameWindow({
+      uri,
+      width: request.width,
+      height: request.height,
+      timeSeconds: request.seconds,
+      prefetchWindowFrames,
+      prefetchFps,
+    });
     const submitResult = await this.sendNativeCommandPayloadIfRunning(
       'submit_commands',
       {
@@ -670,6 +694,45 @@ class NativeRendererBroker {
       throw new Error('native video frame prefetch decoded a frame, but the native core did not accept the source-frame upload');
     }
     return this.withBrokerVideoFramePrefetchStats(await this.getStatus());
+  }
+
+  async prefetchVideoFrameWindow({
+    uri,
+    width,
+    height,
+    timeSeconds,
+    prefetchWindowFrames = 0,
+    prefetchFps = 30,
+  } = {}) {
+    if (!prefetchWindowFrames) return;
+    const frameStep = 1 / Math.max(1, Math.min(120, Number(prefetchFps) || 30));
+    for (let frameOffset = 1; frameOffset <= prefetchWindowFrames; frameOffset += 1) {
+      const request = this.videoFramePrefetchRequest(
+        uri,
+        width,
+        height,
+        Math.max(0, Number(timeSeconds ?? 0) + frameStep * frameOffset),
+      );
+      if (this.videoFramePrefetchCache.has(request.key)) continue;
+      this.stats.video_frame_prefetch_cache_misses =
+        Number(this.stats.video_frame_prefetch_cache_misses ?? 0) + 1;
+      this.stats.ffmpeg_decode_spawns = Number(this.stats.ffmpeg_decode_spawns ?? 0) + 1;
+      try {
+        const frame = await decodeVideoFrameToRgba({
+          uri: request.localPath,
+          width: request.width,
+          height: request.height,
+          timeSeconds: request.seconds,
+          env: this.env,
+          platform: this.platform,
+        });
+        this.stats.ffmpeg_decode_successes = Number(this.stats.ffmpeg_decode_successes ?? 0) + 1;
+        this.storeVideoFramePrefetch(request, frame);
+      } catch (err) {
+        this.stats.ffmpeg_decode_failures = Number(this.stats.ffmpeg_decode_failures ?? 0) + 1;
+        break;
+      }
+    }
   }
 
   async clearPrefetchCache() {
@@ -748,12 +811,13 @@ class NativeRendererBroker {
       !notes.some((note) => note.includes('Local video files can prefetch bounded FFmpeg-decoded frames'))
     ) {
       notes.push(
-        'Local video files can prefetch bounded FFmpeg-decoded frames at requested timestamps into native source-frame textures; continuous in-core native video decode is still pending.',
+        'Local video files can prefetch bounded FFmpeg-decoded frames and adjacent-frame windows into native source-frame textures; continuous in-core native video decode is still pending.',
       );
     }
     return {
       ...caps,
       native_video_frame_prefetch: !!videoFramePrefetch.available,
+      native_video_frame_prefetch_window: !!videoFramePrefetch.available,
       video_frame_prefetch: !!videoFramePrefetch.available,
       video_frame_prefetch_encoder: videoFramePrefetch.available ? 'ffmpeg' : null,
       video_frame_prefetch_path: videoFramePrefetch.ffmpegPath ?? null,
@@ -2492,6 +2556,7 @@ function makeDefaultCapabilities(overrides = {}) {
       media_prefetch: false,
       native_video_frame_decode: false,
       native_video_frame_prefetch: false,
+      native_video_frame_prefetch_window: false,
       video_frame_prefetch: false,
       present_policy: false,
       managed_output_attach: false,

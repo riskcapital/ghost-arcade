@@ -315,6 +315,8 @@ const STATIC_PREVIEW_RETRY_MS = 1000;
 const VIDEO_PREVIEW_REFRESH_MS = 360;
 const NATIVE_VIDEO_PREFETCH_REFRESH_MS = 750;
 const NATIVE_VIDEO_PREFETCH_OVERLOAD_REFRESH_MS = 1200;
+const NATIVE_VIDEO_PREFETCH_WINDOW_FRAMES = 1;
+const NATIVE_VIDEO_PREFETCH_WINDOW_FPS = 30;
 const GPU_PREVIEW_REFRESH_MS = 700;
 const NATIVE_POINT_CLOUD_MAX_POINTS = 500_000;
 
@@ -2494,7 +2496,11 @@ export class NativeRendererSync {
     return `${sourceId}::${uri}`;
   }
 
-  private nativeVideoPrefetchOptions(src: NonNullable<Layer['source']>, now: number) {
+  private nativeVideoPrefetchOptions(
+    src: NonNullable<Layer['source']>,
+    now: number,
+    prefetchWindowFrames = 0,
+  ) {
     const videoTime = Number(src.videoElement?.currentTime);
     const timeSeconds = Number.isFinite(videoTime)
       ? Math.max(0, videoTime)
@@ -2504,6 +2510,8 @@ export class NativeRendererSync {
       timeSeconds,
       decodeWidth: decodeSize,
       decodeHeight: decodeSize,
+      prefetchWindowFrames,
+      prefetchFps: NATIVE_VIDEO_PREFETCH_WINDOW_FPS,
       seq: Math.max(1, Math.round(timeSeconds * 1000)),
     };
   }
@@ -3039,7 +3047,11 @@ export class NativeRendererSync {
               src.src,
               videoPrefetchPriority,
               sourceType,
-              this.nativeVideoPrefetchOptions(src, now),
+              this.nativeVideoPrefetchOptions(
+                src,
+                now,
+                overloadActive ? 0 : NATIVE_VIDEO_PREFETCH_WINDOW_FRAMES,
+              ),
             ).catch(() => {});
           }
         }
