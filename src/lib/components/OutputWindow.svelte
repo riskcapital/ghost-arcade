@@ -63,17 +63,16 @@
     // Cursor clearing can be added later
   }
 
-  // Read the experimental output-transport flags once at the call
-  // site (synchronous get from the settings store). The open helpers apply
+  // Read the output-transport flags once at the call site (synchronous get
+  // from the settings store). The open helpers apply
   // the precedence ordering (nativeCore > zeroCopy > webrtc > legacy).
   //   outputNativeCore    → opens the Rust/wgpu managed output window.
-  //   experimentalZeroCopy → mounts OutputSharedTextureDisplayApp
-  //                          (`?mode=webgpu-display`). On by default.
-  //   experimentalWebRTC   → mounts OutputDisplayApp
+  //   zeroCopy            → mounts OutputSharedTextureDisplayApp
+  //                          (`?mode=webgpu-display`). Fallback default.
+  //   webRTC              → mounts OutputDisplayApp
   //                          (`?mode=webrtc-display`). Escape hatch.
   // Both off → SpoutOutputApp (`?mode=output`), legacy default.
-  // See settings.ts experimental.outputNativeCore / outputZeroCopy /
-  // outputWebRTC for the architectural rationale.
+  // The settings still live under `experimental` for migration stability.
   function readExperimentalTransports(): {
     experimentalWebRTC: boolean;
     experimentalZeroCopy: boolean;
