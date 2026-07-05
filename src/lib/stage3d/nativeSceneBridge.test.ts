@@ -98,7 +98,10 @@ describe('native Stage3D scene bridge', () => {
         },
       }),
       [screenLayer('screen-1')],
-      { camera: { position: [4, 5, 6], target: [7, 8, 9], fov: 71 } },
+      {
+        camera: { position: [4, 5, 6], target: [7, 8, 9], fov: 71 },
+        includeVenuePrimitives: false,
+      },
     );
 
     expect(nativeScene.camera).toMatchObject({
@@ -141,8 +144,30 @@ describe('native Stage3D scene bridge', () => {
       showPixels: false,
     }];
 
-    const nativeScene = buildNativeStage3DScene(current, [screenLayer('screen-1')]);
+    const nativeScene = buildNativeStage3DScene(current, [screenLayer('screen-1')], {
+      includeVenuePrimitives: false,
+    });
     expect(nativeScene.nodes).toHaveLength(1);
     expect(nativeScene.nodes[0].id).toBe('saved-screen');
+  });
+
+  it('adds lightweight native-only venue primitives for Stage3D context', () => {
+    const nativeScene = buildNativeStage3DScene(scene(), [screenLayer('screen-1')]);
+    const ids = nativeScene.nodes.map(node => node.id);
+
+    expect(ids).toEqual(expect.arrayContaining([
+      'native-venue:floor',
+      'native-venue:deck',
+      'native-venue:riser',
+      'native-venue:backdrop',
+      'native-auto-screen:screen-1',
+    ]));
+    expect(nativeScene.nodes.find(node => node.id === 'native-venue:deck')).toMatchObject({
+      type: 'primitive',
+      locked: true,
+      visible: true,
+      geometry: 'box',
+      dimensions: [36, 1.4, 18],
+    });
   });
 });
