@@ -11,6 +11,7 @@ const SOURCE_FRAME_FILE_HANDOFF_B64_THRESHOLD = 512 * 1024;
 const VIDEO_FRAME_PREFETCH_TIMEOUT_MS = 8000;
 const VIDEO_FRAME_PREFETCH_CACHE_MAX_ENTRIES = 24;
 const VIDEO_FRAME_PREFETCH_CACHE_FPS = 30;
+const defaultDecodeBackend = (platform = process.platform) => (platform === 'win32' ? 'ffmpeg_d3d11va' : 'ffmpeg_software');
 const STATIC_IMAGE_EXTENSIONS = new Set([
   '.avif',
   '.bmp',
@@ -338,6 +339,7 @@ class NativeRendererBroker {
     this.tempFrameSerial = 1;
     this.lastStatus = makeDefaultStatus({
       backend: platform === 'darwin' ? 'metal' : platform === 'win32' ? 'd3d12' : 'vulkan',
+      platform,
       last_frame_error: 'Native render core has not started',
     });
     this.stats = makeDefaultStats();
@@ -356,6 +358,7 @@ class NativeRendererBroker {
       if (command === 'native_renderer_start') {
         this.lastStatus = makeDefaultStatus({
           backend: null,
+          platform: this.platform,
           last_frame_error: 'Native renderer disabled by GA_DISABLE_NATIVE_RENDERER=1',
         });
         return this.lastStatus;
@@ -457,6 +460,7 @@ class NativeRendererBroker {
     if (!executable) {
       this.lastStatus = makeDefaultStatus({
         backend: this.platform === 'darwin' ? 'metal' : this.platform === 'win32' ? 'd3d12' : 'vulkan',
+        platform: this.platform,
         last_frame_error:
           'Native render core binary missing. Run `npm run native:build` to build ghost-render-core.',
       });
@@ -845,6 +849,7 @@ class NativeRendererBroker {
       this.killProcess();
       this.lastStatus = makeDefaultStatus({
         backend: this.platform === 'darwin' ? 'metal' : this.platform === 'win32' ? 'd3d12' : 'vulkan',
+        platform: this.platform,
         last_frame_error: 'Native render core stopped',
       });
       this.capabilities = makeDefaultCapabilities({
@@ -2128,7 +2133,7 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     render_clock_time: Number(status.render_clock_time ?? previous.render_clock_time ?? 0),
     render_clock_frame_index: Number(status.render_clock_frame_index ?? previous.render_clock_frame_index ?? 0),
     render_clock_updates: Number(status.render_clock_updates ?? previous.render_clock_updates ?? 0),
-    decode_backend: status.decode_backend || previous.decode_backend || 'synthetic',
+    decode_backend: status.decode_backend || previous.decode_backend || defaultDecodeBackend(),
     output_width: Number(status.output_width ?? status.width ?? previous.output_width ?? 1920),
     output_height: Number(status.output_height ?? status.height ?? previous.output_height ?? 1080),
     output_format: String(status.output_format ?? previous.output_format ?? 'unknown'),
@@ -2722,7 +2727,7 @@ function makeDefaultStatus(overrides = {}) {
     compute_graph_readbacks: 0,
     compute_graph_readback_bytes: 0,
     compute_graph_persistent_buffers: 0,
-    decode_backend: 'synthetic',
+    decode_backend: defaultDecodeBackend(overrides.platform),
     decode_preview_size: 96,
     decode_preview_cache_mb: 128,
     decode_use_output_resolution: true,

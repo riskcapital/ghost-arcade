@@ -458,9 +458,11 @@ try {
     `decode preview clear should acknowledge empty native cache: ${JSON.stringify(clearDecodePreview)}`,
   );
   const policyStatus = await broker.invoke('native_renderer_get_status');
+  const expectedDecodeBackend = process.platform === 'win32' ? 'ffmpeg_d3d11va' : 'ffmpeg_software';
   assert(
     policyStatus.decode_store_cpu_backup_frames === true &&
       policyStatus.decode_allow_synthetic_fallback === true &&
+      policyStatus.decode_backend === expectedDecodeBackend &&
       Number(policyStatus.media_queue_capacity) === 3333 &&
       Number(policyStatus.decode_handoff_queue_capacity) === 4444 &&
       Number(policyStatus.media_high_burst_limit) === 11 &&
@@ -479,7 +481,7 @@ try {
       Number(policyStatus.decode_handoff_predecode_shed_pct) === 82 &&
       Number(policyStatus.decode_predecode_estimate_cache_cap_entries) === 12345 &&
       Number(policyStatus.vram_budget_mb) === 6144,
-    `native policy setters did not round-trip through status: ${JSON.stringify(policyStatus)}`,
+    `native policy setters did not round-trip through status or preserve the platform decode backend: ${JSON.stringify(policyStatus)}`,
   );
   assert(capabilities?.features?.native_output_mirror_texture, 'broker capabilities lost native output mirror support');
   assert(

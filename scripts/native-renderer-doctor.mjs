@@ -255,6 +255,7 @@ async function inspectAppBridge() {
       detail: [
         `bridge=${process.platform === 'darwin' ? 'Syphon' : process.platform === 'win32' ? 'Spout' : 'unsupported'}`,
         `outputFormat=${status?.output_format ?? 'unknown'}`,
+        `decodeBackend=${status?.decode_backend ?? 'unknown'}`,
         `outputSharedTexture=${features.shared_texture_output_export ? 'on' : 'pending'}`,
         `nativeShareSender=${features.native_texture_share_sender ? 'on' : 'pending'}`,
         `nativeMp4Encoder=${features.native_mp4_frame_encoder ? 'on' : 'missing'}`,

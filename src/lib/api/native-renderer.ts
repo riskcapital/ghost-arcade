@@ -1,7 +1,7 @@
 import { invoke } from '$lib/bridge';
 
 export type BackendKind = 'd3d11' | 'd3d12' | 'vulkan' | 'metal';
-export type DecodeBackendKind = 'synthetic' | 'ffmpeg_d3d11va';
+export type DecodeBackendKind = 'synthetic' | 'ffmpeg_software' | 'ffmpeg_d3d11va';
 export type PresentMode = 'vsync' | 'immediate';
 export type NativeQualityPolicy = 'auto' | 'performance' | 'balanced' | 'ultra' | 'insane';
 
@@ -1037,7 +1037,7 @@ export async function startNativeRenderer(config?: Partial<RendererStartConfig>)
       max_frame_latency: config?.max_frame_latency ?? 2,
       use_waitable_object: config?.use_waitable_object ?? false,
       vram_budget_mb: config?.vram_budget_mb ?? 4096,
-      decode_backend: config?.decode_backend ?? 'ffmpeg_d3d11va',
+      decode_backend: config?.decode_backend ?? 'ffmpeg_software',
       decode_preview_size: config?.decode_preview_size ?? 96,
       decode_preview_cache_mb: config?.decode_preview_cache_mb ?? 128,
       decode_upload_queue_cap_mb: config?.decode_upload_queue_cap_mb ?? 256,
