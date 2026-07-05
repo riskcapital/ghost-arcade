@@ -1047,17 +1047,29 @@ export async function uploadNativeRendererSourceGpuSharedTexture(
   });
 }
 
+export type NativeMediaPrefetchOptions = {
+  timeSeconds?: number;
+  decodeWidth?: number;
+  decodeHeight?: number;
+  seq?: number;
+};
+
 export async function prefetchNativeRendererMedia(
   sourceId: string,
   uri: string,
   priority = 1,
   sourceType?: string,
+  options: NativeMediaPrefetchOptions = {},
 ) {
   return invoke<RendererStatus>('native_renderer_prefetch_media', {
     source_id: sourceId,
     uri,
     priority,
     source_type: sourceType,
+    time_seconds: options.timeSeconds,
+    decode_width: options.decodeWidth,
+    decode_height: options.decodeHeight,
+    seq: options.seq,
   });
 }
 

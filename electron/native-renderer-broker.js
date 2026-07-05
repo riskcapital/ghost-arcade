@@ -534,7 +534,7 @@ class NativeRendererBroker {
     }
     if (!imageSource) {
       throw new Error(
-        'Unsupported native renderer command native_renderer_prefetch_media: native prefetch currently supports local static images and local video poster frames only',
+        'Unsupported native renderer command native_renderer_prefetch_media: native prefetch currently supports local static images and timestamped local video frames only',
       );
     }
     const payload = {
@@ -673,10 +673,10 @@ class NativeRendererBroker {
     const notes = Array.isArray(caps.notes) ? caps.notes.map(String) : [];
     if (
       videoFramePrefetch.available &&
-      !notes.some((note) => note.includes('Local video files can prefetch one FFmpeg-decoded poster frame'))
+      !notes.some((note) => note.includes('Local video files can prefetch bounded FFmpeg-decoded frames'))
     ) {
       notes.push(
-        'Local video files can prefetch one FFmpeg-decoded poster frame into native source-frame textures; continuous native video decode is still pending.',
+        'Local video files can prefetch bounded FFmpeg-decoded frames at requested timestamps into native source-frame textures; continuous in-core native video decode is still pending.',
       );
     }
     return {
@@ -981,7 +981,7 @@ class NativeRendererBroker {
         'Native local video frame prefetch',
         !!features.native_video_frame_prefetch && !!videoFramePrefetch.available,
         videoFramePrefetch.available
-          ? `local videos can prefetch a bounded FFmpeg-decoded poster frame via ${videoFramePrefetch.ffmpegPath}`
+          ? `local videos can prefetch a bounded FFmpeg-decoded timestamped frame via ${videoFramePrefetch.ffmpegPath}`
           : (videoFramePrefetch.reason || 'desktop FFmpeg video frame prefetch is unavailable'),
       ],
       [
@@ -1660,7 +1660,7 @@ function applyBrokerCapabilityOverlay(capabilities, textureShare, nativeFrameEnc
     videoFramePrefetch?.available &&
     !notes.some((note) => String(note).includes('Electron video frame prefetch bridge'))
   ) {
-    notes.push('Electron video frame prefetch bridge can decode a bounded local-video poster frame into native source-frame textures.');
+    notes.push('Electron video frame prefetch bridge can decode bounded local-video frames at requested timestamps into native source-frame textures.');
   }
 
   return {

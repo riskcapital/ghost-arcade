@@ -128,6 +128,33 @@ function writeTinyTestVideo(filePath) {
   );
 }
 
+function writeTwoColorTestVideo(filePath) {
+  const ffmpegBin = resolveFfmpegBin();
+  const result = spawnSync(ffmpegBin, [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-y',
+    '-f',
+    'lavfi',
+    '-i',
+    'color=c=red:s=48x32:d=0.6',
+    '-f',
+    'lavfi',
+    '-i',
+    'color=c=blue:s=48x32:d=0.6',
+    '-filter_complex',
+    '[0:v][1:v]concat=n=2:v=1:a=0,format=yuv420p',
+    '-t',
+    '1.2',
+    filePath,
+  ], { encoding: 'utf8' });
+  assert(
+    !result.error && result.status === 0,
+    `could not create two-color video fixture with ffmpeg: ${result.error?.message || result.stderr || result.status}`,
+  );
+}
+
 const BYTE_BUFFER_COMPUTE_SOURCE = `
 struct Seeds {
   a: u32,
@@ -1155,6 +1182,68 @@ try {
       Number(videoPrefetchStatus.source_frame_last_input_bytes ?? 0) === 64 * 64 * 4 &&
       Number(videoPrefetchStatus.source_frame_last_upload_bytes ?? 0) > 0,
     `native video frame prefetch did not hand off the expected bounded RGBA frame: ${JSON.stringify(videoPrefetchStatus)}`,
+  );
+
+  const timedVideoPath = join(tempDir, 'broker-prefetch-video-two-color.mp4');
+  writeTwoColorTestVideo(timedVideoPath);
+  await broker.invoke('native_renderer_submit_commands', {
+    commands: [
+      {
+        type: 'upsert_layer',
+        layer_id: 'timed-video-prefetch-layer',
+        z_index: 0,
+        blend_mode: 'normal',
+        opacity: 1,
+        corners: FULLSCREEN_CORNERS,
+      },
+      {
+        type: 'bind_media_source',
+        layer_id: 'timed-video-prefetch-layer',
+        source_id: 'broker-prefetch-video-timed',
+        uri: timedVideoPath,
+        source_type: 'video',
+      },
+    ],
+  });
+  await broker.invoke('native_renderer_prefetch_media', {
+    source_id: 'broker-prefetch-video-timed',
+    uri: timedVideoPath,
+    source_type: 'video',
+    decode_width: 64,
+    decode_height: 64,
+    priority: 2,
+    time_seconds: 0.05,
+    seq: 50,
+  });
+  const redVideoFramePath = join(tempDir, 'broker-prefetch-video-red.rgba');
+  const redVideoFrameSnapshot = await broker.invoke('native_renderer_export_frame_snapshot', {
+    path: redVideoFramePath,
+    time: 0.05,
+    frame_index: 50,
+  });
+  await broker.invoke('native_renderer_prefetch_media', {
+    source_id: 'broker-prefetch-video-timed',
+    uri: timedVideoPath,
+    source_type: 'video',
+    decode_width: 64,
+    decode_height: 64,
+    priority: 2,
+    time_seconds: 0.75,
+    seq: 750,
+  });
+  const blueVideoFramePath = join(tempDir, 'broker-prefetch-video-blue.rgba');
+  const blueVideoFrameSnapshot = await broker.invoke('native_renderer_export_frame_snapshot', {
+    path: blueVideoFramePath,
+    time: 0.75,
+    frame_index: 750,
+  });
+  const redVideoMean = redVideoFrameSnapshot?.mean_rgba ?? [];
+  const blueVideoMean = blueVideoFrameSnapshot?.mean_rgba ?? [];
+  assert(
+    redVideoFrameSnapshot?.checksum !== blueVideoFrameSnapshot?.checksum &&
+      Number(redVideoMean[0] ?? 0) > Number(blueVideoMean[0] ?? 0) + 0.08 &&
+      Number(blueVideoMean[2] ?? 0) > Number(redVideoMean[2] ?? 0) + 0.08,
+    `native video frame prefetch did not honor requested timestamp: ${JSON.stringify({ redVideoFrameSnapshot, blueVideoFrameSnapshot })}`,
   );
 
   const readiness = await broker.invoke('native_renderer_get_readiness_report');
