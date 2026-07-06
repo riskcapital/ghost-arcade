@@ -112,6 +112,34 @@ function assertExactNativeManifest(name, actualEntries, expectedEntries) {
 export function assertNativeCompositorSourceContract() {
   const heartbeat = readFileSync(join(root, 'native-renderer', 'src', 'heartbeat.wgsl'), 'utf8');
   const main = readFileSync(join(root, 'native-renderer', 'src', 'main.rs'), 'utf8');
+  const nativeBlend = extractWgslFunction(heartbeat, 'native_blend');
+  const wgslBlendCodes = [...nativeBlend.matchAll(/\bm\s*==\s*(\d+)\b/g)]
+    .map((match) => Number(match[1]));
+  const expectedBlendCodes = COMPOSITOR_BLEND_MODES
+    .filter((mode) => mode.code > 0)
+    .map((mode) => mode.code);
+  if (
+    wgslBlendCodes.length !== expectedBlendCodes.length ||
+    wgslBlendCodes.some((code, index) => code !== expectedBlendCodes[index])
+  ) {
+    throw new Error(
+      `native compositor WGSL blend branches drifted: actual=${wgslBlendCodes.join(',')} expected=${expectedBlendCodes.join(',')}`,
+    );
+  }
+
+  for (const mode of COMPOSITOR_BLEND_MODES.filter((entry) => entry.code > 0)) {
+    const id = escapeRegExp(mode.name);
+    const code = mode.code.toFixed(1).replace(/\.0$/, '\\.0');
+    const parserPattern = new RegExp(
+      `"${id}"(?:\\s*\\|\\s*"[^"]+")*\\s*=>\\s*${code}`,
+    );
+    if (!parserPattern.test(main)) {
+      throw new Error(
+        `native compositor Rust blend parser is missing ${mode.name}:${mode.code}`,
+      );
+    }
+  }
+
   const applyNativeEffect = extractWgslFunction(heartbeat, 'apply_native_effect');
   const wgslEffectCodes = [...applyNativeEffect.matchAll(/if\s*\(\s*op\s*==\s*(\d+)\s*\)/g)]
     .map((match) => Number(match[1]));
@@ -1424,7 +1452,8 @@ async function main() {
     if (
       presentStatus?.present_mode !== 'vsync' ||
       Number(presentStatus?.max_frame_latency ?? 0) !== 1 ||
-      !presentStatus?.output_window_attached
+      presentStatus?.allow_tearing !== false ||
+      presentStatus?.use_waitable_object !== false
     ) {
       throw new Error(`native present policy/status did not apply: ${JSON.stringify(presentStatus)}`);
     }
