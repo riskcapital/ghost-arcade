@@ -52,6 +52,15 @@ property float opacity
 property float f_dc_0
 property float f_dc_1
 property float f_dc_2
+property float f_rest_2
+property float f_rest_0
+property float f_rest_1
+property float f_rest_3
+property float f_rest_4
+property float f_rest_5
+property float f_rest_6
+property float f_rest_7
+property float f_rest_8
 property float scale_0
 property float scale_1
 property float scale_2
@@ -60,7 +69,7 @@ property float rot_1
 property float rot_2
 property float rot_3
 end_header
-0 0 0 0 0 -0.5 0.5 -4 -4 -4 1 0 0 0
+0 0 0 0 0 -0.5 0.5 0.2 0.0 0.1 0.3 0.4 0.5 0.6 0.7 0.8 -4 -4 -4 1 0 0 0
 `;
 
 const MESH_PLY = `ply
@@ -104,6 +113,13 @@ describe('parsePLYBuffer', () => {
     expect(result.vertices[0].g).toBe(92);
     expect(result.vertices[0].b).toBe(163);
     expect(result.vertices[0].a).toBe(128);
+    expect(result.sphericalHarmonicsDegree).toBe(1);
+    expect(result.sphericalHarmonicsCoefficientCount).toBe(9);
+    expect(result.vertices[0].f_rest).toEqual([
+      0.0, 0.1, 0.2,
+      0.3, 0.4, 0.5,
+      0.6, 0.7, 0.8,
+    ]);
   });
 
   it('computes correct bounding box', () => {
