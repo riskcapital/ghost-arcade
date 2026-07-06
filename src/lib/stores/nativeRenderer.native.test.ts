@@ -151,6 +151,42 @@ function completeGraphCapabilities(
   };
 }
 
+const mainDriverFeatureSet = {
+  native_output_mirror_texture: true,
+  managed_output_attach: true,
+  managed_output_window_control: true,
+  native_static_image_decode: true,
+  native_static_image_prefetch: true,
+  compute_graph_texture_sampling: true,
+  native_effect_pass_manifest: true,
+  shared_texture_upload: true,
+  shared_texture_output_export: true,
+  native_texture_share_sender: true,
+  native_media_decode: true,
+  media_prefetch: true,
+  native_video_frame_decode: true,
+  native_video_frame_prefetch: true,
+  native_video_decode_pump: true,
+  native_video_decode_pump_window: true,
+  native_recording: true,
+  native_stage3d: true,
+  native_stage3d_output_renderer: true,
+  native_stage3d_recording_parity: true,
+  native_projection_sim: true,
+  native_projection_sim_output_renderer: true,
+  native_projection_sim_recording_parity: true,
+};
+
+function completeMainDriverCapabilities(features: Record<string, boolean> = {}): NativeRendererCapabilities {
+  return {
+    ...completeGraphCapabilities({
+      ...mainDriverFeatureSet,
+      ...features,
+    }),
+    implemented_methods: ['export_frame_snapshot'],
+  };
+}
+
 function readiness(
   modes: RendererReadinessReport['modes'],
   overrides: Partial<RendererReadinessReport> = {},
@@ -187,7 +223,7 @@ describe('native renderer runtime state', () => {
           },
         }),
         {
-          capabilities: capabilities(),
+          capabilities: gateState.full_v2 ? completeMainDriverCapabilities() : capabilities(),
           graphCatalogComplete: true,
           nativeGraphSourceFrames: true,
           updatedAtMs: 123,
@@ -526,6 +562,7 @@ describe('native renderer runtime state', () => {
         capabilities: completeGraphCapabilities({
           native_3d_smoke_graph: true,
           native_particle_field_graph: true,
+          ...mainDriverFeatureSet,
         }),
         checks: [],
       },
@@ -542,6 +579,60 @@ describe('native renderer runtime state', () => {
     });
     expect(state.driverMode).toBe('full-v2');
     expect(state.fullV2Ready).toBe(true);
+  });
+
+  it('does not promote to the main driver when a local runtime gate is missing', () => {
+    const report = readiness(
+      {
+        shadow: { ok: true, detail: 'shadow ready' },
+        output_driver: { ok: true, detail: 'output ready' },
+        full_v2: { ok: true, detail: 'full ready', blockers: [] },
+      },
+      {
+        capabilities: completeMainDriverCapabilities({
+          native_recording: false,
+        }),
+        checks: [],
+      },
+    );
+    const state = deriveNativeRendererRuntimeState(status(), report, {
+      capabilities: report.capabilities,
+      updatedAtMs: 134,
+    });
+
+    expect(state.driverMode).toBe('output-driver');
+    expect(state.fullV2Ready).toBe(false);
+    expect(state.blockers).toContain('native recording/MP4 frame path is not fully ready');
+  });
+
+  it('uses broker readiness checks to down-promote stale full-v2 reports', () => {
+    const report = readiness(
+      {
+        shadow: { ok: true, detail: 'shadow ready' },
+        output_driver: { ok: true, detail: 'output ready' },
+        full_v2: { ok: true, detail: 'full ready', blockers: [] },
+      },
+      {
+        capabilities: completeMainDriverCapabilities(),
+        checks: [
+          {
+            id: 'native-effect-pass-manifest',
+            label: 'Native source-frame effect-pass route',
+            ok: false,
+            detail: 'native effect-pass graph manifest is incomplete',
+          },
+        ],
+      },
+    );
+    const state = deriveNativeRendererRuntimeState(status(), report, {
+      capabilities: report.capabilities,
+      updatedAtMs: 135,
+    });
+
+    expect(state.driverMode).toBe('output-driver');
+    expect(state.fullV2Ready).toBe(false);
+    expect(state.blockers).toContain('native source-frame effect-pass route is incomplete');
+    expect(state.nativeEffectPassReady).toBe(false);
   });
 
   it('uses compact, user-readable labels for the toolbar', () => {
