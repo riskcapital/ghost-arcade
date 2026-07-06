@@ -2266,7 +2266,7 @@ impl App {
             decode_predecode_estimate_cache_cap_entries: 8192,
             vram_budget_mb: 4096,
             auto_present_requested: false,
-            output_window_attached: true,
+            output_window_attached: false,
             layers_seen: 0,
             command_phase: 0.0,
             scene_layers: HashMap::new(),
@@ -2320,7 +2320,8 @@ impl App {
                 self.pending_width as f64,
                 self.pending_height as f64,
             ))
-            .with_resizable(true);
+            .with_resizable(true)
+            .with_visible(self.output_window_attached);
         let window = event_loop
             .create_window(attrs)
             .map_err(|err| err.to_string())?;

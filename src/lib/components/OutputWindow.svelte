@@ -6,6 +6,7 @@
     getNativeRendererCapabilities,
     getNativeRendererReadinessReport,
     getNativeRendererStatus,
+    detachNativeRendererOutputWindow,
     setNativeRendererOutputWindow,
     startNativeRenderer,
   } from '$lib/api/native-renderer';
@@ -23,6 +24,7 @@
   export let mainEngine: RenderEngine | null = null;
 
   const NATIVE_OUTPUT_READY_WAIT_MS = 1500;
+  const NATIVE_OUTPUT_ACTIVE_WAIT_MS = 2500;
   const NATIVE_OUTPUT_READY_POLL_MS = 100;
 
   // NOTE: rotation / cropRegion / showCursor used to be props bound from
@@ -252,7 +254,7 @@
         return false;
       }
 
-      await setNativeRendererOutputWindow({
+      const configuredStatus = await setNativeRendererOutputWindow({
         title: 'Ghost Arcade Native Output',
         label: 'Ghost Arcade Native Output',
         width: winW,
@@ -265,6 +267,22 @@
         decorations: !fullscreen,
         resizable: !fullscreen,
       });
+      await publishNativeRuntimeHandshake(configuredStatus).catch(() => {});
+
+      const activeStatus = nativeManagedOutputIsActive(configuredStatus)
+        ? configuredStatus
+        : await waitForNativeManagedOutputActive();
+      if (!nativeManagedOutputIsActive(activeStatus)) {
+        console.warn(
+          `[Output] Native render-core output did not present; falling back. ${nativeOutputActivationDetail(activeStatus)}`,
+        );
+        await detachNativeRendererOutputWindow().catch(() => {});
+        const detachedStatus = await getNativeRendererStatus().catch(() => null);
+        if (detachedStatus) await publishNativeRuntimeHandshake(detachedStatus).catch(() => {});
+        return false;
+      }
+
+      if (activeStatus) await publishNativeRuntimeHandshake(activeStatus).catch(() => {});
       isOpen = true;
       console.log(
         `[Output] Native render-core output opened on display "${target?.label || target?.id || 'default'}" (${winW}x${winH})`,
@@ -295,6 +313,55 @@
     const startedAt = Date.now();
     let last = await getNativeRendererStatus().catch(() => null);
     while (last?.running && !last.backend_ready && Date.now() - startedAt < deadlineMs) {
+      await new Promise((resolve) => setTimeout(resolve, NATIVE_OUTPUT_READY_POLL_MS));
+      last = await getNativeRendererStatus().catch(() => null);
+    }
+    return last;
+  }
+
+  function nativeManagedOutputIsActive(
+    status: Awaited<ReturnType<typeof getNativeRendererStatus>> | null | undefined,
+  ): boolean {
+    return !!(
+      status?.running &&
+      status.backend_ready &&
+      status.output_window_attached &&
+      status.output_swapchain_ready &&
+      status.output_present_healthy &&
+      Number(status.swapchain_presented ?? 0) > 0
+    );
+  }
+
+  function nativeOutputActivationDetail(
+    status: Awaited<ReturnType<typeof getNativeRendererStatus>> | null | undefined,
+  ): string {
+    if (!status) return 'No status was returned from the native render-core.';
+    if (!status.running) return 'Native render-core is not running.';
+    if (!status.backend_ready) return status.last_frame_error || 'Native render-core backend is not ready.';
+    if (!status.output_window_attached) return 'Native output window is detached.';
+    if (Number(status.swapchain_presented ?? 0) <= 0) {
+      return `No native frames presented yet; last=${status.swapchain_last_present_result || 'none'}.`;
+    }
+    if (!status.output_swapchain_ready) {
+      return `Native output swapchain is not ready; last=${status.swapchain_last_present_result || 'none'}.`;
+    }
+    if (!status.output_present_healthy) {
+      return `Native output present is unhealthy after ${status.output_present_consecutive_failures ?? 0} consecutive failure(s); last=${status.swapchain_last_present_result || 'none'}.`;
+    }
+    return 'Native output status did not satisfy the active-present gate.';
+  }
+
+  async function waitForNativeManagedOutputActive(
+    deadlineMs = NATIVE_OUTPUT_ACTIVE_WAIT_MS,
+  ): Promise<Awaited<ReturnType<typeof getNativeRendererStatus>> | null> {
+    const startedAt = Date.now();
+    let last = await getNativeRendererStatus().catch(() => null);
+    while (
+      last?.running &&
+      last.backend_ready &&
+      !nativeManagedOutputIsActive(last) &&
+      Date.now() - startedAt < deadlineMs
+    ) {
       await new Promise((resolve) => setTimeout(resolve, NATIVE_OUTPUT_READY_POLL_MS));
       last = await getNativeRendererStatus().catch(() => null);
     }
