@@ -1260,11 +1260,15 @@ export interface PointCloudFXNativePointData {
   sampledFromCount: number;
   hasGaussianPayload: boolean;
   depthSortEnabled: boolean;
+  sphericalHarmonicsDegree: number;
+  sphericalHarmonicsCoefficientCount: number;
 }
 
 export interface PointCloudFXNativePointDataOptions extends PointCloudFXDataOptions {
   pointSize?: number;
   signature?: string;
+  sphericalHarmonicsDegree?: number;
+  sphericalHarmonicsCoefficientCount?: number;
 }
 
 export interface PointCloudFXNativeGraphState {
@@ -1622,6 +1626,8 @@ export function buildPointCloudFXNativePointData(
     depthSortEnabled,
   } = packed;
   const indexFor = (i: number) => pointCloudSourceIndexForSample(i, n, sourceCount);
+  const sphericalHarmonicsDegree = Math.max(0, Math.floor(options.sphericalHarmonicsDegree ?? 0));
+  const sphericalHarmonicsCoefficientCount = Math.max(0, Math.floor(options.sphericalHarmonicsCoefficientCount ?? 0));
 
   const first = indexFor(0) * 3;
   const mid = indexFor(Math.floor((n - 1) / 2)) * 3;
@@ -1636,6 +1642,7 @@ export function buildPointCloudFXNativePointData(
     colors[mid + 1]?.toFixed(4),
     colors[last + 2]?.toFixed(4),
     hasGaussianPayload ? 'gaussian' : 'points',
+    `sh${sphericalHarmonicsDegree}:${sphericalHarmonicsCoefficientCount}`,
     options.alpha?.[indexFor(0)]?.toFixed(4) ?? 'a1',
     options.splatScale?.[indexFor(0) * 3 + 0]?.toFixed(4) ?? 's1',
     options.splatRotation?.[indexFor(0) * 4 + 0]?.toFixed(4) ?? 'r1',
@@ -1654,6 +1661,8 @@ export function buildPointCloudFXNativePointData(
     sampledFromCount: sourceCount,
     hasGaussianPayload,
     depthSortEnabled,
+    sphericalHarmonicsDegree,
+    sphericalHarmonicsCoefficientCount,
   };
 }
 

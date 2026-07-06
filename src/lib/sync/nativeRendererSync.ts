@@ -3744,7 +3744,10 @@ export class NativeRendererSync {
               vertices.length,
               Math.min(vertices.length, NATIVE_POINT_CLOUD_MAX_POINTS),
               gaussian ? 'gaussian' : 'points',
+              `sh${parsed.sphericalHarmonicsDegree ?? 0}:${parsed.sphericalHarmonicsCoefficientCount ?? 0}`,
             ].join(':'),
+            sphericalHarmonicsDegree: parsed.sphericalHarmonicsDegree ?? 0,
+            sphericalHarmonicsCoefficientCount: parsed.sphericalHarmonicsCoefficientCount ?? 0,
           });
         })
         .catch((err) => {
