@@ -437,6 +437,7 @@ class NativeRendererBroker {
     this.videoFramePrefetchCacheMaxEntries = VIDEO_FRAME_PREFETCH_CACHE_MAX_ENTRIES;
     this.capabilities = makeDefaultCapabilities({
       backend: this.lastStatus.backend,
+      platform: this.platform,
       running: false,
     });
     this.coreCapabilitiesConfirmed = false;
@@ -949,6 +950,7 @@ class NativeRendererBroker {
       });
       this.capabilities = makeDefaultCapabilities({
         backend: this.lastStatus.backend,
+        platform: this.platform,
         running: false,
       });
       this.coreCapabilitiesConfirmed = false;
@@ -998,6 +1000,7 @@ class NativeRendererBroker {
       this.coreCapabilitiesError = err?.message || String(err);
       this.capabilities = makeDefaultCapabilities({
         backend: fallback?.backend ?? this.lastStatus?.backend ?? null,
+        platform: this.platform,
         running: !!(this.child && !this.child.killed),
         core_capabilities_confirmed: false,
         core_capabilities_error: this.coreCapabilitiesError,
@@ -1020,6 +1023,7 @@ class NativeRendererBroker {
       this.textureShareStatus(),
       this.nativeFrameEncoderStatus(),
       this.videoFramePrefetchStatus(),
+      this.platform,
     );
     return this.capabilities;
   }
@@ -1069,6 +1073,7 @@ class NativeRendererBroker {
     const nativeFrameEncoder = this.nativeFrameEncoderStatus();
     const videoFramePrefetch = this.videoFramePrefetchStatus();
     const sourceFrameSharedTextureImport = sourceFrameSharedTextureImportReadiness(this.capabilities, this.platform);
+    const outputSharedTextureExport = outputSharedTextureExportReadiness(this.capabilities, this.platform);
     const graphInstruments = nativeGraphInstrumentSet(this.capabilities);
     const computeGraphHostReady = !!(
       features.compute_shader_host &&
@@ -1164,13 +1169,13 @@ class NativeRendererBroker {
             ? `native output present has ${this.lastStatus.output_present_consecutive_failures} consecutive failure(s); last=${this.lastStatus.swapchain_last_present_result || 'none'}`
             : `presented ${managedOutputFrameCount} native swapchain frame(s)`;
     const nativeTextureShareSenderOk = !!(
-      features.shared_texture_output_export &&
+      outputSharedTextureExport.ok &&
       textureShare?.available &&
       (textureShare.nativeOutputCapable || textureShare.nativeOutputActive) &&
       !textureShare.nativeOutputWaitingForFrame
     );
-    const nativeTextureShareSenderDetail = !features.shared_texture_output_export
-      ? 'native output shared-texture export is unavailable'
+    const nativeTextureShareSenderDetail = !outputSharedTextureExport.ok
+      ? outputSharedTextureExport.detail
       : !textureShare
         ? 'not connected to Electron texture-share status'
         : !textureShare.available
@@ -1185,7 +1190,7 @@ class NativeRendererBroker {
               ? `native output shared texture can publish through ${textureShareName} when the sender is started`
               : `${textureShareName} addon does not expose native output shared-texture publish`;
     const nativeTextureShareOutputActiveOk = !!(
-      features.shared_texture_output_export &&
+      outputSharedTextureExport.ok &&
       textureShare?.available &&
       textureShare.nativeOutputActive &&
       !textureShare.nativeOutputWaitingForFrame
@@ -1258,6 +1263,7 @@ class NativeRendererBroker {
     const fullNativeV2Blockers = [
       nativeOutputDriverOk ? null : 'native output driver is not ready',
       sourceFrameSharedTextureImport.ok ? null : 'source-frame shared texture import is not ready',
+      outputSharedTextureExport.ok ? null : 'native output shared-texture export contract is not ready',
       effectPassManifestOk ? null : 'native source-frame effect-pass route is not ready',
       features.shared_texture_upload ? null : 'full shared-texture media transport is pending',
       nativeMediaDecodeOk ? null : 'native render-clock video decode pump is not fully ready',
@@ -1284,8 +1290,8 @@ class NativeRendererBroker {
       [
         'shared-texture-output-export',
         'Native output shared-texture export',
-        !!features.shared_texture_output_export,
-        'pending core-to-Electron IOSurface/DXGI output texture export',
+        outputSharedTextureExport.ok,
+        outputSharedTextureExport.detail,
       ],
       [
         'native-texture-share-sender',
@@ -2135,6 +2141,92 @@ function sourceFrameSharedTextureImportReadiness(capabilities, platform = proces
   };
 }
 
+function expectedOutputSharedTextureExport(platform = process.platform) {
+  if (platform === 'darwin') {
+    return {
+      supported: true,
+      backend: 'metal',
+      platform: 'iosurface',
+      exporter: 'metal-iosurface',
+      handleScope: 'global-id',
+      preferredTransport: 'handle',
+      handleByteLength: 4,
+    };
+  }
+  if (platform === 'win32') {
+    return {
+      supported: true,
+      backend: 'd3d12',
+      platform: 'dxgi',
+      exporter: 'd3d12-shared-resource-name',
+      handleScope: 'process-local',
+      preferredTransport: 'shared_name',
+      handleByteLength: 8,
+    };
+  }
+  return {
+    supported: false,
+    backend: 'vulkan',
+    platform: 'unsupported',
+    exporter: 'none',
+    handleScope: '',
+    preferredTransport: '',
+    handleByteLength: 0,
+  };
+}
+
+function outputSharedTextureExportReadiness(capabilities, platform = process.platform) {
+  const contract = capabilities?.output_shared_texture_export;
+  if (!contract || typeof contract !== 'object') {
+    return {
+      ok: false,
+      detail: 'missing output_shared_texture_export contract',
+    };
+  }
+
+  const expected = expectedOutputSharedTextureExport(platform);
+  if (!expected.supported) {
+    return {
+      ok: false,
+      detail: contract.reason || 'native output shared-texture export is only implemented for Metal IOSurface and D3D12 DXGI',
+    };
+  }
+
+  const missing = [];
+  if (!contract.available) {
+    missing.push(contract.reason || 'contract available=false');
+  }
+  for (const [key, expectedValue] of [
+    ['backend', expected.backend],
+    ['platform', expected.platform],
+    ['exporter', expected.exporter],
+    ['handle_scope', expected.handleScope],
+    ['preferred_transport', expected.preferredTransport],
+    ['handle_encoding', 'integer'],
+  ]) {
+    const actual = String(contract[key] ?? '');
+    if (actual !== expectedValue) missing.push(`${key} ${JSON.stringify(actual)} != ${JSON.stringify(expectedValue)}`);
+  }
+  const handleByteLength = Number(contract.handle_byte_length ?? 0);
+  if (handleByteLength !== expected.handleByteLength) {
+    missing.push(`handle_byte_length ${handleByteLength || 'missing'} != ${expected.handleByteLength}`);
+  }
+  for (const format of stringListMissing(contract.exported_formats, ['bgra8unorm', 'bgra8unorm-srgb'])) {
+    missing.push(`exported format ${format}`);
+  }
+
+  if (missing.length) {
+    return {
+      ok: false,
+      detail: `output shared texture export contract incomplete: ${missing.join('; ')}`,
+    };
+  }
+  return {
+    ok: true,
+    detail: `${expected.exporter} output export active for ${expected.platform} ${expected.preferredTransport} transport`,
+  };
+}
+
 function normalizeCapabilities(capabilities, previous = makeDefaultCapabilities()) {
   const source = capabilities && typeof capabilities === 'object' ? capabilities : {};
   const prevFeatures = previous.features && typeof previous.features === 'object' ? previous.features : {};
@@ -2219,13 +2311,14 @@ function normalizeCapabilities(capabilities, previous = makeDefaultCapabilities(
   };
 }
 
-function applyBrokerCapabilityOverlay(capabilities, textureShare, nativeFrameEncoder = null, videoFramePrefetch = null) {
+function applyBrokerCapabilityOverlay(capabilities, textureShare, nativeFrameEncoder = null, videoFramePrefetch = null, platform = process.platform) {
   const features = capabilities?.features && typeof capabilities.features === 'object'
     ? { ...capabilities.features }
     : {};
   const nativeFrameExportReady = hasNativeFrameExport(capabilities);
+  const outputSharedTextureExport = outputSharedTextureExportReadiness(capabilities, platform);
   const nativeTextureShareSenderReady = !!(
-    features.shared_texture_output_export &&
+    outputSharedTextureExport.ok &&
     textureShare?.available &&
     (textureShare.nativeOutputCapable || textureShare.nativeOutputActive) &&
     !textureShare.nativeOutputWaitingForFrame
@@ -2986,6 +3079,7 @@ function makeDefaultCapabilities(overrides = {}) {
       audio2: ['centroid', 'kick', 'snare', 'active'],
     },
     source_frame_shared_texture_import: makeDefaultSourceFrameSharedTextureImport(overrides.platform ?? process.platform),
+    output_shared_texture_export: makeDefaultOutputSharedTextureExportContract(overrides.platform ?? process.platform),
     notes: overrides.running === false
       ? ['Native render core is not running; capabilities are the broker fallback shape.']
       : [],
@@ -3010,6 +3104,23 @@ function makeDefaultOutputSharedTexture(platform = process.platform) {
   return {
     available: false,
     platform: platform === 'darwin' ? 'iosurface' : platform === 'win32' ? 'dxgi' : 'unsupported',
+    reason: 'native output shared texture export is unavailable',
+  };
+}
+
+function makeDefaultOutputSharedTextureExportContract(platform = process.platform) {
+  const expected = expectedOutputSharedTextureExport(platform);
+  return {
+    available: false,
+    backend: expected.backend,
+    platform: expected.platform,
+    exporter: 'none',
+    handle_scope: '',
+    preferred_transport: '',
+    handle_encoding: '',
+    handle_byte_length: 0,
+    exported_formats: [],
+    publisher: 'none',
     reason: 'native output shared texture export is unavailable',
   };
 }
