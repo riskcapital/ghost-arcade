@@ -61,6 +61,71 @@ const FULLSCREEN_CORNERS = {
   bottomLeft: { x: 0, y: 0 },
 };
 
+type NativeGraphManifestExpectation = {
+  id: string;
+  feature: string;
+  shaderIds: string[];
+};
+
+function shaderIdsFromPrecompileCommands(commands: Array<{ shader_id: string }>): string[] {
+  return Array.from(new Set(commands.map((command) => String(command.shader_id))));
+}
+
+function sortedStrings(values: Iterable<string>): string[] {
+  return Array.from(values).map(String).sort((a, b) => a.localeCompare(b));
+}
+
+const EXPECTED_NATIVE_GRAPH_MANIFEST: NativeGraphManifestExpectation[] = [
+  {
+    id: 'planet',
+    feature: 'native_planet_graph',
+    shaderIds: shaderIdsFromPrecompileCommands(buildPlanetNativePrecompileCommands()),
+  },
+  {
+    id: 'smoke-3d',
+    feature: 'native_3d_smoke_graph',
+    shaderIds: shaderIdsFromPrecompileCommands(buildSmoke3DNativePrecompileCommands()),
+  },
+  {
+    id: 'particle-field',
+    feature: 'native_particle_field_graph',
+    shaderIds: shaderIdsFromPrecompileCommands(buildParticleFieldNativePrecompileCommands()),
+  },
+  {
+    id: 'volumetric-spheres',
+    feature: 'native_volumetric_spheres_graph',
+    shaderIds: shaderIdsFromPrecompileCommands(buildVolumetricSpheresNativePrecompileCommands()),
+  },
+  {
+    id: 'smoke-riders',
+    feature: 'native_smoke_riders_graph',
+    shaderIds: shaderIdsFromPrecompileCommands([
+      ...buildSmoke3DNativePrecompileCommands(),
+      ...buildVolumetricSpheresNativePrecompileCommands(),
+    ]),
+  },
+  {
+    id: 'ink-cloud',
+    feature: 'native_ink_cloud_graph',
+    shaderIds: shaderIdsFromPrecompileCommands(buildInkCloudNativePrecompileCommands()),
+  },
+  {
+    id: 'flythrough',
+    feature: 'native_flythrough_graph',
+    shaderIds: shaderIdsFromPrecompileCommands(buildFlythroughNativePrecompileCommands()),
+  },
+  {
+    id: 'pixel-particles',
+    feature: 'native_pixel_particles_graph',
+    shaderIds: shaderIdsFromPrecompileCommands(buildPixelParticlesNativePrecompileCommands()),
+  },
+  {
+    id: 'point-cloud-fx',
+    feature: 'native_point_cloud_fx_graph',
+    shaderIds: shaderIdsFromPrecompileCommands(buildPointCloudFXNativePrecompileCommands()),
+  },
+];
+
 type NativeRpc = {
   send(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<any>;
   close(): Promise<string>;
@@ -498,6 +563,47 @@ async function snapshotSourceFrameLayer(
 
 describe('Native graph instrument runtime fixtures', () => {
   const itIfNativeCore = existsSync(nativeCoreBin) ? it : it.skip;
+
+  itIfNativeCore('advertises graph manifests that match the real native shader bundles', async () => {
+    const rpc = createNativeRpc();
+    try {
+      const capabilities = await rpc.send('capabilities', {}, 5000);
+      const features = capabilities?.features ?? {};
+      const graphIds = sortedStrings((capabilities?.native_graph_instruments ?? []).map(String));
+      const expectedIds = sortedStrings(EXPECTED_NATIVE_GRAPH_MANIFEST.map((entry) => entry.id));
+      const graphManifest = new Map<string, Record<string, unknown>>(
+        ((capabilities?.native_graph_instrument_manifest ?? []) as Record<string, unknown>[])
+          .map((entry: Record<string, unknown>) => [String(entry?.id ?? ''), entry]),
+      );
+
+      expect(features.compute_graph_host).toBe(true);
+      expect(features.compute_graph_render).toBe(true);
+      expect(features.compute_graph_source_frame_target).toBe(true);
+      expect(features.multi_pass_instruments).toBe(true);
+      expect(features.native_instrument_proxies).toBe(false);
+      expect(graphIds).toEqual(expectedIds);
+      expect(sortedStrings(graphManifest.keys())).toEqual(expectedIds);
+
+      for (const expected of EXPECTED_NATIVE_GRAPH_MANIFEST) {
+        const entry = graphManifest.get(expected.id) as Record<string, unknown> | undefined;
+        const shaderIds = sortedStrings(entry?.shader_ids as string[] | undefined ?? []);
+        const manifestFeatures = new Set((entry?.features as string[] | undefined ?? []).map(String));
+
+        expect(entry, expected.id).toBeTruthy();
+        expect(features[expected.feature], expected.id).toBe(true);
+        expect(entry?.render_target, expected.id).toBe('source_frame');
+        expect(entry?.source_uri_prefix, expected.id).toBe(`native-graph://${expected.id}/`);
+        expect(String(entry?.parity ?? ''), expected.id).not.toHaveLength(0);
+        expect(manifestFeatures.has('compute_graph_host'), expected.id).toBe(true);
+        expect(manifestFeatures.has('compute_graph_render'), expected.id).toBe(true);
+        expect(manifestFeatures.has('compute_graph_source_frame_target'), expected.id).toBe(true);
+        expect(manifestFeatures.has(expected.feature), expected.id).toBe(true);
+        expect(shaderIds, expected.id).toEqual(sortedStrings(expected.shaderIds));
+      }
+    } finally {
+      await rpc.close();
+    }
+  }, 15000);
 
   itIfNativeCore('uses explicit graph clock for native source-frame renders', async () => {
     const rpc = createNativeRpc();
