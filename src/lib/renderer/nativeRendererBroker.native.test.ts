@@ -14,6 +14,8 @@ type TextureShareStatus = {
   label: string;
   senderMode?: string;
   nativeOutputCapable?: boolean;
+  nativeOutputTransport?: string;
+  nativeOutputRequiresNamedTexture?: boolean;
   nativeOutputActive?: boolean;
   nativeOutputWaitingForFrame?: boolean;
   nativeOutputLastPublishedFrame?: number;
@@ -150,15 +152,17 @@ function coreCapabilities(features: Record<string, unknown> = {}, overrides: Rec
 function createBroker({
   encoderAvailable = true,
   textureShareStatus = null,
+  platform = 'darwin',
 }: {
   encoderAvailable?: boolean;
   textureShareStatus?: TextureShareStatus | null;
+  platform?: NodeJS.Platform;
 } = {}) {
   const broker = createNativeRendererBroker({
     appRoot: process.cwd(),
     resourcesPath: process.cwd(),
     isPackaged: false,
-    platform: 'darwin',
+    platform,
     env: {
       ...process.env,
       GA_NATIVE_VIDEO_PREFETCH: '0',
@@ -182,6 +186,69 @@ function createBroker({
     last_frame_error: '',
   };
   return broker;
+}
+
+function completeNativeV2Features() {
+  const graphFeatures = Object.fromEntries(nativeGraphManifests.map((entry) => [entry.feature, true]));
+  return {
+    compute_shader_host: true,
+    compute_graph_host: true,
+    compute_graph_render: true,
+    compute_graph_texture_sampling: true,
+    compute_graph_source_frame_target: true,
+    persistent_compute_buffers: true,
+    native_output_mirror_texture: true,
+    shared_texture_source_frame_upload: true,
+    shared_texture_upload: true,
+    shared_texture_output_export: true,
+    managed_output_attach: true,
+    managed_output_window_control: true,
+    native_static_image_decode: true,
+    native_static_image_prefetch: true,
+    native_media_decode: true,
+    media_prefetch: true,
+    native_video_frame_decode: true,
+    native_video_frame_prefetch: true,
+    native_video_decode_pump: true,
+    native_video_decode_pump_window: true,
+    native_stage3d: true,
+    native_stage3d_output_renderer: true,
+    native_stage3d_recording_parity: true,
+    native_projection_sim: true,
+    native_projection_sim_output_renderer: true,
+    native_projection_sim_recording_parity: true,
+    ...graphFeatures,
+  };
+}
+
+function completeGraphManifestOverrides(overrides: Record<string, unknown> = {}) {
+  return {
+    native_graph_instruments: nativeGraphManifests.map((entry) => entry.id),
+    native_graph_instrument_manifest: nativeGraphManifests.map((entry) => ({
+      id: entry.id,
+      label: entry.id,
+      source_uri_prefix: `native-graph://${entry.id}/`,
+      shader_ids: entry.shader_ids,
+      shader_count: entry.shader_ids.length,
+      features: [entry.feature],
+      render_target: 'source_frame',
+      parity: `${entry.id}-parity`,
+    })),
+    ...overrides,
+  };
+}
+
+function windowsSharedTextureImportContract() {
+  return {
+    available: true,
+    backend: 'd3d12',
+    platform: 'dxgi',
+    importer: 'd3d12-open-shared-handle',
+    handle_scope: 'process-handle',
+    accepted_handle_encodings: ['integer', 'base64', 'hex', 'opaque'],
+    accepted_formats: ['bgra8unorm', 'rgba8unorm', '80', '87', '28', '70'],
+    reason: null,
+  };
 }
 
 describe('native renderer broker capability overlay', () => {
@@ -310,6 +377,94 @@ describe('native renderer broker capability overlay', () => {
     expect(checks.get('native-stage3d-recording-parity')?.ok).toBe(true);
     expect(checks.get('native-projection-sim-output-renderer')?.ok).toBe(true);
     expect(checks.get('native-projection-sim-recording-parity')?.ok).toBe(true);
+  });
+
+  it('promotes full-v2 on Windows only when the Spout bridge can publish named DXGI output', async () => {
+    const broker = createBroker({
+      platform: 'win32',
+      encoderAvailable: true,
+      textureShareStatus: {
+        available: true,
+        platform: 'spout',
+        label: 'Spout',
+        senderMode: 'native-dxgi-capable',
+        nativeOutputCapable: true,
+        nativeOutputTransport: 'dxgi-shared-name',
+        nativeOutputRequiresNamedTexture: true,
+        nativeOutputActive: false,
+        nativeOutputWaitingForFrame: false,
+        nativeOutputLastPublishedFrame: 0,
+      },
+    });
+    broker.send = async (method: string) => {
+      expect(method).toBe('get_capabilities');
+      return coreCapabilities(
+        completeNativeV2Features(),
+        completeGraphManifestOverrides({
+          backend: 'd3d12',
+          source_frame_shared_texture_import: windowsSharedTextureImportContract(),
+        }),
+      );
+    };
+
+    const capabilities = await broker.refreshCapabilities({ requireCore: true });
+    expect(capabilities.features.native_texture_share_sender).toBe(true);
+
+    const report = broker.readinessReport();
+    expect(report.modes.output_driver.ok).toBe(true);
+    expect(report.modes.full_v2.ok).toBe(true);
+    expect(report.modes.full_v2.blockers).toEqual([]);
+    const checks = new Map<string, ReadinessCheck>(
+      report.checks.map((check: ReadinessCheck) => [check.id, check]),
+    );
+    expect(checks.get('native-texture-share-sender')?.ok).toBe(true);
+    expect(checks.get('native-texture-share-sender')?.detail).toContain('Spout');
+  });
+
+  it('keeps Windows full-v2 blocked when Spout cannot publish named DXGI output', async () => {
+    const broker = createBroker({
+      platform: 'win32',
+      encoderAvailable: true,
+      textureShareStatus: {
+        available: true,
+        platform: 'spout',
+        label: 'Spout',
+        senderMode: 'source-frame-fallback',
+        nativeOutputCapable: false,
+        nativeOutputTransport: 'dxgi-shared-name',
+        nativeOutputRequiresNamedTexture: true,
+        nativeOutputActive: false,
+        nativeOutputWaitingForFrame: false,
+        nativeOutputLastPublishedFrame: 0,
+      },
+    });
+    broker.send = async (method: string) => {
+      expect(method).toBe('get_capabilities');
+      return coreCapabilities(
+        completeNativeV2Features(),
+        completeGraphManifestOverrides({
+          backend: 'd3d12',
+          source_frame_shared_texture_import: windowsSharedTextureImportContract(),
+        }),
+      );
+    };
+
+    const capabilities = await broker.refreshCapabilities({ requireCore: true });
+    expect(capabilities.features.native_texture_share_sender).toBe(false);
+
+    const report = broker.readinessReport();
+    expect(report.modes.output_driver.ok).toBe(true);
+    expect(report.modes.full_v2.ok).toBe(false);
+    expect(report.modes.full_v2.blockers).toEqual([
+      'Spout native texture-share sender is not active-ready',
+    ]);
+    const checks = new Map<string, ReadinessCheck>(
+      report.checks.map((check: ReadinessCheck) => [check.id, check]),
+    );
+    expect(checks.get('native-texture-share-sender')?.ok).toBe(false);
+    expect(checks.get('native-texture-share-sender')?.detail).toContain(
+      'does not expose native output shared-texture publish',
+    );
   });
 
   it('keeps texture-share sender unavailable while native output waits for its first frame', async () => {

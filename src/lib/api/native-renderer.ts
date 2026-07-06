@@ -1019,6 +1019,8 @@ export interface NativeRendererTextureShareStatus {
   osrActive?: boolean;
   osrFailureReason?: string | null;
   nativeOutputCapable?: boolean;
+  nativeOutputTransport?: string;
+  nativeOutputRequiresNamedTexture?: boolean;
   nativeOutputActive?: boolean;
   nativeOutputWaitingForFrame?: boolean;
   nativeOutputLastPublishedFrame?: number;

@@ -1,9 +1,12 @@
 /**
  * Ghost Arcade — Spout Native Addon for Electron
  *
- * Two output modes:
- *   1. SendImage (CPU path): readPixels → IPC → SendImage() — works immediately
- *   2. SendTexture (GPU zero-copy): DXGI shared handle → SendTexture() — future
+ * Output modes:
+ *   1. SendImage (CPU path): readPixels → IPC → SendImage() — legacy fallback
+ *   2. SendTextureByName (GPU zero-copy): native renderer exports a named
+ *      DXGI shared resource that Electron can open across processes
+ *   3. SendTexture (GPU zero-copy): raw DXGI HANDLE path for same-process or
+ *      duplicated-handle senders
  *
  * Receiver uses SpoutDX's internal D3D11 device with SetAdapterAuto(true)
  * for automatic GPU adapter matching when sender is on a different GPU.
