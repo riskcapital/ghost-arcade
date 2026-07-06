@@ -9,14 +9,16 @@ base64 = "0.22.1"
 bytemuck = { version = "1.24.0", features = ["derive"] }
 image = { version = "0.25.8", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
 naga = { version = "30.0.0", features = ["wgsl-in"] }
-objc2-io-surface = { version = "0.3.2", default-features = false, features = ["IOSurfaceRef", "IOSurfaceTypes", "objc2-core-foundation"] }
-objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["CFDictionary", "CFNumber", "CFString"] }
-objc2-metal = { version = "0.3.2", default-features = false, features = ["MTLAllocation", "MTLDevice", "MTLPixelFormat", "MTLResource", "MTLTexture", "objc2-io-surface"] }
 pollster = "0.4.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 wgpu = "30.0.0"
 winit = "0.30.12"
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["CFDictionary", "CFNumber", "CFString"] }
+objc2-io-surface = { version = "0.3.2", default-features = false, features = ["IOSurfaceRef", "IOSurfaceTypes", "objc2-core-foundation"] }
+objc2-metal = { version = "0.3.2", default-features = false, features = ["MTLAllocation", "MTLDevice", "MTLPixelFormat", "MTLResource", "MTLTexture", "objc2-io-surface"] }
 
 [profile.release]
 codegen-units = 1
