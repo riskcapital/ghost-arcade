@@ -100,6 +100,9 @@ const NATIVE_EFFECT_PASS_DESCRIPTORS = [
   { id: 'strobe-flash', code: 62 },
   { id: 'fm-scanlines', code: 63 },
   { id: 'vhs', code: 64 },
+  { id: 'plasma', code: 65 },
+  { id: 'halftone', code: 66 },
+  { id: 'toon', code: 67 },
 ];
 
 function nativeGraphReadinessId(id) {

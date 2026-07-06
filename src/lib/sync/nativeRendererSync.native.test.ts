@@ -1113,6 +1113,39 @@ describe('native renderer sync effect-pass descriptors', () => {
         vhsSaturation: 0.7,
       },
     })).toBe('vhs:1.0000:0.4500:0.2000:0.3000:0.5500:0.3500:0.4000:0.2500:0.1000:0.4500:0.1000:0.7000');
+
+    expect(effectToNativeDescriptor({
+      type: 'plasma',
+      params: {
+        plasmaMix: 0.9,
+        plasmaScale: 4.5,
+        plasmaSpeed: 0.8,
+        plasmaPalette: 8,
+        plasmaSourceMix: 0.35,
+      },
+    })).toBe('plasma:0.9000:4.5000:0.8000:8:0.3500');
+
+    expect(effectToNativeDescriptor({
+      type: 'halftone',
+      params: {
+        halftoneMix: 1,
+        halftoneScale: 9,
+        halftoneAngle: 24,
+        halftoneDotGain: 1.1,
+        halftoneColorMode: 0,
+      },
+    })).toBe('halftone:1.0000:9.0000:24.0000:1.1000:0.0000');
+
+    expect(effectToNativeDescriptor({
+      type: 'toon',
+      params: {
+        toonMix: 0.95,
+        toonLevels: 3,
+        toonEdgeStrength: 1.2,
+        toonSaturation: 1.2,
+        toonEdgeThreshold: 0.02,
+      },
+    })).toBe('toon:0.9500:3:1.2000:1.2000:0.0200');
   });
 
   it('rebuilds native effect-pass runtime params from hero effect descriptors', () => {
@@ -1189,6 +1222,39 @@ describe('native renderer sync effect-pass descriptors', () => {
         chromaDelay: 0.45,
         trackingJump: 0.1,
         saturation: 0.7,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('plasma:0.9000:4.5000:0.8000:8:0.3500')).toMatchObject({
+      effect: 'plasma',
+      amount: 0.9,
+      params: {
+        plasmaScale: 4.5,
+        plasmaSpeed: 0.8,
+        plasmaPalette: 8,
+        plasmaSourceMix: 0.35,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('halftone:1.0000:9.0000:24.0000:1.1000:0.0000')).toMatchObject({
+      effect: 'halftone',
+      amount: 1,
+      params: {
+        halftoneScale: 9,
+        halftoneAngle: 24,
+        halftoneDotGain: 1.1,
+        halftoneColorMode: 0,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('toon:0.9500:3:1.2000:1.2000:0.0200')).toMatchObject({
+      effect: 'toon',
+      amount: 0.95,
+      params: {
+        toonLevels: 3,
+        toonEdgeStrength: 1.2,
+        toonSaturation: 1.2,
+        toonEdgeThreshold: 0.02,
       },
     });
 
