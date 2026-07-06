@@ -307,6 +307,22 @@
       graphFlags.graphCatalogComplete,
       graphFlags.nativeGraphSourceFrames,
     );
+    return { capabilities, readiness };
+  }
+
+  function nativeOutputDriverReady(
+    readiness: Awaited<ReturnType<typeof getNativeRendererReadinessReport>> | null | undefined,
+  ): boolean {
+    return !!readiness?.modes?.output_driver?.ok;
+  }
+
+  function nativeOutputDriverNotReadyDetail(
+    readiness: Awaited<ReturnType<typeof getNativeRendererReadinessReport>> | null | undefined,
+  ): string {
+    const mode = readiness?.modes?.output_driver;
+    if (mode?.detail) return mode.detail;
+    const blocker = readiness?.modes?.full_v2?.blockers?.[0] || readiness?.blockers?.[0];
+    return blocker || 'native output driver readiness report is unavailable';
   }
 
   async function waitForNativeCoreReady(deadlineMs = NATIVE_OUTPUT_READY_WAIT_MS) {
@@ -371,7 +387,13 @@
   async function ensureNativeCoreReady(fallbackWidth: number, fallbackHeight: number): Promise<boolean> {
     const existing = await waitForNativeCoreReady();
     if (existing?.backend_ready) {
-      await publishNativeRuntimeHandshake(existing).catch(() => {});
+      const handshake = await publishNativeRuntimeHandshake(existing).catch(() => null);
+      if (!nativeOutputDriverReady(handshake?.readiness)) {
+        console.warn(
+          `[Output] Native render-core backend is ready but output driver gates are not: ${nativeOutputDriverNotReadyDetail(handshake?.readiness)}`,
+        );
+        return false;
+      }
       return true;
     }
     if (existing?.running) {
@@ -403,7 +425,13 @@
       console.warn('[Output] Native render-core did not become ready after start:', started?.last_frame_error ?? started);
       return false;
     }
-    await publishNativeRuntimeHandshake(started).catch(() => {});
+    const handshake = await publishNativeRuntimeHandshake(started).catch(() => null);
+    if (!nativeOutputDriverReady(handshake?.readiness)) {
+      console.warn(
+        `[Output] Native render-core started but output driver gates are not ready: ${nativeOutputDriverNotReadyDetail(handshake?.readiness)}`,
+      );
+      return false;
+    }
     return true;
   }
 
