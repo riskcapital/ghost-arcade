@@ -162,6 +162,45 @@ function audioUniformLayoutMatches(actual, expected) {
   );
 }
 
+function expectedSourceFrameSharedTextureImport() {
+  if (process.platform === 'darwin') {
+    return { available: true, backend: 'metal', platform: 'iosurface', importer: 'metal-iosurface', handleScope: 'global-id' };
+  }
+  if (process.platform === 'win32') {
+    return { available: true, backend: 'd3d12', platform: 'dxgi', importer: 'd3d12-open-shared-handle', handleScope: 'process-handle' };
+  }
+  return { available: false, backend: 'vulkan', platform: 'unsupported', importer: 'none', handleScope: '' };
+}
+
+function assertSourceFrameSharedTextureImport(capabilities) {
+  const expected = expectedSourceFrameSharedTextureImport();
+  const contract = capabilities?.source_frame_shared_texture_import;
+  assert(contract, `broker capabilities missing source-frame shared texture import contract: ${JSON.stringify(capabilities)}`);
+  assert(
+    !!capabilities?.features?.shared_texture_source_frame_upload === expected.available,
+    `broker shared source-frame feature disagrees with native import contract: ${JSON.stringify(capabilities?.features)}`,
+  );
+  assert(
+    !!contract.available === expected.available &&
+      contract.backend === expected.backend &&
+      contract.platform === expected.platform &&
+      contract.importer === expected.importer &&
+      contract.handle_scope === expected.handleScope,
+    `broker source-frame shared texture import contract has drifted: ${JSON.stringify(contract)}`,
+  );
+  if (expected.available) {
+    const encodings = new Set((contract.accepted_handle_encodings ?? []).map(String));
+    const formats = new Set((contract.accepted_formats ?? []).map(String));
+    assert(
+      encodings.has('integer') &&
+        encodings.has('base64') &&
+        formats.has('bgra8unorm') &&
+        formats.has('rgba8unorm'),
+      `broker source-frame shared texture import contract is missing required encodings/formats: ${JSON.stringify(contract)}`,
+    );
+  }
+}
+
 const FULLSCREEN_CORNERS = {
   topLeft: { x: 0, y: 1 },
   topRight: { x: 1, y: 1 },
@@ -673,6 +712,7 @@ try {
     `native policy setters did not round-trip through status or preserve the platform decode backend: ${JSON.stringify(policyStatus)}`,
   );
   assert(capabilities?.features?.native_output_mirror_texture, 'broker capabilities lost native output mirror support');
+  assertSourceFrameSharedTextureImport(capabilities);
   assert(
     !!capabilities?.features?.shared_texture_source_frame_upload === sourceFrameSharedTextureExpected,
     `broker shared source-frame capability should match native desktop shared-texture support: ${JSON.stringify(capabilities?.features)}`,

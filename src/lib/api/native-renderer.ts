@@ -412,6 +412,16 @@ export interface NativeRendererCapabilities {
     audio1: readonly string[];
     audio2: readonly string[];
   };
+  source_frame_shared_texture_import?: {
+    available: boolean;
+    backend: string;
+    platform: 'iosurface' | 'dxgi' | 'unsupported' | string;
+    importer: string;
+    handle_scope: string;
+    accepted_handle_encodings: readonly string[];
+    accepted_formats: readonly string[];
+    reason?: string | null;
+  };
   native_scene_bridge?: {
     stage3d: NativeSceneBridgeSummary;
     projection_sim: NativeSceneBridgeSummary;

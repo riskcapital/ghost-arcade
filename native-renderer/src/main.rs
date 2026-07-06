@@ -188,7 +188,9 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   return vec4<f32>(color, alpha);
 }
 "#;
-const STAGE3D_MESH_WGSL: &str = concat!(include_str!("../../src/lib/renderer/wgsl/lighting.wgsl"), r#"
+const STAGE3D_MESH_WGSL: &str = concat!(
+    include_str!("../../src/lib/renderer/wgsl/lighting.wgsl"),
+    r#"
 struct Stage3DMeshUniforms {
   resolution: vec2<f32>,
   item_count: f32,
@@ -491,7 +493,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   rgb *= max(0.0, in.material.y) * light_mul;
   return vec4<f32>(rgb * shade * haze * alpha, alpha);
 }
-"#);
+"#
+);
 
 #[derive(Debug)]
 enum UserEvent {
@@ -2179,6 +2182,11 @@ impl App {
 
     fn capabilities(&self) -> Value {
         let shared_texture_media_transport = self.shared_texture_media_transport_ready();
+        let source_frame_shared_texture_import = self.source_frame_shared_texture_import_contract();
+        let source_frame_shared_texture_import_ready = source_frame_shared_texture_import
+            .get("available")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let features = json!({
             "separate_process_render_core": true,
             "managed_native_window": true,
@@ -2246,7 +2254,7 @@ impl App {
             "auto_present_policy": true,
             "multi_pass_instruments": true,
             "storage_buffer_instruments": true,
-            "shared_texture_source_frame_upload": cfg!(any(target_os = "macos", target_os = "windows")),
+            "shared_texture_source_frame_upload": source_frame_shared_texture_import_ready,
             "native_output_mirror_texture": true,
             "shared_texture_upload": shared_texture_media_transport,
             "shared_texture_output_export": self.renderer.as_ref().is_some_and(RenderState::output_export_ready),
@@ -2300,6 +2308,7 @@ impl App {
             "native_graph_instruments": native_graph_instrument_ids(),
             "native_graph_instrument_manifest": native_graph_instrument_manifest(),
             "audio_uniform_layout": ghost_audio_uniform_layout(),
+            "source_frame_shared_texture_import": source_frame_shared_texture_import,
             "native_scene_bridge": {
                 "stage3d": self.stage3d_scene_summary,
                 "projection_sim": self.projection_sim_scene_summary,
@@ -2313,6 +2322,49 @@ impl App {
                 "Local video media decode is render-clock driven in the native core: visible video sources pump FFmpeg-decoded frame windows into native source-frame textures with adjacent-frame cache prefetch."
             ]
         })
+    }
+
+    fn source_frame_shared_texture_import_contract(&self) -> Value {
+        let renderer_ready = self.renderer.is_some();
+        #[cfg(target_os = "macos")]
+        {
+            json!({
+                "available": renderer_ready,
+                "backend": native_backend_name(),
+                "platform": "iosurface",
+                "importer": "metal-iosurface",
+                "handle_scope": "global-id",
+                "accepted_handle_encodings": ["integer", "base64", "hex", "opaque"],
+                "accepted_formats": ["bgra8unorm", "rgba8unorm", "80", "87", "28", "70"],
+                "reason": if renderer_ready { Value::Null } else { json!("native renderer is not running") },
+            })
+        }
+        #[cfg(target_os = "windows")]
+        {
+            json!({
+                "available": renderer_ready,
+                "backend": native_backend_name(),
+                "platform": "dxgi",
+                "importer": "d3d12-open-shared-handle",
+                "handle_scope": "process-handle",
+                "accepted_handle_encodings": ["integer", "base64", "hex", "opaque"],
+                "accepted_formats": ["bgra8unorm", "rgba8unorm", "80", "87", "28", "70"],
+                "reason": if renderer_ready { Value::Null } else { json!("native renderer is not running") },
+            })
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            json!({
+                "available": false,
+                "backend": native_backend_name(),
+                "platform": "unsupported",
+                "importer": "none",
+                "handle_scope": "",
+                "accepted_handle_encodings": [],
+                "accepted_formats": [],
+                "reason": "native source-frame shared texture import is only implemented for Metal IOSurface and D3D12 DXGI",
+            })
+        }
     }
 
     fn shared_texture_media_transport_ready(&self) -> bool {
