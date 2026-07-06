@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 
 const root = process.cwd();
 const rendererRoot = join(root, 'src', 'lib', 'renderer');
@@ -19,6 +19,8 @@ const WGSL_MODULE_CALL_RE = /\bcreate(?:AndWarm)?WgslShaderModule\s*\(([\s\S]*?)
 const NUMERIC_CONST_RE = /\bconst\s+([A-Z][A-Z0-9_]*)\s*=\s*(-?\d+(?:\.\d+)?)\s*;/g;
 const INTERPOLATION_RE = /\$\{\s*([A-Za-z0-9_]+)\s*\}/g;
 const INCLUDE_RE = /^[ \t]*#include\s+(?:<([^>\r\n]+)>|"([^"\r\n]+)")\s*$/gm;
+const RUST_WGSL_RAW_CONST_RE = /\bconst\s+([A-Z0-9_]+_WGSL)\s*:\s*&str\s*=\s*r#"([\s\S]*?)"#;/g;
+const RUST_WGSL_CONCAT_CONST_RE = /\bconst\s+([A-Z0-9_]+_WGSL)\s*:\s*&str\s*=\s*concat!\(\s*include_str!\("([^"]+)"\)\s*,\s*r#"([\s\S]*?)"#\s*\);/g;
 
 function walkFiles(dir, out = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -207,15 +209,47 @@ function assertNativeStage3DLightingStdlibUsage(stdlib) {
   }
 
   const nativeMain = readFileSync(join(nativeRendererRoot, 'main.rs'), 'utf8');
-  const missingNative = required.filter((name) => !new RegExp(`\\bfn\\s+${name}\\s*\\(`).test(nativeMain));
-  const usesDirectionalHelper = (nativeMain.match(/\bghost_apply_directional_light\s*\(/g) ?? []).length > 1;
-  if (missingNative.length || !usesDirectionalHelper) {
+  const sharedIncludePath = 'include_str!("../../src/lib/renderer/wgsl/lighting.wgsl")';
+  const localCopies = required.filter((name) => new RegExp(`\\bfn\\s+${name}\\s*\\(`).test(nativeMain));
+  if (!nativeMain.includes(sharedIncludePath) || localCopies.length) {
     throw new Error(
-      `native Stage3D mesh shader is missing shared lighting helper coverage: ${
-        missingNative.length ? missingNative.join(', ') : 'ghost_apply_directional_light unused'
+      `native Stage3D mesh shader must consume shared lighting.wgsl directly: ${
+        localCopies.length ? `local copies=${localCopies.join(', ')}` : 'include_str missing'
       }`,
     );
   }
+}
+
+function extractNativeRustWgslRecords() {
+  const mainPath = join(nativeRendererRoot, 'main.rs');
+  const source = readFileSync(mainPath, 'utf8');
+  const records = [];
+  const concatConstNames = new Set();
+
+  for (const match of source.matchAll(RUST_WGSL_CONCAT_CONST_RE)) {
+    const [, name, includePath, body] = match;
+    concatConstNames.add(name);
+    const includeSource = readFileSync(resolve(nativeRendererRoot, includePath), 'utf8');
+    records.push({
+      id: `native-renderer/src/main.rs:${name}`,
+      stage: 'module',
+      entry: 'main',
+      source: `${includeSource}\n${body ?? ''}`,
+    });
+  }
+
+  for (const match of source.matchAll(RUST_WGSL_RAW_CONST_RE)) {
+    const [, name, body] = match;
+    if (concatConstNames.has(name)) continue;
+    records.push({
+      id: `native-renderer/src/main.rs:${name}`,
+      stage: 'module',
+      entry: 'main',
+      source: body ?? '',
+    });
+  }
+
+  return records.filter((record) => looksLikeWgsl(record.source));
 }
 
 function collectRecords() {
@@ -265,6 +299,7 @@ function collectRecords() {
       source,
     });
   }
+  records.push(...extractNativeRustWgslRecords());
 
   if (failures.length) {
     throw new Error(`WGSL source assembly failed:\n${failures.join('\n')}`);
