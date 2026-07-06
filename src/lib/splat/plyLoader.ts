@@ -27,6 +27,7 @@ export interface PLYVertex {
   f_dc_0?: number;
   f_dc_1?: number;
   f_dc_2?: number;
+  f_rest?: number[];
   // UV texture coordinates (optional, from file)
   texture_u?: number;
   texture_v?: number;
@@ -37,6 +38,8 @@ export interface PLYData {
   faces?: number[][];
   dataType: SplatDataType;
   hasUVs: boolean;
+  sphericalHarmonicsDegree?: number;
+  sphericalHarmonicsCoefficientCount?: number;
   boundingBox: {
     min: { x: number; y: number; z: number };
     max: { x: number; y: number; z: number };
@@ -159,6 +162,25 @@ function getBinaryProperty(
     return { name, value, type: info.type };
   }
   return undefined;
+}
+
+function sphericalHarmonicsRestPropertyNames(properties: PLYProperty[]): string[] {
+  return properties
+    .map((property) => {
+      const match = /^f_rest_(\d+)$/.exec(property.name);
+      return match ? { name: property.name, index: Number(match[1]) } : null;
+    })
+    .filter((entry): entry is { name: string; index: number } => !!entry && Number.isFinite(entry.index))
+    .sort((a, b) => a.index - b.index)
+    .map((entry) => entry.name);
+}
+
+function sphericalHarmonicsDegreeForRestCount(restCoefficientCount: number): number {
+  if (restCoefficientCount <= 0 || restCoefficientCount % 3 !== 0) return 0;
+  const basisCount = restCoefficientCount / 3 + 1;
+  const degree = Math.sqrt(basisCount) - 1;
+  const rounded = Math.round(degree);
+  return Math.abs(degree - rounded) < 1e-4 ? rounded : 0;
 }
 
 function makeColorChannels(
@@ -361,6 +383,7 @@ function parseASCII(
     propIndices[p.name] = i;
   });
   const gaussian = isGaussianSplat(vertexElement.properties);
+  const shRestPropertyNames = sphericalHarmonicsRestPropertyNames(vertexElement.properties);
 
   for (let i = 0; i < vertexElement.count && i < dataLines.length; i++) {
     const values = dataLines[i].trim().split(/\s+/).map(Number);
@@ -405,6 +428,12 @@ function parseASCII(
     if (fDc0) vertex.f_dc_0 = fDc0.value;
     if (fDc1) vertex.f_dc_1 = fDc1.value;
     if (fDc2) vertex.f_dc_2 = fDc2.value;
+    if (shRestPropertyNames.length > 0) {
+      vertex.f_rest = shRestPropertyNames.map((name) => {
+        const value = values[propIndices[name]];
+        return Number.isFinite(value) ? value : 0;
+      });
+    }
 
     // UV coordinates (various naming conventions)
     const uIdx = propIndices.u ?? propIndices.s ?? propIndices.texture_u;
@@ -479,6 +508,7 @@ function parseBinary(
     stride += getTypeSize(prop.type);
   }
   const gaussian = isGaussianSplat(vertexElement.properties);
+  const shRestPropertyNames = sphericalHarmonicsRestPropertyNames(vertexElement.properties);
 
   for (let i = 0; i < vertexElement.count; i++) {
     const baseOffset = i * stride;
@@ -540,6 +570,12 @@ function parseBinary(
     if (fDc0) vertex.f_dc_0 = fDc0.value;
     if (fDc1) vertex.f_dc_1 = fDc1.value;
     if (fDc2) vertex.f_dc_2 = fDc2.value;
+    if (shRestPropertyNames.length > 0) {
+      vertex.f_rest = shRestPropertyNames.map((name) => {
+        const value = getValue(name);
+        return Number.isFinite(value) ? value! : 0;
+      });
+    }
 
     // UV coordinates (various naming conventions)
     const tex_u = getValue('u') ?? getValue('s') ?? getValue('texture_u');
@@ -770,6 +806,8 @@ export function parsePLYBuffer(buffer: ArrayBuffer): PLYData {
   const dataType: SplatDataType = isGaussianSplat(vertexElement.properties)
     ? 'gaussian'
     : 'pointcloud';
+  const shRestCoefficientCount = sphericalHarmonicsRestPropertyNames(vertexElement.properties).length;
+  const shDegree = sphericalHarmonicsDegreeForRestCount(shRestCoefficientCount);
 
   let vertices: PLYVertex[];
   let faces: number[][] = [];
@@ -878,6 +916,8 @@ export function parsePLYBuffer(buffer: ArrayBuffer): PLYData {
     faces,
     dataType,
     hasUVs,
+    sphericalHarmonicsDegree: shDegree,
+    sphericalHarmonicsCoefficientCount: shRestCoefficientCount,
     boundingBox,
     center,
   };
