@@ -247,10 +247,119 @@ function deriveFallbackDriverMode(
   return 'offline';
 }
 
-function localMainDriverBlockers(graphCatalogComplete: boolean, nativeGraphSourceFrames: boolean): string[] {
+function featureEnabled(
+  features: NativeRendererCapabilities['features'] | null | undefined,
+  feature: string,
+): boolean {
+  return features?.[feature] === true;
+}
+
+function readinessCheckOkOrFallback(
+  readiness: RendererReadinessReport | null | undefined,
+  id: string,
+  fallback: boolean,
+): boolean {
+  const check = readinessCheck(readiness, id);
+  return check ? !!check.ok : fallback;
+}
+
+function localMainDriverBlockers(options: {
+  status: RendererStatus | null | undefined;
+  readiness: RendererReadinessReport | null | undefined;
+  capabilities: NativeRendererCapabilities | null | undefined;
+  graphCatalogComplete: boolean;
+  nativeGraphSourceFrames: boolean;
+}): string[] {
+  const {
+    status,
+    readiness,
+    capabilities,
+    graphCatalogComplete,
+    nativeGraphSourceFrames,
+  } = options;
+  const features = capabilities?.features ?? readiness?.capabilities?.features ?? {};
   const blockers: string[] = [];
   if (!nativeGraphSourceFrames) blockers.push('native graph source-frame rendering is unavailable');
   if (!graphCatalogComplete) blockers.push('native graph instrument catalog is incomplete');
+
+  const nativeEffectPassReady = readinessCheckOkOrFallback(
+    readiness,
+    'native-effect-pass-manifest',
+    !!(
+      featureEnabled(features, 'native_effect_pass_manifest') &&
+      featureEnabled(features, 'compute_graph_render') &&
+      featureEnabled(features, 'compute_graph_texture_sampling') &&
+      featureEnabled(features, 'compute_graph_source_frame_target')
+    ),
+  );
+  const nativeOutputDriverReady = readinessCheckOkOrFallback(
+    readiness,
+    'native-output-driver',
+    !!(
+      status?.backend_ready &&
+      featureEnabled(features, 'native_output_mirror_texture') &&
+      featureEnabled(features, 'managed_output_attach') &&
+      featureEnabled(features, 'managed_output_window_control') &&
+      nativeGraphSourceFrames &&
+      graphCatalogComplete &&
+      nativeEffectPassReady &&
+      featureEnabled(features, 'native_static_image_decode') &&
+      featureEnabled(features, 'native_static_image_prefetch')
+    ),
+  );
+  const sharedTextureUploadReady = readinessCheckOkOrFallback(
+    readiness,
+    'shared-texture-upload',
+    featureEnabled(features, 'shared_texture_upload'),
+  );
+  const outputSharedTextureExportReady = readinessCheckOkOrFallback(
+    readiness,
+    'shared-texture-output-export',
+    featureEnabled(features, 'shared_texture_output_export'),
+  );
+  const nativeTextureShareSenderReady = readinessCheckOkOrFallback(
+    readiness,
+    'native-texture-share-sender',
+    featureEnabled(features, 'native_texture_share_sender'),
+  );
+  const nativeMediaDecodeReady = readinessCheckOkOrFallback(
+    readiness,
+    'native-media-decode',
+    !!(
+      featureEnabled(features, 'native_media_decode') &&
+      featureEnabled(features, 'media_prefetch') &&
+      featureEnabled(features, 'native_video_frame_decode') &&
+      featureEnabled(features, 'native_video_frame_prefetch') &&
+      featureEnabled(features, 'native_video_decode_pump') &&
+      featureEnabled(features, 'native_video_decode_pump_window')
+    ),
+  );
+  const nativeRecordingReady = readinessCheckOkOrFallback(
+    readiness,
+    'native-recording',
+    featureEnabled(features, 'native_recording'),
+  );
+  const nativeStage3DReady = !!(
+    featureEnabled(features, 'native_stage3d') &&
+    featureEnabled(features, 'native_stage3d_output_renderer') &&
+    featureEnabled(features, 'native_stage3d_recording_parity')
+  );
+  const nativeProjectionSimReady = !!(
+    featureEnabled(features, 'native_projection_sim') &&
+    featureEnabled(features, 'native_projection_sim_output_renderer') &&
+    featureEnabled(features, 'native_projection_sim_recording_parity')
+  );
+
+  if (!nativeOutputDriverReady) blockers.push('native output driver is not ready');
+  if (!nativeEffectPassReady) blockers.push('native source-frame effect-pass route is incomplete');
+  if (!sharedTextureUploadReady) blockers.push('full shared-texture media transport is pending');
+  if (!outputSharedTextureExportReady) blockers.push('native output shared-texture export is unavailable');
+  if (!nativeTextureShareSenderReady) blockers.push('native texture-share sender is not active-ready');
+  if (!nativeMediaDecodeReady) blockers.push('native render-clock video decode pump is not fully ready');
+  if (!nativeRecordingReady) blockers.push('native recording/MP4 frame path is not fully ready');
+  if (!nativeStage3DReady) blockers.push('native Stage3D renderer/recording parity is pending');
+  if (!nativeProjectionSimReady) blockers.push('native projection simulator/recording parity is pending');
+
   return blockers;
 }
 
@@ -300,7 +409,14 @@ export function deriveNativeRendererRuntimeState(
   const graphCatalogComplete = !!(options.graphCatalogComplete ?? inferredGraphFlags.graphCatalogComplete);
   const nativeGraphSourceFrames = !!(options.nativeGraphSourceFrames ?? inferredGraphFlags.nativeGraphSourceFrames);
   const advertisedMode = deriveDriverMode(status, readiness);
-  const localBlockers = localMainDriverBlockers(graphCatalogComplete, nativeGraphSourceFrames);
+  const localBlockers = localMainDriverBlockers({
+    status,
+    readiness,
+    capabilities,
+    graphCatalogComplete,
+    nativeGraphSourceFrames,
+  });
+  const exposedLocalBlockers = advertisedMode === 'full-v2' ? localBlockers : [];
   const mode = advertisedMode === 'full-v2' && localBlockers.length > 0
     ? deriveFallbackDriverMode(status, readiness)
     : advertisedMode;
@@ -334,7 +450,7 @@ export function deriveNativeRendererRuntimeState(
     sourceFrameMipLevels: Number(status?.source_frame_mip_levels ?? capabilities?.limits?.source_frame_mip_levels ?? 1),
     averageGpuMs: Number.isFinite(status?.avg_render_gpu_ms) ? Number(status?.avg_render_gpu_ms) : null,
     readinessDetail,
-    blockers: blockersForMode(mode, readiness, localBlockers),
+    blockers: blockersForMode(mode, readiness, exposedLocalBlockers),
     textureShareLabel: textureShare?.label ?? null,
     textureSharePlatform: textureShare?.platform ?? null,
     textureShareAvailable: !!textureShare?.available,
@@ -343,7 +459,7 @@ export function deriveNativeRendererRuntimeState(
     sharedTextureOutputExportReady: !!(outputExportCheck?.ok ?? features.shared_texture_output_export),
     nativeEffectPassReady: !!(nativeEffectPassCheck?.ok ?? features.native_effect_pass_manifest),
     nativeEffectPassDetail: String(nativeEffectPassCheck?.detail ?? ''),
-    nativeTextureShareSenderReady: !!nativeTextureShareCheck?.ok,
+    nativeTextureShareSenderReady: !!(nativeTextureShareCheck?.ok ?? features.native_texture_share_sender),
     nativeTextureShareSenderDetail: String(nativeTextureShareCheck?.detail ?? ''),
     nativeOutputShareCapable: !!textureShare?.nativeOutputCapable,
     nativeOutputShareActive: !!textureShare?.nativeOutputActive,
