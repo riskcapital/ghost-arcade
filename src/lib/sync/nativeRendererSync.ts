@@ -3303,6 +3303,9 @@ export class NativeRendererSync {
   private nativeGraphReadyKinds = new Set<NativeGraphRouteKind>();
   private nativeEffectPassDescriptorIds = new Set<string>();
   private nativeGraphRoutes = new Map<string, NativeGraphRouteState>();
+  private nativeGraphRouteFailures = 0;
+  private nativeGraphRouteSuppressedFailures = 0;
+  private nativeGraphRouteLastFailure: string | null = null;
   private nativePointCloudDataCache = new Map<string, Promise<PointCloudFXNativePointData>>();
   private nativeSourceFrameSize = SOURCE_FRAME_SIZE_FALLBACK;
   private dynamicSourceFrameCaptureSize = SOURCE_FRAME_SIZE_FALLBACK;
@@ -3400,6 +3403,30 @@ export class NativeRendererSync {
     this.nativeVideoLastDecodeFailures = 0;
     this.nativeVideoLastDecodes = 0;
     this.nativeVideoDecodeWarnings = 0;
+  }
+
+  private resetNativeGraphRouteTelemetry() {
+    this.nativeGraphRouteFailures = 0;
+    this.nativeGraphRouteSuppressedFailures = 0;
+    this.nativeGraphRouteLastFailure = null;
+  }
+
+  private recordNativeGraphRouteFailure(
+    route: Pick<NativeGraphLayerRoute, 'kind' | 'key'>,
+    layerId: string,
+    err: unknown,
+    routeState: NativeGraphRouteState,
+  ) {
+    const message = err instanceof Error ? err.message : String(err);
+    const summary = `${route.kind}:${layerId}:${message}`.slice(0, 240);
+    if (routeState.warnings < 3) {
+      console.warn(`[NativeRendererSync] native ${route.kind} graph failed`, layerId, err);
+    } else {
+      this.nativeGraphRouteSuppressedFailures += 1;
+    }
+    routeState.warnings += 1;
+    this.nativeGraphRouteFailures += 1;
+    this.nativeGraphRouteLastFailure = summary;
   }
 
   private reconcileSharedTextureUploads(status: RendererStatus) {
@@ -4216,10 +4243,7 @@ export class NativeRendererSync {
         routeState.lastManualClockKey = manualClockKey || undefined;
         routeState.warnings = 0;
       } catch (err) {
-        if (routeState.warnings < 3) {
-          console.warn(`[NativeRendererSync] native ${route.kind} graph failed`, layer.id, err);
-        }
-        routeState.warnings += 1;
+        this.recordNativeGraphRouteFailure(route, layer.id, err, routeState);
       } finally {
         routeState.inFlight = false;
       }
@@ -4356,6 +4380,7 @@ export class NativeRendererSync {
     this.nativeEffectPassDescriptorIds = new Set(nativeEffectPassDescriptorIds(startupCapabilities));
     this.nativeComputeGraphSourceFrames = computeGraphSourceFrameHost;
     this.nativeGraphCatalogComplete = computeGraphSourceFrameHost && missingGraphRequirements.length === 0;
+    this.resetNativeGraphRouteTelemetry();
     updateNativeRendererRuntimeFromStartup(
       startupStatus,
       startupReadiness,
@@ -4397,6 +4422,7 @@ export class NativeRendererSync {
     this.resetSharedTextureUploadTracking();
     this.resetNativeImageDecodeTracking();
     this.resetNativeVideoDecodeTracking();
+    this.resetNativeGraphRouteTelemetry();
     this.startupReady = true;
     if (this.latestLayers.length) {
       this.scheduleSync(this.desiredWidth || width, this.desiredHeight || height, this.latestLayers);
@@ -4491,6 +4517,7 @@ export class NativeRendererSync {
     this.resetSharedTextureUploadTracking();
     this.resetNativeImageDecodeTracking();
     this.resetNativeVideoDecodeTracking();
+    this.resetNativeGraphRouteTelemetry();
     this.previewImageElements.clear();
     this.previewImageLoads.clear();
     this.nativeComputeGraphSourceFrames = false;
@@ -4636,6 +4663,9 @@ export class NativeRendererSync {
           capabilities: readiness?.capabilities,
           graphCatalogComplete: this.nativeGraphCatalogComplete,
           nativeGraphSourceFrames: this.nativeComputeGraphSourceFrames,
+          nativeGraphRouteFailures: this.nativeGraphRouteFailures,
+          nativeGraphRouteSuppressedFailures: this.nativeGraphRouteSuppressedFailures,
+          nativeGraphRouteLastFailure: this.nativeGraphRouteLastFailure,
         });
       }
     }

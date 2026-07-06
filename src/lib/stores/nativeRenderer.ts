@@ -25,6 +25,9 @@ export interface NativeRendererRuntimeState {
   graphCatalogComplete: boolean;
   nativeGraphSourceFrames: boolean;
   nativeGraphSourceFrameLayers: number;
+  nativeGraphRouteFailures: number;
+  nativeGraphRouteSuppressedFailures: number;
+  nativeGraphRouteLastFailure: string | null;
   computeGraphRuns: number;
   computeGraphPasses: number;
   sourceFrameSize: number;
@@ -66,6 +69,9 @@ export const initialNativeRendererRuntimeState: NativeRendererRuntimeState = {
   graphCatalogComplete: false,
   nativeGraphSourceFrames: false,
   nativeGraphSourceFrameLayers: 0,
+  nativeGraphRouteFailures: 0,
+  nativeGraphRouteSuppressedFailures: 0,
+  nativeGraphRouteLastFailure: null,
   computeGraphRuns: 0,
   computeGraphPasses: 0,
   sourceFrameSize: 0,
@@ -325,6 +331,9 @@ export function deriveNativeRendererRuntimeState(
     capabilities?: NativeRendererCapabilities | null;
     graphCatalogComplete?: boolean;
     nativeGraphSourceFrames?: boolean;
+    nativeGraphRouteFailures?: number;
+    nativeGraphRouteSuppressedFailures?: number;
+    nativeGraphRouteLastFailure?: string | null;
     updatedAtMs?: number;
   } = {},
 ): NativeRendererRuntimeState {
@@ -368,6 +377,11 @@ export function deriveNativeRendererRuntimeState(
     graphCatalogComplete,
     nativeGraphSourceFrames,
     nativeGraphSourceFrameLayers: Number(status?.native_graph_source_frame_layers ?? 0),
+    nativeGraphRouteFailures: Math.max(0, Number(options.nativeGraphRouteFailures ?? 0)),
+    nativeGraphRouteSuppressedFailures: Math.max(0, Number(options.nativeGraphRouteSuppressedFailures ?? 0)),
+    nativeGraphRouteLastFailure: options.nativeGraphRouteLastFailure !== undefined
+      ? options.nativeGraphRouteLastFailure
+      : null,
     computeGraphRuns: Number(status?.compute_graph_runs ?? 0),
     computeGraphPasses: Number(status?.compute_graph_passes ?? 0),
     sourceFrameSize: Number(status?.source_frame_size ?? capabilities?.limits?.source_frame_size ?? 0),
@@ -422,6 +436,9 @@ export function updateNativeRendererRuntimeFromStatus(
     capabilities?: NativeRendererCapabilities | null;
     graphCatalogComplete?: boolean;
     nativeGraphSourceFrames?: boolean;
+    nativeGraphRouteFailures?: number;
+    nativeGraphRouteSuppressedFailures?: number;
+    nativeGraphRouteLastFailure?: string | null;
   } = {},
 ) {
   nativeRendererRuntime.update((current) => {
@@ -432,6 +449,12 @@ export function updateNativeRendererRuntimeFromStatus(
         capabilities: options.capabilities,
         graphCatalogComplete: options.graphCatalogComplete ?? current.graphCatalogComplete,
         nativeGraphSourceFrames: options.nativeGraphSourceFrames ?? current.nativeGraphSourceFrames,
+        nativeGraphRouteFailures: options.nativeGraphRouteFailures ?? current.nativeGraphRouteFailures,
+        nativeGraphRouteSuppressedFailures: options.nativeGraphRouteSuppressedFailures ??
+          current.nativeGraphRouteSuppressedFailures,
+        nativeGraphRouteLastFailure: options.nativeGraphRouteLastFailure !== undefined
+          ? options.nativeGraphRouteLastFailure
+          : current.nativeGraphRouteLastFailure,
       },
     );
     if (options.readiness || !status?.running) return next;
