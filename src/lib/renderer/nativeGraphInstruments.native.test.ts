@@ -437,6 +437,21 @@ function rgbDistance(a: [number, number, number], b: [number, number, number]): 
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 }
 
+function meanFlythroughDepthAnchor(readback: Record<string, unknown> | undefined): number {
+  const bytes = typeof readback?.bytes_b64 === 'string'
+    ? Buffer.from(readback.bytes_b64, 'base64')
+    : Buffer.alloc(0);
+  const strideFloats = 12;
+  const particleCount = Math.floor(bytes.byteLength / (strideFloats * 4));
+  if (particleCount <= 0) return 0;
+  const view = new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+  let sum = 0;
+  for (let i = 0; i < particleCount; i += 1) {
+    sum += view[i * strideFloats + 7];
+  }
+  return sum / particleCount;
+}
+
 async function snapshotSourceFrameLayer(
   rpc: NativeRpc,
   sourceId: string,
@@ -648,7 +663,14 @@ describe('Native graph instrument runtime fixtures', () => {
           audioTreble: 0.25,
           reset: true,
         });
-        const graphResult = await rpc.send('compute_graph', encodeNativeGraphConfigForRpc(graph.config), 12000);
+        const particleBufferId = graph.config.buffers.find((buffer: Record<string, unknown>) => (
+          typeof buffer.id === 'string' && buffer.id.endsWith(':particles')
+        ))?.id as string | undefined;
+        const graphConfig = {
+          ...graph.config,
+          readbacks: particleBufferId ? [{ id: particleBufferId, include_bytes: true }] : [],
+        };
+        const graphResult = await rpc.send('compute_graph', encodeNativeGraphConfigForRpc(graphConfig), 12000);
         const renders = Array.isArray(graphResult?.renders)
           ? graphResult.renders
           : graphResult?.render
@@ -658,7 +680,7 @@ describe('Native graph instrument runtime fixtures', () => {
           render.target === 'source_frame' &&
           render.source_id === 'native-graph-reactivity-flythrough'
         )), `flythrough-${label}`).toBe(true);
-        return snapshotSourceFrameLayer(
+        const snapshot = await snapshotSourceFrameLayer(
           rpc,
           'native-graph-reactivity-flythrough',
           `native-graph-reactivity-layer-flythrough-${label}`,
@@ -666,6 +688,12 @@ describe('Native graph instrument runtime fixtures', () => {
           41,
           label === 'dark' ? null : 0.001,
         );
+        return {
+          ...snapshot,
+          particleDepthMean: meanFlythroughDepthAnchor(
+            particleBufferId ? graphResult?.readbacks?.[particleBufferId] : undefined,
+          ),
+        };
       };
 
       const pixelRed = await renderPixelParticles('red', [230, 32, 28], 11);
@@ -676,6 +704,7 @@ describe('Native graph instrument runtime fixtures', () => {
       const flyBright = await renderFlythrough('bright', [245, 245, 245], 21);
       const flyDark = await renderFlythrough('dark', [2, 2, 2], 22);
       expect(String(flyDark.checksum)).not.toBe(String(flyBright.checksum));
+      expect(Number(flyBright.particleDepthMean ?? 0)).toBeGreaterThan(Number(flyDark.particleDepthMean ?? 0) + 0.2);
     } finally {
       await rpc.close();
     }
