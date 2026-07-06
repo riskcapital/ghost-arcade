@@ -3705,6 +3705,9 @@ export class NativeRendererSync {
           const alpha = new Float32Array(vertices.length);
           const splatScale = new Float32Array(vertices.length * 3);
           const splatRotation = new Float32Array(vertices.length * 4);
+          const shCoeffCount = parsed.sphericalHarmonicsCoefficientCount ?? 0;
+          const shRestStride = shCoeffCount >= 9 ? 9 : 0;
+          const shRest = shRestStride > 0 ? new Float32Array(vertices.length * shRestStride) : undefined;
           let gaussian = parsed.dataType === 'gaussian';
           for (let i = 0; i < vertices.length; i++) {
             const v = vertices[i];
@@ -3731,12 +3734,22 @@ export class NativeRendererSync {
             splatRotation[rotOff + 1] = Number.isFinite(v.rot_1) ? v.rot_1! : 0;
             splatRotation[rotOff + 2] = Number.isFinite(v.rot_2) ? v.rot_2! : 0;
             splatRotation[rotOff + 3] = Number.isFinite(v.rot_3) ? v.rot_3! : 0;
+            if (shRest && v.f_rest?.length) {
+              const shOff = i * shRestStride;
+              const copyCount = Math.min(shRestStride, v.f_rest.length);
+              for (let j = 0; j < copyCount; j++) {
+                const coeff = v.f_rest[j];
+                shRest[shOff + j] = Number.isFinite(coeff) ? coeff : 0;
+              }
+            }
           }
           return buildPointCloudFXNativePointData(positions, colors, {
             maxPoints: NATIVE_POINT_CLOUD_MAX_POINTS,
             alpha,
             splatScale: gaussian ? splatScale : undefined,
             splatRotation: gaussian ? splatRotation : undefined,
+            sphericalHarmonicsRest: shRest,
+            sphericalHarmonicsRestStride: shRestStride,
             gaussian,
             signature: [
               cacheKey,

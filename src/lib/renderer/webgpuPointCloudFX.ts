@@ -33,7 +33,7 @@ import { createAndWarmWgslShaderModule, resolveGhostWgsl } from './wgsl';
  *
  * Storage layout (per-point), two buffers:
  *
- *   HOME (64 bytes, immutable after load):
+ *   HOME (112 bytes, immutable after load):
  *     homePos:   vec3<f32>  (12)
  *     alpha:     f32        (4)
  *     homeColor: vec3<f32>  (12)
@@ -41,6 +41,12 @@ import { createAndWarmWgslShaderModule, resolveGhostWgsl } from './wgsl';
  *     splatScale: vec3<f32> (12)
  *     gaussian:  f32        (4)
  *     splatRot:  vec4<f32>  (16)
+ *     sh1Y:      vec3<f32>  (12)
+ *     shDegree:  f32        (4)
+ *     sh1Z:      vec3<f32>  (12)
+ *     shCount:   f32        (4)
+ *     sh1X:      vec3<f32>  (12)
+ *     _padSh:    f32        (4)
  *
  *   LIVE (48 bytes, compute-shader write-target):
  *     pos:   vec3<f32>  (12)
@@ -50,21 +56,22 @@ import { createAndWarmWgslShaderModule, resolveGhostWgsl } from './wgsl';
  *     color: vec3<f32>  (12)
  *     _pad:  f32        (4)
  *
- * Total: 112 bytes per point. 250K points = 28MB; 1M points =
- * 112MB. The extra packed home lane keeps scale/rotation/opacity
- * available for the native covariance renderer instead of flattening
- * .ply/.splat files into uniform dots.
+ * Total: 160 bytes per point. 250K points = 40MB; 1M points =
+ * 160MB. The extra packed home lane keeps scale/rotation/opacity
+ * and first-order SH color available for the native covariance
+ * renderer instead of flattening .ply/.splat files into uniform dots.
  *
  * Loading: the host calls `setPointCloudData(positions, colors, opts)`
  * with Float32Array (XYZ × N) + Float32Array (RGB × N, in 0..1).
- * `opts` can carry Gaussian alpha/scale/rotation parsed from .ply /
- * .splat sources. The renderer (re)allocates buffers, normalizes
- * positions into a unit cube around a robust median center, and
- * writeBuffer's the data. After that the first frame renders
- * immediately.
+ * `opts` can carry Gaussian alpha/scale/rotation/SH parsed from
+ * .ply / .splat sources. The renderer (re)allocates buffers,
+ * normalizes positions into a unit cube around a robust median
+ * center, and writeBuffer's the data. After that the first frame
+ * renders immediately.
  */
 
-const HOME_BYTES = 64;
+const HOME_BYTES = 112;
+const HOME_FLOATS = HOME_BYTES / Float32Array.BYTES_PER_ELEMENT;
 const LIVE_BYTES = 48;
 const SORT_PAIR_BYTES = 8;
 const MAX_POINTS = 4_000_000;
@@ -90,6 +97,10 @@ export interface PointCloudFXDataOptions {
   alpha?: Float32Array;
   splatScale?: Float32Array;
   splatRotation?: Float32Array;
+  sphericalHarmonicsRest?: Float32Array;
+  sphericalHarmonicsRestStride?: number;
+  sphericalHarmonicsDegree?: number;
+  sphericalHarmonicsCoefficientCount?: number;
   gaussian?: boolean;
   maxPoints?: number;
 }
@@ -144,6 +155,24 @@ function normalizedQuaternion(
   const len = Math.hypot(qx, qy, qz, qw);
   if (len <= 1e-8) return [1, 0, 0, 0];
   return [qx / len, qy / len, qz / len, qw / len];
+}
+
+function firstOrderShColor(
+  rest: Float32Array | undefined,
+  coefficientStride: number,
+  sourceIndex: number,
+  basisIndex: 0 | 1 | 2,
+): [number, number, number] {
+  if (!rest || coefficientStride < 9) return [0, 0, 0];
+  const off = sourceIndex * coefficientStride;
+  const r = rest[off + basisIndex];
+  const g = rest[off + 3 + basisIndex];
+  const b = rest[off + 6 + basisIndex];
+  return [
+    Number.isFinite(r) ? r : 0,
+    Number.isFinite(g) ? g : 0,
+    Number.isFinite(b) ? b : 0,
+  ];
 }
 
 function medianSorted(values: number[]): number {
@@ -272,6 +301,12 @@ struct Home {
   splatScale:    vec3<f32>,
   gaussian:      f32,
   splatRotation: vec4<f32>,
+  sh1Y:          vec3<f32>,
+  shDegree:      f32,
+  sh1Z:          vec3<f32>,
+  shCoeffCount:  f32,
+  sh1X:          vec3<f32>,
+  _padSh:        f32,
 };
 
 struct Live {
@@ -682,6 +717,7 @@ const GHOST_GAUSSIAN_SIGMA_EXTENT: f32 = 3.0;
 const GHOST_GAUSSIAN_MIN_SIGMA_NDC: f32 = 0.00035;
 const GHOST_GAUSSIAN_MAX_SIGMA_NDC: f32 = 0.18;
 const GHOST_GAUSSIAN_SCREEN_BASIS_STEP: f32 = 0.01;
+const GHOST_SH_C1: f32 = 0.4886025119029199;
 
 struct Home {
   homePos:       vec3<f32>,
@@ -691,6 +727,12 @@ struct Home {
   splatScale:    vec3<f32>,
   gaussian:      f32,
   splatRotation: vec4<f32>,
+  sh1Y:          vec3<f32>,
+  shDegree:      f32,
+  sh1Z:          vec3<f32>,
+  shCoeffCount:  f32,
+  sh1X:          vec3<f32>,
+  _padSh:        f32,
 };
 
 struct Live {
@@ -705,7 +747,7 @@ struct Live {
 struct U {
   viewProj:     mat4x4<f32>,
   camRight:     vec3<f32>,
-  _pad0:        f32,
+  cameraDistance: f32,
   camUp:        vec3<f32>,
   _pad1:        f32,
   topology:     u32,        // 0=points, 1=billboards, 2=strokes
@@ -734,6 +776,24 @@ fn rotateByQuatWxyz(qIn: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
   let qv = q.yzw;
   let t = 2.0 * cross(qv, v);
   return v + q.x * t + cross(qv, t);
+}
+
+fn firstOrderShTint(h: Home, p: Live) -> vec3<f32> {
+  if (h.gaussian <= 0.5 || h.shDegree < 0.5 || h.shCoeffCount < 9.0) {
+    return vec3<f32>(1.0);
+  }
+  let viewDir = normalize(vec3<f32>(0.0, 0.0, max(u.cameraDistance, 1e-4)) - p.pos);
+  let shColor = clamp(
+    h.homeColor +
+      GHOST_SH_C1 * (
+        h.sh1Z * viewDir.z -
+        h.sh1Y * viewDir.y -
+        h.sh1X * viewDir.x
+      ),
+    vec3<f32>(0.0),
+    vec3<f32>(1.0),
+  );
+  return clamp(shColor / max(h.homeColor, vec3<f32>(0.025)), vec3<f32>(0.0), vec3<f32>(4.0));
 }
 
 fn projectToNdc(pos: vec3<f32>) -> vec2<f32> {
@@ -897,7 +957,7 @@ fn vs_main(
   var out: VSOut;
   out.pos    = u.viewProj * vec4<f32>(p.pos + offset, 1.0);
   out.uv     = cornerUV;
-  out.color  = p.color;
+  out.color  = clamp(p.color * firstOrderShTint(h, p), vec3<f32>(0.0), vec3<f32>(4.0));
   out.alpha  = p.alpha * u.opacity;
   out.depth01 = clamp(out.pos.z / max(out.pos.w, 1e-5) * 0.5 + 0.5, 0.0, 1.0);
   out.gaussian = h.gaussian;
@@ -1480,6 +1540,14 @@ export function buildPointCloudFXPackedPointBuffers(
   const pointSize = clampNumber(options.pointSize ?? DEFAULT_POINT_SIZE, 0.0001, 0.2);
   const depthSortEnabled = !!options.depthSort && hasGaussianPayload && n > 1;
   const sortCount = depthSortEnabled ? nextPowerOfTwo(n) : n;
+  const shDegree = Math.max(0, Math.floor(options.sphericalHarmonicsDegree ?? 0));
+  const shCoeffCount = Math.max(0, Math.floor(options.sphericalHarmonicsCoefficientCount ?? 0));
+  const shRestStride = Math.max(0, Math.floor(options.sphericalHarmonicsRestStride ?? shCoeffCount));
+  const hasFirstOrderSh = shDegree >= 1 &&
+    shCoeffCount >= 9 &&
+    shRestStride >= 9 &&
+    !!options.sphericalHarmonicsRest &&
+    options.sphericalHarmonicsRest.length >= sourceCount * shRestStride;
   const homeBytes = new ArrayBuffer(n * HOME_BYTES);
   const homeF = new Float32Array(homeBytes);
   const liveBytes = new ArrayBuffer(n * LIVE_BYTES);
@@ -1491,7 +1559,7 @@ export function buildPointCloudFXPackedPointBuffers(
     const src = sourceIndex * 3;
     const scaleSrc = sourceIndex * 3;
     const rotSrc = sourceIndex * 4;
-    const homeOff = i * 16;
+    const homeOff = i * HOME_FLOATS;
     const liveOff = i * 12;
     const x = (positions[src + 0] - cx) * scale;
     const y = (positions[src + 1] - cy) * scale;
@@ -1514,6 +1582,15 @@ export function buildPointCloudFXPackedPointBuffers(
       options.splatRotation?.[rotSrc + 2] ?? 0,
       options.splatRotation?.[rotSrc + 3] ?? 0,
     );
+    const [sh1Yr, sh1Yg, sh1Yb] = hasFirstOrderSh
+      ? firstOrderShColor(options.sphericalHarmonicsRest, shRestStride, sourceIndex, 0)
+      : [0, 0, 0];
+    const [sh1Zr, sh1Zg, sh1Zb] = hasFirstOrderSh
+      ? firstOrderShColor(options.sphericalHarmonicsRest, shRestStride, sourceIndex, 1)
+      : [0, 0, 0];
+    const [sh1Xr, sh1Xg, sh1Xb] = hasFirstOrderSh
+      ? firstOrderShColor(options.sphericalHarmonicsRest, shRestStride, sourceIndex, 2)
+      : [0, 0, 0];
 
     homeF[homeOff + 0] = x;
     homeF[homeOff + 1] = y;
@@ -1531,6 +1608,18 @@ export function buildPointCloudFXPackedPointBuffers(
     homeF[homeOff + 13] = rot1;
     homeF[homeOff + 14] = rot2;
     homeF[homeOff + 15] = rot3;
+    homeF[homeOff + 16] = sh1Yr;
+    homeF[homeOff + 17] = sh1Yg;
+    homeF[homeOff + 18] = sh1Yb;
+    homeF[homeOff + 19] = hasFirstOrderSh ? shDegree : 0;
+    homeF[homeOff + 20] = sh1Zr;
+    homeF[homeOff + 21] = sh1Zg;
+    homeF[homeOff + 22] = sh1Zb;
+    homeF[homeOff + 23] = hasFirstOrderSh ? shCoeffCount : 0;
+    homeF[homeOff + 24] = sh1Xr;
+    homeF[homeOff + 25] = sh1Xg;
+    homeF[homeOff + 26] = sh1Xb;
+    homeF[homeOff + 27] = 0;
 
     liveF[liveOff + 0] = x;
     liveF[liveOff + 1] = y;
@@ -1793,7 +1882,7 @@ function buildPointCloudFXRenderUniform(
   const ruF = new Float32Array(ruBuf);
   const ruU = new Uint32Array(ruBuf);
   ruF.set(viewProj, 0);
-  ruF[16] = 1; ruF[17] = 0; ruF[18] = 0; ruF[19] = 0;
+  ruF[16] = 1; ruF[17] = 0; ruF[18] = 0; ruF[19] = params.cameraZ;
   ruF[20] = 0; ruF[21] = 1; ruF[22] = 0; ruF[23] = 0;
   ruU[24] = params.topology === 'strokes' ? 2 : (params.topology === 'billboards' ? 1 : 0);
   ruF[25] = params.strokeLength;
@@ -2342,7 +2431,7 @@ export class WebGPUPointCloudFX {
     const ruF = new Float32Array(ruBuf);
     const ruU = new Uint32Array(ruBuf);
     ruF.set(viewProj, 0);
-    ruF[16] = camRight[0]; ruF[17] = camRight[1]; ruF[18] = camRight[2]; ruF[19] = 0;
+    ruF[16] = camRight[0]; ruF[17] = camRight[1]; ruF[18] = camRight[2]; ruF[19] = this.params.cameraZ;
     ruF[20] = camUp[0]; ruF[21] = camUp[1]; ruF[22] = camUp[2]; ruF[23] = 0;
     ruU[24] = this.params.topology === 'strokes' ? 2 : (this.params.topology === 'billboards' ? 1 : 0);
     ruF[25] = this.params.strokeLength;
