@@ -9231,9 +9231,11 @@ impl RenderState {
             match descriptor.platform.as_str() {
                 "dxgi" => {
                     let _handle = descriptor.dxgi_shared_handle()?;
+                    let wgpu_format = wgpu_texture_format_for_shared_texture(descriptor);
                     Err(format!(
-                        "DXGI shared texture source-frame upload received a valid HANDLE for format={} size={}x{}, but D3D11/D3D12 import is pending for backend={}",
+                        "DXGI shared texture source-frame upload received a valid HANDLE for format={} mapped_format={} size={}x{}, but D3D11/D3D12 import is pending for backend={}",
                         descriptor.format,
+                        texture_format_label(wgpu_format),
                         descriptor.width,
                         descriptor.height,
                         native_backend_name()
@@ -11464,6 +11466,7 @@ fn texture_format_label(format: wgpu::TextureFormat) -> &'static str {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn texture_format_bytes_per_texel(format: wgpu::TextureFormat) -> usize {
     match format {
         wgpu::TextureFormat::Rgba16Float => 8,
@@ -11472,6 +11475,7 @@ fn texture_format_bytes_per_texel(format: wgpu::TextureFormat) -> usize {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn native_output_export_format(output_format: wgpu::TextureFormat) -> wgpu::TextureFormat {
     if output_format.is_srgb() {
         wgpu::TextureFormat::Bgra8UnormSrgb
