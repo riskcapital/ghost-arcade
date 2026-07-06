@@ -9,6 +9,11 @@ import {
   pointCloudSourceIndexForSample,
 } from './webgpuPointCloudFX';
 
+const HOME_BYTES_FOR_TEST = 112;
+const HOME_FLOATS_FOR_TEST = HOME_BYTES_FOR_TEST / Float32Array.BYTES_PER_ELEMENT;
+const LIVE_BYTES_FOR_TEST = 48;
+const SORT_PAIR_BYTES_FOR_TEST = 8;
+
 if (typeof globalThis.btoa !== 'function') {
   (globalThis as any).btoa = (value: string) =>
     (globalThis as any).Buffer.from(value, 'binary').toString('base64');
@@ -58,6 +63,9 @@ describe('Point Cloud FX native graph', () => {
     expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.render)?.source).toContain('gaussianScreenAxes');
     expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.render)?.source).toContain('gaussianSigma');
     expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.render)?.source).toContain('exp(-0.5 * r2)');
+    expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.render)?.source).toContain('firstOrderShTint');
+    expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.render)?.source).toContain('sh1Y');
+    expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.render)?.source).toContain('GHOST_SH_C1');
     for (const source of sources) {
       expect(source.source).not.toMatch(/^\s*#include\b/m);
     }
@@ -81,10 +89,10 @@ describe('Point Cloud FX native graph', () => {
     expect(data.signature).toBe('synthetic-cloud');
     expect(data.pointCount).toBe(8);
     expect(data.sampledFromCount).toBe(32);
-    expect(data.homeByteLength).toBe(8 * 64);
-    expect(data.liveByteLength).toBe(8 * 48);
+    expect(data.homeByteLength).toBe(8 * HOME_BYTES_FOR_TEST);
+    expect(data.liveByteLength).toBe(8 * LIVE_BYTES_FOR_TEST);
     expect(data.sortCount).toBe(8);
-    expect(data.sortByteLength).toBe(8 * 8);
+    expect(data.sortByteLength).toBe(8 * SORT_PAIR_BYTES_FOR_TEST);
     expect(data.hasGaussianPayload).toBe(false);
     expect(data.depthSortEnabled).toBe(false);
     expect(data.homeInitialBuffer).toBeInstanceOf(ArrayBuffer);
@@ -98,8 +106,9 @@ describe('Point Cloud FX native graph', () => {
     const expectedSourceIndices = [0, 4, 8, 13, 17, 22, 26, 31];
     for (let i = 0; i < expectedSourceIndices.length; i++) {
       const t = expectedSourceIndices[i] / 31;
-      expect(home[i * 16 + 4]).toBeCloseTo(t);
-      expect(home[i * 16 + 5]).toBeCloseTo(1 - t);
+      const off = i * HOME_FLOATS_FOR_TEST;
+      expect(home[off + 4]).toBeCloseTo(t);
+      expect(home[off + 5]).toBeCloseTo(1 - t);
     }
   });
 
@@ -123,16 +132,17 @@ describe('Point Cloud FX native graph', () => {
     expect(packed?.pointCount).toBe(4);
     expect(packed?.sortCount).toBe(4);
     expect(packed?.depthSortEnabled).toBe(false);
-    expect(packed?.homeBytes.byteLength).toBe(4 * 64);
-    expect(packed?.liveBytes.byteLength).toBe(4 * 48);
+    expect(packed?.homeBytes.byteLength).toBe(4 * HOME_BYTES_FOR_TEST);
+    expect(packed?.liveBytes.byteLength).toBe(4 * LIVE_BYTES_FOR_TEST);
     const home = new Float32Array(packed!.homeBytes);
     const live = new Float32Array(packed!.liveBytes);
     const expectedSourceIndices = [0, 3, 6, 9];
     for (let i = 0; i < expectedSourceIndices.length; i++) {
       const t = expectedSourceIndices[i] / 9;
-      expect(home[i * 16 + 4]).toBeCloseTo(t);
-      expect(home[i * 16 + 5]).toBeCloseTo(1 - t);
-      expect(live[i * 12 + 7]).toBeCloseTo(0.02 * home[i * 16 + 7]);
+      const homeOff = i * HOME_FLOATS_FOR_TEST;
+      expect(home[homeOff + 4]).toBeCloseTo(t);
+      expect(home[homeOff + 5]).toBeCloseTo(1 - t);
+      expect(live[i * 12 + 7]).toBeCloseTo(0.02 * home[homeOff + 7]);
     }
   });
 
@@ -154,11 +164,12 @@ describe('Point Cloud FX native graph', () => {
     });
     const home = new Float32Array(data.homeInitialBuffer);
     const inlierRadii = Array.from({ length: 7 }, (_, i) => {
-      const off = i * 16;
+      const off = i * HOME_FLOATS_FOR_TEST;
       return Math.hypot(home[off + 0], home[off + 1], home[off + 2]);
     });
     const inlierMax = Math.max(...inlierRadii);
-    const outlierRadius = Math.hypot(home[7 * 16 + 0], home[7 * 16 + 1], home[7 * 16 + 2]);
+    const outlierOff = 7 * HOME_FLOATS_FOR_TEST;
+    const outlierRadius = Math.hypot(home[outlierOff + 0], home[outlierOff + 1], home[outlierOff + 2]);
 
     expect(inlierMax).toBeGreaterThan(0.5);
     expect(inlierMax).toBeLessThanOrEqual(0.95);
@@ -183,40 +194,65 @@ describe('Point Cloud FX native graph', () => {
       1, 0, 0, 0,
       0, 1, 0, 0,
     ]);
+    const sphericalHarmonicsRest = new Float32Array([
+      0.10, 0.20, 0.30,
+      0.40, 0.50, 0.60,
+      0.70, 0.80, 0.90,
+      -0.10, -0.20, -0.30,
+      -0.40, -0.50, -0.60,
+      -0.70, -0.80, -0.90,
+    ]);
 
     const data = buildPointCloudFXNativePointData(positions, colors, {
       alpha,
       splatScale,
       splatRotation,
+      sphericalHarmonicsRest,
       gaussian: true,
       pointSize: 0.01,
       signature: 'gaussian-cloud',
       sphericalHarmonicsDegree: 1,
-      sphericalHarmonicsCoefficientCount: 9,
+      sphericalHarmonicsCoefficientCount: 45,
+      sphericalHarmonicsRestStride: 9,
     });
     const home = new Float32Array(data.homeInitialBuffer);
     const live = new Float32Array(data.liveInitialBuffer);
 
-    expect(data.homeByteLength).toBe(2 * 64);
+    expect(data.homeByteLength).toBe(2 * HOME_BYTES_FOR_TEST);
     expect(data.sortCount).toBe(2);
-    expect(data.sortByteLength).toBe(2 * 8);
+    expect(data.sortByteLength).toBe(2 * SORT_PAIR_BYTES_FOR_TEST);
     expect(data.hasGaussianPayload).toBe(true);
     expect(data.depthSortEnabled).toBe(true);
     expect(data.sphericalHarmonicsDegree).toBe(1);
-    expect(data.sphericalHarmonicsCoefficientCount).toBe(9);
+    expect(data.sphericalHarmonicsCoefficientCount).toBe(45);
     expect(home[3]).toBeCloseTo(0.25);
     expect(home[7]).toBeGreaterThan(0);
     expect(home[8]).toBeGreaterThan(0);
     expect(home[11]).toBe(1);
     expect(home[12]).toBeCloseTo(1);
-    expect(home[16 + 3]).toBeCloseTo(0.75);
-    expect(home[16 + 11]).toBe(1);
-    expect(home[16 + 12]).toBeCloseTo(0);
-    expect(home[16 + 13]).toBeCloseTo(1);
+    expect(home[16]).toBeCloseTo(0.10);
+    expect(home[17]).toBeCloseTo(0.40);
+    expect(home[18]).toBeCloseTo(0.70);
+    expect(home[19]).toBe(1);
+    expect(home[20]).toBeCloseTo(0.20);
+    expect(home[21]).toBeCloseTo(0.50);
+    expect(home[22]).toBeCloseTo(0.80);
+    expect(home[23]).toBe(45);
+    expect(home[24]).toBeCloseTo(0.30);
+    expect(home[25]).toBeCloseTo(0.60);
+    expect(home[26]).toBeCloseTo(0.90);
+    const secondHomeOff = HOME_FLOATS_FOR_TEST;
+    expect(home[secondHomeOff + 3]).toBeCloseTo(0.75);
+    expect(home[secondHomeOff + 11]).toBe(1);
+    expect(home[secondHomeOff + 12]).toBeCloseTo(0);
+    expect(home[secondHomeOff + 13]).toBeCloseTo(1);
+    expect(home[secondHomeOff + 16]).toBeCloseTo(-0.10);
+    expect(home[secondHomeOff + 20]).toBeCloseTo(-0.20);
+    expect(home[secondHomeOff + 24]).toBeCloseTo(-0.30);
     expect(live[3]).toBeCloseTo(0.25);
     expect(live[7]).toBeCloseTo(0.01 * home[7]);
     expect(live[12 + 3]).toBeCloseTo(0.75);
-    expect(live[12 + 7]).toBeCloseTo(0.01 * home[16 + 7]);
+    expect(live[12 + 7]).toBeCloseTo(0.01 * home[secondHomeOff + 7]);
   });
 
   it('keeps native gaussian clouds inside the depth-sort budget', () => {
