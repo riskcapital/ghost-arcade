@@ -54,6 +54,34 @@ function capabilities(features: Record<string, boolean> = {}): NativeRendererCap
   };
 }
 
+function completeGraphCapabilities(features: Record<string, boolean> = {}): NativeRendererCapabilities {
+  return {
+    ...capabilities({
+      native_planet_graph: true,
+      native_3d_smoke_graph: true,
+      native_particle_field_graph: true,
+      native_volumetric_spheres_graph: true,
+      native_smoke_riders_graph: true,
+      native_ink_cloud_graph: true,
+      native_flythrough_graph: true,
+      native_pixel_particles_graph: true,
+      native_point_cloud_fx_graph: true,
+      ...features,
+    }),
+    native_graph_instruments: [
+      'planet',
+      'smoke-3d',
+      'particle-field',
+      'volumetric-spheres',
+      'smoke-riders',
+      'ink-cloud',
+      'flythrough',
+      'pixel-particles',
+      'point-cloud-fx',
+    ],
+  };
+}
+
 function readiness(
   modes: RendererReadinessReport['modes'],
   overrides: Partial<RendererReadinessReport> = {},
@@ -136,7 +164,7 @@ describe('native renderer runtime state', () => {
           blockers: ['shared-texture media transport is pending', 'native Stage3D renderer is pending'],
         },
       }),
-      { capabilities: capabilities(), updatedAtMs: 125 },
+      { capabilities: completeGraphCapabilities(), updatedAtMs: 125 },
     );
 
     expect(state.driverMode).toBe('output-driver');
@@ -292,6 +320,92 @@ describe('native renderer runtime state', () => {
     expect(state.driverMode).toBe('output-driver');
     expect(state.fullV2Ready).toBe(false);
     expect(state.blockers).toContain('native graph instrument catalog is incomplete');
+  });
+
+  it('does not infer a complete graph catalog from a partial capabilities fallback', () => {
+    const report = readiness(
+      {
+        shadow: { ok: true, detail: 'shadow ready' },
+        output_driver: { ok: true, detail: 'output ready' },
+        full_v2: { ok: true, detail: 'full ready', blockers: [] },
+      },
+      {
+        capabilities: capabilities({
+          native_3d_smoke_graph: true,
+          native_particle_field_graph: true,
+        }),
+        checks: [],
+      },
+    );
+    const flags = inferNativeGraphRuntimeFlags(report.capabilities, report);
+    const state = deriveNativeRendererRuntimeState(status(), report, {
+      capabilities: report.capabilities,
+      updatedAtMs: 129,
+    });
+
+    expect(flags).toEqual({
+      graphCatalogComplete: false,
+      nativeGraphSourceFrames: true,
+    });
+    expect(state.driverMode).toBe('output-driver');
+    expect(state.fullV2Ready).toBe(false);
+  });
+
+  it('does not infer a complete graph catalog when a graph feature flag is missing', () => {
+    const report = readiness(
+      {
+        shadow: { ok: true, detail: 'shadow ready' },
+        output_driver: { ok: true, detail: 'output ready' },
+        full_v2: { ok: true, detail: 'full ready', blockers: [] },
+      },
+      {
+        capabilities: completeGraphCapabilities({
+          native_pixel_particles_graph: false,
+        }),
+        checks: [],
+      },
+    );
+    const flags = inferNativeGraphRuntimeFlags(report.capabilities, report);
+    const state = deriveNativeRendererRuntimeState(status(), report, {
+      capabilities: report.capabilities,
+      updatedAtMs: 131,
+    });
+
+    expect(flags).toEqual({
+      graphCatalogComplete: false,
+      nativeGraphSourceFrames: true,
+    });
+    expect(state.driverMode).toBe('output-driver');
+    expect(state.fullV2Ready).toBe(false);
+  });
+
+  it('allows a complete capabilities fallback when graph checks are unavailable', () => {
+    const report = readiness(
+      {
+        shadow: { ok: true, detail: 'shadow ready' },
+        output_driver: { ok: true, detail: 'output ready' },
+        full_v2: { ok: true, detail: 'full ready', blockers: [] },
+      },
+      {
+        capabilities: completeGraphCapabilities({
+          native_3d_smoke_graph: true,
+          native_particle_field_graph: true,
+        }),
+        checks: [],
+      },
+    );
+    const flags = inferNativeGraphRuntimeFlags(report.capabilities, report);
+    const state = deriveNativeRendererRuntimeState(status(), report, {
+      capabilities: report.capabilities,
+      updatedAtMs: 130,
+    });
+
+    expect(flags).toEqual({
+      graphCatalogComplete: true,
+      nativeGraphSourceFrames: true,
+    });
+    expect(state.driverMode).toBe('full-v2');
+    expect(state.fullV2Ready).toBe(true);
   });
 
   it('uses compact, user-readable labels for the toolbar', () => {
