@@ -1946,6 +1946,64 @@ export function effectToNativeDescriptor(effect: any): string | null {
       Math.max(0, Math.min(1, mixRaw)).toFixed(4),
     ].join(':');
   }
+  if (type === 'colorbalance' || type === 'color-balance') {
+    const mixRaw = firstFiniteParam(params, ['cbMix', 'colorBalanceMix', 'mix', 'amount'], 1);
+    const shadowRRaw = firstFiniteParam(params, ['cbShadowR', 'shadowR'], 0);
+    const shadowGRaw = firstFiniteParam(params, ['cbShadowG', 'shadowG'], 0);
+    const shadowBRaw = firstFiniteParam(params, ['cbShadowB', 'shadowB'], 0);
+    const preserveRaw = firstFiniteParam(params, ['cbPreserveLuma', 'preserveLuma'], 0);
+    const midRRaw = firstFiniteParam(params, ['cbMidR', 'midR'], 0);
+    const midGRaw = firstFiniteParam(params, ['cbMidG', 'midG'], 0);
+    const midBRaw = firstFiniteParam(params, ['cbMidB', 'midB'], 0);
+    const highRRaw = firstFiniteParam(params, ['cbHighR', 'highR'], 0);
+    const highGRaw = firstFiniteParam(params, ['cbHighG', 'highG'], 0);
+    const highBRaw = firstFiniteParam(params, ['cbHighB', 'highB'], 0);
+    return [
+      'color-balance',
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+      Math.max(-1, Math.min(1, shadowRRaw)).toFixed(4),
+      Math.max(-1, Math.min(1, shadowGRaw)).toFixed(4),
+      Math.max(-1, Math.min(1, shadowBRaw)).toFixed(4),
+      Math.max(0, Math.min(1, preserveRaw)).toFixed(4),
+      Math.max(-1, Math.min(1, midRRaw)).toFixed(4),
+      Math.max(-1, Math.min(1, midGRaw)).toFixed(4),
+      Math.max(-1, Math.min(1, midBRaw)).toFixed(4),
+      '0',
+      Math.max(-1, Math.min(1, highRRaw)).toFixed(4),
+      Math.max(-1, Math.min(1, highGRaw)).toFixed(4),
+      Math.max(-1, Math.min(1, highBRaw)).toFixed(4),
+      '0',
+    ].join(':');
+  }
+  if (type === 'liftgammagain' || type === 'lift-gamma-gain') {
+    const mixRaw = firstFiniteParam(params, ['lggMix', 'liftGammaGainMix', 'mix', 'amount'], 1);
+    const liftRRaw = firstFiniteParam(params, ['lggLiftR', 'liftR'], 0);
+    const liftGRaw = firstFiniteParam(params, ['lggLiftG', 'liftG'], 0);
+    const liftBRaw = firstFiniteParam(params, ['lggLiftB', 'liftB'], 0);
+    const lumaOnlyRaw = firstFiniteParam(params, ['lggLumaOnly', 'lumaOnly'], 0);
+    const gammaRRaw = firstFiniteParam(params, ['lggGammaR', 'gammaR'], 1);
+    const gammaGRaw = firstFiniteParam(params, ['lggGammaG', 'gammaG'], 1);
+    const gammaBRaw = firstFiniteParam(params, ['lggGammaB', 'gammaB'], 1);
+    const gainRRaw = firstFiniteParam(params, ['lggGainR', 'gainR'], 1);
+    const gainGRaw = firstFiniteParam(params, ['lggGainG', 'gainG'], 1);
+    const gainBRaw = firstFiniteParam(params, ['lggGainB', 'gainB'], 1);
+    return [
+      'lift-gamma-gain',
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+      Math.max(-0.5, Math.min(0.5, liftRRaw)).toFixed(4),
+      Math.max(-0.5, Math.min(0.5, liftGRaw)).toFixed(4),
+      Math.max(-0.5, Math.min(0.5, liftBRaw)).toFixed(4),
+      Math.max(0, Math.min(1, lumaOnlyRaw)).toFixed(4),
+      Math.max(0.05, Math.min(4, gammaRRaw)).toFixed(4),
+      Math.max(0.05, Math.min(4, gammaGRaw)).toFixed(4),
+      Math.max(0.05, Math.min(4, gammaBRaw)).toFixed(4),
+      '0',
+      Math.max(0.05, Math.min(4, gainRRaw)).toFixed(4),
+      Math.max(0.05, Math.min(4, gainGRaw)).toFixed(4),
+      Math.max(0.05, Math.min(4, gainBRaw)).toFixed(4),
+      '0',
+    ].join(':');
+  }
   if (type === 'blobtrack' || type === 'blob-track') {
     return blobEffectDescriptor('blob-track', params, {
       mix: 0.8,
@@ -2011,6 +2069,10 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
     rawParam5,
     rawParam6,
     rawParam7,
+    rawParam8,
+    rawParam9,
+    rawParam10,
+    rawParam11,
   ] = descriptor.split(':');
   const effect = rawId.trim().toLowerCase() as NativeEffectPassId;
   if (!NATIVE_EFFECT_PASS_IDS.has(effect)) return null;
@@ -2432,6 +2494,32 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       highRolloffPreserveHue: Number(rawParam2 ?? 0.5),
       highRolloffMaxValue: Number(rawParam3 ?? 1),
       highRolloffMix: Number(rawParam4 ?? 1),
+    };
+  } else if (effect === 'color-balance') {
+    params = {
+      cbShadowR: Number(rawParam0 ?? 0),
+      cbShadowG: Number(rawParam1 ?? 0),
+      cbShadowB: Number(rawParam2 ?? 0),
+      cbPreserveLuma: Number(rawParam3 ?? 0),
+      cbMidR: Number(rawParam4 ?? 0),
+      cbMidG: Number(rawParam5 ?? 0),
+      cbMidB: Number(rawParam6 ?? 0),
+      cbHighR: Number(rawParam8 ?? 0),
+      cbHighG: Number(rawParam9 ?? 0),
+      cbHighB: Number(rawParam10 ?? 0),
+    };
+  } else if (effect === 'lift-gamma-gain') {
+    params = {
+      lggLiftR: Number(rawParam0 ?? 0),
+      lggLiftG: Number(rawParam1 ?? 0),
+      lggLiftB: Number(rawParam2 ?? 0),
+      lggLumaOnly: Number(rawParam3 ?? 0),
+      lggGammaR: Number(rawParam4 ?? 1),
+      lggGammaG: Number(rawParam5 ?? 1),
+      lggGammaB: Number(rawParam6 ?? 1),
+      lggGainR: Number(rawParam8 ?? 1),
+      lggGainG: Number(rawParam9 ?? 1),
+      lggGainB: Number(rawParam10 ?? 1),
     };
   } else if (effect === 'blob-track' || effect === 'blob-contour' || effect === 'blob-heatmap') {
     const defaultFlags = effect === 'blob-contour' ? 0 : 7;

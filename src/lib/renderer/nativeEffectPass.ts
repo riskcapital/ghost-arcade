@@ -57,7 +57,9 @@ export type NativeEffectPassId =
   | 'selective-color'
   | 'false-color'
   | 'shadow-recovery'
-  | 'highlight-rolloff';
+  | 'highlight-rolloff'
+  | 'color-balance'
+  | 'lift-gamma-gain';
 
 export interface NativeEffectPassManifestEntry {
   id: NativeEffectPassId;
@@ -96,6 +98,10 @@ export interface NativeEffectPassOptions {
     param5: number;
     param6: number;
     param7: number;
+    param8: number;
+    param9: number;
+    param10: number;
+    param11: number;
     softness: number;
     roundness: number;
     shape: number;
@@ -350,6 +356,28 @@ export interface NativeEffectPassOptions {
     highRolloffPreserveHue: number;
     highRolloffMaxValue: number;
     highRolloffMix: number;
+    cbShadowR: number;
+    cbShadowG: number;
+    cbShadowB: number;
+    cbMidR: number;
+    cbMidG: number;
+    cbMidB: number;
+    cbHighR: number;
+    cbHighG: number;
+    cbHighB: number;
+    cbPreserveLuma: number;
+    cbMix: number;
+    lggLiftR: number;
+    lggLiftG: number;
+    lggLiftB: number;
+    lggGammaR: number;
+    lggGammaG: number;
+    lggGammaB: number;
+    lggGainR: number;
+    lggGainG: number;
+    lggGainB: number;
+    lggLumaOnly: number;
+    lggMix: number;
   }>;
   clear?: boolean;
   seq?: number;
@@ -448,6 +476,8 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'false-color', code: 57, defaultAmount: 1, amountMin: 0, amountMax: 1 },
   { id: 'shadow-recovery', code: 58, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
   { id: 'highlight-rolloff', code: 59, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'color-balance', code: 60, defaultAmount: 1, amountMin: 0, amountMax: 1 },
+  { id: 'lift-gamma-gain', code: 61, defaultAmount: 1, amountMin: 0, amountMax: 1 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -460,6 +490,7 @@ struct EffectPassUniforms {
   effect: vec4<f32>,
   params0: vec4<f32>,
   params1: vec4<f32>,
+  params2: vec4<f32>,
 }
 
 struct VsOut {
@@ -2478,6 +2509,38 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let result = mix(rolled_rgb, rolled_hue, preserve_hue);
     return vec4<f32>(mix(color, result, wet * weight), src.a);
   }
+  if (code == 60u) {
+    let shadow = clamp(u.params0.xyz, vec3<f32>(-1.0), vec3<f32>(1.0));
+    let preserve_luma = clamp(u.params0.w, 0.0, 1.0);
+    let mid = clamp(u.params1.xyz, vec3<f32>(-1.0), vec3<f32>(1.0));
+    let high = clamp(u.params2.xyz, vec3<f32>(-1.0), vec3<f32>(1.0));
+    let lum = luma(color);
+    let shadow_weight = 1.0 - smoothstep(0.0, 0.5, lum);
+    let high_weight = smoothstep(0.5, 1.0, lum);
+    let mid_weight = 1.0 - shadow_weight - high_weight;
+    let shift = shadow * shadow_weight * 0.3 + mid * mid_weight * 0.3 + high * high_weight * 0.3;
+    var graded = color + shift;
+    if (preserve_luma > 0.001) {
+      let new_luma = luma(graded);
+      graded += vec3<f32>((lum - new_luma) * preserve_luma);
+    }
+    return vec4<f32>(mix(color, clamp(graded, vec3<f32>(0.0), vec3<f32>(1.0)), clamp(amount, 0.0, 1.0)), src.a);
+  }
+  if (code == 61u) {
+    var lift = clamp(u.params0.xyz, vec3<f32>(-0.5), vec3<f32>(0.5));
+    let luma_only = u.params0.w > 0.5;
+    var gamma = clamp(u.params1.xyz, vec3<f32>(0.05), vec3<f32>(4.0));
+    var gain = clamp(u.params2.xyz, vec3<f32>(0.05), vec3<f32>(4.0));
+    if (luma_only) {
+      lift = vec3<f32>((lift.r + lift.g + lift.b) / 3.0);
+      gamma = vec3<f32>((gamma.r + gamma.g + gamma.b) / 3.0);
+      gain = vec3<f32>((gain.r + gain.g + gain.b) / 3.0);
+    }
+    let lifted = color + lift * (vec3<f32>(1.0) - color) * 0.5;
+    let gained = lifted * gain;
+    let graded = pow(max(gained, vec3<f32>(0.0)), vec3<f32>(1.0) / max(gamma, vec3<f32>(0.05)));
+    return vec4<f32>(mix(color, clamp(graded, vec3<f32>(0.0), vec3<f32>(1.0)), clamp(amount, 0.0, 1.0)), src.a);
+  }
   return src;
 }
 
@@ -2578,6 +2641,10 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
   let param5 = clampNumber(params.param5 ?? params.centerY ?? 0, -100000, 100000, 0);
   let param6 = clampNumber(params.param6 ?? params.tintAmount ?? 0, -100000, 100000, 0);
   let param7 = clampNumber(params.param7 ?? params.breathing ?? 0, -100000, 100000, 0);
+  let param8 = clampNumber(params.param8 ?? 0, -100000, 100000, 0);
+  let param9 = clampNumber(params.param9 ?? 0, -100000, 100000, 0);
+  let param10 = clampNumber(params.param10 ?? 0, -100000, 100000, 0);
+  let param11 = clampNumber(params.param11 ?? 0, -100000, 100000, 0);
 
   if (options.effect === 'vignette') {
     param0 = clampNumber(params.softness ?? params.param0, 0, 2, 0.4);
@@ -3035,6 +3102,34 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param5 = 0;
     param6 = 0;
     param7 = 0;
+  } else if (options.effect === 'color-balance') {
+    amount = clampNumber(options.amount ?? params.cbMix ?? params.outputMix ?? params.amount, 0, 1, 1);
+    param0 = clampNumber(params.cbShadowR ?? params.param0, -1, 1, 0);
+    param1 = clampNumber(params.cbShadowG ?? params.param1, -1, 1, 0);
+    param2 = clampNumber(params.cbShadowB ?? params.param2, -1, 1, 0);
+    param3 = clampNumber(params.cbPreserveLuma ?? params.param3, 0, 1, 0);
+    param4 = clampNumber(params.cbMidR ?? params.param4, -1, 1, 0);
+    param5 = clampNumber(params.cbMidG ?? params.param5, -1, 1, 0);
+    param6 = clampNumber(params.cbMidB ?? params.param6, -1, 1, 0);
+    param7 = 0;
+    param8 = clampNumber(params.cbHighR ?? params.param8, -1, 1, 0);
+    param9 = clampNumber(params.cbHighG ?? params.param9, -1, 1, 0);
+    param10 = clampNumber(params.cbHighB ?? params.param10, -1, 1, 0);
+    param11 = 0;
+  } else if (options.effect === 'lift-gamma-gain') {
+    amount = clampNumber(options.amount ?? params.lggMix ?? params.outputMix ?? params.amount, 0, 1, 1);
+    param0 = clampNumber(params.lggLiftR ?? params.param0, -0.5, 0.5, 0);
+    param1 = clampNumber(params.lggLiftG ?? params.param1, -0.5, 0.5, 0);
+    param2 = clampNumber(params.lggLiftB ?? params.param2, -0.5, 0.5, 0);
+    param3 = clampNumber(params.lggLumaOnly ?? params.param3, 0, 1, 0);
+    param4 = clampNumber(params.lggGammaR ?? params.param4, 0.05, 4, 1);
+    param5 = clampNumber(params.lggGammaG ?? params.param5, 0.05, 4, 1);
+    param6 = clampNumber(params.lggGammaB ?? params.param6, 0.05, 4, 1);
+    param7 = 0;
+    param8 = clampNumber(params.lggGainR ?? params.param8, 0.05, 4, 1);
+    param9 = clampNumber(params.lggGainG ?? params.param9, 0.05, 4, 1);
+    param10 = clampNumber(params.lggGainB ?? params.param10, 0.05, 4, 1);
+    param11 = 0;
   }
   return [
     width,
@@ -3053,6 +3148,10 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param5,
     param6,
     param7,
+    param8,
+    param9,
+    param10,
+    param11,
   ];
 }
 
@@ -3095,7 +3194,7 @@ export function buildNativeEffectPassGraph(options: NativeEffectPassOptions): Na
       buffers: [{
         id: uniformId,
         kind: 'uniform',
-        byte_length: 64,
+        byte_length: 80,
         initial_f32: packNativeEffectPassUniforms(options),
       }],
       passes: [],
@@ -3146,7 +3245,7 @@ export function buildNativeEffectPassChainGraph(options: NativeEffectPassChainOp
     buffers.push({
       id: uniformId,
       kind: 'uniform',
-      byte_length: 64,
+      byte_length: 80,
       initial_f32: packNativeEffectPassUniforms(passOptions),
     });
     renderPasses.push(buildNativeEffectPassRenderPass(passOptions, manifest, uniformId, `-${index + 1}`));

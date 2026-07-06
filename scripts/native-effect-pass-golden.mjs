@@ -681,6 +681,28 @@ const FIXTURES = [
     params: [0.68, 0.22, 0.75, 1.05, 0.9, 0, 0, 0],
     tolerance: { mean: 2, p95: 6, p99: 14, max: 80 },
   },
+  {
+    id: 'color-balance',
+    code: 60,
+    time: 0.35,
+    frameDelta: 1 / 30,
+    frameIndex: 29,
+    amount: 0.9,
+    mix: 1,
+    params: [-0.18, 0.02, 0.24, 0.7, 0.08, 0, -0.05, 0, 0.28, 0.12, -0.08, 0],
+    tolerance: { mean: 2, p95: 6, p99: 14, max: 42 },
+  },
+  {
+    id: 'lift-gamma-gain',
+    code: 61,
+    time: 0.35,
+    frameDelta: 1 / 30,
+    frameIndex: 30,
+    amount: 0.85,
+    mix: 1,
+    params: [-0.04, 0.02, 0.12, 0, 1.08, 1, 0.94, 0, 1.18, 1.04, 0.9, 0],
+    tolerance: { mean: 2, p95: 6, p99: 14, max: 42 },
+  },
 ];
 const SOURCE_FIXTURE = {
   id: 'source',
@@ -837,6 +859,7 @@ function makeSourceBytes(width, height, mode = 'gradient') {
 }
 
 function effectUniforms(fixture) {
+  const params = [...fixture.params, 0, 0, 0, 0].slice(0, 12);
   return [
     WIDTH,
     HEIGHT,
@@ -846,7 +869,7 @@ function effectUniforms(fixture) {
     fixture.amount,
     fixture.mix,
     fixture.frameIndex,
-    ...fixture.params,
+    ...params,
   ];
 }
 
@@ -856,7 +879,7 @@ function effectGraph(fixture, sourceId, targetSourceId) {
     buffers: [{
       id: uniformId,
       kind: 'uniform',
-      byte_length: 64,
+      byte_length: 80,
       initial_f32: effectUniforms(fixture),
     }],
     passes: [],
@@ -1097,6 +1120,7 @@ function renderWebGlGolden(request) {
       'uniform vec4 uEffect;',
       'uniform vec4 uParams0;',
       'uniform vec4 uParams1;',
+      'uniform vec4 uParams2;',
       'float luma(vec3 color) { return dot(color, vec3(0.299, 0.587, 0.114)); }',
       'vec3 hueRotate(vec3 color, float turns) {',
       '  float angle = turns * 6.28318530718;',
@@ -2758,6 +2782,36 @@ function renderWebGlGolden(request) {
       '    );',
       '    vec3 result = mix(rolledRgb, rolledHue, preserveHue);',
       '    effected = vec4(mix(color, result, wet * weight), src.a);',
+      '  } else if (code == 60.0) {',
+      '    vec3 shadow = clamp(uParams0.xyz, vec3(-1.0), vec3(1.0));',
+      '    float preserveLuma = clamp(uParams0.w, 0.0, 1.0);',
+      '    vec3 mid = clamp(uParams1.xyz, vec3(-1.0), vec3(1.0));',
+      '    vec3 high = clamp(uParams2.xyz, vec3(-1.0), vec3(1.0));',
+      '    float lum = luma(color);',
+      '    float shadowWeight = 1.0 - smoothstep(0.0, 0.5, lum);',
+      '    float highWeight = smoothstep(0.5, 1.0, lum);',
+      '    float midWeight = 1.0 - shadowWeight - highWeight;',
+      '    vec3 shift = shadow * shadowWeight * 0.3 + mid * midWeight * 0.3 + high * highWeight * 0.3;',
+      '    vec3 graded = color + shift;',
+      '    if (preserveLuma > 0.001) {',
+      '      float newLuma = luma(graded);',
+      '      graded += vec3((lum - newLuma) * preserveLuma);',
+      '    }',
+      '    effected = vec4(mix(color, clamp(graded, vec3(0.0), vec3(1.0)), clamp(amount, 0.0, 1.0)), src.a);',
+      '  } else if (code == 61.0) {',
+      '    vec3 lift = clamp(uParams0.xyz, vec3(-0.5), vec3(0.5));',
+      '    bool lumaOnly = uParams0.w > 0.5;',
+      '    vec3 gamma = clamp(uParams1.xyz, vec3(0.05), vec3(4.0));',
+      '    vec3 gain = clamp(uParams2.xyz, vec3(0.05), vec3(4.0));',
+      '    if (lumaOnly) {',
+      '      lift = vec3((lift.r + lift.g + lift.b) / 3.0);',
+      '      gamma = vec3((gamma.r + gamma.g + gamma.b) / 3.0);',
+      '      gain = vec3((gain.r + gain.g + gain.b) / 3.0);',
+      '    }',
+      '    vec3 lifted = color + lift * (vec3(1.0) - color) * 0.5;',
+      '    vec3 gained = lifted * gain;',
+      '    vec3 graded = pow(max(gained, vec3(0.0)), vec3(1.0) / max(gamma, vec3(0.05)));',
+      '    effected = vec4(mix(color, clamp(graded, vec3(0.0), vec3(1.0)), clamp(amount, 0.0, 1.0)), src.a);',
       '  }',
       '  vec4 mixed = mix(src, effected, clamp(uEffect.z, 0.0, 1.0));',
       '  gl_FragColor = vec4(clamp(mixed.rgb, vec3(0.0), vec3(1.0)), clamp(mixed.a, 0.0, 1.0));',
@@ -2843,6 +2897,7 @@ function renderWebGlGolden(request) {
     ]));
     gl.uniform4fv(gl.getUniformLocation(program, 'uParams0'), new Float32Array(fixture.params.slice(0, 4)));
     gl.uniform4fv(gl.getUniformLocation(program, 'uParams1'), new Float32Array(fixture.params.slice(4, 8)));
+    gl.uniform4fv(gl.getUniformLocation(program, 'uParams2'), new Float32Array([...fixture.params.slice(8, 12), 0, 0, 0, 0].slice(0, 4)));
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
