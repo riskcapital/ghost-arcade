@@ -131,14 +131,15 @@ struct U {
   tunnelDepth:     f32,
   depthStrength:   f32,
   particleCount:   u32,
+  depthSource:     u32,
   flyDistance:     f32,
   _pad0:           f32,
-  _pad1:           f32,
-  _pad2:           f32,
 };
 
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
 @group(0) @binding(1) var<uniform> u: U;
+@group(0) @binding(2) var sourceTexture: texture_2d<f32>;
+@group(0) @binding(3) var sourceSampler: sampler;
 
 // Cheap value-noise gradient hash. Good enough for the curl field —
 // we're not after physically-correct flow, just smooth swirly motion.
@@ -212,11 +213,37 @@ fn curl(p: vec3<f32>) -> vec3<f32> {
   return vec3<f32>(cx, cy, cz) / (2.0 * e);
 }
 
+fn sourceLumaAt(uv: vec2<f32>) -> f32 {
+  let color = textureSampleLevel(sourceTexture, sourceSampler, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0);
+  return dot(color.rgb, vec3<f32>(0.299, 0.587, 0.114));
+}
+
+fn sourceDepthAt(uv: vec2<f32>, mode: u32) -> f32 {
+  let y = sourceLumaAt(uv);
+  if (mode == 1u) {
+    return 1.0 - y;
+  }
+  if (mode == 2u) {
+    let dims = max(textureDimensions(sourceTexture), vec2<u32>(1u, 1u));
+    let texel = 1.0 / vec2<f32>(dims);
+    let dx = abs(sourceLumaAt(uv + vec2<f32>(texel.x, 0.0)) - sourceLumaAt(uv - vec2<f32>(texel.x, 0.0)));
+    let dy = abs(sourceLumaAt(uv + vec2<f32>(0.0, texel.y)) - sourceLumaAt(uv - vec2<f32>(0.0, texel.y)));
+    return clamp((dx + dy) * 4.0, 0.0, 1.0);
+  }
+  return y;
+}
+
 @compute @workgroup_size(64)
 fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let i = gid.x;
   if (i >= u.particleCount) { return; }
   var p = particles[i];
+  let anchorUV = vec2<f32>(p.anchor.x * 0.5 + 0.5, 1.0 - (p.anchor.y * 0.5 + 0.5));
+  let sourceColor = textureSampleLevel(sourceTexture, sourceSampler, anchorUV, 0.0);
+  let sourceDepth = sourceDepthAt(anchorUV, u.depthSource);
+  let sourceMix = clamp(u.dt * 12.0, 0.0, 1.0);
+  p.depthAnchor = mix(p.depthAnchor, sourceDepth, sourceMix);
+  p.alpha = max(0.02, sourceColor.a);
 
   // Curl-noise velocity in the slab-local frame. Scale the sample
   // position so flowScale knob is intuitive — flowScale=1 gives ~one
@@ -716,7 +743,8 @@ function buildFlythroughComputeUniform(params: FlythroughParams, state: Flythrou
   f[5] = params.tunnelDepth;
   f[6] = params.depthStrength;
   u[7] = params.particleCount >>> 0;
-  f[8] = state.flyDistance;
+  u[8] = DEPTH_SRC_IDS[params.depthSource] >>> 0;
+  f[9] = state.flyDistance;
   return bufferToBase64(buffer);
 }
 
@@ -815,6 +843,8 @@ export function buildFlythroughNativeComputeGraph(options: FlythroughNativeGraph
       bindings: [
         { binding: 0, resource: id('particles'), kind: 'storage' },
         { binding: 1, resource: id('compute-uniform'), kind: 'uniform' },
+        sourceTextureBinding,
+        { binding: 3, kind: 'source-frame-sampler' },
       ],
     },
   ];
@@ -874,6 +904,8 @@ export class WebGPUFlythrough {
   private computePipeline: any = null;
   private renderPipelinePoints: any = null;
   private renderPipelineStrokes: any = null;
+  private computeBindGroupLayout: any = null;
+  private renderBindGroupLayout: any = null;
   private computeBindGroup: any = null;
   private renderBindGroup: any = null;
 
@@ -956,27 +988,31 @@ export class WebGPUFlythrough {
     // ── Compute pipeline ─────────────────────────────────────────
     const shaderRuntime = getGhostGpuRuntime() ?? this.device;
     const computeModule = createAndWarmWgslShaderModule(shaderRuntime, COMPUTE_WGSL, 'flythrough/compute');
-    const computeBindGroupLayout = this.device.createBindGroupLayout({
+    this.computeBindGroupLayout = this.device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
         { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } },
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, sampler: { type: 'filtering' } },
       ],
     });
     this.computePipeline = this.device.createComputePipeline({
-      layout: this.device.createPipelineLayout({ bindGroupLayouts: [computeBindGroupLayout] }),
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.computeBindGroupLayout] }),
       compute: { module: computeModule, entryPoint: 'cs_main' },
     });
     this.computeBindGroup = this.device.createBindGroup({
-      layout: computeBindGroupLayout,
+      layout: this.computeBindGroupLayout,
       entries: [
         { binding: 0, resource: { buffer: this.particleBuffer } },
         { binding: 1, resource: { buffer: this.computeUniformBuffer } },
+        { binding: 2, resource: this.sourceTextureView },
+        { binding: 3, resource: this.sourceSampler },
       ],
     });
 
     // ── Render pipelines (one per topology) ──────────────────────
     const renderModule = createAndWarmWgslShaderModule(shaderRuntime, RENDER_WGSL, 'flythrough/render');
-    const renderBindGroupLayout = this.device.createBindGroupLayout({
+    this.renderBindGroupLayout = this.device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX,   buffer: { type: 'read-only-storage' } },
         { binding: 1, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
@@ -985,7 +1021,7 @@ export class WebGPUFlythrough {
       ],
     });
     const renderPipelineLayout = this.device.createPipelineLayout({
-      bindGroupLayouts: [renderBindGroupLayout],
+      bindGroupLayouts: [this.renderBindGroupLayout],
     });
 
     const makePipeline = () => this.device.createRenderPipeline({
@@ -1006,7 +1042,7 @@ export class WebGPUFlythrough {
     this.renderPipelineStrokes = this.renderPipelinePoints;
 
     this.renderBindGroup = this.device.createBindGroup({
-      layout: renderBindGroupLayout,
+      layout: this.renderBindGroupLayout,
       entries: [
         { binding: 0, resource: { buffer: this.particleBuffer } },
         { binding: 1, resource: { buffer: this.renderUniformBuffer } },
@@ -1032,19 +1068,17 @@ export class WebGPUFlythrough {
     this.sourceW = w;
     this.sourceH = h;
 
-    // Re-create the render bind group — it captured the old view.
-    // The compute pipeline doesn't touch the source texture so its
-    // bind group is unaffected.
-    const renderBindGroupLayout = this.device.createBindGroupLayout({
+    this.computeBindGroup = this.device.createBindGroup({
+      layout: this.computeBindGroupLayout,
       entries: [
-        { binding: 0, visibility: GPUShaderStage.VERTEX,   buffer: { type: 'read-only-storage' } },
-        { binding: 1, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+        { binding: 0, resource: { buffer: this.particleBuffer } },
+        { binding: 1, resource: { buffer: this.computeUniformBuffer } },
+        { binding: 2, resource: this.sourceTextureView },
+        { binding: 3, resource: this.sourceSampler },
       ],
     });
     this.renderBindGroup = this.device.createBindGroup({
-      layout: renderBindGroupLayout,
+      layout: this.renderBindGroupLayout,
       entries: [
         { binding: 0, resource: { buffer: this.particleBuffer } },
         { binding: 1, resource: { buffer: this.renderUniformBuffer } },
@@ -1186,7 +1220,8 @@ export class WebGPUFlythrough {
     cu[6]  = this.params.depthStrength;
     // u32 lives in the same buffer — view as Uint32 at offset 28
     new Uint32Array(cu.buffer, cu.byteOffset)[7] = this.particleCount >>> 0;
-    cu[8]  = this.flyDistance;
+    new Uint32Array(cu.buffer, cu.byteOffset)[8] = DEPTH_SRC_IDS[this.params.depthSource] >>> 0;
+    cu[9]  = this.flyDistance;
     // remaining padding stays zero
     this.device.queue.writeBuffer(this.computeUniformBuffer, 0, cu);
 
@@ -1283,5 +1318,9 @@ export class WebGPUFlythrough {
     this.computePipeline = null;
     this.renderPipelinePoints = null;
     this.renderPipelineStrokes = null;
+    this.computeBindGroupLayout = null;
+    this.renderBindGroupLayout = null;
+    this.computeBindGroup = null;
+    this.renderBindGroup = null;
   }
 }

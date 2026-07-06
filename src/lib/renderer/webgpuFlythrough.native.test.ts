@@ -79,6 +79,12 @@ describe('Flythrough native shader bundle', () => {
       entry: 'cs_main',
       dispatch: [64, 1, 1],
     });
+    expect(first.config.passes[0].bindings).toContainEqual(
+      expect.objectContaining({ binding: 2, kind: 'source-frame-texture', source_id: 'media:input-source' }),
+    );
+    expect(first.config.passes[0].bindings).toContainEqual(
+      expect.objectContaining({ binding: 3, kind: 'source-frame-sampler' }),
+    );
     expect(first.config.buffers.find((buffer) => buffer.id.endsWith(':particles'))).toMatchObject({
       kind: 'storage',
       byte_length: 4096 * 48,
@@ -138,6 +144,9 @@ describe('Flythrough native shader bundle', () => {
     });
 
     expect(graph.config.render_passes[0].bindings).toContainEqual(
+      expect.objectContaining({ binding: 2, kind: 'source-frame-texture', allow_missing: true }),
+    );
+    expect(graph.config.passes[0].bindings).toContainEqual(
       expect.objectContaining({ binding: 2, kind: 'source-frame-texture', allow_missing: true }),
     );
   });
