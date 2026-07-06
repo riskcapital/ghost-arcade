@@ -103,6 +103,7 @@ const NATIVE_EFFECT_PASS_DESCRIPTORS = [
   { id: 'plasma', code: 65 },
   { id: 'halftone', code: 66 },
   { id: 'toon', code: 67 },
+  { id: 'kuwahara', code: 68 },
 ];
 
 function nativeGraphReadinessId(id) {

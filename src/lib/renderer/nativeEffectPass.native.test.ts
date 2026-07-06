@@ -238,6 +238,7 @@ describe('Native effect-pass template', () => {
       ['plasma', 65],
       ['halftone', 66],
       ['toon', 67],
+      ['kuwahara', 68],
     ]);
     expect(nativeEffectPassManifestEntry('posterize')).toMatchObject({
       code: 8,
@@ -265,7 +266,34 @@ describe('Native effect-pass template', () => {
     expect(source.source).toContain('code == 65u');
     expect(source.source).toContain('code == 66u');
     expect(source.source).toContain('code == 67u');
+    expect(source.source).toContain('code == 68u');
     expect(source.source).not.toMatch(/^\s*#include\b/m);
+  });
+
+  it('packs kuwahara painterly uniforms', () => {
+    expect(packNativeEffectPassUniforms({
+      sourceId: 'source',
+      targetSourceId: 'target',
+      effect: 'kuwahara',
+      width: 320,
+      height: 180,
+      time: 0.2,
+      frameDelta: 1 / 60,
+      frameIndex: 9,
+      amount: 0.86,
+      mix: 1,
+      params: {
+        kuwaharaRadius: 4,
+        kuwaharaEdgeSharpness: 0.42,
+        kuwaharaColorPunch: 0.35,
+      },
+    })).toEqual([
+      320, 180, 0.2, 1 / 60,
+      68, 0.86, 1, 9,
+      4, 0.42, 0.35, 0,
+      0, 0, 0, 0,
+      0, 0, 0, 0,
+    ]);
   });
 
   it('packs strobe flash timing and tint uniforms', () => {
@@ -2017,6 +2045,37 @@ describe('Native effect-pass template', () => {
             const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.64, 0.44);
             const toonRgb = snapshotPixelRgb(snapshot, pixels, 0.64, 0.44);
             expect(rgbDistance(sourceRgb, toonRgb)).toBeGreaterThan(0.02);
+          },
+        },
+        {
+          id: 'kuwahara',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-kuwahara',
+            effect: 'kuwahara',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 12,
+            amount: 1,
+            params: {
+              kuwaharaRadius: 4,
+              kuwaharaEdgeSharpness: 0.45,
+              kuwaharaColorPunch: 0.35,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const maxDelta = [
+              [0.34, 0.35],
+              [0.50, 0.50],
+              [0.66, 0.58],
+            ].reduce((best, [x, y]) => {
+              const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, x, y);
+              const kuwaharaRgb = snapshotPixelRgb(snapshot, pixels, x, y);
+              return Math.max(best, rgbDistance(sourceRgb, kuwaharaRgb));
+            }, 0);
+            expect(maxDelta).toBeGreaterThan(0.012);
           },
         },
         {
