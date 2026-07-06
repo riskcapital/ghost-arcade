@@ -73,9 +73,29 @@ impl SharedTextureSourceFrameDescriptor {
     }
 
     pub fn unsupported_reason(&self, backend: &str) -> String {
+        let (import_path, handle_status) = match self.platform.as_str() {
+            "dxgi" => {
+                let handle_status = match self.dxgi_shared_handle() {
+                    Ok(_) => "DXGI HANDLE metadata is valid".to_string(),
+                    Err(err) => format!("DXGI HANDLE metadata is invalid: {err}"),
+                };
+                (
+                    "DXGI metadata parsed; D3D11/D3D12 shared-handle import is pending for Windows builds",
+                    handle_status,
+                )
+            }
+            "iosurface" => (
+                "IOSurface metadata parsed; cross-process IOSurface import is pending for this upload path",
+                "IOSurface handle metadata is validated by the macOS import path".to_string(),
+            ),
+            _ => (
+                "no native shared-texture import path is available for this platform",
+                "handle metadata was not validated for this platform".to_string(),
+            ),
+        };
         format!(
             "shared texture source-frame upload is not implemented yet \
-             (backend={backend}, platform={}, format={}, size={}x{}, handle_encoding={}, handle_chars={}, declared_bytes={}, frame={}, sender={})",
+             (backend={backend}, platform={}, format={}, size={}x{}, handle_encoding={}, handle_chars={}, declared_bytes={}, frame={}, sender={}, import_path={import_path}, handle_status={handle_status})",
             self.platform,
             self.format,
             self.width,
@@ -116,6 +136,31 @@ impl SharedTextureSourceFrameDescriptor {
             )),
         }
     }
+
+    pub fn dxgi_shared_handle(&self) -> Result<u64, String> {
+        if self.platform != "dxgi" {
+            return Err(format!(
+                "shared texture platform `{}` is not DXGI",
+                self.platform
+            ));
+        }
+        match self.handle_encoding.as_str() {
+            "integer" | "opaque" => parse_u64_handle(&self.handle, "DXGI shared handle"),
+            "base64" => {
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(self.handle.as_bytes())
+                    .map_err(|err| format!("invalid base64 DXGI shared handle: {err}"))?;
+                dxgi_shared_handle_from_bytes(&bytes)
+            }
+            "hex" => {
+                let bytes = hex_bytes(&self.handle)?;
+                dxgi_shared_handle_from_bytes(&bytes)
+            }
+            encoding => Err(format!(
+                "unsupported DXGI shared handle encoding `{encoding}`"
+            )),
+        }
+    }
 }
 
 fn parse_u32_handle(handle: &str) -> Result<u32, String> {
@@ -124,6 +169,23 @@ fn parse_u32_handle(handle: &str) -> Result<u32, String> {
         .parse::<u64>()
         .map_err(|_| format!("IOSurface handle `{trimmed}` is not an integer ID"))?;
     u32::try_from(parsed).map_err(|_| format!("IOSurface ID `{trimmed}` exceeds u32 range"))
+}
+
+fn parse_u64_handle(handle: &str, label: &str) -> Result<u64, String> {
+    let trimmed = handle.trim();
+    if trimmed.is_empty() {
+        return Err(format!("{label} is empty"));
+    }
+    if let Some(hex) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
+        return u64::from_str_radix(hex, 16)
+            .map_err(|_| format!("{label} `{trimmed}` is not a valid hex HANDLE"));
+    }
+    trimmed
+        .parse::<u64>()
+        .map_err(|_| format!("{label} `{trimmed}` is not an integer HANDLE"))
 }
 
 fn iosurface_id_from_bytes(bytes: &[u8]) -> Result<u32, String> {
@@ -139,20 +201,31 @@ fn iosurface_id_from_bytes(bytes: &[u8]) -> Result<u32, String> {
     }
 }
 
+fn dxgi_shared_handle_from_bytes(bytes: &[u8]) -> Result<u64, String> {
+    match bytes.len() {
+        8 => Ok(u64::from_le_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ])),
+        len => Err(format!(
+            "DXGI shared handle must be an 8-byte HANDLE, received {len} bytes"
+        )),
+    }
+}
+
 fn hex_bytes(handle: &str) -> Result<Vec<u8>, String> {
     let compact: String = handle
         .chars()
         .filter(|ch| !ch.is_ascii_whitespace() && *ch != ':')
         .collect();
     if compact.len() % 2 != 0 {
-        return Err("hex IOSurface handle has an odd character count".to_string());
+        return Err("hex shared texture handle has an odd character count".to_string());
     }
     let mut bytes = Vec::with_capacity(compact.len() / 2);
     for pair in compact.as_bytes().chunks(2) {
         let text = std::str::from_utf8(pair)
-            .map_err(|_| "hex IOSurface handle contains invalid UTF-8".to_string())?;
+            .map_err(|_| "hex shared texture handle contains invalid UTF-8".to_string())?;
         let value = u8::from_str_radix(text, 16)
-            .map_err(|_| format!("hex IOSurface handle contains invalid byte `{text}`"))?;
+            .map_err(|_| format!("hex shared texture handle contains invalid byte `{text}`"))?;
         bytes.push(value);
     }
     Ok(bytes)
@@ -240,6 +313,110 @@ mod tests {
         assert_eq!(descriptor.sender_name.as_deref(), Some("Resolume"));
         assert_eq!(descriptor.width, 1920);
         assert_eq!(descriptor.height, 1080);
+    }
+
+    #[test]
+    fn parses_dxgi_shared_handle_from_integer() {
+        let command = json!({
+            "shared_handle": "123456",
+            "shared_texture_platform": "dxgi",
+            "shared_texture_handle_encoding": "integer"
+        });
+
+        let descriptor =
+            SharedTextureSourceFrameDescriptor::from_command(&command, 1920, 1080).unwrap();
+
+        assert_eq!(descriptor.dxgi_shared_handle().unwrap(), 123456);
+    }
+
+    #[test]
+    fn parses_dxgi_shared_handle_from_opaque_hex_integer() {
+        let command = json!({
+            "shared_handle": "0x123456789ABCDEF0",
+            "shared_texture_platform": "spout"
+        });
+
+        let descriptor =
+            SharedTextureSourceFrameDescriptor::from_command(&command, 1920, 1080).unwrap();
+
+        assert_eq!(
+            descriptor.dxgi_shared_handle().unwrap(),
+            0x1234_5678_9abc_def0
+        );
+    }
+
+    #[test]
+    fn parses_dxgi_shared_handle_from_base64_bytes() {
+        let handle = 0x1234_5678_9abc_def0_u64;
+        let command = json!({
+            "shared_handle": base64::engine::general_purpose::STANDARD.encode(handle.to_le_bytes()),
+            "shared_texture_platform": "d3d12",
+            "shared_texture_handle_encoding": "base64",
+            "shared_texture_handle_byte_length": 8
+        });
+
+        let descriptor =
+            SharedTextureSourceFrameDescriptor::from_command(&command, 3840, 2160).unwrap();
+
+        assert_eq!(descriptor.platform, "dxgi");
+        assert_eq!(descriptor.dxgi_shared_handle().unwrap(), handle);
+    }
+
+    #[test]
+    fn parses_dxgi_shared_handle_from_hex_bytes() {
+        let command = json!({
+            "shared_handle": "f0 de bc 9a 78 56 34 12",
+            "shared_texture_platform": "d3d11",
+            "shared_texture_handle_encoding": "hex",
+            "shared_texture_handle_byte_length": 8
+        });
+
+        let descriptor =
+            SharedTextureSourceFrameDescriptor::from_command(&command, 1280, 720).unwrap();
+
+        assert_eq!(
+            descriptor.dxgi_shared_handle().unwrap(),
+            0x1234_5678_9abc_def0
+        );
+    }
+
+    #[test]
+    fn rejects_short_dxgi_shared_handle_bytes() {
+        let command = json!({
+            "shared_handle": base64::engine::general_purpose::STANDARD.encode(42_u32.to_le_bytes()),
+            "shared_texture_platform": "dxgi",
+            "shared_texture_handle_encoding": "base64",
+            "shared_texture_handle_byte_length": 4
+        });
+
+        let descriptor =
+            SharedTextureSourceFrameDescriptor::from_command(&command, 1280, 720).unwrap();
+
+        assert!(
+            descriptor
+                .dxgi_shared_handle()
+                .unwrap_err()
+                .contains("8-byte HANDLE")
+        );
+    }
+
+    #[test]
+    fn rejects_iosurface_when_requesting_dxgi_shared_handle() {
+        let command = json!({
+            "shared_handle": "42",
+            "shared_texture_platform": "iosurface",
+            "shared_texture_handle_encoding": "integer"
+        });
+
+        let descriptor =
+            SharedTextureSourceFrameDescriptor::from_command(&command, 1280, 720).unwrap();
+
+        assert!(
+            descriptor
+                .dxgi_shared_handle()
+                .unwrap_err()
+                .contains("not DXGI")
+        );
     }
 
     #[test]
