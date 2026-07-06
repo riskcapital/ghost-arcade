@@ -3406,7 +3406,15 @@ impl App {
                         "id": "shared-texture-upload",
                         "label": "Shared texture media transport",
                         "ok": self.shared_texture_media_transport_ready(),
-                        "detail": if self.shared_texture_media_transport_ready() { "native shared texture media transport is active for platform source-frame handles; local video/still media bypasses canvas/base64 through native decode" } else { "full media shared texture transport is pending for this backend" }
+                        "detail": if self.shared_texture_media_transport_ready() {
+                            if cfg!(target_os = "macos") {
+                                "native shared texture media transport is active for IOSurfaceID source-frame handles; local video/still media bypasses canvas/base64 through native decode"
+                            } else if cfg!(target_os = "windows") {
+                                "native shared texture media transport is active for DXGI shared HANDLE source-frame imports; local video/still media bypasses canvas/base64 through native decode"
+                            } else {
+                                "native shared texture media transport is active for platform source-frame handles; local video/still media bypasses canvas/base64 through native decode"
+                            }
+                        } else { "full media shared texture transport is pending for this backend" }
                     },
                     {
                         "id": "native-output-mirror",
@@ -3419,11 +3427,19 @@ impl App {
                         "label": "Native output shared-texture export",
                         "ok": self.renderer.as_ref().is_some_and(RenderState::output_export_ready),
                         "detail": if self.renderer.as_ref().is_some_and(RenderState::output_export_ready) {
-                            "native output mirror is exported as an IOSurface handle".to_string()
+                            if cfg!(target_os = "macos") {
+                                "native output mirror is exported as an IOSurface handle"
+                            } else if cfg!(target_os = "windows") {
+                                "native output mirror is exported as a DXGI shared HANDLE"
+                            } else {
+                                "native output mirror is exported as a platform shared texture"
+                            }.to_string()
                         } else if cfg!(target_os = "macos") {
                             "native output IOSurface export target is unavailable".to_string()
+                        } else if cfg!(target_os = "windows") {
+                            "native output DXGI export target is unavailable".to_string()
                         } else {
-                            "pending core-to-Electron DXGI output texture export".to_string()
+                            "pending backend-specific output shared-texture export".to_string()
                         }
                     },
                     {
@@ -3433,11 +3449,15 @@ impl App {
                         "detail": if self.renderer.as_ref().is_some_and(RenderState::output_export_ready) {
                             if cfg!(target_os = "macos") {
                                 "native core exports the composite as an IOSurface; Electron owns Syphon publication"
+                            } else if cfg!(target_os = "windows") {
+                                "native core exports the composite as a DXGI shared HANDLE; Electron owns Spout publication when supported"
                             } else {
                                 "native core output is ready; Electron owns platform texture-share publication when supported"
                             }
                         } else if cfg!(target_os = "macos") {
                             "native output IOSurface export must be ready before Electron can publish Syphon"
+                        } else if cfg!(target_os = "windows") {
+                            "native output DXGI export must be ready before Electron can publish Spout"
                         } else {
                             "pending core-to-Electron output texture export for platform texture-share publication"
                         }
@@ -8123,7 +8143,13 @@ impl RenderState {
         json!({
             "available": false,
             "platform": if cfg!(target_os = "macos") { "iosurface" } else if cfg!(target_os = "windows") { "dxgi" } else { "unsupported" },
-            "reason": if cfg!(target_os = "macos") { "native output IOSurface export target is unavailable" } else { "native output shared texture export is pending for this backend" },
+            "reason": if cfg!(target_os = "macos") {
+                "native output IOSurface export target is unavailable"
+            } else if cfg!(target_os = "windows") {
+                "native output DXGI export target is unavailable"
+            } else {
+                "native output shared texture export is pending for this backend"
+            },
         })
     }
 

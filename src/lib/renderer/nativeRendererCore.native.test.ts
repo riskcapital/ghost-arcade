@@ -114,6 +114,10 @@ describe('Native render-core RPC contract', () => {
   const itIfNativeCore = existsSync(nativeCoreBin) ? it : it.skip;
   const nativeBackend =
     process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'd3d12' : 'vulkan';
+  const nativeSharedTexturePlatform =
+    process.platform === 'darwin' ? 'iosurface' : process.platform === 'win32' ? 'dxgi' : null;
+  const nativeSharedTextureDetail =
+    process.platform === 'darwin' ? 'IOSurfaceID' : process.platform === 'win32' ? 'DXGI shared HANDLE' : '';
 
   itIfNativeCore('advertises implemented methods and rejects unknown RPC methods', async () => {
     const rpc = createNativeRpc();
@@ -160,7 +164,7 @@ describe('Native render-core RPC contract', () => {
       expect(capabilities?.features?.native_frame_export).toBe(true);
       expect(capabilities?.features?.native_frame_sequence_export).toBe(true);
       expect(capabilities?.features?.native_recording).toBe(false);
-      if (process.platform === 'darwin') {
+      if (nativeSharedTexturePlatform) {
         expect(capabilities?.features?.shared_texture_source_frame_upload).toBe(true);
         expect(capabilities?.features?.shared_texture_upload).toBe(true);
         expect(capabilities?.features?.shared_texture_output_export).toBe(true);
@@ -174,15 +178,18 @@ describe('Native render-core RPC contract', () => {
       expect(checks.get('native-frame-sequence-export')?.ok).toBe(true);
       expect(checks.get('native-recording')?.ok).toBe(false);
       expect(String(checks.get('native-recording')?.detail ?? '')).toContain('Electron broker');
-      if (process.platform === 'darwin') {
+      if (nativeSharedTexturePlatform) {
         expect(checks.get('shared-texture-source-frame-upload')?.ok).toBe(true);
         expect(checks.get('shared-texture-upload')?.ok).toBe(true);
-        expect(String(checks.get('shared-texture-upload')?.detail ?? '')).toContain('IOSurfaceID');
+        expect(String(checks.get('shared-texture-upload')?.detail ?? '')).toContain(nativeSharedTextureDetail);
         expect(checks.get('shared-texture-output-export')?.ok).toBe(true);
         const outputTexture = await rpc.send('output_shared_texture');
         expect(outputTexture?.available).toBe(true);
-        expect(outputTexture?.platform).toBe('iosurface');
+        expect(outputTexture?.platform).toBe(nativeSharedTexturePlatform);
         expect(Number(outputTexture?.handle ?? 0)).toBeGreaterThan(0);
+        expect(Number(outputTexture?.handle_byte_length ?? 0)).toBe(
+          nativeSharedTexturePlatform === 'iosurface' ? 4 : 8,
+        );
         expect(Number(outputTexture?.frame ?? 0)).toBeGreaterThan(0);
         expect(Number(outputTexture?.width ?? 0)).toBeGreaterThan(0);
         expect(Number(outputTexture?.height ?? 0)).toBeGreaterThan(0);
