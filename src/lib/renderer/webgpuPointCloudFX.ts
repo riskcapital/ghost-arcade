@@ -74,6 +74,7 @@ const NORMALIZATION_SAMPLE_LIMIT = 65_536;
 const NORMALIZATION_RADIUS_PERCENTILE = 0.985;
 const MIN_GAUSSIAN_SIZE_MULTIPLIER = 0.45;
 const MAX_GAUSSIAN_SIZE_MULTIPLIER = 10;
+const GAUSSIAN_AA_PIXELS = 0.75;
 
 type Topology = 'points' | 'billboards' | 'strokes';
 
@@ -712,9 +713,9 @@ struct U {
   strokeWidth:  f32,
   opacity:      f32,
   pointCount:   u32,
-  _pad2:        f32,
-  _pad3:        f32,
-  _pad4:        f32,
+  viewportWidth: f32,
+  viewportHeight: f32,
+  gaussianAaPixels: f32,
   fogColor:     vec3<f32>,
   fogOpacity:   f32,
   fogDensity:   f32,
@@ -764,6 +765,7 @@ fn solveScreenToWorldOffset(center: vec3<f32>, ndcOffset: vec2<f32>) -> vec3<f32
 struct GaussianScreenAxes {
   majorOffset: vec3<f32>,
   minorOffset: vec3<f32>,
+  opacityScale: f32,
 };
 
 fn gaussianScreenAxes(center: vec3<f32>, h: Home, p: Live) -> GaussianScreenAxes {
@@ -788,10 +790,10 @@ fn gaussianScreenAxes(center: vec3<f32>, h: Home, p: Live) -> GaussianScreenAxes
   let root = sqrt(max(halfDiff * halfDiff + cxy * cxy, 0.0));
   let minLambda = GHOST_GAUSSIAN_MIN_SIGMA_NDC * GHOST_GAUSSIAN_MIN_SIGMA_NDC;
   let maxLambda = GHOST_GAUSSIAN_MAX_SIGMA_NDC * GHOST_GAUSSIAN_MAX_SIGMA_NDC;
-  let lambdaMajor = clamp((cxx + cyy) * 0.5 + root, minLambda, maxLambda);
-  let lambdaMinor = clamp((cxx + cyy) * 0.5 - root, minLambda, lambdaMajor);
+  let lambdaMajorRaw = max((cxx + cyy) * 0.5 + root, minLambda);
+  let lambdaMinorRaw = max((cxx + cyy) * 0.5 - root, minLambda);
 
-  var major2 = vec2<f32>(cxy, lambdaMajor - cxx);
+  var major2 = vec2<f32>(cxy, lambdaMajorRaw - cxx);
   if (dot(major2, major2) < 1e-6) {
     if (cxx >= cyy) {
       major2 = vec2<f32>(1.0, 0.0);
@@ -802,11 +804,24 @@ fn gaussianScreenAxes(center: vec3<f32>, h: Home, p: Live) -> GaussianScreenAxes
     major2 = normalize(major2);
   }
   let minor2 = vec2<f32>(-major2.y, major2.x);
+  let pixelSigmaNdc = max(
+    2.0 / max(u.viewportWidth, 1.0),
+    2.0 / max(u.viewportHeight, 1.0),
+  ) * max(u.gaussianAaPixels, 0.0);
+  let aaLambda = pixelSigmaNdc * pixelSigmaNdc;
+  let lambdaMajor = clamp(lambdaMajorRaw + aaLambda, minLambda, maxLambda);
+  let lambdaMinor = clamp(lambdaMinorRaw + aaLambda, minLambda, lambdaMajor);
+  let opacityScale = sqrt(clamp(
+    (lambdaMajorRaw * lambdaMinorRaw) / max(lambdaMajor * lambdaMinor, 1e-12),
+    0.08,
+    1.0,
+  ));
   let majorSigmaNdc = major2 * sqrt(lambdaMajor);
   let minorSigmaNdc = minor2 * sqrt(lambdaMinor);
   return GaussianScreenAxes(
     solveScreenToWorldOffset(center, majorSigmaNdc) * GHOST_GAUSSIAN_SIGMA_EXTENT,
     solveScreenToWorldOffset(center, minorSigmaNdc) * GHOST_GAUSSIAN_SIGMA_EXTENT,
+    opacityScale,
   );
 }
 
@@ -818,6 +833,7 @@ struct VSOut {
   @location(3) depth01:   f32,
   @location(4) gaussian:  f32,
   @location(5) gaussianSigma: vec2<f32>,
+  @location(6) gaussianOpacityScale: f32,
 };
 
 @vertex
@@ -832,6 +848,7 @@ fn vs_main(
 
   var cornerUV: vec2<f32> = vec2<f32>(0.0, 0.0);
   var gaussianSigma: vec2<f32> = vec2<f32>(0.0, 0.0);
+  var gaussianOpacityScale: f32 = 1.0;
   var offset:   vec3<f32> = vec3<f32>(0.0, 0.0, 0.0);
 
   if (u.topology == 2u) {
@@ -868,6 +885,7 @@ fn vs_main(
       billboardX = axes.majorOffset;
       billboardY = axes.minorOffset;
       gaussianSigma = q * GHOST_GAUSSIAN_SIGMA_EXTENT;
+      gaussianOpacityScale = axes.opacityScale;
       offset = billboardX * q.x + billboardY * q.y;
     } else {
       offset =
@@ -884,6 +902,7 @@ fn vs_main(
   out.depth01 = clamp(out.pos.z / max(out.pos.w, 1e-5) * 0.5 + 0.5, 0.0, 1.0);
   out.gaussian = h.gaussian;
   out.gaussianSigma = gaussianSigma;
+  out.gaussianOpacityScale = gaussianOpacityScale;
   return out;
 }
 
@@ -912,7 +931,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     let d = distance(in.uv, vec2<f32>(0.5, 0.5)) * 2.0;
     mask = smoothstep(1.0, 0.2, d);
   }
-  let a = in.alpha * mask;
+  let a = in.alpha * mask * in.gaussianOpacityScale;
   let fogT = clamp((1.0 - exp(-in.depth01 * max(u.fogDensity, 0.0) * 4.0)) * u.fogOpacity, 0.0, 1.0);
   let color = mix(in.color, u.fogColor, fogT);
   return vec4<f32>(color * a, a);
@@ -1769,6 +1788,9 @@ function buildPointCloudFXRenderUniform(
   ruF[26] = params.strokeWidth;
   ruF[27] = params.opacity;
   ruU[28] = state.pointCount >>> 0;
+  ruF[29] = width;
+  ruF[30] = height;
+  ruF[31] = GAUSSIAN_AA_PIXELS;
   const fogModeBoost = params.filterMode === 'fog' ? 1 : 0;
   ruF[32] = params.fogColor[0];
   ruF[33] = params.fogColor[1];
@@ -2315,6 +2337,9 @@ export class WebGPUPointCloudFX {
     ruF[26] = this.params.strokeWidth;
     ruF[27] = this.params.opacity;
     ruU[28] = this.pointCount >>> 0;
+    ruF[29] = this.viewportW;
+    ruF[30] = this.viewportH;
+    ruF[31] = GAUSSIAN_AA_PIXELS;
     const fogModeBoost = this.params.filterMode === 'fog' ? 1 : 0;
     ruF[32] = this.params.fogColor[0];
     ruF[33] = this.params.fogColor[1];
