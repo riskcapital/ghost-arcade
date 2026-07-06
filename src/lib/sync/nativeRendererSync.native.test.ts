@@ -939,6 +939,64 @@ describe('native renderer sync effect-pass descriptors', () => {
         hazeFocusBand: 0.37,
       },
     })).toBe('heat-haze:0.4400:9.0000:1.2000:0.3500:0.5500:1:0.4800:0.3700');
+
+    expect(effectToNativeDescriptor({
+      type: 'curves',
+      params: {
+        curvesMix: 0.9,
+        curvesContrast: 0.7,
+        curvesToe: 0.25,
+        curvesShoulder: 0.35,
+        curvesBlackCrush: 0.15,
+      },
+    })).toBe('curves:0.9000:0.7000:0.2500:0.3500:0.1500');
+
+    expect(effectToNativeDescriptor({
+      type: 'selectiveColor',
+      params: {
+        selColorTargetHue: 0.08,
+        selColorRange: 0.16,
+        selColorFeather: 0.07,
+        selColorMode: 1,
+        selColorReplaceHue: 0.58,
+        selColorSatBoost: 0.4,
+      },
+    })).toBe('selective-color:1.0000:0.0800:0.1600:0.0700:1:0.5800:0.4000');
+
+    expect(effectToNativeDescriptor({
+      type: 'falseColor',
+      params: {
+        falseColorMode: 2,
+        falseColorMix: 0.85,
+        falseColorShowOriginal: 0.75,
+        falseColorMidpoint: 0.52,
+        falseColorRange: 0.1,
+      },
+    })).toBe('false-color:0.8500:2:0.7500:0.5200:0.1000');
+
+    expect(effectToNativeDescriptor({
+      type: 'shadowRecovery',
+      params: {
+        shadowAmount: 0.6,
+        shadowThreshold: 0.42,
+        shadowSoftness: 0.33,
+        shadowColorRecovery: 0.42,
+        shadowHighlightProtect: 0.62,
+        shadowMix: 0.9,
+      },
+    })).toBe('shadow-recovery:0.6000:0.4200:0.3300:0.4200:0.6200:0.9000');
+
+    expect(effectToNativeDescriptor({
+      type: 'highlightRolloff',
+      params: {
+        highRolloffAmount: 0.6,
+        highRolloffThreshold: 0.72,
+        highRolloffSoftness: 0.21,
+        highRolloffPreserveHue: 0.8,
+        highRolloffMaxValue: 1.05,
+        highRolloffMix: 0.85,
+      },
+    })).toBe('highlight-rolloff:0.6000:0.7200:0.2100:0.8000:1.0500:0.8500');
   });
 
   it('rebuilds native effect-pass runtime params from hero effect descriptors', () => {
@@ -1049,6 +1107,65 @@ describe('native renderer sync effect-pass descriptors', () => {
         hazeMode: 1,
         hazeFocusY: 0.48,
         hazeFocusBand: 0.37,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('curves:0.9000:0.7000:0.2500:0.3500:0.1500')).toMatchObject({
+      effect: 'curves',
+      amount: 0.9,
+      params: {
+        curvesContrast: 0.7,
+        curvesToe: 0.25,
+        curvesShoulder: 0.35,
+        curvesBlackCrush: 0.15,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('selective-color:1.0000:0.0800:0.1600:0.0700:1:0.5800:0.4000')).toMatchObject({
+      effect: 'selective-color',
+      amount: 1,
+      params: {
+        selColorTargetHue: 0.08,
+        selColorRange: 0.16,
+        selColorFeather: 0.07,
+        selColorMode: 1,
+        selColorReplaceHue: 0.58,
+        selColorSatBoost: 0.4,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('false-color:0.8500:2:0.7500:0.5200:0.1000')).toMatchObject({
+      effect: 'false-color',
+      amount: 0.85,
+      params: {
+        falseColorMode: 2,
+        falseColorShowOriginal: 0.75,
+        falseColorMidpoint: 0.52,
+        falseColorRange: 0.1,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('shadow-recovery:0.6000:0.4200:0.3300:0.4200:0.6200:0.9000')).toMatchObject({
+      effect: 'shadow-recovery',
+      amount: 0.6,
+      params: {
+        shadowThreshold: 0.42,
+        shadowSoftness: 0.33,
+        shadowColorRecovery: 0.42,
+        shadowHighlightProtect: 0.62,
+        shadowMix: 0.9,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('highlight-rolloff:0.6000:0.7200:0.2100:0.8000:1.0500:0.8500')).toMatchObject({
+      effect: 'highlight-rolloff',
+      amount: 0.6,
+      params: {
+        highRolloffThreshold: 0.72,
+        highRolloffSoftness: 0.21,
+        highRolloffPreserveHue: 0.8,
+        highRolloffMaxValue: 1.05,
+        highRolloffMix: 0.85,
       },
     });
   });

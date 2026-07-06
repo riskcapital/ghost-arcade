@@ -52,7 +52,12 @@ export type NativeEffectPassId =
   | 'tilt-shift'
   | 'halation'
   | 'anamorphic-streak'
-  | 'heat-haze';
+  | 'heat-haze'
+  | 'curves'
+  | 'selective-color'
+  | 'false-color'
+  | 'shadow-recovery'
+  | 'highlight-rolloff';
 
 export interface NativeEffectPassManifestEntry {
   id: NativeEffectPassId;
@@ -77,6 +82,8 @@ export interface NativeEffectPassOptions {
     scale: number;
     seed: number;
     amount: number;
+    amount2: number;
+    mix: number;
     param0: number;
     param1: number;
     param2: number;
@@ -95,6 +102,10 @@ export interface NativeEffectPassOptions {
     aspect: number;
     centerX: number;
     centerY: number;
+    focusX: number;
+    focusY: number;
+    focusBand: number;
+    maxBlur: number;
     tintAmount: number;
     breathing: number;
     angle: number;
@@ -163,6 +174,7 @@ export interface NativeEffectPassOptions {
     chromaSplit: number;
     strength: number;
     contrast: number;
+    saturation: number;
     edgeFade: number;
     cubic: number;
     anamorphicX: number;
@@ -302,11 +314,42 @@ export interface NativeEffectPassOptions {
     hazeAmount: number;
     hazeScale: number;
     hazeSpeed: number;
+    length: number;
+    directionY: number;
+    turbulence: number;
     hazeDirectionY: number;
     hazeTurbulence: number;
     hazeMode: number;
     hazeFocusY: number;
     hazeFocusBand: number;
+    curvesContrast: number;
+    curvesToe: number;
+    curvesShoulder: number;
+    curvesBlackCrush: number;
+    curvesMix: number;
+    selColorTargetHue: number;
+    selColorRange: number;
+    selColorFeather: number;
+    selColorMode: number;
+    selColorReplaceHue: number;
+    selColorSatBoost: number;
+    falseColorMode: number;
+    falseColorMix: number;
+    falseColorShowOriginal: number;
+    falseColorMidpoint: number;
+    falseColorRange: number;
+    shadowAmount: number;
+    shadowThreshold: number;
+    shadowSoftness: number;
+    shadowColorRecovery: number;
+    shadowHighlightProtect: number;
+    shadowMix: number;
+    highRolloffAmount: number;
+    highRolloffThreshold: number;
+    highRolloffSoftness: number;
+    highRolloffPreserveHue: number;
+    highRolloffMaxValue: number;
+    highRolloffMix: number;
   }>;
   clear?: boolean;
   seq?: number;
@@ -400,6 +443,11 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'halation', code: 52, defaultAmount: 0.6, amountMin: 0, amountMax: 2 },
   { id: 'anamorphic-streak', code: 53, defaultAmount: 0.6, amountMin: 0, amountMax: 2 },
   { id: 'heat-haze', code: 54, defaultAmount: 0.4, amountMin: 0, amountMax: 1 },
+  { id: 'curves', code: 55, defaultAmount: 1, amountMin: 0, amountMax: 1 },
+  { id: 'selective-color', code: 56, defaultAmount: 1, amountMin: 0, amountMax: 1 },
+  { id: 'false-color', code: 57, defaultAmount: 1, amountMin: 0, amountMax: 1 },
+  { id: 'shadow-recovery', code: 58, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'highlight-rolloff', code: 59, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -722,6 +770,75 @@ fn thermal_palette_native(t: f32, palette: u32) -> vec3<f32> {
   if (x < 0.6) { return mix(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 1.0, 0.0), (x - 0.4) * 5.0); }
   if (x < 0.8) { return mix(vec3<f32>(1.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), (x - 0.6) * 5.0); }
   return mix(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(1.0), (x - 0.8) * 5.0);
+}
+
+fn rgb_to_hsv(c: vec3<f32>) -> vec3<f32> {
+  let K = vec4<f32>(0.0, -0.33333333333, 0.66666666667, -1.0);
+  let p = mix(vec4<f32>(c.bg, K.wz), vec4<f32>(c.gb, K.xy), step(c.b, c.g));
+  let q = mix(vec4<f32>(p.xyw, c.r), vec4<f32>(c.r, p.yzx), step(p.x, c.r));
+  let d = q.x - min(q.w, q.y);
+  return vec3<f32>(
+    abs(q.z + (q.w - q.y) / (6.0 * d + 0.0000000001)),
+    d / (q.x + 0.0000000001),
+    q.x,
+  );
+}
+
+fn hsv_to_rgb(c: vec3<f32>) -> vec3<f32> {
+  let K = vec4<f32>(1.0, 0.66666666667, 0.33333333333, 3.0);
+  let p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+  return c.z * mix(K.xxx, clamp(p - K.xxx, vec3<f32>(0.0), vec3<f32>(1.0)), c.y);
+}
+
+fn false_color_dit_exposure(l: f32) -> vec3<f32> {
+  if (l < 0.04) { return vec3<f32>(0.5, 0.0, 0.7); }
+  if (l < 0.18) { return vec3<f32>(0.0, 0.0, 0.9); }
+  if (l < 0.42) { return vec3<f32>(0.0, 0.8, 0.6); }
+  if (l < 0.55) { return vec3<f32>(0.4, 0.8, 0.0); }
+  if (l < 0.7) { return vec3<f32>(1.0, 1.0, 0.0); }
+  if (l < 0.92) { return vec3<f32>(1.0, 0.5, 0.0); }
+  return vec3<f32>(1.0, 0.0, 0.0);
+}
+
+fn false_color_zone_heat(l: f32) -> vec3<f32> {
+  let n = clamp(l, 0.0, 1.0);
+  return mix(
+    mix(vec3<f32>(0.0, 0.0, 0.5), vec3<f32>(0.0, 0.7, 1.0), smoothstep(0.0, 0.4, n)),
+    mix(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 1.0, 0.0), smoothstep(0.4, 0.7, n)),
+    smoothstep(0.4, 0.55, n),
+  ) + smoothstep(0.85, 1.0, n) * vec3<f32>(1.0, 0.2, 0.0);
+}
+
+fn false_color_resolve(l: f32) -> vec3<f32> {
+  if (l < 0.05) { return vec3<f32>(0.0, 0.0, 1.0); }
+  if (l > 0.95) { return vec3<f32>(1.0, 0.0, 0.0); }
+  return vec3<f32>(l);
+}
+
+fn false_color_stripes(l: f32) -> vec3<f32> {
+  let h = clamp(l, 0.0, 1.0);
+  return vec3<f32>(
+    sin(h * 9.42) * 0.5 + 0.5,
+    sin(h * 9.42 + 2.094) * 0.5 + 0.5,
+    sin(h * 9.42 + 4.189) * 0.5 + 0.5,
+  );
+}
+
+fn highlight_rolloff_hue(src: vec3<f32>, threshold: f32, max_value: f32, amount: f32) -> vec3<f32> {
+  let lum = luma(src);
+  let over = max(0.0, lum - threshold);
+  var compressed = threshold + over / (1.0 + over * (4.0 * amount));
+  compressed = min(compressed, max_value);
+  let scale = select(1.0, compressed / lum, lum > 0.001);
+  return src * scale;
+}
+
+fn highlight_rolloff_channel(value: f32, threshold: f32, amount: f32, weight: f32) -> f32 {
+  let denom = 1.0 + (value - threshold) * 4.0 * amount;
+  let safe_denom = select(-0.001, 0.001, denom >= 0.0);
+  let d = select(denom, safe_denom, abs(denom) < 0.001);
+  let compressed = threshold + (value - threshold) / d;
+  return min(value, mix(value, compressed, weight));
 }
 
 fn night_vision_tint(lum: f32, phosphor: u32) -> vec3<f32> {
@@ -2253,6 +2370,114 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let warped = clamp(uv + vec2<f32>(nx, ny) * strength, vec2<f32>(0.0), vec2<f32>(1.0));
     return sample_clamped(warped);
   }
+  if (code == 55u) {
+    let contrast = clamp(u.params0.x, 0.0, 1.0);
+    let toe = clamp(u.params0.y, 0.0, 1.0);
+    let shoulder = clamp(u.params0.z, 0.0, 1.0);
+    let black_crush = clamp(u.params0.w, 0.0, 1.0);
+    var graded = color;
+    if (black_crush > 0.001) {
+      let threshold = black_crush * 0.15;
+      graded = max(graded - vec3<f32>(threshold), vec3<f32>(0.0)) / max(1.0 - threshold, 0.001);
+    }
+    let t = smoothstep(vec3<f32>(0.0), vec3<f32>(1.0), graded);
+    let s_curve = t * t * (vec3<f32>(3.0) - vec3<f32>(2.0) * t);
+    graded = mix(graded, s_curve, contrast);
+    if (toe > 0.001) {
+      graded = pow(max(graded, vec3<f32>(0.0)), vec3<f32>(1.0 - toe * 0.5));
+    }
+    if (shoulder > 0.001) {
+      let sho = vec3<f32>(1.0) - exp(-graded * (1.0 + shoulder * 2.0));
+      graded = mix(graded, sho, shoulder);
+    }
+    return vec4<f32>(mix(color, graded, clamp(amount, 0.0, 1.0)), src.a);
+  }
+  if (code == 56u) {
+    let target_hue = fract1(u.params0.x);
+    let hue_range = clamp(u.params0.y, 0.0, 1.0);
+    let feather = clamp(u.params0.z, 0.0, 1.0);
+    let mode = u32(round(clamp(u.params0.w, 0.0, 1.0)));
+    let replace_hue = fract1(u.params1.x);
+    let sat_boost = clamp(u.params1.y, 0.0, 1.0);
+    var hsv = rgb_to_hsv(color);
+    var hue_dist = abs(hsv.x - target_hue);
+    hue_dist = min(hue_dist, 1.0 - hue_dist);
+    let band = 1.0 - smoothstep(hue_range, hue_range + feather, hue_dist);
+    if (mode == 0u) {
+      hsv.y *= mix(0.0, 1.0, band);
+      hsv.y = clamp(hsv.y + band * sat_boost * 0.5, 0.0, 1.0);
+    } else {
+      var hue_delta = replace_hue - target_hue;
+      if (hue_delta > 0.5) {
+        hue_delta -= 1.0;
+      }
+      if (hue_delta < -0.5) {
+        hue_delta += 1.0;
+      }
+      hsv.x = fract1(hsv.x + hue_delta * band);
+      hsv.y = clamp(hsv.y + band * sat_boost * 0.5, 0.0, 1.0);
+    }
+    let graded = hsv_to_rgb(hsv);
+    return vec4<f32>(mix(color, graded, clamp(amount, 0.0, 1.0)), src.a);
+  }
+  if (code == 57u) {
+    let mode = u32(round(clamp(u.params0.x, 0.0, 3.0)));
+    let show_original = clamp(u.params0.y, 0.0, 1.0);
+    let midpoint = clamp(u.params0.z, 0.0, 1.0);
+    let range = clamp(u.params0.w, 0.0, 0.5);
+    let lum = luma(color);
+    var fc = false_color_stripes(lum);
+    if (mode == 0u) {
+      fc = false_color_dit_exposure(lum);
+    } else if (mode == 1u) {
+      fc = false_color_zone_heat(lum);
+    } else if (mode == 2u) {
+      fc = false_color_resolve(lum);
+    }
+    if (range > 0.001) {
+      let zone_mask = smoothstep(range, 0.0, abs(lum - midpoint));
+      fc = mix(fc, vec3<f32>(0.0, 1.0, 0.0), zone_mask * 0.4);
+    }
+    let result = mix(color, fc, show_original);
+    return vec4<f32>(mix(color, result, clamp(amount, 0.0, 1.0)), src.a);
+  }
+  if (code == 58u) {
+    let threshold = clamp(u.params0.x, 0.0, 1.0);
+    let softness = clamp(u.params0.y, 0.0, 1.0);
+    let color_recovery = clamp(u.params0.z, 0.0, 1.0);
+    let highlight_protect = clamp(u.params0.w, 0.0, 1.0);
+    let wet = clamp(u.params1.x, 0.0, 1.0);
+    let lum = luma(color);
+    let shadow_weight = 1.0 - smoothstep(threshold, threshold + softness + 0.001, lum);
+    let lift_pow = mix(1.0, 0.45, clamp(amount, 0.0, 1.0));
+    let lifted = pow(max(color, vec3<f32>(0.0001)), vec3<f32>(lift_pow));
+    let high_weight = smoothstep(0.7, 1.0, lum);
+    let effect_weight = shadow_weight * (1.0 - high_weight * highlight_protect);
+    var result = mix(color, lifted, effect_weight);
+    if (color_recovery > 0.001) {
+      let result_luma = luma(result);
+      let boosted = mix(vec3<f32>(result_luma), result, 1.0 + color_recovery * 0.6);
+      result = mix(result, boosted, effect_weight);
+    }
+    return vec4<f32>(mix(color, result, wet), src.a);
+  }
+  if (code == 59u) {
+    let threshold = clamp(u.params0.x, 0.0, 1.0);
+    let softness = clamp(u.params0.y, 0.0, 1.0);
+    let preserve_hue = clamp(u.params0.z, 0.0, 1.0);
+    let max_value = clamp(u.params0.w, 0.7, 1.5);
+    let wet = clamp(u.params1.x, 0.0, 1.0);
+    let lum = luma(color);
+    let weight = smoothstep(threshold - softness, threshold + softness * 0.5 + 0.001, lum);
+    let rolled_hue = highlight_rolloff_hue(color, threshold, max_value, clamp(amount, 0.0, 1.0));
+    let rolled_rgb = vec3<f32>(
+      highlight_rolloff_channel(color.r, threshold, clamp(amount, 0.0, 1.0), weight),
+      highlight_rolloff_channel(color.g, threshold, clamp(amount, 0.0, 1.0), weight),
+      highlight_rolloff_channel(color.b, threshold, clamp(amount, 0.0, 1.0), weight),
+    );
+    let result = mix(rolled_rgb, rolled_hue, preserve_hue);
+    return vec4<f32>(mix(color, result, wet * weight), src.a);
+  }
   return src;
 }
 
@@ -2759,6 +2984,56 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param4 = clampNumber(params.hazeMode ?? params.mode ?? params.param4, 0, 2, 0);
     param5 = clampNumber(params.hazeFocusY ?? params.focusY ?? params.centerY ?? params.param5, 0, 1, 0.5);
     param6 = clampNumber(params.hazeFocusBand ?? params.focusBand ?? params.param6, 0.05, 1, 0.4);
+    param7 = 0;
+  } else if (options.effect === 'curves') {
+    amount = clampNumber(options.amount ?? params.curvesMix ?? params.outputMix ?? params.amount, 0, 1, 1);
+    param0 = clampNumber(params.curvesContrast ?? params.contrast ?? params.param0, 0, 1, 0.4);
+    param1 = clampNumber(params.curvesToe ?? params.param1, 0, 1, 0);
+    param2 = clampNumber(params.curvesShoulder ?? params.param2, 0, 1, 0);
+    param3 = clampNumber(params.curvesBlackCrush ?? params.param3, 0, 1, 0);
+    param4 = 0;
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'selective-color') {
+    amount = clampNumber(options.amount ?? params.outputMix ?? params.amount, 0, 1, 1);
+    param0 = clampNumber(params.selColorTargetHue ?? params.param0, 0, 1, 0);
+    param1 = clampNumber(params.selColorRange ?? params.param1, 0, 1, 0.12);
+    param2 = clampNumber(params.selColorFeather ?? params.param2, 0, 1, 0.08);
+    param3 = clampNumber(params.selColorMode ?? params.mode ?? params.param3, 0, 1, 0);
+    param4 = clampNumber(params.selColorReplaceHue ?? params.param4, 0, 1, 0.55);
+    param5 = clampNumber(params.selColorSatBoost ?? params.saturation ?? params.param5, 0, 1, 0.35);
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'false-color') {
+    amount = clampNumber(options.amount ?? params.falseColorMix ?? params.outputMix ?? params.amount, 0, 1, 1);
+    param0 = clampNumber(params.falseColorMode ?? params.mode ?? params.param0, 0, 3, 0);
+    param1 = clampNumber(params.falseColorShowOriginal ?? params.param1, 0, 1, 1);
+    param2 = clampNumber(params.falseColorMidpoint ?? params.param2, 0, 1, 0.5);
+    param3 = clampNumber(params.falseColorRange ?? params.param3, 0, 0.5, 0);
+    param4 = 0;
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'shadow-recovery') {
+    amount = clampNumber(options.amount ?? params.shadowAmount ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.shadowThreshold ?? params.threshold ?? params.param0, 0, 1, 0.4);
+    param1 = clampNumber(params.shadowSoftness ?? params.softness ?? params.param1, 0, 1, 0.3);
+    param2 = clampNumber(params.shadowColorRecovery ?? params.param2, 0, 1, 0.2);
+    param3 = clampNumber(params.shadowHighlightProtect ?? params.highlightProtect ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.shadowMix ?? params.outputMix ?? params.mix ?? params.param4, 0, 1, 1);
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'highlight-rolloff') {
+    amount = clampNumber(options.amount ?? params.highRolloffAmount ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.highRolloffThreshold ?? params.threshold ?? params.param0, 0, 1, 0.7);
+    param1 = clampNumber(params.highRolloffSoftness ?? params.softness ?? params.param1, 0, 1, 0.2);
+    param2 = clampNumber(params.highRolloffPreserveHue ?? params.param2, 0, 1, 0.5);
+    param3 = clampNumber(params.highRolloffMaxValue ?? params.param3, 0.7, 1.5, 1);
+    param4 = clampNumber(params.highRolloffMix ?? params.outputMix ?? params.mix ?? params.param4, 0, 1, 1);
+    param5 = 0;
+    param6 = 0;
     param7 = 0;
   }
   return [

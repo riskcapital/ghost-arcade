@@ -225,6 +225,11 @@ describe('Native effect-pass template', () => {
       ['halation', 52],
       ['anamorphic-streak', 53],
       ['heat-haze', 54],
+      ['curves', 55],
+      ['selective-color', 56],
+      ['false-color', 57],
+      ['shadow-recovery', 58],
+      ['highlight-rolloff', 59],
     ]);
     expect(nativeEffectPassManifestEntry('posterize')).toMatchObject({
       code: 8,
@@ -244,6 +249,7 @@ describe('Native effect-pass template', () => {
     expect(source.source).toContain('fn blob_cell_bright');
     expect(source.source).toContain('code == 48u');
     expect(source.source).toContain('code == 50u');
+    expect(source.source).toContain('code == 59u');
     expect(source.source).not.toMatch(/^\s*#include\b/m);
   });
 
@@ -1081,6 +1087,114 @@ describe('Native effect-pass template', () => {
       0.25,
       1,
       0.8,
+      0,
+    ]);
+
+    expect(packNativeEffectPassUniforms({
+      sourceId: 'src',
+      targetSourceId: 'dst',
+      effect: 'curves',
+      width: 320,
+      height: 180,
+      time: 0.5,
+      frameDelta: 1 / 24,
+      frameIndex: 3,
+      params: {
+        curvesContrast: 0.7,
+        curvesToe: 0.25,
+        curvesShoulder: 0.35,
+        curvesBlackCrush: 0.15,
+        curvesMix: 0.9,
+      },
+    })).toEqual([
+      320,
+      180,
+      0.5,
+      1 / 24,
+      55,
+      0.9,
+      1,
+      3,
+      0.7,
+      0.25,
+      0.35,
+      0.15,
+      0,
+      0,
+      0,
+      0,
+    ]);
+
+    expect(packNativeEffectPassUniforms({
+      sourceId: 'src',
+      targetSourceId: 'dst',
+      effect: 'selective-color',
+      width: 320,
+      height: 180,
+      time: 0.5,
+      frameDelta: 1 / 24,
+      frameIndex: 3,
+      amount: 0.8,
+      params: {
+        selColorTargetHue: 0.08,
+        selColorRange: 0.16,
+        selColorFeather: 0.07,
+        selColorMode: 1,
+        selColorReplaceHue: 0.58,
+        selColorSatBoost: 0.4,
+      },
+    })).toEqual([
+      320,
+      180,
+      0.5,
+      1 / 24,
+      56,
+      0.8,
+      1,
+      3,
+      0.08,
+      0.16,
+      0.07,
+      1,
+      0.58,
+      0.4,
+      0,
+      0,
+    ]);
+
+    expect(packNativeEffectPassUniforms({
+      sourceId: 'src',
+      targetSourceId: 'dst',
+      effect: 'highlight-rolloff',
+      width: 320,
+      height: 180,
+      time: 0.5,
+      frameDelta: 1 / 24,
+      frameIndex: 3,
+      params: {
+        highRolloffAmount: 0.6,
+        highRolloffThreshold: 0.72,
+        highRolloffSoftness: 0.21,
+        highRolloffPreserveHue: 0.8,
+        highRolloffMaxValue: 1.05,
+        highRolloffMix: 0.85,
+      },
+    })).toEqual([
+      320,
+      180,
+      0.5,
+      1 / 24,
+      59,
+      0.6,
+      1,
+      3,
+      0.72,
+      0.21,
+      0.8,
+      1.05,
+      0.85,
+      0,
+      0,
       0,
     ]);
   });
