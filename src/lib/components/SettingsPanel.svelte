@@ -1407,9 +1407,9 @@
                   <br/>Native graph routing clean.
                 {/if}
                 <br/>
-                Native effects {$nativeRendererRuntime.nativeEffectCoverageNative}/{$nativeRendererRuntime.nativeEffectCoverageTotal}
+                Native effect passes {$nativeRendererRuntime.nativeEffectCoverageNative}/{$nativeRendererRuntime.nativeEffectCoverageTotal}
                 {#if $nativeRendererRuntime.nativeEffectCoverageMissing > 0}
-                  · {$nativeRendererRuntime.nativeEffectCoverageMissing} still WebGL-backed
+                  · {$nativeRendererRuntime.nativeEffectCoverageMissing} pass-eligible still WebGL-backed
                 {/if}
               </span>
             </div>
