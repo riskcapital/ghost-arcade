@@ -3192,9 +3192,19 @@ impl App {
                     },
                     {
                         "id": "native-texture-share-sender",
-                        "label": if cfg!(target_os = "macos") { "Native Syphon sender" } else { "Native Spout sender" },
+                        "label": if cfg!(target_os = "macos") { "Electron Syphon bridge" } else { "Electron Spout bridge" },
                         "ok": false,
-                        "detail": "pending zero-copy texture-share sender from the native composite"
+                        "detail": if self.renderer.as_ref().is_some_and(RenderState::output_export_ready) {
+                            if cfg!(target_os = "macos") {
+                                "native core exports the composite as an IOSurface; Electron owns Syphon publication"
+                            } else {
+                                "native core output is ready; Electron owns platform texture-share publication when supported"
+                            }
+                        } else if cfg!(target_os = "macos") {
+                            "native output IOSurface export must be ready before Electron can publish Syphon"
+                        } else {
+                            "pending core-to-Electron output texture export for platform texture-share publication"
+                        }
                     },
                     {
                         "id": "compute-instrument-host",

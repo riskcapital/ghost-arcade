@@ -70,6 +70,12 @@ function formatBlockers(blockers) {
     .join(' | ');
 }
 
+function directCoreNativeShareSenderState(features = {}) {
+  if (features.native_texture_share_sender) return 'on';
+  if (features.shared_texture_output_export) return 'electron-bridge';
+  return 'pending';
+}
+
 function createRpcProcess() {
   const child = spawn(bin, [], { stdio: ['pipe', 'pipe', 'pipe'] });
   let nextId = 1;
@@ -179,7 +185,7 @@ async function inspectCore() {
         `blendParity=${blendParityChecksum}`,
         `effectParity=${effectParityChecksum}`,
         `outputSharedTexture=${features.shared_texture_output_export ? 'on' : 'pending'}`,
-        `nativeShareSender=${features.native_texture_share_sender ? 'on' : 'pending'}`,
+        `nativeShareSender=${directCoreNativeShareSenderState(features)}`,
         missingFeatures.length ? `missingFeatures=${missingFeatures.join(',')}` : '',
         missingInstruments.length ? `missingGraphs=${missingInstruments.join(',')}` : '',
         blockers.length ? `blockers=${blockers.join('|')}` : '',
