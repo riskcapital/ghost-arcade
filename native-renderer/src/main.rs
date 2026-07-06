@@ -188,7 +188,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   return vec4<f32>(color, alpha);
 }
 "#;
-const STAGE3D_MESH_WGSL: &str = r#"
+const STAGE3D_MESH_WGSL: &str = concat!(include_str!("../../src/lib/renderer/wgsl/lighting.wgsl"), r#"
 struct Stage3DMeshUniforms {
   resolution: vec2<f32>,
   item_count: f32,
@@ -377,30 +377,6 @@ fn rotate_xyz(p: vec3<f32>, rotation: vec3<f32>) -> vec3<f32> {
   return rotate_z(rotate_y(rotate_x(p, rotation.x), rotation.y), rotation.z);
 }
 
-fn ghost_safe_normalize3(v: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
-  let len2 = dot(v, v);
-  if (len2 > 1e-8) {
-    return v * inverseSqrt(len2);
-  }
-  return fallback;
-}
-
-fn ghost_lambert(normal: vec3<f32>, lightDir: vec3<f32>) -> f32 {
-  return max(dot(normalize(normal), normalize(lightDir)), 0.0);
-}
-
-fn ghost_apply_directional_light(
-  baseColor: vec3<f32>,
-  normal: vec3<f32>,
-  lightDir: vec3<f32>,
-  lightColor: vec3<f32>,
-  ambient: f32,
-  strength: f32,
-) -> vec3<f32> {
-  let diffuse = ambient + ghost_lambert(normal, lightDir) * strength;
-  return baseColor * mix(vec3<f32>(1.0), lightColor, 0.6) * diffuse;
-}
-
 fn cube_normal(local: vec3<f32>) -> vec3<f32> {
   let a = abs(local);
   if (a.x >= a.y && a.x >= a.z) { return vec3<f32>(sign(local.x), 0.0, 0.0); }
@@ -515,7 +491,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   rgb *= max(0.0, in.material.y) * light_mul;
   return vec4<f32>(rgb * shade * haze * alpha, alpha);
 }
-"#;
+"#);
 
 #[derive(Debug)]
 enum UserEvent {
