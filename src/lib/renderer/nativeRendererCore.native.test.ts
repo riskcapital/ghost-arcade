@@ -149,6 +149,12 @@ describe('Native render-core RPC contract', () => {
       }, 15000);
       expect(started?.backend_ready).toBe(true);
 
+      await rpc.send('submit_commands', {
+        time: 0.1,
+        frame_index: 1,
+        layers: [],
+      }, 8000);
+
       const capabilities = await rpc.send('get_capabilities');
       expect(capabilities?.features?.frame_snapshot_export).toBe(true);
       expect(capabilities?.features?.native_frame_export).toBe(true);
@@ -157,6 +163,7 @@ describe('Native render-core RPC contract', () => {
       if (process.platform === 'darwin') {
         expect(capabilities?.features?.shared_texture_source_frame_upload).toBe(true);
         expect(capabilities?.features?.shared_texture_upload).toBe(true);
+        expect(capabilities?.features?.shared_texture_output_export).toBe(true);
       } else {
         expect(capabilities?.features?.shared_texture_upload).toBe(false);
       }
@@ -171,6 +178,14 @@ describe('Native render-core RPC contract', () => {
         expect(checks.get('shared-texture-source-frame-upload')?.ok).toBe(true);
         expect(checks.get('shared-texture-upload')?.ok).toBe(true);
         expect(String(checks.get('shared-texture-upload')?.detail ?? '')).toContain('IOSurfaceID');
+        expect(checks.get('shared-texture-output-export')?.ok).toBe(true);
+        const outputTexture = await rpc.send('output_shared_texture');
+        expect(outputTexture?.available).toBe(true);
+        expect(outputTexture?.platform).toBe('iosurface');
+        expect(Number(outputTexture?.handle ?? 0)).toBeGreaterThan(0);
+        expect(Number(outputTexture?.frame ?? 0)).toBeGreaterThan(0);
+        expect(Number(outputTexture?.width ?? 0)).toBeGreaterThan(0);
+        expect(Number(outputTexture?.height ?? 0)).toBeGreaterThan(0);
       } else {
         expect(checks.get('shared-texture-upload')?.ok).toBe(false);
       }
