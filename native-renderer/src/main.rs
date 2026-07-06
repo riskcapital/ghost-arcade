@@ -9116,7 +9116,7 @@ impl RenderState {
             match descriptor.platform.as_str() {
                 "dxgi" => {
                     let _handle = descriptor.dxgi_shared_handle()?;
-                    let wgpu_format = wgpu_texture_format_for_shared_texture(descriptor);
+                    let wgpu_format = descriptor.wgpu_texture_format();
                     Err(format!(
                         "DXGI shared texture source-frame upload received a valid HANDLE for format={} mapped_format={} size={}x{}, but D3D11/D3D12 import is pending for backend={}",
                         descriptor.format,
@@ -9158,7 +9158,7 @@ impl RenderState {
         let surface = IOSurfaceRef::lookup(surface_id)
             .ok_or_else(|| format!("IOSurfaceLookup({surface_id}) returned null"))?;
         let metal_format = metal_texture_format_for_shared_texture(descriptor);
-        let wgpu_format = wgpu_texture_format_for_shared_texture(descriptor);
+        let wgpu_format = descriptor.wgpu_texture_format();
         let width = descriptor.width.max(1);
         let height = descriptor.height.max(1);
         let raw_device = unsafe { self.device.as_hal::<Metal>() }
@@ -9277,7 +9277,7 @@ impl RenderState {
 
         let width = descriptor.width.max(1);
         let height = descriptor.height.max(1);
-        let wgpu_format = wgpu_texture_format_for_shared_texture(descriptor);
+        let wgpu_format = descriptor.wgpu_texture_format();
         let raw_device = unsafe { self.device.as_hal::<Dx12>() }
             .ok_or_else(|| "native renderer is not running on the D3D12 backend".to_string())?;
         let mut raw_resource: Option<ID3D12Resource> = None;
@@ -9348,7 +9348,7 @@ impl RenderState {
         imported_texture: &wgpu::Texture,
         descriptor: &SharedTextureSourceFrameDescriptor,
     ) -> Result<u64, String> {
-        let wgpu_format = wgpu_texture_format_for_shared_texture(descriptor);
+        let wgpu_format = descriptor.wgpu_texture_format();
         let source_view = imported_texture.create_view(&wgpu::TextureViewDescriptor {
             label: Some("Ghost Render Core Imported Shared Source View"),
             format: Some(wgpu_format),
@@ -11500,16 +11500,6 @@ fn native_output_export_format(output_format: wgpu::TextureFormat) -> wgpu::Text
     }
 }
 
-fn wgpu_texture_format_for_shared_texture(
-    descriptor: &SharedTextureSourceFrameDescriptor,
-) -> wgpu::TextureFormat {
-    match normalized_shared_texture_format(descriptor).as_str() {
-        "rgba8unorm" | "28" | "70" => wgpu::TextureFormat::Rgba8Unorm,
-        "bgra8unorm" | "80" | "87" => wgpu::TextureFormat::Bgra8Unorm,
-        _ => wgpu::TextureFormat::Bgra8Unorm,
-    }
-}
-
 #[cfg(target_os = "macos")]
 fn metal_texture_format_for_wgpu_output(
     format: wgpu::TextureFormat,
@@ -11544,19 +11534,11 @@ fn dxgi_format_for_wgpu_output(
 fn metal_texture_format_for_shared_texture(
     descriptor: &SharedTextureSourceFrameDescriptor,
 ) -> objc2_metal::MTLPixelFormat {
-    match normalized_shared_texture_format(descriptor).as_str() {
+    match descriptor.normalized_format().as_str() {
         "rgba8unorm" | "70" => objc2_metal::MTLPixelFormat::RGBA8Unorm,
         "bgra8unorm" | "80" | "87" => objc2_metal::MTLPixelFormat::BGRA8Unorm,
         _ => objc2_metal::MTLPixelFormat::BGRA8Unorm,
     }
-}
-
-fn normalized_shared_texture_format(descriptor: &SharedTextureSourceFrameDescriptor) -> String {
-    descriptor
-        .format
-        .trim()
-        .to_ascii_lowercase()
-        .replace(['-', '_'], "")
 }
 
 fn source_frame_upload_payload<'a>(
@@ -12289,34 +12271,6 @@ fn tier_quality_scale(tier: &str) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn shared_texture_format_maps_common_dxgi_codes() {
-        let mut descriptor = SharedTextureSourceFrameDescriptor {
-            handle: "1".to_string(),
-            platform: "dxgi".to_string(),
-            format: "28".to_string(),
-            handle_encoding: "integer".to_string(),
-            handle_chars: 1,
-            handle_byte_length: None,
-            close_handle_after_import: false,
-            frame: None,
-            sender_name: None,
-            width: 1920,
-            height: 1080,
-        };
-
-        assert_eq!(
-            wgpu_texture_format_for_shared_texture(&descriptor),
-            wgpu::TextureFormat::Rgba8Unorm
-        );
-
-        descriptor.format = "87".to_string();
-        assert_eq!(
-            wgpu_texture_format_for_shared_texture(&descriptor),
-            wgpu::TextureFormat::Bgra8Unorm
-        );
-    }
 
     #[test]
     fn ghost_audio_uniform_layout_documents_the_native_slots() {
