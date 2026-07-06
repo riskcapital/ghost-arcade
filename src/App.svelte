@@ -111,6 +111,7 @@
   import { getNativeRendererStatus } from './lib/api/native-renderer';
   import {
     nativeRendererModeLabel,
+    nativeRendererOutputShareSummary,
     nativeRendererRuntime,
     type NativeRendererRuntimeState,
     type NativeRendererDriverMode,
@@ -252,16 +253,7 @@
     return 'GPU';
   }
   function nativeRendererShareSummary(state: NativeRendererRuntimeState) {
-    const label = state.textureShareLabel || state.textureSharePlatform || 'Texture share';
-    if (state.nativeOutputShareActive) return `${label}: native output IOSurface active`;
-    if (state.nativeOutputShareWaitingForFrame) return `${label}: waiting for first native output frame`;
-    if (state.nativeOutputSharePendingPromotion) {
-      return `${label}: promoting native output (${state.nativeOutputSharePromotionAttempts} check${state.nativeOutputSharePromotionAttempts === 1 ? '' : 's'})`;
-    }
-    if (state.nativeTextureShareSenderReady) return `${label}: native output ready`;
-    if (state.nativeOutputShareCapable) return `${label}: native output capable when sender starts`;
-    if (state.textureShareAvailable) return `${label}: OSR texture-share bridge available`;
-    return state.textureShareLabel ? `${label}: unavailable` : '';
+    return nativeRendererOutputShareSummary(state);
   }
   function nativeRendererToolbarTitle(
     state: NativeRendererRuntimeState,

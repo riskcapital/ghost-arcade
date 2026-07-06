@@ -5,6 +5,8 @@ import {
   inferNativeGraphRuntimeFlags,
   nativeRendererRuntime,
   nativeRendererModeLabel,
+  nativeRendererOutputShareSummary,
+  nativeRendererOutputShareTransportLabel,
   resetNativeRendererRuntime,
   updateNativeRendererRuntimeFromStartup,
   updateNativeRendererRuntimeFromStatus,
@@ -685,6 +687,44 @@ describe('native renderer runtime state', () => {
     expect(nativeRendererModeLabel('shadow')).toBe('Native Scene Sync');
     expect(nativeRendererModeLabel('output-driver')).toBe('Native Output Driver');
     expect(nativeRendererModeLabel('full-v2')).toBe('Native Main Driver');
+  });
+
+  it('summarizes native output texture-share state without hardcoding macOS transport names', () => {
+    expect(nativeRendererOutputShareTransportLabel({
+      textureShareLabel: 'Syphon',
+      textureSharePlatform: 'syphon',
+    })).toBe('IOSurface');
+    expect(nativeRendererOutputShareTransportLabel({
+      textureShareLabel: 'Spout',
+      textureSharePlatform: 'spout',
+    })).toBe('DXGI');
+    expect(nativeRendererOutputShareTransportLabel({
+      textureShareLabel: 'Texture Bridge',
+      textureSharePlatform: 'custom',
+    })).toBe('shared texture');
+
+    expect(nativeRendererOutputShareSummary({
+      textureShareLabel: 'Syphon',
+      textureSharePlatform: 'syphon',
+      textureShareAvailable: true,
+      nativeTextureShareSenderReady: true,
+      nativeOutputShareCapable: true,
+      nativeOutputShareActive: true,
+      nativeOutputShareWaitingForFrame: false,
+      nativeOutputSharePendingPromotion: false,
+      nativeOutputSharePromotionAttempts: 0,
+    })).toBe('Syphon: native output IOSurface active');
+    expect(nativeRendererOutputShareSummary({
+      textureShareLabel: 'Spout',
+      textureSharePlatform: 'spout',
+      textureShareAvailable: true,
+      nativeTextureShareSenderReady: true,
+      nativeOutputShareCapable: true,
+      nativeOutputShareActive: true,
+      nativeOutputShareWaitingForFrame: false,
+      nativeOutputSharePendingPromotion: false,
+      nativeOutputSharePromotionAttempts: 0,
+    })).toBe('Spout: native output DXGI active');
   });
 
   it('preserves startup readiness mode across status-only polling updates', () => {
