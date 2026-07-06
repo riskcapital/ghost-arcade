@@ -112,6 +112,11 @@ function assertExactNativeManifest(name, actualEntries, expectedEntries) {
 export function assertNativeCompositorSourceContract() {
   const heartbeat = readFileSync(join(root, 'native-renderer', 'src', 'heartbeat.wgsl'), 'utf8');
   const main = readFileSync(join(root, 'native-renderer', 'src', 'main.rs'), 'utf8');
+  const compositorPath = join(root, 'native-renderer', 'src', 'compositor.rs');
+  const rustCompositorSource = [
+    main,
+    existsSync(compositorPath) ? readFileSync(compositorPath, 'utf8') : '',
+  ].join('\n');
   const nativeBlend = extractWgslFunction(heartbeat, 'native_blend');
   const wgslBlendCodes = [...nativeBlend.matchAll(/\bm\s*==\s*(\d+)\b/g)]
     .map((match) => Number(match[1]));
@@ -133,7 +138,7 @@ export function assertNativeCompositorSourceContract() {
     const parserPattern = new RegExp(
       `"${id}"(?:\\s*\\|\\s*"[^"]+")*\\s*=>\\s*${code}`,
     );
-    if (!parserPattern.test(main)) {
+    if (!parserPattern.test(rustCompositorSource)) {
       throw new Error(
         `native compositor Rust blend parser is missing ${mode.name}:${mode.code}`,
       );
@@ -159,7 +164,7 @@ export function assertNativeCompositorSourceContract() {
     const descriptorPattern = new RegExp(
       `"${id}"(?:\\s*\\|\\s*"[^"]+")*\\s*=>\\s*Some\\(\\[${code}`,
     );
-    if (!descriptorPattern.test(main)) {
+    if (!descriptorPattern.test(rustCompositorSource)) {
       throw new Error(
         `native compositor Rust descriptor parser is missing ${effect.name}:${effect.code}`,
       );
