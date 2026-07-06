@@ -5847,10 +5847,10 @@
         <!--
           Phase 3.0 (Bridge-A) of the editor renderer migration.
 
-          When experimental.editorWebGPU is OFF (default): mount
-          Canvas alone — the existing WebGL renderer path.
+          When the editor frame bridge is OFF: mount Canvas alone —
+          the existing WebGL renderer path.
 
-          When ON: mount BOTH:
+          When ON (default): mount BOTH:
             - Canvas in bridgeMode (its WebGL <canvas> is hidden via
               opacity:0 but still painted by Chromium each frame)
             - WebGPUCanvas overlaid on top, sourcing the WebGL canvas

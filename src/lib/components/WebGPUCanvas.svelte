@@ -54,9 +54,10 @@
    *     CPU round-trip.
    *
    * ───────────────────────────────────────────────────────────────
-   * RELATED: mid-chain GPU effects (gpuEffectRunner.ts) are now
-   * DEMOTED to opt-in via `experimental.allowMidChainGpuEffects`
-   * (default OFF). That runner does CPU-readback because it has to
+   * RELATED: mid-chain GPU effects (gpuEffectRunner.ts) can still run
+   * through `experimental.allowMidChainGpuEffects` (default ON so GPU
+   * effects visibly work when selected). That runner does CPU-readback
+   * because it has to
    * bridge mid-WebGL-chain — no public API gives us a zero-copy
    * import at an arbitrary point in a WebGL effect chain. This
    * downstream-compositor bridge runs ONCE per frame AFTER the WebGL
@@ -1588,7 +1589,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       <div class="error-title">WebGPU bridge error</div>
       <div class="error-body">{initError}</div>
       <div class="error-hint">
-        Toggle <code>experimental.editorWebGPU</code> off to fall back to WebGL only.
+        Turn off <strong>Editor frame bridge</strong> in Settings → Performance → Renderer to fall back to WebGL only.
       </div>
     </div>
   {/if}
