@@ -196,9 +196,32 @@ function assertNativeHeartbeatAudioStdlibParity(stdlib) {
   }
 }
 
+function assertNativeStage3DLightingStdlibUsage(stdlib) {
+  const lightingStdlib = stdlib.get('lighting');
+  if (!lightingStdlib) throw new Error('WGSL stdlib is missing lighting.wgsl');
+  const required = ['ghost_safe_normalize3', 'ghost_lambert', 'ghost_apply_directional_light'];
+  const shared = extractFunctionNames(lightingStdlib, 'ghost_');
+  const missingShared = required.filter((name) => !shared.has(name));
+  if (missingShared.length) {
+    throw new Error(`src/lib/renderer/wgsl/lighting.wgsl is missing required native helper(s): ${missingShared.join(', ')}`);
+  }
+
+  const nativeMain = readFileSync(join(nativeRendererRoot, 'main.rs'), 'utf8');
+  const missingNative = required.filter((name) => !new RegExp(`\\bfn\\s+${name}\\s*\\(`).test(nativeMain));
+  const usesDirectionalHelper = (nativeMain.match(/\bghost_apply_directional_light\s*\(/g) ?? []).length > 1;
+  if (missingNative.length || !usesDirectionalHelper) {
+    throw new Error(
+      `native Stage3D mesh shader is missing shared lighting helper coverage: ${
+        missingNative.length ? missingNative.join(', ') : 'ghost_apply_directional_light unused'
+      }`,
+    );
+  }
+}
+
 function collectRecords() {
   const stdlib = loadStdlib();
   assertNativeHeartbeatAudioStdlibParity(stdlib);
+  assertNativeStage3DLightingStdlibUsage(stdlib);
   const records = [];
   const failures = [];
 

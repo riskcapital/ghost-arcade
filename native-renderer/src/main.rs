@@ -377,6 +377,30 @@ fn rotate_xyz(p: vec3<f32>, rotation: vec3<f32>) -> vec3<f32> {
   return rotate_z(rotate_y(rotate_x(p, rotation.x), rotation.y), rotation.z);
 }
 
+fn ghost_safe_normalize3(v: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
+  let len2 = dot(v, v);
+  if (len2 > 1e-8) {
+    return v * inverseSqrt(len2);
+  }
+  return fallback;
+}
+
+fn ghost_lambert(normal: vec3<f32>, lightDir: vec3<f32>) -> f32 {
+  return max(dot(normalize(normal), normalize(lightDir)), 0.0);
+}
+
+fn ghost_apply_directional_light(
+  baseColor: vec3<f32>,
+  normal: vec3<f32>,
+  lightDir: vec3<f32>,
+  lightColor: vec3<f32>,
+  ambient: f32,
+  strength: f32,
+) -> vec3<f32> {
+  let diffuse = ambient + ghost_lambert(normal, lightDir) * strength;
+  return baseColor * mix(vec3<f32>(1.0), lightColor, 0.6) * diffuse;
+}
+
 fn cube_normal(local: vec3<f32>) -> vec3<f32> {
   let a = abs(local);
   if (a.x >= a.y && a.x >= a.z) { return vec3<f32>(sign(local.x), 0.0, 0.0); }
@@ -461,8 +485,15 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) in
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-  let light = normalize(vec3<f32>(-0.3, 0.75, 0.55));
-  let shade = 0.48 + 0.52 * clamp(dot(normalize(in.normal + vec3<f32>(0.0, 0.15, 0.0)), light), 0.0, 1.0);
+  let light = ghost_safe_normalize3(vec3<f32>(-0.3, 0.75, 0.55), vec3<f32>(0.0, 1.0, 0.0));
+  let shade = ghost_apply_directional_light(
+    vec3<f32>(1.0),
+    ghost_safe_normalize3(in.normal + vec3<f32>(0.0, 0.15, 0.0), vec3<f32>(0.0, 1.0, 0.0)),
+    light,
+    vec3<f32>(1.0),
+    0.48,
+    0.52,
+  ).r;
   let haze_density = clamp(u.atmosphere.x, 0.0, 4.0);
   let haze_floor = clamp(0.58 - haze_density * 0.22, 0.18, 0.80);
   let haze = clamp(1.0 - in.view_z * (0.012 + haze_density * 0.012), haze_floor, 1.0);
