@@ -9,6 +9,7 @@ pub struct SharedTextureSourceFrameDescriptor {
     pub handle_encoding: String,
     pub handle_chars: usize,
     pub handle_byte_length: Option<u64>,
+    pub close_handle_after_import: bool,
     pub frame: Option<u64>,
     pub sender_name: Option<String>,
     pub width: u32,
@@ -56,6 +57,13 @@ impl SharedTextureSourceFrameDescriptor {
                 .or_else(|| number_at(command, "handleByteLength"))
                 .or_else(|| nested_number_at(shared_texture, "handle_byte_length"))
                 .or_else(|| nested_number_at(shared_texture, "handleByteLength")),
+            close_handle_after_import: bool_at(command, "shared_texture_close_handle_after_import")
+                .or_else(|| bool_at(command, "sharedTextureCloseHandleAfterImport"))
+                .or_else(|| bool_at(command, "close_handle_after_import"))
+                .or_else(|| bool_at(command, "closeHandleAfterImport"))
+                .or_else(|| nested_bool_at(shared_texture, "close_handle_after_import"))
+                .or_else(|| nested_bool_at(shared_texture, "closeHandleAfterImport"))
+                .unwrap_or(false),
             frame: number_at(command, "shared_texture_frame")
                 .or_else(|| number_at(command, "sharedTextureFrame"))
                 .or_else(|| number_at(command, "frame"))
@@ -80,7 +88,7 @@ impl SharedTextureSourceFrameDescriptor {
                     Err(err) => format!("DXGI HANDLE metadata is invalid: {err}"),
                 };
                 (
-                    "DXGI metadata parsed; D3D11/D3D12 shared-handle import is pending for Windows builds",
+                    "DXGI metadata parsed; D3D12 shared-handle import is available on Windows builds",
                     handle_status,
                 )
             }
@@ -286,6 +294,14 @@ fn nested_number_at(value: Option<&Value>, key: &str) -> Option<u64> {
     value?.as_object()?.get(key)?.as_u64()
 }
 
+fn bool_at(value: &Value, key: &str) -> Option<bool> {
+    value.get(key).and_then(Value::as_bool)
+}
+
+fn nested_bool_at(value: Option<&Value>, key: &str) -> Option<bool> {
+    value?.as_object()?.get(key)?.as_bool()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,6 +315,7 @@ mod tests {
             "shared_texture_format": 87,
             "shared_texture_handle_encoding": "b64",
             "shared_texture_handle_byte_length": 8,
+            "shared_texture_close_handle_after_import": true,
             "shared_texture_frame": 12,
             "shared_texture_sender_name": "Resolume"
         });
@@ -312,6 +329,7 @@ mod tests {
         assert_eq!(descriptor.handle_encoding, "base64");
         assert_eq!(descriptor.handle_chars, 8);
         assert_eq!(descriptor.handle_byte_length, Some(8));
+        assert!(descriptor.close_handle_after_import);
         assert_eq!(descriptor.frame, Some(12));
         assert_eq!(descriptor.sender_name.as_deref(), Some("Resolume"));
         assert_eq!(descriptor.width, 1920);

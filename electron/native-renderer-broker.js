@@ -446,6 +446,7 @@ export function createNativeRendererBroker({
   env = process.env,
   textureShareStatusProvider = null,
   nativeFrameEncoderStatusProvider = null,
+  sharedTextureHandlePreparer = null,
 }) {
   return new NativeRendererBroker({
     appRoot,
@@ -455,11 +456,21 @@ export function createNativeRendererBroker({
     env,
     textureShareStatusProvider,
     nativeFrameEncoderStatusProvider,
+    sharedTextureHandlePreparer,
   });
 }
 
 class NativeRendererBroker {
-  constructor({ appRoot, resourcesPath, isPackaged, platform, env, textureShareStatusProvider, nativeFrameEncoderStatusProvider }) {
+  constructor({
+    appRoot,
+    resourcesPath,
+    isPackaged,
+    platform,
+    env,
+    textureShareStatusProvider,
+    nativeFrameEncoderStatusProvider,
+    sharedTextureHandlePreparer,
+  }) {
     this.appRoot = appRoot;
     this.resourcesPath = resourcesPath;
     this.isPackaged = isPackaged;
@@ -469,6 +480,8 @@ class NativeRendererBroker {
       typeof textureShareStatusProvider === 'function' ? textureShareStatusProvider : null;
     this.nativeFrameEncoderStatusProvider =
       typeof nativeFrameEncoderStatusProvider === 'function' ? nativeFrameEncoderStatusProvider : null;
+    this.sharedTextureHandlePreparer =
+      typeof sharedTextureHandlePreparer === 'function' ? sharedTextureHandlePreparer : null;
     this.child = null;
     this.nextId = 1;
     this.pending = new Map();
@@ -489,6 +502,10 @@ class NativeRendererBroker {
     });
     this.coreCapabilitiesConfirmed = false;
     this.coreCapabilitiesError = 'Native render core has not started';
+  }
+
+  getProcessId() {
+    return this.child && !this.child.killed ? this.child.pid : null;
   }
 
   async invoke(command, args = {}) {
@@ -640,9 +657,10 @@ class NativeRendererBroker {
         args.shared_texture_sender_name ?? args.sender_name ?? args.senderName,
       seq: Number(args.seq ?? args.frame ?? 0),
     };
+    const preparedPayload = this.prepareSharedTextureHandlesForNativeCore(payload);
     if ((this.capabilities?.implemented_methods ?? []).includes('upload_source_gpu_shared_texture')) {
       try {
-        const result = await this.send('upload_source_gpu_shared_texture', payload, { timeoutMs: 2500 });
+        const result = await this.send('upload_source_gpu_shared_texture', preparedPayload, { timeoutMs: 2500 });
         this.lastStatus = normalizeStatus(result, this.lastStatus);
         return this.lastStatus;
       } catch (err) {
@@ -653,7 +671,7 @@ class NativeRendererBroker {
     }
     const command = {
       type: 'upload_source_frame',
-      ...payload,
+      ...preparedPayload,
     };
     await this.sendNativeCommandPayloadIfRunning('submit_commands', { commands: [command] }, {
       fallback: null,
@@ -1828,7 +1846,9 @@ class NativeRendererBroker {
     if (Array.isArray(params.commands)) {
       return {
         ...params,
-        commands: params.commands.map((command) => this.prepareNativeCommand(command)),
+        commands: params.commands.map((command) => this.prepareNativeCommand(
+          this.prepareSharedTextureHandlesForNativeCore(command),
+        )),
       };
     }
     if (params.batch && Array.isArray(params.batch.commands)) {
@@ -1836,11 +1856,36 @@ class NativeRendererBroker {
         ...params,
         batch: {
           ...params.batch,
-          commands: params.batch.commands.map((command) => this.prepareNativeCommand(command)),
+          commands: params.batch.commands.map((command) => this.prepareNativeCommand(
+            this.prepareSharedTextureHandlesForNativeCore(command),
+          )),
         },
       };
     }
     return params;
+  }
+
+  prepareSharedTextureHandlesForNativeCore(command) {
+    if (!command || typeof command !== 'object' || !this.sharedTextureHandlePreparer) return command;
+    const type = String(command.type ?? '').trim();
+    const hasSharedHandle =
+      command.shared_handle !== undefined ||
+      command.sharedHandle !== undefined ||
+      command.handle !== undefined ||
+      command.shared_texture !== undefined;
+    if (type && type !== 'upload_source_frame' && type !== 'upload_source_gpu_shared_texture') {
+      return command;
+    }
+    if (!hasSharedHandle) return command;
+    try {
+      return this.sharedTextureHandlePreparer(command, {
+        platform: this.platform,
+        targetPid: this.getProcessId(),
+      }) || command;
+    } catch (err) {
+      console.warn('[NativeRenderer] shared texture handle bridge failed; keeping original metadata', err);
+      return command;
+    }
   }
 
   prepareNativeComputeGraphPayload(params) {

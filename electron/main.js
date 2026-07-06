@@ -44,6 +44,7 @@ const nativeRendererBroker = createNativeRendererBroker({
     };
   },
   nativeFrameEncoderStatusProvider: () => getNativeFrameEncoderStatus(),
+  sharedTextureHandlePreparer: prepareSharedTextureHandlesForNativeCore,
 });
 
 // Force Chromium to use the discrete GPU (NVIDIA/AMD) on Optimus laptops.
@@ -3316,6 +3317,81 @@ function sharedTextureHandlePayload(handle) {
     handleEncoding: 'base64',
     handleByteLength: handle.byteLength,
   };
+}
+
+function sharedTextureHandleBufferFromMetadata(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  const sharedTexture = payload.shared_texture && typeof payload.shared_texture === 'object'
+    ? payload.shared_texture
+    : null;
+  const handle = payload.shared_handle
+    ?? payload.sharedHandle
+    ?? payload.handle
+    ?? sharedTexture?.handle
+    ?? (typeof payload.shared_texture === 'string' ? payload.shared_texture : undefined);
+  const directBuffer = normalizeSharedTextureHandle(handle);
+  if (directBuffer) return directBuffer.byteLength >= 8 ? Buffer.from(directBuffer) : null;
+  const encoding = String(
+    payload.shared_texture_handle_encoding
+      ?? payload.sharedTextureHandleEncoding
+      ?? payload.handle_encoding
+      ?? payload.handleEncoding
+      ?? sharedTexture?.handle_encoding
+      ?? sharedTexture?.handleEncoding
+      ?? sharedTexture?.encoding
+      ?? '',
+  ).toLowerCase();
+  if (typeof handle === 'string' && (encoding === 'base64' || encoding === 'b64')) {
+    const buffer = Buffer.from(handle, 'base64');
+    return buffer.byteLength >= 8 ? buffer : null;
+  }
+  if (handle !== undefined && handle !== null && (!encoding || encoding === 'integer' || encoding === 'opaque')) {
+    try {
+      const value = typeof handle === 'bigint'
+        ? handle
+        : typeof handle === 'number'
+          ? BigInt(Math.trunc(handle))
+          : BigInt(String(handle).trim());
+      if (value <= 0n) return null;
+      const buffer = Buffer.alloc(8);
+      buffer.writeBigUInt64LE(value);
+      return buffer;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function prepareSharedTextureHandlesForNativeCore(payload, context = {}) {
+  if (!isWin || !payload || typeof payload !== 'object') return payload;
+  if (payload.shared_texture_close_handle_after_import || payload.close_handle_after_import) return payload;
+  const targetPid = Number(context.targetPid ?? 0);
+  if (!Number.isFinite(targetPid) || targetPid <= 0) return payload;
+  const addon = loadSpoutAddon();
+  if (!addon || typeof addon.duplicateSharedHandleForProcess !== 'function') return payload;
+  const handleBuffer = sharedTextureHandleBufferFromMetadata(payload);
+  if (!handleBuffer) return payload;
+  try {
+    const duplicated = addon.duplicateSharedHandleForProcess(handleBuffer, targetPid);
+    const duplicatedBuffer = normalizeSharedTextureHandle(duplicated);
+    if (!duplicatedBuffer || duplicatedBuffer.byteLength < 8) return payload;
+    const sharedHandle = Buffer.from(duplicatedBuffer).toString('base64');
+    const byteLength = duplicatedBuffer.byteLength;
+    return {
+      ...payload,
+      shared_handle: sharedHandle,
+      handle_encoding: 'base64',
+      handle_byte_length: byteLength,
+      shared_texture_handle_encoding: 'base64',
+      shared_texture_handle_byte_length: byteLength,
+      shared_texture_close_handle_after_import: true,
+      close_handle_after_import: true,
+    };
+  } catch (err) {
+    console.warn('[NativeRenderer] DXGI handle duplication failed:', err?.message || err);
+    return payload;
+  }
 }
 
 function receiveSpoutTextureInfo() {

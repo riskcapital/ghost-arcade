@@ -9573,7 +9573,7 @@ impl RenderState {
         descriptor: &SharedTextureSourceFrameDescriptor,
     ) -> Result<u64, String> {
         use wgpu::hal::{self, api::Dx12};
-        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::Foundation::{CloseHandle, HANDLE};
         use windows::Win32::Graphics::Direct3D12::ID3D12Resource;
 
         if descriptor.platform != "dxgi" {
@@ -9594,23 +9594,24 @@ impl RenderState {
         let raw_device = unsafe { self.device.as_hal::<Dx12>() }
             .ok_or_else(|| "native renderer is not running on the D3D12 backend".to_string())?;
         let mut raw_resource: Option<ID3D12Resource> = None;
-        unsafe {
+        let os_handle = HANDLE(shared_handle as *mut core::ffi::c_void);
+        let open_result = unsafe {
             raw_device
                 .raw_device()
-                .OpenSharedHandle(
-                    HANDLE(shared_handle as *mut core::ffi::c_void),
-                    &mut raw_resource,
-                )
-                .map_err(|err| {
-                    format!(
-                        "D3D12 OpenSharedHandle failed for HANDLE=0x{shared_handle:x} format={} mapped_format={} size={}x{}: {err}",
-                        descriptor.format,
-                        texture_format_label(wgpu_format),
-                        width,
-                        height
-                    )
-                })?;
+                .OpenSharedHandle(os_handle, &mut raw_resource)
+        };
+        if descriptor.close_handle_after_import {
+            let _ = unsafe { CloseHandle(os_handle) };
         }
+        open_result.map_err(|err| {
+            format!(
+                "D3D12 OpenSharedHandle failed for HANDLE=0x{shared_handle:x} format={} mapped_format={} size={}x{}: {err}",
+                descriptor.format,
+                texture_format_label(wgpu_format),
+                width,
+                height
+            )
+        })?;
         let raw_resource = raw_resource.ok_or_else(|| {
             format!(
                 "D3D12 OpenSharedHandle returned no ID3D12Resource for HANDLE=0x{shared_handle:x}"
@@ -12734,6 +12735,7 @@ mod tests {
             handle_encoding: "integer".to_string(),
             handle_chars: 1,
             handle_byte_length: None,
+            close_handle_after_import: false,
             frame: None,
             sender_name: None,
             width: 1920,
