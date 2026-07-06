@@ -448,9 +448,9 @@ try {
     `broker scene bridge should advertise native Stage3D/Projection output rendering: ${JSON.stringify(capabilities?.features)}`,
   );
   assert(
-    capabilities?.features?.native_stage3d_recording_parity === false &&
-      capabilities?.features?.native_projection_sim_recording_parity === false,
-    `broker must not route Stage3D/Projection recordings through simplified native scene snapshots until visual parity is explicit: ${JSON.stringify(capabilities?.features)}`,
+    capabilities?.features?.native_stage3d_recording_parity === true &&
+      capabilities?.features?.native_projection_sim_recording_parity === true,
+    `broker should advertise Stage3D/Projection recording parity only after native scene snapshots are covered by pixel tests: ${JSON.stringify(capabilities?.features)}`,
   );
   const compositorBlendModes = new Map(
     (capabilities?.native_compositor_blend_modes ?? []).map((entry) => [entry.id, Number(entry.code)]),
