@@ -1258,6 +1258,23 @@ export interface PointCloudFXNativeGraphBuildResult {
   state: PointCloudFXNativeGraphState;
 }
 
+export interface PointCloudFXPackedPointBuffers {
+  sourceCount: number;
+  pointCount: number;
+  sortCount: number;
+  normalization: PointCloudNormalization;
+  homeBytes: ArrayBuffer;
+  liveBytes: ArrayBuffer;
+  sortBytes: ArrayBuffer;
+  hasGaussianPayload: boolean;
+  depthSortEnabled: boolean;
+}
+
+export interface PointCloudFXPackedPointBufferOptions extends PointCloudFXDataOptions {
+  pointSize?: number;
+  depthSort?: boolean;
+}
+
 function clampNumber(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, Number.isFinite(value) ? value : min));
 }
@@ -1389,62 +1406,17 @@ function pointCloudFXParamsFromRaw(
   };
 }
 
-export function getPointCloudFXNativeShaderSources(): PointCloudFXNativeShaderSource[] {
-  return [
-    {
-      shaderId: POINT_CLOUD_FX_NATIVE_SHADER_IDS.compute,
-      label: POINT_CLOUD_FX_NATIVE_SHADER_IDS.compute,
-      stage: 'compute',
-      entry: 'cs_main',
-      source: resolveGhostWgsl(COMPUTE_WGSL, POINT_CLOUD_FX_NATIVE_SHADER_IDS.compute),
-    },
-    {
-      shaderId: POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortFill,
-      label: POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortFill,
-      stage: 'compute',
-      entry: 'cs_main',
-      source: resolveGhostWgsl(SORT_FILL_WGSL, POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortFill),
-    },
-    {
-      shaderId: POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortStep,
-      label: POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortStep,
-      stage: 'compute',
-      entry: 'cs_main',
-      source: resolveGhostWgsl(SORT_STEP_WGSL, POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortStep),
-    },
-    {
-      shaderId: POINT_CLOUD_FX_NATIVE_SHADER_IDS.render,
-      label: POINT_CLOUD_FX_NATIVE_SHADER_IDS.render,
-      stage: 'render',
-      entry: 'vs_main',
-      source: resolveGhostWgsl(RENDER_WGSL, POINT_CLOUD_FX_NATIVE_SHADER_IDS.render),
-    },
-  ];
-}
-
-export function buildPointCloudFXNativePrecompileCommands(): PointCloudFXNativePrecompileCommand[] {
-  return getPointCloudFXNativeShaderSources().map((source) => ({
-    type: 'precompile_shader',
-    shader_id: source.shaderId,
-    stage: source.stage,
-    entry: source.entry,
-    source: source.source,
-  }));
-}
-
-export function buildPointCloudFXNativePointData(
+export function buildPointCloudFXPackedPointBuffers(
   positions: Float32Array,
   colors: Float32Array,
-  options: PointCloudFXNativePointDataOptions = {},
-): PointCloudFXNativePointData {
+  options: PointCloudFXPackedPointBufferOptions = {},
+): PointCloudFXPackedPointBuffers | null {
   const sourceCount = Math.floor(Math.min(positions.length / 3, colors.length / 3));
   const maxPoints = Math.floor(clampNumber(options.maxPoints ?? MAX_POINTS, 1, MAX_POINTS));
   const n = Math.min(sourceCount, maxPoints);
-  if (n <= 0) {
-    throw new Error('point-cloud-fx native point data requires at least one point');
-  }
-  const indexFor = (i: number) => pointCloudSourceIndexForSample(i, n, sourceCount);
+  if (n <= 0) return null;
 
+  const indexFor = (i: number) => pointCloudSourceIndexForSample(i, n, sourceCount);
   const normalization = computePointCloudNormalization(n, (pointIndex, axis) => {
     const src = indexFor(pointIndex) * 3;
     return positions[src + axis];
@@ -1452,7 +1424,7 @@ export function buildPointCloudFXNativePointData(
   const { cx, cy, cz, scale } = normalization;
   const pointSize = clampNumber(options.pointSize ?? DEFAULT_POINT_SIZE, 0.0001, 0.2);
   const hasGaussianPayload = !!options.gaussian || !!options.splatScale || !!options.splatRotation;
-  const depthSortEnabled = hasGaussianPayload && n <= MAX_NATIVE_DEPTH_SORT_POINTS;
+  const depthSortEnabled = !!options.depthSort && hasGaussianPayload && n <= MAX_NATIVE_DEPTH_SORT_POINTS;
   const sortCount = depthSortEnabled ? nextPowerOfTwo(n) : n;
   const homeBytes = new ArrayBuffer(n * HOME_BYTES);
   const homeF = new Float32Array(homeBytes);
@@ -1519,6 +1491,87 @@ export function buildPointCloudFXNativePointData(
     liveF[liveOff + 10] = b;
     liveF[liveOff + 11] = 0;
   }
+
+  return {
+    sourceCount,
+    pointCount: n,
+    sortCount,
+    normalization,
+    homeBytes,
+    liveBytes,
+    sortBytes,
+    hasGaussianPayload,
+    depthSortEnabled,
+  };
+}
+
+export function getPointCloudFXNativeShaderSources(): PointCloudFXNativeShaderSource[] {
+  return [
+    {
+      shaderId: POINT_CLOUD_FX_NATIVE_SHADER_IDS.compute,
+      label: POINT_CLOUD_FX_NATIVE_SHADER_IDS.compute,
+      stage: 'compute',
+      entry: 'cs_main',
+      source: resolveGhostWgsl(COMPUTE_WGSL, POINT_CLOUD_FX_NATIVE_SHADER_IDS.compute),
+    },
+    {
+      shaderId: POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortFill,
+      label: POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortFill,
+      stage: 'compute',
+      entry: 'cs_main',
+      source: resolveGhostWgsl(SORT_FILL_WGSL, POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortFill),
+    },
+    {
+      shaderId: POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortStep,
+      label: POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortStep,
+      stage: 'compute',
+      entry: 'cs_main',
+      source: resolveGhostWgsl(SORT_STEP_WGSL, POINT_CLOUD_FX_NATIVE_SHADER_IDS.sortStep),
+    },
+    {
+      shaderId: POINT_CLOUD_FX_NATIVE_SHADER_IDS.render,
+      label: POINT_CLOUD_FX_NATIVE_SHADER_IDS.render,
+      stage: 'render',
+      entry: 'vs_main',
+      source: resolveGhostWgsl(RENDER_WGSL, POINT_CLOUD_FX_NATIVE_SHADER_IDS.render),
+    },
+  ];
+}
+
+export function buildPointCloudFXNativePrecompileCommands(): PointCloudFXNativePrecompileCommand[] {
+  return getPointCloudFXNativeShaderSources().map((source) => ({
+    type: 'precompile_shader',
+    shader_id: source.shaderId,
+    stage: source.stage,
+    entry: source.entry,
+    source: source.source,
+  }));
+}
+
+export function buildPointCloudFXNativePointData(
+  positions: Float32Array,
+  colors: Float32Array,
+  options: PointCloudFXNativePointDataOptions = {},
+): PointCloudFXNativePointData {
+  const packed = buildPointCloudFXPackedPointBuffers(positions, colors, {
+    ...options,
+    depthSort: true,
+    pointSize: options.pointSize ?? DEFAULT_POINT_SIZE,
+  });
+  if (!packed) {
+    throw new Error('point-cloud-fx native point data requires at least one point');
+  }
+  const {
+    sourceCount,
+    pointCount: n,
+    sortCount,
+    homeBytes,
+    liveBytes,
+    sortBytes,
+    hasGaussianPayload,
+    depthSortEnabled,
+  } = packed;
+  const indexFor = (i: number) => pointCloudSourceIndexForSample(i, n, sourceCount);
 
   const first = indexFor(0) * 3;
   const mid = indexFor(Math.floor((n - 1) / 2)) * 3;
@@ -1988,83 +2041,20 @@ export class WebGPUPointCloudFX {
     colors: Float32Array,
     options: PointCloudFXDataOptions = {},
   ): void {
-    const sourceCount = Math.floor(Math.min(positions.length / 3, colors.length / 3));
-    const maxPoints = Math.floor(clampNumber(options.maxPoints ?? MAX_POINTS, 1, MAX_POINTS));
-    const n = Math.min(sourceCount, maxPoints);
-    if (n === 0) return;
-    const indexFor = (i: number) => pointCloudSourceIndexForSample(i, n, sourceCount);
-
-    const normalization = computePointCloudNormalization(n, (pointIndex, axis) => {
-      const src = indexFor(pointIndex) * 3;
-      return positions[src + axis];
+    const packed = buildPointCloudFXPackedPointBuffers(positions, colors, {
+      ...options,
+      depthSort: false,
+      pointSize: this.params.pointSize,
     });
-    const { cx, cy, cz, scale } = normalization;
-    const hasGaussianPayload = !!options.gaussian || !!options.splatScale || !!options.splatRotation;
-
-    // ── Build the home buffer (64 bytes/point) ─────────────────
-    const homeBytes = new ArrayBuffer(n * HOME_BYTES);
-    const homeF = new Float32Array(homeBytes);
-    for (let i = 0; i < n; i++) {
-      const sourceIndex = indexFor(i);
-      const off = i * 16;  // 64 bytes / 4 = 16 floats
-      const src = sourceIndex * 3;
-      const scaleOff = sourceIndex * 3;
-      const rotOff = sourceIndex * 4;
-      const hasScale = !!options.splatScale &&
-        Number.isFinite(options.splatScale[scaleOff + 0]) &&
-        Number.isFinite(options.splatScale[scaleOff + 1]) &&
-        Number.isFinite(options.splatScale[scaleOff + 2]);
-      const scale0 = hasScale ? options.splatScale![scaleOff + 0] : 0;
-      const scale1 = hasScale ? options.splatScale![scaleOff + 1] : 0;
-      const scale2 = hasScale ? options.splatScale![scaleOff + 2] : 0;
-      const sizeMultiplier = hasScale ? gaussianSizeMultiplier(scale0, scale1, scale2, normalization.scale) : 1;
-      const [rot0, rot1, rot2, rot3] = normalizedQuaternion(
-        options.splatRotation?.[rotOff + 0] ?? 1,
-        options.splatRotation?.[rotOff + 1] ?? 0,
-        options.splatRotation?.[rotOff + 2] ?? 0,
-        options.splatRotation?.[rotOff + 3] ?? 0,
-      );
-
-      homeF[off + 0] = (positions[src + 0] - cx) * scale;
-      homeF[off + 1] = (positions[src + 1] - cy) * scale;
-      homeF[off + 2] = (positions[src + 2] - cz) * scale;
-      homeF[off + 3] = clampNumber(options.alpha?.[sourceIndex] ?? 1, 0, 1);
-      homeF[off + 4] = clampNumber(colors[src + 0], 0, 1);
-      homeF[off + 5] = clampNumber(colors[src + 1], 0, 1);
-      homeF[off + 6] = clampNumber(colors[src + 2], 0, 1);
-      homeF[off + 7] = sizeMultiplier;
-      homeF[off + 8] = hasScale ? normalizedGaussianScale(scale0, normalization.scale) : 1;
-      homeF[off + 9] = hasScale ? normalizedGaussianScale(scale1, normalization.scale) : 1;
-      homeF[off + 10] = hasScale ? normalizedGaussianScale(scale2, normalization.scale) : 1;
-      homeF[off + 11] = hasGaussianPayload ? 1 : 0;
-      homeF[off + 12] = rot0;
-      homeF[off + 13] = rot1;
-      homeF[off + 14] = rot2;
-      homeF[off + 15] = rot3;
-    }
-
-    // ── Build the live buffer seed (initial = home) ────────────
-    // alpha=file alpha, vel=0, size=pointSize × sizeMultiplier,
-    // color=homeColor.
-    const liveBytes = new ArrayBuffer(n * LIVE_BYTES);
-    const liveF = new Float32Array(liveBytes);
-    for (let i = 0; i < n; i++) {
-      const off = i * 12;  // 48 bytes / 4 = 12 floats
-      const homeOff = i * 16;
-      liveF[off + 0] = homeF[homeOff + 0];  // pos.x
-      liveF[off + 1] = homeF[homeOff + 1];  // pos.y
-      liveF[off + 2] = homeF[homeOff + 2];  // pos.z
-      liveF[off + 3] = homeF[homeOff + 3];  // alpha
-      liveF[off + 4] = 0;                 // vel.x
-      liveF[off + 5] = 0;                 // vel.y
-      liveF[off + 6] = 0;                 // vel.z
-      liveF[off + 7] = this.params.pointSize * homeF[homeOff + 7];  // size
-      liveF[off + 8] = homeF[homeOff + 4];  // color.r
-      liveF[off + 9] = homeF[homeOff + 5];  // color.g
-      liveF[off + 10] = homeF[homeOff + 6]; // color.b
-      liveF[off + 11] = 0;
-    }
-    const sortBytes = buildIdentitySortBuffer(n);
+    if (!packed) return;
+    const {
+      sourceCount,
+      pointCount: n,
+      normalization,
+      homeBytes,
+      liveBytes,
+      sortBytes,
+    } = packed;
 
     // ── (Re)allocate buffers at the right size ─────────────────
     try { this.homeBuffer?.destroy?.(); } catch { /* */ }
@@ -2112,7 +2102,7 @@ export class WebGPUPointCloudFX {
       'points from',
       sourceCount,
       '(normalized to unit cube; src scale =',
-      scale.toFixed(4),
+      normalization.scale.toFixed(4),
       ')',
     );
   }

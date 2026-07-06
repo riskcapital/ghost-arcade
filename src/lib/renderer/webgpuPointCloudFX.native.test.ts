@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   POINT_CLOUD_FX_NATIVE_SHADER_IDS,
+  buildPointCloudFXPackedPointBuffers,
   buildPointCloudFXNativeComputeGraph,
   buildPointCloudFXNativePointData,
   buildPointCloudFXNativePrecompileCommands,
@@ -98,6 +99,30 @@ describe('Point Cloud FX native graph', () => {
     expect(Array.from({ length: 4 }, (_, i) =>
       pointCloudSourceIndexForSample(i, 4, 1_000_000),
     )).toEqual([0, 333333, 666666, 999999]);
+  });
+
+  it('packs live WebGPU buffers from the full source cloud', () => {
+    const { positions, colors } = makePoints(10);
+    const packed = buildPointCloudFXPackedPointBuffers(positions, colors, {
+      maxPoints: 4,
+      pointSize: 0.02,
+    });
+
+    expect(packed?.sourceCount).toBe(10);
+    expect(packed?.pointCount).toBe(4);
+    expect(packed?.sortCount).toBe(4);
+    expect(packed?.depthSortEnabled).toBe(false);
+    expect(packed?.homeBytes.byteLength).toBe(4 * 64);
+    expect(packed?.liveBytes.byteLength).toBe(4 * 48);
+    const home = new Float32Array(packed!.homeBytes);
+    const live = new Float32Array(packed!.liveBytes);
+    const expectedSourceIndices = [0, 3, 6, 9];
+    for (let i = 0; i < expectedSourceIndices.length; i++) {
+      const t = expectedSourceIndices[i] / 9;
+      expect(home[i * 16 + 4]).toBeCloseTo(t);
+      expect(home[i * 16 + 5]).toBeCloseTo(1 - t);
+      expect(live[i * 12 + 7]).toBeCloseTo(0.02 * home[i * 16 + 7]);
+    }
   });
 
   it('normalizes architectural scans without letting a distant outlier shrink the cloud', () => {
