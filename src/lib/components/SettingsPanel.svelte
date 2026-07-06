@@ -1406,6 +1406,11 @@
                 {:else if $nativeRendererRuntime.nativeGraphSourceFrames}
                   <br/>Native graph routing clean.
                 {/if}
+                <br/>
+                Native effects {$nativeRendererRuntime.nativeEffectCoverageNative}/{$nativeRendererRuntime.nativeEffectCoverageTotal}
+                {#if $nativeRendererRuntime.nativeEffectCoverageMissing > 0}
+                  · {$nativeRendererRuntime.nativeEffectCoverageMissing} still WebGL-backed
+                {/if}
               </span>
             </div>
             <span

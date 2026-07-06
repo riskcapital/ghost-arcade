@@ -39,6 +39,48 @@ function readNativeEffectPassManifest() {
   return entries;
 }
 
+function nativeEffectPassIdForEffectType(effectType) {
+  return String(effectType)
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .replace(/_/g, '-')
+    .toLowerCase();
+}
+
+function readPublicEffectTypes() {
+  const catalogSource = readFileSync(join(root, 'src/lib/effects/effectCatalog.ts'), 'utf8');
+  const catalogTypes = [...catalogSource.matchAll(/type:\s*'([^']+)'/g)].map((entry) => entry[1]);
+  return Array.from(new Set([
+    ...catalogTypes,
+    'brightness',
+    'contrast',
+    'saturation',
+    'hue',
+  ]));
+}
+
+function readNativeEffectCoverage() {
+  const publicEffectTypes = readPublicEffectTypes();
+  const nativePassIds = readNativeEffectPassManifest().map((entry) => entry.id);
+  const nativePassSet = new Set(nativePassIds);
+  const publicPassIds = new Set(publicEffectTypes.map(nativeEffectPassIdForEffectType));
+  const nativePublicEffectTypes = publicEffectTypes.filter((effectType) =>
+    nativePassSet.has(nativeEffectPassIdForEffectType(effectType)),
+  );
+  const missingPublicEffectTypes = publicEffectTypes.filter((effectType) =>
+    !nativePassSet.has(nativeEffectPassIdForEffectType(effectType)),
+  );
+  const nativeOnlyPassIds = nativePassIds.filter((passId) => !publicPassIds.has(passId));
+  return {
+    publicEffectCount: publicEffectTypes.length,
+    nativePassCount: nativePassIds.length,
+    nativePublicEffectCount: nativePublicEffectTypes.length,
+    missingPublicEffectCount: missingPublicEffectTypes.length,
+    nativeOnlyPassCount: nativeOnlyPassIds.length,
+    missingSample: missingPublicEffectTypes.slice(0, 6).join(','),
+    nativeOnlyPassIds,
+  };
+}
+
 function readGhostAudioUniformLayout() {
   const source = readFileSync(join(root, 'src/lib/audio/ghostAudioUniform.ts'), 'utf8');
   const version = Number(/schema_version:\s*(\d+)/.exec(source)?.[1] ?? 0);
@@ -300,6 +342,7 @@ async function inspectCore() {
     await precompileNativeCompositorParityShaders(rpc);
     const blendParity = await assertNativeCompositorBlendParity(rpc);
     const effectParity = await assertNativeCompositorEffectParity(rpc);
+    const nativeEffectCoverage = readNativeEffectCoverage();
     const blendParityChecksum = blendParity?.readbacks?.['native-compositor-blend-output']?.checksum;
     const effectParityChecksum = effectParity?.readbacks?.['native-compositor-effect-output']?.checksum;
     if (!blendParityChecksum || !effectParityChecksum) {
@@ -345,6 +388,10 @@ async function inspectCore() {
         sourceFrameImportOk ? '' : 'sourceFrameSharedImportMismatch=1',
         `fullMediaSharedTexture=${features.shared_texture_upload ? 'on' : 'pending'}`,
         `compositorParity=${COMPOSITOR_BLEND_MODES.length}b/${COMPOSITOR_EFFECTS.length}fx`,
+        `effectCoverage=${nativeEffectCoverage.nativePublicEffectCount}/${nativeEffectCoverage.publicEffectCount}`,
+        `effectCoverageMissing=${nativeEffectCoverage.missingPublicEffectCount}`,
+        nativeEffectCoverage.nativeOnlyPassCount ? `nativeOnlyEffectPasses=${nativeEffectCoverage.nativeOnlyPassIds.join(',')}` : '',
+        nativeEffectCoverage.missingSample ? `effectCoverageNext=${nativeEffectCoverage.missingSample}` : '',
         `blendParity=${blendParityChecksum}`,
         `effectParity=${effectParityChecksum}`,
         `outputSharedTexture=${features.shared_texture_output_export ? 'on' : 'pending'}`,
@@ -413,6 +460,7 @@ async function inspectAppBridge() {
       ? capabilities.native_effect_pass_descriptors
       : [];
     const expectedEffectPassDescriptors = readNativeEffectPassManifest();
+    const nativeEffectCoverage = readNativeEffectCoverage();
     const effectPassCodes = new Map(effectPassDescriptors.map((entry) => [String(entry?.id ?? ''), Number(entry?.code)]));
     const effectPassManifestOk = !!(
       features.native_effect_pass_manifest &&
@@ -459,6 +507,10 @@ async function inspectAppBridge() {
         `audioLayout=${audioLayoutOk ? `v${expectedAudioLayout.schema_version}` : 'mismatch'}`,
         `effectPass=${features.native_effect_pass_manifest ? `${effectPassDescriptors.length}fx` : 'pending'}`,
         effectPassManifestOk ? '' : `effectPassExpected=${expectedEffectPassDescriptors.length}fx`,
+        `effectCoverage=${nativeEffectCoverage.nativePublicEffectCount}/${nativeEffectCoverage.publicEffectCount}`,
+        `effectCoverageMissing=${nativeEffectCoverage.missingPublicEffectCount}`,
+        nativeEffectCoverage.nativeOnlyPassCount ? `nativeOnlyEffectPasses=${nativeEffectCoverage.nativeOnlyPassIds.join(',')}` : '',
+        nativeEffectCoverage.missingSample ? `effectCoverageNext=${nativeEffectCoverage.missingSample}` : '',
         `frameExport=${features.native_frame_export ? 'on' : 'missing'}`,
         `shadowMode=${readiness?.modes?.shadow?.ok ? 'on' : 'pending'}`,
         `outputDriver=${nativeOutputDriverReady ? 'on' : 'pending'}`,
