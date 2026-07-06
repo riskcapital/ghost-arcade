@@ -72,7 +72,6 @@ import {
 import { parsePLYBuffer } from '$lib/splat/plyLoader';
 import { parseSplatBuffer } from '$lib/splat/splatLoader';
 import {
-  attachNativeRendererOutputWindow,
   clearNativeRendererDecodePreviewCache,
   clearNativeRendererRuntimeCaches,
   detachNativeRendererOutputWindow,
@@ -3977,12 +3976,6 @@ export class NativeRendererSync {
 
   private async applyStartupPolicies() {
     await resetNativeRendererStats().catch(() => {});
-    // Prefer dedicated output window if present; fallback to main window.
-    if (this.supportsNativeMethod('attach_output_window')) {
-      await attachNativeRendererOutputWindow('output')
-        .catch(() => attachNativeRendererOutputWindow('main'))
-        .catch(() => {});
-    }
     const tasks: Promise<unknown>[] = [
       this.applyPresentPolicyProfile(this.presentProfile),
       this.setTargetFps(this.targetFps),
