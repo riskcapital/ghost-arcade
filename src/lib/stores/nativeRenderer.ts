@@ -5,6 +5,7 @@ import type {
   RendererReadinessReport,
   RendererStatus,
 } from '$lib/api/native-renderer';
+import { NATIVE_EFFECT_COVERAGE } from '$lib/renderer/nativeEffectCoverage';
 
 export type NativeRendererDriverMode =
   | 'offline'
@@ -45,6 +46,11 @@ export interface NativeRendererRuntimeState {
   sharedTextureOutputExportReady: boolean;
   nativeEffectPassReady: boolean;
   nativeEffectPassDetail: string;
+  nativeEffectCoverageComplete: boolean;
+  nativeEffectCoverageDetail: string;
+  nativeEffectCoverageNative: number;
+  nativeEffectCoverageTotal: number;
+  nativeEffectCoverageMissing: number;
   nativeTextureShareSenderReady: boolean;
   nativeTextureShareSenderDetail: string;
   nativeRecordingReady: boolean;
@@ -100,6 +106,11 @@ export const initialNativeRendererRuntimeState: NativeRendererRuntimeState = {
   sharedTextureOutputExportReady: false,
   nativeEffectPassReady: false,
   nativeEffectPassDetail: '',
+  nativeEffectCoverageComplete: NATIVE_EFFECT_COVERAGE.complete,
+  nativeEffectCoverageDetail: NATIVE_EFFECT_COVERAGE.detail,
+  nativeEffectCoverageNative: NATIVE_EFFECT_COVERAGE.nativePublicEffectCount,
+  nativeEffectCoverageTotal: NATIVE_EFFECT_COVERAGE.publicEffectCount,
+  nativeEffectCoverageMissing: NATIVE_EFFECT_COVERAGE.missingPublicEffectCount,
   nativeTextureShareSenderReady: false,
   nativeTextureShareSenderDetail: '',
   nativeRecordingReady: false,
@@ -430,6 +441,11 @@ export function deriveNativeRendererRuntimeState(
     sharedTextureOutputExportReady: !!(outputExportCheck?.ok ?? features.shared_texture_output_export),
     nativeEffectPassReady: !!(nativeEffectPassCheck?.ok ?? features.native_effect_pass_manifest),
     nativeEffectPassDetail: String(nativeEffectPassCheck?.detail ?? ''),
+    nativeEffectCoverageComplete: NATIVE_EFFECT_COVERAGE.complete,
+    nativeEffectCoverageDetail: NATIVE_EFFECT_COVERAGE.detail,
+    nativeEffectCoverageNative: NATIVE_EFFECT_COVERAGE.nativePublicEffectCount,
+    nativeEffectCoverageTotal: NATIVE_EFFECT_COVERAGE.publicEffectCount,
+    nativeEffectCoverageMissing: NATIVE_EFFECT_COVERAGE.missingPublicEffectCount,
     nativeTextureShareSenderReady: !!(nativeTextureShareCheck?.ok ?? features.native_texture_share_sender),
     nativeTextureShareSenderDetail: String(nativeTextureShareCheck?.detail ?? ''),
     nativeRecordingReady: !!(nativeRecordingCheck?.ok ?? features.native_recording),
@@ -614,6 +630,12 @@ export function nativeRendererMainDriverGateChecks(
       state.nativeEffectPassReady,
       state.nativeEffectPassDetail || 'native source-frame effect pass manifest is not ready',
     ),
+    {
+      id: 'native-effect-coverage',
+      label: 'Effect coverage',
+      ok: state.nativeEffectCoverageComplete,
+      detail: state.nativeEffectCoverageDetail,
+    },
     gate(
       'shared-texture-upload',
       'Media texture transport',
