@@ -265,13 +265,13 @@ describe('native renderer runtime state', () => {
         }),
         checks: [
           {
-            id: 'native-graph-smoke-3d',
+            id: 'native-3d-smoke-graph',
             label: '3D Smoke',
             ok: true,
             detail: 'ready',
           },
           {
-            id: 'native-graph-particle-field',
+            id: 'native-particle-field-graph',
             label: 'Particle Field',
             ok: false,
             detail: 'missing shader',
