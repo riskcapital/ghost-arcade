@@ -25,6 +25,10 @@ const REQUIRED_GRAPH_INSTRUMENTS = [
   'pixel-particles',
   'point-cloud-fx',
 ];
+const STATEFUL_NATIVE_GRAPH_EFFECT_TYPES = new Set([
+  'gpuFluidSim',
+  'eulerianMagnify',
+]);
 
 function readNativeEffectPassManifest() {
   const source = readFileSync(join(root, 'src/lib/renderer/nativeEffectPass.ts'), 'utf8');
@@ -69,14 +73,31 @@ function readNativeEffectCoverage() {
   const missingPublicEffectTypes = publicEffectTypes.filter((effectType) =>
     !nativePassSet.has(nativeEffectPassIdForEffectType(effectType)),
   );
+  const sourceFramePassEligibleEffectTypes = publicEffectTypes.filter(
+    (effectType) => !STATEFUL_NATIVE_GRAPH_EFFECT_TYPES.has(effectType),
+  );
+  const nativeSourceFramePassEffectTypes = sourceFramePassEligibleEffectTypes.filter((effectType) =>
+    nativePassSet.has(nativeEffectPassIdForEffectType(effectType)),
+  );
+  const missingSourceFramePassEffectTypes = sourceFramePassEligibleEffectTypes.filter((effectType) =>
+    !nativePassSet.has(nativeEffectPassIdForEffectType(effectType)),
+  );
+  const deferredNativeGraphEffectTypes = publicEffectTypes.filter((effectType) =>
+    STATEFUL_NATIVE_GRAPH_EFFECT_TYPES.has(effectType),
+  );
   const nativeOnlyPassIds = nativePassIds.filter((passId) => !publicPassIds.has(passId));
   return {
     publicEffectCount: publicEffectTypes.length,
     nativePassCount: nativePassIds.length,
     nativePublicEffectCount: nativePublicEffectTypes.length,
     missingPublicEffectCount: missingPublicEffectTypes.length,
+    sourceFramePassEligibleEffectCount: sourceFramePassEligibleEffectTypes.length,
+    nativeSourceFramePassEffectCount: nativeSourceFramePassEffectTypes.length,
+    missingSourceFramePassEffectCount: missingSourceFramePassEffectTypes.length,
+    deferredNativeGraphEffectCount: deferredNativeGraphEffectTypes.length,
     nativeOnlyPassCount: nativeOnlyPassIds.length,
-    missingSample: missingPublicEffectTypes.slice(0, 6).join(','),
+    missingSample: missingSourceFramePassEffectTypes.slice(0, 6).join(','),
+    deferredNativeGraphEffectTypes,
     nativeOnlyPassIds,
   };
 }
@@ -390,8 +411,11 @@ async function inspectCore() {
         `compositorParity=${COMPOSITOR_BLEND_MODES.length}b/${COMPOSITOR_EFFECTS.length}fx`,
         `effectCoverage=${nativeEffectCoverage.nativePublicEffectCount}/${nativeEffectCoverage.publicEffectCount}`,
         `effectCoverageMissing=${nativeEffectCoverage.missingPublicEffectCount}`,
+        `effectPassCoverage=${nativeEffectCoverage.nativeSourceFramePassEffectCount}/${nativeEffectCoverage.sourceFramePassEligibleEffectCount}`,
+        `effectPassMissing=${nativeEffectCoverage.missingSourceFramePassEffectCount}`,
+        nativeEffectCoverage.deferredNativeGraphEffectCount ? `deferredGraphEffects=${nativeEffectCoverage.deferredNativeGraphEffectTypes.join(',')}` : '',
         nativeEffectCoverage.nativeOnlyPassCount ? `nativeOnlyEffectPasses=${nativeEffectCoverage.nativeOnlyPassIds.join(',')}` : '',
-        nativeEffectCoverage.missingSample ? `effectCoverageNext=${nativeEffectCoverage.missingSample}` : '',
+        nativeEffectCoverage.missingSample ? `effectPassNext=${nativeEffectCoverage.missingSample}` : '',
         `blendParity=${blendParityChecksum}`,
         `effectParity=${effectParityChecksum}`,
         `outputSharedTexture=${features.shared_texture_output_export ? 'on' : 'pending'}`,
@@ -509,8 +533,11 @@ async function inspectAppBridge() {
         effectPassManifestOk ? '' : `effectPassExpected=${expectedEffectPassDescriptors.length}fx`,
         `effectCoverage=${nativeEffectCoverage.nativePublicEffectCount}/${nativeEffectCoverage.publicEffectCount}`,
         `effectCoverageMissing=${nativeEffectCoverage.missingPublicEffectCount}`,
+        `effectPassCoverage=${nativeEffectCoverage.nativeSourceFramePassEffectCount}/${nativeEffectCoverage.sourceFramePassEligibleEffectCount}`,
+        `effectPassMissing=${nativeEffectCoverage.missingSourceFramePassEffectCount}`,
+        nativeEffectCoverage.deferredNativeGraphEffectCount ? `deferredGraphEffects=${nativeEffectCoverage.deferredNativeGraphEffectTypes.join(',')}` : '',
         nativeEffectCoverage.nativeOnlyPassCount ? `nativeOnlyEffectPasses=${nativeEffectCoverage.nativeOnlyPassIds.join(',')}` : '',
-        nativeEffectCoverage.missingSample ? `effectCoverageNext=${nativeEffectCoverage.missingSample}` : '',
+        nativeEffectCoverage.missingSample ? `effectPassNext=${nativeEffectCoverage.missingSample}` : '',
         `frameExport=${features.native_frame_export ? 'on' : 'missing'}`,
         `shadowMode=${readiness?.modes?.shadow?.ok ? 'on' : 'pending'}`,
         `outputDriver=${nativeOutputDriverReady ? 'on' : 'pending'}`,
