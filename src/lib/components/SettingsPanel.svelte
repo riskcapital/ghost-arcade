@@ -27,6 +27,7 @@
   import { updateInfo } from '../stores/updateChecker';
   import { updateModalOpen } from '../stores/uiState';
   import { project } from '../stores/layers';
+  import { nativeRendererModeLabel, nativeRendererRuntime } from '../stores/nativeRenderer';
   import { checkForUpdate, getCachedVersionResult, type VersionCheckResult } from '../utils/versionCheck';
   import { openExternalUrl } from '../bridge';
 
@@ -1372,6 +1373,43 @@
             <button class="primary-btn" onclick={refreshWebGPUStatus} disabled={webgpuProbing} style="white-space: nowrap;">
               {webgpuProbing ? 'Probing…' : 'Re-probe'}
             </button>
+          </div>
+
+          <div class="setting-row native-runtime-row">
+            <div class="setting-label">
+              <span class="label-text">Native runtime</span>
+              <span class="label-hint native-runtime-detail">
+                {nativeRendererModeLabel($nativeRendererRuntime.driverMode)}
+                · {$nativeRendererRuntime.backend ?? 'offline'}
+                {#if $nativeRendererRuntime.adapterName}
+                  · {$nativeRendererRuntime.adapterName}
+                {/if}
+                · graphs {$nativeRendererRuntime.nativeGraphSourceFrameLayers} layer{$nativeRendererRuntime.nativeGraphSourceFrameLayers === 1 ? '' : 's'}
+                / {$nativeRendererRuntime.computeGraphRuns} run{$nativeRendererRuntime.computeGraphRuns === 1 ? '' : 's'}
+                {#if $nativeRendererRuntime.nativeGraphRouteFailures > 0}
+                  <br/>
+                  <span class="native-runtime-warning">
+                    Graph fallbacks:
+                    {$nativeRendererRuntime.nativeGraphRouteFailures}
+                    {#if $nativeRendererRuntime.nativeGraphRouteSuppressedFailures > 0}
+                      ({$nativeRendererRuntime.nativeGraphRouteSuppressedFailures} suppressed)
+                    {/if}
+                    {#if $nativeRendererRuntime.nativeGraphRouteLastFailure}
+                      · {$nativeRendererRuntime.nativeGraphRouteLastFailure}
+                    {/if}
+                  </span>
+                {:else if $nativeRendererRuntime.nativeGraphSourceFrames}
+                  <br/>Native graph routing clean.
+                {/if}
+              </span>
+            </div>
+            <span
+              class:ok={$nativeRendererRuntime.fullV2Ready}
+              class:warn={$nativeRendererRuntime.nativeGraphRouteFailures > 0 || !$nativeRendererRuntime.fullV2Ready}
+              class="native-runtime-pill"
+            >
+              {$nativeRendererRuntime.fullV2Ready ? 'Ready' : nativeRendererModeLabel($nativeRendererRuntime.driverMode)}
+            </span>
           </div>
 
           <div class="setting-row">
@@ -2750,6 +2788,43 @@
     background: transparent;
     cursor: pointer;
     padding: 0;
+  }
+  .native-runtime-row {
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .native-runtime-detail {
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
+  .native-runtime-warning {
+    color: #fbbf24;
+  }
+  .native-runtime-pill {
+    flex: 0 0 auto;
+    min-width: 84px;
+    max-width: 140px;
+    padding: 5px 9px;
+    border: 1px solid rgba(251, 191, 36, 0.45);
+    border-radius: 4px;
+    color: #fbbf24;
+    background: rgba(251, 191, 36, 0.08);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-align: center;
+    text-transform: uppercase;
+    overflow-wrap: anywhere;
+  }
+  .native-runtime-pill.ok {
+    border-color: rgba(76, 175, 80, 0.45);
+    color: #4caf50;
+    background: rgba(76, 175, 80, 0.08);
+  }
+  .native-runtime-pill.warn {
+    border-color: rgba(251, 191, 36, 0.45);
+    color: #fbbf24;
+    background: rgba(251, 191, 36, 0.08);
   }
   .select-input {
     background: #1c1c20;
