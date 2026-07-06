@@ -28,6 +28,13 @@ const REQUIRED_GRAPH_INSTRUMENTS = [
 const REQUIRED_FEATURES = [
   'compute_graph_host',
   'compute_graph_render',
+  'compute_graph_multi_render',
+  'compute_graph_instanced_render',
+  'compute_graph_indirect_render',
+  'compute_graph_texture_sampling',
+  'compute_graph_depth_render',
+  'compute_graph_line_render',
+  'compute_graph_clear_color',
   'compute_graph_source_frame_target',
   'persistent_compute_buffers',
   'native_output_mirror_texture',
@@ -151,6 +158,7 @@ async function inspectCore() {
     const instruments = new Set(capabilities?.native_graph_instruments ?? []);
     const missingFeatures = REQUIRED_FEATURES.filter((feature) => !features[feature]);
     const missingInstruments = REQUIRED_GRAPH_INSTRUMENTS.filter((instrument) => !instruments.has(instrument));
+    const proxyFallbackDisabled = features.native_instrument_proxies === false;
     const blockers = Array.isArray(readiness?.blockers) ? readiness.blockers : [];
     assertNativeCompositorManifest(capabilities);
     await precompileNativeCompositorParityShaders(rpc);
@@ -161,13 +169,27 @@ async function inspectCore() {
     if (!blendParityChecksum || !effectParityChecksum) {
       throw new Error(`native compositor parity probes returned no checksums: ${JSON.stringify({ blendParity, effectParity })}`);
     }
-    const ok = !!status?.backend_ready && missingFeatures.length === 0 && missingInstruments.length === 0 && blockers.length === 0;
+    const ok =
+      !!status?.backend_ready &&
+      missingFeatures.length === 0 &&
+      missingInstruments.length === 0 &&
+      proxyFallbackDisabled &&
+      blockers.length === 0;
     return {
       ok,
       detail: [
         `backend=${status?.backend ?? 'unknown'}`,
         `adapter=${status?.adapter_name ?? 'unknown'}`,
         `graphs=${instruments.size}/${REQUIRED_GRAPH_INSTRUMENTS.length}`,
+        `graphHost=${features.compute_graph_host ? 'on' : 'missing'}`,
+        `graphMultiRender=${features.compute_graph_multi_render ? 'on' : 'missing'}`,
+        `graphInstancing=${features.compute_graph_instanced_render ? 'on' : 'missing'}`,
+        `graphIndirect=${features.compute_graph_indirect_render ? 'on' : 'missing'}`,
+        `graphTextureSampling=${features.compute_graph_texture_sampling ? 'on' : 'missing'}`,
+        `graphDepth=${features.compute_graph_depth_render ? 'on' : 'missing'}`,
+        `graphLines=${features.compute_graph_line_render ? 'on' : 'missing'}`,
+        `graphClearColor=${features.compute_graph_clear_color ? 'on' : 'missing'}`,
+        `proxyFallback=${proxyFallbackDisabled ? 'off' : 'on'}`,
         `outputFormat=${status?.output_format ?? 'unknown'}`,
         `outputMirror=${features.native_output_mirror_texture ? 'on' : 'missing'}`,
         `frameExport=${features.native_frame_export ? 'on' : 'missing'}`,
@@ -188,6 +210,7 @@ async function inspectCore() {
         `nativeShareSender=${directCoreNativeShareSenderState(features)}`,
         missingFeatures.length ? `missingFeatures=${missingFeatures.join(',')}` : '',
         missingInstruments.length ? `missingGraphs=${missingInstruments.join(',')}` : '',
+        proxyFallbackDisabled ? '' : 'legacyProxyFallback=enabled',
         blockers.length ? `blockers=${blockers.join('|')}` : '',
       ].filter(Boolean).join(' '),
     };
