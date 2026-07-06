@@ -12,6 +12,7 @@ import {
 } from './nativeRenderer';
 import type {
   NativeRendererCapabilities,
+  NativeGraphInstrumentManifestEntry,
   RendererReadinessReport,
   RendererStatus,
 } from '$lib/api/native-renderer';
@@ -54,31 +55,99 @@ function capabilities(features: Record<string, boolean> = {}): NativeRendererCap
   };
 }
 
-function completeGraphCapabilities(features: Record<string, boolean> = {}): NativeRendererCapabilities {
+const graphManifests = [
+  { id: 'planet', feature: 'native_planet_graph', shaderIds: ['planet/render'] },
+  {
+    id: 'smoke-3d',
+    feature: 'native_3d_smoke_graph',
+    shaderIds: [
+      '3d-smoke/splat',
+      '3d-smoke/advect-velocity',
+      '3d-smoke/divergence',
+      '3d-smoke/jacobi',
+      '3d-smoke/subtract-gradient',
+      '3d-smoke/advect-density',
+      '3d-smoke/render',
+    ],
+  },
+  {
+    id: 'particle-field',
+    feature: 'native_particle_field_graph',
+    shaderIds: [
+      'particle-field/behavior',
+      'particle-field/edges',
+      'particle-field/fog',
+      'particle-field/render',
+      'particle-field/lines',
+    ],
+  },
+  {
+    id: 'volumetric-spheres',
+    feature: 'native_volumetric_spheres_graph',
+    shaderIds: ['volumetric-spheres/sim', 'volumetric-spheres/render'],
+  },
+  {
+    id: 'smoke-riders',
+    feature: 'native_smoke_riders_graph',
+    shaderIds: [
+      '3d-smoke/splat',
+      '3d-smoke/advect-velocity',
+      '3d-smoke/divergence',
+      '3d-smoke/jacobi',
+      '3d-smoke/subtract-gradient',
+      '3d-smoke/advect-density',
+      '3d-smoke/render',
+      'volumetric-spheres/sim',
+      'volumetric-spheres/render',
+    ],
+  },
+  {
+    id: 'ink-cloud',
+    feature: 'native_ink_cloud_graph',
+    shaderIds: ['ink-cloud/sim', 'ink-cloud/render', 'ink-cloud/background'],
+  },
+  { id: 'flythrough', feature: 'native_flythrough_graph', shaderIds: ['flythrough/compute', 'flythrough/render'] },
+  {
+    id: 'pixel-particles',
+    feature: 'native_pixel_particles_graph',
+    shaderIds: ['pixel-particles/compute', 'pixel-particles/render'],
+  },
+  {
+    id: 'point-cloud-fx',
+    feature: 'native_point_cloud_fx_graph',
+    shaderIds: [
+      'point-cloud-fx/compute',
+      'point-cloud-fx/sort-fill',
+      'point-cloud-fx/sort-step',
+      'point-cloud-fx/render',
+    ],
+  },
+];
+
+function completeGraphCapabilities(
+  features: Record<string, boolean> = {},
+  manifestOverride?: (
+    entry: NativeGraphInstrumentManifestEntry,
+  ) => NativeGraphInstrumentManifestEntry,
+): NativeRendererCapabilities {
   return {
     ...capabilities({
-      native_planet_graph: true,
-      native_3d_smoke_graph: true,
-      native_particle_field_graph: true,
-      native_volumetric_spheres_graph: true,
-      native_smoke_riders_graph: true,
-      native_ink_cloud_graph: true,
-      native_flythrough_graph: true,
-      native_pixel_particles_graph: true,
-      native_point_cloud_fx_graph: true,
+      ...Object.fromEntries(graphManifests.map((entry) => [entry.feature, true])),
       ...features,
     }),
-    native_graph_instruments: [
-      'planet',
-      'smoke-3d',
-      'particle-field',
-      'volumetric-spheres',
-      'smoke-riders',
-      'ink-cloud',
-      'flythrough',
-      'pixel-particles',
-      'point-cloud-fx',
-    ],
+    native_graph_instruments: graphManifests.map((entry) => entry.id),
+    native_graph_instrument_manifest: graphManifests.map((entry) => {
+      const manifest = {
+        id: entry.id,
+        label: entry.id,
+        source_uri_prefix: `native-graph://${entry.id}/`,
+        shader_ids: entry.shaderIds,
+        features: [entry.feature],
+        render_target: 'source_frame',
+        parity: `${entry.id}-parity`,
+      };
+      return manifestOverride ? manifestOverride(manifest) : manifest;
+    }),
   };
 }
 
@@ -369,6 +438,73 @@ describe('native renderer runtime state', () => {
     const state = deriveNativeRendererRuntimeState(status(), report, {
       capabilities: report.capabilities,
       updatedAtMs: 131,
+    });
+
+    expect(flags).toEqual({
+      graphCatalogComplete: false,
+      nativeGraphSourceFrames: true,
+    });
+    expect(state.driverMode).toBe('output-driver');
+    expect(state.fullV2Ready).toBe(false);
+  });
+
+  it('does not infer a complete graph catalog when manifest metadata is stale', () => {
+    const report = readiness(
+      {
+        shadow: { ok: true, detail: 'shadow ready' },
+        output_driver: { ok: true, detail: 'output ready' },
+        full_v2: { ok: true, detail: 'full ready', blockers: [] },
+      },
+      {
+        capabilities: completeGraphCapabilities({}, (entry) =>
+          entry.id === 'smoke-3d'
+            ? {
+              ...entry,
+              render_target: 'snapshot',
+              parity: '',
+            }
+            : entry,
+        ),
+        checks: [],
+      },
+    );
+    const flags = inferNativeGraphRuntimeFlags(report.capabilities, report);
+    const state = deriveNativeRendererRuntimeState(status(), report, {
+      capabilities: report.capabilities,
+      updatedAtMs: 132,
+    });
+
+    expect(flags).toEqual({
+      graphCatalogComplete: false,
+      nativeGraphSourceFrames: true,
+    });
+    expect(state.driverMode).toBe('output-driver');
+    expect(state.fullV2Ready).toBe(false);
+  });
+
+  it('does not infer a complete graph catalog when manifest shaders are missing', () => {
+    const report = readiness(
+      {
+        shadow: { ok: true, detail: 'shadow ready' },
+        output_driver: { ok: true, detail: 'output ready' },
+        full_v2: { ok: true, detail: 'full ready', blockers: [] },
+      },
+      {
+        capabilities: completeGraphCapabilities({}, (entry) =>
+          entry.id === 'point-cloud-fx'
+            ? {
+              ...entry,
+              shader_ids: ['point-cloud-fx/compute'],
+            }
+            : entry,
+        ),
+        checks: [],
+      },
+    );
+    const flags = inferNativeGraphRuntimeFlags(report.capabilities, report);
+    const state = deriveNativeRendererRuntimeState(status(), report, {
+      capabilities: report.capabilities,
+      updatedAtMs: 133,
     });
 
     expect(flags).toEqual({
