@@ -191,6 +191,8 @@ describe('Point Cloud FX native graph', () => {
       gaussian: true,
       pointSize: 0.01,
       signature: 'gaussian-cloud',
+      sphericalHarmonicsDegree: 1,
+      sphericalHarmonicsCoefficientCount: 9,
     });
     const home = new Float32Array(data.homeInitialBuffer);
     const live = new Float32Array(data.liveInitialBuffer);
@@ -200,6 +202,8 @@ describe('Point Cloud FX native graph', () => {
     expect(data.sortByteLength).toBe(2 * 8);
     expect(data.hasGaussianPayload).toBe(true);
     expect(data.depthSortEnabled).toBe(true);
+    expect(data.sphericalHarmonicsDegree).toBe(1);
+    expect(data.sphericalHarmonicsCoefficientCount).toBe(9);
     expect(home[3]).toBeCloseTo(0.25);
     expect(home[7]).toBeGreaterThan(0);
     expect(home[8]).toBeGreaterThan(0);
