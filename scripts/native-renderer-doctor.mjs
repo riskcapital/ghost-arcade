@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { spawn } from 'node:child_process';
@@ -25,6 +25,19 @@ const REQUIRED_GRAPH_INSTRUMENTS = [
   'pixel-particles',
   'point-cloud-fx',
 ];
+
+function readNativeEffectPassManifest() {
+  const source = readFileSync(join(root, 'src/lib/renderer/nativeEffectPass.ts'), 'utf8');
+  const entries = [];
+  const pattern = /\{\s*id:\s*'([^']+)'\s*,\s*code:\s*(\d+)/g;
+  let match = pattern.exec(source);
+  while (match) {
+    entries.push({ id: match[1], code: Number(match[2]) });
+    match = pattern.exec(source);
+  }
+  if (!entries.length) throw new Error('could not parse NATIVE_EFFECT_PASS_MANIFEST');
+  return entries;
+}
 const REQUIRED_FEATURES = [
   'compute_graph_host',
   'compute_graph_render',
@@ -317,6 +330,13 @@ async function inspectAppBridge() {
     const effectPassDescriptors = Array.isArray(capabilities?.native_effect_pass_descriptors)
       ? capabilities.native_effect_pass_descriptors
       : [];
+    const expectedEffectPassDescriptors = readNativeEffectPassManifest();
+    const effectPassCodes = new Map(effectPassDescriptors.map((entry) => [String(entry?.id ?? ''), Number(entry?.code)]));
+    const effectPassManifestOk = !!(
+      features.native_effect_pass_manifest &&
+      effectPassDescriptors.length === expectedEffectPassDescriptors.length &&
+      expectedEffectPassDescriptors.every((entry) => effectPassCodes.get(entry.id) === entry.code)
+    );
     const checks = new Map((readiness?.checks ?? []).map((check) => [check?.id, check]));
     const directSharedRpc = capabilities?.implemented_methods?.includes('upload_source_gpu_shared_texture');
     const nativeOutputDriverReady = !!(
@@ -334,6 +354,7 @@ async function inspectAppBridge() {
       outputTransportOk &&
       !!features.native_mp4_frame_encoder &&
       !!features.native_recording &&
+      effectPassManifestOk &&
       nativeOutputDriverReady &&
       fullV2Ready === fullNativeExpected &&
       !!checks.get('native-texture-share-sender')?.ok === outputExportExpected &&
@@ -351,6 +372,7 @@ async function inspectAppBridge() {
         `nativeShareSender=${features.native_texture_share_sender ? 'on' : 'pending'}`,
         `nativeMp4Encoder=${features.native_mp4_frame_encoder ? 'on' : 'missing'}`,
         `effectPass=${features.native_effect_pass_manifest ? `${effectPassDescriptors.length}fx` : 'pending'}`,
+        effectPassManifestOk ? '' : `effectPassExpected=${expectedEffectPassDescriptors.length}fx`,
         `frameExport=${features.native_frame_export ? 'on' : 'missing'}`,
         `shadowMode=${readiness?.modes?.shadow?.ok ? 'on' : 'pending'}`,
         `outputDriver=${nativeOutputDriverReady ? 'on' : 'pending'}`,
