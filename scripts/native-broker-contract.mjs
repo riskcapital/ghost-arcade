@@ -194,8 +194,14 @@ function assertSourceFrameSharedTextureImport(capabilities) {
     assert(
       encodings.has('integer') &&
         encodings.has('base64') &&
+        encodings.has('hex') &&
+        encodings.has('opaque') &&
         formats.has('bgra8unorm') &&
-        formats.has('rgba8unorm'),
+        formats.has('rgba8unorm') &&
+        formats.has('80') &&
+        formats.has('87') &&
+        formats.has('28') &&
+        formats.has('70'),
       `broker source-frame shared texture import contract is missing required encodings/formats: ${JSON.stringify(contract)}`,
     );
   }
@@ -1815,6 +1821,15 @@ try {
     checks.get('shared-texture-source-frame-upload')?.ok === sourceFrameSharedTextureExpected,
     `broker shared source-frame readiness should match native desktop shared-texture support: ${JSON.stringify(readiness)}`,
   );
+  if (sourceFrameSharedTextureExpected) {
+    const expectedSourceFrameImport = expectedSourceFrameSharedTextureImport();
+    const sourceFrameCheck = checks.get('shared-texture-source-frame-upload');
+    assert(
+      String(sourceFrameCheck?.detail ?? '').includes(expectedSourceFrameImport.importer) &&
+        String(sourceFrameCheck?.detail ?? '').includes(expectedSourceFrameImport.handleScope),
+      `broker shared source-frame readiness should identify the native importer and handle scope: ${JSON.stringify(sourceFrameCheck)}`,
+    );
+  }
 
   await broker.invoke('native_renderer_submit_commands', {
     commands: [

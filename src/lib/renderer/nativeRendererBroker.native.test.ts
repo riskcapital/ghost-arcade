@@ -97,6 +97,7 @@ const nativeGraphManifests = [
 ];
 
 function coreCapabilities(features: Record<string, unknown> = {}, overrides: Record<string, unknown> = {}) {
+  const sharedSourceFrameReady = features.shared_texture_source_frame_upload === true;
   return {
     schema_version: 1,
     core_version: 'test-core',
@@ -120,6 +121,27 @@ function coreCapabilities(features: Record<string, unknown> = {}, overrides: Rec
       ...features,
     },
     limits: {},
+    source_frame_shared_texture_import: sharedSourceFrameReady
+      ? {
+          available: true,
+          backend: 'metal',
+          platform: 'iosurface',
+          importer: 'metal-iosurface',
+          handle_scope: 'global-id',
+          accepted_handle_encodings: ['integer', 'base64', 'hex', 'opaque'],
+          accepted_formats: ['bgra8unorm', 'rgba8unorm', '80', '87', '28', '70'],
+          reason: null,
+        }
+      : {
+          available: false,
+          backend: 'metal',
+          platform: 'iosurface',
+          importer: 'none',
+          handle_scope: '',
+          accepted_handle_encodings: [],
+          accepted_formats: [],
+          reason: 'native renderer is not running',
+        },
     notes: [],
     ...overrides,
   };

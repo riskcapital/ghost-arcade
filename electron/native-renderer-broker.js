@@ -1066,6 +1066,7 @@ class NativeRendererBroker {
     const textureShare = this.textureShareStatus();
     const nativeFrameEncoder = this.nativeFrameEncoderStatus();
     const videoFramePrefetch = this.videoFramePrefetchStatus();
+    const sourceFrameSharedTextureImport = sourceFrameSharedTextureImportReadiness(this.capabilities, this.platform);
     const graphInstruments = nativeGraphInstrumentSet(this.capabilities);
     const computeGraphHostReady = !!(
       features.compute_shader_host &&
@@ -1254,6 +1255,7 @@ class NativeRendererBroker {
     );
     const fullNativeV2Blockers = [
       nativeOutputDriverOk ? null : 'native output driver is not ready',
+      sourceFrameSharedTextureImport.ok ? null : 'source-frame shared texture import is not ready',
       effectPassManifestOk ? null : 'native source-frame effect-pass route is not ready',
       features.shared_texture_upload ? null : 'full shared-texture media transport is pending',
       nativeMediaDecodeOk ? null : 'native render-clock video decode pump is not fully ready',
@@ -1267,7 +1269,8 @@ class NativeRendererBroker {
       [
         'shared-texture-source-frame-upload',
         'Shared texture source-frame transport',
-        !!features.shared_texture_source_frame_upload,
+        sourceFrameSharedTextureImport.ok,
+        sourceFrameSharedTextureImport.detail,
       ],
       ['shared-texture-upload', 'Shared texture media transport', !!features.shared_texture_upload],
       [
@@ -2046,6 +2049,88 @@ function nativeGraphInstrumentSet(capabilities) {
     if (normalized) ids.add(normalized);
   }
   return ids;
+}
+
+function expectedSourceFrameSharedTextureImport(platform = process.platform) {
+  if (platform === 'darwin') {
+    return {
+      supported: true,
+      backend: 'metal',
+      platform: 'iosurface',
+      importer: 'metal-iosurface',
+      handleScope: 'global-id',
+    };
+  }
+  if (platform === 'win32') {
+    return {
+      supported: true,
+      backend: 'd3d12',
+      platform: 'dxgi',
+      importer: 'd3d12-open-shared-handle',
+      handleScope: 'process-handle',
+    };
+  }
+  return {
+    supported: false,
+    backend: 'vulkan',
+    platform: 'unsupported',
+    importer: 'none',
+    handleScope: '',
+  };
+}
+
+function stringListMissing(value, required) {
+  const values = new Set((Array.isArray(value) ? value : []).map((item) => String(item).toLowerCase()));
+  return required.filter((item) => !values.has(String(item).toLowerCase()));
+}
+
+function sourceFrameSharedTextureImportReadiness(capabilities, platform = process.platform) {
+  const contract = capabilities?.source_frame_shared_texture_import;
+  if (!contract || typeof contract !== 'object') {
+    return {
+      ok: false,
+      detail: 'missing source_frame_shared_texture_import contract',
+    };
+  }
+
+  const expected = expectedSourceFrameSharedTextureImport(platform);
+  if (!expected.supported) {
+    return {
+      ok: false,
+      detail: contract.reason || 'native source-frame shared texture import is only implemented for Metal IOSurface and D3D12 DXGI',
+    };
+  }
+
+  const missing = [];
+  if (!contract.available) {
+    missing.push(contract.reason || 'contract available=false');
+  }
+  for (const [key, expectedValue] of [
+    ['backend', expected.backend],
+    ['platform', expected.platform],
+    ['importer', expected.importer],
+    ['handle_scope', expected.handleScope],
+  ]) {
+    const actual = String(contract[key] ?? '');
+    if (actual !== expectedValue) missing.push(`${key} ${JSON.stringify(actual)} != ${JSON.stringify(expectedValue)}`);
+  }
+  for (const encoding of stringListMissing(contract.accepted_handle_encodings, ['integer', 'base64', 'hex', 'opaque'])) {
+    missing.push(`handle encoding ${encoding}`);
+  }
+  for (const format of stringListMissing(contract.accepted_formats, ['bgra8unorm', 'rgba8unorm', '80', '87', '28', '70'])) {
+    missing.push(`format ${format}`);
+  }
+
+  if (missing.length) {
+    return {
+      ok: false,
+      detail: `source-frame shared texture import contract incomplete: ${missing.join('; ')}`,
+    };
+  }
+  return {
+    ok: true,
+    detail: `${expected.importer} import active for ${expected.platform} ${expected.handleScope} source-frame handles`,
+  };
 }
 
 function normalizeCapabilities(capabilities, previous = makeDefaultCapabilities()) {

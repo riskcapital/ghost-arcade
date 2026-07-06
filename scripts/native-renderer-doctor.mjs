@@ -158,7 +158,16 @@ function sourceFrameSharedTextureImportOk(capabilities, expected = expectedSourc
   if (!expected.available) return true;
   const encodings = new Set(Array.isArray(contract.accepted_handle_encodings) ? contract.accepted_handle_encodings.map(String) : []);
   const formats = new Set(Array.isArray(contract.accepted_formats) ? contract.accepted_formats.map(String) : []);
-  return encodings.has('integer') && encodings.has('base64') && formats.has('bgra8unorm') && formats.has('rgba8unorm');
+  return encodings.has('integer') &&
+    encodings.has('base64') &&
+    encodings.has('hex') &&
+    encodings.has('opaque') &&
+    formats.has('bgra8unorm') &&
+    formats.has('rgba8unorm') &&
+    formats.has('80') &&
+    formats.has('87') &&
+    formats.has('28') &&
+    formats.has('70');
 }
 
 function sourceFrameSharedTextureImportDetail(capabilities) {
