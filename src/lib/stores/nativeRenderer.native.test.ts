@@ -142,6 +142,7 @@ function completeGraphCapabilities(
         label: entry.id,
         source_uri_prefix: `native-graph://${entry.id}/`,
         shader_ids: entry.shaderIds,
+        shader_count: entry.shaderIds.length,
         features: [entry.feature],
         render_target: 'source_frame',
         parity: `${entry.id}-parity`,

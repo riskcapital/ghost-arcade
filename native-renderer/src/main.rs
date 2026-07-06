@@ -42,7 +42,7 @@ use media_decode::{
     native_video_frame_file_signature,
 };
 use native_graph_manifest::{
-    NATIVE_GRAPH_INSTRUMENTS, native_graph_instrument_manifest, native_graph_instruments_note,
+    native_graph_instrument_ids, native_graph_instrument_manifest, native_graph_instruments_note,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -2290,7 +2290,7 @@ impl App {
             "implemented_command_types": CORE_COMMAND_TYPES,
             "native_compositor_blend_modes": native_compositor_blend_manifest(),
             "native_compositor_effect_descriptors": native_compositor_effect_manifest(),
-            "native_graph_instruments": NATIVE_GRAPH_INSTRUMENTS,
+            "native_graph_instruments": native_graph_instrument_ids(),
             "native_graph_instrument_manifest": native_graph_instrument_manifest(),
             "audio_uniform_layout": ghost_audio_uniform_layout(),
             "native_scene_bridge": {

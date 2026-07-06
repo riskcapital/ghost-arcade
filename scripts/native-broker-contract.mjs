@@ -700,6 +700,7 @@ try {
     assert(entry, `broker graph manifest missing ${required.id}: ${JSON.stringify(capabilities?.native_graph_instrument_manifest)}`);
     assert(entry.render_target === 'source_frame', `broker graph ${required.id} lost source-frame target: ${JSON.stringify(entry)}`);
     assert(entry.source_uri_prefix === `native-graph://${required.id}/`, `broker graph ${required.id} URI prefix drifted: ${JSON.stringify(entry)}`);
+    assert(Number(entry.shader_count) === required.shaderIds.length, `broker graph ${required.id} shader_count drifted: ${JSON.stringify(entry)}`);
     for (const shaderId of required.shaderIds) {
       assert(entry.shader_ids?.includes(shaderId), `broker graph ${required.id} missing shader ${shaderId}: ${JSON.stringify(entry)}`);
     }

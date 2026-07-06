@@ -369,6 +369,7 @@ export interface NativeGraphInstrumentManifestEntry {
   label?: string;
   source_uri_prefix?: string;
   shader_ids?: string[];
+  shader_count?: number;
   features?: string[];
   render_target?: string;
   parity?: string;
