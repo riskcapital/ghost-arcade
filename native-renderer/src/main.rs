@@ -2695,9 +2695,7 @@ impl App {
     fn shared_texture_media_transport_ready(&self) -> bool {
         #[cfg(target_os = "macos")]
         {
-            self.renderer
-                .as_ref()
-                .is_some_and(RenderState::output_export_ready)
+            self.renderer.is_some()
         }
         #[cfg(not(target_os = "macos"))]
         {

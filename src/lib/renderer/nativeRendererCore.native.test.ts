@@ -154,6 +154,12 @@ describe('Native render-core RPC contract', () => {
       expect(capabilities?.features?.native_frame_export).toBe(true);
       expect(capabilities?.features?.native_frame_sequence_export).toBe(true);
       expect(capabilities?.features?.native_recording).toBe(false);
+      if (process.platform === 'darwin') {
+        expect(capabilities?.features?.shared_texture_source_frame_upload).toBe(true);
+        expect(capabilities?.features?.shared_texture_upload).toBe(true);
+      } else {
+        expect(capabilities?.features?.shared_texture_upload).toBe(false);
+      }
 
       const readiness = await rpc.send('get_readiness_report');
       const checks = new Map<string, any>((readiness?.checks ?? []).map((check: any) => [check?.id, check]));
@@ -161,6 +167,13 @@ describe('Native render-core RPC contract', () => {
       expect(checks.get('native-frame-sequence-export')?.ok).toBe(true);
       expect(checks.get('native-recording')?.ok).toBe(false);
       expect(String(checks.get('native-recording')?.detail ?? '')).toContain('Electron broker');
+      if (process.platform === 'darwin') {
+        expect(checks.get('shared-texture-source-frame-upload')?.ok).toBe(true);
+        expect(checks.get('shared-texture-upload')?.ok).toBe(true);
+        expect(String(checks.get('shared-texture-upload')?.detail ?? '')).toContain('IOSurfaceID');
+      } else {
+        expect(checks.get('shared-texture-upload')?.ok).toBe(false);
+      }
     } finally {
       await rpc.close();
     }
