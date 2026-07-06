@@ -35,92 +35,6 @@ const VIDEO_EXTENSIONS = new Set([
   '.ogv',
   '.webm',
 ]);
-const REQUIRED_NATIVE_GRAPH_INSTRUMENTS = [
-  {
-    id: 'planet',
-    label: 'Native Planet graph',
-    feature: 'native_planet_graph',
-    shaderIds: ['planet/render'],
-  },
-  {
-    id: 'smoke-3d',
-    label: 'Native 3D Smoke graph',
-    feature: 'native_3d_smoke_graph',
-    shaderIds: [
-      '3d-smoke/splat',
-      '3d-smoke/advect-velocity',
-      '3d-smoke/divergence',
-      '3d-smoke/jacobi',
-      '3d-smoke/subtract-gradient',
-      '3d-smoke/advect-density',
-      '3d-smoke/render',
-    ],
-  },
-  {
-    id: 'particle-field',
-    label: 'Native Particle Field graph',
-    feature: 'native_particle_field_graph',
-    shaderIds: [
-      'particle-field/behavior',
-      'particle-field/edges',
-      'particle-field/fog',
-      'particle-field/render',
-      'particle-field/lines',
-    ],
-  },
-  {
-    id: 'volumetric-spheres',
-    label: 'Native Volumetric Spheres graph',
-    feature: 'native_volumetric_spheres_graph',
-    shaderIds: ['volumetric-spheres/sim', 'volumetric-spheres/render'],
-  },
-  {
-    id: 'smoke-riders',
-    label: 'Native Smoke Riders graph',
-    feature: 'native_smoke_riders_graph',
-    shaderIds: [
-      '3d-smoke/splat',
-      '3d-smoke/advect-velocity',
-      '3d-smoke/divergence',
-      '3d-smoke/jacobi',
-      '3d-smoke/subtract-gradient',
-      '3d-smoke/advect-density',
-      '3d-smoke/render',
-      'volumetric-spheres/sim',
-      'volumetric-spheres/render',
-    ],
-  },
-  {
-    id: 'ink-cloud',
-    label: 'Native Ink Cloud graph',
-    feature: 'native_ink_cloud_graph',
-    shaderIds: ['ink-cloud/sim', 'ink-cloud/render', 'ink-cloud/background'],
-  },
-  {
-    id: 'flythrough',
-    label: 'Native Flythrough graph',
-    feature: 'native_flythrough_graph',
-    shaderIds: ['flythrough/compute', 'flythrough/render'],
-  },
-  {
-    id: 'pixel-particles',
-    label: 'Native Pixel Particles graph',
-    feature: 'native_pixel_particles_graph',
-    shaderIds: ['pixel-particles/compute', 'pixel-particles/render'],
-  },
-  {
-    id: 'point-cloud-fx',
-    label: 'Native Point Cloud FX graph',
-    feature: 'native_point_cloud_fx_graph',
-    shaderIds: [
-      'point-cloud-fx/compute',
-      'point-cloud-fx/sort-fill',
-      'point-cloud-fx/sort-step',
-      'point-cloud-fx/render',
-    ],
-  },
-];
-
 const NATIVE_EFFECT_PASS_DESCRIPTORS = [
   { id: 'invert', code: 1 },
   { id: 'grayscale', code: 2 },
@@ -188,6 +102,28 @@ const NATIVE_EFFECT_PASS_DESCRIPTORS = [
 
 function nativeGraphReadinessId(id) {
   return id === 'smoke-3d' ? 'native-3d-smoke-graph' : `native-${id}-graph`;
+}
+
+function nativeGraphReadinessSpecs(capabilities) {
+  const manifest = Array.isArray(capabilities?.native_graph_instrument_manifest)
+    ? capabilities.native_graph_instrument_manifest
+    : [];
+  return manifest
+    .map((entry) => {
+      const id = String(entry?.id || '');
+      if (!id) return null;
+      return {
+        id,
+        label: String(entry?.label || `Native ${id} graph`),
+        shaderIds: Array.isArray(entry?.shader_ids) ? entry.shader_ids.map(String) : [],
+        shaderCount: Number(entry?.shader_count ?? NaN),
+        features: Array.isArray(entry?.features) ? entry.features.map(String) : [],
+        renderTarget: String(entry?.render_target || ''),
+        sourceUriPrefix: String(entry?.source_uri_prefix || ''),
+        parity: String(entry?.parity || ''),
+      };
+    })
+    .filter(Boolean);
 }
 
 function looksLikeStaticImageUri(uri) {
@@ -1138,21 +1074,30 @@ class NativeRendererBroker {
       features.compute_graph_source_frame_target &&
       features.persistent_compute_buffers
     );
-    const graphManifest = nativeGraphManifestById(this.capabilities);
-    const graphChecks = REQUIRED_NATIVE_GRAPH_INSTRUMENTS.map(({ id, label, feature, shaderIds }) => {
-      const entry = graphManifest.get(id);
-      const entryShaderIds = new Set((entry?.shader_ids ?? []).map(String));
-      const entryFeatures = new Set((entry?.features ?? []).map(String));
-      const missingShaders = shaderIds.filter((shaderId) => !entryShaderIds.has(shaderId));
+    const graphSpecs = nativeGraphReadinessSpecs(this.capabilities);
+    const graphChecks = graphSpecs.map(({
+      id,
+      label,
+      shaderIds,
+      shaderCount,
+      features: requiredFeatures,
+      renderTarget,
+      sourceUriPrefix,
+      parity,
+    }) => {
+      const missingFeatures = ['compute_shader_host', ...requiredFeatures]
+        .filter((feature) => !features[feature]);
       const missing = [
         computeGraphHostReady ? null : 'compute_graph_host/source_frame',
-        features[feature] ? null : feature,
+        missingFeatures.length ? missingFeatures.join(',') : null,
         graphInstruments.has(id) ? null : `${id} manifest entry`,
-        entry?.render_target === 'source_frame' ? null : 'source_frame target',
-        entry?.source_uri_prefix === `native-graph://${id}/` ? null : 'native-graph URI prefix',
-        entryFeatures.has(feature) ? null : `manifest feature ${feature}`,
-        String(entry?.parity ?? '').length > 0 ? null : 'parity metadata',
-        missingShaders.length ? `shader_ids ${missingShaders.join(',')}` : null,
+        renderTarget === 'source_frame' ? null : 'source_frame target',
+        sourceUriPrefix === `native-graph://${id}/` ? null : 'native-graph URI prefix',
+        parity.length > 0 ? null : 'parity metadata',
+        shaderIds.length ? null : 'shader_ids missing',
+        Number.isFinite(shaderCount) && shaderCount === shaderIds.length
+          ? null
+          : `shader_count ${shaderCount || 'missing'} != ${shaderIds.length}`,
       ].filter(Boolean);
       const ok = missing.length === 0;
       return [
@@ -1164,7 +1109,7 @@ class NativeRendererBroker {
           : `missing ${missing.join('; ')}`,
       ];
     });
-    const allGraphInstrumentsReady = graphChecks.every(([, , ok]) => ok);
+    const allGraphInstrumentsReady = graphChecks.length > 0 && graphChecks.every(([, , ok]) => ok);
     const effectPassDescriptors = Array.isArray(this.capabilities?.native_effect_pass_descriptors)
       ? this.capabilities.native_effect_pass_descriptors
       : [];
@@ -1512,7 +1457,7 @@ class NativeRendererBroker {
         'Native compute/multi-pass instrument host',
         computeGraphHostReady && allGraphInstrumentsReady,
         computeGraphHostReady
-          ? `implemented graph routes=${graphChecks.filter(([, , ok]) => ok).length}/${REQUIRED_NATIVE_GRAPH_INSTRUMENTS.length}`
+          ? `implemented graph routes=${graphChecks.filter(([, , ok]) => ok).length}/${graphChecks.length}`
           : 'compute graph host/source-frame target is not ready',
       ],
       [
@@ -2101,15 +2046,6 @@ function nativeGraphInstrumentSet(capabilities) {
     if (normalized) ids.add(normalized);
   }
   return ids;
-}
-
-function nativeGraphManifestById(capabilities) {
-  const entries = new Map();
-  for (const entry of capabilities?.native_graph_instrument_manifest ?? []) {
-    const id = String(entry?.id || '').trim().toLowerCase();
-    if (id) entries.set(id, entry);
-  }
-  return entries;
 }
 
 function normalizeCapabilities(capabilities, previous = makeDefaultCapabilities()) {

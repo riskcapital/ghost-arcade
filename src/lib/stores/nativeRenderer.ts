@@ -12,83 +12,6 @@ export type NativeRendererDriverMode =
   | 'output-driver'
   | 'full-v2';
 
-const REQUIRED_NATIVE_GRAPH_INSTRUMENTS = [
-  {
-    id: 'planet',
-    feature: 'native_planet_graph',
-    shaderIds: ['planet/render'],
-  },
-  {
-    id: 'smoke-3d',
-    feature: 'native_3d_smoke_graph',
-    shaderIds: [
-      '3d-smoke/splat',
-      '3d-smoke/advect-velocity',
-      '3d-smoke/divergence',
-      '3d-smoke/jacobi',
-      '3d-smoke/subtract-gradient',
-      '3d-smoke/advect-density',
-      '3d-smoke/render',
-    ],
-  },
-  {
-    id: 'particle-field',
-    feature: 'native_particle_field_graph',
-    shaderIds: [
-      'particle-field/behavior',
-      'particle-field/edges',
-      'particle-field/fog',
-      'particle-field/render',
-      'particle-field/lines',
-    ],
-  },
-  {
-    id: 'volumetric-spheres',
-    feature: 'native_volumetric_spheres_graph',
-    shaderIds: ['volumetric-spheres/sim', 'volumetric-spheres/render'],
-  },
-  {
-    id: 'smoke-riders',
-    feature: 'native_smoke_riders_graph',
-    shaderIds: [
-      '3d-smoke/splat',
-      '3d-smoke/advect-velocity',
-      '3d-smoke/divergence',
-      '3d-smoke/jacobi',
-      '3d-smoke/subtract-gradient',
-      '3d-smoke/advect-density',
-      '3d-smoke/render',
-      'volumetric-spheres/sim',
-      'volumetric-spheres/render',
-    ],
-  },
-  {
-    id: 'ink-cloud',
-    feature: 'native_ink_cloud_graph',
-    shaderIds: ['ink-cloud/sim', 'ink-cloud/render', 'ink-cloud/background'],
-  },
-  {
-    id: 'flythrough',
-    feature: 'native_flythrough_graph',
-    shaderIds: ['flythrough/compute', 'flythrough/render'],
-  },
-  {
-    id: 'pixel-particles',
-    feature: 'native_pixel_particles_graph',
-    shaderIds: ['pixel-particles/compute', 'pixel-particles/render'],
-  },
-  {
-    id: 'point-cloud-fx',
-    feature: 'native_point_cloud_fx_graph',
-    shaderIds: [
-      'point-cloud-fx/compute',
-      'point-cloud-fx/sort-fill',
-      'point-cloud-fx/sort-step',
-      'point-cloud-fx/render',
-    ],
-  },
-];
-
 export interface NativeRendererRuntimeState {
   running: boolean;
   backendReady: boolean;
@@ -175,18 +98,15 @@ export function inferNativeGraphRuntimeFlags(
   capabilities: NativeRendererCapabilities | null | undefined,
   readiness?: RendererReadinessReport | null,
 ): { graphCatalogComplete: boolean; nativeGraphSourceFrames: boolean } {
-  const features = capabilities?.features ?? readiness?.capabilities?.features ?? {};
+  const nativeFeatures = capabilities?.features ?? readiness?.capabilities?.features ?? {};
   const graphInstrumentIds = new Set(
     ((capabilities ?? readiness?.capabilities)?.native_graph_instruments ?? []).map(String),
   );
-  const graphManifest = new Map(
-    ((capabilities ?? readiness?.capabilities)?.native_graph_instrument_manifest ?? [])
-      .map((entry) => [String(entry?.id ?? ''), entry]),
-  );
+  const graphManifestEntries = (capabilities ?? readiness?.capabilities)?.native_graph_instrument_manifest ?? [];
   const nativeGraphSourceFrames = !!(
-    features.compute_graph_host &&
-    features.compute_graph_render &&
-    features.compute_graph_source_frame_target
+    nativeFeatures.compute_graph_host &&
+    nativeFeatures.compute_graph_render &&
+    nativeFeatures.compute_graph_source_frame_target
   );
   const graphChecks = (readiness?.checks ?? []).filter((check) =>
     isNativeGraphReadinessCheck(String(check?.id ?? '')),
@@ -195,18 +115,23 @@ export function inferNativeGraphRuntimeFlags(
     ? graphChecks.every((check) => !!check?.ok)
     : !!(
       nativeGraphSourceFrames &&
-      REQUIRED_NATIVE_GRAPH_INSTRUMENTS.every((required) => {
-        const entry = graphManifest.get(required.id);
+      graphManifestEntries.length > 0 &&
+      graphManifestEntries.every((entry) => {
+        const id = String(entry?.id ?? '');
         const entryShaderIds = new Set((entry?.shader_ids ?? []).map(String));
-        const entryFeatures = new Set((entry?.features ?? []).map(String));
+        const expectedShaderCount = Number(entry?.shader_count ?? NaN);
+        const entryFeatures = (entry?.features ?? []).map(String);
         return (
-          graphInstrumentIds.has(required.id) &&
-          !!features[required.feature] &&
+          id.length > 0 &&
+          graphInstrumentIds.has(id) &&
+          entryFeatures.length > 0 &&
+          entryFeatures.every((feature) => !!nativeFeatures[feature]) &&
+          entryShaderIds.size > 0 &&
+          Number.isFinite(expectedShaderCount) &&
+          expectedShaderCount === entryShaderIds.size &&
           entry?.render_target === 'source_frame' &&
-          entry?.source_uri_prefix === `native-graph://${required.id}/` &&
-          entryFeatures.has(required.feature) &&
-          String(entry?.parity ?? '').length > 0 &&
-          required.shaderIds.every((shaderId) => entryShaderIds.has(shaderId))
+          entry?.source_uri_prefix === `native-graph://${id}/` &&
+          String(entry?.parity ?? '').length > 0
         );
       })
     );
