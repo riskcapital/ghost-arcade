@@ -2147,7 +2147,8 @@ function applyBrokerCapabilityOverlay(capabilities, textureShare, nativeFrameEnc
   const nativeTextureShareSenderReady = !!(
     features.shared_texture_output_export &&
     textureShare?.available &&
-    (textureShare.nativeOutputCapable || textureShare.nativeOutputActive)
+    (textureShare.nativeOutputCapable || textureShare.nativeOutputActive) &&
+    !textureShare.nativeOutputWaitingForFrame
   );
   features.native_texture_share_sender = !!(
     features.native_texture_share_sender ||

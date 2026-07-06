@@ -635,6 +635,47 @@ describe('native renderer runtime state', () => {
     expect(state.nativeEffectPassReady).toBe(false);
   });
 
+  it('uses texture-share sender readiness checks over stale feature flags', () => {
+    const report = readiness(
+      {
+        shadow: { ok: true, detail: 'shadow ready' },
+        output_driver: { ok: true, detail: 'output ready' },
+        full_v2: { ok: true, detail: 'full ready', blockers: [] },
+      },
+      {
+        capabilities: completeMainDriverCapabilities(),
+        texture_share: {
+          platform: 'syphon',
+          label: 'Syphon',
+          available: true,
+          nativeOutputCapable: true,
+          nativeOutputActive: true,
+          nativeOutputWaitingForFrame: true,
+          nativeOutputLastPublishedFrame: 0,
+        },
+        checks: [
+          {
+            id: 'native-texture-share-sender',
+            label: 'Native Syphon sender',
+            ok: false,
+            detail: 'native output IOSurface pump is waiting for the first rendered frame',
+          },
+        ],
+      },
+    );
+    const state = deriveNativeRendererRuntimeState(status(), report, {
+      capabilities: report.capabilities,
+      updatedAtMs: 136,
+    });
+
+    expect(state.driverMode).toBe('output-driver');
+    expect(state.fullV2Ready).toBe(false);
+    expect(state.blockers).toContain('native texture-share sender is not active-ready');
+    expect(state.nativeTextureShareSenderReady).toBe(false);
+    expect(state.nativeTextureShareSenderDetail).toContain('waiting for the first rendered frame');
+    expect(state.nativeOutputShareWaitingForFrame).toBe(true);
+  });
+
   it('uses compact, user-readable labels for the toolbar', () => {
     expect(nativeRendererModeLabel('offline')).toBe('WebGL Fallback');
     expect(nativeRendererModeLabel('shadow')).toBe('Native Scene Sync');
