@@ -20,6 +20,9 @@ objc2-core-foundation = { version = "0.3.2", default-features = false, features 
 objc2-io-surface = { version = "0.3.2", default-features = false, features = ["IOSurfaceRef", "IOSurfaceTypes", "objc2-core-foundation"] }
 objc2-metal = { version = "0.3.2", default-features = false, features = ["MTLAllocation", "MTLDevice", "MTLPixelFormat", "MTLResource", "MTLTexture", "objc2-io-surface"] }
 
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", default-features = false, features = ["Win32_Foundation", "Win32_Graphics_Direct3D12"] }
+
 [profile.release]
 codegen-units = 1
 lto = "thin"

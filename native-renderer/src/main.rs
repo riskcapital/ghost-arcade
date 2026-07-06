@@ -9225,7 +9225,11 @@ impl RenderState {
         {
             self.import_iosurface_source_frame(slot, descriptor)
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "windows")]
+        {
+            self.import_dxgi_source_frame(slot, descriptor)
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
             let _ = slot;
             match descriptor.platform.as_str() {
@@ -9335,6 +9339,136 @@ impl RenderState {
         };
         let source_view = imported_texture.create_view(&wgpu::TextureViewDescriptor {
             label: Some("Ghost Render Core Imported IOSurface Source View"),
+            format: Some(wgpu_format),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            ..Default::default()
+        });
+        let safe_slot = slot.min(MAX_SOURCE_FRAME_SLOTS - 1);
+        let target_view = self
+            .source_frame_texture
+            .create_view(&wgpu::TextureViewDescriptor {
+                label: Some("Ghost Render Core Shared Texture Source Frame Target"),
+                format: Some(self.source_frame_format),
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                base_mip_level: 0,
+                mip_level_count: Some(1),
+                base_array_layer: safe_slot as u32,
+                array_layer_count: Some(1),
+                ..Default::default()
+            });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Ghost Render Core Shared Texture Source Frame Encoder"),
+            });
+        self.source_frame_blitter
+            .copy(&self.device, &mut encoder, &source_view, &target_view);
+        self.generate_source_frame_mips(&mut encoder, safe_slot);
+        self.queue.submit(Some(encoder.finish()));
+        Ok(self
+            .source_frame_size
+            .saturating_mul(self.source_frame_size)
+            .saturating_mul(texture_format_bytes_per_texel(self.source_frame_format))
+            .min(u64::MAX as usize) as u64)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn import_dxgi_source_frame(
+        &self,
+        slot: usize,
+        descriptor: &SharedTextureSourceFrameDescriptor,
+    ) -> Result<u64, String> {
+        use wgpu::hal::{self, api::Dx12};
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::Graphics::Direct3D12::ID3D12Resource;
+
+        if descriptor.platform != "dxgi" {
+            return Err(format!(
+                "shared texture platform `{}` is not supported by the D3D12 importer",
+                descriptor.platform
+            ));
+        }
+
+        let shared_handle = descriptor.dxgi_shared_handle()?;
+        if shared_handle == 0 {
+            return Err("DXGI shared texture HANDLE was zero".to_string());
+        }
+
+        let width = descriptor.width.max(1);
+        let height = descriptor.height.max(1);
+        let wgpu_format = wgpu_texture_format_for_shared_texture(descriptor);
+        let raw_device = unsafe { self.device.as_hal::<Dx12>() }
+            .ok_or_else(|| "native renderer is not running on the D3D12 backend".to_string())?;
+        let mut raw_resource: Option<ID3D12Resource> = None;
+        unsafe {
+            raw_device
+                .raw_device()
+                .OpenSharedHandle(
+                    HANDLE(shared_handle as *mut core::ffi::c_void),
+                    &mut raw_resource,
+                )
+                .map_err(|err| {
+                    format!(
+                        "D3D12 OpenSharedHandle failed for HANDLE=0x{shared_handle:x} format={} mapped_format={} size={}x{}: {err}",
+                        descriptor.format,
+                        texture_format_label(wgpu_format),
+                        width,
+                        height
+                    )
+                })?;
+        }
+        let raw_resource = raw_resource.ok_or_else(|| {
+            format!(
+                "D3D12 OpenSharedHandle returned no ID3D12Resource for HANDLE=0x{shared_handle:x}"
+            )
+        })?;
+        let hal_texture = unsafe {
+            hal::dx12::Device::texture_from_raw(
+                raw_resource,
+                wgpu_format,
+                wgpu::TextureDimension::D2,
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                1,
+                1,
+            )
+        };
+        let imported_texture = unsafe {
+            self.device.create_texture_from_hal::<Dx12>(
+                hal_texture,
+                &wgpu::TextureDescriptor {
+                    label: Some("Ghost Render Core Imported DXGI Source Frame"),
+                    size: wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu_format,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                },
+                wgpu::TextureUses::RESOURCE,
+            )
+        };
+        self.copy_imported_source_texture(slot, &imported_texture, descriptor)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn copy_imported_source_texture(
+        &self,
+        slot: usize,
+        imported_texture: &wgpu::Texture,
+        descriptor: &SharedTextureSourceFrameDescriptor,
+    ) -> Result<u64, String> {
+        let wgpu_format = wgpu_texture_format_for_shared_texture(descriptor);
+        let source_view = imported_texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("Ghost Render Core Imported Shared Source View"),
             format: Some(wgpu_format),
             dimension: Some(wgpu::TextureViewDimension::D2),
             ..Default::default()
@@ -11466,7 +11600,7 @@ fn texture_format_label(format: wgpu::TextureFormat) -> &'static str {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn texture_format_bytes_per_texel(format: wgpu::TextureFormat) -> usize {
     match format {
         wgpu::TextureFormat::Rgba16Float => 8,
@@ -11488,7 +11622,7 @@ fn wgpu_texture_format_for_shared_texture(
     descriptor: &SharedTextureSourceFrameDescriptor,
 ) -> wgpu::TextureFormat {
     match normalized_shared_texture_format(descriptor).as_str() {
-        "rgba8unorm" | "70" => wgpu::TextureFormat::Rgba8Unorm,
+        "rgba8unorm" | "28" | "70" => wgpu::TextureFormat::Rgba8Unorm,
         "bgra8unorm" | "80" | "87" => wgpu::TextureFormat::Bgra8Unorm,
         _ => wgpu::TextureFormat::Bgra8Unorm,
     }
@@ -12378,6 +12512,33 @@ fn tier_quality_scale(tier: &str) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_texture_format_maps_common_dxgi_codes() {
+        let mut descriptor = SharedTextureSourceFrameDescriptor {
+            handle: "1".to_string(),
+            platform: "dxgi".to_string(),
+            format: "28".to_string(),
+            handle_encoding: "integer".to_string(),
+            handle_chars: 1,
+            handle_byte_length: None,
+            frame: None,
+            sender_name: None,
+            width: 1920,
+            height: 1080,
+        };
+
+        assert_eq!(
+            wgpu_texture_format_for_shared_texture(&descriptor),
+            wgpu::TextureFormat::Rgba8Unorm
+        );
+
+        descriptor.format = "87".to_string();
+        assert_eq!(
+            wgpu_texture_format_for_shared_texture(&descriptor),
+            wgpu::TextureFormat::Bgra8Unorm
+        );
+    }
 
     #[test]
     fn ghost_audio_uniform_layout_documents_the_native_slots() {
