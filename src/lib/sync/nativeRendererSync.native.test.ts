@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type {
   NativeEffectPassRuntime,
 } from './nativeRendererSync';
@@ -201,6 +201,43 @@ describe('native renderer sync shared-texture source frames', () => {
 });
 
 describe('native renderer sync graph effect routing', () => {
+  it('records native graph route failures after warning suppression kicks in', () => {
+    const sync = new NativeRendererSyncCtor() as any;
+    const routeState = {
+      inFlight: false,
+      seq: 0,
+      warnings: 0,
+      state: null,
+      bufferPrefixes: [],
+    };
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      for (let i = 0; i < 4; i += 1) {
+        sync.recordNativeGraphRouteFailure(
+          { kind: 'particle-field', key: 'particle-route' },
+          'layer-a',
+          new Error(`boom-${i}`),
+          routeState,
+        );
+      }
+
+      expect(warnSpy).toHaveBeenCalledTimes(3);
+    } finally {
+      warnSpy.mockRestore();
+    }
+
+    expect(routeState.warnings).toBe(4);
+    expect(sync.nativeGraphRouteFailures).toBe(4);
+    expect(sync.nativeGraphRouteSuppressedFailures).toBe(1);
+    expect(sync.nativeGraphRouteLastFailure).toBe('particle-field:layer-a:boom-3');
+
+    sync.resetNativeGraphRouteTelemetry();
+    expect(sync.nativeGraphRouteFailures).toBe(0);
+    expect(sync.nativeGraphRouteSuppressedFailures).toBe(0);
+    expect(sync.nativeGraphRouteLastFailure).toBeNull();
+  });
+
   it('only attaches native effect-pass chains to GPU graph routes when descriptors are advertised', () => {
     const sync = new NativeRendererSyncCtor() as any;
     sync.nativeComputeGraphSourceFrames = true;

@@ -237,6 +237,9 @@ describe('native renderer runtime state', () => {
       expect(state.graphCatalogComplete).toBe(true);
       expect(state.nativeGraphSourceFrames).toBe(true);
       expect(state.nativeGraphSourceFrameLayers).toBe(3);
+      expect(state.nativeGraphRouteFailures).toBe(0);
+      expect(state.nativeGraphRouteSuppressedFailures).toBe(0);
+      expect(state.nativeGraphRouteLastFailure).toBeNull();
       expect(state.computeGraphRuns).toBe(12);
       expect(state.computeGraphPasses).toBe(48);
       expect(state.sourceFrameSize).toBe(2048);
@@ -700,6 +703,9 @@ describe('native renderer runtime state', () => {
     updateNativeRendererRuntimeFromStatus(status({ compute_graph_runs: 16, compute_graph_passes: 64 }), {
       graphCatalogComplete: true,
       nativeGraphSourceFrames: true,
+      nativeGraphRouteFailures: 4,
+      nativeGraphRouteSuppressedFailures: 1,
+      nativeGraphRouteLastFailure: 'particle-field:layer-a:missing source-frame render',
     });
 
     expect(get(nativeRendererRuntime)).toMatchObject({
@@ -707,8 +713,24 @@ describe('native renderer runtime state', () => {
       outputDriverReady: true,
       computeGraphRuns: 16,
       computeGraphPasses: 64,
+      nativeGraphRouteFailures: 4,
+      nativeGraphRouteSuppressedFailures: 1,
+      nativeGraphRouteLastFailure: 'particle-field:layer-a:missing source-frame render',
       readinessDetail: 'output ready',
       blockers: ['shared texture pending'],
+    });
+
+    updateNativeRendererRuntimeFromStatus(status({ compute_graph_runs: 17, compute_graph_passes: 68 }), {
+      graphCatalogComplete: true,
+      nativeGraphSourceFrames: true,
+    });
+
+    expect(get(nativeRendererRuntime)).toMatchObject({
+      computeGraphRuns: 17,
+      computeGraphPasses: 68,
+      nativeGraphRouteFailures: 4,
+      nativeGraphRouteSuppressedFailures: 1,
+      nativeGraphRouteLastFailure: 'particle-field:layer-a:missing source-frame render',
     });
 
     resetNativeRendererRuntime();
