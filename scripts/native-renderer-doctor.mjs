@@ -227,7 +227,8 @@ async function inspectAppBridge() {
   if (!existsSync(bin)) {
     return { ok: false, detail: 'render-core binary missing' };
   }
-  const outputExportExpected = process.platform === 'darwin';
+  const fullNativeExpected = process.platform === 'darwin' || process.platform === 'win32';
+  const outputExportExpected = fullNativeExpected;
   const broker = createNativeRendererBroker({
     appRoot: root,
     resourcesPath: null,
@@ -274,6 +275,7 @@ async function inspectAppBridge() {
       checks.get('native-output-driver')?.ok &&
       readiness?.modes?.output_driver?.ok
     );
+    const fullV2Ready = !!readiness?.modes?.full_v2?.ok;
     const fullV2Blockers = readiness?.modes?.full_v2?.blockers ?? [];
     const fullV2BlockerDetail = formatBlockers(fullV2Blockers);
     const ok =
@@ -283,6 +285,7 @@ async function inspectAppBridge() {
       !!features.native_mp4_frame_encoder &&
       !!features.native_recording &&
       nativeOutputDriverReady &&
+      fullV2Ready === fullNativeExpected &&
       !!checks.get('native-texture-share-sender')?.ok === outputExportExpected &&
       !!checks.get('native-mp4-frame-encoder')?.ok &&
       !!directSharedRpc;
@@ -300,6 +303,7 @@ async function inspectAppBridge() {
         `shadowMode=${readiness?.modes?.shadow?.ok ? 'on' : 'pending'}`,
         `outputDriver=${nativeOutputDriverReady ? 'on' : 'pending'}`,
         `outputActive=${readiness?.modes?.output_active?.ok ? 'on' : 'idle'}`,
+        `fullV2Required=${fullNativeExpected ? 'yes' : 'no'}`,
         `fullV2=${readiness?.modes?.full_v2?.ok ? 'ready' : `pending(${fullV2Blockers.length})`}`,
         fullV2BlockerDetail ? `fullV2Blockers="${fullV2BlockerDetail}"` : '',
         `stage3dSceneIngest=${features.native_stage3d_scene_ingest ? 'on' : 'pending'}`,

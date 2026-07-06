@@ -386,7 +386,10 @@ try {
   );
 
   const capabilities = await broker.invoke('native_renderer_get_capabilities');
-  const outputExportExpected = process.platform === 'darwin';
+  const fullNativeExpected = process.platform === 'darwin' || process.platform === 'win32';
+  const outputExportExpected = fullNativeExpected;
+  const sourceFrameSharedTextureExpected = fullNativeExpected;
+  const expectedSharedTexturePlatform = process.platform === 'win32' ? 'dxgi' : 'iosurface';
   assert(
     capabilities?.core_capabilities_confirmed === true,
     `broker capabilities should be core-confirmed, not fallback: ${JSON.stringify(capabilities)}`,
@@ -639,16 +642,16 @@ try {
   );
   assert(capabilities?.features?.native_output_mirror_texture, 'broker capabilities lost native output mirror support');
   assert(
-    !!capabilities?.features?.shared_texture_source_frame_upload === (process.platform === 'darwin'),
-    `broker shared source-frame capability should match macOS IOSurface support: ${JSON.stringify(capabilities?.features)}`,
+    !!capabilities?.features?.shared_texture_source_frame_upload === sourceFrameSharedTextureExpected,
+    `broker shared source-frame capability should match native desktop shared-texture support: ${JSON.stringify(capabilities?.features)}`,
   );
   assert(
     !!capabilities?.features?.shared_texture_output_export === outputExportExpected,
-    `broker output shared-texture export capability should match macOS IOSurface support: ${JSON.stringify(capabilities?.features)}`,
+    `broker output shared-texture export capability should match native desktop shared-texture support: ${JSON.stringify(capabilities?.features)}`,
   );
   assert(
     !!capabilities?.features?.shared_texture_upload === outputExportExpected,
-    `broker shared-texture media transport capability should match macOS IOSurface support: ${JSON.stringify(capabilities?.features)}`,
+    `broker shared-texture media transport capability should match native desktop shared-texture support: ${JSON.stringify(capabilities?.features)}`,
   );
   assert(
     !!capabilities?.features?.native_texture_share_sender === outputExportExpected,
@@ -1688,12 +1691,12 @@ try {
   assert(checks.get('native-output-driver')?.ok, `broker readiness omitted native output driver: ${JSON.stringify(readiness)}`);
   assert(readiness?.modes?.shadow?.ok, `broker readiness shadow mode should be ready: ${JSON.stringify(readiness?.modes)}`);
   assert(readiness?.modes?.output_driver?.ok, `broker readiness output-driver mode should be ready: ${JSON.stringify(readiness?.modes)}`);
-  if (outputExportExpected) {
+  if (fullNativeExpected) {
     assert(
       readiness?.modes?.full_v2?.ok === true &&
         Array.isArray(readiness?.modes?.full_v2?.blockers) &&
         readiness.modes.full_v2.blockers.length === 0,
-      `broker readiness should mark full_v2 ready on macOS once native decode and IOSurface transport are active: ${JSON.stringify(readiness?.modes)}`,
+      `broker readiness should mark full_v2 ready on native desktop once decode and shared-texture transport are active: ${JSON.stringify(readiness?.modes)}`,
     );
   } else {
     assert(
@@ -1736,8 +1739,8 @@ try {
     `broker native texture-share sender readiness should match app bridge support: ${JSON.stringify(readiness)}`,
   );
   assert(
-    checks.get('shared-texture-source-frame-upload')?.ok === (process.platform === 'darwin'),
-    `broker shared source-frame readiness should match macOS IOSurface support: ${JSON.stringify(readiness)}`,
+    checks.get('shared-texture-source-frame-upload')?.ok === sourceFrameSharedTextureExpected,
+    `broker shared source-frame readiness should match native desktop shared-texture support: ${JSON.stringify(readiness)}`,
   );
 
   await broker.invoke('native_renderer_submit_commands', {
@@ -1838,9 +1841,9 @@ try {
   if (outputExportExpected) {
     assert(
       outputTexture?.available &&
-        outputTexture.platform === 'iosurface' &&
+        outputTexture.platform === expectedSharedTexturePlatform &&
         String(outputTexture.handle ?? '').length > 0 &&
-        outputTexture.handle_encoding === 'integer' &&
+        String(outputTexture.handle_encoding ?? '').length > 0 &&
         Number(outputTexture.width ?? 0) > 0 &&
         Number(outputTexture.height ?? 0) > 0,
       `broker output shared-texture metadata is incomplete: ${JSON.stringify(outputTexture)}`,
@@ -1868,21 +1871,21 @@ try {
     assert(
       Number(loopbackStatus.source_frame_uploads ?? 0) >
         Number(beforeLoopbackStatus.source_frame_uploads ?? 0),
-      `valid output IOSurface loopback did not count as a source-frame upload: ${JSON.stringify(loopbackStatus)}`,
+      `valid output shared-texture loopback did not count as a source-frame upload: ${JSON.stringify(loopbackStatus)}`,
     );
     assert(
       Number(loopbackStatus.source_frame_shared_texture_uploads ?? 0) >
         Number(beforeLoopbackStatus.source_frame_shared_texture_uploads ?? 0),
-      `valid output IOSurface loopback did not count as a shared upload: ${JSON.stringify(loopbackStatus)}`,
+      `valid output shared-texture loopback did not count as a shared upload: ${JSON.stringify(loopbackStatus)}`,
     );
     assert(
       Number(loopbackStatus.source_frame_rejected_uploads ?? 0) ===
         Number(beforeLoopbackStatus.source_frame_rejected_uploads ?? 0),
-      `valid output IOSurface loopback was unexpectedly rejected: ${JSON.stringify(loopbackStatus)}`,
+      `valid output shared-texture loopback was unexpectedly rejected: ${JSON.stringify(loopbackStatus)}`,
     );
     assert(
       loopbackStatus.source_frame_last_upload_transport === 'shared-texture',
-      `valid output IOSurface loopback did not preserve shared transport detail: ${JSON.stringify(loopbackStatus)}`,
+      `valid output shared-texture loopback did not preserve shared transport detail: ${JSON.stringify(loopbackStatus)}`,
     );
   }
 
