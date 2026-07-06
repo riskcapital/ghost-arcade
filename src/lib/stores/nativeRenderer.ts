@@ -105,7 +105,7 @@ export function inferNativeGraphRuntimeFlags(
     features.compute_graph_source_frame_target
   );
   const graphChecks = (readiness?.checks ?? []).filter((check) =>
-    String(check?.id ?? '').startsWith('native-graph-'),
+    isNativeGraphReadinessCheck(String(check?.id ?? '')),
   );
   const graphCatalogComplete = graphChecks.length > 0
     ? graphChecks.every((check) => !!check?.ok)
@@ -115,6 +115,10 @@ export function inferNativeGraphRuntimeFlags(
     );
 
   return { graphCatalogComplete, nativeGraphSourceFrames };
+}
+
+function isNativeGraphReadinessCheck(id: string): boolean {
+  return id.startsWith('native-graph-') || (id.startsWith('native-') && id.endsWith('-graph'));
 }
 
 function readinessModeOk(readiness: RendererReadinessReport | null | undefined, mode: string) {
