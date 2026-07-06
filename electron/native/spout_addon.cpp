@@ -1177,6 +1177,63 @@ Napi::Value GetGpuInfo(const Napi::CallbackInfo& info) {
     return result;
 }
 
+Napi::Value DuplicateSharedHandleForProcess(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+
+    if (info.Length() < 2 || !info[0].IsBuffer() || !info[1].IsNumber()) {
+        Napi::TypeError::New(env, "Expected (handleBuffer, targetPid)")
+            .ThrowAsJavaScriptException();
+        return env.Null();
+    }
+
+    auto handleBuffer = info[0].As<Napi::Buffer<uint8_t>>();
+    if (handleBuffer.Length() < sizeof(HANDLE)) {
+        return env.Null();
+    }
+
+    HANDLE sourceHandle = *reinterpret_cast<HANDLE*>(handleBuffer.Data());
+    DWORD targetPid = info[1].As<Napi::Number>().Uint32Value();
+    if (!sourceHandle || targetPid == 0) {
+        return env.Null();
+    }
+
+    HANDLE targetProcess = OpenProcess(PROCESS_DUP_HANDLE, FALSE, targetPid);
+    if (!targetProcess) {
+        static int errCount = 0;
+        if (errCount++ < 5)
+            printf("[SpoutAddon] OpenProcess(PROCESS_DUP_HANDLE, pid=%lu) failed: %lu\n",
+                static_cast<unsigned long>(targetPid),
+                static_cast<unsigned long>(GetLastError()));
+        return env.Null();
+    }
+
+    HANDLE targetHandle = nullptr;
+    BOOL ok = DuplicateHandle(
+        GetCurrentProcess(),
+        sourceHandle,
+        targetProcess,
+        &targetHandle,
+        0,
+        FALSE,
+        DUPLICATE_SAME_ACCESS);
+    DWORD err = ok ? ERROR_SUCCESS : GetLastError();
+    CloseHandle(targetProcess);
+
+    if (!ok || !targetHandle) {
+        static int errCount = 0;
+        if (errCount++ < 5)
+            printf("[SpoutAddon] DuplicateHandle(target pid=%lu) failed: %lu\n",
+                static_cast<unsigned long>(targetPid),
+                static_cast<unsigned long>(err));
+        return env.Null();
+    }
+
+    return Napi::Buffer<uint8_t>::Copy(
+        env,
+        reinterpret_cast<uint8_t*>(&targetHandle),
+        sizeof(HANDLE));
+}
+
 
 // ============================================================
 // Module init
@@ -1188,6 +1245,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     SpoutReceiver::Init(env, exports);
     exports.Set("listSenders", Napi::Function::New(env, ListSenders));
     exports.Set("getGpuInfo", Napi::Function::New(env, GetGpuInfo));
+    exports.Set("duplicateSharedHandleForProcess", Napi::Function::New(env, DuplicateSharedHandleForProcess));
     return exports;
 }
 

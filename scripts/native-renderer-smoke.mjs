@@ -1142,7 +1142,9 @@ async function main() {
     await delay(80);
 
     const capabilities = await rpc.send('capabilities', {}, 5000);
-    const outputExportExpected = process.platform === 'darwin';
+    const outputExportExpected = process.platform === 'darwin' || process.platform === 'win32';
+    const expectedSharedTexturePlatform = process.platform === 'win32' ? 'dxgi' : 'iosurface';
+    const sharedTextureLabel = process.platform === 'win32' ? 'DXGI' : 'IOSurface';
     if (!capabilities?.features?.layer_compositor || !capabilities?.features?.fragment_wgsl_host) {
       throw new Error(`native capabilities missing implemented core features: ${JSON.stringify(capabilities)}`);
     }
@@ -1224,7 +1226,7 @@ async function main() {
     if (outputExportExpected) {
       if (
         !outputTexture?.available ||
-        outputTexture.platform !== 'iosurface' ||
+        outputTexture.platform !== expectedSharedTexturePlatform ||
         !String(outputTexture.handle ?? '').length ||
         outputTexture.handle_encoding !== 'integer' ||
         Number(outputTexture.width ?? 0) <= 0 ||
@@ -1239,7 +1241,7 @@ async function main() {
     if (outputExportExpected) {
       const beforeDirectSharedStatus = await rpc.send('status', {}, 5000);
       const directSharedStatus = await rpc.send('upload_source_gpu_shared_texture', {
-        source_id: 'direct-core-iosurface-loopback',
+        source_id: `direct-core-${expectedSharedTexturePlatform}-loopback`,
         width: Number(outputTexture.width),
         height: Number(outputTexture.height),
         shared_handle: String(outputTexture.handle),
@@ -1254,7 +1256,7 @@ async function main() {
           Number(beforeDirectSharedStatus?.source_frame_shared_texture_uploads ?? 0) ||
         directSharedStatus?.source_frame_last_upload_transport !== 'shared-texture'
       ) {
-        throw new Error(`direct native shared texture RPC did not import output IOSurface: ${JSON.stringify(directSharedStatus)}`);
+        throw new Error(`direct native shared texture RPC did not import output ${sharedTextureLabel}: ${JSON.stringify(directSharedStatus)}`);
       }
     }
     if (!capabilities.native_graph_instruments?.includes('smoke-3d')) {
@@ -2092,13 +2094,13 @@ async function main() {
       const loopbackTexture = await rpc.send('output_shared_texture', {}, 5000);
       if (
         !loopbackTexture?.available ||
-        loopbackTexture.platform !== 'iosurface' ||
+        loopbackTexture.platform !== expectedSharedTexturePlatform ||
         !String(loopbackTexture.handle ?? '').length ||
         loopbackTexture.handle_encoding !== 'integer' ||
         Number(loopbackTexture.width ?? 0) <= 0 ||
         Number(loopbackTexture.height ?? 0) <= 0
       ) {
-        throw new Error(`native output IOSurface loopback metadata is incomplete: ${JSON.stringify(loopbackTexture)}`);
+        throw new Error(`native output ${sharedTextureLabel} loopback metadata is incomplete: ${JSON.stringify(loopbackTexture)}`);
       }
       await rpc.send('submit_commands', {
         commands: [
@@ -2106,7 +2108,7 @@ async function main() {
           { type: 'remove_layer', layer_id: 'smoke-native-image' },
           {
             type: 'upload_source_frame',
-            source_id: 'smoke-iosurface-loopback-source',
+            source_id: `smoke-${expectedSharedTexturePlatform}-loopback-source`,
             width: Number(loopbackTexture.width),
             height: Number(loopbackTexture.height),
             shared_handle: String(loopbackTexture.handle),
@@ -2116,13 +2118,13 @@ async function main() {
             shared_texture_handle_byte_length: loopbackTexture.handle_byte_length,
             seq: 1,
           },
-          { type: 'upsert_layer', layer_id: 'smoke-iosurface-loopback-frame', z_index: 0, blend_mode: 'normal', opacity: 1, corners: FULLSCREEN_CORNERS },
-          { type: 'set_layer_visibility', layer_id: 'smoke-iosurface-loopback-frame', visible: true },
-          { type: 'bind_media_source', layer_id: 'smoke-iosurface-loopback-frame', source_id: 'smoke-iosurface-loopback-source', uri: 'iosurface-loopback://native-output', source_type: 'image' },
+          { type: 'upsert_layer', layer_id: `smoke-${expectedSharedTexturePlatform}-loopback-frame`, z_index: 0, blend_mode: 'normal', opacity: 1, corners: FULLSCREEN_CORNERS },
+          { type: 'set_layer_visibility', layer_id: `smoke-${expectedSharedTexturePlatform}-loopback-frame`, visible: true },
+          { type: 'bind_media_source', layer_id: `smoke-${expectedSharedTexturePlatform}-loopback-frame`, source_id: `smoke-${expectedSharedTexturePlatform}-loopback-source`, uri: `${expectedSharedTexturePlatform}-loopback://native-output`, source_type: 'image' },
         ],
       }, 5000);
-      sourceFrameSharedTextureSnapshot = await snapshot(rpc, 'source-frame-iosurface-loopback', 0.52, 8);
-      assertFrame('source frame IOSurface loopback layer', sourceFrameSharedTextureSnapshot, 0.02);
+      sourceFrameSharedTextureSnapshot = await snapshot(rpc, `source-frame-${expectedSharedTexturePlatform}-loopback`, 0.52, 8);
+      assertFrame(`source frame ${sharedTextureLabel} loopback layer`, sourceFrameSharedTextureSnapshot, 0.02);
       const afterSharedFrameStatus = await rpc.send('status', {}, 5000);
       if (
         Number(afterSharedFrameStatus.source_frame_shared_texture_uploads ?? 0) <=
