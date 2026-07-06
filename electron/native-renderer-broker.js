@@ -1209,14 +1209,14 @@ class NativeRendererBroker {
         : !textureShare.available
           ? `${textureShareName} native addon unavailable${textureShare.error ? `: ${textureShare.error}` : ''}`
           : textureShare.nativeOutputPendingPromotion
-            ? `publishing through OSR while waiting to promote to native IOSurface (${textureShare.nativeOutputPromotionAttempts ?? 0} check(s))`
+            ? `publishing through OSR while waiting to promote to native shared texture (${textureShare.nativeOutputPromotionAttempts ?? 0} check(s))`
           : textureShare.nativeOutputWaitingForFrame
-            ? 'native output IOSurface pump is waiting for the first rendered frame'
+            ? 'native output shared-texture pump is waiting for the first rendered frame'
           : textureShare.nativeOutputActive
             ? `native output shared texture is actively publishing through ${textureShareName}${nativeOutputLastFrame > 0 ? `; last native frame ${nativeOutputLastFrame}` : ''}`
             : textureShare.nativeOutputCapable
               ? `native output shared texture can publish through ${textureShareName} when the sender is started`
-              : `${textureShareName} addon does not expose native output IOSurface publish`;
+              : `${textureShareName} addon does not expose native output shared-texture publish`;
     const nativeTextureShareOutputActiveOk = !!(
       features.shared_texture_output_export &&
       textureShare?.available &&
@@ -2195,9 +2195,9 @@ function applyBrokerCapabilityOverlay(capabilities, textureShare, nativeFrameEnc
   const notes = Array.isArray(capabilities?.notes) ? [...capabilities.notes] : [];
   if (
     nativeTextureShareSenderReady &&
-    !notes.some((note) => String(note).includes('Electron texture-share bridge can publish native output IOSurfaces'))
+    !notes.some((note) => String(note).includes('Electron texture-share bridge can publish native output shared textures'))
   ) {
-    notes.push('Electron texture-share bridge can publish native output IOSurfaces through Syphon when the sender is started.');
+    notes.push('Electron texture-share bridge can publish native output shared textures through Syphon/Spout when the sender is started.');
   }
   if (
     nativeFrameEncoder?.available &&

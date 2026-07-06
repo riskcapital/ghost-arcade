@@ -2038,12 +2038,13 @@ function getReceiverTextureInfoSupport(addon = spoutAddon) {
 }
 
 function getNativeOutputTextureShareSupport(addon = spoutAddon) {
-  if (!isMac || !addon) return false;
+  if (!addon) return false;
   const OutputClass = getOutputClass(addon);
+  const method = isMac ? 'publishIOSurface' : 'sendTexture';
   return !!(
     OutputClass &&
     OutputClass.prototype &&
-    typeof OutputClass.prototype.publishIOSurface === 'function'
+    typeof OutputClass.prototype[method] === 'function'
   );
 }
 
@@ -2596,21 +2597,51 @@ function stopOsrPaintPump() {
   } catch {}
 }
 
+function nativeOutputTextureHandleBuffer(texture) {
+  if (!texture || typeof texture !== 'object') return null;
+  const encoding = String(texture.handle_encoding ?? texture.handleEncoding ?? '').toLowerCase();
+  const handle = texture.handle;
+  if (Buffer.isBuffer(handle)) return handle.length >= 8 ? handle : null;
+  if (handle instanceof Uint8Array) return handle.byteLength >= 8 ? Buffer.from(handle) : null;
+  if (handle instanceof ArrayBuffer) return handle.byteLength >= 8 ? Buffer.from(handle) : null;
+  if (encoding === 'base64' && typeof handle === 'string') {
+    const buffer = Buffer.from(handle, 'base64');
+    return buffer.length >= 8 ? buffer : null;
+  }
+  if ((encoding === 'integer' || encoding === 'opaque' || !encoding) && handle !== undefined && handle !== null) {
+    try {
+      const value = typeof handle === 'bigint'
+        ? handle
+        : typeof handle === 'number'
+          ? BigInt(Math.trunc(handle))
+          : BigInt(String(handle).trim());
+      if (value <= 0n) return null;
+      const buffer = Buffer.alloc(8);
+      buffer.writeBigUInt64LE(value);
+      return buffer;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 function isNativeOutputTextureHandleReady(texture) {
-  if (!isMac || !texture || typeof texture !== 'object') return false;
+  if (!texture || typeof texture !== 'object') return false;
   const surfaceId = Number(texture.handle);
   const width = Number(texture.width ?? 0);
   const height = Number(texture.height ?? 0);
-  return !!(
-    texture.available &&
-    texture.platform === 'iosurface' &&
-    Number.isFinite(surfaceId) &&
-    surfaceId > 0 &&
-    Number.isFinite(width) &&
-    width > 0 &&
-    Number.isFinite(height) &&
-    height > 0
-  );
+  if (!(texture.available && Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0)) {
+    return false;
+  }
+  if (isMac) {
+    return !!(
+      texture.platform === 'iosurface' &&
+      Number.isFinite(surfaceId) &&
+      surfaceId > 0
+    );
+  }
+  return texture.platform === 'dxgi' && !!nativeOutputTextureHandleBuffer(texture);
 }
 
 function isPublishableNativeOutputTexture(texture) {
@@ -2630,17 +2661,17 @@ async function getNativeOutputSharedTextureMetadata() {
 }
 
 async function canPublishNativeOutputTextureShare() {
-  if (!isMac) return { ok: false, texture: null, reason: 'native output Syphon path is macOS-only' };
   const addon = loadSpoutAddon();
   const OutputClass = addon ? getOutputClass(addon) : null;
-  if (!OutputClass || typeof OutputClass.prototype?.publishIOSurface !== 'function') {
-    return { ok: false, texture: null, reason: 'SyphonOutput.publishIOSurface is unavailable' };
+  const method = isMac ? 'publishIOSurface' : 'sendTexture';
+  if (!OutputClass || typeof OutputClass.prototype?.[method] !== 'function') {
+    return { ok: false, texture: null, reason: `${textureShareLabel} native output ${method} is unavailable` };
   }
   const texture = await getNativeOutputSharedTextureMetadata();
   return {
     ok: isNativeOutputTextureHandleReady(texture),
     texture,
-    reason: texture?.reason || 'native renderer output IOSurface is unavailable',
+    reason: texture?.reason || `native renderer output ${isMac ? 'IOSurface' : 'DXGI texture'} is unavailable`,
   };
 }
 
@@ -2670,10 +2701,11 @@ function stopNativeOutputTextureSharePromotion() {
 }
 
 function startNativeOutputTextureSharePromotion(reason = 'waiting-for-native-output') {
-  if (!isMac || nativeOutputTextureShareActive || nativeOutputTextureSharePromoteTimer) {
+  if (nativeOutputTextureShareActive || nativeOutputTextureSharePromoteTimer) {
     return false;
   }
-  if (!spoutSendActive || !spoutOutput || typeof spoutOutput.publishIOSurface !== 'function') {
+  const method = isMac ? 'publishIOSurface' : 'sendTexture';
+  if (!spoutSendActive || !spoutOutput || typeof spoutOutput[method] !== 'function') {
     return false;
   }
 
@@ -2693,13 +2725,13 @@ function startNativeOutputTextureSharePromotion(reason = 'waiting-for-native-out
       const texture = await getNativeOutputSharedTextureMetadata();
       if (!isNativeOutputTextureHandleReady(texture)) {
         if (nativeOutputTextureSharePromoteAttempts === 1 || nativeOutputTextureSharePromoteAttempts % 10 === 0) {
-          console.log(`[${textureShareLabel} Native] waiting to promote Syphon sender to native IOSurface: ${texture?.reason || reason}`);
+          console.log(`[${textureShareLabel} Native] waiting to promote sender to native ${isMac ? 'IOSurface' : 'DXGI'} output: ${texture?.reason || reason}`);
         }
         return;
       }
       if (!isPublishableNativeOutputTexture(texture)) {
         if (nativeOutputTextureSharePromoteAttempts === 1 || nativeOutputTextureSharePromoteAttempts % 10 === 0) {
-          console.log(`[${textureShareLabel} Native] waiting to promote Syphon sender until the native output has a rendered frame`);
+          console.log(`[${textureShareLabel} Native] waiting to promote sender until the native output has a rendered frame`);
         }
         return;
       }
@@ -2708,7 +2740,7 @@ function startNativeOutputTextureSharePromotion(reason = 'waiting-for-native-out
       if (!started) return;
 
       destroySpoutOsrWindow();
-      console.log(`[${textureShareLabel} Native] promoted sender to native output IOSurface after ${nativeOutputTextureSharePromoteAttempts} check(s)`);
+      console.log(`[${textureShareLabel} Native] promoted sender to native ${isMac ? 'IOSurface' : 'DXGI'} output after ${nativeOutputTextureSharePromoteAttempts} check(s)`);
       stopNativeOutputTextureSharePromotion();
     } catch (err) {
       if (nativeOutputTextureSharePromoteAttempts <= 5) {
@@ -2728,7 +2760,8 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
   stopNativeOutputTextureSharePromotion();
   stopNativeOutputTextureSharePump();
 
-  if (!isMac || !spoutOutput || typeof spoutOutput.publishIOSurface !== 'function') {
+  const method = isMac ? 'publishIOSurface' : 'sendTexture';
+  if (!spoutOutput || typeof spoutOutput[method] !== 'function') {
     return false;
   }
 
@@ -2741,7 +2774,7 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
   nativeOutputTextureShareWaitingForFrame = false;
   nativeOutputTextureShareWaitingForFrameLogged = false;
   nativeOutputTextureShareLastLogTime = Date.now();
-  notifyMainWindowOsrStatus(true, 'native-iosurface');
+  notifyMainWindowOsrStatus(true, isMac ? 'native-iosurface' : 'native-dxgi');
 
   const publish = async (knownTexture = null) => {
     if (!nativeOutputTextureShareActive || nativeOutputTextureShareInFlight) return;
@@ -2752,14 +2785,14 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
       if (!isNativeOutputTextureHandleReady(texture)) {
         nativeOutputTextureShareFailCount++;
         if (nativeOutputTextureShareFailCount <= 5) {
-          console.warn(`[${textureShareLabel} Native] output IOSurface unavailable:`, JSON.stringify(texture));
+          console.warn(`[${textureShareLabel} Native] output shared texture unavailable:`, JSON.stringify(texture));
         }
         if (nativeOutputTextureShareFailCount >= 10) {
           console.warn(`[${textureShareLabel} Native] falling back to OSR texture share after repeated native output failures`);
-          stopNativeOutputTextureSharePump('native-iosurface-failed');
+          stopNativeOutputTextureSharePump(isMac ? 'native-iosurface-failed' : 'native-dxgi-failed');
           if (spoutSendActive && spoutOutput && !spoutOsrWindow) {
             createSpoutOsrWindow(spoutSendW, spoutSendH);
-            startNativeOutputTextureSharePromotion('native-iosurface-failed');
+            startNativeOutputTextureSharePromotion(isMac ? 'native-iosurface-failed' : 'native-dxgi-failed');
           }
         }
         return;
@@ -2767,13 +2800,12 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
       if (!isPublishableNativeOutputTexture(texture)) {
         nativeOutputTextureShareWaitingForFrame = true;
         if (!nativeOutputTextureShareWaitingForFrameLogged) {
-          console.log(`[${textureShareLabel} Native] waiting for first native output frame before publishing IOSurface`);
+          console.log(`[${textureShareLabel} Native] waiting for first native output frame before publishing shared texture`);
           nativeOutputTextureShareWaitingForFrameLogged = true;
         }
         return;
       }
 
-      const surfaceId = Number(texture.handle);
       const width = Number(texture.width);
       const height = Number(texture.height);
       const frameId = Math.max(0, Math.floor(Number(texture.frame ?? 0)));
@@ -2791,11 +2823,18 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
       ) {
         return;
       }
-      const ok = spoutOutput.publishIOSurface(surfaceId, width, height, !!texture.flipped);
+      let ok = false;
+      if (isMac) {
+        const surfaceId = Number(texture.handle);
+        ok = spoutOutput.publishIOSurface(surfaceId, width, height, !!texture.flipped);
+      } else {
+        const handleBuffer = nativeOutputTextureHandleBuffer(texture);
+        ok = !!(handleBuffer && spoutOutput.sendTexture(handleBuffer));
+      }
       if (!ok) {
         nativeOutputTextureShareFailCount++;
         if (nativeOutputTextureShareFailCount <= 5) {
-          console.warn(`[${textureShareLabel} Native] publishIOSurface returned false for ${width}x${height}`);
+          console.warn(`[${textureShareLabel} Native] ${method} returned false for ${width}x${height}`);
         }
         return;
       }
@@ -2810,7 +2849,7 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
       if (now - nativeOutputTextureShareLastLogTime > 5000) {
         const elapsed = (now - nativeOutputTextureShareLastLogTime) / 1000;
         const fps = nativeOutputTextureShareFrameCount / elapsed;
-        console.log(`[${textureShareLabel} Native] publishIOSurface ${width}x${height} @ ${fps.toFixed(1)} fps`);
+        console.log(`[${textureShareLabel} Native] ${method} ${width}x${height} @ ${fps.toFixed(1)} fps`);
         nativeOutputTextureShareFrameCount = 0;
         nativeOutputTextureShareLastLogTime = now;
       }
@@ -2826,12 +2865,12 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
 
   publish(initialTexture);
   nativeOutputTextureSharePump = setInterval(() => publish(), intervalMs);
-  console.log(`[${textureShareLabel} Native] Output IOSurface pump started @ ${OSR_PAINT_FPS} fps`);
+  console.log(`[${textureShareLabel} Native] Output ${isMac ? 'IOSurface' : 'DXGI'} pump started @ ${OSR_PAINT_FPS} fps`);
   return true;
 }
 
 function getTextureShareSenderMode() {
-  if (nativeOutputTextureShareActive) return 'native-iosurface';
+  if (nativeOutputTextureShareActive) return isMac ? 'native-iosurface' : 'native-dxgi';
   if (osrActive) return 'zero-copy';
   if (ALLOW_CPU_TEXTURE_SHARE_FALLBACK) return 'cpu-sendimage';
   return osrFailureReason ? 'zero-copy-unavailable' : 'zero-copy-pending';
@@ -3687,7 +3726,7 @@ function registerIpcHandlers() {
         createSpoutOsrWindow(targetWidth, targetHeight);
         startNativeOutputTextureSharePromotion('native-pump-start-failed');
       }
-    } else if (nativeOutputShare.reason && isMac) {
+    } else if (nativeOutputShare.reason) {
       console.log(`[${textureShareLabel} Native] using OSR texture share: ${nativeOutputShare.reason}`);
       if (ok) {
         startNativeOutputTextureSharePromotion(nativeOutputShare.reason);
