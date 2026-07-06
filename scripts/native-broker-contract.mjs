@@ -136,6 +136,32 @@ function readNativeEffectPassManifest() {
   return entries;
 }
 
+function readGhostAudioUniformLayout() {
+  const source = readFileSync(join(process.cwd(), 'src/lib/audio/ghostAudioUniform.ts'), 'utf8');
+  const version = Number(/schema_version:\s*(\d+)/.exec(source)?.[1] ?? 0);
+  const readFields = (key) => {
+    const match = new RegExp(`${key}:\\s*\\[([^\\]]+)\\]\\s*as const`).exec(source);
+    assert(match, `could not parse ${key} from GHOST_AUDIO_UNIFORM_LAYOUT`);
+    return [...match[1].matchAll(/'([^']+)'/g)].map((entry) => entry[1]);
+  };
+  assert(version > 0, 'could not parse GHOST_AUDIO_UNIFORM_LAYOUT schema_version');
+  return {
+    schema_version: version,
+    audio0: readFields('audio0'),
+    audio1: readFields('audio1'),
+    audio2: readFields('audio2'),
+  };
+}
+
+function audioUniformLayoutMatches(actual, expected) {
+  if (!actual || Number(actual.schema_version) !== expected.schema_version) return false;
+  return ['audio0', 'audio1', 'audio2'].every((key) =>
+    Array.isArray(actual[key]) &&
+    actual[key].length === expected[key].length &&
+    actual[key].every((field, index) => String(field) === expected[key][index]),
+  );
+}
+
 const FULLSCREEN_CORNERS = {
   topLeft: { x: 0, y: 1 },
   topRight: { x: 1, y: 1 },
@@ -431,6 +457,12 @@ try {
   assert(capabilities?.features?.native_static_image_prefetch, 'broker capabilities lost native still-image prefetch support');
   assert(capabilities?.features?.native_compositor_manifest, 'broker capabilities lost native compositor manifest support');
   assert(capabilities?.features?.native_effect_pass_manifest, 'broker capabilities lost native effect-pass manifest support');
+  const requiredAudioLayout = readGhostAudioUniformLayout();
+  assert(
+    capabilities?.features?.audio_uniform_layout &&
+      audioUniformLayoutMatches(capabilities?.audio_uniform_layout, requiredAudioLayout),
+    `broker native audio uniform layout has drifted from src/lib/audio/ghostAudioUniform.ts: ${JSON.stringify(capabilities?.audio_uniform_layout)}`,
+  );
   assert(
       capabilities?.features?.native_stage3d_scene_ingest &&
       capabilities?.features?.native_stage3d_overlay_preview &&

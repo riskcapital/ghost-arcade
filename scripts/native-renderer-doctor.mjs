@@ -38,6 +38,32 @@ function readNativeEffectPassManifest() {
   if (!entries.length) throw new Error('could not parse NATIVE_EFFECT_PASS_MANIFEST');
   return entries;
 }
+
+function readGhostAudioUniformLayout() {
+  const source = readFileSync(join(root, 'src/lib/audio/ghostAudioUniform.ts'), 'utf8');
+  const version = Number(/schema_version:\s*(\d+)/.exec(source)?.[1] ?? 0);
+  const readFields = (key) => {
+    const match = new RegExp(`${key}:\\s*\\[([^\\]]+)\\]\\s*as const`).exec(source);
+    if (!match) throw new Error(`could not parse ${key} from GHOST_AUDIO_UNIFORM_LAYOUT`);
+    return [...match[1].matchAll(/'([^']+)'/g)].map((entry) => entry[1]);
+  };
+  if (!version) throw new Error('could not parse GHOST_AUDIO_UNIFORM_LAYOUT schema_version');
+  return {
+    schema_version: version,
+    audio0: readFields('audio0'),
+    audio1: readFields('audio1'),
+    audio2: readFields('audio2'),
+  };
+}
+
+function audioUniformLayoutMatches(actual, expected) {
+  if (!actual || Number(actual.schema_version) !== expected.schema_version) return false;
+  return ['audio0', 'audio1', 'audio2'].every((key) =>
+    Array.isArray(actual[key]) &&
+    actual[key].length === expected[key].length &&
+    actual[key].every((field, index) => String(field) === expected[key][index]),
+  );
+}
 const REQUIRED_FEATURES = [
   'compute_graph_host',
   'compute_graph_render',
@@ -216,6 +242,9 @@ async function inspectCore() {
     const outputTexture = await rpc.send('output_shared_texture', {}, 5000);
     const features = capabilities?.features ?? {};
     const instruments = new Set(capabilities?.native_graph_instruments ?? []);
+    const expectedAudioLayout = readGhostAudioUniformLayout();
+    const audioLayoutOk = !!features.audio_uniform_layout &&
+      audioUniformLayoutMatches(capabilities?.audio_uniform_layout, expectedAudioLayout);
     const missingFeatures = REQUIRED_FEATURES.filter((feature) => !features[feature]);
     const missingInstruments = REQUIRED_GRAPH_INSTRUMENTS.filter((instrument) => !instruments.has(instrument));
     const proxyFallbackDisabled = features.native_instrument_proxies === false;
@@ -232,6 +261,7 @@ async function inspectCore() {
     }
     const ok =
       !!status?.backend_ready &&
+      audioLayoutOk &&
       missingFeatures.length === 0 &&
       missingInstruments.length === 0 &&
       proxyFallbackDisabled &&
@@ -252,6 +282,7 @@ async function inspectCore() {
         `graphLines=${features.compute_graph_line_render ? 'on' : 'missing'}`,
         `graphClearColor=${features.compute_graph_clear_color ? 'on' : 'missing'}`,
         `proxyFallback=${proxyFallbackDisabled ? 'off' : 'on'}`,
+        `audioLayout=${audioLayoutOk ? `v${expectedAudioLayout.schema_version}` : 'mismatch'}`,
         `outputFormat=${status?.output_format ?? 'unknown'}`,
         `outputMirror=${features.native_output_mirror_texture ? 'on' : 'missing'}`,
         `frameExport=${features.native_frame_export ? 'on' : 'missing'}`,
@@ -327,6 +358,9 @@ async function inspectAppBridge() {
     const readiness = await broker.invoke('native_renderer_get_readiness_report');
     const outputTexture = await broker.invoke('native_renderer_get_output_shared_texture');
     const features = capabilities?.features ?? {};
+    const expectedAudioLayout = readGhostAudioUniformLayout();
+    const audioLayoutOk = !!features.audio_uniform_layout &&
+      audioUniformLayoutMatches(capabilities?.audio_uniform_layout, expectedAudioLayout);
     const effectPassDescriptors = Array.isArray(capabilities?.native_effect_pass_descriptors)
       ? capabilities.native_effect_pass_descriptors
       : [];
@@ -354,6 +388,7 @@ async function inspectAppBridge() {
       outputTransportOk &&
       !!features.native_mp4_frame_encoder &&
       !!features.native_recording &&
+      audioLayoutOk &&
       effectPassManifestOk &&
       nativeOutputDriverReady &&
       fullV2Ready === fullNativeExpected &&
@@ -371,6 +406,7 @@ async function inspectAppBridge() {
         outputTransportOk ? '' : 'outputTransportMismatch=1',
         `nativeShareSender=${features.native_texture_share_sender ? 'on' : 'pending'}`,
         `nativeMp4Encoder=${features.native_mp4_frame_encoder ? 'on' : 'missing'}`,
+        `audioLayout=${audioLayoutOk ? `v${expectedAudioLayout.schema_version}` : 'mismatch'}`,
         `effectPass=${features.native_effect_pass_manifest ? `${effectPassDescriptors.length}fx` : 'pending'}`,
         effectPassManifestOk ? '' : `effectPassExpected=${expectedEffectPassDescriptors.length}fx`,
         `frameExport=${features.native_frame_export ? 'on' : 'missing'}`,
