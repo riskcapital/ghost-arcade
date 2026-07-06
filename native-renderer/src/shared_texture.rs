@@ -420,6 +420,40 @@ mod tests {
     }
 
     #[test]
+    fn dxgi_unsupported_reason_reports_valid_handle_metadata() {
+        let command = json!({
+            "shared_handle": "0x1234",
+            "shared_texture_platform": "spout"
+        });
+
+        let descriptor =
+            SharedTextureSourceFrameDescriptor::from_command(&command, 1280, 720).unwrap();
+
+        assert!(
+            descriptor
+                .unsupported_reason("d3d12")
+                .contains("DXGI HANDLE metadata is valid")
+        );
+    }
+
+    #[test]
+    fn dxgi_unsupported_reason_reports_invalid_handle_metadata() {
+        let command = json!({
+            "shared_handle": "not-a-handle",
+            "shared_texture_platform": "dxgi"
+        });
+
+        let descriptor =
+            SharedTextureSourceFrameDescriptor::from_command(&command, 1280, 720).unwrap();
+
+        assert!(
+            descriptor
+                .unsupported_reason("d3d12")
+                .contains("DXGI HANDLE metadata is invalid")
+        );
+    }
+
+    #[test]
     fn parses_nested_iosurface_handle_metadata() {
         let command = json!({
             "shared_texture": {
