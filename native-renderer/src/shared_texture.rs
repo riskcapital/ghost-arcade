@@ -170,6 +170,21 @@ impl SharedTextureSourceFrameDescriptor {
             )),
         }
     }
+
+    pub fn normalized_format(&self) -> String {
+        self.format
+            .trim()
+            .to_ascii_lowercase()
+            .replace(['-', '_'], "")
+    }
+
+    pub fn wgpu_texture_format(&self) -> wgpu::TextureFormat {
+        match self.normalized_format().as_str() {
+            "rgba8unorm" | "28" | "70" => wgpu::TextureFormat::Rgba8Unorm,
+            "bgra8unorm" | "80" | "87" => wgpu::TextureFormat::Bgra8Unorm,
+            _ => wgpu::TextureFormat::Bgra8Unorm,
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -605,6 +620,40 @@ mod tests {
                 .iosurface_id()
                 .unwrap_err()
                 .contains("separate process")
+        );
+    }
+
+    #[test]
+    fn shared_texture_format_maps_common_dxgi_codes() {
+        let mut descriptor = SharedTextureSourceFrameDescriptor {
+            handle: "1".to_string(),
+            platform: "dxgi".to_string(),
+            format: "28".to_string(),
+            handle_encoding: "integer".to_string(),
+            handle_chars: 1,
+            handle_byte_length: None,
+            close_handle_after_import: false,
+            frame: None,
+            sender_name: None,
+            width: 1920,
+            height: 1080,
+        };
+
+        assert_eq!(
+            descriptor.normalized_format(),
+            "28",
+            "numeric DXGI formats should normalize without changing value"
+        );
+        assert_eq!(
+            descriptor.wgpu_texture_format(),
+            wgpu::TextureFormat::Rgba8Unorm
+        );
+
+        descriptor.format = "BGRA_8_UNORM".to_string();
+        assert_eq!(descriptor.normalized_format(), "bgra8unorm");
+        assert_eq!(
+            descriptor.wgpu_texture_format(),
+            wgpu::TextureFormat::Bgra8Unorm
         );
     }
 }
