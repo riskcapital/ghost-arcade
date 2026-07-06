@@ -93,7 +93,7 @@ impl SharedTextureSourceFrameDescriptor {
                 )
             }
             "iosurface" => (
-                "IOSurface metadata parsed; cross-process IOSurface import is pending for this upload path",
+                "IOSurface metadata parsed; Metal IOSurfaceID source-frame import is available on macOS builds",
                 "IOSurface handle metadata is validated by the macOS import path".to_string(),
             ),
             _ => (
@@ -102,7 +102,7 @@ impl SharedTextureSourceFrameDescriptor {
             ),
         };
         format!(
-            "shared texture source-frame upload is not implemented yet \
+            "shared texture source-frame upload could not run \
              (backend={backend}, platform={}, format={}, size={}x{}, handle_encoding={}, handle_chars={}, declared_bytes={}, frame={}, sender={}, import_path={import_path}, handle_status={handle_status})",
             self.platform,
             self.format,
@@ -503,6 +503,11 @@ mod tests {
             descriptor
                 .unsupported_reason("metal")
                 .contains("platform=iosurface")
+        );
+        assert!(
+            descriptor
+                .unsupported_reason("metal")
+                .contains("Metal IOSurfaceID source-frame import is available")
         );
         assert!(
             descriptor

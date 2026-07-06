@@ -6758,7 +6758,7 @@ impl App {
             self.reject_shared_texture_source_frame(
                 width,
                 height,
-                "shared texture source-frame upload is not implemented yet (missing shared texture handle)",
+                "shared texture source-frame upload is missing a shared texture handle",
             );
             return;
         };
