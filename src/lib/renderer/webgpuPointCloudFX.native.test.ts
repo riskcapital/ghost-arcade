@@ -5,6 +5,7 @@ import {
   buildPointCloudFXNativePointData,
   buildPointCloudFXNativePrecompileCommands,
   getPointCloudFXNativeShaderSources,
+  pointCloudSourceIndexForSample,
 } from './webgpuPointCloudFX';
 
 if (typeof globalThis.btoa !== 'function') {
@@ -80,6 +81,23 @@ describe('Point Cloud FX native graph', () => {
     expect(data.homeInitialBuffer.byteLength).toBe(data.homeByteLength);
     expect(data.liveInitialBuffer.byteLength).toBe(data.liveByteLength);
     expect(data.sortInitialBuffer.byteLength).toBe(data.sortByteLength);
+
+    const home = new Float32Array(data.homeInitialBuffer);
+    const expectedSourceIndices = [0, 4, 8, 13, 17, 22, 26, 31];
+    for (let i = 0; i < expectedSourceIndices.length; i++) {
+      const t = expectedSourceIndices[i] / 31;
+      expect(home[i * 16 + 4]).toBeCloseTo(t);
+      expect(home[i * 16 + 5]).toBeCloseTo(1 - t);
+    }
+  });
+
+  it('samples point budgets across the whole source cloud', () => {
+    expect(Array.from({ length: 8 }, (_, i) =>
+      pointCloudSourceIndexForSample(i, 8, 32),
+    )).toEqual([0, 4, 8, 13, 17, 22, 26, 31]);
+    expect(Array.from({ length: 4 }, (_, i) =>
+      pointCloudSourceIndexForSample(i, 4, 1_000_000),
+    )).toEqual([0, 333333, 666666, 999999]);
   });
 
   it('normalizes architectural scans without letting a distant outlier shrink the cloud', () => {
