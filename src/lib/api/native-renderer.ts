@@ -371,6 +371,7 @@ export interface NativeGraphInstrumentManifestEntry {
   shader_ids?: string[];
   features?: string[];
   render_target?: string;
+  parity?: string;
 }
 
 export interface NativeCompositorBlendManifestEntry {

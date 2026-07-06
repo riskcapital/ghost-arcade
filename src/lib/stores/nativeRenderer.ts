@@ -13,15 +13,80 @@ export type NativeRendererDriverMode =
   | 'full-v2';
 
 const REQUIRED_NATIVE_GRAPH_INSTRUMENTS = [
-  ['planet', 'native_planet_graph'],
-  ['smoke-3d', 'native_3d_smoke_graph'],
-  ['particle-field', 'native_particle_field_graph'],
-  ['volumetric-spheres', 'native_volumetric_spheres_graph'],
-  ['smoke-riders', 'native_smoke_riders_graph'],
-  ['ink-cloud', 'native_ink_cloud_graph'],
-  ['flythrough', 'native_flythrough_graph'],
-  ['pixel-particles', 'native_pixel_particles_graph'],
-  ['point-cloud-fx', 'native_point_cloud_fx_graph'],
+  {
+    id: 'planet',
+    feature: 'native_planet_graph',
+    shaderIds: ['planet/render'],
+  },
+  {
+    id: 'smoke-3d',
+    feature: 'native_3d_smoke_graph',
+    shaderIds: [
+      '3d-smoke/splat',
+      '3d-smoke/advect-velocity',
+      '3d-smoke/divergence',
+      '3d-smoke/jacobi',
+      '3d-smoke/subtract-gradient',
+      '3d-smoke/advect-density',
+      '3d-smoke/render',
+    ],
+  },
+  {
+    id: 'particle-field',
+    feature: 'native_particle_field_graph',
+    shaderIds: [
+      'particle-field/behavior',
+      'particle-field/edges',
+      'particle-field/fog',
+      'particle-field/render',
+      'particle-field/lines',
+    ],
+  },
+  {
+    id: 'volumetric-spheres',
+    feature: 'native_volumetric_spheres_graph',
+    shaderIds: ['volumetric-spheres/sim', 'volumetric-spheres/render'],
+  },
+  {
+    id: 'smoke-riders',
+    feature: 'native_smoke_riders_graph',
+    shaderIds: [
+      '3d-smoke/splat',
+      '3d-smoke/advect-velocity',
+      '3d-smoke/divergence',
+      '3d-smoke/jacobi',
+      '3d-smoke/subtract-gradient',
+      '3d-smoke/advect-density',
+      '3d-smoke/render',
+      'volumetric-spheres/sim',
+      'volumetric-spheres/render',
+    ],
+  },
+  {
+    id: 'ink-cloud',
+    feature: 'native_ink_cloud_graph',
+    shaderIds: ['ink-cloud/sim', 'ink-cloud/render', 'ink-cloud/background'],
+  },
+  {
+    id: 'flythrough',
+    feature: 'native_flythrough_graph',
+    shaderIds: ['flythrough/compute', 'flythrough/render'],
+  },
+  {
+    id: 'pixel-particles',
+    feature: 'native_pixel_particles_graph',
+    shaderIds: ['pixel-particles/compute', 'pixel-particles/render'],
+  },
+  {
+    id: 'point-cloud-fx',
+    feature: 'native_point_cloud_fx_graph',
+    shaderIds: [
+      'point-cloud-fx/compute',
+      'point-cloud-fx/sort-fill',
+      'point-cloud-fx/sort-step',
+      'point-cloud-fx/render',
+    ],
+  },
 ];
 
 export interface NativeRendererRuntimeState {
@@ -114,6 +179,10 @@ export function inferNativeGraphRuntimeFlags(
   const graphInstrumentIds = new Set(
     ((capabilities ?? readiness?.capabilities)?.native_graph_instruments ?? []).map(String),
   );
+  const graphManifest = new Map(
+    ((capabilities ?? readiness?.capabilities)?.native_graph_instrument_manifest ?? [])
+      .map((entry) => [String(entry?.id ?? ''), entry]),
+  );
   const nativeGraphSourceFrames = !!(
     features.compute_graph_host &&
     features.compute_graph_render &&
@@ -126,9 +195,20 @@ export function inferNativeGraphRuntimeFlags(
     ? graphChecks.every((check) => !!check?.ok)
     : !!(
       nativeGraphSourceFrames &&
-      REQUIRED_NATIVE_GRAPH_INSTRUMENTS.every(([id, feature]) =>
-        graphInstrumentIds.has(id) && !!features[feature]
-      )
+      REQUIRED_NATIVE_GRAPH_INSTRUMENTS.every((required) => {
+        const entry = graphManifest.get(required.id);
+        const entryShaderIds = new Set((entry?.shader_ids ?? []).map(String));
+        const entryFeatures = new Set((entry?.features ?? []).map(String));
+        return (
+          graphInstrumentIds.has(required.id) &&
+          !!features[required.feature] &&
+          entry?.render_target === 'source_frame' &&
+          entry?.source_uri_prefix === `native-graph://${required.id}/` &&
+          entryFeatures.has(required.feature) &&
+          String(entry?.parity ?? '').length > 0 &&
+          required.shaderIds.every((shaderId) => entryShaderIds.has(shaderId))
+        );
+      })
     );
 
   return { graphCatalogComplete, nativeGraphSourceFrames };
