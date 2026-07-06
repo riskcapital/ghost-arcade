@@ -882,6 +882,63 @@ describe('native renderer sync effect-pass descriptors', () => {
         nightVisionRollingNoise: 0.4,
       },
     })).toBe('night-vision:1.7000:0.2500:0.6000:2:1.1000:2:0.4000');
+
+    expect(effectToNativeDescriptor({
+      type: 'tiltShift',
+      params: {
+        tiltShiftMode: 2,
+        tiltShiftFocusY: 0.45,
+        tiltShiftFocusX: 0.55,
+        tiltShiftFocusBand: 0.18,
+        tiltShiftFalloff: 0.32,
+        tiltShiftMaxBlur: 0.7,
+        tiltShiftAngle: 25,
+        tiltShiftSaturation: 1.35,
+      },
+    })).toBe('tilt-shift:1.0000:2:0.4500:0.5500:0.1800:0.3200:0.7000:25.0000:1.3500');
+
+    expect(effectToNativeDescriptor({
+      type: 'halation',
+      params: {
+        halationAmount: 1.1,
+        halationRadius: 18,
+        halationThreshold: 0.52,
+        halationTintR: 0.95,
+        halationTintG: 0.5,
+        halationTintB: 0.25,
+        halationMode: 1,
+        halationMix: 0.8,
+      },
+    })).toBe('halation:1.1000:18.0000:0.5200:0.9500:0.5000:0.2500:1:0.8000');
+
+    expect(effectToNativeDescriptor({
+      type: 'anamorphicStreak',
+      params: {
+        anaIntensity: 0.9,
+        anaLength: 0.42,
+        anaThreshold: 0.68,
+        anaTintR: 0.65,
+        anaTintG: 0.78,
+        anaTintB: 1.1,
+        anaAngle: 8,
+        anaSamples: 40,
+        anaMix: 0.75,
+      },
+    })).toBe('anamorphic-streak:0.9000:0.4200:0.6800:0.6500:0.7800:1.1000:8.0000:40.0000:0.7500');
+
+    expect(effectToNativeDescriptor({
+      type: 'heatHaze',
+      params: {
+        hazeAmount: 0.44,
+        hazeScale: 9,
+        hazeSpeed: 1.2,
+        hazeDirectionY: 0.35,
+        hazeTurbulence: 0.55,
+        hazeMode: 1,
+        hazeFocusY: 0.48,
+        hazeFocusBand: 0.37,
+      },
+    })).toBe('heat-haze:0.4400:9.0000:1.2000:0.3500:0.5500:1:0.4800:0.3700');
   });
 
   it('rebuilds native effect-pass runtime params from hero effect descriptors', () => {
@@ -934,6 +991,64 @@ describe('native renderer sync effect-pass descriptors', () => {
         thermalPalette: 3,
         thermalShimmer: 0.5,
         thermalSensorNoise: 0.25,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('tilt-shift:1.0000:2:0.4500:0.5500:0.1800:0.3200:0.7000:25.0000:1.3500')).toMatchObject({
+      effect: 'tilt-shift',
+      amount: 1,
+      params: {
+        tiltShiftMode: 2,
+        tiltShiftFocusY: 0.45,
+        tiltShiftFocusX: 0.55,
+        tiltShiftFocusBand: 0.18,
+        tiltShiftFalloff: 0.32,
+        tiltShiftMaxBlur: 0.7,
+        tiltShiftAngle: 25,
+        tiltShiftSaturation: 1.35,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('halation:1.1000:18.0000:0.5200:0.9500:0.5000:0.2500:1:0.8000')).toMatchObject({
+      effect: 'halation',
+      amount: 1.1,
+      params: {
+        halationRadius: 18,
+        halationThreshold: 0.52,
+        halationTintR: 0.95,
+        halationTintG: 0.5,
+        halationTintB: 0.25,
+        halationMode: 1,
+        halationMix: 0.8,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('anamorphic-streak:0.9000:0.4200:0.6800:0.6500:0.7800:1.1000:8.0000:40.0000:0.7500')).toMatchObject({
+      effect: 'anamorphic-streak',
+      amount: 0.9,
+      params: {
+        anaLength: 0.42,
+        anaThreshold: 0.68,
+        anaTintR: 0.65,
+        anaTintG: 0.78,
+        anaTintB: 1.1,
+        anaAngle: 8,
+        anaSamples: 40,
+        anaMix: 0.75,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('heat-haze:0.4400:9.0000:1.2000:0.3500:0.5500:1:0.4800:0.3700')).toMatchObject({
+      effect: 'heat-haze',
+      amount: 0.44,
+      params: {
+        hazeScale: 9,
+        hazeSpeed: 1.2,
+        hazeDirectionY: 0.35,
+        hazeTurbulence: 0.55,
+        hazeMode: 1,
+        hazeFocusY: 0.48,
+        hazeFocusBand: 0.37,
       },
     });
   });

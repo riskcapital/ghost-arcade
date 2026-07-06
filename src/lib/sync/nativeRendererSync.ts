@@ -1775,6 +1775,94 @@ export function effectToNativeDescriptor(effect: any): string | null {
       Math.max(0, Math.min(1, rollingRaw)).toFixed(4),
     ].join(':');
   }
+  if (type === 'tiltshift' || type === 'tilt-shift') {
+    const mixRaw = firstFiniteParam(params, ['tiltShiftMix', 'mix', 'amount'], 1);
+    const modeRaw = firstFiniteParam(params, ['tiltShiftMode', 'mode'], 0);
+    const focusYRaw = firstFiniteParam(params, ['tiltShiftFocusY', 'focusY', 'centerY'], 0.5);
+    const focusXRaw = firstFiniteParam(params, ['tiltShiftFocusX', 'focusX', 'centerX'], 0.5);
+    const focusBandRaw = firstFiniteParam(params, ['tiltShiftFocusBand', 'focusBand'], 0.2);
+    const falloffRaw = firstFiniteParam(params, ['tiltShiftFalloff', 'falloff', 'amount2'], 0.3);
+    const maxBlurRaw = firstFiniteParam(params, ['tiltShiftMaxBlur', 'maxBlur'], 0.5);
+    const angleRaw = firstFiniteParam(params, ['tiltShiftAngle', 'angle'], 0);
+    const saturationRaw = firstFiniteParam(params, ['tiltShiftSaturation', 'saturation'], 1.2);
+    return [
+      'tilt-shift',
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+      Math.max(0, Math.min(3, Math.round(modeRaw))).toFixed(0),
+      Math.max(0, Math.min(1, focusYRaw)).toFixed(4),
+      Math.max(0, Math.min(1, focusXRaw)).toFixed(4),
+      Math.max(0.001, Math.min(1, focusBandRaw)).toFixed(4),
+      Math.max(0.001, Math.min(1, falloffRaw)).toFixed(4),
+      Math.max(0, Math.min(1, maxBlurRaw)).toFixed(4),
+      (((angleRaw % 360) + 360) % 360).toFixed(4),
+      Math.max(0, Math.min(2, saturationRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'halation') {
+    const amountRaw = firstFiniteParam(params, ['halationAmount', 'amount'], 0.6);
+    const radiusRaw = firstFiniteParam(params, ['halationRadius', 'radius', 'amount2'], 12);
+    const thresholdRaw = firstFiniteParam(params, ['halationThreshold', 'threshold'], 0.65);
+    const tintRRaw = firstFiniteParam(params, ['halationTintR', 'red'], 0.9);
+    const tintGRaw = firstFiniteParam(params, ['halationTintG', 'green'], 0.45);
+    const tintBRaw = firstFiniteParam(params, ['halationTintB', 'blue'], 0.2);
+    const modeRaw = firstFiniteParam(params, ['halationMode', 'mode'], 0);
+    const mixRaw = firstFiniteParam(params, ['halationMix', 'mix', 'outputMix'], 1);
+    return [
+      'halation',
+      Math.max(0, Math.min(2, amountRaw)).toFixed(4),
+      Math.max(0, Math.min(48, radiusRaw)).toFixed(4),
+      Math.max(0, Math.min(1, thresholdRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, tintRRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, tintGRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, tintBRaw)).toFixed(4),
+      Math.max(0, Math.min(2, Math.round(modeRaw))).toFixed(0),
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'anamorphicstreak' || type === 'anamorphic-streak') {
+    const amountRaw = firstFiniteParam(params, ['anaIntensity', 'intensity', 'amount'], 0.6);
+    const lengthRaw = firstFiniteParam(params, ['anaLength', 'length', 'amount2'], 0.5);
+    const thresholdRaw = firstFiniteParam(params, ['anaThreshold', 'threshold'], 0.7);
+    const tintRRaw = firstFiniteParam(params, ['anaTintR', 'red'], 0.6);
+    const tintGRaw = firstFiniteParam(params, ['anaTintG', 'green'], 0.75);
+    const tintBRaw = firstFiniteParam(params, ['anaTintB', 'blue'], 1);
+    const angleRaw = firstFiniteParam(params, ['anaAngle', 'angle'], 0);
+    const samplesRaw = firstFiniteParam(params, ['anaSamples', 'samples'], 32);
+    const mixRaw = firstFiniteParam(params, ['anaMix', 'mix', 'outputMix'], 1);
+    return [
+      'anamorphic-streak',
+      Math.max(0, Math.min(2, amountRaw)).toFixed(4),
+      Math.max(0, Math.min(1, lengthRaw)).toFixed(4),
+      Math.max(0, Math.min(1, thresholdRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, tintRRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, tintGRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, tintBRaw)).toFixed(4),
+      Math.max(0, Math.min(180, angleRaw)).toFixed(4),
+      Math.max(8, Math.min(64, samplesRaw)).toFixed(4),
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'heathaze' || type === 'heat-haze') {
+    const amountRaw = firstFiniteParam(params, ['hazeAmount', 'amount'], 0.4);
+    const scaleRaw = firstFiniteParam(params, ['hazeScale', 'scale', 'amount2'], 8);
+    const speedRaw = firstFiniteParam(params, ['hazeSpeed', 'speed'], 1);
+    const directionYRaw = firstFiniteParam(params, ['hazeDirectionY', 'directionY'], 0.5);
+    const turbulenceRaw = firstFiniteParam(params, ['hazeTurbulence', 'turbulence'], 0.5);
+    const modeRaw = firstFiniteParam(params, ['hazeMode', 'mode'], 0);
+    const focusYRaw = firstFiniteParam(params, ['hazeFocusY', 'focusY', 'centerY'], 0.5);
+    const focusBandRaw = firstFiniteParam(params, ['hazeFocusBand', 'focusBand'], 0.4);
+    return [
+      'heat-haze',
+      Math.max(0, Math.min(1, amountRaw)).toFixed(4),
+      Math.max(1, Math.min(32, scaleRaw)).toFixed(4),
+      Math.max(0, Math.min(3, speedRaw)).toFixed(4),
+      Math.max(-1, Math.min(1, directionYRaw)).toFixed(4),
+      Math.max(0, Math.min(1, turbulenceRaw)).toFixed(4),
+      Math.max(0, Math.min(2, Math.round(modeRaw))).toFixed(0),
+      Math.max(0, Math.min(1, focusYRaw)).toFixed(4),
+      Math.max(0.05, Math.min(1, focusBandRaw)).toFixed(4),
+    ].join(':');
+  }
   if (type === 'blobtrack' || type === 'blob-track') {
     return blobEffectDescriptor('blob-track', params, {
       mix: 0.8,
@@ -2180,6 +2268,48 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       nightVisionBloom: Number(rawParam3 ?? 0.6),
       nightVisionScopeMask: Number(rawParam4 ?? 1),
       nightVisionRollingNoise: Number(rawParam5 ?? 0),
+    };
+  } else if (effect === 'tilt-shift') {
+    params = {
+      tiltShiftMode: Number(rawParam0 ?? 0),
+      tiltShiftFocusY: Number(rawParam1 ?? 0.5),
+      tiltShiftFocusX: Number(rawParam2 ?? 0.5),
+      tiltShiftFocusBand: Number(rawParam3 ?? 0.2),
+      tiltShiftFalloff: Number(rawParam4 ?? 0.3),
+      tiltShiftMaxBlur: Number(rawParam5 ?? 0.5),
+      tiltShiftAngle: Number(rawParam6 ?? 0),
+      tiltShiftSaturation: Number(rawParam7 ?? 1.2),
+    };
+  } else if (effect === 'halation') {
+    params = {
+      halationRadius: Number(rawParam0 ?? 12),
+      halationThreshold: Number(rawParam1 ?? 0.65),
+      halationTintR: Number(rawParam2 ?? 0.9),
+      halationTintG: Number(rawParam3 ?? 0.45),
+      halationTintB: Number(rawParam4 ?? 0.2),
+      halationMode: Number(rawParam5 ?? 0),
+      halationMix: Number(rawParam6 ?? 1),
+    };
+  } else if (effect === 'anamorphic-streak') {
+    params = {
+      anaLength: Number(rawParam0 ?? 0.5),
+      anaThreshold: Number(rawParam1 ?? 0.7),
+      anaTintR: Number(rawParam2 ?? 0.6),
+      anaTintG: Number(rawParam3 ?? 0.75),
+      anaTintB: Number(rawParam4 ?? 1),
+      anaAngle: Number(rawParam5 ?? 0),
+      anaSamples: Number(rawParam6 ?? 32),
+      anaMix: Number(rawParam7 ?? 1),
+    };
+  } else if (effect === 'heat-haze') {
+    params = {
+      hazeScale: Number(rawParam0 ?? 8),
+      hazeSpeed: Number(rawParam1 ?? 1),
+      hazeDirectionY: Number(rawParam2 ?? 0.5),
+      hazeTurbulence: Number(rawParam3 ?? 0.5),
+      hazeMode: Number(rawParam4 ?? 0),
+      hazeFocusY: Number(rawParam5 ?? 0.5),
+      hazeFocusBand: Number(rawParam6 ?? 0.4),
     };
   } else if (effect === 'blob-track' || effect === 'blob-contour' || effect === 'blob-heatmap') {
     const defaultFlags = effect === 'blob-contour' ? 0 : 7;

@@ -48,7 +48,11 @@ export type NativeEffectPassId =
   | 'night-vision'
   | 'blob-track'
   | 'blob-contour'
-  | 'blob-heatmap';
+  | 'blob-heatmap'
+  | 'tilt-shift'
+  | 'halation'
+  | 'anamorphic-streak'
+  | 'heat-haze';
 
 export interface NativeEffectPassManifestEntry {
   id: NativeEffectPassId;
@@ -270,6 +274,39 @@ export interface NativeEffectPassOptions {
     blobGridSize: number;
     blobMix: number;
     blobFlags: number;
+    tiltShiftMode: number;
+    tiltShiftFocusY: number;
+    tiltShiftFocusX: number;
+    tiltShiftFocusBand: number;
+    tiltShiftFalloff: number;
+    tiltShiftMaxBlur: number;
+    tiltShiftAngle: number;
+    tiltShiftSaturation: number;
+    halationAmount: number;
+    halationRadius: number;
+    halationThreshold: number;
+    halationTintR: number;
+    halationTintG: number;
+    halationTintB: number;
+    halationMode: number;
+    halationMix: number;
+    anaIntensity: number;
+    anaLength: number;
+    anaThreshold: number;
+    anaTintR: number;
+    anaTintG: number;
+    anaTintB: number;
+    anaAngle: number;
+    anaSamples: number;
+    anaMix: number;
+    hazeAmount: number;
+    hazeScale: number;
+    hazeSpeed: number;
+    hazeDirectionY: number;
+    hazeTurbulence: number;
+    hazeMode: number;
+    hazeFocusY: number;
+    hazeFocusBand: number;
   }>;
   clear?: boolean;
   seq?: number;
@@ -359,6 +396,10 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'blob-track', code: 48, defaultAmount: 0.8, amountMin: 0, amountMax: 1 },
   { id: 'blob-contour', code: 49, defaultAmount: 0.7, amountMin: 0, amountMax: 1 },
   { id: 'blob-heatmap', code: 50, defaultAmount: 0.85, amountMin: 0, amountMax: 1 },
+  { id: 'tilt-shift', code: 51, defaultAmount: 1, amountMin: 0, amountMax: 1 },
+  { id: 'halation', code: 52, defaultAmount: 0.6, amountMin: 0, amountMax: 2 },
+  { id: 'anamorphic-streak', code: 53, defaultAmount: 0.6, amountMin: 0, amountMax: 2 },
+  { id: 'heat-haze', code: 54, defaultAmount: 0.4, amountMin: 0, amountMax: 1 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -2078,6 +2119,140 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let overlay_presence = step(0.001, length(overlay));
     return vec4<f32>(final_rgb, max(src.a, overlay_presence * clamp(amount, 0.0, 1.0)));
   }
+  if (code == 51u) {
+    let mode = u32(round(clamp(u.params0.x, 0.0, 3.0)));
+    let focus_y = clamp(u.params0.y, 0.0, 1.0);
+    let focus_x = clamp(u.params0.z, 0.0, 1.0);
+    let band = max(0.001, u.params0.w);
+    let falloff = max(0.001, u.params1.x);
+    let max_blur = clamp(u.params1.y, 0.0, 1.0);
+    let angle = u.params1.z * 0.01745329252;
+    let saturation = clamp(u.params1.w, 0.0, 2.0);
+    var blur_mask = 0.0;
+    if (mode == 0u) {
+      blur_mask = smoothstep(band * 0.5, band * 0.5 + falloff, abs(uv.y - focus_y));
+    } else if (mode == 1u) {
+      blur_mask = smoothstep(band * 0.5, band * 0.5 + falloff, abs(uv.x - focus_x));
+    } else if (mode == 2u) {
+      blur_mask = smoothstep(band * 0.5, band * 0.5 + falloff, length(uv - vec2<f32>(focus_x, focus_y)));
+    } else {
+      let dir = vec2<f32>(cos(angle), sin(angle));
+      let t = abs(dot(uv - vec2<f32>(focus_x, focus_y), dir));
+      blur_mask = smoothstep(band * 0.5, band * 0.5 + falloff, t);
+    }
+    let radius = blur_mask * max_blur * 14.0;
+    let tx = effect_texel() * radius;
+    var acc = color * 0.22;
+    var wsum = 0.22;
+    let offsets = array<vec2<f32>, 12>(
+      vec2<f32>( 1.0,  0.0), vec2<f32>(-1.0,  0.0),
+      vec2<f32>( 0.0,  1.0), vec2<f32>( 0.0, -1.0),
+      vec2<f32>( 0.7,  0.7), vec2<f32>(-0.7,  0.7),
+      vec2<f32>( 0.7, -0.7), vec2<f32>(-0.7, -0.7),
+      vec2<f32>( 1.6,  0.0), vec2<f32>(-1.6,  0.0),
+      vec2<f32>( 0.0,  1.6), vec2<f32>( 0.0, -1.6),
+    );
+    for (var i = 0u; i < 12u; i = i + 1u) {
+      let weight = select(0.055, 0.095, i < 8u);
+      acc += sample_rgb(uv + offsets[i] * tx) * weight;
+      wsum += weight;
+    }
+    var blurred = acc / max(0.0001, wsum);
+    let gray = vec3<f32>(luma(blurred));
+    blurred = mix(gray, blurred, saturation);
+    return vec4<f32>(mix(color, blurred, blur_mask * clamp(amount, 0.0, 1.0)), src.a);
+  }
+  if (code == 52u) {
+    let radius = max(0.0, u.params0.x);
+    let threshold = clamp(u.params0.y, 0.0, 1.0);
+    let tint = clamp(u.params0.zw, vec2<f32>(0.0), vec2<f32>(1.5));
+    let tint_b = clamp(u.params1.x, 0.0, 1.5);
+    let mode = u32(round(clamp(u.params1.y, 0.0, 2.0)));
+    let wet = clamp(u.params1.z, 0.0, 1.0);
+    let tx = effect_texel();
+    let r = radius * mix(0.35, 1.1, clamp(amount * 0.5, 0.0, 1.0));
+    var bleed = bloom_threshold_knee(color, threshold, 0.18) * 0.20;
+    var wsum = 0.20;
+    let offsets = array<vec2<f32>, 12>(
+      vec2<f32>( 1.0,  0.0), vec2<f32>(-1.0,  0.0),
+      vec2<f32>( 0.0,  1.0), vec2<f32>( 0.0, -1.0),
+      vec2<f32>( 0.7,  0.7), vec2<f32>(-0.7,  0.7),
+      vec2<f32>( 0.7, -0.7), vec2<f32>(-0.7, -0.7),
+      vec2<f32>( 1.7,  0.0), vec2<f32>(-1.7,  0.0),
+      vec2<f32>( 0.0,  1.7), vec2<f32>( 0.0, -1.7),
+    );
+    for (var i = 0u; i < 12u; i = i + 1u) {
+      let weight = select(0.055, 0.095, i < 8u);
+      bleed += bloom_threshold_knee(sample_rgb(uv + offsets[i] * tx * r), threshold, 0.18) * weight;
+      wsum += weight;
+    }
+    bleed = (bleed / max(0.0001, wsum)) * vec3<f32>(tint.x, tint.y, tint_b) * amount * 1.7;
+    var result = color + bleed;
+    if (mode == 0u) {
+      result = vec3<f32>(1.0) - (vec3<f32>(1.0) - color) * (vec3<f32>(1.0) - bleed);
+    } else if (mode == 2u) {
+      let a = 2.0 * color * bleed + color * color * (vec3<f32>(1.0) - 2.0 * bleed);
+      let b = sqrt(max(color, vec3<f32>(0.0))) * (2.0 * bleed - vec3<f32>(1.0)) + 2.0 * color * (vec3<f32>(1.0) - bleed);
+      result = mix(a, b, step(vec3<f32>(0.5), bleed));
+    }
+    return vec4<f32>(mix(color, result, wet), src.a);
+  }
+  if (code == 53u) {
+    let streak_len = clamp(u.params0.x, 0.0, 1.0);
+    let threshold = clamp(u.params0.y, 0.0, 1.0);
+    let tint = clamp(vec3<f32>(u.params0.z, u.params0.w, u.params1.x), vec3<f32>(0.0), vec3<f32>(1.5));
+    let angle = u.params1.y * 0.01745329252;
+    let samples = max(8.0, floor(clamp(u.params1.z, 8.0, 64.0) + 0.5));
+    let wet = clamp(u.params1.w, 0.0, 1.0);
+    let dir = vec2<f32>(cos(angle), sin(angle));
+    var streak = vec3<f32>(0.0);
+    var wsum = 0.0;
+    for (var i: i32 = -64; i <= 64; i = i + 1) {
+      let fi = f32(i);
+      if (abs(fi) > samples) {
+        continue;
+      }
+      let t = fi / samples;
+      let s = sample_rgb(uv + dir * t * streak_len);
+      let gate = smoothstep(threshold, threshold + 0.15, luma(s));
+      let weight = exp(-abs(t) * 2.0);
+      streak += s * gate * weight;
+      wsum += weight;
+    }
+    streak = (streak / max(0.0001, wsum)) * tint * amount;
+    let result = vec3<f32>(1.0) - (vec3<f32>(1.0) - color) * (vec3<f32>(1.0) - streak);
+    return vec4<f32>(mix(color, result, wet), src.a);
+  }
+  if (code == 54u) {
+    let scale = max(1.0, u.params0.x);
+    let speed = max(0.0, u.params0.y);
+    let direction_y = clamp(u.params0.z, -1.0, 1.0);
+    let turbulence = clamp(u.params0.w, 0.0, 1.0);
+    let mode = u32(round(clamp(u.params1.x, 0.0, 2.0)));
+    let focus_y = clamp(u.params1.y, 0.0, 1.0);
+    let focus_band = max(0.05, u.params1.z);
+    var p = uv * scale + vec2<f32>(0.0, -u.resolution_time.z * speed * 0.5);
+    p.y += direction_y * u.resolution_time.z * speed * 0.3;
+    let n0 = value_noise2d(p) - 0.5;
+    let n1 = value_noise2d(p * mix(1.0, 2.25, turbulence) + vec2<f32>(123.4, 56.7)) - 0.5;
+    var nx = mix(n0, n0 + n1 * 0.5, turbulence);
+    var ny = mix(n1, n1 + n0 * 0.35, turbulence);
+    var strength = amount * 0.055;
+    if (mode == 0u) {
+      ny *= 0.4;
+      let band_mask = exp(-pow((uv.y - focus_y) / focus_band, 2.0));
+      strength *= band_mask;
+    } else if (mode == 1u) {
+      let wave = sin(u.resolution_time.z * speed + uv.y * 8.0) * 0.5;
+      nx *= 1.0 + wave * 0.5;
+      ny *= 1.0 + wave * 0.5;
+    } else {
+      nx = nx * 0.65 + sin((uv.y + u.resolution_time.z * speed) * 40.0) * 0.18;
+      ny = ny * 0.35;
+    }
+    let warped = clamp(uv + vec2<f32>(nx, ny) * strength, vec2<f32>(0.0), vec2<f32>(1.0));
+    return sample_clamped(warped);
+  }
   return src;
 }
 
@@ -2544,6 +2719,46 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param4 = clampNumber(params.blobGridSize ?? params.gridLines ?? params.param4, 4, 128, 16);
     param5 = blobFlagBits(params, { showCoords: 1, showBBox: 1, showCenter: 1 });
     param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'tilt-shift') {
+    amount = clampNumber(options.amount ?? params.outputMix ?? params.mix ?? params.amount, 0, 1, 1);
+    param0 = clampNumber(params.tiltShiftMode ?? params.mode ?? params.param0, 0, 3, 0);
+    param1 = clampNumber(params.tiltShiftFocusY ?? params.focusY ?? params.centerY ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.tiltShiftFocusX ?? params.focusX ?? params.centerX ?? params.param2, 0, 1, 0.5);
+    param3 = clampNumber(params.tiltShiftFocusBand ?? params.focusBand ?? params.param3, 0.001, 1, 0.2);
+    param4 = clampNumber(params.tiltShiftFalloff ?? params.falloff ?? params.param4, 0.001, 1, 0.3);
+    param5 = clampNumber(params.tiltShiftMaxBlur ?? params.maxBlur ?? params.amount2 ?? params.param5, 0, 1, 0.5);
+    param6 = clampNumber(params.tiltShiftAngle ?? params.angle ?? params.param6, 0, 360, 0);
+    param7 = clampNumber(params.tiltShiftSaturation ?? params.saturation ?? params.param7, 0, 2, 1.2);
+  } else if (options.effect === 'halation') {
+    amount = clampNumber(options.amount ?? params.halationAmount ?? params.amount, 0, 2, 0.6);
+    param0 = clampNumber(params.halationRadius ?? params.radius ?? params.amount2 ?? params.param0, 0, 48, 12);
+    param1 = clampNumber(params.halationThreshold ?? params.threshold ?? params.param1, 0, 1, 0.65);
+    param2 = clampNumber(params.halationTintR ?? params.red ?? params.param2, 0, 1.5, 0.9);
+    param3 = clampNumber(params.halationTintG ?? params.green ?? params.param3, 0, 1.5, 0.45);
+    param4 = clampNumber(params.halationTintB ?? params.blue ?? params.param4, 0, 1.5, 0.2);
+    param5 = clampNumber(params.halationMode ?? params.mode ?? params.param5, 0, 2, 0);
+    param6 = clampNumber(params.halationMix ?? params.outputMix ?? params.mix ?? params.param6, 0, 1, 1);
+    param7 = 0;
+  } else if (options.effect === 'anamorphic-streak') {
+    amount = clampNumber(options.amount ?? params.anaIntensity ?? params.intensity ?? params.amount, 0, 2, 0.6);
+    param0 = clampNumber(params.anaLength ?? params.length ?? params.amount2 ?? params.param0, 0, 1, 0.5);
+    param1 = clampNumber(params.anaThreshold ?? params.threshold ?? params.param1, 0, 1, 0.7);
+    param2 = clampNumber(params.anaTintR ?? params.red ?? params.param2, 0, 1.5, 0.6);
+    param3 = clampNumber(params.anaTintG ?? params.green ?? params.param3, 0, 1.5, 0.75);
+    param4 = clampNumber(params.anaTintB ?? params.blue ?? params.param4, 0, 1.5, 1);
+    param5 = clampNumber(params.anaAngle ?? params.angle ?? params.param5, 0, 180, 0);
+    param6 = clampNumber(params.anaSamples ?? params.samples ?? params.param6, 8, 64, 32);
+    param7 = clampNumber(params.anaMix ?? params.outputMix ?? params.mix ?? params.param7, 0, 1, 1);
+  } else if (options.effect === 'heat-haze') {
+    amount = clampNumber(options.amount ?? params.hazeAmount ?? params.amount, 0, 1, 0.4);
+    param0 = clampNumber(params.hazeScale ?? params.scale ?? params.amount2 ?? params.param0, 1, 32, 8);
+    param1 = clampNumber(params.hazeSpeed ?? params.speed ?? params.param1, 0, 3, 1);
+    param2 = clampNumber(params.hazeDirectionY ?? params.directionY ?? params.param2, -1, 1, 0.5);
+    param3 = clampNumber(params.hazeTurbulence ?? params.turbulence ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.hazeMode ?? params.mode ?? params.param4, 0, 2, 0);
+    param5 = clampNumber(params.hazeFocusY ?? params.focusY ?? params.centerY ?? params.param5, 0, 1, 0.5);
+    param6 = clampNumber(params.hazeFocusBand ?? params.focusBand ?? params.param6, 0.05, 1, 0.4);
     param7 = 0;
   }
   return [
