@@ -25,7 +25,7 @@ use capabilities::{
     CORE_COMMAND_TYPES, CORE_RPC_METHODS, native_compute_host_readiness,
     native_graph_readiness_checks, output_shared_texture_export_ready_detail,
     output_shared_texture_export_unavailable_detail, shared_texture_media_transport_note,
-    shared_texture_media_transport_ready_detail, shared_texture_source_frame_upload_detail,
+    shared_texture_media_transport_ready_detail, source_frame_shared_texture_import_readiness,
     texture_share_sender_label, texture_share_sender_pending_detail,
     texture_share_sender_ready_detail,
 };
@@ -2828,6 +2828,10 @@ impl App {
                 let renderer_ready = self.renderer.is_some();
                 let (compute_instrument_host_ok, compute_instrument_host_detail) =
                     native_compute_host_readiness(&capabilities, renderer_ready);
+                let (
+                    source_frame_shared_texture_import_ok,
+                    source_frame_shared_texture_import_detail,
+                ) = source_frame_shared_texture_import_readiness(&capabilities);
                 let mut checks = vec![
                     json!({
                         "id": "wgpu-device",
@@ -2838,8 +2842,8 @@ impl App {
                     json!({
                         "id": "shared-texture-source-frame-upload",
                         "label": "Shared texture source-frame transport",
-                        "ok": cfg!(any(target_os = "macos", target_os = "windows")),
-                        "detail": shared_texture_source_frame_upload_detail()
+                        "ok": source_frame_shared_texture_import_ok,
+                        "detail": source_frame_shared_texture_import_detail
                     }),
                     json!({
                         "id": "shared-texture-upload",

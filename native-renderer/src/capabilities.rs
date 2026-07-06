@@ -1,5 +1,7 @@
 use serde_json::Value;
 
+const SHARED_TEXTURE_IMPORT_UNSUPPORTED_DETAIL: &str = "native source-frame shared texture import is only implemented for Metal IOSurface and D3D12 DXGI";
+
 pub const COMPUTE_INSTRUMENT_HOST_FEATURES: &[&str] = &[
     "compute_shader_host",
     "compute_graph_host",
@@ -126,16 +128,6 @@ pub fn shared_texture_media_transport_note() -> &'static str {
     "Canvas/base64 source-frame upload is a development fallback; native shared-texture source-frame handles ingest through IOSurfaceID on macOS and DXGI HANDLE on Windows."
 }
 
-pub fn shared_texture_source_frame_upload_detail() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "implemented for IOSurfaceID source-frame handles"
-    } else if cfg!(target_os = "windows") {
-        "implemented for DXGI shared HANDLE source-frame imports"
-    } else {
-        "pending backend-specific shared texture import"
-    }
-}
-
 pub fn shared_texture_media_transport_ready_detail() -> &'static str {
     if cfg!(target_os = "macos") {
         "native shared texture media transport is active for IOSurfaceID source-frame handles; local video/still media bypasses canvas/base64 through native decode"
@@ -224,6 +216,102 @@ fn string_array_missing(value: Option<&Value>, required: &[&str]) -> Vec<String>
         .filter(|needle| !string_array_contains(value, needle))
         .map(|needle| (*needle).to_string())
         .collect()
+}
+
+fn contract_string<'a>(contract: &'a Value, key: &str) -> &'a str {
+    contract.get(key).and_then(Value::as_str).unwrap_or("")
+}
+
+fn contract_reason(contract: &Value) -> Option<String> {
+    contract
+        .get("reason")
+        .and_then(Value::as_str)
+        .filter(|reason| !reason.trim().is_empty())
+        .map(ToString::to_string)
+}
+
+pub fn source_frame_shared_texture_import_readiness(capabilities: &Value) -> (bool, String) {
+    let Some(contract) = capabilities.get("source_frame_shared_texture_import") else {
+        return (
+            false,
+            "missing source_frame_shared_texture_import contract".to_string(),
+        );
+    };
+
+    let (expected_backend, expected_platform, expected_importer, expected_handle_scope) =
+        if cfg!(target_os = "macos") {
+            ("metal", "iosurface", "metal-iosurface", "global-id")
+        } else if cfg!(target_os = "windows") {
+            (
+                "d3d12",
+                "dxgi",
+                "d3d12-open-shared-handle",
+                "process-handle",
+            )
+        } else {
+            return (
+                false,
+                contract_reason(contract)
+                    .unwrap_or_else(|| SHARED_TEXTURE_IMPORT_UNSUPPORTED_DETAIL.to_string()),
+            );
+        };
+
+    let mut missing = Vec::new();
+    if !contract
+        .get("available")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        missing.push(
+            contract_reason(contract).unwrap_or_else(|| "contract available=false".to_string()),
+        );
+    }
+
+    for (key, expected) in [
+        ("backend", expected_backend),
+        ("platform", expected_platform),
+        ("importer", expected_importer),
+        ("handle_scope", expected_handle_scope),
+    ] {
+        let actual = contract_string(contract, key);
+        if actual != expected {
+            missing.push(format!("{key} {actual:?} != {expected:?}"));
+        }
+    }
+
+    missing.extend(
+        string_array_missing(
+            contract.get("accepted_handle_encodings"),
+            &["integer", "base64", "hex", "opaque"],
+        )
+        .into_iter()
+        .map(|encoding| format!("handle encoding {encoding}")),
+    );
+    missing.extend(
+        string_array_missing(
+            contract.get("accepted_formats"),
+            &["bgra8unorm", "rgba8unorm", "80", "87", "28", "70"],
+        )
+        .into_iter()
+        .map(|format| format!("format {format}")),
+    );
+
+    if missing.is_empty() {
+        (
+            true,
+            format!(
+                "{expected_importer} import active for {expected_platform} {expected_handle_scope} source-frame handles"
+            ),
+        )
+    } else {
+        (
+            false,
+            format!(
+                "source-frame shared texture import contract incomplete: {}",
+                missing.join("; ")
+            ),
+        )
+    }
 }
 
 fn native_graph_manifest_entry<'a>(capabilities: &'a Value, id: &str) -> Option<&'a Value> {
@@ -394,6 +482,85 @@ mod tests {
         assert!(!ok);
         assert!(detail.contains("compute_graph_render"));
         assert!(detail.contains("persistent_compute_buffers"));
+    }
+
+    #[test]
+    fn source_frame_shared_texture_import_readiness_rejects_missing_contract() {
+        let capabilities = json!({});
+
+        let (ok, detail) = source_frame_shared_texture_import_readiness(&capabilities);
+
+        assert!(!ok);
+        assert!(detail.contains("source_frame_shared_texture_import"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn source_frame_shared_texture_import_readiness_accepts_macos_contract() {
+        let capabilities = json!({
+            "source_frame_shared_texture_import": {
+                "available": true,
+                "backend": "metal",
+                "platform": "iosurface",
+                "importer": "metal-iosurface",
+                "handle_scope": "global-id",
+                "accepted_handle_encodings": ["integer", "base64", "hex", "opaque"],
+                "accepted_formats": ["bgra8unorm", "rgba8unorm", "80", "87", "28", "70"],
+                "reason": null
+            }
+        });
+
+        let (ok, detail) = source_frame_shared_texture_import_readiness(&capabilities);
+
+        assert!(ok);
+        assert!(detail.contains("metal-iosurface"));
+        assert!(detail.contains("global-id"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn source_frame_shared_texture_import_readiness_accepts_windows_contract() {
+        let capabilities = json!({
+            "source_frame_shared_texture_import": {
+                "available": true,
+                "backend": "d3d12",
+                "platform": "dxgi",
+                "importer": "d3d12-open-shared-handle",
+                "handle_scope": "process-handle",
+                "accepted_handle_encodings": ["integer", "base64", "hex", "opaque"],
+                "accepted_formats": ["bgra8unorm", "rgba8unorm", "80", "87", "28", "70"],
+                "reason": null
+            }
+        });
+
+        let (ok, detail) = source_frame_shared_texture_import_readiness(&capabilities);
+
+        assert!(ok);
+        assert!(detail.contains("d3d12-open-shared-handle"));
+        assert!(detail.contains("process-handle"));
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[test]
+    fn source_frame_shared_texture_import_readiness_rejects_incomplete_contract() {
+        let capabilities = json!({
+            "source_frame_shared_texture_import": {
+                "available": true,
+                "backend": "metal",
+                "platform": "iosurface",
+                "importer": "none",
+                "handle_scope": "",
+                "accepted_handle_encodings": ["integer"],
+                "accepted_formats": ["bgra8unorm"]
+            }
+        });
+
+        let (ok, detail) = source_frame_shared_texture_import_readiness(&capabilities);
+
+        assert!(!ok);
+        assert!(detail.contains("importer"));
+        assert!(detail.contains("handle encoding base64"));
+        assert!(detail.contains("format rgba8unorm"));
     }
 
     #[test]
