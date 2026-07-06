@@ -230,6 +230,8 @@ describe('Native effect-pass template', () => {
       ['false-color', 57],
       ['shadow-recovery', 58],
       ['highlight-rolloff', 59],
+      ['color-balance', 60],
+      ['lift-gamma-gain', 61],
     ]);
     expect(nativeEffectPassManifestEntry('posterize')).toMatchObject({
       code: 8,
@@ -250,6 +252,7 @@ describe('Native effect-pass template', () => {
     expect(source.source).toContain('code == 48u');
     expect(source.source).toContain('code == 50u');
     expect(source.source).toContain('code == 59u');
+    expect(source.source).toContain('code == 61u');
     expect(source.source).not.toMatch(/^\s*#include\b/m);
   });
 
@@ -264,7 +267,7 @@ describe('Native effect-pass template', () => {
     }]);
   });
 
-  it('packs a stable 64-byte effect uniform block', () => {
+  it('packs a stable 80-byte effect uniform block', () => {
     expect(packNativeEffectPassUniforms({
       sourceId: 'src',
       targetSourceId: 'dst',
@@ -293,6 +296,100 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0,
+      0,
+      0,
+      0,
+      0,
+    ]);
+
+    expect(packNativeEffectPassUniforms({
+      sourceId: 'src',
+      targetSourceId: 'dst',
+      effect: 'color-balance',
+      width: 320,
+      height: 180,
+      time: 0.5,
+      frameDelta: 1 / 24,
+      frameIndex: 3,
+      amount: 0.9,
+      params: {
+        cbShadowR: -0.18,
+        cbShadowG: 0.02,
+        cbShadowB: 0.24,
+        cbPreserveLuma: 0.7,
+        cbMidR: 0.08,
+        cbMidG: 0,
+        cbMidB: -0.05,
+        cbHighR: 0.28,
+        cbHighG: 0.12,
+        cbHighB: -0.08,
+      },
+    })).toEqual([
+      320,
+      180,
+      0.5,
+      1 / 24,
+      60,
+      0.9,
+      1,
+      3,
+      -0.18,
+      0.02,
+      0.24,
+      0.7,
+      0.08,
+      0,
+      -0.05,
+      0,
+      0.28,
+      0.12,
+      -0.08,
+      0,
+    ]);
+
+    expect(packNativeEffectPassUniforms({
+      sourceId: 'src',
+      targetSourceId: 'dst',
+      effect: 'lift-gamma-gain',
+      width: 320,
+      height: 180,
+      time: 0.5,
+      frameDelta: 1 / 24,
+      frameIndex: 3,
+      amount: 0.85,
+      params: {
+        lggLiftR: -0.04,
+        lggLiftG: 0.02,
+        lggLiftB: 0.12,
+        lggLumaOnly: 0,
+        lggGammaR: 1.08,
+        lggGammaG: 1,
+        lggGammaB: 0.94,
+        lggGainR: 1.18,
+        lggGainG: 1.04,
+        lggGainB: 0.9,
+      },
+    })).toEqual([
+      320,
+      180,
+      0.5,
+      1 / 24,
+      61,
+      0.85,
+      1,
+      3,
+      -0.04,
+      0.02,
+      0.12,
+      0,
+      1.08,
+      1,
+      0.94,
+      0,
+      1.18,
+      1.04,
+      0.9,
       0,
     ]);
   });
@@ -327,6 +424,10 @@ describe('Native effect-pass template', () => {
       0.25,
       0.5,
       0.75,
+      0,
+      0,
+      0,
+      0,
       0,
       0,
       0,
@@ -372,6 +473,10 @@ describe('Native effect-pass template', () => {
       6,
       0.45,
       0.08,
+      0,
+      0,
+      0,
+      0,
     ]);
 
     expect(packNativeEffectPassUniforms({
@@ -407,6 +512,10 @@ describe('Native effect-pass template', () => {
       1.2,
       20,
       2,
+      0,
+      0,
+      0,
+      0,
       0,
       0,
     ]);
@@ -450,6 +559,10 @@ describe('Native effect-pass template', () => {
       0.58,
       0.2,
       0.1,
+      0,
+      0,
+      0,
+      0,
     ]);
   });
 
@@ -491,6 +604,10 @@ describe('Native effect-pass template', () => {
       0.1,
       0.7,
       2,
+      0,
+      0,
+      0,
+      0,
     ]);
     expect(packNativeEffectPassUniforms({
       sourceId: 'src',
@@ -527,6 +644,10 @@ describe('Native effect-pass template', () => {
       0.7,
       0,
       0,
+      0,
+      0,
+      0,
+      0,
     ]);
   });
 
@@ -556,6 +677,10 @@ describe('Native effect-pass template', () => {
       3,
       0.4,
       0.6,
+      0,
+      0,
+      0,
+      0,
       0,
       0,
       0,
@@ -595,6 +720,10 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0,
+      0,
+      0,
+      0,
     ]);
     expect(packNativeEffectPassUniforms({
       sourceId: 'src',
@@ -627,6 +756,10 @@ describe('Native effect-pass template', () => {
       0.4,
       0.7,
       0.9,
+      0,
+      0,
+      0,
+      0,
       0,
       0,
       0,
@@ -668,6 +801,10 @@ describe('Native effect-pass template', () => {
       0.35,
       0.2,
       0.4,
+      0,
+      0,
+      0,
+      0,
     ]);
   });
 
@@ -703,6 +840,10 @@ describe('Native effect-pass template', () => {
       0.4,
       0.2,
       0.9,
+      0,
+      0,
+      0,
+      0,
       0,
       0,
       0,
@@ -744,6 +885,10 @@ describe('Native effect-pass template', () => {
       2,
       0.7,
       0.2,
+      0,
+      0,
+      0,
+      0,
     ]);
   });
 
@@ -784,6 +929,10 @@ describe('Native effect-pass template', () => {
       1,
       2,
       0,
+      0,
+      0,
+      0,
+      0,
     ]);
 
     expect(packNativeEffectPassUniforms({
@@ -813,6 +962,10 @@ describe('Native effect-pass template', () => {
       2,
       4,
       0.65,
+      0,
+      0,
+      0,
+      0,
       0,
       0,
       0,
@@ -858,6 +1011,10 @@ describe('Native effect-pass template', () => {
       0.4,
       0.7,
       0,
+      0,
+      0,
+      0,
+      0,
     ]);
 
     expect(packNativeEffectPassUniforms({
@@ -895,6 +1052,10 @@ describe('Native effect-pass template', () => {
       1.7,
       0.8,
       0.3,
+      0,
+      0,
+      0,
+      0,
       0,
     ]);
   });
@@ -935,6 +1096,10 @@ describe('Native effect-pass template', () => {
       1.2,
       1,
       0,
+      0,
+      0,
+      0,
+      0,
     ]);
 
     expect(packNativeEffectPassUniforms({
@@ -974,6 +1139,10 @@ describe('Native effect-pass template', () => {
       2,
       0.5,
       1,
+      0,
+      0,
+      0,
+      0,
     ]);
 
     expect(packNativeEffectPassUniforms({
@@ -1009,6 +1178,10 @@ describe('Native effect-pass template', () => {
       1.1,
       2,
       0.4,
+      0,
+      0,
+      0,
+      0,
       0,
       0,
     ]);
@@ -1050,6 +1223,10 @@ describe('Native effect-pass template', () => {
       0.7,
       25,
       1.35,
+      0,
+      0,
+      0,
+      0,
     ]);
 
     expect(packNativeEffectPassUniforms({
@@ -1088,6 +1265,10 @@ describe('Native effect-pass template', () => {
       1,
       0.8,
       0,
+      0,
+      0,
+      0,
+      0,
     ]);
 
     expect(packNativeEffectPassUniforms({
@@ -1119,6 +1300,10 @@ describe('Native effect-pass template', () => {
       0.25,
       0.35,
       0.15,
+      0,
+      0,
+      0,
+      0,
       0,
       0,
       0,
@@ -1160,6 +1345,10 @@ describe('Native effect-pass template', () => {
       0.4,
       0,
       0,
+      0,
+      0,
+      0,
+      0,
     ]);
 
     expect(packNativeEffectPassUniforms({
@@ -1196,6 +1385,10 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0,
+      0,
+      0,
+      0,
     ]);
   });
 
@@ -1218,7 +1411,7 @@ describe('Native effect-pass template', () => {
       expect.objectContaining({
         id: 'effect-pass:gpu:layer-a:effect:invert:uniform',
         kind: 'uniform',
-        byte_length: 64,
+        byte_length: 80,
         initial_f32: expect.arrayContaining([1280, 720, 3, 1 / 60, 1, 0.8, 1, 180]),
       }),
     ]);

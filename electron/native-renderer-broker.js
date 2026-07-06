@@ -181,6 +181,8 @@ const NATIVE_EFFECT_PASS_DESCRIPTORS = [
   { id: 'false-color', code: 57 },
   { id: 'shadow-recovery', code: 58 },
   { id: 'highlight-rolloff', code: 59 },
+  { id: 'color-balance', code: 60 },
+  { id: 'lift-gamma-gain', code: 61 },
 ];
 
 function nativeGraphReadinessId(id) {

@@ -351,6 +351,40 @@ describe('native renderer sync effect-pass descriptors', () => {
         audio: 0.4,
       },
     })).toBe('colorama:0.8500:8:0.1500:0.0500:1.2000:4.0000:0.3500:0.2000:0.4000');
+
+    expect(effectToNativeDescriptor({
+      type: 'colorBalance',
+      params: {
+        cbMix: 0.9,
+        cbShadowR: -0.18,
+        cbShadowG: 0.02,
+        cbShadowB: 0.24,
+        cbPreserveLuma: 0.7,
+        cbMidR: 0.08,
+        cbMidG: 0,
+        cbMidB: -0.05,
+        cbHighR: 0.28,
+        cbHighG: 0.12,
+        cbHighB: -0.08,
+      },
+    })).toBe('color-balance:0.9000:-0.1800:0.0200:0.2400:0.7000:0.0800:0.0000:-0.0500:0:0.2800:0.1200:-0.0800:0');
+
+    expect(effectToNativeDescriptor({
+      type: 'liftGammaGain',
+      params: {
+        lggMix: 0.85,
+        lggLiftR: -0.04,
+        lggLiftG: 0.02,
+        lggLiftB: 0.12,
+        lggLumaOnly: 0,
+        lggGammaR: 1.08,
+        lggGammaG: 1,
+        lggGammaB: 0.94,
+        lggGainR: 1.18,
+        lggGainG: 1.04,
+        lggGainB: 0.9,
+      },
+    })).toBe('lift-gamma-gain:0.8500:-0.0400:0.0200:0.1200:0.0000:1.0800:1.0000:0.9400:0:1.1800:1.0400:0.9000:0');
   });
 
   it('rebuilds native effect-pass runtime params from color correction descriptors', () => {
@@ -1166,6 +1200,40 @@ describe('native renderer sync effect-pass descriptors', () => {
         highRolloffPreserveHue: 0.8,
         highRolloffMaxValue: 1.05,
         highRolloffMix: 0.85,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('color-balance:0.9000:-0.1800:0.0200:0.2400:0.7000:0.0800:0.0000:-0.0500:0:0.2800:0.1200:-0.0800:0')).toMatchObject({
+      effect: 'color-balance',
+      amount: 0.9,
+      params: {
+        cbShadowR: -0.18,
+        cbShadowG: 0.02,
+        cbShadowB: 0.24,
+        cbPreserveLuma: 0.7,
+        cbMidR: 0.08,
+        cbMidG: 0,
+        cbMidB: -0.05,
+        cbHighR: 0.28,
+        cbHighG: 0.12,
+        cbHighB: -0.08,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('lift-gamma-gain:0.8500:-0.0400:0.0200:0.1200:0.0000:1.0800:1.0000:0.9400:0:1.1800:1.0400:0.9000:0')).toMatchObject({
+      effect: 'lift-gamma-gain',
+      amount: 0.85,
+      params: {
+        lggLiftR: -0.04,
+        lggLiftG: 0.02,
+        lggLiftB: 0.12,
+        lggLumaOnly: 0,
+        lggGammaR: 1.08,
+        lggGammaG: 1,
+        lggGammaB: 0.94,
+        lggGainR: 1.18,
+        lggGainG: 1.04,
+        lggGainB: 0.9,
       },
     });
   });
