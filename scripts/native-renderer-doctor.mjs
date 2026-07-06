@@ -87,6 +87,48 @@ function directCoreNativeShareSenderState(features = {}) {
   return 'pending';
 }
 
+function expectedOutputTextureTransport() {
+  if (process.platform === 'darwin') {
+    return { platform: 'iosurface', handleScope: 'global-id', preferredTransport: 'handle' };
+  }
+  if (process.platform === 'win32') {
+    return { platform: 'dxgi', handleScope: 'process-local', preferredTransport: 'shared_name' };
+  }
+  return { platform: 'unsupported', handleScope: '', preferredTransport: '' };
+}
+
+function outputTextureTransportOk(texture, expected = expectedOutputTextureTransport()) {
+  if (expected.platform === 'unsupported') return !texture?.available;
+  if (!texture?.available) return false;
+  if (String(texture.platform ?? '') !== expected.platform) return false;
+  if (String(texture.handle_scope ?? '') !== expected.handleScope) return false;
+  if (String(texture.preferred_transport ?? '') !== expected.preferredTransport) return false;
+  if (!(Number(texture.width ?? 0) > 0 && Number(texture.height ?? 0) > 0)) return false;
+  if (!String(texture.handle ?? '').length) return false;
+  if (expected.platform === 'dxgi') {
+    return String(texture.shared_name ?? '').includes('GhostArcadeNativeOutput');
+  }
+  return true;
+}
+
+function outputTextureTransportDetail(texture, expected = expectedOutputTextureTransport()) {
+  if (expected.platform === 'unsupported') {
+    return texture?.available ? 'unexpected-platform-output-texture' : 'unsupported';
+  }
+  if (!texture?.available) {
+    return `missing(${String(texture?.reason ?? 'not available').replace(/\s+/g, '-')})`;
+  }
+  const parts = [
+    String(texture.platform ?? 'unknown'),
+    String(texture.preferred_transport ?? 'unknown'),
+    String(texture.handle_scope ?? 'unknown'),
+    `${Number(texture.width ?? 0)}x${Number(texture.height ?? 0)}`,
+  ];
+  if (texture.shared_name) parts.push('named');
+  if (!outputTextureTransportOk(texture, expected)) parts.push('mismatch');
+  return parts.join('/');
+}
+
 function createRpcProcess() {
   const child = spawn(bin, [], { stdio: ['pipe', 'pipe', 'pipe'] });
   let nextId = 1;
@@ -158,12 +200,14 @@ async function inspectCore() {
     }, 12000);
     const capabilities = await rpc.send('capabilities', {}, 5000);
     const readiness = await rpc.send('readiness', {}, 5000);
+    const outputTexture = await rpc.send('output_shared_texture', {}, 5000);
     const features = capabilities?.features ?? {};
     const instruments = new Set(capabilities?.native_graph_instruments ?? []);
     const missingFeatures = REQUIRED_FEATURES.filter((feature) => !features[feature]);
     const missingInstruments = REQUIRED_GRAPH_INSTRUMENTS.filter((instrument) => !instruments.has(instrument));
     const proxyFallbackDisabled = features.native_instrument_proxies === false;
     const blockers = Array.isArray(readiness?.blockers) ? readiness.blockers : [];
+    const outputTransportOk = !features.shared_texture_output_export || outputTextureTransportOk(outputTexture);
     assertNativeCompositorManifest(capabilities);
     await precompileNativeCompositorParityShaders(rpc);
     const blendParity = await assertNativeCompositorBlendParity(rpc);
@@ -178,6 +222,7 @@ async function inspectCore() {
       missingFeatures.length === 0 &&
       missingInstruments.length === 0 &&
       proxyFallbackDisabled &&
+      outputTransportOk &&
       blockers.length === 0;
     return {
       ok,
@@ -211,7 +256,9 @@ async function inspectCore() {
         `blendParity=${blendParityChecksum}`,
         `effectParity=${effectParityChecksum}`,
         `outputSharedTexture=${features.shared_texture_output_export ? 'on' : 'pending'}`,
+        `outputTransport=${outputTextureTransportDetail(outputTexture)}`,
         `nativeShareSender=${directCoreNativeShareSenderState(features)}`,
+        outputTransportOk ? '' : 'outputTransportMismatch=1',
         missingFeatures.length ? `missingFeatures=${missingFeatures.join(',')}` : '',
         missingInstruments.length ? `missingGraphs=${missingInstruments.join(',')}` : '',
         proxyFallbackDisabled ? '' : 'legacyProxyFallback=enabled',
@@ -265,6 +312,7 @@ async function inspectAppBridge() {
     const capabilities = await broker.invoke('native_renderer_get_capabilities');
     const decodeCapabilities = await broker.invoke('native_renderer_get_decode_capabilities');
     const readiness = await broker.invoke('native_renderer_get_readiness_report');
+    const outputTexture = await broker.invoke('native_renderer_get_output_shared_texture');
     const features = capabilities?.features ?? {};
     const effectPassDescriptors = Array.isArray(capabilities?.native_effect_pass_descriptors)
       ? capabilities.native_effect_pass_descriptors
@@ -278,10 +326,12 @@ async function inspectAppBridge() {
     const fullV2Ready = !!readiness?.modes?.full_v2?.ok;
     const fullV2Blockers = readiness?.modes?.full_v2?.blockers ?? [];
     const fullV2BlockerDetail = formatBlockers(fullV2Blockers);
+    const outputTransportOk = !outputExportExpected || outputTextureTransportOk(outputTexture);
     const ok =
       !!status?.backend_ready &&
       !!features.shared_texture_output_export === outputExportExpected &&
       !!features.native_texture_share_sender === outputExportExpected &&
+      outputTransportOk &&
       !!features.native_mp4_frame_encoder &&
       !!features.native_recording &&
       nativeOutputDriverReady &&
@@ -296,6 +346,8 @@ async function inspectAppBridge() {
         `outputFormat=${status?.output_format ?? 'unknown'}`,
         `decodeBackend=${status?.decode_backend ?? 'unknown'}`,
         `outputSharedTexture=${features.shared_texture_output_export ? 'on' : 'pending'}`,
+        `outputTransport=${outputTextureTransportDetail(outputTexture)}`,
+        outputTransportOk ? '' : 'outputTransportMismatch=1',
         `nativeShareSender=${features.native_texture_share_sender ? 'on' : 'pending'}`,
         `nativeMp4Encoder=${features.native_mp4_frame_encoder ? 'on' : 'missing'}`,
         `effectPass=${features.native_effect_pass_manifest ? `${effectPassDescriptors.length}fx` : 'pending'}`,
@@ -334,7 +386,7 @@ async function inspectAppBridge() {
         `directSharedTextureRpc=${directSharedRpc ? 'on' : 'missing'}`,
         `textureShareCheck=${checks.get('native-texture-share-sender')?.ok ? 'on' : 'pending'}`,
         `recordingCheck=${checks.get('native-mp4-frame-encoder')?.ok ? 'on' : 'pending'}`,
-      ].join(' '),
+      ].filter(Boolean).join(' '),
     };
   } finally {
     await broker.invoke('native_renderer_stop').catch(() => {});
