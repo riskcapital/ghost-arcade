@@ -10,6 +10,7 @@ const MIN_AUTO_FIT_SCALE = 0.00001;
 const MAX_AUTO_FIT_SCALE = 10000;
 const MIN_GAUSSIAN_POINT_SCALE = 0.45;
 const MAX_GAUSSIAN_POINT_SCALE = 10;
+const MAX_WIREFRAME_SOURCE_POINTS = 20000;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -960,6 +961,7 @@ export class SplatRenderer {
   private wireframeGeometry: THREE.BufferGeometry | null = null;
   private wireframeMaterial: THREE.LineBasicMaterial | null = null;
   private currentRenderMode: string = 'points';
+  private wireframeAttemptedForGeometry = false;
 
   // Original positions for animations
   private originalPositions: Float32Array | null = null;
@@ -1111,6 +1113,8 @@ export class SplatRenderer {
     if (this.points) {
       this.scene.remove(this.points);
     }
+    this.disposeWireframeGeometry();
+    this.wireframeAttemptedForGeometry = false;
 
     const vertices = data.vertices;
     const count = vertices.length;
@@ -1193,26 +1197,25 @@ export class SplatRenderer {
     // Create points
     this.points = new THREE.Points(this.geometry, this.material);
     this.scene.add(this.points);
-
-    // Create wireframe geometry
-    this.createWireframeGeometry(data, positions, colors);
   }
 
   // Create wireframe geometry connecting nearby points
-  private createWireframeGeometry(data: PLYData, positions: Float32Array, colors: Float32Array) {
+  private createWireframeGeometry(data: PLYData) {
     // Dispose old wireframe
-    if (this.wireframeGeometry) {
-      this.wireframeGeometry.dispose();
-    }
-    if (this.wireframeMaterial) {
-      this.wireframeMaterial.dispose();
-    }
-    if (this.wireframe) {
-      this.scene.remove(this.wireframe);
-    }
+    this.disposeWireframeGeometry();
 
-    const count = data.vertices.length;
+    const positionAttr = this.geometry?.getAttribute('position') as THREE.BufferAttribute | undefined;
+    const colorAttr = this.geometry?.getAttribute('color') as THREE.BufferAttribute | undefined;
+    if (!positionAttr || !colorAttr) return;
+
+    const positions = positionAttr.array as ArrayLike<number>;
+    const colors = colorAttr.array as ArrayLike<number>;
+
+    const count = Math.min(data.vertices.length, positionAttr.count, colorAttr.count);
     if (count < 2) return;
+    const sampleStride = count > MAX_WIREFRAME_SOURCE_POINTS
+      ? Math.ceil(count / MAX_WIREFRAME_SOURCE_POINTS)
+      : 1;
 
     // Calculate adaptive distance threshold based on the fitted point cloud size.
     const size = this.pointCloudBounds.size;
@@ -1231,7 +1234,7 @@ export class SplatRenderer {
     const grid = new Map<string, number[]>();
 
     // Build grid
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < count; i += sampleStride) {
       const x = positions[i * 3];
       const y = positions[i * 3 + 1];
       const z = positions[i * 3 + 2];
@@ -1244,7 +1247,7 @@ export class SplatRenderer {
     }
 
     // Find nearby points and create lines
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < count; i += sampleStride) {
       if (connectionCount[i] >= maxConnections) continue;
 
       const x1 = positions[i * 3];
@@ -1320,6 +1323,27 @@ export class SplatRenderer {
     this.wireframe = new THREE.LineSegments(this.wireframeGeometry, this.wireframeMaterial);
     this.wireframe.visible = false; // Hidden by default
     this.scene.add(this.wireframe);
+  }
+
+  private ensureWireframeGeometry() {
+    if (this.wireframe || this.wireframeAttemptedForGeometry || !this.plyData) return;
+    this.wireframeAttemptedForGeometry = true;
+    this.createWireframeGeometry(this.plyData);
+  }
+
+  private disposeWireframeGeometry() {
+    if (this.wireframe) {
+      this.scene.remove(this.wireframe);
+      this.wireframe = null;
+    }
+    if (this.wireframeGeometry) {
+      this.wireframeGeometry.dispose();
+      this.wireframeGeometry = null;
+    }
+    if (this.wireframeMaterial) {
+      this.wireframeMaterial.dispose();
+      this.wireframeMaterial = null;
+    }
   }
 
   private createUniforms(): Record<string, THREE.IUniform> {
@@ -1516,6 +1540,13 @@ export class SplatRenderer {
 
     // Toggle between points and wireframe based on render mode
     const isWireframe = content.renderMode === 'wireframe';
+    const wasWireframe = this.currentRenderMode === 'wireframe';
+    if (isWireframe) {
+      this.ensureWireframeGeometry();
+    } else if (wasWireframe) {
+      this.disposeWireframeGeometry();
+      this.wireframeAttemptedForGeometry = false;
+    }
     if (this.points) {
       this.points.visible = !isWireframe;
     }
@@ -1795,9 +1826,7 @@ export class SplatRenderer {
     if (this.geometry) this.geometry.dispose();
     if (this.material) this.material.dispose();
     if (this.points) this.scene.remove(this.points);
-    if (this.wireframeGeometry) this.wireframeGeometry.dispose();
-    if (this.wireframeMaterial) this.wireframeMaterial.dispose();
-    if (this.wireframe) this.scene.remove(this.wireframe);
+    this.disposeWireframeGeometry();
     if (this.textureMap) this.textureMap.dispose();
     if (this.videoElement) {
       this.videoElement.pause();
