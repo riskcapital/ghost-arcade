@@ -1,6 +1,7 @@
 import { writable } from 'svelte/store';
 import type {
   NativeRendererCapabilities,
+  RendererReadinessCheck,
   RendererReadinessReport,
   RendererStatus,
 } from '$lib/api/native-renderer';
@@ -46,6 +47,10 @@ export interface NativeRendererRuntimeState {
   nativeEffectPassDetail: string;
   nativeTextureShareSenderReady: boolean;
   nativeTextureShareSenderDetail: string;
+  nativeRecordingReady: boolean;
+  nativeStage3DReady: boolean;
+  nativeProjectionSimReady: boolean;
+  readinessChecks: NativeRendererRuntimeCheck[];
   nativeOutputShareCapable: boolean;
   nativeOutputShareActive: boolean;
   nativeOutputShareWaitingForFrame: boolean;
@@ -54,6 +59,13 @@ export interface NativeRendererRuntimeState {
   nativeOutputSharePromotionAttempts: number;
   nativeOutputSharePromotionReason: string | null;
   updatedAtMs: number;
+}
+
+export interface NativeRendererRuntimeCheck {
+  id: string;
+  label: string;
+  ok: boolean;
+  detail: string;
 }
 
 export const initialNativeRendererRuntimeState: NativeRendererRuntimeState = {
@@ -90,6 +102,10 @@ export const initialNativeRendererRuntimeState: NativeRendererRuntimeState = {
   nativeEffectPassDetail: '',
   nativeTextureShareSenderReady: false,
   nativeTextureShareSenderDetail: '',
+  nativeRecordingReady: false,
+  nativeStage3DReady: false,
+  nativeProjectionSimReady: false,
+  readinessChecks: [],
   nativeOutputShareCapable: false,
   nativeOutputShareActive: false,
   nativeOutputShareWaitingForFrame: false,
@@ -324,6 +340,17 @@ function readinessCheck(
   return readiness?.checks?.find((check) => check?.id === id) ?? null;
 }
 
+function normalizeRuntimeChecks(
+  checks: RendererReadinessCheck[] | null | undefined,
+): NativeRendererRuntimeCheck[] {
+  return (checks ?? []).map((check) => ({
+    id: String(check?.id ?? ''),
+    label: String(check?.label ?? check?.id ?? ''),
+    ok: !!check?.ok,
+    detail: String(check?.detail ?? ''),
+  })).filter((check) => check.id.length > 0);
+}
+
 export function deriveNativeRendererRuntimeState(
   status: RendererStatus | null | undefined,
   readiness: RendererReadinessReport | null | undefined,
@@ -363,6 +390,11 @@ export function deriveNativeRendererRuntimeState(
   const outputExportCheck = readinessCheck(readiness, 'shared-texture-output-export');
   const nativeEffectPassCheck = readinessCheck(readiness, 'native-effect-pass-manifest');
   const nativeTextureShareCheck = readinessCheck(readiness, 'native-texture-share-sender');
+  const nativeRecordingCheck = readinessCheck(readiness, 'native-recording');
+  const nativeStage3DOutputCheck = readinessCheck(readiness, 'native-stage3d-output-renderer');
+  const nativeStage3DRecordingCheck = readinessCheck(readiness, 'native-stage3d-recording-parity');
+  const nativeProjectionOutputCheck = readinessCheck(readiness, 'native-projection-sim-output-renderer');
+  const nativeProjectionRecordingCheck = readinessCheck(readiness, 'native-projection-sim-recording-parity');
 
   return {
     running: !!status?.running,
@@ -400,6 +432,16 @@ export function deriveNativeRendererRuntimeState(
     nativeEffectPassDetail: String(nativeEffectPassCheck?.detail ?? ''),
     nativeTextureShareSenderReady: !!(nativeTextureShareCheck?.ok ?? features.native_texture_share_sender),
     nativeTextureShareSenderDetail: String(nativeTextureShareCheck?.detail ?? ''),
+    nativeRecordingReady: !!(nativeRecordingCheck?.ok ?? features.native_recording),
+    nativeStage3DReady: !!(
+      (nativeStage3DOutputCheck?.ok ?? features.native_stage3d_output_renderer) &&
+      (nativeStage3DRecordingCheck?.ok ?? features.native_stage3d_recording_parity)
+    ),
+    nativeProjectionSimReady: !!(
+      (nativeProjectionOutputCheck?.ok ?? features.native_projection_sim_output_renderer) &&
+      (nativeProjectionRecordingCheck?.ok ?? features.native_projection_sim_recording_parity)
+    ),
+    readinessChecks: normalizeRuntimeChecks(readiness?.checks),
     nativeOutputShareCapable: !!textureShare?.nativeOutputCapable,
     nativeOutputShareActive: !!textureShare?.nativeOutputActive,
     nativeOutputShareWaitingForFrame: !!textureShare?.nativeOutputWaitingForFrame,
@@ -477,6 +519,10 @@ export function updateNativeRendererRuntimeFromStatus(
       nativeEffectPassDetail: current.nativeEffectPassDetail,
       nativeTextureShareSenderReady: current.nativeTextureShareSenderReady,
       nativeTextureShareSenderDetail: current.nativeTextureShareSenderDetail,
+      nativeRecordingReady: current.nativeRecordingReady,
+      nativeStage3DReady: current.nativeStage3DReady,
+      nativeProjectionSimReady: current.nativeProjectionSimReady,
+      readinessChecks: current.readinessChecks,
       nativeOutputShareCapable: current.nativeOutputShareCapable,
       nativeOutputShareActive: current.nativeOutputShareActive,
       nativeOutputShareWaitingForFrame: current.nativeOutputShareWaitingForFrame,
@@ -538,4 +584,77 @@ export function nativeRendererOutputShareSummary(
   if (state.nativeOutputShareCapable) return `${label}: native output capable when sender starts`;
   if (state.textureShareAvailable) return `${label}: OSR texture-share bridge available`;
   return state.textureShareLabel ? `${label}: unavailable` : '';
+}
+
+export function nativeRendererMainDriverGateChecks(
+  state: NativeRendererRuntimeState,
+): NativeRendererRuntimeCheck[] {
+  const checks = new Map(state.readinessChecks.map((check) => [check.id, check]));
+  const gate = (
+    id: string,
+    label: string,
+    ok: boolean,
+    detail: string,
+  ): NativeRendererRuntimeCheck => checks.get(id) ?? { id, label, ok, detail };
+  const graphReady = state.nativeGraphSourceFrames && state.graphCatalogComplete;
+  const stageReady = state.nativeStage3DReady && state.nativeProjectionSimReady;
+
+  return [
+    {
+      id: 'native-graph-routing',
+      label: 'Native graph routing',
+      ok: graphReady,
+      detail: graphReady
+        ? 'all native instrument graph routes are cataloged and source-frame ready'
+        : 'native instrument graph catalog/source-frame routing is incomplete',
+    },
+    gate(
+      'native-effect-pass-manifest',
+      'Effect pass route',
+      state.nativeEffectPassReady,
+      state.nativeEffectPassDetail || 'native source-frame effect pass manifest is not ready',
+    ),
+    gate(
+      'shared-texture-upload',
+      'Media texture transport',
+      state.sharedTextureMediaTransportReady,
+      state.sharedTextureMediaTransportReady
+        ? 'full shared-texture media transport is ready'
+        : 'full shared-texture media transport is pending',
+    ),
+    gate(
+      'shared-texture-output-export',
+      'Output texture export',
+      state.sharedTextureOutputExportReady,
+      state.sharedTextureOutputExportReady
+        ? 'native output is exported as a shared GPU texture'
+        : 'native output shared-texture export is unavailable',
+    ),
+    gate(
+      'native-texture-share-sender',
+      `${state.textureShareLabel || 'Texture-share'} sender`,
+      state.nativeTextureShareSenderReady,
+      state.nativeTextureShareSenderDetail || 'native texture-share sender is not active-ready',
+    ),
+    gate(
+      'native-output-driver',
+      'Output driver',
+      state.outputDriverReady,
+      state.outputDriverReady ? 'native output driver is ready' : 'native output driver is not ready',
+    ),
+    gate(
+      'native-recording',
+      'Recording path',
+      state.nativeRecordingReady,
+      state.nativeRecordingReady ? 'native recording path is ready' : 'native recording path is not fully ready',
+    ),
+    {
+      id: 'native-3d-scene-renderers',
+      label: 'Stage/Projection parity',
+      ok: stageReady,
+      detail: stageReady
+        ? 'Stage3D and Projection Sim render/record through the native path'
+        : 'Stage3D or Projection Sim native renderer/recording parity is pending',
+    },
+  ];
 }

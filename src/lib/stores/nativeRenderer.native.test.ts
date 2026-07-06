@@ -3,6 +3,7 @@ import { get } from 'svelte/store';
 import {
   deriveNativeRendererRuntimeState,
   inferNativeGraphRuntimeFlags,
+  nativeRendererMainDriverGateChecks,
   nativeRendererRuntime,
   nativeRendererModeLabel,
   nativeRendererOutputShareSummary,
@@ -359,6 +360,26 @@ describe('native renderer runtime state', () => {
     expect(state.nativeEffectPassDetail).toContain('source-frame layer effects');
     expect(state.nativeTextureShareSenderReady).toBe(false);
     expect(state.nativeTextureShareSenderDetail).toContain('waiting for the first rendered frame');
+    expect(state.nativeRecordingReady).toBe(false);
+    expect(state.readinessChecks.map((check) => check.id)).toEqual([
+      'shared-texture-source-frame-upload',
+      'shared-texture-upload',
+      'shared-texture-output-export',
+      'native-effect-pass-manifest',
+      'native-texture-share-sender',
+    ]);
+    const gates = nativeRendererMainDriverGateChecks(state);
+    expect(gates.map((gate) => [gate.id, gate.ok])).toEqual([
+      ['native-graph-routing', true],
+      ['native-effect-pass-manifest', true],
+      ['shared-texture-upload', false],
+      ['shared-texture-output-export', true],
+      ['native-texture-share-sender', false],
+      ['native-output-driver', true],
+      ['native-recording', false],
+      ['native-3d-scene-renderers', false],
+    ]);
+    expect(gates.find((gate) => gate.id === 'native-texture-share-sender')?.label).toBe('Native Syphon sender');
     expect(state.nativeOutputShareCapable).toBe(true);
     expect(state.nativeOutputShareActive).toBe(false);
     expect(state.nativeOutputShareWaitingForFrame).toBe(true);
