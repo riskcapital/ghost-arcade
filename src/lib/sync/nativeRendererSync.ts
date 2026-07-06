@@ -929,6 +929,34 @@ export function effectToNativeDescriptor(effect: any): string | null {
       Math.max(0, Math.min(1, invertRaw)).toFixed(0),
     ].join(':');
   }
+  if (type === 'vhs') {
+    const trackingRaw = firstFiniteParam(params, ['vhsTracking', 'tracking'], 0.5);
+    const noiseRaw = firstFiniteParam(params, ['vhsNoise', 'noise'], 0.3);
+    const distortionRaw = firstFiniteParam(params, ['vhsDistortion', 'distortion'], 0.3);
+    const colorBleedRaw = firstFiniteParam(params, ['vhsColorBleed', 'colorBleed'], 0.5);
+    const scanlinesRaw = firstFiniteParam(params, ['vhsScanlines', 'scanlines'], 0.3);
+    const headSwitchRaw = firstFiniteParam(params, ['vhsHeadSwitch', 'headSwitch'], 0);
+    const tapeWobbleRaw = firstFiniteParam(params, ['vhsTapeWobble', 'tapeWobble'], 0);
+    const dropoutRaw = firstFiniteParam(params, ['vhsDropout', 'dropout'], 0);
+    const chromaDelayRaw = firstFiniteParam(params, ['vhsChromaDelay', 'chromaDelay'], 0);
+    const trackingJumpRaw = firstFiniteParam(params, ['vhsTrackingJump', 'trackingJump'], 0);
+    const saturationRaw = firstFiniteParam(params, ['vhsSaturation', 'saturation'], 1);
+    return [
+      'vhs',
+      '1.0000',
+      Math.max(0, Math.min(1, trackingRaw)).toFixed(4),
+      Math.max(0, Math.min(1, noiseRaw)).toFixed(4),
+      Math.max(0, Math.min(1, distortionRaw)).toFixed(4),
+      Math.max(0, Math.min(1, colorBleedRaw)).toFixed(4),
+      Math.max(0, Math.min(1, scanlinesRaw)).toFixed(4),
+      Math.max(0, Math.min(1, headSwitchRaw)).toFixed(4),
+      Math.max(0, Math.min(1, tapeWobbleRaw)).toFixed(4),
+      Math.max(0, Math.min(1, dropoutRaw)).toFixed(4),
+      Math.max(0, Math.min(1, chromaDelayRaw)).toFixed(4),
+      Math.max(0, Math.min(1, trackingJumpRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, saturationRaw)).toFixed(4),
+    ].join(':');
+  }
   if (type === 'blur') {
     const radiusRaw =
       (typeof params.blurRadius === 'number' && Number.isFinite(params.blurRadius) ? params.blurRadius : null)
@@ -2170,6 +2198,20 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       speed: Number(rawParam6 ?? 0.6),
       colorMix: Number(rawParam7 ?? 0),
       invert: Number(rawParam8 ?? 0),
+    };
+  } else if (effect === 'vhs') {
+    params = {
+      tracking: Number(rawParam0 ?? 0.5),
+      noise: Number(rawParam1 ?? 0.3),
+      distortion: Number(rawParam2 ?? 0.3),
+      colorBleed: Number(rawParam3 ?? 0.5),
+      scanlines: Number(rawParam4 ?? 0.3),
+      headSwitch: Number(rawParam5 ?? 0),
+      tapeWobble: Number(rawParam6 ?? 0),
+      dropout: Number(rawParam7 ?? 0),
+      chromaDelay: Number(rawParam8 ?? 0),
+      trackingJump: Number(rawParam9 ?? 0),
+      saturation: Number(rawParam10 ?? 1),
     };
   } else if (effect === 'blur') {
     params = {
