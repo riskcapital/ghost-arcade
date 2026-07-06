@@ -90,6 +90,22 @@ export interface PointCloudFXDataOptions {
   splatScale?: Float32Array;
   splatRotation?: Float32Array;
   gaussian?: boolean;
+  maxPoints?: number;
+}
+
+export function pointCloudSourceIndexForSample(
+  sampleIndex: number,
+  sampleCount: number,
+  sourceCount: number,
+): number {
+  if (sourceCount <= 0) return 0;
+  if (sourceCount <= sampleCount || sampleCount <= 1) {
+    return Math.min(sourceCount - 1, Math.max(0, Math.floor(sampleIndex)));
+  }
+  return Math.min(
+    sourceCount - 1,
+    Math.floor(sampleIndex * (sourceCount - 1) / (sampleCount - 1)),
+  );
 }
 
 function gaussianSizeMultiplier(
@@ -1200,7 +1216,6 @@ export interface PointCloudFXNativePointData {
 }
 
 export interface PointCloudFXNativePointDataOptions extends PointCloudFXDataOptions {
-  maxPoints?: number;
   pointSize?: number;
   signature?: string;
 }
@@ -1428,10 +1443,7 @@ export function buildPointCloudFXNativePointData(
   if (n <= 0) {
     throw new Error('point-cloud-fx native point data requires at least one point');
   }
-  const indexFor = (i: number) => {
-    if (sourceCount <= n || n <= 1) return i;
-    return Math.min(sourceCount - 1, Math.floor(i * (sourceCount - 1) / (n - 1)));
-  };
+  const indexFor = (i: number) => pointCloudSourceIndexForSample(i, n, sourceCount);
 
   const normalization = computePointCloudNormalization(n, (pointIndex, axis) => {
     const src = indexFor(pointIndex) * 3;
@@ -1976,12 +1988,16 @@ export class WebGPUPointCloudFX {
     colors: Float32Array,
     options: PointCloudFXDataOptions = {},
   ): void {
-    const n = Math.min(MAX_POINTS, Math.floor(Math.min(positions.length / 3, colors.length / 3)));
+    const sourceCount = Math.floor(Math.min(positions.length / 3, colors.length / 3));
+    const maxPoints = Math.floor(clampNumber(options.maxPoints ?? MAX_POINTS, 1, MAX_POINTS));
+    const n = Math.min(sourceCount, maxPoints);
     if (n === 0) return;
+    const indexFor = (i: number) => pointCloudSourceIndexForSample(i, n, sourceCount);
 
-    const normalization = computePointCloudNormalization(n, (pointIndex, axis) =>
-      positions[pointIndex * 3 + axis],
-    );
+    const normalization = computePointCloudNormalization(n, (pointIndex, axis) => {
+      const src = indexFor(pointIndex) * 3;
+      return positions[src + axis];
+    });
     const { cx, cy, cz, scale } = normalization;
     const hasGaussianPayload = !!options.gaussian || !!options.splatScale || !!options.splatRotation;
 
@@ -1989,9 +2005,11 @@ export class WebGPUPointCloudFX {
     const homeBytes = new ArrayBuffer(n * HOME_BYTES);
     const homeF = new Float32Array(homeBytes);
     for (let i = 0; i < n; i++) {
+      const sourceIndex = indexFor(i);
       const off = i * 16;  // 64 bytes / 4 = 16 floats
-      const scaleOff = i * 3;
-      const rotOff = i * 4;
+      const src = sourceIndex * 3;
+      const scaleOff = sourceIndex * 3;
+      const rotOff = sourceIndex * 4;
       const hasScale = !!options.splatScale &&
         Number.isFinite(options.splatScale[scaleOff + 0]) &&
         Number.isFinite(options.splatScale[scaleOff + 1]) &&
@@ -2007,13 +2025,13 @@ export class WebGPUPointCloudFX {
         options.splatRotation?.[rotOff + 3] ?? 0,
       );
 
-      homeF[off + 0] = (positions[i * 3 + 0] - cx) * scale;
-      homeF[off + 1] = (positions[i * 3 + 1] - cy) * scale;
-      homeF[off + 2] = (positions[i * 3 + 2] - cz) * scale;
-      homeF[off + 3] = clampNumber(options.alpha?.[i] ?? 1, 0, 1);
-      homeF[off + 4] = clampNumber(colors[i * 3 + 0], 0, 1);
-      homeF[off + 5] = clampNumber(colors[i * 3 + 1], 0, 1);
-      homeF[off + 6] = clampNumber(colors[i * 3 + 2], 0, 1);
+      homeF[off + 0] = (positions[src + 0] - cx) * scale;
+      homeF[off + 1] = (positions[src + 1] - cy) * scale;
+      homeF[off + 2] = (positions[src + 2] - cz) * scale;
+      homeF[off + 3] = clampNumber(options.alpha?.[sourceIndex] ?? 1, 0, 1);
+      homeF[off + 4] = clampNumber(colors[src + 0], 0, 1);
+      homeF[off + 5] = clampNumber(colors[src + 1], 0, 1);
+      homeF[off + 6] = clampNumber(colors[src + 2], 0, 1);
       homeF[off + 7] = sizeMultiplier;
       homeF[off + 8] = hasScale ? normalizedGaussianScale(scale0, normalization.scale) : 1;
       homeF[off + 9] = hasScale ? normalizedGaussianScale(scale1, normalization.scale) : 1;
@@ -2088,7 +2106,15 @@ export class WebGPUPointCloudFX {
     });
 
     this.pointCount = n;
-    console.log('[pointcloud-fx] loaded', n, 'points (normalized to unit cube; src scale =', scale.toFixed(4), ')');
+    console.log(
+      '[pointcloud-fx] loaded',
+      n,
+      'points from',
+      sourceCount,
+      '(normalized to unit cube; src scale =',
+      scale.toFixed(4),
+      ')',
+    );
   }
 
   setParams(p: Partial<PointCloudFXParams>): void {
