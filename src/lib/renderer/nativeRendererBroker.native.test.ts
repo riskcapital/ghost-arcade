@@ -1,7 +1,84 @@
 import { describe, expect, it } from 'vitest';
 import { createNativeRendererBroker } from '../../../electron/native-renderer-broker.js';
 
-function coreCapabilities(features: Record<string, unknown> = {}) {
+const nativeGraphManifests = [
+  {
+    id: 'planet',
+    feature: 'native_planet_graph',
+    shader_ids: ['planet/render'],
+  },
+  {
+    id: 'smoke-3d',
+    feature: 'native_3d_smoke_graph',
+    shader_ids: [
+      '3d-smoke/splat',
+      '3d-smoke/advect-velocity',
+      '3d-smoke/divergence',
+      '3d-smoke/jacobi',
+      '3d-smoke/subtract-gradient',
+      '3d-smoke/advect-density',
+      '3d-smoke/render',
+    ],
+  },
+  {
+    id: 'particle-field',
+    feature: 'native_particle_field_graph',
+    shader_ids: [
+      'particle-field/behavior',
+      'particle-field/edges',
+      'particle-field/fog',
+      'particle-field/render',
+      'particle-field/lines',
+    ],
+  },
+  {
+    id: 'volumetric-spheres',
+    feature: 'native_volumetric_spheres_graph',
+    shader_ids: ['volumetric-spheres/sim', 'volumetric-spheres/render'],
+  },
+  {
+    id: 'smoke-riders',
+    feature: 'native_smoke_riders_graph',
+    shader_ids: [
+      '3d-smoke/splat',
+      '3d-smoke/advect-velocity',
+      '3d-smoke/divergence',
+      '3d-smoke/jacobi',
+      '3d-smoke/subtract-gradient',
+      '3d-smoke/advect-density',
+      '3d-smoke/render',
+      'volumetric-spheres/sim',
+      'volumetric-spheres/render',
+    ],
+  },
+  {
+    id: 'ink-cloud',
+    feature: 'native_ink_cloud_graph',
+    shader_ids: ['ink-cloud/sim', 'ink-cloud/render', 'ink-cloud/background'],
+  },
+  {
+    id: 'flythrough',
+    feature: 'native_flythrough_graph',
+    shader_ids: ['flythrough/compute', 'flythrough/render'],
+  },
+  {
+    id: 'pixel-particles',
+    feature: 'native_pixel_particles_graph',
+    shader_ids: ['pixel-particles/compute', 'pixel-particles/render'],
+  },
+  {
+    id: 'point-cloud-fx',
+    feature: 'native_point_cloud_fx_graph',
+    shader_ids: [
+      'point-cloud-fx/compute',
+      'point-cloud-fx/sort-fill',
+      'point-cloud-fx/sort-step',
+      'point-cloud-fx/render',
+    ],
+  },
+];
+
+function coreCapabilities(features: Record<string, unknown> = {}, overrides: Record<string, unknown> = {}) {
   return {
     schema_version: 1,
     core_version: 'test-core',
@@ -26,10 +103,11 @@ function coreCapabilities(features: Record<string, unknown> = {}) {
     },
     limits: {},
     notes: [],
+    ...overrides,
   };
 }
 
-function createBroker({ encoderAvailable = true } = {}) {
+function createBroker({ encoderAvailable = true, textureShareStatus = null } = {}) {
   const broker = createNativeRendererBroker({
     appRoot: process.cwd(),
     resourcesPath: process.cwd(),
@@ -47,6 +125,7 @@ function createBroker({ encoderAvailable = true } = {}) {
       encoder: 'ffmpeg',
       reason: encoderAvailable ? null : 'ffmpeg unavailable in test',
     }),
+    textureShareStatusProvider: textureShareStatus ? () => textureShareStatus : null,
   }) as any;
   broker.child = { killed: false };
   broker.lastStatus = {
@@ -96,5 +175,79 @@ describe('native renderer broker capability overlay', () => {
     expect(checks.get('native-frame-export')?.ok).toBe(true);
     expect(checks.get('native-recording')?.ok).toBe(false);
     expect(String(checks.get('native-recording')?.detail ?? '')).toContain('ffmpeg unavailable');
+  });
+
+  it('promotes full-v2 when native output, graph routes, media, recording, and texture share are ready', async () => {
+    const broker = createBroker({
+      encoderAvailable: true,
+      textureShareStatus: {
+        available: true,
+        platform: 'syphon',
+        label: 'Syphon',
+        senderMode: 'native-iosurface',
+        nativeOutputCapable: true,
+        nativeOutputActive: true,
+        nativeOutputWaitingForFrame: false,
+        nativeOutputLastPublishedFrame: 8,
+      },
+    });
+    broker.send = async (method: string) => {
+      expect(method).toBe('get_capabilities');
+      const graphFeatures = Object.fromEntries(nativeGraphManifests.map((entry) => [entry.feature, true]));
+      return coreCapabilities(
+        {
+          compute_shader_host: true,
+          compute_graph_host: true,
+          compute_graph_render: true,
+          compute_graph_texture_sampling: true,
+          compute_graph_source_frame_target: true,
+          persistent_compute_buffers: true,
+          native_output_mirror_texture: true,
+          shared_texture_source_frame_upload: true,
+          shared_texture_upload: true,
+          shared_texture_output_export: true,
+          managed_output_attach: true,
+          managed_output_window_control: true,
+          native_static_image_decode: true,
+          native_static_image_prefetch: true,
+          native_media_decode: true,
+          media_prefetch: true,
+          native_video_frame_decode: true,
+          native_video_frame_prefetch: true,
+          native_video_decode_pump: true,
+          native_video_decode_pump_window: true,
+          native_stage3d: true,
+          native_projection_sim: true,
+          ...graphFeatures,
+        },
+        {
+          native_graph_instruments: nativeGraphManifests.map((entry) => entry.id),
+          native_graph_instrument_manifest: nativeGraphManifests.map((entry) => ({
+            id: entry.id,
+            label: entry.id,
+            source_uri_prefix: `native-graph://${entry.id}/`,
+            shader_ids: entry.shader_ids,
+            features: [entry.feature],
+            render_target: 'source_frame',
+            parity: `${entry.id}-parity`,
+          })),
+        },
+      );
+    };
+
+    const capabilities = await broker.refreshCapabilities({ requireCore: true });
+    expect(capabilities.features.native_recording).toBe(true);
+    expect(capabilities.features.native_effect_pass_manifest).toBe(true);
+    expect(capabilities.features.native_texture_share_sender).toBe(true);
+
+    const report = broker.readinessReport();
+    expect(report.modes.output_driver.ok).toBe(true);
+    expect(report.modes.full_v2.ok).toBe(true);
+    expect(report.modes.full_v2.blockers).toEqual([]);
+
+    const checks = new Map(report.checks.map((check: any) => [check.id, check]));
+    expect(checks.get('native-texture-share-sender')?.ok).toBe(true);
+    expect(checks.get('native-media-decode')?.ok).toBe(true);
+    expect(checks.get('native-recording')?.ok).toBe(true);
   });
 });
