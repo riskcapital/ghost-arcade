@@ -172,6 +172,49 @@ function expectedSourceFrameSharedTextureImport() {
   return { available: false, backend: 'vulkan', platform: 'unsupported', importer: 'none', handleScope: '' };
 }
 
+function expectedOutputSharedTextureExport() {
+  if (process.platform === 'darwin') {
+    return {
+      available: true,
+      backend: 'metal',
+      platform: 'iosurface',
+      exporter: 'metal-iosurface',
+      handle_scope: 'global-id',
+      preferred_transport: 'handle',
+      handle_encoding: 'integer',
+      handle_byte_length: 4,
+      exported_formats: ['bgra8unorm', 'bgra8unorm-srgb'],
+      reason: null,
+    };
+  }
+  if (process.platform === 'win32') {
+    return {
+      available: true,
+      backend: 'd3d12',
+      platform: 'dxgi',
+      exporter: 'd3d12-shared-resource-name',
+      handle_scope: 'process-local',
+      preferred_transport: 'shared_name',
+      handle_encoding: 'integer',
+      handle_byte_length: 8,
+      exported_formats: ['bgra8unorm', 'bgra8unorm-srgb'],
+      reason: null,
+    };
+  }
+  return {
+    available: false,
+    backend: 'vulkan',
+    platform: 'unsupported',
+    exporter: 'none',
+    handle_scope: '',
+    preferred_transport: '',
+    handle_encoding: '',
+    handle_byte_length: 0,
+    exported_formats: [],
+    reason: 'native output shared-texture export is only implemented for Metal IOSurface and D3D12 DXGI',
+  };
+}
+
 function assertSourceFrameSharedTextureImport(capabilities) {
   const expected = expectedSourceFrameSharedTextureImport();
   const contract = capabilities?.source_frame_shared_texture_import;
@@ -418,6 +461,7 @@ const activeTextureShareReadinessProbe = createNativeRendererBroker({
 });
 activeTextureShareReadinessProbe.capabilities = {
   ...activeTextureShareReadinessProbe.capabilities,
+  output_shared_texture_export: expectedOutputSharedTextureExport(),
   features: {
     ...(activeTextureShareReadinessProbe.capabilities?.features ?? {}),
     shared_texture_output_export: true,
