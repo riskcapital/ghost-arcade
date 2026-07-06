@@ -1459,7 +1459,11 @@ export function buildPointCloudFXPackedPointBuffers(
   options: PointCloudFXPackedPointBufferOptions = {},
 ): PointCloudFXPackedPointBuffers | null {
   const sourceCount = Math.floor(Math.min(positions.length / 3, colors.length / 3));
-  const maxPoints = Math.floor(clampNumber(options.maxPoints ?? MAX_POINTS, 1, MAX_POINTS));
+  const hasGaussianPayload = !!options.gaussian || !!options.splatScale || !!options.splatRotation;
+  const requestedMaxPoints = Math.floor(clampNumber(options.maxPoints ?? MAX_POINTS, 1, MAX_POINTS));
+  const maxPoints = options.depthSort && hasGaussianPayload
+    ? Math.min(requestedMaxPoints, MAX_NATIVE_DEPTH_SORT_POINTS)
+    : requestedMaxPoints;
   const n = Math.min(sourceCount, maxPoints);
   if (n <= 0) return null;
 
@@ -1470,8 +1474,7 @@ export function buildPointCloudFXPackedPointBuffers(
   });
   const { cx, cy, cz, scale } = normalization;
   const pointSize = clampNumber(options.pointSize ?? DEFAULT_POINT_SIZE, 0.0001, 0.2);
-  const hasGaussianPayload = !!options.gaussian || !!options.splatScale || !!options.splatRotation;
-  const depthSortEnabled = !!options.depthSort && hasGaussianPayload && n <= MAX_NATIVE_DEPTH_SORT_POINTS;
+  const depthSortEnabled = !!options.depthSort && hasGaussianPayload && n > 1;
   const sortCount = depthSortEnabled ? nextPowerOfTwo(n) : n;
   const homeBytes = new ArrayBuffer(n * HOME_BYTES);
   const homeF = new Float32Array(homeBytes);
