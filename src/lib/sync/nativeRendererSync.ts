@@ -1863,6 +1863,89 @@ export function effectToNativeDescriptor(effect: any): string | null {
       Math.max(0.05, Math.min(1, focusBandRaw)).toFixed(4),
     ].join(':');
   }
+  if (type === 'curves') {
+    const mixRaw = firstFiniteParam(params, ['curvesMix', 'mix', 'amount'], 1);
+    const contrastRaw = firstFiniteParam(params, ['curvesContrast', 'contrast'], 0.4);
+    const toeRaw = firstFiniteParam(params, ['curvesToe', 'toe'], 0);
+    const shoulderRaw = firstFiniteParam(params, ['curvesShoulder', 'shoulder'], 0);
+    const blackCrushRaw = firstFiniteParam(params, ['curvesBlackCrush', 'blackCrush'], 0);
+    return [
+      'curves',
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+      Math.max(0, Math.min(1, contrastRaw)).toFixed(4),
+      Math.max(0, Math.min(1, toeRaw)).toFixed(4),
+      Math.max(0, Math.min(1, shoulderRaw)).toFixed(4),
+      Math.max(0, Math.min(1, blackCrushRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'selectivecolor' || type === 'selective-color') {
+    const amountRaw = firstFiniteParam(params, ['selectiveColorMix', 'selColorMix', 'mix', 'amount'], 1);
+    const targetHueRaw = firstFiniteParam(params, ['selColorTargetHue', 'targetHue'], 0);
+    const rangeRaw = firstFiniteParam(params, ['selColorRange', 'hueRange', 'range'], 0.1);
+    const featherRaw = firstFiniteParam(params, ['selColorFeather', 'feather'], 0.1);
+    const modeRaw = firstFiniteParam(params, ['selColorMode', 'mode'], 0);
+    const replaceHueRaw = firstFiniteParam(params, ['selColorReplaceHue', 'replaceHue'], 0.33);
+    const satBoostRaw = firstFiniteParam(params, ['selColorSatBoost', 'satBoost', 'saturation'], 0);
+    return [
+      'selective-color',
+      Math.max(0, Math.min(1, amountRaw)).toFixed(4),
+      Math.max(0, Math.min(1, targetHueRaw)).toFixed(4),
+      Math.max(0, Math.min(1, rangeRaw)).toFixed(4),
+      Math.max(0, Math.min(1, featherRaw)).toFixed(4),
+      Math.max(0, Math.min(1, Math.round(modeRaw))).toFixed(0),
+      Math.max(0, Math.min(1, replaceHueRaw)).toFixed(4),
+      Math.max(0, Math.min(1, satBoostRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'falsecolor' || type === 'false-color') {
+    const mixRaw = firstFiniteParam(params, ['falseColorMix', 'mix', 'amount'], 1);
+    const modeRaw = firstFiniteParam(params, ['falseColorMode', 'mode'], 0);
+    const showOriginalRaw = firstFiniteParam(params, ['falseColorShowOriginal', 'showOriginal'], 1);
+    const midpointRaw = firstFiniteParam(params, ['falseColorMidpoint', 'midpoint'], 0.5);
+    const rangeRaw = firstFiniteParam(params, ['falseColorRange', 'range'], 0);
+    return [
+      'false-color',
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+      Math.max(0, Math.min(3, Math.round(modeRaw))).toFixed(0),
+      Math.max(0, Math.min(1, showOriginalRaw)).toFixed(4),
+      Math.max(0, Math.min(1, midpointRaw)).toFixed(4),
+      Math.max(0, Math.min(0.5, rangeRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'shadowrecovery' || type === 'shadow-recovery') {
+    const amountRaw = firstFiniteParam(params, ['shadowAmount', 'amount'], 0.5);
+    const thresholdRaw = firstFiniteParam(params, ['shadowThreshold', 'threshold'], 0.4);
+    const softnessRaw = firstFiniteParam(params, ['shadowSoftness', 'softness'], 0.3);
+    const colorRecoveryRaw = firstFiniteParam(params, ['shadowColorRecovery', 'colorRecovery'], 0.3);
+    const highlightProtectRaw = firstFiniteParam(params, ['shadowHighlightProtect', 'highlightProtect'], 0.6);
+    const mixRaw = firstFiniteParam(params, ['shadowMix', 'mix', 'outputMix'], 1);
+    return [
+      'shadow-recovery',
+      Math.max(0, Math.min(1, amountRaw)).toFixed(4),
+      Math.max(0, Math.min(1, thresholdRaw)).toFixed(4),
+      Math.max(0, Math.min(1, softnessRaw)).toFixed(4),
+      Math.max(0, Math.min(1, colorRecoveryRaw)).toFixed(4),
+      Math.max(0, Math.min(1, highlightProtectRaw)).toFixed(4),
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'highlightrolloff' || type === 'highlight-rolloff') {
+    const amountRaw = firstFiniteParam(params, ['highRolloffAmount', 'amount'], 0.5);
+    const thresholdRaw = firstFiniteParam(params, ['highRolloffThreshold', 'threshold'], 0.7);
+    const softnessRaw = firstFiniteParam(params, ['highRolloffSoftness', 'softness'], 0.2);
+    const preserveHueRaw = firstFiniteParam(params, ['highRolloffPreserveHue', 'preserveHue'], 0.5);
+    const maxValueRaw = firstFiniteParam(params, ['highRolloffMaxValue', 'maxValue'], 1);
+    const mixRaw = firstFiniteParam(params, ['highRolloffMix', 'mix', 'outputMix'], 1);
+    return [
+      'highlight-rolloff',
+      Math.max(0, Math.min(1, amountRaw)).toFixed(4),
+      Math.max(0, Math.min(1, thresholdRaw)).toFixed(4),
+      Math.max(0, Math.min(1, softnessRaw)).toFixed(4),
+      Math.max(0, Math.min(1, preserveHueRaw)).toFixed(4),
+      Math.max(0.7, Math.min(1.5, maxValueRaw)).toFixed(4),
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+    ].join(':');
+  }
   if (type === 'blobtrack' || type === 'blob-track') {
     return blobEffectDescriptor('blob-track', params, {
       mix: 0.8,
@@ -2310,6 +2393,45 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       hazeMode: Number(rawParam4 ?? 0),
       hazeFocusY: Number(rawParam5 ?? 0.5),
       hazeFocusBand: Number(rawParam6 ?? 0.4),
+    };
+  } else if (effect === 'curves') {
+    params = {
+      curvesContrast: Number(rawParam0 ?? 0.4),
+      curvesToe: Number(rawParam1 ?? 0),
+      curvesShoulder: Number(rawParam2 ?? 0),
+      curvesBlackCrush: Number(rawParam3 ?? 0),
+    };
+  } else if (effect === 'selective-color') {
+    params = {
+      selColorTargetHue: Number(rawParam0 ?? 0),
+      selColorRange: Number(rawParam1 ?? 0.1),
+      selColorFeather: Number(rawParam2 ?? 0.1),
+      selColorMode: Number(rawParam3 ?? 0),
+      selColorReplaceHue: Number(rawParam4 ?? 0.33),
+      selColorSatBoost: Number(rawParam5 ?? 0),
+    };
+  } else if (effect === 'false-color') {
+    params = {
+      falseColorMode: Number(rawParam0 ?? 0),
+      falseColorShowOriginal: Number(rawParam1 ?? 1),
+      falseColorMidpoint: Number(rawParam2 ?? 0.5),
+      falseColorRange: Number(rawParam3 ?? 0),
+    };
+  } else if (effect === 'shadow-recovery') {
+    params = {
+      shadowThreshold: Number(rawParam0 ?? 0.4),
+      shadowSoftness: Number(rawParam1 ?? 0.3),
+      shadowColorRecovery: Number(rawParam2 ?? 0.3),
+      shadowHighlightProtect: Number(rawParam3 ?? 0.6),
+      shadowMix: Number(rawParam4 ?? 1),
+    };
+  } else if (effect === 'highlight-rolloff') {
+    params = {
+      highRolloffThreshold: Number(rawParam0 ?? 0.7),
+      highRolloffSoftness: Number(rawParam1 ?? 0.2),
+      highRolloffPreserveHue: Number(rawParam2 ?? 0.5),
+      highRolloffMaxValue: Number(rawParam3 ?? 1),
+      highRolloffMix: Number(rawParam4 ?? 1),
     };
   } else if (effect === 'blob-track' || effect === 'blob-contour' || effect === 'blob-heatmap') {
     const defaultFlags = effect === 'blob-contour' ? 0 : 7;

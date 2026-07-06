@@ -176,6 +176,11 @@ const NATIVE_EFFECT_PASS_DESCRIPTORS = [
   { id: 'halation', code: 52 },
   { id: 'anamorphic-streak', code: 53 },
   { id: 'heat-haze', code: 54 },
+  { id: 'curves', code: 55 },
+  { id: 'selective-color', code: 56 },
+  { id: 'false-color', code: 57 },
+  { id: 'shadow-recovery', code: 58 },
+  { id: 'highlight-rolloff', code: 59 },
 ];
 
 function nativeGraphReadinessId(id) {
