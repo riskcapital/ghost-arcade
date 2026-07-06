@@ -22,7 +22,7 @@ use audio::{GhostAudioUniforms, ghost_audio_uniform_layout};
 use base64::Engine;
 use bytemuck::{Pod, Zeroable};
 use capabilities::{
-    COMPUTE_INSTRUMENT_HOST_FEATURES, CORE_COMMAND_TYPES, CORE_RPC_METHODS,
+    CORE_COMMAND_TYPES, CORE_RPC_METHODS, native_compute_host_readiness, native_graph_readiness,
     output_shared_texture_export_ready_detail, output_shared_texture_export_unavailable_detail,
     shared_texture_media_transport_note, shared_texture_media_transport_ready_detail,
     shared_texture_source_frame_upload_detail, texture_share_sender_label,
@@ -11827,129 +11827,6 @@ fn native_compute_entry(record: &ShaderRecord, source: &str) -> Option<String> {
             .any(|entry| entry == candidate)
             .then(|| candidate.to_string())
     })
-}
-
-fn native_feature_enabled(capabilities: &Value, feature: &str) -> bool {
-    capabilities
-        .get("features")
-        .and_then(|features| features.get(feature))
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-}
-
-fn native_missing_features(capabilities: &Value, required: &[&str]) -> Vec<String> {
-    required
-        .iter()
-        .filter(|feature| !native_feature_enabled(capabilities, feature))
-        .map(|feature| (*feature).to_string())
-        .collect()
-}
-
-fn string_array_contains(value: Option<&Value>, needle: &str) -> bool {
-    value
-        .and_then(Value::as_array)
-        .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(needle)))
-}
-
-fn string_array_missing(value: Option<&Value>, required: &[&str]) -> Vec<String> {
-    required
-        .iter()
-        .filter(|needle| !string_array_contains(value, needle))
-        .map(|needle| (*needle).to_string())
-        .collect()
-}
-
-fn native_graph_manifest_entry<'a>(capabilities: &'a Value, id: &str) -> Option<&'a Value> {
-    capabilities
-        .get("native_graph_instrument_manifest")
-        .and_then(Value::as_array)
-        .and_then(|entries| {
-            entries
-                .iter()
-                .find(|entry| entry.get("id").and_then(Value::as_str) == Some(id))
-        })
-}
-
-fn native_compute_host_readiness(capabilities: &Value, renderer_ready: bool) -> (bool, String) {
-    if !renderer_ready {
-        return (
-            false,
-            "native renderer has not created a wgpu device".to_string(),
-        );
-    }
-    let missing = native_missing_features(capabilities, COMPUTE_INSTRUMENT_HOST_FEATURES);
-    if missing.is_empty() {
-        (
-            true,
-            "compute_graph can run real WGSL graph instruments with persistent buffers and source-frame render targets".to_string(),
-        )
-    } else {
-        (false, format!("missing {}", missing.join("; ")))
-    }
-}
-
-fn native_graph_readiness(
-    capabilities: &Value,
-    renderer_ready: bool,
-    id: &str,
-    label: &str,
-    shader_ids: &[&str],
-    capability_features: &[&str],
-    manifest_features: &[&str],
-) -> (bool, String) {
-    if !renderer_ready {
-        return (
-            false,
-            "native renderer has not created a wgpu device".to_string(),
-        );
-    }
-
-    let mut missing = native_missing_features(capabilities, capability_features);
-    if !string_array_contains(capabilities.get("native_graph_instruments"), id) {
-        missing.push(format!("{id} instrument list entry"));
-    }
-
-    if let Some(entry) = native_graph_manifest_entry(capabilities, id) {
-        let expected_prefix = format!("native-graph://{id}/");
-        if entry.get("source_uri_prefix").and_then(Value::as_str) != Some(expected_prefix.as_str())
-        {
-            missing.push("native-graph URI prefix".to_string());
-        }
-        if entry.get("render_target").and_then(Value::as_str) != Some("source_frame") {
-            missing.push("source_frame target".to_string());
-        }
-        if entry
-            .get("parity")
-            .and_then(Value::as_str)
-            .is_none_or(|parity| parity.is_empty())
-        {
-            missing.push("parity metadata".to_string());
-        }
-
-        missing.extend(
-            string_array_missing(entry.get("features"), manifest_features)
-                .into_iter()
-                .map(|feature| format!("manifest feature {feature}")),
-        );
-        let missing_shaders = string_array_missing(entry.get("shader_ids"), shader_ids);
-        if !missing_shaders.is_empty() {
-            missing.push(format!("shader_ids {}", missing_shaders.join(",")));
-        }
-    } else {
-        missing.push(format!("{id} manifest entry"));
-    }
-
-    if missing.is_empty() {
-        (
-            true,
-            format!(
-                "{label} is implemented via compute_graph source-frame route ({} shared WGSL shader(s))",
-                shader_ids.len()
-            ),
-        )
-    } else {
-        (false, format!("missing {}", missing.join("; ")))
-    }
 }
 
 fn native_wgsl_fragment_supported(source: &str) -> bool {
