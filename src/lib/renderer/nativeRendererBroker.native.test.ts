@@ -280,4 +280,34 @@ describe('native renderer broker capability overlay', () => {
     expect(checks.get('native-media-decode')?.ok).toBe(true);
     expect(checks.get('native-recording')?.ok).toBe(true);
   });
+
+  it('uses swapchain presented frames for managed native output activity', async () => {
+    const broker = createBroker({ encoderAvailable: true });
+    broker.lastStatus = {
+      ...broker.lastStatus,
+      output_window_attached: true,
+      output_swapchain_ready: true,
+      output_present_healthy: true,
+      swapchain_presented: 5,
+      frames_presented: 0,
+      swapchain_last_present_result: 'ok',
+    };
+    broker.send = async (method: string) => {
+      expect(method).toBe('get_capabilities');
+      return coreCapabilities({
+        managed_output_attach: true,
+      });
+    };
+
+    await broker.refreshCapabilities({ requireCore: true });
+    const report = broker.readinessReport();
+    const checks = new Map<string, ReadinessCheck>(
+      report.checks.map((check: ReadinessCheck) => [check.id, check]),
+    );
+
+    expect(report.modes.output_active.ok).toBe(true);
+    expect(String(report.modes.output_active.detail)).toContain('5 native swapchain frame');
+    expect(checks.get('managed-output')?.ok).toBe(true);
+    expect(String(checks.get('managed-output')?.detail ?? '')).toContain('5 native swapchain frame');
+  });
 });
