@@ -25,11 +25,10 @@ use base64::Engine;
 use bytemuck::{Pod, Zeroable};
 use capabilities::{
     CORE_COMMAND_TYPES, CORE_RPC_METHODS, native_compute_host_readiness,
-    native_graph_readiness_checks, output_shared_texture_export_ready_detail,
-    output_shared_texture_export_unavailable_detail, shared_texture_media_transport_note,
-    shared_texture_media_transport_ready_detail, source_frame_shared_texture_import_readiness,
-    texture_share_sender_label, texture_share_sender_pending_detail,
-    texture_share_sender_ready_detail,
+    native_graph_readiness_checks, output_shared_texture_export_readiness,
+    shared_texture_media_transport_note, shared_texture_media_transport_ready_detail,
+    source_frame_shared_texture_import_readiness, texture_share_sender_label,
+    texture_share_sender_pending_detail, texture_share_sender_ready_detail,
 };
 use compositor::{
     blend_mode_code, effect_descriptor_code, native_compositor_blend_manifest,
@@ -1711,7 +1710,12 @@ impl App {
     fn capabilities(&self) -> Value {
         let shared_texture_media_transport = self.shared_texture_media_transport_ready();
         let source_frame_shared_texture_import = self.source_frame_shared_texture_import_contract();
+        let output_shared_texture_export = self.output_shared_texture_export_contract();
         let source_frame_shared_texture_import_ready = source_frame_shared_texture_import
+            .get("available")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let output_shared_texture_export_ready = output_shared_texture_export
             .get("available")
             .and_then(Value::as_bool)
             .unwrap_or(false);
@@ -1785,7 +1789,7 @@ impl App {
             "shared_texture_source_frame_upload": source_frame_shared_texture_import_ready,
             "native_output_mirror_texture": true,
             "shared_texture_upload": shared_texture_media_transport,
-            "shared_texture_output_export": self.renderer.as_ref().is_some_and(RenderState::output_export_ready),
+            "shared_texture_output_export": output_shared_texture_export_ready,
             "native_texture_share_sender": false,
             "native_media_decode": true,
             "media_prefetch": true,
@@ -1837,6 +1841,7 @@ impl App {
             "native_graph_instrument_manifest": native_graph_instrument_manifest(),
             "audio_uniform_layout": ghost_audio_uniform_layout(),
             "source_frame_shared_texture_import": source_frame_shared_texture_import,
+            "output_shared_texture_export": output_shared_texture_export,
             "native_scene_bridge": {
                 "stage3d": self.stage3d_scene_summary,
                 "projection_sim": self.projection_sim_scene_summary,
@@ -1891,6 +1896,62 @@ impl App {
                 "accepted_handle_encodings": [],
                 "accepted_formats": [],
                 "reason": "native source-frame shared texture import is only implemented for Metal IOSurface and D3D12 DXGI",
+            })
+        }
+    }
+
+    fn output_shared_texture_export_contract(&self) -> Value {
+        let output_export_ready = self
+            .renderer
+            .as_ref()
+            .is_some_and(RenderState::output_export_ready);
+        #[cfg(target_os = "macos")]
+        {
+            json!({
+                "available": output_export_ready,
+                "backend": native_backend_name(),
+                "platform": "iosurface",
+                "exporter": "metal-iosurface",
+                "handle_scope": "global-id",
+                "preferred_transport": "handle",
+                "handle_encoding": "integer",
+                "handle_byte_length": 4,
+                "exported_formats": ["bgra8unorm", "bgra8unorm-srgb"],
+                "publisher": "SyphonOutput.publishIOSurface",
+                "reason": if output_export_ready { Value::Null } else { json!("native output IOSurface export target is unavailable") },
+            })
+        }
+        #[cfg(target_os = "windows")]
+        {
+            json!({
+                "available": output_export_ready,
+                "backend": native_backend_name(),
+                "platform": "dxgi",
+                "exporter": "d3d12-shared-resource-name",
+                "handle_scope": "process-local",
+                "preferred_transport": "shared_name",
+                "handle_encoding": "integer",
+                "handle_byte_length": 8,
+                "name_scope": "local-session",
+                "exported_formats": ["bgra8unorm", "bgra8unorm-srgb"],
+                "publisher": "SpoutOutput.sendTextureByName",
+                "reason": if output_export_ready { Value::Null } else { json!("native output DXGI export target is unavailable") },
+            })
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            json!({
+                "available": false,
+                "backend": native_backend_name(),
+                "platform": "unsupported",
+                "exporter": "none",
+                "handle_scope": "",
+                "preferred_transport": "",
+                "handle_encoding": "",
+                "handle_byte_length": 0,
+                "exported_formats": [],
+                "publisher": "none",
+                "reason": "native output shared-texture export is only implemented for Metal IOSurface and D3D12 DXGI",
             })
         }
     }
@@ -2360,6 +2421,8 @@ impl App {
                     source_frame_shared_texture_import_ok,
                     source_frame_shared_texture_import_detail,
                 ) = source_frame_shared_texture_import_readiness(&capabilities);
+                let (output_shared_texture_export_ok, output_shared_texture_export_detail) =
+                    output_shared_texture_export_readiness(&capabilities);
                 let mut checks = vec![
                     json!({
                         "id": "wgpu-device",
@@ -2390,18 +2453,14 @@ impl App {
                     json!({
                         "id": "shared-texture-output-export",
                         "label": "Native output shared-texture export",
-                        "ok": self.renderer.as_ref().is_some_and(RenderState::output_export_ready),
-                        "detail": if self.renderer.as_ref().is_some_and(RenderState::output_export_ready) {
-                            output_shared_texture_export_ready_detail()
-                        } else {
-                            output_shared_texture_export_unavailable_detail()
-                        }
+                        "ok": output_shared_texture_export_ok,
+                        "detail": output_shared_texture_export_detail
                     }),
                     json!({
                         "id": "native-texture-share-sender",
                         "label": texture_share_sender_label(),
                         "ok": false,
-                        "detail": if self.renderer.as_ref().is_some_and(RenderState::output_export_ready) {
+                        "detail": if output_shared_texture_export_ok {
                             texture_share_sender_ready_detail()
                         } else {
                             texture_share_sender_pending_detail()

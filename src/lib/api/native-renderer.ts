@@ -422,6 +422,20 @@ export interface NativeRendererCapabilities {
     accepted_formats: readonly string[];
     reason?: string | null;
   };
+  output_shared_texture_export?: {
+    available: boolean;
+    backend: string;
+    platform: 'iosurface' | 'dxgi' | 'unsupported' | string;
+    exporter: string;
+    handle_scope: string;
+    preferred_transport: 'handle' | 'shared_name' | string;
+    handle_encoding: string;
+    handle_byte_length: number;
+    name_scope?: string;
+    exported_formats: readonly string[];
+    publisher?: string;
+    reason?: string | null;
+  };
   native_scene_bridge?: {
     stage3d: NativeSceneBridgeSummary;
     projection_sim: NativeSceneBridgeSummary;
@@ -915,7 +929,11 @@ export interface NativeRendererOutputSharedTexture {
   platform: 'iosurface' | 'dxgi' | 'unsupported' | string;
   handle?: string;
   handle_encoding?: string;
+  handle_scope?: string;
+  preferred_transport?: 'handle' | 'shared_name' | string;
   handle_byte_length?: number;
+  name?: string;
+  shared_name?: string;
   width?: number;
   height?: number;
   format?: string;

@@ -100,10 +100,15 @@ const nativeGraphManifests = [
 
 function coreCapabilities(features: Record<string, unknown> = {}, overrides: Record<string, unknown> = {}) {
   const sharedSourceFrameReady = features.shared_texture_source_frame_upload === true;
+  const backend = String(overrides.backend ?? 'metal');
+  const outputSharedTextureExport = overrides.output_shared_texture_export ??
+    (features.shared_texture_output_export === true
+      ? outputSharedTextureExportContractForBackend(backend, true)
+      : outputSharedTextureExportContractForBackend(backend, false));
   return {
     schema_version: 1,
     core_version: 'test-core',
-    backend: 'metal',
+    backend,
     implemented_methods: [
       'get_capabilities',
       'export_frame_snapshot',
@@ -144,6 +149,7 @@ function coreCapabilities(features: Record<string, unknown> = {}, overrides: Rec
           accepted_formats: [],
           reason: 'native renderer is not running',
         },
+    output_shared_texture_export: outputSharedTextureExport,
     notes: [],
     ...overrides,
   };
@@ -248,6 +254,38 @@ function windowsSharedTextureImportContract() {
     accepted_handle_encodings: ['integer', 'base64', 'hex', 'opaque'],
     accepted_formats: ['bgra8unorm', 'rgba8unorm', '80', '87', '28', '70'],
     reason: null,
+  };
+}
+
+function outputSharedTextureExportContractForBackend(backend: string, available = true) {
+  if (backend === 'd3d12') {
+    return {
+      available,
+      backend: 'd3d12',
+      platform: 'dxgi',
+      exporter: available ? 'd3d12-shared-resource-name' : 'none',
+      handle_scope: available ? 'process-local' : '',
+      preferred_transport: available ? 'shared_name' : '',
+      handle_encoding: available ? 'integer' : '',
+      handle_byte_length: available ? 8 : 0,
+      name_scope: available ? 'local-session' : '',
+      exported_formats: available ? ['bgra8unorm', 'bgra8unorm-srgb'] : [],
+      publisher: available ? 'SpoutOutput.sendTextureByName' : 'none',
+      reason: available ? null : 'native output shared texture export is unavailable',
+    };
+  }
+  return {
+    available,
+    backend: 'metal',
+    platform: 'iosurface',
+    exporter: available ? 'metal-iosurface' : 'none',
+    handle_scope: available ? 'global-id' : '',
+    preferred_transport: available ? 'handle' : '',
+    handle_encoding: available ? 'integer' : '',
+    handle_byte_length: available ? 4 : 0,
+    exported_formats: available ? ['bgra8unorm', 'bgra8unorm-srgb'] : [],
+    publisher: available ? 'SyphonOutput.publishIOSurface' : 'none',
+    reason: available ? null : 'native output shared texture export is unavailable',
   };
 }
 
@@ -419,6 +457,64 @@ describe('native renderer broker capability overlay', () => {
     );
     expect(checks.get('native-texture-share-sender')?.ok).toBe(true);
     expect(checks.get('native-texture-share-sender')?.detail).toContain('Spout');
+  });
+
+  it('keeps Windows full-v2 blocked when the DXGI output contract is not shared-name publishable', async () => {
+    const broker = createBroker({
+      platform: 'win32',
+      encoderAvailable: true,
+      textureShareStatus: {
+        available: true,
+        platform: 'spout',
+        label: 'Spout',
+        senderMode: 'native-dxgi-capable',
+        nativeOutputCapable: true,
+        nativeOutputTransport: 'dxgi-shared-name',
+        nativeOutputRequiresNamedTexture: true,
+        nativeOutputActive: false,
+        nativeOutputWaitingForFrame: false,
+        nativeOutputLastPublishedFrame: 0,
+      },
+    });
+    broker.send = async (method: string) => {
+      expect(method).toBe('get_capabilities');
+      return coreCapabilities(
+        completeNativeV2Features(),
+        completeGraphManifestOverrides({
+          backend: 'd3d12',
+          source_frame_shared_texture_import: windowsSharedTextureImportContract(),
+          output_shared_texture_export: {
+            available: true,
+            backend: 'd3d12',
+            platform: 'dxgi',
+            exporter: 'd3d12-open-shared-handle',
+            handle_scope: 'process-local',
+            preferred_transport: 'handle',
+            handle_encoding: 'integer',
+            handle_byte_length: 8,
+            exported_formats: ['bgra8unorm', 'bgra8unorm-srgb'],
+            publisher: 'SpoutOutput.sendTexture',
+            reason: null,
+          },
+        }),
+      );
+    };
+
+    const capabilities = await broker.refreshCapabilities({ requireCore: true });
+    expect(capabilities.features.shared_texture_output_export).toBe(true);
+    expect(capabilities.features.native_texture_share_sender).toBe(false);
+
+    const report = broker.readinessReport();
+    expect(report.modes.full_v2.ok).toBe(false);
+    expect(report.modes.full_v2.blockers).toContain(
+      'native output shared-texture export contract is not ready',
+    );
+    const checks = new Map<string, ReadinessCheck>(
+      report.checks.map((check: ReadinessCheck) => [check.id, check]),
+    );
+    expect(checks.get('shared-texture-output-export')?.ok).toBe(false);
+    expect(checks.get('shared-texture-output-export')?.detail).toContain('preferred_transport');
+    expect(checks.get('native-texture-share-sender')?.ok).toBe(false);
   });
 
   it('keeps Windows full-v2 blocked when Spout cannot publish named DXGI output', async () => {

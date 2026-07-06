@@ -1,6 +1,8 @@
 use serde_json::Value;
 
 const SHARED_TEXTURE_IMPORT_UNSUPPORTED_DETAIL: &str = "native source-frame shared texture import is only implemented for Metal IOSurface and D3D12 DXGI";
+const OUTPUT_TEXTURE_EXPORT_UNSUPPORTED_DETAIL: &str =
+    "native output shared-texture export is only implemented for Metal IOSurface and D3D12 DXGI";
 
 pub const COMPUTE_INSTRUMENT_HOST_FEATURES: &[&str] = &[
     "compute_shader_host",
@@ -135,26 +137,6 @@ pub fn shared_texture_media_transport_ready_detail() -> &'static str {
         "native shared texture media transport is active for DXGI shared HANDLE source-frame imports; local video/still media bypasses canvas/base64 through native decode"
     } else {
         "native shared texture media transport is active for platform source-frame handles; local video/still media bypasses canvas/base64 through native decode"
-    }
-}
-
-pub fn output_shared_texture_export_ready_detail() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "native output mirror is exported as an IOSurface handle"
-    } else if cfg!(target_os = "windows") {
-        "native output mirror is exported as a DXGI shared HANDLE"
-    } else {
-        "native output mirror is exported as a platform shared texture"
-    }
-}
-
-pub fn output_shared_texture_export_unavailable_detail() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "native output IOSurface export target is unavailable"
-    } else if cfg!(target_os = "windows") {
-        "native output DXGI export target is unavailable"
-    } else {
-        "pending backend-specific output shared-texture export"
     }
 }
 
@@ -308,6 +290,109 @@ pub fn source_frame_shared_texture_import_readiness(capabilities: &Value) -> (bo
             false,
             format!(
                 "source-frame shared texture import contract incomplete: {}",
+                missing.join("; ")
+            ),
+        )
+    }
+}
+
+pub fn output_shared_texture_export_readiness(capabilities: &Value) -> (bool, String) {
+    let Some(contract) = capabilities.get("output_shared_texture_export") else {
+        return (
+            false,
+            "missing output_shared_texture_export contract".to_string(),
+        );
+    };
+
+    let (
+        expected_backend,
+        expected_platform,
+        expected_exporter,
+        expected_handle_scope,
+        expected_preferred_transport,
+        expected_handle_byte_length,
+    ) = if cfg!(target_os = "macos") {
+        (
+            "metal",
+            "iosurface",
+            "metal-iosurface",
+            "global-id",
+            "handle",
+            4_u64,
+        )
+    } else if cfg!(target_os = "windows") {
+        (
+            "d3d12",
+            "dxgi",
+            "d3d12-shared-resource-name",
+            "process-local",
+            "shared_name",
+            8_u64,
+        )
+    } else {
+        return (
+            false,
+            contract_reason(contract)
+                .unwrap_or_else(|| OUTPUT_TEXTURE_EXPORT_UNSUPPORTED_DETAIL.to_string()),
+        );
+    };
+
+    let mut missing = Vec::new();
+    if !contract
+        .get("available")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        missing.push(
+            contract_reason(contract).unwrap_or_else(|| "contract available=false".to_string()),
+        );
+    }
+
+    for (key, expected) in [
+        ("backend", expected_backend),
+        ("platform", expected_platform),
+        ("exporter", expected_exporter),
+        ("handle_scope", expected_handle_scope),
+        ("preferred_transport", expected_preferred_transport),
+        ("handle_encoding", "integer"),
+    ] {
+        let actual = contract_string(contract, key);
+        if actual != expected {
+            missing.push(format!("{key} {actual:?} != {expected:?}"));
+        }
+    }
+
+    let actual_handle_byte_length = contract
+        .get("handle_byte_length")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    if actual_handle_byte_length != expected_handle_byte_length {
+        missing.push(format!(
+            "handle_byte_length {actual_handle_byte_length} != {expected_handle_byte_length}"
+        ));
+    }
+
+    missing.extend(
+        string_array_missing(
+            contract.get("exported_formats"),
+            &["bgra8unorm", "bgra8unorm-srgb"],
+        )
+        .into_iter()
+        .map(|format| format!("exported format {format}")),
+    );
+
+    if missing.is_empty() {
+        (
+            true,
+            format!(
+                "{expected_exporter} output export active for {expected_platform} {expected_preferred_transport} transport"
+            ),
+        )
+    } else {
+        (
+            false,
+            format!(
+                "output shared texture export contract incomplete: {}",
                 missing.join("; ")
             ),
         )
@@ -561,6 +646,92 @@ mod tests {
         assert!(detail.contains("importer"));
         assert!(detail.contains("handle encoding base64"));
         assert!(detail.contains("format rgba8unorm"));
+    }
+
+    #[test]
+    fn output_shared_texture_export_readiness_rejects_missing_contract() {
+        let capabilities = json!({});
+
+        let (ok, detail) = output_shared_texture_export_readiness(&capabilities);
+
+        assert!(!ok);
+        assert!(detail.contains("output_shared_texture_export"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn output_shared_texture_export_readiness_accepts_macos_contract() {
+        let capabilities = json!({
+            "output_shared_texture_export": {
+                "available": true,
+                "backend": "metal",
+                "platform": "iosurface",
+                "exporter": "metal-iosurface",
+                "handle_scope": "global-id",
+                "preferred_transport": "handle",
+                "handle_encoding": "integer",
+                "handle_byte_length": 4,
+                "exported_formats": ["bgra8unorm", "bgra8unorm-srgb"],
+                "reason": null
+            }
+        });
+
+        let (ok, detail) = output_shared_texture_export_readiness(&capabilities);
+
+        assert!(ok);
+        assert!(detail.contains("metal-iosurface"));
+        assert!(detail.contains("handle"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn output_shared_texture_export_readiness_accepts_windows_contract() {
+        let capabilities = json!({
+            "output_shared_texture_export": {
+                "available": true,
+                "backend": "d3d12",
+                "platform": "dxgi",
+                "exporter": "d3d12-shared-resource-name",
+                "handle_scope": "process-local",
+                "preferred_transport": "shared_name",
+                "handle_encoding": "integer",
+                "handle_byte_length": 8,
+                "exported_formats": ["bgra8unorm", "bgra8unorm-srgb"],
+                "reason": null
+            }
+        });
+
+        let (ok, detail) = output_shared_texture_export_readiness(&capabilities);
+
+        assert!(ok);
+        assert!(detail.contains("d3d12-shared-resource-name"));
+        assert!(detail.contains("shared_name"));
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[test]
+    fn output_shared_texture_export_readiness_rejects_incomplete_contract() {
+        let capabilities = json!({
+            "output_shared_texture_export": {
+                "available": true,
+                "backend": "metal",
+                "platform": "iosurface",
+                "exporter": "none",
+                "handle_scope": "",
+                "preferred_transport": "",
+                "handle_encoding": "opaque",
+                "handle_byte_length": 0,
+                "exported_formats": []
+            }
+        });
+
+        let (ok, detail) = output_shared_texture_export_readiness(&capabilities);
+
+        assert!(!ok);
+        assert!(detail.contains("exporter"));
+        assert!(detail.contains("preferred_transport"));
+        assert!(detail.contains("exported format bgra8unorm"));
+        assert!(detail.contains("exported format bgra8unorm-srgb"));
     }
 
     #[test]
