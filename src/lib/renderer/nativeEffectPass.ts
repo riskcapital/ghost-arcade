@@ -199,14 +199,12 @@ export interface NativeEffectPassOptions {
     chromaSplit: number;
     strength: number;
     contrast: number;
-    saturation: number;
     edgeFade: number;
     cubic: number;
     anamorphicX: number;
     palette: number;
     height: number;
     glow: number;
-    noise: number;
     vignette: number;
     bloom: number;
     scopeMask: number;
