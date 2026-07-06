@@ -172,6 +172,10 @@ const NATIVE_EFFECT_PASS_DESCRIPTORS = [
   { id: 'blob-track', code: 48 },
   { id: 'blob-contour', code: 49 },
   { id: 'blob-heatmap', code: 50 },
+  { id: 'tilt-shift', code: 51 },
+  { id: 'halation', code: 52 },
+  { id: 'anamorphic-streak', code: 53 },
+  { id: 'heat-haze', code: 54 },
 ];
 
 function nativeGraphReadinessId(id) {
