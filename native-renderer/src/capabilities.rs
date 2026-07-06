@@ -8,6 +8,14 @@ pub const COMPUTE_INSTRUMENT_HOST_FEATURES: &[&str] = &[
     "persistent_compute_buffers",
 ];
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeReadinessCheck {
+    pub id: String,
+    pub label: String,
+    pub ok: bool,
+    pub detail: String,
+}
+
 pub const CORE_RPC_METHODS: &[&str] = &[
     "start",
     "stop",
@@ -311,6 +319,62 @@ pub fn native_graph_readiness(
     }
 }
 
+pub fn native_graph_readiness_id(id: &str) -> String {
+    if id == "smoke-3d" {
+        "native-3d-smoke-graph".to_string()
+    } else {
+        format!("native-{id}-graph")
+    }
+}
+
+pub fn native_graph_readiness_checks(
+    capabilities: &Value,
+    renderer_ready: bool,
+) -> Vec<NativeReadinessCheck> {
+    let Some(entries) = capabilities
+        .get("native_graph_instrument_manifest")
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let id = entry.get("id").and_then(Value::as_str)?;
+            let label = entry.get("label").and_then(Value::as_str).unwrap_or(id);
+            let shader_ids = entry
+                .get("shader_ids")
+                .and_then(Value::as_array)
+                .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+                .unwrap_or_default();
+            let manifest_features = entry
+                .get("features")
+                .and_then(Value::as_array)
+                .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+                .unwrap_or_default();
+            let mut capability_features = Vec::with_capacity(manifest_features.len() + 1);
+            capability_features.push("compute_shader_host");
+            capability_features.extend(manifest_features.iter().copied());
+            let (ok, detail) = native_graph_readiness(
+                capabilities,
+                renderer_ready,
+                id,
+                label,
+                &shader_ids,
+                &capability_features,
+                &manifest_features,
+            );
+            Some(NativeReadinessCheck {
+                id: native_graph_readiness_id(id),
+                label: label.to_string(),
+                ok,
+                detail,
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -381,5 +445,43 @@ mod tests {
 
         assert!(ok);
         assert!(detail.contains("Test Graph is implemented"));
+    }
+
+    #[test]
+    fn native_graph_readiness_checks_are_manifest_driven() {
+        let capabilities = json!({
+            "features": {
+                "compute_shader_host": true,
+                "compute_graph_host": true,
+                "compute_graph_render": true,
+                "compute_graph_source_frame_target": true,
+                "native_test_graph": true
+            },
+            "native_graph_instruments": ["test"],
+            "native_graph_instrument_manifest": [
+                {
+                    "id": "test",
+                    "label": "Test Graph",
+                    "source_uri_prefix": "native-graph://test/",
+                    "shader_ids": ["test/render"],
+                    "features": [
+                        "compute_graph_host",
+                        "compute_graph_render",
+                        "compute_graph_source_frame_target",
+                        "native_test_graph"
+                    ],
+                    "render_target": "source_frame",
+                    "parity": "test-shared-wgsl"
+                }
+            ]
+        });
+
+        let checks = native_graph_readiness_checks(&capabilities, true);
+
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].id, "native-test-graph");
+        assert_eq!(checks[0].label, "Test Graph");
+        assert!(checks[0].ok);
+        assert!(checks[0].detail.contains("1 shared WGSL shader"));
     }
 }
