@@ -2008,6 +2008,11 @@ function getTextureShareAddonCandidates(addonName) {
 }
 
 function getTextureShareLoadStatus() {
+  const nativeOutputTransport = isMac
+    ? 'iosurface-handle'
+    : isWin
+      ? 'dxgi-shared-name'
+      : 'unsupported';
   return {
     platform: textureSharePlatform,
     label: textureShareLabel,
@@ -2018,6 +2023,8 @@ function getTextureShareLoadStatus() {
     cpuFallbackAllowed: ALLOW_CPU_TEXTURE_SHARE_FALLBACK,
     receiverTextureInfoSupported: getReceiverTextureInfoSupport(spoutAddon),
     nativeOutputCapable: getNativeOutputTextureShareSupport(spoutAddon),
+    nativeOutputTransport,
+    nativeOutputRequiresNamedTexture: isWin,
     nativeOutputActive: nativeOutputTextureShareActive,
     nativeOutputWaitingForFrame: nativeOutputTextureShareWaitingForFrame,
     nativeOutputLastPublishedFrame: nativeOutputTextureShareLastPublishedFrame,
@@ -2041,7 +2048,7 @@ function getReceiverTextureInfoSupport(addon = spoutAddon) {
 function getNativeOutputTextureShareSupport(addon = spoutAddon) {
   if (!addon) return false;
   const OutputClass = getOutputClass(addon);
-  const method = isMac ? 'publishIOSurface' : 'sendTexture';
+  const method = isMac ? 'publishIOSurface' : 'sendTextureByName';
   return !!(
     OutputClass &&
     OutputClass.prototype &&
