@@ -12,6 +12,18 @@ export type NativeRendererDriverMode =
   | 'output-driver'
   | 'full-v2';
 
+const REQUIRED_NATIVE_GRAPH_INSTRUMENTS = [
+  ['planet', 'native_planet_graph'],
+  ['smoke-3d', 'native_3d_smoke_graph'],
+  ['particle-field', 'native_particle_field_graph'],
+  ['volumetric-spheres', 'native_volumetric_spheres_graph'],
+  ['smoke-riders', 'native_smoke_riders_graph'],
+  ['ink-cloud', 'native_ink_cloud_graph'],
+  ['flythrough', 'native_flythrough_graph'],
+  ['pixel-particles', 'native_pixel_particles_graph'],
+  ['point-cloud-fx', 'native_point_cloud_fx_graph'],
+];
+
 export interface NativeRendererRuntimeState {
   running: boolean;
   backendReady: boolean;
@@ -99,6 +111,9 @@ export function inferNativeGraphRuntimeFlags(
   readiness?: RendererReadinessReport | null,
 ): { graphCatalogComplete: boolean; nativeGraphSourceFrames: boolean } {
   const features = capabilities?.features ?? readiness?.capabilities?.features ?? {};
+  const graphInstrumentIds = new Set(
+    ((capabilities ?? readiness?.capabilities)?.native_graph_instruments ?? []).map(String),
+  );
   const nativeGraphSourceFrames = !!(
     features.compute_graph_host &&
     features.compute_graph_render &&
@@ -111,7 +126,9 @@ export function inferNativeGraphRuntimeFlags(
     ? graphChecks.every((check) => !!check?.ok)
     : !!(
       nativeGraphSourceFrames &&
-      ((capabilities ?? readiness?.capabilities)?.native_graph_instruments?.length ?? 0) > 0
+      REQUIRED_NATIVE_GRAPH_INSTRUMENTS.every(([id, feature]) =>
+        graphInstrumentIds.has(id) && !!features[feature]
+      )
     );
 
   return { graphCatalogComplete, nativeGraphSourceFrames };
