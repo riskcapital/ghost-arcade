@@ -2898,10 +2898,24 @@ function makeDefaultCapabilities(overrides = {}) {
       audio1: ['high', 'beat', 'beat_phase', 'bpm'],
       audio2: ['centroid', 'kick', 'snare', 'active'],
     },
+    source_frame_shared_texture_import: makeDefaultSourceFrameSharedTextureImport(overrides.platform ?? process.platform),
     notes: overrides.running === false
       ? ['Native render core is not running; capabilities are the broker fallback shape.']
       : [],
     ...overrides,
+  };
+}
+
+function makeDefaultSourceFrameSharedTextureImport(platform = process.platform) {
+  return {
+    available: false,
+    backend: platform === 'darwin' ? 'metal' : platform === 'win32' ? 'd3d12' : 'unsupported',
+    platform: platform === 'darwin' ? 'iosurface' : platform === 'win32' ? 'dxgi' : 'unsupported',
+    importer: 'none',
+    handle_scope: '',
+    accepted_handle_encodings: [],
+    accepted_formats: [],
+    reason: 'native renderer is not running',
   };
 }
 

@@ -136,6 +136,42 @@ function expectedOutputTextureTransport() {
   return { platform: 'unsupported', handleScope: '', preferredTransport: '' };
 }
 
+function expectedSourceFrameSharedTextureImport() {
+  if (process.platform === 'darwin') {
+    return { available: true, backend: 'metal', platform: 'iosurface', importer: 'metal-iosurface', handleScope: 'global-id' };
+  }
+  if (process.platform === 'win32') {
+    return { available: true, backend: 'd3d12', platform: 'dxgi', importer: 'd3d12-open-shared-handle', handleScope: 'process-handle' };
+  }
+  return { available: false, backend: 'vulkan', platform: 'unsupported', importer: 'none', handleScope: '' };
+}
+
+function sourceFrameSharedTextureImportOk(capabilities, expected = expectedSourceFrameSharedTextureImport()) {
+  const features = capabilities?.features ?? {};
+  const contract = capabilities?.source_frame_shared_texture_import;
+  if (!contract || !!features.shared_texture_source_frame_upload !== expected.available) return false;
+  if (!!contract.available !== expected.available) return false;
+  if (String(contract.backend ?? '') !== expected.backend) return false;
+  if (String(contract.platform ?? '') !== expected.platform) return false;
+  if (String(contract.importer ?? '') !== expected.importer) return false;
+  if (String(contract.handle_scope ?? '') !== expected.handleScope) return false;
+  if (!expected.available) return true;
+  const encodings = new Set(Array.isArray(contract.accepted_handle_encodings) ? contract.accepted_handle_encodings.map(String) : []);
+  const formats = new Set(Array.isArray(contract.accepted_formats) ? contract.accepted_formats.map(String) : []);
+  return encodings.has('integer') && encodings.has('base64') && formats.has('bgra8unorm') && formats.has('rgba8unorm');
+}
+
+function sourceFrameSharedTextureImportDetail(capabilities) {
+  const contract = capabilities?.source_frame_shared_texture_import;
+  if (!contract) return 'missing';
+  return [
+    contract.available ? 'on' : 'off',
+    String(contract.platform ?? 'unknown'),
+    String(contract.importer ?? 'unknown'),
+    String(contract.handle_scope ?? 'unknown'),
+  ].join('/');
+}
+
 function outputTextureTransportOk(texture, expected = expectedOutputTextureTransport()) {
   if (expected.platform === 'unsupported') return !texture?.available;
   if (!texture?.available) return false;
@@ -250,6 +286,7 @@ async function inspectCore() {
     const proxyFallbackDisabled = features.native_instrument_proxies === false;
     const blockers = Array.isArray(readiness?.blockers) ? readiness.blockers : [];
     const outputTransportOk = !features.shared_texture_output_export || outputTextureTransportOk(outputTexture);
+    const sourceFrameImportOk = sourceFrameSharedTextureImportOk(capabilities);
     assertNativeCompositorManifest(capabilities);
     await precompileNativeCompositorParityShaders(rpc);
     const blendParity = await assertNativeCompositorBlendParity(rpc);
@@ -266,6 +303,7 @@ async function inspectCore() {
       missingInstruments.length === 0 &&
       proxyFallbackDisabled &&
       outputTransportOk &&
+      sourceFrameImportOk &&
       blockers.length === 0;
     return {
       ok,
@@ -294,7 +332,8 @@ async function inspectCore() {
         `mediaSourceClock=${features.native_media_source_playback_state ? 'on' : 'pending'}`,
         `videoDecodePump=${features.native_video_decode_pump ? 'on' : 'pending'}`,
         `pumpWindow=${features.native_video_decode_pump_window ? 'on' : 'pending'}`,
-        `liveSharedFrameImport=${features.shared_texture_source_frame_upload ? 'on' : 'fallback'}`,
+        `liveSharedFrameImport=${sourceFrameSharedTextureImportDetail(capabilities)}`,
+        sourceFrameImportOk ? '' : 'sourceFrameSharedImportMismatch=1',
         `fullMediaSharedTexture=${features.shared_texture_upload ? 'on' : 'pending'}`,
         `compositorParity=${COMPOSITOR_BLEND_MODES.length}b/${COMPOSITOR_EFFECTS.length}fx`,
         `blendParity=${blendParityChecksum}`,
@@ -381,6 +420,7 @@ async function inspectAppBridge() {
     const fullV2Blockers = readiness?.modes?.full_v2?.blockers ?? [];
     const fullV2BlockerDetail = formatBlockers(fullV2Blockers);
     const outputTransportOk = !outputExportExpected || outputTextureTransportOk(outputTexture);
+    const sourceFrameImportOk = sourceFrameSharedTextureImportOk(capabilities);
     const ok =
       !!status?.backend_ready &&
       !!features.shared_texture_output_export === outputExportExpected &&
@@ -390,6 +430,7 @@ async function inspectAppBridge() {
       !!features.native_recording &&
       audioLayoutOk &&
       effectPassManifestOk &&
+      sourceFrameImportOk &&
       nativeOutputDriverReady &&
       fullV2Ready === fullNativeExpected &&
       !!checks.get('native-texture-share-sender')?.ok === outputExportExpected &&
@@ -440,7 +481,8 @@ async function inspectAppBridge() {
         `mediaSourceClock=${features.native_media_source_playback_state ? 'on' : 'pending'}`,
         `videoDecodePump=${decodeCapabilities?.native_video_decode_pump ? 'on' : 'pending'}`,
         `pumpWindow=${decodeCapabilities?.native_video_decode_pump_window ? 'on' : 'pending'}`,
-        `liveSharedFrameImport=${features.shared_texture_source_frame_upload ? 'on' : 'fallback'}`,
+        `liveSharedFrameImport=${sourceFrameSharedTextureImportDetail(capabilities)}`,
+        sourceFrameImportOk ? '' : 'sourceFrameSharedImportMismatch=1',
         `directSharedTextureRpc=${directSharedRpc ? 'on' : 'missing'}`,
         `textureShareCheck=${checks.get('native-texture-share-sender')?.ok ? 'on' : 'pending'}`,
         `recordingCheck=${checks.get('native-mp4-frame-encoder')?.ok ? 'on' : 'pending'}`,
