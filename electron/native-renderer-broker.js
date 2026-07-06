@@ -1267,6 +1267,16 @@ class NativeRendererBroker {
       features.native_video_decode_pump_window &&
       videoFramePrefetch.available
     );
+    const nativeStage3DOutputOk = !!(
+      features.native_stage3d &&
+      features.native_stage3d_output_renderer &&
+      features.native_stage3d_recording_parity
+    );
+    const nativeProjectionSimOutputOk = !!(
+      features.native_projection_sim &&
+      features.native_projection_sim_output_renderer &&
+      features.native_projection_sim_recording_parity
+    );
     const fullNativeV2Blockers = [
       nativeOutputDriverOk ? null : 'native output driver is not ready',
       effectPassManifestOk ? null : 'native source-frame effect-pass route is not ready',
@@ -1274,8 +1284,8 @@ class NativeRendererBroker {
       nativeMediaDecodeOk ? null : 'native render-clock video decode pump is not fully ready',
       nativeTextureShareSenderOk ? null : `${this.platform === 'darwin' ? 'Syphon' : 'Spout'} native texture-share sender is not active-ready`,
       nativeRecordingOk ? null : 'native recording/MP4 frame path is not fully ready',
-      features.native_stage3d ? null : 'native Stage3D renderer is pending',
-      features.native_projection_sim ? null : 'native projection simulator is pending',
+      nativeStage3DOutputOk ? null : 'native Stage3D output renderer/recording parity is pending',
+      nativeProjectionSimOutputOk ? null : 'native projection simulator output renderer/recording parity is pending',
     ].filter(Boolean);
     const fullNativeV2Ok = fullNativeV2Blockers.length === 0;
     const unsupported = [
@@ -1404,10 +1414,18 @@ class NativeRendererBroker {
       [
         'native-stage3d-output-renderer',
         'Native Stage3D output renderer',
-        !!features.native_stage3d,
-        features.native_stage3d
+        !!features.native_stage3d_output_renderer,
+        features.native_stage3d_output_renderer
           ? 'Stage3D scenes render through the native output/frame-snapshot path'
           : 'Stage3D scenes are not yet promoted to native output rendering',
+      ],
+      [
+        'native-stage3d-recording-parity',
+        'Native Stage3D recording parity',
+        !!features.native_stage3d_recording_parity,
+        features.native_stage3d_recording_parity
+          ? 'Stage3D recording uses the same native frame path as live output'
+          : 'Stage3D recording is not yet proven against the native output path',
       ],
       ['native-projection-sim-scene-ingest', 'Native Projection Sim scene ingest', !!features.native_projection_sim_scene_ingest],
       [
@@ -1445,10 +1463,18 @@ class NativeRendererBroker {
       [
         'native-projection-sim-output-renderer',
         'Native Projection Sim output renderer',
-        !!features.native_projection_sim,
-        features.native_projection_sim
+        !!features.native_projection_sim_output_renderer,
+        features.native_projection_sim_output_renderer
           ? 'Projection Sim scenes render through the native output/frame-snapshot path'
           : 'Projection Sim scenes are not yet promoted to native output rendering',
+      ],
+      [
+        'native-projection-sim-recording-parity',
+        'Native Projection Sim recording parity',
+        !!features.native_projection_sim_recording_parity,
+        features.native_projection_sim_recording_parity
+          ? 'Projection Sim recording uses the same native frame path as live output'
+          : 'Projection Sim recording is not yet proven against the native output path',
       ],
       ['compute-graph-host', 'Native buffer compute graph host', !!features.compute_graph_host],
       [

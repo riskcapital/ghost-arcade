@@ -245,7 +245,11 @@ describe('native renderer broker capability overlay', () => {
           native_video_decode_pump: true,
           native_video_decode_pump_window: true,
           native_stage3d: true,
+          native_stage3d_output_renderer: true,
+          native_stage3d_recording_parity: true,
           native_projection_sim: true,
+          native_projection_sim_output_renderer: true,
+          native_projection_sim_recording_parity: true,
           ...graphFeatures,
         },
         {
@@ -279,6 +283,90 @@ describe('native renderer broker capability overlay', () => {
     expect(checks.get('native-texture-share-sender')?.ok).toBe(true);
     expect(checks.get('native-media-decode')?.ok).toBe(true);
     expect(checks.get('native-recording')?.ok).toBe(true);
+    expect(checks.get('native-stage3d-output-renderer')?.ok).toBe(true);
+    expect(checks.get('native-stage3d-recording-parity')?.ok).toBe(true);
+    expect(checks.get('native-projection-sim-output-renderer')?.ok).toBe(true);
+    expect(checks.get('native-projection-sim-recording-parity')?.ok).toBe(true);
+  });
+
+  it('keeps full-v2 blocked when scene bridge output parity is only partially advertised', async () => {
+    const broker = createBroker({
+      encoderAvailable: true,
+      textureShareStatus: {
+        available: true,
+        platform: 'syphon',
+        label: 'Syphon',
+        senderMode: 'native-iosurface',
+        nativeOutputCapable: true,
+        nativeOutputActive: true,
+        nativeOutputWaitingForFrame: false,
+        nativeOutputLastPublishedFrame: 8,
+      },
+    });
+    broker.send = async (method: string) => {
+      expect(method).toBe('get_capabilities');
+      const graphFeatures = Object.fromEntries(nativeGraphManifests.map((entry) => [entry.feature, true]));
+      return coreCapabilities(
+        {
+          compute_shader_host: true,
+          compute_graph_host: true,
+          compute_graph_render: true,
+          compute_graph_texture_sampling: true,
+          compute_graph_source_frame_target: true,
+          persistent_compute_buffers: true,
+          native_output_mirror_texture: true,
+          shared_texture_source_frame_upload: true,
+          shared_texture_upload: true,
+          shared_texture_output_export: true,
+          managed_output_attach: true,
+          managed_output_window_control: true,
+          native_static_image_decode: true,
+          native_static_image_prefetch: true,
+          native_media_decode: true,
+          media_prefetch: true,
+          native_video_frame_decode: true,
+          native_video_frame_prefetch: true,
+          native_video_decode_pump: true,
+          native_video_decode_pump_window: true,
+          native_stage3d: true,
+          native_stage3d_output_renderer: false,
+          native_stage3d_recording_parity: false,
+          native_projection_sim: true,
+          native_projection_sim_output_renderer: false,
+          native_projection_sim_recording_parity: false,
+          ...graphFeatures,
+        },
+        {
+          native_graph_instruments: nativeGraphManifests.map((entry) => entry.id),
+          native_graph_instrument_manifest: nativeGraphManifests.map((entry) => ({
+            id: entry.id,
+            label: entry.id,
+            source_uri_prefix: `native-graph://${entry.id}/`,
+            shader_ids: entry.shader_ids,
+            features: [entry.feature],
+            render_target: 'source_frame',
+            parity: `${entry.id}-parity`,
+          })),
+        },
+      );
+    };
+
+    await broker.refreshCapabilities({ requireCore: true });
+    const report = broker.readinessReport();
+    const checks = new Map<string, ReadinessCheck>(
+      report.checks.map((check: ReadinessCheck) => [check.id, check]),
+    );
+
+    expect(report.modes.output_driver.ok).toBe(true);
+    expect(report.modes.full_v2.ok).toBe(false);
+    expect(report.modes.full_v2.blockers).toEqual([
+      'native Stage3D output renderer/recording parity is pending',
+      'native projection simulator output renderer/recording parity is pending',
+    ]);
+    expect(checks.get('native-stage3d-output-renderer')?.ok).toBe(false);
+    expect(checks.get('native-stage3d-recording-parity')?.ok).toBe(false);
+    expect(checks.get('native-projection-sim-output-renderer')?.ok).toBe(false);
+    expect(checks.get('native-projection-sim-recording-parity')?.ok).toBe(false);
   });
 
   it('uses swapchain presented frames for managed native output activity', async () => {
