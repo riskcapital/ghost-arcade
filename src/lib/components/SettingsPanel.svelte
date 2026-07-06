@@ -27,7 +27,11 @@
   import { updateInfo } from '../stores/updateChecker';
   import { updateModalOpen } from '../stores/uiState';
   import { project } from '../stores/layers';
-  import { nativeRendererModeLabel, nativeRendererRuntime } from '../stores/nativeRenderer';
+  import {
+    nativeRendererMainDriverGateChecks,
+    nativeRendererModeLabel,
+    nativeRendererRuntime,
+  } from '../stores/nativeRenderer';
   import { checkForUpdate, getCachedVersionResult, type VersionCheckResult } from '../utils/versionCheck';
   import { openExternalUrl } from '../bridge';
 
@@ -60,6 +64,7 @@
   let keyboardAddMin = 0;
   let keyboardAddMax = 1;
   let keyboardAddStep = 0.05;
+  $: nativeMainDriverGates = nativeRendererMainDriverGateChecks($nativeRendererRuntime);
 
   function beginKeyboardAdd() {
     keyboardAddOpen = true;
@@ -1411,6 +1416,27 @@
               {$nativeRendererRuntime.fullV2Ready ? 'Ready' : nativeRendererModeLabel($nativeRendererRuntime.driverMode)}
             </span>
           </div>
+          <div class="native-runtime-gates" aria-label="Native renderer main-driver readiness gates">
+            {#each nativeMainDriverGates as gate (gate.id)}
+              <div
+                class:ok={gate.ok}
+                class:warn={!gate.ok}
+                class="native-runtime-gate"
+                title={gate.detail}
+              >
+                <span class="native-runtime-gate-state">{gate.ok ? 'OK' : 'WAIT'}</span>
+                <span class="native-runtime-gate-label">{gate.label}</span>
+              </div>
+            {/each}
+          </div>
+          {#if !$nativeRendererRuntime.fullV2Ready && $nativeRendererRuntime.blockers.length > 0}
+            <div class="native-runtime-blockers">
+              Waiting on {$nativeRendererRuntime.blockers.slice(0, 3).join(' · ')}
+              {#if $nativeRendererRuntime.blockers.length > 3}
+                · +{$nativeRendererRuntime.blockers.length - 3} more
+              {/if}
+            </div>
+          {/if}
 
           <div class="setting-row">
             <div class="setting-label">
@@ -2825,6 +2851,55 @@
     border-color: rgba(251, 191, 36, 0.45);
     color: #fbbf24;
     background: rgba(251, 191, 36, 0.08);
+  }
+  .native-runtime-gates {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    gap: 6px;
+    margin: -2px 0 12px;
+    padding: 0 0 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  .native-runtime-gate {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    padding: 7px 8px;
+    border: 1px solid rgba(251, 191, 36, 0.28);
+    border-radius: 4px;
+    background: rgba(251, 191, 36, 0.06);
+    color: #fbbf24;
+    font-size: 11px;
+    line-height: 1.2;
+  }
+  .native-runtime-gate.ok {
+    border-color: rgba(76, 175, 80, 0.32);
+    background: rgba(76, 175, 80, 0.07);
+    color: #7ee787;
+  }
+  .native-runtime-gate-state {
+    flex: 0 0 auto;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+  }
+  .native-runtime-gate-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .native-runtime-blockers {
+    margin: -4px 0 12px;
+    padding: 8px 10px;
+    border: 1px solid rgba(251, 191, 36, 0.25);
+    border-radius: 4px;
+    background: rgba(251, 191, 36, 0.06);
+    color: #fbbf24;
+    font-size: 11px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
   }
   .select-input {
     background: #1c1c20;
