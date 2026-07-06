@@ -215,6 +215,41 @@ describe('Point Cloud FX native graph', () => {
     expect(live[12 + 7]).toBeCloseTo(0.01 * home[16 + 7]);
   });
 
+  it('keeps native gaussian clouds inside the depth-sort budget', () => {
+    const count = 270_000;
+    const positions = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
+    const splatScale = new Float32Array(count * 3);
+    const splatRotation = new Float32Array(count * 4);
+    for (let i = 0; i < count; i++) {
+      const t = i / (count - 1);
+      positions[i * 3 + 0] = t * 2 - 1;
+      positions[i * 3 + 1] = Math.sin(t * Math.PI * 10) * 0.25;
+      positions[i * 3 + 2] = Math.cos(t * Math.PI * 6) * 0.35;
+      colors[i * 3 + 0] = 0.25 + t * 0.6;
+      colors[i * 3 + 1] = 0.8 - t * 0.4;
+      colors[i * 3 + 2] = 1;
+      splatScale[i * 3 + 0] = -4.3;
+      splatScale[i * 3 + 1] = -4.6;
+      splatScale[i * 3 + 2] = -5.1;
+      splatRotation[i * 4 + 0] = 1;
+    }
+
+    const data = buildPointCloudFXNativePointData(positions, colors, {
+      maxPoints: 500_000,
+      splatScale,
+      splatRotation,
+      gaussian: true,
+      signature: 'oversized-gaussian-cloud',
+    });
+
+    expect(data.sampledFromCount).toBe(count);
+    expect(data.pointCount).toBe(262_144);
+    expect(data.sortCount).toBe(262_144);
+    expect(data.depthSortEnabled).toBe(true);
+    expect(data.hasGaussianPayload).toBe(true);
+  });
+
   it('builds a native compute/render graph and reuses cloud buffers after reset', () => {
     const { positions, colors } = makePoints(96);
     const pointData = buildPointCloudFXNativePointData(positions, colors, {
