@@ -232,6 +232,7 @@ describe('Native effect-pass template', () => {
       ['highlight-rolloff', 59],
       ['color-balance', 60],
       ['lift-gamma-gain', 61],
+      ['strobe-flash', 62],
     ]);
     expect(nativeEffectPassManifestEntry('posterize')).toMatchObject({
       code: 8,
@@ -253,7 +254,37 @@ describe('Native effect-pass template', () => {
     expect(source.source).toContain('code == 50u');
     expect(source.source).toContain('code == 59u');
     expect(source.source).toContain('code == 61u');
+    expect(source.source).toContain('code == 62u');
     expect(source.source).not.toMatch(/^\s*#include\b/m);
+  });
+
+  it('packs strobe flash timing and tint uniforms', () => {
+    expect(packNativeEffectPassUniforms({
+      sourceId: 'source',
+      targetSourceId: 'target',
+      effect: 'strobe-flash',
+      width: 320,
+      height: 180,
+      time: 0.37,
+      frameDelta: 1 / 30,
+      frameIndex: 31,
+      amount: 0.88,
+      mix: 1,
+      params: {
+        strobeRate: 4,
+        strobeDuty: 0.52,
+        strobeMode: 2,
+        strobeTintR: 0.18,
+        strobeTintG: 0.85,
+        strobeTintB: 1,
+      },
+    })).toEqual([
+      320, 180, 0.37, 1 / 30,
+      62, 0.88, 1, 31,
+      4, 0.52, 2, 0.18,
+      0.85, 1, 0, 0,
+      0, 0, 0, 0,
+    ]);
   });
 
   it('builds native precompile commands from the same shader bundle', () => {

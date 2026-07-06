@@ -2004,6 +2004,25 @@ export function effectToNativeDescriptor(effect: any): string | null {
       '0',
     ].join(':');
   }
+  if (type === 'strobeflash' || type === 'strobe-flash') {
+    const intensityRaw = firstFiniteParam(params, ['strobeIntensity', 'intensity', 'amount'], 1);
+    const rateRaw = firstFiniteParam(params, ['strobeRate', 'rate', 'speed'], 4);
+    const dutyRaw = firstFiniteParam(params, ['strobeDuty', 'duty'], 0.5);
+    const modeRaw = firstFiniteParam(params, ['strobeMode', 'mode'], 0);
+    const tintRRaw = firstFiniteParam(params, ['strobeTintR', 'tintR', 'red'], 1);
+    const tintGRaw = firstFiniteParam(params, ['strobeTintG', 'tintG', 'green'], 1);
+    const tintBRaw = firstFiniteParam(params, ['strobeTintB', 'tintB', 'blue'], 1);
+    return [
+      'strobe-flash',
+      Math.max(0, Math.min(2, intensityRaw)).toFixed(4),
+      Math.max(0.5, Math.min(30, rateRaw)).toFixed(4),
+      Math.max(0, Math.min(1, dutyRaw)).toFixed(4),
+      Math.max(0, Math.min(2, Math.round(modeRaw))).toFixed(0),
+      Math.max(0, Math.min(1, tintRRaw)).toFixed(4),
+      Math.max(0, Math.min(1, tintGRaw)).toFixed(4),
+      Math.max(0, Math.min(1, tintBRaw)).toFixed(4),
+    ].join(':');
+  }
   if (type === 'blobtrack' || type === 'blob-track') {
     return blobEffectDescriptor('blob-track', params, {
       mix: 0.8,
@@ -2520,6 +2539,15 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       lggGainR: Number(rawParam8 ?? 1),
       lggGainG: Number(rawParam9 ?? 1),
       lggGainB: Number(rawParam10 ?? 1),
+    };
+  } else if (effect === 'strobe-flash') {
+    params = {
+      strobeRate: Number(rawParam0 ?? 4),
+      strobeDuty: Number(rawParam1 ?? 0.5),
+      strobeMode: Number(rawParam2 ?? 0),
+      strobeTintR: Number(rawParam3 ?? 1),
+      strobeTintG: Number(rawParam4 ?? 1),
+      strobeTintB: Number(rawParam5 ?? 1),
     };
   } else if (effect === 'blob-track' || effect === 'blob-contour' || effect === 'blob-heatmap') {
     const defaultFlags = effect === 'blob-contour' ? 0 : 7;

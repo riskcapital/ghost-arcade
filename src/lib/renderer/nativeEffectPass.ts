@@ -59,7 +59,8 @@ export type NativeEffectPassId =
   | 'shadow-recovery'
   | 'highlight-rolloff'
   | 'color-balance'
-  | 'lift-gamma-gain';
+  | 'lift-gamma-gain'
+  | 'strobe-flash';
 
 export interface NativeEffectPassManifestEntry {
   id: NativeEffectPassId;
@@ -378,6 +379,13 @@ export interface NativeEffectPassOptions {
     lggGainB: number;
     lggLumaOnly: number;
     lggMix: number;
+    strobeRate: number;
+    strobeDuty: number;
+    strobeIntensity: number;
+    strobeMode: number;
+    strobeTintR: number;
+    strobeTintG: number;
+    strobeTintB: number;
   }>;
   clear?: boolean;
   seq?: number;
@@ -478,6 +486,7 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'highlight-rolloff', code: 59, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
   { id: 'color-balance', code: 60, defaultAmount: 1, amountMin: 0, amountMax: 1 },
   { id: 'lift-gamma-gain', code: 61, defaultAmount: 1, amountMin: 0, amountMax: 1 },
+  { id: 'strobe-flash', code: 62, defaultAmount: 1, amountMin: 0, amountMax: 2 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -2541,6 +2550,23 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let graded = pow(max(gained, vec3<f32>(0.0)), vec3<f32>(1.0) / max(gamma, vec3<f32>(0.05)));
     return vec4<f32>(mix(color, clamp(graded, vec3<f32>(0.0), vec3<f32>(1.0)), clamp(amount, 0.0, 1.0)), src.a);
   }
+  if (code == 62u) {
+    let rate = max(0.001, u.params0.x);
+    let duty = clamp(u.params0.y, 0.0, 1.0);
+    let mode = u32(round(clamp(u.params0.z, 0.0, 2.0)));
+    let tint = clamp(vec3<f32>(u.params0.w, u.params1.x, u.params1.y), vec3<f32>(0.0), vec3<f32>(1.0));
+    let phase = fract1(u.resolution_time.z * rate);
+    let gate = step(phase, duty);
+    var result = color;
+    if (mode == 0u) {
+      result = mix(color, color + vec3<f32>(amount * gate), gate);
+    } else if (mode == 1u) {
+      result = mix(color, vec3<f32>(1.0) - color, gate * amount);
+    } else {
+      result = mix(color, color * tint + tint * 0.4, gate * amount);
+    }
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
   return src;
 }
 
@@ -3129,6 +3155,20 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param8 = clampNumber(params.lggGainR ?? params.param8, 0.05, 4, 1);
     param9 = clampNumber(params.lggGainG ?? params.param9, 0.05, 4, 1);
     param10 = clampNumber(params.lggGainB ?? params.param10, 0.05, 4, 1);
+    param11 = 0;
+  } else if (options.effect === 'strobe-flash') {
+    amount = clampNumber(options.amount ?? params.strobeIntensity ?? params.intensity ?? params.amount, 0, 2, 1);
+    param0 = clampNumber(params.strobeRate ?? params.speed ?? params.param0, 0.5, 30, 4);
+    param1 = clampNumber(params.strobeDuty ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.strobeMode ?? params.mode ?? params.param2, 0, 2, 0);
+    param3 = clampNumber(params.strobeTintR ?? params.red ?? params.param3, 0, 1, 1);
+    param4 = clampNumber(params.strobeTintG ?? params.green ?? params.param4, 0, 1, 1);
+    param5 = clampNumber(params.strobeTintB ?? params.blue ?? params.param5, 0, 1, 1);
+    param6 = 0;
+    param7 = 0;
+    param8 = 0;
+    param9 = 0;
+    param10 = 0;
     param11 = 0;
   }
   return [

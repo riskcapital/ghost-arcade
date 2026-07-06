@@ -183,6 +183,7 @@ const NATIVE_EFFECT_PASS_DESCRIPTORS = [
   { id: 'highlight-rolloff', code: 59 },
   { id: 'color-balance', code: 60 },
   { id: 'lift-gamma-gain', code: 61 },
+  { id: 'strobe-flash', code: 62 },
 ];
 
 function nativeGraphReadinessId(id) {
