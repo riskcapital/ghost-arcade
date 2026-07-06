@@ -2626,6 +2626,32 @@ function nativeOutputTextureHandleBuffer(texture) {
   return null;
 }
 
+function nativeOutputTextureName(texture) {
+  if (!texture || typeof texture !== 'object') return '';
+  return String(texture.name ?? texture.shared_name ?? texture.sharedName ?? '').trim();
+}
+
+function hasNativeOutputTextureSharePublisher(output = spoutOutput) {
+  if (!output) return false;
+  if (isMac) return typeof output.publishIOSurface === 'function';
+  if (isWin) {
+    return typeof output.sendTextureByName === 'function' || typeof output.sendTexture === 'function';
+  }
+  return false;
+}
+
+function nativeOutputTextureShareMethodLabel(texture = null, output = spoutOutput) {
+  if (isMac) return 'publishIOSurface';
+  if (isWin) {
+    if (nativeOutputTextureName(texture) && typeof output?.sendTextureByName === 'function') {
+      return 'sendTextureByName';
+    }
+    if (typeof output?.sendTexture === 'function') return 'sendTexture';
+    return 'sendTextureByName/sendTexture';
+  }
+  return 'nativeTextureShare';
+}
+
 function isNativeOutputTextureHandleReady(texture) {
   if (!texture || typeof texture !== 'object') return false;
   const surfaceId = Number(texture.handle);
@@ -2641,7 +2667,7 @@ function isNativeOutputTextureHandleReady(texture) {
       surfaceId > 0
     );
   }
-  return texture.platform === 'dxgi' && !!nativeOutputTextureHandleBuffer(texture);
+  return texture.platform === 'dxgi' && !!(nativeOutputTextureName(texture) || nativeOutputTextureHandleBuffer(texture));
 }
 
 function isPublishableNativeOutputTexture(texture) {
@@ -2663,8 +2689,9 @@ async function getNativeOutputSharedTextureMetadata() {
 async function canPublishNativeOutputTextureShare() {
   const addon = loadSpoutAddon();
   const OutputClass = addon ? getOutputClass(addon) : null;
-  const method = isMac ? 'publishIOSurface' : 'sendTexture';
-  if (!OutputClass || typeof OutputClass.prototype?.[method] !== 'function') {
+  const hasPublisher = !!OutputClass && hasNativeOutputTextureSharePublisher(OutputClass.prototype);
+  const method = nativeOutputTextureShareMethodLabel(null, OutputClass?.prototype);
+  if (!hasPublisher) {
     return { ok: false, texture: null, reason: `${textureShareLabel} native output ${method} is unavailable` };
   }
   const texture = await getNativeOutputSharedTextureMetadata();
@@ -2704,8 +2731,7 @@ function startNativeOutputTextureSharePromotion(reason = 'waiting-for-native-out
   if (nativeOutputTextureShareActive || nativeOutputTextureSharePromoteTimer) {
     return false;
   }
-  const method = isMac ? 'publishIOSurface' : 'sendTexture';
-  if (!spoutSendActive || !spoutOutput || typeof spoutOutput[method] !== 'function') {
+  if (!spoutSendActive || !hasNativeOutputTextureSharePublisher(spoutOutput)) {
     return false;
   }
 
@@ -2760,8 +2786,7 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
   stopNativeOutputTextureSharePromotion();
   stopNativeOutputTextureSharePump();
 
-  const method = isMac ? 'publishIOSurface' : 'sendTexture';
-  if (!spoutOutput || typeof spoutOutput[method] !== 'function') {
+  if (!hasNativeOutputTextureSharePublisher(spoutOutput)) {
     return false;
   }
 
@@ -2809,8 +2834,10 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
       const width = Number(texture.width);
       const height = Number(texture.height);
       const frameId = Math.max(0, Math.floor(Number(texture.frame ?? 0)));
+      const sharedName = nativeOutputTextureName(texture);
       const handleKey = [
         texture.platform || 'native',
+        sharedName,
         texture.handle,
         width,
         height,
@@ -2824,11 +2851,15 @@ function startNativeOutputTextureSharePump(initialTexture = null) {
         return;
       }
       let ok = false;
+      let method = nativeOutputTextureShareMethodLabel(texture, spoutOutput);
       if (isMac) {
         const surfaceId = Number(texture.handle);
         ok = spoutOutput.publishIOSurface(surfaceId, width, height, !!texture.flipped);
+      } else if (sharedName && typeof spoutOutput.sendTextureByName === 'function') {
+        ok = !!spoutOutput.sendTextureByName(sharedName);
       } else {
         const handleBuffer = nativeOutputTextureHandleBuffer(texture);
+        method = 'sendTexture';
         ok = !!(handleBuffer && spoutOutput.sendTexture(handleBuffer));
       }
       if (!ok) {

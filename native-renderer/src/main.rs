@@ -1249,6 +1249,8 @@ struct NativeOutputExport {
     surface: objc2_core_foundation::CFRetained<objc2_io_surface::IOSurfaceRef>,
     #[cfg(target_os = "windows")]
     shared_handle: windows::Win32::Foundation::HANDLE,
+    #[cfg(target_os = "windows")]
+    shared_name: String,
     texture: wgpu::Texture,
     view: wgpu::TextureView,
     blitter: TextureBlitter,
@@ -1256,6 +1258,15 @@ struct NativeOutputExport {
     height: u32,
     format: wgpu::TextureFormat,
     frame: u64,
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for NativeOutputExport {
+    fn drop(&mut self) {
+        if !self.shared_handle.is_invalid() {
+            let _ = unsafe { windows::Win32::Foundation::CloseHandle(self.shared_handle) };
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -7830,6 +7841,17 @@ impl RenderState {
 
         let width = width.max(1);
         let height = height.max(1);
+        let shared_name = format!(
+            "Local\\GhostArcadeNativeOutput-{}-{}x{}-{}",
+            std::process::id(),
+            width,
+            height,
+            epoch_ms()
+        );
+        let shared_name_wide: Vec<u16> = shared_name
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
         let raw_device = unsafe { device.as_hal::<Dx12>() }
             .ok_or_else(|| "native renderer is not running on the D3D12 backend".to_string())?;
         let dxgi_format = dxgi_format_for_wgpu_output(format);
@@ -7891,7 +7913,7 @@ impl RenderState {
                     &raw_resource,
                     None,
                     GENERIC_ALL.0,
-                    windows::core::PCWSTR::null(),
+                    windows::core::PCWSTR::from_raw(shared_name_wide.as_ptr()),
                 )
                 .map_err(|err| {
                     format!(
@@ -7949,6 +7971,7 @@ impl RenderState {
             .build();
         Ok(NativeOutputExport {
             shared_handle,
+            shared_name,
             texture,
             view,
             blitter,
@@ -8087,6 +8110,8 @@ impl RenderState {
                     "handle": (export.shared_handle.0 as usize).to_string(),
                     "handle_encoding": "integer",
                     "handle_byte_length": 8,
+                    "name": export.shared_name.clone(),
+                    "shared_name": export.shared_name.clone(),
                     "width": export.width,
                     "height": export.height,
                     "format": texture_format_label(export.format),
