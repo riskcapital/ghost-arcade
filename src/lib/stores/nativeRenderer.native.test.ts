@@ -358,11 +358,11 @@ describe('native renderer runtime state', () => {
     expect(state.sharedTextureOutputExportReady).toBe(true);
     expect(state.nativeEffectPassReady).toBe(true);
     expect(state.nativeEffectPassDetail).toContain('source-frame layer effects');
-    expect(state.nativeEffectCoverageNative).toBe(63);
+    expect(state.nativeEffectCoverageNative).toBe(66);
     expect(state.nativeEffectCoverageTotal).toBe(184);
-    expect(state.nativeEffectCoverageMissing).toBe(121);
+    expect(state.nativeEffectCoverageMissing).toBe(118);
     expect(state.nativeEffectCoverageComplete).toBe(false);
-    expect(state.nativeEffectCoverageDetail).toContain('native public effect coverage 63/184');
+    expect(state.nativeEffectCoverageDetail).toContain('native public effect coverage 66/184');
     expect(state.nativeTextureShareSenderReady).toBe(false);
     expect(state.nativeTextureShareSenderDetail).toContain('waiting for the first rendered frame');
     expect(state.nativeRecordingReady).toBe(false);
@@ -385,7 +385,7 @@ describe('native renderer runtime state', () => {
       ['native-recording', false],
       ['native-3d-scene-renderers', false],
     ]);
-    expect(gates.find((gate) => gate.id === 'native-effect-coverage')?.detail).toContain('121 public effects still WebGL-only');
+    expect(gates.find((gate) => gate.id === 'native-effect-coverage')?.detail).toContain('118 public effects still WebGL-only');
     expect(gates.find((gate) => gate.id === 'native-texture-share-sender')?.label).toBe('Native Syphon sender');
     expect(state.nativeOutputShareCapable).toBe(true);
     expect(state.nativeOutputShareActive).toBe(false);

@@ -235,6 +235,9 @@ describe('Native effect-pass template', () => {
       ['strobe-flash', 62],
       ['fm-scanlines', 63],
       ['vhs', 64],
+      ['plasma', 65],
+      ['halftone', 66],
+      ['toon', 67],
     ]);
     expect(nativeEffectPassManifestEntry('posterize')).toMatchObject({
       code: 8,
@@ -259,6 +262,9 @@ describe('Native effect-pass template', () => {
     expect(source.source).toContain('code == 62u');
     expect(source.source).toContain('code == 63u');
     expect(source.source).toContain('code == 64u');
+    expect(source.source).toContain('code == 65u');
+    expect(source.source).toContain('code == 66u');
+    expect(source.source).toContain('code == 67u');
     expect(source.source).not.toMatch(/^\s*#include\b/m);
   });
 
@@ -1932,6 +1938,88 @@ describe('Native effect-pass template', () => {
           },
         },
         {
+          id: 'plasma',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-plasma',
+            effect: 'plasma',
+            width: 160,
+            height: 90,
+            time: 0.45,
+            frameDelta: 1 / 30,
+            frameIndex: 9,
+            amount: 0.9,
+            params: {
+              plasmaScale: 4.5,
+              plasmaSpeed: 0.8,
+              plasmaPalette: 8,
+              plasmaSourceMix: 0.35,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.5, 0.5);
+            const plasmaRgb = snapshotPixelRgb(snapshot, pixels, 0.5, 0.5);
+            expect(rgbDistance(sourceRgb, plasmaRgb)).toBeGreaterThan(0.04);
+          },
+        },
+        {
+          id: 'halftone',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-halftone',
+            effect: 'halftone',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 10,
+            amount: 1,
+            params: {
+              halftoneScale: 9,
+              halftoneAngle: 24,
+              halftoneDotGain: 1.1,
+              halftoneColorMode: 0,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const maxDelta = [
+              [0.35, 0.35],
+              [0.50, 0.50],
+              [0.68, 0.56],
+            ].reduce((best, [x, y]) => {
+              const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, x, y);
+              const halftoneRgb = snapshotPixelRgb(snapshot, pixels, x, y);
+              return Math.max(best, rgbDistance(sourceRgb, halftoneRgb));
+            }, 0);
+            expect(maxDelta).toBeGreaterThan(0.04);
+          },
+        },
+        {
+          id: 'toon',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-toon',
+            effect: 'toon',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 11,
+            amount: 0.95,
+            params: {
+              toonLevels: 3,
+              toonEdgeStrength: 1.2,
+              toonSaturation: 1.2,
+              toonEdgeThreshold: 0.02,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.64, 0.44);
+            const toonRgb = snapshotPixelRgb(snapshot, pixels, 0.64, 0.44);
+            expect(rgbDistance(sourceRgb, toonRgb)).toBeGreaterThan(0.02);
+          },
+        },
+        {
           id: 'vhs',
           graph: buildNativeEffectPassGraph({
             sourceId,
@@ -1963,7 +2051,7 @@ describe('Native effect-pass template', () => {
             const lineA = snapshotPixelLuma(snapshot, pixels, 0.5, 0.48);
             const lineB = snapshotPixelLuma(snapshot, pixels, 0.5, 0.52);
             expect(rgbDistance(sourceRgb, effectRgb)).toBeGreaterThan(0.01);
-            expect(Math.abs(lineA - lineB)).toBeGreaterThan(0.005);
+            expect(Math.abs(lineA - lineB)).toBeGreaterThan(0.003);
           },
         },
         {

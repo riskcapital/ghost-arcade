@@ -957,6 +957,51 @@ export function effectToNativeDescriptor(effect: any): string | null {
       Math.max(0, Math.min(1.5, saturationRaw)).toFixed(4),
     ].join(':');
   }
+  if (type === 'plasma') {
+    const amountRaw = firstFiniteParam(params, ['plasmaMix', 'outputMix', 'amount'], 0.85);
+    const scaleRaw = firstFiniteParam(params, ['plasmaScale', 'scale'], 5.5);
+    const speedRaw = firstFiniteParam(params, ['plasmaSpeed', 'speed'], 0.7);
+    const paletteRaw = firstFiniteParam(params, ['plasmaPalette', 'palette'], 0);
+    const sourceMixRaw = firstFiniteParam(params, ['plasmaSourceMix', 'sourceMix'], 0.35);
+    return [
+      'plasma',
+      Math.max(0, Math.min(1, amountRaw)).toFixed(4),
+      Math.max(0.1, Math.min(24, scaleRaw)).toFixed(4),
+      Math.max(0, Math.min(3, speedRaw)).toFixed(4),
+      Math.max(0, Math.min(11, Math.round(paletteRaw))).toFixed(0),
+      Math.max(0, Math.min(1, sourceMixRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'halftone') {
+    const amountRaw = firstFiniteParam(params, ['halftoneMix', 'outputMix', 'amount'], 0.9);
+    const scaleRaw = firstFiniteParam(params, ['halftoneScale', 'scale', 'cellSize'], 14);
+    const angleRaw = firstFiniteParam(params, ['halftoneAngle', 'angle'], 35);
+    const dotGainRaw = firstFiniteParam(params, ['halftoneDotGain', 'dotGain'], 1);
+    const colorModeRaw = firstFiniteParam(params, ['halftoneColorMode', 'colorMode'], 0);
+    return [
+      'halftone',
+      Math.max(0, Math.min(1, amountRaw)).toFixed(4),
+      Math.max(2, Math.min(96, scaleRaw)).toFixed(4),
+      (((angleRaw % 360) + 360) % 360).toFixed(4),
+      Math.max(0.25, Math.min(2, dotGainRaw)).toFixed(4),
+      Math.max(0, Math.min(1, colorModeRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'toon') {
+    const amountRaw = firstFiniteParam(params, ['toonMix', 'outputMix', 'amount'], 0.85);
+    const levelsRaw = firstFiniteParam(params, ['toonLevels', 'levels'], 4);
+    const edgeRaw = firstFiniteParam(params, ['toonEdgeStrength', 'edgeStrength'], 0.8);
+    const saturationRaw = firstFiniteParam(params, ['toonSaturation', 'saturation'], 1.15);
+    const thresholdRaw = firstFiniteParam(params, ['toonEdgeThreshold', 'threshold'], 0.05);
+    return [
+      'toon',
+      Math.max(0, Math.min(1, amountRaw)).toFixed(4),
+      Math.max(2, Math.min(12, Math.round(levelsRaw))).toFixed(0),
+      Math.max(0, Math.min(2, edgeRaw)).toFixed(4),
+      Math.max(0, Math.min(2, saturationRaw)).toFixed(4),
+      Math.max(0, Math.min(1, thresholdRaw)).toFixed(4),
+    ].join(':');
+  }
   if (type === 'blur') {
     const radiusRaw =
       (typeof params.blurRadius === 'number' && Number.isFinite(params.blurRadius) ? params.blurRadius : null)
@@ -2212,6 +2257,27 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       chromaDelay: Number(rawParam8 ?? 0),
       trackingJump: Number(rawParam9 ?? 0),
       saturation: Number(rawParam10 ?? 1),
+    };
+  } else if (effect === 'plasma') {
+    params = {
+      plasmaScale: Number(rawParam0 ?? 5.5),
+      plasmaSpeed: Number(rawParam1 ?? 0.7),
+      plasmaPalette: Number(rawParam2 ?? 0),
+      plasmaSourceMix: Number(rawParam3 ?? 0.35),
+    };
+  } else if (effect === 'halftone') {
+    params = {
+      halftoneScale: Number(rawParam0 ?? 14),
+      halftoneAngle: Number(rawParam1 ?? 35),
+      halftoneDotGain: Number(rawParam2 ?? 1),
+      halftoneColorMode: Number(rawParam3 ?? 0),
+    };
+  } else if (effect === 'toon') {
+    params = {
+      toonLevels: Number(rawParam0 ?? 4),
+      toonEdgeStrength: Number(rawParam1 ?? 0.8),
+      toonSaturation: Number(rawParam2 ?? 1.15),
+      toonEdgeThreshold: Number(rawParam3 ?? 0.05),
     };
   } else if (effect === 'blur') {
     params = {

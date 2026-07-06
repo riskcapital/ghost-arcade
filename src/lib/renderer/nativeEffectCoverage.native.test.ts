@@ -10,14 +10,15 @@ import { NATIVE_EFFECT_PASS_MANIFEST } from './nativeEffectPass';
 describe('native effect coverage', () => {
   it('tracks public effect coverage separately from native helper passes', () => {
     expect(PUBLIC_EFFECT_TYPES).toHaveLength(184);
-    expect(NATIVE_EFFECT_PASS_MANIFEST).toHaveLength(64);
-    expect(NATIVE_EFFECT_COVERAGE.nativePublicEffectCount).toBe(63);
-    expect(NATIVE_EFFECT_COVERAGE.missingPublicEffectCount).toBe(121);
+    expect(NATIVE_EFFECT_PASS_MANIFEST).toHaveLength(67);
+    expect(NATIVE_EFFECT_COVERAGE.nativePublicEffectCount).toBe(66);
+    expect(NATIVE_EFFECT_COVERAGE.missingPublicEffectCount).toBe(118);
     expect(NATIVE_EFFECT_COVERAGE.nativeOnlyPassIds).toEqual(['grayscale']);
-    expect(NATIVE_EFFECT_COVERAGE.missingPublicEffectTypes).toContain('plasma');
-    expect(NATIVE_EFFECT_COVERAGE.missingPublicEffectTypes).toContain('halftone');
+    expect(NATIVE_EFFECT_COVERAGE.nativePublicEffectTypes).toContain('plasma');
+    expect(NATIVE_EFFECT_COVERAGE.nativePublicEffectTypes).toContain('halftone');
+    expect(NATIVE_EFFECT_COVERAGE.nativePublicEffectTypes).toContain('toon');
     expect(NATIVE_EFFECT_COVERAGE.missingPublicEffectTypes).toContain('sphereWireframe');
-    expect(NATIVE_EFFECT_COVERAGE.detail).toContain('native public effect coverage 63/184');
+    expect(NATIVE_EFFECT_COVERAGE.detail).toContain('native public effect coverage 66/184');
   });
 
   it('normalizes EffectType names to native pass ids', () => {

@@ -62,7 +62,10 @@ export type NativeEffectPassId =
   | 'highlight-rolloff'
   | 'color-balance'
   | 'lift-gamma-gain'
-  | 'strobe-flash';
+  | 'strobe-flash'
+  | 'plasma'
+  | 'halftone'
+  | 'toon';
 
 export interface NativeEffectPassManifestEntry {
   id: NativeEffectPassId;
@@ -402,6 +405,27 @@ export interface NativeEffectPassOptions {
     strobeTintR: number;
     strobeTintG: number;
     strobeTintB: number;
+    plasmaMix: number;
+    plasmaScale: number;
+    plasmaSpeed: number;
+    plasmaPalette: number;
+    plasmaSourceMix: number;
+    sourceMix: number;
+    halftoneMix: number;
+    halftoneScale: number;
+    halftoneAngle: number;
+    halftoneDotGain: number;
+    halftoneColorMode: number;
+    cellSize: number;
+    dotGain: number;
+    colorMode: number;
+    toonMix: number;
+    toonLevels: number;
+    toonEdgeStrength: number;
+    toonSaturation: number;
+    toonEdgeThreshold: number;
+    levels: number;
+    edgeStrength: number;
   }>;
   clear?: boolean;
   seq?: number;
@@ -505,6 +529,9 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'strobe-flash', code: 62, defaultAmount: 1, amountMin: 0, amountMax: 2 },
   { id: 'fm-scanlines', code: 63, defaultAmount: 1, amountMin: 0, amountMax: 1 },
   { id: 'vhs', code: 64, defaultAmount: 1, amountMin: 0, amountMax: 1 },
+  { id: 'plasma', code: 65, defaultAmount: 0.85, amountMin: 0, amountMax: 1 },
+  { id: 'halftone', code: 66, defaultAmount: 0.9, amountMin: 0, amountMax: 1 },
+  { id: 'toon', code: 67, defaultAmount: 0.85, amountMin: 0, amountMax: 1 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -1237,6 +1264,57 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let sat_mix = clamp(1.0 - saturation, 0.0, 1.0);
     tape_rgb = mix(tape_rgb, vec3<f32>(tape_luma), sat_mix * 0.6 + tracking * 0.2);
     return vec4<f32>(mix(color, clamp(tape_rgb, vec3<f32>(0.0), vec3<f32>(1.0)), clamp(amount, 0.0, 1.0)), tape_alpha);
+  }
+  if (code == 65u) {
+    let scale = max(0.1, u.params0.x);
+    let speed = clamp(u.params0.y, 0.0, 3.0);
+    let palette = u32(round(clamp(u.params0.z, 0.0, 11.0)));
+    let source_mix = clamp(u.params0.w, 0.0, 1.0);
+    let aspect = u.resolution_time.x / max(u.resolution_time.y, 1.0);
+    let p = (uv - vec2<f32>(0.5)) * vec2<f32>(aspect, 1.0) * scale;
+    let t = u.resolution_time.z * speed;
+    let field =
+      sin(p.x * 3.10 + t) +
+      sin(p.y * 2.70 - t * 1.13) +
+      sin((p.x + p.y) * 2.10 + t * 0.71) +
+      sin(length(p) * 4.20 - t * 1.37);
+    let plasma = clamp(field * 0.125 + 0.5, 0.0, 1.0);
+    let plasma_rgb = colorama_palette(plasma, palette, t * 0.04);
+    let lit = clamp(plasma_rgb * mix(vec3<f32>(1.0), color * 1.65, source_mix), vec3<f32>(0.0), vec3<f32>(1.5));
+    return vec4<f32>(mix(color, lit, clamp(amount, 0.0, 1.0)), src.a);
+  }
+  if (code == 66u) {
+    let cell_px = max(2.0, u.params0.x);
+    let angle = u.params0.y * 0.01745329252;
+    let dot_gain = clamp(u.params0.z, 0.25, 2.0);
+    let color_mode = clamp(u.params0.w, 0.0, 1.0);
+    let pixel_pos = rotate2d(uv * u.resolution_time.xy, angle) / cell_px;
+    let cell = fract(pixel_pos) - vec2<f32>(0.5);
+    let lum = clamp(luma(color), 0.0, 1.0);
+    let radius = clamp((1.0 - lum) * 0.58 * dot_gain, 0.0, 0.7);
+    let aa = 1.5 / cell_px;
+    let dot_mask = 1.0 - smoothstep(radius, radius + aa, length(cell));
+    let paper = mix(vec3<f32>(1.0), color, color_mode);
+    let ink = mix(vec3<f32>(0.0), color * 0.35, color_mode);
+    let halftone = mix(paper, ink, dot_mask);
+    return vec4<f32>(mix(color, halftone, clamp(amount, 0.0, 1.0)), src.a);
+  }
+  if (code == 67u) {
+    let levels = max(2.0, floor(u.params0.x + 0.5));
+    let edge_strength = clamp(u.params0.y, 0.0, 2.0);
+    let saturation_boost = clamp(u.params0.z, 0.0, 2.0);
+    let edge_threshold = clamp(u.params0.w, 0.0, 1.0);
+    let tx = effect_texel();
+    let l = luma(sample_rgb(uv - vec2<f32>(tx.x, 0.0)));
+    let r = luma(sample_rgb(uv + vec2<f32>(tx.x, 0.0)));
+    let b = luma(sample_rgb(uv - vec2<f32>(0.0, tx.y)));
+    let top = luma(sample_rgb(uv + vec2<f32>(0.0, tx.y)));
+    let edge = smoothstep(edge_threshold, edge_threshold + 0.25, length(vec2<f32>(r - l, top - b)) * 2.0);
+    let gray = vec3<f32>(luma(color));
+    let saturated = mix(gray, color, saturation_boost);
+    let poster = floor(clamp(saturated, vec3<f32>(0.0), vec3<f32>(1.0)) * levels + vec3<f32>(0.5)) / levels;
+    let toon_rgb = poster * (1.0 - edge * edge_strength * 0.8);
+    return vec4<f32>(mix(color, toon_rgb, clamp(amount, 0.0, 1.0)), src.a);
   }
   if (code == 14u) {
     let radius = max(0.0, amount);
@@ -2846,6 +2924,36 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param9 = clampNumber(params.trackingJump ?? params.param9, 0, 1, 0);
     param10 = clampNumber(params.saturation ?? params.param10, 0, 1.5, 1);
     param11 = 0;
+  } else if (options.effect === 'plasma') {
+    amount = clampNumber(options.amount ?? params.plasmaMix ?? params.outputMix ?? params.amount, 0, 1, 0.85);
+    param0 = clampNumber(params.plasmaScale ?? params.scale ?? params.param0, 0.1, 24, 5.5);
+    param1 = clampNumber(params.plasmaSpeed ?? params.speed ?? params.param1, 0, 3, 0.7);
+    param2 = clampNumber(params.plasmaPalette ?? params.palette ?? params.param2, 0, 11, 0);
+    param3 = clampNumber(params.plasmaSourceMix ?? params.sourceMix ?? params.param3, 0, 1, 0.35);
+    param4 = 0;
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'halftone') {
+    amount = clampNumber(options.amount ?? params.halftoneMix ?? params.outputMix ?? params.amount, 0, 1, 0.9);
+    param0 = clampNumber(params.halftoneScale ?? params.scale ?? params.cellSize ?? params.param0, 2, 96, 14);
+    param1 = clampNumber(params.halftoneAngle ?? params.angle ?? params.param1, 0, 360, 35);
+    param2 = clampNumber(params.halftoneDotGain ?? params.dotGain ?? params.param2, 0.25, 2, 1);
+    param3 = clampNumber(params.halftoneColorMode ?? params.colorMode ?? params.param3, 0, 1, 0);
+    param4 = 0;
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'toon') {
+    amount = clampNumber(options.amount ?? params.toonMix ?? params.outputMix ?? params.amount, 0, 1, 0.85);
+    param0 = clampNumber(params.toonLevels ?? params.levels ?? params.param0, 2, 12, 4);
+    param1 = clampNumber(params.toonEdgeStrength ?? params.edgeStrength ?? params.param1, 0, 2, 0.8);
+    param2 = clampNumber(params.toonSaturation ?? params.saturation ?? params.param2, 0, 2, 1.15);
+    param3 = clampNumber(params.toonEdgeThreshold ?? params.threshold ?? params.param3, 0, 1, 0.05);
+    param4 = 0;
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
   } else if (options.effect === 'blur') {
     param0 = clampNumber(params.mode ?? params.param0, 0, 3, 1);
     param1 = clampNumber(params.angle ?? params.param1, 0, 360, 0);
