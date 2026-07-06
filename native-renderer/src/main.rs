@@ -1243,9 +1243,12 @@ struct Stage3DMeshFrame {
     items: Vec<Stage3DMeshItemGpu>,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 struct NativeOutputExport {
+    #[cfg(target_os = "macos")]
     surface: objc2_core_foundation::CFRetained<objc2_io_surface::IOSurfaceRef>,
+    #[cfg(target_os = "windows")]
+    shared_handle: windows::Win32::Foundation::HANDLE,
     texture: wgpu::Texture,
     view: wgpu::TextureView,
     blitter: TextureBlitter,
@@ -1963,7 +1966,7 @@ struct RenderState {
     native_compute_graph_buffers: HashMap<String, NativeComputeGraphGpuBuffer>,
     output_mirror_texture: wgpu::Texture,
     output_mirror_view: wgpu::TextureView,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     output_export: Option<NativeOutputExport>,
     snapshot_texture: wgpu::Texture,
     snapshot_view: wgpu::TextureView,
@@ -2323,7 +2326,7 @@ impl App {
             "auto_present_policy": true,
             "multi_pass_instruments": true,
             "storage_buffer_instruments": true,
-            "shared_texture_source_frame_upload": cfg!(target_os = "macos"),
+            "shared_texture_source_frame_upload": cfg!(any(target_os = "macos", target_os = "windows")),
             "native_output_mirror_texture": true,
             "shared_texture_upload": shared_texture_media_transport,
             "shared_texture_output_export": self.renderer.as_ref().is_some_and(RenderState::output_export_ready),
@@ -2599,7 +2602,7 @@ impl App {
             "limits": limits,
             "notes": [
                 "Native graph instruments use shared WGSL for 3D Smoke, Particle Field, Volumetric Spheres, Ink Cloud, Flythrough, Pixel Particles, and Point Cloud FX; the legacy native lookalike proxy path is disabled.",
-                "Canvas/base64 source-frame upload is a development fallback; macOS media transport can ingest IOSurfaceID source-frame handles; DXGI import remains pending for Windows.",
+                "Canvas/base64 source-frame upload is a development fallback; native shared-texture source-frame handles ingest through IOSurfaceID on macOS and DXGI HANDLE on Windows.",
                 "Native frame export is owned by the render core; MP4/JPEG sequence encoding is completed by the Electron bridge.",
                 "Local video media decode is render-clock driven in the native core: visible video sources pump FFmpeg-decoded frame windows into native source-frame textures with adjacent-frame cache prefetch."
             ]
@@ -2607,11 +2610,11 @@ impl App {
     }
 
     fn shared_texture_media_transport_ready(&self) -> bool {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         {
             self.renderer.is_some()
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
             false
         }
@@ -3385,14 +3388,14 @@ impl App {
                     {
                         "id": "shared-texture-source-frame-upload",
                         "label": "Shared texture source-frame transport",
-                        "ok": cfg!(target_os = "macos"),
-                        "detail": if cfg!(target_os = "macos") { "implemented for IOSurfaceID source-frame handles" } else { "pending backend-specific shared texture import" }
+                        "ok": cfg!(any(target_os = "macos", target_os = "windows")),
+                        "detail": if cfg!(target_os = "macos") { "implemented for IOSurfaceID source-frame handles" } else if cfg!(target_os = "windows") { "implemented for DXGI shared HANDLE source-frame imports" } else { "pending backend-specific shared texture import" }
                     },
                     {
                         "id": "shared-texture-upload",
                         "label": "Shared texture media transport",
                         "ok": self.shared_texture_media_transport_ready(),
-                        "detail": if self.shared_texture_media_transport_ready() { "macOS IOSurfaceID media transport is active for source-frame handles; local video/still media bypasses canvas/base64 through native decode" } else { "full media shared texture transport is pending for this backend" }
+                        "detail": if self.shared_texture_media_transport_ready() { "native shared texture media transport is active for platform source-frame handles; local video/still media bypasses canvas/base64 through native decode" } else { "full media shared texture transport is pending for this backend" }
                     },
                     {
                         "id": "native-output-mirror",
@@ -5995,7 +5998,7 @@ impl App {
             "media_prefetch": true,
             "video_decode": true,
             "source_frame_fallback": true,
-            "shared_texture_source_frame_upload": cfg!(target_os = "macos"),
+            "shared_texture_source_frame_upload": cfg!(any(target_os = "macos", target_os = "windows")),
             "shared_texture_upload": self.shared_texture_media_transport_ready(),
             "supported_source_types": ["image", "video"],
             "supported_static_image_extensions": [
@@ -6014,7 +6017,7 @@ impl App {
             "notes": [
                 "Local still images can decode directly into native source-frame textures.",
                 "Local videos can prefetch bounded timestamped frames and adjacent-frame windows into native source-frame textures via FFmpeg.",
-                "Visible local video layers decode continuously from the native render/media clock through the decode pump; macOS shared media sources ingest IOSurfaceID handles, while DXGI import remains pending."
+                "Visible local video layers decode continuously from the native render/media clock through the decode pump; shared media sources ingest IOSurfaceID handles on macOS and DXGI HANDLEs on Windows."
             ]
         })
     }
@@ -7150,7 +7153,7 @@ impl RenderState {
             format,
             "Ghost Render Core Output Mirror",
         );
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         let output_export = Self::create_output_export_target(
             &device,
             config.width,
@@ -7612,7 +7615,7 @@ impl RenderState {
             native_compute_graph_buffers: HashMap::new(),
             output_mirror_texture,
             output_mirror_view,
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             output_export,
             snapshot_texture,
             snapshot_view,
@@ -7807,7 +7810,156 @@ impl RenderState {
         })
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(target_os = "windows")]
+    fn create_output_export_target(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+    ) -> Result<NativeOutputExport, String> {
+        use wgpu::hal::{self, api::Dx12};
+        use windows::Win32::Foundation::GENERIC_ALL;
+        use windows::Win32::Graphics::Direct3D12::{
+            D3D12_CLEAR_VALUE, D3D12_CLEAR_VALUE_0, D3D12_CPU_PAGE_PROPERTY_UNKNOWN,
+            D3D12_HEAP_FLAG_SHARED, D3D12_HEAP_PROPERTIES, D3D12_HEAP_TYPE_DEFAULT,
+            D3D12_MEMORY_POOL_UNKNOWN, D3D12_RESOURCE_DESC, D3D12_RESOURCE_DIMENSION_TEXTURE2D,
+            D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET, D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS,
+            D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_TEXTURE_LAYOUT_UNKNOWN, ID3D12Resource,
+        };
+        use windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC;
+
+        let width = width.max(1);
+        let height = height.max(1);
+        let raw_device = unsafe { device.as_hal::<Dx12>() }
+            .ok_or_else(|| "native renderer is not running on the D3D12 backend".to_string())?;
+        let dxgi_format = dxgi_format_for_wgpu_output(format);
+        let heap_properties = D3D12_HEAP_PROPERTIES {
+            Type: D3D12_HEAP_TYPE_DEFAULT,
+            CPUPageProperty: D3D12_CPU_PAGE_PROPERTY_UNKNOWN,
+            MemoryPoolPreference: D3D12_MEMORY_POOL_UNKNOWN,
+            CreationNodeMask: 0,
+            VisibleNodeMask: 0,
+        };
+        let resource_desc = D3D12_RESOURCE_DESC {
+            Dimension: D3D12_RESOURCE_DIMENSION_TEXTURE2D,
+            Alignment: 0,
+            Width: width as u64,
+            Height: height,
+            DepthOrArraySize: 1,
+            MipLevels: 1,
+            Format: dxgi_format,
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            Layout: D3D12_TEXTURE_LAYOUT_UNKNOWN,
+            Flags: D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET
+                | D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS,
+        };
+        let clear_value = D3D12_CLEAR_VALUE {
+            Format: dxgi_format,
+            Anonymous: D3D12_CLEAR_VALUE_0 { Color: [0.0; 4] },
+        };
+        let mut raw_resource: Option<ID3D12Resource> = None;
+        unsafe {
+            raw_device
+                .raw_device()
+                .CreateCommittedResource(
+                    &heap_properties,
+                    D3D12_HEAP_FLAG_SHARED,
+                    &resource_desc,
+                    D3D12_RESOURCE_STATE_RENDER_TARGET,
+                    Some(&clear_value),
+                    &mut raw_resource,
+                )
+                .map_err(|err| {
+                    format!(
+                        "D3D12 failed to create native output shared texture {}x{} format={}: {err}",
+                        width,
+                        height,
+                        texture_format_label(format)
+                    )
+                })?;
+        }
+        let raw_resource = raw_resource.ok_or_else(|| {
+            format!("D3D12 returned no output export resource for {width}x{height}")
+        })?;
+        let shared_handle = unsafe {
+            raw_device
+                .raw_device()
+                .CreateSharedHandle(
+                    &raw_resource,
+                    None,
+                    GENERIC_ALL.0,
+                    windows::core::PCWSTR::null(),
+                )
+                .map_err(|err| {
+                    format!(
+                        "D3D12 failed to create native output shared HANDLE {}x{} format={}: {err}",
+                        width,
+                        height,
+                        texture_format_label(format)
+                    )
+                })?
+        };
+        let hal_texture = unsafe {
+            hal::dx12::Device::texture_from_raw(
+                raw_resource,
+                format,
+                wgpu::TextureDimension::D2,
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                1,
+                1,
+            )
+        };
+        let texture = unsafe {
+            device.create_texture_from_hal::<Dx12>(
+                hal_texture,
+                &wgpu::TextureDescriptor {
+                    label: Some("Ghost Render Core Output DXGI Export"),
+                    size: wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::COPY_SRC,
+                    view_formats: &[],
+                },
+                wgpu::TextureUses::COLOR_TARGET,
+            )
+        };
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("Ghost Render Core Output DXGI Export View"),
+            format: Some(format),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            ..Default::default()
+        });
+        let blitter = TextureBlitterBuilder::new(device, format)
+            .sample_type(wgpu::FilterMode::Linear)
+            .build();
+        Ok(NativeOutputExport {
+            shared_handle,
+            texture,
+            view,
+            blitter,
+            width,
+            height,
+            format,
+            frame: 0,
+        })
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     fn refresh_output_export(&mut self, encoder: &mut wgpu::CommandEncoder) {
         if let Some(export) = self.output_export.as_mut() {
             let _keep_texture_alive = &export.texture;
@@ -7898,11 +8050,11 @@ impl RenderState {
     }
 
     fn output_export_ready(&self) -> bool {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         {
             self.output_export.is_some()
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
             false
         }
@@ -7918,6 +8070,23 @@ impl RenderState {
                     "handle": export.surface.id().to_string(),
                     "handle_encoding": "integer",
                     "handle_byte_length": 4,
+                    "width": export.width,
+                    "height": export.height,
+                    "format": texture_format_label(export.format),
+                    "frame": export.frame,
+                    "flipped": false,
+                });
+            }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(export) = self.output_export.as_ref() {
+                return json!({
+                    "available": true,
+                    "platform": "dxgi",
+                    "handle": (export.shared_handle.0 as usize).to_string(),
+                    "handle_encoding": "integer",
+                    "handle_byte_length": 8,
                     "width": export.width,
                     "height": export.height,
                     "format": texture_format_label(export.format),
@@ -7961,7 +8130,7 @@ impl RenderState {
         );
         self.output_mirror_texture = output_mirror_texture;
         self.output_mirror_view = output_mirror_view;
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         {
             self.output_export = Self::create_output_export_target(
                 &self.device,
@@ -9969,7 +10138,7 @@ impl RenderState {
                 gpu_timing.resolve_to_readback(&mut mirror_encoder);
             }
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         self.refresh_output_export(&mut mirror_encoder);
         self.queue.submit(Some(mirror_encoder.finish()));
         if should_record_timing {
@@ -11609,7 +11778,7 @@ fn texture_format_bytes_per_texel(format: wgpu::TextureFormat) -> usize {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn native_output_export_format(output_format: wgpu::TextureFormat) -> wgpu::TextureFormat {
     if output_format.is_srgb() {
         wgpu::TextureFormat::Bgra8UnormSrgb
@@ -11637,6 +11806,24 @@ fn metal_texture_format_for_wgpu_output(
             objc2_metal::MTLPixelFormat::BGRA8Unorm_sRGB
         }
         _ => objc2_metal::MTLPixelFormat::BGRA8Unorm,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn dxgi_format_for_wgpu_output(
+    format: wgpu::TextureFormat,
+) -> windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT {
+    match format {
+        wgpu::TextureFormat::Rgba8UnormSrgb => {
+            windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
+        }
+        wgpu::TextureFormat::Rgba8Unorm => {
+            windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R8G8B8A8_UNORM
+        }
+        wgpu::TextureFormat::Bgra8UnormSrgb => {
+            windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM_SRGB
+        }
+        _ => windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
     }
 }
 
