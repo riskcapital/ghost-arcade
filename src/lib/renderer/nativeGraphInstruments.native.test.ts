@@ -53,6 +53,7 @@ const nativeCoreBin = join(
 );
 
 const SOURCE_FRAME_PROBE_SHADER_ID = 'native-graph/source-frame-probe';
+const NATIVE_GRAPH_FEATURE_CONTRACT_SHADER_ID = 'native-graph/feature-contract';
 
 const FULLSCREEN_CORNERS = {
   topLeft: { x: 0, y: 1 },
@@ -397,6 +398,74 @@ fn cs_probe(@builtin(global_invocation_id) gid: vec3<u32>) {
 `;
 }
 
+function nativeGraphFeatureContractWgsl() {
+  return String.raw`
+struct ContractUniforms {
+  tint: vec4<f32>,
+  params: vec4<f32>,
+}
+
+@group(0) @binding(0)
+var<uniform> u: ContractUniforms;
+
+@group(0) @binding(1)
+var source_tex: texture_2d<f32>;
+
+@group(0) @binding(2)
+var source_sampler: sampler;
+
+struct VertexOut {
+  @builtin(position) position: vec4<f32>,
+  @location(0) uv: vec2<f32>,
+  @location(1) color: vec4<f32>,
+}
+
+fn tri_vertex(index: u32) -> vec2<f32> {
+  let verts = array<vec2<f32>, 3>(
+    vec2<f32>(-0.72, -0.62),
+    vec2<f32>( 0.72, -0.62),
+    vec2<f32>( 0.00,  0.74),
+  );
+  return verts[index % 3u];
+}
+
+@vertex
+fn vs_triangle(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
+  let p = tri_vertex(vertex_index);
+  var out: VertexOut;
+  out.position = vec4<f32>(p + u.params.yz, clamp(u.params.x, 0.0, 1.0), 1.0);
+  out.uv = p * 0.5 + vec2<f32>(0.5);
+  out.color = u.tint;
+  return out;
+}
+
+@vertex
+fn vs_line(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
+  let verts = array<vec2<f32>, 2>(
+    vec2<f32>(-0.84, -0.68),
+    vec2<f32>( 0.84,  0.68),
+  );
+  let p = verts[vertex_index % 2u];
+  var out: VertexOut;
+  out.position = vec4<f32>(p, 0.04, 1.0);
+  out.uv = p * 0.5 + vec2<f32>(0.5);
+  out.color = u.tint;
+  return out;
+}
+
+@fragment
+fn fs_tint(in: VertexOut) -> @location(0) vec4<f32> {
+  return in.color;
+}
+
+@fragment
+fn fs_sample_add(in: VertexOut) -> @location(0) vec4<f32> {
+  let sampled = textureSampleLevel(source_tex, source_sampler, clamp(in.uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0);
+  return vec4<f32>(min(sampled.rgb + in.color.rgb * 0.35, vec3<f32>(1.0)), 1.0);
+}
+`;
+}
+
 async function readSourceFrameProbe(
   rpc: NativeRpc,
   sourceId: string,
@@ -680,6 +749,193 @@ describe('Native graph instrument runtime fixtures', () => {
 
       expect(String(repeated.checksum)).toBe(String(first.checksum));
       expect(String(advanced.checksum)).not.toBe(String(first.checksum));
+    } finally {
+      await rpc.close();
+    }
+  }, 45000);
+
+  itIfNativeCore('executes native graph feature contract passes without proxy fallbacks', async () => {
+    const rpc = createNativeRpc();
+    const sourceId = 'native-graph-feature-contract-source';
+    try {
+      await rpc.send('start', {
+        config: {
+          backend: process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'd3d12' : 'vulkan',
+          width: 128,
+          height: 72,
+          target_fps: 30,
+          native_quality_policy: 'performance',
+        },
+      }, 12000);
+      await delay(80);
+
+      const capabilities = await rpc.send('capabilities', {}, 5000);
+      expect(capabilities?.features?.compute_graph_render).toBe(true);
+      expect(capabilities?.features?.compute_graph_multi_render).toBe(true);
+      expect(capabilities?.features?.compute_graph_instanced_render).toBe(true);
+      expect(capabilities?.features?.compute_graph_indirect_render).toBe(true);
+      expect(capabilities?.features?.compute_graph_texture_sampling).toBe(true);
+      expect(capabilities?.features?.compute_graph_depth_render).toBe(true);
+      expect(capabilities?.features?.compute_graph_line_render).toBe(true);
+      expect(capabilities?.features?.compute_graph_source_frame_target).toBe(true);
+      expect(capabilities?.features?.native_instrument_proxies).toBe(false);
+
+      const precompileSummary = await rpc.send('submit_commands', {
+        commands: [
+          {
+            type: 'precompile_shader',
+            shader_id: NATIVE_GRAPH_FEATURE_CONTRACT_SHADER_ID,
+            stage: 'module',
+            entry: 'fs_tint',
+            source: nativeGraphFeatureContractWgsl(),
+          },
+          {
+            type: 'precompile_shader',
+            shader_id: SOURCE_FRAME_PROBE_SHADER_ID,
+            stage: 'compute',
+            entry: 'cs_probe',
+            source: sourceFrameProbeWgsl(),
+          },
+        ],
+      }, 8000);
+      expect(Number(precompileSummary?.dropped ?? 0)).toBe(0);
+
+      const graphResult = await rpc.send('compute_graph', {
+        buffers: [
+          {
+            id: 'native-graph-feature:red',
+            kind: 'uniform',
+            initial_f32: [0.88, 0.10, 0.08, 1, 0.24, 0, 0, 0],
+          },
+          {
+            id: 'native-graph-feature:green',
+            kind: 'uniform',
+            initial_f32: [0.00, 0.78, 0.28, 1, 0.06, 0, 0, 0],
+          },
+          {
+            id: 'native-graph-feature:blue',
+            kind: 'uniform',
+            initial_f32: [0.10, 0.22, 0.92, 1, 0.10, 0.12, -0.04, 0],
+          },
+          {
+            id: 'native-graph-feature:yellow',
+            kind: 'uniform',
+            initial_f32: [0.95, 0.72, 0.10, 1, 0.02, 0, 0, 0],
+          },
+          {
+            id: 'native-graph-feature:indirect',
+            kind: 'storage',
+            indirect: true,
+            initial_u32: [3, 2, 0, 0],
+          },
+        ],
+        passes: [],
+        render_passes: [
+          {
+            name: 'feature-contract-source-seed',
+            shader_id: NATIVE_GRAPH_FEATURE_CONTRACT_SHADER_ID,
+            vertex_entry: 'vs_triangle',
+            fragment_entry: 'fs_tint',
+            target: 'source_frame',
+            source_id: sourceId,
+            clear: true,
+            clear_color: [0, 0, 0, 1],
+            blend: 'replace',
+            vertex_count: 3,
+            instance_count: 2,
+            bindings: [
+              { binding: 0, resource: 'native-graph-feature:red', kind: 'uniform' },
+            ],
+          },
+          {
+            name: 'feature-contract-line-overlay',
+            shader_id: NATIVE_GRAPH_FEATURE_CONTRACT_SHADER_ID,
+            vertex_entry: 'vs_line',
+            fragment_entry: 'fs_tint',
+            target: 'source_frame',
+            source_id: sourceId,
+            clear: false,
+            blend: 'add',
+            primitive: 'line-list',
+            vertex_count: 2,
+            bindings: [
+              { binding: 0, resource: 'native-graph-feature:green', kind: 'uniform' },
+            ],
+          },
+          {
+            name: 'feature-contract-self-sample',
+            shader_id: NATIVE_GRAPH_FEATURE_CONTRACT_SHADER_ID,
+            vertex_entry: 'vs_triangle',
+            fragment_entry: 'fs_sample_add',
+            target: 'source_frame',
+            source_id: sourceId,
+            clear: false,
+            blend: 'alpha',
+            vertex_count: 3,
+            bindings: [
+              { binding: 0, resource: 'native-graph-feature:blue', kind: 'uniform' },
+              { binding: 1, kind: 'source-frame-texture', source_id: sourceId },
+              { binding: 2, kind: 'source-frame-sampler' },
+            ],
+          },
+          {
+            name: 'feature-contract-indirect-depth',
+            shader_id: NATIVE_GRAPH_FEATURE_CONTRACT_SHADER_ID,
+            vertex_entry: 'vs_triangle',
+            fragment_entry: 'fs_tint',
+            target: 'snapshot',
+            clear: true,
+            clear_color: [0, 0, 0, 1],
+            blend: 'replace',
+            depth: true,
+            depth_write: true,
+            depth_compare: 'less-equal',
+            draw_indirect_buffer: 'native-graph-feature:indirect',
+            include_snapshot: true,
+            bindings: [
+              { binding: 0, resource: 'native-graph-feature:yellow', kind: 'uniform' },
+            ],
+          },
+        ],
+      }, 15000);
+
+      const renders = Array.isArray(graphResult?.renders)
+        ? graphResult.renders
+        : graphResult?.render
+          ? [graphResult.render]
+          : [];
+      expect(Number(graphResult?.pass_count ?? -1)).toBe(0);
+      expect(renders).toHaveLength(4);
+      expect(renders.some((render: Record<string, unknown>) => (
+        render.name === 'feature-contract-source-seed' &&
+        render.target === 'source_frame' &&
+        render.source_id === sourceId &&
+        render.instance_count === 2
+      ))).toBe(true);
+      expect(renders.some((render: Record<string, unknown>) => (
+        render.name === 'feature-contract-line-overlay' &&
+        render.primitive === 'line-list' &&
+        render.blend === 'add'
+      ))).toBe(true);
+      expect(renders.some((render: Record<string, unknown>) => (
+        render.name === 'feature-contract-self-sample' &&
+        render.bindings === 3 &&
+        render.target === 'source_frame'
+      ))).toBe(true);
+      expect(renders.some((render: Record<string, unknown>) => (
+        render.name === 'feature-contract-indirect-depth' &&
+        render.target === 'snapshot' &&
+        render.draw === 'indirect' &&
+        render.depth === true &&
+        render.depth_compare === 'less-equal' &&
+        render.indirect_buffer === 'native-graph-feature:indirect'
+      ))).toBe(true);
+      assertVisibleSnapshot('native graph feature contract snapshot', graphResult.render_snapshot as Record<string, unknown>, 0.006);
+
+      const sourceProbe = await readSourceFrameProbe(rpc, sourceId, 'feature-contract-source', 128, 72);
+      const [r, g, b] = meanRgbFromProbe(sourceProbe);
+      expect(r + g + b).toBeGreaterThan(0.08);
+      expect(Math.max(r, g, b)).toBeGreaterThan(0.05);
     } finally {
       await rpc.close();
     }
