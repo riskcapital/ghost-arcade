@@ -9228,11 +9228,23 @@ impl RenderState {
         #[cfg(not(target_os = "macos"))]
         {
             let _ = slot;
-            let _ = descriptor;
-            Err(format!(
-                "shared texture source-frame upload is not implemented yet for backend={}",
-                native_backend_name()
-            ))
+            match descriptor.platform.as_str() {
+                "dxgi" => {
+                    let _handle = descriptor.dxgi_shared_handle()?;
+                    Err(format!(
+                        "DXGI shared texture source-frame upload received a valid HANDLE for format={} size={}x{}, but D3D11/D3D12 import is pending for backend={}",
+                        descriptor.format,
+                        descriptor.width,
+                        descriptor.height,
+                        native_backend_name()
+                    ))
+                }
+                "iosurface" => Err(format!(
+                    "IOSurface source-frame import is only available in macOS Metal builds; {}",
+                    descriptor.unsupported_reason(native_backend_name())
+                )),
+                _ => Err(descriptor.unsupported_reason(native_backend_name())),
+            }
         }
     }
 
