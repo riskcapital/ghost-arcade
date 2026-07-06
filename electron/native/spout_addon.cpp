@@ -14,8 +14,10 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 // Windows headers
+#include <windows.h>
 #include <d3d11_1.h>
 #include <dxgi1_2.h>
 #include <wrl/client.h>
@@ -89,6 +91,7 @@ public:
         Napi::Function func = DefineClass(env, "SpoutOutput", {
             InstanceMethod("setSenderName", &SpoutOutput::SetSenderName),
             InstanceMethod("sendTexture", &SpoutOutput::SendTexture),
+            InstanceMethod("sendTextureByName", &SpoutOutput::SendTextureByName),
             InstanceMethod("sendImage", &SpoutOutput::SendImage),
             InstanceMethod("release", &SpoutOutput::Release),
             InstanceMethod("isInitialized", &SpoutOutput::IsInitialized),
@@ -176,6 +179,57 @@ private:
     unsigned int m_width;
     unsigned int m_height;
 
+    static std::wstring Utf8ToWide(const std::string& text) {
+        if (text.empty()) {
+            return std::wstring();
+        }
+        int wideLen = MultiByteToWideChar(
+            CP_UTF8, MB_ERR_INVALID_CHARS, text.c_str(), -1, nullptr, 0);
+        if (wideLen <= 0) {
+            return std::wstring();
+        }
+        std::vector<wchar_t> buffer(static_cast<size_t>(wideLen), L'\0');
+        int converted = MultiByteToWideChar(
+            CP_UTF8, MB_ERR_INVALID_CHARS, text.c_str(), -1, buffer.data(), wideLen);
+        if (converted <= 0) {
+            return std::wstring();
+        }
+        return std::wstring(buffer.data());
+    }
+
+    Napi::Value SendOpenedTexture(
+        Napi::Env env,
+        const ComPtr<ID3D11Texture2D>& sharedTexture,
+        const char* label
+    ) {
+        if (!sharedTexture) {
+            return Napi::Boolean::New(env, false);
+        }
+
+        D3D11_TEXTURE2D_DESC desc;
+        sharedTexture->GetDesc(&desc);
+        m_width = desc.Width;
+        m_height = desc.Height;
+
+        static int diagCount = 0;
+        if (diagCount < 5) {
+            printf("[SpoutAddon] %s: %ux%u format=%u bindFlags=0x%x miscFlags=0x%x\n",
+                label, desc.Width, desc.Height, desc.Format, desc.BindFlags, desc.MiscFlags);
+            diagCount++;
+        }
+
+        bool ok = m_spout.SendTexture(sharedTexture.Get());
+
+        static int sendDiag = 0;
+        if (sendDiag < 5) {
+            printf("[SpoutAddon] %s result: %s (sender='%s')\n",
+                label, ok ? "true" : "false", m_senderName.c_str());
+            sendDiag++;
+        }
+
+        return Napi::Boolean::New(env, ok);
+    }
+
     Napi::Value SetSenderName(const Napi::CallbackInfo& info) {
         Napi::Env env = info.Env();
 
@@ -245,28 +299,53 @@ private:
             }
         }
 
-        D3D11_TEXTURE2D_DESC desc;
-        sharedTexture->GetDesc(&desc);
-        m_width = desc.Width;
-        m_height = desc.Height;
+        return SendOpenedTexture(env, sharedTexture, "SendTexture");
+    }
 
-        static int diagCount = 0;
-        if (diagCount < 5) {
-            printf("[SpoutAddon] SendTexture: %ux%u format=%u bindFlags=0x%x miscFlags=0x%x\n",
-                desc.Width, desc.Height, desc.Format, desc.BindFlags, desc.MiscFlags);
-            diagCount++;
+    /**
+     * Send a texture from a named DXGI shared resource. Unlike raw HANDLE
+     * integers, shared-resource names can be opened across the native-renderer
+     * process and Electron's Spout bridge process.
+     */
+    Napi::Value SendTextureByName(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+
+        if (!m_initialized) {
+            Napi::Error::New(env, "Not initialized").ThrowAsJavaScriptException();
+            return Napi::Boolean::New(env, false);
         }
 
-        bool ok = m_spout.SendTexture(sharedTexture.Get());
-
-        static int sendDiag = 0;
-        if (sendDiag < 5) {
-            printf("[SpoutAddon] SendTexture result: %s (sender='%s')\n",
-                ok ? "true" : "false", m_senderName.c_str());
-            sendDiag++;
+        if (info.Length() < 1 || !info[0].IsString()) {
+            Napi::TypeError::New(env, "String argument expected (shared texture name)")
+                .ThrowAsJavaScriptException();
+            return Napi::Boolean::New(env, false);
         }
 
-        return Napi::Boolean::New(env, ok);
+        if (!m_hasExternalDevice || !m_extDevice1) {
+            static int warnCount = 0;
+            if (warnCount++ < 3)
+                printf("[SpoutAddon] SendTextureByName: no external D3D11.1 device — zero-copy unavailable\n");
+            return Napi::Boolean::New(env, false);
+        }
+
+        std::string sharedName = info[0].As<Napi::String>().Utf8Value();
+        std::wstring wideName = Utf8ToWide(sharedName);
+        if (wideName.empty()) {
+            return Napi::Boolean::New(env, false);
+        }
+
+        ComPtr<ID3D11Texture2D> sharedTexture;
+        HRESULT hr = m_extDevice1->OpenSharedResourceByName(
+            wideName.c_str(), GENERIC_ALL, IID_PPV_ARGS(&sharedTexture));
+        if (FAILED(hr)) {
+            static int errCount = 0;
+            if (errCount++ < 5)
+                printf("[SpoutAddon] OpenSharedResourceByName failed for '%s': 0x%08lx\n",
+                    sharedName.c_str(), hr);
+            return Napi::Boolean::New(env, false);
+        }
+
+        return SendOpenedTexture(env, sharedTexture, "SendTextureByName");
     }
 
     /**
