@@ -88,10 +88,9 @@
   import { getErrorLog, clearErrorLog, type ErrorEntry } from '../utils/errorReporter';
   import { isWebGPUSupported, probeWebGPU, getWebGPUInfo, type WebGPUInfo } from '../renderer/webgpuCapability';
 
-  // GPU Acceleration panel state — populated by the WebGPU capability probe.
-  // We display the adapter info read-only and expose the two production
-  // toggles (editor-side bridge + zero-copy output transport). The probe
-  // is idempotent, so calling it from onMount is cheap on repeat opens.
+  // Renderer panel state — populated by the WebGPU capability probe. Native
+  // output is the primary path; these controls expose the editor bridge and
+  // fallback transports without moving their persisted keys.
   let webgpuSupported = isWebGPUSupported();
   let webgpuInfo: WebGPUInfo = getWebGPUInfo();
   let webgpuProbing = false;
@@ -106,7 +105,7 @@
     }
   }
 
-  // Snapshot of the experimental GPU flags at the time this settings
+  // Snapshot of the renderer bridge flags at the time this settings
   // panel script first ran. The Electron renderer wires up which
   // canvas/bridge to mount at boot, so toggling editorWebGPU or
   // allowMidChainGpuEffects mid-session leaves the engine in a
@@ -115,15 +114,15 @@
   // when a restart is required. Using $settings.experimental directly
   // (not the store wrapper) so the snapshot is a plain object frozen
   // at module-script-eval time.
-  const bootExperimentalGPU = {
+  const bootRendererFlags = {
     editorWebGPU: $settings.experimental?.editorWebGPU ?? true,
     outputZeroCopy: $settings.experimental?.outputZeroCopy ?? true,
     allowMidChainGpuEffects: $settings.experimental?.allowMidChainGpuEffects ?? true,
   };
   $: gpuRestartRequired =
-    $settings.experimental?.editorWebGPU !== bootExperimentalGPU.editorWebGPU ||
-    $settings.experimental?.outputZeroCopy !== bootExperimentalGPU.outputZeroCopy ||
-    $settings.experimental?.allowMidChainGpuEffects !== bootExperimentalGPU.allowMidChainGpuEffects;
+    $settings.experimental?.editorWebGPU !== bootRendererFlags.editorWebGPU ||
+    $settings.experimental?.outputZeroCopy !== bootRendererFlags.outputZeroCopy ||
+    $settings.experimental?.allowMidChainGpuEffects !== bootRendererFlags.allowMidChainGpuEffects;
 
   let restarting = false;
   async function restartApp() {
@@ -297,7 +296,7 @@
       { id: 'output:display', label: 'Display' },
     ]},
     { id: 'performance', label: 'Performance', sections: [
-      { id: 'performance:gpu', label: 'GPU Acceleration' },
+      { id: 'performance:gpu', label: 'Renderer' },
       { id: 'performance:render-quality', label: 'Render Quality' },
       { id: 'performance:video-decoding', label: 'Video Decoding' },
     ]},
@@ -334,7 +333,7 @@
 
   let selectedSection: SectionId = 'app:appearance';
   // Advanced sections are always visible now — the checkbox was hiding
-  // mildly intimidating but useful sections (MediaPipe, GPU Acceleration)
+  // mildly intimidating but useful sections (MediaPipe, Renderer)
   // from users who would have benefited from finding them. Variable kept
   // as a constant so the existing visibility filter below still compiles.
   const showAdvanced = true;
@@ -1331,7 +1330,7 @@
             <div class="gpu-restart-banner" role="alert">
               <div class="gpu-restart-text">
                 <strong>Restart required.</strong>
-                These GPU settings only take effect on a fresh process —
+                These renderer bridge settings only take effect on a fresh process —
                 the editor will appear broken (no grid, missing frames)
                 until you restart the app.
               </div>
@@ -1362,7 +1361,7 @@
                     <br/><span style="color: #fbbf24;">⚠ Software fallback adapter — performance will be limited.</span>
                   {/if}
                   <br/>
-                  Hardware-accelerated rendering paths are available. Native core output is the primary path; WebGPU zero-copy remains the fast fallback.
+                  Native core output is the primary path. WebGPU is available for the editor bridge, GPU effects, and the zero-copy fallback output.
                 {:else}
                   {webgpuInfo.failReason ? `Reason: ${webgpuInfo.failReason}.` : 'Your browser/device did not return a WebGPU adapter.'}
                   <br/>
@@ -1377,9 +1376,9 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Editor GPU bridge</span>
+              <span class="label-text">Editor frame bridge</span>
               <span class="label-hint">
-                Use the WebGPU + VideoFrame bridge for the editor → output handoff. When off, falls back to the legacy WebGL transport (works everywhere, slightly higher latency, no zero-copy).
+                Use the WebGPU + VideoFrame bridge for the editor → renderer handoff. When off, falls back to the legacy WebGL transport (works everywhere, slightly higher latency, no zero-copy).
                 {#if !webgpuSupported}
                   <br/><em style="color: #999;">Disabled — requires WebGPU.</em>
                 {/if}
@@ -1415,9 +1414,9 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Zero-copy GPU output</span>
+              <span class="label-text">Fallback zero-copy output</span>
               <span class="label-hint">
-                Send frames to the fallback output window via WebGPU's <code>importExternalTexture</code> — no encode/decode round trip, true 4K60. Used when native core output is off or unavailable. Apply on next output-window open.
+                Send frames to the fallback output window via WebGPU's <code>importExternalTexture</code> — no encode/decode round trip, true 4K60. Used only when native core output is off or unavailable. Applies on next output-window open.
                 {#if !webgpuSupported}
                   <br/><em style="color: #999;">Disabled — requires WebGPU.</em>
                 {/if}
@@ -1436,7 +1435,7 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Mid-chain GPU effects</span>
+              <span class="label-text">GPU effect bridge</span>
               <span class="label-hint">
                 Allow WebGPU effects (e.g. <em>Fluid Sim</em>) in the middle of a layer's effect chain. Adds a ~3 ms GPU↔CPU round-trip per affected effect; turn off if you're not using GPU effects and want the steady-state path purely WebGL.
                 {#if !webgpuSupported}

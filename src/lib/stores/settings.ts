@@ -673,18 +673,12 @@ export const DEFAULT_LAYER_SHADERS: { id: DefaultLayerShader; label: string }[] 
 ];
 
 /**
- * Experimental flags for in-progress feature work. These are
- * deliberately NOT surfaced in the normal settings UI — the
- * preferences panel only renders them when a dev-mode URL override
- * (`?dev=1`) is present. Production users see no UI for these
- * regardless of localStorage state.
+ * Renderer transition and diagnostic flags.
  *
- * Each flag has its own kill switch via URL param so a feature in
- * trouble can be disabled without re-launching the app:
- *   - `?webgpu-disable=1` forces webgpuPilot off (overrides
- *     localStorage). Combined with the capability probe so a
- *     machine without WebGPU also sees the pilot disabled even
- *     when the user toggled it on.
+ * These still live under `experimental` in persisted settings so older
+ * installs migrate cleanly, but several of them are now production controls:
+ * native core output is the primary v2 route, WebGPU zero-copy is the fallback
+ * route, and the editor VideoFrame bridge is enabled by default.
  */
 export interface ExperimentalSettings {
   /** S4 pilot: enable the WebGPU + TSL particle-flow effect.
@@ -711,25 +705,12 @@ export interface ExperimentalSettings {
    */
   outputWebRTC: boolean;
 
-  /** Phase 2 of the WebGPU migration: swap the editor's main
-   *  renderer from THREE.WebGLRenderer to THREE.WebGPURenderer.
-   *
-   *  Default false. When on AND the WebGPU capability probe
-   *  returns supported, Canvas.svelte instantiates WebGPUEngine
-   *  (renderer/webgpuEngine.ts) instead of RenderEngine (engine.ts).
-   *
-   *  Phase 2 scope: editor canvas shows clear color only — per-layer
-   *  rendering is intentionally NOT in this phase. The point of
-   *  Phase 2 is proving (a) WebGPURenderer works as the main
-   *  renderer in this Electron build, and (b) canvas.captureStream()
-   *  (which the output presenter depends on) keeps working with a
-   *  WebGPU canvas. Once those success criteria pass, Phase 3
-   *  begins porting per-layer renderers one at a time.
-   *
-   *  See docs/WEBGPU_MIGRATION.md for the full roadmap. */
+  /** Editor VideoFrame bridge. Default true: Canvas.svelte keeps the WebGL
+   *  editor compositor live while WebGPUCanvas handles GPU-backed handoff and
+   *  preview/output bridge work. */
   editorWebGPU: boolean;
 
-  /** Zero-copy GPU output transport — the production target.
+  /** Zero-copy GPU output transport — the fallback path behind native output.
    *
    *  When true (default), the visible output window mounts
    *  OutputSharedTextureDisplayApp: a WebGPU presenter that receives
@@ -753,7 +734,8 @@ export interface ExperimentalSettings {
    *      what Resolume builds in C++. We just consume it through web
    *      APIs.
    *
-   *  Falls back to `outputWebRTC` (if also true) or to the legacy
+   *  Used when `outputNativeCore` is disabled or unavailable. Falls back to
+   *  `outputWebRTC` (if also true) or to the legacy
    *  SpoutOutputApp when WebGPU is unavailable (`webgpuCapability`
    *  probe fails) or when MessagePortMain delivery fails.
    *
@@ -773,19 +755,9 @@ export interface ExperimentalSettings {
    * the user has a WebGPU effect (e.g. `gpuFluidSim`) in their layer's
    * effect chain.
    *
-   * Why opt-in: `gpuEffectRunner` does a per-frame GPU→CPU readback via
-   * `readRenderTargetPixels` then a CPU→GPU upload via `writeTexture`,
-   * costing ~3ms at 1080p per affected effect. That round-trip is the
-   * single biggest "WebGPU effects are slow" complaint. The strategic
-   * shift in the GPU edition is to push WebGPU work to the downstream
-   * compositor stage (via the WebGPUCanvas VideoFrame +
-   * importExternalTexture bridge), where the transfer is zero-copy.
-   *
-   * When this flag is OFF (default in the GPU edition):
-   *  - `gpuFluidSim` and any future `gpu*`-prefixed effects in the
-   *    middle of a layer's effect chain are skipped (pass-through).
-   *  - Output / compositor-stage WebGPU work is unaffected — that runs
-   *    through `WebGPUCanvas.svelte` and never touches gpuEffectRunner.
+   * Default true now so GPU effects visibly work when selected. Power users
+   * can disable it to avoid the per-frame GPU→CPU→GPU transfer cost when they
+   * are not using mid-chain GPU effects.
    *
    * When ON: mid-chain WebGPU effects work as before, paying the
    * CPU-readback cost. Useful when the effect needs to compose with
@@ -1004,7 +976,7 @@ function createDefaultSettings(): AppSettings {
       // ship (`gpuFluidSim`) on a layer did nothing, which is a wrong
       // default for the GPU edition. Now ON by default: users who add
       // a `gpu*` effect actually get the effect. Power users can flip
-      // it off in Settings → Experimental to keep the steady-state
+      // it off in Settings → Performance → Renderer to keep the steady-state
       // path purely WebGL when they're not using GPU effects.
       allowMidChainGpuEffects: true,
     },
