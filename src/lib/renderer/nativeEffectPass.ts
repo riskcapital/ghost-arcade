@@ -13,6 +13,7 @@ export type NativeEffectPassId =
   | 'rgb-shift'
   | 'scanlines'
   | 'fm-scanlines'
+  | 'vhs'
   | 'blur'
   | 'chromatic-aberration'
   | 'glitch'
@@ -93,6 +94,17 @@ export interface NativeEffectPassOptions {
     fmDepth: number;
     amp: number;
     colorMix: number;
+    tracking: number;
+    noise: number;
+    distortion: number;
+    colorBleed: number;
+    scanlines: number;
+    headSwitch: number;
+    tapeWobble: number;
+    dropout: number;
+    chromaDelay: number;
+    trackingJump: number;
+    saturation: number;
     param0: number;
     param1: number;
     param2: number;
@@ -494,6 +506,7 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'lift-gamma-gain', code: 61, defaultAmount: 1, amountMin: 0, amountMax: 1 },
   { id: 'strobe-flash', code: 62, defaultAmount: 1, amountMin: 0, amountMax: 2 },
   { id: 'fm-scanlines', code: 63, defaultAmount: 1, amountMin: 0, amountMax: 1 },
+  { id: 'vhs', code: 64, defaultAmount: 1, amountMin: 0, amountMax: 1 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -553,6 +566,25 @@ fn value_noise2d(p: vec2<f32>) -> f32 {
   let d = hash21(i + vec2<f32>(1.0, 1.0));
   let v = f * f * (3.0 - 2.0 * f);
   return mix(mix(a, b, v.x), mix(c, d, v.x), v.y);
+}
+
+fn vhs_hash11(seed: f32) -> f32 {
+  return fract1(sin(seed * 12.9898) * 43758.5453123);
+}
+
+fn vhs_random(st: vec2<f32>) -> f32 {
+  return fract1(sin(dot(st, vec2<f32>(12.9898, 78.233))) * 43758.5453123);
+}
+
+fn vhs_noise(st: vec2<f32>) -> f32 {
+  let i = floor(st);
+  let f = fract(st);
+  let a = vhs_random(i);
+  let b = vhs_random(i + vec2<f32>(1.0, 0.0));
+  let c = vhs_random(i + vec2<f32>(0.0, 1.0));
+  let d = vhs_random(i + vec2<f32>(1.0, 1.0));
+  let u2 = f * f * (3.0 - 2.0 * f);
+  return mix(a, b, u2.x) + (c - a) * u2.y * (1.0 - u2.x) + (d - b) * u2.x * u2.y;
 }
 
 fn sample_clamped(uv: vec2<f32>) -> vec4<f32> {
@@ -1157,6 +1189,56 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
       return vec4<f32>(line_col * (1.0 - line_mask), src.a);
     }
     return vec4<f32>(line_col * line_mask, line_mask * src.a);
+  }
+  if (code == 64u) {
+    let tracking = clamp(u.params0.x, 0.0, 1.0);
+    let noise_amount = clamp(u.params0.y, 0.0, 1.0);
+    let distortion = clamp(u.params0.z, 0.0, 1.0);
+    let color_bleed = clamp(u.params0.w, 0.0, 1.0);
+    let scanline_amount = clamp(u.params1.x, 0.0, 1.0);
+    let head_switch = clamp(u.params1.y, 0.0, 1.0);
+    let tape_wobble = clamp(u.params1.z, 0.0, 1.0);
+    let dropout = clamp(u.params1.w, 0.0, 1.0);
+    let chroma_delay = clamp(u.params2.x, 0.0, 1.0);
+    let tracking_jump = clamp(u.params2.y, 0.0, 1.0);
+    let saturation = clamp(u.params2.z, 0.0, 1.5);
+    let t = u.resolution_time.z;
+    var tape_uv = uv;
+    let jump_trigger = step(0.985, vhs_hash11(floor(t * 1.3))) * tracking_jump;
+    let jump_amount = tracking_jump * 0.08 * (sin(t * 0.7) * 0.5 + 0.5);
+    tape_uv.y = fract1(tape_uv.y + jump_amount + jump_trigger * 0.4);
+    let wobble = sin(tape_uv.y * 4.0 + t * 1.5) * 0.6 + sin(tape_uv.y * 11.0 + t * 0.7) * 0.4;
+    tape_uv.x += wobble * tape_wobble * 0.012;
+    var tracking_offset = sin(tape_uv.y * 10.0 + t * 3.0) * tracking * 0.02;
+    tracking_offset += step(0.99, vhs_random(vec2<f32>(t * 0.1, tape_uv.y))) * tracking * 0.1;
+    tape_uv.x += tracking_offset;
+    tape_uv.x += sin(tape_uv.y * 50.0 + t * 10.0) * distortion * 0.003;
+    tape_uv.y += sin(tape_uv.x * 30.0 + t * 8.0) * distortion * 0.002;
+    let head_band = smoothstep(0.06, 0.0, tape_uv.y);
+    let head_tear = (vhs_random(vec2<f32>(floor(tape_uv.y * 200.0), floor(t * 30.0))) - 0.5) * head_band * head_switch * 0.06;
+    tape_uv.x += head_tear;
+    let bleed_amount = color_bleed * 0.005;
+    let chroma_lag = chroma_delay * 0.012;
+    var tape_rgb = vec3<f32>(
+      sample_clamped(vec2<f32>(tape_uv.x + bleed_amount + chroma_lag, tape_uv.y)).r,
+      sample_clamped(tape_uv).g,
+      sample_clamped(vec2<f32>(tape_uv.x - bleed_amount - chroma_lag, tape_uv.y)).b,
+    );
+    let tape_alpha = sample_clamped(tape_uv).a;
+    let dropout_seed = floor(tape_uv.y * u.resolution_time.y * 0.5) + floor(t * 4.0);
+    let dropout_hit = step(1.0 - dropout * 0.04, vhs_hash11(dropout_seed));
+    if (dropout_hit > 0.5) {
+      let dropout_kind = vhs_hash11(dropout_seed + 7.3);
+      tape_rgb = mix(tape_rgb, select(vec3<f32>(0.0), vec3<f32>(1.0), dropout_kind > 0.5), 0.85);
+    }
+    let n = vhs_noise(tape_uv * u.resolution_time.xy * 0.5 + vec2<f32>(t * 100.0));
+    tape_rgb += (n - 0.5) * noise_amount * 0.3;
+    let scanline = sin(uv.y * u.resolution_time.y * 2.0) * 0.5 + 0.5;
+    tape_rgb *= 1.0 - scanline_amount * 0.3 * scanline;
+    let tape_luma = dot(tape_rgb, vec3<f32>(0.299, 0.587, 0.114));
+    let sat_mix = clamp(1.0 - saturation, 0.0, 1.0);
+    tape_rgb = mix(tape_rgb, vec3<f32>(tape_luma), sat_mix * 0.6 + tracking * 0.2);
+    return vec4<f32>(mix(color, clamp(tape_rgb, vec3<f32>(0.0), vec3<f32>(1.0)), clamp(amount, 0.0, 1.0)), tape_alpha);
   }
   if (code == 14u) {
     let radius = max(0.0, amount);
@@ -2753,6 +2835,19 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param6 = clampNumber(params.speed ?? params.param6, 0, 2, 0.6);
     param7 = clampNumber(params.colorMix ?? params.param7, 0, 1, 0);
     param8 = clampNumber(params.invert ?? params.param8, 0, 1, 0);
+  } else if (options.effect === 'vhs') {
+    param0 = clampNumber(params.tracking ?? params.param0, 0, 1, 0.5);
+    param1 = clampNumber(params.noise ?? params.param1, 0, 1, 0.3);
+    param2 = clampNumber(params.distortion ?? params.param2, 0, 1, 0.3);
+    param3 = clampNumber(params.colorBleed ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.scanlines ?? params.param4, 0, 1, 0.3);
+    param5 = clampNumber(params.headSwitch ?? params.param5, 0, 1, 0);
+    param6 = clampNumber(params.tapeWobble ?? params.param6, 0, 1, 0);
+    param7 = clampNumber(params.dropout ?? params.param7, 0, 1, 0);
+    param8 = clampNumber(params.chromaDelay ?? params.param8, 0, 1, 0);
+    param9 = clampNumber(params.trackingJump ?? params.param9, 0, 1, 0);
+    param10 = clampNumber(params.saturation ?? params.param10, 0, 1.5, 1);
+    param11 = 0;
   } else if (options.effect === 'blur') {
     param0 = clampNumber(params.mode ?? params.param0, 0, 3, 1);
     param1 = clampNumber(params.angle ?? params.param1, 0, 360, 0);

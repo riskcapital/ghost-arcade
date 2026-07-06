@@ -1059,6 +1059,23 @@ describe('native renderer sync effect-pass descriptors', () => {
         fmLinesInvert: 1,
       },
     })).toBe('fm-scanlines:1.0000:2:180.0000:0.4000:0.2000:0.7000:0.8000:1.1000:0.3500:1');
+
+    expect(effectToNativeDescriptor({
+      type: 'vhs',
+      params: {
+        vhsTracking: 0.45,
+        vhsNoise: 0.2,
+        vhsDistortion: 0.3,
+        vhsColorBleed: 0.55,
+        vhsScanlines: 0.35,
+        vhsHeadSwitch: 0.4,
+        vhsTapeWobble: 0.25,
+        vhsDropout: 0.1,
+        vhsChromaDelay: 0.45,
+        vhsTrackingJump: 0.1,
+        vhsSaturation: 0.7,
+      },
+    })).toBe('vhs:1.0000:0.4500:0.2000:0.3000:0.5500:0.3500:0.4000:0.2500:0.1000:0.4500:0.1000:0.7000');
   });
 
   it('rebuilds native effect-pass runtime params from hero effect descriptors', () => {
@@ -1117,6 +1134,24 @@ describe('native renderer sync effect-pass descriptors', () => {
         speed: 1.1,
         colorMix: 0.35,
         invert: 1,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('vhs:1.0000:0.4500:0.2000:0.3000:0.5500:0.3500:0.4000:0.2500:0.1000:0.4500:0.1000:0.7000')).toMatchObject({
+      effect: 'vhs',
+      amount: 1,
+      params: {
+        tracking: 0.45,
+        noise: 0.2,
+        distortion: 0.3,
+        colorBleed: 0.55,
+        scanlines: 0.35,
+        headSwitch: 0.4,
+        tapeWobble: 0.25,
+        dropout: 0.1,
+        chromaDelay: 0.45,
+        trackingJump: 0.1,
+        saturation: 0.7,
       },
     });
 
