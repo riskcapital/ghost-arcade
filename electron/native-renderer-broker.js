@@ -1166,22 +1166,25 @@ class NativeRendererBroker {
           textureShare.error ? `error=${textureShare.error}` : null,
         ].filter(Boolean).join(' ')
       : 'not connected to Electron texture-share status';
+    const managedOutputFrameCount = Number(
+      this.lastStatus.swapchain_presented ?? this.lastStatus.frames_presented ?? 0,
+    );
     const managedOutputOk = !!(
       features.managed_output_attach &&
       this.lastStatus.output_window_attached &&
       this.lastStatus.output_swapchain_ready &&
       this.lastStatus.output_present_healthy &&
-      Number(this.lastStatus.frames_presented ?? 0) > 0
+      managedOutputFrameCount > 0
     );
     const managedOutputDetail = !features.managed_output_attach
       ? 'managed output attach is not implemented'
       : !this.lastStatus.output_window_attached
         ? 'native output window is detached/hidden'
-        : Number(this.lastStatus.frames_presented ?? 0) <= 0
+        : managedOutputFrameCount <= 0
           ? `waiting for first native swapchain present; last=${this.lastStatus.swapchain_last_present_result || 'none'}`
           : this.lastStatus.output_present_consecutive_failures > 0
             ? `native output present has ${this.lastStatus.output_present_consecutive_failures} consecutive failure(s); last=${this.lastStatus.swapchain_last_present_result || 'none'}`
-            : `presented ${this.lastStatus.frames_presented} native frame(s)`;
+            : `presented ${managedOutputFrameCount} native swapchain frame(s)`;
     const nativeTextureShareSenderOk = !!(
       features.shared_texture_output_export &&
       textureShare?.available &&
