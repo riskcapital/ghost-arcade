@@ -1031,6 +1031,19 @@ describe('native renderer sync effect-pass descriptors', () => {
         highRolloffMix: 0.85,
       },
     })).toBe('highlight-rolloff:0.6000:0.7200:0.2100:0.8000:1.0500:0.8500');
+
+    expect(effectToNativeDescriptor({
+      type: 'strobeFlash',
+      params: {
+        strobeIntensity: 0.88,
+        strobeRate: 4,
+        strobeDuty: 0.52,
+        strobeMode: 2,
+        strobeTintR: 0.18,
+        strobeTintG: 0.85,
+        strobeTintB: 1,
+      },
+    })).toBe('strobe-flash:0.8800:4.0000:0.5200:2:0.1800:0.8500:1.0000');
   });
 
   it('rebuilds native effect-pass runtime params from hero effect descriptors', () => {
@@ -1234,6 +1247,18 @@ describe('native renderer sync effect-pass descriptors', () => {
         lggGainR: 1.18,
         lggGainG: 1.04,
         lggGainB: 0.9,
+      },
+    });
+    expect(nativeEffectPassFromDescriptor('strobe-flash:0.8800:4.0000:0.5200:2:0.1800:0.8500:1.0000')).toMatchObject({
+      effect: 'strobe-flash',
+      amount: 0.88,
+      params: {
+        strobeRate: 4,
+        strobeDuty: 0.52,
+        strobeMode: 2,
+        strobeTintR: 0.18,
+        strobeTintG: 0.85,
+        strobeTintB: 1,
       },
     });
   });
