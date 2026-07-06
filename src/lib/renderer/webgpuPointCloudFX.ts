@@ -678,6 +678,9 @@ const RENDER_WGSL = /* wgsl */ `
 #include <sort>
 
 const GHOST_GAUSSIAN_SIGMA_EXTENT: f32 = 3.0;
+const GHOST_GAUSSIAN_MIN_SIGMA_NDC: f32 = 0.00035;
+const GHOST_GAUSSIAN_MAX_SIGMA_NDC: f32 = 0.18;
+const GHOST_GAUSSIAN_SCREEN_BASIS_STEP: f32 = 0.01;
 
 struct Home {
   homePos:       vec3<f32>,
@@ -732,37 +735,61 @@ fn rotateByQuatWxyz(qIn: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
   return v + q.x * t + cross(qv, t);
 }
 
-fn cameraPlaneAxis(axis: vec3<f32>, radius: f32) -> vec2<f32> {
-  return vec2<f32>(dot(axis, u.camRight), dot(axis, u.camUp)) * radius;
+fn projectToNdc(pos: vec3<f32>) -> vec2<f32> {
+  let clip = u.viewProj * vec4<f32>(pos, 1.0);
+  return clip.xy / max(abs(clip.w), 1e-5);
+}
+
+fn projectSplatAxisNdc(center: vec3<f32>, axis: vec3<f32>, radius: f32) -> vec2<f32> {
+  let offset = axis * max(radius, 1e-7);
+  let plus = projectToNdc(center + offset);
+  let minus = projectToNdc(center - offset);
+  return (plus - minus) * 0.5;
+}
+
+fn solveScreenToWorldOffset(center: vec3<f32>, ndcOffset: vec2<f32>) -> vec3<f32> {
+  let c = projectToNdc(center);
+  let screenRight = projectToNdc(center + u.camRight * GHOST_GAUSSIAN_SCREEN_BASIS_STEP) - c;
+  let screenUp = projectToNdc(center + u.camUp * GHOST_GAUSSIAN_SCREEN_BASIS_STEP) - c;
+  let det = screenRight.x * screenUp.y - screenRight.y * screenUp.x;
+  if (abs(det) < 1e-7) {
+    let fallback = max(length(ndcOffset), 1e-7);
+    return (u.camRight * ndcOffset.x + u.camUp * ndcOffset.y) / fallback * 1e-4;
+  }
+  let worldX = (ndcOffset.x * screenUp.y - ndcOffset.y * screenUp.x) / det;
+  let worldY = (screenRight.x * ndcOffset.y - screenRight.y * ndcOffset.x) / det;
+  return (u.camRight * worldX + u.camUp * worldY) * GHOST_GAUSSIAN_SCREEN_BASIS_STEP;
 }
 
 struct GaussianScreenAxes {
-  majorAxis: vec3<f32>,
-  minorAxis: vec3<f32>,
-  stretch: vec2<f32>,
+  majorOffset: vec3<f32>,
+  minorOffset: vec3<f32>,
 };
 
-fn gaussianScreenAxes(h: Home) -> GaussianScreenAxes {
+fn gaussianScreenAxes(center: vec3<f32>, h: Home, p: Live) -> GaussianScreenAxes {
   let sx = max(h.splatScale.x, 1e-6);
   let sy = max(h.splatScale.y, 1e-6);
   let sz = max(h.splatScale.z, 1e-6);
   let meanScale = max((sx + sy + sz) / 3.0, 1e-6);
 
-  let ax = cameraPlaneAxis(rotateByQuatWxyz(h.splatRotation, vec3<f32>(1.0, 0.0, 0.0)), sx / meanScale);
-  let ay = cameraPlaneAxis(rotateByQuatWxyz(h.splatRotation, vec3<f32>(0.0, 1.0, 0.0)), sy / meanScale);
-  let az = cameraPlaneAxis(rotateByQuatWxyz(h.splatRotation, vec3<f32>(0.0, 0.0, 1.0)), sz / meanScale);
+  let visualScale = max(p.size, 1e-6);
+  let ax = projectSplatAxisNdc(center, rotateByQuatWxyz(h.splatRotation, vec3<f32>(1.0, 0.0, 0.0)), visualScale * sx / meanScale);
+  let ay = projectSplatAxisNdc(center, rotateByQuatWxyz(h.splatRotation, vec3<f32>(0.0, 1.0, 0.0)), visualScale * sy / meanScale);
+  let az = projectSplatAxisNdc(center, rotateByQuatWxyz(h.splatRotation, vec3<f32>(0.0, 0.0, 1.0)), visualScale * sz / meanScale);
 
-  // Project the 3D gaussian covariance into the camera plane. This
-  // is the light-weight version of 3DGS projection: enough to preserve
-  // anisotropy and view-dependent orientation without adding a separate
-  // projected-covariance compute pass yet.
+  // Project the full 3D gaussian covariance through viewProj with a
+  // finite-difference Jacobian. This preserves anisotropy, perspective,
+  // and the view-dependent contribution of splat axes that point toward
+  // the camera without needing a separate covariance compute pass yet.
   let cxx = ax.x * ax.x + ay.x * ay.x + az.x * az.x;
   let cxy = ax.x * ax.y + ay.x * ay.y + az.x * az.y;
   let cyy = ax.y * ax.y + ay.y * ay.y + az.y * az.y;
   let halfDiff = (cxx - cyy) * 0.5;
   let root = sqrt(max(halfDiff * halfDiff + cxy * cxy, 0.0));
-  let lambdaMajor = max((cxx + cyy) * 0.5 + root, 1e-6);
-  let lambdaMinor = max((cxx + cyy) * 0.5 - root, 1e-6);
+  let minLambda = GHOST_GAUSSIAN_MIN_SIGMA_NDC * GHOST_GAUSSIAN_MIN_SIGMA_NDC;
+  let maxLambda = GHOST_GAUSSIAN_MAX_SIGMA_NDC * GHOST_GAUSSIAN_MAX_SIGMA_NDC;
+  let lambdaMajor = clamp((cxx + cyy) * 0.5 + root, minLambda, maxLambda);
+  let lambdaMinor = clamp((cxx + cyy) * 0.5 - root, minLambda, lambdaMajor);
 
   var major2 = vec2<f32>(cxy, lambdaMajor - cxx);
   if (dot(major2, major2) < 1e-6) {
@@ -775,10 +802,11 @@ fn gaussianScreenAxes(h: Home) -> GaussianScreenAxes {
     major2 = normalize(major2);
   }
   let minor2 = vec2<f32>(-major2.y, major2.x);
+  let majorSigmaNdc = major2 * sqrt(lambdaMajor);
+  let minorSigmaNdc = minor2 * sqrt(lambdaMinor);
   return GaussianScreenAxes(
-    normalize(u.camRight * major2.x + u.camUp * major2.y),
-    normalize(u.camRight * minor2.x + u.camUp * minor2.y),
-    clamp(vec2<f32>(sqrt(lambdaMajor), sqrt(lambdaMinor)), vec2<f32>(0.28), vec2<f32>(4.0)),
+    solveScreenToWorldOffset(center, majorSigmaNdc) * GHOST_GAUSSIAN_SIGMA_EXTENT,
+    solveScreenToWorldOffset(center, minorSigmaNdc) * GHOST_GAUSSIAN_SIGMA_EXTENT,
   );
 }
 
@@ -833,19 +861,19 @@ fn vs_main(
     cornerUV = vec2<f32>(q.x * 0.5 + 0.5, q.y * 0.5 + 0.5);
     // billboards are 2× bigger than points
     let sizeMul = select(1.0, 2.0, u.topology == 1u);
-    var axisStretch = vec2<f32>(1.0);
     var billboardX = u.camRight;
     var billboardY = u.camUp;
     if (h.gaussian > 0.5) {
-      let axes = gaussianScreenAxes(h);
-      axisStretch = axes.stretch * GHOST_GAUSSIAN_SIGMA_EXTENT;
-      billboardX = axes.majorAxis;
-      billboardY = axes.minorAxis;
+      let axes = gaussianScreenAxes(p.pos, h, p);
+      billboardX = axes.majorOffset;
+      billboardY = axes.minorOffset;
       gaussianSigma = q * GHOST_GAUSSIAN_SIGMA_EXTENT;
+      offset = billboardX * q.x + billboardY * q.y;
+    } else {
+      offset =
+        billboardX * (q.x * p.size * sizeMul) +
+        billboardY * (q.y * p.size * sizeMul);
     }
-    offset =
-      billboardX * (q.x * p.size * sizeMul * axisStretch.x) +
-      billboardY * (q.y * p.size * sizeMul * axisStretch.y);
   }
 
   var out: VSOut;
